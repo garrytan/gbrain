@@ -419,4 +419,19 @@ describe('F6: a bidirectional control in the checkout name cannot reorder the pr
       }
     }
   });
+
+  test('F6b: a checkout name with LRM, RLM or ALM prints no raw mark; the printed commands read back to the exact path', async () => {
+    const MARK = /[\u200e\u200f\u061c]/;
+    for (const root of ['/brains/\u200fkrow/12', '/brains/a\u200eb c', '/brains/\u061c1/2']) {
+      const [id] = await holds(row({ root, owner_root: root, last_error: identity }));
+      const rendered = renderAction(id!.fix, cliRenderContext());
+      for (const text of [rendered.command!, rendered.why, rendered.user_message!]) expect(text).not.toMatch(MARK);
+      expect(bashArgv(rendered.command!)).toEqual({ argv: ['git', '-C', root, 'config', '--show-origin', '--get-regexp', '^user\\.'], ran: false });
+      const [parked] = await holds(row({ root, owner_root: root, last_error: { phase: 'commit', step: 'add', reason: 'filter_failed' } }));
+      const why = renderAction(parked!.fix, cliRenderContext()).why;
+      expect(why).not.toMatch(MARK);
+      expect(why).toContain(`git -C ${leafQuote(root)} status`);
+      expect(bashArgv(`git -C ${leafQuote(root)} status`)).toEqual({ argv: ['git', '-C', root, 'status'], ran: false });
+    }
+  });
 });

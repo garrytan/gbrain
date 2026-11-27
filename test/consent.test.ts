@@ -500,3 +500,18 @@ describe('F6 (d3): a consent refusal shows no raw bidi control, and its JSON tex
     expect(json.preview.argv).toEqual(['gbrain', 'demo', page, '--dry-run']);
   });
 });
+
+describe('F6b: a consent refusal shows no raw LRM, RLM or ALM, and its JSON text parses to the exact argv', () => {
+  test('a page value with U+061C in the approved and preview argv', async () => {
+    const MARK = /[\u200e\u200f\u061c]/;
+    const page = 'notes/\u061c1/2\u200f.md';
+    const e = await inHome(() => refusal(requireConsent(req(['paid'], [], { argv: ['gbrain', 'demo', page], preview_argv: ['gbrain', 'demo', page, '--dry-run'] }), env())));
+    if (!isConsentRefusal(e)) throw e;
+    expect(renderConsentRefusal(e.consent, { json: false }).stdout!).not.toMatch(MARK);
+    const text = renderConsentRefusal(e.consent, { json: true }).stdout!;
+    expect(text).not.toMatch(MARK);
+    const json = JSON.parse(text);
+    expect(json.fix.argv).toEqual(['gbrain', 'demo', page, '--yes']);
+    expect(json.preview.argv).toEqual(['gbrain', 'demo', page, '--dry-run']);
+  });
+});

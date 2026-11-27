@@ -5,7 +5,7 @@
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import {
-  __setDocsRefForTests, argvFromCommand, deriveNext, docsUrl, inertText, noticeBlock, orderNotices, paramRef,
+  __setDocsRefForTests, argvFromCommand, bidiInert, deriveNext, docsUrl, inertText, jsonText, noticeBlock, orderNotices, paramRef,
   redactForTransport, renderAction, renderCliError, renderNotice, shellQuote, toAgentError, toolErrorResult, toolResultWithNotices,
   type Action, type Decision, type Effect, type Notice, type RenderContext,
 } from '../src/core/agent-output.ts';
@@ -533,6 +533,71 @@ describe('F6 (d1-d3): error prose, callable MCP steps and JSON error text carry 
       expect(JSON.parse(line.slice('fix: get_page '.length))).toEqual({ slug });
       const [rendered] = (result._meta as { gbrain_notices: Array<{ fix: { mcp: { arguments: unknown } } }> }).gbrain_notices;
       expect(rendered!.fix.mcp.arguments).toEqual({ slug });
+    });
+  }
+});
+
+describe('F6b: the bidirectional marks LRM, RLM and ALM are escaped like the F6 controls', () => {
+  /** The three marks: they change how nearby slashes, digits and punctuation show (U+200E, U+200F, U+061C). */
+  const MARKS = ['\u200e', '\u200f', '\u061c'];
+  const MARK = /[\u200e\u200f\u061c]/;
+  /** All twelve direction characters agent text escapes: the F6 nine plus the three marks. */
+  const TWELVE = ['\u202a', '\u202b', '\u202c', '\u202d', '\u202e', '\u2066', '\u2067', '\u2068', '\u2069', ...MARKS];
+  const octal = (ch: string) => [...new TextEncoder().encode(ch)].map(b => `\\${b.toString(8).padStart(3, '0')}`).join('');
+  const bash = (command: string) => execFileSync('bash', ['-c', `set -- ${command}; printf '%s\\0' "$@"`], { encoding: 'utf8' }).split('\0').slice(0, -1);
+  /** Shows as `notes/` + `2026/01` with its digits and slashes moved by the RLM. */
+  const slug = 'notes/\u200f2026/01\u200e.md';
+
+  test('inertText, bidiInert, both shellQuote helpers and jsonText escape the same twelve, and nothing else outside C0/C1', () => {
+    for (const ch of TWELVE) {
+      expect(inertText(`a${ch}b`)).toBe(`a${octal(ch)}b`);
+      expect(bidiInert(`a${ch}b`)).toBe(`a${octal(ch)}b`);
+      expect(shellQuote(['x', `a${ch}b`])).toBe(`x $'a${octal(ch)}b'`);
+      expect(leafQuote(`a${ch}b`)).toBe(`$'a${octal(ch)}b'`);
+      expect(bash(shellQuote(['x', `a${ch}b`]))).toEqual(['x', `a${ch}b`]);
+      const json = jsonText({ v: `a${ch}b` });
+      expect(json).toBe(`{"v":"a\\u${ch.charCodeAt(0).toString(16).padStart(4, '0')}b"}`);
+      expect(JSON.parse(json)).toEqual({ v: `a${ch}b` });
+    }
+    // A zero-width space is not a direction character: every pass leaves it as it is.
+    for (const f of [inertText, bidiInert]) expect(f('a\u200bb')).toBe('a\u200bb');
+    expect(leafQuote('a\u200bb')).toBe("'a\u200bb'");
+    expect(jsonText('a\u200bb')).toBe(JSON.stringify('a\u200bb'));
+  });
+
+  test('CLI: a real page_not_found with an RLM in the page prints no raw mark; --json parses to the exact argv', () => {
+    const e = pageNotFoundError({ remote: false }, slug, { includeDeleted: false });
+    expect(renderCliError(e, { json: false, command: 'get', tty: true }).stderr!).not.toMatch(MARK);
+    const text = renderCliError(e, { json: true, command: 'get', tty: false }).stdout!;
+    expect(text).not.toMatch(MARK);
+    const doc = JSON.parse(text) as { message: string; suggestion: string; fix: { argv: string[] } };
+    for (const prose of [doc.message, doc.suggestion]) expect(prose).not.toMatch(MARK);
+    expect(doc.fix.argv).toContain(slug);
+  });
+
+  for (const transport of ['stdio', 'http'] as const) {
+    test(`MCP over ${transport}: the error text, its Next step and a notice fix line hold no raw mark; arguments parse back exactly`, () => {
+      const c = ctx({ transport, isCallable: () => true });
+      const env = toAgentError(pageNotFoundError({ remote: true, transport, isCallable: () => true }, slug, { includeDeleted: false }), { transport, op: 'get_page', render: c });
+      const text = toolErrorResult(env).content[0]!.text;
+      expect(text).not.toMatch(MARK);
+      const doc = JSON.parse(text) as { suggestion: string; fix: { mcp: { arguments: Record<string, unknown> } } };
+      expect(doc.fix.mcp.arguments.slug).toBe(slug);
+      const n: Notice = { code: 'empty_retrieval', kind: 'degraded', why: `No match in ${slug}`, fix: getPageFix(slug, 'Reads the page.')! };
+      const block = toolResultWithNotices({ ok: true }, [n], c).content[1]!.text;
+      expect(block).not.toMatch(MARK);
+      const line = block.split('\n').find(l => l.startsWith('fix: get_page '))!;
+      expect(JSON.parse(line.slice('fix: get_page '.length))).toEqual({ slug });
+    });
+  }
+
+  for (const ch of MARKS) {
+    test(`the HTTP view masks a private path after a raw U+${ch.charCodeAt(0).toString(16).toUpperCase().padStart(4, '0')} in argv`, () => {
+      const word = `label${ch}/home/owner/private`;
+      const a = action({ argv: ['git', '-C', word, 'status'], verify: { argv: ['git', '-C', word, 'log'] }, preview_argv: ['git', '-C', word, 'diff'] });
+      const view = JSON.stringify(redactForTransport(renderAction(a, ctx({ transport: 'http', isCallable: () => false })), 'http'));
+      expect(view).not.toContain('/home/owner');
+      expect(renderAction(a, ctx()).argv).toEqual(['git', '-C', word, 'status']);
     });
   }
 });
