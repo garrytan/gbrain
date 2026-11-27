@@ -150,6 +150,10 @@ export function readWriteTally(dir: string, epochId: string | null): WriteTallyF
   try { const f = loadTally(dir); return f && epochId !== null && f.epoch_id === epochId ? f : null; } catch { return null; } // silent-read-ok: no readable tally is no count; the status shows zero and criterion 5 stays missing
 }
 
+/** How many earlier refusals a sample line's `dropped` stands for, the same on both ends of the pipe: an integer of at most five digits (what supervisor.ts `sampleWeight` can read), capped at 10,000; anything else is 0. */
+export function carriedRefusals(dropped: unknown): number {
+  return Number.isInteger(dropped) && (dropped as number) > 0 && (dropped as number) <= 99_999 ? Math.min(dropped as number, 10_000) : 0;
+}
 /** How many write samples a serving process sent the child of `session` (supervisor.ts `recordSent`); the child reads it at the end of its input and counts what it never received as lost (`pipe_unflushed`). */
 export const sentPath = (dir: string, session: string): string => join(dir, `write-sent.${session.replace(/[^A-Za-z0-9_-]/g, '_')}.json`);
 /** The most samples one receipt may stand for: a larger count is not one we can write down (it would be a long loop of durable appends at worker start), so it reads as unreadable. */
@@ -189,7 +193,7 @@ export function outstandingReceipts(dir: string, epoch: string | null): string[]
  * Lost-sample reasons that were not qualifying writes: such a sample would have been sent as capability_missing (write-capture.ts sends every write outside `PILOT_WRITES` so), so it is
  * folded there under its own name (`capability_missing_by_family`), counted and visible, never as uncomparable: only a lost qualifying write counts against the compared share.
  */
-export const LOST_NONQUALIFYING: ReadonlySet<string> = new Set(['pipe_unflushed_nonqualifying']);
+export const LOST_NONQUALIFYING: ReadonlySet<string> = new Set(['pipe_unflushed_nonqualifying', 'receipt_orphaned_nonqualifying']);
 /** The most samples one `recordLost` call stands for (the child's own cap on a `dropped` count). */
 const MAX_LOST_PER_RECORD = 10_000;
 /** Samples the serving process lost (a refused send, a read-back abandoned at disconnect) are never written into the tally by that process (a locked write could stall it): each is one `{epoch_id, reason}` line appended, with no lock, to its own file; the owner child folds them in. True only when the line and its directory entry are flushed to disk; false otherwise. */
@@ -319,7 +323,10 @@ export class WriteTally {
         if (r === null || r === 'unreadable') continue;
         const age = Date.now() - statSync(path).mtimeMs;
         if (!(age > STALE_RECEIPT_MS || (r.pid !== undefined && r.pid > 1 && r.pid !== this.pid && !running(r.pid)))) continue;
-        if (recordLostCount(this.dir, epoch, 'receipt_orphaned', r.sent) < r.sent) continue; // a receipt that names another epoch is settled like any other (it can only be hand-written: commands write none)
+        // What that worker had read is unknown, so every sample it was sent is booked (more than was lost, never less); only the qualifying ones count against the share, when the receipt says how many.
+        const q = r.sent_qualifying ?? r.sent;
+        if (recordLostCount(this.dir, epoch, 'receipt_orphaned', q) < q) continue; // a receipt that names another epoch is settled like any other (it can only be hand-written: commands write none)
+        if (r.sent - q > 0 && recordLostCount(this.dir, epoch, 'receipt_orphaned_nonqualifying', r.sent - q) < r.sent - q) continue;
         if (readEpoch(this.dir)?.epoch_id !== epoch) return; // the epoch moved while this was booked: the receipt stays for the new owner
         rmSync(path, { force: true });
       }

@@ -23,7 +23,7 @@ import { readEpoch } from './evidence-epoch.ts';
 import { appendFault, type ShadowFault } from './ledger.ts';
 import type { MirrorTransport } from './mirror.ts';
 import { readShadowState } from './state.ts';
-import { PILOT_WRITES, sentPath } from './write-compare.ts';
+import { carriedRefusals, PILOT_WRITES, sentPath } from './write-compare.ts';
 
 export interface ShadowSupervisorOptions {
   dir: string;
@@ -72,7 +72,7 @@ export const askCode = (error: unknown): string => {
 export function sampleWeight(line: string): number {
   if (!line.startsWith('{"t":"write"')) return 0;
   const dropped = /,"dropped":(\d{1,5})\}\n$/.exec(line.length > 40 ? line.slice(-40) : line);
-  return 1 + (dropped ? Math.min(Number(dropped[1]), 10_000) : 0);
+  return 1 + (dropped ? carriedRefusals(Number(dropped[1])) : 0);
 }
 
 /**

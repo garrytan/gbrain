@@ -34,7 +34,7 @@ import { FollowChild, type FollowEvent, type FollowStore } from './follow-child.
 import { appendFault, appendLedgerRows, writeSummaryFile, type ShadowLedgerRow, type ShadowSummaryFile } from './ledger.ts';
 import { newMirrorCounters, type MirrorCounters } from './mirror.ts';
 import { createWriteComparer } from './write-compare-child.ts';
-import { PILOT_WRITES, readReceipt, recordLostCount, sentPath, WriteTally } from './write-compare.ts';
+import { carriedRefusals, PILOT_WRITES, readReceipt, recordLostCount, sentPath, WriteTally } from './write-compare.ts';
 import { appendRecall, IntervalGate, recallEligible, RECALL_INTERVAL_MS, scoreRecall, type RankedKey } from './recall.ts';
 import { isShadowReadMember, SHADOW_READ_MEMBERS, type ShadowReadMember } from './reads.ts';
 import { readSeedRecord } from './seed.ts';
@@ -295,7 +295,7 @@ function childEpoch(
 
 /** The samples a write line stands for, as the serving process counted them when it sent it (supervisor.ts `sampleWeight` and `sampleQualifyingWeight`): the line plus the earlier refusals it carries, and the qualifying part (a page or link write, plus those refusals). */
 function receivedWeight(event: { op?: unknown; dropped?: number }): { all: number; qualifying: number } {
-  const carried = Number.isInteger(event.dropped) && event.dropped! > 0 ? Math.min(event.dropped!, 10_000) : 0;
+  const carried = carriedRefusals(event.dropped); // read exactly as the serving process read it when it counted the line
   return { all: 1 + carried, qualifying: carried + (typeof event.op === 'string' && PILOT_WRITES.has(event.op) ? 1 : 0) };
 }
 
@@ -311,9 +311,12 @@ function settleReceipt(shadowDir: string, session: string, received: number, rec
   if (receipt === 'unreadable') { faultLine(`sent_count_unreadable file=write-sent.${session.replace(/[^A-Za-z0-9_-]/g, '_')}.json`); return false; }
   if (receipt === null) return false;
   const missing = Math.max(0, receipt.sent - received);
-  const qualifying = receipt.sent_qualifying === undefined ? missing : Math.min(missing, Math.max(0, receipt.sent_qualifying - receivedQualifying));
+  // The lost samples that were not qualifying are the other writes sent less the other writes read (refusal counts are on the qualifying side of both, so they never move this); every
+  // other lost sample, including any count the two ends disagree on, is booked as qualifying: never fewer against the share.
+  const nonqualifying = receipt.sent_qualifying === undefined ? 0 : Math.min(missing, Math.max(0, (receipt.sent - receipt.sent_qualifying) - (received - receivedQualifying)));
+  const qualifying = missing - nonqualifying;
   let short = 0;
-  for (const [reason, n] of [['pipe_unflushed', qualifying], ['pipe_unflushed_nonqualifying', missing - qualifying]] as const) {
+  for (const [reason, n] of [['pipe_unflushed', qualifying], ['pipe_unflushed_nonqualifying', nonqualifying]] as const) {
     const done = n === 0 ? 0 : epoch === undefined ? 0 : recordLostCount(shadowDir, epoch, reason, n); // this worker's own receipt is its own samples whatever stamp it carries: booked under the epoch on disk, never dropped
     if (done < n) { short += n - done; faultLine(`${reason} n=${n - done}`); }
   }
