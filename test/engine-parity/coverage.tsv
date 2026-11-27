@@ -196,7 +196,7 @@ deleteSourceRecord	pages	yes	11	no	yes	yes	serves
 readSourceDeleteImpact	pages	yes	2	no	yes	yes	serves
 readPageSizeRows	pages	yes	4	no	yes	yes	serves
 holdPageEmbedding	pages	yes	5	no	yes	yes	serves
-readReasonPurgeTombstones	pages	yes	7	no	yes	yes	serves
+readReasonPurgeTombstones	pages	yes	6	no	yes	yes	serves
 writeReasonPurgeTombstones	pages	yes	2	no	yes	yes	serves
 advanceSourcePurgeEpoch	pages	no	0	no	-	-	-
 listSourcePathPages	pages	yes	3	no	yes	yes	serves
@@ -843,7 +843,7 @@ recordHeldGenerationRow	persistence_journal	yes	14	no	yes	yes	serves
 readGitHoldRecords	persistence_journal	yes	3	no	yes	yes	serves
 readGitHoldRetryRequest	persistence_journal	yes	2	no	yes	yes	serves
 readGitHoldReportInputs	persistence_journal	yes	2	no	yes	yes	serves
-readSourcePurgeEpoch	persistence_journal	yes	6	no	yes	yes	serves
+readSourcePurgeEpoch	persistence_journal	yes	5	no	yes	yes	serves
 lockGitHoldSummary	persistence_journal	yes	1	no	yes	yes	serves
 adjustGitHoldSummary	persistence_journal	yes	1	no	yes	yes	serves
 readGitHoldRow	persistence_journal	yes	2	no	yes	yes	serves
