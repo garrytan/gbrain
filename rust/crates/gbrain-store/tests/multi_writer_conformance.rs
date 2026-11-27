@@ -2193,7 +2193,18 @@ fn c19_child_writer() {
                     // writer's. A line the kill cuts in half has no newline and is dropped by the parent.
                     let outcome: std::result::Result<Value, String> = if explicit {
                         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                            let tx = begin_host(store, w);
+                            // Optimistic needs multi-user mode on the concurrent store; any other brain runs the
+                            // explicit transaction serialized (optimistic mode is refused there, never faked).
+                            let tx = if logged && optimistic {
+                                begin_host(store, w)
+                            } else {
+                                store
+                                    .begin_with(TxnOptions {
+                                        origin: Some(origin(w)),
+                                        ..TxnOptions::default()
+                                    })
+                                    .unwrap_or_else(|e| panic!("{e}"))
+                            };
                             let receipt = tx.store().submit_page_mutation(&m, None).unwrap();
                             commit_host(store, tx);
                             receipt
