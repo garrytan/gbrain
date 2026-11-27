@@ -365,6 +365,8 @@
     "identity_unproven",
     "import_invalid",
     "independent_principal_required",
+    "idea_implemented",
+    "idea_not_found",
     "initiative_not_active",
     "initiative_not_done",
     "initiative_not_found",
