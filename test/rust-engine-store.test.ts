@@ -213,10 +213,10 @@ describe('Rust engine on the store', () => {
     expect(await tag(true)).toBeUndefined();
   });
 
-  withAddon('excludePrivate serves a caller whose record holds a reader identity and the folder rules it satisfies, and refuses lineage', async () => {
+  withAddon('excludePrivate serves a caller whose record holds a reader identity and the folder rules it satisfies, and a lineage read', async () => {
     const { engine } = await open();
     await engine.putPage('notes/a', page);
-    // A reader identity and a satisfied folder rule are served (the callerReaders opt-in); lineage still refuses.
+    // A reader identity, a satisfied folder rule and a lineage read are served (the callerReaders opt-in).
     const asReader = <T>(fn: () => Promise<T>) => withCallerAccess({ identity: ['member:alice-example'] }, fn);
     expect(await code(() => asReader(() => engine.getRecentSalience({ days: 7, excludePrivate: true })))).toBeUndefined();
     const member = { identity: ['member:alice-example'], satisfiedRuleIds: ['default:team-notes'] };
@@ -226,14 +226,14 @@ describe('Rust engine on the store', () => {
     expect([...(await asMember(() => engine.getSalienceScores(refs, { excludePrivate: true }))).keys()]).toEqual(['default::notes/a']);
     expect(await code(() => asMember(() => engine.findAnomalies({ since: '2026-01-02', excludePrivate: true })))).toBeUndefined();
     const asLineage = <T>(fn: () => Promise<T>) => withCallerAccess({ ...member, lineage: true }, fn);
-    expect(await code(() => asLineage(() => engine.getRecentSalience({ days: 7, excludePrivate: true })))).toBe('engine_capability_missing');
-    expect(await code(() => asLineage(() => engine.getSalienceScores(refs, { excludePrivate: true })))).toBe('engine_capability_missing');
-    expect(await code(() => asLineage(() => engine.findAnomalies({ since: '2026-01-02', excludePrivate: true })))).toBe('engine_capability_missing');
+    expect((await asLineage(() => engine.getRecentSalience({ days: 7, excludePrivate: true }))).map(r => r.slug)).toEqual(['notes/a']);
+    expect([...(await asLineage(() => engine.getSalienceScores(refs, { excludePrivate: true }))).keys()]).toEqual(['default::notes/a']);
+    expect(await code(() => asLineage(() => engine.findAnomalies({ since: '2026-01-02', excludePrivate: true })))).toBeUndefined();
     // Without excludePrivate the caller's record does not matter: the read applies no page policy.
     expect(await code(() => asLineage(() => engine.getRecentSalience({ days: 7 })))).toBeUndefined();
   });
 
-  withAddon('excludePrivate on the fact reads serves a reader identity and grant and its satisfied folder rules but refuses audiences, lineage and labelled-only', async () => {
+  withAddon('excludePrivate on the fact reads serves a reader identity and grant and its satisfied folder rules and a labelled-only grant but refuses audiences and lineage', async () => {
     const { engine } = await open();
     await engine.putPage('notes/a', page);
     await engine.insertFacts([{ fact: 'f', entity_slug: 'people/a-example', source_markdown_slug: 'notes/a', row_num: 1, kind: 'fact', visibility: 'world', source: 'fence' }] as never, { source_id: 'default' });
@@ -245,12 +245,12 @@ describe('Rust engine on the store', () => {
     const reader = { identity: ['member:alice-example'], privateReadableSources: ['default'] };
     // The reader's satisfied folder rules ride in its record (storePrivacyPolicy), and the store judges a held fact under
     // them as sharedHeldRuledSql does (test/engine-parity/held-fact-folder-rule.test.ts), so that read is served too.
-    const served = { reader, folderRule: { ...reader, satisfiedRuleIds: ['default:team-notes'] } };
-    // Option C scope: each of these changes the fact policy text, and the store has no form for it.
+    const served = { reader, folderRule: { ...reader, satisfiedRuleIds: ['default:team-notes'] }, labelledOnly: { ...reader, labelledOnly: true } };
+    // Each of these changes the fact policy text, and the store has no form for it (row 32e-b-4 for lineage).
     const refused = {
       audience: { audience: ['member:alice-example', 'member:bob-example'], audienceIdentities: [['member:alice-example'], ['member:bob-example']] },
       lineage: { ...reader, lineage: true },
-      labelledOnly: { ...reader, labelledOnly: true },
+      labelledLineage: { ...reader, labelledOnly: true, lineage: true },
     };
     for (const [name, read] of Object.entries(reads)) {
       for (const [kind, access] of Object.entries(served)) {

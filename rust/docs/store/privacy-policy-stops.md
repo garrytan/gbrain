@@ -16,8 +16,12 @@ The census comes from reading the code. It was not built or run against `cd8eac4
   below stops on the CLI.
 - An MCP caller (`remote: true`) builds its access record from the bound credential
   (`src/core/access/caller.ts:285-308`).
-- A member with `callerReaders` serves a record that carries only reader identity and private-readable grants. A
-  record widened by folder-rule readers, lineage or a labelled-only grant stops.
+- A member with `callerReaders` serves a record that carries reader identity, private-readable grants, the folder rules
+  the caller satisfies, a labelled-only grant and a member's lineage read (row 32e-b-2, `callerReference` in
+  `private-provenance.ts`). The page policy judges the lineage read with the owner read rule and, for a labelled-only
+  caller, with the labelled-only conjunct and its origin walk; the fact policy serves a labelled-only grant (a fact is read
+  on the caller's own member page only) and still stops for every member under `access.members_read_lineage` (row 32e-b-4; `search` stops there too through its saved-facts arm). The remote read floor of a labelled-only caller (`remoteReadFloorSql`, used by `search`, `list_pages` and `recall` when no source is named) is served by `storePageTextPolicy`.
+  An audience of several identities for a labelled-only member stops too.
 - `storePrivacyPolicy` (fact policy) stops at `private-provenance.ts:166`. `storePageTextPolicy` and `storePagePolicy`
   stop at `:271` after `judgeWidenedCaller` (`:293`).
 - `storeFloorPolicy` (the remote provenance floor) stops at `:179` for a labelled-only grant or an owner read.
@@ -26,8 +30,10 @@ The census comes from reading the code. It was not built or run against `cd8eac4
 
 ## Widened-caller stops (MCP only)
 
-On MCP each of these serves a caller with only identity and grants, and stops for a caller with folder-rule readers,
-lineage or a labelled-only grant. On the plain CLI none of them is asked for a policy.
+On MCP each of these serves a caller with identity, grants, the folder rules it satisfies, a labelled-only grant and a
+member's lineage read, where the member opts in with `callerReaders`; the fact reads in the next section stop under lineage
+(row 32e-b-4). A member that does not opt in still stops for a caller with folder-rule readers, lineage or a labelled-only
+grant. On the plain CLI none of them is asked for a policy.
 
 | Store member | File:line (cd8eac4d0c) | Reached from | Stops at |
 | --- | --- | --- | --- |
@@ -45,7 +51,7 @@ lineage or a labelled-only grant. On the plain CLI none of them is asked for a p
 | `readReplacementTarget` | `facts-remember.ts:106`, policy `facts-remember.ts:108` | a remote fact save that replaces a fact (`src/core/facts/single-prepare.ts:202`), only with `excludePrivate` | a labelled-only grant or an owner read (`private-provenance.ts:179`) |
 | `readClaimWithdrawal` | `facts-remember.ts:120`, policy `facts-remember.ts:121` | a remote save that meets a withdrawal (`src/core/facts/single-prepare.ts:102`), only with `excludePrivate` | a labelled-only grant or an owner read (`private-provenance.ts:179`) |
 | `findActiveSingleFact` | `facts-purge.ts:75`, policy `facts-purge.ts:76` | a remote fact save with no page slug (`src/core/facts/single-prepare.ts:141-142`) | a labelled-only grant or an owner read (`private-provenance.ts:179`) |
-| `readLiveFactEntityPage` | `facts-rest.ts:31`, policy `facts-rest.ts:33` (remote read floor, no `callerReaders`) | subject inference for a remote save (`src/core/facts/subject-infer.ts:254`) | a labelled-only grant only; the floor reads no other identity (`private-provenance.ts:271`) |
+| `readLiveFactEntityPage` | `facts-rest.ts:31`, policy `facts-rest.ts:33` (remote read floor, no `callerReaders`) | subject inference for a remote save (`src/core/facts/subject-infer.ts:254`) | a remote page-floor rendering that matches none of `storePageTextPolicy`'s reference forms; supported labelled-only callers are served, with the caller record's pending prefixes forwarded (`private-provenance.ts:395-412`) |
 | `readMemberPageWithdrawal` | `facts-remember.ts:114`, policy `facts-remember.ts:115` | a remote save onto a member page (`src/core/facts/single-prepare.ts:64` and `:92`) | the page's member (not the caller) meets a folder rule (`private-provenance.ts:192`), or an owner read the store does not model (`:201`, `:219`) |
 
 ## Managed clone stop

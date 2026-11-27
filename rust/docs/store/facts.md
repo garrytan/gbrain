@@ -81,9 +81,12 @@ both. The provenance gate reads neither, with one exception in the first form: i
 judges the caller's own member page (`memory/members/<member>`, the actor's member or the first
 `member:` principal) with the identity. The member then sends that slug as `memberPage`, and
 `hidden_by_private_provenance` reads the identity on that page only (`provenance_identity`). The
-second form has no CASE and sends no `memberPage`. Any other caller (folder rules, audiences,
-lineage, labelled-only members) is refused with
-`engine_capability_missing` (`src/core/rust-engine/store-members/private-provenance.ts`). A keyed-slug entity
+second form has no CASE and sends no `memberPage`. A labelled-only caller is served too: the member sends `labelledOnly: { identity, satisfiedRuleIds, member }`, and the
+store hides a fact unless it sits on `memory/members/<member>` and that page names `member:<member>` (`own_page_fact`,
+`labelledOnlyFactSql`); the entity and holding pages are judged without the labelled-only conjunct, as
+`privateEntityFilterForCaller` does. A non-owner caller under `access.members_read_lineage` (ordinary or labelled-only), or an
+audience whose policy matches none of the reference renderings (including a labelled-only audience of several identities),
+is refused with `engine_capability_missing` (row 32e-b-4 for lineage; `src/core/rust-engine/store-members/private-provenance.ts`). A keyed-slug entity
 (an `entity_slug` with no `/`) is judged at the name-key page directories (`NAME_KEY_PAGE_DIRS`) by
 `facts/privacy.rs`, as `privateEntityFilterForCaller` does.
 An anonymous caller on a brain that never named readers (`restricted` false in its
@@ -107,10 +110,12 @@ a private row the same `widen` record admits (`world_admits`):
 | Private-facts grant | a private row of a source in `privateFactSources` that has a page to check (not `unpagedFactSql`: no holding page, or a conversation, hook, sweep, transcript or connector lane) and whose pages keep it private for no reason: no holding, entity or provenance slug under `memory/members/`; the holding and provenance pages (`provenance_slug`) not derivation-private in any row, missing, soft-deleted or quarantined; the entity page not derivation-private; and not a held row the grant refuses (GST-2979: a visibility proposal names a copy the caller's reads admit by neither rule, along the hold chain; `widen.rs` `hold_refused`) | `grantedPrivateFactSql`, `factPagesOpenSql`, `factPageReasons` (`src/core/facts/private-fact-pages.ts`) |
 
 The member (`src/core/rust-engine/store-members/fact-visibility.ts`) sends the list alone when PGLite renders the
-bare list. Otherwise it sends `widen` only when the caller's text equals the rendering for a record of just its reader
-identity, private-readable grant and private-facts grant (`judgeWidenedCaller`), with `member` the member that
-record reads as and `memberPagePolicy` its page policy. Any other caller (an audience, an attested actor whose text
-differs, folder rules, a relaxed read) refuses with `engine_capability_missing`. Covered by
+bare list. Otherwise it sends `widen` only when the caller's text matches a fresh reference record of its reader
+identity, private-readable grant and private-facts grant, plus the supported labelled-only and lineage fields from
+`callerReference`, optionally with its satisfied folder rules and pending prefixes. `member` is the member that
+record reads as; `memberPagePolicy` carries its page policy and reference flags. A caller whose text matches none
+of these renderings refuses with `engine_capability_missing`. The separate private-provenance fact gate still
+refuses non-owner lineage reads (row 32e-b-4). Covered by
 `test/engine-parity/fact-visibility-widening.test.ts`, `fact-trajectory-widening.test.ts` and
 `fact-pool-widening.test.ts`, which share `fact-widening-fixture.ts`.
 
@@ -731,8 +736,10 @@ a soft-deleted page, the trust floor and the filters), so a row the caller canno
 | `listCallOffCueFacts(scope, pairs)` | For each pair, the newest 50 pool rows (by `valid_from`, then id) whose text holds one of 28 retraction or call-off phrases as whole words, case-insensitive (`\m...\M`, so `cancelledX` and `retractor` do not match; `called off-site` does). |
 | `listPoolEntityPairs(scope, filters)` | The distinct `(source, entity)` pairs of pool rows that have an entity. |
 
-The TypeScript members refuse (`engine_capability_missing`) a vector-typed column (the store keeps `halfvec`) and a read policy
-other than the no-caller or reader-identity one; `hnswIterativeScan` only changes the Postgres plan, so the store ignores it.
+The TypeScript members refuse (`engine_capability_missing`) a vector-typed column (the store keeps `halfvec`) and any visibility
+or private-provenance policy whose text matches none of the supported reference renderings described above. Supported
+labelled-only callers with lineage off are served; non-owner lineage reads remain refused by the private-provenance
+fact gate (row 32e-b-4). `hnswIterativeScan` only changes the Postgres plan, so the store ignores it.
 Parity: `test/engine-parity/recall-members.test.ts` (edges of each member and the pool functions a search and a recall call, whole),
 and the same members in `facts-rest-sites.test.ts`.
 
@@ -1448,8 +1455,10 @@ Served on Rust: `listClaimConflictPairs`, `countClaimConflictPairs`, `listUnarch
   names it, by proposal id then by the order of `ids`, when both facts are active, in the source of the proposal and
   readable (world only for a remote caller, the fact privacy policy, the page and quarantine rules, and the trust
   floor).
-- `readLiveFactEntityPage` is none for a soft-deleted page or one the remote read floor hides. The privacy policies are
-  judged by the TypeScript members and a caller whose member pages, grants or lineage widen them is refused.
+- `readLiveFactEntityPage` is none for a soft-deleted page or one the remote page-read floor hides. Its TypeScript
+  member uses `storePageTextPolicy(remoteReadFloorSql)`, which serves supported labelled-only callers, including
+  lineage reads, and ordinary callers carrying pending folder prefixes when their policy text matches. This is
+  distinct from the fact-provenance floor (`storeFloorPolicy`) and the non-owner lineage fact-policy refusal.
 - `expireFactsOfGonePages` expires, in one write, the facts filed on a gone page (an ontology observation is not
   filed there), the conversation slots filed on it (the row gives up its dimension, value and slot), the facts extracted
   from it and filed on none, and the facts about it that no other page row holds. The first rule that matches a row

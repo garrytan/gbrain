@@ -165,6 +165,7 @@ Rules:
   | 9 | Batch 15 (soak counter, request index states, page window chunk reads, concept rebuild, slug-spelling repair, loud search refusals and the members tail) |
   | 10 | Sync 19, dac09d5610 (batch 15 merged with master c341d40de3) |
   | 11 | Batch 15b (labelled-only policy on Rust, the purge-receipt and purge-ledger members of the fact purge path) |
+  | 12 | `rust-engine/labelled-only-reads-rust` (row 32e-b-2: labelled-only and lineage reads, `callerReference` in `private-provenance.ts`). Provisional, main's 11 plus one; the trunk renumbers at intake. `rust-engine/enforced-member-writes-rust` claims a provisional number too | this branch, merged with `rust-engine/main` 85ad984039 |
 
 Reserved tags:
 
@@ -928,7 +929,7 @@ Slug renames and page aliases.
 - **Depends on:** `updateSlug` moves the page key (`P`) from the old slug to the new one through core's `pages::rename_page` (built; "Core hooks"). This family versions the page first (`pages::snapshot_in`), then calls `rename_page`, then records the alias, moves its own slug bindings (`page_aliases`, statements 7 and 8 of "Rename slug rows"), and calls `cascade::rename_slug_rows` for the facts records. Links, chunks, tags, timeline and versions follow the page id and need no change.
 - **Estimate:** about 5 to 6 days.
 - **Notes:** Same capability (`pages`) as page_ops and extraction. `resolveSlugWithAliasDetailed` returns how the slug was found; keep its result fields exact.
-- **Known gap:** the Rust store keeps no `alias_text` and no `case_sensitive` flag on `page_aliases` rows, so `resolveCaseSensitiveAliases` is always empty, `readPageAliasRows` gives `alias_text: null`, and `replaceDerivedAliases` stays unserved until alias storage exists (`rust/docs/store/alias_fanout_reads.md`). `findPagesByTitles`, `resolveAliases` and `aliasCanonicalRefs` with `excludePrivate` serve a caller's reader identity and private-readable grant; they refuse with `engine_capability_missing` for a caller whose policy differs in any other way (folder rules, lineage, an owner read), and the caller's fail-open fallback reads that as no rows.
+- **Known gap:** the Rust store keeps no `alias_text` and no `case_sensitive` flag on `page_aliases` rows, so `resolveCaseSensitiveAliases` is always empty, `readPageAliasRows` gives `alias_text: null`, and `replaceDerivedAliases` stays unserved until alias storage exists (`rust/docs/store/alias_fanout_reads.md`). `findPagesByTitles`, `resolveAliases` and `aliasCanonicalRefs` with `excludePrivate` serve modelled reader identities, private-readable grants, folder rules, labelled-only and member-lineage page policies, and owner records when the SQL text matches a freshly rendered reference record. Unmodelled caller policies, including a labelled-only audience of several identities, refuse with `engine_capability_missing`, and the caller's fail-open fallback reads that as no rows.
 - **Parity cases (11, in `sync-aliases.test.ts` and `alias-trust.test.ts`):**
   - `sync-aliases.test.ts`: updateSlug renames a page in place, keeps its chunks, and returns 0 when the old slug is absent
   - `sync-aliases.test.ts`: updateSlug is source-scoped and rejects a path-traversal new slug
@@ -2047,9 +2048,9 @@ and write provenance on content rows, and the trust records.
     derivation rows a rewritten segment may hold (`deleteRewrittenSegmentDerivations`), the version read
     (`listPurgeVersionBodies`, `purge_version_bodies.rs`), and `createVersion` with the purge's `preimage`.
   - `resolveAliases` serves the floor, the flagged-page filter and `excludePrivate` on both the alias page and its
-    title shadow (`alias-trust.test.ts`), a caller's reader identity and private-readable grant included; it still
-    refuses `excludePrivate` for a caller whose member pages, grants or lineage widen the page policy, and the search
-    fan-out reads that refusal as no aliases.
+    title shadow (`alias-trust.test.ts`), including modelled reader identities, private-readable grants, folder rules,
+    labelled-only and member-lineage page policies, and owner records. Unmodelled caller policies, including a
+    labelled-only audience of several identities, still refuse `excludePrivate`, and the search fan-out reads that refusal as no aliases.
   - Not yet built: the scan cursor, the claim and `max(id)` reads of the eligibility scan, and the admin slug and lifetime reads still go through `executeRaw`. The takes members keep
     their refusal.
   - Pinned by `test/engine-parity/trust-reads.test.ts` and `test/engine-parity/trust-tier-reads.test.ts` on all three engines.
