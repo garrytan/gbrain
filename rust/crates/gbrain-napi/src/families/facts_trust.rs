@@ -108,14 +108,18 @@ impl Brain {
         })
     }
 
-    /// `matchHeadStems`: resolves `{ h, i }` per head, in `heads` order.
+    /// `matchHeadStems(heads, terms, config?)`: resolves `{ h, i }` per head, in `heads` order;
+    /// `config` is the text search configuration (absent: `english`).
     #[napi]
     pub fn match_head_stems<'env>(
         &self,
         env: &'env Env,
         heads: Vec<String>,
         terms: Vec<String>,
+        config: Option<String>,
     ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| s.match_head_stems(&heads, &terms))
+        self.run(env, move |s| {
+            s.match_head_stems(&heads, &terms, config.as_deref())
+        })
     }
 }

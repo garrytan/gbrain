@@ -28,7 +28,9 @@ rankers (`keyword/rank.rs`). Their signatures are listed in the `keyword.rs` hea
 
 Every keyword member except `findByTitleFuzzy` refuses:
 
-- a text search configuration other than `english` (`getFtsLanguage()`);
+- a text search configuration other than `english` (`getFtsLanguage()`): the keyword index holds English postings.
+  The query-time readers in other families (the saved-facts match, `wordLexemes`, the facts keyword arms) also
+  serve `german` (`keyword/stem_german.rs`); a configuration without a Snowball port refuses everywhere;
 - a date bound (`afterDate`, `beforeDate`) that is not an ISO date or date-time
   (`YYYY-M-D[( |T|t)H:MM[:SS[.f…]][Z|z|±HH[:MM]]]`) or that is outside the calendar. A fraction of any length rounds
   to the nearest microsecond, a tie to the even one, as Postgres's `rint` does, and may carry into the next second.

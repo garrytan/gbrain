@@ -169,6 +169,7 @@ test/engine-parity/forget-rebuild.test.ts	1	0
 test/engine-parity/forget-remember.test.ts	2	0
 test/engine-parity/forget-whole-cli.test.ts	2	0
 test/engine-parity/forget-whole.test.ts	5	0
+test/engine-parity/fts-german.test.ts	3	1
 test/engine-parity/generation-output-parity.test.ts	15	0
 test/engine-parity/generation-page-rows-order.test.ts	1	0
 test/engine-parity/generation-write-parity.test.ts	4	0
@@ -182,7 +183,7 @@ test/engine-parity/harness-consumer-stop.test.ts	2	0
 test/engine-parity/held-fact-folder-rule.test.ts	1	0
 test/engine-parity/held-fence-cells.test.ts	5	0
 test/engine-parity/hidden-refusals-2.test.ts	12	0
-test/engine-parity/hidden-refusals.test.ts	4	1
+test/engine-parity/hidden-refusals.test.ts	5	0
 test/engine-parity/holding-page-purges.test.ts	3	0
 test/engine-parity/hot-memory-meta.test.ts	3	0
 test/engine-parity/hot-memory-watermark.test.ts	2	0
