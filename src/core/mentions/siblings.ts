@@ -119,13 +119,16 @@ export async function siblingCanonical(engine: BrainEngine, sourceId: string, sl
  * page existed got, #4828) when no other page claims that basename. The
  * entity card and recall read all of them, so a saved fact shows up whichever
  * sibling a reader asks for. A caller that already read the live page passes
- * its `title`, which skips the page read.
+ * its `title`, which skips the page read. Under `excludePrivate` (the default)
+ * the title read applies the private-page predicate, so a page the caller may
+ * not read adds no key, exactly as when no page sits at the slug.
  */
 export async function factEntitySlugs(engine: BrainEngine, sourceId: string, slug: string, opts: { excludePrivate?: boolean; title?: string | null } = {}): Promise<string[]> {
-  const page = opts.title !== undefined ? { title: opts.title } : await engine.getPage(slug, { sourceId }).catch(() => null);
+  const excludePrivate = opts.excludePrivate ?? true;
+  const page = opts.title !== undefined ? { title: opts.title } : await engine.getPage(slug, { sourceId, excludePrivate }).catch(() => null);
   const folded = await unheldFoldedSlug(engine, sourceId, slug);
   if (!page) return folded ? [slug, folded] : [slug];
-  const siblings = await readIdentitySiblings(engine, sourceId, { slug, title: page.title }, { excludePrivate: opts.excludePrivate ?? true });
+  const siblings = await readIdentitySiblings(engine, sourceId, { slug, title: page.title }, { excludePrivate });
   const { slugify } = await import('../entities/resolve.ts');
   const subject = slugify(titleName(page.title ?? ''));
   const basename = await unclaimedBasename(engine, sourceId, slug);

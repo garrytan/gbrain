@@ -125,6 +125,7 @@ test/engine-parity/fact-fingerprint-ambiguous.test.ts	5	0
 test/engine-parity/fact-fingerprint-corpus.test.ts	2	0
 test/engine-parity/fact-future-order.test.ts	1	0
 test/engine-parity/fact-insert-guard.test.ts	2	0
+test/engine-parity/fact-keys-private-title.test.ts	3	0
 test/engine-parity/fact-page-delete.test.ts	2	0
 test/engine-parity/fact-pool-widening.test.ts	2	0
 test/engine-parity/fact-provenance.test.ts	2	0
