@@ -14,7 +14,7 @@ import { loadRustAddon, type RustAddon } from '../../src/core/rust-engine/addon-
 import { detectAddonTarget } from '../../src/core/rust-engine/addon-target.ts';
 import { hasDatabase } from './helpers.ts';
 import { persistencePostgresTemplate } from '../helpers/persistence-postgres.ts';
-import { defineWriteCompareScenarios } from '../helpers/shadow-write-compare-scenarios.ts';
+import { defineFenceNegatives, defineWriteCompareScenarios } from '../helpers/shadow-write-compare-scenarios.ts';
 
 const TARGET = detectAddonTarget();
 const BUILT = join(import.meta.dir, '..', '..', 'rust', 'target', 'addon', `gbrain_engine.${TARGET ?? 'unsupported'}.node`);
@@ -42,6 +42,11 @@ const dirs: string[] = [];
   });
 
   defineWriteCompareScenarios({
+    primary: () => engine, reset: async () => {}, kind: 'postgres',
+    tempDir: () => { const dir = mkdtempSync(join(tmpdir(), 'gbrain-write-compare-pg-')); dirs.push(dir); return dir; },
+    ...(HAVE_ADDON ? { addon: () => addon!, addonPath: BUILT } : {}),
+  });
+  defineFenceNegatives({
     primary: () => engine, reset: async () => {}, kind: 'postgres',
     tempDir: () => { const dir = mkdtempSync(join(tmpdir(), 'gbrain-write-compare-pg-')); dirs.push(dir); return dir; },
     ...(HAVE_ADDON ? { addon: () => addon!, addonPath: BUILT } : {}),

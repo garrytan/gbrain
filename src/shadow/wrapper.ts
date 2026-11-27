@@ -173,7 +173,7 @@ function buildProxy<E extends BrainEngine>(engine: E, sink: ShadowSink, opts: Sh
     const scope = outer ? outer.scope : opts.writes?.scope(engine);
     const writes: TxWrites = { wrote: false, scope, nested: !!outer, path: outer && scope ? [...outer.path, scope.open()] : [] };
     const call = (scope: Frame | null) => fn.apply(engine, [
-      (tx: BrainEngine) => (callback as (tx: BrainEngine) => unknown)(tx && typeof tx === 'object' ? buildProxy(tx, sink, opts, true, scope, writes) : tx),
+      (tx: BrainEngine) => beforeCommit((callback as (tx: BrainEngine) => unknown)(tx && typeof tx === 'object' ? buildProxy(tx, sink, opts, true, scope, writes) : tx), tx, outer ? undefined : writes.scope),
       ...rest,
     ]);
     const out = follow ? followScope(followCtx(engine, frame, inTransaction), false, call) : call(null);
@@ -190,6 +190,12 @@ function buildProxy<E extends BrainEngine>(engine: E, sink: ShadowSink, opts: Sh
     const notify = (): void => { try { if (wrote()) observe(); } catch { /* the shadow never fails a call */ } };
     if (!isThenable(out)) { notify(); return out; }
     return out.then((value: unknown) => { notify(); return value; });
+  };
+
+  /** Gives the sampler its last look inside the outermost transaction, once its callback has finished and before the commit (TxScope.beforeCommit); a callback that rejected is rolled back and gets none. Never fails the write. */
+  const beforeCommit = (out: unknown, tx: BrainEngine, scope: TxScope | undefined): unknown => {
+    if (!scope || !tx || typeof tx !== 'object' || !isThenable(out)) return out;
+    return out.then(async (value: unknown) => { try { await scope.beforeCommit(tx); } catch { /* the shadow never fails a call */ } return value; });
   };
 
   /** Hands the outermost transaction's sampled writes to the sampler once it has committed; a rejection hands over nothing, so a rolled-back write is never compared. */
@@ -248,7 +254,7 @@ function buildProxy<E extends BrainEngine>(engine: E, sink: ShadowSink, opts: Sh
       if (typeof callback !== 'function') return target.transaction(callback, ...rest);
       const scope = opts.writes!.scope(engine);
       const writes: TxWrites = { wrote: false, scope, nested: false, path: [] };
-      return committed(target.transaction((tx: BrainEngine) => (callback as (tx: BrainEngine) => unknown)(tx && typeof tx === 'object' ? buildProxy(tx, quietSink, quiet, true, null, writes) : tx), ...rest), scope);
+      return committed(target.transaction((tx: BrainEngine) => beforeCommit((callback as (tx: BrainEngine) => unknown)(tx && typeof tx === 'object' ? buildProxy(tx, quietSink, quiet, true, null, writes) : tx), tx, scope), ...rest), scope);
     }) });
   };
 
