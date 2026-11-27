@@ -28,7 +28,7 @@ const describeAddon = HAVE_ADDON ? describe : describe.skip;
 
 const saved = process.env.GBRAIN_RUST_MULTIUSER;
 const TOKEN = 'store-returning-owner-token';
-const MANAGED_STORES = ['manualLinkStore', 'topologyStore', 'gitEffectStore', 'gitDurabilityStore'] as const;
+const MANAGED_STORES = ['manualLinkStore', 'topologyStore', 'gitEffectStore', 'gitDurabilityStore', 'refreshStore', 'groupPublishStore'] as const;
 let dir = '';
 let owner: RustEngine;
 let listener: ServedListener;
