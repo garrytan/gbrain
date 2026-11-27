@@ -182,6 +182,14 @@ describe('GCH-05: the identity question goes to the host that makes the commits,
     expect(unbound!.fix.ask_user).toBeUndefined();
     expect(unbound!.fix.why).toContain('git -C <checkout> status');
   });
+
+  test('this host owns but has no binding of its own: no identity command against another host\'s path', async () => {
+    const [hold] = await holds(row({ root: '/brains/aaa-other-host', owner_root: null, last_error: identity }));
+    expect(hold!.owner_host).toBe('this_host');
+    expect(hold!.root).toBeNull();
+    expect(hold!.fix.ask_user).toBeUndefined();
+    expect(JSON.stringify(hold)).not.toContain('/brains/aaa-other-host');
+  });
 });
 
 describe('GCH-06: holds go most urgent first', () => {

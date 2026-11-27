@@ -717,7 +717,7 @@ cause to check". `gbrain sync status --source <source>` shows them as
 `git commits held: … at step commit-tree (reason: identity_missing)`; its `--json` has `git_commit_holds` (each with
 the failed step, a reason code from a fixed list, `identity_missing` and `owner_host`). gbrain never stores or prints
 git's own error text, because a filter, hook or credential helper can print a secret or a private path; run the
-failing step in the checkout to read it. When this host owns the checkout, `Next:` is a question for the user
+failing step in the checkout to read it. When this host owns the checkout (its own binding), `Next:` is a question for the user
 (`ASK THE USER:`, `needs_human: true`): which name and email commits should use. When another host owns it, set the
 identity on that host, which `gbrain sources writer status --source <source>` names. Another failing step (a clean
 filter, a hook) shows its own step and reason (`filter_failed`, `hook_rejected`) instead. Set the identity in the

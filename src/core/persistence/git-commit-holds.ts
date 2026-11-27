@@ -19,7 +19,7 @@ import { existingHostIdFor } from './identity.ts';
 
 export interface GitCommitHold {
   source_id: string;
-  /** The managed checkout the effects commit in: the owner host's binding path when known, else this host's first. */
+  /** The managed checkout the effects commit in: the owner host's binding path; when this host owns it, only its own (null without one); else, when no owner binding is known, the first binding path. */
   root: string | null;
   /** Whether the worktree's owner is this host (`this_host`), another host, or not known here. */
   owner_host: 'this_host' | 'other_host' | 'unknown';
@@ -68,7 +68,9 @@ export async function readGitCommitHolds(engine: BrainEngine, sourceIds?: string
     const last = diagnostic(row.last_error);
     const owner = row.owner_host_id ? row.owner_host_id.toLowerCase() : null;
     const owner_host: GitCommitHold['owner_host'] = !owner || !host ? 'unknown' : owner === host ? 'this_host' : 'other_host';
-    const hold = { source_id: row.source_id, root: row.owner_root ?? row.root, owner_host, retrying: Number(row.retrying), parked: Number(row.parked), codes: row.codes,
+    // This host's own binding only: another host's path is never the target of a local command.
+    const root = owner_host === 'this_host' ? row.owner_root : row.owner_root ?? row.root;
+    const hold = { source_id: row.source_id, root, owner_host, retrying: Number(row.retrying), parked: Number(row.parked), codes: row.codes,
       oldest_at: new Date(row.oldest_at).toISOString(), former_worktree: row.former_worktree === true, last_error: last, identity_missing: last?.identity === true };
     return { ...hold, fix: gitCommitFix(hold) };
   });
