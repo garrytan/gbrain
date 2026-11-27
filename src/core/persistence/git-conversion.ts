@@ -75,6 +75,7 @@ import { faultPoint } from './fault-points.ts';
 import { declarePersistenceProtocol } from './protocol.ts';
 import { previewChangedError, previewHash } from './preview-approval.ts';
 import { sha256, stableJson } from './digest.ts';
+import { storedGitData } from './git-diagnostic.ts';
 
 export const CONVERSION_GROUP_MAX = 200;
 /** Adoption candidates whose export view the plan reads per read-only transaction (the census's batch size). */
@@ -1124,9 +1125,12 @@ async function settleParked(engine: BrainEngine, sourceId: string, parked: Parke
       // Metadata only (G7a has no standalone declare helper): the page's declared class and the parked record change together.
       await engine.transaction(async tx => {
         await declarePersistenceProtocol(tx);
-        await tx.executeRaw('SELECT id FROM persistence_effects WHERE id=$1 FOR UPDATE', [item.effect]);
+        const [locked] = await tx.executeRaw<{ data: unknown }>('SELECT data FROM persistence_effects WHERE id=$1 FOR UPDATE', [item.effect]);
         await tx.executeRaw(`UPDATE pages SET database_only_reason='git_ignored' WHERE source_id=$1 AND slug=ANY($2::text[]) AND deleted_at IS NULL AND database_only_reason IS NULL`, [sourceId, item.slugs]);
-        await tx.executeRaw(`UPDATE persistence_effects SET data=jsonb_set(data,'{parked}',(SELECT jsonb_agg(p||'{"declared":"git_ignored"}'::jsonb) FROM jsonb_array_elements(data->'parked') p)),updated_at=now() WHERE id=$1`, [item.effect]);
+        // GCH5-01: the rewrite starts from the locked data in the fixed diagnostic shape (storedGitData), so a git line an
+        // older release kept on a parked entry is not copied into the declared entries.
+        const data = storedGitData(typeof locked?.data === 'string' ? JSON.parse(locked.data) as unknown : locked?.data);
+        await tx.executeRaw(`UPDATE persistence_effects SET data=jsonb_set($2::text::jsonb,'{parked}',(SELECT jsonb_agg(p||'{"declared":"git_ignored"}'::jsonb) FROM jsonb_array_elements($2::text::jsonb->'parked') p)),updated_at=now() WHERE id=$1`, [item.effect, JSON.stringify(data)]);
       });
       reclassified++;
       continue;

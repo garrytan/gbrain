@@ -43,7 +43,7 @@ import { persistenceFileHash } from './coordinator.ts';
 import { sourceDbOnlyDir } from './source-storage.ts';
 import { declarePersistenceProtocol } from './protocol.ts';
 import { GIT_PUSH_CODES } from './git-push-holds.ts';
-import { storedParkedTargets } from './git-diagnostic.ts';
+import { storedGitData, storedParkedTargets } from './git-diagnostic.ts';
 import type { EffectSettlement, ParkedTarget, PersistenceEffect, RetiredTarget, SettlementProof, SettledTarget } from './effect-model.ts';
 import type { WriteRequest } from './model.ts';
 
@@ -204,17 +204,20 @@ export async function settleEffects(engine: BrainEngine, input: SettleEffectsInp
         'Preview again, show the user the new plan, and run its apply_command only if they approve it.',
         { fix: readFix('Shows the current settle plan and its plan_hash, read-only.', { argv: ['gbrain', 'sources', 'writer', 'settle-effects', sourceId, ...selector, ...modeFlags, '--dry-run', '--json'] }) });
       const at = new Date().toISOString();
+      // GCH5-01: each rewrite starts from the locked row's data in the fixed diagnostic shape (storedGitData), so a git
+      // line an older release kept on the row is not carried into the settled or un-settled row.
+      const stored = new Map(rows.map(row => [String(row.id), JSON.stringify(storedGitData(row.data))]));
       for (const effect of actionable) {
         if (unsettle) {
-          await tx.executeRaw(`UPDATE persistence_effects SET data=(data-'settled')||jsonb_build_object('settlements',COALESCE(data->'settlements','[]'::jsonb)||jsonb_build_array($2::text::jsonb)),
-            updated_at=now() WHERE id=$1 AND data ? 'settled'`, [effect.effect_id, JSON.stringify({ action: 'unsettled', at, host_id: hostId, plan_hash: planHash, settled: effect.settled })]);
+          await tx.executeRaw(`UPDATE persistence_effects SET data=($3::text::jsonb-'settled')||jsonb_build_object('settlements',COALESCE(data->'settlements','[]'::jsonb)||jsonb_build_array($2::text::jsonb)),
+            updated_at=now() WHERE id=$1 AND data ? 'settled'`, [effect.effect_id, JSON.stringify({ action: 'unsettled', at, host_id: hostId, plan_hash: planHash, settled: effect.settled }), stored.get(effect.effect_id)]);
           effect.action = 'unsettled';
           continue;
         }
         const settled: EffectSettlement = { reason: effect.proof!.kind, at, host_id: hostId, plan_hash: planHash, proof: effect.proof! };
-        await tx.executeRaw(`UPDATE persistence_effects SET data=data||jsonb_build_object('settled',$2::text::jsonb,'settlements',COALESCE(data->'settlements','[]'::jsonb)||jsonb_build_array($3::text::jsonb)),
+        await tx.executeRaw(`UPDATE persistence_effects SET data=$4::text::jsonb||jsonb_build_object('settled',$2::text::jsonb,'settlements',COALESCE(data->'settlements','[]'::jsonb)||jsonb_build_array($3::text::jsonb)),
           updated_at=now() WHERE id=$1 AND state='failed' AND execution_token IS NULL AND recovery IS NULL AND NOT (data ? 'settled')`,
-        [effect.effect_id, JSON.stringify(settled), JSON.stringify({ action: 'settled', ...settled })]);
+        [effect.effect_id, JSON.stringify(settled), JSON.stringify({ action: 'settled', ...settled }), stored.get(effect.effect_id)]);
         effect.action = 'settled';
       }
     }

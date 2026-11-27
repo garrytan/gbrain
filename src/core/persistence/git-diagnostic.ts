@@ -107,8 +107,9 @@ export function storedParkedTargets<T>(parked: readonly T[]): T[] {
 
 /**
  * GCH-01a: a Git effect's data with `last_error` and every parked target's `last_error` in the fixed shape. The
- * write chokepoints (requeue, park, the retry's requeue, the withheld-target re-arm) store data through it. Data
- * that is not an object is returned as it is; idempotent.
+ * write chokepoints (requeue, park, the retry's requeue, the withheld-target re-arm, settle and un-settle, the
+ * conversion's ignored-target declare) store data through it. Data that is not an object is returned as it is;
+ * idempotent.
  */
 export function storedGitData<T>(data: T): T {
   if (!data || typeof data !== 'object' || Array.isArray(data)) return data;

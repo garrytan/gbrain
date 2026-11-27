@@ -223,9 +223,19 @@ for (const backend of testBackends()) describe(`[${backend}] G8a: sources canoni
     expect(await strict(engine)).toBe(false);
     expect(git(root, 'rev-parse', 'HEAD')).toBe(base);
 
+    // GCH5-01: a git line an older release stored on the parked entry is not copied into the declared entry.
+    await engine.transaction(async tx => {
+      await tx.executeRaw("SELECT set_config('gbrain.persistence_protocol','2',true)");
+      await tx.executeRaw(`UPDATE persistence_effects SET data=jsonb_set(data,'{parked,0,last_error}',$1::text::jsonb) WHERE kind='git' AND data->'parked'->0->>'slug'='scratch/ignored'`,
+        [JSON.stringify({ line: 'fatal: unable to access https://bob:pa/ss@example.com/repo', step: 'add', phase: 'commit' })]);
+    });
     const result = await applyGitConversion(engine, 'default', preview.preview_hash, PROCESSING);
     expect(result).toMatchObject({ status: 'converted', committed: { groups: 1, pages: 3 }, holds_cleared: 2, parked: { reclassified: 1 },
       after: { remaining: 0, strict: true, parked_effects: { count: 0 } } });
+    const [declared] = await engine.executeRaw<{ parked: unknown }>(`SELECT data->'parked' AS parked FROM persistence_effects WHERE kind='git' AND data->'parked'->0->>'slug'='scratch/ignored'`);
+    const entries = (typeof declared!.parked === 'string' ? JSON.parse(declared!.parked) : declared!.parked) as Array<Record<string, unknown>>;
+    expect(entries).toEqual([{ slug: 'scratch/ignored', error_code: 'git_target_ignored', rule: '.gitignore:1: scratch/', declared: 'git_ignored',
+      last_error: { phase: 'commit', step: 'add', reason: 'other' } }]);
     expect(await strict(engine)).toBe(true);
     expect(conversionCommits(root, base)).toEqual([{ subject: 'gbrain: persist 3 canonical memory updates', paths: ['notes/ahead.md', 'notes/dbonly.md', 'notes/legacy.md'] }]);
     expect(git(root, 'status', '--porcelain')).toBe('');

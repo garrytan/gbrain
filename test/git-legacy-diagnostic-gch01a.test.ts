@@ -6,7 +6,7 @@
  *  - Contract: every output that lists a held Git effect's targets (`gbrain sources writer retry-effects --dry-run` and
  *    its real run, doctor `parked_effects`, the `settle-effects` preview) shows each stored diagnostic in the fixed
  *    shape `{phase, step, reason, identity?}` (git-diagnostic.ts storedGitDiagnostic), and every rewrite of the effect
- *    (the retry's requeue, the next park) stores that shape, never the stored line.
+ *    (the retry's requeue, the next park, a settle and its un-settle) stores that shape, never the stored line.
  *  - Regression: a token, a private key path or a URL password from a stored line printed in JSON or kept in the row.
  *  - Why existing coverage misses it: slice 4 pinned only the `sync status` holds; these outputs print the stored
  *    entries as they are, and the retry and park paths spread the stored data into the new row.
@@ -79,7 +79,7 @@ for (const kind of testBackends()) {
     }
 
     /** A committed page write whose Git effect is parked with the legacy diagnostic shape seeded into its row. */
-    async function legacyParked(root: string, sourceId: string) {
+    async function legacyParked(root: string, sourceId: string, code = 'git_unavailable') {
       const binding = (await getWorktreeBinding(engine, sourceId, localHostId()))!;
       const page = (body: string) => ({ type: 'note', title: 'Lee Example', compiled_truth: body, timeline: '', frontmatter: {} });
       await engine.putPage(SLUG, page('Before'), { sourceId });
@@ -98,7 +98,7 @@ for (const kind of testBackends()) {
       expect(result.state).toBe('committed');
       await engine.executeRaw(`UPDATE persistence_effects SET state='failed',error_code='targets_parked',data=data || $2::text::jsonb
         WHERE request_id=$1::uuid AND kind='git'`, [row.id, JSON.stringify({ target_failures: 5, last_error: LEGACY_LAST,
-        parked: [{ slug: SLUG, error_code: 'git_unavailable', last_error: LEGACY_PARKED }, { slug: 'notes/odd-example', error_code: 'git_unavailable', last_error: LEGACY_ODD }] })]);
+        parked: [{ slug: SLUG, error_code: code, last_error: LEGACY_PARKED }, { slug: 'notes/odd-example', error_code: code, last_error: LEGACY_ODD }] })]);
       return { id: row.id, requestId };
     }
     const data = async (id: string) => (await engine.executeRaw<{ state: string; error_code: string | null; data: Record<string, unknown> }>(
@@ -131,6 +131,30 @@ for (const kind of testBackends()) {
       const settle = await settleEffects(engine, { sourceId, requestId: w.requestId });
       expect(settle.effects[0]!.targets.map(target => (target as { last_error?: unknown }).last_error)).toEqual([fixed.parked, fixed.odd]);
       expect(JSON.stringify(settle)).not.toMatch(LEAK);
+    }), 120_000);
+
+    test('GCH5-01: a settle and its un-settle store the fixed shape, not the stored line', isolated(async () => {
+      const { root, sourceId } = await claimedRepo();
+      const w = await legacyParked(root, sourceId, 'git_target_unsafe');
+      // The targets are declared db_only afterwards, so settle has its exact-target proof.
+      writeFileSync(join(root, 'gbrain.yml'), 'storage:\n  db_only:\n    - notes/\n');
+      const preview = await settleEffects(engine, { sourceId, requestId: w.requestId });
+      expect(preview.effects.map(effect => effect.action)).toEqual(['would_settle']);
+      const settled = await settleEffects(engine, { sourceId, requestId: w.requestId, apply: true, expect: preview.plan_hash });
+      expect(settled.effects.map(effect => effect.action)).toEqual(['settled']);
+      const row = await data(w.id);
+      expect(row.data.settled).toBeDefined();
+      expect(row.data.last_error).toEqual(fixed.last);
+      expect((row.data.parked as Array<{ last_error?: unknown }>).map(target => target.last_error)).toEqual([fixed.parked, fixed.odd]);
+      expect(JSON.stringify(row.data)).not.toMatch(LEAK);
+      // A legacy line another build put back on the settled row is not carried through the un-settle either.
+      await engine.executeRaw(`UPDATE persistence_effects SET data=data || $2::text::jsonb WHERE request_id=$1::uuid AND kind='git'`, [w.id, JSON.stringify({ last_error: LEGACY_LAST })]);
+      const back = await settleEffects(engine, { sourceId, requestId: w.requestId, unsettle: true });
+      await settleEffects(engine, { sourceId, requestId: w.requestId, unsettle: true, apply: true, expect: back.plan_hash });
+      const unsettled = await data(w.id);
+      expect(unsettled.data.settled).toBeUndefined();
+      expect(unsettled.data.last_error).toEqual(fixed.last);
+      expect(JSON.stringify(unsettled.data)).not.toMatch(LEAK);
     }), 120_000);
 
     test('the retry\'s requeue stores the fixed shape, not the stored line', isolated(async () => {
