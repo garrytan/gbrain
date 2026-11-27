@@ -319,11 +319,12 @@ never long pages.
 **Limits.** One size preflight query reads the character and byte counts of the hit pages
 under the caller's read scope; it never reads a body. Then, in rank order, at
 most **5** long pages (`LONG_PAGE_MAX_PAGES`) holding at most **1,000,000**
-stored-body bytes together (`LONG_PAGE_MAX_INPUT_BYTES`) are fetched in one
+stored-body bytes together (`LONG_PAGE_MAX_INPUT_BYTES`, the timeline counted
+even under `detail: "low"`, since the read returns it) are fetched in one
 bounded batched call of their own, so they can neither slow nor fail the
 conversation fetch. A page that would cross a limit is skipped whole, never
-sliced: bodies are sanitized whole before any cut. Preflight plus fetch share
-a cooperative **2,000 ms** deadline (`LONG_PAGE_DEADLINE_MS`). A long page that
+sliced: bodies are sanitized whole before any cut. Preflight plus fetch,
+fence-overlay reads included, share a cooperative **2,000 ms** deadline (`LONG_PAGE_DEADLINE_MS`). A long page that
 cannot be delivered in its unit keeps its ranked chunk, byte-identical to the
 off path, with `delivered.reason: "long_page_chunk"` and a fallback code
 saying why (below). A preflight that fails or misses the deadline leaves the
@@ -335,7 +336,9 @@ remote callers): unchanged chunks are paid for first, then conversations and
 long pages reserve their matching span and grow in rank order. A long page
 whose matching span no longer fits keeps its ranked chunk
 (`long_page_chunk`, fallback `long_page_over_budget`), so the key never returns
-less than `chunk` would.
+less than `chunk` would. Only a block's first ranked passage is reserved: a later
+ranked passage on the same page (or conversation) that the budget leaves out
+comes back as its own ranked-chunk row the same way, never dropped.
 
 **Response.** A long-page block is an ordinary delivered row (`delivered.unit`
 is the unit that ran; a `section` with no structure falls back to `window`
@@ -529,7 +532,7 @@ delivered text and each result gains `delivered`.
 | `date_header_unavailable` | Date headers are on but the page dates could not be read. | Every header reads `[observed unknown]`. |
 | `long_page_pages` / `long_page_bytes` | `search.long_page_unit`: the long page came after 5 long pages, or would cross 1,000,000 stored-body bytes. | Its ranked chunk (`reason: long_page_chunk`). |
 | `long_page_over_budget` | `search.long_page_unit`: the long page's matching span no longer fit the budget. | Its ranked chunk (`reason: long_page_chunk`). |
-| `long_page_deadline` / `long_page_fetch_failed` / `long_page_preflight_failed` | `search.long_page_unit`: the size preflight or the long-page fetch missed the 2,000 ms deadline or failed. | Its ranked chunk (`reason: long_page_chunk`); a failed preflight leaves the call on the off path. |
+| `long_page_deadline` / `long_page_fetch_failed` / `long_page_preflight_failed` | `search.long_page_unit`: the size preflight or the long-page fetch (its fence-overlay reads included) missed the 2,000 ms deadline or failed. | Its ranked chunk (`reason: long_page_chunk`); a failed preflight leaves the call on the off path. |
 | drop `not_readable` | The page is no longer readable by this caller (deleted, private, grant revoked, quarantined, archived source, source outside scope). | Result removed. Never falls back to cached text. |
 | `snippet_marker_omitted` | Under an explicit `auto` budget, a row's allocation could not hold the snippet recovery marker. | Capped block without the marker, `truncated: true`. |
 | drop `budget_floor` | Not even the block's matching span fits the remaining budget. | Result removed (rank one is instead cut to fit). Under `auto` without an explicit budget nothing is dropped for budget: the conversation keeps its ranked chunks. |
@@ -601,7 +604,10 @@ warning naming the minimum server version.
    `serializeMarkdown` writes); `project` is `credentialSafeProjection`
    (`src/core/credential-projection.ts`), the function the markdown and code
    chunkers apply before splitting, so chunks and page text agree on every
-   redacted key. Each fetched chunk is located in that text in
+   redacted key. Each fetched chunk is placed by its stored byte span when the
+   span still holds the chunk's text, so text repeated under two headings is
+   placed where it was cut. A chunk with no span or a stale one is located in
+   that text in
    `chunk_index` order: exact match first, then a whitespace-insensitive match
    (the chunker trims chunks and folds some whitespace-only runs, so chunk text
    is not always verbatim). A fenced-code hit is placed by its code without the

@@ -353,9 +353,9 @@ export const LONG_PAGE_MIN_CHARS_CONFIG_KEY = 'search.long_page_min_chars';
 export const DEFAULT_LONG_PAGE_MIN_CHARS = 20_000;
 /** Long pages per call that get the unit, in rank order; later ones keep their chunk (`long_page_pages`). */
 export const LONG_PAGE_MAX_PAGES = 5;
-/** Stored-body bytes those pages may bring in; a page that would cross it keeps its chunk (`long_page_bytes`), since bodies are read whole and never sliced. */
+/** Stored-body bytes those pages may bring in, timeline included even at `detail: "low"` (the read returns it); a page that would cross it keeps its chunk (`long_page_bytes`), since bodies are read whole and never sliced. */
 export const LONG_PAGE_MAX_INPUT_BYTES = 1_000_000;
-/** Cooperative deadline for the size preflight plus the long-page fetch (`long_page_deadline`). */
+/** Cooperative deadline for the size preflight plus the long-page fetch and its fence-overlay reads (`long_page_deadline`). */
 export const LONG_PAGE_DEADLINE_MS = 2_000;
 
 export interface LongPagePolicy { unit: LongPageUnit; minChars: number }
@@ -415,7 +415,7 @@ export async function selectLongPages(engine: BrainEngine, plan: EvidencePlan | 
     const tl = scope.detail === 'low' ? null : `CASE WHEN COALESCE(p.timeline, '') !~ '\\S' THEN 0 ELSE ${TIMELINE_SEPARATOR.length} + `;
     const rows = await withTimeout(engine.executeRaw<{ id: number; chars: number; bytes: number }>(
       `SELECT p.id, char_length(COALESCE(p.compiled_truth, ''))${tl ? ` + ${tl}char_length(p.timeline) END` : ''} AS chars,
-              octet_length(COALESCE(p.compiled_truth, ''))${tl ? ` + ${tl}octet_length(p.timeline) END` : ''} AS bytes FROM pages p
+              octet_length(COALESCE(p.compiled_truth, '')) + ${tl ? `${tl}octet_length(p.timeline) END` : `octet_length(COALESCE(p.timeline, ''))`} AS bytes FROM pages p
         WHERE p.id = ANY($1::int[]) AND ${filter} AND ${servedTextProjectionFilter('p')}${requiresSafeChunks(scope) ? ` AND ${safeChunksFilter('p')}` : ''}`,
       params), LONG_PAGE_DEADLINE_MS);
     sizes = new Map(rows.map(r => [Number(r.id), { chars: Number(r.chars), bytes: Number(r.bytes) }]));
@@ -781,13 +781,17 @@ function planBlock(page: ChunkWindowPage, hits: SearchResult[], requested: Exclu
   if (page.chunks.length === 0 && page.row_limited) return fallbackBlock(best, hits, 'row_limit');
   const { text, timelineAt } = pageEvidenceText(page, includeTimeline);
   const textBytes = Buffer.byteLength(text, 'utf8');
-  const truthChunks = page.chunks.filter(c => c.chunk_source === 'compiled_truth');
-  const timelineChunks = page.chunks.filter(c => c.chunk_source === 'timeline');
-  // Large pages: above 1 MiB the text is never whitespace-folded whole; hits are anchored by their stored spans only.
-  const spans = textBytes > SPAN_ONLY_LOCATE_BYTES ? locateChunksByStoredSpans(text, timelineAt, page.chunks) : [
-    ...locateChunks(timelineAt < 0 ? text : text.slice(0, timelineAt - TIMELINE_SEPARATOR.length), truthChunks),
-    ...(timelineAt < 0 ? [] : locateChunks(text.slice(timelineAt), timelineChunks).map(sp => ({ ...sp, start: sp.start + timelineAt, end: sp.end + timelineAt }))),
-  ];
+  // Stored spans place a chunk where it was cut, so identical text under two headings anchors on the ranked one; a chunk with a
+  // missing or stale span takes its place from the in-order text search over every chunk. Above 1 MiB nothing is folded whole.
+  const stored = locateChunksByStoredSpans(text, timelineAt, page.chunks);
+  const placed = new Set(stored.map(sp => sp.id));
+  const spans = textBytes > SPAN_ONLY_LOCATE_BYTES || placed.size === page.chunks.length ? stored : [
+    ...stored,
+    ...[
+      ...locateChunks(timelineAt < 0 ? text : text.slice(0, timelineAt - TIMELINE_SEPARATOR.length), page.chunks.filter(c => c.chunk_source === 'compiled_truth')),
+      ...(timelineAt < 0 ? [] : locateChunks(text.slice(timelineAt), page.chunks.filter(c => c.chunk_source === 'timeline')).map(sp => ({ ...sp, start: sp.start + timelineAt, end: sp.end + timelineAt }))),
+    ].filter(sp => !placed.has(sp.id)),
+  ].sort((a, b) => a.chunk_index - b.chunk_index);
   const doc = buildDoc(text, spans);
   return blockFromDoc(page, hits, doc, hits.map(h => locateAnchor(doc, h, textBytes <= SPAN_ONLY_LOCATE_BYTES)), requested, radius, textBytes > DEFAULT_INLINE_BODY_BYTES);
 }
@@ -1252,14 +1256,18 @@ export async function deliverEvidence(
     if (requests.length === 0) return new Map();
     if (timeoutMs <= 0) return 'fetch_timeout';
     try {
-      const rows = await withTimeout(engine.getChunkWindows(requests, {
-        ...(scope.sourceIds && scope.sourceIds.length > 0 ? { sourceIds: scope.sourceIds } : scope.sourceId ? { sourceId: scope.sourceId } : {}),
-        excludePrivate: scope.excludePrivate,
-        requireSafeChunks: requiresSafeChunks(scope),
-        chunkSources: scope.detail === 'low' ? ['compiled_truth'] : ['compiled_truth', 'timeline'],
-        maxRows: Math.min(MAX_ROWS, requests.reduce((n, r) => n + (r.to_index - r.from_index + 1), 0)),
-      }), timeoutMs);
-      for (const p of rows) if (!p.segmented) p.fenceOverlay = await loadFenceChunkOverlay(engine, { sourceId: p.source_id, slug: p.slug, compiled_truth: p.compiled_truth, timeline: p.timeline });
+      const read = async () => {
+        const rows = await engine.getChunkWindows(requests, {
+          ...(scope.sourceIds && scope.sourceIds.length > 0 ? { sourceIds: scope.sourceIds } : scope.sourceId ? { sourceId: scope.sourceId } : {}),
+          excludePrivate: scope.excludePrivate,
+          requireSafeChunks: requiresSafeChunks(scope),
+          chunkSources: scope.detail === 'low' ? ['compiled_truth'] : ['compiled_truth', 'timeline'],
+          maxRows: Math.min(MAX_ROWS, requests.reduce((n, r) => n + (r.to_index - r.from_index + 1), 0)),
+        });
+        for (const p of rows) if (!p.segmented) p.fenceOverlay = await loadFenceChunkOverlay(engine, { sourceId: p.source_id, slug: p.slug, compiled_truth: p.compiled_truth, timeline: p.timeline });
+        return rows;
+      };
+      const rows = await withTimeout(read(), timeoutMs);
       return new Map(rows.map(p => [p.page_id, p]));
     } catch (e) {
       return e instanceof EvidenceTimeout ? 'fetch_timeout' : 'fetch_failed';
@@ -1336,12 +1344,21 @@ export async function deliverEvidence(
       ({ kept: candidates, meta: rankCutMeta } = cutWholePages(planned, shared, plan.rankCut, b => wholeCost(b, tokenizer, omitTok), b => floorOf(b, tokenizer).tokens));
       if (planned.length > candidates.length) dropped.rank_cut = planned.length - candidates.length;
     }
-    kept = allocate(candidates, shared, tokenizer, dropped, auto
-      ? b => {
-        if (b.reason === 'long_page') fallbacks.add('long_page_over_budget');
-        for (const h of b.hits) passthrough.push({ rank: hits.indexOf(h), hit: h, reason: b.reason === 'long_page' ? 'long_page_chunk' : 'conversation_over_budget' });
-      }
-      : undefined);
+    const spill = (b: Block) => {
+      if (b.reason === 'long_page') fallbacks.add('long_page_over_budget');
+      for (const h of b.hits) passthrough.push({ rank: hits.indexOf(h), hit: h, reason: b.reason === 'long_page' ? 'long_page_chunk' : 'conversation_over_budget' });
+    };
+    kept = allocate(candidates, shared, tokenizer, dropped, auto ? spill : undefined);
+    // Only a block's first passage is reserved: a later ranked passage the budget left out is spilled as its own chunk.
+    if (auto) for (const b of kept) {
+      const lost = new Set(b.anchors.flatMap((a, k) => (k > 0 && !a.pieces.every(i => b.selected.has(i)) ? [k] : [])));
+      if (lost.size === 0) continue;
+      const keep = new Set(b.anchors.flatMap((a, k) => (lost.has(k) ? [] : a.pieces)));
+      for (const k of lost) for (const i of b.anchors[k].pieces) if (!keep.has(i)) b.selected.delete(i);
+      spill({ ...b, hits: b.hits.filter((_, k) => lost.has(k)) });
+      b.hits = b.hits.filter((_, k) => !lost.has(k));
+      b.anchors = b.anchors.filter((_, k) => !lost.has(k));
+    }
   }
   let results: DeliveredSearchResult[] = kept.map(b => {
     const out = emit(b, tokenizer);

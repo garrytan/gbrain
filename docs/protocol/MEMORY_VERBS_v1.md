@@ -150,6 +150,8 @@ Retrieve saved facts and (with `query`) budget-packed page snippets.
   `facts_degraded.reason` says why. A question over 12 content words is searched
   on its last 24 and scored on the 12 of those the fewest candidate facts hold,
   so an instruction preamble ahead of the turn does not crowd out its words.
+  A question whose only words are two letters long or dates (`AI`, `2026`) is
+  searched and scored on those words as written instead of on none.
   When candidates were found and none cleared the admission rule, the response
   carries `facts_below_floor: <n>`; it is absent when nothing matched. Over
   2,000 characters is `invalid_params` reason `question_too_long` with detail

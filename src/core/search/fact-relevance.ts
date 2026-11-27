@@ -67,6 +67,13 @@ export function queryTerms(query: string): string[] {
   return contentTerms(query).slice(0, MAX_QUERY_TERMS);
 }
 
+/** A question none of whose content terms is scored (only short words and dates: "AI", "2026"). */
+export const literalQuestion = (query: string) => !contentTerms(query).some(t => !neutralWord(t));
+/** Such a question's terms as written: its distinct words, stopwords dropped, at most 12 (recall's `literalFallback`). */
+export function literalTerms(query: string): string[] {
+  return [...new Set(query.toLowerCase().match(WORD_RE) ?? [])].filter(t => !STOPWORDS.has(t)).slice(0, MAX_QUERY_TERMS);
+}
+
 export const DATED_BONUS = 0.1;
 /** What a term matched only through its stem (Rogers for Roger, lives for live) adds to the score, as a share of an exact match. */
 const STEM_ONLY_WEIGHT = 0.9;
@@ -132,6 +139,8 @@ export interface FactPoolOpts {
   distinctiveTerms?: boolean;
   /** GBRA-574 B1: the named-entity arm also pools that entity's ended facts (ENDED_FACT_SQL), the most recent first. */
   history?: boolean;
+  /** Search and score a literalQuestion on its literalTerms instead of no terms (recall). */
+  literalFallback?: boolean;
 }
 
 export interface FactCandidate {
@@ -156,6 +165,8 @@ export interface FactPool {
   terms: string[];
   /** Each question and candidate word's lexemes under the brain's full-text config (empty: a stopword); null when that read failed. */
   stems: WordStems | null;
+  /** The terms are literalTerms: `scoreFactCandidates` counts short words and dates too. */
+  literal: boolean;
 }
 
 /** Word to its full-text lexemes, for `scoreFactCandidates`. */
@@ -263,7 +274,8 @@ function heldTerms(searched: string[], candidates: FactCandidate[]): string[] {
  */
 export async function collectFactCandidates(engine: BrainEngine, question: string, scope: FactPoolScope, queryEmbedding: Float32Array | null | undefined,
   opts: FactPoolOpts): Promise<FactPool> {
-  const all = contentTerms(question);
+  const literal = opts.literalFallback === true && literalQuestion(question);
+  const all = literal ? literalTerms(question) : contentTerms(question);
   const searched = opts.distinctiveTerms && all.length > MAX_QUERY_TERMS ? all.slice(-SEARCH_TERMS) : all.slice(0, MAX_QUERY_TERMS);
   const { where, params } = poolPredicate(scope, opts.filters);
   const column = queryEmbedding?.length ? await factsEmbeddingColumn(engine) : null;
@@ -289,9 +301,10 @@ export async function collectFactCandidates(engine: BrainEngine, question: strin
     const p = armParams(allSim ? simParams : []);
     const doc = factsFtsDocument('f');
     const tsq = `NULLIF(replace(plainto_tsquery('${getFtsLanguage()}'::regconfig, $${p.length + 1})::text, ' & ', ' | '), '')::tsquery`;
+    // A fact holding every searched word is pooled ahead of any partial match, however many partial matches rank higher.
     return customPlan<Row>(engine,
       `SELECT ${COLS}, ${allSim ? simSql : 'NULL::float8 AS similarity'} FROM facts f WHERE ${where} AND ${doc} @@ ${tsq}
-       ORDER BY ts_rank_cd(${doc}, ${tsq}) DESC, COALESCE(f.valid_from, f.created_at) DESC, f.id DESC LIMIT $${p.length + 2}`,
+       ORDER BY (${doc} @@ plainto_tsquery('${getFtsLanguage()}'::regconfig, $${p.length + 1})) DESC, ts_rank_cd(${doc}, ${tsq}) DESC, COALESCE(f.valid_from, f.created_at) DESC, f.id DESC LIMIT $${p.length + 2}`,
       [...p, searched.join(' '), opts.depth.keyword]);
   };
   const nearest = async (): Promise<Row[]> => {
@@ -337,7 +350,16 @@ export async function collectFactCandidates(engine: BrainEngine, question: strin
   const candidates = [...found.values()];
   const terms = heldTerms(searched, candidates);
   const stems = await wordStems(engine, [...new Set([...terms, ...candidates.flatMap(c => [...wordsOf(c)])])].filter(w => !neutralWord(w)));
-  return { candidates, cosine, column: !!column, terms, stems };
+  return { candidates, cosine, column: !!column, terms, stems, literal };
+}
+
+/**
+ * The pooled facts with these ids, read again under the pool's read policy and filters, so a fact whose visibility,
+ * provenance or trust narrowed after the pool read is not returned. Throws on a database error.
+ */
+export async function readPooledFacts<T>(engine: BrainEngine, scope: FactPoolScope, filters: FactPoolFilters | undefined, ids: readonly number[]): Promise<T[]> {
+  const { where, params } = poolPredicate(scope, filters);
+  return engine.executeRaw<T>(`SELECT f.* FROM facts f WHERE ${where} AND f.id = ANY($${params.length + 1}::bigint[])`, [...params, [...ids]]);
 }
 
 /**
@@ -483,12 +505,12 @@ export function factRecency(f: Pick<FactCandidate, 'valid_from' | 'created_at'> 
 /**
  * Score every candidate (cosine + term share + DATED_BONUS when dated), ordered by score, newest valid_from, then id.
  * With `stems` (the pool's) a term matches a fact word sharing a lexeme, and a word with none is a stopword; dates,
- * years and auxiliaries count on neither side. A stem-only match adds STEM_ONLY_WEIGHT of an exact one to the score
- * (never to termShare, which admission reads), so "Roger" ranks the Roger fact above the Rogers one.
+ * years and auxiliaries count on neither side (both do for `literal` terms). A stem-only match adds STEM_ONLY_WEIGHT of
+ * an exact one to the score (never to termShare, which admission reads), so "Roger" ranks the Roger fact above the Rogers one.
  */
-export function scoreFactCandidates(question: string, candidates: FactCandidate[], terms = queryTerms(question), stems: WordStems | null = null): ScoredFact[] {
+export function scoreFactCandidates(question: string, candidates: FactCandidate[], terms = queryTerms(question), stems: WordStems | null = null, literal = false): ScoredFact[] {
   const lexemes = (w: string) => stems?.get(w) ?? [w];
-  const counted = (w: string) => w.length >= 3 && !STOPWORDS.has(w) && !neutralWord(w) && lexemes(w).length > 0;
+  const counted = (w: string) => (literal || (w.length >= 3 && !neutralWord(w))) && !STOPWORDS.has(w) && lexemes(w).length > 0;
   const asked = terms.filter(counted);
   return candidates.map(c => {
     const words = [...wordsOf(c)].filter(counted);
