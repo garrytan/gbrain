@@ -34,7 +34,7 @@ import { FollowChild, type FollowEvent, type FollowStore } from './follow-child.
 import { appendFault, appendLedgerRows, writeSummaryFile, type ShadowLedgerRow, type ShadowSummaryFile } from './ledger.ts';
 import { newMirrorCounters, type MirrorCounters } from './mirror.ts';
 import { createWriteComparer } from './write-compare-child.ts';
-import { droppedWeight, readOwed, sampleWeight, WriteTally } from './write-compare.ts';
+import { droppedWeight, readOwed, sampleQualifyingWeight, sampleWeight, WriteTally } from './write-compare.ts';
 import { appendRecall, IntervalGate, recallEligible, RECALL_INTERVAL_MS, scoreRecall, type RankedKey } from './recall.ts';
 import { isShadowReadMember, SHADOW_READ_MEMBERS, type ShadowReadMember } from './reads.ts';
 import { readSeedRecord } from './seed.ts';
@@ -546,15 +546,16 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
     return draining;
   };
 
+  let receivedQualifying = 0; // the part of `received` that is page and link writes, counted from the same bytes as the serving process counted it (write-compare.ts sampleQualifyingWeight)
   let received = 0; // write samples read from the pipe, whole lines only (a line the exit of the serving process cut short is not one)
   const rl = createInterface({ input: deps.input, crlfDelay: Infinity });
   for await (const line of rl) {
     if (!line) continue;
     let event: { t?: string; counters?: MirrorCounters; pid?: number; dropped?: number };
-    try { event = JSON.parse(line); } catch { const w = sampleWeight(`${line}\n`); if (w > 0) { received += w; writes.unreadable(w); } continue; } // a write line that cannot be read still stands for the samples its text states: settled once, as `uncomparable`
+    try { event = JSON.parse(line); } catch { const w = sampleWeight(`${line}\n`); if (w > 0) { const q = sampleQualifyingWeight(`${line}\n`); received += w; receivedQualifying += q; writes.unreadable(w, q); } continue; } // a write line that cannot be read still stands for the samples its text states: settled once, as `uncomparable`
     if (event.t === 'apply' || event.t === 'watermark' || event.t === 'depth' || event.t === 'rpc') { follow.handle(event as FollowEvent); continue; }
     if (event.t === 'answer') { ask.answer(event as never); continue; }
-    if (event.t === 'write') { received += 1 + droppedWeight(event.dropped); writes.handle(event as never, line.length); continue; } // the weight the serving process counted when it sent the line (write-compare.ts sampleWeight)
+    if (event.t === 'write') { const q = sampleQualifyingWeight(`${line}\n`); received += 1 + droppedWeight(event.dropped); receivedQualifying += q; writes.handle(event as never, line.length, q); continue; } // the weight the serving process counted when it sent the line (write-compare.ts sampleWeight)
     if (event.t === 'stats' && event.counters) { summary.primary = { ...newMirrorCounters(), ...event.counters }; summary.primary_pid = event.pid; continue; }
     if (event.t !== 'read' || paused) continue;
     if (pending.length >= SHADOW_CHILD_QUEUE_BOUND) { summary.child_shed++; continue; }
@@ -568,7 +569,13 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
   // The serving process wrote down, durably and before any line reached the pipe, how many write samples it owes this session (`write-owed.<session>.json`). What it owed and this child never read was dropped in its pipe at its exit: it is
   // booked as `pipe_unflushed`, settled in this child's own saves. A file that is there and cannot be read stays, and status reads it as no evidence.
   const owedRecord = readOwed(shadowDir, session);
-  if (owedRecord !== null && owedRecord !== 'unreadable') writes.missing(Math.max(0, owedRecord.owed - received));
+  if (owedRecord !== null && owedRecord !== 'unreadable') {
+    // Only the lost page and link writes count against the share: the other writes owed less the other writes read are booked as `pipe_unflushed_nonqualifying`; every other lost sample, including any count the two ends
+    // disagree on, is `pipe_unflushed`. A record with no qualifying count (an older serving process) books every one as `pipe_unflushed`.
+    const lost = Math.max(0, owedRecord.owed - received);
+    const nonqualifying = owedRecord.owed_qualifying === undefined ? 0 : Math.min(lost, Math.max(0, (owedRecord.owed - owedRecord.owed_qualifying) - (received - receivedQualifying)));
+    writes.missing(lost, nonqualifying);
+  }
   // The serving process ended our stdin: nothing it was asked can still be answered. A queued rerun ends as skipped.
   ask.closeAll(); waiter.close(); // a rerun waiting for a quiet window ends now, as skipped
   for (const task of reruns.drop()) record(task.event, task.c, task.rustMs, task.rows, 'skipped:child_closing');
