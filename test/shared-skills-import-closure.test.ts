@@ -6,8 +6,11 @@
  *    would reach a wider audience, or change file class, in a skill that holds it already, the publication refuses
  *    local_conflict by name at submission and again at prepare. It writes nothing, both heads and the checkout stay as
  *    they were, and a reader still cannot fetch the restricted file. A copy that keeps or narrows the audience publishes.
+ *    A proposed skill also may not show such a file to more callers than the other skills that hold it already do,
+ *    counting each holder's SKILL.md audience and private flag, so a readers file in a hidden skill stays hidden.
  * 2. Fails on: an import or a remote put_skill that newly references a restricted convention with a wider audience
- *    republishing the other skill's copy to readers, or a queued request from an older release doing it at prepare.
+ *    republishing the other skill's copy to readers, a public skill republishing a convention that only a restricted or
+ *    private skill holds, or a queued request from an older release doing either at prepare.
  * 3. Existing coverage: test/shared-skills-publication-sparse.test.ts rebuilds dependents with a changed convention of
  *    the same policy; test/shared-skills-adoption-keeps-files.test.ts checks only the proposed skill's own files.
  * 4. Seam: none, except the prepare case, which shapes a request row like one an older release accepted from this
@@ -28,6 +31,7 @@ import { sha256 } from '../src/core/persistence/digest.ts';
 import { importSharedSkillProposal, prepareSharedSkillMutation, submitSharedSkillMutation } from '../src/core/shared-skills/publication.ts';
 import { getSharedSkill, getSharedSkillAsset } from '../src/core/shared-skills/catalog.ts';
 import { setSharedSkillPolicy } from '../src/core/shared-skills/policy.ts';
+import { normalizeSkillFiles, skillMetadata } from '../src/core/shared-skills/manifest.ts';
 import type { SharedSkillPolicy } from '../src/core/shared-skills/model.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { isolatedSharedSkillsEngine } from './helpers/shared-skills-engine.ts';
@@ -82,9 +86,9 @@ function checkout(root: string): Record<string, string> {
   out['skillpack.json'] = readFileSync(join(root, 'skillpack.json'), 'utf8');
   return out;
 }
-async function put(f: Fixture, ctx: OperationContext, name: string, files: Array<Record<string, unknown>>) {
+async function put(f: Fixture, ctx: OperationContext, name: string, files: Array<Record<string, unknown>>, extra: Record<string, unknown> = {}) {
   return submitSharedSkillMutation(ctx, 'put_skill', { request_id: randomUUID(), expected_revision: await revisionOf(f, name),
-    source_id: 'default', source_incarnation: f.incarnation, pack_id: 'example-pack', name, files });
+    source_id: 'default', source_incarnation: f.incarnation, pack_id: 'example-pack', name, files, ...extra });
 }
 /** Alpha holds the guide restricted to the editor; beta does not hold it yet. */
 async function publishBoth(f: Fixture) {
@@ -96,6 +100,19 @@ async function publishBoth(f: Fixture) {
 async function readerGuide(f: Fixture) {
   const detail = await getSharedSkill(f.reader, { source_id: 'default', pack_id: 'example-pack', name: 'alpha' });
   return getSharedSkillAsset(f.reader, { ...detail, path: GUIDE }).then(asset => Buffer.from(asset.content, 'base64').toString(), (error: { code?: string }) => error.code);
+}
+/** What the reader gets for a skill's copy of the guide: its body, or the refusal code. */
+async function readerCopy(f: Fixture, skill: string) {
+  const detail = await getSharedSkill(f.reader, { source_id: 'default', pack_id: 'example-pack', name: skill });
+  return getSharedSkillAsset(f.reader, { ...detail, path: GUIDE }).then(asset => Buffer.from(asset.content, 'base64').toString(), (error: { code?: string }) => error.code);
+}
+/** Alpha holds a readers guide, but alpha itself is hidden from the reader (its SKILL.md audience, or private); beta does not hold the guide yet. */
+async function publishHidden(f: Fixture, hide: 'audience' | 'private') {
+  const alpha = hide === 'audience' ? [{ ...prose('alpha', 'Use the guide.', [GUIDE]), audience: RESTRICTED }, guide(['readers'])] : [prose('alpha', 'Use the guide.', [GUIDE]), guide(['readers'])];
+  for (const result of [await put(f, f.local, 'alpha', alpha, hide === 'private' ? { private: true } : {}), await put(f, f.local, 'beta', [prose('beta', 'Standalone.')])]) {
+    expect((result as { state?: string }).state).toBe('committed');
+  }
+  expect(await readerCopy(f, 'alpha').catch((error: { code?: string }) => error.code)).toBe('skill_not_found');
 }
 /** Beta's reviewed checkout edit that newly references the guide. */
 const stageBeta = (f: Fixture) => writeFileSync(join(f.root, 'skills/beta/SKILL.md'), skillMd('beta', 'Now uses the guide.'));
@@ -208,6 +225,61 @@ for (const [name, url] of backends) {
       const before = { heads: await heads(f), checkout: checkout(f.root) };
       const outcome = await prepareSharedSkillMutation(f.engine, old as never, f.local.config).then(() => 'prepared', (error: { code?: string }) => error.code);
       expect({ outcome, heads: await heads(f), reader: await readerGuide(f), checkout: checkout(f.root) })
+        .toEqual({ outcome: 'local_conflict', heads: before.heads, reader: 'skill_asset_not_found', checkout: before.checkout });
+    }, url), 120_000);
+
+    // Value: protects=a remote editor cannot show a convention to every reader through a public skill while the only skill holding it is hidden from readers; fails_when=put_skill on beta republishes alpha's guide to readers; why_new=the dependent check compared file audiences only, so a readers file in a restricted skill counted as already public; seam=none; no_claim=copying the bytes to a file under beta's own directory, which no shared-file check can see
+    test('a remote put_skill that shows a convention held only by a restricted skill to readers refuses, and nothing changes', () => fixture(async f => {
+      await publishHidden(f, 'audience');
+      const before = { heads: await heads(f), checkout: checkout(f.root) };
+      const outcome = await put(f, f.editor, 'beta', [prose('beta', 'Now uses the guide.', [GUIDE]), guide(['readers'])])
+        .then(() => 'published', (error: { code?: string; message?: string }) => `${error.code}: ${error.message}`);
+      expect(outcome).toBe(`local_conflict: The publication was refused: ${GUIDE} would reach a wider audience than the 1 other skill that already holds it gives it. Nothing was written.`);
+      expect({ heads: await heads(f), reader: await readerCopy(f, 'beta'), checkout: checkout(f.root) })
+        .toEqual({ heads: before.heads, reader: 'skill_asset_not_found', checkout: before.checkout });
+    }, url), 120_000);
+
+    // Value: protects=a private skill's convention stays off the remote catalog when another skill is imported; fails_when=the import publishes alpha's guide to readers through beta; why_new=no check read the holder's private flag; seam=none; no_claim=none
+    test('an import that shows a convention held only by a private skill to readers refuses by name, and nothing changes', () => fixture(async f => {
+      await publishHidden(f, 'private');
+      stageBeta(f);
+      const before = { heads: await heads(f), checkout: checkout(f.root) };
+      const outcome = await importBeta(f, ['readers'], 'reference', true).then(() => 'imported', (error: { code?: string; message?: string }) => `${error.code}: ${error.message}`);
+      expect(outcome).toBe(`local_conflict: The publication was refused: skills/beta would publish ${GUIDE} to a wider audience than skills/alpha gives it. Nothing was written.`);
+      expect({ heads: await heads(f), reader: await readerCopy(f, 'beta'), checkout: checkout(f.root) })
+        .toEqual({ heads: before.heads, reader: 'skill_asset_not_found', checkout: before.checkout });
+    }, url), 120_000);
+
+    // Value: protects=a copy no wider than the hidden holder gives it still publishes; fails_when=a narrowing copy refuses; why_new=the new check must not over-refuse; seam=none; no_claim=none
+    test('a copy of a hidden convention that is no wider than its holder gives it publishes', () => fixture(async f => {
+      await publishHidden(f, 'audience');
+      const result = await put(f, f.editor, 'beta', [prose('beta', 'Now uses the guide.', [GUIDE]), guide(RESTRICTED)]);
+      expect({ state: (result as { state?: string }).state, reader: await readerCopy(f, 'beta') }).toEqual({ state: 'committed', reader: 'skill_asset_not_found' });
+    }, url), 120_000);
+
+    // Value: protects=a convention that another skill already shows to readers still publishes through a new skill; fails_when=the check counts only the hidden holder and refuses; why_new=the new check must not over-refuse; seam=none; no_claim=none
+    test('a convention that another skill already shows to readers publishes through a new skill', () => fixture(async f => {
+      for (const files of [[prose('gamma', 'Use the guide.', [GUIDE]), guide(['readers'])], [{ ...prose('alpha', 'Use the guide.', [GUIDE]), audience: RESTRICTED }, guide(['readers'])]]) {
+        const name = files[0].path.split('/')[1];
+        expect((await put(f, f.local, name, files) as { state?: string }).state).toBe('committed');
+      }
+      const result = await put(f, f.editor, 'beta', [prose('beta', 'Now uses the guide.', [GUIDE]), guide(['readers'])]);
+      expect({ state: (result as { state?: string }).state, reader: await readerCopy(f, 'beta') }).toEqual({ state: 'committed', reader: 'Synthetic shared guide body.\n' });
+    }, url), 120_000);
+
+    // Value: protects=a request queued by an older release that shows a hidden skill's convention to readers is checked again before it touches the checkout; fails_when=resume publishes beta with alpha's guide; why_new=no check ran at prepare; seam=the request row is shaped like one an older release accepted, from this brain's own committed put_skill; no_claim=none
+    test('a queued publication from an older release that shows a hidden convention to readers is refused on resume', () => fixture(async f => {
+      await publishHidden(f, 'audience');
+      const [request] = await f.engine.executeRaw<Record<string, any>>("SELECT * FROM persistence_requests WHERE operation='put_skill' ORDER BY sequence DESC LIMIT 1");
+      const [pack] = await f.engine.executeRaw<{ revision: string }>('SELECT revision::text AS revision FROM shared_skill_packs WHERE source_id=$1', ['default']);
+      const intent = typeof request.intent === 'string' ? JSON.parse(request.intent) : request.intent;
+      const current = Object.fromEntries((await heads(f)).map(head => [head.name, head.revision]));
+      const files = normalizeSkillFiles('beta', [prose('beta', 'Now uses the guide.', [GUIDE]), guide(['readers'])]);
+      const old = { ...request, intent: { ...intent, expected_revision: current.beta, affected: ['alpha', 'beta'].map(target => ({ name: target, revision: current[target] })),
+        expected_pack_revision: pack.revision, proposals: [{ name: 'beta', files, metadata: skillMetadata('beta', files, {}), expected_revision: current.beta }] } };
+      const before = { heads: await heads(f), checkout: checkout(f.root) };
+      const outcome = await prepareSharedSkillMutation(f.engine, old as never, f.local.config).then(() => 'prepared', (error: { code?: string }) => error.code);
+      expect({ outcome, heads: await heads(f), reader: await readerCopy(f, 'beta'), checkout: checkout(f.root) })
         .toEqual({ outcome: 'local_conflict', heads: before.heads, reader: 'skill_asset_not_found', checkout: before.checkout });
     }, url), 120_000);
   });
