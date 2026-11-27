@@ -1625,6 +1625,17 @@ describe('S2d: a pending marker blocks status, and every owed-file remover re-re
     expect(stat(dir)).toMatchObject({ state: 'measured' });
   });
 
+  test('the orphan pass books nothing for a marked session: the stale record\'s count is not the obligation, so it is neither booked nor removed', () => {
+    const dir = tmp(); const epoch = epochOf(dir); passing(dir, epoch);
+    owe(dir, 'sb', 1, { child_exited: true }); linkSync(owedPath(dir, 'sb'), marker(dir, 'sb'));
+    worker(dir, epoch, 'owner').recover();
+    expect(readWriteTally(dir, epoch)!.uncomparable).toBe(0); // nothing booked on the stale count
+    expect(readOwed(dir, 'sb')).toMatchObject({ owed: 1 });
+    rmSync(marker(dir, 'sb')); // the marker is cleared (the full record is durable): now the pass books what is unsettled, once
+    worker(dir, epoch, 'owner').recover();
+    expect(readWriteTally(dir, epoch)!.uncomparable).toBe(1);
+  });
+
   test('a marker that cannot be listed blocks status; it never reads as no markers', async () => {
     const dir = tmp(); const epoch = epochOf(dir); passing(dir, epoch); owe(dir, 'sq', 0);
     const fs = await import('node:fs'); const realList = fs.readdirSync;
