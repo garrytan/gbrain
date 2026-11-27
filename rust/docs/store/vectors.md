@@ -57,8 +57,9 @@ bounded scan returns no rows at once, as the full scan would.
 Measured with `rust/bench/vector-scan.sh` (an invented corpus, 1536 dims, 2 chunks per page on average,
 limit 50, 8 vCPU Xeon 6975P-C): unfiltered p50 165 ms before and 8.6 ms after at 10,000 pages, 887 ms
 before and 28.5 ms after at 50,000 pages. A filter that keeps few pages reads more of them before the top
-settles (a 4% source at 50,000 pages: 239 ms before, 74 ms after). `cosinesByChunkIds` still reads every
-page (about 590 ms at 50,000 pages).
+settles (a 4% source at 50,000 pages: 239 ms before, 74 ms after). That bench ran before the keyed lookups, when
+`cosinesByChunkIds` read every page (about 590 ms at 50,000 pages); it now reads only the pages that hold the asked
+chunk ids ([keyed-index.md](keyed-index.md), `## cosinesByChunkIds` below).
 
 ## searchTakesVector
 
