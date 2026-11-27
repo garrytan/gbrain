@@ -436,7 +436,8 @@ rule and pins stay in the prompt of a session the owner shares with others
 On every live conversation turn the plugin therefore sends an
 `<owner_context_withdrawn>` block ahead of the conversation rule and pins,
 which tells the model that any owner rule, pins, brief or suggestions from an
-earlier turn no longer apply; the log line says `withdrawn: true`. Silent
+earlier turn no longer apply; the log line says `withdrawn: true`. The
+owner's next turn on that session gets their rule, pins and brief again. Silent
 turns (relay, cron, heartbeat, webhook, internal) are the owner's own
 machinery and get nothing, as before. The other person still shares the
 session's transcript, so give each DM its own session (`per-channel-peer`)
