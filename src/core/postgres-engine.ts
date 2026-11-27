@@ -179,7 +179,10 @@ import * as publicationJournalImpl from './engine-sql/publication-journal.ts';
 import * as gitDurabilityImpl from './engine-sql/git-durability.ts';
 import * as gitEffectsImpl from './engine-sql/git-effects.ts';
 import * as topologyStoreImpl from './engine-sql/topology-store.ts';
+import * as refreshStoreImpl from './engine-sql/refresh-store.ts';
+import * as groupPublishStoreImpl from './engine-sql/group-publish-store.ts';
 import * as manualLinksImpl from './engine-sql/manual-links.ts';
+import * as managedSyncStoreImpl from './engine-sql/managed-sync-store.ts';
 import * as writerStatusImpl from './engine-sql/writer-status.ts';
 import * as labelDoorImpl from './engine-sql/label-door.ts';
 import * as pagePurgeImpl from './engine-sql/page-purge.ts';
@@ -2327,6 +2330,11 @@ export class PostgresEngine implements BrainEngine {
   expireStaleWriteClaims(expiry: persistenceClaimsImpl.ClaimExpiry, opts?: { signal?: AbortSignal; direct?: boolean }) { return persistenceClaimsImpl.expireStaleWriteClaims(opts?.direct ? this.directRawSql : this.autocommitSql, expiry, { signal: opts?.signal }); }
   hasClaimableWrite(hostId: string, excludeRoots: string[], opts?: { priority?: boolean | null; signal?: AbortSignal }) { return persistenceClaimsImpl.hasClaimableWrite(unscopedExecutor(this.autocommitSql, 'persistence: claim check ran unscoped through executeRaw'), hostId, excludeRoots, opts); }
   selectClaimableWrite<R = Record<string, unknown>>(spec: persistenceClaimsImpl.ClaimHeadSpec) { return persistenceClaimsImpl.selectClaimableWrite<R>(unscopedExecutor(this.engineSql, 'persistence: FIFO head read ran unscoped through the transaction executeRaw'), spec); }
+  selectClaimableLaneHead<R = Record<string, unknown>>(spec: persistenceClaimsImpl.LaneHeadSpec) { return persistenceClaimsImpl.selectClaimableLaneHead<R>(unscopedExecutor(this.engineSql, 'persistence: lane head read ran unscoped through the transaction executeRaw'), spec); }
+  chargeTransientInterruption(charge: persistenceClaimsImpl.TransientCharge) { return persistenceClaimsImpl.chargeTransientInterruption(this.autocommitSql, charge); }
+  stampLaneHeadClaim<R = Record<string, unknown>>(stamp: persistenceClaimsImpl.LaneHeadStamp) { return persistenceClaimsImpl.stampLaneHeadClaim<R>(this.autocommitSql, stamp); }
+  // The reclaim ran on executeRawDirect (journal.ts reclaimReleasedWrite).
+  reclaimReleasedWrite<R = Record<string, unknown>>(stamp: persistenceClaimsImpl.LaneHeadStamp) { return persistenceClaimsImpl.reclaimReleasedWrite<R>(this.directRawSql, stamp); }
   // The consumer row reads ran on executeRaw (direct while the consumer's route is); the heartbeat's writes on executeRawDirect.
   listHostConsumerRows(hostId: string, opts?: { signal?: AbortSignal; direct?: boolean }) { return persistenceClaimsImpl.listHostConsumerRows(unscopedExecutor(opts?.direct ? this.directRawSql : this.engineSql, 'persistence: consumer rows read ran unscoped through executeRaw'), hostId, { signal: opts?.signal }); }
   probeLiveConsumerRows(probe: persistenceClaimsImpl.ConsumerProbe, opts?: { signal?: AbortSignal; direct?: boolean }) { return persistenceClaimsImpl.probeLiveConsumerRows(unscopedExecutor(opts?.direct ? this.directRawSql : this.engineSql, 'persistence: live consumer probe ran unscoped through executeRaw'), probe, { signal: opts?.signal }); }
@@ -2368,6 +2376,7 @@ export class PostgresEngine implements BrainEngine {
   listRetryTrackedEffects<R = Record<string, unknown>>(requestRowId: string, parkedOnly: boolean, failedCodes: readonly string[]) { return this.preparationRead(exec => effectScansImpl.listRetryTrackedEffects<R>(unscopedExecutor(exec, 'persistence: retry effect read ran unscoped through executeRaw'), requestRowId, parkedOnly, failedCodes)); }
   lockEffectRow<R = Record<string, unknown>>(id: string | number) { return effectScansImpl.lockEffectRow<R>(unscopedExecutor(this.autocommitSql, 'persistence: effect lock ran unscoped through executeRaw'), id); }
   stampEffectClaim<R = Record<string, unknown>>(claim: effectWorkerImpl.EffectClaim) { return effectWorkerImpl.stampEffectClaim<R>(this, claim); }
+  claimEffectRecovery<R = Record<string, unknown>>(claim: effectWorkerImpl.EffectClaim) { return effectWorkerImpl.claimEffectRecovery<R>(this, claim); }
   claimCoalescedGitEffects<R = Record<string, unknown>>(input: effectWorkerImpl.CoalescedGitClaim) { return effectWorkerImpl.claimCoalescedGitEffects<R>(this, input); }
   renewEffectClaim(claim: effectWorkerImpl.EffectClaimRef, opts?: { direct?: boolean }) { return effectWorkerImpl.renewEffectClaim((opts?.direct ? { executeRaw: <T = Record<string, unknown>>(sql: string, params?: unknown[]) => this.executeRawDirect<T>(sql, params) } : this), claim); }
   advanceEffectRow(claim: effectWorkerImpl.EffectClaimRef & { slug: string }) { return effectWorkerImpl.advanceEffectRow(this, claim); }
@@ -2898,7 +2907,10 @@ export class PostgresEngine implements BrainEngine {
   gitDurabilityStore() { return gitDurabilityImpl.gitDurabilityStore(this); }
   gitEffectStore() { return gitEffectsImpl.gitEffectStore(this); }
   topologyStore() { return topologyStoreImpl.topologyStore(this); }
+  refreshStore() { return refreshStoreImpl.refreshStore(this); }
+  groupPublishStore() { return groupPublishStoreImpl.groupPublishStore(this); }
   manualLinkStore() { return manualLinksImpl.manualLinkStore(this); }
+  runSyncStatement<R = Record<string, unknown>>(name: managedSyncStoreImpl.SyncStatementName, params?: readonly unknown[], opts?: managedSyncStoreImpl.SyncStatementOptions) { return managedSyncStoreImpl.runSyncStatement<R>(this, name, params, opts); }
   chronicleStore() { return chronicleExecutorImpl.chronicleStore(this); }
   addPersistenceCounters(key: string, delta: Partial<Record<CounterColumn, number>>): Promise<void> { return writerReleaseImpl.addPersistenceCounters(this, key, delta); }
   hasExtractedEvents(sourceId: string, pageId: number) { return whenNotAborted(() => writeMiscImpl.hasExtractedEvents(this.writeMiscReads, sourceId, pageId)); }

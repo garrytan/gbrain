@@ -75,15 +75,45 @@ export interface StressObservation {
   reports: readonly StressReport[];
   pageBodies: ReadonlyMap<string, string>;
   jobIdsByKey: ReadonlyMap<string, readonly number[]>;
+  /** The job ids the parent claimed in its drain after every writer finished (a writer's claim may legitimately answer null while waiting work exists). */
+  drained: readonly number[];
 }
 
 const BUSY = new Set(['store_locked', 'pglite_busy', 'owner_unavailable', 'owner_busy']);
 
 /**
+ * Every way the claims of a C18 run break "no double claim, none lost", as messages naming the ids; empty when they hold.
+ * A writer's claim may answer null while committed waiting work exists (the rows it can see are locked by other claimers in
+ * flight, and a job committed after its statement's snapshot is invisible to it), so a null is allowed; what is not allowed is a
+ * job claimed twice (across the writers and the drain together), a claimed id that is not a stored job, and a stored job nobody
+ * claimed even after the drain.
+ */
+export function claimAccountViolations(seen: { writerClaims: readonly (number | null)[]; drained: readonly number[]; stored: readonly number[] }): string[] {
+  const out: string[] = [];
+  const claimed = [...seen.writerClaims.filter((id): id is number => id !== null), ...seen.drained];
+  const times = new Map<number, number>();
+  for (const id of claimed) times.set(id, (times.get(id) ?? 0) + 1);
+  const stored = new Set(seen.stored);
+  for (const [id, n] of [...times].sort((a, b) => a[0] - b[0])) if (n > 1) out.push(`job ${id} was claimed ${n} times`);
+  for (const id of [...times.keys()].sort((a, b) => a - b)) if (!stored.has(id)) out.push(`claimed id ${id} is not a stored job`);
+  for (const id of [...stored].sort((a, b) => a - b)) if (!times.has(id)) out.push(`stored job ${id} was never claimed, not even by the drain`);
+  if (out.length > 0) {
+    // The context a failure log needs: the ids that differ and what the writers and the drain did.
+    const nulls = seen.writerClaims.filter(id => id === null).length;
+    const list = (ids: readonly number[]) => `[${ids.slice().sort((a, b) => a - b).join(', ')}]`;
+    out.push(`claim accounting: ${seen.stored.length} stored jobs ${list(seen.stored)}; ${seen.writerClaims.length - nulls} writer claims and ${nulls} null writer claims; `
+      + `drained ${seen.drained.length} ${list(seen.drained)}; claimed but not stored ${list([...times.keys()].filter(id => !stored.has(id)))}; `
+      + `stored but never claimed ${list([...stored].filter(id => !times.has(id)))}; claimed more than once ${list([...times].filter(([, n]) => n > 1).map(([id]) => id))}`);
+  }
+  return out;
+}
+
+/**
  * Every way the C18 run breaks "64 writers in 8 processes, no lost update, no double claim, no busy error", as messages; empty
  * when it holds: the loads overlapped (every process started before any finished), the 64 writers are 0..63 once each, none was
  * refused or got a busy error, every expected page slug has its exact body, the stored jobs are exactly the 64 request keys with one
- * row each, and the claimed ids are distinct and are exactly the stored jobs' ids.
+ * row each, and the claims account for every stored job exactly once (claimAccountViolations: the writers' claims, which may be
+ * null, plus the parent's drain).
  */
 export function stressViolations(seen: StressObservation): string[] {
   const out: string[] = [];
@@ -105,10 +135,8 @@ export function stressViolations(seen: StressObservation): string[] {
   const keys = [...seen.jobIdsByKey.keys()].sort();
   if (keys.join('|') !== expectedKeys.join('|')) out.push('the stored jobs are not exactly the 64 request keys');
   for (const [key, rows] of seen.jobIdsByKey) if (rows.length !== 1) out.push(`request key ${key} has ${rows.length} rows`);
-  const claimed = writers.map(w => w.job).filter((id): id is number => id !== null);
-  if (claimed.length !== new Set(claimed).size) out.push('a job was claimed twice');
   const stored = [...seen.jobIdsByKey.values()].flat().sort((x, y) => x - y);
-  if (claimed.slice().sort((x, y) => x - y).join(',') !== stored.join(',')) out.push('the claimed ids are not the stored jobs\' ids');
+  out.push(...claimAccountViolations({ writerClaims: writers.map(w => w.job), drained: seen.drained, stored }));
   return out;
 }
 

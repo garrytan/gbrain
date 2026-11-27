@@ -6,11 +6,14 @@ import type { AccessTokenWriteGrant, AdmissionRate, ClaimedWriteRow, CompletedWr
 import type { AtomOriginInputRow, AtomWriteReceiptRow, GenerationVersionProducer, ProducerVersionRow } from '../engine-sql/generation-atom-reads.ts';
 import type { CapacityForecastInputs, HousekeepingTurnClaim, PendingSegmentedProjection, ProjectionJobRef, ProjectionPageRef, ProjectionWindowRow, ReceiptBudget, SegmentedProjectionClaimOutcome, SegmentedProjectionFilter, TrueUpReservation } from '../engine-sql/persistence-housekeeping.ts';
 import type * as ChronicleEventsSql from '../engine-sql/chronicle-events.ts';
-import type { ClaimExpiry, ClaimHeadSpec, ClaimRelease, ClaimRenewal, ConsumerProbe, ConsumerRenewal, ConsumerRowKey, ConsumerRowRead, SourceMembership, TopologyChange, TopologyChangeInsert } from '../engine-sql/persistence-claims.ts';
+import type { ClaimExpiry, ClaimHeadSpec, ClaimRelease, ClaimRenewal, LaneHeadSpec, LaneHeadStamp, TransientCharge, ConsumerProbe, ConsumerRenewal, ConsumerRowKey, ConsumerRowRead, SourceMembership, TopologyChange, TopologyChangeInsert } from '../engine-sql/persistence-claims.ts';
 import type { GitDurabilityStore } from '../engine-sql/git-durability.ts';
 import type { GitEffectStore } from '../engine-sql/git-effects.ts';
 import type { TopologyStore } from '../engine-sql/topology-store.ts';
+import type { RefreshStore } from '../engine-sql/refresh-store.ts';
+import type { GroupPublishStore } from '../engine-sql/group-publish-store.ts';
 import type { ManualLinkStore } from '../engine-sql/manual-links.ts';
+import type { SyncStatementName, SyncStatementOptions } from '../engine-sql/managed-sync-store.ts';
 import type { CoalescedGitClaim, EffectClaim, EffectClaimRef, EffectWorktreeOwner, MirrorGateRow } from '../engine-sql/persistence-effect-worker.ts';
 import type { FenceHoldFileRow, FenceHoldKey, FenceHoldRow } from '../engine-sql/fence-holds.ts';
 import type { FenceVersionBodyRow } from '../engine-sql/generation-fence-evidence.ts';
@@ -260,6 +263,17 @@ export interface PersistenceMembers {
   readOwnerHostBinding(worktreeId: string): Promise<string | null>;
   /** Stamps a claim (running, token, lease, first phase) on request `id`; null when the refresh barrier refused it. */
   stampWriteClaim(id: string, token: string, leaseMs: number, phaseJson: string, opts?: FenceOpts): Promise<ClaimedWriteRow | null>;
+  /**
+   * The lane head the next `claimNextLaneHead` takes (engine-sql/persistence-claims.ts `laneHeadText`), locked until the
+   * transaction ends, or null. A multi-user Rust brain also checks the caller's host fence.
+   */
+  selectClaimableLaneHead<R = Record<string, unknown>>(spec: LaneHeadSpec): Promise<R | null>;
+  /** Stamps a lane head claim (running, token, lease, first phase); the claimed row with `seen_sequence`, or null for an unknown id. */
+  stampLaneHeadClaim<R = Record<string, unknown>>(stamp: LaneHeadStamp): Promise<R | null>;
+  /** Claims again a queued request this owner pass released itself, never before its backoff; null when it is not claimable now (`reclaimReleasedWrite`). */
+  reclaimReleasedWrite<R = Record<string, unknown>>(stamp: LaneHeadStamp): Promise<R | null>;
+  /** Counts one transient interruption on a claim still held under its token and schedules its next claim; the new count, or null when the claim is gone (`chargeTransientInterruption`). */
+  chargeTransientInterruption(charge: TransientCharge): Promise<{ transient_interruptions: number } | null>;
   /** Request `id` locked FOR UPDATE until the transaction ends, or null. */
   lockWriteRequest(id: string): Promise<WriteRequest | null>;
   /** Records a request's terminal state and releases its counters; null when the result exceeds its reservation. */
@@ -417,7 +431,7 @@ export interface PersistenceMembers {
   /** Leases this host's housekeeping turn; true when it was free. `direct` sends it on the Postgres direct pool. */
   claimHousekeepingTurn(claim: HousekeepingTurnClaim, opts?: { signal?: AbortSignal; direct?: boolean }): Promise<boolean>;
   /** Marks this host's leased housekeeping turn finished. `direct` sends it on the Postgres direct pool. */
-  completeHousekeepingTurn(turn: { op: string; hostId: string }, opts?: { direct?: boolean }): Promise<void>;
+  completeHousekeepingTurn(turn: { op: string; hostId: string } & FenceOpts, opts?: { direct?: boolean }): Promise<void>;
   /** The explicit receipt retention (null when unset), the brain's reserved terminal bytes and now minus `floorDays`, as text. */
   readReceiptBudget(retentionKey: string, floorDays: number): Promise<ReceiptBudget>;
   /** Up to 100 compactable receipts completed over `retentionDays` ago, oldest first, without unresolved caller refusals or open-sync rows. */
@@ -442,11 +456,11 @@ export interface PersistenceMembers {
   selectProjectionWindowJobs(cursor: Pick<ProjectionScanCursor, 'after' | 'highWater'>, retryCooldown: boolean): Promise<ProjectionWindowRow[]>;
   // The segmented projector's queue writes (page-body/projection.ts). `claim` is `segmented_projecting:<uuid>`, unique to one build.
   /** Claims the page's queued job unless another live claim holds it: `claimed`, `held`, or `absent` when the page has no job. */
-  claimSegmentedProjection(ref: ProjectionPageRef, claim: string): Promise<SegmentedProjectionClaimOutcome>;
+  claimSegmentedProjection(ref: ProjectionPageRef, claim: string, opts?: FenceOpts): Promise<SegmentedProjectionClaimOutcome>;
   /** Moves this build's claim to now, in the caller's transaction when it has one; false when the job no longer carries `claim`. */
-  renewSegmentedProjectionClaim(ref: ProjectionPageRef, claim: string): Promise<boolean>;
+  renewSegmentedProjectionClaim(ref: ProjectionPageRef, claim: string, opts?: FenceOpts): Promise<boolean>;
   /** Puts a job that still carries `claim` back to `canonical_change`, so another build can take it. */
-  releaseSegmentedProjectionClaim(ref: ProjectionPageRef, claim: string): Promise<void>;
+  releaseSegmentedProjectionClaim(ref: ProjectionPageRef, claim: string, opts?: FenceOpts): Promise<void>;
   /** Deletes the job when it is still queued at `job.revision` (the page sealed at that revision). */
   deleteProjectionJob(job: ProjectionJobRef): Promise<void>;
   /** Marks a job still queued at `job.revision` and not under a live claim `rebuild_failed`, starting its retry window. */
@@ -517,6 +531,8 @@ export interface PersistenceMembers {
   // `token` (a null token matches none), so a claim that moved changes nothing.
   /** Claims effect `id` under `token` (running, a 2-minute lease, one more attempt): the claimed row, or null when no effect has the id. */
   stampEffectClaim<R = Record<string, unknown>>(claim: EffectClaim): Promise<R | null>;
+  /** Claims effect `id` for its recovery: the claimed row, or null when it holds no recovery record (`claimAndRecoverEffect`). */
+  claimEffectRecovery<R = Record<string, unknown>>(claim: EffectClaim): Promise<R | null>;
   /**
    * Claims up to `limit` more ready single-file Git effects of one worktree for its owner host, each under a fresh
    * token, under `selectClaimableEffect`'s rules (#5530): the claimed rows. A non-uuid host or worktree id refuses.
@@ -539,11 +555,21 @@ export interface PersistenceMembers {
    * writes, and the moved-checkout reads. Called on a transaction engine, every store call runs in that transaction.
    */
   topologyStore(): Promise<TopologyStore>;
+  /** The worktree refresh rows and the writes held behind a refresh or an import (engine-sql/refresh-store.ts). */
+  refreshStore(): Promise<RefreshStore>;
+  /** The statements of a grouped publication: the group's claims, its completion and the import path check (engine-sql/group-publish-store.ts). */
+  groupPublishStore(): Promise<GroupPublishStore>;
   /**
    * The managed link-edit and links-fence projection statements (engine-sql/manual-links.ts). Called on a transaction
    * engine, every store call runs in that transaction.
    */
   manualLinkStore(): Promise<ManualLinkStore>;
+  /**
+   * One named statement of the managed sync (engine-sql/managed-sync-store.ts): the rows `gbrain sync` of a managed source reads and
+   * writes. PGLite and Postgres run its text on their own `executeRaw`; a Rust brain answers by name from its records. Called on a
+   * transaction engine, the statement runs in that transaction.
+   */
+  runSyncStatement<R = Record<string, unknown>>(name: SyncStatementName, params?: readonly unknown[], opts?: SyncStatementOptions): Promise<R[]>;
   /**
    * Extends an effect claim's lease by 2 minutes; true while it is running under the token with no recovery. `direct`
    * runs it on the Postgres direct lane (`executeRawDirect`), outside any pooled transaction.

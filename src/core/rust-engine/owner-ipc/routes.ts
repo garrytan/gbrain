@@ -6,7 +6,8 @@
  * - `forward`: the call crosses the owner socket as data and runs on the owner engine. Every member that takes only
  *   data is forwarded, executeRaw included (one statement, never a transaction).
  * - `refuse`: the member takes a callback that must run against the engine (a transaction body, a reserved
- *   connection, a schema lock, a store whose calls run inside a transaction: worktreeClaimStore and writerAdminStore).
+ *   connection, a schema lock, a store whose calls run inside a transaction: worktreeClaimStore and writerAdminStore, and
+ *   the managed-mode stores, whose answer is an object of functions).
  *   Transactions do not cross the socket, so the member rejects at once with `engine_capability_missing` and nothing runs.
  *   owner-ipc/whole-op.ts can send a whole operation that needs a transaction to run inside the owner, but no entry point
  *   calls it yet: a journaled write from a client (put_page, remember) stops at write admission, which opens a transaction,
@@ -32,7 +33,10 @@ export type OwnerIpcRoute = 'local' | 'forward' | 'refuse';
 
 const LOCAL: ReadonlySet<string> = new Set(['kind', 'capabilities', 'connect', 'disconnect', 'reconnect', 'registerBeforeDisconnect']);
 const REFUSE: ReadonlySet<string> = new Set(['transaction', 'transactionDirect', 'withReservedConnection', 'holdSchemaMigrationLock', 'keywordBoundedRead',
-  'worktreeClaimStore', 'writerAdminStore']);
+  'worktreeClaimStore', 'writerAdminStore',
+  // The managed-mode stores answer an object of functions that run on the owner's store: a function does not cross the
+  // socket, so a client refuses them by name instead of receiving an empty object (lane LM; managed mode runs in the owner).
+  'gitDurabilityStore', 'gitEffectStore', 'topologyStore', 'manualLinkStore', 'refreshStore', 'groupPublishStore']);
 
 export const OWNER_IPC_ROUTES: Readonly<Record<RustEngineMember, OwnerIpcRoute>> = Object.fromEntries(
   Object.keys(RUST_ENGINE_MEMBERS).map(member => [member, LOCAL.has(member) ? 'local' : REFUSE.has(member) ? 'refuse' : 'forward']),

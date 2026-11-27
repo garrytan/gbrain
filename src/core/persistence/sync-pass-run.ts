@@ -57,7 +57,6 @@ import { isCodeFilePath, readMetafilePagesMode, resolveSlugForPath } from '../sy
 import { readPassSwitches } from './sync-held-deletions.ts';
 import { keepPassPages, takePassPages } from './sync-tree-reuse.ts';
 import { syncOriginPath } from './sync-origin.ts';
-import { databaseOnlyPageSql } from './unbound-pages.ts';
 import { originMarkerFingerprint } from './sync-markers.ts';
 import { SYNC_SLICE_OP } from './sync-slices.ts';
 import { passResumeArgs } from './sync-pass-readers.ts';
@@ -69,6 +68,7 @@ import { SIZE_STATE_SAMPLE, type SyncSizeStates } from '../page-embedding-budget
 import { massReconcileAllowed } from '../sync-reconcile.ts';
 import { keepDbHeadroom } from '../repair/keep-db-policy.ts';
 import { removalPendingChanged } from './sync-removal-pending.ts';
+import { syncRows } from '../engine-sql/managed-sync-store.ts';
 
 /** Rounds a pass runs before it stops `not_converged` (design §3.1). */
 export const PASS_MAX_ROUNDS = 4;
@@ -134,9 +134,8 @@ const parserFingerprint = () => digest(['x.md', 'x.ts', 'x.png'].map(path => syn
  */
 async function retireLegacyCursors(engine: BrainEngine, input: { sourceId: string; incarnation: string; remote: boolean; assertActive: () => void }):
   Promise<{ wait?: RetryWait; hostRequired?: true; episode?: PassEpisode }> {
-  const readHeader = (key: string) => engine.executeRaw<{ slices: boolean; header: { runId?: string; done?: boolean; processingOptions?: SyncProcessingOptions; syncOptions?: SyncCursorOptions & { exclude?: string[]; includeHidden?: string[]; strategy?: string; srcSubpath?: string; workingTree?: boolean } } | null }>(
-    `SELECT (SELECT completed_keys->0 FROM op_checkpoints WHERE op='managed-sync' AND fingerprint=$1) AS header,
-      EXISTS (SELECT 1 FROM op_checkpoints WHERE op=$2 AND left(fingerprint, length($3))=$3) AS slices`, [key, SYNC_SLICE_OP, `${input.sourceId}:${input.incarnation}:`]);
+  const readHeader = (key: string) => syncRows<{ slices: boolean; header: { runId?: string; done?: boolean; processingOptions?: SyncProcessingOptions; syncOptions?: SyncCursorOptions & { exclude?: string[]; includeHidden?: string[]; strategy?: string; srcSubpath?: string; workingTree?: boolean } } | null }>(
+    engine, 'cursor_header_slices', [key, SYNC_SLICE_OP, `${input.sourceId}:${input.incarnation}:`]);
   // #6712 PR 4b: the canonical key's header is read beside the resolution (the key it picks unless it adopts an older one;
   // the resolution never writes the key it picks), and read again only for an adopted key.
   const canonical = managedCursorKey(input.incarnation, undefined), speculative = readHeader(canonical);
@@ -234,7 +233,7 @@ async function batchEntries(engine: BrainEngine, level: ShadowLevel, deletes: Sh
   if (adopting.length) {
     // A batch-wide read runs on this thread under PGLite (at 8k new files, about as long as the loops' budget): it starts a stretch of its own.
     await step.pause();
-    const identities = await engine.executeRaw<LegacyIdentity>("SELECT id, slug, source_path, deleted_at, frontmatter->>'id' AS fm_id FROM pages WHERE source_id=$1 AND (source_path IS NULL OR slug=ANY($2::text[]))",
+    const identities = await syncRows<LegacyIdentity>(engine, 'pages_for_adoption',
       [level.sourceId, [...new Set(adopting.map(entry => slugOf.get(entry.path)!))]]);
     const bySlug = new Map(identities.map(page => [page.slug, page]));
     for (const entry of adopting) {
@@ -246,8 +245,8 @@ async function batchEntries(engine: BrainEngine, level: ShadowLevel, deletes: Sh
   }
   const slugs = [...new Set([...slugOf.values()].filter(Boolean))];
   if (slugs.length) await step.pause();
-  const holders = new Map((slugs.length ? await engine.executeRaw<{ id: number | string; slug: string; source_path: string | null; revision: string; deleted: boolean; unbound: boolean; fm_id: string | null }>(
-    `SELECT id, slug, source_path, knowledge_revision::text AS revision, deleted_at IS NOT NULL AS deleted, ${databaseOnlyPageSql('pages')} AS unbound, frontmatter->>'id' AS fm_id FROM pages WHERE source_id=$1 AND slug=ANY($2::text[])`, [level.sourceId, slugs]) : [])
+  const holders = new Map((slugs.length ? await syncRows<{ id: number | string; slug: string; source_path: string | null; revision: string; deleted: boolean; unbound: boolean; fm_id: string | null }>(
+    engine, 'pages_by_slug', [level.sourceId, slugs]) : [])
     .map(page => [page.slug, page]));
   const gitPathOfOrigin = (origin: string) => level.slugMode === 'source-root' && level.scope ? `${level.scope}/${syncOriginPath(origin)}` : syncOriginPath(origin);
   // #6887: a both-moved import imports when the page still holds what its recorded disk blob imports (sync-screen.ts driftBaselineContent).
@@ -333,8 +332,7 @@ async function batchEntries(engine: BrainEngine, level: ShadowLevel, deletes: Sh
     // A held destination renamed again (a Git rename of the held path) carries the held identity on.
     const heldAt = (path: string | undefined) => path === undefined ? undefined : level.heldRenames.find(row => row.path === path)?.rename;
     const held = heldAt(winner.path) ?? (level.heldRenames.length ? heldAt((await gitRenames())?.get(winner.path)?.from) : undefined);
-    const origin = held ? (await engine.executeRaw<{ source_path: string | null; revision: string; deleted: boolean; fm_id: string | null }>(
-      "SELECT source_path, knowledge_revision::text AS revision, deleted_at IS NOT NULL AS deleted, frontmatter->>'id' AS fm_id FROM pages WHERE source_id=$1 AND id=$2", [level.sourceId, held.pageId]))[0] : undefined;
+    const origin = held ? (await syncRows<{ source_path: string | null; revision: string; deleted: boolean; fm_id: string | null }>(engine, 'page_origin_by_id', [level.sourceId, held.pageId]))[0] : undefined;
     if (held && origin && !origin.deleted && origin.source_path !== null && syncOriginPath(origin.source_path) === syncOriginPath(held.sourcePath)
       && !explicitIdVeto(incomingId(discovery, named(winner)), origin.fm_id)) {
       entries.push({ ...base, pageId: null, revision: null, ...(origin.revision === held.revision ? { renameFrom: held } : { renameHeld: held }) });
@@ -371,15 +369,12 @@ async function awaitInFlight(engine: BrainEngine, level: ShadowLevel, inFlight: 
   const pageIds = inFlight.flatMap(entry => entry.pageId === null ? [] : [entry.pageId]);
   const origins = inFlight.map(entry => entryPaths(level, entry.path).sourcePath);
   const names = `r.page_id=ANY($2::int[]) OR r.intent->>'sourcePath'=ANY($3::text[]) OR r.intent->>'path'=ANY($3::text[])`;
-  const opened = [...new Set([...(await engine.executeRaw<{ id: string }>(`SELECT r.id FROM persistence_requests r WHERE r.source_id=$1 AND r.state IN ('queued','running','recovering') AND (${names})`,
-    [level.sourceId, pageIds, origins])).map(row => String(row.id)), ...carried])];
+  const opened = [...new Set([...(await syncRows<{ id: string }>(engine, 'inflight_open_ids', [level.sourceId, pageIds, origins])).map(row => String(row.id)), ...carried])];
   const until = Date.now() + budgetMs;
   while (Date.now() < until) {
     // The open work readOpenWork marked: an open request, or a pending Git effect named by its request or its relative_path
     // (a put_page that created its page records no page_id or origin on the request).
-    const [open] = await engine.executeRaw(`SELECT 1 FROM persistence_requests r WHERE r.source_id=$1 AND (r.state IN ('queued','running','recovering') AND (${names})
-        OR EXISTS (SELECT 1 FROM persistence_effects e WHERE e.request_id=r.id AND e.kind='git' AND e.state IN ('queued','running')
-          AND (${names} OR e.data->>'relative_path'=ANY($3::text[])))) LIMIT 1`, [level.sourceId, pageIds, origins]);
+    const [open] = await syncRows(engine, 'inflight_open_work', [level.sourceId, pageIds, origins]);
     assertActive();
     if (!open) break;
     await new Promise(resolve => setTimeout(resolve, 100));
@@ -387,8 +382,7 @@ async function awaitInFlight(engine: BrainEngine, level: ShadowLevel, inFlight: 
   const credited = { added: 0, modified: 0, deleted: 0, renamed: 0, committed: [] as string[] };
   if (!opened.length) return credited;
   const created = new Set(inFlight.filter(entry => entry.pageId === null).map(entry => entryPaths(level, entry.path).sourcePath));
-  const committed = await engine.executeRaw<{ id: string; kind: string | null; source_path: string | null; renamed: boolean }>(`SELECT id::text AS id, intent->>'kind' AS kind, intent->>'sourcePath' AS source_path,
-    intent ? 'renameFrom' AS renamed FROM persistence_requests WHERE id=ANY($1::uuid[]) AND state='committed'`, [opened]);
+  const committed = await syncRows<{ id: string; kind: string | null; source_path: string | null; renamed: boolean }>(engine, 'inflight_committed', [opened]);
   credited.committed = committed.map(row => row.id);
   for (const row of committed) {
     if (row.kind === 'managed_sync_delete') credited.deleted++;
@@ -402,8 +396,7 @@ async function awaitInFlight(engine: BrainEngine, level: ShadowLevel, inFlight: 
 
 /** The oldest open request naming one of the in-flight pages or origins. */
 async function openInFlightRequest(engine: BrainEngine, level: ShadowLevel, inFlight: ShadowPath[]): Promise<WriteRequest | null> {
-  const [row] = await engine.executeRaw<{ id: string }>(`SELECT r.id FROM persistence_requests r WHERE r.source_id=$1 AND r.state IN ('queued','running','recovering')
-    AND (r.page_id=ANY($2::int[]) OR r.intent->>'sourcePath'=ANY($3::text[])) ORDER BY r.sequence LIMIT 1`,
+  const [row] = await syncRows<{ id: string }>(engine, 'open_inflight_request',
   [level.sourceId, inFlight.flatMap(entry => entry.pageId === null ? [] : [entry.pageId]), inFlight.map(entry => entryPaths(level, entry.path).sourcePath)]);
   return row ? getWriteRequestById(engine, row.id) : null;
 }
@@ -416,9 +409,7 @@ async function writeLegacyMarkers(engine: BrainEngine, level: ShadowLevel): Prom
   if (!rows.length) return 0;
   await engine.transaction(async tx => {
     await assertDrainLease(tx, level.sourceId);
-    await tx.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys,updated_at)
-      SELECT $1, row->>'fingerprint', jsonb_build_array(row->'value'), now() FROM jsonb_array_elements($2::text::jsonb) AS row ON CONFLICT (op,fingerprint) DO NOTHING`,
-    [SYNC_ORIGIN_DELETED_OP, JSON.stringify(rows)]);
+    await syncRows(tx, 'legacy_markers_insert', [SYNC_ORIGIN_DELETED_OP, JSON.stringify(rows)]);
   });
   return rows.length;
 }
@@ -441,7 +432,7 @@ async function pinPass(engine: BrainEngine, input: SyncPassInput, lease: NonNull
     input.processingOptions.noSchemaPack ? null : loadActivePackForEngine(engine, { remote: false, sourceId }).catch(() => null),
     readSyncTail(engine, sourceId), readGitHoldRetryPaths(engine, sourceId, incarnation), readGitSourceHolds(engine, { sourceIds: [sourceId] }),
     passIdleProbe(engine, { sourceId, incarnation, worktreeId: context.binding.worktree_id, requestHwm: null, openAtStamp: null }),
-    engine.executeRaw(`SELECT 1 FROM op_checkpoints WHERE op='managed-sync-failure' AND fingerprint=ANY($1::text[]) LIMIT 1`, [passFailureKeys(sourceId, incarnation)]),
+    syncRows(engine, 'failure_key_present', [passFailureKeys(sourceId, incarnation)]),
     readIdleFacts(engine, sourceId, incarnation)] as const);
   pin.catch(() => undefined);
   const handover = await retireLegacyCursors(engine, { sourceId, incarnation, remote, assertActive });
@@ -681,7 +672,7 @@ function mismatchStreaks(before: ManagedSyncPassValue['obligations']['mismatch']
 async function unchangedBlockedRefusal(engine: BrainEngine, input: { sourceId: string; incarnation: string; root: string; head: string; blocked: { request_id: string; pass_id: string } }):
   Promise<{ row: WriteRequest; intent: SyncIntent } | null> {
   if ((await readSyncHoldPolicy(engine)).mode !== 'fail') return null;
-  const [found] = await engine.executeRaw<{ id: string }>('SELECT id FROM persistence_requests WHERE source_id=$1 AND request_id=$2', [input.sourceId, input.blocked.request_id]);
+  const [found] = await syncRows<{ id: string }>(engine, 'request_by_request_id', [input.sourceId, input.blocked.request_id]);
   const row = found ? await getWriteRequestById(engine, found.id) : null;
   const intent = row?.intent as unknown as SyncIntent | null | undefined;
   if (!row || !intent || !['failed', 'conflict', 'cancelled'].includes(row.state)) return null;
@@ -1124,7 +1115,7 @@ export async function runSyncPass(engine: BrainEngine, input: SyncPassInput): Pr
  * `clock_timestamp()`), so a host clock running ahead cannot make a restriction look effective early.
  */
 async function databaseNow(tx: Pick<BrainEngine, 'executeRaw'>): Promise<string> {
-  const [row] = await tx.executeRaw<{ at: string | Date }>('SELECT now() AS at');
+  const [row] = await syncRows<{ at: string | Date }>(tx, 'database_now');
   return new Date(row!.at).toISOString();
 }
 

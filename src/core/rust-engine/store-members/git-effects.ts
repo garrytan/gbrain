@@ -11,10 +11,13 @@
 import type { GitEffectStore } from '../../engine-sql/git-effects.ts';
 import type { RustEngine } from '../../rust-engine.ts';
 import type { StoreBrain } from '../store.ts';
+import type { FenceOpts } from '../../engine-sql/lease-token.ts';
 import { storeCall } from './common.ts';
 import { heldStore } from './managed-hold.ts';
 
 const MEMBER = 'gitEffectStore';
+/** `{ fence }` when the call carries one, else nothing: an unfenced call sends what it always sent. */
+const fenceOf = (opts?: FenceOpts): FenceOpts => opts?.fence ? { fence: opts.fence } : {};
 
 function rustGitEffectStore(brain: StoreBrain): GitEffectStore {
   const call = <T>(run: () => Promise<T>): Promise<T> => storeCall({ member: MEMBER }, run);
@@ -23,10 +26,10 @@ function rustGitEffectStore(brain: StoreBrain): GitEffectStore {
   const claims = (list: readonly { id: string; token: string | null }[]) => list.map(c => ({ id: String(c.id), token: c.token }));
   return {
     publicationsPending: worktreeId => rows('publications_pending', { worktreeId }),
-    async yieldToPublications(list, delayMs) { await write('yield_to_publications', { claims: claims(list), delayMs }); },
+    async yieldToPublications(list, delayMs, opts) { await write('yield_to_publications', { claims: claims(list), delayMs, ...fenceOf(opts) }); },
     recoveringPublications: worktreeId => rows('recovering_publications', { worktreeId }),
     worktreeRecovering: worktreeId => rows('worktree_recovering', { worktreeId }),
-    async recordPlainOutcome(list, outcomeJson) { await write('record_plain_outcome', { claims: claims(list), outcomeJson }); },
+    async recordPlainOutcome(list, outcomeJson, opts) { await write('record_plain_outcome', { claims: claims(list), outcomeJson, ...fenceOf(opts) }); },
   };
 }
 

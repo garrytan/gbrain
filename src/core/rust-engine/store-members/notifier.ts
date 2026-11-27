@@ -62,14 +62,14 @@ export const writeNotifierState: StoreMember<[sourceId: string, patch: StatePatc
   const error = p.error ? { code: p.error.code, message: p.error.message.slice(0, 2000), tracePath: p.error.tracePath ?? null } : null;
   await storeCall({ member: 'writeNotifierState' }, () => brain.writeNotifierState(sourceId, {
     state: p.state, reason: p.reason ?? null, firstDue: p.firstDue, attempts: p.attempts ?? null, nextRetryInMs: p.nextRetryInMs ?? null,
-    progress: p.progress === true, errorGiven: p.error !== undefined, error,
+    progress: p.progress === true, errorGiven: p.error !== undefined, error, ...(p.lease ? { lease: p.lease } : {}),
   }));
 };
 
 /** The coverage record of a source, in one store write. */
 export const writeNotifierCoverage: StoreMember<[sourceId: string, coverage: Coverage], void> = async (brain, sourceId, c) => {
   await storeCall({ member: 'writeNotifierCoverage' }, () => brain.writeNotifierCoverage(sourceId,
-    { head: c.head, mode: c.mode, ownerHostId: c.ownerHostId, ownerKind: c.ownerKind, ownerPid: c.ownerPid }));
+    { head: c.head, mode: c.mode, ownerHostId: c.ownerHostId, ownerKind: c.ownerKind, ownerPid: c.ownerPid, ...(c.lease ? { lease: c.lease } : {}) }));
 };
 
 /** The host that advanced a classic source; nothing is written when it did not change. */

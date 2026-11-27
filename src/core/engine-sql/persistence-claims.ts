@@ -443,3 +443,141 @@ export async function selectClaimableWrite<R = Record<string, unknown>>(exec: Le
   const [row] = await exec.executeRaw<R>(sql, params);
   return row ?? null;
 }
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The lane head claim (persistence/journal.ts claimNextLaneHead) and the owner's reclaim of a write it released
+// (reclaimReleasedWrite): the three statements those two functions sent through executeRaw, text unchanged.
+
+/**
+ * The lane head read (#5984), the text `claimNextLaneHead` sent around the `foreground_priority` condition (see
+ * `laneHeadText`): the head of the next admitted group of lane $3 on worktree $2 for host $1, `LIMIT 1 FOR UPDATE OF r
+ * SKIP LOCKED`. $4 = the newest request sequence when this process last claimed a head of the run, $5 = this process's
+ * consumer nonce.
+ */
+const LANE_HEAD = [
+`SELECT r.* FROM persistence_requests r
+      JOIN persistence_worktrees w ON w.id=r.worktree_id
+      WHERE r.worktree_id=$2::uuid AND r.state='queued' AND (r.next_attempt_at IS NULL OR r.next_attempt_at<=now()) AND r.intent->>'lane'=$3 AND r.intent->>'group'=r.request_id::text
+        AND w.owner_host_id=$1::uuid AND w.state='active' AND NOT EXISTS (SELECT 1 FROM persistence_worktree_refreshes fence WHERE fence.worktree_id=r.worktree_id
+        AND fence.state IN ('fenced','merged','recovery_required'))
+        AND NOT EXISTS (SELECT 1 FROM persistence_effects blocked WHERE blocked.worktree_id=r.worktree_id AND blocked.recovery IS NOT NULL)
+        AND NOT EXISTS (SELECT 1 FROM persistence_effects mirror WHERE mirror.worktree_id=r.worktree_id
+          AND mirror.kind='withdrawal-mirror' AND mirror.state IN ('queued','running'))
+        AND NOT EXISTS (SELECT 1 FROM persistence_requests blocked WHERE blocked.worktree_id=r.worktree_id AND blocked.recovery IS NOT NULL)
+        AND NOT EXISTS (SELECT 1 FROM persistence_requests earlier WHERE earlier.worktree_id=r.worktree_id AND earlier.sequence<r.sequence
+          AND (earlier.state IN ('queued','recovering') OR (earlier.state='deferred' AND (earlier.deferred_refresh_id IS NOT NULL OR earlier.deferred_import_from IS NOT NULL)
+        AND (earlier.deferred_refresh_id IS NULL OR EXISTS (SELECT 1 FROM persistence_worktree_refreshes released
+          WHERE released.id=earlier.deferred_refresh_id AND released.released_at IS NOT NULL))
+        AND (earlier.deferred_import_from IS NULL OR EXISTS (SELECT 1 FROM sources imported
+          WHERE imported.id=earlier.source_id AND COALESCE(imported.last_commit,'')<>earlier.deferred_import_from))) OR (earlier.state='running' AND COALESCE(earlier.intent->>'lane','')<>$3)))
+        -- #5984 Phase 4.5: no new lane head while a foreground write that may go first waits (a claimed one publishes
+        -- beside the lanes), except one head after each foreground commit since this run's last head claim.
+        AND NOT ((`,
+`) AND r.worktree_id IN (SELECT f.worktree_id FROM (SELECT f.worktree_id, f.sequence FROM persistence_requests f
+    WHERE f.worktree_id=$2::uuid AND (f.state IN ('queued','running','recovering') OR (f.state='deferred' AND (f.deferred_refresh_id IS NOT NULL OR f.deferred_import_from IS NOT NULL)
+        AND (f.deferred_refresh_id IS NULL OR EXISTS (SELECT 1 FROM persistence_worktree_refreshes released
+          WHERE released.id=f.deferred_refresh_id AND released.released_at IS NOT NULL))
+        AND (f.deferred_import_from IS NULL OR EXISTS (SELECT 1 FROM sources imported
+          WHERE imported.id=f.source_id AND COALESCE(imported.last_commit,'')<>f.deferred_import_from)))) AND (f.state<>'running' OR (NOT f.publication_started
+      AND f.claim_phase->'owner'->>'nonce' IS DISTINCT FROM $5::text))
+    AND f.recovery IS NULL AND NOT COALESCE(f.intent->>'kind','') LIKE 'managed_sync_%'
+    AND NOT EXISTS (SELECT 1 FROM persistence_requests named WHERE named.worktree_id=f.worktree_id AND named.sequence<f.sequence
+      AND named.state IN ('queued','running','recovering') AND COALESCE(named.intent->>'kind','') LIKE 'managed_sync_%' AND (named.source_id=f.source_id AND (named.slug=f.slug
+  OR named.page_id=f.page_id OR named.intent->'renameFrom'->>'slug'=f.slug)))
+    AND NOT EXISTS (SELECT 1 FROM persistence_requests ahead WHERE ahead.worktree_id=f.worktree_id AND ahead.sequence<f.sequence
+      AND (ahead.state='queued' OR (ahead.state='deferred' AND (ahead.deferred_refresh_id IS NOT NULL OR ahead.deferred_import_from IS NOT NULL)
+        AND (ahead.deferred_refresh_id IS NULL OR EXISTS (SELECT 1 FROM persistence_worktree_refreshes released
+          WHERE released.id=ahead.deferred_refresh_id AND released.released_at IS NOT NULL))
+        AND (ahead.deferred_import_from IS NULL OR EXISTS (SELECT 1 FROM sources imported
+          WHERE imported.id=ahead.source_id AND COALESCE(imported.last_commit,'')<>ahead.deferred_import_from)))) AND NOT COALESCE(ahead.intent->>'kind','') LIKE 'managed_sync_%'
+      AND EXISTS (SELECT 1 FROM persistence_requests named WHERE named.worktree_id=ahead.worktree_id AND named.sequence<ahead.sequence
+        AND named.state IN ('queued','running','recovering') AND COALESCE(named.intent->>'kind','') LIKE 'managed_sync_%' AND (named.source_id=ahead.source_id AND (named.slug=ahead.slug
+  OR named.page_id=ahead.page_id OR named.intent->'renameFrom'->>'slug'=ahead.slug))))
+    AND NOT EXISTS (SELECT 1 FROM persistence_requests c WHERE c.sequence>COALESCE($4::bigint,0) AND c.worktree_id=f.worktree_id
+      AND c.state='committed' AND NOT COALESCE(c.intent->>'kind','') LIKE 'managed_sync_%')) f))
+      ORDER BY r.sequence LIMIT 1 FOR UPDATE OF r SKIP LOCKED`,
+] as const;
+
+/** What the lane head read selects by; journal.ts `claimNextLaneHead` documents each input. */
+export interface LaneHeadSpec {
+  /** $1: this consumer's host id (a uuid). */
+  hostId: string;
+  /** $2: the worktree whose lane runs here (a uuid). */
+  worktreeId: string;
+  /** $3: the lane run. */
+  run: string;
+  /** $4: the newest request sequence when this process last claimed a head of the run, or null. */
+  seenSequence: string | null;
+  /** $5: this process's consumer nonce. */
+  nonce: string;
+  /** The `foreground_priority` environment override, or null for the brain config row. */
+  priority: boolean | null;
+  /** The caller's host fence on a multi-user Rust brain; the SQL engines ignore it. */
+  fence?: LeaseToken;
+}
+
+/** The lane head read for one `foreground_priority` value. */
+export function laneHeadText(priority: boolean | null | undefined): string {
+  return `${LANE_HEAD[0]}${PRIORITY_SQL[priorityKey(priority)]}${LANE_HEAD[1]}`;
+}
+
+/** The lane head read's text and parameters for one spec. */
+export function laneHeadStatement(spec: LaneHeadSpec): { sql: string; params: unknown[] } {
+  return { sql: laneHeadText(spec.priority), params: [spec.hostId, spec.worktreeId, spec.run, spec.seenSequence, spec.nonce] };
+}
+
+/** The request the lane head claim takes next, locked until its transaction ends, or null. */
+export async function selectClaimableLaneHead<R = Record<string, unknown>>(exec: LegacyUnscopedRead, spec: LaneHeadSpec): Promise<R | null> {
+  const { sql, params } = laneHeadStatement(spec);
+  const [row] = await exec.executeRaw<R>(sql, params);
+  return row ?? null;
+}
+
+/**
+ * The lane head's claim stamp: running under a token with its lease and first phase, returning the row with the newest
+ * request sequence as `seen_sequence`. $1 id, $2 token, $3 lease ms, $4 the claim phase.
+ */
+export const LANE_HEAD_STAMP_SQL = `UPDATE persistence_requests SET state='running',
+      execution_token=$2::uuid,claim_expires_at=now()+($3::double precision*interval '1 millisecond'),
+      updated_at=now(),blocked_reason=NULL,claim_phase=$4::text::jsonb WHERE id=$1::uuid RETURNING *,(SELECT max(sequence) FROM persistence_requests)::text AS seen_sequence`;
+
+/** A lane head claim stamp: request `id`, its new claim `token`, the lease and the phase to record. */
+export interface LaneHeadStamp { id: string; token: string; leaseMs: number; phaseJson: string; fence?: LeaseToken }
+
+/** Stamps the lane head claim; the claimed row with `seen_sequence`, or null when no request has the id. */
+export async function stampLaneHeadClaim<R = Record<string, unknown>>(exec: SqlExecutor, stamp: LaneHeadStamp): Promise<R | null> {
+  const [claimed] = await exec.executeRaw<R>(LANE_HEAD_STAMP_SQL, [stamp.id, stamp.token, stamp.leaseMs, stamp.phaseJson]);
+  return claimed ?? null;
+}
+
+/**
+ * `reclaimReleasedWrite` (#6007; the protocol predicate and `BACKOFF_ELAPSED('persistence_requests')` written out): claims
+ * again a request this owner pass released to the queue itself, never before its backoff. $1 id, $2 token, $3 lease ms, $4 phase.
+ */
+export const RECLAIM_RELEASED_SQL = `UPDATE persistence_requests SET state='running',execution_token=$2::uuid,
+    claim_expires_at=now()+($3::double precision*interval '1 millisecond'),updated_at=now(),blocked_reason=NULL,claim_phase=$4::text::jsonb
+    WHERE id=$1::uuid AND state='queued' AND recovery IS NULL AND (persistence_requests.next_attempt_at IS NULL OR persistence_requests.next_attempt_at<=now()) AND set_config('gbrain.persistence_protocol','2',true)='2' RETURNING *`;
+
+/** Reclaims request `id` under a fresh `token`: the claimed row, or null when it is not queued, holds a recovery or is still backing off. */
+export async function reclaimReleasedWrite<R = Record<string, unknown>>(exec: SqlExecutor, stamp: LaneHeadStamp): Promise<R | null> {
+  const [claimed] = await exec.executeRaw<R>(RECLAIM_RELEASED_SQL, [stamp.id, stamp.token, stamp.leaseMs, stamp.phaseJson]);
+  return claimed ?? null;
+}
+
+/**
+ * `chargeTransientInterruption` (persistence/transient-retry.ts; the protocol predicate written out): counts one transient
+ * interruption on a claim still held under its token and schedules the next claim after a bounded exponential backoff.
+ * $1 id, $2 token, $3 base ms, $4 ceiling ms.
+ */
+export const CHARGE_TRANSIENT_SQL = `UPDATE persistence_requests SET transient_interruptions=transient_interruptions+1,
+    next_attempt_at=now()+(LEAST($3::double precision*power(2::double precision,LEAST(transient_interruptions,30)),$4::double precision)*interval '1 millisecond'),
+    updated_at=now() WHERE id=$1::uuid AND execution_token=$2::uuid AND state='running' AND set_config('gbrain.persistence_protocol','2',true)='2' RETURNING transient_interruptions`;
+
+/** A transient interruption charged to claim `token` of request `id`, with the backoff's base and ceiling. */
+export interface TransientCharge { id: string; token: string | null; baseMs: number; maxMs: number; fence?: LeaseToken }
+
+/** The count after the charge, or null when the request is no longer running under the token. */
+export async function chargeTransientInterruption(exec: SqlExecutor, charge: TransientCharge): Promise<{ transient_interruptions: number } | null> {
+  const [charged] = await exec.executeRaw<{ transient_interruptions: number }>(CHARGE_TRANSIENT_SQL, [charge.id, charge.token, charge.baseMs, charge.maxMs]);
+  return charged ?? null;
+}

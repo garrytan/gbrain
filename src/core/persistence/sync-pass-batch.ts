@@ -8,6 +8,7 @@ import type { SyncEntry } from './sync-discovery.ts';
 import { assertDrainLease } from './sync-lease.ts';
 import { admissionAllows, readSyncAdmission, type SyncAdmission } from './sync-admission.ts';
 import { reservePassCost, type PricedIntent } from './sync-pass-episode.ts';
+import { syncRows } from '../engine-sql/managed-sync-store.ts';
 
 /**
  * #6712 PR 4b (design v3.2 §3.1): a live pass admits each round batch through the cursor machinery of sync-run.ts with no
@@ -85,16 +86,10 @@ export async function readConvergedWatermark(tx: Pick<BrainEngine, 'executeRaw'>
   /** `converged.writeback` (sync-pass-row.ts): a folded writeback stamp's own write, and the prior stamp's list, of which the uncommitted stay. */
   writeback?: { own?: string; prior?: readonly string[] }): Promise<{ request_hwm: string; open_at_stamp: string[] | null; writeback?: string[] }> {
   // The worktree's requests and the incarnation's worktree-less ones (writes admitted with sync.write_through=false).
-  const [hwm] = await tx.executeRaw<{ hwm: string | null }>(`SELECT GREATEST((SELECT max(sequence) FROM persistence_requests WHERE worktree_id=$1::uuid),
-    (SELECT max(sequence) FROM persistence_requests WHERE worktree_id IS NULL AND source_id=$2 AND source_incarnation=$3::uuid))::text AS hwm`, [scope.worktreeId, scope.sourceId, scope.incarnation]);
-  const open = await tx.executeRaw<{ id: string }>(`(SELECT 'r:'||request_id::text AS id FROM persistence_requests
-      WHERE state IN ('queued','running','recovering') AND (worktree_id=$1::uuid OR worktree_id IS NULL AND source_id=$4 AND source_incarnation=$5::uuid)
-        AND request_id IS DISTINCT FROM $2::uuid LIMIT $3)
-    UNION ALL (SELECT 'e:'||e.id::text FROM persistence_effects e JOIN persistence_requests r ON r.id=e.request_id
-      WHERE r.worktree_id=$1::uuid AND e.kind='git' AND e.state IN ('queued','running') LIMIT $3)`, [scope.worktreeId, selfRequestId, cap + 1, scope.sourceId, scope.incarnation]);
+  const [hwm] = await syncRows<{ hwm: string | null }>(tx, 'converged_hwm', [scope.worktreeId, scope.sourceId, scope.incarnation]);
+  const open = await syncRows<{ id: string }>(tx, 'converged_open', [scope.worktreeId, selfRequestId, cap + 1, scope.sourceId, scope.incarnation]);
   // The prior list's writebacks whose Git effect has not committed (queued, running, failed or parked) and is not settled stay listed.
-  const carried = writeback?.prior?.length ? (await tx.executeRaw<{ id: string }>(`SELECT DISTINCT e.request_id::text AS id FROM persistence_effects e
-      WHERE e.request_id = ANY($1::uuid[]) AND e.kind='git' AND e.state<>'committed' AND NOT (e.data ? 'settled')`, [writeback.prior])).map(row => row.id) : [];
+  const carried = writeback?.prior?.length ? (await syncRows<{ id: string }>(tx, 'converged_writeback', [writeback.prior])).map(row => row.id) : [];
   const listed = [...new Set([...(writeback?.own ? [writeback.own] : []), ...carried])];
   return { request_hwm: hwm?.hwm ?? '0', open_at_stamp: open.length > cap ? null : open.map(row => row.id), ...(listed.length ? { writeback: listed } : {}) };
 }

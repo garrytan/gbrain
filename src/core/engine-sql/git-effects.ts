@@ -9,6 +9,7 @@
  * (rust/crates/gbrain-store/src/persistence/git_effects.rs).
  */
 import type { BrainEngine } from '../engine.ts';
+import type { FenceOpts } from './lease-token.ts';
 
 type RawSql = Pick<BrainEngine, 'executeRaw'>;
 
@@ -19,7 +20,7 @@ export interface GitEffectStore {
   /** Whether a request on the worktree is still queued or running (a group yields to it). */
   publicationsPending(worktreeId: string): Promise<boolean>;
   /** Requeues the claimed effects `publication_pending`, due again after `delayMs`. */
-  yieldToPublications(claims: readonly GitEffectClaimRef[], delayMs: number): Promise<void>;
+  yieldToPublications(claims: readonly GitEffectClaimRef[], delayMs: number, opts?: FenceOpts): Promise<void>;
   /**
    * The worktree's requests that hold a recovery record: null when none does, else whether every one of them is a
    * publication in flight (running under a live claim, or settled with its record not yet cleared).
@@ -28,7 +29,7 @@ export interface GitEffectStore {
   /** Whether any request on the worktree holds a recovery record. */
   worktreeRecovering(worktreeId: string): Promise<boolean>;
   /** Settles the claimed effects (no recovery) with `outcomeJson`: committed, or failed `targets_parked` when they parked targets. */
-  recordPlainOutcome(claims: readonly GitEffectClaimRef[], outcomeJson: string): Promise<void>;
+  recordPlainOutcome(claims: readonly GitEffectClaimRef[], outcomeJson: string, opts?: FenceOpts): Promise<void>;
 }
 
 /** `publicationsPending`: $1 worktree id. */

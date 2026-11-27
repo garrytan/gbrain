@@ -2,6 +2,7 @@
  * The facts statements of BrainEngine: doctor, cycle, purge, withdrawal, relink, repair, trust and conversation members.
  * Declarations moved verbatim out of engine.ts; `BrainEngine` extends this interface, so the member set is unchanged.
  */
+import type { LeaseToken } from '../engine-sql/lease-token.ts';
 import type * as AccessGrantsSql from '../engine-sql/access-grants.ts';
 import type { ConversationFactLink, ConversationRelinkPagesQuery, RelinkPlacement } from '../engine-sql/fact-relink-writes.ts';
 import type * as DerivationTrustSql from '../engine-sql/derivation-trust.ts';
@@ -497,9 +498,9 @@ export interface FactsStatementMembers {
   /** Whether another continuation's live claim (not `claim`) holds the page's deferred chunk replacement at `revision`. */
   isDeferredReplacementHeld(sourceId: string, slug: string, revision: string, claim: string): Promise<boolean>;
   /** Gives the job still queued at `job.revision` the reason `claim` at now. */
-  renewDeferredReplacementClaim(job: ProjectionRebuildSql.ProjectionJobKey, claim: string): Promise<void>;
+  renewDeferredReplacementClaim(job: ProjectionRebuildSql.ProjectionJobKey, claim: string, opts?: { fence?: LeaseToken }): Promise<void>;
   /** Hands a continuation's claim back: every job of `slug` whose reason is still `claim` gets the deferred replacement reason, its time unchanged. */
-  releaseDeferredReplacementClaim(slug: string, claim: string): Promise<void>;
+  releaseDeferredReplacementClaim(slug: string, claim: string, opts?: { fence?: LeaseToken }): Promise<void>;
   /** The rows a media drain takes, images last, then pages answered from their pre-upgrade index, oldest first, at most `limit`. */
   listProjectionDrainPreview(limit: number): Promise<ProjectionRebuildSql.ProjectionDrainPreviewRow[]>;
   /** The image seal's window: queue rows after `after` (incarnation, slug in the C collation), at most `limit`, each with whether its page is a sealable image at the row's revision. */

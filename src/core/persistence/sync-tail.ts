@@ -15,6 +15,7 @@ import { faultPoint } from './fault-points.ts';
 import { currentDrainLease } from './sync-lease.ts';
 import { readSyncTail, SYNC_TAIL_OP, type TailObligation } from './sync-tail-record.ts';
 import type { SyncResult } from '../../commands/sync.ts';
+import { syncRows } from '../engine-sql/managed-sync-store.ts';
 
 /** The tail's link-extraction budget (it was the governed pass's `FINISH_BUDGET_MS`); a caller deadline shortens it. */
 export const SYNC_TAIL_BUDGET_MS = 5 * 60_000;
@@ -66,11 +67,7 @@ export async function runSyncTail(engine: BrainEngine, sourceId: string, opts: {
     if (extract && deadlineAt > Date.now()) {
       // A cursor run's imports are its manifest's; a pass writes none, so its imports are its committed requests since its pin.
       const passes = owed.filter(item => item.since);
-      slugs = (await engine.executeRaw<{ slug: string }>(`SELECT DISTINCT slug FROM (SELECT e->>'slug' AS slug FROM op_checkpoints m, jsonb_array_elements(m.completed_keys) e
-        WHERE m.op='managed-sync-manifest' AND m.fingerprint=ANY($1::text[]) AND e->>'action'='import' AND e->>'slug' IS NOT NULL
-        UNION SELECT r.slug FROM persistence_requests r, jsonb_to_recordset($2::text::jsonb) AS p(run_id text, since timestamptz, at timestamptz)
-        WHERE r.recovery IS NULL AND NOT r.compacted AND r.state='committed' AND r.completed_at BETWEEN p.since AND p.at AND r.source_id=$3
-          AND r.intent->>'passId'=p.run_id AND r.intent->>'kind'='managed_sync_import') imported LIMIT ${SYNC_TAIL_MAX_PAGES + 1}`,
+      slugs = (await syncRows<{ slug: string }>(engine, 'tail_slugs',
       [owed.map(item => item.run_id), JSON.stringify(passes.map(item => ({ run_id: item.run_id, since: item.since, at: item.at }))), sourceId],
       { timeoutMs: Math.max(1, deadlineAt - Date.now()) })).map(row => row.slug);
       if (deadlineAt > Date.now()) links = await extractManagedStaleLinks(engine, { sourceId, maxPages: SYNC_TAIL_MAX_PAGES, timeBudgetMs: deadlineAt - Date.now(), signal: opts.signal, mentions: false, slugs,
@@ -80,7 +77,7 @@ export async function runSyncTail(engine: BrainEngine, sourceId: string, opts: {
     failure = error instanceof Error ? error.message : String(error);
   }
   const ran = failure === null && (!extract || links !== undefined);
-  if (ran) await engine.executeRaw('DELETE FROM op_checkpoints WHERE op=$1 AND fingerprint=$2 AND completed_keys=$3::text::jsonb', [SYNC_TAIL_OP, sourceId, JSON.stringify(owed)]).catch(() => undefined);
+  if (ran) await syncRows(engine, 'tail_clear', [SYNC_TAIL_OP, sourceId, JSON.stringify(owed)]).catch(() => undefined);
   // Imported pages are derived first, so the run left some underived only when it visited fewer pages than it imported;
   // `remaining` is the source's whole stale backlog, older pages included, and is not this run's to report.
   const underived = links ? Math.max(0, slugs.length - links.pages - links.skipped) : 0;

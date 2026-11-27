@@ -63,6 +63,7 @@ import { originConflictHold } from './sync-screen.ts';
 import { readSyncFile } from './sync-discovery.ts';
 import { frontmatterIdentity } from '../sync-rename-identity.ts';
 import { applyHeldDeletions, newHeldDeletionState, type HeldDeletionState } from './sync-held-deletions.ts';
+import { syncRows } from '../engine-sql/managed-sync-store.ts';
 
 /** Legacy pages the sweep screens per pass after the incarnation's first full round (design §2.7, [estimated]). */
 export const PASS_LEGACY_SWEEP_MAX = 500;
@@ -292,11 +293,9 @@ async function skipDanglingLinks(engine: BrainEngine, level: ShadowLevel, input:
   if (level.mode === 'committed' && links.length) links = keepCommittedLinks(links, committedSymlinks(level.gitRoot, level.head, links.map(link => link.entry.path)));
   if (!links.length) return;
   const slugs = [...new Set(links.flatMap(link => link.slug ? [link.slug] : []))];
-  const live = new Set(slugs.length ? (await engine.executeRaw<{ slug: string }>('SELECT slug FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND slug=ANY($2::text[])',
-    [level.sourceId, slugs])).map(row => row.slug) : []);
+  const live = new Set(slugs.length ? (await syncRows<{ slug: string }>(engine, 'live_slugs', [level.sourceId, slugs])).map(row => row.slug) : []);
   const skipped = links.filter(link => !link.slug || !live.has(link.slug));
-  const holds = new Set((await engine.executeRaw<{ path: string }>(`SELECT completed_keys->0->>'path' AS path FROM op_checkpoints WHERE op=$1 AND fingerprint=ANY($2::text[])
-    AND completed_keys->0->>'code'='file_unreadable'`, [GIT_HOLD_OP, skipped.filter(link => link.entry.state.hold).map(link => gitHoldFingerprint(level.sourceId, level.incarnation, link.path))])).map(row => row.path));
+  const holds = new Set((await syncRows<{ path: string }>(engine, 'unreadable_hold_paths', [GIT_HOLD_OP, skipped.filter(link => link.entry.state.hold).map(link => gitHoldFingerprint(level.sourceId, level.incarnation, link.path))])).map(row => row.path));
   const settled = skipped.filter(link => !link.entry.state.hold || holds.has(link.path));
   await inFencedSlices(engine, level.sourceId, settled.filter(link => holds.has(link.path)), async (tx, link) => {
     if (await clearGitHold(tx, { sourceId: level.sourceId, incarnation: level.incarnation, path: link.path, observedAt: input.observedAt })) state.dangling.released++;
@@ -448,8 +447,7 @@ async function writeRecords(engine: BrainEngine, level: ShadowLevel, writes: Rec
   for (const write of writes) recorded.add(write.pageId);
   return engine.transaction(async tx => {
     await assertDrainLease(tx, level.sourceId);
-    const rows = await tx.executeRaw<{ id: number | string; revision: string }>('SELECT id, knowledge_revision::text AS revision FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND id=ANY($2::int[]) FOR SHARE',
-      [level.sourceId, writes.map(write => write.pageId)]);
+    const rows = await syncRows<{ id: number | string; revision: string }>(tx, 'pages_revisions_shared', [level.sourceId, writes.map(write => write.pageId)]);
     const current = new Map(rows.map(row => [Number(row.id), row.revision]));
     const fenced = writes.filter(write => current.get(write.pageId) === write.revision);
     await recordSyncImportProvenances(tx, fenced.map(write => write.record));

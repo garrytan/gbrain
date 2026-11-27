@@ -22,8 +22,9 @@
 //! Run more seeds with `GBRAIN_SIM_SEEDS=10000`; repeat one with `GBRAIN_SIM_SEED=<n>`.
 //!
 //! This file drives the single-writer store only. Its crash and recovery tests are named
-//! `embedded_one_owner_...`; each has an `#[ignore = "multi_writer"]` twin for the optimistic store, which
-//! `tests/multi_writer_sim.rs` drives through the `step_pipeline()` seam once it exists.
+//! `embedded_one_owner_...`; each has a `_multi_writer` twin on the optimistic store with multi-user mode and the commit log on.
+//! The twins' clients take steps one at a time on the seeded scheduler, so a commit is a batch of one; the interleaved batches
+//! of the optimistic pipeline are driven through the `step_pipeline()` seam in `tests/multi_writer_sim.rs`.
 
 mod common;
 
@@ -40,6 +41,7 @@ use gbrain_store::kv::{read_i64, scan_prefix};
 use gbrain_store::links::{
     AddLinkOptions, LinkBatchInput, LinkScope, RemoveLinkOptions, TraverseGraphOptions,
 };
+use gbrain_store::occ_kv::OccKv;
 use gbrain_store::pages::{PageInput, PutPageOptions, ReadScope};
 use gbrain_store::redb_kv::RedbKv;
 use gbrain_store::timeline::{
@@ -83,10 +85,36 @@ impl FileBackend for SimBackend {
     }
 }
 
-fn open_kv(disk: &SimDisk) -> Result<Arc<dyn Kv>, StoreError> {
+/// The record file on the simulated disk: redb alone (one writer), or under the optimistic commit pipeline.
+fn open_kv(disk: &SimDisk, optimistic: bool) -> Result<Arc<dyn Kv>, StoreError> {
     let kv = RedbKv::open_backend(Box::new(SimBackend(disk.open(FILE))))?;
+    if optimistic {
+        return Ok(Arc::new(OccKv::new(kv)?));
+    }
     Ok(Arc::new(kv))
 }
+
+/// What a run opens: the single-writer store, the single-writer store with the commit log on (multi-user mode), or the
+/// optimistic store with multi-user mode and the log on (the multi-writer twins).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Flavor {
+    logged: bool,
+    optimistic: bool,
+}
+
+const PLAIN: Flavor = Flavor {
+    logged: false,
+    optimistic: false,
+};
+const LOGGED: Flavor = Flavor {
+    logged: true,
+    optimistic: false,
+};
+/// Multi-user mode and the log on, on the optimistic record file.
+const OPTIMISTIC: Flavor = Flavor {
+    logged: true,
+    optimistic: true,
+};
 
 // ---- time and ids from the seed --------------------------------------------------------------
 
@@ -220,6 +248,9 @@ impl KvWrite for RecWrite {
         let outcome = inner.commit();
         let mut log = log.lock().unwrap();
         match &outcome {
+            // A write that changed nothing commits without a new sequence on the optimistic store (it reports the version it saw):
+            // not a commit to record.
+            Ok(version) if writes.is_empty() && *version <= log.last => {}
             Ok(version) => {
                 log.committed.push(Committed {
                     snapshot: version.saturating_sub(1),
@@ -616,12 +647,14 @@ struct Run {
 
 /// Open the store on `disk`, apply `plan` once it is ready, and drive the seeded clients.
 fn workload(disk: &SimDisk, seed: u64, plan: Option<FaultPlan>) -> Result<Run, StoreError> {
-    workload_as(disk, seed, plan, false)
+    workload_as(disk, seed, plan, PLAIN)
 }
 
-/// The options of a logged run: the commit log on, with a host id for the write origin.
-fn logged_options() -> OpenOptions {
+/// The options of a logged run: the commit log on, with a host id for the write origin; `optimistic` puts the store on the
+/// concurrent-write record file (`concurrent_writes`).
+fn logged_options(optimistic: bool) -> OpenOptions {
     OpenOptions {
+        concurrent_writes: optimistic,
         multiuser: true,
         multiuser_writes: MultiUserWrites {
             commit_log: true,
@@ -637,9 +670,9 @@ fn workload_as(
     disk: &SimDisk,
     seed: u64,
     plan: Option<FaultPlan>,
-    logged: bool,
+    flavor: Flavor,
 ) -> Result<Run, StoreError> {
-    let kv = open_kv(disk)?;
+    let kv = open_kv(disk, flavor.optimistic)?;
     let log = Arc::new(Mutex::new(Log {
         committed: Vec::new(),
         in_doubt: Vec::new(),
@@ -652,13 +685,17 @@ fn workload_as(
     let store = Store::open_kv(
         recording,
         Arc::new(SimEnv::new(seed ^ 0xE4E)),
-        if logged {
-            logged_options()
+        if flavor.logged {
+            logged_options(flavor.optimistic)
         } else {
             OpenOptions::default()
         },
     )?;
-    let baseline = if logged {
+    if flavor.logged {
+        // Multi-user mode and the log on, in the run and asserted: a run that lost the switch fails here, never passes as a plain one.
+        common::mu::assert_logged(&store);
+    }
+    let baseline = if flavor.logged {
         let read = kv.snapshot()?;
         let meta = commit_log::read_meta(&*read)?.expect("a logged run's brain keeps a log");
         Some((data_of(&*read)?, meta.newest))
@@ -729,7 +766,14 @@ fn data_of(read: &dyn KvRead) -> Result<Model, StoreError> {
 /// A logged run's log check: every record after the baseline position, applied to the baseline
 /// in order, gives exactly the records `kv` holds. A gap, a record whose data is missing or data
 /// whose record is missing shows up as a difference.
-fn check_log_replay(kv: &dyn Kv, baseline: &(Model, CommitPosition)) -> Result<(), String> {
+///
+/// `optimistic`: the optimistic store logs blind counter adds (`AddI64`: the delta, 8 bytes little-endian, onto a counter stored the
+/// same way, absent as 0), which the replay applies; the single-writer store never logs one, and a run that finds one fails.
+fn check_log_replay(
+    kv: &dyn Kv,
+    baseline: &(Model, CommitPosition),
+    optimistic: bool,
+) -> Result<(), String> {
     let read = kv.snapshot().map_err(|e| e.to_string())?;
     let (start, cursor) = baseline;
     let page = commit_log::read_commit_log(&*read, Some(*cursor), usize::MAX)
@@ -771,6 +815,17 @@ fn check_log_replay(kv: &dyn Kv, baseline: &(Model, CommitPosition)) -> Result<(
                         .map(u64::from_be_bytes)
                         .unwrap_or(0);
                     model.insert(key.clone(), base.max(*m).to_be_bytes().to_vec());
+                }
+                commit_log::LogOp::AddI64(delta) if optimistic => {
+                    let base = model
+                        .get(key)
+                        .and_then(|b| <[u8; 8]>::try_from(b.as_slice()).ok())
+                        .map(i64::from_le_bytes)
+                        .unwrap_or(0);
+                    model.insert(
+                        key.clone(),
+                        base.wrapping_add(*delta).to_le_bytes().to_vec(),
+                    );
                 }
                 other => return Err(format!("the single-writer store logged {other:?}")),
             }
@@ -1194,17 +1249,18 @@ fn reopen(
     disk: &SimDisk,
     seed: u64,
     baseline: Option<&(Model, CommitPosition)>,
+    optimistic: bool,
 ) -> (Reopen, Vec<Violation>) {
     let mut extra = Vec::new();
     let opened = catch_unwind(AssertUnwindSafe(|| -> Result<(u64, Model), StoreError> {
-        let kv = open_kv(disk)?;
+        let kv = open_kv(disk, optimistic)?;
         let version = kv.version()?;
         let state = read_state(&*kv)?;
         for problem in integrity(&*kv)? {
             extra.push(corrupt(format!("after recovery: {problem}")));
         }
         if let Some(baseline) = baseline
-            && let Err(problem) = check_log_replay(&*kv, baseline)
+            && let Err(problem) = check_log_replay(&*kv, baseline, optimistic)
         {
             extra.push(corrupt(format!(
                 "after recovery, the commit log: {problem}"
@@ -1214,11 +1270,14 @@ fn reopen(
             kv.clone(),
             Arc::new(SimEnv::new(seed ^ 0x5EED)),
             if baseline.is_some() {
-                logged_options()
+                logged_options(optimistic)
             } else {
                 OpenOptions::default()
             },
         )?;
+        if baseline.is_some() {
+            common::mu::assert_logged(&store);
+        }
         let input: PageInput = serde_json::from_value(
             json!({"type": "note", "title": "after", "compiled_truth": "written after recovery"}),
         )
@@ -1237,7 +1296,7 @@ fn reopen(
             )));
         }
         if let Some(baseline) = baseline
-            && let Err(problem) = check_log_replay(&*kv, baseline)
+            && let Err(problem) = check_log_replay(&*kv, baseline, optimistic)
         {
             extra.push(corrupt(format!(
                 "after the first write following recovery, the commit log: {problem}"
@@ -1254,15 +1313,15 @@ fn reopen(
 }
 
 fn run_seed(seed: u64, kind: Kind) -> SeedResult {
-    run_seed_as(seed, kind, false)
+    run_seed_as(seed, kind, PLAIN)
 }
 
-fn run_seed_as(seed: u64, kind: Kind, logged: bool) -> SeedResult {
+fn run_seed_as(seed: u64, kind: Kind, flavor: Flavor) -> SeedResult {
     let mut res = SeedResult::default();
     // Calibration: the same seed on an honest disk with no crash gives the I/O budget.
     let (setup_ops, total_ops) = {
         let disk = SimDisk::new(seed, FaultPlan::none());
-        let run = workload_as(&disk, seed, None, logged)
+        let run = workload_as(&disk, seed, None, flavor)
             .expect("the store opens on a fresh simulated disk");
         (run.setup_ops, disk.stats().io_ops)
     };
@@ -1309,7 +1368,7 @@ fn run_seed_as(seed: u64, kind: Kind, logged: bool) -> SeedResult {
         crash_mode: mode,
     };
     let ran = catch_unwind(AssertUnwindSafe(|| {
-        workload_as(&disk, seed, Some(plan), logged)
+        workload_as(&disk, seed, Some(plan), flavor)
     }));
     let run = match ran {
         Ok(Ok(run)) => run,
@@ -1346,7 +1405,7 @@ fn run_seed_as(seed: u64, kind: Kind, logged: bool) -> SeedResult {
     res.violations.extend(violations);
 
     disk.reboot();
-    let (reopened, extra) = reopen(&disk, seed, baseline.as_ref());
+    let (reopened, extra) = reopen(&disk, seed, baseline.as_ref(), flavor.optimistic);
     // The control tells the checker the disk was honest although it lied, so a clean refusal or
     // a lost acknowledged commit must show up as a violation.
     let lied = stats.fsync_lies > 0 && kind != Kind::Control;
@@ -1421,13 +1480,13 @@ impl Totals {
 }
 
 fn run_kind(kind: Kind, default_seeds: u64, label: &str) -> Totals {
-    run_kind_as(kind, default_seeds, label, false)
+    run_kind_as(kind, default_seeds, label, PLAIN)
 }
 
-fn run_kind_as(kind: Kind, default_seeds: u64, label: &str, logged: bool) -> Totals {
+fn run_kind_as(kind: Kind, default_seeds: u64, label: &str, flavor: Flavor) -> Totals {
     let mut totals = Totals::default();
     for seed in seeds(default_seeds) {
-        let result = run_seed_as(seed, kind, logged);
+        let result = run_seed_as(seed, kind, flavor);
         totals.add(seed, &result);
     }
     totals.print(label);
@@ -1613,7 +1672,7 @@ fn a_seed_replays_exactly() {
 
 #[test]
 fn logged_a_crash_at_any_point_keeps_the_log_and_the_records_in_step() {
-    let totals = run_kind_as(Kind::Crash, 200, "logged crash", true);
+    let totals = run_kind_as(Kind::Crash, 200, "logged crash", LOGGED);
     assert_clean(&totals, "logged crash");
     assert_eq!(totals.refused, 0, "an honest disk must always reopen");
     assert!(totals.crashes > 0, "no seed crashed mid-run");
@@ -1621,7 +1680,7 @@ fn logged_a_crash_at_any_point_keeps_the_log_and_the_records_in_step() {
 
 #[test]
 fn logged_fsync_errors_and_lies_keep_the_log_and_the_records_in_step() {
-    let totals = run_kind_as(Kind::FsyncFault, 200, "logged fsync-fault", true);
+    let totals = run_kind_as(Kind::FsyncFault, 200, "logged fsync-fault", LOGGED);
     assert_clean(&totals, "logged fsync-fault");
 }
 
@@ -1631,7 +1690,7 @@ fn logged_the_control_run_must_report_violations() {
         Kind::Control,
         200,
         "logged control (expected to find violations)",
-        true,
+        LOGGED,
     );
     if totals.seeds >= 50 {
         assert!(totals.violations() > 0, "the logged checker is blind");
@@ -1642,7 +1701,7 @@ fn logged_the_control_run_must_report_violations() {
 fn logged_an_honest_run_has_a_log_that_replays_to_its_records() {
     for seed in seeds(40) {
         let disk = SimDisk::new(seed, FaultPlan::none());
-        let run = workload_as(&disk, seed, None, true).unwrap();
+        let run = workload_as(&disk, seed, None, LOGGED).unwrap();
         assert_eq!(run.stopped, None, "seed {seed}");
         assert!(
             run.violations.is_empty(),
@@ -1650,37 +1709,100 @@ fn logged_an_honest_run_has_a_log_that_replays_to_its_records() {
             run.violations
         );
         let baseline = run.baseline.clone().unwrap();
-        check_log_replay(&*run.kv, &baseline).unwrap_or_else(|e| panic!("seed {seed}: {e}"));
+        check_log_replay(&*run.kv, &baseline, false).unwrap_or_else(|e| panic!("seed {seed}: {e}"));
         // The check is not blind: a key the log never wrote shows up.
         let mut extra = baseline.clone();
         extra.0.insert(b"zz/not-logged".to_vec(), b"x".to_vec());
-        assert!(check_log_replay(&*run.kv, &extra).is_err(), "seed {seed}");
+        assert!(
+            check_log_replay(&*run.kv, &extra, false).is_err(),
+            "seed {seed}"
+        );
     }
 }
 
-/// C19, P-H: the same check on the optimistic store, driven by the seeded scheduler through the `step_pipeline()` seam
-/// (`tests/multi_writer_sim.rs`). Twin of `embedded_one_owner_an_honest_run_matches_its_recorded_commits_and_is_sound`; pending on the sim seam.
+/// C19, P-H: the honest-run check on the optimistic store (multi-user mode and the commit log on, asserted in the run), the same
+/// seeded clients and the same checks as `embedded_one_owner_an_honest_run_matches_its_recorded_commits_and_is_sound`, plus the
+/// log replay of `logged_an_honest_run_has_a_log_that_replays_to_its_records`. The clients take their steps one at a time on the
+/// seeded scheduler, so each commit is a batch of one; the interleaved batches of the optimistic pipeline are driven through the
+/// `step_pipeline()` seam in `tests/multi_writer_sim.rs`.
 #[test]
-#[ignore = "multi_writer"]
 fn an_honest_run_matches_its_recorded_commits_and_is_sound_multi_writer() {
-    common::mu::pending_member::<()>(common::mu::L1_SIM, "OccKv::step_pipeline")
-        .unwrap_or_else(|e| panic!("{e}"));
+    for seed in seeds(40) {
+        let disk = SimDisk::new(seed, FaultPlan::none());
+        let run = workload_as(&disk, seed, None, OPTIMISTIC).unwrap();
+        assert_eq!(run.stopped, None, "seed {seed}");
+        assert!(
+            run.violations.is_empty(),
+            "seed {seed}: {:?}",
+            run.violations
+        );
+        let log = run.log.lock().unwrap();
+        assert!(log.in_doubt.is_empty());
+        assert!(
+            log.committed.len() > 5,
+            "seed {seed} committed only {}",
+            log.committed.len()
+        );
+        let version = run.kv.version().unwrap();
+        assert_eq!(version, log.last, "seed {seed}");
+        check::check_serializable(&log.committed).expect("serializable");
+        assert_eq!(
+            check::replay_to(&log.committed, version),
+            read_state(&*run.kv).unwrap(),
+            "seed {seed}: the recorded commits do not rebuild the store"
+        );
+        assert_eq!(
+            integrity(&*run.kv).unwrap(),
+            Vec::<String>::new(),
+            "seed {seed}"
+        );
+        let baseline = run.baseline.clone().unwrap();
+        check_log_replay(&*run.kv, &baseline, true).unwrap_or_else(|e| panic!("seed {seed}: {e}"));
+        // The check is not blind on the optimistic store either: a key the log never wrote shows up.
+        let mut extra = baseline.clone();
+        extra.0.insert(b"zz/not-logged".to_vec(), b"x".to_vec());
+        assert!(
+            check_log_replay(&*run.kv, &extra, true).is_err(),
+            "seed {seed}"
+        );
+    }
 }
 
-/// C19, P-H: the same check on the optimistic store, driven by the seeded scheduler through the `step_pipeline()` seam
-/// (`tests/multi_writer_sim.rs`). Twin of `embedded_one_owner_a_crash_at_any_point_loses_nothing_and_tears_nothing`; pending on the sim seam.
+/// C19, P-H: a crash at any point on the optimistic store (multi-user mode and the log on) loses no acknowledged commit and
+/// tears none, the log and the records stay in step, and the store reopens and takes a write. Twin of
+/// `embedded_one_owner_a_crash_at_any_point_loses_nothing_and_tears_nothing`.
 #[test]
-#[ignore = "multi_writer"]
 fn a_crash_at_any_point_loses_nothing_and_tears_nothing_multi_writer() {
-    common::mu::pending_member::<()>(common::mu::L1_SIM, "OccKv::step_pipeline")
-        .unwrap_or_else(|e| panic!("{e}"));
+    let totals = run_kind_as(Kind::Crash, 200, "optimistic crash", OPTIMISTIC);
+    assert_clean(&totals, "optimistic crash");
+    assert_eq!(totals.refused, 0, "an honest disk must always reopen");
+    assert!(totals.crashes > 0, "no seed crashed mid-run");
+    assert!(totals.commits > 0, "no commit was acknowledged");
 }
 
-/// C19, P-H: the same check on the optimistic store, driven by the seeded scheduler through the `step_pipeline()` seam
-/// (`tests/multi_writer_sim.rs`). Twin of `embedded_one_owner_fsync_errors_and_lies_are_survived_or_refused_cleanly`; pending on the sim seam.
+/// C19, P-H: fsync errors and lies on the optimistic store are survived or refused cleanly. Twin of
+/// `embedded_one_owner_fsync_errors_and_lies_are_survived_or_refused_cleanly`.
 #[test]
-#[ignore = "multi_writer"]
 fn fsync_errors_and_lies_are_survived_or_refused_cleanly_multi_writer() {
-    common::mu::pending_member::<()>(common::mu::L1_SIM, "OccKv::step_pipeline")
-        .unwrap_or_else(|e| panic!("{e}"));
+    let totals = run_kind_as(Kind::FsyncFault, 200, "optimistic fsync-fault", OPTIMISTIC);
+    assert_clean(&totals, "optimistic fsync-fault");
+    assert!(totals.commits > 0, "no commit was acknowledged");
+}
+
+/// The control of the two twins above: on the optimistic store, every fsync lies and the checker is told the disk was honest,
+/// so it must report violations (a checker that cannot fail would pass the twins for nothing).
+#[test]
+fn the_control_run_must_report_violations_multi_writer() {
+    let totals = run_kind_as(
+        Kind::Control,
+        200,
+        "optimistic control (expected to find violations)",
+        OPTIMISTIC,
+    );
+    if totals.seeds >= 50 {
+        assert!(
+            totals.violations() > 0,
+            "the optimistic checker is blind: every fsync lied and nothing was reported"
+        );
+    }
 }

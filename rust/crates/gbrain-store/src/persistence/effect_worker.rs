@@ -195,6 +195,11 @@ pub struct CoalescedGitClaim {
     #[serde(default)]
     pub dead_owners: Vec<String>,
     pub owner_json: String,
+    /// The caller's host registration (lane L5). Each claimed effect records its lease name and epoch
+    /// (`CLAIM_EFFECT`, the effect id as decimal text), as the ordinary effect claim does, so `settle_effect` and the
+    /// Git effect writes finish it only under the same epoch.
+    #[serde(default)]
+    pub fence: Option<LeaseToken>,
 }
 
 /// `CLAIM_COALESCED_GIT_EFFECTS_SQL`: up to `limit` ready single-file Git effects of the worktree
@@ -326,6 +331,25 @@ pub(crate) fn stamp_effect_claim_in(
     env: &dyn Env,
     claim: &EffectClaim,
 ) -> Result<Option<Value>> {
+    claim_effect_in(tx, env, claim, false)
+}
+
+/// `claimEffectRecovery`'s statement: the same stamp, only while the effect holds a recovery record
+/// (`WHERE id=$1 AND recovery IS NOT NULL`).
+pub(crate) fn claim_effect_recovery_in(
+    tx: &mut dyn KvWrite,
+    env: &dyn Env,
+    claim: &EffectClaim,
+) -> Result<Option<Value>> {
+    claim_effect_in(tx, env, claim, true)
+}
+
+fn claim_effect_in(
+    tx: &mut dyn KvWrite,
+    env: &dyn Env,
+    claim: &EffectClaim,
+    recovering_only: bool,
+) -> Result<Option<Value>> {
     let id = effect_id(&claim.id)?;
     let token = pg_uuid(&claim.token)?;
     let owner: Value = serde_json::from_str(&claim.owner_json)
@@ -333,6 +357,9 @@ pub(crate) fn stamp_effect_claim_in(
     let Some(mut e) = effect_by_id(&*tx, id)? else {
         return Ok(None);
     };
+    if recovering_only && e.recovery.is_none() {
+        return Ok(None);
+    }
     let now = env.now_micros();
     e.state = "running".into();
     e.execution_token = Some(token);
@@ -706,9 +733,50 @@ impl Store {
         })
     }
 
+    /// `claimEffectRecovery(claim)`: the claimed row, or null when the effect holds no recovery record.
+    pub fn claim_effect_recovery(&self, claim: &EffectClaim) -> Result<Option<Value>> {
+        self.write(|tx| {
+            fence::begin(self, tx, claim.fence.as_ref(), "claim_effect_recovery")?;
+            let row = claim_effect_recovery_in(tx, &*self.env, claim)?;
+            if row.is_some() {
+                let id = effect_id(&claim.id)?.to_string();
+                fence::claim_taken(
+                    self,
+                    tx,
+                    CLAIM_EFFECT,
+                    &id,
+                    claim.fence.as_ref(),
+                    "claim_effect_recovery",
+                    None,
+                )?;
+            }
+            Ok(row)
+        })
+    }
+
     /// `claimCoalescedGitEffects(input)`: the claimed rows, in claim order.
     pub fn claim_coalesced_git_effects(&self, input: &CoalescedGitClaim) -> Result<Vec<Value>> {
-        self.write(|tx| claim_coalesced_git_effects_in(tx, &*self.env, input))
+        self.write(|tx| {
+            fence::begin(
+                self,
+                tx,
+                input.fence.as_ref(),
+                "claim_coalesced_git_effects",
+            )?;
+            let rows = claim_coalesced_git_effects_in(tx, &*self.env, input)?;
+            for id in rows.iter().filter_map(|row| row["id"].as_str()) {
+                fence::claim_taken(
+                    self,
+                    tx,
+                    CLAIM_EFFECT,
+                    id,
+                    input.fence.as_ref(),
+                    "claim_coalesced_git_effects",
+                    None,
+                )?;
+            }
+            Ok(rows)
+        })
     }
 
     /// One settle statement (`renewEffectClaim`, `advanceEffectRow`, `completeEffectRow`, ...):

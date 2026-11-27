@@ -15,7 +15,10 @@ import { isSyncReadBound, isUnreadableSyncFile } from './sync-screen.ts';
 import { loadActivePackForEngine } from '../schema-pack/engine-resolution.ts';
 import { sha256 } from './digest.ts';
 import { startClaimPhase } from './claim-phase.ts';
-import { inspectUnchanged, kernelPageSql, kernelPageWork, screeningRequest, type KernelPage, type NoopKernelWaiver } from './noop-kernel.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
+import { syncRows } from '../engine-sql/managed-sync-store.ts';
+import { UNFINISHED_PAGE_REQUEST_SQL } from './sync-run-sql.ts';
+import { inspectUnchanged, kernelPageWork, screeningRequest, type KernelPage, type NoopKernelWaiver } from './noop-kernel.ts';
 import { chunkManifestReads } from '../search/safe-chunks.ts';
 import { validateSyncAuthority, type SyncAuthority } from './sync-authority.ts';
 import { readSyncFile, type SyncEntry } from './sync-discovery.ts';
@@ -36,8 +39,7 @@ import { isPassBatchKey, passBatchHead } from './sync-pass-batch.ts';
  */
 async function heldCursorHead(tx: BrainEngine, key: string, sourceId: string): Promise<{ run_id: string | null; index: number | string | null; request_id: string | null } | undefined> {
   if (isPassBatchKey(key)) return passBatchHead(tx, key, sourceId);
-  const [held] = await tx.executeRaw<{ run_id: string | null; index: number | string | null; request_id: string | null }>(`SELECT completed_keys->0->>'runId' AS run_id,
-    completed_keys->0->'index' AS index,completed_keys->0->'pending'->>'requestId' AS request_id FROM op_checkpoints WHERE op='managed-sync' AND fingerprint=$1 FOR UPDATE`, [key]);
+  const [held] = await syncRows<{ run_id: string | null; index: number | string | null; request_id: string | null }>(tx, 'cursor_head_locked', [key]);
   return held;
 }
 
@@ -96,20 +98,7 @@ const rethrowAbort = (error: unknown, signal?: AbortSignal) => { if (signal?.abo
 /** DX-A15: `GBRAIN_SYNC_WAIVE_NOOP=0` admits every entry, for triage. */
 export function noopWaiversEnabled(env: NodeJS.ProcessEnv = process.env): boolean { return env.GBRAIN_SYNC_WAIVE_NOOP !== '0'; }
 
-const PAGE_MATCH = `r.source_id=$3 AND (r.slug=$4 OR r.page_id=$5::bigint OR r.intent->'renameFrom'->>'slug'=$4 OR r.intent->'renameFrom'->>'pageId'=$6
-  OR ($7::text IS NOT NULL AND (r.intent->>'path'=$7 OR r.intent->>'sourcePath'=$8 OR r.intent->'renameFrom'->>'sourcePath'=$8)))`;
-/**
- * CEO-A12/A34: an unfinished request for the page, by slug, page id or a rename
- * from it; #6278: also by the entry's file path or origin, or a rename from that
- * origin (`$7`, `$8`; null skips the path match). Each branch matches one
- * partial request index: worktree pending, worktree recovery, and
- * database-only pending by source incarnation.
- */
-export const UNFINISHED_PAGE_REQUEST_SQL = `SELECT 1 FROM (
-  (SELECT r.id FROM persistence_requests r WHERE r.worktree_id=$1::uuid AND r.state IN ('queued','running','recovering') AND ${PAGE_MATCH} LIMIT 1)
-  UNION ALL (SELECT r.id FROM persistence_requests r WHERE r.worktree_id=$1::uuid AND r.recovery IS NOT NULL AND ${PAGE_MATCH} LIMIT 1)
-  UNION ALL (SELECT r.id FROM persistence_requests r WHERE r.source_incarnation=$2::uuid AND r.worktree_id IS NULL
-    AND r.state IN ('queued','running','recovering') AND ${PAGE_MATCH} LIMIT 1)) unfinished LIMIT 1`;
+export { UNFINISHED_PAGE_REQUEST_SQL };
 
 /** The parameters of `UNFINISHED_PAGE_REQUEST_SQL` for one frozen entry (slug, page id, file path and origin). */
 export function unfinishedPageRequestParams(cursor: Pick<WaiverCursor, 'sourceId' | 'incarnation' | 'binding'>, pending: Pick<WaiverEntry, 'slug' | 'pageId' | 'intent'>): unknown[] {
@@ -138,7 +127,7 @@ export async function waiveNoopEntry<C extends WaiverCursor>(engine: BrainEngine
       try { await assertSyncPageOrigin(tx, cursor.sourceId, intent.sourcePath!, pending.pageId, true, syncOriginScope(cursor)); }
       catch { return null; }
     } else if (snapshot?.page.id !== pending.pageId || snapshot.page.deleted_at != null || snapshot.revision !== intent.expected_revision) return null;
-    const unfinished = await tx.executeRaw(UNFINISHED_PAGE_REQUEST_SQL, unfinishedPageRequestParams(cursor, pending));
+    const unfinished = await syncRows(tx, 'unfinished_page_request', unfinishedPageRequestParams(cursor, pending));
     if (unfinished.length) return null;
     const provenance = waivedProvenance(cursor, pending, waived, snapshot!.revision);
     if (provenance === false) return null;
@@ -204,7 +193,7 @@ export async function waiveNoopRun<C extends WaiverCursor>(engine: BrainEngine, 
   if (!run.length) return null;
   try {
     return await engine.transaction(async tx => {
-      await tx.executeRaw("SELECT set_config('lock_timeout','2s',true),set_config('statement_timeout','10s',true)");
+      await syncRows(tx, 'waiver_settings');
       await tx.lockPageKeys(run.map(entry => ({ sourceId: cursor.sourceId, slug: entry.pending.slug })));
       const held = await heldCursorHead(tx, key, cursor.sourceId);
       if (held?.run_id !== cursor.runId || Number(held.index) !== cursor.index || held.request_id != null) return { cursor: await reread(tx), waived: 0 };
@@ -212,8 +201,7 @@ export async function waiveNoopRun<C extends WaiverCursor>(engine: BrainEngine, 
       // The run's screens may span many entries: an owner change since the first one sends the run back to the per-entry path.
       const binding = await getWorktreeBinding(tx, cursor.sourceId);
       if (!binding || String(binding.owner_epoch) !== run[0]!.pending.intent.ownerEpoch) return null;
-      const pages = await tx.executeRaw<{ id: number | string; slug: string; deleted: boolean; knowledge_revision: string | number | null }>(
-        'SELECT id,slug,deleted_at IS NOT NULL AS deleted,knowledge_revision FROM pages WHERE source_id=$1 AND slug=ANY($2::text[])', [cursor.sourceId, run.map(entry => entry.pending.slug)]);
+      const pages = await syncRows<{ id: number | string; slug: string; deleted: boolean; knowledge_revision: string | number | null }>(tx, 'waiver_pages', [cursor.sourceId, run.map(entry => entry.pending.slug)]);
       const bySlug = new Map(pages.map(page => [page.slug, page]));
       const scope = syncOriginScope(cursor);
       // #6423: the per-entry checks go out in pipelined chunks of at most WAIVER_PIPELINE_MAX calls, and a chunk is sent only
@@ -224,7 +212,7 @@ export async function waiveNoopRun<C extends WaiverCursor>(engine: BrainEngine, 
         const chunk = run.slice(from, from + WAIVER_PIPELINE_MAX / 2);
         noteDrainSql(UNFINISHED_PAGE_REQUEST_SQL);
         const checks = await pipelined(tx, chunk.flatMap(({ pending, waived }) => [
-          () => tx.executeRaw(UNFINISHED_PAGE_REQUEST_SQL, unfinishedPageRequestParams(cursor, pending)),
+          () => syncRows(tx, 'unfinished_page_request', unfinishedPageRequestParams(cursor, pending)),
           () => waived.kind === 'delete'
             ? assertSyncPageOrigin(tx, cursor.sourceId, pending.intent.sourcePath!, pending.pageId, true, scope).then(() => true, () => false)
             : Promise.resolve(true),
@@ -286,14 +274,14 @@ export async function waivePrescreenedRun<C extends WaiverCursor & { binding: { 
   const pack = input.noSchemaPack ? null : await loadActivePackForEngine(engine, { remote: false, sourceId: cursor.sourceId }).catch(() => null);
   try {
     return await engine.transaction(async tx => {
-      await tx.executeRaw("SELECT set_config('lock_timeout','2s',true),set_config('statement_timeout','10s',true)");
+      await syncRows(tx, 'waiver_settings');
       await tx.lockPageKeys(run.map(entry => ({ sourceId: cursor.sourceId, slug: entry.slug })));
       const held = await heldCursorHead(tx, key, cursor.sourceId);
       if (held?.run_id !== cursor.runId || Number(held.index) !== cursor.index || held.request_id != null) return { cursor: await reread(tx), waived: 0 };
       await faultPoint('sync:prescreened', { sourceId: cursor.sourceId });
       const binding = await getWorktreeBinding(tx, cursor.sourceId);
       if (!binding || String(binding.owner_epoch) !== String(cursor.binding.owner_epoch)) return null;
-      const pages = new Map((await tx.executeRaw<KernelPage>(`${kernelPageSql(await chunkManifestReads(engine, tx))} WHERE p.source_id=$1 AND p.slug=ANY($2::text[]) AND p.deleted_at IS NULL`,
+      const pages = new Map((await syncRows<KernelPage>(tx, await chunkManifestReads(engine, tx) ? 'kernel_pages_by_slug' : 'kernel_pages_by_slug_unmanifested',
         [cursor.sourceId, run.map(entry => entry.slug)])).map(page => [page.slug, page]));
       const records = await readSyncImportProvenances(tx, cursor.sourceId, cursor.incarnation, run.map(entry => entry.pageId));
       const holds = await heldGitPaths(tx, cursor.sourceId, cursor.incarnation, run.map(entry => entry.path));
@@ -301,7 +289,7 @@ export async function waivePrescreenedRun<C extends WaiverCursor & { binding: { 
       chunks: for (let from = 0; from < run.length; from += WAIVER_PIPELINE_MAX) {
         const chunk = run.slice(from, from + WAIVER_PIPELINE_MAX);
         noteDrainSql(UNFINISHED_PAGE_REQUEST_SQL);
-        const unfinished = await pipelined(tx, chunk.map(entry => () => tx.executeRaw(UNFINISHED_PAGE_REQUEST_SQL,
+        const unfinished = await pipelined(tx, chunk.map(entry => () => syncRows(tx, 'unfinished_page_request',
           unfinishedPageRequestParams(cursor, { slug: entry.slug, pageId: entry.pageId, intent: { path: entry.path, sourcePath: entry.sourcePath } as SyncIntent })))) as unknown[][];
         for (const [i, entry] of chunk.entries()) {
           const page = pages.get(entry.slug), record = records.get(entry.pageId);
@@ -404,6 +392,8 @@ export async function unchangedSyncImport(engine: BrainEngine, cursor: WaiverCur
     return { kernel: inspected.waived ?? [], ...(prepared.importProvenance && !inspected.waived?.length ? { provenance: prepared.importProvenance } : {}) };
   } catch (error) {
     rethrowAbort(error, signal);
+    // A refusal of the engine (the kernel's page read) is not a screen that found no waiver.
+    rethrowCapabilityRefusal(error);
     return null;
   }
 }

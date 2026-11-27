@@ -33,6 +33,7 @@ import { CRON_FINISHED, WRITE_SETTLED, cronMarker, cronWake, jobMarker, jobWake,
 import { operatorTerms, termsAccepted, type OperatorTerms } from './terms.ts';
 import { ingestCronSpool } from './spool.ts';
 import { managedFilesystemDatastorePath } from '../persistence/filesystem-guard.ts';
+import { fenceOpts } from '../persistence/host-fence.ts';
 
 export const WAKE_RETRY_SCHEDULE_S = [30, 120, 480, 1800] as const;
 export const WAKE_MAX_ATTEMPTS = 5;
@@ -50,11 +51,15 @@ export interface DrainReport { delivered: number; retried: number; dead: number;
  * Lease one open, due row (LEASE_S seconds). Returns the lease's timestamp in epoch microseconds (text, so no driver rounds it), the
  * token settle() must match, and the row's current attempts: the candidate snapshot may be stale by now.
  */
-const claim = (engine: BrainEngine, id: number) => engine.claimWakeWatch(id, LEASE_S);
+const claim = (engine: BrainEngine, id: number) => {
+  // The host fence (multi-user Rust, I-5): a host whose registration moved is refused lease_lost; none elsewhere.
+  const fence = fenceOpts(engine);
+  return fence.fence ? engine.claimWakeWatch(id, LEASE_S, fence) : engine.claimWakeWatch(id, LEASE_S);
+};
 
 /** Settle a leased row; false when it was ended (unwatch, disable, expiry) or re-leased meanwhile, which then wins. */
 function settle(engine: BrainEngine, id: number, lease: string, state: 'open' | 'delivered' | 'dead' | 'ended', fields: { marker?: string; attempts?: number; delayS?: number; error?: string | null }): Promise<boolean> {
-  return engine.settleWakeWatch({ id, lease, state, ...fields });
+  return engine.settleWakeWatch({ id, lease, state, ...fields, ...fenceOpts(engine) });
 }
 
 /** Live access members: on a brain with any, every watch needs its principal's acceptance of the operator's terms (terms.ts). */
@@ -174,9 +179,9 @@ async function deliver(engine: BrainEngine, api: WakeshiftApi, row: WakeRow, rep
 
 /** Send up to 10 due queued forgets (forget.ts) under a lease; `forgotten: false` (nothing held) also completes one. */
 async function drainForgets(engine: BrainEngine, api: WakeshiftApi, report: DrainReport): Promise<void> {
-  const due = await engine.claimWakeForgets({ leaseSeconds: LEASE_S, limit: FORGET_DRAIN_BATCH });
+  const due = await engine.claimWakeForgets({ leaseSeconds: LEASE_S, limit: FORGET_DRAIN_BATCH, ...fenceOpts(engine) });
   const done = (id: number, lease: string, state: 'pending' | 'done' | 'dead', attempts: number, error: string | null, delayS?: number) =>
-    engine.settleWakeForget({ id, lease, state, attempts, error, ...(delayS === undefined ? {} : { delayS }) });
+    engine.settleWakeForget({ id, lease, state, attempts, error, ...(delayS === undefined ? {} : { delayS }), ...fenceOpts(engine) });
   for (const row of due) {
     const attempts = Number(row.attempts) + 1;
     try {
