@@ -72,19 +72,8 @@ export async function sourceBasenameIndex(engine: BrainEngine, sourceId: string)
   return (await next).index;
 }
 
-/**
- * Link endpoints by slug: every live page in the origin source, plus other
- * sources' pages for the slugs the origin lacks or a link names elsewhere ($3).
- * The origin read and each source's residual read use (source_id, slug).
- */
-export const LINK_ENDPOINTS_SQL = `WITH own AS (
-    SELECT slug, source_id, type, knowledge_revision FROM pages WHERE source_id=$1 AND slug=ANY($2::text[]) AND deleted_at IS NULL),
-  elsewhere AS (SELECT array_agg(k) AS refs FROM unnest($2::text[]) k WHERE k=ANY($3::text[]) OR NOT EXISTS (SELECT 1 FROM own WHERE own.slug=k))
-  SELECT slug, source_id, type, knowledge_revision FROM own
-  UNION ALL
-  SELECT p.slug, p.source_id, p.type, p.knowledge_revision FROM elsewhere e, sources s, LATERAL (SELECT slug, source_id, type, knowledge_revision
-    FROM pages WHERE source_id=s.id AND slug=ANY(e.refs) AND deleted_at IS NULL OFFSET 0) p
-  WHERE s.id<>$1`;
+/** The statement listLinkEndpointPages sends (engine-sql/link-reads.ts), re-exported for the tests that watch it. */
+export { LINK_ENDPOINTS_SQL } from '../engine-sql/link-reads.ts';
 
 /**
  * `primeSemantics`: install the pack relation semantics now, during preparation, so apply's
@@ -128,8 +117,8 @@ export async function prepareAutomaticLinks(engine: BrainEngine, slug: string,
     aliases.has(c.targetSlug) && (c.targetSourceId ?? sourceId) === sourceId ? { ...c, targetSlug: aliases.get(c.targetSlug)! } : c;
   const keys = [...new Set([...referenced, ...initial.candidates.map(retarget).flatMap(c => [c.targetSlug, c.fromSlug ?? slug])])].sort();
   // Another source's same-slug page only decides a slug the origin lacks (a counted cross_source drop) or one a link names there.
-  const endpointRows = await engine.executeRaw<{ slug: string; source_id: string; type: string; knowledge_revision: string }>(LINK_ENDPOINTS_SQL,
-    [sourceId, keys, [...new Set(initial.candidates.filter(c => c.targetSourceId && c.targetSourceId !== sourceId).map(c => c.targetSlug))]]);
+  const endpointRows = await engine.listLinkEndpointPages(sourceId, keys,
+    [...new Set(initial.candidates.filter(c => c.targetSourceId && c.targetSourceId !== sourceId).map(c => c.targetSlug))]);
   const endpoints = indexLinkSources(endpointRows);
   const policy = await loadLinkSourcePolicy(engine, sourceId);
   const metadata = new Map(endpointRows.map(row => [`${row.source_id}\0${row.slug}`, row]));

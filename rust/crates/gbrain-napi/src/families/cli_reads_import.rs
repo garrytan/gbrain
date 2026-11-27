@@ -69,6 +69,27 @@ impl Brain {
         self.run(env, move |s| s.has_guest_source())
     }
 
+    /// `hasExtractedEvents(sourceId, pageId)`: a boolean.
+    #[napi]
+    pub fn has_extracted_events<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        page_id: i64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.has_extracted_events(&source_id, page_id))
+    }
+
+    /// `pageAwaitsRederive(pageId)`: resolves whether a purge marked the page in `needs_rederive`.
+    #[napi]
+    pub fn page_awaits_rederive<'env>(
+        &self,
+        env: &'env Env,
+        page_id: i64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.page_awaits_rederive(page_id))
+    }
+
     /// `readPageTrustRows({ ids?, keys?, includeDeleted? })`: one trust row per page found.
     #[napi]
     pub fn read_page_trust_rows<'env>(

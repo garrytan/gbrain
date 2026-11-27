@@ -509,6 +509,14 @@ import type { PublicationJournalStore } from './engine-sql/publication-journal.t
 import type { StoredWorktreeManifest } from './persistence/worktree-manifest.ts';
 import type * as SegmentedPurgeWritesSql from './engine-sql/segmented-purge-writes.ts';
 import type { LinkTargetPage, LinksRearm, OwnedLink, WriterReadPolicy } from './engine-sql/remote-links.ts';
+import type { FactPreimage } from './engine-sql/facts.ts';
+import type { FenceFactRow } from './engine-sql/trust-fence.ts';
+import type { FenceProjectionTarget } from './engine-sql/facts.ts';
+import type { FenceRowsTarget } from './engine-sql/trust-fence.ts';
+import type { GuardedTakeRow } from './engine-sql/trust-fence.ts';
+import type { GuardedTakeRowsQuery } from './engine-sql/trust-fence.ts';
+import type { LinkEndpointPage } from './engine-sql/link-reads.ts';
+import type { LivePageBodyRow } from './engine-sql/write-guards.ts';
 export type { StaleTakeOpts, StaleTakeRow, TakeEmbeddingInput } from './takes-row-types.ts';
 
 /** Resolution metadata for resolveTake. */
@@ -3677,4 +3685,36 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
 
 
 
+  /**
+   * Records now as the retrieval time of each page id that names a page (last-retrieved.ts bumpLastRetrievedAt),
+   * unless its record is under 5 minutes old. The samplers above read it as `last_retrieved_at`. An empty list
+   * writes nothing.
+   */
+  bumpPageRetrievals(pageIds: number[]): Promise<void>;
+  /** Whether any source is a guest source. */
+  hasGuestSource(): Promise<boolean>;
+  /** Whether any body staging or segment text exists: the vacuum's one probe before it sweeps (engine-sql/write-guards.ts). */
+  hasSegmentStorage(): Promise<boolean>;
+  /**
+   * The page's live fence facts the writer may not simply expire (engine-sql/trust-fence.ts), by row number and locked until
+   * the transaction ends: more trusted than the writer's declared tier, held narrower by a widening proposal the incoming
+   * fence still asks to widen, or opened by `gbrain repair open-facts`. Each row carries its stored `trust_tier`.
+   */
+  listFenceFactRows(target: FenceRowsTarget): Promise<FenceFactRow[]>;
+  /**
+   * The facts a page publication's fence projection would retire (engine-sql/facts.ts `listFenceRetireCandidates`): the
+   * before-state of each fact attached to the page at a fence position that the incoming fence (`target.incoming`, the
+   * JSON text of its row_num, fact and visibility) does not hold as it is, by row number then id. A conversation-extractor
+   * row counts only when a fence row claims its number; a private row `gbrain repair open-facts` opens never does.
+   */
+  listFenceRetireCandidates(target: FenceProjectionTarget): Promise<FactPreimage[]>;
+  /** The stored takes of a reconcile batch's pages that a lower-tier write may not change, by page and row, locked (engine-sql/trust-fence.ts). */
+  listGuardedTakeRows(q: GuardedTakeRowsQuery): Promise<GuardedTakeRow[]>;
+  listLinkEndpointPages(sourceId: string, slugs: string[], crossSourceSlugs: string[]): Promise<LinkEndpointPage[]>;
+  /** The database clock as a UTC ISO string with microseconds (`YYYY-MM-DDTHH:MM:SS.ffffffZ`). */
+  readDatabaseClock(): Promise<string>;
+  /** A live page's frontmatter, body columns, body storage and content hash (the valid-time advisory's after image), or null. */
+  readLivePageBody(slug: string, opts: { sourceId: string }): Promise<LivePageBodyRow | null>;
+  /** Takes the source row's lock for the rest of the transaction and reads nothing; an unknown source is a no-op (`lockSourceForUpdate`, engine-sql/sources.ts). */
+  lockSourceForUpdate(sourceId: string): Promise<void>;
 }

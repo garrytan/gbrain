@@ -12,6 +12,43 @@
  */
 import type { LegacyUnscopedRead } from './brands.ts';
 import { renderFragment, sqlFragment, trustedSql, type SqlFragment } from './fragment.ts';
+/**
+ * `selectClaimableEffect`: $1 host id, $2 the owner keys proved dead (`pid:nonce:start`). The text
+ * `claimPersistenceEffect` (persistence/effect-journal.ts) has always sent, with `DEAD_OWNER_EFFECT_SQL('e', '$2')` and
+ * `refreshFenceClear('e')` written out; test/persistence-journal-statements.test.ts checks it against those fragments.
+ */
+export const CLAIMABLE_EFFECT_SQL = `SELECT e.* FROM persistence_effects e
+      LEFT JOIN persistence_worktrees w ON w.id=e.worktree_id
+      WHERE (e.state='queued' OR e.state='running' AND e.claim_expires_at<now() OR e.state='running' AND e.recovery IS NULL
+  AND e.claim_owner->>'token'=e.execution_token::text AND concat_ws(':',e.claim_owner->'owner'->>'pid',e.claim_owner->'owner'->>'nonce',e.claim_owner->'owner'->>'start')=ANY($2::text[])) AND e.next_attempt_at<=now()
+      AND (e.worktree_id IS NULL OR w.owner_host_id=$1::uuid) AND (e.worktree_id IS NULL OR NOT EXISTS (SELECT 1 FROM persistence_worktree_refreshes fence WHERE fence.worktree_id=e.worktree_id
+        AND fence.state IN ('fenced','merged','recovery_required')))
+      AND e.recovery IS NULL AND NOT EXISTS (SELECT 1 FROM persistence_effects blocked
+        WHERE blocked.worktree_id=e.worktree_id AND blocked.recovery IS NOT NULL)
+      AND NOT EXISTS (SELECT 1 FROM persistence_requests blocked
+        WHERE blocked.worktree_id=e.worktree_id AND blocked.recovery IS NOT NULL)
+      AND (e.kind='withdrawal-mirror' OR NOT EXISTS (SELECT 1 FROM persistence_effects mirror
+        WHERE mirror.request_id=e.request_id AND mirror.kind='withdrawal-mirror' AND mirror.state IN ('queued','running')))
+      ORDER BY e.next_attempt_at,e.id LIMIT 1 FOR UPDATE OF e SKIP LOCKED`;
+
+/** `listEffectRecoveries`: $1 host id, $2 the id to scan after (null from the start), $3 the row limit. */
+export const EFFECT_RECOVERIES_SQL = `SELECT e.* FROM persistence_effects e
+    JOIN persistence_worktrees w ON w.id=e.worktree_id
+    WHERE e.recovery IS NOT NULL AND w.owner_host_id=$1::uuid AND e.next_attempt_at<=now()
+      AND ($2::bigint IS NULL OR e.id>$2::bigint) ORDER BY e.id LIMIT $3`;
+
+/** `listGatedMirrorRequests`: $1 host id, $2 the gate's parked-target filter (JSON text), $3 the parked codes that may stay. */
+export const GATED_MIRROR_REQUESTS_SQL = `SELECT DISTINCT r.id::text AS id,r.source_id,r.request_id::text AS request_id FROM persistence_effects e
+       JOIN persistence_requests r ON r.id=e.request_id JOIN persistence_worktrees w ON w.id=e.worktree_id
+       WHERE e.kind='withdrawal-mirror' AND e.state='failed' AND e.error_code='targets_parked' AND w.owner_host_id=$1::uuid
+       AND e.data->'parked' @> $2::text::jsonb
+       AND NOT EXISTS (SELECT 1 FROM persistence_effects o CROSS JOIN LATERAL jsonb_array_elements(COALESCE(o.data->'parked','[]'::jsonb)) AS p(target)
+         WHERE o.request_id=e.request_id AND o.state<>'committed' AND COALESCE(p.target->>'error_code','')<>ALL($3::text[]))
+       LIMIT 100`;
+
+/** One request whose failed withdrawal mirror is parked only by the segmented writer gate: journal id, source and request id. */
+export interface GatedMirrorRequest { id: string; source_id: string; request_id: string }
+
 
 /**
  * `readRequestEffects`, every kind: $1 request id. The text `publicEffectsForRequest` (persistence/effect-journal.ts) has always
@@ -85,4 +122,32 @@ export async function listEmbeddingCandidates(exec: LegacyUnscopedRead, sourceId
       OR NOT EXISTS (SELECT 1 FROM sources s WHERE s.id = r.source_id AND s.incarnation = r.source_incarnation)) ORDER BY e.id`);
   const rows = await exec.executeRaw<EmbeddingCandidate>(text, params);
   return rows.map(row => ({ ...row, attempts: Number(row.attempts), chars: Number(row.chars) }));
+}
+
+/**
+ * Up to `limit` effects on worktrees host `hostId` owns that carry a recovery due now, in id order, after effect id
+ * `after` (from the start when null). An id that is not a uuid, an `after` that is not a bigint and a negative limit
+ * refuse, as their casts and LIMIT do.
+ */
+export function listEffectRecoveries<R = Record<string, unknown>>(exec: LegacyUnscopedRead, hostId: string, after: string | null, limit: number): Promise<R[]> {
+  return exec.executeRaw<R>(EFFECT_RECOVERIES_SQL, [hostId, after, limit]);
+}
+
+/**
+ * Up to 100 requests on worktrees host `hostId` owns with a failed withdrawal mirror parked by `gateCode`, whose every
+ * other unsettled effect is parked only with a code in `allowedCodes`. An id that is not a uuid refuses, as `::uuid` does.
+ */
+export function listGatedMirrorRequests(exec: LegacyUnscopedRead, hostId: string, gateCode: string, allowedCodes: readonly string[]): Promise<GatedMirrorRequest[]> {
+  return exec.executeRaw<GatedMirrorRequest>(GATED_MIRROR_REQUESTS_SQL, [hostId, JSON.stringify([{ error_code: gateCode }]), [...allowedCodes]]);
+}
+
+/**
+ * The next effect host `hostId` may claim, row-locked for the caller's transaction (skipping rows another transaction
+ * holds), or null: a queued effect, or a running one whose lease ran out or whose owner is in `deadOwners`, due now,
+ * on no worktree or on one this host owns with no refresh fence, with no recovery on it or its worktree, and not behind
+ * an unsettled withdrawal mirror of its request. Oldest due first. A host id that is not a uuid refuses, as `::uuid` does.
+ */
+export async function selectClaimableEffect<R = Record<string, unknown>>(exec: LegacyUnscopedRead, hostId: string, deadOwners: readonly string[]): Promise<R | null> {
+  const [row] = await exec.executeRaw<R>(CLAIMABLE_EFFECT_SQL, [hostId, [...deadOwners]]);
+  return row ?? null;
 }

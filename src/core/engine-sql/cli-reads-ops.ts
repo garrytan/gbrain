@@ -3,6 +3,12 @@ import { activationSuppressedSql } from '../eligibility/sql.ts';
 import { heldRowSql } from '../eligibility/fence-overlay.ts';
 import { holdAppliesToPageSql } from '../write-gate-binding.ts';
 import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
+/** One facts-fence row a chunk names: its source, page slug and row number. */
+export interface FenceRowKey { source_id: string; slug: string; row_num: number }
+
+/** The current state of the newest live fact at a fence row: its stored tier, an activation flag and a pending supersede proposal ref. */
+export interface FenceRowTrust { source_id: string; slug: string; row_num: number; trust_tier: string; flagged: boolean; contested: string | null }
+
 
 /** The engine's `executeRaw` (bound), with the two bounds these reads use. */
 export type EngineRawRead = <R = Record<string, unknown>>(sql: string, params?: unknown[], opts?: { timeoutMs?: number; jitOff?: boolean; prepare?: boolean }) => Promise<R[]>;

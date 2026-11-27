@@ -30,4 +30,9 @@ export const PAGES_MEMBERS = {
   readReflexLiveKeys: 'pages',
   readReflexPages: 'pages',
   storeSegmentDerivationsIfLive: 'page_body',
+  bumpPageRetrievals: 'pages',
+  hasGuestSource: 'sources',
+  readDatabaseClock: 'pages',
+  readLivePageBody: 'pages',
+  lockSourceForUpdate: 'sources',
 } as const satisfies Partial<Record<keyof BrainEngine, MemberClass>>;

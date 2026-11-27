@@ -9,6 +9,7 @@
 import { finalizeLastSeen } from '../../chronicle/last-seen.ts';
 import type { ChronicleTimelineOpts, ChronicleTimelineRow, LastSeenResult, PageReadScope } from '../../types.ts';
 import { storeCall, takeOptions, type StoreMember } from './common.ts';
+import type { TimelineDetailRefresh, TimelineRowRemoval } from '../../engine-sql/timeline.ts';
 
 // The chronicle reads never read these PageReadScope keys on PGLite either. `excludePrivate` is not here: the SQL
 // engines apply a privacy filter for it, so it refuses.
@@ -44,4 +45,13 @@ type EventProjection = { depthSlug: string; eventSlug: string; date: string; sum
 export const upsertEventProjection: StoreMember<[opts: EventProjection], { projected: boolean }> = (brain, opts) => {
   const options = takeOptions('upsertEventProjection', opts, ['depthSlug', 'eventSlug', 'date', 'summary', 'detail', 'sourceId']);
   return storeCall({ member: 'upsertEventProjection' }, () => brain.upsertEventProjection(options));
+};
+
+/** Removes the page's timeline rows a rewrite dropped; each row's date and whether a row was removed. */
+export const removeTimelineRows: StoreMember<[pageId: number, rows: TimelineRowRemoval[]], Array<{ date: string; removed: boolean }>> = (brain, pageId, rows) =>
+  storeCall({ member: 'removeTimelineRows' }, () => brain.removeTimelineRows(pageId, rows));
+
+/** Refreshes the details of the page's kept timeline rows. */
+export const updateTimelineDetails: StoreMember<[pageId: number, rows: TimelineDetailRefresh[]], void> = async (brain, pageId, rows) => {
+  await storeCall({ member: 'updateTimelineDetails' }, () => brain.updateTimelineDetails(pageId, rows));
 };

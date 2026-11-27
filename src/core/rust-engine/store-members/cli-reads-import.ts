@@ -5,6 +5,7 @@
 import type { GuestSourceLookupRow, SourceIncarnationRow, SourceRecordRow } from '../../engine.ts';
 import { withDates } from '../store-codec.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
+import type { PageTrustLookup, PageTrustRow } from '../../engine.ts';
 
 export const listSourceRecords: StoreMember<[], SourceRecordRow[]> = async (brain) => {
   const rows: SourceRecordRow[] = await storeCall({ member: 'listSourceRecords' }, () => brain.listSourceRecords());
@@ -27,3 +28,19 @@ export const readGuestSourceRow: StoreMember<[sourceId: string], GuestSourceLook
   if (guests.includes(sourceId)) refuseMember('readGuestSourceRow', `source ${sourceId} is a guest source (config guest: true) and the store keeps no guest_sources row for its writers`);
   return storeCall({ member: 'readGuestSourceRow', sourceId }, () => brain.readGuestSourceRow(sourceId));
 };
+
+/** The ids among `sourceIds` that name a guest source. */
+export const listGuestSourceIds: StoreMember<[sourceIds: readonly string[]], string[]> = async (brain, sourceIds) =>
+  sourceIds.length === 0 ? [] : storeCall({ member: 'listGuestSourceIds' }, () => brain.listGuestSourceIds([...sourceIds]));
+
+/** The trust rows of the pages named by id or by source and slug. */
+export const readPageTrustRows: StoreMember<[lookup: PageTrustLookup], PageTrustRow[]> = (brain, lookup) =>
+  storeCall({ member: 'readPageTrustRows' }, () => brain.readPageTrustRows({
+    ids: [...(lookup.ids ?? [])], keys: [...(lookup.keys ?? [])], includeDeleted: lookup.includeDeleted === true,
+  }));
+
+export const hasGuestSource: StoreMember<[], boolean> = (brain) =>
+  storeCall({ member: 'hasGuestSource' }, () => brain.hasGuestSource());
+
+export const readDatabaseClock: StoreMember<[], string> = (brain) =>
+  storeCall({ member: 'readDatabaseClock' }, () => brain.readDatabaseClock());

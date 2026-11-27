@@ -17,7 +17,8 @@ import { acquireWorktree, getWorktreeBinding } from './ownership.ts';
 import { ownerExceptionLogText } from './publication-failure.ts';
 import { refreshManagedFilesystemRoots } from './filesystem-guard.ts';
 import { PROJECTION_RETRY_READY_SQL, rebuildPendingPageProjections } from '../page-state/projections.ts';
-import { advanceProjectionCursor, residentProjectionCursor, residentWindowCtes } from '../page-state/projection-window.ts';
+import { advanceProjectionCursor, residentProjectionCursor } from '../page-state/projection-window.ts';
+import type { IdleProbeSpec } from '../engine-sql/persistence-idle-probe.ts';
 import { rebuildPendingSegmentedProjections } from '../page-body/projection.ts';
 import { publicationConcurrency } from './pool-capacity.ts';
 import { claimedHeadOrder } from './sync-window.ts';
@@ -40,11 +41,12 @@ import { refreshFenceClear } from './worktree-refresh-schema.ts';
 import { faultPoint } from './fault-points.ts';
 import { abandonedClaimCutoff, EFFECT_OWNER_KEY_SQL, PROCESS_STARTED_AT, releaseAbandonedClaims } from './effect-journal.ts';
 import { readWriteSwitchSnapshot, writeSwitchOn } from './switches.ts';
-import { consumerConnectionRoute, consumerStatementEngine, poolerExposureLine } from './consumer-lane.ts';
+import { consumerConnectionRoute, consumerOnDirectLane, consumerStatementEngine, poolerExposureLine } from './consumer-lane.ts';
 import { isConnectionLoss } from '../retry-matcher.ts';
 import { INSPECT_OWNER_RETRY_MS } from './health.ts';
 import { lockOpenOsError } from './native-lock.ts';
 import { boundPublication, publicationLeaseMs, readPublicationCeilingMs, type PublicationBound } from './publication-deadline.ts';
+import { foregroundPriorityOverride } from './journal.ts';
 
 type PhaseObservation = { name: string; started_at: string; deadline_exceeded: boolean; attempt: number; first_conn_ms?: number };
 /** #5373: set by a task that abandons a still-running preparation after losing its claim; its root is freed only once `until` settles. */
@@ -129,6 +131,15 @@ export const LANE_BUSY = Symbol('gbrain.laneBusy');
 /** `clock` (#6278): the claim's phase clock, for `enterClaimStep` at the preparer's await boundaries. */
 export type PrepareMutation = (engine: BrainEngine, row: WriteRequest, config: GBrainConfig, signal?: AbortSignal, clock?: ClaimPhaseClock) => Promise<PreparedMutation>;
 /** #6278: a consumer phase ended by its own deadline (server cancel or client-side discard), never a storage fault. */
+/**
+ * The oldest recovering write of each of this host's worktrees not in `excluded`, at most 16 (the consumer's
+ * recovery scan, engine member `listOwnerRecoveryHeads`). It takes the consumer's direct lane when the consumer's
+ * statements do. Recovery records live only on worktree-owned writes, so an engine without managed persistence
+ * answers none.
+ */
+export function readOwnerRecoveryHeads(engine: BrainEngine, hostId: string, excluded: string[], signal?: AbortSignal): Promise<WriteRequest[]> {
+  return engine.listOwnerRecoveryHeads<WriteRequest>(hostId, excluded, { signal, direct: consumerOnDirectLane(engine) });
+}
 export class PhaseDeadlineError extends Error {
   readonly code = 'deadline_exceeded';
   constructor(readonly phase: string, cause: unknown) {
@@ -347,7 +358,8 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
     if (interval === 0) return true;
     if (Date.now() - this.housekeepingAskedAt < interval) return false;
     this.housekeepingAskedAt = Date.now();
-    const claimed = await this.phase('housekeeping_turn', signal => claimHousekeepingTurn(this.statements, this.hostId, interval, signal)).catch(() => null);
+    const claimed = await this.phase('housekeeping_turn', signal => claimHousekeepingTurn(this.engine, this.hostId, interval, signal,
+      consumerConnectionRoute(this.engine).lane === 'direct')).catch(() => null);
     this.turnClaimed ||= claimed === true;
     this.housekeepingTurn = claimed !== false;
     return this.housekeepingTurn;
@@ -361,7 +373,7 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
     this.turnClaimed = false;
     const upkeep = [this.maintenanceWorker, this.projectionWorker, this.topologyWorker];
     this.turnDone = Promise.allSettled(upkeep).then(async () => {
-      if (!this.stopping) await completeHousekeepingTurn(this.statements, this.hostId);
+      if (!this.stopping) await completeHousekeepingTurn(this.engine, this.hostId, consumerConnectionRoute(this.engine).lane === 'direct');
     }).catch(error => this.report(error));
   }
   /**
@@ -412,49 +424,13 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
     // #6803: inline projection rows are probed through the resident's bounded window (projection-window.ts), which this
     // probe advances; segmented rows keep their own probe over the whole queue, as their selector reads it.
     const cursor = residentProjectionCursor(this.engine);
-    const params: unknown[] = [this.hostId, excluded, publicationConcurrency(this.engine) > 0, retryingTopologies, [...this.laneTasks.keys()]];
-    const windowCtes = residentWindowCtes(cursor, params, PROJECTION_RETRY_READY_SQL);
     // #9227: on PGLite, claims an earlier process left behind count until the scan below has released them, so a one-shot
     // write queued behind such a head clears it at once instead of waiting out its lease (30 s, or 365 s while publishing).
     const cutoff = this.abandonedReleased || this.opts.oneShot?.waiting() === false ? null : abandonedClaimCutoff(this.engine);
-    if (cutoff) params.push(cutoff.toISOString());
-    const abandoned = cutoff ? `
-      OR EXISTS (SELECT 1 FROM persistence_requests r WHERE r.state='running' AND r.recovery IS NULL AND r.publication_started=false AND r.updated_at<$${params.length}::timestamptz)
-      OR EXISTS (SELECT 1 FROM persistence_effects e WHERE e.state='running' AND e.recovery IS NULL AND e.updated_at<$${params.length}::timestamptz)` : '';
-    const [row] = await this.phase('idle_probe', async signal => this.probeQuery<{ work: boolean; projection_work: boolean; projection_last: { source_incarnation: string; slug: string } | null; high_water: string | null }>(this.laneInUse || direct ? undefined : await this.acquireIdleLane(signal), `WITH ${windowCtes},
-    pwork AS (SELECT EXISTS (SELECT 1 FROM (SELECT source_incarnation,slug FROM recent UNION ALL SELECT source_incarnation,slug FROM win) j
-      CROSS JOIN LATERAL (SELECT s.id FROM sources s WHERE s.incarnation=j.source_incarnation AND NOT s.archived OFFSET 0) s
-      CROSS JOIN LATERAL (SELECT 1 FROM (SELECT p.id FROM pages p WHERE p.source_id=s.id AND p.slug=j.slug OFFSET 0) k
-        JOIN pages p ON p.id=k.id WHERE p.deleted_at IS NULL AND p.page_kind IN ('markdown','code')) p) AS found)
-    SELECT (SELECT found FROM pwork) AS projection_work,
-      (SELECT json_build_object('source_incarnation',source_incarnation,'slug',slug) FROM win ORDER BY ord DESC LIMIT 1) AS projection_last,
-      (SELECT at FROM high_water) AS high_water, (
-      EXISTS (SELECT 1 FROM persistence_requests r LEFT JOIN persistence_worktrees w ON w.id=r.worktree_id
-        WHERE ${claimableWriteSql(foregroundPrioritySql(), '$5::text[]')}
-        AND ($3::boolean OR r.blocked_reason IS DISTINCT FROM 'writer_pool_capacity'))
-      OR EXISTS (SELECT 1 FROM persistence_requests r JOIN persistence_worktrees w ON w.id=r.worktree_id
-        WHERE w.owner_host_id=$1::uuid AND r.recovery IS NOT NULL AND NOT (r.worktree_id::text=ANY($2::text[])))
-      OR EXISTS (SELECT 1 FROM persistence_requests r WHERE r.state='running' AND r.recovery IS NULL
-        AND r.publication_started=false AND r.claim_expires_at<now()
-        AND (r.worktree_id IS NULL OR EXISTS (SELECT 1 FROM persistence_worktrees w WHERE w.id=r.worktree_id AND w.owner_host_id=$1::uuid)))
-      OR EXISTS (SELECT 1 FROM persistence_effects e LEFT JOIN persistence_worktrees w ON w.id=e.worktree_id
-        WHERE (e.state='queued' OR e.state='running' AND e.claim_expires_at<now()) AND e.next_attempt_at<=now()
-        AND (e.worktree_id IS NULL OR w.owner_host_id=$1::uuid) AND (e.worktree_id IS NULL OR ${refreshFenceClear('e')}) AND e.recovery IS NULL
-        AND NOT EXISTS (SELECT 1 FROM persistence_effects blocked WHERE blocked.worktree_id=e.worktree_id AND blocked.recovery IS NOT NULL)
-        AND NOT EXISTS (SELECT 1 FROM persistence_requests blocked WHERE blocked.worktree_id=e.worktree_id AND blocked.recovery IS NOT NULL)
-        AND (e.kind='withdrawal-mirror' OR NOT EXISTS (SELECT 1 FROM persistence_effects mirror
-          WHERE mirror.request_id=e.request_id AND mirror.kind='withdrawal-mirror' AND mirror.state<>'committed')))
-      OR EXISTS (SELECT 1 FROM persistence_effects e JOIN persistence_worktrees w ON w.id=e.worktree_id
-        WHERE e.recovery IS NOT NULL AND w.owner_host_id=$1::uuid AND e.next_attempt_at<=now())
-      OR (SELECT found FROM pwork)
-      OR EXISTS (SELECT 1 FROM page_projection_jobs j JOIN sources s ON s.incarnation=j.source_incarnation AND NOT s.archived
-        JOIN pages p ON p.source_id=s.id AND p.slug=j.slug AND p.deleted_at IS NULL AND p.body_storage='segmented'
-        WHERE ${PROJECTION_RETRY_READY_SQL})
-      OR EXISTS (SELECT 1 FROM persistence_topology_changes c
-        JOIN persistence_worktrees w ON w.id=(c.recovery->>'worktreeId')::uuid
-        WHERE c.recovery IS NOT NULL AND w.owner_host_id=$1::uuid AND NOT (c.id::text=ANY($4::text[])))
-      OR ${overdueDeferredWorkSql('$1')}${abandoned}
-    ) AS work`, params, signal));
+    const spec: IdleProbeSpec = { hostId: this.hostId, excludedRoots: excluded, publishing: publicationConcurrency(this.engine) > 0, retryingTopologies,
+      laneRoots: [...this.laneTasks.keys()], cursor, abandonedBefore: cutoff ? cutoff.toISOString() : null, foregroundPriority: foregroundPriorityOverride() };
+    const row = await this.phase('idle_probe', async signal => this.probeOn(this.laneInUse || direct ? undefined : await this.acquireIdleLane(signal),
+      lane => lane ? this.engine.probeIdleWork(spec, { lane }) : this.engine.probeIdleWork(spec, { signal, direct: consumerOnDirectLane(this.engine) }), signal));
     // A window holding work stays put, so the tick it wakes reads the same rows.
     advanceProjectionCursor(cursor, row?.projection_work ? null : row?.projection_last, row?.high_water);
     return row?.work === true;
@@ -565,11 +541,17 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
       if (lost && this.idleLane?.conn === conn) { await this.releaseIdleLane(); this.idleLaneRetryAt = Date.now() + 60_000; }
     }
   }
-  private async probeQuery<T>(lane: ReservedConnection | undefined, sql: string, params: unknown[], signal?: AbortSignal): Promise<T[]> {
-    if (!lane) return this.statements.executeRaw<T>(sql, params, { signal });
-    if (this.laneInUse) return this.statements.executeRaw<T>(sql, params, { signal });
+  private probeQuery<T>(lane: ReservedConnection | undefined, sql: string, params: unknown[], signal?: AbortSignal): Promise<T[]> {
+    return this.probeOn(lane, on => on ? on.executeRaw<T>(sql, params) : this.statements.executeRaw<T>(sql, params, { signal }), signal);
+  }
+  /**
+   * Runs `run` on the reserved idle `lane` (passed through) when one is held and free, else with no lane (the caller then
+   * runs on its ordinary route under `signal`). A lane query cannot be cancelled, so an abort races it and retires the lane.
+   */
+  private async probeOn<T>(lane: ReservedConnection | undefined, run: (lane: ReservedConnection | undefined) => Promise<T>, signal?: AbortSignal): Promise<T> {
+    if (!lane || this.laneInUse) return run(undefined);
     this.probeOnLane = true;
-    const query = lane.executeRaw<T>(sql, params);
+    const query = run(lane);
     void query.then(() => { this.probeOnLane = false; }, () => { this.probeOnLane = false; });
     if (!signal) return query;
     const aborted = Promise.withResolvers<never>();
@@ -685,13 +667,7 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
     for (const [root, retryAt] of this.rootRetryAfter) if (retryAt <= now) this.rootRetryAfter.delete(root);
     if (scan) {
       const excluded = [...this.activeRoots, ...this.rootRetryAfter.keys()];
-      const recovery = await this.phase('recovery_scan', signal => this.statements.executeRaw<Pick<WriteRequest, 'id' | 'source_id' | 'worktree_id' | 'state' | 'blocked_reason'>>(
-        `SELECT r.id,r.source_id,r.worktree_id,r.state,r.blocked_reason FROM persistence_requests r
-        JOIN persistence_worktrees w ON w.id=r.worktree_id
-        WHERE w.owner_host_id=$1::uuid AND r.recovery IS NOT NULL AND NOT(r.worktree_id::text=ANY($2::text[]))
-        AND NOT EXISTS (SELECT 1 FROM persistence_requests earlier WHERE earlier.worktree_id=r.worktree_id
-          AND earlier.recovery IS NOT NULL AND earlier.sequence<r.sequence)
-        ORDER BY r.updated_at,r.sequence LIMIT 16`, [this.hostId, excluded], { signal }));
+      const recovery = await this.phase('recovery_scan', signal => readOwnerRecoveryHeads(this.engine, this.hostId, excluded, signal));
       for (const row of recovery) {
         const root = row.worktree_id!;
         // Always skip at least the next scheduled poll for an unresolved root.
@@ -722,16 +698,8 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
       const deadOwners = this.deadOwnersSeen?.length ? this.deadOwnersSeen : await this.phase('dead_owner_claims', signal => this.deadOwnerClaims(signal));
       this.deadOwnersSeen = null;
       // #6278: a claim that expired while its owner was preparing (the kill case) counts one preparation attempt.
-      await this.phase('expired_claims', signal => this.statements.executeRaw(`WITH expired AS (
-        SELECT r.id FROM persistence_requests r WHERE r.state='running' AND r.recovery IS NULL
-        AND r.publication_started=false AND ${PERSISTENCE_PROTOCOL_PREDICATE}
-        AND (r.claim_expires_at<now() OR r.claim_phase->>'token'=r.execution_token::text
-          AND concat_ws(':',r.claim_phase->'owner'->>'pid',r.claim_phase->'owner'->>'nonce',r.claim_phase->'owner'->>'start')=ANY($3::text[]))
-        AND (r.worktree_id IS NULL OR EXISTS (SELECT 1 FROM persistence_worktrees w WHERE w.id=r.worktree_id AND w.owner_host_id=$1::uuid))
-        ORDER BY r.sequence LIMIT 100 FOR UPDATE OF r SKIP LOCKED)
-        UPDATE persistence_requests r SET state='queued',execution_token=NULL,claim_expires_at=NULL,
-          preparation_attempts=r.preparation_attempts+CASE WHEN $2::boolean THEN ${EXPIRED_PREPARING_CHARGE_SQL('r')} ELSE 0 END
-        FROM expired WHERE r.id=expired.id`, [this.hostId, this.policy.deadlines, deadOwners], { signal }));
+      await this.phase('expired_claims', signal => this.engine.expireStaleWriteClaims({ hostId: this.hostId, charge: this.policy.deadlines, deadOwners },
+        { signal, direct: consumerConnectionRoute(this.engine).lane === 'direct' }));
       // PR B: a write deferred behind a refresh that outlived the barrier's wait limit ends failed, nothing applied.
       for (const row of await this.phase('deferred_expiry', signal => expireDeferredWrites(this.engine, this.hostId, signal))) this.settled(row);
     }
@@ -1133,7 +1101,7 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
     const stop = () => prep.abort({ code: 'consumer_stopping' });
     this.abort.signal.addEventListener('abort', stop, { once: true });
     const lease = startClaimLease(
-      signal => renewWriteClaim({ executeRaw: this.engine.executeRawDirect.bind(this.engine) }, row.id, row.execution_token!, this.opts.claimLeaseMs ?? 30_000,
+      signal => renewWriteClaim(this.engine, row.id, row.execution_token!, this.opts.claimLeaseMs ?? 30_000,
         this.engine.kind === 'postgres' ? signal : undefined, claimPhaseStamp(clock, row.execution_token)),
       this.leaseTiming(), () => prep.abort({ code: 'claim_lost' }));
     const releaseReason = () => !lease.held ? 'claim_lost' : observation.deadline_exceeded ? 'preparation_deadline' : 'consumer_stopping';
@@ -1171,7 +1139,7 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
       enterClaimPhase(clock, 'publishing');
       await faultPoint('consumer:prepared', { requestId: row.request_id, writeId: row.id, sourceId: row.source_id, operation: row.operation });
       const ceilingMs = await ceiling;
-      await holdClaimForPublication(lease, () => renewWriteClaim({ executeRaw: this.engine.executeRawDirect.bind(this.engine) }, row.id, row.execution_token!,
+      await holdClaimForPublication(lease, () => renewWriteClaim(this.engine, row.id, row.execution_token!,
         publicationLeaseMs(ceilingMs), undefined, claimPhaseStamp(clock, row.execution_token)));
       const { done, settled } = await boundPublication(() => this.publishSingle(row, prepared), this.publicationBound(row, ceilingMs, clock));
       if (done.state === 'failed') this.log('publication', done.error_code ?? 'storage_error', failureLogText(done), '', row);

@@ -28,17 +28,17 @@ import type { BrainEngine } from '../engine.ts';
 import type { LocalWriterRow } from '../engine-sql/persistence-state.ts';
 import { OperationError } from '../ops/contract.ts';
 import { registerEngineView, writeSwitchOn } from './switches.ts';
-import { GUEST_SOURCES_HIDDEN_SQL } from '../guests/note.ts';
+import { ADMISSION_SOURCE_SQL, type AdmissionSourceRow, WORKTREE_BINDING_SQL, type WorktreeBinding } from '../engine-sql/write-misc.ts';
 
 export const PREADMIT_TTL_MS = 30_000;
 const BRAIN_SQL = 'SELECT brain_id FROM persistence_brain WHERE singleton=1';
 /**
- * Page admission's source row and, in the same statement, its guest_sources row (GBRA-504). A row worth caching has a
+ * Page admission's source row (engine `readAdmissionSource`), cached under its statement text. A row worth caching has a
  * local path, and a source with one is never a guest source (the database refuses it: guest_source_database_only).
- * guest_sources_hidden: row-level security keeps this role from reading guest_sources, so admission refuses.
  */
-export const ADMISSION_SOURCE_SQL = `SELECT s.incarnation,s.archived,s.local_path,s.config->>'kind' AS kind,s.config->>'role' AS role,g.writers AS guest_writers,g.trust_ceiling AS guest_trust_ceiling,${GUEST_SOURCES_HIDDEN_SQL} AS guest_sources_hidden FROM sources s LEFT JOIN guest_sources g ON g.source_id=s.id WHERE s.id=$1`;
-const BINDING_SQL = 'SELECT s.source_id,s.source_incarnation,s.worktree_id,s.relative_path, s.topology_generation::text AS topology_generation,w.owner_host_id,w.owner_epoch::text AS owner_epoch,w.state, h.local_path,h.coordination_path FROM persistence_source_bindings s JOIN persistence_worktrees w ON w.id=s.worktree_id LEFT JOIN persistence_host_bindings h ON h.worktree_id=w.id AND h.host_id=$2::uuid WHERE s.source_id=$1';
+export { ADMISSION_SOURCE_SQL };
+/** The worktree binding (engine `getWorktreeBinding`), cached under its statement text like the source row. */
+const BINDING_SQL = WORKTREE_BINDING_SQL.replace(/\s+/g, ' ').trim();
 const WRITER_SQL = new Set([
   'SELECT revoked_at,credential_hash,lane FROM persistence_local_writers WHERE id=$1::uuid',
   'SELECT lane,credential_hash,grant_ceiling,revoked_at FROM persistence_local_writers WHERE id=$1::uuid',
@@ -76,8 +76,10 @@ export async function preadmitReads(engine: BrainEngine, now: () => number = Dat
     if (held.brainId && held.brainId.id !== id) held.reads.clear();
     held.brainId = { id, at: now() };
   };
-  const read = async (sql: string, params: unknown[] | undefined, opts: { signal?: AbortSignal } | undefined): Promise<unknown[]> => {
-    if (caches.get(engine) !== held) return engine.executeRaw(sql, params, opts);
+  // `fetch` runs the read on a miss: the statement itself, or the typed member that runs it.
+  const read = async (sql: string, params: unknown[] | undefined, opts: { signal?: AbortSignal } | undefined,
+    fetch: () => Promise<Array<Record<string, unknown>>> = () => engine.executeRaw<Record<string, unknown>>(sql, params, opts)): Promise<unknown[]> => {
+    if (caches.get(engine) !== held) return fetch();
     if (sql === BRAIN_SQL) {
       if (held.brainId && now() - held.brainId.at < PREADMIT_TTL_MS) return [{ brain_id: held.brainId.id }];
       const rows = await engine.executeRaw<Record<string, unknown>>(sql, params, opts);
@@ -87,7 +89,7 @@ export async function preadmitReads(engine: BrainEngine, now: () => number = Dat
     const key = JSON.stringify([held.brainId?.id ?? null, sql, params ?? null]);
     const hit = held.reads.get(key);
     if (hit && now() - hit.at < PREADMIT_TTL_MS) return hit.rows.map(row => ({ ...(row as object) }));
-    const rows = await engine.executeRaw<Record<string, unknown>>(sql, params, opts);
+    const rows = await fetch();
     if (held.brainId && present(sql, rows) && caches.get(engine) === held) held.reads.set(key, { at: now(), rows: rows.map(row => ({ ...row })) });
     else held.reads.delete(key);
     return rows;
@@ -112,6 +114,16 @@ export async function preadmitReads(engine: BrainEngine, now: () => number = Dat
   // Every cached read is filed under the brain it was taken for, which admission checks.
   if (!held.brainId || now() - held.brainId.at >= PREADMIT_TTL_MS) await read(BRAIN_SQL, undefined, undefined);
   return registerEngineView(new Proxy(engine, { get(target, key) {
+    if (key === 'readAdmissionSource') return async (sourceId: string): Promise<AdmissionSourceRow | null> => {
+      const rows = await read(ADMISSION_SOURCE_SQL, [sourceId], undefined,
+        async () => { const row = await target.readAdmissionSource(sourceId); return row ? [row as unknown as Record<string, unknown>] : []; });
+      return (rows[0] as AdmissionSourceRow | undefined) ?? null;
+    };
+    if (key === 'getWorktreeBinding') return async (sourceId: string, hostId: string | null): Promise<WorktreeBinding | null> => {
+      const rows = await read(BINDING_SQL, [sourceId, hostId], undefined,
+        async () => { const row = await target.getWorktreeBinding(sourceId, hostId); return row ? [row as unknown as Record<string, unknown>] : []; });
+      return (rows[0] as WorktreeBinding | undefined) ?? null;
+    };
     if (key === 'executeRaw') return (sql: string, params?: unknown[], opts?: { signal?: AbortSignal }) => {
       const text = flat(sql);
       return text === BRAIN_SQL || text === ADMISSION_SOURCE_SQL || text === BINDING_SQL || WRITER_SQL.has(text) ? read(text, params, opts) : target.executeRaw(sql, params, opts);

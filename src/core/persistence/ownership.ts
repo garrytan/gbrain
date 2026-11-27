@@ -94,6 +94,21 @@ export async function getWorktreeBinding(engine: SqlEngine | (SqlEngine & Pick<B
   if ('getWorktreeBinding' in engine && typeof engine.getWorktreeBinding === 'function') return engine.getWorktreeBinding(sourceId, hostId);
   return getWorktreeBindingRaw(engine, sourceId, hostId);
 }
+/**
+ * A shared-read memo's typed binding read (page-mutations.ts `batchSharedReads`): one read per source and host, keyed
+ * by the member and its arguments. An absent binding is never kept: a later write of the same batch may claim the
+ * worktree, and `claimWorktree` reads the binding it made through the same engine.
+ */
+export function sharedWorktreeBinding(reads: Map<string, Promise<unknown>>, once: <T>(id: string, read: () => Promise<T>) => Promise<T>,
+  read: BrainEngine['getWorktreeBinding']): BrainEngine['getWorktreeBinding'] {
+  return (sourceId, hostId) => {
+    const memo = JSON.stringify(['getWorktreeBinding', sourceId, hostId]);
+    return once(memo, () => read(sourceId, hostId)).then(binding => {
+      if (!binding) reads.delete(memo);
+      return binding;
+    });
+  };
+}
 /** `automatic` is only the ordinary first-write claim; the writer admin lock never blocks it. */
 export async function claimWorktree(engine: BrainEngine, sourceId: string, path: string, hostId = hostIdFor(engine), expectedAdminState?: string,
   options: { automatic?: boolean } = {}): Promise<WorktreeBinding> {

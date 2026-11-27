@@ -236,35 +236,15 @@ export function sourceFederationState(config: unknown): 'federated' | 'isolated'
  * Enumerate every source. Order: 'default' first, then alphabetical by id.
  *
  * Caller filters in-process when the predicate is cheap (federatedOnly,
- * includeArchived). For source-id targeted reads use `fetchSource` instead
- * (single-row SELECT).
+ * includeArchived). For one source by id use `fetchSource`.
  */
 export async function loadAllSources(
   engine: BrainEngine,
   opts: LoadAllSourcesOpts = {},
 ): Promise<SourceRow[]> {
-  // Defensive on legacy brains pre-v0.26.5 that lack the archived column.
-  let rows: SourceRow[];
-  try {
-    rows = await engine.executeRaw<SourceRow>(
-      `SELECT id, name, local_path, last_commit, last_sync_at, config, created_at, archived, newest_content_at
-         FROM sources
-       ORDER BY (id = 'default') DESC, id`,
-    );
-  } catch (err) {
-    // Forward-reference safety: pre-v0.26.5 brains lack `archived`; pre-v109
-    // brains lack `newest_content_at`. Re-issue with the historical minimal
-    // set; archived defaults false, newest_content_at undefined → wall-clock.
-    if (isUndefinedColumnError(err)) {
-      rows = await engine.executeRaw<SourceRow>(
-        `SELECT id, name, local_path, last_commit, last_sync_at, config, created_at
-           FROM sources
-         ORDER BY (id = 'default') DESC, id`,
-      );
-    } else {
-      throw err;
-    }
-  }
+  // Pre-v0.26.5 brains lack `archived` and pre-v109 brains lack `newest_content_at`: the member reads them with the
+  // historical minimal columns (archived reads false, newest_content_at undefined → wall-clock).
+  const rows: SourceRow[] = await engine.listSourceRecords();
 
   let filtered = rows;
   if (!opts.includeArchived) {
@@ -276,35 +256,13 @@ export async function loadAllSources(
   return filtered;
 }
 
-/** Single-row fetch — kept here so callers don't grow yet-another SELECT. */
+/**
+ * One source by id, or null. `listSourceRecords` reads every source with the same columns (and the minimal columns on a
+ * schema without `archived`/`newest_content_at`); a brain has few sources, so this costs one small read.
+ */
 export async function fetchSource(
   engine: BrainEngine,
   id: string,
 ): Promise<SourceRow | null> {
-  try {
-    const rows = await engine.executeRaw<SourceRow>(
-      `SELECT id, name, local_path, last_commit, last_sync_at, config, created_at, archived, newest_content_at
-         FROM sources WHERE id = $1`,
-      [id],
-    );
-    return rows[0] ?? null;
-  } catch (err) {
-    if (isUndefinedColumnError(err)) {
-      const rows = await engine.executeRaw<SourceRow>(
-        `SELECT id, name, local_path, last_commit, last_sync_at, config, created_at
-           FROM sources WHERE id = $1`,
-        [id],
-      );
-      return rows[0] ?? null;
-    }
-    throw err;
-  }
-}
-
-/** Driver-tolerant 42703 detector. Mirrors src/core/utils.ts pattern. */
-function isUndefinedColumnError(err: unknown): boolean {
-  if (!err || typeof err !== 'object') return false;
-  const e = err as { code?: string; message?: string };
-  if (e.code === '42703') return true;
-  return typeof e.message === 'string' && /column .* does not exist/i.test(e.message);
+  return (await engine.listSourceRecords()).find(row => row.id === id) ?? null;
 }

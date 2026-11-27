@@ -1,10 +1,10 @@
 import { opError, type OperationError } from '../ops/contract.ts';
 import { PAGE_BODY_CONFIG_KEYS, pageRecoveryBytes, segmentedPageCeiling } from '../page-body/limits.ts';
 import { DEFAULT_JOURNAL_LIMITS, principalKey, type JournalLimits, type Principal, type SqlEngine } from './model.ts';
-import { engineKey } from '../engine-key.ts';
-import { COMPACTED_RECEIPT_BYTES_SQL, EFFECT_BYTES_SQL, RECEIPT_RESERVATION_FLOOR } from './receipt-bytes.ts';
 import type { BrainEngine } from '../engine.ts';
-import { readConfigValue, type ConfigReader } from '../config-values.ts';
+import { engineKey } from '../engine-key.ts';
+import { RECEIPT_RESERVATION_FLOOR } from './receipt-bytes.ts';
+import { readConfigMap, readConfigValue, type ConfigReader } from '../config-values.ts';
 
 /** Fallback compacted receipt size when no receipt is sampled; a compacted put_page measures about 3.9 KB. */
 export const RETAINED_RECEIPT_BYTES = 4096;
@@ -19,9 +19,9 @@ export const DEFAULT_RECEIPT_RETENTION_DAYS = 30;
 export const RECEIPT_TARGET_KEY = 'persistence.housekeeping.receipt_target_bytes';
 export const DEFAULT_RECEIPT_TARGET_BYTES = 8 * 1024 ** 3;
 export const HOUSEKEEPING_FLOOR_DAYS = 7;
-export async function readReceiptTargetBytes(engine:SqlEngine):Promise<number> {
-  const [row]=await engine.executeRaw<{value:string}>('SELECT value FROM config WHERE key=$1',[RECEIPT_TARGET_KEY]);
-  return row ? parseJournalConfigValue(RECEIPT_TARGET_KEY,row.value) : DEFAULT_RECEIPT_TARGET_BYTES;
+export async function readReceiptTargetBytes(engine:ConfigReader|Pick<BrainEngine,'getConfigValues'>):Promise<number> {
+  const value=await readConfigValue(engine,RECEIPT_TARGET_KEY);
+  return value!==undefined ? parseJournalConfigValue(RECEIPT_TARGET_KEY,value) : DEFAULT_RECEIPT_TARGET_BYTES;
 }
 /**
  * The reserved bytes the receipt target counts: terminal receipts not yet compacted that no recovery holds (the rows of the
@@ -156,8 +156,7 @@ const uploadLimitKey = (key: keyof UploadLimits) => `persistence.limits.${key.re
 export const UPLOAD_CONFIG_KEYS: readonly string[] = (Object.keys(DEFAULT_UPLOAD_LIMITS) as Array<keyof UploadLimits>).map(uploadLimitKey);
 
 export async function readUploadLimits(engine: SqlEngine): Promise<UploadLimits> {
-  const rows = await engine.executeRaw<{ key: string; value: string }>('SELECT key,value FROM config WHERE key=ANY($1::text[])', [[...UPLOAD_CONFIG_KEYS]]);
-  const configured = new Map(rows.map(row => [row.key, row.value]));
+  const configured = await readConfigMap(engine, UPLOAD_CONFIG_KEYS);
   const limits = { ...DEFAULT_UPLOAD_LIMITS };
   for (const key of Object.keys(limits) as Array<keyof UploadLimits>) {
     const value = configured.get(uploadLimitKey(key));

@@ -10,6 +10,51 @@
 import type { LegacyUnscopedRead } from './brands.ts';
 import type { QueryOpts, SqlExecutor } from './executor.ts';
 import { renderFragment, sqlFragment, trustedSql, type SqlFragment } from './fragment.ts';
+/** An expired-claim release: this consumer's host id, whether a claim that expired while preparing counts an attempt, and the dead owners. */
+export interface ClaimExpiry { hostId: string; charge: boolean; deadOwners: string[] }
+
+/** One heartbeat renewal: the row the caller owns, with its report. `pool` and `mintedUnder` are JSON text or null. */
+export interface ConsumerRenewal {
+  hostId: string; pid: number; nonce: string; pidNs: string | null; kind: string; mode: string; restartRequired: boolean; rootBarrierAgeMs: number | null;
+  pool: string | null; hostJsonPath: string; persistenceHome: string; mintedUnder: string | null; version: string; purgeMs: number;
+  bootId: string | null; processStart: string | null;
+}
+
+/** The row a stopping consumer deletes. */
+export interface ConsumerRowKey { hostId: string; pid: number; nonce: string }
+
+export const DELETE_CONSUMER_SQL = 'DELETE FROM persistence_consumers WHERE host_id=$1::uuid AND pid=$2::integer AND nonce=$3';
+
+/** The consumer's `expired_claims` statement (the protocol predicate and `EXPIRED_PREPARING_CHARGE_SQL('r')` written out): $1 = host id, $2 = charge a preparing claim, $3 = dead claim owners. */
+export const EXPIRE_CLAIMS_SQL = `WITH expired AS (
+        SELECT r.id FROM persistence_requests r WHERE r.state='running' AND r.recovery IS NULL
+        AND r.publication_started=false AND set_config('gbrain.persistence_protocol','2',true)='2'
+        AND (r.claim_expires_at<now() OR r.claim_phase->>'token'=r.execution_token::text
+          AND concat_ws(':',r.claim_phase->'owner'->>'pid',r.claim_phase->'owner'->>'nonce',r.claim_phase->'owner'->>'start')=ANY($3::text[]))
+        AND (r.worktree_id IS NULL OR EXISTS (SELECT 1 FROM persistence_worktrees w WHERE w.id=r.worktree_id AND w.owner_host_id=$1::uuid))
+        ORDER BY r.sequence LIMIT 100 FOR UPDATE OF r SKIP LOCKED)
+        UPDATE persistence_requests r SET state='queued',execution_token=NULL,claim_expires_at=NULL,
+          preparation_attempts=r.preparation_attempts+CASE WHEN $2::boolean THEN CASE WHEN r.claim_phase->>'phase'='preparing' AND r.claim_phase->>'token'=r.execution_token::text THEN 1 ELSE 0 END ELSE 0 END
+        FROM expired WHERE r.id=expired.id`;
+
+/**
+ * What this binary's consumer can drain: `refresh_barrier_1` (v292) claims writes deferred behind a worktree refresh,
+ * `refresh_barrier_import_1` (v294) writes held for an import.
+ */
+export const CONSUMER_CAPABILITIES = ['refresh_barrier_1', 'refresh_barrier_import_1'] as const;
+
+/** Purges the host's lapsed rows (not the caller's), then inserts or renews the caller's row with CONSUMER_CAPABILITIES. */
+export const RENEW_CONSUMER_SQL = `WITH purged AS (
+    DELETE FROM persistence_consumers WHERE host_id=$1::uuid AND renewed_at < now() - ($14::integer * interval '1 millisecond') AND NOT (pid=$2::integer AND nonce=$3))
+  INSERT INTO persistence_consumers(host_id,pid,nonce,pid_ns,kind,mode,restart_required,root_barrier_age_ms,pool,host_json_path,persistence_home,minted_under,version,boot_id,process_start,segment_reader,capabilities)
+  VALUES($1::uuid,$2::integer,$3,$4,$5,$6,$7::boolean,$8::integer,$9::text::jsonb,$10,$11,$12::text::jsonb,$13,$15,$16,true,ARRAY['refresh_barrier_1','refresh_barrier_import_1']::text[])
+  ON CONFLICT (host_id,pid,nonce) DO UPDATE SET renewed_at=now(),mode=EXCLUDED.mode,restart_required=EXCLUDED.restart_required,
+    root_barrier_age_ms=EXCLUDED.root_barrier_age_ms,pool=EXCLUDED.pool,version=EXCLUDED.version,segment_reader=EXCLUDED.segment_reader,capabilities=EXCLUDED.capabilities`;
+
+/** GBRA-248: stamps the host's worktrees with the time it stopped; rows another transaction holds are skipped, in id order. */
+export const STAMP_WORKTREE_HEARTBEATS_SQL = `UPDATE persistence_worktrees SET heartbeat_at=now() WHERE id IN
+        (SELECT id FROM persistence_worktrees WHERE owner_host_id=$1::uuid ORDER BY id FOR UPDATE SKIP LOCKED)`;
+
 
 /** `PERSISTENCE_PROTOCOL_PREDICATE` (protocol.ts): declares protocol 2 for the statement; always true. */
 export const PROTOCOL_PREDICATE_SQL = "set_config('gbrain.persistence_protocol','2',true)='2'";
@@ -312,4 +357,22 @@ export async function selectClaimableWrite<R = Record<string, unknown>>(exec: Le
   const { sql, params } = claimHeadStatement(spec);
   const [row] = await exec.executeRaw<R>(sql, params);
   return row ?? null;
+}
+
+export async function deleteConsumerRow(exec: SqlExecutor, key: ConsumerRowKey, opts?: QueryOpts): Promise<void> {
+  await exec.executeRaw(DELETE_CONSUMER_SQL, [key.hostId, key.pid, key.nonce], opts);
+}
+
+/** Returns expired claims (and claims of dead owners) to queued, at most 100 per call. */
+export async function expireStaleWriteClaims(exec: SqlExecutor, expiry: ClaimExpiry, opts?: QueryOpts): Promise<void> {
+  await exec.executeRaw(EXPIRE_CLAIMS_SQL, [expiry.hostId, expiry.charge, expiry.deadOwners], opts);
+}
+
+export async function renewConsumerRow(exec: SqlExecutor, r: ConsumerRenewal, opts?: QueryOpts): Promise<void> {
+  await exec.executeRaw(RENEW_CONSUMER_SQL, [r.hostId, r.pid, r.nonce, r.pidNs, r.kind, r.mode, r.restartRequired, r.rootBarrierAgeMs,
+    r.pool, r.hostJsonPath, r.persistenceHome, r.mintedUnder, r.version, r.purgeMs, r.bootId, r.processStart], opts);
+}
+
+export async function stampWorktreeHeartbeats(exec: SqlExecutor, hostId: string, opts?: QueryOpts): Promise<void> {
+  await exec.executeRaw(STAMP_WORKTREE_HEARTBEATS_SQL, [hostId], opts);
 }

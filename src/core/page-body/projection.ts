@@ -227,15 +227,8 @@ export async function rebuildPendingSegmentedProjections(engine: BrainEngine, li
     onFailure?: (failure: ProjectionRebuildFailure) => void } = {}): Promise<{ rebuilt: number; failed: number; listed: string[] }> {
   const now = opts.now ?? Date.now;
   const startedAt = now();
-  const params: unknown[] = [Math.max(1, limit)];
-  const filters = [opts.retryCooldown === false ? `NOT ${SEGMENTED_PROJECTION_CLAIMED_SQL}` : PROJECTION_RETRY_READY_SQL];
-  if (opts.notAfter !== undefined) filters.push(`j.updated_at<=$${params.push(opts.notAfter)}::text::timestamptz`);
-  if (opts.reasons) filters.push(`j.reason=ANY($${params.push(opts.reasons)}::text[])`);
-  if (opts.exclude?.length) filters.push(`NOT (j.source_incarnation::text || '/' || j.slug)=ANY($${params.push(opts.exclude)}::text[])`);
-  const jobs = await engine.executeRaw<{ source_id: string; source_incarnation: string; slug: string; revision: string }>(`SELECT s.id AS source_id,
-      j.source_incarnation::text AS source_incarnation, j.slug, j.revision::text AS revision
-    FROM page_projection_jobs j ${SEGMENTED_JOB_PROBES}
-    WHERE ${filters.join(' AND ')} ORDER BY j.updated_at, j.slug LIMIT $1`, params);
+  const jobs = await engine.listPendingSegmentedProjections({ limit, notAfter: opts.notAfter, reasons: opts.reasons, exclude: opts.exclude,
+    retryCooldown: opts.retryCooldown });
   let rebuilt = 0, failed = 0;
   const listed: string[] = [];
   for (const [index, job] of jobs.entries()) {
@@ -244,11 +237,10 @@ export async function rebuildPendingSegmentedProjections(engine: BrainEngine, li
     try {
       if (!(await buildSegmentedProjection(engine, { sourceId: job.source_id, slug: job.slug }, { expectedRevision: job.revision })).sealed) continue;
       rebuilt++;
-      await engine.executeRaw('DELETE FROM page_projection_jobs WHERE source_incarnation=$1::uuid AND slug=$2 AND revision=$3::uuid', [job.source_incarnation, job.slug, job.revision]);
+      await engine.deleteProjectionJob({ sourceIncarnation: job.source_incarnation, slug: job.slug, revision: job.revision });
     } catch (error) {
       failed++;
-      await engine.executeRaw(`UPDATE page_projection_jobs j SET reason='rebuild_failed', updated_at=now()
-        WHERE j.source_incarnation=$1::uuid AND j.slug=$2 AND j.revision=$3::uuid AND NOT ${SEGMENTED_PROJECTION_CLAIMED_SQL}`, [job.source_incarnation, job.slug, job.revision]);
+      await engine.markProjectionRebuildFailed({ sourceIncarnation: job.source_incarnation, slug: job.slug, revision: job.revision });
       opts.onFailure?.({ source_id: job.source_id, slug: job.slug, reason: (error instanceof Error ? error.message : String(error)).split('\n')[0]!.slice(0, 300) });
     }
   }

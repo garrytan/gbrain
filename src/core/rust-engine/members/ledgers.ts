@@ -38,4 +38,5 @@ export const LEDGER_MEMBERS = {
   readPageVersionEdition: 'pages', // held: no Rust store member yet; served later as 'page_versions'
   readCursorEdition: 'pages', // held: no Rust store member yet; served later as 'page_versions'
   pageAwaitsRederive: 'pages',
+  listGuardedTakeRows: 'takes',
 } as const satisfies Partial<Record<keyof BrainEngine, MemberClass>>;

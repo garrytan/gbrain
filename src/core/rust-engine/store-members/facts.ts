@@ -25,6 +25,15 @@ import { storePrivacyPolicy } from './private-provenance.ts';
 import { privateProvenanceFilterUnderPolicy } from '../../search/private-visibility.ts';
 import { withDates } from '../store-codec.ts';
 import { facetOfMetric } from '../../profile/facets.ts';
+import type { FactPreimage } from '../../engine-sql/facts.ts';
+/** The store reads the page's rows by number; ids come back as numbers, and the times as the `jsonb` text PGLite's statement gives. */
+/** A before-state row as the store returns it: ids as numbers, the times as the `jsonb` text PGLite's statement gives. */
+const preimageRows = (rows: Row[]): FactPreimage[] => rows.map((row) => ({
+  ...row, id: Number(row.id),
+  superseded_by: row.superseded_by == null ? null : Number(row.superseded_by),
+  consolidated_into: row.consolidated_into == null ? null : Number(row.consolidated_into),
+})) as unknown as FactPreimage[];
+
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
 type FactRow = Awaited<ReturnType<BrainEngine['listFactsByEntity']>>[number];
@@ -303,3 +312,7 @@ export const migrateFactsToCanonical: Member<'migrateFactsToCanonical'> = async 
     brain.migrateFactsToCanonical(phantomSlug, canonicalSlug, sourceId));
   return { migrated };
 };
+
+export const listFenceRetireCandidates: Member<'listFenceRetireCandidates'> = async (brain, target) =>
+  preimageRows(await storeCall({ member: 'listFenceRetireCandidates', slug: target.slug, sourceId: target.sourceId },
+    () => brain.listFenceRetireCandidates({ sourceId: target.sourceId, slug: target.slug, incoming: target.incoming })) as Row[]);

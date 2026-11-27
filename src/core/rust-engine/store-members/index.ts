@@ -53,6 +53,23 @@ import * as jobs from './jobs.ts';
 import * as persistenceIdentity from './persistence-identity.ts';
 import * as persistence from './persistence.ts';
 import * as writerAdmin from './writer-admin.ts';
+// The members `gbrain put` and `gbrain get` reach on a brain with no managed persistence (docs/research/rust-put-get-member-trace.md).
+import * as writeMisc from './write-misc.ts';
+import * as connectGate from './connect-gate.ts';
+import * as withdrawalFence from './withdrawal-fence.ts';
+import * as accessMembers from './access-members.ts';
+import * as trustTierReads from './trust-tier-reads.ts';
+import * as publicationJournal from './publication-journal.ts';
+import * as writeGuards from './write-guards.ts';
+import * as writeContext from './write-context.ts';
+import * as housekeeping from './housekeeping.ts';
+import * as effectScans from './effect-scans.ts';
+import * as trustFence from './trust-fence.ts';
+import * as fenceHolds from './fence-holds.ts';
+import * as ownerScans from './owner-scans.ts';
+import * as syncHoldStore from './sync-hold-store.ts';
+import * as effectWorker from './effect-worker.ts';
+import * as wantedLinks from './wanted-links.ts';
 
 /** Schema is created when the store opens (rust/README.md, `brain.open`), so there is nothing left for initSchema to run. */
 const initSchema: StoreMember<[], void> = async () => undefined;
@@ -76,6 +93,9 @@ export const STORE_MEMBERS = {
   ...jobsHealth,
   // Import-path members: source and resolver reads, persistence identity and mode, cycle locks, the seal read.
   ...cliSources, ...cliReadsImport, ...cliEntities, ...importMembers, ...jobs, ...persistenceIdentity, ...persistence, ...writerAdmin,
+  // The put and get path on a brain with no managed persistence.
+  ...writeMisc, ...connectGate, ...withdrawalFence, ...accessMembers, ...trustTierReads, ...publicationJournal, ...writeGuards,
+  ...writeContext, ...housekeeping, ...effectScans, ...trustFence, ...fenceHolds, ...ownerScans, ...syncHoldStore, ...effectWorker, ...wantedLinks,
 } as const satisfies { [K in keyof BrainEngine]?: (brain: never, ...args: never[]) => Promise<unknown> };
 
 export type ServedMember = keyof typeof STORE_MEMBERS;

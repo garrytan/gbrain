@@ -1,4 +1,8 @@
-
+/** `stampEffectClaim`: claims effect `id` under `token`; `ownerJson` is the `claim_owner` stamp (`effectClaimStamp`). */
+export interface EffectClaim { id: EffectId; token: string; ownerJson: string }
+/** `stampEffectClaim`: $1 id, $2 token, $3 the owner stamp. The text `claimPersistenceEffect` has always sent. */
+export const STAMP_EFFECT_CLAIM_SQL = `UPDATE persistence_effects SET state='running',execution_token=$2::uuid,claim_owner=$3::text::jsonb,
+      claim_expires_at=now()+interval '2 minutes',attempts=attempts+1,updated_at=now() WHERE id=$1 RETURNING *`;
 
 /** The engine an effect worker statement runs on: its own `executeRaw` (or the direct lane's). */
 export interface EffectExec { executeRaw<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]> }
@@ -56,4 +60,10 @@ export async function lockEffectGuard(exec: EffectExec, worktreeId: string | nul
   if (!worktreeId) return null;
   const [owner] = await exec.executeRaw<EffectWorktreeOwner>(EFFECT_GUARD_WORKTREE_SQL, [worktreeId]);
   return owner ?? null;
+}
+
+/** Claims effect `id` under `token`: the claimed row, or null when no effect has the id. */
+export async function stampEffectClaim<R = Record<string, unknown>>(exec: EffectExec, claim: EffectClaim): Promise<R | null> {
+  const [row] = await exec.executeRaw<R>(STAMP_EFFECT_CLAIM_SQL, [claim.id, claim.token, claim.ownerJson]);
+  return row ?? null;
 }

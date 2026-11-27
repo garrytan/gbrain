@@ -35,7 +35,8 @@ import { admitWrite, assertPageRequestIdentity, assertReplayIntent, getWriteRequ
 import { submissionAuthority, authorizeStoredRequest, sharedWriterRow } from './authority.ts';
 import { currentVerifiedLocalWriter, hostIdFor, readLocalWriter, registerLocalWriter, withVerifiedLocalRegistration } from './identity.ts';
 import type { BrainEngine } from '../engine.ts';
-import { claimWorktree, getWorktreeBinding } from './ownership.ts';
+import { claimWorktree, getWorktreeBinding, sharedWorktreeBinding } from './ownership.ts';
+import type { AdmissionSourceRow, SourceStateOptions } from '../engine-sql/write-misc.ts';
 import { clientRequestIdOf, parseMutationPrecondition } from './preconditions.ts';
 import { assertPurgeParams } from './purge-params.ts';
 import type { Principal, WriteRequest } from './model.ts';
@@ -48,7 +49,7 @@ import { colonSlugWindowsRefusal, isWindowsColonTarget } from './native-file-tar
 import { CALLER_CONTENT_OPERATIONS, publishesDatabaseOnly } from './page-prepare.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
 import { liveSearchable } from './searchable.ts';
-import { ADMISSION_SOURCE_SQL, cachedPreadmitBrain, dropPreadmitCache, preadmitReads, preadmitRecheckFailed } from './preadmit-cache.ts';
+import { cachedPreadmitBrain, dropPreadmitCache, preadmitReads, preadmitRecheckFailed } from './preadmit-cache.ts';
 import { pipelined } from '../page-state/transactions.ts';
 import { EXISTING_PAGE_OPERATIONS, refuseLegacySpelling, storedWriteSlug } from './legacy-slug-put.ts';
 import { holdsSummarizedToolCalls, isQuotedPageType, quotesTier, unquoteTranscriptText } from '../search/transcript-quote.ts';
@@ -86,12 +87,8 @@ const flatSql = (sql: string) => sql.replace(/\s+/g, ' ').trim();
  * import's source-root and company-profile checks. All of them are rechecked
  * under lock by the admission transaction or by publication.
  */
-type AdmissionSource = { incarnation: string; archived: boolean; local_path: string | null; kind: string | null; role: string | null; guest_writers: string[] | null; guest_trust_ceiling: string | null; guest_sources_hidden: boolean };
 const BATCH_SHARED_READS = new Set([
-  ADMISSION_SOURCE_SQL,
-  'SELECT s.source_id,s.source_incarnation,s.worktree_id,s.relative_path, s.topology_generation::text AS topology_generation,w.owner_host_id,w.owner_epoch::text AS owner_epoch,w.state, h.local_path,h.coordination_path FROM persistence_source_bindings s JOIN persistence_worktrees w ON w.id=s.worktree_id LEFT JOIN persistence_host_bindings h ON h.worktree_id=w.id AND h.host_id=$2::uuid WHERE s.source_id=$1',
   'SELECT lane,revoked_at,grant_ceiling FROM persistence_local_writers WHERE id=$1::uuid',
-  'SELECT local_path FROM sources WHERE id=$1 AND incarnation=$2::uuid',
   'SELECT brain_id FROM persistence_brain WHERE singleton=1',
   'SELECT value FROM config WHERE key=$1',
   "SELECT config,incarnation FROM sources WHERE id=$1",
@@ -108,7 +105,6 @@ const BATCH_SHARED_READS = new Set([
 const WRITER_ROW_SQL = 'SELECT lane,credential_hash,grant_ceiling,revoked_at FROM persistence_local_writers WHERE id=$1::uuid';
 export const SCREENING_SHARED_READS: ReadonlySet<string> = new Set([
   WRITER_ROW_SQL,
-  'SELECT p.source_id,p.source_incarnation,s.local_path AS source_root, h.local_path AS worktree_root,b.relative_path FROM shared_skill_packs p JOIN sources s ON s.id=p.source_id AND s.incarnation=p.source_incarnation LEFT JOIN persistence_source_bindings b ON b.source_id=p.source_id AND b.source_incarnation=p.source_incarnation LEFT JOIN persistence_host_bindings h ON h.worktree_id=b.worktree_id AND h.host_id=$1::uuid',
 ]);
 /** The shared reads above, plus their typed twins: the brain identity and the unlocked writer row. */
 export function batchSharedReads(engine: BrainEngine, extra?: ReadonlySet<string>): BrainEngine {
@@ -122,6 +118,16 @@ export function batchSharedReads(engine: BrainEngine, extra?: ReadonlySet<string
     if (key === 'executeRaw') return (sql: string, params?: unknown[], opts?: { signal?: AbortSignal }) =>
       BATCH_SHARED_READS.has(flatSql(sql)) || extra?.has(flatSql(sql)) ? once(JSON.stringify([flatSql(sql), params ?? null]), () => target.executeRaw(sql, params, opts)) : target.executeRaw(sql, params, opts);
     if (key === 'readPersistenceBrainId') return () => once('typed:brain', () => target.readPersistenceBrainId());
+    // Page admission's source row (engine-sql/write-misc.ts) and the worktree binding, once per batch; an absent binding
+    // is read again, since a later page may claim the worktree.
+    if (key === 'readAdmissionSource') return (sourceId: string) => once(JSON.stringify([key, sourceId]), () => target.readAdmissionSource(sourceId));
+    if (key === 'getWorktreeBinding') return sharedWorktreeBinding(reads, once, (sourceId, hostId) => target.getWorktreeBinding(sourceId, hostId));
+    // A write's unlocked source state (engine-sql/write-misc.ts); a locked read runs every time.
+    if (key === 'readSourceState') return (sourceId: string, opts?: SourceStateOptions) =>
+      opts?.lock ? target.readSourceState(sourceId, opts) : once(JSON.stringify([key, sourceId]), () => target.readSourceState(sourceId));
+    // The screen's shared skillpack reads (knowledge-guard.ts), once per batch.
+    if (key === 'sharedSkillPackTablePresent' && extra) return () => once(key, () => target.sharedSkillPackTablePresent());
+    if (key === 'listSharedSkillPackRoots' && extra) return (hostId: string) => once(JSON.stringify([key, hostId]), () => target.listSharedSkillPackRoots(hostId));
     // The managed import's company-profile check reads the source's incarnation and receipt once per batch, as its two statements did.
     if (key === 'readSourceIncarnation') return (id: string) => once(JSON.stringify(['typed:incarnation', id]), () => target.readSourceIncarnation(id)).then(row => row && { ...row });
     if (key === 'hasCompanyBrainReceipt') return (id: string) => once(JSON.stringify(['typed:receipt', id]), () => target.hasCompanyBrainReceipt(id));
@@ -448,11 +454,11 @@ export async function preparePageAdmission(ctx: OperationContext,
   const captureSlug = input.operation === 'capture' ? await resolveCaptureFile(ctx, sourceId, p) : null;
   const principal = await requestPrincipalForContext(ctx);
   // Independent reads go out together on Postgres; the first refusal in this order is the one reported.
-  const [, prior, [source]] = await pipelined(ctx.engine, [
+  const [, prior, source] = await pipelined(ctx.engine, [
     () => assertPageRequestIdentity(ctx.engine, principal, requestId),
     () => getWriteRequest(ctx.engine, principal, requestId),
-    () => ctx.engine.executeRaw<AdmissionSource>(ADMISSION_SOURCE_SQL, [sourceId]).catch(e => schemaBehindGuests(ctx.engine, e)),
-  ]) as [unknown, WriteRequest | null, AdmissionSource[]];
+    () => ctx.engine.readAdmissionSource(sourceId).catch(e => schemaBehindGuests(ctx.engine, e)),
+  ]) as [unknown, WriteRequest | null, AdmissionSourceRow | null];
   if (source?.guest_sources_hidden) throw guestSourcesUnreadable(sourceId);
   const guest: GuestSource | null = source?.guest_writers ? { source_id: sourceId, writers: source.guest_writers, trust_ceiling: source.guest_trust_ceiling! } : null;
   // GBRA-504: a guest source admits only its listed writers' plain put_page, carrying the guest attribution, which joins

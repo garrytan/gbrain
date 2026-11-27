@@ -161,11 +161,9 @@ function upgradedAcrossRelease(): boolean {
 
 async function brainCreatedBefore(engine: BrainEngine, cutoffMs: number): Promise<boolean> {
   try {
-    const rows = await engine.executeRaw<{ at: string | Date | null }>(`SELECT MIN(created_at) AS at FROM sources`);
-    const at = rows[0]?.at;
-    if (at === null || at === undefined) return false;
-    const ms = new Date(at).getTime();
-    return Number.isFinite(ms) && ms < cutoffMs;
+    // MIN(created_at) over every source, archived ones too.
+    const times = (await engine.listSourceRecords()).map(r => (r.created_at == null ? NaN : new Date(r.created_at).getTime()));
+    return times.some(ms => Number.isFinite(ms) && ms < cutoffMs);
   } catch {
     return false;
   }

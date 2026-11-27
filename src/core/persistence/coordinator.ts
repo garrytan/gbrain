@@ -607,7 +607,7 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
     const done = await publicationTransaction(engine, async tx => {
       await declarePublication(tx);
       const liveBinding = await guardOwnership(tx, row, hostId);
-      if (prepared.sourceExclusive && !prepared.exclusiveSources?.length) await tx.executeRaw('SELECT id FROM sources WHERE id=$1 FOR UPDATE', [row.source_id]);
+      if (prepared.sourceExclusive && !prepared.exclusiveSources?.length) await tx.lockSourceForUpdate(row.source_id);
       if (prepared.exclusiveSources?.length) await lockCoreSources(tx, prepared.sourceExclusive ? [row.source_id, ...prepared.exclusiveSources] : prepared.exclusiveSources);
       if (binding && String(liveBinding?.owner_epoch) !== String(binding.owner_epoch)) throw opError('owner_unavailable', 'Owner epoch changed before publication.',
         `Source ${row.source_id}'s canonical owner changed (a transfer or re-claim) after request ${row.request_id} was prepared, so this host published nothing for it. Inspect the owner and the request before resubmitting; do not claim or transfer the source to push this write through.`,
@@ -617,9 +617,9 @@ export async function publishMutation(engine: BrainEngine, row: WriteRequest, pr
       await lockCounters(tx, ['brain', principalKey(requestPrincipal(row)), ...(row.worktree_id ? [`worktree:${row.worktree_id}`] : [])]);
       // A file publication stamps `publication_started` on the row lock it takes anyway; the stamp lives and dies
       // with this transaction either way (control.ts reads a rolled-back stamp as "never started").
-      const [current] = await tx.executeRaw<WriteRequest>(recovery
-        ? 'UPDATE persistence_requests SET publication_started=true WHERE id=$1::uuid RETURNING *'
-        : 'SELECT * FROM persistence_requests WHERE id=$1::uuid FOR UPDATE', [row.id]);
+      const current = recovery
+        ? await (await tx.publicationJournalStore()).markPublicationStarted(row.id)
+        : await tx.lockWriteRequest(row.id);
       if (!current || current.execution_token !== row.execution_token || current.state !== 'running') throw opError('write_claim_lost', 'Execution claim changed before publication.',
         `Another worker took over request ${row.request_id} (its execution claim expired or was reassigned) before this attempt published, so this attempt wrote nothing and the current holder decides the outcome. Inspect the request rather than resubmitting it.`,
         { fix: requestFix(row) });

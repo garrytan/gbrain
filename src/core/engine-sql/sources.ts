@@ -207,3 +207,12 @@ export interface SourceRoutingRow { id: string; local_path: string | null; archi
 
 /** Live page counts of `default` against every other source (`countDefaultSourceSplit`). */
 export interface DefaultSourceSplit { defaultPages: number; nonDefaultPages: number; nonDefaultSources: number }
+
+/**
+ * Takes the source row's lock (`SELECT id FROM sources WHERE id=$1 FOR UPDATE`) for the rest of the caller's transaction,
+ * reading nothing back; an unknown source is a no-op. The publication transaction of a `sourceExclusive` mutation takes it
+ * before any other publication statement (persistence/coordinator.ts).
+ */
+export async function lockSourceForUpdate(exec: SqlExecutor, sourceId: string): Promise<void> {
+  await exec.executeRaw('SELECT id FROM sources WHERE id=$1 FOR UPDATE', [sourceId]);
+}

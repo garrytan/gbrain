@@ -1240,10 +1240,7 @@ export async function resumeWorktreeRefreshes(engine: BrainEngine, opts: { hostI
   const host = opts.hostId ?? hostIdFor(engine);
   const budgetMs = await configuredMs(engine, undefined, 'GBRAIN_REFRESH_SYNC_BUDGET_MS', 'sources.refresh_sync_budget_ms', SYNC_BUDGET_MS).catch(() => SYNC_BUDGET_MS);
   // #9649: a syncing row that has not moved for a whole sync budget is listed even while its members lag (completeSyncedOrphan).
-  const rows = await engine.executeRaw<WorktreeRefreshRow & { stale: boolean }>(`SELECT f.*,f.updated_at<now()-($2::double precision*interval '1 millisecond') AS stale FROM persistence_worktree_refreshes f
-    JOIN persistence_worktrees w ON w.id=f.worktree_id WHERE w.owner_host_id=$1::uuid AND f.state IN ('draining','fenced','merged','syncing') AND (f.state<>'syncing'
-      OR f.updated_at<now()-($2::double precision*interval '1 millisecond') OR NOT EXISTS (SELECT 1 FROM sources s WHERE s.id=ANY(f.source_ids) AND (s.last_commit IS NULL OR s.last_commit=f.old_head)))
-    ORDER BY f.state='syncing', f.created_at LIMIT 16`, [host, budgetMs]);
+  const rows = await engine.listResumableRefreshes<WorktreeRefreshRow>(host, budgetMs);
   const listed = new Set(rows.map(row => row.id));
   for (const cache of [laggingSyncing, unreadableHeadLogged]) for (const id of cache.keys()) if (!listed.has(id)) cache.delete(id);
   let moved = 0;

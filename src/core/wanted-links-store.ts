@@ -4,7 +4,6 @@
  * imports, calls it inside the derived-link replacement transaction.
  */
 import type { BrainEngine } from './engine.ts';
-import { executeRawJsonb } from './sql-query.ts';
 import { sanitizeForJsonb } from './batch-rows.ts';
 import { validateSlug } from './utils.ts';
 
@@ -32,10 +31,8 @@ export interface WantedLinksReplacement {
 }
 
 /** The database clock as a UTC ISO string with microseconds, independent of the session's DateStyle. */
-export async function wantedReadAt(engine: Pick<BrainEngine, 'executeRaw'>): Promise<string> {
-  const [row] = await engine.executeRaw<{ at: string }>(
-    `SELECT to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS at`);
-  return row!.at;
+export async function wantedReadAt(engine: Pick<BrainEngine, 'readDatabaseClock'>): Promise<string> {
+  return engine.readDatabaseClock();
 }
 
 /**
@@ -48,13 +45,12 @@ export async function wantedReadAt(engine: Pick<BrainEngine, 'executeRaw'>): Pro
  * and the page-guard lock; the origin's own source needs no read.
  */
 export async function possibleWantedRows<T extends Pick<WantedLinkInput, 'ref_kind' | 'target_source_id' | 'target_ref'>>(
-  tx: Pick<BrainEngine, 'executeRaw'>, originSourceId: string, rows: readonly T[],
+  tx: Pick<BrainEngine, 'lockRegisteredSourceIds'>, originSourceId: string, rows: readonly T[],
 ): Promise<T[]> {
   const shaped = rows.filter(row => row.ref_kind !== 'slug' || pageSlugShaped(row.target_ref));
   const foreign = [...new Set(shaped.map(row => row.target_source_id).filter(id => id !== originSourceId))];
   if (!foreign.length) return shaped;
-  const registered = new Set((await tx.executeRaw<{ id: string }>(
-    'SELECT id FROM sources WHERE id = ANY($1::text[]) ORDER BY id FOR SHARE', [foreign])).map(row => row.id));
+  const registered = new Set(await tx.lockRegisteredSourceIds(foreign));
   return shaped.filter(row => row.target_source_id === originSourceId || registered.has(row.target_source_id));
 }
 
@@ -74,7 +70,7 @@ function pageSlugShaped(target: string): boolean {
  * after that read wakes the origin once, and the next extraction settles it.
  */
 export async function replaceWantedLinks(
-  tx: Pick<BrainEngine, 'executeRaw' | 'lockPageKeys'>,
+  tx: Pick<BrainEngine, 'lockRegisteredSourceIds' | 'lockPageKeys' | 'replaceWantedLinkRows'>,
   origin: { pageId: number; sourceId: string },
   replacement: WantedLinksReplacement,
 ): Promise<number> {
@@ -88,27 +84,7 @@ export async function replaceWantedLinks(
   const slugTargets = rows.filter(row => row.ref_kind === 'slug')
     .map(row => ({ sourceId: row.target_source_id, slug: row.target_ref }));
   if (slugTargets.length) await tx.lockPageKeys(slugTargets);
-  await executeRawJsonb(tx, `DELETE FROM wanted_links w
-      WHERE w.origin_page_id = $1
-        AND w.producer IN (SELECT jsonb_array_elements_text(($2::jsonb)->'producers'))
-        AND NOT EXISTS (SELECT 1 FROM jsonb_to_recordset(($2::jsonb)->'rows')
-          AS v(producer text, ref_kind text, target_source_id text, target_ref text)
-          WHERE v.producer = w.producer AND v.ref_kind = w.ref_kind
-            AND v.target_source_id = w.target_source_id AND v.target_ref = w.target_ref)`,
-  [origin.pageId], [{ rows, producers: replacement.producers }]);
-  if (!rows.length) return 0;
-  const written = await executeRawJsonb<{ id: number }>(tx, `INSERT INTO wanted_links
-      (origin_page_id, source_id, producer, ref_kind, target_source_id, target_ref, link_type, context, checked_at)
-    SELECT $1, $2, v.producer, v.ref_kind, v.target_source_id, v.target_ref, v.link_type, v.context,
-      CASE WHEN v.ref_kind = 'slug' AND EXISTS (SELECT 1 FROM pages t WHERE t.source_id = v.target_source_id
-        AND t.deleted_at IS NULL AND t.slug = v.target_ref)
-      THEN '-infinity'::timestamptz WHEN v.ref_kind = 'name' THEN $3::timestamptz ELSE now() END
-    FROM jsonb_to_recordset(($4::jsonb)->'rows')
-      AS v(producer text, ref_kind text, target_source_id text, target_ref text, link_type text, context text)
-    ON CONFLICT ON CONSTRAINT wanted_links_reference_unique DO UPDATE
-      SET link_type = EXCLUDED.link_type, context = EXCLUDED.context, checked_at = EXCLUDED.checked_at
-    RETURNING id`, [origin.pageId, origin.sourceId, replacement.readAt ?? null], [{ rows }]);
-  return written.length;
+  return tx.replaceWantedLinkRows(origin, { rows, producers: replacement.producers, readAt: replacement.readAt });
 }
 
 export interface WantedPageRow {

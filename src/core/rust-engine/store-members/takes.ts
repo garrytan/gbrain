@@ -20,6 +20,7 @@ import { deriveResolutionTuple, finalizeScorecard } from '../../takes-resolution
 import type { SearchOpts } from '../../types.ts';
 import { GBrainError } from '../../types.ts';
 import { refuseMember, storeCall, takeOptions, throwIfAborted, type StoreMember } from './common.ts';
+import type { TakeFenceRow } from '../../engine-sql/takes.ts';
 
 /** Page-read options these members accept and that change nothing here (no trust tiers or chunk safety on takes). */
 const IGNORED_READ_OPTIONS = ['minTrust', 'suppressFlagged', 'requireSafeChunks'] as const;
@@ -255,3 +256,12 @@ export const listActiveTakesForPages: StoreMember<[pageIds: number[], opts?: { t
     for (const take of rows) out.get(take.page_id)?.push(toTake(take));
     return out;
   };
+
+/** Deletes the page's take rows with these row numbers (a fence rewrite drops them). */
+export const deleteTakeRows: StoreMember<[pageId: number, rowNums: number[]], void> = async (brain, pageId, rowNums) => {
+  await storeCall({ member: 'deleteTakeRows' }, () => brain.deleteTakeRows(pageId, rowNums));
+};
+
+/** The row numbers of the page's take rows that match the fence rows, at most `limit`. */
+export const matchTakeRows: StoreMember<[pageId: number, rows: TakeFenceRow[], limit: number], number[]> = (brain, pageId, rows, limit) =>
+  storeCall({ member: 'matchTakeRows' }, () => brain.matchTakeRows(pageId, rows, limit));

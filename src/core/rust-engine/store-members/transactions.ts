@@ -30,6 +30,7 @@ import { capabilityMissing } from '../errors.ts';
 import { mapStoreError, storeErrorCode } from '../store-errors.ts';
 import type { RustStore, StoreBrain } from '../store.ts';
 import { storeCall } from './common.ts';
+import { readPersistenceBrainId } from './persistence-identity.ts';
 
 type TransactionFn<T> = (engine: BrainEngine) => Promise<T>;
 
@@ -264,4 +265,20 @@ export const lockPageKeys = async function lockPageKeys(this: RustEngine, brain:
     throw mapStoreError(error, { member: 'lockPageKeys' });
   }
   for (const key of pending) held.keys.add(guardKey(key)!);
+};
+
+/**
+ * The persistence protocol declaration: protocol 2 for the rest of the transaction, then the brain id. The store
+ * commits every transaction durably through its one writer and has no lock or statement timeouts, so the durable
+ * settings change nothing here. The id is the one `readPersistenceBrainId` reads (null for a store without one).
+ * Outside a transaction nothing is kept, as on PGLite, where the setting ends with its statement.
+ */
+export const declarePersistence = async function declarePersistence(this: RustEngine, brain: StoreBrain, _opts?: Parameters<BrainEngine['declarePersistence']>[0]): Promise<string | null> {
+  const scope = this._txScope;
+  if (scope) {
+    if (scope.ended) throw mapStoreError({ code: 'store_closed' }, { member: 'declarePersistence' });
+    scope.settings.set('gbrain.persistence_protocol', '2');
+  }
+  seen(this).add('gbrain.persistence_protocol');
+  return readPersistenceBrainId(brain);
 };

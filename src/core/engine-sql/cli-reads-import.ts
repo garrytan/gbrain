@@ -155,3 +155,16 @@ function isUndefinedColumnError(err: unknown): boolean {
   if (e.code === '42703') return true;
   return typeof e.message === 'string' && /column .* does not exist/i.test(e.message);
 }
+
+/** Whether any source is a guest source (guestSourceSql), read as `read_source` like search's read policy. */
+export async function hasGuestSource(exec: LegacyUnscopedRead): Promise<boolean> {
+  const [row] = await exec.executeRaw<{ present: boolean }>(`SELECT EXISTS (SELECT 1 FROM sources read_source WHERE ${guestSourceSql('read_source.config', 'read_source.id')}) AS present`);
+  return row?.present !== false;
+}
+
+/** The database clock as a UTC ISO string with microseconds, independent of the session's DateStyle. */
+export async function readDatabaseClock(exec: LegacyUnscopedRead): Promise<string> {
+  const [row] = await exec.executeRaw<{ at: string }>(
+    `SELECT to_char(clock_timestamp() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS at`);
+  return row!.at;
+}

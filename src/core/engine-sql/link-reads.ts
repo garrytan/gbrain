@@ -1,6 +1,22 @@
 
 import type { LegacyUnscopedRead } from './brands.ts';
 import { rows } from './search-reads.ts';
+/**
+ * Link endpoints by slug: every live page in the origin source, plus other
+ * sources' pages for the slugs the origin lacks or a link names elsewhere ($3).
+ * The origin read and each source's residual read use (source_id, slug).
+ */
+export const LINK_ENDPOINTS_SQL = `WITH own AS (
+    SELECT slug, source_id, type, knowledge_revision FROM pages WHERE source_id=$1 AND slug=ANY($2::text[]) AND deleted_at IS NULL),
+  elsewhere AS (SELECT array_agg(k) AS refs FROM unnest($2::text[]) k WHERE k=ANY($3::text[]) OR NOT EXISTS (SELECT 1 FROM own WHERE own.slug=k))
+  SELECT slug, source_id, type, knowledge_revision FROM own
+  UNION ALL
+  SELECT p.slug, p.source_id, p.type, p.knowledge_revision FROM elsewhere e, sources s, LATERAL (SELECT slug, source_id, type, knowledge_revision
+    FROM pages WHERE source_id=s.id AND slug=ANY(e.refs) AND deleted_at IS NULL OFFSET 0) p
+  WHERE s.id<>$1`;
+
+export interface LinkEndpointPage { slug: string; source_id: string; type: string; knowledge_revision: string }
+
 
 /** One returned link context worldLinkContexts checks (eligibility/fence-overlay.ts): its row index, stored edge and text. */
 export interface LinkContextAsk { i: number; fromSourceId: string; fromSlug: string; toSourceId: string; toSlug: string; linkType: string; context: string }
@@ -37,4 +53,9 @@ export async function readLinkContextOriginPages(exec: LegacyUnscopedRead, ids: 
   if (ids.length === 0) return [];
   const rows = await exec.executeRaw<LinkContextOriginPage>(LINK_CONTEXT_ORIGIN_SQL, [[...ids]]);
   return rows.map(r => ({ ...r, id: Number(r.id) }));
+}
+
+/** The live pages LINK_ENDPOINTS_SQL names: the origin source's rows first (automatic link preparation). */
+export async function listLinkEndpointPages(exec: LegacyUnscopedRead, sourceId: string, slugs: string[], crossSourceSlugs: string[]): Promise<LinkEndpointPage[]> {
+  return exec.executeRaw<LinkEndpointPage>(LINK_ENDPOINTS_SQL, [sourceId, slugs, crossSourceSlugs]);
 }

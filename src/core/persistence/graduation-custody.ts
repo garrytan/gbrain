@@ -19,7 +19,7 @@ import { moveHeldPglite } from './maintenance.ts';
 import { withFilesystemPublication } from './filesystem-guard.ts';
 import { flushDirectory } from '../fs-durable.ts';
 import type { BrainEngine } from '../engine.ts';
-import { GRADUATION_RUN_SETTING, graduationTablePresent, readGraduationConnectRow } from './graduation-schema.ts';
+import { graduationTablePresent, readGraduationConnectRow } from './graduation-schema.ts';
 import type { GraduationPathState, IntentMarker, ManifestState, TargetIdentity, Tombstone } from './engine-graduation.types.ts';
 
 
@@ -363,10 +363,9 @@ function cutoverSourceRefusal(runId: string, sourceDataDir: string | null): Oper
  */
 export async function assertGraduationAdmission(tx: BrainEngine): Promise<void> {
   if (!await graduationTablePresent(tx, { cached: true })) return;
-  const [row] = await tx.executeRaw<{ role: string; run_id: string; state: string; source_data_dir: string | null; run: string | null }>(
-    `SELECT role, run_id::text AS run_id, state, source_data_dir, NULLIF(current_setting('${GRADUATION_RUN_SETTING}', true), '') AS run
-     FROM persistence_graduation WHERE singleton = 1`);
-  if (!row || row.run === row.run_id) return;
+  // The run setting is read in the same statement as the row (engine-sql/connect-gate.ts, GRADUATION_RUN_SETTING).
+  const row = await tx.readGraduationGateRow({ withRunSetting: true });
+  if (!row || (row.run ?? null) === row.run_id) return;
   if (row.role === 'target') {
     if (row.state === 'authoritative') return;
     throw inProgressError({ runId: row.run_id, state: row.state });

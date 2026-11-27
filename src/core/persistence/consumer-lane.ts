@@ -69,6 +69,15 @@ export function consumerStatementEngine(engine: BrainEngine): BrainEngine {
   } }), viewedEngine(engine));
 }
 
+/**
+ * Whether the consumer's statements take the Postgres direct lane now. A typed engine member does not pass through
+ * consumerStatementEngine's executeRaw routing, so its caller passes this as the member's `direct` option. Only the
+ * Postgres engine has a direct lane (`executeRawDirect`); the other engines ignore the option.
+ */
+export function consumerOnDirectLane(engine: BrainEngine): boolean {
+  return typeof engine.executeRawDirect === 'function' && consumerConnectionRoute(engine).lane === 'direct';
+}
+
 /** The one loud line a consumer prints when it starts on a transaction-mode pooler with no direct route. */
 export function poolerExposureLine(route: ConsumerConnectionRoute): string | null {
   if (route.lane === 'direct' || route.pooler_mode !== 'transaction') return null;

@@ -35,6 +35,20 @@ import { storedTrustTier } from '../trust/tier.ts';
 import { ensureWellFormed } from '../text-safe.ts';
 import { valueHash } from '../chronicle/ontology.ts';
 import { PROFILE_METRIC_SQL_PATTERN } from '../profile/facets.ts';
+import { openedFactRowSql } from '../persistence/context.ts';
+
+/** The columns a fact's before-state keeps (generations/adapters/fact-rows.ts records them as the preimage of a retired fence row). */
+export const FACT_PREIMAGE_SQL = `jsonb_build_object('id', f.id, 'row_num', f.row_num, 'fact', f.fact, 'visibility', f.visibility, 'kind', f.kind,
+  'entity_slug', f.entity_slug, 'source', f.source, 'expired_at', f.expired_at, 'valid_from', f.valid_from, 'valid_until', f.valid_until,
+  'superseded_by', f.superseded_by, 'consolidated_at', f.consolidated_at, 'consolidated_into', f.consolidated_into, 'attributed_to', f.attributed_to)`;
+
+/** A fact's before-state: `FACT_PREIMAGE_SQL` as read back (the times are `timestamptz` JSON text). */
+export type FactPreimage = { id: number; row_num: number | null; fact: string; visibility: string; expired_at: string | null; valid_until: string | null;
+  superseded_by: number | null; consolidated_at: string | null; consolidated_into: number | null; entity_slug: string | null; attributed_to: string | null; source?: string | null };
+
+/** The page a fence projection reads: its source, slug and the incoming fence (`jsonb_to_recordset` text of row_num, fact, visibility). */
+export interface FenceProjectionTarget { sourceId: string; slug: string; incoming: string }
+
 
 export type EmbeddingCast = '::vector' | '::halfvec';
 
@@ -923,4 +937,24 @@ function vectorLiteralSql(literal: string, cast: EmbeddingCast): string {
 function toPgVectorLiteral(v: Float32Array | number[]): string {
   if (v instanceof Float32Array) return '[' + Array.from(v).join(',') + ']';
   return '[' + v.join(',') + ']';
+}
+
+/**
+ * The facts a page publication's fence projection would retire (generations/adapters/fact-rows.ts
+ * `projectFactFenceGeneration`): the before-state of each fact attached to the page at a fence position, in row number
+ * then id order, that the incoming fence does not hold at the same number, claim and visibility. A conversation-extractor
+ * row (`source` starting `cli:extract-conversation-facts`) is a candidate only when a fence row claims its number, and a
+ * private row `gbrain repair open-facts` opens in place is never one (#8194). The caller decides which candidates retire.
+ */
+export async function listFenceRetireCandidates(exec: LegacyUnscopedRead, target: FenceProjectionTarget): Promise<FactPreimage[]> {
+  const opened = trustedSql(openedFactRowSql('f', 'v.incoming'));
+  return (await exec.run<{ preimage: FactPreimage }>(sqlFragment`SELECT ${trustedSql(FACT_PREIMAGE_SQL)} AS preimage FROM facts f
+      CROSS JOIN (SELECT ${target.incoming}::text AS incoming) v
+      WHERE f.source_id=${target.sourceId} AND f.source_markdown_slug=${target.slug} AND f.row_num IS NOT NULL
+        AND (COALESCE(f.source,'') NOT LIKE 'cli:extract-conversation-facts%'
+          OR EXISTS (SELECT 1 FROM jsonb_to_recordset(v.incoming::text::jsonb) AS c(row_num integer) WHERE c.row_num=f.row_num))
+        AND NOT EXISTS (SELECT 1 FROM jsonb_to_recordset(v.incoming::text::jsonb) AS n(row_num integer,fact text,visibility text)
+          WHERE n.row_num=f.row_num AND n.fact=f.fact AND n.visibility=f.visibility)
+        AND NOT ${opened}
+      ORDER BY f.row_num, f.id`)).rows.map(row => row.preimage);
 }

@@ -10,6 +10,9 @@
  */
 import type { BrainEngine } from '../engine.ts';
 
+/** The brain row FOR SHARE, the last column of every declaration. */
+export const BRAIN_SHARE = '(SELECT brain_id::text FROM persistence_brain WHERE singleton=1 FOR SHARE) AS brain';
+
 /** The durable-write settings a declaration may carry. `idleInTransaction` is set first, in the same statement. */
 export interface DurablePersistenceSettings {
   lockTimeout: string;

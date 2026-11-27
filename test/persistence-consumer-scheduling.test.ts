@@ -736,13 +736,12 @@ test('a retryable root becomes eligible again after its backoff expires', async 
   }
 }), 15_000);
 
-// #5373: claim loss during preparation. The renewal statement is the one renewWriteClaim sends.
-const RENEWAL_SQL_MARK = 'claim_expires_at=now()+';
+// #5373: claim loss during preparation. Every renewal goes through the engine's renewWriteClaim member.
 function interceptRenewals(onRenewal: (id: string, token: string) => Promise<unknown> | undefined): () => void {
-  const direct = engine.executeRawDirect.bind(engine);
-  (engine as unknown as { executeRawDirect: unknown }).executeRawDirect = (sql: string, params?: unknown[]) =>
-    (sql.includes(RENEWAL_SQL_MARK) ? onRenewal(String(params?.[0]), String(params?.[1])) : undefined) ?? direct(sql, params);
-  return () => { (engine as unknown as { executeRawDirect: unknown }).executeRawDirect = direct; };
+  const renew = engine.renewWriteClaim.bind(engine);
+  (engine as unknown as { renewWriteClaim: unknown }).renewWriteClaim = (input: Parameters<typeof renew>[0], opts?: Parameters<typeof renew>[1]) =>
+    (onRenewal(input.id, input.token) as Promise<boolean> | undefined) ?? renew(input, opts);
+  return () => { (engine as unknown as { renewWriteClaim: unknown }).renewWriteClaim = renew; };
 }
 const pageBody = async (slug: string, sourceId: string) => (await engine.readPageSnapshot(slug, { sourceId }))?.page.compiled_truth ?? null;
 

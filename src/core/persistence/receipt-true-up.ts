@@ -80,8 +80,7 @@ export async function sweepCompactedReservations(engine: BrainEngine, scan = 100
   const cursor = await engine.getConfig(COMPACTED_SWEEP_KEY);
   if (cursor === 'done') return { freed_bytes: 0, done: true };
   const after = cursor && /^\d+$/.test(cursor) ? cursor : '0';
-  const window = await engine.executeRaw<{ id: string; sequence: string; compacted: boolean }>(`SELECT id,sequence::text AS sequence,compacted
-    FROM persistence_requests WHERE sequence>$1::bigint ORDER BY sequence LIMIT $2`, [after, scan]);
+  const window = await engine.listReservationsAfter(after, scan);
   if (!window.length) {
     await engine.setConfig(COMPACTED_SWEEP_KEY, 'done');
     return { freed_bytes: 0, done: true };

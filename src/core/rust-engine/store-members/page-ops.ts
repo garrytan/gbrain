@@ -291,3 +291,9 @@ export const revertToVersion: StoreMember<[slug: string, versionId: number, opts
     throw error;
   }
 };
+
+/** Records now as each page's retrieval time, 5-minute throttled (gbrain-store `page_ops/retrievals.rs`). */
+export const bumpPageRetrievals: StoreMember<[pageIds: number[]], void> = async (brain, ids) => {
+  if (!ids.length) return;
+  await storeCall({ member: 'bumpPageRetrievals' }, () => brain.bumpPageRetrievals(pageIds('bumpPageRetrievals', ids)));
+};

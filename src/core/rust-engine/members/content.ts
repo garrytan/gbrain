@@ -23,4 +23,6 @@ export const CONTENT_MEMBERS = {
   readRowTrustRows: 'timeline',
   listStoredTimelineRowsOrdered: 'timeline',
   deleteTimelineRows: 'timeline',
+  hasSegmentStorage: 'page_body',
+  listLinkEndpointPages: 'links',
 } as const satisfies Partial<Record<keyof BrainEngine, MemberClass>>;

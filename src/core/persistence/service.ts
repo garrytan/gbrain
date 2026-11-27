@@ -35,6 +35,7 @@ import { withdrawnFromDetail } from '../facts/withdrawal.ts';
 import { heldFileDiagnostic, storedCheckoutRefusal } from './verb-errors.ts';
 import { isMissingPageMessage } from './page-identity.ts';
 import { registerPersistenceConsumerConfig } from '../embedding-disabled.ts';
+import { nullUnlessCapabilityRefusal, rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 
 interface Service { consumer: PersistenceConsumerLike; heartbeat?: ConsumerHeartbeat; stopping: boolean; unregisterStop?: () => void; unregisterReopen?: () => void; }
 const services = new WeakMap<BrainEngine, Service>();
@@ -296,6 +297,8 @@ export async function awaitWrite(engine: BrainEngine, row: WriteRequest, config:
       const read = await readProgress(engine, id, deadline - performance.now());
       if ('cancelled' in read) continue;
       if ('error' in read) {
+        // An engine that does not serve the progress read refuses by name; polling it again cannot succeed.
+        rethrowCapabilityRefusal(read.error);
         failure = { error: read.error, attempts: (failure?.attempts ?? 0) + 1 };
         const { classifyPgAccessError } = await import('../pg-access-classify.ts');
         if (FATAL_READ_REASONS.includes(classifyPgAccessError(read.error).reason)) break;
@@ -328,7 +331,7 @@ export async function awaitWrite(engine: BrainEngine, row: WriteRequest, config:
   if (handed) row = handed;
   // A stopped wait then reads the receipt once, so a write that committed meanwhile is banked rather than reported pending.
   if (!isTerminal(row) && opts.signal?.aborted && !service.stopping) {
-    const latest = await getWriteRequestProgress(engine, id).catch(() => null);
+    const latest = await getWriteRequestProgress(engine, id).catch(nullUnlessCapabilityRefusal);
     if (latest) row = { ...row, ...latest };
     if (isTerminal(row)) return { kind: 'terminal', row: await getWriteRequestById(engine, id).catch(() => null) ?? row };
   }

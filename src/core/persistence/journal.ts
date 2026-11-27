@@ -9,7 +9,6 @@ import type { Action } from '../agent-output.ts';
 import { digest, jsonBytes, requireUuid } from './digest.ts';
 import { authorizeWrite } from './authority.ts';
 import { journalLimitKey, oneYearCapacity, readJournalLimits, readReceiptRetentionDays } from './limits.ts';
-import { UNRESOLVED_CALLER_REFUSAL_SQL } from './terminal-classify.ts';
 import { outstandingCapacityDetail, retryWriteAdmission, waitOutRefreshFence } from './admission-retry.ts';
 import { PreadmitBrainChanged } from './preadmit-cache.ts';
 import { pipelined } from '../page-state/transactions.ts';
@@ -44,7 +43,6 @@ import {
   type JournalLimits, type Principal, type RecoveryRecord, type RequestState,
   type SqlEngine, type WriteAuthority, type WriteRequest,
 } from './model.ts';
-import type { CompletedWriteRow, WriteCompletion } from '../engine-sql/persistence-journal.ts';
 
 export interface WriteAdmission {
   principal: Principal;
@@ -255,12 +253,11 @@ export async function assertPageRequestIdentity(engine: Pick<BrainEngine, 'readT
 export async function getWriteRequestById(engine: Pick<BrainEngine, 'readWriteRequestById'>, id: string, signal?: AbortSignal): Promise<WriteRequest | null> {
   return engine.readWriteRequestById(id, { signal });
 }
-/** #5984: the columns a waiter needs while a request is unfinished; the full row is read once it is terminal. */
-export type WriteRequestProgress = Pick<WriteRequest, 'state' | 'error_code' | 'error_message' | 'completed_at' | 'updated_at' | 'blocked_reason' | 'outcome' | 'deferred_refresh_id' | 'deferred_import_from'>;
-export const WRITE_PROGRESS_SQL = 'SELECT state,error_code,error_message,completed_at,updated_at,blocked_reason,outcome,deferred_refresh_id,deferred_import_from FROM persistence_requests WHERE id=$1::uuid';
-export async function getWriteRequestProgress(engine: SqlEngine, id: string, signal?: AbortSignal): Promise<WriteRequestProgress | null> {
-  const [row] = await engine.executeRaw<WriteRequestProgress>(WRITE_PROGRESS_SQL, [id], { signal });
-  return row ?? null;
+/** #5984: the progress columns a waiter polls (engine-sql/persistence-journal.ts `readWriteRequestProgress`). */
+export { WRITE_PROGRESS_SQL, type WriteRequestProgress } from '../engine-sql/persistence-journal.ts';
+import type { CompletedWriteRow, WriteCompletion, WriteRequestProgress } from '../engine-sql/persistence-journal.ts';
+export async function getWriteRequestProgress(engine: Pick<BrainEngine, 'readWriteRequestProgress'>, id: string, signal?: AbortSignal): Promise<WriteRequestProgress | null> {
+  return engine.readWriteRequestProgress(id, { signal });
 }
 export function intentDigest(a: Pick<WriteAdmission, 'operation' | 'sourceId' | 'slug' | 'callerIntent'>): string {
   return digest({ operation: a.operation, source_id: a.sourceId, slug: a.slug, intent: a.callerIntent });
@@ -315,16 +312,14 @@ async function prepareAdmission(engine: BrainEngine, input: WriteAdmission, over
       // Source membership is locked before principal/counter/request guards. A
       // deleted/recreated source never receives work accepted for its old identity.
       async () => {
-        const [source] = await tx.executeRaw<{ incarnation: string; archived: boolean }>(
-          'SELECT incarnation,archived FROM sources WHERE id=$1 FOR SHARE', [input.sourceId]);
+        const source = await tx.readSourceMembership(input.sourceId, { lock: true });
         if (!source || source.archived || source.incarnation !== input.sourceIncarnation) {
           throw new OperationError('source_changed', 'The write source is missing, archived, or was replaced.', 'Resolve the source again and submit a new request.');
         }
       },
       () => authorizeWrite(tx, input.authority, input.operation, input.slug, true),
       () => lockCounters(tx, ['brain', principalKey(input.principal)]),
-      () => input.principal.kind === 'local_cli' ? tx.executeRaw('SELECT id FROM persistence_topology_changes WHERE principal_id=$1::uuid AND request_id=$2::uuid', [input.principal.id, requestId])
-        : Promise.resolve([]),
+      () => input.principal.kind === 'local_cli' ? tx.findTopologyChanges(input.principal.id, [requestId]) : Promise.resolve([]),
       () => getWriteRequest(tx, input.principal, requestId),
     ]) as [unknown, unknown, unknown, unknown, unknown, Counter[], unknown[], WriteRequest | null];
     if (topology.length) throw lifecycleIdConflict(requestId);
@@ -356,18 +351,12 @@ async function prepareAdmission(engine: BrainEngine, input: WriteAdmission, over
     }
     if (origin === 'background') await assertBackgroundRoom(tx, counters, limits, 1, terminalBytes);
     // The request row and its counter reservation in one statement; the counters are already locked.
-    const [row] = await tx.executeRaw<WriteRequest>(`WITH reserved AS (UPDATE persistence_counters SET outstanding_count=outstanding_count+1,
-      intent_bytes=intent_bytes+$14,lifetime_ids=lifetime_ids+1,terminal_bytes=terminal_bytes+$15 WHERE key=ANY($20::text[]))
-      INSERT INTO persistence_requests
-      (principal_kind,principal_id,request_id,operation,source_id,source_incarnation,page_id,slug,
-       worktree_id,topology_generation,digest,intent,authority,intent_bytes,terminal_reservation,target_kind,protocol_version,
-       admitter_version,admitter_host_id,client_request_id,admitter_segment_reader,state,deferred_refresh_id)
-      VALUES($1,$2,$3::uuid,$4,$5,$6::uuid,$7,$8,$9::uuid,$10,$11,$12::text::jsonb,$13::text::jsonb,$14,$15,$16,$17,$18,$19::uuid,$21,true,$22,$23::uuid)
-      RETURNING *`, [input.principal.kind, input.principal.id, requestId, input.operation, input.sourceId,
-      input.sourceIncarnation, input.pageId ?? null, input.slug, input.worktreeId ?? null, input.topologyGeneration ?? null,
-      fingerprint, JSON.stringify(input.intent), JSON.stringify(input.authority), bytes, terminalBytes, input.targetKind ?? 'page', input.protocolVersion ?? 1,
-      stamp.version, stamp.hostId, counters.map(c => c.key), input.clientRequestId ?? null, deferTo ? 'deferred' : 'queued', deferTo]);
-    return row;
+    return tx.insertWriteRequest({ principalKind: input.principal.kind, principalId: input.principal.id, requestId, operation: input.operation,
+      sourceId: input.sourceId, sourceIncarnation: input.sourceIncarnation, pageId: input.pageId ?? null, slug: input.slug, worktreeId: input.worktreeId ?? null,
+      topologyGeneration: input.topologyGeneration ?? null, digest: fingerprint, intent: input.intent, authority: input.authority, intentBytes: bytes,
+      terminalReservation: terminalBytes, targetKind: input.targetKind ?? 'page', protocolVersion: input.protocolVersion ?? 1, admitterVersion: stamp.version,
+      admitterHostId: stamp.hostId, counterKeys: counters.map(c => c.key), clientRequestId: input.clientRequestId ?? null, state: deferTo ? 'deferred' : 'queued',
+      deferredRefreshId: deferTo });
   } };
 }
 
@@ -779,10 +768,8 @@ export function foregroundPriority(engine: SqlEngine): Promise<boolean> {
 }
 
 /** #5401: whether `claimNextWrite` would find a row now. Read-only: no lock and no claim. */
-export async function hasClaimableWrite(engine: SqlEngine, hostId: string, excludeRoots: string[] = [], signal?: AbortSignal): Promise<boolean> {
-  const [row] = await engine.executeRaw<{ claimable: boolean }>(`SELECT EXISTS (SELECT 1 FROM persistence_requests r
-      LEFT JOIN persistence_worktrees w ON w.id=r.worktree_id WHERE ${claimableWriteSql(foregroundPrioritySql())} LIMIT 1) AS claimable`, [hostId, excludeRoots], { signal });
-  return row?.claimable === true;
+export async function hasClaimableWrite(engine: Pick<BrainEngine, 'hasClaimableWrite'>, hostId: string, excludeRoots: string[] = [], signal?: AbortSignal): Promise<boolean> {
+  return engine.hasClaimableWrite(hostId, excludeRoots, { priority: foregroundPriorityOverride(), signal });
 }
 
 /** Claims commit before OS-lock waits. An unresolved head blocks its entire root. */
@@ -834,23 +821,14 @@ const FOREGROUND_WAITING_ON = (nonce: string, seen: string, worktree = 'TRUE') =
  */
 export async function claimNextWrite(engine: BrainEngine, hostId: string, leaseMs = 30_000, excludeRoots: string[] = [], fifoRoots: string[] = [],
   laneRoots: string[] = [], syncSeen: Record<string, string> = {}): Promise<(WriteRequest & { passed_sync?: boolean; seen_sequence?: string | null }) | null> {
-  const first = `(${foregroundPrioritySql()}) AND NOT (COALESCE(r.worktree_id::text,'db:'||r.source_incarnation::text)=ANY($3::text[]))`;
   const holderOnly = !RESIDENT_CONSUMER_KINDS.includes(claimOwnerKind());
   return engine.transactionDirect(async tx => {
     // The protocol declaration and the FIFO head read are sent together.
-    const [, [row]] = await pipelined(tx, [
+    const [, row] = await pipelined(tx, [
       () => declarePersistenceProtocol(tx),
-      () => tx.executeRaw<WriteRequest>(`WITH waiting AS MATERIALIZED (SELECT f.worktree_id, max(f.sequence) AS last
-        FROM (${FOREGROUND_WAITING_ON('$5::text', "($6::text::jsonb->>f.worktree_id::text)::bigint")}) f GROUP BY f.worktree_id)
-      SELECT r.* FROM persistence_requests r
-      LEFT JOIN persistence_worktrees w ON w.id=r.worktree_id
-      WHERE ${claimableWriteSql(`(${first})`, '$4::text[]')}
-        -- On a root whose lane groups run in this process only a foreground write is claimed (beside them).
-        AND NOT (r.worktree_id::text=ANY($4::text[]) AND (${SYNC_KIND('r')} OR NOT (${first})))
-        AND NOT (${SYNC_KIND('r')} AND ${first} AND EXISTS (SELECT 1 FROM waiting g WHERE g.worktree_id=r.worktree_id AND g.last>r.sequence))
-      ORDER BY ${holderOnly ? `${LEASE_HELD}, ` : ''}${CLAIM_ORDER(`(${first})`)} LIMIT 1 FOR UPDATE OF r SKIP LOCKED`,
-      [hostId, excludeRoots, fifoRoots, laneRoots, consumerIdentity().nonce, JSON.stringify(syncSeen), ...(holderOnly ? [syncLockId(''), process.pid, hostname()] : [])]),
-    ]) as [unknown, WriteRequest[]];
+      () => tx.selectClaimableWrite<WriteRequest>({ hostId, excludeRoots, fifoRoots, laneRoots, nonce: consumerIdentity().nonce, syncSeen,
+        priority: foregroundPriorityOverride(), leaseHolder: holderOnly ? { lockPrefix: syncLockId(''), pid: process.pid, host: hostname() } : null }),
+    ]) as [unknown, WriteRequest | null];
     if (!row) return null;
     if (holderOnly && String(row.intent?.kind ?? '').startsWith('managed_sync_')) {
       const [lease] = await tx.executeRaw<{ holder_pid: number; holder_host: string | null }>(`SELECT holder_pid, holder_host FROM gbrain_cycle_locks
@@ -860,13 +838,7 @@ export async function claimNextWrite(engine: BrainEngine, hostId: string, leaseM
     // `passed_sync`: the claimed row went ahead of a queued sync row of its root.
     // #6278: the claim stamps its own `preparing` phase, so a kill before the first renewal is charged like any other.
     const token = randomUUID();
-    const [claimed] = await tx.executeRaw<WriteRequest & { passed_sync: boolean; seen_sequence: string | null }>(`UPDATE persistence_requests SET state='running',
-      execution_token=$2::uuid,claim_expires_at=now()+($3::double precision*interval '1 millisecond'),
-      updated_at=now(),blocked_reason=NULL,claim_phase=$4::text::jsonb WHERE id=$1::uuid AND ${REFRESH_BARRIER_CLAIM_PREDICATE} RETURNING *,EXISTS (SELECT 1 FROM persistence_requests earlier
-        WHERE earlier.worktree_id=persistence_requests.worktree_id AND earlier.sequence<persistence_requests.sequence
-        AND earlier.state='queued' AND ${SYNC_KIND('earlier')}) AS passed_sync,
-        CASE WHEN ${SYNC_KIND('persistence_requests')} THEN (SELECT max(sequence) FROM persistence_requests)::text END AS seen_sequence`,
-    [row.id, token, leaseMs, claimPhaseStamp(startClaimPhase(), token)]);
+    const claimed = await tx.stampWriteClaim(row.id, token, leaseMs, claimPhaseStamp(startClaimPhase(), token));
     return claimed ? { ...claimed, previous_claim_phase: row.claim_phase } : null;
   }, { pipelineFirst: isPersistenceDeclaration });
 }
@@ -912,11 +884,8 @@ export async function claimNextLaneHead(engine: BrainEngine, hostId: string, wor
   });
 }
 /** `phase` (claim-phase.ts `claimPhaseStamp`, #6176) records the claim's current phase with the renewal. */
-export async function renewWriteClaim(engine: Pick<SqlEngine, 'executeRaw'>, id: string, token: string, leaseMs = 30_000, signal?: AbortSignal, phase: string | null = null): Promise<boolean> {
-  const rows = await engine.executeRaw(`UPDATE persistence_requests SET
-    claim_expires_at=now()+($3::double precision*interval '1 millisecond'),updated_at=now(),claim_phase=COALESCE($4::text::jsonb,claim_phase)
-    WHERE id=$1::uuid AND execution_token=$2::uuid AND state='running' AND ${PERSISTENCE_PROTOCOL_PREDICATE} RETURNING id`, [id, token, leaseMs, phase], { signal });
-  return rows.length === 1;
+export async function renewWriteClaim(engine: Pick<BrainEngine, 'renewWriteClaim'>, id: string, token: string, leaseMs = 30_000, signal?: AbortSignal, phase: string | null = null): Promise<boolean> {
+  return engine.renewWriteClaim({ id, token, leaseMs, phaseJson: phase }, { signal });
 }
 /** `charge` (#6278): a `preparation_deadline` release counts one preparation attempt; `claim_lost`, `consumer_stopping` and the rest never do. */
 export async function releaseUnpublishedClaim(engine: Pick<BrainEngine, 'releaseUnpublishedClaim'>, row: WriteRequest, reason: string, opts: { charge?: boolean } = {}): Promise<void> {
@@ -1177,9 +1146,7 @@ export async function vacuumPersistenceQueues(engine: BrainEngine): Promise<numb
  * existence probe.
  */
 export async function sweepSegmentStorage(engine: BrainEngine): Promise<void> {
-  const [row] = await engine.executeRaw<{ present: boolean }>(
-    'SELECT EXISTS (SELECT 1 FROM page_body_stagings) OR EXISTS (SELECT 1 FROM page_segment_texts) AS present');
-  if (!row?.present) return;
+  if (!await engine.hasSegmentStorage()) return;
   if (!await readManagedMode(engine)) { await engine.sweepSegments({ expireStagings: true }); return; }
   const owned = await engine.executeRaw<{ source_id: string }>(`SELECT s.source_id FROM persistence_source_bindings s
     JOIN persistence_worktrees w ON w.id=s.worktree_id WHERE w.owner_host_id=$1::uuid AND w.state='active'`, [hostIdFor(engine)]);
@@ -1228,14 +1195,7 @@ export async function compactWriteReceiptsDetailed(engine: BrainEngine, retentio
   if (!Number.isFinite(retentionDays) || retentionDays < 0) throw new TypeError('Invalid receipt retention.');
   // Receipts with unfinished effects stay retained; filtering them before the
   // LIMIT keeps a backlog of parked effects from starving later receipts.
-  const rows = await engine.executeRaw<WriteRequest>(`SELECT * FROM persistence_requests r
-    WHERE state IN ('committed','conflict','failed','cancelled') AND recovery IS NULL AND NOT compacted
-    AND completed_at < now()-($1::double precision*interval '1 day')
-    AND NOT EXISTS (SELECT 1 FROM persistence_effects e WHERE e.request_id=r.id AND e.state<>'committed')
-    AND NOT COALESCE(${UNRESOLVED_CALLER_REFUSAL_SQL('r')}, false)
-    ${OPEN_SYNC_CURSOR_EXCLUSION('r')}
-    ${NEWEST_SYNC_RECEIPT_EXCLUSION('r')}
-    ORDER BY sequence LIMIT 100`, [retentionDays]);
+  const rows = await engine.listCompactableReceipts<WriteRequest>(retentionDays);
   const result: ReceiptCompactionResult = { compacted: 0, freed_bytes: 0, skipped_by_reason: {} };
   for (const row of rows) {
     const done = await compactReceipt(engine, row).catch(error => {

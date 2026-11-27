@@ -4,13 +4,19 @@
  * own tables, and the local writer registration every CLI write checks (persistence/identity.ts registerLocalWriter).
  */
 import type { LocalWriterInsert, LocalWriterRow } from '../../engine-sql/persistence-state.ts';
-import type { AccessTokenWriteGrant, AdmissionRate, ClaimedWriteRow, CompletedWriteRow, CounterRow, OAuthClientWriteGrant, PublicationEffectsSpec, TerminalIntentCompaction, WriteCompletion, WriteRequestInsert } from '../../engine-sql/persistence-journal.ts';
+import type { AccessTokenWriteGrant, AdmissionRate, ClaimedWriteRow, CompletedWriteRow, CounterRow, OAuthClientWriteGrant, PublicationEffectsSpec, TerminalIntentCompaction, WriteCompletion, WriteRequestInsert, WriteRequestProgress } from '../../engine-sql/persistence-journal.ts';
 import type { ClaimRelease, ClaimRenewal, SourceMembership, TopologyChange } from '../../engine-sql/persistence-claims.ts';
 import type { WriteRequest } from '../../persistence/model.ts';
 import { PAGE_BODY_CONFIG_KEYS } from '../../page-body/limits.ts';
 import type { StoreBrain } from '../store.ts';
 import { requestRow, topologyRow, uuidText, withDates } from '../store-codec.ts';
 import { storeCall, type StoreMember } from './common.ts';
+import type { RustEngine } from '../../rust-engine.ts';
+import type { LedgerSource } from '../../engine-sql/belief.ts';
+import type { ClaimExpiry } from '../../engine-sql/persistence-claims.ts';
+import type { ClaimHeadSpec } from '../../engine-sql/persistence-claims.ts';
+import type { ConsumerRenewal } from '../../engine-sql/persistence-claims.ts';
+import type { ConsumerRowKey } from '../../engine-sql/persistence-claims.ts';
 
 /** The stored brain mode: `enabled` and `mode_epoch` (text) of the persistence brain row. */
 async function readBrainMode(brain: StoreBrain, member: string): Promise<{ enabled: boolean; mode_epoch: string }> {
@@ -142,3 +148,81 @@ export const readSourceMembership: StoreMember<[sourceId: string, opts?: { lock?
 
 export const findTopologyChanges: StoreMember<[principalId: string, requestIds: string[]], Array<{ request_id: string }>> = (brain, principalId, requestIds) =>
   storeCall({ member: 'findTopologyChanges' }, () => brain.findTopologyChanges(principalId, [...requestIds]));
+
+/** `current_setting('plan_cache_mode')` on a PGLite brain that never set it. */
+const PLAN_CACHE_MODE = 'auto';
+const PLAN_CACHE_SETTING = 'plan_cache_mode';
+
+/**
+ * The belief ledger's view of a source (gbrain-store `trust::belief_history`): its incarnation, purge epoch and newest
+ * coverage event, and whether a purge tombstone or a raised epoch makes a purge possible. A batch also returns the one
+ * unmanaged brain row and the plan-cache mode it replaced: inside a transaction with coverage active it sets the
+ * transaction's `plan_cache_mode` to `force_generic_plan` (transactions.ts keeps it), as the SQL batch does with
+ * `set_config`. The store has no planner, so the setting changes nothing else.
+ */
+export const readLedgerSource = async function readLedgerSource(this: RustEngine, brain: StoreBrain, sourceId: string, opts?: { batch?: boolean }): Promise<LedgerSource | null> {
+  const row = await storeCall({ member: 'readLedgerSource' }, () => brain.readLedgerSource(sourceId)) as LedgerSource | null;
+  if (!row) return null;
+  if (!opts?.batch) return row;
+  const scope = this._txScope && !this._txScope.ended ? this._txScope : null;
+  const planModePrev = scope?.settings.get(PLAN_CACHE_SETTING) ?? PLAN_CACHE_MODE;
+  if (scope && row.coverage !== null && row.coverage !== 'coverage.stopped') scope.settings.set(PLAN_CACHE_SETTING, 'force_generic_plan');
+  return { ...row, managedRows: [{ enabled: false }], planModePrev };
+};
+
+/** The heartbeat's row delete; there is no row. */
+export const deleteConsumerRow: StoreMember<[key: ConsumerRowKey, opts?: { signal?: AbortSignal }], void> = async () => undefined;
+
+/** Returns expired claims, and claims of dead owners, to queued (at most 100). Every request here is unbound, so the host check passes. */
+export const expireStaleWriteClaims: StoreMember<[expiry: ClaimExpiry, opts?: { signal?: AbortSignal; direct?: boolean }], void> = async (brain, expiry) => {
+  await storeCall({ member: 'expireStaleWriteClaims' }, () => brain.expireStaleWriteClaims(expiry));
+};
+
+/**
+ * Whether a claim would find a row now. The host id selects worktree rows; a row on a worktree refuses
+ * `engine_capability_missing` until the store can read its worktree.
+ */
+export const hasClaimableWrite: StoreMember<[hostId: string, excludeRoots: string[], opts?: { priority?: boolean | null; signal?: AbortSignal }], boolean> =
+  (brain, hostId, excludeRoots, opts) =>
+    storeCall({ member: 'hasClaimableWrite' }, () => brain.hasClaimableWrite({ hostId, excludeRoots, priority: opts?.priority ?? null }));
+
+/** The topology recovery scan: this host's changes with a recovery after the cursor, in id order; timestamps as Dates. */
+export const listTopologyRecoveries: StoreMember<[hostId: string, after: string | null, limit: number], TopologyChange[]> = async (brain, hostId, after, limit) =>
+  ((await storeCall({ member: 'listTopologyRecoveries' }, () => brain.listTopologyRecoveries(hostId, after, limit))) as unknown[]).map(row => topologyRow(row)!);
+
+/** The heartbeat renewal; no row is kept. */
+export const renewConsumerRow: StoreMember<[renewal: ConsumerRenewal, opts?: { signal?: AbortSignal }], void> = async () => undefined;
+
+/**
+ * The request a FIFO claim takes next, or null. The whole spec goes to the store: the lease holder ranks a managed-sync
+ * row whose drain lease another process holds last, and the host id, nonce and sync-seen map select worktree rows (a
+ * row on a worktree refuses `engine_capability_missing` until the store can read its worktree). One process owns the
+ * store, so no row is locked against another.
+ */
+export const selectClaimableWrite: StoreMember<[spec: ClaimHeadSpec], WriteRequest | null> = async (brain, spec) =>
+  requestRow<WriteRequest>(await storeCall({ member: 'selectClaimableWrite' }, () => brain.selectClaimableWrite({
+    hostId: spec.hostId, excludeRoots: spec.excludeRoots, fifoRoots: spec.fifoRoots, laneRoots: spec.laneRoots, nonce: spec.nonce,
+    syncSeen: spec.syncSeen, priority: spec.priority, leaseHolder: spec.leaseHolder })));
+
+/** The worktree heartbeat stamp: `heartbeat_at` now on every worktree the host owns (the claims an unmanaged brain keeps). */
+export const stampWorktreeHeartbeats: StoreMember<[hostId: string, opts?: { signal?: AbortSignal }], void> = async (brain, hostId, opts) => {
+  opts?.signal?.throwIfAborted();
+  await storeCall({ member: 'stampWorktreeHeartbeats' }, () => brain.stampWorktreeHeartbeats(hostId));
+};
+
+/**
+ * The progress columns of request `id`, or null: the columns PGLite's WRITE_PROGRESS_SQL selects, taken from the
+ * stored row. `signal` changes nothing, as for readWriteRequestById.
+ */
+export const readWriteRequestProgress: StoreMember<[id: string, opts?: { signal?: AbortSignal }], WriteRequestProgress | null> = async (brain, id) => {
+  const row = requestRow<WriteRequest>(await storeCall({ member: 'readWriteRequestProgress' }, () => brain.readWriteRequestById(id)));
+  if (!row) return null;
+  return { state: row.state, error_code: row.error_code, error_message: row.error_message, completed_at: row.completed_at, updated_at: row.updated_at,
+    blocked_reason: row.blocked_reason, outcome: row.outcome, deferred_refresh_id: row.deferred_refresh_id, deferred_import_from: row.deferred_import_from };
+};
+
+/**
+ * Synchronous commit for the current transaction: nothing to set. A store commit makes every write durable before it
+ * returns (gbrain-store kv.rs `commit`), so each commit already waits for the flush.
+ */
+export const requireSynchronousCommit: StoreMember<[], void> = async () => undefined;

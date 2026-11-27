@@ -6,6 +6,11 @@
  * persistence/deactivation.ts sent through `executeRaw`; the decisions (refuse, clean up, record roots) stay there.
  */
 import type { LegacyUnscopedRead } from './brands.ts';
+/** What a committed writer deactivation recorded: the brain, the retired epoch, the worktrees and the source roots. */
+export interface RetiredDeactivationRow {
+  outcome: { brain_id?: string; retired_mode_epoch?: number; worktrees?: Array<{ id: string; roots: string[] }>; source_roots?: string[] };
+}
+
 
 /** The persistence tables the connect gate probes before it reads them. */
 export type PersistenceTable = 'persistence_brain' | 'persistence_topology_changes' | 'persistence_graduation';
@@ -70,4 +75,10 @@ export async function readGraduationGateRow(exec: LegacyUnscopedRead, opts: { wi
     : await exec.executeRaw<GraduationGateRow>(
       `SELECT role, run_id::text AS run_id, state, source_data_dir FROM persistence_graduation WHERE singleton = 1`);
   return row ?? null;
+}
+
+/** The outcome of every committed writer deactivation, in no order. */
+export async function listRetiredDeactivations(exec: LegacyUnscopedRead): Promise<RetiredDeactivationRow[]> {
+  return exec.executeRaw<RetiredDeactivationRow>(
+    "SELECT outcome FROM persistence_topology_changes WHERE operation='writer_deactivate' AND state='committed'");
 }

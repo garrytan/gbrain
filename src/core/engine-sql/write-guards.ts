@@ -13,6 +13,9 @@ import type { SqlExecutor } from './executor.ts';
 import { sqlFragment, trustedSql } from './fragment.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
 import type { PageKind } from '../types.ts';
+/** What a write's valid-time advisory compares of a page: its frontmatter and stored body, or a segmented body's content hash. */
+export interface LivePageBodyRow { frontmatter: unknown; compiled_truth: string | null; timeline: string | null; body_storage: string | null; content_hash: string | null }
+
 
 /** The page an origin check is about: its id, slug, recorded origin and tombstone time (null while live). */
 export interface PageOriginRow { id: number; slug: string; source_path: string | null; deleted_at: Date | string | null }
@@ -66,4 +69,11 @@ export async function hasSegmentStorage(exec: LegacyUnscopedRead): Promise<boole
   const [row] = await exec.executeRaw<{ present: boolean }>(
     'SELECT EXISTS (SELECT 1 FROM page_body_stagings) OR EXISTS (SELECT 1 FROM page_segment_texts) AS present');
   return row?.present === true;
+}
+
+/** The body columns of live page `slug` of `opts.sourceId` (persistence/valid-time-advisory.ts), or null when it is not live. */
+export async function readLivePageBody(exec: LegacyUnscopedRead, slug: string, opts: { sourceId: string }): Promise<LivePageBodyRow | null> {
+  const [row] = await exec.executeRaw<LivePageBodyRow>(`SELECT frontmatter, compiled_truth, timeline, body_storage, content_hash FROM pages
+      WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL`, [opts.sourceId, slug]);
+  return row ?? null;
 }

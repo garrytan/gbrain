@@ -23,7 +23,7 @@ import { isSegmentedPage } from '../page-body/page-shape.ts';
 import { pageReadFilter } from '../search/read-policy-sql.ts';
 import type { PageReadScope } from '../types.ts';
 import { projectionClassSql, sealableImageSql } from './projection-class.ts';
-import { advanceProjectionCursor, ineligibleKey, rememberIneligible, residentWindowCtes, type ProjectionScanCursor } from './projection-window.ts';
+import { advanceProjectionCursor, ineligibleKey, rememberIneligible, type ProjectionScanCursor } from './projection-window.ts';
 import { acceptedEmbeddingInputHashes, embeddingInputHash, plainEmbeddingTier, synopsisBodyHash,
   type EmbeddingInputContext, type EmbeddingTier } from '../embedding-input-hash.ts';
 import { chunkModelMatchesSql } from '../embedding-invalidation.ts';
@@ -608,13 +608,10 @@ type WindowKey = { source_incarnation: string; slug: string };
  */
 async function selectWindowJobs(engine: BrainEngine, cursor: ProjectionScanCursor, retryCooldown: boolean):
   Promise<{ jobs: Array<QueuedJob & { ord: number }>; window: WindowKey[]; highWater: string | null }> {
-  const params: unknown[] = [];
-  const ctes = residentWindowCtes(cursor, params, retryCooldown ? PROJECTION_RETRY_READY_SQL : 'TRUE');
-  const rows = await engine.executeRaw<WindowKey & { lane: string | null; ord: number; revision: string; high_water: string | null }>(`WITH ${ctes}
-    SELECT r.lane,r.ord,r.source_incarnation::text AS source_incarnation,r.slug,r.revision::text AS revision,h.at AS high_water
-    FROM high_water h LEFT JOIN (SELECT source_incarnation,slug,revision,updated_at,lane,ord FROM recent
-      UNION ALL SELECT source_incarnation,slug,revision,updated_at,lane,ord FROM win) r ON true
-    ORDER BY r.lane,r.ord`, params);
+  // engine-sql/persistence-housekeeping.ts holds the statement; on an empty queue it returns one row of nulls that carries the high water.
+  const all = await engine.selectProjectionWindowJobs(cursor, retryCooldown);
+  const rows = all.filter((row): row is typeof row & WindowKey & { lane: string; ord: number; revision: string } =>
+    row.lane !== null && row.source_incarnation !== null && row.slug !== null && row.revision !== null);
   const window = rows.filter(row => row.lane === 'window').sort((a, b) => Number(a.ord) - Number(b.ord));
   const seen = new Set<string>();
   const candidates = [...rows.filter(row => row.lane === 'recent'), ...window].filter(row => {
@@ -638,7 +635,7 @@ async function selectWindowJobs(engine: BrainEngine, cursor: ProjectionScanCurso
     jobs.push({ source_id: probe.source_id, source_incarnation: row.source_incarnation, slug: row.slug, revision: row.revision,
       page_kind: probe.page_kind, ord: row.lane === 'window' ? Number(row.ord) : 0 });
   }
-  return { jobs, window, highWater: rows[0]?.high_water ?? null };
+  return { jobs, window, highWater: all[0]?.high_water ?? null };
 }
 
 /**

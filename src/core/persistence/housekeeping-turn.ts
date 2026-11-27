@@ -13,7 +13,7 @@
  * after it) and `["done"]` once one finished, `updated_at` stamping either. The scans a waiting write may be blocked
  * behind still run at once (consumer.ts `sweepAllowed`).
  */
-import type { SqlEngine } from './model.ts';
+import type { BrainEngine } from '../engine.ts';
 import { CONSUMER_LIVE_MS, RESIDENT_CONSUMER_KINDS } from './consumer-heartbeat.ts';
 
 export const HOUSEKEEPING_TURN_OP = 'consumer-housekeeping';
@@ -28,22 +28,16 @@ export function housekeepingIntervalMs(env: Record<string, string | undefined> =
 
 /**
  * Claims the host's housekeeping turn: true when the last finished turn is older than `intervalMs`, no other process holds
- * an unexpired lease on it, and no resident full consumer of the host is live.
+ * an unexpired lease on it, and no resident full consumer of the host is live. `direct` sends it on the Postgres direct
+ * pool (the consumer's statement route, consumer-lane.ts).
  */
-export async function claimHousekeepingTurn(engine: SqlEngine, hostId: string, intervalMs: number, signal?: AbortSignal): Promise<boolean> {
-  const [row] = await engine.executeRaw<{ claimed: boolean }>(`WITH claim AS (
-      INSERT INTO op_checkpoints (op, fingerprint, completed_keys, updated_at)
-      SELECT $1::text, $2::text, '["leased"]'::jsonb, now() WHERE NOT EXISTS (SELECT 1 FROM persistence_consumers WHERE host_id=$2::text::uuid
-        AND kind=ANY($4::text[]) AND mode IN ('full','promoted') AND renewed_at > now() - ($5::integer * interval '1 millisecond'))
-      ON CONFLICT (op, fingerprint) DO UPDATE SET updated_at=now(), completed_keys='["leased"]'::jsonb
-      WHERE op_checkpoints.updated_at <= now() - (CASE WHEN op_checkpoints.completed_keys='["done"]'::jsonb THEN $3::bigint ELSE $6::bigint END
-        * interval '1 millisecond') RETURNING 1)
-    SELECT EXISTS (SELECT 1 FROM claim) AS claimed`, [HOUSEKEEPING_TURN_OP, hostId, intervalMs, [...RESIDENT_CONSUMER_KINDS], CONSUMER_LIVE_MS, HOUSEKEEPING_LEASE_MS], { signal });
-  return row?.claimed === true;
+export async function claimHousekeepingTurn(engine: Pick<BrainEngine, 'claimHousekeepingTurn'>, hostId: string, intervalMs: number, signal?: AbortSignal,
+  direct?: boolean): Promise<boolean> {
+  return engine.claimHousekeepingTurn({ op: HOUSEKEEPING_TURN_OP, hostId, intervalMs, leaseMs: HOUSEKEEPING_LEASE_MS,
+    consumerKinds: RESIDENT_CONSUMER_KINDS, consumerLiveMs: CONSUMER_LIVE_MS }, { signal, direct });
 }
 
 /** Marks the host's leased turn finished: the next one is due `intervalMs` from now. */
-export async function completeHousekeepingTurn(engine: SqlEngine, hostId: string): Promise<void> {
-  await engine.executeRaw(`UPDATE op_checkpoints SET completed_keys='["done"]'::jsonb, updated_at=now()
-    WHERE op=$1 AND fingerprint=$2 AND completed_keys='["leased"]'::jsonb`, [HOUSEKEEPING_TURN_OP, hostId]);
+export async function completeHousekeepingTurn(engine: Pick<BrainEngine, 'completeHousekeepingTurn'>, hostId: string, direct?: boolean): Promise<void> {
+  await engine.completeHousekeepingTurn({ op: HOUSEKEEPING_TURN_OP, hostId }, { direct });
 }

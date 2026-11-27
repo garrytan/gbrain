@@ -76,4 +76,6 @@ export const FACTS_MEMBERS = {
   insertTrustProposal: 'pages', // held: no Rust store member yet; served later as 'facts'
   getTrustProposal: 'pages', // held: no Rust store member yet; served later as 'facts'
   listTrustProposals: 'pages', // held: no Rust store member yet; served later as 'facts'
+  listFenceFactRows: 'facts',
+  listFenceRetireCandidates: 'facts',
 } as const satisfies Partial<Record<keyof BrainEngine, MemberClass>>;

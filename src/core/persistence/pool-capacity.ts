@@ -6,8 +6,9 @@ const publishing = new WeakMap<object, number>();
 function ordinaryPool(engine: BrainEngine): BudgetPool {
   return (engine as BrainEngine & { sql: BudgetPool }).sql;
 }
+/** One publisher on an embedded store with one writer (PGLite, the Rust store); Postgres sizes from its pool. */
 export function publicationConcurrency(engine: BrainEngine): number {
-  return engine.kind === 'pglite' ? 1 : Math.min(2, poolLongHoldCapacity(ordinaryPool(engine)));
+  return engine.kind === 'pglite' || engine.kind === 'rust' ? 1 : Math.min(2, poolLongHoldCapacity(ordinaryPool(engine)));
 }
 /**
  * Acquire before checking out a connection; there is no asynchronous wait here. #5984 lanes pass a higher

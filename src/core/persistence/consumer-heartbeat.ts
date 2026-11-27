@@ -212,18 +212,8 @@ export interface ConsumerHeartbeat {
   stop(): Promise<void>;
 }
 
-type DirectEngine = SqlEngine & Partial<Pick<BrainEngine, 'kind' | 'executeRawDirect'>>;
-/**
- * What this binary's consumer can drain: `refresh_barrier_1` (v292) claims writes deferred behind a worktree refresh,
- * `refresh_barrier_import_1` (v294) writes held for an import.
- */
-export const CONSUMER_CAPABILITIES = ['refresh_barrier_1', 'refresh_barrier_import_1'] as const;
-const RENEW_SQL = `WITH purged AS (
-    DELETE FROM persistence_consumers WHERE host_id=$1::uuid AND renewed_at < now() - ($14::integer * interval '1 millisecond') AND NOT (pid=$2::integer AND nonce=$3))
-  INSERT INTO persistence_consumers(host_id,pid,nonce,pid_ns,kind,mode,restart_required,root_barrier_age_ms,pool,host_json_path,persistence_home,minted_under,version,boot_id,process_start,segment_reader,capabilities)
-  VALUES($1::uuid,$2::integer,$3,$4,$5,$6,$7::boolean,$8::integer,$9::text::jsonb,$10,$11,$12::text::jsonb,$13,$15,$16,true,ARRAY['${CONSUMER_CAPABILITIES.join("','")}']::text[])
-  ON CONFLICT (host_id,pid,nonce) DO UPDATE SET renewed_at=now(),mode=EXCLUDED.mode,restart_required=EXCLUDED.restart_required,
-    root_barrier_age_ms=EXCLUDED.root_barrier_age_ms,pool=EXCLUDED.pool,version=EXCLUDED.version,segment_reader=EXCLUDED.segment_reader,capabilities=EXCLUDED.capabilities`;
+type HeartbeatEngine = Pick<BrainEngine, 'kind' | 'renewConsumerRow' | 'deleteConsumerRow' | 'stampWorktreeHeartbeats'>;
+export { CONSUMER_CAPABILITIES } from '../engine-sql/persistence-claims.ts';
 
 /**
  * Starts this process's heartbeat row for `hostId` and renews it every
@@ -231,12 +221,10 @@ const RENEW_SQL = `WITH purged AS (
  * bounded by `deadlineMs`; an overrun is cancelled through its signal and
  * counted as a failure. Inert on PGLite (`stop()` resolves at once).
  */
-export function startConsumerHeartbeat(engine: DirectEngine, hostId: string, opts: ConsumerHeartbeatOpts): ConsumerHeartbeat {
+export function startConsumerHeartbeat(engine: HeartbeatEngine, hostId: string, opts: ConsumerHeartbeatOpts): ConsumerHeartbeat {
   if (engine.kind === 'pglite') return { renew: async () => {}, get failures() { return 0; }, stop: async () => {} };
   const self = opts.identity ?? consumerIdentity();
   const paths = opts.paths ?? hostIdentityPathsFor(engine);
-  const execute = (sql: string, params: unknown[], signal: AbortSignal) =>
-    engine.executeRawDirect ? engine.executeRawDirect(sql, params, { signal }) : engine.executeRaw(sql, params, { signal });
   const everyMs = opts.everyMs ?? CONSUMER_RENEWAL_MS;
   const deadlineMs = opts.deadlineMs ?? CONSUMER_DEADLINE_MS;
   let stopped = false;
@@ -261,9 +249,10 @@ export function startConsumerHeartbeat(engine: DirectEngine, hostId: string, opt
     try {
       const status = opts.report();
       const mode = typeof opts.mode === 'function' ? opts.mode() : opts.mode;
-      await bounded(execute(RENEW_SQL, [hostId, self.pid, self.nonce, self.pid_ns, opts.kind, mode, status.restart_required, status.root_barrier_age_ms,
-        status.pool ? JSON.stringify(status.pool) : null, paths.host_json_path, paths.persistence_home,
-        paths.minted_under ? JSON.stringify(paths.minted_under) : null, VERSION, CONSUMER_PURGE_MS, self.boot_id ?? null, self.start ?? null], cancel.signal), cancel, deadlineMs);
+      await bounded(engine.renewConsumerRow({ hostId, pid: self.pid, nonce: self.nonce, pidNs: self.pid_ns, kind: opts.kind, mode,
+        restartRequired: status.restart_required, rootBarrierAgeMs: status.root_barrier_age_ms, pool: status.pool ? JSON.stringify(status.pool) : null,
+        hostJsonPath: paths.host_json_path, persistenceHome: paths.persistence_home, mintedUnder: paths.minted_under ? JSON.stringify(paths.minted_under) : null,
+        version: VERSION, purgeMs: CONSUMER_PURGE_MS, bootId: self.boot_id ?? null, processStart: self.start ?? null }, { signal: cancel.signal }), cancel, deadlineMs);
       streak = 0;
     } catch (error) {
       if (!stopped) report(error);
@@ -288,13 +277,12 @@ export function startConsumerHeartbeat(engine: DirectEngine, hostId: string, opt
       clearInterval(cadence);
       await inFlight;
       const cancel = new AbortController();
-      try { await bounded(execute('DELETE FROM persistence_consumers WHERE host_id=$1::uuid AND pid=$2::integer AND nonce=$3', [hostId, self.pid, self.nonce], cancel.signal), cancel, 1_000); }
+      try { await bounded(engine.deleteConsumerRow({ hostId, pid: self.pid, nonce: self.nonce }, { signal: cancel.signal }), cancel, 1_000); }
       catch { /* the row lapses on its own; the next renewal on this host purges it */ }
       // GBRA-248: the worktrees this host owns keep the time it stopped, so owner-activity.ts can tell a stopped owner from one long gone.
       // Rows another transaction holds (a transfer) are skipped, in id order, so the stamp neither waits nor deadlocks.
       const stamp = new AbortController();
-      try { await bounded(execute(`UPDATE persistence_worktrees SET heartbeat_at=now() WHERE id IN
-        (SELECT id FROM persistence_worktrees WHERE owner_host_id=$1::uuid ORDER BY id FOR UPDATE SKIP LOCKED)`, [hostId], stamp.signal), stamp, 1_000); }
+      try { await bounded(engine.stampWorktreeHeartbeats(hostId, { signal: stamp.signal }), stamp, 1_000); }
       catch { /* best effort: owner activity falls back to receipts and the last renewal */ }
     },
   };

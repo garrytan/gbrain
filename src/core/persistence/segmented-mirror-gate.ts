@@ -86,14 +86,7 @@ export async function resumeGatedMirrors(engine: BrainEngine, hostId: string): P
   lastResume.set(engine, Date.now());
   let requeued = 0;
   try {
-    const requests = await engine.executeRaw<{ id: string; source_id: string; request_id: string }>(
-      `SELECT DISTINCT r.id::text AS id,r.source_id,r.request_id::text AS request_id FROM persistence_effects e
-       JOIN persistence_requests r ON r.id=e.request_id JOIN persistence_worktrees w ON w.id=e.worktree_id
-       WHERE e.kind='withdrawal-mirror' AND e.state='failed' AND e.error_code='targets_parked' AND w.owner_host_id=$1::uuid
-       AND e.data->'parked' @> $2::text::jsonb
-       AND NOT EXISTS (SELECT 1 FROM persistence_effects o CROSS JOIN LATERAL jsonb_array_elements(COALESCE(o.data->'parked','[]'::jsonb)) AS p(target)
-         WHERE o.request_id=e.request_id AND o.state<>'committed' AND COALESCE(p.target->>'error_code','')<>ALL($3::text[]))
-       LIMIT 100`, [hostId, JSON.stringify([{ error_code: SEGMENTED_MIRROR_GATE_CODE }]), [SEGMENTED_MIRROR_GATE_CODE, WITHHELD_BY_MIRROR]]);
+    const requests = await engine.listGatedMirrorRequests(hostId, SEGMENTED_MIRROR_GATE_CODE, [SEGMENTED_MIRROR_GATE_CODE, WITHHELD_BY_MIRROR]);
     if (!requests.length || (await mirrorGateBlockers(engine, hostId)).length) return 0;
     const { retryParkedEffects } = await import('./effect-retry.ts');
     for (const request of requests) {

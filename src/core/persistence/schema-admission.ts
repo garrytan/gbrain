@@ -14,14 +14,14 @@ import type { BrainEngine } from '../engine.ts';
 import { opError, type OperationError } from '../ops/contract.ts';
 import type { Action } from '../agent-output.ts';
 import { LATEST_SCHEMA_VERSION } from '../schema-migrations/latest.generated.ts';
+import { readConfigValue, type ConfigReader } from '../config-values.ts';
 
 export const SCHEMA_BEHIND_REASON = 'schema_behind';
 
 /** Whether the brain's schema version is below this build's; null when it cannot be read. A terminal-receipt reader's input. */
-export async function readSchemaBehind(engine: Pick<BrainEngine, 'executeRaw'>): Promise<boolean | null> {
+export async function readSchemaBehind(engine: ConfigReader): Promise<boolean | null> {
   try {
-    const [row] = await engine.executeRaw<{ value: string | null }>(`SELECT value FROM config WHERE key='version'`);
-    const current = Number.parseInt(row?.value ?? '', 10);
+    const current = Number.parseInt(await readConfigValue(engine, 'version') ?? '', 10);
     return Number.isSafeInteger(current) ? current < LATEST_SCHEMA_VERSION : null;
   } catch {
     return null;
@@ -41,14 +41,11 @@ export function schemaBehindFix(ownsSchema: boolean): Action {
  * raise for a new request, or null.
  */
 export async function schemaAdmissionRefusal(tx: BrainEngine): Promise<OperationError | null> {
-  const [row] = await tx.executeRaw<{ value: string | null }>(`SELECT value FROM config WHERE key='version'`);
-  const current = Number.parseInt(row?.value ?? '', 10);
+  const current = Number.parseInt(await readConfigValue(tx, 'version') ?? '', 10);
   if (!Number.isSafeInteger(current) || current >= LATEST_SCHEMA_VERSION) return null;
   // Loaded only when behind: the lock module pulls in the engine factory.
   if ((await import('../migration-orchestration-lock.ts')).migrationOrchestrationHeldHere()) return null;
-  const [owner] = await tx.executeRaw<{ owns: boolean | null }>(
-    `SELECT pg_has_role(current_user, c.relowner, 'USAGE') AS owns FROM pg_class c WHERE c.oid = to_regclass('sources')`);
-  const ownsSchema = owner?.owns !== false;
+  const ownsSchema = await tx.ownsSchemaTables();
   return opError('migrations_pending', `The brain schema is at v${current} and this gbrain build needs v${LATEST_SCHEMA_VERSION}, so the write was not admitted.`,
     `Not retryable as is: the same write refuses until the schema is migrated. Apply the pending migrations with \`gbrain apply-migrations --yes\`${ownsSchema ? '' : ' as the database role that owns the gbrain tables (this connection\'s role does not)'}, then resubmit; nothing was admitted, so the same request_id commits.`,
     { reason: SCHEMA_BEHIND_REASON, why: 'The write path of this build reads tables or columns that only the pending migrations add, so publishing now would fail on the missing schema and spend the request id.',

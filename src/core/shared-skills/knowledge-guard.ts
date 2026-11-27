@@ -5,6 +5,8 @@ import { OperationError } from '../ops/contract.ts';
 import { isRelativeFileUri, resolveSourceLocalFilePath, sourceGitScope } from '../markdown.ts';
 import { screeningPath } from '../persistence/screening-paths.ts';
 import { hostIdFor } from '../persistence/identity.ts';
+import type { BrainEngine } from '../engine.ts';
+import type { SharedSkillPackRoot } from '../engine-sql/write-misc.ts';
 import type { SqlEngine, WriteRequest } from '../persistence/model.ts';
 import { canonicalFilesystemPath } from '../persistence/root-registry.ts';
 
@@ -14,13 +16,10 @@ export interface KnowledgePublicationFile { path: string; root: string; expected
 /** The maintenance intent that soft-deletes an approved ghost page (`gbrain repair ghost-pages`, `file-drift --prefer file`). */
 export const GHOST_RETIREMENT_INTENT = 'managed_maintenance_retire_ghost_page';
 
-interface PackRoot {
-  source_id: string;
-  source_incarnation: string;
-  source_root: string | null;
-  worktree_root: string | null;
-  relative_path: string | null;
-}
+type PackRoot = SharedSkillPackRoot;
+/** The typed engine reads of the screen (engine-sql/write-misc.ts); a SqlEngine here is always a whole engine or a view of one. */
+type GuardEngine = Pick<BrainEngine, 'sharedSkillPackTablePresent' | 'listSharedSkillPackRoots' | 'readSourceState'>;
+const guardEngine = (engine: SqlEngine) => engine as unknown as GuardEngine;
 
 function reserved(path: string): boolean {
   const normalized = path.split(sep).join('/').toLowerCase();
@@ -84,15 +83,10 @@ function sharedPacks(engine: SqlEngine): Promise<PackRoot[]> {
   const read = async () => {
     const owner = connectionOwner(engine);
     if (!packTablePresent.has(owner)) {
-      const [schema] = await engine.executeRaw<{ present: boolean }>("SELECT to_regclass('shared_skill_packs') IS NOT NULL AS present");
-      if (!schema?.present) return [];
+      if (!await guardEngine(engine).sharedSkillPackTablePresent()) return [];
       packTablePresent.add(owner);
     }
-    return engine.executeRaw<PackRoot>(`SELECT p.source_id,p.source_incarnation,s.local_path AS source_root,
-      h.local_path AS worktree_root,b.relative_path FROM shared_skill_packs p
-      JOIN sources s ON s.id=p.source_id AND s.incarnation=p.source_incarnation
-      LEFT JOIN persistence_source_bindings b ON b.source_id=p.source_id AND b.source_incarnation=p.source_incarnation
-      LEFT JOIN persistence_host_bindings h ON h.worktree_id=b.worktree_id AND h.host_id=$1::uuid`, [hostIdFor(engine)]);
+    return guardEngine(engine).listSharedSkillPackRoots(hostIdFor(engine));
   };
   if ((engine as { _pageTransaction?: boolean })._pageTransaction !== true) return read();
   let cached = packsInTransaction.get(engine);
@@ -119,7 +113,8 @@ export async function assertKnowledgePublicationAllowed(
     ...(pack.worktree_root !== null && pack.relative_path !== null ? [resolve(pack.worktree_root, pack.relative_path)] : []),
   ]))].map(root => screeningPath(`pack-root\0${root}`, () => canonicalFilesystemPath(root)));
   const paths = preparedFile ? [preparedFile.path] : [];
-  const [source] = await engine.executeRaw<{ local_path: string | null }>('SELECT local_path FROM sources WHERE id=$1 AND incarnation=$2::uuid', [row.source_id, row.source_incarnation]);
+  const state = await guardEngine(engine).readSourceState(row.source_id);
+  const source = state?.incarnation === row.source_incarnation.toLowerCase() ? state : null;
   const sourceRoots = [...new Set([...(source?.local_path ? [source.local_path] : []), ...(preparedFile ? [preparedFile.root] : []),
     ...(ownPack?.worktree_root !== null && ownPack?.worktree_root !== undefined && ownPack.relative_path !== null
       ? [resolve(ownPack.worktree_root, ownPack.relative_path)] : [])])];

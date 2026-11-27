@@ -11,6 +11,121 @@
  */
 import type { LegacyUnscopedRead } from './brands.ts';
 import type { SqlExecutor } from './executor.ts';
+import type { ProjectionScanCursor } from '../page-state/projection-window.ts';
+import type { QueryOpts } from './executor.ts';
+import type { SqlFragment } from './fragment.ts';
+import { joinFragments } from './fragment.ts';
+import { sqlFragment } from './fragment.ts';
+import { trustedSql } from './fragment.ts';
+/** `PROJECTION_RETRY_READY_SQL` (projections.ts) as a fragment: a queue row `j` out of its retry cooldown. */
+export function projectionRetryReadyFragment(): SqlFragment {
+  return sqlFragment`${trustedSql(PROJECTION_RETRY_READY_TEXT)}`;
+}
+
+/** `markProjectionRebuildFailed`: $1 source incarnation, $2 slug, $3 revision. */
+export const MARK_PROJECTION_REBUILD_FAILED_SQL = `UPDATE page_projection_jobs j SET reason='rebuild_failed', updated_at=now()
+        WHERE j.source_incarnation=$1::uuid AND j.slug=$2 AND j.revision=$3::uuid AND NOT (split_part(j.reason,':',1)='segmented_projecting' AND j.updated_at>=now()-interval '60 seconds')`;
+
+
+/** `claimHousekeepingTurn`: $1 op, $2 host id, $3 interval ms, $4 resident consumer kinds, $5 consumer live ms, $6 lease ms. */
+export const CLAIM_HOUSEKEEPING_TURN_SQL = `WITH claim AS (
+      INSERT INTO op_checkpoints (op, fingerprint, completed_keys, updated_at)
+      SELECT $1::text, $2::text, '["leased"]'::jsonb, now() WHERE NOT EXISTS (SELECT 1 FROM persistence_consumers WHERE host_id=$2::text::uuid
+        AND kind=ANY($4::text[]) AND mode IN ('full','promoted') AND renewed_at > now() - ($5::integer * interval '1 millisecond'))
+      ON CONFLICT (op, fingerprint) DO UPDATE SET updated_at=now(), completed_keys='["leased"]'::jsonb
+      WHERE op_checkpoints.updated_at <= now() - (CASE WHEN op_checkpoints.completed_keys='["done"]'::jsonb THEN $3::bigint ELSE $6::bigint END
+        * interval '1 millisecond') RETURNING 1)
+    SELECT EXISTS (SELECT 1 FROM claim) AS claimed`;
+
+/** `completeHousekeepingTurn`: $1 op, $2 host id. */
+export const COMPLETE_HOUSEKEEPING_TURN_SQL = `UPDATE op_checkpoints SET completed_keys='["done"]'::jsonb, updated_at=now()
+    WHERE op=$1 AND fingerprint=$2 AND completed_keys='["leased"]'::jsonb`;
+
+/** A turn claim: the checkpoint op, this host, the interval after a finished turn, the lease, and which live consumers block it. */
+export interface HousekeepingTurnClaim {
+  op: string; hostId: string; intervalMs: number; leaseMs: number; consumerKinds: readonly string[]; consumerLiveMs: number;
+}
+
+/** `SEGMENTED_PROJECTION_CLAIMED_SQL` (projections.ts). */
+export const SEGMENTED_PROJECTION_CLAIMED_TEXT = "(split_part(j.reason,':',1)='segmented_projecting' AND j.updated_at>=now()-interval '60 seconds')";
+/** `PROJECTION_RETRY_READY_SQL` (projections.ts). */
+export const PROJECTION_RETRY_READY_TEXT = "(j.reason IS DISTINCT FROM 'rebuild_failed' OR j.updated_at<now()-interval '30 seconds')"
+  + ` AND NOT ${SEGMENTED_PROJECTION_CLAIMED_TEXT}`
+  + " AND NOT (split_part(j.reason,':',1)='chunk_replacement_continuing' AND j.updated_at>=now()-interval '60 seconds')";
+
+export interface PendingSegmentedProjection { source_id: string; source_incarnation: string; slug: string; revision: string }
+
+/**
+ * One row of the resident's window selection; on an empty queue one row of nulls carries the high water. `ord` is an
+ * int4 in SQL (row_number() is int8, which the Postgres engine reads as a BigInt), so it is a number on every engine.
+ */
+export interface ProjectionWindowRow {
+  lane: string | null; ord: number | null; source_incarnation: string | null; slug: string | null; revision: string | null; high_water: string | null;
+}
+
+/** `housekeepReceipts`' state read: $1 retention config key, $2 floor days. */
+export const RECEIPT_BUDGET_SQL = `SELECT (SELECT value FROM config WHERE key=$1) AS retention,(SELECT terminal_bytes::text FROM persistence_counters WHERE key='brain') AS used,
+      to_char((now()-($2::double precision*interval '1 day')) AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS cutoff`;
+
+/**
+ * `sweepCompactedReservations`' window: $1 the sequence walked through, $2 rows. ORDER BY names the table's bigint
+ * column: a bare `sequence` would sort the text alias ("10" before "9") and the cursor would skip rows.
+ */
+export const RESERVATIONS_AFTER_SQL = `SELECT id,sequence::text AS sequence,compacted
+    FROM persistence_requests WHERE sequence>$1::bigint ORDER BY persistence_requests.sequence LIMIT $2`;
+
+/** The explicit retention setting (null when unset), the brain's reserved terminal bytes (null with no counter) and now minus `floorDays`. */
+export interface ReceiptBudget { retention: string | null; used: string | null; cutoff: string }
+
+/** `SEGMENTED_JOB_PROBES` (projections.ts): live segmented pages of active sources. */
+export const SEGMENTED_JOB_PROBES_SQL = `JOIN sources s ON s.incarnation=j.source_incarnation AND NOT s.archived
+    JOIN pages p ON p.source_id=s.id AND p.slug=j.slug AND p.deleted_at IS NULL AND p.body_storage='segmented'`;
+
+/** A segmented row no other process holds (the filter when the retry cooldown is off). */
+const SEGMENTED_PROJECTION_UNCLAIMED_TEXT = `NOT (split_part(j.reason,':',1)='segmented_projecting' AND j.updated_at>=now()-interval '60 seconds')`;
+
+/** Which segmented queue rows `rebuildPendingSegmentedProjections` takes. */
+export interface SegmentedProjectionFilter {
+  limit: number; notAfter?: string; reasons?: readonly string[]; exclude?: readonly string[];
+  /** false takes a row in its retry cooldown (still not one another process holds). */
+  retryCooldown?: boolean;
+}
+
+/**
+ * The resident's bounded selection: `residentWindowCtes` (page-state/projection-window.ts) written out, with its row
+ * budgets (100 recent, 400 window) inlined; the recency lane, then the key window from `cursor`.
+ */
+export function projectionWindowFragment(cursor: Pick<ProjectionScanCursor, 'after' | 'highWater'>, retryCooldown: boolean): SqlFragment {
+  // The lane order never reaches output: lane is the literal 'recent' or 'window', which sorts the same in every collation, and the rows feed projection job processing.
+  return sqlFragment`WITH ${residentWindowCtesFragment(cursor, retryCooldown)}
+    SELECT r.lane,r.ord,r.source_incarnation::text AS source_incarnation,r.slug,r.revision::text AS revision,h.at AS high_water
+    FROM high_water h LEFT JOIN (SELECT source_incarnation,slug,revision,updated_at,lane,ord FROM recent
+      UNION ALL SELECT source_incarnation,slug,revision,updated_at,lane,ord FROM win) r ON true
+    ORDER BY r.lane,r.ord`;
+}
+
+/**
+ * `residentWindowCtes(cursor, params, filter)` (page-state/projection-window.ts) written out: the `mark`, `recent`,
+ * `fwd`, `wrap`, `win` and `high_water` CTEs, the filter `PROJECTION_RETRY_READY_TEXT` or TRUE.
+ */
+export function residentWindowCtesFragment(cursor: Pick<ProjectionScanCursor, 'after' | 'highWater'>, retryCooldown: boolean): SqlFragment {
+  const filter = retryCooldown ? trustedSql(PROJECTION_RETRY_READY_TEXT) : trustedSql('TRUE');
+  const cols = trustedSql('j.source_incarnation,j.slug,j.revision,j.updated_at,j.reason');
+  const inc = cursor.after.source_incarnation;
+  const slug = cursor.after.slug;
+  return sqlFragment`mark AS (SELECT COALESCE(${cursor.highWater}::text::timestamptz,(SELECT max(updated_at) FROM page_projection_jobs)) AS at),
+    recent AS (SELECT ${cols},'recent'::text AS lane,0 AS ord FROM page_projection_jobs j, mark
+      WHERE j.updated_at > mark.at - interval '10 minutes' AND ${filter} ORDER BY j.updated_at DESC, j.source_incarnation, j.slug COLLATE "C" LIMIT 100),
+    fwd AS (SELECT ${cols} FROM page_projection_jobs j WHERE (j.source_incarnation,j.slug COLLATE "C") > (${inc}::uuid,${slug} COLLATE "C") AND ${filter}
+      ORDER BY j.source_incarnation,j.slug COLLATE "C" LIMIT 400),
+    wrap AS (SELECT ${cols} FROM page_projection_jobs j WHERE (j.source_incarnation,j.slug COLLATE "C") <= (${inc}::uuid,${slug} COLLATE "C") AND ${filter}
+      ORDER BY j.source_incarnation,j.slug COLLATE "C" LIMIT 400),
+    win AS (SELECT *,'window'::text AS lane,(row_number() OVER (ORDER BY part,source_incarnation,slug COLLATE "C"))::int AS ord FROM (
+      SELECT * FROM ((SELECT *,0 AS part FROM fwd ORDER BY source_incarnation,slug COLLATE "C") UNION ALL (SELECT *,1 AS part FROM wrap ORDER BY source_incarnation,slug COLLATE "C")) u
+      ORDER BY part,source_incarnation,slug COLLATE "C" LIMIT 400) w),
+    high_water AS (SELECT max(updated_at)::text AS at FROM page_projection_jobs)`;
+}
+
 
 /**
  * `compactWriteReceiptsDetailed`'s listing (`UNRESOLVED_CALLER_REFUSAL_SQL('r')`, `OPEN_SYNC_CURSOR_EXCLUSION('r')` and
@@ -155,4 +270,48 @@ export interface ProjectionJobRef { sourceIncarnation: string; slug: string; rev
 /** Deletes the job when it is still queued at `job.revision`. */
 export async function deleteProjectionJob(exec: SqlExecutor, job: ProjectionJobRef): Promise<void> {
   await exec.executeRaw(DELETE_PROJECTION_JOB_SQL, [job.sourceIncarnation, job.slug, job.revision]);
+}
+
+/** True when this host's turn was free and is now leased to the caller. */
+export async function claimHousekeepingTurn(exec: SqlExecutor, claim: HousekeepingTurnClaim, opts?: QueryOpts): Promise<boolean> {
+  const [row] = await exec.executeRaw<{ claimed: boolean }>(CLAIM_HOUSEKEEPING_TURN_SQL,
+    [claim.op, claim.hostId, claim.intervalMs, [...claim.consumerKinds], claim.consumerLiveMs, claim.leaseMs], opts);
+  return row?.claimed === true;
+}
+
+/** Marks the host's leased turn finished. */
+export async function completeHousekeepingTurn(exec: SqlExecutor, turn: { op: string; hostId: string }, opts?: QueryOpts): Promise<void> {
+  await exec.executeRaw(COMPLETE_HOUSEKEEPING_TURN_SQL, [turn.op, turn.hostId], opts);
+}
+
+export async function listPendingSegmentedProjections(exec: LegacyUnscopedRead, filter: SegmentedProjectionFilter): Promise<PendingSegmentedProjection[]> {
+  const filters: SqlFragment[] = [filter.retryCooldown === false
+    ? sqlFragment`${trustedSql(SEGMENTED_PROJECTION_UNCLAIMED_TEXT)}` : sqlFragment`${trustedSql(PROJECTION_RETRY_READY_TEXT)}`];
+  if (filter.notAfter !== undefined) filters.push(sqlFragment`j.updated_at<=${filter.notAfter}::text::timestamptz`);
+  if (filter.reasons) filters.push(sqlFragment`j.reason=ANY(${[...filter.reasons]}::text[])`);
+  if (filter.exclude?.length) filters.push(sqlFragment`NOT (j.source_incarnation::text || '/' || j.slug)=ANY(${[...filter.exclude]}::text[])`);
+  const { rows } = await exec.run<PendingSegmentedProjection>(sqlFragment`SELECT s.id AS source_id,
+      j.source_incarnation::text AS source_incarnation, j.slug, j.revision::text AS revision
+    FROM page_projection_jobs j ${trustedSql(SEGMENTED_JOB_PROBES_SQL)}
+    WHERE ${joinFragments(filters, ' AND ')} ORDER BY j.updated_at, j.slug COLLATE "C", j.source_incarnation LIMIT ${Math.max(1, filter.limit)}`);
+  return rows;
+}
+
+export function listReservationsAfter(exec: LegacyUnscopedRead, after: string, limit: number): Promise<Array<{ id: string; sequence: string; compacted: boolean }>> {
+  return exec.executeRaw(RESERVATIONS_AFTER_SQL, [after, limit]);
+}
+
+export async function readReceiptBudget(exec: LegacyUnscopedRead, retentionKey: string, floorDays: number): Promise<ReceiptBudget> {
+  const [row] = await exec.executeRaw<ReceiptBudget>(RECEIPT_BUDGET_SQL, [retentionKey, floorDays]);
+  return row!;
+}
+
+/** Runs `projectionWindowFragment`; on an empty queue it returns one row of nulls that carries the high water. */
+export async function selectProjectionWindowJobs(exec: LegacyUnscopedRead, cursor: Pick<ProjectionScanCursor, 'after' | 'highWater'>, retryCooldown: boolean): Promise<ProjectionWindowRow[]> {
+  return (await exec.run<ProjectionWindowRow>(projectionWindowFragment(cursor, retryCooldown))).rows;
+}
+
+/** Marks a job still queued at `job.revision` that no live claim holds `rebuild_failed`, starting its retry window. */
+export async function markProjectionRebuildFailed(exec: SqlExecutor, job: ProjectionJobRef): Promise<void> {
+  await exec.executeRaw(MARK_PROJECTION_REBUILD_FAILED_SQL, [job.sourceIncarnation, job.slug, job.revision]);
 }

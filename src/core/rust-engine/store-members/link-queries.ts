@@ -33,6 +33,7 @@ import { refuseMember, storeCall, takeOptions, type StoreMember } from './common
 import { HYBRID_BAG_KEYS, storePagePolicy } from './private-provenance.ts';
 import { ownerWidened } from '../../search/private-visibility.ts';
 import { requiresSafeChunks } from '../../search/safe-chunks.ts';
+import type { LinkEndpointPage } from '../../engine-sql/link-reads.ts';
 
 /** The read-policy keys the store models: the source filter. */
 const SCOPE_KEYS = ['sourceId', 'sourceIds'] as const;
@@ -330,3 +331,8 @@ export const pagesLinkingTo: StoreMember<[fromIds: number[], toIds: number[]], n
     const rows: number[] = await storeCall({ member: 'pagesLinkingTo' }, () => brain.pagesLinkingTo(from, to));
     return rows.map(Number);
   };
+
+/** Automatic link preparation's endpoint pages: the origin source's rows first. */
+export const listLinkEndpointPages: StoreMember<[sourceId: string, slugs: string[], crossSourceSlugs: string[]], LinkEndpointPage[]> =
+  async (brain, sourceId, slugs, crossSourceSlugs) => storeCall({ member: 'listLinkEndpointPages' },
+    () => brain.listLinkEndpointPages({ sourceId, slugs, crossSourceSlugs }));

@@ -30,3 +30,10 @@ export const listActiveSourceConfigs: StoreMember<[], ActiveSourceConfigRow[]> =
   const rows = (await storeCall({ member: 'listActiveSourceConfigs' }, () => brain.listSourceRecords())) as SourceRecordRow[];
   return rows.filter(row => row.archived !== true).map(({ id, config }) => ({ id, config, archived: false }));
 };
+
+/**
+ * The publication transaction's exclusive source lock (`lockSourceForUpdate`, engine-sql/sources.ts). It takes no row lock and
+ * calls no store function: the store admits one write transaction at a time, as `lockSourceRow` notes, so the publication
+ * transaction already holds the source against every other writer.
+ */
+export const lockSourceForUpdate: StoreMember<[sourceId: string], void> = async () => {};

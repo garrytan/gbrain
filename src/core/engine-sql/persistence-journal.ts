@@ -17,6 +17,27 @@ import { COMPACTED_RECEIPT_BYTES_SQL, EFFECT_BYTES_SQL } from '../persistence/re
 import { TOKEN_GRANT_ROW_COLUMNS, type TokenGrantRow } from '../grants/model.ts';
 import { sqlFragment, trustedSql } from './fragment.ts';
 
+/** One source's held-file counts from its summary row. */
+export interface HeldCoverageRow { source_id: string; count: number | string; stale: number | string; fences: number | string; concurrent: number | string; stalled: number | string; dirty: number | string; drift: number | string }
+
+/** The query of `readHeldHitRows`: the hits' page ids, the read's live sources, and the relevance types and patterns. */
+export interface HeldHitQuery { pageIds: string[]; sourceIds: string[]; types: string[]; patterns: string[] }
+
+/** The hold rows of the hits (`record` and the page's `revision`), then one row with `could_affect` alone. */
+export interface HeldHitRow<R> { record: R | null; revision: string | null; could_affect: number | string | null }
+
+/** The op of a held file's checkpoint row (sync-holds.ts re-exports it). */
+export const GIT_HOLD_OP = 'sync-hold';
+
+/** The held-page read: $1 the hold op, $2 the page ids as text. Joins each hold to its page by key. */
+export const HELD_PAGES_SQL = `SELECT h.completed_keys->0 AS record, p.knowledge_revision::text AS revision
+      FROM op_checkpoints h
+      JOIN sources s ON s.id=h.completed_keys->0->>'source_id' AND s.incarnation::text=h.completed_keys->0->>'incarnation'
+      LEFT JOIN pages p ON p.id=(h.completed_keys->0->>'page_id')::int
+      WHERE h.op=$1 AND (h.completed_keys->0->>'page_id')=ANY($2::text[])
+      ORDER BY h.fingerprint COLLATE "C"`;
+
+
 /** Creates missing counter rows; takes no lock on existing ones. Keys sorted. */
 export const ENSURE_COUNTERS_SQL = 'INSERT INTO persistence_counters(key) SELECT k FROM unnest($1::text[]) WITH ORDINALITY AS u(k,n) ORDER BY n ON CONFLICT DO NOTHING';
 /** Locks counter rows in one global order (deadlock avoidance). */
@@ -433,4 +454,9 @@ export function publicationEffectsParams(spec: PublicationEffectsSpec): unknown[
 export async function insertPublicationEffects(exec: SqlExecutor, spec: PublicationEffectsSpec): Promise<string[]> {
   const rows = await exec.executeRaw<{ kind: string }>(PUBLICATION_EFFECTS_SQL, publicationEffectsParams(spec));
   return rows.map(row => row.kind);
+}
+
+/** The current-incarnation hold rows naming these page ids, each with its page's revision, in fingerprint order. */
+export function readHeldPageRows<R>(exec: LegacyUnscopedRead, pageIds: string[]): Promise<Array<{ record: R; revision: string | null }>> {
+  return exec.executeRaw<{ record: R; revision: string | null }>(HELD_PAGES_SQL, [GIT_HOLD_OP, pageIds]);
 }
