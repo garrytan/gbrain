@@ -21,7 +21,7 @@ import { ownerOnlySourcesPresent, sourceIsOwnerOnly } from '../access/owner-only
 
 /** An engine that also reads a stored writer's slug fence (storedOwnerSpeaksForItself and the checks that call it). */
 /** An engine that resolves a writer's live member identity (access/caller.ts memberIdentityFor). */
-export type MemberEngine = SqlEngine & Pick<BrainEngine, 'readLiveMember' | 'hasLabelledOnlyMember' | 'hasLabelledOnlyMemberAmong' | 'getConfig' | 'readLinkedMember' | 'readAccessTokenAttest' | 'readOauthClientAttest'>;
+export type MemberEngine = SqlEngine & Pick<BrainEngine, 'readLiveMember' | 'getConfigValues' | 'hasLabelledOnlyMember' | 'hasLabelledOnlyMemberAmong' | 'getConfig' | 'readLinkedMember' | 'readAccessTokenAttest' | 'readOauthClientAttest'>;
 export type FenceEngine = MemberEngine & Pick<BrainEngine, 'readWriterSlugFence'>;
 
 /** An engine that also runs the opening probe of a page write's visibility check (authorizePageVisibility). */
