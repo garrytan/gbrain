@@ -15,7 +15,3 @@
 - A `Next` line for a step that asks the user ends with `ASK THE USER first: the question on the hold above.` instead of repeating the question.
 - A stored or printed git step outside the known step names reads as `git`.
 - With no next step and a hold that asks the user, the text prints `Next: nothing gbrain runs on its own; it waits on the user (ASK THE USER above).` instead of "the source is synced and holds nothing".
-
-### Known, not in this change
-- A legacy free-form `line` in a stored Git error can still appear in `gbrain retry-effects --dry-run`, in doctor parked-effects JSON and when an effect row is rewritten.
-- Action text flattens newlines in the agent output renderer.

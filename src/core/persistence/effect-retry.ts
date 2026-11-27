@@ -17,6 +17,7 @@ import { targetedWithdrawalEffect, upgradeWithdrawalEffect } from './effect-targ
 import { declarePersistenceProtocol } from './protocol.ts';
 import { writerAdminState } from './admin-intent.ts';
 import { getWorktreeBinding } from './ownership.ts';
+import { storedGitData, storedParkedTargets } from './git-diagnostic.ts';
 
 const ownerStatusFix = (sourceId: string): Action => readFix(`Shows source ${sourceId}'s canonical owner with its blocking, retrying and parked effects, read-only.`,
   { argv: ['gbrain', 'sources', 'writer', 'status', '--source', sourceId, '--json'] });
@@ -149,7 +150,7 @@ export async function retryParkedEffects(engine: BrainEngine, sourceId: string, 
       await guardRetriedEffect(tx, selected, hostId, request);
       const effect = (await tx.lockEffectRow<PersistenceEffect>(selected.id))!;
       const parked = effect.data.parked ?? [];
-      const summary = { kind: effect.kind, error_code: effect.error_code, parked_targets: parked.length, targets: parked.slice(0, 20), retried: effect.data.retried ?? 0 };
+      const summary = { kind: effect.kind, error_code: effect.error_code, parked_targets: parked.length, targets: storedParkedTargets(parked.slice(0, 20)), retried: effect.data.retried ?? 0 };
       const parkedState = effect.error_code === 'targets_parked' ? 'parked' : 'failed';
       if (effect.state === 'failed' && effect.data.settled) { effects.push({ ...summary, state: parkedState, terminal: true, action: 'settled', settled: effect.data.settled }); continue; }
       if (effect.state !== 'failed' || (parkedState === 'failed' && options.parkedOnly && !options.failedCodes?.includes(effect.error_code ?? ''))) {
@@ -171,7 +172,7 @@ export async function retryParkedEffects(engine: BrainEngine, sourceId: string, 
       const scanning = targetedWithdrawalEffect(effect) || effect.data.source_scan === true;
       const slugs = scanning ? [...new Set([...retrying, ...parked.flatMap(entry => entry.slug ? [entry.slug] : [])])] : [];
       // The requeue is a Git durability store write (engine-sql/git-durability.ts), so a Rust brain applies it to its effect record.
-      const updated = await (await tx.gitDurabilityStore()).requeueParkedEffect(String(effect.id), { ...data, ...(slugs.length ? { retry_slugs: slugs } : {}), target_failures: PARK_AFTER_FAILURES - 1,
+      const updated = await (await tx.gitDurabilityStore()).requeueParkedEffect(String(effect.id), { ...storedGitData(data), ...(slugs.length ? { retry_slugs: slugs } : {}), target_failures: PARK_AFTER_FAILURES - 1,
         ...(!scanning && (effect.data.slug ?? effect.data.relative_path) ? { failing_target: effect.data.slug ?? effect.data.relative_path } : {}),
         ...(underOwner ? { retried_under: 'owner_host', retried_by_host: hostId } : {}),
         ...(effect.kind === 'embedding' ? { embedding_attempt_base: effect.attempts } : {}),

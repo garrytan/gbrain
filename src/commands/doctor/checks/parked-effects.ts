@@ -4,6 +4,7 @@ import type { WriteRequest } from '../../../core/persistence/model.ts';
 import { OperationError } from '../../../core/ops/contract.ts';
 import { authorizeStoredRequest } from '../../../core/persistence/authority.ts';
 import { indexLockReceiptPath, readIndexLockReclaims } from '../../../core/persistence/index-lock-reclaim.ts';
+import { storedParkedTargets } from '../../../core/persistence/git-diagnostic.ts';
 
 const RECLAIM_WINDOW_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -55,7 +56,7 @@ export async function checkParkedEffects(engine: BrainEngine, sourceIds?: string
       const revoked = await revokedAuthority(engine, request);
       // GBRA-133: a target a .gitignore rule excludes parks again on any retry while the rule stands; its group says what to change first.
       const ignored = row.parked.every(target => target.error_code === 'git_target_ignored');
-      effects.push({ request_id: request.request_id, ...row, ...(former ? { former_binding: true } : {}), ...(ignored ? {} : { command: preview }), ...(revoked === null ? {} : {
+      effects.push({ request_id: request.request_id, ...row, parked: storedParkedTargets(row.parked), ...(former ? { former_binding: true } : {}), ...(ignored ? {} : { command: preview }), ...(revoked === null ? {} : {
         owner_revoked: revoked,
         exit: row.kind === 'git'
           ? `the original writer is revoked; ask the user, then retry once under the brain owner's authority: gbrain sources writer retry-effects ${row.source_id} --request-id ${request.request_id} --admin-intent writer_retry_effects --expected-state <admin_state from gbrain sources writer status>`

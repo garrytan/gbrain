@@ -89,3 +89,35 @@ export function storedGitDiagnostic(value: unknown): GitDiagnostic | null {
   const reason: GitReason = identity ? 'identity_missing' : (GIT_REASONS as readonly unknown[]).includes(v.reason) ? v.reason as GitReason : 'other';
   return { phase: v.phase === 'push' ? 'push' : 'commit', step: stepName(v.step), reason, ...(identity ? { identity: true as const } : {}) };
 }
+
+/**
+ * GCH-01a: the parked list of a Git effect with each target's `last_error` in the fixed shape (storedGitDiagnostic),
+ * dropped when nothing usable is left. A row an older release wrote can hold git's own stderr line on a target; every
+ * read that prints targets (retry-effects, doctor parked_effects, settle-effects) and every write that stores them
+ * again goes through this, so that line is neither printed nor carried forward. Idempotent; other fields are kept.
+ */
+export function storedParkedTargets<T>(parked: readonly T[]): T[] {
+  return parked.map(entry => {
+    if (!entry || typeof entry !== 'object' || !('last_error' in entry)) return entry;
+    const { last_error, ...rest } = entry as Record<string, unknown>;
+    const diagnostic = storedGitDiagnostic(last_error);
+    return (diagnostic ? { ...rest, last_error: diagnostic } : rest) as T;
+  });
+}
+
+/**
+ * GCH-01a: a Git effect's data with `last_error` and every parked target's `last_error` in the fixed shape. The
+ * write chokepoints (requeue, park, the retry's requeue, the withheld-target re-arm, settle and un-settle, the
+ * conversion's ignored-target declare) store data through it. Data that is not an object is returned as it is;
+ * idempotent.
+ */
+export function storedGitData<T>(data: T): T {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return data;
+  const out: Record<string, unknown> = { ...(data as Record<string, unknown>) };
+  if ('last_error' in out) {
+    const diagnostic = storedGitDiagnostic(out.last_error);
+    if (diagnostic) out.last_error = diagnostic; else delete out.last_error;
+  }
+  if (Array.isArray(out.parked)) out.parked = storedParkedTargets(out.parked);
+  return out as T;
+}
