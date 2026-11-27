@@ -12,10 +12,10 @@ Four tiers:
 
 | Tier | Purpose | Default | Examples |
 |---|---|---|---|
-| `utility` | fast classification, expansion, verdict, dedup | `claude-haiku-4-5-20251001` | query expansion, facts contradiction classifier, dream triage judge (prefers `models.dream.triage`) |
-| `reasoning` | default chat, synthesis, generation | `claude-sonnet-4-6` | gateway chat, dream synthesize, patterns, facts extraction |
-| `deep` | slow, expensive reasoning | `claude-opus-4-7` | `gbrain think`, auto-think, cross-modal eval slot B |
-| `subagent` | multi-turn tool loop (capability-gated) | `claude-sonnet-4-6` | `gbrain agent run` |
+| `utility` | fast classification, expansion, verdict, dedup | `claude-haiku-5-5` | query expansion, facts contradiction classifier, dream triage judge (prefers `models.dream.triage`) |
+| `reasoning` | default chat, synthesis, generation | `claude-sonnet-5-5` | gateway chat, dream synthesize, patterns, facts extraction |
+| `deep` | slow, expensive reasoning | `claude-opus-5-5` | `gbrain think`, auto-think, cross-modal eval slot B |
+| `subagent` | multi-turn tool loop (capability-gated) | `claude-sonnet-5-5` | `gbrain agent run` |
 
 The Default column shows the Anthropic defaults — used when
 `ANTHROPIC_API_KEY` is present (Anthropic wins when both keys exist) and kept
@@ -124,7 +124,13 @@ work, not what gbrain calls internally.
 
 ### Refusals
 
-When a model refuses a request:
+This covers the model the agent picks for its own work. gbrain's own chat
+calls are a separate layer: with a `chat_fallback_chain` set, gbrain sends a
+refused request to the next model in the chain by itself only when
+`chat_fallback_on_refusal` is true (`gbrain doctor --only chat_fallback_chain`
+shows both).
+
+When a model you chose refuses a request:
 1. Tell the user, naming the model: it is a provider refusal, not a model failure
 2. Stop that step. Don't re-spawn it on another model. A stored `refusal_routing.behavior: next_in_chain` in [cross-modal.yaml](cross-modal.yaml) is read as `report`, with a one-line notice that the option was removed
 3. Never reword the request to get around a refusal, and never hide the refusal

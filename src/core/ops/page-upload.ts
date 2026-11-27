@@ -32,9 +32,10 @@ import { readPageBodyPolicy } from '../page-body/limits.ts';
 import { contentRefusalError, loadImportSanityConfig } from '../import-screen.ts';
 import { DEFAULT_WRITE_GATE_CONFIG, writeGateApplies } from '../write-gate.ts';
 import { admitPageAppend } from '../persistence/page-append.ts';
+import { screenUploadedSecrets } from '../persistence/write-secrets.ts';
 import {
   abortUpload, appendPart, expireIfLapsed, partBytes, partMaxFrameBytes, partSha256, readUpload, readUploadByRequest, reserveUpload,
-  isStagingBodyRef, sealUpload, stagedSha256, transitionUploads, uploadExpired, uploadNotFound, uploadPartFrameBytes, uploadPartLimit, type StagingBodyRef, type UploadMode, type UploadRow,
+  isStagingBodyRef, sealUpload, stagedSha256, stagedUploadParts, transitionUploads, uploadExpired, uploadNotFound, uploadPartFrameBytes, uploadPartLimit, type StagingBodyRef, type UploadMode, type UploadRow,
 } from '../persistence/page-upload.ts';
 
 const MODES: readonly UploadMode[] = ['create', 'replace', 'append'];
@@ -367,6 +368,15 @@ const commit_page_upload: Operation = {
       if (row.state === 'open') throw opError('write_pending', 'Another call is committing this upload.', 'Call commit_page_upload again with this upload_id.', { fix: statusFix(row.id) });
     }
     const bodyRef: StagingBodyRef = { kind: 'staging', staging_id: row.id, sha256: row.declared_sha256, bytes: row.declared_bytes };
+    // secrets.on_write: every call that would submit a sealed body screens it whole, including one that lost the seal
+    // race or resumes after a crash, so a secret split across parts is found; a refused upload is discarded.
+    if (!submitted) {
+      const secret = await screenUploadedSecrets(ctx, () => stagedUploadParts(ctx.engine, bodyRef));
+      if (secret) {
+        await abortUpload(ctx.engine, row.id);
+        throw secret;
+      }
+    }
     if (row.mode === 'append') {
       try {
         return await admitPageAppend(ctx, { slug: row.slug, source_id: row.source_id, request_id: row.client_request_id, body_ref: bodyRef,

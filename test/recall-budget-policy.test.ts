@@ -61,7 +61,8 @@ async function page(slug: string, title: string, text: string, sourceId = 'defau
 async function seedStarvation() {
   await page('notes/telescope', 'Zebra telescope', 'The zebra telescope calibration code is QX-17. Store it in the blue case.');
   for (let i = 0; i < 4; i++) {
-    await fact(`Garden observation ${i}: `.padEnd(144, 'x'), { valid_from: new Date(`2026-09-01T00:00:0${i}Z`) });
+    // Facts that match the query (#10225 ranks query-only recall), so facts-first still fills the budget before pages.
+    await fact(`Zebra telescope observation ${i}: `.padEnd(144, 'x'), { valid_from: new Date(`2026-09-01T00:00:0${i}Z`) });
   }
 }
 
@@ -244,7 +245,7 @@ describe('recall opt-in query-first budget packing', () => {
 
   test('no page hits leaves the full budget for the same fact prefix', async () => {
     await seedStarvation();
-    const params = { query: 'unmatched quasars', budget_tokens: 75 };
+    const params = { query: 'observation', budget_tokens: 75 };
     const legacy = await recall(params);
     const candidate = await recall({ ...params, budget_policy: 'query_first' });
     expect(withoutPacking(candidate)).toEqual(legacy);
@@ -261,7 +262,7 @@ describe('recall opt-in query-first budget packing', () => {
   });
 
   test('oversized page head stops the page prefix, preserves its contents, and leaves facts the full budget', async () => {
-    await fact('Fits.');
+    await fact('Needle fits.');
     const raw = [
       { page_id: 1, slug: 'notes/large', title: 'Large', chunk_text: 'x'.repeat(400), score: 2, source_id: 'default' },
       { page_id: 2, slug: 'notes/small', title: 'Small', chunk_text: 'Tiny', score: 1, source_id: 'default' },
@@ -270,7 +271,7 @@ describe('recall opt-in query-first budget packing', () => {
     try {
       const result = await recall({ query: 'needle', budget_tokens: 10, budget_policy: 'query_first' });
       expect(result.results).toEqual([]);
-      expect(result.facts.map((f: any) => f.fact)).toEqual(['Fits.']);
+      expect(result.facts.map((f: any) => f.fact)).toEqual(['Needle fits.']);
       expect(raw.map(r => [r.slug, r.chunk_text])).toEqual([['notes/large', 'x'.repeat(400)], ['notes/small', 'Tiny']]);
       expect(result.budget_packing.results).toEqual({ candidates: 2, kept: 0, dropped: 2, used: 0 });
       assertAccounting(result);
@@ -281,11 +282,12 @@ describe('recall opt-in query-first budget packing', () => {
     await fact('Tiny', { valid_from: new Date('2026-09-01') });
     await fact('x'.repeat(400), { valid_from: new Date('2026-09-02') });
     await page('notes/short', 'Needle', 'Needle');
-    const result = await recall({ query: 'needle', budget_tokens: 10, budget_policy: 'query_first' });
+    // `since` keeps the newest-first fact arm (a query-only recall ranks facts since #10225), so the oversized fact leads.
+    const result = await recall({ query: 'needle', since: '2026-08-01', budget_tokens: 10, budget_policy: 'query_first' });
     expect(result.results).toHaveLength(1);
     expect(result.facts).toEqual([]);
     assertAccounting(result);
-    const empty = await recall({ query: 'needle', budget_tokens: 1, budget_policy: 'query_first' });
+    const empty = await recall({ query: 'needle', since: '2026-08-01', budget_tokens: 1, budget_policy: 'query_first' });
     expect(empty.budget_packing.reason).toBe('first_items_exceed_budget');
     expect(empty).toMatchObject({ facts: [], results: [], budget_used: 0, dropped_count: 3 });
     assertAccounting(empty);
@@ -294,7 +296,7 @@ describe('recall opt-in query-first budget packing', () => {
   test('retains multiple required pages in their original order without changing candidates or per-arm limits', async () => {
     await page('notes/canary-a', 'Canary rollout region', 'The canary rollout starts in region west.');
     await page('notes/canary-b', 'Canary rollout rollback', 'The canary rollout stops at three percent errors.');
-    for (let i = 0; i < 4; i++) await fact(`Observation ${i}: `.padEnd(144, 'x'));
+    for (let i = 0; i < 4; i++) await fact(`Canary rollout observation ${i}: `.padEnd(144, 'x'));
     const all = await recall({ query: 'canary rollout' });
     const result = await recall({ query: 'canary rollout', budget_tokens: 75, budget_policy: 'query_first' });
     expect(result.results).toEqual(all.results);
@@ -349,14 +351,14 @@ describe('recall opt-in query-first budget packing', () => {
     await page('notes/compass', 'Compass denied', 'Compass denied answer.', 'denied');
     await page('notes/private', 'Compass private', 'Compass private answer.', 'default', { visibility: 'private' });
     await engine.putPage('notes/unsafe', { type: 'note', title: 'Compass unsafe', compiled_truth: 'Compass unsafe answer.' });
-    await fact('Public fact.', {}, 'peer');
-    await fact('Private fact.', { visibility: 'private' }, 'peer');
-    await fact('Denied fact.', {}, 'denied');
+    await fact('Compass public fact.', {}, 'peer');
+    await fact('Compass private fact.', { visibility: 'private' }, 'peer');
+    await fact('Compass denied fact.', {}, 'denied');
     const overrides = { remote: true, auth: { allowedSources: ['default', 'peer'] } } as Partial<OperationContext>;
     const params = { query: 'compass', budget_tokens: 75, budget_policy: 'query_first' };
     const result = await recall(params, overrides);
     expect(result.results.map((r: any) => r.title)).toEqual(['Compass public']);
-    expect(result.facts.map((r: any) => r.fact)).toEqual(['Public fact.']);
+    expect(result.facts.map((r: any) => r.fact)).toEqual(['Compass public fact.']);
     expect(result.budget_packing.facts.candidates).toBe(1);
     expect(result.budget_packing.results.candidates).toBe(1);
     assertAccounting(result);

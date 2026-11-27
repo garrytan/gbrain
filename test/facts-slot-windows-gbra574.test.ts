@@ -24,6 +24,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import type { ExtractedFact } from '../src/core/facts/extract.ts';
 import { runExtractConversationFactsCore } from '../src/commands/extract-conversation-facts.ts';
+import { publishConversationFacts } from '../src/core/facts/conversation-publication.ts';
 import { valueHash } from '../src/core/chronicle/ontology.ts';
 import { expireGonePageFacts } from '../src/core/facts/gone-page-facts.ts';
 import { dropRekeyDuplicates } from '../src/core/facts/ontology-rekey.ts';
@@ -610,6 +611,22 @@ for (const backend of testBackends()) {
         expect((await slotRows()).map(r => [r.source_markdown_slug, r.value])).toEqual([['meetings/chat-a', 'Lisbon'], ['meetings/chat-b', 'Porto'], ['meetings/chat-c', 'Lisbon']]);
         const lisbon = (await block(LIVE_Q)).find(r => r.includes('Alice Example lives in Lisbon.'));
         expect(lisbon?.split('\n')[0]).toBe(header(P1, P1));
+      });
+
+      test('a return to an earlier value with no event date is published and stays undated', async () => {
+        const pages: Page[] = [
+          { slug: 'meetings/chat-a', title: 'Chat A', date: P1, said: [LISBON] },
+          { slug: 'meetings/chat-b', title: 'Chat B', date: P2, said: [{ fact: 'Alice Example moved to Porto.', valid: P2, slot: ['location', 'Porto'] }] },
+          { slug: 'meetings/chat-c', title: 'Chat C', date: P3, said: [] },
+        ];
+        await putPages(pages); await extract(pages.slice(0, 2));
+        const [first] = await engine.executeRaw<{ source: string }>(`SELECT source FROM facts WHERE source_markdown_slug='meetings/chat-a' AND dimension='location'`);
+        const restated = { fact: LISBON.fact, kind: 'fact', entity_slug: ALICE, context: null, valid_from: null, valid_until: null, source: first!.source,
+          source_session: null, confidence: 1, notability: 'high', embedding: null, embedding_model: null, visibility: 'private', dimension: 'location', value: 'Lisbon' };
+        const published = await publishConversationFacts(engine, 'default', 'meetings/chat-c', [restated as never], { scope: 'window' });
+        expect([published.facts_inserted, published.duplicates_skipped]).toEqual([1, 0]);
+        const [row] = await engine.executeRaw<{ valid_from: Date | null }>(`SELECT valid_from FROM facts WHERE source_markdown_slug='meetings/chat-c' AND dimension='location'`);
+        expect(row?.valid_from ?? null).toBeNull();
       });
 
       test('an ontology observation never ends a conversation window', async () => {

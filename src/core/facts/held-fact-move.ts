@@ -22,6 +22,7 @@ import { transientDatabaseFailure, transientInterruption } from '../persistence/
 import { registerEngineView } from '../persistence/switches.ts';
 import { syncPreparationBudgetMs } from '../persistence/sync-waivers.ts';
 import { requestConfigValue } from '../config-snapshot.ts';
+import { isRuleSlug } from '../rules/record.ts';
 import { isFenceHold, pageHasFile, planManagedPage, type UnfencedFactRow } from './unfenced-facts.ts';
 
 export interface HeldFactMoveOutcome {
@@ -138,6 +139,7 @@ export type HoldingHome = Awaited<ReturnType<typeof holdingHome>>;
 export async function heldRowDestination(engine: BrainEngine, sourceId: string, key: string, from: string,
   home: (key: string) => Promise<HoldingHome> = k => holdingHome(engine, sourceId, k)):
   Promise<{ slug: string; kind: 'page' | 'create' | 'rehome' } | { unmovable: string } | null> {
+  if (isRuleSlug(key)) return null;
   const target = await heldFactTarget(engine, sourceId, key);
   if (target && 'ambiguous' in target) return { unmovable: ambiguousHeldReason(target.ambiguous) };
   if (target) return { slug: target.slug, kind: 'page' };

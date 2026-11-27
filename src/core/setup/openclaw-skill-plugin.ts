@@ -50,7 +50,7 @@ import { ResolverError } from '../skills/resolver/errors.ts';
 import { logsDir, skillIndexRoot } from '../skills/resolver/paths.ts';
 import { readDirSources } from '../skills/resolver/sources.ts';
 import { openclawConfigPath, openclawPath, openclawStateDir, parseJson5ish, resolveOpenclawWorkspace } from './brain-first.ts';
-import { openclawSkillLoaderJs, openclawSkillWorkerJs } from './openclaw-skill-plugin-code.ts';
+import { OPENCLAW_SKILL_PLUGIN_CODE_VERSION, openclawSkillLoaderJs, openclawSkillWorkerJs } from './openclaw-skill-plugin-code.ts';
 import { openclawPluginRegistered, runOpenclawCli } from './openclaw-turn-plugin.ts';
 import { catalogSkillPaths, pinnedBlockFor, type PinClass } from './skill-pins.ts';
 import { readResolverConfig } from './skill-resolver-config.ts';
@@ -87,6 +87,14 @@ export interface OpenclawSkillAgentState {
   /** The owner-session pins (the session-start brief when pins_route is first_turn). */
   pinned_block: string;
   pinned_ids: string[];
+  /** The owner's session-start brief (pins added with --brief): once per owner session and again after a compaction or reset, whatever pins_route says. */
+  brief_block?: string;
+  brief_ids?: string[];
+  /** One line from the operator (--operator-rule) sent on every owner turn, and one for conversations (--conversation-operator-rule), while the mode is live. */
+  operator_rule?: string;
+  conversation_operator_rule?: string;
+  /** --require-owner-sender: with no memory audience from OpenClaw, the main session is the owner's only for a turn from one of owner_sender_ids (none set: never). */
+  require_owner_sender?: boolean;
   /** The pins for conversations (groups, channels, other people's DMs), every turn. */
   conversation_pinned_block?: string;
   conversation_pinned_ids?: string[];
@@ -97,7 +105,18 @@ export interface OpenclawSkillAgentState {
   /** The session classes that get suggestions (relay, cron, heartbeat, webhook and internal turns never do); absent means both. */
   suggest_classes?: PinClass[];
   owner_sender_ids: string[];
+  /** --owner-skill: skill names kept to the owner's sessions whatever copy OpenClaw loads (a host-local copy without `audience: owner` included): never suggested or pinned in a conversation. */
+  owner_skill_ids?: string[];
 }
+/** The longest operator rule line (--operator-rule, --conversation-operator-rule). */
+export const OPERATOR_RULE_MAX = 200;
+
+/** Why an operator rule line is not valid as written, or null: one line of visible text with no < or > (so it cannot open or close a block), at most OPERATOR_RULE_MAX characters. The plugin checks the same rule again before sending one. */
+export function operatorRuleProblem(line: string): string | null {
+  if (!line.trim() || line !== line.trim() || line.length > OPERATOR_RULE_MAX || /[\u0000-\u001f\u007f-\u009f\u2028\u2029<>]/.test(line)) return `must be one line of 1-${OPERATOR_RULE_MAX} characters with no < or >, no line breaks and no leading or trailing spaces`;
+  return null;
+}
+
 export interface OpenclawSkillState { v: 1; gbrain_version: string; library_sha256: string; gbrain_home?: string; agents: Record<string, OpenclawSkillAgentState> }
 
 export interface OpenclawSkillStep { step: 'library' | 'catalog' | 'state' | 'plugin' | 'install' | 'verify' | 'self-test'; action: 'write' | 'keep' | 'remove' | 'skip' | 'run'; detail: string }
@@ -105,7 +124,7 @@ export interface OpenclawSkillError { code: 'skill_resolver_plugin_not_installed
 export interface OpenclawSkillResult {
   mode: OpenclawSkillMode;
   steps: OpenclawSkillStep[];
-  agents: Array<{ id: string; mode: OpenclawSkillMode; catalog: string; skills: number; pins: number; conversation_pins?: number; unknown_pins: string[]; sources?: Record<string, number> }>;
+  agents: Array<{ id: string; mode: OpenclawSkillMode; catalog: string; skills: number; pins: number; conversation_pins?: number; brief?: number; unknown_pins: string[]; sources?: Record<string, number>; owner_skills?: string[] }>;
   notes: string[];
   error?: OpenclawSkillError;
 }
@@ -304,6 +323,10 @@ export function sourceOfPath(path: string, roots: readonly OpenclawSkillRoot[]):
   return roots.find((r) => within(path, realOr(r.dir)))?.source ?? null;
 }
 
+function ownerHiddenIds(names: readonly string[], ids: Iterable<string>): string[] {
+  return [...new Set([...names, ...[...ids].filter((id) => names.some((n) => id.endsWith(':' + n)))])];
+}
+
 function catalogBuiltAt(home: string, catalog: string): string | null {
   // silent-read-ok: no readable receipt records no build, and the loader withholds conversation pins once a receipt with a build appears
   try { const at = JSON.parse(readFileSync(join(skillIndexRoot(home), catalog, 'receipt.json'), 'utf8'))?.build?.built_at; return typeof at === 'string' ? at : null; } catch { return null; }
@@ -411,6 +434,36 @@ export function openclawHostDrift(agentId: string, catalogIds: string[], exclude
 
 const someNames = (ids: string[]) => `${ids.slice(0, 10).join(', ')}${ids.length > 10 ? ` and ${ids.length - 10} more` : ''}`;
 
+/** Rollout knobs from setup flags; an empty operator rule clears it. */
+export interface OpenclawSkillTuning { live_fraction?: number; pins_route?: 'system' | 'first_turn'; owner_sender_ids?: string[]; suggest_classes?: PinClass[]; operator_rule?: string; conversation_operator_rule?: string; require_owner_sender?: boolean; owner_skills_add?: string[]; owner_skills_remove?: string[] }
+
+/**
+ * Whether OpenClaw may put another person's direct message on this agent's shared main session: session.dmScope is
+ * main (OpenClaw's default, so every DM lands there) globally or on a route binding for the agent. Such a turn carries
+ * the main session key, so without a memory audience from OpenClaw only owner_sender_ids tell the owner apart.
+ */
+export function openclawDmScopeMain(agentId: string): boolean {
+  let cfg: Cfg;
+  try { cfg = openclawConfig(); } catch { return true; } // silent-read-ok: an unreadable openclaw.json leaves OpenClaw's default, dmScope main, so the warning stays on
+  if ((cfg.session?.dmScope ?? 'main') === 'main') return true;
+  return Array.isArray(cfg.bindings) && cfg.bindings.some((b: Cfg) => b && b.agentId === agentId && b.session?.dmScope === 'main');
+}
+
+/** A live agent whose main session counts as the owner's for anyone who messages it directly: dmScope main, no owner_sender_ids and no require_owner_sender. OpenClaw's memory audience, when it sends one, still decides per turn. */
+export function openclawOwnerUnverified(agentId: string, a: Pick<OpenclawSkillAgentState, 'mode' | 'owner_sender_ids' | 'require_owner_sender'>): boolean {
+  return a.mode === 'live' && !(a.owner_sender_ids ?? []).length && a.require_owner_sender !== true && openclawDmScopeMain(agentId);
+}
+
+/** The plugin code version installed in OpenClaw (its index.js), or null when none is readable. An older one ignores state fields added since. */
+export function openclawLoaderVersion(): number | null {
+  try { const m = /const PLUGIN_VERSION = "(\d+)";/.exec(readFileSync(join(openclawSkillPluginDir(), 'index.js'), 'utf8')); return m ? Number(m[1]) : null; } catch { // silent-read-ok: null is not "healthy" here: doctor reports an unreadable loader as skill_resolver_plugin_outdated
+    return null;
+  }
+}
+
+/** The setup command that sets an owner sender for an agent (the fix doctor and setup print). */
+export const ownerSenderFix = (agentId: string): string => `gbrain setup openclaw --skills-index-only --agent ${agentId} --owner-sender <your sender id>`;
+
 export interface OpenclawSkillSyncOptions {
   mode: 'live' | 'shadow' | null;
   agents: string[] | 'all' | null;
@@ -421,7 +474,7 @@ export interface OpenclawSkillSyncOptions {
   /** Library, catalogs and state only: never the plugin files or OpenClaw's CLI (setup --skills-index-only, the plugin's own skew refresh). */
   refreshOnly?: boolean;
   /** Rollout knobs from setup flags; unset ones keep the agent's prior value. */
-  tuning?: { live_fraction?: number; pins_route?: 'system' | 'first_turn'; owner_sender_ids?: string[]; suggest_classes?: PinClass[] };
+  tuning?: OpenclawSkillTuning;
   deps?: OpenclawSkillDeps;
 }
 
@@ -504,7 +557,14 @@ export async function syncOpenclawSkillPlugin(opts: OpenclawSkillSyncOptions): P
     const root = readRootFor(policy.path_reads, policy.workspace);
     const builtAt = catalogBuiltAt(home, catalog);
     const pins = dryRun ? none : pinnedBlockFor(home, catalog, 'openclaw', root, { cls: 'owner', hidden });
-    const talk = dryRun ? none : pinnedBlockFor(home, catalog, 'openclaw', root, { cls: 'conversation', hidden });
+    const ownerSkills = [...new Set([...(before?.owner_skill_ids ?? []), ...(tune.owner_skills_add ?? [])])].filter((n) => !(tune.owner_skills_remove ?? []).includes(n)).sort();
+    const talk = dryRun ? none : pinnedBlockFor(home, catalog, 'openclaw', root, { cls: 'conversation', hidden: [...hidden, ...ownerHiddenIds(ownerSkills, files.keys())] });
+    const brief = dryRun ? none : pinnedBlockFor(home, catalog, 'openclaw', root, { cls: 'owner', hidden, brief: true });
+    const rule = (key: 'operator_rule' | 'conversation_operator_rule') => {
+      const v = tune[key] ?? before?.[key];
+      return typeof v === 'string' && v && !operatorRuleProblem(v) ? { [key]: v } : {};
+    };
+    const requireOwner = tune.require_owner_sender ?? before?.require_owner_sender ?? false;
     const sources: Record<string, number> = {};
     for (const [sid, p] of files) if (!hidden.includes(sid)) { const s = sourceOfPath(p, roots) ?? 'unknown'; sources[s] = (sources[s] ?? 0) + 1; }
     agents[id] = {
@@ -515,10 +575,15 @@ export async function syncOpenclawSkillPlugin(opts: OpenclawSkillSyncOptions): P
       pinned_block: pins.block, pinned_ids: pins.ids, conversation_pinned_block: talk.block, conversation_pinned_ids: talk.ids, host_hidden: [...new Set(hidden)], pins_built_at: builtAt,
       ...((tune.suggest_classes ?? before?.suggest_classes) ? { suggest_classes: tune.suggest_classes ?? before!.suggest_classes } : {}),
       owner_sender_ids: tune.owner_sender_ids ?? before?.owner_sender_ids ?? [],
+      brief_block: brief.block, brief_ids: brief.ids, ...rule('operator_rule'), ...rule('conversation_operator_rule'), ...(requireOwner ? { require_owner_sender: true } : {}),
+      ...(ownerSkills.length ? { owner_skill_ids: ownerSkills } : {}),
     };
-    const unknown = [...new Set([...pins.unknown, ...talk.unknown])];
-    const withheld = [...new Set([...pins.withheld, ...talk.withheld])];
-    out.agents.push({ id, mode: agents[id]!.mode, catalog, skills: skills - new Set(hidden).size, pins: pins.ids.length, conversation_pins: talk.ids.length, unknown_pins: unknown, sources });
+    const absent = ownerSkills.filter((n) => !ownerHiddenIds([n], files.keys()).some((x) => files.has(x)));
+    if (absent.length) out.notes.push(`agent ${id}: owner-only skill name(s) not in ${catalog}, kept so they stay owner-only once installed: ${someNames(absent)}`);
+    if (openclawOwnerUnverified(id, agents[id]!)) out.notes.push(`agent ${id}: OpenClaw puts every direct message on this agent's main session (session.dmScope main) and no --owner-sender is set, so unless OpenClaw sends a memory audience, anyone who messages the agent directly gets the owner's pins, brief, operator rule and owner-only suggestions. Fix: ${ownerSenderFix(id)} (your id on the channel: the bare id, for example 123456789 on Telegram, or commands.ownerAllowFrom's telegram:123456789 form), or add --require-owner-sender to treat the main session as another person's DM until one is set (skill_resolver_owner_unverified)`);
+    const unknown = [...new Set([...pins.unknown, ...talk.unknown, ...brief.unknown])];
+    const withheld = [...new Set([...pins.withheld, ...talk.withheld, ...brief.withheld])];
+    out.agents.push({ id, mode: agents[id]!.mode, catalog, skills: skills - new Set(hidden).size, pins: pins.ids.length, conversation_pins: talk.ids.length, brief: brief.ids.length, unknown_pins: unknown, sources, ...(ownerSkills.length ? { owner_skills: ownerSkills } : {}) });
     if (unknown.length) out.notes.push(`agent ${id}: pinned skill(s) not in ${catalog}, left out of the block: ${unknown.join(', ')} (skill_resolver_pin_unknown)`);
     if (withheld.length) out.notes.push(`agent ${id}: pinned skill(s) OpenClaw hides from this agent, loads from another folder, or marks audience: owner (kept out of conversations), left out of the block: ${withheld.join(', ')} (skill_resolver_pin_withheld)`);
   }
@@ -549,7 +614,11 @@ export async function syncOpenclawSkillPlugin(opts: OpenclawSkillSyncOptions): P
   const stateChanged = (() => { try { return readFileSync(openclawSkillStatePath(home), 'utf8') !== stateText; } catch { return true; } })();
   if (stateChanged) { mkdirSync(home, { recursive: true }); atomicWriteTextFile(openclawSkillStatePath(home), stateText, { freshMode: 0o600 }); chmodSync(openclawSkillStatePath(home), 0o600); }
   out.steps.push({ step: 'state', action: stateChanged ? 'write' : 'keep', detail: `${openclawSkillStatePath(home)} (${Object.entries(agents).map(([id, a]) => `${id} ${a.mode}`).join(', ')})` });
-  if (opts.refreshOnly) return out;
+  if (opts.refreshOnly) {
+    const loader = openclawLoaderVersion();
+    if (loader !== null && loader < OPENCLAW_SKILL_PLUGIN_CODE_VERSION) out.notes.push(`the installed plugin code (version ${loader}) is older than this gbrain's (${OPENCLAW_SKILL_PLUGIN_CODE_VERSION}), so it ignores the operator rule, the --brief pins, --require-owner-sender and --owner-skill, and does not withdraw the owner's context on another person's turn; rerun gbrain setup openclaw with the flags you installed with (--workspace, --name, --agent) to update it, then restart the gateway (skill_resolver_plugin_outdated)`);
+    return out;
+  }
 
   try {
     if (changed) {
@@ -603,10 +672,12 @@ export function refreshOpenclawPins(home: string): string[] {
     const root = readRootFor(a.path_reads, a.workspace_dir);
     const builtAt = catalogBuiltAt(home, a.catalog);
     const pins = pinnedBlockFor(home, a.catalog, 'openclaw', root, { cls: 'owner', hidden });
-    const talk = pinnedBlockFor(home, a.catalog, 'openclaw', root, { cls: 'conversation', hidden });
+    const talk = pinnedBlockFor(home, a.catalog, 'openclaw', root, { cls: 'conversation', hidden: [...hidden, ...ownerHiddenIds(a.owner_skill_ids ?? [], Object.keys(a.skill_files ?? {}))] });
+    const brief = pinnedBlockFor(home, a.catalog, 'openclaw', root, { cls: 'owner', hidden, brief: true });
     if (pins.block === a.pinned_block && JSON.stringify(pins.ids) === JSON.stringify(a.pinned_ids)
-      && talk.block === (a.conversation_pinned_block ?? '') && JSON.stringify(talk.ids) === JSON.stringify(a.conversation_pinned_ids ?? []) && builtAt === (a.pins_built_at ?? null)) continue;
-    agents[id] = { ...a, pinned_block: pins.block, pinned_ids: pins.ids, conversation_pinned_block: talk.block, conversation_pinned_ids: talk.ids, pins_built_at: builtAt };
+      && talk.block === (a.conversation_pinned_block ?? '') && JSON.stringify(talk.ids) === JSON.stringify(a.conversation_pinned_ids ?? [])
+      && brief.block === (a.brief_block ?? '') && JSON.stringify(brief.ids) === JSON.stringify(a.brief_ids ?? []) && builtAt === (a.pins_built_at ?? null)) continue;
+    agents[id] = { ...a, pinned_block: pins.block, pinned_ids: pins.ids, conversation_pinned_block: talk.block, conversation_pinned_ids: talk.ids, brief_block: brief.block, brief_ids: brief.ids, pins_built_at: builtAt };
     changed.push(id);
   }
   if (changed.length) atomicWriteTextFile(openclawSkillStatePath(home), `${JSON.stringify({ ...prior, agents }, null, 2)}\n`, { freshMode: 0o600 });
@@ -662,7 +733,7 @@ export function removeOpenclawSkillPlugin(opts: { home: string; agents: string[]
 /** One human line per step, matching setup's step lines. */
 export function describeOpenclawSkill(r: OpenclawSkillResult, dryRun: boolean): string[] {
   const lines = r.steps.map((s) => `  ${(dryRun && (s.action === 'write' || s.action === 'remove' || s.action === 'run') ? `would ${s.action}` : s.action).padEnd(8)} ${'resolver'.padEnd(7)} ${s.step}: ${s.detail}`);
-  for (const a of r.agents) lines.push(`skill resolver (openclaw agent ${a.id}): ${a.mode}; ${a.skills} skills in ${a.catalog}${a.sources && Object.keys(a.sources).length ? ` (${Object.entries(a.sources).map(([s, n]) => `${s} ${n}`).join(', ')})` : ''}; ${a.pins} pinned`);
+  for (const a of r.agents) lines.push(`skill resolver (openclaw agent ${a.id}): ${a.mode}; ${a.skills} skills in ${a.catalog}${a.sources && Object.keys(a.sources).length ? ` (${Object.entries(a.sources).map(([s, n]) => `${s} ${n}`).join(', ')})` : ''}; ${a.pins} pinned${a.brief ? `, ${a.brief} in the session brief` : ''}${a.owner_skills?.length ? `; owner-only by name: ${someNames(a.owner_skills)}` : ''}`);
   for (const n of r.notes) lines.push(`  note     ${'resolver'.padEnd(7)} ${n}`);
   return lines;
 }

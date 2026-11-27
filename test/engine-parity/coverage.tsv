@@ -6,28 +6,35 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 332/470
-# calibration_profiles: 0/2
-# trust: 0/6
+# covered: 332/581
+# mention_pass: 0/1
+# belief_purge: 0/2
+# connect_gate: 0/2
+# projection_rebuild: 0/14
+# facts_cycle_sites: 0/1
+# cli_reads_ops: 0/2
+# link_reads: 0/2
+# calibration_profiles: 0/3
+# trust: 0/10
 # minion_queue: 0/2
-# belief_ledger: 0/2
-# persistence_journal: 0/24
+# belief_ledger: 0/6
+# persistence_journal: 0/35
 # facts_recall: 0/1
-# facts_trust: 0/1
-# purge_plan: 0/2
-# facts_purge: 0/11
+# facts_trust: 0/6
+# purge_plan: 0/3
+# facts_purge: 0/42
 # reflex_reads: 0/2
 # trust_proposals: 0/3
-# remote_links: 0/4
+# remote_links: 0/5
 # page_visibility: 0/2
-# write_guards: 0/1
+# write_guards: 0/3
 # access_members: 0/1
-# cli_reads_import: 0/6
+# cli_reads_import: 0/7
 # lifecycle: 9/9
 # pages: 33/42
 # search: 7/7
 # search_reads: 9/9
-# chunks: 22/31
+# chunks: 22/32
 # extraction: 7/7
 # links: 23/23
 # tags: 5/5
@@ -36,16 +43,16 @@
 # raw_files: 5/6
 # takes: 17/18
 # dream: 3/3
-# contradictions: 5/5
+# contradictions: 5/7
 # facts: 14/14
-# segmented_body: 15/16
+# segmented_body: 15/17
 # versions: 3/3
 # stats_ingest: 5/5
 # sync_aliases: 10/10
-# config: 6/6
+# config: 6/7
 # withdrawal_pages: 0/2
 # withdrawal_fence: 0/1
-# import_guards: 9/11
+# import_guards: 9/12
 # cycle_locks: 6/9
 # raw_sql: 4/4
 # code_edges: 8/8
@@ -57,39 +64,79 @@
 # alias_fanout_reads: 4/5
 # cli_reads_export: 9/12
 # jobs_health: 8/8
-# trust_tier_reads: 1/3
+# trust_tier_reads: 1/20
 # withdrawal_discovery: 1/1
 # belief_reads: 0/1
 # search_vector: 0/1
 # open_loops: 5/7
-# write_misc: 0/29
+# write_misc: 0/32
 # entity_reads: 4/4
 # owner_only: 1/1
 # wanted_links: 2/2
 # salience_enrich: 5/5
 method	family	covered	parity_cases	legacy_e2e	pglite	postgres	rust
+storeSegmentDerivationsIfLive	mention_pass	no	0	no	-	-	-
+bumpSourcePurgeEpoch	belief_purge	no	0	no	-	-	-
+hasBeliefEvents	belief_purge	no	0	no	-	-	-
+hasPersistenceTable	connect_gate	no	0	no	-	-	-
+listManagedRootBindings	connect_gate	no	0	no	-	-	-
+readChunkKeepState	projection_rebuild	no	0	no	-	-	-
+clearUnkeptChunkVectors	projection_rebuild	no	0	no	-	-	-
+setProjectionChunkerVersion	projection_rebuild	no	0	no	-	-	-
+hasDrainableProjectionJob	projection_rebuild	no	0	no	-	-	-
+readChunkRowsFingerprint	projection_rebuild	no	0	no	-	-	-
+deleteUnkeptChunks	projection_rebuild	no	0	no	-	-	-
+listStaleChunkVectors	projection_rebuild	no	0	no	-	-	-
+clearChunkVectors	projection_rebuild	no	0	no	-	-	-
+countPendingTextChunks	projection_rebuild	no	0	no	-	-	-
+readProjectionHead	projection_rebuild	no	0	no	-	-	-
+isDeferredReplacementHeld	projection_rebuild	no	0	no	-	-	-
+renewDeferredReplacementClaim	projection_rebuild	no	0	no	-	-	-
+releaseDeferredReplacementClaim	projection_rebuild	no	0	no	-	-	-
+queuePageProjectionJob	projection_rebuild	no	0	no	-	-	-
+readLiveStoredBody	facts_cycle_sites	no	0	no	-	-	-
+listHeldFenceCells	cli_reads_ops	no	0	no	-	-	-
+readFenceOverlayRows	cli_reads_ops	no	0	no	-	-	-
+readLinkContextMatches	link_reads	no	0	no	-	-	-
+readLinkContextOriginPages	link_reads	no	0	no	-	-	-
 getLatestCalibrationProfile	calibration_profiles	no	0	no	-	-	-
 insertCalibrationProfile	calibration_profiles	no	0	no	-	-	-
+purgeCalibrationProfilesByWave	calibration_profiles	no	0	no	-	-	-
+insertFactWithdrawal	trust	no	0	no	-	-	-
 isFactPurged	trust	no	0	no	-	-	-
+readSourcePurgeFlags	trust	no	0	no	-	-	-
+listPurgedTakeRows	trust	no	0	no	-	-	-
 upsertWriteGateReceipt	trust	no	0	no	-	-	-
+upsertPageWriteGateReceipt	trust	no	0	no	-	-	-
 listWriteGateReceiptsFor	trust	no	0	no	-	-	-
 upsertWriteGateHold	trust	no	0	no	-	-	-
 listWriteGateHoldRows	trust	no	0	no	-	-	-
 getWriteGateHoldRow	trust	no	0	no	-	-	-
 readScopeSourceConfigs	minion_queue	no	0	no	-	-	-
 readOauthClient	minion_queue	no	0	no	-	-	-
+insertBeliefEvents	belief_ledger	no	0	no	-	-	-
 markBeliefCommits	belief_ledger	no	0	no	-	-	-
+readOpenBeliefLifetimes	belief_ledger	no	0	no	-	-	-
+endBeliefLifetime	belief_ledger	no	0	no	-	-	-
 readBeliefStateRows	belief_ledger	no	0	no	-	-	-
+readBeliefFactsById	belief_ledger	no	0	no	-	-	-
+readNotifierStatusRows	persistence_journal	no	0	no	-	-	-
+hasNotifierCoverage	persistence_journal	no	0	no	-	-	-
 declarePersistence	persistence_journal	no	0	no	-	-	-
 requireSynchronousCommit	persistence_journal	no	0	no	-	-	-
+readJournalLimitRows	persistence_journal	no	0	no	-	-	-
+readSourcePurgeEpoch	persistence_journal	no	0	no	-	-	-
 readWriteRequest	persistence_journal	no	0	no	-	-	-
+readWriteRequestsByRequestIds	persistence_journal	no	0	no	-	-	-
 readWriteRequestById	persistence_journal	no	0	no	-	-	-
 readOAuthClientWriteGrant	persistence_journal	no	0	no	-	-	-
 readAccessTokenWriteGrant	persistence_journal	no	0	no	-	-	-
 shareLockWriteCredential	persistence_journal	no	0	no	-	-	-
 readCounterRows	persistence_journal	no	0	no	-	-	-
+readAdmissionRate	persistence_journal	no	0	no	-	-	-
 lockPersistenceCounters	persistence_journal	no	0	no	-	-	-
 insertWriteRequest	persistence_journal	no	0	no	-	-	-
+readOwnerHostBinding	persistence_journal	no	0	no	-	-	-
 stampWriteClaim	persistence_journal	no	0	no	-	-	-
 lockWriteRequest	persistence_journal	no	0	no	-	-	-
 completeWriteRow	persistence_journal	no	0	no	-	-	-
@@ -97,7 +144,11 @@ lockWriteRequestsById	persistence_journal	no	0	no	-	-	-
 compactTerminalIntent	persistence_journal	no	0	no	-	-	-
 insertPublicationEffects	persistence_journal	no	0	no	-	-	-
 readSourceMembership	persistence_journal	no	0	no	-	-	-
+findTopologyChanges	persistence_journal	no	0	no	-	-	-
 renewWriteClaim	persistence_journal	no	0	no	-	-	-
+releaseUnpublishedClaim	persistence_journal	no	0	no	-	-	-
+readCapacityForecastInputs	persistence_journal	no	0	no	-	-	-
+deleteProjectionJob	persistence_journal	no	0	no	-	-	-
 readRequestEffects	persistence_journal	no	0	no	-	-	-
 renewEffectClaim	persistence_journal	no	0	no	-	-	-
 completeEffectRow	persistence_journal	no	0	no	-	-	-
@@ -105,20 +156,57 @@ failEffectRow	persistence_journal	no	0	no	-	-	-
 lockEffectGuard	persistence_journal	no	0	no	-	-	-
 readSegmentedGateEvidence	persistence_journal	no	0	no	-	-	-
 listSlotRows	facts_recall	no	0	no	-	-	-
+listDerivedRows	facts_trust	no	0	no	-	-	-
 listFactProvenance	facts_trust	no	0	no	-	-	-
+expireDerivedFacts	facts_trust	no	0	no	-	-	-
+deactivateDerivedTakes	facts_trust	no	0	no	-	-	-
+softDeleteDerivedPages	facts_trust	no	0	no	-	-	-
+markNeedsRederive	facts_trust	no	0	no	-	-	-
+listRequestsHoldingStagings	purge_plan	no	0	no	-	-	-
 countPurgeProbe	purge_plan	no	0	no	-	-	-
 listPurgeProbeItems	purge_plan	no	0	no	-	-	-
+countFactFingerprintLeftovers	facts_purge	no	0	no	-	-	-
 loadPurgeTarget	facts_purge	no	0	no	-	-	-
 insertFactPurge	facts_purge	no	0	no	-	-	-
 insertTakePurge	facts_purge	no	0	no	-	-	-
 upsertPagePurges	facts_purge	no	0	no	-	-	-
+listPageGitEffectsForStrip	facts_purge	no	0	no	-	-	-
+listPageChangeReasons	facts_purge	no	0	no	-	-	-
+listRequestsRecordingReasons	facts_purge	no	0	no	-	-	-
+listSegmentedPageBodies	facts_purge	no	0	no	-	-	-
+listSegmentedVersionBodies	facts_purge	no	0	no	-	-	-
 setPurgeProbeTimeout	facts_purge	no	0	no	-	-	-
 probePurgeDerivations	facts_purge	no	0	no	-	-	-
+listBeliefEventsForPurgeProbe	facts_purge	no	0	no	-	-	-
+listFactContextsForPurgeProbe	facts_purge	no	0	no	-	-	-
+listPageSourcePathsForPurge	facts_purge	no	0	no	-	-	-
+listNearestFactsForPurge	facts_purge	no	0	no	-	-	-
+countLegacyDerivedPages	facts_purge	no	0	no	-	-	-
+vacuumPurgedTables	facts_purge	no	0	no	-	-	-
+listPageProseHits	facts_purge	no	0	no	-	-	-
+readPurgeReceiptSourcePath	facts_purge	no	0	no	-	-	-
 countPagePurgeTombstones	facts_purge	no	0	no	-	-	-
+readDeletePageRequest	facts_purge	no	0	no	-	-	-
 listPurgeEffects	facts_purge	no	0	no	-	-	-
+countPurgeFingerprintResidue	facts_purge	no	0	no	-	-	-
+countPurgeVersionsCarryingClaim	facts_purge	no	0	no	-	-	-
+countPurgeReviewRows	facts_purge	no	0	no	-	-	-
+listPurgeStreamSlugs	facts_purge	no	0	no	-	-	-
+findPurgeBlockedPublication	facts_purge	no	0	no	-	-	-
+setPurgeVersionBody	facts_purge	no	0	no	-	-	-
+redactVersionChangeReasons	facts_purge	no	0	no	-	-	-
+listSegmentedVersionsForPurge	facts_purge	no	0	no	-	-	-
+abortPurgedStagings	facts_purge	no	0	no	-	-	-
+deletePurgedStagingParts	facts_purge	no	0	no	-	-	-
+deletePageViewDigests	facts_purge	no	0	no	-	-	-
+deleteUnreferencedPurgedTexts	facts_purge	no	0	no	-	-	-
+insertHoldingPagePurges	facts_purge	no	0	no	-	-	-
 deletePurgeReviewQueue	facts_purge	no	0	no	-	-	-
 deletePurgeReviewProposals	facts_purge	no	0	no	-	-	-
 deletePurgeDecideProposals	facts_purge	no	0	no	-	-	-
+deletePurgeTakeProposals	facts_purge	no	0	no	-	-	-
+listPurgedPageRevisions	facts_purge	no	0	no	-	-	-
+insertPurgeEffects	facts_purge	no	0	no	-	-	-
 readReflexLiveKeys	reflex_reads	no	0	no	-	-	-
 readReflexPages	reflex_reads	no	0	no	-	-	-
 insertTrustProposal	trust_proposals	no	0	no	-	-	-
@@ -128,16 +216,20 @@ setEffectTransactionLimits	remote_links	no	0	no	-	-	-
 readOwnedLinks	remote_links	no	0	no	-	-	-
 deleteOwnedLinks	remote_links	no	0	no	-	-	-
 readLinkTargetPages	remote_links	no	0	no	-	-	-
+rearmLinksEffects	remote_links	no	0	no	-	-	-
 readWriteVisibilityProbe	page_visibility	no	0	no	-	-	-
 readWriterSlugFence	page_visibility	no	0	no	-	-	-
+readPageOrigin	write_guards	no	0	no	-	-	-
+sealImportedPage	write_guards	no	0	no	-	-	-
 readPageIndexingState	write_guards	no	0	no	-	-	-
 readLinkedMember	access_members	no	0	no	-	-	-
 listSourceRecords	cli_reads_import	no	0	no	-	-	-
+readGuestSourceRow	cli_reads_import	no	0	no	-	-	-
 readSourceIncarnation	cli_reads_import	no	0	no	-	-	-
 hasCompanyBrainReceipt	cli_reads_import	no	0	no	-	-	-
-readGuestSourceRow	cli_reads_import	no	0	no	-	-	-
 listGuestSourceIds	cli_reads_import	no	0	no	-	-	-
 readPageTrustRows	cli_reads_import	no	0	no	-	-	-
+readRowTrustRows	cli_reads_import	no	0	no	-	-	-
 connect	lifecycle	yes	1	yes	yes	yes	serves
 disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
@@ -148,10 +240,10 @@ transactionDirect	lifecycle	yes	1	no	yes	yes	serves
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
 getPage	pages	yes	54	yes	yes	yes	serves
-readPageSnapshot	pages	yes	21	no	yes	yes	serves
+readPageSnapshot	pages	yes	31	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	1	no	yes	yes	serves
-putPage	pages	yes	205	yes	yes	yes	serves
+putPage	pages	yes	215	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	17	yes	yes	yes	serves
@@ -235,6 +327,7 @@ readEmbeddingCompletion	chunks	no	0	no	-	-	-
 lockEffectClaimRow	chunks	no	0	no	-	-	-
 lockEmbeddingSwitch	chunks	no	0	no	-	-	-
 installChunkEmbeddings	chunks	no	0	no	-	-	-
+hasUnsealedPages	chunks	no	0	no	-	-	-
 getChunksWithEmbeddings	chunks	yes	2	no	yes	yes	serves
 countStalePagesForExtraction	extraction	yes	4	yes	yes	yes	serves
 listStalePagesForExtraction	extraction	yes	3	yes	yes	yes	serves
@@ -274,8 +367,8 @@ getTags	tags	yes	3	yes	yes	yes	serves
 sampleEffectiveDates	timeline	yes	1	no	yes	yes	refuses:raw_sql
 sampleEffectiveDateSources	timeline	yes	1	no	yes	yes	refuses:raw_sql
 readMaxTimelineEntryId	timeline	yes	1	no	yes	yes	refuses:raw_sql
-listStoredTimelineRowsOrdered	timeline	yes	2	no	yes	yes	refuses:raw_sql
-deleteTimelineRows	timeline	yes	2	no	yes	yes	refuses:raw_sql
+listStoredTimelineRowsOrdered	timeline	yes	2	no	yes	yes	refuses:timeline
+deleteTimelineRows	timeline	yes	2	no	yes	yes	refuses:timeline
 storedTimelineRowsByPageIds	timeline	yes	1	no	yes	yes	refuses:raw_sql
 countSegmentedTimelinePages	timeline	yes	1	no	yes	yes	refuses:raw_sql
 countTimelineCommentMarkupRows	timeline	yes	1	no	yes	yes	refuses:raw_sql
@@ -326,6 +419,8 @@ loadContradictionsTrend	contradictions	yes	1	no	yes	yes	serves
 getContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 putContradictionCacheEntry	contradictions	yes	1	no	yes	yes	serves
 sweepContradictionCache	contradictions	yes	1	no	yes	yes	serves
+listLiveChunksByIds	contradictions	no	0	no	-	-	-
+listLiveTakesByIds	contradictions	no	0	no	-	-	-
 insertFact	facts	yes	28	yes	yes	yes	serves
 insertFacts	facts	yes	14	no	yes	yes	serves
 deleteFactsForPage	facts	yes	2	no	yes	yes	serves
@@ -356,6 +451,7 @@ sweepSegments	segmented_body	yes	1	no	yes	yes	refuses:page_body
 readSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
 upsertSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
 retireSegmentDerivations	segmented_body	yes	2	no	yes	yes	serves
+deleteRewrittenSegmentDerivations	segmented_body	no	0	no	-	-	-
 createVersion	versions	yes	6	no	yes	yes	serves
 getVersions	versions	yes	5	no	yes	yes	serves
 revertToVersion	versions	yes	2	no	yes	yes	serves
@@ -364,7 +460,7 @@ getStats	stats_ingest	yes	4	yes	yes	yes	serves
 getHealth	stats_ingest	yes	5	yes	yes	yes	serves
 logIngest	stats_ingest	yes	2	no	yes	yes	serves
 getIngestLog	stats_ingest	yes	2	no	yes	yes	serves
-updateSlug	sync_aliases	yes	14	no	yes	yes	serves
+updateSlug	sync_aliases	yes	24	no	yes	yes	serves
 rewriteLinks	sync_aliases	yes	1	no	yes	yes	serves
 resolveSlugWithAlias	sync_aliases	yes	1	yes	yes	yes	serves
 resolveSlugWithAliasDetailed	sync_aliases	yes	1	yes	yes	yes	serves
@@ -380,6 +476,7 @@ unsetConfig	config	yes	2	no	yes	yes	serves
 listConfigKeys	config	yes	2	no	yes	yes	serves
 getAllConfig	config	yes	1	no	yes	yes	serves
 getConfigValues	config	yes	1	no	yes	yes	serves
+readStoredConfigValue	config	no	0	no	-	-	-
 listSegmentedPages	withdrawal_pages	no	0	no	-	-	-
 invalidateWithdrawnPages	withdrawal_pages	no	0	no	-	-	-
 hasWithdrawnFenceClaim	withdrawal_fence	no	0	no	-	-	-
@@ -387,13 +484,14 @@ ownsSchemaTables	import_guards	no	0	no	-	-	-
 readManagedModeRows	import_guards	yes	1	no	yes	yes	serves
 getSourceStrictness	import_guards	yes	1	no	yes	yes	serves
 readPersistenceBrainId	import_guards	yes	1	no	yes	yes	serves
-readLocalWriterRow	import_guards	yes	1	no	yes	yes	refuses:persistence_journal
-insertLocalWriterRow	import_guards	yes	1	no	yes	yes	refuses:persistence_journal
+readLocalWriterRow	import_guards	yes	1	no	yes	yes	serves
+insertLocalWriterRow	import_guards	yes	1	no	yes	yes	serves
 readTransactionSettings	import_guards	yes	1	no	yes	yes	serves
 applyTransactionSettings	import_guards	yes	2	no	yes	yes	serves
 readLedgerSource	import_guards	yes	1	no	yes	yes	refuses:persistence_journal
 isFolderRestricted	import_guards	yes	1	no	yes	yes	refuses:access_control
 beginSnapshotRead	import_guards	no	0	no	-	-	-
+setWriteContext	import_guards	no	0	no	-	-	-
 acquireCycleLock	cycle_locks	yes	8	no	yes	yes	serves
 refreshCycleLock	cycle_locks	yes	1	no	yes	yes	serves
 releaseCycleLock	cycle_locks	yes	1	no	yes	yes	serves
@@ -469,7 +567,7 @@ readExportWithdrawalLedgerBytes	cli_reads_export	no	0	no	-	-	-
 listExportWithdrawals	cli_reads_export	no	0	no	-	-	-
 readExportPageRows	cli_reads_export	yes	1	no	yes	yes	refuses:raw_sql
 normalizeFenceLines	cli_reads_export	yes	1	no	yes	yes	refuses:raw_sql
-readSegmentedPageHead	cli_reads_export	yes	1	no	yes	yes	refuses:raw_sql
+readSegmentedPageHead	cli_reads_export	yes	1	no	yes	yes	refuses:pages
 readBodyManifestRows	cli_reads_export	yes	1	no	yes	yes	refuses:raw_sql
 readBodyManifestMeta	cli_reads_export	yes	1	no	yes	yes	refuses:raw_sql
 readBodyManifestOutline	cli_reads_export	no	0	no	-	-	-
@@ -486,7 +584,24 @@ readOldestWaitingAge	jobs_health	yes	2	no	yes	yes	serves
 listStuckActiveJobsByName	jobs_health	yes	2	no	yes	yes	serves
 listVersionTrustTiers	trust_tier_reads	no	0	no	-	-	-
 listVersionReasonWriters	trust_tier_reads	no	0	no	-	-	-
-listPageTypesByIds	trust_tier_reads	yes	1	no	yes	yes	refuses:raw_sql
+listCorePageRows	trust_tier_reads	no	0	no	-	-	-
+listTrustScanRows	trust_tier_reads	no	0	no	-	-	-
+countUnscannedTrustRows	trust_tier_reads	no	0	no	-	-	-
+readTrustScanCursor	trust_tier_reads	no	0	no	-	-	-
+writeTrustScanCursor	trust_tier_reads	no	0	no	-	-	-
+listClaimPendingSourceIds	trust_tier_reads	no	0	no	-	-	-
+readTrustScanCeilings	trust_tier_reads	no	0	no	-	-	-
+readBeliefHistoryRows	trust_tier_reads	no	0	no	-	-	-
+listVisibleBeliefLifetimes	trust_tier_reads	no	0	no	-	-	-
+listPageRefsByIds	trust_tier_reads	yes	1	no	yes	yes	refuses:pages
+listPageTrustTiersByKey	trust_tier_reads	no	0	no	-	-	-
+lockLivePagesByKey	trust_tier_reads	no	0	no	-	-	-
+listValidTimeIdentities	trust_tier_reads	no	0	no	-	-	-
+pickValidTimeEdition	trust_tier_reads	no	0	no	-	-	-
+listAmendmentsNotApplied	trust_tier_reads	no	0	no	-	-	-
+readPageVersionEdition	trust_tier_reads	no	0	no	-	-	-
+readCursorEdition	trust_tier_reads	no	0	no	-	-	-
+pageAwaitsRederive	trust_tier_reads	no	0	no	-	-	-
 readWithdrawalDiscovery	withdrawal_discovery	yes	4	no	yes	yes	refuses:raw_sql
 listCoveredSources	belief_reads	no	0	no	-	-	-
 countSearchVectorRows	search_vector	no	0	no	-	-	-
@@ -504,12 +619,13 @@ listSharedSkillPackRoots	write_misc	no	0	no	-	-	-
 getWorktreeBinding	write_misc	no	0	no	-	-	-
 worktreeClaimStore	write_misc	no	0	no	-	-	-
 readWriterAdminState	write_misc	no	0	no	-	-	-
+readWorktreeManifest	write_misc	no	0	no	-	-	-
 writerAdminStore	write_misc	no	0	no	-	-	-
+publicationJournalStore	write_misc	no	0	no	-	-	-
 hasExtractedEvents	write_misc	no	0	no	-	-	-
 listActiveAccessMembers	write_misc	no	0	no	-	-	-
 hasLabelledOnlyMember	write_misc	no	0	no	-	-	-
 listAccessTokens	write_misc	no	0	no	-	-	-
-notifierCoverageRecorded	write_misc	no	0	no	-	-	-
 readOpCheckpointKeys	write_misc	no	0	no	-	-	-
 deleteOpCheckpoint	write_misc	no	0	no	-	-	-
 readHealthMemoClock	write_misc	no	0	no	-	-	-
@@ -522,10 +638,12 @@ readPendingProposalSummary	write_misc	no	0	no	-	-	-
 listMemoryProposalRows	write_misc	no	0	no	-	-	-
 listOwnerProposalRows	write_misc	no	0	no	-	-	-
 attachSourcePath	write_misc	no	0	no	-	-	-
+addPersistenceCounters	write_misc	no	0	no	-	-	-
 readLiveMember	write_misc	no	0	no	-	-	-
 readFolderAccess	write_misc	no	0	no	-	-	-
 readMayActFor	write_misc	no	0	no	-	-	-
 readAudiencePrincipals	write_misc	no	0	no	-	-	-
+readAccessMembers	write_misc	no	0	no	-	-	-
 readIgnoredPrivacyLabelPages	entity_reads	yes	2	no	yes	yes	serves
 readLivePageFrontmatter	entity_reads	yes	1	no	yes	yes	serves
 readImageSealProbe	entity_reads	yes	2	no	yes	yes	serves

@@ -29,6 +29,6 @@ beforeEach(async () => {
 describe('remote forget refusals and entity cards respect visibility and withdrawal', () => {
   test('an unlinked forget keeps copies the caller cannot read, with one fixed refusal', () => unlinkedForgetKeepsHiddenCopies(engine));
   test('a linked forget keeps copies the caller cannot read', () => linkedForgetKeepsHiddenCopies(engine));
-  test('a withdrawal backed only by unreadable rows refuses as an unreadable page does', () => hiddenWithdrawalRefusesGenerically(engine));
+  test('a withdrawal backed only by unreadable rows refuses a remote caller as a visible withdrawal does, with no detail', () => hiddenWithdrawalRefusesGenerically(engine));
   test('the card excerpt carries the withdrawal overlay', () => cardExcerptHidesWithdrawnRows(engine));
 });

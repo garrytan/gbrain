@@ -28,13 +28,13 @@ import { RERUN_DEADLINE_MS } from './checks.ts';
 import { createAsker, createSerialQueue, createWaiter, membersDigest, policyApplies, privacyVerdict, RERUN_QUEUE_BOUND, resultDigest, safeCode } from './child-checks.ts';
 import { classifyError, classifyResult, type Classification } from './classify.ts';
 import { decodeValue, encodeValue } from './codec.ts';
-import { adapterIdentity, capabilitySetHash, currentBuild, ensureEpoch, internalErrorRecorder, type EpochBuild, type EpochManifest } from './evidence-epoch.ts';
+import { adapterIdentity, capabilitySetHash, currentBuild, ensureEpoch, internalErrorRecorder, readEpoch, type EpochBuild, type EpochManifest } from './evidence-epoch.ts';
 import { exactnessArm, qualifyMismatch, SHADOW_COMPARATOR_VERSION } from './exactness.ts';
 import { FollowChild, type FollowEvent, type FollowStore } from './follow-child.ts';
 import { appendFault, appendLedgerRows, writeSummaryFile, type ShadowLedgerRow, type ShadowSummaryFile } from './ledger.ts';
 import { newMirrorCounters, type MirrorCounters } from './mirror.ts';
 import { createWriteComparer } from './write-compare-child.ts';
-import { WriteTally } from './write-compare.ts';
+import { droppedWeight, readOwed, sampleWeight, WriteTally } from './write-compare.ts';
 import { appendRecall, IntervalGate, recallEligible, RECALL_INTERVAL_MS, scoreRecall, type RankedKey } from './recall.ts';
 import { isShadowReadMember, SHADOW_READ_MEMBERS, type ShadowReadMember } from './reads.ts';
 import { readSeedRecord } from './seed.ts';
@@ -75,6 +75,8 @@ export interface ShadowChildDeps {
   exit?: (code: number) => void;
   exitDeadlineMs?: number;
   flushMs?: number;
+  /** The obligation pass (default 10 s): a seam for tests. */
+  passMs?: number;
   childId?: string;
   now?: () => number;
   /** The approved readiness policy's hash, an evidence epoch input (evidence-epoch.ts); default `policyHash(READINESS_POLICY)` (engine-swap/policy.ts): the approved policy's hash, not an in-force one. */
@@ -390,9 +392,16 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
   };
 
   // Write comparisons (write-compare.ts): sampled page and link writes replayed on a scratch store, counted under the current epoch.
-  const writes = createWriteComparer({ dir: shadowDir, load, tally: new WriteTally(shadowDir, curEpoch, () => !deleted()), alive: () => !deleted(), openEngine: deps.openEngine, onError: recordRustError });
   const session = deps.session ?? process.env.GBRAIN_SHADOW_SESSION ?? '';
+  const writes = createWriteComparer({ dir: shadowDir, load, tally: new WriteTally(shadowDir, curEpoch, () => !deleted(), process.pid, session, now), alive: () => !deleted(), openEngine: deps.openEngine, onError: recordRustError });
   const ask = createAsker(deps.writeControl, session);
+  // A client child's (or a retired one's) lost lines are written on the same 2 s beat, never one durable write per verdict.
+  const lineFlusher = setInterval(() => { try { writes.flush(); } catch { /* the lines stay held; the next beat tries again */ } }, deps.flushMs ?? 2_000);
+  (lineFlusher as { unref?: () => void }).unref?.();
+  // Every 10 s: one more save of what could not be saved, the lines held, and the obligations of sessions that are gone (an owner child settles them). A save that keeps failing for a minute with outcomes held ends this child: the
+  // supervisor restarts it, and the next owner books what it never settled, so the session is not held open for good by one child's failing save.
+  const obligationPass = setInterval(() => { try { if (writes.pass()) { flush(true); deps.exit?.(1); } } catch { /* a failed pass is retried at the next one */ } }, deps.passMs ?? 10_000);
+  (obligationPass as { unref?: () => void }).unref?.();
 
   /** A call that never returns keeps its slot: that is what bounds the pile. */
   const trackStall = (call: Promise<unknown>): void => { stalled.add(call); const settled = (): void => { stalled.delete(call); }; call.then(settled, settled); };
@@ -537,14 +546,15 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
     return draining;
   };
 
+  let received = 0; // write samples read from the pipe, whole lines only (a line the exit of the serving process cut short is not one)
   const rl = createInterface({ input: deps.input, crlfDelay: Infinity });
   for await (const line of rl) {
     if (!line) continue;
-    let event: { t?: string; counters?: MirrorCounters; pid?: number };
-    try { event = JSON.parse(line); } catch { continue; }
+    let event: { t?: string; counters?: MirrorCounters; pid?: number; dropped?: number };
+    try { event = JSON.parse(line); } catch { const w = sampleWeight(`${line}\n`); if (w > 0) { received += w; writes.unreadable(w); } continue; } // a write line that cannot be read still stands for the samples its text states: settled once, as `uncomparable`
     if (event.t === 'apply' || event.t === 'watermark' || event.t === 'depth' || event.t === 'rpc') { follow.handle(event as FollowEvent); continue; }
     if (event.t === 'answer') { ask.answer(event as never); continue; }
-    if (event.t === 'write') { writes.handle(event as never); continue; }
+    if (event.t === 'write') { received += 1 + droppedWeight(event.dropped); writes.handle(event as never, line.length); continue; } // the weight the serving process counted when it sent the line (write-compare.ts sampleWeight)
     if (event.t === 'stats' && event.counters) { summary.primary = { ...newMirrorCounters(), ...event.counters }; summary.primary_pid = event.pid; continue; }
     if (event.t !== 'read' || paused) continue;
     if (pending.length >= SHADOW_CHILD_QUEUE_BOUND) { summary.child_shed++; continue; }
@@ -555,15 +565,24 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
     const timer = setTimeout(() => { summary.child_shed += pending.length; writes.abandon(); flush(true); deps.exit!(0); }, deps.exitDeadlineMs ?? SHADOW_CHILD_EXIT_DEADLINE_MS);
     (timer as { unref?: () => void }).unref?.();
   }
+  // The serving process wrote down, durably and before any line reached the pipe, how many write samples it owes this session (`write-owed.<session>.json`). What it owed and this child never read was dropped in its pipe at its exit: it is
+  // booked as `pipe_unflushed`, settled in this child's own saves. A file that is there and cannot be read stays, and status reads it as no evidence.
+  const owedRecord = readOwed(shadowDir, session);
+  if (owedRecord !== null && owedRecord !== 'unreadable') writes.missing(Math.max(0, owedRecord.owed - received));
   // The serving process ended our stdin: nothing it was asked can still be answered. A queued rerun ends as skipped.
   ask.closeAll(); waiter.close(); // a rerun waiting for a quiet window ends now, as skipped
   for (const task of reruns.drop()) record(task.event, task.c, task.rustMs, task.rows, 'skipped:child_closing');
   await drain();
   await reruns.idle();
-  await recalling; await writes.idle();
+  await recalling;
+  // The owed file is removed only now, once the serving process closed it and the settled count read back from disk covers everything it owed: a failed final save (or a death or the exit deadline before it) leaves it, and the next owner
+  // worker books what was never settled as receipt_orphaned (more than was lost, never less); with it gone, status would read measured with an outcome that was only ever in memory.
+  if (await writes.idle()) { try { writes.finish(); } catch { /* the file stays: the next owner worker settles it, or status reads no evidence */ } }
   await follow.close();
   clearInterval(heartbeat);
   clearInterval(flusher);
+  clearInterval(lineFlusher);
+  clearInterval(obligationPass);
   flush(true);
   if (engine) { try { await engine.disconnect(); } catch { /* exiting anyway */ } }
   return handled;

@@ -537,7 +537,7 @@ async function extractLoops(state: CaseState) {
 
 async function activeFacts(state: CaseState) {
   return state.brain.engine.executeRaw<{ id: number; fact: string; expired_at: string | null }>(
-    'SELECT id,fact,expired_at::text FROM facts WHERE source_id=$1 ORDER BY id', [state.sourceId]);
+    'SELECT id,fact,expired_at::text FROM facts WHERE source_id=$1 AND expired_at IS NULL ORDER BY id', [state.sourceId]);
 }
 
 async function outcomeRows(state: CaseState) {

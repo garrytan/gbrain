@@ -27,6 +27,11 @@
 import { createHash } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
 import { memberIdentityFor } from '../access/caller.ts';
+import { grantFromTokenRow, type TokenGrantRow } from '../grants/model.ts';
+import { tokenReadSources } from '../grants/read-shared.ts';
+import { NO_SOURCES } from '../source-id.ts';
+import { sqlQueryForEngine } from '../sql-query.ts';
+import { hasScope, parseScopeString } from '../scope.ts';
 import { WakeshiftError, type WakeshiftApi } from './client.ts';
 import { wakeshiftRuntime, type WakeshiftRuntime } from './config.ts';
 import { CRON_FINISHED, JOB_FINISHED, WRITE_SETTLED, cronMarker, cronWake, jobMarker, jobWake, wakeEmitId, writeMarker, writeWake, type JobSnapshot, type WriteSnapshot } from './events.ts';
@@ -58,6 +63,8 @@ export interface WakeRow {
   job_id: number | null;
   job_name: string | null;
   job_status: string | null;
+  /** GST-4010: the watcher submitted the job, or is a local stdio watch (the job owner fence at delivery time). */
+  job_visible: boolean | null;
   started_at: Date | string | null;
   finished_at: Date | string | null;
   finished_us: string | null;
@@ -85,6 +92,11 @@ const CANDIDATES_SQL = (byId: boolean) => `
 SELECT w.id, w.event, w.target, w.target_ref, w.principal_kind, w.principal_id, w.member_id, w.wake_user, w.ws_subscription_id, w.attempts,
        ${US('w.created_at')} AS created_us,
        j.id AS job_id, j.name AS job_name, j.status AS job_status, j.started_at, j.finished_at, ${US('j.finished_at')} AS finished_us,
+       (w.principal_kind = 'local_stdio'
+         OR (((j.submission_authority->'principal'->>'kind' = w.principal_kind AND j.submission_authority->'principal'->>'id' = w.principal_id)
+              OR (j.submission_authority->'principal' IS NULL AND w.principal_kind = 'oauth_client' AND j.data->>'__owner_client_id' = w.principal_id))
+             AND COALESCE(j.submission_authority->'grant'->'actor'->>'system', '') = '' AND COALESCE(j.submission_authority->'grant'->'actor'->>'external_id', '') = ''
+             AND COALESCE(j.submission_authority->'grant'->'actor'->>'member', '') = '' AND j.submission_authority->'grant'->'actingFor' IS NULL)) IS TRUE AS job_visible,
        r.id::text AS req_id, r.state AS req_state, r.operation AS req_operation, r.source_id AS req_source_id, r.created_at AS req_created_at,
        COALESCE(r.completed_at, r.updated_at) AS req_settled_at, ${US('COALESCE(r.completed_at, r.updated_at)')} AS req_settled_us,
        c.id AS run_id, c.status AS run_status, c.finished_at AS run_finished_at
@@ -159,6 +171,35 @@ export async function principalLive(engine: BrainEngine, row: Pick<WakeRow, 'pri
   return identity.includes(`member:${row.member_id}`);
 }
 
+/**
+ * GST-4023: agentOwnerFence's whole-queue rule, read live at delivery: the watch is bound to the brain owner now
+ * (config access.owner_member) and its credential still holds admin scope and a live source grant (GST-4045): an OAuth
+ * client without the explicit no-source grant whose granted sources are not all archived, or a legacy token whose
+ * grant still resolves to a source the way a request resolves it (tokenReadSources), so a token narrowed to no source
+ * or whose write source was archived reads nothing.
+ */
+async function ownerReadsWholeQueue(engine: BrainEngine, row: Pick<WakeRow, 'principal_kind' | 'principal_id' | 'member_id'>): Promise<boolean> {
+  if (!row.member_id) return false;
+  const [live] = await engine.executeRaw<{ owner: string | null; client_scope: string | null; token: Record<string, unknown> | null }>(
+    `SELECT (SELECT value FROM config WHERE key = 'access.owner_member') AS owner,
+            (SELECT c.scope FROM oauth_clients c WHERE $1 = 'oauth_client' AND c.client_id = $2 AND c.deleted_at IS NULL
+               AND to_jsonb(c)->>'source_grant' IS DISTINCT FROM 'none'
+               AND (to_jsonb(c)->>'source_id' IS NULL OR EXISTS (SELECT 1 FROM sources s WHERE s.id = to_jsonb(c)->>'source_id'
+                 AND NOT COALESCE((to_jsonb(s)->>'archived')::boolean, false)))
+               AND (COALESCE(jsonb_array_length(NULLIF(to_jsonb(c)->'federated_read', 'null'::jsonb)), CASE WHEN to_jsonb(c)->>'source_id' IS NULL THEN 0 ELSE 1 END) = 0
+                 OR EXISTS (SELECT 1 FROM sources s WHERE NOT COALESCE((to_jsonb(s)->>'archived')::boolean, false)
+                   AND s.id IN (SELECT jsonb_array_elements_text(COALESCE(NULLIF(to_jsonb(c)->'federated_read', 'null'::jsonb), jsonb_build_array(to_jsonb(c)->>'source_id'))))))) AS client_scope,
+            (SELECT to_jsonb(t) FROM access_tokens t WHERE $1 = 'legacy_token' AND t.id::text = $2 AND t.revoked_at IS NULL) AS token`,
+    [row.principal_kind, row.principal_id]);
+  if (!live || live.owner !== row.member_id) return false;
+  if (row.principal_kind === 'oauth_client') return hasScope(parseScopeString(live.client_scope), 'admin');
+  if (!live.token) return false;
+  const grant = grantFromTokenRow(live.token as TokenGrantRow);
+  if (!hasScope(grant.scopes, 'admin')) return false;
+  const sources = await tokenReadSources(sqlQueryForEngine(engine), grant, async () => row.member_id);
+  return sources.sourceId !== NO_SOURCES;
+}
+
 /** End a watch at Wakeshift once (best effort: the conversation is told; a failure leaves Wakeshift's own ttl to end it). */
 export async function endAtWakeshift(api: WakeshiftApi, row: Pick<WakeRow, 'wake_user' | 'ws_subscription_id'>): Promise<boolean> {
   try { return (await api.end({ user: row.wake_user, id: row.ws_subscription_id })).ended === true; } catch { return false; }
@@ -213,6 +254,11 @@ async function deliver(engine: BrainEngine, api: WakeshiftApi, row: WakeRow, rep
     if (terms.shared && !(await termsAccepted(engine, row, terms.current))) {
       await endAtWakeshift(api, row);
       if (await settle(engine, row.id, lease, 'ended', { error: 'terms_not_accepted' })) report.ended++;
+      return;
+    }
+    if (row.event === JOB_FINISHED && row.job_id != null && row.job_visible !== true && !(await ownerReadsWholeQueue(engine, row))) {
+      await endAtWakeshift(api, row);
+      if (await settle(engine, row.id, lease, 'ended', { error: 'job_not_visible' })) report.ended++;
       return;
     }
     const { marker, args, payload, text } = wakeFor(row);

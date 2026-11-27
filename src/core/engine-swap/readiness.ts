@@ -34,6 +34,8 @@ export interface ShadowStatus {
     capability_missing?: number;
     /** Sampled writes outside the page and link pilot, by family (shadow/write-compare.ts). */
     capability_missing_by_family?: Record<string, number>;
+    /** Sessions with an owed sample still unsettled, replays with no verdict and lost samples no tally has taken (shadow/follow-status.ts); the swap check waits for it to be absent. */
+    unresolved_replays?: number;
   };
   fingerprints?: {
     checked_rows?: number;
@@ -69,6 +71,8 @@ export interface ShadowStatus {
     /** Writer hosts seen by durable writer observations in the last 7 days; null when no observation table exists. */
     writer_hosts_7d?: number | null;
     unknown_writer_paths?: number;
+    /** Observed writers of an older build (no write_protocol, or one below this build's) in the evidence epoch; counted in `unknown_writer_paths`. */
+    legacy_write_writers?: number;
     team_brain?: boolean;
     preview_target?: boolean;
   };
@@ -84,6 +88,8 @@ export interface CriterionRow {
   detail: string;
   /** Criterion 8 only: measured and reported, never gating (D23). */
   gating: boolean;
+  /** Criterion 5 only: one line per write type it does not compare, then the named loss. The text report prints them under the row; `detail` is unchanged. */
+  lines?: string[];
 }
 
 export interface ReadinessVerdict {
@@ -105,15 +111,42 @@ export const MIN_VECTOR_RECALL = 0.98;
 export const MIN_BENCH_PAIRS = 100;
 
 /** What a criterion 5 pass covers, said wherever write comparisons are shown (the shadow status line, this report). */
-export const WRITE_COVERAGE_LIMIT = 'a criterion 5 pass covers page and link writes only';
+export const WRITE_COVERAGE_LIMIT = 'a criterion 5 pass covers the pilot page and link writes only';
+/** The lane owner's wording for what criterion 5 leaves uncompared; the swap report appends it to the criterion 5 detail. */
+export const WRITE_COVERAGE_NAMED = 'Criterion 5 covers the pilot page and link writes (putPage, deletePage, addLink, addLinksBatch, removeLink) only (#10350, #10360, #10382, #10390). These write types are not compared and get named lines in the swap report: chunks, tags, aliases, timeline entries, takes, facts, fact withdrawals, open loops, sources, owner-only marks and the decide store.';
+/**
+ * The named write types and the `capability_missing_by_family` keys each one reads, in the order of WRITE_COVERAGE_NAMED. A key is the first table of the
+ * sampled member (`writeFamily`, src/shadow/write-compare.ts), so a type's line reads only the writes whose first table it is.
+ * Fact withdrawals has no key of its own (only `updateSlug` writes them, and it is counted as `pages:updateSlug`), so its line reads that key.
+ */
+const WRITE_NAMED_TYPES: ReadonlyArray<readonly [string, readonly string[]]> = [
+  ['chunks', ['content_chunks']],
+  ['tags', ['tags']],
+  ['aliases', ['page_aliases']],
+  ['timeline entries', ['timeline_entries']],
+  ['takes', ['takes']],
+  ['facts', ['facts']],
+  ['open loops', ['open_loops']],
+  ['sources', ['sources']],
+  ['owner-only marks', ['owner_only_marks']],
+  ['decide store', ['decide_state', 'decide_spend', 'decision_receipts', 'decide_calibrations', 'decide_proposals', 'decide_review_proposals', 'decide_review_queue', 'decide_sweep_deferred']],
+];
+const FACT_WITHDRAWALS_FAMILY = 'pages:updateSlug';
+/** A named loss, not a fix: what the sentence above does not say. It is the last line under criterion 5 and the last limit in the guide. */
+export const WRITE_COVERAGE_LOSS = 'Named loss: only putPage, deletePage, addLink, addLinksBatch and removeLink are compared, so these other page and link writes are counted capability_missing and are not compared: pages:deletePages, pages:softDeletePage, pages:softDeletePages, pages:restorePage, pages:purgeDeletedPages, pages:updateSlug, pages:refreshPageBody, pages:refreshPageOrigin, pages:updatePageContextualRetrievalState, pages:stripStaleFrontmatterKeys, pages:markPagesExtractedBatch, pages:markPagesAttendanceBlocked, pages:setPageEmbeddingSignature, pages:setChunkerVersion, pages:writeTextProjectionSeal, pages:revertToVersion, pages:setEmotionalWeightBatch, pages:invalidateWithdrawnPages, pages:createSegmentedPageShell, pages:sealSegmentedPage, pages:flipBodyGeneration, links:removeLinksByPagesAndSource, links:replaceDerivedLinks, links:replaceDerivedLinksBatch. A write that touches several tables is counted under its first table only, so the side effects of deletePages, purgeDeletedPages and updateSlug (aliases, open loops, owner-only marks, fact withdrawals) land under pages:* keys, and a type\'s line above reads only the writes whose first table it is.';
 /** And on which brains: a PGLite brain's single connection cannot bound the read a sampled write waits for, so it samples no writes and criterion 5 stays missing. */
 export const WRITE_PGLITE_LIMIT = 'PGLite brains record no write comparisons';
 /** And by whom: only the shadow child that owns the Rust store records; a client child adds no evidence and can never make criterion 5 pass. */
 export const WRITE_CLIENT_LIMIT = 'client shadow children record no write comparisons';
 
+/** And at what load: the child replays one sample at a time, so a brain that writes faster than it replays never has all its samples settled. */
+export const WRITE_SETTLE_LIMIT = 'the child keeps up only below ~19 samples/s on this VM; a brain that writes faster has no moment with all samples settled, so the swap check refuses';
+/** What criterion 5 says when the swap check waited 60 s (`SWAP_SETTLE_WAIT_MS`, plan.ts) and never read a moment with every sample settled. */
+export const BRAIN_BUSY = 'brain busy: no 60 s lull with all samples settled; retry when idle';
+
 const DAY_MS = 86_400_000;
 
-type Check = { state: CriterionState; detail: string };
+type Check = { state: CriterionState; detail: string; lines?: string[] };
 
 function num(v: unknown): v is number { return typeof v === 'number' && Number.isFinite(v); }
 
@@ -232,6 +265,19 @@ function searchArms(r: Reader): Check {
   });
 }
 
+/** The per-type lines for criterion 5: each named type with its sampled count, or "not sampled"; then every other sampled key; then the named loss. */
+function uncoveredWriteLines(byFamily: Record<string, unknown>): string[] {
+  const count = (k: string): number => { const n = byFamily[k]; return num(n) && n > 0 ? n : 0; };
+  const named = new Set(WRITE_NAMED_TYPES.flatMap(([, keys]) => keys));
+  const lines = WRITE_NAMED_TYPES.map(([type, keys]) => {
+    const seen = keys.filter(count).map((k) => `${k} ${count(k)}`);
+    return seen.length ? `${type}: sampled ${keys.reduce((n, k) => n + count(k), 0)} (${seen.join(', ')})` : `${type}: not sampled`;
+  });
+  lines.splice(6, 0, `fact withdrawals: not sampled separately (counted under ${FACT_WITHDRAWALS_FAMILY} ${count(FACT_WITHDRAWALS_FAMILY)})`);
+  const other = Object.keys(byFamily).filter((k) => !named.has(k) && count(k)).map((k) => `${k} ${count(k)}`);
+  return [...lines, `other write families sampled: ${other.length ? other.join(', ') : 'none'}`, WRITE_COVERAGE_LOSS];
+}
+
 function writeComparisons(r: Reader): Check {
   const out = guarded(r, () => {
     const state = r.s('write_comparisons.state');
@@ -239,16 +285,21 @@ function writeComparisons(r: Reader): Check {
     const unexplained = r.n('write_comparisons.unexplained_difference');
     if (state === undefined || comparable === undefined || unexplained === undefined) return { state: 'missing', detail: '' };
     // A shadow that cannot compare writes never passes (S3 rule: capability_missing refuses, like a missing field).
-    if (state === 'capability_missing') return { state: 'missing', detail: 'no evidence: write_comparisons.state is capability_missing' };
+    if (state === 'capability_missing') {
+      const unsettled = r.peek<number>('write_comparisons.unresolved_replays');
+      if (num(unsettled) && unsettled > 0) return { state: 'missing', detail: BRAIN_BUSY }; // the swap check already waited for a lull (plan.ts)
+      return { state: 'missing', detail: 'no evidence: write_comparisons.state is capability_missing' };
+    }
     const fails: string[] = [];
     if (comparable < MIN_WRITE_COMPARISONS) fails.push(`${comparable} of ${MIN_WRITE_COMPARISONS} comparable write comparisons`);
     if (unexplained > 0) fails.push(`${unexplained} unexplained differences`);
     return fails.length ? { state: 'fail', detail: fails.join('; ') } : { state: 'pass', detail: `${comparable} comparable, zero unexplained` };
   });
   // The coverage limit rides on every outcome. Only page and link writes are compared; every other write family is capability_missing.
-  const named = Object.entries(r.peek<Record<string, number>>('write_comparisons.capability_missing_by_family') ?? {}).filter(([, n]) => num(n) && n > 0).map(([f, n]) => `${f} ${n}`);
-  const limit = `${WRITE_COVERAGE_LIMIT}; ${WRITE_PGLITE_LIMIT}; ${WRITE_CLIENT_LIMIT}; every other write family is capability_missing${named.length ? ` (sampled so far: ${named.join(', ')})` : ''}`;
-  return { ...out, detail: out.detail ? `${out.detail}; ${limit}` : limit };
+  const byFamily = r.peek<Record<string, number>>('write_comparisons.capability_missing_by_family') ?? {};
+  const named = Object.entries(byFamily).filter(([, n]) => num(n) && n > 0).map(([f, n]) => `${f} ${n}`);
+  const limit = `${WRITE_COVERAGE_LIMIT}; ${WRITE_PGLITE_LIMIT}; ${WRITE_CLIENT_LIMIT}; every other write family is capability_missing${named.length ? ` (sampled so far: ${named.join(', ')})` : ''}; ${WRITE_SETTLE_LIMIT}; ${WRITE_COVERAGE_NAMED}`;
+  return { ...out, detail: out.detail ? `${out.detail}; ${limit}` : limit, lines: uncoveredWriteLines(typeof byFamily === 'object' && byFamily !== null ? byFamily : {}) };
 }
 
 function fingerprintsAndAllocators(r: Reader): Check {
@@ -318,7 +369,10 @@ function eligibility(r: Reader): Eligibility {
   // Exactly one observed writer host: zero (or a non-count) is no writer evidence, never "one host".
   if (!Number.isInteger(hosts) || hosts < 1) return { state: 'missing', detail: `no writer host observed in the last 7 days (${hosts})`, reason: 'writer_coverage_unknown' };
   if (hosts > 1) return { state: 'fail', detail: `${hosts} writer hosts in the last 7 days`, reason: 'multiple_writer_hosts' };
-  if (unknown > 0) return { state: 'fail', detail: `${unknown} write path(s) with no observation`, reason: 'writer_coverage_unknown' };
+  if (unknown > 0) {
+    const legacy = r.peek<number>('eligibility.legacy_write_writers');
+    return { state: 'fail', detail: `${unknown} write path(s) with no observation${num(legacy) && legacy > 0 ? ` (${legacy} observed writer(s) of an older build that keeps no per-session write-sample record: no write_protocol 2)` : ''}`, reason: 'writer_coverage_unknown' };
+  }
   if (team === undefined || preview === undefined) return { state: 'missing', detail: `no evidence: ${[team === undefined ? 'eligibility.team_brain' : '', preview === undefined ? 'eligibility.preview_target' : ''].filter(Boolean).join(', ')}` };
   if (!preview) return { state: 'fail', detail: 'the shadow host is not on a preview target' };
   return { state: 'pass', detail: 'one writer host, no unknown write path, a personal brain on a preview target' };
@@ -376,7 +430,7 @@ export function evaluateReadiness(doc: ShadowStatus | null, now: Date = new Date
     const f = doc!.follower!;
     checks[0] = { state: 'fail', detail: `the follower is behind: lag ${f.lag_ms ?? 0} ms, queue ${f.queue_depth ?? 0}, coverage watermark ${f.coverage_watermark?.valid === false ? 'invalid' : 'valid'}` };
   }
-  const criteria = CRITERIA.map((c, i) => ({ ...c, state: checks[i]!.state, detail: checks[i]!.detail, gating: c.n !== 8 }));
+  const criteria = CRITERIA.map((c, i) => ({ ...c, state: checks[i]!.state, detail: checks[i]!.detail, gating: c.n !== 8, ...(checks[i]!.lines ? { lines: checks[i]!.lines } : {}) }));
   const ready = criteria.every(c => !c.gating || c.state === 'pass');
   let reason: SwapRefusalReason | null = null;
   if (!ready) {

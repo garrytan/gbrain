@@ -46,6 +46,10 @@ const CALLS: Record<string, (engine: BrainEngine) => Promise<unknown>> = {
   hasCompanyBrainReceipt: (e) => e.hasCompanyBrainReceipt('default'),
   readGuestSourceRow: (e) => e.readGuestSourceRow('default'),
   listAllSources: (e) => e.listAllSources(),
+  readFenceOverlayRows: (e) => e.readFenceOverlayRows({ sourceId: 'default', slug: 'a' }, [{ row_num: 1, claim: 'c', visibility: 'world', fp: null }], { hideHeld: false }),
+  readLiveStoredBody: (e) => e.readLiveStoredBody('default', 'a'),
+  readSourcePurgeFlags: (e) => e.readSourcePurgeFlags('default'),
+  listPurgedTakeRows: (e) => e.listPurgedTakeRows('default', [{ row_num: 1, claim: 'c' }], null),
 };
 
 test('every typed preparation read this part adds is in TYPED_PREPARATION_READS and is a member of the Postgres engine', () => {

@@ -69,7 +69,7 @@ function fenceRow(v: Record<string, unknown>, rowNum: number, context: string) {
   return {
     rowNum, claim: String(v.fact), kind: v.kind as never, confidence: Number(v.confidence ?? 1),
     visibility: v.visibility as never, notability: (v.notability ?? 'medium') as never,
-    validFrom: fenceInstant(v.valid_from)!,
+    validFrom: v.valid_from == null ? undefined : fenceInstant(v.valid_from)!,
     validUntil: v.valid_until ? fenceInstant(v.valid_until)! : undefined,
     source: v.source == null ? undefined : String(v.source),
     context,
@@ -99,7 +99,7 @@ function fenceInstant(value: unknown): string | null {
  * have its dates rounded, by the page projection, so it is never moved.
  */
 function roundTrips(v: Record<string, unknown>, context: string): boolean {
-  if (fenceInstant(v.valid_from) === null || v.valid_until != null && fenceInstant(v.valid_until) === null) return false;
+  if (v.valid_from != null && fenceInstant(v.valid_from) === null || v.valid_until != null && fenceInstant(v.valid_until) === null) return false;
   const parsed = parseFactsFence(upsertFactRow('', fenceRow(v, 1, context)).body);
   const cell = parsed.facts[0];
   return parsed.warnings.length === 0 && parsed.facts.length === 1 && cell!.active && cell!.claim === String(v.fact)

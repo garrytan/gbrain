@@ -1729,6 +1729,16 @@ More: [docs/guides/standing-rules.md#correct_instruction_refused](../../docs/gui
 
 More: [docs/guides/standing-rules.md#correct_origin_refused](../../docs/guides/standing-rules.md#correct_origin_refused)
 
+### correct_proposals_capped
+
+<a id="correct_proposals_capped"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| correct was refused because this connection already has 20 corrections waiting for the owner or unfinished, so nothing was written. | A rule another member proposes waits for the owner; a cap per connection keeps one agent from filling the brain with proposals nobody reviews. | Ask the owner to approve or retire the waiting rules, or finish a stopped correction with correct {receipt_id, resume: true}. Run: gbrain rules list | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/standing-rules.md#correct_proposals_capped](../../docs/guides/standing-rules.md#correct_proposals_capped)
+
 ### correct_receipt_not_found
 
 <a id="correct_receipt_not_found"></a>
@@ -1863,7 +1873,7 @@ More: [docs/guides/google-socket.md#error-codes](../../docs/guides/google-socket
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| gbrain dedupe classes or sample was asked to search the web (--exa) on a brain where Exa is off: EXA_API_KEY is not set or dedupe.exa is not on, so nothing was sent. | Web search sends a name plus one company or job title to Exa, a paid outside service, so it stays off until the user supplies their own key and turns it on. | Count the queries and their cost with gbrain dedupe classes --exa --dry-run, then set EXA_API_KEY and run gbrain config set dedupe.exa on. Run: gbrain dedupe classes --exa --dry-run --json | user | `gbrain doctor --json` | 1 | no |
+| gbrain dedupe classes or sample was asked to search the web (--exa) on a brain where Exa is off: EXA_API_KEY is not set or dedupe.exa is not on, so nothing was sent. | Web search sends a name and one work clue (a company, job title or company-site label) to Exa, a paid outside service, so it stays off until the user supplies their own key and turns it on. | Count the queries and their cost with gbrain dedupe classes --exa --dry-run, then set EXA_API_KEY and run gbrain config set dedupe.exa on. Run: gbrain dedupe classes --exa --dry-run --json | user | `gbrain doctor --json` | 1 | no |
 
 More: [docs/guides/duplicate-people.md#web-search-exa](../../docs/guides/duplicate-people.md#web-search-exa)
 
@@ -2421,7 +2431,7 @@ More: [docs/guides/repair.md#rename-identity](../../docs/guides/repair.md#rename
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| `remember`, or an owner `gbrain trust release` that writes a held fact into its entity page's `## Facts` table (a managed brain), refused a claim that was explicitly forgotten for this subject (wire `invalid_params`, message prefix `fact_withdrawn:`); nothing was saved, and a refused release leaves the fact held. | A forgotten claim stays withdrawn: remembering the same normalized text does not restore it, and a claim forgotten without an entity is withdrawn for every entity. The additive `withdrawn` object (`at`, `subject`: an entity slug or `all_entities`, `visibility`) says when and how widely the exact claim was forgotten; it covers that exact claim only, and its absence carries no meaning. | Do not retry the same text. Tell the user the claim was forgotten (withdrawn.at, withdrawn.subject); if it is still true, remember it in new words. To link a fact saved without an entity, remember it with entity and replaces set to its fact id instead of forgetting it. For a refused release, do not retry it: drop the hold (gbrain trust drop h<id>) unless the user wants the claim back in new words. | agent | `repeat the read that failed` | 1 | no |
+| `remember`, or an owner `gbrain trust release` that writes a held fact into its entity page's `## Facts` table (a managed brain), refused a claim that was explicitly forgotten for this subject (wire `invalid_params`, message prefix `fact_withdrawn:`); nothing was saved, and a refused release leaves the fact held. | A forgotten claim stays withdrawn: remembering the same normalized text does not restore it, and a claim forgotten without an entity is withdrawn for every entity. The additive `withdrawn` object (`at`, `subject`: an entity slug or `all_entities`, `visibility`) says when and how widely the exact claim was forgotten; it covers that exact claim only, is sent to a trusted local caller, and to a remote save onto the caller's own member page when the withdrawal is one that page's member reads; any other remote refusal, and every receipt or replay a remote reader gets, carries none, and its absence carries no meaning. | Do not retry the same text. Tell the user the claim was forgotten (with withdrawn.at and withdrawn.subject when the refusal carries them); if it is still true, remember it in new words. To link a fact saved without an entity, remember it with entity and replaces set to its fact id instead of forgetting it. For a refused release, do not retry it: drop the hold (gbrain trust drop h<id>) unless the user wants the claim back in new words. | agent | `repeat the read that failed` | 1 | no |
 
 ### facts_absorb_write_refused
 
@@ -5887,6 +5897,16 @@ More: [docs/guides/windowed-reads.md#revision_changed](../../docs/guides/windowe
 
 More: [docs/guides/google-socket.md#error-codes](../../docs/guides/google-socket.md#error-codes)
 
+### rule_busy
+
+<a id="rule_busy"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Another correction, approval or retirement of the same standing rule was running, so nothing was written. | One call at a time changes a rule and its fact, so a retirement never lands between an approval's check and its fact change. | Retry in a few seconds; the other call finishes on its own. | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/standing-rules.md#rule_busy](../../docs/guides/standing-rules.md#rule_busy)
+
 ### rule_exists
 
 <a id="rule_exists"></a>
@@ -6102,6 +6122,16 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | A search offset was over the 10,000 limit. | The request itself was wrong or no longer matches the brain; nothing was changed. | Page with match: "keyword" and the next object each response returns; a cursor has no depth limit. | agent | `repeat the read that failed` | 1 | no |
+
+### secret_in_write
+
+<a id="secret_in_write"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A remote page write looks like it holds a secret and the brain host set secrets.on_write to block (a chunked upload is refused under redact too), so nothing was written; the message names pattern names and a count, never the value. | A page is read by everyone the brain serves and sent to its model providers, so a credential stored in one is exposed to all of them. | Remove the secret (name the environment variable or secret store entry that holds it instead) and send the write again with a new request_id. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#secret_in_write](../../docs/guides/write-refusals.md#secret_in_write)
 
 ### secret_reveal_forbidden
 
@@ -6597,6 +6627,16 @@ More: [docs/guides/skill-resolver.md#skill_resolver_library_missing](../../docs/
 
 More: [docs/guides/skill-resolver.md#skill_resolver_library_skew](../../docs/guides/skill-resolver.md#skill_resolver_library_skew)
 
+### skill_resolver_owner_unverified
+
+<a id="skill_resolver_owner_unverified"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| An OpenClaw agent with the skill resolver live puts every direct message on its shared main session (session.dmScope main), has no owner sender set, and OpenClaw sends no memory audience, so anyone who messages it directly gets the owner's pins, brief, operator rule and owner-only skill suggestions. | The request itself was wrong or no longer matches the brain; nothing was changed. | Run gbrain setup openclaw --skills-index-only --agent <id> --owner-sender <your sender id>, or add --require-owner-sender so the main session counts as another person's DM until an owner sender is set. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/skill-resolver.md#skill_resolver_owner_unverified](../../docs/guides/skill-resolver.md#skill_resolver_owner_unverified)
+
 ### skill_resolver_pin_unknown
 
 <a id="skill_resolver_pin_unknown"></a>
@@ -6616,6 +6656,16 @@ More: [docs/guides/skill-resolver.md#skill_resolver_pin_unknown](../../docs/guid
 | gbrain setup openclaw wrote the skill-resolver plugin, but OpenClaw has not installed or loaded it: no openclaw on PATH, an openclaw command failed, or plugins inspect does not show it loaded. | A partial install injects nothing, so setup never reports it as success; the files and the state are kept so the remaining commands finish it. | Run the remaining openclaw commands the message names on the OpenClaw host, restart the gateway, then gbrain doctor --only skill_resolver. | user | `repeat the read that failed` | 3 | no |
 
 More: [docs/guides/skill-resolver.md#skill_resolver_plugin_not_installed](../../docs/guides/skill-resolver.md#skill_resolver_plugin_not_installed)
+
+### skill_resolver_plugin_outdated
+
+<a id="skill_resolver_plugin_outdated"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The OpenClaw skill-resolver plugin code installed in OpenClaw is older than this gbrain, so it ignores settings added since (the operator rule line, --brief pins, --require-owner-sender, --owner-skill) and, before version 7, does not withdraw the owner's context on another person's turn. | The request itself was wrong or no longer matches the brain; nothing was changed. | Rerun the gbrain setup openclaw command you installed with (its --workspace, --name and --agent flags), which rewrites and reinstalls the plugin files, then restart the gateway once. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/skill-resolver.md#skill_resolver_plugin_outdated](../../docs/guides/skill-resolver.md#skill_resolver_plugin_outdated)
 
 ### skill_resolver_selftest_failed
 
@@ -7292,6 +7342,22 @@ More: [docs/guides/write-refusals.md#tail_exposure_approval](../../docs/guides/w
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
 | The skill target must remain within its selected root. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+### telemetry_forget_failed
+
+<a id="telemetry_forget_failed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain telemetry forget could not get the telemetry server to confirm it deleted this install's record and unlinked its stored events, so the local install id was kept. | The local id is the only way to name this install's rows on the server; deleting it before the server confirms would leave the record there with no way to ask again. | Run gbrain telemetry forget again when the machine is online. | agent | `gbrain doctor --json` | 1 | yes |
+
+### telemetry_pulse_unavailable
+
+<a id="telemetry_pulse_unavailable"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The public telemetry pulse is stale or could not be read (a 503, an error or no connection), so it says nothing about the current release. | An outage must never read as zero failures: a monitor that took a missing pulse for a healthy one would miss a broken release. | Retry gbrain telemetry pulse later, and treat this run as unknown, not as no problems. | agent | `gbrain doctor --json` | 1 | yes |
 
 ### timeline_comment_markup
 

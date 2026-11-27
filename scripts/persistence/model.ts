@@ -354,7 +354,7 @@ export class ReferenceModel {
    * hold is recorded, and its rows are still the ones it had when they last matched the fence. A parsed fence with the
    * hold still recorded fails, so a hold never outlives the fence that answers it.
    */
-  private async checkFence(stage: string, row: { source_id: string; slug: string }, content: string, fence: 'facts' | 'takes', listed: string[], rows: string[]): Promise<void> {
+  private async checkFence(stage: string, row: { id: number; source_id: string; slug: string }, content: string, fence: 'facts' | 'takes', listed: string[], rows: string[], revision?: unknown): Promise<void> {
     const k = `${key(row.source_id, row.slug)}\u0000${fence}`;
     const [hold] = await this.q<{ n: number }>(`SELECT count(*)::int AS n FROM derived_generations WHERE source_id=$1 AND kind=$2 AND owner_key=$3
       AND state='held' AND held_reason='fence_absent'`, [row.source_id, fence === 'facts' ? FACT_FENCE_KIND : TAKE_FENCE_KIND, fenceOwnerKey(row.slug)]);
@@ -366,7 +366,31 @@ export class ReferenceModel {
       return;
     }
     if (absent && held && this.projected.get(k) === JSON.stringify(rows)) return;
-    this.violate({ class: 'projection_drift', detail: `${stage}: ${row.source_id}/${row.slug} ${fence} fence ${JSON.stringify(listed)} != rows ${JSON.stringify(rows)}${held ? ' (held fence_absent)' : ''}` });
+    const evidence = fence === 'facts' ? await this.factsDriftEvidence(row, [...new Set([...listed, ...rows])], absent, revision)
+      .catch((error: unknown) => ` [evidence unreadable: ${String((error as Error)?.message ?? error).slice(0, 160)}]`) : '';
+    this.violate({ class: 'projection_drift', detail: `${stage}: ${row.source_id}/${row.slug} ${fence} fence ${JSON.stringify(listed)} != rows ${JSON.stringify(rows)}${held ? ' (held fence_absent)' : ''}${evidence}` });
+  }
+
+  /**
+   * #7651: what a facts drift looked like when it happened, so a rare CI failure names the write behind it: whether
+   * the stored body (not only the get_page read) holds each claim on either side, the revision the read and the stored page
+   * carry, which page versions held a claim, and the last write requests on the page.
+   */
+  private async factsDriftEvidence(row: { id: number; source_id: string; slug: string }, claims: string[], absent: boolean, revision: unknown): Promise<string> {
+    const [page] = await this.q<{ revision: string | null; body: string }>(
+      "SELECT knowledge_revision::text AS revision,COALESCE(compiled_truth,'')||chr(10)||COALESCE(timeline,'') AS body FROM pages WHERE id=$1", [row.id]);
+    const facts = await this.q<{ id: number; row_num: number | null; created_at: string }>(`SELECT id,row_num,created_at::text FROM facts
+      WHERE source_id=$1 AND source_markdown_slug=$2 AND fact=ANY($3::text[])
+      AND expired_at IS NULL AND superseded_by IS NULL AND (valid_until IS NULL OR valid_until > now()) ORDER BY id`, [row.source_id, row.slug, claims]);
+    const versions = await this.q<{ held: boolean }>(`SELECT EXISTS (SELECT 1 FROM unnest($2::text[]) AS c(claim) WHERE strpos(COALESCE(v.compiled_truth,'')||chr(10)||COALESCE(v.timeline,''),c.claim)>0) AS held
+      FROM page_versions v WHERE v.page_id=$1 ORDER BY v.id`, [row.id, claims]);
+    const requests = await this.q<{ operation: string; state: string; error_code: string | null; sequence: string }>(`SELECT operation,state,error_code,sequence::text
+      FROM persistence_requests WHERE source_id=$1 AND slug=$2 ORDER BY persistence_requests.sequence DESC LIMIT 6`, [row.source_id, row.slug]);
+    return ` [evidence: read rev=${String(revision ?? 'none')} stored rev=${page?.revision ?? 'none'} fence=${absent ? 'absent' : 'present'}`
+      + ` stored body holds=${JSON.stringify(claims.map(c => page?.body.includes(c) ?? false))}`
+      + ` rows=${facts.map(f => `#${f.id}/r${f.row_num ?? '-'}@${f.created_at}`).join(',') || 'none'}`
+      + ` versions holding=${versions.map(v => (v.held ? '1' : '0')).join('') || 'none'}`
+      + ` requests=${requests.map(q => `${q.sequence}:${q.operation}:${q.state}${q.error_code ? `:${q.error_code}` : ''}`).join(',') || 'none'}]`;
   }
 
   private async checkProjection(stage: string, live: { id: number; source_id: string; slug: string }[]): Promise<void> {
@@ -382,11 +406,11 @@ export class ReferenceModel {
         'SELECT row_num,claim,active FROM takes WHERE page_id=$1 ORDER BY row_num', [row.id]);
       const fence = takes.map(t => `${t.rowNum}:${t.claim}:${t.active}`).sort();
       const db = dbTakes.map(t => `${t.row_num}:${t.claim}:${t.active}`).sort();
-      await this.checkFence(stage, row, content, 'takes', fence, db);
+      await this.checkFence(stage, row, content, 'takes', fence, db, page.revision);
       const liveFacts = parseFactsFence(content).facts.filter(f => !f.forgotten && f.validUntil === undefined).map(f => f.claim).sort();
       const dbFacts = (await this.q<{ fact: string }>(`SELECT fact FROM facts WHERE source_id=$1 AND source_markdown_slug=$2
         AND expired_at IS NULL AND superseded_by IS NULL AND (valid_until IS NULL OR valid_until > now())`, [row.source_id, row.slug])).map(f => f.fact).sort();
-      await this.checkFence(stage, row, content, 'facts', liveFacts, dbFacts);
+      await this.checkFence(stage, row, content, 'facts', liveFacts, dbFacts, page.revision);
     }
     const [orphans] = await this.q<{ takes: number; timeline: number }>(`SELECT
       (SELECT count(*)::int FROM takes t WHERE NOT EXISTS (SELECT 1 FROM pages p WHERE p.id=t.page_id)) AS takes,

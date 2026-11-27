@@ -6,7 +6,7 @@
 import { describe, expect, spyOn, test } from 'bun:test';
 import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { evaluateReadiness, WRITE_CLIENT_LIMIT, WRITE_COVERAGE_LIMIT, WRITE_PGLITE_LIMIT, type ShadowStatus } from '../../src/core/engine-swap/readiness.ts';
+import { evaluateReadiness, WRITE_CLIENT_LIMIT, WRITE_COVERAGE_LIMIT, WRITE_COVERAGE_NAMED, WRITE_PGLITE_LIMIT, type ShadowStatus } from '../../src/core/engine-swap/readiness.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { importFile } from '../../src/core/import-file.ts';
 import { operationsByName, type OperationContext } from '../../src/core/operations.ts';
@@ -16,16 +16,22 @@ import { disposePersistenceConsumer } from '../../src/core/persistence/service.t
 import { makeGitFixture } from '../helpers/git-fixture.ts';
 import { mkdirSync } from 'node:fs';
 import type { RustAddon } from '../../src/core/rust-engine/addon-loader.ts';
-import { attachShadow, attachShadowParts } from '../../src/shadow/attach.ts';
+import { attachShadow, attachShadowParts, writeGeneration } from '../../src/shadow/attach.ts';
+import { ShadowFollower } from '../../src/shadow/follower.ts';
 import { buildFollowStatus, readFollowerFile, renderFollowStatus } from '../../src/shadow/follow-status.ts';
 import { newMirrorCounters } from '../../src/shadow/mirror.ts';
 import { writeSeedRecord } from '../../src/shadow/seed.ts';
 import { wrapShadowEngine } from '../../src/shadow/wrapper.ts';
-import { completeWriteRow, lockPersistenceCounters } from '../../src/core/engine-sql/persistence-journal.ts';
-import { createWriteSampler, JOURNAL_MEMBER_STATEMENTS, PUT_PAGE_OPTIONS, readPreimage } from '../../src/shadow/write-capture.ts';
+import { completeWriteRow, insertPublicationEffects, lockPersistenceCounters } from '../../src/core/engine-sql/persistence-journal.ts';
+import { sqlWrites } from '../../src/shadow/sql-writes.ts';
+import { sealImportedPage } from '../../src/core/engine-sql/write-guards.ts';
+import { renderFragment } from '../../src/core/engine-sql/fragment.ts';
+import { pageSearchVectorSql } from '../../src/core/fts-language.ts';
+import { bookkeepingStatements, createWriteSampler, JOURNAL_MEMBER_STATEMENTS, PUT_PAGE_OPTIONS, readPreimage } from '../../src/shadow/write-capture.ts';
 import { createWriteComparer } from '../../src/shadow/write-compare-child.ts';
+import { openRustEngine, type RustEngineAddonHandle } from '../../src/core/rust-engine.ts';
 import { readWriteTally, WriteTally, type WriteEvent } from '../../src/shadow/write-compare.ts';
-import { ensureEpoch } from '../../src/shadow/evidence-epoch.ts';
+import { ensureEpoch, readEpoch } from '../../src/shadow/evidence-epoch.ts';
 import { withEnv } from './with-env.ts';
 import { fillSeedFixture, seedInto } from './shadow-seed-fixture.ts';
 
@@ -68,7 +74,7 @@ export function fakeComparer(dir: string, over: { imported?: (rows: number) => R
   });
   return Object.assign(comparer, { counts: on.counts });
 }
-export const settle = async (c: { handle(e: WriteEvent): void; idle(): Promise<void> }, events: WriteEvent[]) => { for (const e of events) c.handle(e); await c.idle(); };
+export const settle = async (c: { handle(e: WriteEvent): void; idle(): Promise<unknown> }, events: WriteEvent[]) => { for (const e of events) c.handle(e); await c.idle(); };
 
 /** Counts the preimage reads an engine is asked for: they run inside a transaction, so this watches the SQL its transactions run. */
 export function watchPreimage(engine: BrainEngine): { count: () => number; restore: () => void } {
@@ -85,6 +91,49 @@ export function watchPreimage(engine: BrainEngine): { count: () => number; resto
     })), opts);
   }) as never);
   return { count: () => n, restore: () => spy.mockRestore() };
+}
+
+/** What the write-counter scenarios share: the real wrapper with the real follower as its sink, a write from another process, and a hook between a commit and its read-back. */
+function fenceKit(ctx: WriteCompareContext) {
+  const primary = ctx.primary;
+  const addonOf = (): RustAddon => ctx.addon!();
+    const pg = ctx.kind === 'postgres';
+    const putEvents = (inbox: WriteEvent[]) => inbox.filter((e) => e.op === 'putPage');
+    const sampled = (inbox: WriteEvent[], op: string) => inbox.filter((e) => e.op === op && e.outcome === undefined);
+    /** The real wrapper with the real follower as its sink, the follower's write count as the sampler's `generation` (attach.ts), and the real data fence where the brain has one. The follower reads nothing (no child): only its publish counters matter here. */
+    function prod(opts: { generation?: () => number | undefined; send?: (line: string) => boolean } = {}) {
+      const follower = new ShadowFollower({ reads: { pauseMs: 0, read: async () => { throw new Error('no reads in this rig'); }, close: async () => {} } as never, send: () => true, rpc: async () => { throw new Error('no child in this rig'); } });
+      const inbox: WriteEvent[] = [];
+      const sampler = createWriteSampler({ rate: 1, generation: opts.generation ?? writeGeneration(follower), send: opts.send ?? ((line) => { inbox.push(JSON.parse(line)); return true; }), active: () => true });
+      const sink = { counters: newMirrorCounters(), offer: () => {}, active: () => true };
+      return { follower, inbox, wrapped: wrapShadowEngine(primary(), sink, { sampleRate: 0, follow: { sink: follower }, writes: sampler }) };
+    }
+    const opCtx = (wrapped: BrainEngine) => ({ engine: wrapped, config: {}, logger: { info() {}, warn() {}, error() {} }, dryRun: false, remote: true }) as unknown as OperationContext;
+    const replay = async (events: WriteEvent[]) => {
+      const dir = ctx.tempDir(); const on = tallyOn(dir);
+      await settle(createWriteComparer({ dir, tally: on.tally, alive: () => true, load: { ok: true, addon: addonOf() } as never, scratchRoot: ctx.tempDir() }), events);
+      return on.counts();
+    };
+    /** A write from another process: a child bun process on its own connection to this database (Postgres only). */
+    async function otherProcessWrite(sql: string, params: string[] = []): Promise<void> {
+      if (!pg) { await primary().executeRaw(sql.replace(/\$1/g, `'${params[0]}'`)); return; } // PGLite: a second process cannot open the file (its single-writer lock), so the write is made unwrapped, as no other process could
+      const [{ d }] = await primary().executeRaw<{ d: string }>('SELECT current_database() AS d');
+      if (!d.startsWith('gbrain_test_')) throw new Error('refusing to write to a database that is not a test clone');
+      const url = new URL(process.env.DATABASE_URL!); url.pathname = `/${d}`;
+      const child = Bun.spawn([process.execPath, '-e', "import postgres from '#postgres'; const s = postgres(process.env.OTHER_URL, { max: 1, prepare: false }); await s.unsafe(process.env.OTHER_SQL, JSON.parse(process.env.OTHER_PARAMS)); await s.end();"], {
+        cwd: join(import.meta.dir, '..', '..'), env: { PATH: process.env.PATH ?? '', HOME: process.env.HOME ?? '', OTHER_URL: url.toString(), OTHER_SQL: sql, OTHER_PARAMS: JSON.stringify(params) }, stdout: 'ignore', stderr: 'pipe',
+      });
+      if (await child.exited !== 0) throw new Error(`other process failed: ${await new Response(child.stderr).text()}`);
+    }
+    /** Runs `act` once, between the commit and the read-back of the first sampled write (the first read-back's page read). */
+    function between(act: () => Promise<unknown>): { restore: () => void } {
+      const realGetPage = primary().getPage as (...a: Parameters<BrainEngine['getPage']>) => ReturnType<BrainEngine['getPage']>; let once = true;
+      // The read-back is the one getPage on the primary itself; the pin read (a nested transaction's engine, inside the sampled transaction) must not trigger it.
+      const hook = spyOn(primary(), 'getPage').mockImplementation((async function (this: unknown, ...args: Parameters<BrainEngine['getPage']>) { if (once && this === primary()) { once = false; await act(); } return realGetPage.apply(this, args); }) as never);
+      return { restore: () => hook.mockRestore() };
+    }
+    const fresh = async () => { await ctx.reset(); await fillSeedFixture(primary()); await primary().setConfig('search.contextual_retrieval', 'none'); };
+  return { pg, putEvents, sampled, prod, opCtx, replay, otherProcessWrite, between, fresh };
 }
 
 export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
@@ -160,6 +209,14 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       expect(readdirSync(out.scratch)).toEqual([]); // every scratch store is deleted
     }, 120_000);
 
+    test('forty samples handed to the child together all wait their turn and are replayed: none is shed queue_full (master kept 16 and shed the rest)', async () => {
+      const out = await replay(async (e, sampled) => {
+        for (let n = 1; n <= 40; n++) { await e.putPage(`people/burst-${n}-example`, page(`Burst ${n} Example`)); await sampled(n); }
+      }, 40);
+      expect(out.tally).toMatchObject({ comparable: 40, unexplained_difference: 0, uncomparable: 0, capability_missing: 0 });
+      expect(out.tally.uncomparable_by_reason.queue_full).toBeUndefined();
+    }, 180_000);
+
     test('a write whose changed rows differ is counted unexplained_difference, never comparable', async () => {
       const out = await replay(async (e) => { await e.putPage('people/dora-example', page('Dora Example')); }, 1, (ev) => {
         (ev.post as { pages: Array<{ title: string }> }).pages[0]!.title = 'Not What Rust Wrote';
@@ -206,6 +263,7 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       expect(row.state).toBe('fail'); // 1 of 1,000 comparable: the pass rule is unchanged
       expect(row.detail).toContain('1 of 1000 comparable');
       expect(row.detail).toContain(WRITE_COVERAGE_LIMIT);
+      expect(row.detail).toContain(WRITE_COVERAGE_NAMED); // the owner's wording, verbatim, names every write type left uncompared
       expect(row.detail).toContain('sampled so far: tags 1');
       expect(row.detail).toContain(WRITE_PGLITE_LIMIT);
       expect(renderFollowStatus(status).join('\n')).toContain(`comparable 1, unexplained 0`);
@@ -809,10 +867,11 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       await ctx.reset(); await fillSeedFixture(primary());
       let gen = 0; // PGLite has no data fence (one process writes): the serving process\'s write count says it; Postgres is caught by the fence alone
       const { inbox, wrapped } = rig(ctx.kind === 'pglite' ? { generation: () => gen } : {});
-      const original = primary().getPage.bind(primary()); let once = true;
-      const hook = spyOn(primary(), 'getPage').mockImplementation((async (...args: Parameters<BrainEngine['getPage']>) => {
-        if (once) { once = false; gen += 2; await primary().putPage('companies/acme-example', page('Acme Edited Elsewhere')); }
-        return original(...args);
+      const realGetPage = primary().getPage as (...a: Parameters<BrainEngine['getPage']>) => ReturnType<BrainEngine['getPage']>; let once = true;
+      // Fires at the read-back (the getPage on the primary itself), not at the sampler's pin read, which runs on the transaction's own engine while the transaction still holds the page row: a writer started there would wait for that lock.
+      const hook = spyOn(primary(), 'getPage').mockImplementation((async function (this: unknown, ...args: Parameters<BrainEngine['getPage']>) {
+        if (once && this === primary()) { once = false; gen += 2; await primary().putPage('companies/acme-example', page('Acme Edited Elsewhere')); }
+        return realGetPage.apply(this, args);
       }) as never);
       try {
         await wrapped.transaction(async (tx) => { await tx.putPage('companies/acme-example', page('Acme Renamed')); });
@@ -824,7 +883,7 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
 
     test('an option the Rust store does not take is uncomparable (unknown_option), in a transaction or not; the ones it takes are not; the list is the store\'s own', async () => {
       await ctx.reset(); await fillSeedFixture(primary());
-      const unknown = [{ contextualRetrieval: { mode: 'title', corpusGeneration: null } }, { reuseSegments: {} }, { prepare: () => undefined }, { sourceId: 'default', somethingNew: 1 }];
+      const unknown = [{ reuseSegments: {} }, { prepare: () => undefined }, { sourceId: 'default', somethingNew: 1 }];
       for (const opts of unknown) {
         for (const inTransaction of [false, true]) {
           const { inbox, wrapped } = rig();
@@ -958,6 +1017,71 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       expect(verdicts(inbox)).toEqual([['sample', undefined]]);
     }, 60_000);
 
+    test('the swap report names what criterion 5 leaves uncompared, and the warm single-write path is no longer one of them', () => {
+      const detail = row5({}).detail ?? '';
+      expect(detail).toContain(WRITE_COVERAGE_NAMED);
+      expect(WRITE_COVERAGE_NAMED).toContain('chunks, tags, aliases, timeline entries, takes, facts, fact withdrawals, open loops, sources, owner-only marks and the decide store');
+      expect(detail).not.toContain('warm single-write path');
+    });
+
+    // The warm single-write lane: a reserved connection's own transaction (Postgres only; PGLite's reserved connection has none).
+    const lane = async <T>(wrapped: BrainEngine, run: (tx: BrainEngine) => Promise<T>, opts?: Record<string, unknown>): Promise<T> =>
+      (wrapped as any).withReservedConnection((conn: any) => conn.transaction(run, opts));
+
+    test('a page write in the warm lane transaction is sampled after the commit, a rolled-back one is dropped, and the warm transaction itself is unchanged', async () => {
+      if (ctx.kind !== 'postgres') return;
+      const { inbox, wrapped } = await fresh();
+      await lane(wrapped, async (tx) => { await tx.putPage('people/una-example', page('Una Example'), { sourceId: 'default', inline: true }); expect(putEvents(inbox)).toEqual([]); });
+      expect((await primary().getPage('people/una-example'))?.title).toBe('Una Example');
+      expect((await sampleOf(inbox)).length).toBe(1);
+      expect(putEvents(inbox)[0]!.outcome).toBeUndefined(); // a full sample: the rows read before the write travel with it
+      await expect(lane(wrapped, async (tx) => { await tx.putPage('people/vic-example', page('Vic Example')); throw new Error('roll back'); })).rejects.toThrow('roll back');
+      await new Promise((r) => setTimeout(r, 300));
+      expect(putEvents(inbox)).toHaveLength(1); // nothing more: the rolled-back write is never compared
+      expect(await primary().getPage('people/vic-example')).toBeNull();
+    }, 60_000);
+
+    test('a warm-lane write is never sampled through the savepoint while another call runs: parallel inline writes and a version row all survive the commit', async () => {
+      if (ctx.kind !== 'postgres') return;
+      await ctx.reset(); await fillSeedFixture(primary());
+      await primary().putPage('people/wes-example', page('Wes Example'));
+      const { inbox, wrapped } = rig();
+      const snapshot = await primary().readPageSnapshot('people/wes-example');
+      await lane(wrapped, async (tx) => {
+        await Promise.all([
+          tx.putPage('people/xia-example', page('Xia Example'), { sourceId: 'default', inline: true }),
+          tx.putPage('people/yan-example', page('Yan Example'), { sourceId: 'default', inline: true }),
+          tx.createVersion('people/wes-example', { sourceId: 'default', preimage: snapshot } as never),
+          tx.putPage('people/wes-example', page('Wes Renamed'), { sourceId: 'default', inline: true }),
+        ]);
+      });
+      for (const slug of ['people/xia-example', 'people/yan-example']) expect(await primary().getPage(slug)).not.toBeNull();
+      expect((await primary().getPage('people/wes-example'))?.title).toBe('Wes Renamed');
+      expect(await primary().getVersions('people/wes-example')).toHaveLength(1);
+      await sampleOf(inbox, 3);
+      expect(verdicts(inbox).filter(([, reason]) => reason === 'in_transaction_busy').length).toBe(2);
+    }, 60_000);
+
+    test('the warm lane keeps its first statement first: with pipelineFirst the declaration is sent before BEGIN is answered, and every preimage statement follows it', async () => {
+      if (ctx.kind !== 'postgres') return;
+      const { inbox, wrapped } = await fresh();
+      const declaration = "SELECT set_config('gbrain.persistence_protocol','2',true)";
+      const seen: string[] = [];
+      const original = primary().executeRaw as (...a: unknown[]) => Promise<unknown>;
+      const spy = spyOn(primary(), 'executeRaw').mockImplementation(function (this: unknown, sql: unknown, ...rest: unknown[]) { if (typeof sql === 'string') seen.push(sql); return original.call(this, sql, ...rest); } as never);
+      try {
+        await lane(wrapped, async (tx) => { await tx.executeRaw(declaration); await tx.putPage('people/zed-example', page('Zed Example'), { sourceId: 'default', inline: true }); },
+          { pipelineFirst: (statement: string) => statement === declaration });
+      } finally { spy.mockRestore(); }
+      await sampleOf(inbox);
+      const first = seen.findIndex((q) => q === declaration);
+      const preimage = seen.map((q, i) => (q.includes('shadow write preimage') ? i : -1)).filter((i) => i >= 0);
+      expect(first).toBe(0);
+      expect(preimage.length).toBeGreaterThan(0);
+      expect(preimage.every((i) => i > first)).toBe(true);
+      expect((await primary().getPage('people/zed-example'))?.title).toBe('Zed Example');
+    }, 60_000);
+
     test('the journal members the sampler treats as bookkeeping send only the statements it judged: each typed member, on both dialects, sends exactly its mapped statements and nothing else', async () => {
       const record = async (dialect: 'postgres' | 'pglite', run: (exec: never) => Promise<unknown>) => {
         const sent: string[] = [];
@@ -972,8 +1096,32 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
         expect(await record(dialect, (exec) => completeWriteRow(exec, completion(false) as never))).toEqual([complete!]);
         expect(await record(dialect, (exec) => completeWriteRow(exec, completion(true) as never))).toEqual([probe!]);
       }
-      expect([...JOURNAL_MEMBER_STATEMENTS.keys()].sort()).toEqual(['completeWriteRow', 'lockPersistenceCounters']); // upsertWriteGateReceipt and insertPublicationEffects are not bookkeeping: they stay ordinary writes
+      const effects = JOURNAL_MEMBER_STATEMENTS.get('insertPublicationEffects')!;
+      for (const dialect of ['postgres', 'pglite'] as const) {
+        expect(await record(dialect, (exec) => insertPublicationEffects(exec, { requestId: '00000000-0000-4000-8000-000000000000', revision: null, sourceId: 'default', sourceIncarnation: '00000000-0000-4000-8000-000000000001', worktreeId: null, effects: [{ kind: 'links', data: {} }] } as never))).toEqual([effects[0]!]);
+      }
+      expect([...JOURNAL_MEMBER_STATEMENTS.keys()].sort()).toEqual(['completeWriteRow', 'insertPublicationEffects', 'lockPersistenceCounters']); // upsertWriteGateReceipt is not bookkeeping: it stays an ordinary write
     }, 30_000);
+
+    test('insertPublicationEffects is bookkeeping only while its statement writes persistence_effects and nothing else: a statement that writes another table is an ordinary write', () => {
+      const [effects] = JOURNAL_MEMBER_STATEMENTS.get('insertPublicationEffects')!;
+      expect(sqlWrites(effects!).map((w) => `${w.kind}:${(w as { relation?: string }).relation}`)).toEqual(['relation:persistence_effects']);
+      expect(bookkeepingStatements([effects!])).toBe(true);
+      expect(bookkeepingStatements([`WITH moved AS (INSERT INTO pages (slug) VALUES ('x') RETURNING 1) ${effects!}`])).toBe(false);
+      expect(bookkeepingStatements([effects!, 'UPDATE pages SET title = title'])).toBe(false);
+    });
+
+    test('the closing seal the sampler treats as a seal is exactly the page update the sealImportedPage member sends: any other text is an ordinary write again', async () => {
+      let sent = '';
+      await sealImportedPage({ run: async (fragment: never) => { sent = renderFragment(fragment).text; return { rows: [] }; } } as never, 'notes/a',
+        { sourceId: 'default', revision: '00000000-0000-4000-8000-000000000000', timelineText: '', chunkerVersion: 1 });
+      const norm = (text: string) => text.replace(/\s+/g, ' ').replace(/\$\d+/g, '$').trim();
+      expect(norm(sent)).toBe(norm(`UPDATE pages SET chunker_version=$1,
+        text_projection_revision=CASE WHEN knowledge_revision=$2::uuid THEN knowledge_revision ELSE text_projection_revision END,
+        search_vector=CASE WHEN knowledge_revision=$2::uuid THEN ${pageSearchVectorSql('title', 'v.seal_input')} ELSE search_vector END
+        FROM (SELECT $3::text AS seal_input) v
+        WHERE pages.source_id=$4 AND pages.slug=$5 RETURNING pages.id`));
+    });
 
     test('calls made while the preimage is read keep their order behind the sampled write (a tag added right after a new page lands on it)', async () => {
       const { inbox, wrapped } = await fresh();
@@ -1010,6 +1158,18 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       });
       await until(() => putEvents(inbox).length === 2);
       expect(putEvents(inbox).map((e) => (e.args as string[])[0]).sort()).toEqual(['people/ivy-example', 'people/jon-example']);
+      expect(await real(putEvents(inbox))).toMatchObject({ comparable: 2, unexplained_difference: 0, uncomparable: 0 });
+    }, 120_000);
+
+    test('a page write in the warm lane transaction is replayed and comparable (a create and an update of the same page, default contextual-retrieval mode)', async () => {
+      if (ctx.kind !== 'postgres') return;
+      await ctx.reset(); await fillSeedFixture(primary());
+      const { inbox, wrapped } = rig();
+      const run = (title: string) => (wrapped as any).withReservedConnection((conn: any) => conn.transaction(async (tx: BrainEngine) => {
+        await tx.putPage('people/abe-example', page(title), { sourceId: 'default', inline: true, contextualRetrieval: { mode: 'title', corpusGeneration: 'generation-example' } });
+      }));
+      await run('Abe Example'); await run('Abe Renamed');
+      await until(() => putEvents(inbox).length === 2);
       expect(await real(putEvents(inbox))).toMatchObject({ comparable: 2, unexplained_difference: 0, uncomparable: 0 });
     }, 120_000);
 
@@ -1092,7 +1252,39 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       for (const reason of Object.keys(tally.uncomparable_by_reason)) expect(['in_transaction_busy', 'preimage_not_loaded']).toContain(reason);
     }, 180_000);
 
-    test('a real sync import of a new page and then a changed one ends up in the tally: comparable when contextual retrieval is off, uncomparable by name when it stamps the write', async () => {
+    test('three arms store the same contextual-retrieval stamp: the primary (PGLite or Postgres) and the Rust engine through its store member', async () => {
+      await ctx.reset();
+      const stamp = { mode: 'title', corpusGeneration: 'generation-example' };
+      const dir = join(ctx.tempDir(), 'store');
+      const rust: any = openRustEngine({ addon: addonOf() as unknown as RustEngineAddonHandle, databasePath: dir });
+      try {
+        await rust.connect({ database_path: dir });
+        for (const engine of [primary(), rust]) await engine.putPage('notes/stamp-example', page('Stamp Example'), { sourceId: 'default', contextualRetrieval: stamp });
+        const [row] = await primary().executeRaw<{ contextual_retrieval_mode: string; corpus_generation: string }>("SELECT contextual_retrieval_mode, corpus_generation FROM pages WHERE slug = 'notes/stamp-example'");
+        const theirs = await rust.getPage('notes/stamp-example');
+        expect({ mode: row!.contextual_retrieval_mode, generation: row!.corpus_generation }).toEqual({ mode: 'title', generation: 'generation-example' });
+        expect(theirs.contextual_retrieval_mode).toBe(row!.contextual_retrieval_mode);
+        // The Rust engine reads the stamp back as the page's mode; no engine member returns its corpus generation, so that column is checked on the primary only.
+        // A `none` stamp writes nothing on every arm, as the primary's own putPage leaves both columns alone for it.
+        for (const engine of [primary(), rust]) await engine.putPage('notes/stamp-none', page('Stamp None'), { sourceId: 'default', contextualRetrieval: { mode: 'none', corpusGeneration: null } });
+        const [none] = await primary().executeRaw<{ contextual_retrieval_mode: string | null }>("SELECT contextual_retrieval_mode FROM pages WHERE slug = 'notes/stamp-none'");
+        expect((await rust.getPage('notes/stamp-none')).contextual_retrieval_mode ?? null).toBe(none!.contextual_retrieval_mode ?? null);
+      } finally { await rust.disconnect().catch(() => undefined); }
+    }, 120_000);
+
+    test('a real sync import in the default contextual-retrieval mode (title) is compared: the stamp it sends is carried to the replay, and both the new and the changed page are comparable', async () => {
+      await ctx.reset();
+      const root = ctx.tempDir(); const file = join(root, 'default-mode.md');
+      const { inbox, wrapped } = rig();
+      const sync = async (body: string) => { writeFileSync(file, `---\ntype: note\ntitle: Default Mode\n---\n\n${body}\n`); await importFile(wrapped as never, file, 'notes/default-mode.md', { noEmbed: true }); };
+      await sync('First body of the page.'); await sync('A changed body of the page.');
+      await until(() => putEvents(inbox).length === 2);
+      expect(await real(putEvents(inbox))).toMatchObject({ comparable: 2, unexplained_difference: 0, uncomparable: 0 });
+      const sent = putEvents(inbox).map((e) => (e.args as unknown[])[2] as { contextualRetrieval?: { mode?: string } });
+      expect(sent.map((o) => o.contextualRetrieval?.mode)).toEqual(['title', 'title']); // the default brain sends the option, and it is carried
+    }, 120_000);
+
+    test('a real sync import of a new page and then a changed one ends up in the tally: comparable when contextual retrieval is off and when it stamps the write', async () => {
       await ctx.reset();
       const root = ctx.tempDir(); const file = join(root, 'sync-example.md');
       const sync = async (body: string) => { writeFileSync(file, `---\ntype: note\ntitle: Sync Example\n---\n\n${body}\n`); await importFile(wrapped as never, file, 'notes/sync-example.md', { noEmbed: true }); };
@@ -1105,7 +1297,261 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       ({ inbox, wrapped } = rig());
       await sync('A third body of the page.');
       await until(() => putEvents(inbox).length === 1);
-      expect(await real(putEvents(inbox))).toMatchObject({ comparable: 0, uncomparable: 1, uncomparable_by_reason: { unknown_option: 1 } });
+      expect(await real(putEvents(inbox))).toMatchObject({ comparable: 1, unexplained_difference: 0, uncomparable: 0 });
     }, 120_000);
+  });
+
+  describe('the write counter and the data fence, wired as production wires them', () => {
+    const { pg, putEvents, sampled, prod, opCtx, replay, between, fresh } = fenceKit(ctx);
+
+    test('a remove_link through the operation layer is compared: its own second write (the link transition delete) is not another writer', async () => {
+      await fresh();
+      for (let i = 0; i < 3; i++) await primary().putPage(`people/p${i}`, { type: 'person', title: `P${i}`, compiled_truth: `P${i}.`, timeline: '' });
+      const { follower, inbox, wrapped } = prod(); const c = opCtx(wrapped);
+      for (let i = 0; i < 3; i++) await operationsByName.add_link.handler(c, { from: 'people/alice-example', to: `people/p${i}`, link_type: 'related_to' });
+      for (let i = 0; i < 3; i++) await operationsByName.remove_link.handler(c, { from: 'people/alice-example', to: `people/p${i}`, link_type: 'related_to' });
+      await until(() => sampled(inbox, 'removeLink').length >= 3 && sampled(inbox, 'addLink').length >= 3); await follower.settle();
+      expect(sampled(inbox, 'removeLink').map((e) => Boolean(e.moved))).toEqual([false, false, false]);
+      expect(sampled(inbox, 'addLink').map((e) => Boolean(e.moved))).toEqual([false, false, false]);
+      if (ctx.addon) expect(await replay([...sampled(inbox, 'removeLink'), ...sampled(inbox, 'addLink')])).toMatchObject({ comparable: 6, unexplained_difference: 0, uncomparable: 0 });
+    }, 120_000);
+
+    test('a put_page through the operation layer is compared: the process\'s own journal, effect and link batches after the commit are not another writer (a brain with a data fence; where there is none, the counter decides and only the samples are checked)', async () => {
+      await fresh();
+      const { follower, inbox, wrapped } = prod(); const c = opCtx(wrapped);
+      for (let i = 0; i < 4; i++) await operationsByName.put_page.handler(c, { slug: `notes/put-${i}`, content: `---\ntitle: Note ${i}\ntype: note\n---\nNote ${i} mentions [[people/alice-example]] and [Acme](companies/acme-example).\n\n## Timeline\n\n- 2026-01-0${i + 1}: something happened\n` });
+      if (!pg) { await follower.settle(); return; } // no data fence on PGLite: the counter decides there (a PGLite brain samples no write in production), and these puts end in comparable or named-uncomparable samples the other scenarios count
+      await until(() => sampled(inbox, 'putPage').length >= 4); await follower.settle();
+      expect(sampled(inbox, 'putPage').map((e) => Boolean(e.moved))).toEqual([false, false, false, false]);
+      if (ctx.addon) expect(await replay(sampled(inbox, 'putPage'))).toMatchObject({ comparable: 4, unexplained_difference: 0 });
+    }, 120_000);
+
+    test('a concurrent wrapped addLink that updates the same edge before the first read-back marks the first sample moved: the fence exempts the write\'s own edge, so the counter still decides for a link write', async () => {
+      await fresh(); await primary().putPage('people/bob-example', page('Bob Example'));
+      const { inbox, wrapped } = prod();
+      const hook = between(() => wrapped.addLink('people/alice-example', 'people/bob-example', 'second context', 'works_at'));
+      try {
+        await wrapped.addLink('people/alice-example', 'people/bob-example', 'first context', 'works_at');
+        await until(() => sampled(inbox, 'addLink').length >= 2);
+      } finally { hook.restore(); }
+      const first = sampled(inbox, 'addLink').find((e) => (e.args as unknown[])[2] === 'first context')!;
+      expect(Boolean(first.moved)).toBe(true);
+    }, 120_000);
+
+    test('a page imported with tags is compared: the tags it adds later in the same transaction rewrite the revision, and that is not another writer (no counter in this rig, so only the revision check can say moved)', async () => {
+      await fresh();
+      const { inbox, wrapped } = rig();
+      const root = ctx.tempDir();
+      for (let i = 0; i < 3; i++) {
+        const file = join(root, `tagged-${i}.md`);
+        writeFileSync(file, `---\ntype: note\ntitle: Tagged ${i}\ntags: [alpha, beta]\n---\n\nTagged body ${i} links to [Acme](companies/acme-example).\n`);
+        await importFile(wrapped as never, file, `notes/tagged-${i}.md`, { noEmbed: true });
+      }
+      await until(() => putEvents(inbox).length >= 3);
+      expect(putEvents(inbox).map((e) => [e.outcome ?? 'sample', e.reason ?? null, Boolean(e.moved)])).toEqual([['sample', null, false], ['sample', null, false], ['sample', null, false]]);
+      const [tags] = await primary().executeRaw<{ n: string }>("SELECT count(*)::text AS n FROM tags t JOIN pages p ON p.id = t.page_id WHERE p.slug LIKE 'notes/tagged-%'");
+      expect(Number(tags!.n)).toBe(6); // the tags are really there
+      if (ctx.addon) expect(await replay(putEvents(inbox))).toMatchObject({ comparable: 3, unexplained_difference: 0, uncomparable: 0 });
+    }, 120_000);
+
+    test('the counter is kept wherever the fence did not run and complete for the sample (not decided by the engine name): without the capability it decides; with a fence that cannot finish the sample is moved; with a completed fence it does not decide', async () => {
+      await fresh();
+      const jump = (): { gen: () => number; bump: () => void } => { let n = 0; return { gen: () => n, bump: () => { n += 2; } }; };
+      const run = async (engine: BrainEngine, g: ReturnType<typeof jump>, sabotage?: () => { restore: () => void }) => {
+        const inbox: WriteEvent[] = [];
+        const sampler = createWriteSampler({ rate: 1, generation: g.gen, send: (line) => { inbox.push(JSON.parse(line)); return true; }, active: () => true });
+        const wrapped = wrapShadowEngine(engine, { counters: newMirrorCounters(), offer: () => {}, active: () => true }, { sampleRate: 0, writes: sampler });
+        const hook = between(async () => { g.bump(); });
+        const fail = sabotage?.();
+        try { await wrapped.transaction(async (tx) => { await tx.putPage('companies/acme-example', page(`Acme ${Math.random()}`)); }); await until(() => putEvents(inbox).length >= 1); } finally { hook.restore(); fail?.restore(); }
+        return Boolean(putEvents(inbox)[0]!.moved);
+      };
+      const runStandalone = async (engine: BrainEngine, g: ReturnType<typeof jump>) => {
+        const inbox: WriteEvent[] = [];
+        const sampler = createWriteSampler({ rate: 1, generation: g.gen, send: (line) => { inbox.push(JSON.parse(line)); return true; }, active: () => true });
+        const wrapped = wrapShadowEngine(engine, { counters: newMirrorCounters(), offer: () => {}, active: () => true }, { sampleRate: 0, writes: sampler });
+        const hook = between(async () => { g.bump(); });
+        try { await wrapped.putPage('companies/acme-example', page(`Acme Alone ${Math.random()}`)); await until(() => putEvents(inbox).length >= 1); } finally { hook.restore(); }
+        return Boolean(putEvents(inbox)[0]!.moved);
+      };
+      // No data-fence capability (what PGLite is, and what any engine without `postgres_admin` is): the counter decides.
+      const own = Object.getOwnPropertyDescriptor(primary(), 'capabilities');
+      const without = (): void => { Object.defineProperty(primary(), 'capabilities', { configurable: true, value: new Set([...primary().capabilities].filter((c) => c !== 'postgres_admin')) }); };
+      const restore = (): void => { if (own) Object.defineProperty(primary(), 'capabilities', own); else delete (primary() as { capabilities?: unknown }).capabilities; };
+      if (pg) without();
+      try { expect(await run(primary(), jump())).toBe(true); } finally { if (pg) restore(); }
+      if (pg) {
+        // A completed fence decides: the counter jumped and the rows did not move, so it is not moved.
+        expect(await run(primary(), jump())).toBe(false);
+        // A completed fence is not enough where nothing pins the target row: a putPage outside a transaction (and every link write) keeps the counter.
+        expect(await runStandalone(primary(), jump())).toBe(true);
+        // A fence that cannot finish (its read fails) never passes: moved even though the counter never moved.
+        const real = primary().transaction.bind(primary()) as (fn: unknown, o?: { readOnly?: boolean }) => Promise<unknown>;
+        const sabotage = () => { const spy = spyOn(primary(), 'transaction').mockImplementation(((fn: unknown, o?: { readOnly?: boolean }) => (o?.readOnly ? Promise.reject(new Error('fence read failed')) : real(fn, o))) as never); return { restore: () => spy.mockRestore() }; };
+        const quiet = jump(); quiet.bump = () => {};
+        expect(await run(primary(), quiet, sabotage)).toBe(true);
+      }
+    }, 120_000);
+
+    test('a call still running when the callback returns is waited for before the pin, so the pin is taken; a pinned page with tags written after it is not moved', async () => {
+      await fresh();
+      const { inbox, wrapped } = prod();
+      await wrapped.transaction(async (tx) => { await tx.putPage('companies/acme-example', page('Acme No Later Write')); });
+      await until(() => putEvents(inbox).length >= 1);
+      expect(Boolean(putEvents(inbox)[0]!.moved)).toBe(false);
+      await wrapped.transaction(async (tx) => { const written = await tx.putPage('companies/acme-example', page('Acme With Tags')); await tx.addPageTagsById(written.id, ['alpha']); });
+      await until(() => putEvents(inbox).length >= 2);
+      expect(Boolean(putEvents(inbox)[1]!.moved)).toBe(false); // the tags rewrote the revision: the pin read just before the commit is the one the page commits with
+      await wrapped.transaction(async (tx) => {
+        const written = await tx.putPage('people/alice-example', page('Alice Busy'));
+        await tx.addPageTagsById(written.id, ['alpha']);
+        void tx.deleteChunks('people/alice-example'); // still running when the callback returns: with the follower wired, the transaction's end waits for it, so the pin is taken after it
+      });
+      await until(() => putEvents(inbox).length >= 3);
+      expect(putEvents(inbox)[2]!.outcome).toBeUndefined(); // a full sample (before the drain: in_transaction_busy on Postgres)
+      expect(Boolean(putEvents(inbox)[2]!.moved)).toBe(false);
+    }, 120_000);
+  });
+
+  describe('a CLI that sends many samples and exits at once loses none uncounted (received + counted lost == sent)', () => {
+    /** Runs the "CLI" (test/helpers/shadow-pipe-exit-parent.ts): `n` samples of `lineBytes` to the real shadow child loop, which starts `readerSleep` seconds late, then exit; returns what the child's tally holds once it ends. */
+    async function exitAtOnce(n: number, readerSleep: number, drainMs: number | undefined, lineBytes = 2_000) {
+      const home = ctx.tempDir(); const done = join(home, 'child-done');
+      const url = ctx.kind === 'postgres' ? (primary() as unknown as { connectedDatabaseUrl?: string }).connectedDatabaseUrl : undefined;
+      const proc = Bun.spawn([process.execPath, join(import.meta.dir, 'shadow-pipe-exit-parent.ts')], {
+        env: { ...process.env, GBRAIN_HOME: ctx.tempDir(), KIND: ctx.kind, DIR: home, N: String(n), LINE_BYTES: String(lineBytes), READER_SLEEP: String(readerSleep), DONE: done, ...(url ? { DATABASE_URL: url } : {}), ...(drainMs ? { DRAIN_MS: String(drainMs) } : {}) },
+        stdout: 'pipe', stderr: 'pipe',
+      });
+      const [out, err] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
+      expect(await proc.exited, err).toBe(0);
+      const said = JSON.parse(out.trim().split('\n').at(-1)!) as { sent: number; refused: number };
+      await until(() => existsSync(done), (readerSleep + 30) * 1000); // the child outlives its parent: it reads what the pipe holds, then counts what it was never sent
+      const t = readWriteTally(home, readEpoch(home)!.epoch_id)!;
+      // `cut`: the pipe holds a prefix of the stream, so at most its LAST line can be cut short (seen on macOS, whose pipe takes part of a write); the child reads that line, cannot parse it and settles it
+      // `line_unreadable` (src/shadow/child.ts), so it is neither received whole nor lost in the pipe, and it is still counted.
+      return { ...said, received: t.uncomparable_by_reason.no_sample ?? 0, lost: t.uncomparable_by_reason.pipe_unflushed ?? 0, cut: t.uncomparable_by_reason.line_unreadable ?? 0, reasons: t.uncomparable_by_reason, total: t.comparable + t.unexplained_difference + t.uncomparable + t.capability_missing, files: readdirSync(home) };
+    }
+
+    test('a reader that catches up while the CLI waits: every sample is received and counted, none is lost', async () => {
+      const r = await exitAtOnce(300, 1, 10_000);
+      expect(r.refused).toBe(0);
+      expect({ received: r.received, lost: r.lost, total: r.total }).toEqual({ received: r.sent, lost: 0, total: r.sent }); // master: about a quarter arrive and nothing counts the rest
+      expect(r.files.filter((f) => f.startsWith('write-owed.') || f.startsWith('write-sent.'))).toEqual([]); // the child settled every owed sample and removed the owed record (was: the sent count, write-sent.*)
+    }, 120_000);
+
+    for (const lineBytes of [200, 2_000, 20_000]) {
+      test(`a reader slower than the drain bound (${lineBytes}-byte samples): what the pipe never delivered is counted lost (pipe_unflushed), exactly`, async () => {
+        const r = await exitAtOnce(Math.ceil(600_000 / lineBytes), 4, 400, lineBytes); // about 600 KB, more than the pipe holds
+        expect(r.refused).toBe(0);
+        expect(r.lost).toBeGreaterThan(0);
+        expect(r.received).toBeLessThan(r.sent);
+        expect(r.cut, JSON.stringify(r.reasons)).toBeLessThanOrEqual(1); // only the last line in the pipe can be cut short
+        expect(r.received + r.cut + r.lost, JSON.stringify(r.reasons)).toBe(r.sent); // every sample is received whole, read cut short, or counted lost in the pipe: exactly
+        expect(r.total, JSON.stringify(r.reasons)).toBe(r.sent);
+      }, 120_000);
+    }
+  });
+}
+
+/** The fence's negatives, Postgres only (the data fence exists only there; PGLite samples no write in production and has no fence to test): called from test/e2e/shadow-write-compare.test.ts, so the PGLite receipt lane never lists a skipped test. */
+export function defineFenceNegatives(ctx: WriteCompareContext): void {
+  const primary = ctx.primary;
+  const { sampled, prod, opCtx, otherProcessWrite, between, fresh } = fenceKit(ctx);
+  const putEvents = (inbox: WriteEvent[]) => inbox.filter((e) => e.op === 'putPage');
+
+  describe('what still marks a sample moved (the data fence alone, on Postgres)', () => {
+    const slugOf = (e: WriteEvent) => (e.args as unknown[] | undefined)?.[0];
+    const ofPage = (inbox: WriteEvent[], slug: string) => putEvents(inbox).filter((e) => slugOf(e) === slug);
+    /** The positive control of every negative below, in the same wiring: a real put_page with nothing writing beside it is not moved (it is, on master: its own bookkeeping batches move the counter). */
+    async function cleanPutPage(wrapped: BrainEngine, inbox: WriteEvent[]): Promise<void> {
+      await operationsByName.put_page.handler(opCtx(wrapped), { slug: 'notes/control', content: '---\ntitle: Control\ntype: note\n---\nControl mentions [[people/alice-example]].\n' });
+      await until(() => ofPage(inbox, 'notes/control').length >= 1);
+      expect(Boolean(ofPage(inbox, 'notes/control')[0]!.moved)).toBe(false);
+    }
+    /** Alice and Bob exist and are linked. A link write between them copies both pages and the links between the two; a put of Alice copies only Alice. */
+    const linked = async () => { await fresh(); await primary().putPage('people/bob-example', page('Bob Example')); await primary().addLink('people/alice-example', 'people/bob-example', 'knows', 'knows'); };
+    const linkAlice = (wrapped: BrainEngine) => wrapped.addLink('people/alice-example', 'people/bob-example', 'works_at', 'works_at');
+    const putAlice = (wrapped: BrainEngine, more?: (tx: BrainEngine, written: { id: number }) => Promise<unknown>) => wrapped.transaction(async (tx) => { const written = await tx.putPage('people/alice-example', page('Alice Renamed')); await more?.(tx, written as { id: number }); });
+    const linkSamples = (inbox: WriteEvent[]) => sampled(inbox, 'addLink').filter((e) => (e.args as unknown[] | undefined)?.[3] === 'works_at');
+
+    test('(i) a write by another call in this process to a copied row (the other page of a link write) marks the sample moved', async () => {
+      await linked();
+      const { inbox, wrapped } = prod();
+      await cleanPutPage(wrapped, inbox);
+      const hook = between(() => wrapped.putPage('people/bob-example', page('Bob Edited By Another Call')));
+      try { await linkAlice(wrapped); await until(() => linkSamples(inbox).length >= 1); } finally { hook.restore(); }
+      expect(Boolean(linkSamples(inbox)[0]!.moved)).toBe(true);
+    }, 120_000);
+
+    test('(ii) a different transaction changing the page between its commit and the read-back fails the revision check, with and without tags written after the page', async () => {
+      await linked();
+      const { inbox, wrapped } = prod();
+      await cleanPutPage(wrapped, inbox);
+      for (const tagged of [false, true]) {
+        const seen = ofPage(inbox, 'people/alice-example').length;
+        const hook = between(() => primary().transaction(async (tx) => { await tx.executeRaw("UPDATE pages SET title = title || ' (edited elsewhere)', knowledge_revision = gen_random_uuid() WHERE slug = 'people/alice-example'"); }));
+        try { await putAlice(wrapped, tagged ? (tx, written) => tx.addPageTagsById(written.id, ['alpha']) : undefined); await until(() => ofPage(inbox, 'people/alice-example').length > seen); } finally { hook.restore(); }
+        expect(Boolean(ofPage(inbox, 'people/alice-example')[seen]!.moved)).toBe(true);
+      }
+    }, 120_000);
+
+    test('(iii) a concurrent write to a target page\'s links outside the footprint (another link between the two pages) marks it moved', async () => {
+      await linked();
+      const { inbox, wrapped } = prod();
+      await cleanPutPage(wrapped, inbox);
+      const hook = between(() => primary().addLink('people/alice-example', 'people/bob-example', 'mentions', 'mentions'));
+      try { await linkAlice(wrapped); await until(() => linkSamples(inbox).length >= 1); } finally { hook.restore(); }
+      expect(Boolean(linkSamples(inbox)[0]!.moved)).toBe(true);
+    }, 120_000);
+
+    test('(iv) a write from another process to a copied row during the window marks the sample moved: the fence catches it, the counter cannot', async () => {
+      await linked();
+      const { inbox, wrapped } = prod();
+      await cleanPutPage(wrapped, inbox);
+      const hook = between(() => otherProcessWrite("UPDATE pages SET title = 'Bob Edited By Another Process' WHERE slug = $1", ['people/bob-example']));
+      try { await linkAlice(wrapped); await until(() => linkSamples(inbox).length >= 1); } finally { hook.restore(); }
+      expect(Boolean(linkSamples(inbox)[0]!.moved)).toBe(true);
+      const [title] = await primary().executeRaw<{ title: string }>("SELECT title FROM pages WHERE slug = 'people/bob-example'");
+      expect(title!.title).toBe('Bob Edited By Another Process'); // the other process really wrote it
+      const quiet = prod();
+      await quiet.wrapped.addLink('people/alice-example', 'people/bob-example', 'founded', 'founded');
+      await until(() => sampled(quiet.inbox, 'addLink').length >= 1);
+      expect(Boolean(sampled(quiet.inbox, 'addLink')[0]!.moved)).toBe(false); // the same wiring with no writer beside it is clean
+    }, 120_000);
+
+    test('a contextual-retrieval stamp written to the target page after the commit and before the read-back marks the sample moved: it changes a compared column but not the revision', async () => {
+      await linked();
+      const { inbox, wrapped } = prod();
+      await cleanPutPage(wrapped, inbox);
+      const hook = between(() => primary().updatePageContextualRetrievalState('people/alice-example', 'default', 'title', 'generation-after-commit'));
+      try { await putAlice(wrapped); await until(() => ofPage(inbox, 'people/alice-example').length >= 1); } finally { hook.restore(); }
+      expect(Boolean(ofPage(inbox, 'people/alice-example')[0]!.moved)).toBe(true);
+    }, 120_000);
+
+    test('the pin read never waits behind another writer queued on the page row: the save commits within the bound and its sample is sent, moved or not', async () => {
+      await linked();
+      const { inbox, wrapped } = prod();
+      let other: Promise<unknown> | undefined; const started = Date.now();
+      await putAlice(wrapped, async () => {
+        other = primary().executeRaw("UPDATE pages SET title = title || ' (queued)' WHERE slug = 'people/alice-example'"); // waits for the transaction's own row lock until it commits
+        await new Promise((r) => setTimeout(r, 300));
+      });
+      expect(Date.now() - started).toBeLessThan(2_000); // the pin (statement timeout 2 s) did not queue behind it, nor did the commit
+      await other;
+      await until(() => ofPage(inbox, 'people/alice-example').length >= 1);
+      expect(['sample', 'uncomparable']).toContain(ofPage(inbox, 'people/alice-example')[0]!.outcome ?? 'sample');
+    }, 60_000);
+
+    test('the page row stays locked by the transaction\'s own putPage until it commits: another transaction\'s update of it waits, so the revision read just before the commit is the transaction\'s own', async () => {
+      await fresh();
+      let waited = false; let other: Promise<unknown> | undefined;
+      await primary().transaction(async (tx) => {
+        await tx.putPage('people/alice-example', page('Alice Locked'));
+        other = primary().executeRaw("UPDATE pages SET title = title || ' x' WHERE slug = 'people/alice-example'").then(() => { waited = true; });
+        await new Promise((r) => setTimeout(r, 400));
+        expect(waited).toBe(false);
+      });
+      await other; expect(waited).toBe(true);
+    }, 60_000);
   });
 }

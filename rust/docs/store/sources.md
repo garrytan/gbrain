@@ -67,14 +67,13 @@ The source members below behave differently on the Rust engine. Each difference 
 - `listSourceIds` reads the ids from `listSourceRecords`, archived sources included, and sorts them in
   byte order. The SQL engines sort `ORDER BY id COLLATE "C"`, the same byte order on any server
   locale.
-- `readSoleSourceId` and `readFirstSourceId` read `listSourceRecords` too. The first answers the
-  only id or null; the second answers `default`, else the lowest id in byte order, as the SQL
-  engines' `COLLATE "C"` tie-break does. No parity case can drop `default` on a Rust brain, so
-  only the SQL arms check the case without it.
-- `lockAllSourceRows` takes no lock, like `lockSourceRow`. The SQL engines read every row
-  `ORDER BY id FOR UPDATE` (or `FOR SHARE`).
-- `lockSourceRow` reads the row from `listSourceRecords` and takes no lock. The SQL engines read
-  with `FOR UPDATE`; no parity case checks that lock.
+- `readSoleSourceId` and `readFirstSourceId` are not BrainEngine members on this tree; they appear only in the
+  typed-read list of `src/core/statement-deadline.ts`, and no `store-members/` module exports them.
+- `lockSourceRow` is not served on a Rust brain: it is classified `pages` with the comment "held: no Rust store
+  member yet" (`src/core/rust-engine/members/pages.ts:15`), is not exported from `store-members/`, and the store has
+  no method that takes a source row lock. The SQL engines read the row with `FOR UPDATE`.
+- `lockAllSourceRows` is not a BrainEngine member on this tree; no file under `src/` defines it (a comment in
+  `src/core/engine-sql/access-credentials.ts:66` names it).
 - `readSourceRow` reads from `listSourceRecords`. A caller that needs the incarnation makes one
   `readSourceIncarnation` call per source.
 - `advanceSourceCommit` stamps `last_sync_at` with the process clock. The SQL engines use the

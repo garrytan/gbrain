@@ -3,9 +3,16 @@
 Part of the store contract in [rust/README.md](../../README.md) ("The brain store"): the rules there apply to every method here.
 
 The persistence coordinator (`src/core/persistence/`) stays TypeScript. This family stores the rows
-it reads and writes, so the typed journal members of `src/core/engine-sql/persistence-journal.ts` and
-`persistence-claims.ts` and `persistence-housekeeping.ts` have the same answer on a Rust brain as on
-PGLite. The code is `crates/gbrain-store/src/persistence.rs`, with `persistence/housekeeping.rs` and
+it reads and writes. The store methods below are native only: the TypeScript engine on this tree serves four
+persistence members (`readManagedModeRows` and `ownsSchemaTables` in `store-members/persistence.ts`,
+`readPersistenceBrainId` in `store-members/persistence-identity.ts`, `readWriterAdminState` in
+`store-members/writer-admin.ts`) and no other module in `store-members/` exports a persistence member. The rest of
+the journal, claim and housekeeping reads of `src/core/engine-sql/persistence-journal.ts`,
+`persistence-claims.ts` and `persistence-housekeeping.ts` either are BrainEngine members classified
+`persistence_journal` (`src/core/rust-engine/members/persistence.ts`, `members/pages.ts:22-28`), which refuse
+a Rust brain with `engine_capability_missing`, or are functions that run SQL through `executeRaw`, which a Rust
+brain refuses with `raw_sql`. In the tables, a name in the "Mirrors" column that no file under `src/` names has no
+TypeScript caller. The code is `crates/gbrain-store/src/persistence.rs`, with `persistence/housekeeping.rs` and
 `persistence/topology.rs` and `persistence/projection_queue.rs`; the native write path (`submitPageMutation`) is in
 [journal.md](journal.md).
 
@@ -58,7 +65,7 @@ serialize by default; `concurrent_writes` enables optimistic concurrent writers.
 | `brain.insertWriteRequestGroup(rows)` | the stored `WriteRequest`s in order, each inserted and charged as `insertWriteRequest` does, all in one store write: a refusal at any row keeps no row and no charge | `insertWriteRequestGroup` (journal.ts `admitWriteGroupInTransaction`) |
 | `brain.readWriteRequest({ kind, id }, requestId)` | the `WriteRequest` or `null` | `readWriteRequest` |
 | `brain.listWriteRequestsByRequestId(requestId)` | at most two `WriteRequest` rows with that request id, across every principal (no order is promised; the Postgres statement has no ORDER BY); `invalid_input` for an id that is not a UUID. Two rows tell the caller the id is shared, so the host operator gets `not_found` instead of one principal's request | `readWriteRequestsByRequestId` |
-| `brain.readWriteRequestById(id)` | the `WriteRequest` or `null` | `readWriteRequestById`, `lockWriteRequest`, `readWriteRequestProgress` (the TS member picks the nine progress columns from this row) |
+| `brain.readWriteRequestById(id)` | the `WriteRequest` or `null` | `readWriteRequestById` and `lockWriteRequest` (BrainEngine members classified `persistence_journal`, refused on a Rust brain). `readWriteRequestProgress` is a function of `engine-sql/persistence-journal.ts`, not a member, and has no store method |
 | `brain.listWriteRequestsByRequestIds(requestIds)` | the `WriteRequest` rows admitted under any of the client request ids, any principal, by sequence; `invalid_argument` for an id that is not a uuid | `listWriteRequestsByRequestIds` |
 | `brain.listLaterPersistenceRequests(sourceId, incarnation, slug, sequence)` | the source's requests for the slug with a sequence above `sequence` (text, a Postgres bigint) in state `queued`, `running`, `recovering` or `committed`, in sequence order; the incarnation matches without regard to case. A sequence that is not an integer is `invalid_argument` | `listLaterPersistenceRequests` |
 | `brain.listCommittedOutputRequests(requestIds, sourceId, incarnation)` | `[{ request }]`: the committed `put_page` requests of the source and incarnation whose request id is one of `requestIds` (uuids), newest sequence first; an empty id list reads nothing | `listCommittedOutputRequests` |
@@ -78,7 +85,7 @@ serialize by default; `concurrent_writes` enables optimistic concurrent writers.
 | `brain.expireStaleWriteClaims({ hostId, charge, deadOwners })` | the number of claims returned to `queued`: an expired lease, or a phase owner in `deadOwners` (`pid:nonce:start`), with publication not started; at most 100, oldest first. `charge` counts one preparation attempt for a claim that expired while preparing | `expireStaleWriteClaims` |
 | `brain.hasClaimableWrite({ hostId, excludeRoots, priority })` | whether a claim would find a row now. `priority` `null` reads config `sync.foreground_priority` (on unless `0` or `false`). A host id that is not a uuid refuses with the uuid syntax message | `hasClaimableWrite` |
 | `brain.selectClaimableWrite({ hostId, excludeRoots, fifoRoots, laneRoots, nonce, syncSeen, priority, leaseHolder })` | the request row a FIFO claim takes next, or `null`. A row is a candidate when it is `queued` or a `deferred` row whose refresh is released. With `leaseHolder` (`{ lockPrefix, pid, host }`, a non-resident consumer), a managed-sync row whose lock `lockPrefix + source_id` is live and held by another process ranks last; then a foreground row before the sync rows it passes, then sequence order. A root in `fifoRoots` claims plain FIFO; with any lane root only a foreground row is claimed. `nonce` and `syncSeen` feed the sync-wait term, which matches worktree rows only. A host id that is not a uuid, or a fractional or out-of-range `pid`, refuses as the Postgres casts do | `selectClaimableWrite` |
-| `brain.readSourceMembership(sourceId)` | `{ incarnation, archived }` or `null` | `readSourceMembership`, `readLedgerSource` |
+| `brain.readSourceMembership(sourceId)` | `{ incarnation, archived }` or `null` | `readSourceMembership` (a BrainEngine member classified `persistence_journal`, refused on a Rust brain); `readLedgerSource` is classified the same and also refuses |
 
 A candidate row that names a worktree is claimed only by a consumer of the host that owns the worktree
 while the worktree is `active`, with no fence (`fenced`, `merged`, `recovery_required`) refresh, no
@@ -106,16 +113,15 @@ host owns, and claims with a null worktree.
 
 ### Access grants
 
-The access-grant members answer from the OAuth client and access token rows the store keeps
-([oauth-clients.md](oauth-clients.md), [access-tokens.md](access-tokens.md)). `readOAuthClientReceiptGrant` and
-`readAccessTokenReceiptGrant` return the row deleted or revoked too (the caller refuses it);
-`readOAuthClientMemberGrant` and `readAccessTokenMemberGrant` return nothing for a deleted client or a revoked token.
-A token id that is not a UUID is refused as PostgreSQL refuses it. The `lock` option changes nothing: the store runs
-one write transaction at a time. The write re-check reads `readOAuthClientWriteGrant` and
-`readAccessTokenWriteGrant` are served the same way ([journal.md](journal.md)).
-`readLocalWriterMemberGrant` is `readLocalWriterRow` (the revoked row is returned with its mark; the caller
-denies it). `readSharedSkillServingEpoch` is a UUID derived from the persistence brain id (SHA-256), stable for
-the brain, and `null` when the brain has no id, so membership denies.
+The native access-grant reads answer from the OAuth client and access token rows the store keeps
+([oauth-clients.md](oauth-clients.md), [access-tokens.md](access-tokens.md)): `brain.readOauthClientWriteGrant` and
+`brain.readAccessTokenWriteGrant` (`crates/gbrain-store/src/jobs/credential_binding.rs:250,264`) return the row of a
+deleted client or a revoked token too, with `deleted_at` or `revoked_at` as ISO text, and `null` for an id the store does
+not have; a token id matches in any case. Their BrainEngine members `readOAuthClientWriteGrant` and
+`readAccessTokenWriteGrant`, and `shareLockWriteCredential`, are classified `persistence_journal`
+(`members/persistence.ts:21-23`) and refuse on a Rust brain; no TypeScript member calls the native reads. No file in
+`src/` or `crates/` names `readOAuthClientReceiptGrant`, `readAccessTokenReceiptGrant`, `readOAuthClientMemberGrant`,
+`readAccessTokenMemberGrant`, `readLocalWriterMemberGrant` or `readSharedSkillServingEpoch`.
 
 ## Receipt list
 
@@ -141,11 +147,10 @@ Lengths count characters, as Postgres `left` and `length` do.
 
 ## Steps that need one transaction
 
-Three coordinator steps run as one engine transaction. Each calls `requireTransactions`
-(`src/core/rust-engine/errors.ts`) before it opens one: an engine whose capability set lacks
-`transactions` refuses with `engine_capability_missing`, `capability=transactions` and the step's name
-and reason in the detail, and writes nothing. This engine serves `transactions`, so the check passes;
-an engine without a capability set (Postgres, PGLite, a transaction handle) passes too.
+Three coordinator steps run as one engine transaction (`engine.transaction`, `engine.transactionDirect`). No
+`requireTransactions` function exists in `src/`. A Rust brain does not serve `transaction` or `transactionDirect`
+(classified `transactions`; `store-members/transactions.ts:12` is `export {}`), so `servedCapabilities()` does not report
+`transactions` and each step refuses with `engine_capability_missing` before it opens one.
 
 | Step | Why it needs a transaction |
 | --- | --- |
@@ -182,7 +187,7 @@ The consumer's housekeeping after a write (`persistence-housekeeping.ts`).
 | `brain.completeHousekeepingTurn({ op, hostId })` | marks a leased turn done; any other row is left as it is | `completeHousekeepingTurn` |
 | `brain.readReceiptBudget(retentionKey, floorDays)` | `{ retention, used, cutoff }`: the config value, the brain counter's terminal bytes, and now minus `floorDays` | `readReceiptBudget` |
 | `brain.listCompactableReceipts(retentionDays)` | compactable receipts completed more than `retentionDays` ago that are not an unresolved caller refusal, oldest first, at most 100. The open-sync-cursor and newest-sync-receipt exclusions never match (no managed-sync rows, no worktree) | `listCompactableReceipts` |
-| `brain.readReceiptCompactionWindow(hours)`, `brain.listReceiptCompactionCandidates(states, cutoff, maxSequence)`, `brain.countKeptFailedReceipts(cutoff)` | the `repair receipt-compaction` reads: now minus `hours` as a UTC ISO time with microseconds and the newest request sequence as text (null on an empty journal); the receipts in `states` with no recovery, not compacted, completed before `cutoff`, at or below `maxSequence` and with every effect committed, leaving out a receipt of a managed-sync run whose cursor is not done or a pass whose outcome is `open`, oldest first; and the count of failed, conflicted and cancelled receipts before `cutoff`. The newest-sync-receipt exclusion never matches (no worktree). Compacting a receipt stays raw SQL, so an apply with a candidate stops on `raw_sql` | `readReceiptCompactionWindow`, `listReceiptCompactionCandidates`, `countKeptFailedReceipts` |
+| `brain.readReceiptCompactionWindow(hours)`, `brain.listReceiptCompactionCandidates(states, cutoff, maxSequence)`, `brain.countKeptFailedReceipts(cutoff)` | the `repair receipt-compaction` reads: now minus `hours` as a UTC ISO time with microseconds and the newest request sequence as text (null on an empty journal); the receipts in `states` with no recovery, not compacted, completed before `cutoff`, at or below `maxSequence` and with every effect committed, leaving out a receipt of a managed-sync run whose cursor is not done or a pass whose outcome is `open`, oldest first; and the count of failed, conflicted and cancelled receipts before `cutoff`. The newest-sync-receipt exclusion never matches (no worktree). `repair receipt-compaction` (`src/core/repair/receipt-compaction.ts:55-97`) reads these with `executeRaw`, which a Rust brain refuses with `raw_sql`; no TypeScript member calls these methods | `readReceiptCompactionWindow`, `listReceiptCompactionCandidates`, `countKeptFailedReceipts` |
 | `brain.listReservationsAfter(after, limit)` | `{ id, sequence, compacted }` past `after`, in sequence order | `listReservationsAfter` |
 | `brain.listTrueUpRequests(ids)` | the terminal requests among `ids`, in no set order, with `effect_bytes` (the request's effect rows summed as `EFFECT_BYTES_SQL` sums them, as text) and `unfinished` (an effect is `queued` or `running`) | `listTrueUpRequests` |
 | `brain.trueUpReservations(rows)` | the bytes given back, as text. Each `{ id, old, kept, effects }` whose request still reserves `old`, still has `effects` effect bytes and has no `queued` or `running` effect now reserves `kept`. The freed bytes, summed per counter (the brain and the request's principal), leave the counters that exist, clamped at zero; each clamped counter adds one to config `persistence.true_up.clamped`. A changed or unknown request changes nothing. `invalid` for a malformed id or effect byte count | `trueUpReservations` |
@@ -197,7 +202,7 @@ The consumer's housekeeping after a write (`persistence-housekeeping.ts`).
 | `brain.listQueuedPageProjections(filter)` | the queued jobs of unsegmented pages a rebuild can take now (`{ jobs, pages }`), with `filter` `{ sourceId?, slug?, slugs?, keys?, after?, limit, model, dims, staleText?, served? }` as `listQueuedPageProjections` (engine-sql/projection-rebuild.ts) reads it; `served: 'waiting'` keeps the pages the activation has not served | `listQueuedPageProjections` |
 | `brain.readProjectionJobReason(key)` | the job's reason, or `null` (the rebuild deletes the job with `deleteProjectionJob` above) | `readProjectionJobReason` |
 | `brain.readChunkKeepState(pageId, model, dims)` / `brain.clearUnkeptChunkVectors(pageId, model, dims, currentIds)` | the chunk ids whose vector the rebuild keeps for the model and dimensions; the clear drops the vector of every other chunk of the page, in one write | `readChunkKeepState`, `clearUnkeptChunkVectors` |
-| `brain.hasDrainableProjectionJob()` | whether a job of a live inline page of an active source is queued with a reason other than `rebuild_failed`; the TypeScript member refuses the `media` option | `hasDrainableProjectionJob` |
+| `brain.hasDrainableProjectionJob()` | whether a job of a live inline page of an active source is queued with a reason other than `rebuild_failed`. The BrainEngine member `hasDrainableProjectionJob` is classified `persistence_journal` (`members/persistence.ts:55`) and refuses on a Rust brain, so no TypeScript member passes the `media` option to this method | `hasDrainableProjectionJob` |
 | `brain.readChunkRowsFingerprint(pageId)` | an opaque text that changes when the page's chunk rows (their ids and indexes) change: the row count and the sha256 of the `id:index` pairs. It is compared only with itself, never with the Postgres `hashtext` sum | `readChunkRowsFingerprint` |
 | `brain.deleteUnkeptChunks(pageId, keptIds)` | every chunk row of the page whose id is not in `keptIds` deleted | `deleteUnkeptChunks` |
 | `brain.listStaleChunkVectors(pageId, model, dims, currentIds)` | in chunk order, the ids of the page's chunks that hold a vector the page no longer accepts: another model (or the bare name at other dimensions), embedded from other text, or not in `currentIds` | `listStaleChunkVectors` |
@@ -256,15 +261,17 @@ Differences from the SQL engines:
   caller answers 0).
 - The SQL record read names no order; the store answers in the order the fingerprints are named. The
   caller keys the records by page.
-- The sync import provenance records (op `sync-import-provenance`, one per page) go through the two record
-  members. The sync holds, their summary and the managed sync pass row are whole rows written through the
-  checkpoint row methods below. The other `op_checkpoints` writers (sync delete tombstones, sync identity
-  downgrades, fence repair, the persistence receipts) are still raw SQL. Their rows are not in this store, so
-  the store's unit test is the only check of the tombstone and downgrade exemptions on this engine.
+- No TypeScript member calls the record methods. `store-members/op-checkpoint.ts` exports only
+  `purgeStaleAppliedCaptures`, which answers `0`; `readOpCheckpointKeys` and `deleteOpCheckpoint` are classified
+  `persistence_journal` and refuse. The sync import provenance records (op `sync-import-provenance`, one per page:
+  `readSyncImportProvenances`, `recordSyncImportProvenances`), the sync holds, their summary and the managed sync
+  pass row are written by `src/core/persistence/sync-holds.ts`, `sync-prepare.ts` and their neighbours through
+  `executeRaw`, which a Rust brain refuses with `raw_sql`. So on this tree the store's unit test is the only check of the
+  tombstone and downgrade exemptions.
 
 ## Sync pass pages
 
-A managed sync pass's `I⋈P` read (`src/core/engine-sql/sync-pass-pages.ts`): the source's pages with a
+A managed sync pass's `I⋈P` read (the native method only: `src/core/engine-sql/sync-pass-pages.ts` does not exist on this tree and no TypeScript file names `readSyncImportPageRows`): the source's pages with a
 `source_path`, each with the fields of its `sync-import-provenance` record (fingerprint
 `<source>:<incarnation>:<page id>`), in page id order. It reads the pages, their body state and
 contextual retrieval mode, the records, and for a deleted page the `sync-delete-tombstone` record and the
@@ -282,8 +289,9 @@ Differences from the SQL engines:
 
 ## Sync run reads
 
-A managed sync run's journal reads (`src/core/engine-sql/sync-run-reads.ts`) and the `sync.admission`
-statements (`src/core/engine-sql/sync-admission.ts`): the requests a principal admitted, the two reads of the
+A managed sync run's journal reads and the `sync.admission` statements (native methods only:
+`src/core/engine-sql/sync-run-reads.ts` and `sync-admission.ts` do not exist on this tree and no TypeScript file names
+these methods): the requests a principal admitted, the two reads of the
 `concurrent_write` proof, the row that dates a local `config set sync.admission`, and `sync status`'s two
 `effective` probes of a restricted value. A parameter the SQL casts to `uuid` that is not a UUID refuses with
 `invalid_input`.
@@ -303,15 +311,14 @@ Differences from the SQL engines:
   as its `created_at`, which the stamp never dates before.
 - An unparsable `setAt`, or a pinned pass whose `started_at` does not parse, refuses with `invalid_input`, as the
   `::timestamptz` casts refuse.
-- `syncAdmissionStatus` reads the setting itself with raw SQL first, so `sync status` still refuses on this engine
-  until that read is a member.
 
 ## Checkpoint rows
 
 A whole `op_checkpoints` row, read and written as one JSON value (checkpoint_rows.rs). The rows use
 the op checkpoint keys (`d 0x02 <op> 0x00 <fingerprint>`), so the purge above and `deleteOpCheckpoint`
-see them. The TypeScript members in `src/core/rust-engine/store-members/sync-hold-store.ts` build the
-sync hold, hold summary and managed sync pass members on these methods. An op or fingerprint with a
+see them. No file `store-members/sync-hold-store.ts` exists and no TypeScript member calls these methods; the names in
+the "Mirrors" column (`readGitHoldRow`, `writeGitHoldRow`, `replaceGitHoldRow`, `lockGitHoldSummary`, `adjustGitHoldSummary`,
+`readSyncPassRow`, `writeSyncPassRow`) appear in no file under `src/`. An op or fingerprint with a
 NUL byte reads nothing and refuses a write with `invalid_input`.
 
 | JS | Resolves | Mirrors |
@@ -322,15 +329,7 @@ NUL byte reads nothing and refuses a write with `invalid_input`.
 | `brain.listOpCheckpointRows(op, fingerprintPrefix)` | the op's rows whose fingerprint starts with the prefix (every row for `""`), in fingerprint byte order | `readGitHoldRecords`, `readHeldPageRows`, `readLiveSyncPassRows` |
 | `brain.readPageRevisions(ids)` | `{ id, slug, knowledge_revision }` of each listed page, deleted or not, once each in id order; an unknown or negative id answers nothing (`trust/withdrawal_commit.rs`; `readHeldPageRows` joins its page by id through it and reads `knowledge_revision`) | `readPageRevisions` |
 
-Differences from the SQL engines:
-
-- The SQL members change a row inside one statement. The TypeScript members read the row, then
-  write it with `replaceOpCheckpointRow`, which lands only on the row they read. The summary
-  adjustment retries up to 8 times and then throws, where Postgres waits on the row lock.
-- `lockGitHoldSummary` takes no lock: it creates a missing summary or re-stamps an existing one.
-  Two concurrent hold writes of one path are not serialized; the summary counts stay right because
-  each adjustment is a compare-and-replace.
-- `read_at` of a pass row is the process clock at the read; the SQL engines use the database clock.
+`replaceOpCheckpointRow` is the compare-and-replace these rows offer: it lands only on the row the caller read.
 
 ## Commit notifier
 
@@ -342,9 +341,10 @@ The resident commit notifier's host lease, host source list, per-source rows and
 `attachMarkerJob`, `readMarkers`, `readDueMarkers`, `pruneSatisfiedMarkers`, `clearMarker` and
 `settleMarkers`), the sync request's source shape (`notifier/nudge.ts` `sourceSyncShape`), the first-due
 clock (`sync-pending.ts` `readFirstDue`) and the drain lease holder's progress (`persistence/sync-lease.ts`).
-With these typed, a resident on this engine starts the notifier and records each
-source's state and coverage, a sync request records its marker, and search reports each source's
-freshness, as on Postgres.
+The notifier code reads and writes these rows with `executeRaw` (`src/core/notifier/store.ts`,
+`status.ts`), which a Rust brain refuses with `raw_sql`. `readNotifierStatusRows` and `hasNotifierCoverage` are
+BrainEngine members classified `persistence_journal` and refuse; the other names above are not members, and no
+TypeScript member calls the native methods below.
 
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
@@ -376,7 +376,7 @@ marker that names a head stops being due once that head equals the source's `las
 
 | `brain.readSourceSyncShape(sourceId)` | `{ local_path, root, bound }` for a source that exists and is not archived, else `null`. This engine keeps no managed worktree binding, so `root` is `null` and `bound` is `false` | `readSourceSyncShape` |
 | `brain.readNotifierFirstDue(ids)` | one row per existing listed source (archived included), in id order: `{ source_id, observed_head, first_due_at }`. `observed_head` is the notifier row's at the source's incarnation; `first_due_at` is the earlier of that row's `first_due_at` when its state is not idle and the oldest freshness marker whose `wanted_head` is null or differs from the source's `last_commit` | `readNotifierFirstDue` |
-| `readDrainHolderProgress(sourceId, since)` | `null`, answered in TypeScript (`store-members/write-misc.ts`): this engine keeps no managed worktree binding or managed commit journal, so the holder's progress reads zero commits, as an unbound source does on Postgres | `readDrainHolderProgress` |
+| `readDrainHolderProgress(sourceId, since)` | not served: no file `store-members/write-misc.ts` exists and no file under `src/` or `crates/` names `readDrainHolderProgress` | none |
 A source delete removes its notifier row and its wanted markers. The drain lease's holder record and
 the notifier's live-job read are in [jobs.md](jobs.md); the source's `last_commit` read is in
 [sources.md](sources.md).
@@ -454,8 +454,9 @@ and it failed, or it is queued and was last updated over an hour ago or carries 
 effect whose code is in `neverRetried` is left out, and so is a failed effect with no code, as the SQL `NOT (...
 IN ...)` drops it. `chars` is the `compiled_truth` plus `timeline` length of the effect's `page_id`, the sum over its
 `targets` (a target named twice counts twice), or the sum over the source's live pages; 0 when no page matches.
-The repair's settle step stays on raw SQL, so a candidate here stops the repair's apply on the `raw_sql`
-refusal; an empty list previews and applies as Postgres does.
+The TypeScript `listEmbeddingCandidates` and the settle step in `src/core/persistence/embedding-settlement.ts`
+(lines 73 to 231) run their SQL through `executeRaw`, which a Rust brain refuses with `raw_sql`; no TypeScript member
+calls this method.
 
 The effect worker claims and settles these rows (see "Effect worker"). The receipt names a row that
 exists, and the write's reservation stays charged until the effect ends.
@@ -559,8 +560,8 @@ embedding effects whose chunks already carry current vectors. Its four members:
   with no withdrawal mirror of the request left to commit, whose page is in the effect's source, live,
   at the effect's revision with its text projection sealed there and stamped with `spec.signature`, and
   whose every chunk has a vector, `embedded_at`, an embedded text hash equal to the md5 of its text and
-  the model `spec.expectedModel` (`null` matches a chunk with no model). Only the `embedding` column is
-  served; another column refuses as a missing member.
+  the model `spec.expectedModel` (`null` matches a chunk with no model). The store has one vector
+  column, `embedding`, and no TypeScript file names this method, so no TypeScript caller chooses another column.
 - `brain.settleNoopEmbeddingRows(ids)`: each `queued` effect with no recovery among `ids` becomes
   `committed` with no error, one more attempt, no claim, outcome `{}` and the data keys `retry_slugs`,
   `target_failures` and `failing_target` removed; it returns `{ id, request_id }` for each.
@@ -605,9 +606,10 @@ An unmanaged writer claim (`claimWorktree` in `src/core/persistence/ownership.ts
 worktree per checkout, its paths on this host and the source that lives under it. The claim runs
 through `claimWorktreeBinding(engine, body)` in `src/core/engine-sql/worktree-claim.ts`: it opens
 `engine.transaction` and gives the body the transaction's `worktreeClaimStore()`. On PGLite and
-Postgres that store is the module's SQL; on this engine it is the store calls below on the
-transaction's handle. The transaction opens on the engine the caller holds, so a wrapper of the
-engine sees it. The claim's checks (the source lock, the writer admin lock,
+Postgres that store is the module's SQL. On a Rust brain neither is served on this tree: `worktreeClaimStore` is a
+BrainEngine member classified `persistence_journal` (`members/pages.ts:22`) and `transaction` is classified
+`transactions` (`store-members/transactions.ts:12` exports nothing), so both refuse with `engine_capability_missing`.
+The store calls below are native only. The claim's checks (the source lock, the writer admin lock,
 the overlap with this host's other worktrees and the physical-root files) stay in TypeScript. The
 store keeps the three rows and refuses what the tables' keys, foreign keys and CHECKs refuse.
 
@@ -646,8 +648,11 @@ reviewed `--expected-state` check (`writerAdminState`, `assertWriterAdminState`)
 (`ownership.ts`) run as a `writerAdminTransaction` body over that store. An accept reads the
 prepared manifest with `readWorktreeManifest` before its transaction, and rebinds the content
 receipts through the store's `contentReceiptRows` and `swapConfigValue`
-(`shared-skills/receipt-root.ts`). On this
-engine the store's calls run on the transaction's store handle (`store-members/writer-admin.ts`).
+(`shared-skills/receipt-root.ts`). The store has
+the methods for that, but this engine serves only the state read: `store-members/writer-admin.ts` exports
+`readWriterAdminState` (lines 11-14, `brain.writerAdminStateText()`) and no `writerAdminStore`, and
+`store-members/transactions.ts` exports nothing (line 12). The transaction-backed writer lock and transfer calls above
+therefore still refuse a Rust brain until those members are wired.
 `lockBrain` and `{ lock: true }` do nothing: the store runs one write transaction at a time, so a
 state read in a transaction holds until it commits. `now()` is this process's clock in the SQL
 engines' format.
@@ -662,18 +667,21 @@ over no rows gives. Two parts differ from a SQL brain:
 - **The digest.** Each brain has its own id, so a state reviewed on one brain never matches
   another, on any engine.
 
-A real `gbrain sources writer claim` applies on this engine, and `writer deactivate` and
-`writer activate` lift it through the writer release store ("Writer release" below).
+The writer claim path (`claimWorktree` in `src/core/persistence/ownership.ts`) runs on `worktreeClaimStore` and
+`writerAdminStore`, and neither is served on a Rust brain on this tree. The writer release calls ("Writer release"
+below) are not served either.
 
-A claim that finds a wedged reservation (its coordination lock recorded inside the checkout, #6766)
-repairs it in one claim-store transaction (`persistence/coordination-lock.ts`
-`repairWedgedReservation`): the store's `brainId` and `worktree` answer the brain and worktree checks
-from the brain row and the worktree records.
+A claim that finds a wedged reservation (its coordination lock recorded inside the checkout) repairs it in one
+claim-store transaction (`persistence/coordination-lock.ts` `repairWedgedReservation`); that claim store is
+`worktreeClaimStore`, which a Rust brain does not serve on this tree. The store's `brain_id` and worktree records are native only.
 
 ## Writer status
 
-`gbrain sources writer status` reads five members of `src/core/engine-sql/writer-status.ts`,
-answered here by `persistence/writer_status.rs`:
+`gbrain sources writer status`: `src/core/engine-sql/writer-status.ts` holds only the row types
+(`WriterStatusRows`, `OnboardingSourceRow`, `BlockingEffectRow`) on this tree, and no TypeScript file names the reads
+below. The store answers four of them natively in `persistence/writer_status.rs`
+(`brain.writerDiagnosticRows`, `writerStatusRows`, `onboardingSources`, `blockingEffectRows`,
+`writer_status.rs:338-373`); no TypeScript member calls them.
 
 - `readWriterDiagnosticRows(abandonedCutoff, excludedOrigins)`: the request, counter and claim row
   sets of the diagnostics block. A running claim untouched since the cutoff is abandoned. A cutoff
@@ -683,24 +691,24 @@ answered here by `persistence/writer_status.rs`:
 - `listOnboardingSources(sourceId)`: the active sources of the onboarding preflight.
 - `listBlockingEffectRows(sourceId, limit, recoveringOnly)`: the effects that keep the brain from
   quiescing, by id.
-- `listActiveWorktreeRefreshRows(sourceId)`: the active worktree refreshes, oldest first, with
-  their deferred request count and age.
+
+`listActiveWorktreeRefreshRows(sourceId)` has no store method; no file under `src/` or `crates/` names it.
 
 Text keys sort in byte order on every engine (`COLLATE "C"` in the SQL). Ages are whole
-milliseconds, rounded as `EXTRACT(EPOCH ...)*1000` cast to bigint rounds. Three reads of the status
-(stalled catch-ups, parked groups and source movement) still read raw SQL: on this engine the
-first two refuse and source movement reports `not_read`.
+milliseconds, rounded as `EXTRACT(EPOCH ...)*1000` cast to bigint rounds.
 
 ## Writer release
 
 `gbrain sources writer deactivate` and `activate` (`src/core/persistence/deactivation.ts`,
 `activation.ts`, `pre-activation-release.ts`) and the counter charges of a topology receipt
-(`topology-receipts.ts`) run on the BrainEngine members `writerReleaseStore()` and
-`addPersistenceCounters(key, delta)` of `src/core/engine-sql/writer-release.ts`. On this engine the
-store is `store-members/writer-release.ts`: each read is one `brain.writerReleaseRows({ kind, ... })`
-call (`persistence::ReleaseRead`) with the rows of the SQL it replaces. The lock calls and `begin`
-change nothing (one write transaction at a time, durable commit). `writerProtocolCount` is 0: no
-writer protocol registration exists here.
+(`topology-receipts.ts`) are the callers the native release methods are built for. On this tree no
+TypeScript file calls `brain.writerReleaseRows`, `setBrainEnabled`, `releaseWorktreeBindings` or the native
+`addPersistenceCounters`: `store-members/writer-release.ts` does not exist, `writerReleaseStore` appears only in
+`src/core/engine-sql/writer-release.ts`, and the BrainEngine member `addPersistenceCounters` is classified
+`persistence_journal` (`members/pages.ts:26`) and refuses on a Rust brain. The one release read served is
+`readManagedModeRows`, which reads `kind: 'brain_mode'` (`store-members/persistence.ts:9-15`). Each
+`writerReleaseRows` read is one `brain.writerReleaseRows({ kind, ... })` call (`persistence::ReleaseRead`) with the rows of the
+SQL it replaces. `writerProtocolCount` is 0 in the store: no writer protocol registration exists there.
 
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
@@ -721,9 +729,9 @@ writer protocol registration exists here.
 
 Differences from a SQL brain: slugs and source ids sort in byte order; the store keeps no
 `database_only_reason` (always null); an audit page's frontmatter size is its compact JSON text
-(only the audit's 5 MB skip reads it). The engine reports `managed_persistence`, so an activated Rust
-brain is written through the journal; a topology change of a managed source still refuses `raw_sql`
-(`persistence/topology-locks.ts`).
+(only the audit's 5 MB skip reads it). The Rust engine does not report `managed_persistence`
+(`readOwnerHostBinding` is classified with it, `members/persistence.ts:28`, and refuses), so nothing on this tree
+writes an activated Rust brain through the journal.
 
 ## Publication journal
 
@@ -732,12 +740,12 @@ A write to a worktree-bound source publishes its file around a request-row recov
 prepareRecovery, clearResolvedRecovery and markRecovering, `page-prepare.ts`, `ownership.ts`
 guardOwnership, `effect-journal.ts`, `staging.ts` upgradeRecoveryStaging). Those reads and writes
 run on the BrainEngine member `publicationJournalStore()` of
-`src/core/engine-sql/publication-journal.ts`. On this engine the store is
-`store-members/publication-journal.ts`: each read is one `brain.publicationJournalRows({ kind, ... })`
-call (`persistence::PublicationRead`) and each write one `brain.publicationJournalWrite({ kind, ... })`
-call (`persistence::PublicationWrite`). `lockSource`, `shareWorktree` and `stagingDurability` change
-nothing (one write transaction at a time, durable commit); `shareWorktreeOwner` is
-`brain.readWorktreeOwner(id)`.
+`src/core/engine-sql/publication-journal.ts`. A Rust brain does not serve it: the member is classified
+`persistence_journal` (`members/pages.ts:28`) and refuses, and no file `store-members/publication-journal.ts` exists.
+The native store has the calls: each read is one `brain.publicationJournalRows({ kind, ... })` call
+(`persistence::PublicationRead`, `crates/gbrain-store/src/persistence/publication.rs:470`) and each write one
+`brain.publicationJournalWrite({ kind, ... })` call (`persistence::PublicationWrite`, `publication.rs:475`);
+`brain.readWorktreeOwner(id)` is the owner read. No TypeScript member calls them.
 
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
@@ -757,16 +765,16 @@ nothing (one write transaction at a time, durable commit); `shareWorktreeOwner` 
 
 A counter release below zero is `constraint_violation`, as the CHECK (>= 0) refuses it; a missing
 counter row changes nothing. recoverPublication and upgradeRecoveryStaging move the counters through
-`addPersistenceCounters` ("Writer release"). A bound write is still admitted only through
-`requireManagedPersistence` (`journal.ts` admission), which this engine refuses until that
-admission is typed. The owner pending-wait read in `owner-activity.ts` stays raw SQL.
+`addPersistenceCounters` ("Writer release"). No function `requireManagedPersistence` exists in `src/`; the
+`managed_persistence` capability is named only in `engine-capabilities.ts` and in the classification of
+`readOwnerHostBinding` (`members/persistence.ts:28`), and the Rust engine does not report it.
 
-## TypeScript members with no stored state
+## Members with no stored state
 
-| Member | Answer | Why |
+| Member | On a Rust brain | Why |
 | --- | --- | --- |
-| `readLedgerSource(sourceId, opts?)` | `{ incarnation, purgeEpoch: 0, coverage: null, purgesPossible }`, `purgesPossible` true when the source holds a fact purge tombstone (`hasFactPurges`, rust/docs/store/facts.md "The fact purge ledger"); a batch adds `managedRows: [{ enabled: false }]` and `planModePrev`, the transaction's `plan_cache_mode` before the probe (`'auto'` when unset), and inside a transaction with coverage active sets it to `force_generic_plan` | Belief events, the purge epoch and take and page purges are written only through `executeRaw`, which this engine refuses. |
-| `listHostConsumerRows(hostId, opts?)`, `probeLiveConsumerRows(probe, opts?)` | `[]` | One process owns this engine's brain, so it keeps no consumer heartbeat rows. PGLite, which also admits one process, answers the same in its callers (`listHostConsumers`, `probeLiveFullConsumer`) without a read. |
-| `renewConsumerRow(renewal, opts?)`, `deleteConsumerRow(key, opts?)` | resolve with no effect | The heartbeat has no row to renew or delete. `stampWorktreeHeartbeats` is served; see "Worktree bindings". |
-| `lockEffectGuard(worktreeId)` | resolves `null` | The store is single-writer, so the brain-row share lock has nothing to wait on, and this engine has no worktree to read. A worktree id that is not a uuid refuses with the uuid syntax message. |
-| `requireSynchronousCommit()` | resolves with no effect | A store commit makes every write durable before it returns (`kv.rs` `commit`), so there is no asynchronous commit to turn off. |
+| `readLedgerSource(sourceId, opts?)` | refuses: classified `persistence_journal` (`members.ts:321`) and not exported from `store-members/` | The native `brain.readLedgerSource` (`crates/gbrain-napi/src/families/belief_ledger.rs:215`) exists; no TypeScript member calls it. |
+| `listHostConsumerRows(hostId, opts?)`, `probeLiveConsumerRows(probe, opts?)` | not BrainEngine members on this tree; they appear only in the typed-read list of `src/core/statement-deadline.ts:108-119` | The store keeps no consumer heartbeat rows and has no method of these names. |
+| `renewConsumerRow(renewal, opts?)`, `deleteConsumerRow(key, opts?)` | no file under `src/` or `crates/` names them | The store keeps no consumer heartbeat rows. `stampWorktreeHeartbeats` is a native method (`crates/gbrain-napi/src/families/worktrees.rs:215`); no TypeScript member calls it. |
+| `lockEffectGuard(worktreeId)` | refuses: classified `persistence_journal` (`members/persistence.ts:48`) | No store method of that name. |
+| `requireSynchronousCommit()` | refuses: classified `transactions` (`members/foundation.ts:8`) | A store commit makes every write durable before it returns (`kv.rs` `commit`), so the store has no asynchronous commit to turn off. |

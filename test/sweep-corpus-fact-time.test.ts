@@ -4,8 +4,8 @@
  *
  * Protects: a backdated session file yields facts whose valid_from is the
  * file's day, and the extractor is told that day as the observation date;
- * a file time that cannot be trusted (in the future, or before 2000) falls
- * back to extraction time; the file time stays out of the managed batch key
+ * a file time that cannot be trusted (in the future, or before 2000) leaves
+ * the event date unknown; the file time stays out of the managed batch key
  * (persistence/facts-maintenance.ts digests validFrom, not turnAt), so it
  * never re-keys a window already tried.
  * Fails when: the corpus pass stamps facts at extraction time again.
@@ -84,14 +84,12 @@ describe('corpus fact time (#6159)', () => {
     expect(prompts.join('\n')).toContain(`Observation date: ${written.toISOString().slice(0, 10)}`);
   });
 
-  test('an untrusted file time (future, or before 2000) dates facts at extraction', async () => {
+  test('an untrusted file time (future, or before 2000) leaves the event date unknown', async () => {
     session('future.txt', new Date(Date.now() + 3 * DAY));
     session('ancient.txt', new Date('1990-01-01T00:00:00Z'));
-    const before = Date.now();
     await sweep();
-    const dates = await factDates();
-    expect(dates).toHaveLength(2);
-    for (const d of dates) expect(d.getTime()).toBeGreaterThanOrEqual(before - 1_000);
+    const rows = await engine.executeRaw<{ valid_from: Date | null }>("SELECT valid_from FROM facts WHERE source = 'sweep:corpus'");
+    expect(rows.map((r) => r.valid_from)).toEqual([null, null]);
   });
 
   test('corpusFactTime accepts a sane file time and rejects the rest with a reason', () => {

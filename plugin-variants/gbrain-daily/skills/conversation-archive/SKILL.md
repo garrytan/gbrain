@@ -1,6 +1,7 @@
 ---
 name: conversation-archive
 version: 1.0.0
+audience: owner
 description: >
   Import AI-assistant chat exports (ChatGPT, Claude, Perplexity) and agent
   session transcripts into the brain as one dated page per conversation under
@@ -74,14 +75,16 @@ formats:
 gbrain transcripts ingest ~/Downloads/conversations.json   # unzip first
 gbrain transcripts ingest                                  # discover harness logs
 gbrain transcripts ingest --max-bytes 4gb <store>          # oversized store (omit = per-format caps)
+gbrain transcripts ingest converted.json --format claude-export --provider muse-example
 gbrain transcripts status                                  # found vs imported gaps
 gbrain transcripts archive run                             # one page per conversation per local day (on by default on a personal brain, run by maintenance; `archive off` stops it)
 ```
 
-`--max-bytes` note: the cap is part of the `--since last` checkpoint
-fingerprint — running with a different cap (or dropping it) starts a fresh
-watermark scope, so a capped run's skipped tail is never mistaken for
-already-scanned.
+Use `--provider` for converted logs: it labels the origin under
+`conversations/<provider>/`, without changing the parser or renaming old
+pages. Use 1–40 characters: lowercase letters or digits, with single
+hyphens between them. Changing or dropping the provider or byte cap starts a
+separate `--since last` checkpoint.
 
 Native-vs-manual delta to know: the native lane redacts SECRETS by FORMAT
 (vendor key prefixes, JWTs, cloud/API key shapes, `Bearer` headers,
@@ -254,11 +257,10 @@ backlinks, and deeper enrichment route through the existing
 [ingest](../ingest/SKILL.md) / [enrich](../enrich/SKILL.md) skills — do not
 re-implement them here.
 
-## Three Invariants (root-caused upstream — do not reintroduce)
+## Three Invariants (do not reintroduce)
 
-An upstream deployment of this pipeline silently lost days of transcripts.
-The root cause was three stacked bugs; the fixes are structural. Preserve
-them in any archiver you build with this skill:
+Breaking any of these silently loses transcripts; the fixes are structural.
+Preserve them in any archiver you build with this skill:
 
 1. **Capture cadence must outrun store eviction.** Session stores rotate
    content out of their retained window. Content written early in a long

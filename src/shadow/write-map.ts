@@ -39,6 +39,14 @@ const each = <T>(rows: readonly T[] | undefined, f: (row: T) => Target[]): Targe
 
 const linkSide = (from: string, to: string, fromSource?: string | null, toSource?: string | null, del = false): Target =>
   ({ relation: 'links', sel: { from_page_id: ref(from, fromSource), to_page_id: ref(to, toSource) }, del });
+/**
+ * The relationship state a link write refreshes inside the engine (`refreshRelationships`, which runs on the engine itself and
+ * not on the wrapper): the rows of the link's pair, which the refresh can write or remove.
+ */
+const pairState = (from: string, to: string, fromSource?: string | null, toSource?: string | null): Target =>
+  ({ relation: 'link_relationships', sel: { from_page_id: ref(from, fromSource), to_page_id: ref(to, toSource) }, del: true });
+/** Link writes whose pairs the arguments do not name (derived links by origin, links by link source): the whole state is re-read. */
+const LINK_STATE: Target[] = whole('link_relationships', 'link_transitions');
 const originLinks = (slug: string, source: string, del: boolean, extra: Record<string, string> = {}): Target[] => [
   { relation: 'links', sel: { origin_page_id: ref(slug, source), ...extra }, del },
   { relation: 'links', sel: { from_page_id: ref(slug, source), ...extra }, del },
@@ -110,18 +118,21 @@ export const WRITE_MAP: Record<string, WriteSpec> = {
   stageSegmentChunks: { tables: ['content_chunks'], plan: (a) => [childById('content_chunks', a[0])] },
   sweepSegments: { tables: ['content_chunks'] },
   // Links
-  addLink: { tables: ['links'], plan: (a) => [linkSide(a[0], a[1], a[7]?.fromSourceId, a[7]?.toSourceId)] },
-  removeLink: { tables: ['links'], plan: (a) => [linkSide(a[0], a[1], a[4]?.fromSourceId, a[4]?.toSourceId, true)] },
+  addLink: { tables: ['links', 'link_relationships'], plan: (a) => [linkSide(a[0], a[1], a[7]?.fromSourceId, a[7]?.toSourceId), pairState(a[0], a[1], a[7]?.fromSourceId, a[7]?.toSourceId)] },
+  removeLink: { tables: ['links', 'link_relationships'], plan: (a) => [linkSide(a[0], a[1], a[4]?.fromSourceId, a[4]?.toSourceId, true), pairState(a[0], a[1], a[4]?.fromSourceId, a[4]?.toSourceId)] },
   removeLinksByPagesAndSource: {
-    tables: ['links'],
-    plan: (a) => each<any>(a[0], (p) => originLinks(p.slug, p.source_id, true, { link_source: a[1]?.linkSource })),
+    tables: ['links', 'link_relationships'],
+    plan: (a) => [...each<any>(a[0], (p) => originLinks(p.slug, p.source_id, true, { link_source: a[1]?.linkSource })), ...whole('link_relationships')],
   },
   addLinksBatch: {
-    tables: ['links'],
-    plan: (a) => each<any>(a[0], (l) => [{ relation: 'links', sel: { from_page_id: ref(l.from_slug, l.from_source_id) } }]),
+    tables: ['links', 'link_relationships'],
+    plan: (a) => each<any>(a[0], (l) => [
+      { relation: 'links', sel: { from_page_id: ref(l.from_slug, l.from_source_id) } },
+      pairState(l.from_slug, l.to_slug, l.from_source_id, l.to_source_id),
+    ]),
   },
-  replaceDerivedLinks: { tables: ['links', 'wanted_links', 'pages'], plan: (a) => derivedLinks(a[0]) },
-  replaceDerivedLinksBatch: { tables: ['links', 'wanted_links', 'pages'], plan: (a) => each<any>(a[0], (item) => derivedLinks(item.origin)) },
+  replaceDerivedLinks: { tables: ['links', 'wanted_links', 'pages', 'link_relationships', 'link_transitions'], plan: (a) => [...derivedLinks(a[0]), ...LINK_STATE] },
+  replaceDerivedLinksBatch: { tables: ['links', 'wanted_links', 'pages', 'link_relationships', 'link_transitions'], plan: (a) => [...each<any>(a[0], (item) => derivedLinks(item.origin)), ...LINK_STATE] },
   replaceWantedLinkRows: { tables: ['wanted_links'], plan: (a) => [{ relation: 'wanted_links', sel: { origin_page_id: id(a[0]?.pageId) }, del: true }] },
   // Timeline
   addTimelineEntry: { tables: ['timeline_entries'], plan: (a) => [child('timeline_entries', a[0], a[2]?.sourceId)] },
@@ -234,14 +245,16 @@ export const RAW_MEMBERS: ReadonlySet<string> = new Set(['executeRaw', 'executeR
 const READ_PREFIX = /^(get|list|count|find|search|read|resolve|has|is|sum|cosines|traverse|relational|batchLoad|discover|load)/;
 /** Read-only members whose names do not start with a read prefix (search-read helpers). */
 export const READ_ONLY_MEMBERS: ReadonlySet<string> = new Set([
-  'probePurgeDerivations',
+  'probePurgeDerivations', 'lockLivePagesByKey', 'pickValidTimeEdition', 'pageAwaitsRederive',
   'activeEmbeddingColId', 'aliasCanonicalRefs', 'generatedPagesIn', 'livePageIdsAt', 'pageCollapseFacts', 'pagesLinkingTo',
   'slugsEndingIn', 'supersedingPageSlugs',
   'dailyDecideSpend', 'decideConflictNoEntityCounts', 'decideSlotUsage',
-  'normalizeFenceLines', 'notifierCoverageRecorded', 'sampleEffectiveDates', 'sampleEffectiveDateSources', 'sharedSkillPackTablePresent',
+  'normalizeFenceLines', 'hasNotifierCoverage', 'sampleEffectiveDates', 'sampleEffectiveDateSources', 'sharedSkillPackTablePresent',
   'storedTimelineRowsByPageIds',
   // Whether this role owns the schema tables (a catalog read; the import's guest lookup asks it).
   'ownsSchemaTables',
+  // Sets transaction-local settings (the persistence identity and write context) and writes no row: the raw set_config statement it replaced was never a write to follow or compare.
+  'setWriteContext',
 ]);
 export type MemberKind = 'read_name' | 'raw' | 'reserved' | 'ignored' | 'schema' | 'mapped' | 'unmapped';
 
@@ -252,7 +265,9 @@ export type MemberKind = 'read_name' | 'raw' | 'reserved' | 'ignored' | 'schema'
  * changed, as for any member outside the map. The set is exact (test/shadow-follow-producer.test.ts).
  */
 export const UNMAPPED_WRITE_MEMBERS: ReadonlySet<string> = new Set([
-  'insertFactPurge', 'insertTakePurge', 'upsertPagePurges', 'setPurgeProbeTimeout', 'deletePurgeReviewQueue', 'deletePurgeReviewProposals', 'deletePurgeDecideProposals', 'declarePersistence', 'requireSynchronousCommit', 'shareLockWriteCredential', 'lockPersistenceCounters', 'insertWriteRequest', 'stampWriteClaim', 'lockWriteRequest', 'lockWriteRequestsById', 'compactTerminalIntent', 'completeWriteRow', 'insertPublicationEffects', 'renewWriteClaim', 'renewEffectClaim', 'completeEffectRow', 'failEffectRow', 'lockEffectGuard', 'beginSnapshotRead', 'markBeliefCommits', 'lockSourceRow', 'worktreeClaimStore', 'writerAdminStore', 'deleteOpCheckpoint', 'recordPageEmbeddingHold', 'openPageEmbeddingHold', 'reservePageEmbedding', 'settlePageEmbeddingReservation', 'lockEffectClaimRow', 'lockEmbeddingSwitch', 'installChunkEmbeddings', 'setEffectTransactionLimits', 'deleteOwnedLinks', 'insertTrustProposal', 'takePageEmbeddingLease', 'renewPageEmbeddingLease', 'releasePageEmbeddingLease', 'insertCalibrationProfile', 'upsertWriteGateReceipt', 'upsertWriteGateHold',
+  'insertFactPurge', 'insertTakePurge', 'upsertPagePurges', 'clearUnkeptChunkVectors', 'setProjectionChunkerVersion', 'deleteUnkeptChunks', 'clearChunkVectors', 'renewDeferredReplacementClaim', 'releaseDeferredReplacementClaim', 'queuePageProjectionJob', 'setPurgeProbeTimeout', 'vacuumPurgedTables', 'setPurgeVersionBody', 'redactVersionChangeReasons', 'abortPurgedStagings', 'deletePurgedStagingParts', 'deletePageViewDigests', 'deleteUnreferencedPurgedTexts', 'insertHoldingPagePurges', 'deletePurgeReviewQueue', 'deletePurgeReviewProposals', 'deletePurgeDecideProposals', 'deletePurgeTakeProposals', 'insertPurgeEffects', 'expireDerivedFacts', 'deactivateDerivedTakes', 'softDeleteDerivedPages', 'markNeedsRederive', 'declarePersistence', 'requireSynchronousCommit', 'shareLockWriteCredential', 'lockPersistenceCounters', 'insertWriteRequest', 'stampWriteClaim', 'lockWriteRequest', 'lockWriteRequestsById', 'compactTerminalIntent', 'completeWriteRow', 'insertPublicationEffects', 'renewWriteClaim', 'releaseUnpublishedClaim', 'deleteProjectionJob', 'renewEffectClaim', 'completeEffectRow', 'failEffectRow', 'lockEffectGuard', 'beginSnapshotRead', 'insertBeliefEvents', 'markBeliefCommits', 'endBeliefLifetime', 'bumpSourcePurgeEpoch', 'storeSegmentDerivationsIfLive', 'lockSourceRow', 'worktreeClaimStore', 'writerAdminStore', 'publicationJournalStore', 'addPersistenceCounters', 'deleteOpCheckpoint', 'deleteRewrittenSegmentDerivations', 'sealImportedPage', 'recordPageEmbeddingHold', 'openPageEmbeddingHold', 'reservePageEmbedding', 'settlePageEmbeddingReservation', 'lockEffectClaimRow', 'lockEmbeddingSwitch', 'installChunkEmbeddings', 'setEffectTransactionLimits', 'deleteOwnedLinks', 'rearmLinksEffects', 'insertTrustProposal', 'takePageEmbeddingLease', 'renewPageEmbeddingLease', 'releasePageEmbeddingLease', 'writeTrustScanCursor', 'insertCalibrationProfile', 'purgeCalibrationProfilesByWave', 'insertFactWithdrawal', 'upsertWriteGateReceipt', 'upsertPageWriteGateReceipt', 'upsertWriteGateHold',
+  'insertFactPurge', 'insertTakePurge', 'upsertPagePurges', 'clearUnkeptChunkVectors', 'setProjectionChunkerVersion', 'deleteUnkeptChunks', 'clearChunkVectors', 'renewDeferredReplacementClaim', 'releaseDeferredReplacementClaim', 'queuePageProjectionJob', 'setPurgeProbeTimeout', 'vacuumPurgedTables', 'setPurgeVersionBody', 'redactVersionChangeReasons', 'abortPurgedStagings', 'deletePurgedStagingParts', 'deletePageViewDigests', 'deleteUnreferencedPurgedTexts', 'insertHoldingPagePurges', 'deletePurgeReviewQueue', 'deletePurgeReviewProposals', 'deletePurgeDecideProposals', 'deletePurgeTakeProposals', 'insertPurgeEffects', 'expireDerivedFacts', 'deactivateDerivedTakes', 'softDeleteDerivedPages', 'markNeedsRederive', 'declarePersistence', 'requireSynchronousCommit', 'shareLockWriteCredential', 'lockPersistenceCounters', 'insertWriteRequest', 'stampWriteClaim', 'lockWriteRequest', 'lockWriteRequestsById', 'compactTerminalIntent', 'completeWriteRow', 'insertPublicationEffects', 'renewWriteClaim', 'releaseUnpublishedClaim', 'deleteProjectionJob', 'renewEffectClaim', 'completeEffectRow', 'failEffectRow', 'lockEffectGuard', 'beginSnapshotRead', 'insertBeliefEvents', 'markBeliefCommits', 'endBeliefLifetime', 'bumpSourcePurgeEpoch', 'storeSegmentDerivationsIfLive', 'lockSourceRow', 'worktreeClaimStore', 'writerAdminStore', 'publicationJournalStore', 'addPersistenceCounters', 'deleteOpCheckpoint', 'deleteRewrittenSegmentDerivations', 'sealImportedPage', 'recordPageEmbeddingHold', 'openPageEmbeddingHold', 'reservePageEmbedding', 'settlePageEmbeddingReservation', 'lockEffectClaimRow', 'lockEmbeddingSwitch', 'installChunkEmbeddings', 'setEffectTransactionLimits', 'deleteOwnedLinks', 'rearmLinksEffects', 'insertTrustProposal', 'takePageEmbeddingLease', 'renewPageEmbeddingLease', 'releasePageEmbeddingLease', 'writeTrustScanCursor', 'insertCalibrationProfile', 'purgeCalibrationProfilesByWave', 'insertFactWithdrawal', 'upsertWriteGateReceipt', 'upsertPageWriteGateReceipt', 'upsertWriteGateHold',
+  'insertFactPurge', 'insertTakePurge', 'upsertPagePurges', 'clearUnkeptChunkVectors', 'setProjectionChunkerVersion', 'deleteUnkeptChunks', 'clearChunkVectors', 'renewDeferredReplacementClaim', 'releaseDeferredReplacementClaim', 'queuePageProjectionJob', 'setPurgeProbeTimeout', 'vacuumPurgedTables', 'setPurgeVersionBody', 'redactVersionChangeReasons', 'abortPurgedStagings', 'deletePurgedStagingParts', 'deletePageViewDigests', 'deleteUnreferencedPurgedTexts', 'insertHoldingPagePurges', 'deletePurgeReviewQueue', 'deletePurgeReviewProposals', 'deletePurgeDecideProposals', 'deletePurgeTakeProposals', 'insertPurgeEffects', 'expireDerivedFacts', 'deactivateDerivedTakes', 'softDeleteDerivedPages', 'markNeedsRederive', 'declarePersistence', 'requireSynchronousCommit', 'shareLockWriteCredential', 'lockPersistenceCounters', 'insertWriteRequest', 'stampWriteClaim', 'lockWriteRequest', 'lockWriteRequestsById', 'compactTerminalIntent', 'completeWriteRow', 'insertPublicationEffects', 'renewWriteClaim', 'releaseUnpublishedClaim', 'deleteProjectionJob', 'renewEffectClaim', 'completeEffectRow', 'failEffectRow', 'lockEffectGuard', 'beginSnapshotRead', 'insertBeliefEvents', 'markBeliefCommits', 'endBeliefLifetime', 'bumpSourcePurgeEpoch', 'storeSegmentDerivationsIfLive', 'lockSourceRow', 'worktreeClaimStore', 'writerAdminStore', 'publicationJournalStore', 'addPersistenceCounters', 'deleteOpCheckpoint', 'deleteRewrittenSegmentDerivations', 'sealImportedPage', 'recordPageEmbeddingHold', 'openPageEmbeddingHold', 'reservePageEmbedding', 'settlePageEmbeddingReservation', 'lockEffectClaimRow', 'lockEmbeddingSwitch', 'installChunkEmbeddings', 'setEffectTransactionLimits', 'deleteOwnedLinks', 'rearmLinksEffects', 'insertTrustProposal', 'takePageEmbeddingLease', 'renewPageEmbeddingLease', 'releasePageEmbeddingLease', 'writeTrustScanCursor', 'insertCalibrationProfile', 'purgeCalibrationProfilesByWave', 'insertFactWithdrawal', 'upsertWriteGateReceipt', 'upsertPageWriteGateReceipt', 'upsertWriteGateHold',
 ]);
 
 export function memberKind(name: string): MemberKind {

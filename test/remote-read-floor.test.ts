@@ -15,6 +15,8 @@ import { privatePagesFilterFragment, privateProvenanceFilterFragment, remoteProv
 
 /** file, enclosing top-level declaration, fragment: why it stays plain. */
 const PLAIN: Record<string, string> = {
+  'src/core/engine-sql/trust-tier-reads.ts listValidTimeIdentities privatePagesFilterFragment': 'the world flag of the page; the read itself is gated by privatePagesFilterForCaller',
+  'src/core/engine-sql/link-temporal.ts readLinkRelationshipEvidence privatePagesFilterFragment': 'write-side: records whether a link origin is public',
   'src/core/engine-sql/belief-state.ts readBeliefStateRows privatePagesFilterFragment': 'the ledger and purge read the stored world visibility, not a caller view',
   'src/commands/sources-add-next.ts noGrantFloorNext privatePagesFilterFragment': 'local CLI hint after sources add; never a remote read',
   'src/core/ai/decide/egress.ts visiblePages privatePagesFilterFragment': 'egress policy: which pages may leave the machine, judged as world',

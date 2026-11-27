@@ -111,7 +111,6 @@ src/commands/doctor/checks/ontology-facts.ts	execute_raw	1
 src/commands/doctor/checks/origin-twins.ts	execute_raw	1
 src/commands/doctor/checks/orphan-bindings.ts	execute_raw	3
 src/commands/doctor/checks/orphan-estimate.ts	execute_raw	2
-src/commands/doctor/checks/outside-content-fences.ts	execute_raw	1
 src/commands/doctor/checks/overwritten-edits.ts	execute_raw	1
 src/commands/doctor/checks/owner-host-stale.ts	execute_raw	2
 src/commands/doctor/checks/parked-effects.ts	execute_raw	2
@@ -432,10 +431,9 @@ src/core/derived-links.ts	execute_raw	10
 src/core/destructive-guard.ts	execute_raw	17
 src/core/eligibility/activation.ts	execute_raw	1
 src/core/eligibility/explain.ts	execute_raw	4
-src/core/eligibility/fence-overlay.ts	execute_raw	3	came from master #9627 (held private facts, database-only untrack), which landed after this ratchet was cut
 src/core/eligibility/generation.ts	execute_raw	1
 src/core/eligibility/scan.ts	execute_raw	7
-src/core/eligibility/stamp.ts	execute_raw	5	came from master #9574 (held private restatements), which landed before this ratchet
+src/core/eligibility/stamp.ts	execute_raw	1	came from master #9574 (held private restatements), which landed before this ratchet
 src/core/embed-backfill-stall.ts	execute_raw	1
 src/core/embed-backfill-submit.ts	execute_raw	2
 src/core/embed-consent.ts	execute_raw	2
@@ -459,7 +457,6 @@ src/core/entities/resolve-on-save.ts	execute_raw	1	GBRA-574 F #9674 (opened befo
 src/core/entities/resolve.ts	execute_raw	13
 src/core/entity-identity.ts	execute_raw	6
 src/core/eval-contradictions/cost-prompt.ts	execute_raw	1
-src/core/eval-contradictions/scoped-read.ts	execute_raw	2
 src/core/export-publish.ts	driver_call	3
 src/core/export-stage.ts	driver_call	3
 src/core/extract-ner.ts	execute_raw	1
@@ -479,7 +476,7 @@ src/core/facts/contested-claims.ts	execute_raw	1
 src/core/facts/conversation-entity-hints.ts	execute_raw	1
 src/core/facts/conversation-incremental.ts	execute_raw	1
 src/core/facts/conversation-memo.ts	execute_raw	4
-src/core/facts/conversation-publication.ts	execute_raw	24
+src/core/facts/conversation-publication.ts	execute_raw	23	#10443: publication narrows the expired copies of a claim it narrows to private, so kept history never shows the claim wider than its replacement (one UPDATE, the conversation facts area converts as a whole)
 src/core/facts/conversation-relink-carry.ts	execute_raw	1
 src/core/facts/conversation-relink.ts	execute_raw	7	GBRA-574 F #9674 (opened before this ratchet): +1 the relink --unbacked read of name-tag rows
 src/core/facts/dead-absorb-retry.ts	execute_raw	2
@@ -489,7 +486,7 @@ src/core/facts/embedding-identity.ts	execute_raw	2
 src/core/facts/facts-home.ts	execute_raw	4
 src/core/facts/fence-fact-append.ts	execute_raw	4
 src/core/facts/fence-write.ts	execute_raw	2
-src/core/facts/file-body-guard.ts	execute_raw	2
+src/core/facts/file-body-guard.ts	execute_raw	1
 src/core/facts/forget.ts	execute_raw	4
 src/core/facts/fts-index.ts	execute_raw	3
 src/core/facts/gone-page-facts.ts	execute_raw	4
@@ -498,17 +495,16 @@ src/core/facts/meta-hook.ts	execute_raw	1
 src/core/facts/ontology-rekey.ts	execute_raw	4
 src/core/facts/proposal-review.ts	execute_raw	3
 src/core/facts/proposal-supersede.ts	execute_raw	4
-src/core/facts/purge-overlay.ts	execute_raw	3
+src/core/facts/purge-overlay.ts	execute_raw	1
 src/core/facts/purge-reasons.ts	execute_raw	8
-src/core/facts/purge-verify.ts	execute_raw	21
+src/core/facts/purge-verify.ts	execute_raw	2
 src/core/facts/purge.ts	execute_raw	40	GBRA-574 F #9674 (opened before this ratchet): +1 the purge plan reads whether a fact sits on an unbacked name tag
-src/core/facts/question-recall.ts	execute_raw	1
 src/core/facts/reconcile-watermark.ts	execute_raw	6
 src/core/facts/relink-publish.ts	execute_raw	8
 src/core/facts/relink.ts	execute_raw	5
 src/core/facts/retire.ts	execute_raw	1
 src/core/facts/similar-active.ts	execute_raw	2
-src/core/facts/single-prepare.ts	execute_raw	7
+src/core/facts/single-prepare.ts	execute_raw	6
 src/core/facts/slot-tagging.ts	execute_raw	1	GBRA-574 #9668: the live person-page read that picks slot-tagging candidates, written before this ratchet landed; moves behind a typed facts engine method with its area
 src/core/facts/subject-infer.ts	execute_raw	1
 src/core/facts/unfenced-facts.ts	execute_raw	9	GST-3490 #10005: the sweep's unfenced read counts unfenceable rows on the server before reading only fenceable ones; moves behind a typed facts engine method with its area
@@ -660,9 +656,9 @@ src/core/minions/worker.ts	execute_raw	7
 src/core/multi-source-drift.ts	execute_raw	1
 src/core/notifier/nudge.ts	execute_raw	1
 src/core/notifier/resident.ts	execute_raw	3
-src/core/notifier/status.ts	execute_raw	2
+src/core/notifier/status.ts	execute_raw	1
 src/core/notifier/store.ts	execute_raw	15
-src/core/oauth-grants.ts	sql_template	16
+src/core/oauth-grants.ts	sql_template	30	#9364 refresh families: the v338 table probe, the family column on issue, the rotation record and its grace wipe, the replay lookup (owner read, then the owning client lock before the rotation row), the family revocation (tokens, sealed pairs, the owning client lock), the client-revoke and expiry sweeps (the grace-window wipe and the expired-record delete, each skipping locked rows); all run inside the OAuth client-row lock transaction, which has no engine method yet; converts with the rest of the OAuth grant lifecycle; GST-4024: revoking a rotated refresh token also clears its sealed pair under the same client lock
 src/core/oauth-provider.ts	sql_template	22
 src/core/onboard/checks.ts	execute_raw	5
 src/core/onboard/first-session.ts	execute_raw	3	first-session suggestion: the onboarding.first_session record compare-and-swap in config (insert and update) and the pointer read of recent world-visible pages under remoteReadFloorSql; converts with setup-history.ts
@@ -676,7 +672,6 @@ src/core/ops/admin.ts	execute_raw	2
 src/core/ops/attribution.ts	execute_raw	8
 src/core/ops/backlinks-paged.ts	execute_raw	3
 src/core/ops/chronicle.ts	execute_raw	1
-src/core/ops/chunks.ts	execute_raw	1	came from master #9574 (held private restatements), which landed before this ratchet
 src/core/ops/context.ts	execute_raw	1
 src/core/ops/extraction.ts	execute_raw	1
 src/core/ops/facts.ts	execute_raw	1
@@ -697,7 +692,7 @@ src/core/ops/qm-memory.ts	execute_raw	2
 src/core/ops/request-tools.ts	execute_raw	2
 src/core/ops/search-exact.ts	execute_raw	2	came from master #9574 (held private restatements), which landed before this ratchet
 src/core/ops/search-type-filter.ts	execute_raw	1
-src/core/ops/search.ts	execute_raw	2
+src/core/ops/search.ts	execute_raw	1
 src/core/ops/skills-catalog.ts	execute_raw	2
 src/core/ops/storage-manifest.ts	execute_raw	2
 src/core/ops/tags.ts	execute_raw	1
@@ -719,7 +714,7 @@ src/core/page-body/read-range.ts	execute_raw	5
 src/core/page-body/rechunk.ts	execute_raw	8
 src/core/page-body/segment-blocks.ts	execute_raw	1
 src/core/page-body/segment-conversation.ts	execute_raw	3
-src/core/page-body/segment-derive.ts	execute_raw	33
+src/core/page-body/segment-derive.ts	execute_raw	28
 src/core/page-body/segment-facts.ts	execute_raw	1
 src/core/page-body/segment-ledger.ts	execute_raw	1
 src/core/page-body/segment-rewrite.ts	execute_raw	9
@@ -733,29 +728,29 @@ src/core/page-spend.ts	execute_raw	4
 src/core/page-state/contextual-proof.ts	execute_raw	3
 src/core/page-state/credential-reseal.ts	execute_raw	6
 src/core/page-state/guards.ts	execute_raw	11
+src/core/page-state/history-prune.ts	execute_raw	4	#9737 history prune preview: lists inline versions and their pages for the selection, the brain id the plan_hash binds and the sources a bare slug names; the page-state area is still raw SQL (versions.ts) and converts with it
 src/core/page-state/image-seal.ts	execute_raw	5
 src/core/page-state/materialize.ts	execute_raw	5
 src/core/page-state/projection-status.ts	execute_raw	1
-src/core/page-state/projections.ts	execute_raw	37
+src/core/page-state/projections.ts	execute_raw	19
 src/core/page-state/rebuild-estimate.ts	execute_raw	1
 src/core/page-state/rename-alias.ts	execute_raw	11
 src/core/page-state/revision-backfill-schema.ts	execute_raw	12
 src/core/page-state/tags.ts	execute_raw	3
-src/core/page-state/versions.ts	execute_raw	9
+src/core/page-state/versions.ts	execute_raw	10	#9737 pruneInlineVersionsById: the bounded delete the history prune applies under each page lock, beside the existing version SQL here
 src/core/page-window/bounded-lead.ts	execute_raw	2
 src/core/page-window/segmented.ts	execute_raw	5
 src/core/pages-upsert-arbiter.ts	execute_raw	6
 src/core/persistence/activation.ts	execute_raw	9
 src/core/persistence/admin-lock.ts	execute_raw	7
 src/core/persistence/administration.ts	execute_raw	8
-src/core/persistence/admission-origin.ts	execute_raw	1
 src/core/persistence/applied-watermark.ts	execute_raw	4
 src/core/persistence/atom-maintenance.ts	execute_raw	21
 src/core/persistence/authority.ts	execute_raw	4
 src/core/persistence/blocking-effects.ts	execute_raw	2
 src/core/persistence/bounded-reads.ts	execute_raw	10
 src/core/persistence/canonical-projections.ts	execute_raw	16
-src/core/persistence/capacity-forecast.ts	execute_raw	8
+src/core/persistence/capacity-forecast.ts	execute_raw	2
 src/core/persistence/capacity-view.ts	execute_raw	1
 src/core/persistence/change-reason.ts	execute_raw	4
 src/core/persistence/checkpoint-validation.ts	execute_raw	5
@@ -774,9 +769,8 @@ src/core/persistence/consumer-diagnostics.ts	execute_raw	3
 src/core/persistence/consumer-heartbeat.ts	execute_raw	4
 src/core/persistence/consumer-lane.ts	execute_raw	2
 src/core/persistence/consumer.ts	execute_raw	6
-src/core/persistence/context.ts	execute_raw	3
+src/core/persistence/context.ts	execute_raw	2
 src/core/persistence/control.ts	execute_raw	2
-src/core/persistence/coordination-lock.ts	execute_raw	2
 src/core/persistence/coordinator.ts	execute_raw	9
 src/core/persistence/core-guard.ts	execute_raw	2
 src/core/persistence/database-write.ts	execute_raw	2
@@ -788,7 +782,7 @@ src/core/persistence/diagnostics.ts	execute_raw	7
 src/core/persistence/drift-conflicts.ts	execute_raw	9
 src/core/persistence/effect-catchup.ts	execute_raw	1
 src/core/persistence/effect-facts.ts	execute_raw	8
-src/core/persistence/effect-journal.ts	execute_raw	21
+src/core/persistence/effect-journal.ts	execute_raw	17
 src/core/persistence/effect-recovery-scan.ts	execute_raw	1
 src/core/persistence/effect-recovery.ts	execute_raw	16
 src/core/persistence/effect-retry.ts	execute_raw	14
@@ -802,7 +796,7 @@ src/core/persistence/facts-maintenance.ts	execute_raw	4
 src/core/persistence/facts-prepare.ts	execute_raw	5
 src/core/persistence/file-claims.ts	execute_raw	2
 src/core/persistence/file-repair.ts	execute_raw	4
-src/core/persistence/filesystem-guard.ts	execute_raw	3
+src/core/persistence/filesystem-guard.ts	execute_raw	1
 src/core/persistence/forget-prepare.ts	execute_raw	7	GBRA-574 F #9674 (opened before this ratchet): +1 forget reads whether the claim sits on an unbacked name tag
 src/core/persistence/git-conversion.ts	execute_raw	16
 src/core/persistence/git-declared.ts	execute_raw	7
@@ -832,12 +826,12 @@ src/core/persistence/import-mutations.ts	execute_raw	3
 src/core/persistence/import-prepare.ts	execute_raw	1
 src/core/persistence/import-reads.ts	execute_raw	7
 src/core/persistence/intent-redaction.ts	execute_raw	10
-src/core/persistence/journal.ts	execute_raw	59
+src/core/persistence/journal.ts	execute_raw	54
 src/core/persistence/landing-gaps.ts	execute_raw	3
 src/core/persistence/large-page-guard.ts	execute_raw	1
 src/core/persistence/legacy-locks.ts	execute_raw	1
 src/core/persistence/legacy-sync-failures.ts	execute_raw	1
-src/core/persistence/limits.ts	execute_raw	7
+src/core/persistence/limits.ts	execute_raw	3
 src/core/persistence/links-extraction-holds.ts	execute_raw	2
 src/core/persistence/links-preparation.ts	execute_raw	4
 src/core/persistence/local-edit-adoption.ts	execute_raw	6
@@ -851,7 +845,7 @@ src/core/persistence/manual-links.ts	execute_raw	8
 src/core/persistence/memory-mutations.ts	execute_raw	6	GST-2897 B (#9670, opened before this ratchet): one read of a fact's entity_slug so the member it is about can withdraw it; no typed engine method exists yet
 src/core/persistence/memory-prepare.ts	execute_raw	4
 src/core/persistence/memory-proposals.ts	execute_raw	16
-src/core/persistence/mirror-read-only.ts	execute_raw	4
+src/core/persistence/mirror-read-only.ts	execute_raw	3
 src/core/persistence/moved-pages.ts	execute_raw	8	GST-3623: readMoveCandidates reads the live pages a ghost may have moved to (by file name, renamed path or blob path) in one query; the moved-pages area is still raw SQL and converts with it
 src/core/persistence/noop-kernel.ts	execute_raw	2
 src/core/persistence/onboarding.ts	execute_raw	1
@@ -861,7 +855,7 @@ src/core/persistence/origin-twins.ts	execute_raw	2
 src/core/persistence/orphan-bindings.ts	execute_raw	2
 src/core/persistence/overwritten-edits.ts	execute_raw	3
 src/core/persistence/owner-activity.ts	execute_raw	1
-src/core/persistence/ownership.ts	execute_raw	25	+1 #10123: acceptWriterTransfer reads the previous owner binding git_durability inside the accept transaction (one SELECT beside the binding INSERT it carries into)
+src/core/persistence/ownership.ts	execute_raw	1
 src/core/persistence/page-advisories.ts	execute_raw	1
 src/core/persistence/page-append.ts	execute_raw	3
 src/core/persistence/page-batch.ts	execute_raw	2
@@ -872,7 +866,7 @@ src/core/persistence/page-upload.ts	execute_raw	16
 src/core/persistence/page-visibility.ts	execute_raw	10
 src/core/persistence/parked-groups.ts	execute_raw	1
 src/core/persistence/pending-import.ts	execute_raw	1
-src/core/persistence/physical-root.ts	execute_raw	15
+src/core/persistence/physical-root.ts	execute_raw	13
 src/core/persistence/plain-directory-drift.ts	execute_raw	2	#8079: reads and records whether a page revision was written with its file in step (journal receipt join plus agreement checkpoint); persistence protocol state, no typed checkpoint methods yet.
 src/core/persistence/pre-activation-release.ts	execute_raw	7
 src/core/persistence/preadmit-cache.ts	execute_raw	4
@@ -1063,7 +1057,7 @@ src/core/repair/url-clone-fences.ts	execute_raw	5
 src/core/repair/visibility.ts	execute_raw	11
 src/core/restore-target.ts	execute_raw	4
 src/core/review-lists.ts	execute_raw	1
-src/core/rules/correct.ts	execute_raw	1	GST-3827 C2: the atomic claim of a new correction receipt (INSERT INTO config ... ON CONFLICT DO NOTHING RETURNING); no typed engine method claims a config key
+src/core/rules/correct.ts	execute_raw	3	GST-3827 C2: the atomic claim of a config key (a new correction receipt, and the per-rule lease) and its compare-and-delete release (INSERT INTO config ... ON CONFLICT DO NOTHING RETURNING; DELETE ... WHERE key AND value); no typed engine method claims or releases a config key. +1 (#10456 final review): the remote fact read an entity check needs before it names the fact's page, the same predicate forget's readsUnder runs in memory-mutations.ts; no typed engine method reads a fact under the caller's policy
 src/core/schema-migrations/helpers.ts	execute_raw	12
 src/core/schema-migrations/v039-multimodal-dual-column-v0-27-1.ts	execute_raw	1
 src/core/schema-migrations/v045-facts-hot-memory-v0-31.ts	execute_raw	2
@@ -1106,7 +1100,7 @@ src/core/search/entity-facts.ts	execute_raw	1
 src/core/search/evidence-date.ts	execute_raw	3
 src/core/search/evidence-delivery.ts	execute_raw	2
 src/core/search/exact-scan.ts	execute_raw	2
-src/core/search/fact-relevance.ts	execute_raw	14	came from master #9627 (held private facts, database-only untrack), which landed after this ratchet was cut; GBRA-574 F #9674 (opened before this ratchet): +1 poolUnbackedKeys, the name-tag lookup for the slot-history arm
+src/core/search/fact-relevance.ts	execute_raw	15	came from master #9627 (held private facts, database-only untrack), which landed after this ratchet was cut; GBRA-574 F #9674 (opened before this ratchet): +1 poolUnbackedKeys, the name-tag lookup for the slot-history arm; GST-4039: +1 readPooledFacts, ranked recall's second read moved here from question-recall.ts (which drops to 0) so it reuses the pool's read-policy predicate
 src/core/search/facts-arm.ts	execute_raw	3
 src/core/search/feedback-boost.ts	execute_raw	1
 src/core/search/frontmatter-where.ts	execute_raw	1
@@ -1144,7 +1138,6 @@ src/core/shared-skills/migration.ts	execute_raw	4
 src/core/shared-skills/optimizer.ts	execute_raw	1
 src/core/shared-skills/policy.ts	execute_raw	11
 src/core/shared-skills/publication.ts	execute_raw	14
-src/core/shared-skills/receipt-root.ts	execute_raw	2
 src/core/shared-skills/restore.ts	execute_raw	27
 src/core/shared-skills/retention.ts	execute_raw	12
 src/core/shared-skills/setup-source-policy.ts	execute_raw	1
@@ -1200,6 +1193,7 @@ src/core/token-mint.ts	execute_raw	3
 src/core/token-mint.ts	sql_template	1
 src/core/transcripts/archive.ts	execute_raw	15
 src/core/transcripts/discover.ts	execute_raw	2
+src/core/transcripts/fence-acceptance.ts	execute_raw	5	#9427: the outside-fences scan moved here from doctor/checks/outside-content-fences.ts (its row moves with it) under a UTC session time zone so its fingerprint is stable, the brain id the plan_hash binds, and the apply row lock (insert-if-missing, SELECT FOR UPDATE) that keeps two applies from dropping each other; the transcripts area is still raw SQL and converts with it
 src/core/transcripts/hermes.ts	driver_call	1
 src/core/transcripts/ingest.ts	execute_raw	3
 src/core/transcripts/recover.ts	execute_raw	1
@@ -1243,7 +1237,7 @@ src/core/verbs/entity-references.ts	execute_raw	1
 src/core/verbs/entity-source.ts	execute_raw	1
 src/core/verbs/entity-text-mentions.ts	execute_raw	1
 src/core/verbs/entity-variants.ts	execute_raw	4
-src/core/wakeshift/drain.ts	execute_raw	10
+src/core/wakeshift/drain.ts	execute_raw	11	GST-4023: one live read at delivery (owner binding plus the credential's current scope) so an owner-bound watch reads the whole queue only while it still holds admin, as agentOwnerFence does; the wakeshift tables have no engine methods yet
 src/core/wakeshift/forget.ts	sql_template	6
 src/core/wakeshift/spool.ts	execute_raw	3
 src/core/wakeshift/terms.ts	execute_raw	2

@@ -78,7 +78,7 @@ import { AUDIT_ROW_SOURCES, CONVERSATION_EXTRACTOR_VERSION, CONVERSATION_FACTS_S
 import { ALLOWED_TYPES, pageTypesForAllowed, type AllowedType } from './conversation-types.ts';
 import { withWriteTrust } from '../persistence/context.ts';
 import { conversationDerivation } from '../persistence/derived-facts.ts';
-import { RELINKED_DERIVED_ROW, inheritRelinkedEntities } from './conversation-relink-carry.ts';
+import { inheritRelinkedEntities } from './conversation-relink-carry.ts';
 import { recordReextractMemo } from './conversation-memo.ts';
 import { tightenToStoredPage } from './visibility.ts';
 import { recordTaintEdges } from '../trust/taint.ts';
@@ -356,7 +356,7 @@ function freezeRow(row: ConversationFactRow, entryVisibility: 'private' | 'world
   return {
     ...(row.visibility === 'private' && entryVisibility === 'world' && !OUTCOME_SOURCES.has(row.source) ? { visibility: 'private' as const } : {}),
     fact: row.fact, kind: row.kind ?? 'fact', entity_slug: row.entity_slug ?? null, context: row.context ?? null,
-    valid_from: (row.valid_from ?? new Date()).toISOString(), valid_until: row.valid_until ? row.valid_until.toISOString() : null,
+    valid_from: row.valid_from ? row.valid_from.toISOString() : null, valid_until: row.valid_until ? row.valid_until.toISOString() : null,
     source: row.source, source_session: row.source_session ?? null, confidence: row.confidence ?? 1.0,
     notability: row.notability ?? 'medium', embedding: row.embedding ? Array.from(row.embedding) : null,
     embedding_model: row.embedding ? row.embedding_model ?? null : null,
@@ -429,7 +429,7 @@ function entryProblem(entry: ConversationPageEntry): string | null {
   for (const fact of entry.rows) {
     if (typeof fact.fact !== 'string' || !fact.fact.trim() || typeof fact.source !== 'string' || !fact.source.startsWith(CONVERSATION_FACTS_SOURCE_PREFIX)
       || !ALL_FACT_KINDS.includes((fact.kind ?? 'fact') as never) || (fact.source_session != null && !String(fact.source_session).startsWith(CONVERSATION_FACTS_SOURCE_PREFIX))
-      || Number.isNaN(Date.parse(fact.valid_from)) || (fact.valid_until != null && Number.isNaN(Date.parse(fact.valid_until)))) {
+      || (fact.valid_from != null && Number.isNaN(Date.parse(fact.valid_from))) || (fact.valid_until != null && Number.isNaN(Date.parse(fact.valid_until)))) {
       return 'a row falls outside the conversation extractor\'s provenance or fact kinds';
     }
     if (OUTCOME_SOURCES.has(fact.source) && fact.source_session !== `${fact.source}:${entry.slug}:${entry.version_token}`) return 'it carries an outcome for another page version';
@@ -530,9 +530,10 @@ export async function publishConversationFacts(tx: BrainEngine, sourceId: string
   let duplicates = 0;
   for (const entry of retire || opts.scope === 'window' || segments ? kept : kept.filter(({ row }) => OUTCOME_SOURCES.has(row.source))) {
     const { row } = entry;
-    const [prior] = row.dimension && row.value && row.entity_slug && row.valid_from != null ? await tx.executeRaw<{ value_hash: string }>(`SELECT value_hash FROM facts
+    const [prior] = row.dimension && row.value && row.entity_slug ? await tx.executeRaw<{ value_hash: string }>(`SELECT value_hash FROM facts
       WHERE source_id=$1 AND entity_slug=$2 AND dimension=$3 AND value_hash IS NOT NULL AND expired_at IS NULL AND superseded_by IS NULL AND ${CONVERSATION_SLOT_SQL}
-        AND valid_from <= $4::timestamptz ORDER BY valid_from DESC, id DESC LIMIT 1`, [sourceId, row.entity_slug, row.dimension, new Date(row.valid_from).toISOString()]) : [];
+        AND COALESCE(valid_from, created_at) <= $4::timestamptz ORDER BY COALESCE(valid_from, created_at) DESC, id DESC LIMIT 1`,
+      [sourceId, row.entity_slug, row.dimension, (row.valid_from ? new Date(row.valid_from) : new Date()).toISOString()]) : [];
     if (OUTCOME_SOURCES.has(row.source) || (prior && prior.value_hash !== valueHash(row.value!)) || !await findCaptureDuplicate(scope, { fact: row.fact, entitySlug: row.entity_slug ?? null,
       visibility: row.visibility ?? 'private', attributedTo: row.attributed_to ?? null })) published.push(entry);
     else duplicates++;
@@ -550,6 +551,12 @@ export async function publishConversationFacts(tx: BrainEngine, sourceId: string
     return { deleted: retiredWindows + outcomes.length, ...await insertConversationFacts(tx, sourceId, slug, published.map(({ row }) => row)) };
   });
   const stored = published.filter((_, i) => !purged.has(i));
+  // #10443: a claim this run narrows to private (stored, or skipped as a duplicate) narrows the page's expired copies of
+  // it too, matched by claim fingerprint, so history never shows it wider.
+  const narrowed = kept.flatMap(({ row }) => row.visibility === 'private' && !OUTCOME_SOURCES.has(row.source) ? [row.fact] : []);
+  if (narrowed.length) await tx.executeRaw(`UPDATE facts SET visibility='private' WHERE source_id=$1 AND source_markdown_slug=$2
+    AND source LIKE '${CONVERSATION_FACTS_SOURCE_PREFIX}%' AND expired_at IS NOT NULL AND visibility <> 'private'
+    AND gbrain_fact_fingerprint(fact) IN (SELECT gbrain_fact_fingerprint(n) FROM unnest($3::text[]) AS n)`, [sourceId, slug, narrowed]);
   if (segments) await stampSourceWindows(tx, ids, stored.map(({ index }) => segments.windows[index] ?? null));
   for (const [i, id] of ids.entries()) {
     await recordTaintEdges(tx, { table: 'facts', id, sourceId }, derivation.inputs);
@@ -627,19 +634,10 @@ async function insertableSlots(tx: BrainEngine, sourceId: string, slug: string, 
 export const LABEL_RETIRED_MARKER = 'retired: conversation-labels';
 
 /**
- * Clears a page's prior extractor batch before a replacement, keeping the
- * history other records depend on: a row an open loop (`open_loops.fact_id`,
- * no FK) or another fact's `superseded_by` references is expired, never
- * deleted, and rows `gbrain repair conversation-labels` retired stay expired.
- * A row `gbrain facts relink --conversation` linked is expired too, so the
- * replacement inherits its entity (conversation-relink-carry.ts); the previous
- * clear's expired relinked rows go first. Every other extractor row of the
- * page is deleted. Returns the rows removed from the active batch.
- */
-/** The page's conversation facts, audit rows aside: what a clear would lose that a window extraction may not see again. */
+/** The page's active conversation facts, audit rows aside: what a clear would lose that a window extraction may not see again. */
 export async function countConversationFacts(db: BrainEngine, sourceId: string, slug: string): Promise<number> {
   const [row] = await db.executeRaw<{ count: string }>(`SELECT count(*)::text AS count FROM facts f WHERE f.source_id=$1 AND f.source_markdown_slug=$2
-    AND f.source LIKE '${CONVERSATION_FACTS_SOURCE_PREFIX}%' AND NOT (f.source = ANY($3::text[]))`, [sourceId, slug, [...AUDIT_ROW_SOURCES]]);
+    AND f.source LIKE '${CONVERSATION_FACTS_SOURCE_PREFIX}%' AND f.expired_at IS NULL AND NOT (f.source = ANY($3::text[]))`, [sourceId, slug, [...AUDIT_ROW_SOURCES]]);
   return Number(row?.count ?? 0);
 }
 
@@ -659,6 +657,11 @@ export async function countConversationFactsOutside(db: BrainEngine, sourceId: s
 }
 
 /**
+ * Clears a page's prior extractor batch before a replacement without losing history (#10443): every active
+ * extractor fact is expired and keeps its row, so active reads drop it while `recall --include-expired` and the
+ * open loops and `superseded_by` links that reference it keep it. A row `gbrain facts relink --conversation`
+ * linked is expired the same way, so the replacement inherits its entity (conversation-relink-carry.ts). Only the
+ * page's audit checkpoint rows are deleted. Returns the rows removed from the active batch.
  * With `windows`, only the page's anchored facts whose window key is in `keys` (`keep` false) or not in it (`keep` true),
  * and its unanchored facts when `unanchored`.
  */
@@ -666,20 +669,16 @@ export async function clearConversationFacts(db: BrainEngine, sourceId: string, 
   windows?: { keys: readonly string[]; keep: boolean; unanchored: boolean }): Promise<number> {
   const page = `f.source_id=$1 AND f.source_markdown_slug=$2 AND f.source LIKE '${CONVERSATION_FACTS_SOURCE_PREFIX}%'` + (windows
     ? ` AND NOT (f.source = ANY($3::text[])) AND (CASE WHEN f.source_window IS NULL THEN $4::boolean ELSE (${WINDOW_KEY_SQL} = ANY($5::text[])) <> $6::boolean END)` : '');
-  const params = windows ? [sourceId, slug, [...AUDIT_ROW_SOURCES], windows.unanchored, [...windows.keys], windows.keep] : [sourceId, slug];
-  const referenced = 'EXISTS (SELECT 1 FROM open_loops o WHERE o.fact_id=f.id) OR EXISTS (SELECT 1 FROM facts g WHERE g.superseded_by=f.id)';
+  const params = windows ? [sourceId, slug, [...AUDIT_ROW_SOURCES], windows.unanchored, [...windows.keys], windows.keep] : [sourceId, slug, [...AUDIT_ROW_SOURCES]];
   // GBRA-574 B2: a row kept expired gives up its slot, so the replacement can hold the same slot key.
   const unslot = 'dimension=NULL, value=NULL, value_hash=NULL, dim_status=NULL';
-  await db.executeRaw(`DELETE FROM facts f WHERE ${page} AND f.expired_at IS NOT NULL AND ${RELINKED_DERIVED_ROW} AND NOT (${referenced})`, params);
-  await db.executeRaw(`UPDATE facts f SET ${unslot} WHERE ${page} AND f.expired_at IS NOT NULL AND f.dimension IS NOT NULL`, params);
-  const [relinked] = await db.executeRaw<{ count: string }>(`WITH up AS (UPDATE facts f SET expired_at=now(), ${unslot}
-    WHERE ${page} AND f.expired_at IS NULL AND ${RELINKED_DERIVED_ROW} RETURNING 1) SELECT COUNT(*)::text AS count FROM up`, params);
-  const [expired] = await db.executeRaw<{ count: string }>(`WITH up AS (UPDATE facts f SET expired_at=now(), ${unslot}
-    WHERE ${page} AND f.expired_at IS NULL AND (${referenced}) RETURNING 1) SELECT COUNT(*)::text AS count FROM up`, params);
-  const [deleted] = await db.executeRaw<{ count: string }>(`WITH del AS (DELETE FROM facts f
-    WHERE ${page} AND NOT (${referenced}) AND COALESCE(f.context,'') NOT LIKE '%${LABEL_RETIRED_MARKER}%' AND NOT (${RELINKED_DERIVED_ROW}) RETURNING 1)
+  await db.executeRaw(`UPDATE facts f SET ${unslot} WHERE ${page} AND NOT (f.source = ANY($3::text[])) AND f.expired_at IS NOT NULL AND f.dimension IS NOT NULL`, params);
+  const [audit] = windows ? [] : await db.executeRaw<{ count: string }>(`WITH del AS (DELETE FROM facts f WHERE ${page} AND f.source = ANY($3::text[]) RETURNING 1)
     SELECT COUNT(*)::text AS count FROM del`, params);
-  return Number(relinked?.count ?? 0) + Number(expired?.count ?? 0) + Number(deleted?.count ?? 0);
+  const [expired] = await db.executeRaw<{ count: string }>(`WITH up AS (UPDATE facts f SET expired_at=now(), ${unslot}
+    WHERE ${page} AND f.expired_at IS NULL AND NOT (f.source = ANY($3::text[])) RETURNING 1)
+    SELECT COUNT(*)::text AS count FROM up`, params);
+  return Number(audit?.count ?? 0) + Number(expired?.count ?? 0);
 }
 
 
@@ -715,7 +714,7 @@ async function applyEntry(tx: BrainEngine, row: WriteRequest, entry: Conversatio
   const merges = await mergedEntities(tx, row.source_id, entry.rows.map(fact => fact.entity_slug).filter((s): s is string => !!s));
   const rows = entry.rows.map(fact => ({
     ...fact, visibility: OUTCOME_SOURCES.has(fact.source) || fact.visibility === 'private' ? 'private' as const : entry.visibility, entity_slug: fact.entity_slug ? merges.get(fact.entity_slug) ?? fact.entity_slug : null,
-    valid_from: new Date(fact.valid_from), valid_until: fact.valid_until ? new Date(fact.valid_until) : null,
+    valid_from: fact.valid_from == null ? null : new Date(fact.valid_from), valid_until: fact.valid_until ? new Date(fact.valid_until) : null,
     embedding: vectors && fact.embedding ? new Float32Array(fact.embedding) : null,
     embedding_model: vectors && fact.embedding ? entry.embedding!.model : null,
   }));

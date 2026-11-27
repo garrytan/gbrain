@@ -763,6 +763,16 @@ upstream failure rather than triggering a re-list.
   back. Refreshes of one grant are serialized across processes.
 - Mail, calendar and contact pages and the sync state: 0600 files in 0700
   directories gbrain creates. See [File permissions](#file-permissions).
+- Sign-in codes and links in mail: off by default, so Gmail bodies are stored
+  as they arrive. `gbrain config set google.gmail.redact_credentials true`
+  makes every Gmail sync replace labelled one-time codes, sign-in, reset and
+  verify links that carry a token, credential-shaped strings and labelled
+  passwords with `[redacted:otp]`, `[redacted:login-link]`,
+  `[redacted:credential]` or `[redacted:password]` before the text is stored,
+  chunked or indexed, on every later sync of the thread too. A page stored
+  before you turned it on keeps its text until its thread syncs again, and
+  older page versions keep theirs. Unlabelled numbers and ordinary links are
+  left alone, so a code with no label next to it is not caught.
 - Disconnect: `gbrain google disconnect <email>` removes local tokens; revoke
   Google-side at <https://myaccount.google.com/permissions>.
 - Upgrade/transfer: `gbrain creds export` produces a passphrase-encrypted
