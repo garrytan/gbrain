@@ -20,6 +20,7 @@
       "out-of-scope:chronicle-executor (statements chronicle callers ran through executeRaw, moved into engine-sql/chronicle-executor.ts; pinned byte-identical by test/chronicle-executor-sql-pin.test.ts)": 1,
       "out-of-scope:chunk-reads (born in engine-sql/chunk-reads.ts; pinned by test/engine-parity/chunk-reads.test.ts)": 14,
       "out-of-scope:cli-export-reads (born in engine-sql/export-reads.ts; pinned by test/engine-parity/cli-reads-export.test.ts)": 14,
+      "out-of-scope:cli-import-reads (born in engine-sql/cli-reads-import.ts; pinned by test/engine-parity/cli-reads-import.test.ts and test/engine-sql-guest-delete-row.test.ts)": 1,
       "out-of-scope:cli-import-reads (born in engine-sql/cli-reads-import.ts; pinned by test/engine-parity/cli-reads-import.test.ts)": 15,
       "out-of-scope:cli-reads (born in engine-sql/cli-reads-ops.ts; pinned by test/engine-parity/cli-reads-ops.test.ts)": 13,
       "out-of-scope:concept-rebuild (born in engine-sql/concept-rebuild.ts; pinned by test/engine-parity/concept-rebuild.test.ts and test/concept-rebuild-*-9653.test.ts)": 8,
