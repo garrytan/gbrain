@@ -342,6 +342,7 @@ test/engine-parity/request-tools-persist.test.ts	1	0
 test/engine-parity/resident-projection.test.ts	2	0
 test/engine-parity/resolve-reads.test.ts	7	0
 test/engine-parity/restriction-flag-reads.test.ts	3	0
+test/engine-parity/retention-purge.test.ts	7	0
 test/engine-parity/retrieval-coverage.test.ts	17	0
 test/engine-parity/retrieval-reflex.test.ts	5	0
 test/engine-parity/schema-detect.test.ts	4	0
