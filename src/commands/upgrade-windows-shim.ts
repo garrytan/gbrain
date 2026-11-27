@@ -20,6 +20,16 @@ const STALE_SHIM = /^gbrain\.exe\.stale(\.\d+)*$/;
 /** Bun's Windows launcher is a few KB. */
 const MAX_SHIM_BYTES = 1024 * 1024;
 
+function inBinDir(dir: string, name: string): string {
+  // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- dir is Bun's own bin directory (bun pm bin -g or Bun's env vars) and name is a fixed launcher name or one that matched STALE_SHIM
+  return join(dir, name);
+}
+
+/** Whether Bun linked the launcher's metadata (`gbrain.bunx`) in `dir`. */
+export function shimLinked(dir: string): boolean {
+  return existsSync(inBinDir(dir, 'gbrain.bunx'));
+}
+
 /**
  * The directory Bun links global bins into: what `askBun` (`bun pm bin -g`, which also honors bunfig's globalBinDir)
  * reports, else BUN_INSTALL_BIN, else <BUN_INSTALL>/bin, else ~/.bun/bin.
@@ -34,8 +44,8 @@ export function bunShimDir(env: NodeJS.ProcessEnv = process.env, askBun?: () => 
     }
   }
   if (env.BUN_INSTALL_BIN) return env.BUN_INSTALL_BIN;
-  if (env.BUN_INSTALL) return join(env.BUN_INSTALL, 'bin');
-  return join(env.USERPROFILE || env.HOME || homedir(), '.bun', 'bin');
+  if (env.BUN_INSTALL) return inBinDir(env.BUN_INSTALL, 'bin');
+  return inBinDir(inBinDir(env.USERPROFILE || env.HOME || homedir(), '.bun'), 'bin');
 }
 
 /** Bun's own answer for its global bin directory (`bun pm bin -g`). */
@@ -56,7 +66,7 @@ export function removeStaleShims(dir: string): string[] {
   const removed: string[] = [];
   for (const name of names) {
     if (!STALE_SHIM.test(name)) continue;
-    const path = join(dir, name);
+    const path = inBinDir(dir, name);
     try {
       const stat = lstatSync(path);
       if (!stat.isFile() || stat.size > MAX_SHIM_BYTES) continue;
@@ -76,10 +86,10 @@ export function removeStaleShims(dir: string): string[] {
 export function moveAsideOrphanedShim(dir: string, platform: NodeJS.Platform = process.platform, pid: number = process.pid): { from: string; to: string } | null {
   if (platform !== 'win32') return null;
   removeStaleShims(dir);
-  const from = join(dir, SHIM);
+  const from = inBinDir(dir, SHIM);
   if (!existsSync(from)) return null;
-  let to = join(dir, `${SHIM}.stale.${pid}`);
-  for (let n = 1; existsSync(to); n++) to = join(dir, `${SHIM}.stale.${pid}.${n}`);
+  let to = inBinDir(dir, `${SHIM}.stale.${pid}`);
+  for (let n = 1; existsSync(to); n++) to = inBinDir(dir, `${SHIM}.stale.${pid}.${n}`);
   try {
     const stat = lstatSync(from);
     if (!stat.isFile() || stat.size > MAX_SHIM_BYTES) {

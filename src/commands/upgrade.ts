@@ -27,7 +27,7 @@ import {
   readPackageTarget,
   type TargetFloor,
 } from '../core/bun-floor.ts';
-import { askBunForBinDir, bunShimDir, moveAsideOrphanedShim } from './upgrade-windows-shim.ts';
+import { askBunForBinDir, bunShimDir, moveAsideOrphanedShim, shimLinked } from './upgrade-windows-shim.ts';
 
 const GBRAIN_GITHUB_REPO = 'garrytan/gbrain';
 
@@ -426,11 +426,11 @@ async function installStableRelease(method: string, target: { version: string; c
     bun(['add', '-g', BUN_BACKEND, spec]);
     return 'installed';
   } catch {
-    const linked = process.platform !== 'win32' || existsSync(join(shimDir, 'gbrain.bunx'));
+    const linked = process.platform !== 'win32' || shimLinked(shimDir);
     if (linked && installedDespiteFailure(ctx.oldVersion, method)) return 'installed';
     console.error(`Installing ${spec} failed. Restoring gbrain ${ctx.oldVersion}...`);
     const hint = reinstallHintLines(target.version, ctx.oldVersion, process.platform, shimDir);
-    try { if (removed || !existsSync(join(shimDir, 'gbrain.bunx'))) moveAsideOrphanedShim(shimDir); bun(['add', '-g', BUN_BACKEND, `github:${GBRAIN_GITHUB_REPO}#v${ctx.oldVersion}`]); console.error(`Restored gbrain ${ctx.oldVersion}.`); }
+    try { if (removed || !shimLinked(shimDir)) moveAsideOrphanedShim(shimDir); bun(['add', '-g', BUN_BACKEND, `github:${GBRAIN_GITHUB_REPO}#v${ctx.oldVersion}`]); console.error(`Restored gbrain ${ctx.oldVersion}.`); }
     catch { console.error('Restore failed. Reinstall by hand:'); for (const line of hint) console.error(`  ${line}`); }
     recordUpgradeError({ phase: ctx.phase ?? 'stable-reinstall', fromVersion: ctx.oldVersion, toVersion: target.version, error: `bun add -g ${BUN_BACKEND} ${spec} failed`, recover: process.platform === 'win32' ? `${hint[0]} ${hint.slice(1).map((line, i) => `(${i + 1}) ${line}`).join(' ')}` : hint[0] });
     setCliExitVerdict(1);
