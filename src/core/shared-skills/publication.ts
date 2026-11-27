@@ -351,8 +351,9 @@ export async function submitSharedSkillMutation(ctx: OperationContext, operation
       { fix: skillHeadFix(sourceId, packId, name) });
   }
   const replacement = new Map(proposals.flatMap(p => p.files).filter(f => f.path.startsWith('skills/conventions/')).map(f => [f.path, f]));
-  refuseDependentWidening(sourceId, current.filter(head => dependents.includes(head.name) && !head.deleted)
-    .map(head => ({ name: head.name, files: reachableAfterReplacement(head.name, head.files, replacement) })), current, ctx.remote === false);
+  const rebuilt = current.filter(head => dependents.includes(head.name) && !head.deleted)
+    .map(head => ({ name: head.name, files: reachableAfterReplacement(head.name, head.files, replacement) }));
+  refuseDependentWidening(sourceId, rebuilt, current, ctx.remote === false);
   const manifestBytes = canonicalRead(root, 'skillpack.json');
   if (!pack && manifestBytes && (!adoption || adoption.mode === 'proposal')) {
     throw opError('approval_required', 'An unadopted skillpack already exists on disk. A trusted host must adopt its complete reviewed inventory before individual skill publication.',
@@ -406,8 +407,11 @@ export async function submitSharedSkillMutation(ctx: OperationContext, operation
     extraFiles[path] = content;
   }
   const inventoryPaths = ['skillpack.json', ...inventory.flatMap(entry => entry.files.map(file => file.path))];
+  // A dependent is compared with the files it keeps once the shared files are replaced, as prepare rebuilds it.
+  const rebuiltPaths = new Map(rebuilt.map(entry => [entry.name, entry.files.map(file => file.path)]));
   refuseNewCaseCollisions(sourceId, inventoryPaths, ['skillpack.json', ...Object.keys(extraFiles), ...allProposedFiles.map(file => file.path),
-    ...inventory.filter(entry => !proposals.some(p => p.name === entry.name)).flatMap(entry => entry.files.map(file => file.path))], ctx.remote === false);
+    ...inventory.filter(entry => !proposals.some(p => p.name === entry.name))
+      .flatMap(entry => rebuiltPaths.get(entry.name) ?? entry.files.map(file => file.path))], ctx.remote === false);
   const touched = new Set([...allProposedFiles.map(f => f.path), ...current.filter(r => affected.some(p => p.name === r.name)).flatMap(r => r.files.map(f => f.path)), ...Object.keys(extraFiles)]);
   for (const [path, expectedHash] of Object.entries(adoption?.expected_hashes ?? {})) {
     if (path !== 'skillpack.json') skillPath(path);

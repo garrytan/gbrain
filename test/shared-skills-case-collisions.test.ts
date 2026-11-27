@@ -175,6 +175,17 @@ for (const [name, url] of backends) {
       const outcome = await prepareSharedSkillMutation(f.engine, old as never, f.local.config).then(() => 'prepared', (error: { code?: string }) => error.code);
       expect({ outcome, heads: await heads(f), checkout: checkout(f.root) }).toEqual({ outcome: 'local_conflict', ...before });
     }, url), 120_000);
+
+    // Value: protects=a shared edit that moves every skill off one spelling is not refused by files no skill keeps; fails_when=admission compares alpha's old Refs/old.md, which prepare drops, with beta's new refs/new.md; why_new=admission read dependents' current files, not the files they keep; seam=none; no_claim=none
+    test('a shared edit that replaces a directory spelling for every skill that reaches it publishes', () => fixture(async f => {
+      const ROOT = 'skills/conventions/root.md';
+      const OLD = 'skills/conventions/Refs/old.md';
+      const NEW = 'skills/conventions/refs/new.md';
+      committed(await put(f, f.local, 'alpha', [prose('alpha', 'Use the root.', [ROOT]), { ...shared(ROOT), depends_on: [OLD] }, shared(OLD)]));
+      committed(await put(f, f.local, 'beta', [prose('beta', 'Use the root too.', [ROOT]), { ...shared(ROOT), depends_on: [OLD] }, shared(OLD)]));
+      committed(await put(f, f.local, 'beta', [prose('beta', 'Use the root too.', [ROOT]), { ...shared(ROOT), content: 'Synthetic root, edited.\n', depends_on: [NEW] }, shared(NEW)]));
+      expect(Object.keys(checkout(f.root)).filter(path => path.startsWith('skills/conventions/')).sort()).toEqual([NEW, ROOT]);
+    }, url), 120_000);
   });
 }
 
