@@ -6,7 +6,7 @@
  * refuses for a caller whose members, grants or lineage change it. `readRetirementHop` applies the hop's page policy
  * the same way (retirementHopPolicy).
  */
-import type { EntityAnchoredPages, TextMentionPageRow, EntityCardMatch, EntityCardRow, IgnoredLabelPageRow, InboundLinkerCountRow, LivePageTypeRow, MentionDueQuery, MentionIndexRecount, MentionIndexStatusRow, NameVariantCandidateQuery, NameVariantCandidateRow, PrefixCandidateQuery, PrefixCandidateRow, PrefixTitleRow, ResolverPrivacy, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow, SlugPatternPageRow, TrigramCandidateQuery, TrigramCandidateRow, FuzzyEntityCandidateRow, NameVariantCardCandidateRow, VariantPageRow } from '../../engine-sql/entity-reads.ts';
+import type { CoverageCountOpts, EntityAnchoredPages, TextMentionPageRow, EntityCardMatch, EntityCardRow, IgnoredLabelPageRow, InboundLinkerCountRow, LivePageTypeRow, MentionDueQuery, MentionIndexRecount, MentionIndexStatusRow, NameVariantCandidateQuery, NameVariantCandidateRow, PrefixCandidateQuery, PrefixCandidateRow, PrefixTitleRow, ResolverPrivacy, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow, SlugPatternPageRow, TrigramCandidateQuery, TrigramCandidateRow, FuzzyEntityCandidateRow, NameVariantCardCandidateRow, VariantPageRow } from '../../engine-sql/entity-reads.ts';
 import { ignoredPrivacyLabels, SCAN_CAP } from '../../search/ignored-privacy-labels.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
 import { retirementHopPolicy, storePagePolicy } from './private-provenance.ts';
@@ -18,13 +18,24 @@ export const readMentionLastPass: StoreMember<[sourceId?: string | null], string
 export const readMentionIndexStatus: StoreMember<[sourceIds: readonly string[]], MentionIndexStatusRow[]> = (brain, sourceIds) =>
   storeCall({ member: 'readMentionIndexStatus' }, () => brain.readMentionIndexStatus({ sourceIds: [...sourceIds] }));
 
-/** The source's live pages: the due count at a version no page state holds (-1), so every live page is due whatever the pass has scanned. */
-export const countLivePagesInSource: StoreMember<[sourceId: string], number> = async (brain, sourceId) =>
-  Number(await storeCall({ member: 'countLivePagesInSource', sourceId }, () => brain.countPagesDueForMentions({ sourceId, mentionVersion: -1 })));
+/**
+ * The source's live pages: the due count at a version no page state holds (-1), so every live page is due whatever the
+ * pass has scanned. `excludePrivate` leaves out the pages the caller may not read (the store page policy).
+ */
+export const countLivePagesInSource: StoreMember<[sourceId: string, opts?: CoverageCountOpts], number> = async (brain, sourceId, opts) => {
+  const taken = takeOptions('countLivePagesInSource', opts, ['excludePrivate']);
+  const excludePrivate = storePagePolicy('countLivePagesInSource', taken.excludePrivate, { callerReaders: true });
+  return Number(await storeCall({ member: 'countLivePagesInSource', sourceId }, () =>
+    brain.countPagesDueForMentions({ sourceId, mentionVersion: -1, excludePrivate: excludePrivate ?? null })));
+};
 
-/** The source's live pages written at or after `since` that have no mention state at their content and `mentionVersion`. */
-export const countMentionDueSince: StoreMember<[sourceId: string, since: string, mentionVersion: number], number> = async (brain, sourceId, since, mentionVersion) =>
-  Number(await storeCall({ member: 'countMentionDueSince', sourceId }, () => brain.countMentionDueSince({ sourceId, since, mentionVersion })));
+/** The source's live pages written at or after `since` that have no mention state at their content and `mentionVersion`; `excludePrivate` as above. */
+export const countMentionDueSince: StoreMember<[sourceId: string, since: string, mentionVersion: number, opts?: CoverageCountOpts], number> = async (brain, sourceId, since, mentionVersion, opts) => {
+  const taken = takeOptions('countMentionDueSince', opts, ['excludePrivate']);
+  const excludePrivate = storePagePolicy('countMentionDueSince', taken.excludePrivate, { callerReaders: true });
+  return Number(await storeCall({ member: 'countMentionDueSince', sourceId }, () =>
+    brain.countMentionDueSince({ sourceId, since, mentionVersion, excludePrivate: excludePrivate ?? null })));
+};
 
 /** The compare-and-set on the source's status row's fingerprint; a source with no row is untouched. */
 export const recountMentionIndexStatus: StoreMember<[sourceId: string, recount: MentionIndexRecount], void> = async (brain, sourceId, recount) => {
@@ -34,9 +45,11 @@ export const recountMentionIndexStatus: StoreMember<[sourceId: string, recount: 
 };
 
 export const countPagesDueForMentions: StoreMember<[q: MentionDueQuery], number> = async (brain, q) => {
-  const opts = takeOptions('countPagesDueForMentions', q, ['sourceId', 'mentionVersion', 'aliases']);
+  const opts = takeOptions('countPagesDueForMentions', q, ['sourceId', 'mentionVersion', 'aliases', 'excludePrivate']);
+  const excludePrivate = storePagePolicy('countPagesDueForMentions', opts.excludePrivate, { callerReaders: true });
   return Number(await storeCall({ member: 'countPagesDueForMentions', sourceId: q.sourceId ?? undefined }, () =>
-    brain.countPagesDueForMentions({ sourceId: opts.sourceId ?? null, mentionVersion: opts.mentionVersion, aliases: opts.aliases ?? null })));
+    brain.countPagesDueForMentions({ sourceId: opts.sourceId ?? null, mentionVersion: opts.mentionVersion, aliases: opts.aliases ?? null,
+      excludePrivate: excludePrivate ?? null })));
 };
 
 export const readIdentitySiblingCandidates: StoreMember<[sourceId: string, q: SiblingCandidateQuery], SiblingCandidateRow[]> = (brain, sourceId, q) => {

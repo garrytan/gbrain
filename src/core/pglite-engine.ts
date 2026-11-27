@@ -2891,8 +2891,8 @@ export class PGLiteEngine implements BrainEngine {
   // Entity and mention reads the CLI made through executeRaw (engine-sql/entity-reads.ts).
   readMentionLastPass(sourceId?: string | null) { return entityReadsImpl.readMentionLastPass(unscopedExecutor(this.engineSql, 'entities: mention pass time ran unscoped through executeRaw'), sourceId); }
   readMentionIndexStatus(sourceIds: readonly string[]) { return entityReadsImpl.readMentionIndexStatus(unscopedExecutor(this.engineSql, 'entities: mention-index status ran unscoped through executeRaw'), sourceIds); }
-  countLivePagesInSource(sourceId: string) { return entityReadsImpl.countLivePagesInSource(unscopedExecutor(this.engineSql, 'entities: live-page count ran unscoped through executeRaw'), sourceId); }
-  countMentionDueSince(sourceId: string, since: string, mentionVersion: number) { return entityReadsImpl.countMentionDueSince(unscopedExecutor(this.engineSql, 'entities: mention due-since count ran unscoped through executeRaw'), sourceId, since, mentionVersion); }
+  countLivePagesInSource(sourceId: string, opts?: entityReadsImpl.CoverageCountOpts) { return entityReadsImpl.countLivePagesInSource(unscopedExecutor(this.engineSql, 'entities: live-page count ran unscoped through executeRaw'), sourceId, opts); }
+  countMentionDueSince(sourceId: string, since: string, mentionVersion: number, opts?: entityReadsImpl.CoverageCountOpts) { return entityReadsImpl.countMentionDueSince(unscopedExecutor(this.engineSql, 'entities: mention due-since count ran unscoped through executeRaw'), sourceId, since, mentionVersion, opts); }
   recountMentionIndexStatus(sourceId: string, recount: entityReadsImpl.MentionIndexRecount) { return entityReadsImpl.recountMentionIndexStatus(this.engineSql, sourceId, recount); }
   readSegmentedPageSealed(sourceId: string, slug: string) { return segmentDeriveStoreImpl.readSegmentedPageSealed(this, sourceId, slug); }
   storeSegmentDerivationsIfLive(pageId: number, generation: number, rows: readonly segmentDeriveStoreImpl.SegmentDerivationStoreRow[]) { return segmentDeriveStoreImpl.storeSegmentDerivationsIfLive(this, pageId, generation, rows); }

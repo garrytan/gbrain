@@ -10,7 +10,7 @@ import type * as BriefReadsSql from '../engine-sql/brief-reads.ts';
 import type * as ConceptRebuildSql from '../engine-sql/concept-rebuild.ts';
 import type * as EmbeddingCatalogSql from '../engine-sql/embedding-catalog.ts';
 import type * as ChronicleReadsSql from '../engine-sql/chronicle-reads.ts';
-import type { EntityAnchoredPages, EntityCardMatch, EntityCardRow, ExtractionLagCounts, ExtractionLagQuery, FuzzyEntityCandidateRow, IgnoredLabelPageRow, InboundLinkerCountRow, LivePageTypeRow, MentionDueQuery, MentionIndexRecount, MentionIndexStatusRow, NameVariantCandidateQuery, NameVariantCandidateRow, PrefixCandidateQuery, PrefixCandidateRow, PrefixTitleRow, ResolverPrivacy, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow, SlugPatternPageRow, TextMentionPageRow, TrigramCandidateQuery, TrigramCandidateRow, VariantPageRow, NameVariantCardCandidateRow } from '../engine-sql/entity-reads.ts';
+import type { CoverageCountOpts, EntityAnchoredPages, EntityCardMatch, EntityCardRow, ExtractionLagCounts, ExtractionLagQuery, FuzzyEntityCandidateRow, IgnoredLabelPageRow, InboundLinkerCountRow, LivePageTypeRow, MentionDueQuery, MentionIndexRecount, MentionIndexStatusRow, NameVariantCandidateQuery, NameVariantCandidateRow, PrefixCandidateQuery, PrefixCandidateRow, PrefixTitleRow, ResolverPrivacy, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow, SlugPatternPageRow, TextMentionPageRow, TrigramCandidateQuery, TrigramCandidateRow, VariantPageRow, NameVariantCardCandidateRow } from '../engine-sql/entity-reads.ts';
 import type { ExactBatchRow, ExactScanOpts } from '../search/exact-scan.ts';
 import type { ExactIdentityRow, ExactIdentityStatementOpts } from '../engine-sql/exact-identity.ts';
 import type { ExactRescanChunkRow, ExactSnippetChunkRow, ExactSnippetKey, ExtractionPendingRow, FenceOverlayIncomingRow, FenceOverlayRow, FenceRowKey, FenceRowTrust, HeldFenceCellKey, HeldFenceCellRow, LongPageSizeRow, PageTypeProbe, RankCoverageRow, UnattributedFactRow, WantedPageRow } from '../engine-sql/cli-reads-ops.ts';
@@ -138,15 +138,22 @@ export interface ReadStatementMembers {
   readMentionLastPass(sourceId?: string | null): Promise<string | null>;
   /** The mention-index status rows of `sourceIds` (mentions/coverage.ts), in no defined order; a source with no row has none. */
   readMentionIndexStatus(sourceIds: readonly string[]): Promise<MentionIndexStatusRow[]>;
-  /** The live (not soft-deleted) pages of one source: mention coverage's pending count for a source with no status row. */
-  countLivePagesInSource(sourceId: string): Promise<number>;
-  /** Live pages of one source written at or after `since` (`-infinity` for no bound) and not scanned at their content or `mentionVersion`. */
-  countMentionDueSince(sourceId: string, since: string, mentionVersion: number): Promise<number>;
+  /**
+   * The live (not soft-deleted) pages of one source: mention coverage's pending count for a source with no status row.
+   * `excludePrivate` leaves out the pages the caller may not read.
+   */
+  countLivePagesInSource(sourceId: string, opts?: CoverageCountOpts): Promise<number>;
+  /**
+   * Live pages of one source written at or after `since` (`-infinity` for no bound) and not scanned at their content or
+   * `mentionVersion`; `excludePrivate` leaves out the pages the caller may not read.
+   */
+  countMentionDueSince(sourceId: string, since: string, mentionVersion: number, opts?: CoverageCountOpts): Promise<number>;
   /** Writes a coverage recount on a source's status row while its fingerprint is `expectedFingerprint`; no row, no write. */
   recountMentionIndexStatus(sourceId: string, recount: MentionIndexRecount): Promise<void>;
   /**
    * Live pages due for the mention pass (no mention state, or state behind the page's content or `mentionVersion`), in
-   * one source or every source; `aliases` also counts pages of those types whose derived aliases are behind.
+   * one source or every source; `aliases` also counts pages of those types whose derived aliases are behind, and
+   * `excludePrivate` leaves out the pages the caller may not read.
    */
   countPagesDueForMentions(q: MentionDueQuery): Promise<number>;
   /**

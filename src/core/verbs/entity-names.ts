@@ -86,7 +86,7 @@ async function attachReferences(engine: BrainEngine, sourceId: string, results: 
     ? { next: { ...refs.rows[i]!.next, arguments: { ...refs.rows[i]!.next!.arguments, source_id: sourceId } } } : {}));
   if (refs.notice) opts.emitNotice?.(refs.notice);
   if (!refs.rows.some(r => r.referenced_by_count !== undefined || r.records)) return;
-  const coverage = await readMentionCoverage(engine, [sourceId]).catch(() => null);
+  const coverage = await readMentionCoverage(engine, [sourceId], { excludePrivate }).catch(() => null);
   const notice = coverage ? mentionCoverageNotice(coverage) : null;
   if (notice) opts.emitNotice?.(notice);
 }

@@ -39,7 +39,12 @@ export interface MentionDueQuery {
   mentionVersion: number;
   /** Also count pages of these types whose derived aliases are behind their content or `version`. */
   aliases?: { types: readonly string[]; version: number };
+  /** Leave out the pages the caller may not read (`privatePagesFilterForCaller`): an untrusted caller's count. */
+  excludePrivate?: boolean;
 }
+
+/** A coverage count for one caller: `excludePrivate` leaves out the pages an untrusted caller may not read. */
+export interface CoverageCountOpts { excludePrivate?: boolean }
 
 /** One source's mention-index status row (mentions/coverage.ts); the times are what the driver returns. */
 export interface MentionIndexStatusRow {
@@ -57,9 +62,13 @@ export async function readMentionIndexStatus(exec: LegacyUnscopedRead, sourceIds
     `SELECT source_id, state, pending, counted_at, last_pass_at, policy_fingerprint FROM mention_index_status WHERE source_id = ANY($1::text[])`, [sourceIds]);
 }
 
-/** The live (not soft-deleted) pages of one source: mention coverage's pending count for a source with no status row. */
-export async function countLivePagesInSource(exec: LegacyUnscopedRead, sourceId: string): Promise<number> {
-  const [n] = await exec.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM pages WHERE source_id = $1 AND deleted_at IS NULL', [sourceId]);
+/**
+ * The live (not soft-deleted) pages of one source: mention coverage's pending count for a source with no status row.
+ * `excludePrivate` leaves out the pages the caller may not read.
+ */
+export async function countLivePagesInSource(exec: LegacyUnscopedRead, sourceId: string, opts: CoverageCountOpts = {}): Promise<number> {
+  const priv = opts.excludePrivate ? ` AND ${privatePagesFilterForCaller('pages')}` : '';
+  const [n] = await exec.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM pages WHERE source_id = $1 AND deleted_at IS NULL${priv}`, [sourceId]);
   return Number(n?.n ?? 0);
 }
 
@@ -67,13 +76,16 @@ export async function countLivePagesInSource(exec: LegacyUnscopedRead, sourceId:
  * Live pages of one source written at or after `since` (a timestamptz text, `-infinity` for no
  * bound) that are not scanned at their current content or at `mentionVersion`: what mention
  * coverage adds to a status row's saved count. The bound binds as text: postgres.js serializes a
- * timestamptz parameter through `new Date()`, which cannot hold `-infinity`.
+ * timestamptz parameter through `new Date()`, which cannot hold `-infinity`. `excludePrivate` leaves out the pages
+ * the caller may not read.
  */
-export async function countMentionDueSince(exec: LegacyUnscopedRead, sourceId: string, since: string, mentionVersion: number): Promise<number> {
+export async function countMentionDueSince(exec: LegacyUnscopedRead, sourceId: string, since: string, mentionVersion: number,
+  opts: CoverageCountOpts = {}): Promise<number> {
+  const priv = opts.excludePrivate ? ` AND ${privatePagesFilterForCaller('p')}` : '';
   const [n] = await exec.executeRaw<{ n: number }>(
       `SELECT count(*)::int AS n FROM pages p LEFT JOIN page_mention_state s ON s.page_id = p.id
         WHERE p.source_id = $1 AND p.updated_at >= $2::text::timestamptz AND p.deleted_at IS NULL
-          AND (s.page_id IS NULL OR s.mention_revision IS DISTINCT FROM p.knowledge_revision OR s.mention_version IS DISTINCT FROM $3)`,
+          AND (s.page_id IS NULL OR s.mention_revision IS DISTINCT FROM p.knowledge_revision OR s.mention_version IS DISTINCT FROM $3)${priv}`,
       [sourceId, since, mentionVersion]);
   return Number(n?.n ?? 0);
 }
@@ -108,8 +120,9 @@ export async function countPagesDueForMentions(exec: LegacyUnscopedRead, q: Ment
   const aliasDue = q.aliases
     ? sqlFragment` OR (p.type = ANY(${[...q.aliases.types]}::text[]) AND (s.alias_revision IS DISTINCT FROM p.knowledge_revision OR s.alias_version IS DISTINCT FROM ${q.aliases.version}))`
     : sqlFragment``;
+  const priv = q.excludePrivate ? sqlFragment` AND ${trustedSql(privatePagesFilterForCaller('p'))}` : sqlFragment``;
   const { text, params } = renderFragment(sqlFragment`SELECT count(*)::int AS n FROM pages p LEFT JOIN page_mention_state s ON s.page_id = p.id
-        WHERE p.deleted_at IS NULL AND (${source}::text IS NULL OR p.source_id = ${source}) AND (${due}${aliasDue})`);
+        WHERE p.deleted_at IS NULL AND (${source}::text IS NULL OR p.source_id = ${source}) AND (${due}${aliasDue})${priv}`);
   const rows = await exec.executeRaw<{ n: number }>(text, params);
   return Number(rows[0]?.n ?? 0);
 }

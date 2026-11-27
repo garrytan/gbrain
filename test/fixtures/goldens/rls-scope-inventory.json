@@ -669,6 +669,17 @@
         ],
         "flagOnScopes": []
       },
+      "countPagesDueForMentions#sourceId+aliases+private": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "countPeopleFolderPages#default": {
         "flagOffLanes": [
           "pool"

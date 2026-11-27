@@ -127,10 +127,13 @@ export async function countMentionDuePages(engine: Pick<BrainEngine, 'countPages
  * Index-due live pages of one source: mention-due pages plus linkable entity
  * pages (`types`) whose derived aliases are behind their content or
  * ALIAS_DERIVATION_VERSION. The status row's `pending` holds this count.
+ * `excludePrivate` leaves out the pages the caller may not read: a count for
+ * one untrusted caller (mentions/coverage.ts), never saved on the row.
  */
-export async function countIndexDuePages(engine: Pick<BrainEngine, 'countPagesDueForMentions'>, sourceId: string, types: string[]): Promise<number> {
+export async function countIndexDuePages(engine: Pick<BrainEngine, 'countPagesDueForMentions'>, sourceId: string, types: string[],
+  opts: { excludePrivate?: boolean } = {}): Promise<number> {
   return engine.countPagesDueForMentions({ sourceId, mentionVersion: MENTION_EXTRACTOR_VERSION,
-    aliases: { types, version: ALIAS_DERIVATION_VERSION } });
+    aliases: { types, version: ALIAS_DERIVATION_VERSION }, ...(opts.excludePrivate ? { excludePrivate: true } : {}) });
 }
 
 /**

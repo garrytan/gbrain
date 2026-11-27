@@ -328,9 +328,10 @@ export class DeclarationMemo {
  * Notices for an alias fan-out: the model-visible line when it stopped at its
  * cap (the skipped names can be searched directly), and the `mention_index`
  * notice when the resolved entity's source is not fully indexed yet (its
- * aliases may be incomplete until the catch-up sweep finishes).
+ * aliases may be incomplete until the catch-up sweep finishes), counted over
+ * the pages the caller may read (`excludePrivate`).
  */
-async function emitFanoutNotices(ctx: OperationContext, fanout: FanoutMeta | undefined, scope: SourceScope): Promise<void> {
+async function emitFanoutNotices(ctx: OperationContext, fanout: FanoutMeta | undefined, scope: SourceScope, excludePrivate: boolean): Promise<void> {
   if (!fanout) return;
   if (fanout.truncated) {
     const notice: Notice = { code: 'alias_fanout', kind: 'info',
@@ -338,7 +339,7 @@ async function emitFanoutNotices(ctx: OperationContext, fanout: FanoutMeta | und
     ctx.emitNotice?.(notice);
   }
   if (!fanout.resolved_entity) return;
-  const coverage = await readMentionCoverage(ctx.engine, scope.sourceIds?.length ? scope.sourceIds : [scope.sourceId ?? ctx.sourceId ?? 'default']).catch(() => null);
+  const coverage = await readMentionCoverage(ctx.engine, scope.sourceIds?.length ? scope.sourceIds : [scope.sourceId ?? ctx.sourceId ?? 'default'], { excludePrivate }).catch(() => null);
   const notice = coverage ? mentionCoverageNotice(coverage) : null;
   if (notice) ctx.emitNotice?.(notice);
 }
@@ -828,7 +829,7 @@ const search: Operation = {
           { excludePrivate, requireSafeChunks: ctx.remote !== false, ...(types ? { types } : {}), ...scope }, () => declarations.scan(primary, queryText), resolving))
         : { results: primary };
       let results = fanned.results.map(r => ({ ...r }));
-      if (first) await emitFanoutNotices(ctx, fanned.fanout, scope);
+      if (first) await emitFanoutNotices(ctx, fanned.fanout, scope, excludePrivate);
       results = await keepFrontmatterMatches(ctx.engine, await timings.stage('anchoring', () => anchorOpResults(ctx.engine, p, queryText, results, { ...scope, excludePrivate, requireSafeChunks: ctx.remote !== false, filtered: !!types || !!where, evidencePlan: !!plan })), where);
       stampDeepResearchIds(results);
       return { capped, declarations, fanned, results };
@@ -856,7 +857,7 @@ function queryOpStages(ctx: OperationContext, p: Record<string, unknown>, queryT
     const declarations = new DeclarationMemo();
     const fanned = await timings.stage('alias_fanout', () => withAliasFanOut(ctx.engine, primaryRows, queryText, { ...querySourceScope, excludePrivate },
       { excludePrivate, requireSafeChunks: ctx.remote !== false, ...(types ? { types } : {}), ...querySourceScope }, () => declarations.scan(primaryRows, queryText), resolving));
-    if (first) await emitFanoutNotices(ctx, fanned.fanout, querySourceScope);
+    if (first) await emitFanoutNotices(ctx, fanned.fanout, querySourceScope, excludePrivate);
     const results = await applyQueryArms(ctx.engine, p, queryText, fanned.results, { ...querySourceScope, excludePrivate, requireSafeChunks: ctx.remote !== false, filtered: !!types || !!where, evidencePlan: !!plan, evidenceBudget: plan?.budgetTokens, remote: ctx.remote !== false, queryEmbedding, rowCap: () => resolveEffectiveLimit(ctx, p), timer: timings });
     return { pageCapMeta, declarations, fanned, results, grade: gradeRetrievalConfidence(results, { query: queryText }) };
   };

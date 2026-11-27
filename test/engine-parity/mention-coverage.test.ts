@@ -8,8 +8,10 @@
  *    coverage on a linkable type and `type_not_linkable` on another; get_backlinks with `group: "page"` returns it; a
  *    search whose query names an entity, and an entity-names lookup whose entity has referrers, emit the
  *    `mention_index` notice for it.
- *    The coverage counts a private page of a source like any live page (a count, never a slug), and a remote caller
- *    who reads world pages only gets the same paged backlinks as PGLite, with the private referrer absent.
+ *    The coverage counts a private page of a source like any live page for a local caller (a count, never a slug); a
+ *    remote caller who reads world pages only leaves out the private pages it cannot read (6 live pages, 4 it may
+ *    read), and gets the same paged backlinks as PGLite, with the private referrer absent. The status-row branches
+ *    for that caller are compared in test/engine-parity/mention-coverage-private.test.ts.
  *  - Regression: the Rust arm refused the read (raw SQL), so the card's references failed to `read_failed`, the
  *    paged backlinks call failed, and search and entity-names dropped the notice on a Rust brain.
  *  - Why existing coverage misses it: the mentions tests run PGLite only and seed status rows through executeRaw;
@@ -166,7 +168,7 @@ describe('engine parity: mention-index coverage', () => {
   );
 
   parityTest(
-    'a world-only remote caller gets the same paged backlinks as a local one, minus the private referrer, and the same coverage',
+    'a world-only remote caller gets the same paged backlinks as a local one, minus the private referrer, and coverage over the pages it may read',
     { methods: ['putPage', 'softDeletePage', 'setPageAliases', 'addLinksBatch', 'listReferrerTargetSources', 'countReferrerRows', 'readReferrerRows'] },
     async (engine: BrainEngine, backend) => {
       await seed(engine, backend);
@@ -184,7 +186,8 @@ describe('engine parity: mention-index coverage', () => {
       expect(out.remote.slugs).toEqual(['notes/one', 'notes/two']);
       expect([out.local.total, out.remote.total]).toEqual([3, 2]);
       expect(JSON.stringify(out.remote)).not.toContain('secret');
-      expect(out.remote.coverage).toEqual({ ...PENDING_DEFAULT, pending_pages: 6 });
+      expect(out.local.coverage).toEqual({ ...PENDING_DEFAULT, pending_pages: 6 });
+      expect(out.remote.coverage).toEqual({ ...PENDING_DEFAULT, pending_pages: 4 });
       expect(out.notices).toEqual({ local: ['mention_index'], remote: ['mention_index'] });
       return out;
     },

@@ -3121,6 +3121,7 @@ export const EXTRA_READ_CASES: SqlCase[] = [
   ...variants('countPagesDueForMentions', [
     ['default', (e) => e.countPagesDueForMentions({ sourceId: null, mentionVersion: 1 })],
     ['sourceId+aliases', (e) => e.countPagesDueForMentions({ sourceId: SRC, mentionVersion: 1, aliases: { types: ['person'], version: 1 } })],
+    ['sourceId+aliases+private', (e) => e.countPagesDueForMentions({ sourceId: SRC, mentionVersion: 1, aliases: { types: ['person'], version: 1 }, excludePrivate: true })],
   ]),
   ...variants('upsertGuestSource', [['default', (e) => e.upsertGuestSource('default', ['a-z', 'ab'], 'external_untrusted')]]),
   ...variants('listGuestNotes', [['all', (e) => e.listGuestNotes('notes/a')], ['one source', (e) => e.listGuestNotes('notes/a', 'default')]]),

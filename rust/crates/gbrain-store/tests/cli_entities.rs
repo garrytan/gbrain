@@ -134,6 +134,7 @@ fn with_no_pass_run_every_live_page_is_due() {
                 source_id: source.map(String::from),
                 mention_version: 7,
                 aliases: None,
+                exclude_private: None,
             })
             .unwrap()
     };
@@ -161,6 +162,7 @@ fn mention_coverage_reads_see_no_status_rows_before_a_pass_ran() {
             source_id: source.into(),
             since: since.into(),
             mention_version: 0,
+            exclude_private: None,
         })
     };
     assert_eq!(since("default", "-infinity").unwrap(), 11);
@@ -180,6 +182,65 @@ fn mention_coverage_reads_see_no_status_rows_before_a_pass_ran() {
         })
         .unwrap();
     assert!(status(&["default"]).is_empty());
+}
+
+#[test]
+fn mention_coverage_counts_skip_private_pages_under_the_policy() {
+    let dir = TempDir::new("cli-mention-coverage-private");
+    let store = open(&dir);
+    let page = |fm: Value| json!({"type": "note", "title": "N", "compiled_truth": "body", "frontmatter": fm});
+    put(&store, "default", "notes/a", page(json!({})));
+    put(
+        &store,
+        "default",
+        "notes/b",
+        page(json!({"visibility": "world"})),
+    );
+    put(
+        &store,
+        "default",
+        "notes/private",
+        page(json!({"visibility": "private"})),
+    );
+    put(
+        &store,
+        "default",
+        "notes/restricted",
+        page(json!({"access": "restricted"})),
+    );
+    let policy = |honor_aliases: bool| PrivacyPolicy {
+        honor_aliases,
+        entity_privacy: true,
+        ..Default::default()
+    };
+    let due = |exclude_private: Option<PrivacyPolicy>| {
+        store
+            .count_pages_due_for_mentions(&MentionDueQuery {
+                source_id: Some("default".into()),
+                mention_version: 7,
+                aliases: None,
+                exclude_private,
+            })
+            .unwrap()
+    };
+    let since = |exclude_private: Option<PrivacyPolicy>| {
+        store
+            .count_mention_due_since(&MentionDueSinceQuery {
+                source_id: "default".into(),
+                since: "-infinity".into(),
+                mention_version: 7,
+                exclude_private,
+            })
+            .unwrap()
+    };
+    // No policy counts every live page; the policy leaves out the pages it hides, and only those.
+    assert_eq!((due(None), since(None)), (4, 4));
+    assert_eq!((due(Some(policy(true))), since(Some(policy(true)))), (2, 2));
+    // Without honor_aliases a private `access` value does not hide the page.
+    assert_eq!(
+        (due(Some(policy(false))), since(Some(policy(false)))),
+        (3, 3)
+    );
 }
 
 #[test]

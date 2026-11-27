@@ -507,7 +507,7 @@ export async function buildEntityCard(
     const textMentions = await readTextMentions(engine, sources, trimmed, { remote: opts.remote, excludePrivate: scope.excludePrivate, omitQuarantined: opts.omitQuarantined });
     return {
       found: false, suggestions: selected.suggestions,
-      coverage: await readMentionCoverage(engine, [...sources]).catch(failOpen(undefined)),
+      coverage: await readMentionCoverage(engine, [...sources], { excludePrivate: scope.excludePrivate }).catch(failOpen(undefined)),
       ...(textMentions?.total || textMentions?.unread ? { text_mentions: textMentions } : {}),
       ...ambiguous,
       ...degraded,
@@ -558,7 +558,7 @@ async function cardReferences(engine: BrainEngine, sourceId: string, row: CardPa
     const { pack } = await loadLinkableTypes(engine, sourceId);
     const { total, groups } = await readReferrerGroups(engine, { slug: row.slug, sourceId, referrerSources: [sourceId], excludePrivate, pack,
       keepVisibility: opts.remote ? ['world'] : ['private', 'world'], eligibility: opts.eligibility });
-    let coverage = await readMentionCoverage(engine, [sourceId]);
+    let coverage = await readMentionCoverage(engine, [sourceId], { excludePrivate });
     if (coverage.state !== 'disabled' && !entityTypes.has(row.type ?? '')) coverage = { ...coverage, state: 'type_not_linkable', degraded: true };
     const referenced_by = groups.map((g): ReferenceGroupView => {
       const rows = g.rows.map(({ source_id: _s, ...rest }) => rest);

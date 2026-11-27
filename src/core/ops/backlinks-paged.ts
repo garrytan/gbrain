@@ -103,7 +103,7 @@ export async function readBacklinkPage(ctx: OperationContext, p: Record<string, 
     throw opError('invalid_params', 'get_backlinks: cursor is not one this tool returned.', 'Pass the cursor from the previous get_backlinks response unchanged, or omit it to start from the newest page.');
   }
   const resolved = await referrerScope(ctx, String(p.slug), policy);
-  const coverage = await readMentionCoverage(ctx.engine, resolved?.sources ?? await scopeSources(ctx, policy));
+  const coverage = await readMentionCoverage(ctx.engine, resolved?.sources ?? await scopeSources(ctx, policy), { excludePrivate: readPolicyOf(policy)?.excludePrivate === true });
   const notice = mentionCoverageNotice(coverage);
   if (notice) ctx.emitNotice?.(notice);
   if (!resolved) return { rows: [], total: 0, truncated: false, cursor: null, coverage };

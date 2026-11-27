@@ -9,7 +9,7 @@ use crate::chunks::SAFE_FENCE_CHUNKER_VERSION;
 use crate::cli_reads::pg_text::{pg_lower, regex_char_matches};
 use crate::env::{iso, parse_iso};
 use crate::error::{Result, StoreError};
-use crate::facts::{PrivacyPolicy, like, page_hidden};
+use crate::facts::{OwnerOnlyCache, PrivacyPolicy, like, page_hidden};
 use crate::kv::KvRead;
 use crate::link_queries::ranks;
 use crate::links::out_links;
@@ -51,6 +51,9 @@ pub struct MentionDueSinceQuery {
     /// The extractor version a page's state must hold to count as scanned.
     #[serde(default)]
     pub mention_version: i64,
+    /// `excludePrivate`: the page policy (`facts/privacy.rs` `page_hidden`); null counts every page.
+    #[serde(default)]
+    pub exclude_private: Option<PrivacyPolicy>,
 }
 
 /// `recountMentionIndexStatus(sourceId, recount)`.
@@ -75,6 +78,9 @@ pub struct MentionDueQuery {
     /// Also count pages of these types whose derived aliases are behind their content or `version`.
     #[serde(default)]
     pub aliases: Option<MentionDueAliases>,
+    /// `excludePrivate`: the page policy (`facts/privacy.rs` `page_hidden`); null counts every page.
+    #[serde(default)]
+    pub exclude_private: Option<PrivacyPolicy>,
 }
 
 /// `MentionDueQuery.aliases`.
@@ -344,7 +350,8 @@ impl Store {
     /// `countMentionDueSince(sourceId, since, mentionVersion)`: the source's live pages with
     /// `updated_at >= since` and no mention state at the page's content and `mention_version`.
     /// `-infinity` has no bound; `infinity` matches nothing; other text must be the ISO time
-    /// coverage passes (`toIso`), or the read is refused.
+    /// coverage passes (`toIso`), or the read is refused. `exclude_private` leaves out the pages
+    /// the page policy hides.
     pub fn count_mention_due_since(&self, q: &MentionDueSinceQuery) -> Result<u64> {
         let since = match q.since.trim() {
             "-infinity" => i64::MIN,
@@ -356,9 +363,15 @@ impl Store {
             })?,
         };
         let read = self.read()?;
+        let mut owner_only = OwnerOnlyCache::default();
         let mut n = 0u64;
         for p in all_pages(&*read)? {
             if p.deleted_at_us.is_some() || p.source_id != q.source_id || p.updated_at_us < since {
+                continue;
+            }
+            if let Some(policy) = &q.exclude_private
+                && owner_only.page_hidden(&*read, &p, policy)?
+            {
                 continue;
             }
             let state = crate::mention_state::read_page_state(&*read, p.id)?;
@@ -395,12 +408,19 @@ impl Store {
 
     /// `countPagesDueForMentions(q)`: the live pages in the scope (every page when `source_id` is
     /// `None`) with no mention state or state behind the page's content or `mention_version`; with
-    /// `aliases`, also the pages of its types whose derived aliases are behind.
+    /// `aliases`, also the pages of its types whose derived aliases are behind; `exclude_private`
+    /// leaves out the pages the page policy hides.
     pub fn count_pages_due_for_mentions(&self, q: &MentionDueQuery) -> Result<u64> {
         let read = self.read()?;
+        let mut owner_only = OwnerOnlyCache::default();
         let mut n = 0u64;
         for p in all_pages(&*read)? {
             if p.deleted_at_us.is_some() || q.source_id.as_deref().is_some_and(|s| p.source_id != s)
+            {
+                continue;
+            }
+            if let Some(policy) = &q.exclude_private
+                && owner_only.page_hidden(&*read, &p, policy)?
             {
                 continue;
             }

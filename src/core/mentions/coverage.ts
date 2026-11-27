@@ -9,6 +9,15 @@
  * so a version bump shows every version-behind page as pending, whatever its
  * `updated_at`, until the sweep reaches it.
  *
+ * A caller that may not read private pages (`excludePrivate`: a remote caller)
+ * gets the same coverage whether a private page exists or not. The two indexed
+ * counts (a source with no row, the pages due since the count) leave out the
+ * pages it may not read. A saved count above 0, or one another binary counted,
+ * is replaced for that caller by a whole-source due count it may read, which
+ * is never saved; the recount saved on the row stays the whole-source count.
+ * One residual: a hidden page's name change leaves the row `pending` until the
+ * pass saves it, so a `complete` source reads `pending` meanwhile.
+ *
  * States: `complete`; `pending` (pages written or invalidated since the last
  * pass, pages behind the binary's mention or alias version, or no pass yet);
  * `disabled` (auto_link or mentions.auto_link is off);
@@ -37,9 +46,14 @@ const toIso = (v: unknown): string | null => {
   return Number.isFinite(ms) ? new Date(ms).toISOString() : null;
 };
 
-/** Coverage over `sourceIds` (the caller's permitted sources). */
-export async function readMentionCoverage(engine: Pick<BrainEngine, 'executeRaw' | 'getConfig' | 'countPagesDueForMentions' | 'readMentionIndexStatus' | 'countLivePagesInSource' | 'countMentionDueSince' | 'recountMentionIndexStatus'>, sourceIds: string[]): Promise<MentionCoverage> {
+/** Coverage over `sourceIds` (the caller's permitted sources); `excludePrivate` for a caller that may not read private pages. */
+export async function readMentionCoverage(engine: Pick<BrainEngine, 'executeRaw' | 'getConfig' | 'countPagesDueForMentions' | 'readMentionIndexStatus' | 'countLivePagesInSource' | 'countMentionDueSince' | 'recountMentionIndexStatus'>, sourceIds: string[],
+  opts: { excludePrivate?: boolean } = {}): Promise<MentionCoverage> {
   const policy = await readMentionPolicy(engine);
+  const hide = opts.excludePrivate === true;
+  // The caller's own due count over the whole source: pages it may not read are left out, and it is never saved.
+  const callerDue = async (sourceId: string) =>
+    countIndexDuePages(engine, sourceId, linkableTypesFor(await loadSourcePack(engine, sourceId), policy), { excludePrivate: true });
   const rows = await engine.readMentionIndexStatus(sourceIds);
   const bySource = new Map(rows.map(r => [r.source_id, r]));
   let pending = 0;
@@ -52,7 +66,7 @@ export async function readMentionCoverage(engine: Pick<BrainEngine, 'executeRaw'
     if (lastPass && (!last || lastPass > last)) last = lastPass;
     if (!policy.enabled) continue;
     if (!row || row.state === 'disabled') {
-      pending += await engine.countLivePagesInSource(sourceId);
+      pending += hide ? await engine.countLivePagesInSource(sourceId, { excludePrivate: true }) : await engine.countLivePagesInSource(sourceId);
       continue;
     }
     if (row.state === 'failed') failed = true;
@@ -64,11 +78,18 @@ export async function readMentionCoverage(engine: Pick<BrainEngine, 'executeRaw'
       const due = await countIndexDuePages(engine, sourceId, linkableTypesFor(await loadSourcePack(engine, sourceId), policy));
       await engine.recountMentionIndexStatus(sourceId, { pending: due, fingerprint: `${stored.hash ?? ''};${INDEX_VERSION_STAMP}`, expectedFingerprint: row.policy_fingerprint })
         .catch(() => undefined);
-      pending += due;
+      pending += hide ? await callerDue(sourceId) : due;
+      continue;
+    }
+    // The saved count includes pages this caller may not read: count the ones it may read instead.
+    if (hide && Number(row.pending ?? 0) > 0) {
+      pending += await callerDue(sourceId);
       continue;
     }
     // Pages written at or after the last count that are not scanned at their current content (the index on updated_at keeps it small).
-    const since = await engine.countMentionDueSince(sourceId, toIso(row.counted_at) ?? '-infinity', MENTION_EXTRACTOR_VERSION);
+    const since = hide
+      ? await engine.countMentionDueSince(sourceId, toIso(row.counted_at) ?? '-infinity', MENTION_EXTRACTOR_VERSION, { excludePrivate: true })
+      : await engine.countMentionDueSince(sourceId, toIso(row.counted_at) ?? '-infinity', MENTION_EXTRACTOR_VERSION);
     pending += Number(row.pending ?? 0) + since;
   }
   const state: CoverageState = !policy.enabled ? 'disabled' : failed ? 'failed' : pending > 0 || unsettled ? 'pending' : 'complete';
