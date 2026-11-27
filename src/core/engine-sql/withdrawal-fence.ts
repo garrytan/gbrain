@@ -7,7 +7,7 @@
  * (rust/crates/gbrain-store/src/facts/withdrawal_fence.rs).
  *
  * `hasWithdrawnFenceClaim(sourceId, claims, subject)` is true when a withdrawal or a purge tombstone of the source has
- * the fingerprint or the v1 fingerprint of a claim, at the claim's visibility (any visibility when the claim has
+ * the fingerprint, the v2 fingerprint or the v1 fingerprint of a claim, at the claim's visibility (any visibility when the claim has
  * none), under subject '*' or `subject` (any subject when `subject` is null).
  *
  * The CTE fingerprints each incoming claim once. Inside the join condition the planner re-evaluates both fingerprint
@@ -20,12 +20,13 @@ type Raw = Pick<BrainEngine, 'executeRaw'>;
 /** One claim of a malformed fence: its text and its visibility cell (null when the cell is not private or world). */
 export interface FenceClaimRow { claim: string; visibility: string | null }
 
-const WITHDRAWN_FENCE_CLAIM_SQL = `WITH incoming AS MATERIALIZED (SELECT i.visibility, gbrain_fact_fingerprint(i.claim) AS fp, gbrain_fact_fingerprint_v1(i.claim) AS fp_v1
+const WITHDRAWN_FENCE_CLAIM_SQL = `WITH incoming AS MATERIALIZED (SELECT i.visibility, gbrain_fact_fingerprint(i.claim) AS fp, gbrain_fact_fingerprint_v2(i.claim) AS fp_v2,
+      gbrain_fact_fingerprint_v1(i.claim) AS fp_v1
       FROM jsonb_to_recordset($2::text::jsonb) i(claim text,visibility text))
     SELECT 1 FROM incoming
     JOIN (SELECT source_id,visibility,subject,fact_hash FROM fact_withdrawals WHERE source_id=$1
       UNION ALL SELECT source_id,visibility,subject,fact_hash FROM fact_purges WHERE source_id=$1) w
-      ON w.source_id=$1 AND w.fact_hash IN (incoming.fp,incoming.fp_v1)
+      ON w.source_id=$1 AND w.fact_hash IN (incoming.fp,incoming.fp_v2,incoming.fp_v1)
       AND (incoming.visibility IS NULL OR w.visibility=incoming.visibility)
       AND ($3::text IS NULL OR w.subject = '*' OR w.subject = $3::text) LIMIT 1`;
 

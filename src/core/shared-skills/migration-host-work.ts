@@ -47,6 +47,8 @@ export async function hostWorkMigrations(engine: BrainEngine): Promise<Set<strin
  */
 export function owedConflicts(report: Pick<SharedMigrationReport, 'sources'> | null | undefined): OwedConflict[] | null {
   if (report?.sources?.some(row => row.policy_unverified)) return null;
+  // A client of a Rust brain's owner cannot tell whether a skillpack.json change is a conflict: unknown, never "none".
+  if (report?.sources?.some(row => row.stages.some(stage => stage.code === 'owner_unavailable'))) return null;
   return (report?.sources ?? []).flatMap(row => row.stages.filter(stage => stage.status === 'conflict')
     .map(stage => ({ source_id: row.source_id, code: stage.code ?? 'local_conflict', reason: stage.reason ?? '' })));
 }

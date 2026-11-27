@@ -19,6 +19,22 @@ Rust store serves them from `rust/crates/gbrain-store/src/edge_proposals.rs`; th
 | `rejectOpenEdgeProposal(id)` | true when an open proposal (`proposed`, `undated_unresolved`, `ambiguous_same_date`) became `rejected` |
 | `markRevertedEdgeProposals()` | the count of applied proposals updated before now whose closure transition is gone; each becomes `reverted_by_user` |
 
+## The `gbrain edge-proposals` command
+
+`src/commands/edge-proposals.ts` lists, shows, clears, undoes and dates proposals through six more members of the same
+SQL file. The store serves them from `edge_proposals/cli.rs`.
+
+| Member | Result |
+| --- | --- |
+| `listEdgeProposalCliRows(filter, limit)` | the proposals `filter` admits (`all`, `statuses`, one `id`, or one `undated` id), newest `created_at` first and then the larger id, at most `limit`; each with the subject, target and ending slugs; a proposal whose subject or target page is gone is left out |
+| `deleteHeldEdgeProposalErrors()` | deletes the `error` proposals whose detail starts with `held after `; `[{ id }]` in id order |
+| `listAppliedEdgeProposalIds()` | `[{ id }]` of the `applied` proposals in id order |
+| `deleteEdgeProposalError(id)` | deletes the proposal while it is an `error` row; `[{ id }]`, `[]` when it is not one |
+| `readEdgeProposalSourceId(id)` | the proposal's source, or null |
+| `markEdgeProposalDated(id)` | the proposal becomes `rejected` with the detail `dated by user` |
+
+A deleted proposal takes its evidence key with it, so the next dream cycle can record the same evidence again.
+
 ## Records
 
 - `Q 0x04 id -> proposal`: one proposal, the id as 8 big-endian bytes.
@@ -49,6 +65,8 @@ Rust store serves them from `rust/crates/gbrain-store/src/edge_proposals.rs`; th
 - A page id that names no page: `CONSTRAINT_VIOLATION`, the `link_edge_proposals_<column>_fkey` text.
 - A close date that is not a date: `INVALID_ARGUMENT`, `invalid input syntax for type date`.
 - A `maxSubjects` that is not a whole number or is negative: `INVALID_ARGUMENT`, the Postgres text.
+- A `listEdgeProposalCliRows` limit that is not a whole number from 1 to 1000: `INVALID_ARGUMENT`. The SQL member
+  refuses the same limits before it runs (the command clamps its `--limit` to that range).
 
 ## Known differences
 
@@ -59,3 +77,12 @@ Rust store serves them from `rust/crates/gbrain-store/src/edge_proposals.rs`; th
 - A record refused for an unknown status draws no id on the store; Postgres draws one before the check fails.
 - `readLastContradictionsPromptVersion` belongs to the same capability and is served (`contradictions.md`), so the
   store reports `contradictions`.
+- `confidence` is a `REAL`. `listEdgeProposalCliRows` answers it as the shortest decimal that reads back as the stored
+  single-precision value (0.9, not 0.8999999761581421), as PGLite and Postgres print a `REAL`.
+- `gbrain edge-proposals date` writes its timeline line through the `add_timeline_entry` operation. On a Rust brain that
+  write queues: its preparation reads the source kind through `executeRaw`
+  (`src/core/persistence/semantic-pages.ts:83`). The command's own members are served; the parity case pins that stop
+  by name. The getSource hunk on that line serves the read: babe38bded (`rust-engine/admin-unowned-rust`) and
+  65b3f8a992 (`rust-engine/timeline-add-rust`) carry it byte-identical. With that hunk, the write stops next in
+  `guardFenceRows` (`src/core/trust/fence-guard.ts:71`), which the pin also names. Whichever change lands second
+  removes the pin.

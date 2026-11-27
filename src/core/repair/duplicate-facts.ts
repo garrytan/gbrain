@@ -44,7 +44,6 @@ import { submitPageMutation } from '../persistence/page-mutations.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
 import { afterCursor, repairRequestId, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairListing, type RepairPlan, type RepairScope } from './core.ts';
-import { requireRawSql } from '../rust-engine/errors.ts';
 
 export interface DuplicateRow {
   id: number;
@@ -169,8 +168,6 @@ export const duplicateFactsRepair: RepairHandler = {
   },
   async apply(ctx, entry): Promise<RepairItemOutcome> {
     const { group, hash, last } = entry as GroupItem;
-    // The live recheck, the supersede and the page strike (the page write door) run through raw SQL, so a Rust brain stops here by name, before its first write.
-    requireRawSql(ctx.engine, 'repair duplicate-facts page write');
     const { retired, segmented } = await retireGroup(ctx, entry, group);
     if (last) await clearApprovedSet(ctx.engine, { command: 'duplicate-facts', hash });
     const changed = group.retire.filter(r => !retired.includes(r.id) && !segmented.includes(r.id)).map(r => r.id);
@@ -184,15 +181,11 @@ export const duplicateFactsRepair: RepairHandler = {
 
 /** The rows still active, unsuperseded and stating the group's claim on the entity and fence row the preview saw. */
 async function unchanged(db: BrainEngine, group: DuplicateGroup, rows: DuplicateRow[]): Promise<DuplicateRow[]> {
-  const live = await db.executeRaw<{ id: number | string; entity_slug: string | null; row_num: number | string | null; source_markdown_slug: string | null }>(
-    `SELECT id, entity_slug, row_num, source_markdown_slug FROM facts
-      WHERE source_id=$1 AND id=ANY($2::bigint[]) AND visibility=$3 AND gbrain_fact_fingerprint(fact)=$4
-        AND expired_at IS NULL AND (valid_until IS NULL OR valid_until > now()) AND superseded_by IS NULL`,
-    [group.source_id, rows.map(r => r.id), group.visibility, group.fingerprint]);
-  const byId = new Map(live.map(r => [Number(r.id), r]));
+  const live = await db.listLiveDuplicateRows(group.source_id, rows.map(r => r.id), group.visibility, group.fingerprint);
+  const byId = new Map(live.map(r => [r.id, r]));
   return rows.filter(r => {
     const now = byId.get(r.id);
-    return !!now && now.entity_slug === r.entity_slug && (now.row_num === null ? null : Number(now.row_num)) === r.row_num
+    return !!now && now.entity_slug === r.entity_slug && now.row_num === r.row_num
       && (r.fence_page === null || now.source_markdown_slug === r.fence_page);
   });
 }
@@ -212,12 +205,8 @@ async function retireGroup(ctx: RepairContext, entry: RepairItem, group: Duplica
   const retired: number[] = [];
   const dbOnly = live.filter(r => r.fence_page === null);
   if (dbOnly.length) {
-    retired.push(...await databaseWrite(ctx, group, [...new Set([entry.slug, ...dbOnly.map(r => r.entity_slug ?? entry.slug)])], async tx => (await tx.executeRaw<{ id: number | string }>(
-      `UPDATE facts SET expired_at = now(), superseded_by = $3
-        WHERE source_id = $1 AND id = ANY($2::bigint[]) AND expired_at IS NULL AND superseded_by IS NULL
-          AND visibility = $4 AND gbrain_fact_fingerprint(fact) = $5
-          AND EXISTS (SELECT 1 FROM facts k WHERE k.source_id = $1 AND k.id = $3 AND k.expired_at IS NULL)
-        RETURNING id`, [group.source_id, dbOnly.map(r => r.id), group.kept.id, group.visibility, group.fingerprint])).map(r => Number(r.id))));
+    retired.push(...await databaseWrite(ctx, group, [...new Set([entry.slug, ...dbOnly.map(r => r.entity_slug ?? entry.slug)])], tx =>
+      tx.supersedeDuplicateFacts(group.source_id, dbOnly.map(r => r.id), group.kept.id, group.visibility, group.fingerprint)));
   }
   const fenced = live.filter(r => r.fence_page !== null);
   if (!fenced.length) return { retired, segmented: [] };
@@ -244,7 +233,5 @@ async function strikeFencedCopies(ctx: RepairContext, entry: RepairItem, group: 
   await submitPageMutation(ctx, { operation: 'put_page', params: { slug, source_id: group.source_id,
     content: serializePageToMarkdown(page, snapshot.tags), expected_revision: snapshot.revision,
     request_id: await repairRequestId(ctx, 'duplicate-facts', entry, snapshot.revision) } });
-  return databaseWrite(ctx, group, [slug], async tx => (await tx.executeRaw<{ id: number | string }>(
-    `UPDATE facts SET superseded_by = $3 WHERE source_id = $1 AND id = ANY($2::bigint[]) AND expired_at IS NOT NULL AND superseded_by IS NULL
-      RETURNING id`, [group.source_id, struck.map(r => r.id), group.kept.id])).map(r => Number(r.id)));
+  return databaseWrite(ctx, group, [slug], tx => tx.linkStruckDuplicateFacts(group.source_id, struck.map(r => r.id), group.kept.id));
 }

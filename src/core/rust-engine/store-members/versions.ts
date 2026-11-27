@@ -7,7 +7,7 @@
  * engine-sql/version-prune.ts). A segmented page's snapshot references its body
  * generation and keeps content_hash, as insertSegmentedVersion does. A version keeps the reason a write stamped on it:
  * getVersions reads it as `replaced_because` (the trusted read; `excludePrivate` is refused). `revertToVersion` is not
- * served: it reads pages through raw SQL.
+ * served: it reads pages through raw SQL. readPageVersionRow is the version row `revert_version` reverts to.
  */
 import type { PageVersion, GetVersionsOpts, PageVersionRows } from '../../page-state/version-types.ts';
 import type { VersionHistory } from '../../page-state/versions.ts';
@@ -145,6 +145,15 @@ export const readVersionContent: StoreMember<[versionId: number, pageId: number]
   requireInteger(member, 'version id', versionId);
   requireInteger(member, 'page id', pageId);
   return storeCall({ member }, () => brain.readVersionContent({ versionId, pageId }));
+};
+
+/** revert_version's read of the whole version row (pages.rs `read_page_version_row`), as `createVersion` returns a row. */
+export const readPageVersionRow: StoreMember<[versionId: number, pageId: number], PageVersion | null> = async (brain, versionId, pageId) => {
+  const member = 'readPageVersionRow';
+  requireInteger(member, 'version id', versionId);
+  requireInteger(member, 'page id', pageId);
+  const row: PageVersion | null = await storeCall({ member }, () => brain.readPageVersionRow(versionId, pageId));
+  return row === null ? null : toCreatedVersion(row);
 };
 
 /** The newest version of the page that the request archived, or null (repair_versions.rs, `receipt.archived.request_id`). */

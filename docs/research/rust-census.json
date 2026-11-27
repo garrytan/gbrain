@@ -518,6 +518,7 @@
   {
    "id": "P04",
    "title": "Typed store member(s) for the raw SQL in src/core/verbs/entity-card.ts",
+   "owner": "done on rust-engine/main: entity-card.ts has no executeRaw since 4822fe992b (hand refresh, no census rerun)",
    "kind": "raw_sql",
    "score": 12,
    "hot": [

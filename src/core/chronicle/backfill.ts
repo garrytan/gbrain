@@ -89,7 +89,6 @@ export interface ChronicleBackfillResult {
 }
 
 const DEFAULT_LIMIT = 1000;
-const PAGE_BATCH = 500;
 const JUDGE_OVERHEAD_CHARS = 900;
 const EST_OUTPUT_TOKENS = 800;
 
@@ -115,11 +114,10 @@ export async function runChronicleBackfill(engine: BrainEngine, opts: ChronicleB
   const stamp: ChronicleCampaignStamp | null = maxUsd !== null && !dryRun && opts.yes
     ? { campaignId: randomUUID(), attemptCapUsd: settings.jobBudgetUsd, maxAttempts, maxUsd } : null;
   const datedSince = opts.datedSince ? new Date(opts.datedSince) : null;
-  const params: unknown[] = [[...CHRONICLE_TYPES], RESCUE_SLUG_PREFIXES.map((p) => `${p}%`), CHRONICLE_EXTRACTOR_VERSION];
-  let scope = '';
-  if (opts.sourceIds?.length) { params.push(opts.sourceIds); scope += ` AND p.source_id = ANY($${params.length}::text[])`; }
-  else if (opts.sourceId) { params.push(opts.sourceId); scope += ` AND p.source_id = $${params.length}`; }
-  if (opts.since) { params.push(opts.since); scope += ` AND p.updated_at >= $${params.length}::date`; }
+  const batch = {
+    types: [...CHRONICLE_TYPES], slugPatterns: RESCUE_SLUG_PREFIXES.map((p) => `${p}%`), extractorVersion: CHRONICLE_EXTRACTOR_VERSION,
+    sourceIds: opts.sourceIds, sourceId: opts.sourceId, since: opts.since,
+  };
 
   const result: ChronicleBackfillResult = {
     dry_run: dryRun, scanned: 0, eligible: 0, queued: 0, already_done: 0, skipped: {}, limit, limit_reached: false,
@@ -134,19 +132,7 @@ export async function runChronicleBackfill(engine: BrainEngine, opts: ChronicleB
   let unpriced = false;
   let lastId = 0;
   for (;;) {
-    params.push(lastId);
-    const cursor = params.length;
-    const pages = await engine.executeRaw<{
-      id: number; source_id: string; slug: string; type: string; compiled_truth: string | null; frontmatter: Record<string, unknown> | null;
-      effective_date: Date | string | null; effective_date_source: string | null; content_hash: string | null; done: boolean;
-    }>(
-      `SELECT p.id, p.source_id, p.slug, p.type, coalesce(p.compiled_truth, p.truth_lead) AS compiled_truth, p.frontmatter, p.effective_date, p.effective_date_source, p.content_hash,
-              EXISTS (SELECT 1 FROM chronicle_page_state c WHERE c.page_id=p.id AND c.content_hash=p.content_hash
-                AND c.extractor_version=$3 AND (c.state='extracted' OR (c.state IN ('pending','failed') AND c.trigger='backfill' AND c.attempts < ${CHRONICLE_DEFAULTS.maxAttempts}))) AS done
-         FROM pages p
-        WHERE p.deleted_at IS NULL AND (p.type = ANY($1::text[]) OR p.slug LIKE ANY($2::text[]))${scope} AND p.id > $${cursor}
-        ORDER BY p.id LIMIT ${PAGE_BATCH}`, params);
-    params.pop();
+    const pages = await engine.readChronicleBackfillBatch({ ...batch, afterId: lastId });
     if (pages.length === 0) break;
     lastId = Number(pages[pages.length - 1].id);
     for (const page of pages) {

@@ -94,13 +94,14 @@ two engines share that code instead of copying it:
 
 Two members for statements `src/core/ops/admin.ts` ran as raw SQL: `listVisiblePageSlugs` (the slugs `visibleMostConnected`
 may show, under the read or access policy and an optional source scope) and `readPagesForVersionHistory` (the page rows
-by id that `get_versions` resolves). Neither is served on Rust today: each is absent from `store-members/*`, so it refuses with
-`engine_capability_missing` naming the member (the capability in `members.ts` is `pages`). The caller sees the refusal;
-no member changes behaviour. What the store would need to serve them:
+by id that `get_versions` resolves). Their capability in `members.ts` is `pages`.
 
-| Members | Reads | The store would need |
-| --- | --- | --- |
-| `listVisiblePageSlugs` | the slugs of live pages the caller's policy admits, within the sources given | the page scan with the caller's page policy (read or access form) applied per page |
-| `readPagesForVersionHistory` | `id`, `slug`, `source_id` and `frontmatter` for each page id; the statement does not filter soft-deleted pages | the page record by id |
+`readPagesForVersionHistory` is served: `Store::read_pages_for_version_history` (`gbrain-store/src/tail_reads.rs`, see
+`tail_reads.md`) reads the page record of each id: `id`, `slug`, `source_id` and `frontmatter`, in id order, each id once,
+soft-deleted pages included (the statement does not filter them). An unknown or negative id names no row.
+
+`listVisiblePageSlugs` is served: `Store::list_visible_page_slugs` (`gbrain-store/src/cli_reads/admin_reads.rs`, see
+`admin-reads.md`) keeps the slugs of the live pages in the given sources that the caller's page policy (read or access
+form, as the typed store policy) does not hide, in byte order.
 
 The policy text is Postgres text only; the store reads the typed arguments, never the statement.

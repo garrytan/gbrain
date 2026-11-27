@@ -159,8 +159,19 @@ const sweptReads: readonly LockedRead[] = [
   ['matchTakeRows', 'takes', 'FROM takes k', e => e.matchTakeRows(pageId, [{ row_num: 1, claim: 'a claim', kind: 'take', holder: 'self' }], 10)],
   ['listFactWithdrawalDates', 'fact_withdrawals', 'JOIN fact_withdrawals w', e => e.listFactWithdrawalDates('default', [{ row_num: 1, claim: 'a claim', visibility: 'world' }], null)],
   ['listCorePageRows', 'pages', 'always_load', e => e.listCorePageRows({ limit: 10 })],
+  // The segmented write path's reads a page preparation makes (stageSegmentedImport, the seal probe, chunk-vector reuse).
+  ['readSegmentedLivePage', 'pages', 'body_generation, body_storage', e => e.readSegmentedLivePage(pageId)],
+  ['listChunkedOccurrences', 'content_chunks', 'unnest($2::bigint[])', e => e.listChunkedOccurrences(pageId, [1], 1)],
+  ['readRetiredChunkVectors', 'content_chunks', 'FROM content_chunks c JOIN pages p', e => e.readRetiredChunkVectors(pageId, [1], 'embedding')],
+  ['hasStaleSegmentChunks', 'content_chunks', 'WITH RECURSIVE occ(o)', e => e.hasStaleSegmentChunks(pageId, 1, [1])],
+  // The withdrawal overlay's '*' purge lookup (overlayCanonicalBodiesTyped), waiting on a locked fact_purges.
+  ['listGlobalPurgeWithdrawals', 'fact_purges', 'FROM fact_purges', e => e.listGlobalPurgeWithdrawals('default', ['h'], false)],
   // A row lock: a read-only deadline transaction would refuse it, so "with budget left answers" pins the read-write bound.
   ['lockRegisteredSourceIds', 'sources', 'FROM sources WHERE id = ANY', e => e.lockRegisteredSourceIds(['default'])],
+  // The owner write's reads of the stored page (persistence/page-visibility.ts ownerRewriteOf, authorizePageVisibility's hiddenUnder).
+  ['readPagePrivacyHidden', 'pages', 'AS hidden FROM pages p', e => e.readPagePrivacyHidden('default', 'notes/seal-probe')],
+  ['readLinkTargetPages', 'pages', 'AS visible', e => e.readLinkTargetPages('default', ['notes/seal-probe'], null)],
+  ['readWriteVisibilityProbe', 'pages', 'AS identity_may_open', e => e.readWriteVisibilityProbe('default', 'notes/seal-probe')],
 ];
 
 describe.skipIf(!hasDatabase())('typed reads swept into the preparation set keep the deadline (Postgres)', () => {

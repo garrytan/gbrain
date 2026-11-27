@@ -4,13 +4,11 @@
  * GBRAIN_TEST_RUST_ARM=1).
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
- *  - Contract: on PGLite and Postgres the purge commits: the fact is gone, its tombstone refuses the claim, and the
- *    request is stored committed. On the Rust arm the purge refuses at its pre-write check
- *    (src/core/persistence/fact-purge-path-members.ts, wired in src/core/ops/purge.ts) with the typed refusal that names
- *    the first stop on the list with its owner and due date, before it calls any engine member: nothing is journaled
- *    or written, so the fact is still there, there is no tombstone and no stored write request, and the admission
- *    counters are unchanged. `--status --continue` also writes (it continues the derivation sweep), so it refuses the
- *    same way; a dry run and `--match` only read and run on every arm.
+ *  - Contract: on every engine the purge of a fact on a source with no belief ledger commits: the fact is gone, its
+ *    tombstone refuses the claim, and the request is stored committed. The Rust arm passes its pre-write check
+ *    (src/core/persistence/fact-purge-path-members.ts, wired in src/core/ops/purge.ts), which refuses only on a stop the
+ *    purge can reach; a source with a belief ledger still has stops (test/engine-parity/fact-purge-receipt-e2e.test.ts).
+ *    `--status --continue` also writes (it continues the derivation sweep); a dry run and `--match` only read.
  *  - Regression: the Rust arm ran the purge transaction's write admission (the write request and its counters) before
  *    the first unserved purge statement, and stopped inside the transaction on a refusal that named no owner or date.
  *    A store transaction that kept those writes after the refusal would leave a queued purge request that never
@@ -73,11 +71,11 @@ async function brainState(engine: BrainEngine, ctx: OperationContext, id: number
 }
 
 describe('engine parity: a whole fact purge', () => {
-  parityTest('purge_fact commits on the SQL engines; the Rust arm refuses before it journals or writes anything', {
+  parityTest('purge_fact commits on every engine: the fact is gone, its tombstone refuses the claim, the request is committed', {
     methods: ['insertFact', 'loadPurgeTarget', 'planFactPurgeIds', 'readPurgeSourceLocalPath', 'lockPurgeSource', 'insertWriteRequest',
-      'readWriteRequest', 'readCounterRows', 'isFactPurged', 'listPurgeMatchCandidates'],
+      'readWriteRequest', 'readCounterRows', 'isFactPurged', 'listPurgeMatchCandidates', 'listBeliefEventsForPurgeProbe'],
     timeout: 60_000,
-  }, async (engine, backend) => {
+  }, async (engine) => {
     await registerLocalWriter(engine, 'cli');
     const called = new Set<string>();
     const ctx = contextFor(noting(engine, called));
@@ -92,22 +90,10 @@ describe('engine parity: a whole fact purge', () => {
     const match = await purge.handler(ctx, { match: 'Gate code' }) as { candidates: Array<{ id: number }> };
     expect(match.candidates.map((candidate) => Number(candidate.id))).toEqual([seeded.id]);
     called.clear();
-    const commit = await purge.handler(ctx, { id: seeded.id, confirm: dry.confirm_token, expected_revision: dry.expected_revision, request_id: REQUEST })
-      .then((outcome) => ({ outcome: outcome as Record<string, unknown> }), (error: unknown) => ({ error }));
-    if ('error' in commit) {
-      // Only the Rust arm stops; it must stop on the typed refusal, with the brain exactly as it was.
-      const error = commit.error as { code?: unknown; message?: string; detail?: string };
-      expect({ backend, code: error.code }).toEqual({ backend: 'rust', code: 'engine_capability_missing' });
-      // The check runs before the purge reads or writes: no member was called, so nothing was journaled.
-      expect([...called]).toEqual([]);
-      // The first stop on the list is lane 4's rust-5a serving of the purge transaction's statements; the refusal names its owner and date.
-      expect(error.message).toContain('which needs findPurgeBlockedPublication');
-      expect(error.message).toContain('owner lane 4 (rust-5a bc4cc890fe), due 5 PM PST Nov 23');
-      expect(error.detail).toContain('outcome=none');
-      expect(error.detail).toContain('owner="lane 4 (rust-5a bc4cc890fe)" due="5 PM PST Nov 23"');
-      expect(await brainState(engine, ctx, seeded.id)).toEqual(before);
-      throw commit.error;
-    }
+    const commit = { outcome: await purge.handler(ctx, { id: seeded.id, confirm: dry.confirm_token, expected_revision: dry.expected_revision,
+      request_id: REQUEST }) as Record<string, unknown> };
+    // The receipt read the belief probe (listBeliefEventsForPurgeProbe), which the Rust engine serves.
+    expect(called.has('listBeliefEventsForPurgeProbe')).toBe(true);
     const after = await brainState(engine, ctx, seeded.id);
     return {
       state: commit.outcome.state,
@@ -116,28 +102,20 @@ describe('engine parity: a whole fact purge', () => {
     };
   });
 
-  parityTest('purge_fact --status --continue writes through the derivation sweep: the Rust arm refuses it, on the first stop left, before it reads or writes anything', {
-    // The sweep it continues is served on Rust; the first stop left on the continue is the receipt's effect read (the `facts` capability).
+  parityTest('purge_fact --status --continue writes through the derivation sweep and answers the same on every engine', {
+    // The sweep it continues and the receipt's effect read (rust-5a) are served on Rust, so the continue has no stop left.
     methods: ['readWriteRequest', 'loadPurgeTarget'],
     timeout: 60_000,
-  }, async (engine, backend) => {
+  }, async (engine) => {
     await registerLocalWriter(engine, 'cli');
     const called = new Set<string>();
     const ctx = contextFor(noting(engine, called));
-    // A `facts` member the case reaches on every arm, so the Rust arm's refusal (`facts`, the receipt's effect read) is one it expects.
     await engine.loadPurgeTarget(1, SRC);
     called.clear();
     const outcome = await purge.handler(ctx, { status: true, continue: true, request_id: REQUEST })
       .then(() => ({ code: 'ok' }), (error: unknown) => ({ error }));
     if (!('error' in outcome)) return outcome;
     const error = outcome.error as { code?: unknown; message?: string; detail?: string };
-    if (backend !== 'rust') return { code: error.code };
-    expect({ backend, code: error.code }).toEqual({ backend: 'rust', code: 'engine_capability_missing' });
-    expect([...called]).toEqual([]);
-    // The sweep is no stop any more (it is the typed continueDerivationSweep); lane 4's receipt read of the effects is the first one left.
-    expect(error.message).toContain('which needs listPurgeEffects');
-    expect(error.message).toContain('owner lane 4 (rust-5a 90e7bea933), due 5 PM PST Nov 25');
-    expect(error.detail).toContain('owner="lane 4 (rust-5a 90e7bea933)" due="5 PM PST Nov 25"');
-    throw outcome.error;
+    return { code: error.code };
   });
 });

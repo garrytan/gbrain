@@ -23,7 +23,7 @@ import { accessSync, constants, existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, join } from 'node:path';
 import { loadBoundedYaml } from '../core/data-frontmatter.ts';
-import { REGISTRATION_ADVERTISE, REGISTRATION_SURFACE, stdioServeArgv } from '../core/mcp-registration.ts';
+import { registeredAdvertise, registeredSurface, stdioServeArgv, type RegistrationProfile } from '../core/mcp-registration.ts';
 import type { McpSurface } from '../mcp/surface.ts';
 import { bunSpawnSync } from '../core/spawn.ts';
 import { ensureHookLauncher, HOOK_LAUNCHER_NAME, hookLauncherPath } from '../core/setup/hook-launcher.ts';
@@ -32,7 +32,8 @@ import { STDIO_MEMBER_FLAG } from '../core/stdio-member-flag.ts';
 
 export type HermesRun = (argv: string[], input: string) => { ok: boolean; output: string };
 
-export interface HermesMcpOutcome { action: 'write' | 'keep' | 'print' | 'remove' | 'skip' | 'error'; path: string; detail: string; command?: string }
+/** `surface`: the surface the entry serves after a write or keep (the brain-first block and turn rule name its tools). */
+export interface HermesMcpOutcome { action: 'write' | 'keep' | 'print' | 'remove' | 'skip' | 'error'; path: string; detail: string; command?: string; surface?: McpSurface }
 
 export interface HermesMcpOptions {
   hermesHome: string;
@@ -141,11 +142,12 @@ export function syncHermesMcp(o: HermesMcpOptions): HermesMcpOutcome {
 }
 
 /**
- * The MCP step of `gbrain setup hermes`: a surface the user chose is listed in full, else Hermes lists the memory
- * verbs. Hermes starts the server through the hook launcher, as Codex does, so a script-mode gbrain never starts Bun
+ * The MCP step of `gbrain setup hermes`: a surface the user chose is listed in full, else gbrain's existing entry
+ * keeps its own surface and listing, else Hermes gets its default profile (registrationProfile('hermes'): starter
+ * listing the memory verbs). Hermes starts the server through the hook launcher, as Codex does, so a script-mode gbrain never starts Bun
  * next to a cloned repository's bunfig.toml.
  */
-export function hermesMcpStep(o: { hermesHome: string; name: string; surface?: McpSurface; gbrainBin: string | null; remove: boolean; dryRun: boolean }): HermesMcpOutcome {
+export function hermesMcpStep(o: { hermesHome: string; name: string; surface?: McpSurface; defaults: RegistrationProfile; gbrainBin: string | null; remove: boolean; dryRun: boolean }): HermesMcpOutcome {
   if (o.remove) return removeHermesMcp(o);
   const path = join(o.hermesHome, 'config.yaml');
   if (!o.gbrainBin?.startsWith('/')) return { action: 'print', path, detail: 'cannot resolve an absolute gbrain path for the MCP server, so it was not registered; run setup by its full path (~/.local/bin/gbrain setup hermes) or pass --gbrain-bin <absolute path>' };
@@ -153,8 +155,18 @@ export function hermesMcpStep(o: { hermesHome: string; name: string; surface?: M
   try { command = o.dryRun ? hookLauncherPath() : ensureHookLauncher(hookLauncherPath()); } catch (e) {
     return { action: 'error', path, detail: `the MCP server was not registered (${(e as Error).message})` };
   }
-  return syncHermesMcp({ hermesHome: o.hermesHome, name: o.name, command, gbrainBin: o.gbrainBin, surface: o.surface ?? REGISTRATION_SURFACE,
-    advertise: o.surface ? null : REGISTRATION_ADVERTISE, gbrainHome: process.env.GBRAIN_HOME?.trim() || null, dryRun: o.dryRun });
+  let profile: RegistrationProfile = o.surface ? { surface: o.surface, advertise: null } : o.defaults;
+  if (!o.surface) {
+    try {
+      const entry = readEntry(path, o.name);
+      const text = entry && ours(entry) && Array.isArray(entry.args) ? entry.args.map(String).join(' ') : '';
+      const surface = registeredSurface(text);
+      if (surface) profile = { surface, advertise: registeredAdvertise(text) };
+    } catch { /* silent-read-ok: syncHermesMcp reads the same file inside its own handler and reports the error */ }
+  }
+  const outcome = syncHermesMcp({ hermesHome: o.hermesHome, name: o.name, command, gbrainBin: o.gbrainBin, surface: profile.surface,
+    advertise: profile.advertise, gbrainHome: process.env.GBRAIN_HOME?.trim() || null, dryRun: o.dryRun });
+  return outcome.action === 'write' || outcome.action === 'keep' ? { ...outcome, surface: profile.surface } : outcome;
 }
 
 /** Remove gbrain's entry with `hermes mcp remove`. Never throws. */

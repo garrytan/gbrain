@@ -273,6 +273,25 @@ pub(crate) fn remove_for_slugs(
     Ok(removed)
 }
 
+/// A fact purge's delete of the proposal queue (`deletePurgeTakeProposals`): deletes the proposals of `source_id` whose
+/// `gbrain_fact_fingerprint(claim_text)` is `fact_hash`, each with its idempotency entry and its nudges; how many.
+pub(crate) fn remove_for_fingerprint(
+    tx: &mut dyn KvWrite,
+    source_id: &str,
+    fact_hash: &str,
+) -> Result<u64> {
+    let mut removed = 0;
+    for record in all_proposals(&*tx)? {
+        if record.source_id == source_id
+            && crate::facts::fact_fingerprint(&record.claim_text) == fact_hash
+        {
+            delete_proposal(tx, &record)?;
+            removed += 1;
+        }
+    }
+    Ok(removed)
+}
+
 /// A page purge receipt's probe of the proposal queue (`countPurgeStoreProbe` on `take_proposals`): how many proposals of
 /// `source_id` are filed under `slug`.
 pub(crate) fn count_for_slug(read: &dyn KvRead, source_id: &str, slug: &str) -> Result<usize> {
@@ -701,6 +720,58 @@ mod tests {
         let options: PutPageOptions =
             serde_json::from_value(json!({"sourceId": "default"})).unwrap();
         store.put_page(slug, &input, &options).unwrap();
+    }
+
+    #[test]
+    fn a_fact_purge_deletes_the_proposals_whose_claim_has_the_fingerprint_with_their_nudges() {
+        let store = open_store();
+        let hash = crate::facts::fact_fingerprint("The harbor will reopen");
+        let a = store
+            .insert_take_proposal(&input("a", "The harbor will reopen", None))
+            .unwrap()
+            .unwrap();
+        store
+            .insert_take_proposal(&input("b", "The  HARBOR will reopen ", None))
+            .unwrap()
+            .unwrap();
+        let kept = store
+            .insert_take_proposal(&input("b", "Something else", None))
+            .unwrap()
+            .unwrap();
+        store.insert_take_nudge(&nudge_at(a as i64)).unwrap();
+        assert_eq!(
+            store.delete_purge_take_proposals("default", &hash).unwrap(),
+            2
+        );
+        assert_eq!(
+            store.delete_purge_take_proposals("default", &hash).unwrap(),
+            0
+        );
+        assert_eq!(
+            store.delete_purge_take_proposals("other", &hash).unwrap(),
+            0
+        );
+        let read = store.read().unwrap();
+        let left: Vec<u64> = all_proposals(&*read)
+            .unwrap()
+            .iter()
+            .map(|r| r.id)
+            .collect();
+        assert_eq!(left, vec![kept]);
+        assert!(!proposal_exists(&*read, a as i64).unwrap());
+        drop(read);
+        // The idempotency entry went with the proposal: the same claim on the same page key is stored again.
+        assert!(
+            store
+                .insert_take_proposal(&input("a", "The harbor will reopen", None))
+                .unwrap()
+                .is_some()
+        );
+        assert!(
+            store
+                .delete_purge_take_proposals("default\0", &hash)
+                .is_err()
+        );
     }
 
     #[test]

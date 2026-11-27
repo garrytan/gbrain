@@ -28,6 +28,7 @@ use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::pages::read_page_by_id;
 use crate::sources::read_source;
 use crate::{Store, get_json, keys, put_json};
+use serde::Deserialize;
 use serde_json::{Value, json};
 
 /// Refuses NUL, which Postgres text cannot hold, so a key part cannot run into the next one.
@@ -404,6 +405,71 @@ pub(crate) fn upsert_fence_trend_run_record_in(
     )
 }
 
+/// `(text)::int`: Postgres's int4 input, which allows surrounding white space and a sign and refuses anything else.
+fn int4_text(text: &str) -> Result<i64> {
+    let trimmed = text.trim_matches(|c: char| c.is_ascii_whitespace());
+    trimmed.parse::<i32>().map(i64::from).map_err(|_| {
+        StoreError::invalid(format!("invalid input syntax for type integer: \"{text}\""))
+    })
+}
+
+/// `jsonb ->> key` of a soak counter: the value's text, or `None` for a missing key, a JSON null or a non-object.
+fn counter_text(first: &Value, kind: &str) -> Option<String> {
+    match first.as_object()?.get(kind)? {
+        Value::Null => None,
+        Value::String(s) => Some(s.clone()),
+        other => Some(other.to_string()),
+    }
+}
+
+/// `addSoakCounterEvent(op, day, kind, n)` (engine-sql/soak-counters.ts): the row `(op, day)` becomes
+/// `[{ day, kind: n }]` when new; otherwise its first record gets `kind` = `(first->>kind)::int` (0 when absent) + `n`.
+/// As in Postgres: `kind` = "day" overwrites the day in a new row, a first record that is NULL leaves `[null]`, an
+/// array or scalar first record concatenates (`||`), and a count that is not an int4 or overflows one refuses.
+pub(crate) fn add_soak_counter_event_in(
+    tx: &mut dyn KvWrite,
+    env: &dyn Env,
+    op: &str,
+    day: &str,
+    kind: &str,
+    n: i64,
+) -> Result<()> {
+    let n = i32::try_from(n).map_err(|_| StoreError::invalid("integer out of range"))?;
+    let completed = match get_json::<HousekeepingRow>(&*tx, &parent_key(op, day)?)? {
+        None => {
+            let mut record = serde_json::Map::new();
+            record.insert("day".to_owned(), json!(day));
+            record.insert(kind.to_owned(), json!(n));
+            json!([Value::Object(record)])
+        }
+        Some(row) => {
+            let first = row.completed_keys.get(0).cloned().unwrap_or(Value::Null);
+            let old = match counter_text(&first, kind) {
+                Some(text) => int4_text(&text)?,
+                None => 0,
+            };
+            let sum = i32::try_from(old + i64::from(n))
+                .map_err(|_| StoreError::invalid("integer out of range"))?;
+            let mut add = serde_json::Map::new();
+            add.insert(kind.to_owned(), json!(sum));
+            let merged = match first {
+                Value::Null => Value::Null,
+                Value::Object(mut record) => {
+                    record.extend(add);
+                    Value::Object(record)
+                }
+                Value::Array(mut items) => {
+                    items.push(Value::Object(add));
+                    Value::Array(items)
+                }
+                scalar => json!([scalar, Value::Object(add)]),
+            };
+            json!([merged])
+        }
+    };
+    write_op_checkpoint_record_in(tx, env, op, day, Some(&completed))
+}
+
 /// `replaceOpCheckpointAtVersion(op, fingerprint, completedKeys, expected)`: `UPDATE ... WHERE op=$1
 /// AND fingerprint=$2 AND (completed_keys->0->>'v')::int = $4 RETURNING 1`. True when the parent's
 /// first record held `v` = `expected` and this call replaced the records. A `v` that is not an
@@ -626,7 +692,105 @@ pub(crate) fn purge_stale_checkpoints_in(
     Ok(stale.len() as i64)
 }
 
+/// The op of a page's atom generation ledger (`ATOM_GENERATION_OP`).
+const ATOM_GENERATION_OP: &str = "managed-atoms-generation";
+/// The op of a completed managed atom run.
+const MANAGED_ATOMS_OP: &str = "managed-atoms";
+
+/// `recordAtomGenerationBump(sourceId, incarnation, pageId, keepContentHash, keepGeneration)`.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AtomGenerationBump {
+    pub source_id: String,
+    pub incarnation: String,
+    pub page_id: i64,
+    pub keep_content_hash: Option<String>,
+    pub keep_generation: Option<i64>,
+}
+
+/// `completed_keys->0->>field` of a checkpoint row.
+fn first_key_text(row: &HousekeepingRow, field: &str) -> Option<String> {
+    row.completed_keys
+        .get(0)
+        .and_then(|first| first.get(field))
+        .and_then(crate::timeline_queries::jsonb_field_text)
+}
+
 impl Store {
+    /// `readAtomGeneration(pageId, contentHash)`: of the page's `managed-atoms-generation` ledger row, `keep_generation`
+    /// when `keep` is `contentHash`, else `generation`, as a number (`Number(text ?? 0)`); 0 with no row.
+    pub fn read_atom_generation(&self, page_id: i64, content_hash: &str) -> Result<f64> {
+        let read = self.read()?;
+        let Some(row) = get_json::<HousekeepingRow>(
+            &*read,
+            &parent_key(ATOM_GENERATION_OP, &page_id.to_string())?,
+        )?
+        else {
+            return Ok(0.0);
+        };
+        let field = if first_key_text(&row, "keep").as_deref() == Some(content_hash) {
+            "keep_generation"
+        } else {
+            "generation"
+        };
+        Ok(match first_key_text(&row, field) {
+            None => 0.0,
+            Some(text) => text.trim().parse::<f64>().unwrap_or(f64::NAN),
+        })
+    }
+
+    /// `recordAtomGenerationBump(...)`: upserts the page's ledger row `[{ generation, keep, keep_generation }]`
+    /// (generation 1, or the stored one plus 1), stamped now, and deletes the `managed-atoms` checkpoints of the source's
+    /// page whose `contentHash` is not the kept one. The store keeps no `extract_atoms_page_state` rows, so that
+    /// statement deletes nothing here.
+    pub fn record_atom_generation_bump(&self, a: &AtomGenerationBump) -> Result<()> {
+        let _ = &a.incarnation;
+        let fingerprint = a.page_id.to_string();
+        self.write(|tx| {
+            let key = parent_key(ATOM_GENERATION_OP, &fingerprint)?;
+            let generation = match get_json::<HousekeepingRow>(&*tx, &key)? {
+                None => 1,
+                Some(row) => match first_key_text(&row, "generation") {
+                    None => 1,
+                    Some(text) => text.trim().parse::<i64>().map_err(|_| {
+                        StoreError::invalid(format!("invalid input syntax for type integer: \"{text}\""))
+                    })? + 1,
+                },
+            };
+            let record = crate::jsonb::order(json!({
+                "generation": generation, "keep": a.keep_content_hash, "keep_generation": a.keep_generation,
+            }));
+            write_op_checkpoint_record_in(tx, &*self.env, ATOM_GENERATION_OP, &fingerprint, Some(&json!([record])))?;
+            let mut prefix = vec![keys::PERSISTENCE, super::HOUSEKEEPING];
+            prefix.extend_from_slice(MANAGED_ATOMS_OP.as_bytes());
+            prefix.push(0);
+            let mut gone: Vec<String> = Vec::new();
+            let mut bad = false;
+            scan_prefix(&*tx, &prefix, false, &mut |k, v| {
+                match (std::str::from_utf8(&k[prefix.len()..]), serde_json::from_slice::<HousekeepingRow>(v)) {
+                    (Ok(fp), Ok(row)) => {
+                        if first_key_text(&row, "sourceId").as_deref() == Some(a.source_id.as_str())
+                            && first_key_text(&row, "kind").as_deref() == Some("page")
+                            && first_key_text(&row, "pageId").as_deref() == Some(fingerprint.as_str())
+                            && first_key_text(&row, "contentHash") != a.keep_content_hash
+                        {
+                            gone.push(fp.to_string());
+                        }
+                    }
+                    _ => bad = true,
+                }
+                !bad
+            })?;
+            if bad {
+                return Err(StoreError::new(crate::error::STORE_CORRUPT, "an op checkpoint row is not readable"));
+            }
+            for fp in gone {
+                delete_op_checkpoint_in(tx, MANAGED_ATOMS_OP, &fp)?;
+            }
+            Ok(())
+        })
+    }
+
     /// `readOpCheckpointDoc(op, fingerprint)`: the one JSON document the parent holds
     /// (`completed_keys -> 0`), or JSON null when there is no parent, its keys are not an array or
     /// the array is empty. The propose_takes failure ledger keeps its record this way.
@@ -714,6 +878,11 @@ impl Store {
         record: &Value,
     ) -> Result<()> {
         self.write(|tx| upsert_fence_trend_run_record_in(tx, &*self.env, op, fingerprint, record))
+    }
+
+    /// `addSoakCounterEvent(op, day, kind, n)`.
+    pub fn add_soak_counter_event(&self, op: &str, day: &str, kind: &str, n: i64) -> Result<()> {
+        self.write(|tx| add_soak_counter_event_in(tx, &*self.env, op, day, kind, n))
     }
 
     /// `replaceOpCheckpointAtVersion(op, fingerprint, completedKeys, expected)`.

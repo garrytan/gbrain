@@ -169,7 +169,7 @@ export const listDerivedRows: Member<'listDerivedRows'> = (brain, frontier, limi
   const member = 'listDerivedRows';
   if (!Number.isSafeInteger(limit)) refuseMember(member, 'a limit that is not an integer');
   for (const ref of frontier) if (typeof ref.table !== 'string' || typeof ref.id !== 'string') refuseMember(member, 'a frontier row whose table or id is not text');
-  return storeCall({ member }, () => brain.listDerivedRows({ frontier: frontier.map(f => ({ table: f.table, id: f.id })), limit }));
+  return storeCall({ member }, () => brain.listDerivedRows({ frontier: frontier.map((f) => ({ table: f.table, id: f.id })), limit }));
 };
 
 /** The ids of a `bigint[]` argument as the store reads them; an id that is not a safe integer is refused, not rounded. */

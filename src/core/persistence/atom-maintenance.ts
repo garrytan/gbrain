@@ -211,7 +211,7 @@ export async function readAtomOrigin(engine: BrainEngine, session: ManagedAtomSe
       `Page ${item.slug} in source ${session.sourceId} changed while its atoms were being prepared; nothing was extracted from it. Run the drain again to extract the current revision.`,
       { fix: drainFix(session.sourceId) });
   }
-  const generation = await atomGeneration(engine, snapshot.page.id, item.contentHash);
+  const generation = await engine.readAtomGeneration(snapshot.page.id, item.contentHash);
   return { kind: item.kind, locator: item.slug, contentHash: item.contentHash, textHash: sha256(item.content), pageId: snapshot.page.id,
     revision: snapshot.revision, visibility: effectiveVisibility({ kind: 'page', page: await withFolderRestricted(engine, snapshot.page) }), ...(generation > 0 ? { generation } : {}) };
 }
@@ -220,34 +220,13 @@ export const ATOM_GENERATION_OP = 'managed-atoms-generation';
 export const ATOM_RETIRED_BY_REEXTRACT = 'managed-reextract';
 
 /**
- * The generation a page's content keys on: the content a retirement kept (the extraction that retired) keeps
- * the generation its accepted batch already used, so that batch stays resumable; every other content moves on.
- */
-async function atomGeneration(engine: BrainEngine, pageId: number, contentHash: string): Promise<number> {
-  const [row] = await engine.executeRaw<{ generation: string | null; keep: string | null; keep_generation: string | null }>(
-    `SELECT completed_keys->0->>'generation' AS generation, completed_keys->0->>'keep' AS keep, completed_keys->0->>'keep_generation' AS keep_generation
-       FROM op_checkpoints WHERE op='${ATOM_GENERATION_OP}' AND fingerprint=$1`, [String(pageId)]);
-  if (!row) return 0;
-  return Number((row.keep !== null && row.keep === contentHash ? row.keep_generation : row.generation) ?? 0);
-}
-
-/**
  * Retiring an origin page's atoms invalidates its earlier completed extractions: the generation
  * changes the run key of every other content, so a retained receipt is not replayed, and discovery
  * offers the page again. `keepContentHash` (the extraction that retired) keeps its key and its state.
  */
 export async function bumpAtomGeneration(tx: BrainEngine, sourceId: string, incarnation: string, pageId: number, keepContentHash: string | null): Promise<void> {
-  const kept = keepContentHash === null ? null : await atomGeneration(tx, pageId, keepContentHash);
-  await tx.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys)
-      VALUES('${ATOM_GENERATION_OP}',$1,jsonb_build_array(jsonb_build_object('generation',1,'keep',$2::text,'keep_generation',$3::integer)))
-    ON CONFLICT(op,fingerprint) DO UPDATE SET updated_at=now(), completed_keys=jsonb_build_array(jsonb_build_object('generation',
-      COALESCE((op_checkpoints.completed_keys->0->>'generation')::integer,0)+1,'keep',$2::text,'keep_generation',$3::integer))`,
-  [String(pageId), keepContentHash, kept]);
-  await tx.executeRaw('DELETE FROM extract_atoms_page_state WHERE source_incarnation=$1::uuid AND page_id=$2 AND content_hash IS DISTINCT FROM $3::text',
-    [incarnation, pageId, keepContentHash]);
-  await tx.executeRaw(`DELETE FROM op_checkpoints WHERE op='managed-atoms' AND completed_keys->0->>'sourceId'=$1
-    AND completed_keys->0->>'kind'='page' AND completed_keys->0->>'pageId'=$2 AND completed_keys->0->>'contentHash' IS DISTINCT FROM $3::text`,
-  [sourceId, String(pageId), keepContentHash]);
+  const kept = keepContentHash === null ? null : await tx.readAtomGeneration(pageId, keepContentHash);
+  await tx.recordAtomGenerationBump(sourceId, incarnation, pageId, keepContentHash, kept);
 }
 
 /**

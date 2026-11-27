@@ -148,6 +148,33 @@ fn the_name_read_answers_each_asked_token_once_by_id_a_revoked_one_included() {
 
 const MINUTE_US: i64 = 60_000_000;
 
+/// `gbrain auth list` prints where a key with the read-shared switch on writes and what it reads, from these columns.
+#[test]
+fn the_list_carries_the_grant_columns_auth_list_prints() {
+    let b = brain("tokens-list-grant");
+    let id = insert(&b, token("shared", "hash-shared", json!({ "source_grant": "federated", "source_id": "default", "federated_read": ["default", "wiki"] }))).unwrap();
+    b.set_access_token_read_shared_revision(&id, Some(1))
+        .unwrap();
+    let rows = b.list_access_tokens().unwrap();
+    let row = &rows.as_array().unwrap()[0];
+    assert_eq!(
+        (
+            &row["source_grant"],
+            &row["source_id"],
+            &row["federated_read"],
+            &row["grant_revision"],
+            &row["read_shared_revision"]
+        ),
+        (
+            &json!("federated"),
+            &json!("default"),
+            &json!(["default", "wiki"]),
+            &json!(1),
+            &json!(1)
+        )
+    );
+}
+
 #[test]
 fn the_list_is_newest_first_with_the_columns_not_kept_at_their_defaults_and_no_hash() {
     let b = brain("tokens-list");

@@ -153,6 +153,9 @@ describe('the write-time chronicle decision', () => {
           const before = { pending: await hashOf('meetings/link-example'), skipped: await hashOf('meetings/skipped-example') };
           const link = await run(engine, 'add_link', { from: 'meetings/link-example', to: 'people/alice-example', context: 'Synthetic participant' }, 'vault');
           const other = await run(engine, 'add_link', { from: 'meetings/skipped-example', to: 'people/alice-example', context: 'Synthetic participant' }, 'vault');
+          // With the hold lifted on this test engine (GBRAIN_TEST_RUST_MANAGED=1, rust-managed.ts), a step of the managed
+          // add_link the Rust store does not serve yet ends the case as stopped, never as equal.
+          for (const step of [link, other]) if (!step.ok && (step as { code?: string }).code === 'engine_capability_missing' && thrown.has(step)) throw thrown.get(step);
           const after = { pending: await hashOf('meetings/link-example'), skipped: await hashOf('meetings/skipped-example') };
           const out = { person: person.ok, created: created.ok, skippedPut: skippedPut.ok, link: { ok: link.ok, code: (link as { code?: string }).code ?? null }, other: { ok: other.ok, code: (other as { code?: string }).code ?? null },
             newRevisions: { pending: before.pending !== null && after.pending !== before.pending, skipped: before.skipped !== null && after.skipped !== before.skipped },

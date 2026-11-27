@@ -10,6 +10,7 @@
  * rewritten with identical values, renumbered, re-inserted) yields no event.
  */
 import type { BrainEngine } from '../engine.ts';
+import { legacyClaimFingerprints, mayHaveLegacyFingerprint } from './legacy-fingerprint.ts';
 
 export interface RawPage {
   id: number; slug: string; deleted: boolean; revision: string; content_hash: string | null; tier: string;
@@ -99,6 +100,15 @@ export async function readBeliefState(tx: BrainEngine, sourceId: string, slugs: 
   const entityPageOf = new Map((entityPages ?? []).map(([slug, id]) => [slug, Number(id)]));
   const factRows = facts ? facts.map(toFact) : null;
   const takeRows = takes ? takes.map(toTake) : null;
+  // Fingerprints computed here (not known or cached, which already are) take a claim's pre-v341 fingerprint where its history has it.
+  const fresh = <T extends { th?: string }>(rows: T[] | null, text: (r: T) => string) => (rows ?? []).filter(r => r.th === undefined || !knownFp.has(r.th))
+    .filter(r => mayHaveLegacyFingerprint(text(r)));
+  const freshFacts = fresh(factRows, f => f.fact), freshTakes = fresh(takeRows, k => k.claim);
+  if (freshFacts.length || freshTakes.length) {
+    const legacy = await legacyClaimFingerprints(tx, sourceId, [...freshFacts.map(f => f.fact), ...freshTakes.map(k => k.claim)]);
+    for (const f of freshFacts) f.fp = legacy.get(f.fact) ?? f.fp;
+    for (const k of freshTakes) k.claim_fp = legacy.get(k.claim) ?? k.claim_fp;
+  }
   const slugOfPage = new Map(pages.map(p => [p.id, p.slug]));
   const seen = new Map<string, string[]>();
   for (const [slug, th, fp] of [...(factRows ?? known!.facts).map(f => [f.sms ?? f.entity_slug ?? '', f.th, f.fp] as const),
@@ -129,8 +139,11 @@ export async function readBeliefState(tx: BrainEngine, sourceId: string, slugs: 
 }
 
 /** Rows by id, for a guard event whose row lives outside the batch's streams. */
-export async function readFactsById(tx: BrainEngine, ids: readonly number[]): Promise<RawFact[]> {
-  return (await tx.readBeliefFactsById(ids)).map(toFact);
+export async function readFactsById(tx: BrainEngine, sourceId: string, ids: readonly number[]): Promise<RawFact[]> {
+  const facts = (await tx.readBeliefFactsById(ids)).map(toFact);
+  const legacy = await legacyClaimFingerprints(tx, sourceId, facts.map(f => f.fact));
+  for (const f of facts) f.fp = legacy.get(f.fact) ?? f.fp;
+  return facts;
 }
 
 function toFact(r: Record<string, unknown>): RawFact {

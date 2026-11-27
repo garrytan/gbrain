@@ -74,3 +74,6 @@ export const countChunkColumnCoverage: Member<'countChunkColumnCoverage'> = asyn
   const covered = fixed ? 0 : stats.embedded_count;
   return { pct: total > 0 ? (covered / total) * 100 : null, total };
 };
+
+/** The store keeps no query cache (no search result is cached on a Rust brain), so the schema-pack invalidation deletes nothing. */
+export const invalidateQueryCacheRows: Member<'invalidateQueryCacheRows'> = async () => 0;

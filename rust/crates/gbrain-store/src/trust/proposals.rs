@@ -460,6 +460,37 @@ pub(crate) fn held_narrower(read: &dyn KvRead, fact_id: u64) -> Result<bool> {
     Ok(false)
 }
 
+/// How many proposals hold fact `fact_id` narrower in the sense of [`held_narrower`], counting only those of
+/// `source_id` when it is given (engine-sql/facts-cycle.ts `listHeldWideningFactIds`: `source_id = $1`, one row
+/// per proposal).
+pub(crate) fn held_narrower_in(
+    read: &dyn KvRead,
+    source_id: Option<&str>,
+    fact_id: u64,
+) -> Result<usize> {
+    let Ok(row_id) = i64::try_from(fact_id) else {
+        return Ok(0);
+    };
+    let mut n = 0;
+    for id in ids_naming(read, "facts", row_id)? {
+        let Some(p) = read_record(read, id)? else {
+            return Err(corrupt("row index entry without its row"));
+        };
+        if source_id.is_none_or(|s| p.source_id == s)
+            && matches!(p.action.as_str(), "supersede_fact" | "confirm")
+            && p.related_table.as_deref() == Some("facts")
+            && p.related_id == Some(row_id)
+            && matches!(p.status.as_str(), "pending" | "rejected" | "undone")
+            && p.before_state
+                .as_object()
+                .is_some_and(|state| state.contains_key("visibility"))
+        {
+            n += 1;
+        }
+    }
+    Ok(n)
+}
+
 /// The fact pairs a pending `supersede_fact` proposal between two facts covers, both ways round (the claim-conflict
 /// read leaves them out: `trust_proposals` with `status = 'pending'`, `target_table` and `related_table` `facts`).
 pub(crate) fn pending_fact_supersessions(read: &dyn KvRead) -> Result<HashSet<(i64, i64)>> {
@@ -501,6 +532,66 @@ pub(crate) fn contested_ref(read: &dyn KvRead, table: &str, row_id: i64) -> Resu
         }
     }
     Ok(None)
+}
+
+/// The label guard's prior tiers of a page (trust/page-write.ts `labelGuardTier`): `before_state->>'prior_tier'` of
+/// every `lower_page` proposal targeting the page that is not `accepted` and has a higher id than the page's last
+/// accepted `lower_page` proposal whose `after_state->>'resolution'` is not `labels_applied` (0 when none), ascending by
+/// id. A missing or non-text `prior_tier` reads as `->>` does (none, or the value's JSON text).
+pub(crate) fn lower_page_prior_tiers(
+    read: &dyn KvRead,
+    page_id: i64,
+) -> Result<Vec<Option<String>>> {
+    let mut lowers = Vec::new();
+    for id in ids_naming(read, "pages", page_id)? {
+        let Some(p) = read_record(read, id)? else {
+            return Err(corrupt("row index entry without its row"));
+        };
+        if p.action == "lower_page" && p.target_table == "pages" && p.target_id == page_id {
+            lowers.push(p);
+        }
+    }
+    let text = |state: &Value, key: &str| {
+        state
+            .get(key)
+            .and_then(crate::cli_reads::entities::arrow_text)
+    };
+    let cutoff = lowers
+        .iter()
+        .filter(|p| {
+            p.status == "accepted"
+                && text(&p.after_state, "resolution").as_deref() != Some("labels_applied")
+        })
+        .map(|p| p.id)
+        .max()
+        .unwrap_or(0);
+    Ok(lowers
+        .iter()
+        .filter(|p| p.status != "accepted" && p.id > cutoff)
+        .map(|p| text(&p.before_state, "prior_tier"))
+        .collect())
+}
+
+/// `gbrain repair open-facts`' trust contest on fact `fact_id` (`openFactsReasonSql`, 'contested'): a proposal naming the
+/// fact as its target or related row that is pending, or a `supersede_fact` or `confirm` widening (`before_state` has a
+/// `visibility` key) the owner rejected or undid.
+pub(crate) fn open_fact_contested(read: &dyn KvRead, fact_id: i64) -> Result<bool> {
+    for id in ids_naming(read, "facts", fact_id)? {
+        let Some(p) = read_record(read, id)? else {
+            return Err(corrupt("row index entry without its row"));
+        };
+        if !p.names("facts", fact_id) {
+            continue;
+        }
+        if p.status == "pending"
+            || (matches!(p.action.as_str(), "supersede_fact" | "confirm")
+                && matches!(p.status.as_str(), "rejected" | "undone")
+                && p.before_state.get("visibility").is_some())
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// The targets (`target_table`, `target_id`) of the visibility proposals that name fact `fact_id` as their related row,

@@ -13,6 +13,7 @@ const load_brain_membership = () => import('./ops/brain-membership.ts') as Promi
 const load_calibration = () => import('./ops/calibration.ts') as Promise<Record<string, unknown>>;
 const load_chronicle = () => import('./ops/chronicle.ts') as Promise<Record<string, unknown>>;
 const load_chunks = () => import('./ops/chunks.ts') as Promise<Record<string, unknown>>;
+const load_claims = () => import('./ops/claims.ts') as Promise<Record<string, unknown>>;
 const load_code_intel = () => import('./ops/code-intel.ts') as Promise<Record<string, unknown>>;
 const load_connectors = () => import('./ops/connectors.ts') as Promise<Record<string, unknown>>;
 const load_embedding_migration = () => import('./ops/embedding-migration.ts') as Promise<Record<string, unknown>>;
@@ -23,15 +24,18 @@ const load_feedback = () => import('./ops/feedback.ts') as Promise<Record<string
 const load_files = () => import('./ops/files.ts') as Promise<Record<string, unknown>>;
 const load_find_pages = () => import('./ops/find-pages.ts') as Promise<Record<string, unknown>>;
 const load_graph_rank = () => import('./ops/graph-rank.ts') as Promise<Record<string, unknown>>;
+const load_household = () => import('./ops/household.ts') as Promise<Record<string, unknown>>;
 const load_image = () => import('./ops/image.ts') as Promise<Record<string, unknown>>;
 const load_ingest_log = () => import('./ops/ingest-log.ts') as Promise<Record<string, unknown>>;
 const load_insights = () => import('./ops/insights.ts') as Promise<Record<string, unknown>>;
 const load_jobs = () => import('./ops/jobs.ts') as Promise<Record<string, unknown>>;
 const load_learned = () => import('./ops/learned.ts') as Promise<Record<string, unknown>>;
+const load_ledger = () => import('./ops/ledger.ts') as Promise<Record<string, unknown>>;
 const load_links = () => import('./ops/links.ts') as Promise<Record<string, unknown>>;
 const load_loops = () => import('./ops/loops.ts') as Promise<Record<string, unknown>>;
 const load_memory_settings = () => import('./ops/memory-settings.ts') as Promise<Record<string, unknown>>;
 const load_notices = () => import('./ops/notices.ts') as Promise<Record<string, unknown>>;
+const load_onboarding = () => import('./ops/onboarding.ts') as Promise<Record<string, unknown>>;
 const load_orphans = () => import('./ops/orphans.ts') as Promise<Record<string, unknown>>;
 const load_page_append = () => import('./ops/page-append.ts') as Promise<Record<string, unknown>>;
 const load_page_batch = () => import('./ops/page-batch.ts') as Promise<Record<string, unknown>>;
@@ -39,6 +43,7 @@ const load_page_edit = () => import('./ops/page-edit.ts') as Promise<Record<stri
 const load_page_upload = () => import('./ops/page-upload.ts') as Promise<Record<string, unknown>>;
 const load_pages = () => import('./ops/pages.ts') as Promise<Record<string, unknown>>;
 const load_persistence = () => import('./ops/persistence.ts') as Promise<Record<string, unknown>>;
+const load_policy = () => import('./ops/policy.ts') as Promise<Record<string, unknown>>;
 const load_purge = () => import('./ops/purge.ts') as Promise<Record<string, unknown>>;
 const load_qm_memory = () => import('./ops/qm-memory.ts') as Promise<Record<string, unknown>>;
 const load_questions = () => import('./ops/questions.ts') as Promise<Record<string, unknown>>;
@@ -160,6 +165,13 @@ export const OPERATION_LOADERS: Record<string, readonly [() => Promise<Record<st
   "storage_register": [load_storage_manifest, "storageManifestOperations"],
   "storage_update": [load_storage_manifest, "storageManifestOperations"],
   "reveal_secret": [load_secrets, "secretsOperations"],
+  "check_claims": [load_claims, "claimsOperations"],
+  "policy_check": [load_policy, "policyOperations"],
+  "agent_policy": [load_policy, "policyOperations"],
+  "capabilities": [load_policy, "policyOperations"],
+  "log_action": [load_ledger, "ledgerOperations"],
+  "ledger": [load_ledger, "ledgerOperations"],
+  "policy_reserve": [load_ledger, "ledgerOperations"],
   "submit_job": [load_jobs, "jobsOperations"],
   "get_job": [load_jobs, "jobsOperations"],
   "wait_job": [load_jobs, "jobsOperations"],
@@ -264,6 +276,10 @@ export const OPERATION_LOADERS: Record<string, readonly [() => Promise<Record<st
   "loops_close": [load_loops, "loopsOperations"],
   "loops_mute": [load_loops, "loopsOperations"],
   "loops_unmute": [load_loops, "loopsOperations"],
+  "household_due": [load_household, "householdOperations"],
+  "household_add": [load_household, "householdOperations"],
+  "household_mark": [load_household, "householdOperations"],
+  "household_replace": [load_household, "householdOperations"],
   "questions_pin": [load_questions, "questionsOperations"],
   "questions_list": [load_questions, "questionsOperations"],
   "questions_status": [load_questions, "questionsOperations"],
@@ -271,4 +287,8 @@ export const OPERATION_LOADERS: Record<string, readonly [() => Promise<Record<st
   "questions_unpin": [load_questions, "questionsOperations"],
   "mute_notice": [load_notices, "noticesOperations"],
   "learned": [load_learned, "learnedOperations"],
+  "learned_keep": [load_learned, "learnedOperations"],
+  "learned_undo": [load_learned, "learnedOperations"],
+  "onboarding_status": [load_onboarding, "onboardingOperations"],
+  "onboarding_off": [load_onboarding, "onboardingOperations"],
 };

@@ -49,8 +49,15 @@ async function recordStatements<T>(engine: BrainEngine, fn: () => Promise<T>): P
     sent.push({ sql: 'readGitHoldRecords', params: args });
     return readGitHolds.apply(this, args);
   };
+  // The settled-failures settle lists the source's failure rows through listSourceManagedSyncFailures (persistence/sync-failures.ts
+  // sourceFailureRows), the same statement master sent through executeRaw; recorded the same way.
+  const listFailures = target.listSourceManagedSyncFailures!;
+  target.listSourceManagedSyncFailures = function (this: unknown, ...args: unknown[]) {
+    sent.push({ sql: 'listSourceManagedSyncFailures', params: args });
+    return listFailures.apply(this, args);
+  };
   try { return { result: await fn(), sent }; }
-  finally { delete target.executeRaw; delete target.listSourceHoldRecords; delete target.readGitHoldRecords; }
+  finally { delete target.executeRaw; delete target.listSourceHoldRecords; delete target.readGitHoldRecords; delete target.listSourceManagedSyncFailures; }
 }
 
 /** What each settle in IDLE_SKIPS sends when it runs, counted in a run's statements. */
@@ -58,7 +65,8 @@ const settles = (sent: Array<{ sql: string; params: unknown[] }>, sourceId: stri
   holdReads: sent.filter(s => (s.sql === 'listSourceHoldRecords' && s.params[0] === GIT_HOLD_OP && ((s.params[1] as { runId?: string | null } | undefined)?.runId ?? null) === null)
     || (s.sql === 'readGitHoldRecords' && ((s.params[0] as { runId?: string | null } | undefined)?.runId ?? null) === null)).length,
   holdReport: sent.filter(s => s.sql.includes("COALESCE((completed_keys->0->>'count')::int,0) AS count") && s.params[0] === GIT_HOLD_SUMMARY_OP).length,
-  failureRows: sent.filter(s => s.sql.includes("f.op='managed-sync-failure' AND f.completed_keys->0->>'source_id'=$1")).length,
+  failureRows: sent.filter(s => s.sql.includes("f.op='managed-sync-failure' AND f.completed_keys->0->>'source_id'=$1")
+    || (s.sql === 'listSourceManagedSyncFailures' && s.params[0] === sourceId)).length,
   needsHuman: sent.filter(s => s.sql === 'SELECT incarnation::text AS incarnation FROM sources WHERE id=$1' && s.params[0] === sourceId).length,
   tailReads: sent.filter(s => s.params[0] === SYNC_TAIL_OP && s.params[1] === sourceId && s.sql.startsWith('SELECT completed_keys FROM op_checkpoints')).length,
 });

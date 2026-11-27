@@ -3,9 +3,12 @@
  * from the Rust store (rust/crates/gbrain-store/src/edge_proposals.rs): listEdgeContradictionCandidates,
  * listKnownEdgeProposals, recordEdgeProposal, readEdgeProposal, edgeClosureLanded, readEdgeProposalEvidence,
  * readEdgeProposalHash, markEdgeProposalStale, setEdgeProposalStatus, rejectOpenEdgeProposal, markEdgeProposalUndone and
- * markRevertedEdgeProposals. See rust/docs/store/edge_proposals.md.
+ * markRevertedEdgeProposals; and the six members of `gbrain edge-proposals` (listEdgeProposalCliRows,
+ * deleteHeldEdgeProposalErrors, listAppliedEdgeProposalIds, deleteEdgeProposalError, readEdgeProposalSourceId and
+ * markEdgeProposalDated, edge_proposals/cli.rs). See rust/docs/store/edge_proposals.md.
  */
 import type { BrainEngine } from '../../engine.ts';
+import { withDates } from '../store-codec.ts';
 import { NON_EMPLOYER_PREFIXES, NON_EMPLOYER_TYPES } from '../../link-target-roles.ts';
 import { storeCall, type StoreMember } from './common.ts';
 
@@ -62,3 +65,26 @@ export const markEdgeProposalUndone: Member<'markEdgeProposalUndone'> = async (b
 
 export const markRevertedEdgeProposals: Member<'markRevertedEdgeProposals'> = (brain) =>
   storeCall({ member: 'markRevertedEdgeProposals' }, () => brain.markRevertedEdgeProposals());
+
+/** `listEdgeProposalCliRows`: the store answers `created_at` as ISO text; PGLite returns a `Date`. */
+export const listEdgeProposalCliRows: Member<'listEdgeProposalCliRows'> = async (brain, filter, limit) => {
+  // A limit outside 1 to 1000, or not whole, is refused by the store as by the SQL member (invalid_argument).
+  const rows: Array<Record<string, unknown>> = await storeCall({ member: 'listEdgeProposalCliRows' }, () => brain.listEdgeProposalCliRows(filter, limit));
+  return rows.map((row) => withDates(row, ['created_at'])) as never;
+};
+
+export const deleteHeldEdgeProposalErrors: Member<'deleteHeldEdgeProposalErrors'> = (brain) =>
+  storeCall({ member: 'deleteHeldEdgeProposalErrors' }, () => brain.deleteHeldEdgeProposalErrors());
+
+export const listAppliedEdgeProposalIds: Member<'listAppliedEdgeProposalIds'> = (brain) =>
+  storeCall({ member: 'listAppliedEdgeProposalIds' }, () => brain.listAppliedEdgeProposalIds());
+
+export const deleteEdgeProposalError: Member<'deleteEdgeProposalError'> = (brain, id) =>
+  storeCall({ member: 'deleteEdgeProposalError' }, () => brain.deleteEdgeProposalError(id));
+
+export const readEdgeProposalSourceId: Member<'readEdgeProposalSourceId'> = (brain, id) =>
+  storeCall({ member: 'readEdgeProposalSourceId' }, () => brain.readEdgeProposalSourceId(id));
+
+export const markEdgeProposalDated: Member<'markEdgeProposalDated'> = async (brain, id) => {
+  await storeCall({ member: 'markEdgeProposalDated' }, () => brain.markEdgeProposalDated(id));
+};

@@ -8,8 +8,9 @@
  *    stalled-effect readers, the held-read stale stamp, the landing-gap and drift-conflict audits (pages, producers and the
  *    keyset cursor), the legacy-lock, derived-origin, managed-sync orphan and connector orphan listings, and the atom
  *    retirement ledger's newest-per-origin pick return the same rows in the same order on every engine arm (PGLite always;
- *    Postgres with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1, where each case stops on the typed raw_sql
- *    refusal): byte order, as PGLite sorts and as Postgres sorts with `COLLATE "C"`.
+ *    Postgres with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1, where each raw-SQL case stops on the typed
+ *    raw_sql refusal, and the atom retirement case, seeded and read through typed members, runs to the end): byte order,
+ *    as PGLite sorts and as Postgres sorts with `COLLATE "C"`.
  *  - Regression: on an en_US Postgres these reads sorted by the locale, which skips punctuation (`ab` before `a-z`), so a
  *    status list, a blocker list, a refusal naming "the first" source, a stale stamp taken from "the first" hold, and the
  *    drift audit's `next` cursor came back in another order than on PGLite, and a page crossing a cursor could repeat or vanish.
@@ -35,7 +36,7 @@ import { GIT_HOLD_OP, GIT_HOLD_SUMMARY_OP } from '../../src/core/engine-sql/pers
 import { activatePersistence } from '../../src/core/persistence/activation.ts';
 import { writerAdminState } from '../../src/core/persistence/admin-intent.ts';
 import { runPersistenceAdministration } from '../../src/core/persistence/administration.ts';
-import { atomRetirementsSql, ATOM_REEXTRACT_RETIRED_BY } from '../../src/core/persistence/atom-retirement-hold.ts';
+import { ATOM_REEXTRACT_RETIRED_BY } from '../../src/core/persistence/atom-retirement-hold.ts';
 import { orphanConnectorCheckpoints } from '../../src/core/persistence/connector-checkpoint-migration.ts';
 import { hostIdentityMismatches } from '../../src/core/persistence/consumer-diagnostics.ts';
 import { deactivationBlockers, physicalRootBlockers, deactivatePersistence } from '../../src/core/persistence/deactivation.ts';
@@ -206,19 +207,23 @@ describe('connector, derived-origin and atom-retirement readers sort by byte', (
   });
 
   parityTest('atomRetirementsSql keeps the byte-latest retirement of an origin as the latest', {
-    methods: ['executeRaw'], requires: 'raw_sql',
+    methods: ['putPage', 'softDeletePage', 'listRestorableAtoms', 'countKeptAtomRetirements'],
   }, async (engine) => {
+    const put = (slug: string, type: string, frontmatter: Record<string, unknown>) =>
+      engine.putPage(slug, { type: type as never, title: slug, compiled_truth: 'x', timeline: '', frontmatter }, { sourceId: 'default' });
+    await put('notes/origin', 'note', {});
     const retire = async (slug: string, hash: string, retiredAt: string) => {
-      await engine.executeRaw(`INSERT INTO pages(slug,type,title,compiled_truth,frontmatter,deleted_at) VALUES($1,'atom',$1,'x',$2::text::jsonb,now())`,
-        [slug, JSON.stringify({ retired_by: ATOM_REEXTRACT_RETIRED_BY, source_slug: 'notes/origin', source_hash: hash, retired_at: retiredAt })]);
+      await put(slug, 'atom', { retired_by: ATOM_REEXTRACT_RETIRED_BY, source_slug: 'notes/origin', source_hash: hash, retired_at: retiredAt });
+      await engine.softDeletePage(slug, { sourceId: 'default' });
     };
-    // en_US puts `ab` before `a-z`, so a descending locale sort would pick `a-z`; bytes pick `ab`.
+    // en_US puts `ab` before `a-z`, so a descending locale sort would pick `a-z`; bytes pick `ab`. The restorable atom
+    // is the latest retirement of its origin (atomRetirementsSql's `latest`); the other counts as an older generation.
     await retire('atoms/older', 'hash-older', 'a-z');
     await retire('atoms/newer', 'hash-newer', 'ab');
-    const rows = await engine.executeRaw<{ slug: string; latest: boolean }>(`SELECT slug,latest FROM (${atomRetirementsSql()}) r ORDER BY slug`);
-    const latest = rows.filter(row => row.latest).map(row => row.slug);
-    expect(latest).toEqual(['atoms/newer']);
-    return latest;
+    const latest = (await engine.listRestorableAtoms(['default'], null)).map(row => row.slug);
+    const kept = await engine.countKeptAtomRetirements(['default']);
+    expect({ latest, kept }).toEqual({ latest: ['atoms/newer'], kept: { origin_gone: 0, replaced: 0, older_generation: 1 } });
+    return { latest, kept };
   });
 });
 
@@ -250,7 +255,7 @@ describe('drift, stalled-effect and retry listings sort by byte', () => {
     methods: ['insertWriteRequest', 'completeWriteRow', 'listDriftConflictGroups'],
   }, async (engine, backend) => inHome(async () => {
     // A soft hyphen (U+00AD) that a locale ignores, and NFC `é` beside NFD `e` + U+0301: distinct bytes that en_US ranks
-    // as near-equal (equal at its first levels). The audit groups by `slug COLLATE "C"` (v336): each slug must stay its own
+    // as near-equal (equal at its first levels). The audit groups by `slug COLLATE "C"` (v338): each slug must stay its own
     // group with its own receipt count, its exact bytes and its byte position, as the default-collation grouping gave.
     const counts = new Map<string, number>([['notes/ab', 1], ['notes/a\u00adb', 2], ['notes/caf\u00e9', 3], ['notes/cafe\u0301', 4]]);
     await createSource(engine, backend, 'ab');

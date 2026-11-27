@@ -19,7 +19,6 @@ import { pendingTimelineRows } from '../persistence/canonical-projections.ts';
 import { submitPageMutation } from '../persistence/page-mutations.ts';
 import { retractRemovedTimelineEntries, type StoredTimelineTuple } from '../timeline-extract.ts';
 import { repairRequestId, type RepairHandler, type RepairItem, type RepairScope, type RepairCursor } from './core.ts';
-import { requireRawSql } from '../rust-engine/errors.ts';
 
 interface TimelinePage { id: number; source_id: string; slug: string; compiled_truth: string; timeline: string | null }
 
@@ -134,7 +133,6 @@ export const timelineRepair: RepairHandler = {
     if (!snapshot) return false;
     const counts = await pendingTimelineRows(ctx.engine, { ...snapshot.page, timeline: snapshot.page.timeline ?? '' }, await removedRowIds(ctx.engine, snapshot.page));
     if (!counts.materializable) return false;
-    requireRawSql(ctx.engine, 'repair timeline page write');
     await submitPageMutation(ctx, { operation: 'put_page', params: { slug: item.slug, source_id: item.source_id,
       content: serializePageToMarkdown(snapshot.page, snapshot.tags), expected_revision: snapshot.revision,
       request_id: await repairRequestId(ctx, 'timeline', item, snapshot.revision) } });

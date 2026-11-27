@@ -1285,7 +1285,7 @@ fn keys_for_origin(
 
 /// Inserts a transition unless a row with the same identity exists (`ON CONFLICT DO NOTHING`).
 /// Returns whether it was inserted.
-fn insert_transition(tx: &mut dyn KvWrite, record: TransitionRecord) -> Result<bool> {
+pub(crate) fn insert_transition(tx: &mut dyn KvWrite, record: TransitionRecord) -> Result<bool> {
     let key = record.key();
     if transitions_of(&*tx, &key)?
         .iter()

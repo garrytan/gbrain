@@ -36,7 +36,8 @@ export interface WorktreeManifest { digest: string; file_count: number;
   scope?: 'git';
   /** Git scope only: untracked files Git does not ignore, which the manifest does not cover (count only, never names). */
   untracked_count?: number }
-export type StoredWorktreeManifest = WorktreeManifest & { canonical_stamp?: string; self_transfer?: PhysicalRootRecovery };
+export type StoredWorktreeManifest = WorktreeManifest & { canonical_stamp?: string; self_transfer?: PhysicalRootRecovery;
+  recovery_git?: Array<{ source: string; path: string; commit: string }> };
 export const MANIFEST_PROGRESS_MIN_FILES = 5000;
 const GIT_LIMITS = { timeoutMs: 60_000, maxBytes: 256 * 1024 * 1024 };
 

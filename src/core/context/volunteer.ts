@@ -25,6 +25,7 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
+import { isMissingSchemaObject } from '../utils.ts';
 import type { TrustTier } from '../trust/tier.ts';
 import type { ReadEligibility } from '../eligibility/policy.ts';
 import { proactiveEligibility } from '../eligibility/registry.ts';
@@ -367,22 +368,12 @@ export async function volunteerUsageStats(
   const safeDays = Number.isFinite(days) && days > 0 ? Math.floor(days) : 30;
   let rows: Array<{ match_arm: string; channel: string; volunteered: string | number; used: string | number }> = [];
   try {
-    rows = await engine.executeRaw(
-      `SELECT e.match_arm, e.channel,
-              count(*)::text AS volunteered,
-              count(*) FILTER (WHERE GREATEST(p.last_retrieved_at, r.last_retrieved_at) > e.volunteered_at)::text AS used
-         FROM context_volunteer_events e
-         LEFT JOIN pages p
-           ON p.source_id = e.source_id AND p.slug = e.slug AND p.deleted_at IS NULL
-         LEFT JOIN page_retrievals r ON r.page_id = p.id
-        WHERE e.source_id = ANY($1::text[])
-          AND e.volunteered_at > now() - ($2 || ' days')::interval
-        GROUP BY e.match_arm, e.channel
-        ORDER BY e.match_arm COLLATE "C", e.channel COLLATE "C"`,
-      [sourceIds, String(safeDays)],
-    );
-  } catch {
-    rows = []; // pre-v117 brain — table doesn't exist yet
+    // engine-sql/volunteer-events.ts VOLUNTEER_USAGE_SQL.
+    rows = await engine.readVolunteerUsage(sourceIds, safeDays);
+  } catch (e) {
+    // A brain from before v117 has no events table: zero events. Anything else (a refusal, a lost connection) surfaces.
+    if (!isMissingSchemaObject(e, 'table', 'context_volunteer_events')) throw e;
+    rows = [];
   }
   const by_arm: VolunteerArmStats[] = rows.map((r) => {
     const volunteered = Number(r.volunteered);

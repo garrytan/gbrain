@@ -4,9 +4,8 @@
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: on a brain seeded so each preview lists at least one item, the preview is equal on PGLite, Postgres
  *    (DATABASE_URL) and the Rust engine (GBRAIN_TEST_RUST_ARM=1). lost-fence-rows lists a fact row a fence generation
- *    retired while the page lost its whole facts fence, restored from the page version that held it; the restore is a
- *    page write on the SQL arms, and the Rust engine refuses it by name ("repair lost-fence-rows page write", lane 7's
- *    writer). The lost-fence-rows members answer the same rows on every arm.
+ *    retired while the page lost its whole facts fence, restored from the page version that held it; the restore (a page
+ *    write) is the same on every arm. The lost-fence-rows members answer the same rows on every arm.
  *    stale-atoms lists an atom whose origin is gone and an atom whose origin moved past it with a completed unmanaged
  *    extraction of its new content the same way on every arm. Its apply retires both atoms and keeps the new one on the
  *    SQL arms; the retirement publishes an atom generation (lane 7's writer), and the Rust engine refuses it by name
@@ -134,22 +133,17 @@ async function seedGenerations(engine: BrainEngine) {
 }
 
 describe('engine parity: the generation repair kinds of batch 7', () => {
-  parityTest('lost-fence-rows previews a lost fact row the same way, and the Rust engine refuses the restore by name', {
+  parityTest('lost-fence-rows previews a lost fact row and restores it the same way on every arm', {
     methods: ['putPage', 'createVersion', 'activateGenerationRows', 'listRetiredFenceItems', 'listInlineVersionTexts', 'hasActiveFactText',
       'readFactTrustTier', 'listFenceFactRowNums'],
-    requires: 'raw_sql', timeout: 60_000,
-  }, async (engine, backend) => withHome(async () => {
+    timeout: 60_000,
+  }, async (engine) => withHome(async () => {
     await seedLostFact(engine);
     const previewed = await runKind(engine, 'lost-fence-rows', false);
     expect(previewed.affected).toBe(1);
-    try {
-      const applied = await runKind(engine, 'lost-fence-rows', true, { expect: previewed.preview_hash });
-      expect((await engine.getPage(SLUG, { sourceId: 'default' }))?.compiled_truth).toContain(LOST);
-      return { preview: shape(previewed), applied: shape(applied) };
-    } catch (err) {
-      if (backend === 'rust') expect(refusalText(err)).toContain('repair lost-fence-rows page write');
-      throw err;
-    }
+    const applied = await runKind(engine, 'lost-fence-rows', true, { expect: previewed.preview_hash });
+    expect((await engine.getPage(SLUG, { sourceId: 'default' }))?.compiled_truth).toContain(LOST);
+    return { preview: shape(previewed), applied: shape(applied) };
   }));
 
   parityTest('the lost-fence-rows members answer the same rows on every arm', {
@@ -201,9 +195,23 @@ describe('engine parity: the generation repair kinds of batch 7', () => {
     return { listed, preview: shape(previewed) };
   }));
 
-  parityTest('stale-atoms retires the approved atoms the same way, and the Rust engine refuses the retirement by name', {
-    methods: ['putPage', 'listStaleAtoms'],
-    requires: 'raw_sql', timeout: 60_000,
+  parityTest('the atom generation ledger reads 0, bumps, and keeps the kept content at its generation', {
+    methods: ['putPage', 'readAtomGeneration', 'recordAtomGenerationBump', 'listSourceIncarnations'], timeout: 60_000,
+  }, async (engine) => {
+    const page = await engine.putPage('notes/ledger', { type: 'note' as never, title: 'ledger', compiled_truth: 'Ledger body.', timeline: '' }, { sourceId: 'default' });
+    const [source] = await engine.listSourceIncarnations(['default']);
+    const read = async () => [await engine.readAtomGeneration(page.id, 'hash-a'), await engine.readAtomGeneration(page.id, 'hash-b')];
+    const before = await read();
+    await engine.recordAtomGenerationBump('default', source!.incarnation, page.id, null, null);
+    const first = await read();
+    await engine.recordAtomGenerationBump('default', source!.incarnation, page.id, 'hash-a', await engine.readAtomGeneration(page.id, 'hash-a'));
+    const kept = await read();
+    return { before, first, kept };
+  });
+
+  parityTest('stale-atoms retires the approved atoms the same way on every arm', {
+    methods: ['putPage', 'listStaleAtoms', 'readAtomGeneration', 'recordAtomGenerationBump'],
+    timeout: 60_000,
   }, async (engine, backend) => withHome(async () => {
     await seedStaleAtoms(engine);
     const previewed = await runKind(engine, 'stale-atoms', false);
@@ -214,7 +222,11 @@ describe('engine parity: the generation repair kinds of batch 7', () => {
       const changed = await engine.getPage('atoms/changed', { sourceId: 'default' });
       const kept = await engine.getPage('atoms/new', { sourceId: 'default' });
       expect([applied.applied, gone, changed, kept?.slug]).toEqual([2, null, null, 'atoms/new']);
-      return { applied: shape(applied), gone: gone === null, changed: changed === null, kept: kept?.slug ?? null };
+      // The retirement of the moved-origin atom bumps notes/origin's atom ledger: the kept content keeps generation 0,
+      // any other content keys on generation 1.
+      const origin = (await engine.getPage('notes/origin', { sourceId: 'default' }))!;
+      const generations = { kept: await engine.readAtomGeneration(origin.id, origin.content_hash!), other: await engine.readAtomGeneration(origin.id, 'other') };
+      return { applied: shape(applied), gone: gone === null, changed: changed === null, kept: kept?.slug ?? null, generations };
     } catch (err) {
       if (backend === 'rust') expect(refusalText(err)).toContain('repair stale-atoms retirement');
       throw err;

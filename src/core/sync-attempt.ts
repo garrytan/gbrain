@@ -54,7 +54,7 @@ const JOB_SQL = `WITH jobs AS (SELECT id, status, result, created_at, started_at
   chain AS (SELECT max(created_at) FILTER (WHERE ${LIMITED} AND ${LANDED}) AS landed_created, max(at) FILTER (WHERE ${LIMITED} AND ${LANDED}) AS landed_at,
       max(created_at) FILTER (WHERE ${SUBSTANTIVE} AND NOT (${LIMITED})) AS broken_created
     FROM jobs WHERE $2::timestamptz IS NOT NULL AND at >= $2::timestamptz)
-SELECT j.id AS job_id, j.status, j.result->>'status' AS result_status, j.result->>'failedFiles' AS failed_files,
+SELECT j.id AS job_id, j.status, j.result->>'status' AS result_status, j.result->>'failedFiles' AS failed_files, j.result->'partial_causes' AS partial_causes,
     (j.status='active' AND j.lock_until > now()) AS live, j.started_at, j.at,
     CASE WHEN c.broken_created IS NULL OR c.broken_created < c.landed_created THEN c.landed_at END AS usage_limited_since
   FROM (SELECT * FROM jobs ORDER BY created_at DESC, id DESC LIMIT 1) j CROSS JOIN chain c`;
@@ -67,7 +67,7 @@ const iso = (value: unknown): string | null => {
 
 async function lastSyncJob(engine: BrainEngine, sourceId: string, freshSince: string | null): Promise<Omit<SyncAttempt, 'managed_next'> | null> {
   let rows: Array<{ job_id: number | string | null; status: string | null; result_status: string | null; failed_files: string | null; live: boolean | null;
-    started_at: unknown; at: unknown; usage_limited_since: unknown }>;
+    partial_causes: unknown; started_at: unknown; at: unknown; usage_limited_since: unknown }>;
   try {
     rows = await engine.executeRaw(JOB_SQL, [sourceId, freshSince]);
   } catch (error) {
@@ -80,10 +80,12 @@ async function lastSyncJob(engine: BrainEngine, sourceId: string, freshSince: st
   const failed = Number(row.failed_files ?? 0);
   const since = iso(row.usage_limited_since);
   const started = row.live === true ? iso(row.started_at) : null;
+  const causes = Array.isArray(row.partial_causes) ? row.partial_causes.filter((c): c is string => typeof c === 'string') : [];
+  const outcome = causes.length ? row.result_status + ': ' + causes.join('; ') : row.result_status;
   return {
     state: queued ? 'attempt_queued' : 'last_attempt_unsuccessful',
     last_attempt_at: iso(row.at),
-    result: row.result_status ? `${row.status} (${row.result_status})` : row.status,
+    result: row.result_status ? `${row.status} (${outcome})` : row.status,
     held: Number.isFinite(failed) ? failed : 0,
     job_id: Number(row.job_id),
     ...(row.live === true ? { live_job: true as const, ...(started ? { live_job_started_at: started } : {}) } : {}),

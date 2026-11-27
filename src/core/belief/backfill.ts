@@ -38,6 +38,7 @@ import { readLedgerSource } from './ledger.ts';
 import { resolveLifetimes } from './lifetimes.ts';
 import { factValue, takeValue } from './subjects.ts';
 import { coverageIntervals } from './coverage-report.ts';
+import { legacyClaimFingerprints } from './legacy-fingerprint.ts';
 
 export interface BackfillPageResult { slug: string; versions: number; events: number; complete: boolean; reasons: string[] }
 export interface BackfillReport { source_id: string; since: string | null; pages: BackfillPageResult[]; events: number; retried: number }
@@ -52,16 +53,18 @@ const iso = (v: unknown) => v == null ? null : new Date(v as string).toISOString
 const dateIso = (d?: string) => d ? iso(/^\d{4}-\d{2}-\d{2}$/.test(d) ? `${d}T00:00:00Z` : d) : null;
 
 /** Keyed fence subjects of one body: active fence facts by (page, fp, visibility) and takes by (page, claim hash, ordinal). Purge registers version carriers under these keys. */
-export async function bodySubjects(engine: BrainEngine, lifetime: string, text: string, pageVisibility: string): Promise<{ subjects: Keyed[]; warnings: string[] }> {
+export async function bodySubjects(engine: BrainEngine, sourceId: string, lifetime: string, text: string, pageVisibility: string): Promise<{ subjects: Keyed[]; warnings: string[] }> {
   const facts = parseFactsFence(text);
   const takes = parseTakesFence(text);
   const active = facts.facts.filter(f => f.active);
-  const fps = active.length ? await engine.executeRaw<{ fp: string }>('SELECT gbrain_fact_fingerprint(c) AS fp FROM unnest($1::text[]) WITH ORDINALITY AS t(c, n) ORDER BY n',
-    [active.map(f => f.claim)]) : [];
+  // computeFactFingerprints runs the statement this read sent (engine-sql/facts-trust.ts), so a Rust brain serves it too.
+  const fps = active.length ? (await engine.computeFactFingerprints(active.map(f => f.claim))).map(fp => ({ fp })) : [];
+  // A claim recorded under its pre-v341 fingerprint keeps it (legacy-fingerprint.ts), as the stream reads do.
+  const legacy = await legacyClaimFingerprints(engine, sourceId, [...active.map(f => f.claim), ...takes.takes.map(t => t.claim)]);
   const subject = lifetimeRef(lifetime);
   const groups = new Map<string, { raw: Parameters<typeof factValue>[0]; count: number }>();
   for (const [i, f] of active.entries()) {
-    const fp = fps[i]!.fp;
+    const fp = legacy.get(f.claim) ?? fps[i]!.fp;
     const key = factKey(subject, fp, f.visibility);
     const existing = groups.get(key);
     if (existing) { existing.count++; continue; }
@@ -74,10 +77,9 @@ export async function bodySubjects(engine: BrainEngine, lifetime: string, text: 
     return { kind: 'fact', key, value, vhash: valueHash(value), visibility: raw.visibility, claimFp: raw.fp, validFrom: raw.valid_from, validUntil: raw.valid_until };
   });
   const rows = takes.takes.filter(t => t.source !== TAKE_RESERVATION_SOURCE);
-  const takeFps = rows.length ? await engine.executeRaw<{ fp: string }>('SELECT gbrain_fact_fingerprint(c) AS fp FROM unnest($1::text[]) WITH ORDINALITY AS t(c, n) ORDER BY n',
-    [rows.map(t => t.claim)]) : [];
+  const takeFps = rows.length ? (await engine.computeFactFingerprints(rows.map(t => t.claim))).map(fp => ({ fp })) : [];
   const byClaim = new Map<string, Array<{ t: typeof rows[number]; fp: string }>>();
-  rows.forEach((t, i) => { const h = takeClaimHash(t.claim, t.kind, t.holder); byClaim.set(h, [...byClaim.get(h) ?? [], { t, fp: takeFps[i]!.fp }]); });
+  rows.forEach((t, i) => { const h = takeClaimHash(t.claim, t.kind, t.holder); byClaim.set(h, [...byClaim.get(h) ?? [], { t, fp: legacy.get(t.claim) ?? takeFps[i]!.fp }]); });
   for (const [hash, group] of byClaim) {
     group.sort((a, b) => (a.t.sinceDate ?? '').localeCompare(b.t.sinceDate ?? '') || a.t.rowNum - b.t.rowNum);
     group.forEach(({ t, fp }, ordinal) => {
@@ -127,7 +129,7 @@ async function preparePage(engine: BrainEngine, sourceId: string, slug: string, 
   for (const [i, body] of chain.entries()) {
     if (body.text == null) { reasons.push('segmented_version_body'); priorRevision = body.revision; continue; }
     const bodyVisibility = body.private ? 'private' : visibility;
-    const { subjects, warnings } = await bodySubjects(engine, lifetime, body.text, bodyVisibility);
+    const { subjects, warnings } = await bodySubjects(engine, sourceId, lifetime, body.text, bodyVisibility);
     if (warnings.length) reasons.push('fence_parse_warnings');
     const cause = { op: 'backfill', version: i < bodies.length ? Number(before[i]!.id) : closing ? Number(closing.id) : null, at_coverage_start: i === bodies.length };
     const out: BeliefEventDraft[] = [{ ...base, subjectKind: 'page', subjectKey: pageKey(lifetime), eventType: 'page.published', visibility: bodyVisibility,

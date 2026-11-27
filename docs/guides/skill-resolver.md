@@ -12,10 +12,14 @@ model.
   `gbrain setup <claude-code|codex|hermes> --skill-loading resolve` (OpenClaw and
   Pi: the plugin and extension below; Cursor: pinned skills only, below).
   Setup writes nothing for it otherwise.
-- **Local and deterministic.** Word matching (BM25F) over the catalog's names,
-  descriptions, triggers, routing rows and the first 4 KB of each body. No
-  network, no model, no clock, no randomness on the turn path, unless you turn
-  on the [model picker](#model-picker-opt-in).
+- **Words, plus meaning when the brain can embed.** Word matching (BM25F)
+  over the catalog's names, descriptions, triggers, routing rows and the first
+  4 KB of each body, done on the machine. When the brain has an embedding
+  model, Claude Code and Codex turns also rank by meaning with
+  [skill vectors](#skill-vectors), which sends each message to that
+  embedding provider. With no embedding model and the
+  [model picker](#model-picker-opt-in) off, nothing leaves the machine and
+  the same message always gets the same block.
 - **No brain needed.** It works on a keyless, repo-less or brainless install,
   on a thin client, and while `gbrain serve` holds the PGLite lock. It never
   reads or writes the brain.
@@ -58,6 +62,14 @@ One catalog per skill set. Names are 1-64 characters of `a-z`, `0-9`, `_` and
   `eligible: false` are never indexed. Dot-entries (harness-owned state such
   as Codex's `.system/` or Hermes's `.usage.json`) and `node_modules` are
   never read, so a harness writing them does not make the index stale.
+- A skill with `deprecated: true` in its SKILL.md frontmatter (a JSON entry:
+  `"deprecated": true`) is indexed but never suggested from a word match or
+  offered to the model picker. It still loads when the turn names it
+  (`use the reports skill`, `/reports`), and its reason then says so; add
+  `replaced_by: <skill>` and the reason reads `deprecated, use <skill>
+  instead`. It also leaves the trigger index that `gbrain check-resolvable`
+  and the routing eval read: its frontmatter triggers and its RESOLVER.md rows
+  are dropped, and it is not reported as unreachable.
 - `--routing <file>` adds the rows of one RESOLVER-style routing table to
   the skills they name.
 - `--scope project` marks a cloned repository's skills: their blocks show ids
@@ -144,7 +156,9 @@ The lane always exits 0 and prints nothing when it cannot deliver:
   50 ms on an idle 4-core machine with an empty file cache, and up to about
   105 ms with the CPU oversubscribed), so the turn's own clock starts once it
   is ready. With the [model picker](#model-picker-opt-in) on, the turn also
-  gets the picker's wait (`router_timeout_ms`) plus 100 ms. At either limit
+  gets the picker's wait (`router_timeout_ms`) plus 100 ms; with it off and a
+  catalog built with [skill vectors](#skill-vectors), the turn also gets 1
+  second for the message's vector plus 100 ms. At either limit
   the process prints nothing, exits and commits no session state.
 - **Turn settings:** `skills.resolver.top_k` (1-8, default 5),
   `skills.resolver.min_match` (the weakest `match_strength` to suggest;
@@ -206,8 +220,10 @@ The lane always exits 0 and prints nothing when it cannot deliver:
   Hermes sends no compaction event; the lane resets a session when its history shrinks or on a first turn.
 
 Each turn appends one line (outcome, error code, duration, the worker's load
-time as `worker_ms`, catalogs, and with the model picker on, `router`: who
-answered, the fallback code and the picker's wait; never turn text) to `skill-index/logs/lane-<UTC date>.jsonl`, one file per day,
+time as `worker_ms`, catalogs, with the model picker on, `router`: who
+answered, the fallback code and the picker's wait, and with skill vectors,
+`vectors`: whether the turn ranked with them, the fallback code and the wait
+for the message's vector; never turn text) to `skill-index/logs/lane-<UTC date>.jsonl`, one file per day,
 kept 14 days and capped at 2 MB a day. `gbrain doctor` (`skill_resolver`, and
 `harness_wiring`'s details) reports the hook, each catalog's freshness and
 the recent error codes; it says nothing while the resolver is off. A hook from
@@ -228,20 +244,35 @@ is too slow there. `gbrain setup openclaw --skill-loading resolve --gbrain-bin <
 installs a separate plugin, `gbrain-skill-resolver`, that ranks inside the
 gateway's Node process instead:
 
-1. It builds one catalog per agent, `openclaw-<agent>`, from the skill
-   directories OpenClaw loads for that agent, and writes the Node library to
-   `~/.gbrain/lib/<sha256>.mjs`.
+1. It builds one catalog per agent, `openclaw-<agent>`, from every skill
+   folder OpenClaw loads for that agent: the workspace and `.agents/skills`
+   folders, managed, Skill Workshop, custodian and bundled skills, and each
+   extra dir (`skills.load.extraDirs` and plugin skill folders). When two
+   folders hold a skill of the same name, the catalog keeps the copy OpenClaw
+   loads. It writes the Node library to `~/.gbrain/lib/<sha256>.mjs`.
 2. It writes the plugin to `<openclaw state dir>/gbrain/gbrain-skill-resolver`
-   and its state to `~/.gbrain/openclaw-skill-resolver.json` (mode 0600: per
-   agent the mode, catalog, top_k, floor, top_gate when set, pinned block and rollout knobs).
+   and its state to `~/.gbrain/openclaw-skill-resolver.json` (mode 0600). The
+   state names `gbrain_home` (the gbrain home the plugin reads, so another
+   tool can check it agrees) and, per agent, the mode, catalog, top_k, floor,
+   top_gate when set, pinned block, rollout knobs, the skill folders with
+   their OpenClaw source (`skill_roots`; `skill_dirs` lists the same
+   folders), each skill's `SKILL.md` path (`skill_files`), and which paths
+   the agent's `read` tool may open (`path_reads`: `any`, `workspace`
+   under `tools.fs.workspaceOnly` with `workspace_dir`, or `none` in a
+   sandbox).
 3. It runs `openclaw plugins install --link`, `plugins enable` and
    `config set ...hooks.allowConversationAccess true`, then
    `plugins inspect` and one self-test turn under Node. Anything short of a
    loaded plugin exits 3 with `skill_resolver_plugin_not_installed` and the
    commands still to run; it never reports a partial install as done.
 
-Setup also asks OpenClaw which skills each agent's model can use
-(`openclaw skills list --json --agent <id>`, its `modelVisible` field). A
+Setup asks OpenClaw which skills each agent's model can use and where each
+one lives: the running gateway's `skills.status` first (`openclaw gateway
+call skills.status`, about 2 s), and when no gateway answers,
+`openclaw skills list --json --agent <id>` plus one `openclaw skills info
+--json` for each source whose folder it cannot place (that list carries no
+file paths; about 4 s per call). A skill OpenClaw loads from a different folder
+than the catalog's copy is never suggested, and setup counts them. A
 skill in the agent's directories that OpenClaw hides from it (not eligible on
 this host, outside the agent's skill filter, model invocation off) or does not
 list at all (cut at load, see `skill_resolver_host_load_cut`) goes into that
@@ -262,7 +293,14 @@ turn (`before_prompt_build`; inter-session and other internal turns are
 skipped) it ranks the message the user just sent (OpenClaw's `event.prompt`;
 `event.messages` holds only earlier turns) and puts up to 3 suggestions with at
 least a description match in `appendContext`, and the pinned block in
-`appendSystemContext`. A turn whose run OpenClaw already ended (its
+`appendSystemContext`. Each suggestion carries its `SKILL.md` path, and the
+block tells the model to open it with `read` first and fall back to
+`skills_read` by name (through `dispatch_action` when OpenClaw lists
+`skills_read` only behind its tool search). That still works with OpenClaw's
+skill listing off (`skillsLimits.maxSkillsPromptChars: 0`). When a
+suggested skill sits where the agent's `read` cannot reach (outside the
+workspace under `tools.fs.workspaceOnly`, or anywhere in a sandbox), the
+block leads with `skills_read` instead. A turn whose run OpenClaw already ended (its
 `assertActive` check throws) commits nothing toward the session. Ranking runs
 in a worker thread with a 50 ms deadline: a miss injects nothing, commits
 nothing and is logged as `timeout`; three misses in a row restart the worker.
@@ -300,12 +338,21 @@ way every lane does, so a bad value makes setup refuse with
 the next `gbrain setup openclaw`.
 
 Each turn appends one line (agent, outcome, duration, error code, arm,
-suggested ids; never turn text) to
-`skill-index/logs/openclaw-<date>.jsonl`, and a `read` line when the model
-opens a skill, marked with whether it was suggested. `gbrain doctor --only
-skill_resolver` reports the plugin, the library, each agent's catalog and pins
-and, over the last 24 hours, the turns, outcomes, how many reads were of
-suggested skills and the deadline-miss rate. Above 5% over at least 20 turns
+suggested ids, the session class and each suggestion's OpenClaw source; never
+turn text) to `skill-index/logs/openclaw-<date>.jsonl`, and a `read` line
+when the model opens a skill, by `skills_read` or by `read` of its
+`SKILL.md` path, directly or through `dispatch_action` (counted once),
+marked with whether it was suggested, the tool, the source and the session
+class. The session class is `owner`, `direct`, `group`, `channel`,
+`conversation`, `relay`, `webhook`, `cron`, `heartbeat`, `internal`
+or `unknown` when OpenClaw sends no memory audience. `gbrain doctor --only
+skill_resolver` reports the plugin, the library, the gbrain home, each agent's
+catalog, pins, skill listing and read reach and, over the last 24 hours, the
+turns, outcomes, how many reads were of suggested skills (also split by
+session class and by source) and the deadline-miss rate. An agent with
+OpenClaw's listing off reads `listing off, resolver live` while the plugin
+suggests for it; a load cut then does not warn when its `read` may open any
+path (`path_reads: any`). Above 5% over at least 20 turns
 it warns with `skill_resolve_timeout`; keep a rollout in shadow until the rate
 is under that on the real host.
 
@@ -412,6 +459,97 @@ off keeps them; an OpenClaw agent uses a change from its next turn, and Claude
 Code and Codex (`claude-code-user`, `codex-user`) from their next session
 start, through the [hook lane](#hook-lane-claude-code-and-codex).
 
+## Skill vectors
+
+Word matching misses a skill when the message shares no word with it
+("can we go live today?" against a skill described as "deploy the service to
+production"). Skill vectors find it by meaning: each build turns every
+skill's text into one vector with the brain's own embedding model, and each
+turn embeds the message with the same model and compares the two.
+
+- **When it is on.** Wherever the brain has an embedding model
+  (`embedding_model` in `~/.gbrain/config.json`, the one `gbrain init` set
+  for your pages) with its key, for catalogs built for Claude Code or Codex
+  (or with no `--harness`) in user scope. There is no separate setting.
+  OpenClaw, Pi, Hermes and project catalogs keep word matching only. A brain
+  with `embedding_disabled`, or with no embedding model, builds no vectors.
+- **What is sent, and to whom.** Each build sends every skill's name,
+  description, when-to-use text, triggers and the start of its body (up to
+  6,000 characters a skill) to the embedding provider once. Each turn sends
+  the user's message. The provider is the one the brain already uses for its
+  pages: Voyage, OpenAI or Google, over HTTPS with the brain's key
+  (`VOYAGE_API_KEY`, `OPENAI_API_KEY`, `GOOGLE_GENERATIVE_AI_API_KEY` or
+  `GEMINI_API_KEY`, or the matching key in `config.json`);
+  `OPENAI_BASE_URL` and `GOOGLE_GENERATIVE_AI_BASE_URL` point it at a proxy.
+  `gbrain setup claude-code --skill-loading resolve` (and `codex`) says so
+  when vectors are on.
+- **How it ranks.** The skills whose cosine with the message reaches the
+  model's floor (below) join the word ranking, and the two lists are fused by
+  rank (reciprocal rank fusion, k = 60, the same fusion the brain's own search
+  uses). A skill found only by meaning shows with
+  `match_strength: "vector"` and a reason like `meaning: cosine 0.412`, and
+  `--explain-target <id>` adds the skill's `vector` cosine and floor.
+- **The no-skill gate.** For a catalog with vectors, the floor replaces
+  [`top_gate`](#top_gate-the-no-skill-gate-on-by-default): the block is
+  empty (`weak_top_match`) unless some skill it would show reaches the floor.
+  A skill named in the turn still bypasses it.
+- **How long it waits.** At most 1 second for the message's vector with the
+  picker off; with the picker on, the picker's own wait covers both, and when
+  the picker answers the vector is not waited for. Either way the wait ends
+  at least 100 ms before the caller's deadline, so a late timer on a busy
+  machine still leaves the word matcher time to answer. With the picker off,
+  Claude Code's hook waits at most 1.5 seconds in all and every other harness
+  2 seconds; with it on, the picker's own wait sets the limit.
+- **When it can't answer.** The turn is the word matcher's, byte for byte,
+  and `vectors.fallback.code` in the `--json` output says why (the hook lane
+  log has the same code). The codes: `missing_key`, `provider_error`,
+  `timeout`, `bad_reply` (a reply of the wrong shape, or an all-zero
+  vector), `stale_vectors` (the brain's embedding model or
+  width changed since the build), and `not_needed`
+  (the picker answered). The build receipt's `vectors` field is either
+  `{model, dims, count}` or `{skipped: <code>}`, where the codes add
+  `no_embedder`, `embedding_disabled`, `unsupported_provider`,
+  `not_this_harness`, `project_scope`, `too_many_skills` (the vectors file,
+  header included, would pass 64 MB; checked before any request when
+  `embedding_dimensions` is set, else after the first reply) and
+  `unmeasured_model`; `not_needed` there means the catalog has no
+  skills. A build sends at most 60,000 characters per request.
+- **Keeping them current.** A turn marks the catalog stale (`meta.index_stale`)
+  when its vectors no longer match the brain: the embedding model or width
+  changed, an embedding model or key was added since the build, or the build's
+  embedding failed (`provider_error`, `timeout`, `bad_reply`) more than 10
+  minutes ago, for at most 3 failed builds in a row (the receipt counts them
+  in `vectors.attempts`), since a failed embed may still be billed. With
+  auto-rebuild on, the hook lane then rebuilds it, at most
+  once a minute. The skills are embedded before the build takes the catalog's
+  lock, so a slow provider never holds up another build or `setup`.
+
+**The floors.** A floor is a cosine below which a skill is not shown on
+meaning alone. It is set per model, since each model spreads cosines
+differently, and a model with no measured floor gets no vectors
+(`unmeasured_model`), so it can never make the no-skill rate worse than words
+alone. The floors were chosen on the development half of a private routing
+benchmark (590 requests that need a skill, 414 that need none; Claude Code
+catalog, top 5, `top_gate` 0.6 for words); its held-out half was not read. The
+rule: the most requests whose right skill is in the block, among floors that
+give no more no-skill requests a block than words alone.
+
+| Embedding model | Floor | Right skill in the block (of 590) | No-skill requests that get a block (of 414) |
+|---|---|---|---|
+| words only (no vectors) | | 283 (48.0%) | 184 (44.4%) |
+| `voyage:voyage-4` | 0.26 | 310 (52.5%) | 165 (39.9%) |
+| `voyage:voyage-4-large` | 0.22 | 309 (52.4%) | 148 (35.7%) |
+| `voyage:voyage-4-lite` | 0.26 | 311 (52.7%) | 147 (35.5%) |
+| `voyage:voyage-3.5` | 0.34 | 287 (48.6%) | 154 (37.2%) |
+| `openai:text-embedding-3-large` | 0.26 | 333 (56.4%) | 184 (44.4%) |
+| `openai:text-embedding-3-small` | 0.28 | 314 (53.2%) | 182 (44.0%) |
+| `google:gemini-embedding-001` | 0.60 | 350 (59.3%) | 75 (18.1%) |
+| `google:gemini-embedding-2` | 0.62 | 346 (58.6%) | 120 (29.0%) |
+
+Each floor was measured at the width that benchmark used; a different
+`embedding_dimensions` shifts cosines and has not been measured. Requests
+written as task lists stayed hard for every method (about 1 in 10 found).
+
 ## Model picker (opt-in)
 
 The word matcher finds a skill when the message uses the skill's own words
@@ -472,12 +610,15 @@ endpoint can be the picker, a self-hosted or fine-tuned one included: set
 | `skills.resolver.router_base_url` | the endpoint's base URL up to `/v1`, like `https://models.example.com/v1` (https, or http to localhost only); required |
 | `skills.resolver.router_api_key_env` | the name of the environment variable holding its key, like `MY_MODEL_API_KEY`; unset sends no key |
 | `skills.resolver.router_usd_per_mtok` | `[input, output]` or `[input, output, cached input]` in USD per million tokens, so the daily cap holds; required (`0,0` for a free one). Without the third value, cached input is charged at the input rate |
+| `skills.resolver.router_extra_body` | optional: a JSON object of at most 4,096 bytes added to each request body, like `{"reasoning_effort": "none"}` for a model that should answer without reasoning. It may set only sampling and reasoning controls (`temperature`, `top_p`, `top_k`, `min_p`, `seed`, `presence_penalty`, `frequency_penalty`, `repetition_penalty`, `reasoning_effort`, `thinking`, `chat_template_kwargs`), so it can't add billable input such as tools or lift the output cap the daily spend cap counts on. Its bytes count toward each call's reservation, and it applies to `compat:` models only |
+| `skills.resolver.router_prompt_version` | optional: for a model trained on the picker's request, the picker prompt version it was trained on (`prompt_version` in a catalog's `picker.json`). When gbrain moves to a new version the picker turns itself off with `config_invalid` instead of sending the model a request it was not trained on |
 
 ```bash
 gbrain config set skills.resolver.router_model compat:acme/skill-picker-1
 gbrain config set skills.resolver.router_base_url https://models.example.com/v1
 gbrain config set skills.resolver.router_api_key_env MY_MODEL_API_KEY
 gbrain config set skills.resolver.router_usd_per_mtok 0.1,0.5
+gbrain config set skills.resolver.router_extra_body '{"reasoning_effort": "none"}'
 ```
 
 **Cost and wait.** A turn sends the skill list and the message, about 9,000
@@ -541,8 +682,9 @@ current ids.
 
 ### router_fallback: config_invalid
 
-A `skills.resolver.router_*` value is out of range. The turn is not refused:
-the picker stays off until the value is fixed or unset
+A `skills.resolver.router_*` value is out of range, or
+`router_prompt_version` names a version other than the one this gbrain sends.
+The turn is not refused: the picker stays off until the value is fixed or unset
 (`gbrain config unset skills.resolver.router_timeout_ms`).
 
 ### router_fallback: no_pricing
@@ -567,11 +709,14 @@ The JSON Schemas are checked in under `docs/schemas/`:
   `--input-json -` or the library.
 - `skill-resolver.v1.turn-output.json`: the `--json` result. Everything outside
   `meta` is byte-identical for the same index, input and session state, except
-  on a turn the model picker answered or was asked, which also carries `router`.
+  on a turn the model picker answered or was asked, which also carries `router`,
+  and on a turn whose catalog has [skill vectors](#skill-vectors), which also
+  carries `vectors`.
 - `skill-resolver.v1.build-input.json`: the `--from-json` catalog,
   `[{id, name, description?, when_to_use?, triggers?, routing?, body?, path?,
-  eligible?, disable_model_invocation?}]`. With the same fields a SKILL.md
-  folder has (`when_to_use`, `disable-model-invocation`), a JSON build gives
+  eligible?, disable_model_invocation?, deprecated?, replaced_by?}]`. With the
+  same fields a SKILL.md folder has (`when_to_use`, `disable-model-invocation`,
+  `deprecated`, `replaced_by`), a JSON build gives
   the same `catalog_hash` and `index_hash` as the folder build.
 - `skill-resolver.v1.build-receipt.json`: the build receipt, also saved as
   `receipt.json` beside the index.
@@ -580,10 +725,12 @@ Within v1, changes are additive only.
 
 `no_skill` is true only for an acknowledgement from a small multilingual list
 (`no_skill_reason: "ack"`) or when no word of the turn is in the catalog
-(`"no_match"`). The ranker has no score threshold of its own; `top_gate`
+(`"no_match"`; with skill vectors, only when no skill reaches the cosine
+floor either). The ranker has no score threshold of its own; `top_gate`
 (below) empties the block when the best match is weak. Each suggestion's `match_strength` says how it matched
 (`named` in the turn, `picked` by the model picker, else the first of `name`,
-`triggers`, `routing`, `description`, `body`). `min_match_strength` (`--min-match`) filters
+`triggers`, `routing`, `description`, then `vector` for a skill found by
+meaning alone, then `body`). `min_match_strength` (`--min-match`) filters
 candidates: weaker matches are dropped before the cut to `top_k` and the
 stronger ones still fill the block, so `description` drops body-only matches.
 It is not a gate: in a large catalog some skill almost always matches a
@@ -603,7 +750,8 @@ idf, `ln(1 + (n - 0.5) / 1.5)` for a catalog of `n` skills, is below the
 threshold (0 to 100). With merged catalogs it takes the
 highest of those candidates. A skill named in the turn bypasses it. The
 division keeps the number comparable across catalog sizes; it does not undo
-message length, so long messages still score higher.
+message length, so long messages still score higher. A catalog with
+[skill vectors](#skill-vectors) uses its cosine floor instead.
 
 The default is 0.6; `0` turns the gate off. Without it, a large catalog
 almost always has some skill that shares a word with the message, so every
@@ -636,7 +784,8 @@ on stderr and keeps the default.
 
 An empty block carries `block_reason`: `ack`, `no_match`, `filtered` (every
 match was excluded or below `min_match_strength`), `weak_top_match` (the best
-skill scored below `top_gate`), `deduped` (every match was
+skill scored below `top_gate`, or with skill vectors no skill reached the
+floor), `deduped` (every match was
 already suggested in the session), `paced` (past half the budget and the top
 match is not on a name, trigger or routing row), `budget_exhausted`, `shadow`
 (the live output of a `--shadow` turn) or `error`. It is null when the block
@@ -712,14 +861,16 @@ wins: nothing is published.
 
 ## Privacy and data flow
 
-With the model picker off (the default) nothing leaves the machine; see
-[Model picker](#model-picker-opt-in) for what it sends when on. Everything lives under `$GBRAIN_HOME/.gbrain/skill-index/`
+With no embedding model and the model picker off, nothing leaves the
+machine; see [Skill vectors](#skill-vectors) and
+[Model picker](#model-picker-opt-in) for what each sends. Everything lives under `$GBRAIN_HOME/.gbrain/skill-index/`
 (`~/.gbrain/skill-index/` by default):
 
 | Path | Holds |
 |---|---|
 | `<catalog>/index.bin`, `receipt.json` | the index and its receipt (receipt written last) |
 | `<catalog>/source.json` | the `--from-json` snapshot |
+| `<catalog>/vectors.bin` | one vector per skill from the brain's embedding model, with the model and width it was made with; written only when skill vectors are on |
 | `<catalog>/picker.json` | each skill's id and description (up to 400 characters), read only by the model picker |
 | `router-spend.json`, `router-spend.json.lock` | the model picker's spend today (UTC), in USD; no turn text |
 | `<catalog>/fingerprint.json`, `stat-check`, `stale.stamp`, `lock`, `build.log` | freshness, lease and the last build error |
@@ -749,6 +900,22 @@ slice) at p95 10 ms with 1,000 skills and 40 ms with 7,500 skills on 2 vCPUs.
 nine rounds of 100 turns, and judges the median round's p95, so one burst of host stalls on a shared
 runner does not decide it; the `Skill resolver bench` workflow enforces it on
 pull requests that touch the resolver.
+
+With [skill vectors](#skill-vectors) on, a turn also waits for the
+message's vector, so the provider's round trip dominates. Measured through
+real hook processes (gbrain's own 76 skills, 60 turns each, one cloud
+machine, November 2026):
+
+| Embedding model | Hook p50 | Hook p95 |
+|---|---|---|
+| none (words only) | 123 ms | 139 ms |
+| `voyage:voyage-4`, Claude Code | 284 ms | 328 ms |
+| `voyage:voyage-4`, Codex | 286 ms | 345 ms |
+| `google:gemini-embedding-001` | 337 ms | 380 ms |
+| `openai:text-embedding-3-large` | 795 ms | 904 ms |
+
+A slower provider costs at most the 1-second vector wait before the turn
+falls back to words.
 
 ## Library
 
@@ -844,7 +1011,8 @@ catalog size with `gbrain skills index status`.
 
 ### skill_index_removed
 
-The catalog was removed while a build ran, so the build published nothing.
+The catalog was removed while a build ran, or removed and made again under
+the same name, so the build published nothing and left the new catalog alone.
 
 ### skill_catalog_too_large
 
@@ -978,7 +1146,8 @@ run. Run `gbrain setup openclaw --skill-loading resolve --agent <id>`.
 OpenClaw does not list some of the skills in the agent's skill directories (it
 caps each root with `skills.limits.maxCandidatesPerRoot` and each source with
 `skills.limits.maxSkillsLoadedPerSource`), so `skills_read` could not open
-them. Setup leaves those skills out of the agent's suggestions and names them;
+them. An agent with the skill listing off whose `read` may open any path is
+not warned: the block names each path. Setup leaves those skills out of the agent's suggestions and names them;
 doctor warns when the plugin still suggests one (the limits changed since
 setup ran). To get them back, raise those limits in `openclaw.json` or split
 the root, then run setup again. gbrain never edits these limits itself.

@@ -62,6 +62,7 @@ other and the second sees the first's revision. A second write of one revision n
 | `brain.applyAccessRuleChanges(sourceId, changes)` | deletes `remove`, inserts `insert` (an existing id refuses), upserts `pending`, in one write | `DELETE_RULE_SQL`, `INSERT_RULE_SQL`, `UPSERT_PENDING_SQL` |
 | `brain.restampAccessWindow(sourceId, after, batch)` | `{ last, scanned, changed }` for the next `batch` pages by id, deleted pages included; writes the `0x05` stamps | `RESTAMP_WINDOW_SQL` |
 | `brain.finishAccessRestamp(sourceId)` | the pages restamped; then drops the pending prefixes and marks every revision applied | `RESTAMP_ALL_SQL`, `DELETE_PENDING_SQL`, `MARK_APPLIED_SQL` |
+| `brain.countAccessFolderDrift(sourceId)` | the pages of the source (a soft-deleted one too) whose kept rule ids differ from the folder rules that cover them now; a read, the count a restamp would change | `COUNT(*) ... folder_rule_ids IS DISTINCT FROM gbrain_access_folder_rules(source_id, slug)` (the `access_policy_pending` doctor check) |
 | `brain.insertAccessPolicyRevision(row)` | records a revision (a revision number the source has, or an operation id any source has, refuses) | `INSERT_REVISION_SQL` |
 | `brain.markAccessRevisionsApplied(sourceId, upTo?)` / `approveAccessPolicyRevision(sourceId, revision, actor)` | marks unapplied revisions applied (up to `upTo`) / records the approver, now | `MARK_APPLIED_SQL`, `MARK_APPLIED_UP_TO_SQL`, `APPROVE_REVISION_SQL` |
 | `brain.listAccessPrefixSlugs(sourceId, prefixes)` | the live slugs that start with any prefix, by slug | `PREFIX_SLUGS_SQL`, `PREFIXES_SLUGS_SQL` |
@@ -72,8 +73,9 @@ The store stamps a page when it is written, as the trigger `pages_access_stamp_f
 under a key that held no record of the same page (an insert, a rename or a move) takes the `0x05` rule ids that cover
 it now when its source has access state, and none otherwise, in the same write (`FlaggingWriter`,
 `access_policy::stamp_page_put`). A put over the same page keeps its ids, as an UPDATE that names no slug, source or
-stamp column does. So `pages_restamped` counts the same pages as on PGLite and Postgres. What a caller can read does
-not depend on the stamps: the store judges each read against the rules it holds.
+stamp column does. So `pages_restamped` counts the same pages as on PGLite and Postgres. What a caller can read
+depends on the stamps only for an id whose rule was removed and not yet restamped (below): otherwise the store judges
+each read against the rules it holds.
 
 The store has no row-level security, so `readFolderAccess` never returns the `'!unreadable'` row and the unreadable
 part of `isFolderRestricted` is always false.
@@ -102,6 +104,16 @@ caller reads:
 One difference remains: PGLite stamps `folder_rule_ids` when a page is written and changes it only on a restamp, and
 the store judges a page against the rules it holds when the read runs. The two agree after `restampSource`, which is
 the state a finished policy change leaves.
+
+The one window where that difference could open a page is a rule removed before its restamp: SQL keeps the deleted id
+in `folder_rule_ids`, which no caller satisfies, so the page stays hidden until the restamp. The store closes it the
+same way. `facts::privacy::stamped_rules`, the one helper every privacy read takes its folder rules from (the readers
+and folder test, the short open form, the origin tests and the owner read rule), also returns a retired rule for each
+id in the page's kept `0x05` record that is no longer a live rule of its source (`access_policy::retired_rules`): no
+readers, so nobody satisfies it, and `covers_derived` true, so the origin tests close too, as `gbrain_access_lineage_rules`
+keeps a stamped id whose rule is gone ("fail closed"). A page with no `0x05` record keeps the live rules alone, and a
+retired rule only ever hides a page, never shows one
+(`a_page_stamped_with_a_removed_rule_stays_hidden_until_the_restamp`; parity case in `access-policy.test.ts`).
 
 The folder test reads the store's rules and pending prefixes, and the policy's `satisfiedRuleIds` and `folderCoverage`
 (both default to empty). `member_access_allows` ANDs it with the owner-only test (`owner_only`, absent means `closed`).
@@ -136,7 +148,7 @@ every live token is unbound and no key reads a source; a client registered with 
 | `filterUnarchivedSourceIds(ids)` | the ids of `ids` that name a source that is not archived (`listAllSources`) | `UNARCHIVED_SOURCE_IDS_SQL` |
 | `countCompanyPages(sourceId)` | `{ pages, calls }`: the live pages of the source and those under `company/calls/` (`listAccessPrefixSlugs`) | `COMPANY_PAGE_COUNTS_SQL` |
 | `listAccessPolicySources()` | every source with access state, archived ones too, by id in code-unit order | `POLICY_STATE_SOURCES_SQL` |
-| `countOpenPages(sources, exclude)` | `{ source, folder, type, visible, pages }` for each group of live pages the empty-identity member-access policy admits in `sources`, less each excluded prefix; `visible` is whether the page policy admits the page too; no set order (`listAccessPrefixSlugs`, then `readLivePageTypes` under each policy); refuses unless both rendered policies equal the no-caller policies | `openPagesStatement` |
+| `countOpenPages(sources, exclude)` | `{ source, folder, type, visible, pages }` for each group of live pages the empty-identity member-access policy admits in `sources`, less each excluded prefix; `visible` is whether the page policy admits the page too; no set order (`listAccessPrefixSlugs`, then `readLivePageTypes` under each policy); inside a caller record the floor must equal a fresh record's rendering for the empty identity with the caller's folder coverage, which the store judges together with its live pending prefixes (`openPageSql` adds them), and the page policy is judged for that empty identity; any other rendering refuses | `openPagesStatement` |
 | `countPeopleFolderPages()` | `{ source_id, folder, pages }` for each `people/<folder>/` holding live pages, by source then folder in code-unit order | `PEOPLE_FOLDER_PAGES_SQL` |
 | `brain.readUnfinishedAccessMigration(sourceId)` | `{ id, phase, direction, receipts }` of the newest migration of the source that has not switched, or null | `UNFINISHED_MIGRATION_SQL` |
 | `brain.insertAccessMigration(id, sourceId, direction)` | starts a migration at `started` with `{}` receipts; a source with no access state, a direction other than `to_git` or `to_database`, or a used id refuses | `INSERT_MIGRATION_SQL` |
@@ -176,7 +188,11 @@ a Postgres server whose collation is not `C` gives the byte order PGLite and the
   watermark moves when a rule or a pending prefix changes.
 - `crates/gbrain-store/src/access_migrations.rs` (unit tests): the unfinished migration is the newest that has not
   switched, and a migration write the table refuses (a source with no access state, a direction or phase it does not
-  allow, a used id) writes nothing.
+  allow, a used id) writes nothing; an id one source used is refused for another; a switch keeps its receipts and stamps
+  an update time after the creation time; and the newest is by creation time when ids are in reverse key order.
+- `test/engine-parity/access-migrate.test.ts`: on every arm, the whole `gbrain access rule migrate` flow: `--to database`
+  from no store, `--to git` with its files and commits, a resume after a stop, the refusal of the other way, and `resume`
+  in the preview.
 - `test/engine-parity/access-setup.test.ts`: on every arm, a brain with no access tokens has nothing unbound, no live
   key and no key reading a source, the unarchived source ids, the company and people-folder page counts, the sources
   with access state, and a policy-store migration from its start until it switches.

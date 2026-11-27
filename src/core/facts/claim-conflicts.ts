@@ -63,10 +63,15 @@ export interface ClaimConflictRun {
   warnings: string[];
 }
 
-/** dream.claim_conflicts.mode: propose files proposals each cycle; off (the default, and any other stored value) skips the phase. */
+/**
+ * dream.claim_conflicts.mode: propose (the default when unset: keyless, it writes only proposal rows) files proposals each
+ * cycle; off, any other stored value, and a config read that fails skip the phase.
+ */
 export async function claimConflictsMode(engine: Pick<BrainEngine, 'getConfig'>): Promise<'propose' | 'off'> {
-  const raw = (await engine.getConfig(CLAIM_CONFLICTS_MODE_KEY).catch(() => null))?.trim().toLowerCase();
-  return raw === 'propose' ? 'propose' : 'off';
+  let raw: string | null;
+  try { raw = await engine.getConfig(CLAIM_CONFLICTS_MODE_KEY); } catch { return 'off'; }
+  if (raw == null) return 'propose';
+  return raw.trim().toLowerCase() === 'propose' ? 'propose' : 'off';
 }
 
 /** Why value is not a valid dream.claim_conflicts.mode, or null when it is. */
@@ -130,11 +135,11 @@ export async function runClaimConflicts(engine: BrainEngine, opts: { sourceIds?:
     warnings: knob.warning ? [knob.warning] : [] };
 }
 
-/** Cycle adapter: off by default (dream.claim_conflicts.mode); maps the run onto the cycle's PhaseResult (duration filled by the caller). */
+/** Cycle adapter: on by default, off with dream.claim_conflicts.mode off; maps the run onto the cycle's PhaseResult (duration filled by the caller). */
 export async function claimConflictsCyclePhase(engine: BrainEngine | null, dryRun: boolean): Promise<PhaseResult> {
   if (!engine) return { phase: 'claim_conflicts', status: 'skipped', duration_ms: 0, summary: 'no database connected', details: { reason: 'no_database' } };
   if (await claimConflictsMode(engine) === 'off') {
-    return { phase: 'claim_conflicts', status: 'skipped', duration_ms: 0, summary: 'mode off (' + CLAIM_CONFLICTS_MODE_KEY + ', default off)', details: { reason: 'mode_off' } };
+    return { phase: 'claim_conflicts', status: 'skipped', duration_ms: 0, summary: 'mode off (' + CLAIM_CONFLICTS_MODE_KEY + ' off; unset means propose)', details: { reason: 'mode_off' } };
   }
   const r = await runClaimConflicts(engine, { dryRun });
   const status: PhaseResult['status'] = r.status === 'complete' ? 'ok' : r.status === 'partial' ? 'warn' : r.status === 'failed' ? 'fail' : 'skipped';

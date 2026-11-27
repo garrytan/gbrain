@@ -137,6 +137,35 @@ Rules:
   Format 2 keeps each chunk-stats and unfinished-request counter in its own record; a format-1 brain is upgraded in
   one write transaction when it opens, and a format-1-only build refuses a format-2 brain.
 
+- **Store format-number ledger.** Landing order decides each number: the second lander merges the first lander's head
+  with `--no-ff` and takes the next free number, so the chain stays contiguous. Check it at every intake that changes
+  `FORMAT_VERSION`.
+
+  | Format | Change | Head | State |
+  | --- | --- | --- | --- |
+  | 8 | The format on `rust-engine/main` | `rust-engine/main` | landed |
+  | 9 | Keyed lookups (PR 10277) | `7896376b` | planned, lands after the Nov 26 shadow release |
+  | 10 | `vector-rank-key` | `4930072d` | planned, lands after the Nov 26 shadow release |
+  | 11 | Refresh evidence reads (head 2) | `66e6c7ae` | planned |
+  | 12 | Keyed lookups 2 (PR 10328, stacked on PR 10277) | `7896376b` | planned, lands after the Nov 26 shadow release |
+  | 13 | Packed keyword index | `7896376b` | planned |
+
+  The next free number is 14. A head that takes a number that is not its own in this table renumbers before it lands.
+
+- **`SHADOW_ADAPTER_VERSION` ledger** (`src/shadow/evidence-epoch.ts`). One version per distinct adapter source (the
+  digest of `store-members/**`, `store-codec.ts` and `members.ts` that `test/shadow-evidence.test.ts` pins). A lander
+  that changes the source takes the next number at its final merge and recomputes the digest in the same commit; a head
+  never keeps its own number. Check it at every intake that touches `store-members/**` or `src/shadow`.
+
+  | Version | Tree |
+  | --- | --- |
+  | 6 | `rust-engine/main` f9592f7a7e (sync 17) |
+  | 7 | Batch 14, 7c85d5696f (persistence binding reads, store listings, sync identity share, stored spellings, phone, repair kinds) |
+  | 8 | `rust-engine/main` a597e7a6c6 (batch 14 plus sync 18: master's profile-facet trajectory filter, the snapshot refusals) |
+  | 9 | Batch 15 (soak counter, request index states, page window chunk reads, concept rebuild, slug-spelling repair, loud search refusals and the members tail) |
+  | 10 | Sync 19, dac09d5610 (batch 15 merged with master c341d40de3) |
+  | 11 | Batch 15b (labelled-only policy on Rust, the purge-receipt and purge-ledger members of the fact purge path) |
+
 Reserved tags:
 
 | Family | Tag | Constant | Cascade on page delete |
@@ -203,6 +232,7 @@ in its module header:
 | `0x0E` | `TELEMETRY_CHRONICLE_ROW` | `chronicle_page_state` (a page or source delete removes its rows, `chronicle_state.rs`) |
 | `0x0F` | `TELEMETRY_CHRONICLE_RESERVATION` | `chronicle_judge_reservations` (read by `countRecentChronicleReservations`) |
 | `0x10` | `TELEMETRY_CHRONICLE_SEQUENCE` | the `chronicle_judge_reservations` id counter |
+| `0x11` | `TELEMETRY_ACCESS_READ_LOG` | `access_read_log` (`access_read_log.rs`) |
 
 `eval_candidates` stays with eval_capture (`Z`). A new telemetry table takes the next unused sub-tag in a reviewed
 change to this table and to `keys.rs`.
@@ -235,6 +265,7 @@ branch, and the reserved ones, with the owner who claimed it. The rules:
 | `3` | `SECRET_STORE` | lane 10 | reserved (the trunk holds it for the secret store) |
 | `~` | `FAMILY_ESCAPE` | core | main once this lands: the escape for two-byte family tags |
 | `~k` | `KEYED_INDEX` | the keyed-lookups lane | branch rust-engine/keyed-lookups (store format 9: the keyed lookups of `keyed_index.rs`) |
+| `~e` | `PAGE_EXTRACTION_STATE` | lane 8 (rust-members-tail) | branch rust-engine/rust-members-tail: the `page_extraction_state` family (the extraction watermark and partial-input receipt of a page); a hard page delete removes the page's rows; the tag `2` stays free |
 
 Free one-byte tags: the digits `4` to `9` (approved rows only) and punctuation other than `~`, which stays unclaimed
 unless a reviewed change to this table names it.
@@ -582,8 +613,9 @@ store keeps the same rule in `pages.rs`.
   `write_guards.rs`, and `bindPageOrigin` runs the same origin check as `putPage`. See
   [`rust/docs/store/write-guards.md`](../../rust/docs/store/write-guards.md).
 - **Page visibility guards.** A remote page write's reads of whether the caller sees a page, which of a list of
-  pages it reads, the opening probe of its visibility check, and a stored writer's slug fence are typed engine members
-  (`readPageHiddenFromCaller`, `readCallerPageAccess`, `readWriteVisibilityProbe`, capability `pages`;
+  pages it reads, the opening probe of its visibility check, whether a live page fails the privacy part alone, and a
+  stored writer's slug fence are typed engine members (`readPageHiddenFromCaller`, `readCallerPageAccess`,
+  `readWriteVisibilityProbe`, `readPagePrivacyHidden`, capability `pages`;
   `readWriterSlugFence`, capability `persistence_journal`; SQL in
   `engine-sql/page-visibility.ts`). The store answers the page reads in `page_visibility.rs` and the fence from
   its local writer registration; an OAuth client's fence and an unrendered caller policy refuse. See
@@ -964,7 +996,7 @@ Facts and their supersession chains.
     The store serves them from the source, `F 0x01` and page records (`memory_mutation_reads.rs`, no new key prefix;
     rust/docs/store/memory_mutation_reads.md). The member refuses a non-integer fact id and a caller whose world rule
     a member page or a private-facts grant widens, a remote provenance floor that is not the no-caller one, and
-    `ownerReachesFact` for an owner bound to a member. Pinned by `test/engine-parity/memory-mutation-reads.test.ts`
+    `ownerReachesFact` for an owner bound to a member whose policy texts match no reference rendering. Pinned by `test/engine-parity/memory-mutation-reads.test.ts`
     and `test/engine-parity/forget-reach-reads.test.ts`.
   - The forget commit is typed too (`engine-sql/trust-withdrawals.ts`): `lockFactForWithdrawal`, `queueWithdrawalReview`,
     `listSegmentedPagesBySlug`, `bumpWithdrawnPageRevisions`, `readPageRevisions` and `appendFactForgetReason`, and
@@ -1016,11 +1048,11 @@ Facts and their supersession chains.
     (`facts/repair_previews.rs`); the apply of each still writes through raw SQL. Pinned by
     `test/engine-parity/repair-facts-previews.test.ts`.
     The previews of `fact-claim-dates` (`listFactsOnValidDay`), `url-clone-fences` (`readLivePageByPath`) and `purged-page-facts`
-    (`listPurgedPageFactCandidates`) are typed the same way, and the `captured-facts` preview was already served. The applies of
-    `captured-facts`, `url-clone-fences` and `purged-page-facts` stop on a Rust brain by name (`engine_capability_missing`, raw_sql:
-    "repair captured-facts page write", "repair url-clone-fences page write", "repair purged-page-facts expire") before their first
-    write, until the page write door and the fact expiry move to typed members. Pinned by `test/engine-parity/repair-facts-previews-2.test.ts`.
-    The scan of `facts-home` (`listFactsHomeCandidates`, `listHeldHomeRows`, `listOrphanedFenceRows`) and `readFacts`' snapshots (`readFactSnapshots`) are served from `facts/repair_home.rs`, so a strict source's preview of facts that need no folder-access read is equal on Rust; `holdingPageFor` rethrows a capability refusal rather than reading it as `access_unreadable`. `visibility` (except its `facts` class) and `open-facts` stop by name before any read (`engine_capability_missing`, raw_sql: "repair visibility privacy scan", "repair open-facts privacy scan"), as their reads build privacy predicates the store does not carry; the applies of `facts-home` and `visibility` stop at "repair facts-home page write" and "repair visibility page write". Pinned by `test/engine-parity/repair-facts-previews-3.test.ts`.
+    (`listPurgedPageFactCandidates`) are typed the same way, and the `captured-facts` preview was already served. Their applies
+    are typed too (`engine-sql/repair-applies.ts`, `rust/docs/store/repair-applies.md`), so they run on a Rust brain; a
+    `fact-claim-dates` page move stops by name ("repair fact-claim-dates page write"). Pinned by
+    `test/engine-parity/repair-facts-previews-2.test.ts`.
+    The scan of `facts-home` (`listFactsHomeCandidates`, `listHeldHomeRows`, `listOrphanedFenceRows`) and `readFacts`' snapshots (`readFactSnapshots`) are served from `facts/repair_home.rs`, so a strict source's preview of facts that need no folder-access read is equal on Rust; `holdingPageFor` rethrows a capability refusal rather than reading it as `access_unreadable`. The `visibility` and `open-facts` previews are typed (`engine-sql/visibility-scans.ts`, `open-facts-scans.ts`, `open-twins.ts`); a `visibility` page item or fenced fact stops at "repair visibility page write" and the `open-facts` apply at "repair open-facts privacy scan". Pinned by `test/engine-parity/repair-facts-previews-3.test.ts`.
   - Held fence cells. The world-only fact read's check of which facts-fence row lines a caller may not see
     (`eligibility/stamp.ts` `heldFenceLines`, under get_page, get_chunks, think and search_exact) is the typed member
     `listHeldFenceCells` (capability `facts`, SQL in `engine-sql/cli-reads-ops.ts`, one statement for PGLite and

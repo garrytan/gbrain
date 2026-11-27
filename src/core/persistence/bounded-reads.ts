@@ -97,7 +97,7 @@ export function isSharedReadFailure(error: unknown): boolean {
  * under `withReadDeadline` (postgres-engine.ts `preparationRead`), so every preparer view wraps them, with or without
  * `engineReads`. The label stands in for the statement text on the claim stamp's `last_sql`.
  */
-export const TYPED_PREPARATION_READS: ReadonlySet<string> = new Set(['getSource', 'getConfigValues', 'readManagedModeRows', 'getSourceStrictness',
+export const TYPED_PREPARATION_READS: ReadonlySet<string> = new Set(['getSource', 'getConfigValues', 'readManagedModeRows', 'readRequestIndexStates', 'getSourceStrictness',
   'readPersistenceBrainId', 'readLocalWriterRow', 'readLedgerSource', 'isFolderRestricted', 'listSourceLocalPaths', 'getChunkReuseRows', 'getPageSealState',
   'readJournalLimitRows', 'readWriteRequest', 'readWriteRequestById', 'readHeldPageRows', 'readHeldCoverageRows',
   'readSourceState', 'readAdmissionSource', 'listLinkEndpointPages', 'sharedSkillPackTablePresent', 'listSharedSkillPackRoots',
@@ -106,11 +106,13 @@ export const TYPED_PREPARATION_READS: ReadonlySet<string> = new Set(['getSource'
   'listFactWithdrawalDates', 'listCorePageRows', 'lockRegisteredSourceIds',
   'getConfig', 'getAllConfig', 'listConfigKeys', 'readStoredConfigValue', 'readPageSnapshot', 'getPage',
   'findDuplicatePage', 'findByTitleFuzzy', 'searchKeyword',
-  'readSegmentTexts', 'readManifest', 'readSegmentedGateEvidence', 'readJobSourceState', 'readJobPrincipal', 'readOauthClient', 'hasLabelledOnlyMember', 'readSegmentedPageHead', 'readSourceIncarnation', 'readStoredPageTier', 'readFactSnapshots',
+  'readSegmentTexts', 'readManifest', 'readSegmentedGateEvidence', 'readJobSourceState', 'readJobPrincipal', 'readOauthClient', 'hasLabelledOnlyMember', 'hasLabelledOnlyMemberAmong', 'readSegmentedPageHead', 'readSourceIncarnation', 'readStoredPageTier', 'readFactSnapshots', 'readLabelGuardTiers',
   'readJournalCeiling', 'sweepJournalChunk',
   'listPurgeClaimFacts', 'listPurgeClaimTakes', 'listQueuedPagePurges', 'listPageLinkStreams', 'listPagePurgeTombstones',
   'listForcedCutSeqs', 'readSegmentedVersionBodyBytes',
-  'listChunkedOccurrences', 'readRetiredChunkVectors', 'hasStaleSegmentChunks', 'readLiveSlugAliases', 'readSourceSlugProbe']);
+  'listChunkedOccurrences', 'readRetiredChunkVectors', 'hasStaleSegmentChunks', 'readLiveSlugAliases', 'readSourceSlugProbe', 'readSegmentedLivePage', 'normalizeFenceLines', 'listGlobalPurgeWithdrawals',
+  'readPagePrivacyHidden', 'readLinkTargetPages', 'readWriteVisibilityProbe',
+  'hasPositionedPageFacts', 'hasFenceAbsentHold', 'listPageTakeRowNums', 'readPageInlineBody']);
 
 /**
  * Engine members that return a store over the engine. The view binds them to itself, so the store's raw statements go

@@ -72,6 +72,9 @@ matching coverage event in their current incarnation). The whole re-extract stil
 | `brain.listTakePreimages(pageId, ids, incoming)` | `[{ preimage, gone }]` by row number: the gone takes and those an incoming row of the number restates with another claim, kind or holder, once per such row (the SQL's `LEFT JOIN`) | `takePreimages` |
 | `brain.deleteTakesByIds(ids)` | deletes the listed takes on any page with the evidence rows that cite them; an empty list writes nothing | the prune delete |
 | `brain.findTakeId(pageId, rowNum)` | the id of the page's take at the row number, or null | `upsertProjectedTakes` |
+| `brain.listTakeHoldersAtRows(pageId, rowNums)` | the distinct holders of the page's takes at those row numbers, sorted (the SQL's `DISTINCT` sets no order) | `authorizeStoredTakeHolders` (persistence/authority.ts) |
+| `brain.stampTakeResolvedAt(pageId, rowNum, resolvedAt)` | sets only `resolved_at` of the take at the row number (a date reads as midnight UTC); no take there writes nothing; text that is not a time is refused | the takes prepare step (persistence/takes-prepare.ts) |
+| `brain.recordTakeHoldersUsed(requestId, holders)` | sets the stored request's `authority.takeHoldersUsed` to `holders`; a request that is not stored, or an authority that is not an object, is left alone | the takes prepare step |
 
 The `preimage` object has the keys of `TAKE_PREIMAGE_SQL`; `resolved_at` is printed the way `jsonb_build_object` prints
 a `timestamptz`. The TypeScript members refuse an id that is not an integer. Pinned by

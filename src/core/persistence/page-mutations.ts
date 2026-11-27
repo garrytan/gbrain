@@ -61,6 +61,8 @@ import { admitGuestOperation, assertGuestFrontmatter, assertGuestReaders, GUEST_
 import { currentCallerAccess } from '../search/private-visibility.ts';
 import { assertStorageSourceWriter } from '../storage-manifest/door.ts';
 import { OWNED_FOLDER_KINDS } from '../owned-folder/paths.ts';
+import { assertPolicySlugWrite } from '../policy/admission.ts';
+import { assertActionSlugWrite } from '../ledger/admission.ts';
 
 export async function requestPrincipalForContext(ctx: OperationContext): Promise<Principal> {
   // #5994: a failed-writes replay is admitted under the original writer.
@@ -198,10 +200,10 @@ async function resolveCaptureFile(ctx: OperationContext, sourceId: string, p: Re
   }
   const file = p.local_file;
   delete p.local_file;
-  const [source] = await ctx.engine.executeRaw<{ local_path: string | null }>('SELECT local_path FROM sources WHERE id=$1', [sourceId]);
+  const sourceLocalPath = await ctx.engine.readSourceLocalPath(sourceId);
   const binding = await getWorktreeBinding(ctx.engine, sourceId);
   let root = binding ? binding.owner_host_id === hostIdFor(ctx.engine) && binding.local_path ? join(binding.local_path, binding.relative_path) : null
-    : source?.local_path || (sourceId === 'default' ? await ctx.engine.getConfig('sync.repo_path') : null);
+    : sourceLocalPath || (sourceId === 'default' ? await ctx.engine.getConfig('sync.repo_path') : null);
   if (root && !isHostAbsolutePath(root)) root = null;
   let origin: string | null = null;
   try { if (root) origin = relative(realpathSync(root), realpathSync(file)); } catch { /* unreadable or absent root */ }
@@ -355,8 +357,7 @@ async function unquotedPutContent(engine: BrainEngine, sourceId: string, slug: s
   const summarized = /, arguments omitted\]/.test(unquoted);
   const quotedType = isQuotedPageType(String(parseMarkdownHead(unquoted).frontmatter.type ?? ''));
   if (!summarized && (unquoted === content || quotedType)) return unquoted;
-  const [stored] = await engine.executeRaw<{ type: string | null; trust_tier: string | null; title: string | null; frontmatter: unknown }>(
-    'SELECT type, trust_tier, title, frontmatter FROM pages WHERE source_id = $1 AND slug = $2', [sourceId, slug]);
+  const stored = await engine.readStoredPageHead(sourceId, slug);
   // Compared with the stored body's tool calls; a segmented page reads NULL inline columns, so its summarized round trip is refused.
   const losesCalls = async () => {
     const body = await readStoredBody(engine, sourceId, slug);
@@ -437,6 +438,8 @@ export async function preparePageAdmission(ctx: OperationContext,
   if (input.batch) p.page_batch = { id: input.batch.id, index: input.batch.index, size: input.batch.size, ...(input.batch.repeats?.length ? { repeats: input.batch.repeats } : {}) };
   const requestId = input.batch ? input.batch.requestId : typeof p.request_id === 'string' ? p.request_id : randomUUID();
   const sourceId = pageMutationSource(ctx, p, input.operation);
+  assertPolicySlugWrite(ctx.remote !== false, p);
+  assertActionSlugWrite(ctx.remote !== false, p);
   await initializeLocalPersistence(ctx);
   const captureSlug = input.operation === 'capture' ? await resolveCaptureFile(ctx, sourceId, p) : null;
   const principal = await requestPrincipalForContext(ctx);
@@ -603,8 +606,7 @@ export async function preparePageAdmission(ctx: OperationContext,
   if (writeThrough && root && !binding) {
     // #5393: a revert is also judged on the version it writes.
     const fileBacked = Boolean(snapshot?.page.source_path) || Boolean(input.operation === 'revert_version' && snapshot
-      && (await ctx.engine.executeRaw<{ source_path: string | null }>('SELECT source_path FROM page_versions WHERE id=$1 AND page_id=$2',
-        [p.version_id, snapshot.page.id]))[0]?.source_path);
+      && await ctx.engine.readVersionSourcePath(Number(p.version_id), Number(snapshot.page.id)));
     const decision = await decideUnboundWrite(ctx.engine, { sourceId, sourceKind: source.kind, fileBacked, path: ctx.remote === false ? root : null });
     if (decision.kind === 'claim') binding = await claimWorktree(ctx.engine, sourceId, root, undefined, undefined, { automatic: true });
     else authority.databaseOnlyReason = decision.reason;

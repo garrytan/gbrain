@@ -3,9 +3,10 @@
  * reads come from rust/crates/gbrain-store/src/generations/chronicle_events.rs, the projection rows from
  * timeline_queries/event_rows.rs.
  *
- * The store keeps no chronicle ledger (`chronicle_page_state`; see `hasExtractedEvents` in write-misc.ts), so it owns
- * no event hash and records no skip decision: those two members answer empty here, as the ledger tables do on a brain
- * that never ran an extraction.
+ * The store keeps the chronicle ledger's pending and skipped decisions (`chronicle_page_state`, chronicle_ledger.rs) but
+ * no extracted row (the extraction writer, chronicle/execute.ts, stays raw SQL and refuses here), so it owns no event
+ * hash (`listChronicleOwnedHashes` and `hasExtractedEvents` answer empty, as on a brain that never ran an extraction)
+ * and reads its skip decisions from the store.
  */
 import type { BrainEngine } from '../../engine.ts';
 import { storeCall, type StoreMember } from './common.ts';
@@ -62,8 +63,10 @@ export const restoreEventProjection: Member<'restoreEventProjection'> = async (b
     depthPageId: row.depthPageId, date: row.date, source: row.source, summary: row.summary, detail: row.detail ?? null, eventPageId: row.eventPageId }));
 };
 
-/** The store keeps no chronicle ledger, so it records no skip decision. */
-export const hasChronicleSkipDecision: Member<'hasChronicleSkipDecision'> = async () => false;
+/** Whether the store's ledger records that skip decision for that page revision. */
+export const hasChronicleSkipDecision: Member<'hasChronicleSkipDecision'> = async (brain, d) =>
+  storeCall({ member: 'hasChronicleSkipDecision', sourceId: d.sourceId }, () =>
+    brain.hasChronicleSkipDecision(d.sourceId, d.pageId, d.contentHash, d.extractorVersion, d.reason)) as Promise<boolean>;
 
 /** The live generations of `kind` whose depth page is gone and that still hold a live item, oldest update first. */
 export const listOrphanedChronicleOwners: Member<'listOrphanedChronicleOwners'> = async (brain, sourceId, kind, limit) =>

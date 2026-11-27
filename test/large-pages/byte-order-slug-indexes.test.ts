@@ -1,6 +1,6 @@
 /**
  * The per-source slug walks compare and order `slug COLLATE "C"`. The only slug indexes on pages and persistence_requests
- * use the database's default collation, so v336 adds idx_pages_source_slug_c and persistence_requests_source_slug_c on
+ * use the database's default collation, so v338 adds idx_pages_source_slug_c and persistence_requests_source_slug_c on
  * (source_id, slug COLLATE "C"), and the drift-conflict audit groups by the same "C" expression so the second index can
  * feed its grouping.
  *
@@ -32,7 +32,7 @@ import { PGLITE_SCHEMA_SQL } from '../../src/core/pglite-schema.generated.ts';
 import { SCHEMA_SQL } from '../../src/core/schema-embedded.generated.ts';
 import { MIGRATIONS } from '../../src/core/schema-migrations/registry.generated.ts';
 import { LATEST_SCHEMA_VERSION } from '../../src/core/schema-migrations/latest.generated.ts';
-import { PAGES_SOURCE_SLUG_BYTE_ORDER_INDEX } from '../../src/core/schema-migrations/v336-byte-order-slug-indexes.ts';
+import { PAGES_SOURCE_SLUG_BYTE_ORDER_INDEX } from '../../src/core/schema-migrations/v338-byte-order-slug-indexes.ts';
 import { runRepair, resolveRepairScope } from '../../src/core/repair/core.ts';
 import { requestIndexesRepair } from '../../src/core/repair/request-indexes.ts';
 import { isolatedPersistencePostgres } from '../helpers/persistence-postgres.ts';
@@ -42,7 +42,7 @@ const PAGES = PAGES_SOURCE_SLUG_BYTE_ORDER_INDEX;
 const REQUESTS = PERSISTENCE_REQUEST_SLUG_BYTE_ORDER_INDEX;
 const migration = MIGRATIONS.find(m => m.name === 'byte_order_slug_indexes');
 
-describe('v336 byte-order slug indexes: the migration module', () => {
+describe('v338 byte-order slug indexes: the migration module', () => {
   test('is registered once, in the online-index shape, and is DDL only', () => {
     expect(MIGRATIONS.filter(m => m.name === 'byte_order_slug_indexes')).toHaveLength(1);
     expect(migration).toMatchObject({ idempotent: true, transaction: false, sql: '' });
@@ -61,7 +61,7 @@ describe('v336 byte-order slug indexes: the migration module', () => {
   });
 });
 
-for (const backend of testBackends()) describe(`[${backend}] v336 byte-order slug indexes on a brain`, () => {
+for (const backend of testBackends()) describe(`[${backend}] v338 byte-order slug indexes on a brain`, () => {
   let engine: BrainEngine;
   let close: () => Promise<void>;
   const ctx = () => ({ engine, config: { engine: backend }, remote: false, dryRun: false, logger: { info() {}, warn() {}, error() {} } }) as unknown as OperationContext;

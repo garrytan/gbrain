@@ -10,14 +10,18 @@ import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import { runEdgeProposals } from '../src/commands/edge-proposals.ts';
 import { _resetCliExitVerdictForTests } from '../src/core/cli-force-exit.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { listEdgeProposalCliRows, type EdgeProposalCliFilter } from '../src/core/engine-sql/contradictions-cycle.ts';
 
 interface Recorded { sql: string; params: unknown[] }
 
 function recordingEngine(): { engine: BrainEngine; calls: Recorded[] } {
   const calls: Recorded[] = [];
+  const executeRaw = async (sql: string, params: unknown[] = []) => { calls.push({ sql, params }); return []; };
+  // The list read is the typed member now; it runs its SQL (engine-sql/contradictions-cycle.ts) on the recording read.
   const engine = {
     kind: 'pglite',
-    executeRaw: async (sql: string, params: unknown[] = []) => { calls.push({ sql, params }); return []; },
+    executeRaw,
+    listEdgeProposalCliRows: (filter: EdgeProposalCliFilter, limit: number) => listEdgeProposalCliRows(executeRaw as never, filter, limit),
   } as unknown as BrainEngine;
   return { engine, calls };
 }

@@ -236,17 +236,17 @@ describe('moved-checkout members and topology refusals name sources by byte', ()
   }));
 
   parityTest('a topology lock refusal names the byte-first member of the worktree that holds the root', {
-    methods: ['executeRaw'], requires: 'raw_sql',
-  }, async (engine) => inHome(async () => {
+    methods: ['worktreeClaimStore', 'readPersistenceBrainId', 'listHostTopologyRows', 'listWorktreeMembers'],
+  }, async (engine, backend) => inHome(async () => {
     const owner = randomUUID();
-    const worktree = await addWorktree(engine, owner);
-    for (const id of MIXED_IDS) await bind(engine, id, await addSource(engine, id), worktree);
-    await hostBind(engine, worktree, localHostId(), '/collate/root');
+    const worktree = await seedWorktree(engine, owner);
+    for (const id of SOURCE_IDS) await seedSourceBinding(engine, id, await seedSource(engine, backend, id), worktree);
+    await seedHostBinding(engine, worktree, localHostId(), '/collate/root');
     const refusal = await withTopologyLocks(engine, 'unbound', async () => 'locked', '/collate/root/inside', 0)
       .then(() => null, (error: Error) => error);
     expect(refusal).not.toBeNull();
     const named = /The worktree holding source (\S+) is owned/.exec((refusal as { suggestion?: string }).suggestion ?? '')?.[1];
-    expect(named).toBe(byteOrder(MIXED_IDS)[0]);
+    expect(named).toBe(byteOrder(SOURCE_IDS)[0]);
     return named;
   }));
 });
@@ -299,14 +299,18 @@ describe('purge reads sort tombstones and park records by byte', () => {
     return { candidates, keyOrder: keys.map(key => (JSON.parse(key) as string[]).slice(0, 2).join('/')) };
   }));
 
+  // Parity coverage loss (swap report): the tie this case checks needs tombstones of two sources deleted at one instant,
+  // which a Rust brain cannot stamp (each soft delete takes its own store time), so the case stays on the SQL arms. The Rust
+  // store serves listUnreviewedSyncTombstones; rust/crates/gbrain-store/tests/repair_scans.rs writes the records it reads.
   parityTest('readUnreviewedSyncTombstones lists sync-deleted tombstones by byte source id, then byte slug', {
-    methods: ['executeRaw', 'putPage'], requires: 'raw_sql',
+    methods: ['executeRaw', 'putPage', 'listUnreviewedSyncTombstones'], requires: 'raw_sql',
   }, async (engine, backend) => {
     await seedTombstones(engine, backend);
     await engine.executeRaw(`INSERT INTO op_checkpoints(op, fingerprint, completed_keys)
       SELECT $1, p.id::text, jsonb_build_array(jsonb_build_object('source_id', p.source_id, 'slug', p.slug, 'deleted_at', p.deleted_at)) FROM pages p WHERE p.deleted_at IS NOT NULL`, [SYNC_DELETE_TOMBSTONE_OP]);
     const rows = (await readUnreviewedSyncTombstones(engine, 24)).map(row => `${row.source_id}/${row.slug}`);
     expect(rows).toEqual(BYTE_TOMBSTONES);
+    expect((await engine.listUnreviewedSyncTombstones(24)).map(row => `${row.source_id}/${row.slug}`)).toEqual(rows);
     return rows;
   });
 });

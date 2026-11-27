@@ -11,9 +11,9 @@
  * keep. What each member answers and why: rust/docs/store/write_misc.md.
  */
 import type {
-  AdmissionSourceRow, AttachSourcePathOptions, PendingProposalRow, ProposalListQuery, SharedSkillPackRoot, SourceStateOptions, SourceStateRow, WorktreeBinding,
+  AdmissionSourceRow, AttachSourcePathOptions, PendingProposalRow, ProposalListQuery, SharedSkillPackRoot, SourceStateOptions, SourceStateRow, WorktreeBinding, HostTopologyRow,
 } from '../../engine-sql/write-misc.ts';
-import type { AccessCredentialLookup, AccessCredentialRow, AccessMemberLookup, AccessMemberRow, LiveMemberRow, LiveMemberVia, AppliedPolicyRevision, FolderAccessRows, AudiencePrincipalRows, MayActForVia, JobPrincipalKind, PageNamingReaderRow } from '../../engine-sql/access-control.ts';
+import type { AccessCredentialLookup, AccessCredentialRow, AccessMemberLookup, AccessMemberRow, LiveMemberRow, LiveMemberVia, AppliedPolicyRevision, FolderAccessRows, AudiencePrincipalRows, MayActForVia, JobPrincipalKind, OwnerCredentialRow, PageNamingReaderRow } from '../../engine-sql/access-control.ts';
 import { readAccessMembers } from './access-members.ts';
 import { LIVE_PAGES_NAMING_READER_LIMIT, PAGES_NAMING_READER_LIMIT } from '../../engine-sql/access-control.ts';
 import type { ScopeSourceLock } from '../../engine-sql/access-credentials.ts';
@@ -21,6 +21,7 @@ import type { DrainHolderProgressRow } from '../../engine-sql/persistence-journa
 import { readOauthClient } from './jobs-oauth-clients.ts';
 import { storeCall, type StoreMember } from './common.ts';
 import { uuidText } from '../store-codec.ts';
+import { OWNER_MEMBER_KEY } from '../../search/private-visibility.ts';
 
 /**
  * The source's incarnation, archived flag, local path and config, or null. `lock: 'share'` asks the SQL engines to hold
@@ -84,6 +85,14 @@ export const listSharedSkillPackRoots: StoreMember<[hostId: string], SharedSkill
 export const getWorktreeBinding: StoreMember<[sourceId: string, hostId: string | null], WorktreeBinding | null> = (brain, sourceId, hostId) =>
   storeCall({ member: 'getWorktreeBinding', sourceId }, () => brain.getWorktreeBinding(sourceId, hostId));
 
+/** Each host binding of `hostId` with its worktree's owner, epoch, state and topology generation (gbrain-store `persistence::worktrees`). */
+export const listHostTopologyRows: StoreMember<[hostId: string], HostTopologyRow[]> = (brain, hostId) =>
+  storeCall({ member: 'listHostTopologyRows' }, () => brain.listHostTopologyRows(hostId));
+
+/** The source bindings of one worktree, by byte source id. */
+export const listWorktreeMembers: StoreMember<[worktreeId: string], Array<{ source_id: string; relative_path: string }>> = (brain, worktreeId) =>
+  storeCall({ member: 'listWorktreeMembers' }, () => brain.listWorktreeMembers(worktreeId));
+
 /** A binding names the source at its current incarnation (SOURCE_CLAIMED_SQL). */
 export const isSourceClaimed: StoreMember<[sourceId: string], boolean> = (brain, sourceId) =>
   storeCall({ member: 'isSourceClaimed', sourceId }, () => brain.isSourceClaimed(sourceId));
@@ -105,6 +114,18 @@ export const hasExtractedEvents: StoreMember<[sourceId: string, pageId: number],
  */
 export const hasLabelledOnlyMember: StoreMember<[], boolean> = async (brain) =>
   (await readAccessMembers(brain, { includeRemoved: true })).some(row => row.labelled_only === true);
+
+/**
+ * Whether one of `memberIds` carries the labelled-only grant and is not the configured owner: the store's member records
+ * (live or not, as the SQL reads every row) and the config `access.owner_member` with its spaces trimmed (`btrim`); no
+ * owner row leaves every listed member eligible, as `id IS DISTINCT FROM NULL` is true.
+ */
+export const hasLabelledOnlyMemberAmong: StoreMember<[memberIds: readonly string[]], boolean> = async (brain, memberIds) => {
+  const raw = await storeCall({ member: 'hasLabelledOnlyMemberAmong' }, () => brain.getConfig(OWNER_MEMBER_KEY)) as string | null;
+  const owner = raw === null ? null : raw.replace(/^ +| +$/g, '');
+  const wanted = new Set(memberIds);
+  return (await readAccessMembers(brain, { includeRemoved: true })).some(row => row.labelled_only === true && wanted.has(row.id) && row.id !== owner);
+};
 
 /**
  * The store's brain id and commit sequence (`readProjectionReadinessGeneration`). Every commit advances it, a page write
@@ -205,6 +226,10 @@ export const listOwnerProposalRows: StoreMember<[requestId: string], Array<Recor
  */
 export const readAccessCredentials: StoreMember<[by: AccessCredentialLookup], AccessCredentialRow[]> = async (brain, by) =>
   await storeCall({ member: 'readAccessCredentials' }, () => brain.readAccessCredentials(by)) as AccessCredentialRow[];
+
+/** The member's live tokens (grant columns) and clients (the row less its secret hash), by byte order of kind, name and id. */
+export const listOwnerCredentialRows: StoreMember<[memberId: string], OwnerCredentialRow[]> = async (brain, memberId) =>
+  await storeCall({ member: 'listOwnerCredentialRows' }, () => brain.listOwnerCredentialRows(memberId)) as OwnerCredentialRow[];
 
 
 /**

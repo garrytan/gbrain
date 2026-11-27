@@ -292,6 +292,51 @@ impl Store {
         ))
     }
 
+    /// `listOwnerCredentialRows(memberId)`: `[{ kind, id, name, row }]`, the live credentials bound to `memberId` as
+    /// guests/owner-credentials.ts read them: each token that is not revoked (its row the grant columns and `min_trust`,
+    /// as `jsonb_build_object` builds them) and each client that is not deleted (its row as `to_jsonb(c) -
+    /// 'client_secret_hash'`, its name the client name). Ordered by kind, name and id, each by byte, as `COLLATE "C"`.
+    pub fn list_owner_credential_rows(&self, member_id: &str) -> Result<Value> {
+        let read = self.read()?;
+        let mut rows: Vec<(String, String, String, Value)> = Vec::new();
+        for t in all_tokens(&*read)? {
+            if t.revoked_at.is_some() || t.member_id.as_deref() != Some(member_id) {
+                continue;
+            }
+            let row = json!({
+                "id": t.id, "scopes": t.scopes, "permissions": t.permissions, "private_pages": t.private_pages,
+                "private_facts": t.private_facts, "grant_revision": t.grant_revision,
+                "read_shared_revision": t.read_shared_revision, "source_grant": t.source_grant,
+                "source_id": t.source_id, "federated_read": t.federated_read,
+                "allowed_operations": t.allowed_operations, "takes_holders": t.takes_holders,
+                "min_trust": t.min_trust,
+            });
+            rows.push(("token".into(), t.name.clone(), t.id.clone(), row));
+        }
+        for c in all_clients(&*read)? {
+            if c.deleted_at.is_some() || c.member_id.as_deref() != Some(member_id) {
+                continue;
+            }
+            rows.push((
+                "client".into(),
+                c.client_name.clone(),
+                c.client_id.clone(),
+                c.to_grant_json(),
+            ));
+        }
+        rows.sort_by(|a, b| {
+            a.0.as_bytes()
+                .cmp(b.0.as_bytes())
+                .then_with(|| a.1.as_bytes().cmp(b.1.as_bytes()))
+                .then_with(|| a.2.as_bytes().cmp(b.2.as_bytes()))
+        });
+        Ok(Value::Array(
+            rows.into_iter()
+                .map(|(kind, name, id, row)| json!({ "kind": kind, "id": id, "name": name, "row": row }))
+                .collect(),
+        ))
+    }
+
     /// `readOAuthClientWriteGrant(clientId)`: the columns the write re-check reads, of the client with this client id,
     /// deleted or not (the caller reads `deleted_at`, ISO text or NULL), or None.
     pub fn read_oauth_client_write_grant(&self, client_id: &str) -> Result<Option<Value>> {

@@ -178,4 +178,19 @@ describe('engine parity: derived generation trust writes', () => {
     expect(answers.afterSecond.stamp['atoms/two']).toEqual({ deleted: true, source_hash: true, retired_by: 'extract-atoms' });
     return answers;
   });
+  parityTest('lowerTrustTier refuses a tier that names no trust tier on every engine, whether or not a row would be lowered', {
+    methods: ['putPage', 'getPage', 'readPageTrustRows', 'transaction', 'lowerTrustTier'],
+  }, async (engine) => {
+    // Before the refusal, the SQL engines ranked the bad name 0: they wrote it to every ranked row (and the tier CHECK
+    // refused) or resolved [] when no row matched, while the Rust store refused every call.
+    await putAt(engine, 'notes/ranked', 'operator_curated', 'a ranked page');
+    const id = Number((await engine.getPage('notes/ranked'))!.id);
+    const lower = (ids: number[]) => engine.lowerTrustTier('pages', ids, 'bogus' as TrustTier, null)
+      .then((rows) => ({ rows }), (e: unknown) => ({ error: (e as Error).message }));
+    const answers = { ranked: await lower([id]), missing: await lower([987_654_321]), none: await lower([]),
+      kept: (await engine.readPageTrustRows({ keys: [{ source_id: 'default', slug: 'notes/ranked' }], includeDeleted: true }))[0]?.trust_tier ?? null };
+    const refused = { error: 'lowerTrustTier: unknown trust tier "bogus"' };
+    expect(answers).toEqual({ ranked: refused, missing: refused, none: { rows: [] }, kept: 'operator_curated' });
+    return answers;
+  });
 });

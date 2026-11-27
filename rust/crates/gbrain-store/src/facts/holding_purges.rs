@@ -9,6 +9,7 @@
 //! row would be added, as Postgres refuses the bound parameter.
 
 use super::bigint;
+use super::privacy::holding_slug;
 use super::purge_ledger::FactPurgeInsert;
 use super::read_fact;
 use crate::Store;
@@ -30,11 +31,6 @@ pub struct HoldingPagePurgeArgs {
     #[serde(default)]
     pub reason: Option<String>,
     pub fact_ids: Vec<f64>,
-}
-
-/// `holdingSlugSql`.
-fn holding_slug(slug: &str) -> bool {
-    slug == "memory/unattributed" || slug.ends_with("/memory/unattributed")
 }
 
 impl Store {

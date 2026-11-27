@@ -6,14 +6,15 @@
  * page_filled) that were kept, or shown and not undone within 7 days of being shown. Expired and never-shown items
  * never count; you_wrote items never count; questions are reported apart. The scoreboard is the share of nights with
  * at least 5 counted items. A caller that does not read the whole ledger (a remote caller other than the owner) gets
- * stats over the items it can read now, so its counts never reveal what it cannot read.
+ * stats over the items it can read now, read first and capped on their own, so neither its counts nor its truncated
+ * flag reveal what it cannot read.
  */
 
 import type { BrainEngine } from '../engine.ts';
 import type { OperationContext } from '../ops/contract.ts';
 import { isValidTimeZone } from '../cycle/cycle-date.ts';
 import { CHANGE_KINDS, QUESTION_KINDS, type LearningKind } from './kinds.ts';
-import { callerFilters, liveItems } from './read.ts';
+import { callerFilters, defaultWindowStart, liveItems } from './read.ts';
 
 export const STATS_DEFAULT_DAYS = 30;
 export const NIGHT_ENDS_HOUR = 6;
@@ -60,19 +61,17 @@ export function countsTowardBar(row: Pick<LedgerRow, 'kind' | 'state' | 'shown_a
 export async function learnedStats(engine: BrainEngine, ctx: OperationContext, opts: { sourceIds: string[] | null; since?: Date; now?: Date; rowCap?: number }): Promise<LearnedStats> {
   const rowCap = opts.rowCap ?? STATS_ROW_CAP;
   const now = opts.now ?? new Date();
-  const since = opts.since ?? new Date(now.getTime() - STATS_DEFAULT_DAYS * 86_400_000);
+  const since = opts.since ?? await defaultWindowStart(engine, now, STATS_DEFAULT_DAYS);
   const timeZone = await brainTimeZone(engine);
   const iso = (col: string) => `to_char(${col} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`;
+  const filters = await callerFilters(engine, ctx);
+  const readable = filters.full ? null : await liveItems(engine, ctx, filters, { sourceIds: opts.sourceIds, since, unseenOnly: false, limit: rowCap + 1 });
   let rows = await engine.executeRaw<LedgerRow>(`SELECT id, kind, state, ${iso('created_at')} AS created_at, ${iso('shown_at')} AS shown_at, ${iso('decided_at')} AS decided_at
       FROM learning_items WHERE ($1::text[] IS NULL OR source_id = ANY($1::text[])) AND created_at >= $2::timestamptz
-     ORDER BY created_at DESC, id DESC LIMIT $3`, [opts.sourceIds, since.toISOString(), rowCap + 1]);
-  const truncated = rows.length > rowCap;
-  if (truncated) rows = rows.slice(0, rowCap);
-  const filters = await callerFilters(engine, ctx);
-  if (!filters.full) {
-    const readable = new Set((await liveItems(engine, ctx, filters, { sourceIds: opts.sourceIds, since, unseenOnly: false, limit: rowCap })).map(i => i.id));
-    rows = rows.filter(r => readable.has(String(r.id)));
-  }
+       AND ($4::bigint[] IS NULL OR id = ANY($4::bigint[]))
+     ORDER BY created_at DESC, id DESC LIMIT $3`, [opts.sourceIds, since.toISOString(), rowCap + 1, readable ? readable.slice(0, rowCap).map(i => i.id) : null]);
+  const truncated = readable ? readable.length > rowCap : rows.length > rowCap;
+  if (rows.length > rowCap) rows = rows.slice(0, rowCap);
   const nights = new Map<string, NightStats>();
   for (const row of rows) {
     const night = nightOf(new Date(row.created_at), timeZone);

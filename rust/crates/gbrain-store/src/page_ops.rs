@@ -454,7 +454,11 @@ fn snapshot_json(read: &dyn KvRead, page: &PageRecord) -> Result<Value> {
 
 /// A canonical field changed: a new knowledge revision, and the chunks no longer match the text
 /// (as `pages::tag_change`).
-fn write_changed(tx: &mut dyn KvWrite, env: &dyn Env, page: &mut PageRecord) -> Result<()> {
+pub(crate) fn write_changed(
+    tx: &mut dyn KvWrite,
+    env: &dyn Env,
+    page: &mut PageRecord,
+) -> Result<()> {
     page.knowledge_revision = env.new_uuid();
     page.text_projection_revision = None;
     write_page(tx, page)
@@ -462,12 +466,12 @@ fn write_changed(tx: &mut dyn KvWrite, env: &dyn Env, page: &mut PageRecord) -> 
 
 /// The rows PGLite scrubs after a hard delete that name a page outside any foreign key
 /// (`scrubPurgedSlugs` and friends), run in the delete's transaction after the pages are gone.
-/// The store keeps the eval candidates' `retrieved_slugs` (`scrubPurgedSlugs`) and, of
-/// `scrubPurgedSlugStores`, the page aliases, slug aliases and rename history
-/// (`aliases::scrub_purged_slug_stores`), scrubbed in PGLite's order
-/// (src/core/engine-sql/pages.ts:235-237). Retrieval logs, ratings, the volunteer log, the
-/// gazetteer, take proposals, open loops, core-edit notices and write-gate holds do not exist here
-/// yet.
+/// The store keeps the eval candidates' `retrieved_slugs` (`scrubPurgedSlugs`), of `scrubPurgedNameStores` the mention
+/// gazetteer (`mention_state::scrub_purged_entries`), the volunteer log (`volunteer_events::scrub_purged_slugs`) and the
+/// retrieval logs, ratings and weights (`retrieval_feedback::scrub_purged_slugs`) and, of `scrubPurgedSlugStores`, the
+/// take proposals (with their idempotency entries and nudges), the open loops (with their dedupe keys), the page aliases,
+/// slug aliases and rename history, scrubbed in PGLite's order (src/core/engine-sql/pages.ts deletePages). Core-edit
+/// notices and write-gate holds are not scrubbed here.
 fn scrub_purged_slugs(
     tx: &mut dyn KvWrite,
     source_id: &str,
@@ -475,6 +479,14 @@ fn scrub_purged_slugs(
     secret_occurrences: &BTreeSet<u64>,
 ) -> Result<()> {
     crate::eval_capture::remove_retrieved_slugs(tx, source_id, slugs)?;
+    crate::mention_state::scrub_purged_entries(tx, source_id, slugs)?;
+    crate::volunteer_events::scrub_purged_slugs(tx, source_id, slugs)?;
+    crate::retrieval_feedback::scrub_purged_slugs(tx, source_id, slugs)?;
+    // `deletePurgedSlugStoreRows` (engine-sql/purge-slug-stores.ts SLUG_STORE_DELETES), in its order: the take proposals
+    // and open loops filed under the slug, then the aliases and rename history.
+    let wanted: BTreeSet<&str> = slugs.iter().map(String::as_str).collect();
+    crate::takes::proposals::remove_for_slugs(tx, source_id, &wanted)?;
+    crate::facts::loops::remove_for_slugs(tx, source_id, &wanted)?;
     crate::aliases::scrub_purged_slug_stores(tx, source_id, slugs)?;
     crate::secret_store::purge_for_deleted_pages(tx, source_id, slugs, secret_occurrences)?;
     Ok(())
@@ -754,6 +766,19 @@ impl Store {
             .map(|p| p.slug)
             .collect();
         Ok(slugs.into_iter().collect())
+    }
+
+    /// `listMarkdownPageSlugs(sourceId)`: the slugs of the source's markdown pages, soft-deleted pages included, by
+    /// byte order (`ORDER BY slug COLLATE "C"`).
+    pub fn list_markdown_page_slugs(&self, source_id: &str) -> Result<Vec<String>> {
+        let read = self.read()?;
+        let mut slugs: Vec<String> = all_pages(&*read)?
+            .into_iter()
+            .filter(|p| p.source_id == source_id && p.page_kind == "markdown")
+            .map(|p| p.slug)
+            .collect();
+        slugs.sort();
+        Ok(slugs)
     }
 
     /// `listAllPageRefs()`: `{ slug, source_id, updated_at }` for every live page, ordered by

@@ -87,8 +87,8 @@ pub(super) fn fence_columns(out: &mut Map<String, Value>, r: &FactRecord) {
 
 /// `SELECT * FROM facts` for one row, as the single-fact decision reads it: every column, the
 /// times as ISO text, `embedding` as the vector's text, and the stamped `trust_tier` and
-/// `write_origin`, and the write receipt (`write_receipt.rs`). The store keeps no `source_window`:
-/// it is NULL, as `listFactsByEntity` answers.
+/// `write_origin`, the write receipt (`write_receipt.rs`) and `source_window`, as
+/// `listFactsByEntity` answers.
 pub(crate) fn select_star(r: &FactRecord) -> Value {
     let time = |us: Option<i64>| us.map(iso);
     let mut out = Map::new();
@@ -118,7 +118,7 @@ pub(crate) fn select_star(r: &FactRecord) -> Value {
     out.insert("value_hash".into(), json!(r.value_hash));
     out.insert("dim_status".into(), json!(r.dim_status));
     r.receipt.extend_json(&mut out);
-    out.insert("source_window".into(), Value::Null);
+    out.insert("source_window".into(), json!(r.source_window));
     out.insert("write_origin".into(), json!(r.write_origin));
     out.insert("trust_tier".into(), json!(r.tier().as_str()));
     Value::Object(out)

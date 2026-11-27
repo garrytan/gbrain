@@ -14,6 +14,7 @@ import { emailSignals, readEmailIndex } from './email.ts';
 import { messagingSignals, readMessagingIndex } from './messaging.ts';
 import { exaQueryFor, resolveExa, type ExaMode, type ExaQuery, type ExaReport, type ExaSettings } from './exa.ts';
 import { PAIR_CLASSES, VERDICTS, classesOf, combine, type PairClass, type Signal, type Verdict } from './combine.ts';
+import { isKnownGivenName, nameWords } from '../name-variants.ts';
 
 export const DEDUPE_CLASSES_SCHEMA_VERSION = 1 as const;
 
@@ -29,6 +30,11 @@ export interface ClassifiedPair {
   score: number;
   why: string[];
   email_off?: string;
+  /**
+   * Why the pair never links automatically, whatever its evidence: a family or minor page, a page that is not a person,
+   * a page not every reader may read, or names that disagree where neither is shaped like a handle (namesHold).
+   */
+  hold?: 'family' | 'minor' | 'not_a_person' | 'restricted' | 'names_disagree';
 }
 
 export interface ClassesReport {
@@ -36,7 +42,7 @@ export interface ClassesReport {
   pairs: number;
   classes: Record<PairClass, number>;
   verdicts: Record<Verdict, number>;
-  skipped: { large_groups: number; already_linked: number; decided_apart: number; no_class: number };
+  skipped: { large_groups: number; already_linked: number; decided_apart: number; no_class: number; copies: number };
   email: { pages: number };
   messaging: { pages: number; chats: number; one_to_one: number; too_large: number; segmented_page: { read: number; set_aside: number; pages: Array<{ source_id: string; slug: string }> }; signal: 'no reader' };
   exa: ExaReport | { mode: 'off' };
@@ -134,19 +140,41 @@ export async function classifyPairs(engine: BrainEngine, opts: ClassifyOptions =
     report.pairs++;
     report.verdicts[decided.verdict]++;
     for (const c of classes) report.classes[c]++;
+    const hold = pair.a.hold ?? pair.b.hold ?? (evidence.nonPerson ? 'not_a_person' as const : null)
+      ?? (pair.a.restricted || pair.b.restricted ? 'restricted' as const : null)
+      ?? (namesHold(pair) ? 'names_disagree' as const : null);
     pairs.push({ id: pair.id, members: [member(pair.a), member(pair.b)], base: pair.base, signals: [...signals].sort(), classes,
-      verdict: decided.verdict, reason: decided.reason, score: decided.score, why: pair.why, ...(emailOff ? { email_off: emailOff } : {}) });
+      verdict: decided.verdict, reason: decided.reason, score: decided.score, why: pair.why, ...(emailOff ? { email_off: emailOff } : {}), ...(hold ? { hold } : {}) });
   }
   pairs.sort((x, y) => (x.id < y.id ? -1 : x.id > y.id ? 1 : 0));
   return { report, pairs };
 }
 
-const evidenceOf = (pair: CandidatePair, signals: ReadonlySet<Signal>) =>
-  ({ base: pair.base, names: pair.names, signals, sensitive: !!(pair.a.sensitive || pair.b.sensitive) });
+/**
+ * Two names that do not agree never link automatically unless one of them is shaped like a handle: one word of three or
+ * more characters, no digit, and not a given name the nickname table knows. So two full names that disagree are held,
+ * a title with a digit is held, and a one-word given name (`Sarah` beside `Michael Jones`) is held.
+ */
+function namesHold(pair: CandidatePair): boolean {
+  if (pair.names === true) return false;
+  const titles = [pair.a.title.trim(), pair.b.title.trim()];
+  if (titles.some(t => /\d/.test(t))) return true;
+  const oneGivenName = (t: string) => { const w = nameWords(t); return w.length === 1 && isKnownGivenName(w[0]!); };
+  if (titles.some(oneGivenName)) return true;
+  return !titles.some(t => t.length >= 3 && !/\s/.test(t));
+}
 
-/** A seeded random sample of the pairs in one class (mulberry32 shuffle of the id-sorted pairs); every pair when fewer. */
+const evidenceOf = (pair: CandidatePair, signals: ReadonlySet<Signal>) =>
+  ({ base: pair.base, names: pair.names, signals, sensitive: !!(pair.a.hold || pair.b.hold), nonPerson: pair.a.nonPerson || pair.b.nonPerson });
+
+/** A seeded random sample of the pairs in one class (seededPick of the id-sorted pairs); every pair when fewer. */
 export function samplePairs(pairs: ClassifiedPair[], cls: PairClass, n: number, seed: number): ClassifiedPair[] {
-  const pool = pairs.filter(p => p.classes.includes(cls));
+  return seededPick(pairs.filter(p => p.classes.includes(cls)), n, seed);
+}
+
+/** A seeded random pick (mulberry32 shuffle of the items in their given order); every item when fewer. */
+export function seededPick<T>(items: readonly T[], n: number, seed: number): T[] {
+  const pool = [...items];
   let t = seed >>> 0;
   const rand = () => {
     t = (t + 0x6d2b79f5) >>> 0;

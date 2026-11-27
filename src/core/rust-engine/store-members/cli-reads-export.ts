@@ -84,3 +84,4 @@ export const readManifestSeqAt: StoreMember<[pageId: number, generation: number,
 /** A segmented body read: the size the newest segmented version of a generation records (`cli_reads::export::read_segmented_version_body_bytes`). */
 export const readSegmentedVersionBodyBytes: StoreMember<[pageId: number, generation: number], number | null> = async (brain, pageId, generation) =>
   (await storeCall({ member: 'readSegmentedVersionBodyBytes' }, () => brain.readSegmentedVersionBodyBytes(pageId, generation))) ?? null;
+

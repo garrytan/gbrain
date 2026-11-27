@@ -3,7 +3,7 @@
  * one segment. readPageSnapshot overlays an inline body whole; a segmented
  * body is overlaid segment by segment, with the same ledger (the page's
  * withdrawals, subject '*' included, and its '*' purge marker) and the same
- * DB normalization (overlayCanonicalBodies), so the 16,384-marker
+ * normalization (overlayCanonicalBodies, through the engine's typed normalizeFenceLines), so the 16,384-marker
  * capacity applies per segment. Used by every reader of segment text that
  * must not show withdrawn rows: the segment reader and the segment chunker.
  */

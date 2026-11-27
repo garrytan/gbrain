@@ -67,7 +67,6 @@ import { maintenanceTransaction } from '../persistence/attribution.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
 import { readBodyRange } from '../page-body/read-range.ts';
 import { sortSourcesById } from '../source-rows.ts';
-import { requireRawSql } from '../rust-engine/errors.ts';
 
 export const REDACTED_FACTS_INTENT = 'managed_maintenance_restore_redacted_facts';
 const RESTORE_PATTERNS = [...INJECTION_PATTERNS, LEGACY_EVAL_SHELL];
@@ -276,8 +275,6 @@ export const redactedFactsRepair: RepairHandler = {
       return !!current && (['class', 'fact_hash', 'slug', 'row_num', 'route', 'restored'] as const).every(field => current[field] === f[field]);
     });
     const restored: number[] = [];
-    // A fence row is restored by a page write (lane 7's put_page); stop before any write of the page, database rows included.
-    if (unchanged.some(f => f.route === 'fence')) requireRawSql(engine, 'repair redacted-facts page write');
     const dbOnly = unchanged.filter(f => f.route === 'database');
     if (dbOnly.length) restored.push(...await restoreDatabaseRows(engine, page, hash, dbOnly));
     const fenced = unchanged.filter(f => f.route === 'fence');

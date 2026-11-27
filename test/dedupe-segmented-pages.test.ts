@@ -41,10 +41,10 @@ beforeAll(async () => {
   await engine.executeRaw("INSERT INTO sources(id,name) VALUES('people-b','people-b') ON CONFLICT DO NOTHING");
   await engine.setConfig('pages.segmented_storage', 'on');
   await person('people/alice-example', 'Alice Example', { email: 'alice@example.invalid' });
-  await person('people/alice-example', 'Alice Example', { emails: ['alice@example.invalid'] }, 'people-b');
+  await person('contacts/alice-example', 'Alice Example', { emails: ['alice@example.invalid'] }, 'people-b');
   const bigNotes = Array.from({ length: Math.ceil((2 * MB) / 24) }, (_, i) => `Meeting note ${String(i).padStart(8, '0')}.`).join('\n\n');
   expect((await importFromContent(engine, 'people/bob-example', `---\ntitle: Bob Example\ntype: person\nemail: bob@example.invalid\n---\n${bigNotes}\n`, { sourceId: 'default', noEmbed: true })).status).toBe('imported');
-  await person('people/bob-example', 'Bob Example', { email: 'bob@example.invalid' }, 'people-b');
+  await person('contacts/bob-example', 'Bob Example', { email: 'bob@example.invalid' }, 'people-b');
   expect((await importFromContent(engine, 'imessage/chat-big/2026-01-02', largeChat(), { sourceId: 'default', noEmbed: true })).status).toBe('imported');
   const rows = await engine.executeRaw<{ slug: string }>("SELECT slug FROM pages WHERE body_storage='segmented' ORDER BY slug");
   expect(rows.map(r => r.slug)).toEqual(['imessage/chat-big/2026-01-02', 'people/bob-example']);

@@ -576,7 +576,10 @@ export async function listPages(exec: ScopedRead, filters?: PageFilters): Promis
     const columns = filters?.listColumnsOnly === true
       ? sqlFragment`p.id, p.source_id, p.slug, p.type, p.page_kind, p.title, p.created_at, p.updated_at, p.deleted_at,
           p.effective_date, p.effective_date_source, p.body_storage, p.body_bytes, ''::text AS compiled_truth, ''::text AS timeline, '{}'::jsonb AS frontmatter`
-      : sqlFragment`p.*`;
+      : filters?.omitBodies === true
+        ? sqlFragment`p.id, p.source_id, p.slug, p.type, p.page_kind, p.title, p.created_at, p.updated_at, p.deleted_at,
+          p.effective_date, p.effective_date_source, p.body_storage, p.body_bytes, ''::text AS compiled_truth, ''::text AS timeline, p.frontmatter`
+        : sqlFragment`p.*`;
       const { rows } = await exec.run(sqlFragment`
         SELECT ${columns}, to_char(p.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS updated_at_iso FROM pages p
         ${tagJoin}
@@ -1335,4 +1338,12 @@ export const BUMP_LAST_RETRIEVED_SQL = renderFragment(bumpRetrievalsFragment([])
 export async function bumpPageRetrievals(exec: SqlExecutor, pageIds: number[]): Promise<void> {
   if (pageIds.length === 0) return;
   await exec.run(bumpRetrievalsFragment(pageIds));
+}
+
+/** The statement commands/reconcile-links.ts runReconcileLinks ran through executeRaw. */
+export const MARKDOWN_PAGE_SLUGS_SQL = `SELECT slug FROM pages WHERE page_kind = 'markdown' AND source_id = $1 ORDER BY slug COLLATE "C"`;
+
+/** The slugs of the source's markdown pages, soft-deleted pages included, by byte order. A failure is thrown unchanged. */
+export async function listMarkdownPageSlugs(exec: Pick<BrainEngine, 'executeRaw'>, sourceId: string): Promise<string[]> {
+  return (await exec.executeRaw<{ slug: string }>(MARKDOWN_PAGE_SLUGS_SQL, [sourceId])).map(r => r.slug);
 }

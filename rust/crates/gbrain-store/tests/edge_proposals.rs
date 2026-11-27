@@ -474,6 +474,40 @@ fn candidates_are_live_state_groups_with_two_targets_and_works_at_needs_an_emplo
     }
 }
 
+/// Groups that share one refresh stamp are cut by `maxSubjects` at the lowest subject page id, whichever
+/// source holds them: the SQL's `ORDER BY max(refreshed_at) DESC, from_page_id, link_type`.
+#[test]
+fn groups_that_tie_on_the_refresh_stamp_are_cut_at_the_lowest_subject_page_id() {
+    let b = brain("edge-tie-cut");
+    let first = page(&b, "people/first", "person");
+    let second = page(&b, "people/second", "person");
+    let acme = page(&b, "companies/acme", "company");
+    let widget = page(&b, "companies/widget", "company");
+    // The lower page id belongs to the source that sorts later, so a source-first order would cut the wrong subject.
+    let mut rows = Vec::new();
+    for (subject, source, hash) in [(first, "src-b", "f"), (second, "src-a", "s")] {
+        for (target, tag) in [(acme, "a"), (widget, "w")] {
+            let mut row = state(
+                subject,
+                target,
+                "works_at",
+                Value::Null,
+                &format!("{hash}{tag}"),
+            );
+            row["source_id"] = json!(source);
+            rows.push(row);
+        }
+    }
+    write_state(&b, json!(rows));
+    assert_eq!(
+        candidates(&b, query(json!({ "maxSubjects": 1 }))),
+        vec![
+            "people/first>companies/acme",
+            "people/first>companies/widget"
+        ]
+    );
+}
+
 #[test]
 fn a_hard_delete_removes_the_proposals_of_its_pages_and_clears_an_ending() {
     let b = brain("edge-cascade");
@@ -506,5 +540,158 @@ fn a_hard_delete_removes_the_proposals_of_its_pages_and_clears_an_ending() {
         b.list_known_edge_proposals(alice as f64, "works_at", &["keep".into(), "gone".into()])
             .unwrap()
             .is_empty()
+    );
+}
+
+/// The ids, in order, of `[{ id }]`.
+fn id_list(v: &Value) -> Vec<u64> {
+    v.as_array()
+        .unwrap()
+        .iter()
+        .map(|r| r["id"].as_u64().unwrap())
+        .collect()
+}
+
+#[test]
+fn the_edge_proposals_command_lists_filters_clears_and_dates_proposals() {
+    use gbrain_store::edge_proposals::EdgeProposalCliFilter;
+    let b = brain("edge-cli");
+    let alice = page(&b, "people/alice", "person");
+    let acme = page(&b, "companies/acme", "company");
+    let widget = page(&b, "companies/widget", "company");
+    let record = |hash: &str, status: &str, edit: Value| {
+        let mut p = json!({
+            "sourceId": "default", "fromPageId": alice, "aToPageId": acme, "bToPageId": widget, "linkType": "works_at",
+            "evidenceHash": hash, "status": status, "endingToPageId": acme, "closeDate": "2025-03-01",
+            "bornClosed": false, "model": "m", "confidence": 0.9, "generatedLine": "line", "detail": null,
+        });
+        for (k, v) in edit.as_object().unwrap() {
+            p[k] = v.clone();
+        }
+        let id = b.record_edge_proposal(&de(p)).unwrap().unwrap();
+        b.clock.advance(HOUR);
+        id
+    };
+    let proposed = record("h1", "proposed", json!({}));
+    let undated = record(
+        "h2",
+        "undated_unresolved",
+        json!({ "endingToPageId": null, "closeDate": null }),
+    );
+    let applied = record("h3", "applied", json!({}));
+    let held = record("h4", "error", json!({ "detail": "held after 3 attempts" }));
+    let open_error = record("h5", "error", json!({ "detail": "attempt 1" }));
+    let filter = |v: Value| -> EdgeProposalCliFilter { de(v) };
+    let list = |f: &EdgeProposalCliFilter, limit: f64| -> Vec<u64> {
+        b.list_edge_proposal_cli_rows(f, limit)
+            .unwrap()
+            .iter()
+            .map(|r| r["id"].as_u64().unwrap())
+            .collect()
+    };
+    // Newest first; a status list, one id and one undated id narrow it; the limit cuts it.
+    let all = filter(json!({ "kind": "all" }));
+    assert_eq!(
+        list(&all, 1000.0),
+        vec![open_error, held, applied, undated, proposed]
+    );
+    assert_eq!(list(&all, 2.0), vec![open_error, held]);
+    let open =
+        filter(json!({ "kind": "statuses", "statuses": ["proposed", "undated_unresolved"] }));
+    assert_eq!(list(&open, 50.0), vec![undated, proposed]);
+    assert_eq!(
+        list(&filter(json!({ "kind": "id", "id": applied })), 50.0),
+        vec![applied]
+    );
+    assert_eq!(
+        list(&filter(json!({ "kind": "undated", "id": applied })), 50.0),
+        Vec::<u64>::new()
+    );
+    assert_eq!(
+        list(&filter(json!({ "kind": "undated", "id": undated })), 50.0),
+        vec![undated]
+    );
+    for bad in [0.0, 1001.0, 2.5] {
+        assert_eq!(
+            b.list_edge_proposal_cli_rows(&all, bad).unwrap_err().code,
+            INVALID_ARGUMENT
+        );
+    }
+    // The row: slugs for the pages, the date as text, REAL as Postgres prints it.
+    let row = &b
+        .list_edge_proposal_cli_rows(&filter(json!({ "kind": "id", "id": proposed })), 50.0)
+        .unwrap()[0];
+    assert_eq!(
+        [
+            &row["subject"],
+            &row["a_target"],
+            &row["b_target"],
+            &row["ending"]
+        ],
+        [
+            &json!("people/alice"),
+            &json!("companies/acme"),
+            &json!("companies/widget"),
+            &json!("companies/acme")
+        ]
+    );
+    assert_eq!(
+        [&row["close_date"], &row["confidence"], &row["born_closed"]],
+        [&json!("2025-03-01"), &json!(0.9), &json!(false)]
+    );
+    assert!(row["created_at"].as_str().unwrap().ends_with('Z'));
+    let undated_row = &b
+        .list_edge_proposal_cli_rows(&filter(json!({ "kind": "id", "id": undated })), 50.0)
+        .unwrap()[0];
+    assert_eq!(
+        [&undated_row["ending"], &undated_row["close_date"]],
+        [&Value::Null, &Value::Null]
+    );
+
+    assert_eq!(
+        id_list(&b.list_applied_edge_proposal_ids().unwrap()),
+        vec![applied]
+    );
+    // Only an error row is cleared by id; only the held one by --all-held.
+    assert_eq!(
+        id_list(&b.delete_edge_proposal_error(proposed as f64).unwrap()),
+        Vec::<u64>::new()
+    );
+    assert_eq!(
+        id_list(&b.delete_held_edge_proposal_errors().unwrap()),
+        vec![held]
+    );
+    assert_eq!(
+        id_list(&b.delete_held_edge_proposal_errors().unwrap()),
+        Vec::<u64>::new()
+    );
+    assert_eq!(
+        id_list(&b.delete_edge_proposal_error(open_error as f64).unwrap()),
+        vec![open_error]
+    );
+    assert_eq!(
+        id_list(&b.delete_edge_proposal_error(open_error as f64).unwrap()),
+        Vec::<u64>::new()
+    );
+    // A cleared error frees its evidence: the pair can be recorded again.
+    assert!(
+        b.record_edge_proposal(&proposal(alice, acme, widget, "h4", "proposed"))
+            .unwrap()
+            .is_some()
+    );
+
+    assert_eq!(
+        b.read_edge_proposal_source_id(undated as f64).unwrap(),
+        Some("default".to_string())
+    );
+    assert_eq!(b.read_edge_proposal_source_id(987_654.0).unwrap(), None);
+    b.mark_edge_proposal_dated(undated as f64).unwrap();
+    let dated = &b
+        .list_edge_proposal_cli_rows(&filter(json!({ "kind": "id", "id": undated })), 50.0)
+        .unwrap()[0];
+    assert_eq!(dated["status"], json!("rejected"));
+    assert_eq!(
+        list(&filter(json!({ "kind": "undated", "id": undated })), 50.0),
+        Vec::<u64>::new()
     );
 }

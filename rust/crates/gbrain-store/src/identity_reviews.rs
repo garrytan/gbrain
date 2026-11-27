@@ -14,7 +14,7 @@
 //! or not at all, and applies run one at a time (the advisory lock of the SQL).
 
 use crate::alias_fanout_reads::reject_nul;
-use crate::cli_reads::entities::is_retired;
+use crate::cli_reads::entities::{is_collapsed, is_retired};
 use crate::cli_reads::pg_text::timestamptz_text;
 use crate::entity_identities::{
     IdentityRecord, all_records, group_key, group_pages, record, row_key,
@@ -99,6 +99,10 @@ pub struct EntityKeyRowsOpts {
     /// Narrows the read to pages one of whose `fields` values reads as one of the token values.
     #[serde(default)]
     pub tokens: Option<KeyTokens>,
+    /// Instead of the live unretired pages: the retired pages a dedupe collapse made (a
+    /// `dedupe_collapse` record and a `merged_into` value that is not blank).
+    #[serde(default)]
+    pub collapsed: bool,
 }
 
 /// One decision of `applyIdentityDecisions({ upsert })`; `decided_at` null takes now.
@@ -254,7 +258,11 @@ impl Store {
                 || !types.contains(page.page_type.as_str())
                 || (page.source_id.as_str(), page.slug.as_str())
                     <= (after.0.as_str(), after.1.as_str())
-                || is_retired(&page)
+                || (if opts.collapsed {
+                    !is_collapsed(&page)
+                } else {
+                    is_retired(&page)
+                })
                 || named
                     .as_ref()
                     .is_some_and(|n| !n.contains(&(page.source_id.as_str(), page.slug.as_str())))
@@ -580,8 +588,14 @@ fn decided_at_micros(text: &str) -> Option<i64> {
         return Some(at);
     }
     // The listed text carries a zone (`+00`, or another offset such as `-01:30`); a time with none is refused.
+    // The zone is looked for from byte 19 on as bytes, never as a `str` slice: byte 19 can fall inside a
+    // non-ASCII character, and `+` and `-` are ASCII, so they never appear inside one.
     let t = text.trim();
-    if t.len() <= 19 || !t[19..].contains(['+', '-']) {
+    let zoned = t
+        .as_bytes()
+        .get(19..)
+        .is_some_and(|rest| !rest.is_empty() && rest.iter().any(|b| matches!(b, b'+' | b'-')));
+    if !zoned {
         return None;
     }
     crate::persistence::projection_queue::parse_timestamptz(t, "decided_at").ok()
@@ -635,6 +649,21 @@ mod tests {
             parse_iso("2026-11-18T00:00:00.000000Z")
         );
         assert_eq!(decided_at_micros("2026-11-18 00:00:00"), None);
+    }
+
+    #[test]
+    fn decided_at_refuses_non_ascii_text_without_panicking() {
+        // Byte 19 falls inside a two- or three-byte character: the zone test must not slice there.
+        for text in [
+            "2026-11-18 00:00:0\u{e9}+00",
+            "2026-11-18 00:00:00\u{e9}",
+            "2026-11-18 00:00:\u{2160}+00",
+            "\u{ff12}\u{ff10}\u{ff12}\u{ff16}-11-18 00:00:00+00",
+            "2026-11-18 00:00:00+\u{ff10}0",
+            "\u{1f600}\u{1f600}\u{1f600}\u{1f600}\u{1f600}\u{1f600}",
+        ] {
+            assert_eq!(decided_at_micros(text), None, "{text:?}");
+        }
     }
 
     #[test]

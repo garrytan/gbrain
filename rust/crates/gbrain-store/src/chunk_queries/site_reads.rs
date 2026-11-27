@@ -178,7 +178,7 @@ fn meta_line(chunk: &ChunkRecord, key: &str) -> Option<i64> {
 }
 
 /// `servedTextProjectionFilter`.
-fn served(page: &PageRecord) -> bool {
+pub(crate) fn served(page: &PageRecord) -> bool {
     sealed(page) || page.text_projection_revision.as_deref() == Some(ACTIVATION_SERVED_REVISION)
 }
 

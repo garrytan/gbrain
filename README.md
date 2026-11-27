@@ -134,7 +134,7 @@ The repo is not a complete backup; see the [bootstrap guide](docs/guides/bootstr
 
 ### Connect GBrain to your AI client (MCP)
 
-- **Local stdio client:** `gbrain setup claude-code` or `gbrain setup codex` registers `gbrain serve` (lists the memory verbs; `--surface full` lists every tool) behind gbrain's launcher, so a session opened in a cloned repository never loads that repository's `bunfig.toml` or `.env`, and adds the brain-first instructions: agents seldom call a brain nobody told them about. Cursor, Windsurf and other stdio clients take `"$(command -v gbrain)" serve --surface starter --advertise verbs`.
+- **Local stdio client:** `gbrain setup claude-code` or `gbrain setup codex` registers `gbrain serve` (Claude Code lists the memory verbs, Codex every tool) behind gbrain's launcher, so a session opened in a cloned repository never loads that repository's `bunfig.toml` or `.env`, and adds the brain-first instructions: agents seldom call a brain nobody told them about. Cursor, Windsurf and other stdio clients take `"$(command -v gbrain)" serve --surface starter --advertise verbs`.
 - **Plugins with curated skills:** Codex `codex plugin marketplace add garrytan/gbrain@codex-plugin` + `codex plugin add gbrain@gbrain`; Claude Code `/plugin marketplace add garrytan/gbrain` + `/plugin install gbrain@gbrain`.
 - **This brain from anywhere:** `gbrain mcp expose` publishes it on your Tailscale tailnet as a user service (`--funnel` for cloud agents such as Grok Bot, Muse and ChatGPT). [Guide](docs/guides/remote-mcp.md).
 - **A brain on another host:** `gbrain connect https://your-host/mcp --token gbrain_xxx --install` (add `--agent codex` for Codex). Hosted brains use [native OAuth or a private handoff](docs/guides/hosted-harness-access.md); dashboard, clients and permissions live in [MCP administration](docs/mcp/ADMIN.md).
@@ -166,9 +166,9 @@ Alongside keyword and semantic retrieval, GBrain offers two optional ways to use
 
 The point of building a 150K-page brain is to use it as a strategic moat. To never lose context. To query what's in your own head without re-reading it. The brain layer is what makes the moat usable. The 24/7 dream cycle is what keeps it sharp. Both run on your hardware, your DB, your keys.
 
-It's easier to ship a daemon that runs 24/7 to ingest, enrich, and consolidate than it is to keep an agent in chat working hard. GBrain is that daemon, generalized. Install in 30 minutes. Your agent does the work. As my personal agent gets smarter, so does yours.
+It's easier to ship a daemon that runs 24/7 to ingest, enrich, and consolidate than it is to keep an agent in chat working hard. GBrain is that daemon, generalized. Install in a few minutes: on a cloud machine a cold `bun install -g` took about 11 seconds and `gbrain setup claude-code` about 10 (gbrain v0.60.769.0); the rest is you reading the output and opening a new session. Your agent does the work. As my personal agent gets smarter, so does yours.
 
-> **Start keyless.** Your harness subscription and any separately configured model API usage are different costs. The optional personal-agent bootstrap takes about 15 minutes; always-on enrichment needs its own compute and API configuration.
+> **Start keyless.** Your harness subscription and any separately configured model API usage are different costs. The optional personal-agent bootstrap takes about 15 more minutes of your time, mostly answering its interview; always-on enrichment needs its own compute and API configuration.
 
 Durable preferences and facts can be shared across agents; transient task and
 harness configuration state stay local. Configured cloud embedding, reranking,
@@ -319,6 +319,7 @@ Want to see a tutorial that isn't here yet? [Open an issue](https://github.com/g
 - **Brain-first lookup** before any external API call. The cheapest, fastest, most personal information source you have.
 - **Auto-link** extracts graph links for trusted local page writes. No LLM calls; pure pattern matching on page references such as `[[people/alice-example]]`. Unresolved extracted facts keep their provenance without inventing a backing page.
 - **Cron-driven enrichment** runs while you sleep: dedup people pages, fix citations, score salience, find contradictions, prep tomorrow's tasks.
+- **The morning note** shows what the night learned, each item with where it came from, and lets you keep it or undo it: see [the morning note](docs/guides/morning-note.md).
 
 The whole loop is described in [`docs/architecture/topologies.md`](docs/architecture/topologies.md) with diagrams.
 

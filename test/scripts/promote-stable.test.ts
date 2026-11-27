@@ -23,6 +23,7 @@ import {
   type GitResult, type PromoteDeps, type PromoteInputs, type SoakRun, type TagFields,
 } from '../../scripts/promote-stable.ts';
 import type { MatrixReceipt } from '../../scripts/stable-matrix.ts';
+import { CANARY_CONTEXT, judgeCanary, parseCanaryPosters, readCanaryStatuses, type CommitStatus } from '../../scripts/stable-canary.ts';
 import { offeredVersion } from '../../src/core/self-upgrade.ts';
 import { upgradeSummary } from '../../src/core/upgrade-summary.ts';
 import { RECORD_MAX_BYTES } from '../../src/core/stable-channel.ts';
@@ -145,7 +146,23 @@ interface Setup {
   latest?: string;
   soakWorkflow?: string;
   repo?: FakeRepo;
+  /** The statuses on the release commit; 'error' fails the read. Default: the install canary passed the tag. */
+  canary?: CommitStatus[] | 'error';
 }
+
+/** The install canary's status on v<version>, as it posts it. */
+const canaryStatus = (version: string, state = 'success', over: Partial<CommitStatus> = {}): CommitStatus => ({
+  context: CANARY_CONTEXT, state, description: `v${version} run 20261020T0900Z: ${state === 'failure' ? 'fail openclaw' : 'pass'}`,
+  creator: { login: 'capy-ai[bot]' }, created_at: '2026-10-20T08:00:00Z', ...over,
+});
+
+/** A ghApi fallback that answers the statuses read with the canary's pass on whichever v<version> the commit carries. */
+const canaryPassFor = (tagOf: (commit: string) => string | undefined) => (path: string): CommitStatus[] | null => {
+  const m = /\/commits\/([0-9a-f]{40})\/statuses/.exec(path);
+  if (!m) return null;
+  const tag = tagOf(m[1]!);
+  return tag ? [canaryStatus(tag.replace(/^v/, ''))] : [];
+};
 
 function harness(setup: Setup = {}) {
   const calls: string[] = [];
@@ -173,6 +190,10 @@ function harness(setup: Setup = {}) {
       if (path.includes('/releases/tags/')) {
         if (setup.release === null) throw new Error(`gh api ${path} failed: HTTP 404: Not Found`);
         return setup.release ?? { draft: false, id: 42 };
+      }
+      if (path.includes('/statuses')) {
+        if (setup.canary === 'error') throw new Error(`gh api ${path} failed: HTTP 403: Resource not accessible by integration`);
+        return setup.canary ?? canaryPassFor(c => Object.entries(repo.tags).find(([n, t]) => /^v\d/.test(n) && t.commit === c)?.[0])(path);
       }
       return run;
     },
@@ -291,7 +312,7 @@ describe('promote', () => {
     const h = harness();
     const p = await promote(h.deps, inputs());
     expect(p).toMatchObject({ version: '0.60.361.0', commit: sha('b'), tree: sha('2'), previous: '0.60.360.0', scoreboard: RUN_URL, recordCreated: true, promotedAt: '2026-10-21T17:00:00Z' });
-    expect(h.api).toEqual([`repos/${REPO}/collaborators/alice-example/permission`, `repos/${REPO}/releases/tags/v0.60.361.0`, `repos/${REPO}/actions/runs/123456`, `repos/${REPO}/releases/latest`]);
+    expect(h.api).toEqual([`repos/${REPO}/collaborators/alice-example/permission`, `repos/${REPO}/releases/tags/v0.60.361.0`, `repos/${REPO}/actions/runs/123456`, `repos/${REPO}/commits/${sha('b')}/statuses?per_page=100&page=1`, `repos/${REPO}/releases/latest`]);
     const pushes = h.calls.filter(c => c.startsWith('push'));
     expect(pushes).toEqual([
       `push --atomic --force-with-lease=refs/tags/stable:tagobj-stable-old --force-with-lease=refs/heads/stable-record: origin refs/tags/stable-v0.60.361.0:refs/tags/stable-v0.60.361.0 refs/tags/stable:refs/tags/stable ${h.repo.recordBranch}:refs/heads/stable-record`,
@@ -552,6 +573,7 @@ describe('promote against real git', () => {
         ...processDeps(env, work), repo: REPO, actor: 'alice-example', soakWorkflow: 'soak.yml', now: () => NOW, log: () => {}, summary: () => {},
         ghApi: async path => (path.endsWith('/permission') ? { permission: 'admin', role_name: 'admin' }
           : path.includes('/releases/tags/') ? { draft: false, id: 7 }
+          : path.includes('/statuses') ? [canaryStatus(version)]
           : { ...run, head_sha: git(work, 'rev-parse', `v${version}^{commit}`) }),
         ghApiWrite: async () => ({}),
       });
@@ -792,6 +814,69 @@ describe('promote: the upgrade matrix run (stability plan 3a)', () => {
   });
 });
 
+describe('promote: the install canary', () => {
+  test('a release the canary passed promotes, and the tag and summary carry the pass', async () => {
+    const h = harness();
+    const p = await promote(h.deps, inputs());
+    expect(p.installCanary).toBe('v0.60.361.0 run 20261020T0900Z: pass');
+    expect(h.repo.tags.stable!.message).toContain('install_canary: v0.60.361.0 run 20261020T0900Z: pass\n');
+  });
+
+  test('a failed or untested release is refused; a maintainer waiver promotes it and the record says waived', async () => {
+    await refusedAsync(promote(harness({ canary: [canaryStatus('0.60.361.0', 'failure')] }).deps, inputs()), /the install canary failed v0\.60\.361\.0 .*canary_waiver/);
+    await refusedAsync(promote(harness({ canary: [] }).deps, inputs()), /v0\.60\.361\.0 is not tested yet/);
+    await refusedAsync(promote(harness({ canary: [canaryStatus('0.60.361.0', 'pending')] }).deps, inputs()), /not tested yet: the install canary's newest status for it is pending/);
+    const h = harness({ canary: [canaryStatus('0.60.361.0', 'failure')] });
+    const p = await promote(h.deps, inputs({ canaryWaiver: '  hermes   outage, not ours ' }));
+    expect(p.installCanary).toBe('waived: hermes outage, not ours');
+    expect(h.repo.tags.stable!.message).toContain('install_canary: waived: hermes outage, not ours\n');
+  });
+
+  test('a rollback does not read the canary; unreadable statuses refuse a forward promotion', async () => {
+    const back = harness({ canary: 'error', run: { status: 'completed', conclusion: 'success', path: SOAK, head_sha: sha('a') } });
+    back.repo.tags.stable = { commit: sha('b'), object: 'tagobj-stable-old' };
+    const p = await promote(back.deps, inputs({ version: '0.60.360.0', rollback: true, reason: 'sync regression' }));
+    expect(p.installCanary ?? '').toBe('');
+    expect(back.api.some(a => a.includes('/statuses'))).toBe(false);
+    await refusedAsync(promote(harness({ canary: 'error' }).deps, inputs()), /statuses on v0\.60\.361\.0 .*could not be read .*HTTP 403/);
+  });
+
+  test('judgeCanary reads the statuses as the canary posts them live: capy-ai[bot], v<tag> run <id>, newest first', () => {
+    const live = [
+      { context: CANARY_CONTEXT, state: 'success', description: 'v0.60.765.0 run 20261123T025437Z-3567: pass', creator: { login: 'capy-ai[bot]' }, created_at: '2026-11-23T08:12:40Z' },
+      { context: CANARY_CONTEXT, state: 'pending', description: 'v0.60.765.0 run 20261123T025437Z-3567: started', creator: { login: 'capy-ai[bot]' }, created_at: '2026-11-23T03:00:00Z' },
+    ];
+    expect(judgeCanary(live, '0.60.765.0', parseCanaryPosters(undefined))).toMatchObject({ state: 'success', description: 'v0.60.765.0 run 20261123T025437Z-3567: pass' });
+    expect(judgeCanary([{ ...live[0]!, state: 'failure', description: 'v0.60.761.0 run 20261123T025437Z-3567: fail openclaw/setup,hermes/setup' }], '0.60.761.0', ['capy-ai[bot]']).state).toBe('failure');
+    expect(judgeCanary(live, '0.60.765.0', ['garrytan']).state).toBe('untested');
+    expect(judgeCanary([{ ...live[0]!, state: 'failure', description: 'v0.60.766.0 run 20261123T1200Z-9: fail incomplete' }], '0.60.766.0', ['capy-ai[bot]'])).toMatchObject({ state: 'failure', why: 'the install canary failed v0.60.766.0 (v0.60.766.0 run 20261123T1200Z-9: fail incomplete)' });
+  });
+
+  test('rollback=true on a newer release that was never stable is still checked; a real rollback is not', async () => {
+    await refusedAsync(promote(harness({ canary: [canaryStatus('0.60.361.0', 'failure')] }).deps, inputs({ rollback: true, reason: 'not really a rollback' })), /the install canary failed v0\.60\.361\.0/);
+  });
+
+  test('readCanaryStatuses pages until a short page, so a pass behind 100 newer statuses is found', async () => {
+    const noise = Array.from({ length: 100 }, (_, i) => ({ context: 'ci/other', state: 'success', created_at: '2026-11-23T09:00:00Z', description: `n${i}` }));
+    const paths: string[] = [];
+    const rows = await readCanaryStatuses(async path => { paths.push(path); return path.endsWith('page=1') ? noise : [canaryStatus('0.60.361.0')]; }, REPO, sha('b'));
+    expect(paths).toEqual([1, 2].map(n => `repos/${REPO}/commits/${sha('b')}/statuses?per_page=100&page=${n}`));
+    expect(judgeCanary(rows, '0.60.361.0', parseCanaryPosters(undefined)).state).toBe('success');
+    await expect(readCanaryStatuses(async () => ({ message: 'nope' }), REPO, sha('b'))).rejects.toThrow(/not a list/);
+  });
+
+  test('a status with no created_at never outranks a dated one', () => {
+    const rows = [canaryStatus('0.60.361.0', 'success', { created_at: null }), canaryStatus('0.60.361.0', 'failure', { created_at: '2026-11-23T09:00:00Z' })];
+    expect(judgeCanary(rows, '0.60.361.0', parseCanaryPosters(undefined)).state).toBe('failure');
+  });
+
+  test('parseCanaryPosters defaults to the Capy bot the canary posts as, and lowercases a configured list', () => {
+    expect(parseCanaryPosters(undefined)).toEqual(['capy-ai[bot]']);
+    expect(parseCanaryPosters(' ,')).toEqual(['capy-ai[bot]']);
+    expect(parseCanaryPosters('Capy-AI[bot], alice-example')).toEqual(['capy-ai[bot]', 'alice-example']);
+  });
+});
+
 describe('promote-stable.yml', () => {
   const workflowYml = readFileSync(join(ROOT, '.github/workflows/promote-stable.yml'), 'utf8');
   const wf = load(workflowYml) as {
@@ -804,12 +889,12 @@ describe('promote-stable.yml', () => {
   test('dispatch only, with the decided inputs, one serial group and scoped permissions', () => {
     expect(Object.keys(wf.on)).toEqual(['workflow_dispatch']);
     const i = wf.on.workflow_dispatch!.inputs;
-    expect(Object.keys(i)).toEqual(['version', 'soak_run_url', 'matrix_run_url', 'scoreboard_url', 'rollback', 'reason', 'withdraw', 'not_promotable', 'not_promotable_reason', 'not_promotable_fixed_in', 'not_promotable_remove']);
-    for (const k of ['matrix_run_url', 'withdraw', 'not_promotable', 'not_promotable_reason', 'not_promotable_fixed_in', 'not_promotable_remove']) expect(i[k]).toMatchObject({ required: false, type: 'string', default: '' });
+    expect(Object.keys(i)).toEqual(['version', 'soak_run_url', 'matrix_run_url', 'scoreboard_url', 'rollback', 'reason', 'withdraw', 'not_promotable', 'not_promotable_reason', 'not_promotable_fixed_in', 'not_promotable_remove', 'canary_waiver']);
+    for (const k of ['matrix_run_url', 'withdraw', 'not_promotable', 'not_promotable_reason', 'not_promotable_fixed_in', 'not_promotable_remove', 'canary_waiver']) expect(i[k]).toMatchObject({ required: false, type: 'string', default: '' });
     expect([i.version!.required, i.soak_run_url!.required, i.scoreboard_url!.required]).toEqual([true, true, false]);
     expect(i.rollback).toMatchObject({ type: 'boolean', default: false });
     expect(wf.concurrency).toEqual({ group: 'promote-stable', 'cancel-in-progress': false });
-    expect(wf.permissions).toEqual({ contents: 'write', actions: 'read' });
+    expect(wf.permissions).toEqual({ contents: 'write', actions: 'read', statuses: 'read' });
   });
 
   test('inputs reach the script through env only; actions are pinned like release.yml; full history', () => {
@@ -821,6 +906,7 @@ describe('promote-stable.yml', () => {
       PROMOTE_ROLLBACK: '${{ inputs.rollback }}', PROMOTE_REASON: '${{ inputs.reason }}', PROMOTE_WITHDRAW: '${{ inputs.withdraw }}',
       PROMOTE_NOT_PROMOTABLE: '${{ inputs.not_promotable }}', PROMOTE_NOT_PROMOTABLE_REASON: '${{ inputs.not_promotable_reason }}', PROMOTE_NOT_PROMOTABLE_FIXED_IN: '${{ inputs.not_promotable_fixed_in }}',
       PROMOTE_NOT_PROMOTABLE_REMOVE: '${{ inputs.not_promotable_remove }}', PROMOTE_MATRIX_RUN_URL: '${{ inputs.matrix_run_url }}',
+      PROMOTE_CANARY_WAIVER: '${{ inputs.canary_waiver }}', STABLE_CANARY_POSTERS: '${{ vars.STABLE_CANARY_POSTERS }}',
     });
     for (const s of steps) expect(s.run ?? '').not.toContain('${{');
     const releaseYml = readFileSync(join(ROOT, '.github/workflows/release.yml'), 'utf8');

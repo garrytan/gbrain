@@ -101,6 +101,86 @@ fn command_upsert_merges_metadata_and_keeps_the_rest() {
 }
 
 #[test]
+fn an_upload_binds_the_live_page_and_follows_its_slug() {
+    let dir = TempDir::new("files-ops-follow");
+    let store = open(&dir);
+    add_source(&store, "other");
+    let id = put(&store, "default", "people/old", false);
+    let there = put(&store, "other", "people/old", false);
+    put(&store, "default", "people/gone", false);
+    store
+        .soft_delete_page("people/gone", Some("default"))
+        .unwrap();
+    let of = |path: &str| {
+        store
+            .list_file_rows("all", None)
+            .unwrap()
+            .into_iter()
+            .find(|r| r["storage_path"] == path)
+            .unwrap()
+    };
+    // A command upload binds the live page at its slug in its source, and none when the page is gone or absent.
+    store
+        .upsert_file_row("command", &row("c/cli.png", Some("people/old"), json!({})))
+        .unwrap();
+    let mut raw = row("c/raw.png", Some("people/old"), json!({}));
+    raw.source_id = Some("other".into());
+    store.upsert_file_row("command", &raw).unwrap();
+    store
+        .upsert_file_row(
+            "command",
+            &row("c/gone.png", Some("people/gone"), json!({})),
+        )
+        .unwrap();
+    store
+        .upsert_file_row(
+            "command",
+            &row("c/none.png", Some("people/nobody"), json!({})),
+        )
+        .unwrap();
+    assert_eq!(of("c/cli.png")["page_id"], id);
+    assert_eq!(of("c/raw.png")["page_id"], there);
+    assert_eq!(of("c/gone.png")["page_id"], Value::Null);
+    assert_eq!(of("c/none.png")["page_id"], Value::Null);
+    // A rename moves the files bound to the page by id and named by the old slug (raw_files::rename_page_files).
+    assert_eq!(
+        store
+            .update_slug("people/old", "people/new", Some("default"))
+            .unwrap(),
+        1
+    );
+    assert_eq!(of("c/cli.png")["page_slug"], "people/new");
+    assert_eq!(
+        of("c/raw.png")["page_slug"],
+        "people/old",
+        "another source's file stays"
+    );
+    // An operation upload names the page's slug as it is now, also when it still carries the old one.
+    let mut op = row("o/op.png", Some("people/old"), json!({}));
+    op.source_id = Some("default".into());
+    op.page_id = Some(json!(id));
+    store.upsert_file_row("operation", &op).unwrap();
+    assert_eq!(of("o/op.png")["page_slug"], "people/new");
+    // A repeat that binds the page takes its id and slug together; a repeat that binds none keeps the pair.
+    let mut again = row("c/none.png", Some("people/new"), json!({}));
+    again.content_hash = Some("hash-2".into());
+    store.upsert_file_row("command", &again).unwrap();
+    assert_eq!(of("c/none.png")["page_id"], id);
+    assert_eq!(of("c/none.png")["page_slug"], "people/new");
+    let mut keeps = row("c/none.png", Some("people/nobody"), json!({}));
+    keeps.content_hash = Some("hash-3".into());
+    store.upsert_file_row("command", &keeps).unwrap();
+    assert_eq!(of("c/none.png")["page_id"], id);
+    assert_eq!(of("c/none.png")["page_slug"], "people/new");
+    let mut stale = row("o/op.png", Some("people/old"), json!({}));
+    stale.source_id = Some("default".into());
+    stale.page_id = Some(json!(id));
+    stale.content_hash = Some("hash-4".into());
+    store.upsert_file_row("operation", &stale).unwrap();
+    assert_eq!(of("o/op.png")["page_slug"], "people/new");
+}
+
+#[test]
 fn list_orders_and_limits() {
     let dir = TempDir::new("files-ops-lists");
     let store = open(&dir);
@@ -305,13 +385,15 @@ fn readable_reads_hide_private_pages_by_id_and_by_slug_in_any_source() {
     }
     let p = policy();
     let none = store.list_readable_files("rows", None, None).unwrap();
+    // The operation upload names the page's slug as it is now (`COALESCE((SELECT p.slug FROM pages p WHERE p.id = $8
+    // FOR SHARE), $1)`), so the file bound by id alone lists under its page's slug, not last with the unbound.
     assert_eq!(
         paths(&none),
         [
             "x/open.png",
+            "x/by-id.png",
             "x/by-slug.png",
             "x/deleted.png",
-            "x/by-id.png",
             "x/unlinked.png"
         ]
     );

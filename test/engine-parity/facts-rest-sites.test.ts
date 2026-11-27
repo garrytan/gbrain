@@ -6,7 +6,7 @@
  *  - Contract: readPendingWriteReceipt, lockSourceShared, lockAgentWritebackSetting, listOversizedStaleFacts, listLivePersonTitles,
  *    readLiveFactEntityPage, listFactsToRetireFromPage, listContestedProposalPairs, listFactProvenance, recordDerivationEdges,
  *    listDerivedRows, expireDerivedFacts, deactivateDerivedTakes, softDeleteDerivedPages, markNeedsRederive,
- *    readMemberPageWithdrawal, readFactVisibility, readReplacementTarget, readPairFactRow, expireSupersededFact,
+ *    readMemberPageWithdrawal, readClaimWithdrawal, readFactVisibility, readReplacementTarget, readPairFactRow, expireSupersededFact,
  *    restoreSupersededFact, readFactForForget, expireFactSuperseded, expireFactAtDate, readWithdrawalAnchor, readFactActivity,
  *    readReviewAcceptedMark, readFactsFtsIndexState, swapFactsFtsIndex, readFactsEmbeddingColumn, listNearestFacts,
  *    listSlotRows, listPoolUnbackedKeys, listCallOffCueFacts, listPoolEntityPairs and listFactRowsByIds return the same observable
@@ -29,8 +29,9 @@ import type { BrainEngine } from '../../src/core/engine.ts';
 import { derivedRowsFrom, hideDerivedRows, recordDerivationInputs } from '../../src/core/facts/derivation-inputs.ts';
 import { ensureFactsFtsIndex } from '../../src/core/facts/fts-index.ts';
 import { getFtsLanguage } from '../../src/core/fts-language.ts';
-import { basisEmbedding, createSource, archiveSource, parityArms } from './harness.ts';
+import { basisEmbedding, createSource, archiveSource, parityArms, type ParityBackend } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
+import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -78,6 +79,21 @@ async function factState(engine: BrainEngine, slug: string, name: (id: number | 
 }
 
 const scope = (extra: Record<string, unknown> = {}) => ({ sourceId: SRC, worldOnly: false, excludePrivate: false, ...extra }) as never;
+
+/**
+ * On the Rust arm, runs a case that must stop on its member's typed refusal and pins the refusal's exact words, so a
+ * refusal of another input, or a member that starts serving the input, fails the case. Other arms run it as written.
+ */
+async function rustStopsWith<T>(backend: ParityBackend, stop: string, run: () => Promise<T>): Promise<T> {
+  if (backend !== 'rust') return run();
+  try {
+    await run();
+  } catch (error) {
+    expect(error instanceof Error ? error.message : String(error)).toContain(`does not support ${stop} yet`);
+    throw error;
+  }
+  throw new Error(`[rust] expected the typed refusal of ${stop}, but the case ran`);
+}
 
 describe('engine parity: facts write-path and recall statements that left executeRaw', () => {
   parityTest('readPendingWriteReceipt finds no receipt for a request nothing queued', { methods: ['readPendingWriteReceipt'] }, async (engine) => {
@@ -378,8 +394,13 @@ describe('engine parity: facts write-path and recall statements that left execut
   }, async (engine) => {
     await engine.putPage('memory/members/alice-example', note('Alice', { readable_by: ['alice-example'] }));
     await engine.putPage('notes/hidden', note('Hidden', { visibility: 'private' }));
+    // A page derived from a page that names readers (which also sets the store's restriction flag): the full form's
+    // origin walk hides it; the short form of a brain with no member-access restrictions does not.
+    await engine.putPage('notes/readers', note('Readers', { readable_by: ['alice-example'] }));
+    await engine.putPage('notes/lineage', note('Lineage', { derived_from: ['notes/readers'] }));
     const ids = await fenced(engine, [
       { fact: 'open row', entity_slug: 'people/a', source_markdown_slug: 'notes/open' },
+      { fact: 'lineage row', entity_slug: 'people/a', source_markdown_slug: 'notes/lineage' },
       { fact: 'hidden row', entity_slug: 'people/a', source_markdown_slug: 'notes/hidden', visibility: 'private' },
       { fact: 'own page row', entity_slug: 'people/a', source_markdown_slug: 'memory/members/alice-example', visibility: 'private' },
       { fact: 'withdrawn row', entity_slug: 'people/a', source_markdown_slug: 'notes/open' },
@@ -392,6 +413,8 @@ describe('engine parity: facts write-path and recall statements that left execut
       const targetId = ids.get(name)!;
       out[name] = {
         local: view(await engine.readReplacementTarget({ targetId, sourceId: SRC, ownPage: null })),
+        // A local read has no floor, so the own page it names changes nothing.
+        localOwn: view(await engine.readReplacementTarget({ targetId, sourceId: SRC, ownPage: 'memory/members/alice-example' })),
         remote: view(await engine.readReplacementTarget({ targetId, sourceId: SRC, excludePrivate: true, ownPage: null })),
         remoteOwn: view(await engine.readReplacementTarget({ targetId, sourceId: SRC, excludePrivate: true, ownPage: 'memory/members/alice-example' })),
         locked: await engine.transaction(async tx => view(await tx.readReplacementTarget({ targetId, sourceId: SRC, ownPage: null, lock: true }))),
@@ -402,9 +425,139 @@ describe('engine parity: facts write-path and recall statements that left execut
     expect(out['open row']).toMatchObject({ local: { withdrawn: false }, remote: { fact: 'open row' }, otherSource: null });
     expect((out['hidden row'] as { remote: unknown }).remote).toBeNull();
     expect((out['own page row'] as { remoteOwn: unknown }).remoteOwn).not.toBeNull();
+    for (const name of Object.keys(out)) {
+      const row = out[name] as { local: unknown; localOwn: unknown };
+      expect(row.localOwn).toEqual(row.local);
+    }
     expect(await engine.readReplacementTarget({ targetId: 999_999, sourceId: SRC, ownPage: null })).toBeNull();
     return out;
   });
+
+  // A remote caller reads inside a caller record: the floor then has no live pending-coverage test, an owner read drops
+  // the owner-only test and `restricted: false` renders the short member-access form. The store models each of these, so
+  // the Rust members answer them; PGLite and Postgres read through the same floor text.
+  parityTest('readReplacementTarget and readClaimWithdrawal answer the remote floor inside a caller record: a member, the owner and a brain with no member-access restrictions', {
+    methods: ['readReplacementTarget', 'readClaimWithdrawal', 'insertFacts', 'putPage', 'insertFactWithdrawal', 'expireFactsByWithdrawal'],
+  }, async (engine) => {
+    await engine.putPage('notes/hidden', note('Hidden', { visibility: 'private' }));
+    // A page derived from a page that names readers (which also sets the store's restriction flag): the full form's
+    // origin walk hides it; the short form of a brain with no member-access restrictions does not.
+    await engine.putPage('notes/readers', note('Readers', { readable_by: ['alice-example'] }));
+    await engine.putPage('notes/lineage', note('Lineage', { derived_from: ['notes/readers'] }));
+    const ids = await fenced(engine, [
+      { fact: 'open row', entity_slug: 'people/a', source_markdown_slug: 'notes/open' },
+      { fact: 'lineage row', entity_slug: 'people/a', source_markdown_slug: 'notes/lineage' },
+      { fact: 'hidden row', entity_slug: 'people/a', source_markdown_slug: 'notes/hidden', visibility: 'private' },
+      { fact: 'open claim', entity_slug: 'people/a', source_markdown_slug: 'notes/open' },
+      { fact: 'hidden claim', entity_slug: 'people/a', source_markdown_slug: 'notes/hidden', visibility: 'private' },
+    ]);
+    for (const [visibility, fact] of [['world', 'open claim'], ['private', 'hidden claim']] as const) {
+      expect(await engine.insertFactWithdrawal(SRC, visibility, fact, '*', '2026-06-01T00:00:00Z')).toBe(true);
+      await engine.expireFactsByWithdrawal(SRC, visibility, fact, '*');
+    }
+    const read = async () => {
+      const target = async (name: string) => {
+        const row = await engine.readReplacementTarget({ targetId: ids.get(name)!, sourceId: SRC, excludePrivate: true, ownPage: null });
+        return row === null ? null : { fact: row.fact, visibility: row.visibility };
+      };
+      const claim = async (visibility: string, fact: string) => {
+        const got = await engine.readClaimWithdrawal({ sourceId: SRC, visibility, fact, entitySlug: 'people/a', ownPage: null, excludePrivate: true });
+        return { hidden: got.hidden, subject: got.row?.subject ?? null };
+      };
+      return { openRow: await target('open row'), lineageRow: await target('lineage row'), hiddenRow: await target('hidden row'), openClaim: await claim('world', 'open claim'), hiddenClaim: await claim('private', 'hidden claim') };
+    };
+    const records = {
+      member: { identity: ['member:alice-example'] },
+      owner: { owner: true, identity: ['member:alice-example'] },
+      open: { restricted: false, identity: ['member:alice-example'] },
+      ownerOpen: { owner: true, restricted: false, identity: ['member:alice-example'] },
+    } as const;
+    const out: Record<string, unknown> = { none: await read() };
+    for (const [name, record] of Object.entries(records)) out[name] = await withCallerAccess({ ...record, identity: [...record.identity] }, read);
+    const floor = { openRow: { fact: 'open row', visibility: 'world' }, lineageRow: null, hiddenRow: null, openClaim: { hidden: false, subject: '*' }, hiddenClaim: { hidden: true, subject: null } };
+    const short = { ...floor, lineageRow: { fact: 'lineage row', visibility: 'world' } };
+    expect(out).toEqual({ none: floor, member: floor, owner: floor, open: short, ownerOpen: short });
+    return out;
+  });
+
+  // The refusal a save of a forgotten claim meets: the most specific subject, then the newest withdrawal, among the
+  // withdrawals whose withdrawn rows the caller sees (or that no row backs); under the remote floor, `hidden` when every
+  // withdrawn row of the claim is one the caller cannot see. Each withdrawal has its own time, so no order ties.
+  parityTest('readClaimWithdrawal names the withdrawal a save of a forgotten claim meets, under the remote floor and the own page', {
+    methods: ['readClaimWithdrawal', 'insertFacts', 'putPage', 'insertFactWithdrawal', 'expireFactsByWithdrawal'],
+  }, async (engine) => {
+    const own = 'memory/members/alice-example';
+    await engine.putPage(own, note('Alice', { readable_by: ['alice-example'] }));
+    await engine.putPage('notes/hidden', note('Hidden', { visibility: 'private' }));
+    await fenced(engine, [
+      { fact: 'open claim', entity_slug: 'people/a', source_markdown_slug: 'notes/open' },
+      { fact: 'hidden claim', entity_slug: 'people/a', source_markdown_slug: 'notes/hidden', visibility: 'private' },
+      { fact: 'own claim', source_markdown_slug: own, visibility: 'private' },
+      { fact: 'mixed claim', entity_slug: 'people/m', source_markdown_slug: 'notes/open' },
+      { fact: 'mixed claim', entity_slug: 'people/n', source_markdown_slug: 'notes/hidden' },
+    ]);
+    const withdrawals: Array<[string, string, string, string]> = [
+      ['world', 'open claim', '*', '2026-06-01T00:00:00Z'],
+      ['world', 'open claim', 'people/a', '2026-06-02T00:00:00Z'],
+      ['private', 'hidden claim', '*', '2026-06-03T00:00:00Z'],
+      ['private', 'own claim', own, '2026-06-04T00:00:00Z'],
+      ['private', 'own claim', '*', '2026-06-05T00:00:00Z'],
+      ['world', 'unbacked claim', 'people/z', '2026-06-06T00:00:00Z'],
+      ['world', 'mixed claim', 'people/n', '2026-06-07T00:00:00Z'],
+      ['world', 'mixed claim', '*', '2026-06-08T00:00:00Z'],
+    ];
+    for (const [visibility, fact, subject, when] of withdrawals) {
+      expect(await engine.insertFactWithdrawal(SRC, visibility, fact, subject, when)).toBe(true);
+      await engine.expireFactsByWithdrawal(SRC, visibility, fact, subject);
+    }
+    const read = async (visibility: string, fact: string, entitySlug: string | null, ownPage: string | null, excludePrivate?: boolean) => {
+      const got = await engine.readClaimWithdrawal({ sourceId: SRC, visibility, fact, entitySlug, ownPage, excludePrivate });
+      if (got.row) expect(got.row.withdrawn_at).toMatch(PG_TEXT);
+      return { hidden: got.hidden, row: got.row && { subject: got.row.subject, visibility: got.row.visibility, at: iso(got.row.withdrawn_at) } };
+    };
+    const claims: Array<[string, string, string | null]> = [
+      ['world', 'open claim', 'people/a'], ['private', 'hidden claim', 'people/a'], ['private', 'own claim', null],
+      ['world', 'unbacked claim', 'people/z'], ['world', 'unbacked claim', null], ['world', 'mixed claim', 'people/n'],
+      ['world', 'never forgotten', 'people/a'],
+    ];
+    const out: Record<string, unknown> = {};
+    for (const [visibility, fact, entity] of claims) {
+      out[`${fact} / ${entity ?? 'no entity'}`] = {
+        local: await read(visibility, fact, entity, null),
+        localOwn: await read(visibility, fact, entity, own),
+        remote: await read(visibility, fact, entity, null, true),
+        remoteOwn: await read(visibility, fact, entity, own, true),
+        otherSource: await engine.readClaimWithdrawal({ sourceId: 'other', visibility, fact, entitySlug: entity, ownPage: null }),
+      };
+    }
+    const row = (subject: string, visibility: string, day: string) => ({ hidden: false, row: { subject, visibility, at: `2026-06-${day}T00:00:00.000Z` } });
+    expect(out['open claim / people/a']).toMatchObject({ local: row('people/a', 'world', '02'), remote: row('people/a', 'world', '02') });
+    expect(out['hidden claim / people/a']).toMatchObject({ local: row('*', 'private', '03'), remote: { hidden: true, row: null } });
+    expect(out['own claim / no entity']).toMatchObject({
+      local: row('*', 'private', '05'), localOwn: row(own, 'private', '04'), remote: { hidden: true, row: null }, remoteOwn: row(own, 'private', '04'),
+    });
+    expect(out['unbacked claim / people/z']).toMatchObject({ local: row('people/z', 'world', '06'), remote: row('people/z', 'world', '06') });
+    expect(out['unbacked claim / no entity']).toMatchObject({ local: { hidden: false, row: null }, remote: { hidden: false, row: null } });
+    expect(out['mixed claim / people/n']).toMatchObject({ local: row('people/n', 'world', '07'), remote: row('*', 'world', '08') });
+    expect(out['never forgotten / people/a']).toMatchObject({ local: { hidden: false, row: null }, remote: { hidden: false, row: null } });
+    for (const name of Object.keys(out)) expect((out[name] as { otherSource: unknown }).otherSource).toEqual({ hidden: false, row: null });
+    return out;
+  });
+
+  // An id binds as bigint: PGLite refuses a fraction with the cast error; the Rust member refuses it before the store with
+  // its typed refusal. Any other error fails the case.
+  parityTest('readReplacementTarget refuses an id that is not a whole number', {
+    methods: ['readReplacementTarget'],
+  }, (engine, backend) => rustStopsWith(backend, 'readReplacementTarget (an id that is not a whole number)', async () => {
+    try {
+      await engine.readReplacementTarget({ targetId: 1.5, sourceId: SRC, ownPage: null });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (/invalid input syntax for type bigint: "1\.5"/.test(message)) return 'invalid input syntax for type bigint: "1.5"';
+      throw error;
+    }
+    throw new Error('readReplacementTarget read a fractional id');
+  }));
 
   parityTest('readMemberPageWithdrawal finds the withdrawal a save onto a member page meets: its own subject first, another subject only for a row the member reads', {
     methods: ['readMemberPageWithdrawal', 'insertFacts', 'expireFact', 'insertFactWithdrawal', 'putPage'],
@@ -446,6 +599,52 @@ describe('engine parity: facts write-path and recall statements that left execut
     expect(out.ownSubject).toEqual({ subject: PAGE, visibility: 'private' });
     expect(out.wildcard).toEqual({ subject: '*', visibility: 'world' });
     expect(out.unknown).toBeNull();
+    return out;
+  });
+
+  parityTest('readMemberPageWithdrawal for the brain owner counts a row of any visibility and judges a derived page by whether its origins name the owner', {
+    methods: ['readMemberPageWithdrawal', 'insertFacts', 'expireFact', 'insertFactWithdrawal', 'putPage'],
+  }, async (engine) => {
+    const PAGE = 'memory/members/alice-example';
+    await engine.putPage(PAGE, note('Alice', { readable_by: ['alice-example'] }));
+    await engine.putPage('notes/origin-alice', note('Origin for Alice', { readable_by: ['alice-example'] }));
+    await engine.putPage('notes/origin-bob', note('Origin for Bob', { readable_by: ['bob-example'] }));
+    await engine.putPage('atoms/from-alice', note('From Alice', { source_slug: 'notes/origin-alice', visibility: 'world' }, 'atom'));
+    await engine.putPage('atoms/from-bob', note('From Bob', { source_slug: 'notes/origin-bob', visibility: 'world' }, 'atom'));
+    await engine.putPage('notes/derived-alice', note('Derived from Alice', { derived_from: ['notes/origin-alice.md'] }));
+    const ids = await fenced(engine, [
+      { fact: 'claim on alice atom', entity_slug: 'people/a', source_markdown_slug: 'atoms/from-alice' },
+      { fact: 'claim on bob atom', entity_slug: 'people/a', source_markdown_slug: 'atoms/from-bob' },
+      { fact: 'claim on alice lineage', entity_slug: 'people/a', source_markdown_slug: 'notes/derived-alice' },
+      { fact: 'private claim on open page', entity_slug: 'people/a', source_markdown_slug: 'notes/open', visibility: 'private' },
+    ]);
+    for (const id of ids.values()) await engine.expireFact(id);
+    const T = '2026-06-01T00:00:00Z';
+    await engine.insertFactWithdrawal(SRC, 'world', 'claim on alice atom', 'people/a', T);
+    await engine.insertFactWithdrawal(SRC, 'world', 'claim on bob atom', 'people/a', T);
+    await engine.insertFactWithdrawal(SRC, 'world', 'claim on alice lineage', '*', T);
+    await engine.insertFactWithdrawal(SRC, 'private', 'private claim on open page', 'people/a', T);
+    const ask = async (fact: string, visibility: string, owner: boolean) => {
+      const row = await engine.readMemberPageWithdrawal({
+        sourceId: SRC, visibility, fact, entitySlug: 'people/a', page: PAGE, owner, identity: ['member:alice-example'], satisfied: [],
+      });
+      if (row === null) return null;
+      expect(row.withdrawn_at).toMatch(PG_TEXT);
+      return { subject: row.subject, visibility: row.visibility };
+    };
+    const out: Record<string, unknown> = {};
+    for (const owner of [false, true]) {
+      const who = owner ? 'owner' : 'member';
+      out[`${who}AliceAtom`] = await ask('claim on alice atom', 'world', owner);
+      out[`${who}BobAtom`] = await ask('claim on bob atom', 'world', owner);
+      out[`${who}AliceLineage`] = await ask('claim on alice lineage', 'world', owner);
+      out[`${who}PrivateOpen`] = await ask('private claim on open page', 'private', owner);
+    }
+    expect(out).toEqual({
+      memberAliceAtom: null, memberBobAtom: null, memberAliceLineage: null, memberPrivateOpen: null,
+      ownerAliceAtom: { subject: 'people/a', visibility: 'world' }, ownerBobAtom: null,
+      ownerAliceLineage: { subject: '*', visibility: 'world' }, ownerPrivateOpen: { subject: 'people/a', visibility: 'private' },
+    });
     return out;
   });
 
@@ -492,6 +691,41 @@ describe('engine parity: facts write-path and recall statements that left execut
     expect(out.afterRestore).toMatchObject({ expired: false, valid_until: null, superseded_by: null });
     return out;
   });
+
+  // Postgres reads many timestamptz texts; the store reads only an ISO instant (`YYYY-MM-DDTHH:MM:SS[.ffffff]Z`). For a
+  // text that Postgres reads and the store does not, PGLite writes the row and the Rust member stops on its typed refusal.
+  const supersedePair = async (engine: BrainEngine) => {
+    const ids = await remember(engine, [
+      { fact: 'old claim', entity_slug: 'people/a', valid_from: at('2026-01-01T00:00:00Z') },
+      { fact: 'new claim', entity_slug: 'people/a', valid_from: at('2026-02-01T00:00:00Z') },
+    ]);
+    return { oldId: ids.get('old claim')!, newId: ids.get('new claim')! };
+  };
+
+  parityTest('expireSupersededFact takes an until that is not an ISO instant only where Postgres reads it', {
+    methods: ['expireSupersededFact', 'readPairFactRow', 'insertFact'],
+  }, (engine, backend) => rustStopsWith(backend, 'expireSupersededFact (an until that is not an ISO instant)', async () => {
+    const { oldId, newId } = await supersedePair(engine);
+    const expired = await engine.expireSupersededFact({ oldId, sourceId: SRC, newId, until: '2026-03-01 00:00:00+00' });
+    const row = await engine.readPairFactRow(oldId);
+    const out = { expired, valid_until: iso(row!.valid_until) };
+    expect(out).toEqual({ expired: 1, valid_until: '2026-03-01T00:00:00.000Z' });
+    return out;
+  }));
+
+  parityTest('restoreSupersededFact takes an expiredAt that is not an ISO instant only where Postgres reads it', {
+    methods: ['expireSupersededFact', 'restoreSupersededFact', 'readPairFactRow', 'insertFact'],
+  }, (engine, backend) => rustStopsWith(backend, 'restoreSupersededFact (an expiredAt that is not an ISO instant)', async () => {
+    const { oldId, newId } = await supersedePair(engine);
+    expect(await engine.expireSupersededFact({ oldId, sourceId: SRC, newId, until: null })).toBe(1);
+    const restored = await engine.restoreSupersededFact({
+      oldId, sourceId: SRC, expiredAt: '2026-04-01 00:00:00+00', validUntil: null, supersededBy: null, expectedSupersededBy: newId,
+    });
+    const row = await engine.readPairFactRow(oldId);
+    const out = { restored, expired_at: iso(row!.expired_at), superseded_by: row!.superseded_by };
+    expect(out).toEqual({ restored: 1, expired_at: '2026-04-01T00:00:00.000Z', superseded_by: null });
+    return out;
+  }));
 
   parityTest('readFactForForget, expireFactSuperseded and expireFactAtDate read and end an active fact for a forget, and only an active one', {
     methods: ['readFactForForget', 'expireFactSuperseded', 'expireFactAtDate', 'insertFact', 'insertFacts', 'listFactsByEntity'],
@@ -562,6 +796,11 @@ describe('engine parity: facts write-path and recall statements that left execut
     return out;
   });
 
+  // Named Rust design stop, no divergence row: readFactsFtsIndexState and swapFactsFtsIndex read and rename a Postgres
+  // catalog index (pg_index), and the Rust store keeps one keyword index under one STORE_LANGUAGE, so the swap to another
+  // language refuses. No production Rust caller exists: only ensureFactsFtsIndex calls the pair, from the PGLite and
+  // Postgres ensureFactsKeywordIndex and migration v237; on Rust, reindex-search-vector takes ensureFactsKeywordIndex
+  // (link-temporal.ts), and initSchema runs no migrations.
   parityTest('readFactsFtsIndexState reads the keyword index and swapFactsFtsIndex swaps the built one into place (ensureFactsFtsIndex)', {
     methods: ['readFactsFtsIndexState', 'swapFactsFtsIndex', 'transaction'],
   }, async (engine) => {
@@ -676,6 +915,77 @@ describe('engine parity: facts write-path and recall statements that left execut
     expect(out.worldOnly.map(r => r.fact)).not.toContain('alice private slot');
     expect(out.excludePrivate.map(r => r.fact)).not.toContain('alice private slot');
     expect(out.none).toEqual([]);
+    return out;
+  });
+
+  parityTest('listSlotRows keeps the whole pool scope: source scope, visibility, trust floor, flagged rows, quarantine and private pages', {
+    methods: ['listSlotRows', 'insertFacts', 'expireFact', 'putPage', 'transaction', 'applyTransactionSettings', 'upsertWriteGateReceipt'],
+  }, async (engine, backend) => {
+    // GST-3170: slot ends (search/slot-ends.ts) and the slot history read these rows to end a value, so a row the scope
+    // hides must never come back here, or it ends (or shows) a value the caller cannot read.
+    await createSource(engine, backend, 'other');
+    await engine.putPage('people/carol', note('Carol', {}, 'person'));
+    await engine.putPage('notes/open', note('Open'));
+    await engine.putPage('notes/hidden', note('Hidden', { visibility: 'private' }));
+    await engine.putPage('notes/held', note('Held', { quarantine: { reason: 'junk_pattern', detail: 'test', assessed_at: '2026-01-01T00:00:00Z' } }));
+    const row = (fact: string, value: string, day: number, extra: Record<string, unknown> = {}) => ({
+      fact, entity_slug: 'people/carol', source: CONVERSATION, dimension: 'location', value, source_markdown_slug: 'notes/open', row_num: day,
+      valid_from: at(`2026-01-${String(day).padStart(2, '0')}T00:00:00Z`), ...extra });
+    // One write per trust tier, so each row's tier comes from its own transaction. The lower tiers write other entities,
+    // so this case reads the scope, not the rules between tiers of one slot. Each row has its own row_num: a second
+    // write with a row_num already in use inserts nothing.
+    const tiered = async (tier: string, rows: Array<Record<string, unknown> & { fact: string }>, sourceId = SRC) => engine.transaction(async tx => {
+      await tx.applyTransactionSettings(['gbrain.write_trust_tier', 'gbrain.write_trust_promotion', 'gbrain.write_origin'], [tier, tier, JSON.stringify({ channel: tier })]);
+      return fenced(tx, rows, sourceId);
+    });
+    const curated = await tiered('operator_curated', [
+      row('carol in Lisbon', 'Lisbon', 1),
+      row('carol in Paris until last year', 'Paris', 2, { valid_until: at('2025-01-01T00:00:00Z') }),
+      row('carol in Rome, forgotten', 'Rome', 3),
+      row('carol private fact in Madrid', 'Madrid', 4, { visibility: 'private' }),
+      row('carol in Oslo on a private page', 'Oslo', 5, { source_markdown_slug: 'notes/hidden' }),
+      row('carol in Bern on a quarantined page', 'Bern', 6, { source_markdown_slug: 'notes/held' }),
+      row('carol in Vienna, not a conversation row', 'Vienna', 7, { source: 'fence' }),
+      { ...row('carol employer Acme', 'Acme', 8), dimension: 'employer' },
+    ]);
+    await engine.expireFact(curated.get('carol in Rome, forgotten')!);
+    const agent = await tiered('agent_written', [row('dave in Prague, agent written', 'Prague', 9, { entity_slug: 'people/dave' }), row('dave in Riga, flagged', 'Riga', 10, { entity_slug: 'people/dave' })]);
+    await engine.upsertWriteGateReceipt({ target_table: 'facts', target_id: String(agent.get('dave in Riga, flagged')), source_id: SRC,
+      content_hash: 'h1', tier: 'agent_written', detector_version: 1, verdict: 'flag', reason_families: ['standing_instruction'],
+      reasons: ['standing_instruction found'], detector_error: false, request_id: null } as never);
+    const untrusted = await tiered('external_untrusted', [row('erin in Kyiv, untrusted', 'Kyiv', 11, { entity_slug: 'people/erin' })]);
+    const other = await tiered('operator_curated', [row('carol in Lima, other source', 'Lima', 12)], 'other');
+    const name = namer(new Map([...curated, ...agent, ...untrusted, ...other]));
+    const slot = (sourceId: string, dimension = 'location', entity = 'people/carol') => ({ source_id: sourceId, entity_slug: entity, dimension });
+    const local = [slot(SRC), slot(SRC, 'location', 'people/dave'), slot(SRC, 'location', 'people/erin')];
+    const read = async (scopeArg: unknown, slots = local) =>
+      (await engine.listSlotRows(scopeArg as never, slots)).map(r => ({ name: name(r.id), source: r.source_id, dimension: r.dimension, from: iso(r.valid_from) }));
+    const out = {
+      plain: await read(scope()),
+      worldOnly: await read(scope({ worldOnly: true })),
+      excludePrivate: await read(scope({ excludePrivate: true })),
+      floorAgent: await read(scope({ minTrust: 'agent_written' })),
+      floorCurated: await read(scope({ minTrust: 'operator_curated' })),
+      suppressFlagged: await read(scope({ suppressFlagged: true })),
+      everything: await read(scope({ worldOnly: true, excludePrivate: true, minTrust: 'agent_written', suppressFlagged: true }), [...local, slot(SRC, 'employer')]),
+      otherSlotOutOfScope: await read(scope(), [slot('other')]),
+      twoSources: await read({ sourceIds: [SRC, 'other'], worldOnly: false, excludePrivate: false }, [...local, slot('other')]),
+      twoSourcesOneSlot: await read({ sourceIds: [SRC, 'other'], worldOnly: false, excludePrivate: false }, [slot('other')]),
+    };
+    const names = (rows: Array<{ name: string }>) => rows.map(r => r.name);
+    // Each knob takes out its own row and nothing else, so no read here passes vacuously.
+    const base = ['carol in Lisbon', 'carol in Paris until last year', 'carol private fact in Madrid', 'carol in Oslo on a private page',
+      'dave in Prague, agent written', 'dave in Riga, flagged', 'erin in Kyiv, untrusted'];
+    expect(names(out.plain)).toEqual(base);
+    expect(names(out.worldOnly)).toEqual(base.filter(n => n !== 'carol private fact in Madrid'));
+    expect(names(out.excludePrivate)).toEqual(base.filter(n => n !== 'carol in Oslo on a private page'));
+    expect(names(out.floorAgent)).toEqual(base.filter(n => n !== 'erin in Kyiv, untrusted'));
+    expect(names(out.floorCurated)).toEqual(base.filter(n => !/Prague|Riga|Kyiv/.test(n)));
+    expect(names(out.suppressFlagged)).toEqual(base.filter(n => n !== 'dave in Riga, flagged'));
+    expect(names(out.everything)).toEqual(['carol in Lisbon', 'carol in Paris until last year', 'carol employer Acme', 'dave in Prague, agent written']);
+    expect(out.otherSlotOutOfScope).toEqual([]);
+    expect(names(out.twoSources)).toEqual([...base, 'carol in Lima, other source']);
+    expect(names(out.twoSourcesOneSlot)).toEqual(['carol in Lima, other source']);
     return out;
   });
 

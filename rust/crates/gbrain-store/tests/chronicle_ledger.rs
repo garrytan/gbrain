@@ -25,6 +25,18 @@ fn row(
     .unwrap()
 }
 
+/// Puts pages `p1` to `pN` in the default source, so page ids 1 to N exist for the ledger rows' foreign keys.
+fn pages(b: &gbrain_store::Store, n: i64) {
+    for i in 1..=n {
+        let input: gbrain_store::pages::PageInput = serde_json::from_value(json!({
+            "type": "meeting", "title": format!("p{i}"), "compiled_truth": "body",
+        }))
+        .unwrap();
+        b.put_page(&format!("p{i}"), &input, &Default::default())
+            .unwrap();
+    }
+}
+
 fn key(page: i64, hash: &str) -> ChronicleJudgeKey {
     serde_json::from_value(json!({ "sourceId": "default", "pageId": page, "contentHash": hash }))
         .unwrap()
@@ -33,6 +45,7 @@ fn key(page: i64, hash: &str) -> ChronicleJudgeKey {
 #[test]
 fn an_automatic_decision_leaves_a_pending_backfill_row() {
     let b = brain("chronicle-guard-backfill");
+    pages(&b, 10);
     assert!(
         b.upsert_chronicle_row(&row(1, "h", "pending", "backfill", None, None))
             .unwrap()
@@ -55,6 +68,7 @@ fn an_automatic_decision_leaves_a_pending_backfill_row() {
 #[test]
 fn an_unknown_state_or_trigger_refuses() {
     let b = brain("chronicle-bad-enum");
+    pages(&b, 10);
     assert!(
         b.upsert_chronicle_row(&row(1, "h", "done", "auto", None, None))
             .is_err()
@@ -68,6 +82,7 @@ fn an_unknown_state_or_trigger_refuses() {
 #[test]
 fn the_rollup_counts_reasons_and_principals_by_byte() {
     let b = brain("chronicle-rollup");
+    pages(&b, 10);
     for (i, name) in ["b", "B", "a", "A"].iter().enumerate() {
         let page = i as i64 + 1;
         b.upsert_chronicle_row(&row(page, "h", "skipped", "auto", Some(name), Some(name)))
@@ -105,6 +120,7 @@ fn the_rollup_counts_reasons_and_principals_by_byte() {
 #[test]
 fn a_reservation_stops_at_the_limit_and_ages_out_after_a_day() {
     let b = brain("chronicle-limit");
+    pages(&b, 10);
     assert!(b.reserve_chronicle_judge_slot(2, &key(1, "h")).unwrap());
     assert!(b.reserve_chronicle_judge_slot(2, &key(2, "h")).unwrap());
     assert!(!b.reserve_chronicle_judge_slot(2, &key(3, "h")).unwrap());
@@ -122,6 +138,7 @@ fn a_reservation_stops_at_the_limit_and_ages_out_after_a_day() {
 #[test]
 fn a_row_older_than_a_week_leaves_the_counts_and_pending_stays() {
     let b = brain("chronicle-week");
+    pages(&b, 10);
     b.upsert_chronicle_row(&row(1, "h", "skipped", "auto", Some("r"), None))
         .unwrap();
     b.upsert_chronicle_row(&row(2, "h", "pending", "auto", None, None))
@@ -136,6 +153,7 @@ fn a_row_older_than_a_week_leaves_the_counts_and_pending_stays() {
 #[test]
 fn a_prune_deletes_only_the_reservations_older_than_two_days() {
     let b = brain("chronicle-prune");
+    pages(&b, 10);
     assert!(b.reserve_chronicle_judge_slot(9, &key(1, "h")).unwrap());
     b.clock.advance(DAY);
     assert!(b.reserve_chronicle_judge_slot(9, &key(2, "h")).unwrap());
@@ -159,6 +177,7 @@ fn tuple(page: i64, hash: &str) -> gbrain_store::chronicle_ledger::ChronicleKeyT
 #[test]
 fn a_claim_leases_a_row_once_and_a_lapsed_lease_is_claimable_again() {
     let b = brain("chronicle-claim");
+    pages(&b, 10);
     assert!(
         b.upsert_chronicle_row(&row(1, "h", "pending", "auto", None, None))
             .unwrap()
@@ -197,6 +216,7 @@ fn a_claim_leases_a_row_once_and_a_lapsed_lease_is_claimable_again() {
 #[test]
 fn an_outcome_is_recorded_only_at_the_attempt_it_was_judged_at() {
     let b = brain("chronicle-finish");
+    pages(&b, 10);
     assert!(
         b.upsert_chronicle_row(&row(1, "h", "pending", "auto", None, None))
             .unwrap()
@@ -243,5 +263,62 @@ fn an_outcome_is_recorded_only_at_the_attempt_it_was_judged_at() {
     assert_eq!(
         (costed.cost_usd, costed.cost_attempts),
         (Some(0.25), vec![1])
+    );
+}
+
+#[test]
+fn an_upsert_for_a_missing_source_or_page_refuses_and_writes_nothing() {
+    let b = brain("chronicle-fk");
+    pages(&b, 1);
+    let mut missing_source = row(1, "h", "pending", "auto", None, None);
+    missing_source.source_id = "no-such-source".into();
+    assert_eq!(
+        b.upsert_chronicle_row(&missing_source).unwrap_err().code,
+        "source_not_found"
+    );
+    assert_eq!(
+        b.upsert_chronicle_row(&row(99, "h", "pending", "auto", None, None))
+            .unwrap_err()
+            .code,
+        "page_not_found"
+    );
+    assert_eq!(b.read_chronicle_ledger().unwrap()["counts"]["pending"], 0);
+    assert!(
+        b.upsert_chronicle_row(&row(1, "h", "pending", "auto", None, None))
+            .unwrap()
+    );
+}
+
+#[test]
+fn a_skip_decision_reads_only_a_skipped_row_with_that_reason() {
+    let b = brain("chronicle-skip-decision");
+    pages(&b, 3);
+    assert!(
+        !b.has_chronicle_skip_decision("default", 3, "h", 2, "too_short")
+            .unwrap()
+    );
+    assert!(
+        b.upsert_chronicle_row(&row(3, "h", "skipped", "backfill", Some("too_short"), None))
+            .unwrap()
+    );
+    assert!(
+        b.has_chronicle_skip_decision("default", 3, "h", 2, "too_short")
+            .unwrap()
+    );
+    assert!(
+        !b.has_chronicle_skip_decision("default", 3, "h", 2, "other")
+            .unwrap()
+    );
+    assert!(
+        !b.has_chronicle_skip_decision("default", 3, "h2", 2, "too_short")
+            .unwrap()
+    );
+    assert!(
+        !b.has_chronicle_skip_decision("default", 3, "h", 3, "too_short")
+            .unwrap()
+    );
+    assert!(
+        !b.has_chronicle_skip_decision("other", 3, "h", 2, "too_short")
+            .unwrap()
     );
 }

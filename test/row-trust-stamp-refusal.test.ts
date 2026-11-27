@@ -32,7 +32,7 @@ describe('stampRowTrust', () => {
     const lookups: RowTrustLookup[] = [];
     const engine = fake(async (lookup) => {
       lookups.push(lookup);
-      return [{ id: 7, trust_tier: 'agent_written', write_origin: { channel: 'agent' }, flagged: true, contested: null }];
+      return [{ id: 7, trust_tier: 'agent_written', write_origin: { channel: 'agent' }, flagged: true, contested: null, precedence: null }];
     });
     const out = await stampRowTrust(engine, 'timeline_entries', [{ id: 7 }, { id: '7' }, { id: 8 }], r => r.id);
     expect(lookups).toEqual([{ table: 'timeline_entries', ids: [7, 8] }]);

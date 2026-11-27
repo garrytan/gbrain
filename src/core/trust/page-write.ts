@@ -188,12 +188,7 @@ export async function labelGuardTier(engine: BrainEngine, trust: WriteTrust, pag
   const labels = page.frontmatter ?? {};
   let tier: TrustTier | null = null;
   if (labelledPrivate(labels) || normalizeReaders(labels) !== null) {
-    const [guard] = await engine.executeRaw<{ owner_set: string | null; priors: (string | null)[] | null }>(`SELECT
-      (SELECT tier FROM page_label_guards WHERE page_id = $1) AS owner_set,
-      ARRAY(SELECT before_state->>'prior_tier' FROM trust_proposals WHERE target_table = 'pages' AND target_id = $1 AND action = 'lower_page' AND status <> 'accepted'
-        AND id > COALESCE((SELECT max(id) FROM trust_proposals WHERE target_table = 'pages' AND target_id = $1 AND action = 'lower_page' AND status = 'accepted'
-          AND after_state->>'resolution' IS DISTINCT FROM 'labels_applied'), 0)) AS priors`,
-    [Number(page.id)]);
+    const guard = await engine.readLabelGuardTiers(Number(page.id));
     tier = maxTrust(stored === 'unknown' ? minTrust(OWNER_TIER_FLOOR, ...frontmatterTrustCaps(labels)) : stored,
       ...[guard?.owner_set ?? null, ...(guard?.priors ?? [])].filter(isTrustTier));
     if (compareTrust(trust.tier, tier) >= 0) tier = null;
@@ -314,9 +309,6 @@ export async function recordAgentPageLowering(tx: BrainEngine, row: Pick<WriteRe
  * queues the page's projection rebuild (re-chunk) in the same transaction.
  */
 export async function queueTierProjection(tx: BrainEngine, table: 'facts' | 'takes' | 'pages', id: number): Promise<void> {
-  const sql = table === 'facts' ? 'SELECT source_id, source_markdown_slug AS slug FROM facts WHERE id = $1 AND source_markdown_slug IS NOT NULL'
-    : table === 'takes' ? 'SELECT p.source_id, p.slug FROM takes t JOIN pages p ON p.id = t.page_id WHERE t.id = $1'
-      : 'SELECT source_id, slug FROM pages WHERE id = $1';
-  const [page] = await tx.executeRaw<{ source_id: string; slug: string }>(sql, [id]);
+  const page = await tx.readTierProjectionPage(table, id);
   if (page) await queuePageProjection(tx, page.source_id, page.slug, 'trust_tier_changed');
 }

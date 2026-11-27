@@ -31,7 +31,8 @@ import { deriveNext, renderAction, type Action } from '../src/core/agent-output.
 import { fenceMessage } from '../src/core/fence-repair/reasons.ts';
 import { FENCE_VERSION } from '../src/core/fence-repair/refusal.ts';
 import { QUOTE_SCREEN_VERSION } from '../src/core/fence-repair/quote-markers.ts';
-import { fenceFileLine, fenceHoldStatus, type FenceAutoRepair } from '../src/core/fence-repair/hold-fix.ts';
+import { fenceFileLine, fenceHoldStatus, readFenceAutoRepair, type FenceAutoRepair } from '../src/core/fence-repair/hold-fix.ts';
+import { capabilityMissing, isCapabilityMissing } from '../src/core/rust-engine/errors.ts';
 import { parseMarkdown, RECOVERY_VERSION } from '../src/core/markdown.ts';
 
 const location = { reason: 'holder_unresolved', fence: 'takes', section: 'body', rows: [3], columns: ['who'], line: 7 } as const;
@@ -260,5 +261,20 @@ describe('location-only privacy (sentinel)', () => {
         expect(text).not.toContain('repair frontmatter');
       }
     }
+  });
+});
+
+describe('readFenceAutoRepair never takes a failed read for the defaults', () => {
+  test('a refused or failed read surfaces, through the typed member and through an executeRaw-only view', async () => {
+    const refusal = () => { throw capabilityMissing('raw_sql', 'executeRaw'); };
+    const viaMember = { executeRaw: async () => [], getConfigValues: async () => refusal(), readLastFinishedJobAt: async () => null };
+    const jobRefused = { executeRaw: async () => [], getConfigValues: async () => [], readLastFinishedJobAt: async () => refusal() };
+    const viaRaw = { executeRaw: async () => refusal() };
+    for (const engine of [viaMember, jobRefused, viaRaw]) {
+      const err = await readFenceAutoRepair(engine as never).then(() => null, (e: unknown) => e);
+      expect(isCapabilityMissing(err)).toBe(true);
+    }
+    const lost = { executeRaw: async () => { throw new Error('connection reset'); } };
+    expect(await readFenceAutoRepair(lost as never).then(() => 'answered', (e: Error) => e.message)).toBe('connection reset');
   });
 });

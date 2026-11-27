@@ -405,12 +405,26 @@ for (const kind of arms) {
       expect(cases.excludePrivateWithType).toEqual({ ok: [] });
       // detail low reads compiled_truth chunks only, so the page falls back to its next best chunk.
       expect(cases.detailLow).toEqual({ ok: [...ALL.slice(0, 2), 'f-srcb#0 0.0244 src-b', 'i-private#0 0.0242 default', 'n-timeline#1 -0.0170 default', ...ALL.slice(5)] });
+      // The trust floor and the flagged-page filter apply on every engine. Every fixture page is stamped `unknown` and none
+      // carries a gate flag, so a floor at `unknown` keeps every page, a floor above it keeps none (the floor is applied, not
+      // ignored), and suppressFlagged hides nothing. vector-options.test.ts covers mixed tiers and flagged pages.
+      const trust = {
+        floorUnknown: await sv(q, { minTrust: 'unknown' }),
+        floorAgent: await sv(q, { minTrust: 'agent_written' }),
+        floorAgentPrivate: await sv(q, { excludePrivate: true, minTrust: 'agent_written' }),
+        suppressFlaggedPrivate: await sv(q, { excludePrivate: true, suppressFlagged: true }),
+      };
+      expect(trust).toEqual({ floorUnknown: { ok: ALL }, floorAgent: { ok: [] }, floorAgentPrivate: { ok: [] },
+        suppressFlaggedPrivate: { ok: without('i-private') } });
       if (rust) {
-        // The store keeps no trust tiers and knows no other option: they still refuse beside excludePrivate, never answer without the filter.
-        for (const extra of [{ minTrust: 0.5 }, { suppressFlagged: true }, { notAnOption: true }]) {
-          expect(await sv(q, { excludePrivate: true, ...extra })).toMatchObject({ refused: 'engine_capability_missing' });
+        // An option the store does not know still refuses beside excludePrivate, and a floor that names no tier refuses as a
+        // bad argument: neither answers without the filter.
+        expect(await sv(q, { excludePrivate: true, notAnOption: true })).toMatchObject({ refused: 'engine_capability_missing' });
+        for (const floor of [0.5, 'trusted']) {
+          expect(await sv(q, { excludePrivate: true, minTrust: floor })).toEqual({ refused: 'invalid_argument', message: `minTrust: "${floor}" names no trust tier` });
         }
       }
+      record(kind, 'filtersTrust', trust);
       record(kind, 'filters', cases);
     });
 
@@ -650,9 +664,28 @@ for (const kind of arms) {
         const ids = (await vectorRows()).map((r) => r.page_id);
         expect(await outcome(() => engine.getContentFlagsByPageIds(ids, { notAnOption: true } as never))).toMatchObject({ refused: 'engine_capability_missing' });
         expect(await outcome(() => engine.getUnverifiedExtractionPageIds(ids, { notAnOption: true } as never))).toMatchObject({ refused: 'engine_capability_missing' });
-        expect(await outcome(() => engine.getContentFlagsByPageIds(ids, { minTrust: 0.5 } as never))).toMatchObject({ refused: 'engine_capability_missing' });
-        expect(await outcome(() => engine.getUnverifiedExtractionPageIds(ids, { suppressFlagged: true } as never))).toMatchObject({ refused: 'engine_capability_missing' });
+        // A floor that is no trust tier refuses as a bad argument, never reads without the floor.
+        const reads = [
+          (opts: unknown) => engine.getContentFlagsByPageIds(ids, opts as never),
+          (opts: unknown) => engine.getUnverifiedExtractionPageIds(ids, opts as never),
+        ];
+        for (const read of reads) {
+          expect(await outcome(() => read({ minTrust: 0.5 }))).toMatchObject({ refused: 'invalid_argument' });
+          expect(await outcome(() => read({ minTrust: 'trusted' }))).toEqual({ refused: 'invalid_argument', message: 'minTrust: "trusted" names no trust tier' });
+        }
       }
+      // The marker reads take the trust floor and the flagged-page filter on every engine (every fixture page is `unknown`,
+      // none flagged): a floor above `unknown` drops every marker, and suppressFlagged keeps them all.
+      const markerTrust = await outcome(async () => {
+        const ids = (await vectorRows()).map((r) => r.page_id);
+        const count = async (opts: Record<string, unknown>) => ({
+          flags: (await engine.getContentFlagsByPageIds(ids, opts as never)).size,
+          marks: (await engine.getUnverifiedExtractionPageIds(ids, opts as never)).size,
+        });
+        return { none: await count({}), unknown: await count({ minTrust: 'unknown' }), agent: await count({ minTrust: 'agent_written' }), flagged: await count({ suppressFlagged: true }) };
+      });
+      expect(markerTrust).toEqual({ ok: { none: { flags: 1, marks: 2 }, unknown: { flags: 1, marks: 2 }, agent: { flags: 0, marks: 0 }, flagged: { flags: 1, marks: 2 } } });
+      record(kind, 'markerTrust', markerTrust);
       // The generated-page demotion reads the entity the query names, the live page at it and the pages linking to it.
       const demotion = async (scope: { excludePrivate?: boolean }) => outcome(async () => {
         const rowsIn = await vectorRows();

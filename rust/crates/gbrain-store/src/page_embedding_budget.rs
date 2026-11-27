@@ -408,6 +408,15 @@ pub(crate) fn read_state_reason(
     Ok(get_json::<BudgetRecord>(read, &budget_key(page_id))?.map(|r| (r.state, r.reason)))
 }
 
+/// The page's ledger `(state, reason, updated_at)` in microseconds, if it has a row (`readBudgetHoldAge`).
+pub(crate) fn read_state_reason_updated(
+    read: &dyn KvRead,
+    page_id: u64,
+) -> Result<Option<(String, Option<String>, i64)>> {
+    Ok(get_json::<BudgetRecord>(read, &budget_key(page_id))?
+        .map(|r| (r.state, r.reason, r.updated_at)))
+}
+
 /// Deletes the page's ledger record (`embeddings::remove_page_rows`).
 pub(crate) fn remove_page_budget(tx: &mut dyn KvWrite, page_id: u64) -> Result<()> {
     tx.delete(&budget_key(page_id))

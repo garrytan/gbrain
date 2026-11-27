@@ -1,8 +1,7 @@
 /**
  * A put_page that names a page by the exact spelling it was stored under before writes composed slugs to
  * Unicode NFC (a decomposed `café` stored lowercase only). The write path stores the composed slug, so a put
- * by that spelling would create a second page that prints the same name. Until a collision-safe key migration
- * moves such pages, the put is refused: nothing moves, no revision is written and no composed twin is created.
+ * by that spelling would create a second page that prints the same name. Until `gbrain repair slug-spelling` moves such a page, the put is refused: nothing moves, no revision is written and no composed twin is created.
  * The page still opens by either spelling, with its tags and timeline.
  */
 import type { BrainEngine } from '../engine.ts';
@@ -10,18 +9,32 @@ import type { OperationContext } from '../ops/contract.ts';
 import { opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
 import { normalizeSlug, withStoredSlug } from '../utils.ts';
+import { managedPersistenceEnabled } from './ownership.ts';
 
-/** The refusal for a put by the decomposed (or capitalised) spelling `stored` of a page whose composed slug is `slug`. */
-export function legacySpellingRefusal(stored: string, slug: string, sourceId: string) {
+/** The command that previews moving the stored pages of a source to their normal spelling. */
+export const slugSpellingPreviewArgv = (sourceId: string): string[] => ['gbrain', 'repair', 'slug-spelling', '--source', sourceId];
+
+/**
+ * The refusal for a put by the decomposed (or capitalised) spelling `stored` of a page whose normal slug is `slug`. On a
+ * classic brain it names the repair that moves the page; on a managed brain, where page tables take writes only through
+ * coordinated publications, it says a person must decide, and names no command that would refuse too. The text is the
+ * same on every engine.
+ */
+export function legacySpellingRefusal(stored: string, slug: string, sourceId: string, managed = false) {
   const read = { argv: ['gbrain', 'get', '--source', sourceId, '--', stored], mcp: { tool: 'get_page', arguments: { slug: stored, source_id: sourceId } } };
+  const preview = slugSpellingPreviewArgv(sourceId);
+  const kind = stored === stored.normalize('NFC') ? 'capitalised' : 'decomposed Unicode';
+  const way = managed
+    ? `Moving the page to the normal spelling ${slug} is not available on a managed brain, so a person has to decide how to rename it; until then the page cannot be replaced by put, and it stays readable and editable by its stored spelling.`
+    : `To move the page to the normal spelling ${slug}, preview ${preview.join(' ')}, then run the apply command it prints after the owner agrees; until then the page cannot be replaced by put.`;
   return opError('invalid_params',
-    `Page ${stored} is stored under an older ${stored === stored.normalize('NFC') ? 'capitalised' : 'decomposed Unicode'} spelling of its name, so a put by that spelling is refused and nothing was changed. `
-      + `A fix that moves the page to the composed spelling ${slug} is coming; until then the page cannot be replaced by put.`,
-    'Read the page with get_page by either spelling; it keeps its content, tags and timeline. Do not write it under the composed spelling, which would create a second page.', {
+    `Page ${stored} is stored under an older ${kind} spelling of its name, so a put by that spelling is refused and nothing was changed. ${way}`,
+    'Read the page with get_page by either spelling; it keeps its content, tags and timeline. Do not write it under the normal spelling, which would create a second page.', {
       detail: 'legacy_slug_spelling',
-      why: 'Writes store slugs in composed (NFC) form. Writing this page would either create a second page under the composed slug or move the stored one, '
-        + 'and the move is not yet safe (it must check visibility and commit with the write).',
-      fix: { ...readFix('Reads the page under the spelling it is stored by.', read), verify: read },
+      why: 'Writes store slugs in the normal form (lowercase, Unicode NFC). Writing this page would either create a second page under the normal slug or move the stored one, '
+        + 'and only the explicit repair moves a page, after a preview the owner approves.',
+      fix: managed ? { ...readFix('Reads the page under the spelling it is stored by.', read), verify: read }
+        : { ...readFix('Previews moving every page of the source stored under an older spelling to its normal slug; writes nothing.', { argv: [...preview, '--json'] }), verify: read },
     });
 }
 
@@ -35,7 +48,7 @@ export const EXISTING_PAGE_OPERATIONS: readonly string[] = ['delete_page', 'rest
 export async function refuseLegacySpelling(ctx: OperationContext, sourceId: string, rawSlug: unknown, slug: string): Promise<void> {
   if (typeof rawSlug !== 'string') return;
   for (const stored of new Set([rawSlug, rawSlug.toLowerCase()])) {
-    if (stored !== slug && await ctx.engine.readPageSnapshot(stored, { sourceId, includeDeleted: true })) throw legacySpellingRefusal(stored, slug, sourceId);
+    if (stored !== slug && await ctx.engine.readPageSnapshot(stored, { sourceId, includeDeleted: true })) throw legacySpellingRefusal(stored, slug, sourceId, await managedPersistenceEnabled(ctx.engine));
   }
 }
 
@@ -50,8 +63,11 @@ export async function legacyImportHold(engine: BrainEngine, sourceId: string | u
   if (spellings.length === 0 || await engine.getPage(slug, at)) return null;
   for (const stored of spellings) {
     if (!await engine.getPage(stored, at)) continue;
+    const managed = await managedPersistenceEnabled(engine);
     return `Page ${stored} is stored under an older spelling of its name (capitals or decomposed Unicode), and an import writes the normal spelling ${slug}, which would create a second page that prints the same name, so nothing was imported. `
-      + `Fix: leave this content out until the page moves to ${slug}, or import it under a different slug.`;
+      + (managed
+        ? 'Fix: leave this content out (moving the page is not available on a managed brain, so a person has to decide how to rename it), or import it under a different slug.'
+        : `Fix: leave this content out until the page moves to ${slug} (preview ${slugSpellingPreviewArgv(sourceId ?? 'default').join(' ')}), or import it under a different slug.`);
   }
   return null;
 }

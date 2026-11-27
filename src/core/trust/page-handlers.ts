@@ -153,11 +153,9 @@ export async function setRowTier(engine: BrainEngine, input: {
   const changed = await engine.transaction(async tx => {
     const run = async () => {
       if (input.expect && !(await input.expect(tx))) return false;
-      const [prior] = await tx.executeRaw<{ trust_tier: string }>(`SELECT trust_tier FROM ${input.table} WHERE id = $1`, [input.id]);
-      const update = () => tx.executeRaw<{ id: number }>(
-        `UPDATE ${input.table} SET trust_tier = $2,
-            write_origin = COALESCE(write_origin, '{}'::jsonb) || jsonb_build_object('owner_decision', $3::text::jsonb)
-          WHERE id = $1 RETURNING id`, [input.id, input.tier, JSON.stringify({ tier: input.tier, at: new Date().toISOString(), publication_id: publicationId, ...input.note })]);
+      const prior = await tx.readRowTrustTier(input.table, input.id);
+      const update = () => tx.setRowTrustTier(input.table, input.id, input.tier,
+        JSON.stringify({ tier: input.tier, at: new Date().toISOString(), publication_id: publicationId, ...input.note }));
       const rows = input.ceiling ? await withTrustPromotion(tx, input.ceiling, update) : await update();
       if (rows.length !== 1) return false;
       await queueTierProjection(tx, input.table, input.id);
@@ -370,7 +368,7 @@ async function publishOwnerPage(engine: BrainEngine, input: PageActionInput, int
         }
         // forceRechunk: the trust_tier marker is hash-ephemeral, so removing it alone would read as unchanged content.
         const prior = intent.mode === 'restore_provenance' ? await readPageTrustState(tx, input.sourceId, input.slug) : null;
-        await importFromContent(tx, input.slug, markdown, { sourceId: input.sourceId, noEmbed: true, preserveGateMarkers: intent.mode !== 'revert', forceRechunk: true, allowEmptyOverwrite: intent.mode === 'revert' });
+        await importFromContent(tx, input.slug, markdown, { sourceId: input.sourceId, noEmbed: true, householdOwner: async () => true, preserveGateMarkers: intent.mode !== 'revert', forceRechunk: true, allowEmptyOverwrite: intent.mode === 'revert' });
         if (prior) await recordAgentPageLowering(tx, { operation: TRUST_OWNER_PAGE_OPERATION, source_id: input.sourceId, slug: input.slug }, { tier: prior.tier, revision: prior.revision }, PROVENANCE_PROPOSER);
         if (writeThrough && file?.ok && file.target) {
           const written = await writeThrough.writePageThrough(tx, input.slug, { sourceId: input.sourceId, expectedFileBytes: file.target.expectedFileBytes });

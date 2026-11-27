@@ -56,13 +56,15 @@ The `fact_withdrawals` ledger (src/core/facts/withdrawal-schema.ts). One record 
 `t 0x01 source \0 visibility \0 subject \0 fact_hash` -> `{"withdrawn_at_us": <i64>}`
 
 `fact_hash` is `gbrain_fact_fingerprint(claim)` (`trust::fingerprint::fact_fingerprint`). Rows written before v174
-hold `gbrain_fact_fingerprint_v1(claim)`, and every read matches both. Deleting a source removes its rows (the table's
+hold `gbrain_fact_fingerprint_v1(claim)`, and every read matches both. Postgres rows written before v341 can hold
+`gbrain_fact_fingerprint_v2(claim)` (whitespace by the database locale); the SQL reads match that hash too. The store
+never wrote one: it folds the explicit `is_pg_space` list, which `gbrain_fact_fingerprint` folds on every engine. Deleting a source removes its rows (the table's
 `ON DELETE CASCADE`, through `cascade::remove_source_rows`). A slug rename (`updateSlug`) moves them in its own
 transaction (`move_subject_in`, the same move `moveFactWithdrawalSubject` makes).
 
 | Member | Store method | PGLite statement |
 | --- | --- | --- |
-| `hasCoveringFactWithdrawal` | `has_covering_fact_withdrawal`: four point reads (`*` and the subject, the hash and the v1 hash of the claim) | `SELECT 1 … fact_hash IN ($3, v1($5)) AND (subject='*' OR subject=$4)` |
+| `hasCoveringFactWithdrawal` | `has_covering_fact_withdrawal`: four point reads (`*` and the subject, the hash and the v1 hash of the claim) | `SELECT 1 … fact_hash IN ($3, v2($5), v1($5)) AND (subject='*' OR subject=$4)` |
 | `isFactWithdrawn` | `is_fact_withdrawn`: point reads for each visibility (the given one, or both when null), the hash and the v1 hash of the claim, and subject `*`, the entity and the member page; then the purge tombstones (hash only; `*` and the entity). A null entity or member page matches nothing | `SELECT 1 FROM fact_withdrawals … UNION ALL SELECT 1 FROM fact_purges … LIMIT 1` |
 | `isFactPurged` | `is_fact_purged` (facts/purge_ledger.rs): point reads for subject `*` and the entity; a visibility outside the CHECK matches nothing | `SELECT 1 FROM fact_purges … AND (subject='*' OR subject=$4) LIMIT 1` |
 | `insertFactWithdrawal` | `insert_fact_withdrawal`: false when the key exists, which keeps its time | `INSERT … COALESCE($5::timestamptz, now()) ON CONFLICT DO NOTHING RETURNING` |
@@ -147,12 +149,12 @@ Rust guesses and gaps (1x parity):
 Not built (they still run through `executeRaw`, which the Rust engine refuses): the reads that also read `fact_purges`
 (the store keeps that table now, rust/docs/store/facts.md "The fact purge ledger", but these reads do not read it yet:
 the ambiguous-fence check, the export snapshot), the reads that join `facts` (the effect-target
-request, the single-fact prepare, the repair and review lanes), and the meta-hook watermark. The `facts` insert guard
-`gbrain_preserve_fact_withdrawal` is built: every fact write (`write_fact`) saves a row that is not expired and matches a
-withdrawal of its claim as expired at the earliest such withdrawal, with `valid_until` no later than it
-(`facts::purge::earliest_withdrawal`; a member-page row matches only its page's withdrawals, an unbacked name key any
-subject but an owned memory page). The repair members that set a watched column on a row they can leave active also run
-it before `write_fact` (`facts/withdrawal_guard.rs`; facts.md, "Captured-facts and rehome repair").
+request, the single-fact prepare, the repair and review lanes) and the meta-hook watermark. The `facts` guard
+`gbrain_preserve_fact_withdrawal` is built (`facts/withdrawal_guard.rs`): every fact write (`write_fact`) saves a row
+that is not expired and matches a withdrawal of its claim as expired at the earliest such withdrawal, with
+`valid_until` no later than it (`facts::purge::earliest_withdrawal`; a member-page row matches only its page's
+withdrawals, an unbacked name key any subject but an owned memory page). Every update member that sets a watched
+column on a row it can leave active runs it too (facts.md, "Captured-facts and rehome repair").
 
 Rust guesses and gaps (1x parity):
 
@@ -262,7 +264,7 @@ the family adds no key prefix. Versions have no by-id index: the version reads s
 | `listAmendmentsNotApplied` | `list_amendments_not_applied` (`link_queries/link_temporal.rs`): the live pages with an `amends` link to the page whose relationship start in the scope is after the edition and on or before the date, or absent; under the source and page-policy filters, by slug then source, bytewise | `SELECT f.slug, … min(lr.first_start) … GROUP BY f.slug, f.source_id ORDER BY f.slug COLLATE "C" …` |
 | `readPageVersionEdition` | `read_page_version_edition` (`trust/valid_time.rs`): the page's `V` version record with the fields an edition reads, `body_storage` `inline` unless the snapshot is segmented; null for another page or an unknown id | `SELECT id, title, … FROM page_versions WHERE id = $1 AND page_id = $2` |
 | `readCursorEdition` | `read_cursor_edition` (`trust/valid_time.rs`): whether the page record (deleted or not) is still at the revision, and the newest `V` version record at it; null when the page is gone | `SELECT (p.knowledge_revision::text = $2) AS current, (SELECT max(v.id) …) FROM pages p WHERE p.id = $1` |
-| `pageAwaitsRederive` | none: the store keeps no `needs_rederive` queue (only a raw-SQL purge writes one, and `executeRaw` refuses), so the member answers false | `SELECT count(*)::int AS n FROM pages p WHERE p.id = $1 AND NOT NOT EXISTS (… needs_rederive …)` |
+| `pageAwaitsRederive` | served: true when a page with the id exists and the store's `needs_rederive` queue (`generations/needs_rederive.rs`, written by `markNeedsRederive`) names it | `SELECT count(*)::int AS n FROM pages p WHERE p.id = $1 AND NOT NOT EXISTS (… needs_rederive …)` |
 | `listHeldRows` | `list_held_rows` (`trust/held_rows.rs`): the page's take or timeline records among the ids whose stored tier ranks above the writer (the named `writer`, else the declared tier of the write trust context; a name that is no tier ranks 0) or, with `pending`, that a pending `forget` proposal targets; `{ id, trust_tier }` by id. A take or timeline record stored before its tier reads `unknown`; any other table refuses with `invalid_argument`. The `FOR UPDATE` lock adds nothing under the store's one writer | `SELECT x.id, x.trust_tier FROM takes|timeline_entries x WHERE x.page_id = $1 AND x.id = ANY($2) AND (rank > writer OR OPEN_CONTEST) ORDER BY x.id FOR UPDATE` |
 | `listGuardedTakeRows` | `list_guarded_take_rows` (`trust/held_rows.rs`): the batch guard of `gbrain extract takes` (`guardTakeRows`). The stored takes on the batch's pages that a `gone` entry deletes or an incoming row of the same page and number changes (another claim, kind or holder, or deactivates an active take), and that rank above the declared tier of the write trust context or, with `pending`, that a pending `forget` proposal targets; `{ id, page_id, row_num, trust_tier, change }` by page then row, once per matching entry, `change` `removed`, `replaced` or `deactivated`. An empty batch reads nothing | `SELECT x.id, … CASE … END AS change FROM takes x LEFT JOIN jsonb_to_recordset($1) n … LEFT JOIN jsonb_to_recordset($2) g … WHERE x.page_id = ANY($3) AND (rank > writer OR OPEN_CONTEST) … ORDER BY x.page_id, x.row_num FOR UPDATE OF x` |
 
@@ -372,6 +374,9 @@ because enable refused on this engine before it, so no store could hold a baseli
 - `readBeliefTombstones` reads the fact half from the fact purge ledger (`F 0x0F`, any visibility and any subject)
   and the take half from the take purge ledger (`facts.md`, "The take purge ledger"). A fingerprint found in both
   halves, or asked twice, is answered once.
+- `readLegacyClaimFingerprints` and `readLegacyBeliefTombstones` make no store call and answer none: they find a claim
+  recorded or purged under the pre-v341 Postgres fingerprint, which the store never held (it folds the explicit
+  `is_pg_space` list).
 - `readBeliefHistoryRows` reads the source's current incarnation by id, ascending or descending, in batches, with
   the slug, subject key, recorded-time window, subject key list and `beforeId` filters. Each row carries
   `stream_visible` (the stream lifetime is open, its page live at the same source and slug, the same page when the
@@ -393,6 +398,18 @@ because enable refused on this engine before it, so no store could hold a baseli
   unexpired page-less database-only facts (their entity) and of unexpired slot facts with no row (their page), less
   the run's baselined slugs and the skip list, up to the limit. The source row lock `enableBeliefLedger` and
   `disableBeliefLedger` take is `lockSourceRow`, a plain read here: the store runs one write transaction at a time.
+- The drift scan's reads (`trust::belief_coverage`): `listBeliefDriftCandidates` lists the slugs of the source's page rows
+  (live and soft-deleted), of its page-less facts (their entity, by the newest fact) and of the incarnation's open
+  lifetimes, newest first (a page by `updated_at`, a lifetime by `started_at`) and in byte order within a tie.
+  `readNewestBeliefEvent` answers the newest event of a slug in an incarnation other than a coverage event or a
+  backfill (id, state hash, recorded time), or none. The ledger keeps no per-slug event index, so it walks the
+  incarnation's events newest first until one names the slug: a read for the drift scan's sample, not a hot path.
+- `listOrphanLifetimes` (`orphanLifetimes`, belief/coverage-report.ts) answers `{ count, samples }`: the source's open
+  lifetimes of its current incarnation with no page row at their slug (a soft-deleted page is still a row) and, when
+  `deep`, the source's events of any incarnation that name a page lifetime no lifetime record holds (in any source, as the
+  SQL tests it), one finding per distinct slug and lifetime. Findings sort by slug then lifetime bytes; `count` is all of
+  them and `samples` the first `max(1, limit)`. An unknown source has no open lifetimes, but its events still answer the
+  deep read.
 - The state reads (`trust::belief_state`): `readBeliefStateRows` reads each stream of the source (a listed slug, or a
   listed page id in the source): its live or soft-deleted page, the unexpired fence facts it projects and the
   unexpired database-only facts about it, its takes, the links and transitions whose origin, else from, page it is,
@@ -422,9 +439,63 @@ The store serves the purge statements of src/core/engine-sql/belief-purge.ts
   hash. It skips one already released to that hash and one whose redacted text has that hash, and answers the purge
   request of each released row, in id order.
 - `replayPagePurges` and `countPagePurgeTombstones` live with the page purge ledger (`facts.md`, `facts/page_purges.rs`).
+- `listBeliefEventsForPurgeProbe` is the purge receipt's read of recorded history (`ledgerReports` in
+  src/core/facts/purge-verify.ts): the source's events with a recorded value and an id above `after`, the lowest 1000
+  across every incarnation, in id order. Each incarnation is a seek under `t 0x09 0x00 source \0 incarnation \0` to the
+  id after the cursor; a NaN cursor, or one past the last id, answers none. The member serves one statement of
+  engine-sql/facts-purge.ts, so it keeps the `facts` refusal class there; its case is in `belief-purge-probes.test.ts`.
 - `readPurgeReplaySchema` makes no store call: the store always has the live schema, so it answers every listed store
   and every probed table and column as present.
 - Pinned by `test/engine-parity/belief-purge-probes.test.ts` on every arm and by the unit tests in each module.
+
+## The belief-ledger half of a purge (`trust::belief_purge_ledger`)
+
+The store serves the statements of src/core/engine-sql/belief-purge-ledger.ts
+(src/core/rust-engine/store-members/belief-purge-ledger.ts): the steps belief/purge.ts and belief/preimages.ts run for a
+fact purge, a page purge and the restore replay on a source that records belief events. They keep no keys of their own.
+The statements read an event by id and events by lifetime alone; the store reads within the source the caller names
+(an event and a lifetime belong to one source). A keyset read gathers every incarnation of the source under
+`t 0x09 0x00 source \0`, sorts by id and answers at most 1000 rows after its cursor; a NaN cursor answers none.
+
+- `listDerivedStreamSlugs`: `facts:<id>` with the fact's fence page, else its entity (a fact with neither is left out),
+  `takes:<id>` with its page's slug and `pages:<id>` with its slug, rows of the source only.
+- `listMissingPreimages`: the 1-based position of each (page, revision) pair no version of the page holds. A revision that
+  is not a UUID refuses, as its `::uuid` cast does.
+- `redactPurgedBeliefKeys`: the source's fact and take events with one of the fingerprints, and every event of the
+  lifetimes, lose value, value hash and prior hash and are marked purged, unless already so; it answers how many it
+  marked. `legacyClaims` (claims that may have a pre-v341 Postgres fingerprint) matches nothing: the store has always
+  folded the one explicit list, as `readLegacyClaimFingerprints` answers none.
+- `listBeliefCarrierEvents`, `readBeliefEventValue`, `rewriteBeliefEventFields`, `rechainBeliefPriorHash`: the
+  carrying-field redaction. A rewrite keeps the event's prior hash only while an earlier event of the same subject key
+  (any kind, through the `t 0x09 0x03` subject index) has it as value hash; the re-chain moves the subject's later events
+  chained to the old hash. `value->>'field'` is the field's text, or its jsonb text when it is not a string.
+- `listBeliefQuotingRows`: unexpired facts with a context (the `BY_SOURCE` index, id order), takes with a resolution
+  source whose page is in the source, and links with a context whose origin page's source, else from page's, is the
+  source.
+- `listPageBeliefLifetimes`, `listPagePurgeLiveClaims`, `listPageVersionFenceBodies`, `listLifetimeClaimEvents`: the page
+  purge's lifetimes and claim inventory. The live claims carry the store's `gbrain_fact_fingerprint`.
+- `listPurgeCarrierVersions`: the versions among the ids whose page is in the source, with whether the page passes the
+  no-caller page policy (`privatePagesFilterFragment('p')`, sent as its flags).
+- `listKnownBeliefSubjectKeys`: the keys with an event of any kind in the source, in key order.
+- The redaction writes run in one `Store::write` each, so the member-access flag wrap applies. Pinned by
+  `test/engine-parity/belief-purge-ledger.test.ts` and `fact-purge-receipt-e2e.test.ts` on every arm, the statements by
+  `test/belief-purge-ledger-sql-pin.test.ts`, and the module's unit tests.
+
+## Tier-only row changes (`trust::row_tier`)
+
+`setRowTier` (trust/page-handlers.ts) and `queueTierProjection` (trust/page-write.ts) through typed members
+(`src/core/engine-sql/row-tier.ts`), for a fact, a take or a page:
+
+- `readRowTrustTier(table, id)`: `{ trust_tier }`, or null for no row.
+- `setRowTrustTier(table, id, tier, decision)`: the tier by name, and `owner_decision` merged into `write_origin`
+  (`COALESCE(write_origin, '{}') || jsonb_build_object('owner_decision', decision)`); `[id]`, or `[]` for no row. The
+  stamp runs as an UPDATE that names both columns: a raise needs the promotion the caller opens, an undeclared writer's
+  raise is refused, a lowering is kept. A page goes through the page trust restore (`pages.rs`).
+- `readTierProjectionPage(table, id)`: `{ source_id, slug }` of a fact's markdown page (none without one), a take's page
+  or the page itself, in any state.
+
+The members add no keys.
+
 ## Label guards (`trust::label_guards`)
 
 The `page_label_guards` table (GST-2521): the trust tier an owner label write set on a page. One record per page:

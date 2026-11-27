@@ -12,7 +12,7 @@
  * triggered skill near the line does not reorder a live session.
  */
 import { createHash, randomBytes } from 'node:crypto';
-import { existsSync, readdirSync, readFileSync, renameSync, rmSync, statSync } from 'node:fs';
+import { closeSync, existsSync, openSync, readdirSync, readFileSync, renameSync, rmSync, statSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { VERSION } from '../../../version.ts';
 import { ResolverError } from './errors.ts';
@@ -26,7 +26,8 @@ import { applyRouting, JSON_INPUT_CAP_BYTES, mergeSkillFolders, readBundledSourc
 import { TOKENIZER_ID } from './tokenize.ts';
 import { BLOCK_TOKEN_CAP, BLOCK_TOKENIZER, HARNESSES } from './block.ts';
 import { readResolverSettings } from './config.ts';
-import { PICKER_DESCRIPTION_CHARS } from './router.ts';
+import { PICKER_DESCRIPTION_CHARS, PICKER_PROMPT_VERSION } from './router.ts';
+import { embedCatalog, turnEmbedder, VECTOR_RETRY_CODES, vectorsIneligible, type VectorsReceipt, type VectorsSkip } from './vectors.ts';
 
 export const RECEIPT_SCHEMA_VERSION = 1;
 export const T_SHARE_ON = 0.25;
@@ -67,6 +68,8 @@ export interface BuildReceipt {
   ranker: { id: string; version: number; variant: Variant; params: (typeof VARIANT_PARAMS)[Variant]; calibration_split_sha256: string; tokenizer: string; k: number; hint_chars: number; trigger_share: number };
   index: { file: 'index.bin'; index_hash: string; size: number; n_terms: number; n_postings: number; truncated_skills: number };
   block: { token_cap: number; tokenizer: string };
+  /** The skill vectors beside the index (vectors.bin), or why the catalog has none. */
+  vectors: VectorsReceipt | VectorsSkip;
   build: { args: string[]; rebuild_argv: string[] | null; ms: number; built_at: string; generation: number };
 }
 
@@ -99,7 +102,7 @@ const bodyHash = (s: SkillRecord) => sha(s.body);
 
 /** sha256 over every effective input that affects ranking, eligibility or loading. */
 export function catalogHash(skills: readonly SkillRecord[], skipped: readonly SkippedSkill[], routingRows: number, scope: string): string {
-  const rows = skills.map(s => [s.id, s.name, s.description, s.whenToUse ?? '', s.triggers, s.routing, bodyHash(s), s.path ?? '', s.namespace ?? '']);
+  const rows = skills.map(s => [s.id, s.name, s.description, s.whenToUse ?? '', s.triggers, s.routing, bodyHash(s), s.path ?? '', s.namespace ?? '', ...(s.deprecated ? [{ deprecated: s.replacedBy ?? true }] : [])]);
   const skips = skipped.map(k => [k.reason, k.id ?? '', k.path ?? '', k.kept ?? '']).sort((a, b) => (JSON.stringify(a) < JSON.stringify(b) ? -1 : 1));
   return sha(JSON.stringify({ v: 1, skills: rows, skipped: skips, routing_rows: routingRows, scope }));
 }
@@ -194,21 +197,40 @@ async function prepare(input: BuildInput): Promise<Prepared> {
 
 const removedError = () => new ResolverError('skill_index_removed', 'The catalog was removed while this build ran, so nothing was published.', { suggestion: 'Run the build again if the catalog should exist.' });
 
-export async function buildSkillIndex(input: BuildInput, opts: { home?: string; now?: () => number } = {}): Promise<BuildReceipt> {
+export async function buildSkillIndex(input: BuildInput, opts: { home?: string; now?: () => number; env?: NodeJS.ProcessEnv } = {}): Promise<BuildReceipt> {
   const started = performance.now();
   validateBuild(input);
   const home = opts.home ?? resolverHome();
   const dir = catalogDir(home, input.catalog);
   ensureDir(dir);
+  const dirId = (): string | null => { try { const s = statSync(dir, { bigint: true }); return `${s.dev}:${s.ino}`; } catch { return null; } };
+  let pin: number | null = null;
+  try { pin = openSync(dir, 'r'); } catch { /* a platform that cannot open a directory compares the path's identity alone */ }
+  const unpin = () => { if (pin !== null) { try { closeSync(pin); } catch { /* closed */ } pin = null; } };
+  const born = dirId();
   const previous = readReceipt(home, input.catalog);
-  const lease = await acquireLease(join(dir, 'lock'), { purpose: 'build', leaseMs: BUILD_LEASE_MS, generation: (previous?.build.generation ?? 0) + 1, retries: 3, waitMs: 250, now: opts.now });
+  const scope = input.scope ?? 'user';
+  const env = opts.env ?? process.env;
+  const ineligible = vectorsIneligible(input.harness, scope);
+  let early: Prepared | null = null;
+  let earlyVectors: Awaited<ReturnType<typeof embedCatalog>> | null = null;
+  let lease: Awaited<ReturnType<typeof acquireLease>>;
+  try {
+    early = ineligible === null && !('skip' in turnEmbedder(home, env)) ? await prepare(input).catch(() => null) : null;
+    earlyVectors = early ? await embedCatalog(early.records, early.catalog_hash, ineligible, home, env) : null;
+    lease = await acquireLease(join(dir, 'lock'), { purpose: 'build', leaseMs: BUILD_LEASE_MS, generation: (previous?.build.generation ?? 0) + 1, retries: 3, waitMs: 250, now: opts.now });
+  } catch (e) {
+    unpin();
+    throw (e as NodeJS.ErrnoException)?.code === 'ENOENT' ? removedError() : e;
+  }
+  if (dirId() !== born) { releaseLease(lease); unpin(); throw removedError(); }
   const { args, fix } = buildArgs(input);
   try {
     const p = await prepare(input);
     const { variant, share } = chooseVariant(p.records, previous?.ranker.variant);
     const { bytes, truncatedSkills } = encodeIndex(p.records, variant);
     const header = JSON.parse(new TextDecoder().decode(bytes.subarray(44, 44 + new DataView(bytes.buffer).getUint32(8, true))));
-    const scope = input.scope ?? 'user';
+    const vectors = earlyVectors && early!.catalog_hash === p.catalog_hash ? earlyVectors : await embedCatalog(p.records, p.catalog_hash, ineligible, home, env);
     const receipt: BuildReceipt = {
       schema_version: RECEIPT_SCHEMA_VERSION, gbrain_version: VERSION, gbrain_commit: gbrainCommit(),
       catalog: {
@@ -223,14 +245,16 @@ export async function buildSkillIndex(input: BuildInput, opts: { home?: string; 
       ranker: { id: RANKER_ID, version: RANKER_VERSION, variant, params: VARIANT_PARAMS[variant], calibration_split_sha256: CALIBRATION_SPLIT_SHA256, tokenizer: TOKENIZER_ID, k: 5, hint_chars: HINT_CHARS, trigger_share: share },
       index: { file: 'index.bin', index_hash: sha(bytes), size: bytes.length, n_terms: header.n_terms, n_postings: header.n_postings, truncated_skills: truncatedSkills },
       block: { token_cap: BLOCK_TOKEN_CAP, tokenizer: BLOCK_TOKENIZER },
+      vectors: 'bytes' in vectors ? vectors.receipt : VECTOR_RETRY_CODES.includes(vectors.skipped) ? { ...vectors, attempts: (previous?.vectors && 'skipped' in previous.vectors && VECTOR_RETRY_CODES.includes(previous.vectors.skipped) ? previous.vectors.attempts ?? 1 : 0) + 1 } : vectors,
       build: { args, rebuild_argv: fix, ms: 0, built_at: new Date((opts.now ?? Date.now)()).toISOString(), generation: lease.record.generation },
     };
-    if (!holdsLease(lease) || !existsSync(dir)) throw removedError();
+    if (!holdsLease(lease) || dirId() !== born) throw removedError();
     try {
       if (p.source.kind === 'json') writeFileDurable(join(dir, 'source.json'), p.source.snapshot!);
       if (p.source.fingerprint) writeFileDurable(join(dir, 'fingerprint.json'), JSON.stringify({ fingerprint: p.source.fingerprint, routing: p.routing?.stat ?? null }));
       writeFileDurable(join(dir, 'index.bin'), bytes);
-      writeFileDurable(join(dir, 'picker.json'), `${JSON.stringify({ v: 1, catalog_hash: p.catalog_hash, skills: p.records.map(s => [s.id, pickerDescription(s.description)]) })}\n`);
+      if ('bytes' in vectors) writeFileDurable(join(dir, 'vectors.bin'), vectors.bytes); else rmSync(join(dir, 'vectors.bin'), { force: true });
+      writeFileDurable(join(dir, 'picker.json'), `${JSON.stringify({ v: 1, catalog_hash: p.catalog_hash, prompt_version: PICKER_PROMPT_VERSION, skills: p.records.map(s => [s.id, pickerDescription(s.description)]) })}\n`);
       receipt.build.ms = Math.round(performance.now() - started);
       writeFileDurable(join(dir, 'receipt.json'), `${JSON.stringify(receipt, null, 2)}\n`);
     } catch (e) {
@@ -242,11 +266,12 @@ export async function buildSkillIndex(input: BuildInput, opts: { home?: string; 
     return receipt;
   } catch (e) {
     try {
-      if (existsSync(dir)) writeFileDurable(join(dir, 'build.log'), `${JSON.stringify({ at: new Date().toISOString(), code: e instanceof ResolverError ? e.code : 'skill_resolver_internal', message: e instanceof ResolverError ? e.message : (e as Error).name })}\n`);
+      if (dirId() === born) writeFileDurable(join(dir, 'build.log'), `${JSON.stringify({ at: new Date().toISOString(), code: e instanceof ResolverError ? e.code : 'skill_resolver_internal', message: e instanceof ResolverError ? e.message : (e as Error).name })}\n`);
     } catch { /* best effort */ }
     throw e;
   } finally {
     releaseLease(lease);
+    unpin();
   }
 }
 

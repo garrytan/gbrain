@@ -50,6 +50,7 @@ import { claimStateOf, type ClaimState } from './claim-phase.ts';
 import { readPreparationPolicy } from './switches.ts';
 import { listHostConsumers } from './consumer-heartbeat.ts';
 import type { DrainHolder } from './sync-lease.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 
 export type MovementState = 'moving' | 'held' | 'parked' | 'not_moving' | 'nothing_pending' | 'unknown';
 /** #6781: why a source's movement is `unknown`; `error` is the failed read's message, bounded. */
@@ -121,7 +122,7 @@ export async function liveSyncJob(engine: BrainEngine, sourceId: string, liveHol
     : await (await import('./sync-lease.ts')).readDrainLease(engine, sourceId).then(lease => lease?.live ? lease.holder : null, () => null);
   if (holder?.kind === 'job' && holder.id && /^\d+$/.test(holder.id)) return Number(holder.id);
   // The lease's beacon row (sync-lease.ts) is for older binaries; this build reads the lease holder above.
-  return engine.readLiveSyncJobId(sourceId).catch(() => null);
+  return engine.readLiveSyncJobId(sourceId).catch((error: unknown) => { rethrowCapabilityRefusal(error); return null; });
 }
 
 /** The movement of every active managed source (or of `sourceIds`), one bounded read each; sources without a binding are omitted. */

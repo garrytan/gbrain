@@ -8,7 +8,7 @@ use gbrain_store::cli_reads::import::{PageTrustKey, PageTrustLookup};
 use gbrain_store::error::*;
 use gbrain_store::pages::{
     PageFilters, PageInput, PageTrustRestore, PutPageOptions, ReadScope, VersionReasonStamp,
-    VersionsOptions,
+    VersionsOptions, validate_slug,
 };
 use gbrain_store::{Store, sources::SourceInput};
 use serde_json::{Value, json};
@@ -823,6 +823,38 @@ fn the_holding_prune_keeps_the_newest_five_versions_and_marks_the_gap() {
     assert_eq!(store.prune_holding_page_versions(-1).unwrap(), 0);
 }
 
+#[test]
+fn no_version_prune_touches_an_agent_policy_page() {
+    let dir = TempDir::new("pages-policy-prune");
+    let store = open(&dir);
+    let policy = |slug: &str| PageInput {
+        page_type: "agent_policy".into(),
+        ..input(slug, "rules")
+    };
+    let page_id = store
+        .put_page(
+            "policy/agent",
+            &policy("policy/agent"),
+            &PutPageOptions::default(),
+        )
+        .unwrap()["id"]
+        .as_i64()
+        .unwrap();
+    for _ in 0..8 {
+        store.create_version("policy/agent", None).unwrap();
+    }
+    let count = || {
+        store
+            .get_versions("policy/agent", &VersionsOptions::default())
+            .unwrap()
+            .len()
+    };
+    let before = count();
+    assert!(before > 5);
+    assert_eq!(store.prune_holding_page_versions(page_id).unwrap(), 0);
+    assert_eq!(count(), before);
+}
+
 fn trust_of(store: &Store, slug: &str) -> (String, Option<Value>) {
     let rows = store
         .read_page_trust_rows(&PageTrustLookup {
@@ -1161,5 +1193,27 @@ fn an_alias_read_follows_a_rename_alias_and_an_exact_slug_wins() {
     assert_eq!(
         read("notes/old", json!({"resolveAlias": true})).as_deref(),
         Some("notes/old")
+    );
+}
+
+#[test]
+fn a_decomposed_slug_is_stored_composed_and_read_by_its_composed_spelling() {
+    let dir = TempDir::new("pages-nfc-slug");
+    let store = open(&dir);
+    // "people/zoe\u{308}-example" (e + combining diaeresis), and an uppercase "E\u{301}" that lowercases then composes.
+    let stored = put(&store, "people/zoe\u{308}-example", "Zoe.");
+    assert_eq!(stored["slug"], json!("people/zo\u{eb}-example"));
+    let snapshot = store
+        .read_page_snapshot("people/zo\u{eb}-example", &ReadScope::default())
+        .unwrap()
+        .unwrap();
+    assert_eq!(snapshot["page"]["slug"], json!("people/zo\u{eb}-example"));
+    assert_eq!(
+        validate_slug("Notes/CAFE\u{301}").unwrap(),
+        "notes/caf\u{e9}"
+    );
+    assert_eq!(
+        validate_slug("Unicode/I\u{307}").unwrap(),
+        "unicode/i\u{307}"
     );
 }
