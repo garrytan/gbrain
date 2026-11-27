@@ -26,6 +26,7 @@ import { dispatchToolCall } from '../../src/mcp/dispatch.ts';
 import { prefixAnchoredPages } from '../../src/core/search/entity-anchor.ts';
 import { retrieveEvidence } from '../../src/core/questions/refresh.ts';
 import type { PinRow } from '../../src/core/questions/store.ts';
+import { rethrowRoutedStop } from '../helpers/rust-by-design-stop.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -170,7 +171,8 @@ describe('engine parity: search-caller reads that stopped a user command on Rust
   /**
    * The refresh's evidence read: the prefix-anchored pages come first. On Rust this case still stops, after the anchored
    * read, at retrieveEvidence's own raw reads (src/core/questions/refresh.ts, the candidate pages, published answers,
-   * facts, timeline and takes), which a follow-up item serves; it is an unpinned stop, counted in the tally.
+   * facts, timeline and takes): a named stop (RUST_ENGINE.md row 57) until the questions family is ported as one whole,
+   * after Dec 1.
    */
   parityTest('gbrain questions refresh of a slug-prefix pin gathers the prefix-anchored pages first', {
     methods: ['putPage', 'readPrefixAnchoredPages'],
@@ -181,7 +183,9 @@ describe('engine parity: search-caller reads that stopped a user command on Rust
     }
     const pin = { id: 1, source_id: 'default', slug: 'questions/widget-status', question: 'What is the widget status?', scope_slug_prefix: 'projects/widget/',
       scope_entity: null } as unknown as PinRow;
-    const evidence = await retrieveEvidence(engine, pin);
+    // The Rust arm's stop, by name (RUST_ENGINE.md row 57): the evidence reads are raw SQL, and a Rust brain refuses
+    // `gbrain questions` at dispatch, so no Rust caller reaches retrieveEvidence until the questions family is ported.
+    const evidence = await retrieveEvidence(engine, pin).catch((e: unknown) => rethrowRoutedStop(e, 'executeRaw', '57'));
     const pages = evidence.filter(e => e.kind === 'page').map(e => e.page_slug);
     expect(pages.slice(0, 3)).toEqual(['projects/widget/n3', 'projects/widget/n2', 'projects/widget/n1']);
     return pages;
