@@ -167,8 +167,10 @@ drop, and its bound store's `commit_transaction` / `rollback_transaction` refuse
   skips at most 1024 ids per sequence. Not covered: a promoted follower, whose copy carries no reservation (see
   `occ_kv.rs`, "Id sequences").
 - `holdPageKeys` also takes the keys in the brain's single-flight table until the transaction ends: sorted; a
-  transaction that holds no key, or is older than the holder, waits (bounded by the deadline, then `timeout` reason
-  `key_wait`); a younger one that already holds a key is refused and runs again keeping its age (`transactionAge()`).
+  transaction that holds no key, or is older than the holder and every waiter ahead of it, waits (bounded by the
+  deadline, then `timeout` reason `key_wait`); a younger one that already holds a key is refused and runs again keeping
+  its age (`transactionAge()`). Waiters for one key take it first come, first served: a newcomer never takes a key
+  ahead of a transaction already waiting for it. The same order holds for a rerun queued on its retry keys.
   A waiter that has read nothing reads on from after the holder's commit.
 - `deadlineAtMs` is checked at each statement and when the commit runs; past it the transaction ends `timeout` reason
   `transaction_deadline`. Once the commit is handed to the pipeline, its answer is the result.

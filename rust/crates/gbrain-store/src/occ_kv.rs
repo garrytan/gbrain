@@ -28,7 +28,8 @@
 //! key it lost a conflict on (in key order, so two retries cannot deadlock). A first attempt that
 //! reads a key another transaction holds this way stops at once with `write_conflict` and is
 //! retried behind the lock. Many writers of one page then wait in line, as on a Postgres row
-//! lock, instead of all retrying together.
+//! lock, instead of all retrying together. The line is first come, first served: a freed key goes
+//! to the retry that has waited longest, and a newcomer joins the back.
 //!
 //! An exclusive write (`Kv::begin_write_exclusive`, the base of an explicit transaction) stops the
 //! pipeline after the commits queued before it and holds it until the exclusive write commits or
@@ -62,7 +63,7 @@ use crate::error::{Result, STORE_CLOSED, STORE_CORRUPT, StoreError, WRITE_CONFLI
 use crate::kv::{CounterCheck, Kv, KvRead, KvWrite};
 use crate::redb_kv::{RedbKv, reject_reserved};
 use std::cell::RefCell;
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::ops::Bound;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, Sender, SyncSender, channel, sync_channel};
@@ -261,17 +262,59 @@ impl OccStats {
 
 #[derive(Default)]
 struct KeyLocks {
-    held: Mutex<HashMap<Vec<u8>, u64>>,
+    table: Mutex<KeyTable>,
     released: Condvar,
     /// How many keys are held, so a read can skip the mutex when none are.
     count: AtomicUsize,
     next_owner: AtomicU64,
 }
 
+/// The held keys and, per busy key, its waiters in arrival order.
+#[derive(Default)]
+struct KeyTable {
+    held: HashMap<Vec<u8>, u64>,
+    /// A key is taken by the first owner in its queue once it is free; a newcomer that finds the
+    /// key held or a queue already waiting joins the back (first come, first served).
+    queued: HashMap<Vec<u8>, VecDeque<u64>>,
+}
+
+impl KeyTable {
+    /// True when `owner` may take `key` now: nobody holds it and nobody waits ahead of `owner`.
+    fn turn(&self, key: &[u8], owner: u64) -> bool {
+        !self.held.contains_key(key)
+            && self
+                .queued
+                .get(key)
+                .is_none_or(|q| q.front().is_none_or(|o| *o == owner))
+    }
+
+    /// Takes `owner` out of `key`'s queue.
+    fn leave(&mut self, key: &[u8], owner: u64) {
+        if let Some(q) = self.queued.get_mut(key) {
+            q.retain(|o| *o != owner);
+            if q.is_empty() {
+                self.queued.remove(key);
+            }
+        }
+    }
+}
+
+fn key_wait_timeout() -> StoreError {
+    StoreError::timeout(
+        "key_wait",
+        "the write waited for a busy key past its deadline; nothing was committed",
+    )
+}
+
 impl KeyLocks {
-    /// Takes every key in `keys`, in order, waiting for each one that another owner holds. With a
+    /// Takes every key in `keys`, in order, waiting for each one that another owner holds or that
+    /// earlier callers already wait for: waiters for one key take it in the order they came. With a
     /// deadline, a wait that reaches it ends `timeout` (reason `key_wait`) and gives back every key
     /// this call already took: the guard owns each key from the moment it is taken.
+    ///
+    /// No wait cycle can form: every caller takes its keys in sorted order and holds nothing from
+    /// before the call, so a waiter waits only for owners of keys at or after its own (a holder of
+    /// the key waits for a later key, a waiter ahead of it for the same key).
     fn acquire(
         self: &Arc<Self>,
         keys: &BTreeSet<Vec<u8>>,
@@ -283,46 +326,51 @@ impl KeyLocks {
             owner,
             keys: Vec::with_capacity(keys.len()),
         };
-        let mut held = self.held.lock().unwrap_or_else(|p| p.into_inner());
+        let mut table = self.table.lock().unwrap_or_else(|p| p.into_inner());
         for key in keys {
-            let mut waited = false;
-            while held.get(key).is_some_and(|o| *o != owner) {
-                waited = true;
-                held = match deadline {
-                    None => self.released.wait(held).unwrap_or_else(|p| p.into_inner()),
-                    Some(at) => {
-                        let now = Instant::now();
-                        if now >= at {
-                            // Release the map before the guard gives back the keys it took.
-                            drop(held);
-                            drop(guard);
-                            return Err(StoreError::timeout(
-                                "key_wait",
-                                "the write waited for a busy key past its deadline; nothing was committed",
-                            ));
+            if table.held.get(key) == Some(&owner) {
+                continue;
+            }
+            if !table.turn(key, owner) {
+                table
+                    .queued
+                    .entry(key.clone())
+                    .or_default()
+                    .push_back(owner);
+                while !table.turn(key, owner) {
+                    table = match deadline {
+                        None => self.released.wait(table).unwrap_or_else(|p| p.into_inner()),
+                        Some(at) => {
+                            let now = Instant::now();
+                            if now >= at {
+                                table.leave(key, owner);
+                                // Release the table before the guard gives back the keys it took.
+                                drop(table);
+                                self.released.notify_all();
+                                drop(guard);
+                                return Err(key_wait_timeout());
+                            }
+                            self.released
+                                .wait_timeout(table, at - now)
+                                .unwrap_or_else(|p| p.into_inner())
+                                .0
                         }
-                        self.released
-                            .wait_timeout(held, at - now)
-                            .unwrap_or_else(|p| p.into_inner())
-                            .0
-                    }
-                };
+                    };
+                }
+                table.leave(key, owner);
+                // A key freed just as the deadline passed is not taken after it; the next waiter is.
+                if deadline.is_some_and(|at| Instant::now() >= at) {
+                    drop(table);
+                    self.released.notify_all();
+                    drop(guard);
+                    return Err(key_wait_timeout());
+                }
             }
-            // A key freed just as the deadline passed is not taken after it.
-            if waited && deadline.is_some_and(|at| Instant::now() >= at) {
-                drop(held);
-                drop(guard);
-                return Err(StoreError::timeout(
-                    "key_wait",
-                    "the write waited for a busy key past its deadline; nothing was committed",
-                ));
-            }
-            if held.insert(key.clone(), owner).is_none() {
-                self.count.fetch_add(1, Ordering::Release);
-                guard.keys.push(key.clone());
-            }
+            table.held.insert(key.clone(), owner);
+            self.count.fetch_add(1, Ordering::Release);
+            guard.keys.push(key.clone());
         }
-        drop(held);
+        drop(table);
         Ok(guard)
     }
 
@@ -331,8 +379,8 @@ impl KeyLocks {
         if self.count.load(Ordering::Acquire) == 0 {
             return false;
         }
-        let held = self.held.lock().unwrap_or_else(|p| p.into_inner());
-        held.contains_key(key)
+        let table = self.table.lock().unwrap_or_else(|p| p.into_inner());
+        table.held.contains_key(key)
     }
 }
 
@@ -344,14 +392,14 @@ struct LockGuard {
 
 impl Drop for LockGuard {
     fn drop(&mut self) {
-        let mut held = self.locks.held.lock().unwrap_or_else(|p| p.into_inner());
+        let mut table = self.locks.table.lock().unwrap_or_else(|p| p.into_inner());
         for key in &self.keys {
-            if held.get(key) == Some(&self.owner) {
-                held.remove(key);
+            if table.held.get(key) == Some(&self.owner) {
+                table.held.remove(key);
                 self.locks.count.fetch_sub(1, Ordering::Release);
             }
         }
-        drop(held);
+        drop(table);
         self.locks.released.notify_all();
     }
 }
@@ -1559,6 +1607,10 @@ impl KvWrite for OccTxn {
         result
     }
 }
+
+#[cfg(test)]
+#[path = "occ_kv_fairness_tests.rs"]
+mod key_lock_fairness_tests;
 
 #[cfg(all(test, feature = "sim"))]
 mod sim_seam_tests {
