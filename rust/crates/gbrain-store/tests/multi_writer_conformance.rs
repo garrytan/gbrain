@@ -38,7 +38,7 @@ use gbrain_store::persistence::{
     WriteCompletion, WriteRequestInsert,
 };
 use gbrain_store::{FORMAT_VERSION, Kv, OpenOptions, Store, StoreError};
-use memory_env::{Brain, brain, brain_in};
+use memory_env::{Brain, brain};
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::{BufRead, Write};
