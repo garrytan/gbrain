@@ -71,8 +71,11 @@ export function resolvedMultiuser(engine: unknown): boolean | undefined {
 }
 
 export function rustMultiuserResolution(engine: unknown): MuResolution {
-  const e = engine as { ownerRole?: unknown; openStoreIfOpen?: (member: string) => unknown };
+  const e = engine as { ownerRole?: unknown; openStoreIfOpen?: (member: string) => unknown; capabilities?: Set<string> };
   if (e.ownerRole === 'client') return 'client';
+  // A served client (GBRAIN_TEST_RUST_SERVED) has no store; its capabilities mirror its server's hello, which lists
+  // `multi_writer` exactly when the server's store resolved multi-user mode.
+  if (e.capabilities instanceof Set && e.capabilities.has('served')) return e.capabilities.has('multi_writer') ? 'on' : 'off';
   const store = e.openStoreIfOpen?.('multiuserSwitch') as { multiuser?: unknown } | null | undefined;
   if (store === null || store === undefined) return 'closed';
   if (typeof store.multiuser !== 'boolean') return 'unexposed';
