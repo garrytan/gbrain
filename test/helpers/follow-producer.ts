@@ -236,3 +236,23 @@ export async function finishedNestedIsNotBusy(primary: BrainEngine): Promise<voi
   const items = h.batches.flatMap((b) => b.items);
   if (items.some((i) => i.kind === 'relation' && i.reason === 'pre_read_busy')) throw new Error(`a finished nested transaction made the next write busy: ${JSON.stringify(items)}`);
 }
+
+/** An unawaited followed write inside a nested transaction that then throws stays rolled back with it, and an awaited one inside a nested transaction never waits on that transaction. */
+export async function nestedFollowedWritesStayInTheirSavepoint(primary: BrainEngine): Promise<void> {
+  const h = followHarness(primary);
+  await primary.setConfig('test.follow.rollback', 'keep');
+  await primary.setConfig('test.follow.awaited', 'drop');
+  let pending: Promise<unknown> | undefined;
+  const t0 = Date.now();
+  await h.engine.transaction(async (tx) => {
+    await tx.transaction(async (inner) => { pending = inner.unsetConfig('test.follow.rollback').catch(() => undefined); throw new Error('abort'); }).catch(() => undefined);
+    await pending;
+    await tx.transaction(async (inner) => { await inner.unsetConfig('test.follow.awaited'); });
+  });
+  const ms = Date.now() - t0;
+  const value = async (key: string) => (await primary.executeRaw<{ value: string }>('SELECT value FROM config WHERE key = $1', [key]))[0]?.value;
+  if ((await value('test.follow.rollback')) !== 'keep') throw new Error('the unawaited write escaped its nested rollback');
+  if ((await value('test.follow.awaited')) !== undefined) throw new Error('the awaited nested write did not commit');
+  if (ms > 1_500) throw new Error(`a write inside a nested transaction waited on that transaction (${ms} ms)`);
+  if (h.batches.flatMap((b) => b.items).some((i) => i.kind === 'relation' && i.reason === 'pre_read_busy')) throw new Error('a nested write was planned pre_read_busy');
+}
