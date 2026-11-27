@@ -45,29 +45,93 @@ export async function readAtomPageIdentity(engine: SqlEngine, sourceId: string, 
   return row && { pageId: row.id, sourceIncarnation: row.incarnation, revision: row.knowledge_revision };
 }
 
+/**
+ * Record a scan of the page's current content. `inputSha256` (a successful complete scan only) is the digest of the
+ * model input it read (atomInputDigest); a later content hash whose input digests the same reuses its atoms
+ * (reusableAtomScan). GST-4020: a failure clears the row's completion, so a page offered again on content it had
+ * completed (a newer world withdrawal, a revert) stays retryable instead of reading as done.
+ */
 export async function writeAtomPageState(
-  engine: SqlEngine, sourceId: string, item: AtomPageInput, outcome: 'complete' | 'failure',
+  engine: SqlEngine, sourceId: string, item: AtomPageInput, outcome: 'complete' | 'failure', inputSha256?: string,
 ): Promise<number> {
   if (!item.identity) throw new AtomPageStateError('unpinned');
   const { pageId, sourceIncarnation, revision } = item.identity;
   const [row] = await engine.executeRaw<{ fail_count: number }>(
-    `INSERT INTO extract_atoms_page_state (source_incarnation, page_id, content_hash, fail_count, tombstoned)
-      SELECT s.incarnation, p.id, p.content_hash, $7::integer, $8::boolean
+    `INSERT INTO extract_atoms_page_state (source_incarnation, page_id, content_hash, fail_count, tombstoned, input_sha256)
+      SELECT s.incarnation, p.id, p.content_hash, $7::integer, $8::boolean, $9::text
       FROM pages p JOIN sources s ON s.id=p.source_id
       WHERE p.id=$1 AND s.incarnation=$2::uuid AND p.source_id=$3 AND p.slug=$4
         AND p.content_hash=$5 AND p.knowledge_revision=$6::uuid AND p.deleted_at IS NULL
       FOR SHARE OF p, s
       ON CONFLICT (source_incarnation, page_id, content_hash) DO UPDATE
         SET fail_count=extract_atoms_page_state.fail_count + EXCLUDED.fail_count,
-            tombstoned=extract_atoms_page_state.tombstoned OR EXCLUDED.tombstoned, updated_at=now()
+            tombstoned=EXCLUDED.tombstoned, input_sha256=EXCLUDED.input_sha256, updated_at=now()
       RETURNING fail_count`,
     [pageId, sourceIncarnation, sourceId, item.slug, item.contentHash, revision,
-      outcome === 'failure' ? 1 : 0, outcome === 'complete']).catch((error: unknown) => {
+      outcome === 'failure' ? 1 : 0, outcome === 'complete', outcome === 'complete' ? inputSha256 ?? null : null]).catch((error: unknown) => {
     const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined;
     throw new AtomPageStateError(code === '42P01' ? 'schema' : code === '42501' ? 'denied' : 'storage');
   });
   if (!row) throw new AtomPageStateError('changed');
   return Number(row.fail_count);
+}
+
+/**
+ * GST-4020 (#10435): the atoms an unmanaged page's earlier extraction left, when they are exactly what extracting its
+ * current content would produce, so the page needs no model call; null otherwise. That holds when the page's newest
+ * scan is a complete read (not partial, not a failure tombstone) of the same model input (`inputSha256`, the digest
+ * stored with the scan; a scan written before digests existed never matches), and every atom it left still fits the
+ * page as it stands: none is pending, none carries another date, none is world while the page is now private, and no
+ * extractor atom still names a slug the page was renamed from. A page that fails any of these is extracted again.
+ */
+export async function reusableAtomScan(engine: SqlEngine, sourceId: string, item: AtomPageInput, inputSha256: string,
+  page: { visibility: string; date: string | null }): Promise<string[] | null> {
+  if (!item.identity) return null;
+  const [scan] = await engine.executeRaw<{ content_hash: string; tombstoned: boolean; fail_count: number; partial_input_chars: number | null; input_sha256: string | null }>(
+    `SELECT content_hash, tombstoned, fail_count, partial_input_chars, input_sha256 FROM extract_atoms_page_state
+      WHERE source_incarnation=$1::uuid AND page_id=$2 ORDER BY updated_at DESC LIMIT 1`,
+    [item.identity.sourceIncarnation, item.identity.pageId]);
+  if (!scan?.tombstoned || scan.partial_input_chars !== null || Number(scan.fail_count) >= MAX_DETERMINISTIC_FAILURES
+    || scan.input_sha256 !== inputSha256) return null;
+  const atoms = await engine.executeRaw<{ slug: string; source_slug: string; visibility: string | null; date: string | null; source_hash: string | null }>(
+    `SELECT a.slug, a.frontmatter->>'source_slug' AS source_slug, a.frontmatter->>'visibility' AS visibility,
+       a.frontmatter->>'date' AS date, a.frontmatter->>'source_hash' AS source_hash
+      FROM pages a
+      WHERE a.source_id=$1 AND a.type='atom' AND a.deleted_at IS NULL
+        AND COALESCE(a.frontmatter->>'managed_extraction', '') <> 'true'
+        AND a.frontmatter->>'source_slug' = ANY(ARRAY[$2::text] || ARRAY(${renamedFromSql}))`,
+    [sourceId, item.slug]);
+  const scanned = scan.content_hash.slice(0, 16), current = item.contentHash.slice(0, 16);
+  const fits = atoms.every(atom => atom.source_slug === item.slug && (atom.source_hash === scanned || atom.source_hash === current)
+    && (atom.date ?? '').slice(0, 10) === (page.date ?? '').slice(0, 10) && !(page.visibility === 'private' && atom.visibility !== 'private'));
+  return fits ? atoms.map(atom => atom.slug) : null;
+}
+
+/** SQL (params $1 source id, $2 slug): every slug a rename moved the page now at $2 away from. */
+const renamedFromSql = `SELECT alias_slug FROM slug_aliases WHERE source_id=$1 AND canonical_slug=$2 AND notes='rename'
+  UNION SELECT old_slug FROM slug_rename_history WHERE source_id=$1 AND new_slug=$2`;
+
+/** GST-4020: move reused atoms onto the page's current content hash, as a completed generation does (atoms adapter completeItems). */
+export async function moveReusedAtoms(engine: SqlEngine, sourceId: string, slugs: readonly string[], contentHash: string): Promise<void> {
+  if (!slugs.length) return;
+  await engine.executeRaw(`UPDATE pages SET frontmatter = frontmatter || jsonb_build_object('source_hash', $1::text)
+    WHERE source_id=$2 AND type='atom' AND slug = ANY($3::text[]) AND deleted_at IS NULL`, [contentHash.slice(0, 16), sourceId, [...slugs]]);
+}
+
+/**
+ * GST-4020: the live extractor atoms of an unmanaged page that still name a slug the page was renamed from. Their
+ * origin is this page, so a re-extraction of it supersedes them; left live they keep the visibility of the page as it
+ * was before the rename.
+ */
+export async function renamedOriginAtoms(engine: SqlEngine, sourceId: string, slug: string): Promise<string[]> {
+  const rows = await engine.executeRaw<{ slug: string }>(
+    `SELECT a.slug FROM pages a
+      WHERE a.source_id=$1 AND a.type='atom' AND a.deleted_at IS NULL
+        AND COALESCE(a.frontmatter->>'managed_extraction', '') <> 'true'
+        AND COALESCE(a.frontmatter->>'extracted_by', '') LIKE 'extract\\_atoms%'
+        AND a.frontmatter->>'source_slug' = ANY(ARRAY(${renamedFromSql}))`,
+    [sourceId, slug]);
+  return rows.map(row => row.slug);
 }
 
 const LEGACY_KEYS = ['atoms_scan_hash', 'atoms_fail_hash', 'atoms_fail_count'];
