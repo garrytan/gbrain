@@ -173,7 +173,9 @@ export function readFrames(socket: Socket, onFrame: (frame: Record<string, unkno
  *   server -> client  result frames add `position` ({ sequence, index }) for writes, `cid` (correlation id) for errors
  *   server -> client  { t: 'cbcall', id, cb, key, args }    a callback of call `id` that returns a value
  *   client -> server  { t: 'cbresult', cb, ok, value | error }
- *   client -> server  { t: 'txn', id, op: 'begin' | 'commit' | 'rollback', txn?, read_only? }   (cap `txn`)
+ *   client -> server  { t: 'txn', id, op: 'begin' | 'commit' | 'rollback', txn?, read_only?, rerun_of? }   (cap `txn`)
+ *                     `rerun_of` (begin, top level): the id of this connection's transaction that lost its commit and that
+ *                     this begin runs again; the server starts it with that run's lost keys and age. An unknown id is ignored.
  *
  * Over TCP each frame is a u32 big-endian length, then the JSON header, then `tail_len` bytes of binary tail when the
  * header names one (served/framing.ts). The Unix socket keeps JSON lines. Unknown top-level fields are ignored by

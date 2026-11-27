@@ -15,7 +15,7 @@
  * reason `transaction_deadline`. Once the callback has resolved the timer is disarmed before the commit is sent; the
  * store makes the last deadline check when the commit runs, and its answer is the result.
  */
-import type { AsyncLocalStorage } from 'node:async_hooks';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import type { TransactionOptions } from '../engine.ts';
 import type { CommitPosition } from '../engine-members/commit-log.ts';
 import { opError } from '../ops/contract.ts';
@@ -34,6 +34,45 @@ export interface OptimisticTransactions {
 interface Executor { Pool: new (threads: number) => { shutdown(waitMs: number): Promise<unknown> }; Brain: new (pool: unknown) => StoreBrain }
 
 type Attempt<T> = { kind: 'done'; value: T } | { kind: 'conflict'; error: unknown };
+
+/**
+ * What a rerun of one transaction keeps from the runs before it: the keys they lost on (a rerun queues for them first)
+ * and the first run's single-flight age (a rerun keeps its place, wait-die). In process the retry loop below keeps it;
+ * a transaction over the wire is run again by its client from a fresh server transaction, so the brain server carries
+ * it from the lost run to the client's rerun (served/session-calls.ts) through `withTransactionRerun`.
+ */
+export interface TransactionRerun { readonly keys: Set<string>; readonly age: { value?: number }; claimed?: boolean }
+
+export function newTransactionRerun(): TransactionRerun { return { keys: new Set(), age: {} }; }
+
+const carriedRerun = new AsyncLocalStorage<TransactionRerun>();
+
+/**
+ * Runs `fn` so the first optimistic transaction it opens starts from `rerun` and records its own runs into it. Only
+ * that one transaction claims it; a transaction the callback opens later starts fresh.
+ */
+export function withTransactionRerun<T>(rerun: TransactionRerun, fn: () => T): T {
+  return carriedRerun.run(rerun, fn);
+}
+
+/**
+ * Records the key a call inside a transaction lost on (`write_conflict`) into `rerun`, as a lost commit's key is
+ * recorded below. True when `error` is a lost conflict: the caller's rerun then keeps its place in line.
+ */
+export function noteLostConflict(rerun: TransactionRerun, error: unknown): boolean {
+  if (!isConflict(error)) return false;
+  const lost = conflictHex(error);
+  if (lost) rerun.keys.add(lost);
+  return true;
+}
+
+/** The rerun state the first optimistic transaction inside `withTransactionRerun` starts from; any other starts fresh. */
+export function claimTransactionRerun(): TransactionRerun {
+  const carried = carriedRerun.getStore();
+  if (carried === undefined || carried.claimed) return newTransactionRerun();
+  carried.claimed = true;
+  return carried;
+}
 
 /** How many more times an optimistic transaction's callback runs after a lost commit (interface I-1). */
 export const OPTIMISTIC_TRANSACTION_RETRIES = 8;
@@ -139,10 +178,10 @@ export async function runOptimisticTransaction<T>(
   const signal = opts?.signal;
   if (signal?.aborted) throw transactionAborted(signal);
   const deadlineAt = transactionDeadlineAt();
-  // The keys earlier runs lost on: a rerun queues for them first, as a retried Store::write does.
-  const retryKeys = new Set<string>();
-  // The first run's single-flight age: a rerun keeps it, so it becomes the oldest and gets through (wait-die).
-  const age: { value?: number } = {};
+  // The keys earlier runs lost on (a rerun queues for them first, as a retried Store::write does) and the first run's
+  // single-flight age (a rerun keeps it, so it becomes the oldest and gets through, wait-die); carried in from a lost
+  // run over the wire when the brain server runs a client's rerun.
+  const { keys: retryKeys, age } = claimTransactionRerun();
   for (let attempt = 1; ; attempt++) {
     if (deadlineAt !== undefined && Date.now() >= deadlineAt) throw deadlineError('transaction');
     const outcome = await runAttempt(engine, state, context, opts, deadlineAt, { keys: [...retryKeys].sort(), age }, run);

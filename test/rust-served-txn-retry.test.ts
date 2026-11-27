@@ -27,6 +27,8 @@ import { listenServed, type ServedListener } from '../src/core/rust-engine/serve
 import { connectServedEngine } from '../src/core/rust-engine/served/engine.ts';
 import { OWNER_TOKEN_IDS_CONFIG_KEY } from '../src/core/rust-engine/served/auth.ts';
 import type { ServedServerOptions } from '../src/core/rust-engine/served/session.ts';
+import { connectServed } from '../src/core/rust-engine/served/client.ts';
+import { claimTransactionRerun, OPTIMISTIC_TRANSACTION_RETRIES } from '../src/core/rust-engine/optimistic-transaction.ts';
 
 const TOKEN = 'gbrain_txn_retry_owner_token';
 const ownerInfo = { principal: { kind: 'legacy_token', id: 'tok-1' }, scopes: ['read', 'write', 'admin'], sourceId: 'default', hasSourceGrant: false, member: null, mayActFor: null, attest: null };
@@ -39,6 +41,9 @@ let losses = 0;
 /** Calls inside a transaction the fake fails with the store's write_conflict (a transaction it doomed) before one goes through. */
 let doomed = 0;
 const committed: string[] = [];
+/** Per server transaction: the age and lost keys it started from (the rerun state the brain server carried in). */
+const started: Array<{ age: number; keys: string[] }> = [];
+let nextAge = 0;
 /** Writes the fake took outside any transaction (a call on the engine itself, not on the transaction handle). */
 const outside: string[] = [];
 
@@ -49,6 +54,10 @@ const fake = {
   logIngest: async (entry: { source_ref?: unknown }) => { outside.push(String(entry?.source_ref)); },
   // The optimistic engine on a lost commit: nothing of the run is kept, and the callback runs again (at most 8 more).
   transaction: async (fn: (tx: unknown) => Promise<unknown>) => {
+    // As the optimistic engine does: start from the rerun state the server carries in, keep the first run's age.
+    const rerun = claimTransactionRerun();
+    started.push({ age: rerun.age.value ?? nextAge + 1, keys: [...rerun.keys].sort() });
+    rerun.age.value ??= ++nextAge;
     for (let attempt = 1; ; attempt++) {
       const writes: string[] = [];
       const tx = { ...fake, putPage: async (slug: unknown) => {
@@ -56,7 +65,7 @@ const fake = {
         writes.push(String(slug)); return { slug };
       } };
       const value = await fn(tx);
-      if (losses > 0) { losses--; if (attempt > 8) throw Object.assign(new Error('contention'), { code: 'revision_conflict' }); continue; }
+      if (losses > 0) { losses--; rerun.keys.add(`6d2a${String(started.length).padStart(2, '0')}`); if (attempt > 8) throw Object.assign(new Error('contention'), { code: 'revision_conflict' }); continue; }
       committed.push(...writes);
       return value;
     }
@@ -82,7 +91,7 @@ afterAll(async () => {
 });
 
 const undo: Array<() => void> = [];
-afterEach(() => { for (const u of undo.splice(0)) u(); losses = 0; doomed = 0; committed.length = 0; outside.length = 0; });
+afterEach(() => { for (const u of undo.splice(0)) u(); losses = 0; doomed = 0; committed.length = 0; outside.length = 0; started.length = 0; });
 
 async function servedEngine(): Promise<BrainEngine> {
   const engine = { kind: 'rust', capabilities: new Set<string>() };
@@ -130,5 +139,47 @@ describe('a transaction over the wire that loses its commit', () => {
     expect({ code: error?.code, reason: error?.reason }).toEqual({ code: 'revision_conflict', reason: 'transaction_contention' });
     expect(runs).toBe(9);
     expect(committed).toEqual([]);
+  });
+});
+
+describe('a rerun over the wire keeps its place in line (known red 6: C11 served env starved one writer)', () => {
+  test('each rerun starts from the first run\'s age and every key the runs before it lost on', async () => {
+    const engine = await servedEngine();
+    losses = 2;
+    let runs = 0;
+    await engine.transaction(async tx => { runs++; await tx.putPage(`notes/kept-${runs}`, {} as never); });
+    expect(runs).toBe(3);
+    expect(new Set(started.map(s => s.age)).size, 'a rerun started with a fresh age').toBe(1);
+    expect(started.map(s => s.keys)).toEqual([[], ['6d2a01'], ['6d2a01', '6d2a02']]);
+  });
+
+  test('a fresh transaction, or one on another connection, never takes a lost run\'s place', async () => {
+    const a = await servedEngine();
+    const b = await servedEngine();
+    losses = 1;
+    await a.transaction(async tx => { await tx.putPage('notes/a', {} as never); });
+    await b.transaction(async tx => { await tx.putPage('notes/b', {} as never); });
+    await a.transaction(async tx => { await tx.putPage('notes/a2', {} as never); });
+    expect(started.map(s => s.keys)).toEqual([[], ['6d2a01'], [], []]);
+    expect(new Set(started.map(s => s.age)).size).toBe(3);
+  });
+
+  test('a client that keeps naming its lost run past the rerun bound starts fresh: no client stays the oldest writer forever', async () => {
+    const connection = await connectServed(`gbrain+tcp://127.0.0.1:${listener.port}`, { token: TOKEN });
+    try {
+      let lost: string | undefined;
+      for (let run = 1; run <= OPTIMISTIC_TRANSACTION_RETRIES + 2; run++) {
+        losses = 1;
+        const ref = String(await connection.txn('begin', lost ? { rerunOf: lost } : {}));
+        const outcome = await connection.txn('commit', { txn: ref }).then(() => 'committed', (e: { reason?: string }) => e.reason);
+        expect(outcome).toBe('transaction_conflict');
+        lost = ref;
+      }
+      const ages = started.map(s => s.age);
+      // Runs 1..9 share the first age (the first run and its 8 reruns); the 10th starts fresh.
+      expect(new Set(ages.slice(0, OPTIMISTIC_TRANSACTION_RETRIES + 1)).size).toBe(1);
+      expect(ages[OPTIMISTIC_TRANSACTION_RETRIES + 1]).not.toBe(ages[0]);
+      expect(started[OPTIMISTIC_TRANSACTION_RETRIES + 1]!.keys).toEqual([]);
+    } finally { connection.close(); }
   });
 });

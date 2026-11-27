@@ -85,7 +85,7 @@ export interface ServedConnection extends OwnerConnection {
   /** Sends one call or whole operation; `txn` binds it to an open transaction (served/transaction.ts). */
   request(kind: 'call' | 'fn', member: string, args: unknown[], opts?: { txn?: string }): Promise<unknown>;
   /** Sends a transaction frame and resolves with its value (a transaction id for `begin`). */
-  txn(op: 'begin' | 'commit' | 'rollback', opts: { txn?: string; readOnly?: boolean }): Promise<unknown>;
+  txn(op: 'begin' | 'commit' | 'rollback', opts: { txn?: string; readOnly?: boolean; rerunOf?: string }): Promise<unknown>;
   /** Builds the engine-shaped proxy of a transaction the server holds (set by served/transaction.ts). */
   txProxy?: (ref: string) => unknown;
 }
@@ -459,10 +459,11 @@ export async function connectServed(url: string, opts: ConnectServedOptions = {}
     return send(frame, member, callbacks, ropts.txn, signals, deadlineAt);
   };
 
-  const txn = (op: 'begin' | 'commit' | 'rollback', topts: { txn?: string; readOnly?: boolean }): Promise<unknown> => {
+  const txn = (op: 'begin' | 'commit' | 'rollback', topts: { txn?: string; readOnly?: boolean; rerunOf?: string }): Promise<unknown> => {
     if (closedByUser) return Promise.reject(servedGone('transaction', false));
     const id = nextId++;
-    const frame = { t: 'txn', id, op, ...(topts.txn ? { txn: topts.txn } : {}), ...(topts.readOnly ? { read_only: true } : {}) };
+    const frame = { t: 'txn', id, op, ...(topts.txn ? { txn: topts.txn } : {}), ...(topts.readOnly ? { read_only: true } : {}),
+      ...(topts.rerunOf ? { rerun_of: topts.rerunOf } : {}) };
     return send(frame, 'transaction', new Map(), topts.txn ?? (op === 'begin' ? 'begin' : undefined), new Set(), undefined);
   };
 

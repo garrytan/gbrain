@@ -136,9 +136,14 @@ async function runTransaction<T>(engine: object, connection: ServedConnection, f
   opts: TransactionOptions | undefined, parent?: string, parentHeld: HeldPageKeys | null = null): Promise<T> {
   // A savepoint's lost commit is its top-level transaction's: only the top level runs the callback again.
   if (parent !== undefined) return runTransactionOnce(engine, connection, fn, opts, parent, parentHeld);
-  // One transaction, not a list of items: only a lost commit runs it again; every other failure is the answer.
+  // One transaction, not a list of items: only a lost commit runs it again; every other failure is the answer. A rerun
+  // names the run it repeats, so the server starts it with that run's lost keys and age and it keeps its place in line,
+  // as a rerun in process does (optimistic-transaction.ts); a fresh age each time would lose to every younger writer.
+  const runRef: { begun?: string } = {};
   for (let attempt = 1; ; attempt++) {
-    const outcome = await runTransactionOnce(engine, connection, fn, opts, parent, parentHeld)
+    const rerunOf = runRef.begun;
+    runRef.begun = undefined;
+    const outcome = await runTransactionOnce(engine, connection, fn, opts, parent, parentHeld, { rerunOf, begun: runRef })
       .then(value => ({ value }), (error: unknown) => ({ error }));
     if (!('error' in outcome)) return outcome.value;
     if (!lostCommit(outcome.error)) throw outcome.error;
@@ -160,9 +165,12 @@ function lostCommit(error: unknown): boolean {
 }
 
 async function runTransactionOnce<T>(engine: object, connection: ServedConnection, fn: (tx: BrainEngine) => Promise<T>,
-  opts: TransactionOptions | undefined, parent?: string, parentHeld: HeldPageKeys | null = null): Promise<T> {
+  opts: TransactionOptions | undefined, parent?: string, parentHeld: HeldPageKeys | null = null,
+  rerun?: { rerunOf?: string; begun: { begun?: string } }): Promise<T> {
   if (opts?.signal?.aborted) throw opError('cancelled', 'The transaction was cancelled before it began; nothing was written.', 'Retry the transaction.', { detail: 'member=transaction via=served' });
-  const ref = String(await connection.txn('begin', { ...(parent ? { txn: parent } : {}), ...(opts?.readOnly ? { readOnly: true } : {}) }));
+  const ref = String(await connection.txn('begin', { ...(parent ? { txn: parent } : {}), ...(opts?.readOnly ? { readOnly: true } : {}),
+    ...(rerun?.rerunOf ? { rerunOf: rerun.rerunOf } : {}) }));
+  if (rerun) rerun.begun.begun = ref;
   const tx = transactionHandle(engine, connection, ref, parentHeld);
   let value: T;
   try { value = await fn(tx); }

@@ -16,7 +16,8 @@ import { decodeError, decodeValue, encodeValue, type Wire } from '../owner-ipc/c
 import { OWNER_IPC_ROUTES, ownerCallTimeout, ownerIpcRefusal, ownerMemberOnlyReads } from '../owner-ipc/routes.ts';
 import { withCallerAccess, withoutCallerAccess, type CallerAccess } from '../../search/private-visibility.ts';
 import { heldRowHook } from '../owner-ipc/held-row.ts';
-import { servedCallbackTimeout, servedProtocol, servedTransactionConflict, servedTransactionDeadline } from './errors.ts';
+import { SERVED_TXN_CONFLICT_REASON, servedCallbackTimeout, servedProtocol, servedTransactionConflict, servedTransactionDeadline } from './errors.ts';
+import { newTransactionRerun, noteLostConflict, OPTIMISTIC_TRANSACTION_RETRIES, withTransactionRerun, type TransactionRerun } from '../optimistic-transaction.ts';
 import { restoreTail } from './framing.ts';
 import type { ServedCall, ServedServerOptions, ServedServerSide } from './session.ts';
 import { STORE_RETURNING_MEMBERS as STORE_MEMBERS_RETURNING, servedBrainMethod } from './store-returning.ts';
@@ -33,11 +34,19 @@ function isEngineHandle(value: object): value is BrainEngine {
   }
 }
 
+/** Lost transactions a connection keeps for its client's reruns (one per transaction the client is running again). */
+const MAX_KEPT_RERUNS = 256;
+
 interface OpenTxn {
   engine: BrainEngine;
   /** Ends a transaction the client opened: commit (resolve) or roll back (reject). Absent for a borrowed handle. */
   end?: { commit(): void; rollback(error: unknown): void; settled: Promise<unknown>; timer: ReturnType<typeof setTimeout> };
+  /** What the top-level transaction's runs learned for a rerun (shared by its savepoints); absent for a borrowed handle. */
+  rerun?: CarriedRerun;
 }
+
+/** A top-level transaction's rerun state, and whether a call inside it lost a conflict (the client then runs it again). */
+interface CarriedRerun { state: TransactionRerun; lostInCall: boolean }
 
 export interface SessionCallsContext {
   side: ServedServerSide;
@@ -54,6 +63,12 @@ export interface SessionCallsContext {
 export function sessionCalls(ctx: SessionCallsContext) {
   const { side, opts, writeFrame, encodeErr, replyDirect } = ctx;
   const txns = new Map<string, OpenTxn>();
+  // Top-level transactions of this connection that lost their commit, by id: what their runs kept (the keys they lost on,
+  // their age), so the client's rerun, which names the lost id in its begin (`rerun_of`), keeps its place in line as a
+  // rerun does in process. Taken once; only this connection's own ids are found here; the oldest goes past the bound.
+  // A chain keeps its place for at most the rerun bound (OPTIMISTIC_TRANSACTION_RETRIES, the client's bound too): a
+  // client that runs a transaction again past it starts fresh, so no client can stay the oldest writer by never stopping.
+  const reruns = new Map<string, { state: TransactionRerun; losses: number }>();
   const callbacks = new Map<number, { resolve(v: unknown): void; reject(e: unknown): void; timer: ReturnType<typeof setTimeout>; call: ServedCall }>();
   let nextCallback = 1;
   const caps = { has: (c: string) => ctx.caps().has(c) };
@@ -163,6 +178,8 @@ export function sessionCalls(ctx: SessionCallsContext) {
       const value = await (remote ? withRemoteCaller(true, run) : run());
       writeFrame({ t: 'result', id, ok: true, value: encodeValue(value) }, member);
     } catch (error) {
+      // A call the store refused `write_conflict` makes the client run the transaction again: keep the key for that rerun.
+      if (open.rerun && noteLostConflict(open.rerun.state, error)) open.rerun.lostInCall = true;
       writeFrame({ t: 'result', id, ok: false, error: encodeErr(error) }, member);
     }
   };
@@ -186,7 +203,16 @@ export function sessionCalls(ctx: SessionCallsContext) {
       ended.catch(() => undefined);
       let answered = false;
       let runs = 0;
-      const settled = parent.transaction(async tx => {
+      // A top-level rerun of a transaction this connection lost keeps that transaction's keys and age; any other begin
+      // starts fresh. A savepoint's lost commit is its top-level transaction's, so a savepoint carries nothing.
+      const rerunOf = parentRef === undefined && typeof frame.rerun_of === 'string' ? frame.rerun_of : undefined;
+      const kept = rerunOf !== undefined ? reruns.get(rerunOf) : undefined;
+      if (rerunOf !== undefined) reruns.delete(rerunOf);
+      const losses = kept?.losses ?? 0;
+      const rerun = parentRef === undefined ? kept?.state ?? newTransactionRerun() : null;
+      if (rerun) rerun.claimed = false;
+      const carried: CarriedRerun | undefined = rerun ? { state: rerun, lostInCall: false } : txns.get(parentRef!)?.rerun;
+      const begin = () => parent.transaction(async tx => {
         // A second run means the first run's commit was lost and the engine would run the callback again. The callback
         // here only waits for the client, so a second run would commit nothing and answer success: end it, and the
         // client runs its own callback again (served/engine.ts runTransaction).
@@ -195,11 +221,19 @@ export function sessionCalls(ctx: SessionCallsContext) {
         if (ctx.closed()) throw servedTransactionDeadline(0);
         const timer = setTimeout(() => rollback(servedTransactionDeadline(maxMs)), maxMs);
         timer.unref?.();
-        txns.set(ref, { engine: tx, end: { commit, rollback, settled: ended, timer } });
+        txns.set(ref, { engine: tx, end: { commit, rollback, settled: ended, timer }, ...(carried ? { rerun: carried } : {}) });
         answered = true;
         writeFrame({ t: 'result', id, ok: true, value: ref });
         try { await ended; } finally { clearTimeout(timer); txns.delete(ref); }
       }, frame.read_only === true ? { readOnly: true } : undefined);
+      const settled = rerun ? withTransactionRerun(rerun, begin) : begin();
+      // A lost commit (the engine would run the callback again): keep what its runs learned for the client's rerun.
+      if (rerun) settled.catch((error: unknown) => {
+        if ((error as { reason?: unknown } | null)?.reason !== SERVED_TXN_CONFLICT_REASON && !carried?.lostInCall) return;
+        if (losses + 1 > OPTIMISTIC_TRANSACTION_RETRIES) return;
+        reruns.set(ref, { state: rerun, losses: losses + 1 });
+        if (reruns.size > MAX_KEPT_RERUNS) reruns.delete(reruns.keys().next().value!);
+      });
       // A begin that failed before its callback ran is answered here; a later failure answers the commit.
       settled.catch((error: unknown) => { if (!answered) { answered = true; writeFrame({ t: 'result', id, ok: false, error: encodeErr(error) }); } });
       txnSettled.set(ref, settled);
@@ -239,6 +273,7 @@ export function sessionCalls(ctx: SessionCallsContext) {
     for (const [cb, pending] of callbacks) { clearTimeout(pending.timer); callbacks.delete(cb); pending.reject(servedCallbackTimeout(pending.call.member, 0)); }
     // A transaction the client held rolls back with its connection.
     for (const open of txns.values()) open.end?.rollback(servedTransactionDeadline(0));
+    reruns.clear();
   };
 
   return { rebuildFunction, onCallbackResult, runInTransaction, onTxnFrame, closeCalls };
