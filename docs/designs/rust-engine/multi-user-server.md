@@ -326,6 +326,13 @@ one (served/remote-side-writes.ts); one id outside the caller's read scope refus
 stamp stays best-effort: a failed stamp never fails the read. `test/rust-owner-ipc-remote.test.ts` pins the list to that one
 member; any addition waits for a ruling.
 
+**The one transaction setting.** `OWNER_IPC_REMOTE_TXN_SETTINGS` (owner-ipc/routes.ts) holds exactly `beginSnapshotRead`.
+A remote caller may send it only on a transaction it holds (a frame with `txn`), where it makes that transaction one
+snapshot or read-only and ends with the caller's own commit or rollback. A remote fuzzy `get_page` reads its candidates
+this way in process (ops/pages.ts). Outside a transaction it stays on `OWNER_IPC_REMOTE_DENY`, at the client and at the
+server, and a write inside the caller's transaction stays refused as anywhere else. `test/rust-owner-ipc-remote.test.ts`
+pins the list to that one member.
+
 **Follow-up (A1).** Once per-user access lifts, a non-owner principal's remote `put_page` needs its own privacy and
 visibility parity case (its readers, a private page it may not see, an owner-only source): today only the owner's floor sends
 remote whole operations, so `owner-write-privacy` covers the owner's own key only.
