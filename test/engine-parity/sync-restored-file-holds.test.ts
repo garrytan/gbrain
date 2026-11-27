@@ -22,7 +22,7 @@
  */
 import { describe, expect } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -40,6 +40,7 @@ import { repairRunner } from '../../src/core/repair/registry.ts';
 import { purgeDeletedPagesCoordinated } from '../../src/core/persistence/purge-deleted.ts';
 import { createSource, parityArms } from './harness.ts';
 import { rethrowManagedStop } from '../helpers/rust-by-design-stop.ts';
+import { activatePersistence } from '../../src/core/persistence/activation.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { withEnv } from '../helpers/with-env.ts';
 
@@ -83,10 +84,20 @@ describe('engine parity: a file restored after a delete asks first', () => {
             if (backend !== 'rust') await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
             await createSource(engine, backend, SOURCE, {}, root);
             await claimWorktree(engine, SOURCE, root);
+            // A Rust brain activates through the production path (activatePersistence), as the other managed cases do.
             if (backend !== 'rust') await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+            else await activatePersistence(engine, { confirmQuiesced: true });
             const sync = () => performManagedSync(engine, { sourceId: SOURCE, noPull: true, noEmbed: true, noExtract: true });
-            // The Rust arm's managed stop, by name (RUST_ENGINE.md row 47): the managed sync refuses managed_persistence.
-            await sync().catch((e: unknown) => rethrowManagedStop(e));
+            // The Rust arm's managed stop, by name (RUST_ENGINE.md row 47): the managed sync refuses managed_persistence, or,
+            // with the hold lifted, raw_sql at its first raw read. Either way nothing is half-written: no page of the
+            // source exists and the checkout's files keep their bytes.
+            const files = () => ['ivy', 'jon'].map(n => readFileSync(join(root, 'notes', `${n}.md`), 'utf8'));
+            const before = files();
+            await sync().catch(async (e: unknown) => {
+              const pages = await Promise.all(['notes/ivy', 'notes/jon'].map(slug => engine.readPageSnapshot(slug, { sourceId: SOURCE, includeDeleted: true })));
+              expect({ pages: pages.map(p => p?.page.slug ?? null), files: files() }).toEqual({ pages: [null, null], files: before });
+              return rethrowManagedStop(e);
+            });
             const ctx = { engine, config: { engine: engine.kind }, logger: quiet, dryRun: false, remote: false, sourceId: SOURCE } as unknown as OperationContext;
             const holds = async () => ((await readGitSourceHolds(engine, { sourceIds: [SOURCE] }))[0]?.holds ?? [])
               .map(hold => [hold.path, hold.code, hold.meta.state ?? null, hold.meta.restored ?? null]).sort();
