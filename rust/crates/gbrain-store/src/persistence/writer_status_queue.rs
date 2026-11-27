@@ -530,7 +530,9 @@ pub(crate) fn parked_effect_rows_in(
 /// recovery and not settled, whose code is one of `codes` (a parked effect's code is its first
 /// parked target's code that is one of them), per source and worktree by source id in byte order:
 /// the worktree's first host path in byte order, whether the source is bound elsewhere now, how
-/// many retry and how many are parked, the codes in byte order and the oldest request.
+/// many retry and how many are parked, the codes in byte order, the oldest request, the newest
+/// failed step, the worktree (lowercase), its owner host and the owner's binding path. Groups of
+/// one source go by worktree id in byte order, no worktree last.
 pub(crate) fn git_push_hold_rows_in(
     read: &dyn KvRead,
     codes: &[String],
@@ -542,6 +544,11 @@ pub(crate) fn git_push_hold_rows_in(
         .collect();
     let bindings = scan_records::<SourceBindingRecord>(read, SOURCE_BINDING, "source binding")?;
     let hosts = scan_records::<HostBindingRecord>(read, HOST_BINDING, "host binding")?;
+    let worktrees: BTreeMap<String, WorktreeRecord> =
+        scan_records::<WorktreeRecord>(read, WORKTREE, "worktree")?
+            .into_iter()
+            .map(|w| (w.id.to_lowercase(), w))
+            .collect();
     let listed = |c: &str| codes.iter().any(|x| x == c);
     #[derive(Default)]
     struct Hold {
@@ -549,6 +556,8 @@ pub(crate) fn git_push_hold_rows_in(
         parked: i64,
         codes: BTreeSet<String>,
         oldest: Option<i64>,
+        /// The newest held effect's `last_error` object, keyed by (request time, effect id).
+        last_error: Option<((i64, i64), Value)>,
     }
     type Key = (Option<String>, Option<String>);
     let mut groups: Vec<(Key, Hold)> = Vec::new();
@@ -561,16 +570,22 @@ pub(crate) fn git_push_hold_rows_in(
         let Some(r) = requests.get(&e.request_id).filter(|_| held) else {
             continue;
         };
-        let code = if e.error_code.as_deref() == Some("targets_parked") {
+        // A parked effect's code and failed step come from its first parked entry with a listed code.
+        let (code, last_error) = if e.error_code.as_deref() == Some("targets_parked") {
             match e.data.get("parked") {
                 Some(Value::Array(items)) => items
                     .iter()
-                    .filter_map(|p| json_text(p.as_object().and_then(|o| o.get("error_code"))))
-                    .find(|c| listed(c)),
-                _ => None,
+                    .filter_map(|p| {
+                        let o = p.as_object()?;
+                        let c = json_text(o.get("error_code"))?;
+                        listed(&c).then(|| (Some(c), o.get("last_error").cloned()))
+                    })
+                    .next()
+                    .unwrap_or((None, None)),
+                _ => (None, None),
             }
         } else {
-            e.error_code.clone()
+            (e.error_code.clone(), e.data.get("last_error").cloned())
         };
         let Some(code) = code.filter(|c| listed(c)) else {
             continue;
@@ -594,8 +609,17 @@ pub(crate) fn git_push_hold_rows_in(
         }
         g.codes.insert(code);
         g.oldest = Some(g.oldest.map_or(r.created_at_us, |o| o.min(r.created_at_us)));
+        if let Some(last) = last_error.filter(Value::is_object) {
+            let at = (r.created_at_us, e.id);
+            if g.last_error.as_ref().is_none_or(|(seen, _)| at > *seen) {
+                g.last_error = Some((at, last));
+            }
+        }
     }
-    groups.sort_by(|(a, _), (b, _)| nulls_last(a.0.as_deref(), b.0.as_deref()));
+    groups.sort_by(|(a, _), (b, _)| {
+        nulls_last(a.0.as_deref(), b.0.as_deref())
+            .then_with(|| nulls_last(a.1.as_deref(), b.1.as_deref()))
+    });
     Ok(groups
         .into_iter()
         .map(|((source_id, worktree), g)| {
@@ -612,14 +636,31 @@ pub(crate) fn git_push_hold_rows_in(
                         .as_deref()
                         .is_some_and(|w| b.worktree_id.eq_ignore_ascii_case(w))
             });
+            let owner = worktree
+                .as_ref()
+                .and_then(|w| worktrees.get(w))
+                .and_then(|w| w.owner_host_id.as_ref())
+                .map(|o| o.to_lowercase());
+            let owner_root = worktree.as_ref().zip(owner.as_ref()).and_then(|(w, o)| {
+                hosts
+                    .iter()
+                    .find(|h| {
+                        h.worktree_id.eq_ignore_ascii_case(w) && h.host_id.eq_ignore_ascii_case(o)
+                    })
+                    .map(|h| h.local_path.clone())
+            });
             json!({
                 "source_id": source_id,
                 "root": root,
                 "former_worktree": !bound,
+                "worktree_id": worktree,
+                "owner_host_id": owner,
+                "owner_root": owner_root,
                 "retrying": g.retrying,
                 "parked": g.parked,
                 "codes": g.codes.into_iter().collect::<Vec<_>>(),
                 "oldest_at": g.oldest.map(iso),
+                "last_error": g.last_error.map(|(_, v)| v),
             })
         })
         .collect())

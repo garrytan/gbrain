@@ -1,5 +1,6 @@
 import type { WriteRequest } from './model.ts';
 import type { WithdrawalTarget } from '../facts/withdrawal-discovery.ts';
+import type { GitDiagnostic } from './git-diagnostic.ts';
 import { fenceRepairCommitSubject, type FenceRepairReceipt } from '../fence-repair/receipt.ts';
 import { contentRepairCommitSubject, contentRepairTrailer, type ContentRepairReceipt } from '../content-repair/receipt.ts';
 
@@ -49,7 +50,9 @@ export function adoptedBy(trailers: Iterable<string>): string[] {
   return [...trailers].filter(trailer => trailer.startsWith(key)).map(trailer => trailer.slice(key.length));
 }
 /** `rule`: for `git_target_ignored`, the .gitignore rule that excludes the file (`<file>:<line>: <pattern>`). */
-export interface ParkedTarget { slug?: string; error_code: string; rule?: string }
+export interface ParkedTarget { slug?: string; error_code: string; rule?: string;
+  /** The failed git step, its phase and its reason code when the target parked (git-diagnostic.ts). */
+  last_error?: GitDiagnostic }
 /** #7423 / #7378: a settled target: under a declared db_only dir (`declared`), or its current bytes proved on the fetched remote (effect-settle.ts). */
 export type SettledTarget = { slug: string; declared: string }
   | { slug: string; path: string; remote_ref: string; remote_commit: string; blob: string; receipt_request_id: string };
@@ -118,6 +121,8 @@ export interface PersistenceEffect {
     busy_at?: string;
     /** The target `target_failures` belongs to; a different target starts from zero. */
     failing_target?: string;
+    /** The last failed git step of the current target: phase, step and reason code (git-diagnostic.ts). */
+    last_error?: GitDiagnostic;
     /** Targets set aside after repeated failures; a slugless entry parks the whole effect. */
     parked?: ParkedTarget[];
     /** Parked scan targets an explicit retry authorized for one more attempt. */

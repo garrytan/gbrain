@@ -713,7 +713,15 @@ system config), every page write still commits to the database, but its Git
 effect fails `git_unavailable`: the file stays untracked, the effect is retried
 every 30 seconds, and after 5 failures (about 2.5 minutes) it parks. Its message
 says "a missing Git identity (user.name, user.email) in that checkout is one
-cause to check". Set the identity in the checkout, then retry the parked effects:
+cause to check". `gbrain sync status --source <source>` shows them as
+`git commits held: … at step commit-tree (reason: identity_missing)`; its `--json` has `git_commit_holds` (each with
+the failed step, a reason code from a fixed list, `identity_missing` and `owner_host`). gbrain never stores or prints
+git's own error text, because a filter, hook or credential helper can print a secret or a private path; run the
+failing step in the checkout to read it. When this host owns the checkout (its own binding), `Next:` is a question for the user
+(`ASK THE USER:`, `needs_human: true`): which name and email commits should use. When another host owns it, set the
+identity on that host, which `gbrain sources writer status --source <source>` names. Another failing step (a clean
+filter, a hook) shows its own step and reason (`filter_failed`, `hook_rejected`) instead. Set the identity in the
+checkout, then retry the parked effects:
 
 ```bash
 git -C <checkout> config user.name "<name>"
@@ -721,8 +729,10 @@ git -C <checkout> config user.email "<email>"
 gbrain sources writer retry-effects <source> --parked-code git_unavailable --dry-run
 ```
 
-Run the printed command without `--dry-run` to retry them. This is the same on
-PGLite, Postgres and Rust brains ([troubleshooting](troubleshooting.md#symptom-table)).
+Run the printed command without `--dry-run` to retry them. PGLite and Postgres work this way today. On a Rust brain
+the failure record still refuses `raw_sql` instead of parking until lane 7's typed recovery read lands
+([RUST_ENGINE.md](../designs/RUST_ENGINE.md) conflict row 55); `gbrain sync status` reads the holds the same way there
+([troubleshooting](troubleshooting.md#symptom-table)).
 
 CLI and stdio registrations are durable, separate principals. The CLI lane is
 trusted local administration; stdio remains an untrusted memory caller.

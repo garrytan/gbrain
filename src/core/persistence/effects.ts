@@ -42,6 +42,7 @@ import { isSourceDbOnlySlug } from './source-storage.ts';
 import { advanceEffectCursor, claimCoalescedGitEffects, claimPersistenceEffect, completeEffect, effectClaimStamp, effectClaimKeeper, failEffect, hasRearmableTargets, mirrorGates, parkEffect, rearmWithheldTargets, renewPersistenceEffectClaim, requeueEffect, retryBusyEffect, retryEffect, singleFileGitEffect, type MirrorGate } from './effect-journal.ts';
 import { guardEffectSource, recoverEffectPublication, reserveEffectRecovery } from './effect-recovery.ts';
 import { commitGitTargets, DURABILITY_NOT_ENABLED, gitRootAhead, publishGitEffect, pushGitRoot, type GitEffectOwner } from './effect-git.ts';
+import { gitDiagnosticOf, type GitDiagnostic } from './git-diagnostic.ts';
 import { retryIndexLockParks } from './effect-retry.ts';
 import { assertSegmentedMirrorGate, resumeGatedMirrors } from './segmented-mirror-gate.ts';
 import { gitDurabilityPolicy } from './git-durability-policy.ts';
@@ -717,8 +718,9 @@ async function recordFailure(engine: BrainEngine, effect: PersistenceEffect, err
     derived.counted.push({ effect, code: failureCode });
     return;
   }
-  const [current] = await engine.executeRaw<{ recovering: boolean }>('SELECT recovery IS NOT NULL AS recovering FROM persistence_effects WHERE id=$1', [effect.id]);
-  if (current?.recovering) { await retryEffect(engine, effect, code, 30_000); return; }
+  const recovering = effectRecoverySeam.probe ? await effectRecoverySeam.probe(effect.id)
+    : (await engine.executeRaw<{ recovering: boolean }>('SELECT recovery IS NOT NULL AS recovering FROM persistence_effects WHERE id=$1', [effect.id]))[0]?.recovering;
+  if (recovering) { await retryEffect(engine, effect, code, 30_000); return; }
   // GBRA-133: a target a .gitignore rule excludes fails the same way on every attempt; it parks at once, naming the rule.
   if (code === 'git_target_ignored') { await parkEffectTarget(engine, effect, code, target, (error as OperationError).detail); return; }
   // A retried parked target has exactly one authorized attempt; otherwise the
@@ -726,12 +728,25 @@ async function recordFailure(engine: BrainEngine, effect: PersistenceEffect, err
   const prior = target !== undefined && effect.data.retry_slugs?.includes(target) ? PARK_AFTER_FAILURES - 1
     : effect.data.failing_target === target ? effect.data.target_failures ?? 0 : 0;
   const failures = prior + 1;
+  // The failed step and its reason code replace any earlier one, so a later failure never shows an old cause.
+  const { last_error: _stale, ...data } = effect.data;
+  const lastError = lastErrorOf(error);
   if (failures < PARK_AFTER_FAILURES) {
-    await requeueEffect(engine, effect, { ...effect.data, target_failures: failures, ...(target === undefined ? {} : { failing_target: target }) }, code, 30_000);
+    await requeueEffect(engine, effect, { ...data, target_failures: failures, ...(target === undefined ? {} : { failing_target: target }), ...(lastError ? { last_error: lastError } : {}) }, code, 30_000);
     return;
   }
-  await parkEffectTarget(engine, effect, code, target);
+  await parkEffectTarget(engine, { ...effect, data }, code, target, undefined, lastError);
 }
+
+/** The failed step's diagnostic as the effect stores it (`data.last_error`, and on a parked entry); none for other errors. */
+const lastErrorOf = (error: unknown) => gitDiagnosticOf(error);
+
+/**
+ * Test seam: answers recordFailure's recovery probe instead of its raw read. A Rust brain refuses that raw read
+ * (docs/designs/RUST_ENGINE.md conflict row 55) until lane 7's typed effectRecovering (20da396ebd) lands, so a parity
+ * test that needs a failure recorded on the Rust arm stands it in here, by name; null (the default) keeps the raw read.
+ */
+export const effectRecoverySeam: { probe: ((effectId: string | number) => Promise<boolean>) | null } = { probe: null };
 
 /** Effects whose work is derived from a committed page: they count failures without a target and end terminal at the cap. */
 const DERIVED_KINDS: readonly string[] = ['links', 'facts-backstop'];
@@ -770,10 +785,10 @@ const DEPENDENCY_CODES = ['publish_secret_rebuild_unbounded', 'recovery_required
  * or a failure outside any target, parks the whole effect. Parked work stays
  * retained until `gbrain sources writer retry-effects` authorizes another attempt.
  */
-async function parkEffectTarget(engine: BrainEngine, effect: PersistenceEffect, code: string, target: string | undefined, rule?: string): Promise<void> {
+async function parkEffectTarget(engine: BrainEngine, effect: PersistenceEffect, code: string, target: string | undefined, rule?: string, lastError?: GitDiagnostic): Promise<void> {
   const { target_failures: _failures, failing_target: _target, retry_slugs: retrying = [], ...data } = effect.data;
   const scanning = target !== undefined && (targetedWithdrawalEffect(effect) || effect.data.source_scan === true);
-  const parked = [...(effect.data.parked ?? []), { ...(target ?? effect.data.slug ? { slug: target ?? effect.data.slug } : {}), error_code: code, ...(rule ? { rule } : {}) }];
+  const parked = [...(effect.data.parked ?? []), { ...(target ?? effect.data.slug ? { slug: target ?? effect.data.slug } : {}), error_code: code, ...(rule ? { rule } : {}), ...(lastError ? { last_error: lastError } : {}) }];
   if (!scanning) { await parkEffect(engine, effect, { ...data, ...(retrying.length ? { retry_slugs: retrying } : {}), parked }); return; }
   const remaining = retrying.filter(slug => slug !== target);
   // An embedding scan's next page starts with a full attempt budget, as when the cursor advances.
@@ -990,11 +1005,15 @@ async function runEffectPass(engine: BrainEngine, config: GBrainConfig, opts: Ef
       const pending = unpushed.get(binding.local_path) ?? { binding, items: [] };
       // #7089: an absent target whose removal an earlier attempt committed (its push failed) joins the push like an
       // unchanged one while the root is ahead of its upstream; on a root that is not ahead it completes without a push.
-      const ahead = [...outcomes.values()].some(outcome => !(outcome instanceof OperationError) && outcome.reason === 'target_absent')
-        && await gitRootAhead(binding.local_path, opts.signal);
+      // GCH-03: a probe that cannot answer holds only the absent targets (as a push hold); every other target keeps its own outcome.
+      let ahead = false, probeError: unknown = null;
+      if ([...outcomes.values()].some(outcome => !(outcome instanceof OperationError) && outcome.reason === 'target_absent')) {
+        try { ahead = await gitRootAhead(binding.local_path, opts.signal); } catch (error) { probeError = error; }
+      }
       for (const { effect, path, attempt } of targets) {
         const outcome = outcomes.get(path)!;
         if (outcome instanceof OperationError) await recordFailure(engine, effect, outcome, opts.signal, attempt.target);
+        else if (outcome.reason === 'target_absent' && probeError) await recordFailure(engine, effect, probeError, opts.signal, attempt.target);
         else if (outcome.reason === 'target_absent' && !ahead) await completeEffect(engine, effect, outcome);
         else pending.items.push({ effect, outcome: commits.has(path) ? { ...outcome, commit: commits.get(path) } : outcome, target: attempt.target });
       }

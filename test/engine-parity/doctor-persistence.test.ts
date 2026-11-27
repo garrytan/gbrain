@@ -203,7 +203,11 @@ describe('doctor persistence reads', () => {
           const codes = ['git_push_unavailable', 'push_unconfirmed', 'integrate_conflict', 'publish_secret_found', 'publish_scan_unreadable', 'push_credential_refused'];
           const parked = (await engine.listParkedEffects(null)).map(({ request, ...row }) => ({ request: request.request_id, slug: request.slug, ...row }));
           const holds = (await engine.listGitPushHoldRows(codes, null)).map(row => ({ ...row, root: row.root === null ? null : row.root.split(home).join('$HOME'),
-            oldest_at: new Date(row.oldest_at).getTime() > 0 }));
+            oldest_at: new Date(row.oldest_at).getTime() > 0,
+            // The ids are random per run: whether each is there, lowercase, and the owner's path as a path.
+            worktree_id: row.worktree_id === null ? null : row.worktree_id === row.worktree_id.toLowerCase() ? 'lowercase-id' : row.worktree_id,
+            owner_host_id: row.owner_host_id === null ? null : row.owner_host_id === row.owner_host_id.toLowerCase() ? 'lowercase-id' : row.owner_host_id,
+            owner_root: row.owner_root === null ? null : row.owner_root.split(home).join('$HOME') }));
           const answers = {
             count: await engine.countParkedEffects(null), countScoped: await engine.countParkedEffects(['default', 'ab']),
             parked, parkedScoped: (await engine.listParkedEffects(['default'])).map(r => r.request.request_id),
@@ -218,9 +222,11 @@ describe('doctor persistence reads', () => {
               parked: [{ slug: 'notes/m', error_code: 'held_by_rule' }] }]);
           expect(answers.parkedScoped).toEqual([requestOf(5)]);
           expect(answers.holds).toEqual([
-            { source_id: 'ab', root: null, former_worktree: true, retrying: 0, parked: 1, codes: ['push_credential_refused'], oldest_at: true },
+            { source_id: 'ab', root: null, former_worktree: true, retrying: 0, parked: 1, codes: ['push_credential_refused'], oldest_at: true, last_error: null,
+              worktree_id: null, owner_host_id: null, owner_root: null },
             { source_id: 'work', root: '$HOME/checkout', former_worktree: false, retrying: 1, parked: 2,
-              codes: ['git_push_unavailable', 'integrate_conflict', 'push_unconfirmed'], oldest_at: true }]);
+              codes: ['git_push_unavailable', 'integrate_conflict', 'push_unconfirmed'], oldest_at: true, last_error: null,
+              worktree_id: 'lowercase-id', owner_host_id: 'lowercase-id', owner_root: '$HOME/checkout' }]);
           expect(answers.holdsScoped).toEqual(['ab']);
           return answers;
         });

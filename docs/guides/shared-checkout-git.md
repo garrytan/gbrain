@@ -172,6 +172,14 @@ The agent reads `gbrain sync status --source <id> --json` (`git_push_holds`) or
 failures go through `gbrain sources writer retry-effects <source> --parked-pushes`
 (preview with `--dry-run`); a conflict names the user's choice first.
 
+**Say to your agent:** *"My page files stopped getting committed. Find out why."*
+The agent reads `gbrain sync status --source <id> --json` (`git_commit_holds`): each
+hold names the failed git step, a reason code (`identity_missing`, `filter_failed`,
+`hook_rejected` ...; never git's own words) and whether the checkout has no Git identity.
+A push that timed out after the local commit, or a retried removal whose upstream git
+cannot read, is a push hold (`git_push_unavailable`), never a commit hold. See
+[managed Git identity](concurrent-writes.md#managed-git-identity).
+
 <a id="preview-the-secret-scan"></a>
 ### Preview the secret scan
 

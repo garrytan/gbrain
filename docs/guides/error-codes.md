@@ -2975,7 +2975,7 @@ More: [docs/guides/write-refusals.md#git_protocol_required](../../docs/guides/wr
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A git command did not complete. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | Wait briefly, then retry the same request (writes: reuse the same request_id). | agent | `repeat the read that failed` | 1 | yes |
+| A git command did not complete. | A temporary condition (a lock, a pending write, a rate limit); the same request can succeed later. | gbrain sync status shows a managed Git effect that keeps failing (git_commit_holds: the git step and a reason code). A missing Git identity (user.name, user.email) in the checkout is a common cause: set it there, then gbrain sources writer retry-effects <source> --parked-code git_unavailable --dry-run. | agent | `repeat the read that failed` | 1 | yes |
 
 ### git_worktree_link_broken
 
