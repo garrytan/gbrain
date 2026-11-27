@@ -1287,7 +1287,7 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
           expect(await performSync(wrapped, opts as never)).toMatchObject({ status: 'first_sync' });
           write('A synthetic record about durable processing, changed.'); git.commitAll('second');
           expect(await performSync(wrapped, opts as never)).toMatchObject({ status: 'synced' });
-        } finally { await disposePersistenceConsumer(primary()); await primary().executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1'); }
+        } finally { await disposePersistenceConsumer(wrapped); await disposePersistenceConsumer(primary()); await primary().executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1'); }
       });
       await until(() => putEvents(inbox).length >= 2);
       const tally = await real(putEvents(inbox));
