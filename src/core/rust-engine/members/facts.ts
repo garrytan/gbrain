@@ -305,6 +305,8 @@ export const FACTS_MEMBERS = {
   lockApprovedFacts: 'facts',
   expireApprovedFacts: 'facts',
   tightenDatabaseFactVisibility: 'facts',
+  readFactLiveVisibility: 'facts',
+  tightenFencedFactVisibility: 'facts',
   listPageAccessKeys: 'access_control',
   listOpenTwinRows: 'access_control',
   listOpenFactsWindow: 'facts',

@@ -2800,6 +2800,39 @@ const PINS: Pin[] = [
     FROM (SELECT $1::text AS owed_op) q, pages p WHERE ${HELD_CONCEPT_SQL} ORDER BY p.source_id, p.slug`],
   },
   {
+    from: 'src/core/repair/visibility.ts:169 planVisibilityRepair (the apply re-decide page type; at 85ad984039; now listPageRefsByIds, which also names id, source_id and slug)',
+    case: { method: 'listPageRefsByIds', variant: 'default', run: e => e.listPageRefsByIds([7]) },
+    texts: ['SELECT id, source_id, slug, type FROM pages WHERE id = ANY($1::bigint[]) ORDER BY id'],
+  },
+  {
+    from: 'src/core/repair/visibility.ts:252 applyFactItem (the fenced fact read back after the page write; at 85ad984039)',
+    case: { method: 'readFactLiveVisibility', variant: 'default', run: e => e.readFactLiveVisibility(7) },
+    texts: ['SELECT visibility, expired_at IS NULL AS live FROM facts WHERE id=$1'],
+  },
+  {
+    from: 'src/core/repair/visibility.ts:254 applyFactItem (the fenced fact made private in place; at 85ad984039)',
+    case: { method: 'tightenFencedFactVisibility', variant: 'default', run: e => e.tightenFencedFactVisibility('default', 7, 1) },
+    texts: ["UPDATE facts SET visibility='private' WHERE source_id=$1 AND id=$2 AND row_num=$3 AND visibility='world' AND expired_at IS NULL RETURNING id"],
+  },
+  {
+    from: 'src/core/page-state/contextual-proof.ts:12 reconcileContextualEmbeddingInputs (the recorded input hashes; at 85ad984039)',
+    case: { method: 'readChunkInputHashes', variant: 'default', run: e => e.readChunkInputHashes(7) },
+    texts: ['SELECT id,embedding_input_hash FROM content_chunks WHERE page_id=$1'],
+  },
+  {
+    from: 'src/core/page-state/contextual-proof.ts:19 reconcileContextualEmbeddingInputs (the stale vectors cleared; at 85ad984039)',
+    case: { method: 'clearChunkEmbeddingsByIds', variant: 'default', run: e => e.clearChunkEmbeddingsByIds(7, { name: 'embedding', dimensions: 1536 }, [1, 2]) },
+    // The caller's interpolation (the quoted column) is rebuilt from its builder, so a drift fails.
+    texts: () => [`UPDATE content_chunks SET ${quoteIdentifier('embedding')}=NULL,
+    embedded_at=NULL,embedded_text_hash=NULL,embedding_input_hash=NULL,embedding_pending_since=now() WHERE page_id=$1 AND id=ANY($2::int[])`],
+  },
+  {
+    from: 'src/core/page-state/contextual-proof.ts:23 reconcileContextualEmbeddingInputs (the proof hashes recorded; at 85ad984039)',
+    case: { method: 'writeChunkInputHashes', variant: 'default', run: e => e.writeChunkInputHashes(7, [1], ['h']) },
+    texts: [`UPDATE content_chunks c SET embedding_input_hash=proof.hash
+    FROM unnest($2::int[],$3::text[]) AS proof(id,hash) WHERE c.page_id=$1 AND c.id=proof.id`],
+  },
+  {
     from: 'src/core/search/entity-anchor.ts:116 applyEntityAnchoring (the anchored page titles; at efeb078093)',
     case: { method: 'readPageTitlesById', variant: 'default', run: e => e.readPageTitlesById([1, 2]) },
     texts: ['SELECT id, title FROM pages WHERE id = ANY($1::int[])'],

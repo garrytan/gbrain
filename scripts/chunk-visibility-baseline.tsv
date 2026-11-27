@@ -16,7 +16,6 @@ src/core/engine-sql/facts-purge.ts	1
 src/core/engine-sql/health.ts	3
 src/core/engine-sql/pages.ts	2
 src/core/oversized-backfill.ts	2
-src/core/page-state/contextual-proof.ts	1
 src/core/pglite-engine.ts	1
 src/core/postgres-engine.ts	1
 src/core/schema-migrations/v116-code-edges-source-backfill-and-callee-index.ts	1
