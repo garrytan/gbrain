@@ -20,7 +20,11 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { serveOwnerEngine, type OwnerEngineServer } from '../src/core/rust-engine/owner-ipc/server.ts';
 import { connectOwner, installOwnerClient } from '../src/core/rust-engine/owner-ipc/client.ts';
-import { OWNER_IPC_REMOTE_READS, OWNER_IPC_ROUTES } from '../src/core/rust-engine/owner-ipc/routes.ts';
+import {
+  OWNER_IPC_REMOTE_DENY, OWNER_IPC_REMOTE_HAND_READS, OWNER_IPC_REMOTE_READS, OWNER_IPC_REMOTE_TYPED_READS, OWNER_IPC_ROUTES,
+} from '../src/core/rust-engine/owner-ipc/routes.ts';
+import { OWNER_IPC_TYPED_CONFIRMING_READS, OWNER_IPC_TYPED_READS } from '../src/core/rust-engine/owner-ipc/typed-member-classes.ts';
+import { OWNER_IPC_CONFIRMING_READS } from '../src/core/rust-engine/owner-ipc/confirming-reads.ts';
 import { forwardWholeOperation } from '../src/core/rust-engine/owner-ipc/whole-op.ts';
 import { isRemoteCaller, withRemoteCaller } from '../src/core/remote-caller.ts';
 import { currentSubmissionAuthority, withSubmissionAuthority, APPLICATION_AUTHORITY, type SubmissionAuthority } from '../src/core/minions/submission-authority.ts';
@@ -64,6 +68,59 @@ const refusal = async (promise: Promise<unknown>) => {
   expect(error).toBeInstanceOf(OperationError);
   return { code: error?.code, message: error?.message };
 };
+
+/** The hand-listed remote reads as of ruling A (2026-11-26); new remote reads are typed reads (OWNER_IPC_REMOTE_TYPED_READS). */
+const HAND_READS_FROZEN_SIZE = 145;
+
+/**
+ * The remote read list guard (multi-user lane L3, ruling A on batch 1): a member reaches the remote list only as a typed
+ * read (typed-member-classes.ts) or as one of the frozen hand-listed reads, never as a typed write, and never when
+ * OWNER_IPC_REMOTE_DENY names it. It does not read OWNER_IPC_LOCAL_ONLY_READS (as spread, that set is every typed read).
+ */
+function remoteListProblems(lists: { remote: Iterable<string>; hand: ReadonlySet<string>; typed: ReadonlySet<string>; writes: ReadonlySet<string>; deny: ReadonlySet<string> }): string[] {
+  const problems: string[] = [];
+  for (const member of lists.remote) {
+    if (!lists.typed.has(member) && !lists.hand.has(member)) problems.push(`${member}: not a typed read and not on the frozen hand list`);
+    if (lists.writes.has(member)) problems.push(`${member}: a typed write`);
+    if (lists.deny.has(member)) problems.push(`${member}: denied (${OWNER_IPC_REMOTE_DENY[member] ?? 'fixture'})`);
+  }
+  return problems;
+}
+
+const REAL = {
+  hand: OWNER_IPC_REMOTE_HAND_READS,
+  typed: new Set(OWNER_IPC_TYPED_READS),
+  writes: new Set([...Object.keys(OWNER_IPC_TYPED_CONFIRMING_READS), ...Object.keys(OWNER_IPC_CONFIRMING_READS)]),
+  deny: new Set(Object.keys(OWNER_IPC_REMOTE_DENY)),
+};
+
+describe('the remote read list guard', () => {
+  test('every remote read is a typed read or a frozen hand-listed read, never a typed write, never denied', () => {
+    expect(remoteListProblems({ remote: OWNER_IPC_REMOTE_READS, ...REAL })).toEqual([]);
+  });
+
+  test('the remote list is exactly the hand list and the typed additions; the hand list is frozen (new reads go to the typed list)', () => {
+    expect(new Set(OWNER_IPC_REMOTE_READS)).toEqual(new Set([...OWNER_IPC_REMOTE_HAND_READS, ...OWNER_IPC_REMOTE_TYPED_READS]));
+    expect(OWNER_IPC_REMOTE_HAND_READS.size).toBe(HAND_READS_FROZEN_SIZE);
+    expect(OWNER_IPC_REMOTE_TYPED_READS.filter(member => !REAL.typed.has(member))).toEqual([]);
+  });
+
+  test('the guard fails when a denied member is added to the remote list (readCommitLog, a secret-store read)', () => {
+    for (const denied of ['readCommitLog', 'lastCommitPosition', 'beginSnapshotRead', 'readSecretStoreSnapshot']) {
+      expect(Object.hasOwn(OWNER_IPC_REMOTE_DENY, denied), `${denied} is on the deny list`).toBe(true);
+      expect(remoteListProblems({ remote: [...OWNER_IPC_REMOTE_READS, denied], ...REAL }).some(p => p.startsWith(`${denied}: denied`))).toBe(true);
+    }
+  });
+
+  test('the guard fails on a typed write and on a member that is neither a typed read nor hand-listed', () => {
+    expect(remoteListProblems({ remote: ['putPage'], ...REAL }).some(p => p.startsWith('putPage: a typed write'))).toBe(true);
+    expect(remoteListProblems({ remote: ['notAMember'], ...REAL })).toEqual(['notAMember: not a typed read and not on the frozen hand list']);
+  });
+
+  test('every denied member names its reason', () => {
+    expect(Object.entries(OWNER_IPC_REMOTE_DENY).filter(([, reason]) => reason.trim().length < 15).map(([member]) => member)).toEqual([]);
+  });
+});
 
 describe('a client of the owner, for a remote caller', () => {
   test('every member of the remote read list is a forwarded member, and no write is on it', () => {
