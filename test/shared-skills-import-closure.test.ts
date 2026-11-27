@@ -308,6 +308,17 @@ for (const [name, url] of backends) {
       expect({ state: (result as { state?: string }).state, reader: await readerCopy(f, 'beta') }).toEqual({ state: 'committed', reader: 'Synthetic shared guide body.\n' });
     }, url), 120_000);
 
+    // Value: protects=an owner who shows a convention to readers can still hand it to a skill restricted to one reader; fails_when=the reader's principal is not listed literally next to readers, so the publication is refused; why_new=readers covers every principal and the new check must not over-refuse; seam=none; no_claim=none
+    test('a convention widened to readers publishes to a skill restricted to one reader', () => fixture(async f => {
+      const [policy] = await f.engine.executeRaw<{ epoch: string }>('SELECT epoch FROM shared_skill_policies WHERE source_id=$1', ['default']);
+      await setSharedSkillPolicy(f.local, 'default', { ...POLICY, audiences: [...POLICY.audiences, 'oauth_client:reader'] }, policy.epoch);
+      for (const [name, files] of [['alpha', [prose('alpha', 'Uses both.', [ROOT, GUIDE]), root(), guide(RESTRICTED)]], ['gamma', [{ ...prose('gamma', 'Uses the root.', [ROOT]), audience: ['oauth_client:reader'] }, root()]]] as const) {
+        expect((await put(f, f.local, name, [...files]) as { state?: string }).state).toBe('committed');
+      }
+      const result = await put(f, f.local, 'alpha', [prose('alpha', 'Uses both.', [ROOT, GUIDE]), root([GUIDE]), guide(['readers'])]);
+      expect({ state: (result as { state?: string }).state, reader: await readerCopy(f, 'gamma') }).toEqual({ state: 'committed', reader: 'Synthetic shared guide body.\n' });
+    }, url), 120_000);
+
     // Value: protects=a skill the owner's policy now hides keeps its convention hidden; fails_when=a revoked readers audience on the holder's SKILL.md still counts as showing the file to the editor; why_new=the catalog applies the source policy to both audiences; seam=none; no_claim=none
     test('a convention held by a skill whose readers audience the policy revoked stays hidden from a remote put_skill', () => fixture(async f => {
       for (const [name, files] of [['alpha', [prose('alpha', 'Use the guide.', [GUIDE]), guide(RESTRICTED)]], ['beta', [{ ...prose('beta', 'Standalone.'), audience: RESTRICTED }]]] as const) {

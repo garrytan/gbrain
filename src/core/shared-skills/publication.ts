@@ -739,7 +739,7 @@ async function refuseHiddenExposure(engine: BrainEngine, sourceId: string, incar
     // reach a rebuilt skill gains, since a proposal's own new audience is the change under review.
     const authorized = new Set([...prior, ...(others.length ? [] : reach(proposals))]);
     const remaining = others.length ? others : proposals.filter(skill => sealedHolds(skill.name) && keeps(skill));
-    if (!remaining.length || [...(others.length ? after : reach(rebuilt))].every(a => authorized.has(a))) continue;
+    if (!remaining.length || (authorized.has('readers') || [...(others.length ? after : reach(rebuilt))].every(a => authorized.has(a)))) continue;
     paths.push(path);
     for (const skill of remaining) holders.add(skill.name);
     reasons.push(`${path} would reach a wider audience than ${bounded(remaining.map(skill => `skills/${skill.name}`), ', ')} ${remaining.length === 1 ? 'gives' : 'give'} it`);
