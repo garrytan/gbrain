@@ -339,9 +339,13 @@ catch(error){appendFileSync(${JSON.stringify(join(root, 'publication-failures'))
     const state = new OwnerProcessingState('supervisor', 'fixture');
     const reporter = pathToFileURL(join(import.meta.dir, '../src/commands/jobs-readiness.ts')).href;
     const worker = join(root, 'late-ready.ts');
+    // The handler is armed before the reporter module loads, so a timeout signal that lands while a loaded runner is still
+    // loading it is handled once the load finishes. The kill grace is the production one: the worker exits from its handler,
+    // so a passing run never waits on it.
     writeFileSync(worker, `import {writeFileSync} from 'node:fs';
-import {reportWorkerReady} from ${JSON.stringify(reporter)};
-process.on('SIGTERM',()=>{
+const reporter=import(${JSON.stringify(reporter)});
+process.on('SIGTERM',async()=>{
+ const {reportWorkerReady}=await reporter;
  try {reportWorkerReady();writeFileSync(${JSON.stringify(join(root, 'late-admission'))},'unexpected');}
  catch(error){writeFileSync(${JSON.stringify(join(root, 'late-refusal'))},String(error));}
  process.exit(1);
@@ -350,7 +354,7 @@ setInterval(()=>{},1000);`);
     let timeouts = 0;
     const sup = new ChildWorkerSupervisor({
       cliPath: process.execPath, args: [worker], processingState: state,
-      maxCrashes: 1, hardStopMaxCrashes: 1, _startupReadyTimeoutMs: 1000, _startupKillGraceMs: 1000,
+      maxCrashes: 1, hardStopMaxCrashes: 1, _startupReadyTimeoutMs: 1000,
       isStopping: () => false, onMaxCrashesExceeded: () => {},
       onEvent: event => { if (event.kind === 'worker_startup_timeout') timeouts++; },
     });

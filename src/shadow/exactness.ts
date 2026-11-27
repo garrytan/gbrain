@@ -34,9 +34,9 @@ import { SHADOW_READ_MEMBERS } from './reads.ts';
 /**
  * Bump when classify.ts or this table changes what counts as a match: it starts a new evidence epoch. 3: the shadow
  * privacy, rerun and recall rules (row-identity clearance, the proof that nothing moved, tie-aware recall) replace the
- * ones an epoch of version 2 collected its records under, and those records must not count.
+ * ones an epoch of version 2 collected its records under, and those records must not count. 4: the write comparisons keep a per-session obligation of samples (write-compare.ts), so an epoch of version 3 cannot be shown to have recorded every lost sample; a new epoch also lets criterion 11 name writers of an older build.
  */
-export const SHADOW_COMPARATOR_VERSION = 3;
+export const SHADOW_COMPARATOR_VERSION = 4;
 /** The only keyword ranker Rust has (D5); the status names it so a better default ranker is a visible change. */
 export const SHADOW_KEYWORD_RANKER = 'ts_rank' as const;
 

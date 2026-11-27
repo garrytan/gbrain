@@ -28,8 +28,7 @@ import { attestedShareRefused, MEMBER_PAGE_PREFIX, memberPageFrontmatter, member
 import { claimColumns, storedClaim } from '../facts/typed-claim.ts';
 import { parseStoredActor } from '../access/actor-model.ts';
 import { withoutBody } from '../page-body/page-shape.ts';
-import { ruleOwnerOnly } from '../rules/admission.ts';
-import { isRuleSlug } from '../rules/record.ts';
+import { refuseRuleFactTarget } from '../rules/admission.ts';
 import { pageFactDate } from '../facts/extract-from-fence.ts';
 
 function conflict(row: WriteRequest): never {
@@ -80,7 +79,7 @@ export async function prepareMemoryMutation(engine: BrainEngine, row: WriteReque
   const p = row.intent;
   // C2: a standing rule page changes only through correct or gbrain rules; a fact on it, local or remote, and whatever
   // redirect led there, would move its revision.
-  if (isRuleSlug(row.slug) || isRuleSlug(p.entity_slug)) throw ruleOwnerOnly(isRuleSlug(row.slug) ? row.slug : String(p.entity_slug));
+  refuseRuleFactTarget(row.slug, p.entity_slug);
   // GST-2249 W1: a stored save made for an attested person never publishes shared, whenever it was admitted. An audience
   // (on_behalf_of) is not an attested person, so a shared agent's share: true still publishes.
   if (p.share === true && parseStoredActor(row.authority?.actingFor)) throw attestedShareRefused(opError);

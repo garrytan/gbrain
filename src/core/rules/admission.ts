@@ -26,6 +26,17 @@ export function ruleOwnerOnly(slug: string): OperationError {
     `Save a correction with correct (it writes the rule and fixes the fact together), or ask the user to run gbrain rules retire ${ruleIdOf(slug)} on the brain host to retire it.`, { fix });
 }
 
+/** C2: no fact writer, local or remote, lands a fact on a standing rule page; only correct and gbrain rules write one. */
+export function refuseRuleFactTarget(...slugs: unknown[]): void {
+  const rule = slugs.find(isRuleSlug);
+  if (rule !== undefined) throw ruleOwnerOnly(String(rule));
+}
+
+/** C2: an automatic fact writer's entity that resolves to a standing rule page is no entity; the fact is kept unlinked. */
+export function offRulePage<T extends { slug: string }>(resolved: T | null): T | null {
+  return resolved && isRuleSlug(resolved.slug) ? null : resolved;
+}
+
 /** Before anything is journaled: a remote write naming a rule slug outside the correct verb. */
 export function assertRuleSlugWrite(remote: boolean, params: Record<string, unknown>): void {
   if (!remote || ruleWriter.getStore()) return;

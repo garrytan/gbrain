@@ -28,10 +28,13 @@ export const NOTE_LOCK_TIMEOUT_MS = 50;
 export const NOTE_STATEMENT_TIMEOUT_MS = 2_000;
 
 /** The one statement a note runs: insert the row, or refresh last_seen when it is older than the refresh interval. */
-const NOTE_SQL = `INSERT INTO engine_writer_observations (host_id, application_name, process_kind, gbrain_version)
-VALUES ($1, $2, $3, $4)
-ON CONFLICT (host_id, application_name) DO UPDATE SET last_seen = now(), process_kind = EXCLUDED.process_kind, gbrain_version = EXCLUDED.gbrain_version
+const NOTE_SQL = `INSERT INTO engine_writer_observations (host_id, application_name, process_kind, gbrain_version, write_protocol)
+VALUES ($1, $2, $3, $4, $5)
+ON CONFLICT (host_id, application_name) DO UPDATE SET last_seen = now(), process_kind = EXCLUDED.process_kind, gbrain_version = EXCLUDED.gbrain_version, write_protocol = EXCLUDED.write_protocol
 WHERE engine_writer_observations.last_seen < now() - interval '${OBSERVATION_REFRESH_MS / 1000} seconds'`;
+
+/** The write-comparison protocol this build speaks: 2 keeps the per-session obligation of write samples (shadow/write-compare.ts). An observed writer with NULL or less wrote under an older build. */
+export const WRITE_PROTOCOL = 2;
 
 /**
  * The eligibility read, one read-only statement: hosts that claimed writes in the window; on a hooked (Postgres)
@@ -46,7 +49,7 @@ WHERE engine_writer_observations.last_seen < now() - interval '${OBSERVATION_REF
  * inherited rights count, so a member of pg_write_all_data is judged as itself. A brain table counts as unhooked
  * unless its hook is enabled for ordinary writes, statement-level, unconditional, on all four events and calls gbrain_note_writer().
  * A process claim resolves a session only while the claim is inside the window too: an expired claim cannot hide a current writer.
- * $1 window start, $2 hooks expected, $3 evidence tables, $4 trigger name.
+ * $1 window start, $2 hooks expected, $3 evidence tables, $4 trigger name, $5 where legacy writers count from (the window start, or the epoch start less the refresh slack, whichever is later).
  */
 const EVIDENCE_SQL = `WITH brain AS (
   SELECT c.oid, c.relowner FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
@@ -57,6 +60,7 @@ const EVIDENCE_SQL = `WITH brain AS (
 )
 SELECT
   (SELECT count(DISTINCT host_id) FROM engine_writer_observations WHERE last_seen >= $1::timestamptz)::int AS hosts,
+  (SELECT count(*) FROM engine_writer_observations WHERE last_seen >= $5::timestamptz AND (write_protocol IS NULL OR write_protocol < ${WRITE_PROTOCOL}))::int AS legacy_write_writers,
   CASE WHEN $2::boolean THEN (SELECT count(*) FROM (SELECT DISTINCT s.application_name, s.client_addr FROM engine_writer_sessions s
     WHERE s.last_seen >= $1::timestamptz AND NOT EXISTS (SELECT 1 FROM engine_writer_observations o WHERE o.application_name = s.application_name AND o.last_seen >= $1::timestamptz)) u)::int ELSE 0 END AS unresolved,
   (SELECT count(*) FROM engine_writer_coverage_gaps WHERE created_at >= $1::timestamptz)::int AS gaps,
@@ -70,14 +74,14 @@ SELECT
         WHERE e.name = 'engine_writer_coverage_gaps' AND has_table_privilege(r.oid, e.oid, 'INSERT')
           AND (NOT e.relrowsecurity OR r.rolsuper OR r.rolbypassrls OR (pg_has_role(r.oid, e.relowner, 'USAGE') AND NOT e.relforcerowsecurity))))::int ELSE 0 END AS uncovered_roles`;
 
-export interface WriterEvidence { hosts: number; unresolved: number; gaps: number; unhooked: number; uncovered_roles: number }
+export interface WriterEvidence { hosts: number; unresolved: number; gaps: number; unhooked: number; uncovered_roles: number; legacy_write_writers: number }
 
 /** The eligibility read: one read-only SELECT. Throws what the engine throws; the caller turns that into an omission. */
-export async function readWriterEvidence(engine: BrainEngine, since: Date, hooksExpected: boolean, trigger: string, evidenceTables: readonly string[]): Promise<WriterEvidence> {
-  const [row] = await engine.executeRaw<Record<keyof WriterEvidence, unknown>>(EVIDENCE_SQL, [since.toISOString(), hooksExpected, [...evidenceTables], trigger]);
+export async function readWriterEvidence(engine: BrainEngine, since: Date, hooksExpected: boolean, trigger: string, evidenceTables: readonly string[], legacySince: Date = since): Promise<WriterEvidence> {
+  const [row] = await engine.executeRaw<Record<keyof WriterEvidence, unknown>>(EVIDENCE_SQL, [since.toISOString(), hooksExpected, [...evidenceTables], trigger, legacySince.toISOString()]);
   const n = (v: unknown): number => { const x = typeof v === 'number' || typeof v === 'bigint' || (typeof v === 'string' && /^\d+$/.test(v)) ? Number(v) : Number.NaN; if (!Number.isInteger(x) || x < 0) throw Object.assign(new Error('writer evidence: bad count'), { code: 'writer_evidence_malformed' }); return x; };
   if (!row) throw Object.assign(new Error('writer evidence: no row'), { code: 'writer_evidence_malformed' });
-  return { hosts: n(row.hosts), unresolved: n(row.unresolved), gaps: n(row.gaps), unhooked: n(row.unhooked), uncovered_roles: n(row.uncovered_roles) };
+  return { hosts: n(row.hosts), unresolved: n(row.unresolved), gaps: n(row.gaps), unhooked: n(row.unhooked), uncovered_roles: n(row.uncovered_roles), legacy_write_writers: n(row.legacy_write_writers) };
 }
 
 export interface WriterIdentity {
@@ -85,6 +89,8 @@ export interface WriterIdentity {
   applicationName: string;
   processKind: string;
   gbrainVersion: string;
+  /** The write-comparison protocol this row records: this build's `WRITE_PROTOCOL` unless a test names another. */
+  writeProtocol?: number;
 }
 
 export interface WriterObserverOptions {
@@ -168,7 +174,7 @@ export class WriterObserver {
         // A note must never hold a serving connection: a lock or a slow statement ends it in milliseconds, as a recorded failure.
         await tx.executeRaw(`SET LOCAL lock_timeout = '${NOTE_LOCK_TIMEOUT_MS}ms'`);
         await tx.executeRaw(`SET LOCAL statement_timeout = '${NOTE_STATEMENT_TIMEOUT_MS}ms'`);
-        await tx.executeRaw(NOTE_SQL, [id.hostId, id.applicationName, id.processKind, id.gbrainVersion]);
+        await tx.executeRaw(NOTE_SQL, [id.hostId, id.applicationName, id.processKind, id.gbrainVersion, id.writeProtocol ?? WRITE_PROTOCOL]);
       });
     // capability-refusal-ok: a background note on the primary (PGLite or Postgres) must never throw into the caller; any refusal becomes a fault that eligibility counts as unknown
     } catch (error) { // silent-read-ok: not silent; the failure becomes a writer_observation_failed fault that eligibility counts as unknown

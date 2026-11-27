@@ -11,6 +11,7 @@ import { OperationError, opError } from '../ops/contract.ts';
 import { hostFix, opTransport, readFix } from '../ops/op-fix.ts';
 import type { Action } from '../agent-output.ts';
 import { resolveEntitySlugWithSource } from '../entities/resolve.ts';
+import { offRulePage } from '../rules/admission.ts';
 import { appendContextNote, type InferredVia } from '../facts/subject-infer.ts';
 import { inferenceNote } from '../facts/subject-infer-write.ts';
 import { resolveDefaultVisibility } from '../facts/visibility.ts';
@@ -641,7 +642,7 @@ export async function publishManagedFacts(engine: BrainEngine, session: ManagedF
   for (const fact of facts) {
     if (ctx.abortSignal?.aborted) throw new DOMException('Fact extraction was aborted before admission.', 'AbortError');
     if (ctx.notabilityFilter === 'high-only' && fact.notability !== 'high' || ctx.notabilityFilter === 'medium-and-up' && fact.notability === 'low') continue;
-    const resolved = fact.entity_slug ? await resolveEntitySlugWithSource(engine, sourceId, fact.entity_slug) : null;
+    const resolved = offRulePage(fact.entity_slug ? await resolveEntitySlugWithSource(engine, sourceId, fact.entity_slug) : null);
     const entitySlug = resolved && resolved.source !== 'fallback_slugify' ? resolved.slug : null;
     const attributed = entitySlug ?? (options.attributeFallback && resolved ? resolved.slug : null);
     // GST-2492: on a strict source a kept fallback entity is held on its holding page (its folder's under a folder rule).

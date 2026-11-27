@@ -59,6 +59,26 @@ export interface SwapPlanInputs {
   services?: ServiceDefinition[];
   disk?: { path: string; free_bytes: number | null };
   now?: Date;
+  /** Seams for tests only: the wait below is a constant, never a setting. */
+  clock?: () => number;
+  sleep?: (ms: number) => Promise<void>;
+}
+
+/** How long the swap check waits for a moment with every sample settled (a constant, not a knob): it takes the first read with nothing unsettled, and past it reads the busy brain as it is (criterion 5 then says "brain busy"). */
+export const SWAP_SETTLE_WAIT_MS = 60_000;
+const SETTLE_POLL_MS = 1_000;
+const unsettled = (status: ShadowStatus | null): boolean => { const n = status?.write_comparisons?.unresolved_replays; return typeof n === 'number' && n > 0; };
+
+/** Reads the shadow status until nothing in it is unsettled (a lull), at most `SWAP_SETTLE_WAIT_MS`; the last read otherwise. A status with nothing unsettled, or none at all, is returned at once. */
+async function readSettledStatus(engine: BrainEngine, deps: SwapPlanInputs): Promise<ShadowStatus | null> {
+  if (!deps.readShadowStatus) return null;
+  const clock = deps.clock ?? Date.now; const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((resolve) => { setTimeout(resolve, ms); }));
+  const start = clock();
+  for (;;) {
+    const status = await deps.readShadowStatus(engine);
+    if (!unsettled(status) || clock() - start >= SWAP_SETTLE_WAIT_MS) return status;
+    await sleep(SETTLE_POLL_MS);
+  }
 }
 
 /** Non-terminal refresh rows (draining, fenced, merged, syncing, recovery_required), through the reader
@@ -104,7 +124,7 @@ function planHash(p: Omit<SwapPlan, 'plan_hash'>): string {
 export async function planEngineSwap(engine: BrainEngine, deps: SwapPlanInputs = {}): Promise<SwapPlan> {
   await assertNotManaged(engine);
   await assertRefreshesSettled(engine);
-  const status = deps.readShadowStatus ? await deps.readShadowStatus(engine) : null;
+  const status = await readSettledStatus(engine, deps);
   const readiness = evaluateReadiness(status, deps.now ?? new Date());
   const base: Omit<SwapPlan, 'plan_hash'> = {
     schema_version: 1,

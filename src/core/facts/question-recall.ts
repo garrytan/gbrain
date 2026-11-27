@@ -25,7 +25,7 @@ import { loadEmbeddingQueryPrefix } from '../search/query-prefix.ts';
 import { embedQueryBounded, makeQueryEmbedDeadline } from '../search/hybrid.ts';
 import { resolveHnswIterativeScan } from '../search/hnsw-iterative-scan.ts';
 import {
-  FACT_ADMISSION_FLOOR_EVIDENCE, QUESTION_ADMISSION_RULES, admitted, collectFactCandidates, countUncomparableFacts, factRecency, isDatedFact, poolEntityPairs, queryTerms, scoreFactCandidates,
+  FACT_ADMISSION_FLOOR_EVIDENCE, QUESTION_ADMISSION_RULES, admitted, collectFactCandidates, countUncomparableFacts, factRecency, isDatedFact, literalTerms, poolEntityPairs, readPooledFacts, scoreFactCandidates,
   type FactPoolFilters, type FactPoolScope, type QuestionAdmissionRule,
 } from '../search/fact-relevance.ts';
 import { applySlotEnds } from '../search/slot-ends.ts';
@@ -241,28 +241,27 @@ export async function rankFactsByQuestion(ctx: OperationContext, input: Question
     throw rankingUnavailable(input.params, error);
   }
   const { embedding, reason } = await questionEmbedding(ctx, question);
-  if (!embedding && queryTerms(question).length === 0) return empty({ reason: 'no_query_terms' });
+  if (!embedding && literalTerms(question).length === 0) return empty({ reason: 'no_query_terms' });
   try {
     const [pool, uncomparable, rule, switches] = await Promise.all([
       collectFactCandidates(ctx.engine, question, scope, embedding, {
         depth: { keyword: QUESTION_POOL_DEPTH, cosine: QUESTION_POOL_DEPTH, entity: QUESTION_POOL_DEPTH }, filters, cosineForAll: true,
-        hnswIterativeScan: resolveHnswIterativeScan(ctx.engine, ctx.config), distinctiveTerms: true,
+        hnswIterativeScan: resolveHnswIterativeScan(ctx.engine, ctx.config), distinctiveTerms: true, literalFallback: true,
       }),
       embedding ? countUncomparableFacts(ctx.engine, scope, filters, embedding.length) : [],
       admissionRule(ctx.engine),
       readRecallSwitches(ctx.engine),
     ]);
+    if (!embedding && pool.literal && !pool.terms.some(t => (pool.stems?.get(t) ?? [t]).length > 0)) return empty({ reason: 'no_query_terms' });
     const weighted = switches.weighting;
     const grouped = switches.grouping && !input.entity;
-    const scored = scoreFactCandidates(question, pool.candidates, pool.terms, pool.stems);
+    const scored = scoreFactCandidates(question, pool.candidates, pool.terms, pool.stems, pool.literal);
     const ranked = scored.filter(s => admitted(s, rule) || (input.fromQuery === true && s.terms > 0 && s.matched === s.terms));
     const unembedded = uncomparable.reduce((n, r) => n + r.n, 0);
     const why = reason ?? (embedding && !pool.column ? 'facts_embedding_column_missing' : undefined);
     const degraded: FactsDegraded | undefined = why || unembedded ? { ...(why ? { reason: why } : {}), ...(unembedded ? { unembedded } : {}) } : undefined;
     let ids = ranked.map(s => s.candidate.id);
-    const raw = ids.length
-      ? await ctx.engine.executeRaw<FactRowSqlShape>('SELECT * FROM facts WHERE source_id = ANY($1::text[]) AND id = ANY($2::bigint[])', [input.factSources, ids])
-      : [];
+    const raw = ids.length ? await readPooledFacts<FactRowSqlShape>(ctx.engine, scope, filters, ids) : [];
     const byId = new Map(raw.map(r => { const row = rowToFact(r); return [row.id, { ...row, embedding: null }] as const; }));
     const modelKey = embedding && pool.column ? calibrationKey(getEmbeddingModel(), getEmbeddingDimensions()) : null;
     const weighting = weighted ? weighByConfidence(ranked.map(s => ({ id: s.candidate.id, score: s.score })), byId) : undefined;
