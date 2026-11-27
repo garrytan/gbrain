@@ -709,7 +709,7 @@ async function storedTranscriptLayout(engine: BrainEngine, sourceId: string, met
   const rows = await engine.executeRaw<{ slug: string; title: string; fid: string; ti: unknown; trusted: boolean; marked: boolean }>(
     `SELECT p.slug, p.title, p.frontmatter->>'id' AS fid, p.frontmatter->'transcript_import' AS ti,
             (p.frontmatter->'${SPEAKER_OWNER_KEY}') IS NOT NULL AS marked,
-            ${importerWroteLiveTextSql('p', '$4')} AS trusted
+            ${importerWroteLiveTextSql('p', '$4', { legacy: true })} AS trusted
        FROM pages p
       WHERE p.source_id = $1 AND p.deleted_at IS NULL AND p.frontmatter->>'id' IN ($2, $3) ORDER BY p.id`,
     [sourceId, first, second, IMPORTER_INGESTED_VIA],

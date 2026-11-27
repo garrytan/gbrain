@@ -107,7 +107,7 @@ export async function connectorSpeakerOwnerStamp(engine: BrainEngine, sourceId: 
 function trustedWriterSql(writers: string): string {
   const connector = `(starts_with(p.content_author, '${CONNECTOR_AUTHOR_PREFIX}') AND p.content_author_hash = p.content_hash
     AND s.config->>'kind' IN (${SPEAKER_OWNER_CONNECTOR_KINDS.map(k => `'${k}'`).join(',')}))`;
-  return `(${contentAuthoredBySql('p', writers)} OR ${connector})`;
+  return `(${contentAuthoredBySql('p', writers, { legacy: true })} OR ${connector})`;
 }
 
 export type SpeakerOwnerStatus = 'trusted' | 'absent' | 'invalid' | 'untrusted_writer' | 'member_mismatch';

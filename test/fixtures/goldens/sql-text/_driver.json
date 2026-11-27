@@ -4185,7 +4185,7 @@
       "refreshPageBody": {
         "default": [
           {
-            "paramCount": 8,
+            "paramCount": 5,
             "unsafeOptions": {
               "cancelFence": false,
               "prepare": true,

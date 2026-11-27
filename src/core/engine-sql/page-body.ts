@@ -385,9 +385,8 @@ export async function flipBodyGeneration(exec: SqlExecutor, input: BodyFlipInput
         source_path = COALESCE(${m.sourcePath}::text, source_path), source_kind = COALESCE(${m.sourceKind}::text, source_kind),
         source_uri = COALESCE(${m.sourceUri}::text, source_uri), ingested_via = COALESCE(${m.ingestedVia}::text, ingested_via),
         ingested_at = COALESCE(${m.ingestedAt}::timestamptz, ingested_at),
-        content_author = CASE WHEN content_author IS NOT NULL AND content_author_hash = ${b.content_hash}::text THEN content_author ELSE ${m.contentAuthor}::text END,
-        content_author_hash = CASE WHEN content_author IS NOT NULL AND content_author_hash = ${b.content_hash}::text THEN content_author_hash
-          WHEN ${m.contentAuthor}::text IS NULL THEN NULL ELSE ${b.content_hash}::text END
+        content_author = ${m.contentAuthor}::text,
+        content_author_hash = CASE WHEN ${m.contentAuthor}::text IS NULL THEN NULL ELSE ${b.content_hash}::text END
       WHERE id = ${input.pageId}`);
     // GST-1209: the generation this flip made live must tile the body it recorded, as every reader checks it; rows the
     // write staged that went missing would otherwise commit a body nothing can read.

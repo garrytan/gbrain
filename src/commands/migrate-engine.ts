@@ -518,9 +518,9 @@ export async function copyPageToTarget(
     import_filename: string | null; source_kind: string | null; source_uri: string | null; ingested_via: string | null; ingested_at: Date | string | null; sealed: boolean;
     content_author: string | null }>(
     `SELECT page_kind,source_path,effective_date,effective_date_source,import_filename,source_kind,source_uri,ingested_via,ingested_at,
-            CASE WHEN content_author_hash = content_hash THEN content_author END AS content_author,
+            CASE WHEN content_author_hash = content_hash AND content_hash = $3 THEN content_author END AS content_author,
             text_projection_revision IS NOT DISTINCT FROM knowledge_revision AS sealed
-       FROM pages WHERE slug=$1 AND source_id=$2`, [page.slug, page.source_id ?? 'default']);
+       FROM pages WHERE slug=$1 AND source_id=$2`, [page.slug, page.source_id ?? 'default', page.content_hash ?? null]);
   const asDate = (value: Date | string | null | undefined) => value == null ? null : value instanceof Date ? value : new Date(value);
   await target.putPage(page.slug, nullifyUndefinedColumns({
     type: page.type,

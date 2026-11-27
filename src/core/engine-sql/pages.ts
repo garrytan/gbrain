@@ -198,11 +198,9 @@ export async function putPage(
         source_uri            = COALESCE(EXCLUDED.source_uri,            pages.source_uri),
         ingested_via          = COALESCE(EXCLUDED.ingested_via,          pages.ingested_via),
         ingested_at           = COALESCE(EXCLUDED.ingested_at,           pages.ingested_at),
-        -- GST-4056: identical text keeps the author it has; new text takes this write's (content-author-schema.ts).
-        content_author        = CASE WHEN pages.content_author IS NOT NULL AND pages.content_author_hash = EXCLUDED.content_hash
-                                     THEN pages.content_author ELSE EXCLUDED.content_author END,
-        content_author_hash   = CASE WHEN pages.content_author IS NOT NULL AND pages.content_author_hash = EXCLUDED.content_hash
-                                     THEN pages.content_author_hash ELSE EXCLUDED.content_author_hash END
+        -- GST-4056: this write's author; the pages_content_author trigger settles it (content-author-schema.ts).
+        content_author        = EXCLUDED.content_author,
+        content_author_hash   = EXCLUDED.content_author_hash
       RETURNING knowledge_revision, text_projection_revision, id, source_id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at, effective_date, effective_date_source, import_filename, source_kind, source_uri, ingested_via, ingested_at
       ), ${HOLD_BIND_CTE}
       SELECT * FROM ins
@@ -448,9 +446,6 @@ export async function refreshPageBody(
           timeline = ${timeline},
           content_hash = ${contentHash},
           chunker_version = ${trustedSql(bodyWriteChunkVersion('$1', '$2'))},
-          -- GST-4056: a restamped hash over the same body keeps the page's author.
-          content_author_hash = CASE WHEN content_author_hash = content_hash AND compiled_truth IS NOT DISTINCT FROM ${compiledTruth}
-            AND timeline IS NOT DISTINCT FROM ${timeline} THEN ${contentHash} ELSE content_author_hash END,
           updated_at = now()
       WHERE source_id = ${sourceId}
         AND slug = ${slug}

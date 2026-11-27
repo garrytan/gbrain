@@ -12,8 +12,9 @@ export const IMPORTER_INGESTED_VIA = 'cli:transcripts-ingest';
  * IMPORTER_INGESTED_VIA. GST-4056: the first-ingest stamp (`ingested_via`) and the revision's attribution are not
  * evidence: every later write keeps the stamp, and tag changes and maintenance move the revision. The content author
  * changes only with the text, and a remote write always names its own operation. Shared with transcripts
- * accept-fences (#9427).
+ * accept-fences (#9427), which takes no `legacy` page: the rule before GST-4056 accepted one only with
+ * `ingested_at >= updated_at`, and the backfill stamps such a page with the importer itself.
  */
-export function importerWroteLiveTextSql(page: string, via: string): string {
-  return contentAuthoredBySql(page, via);
+export function importerWroteLiveTextSql(page: string, via: string, opts: { legacy?: boolean } = {}): string {
+  return contentAuthoredBySql(page, via, opts);
 }

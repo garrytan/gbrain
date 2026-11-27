@@ -1,4 +1,5 @@
 import { assertUnmanagedCanonicalWriter } from './persistence/maintenance.ts';
+import { claimUnchangedText } from './persistence/content-author-schema.ts';
 import { legacyImportHold } from './persistence/legacy-slug-put.ts';
 import { suffixedFrontmatterSlugHold } from './persistence/suffixed-slug.ts';
 import { noncanonicalPrivateHold } from './persistence/visibility-request.ts';
@@ -556,9 +557,11 @@ export async function importFromContent(
         const result: ImportResult = { slug, status: 'skipped', chunks: 0, parsedPage, ...(typeWarning ? { type_warning: typeWarning } : {}), ...fenceFields };
         return opts.prepare({ slug, parsedPage, observedRevision: (existing as typeof existing & { knowledge_revision?: string }).knowledge_revision ?? null,
           noop: true, result, validate: async () => {},
-          apply: async tx => { if (reseal) await queuePageProjection(tx, sourceId ?? 'default', slug, 'safe_chunk_reseal'); } });
+          apply: async tx => { if (reseal) await queuePageProjection(tx, sourceId ?? 'default', slug, 'safe_chunk_reseal');
+            await claimUnchangedText(tx, existing.id, existing.content_hash, opts.content_author !== undefined ? opts.content_author : opts.ingested_via); } });
       }
       await persistUnchanged();
+      await claimUnchangedText(engine, existing.id, existing.content_hash, opts.content_author !== undefined ? opts.content_author : opts.ingested_via);
       const resealed = reseal ? await resealSafeChunks(engine, slug, sourceId ?? 'default') : null;
       return { slug, status: 'skipped', chunks: 0, parsedPage, ...(typeWarning ? { type_warning: typeWarning } : {}), ...(resealed ? { resealed } : {}), ...fenceFields };
     }

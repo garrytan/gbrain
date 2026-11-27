@@ -361,6 +361,7 @@ src/core/ops/attribution.ts	get_write_attribution	field	NONE	not the page body: 
 src/core/ops/attribution.ts	rowTarget	field	NONE	not the page body: timeline entry id param
 src/core/ops/claims.ts	check_claims	field	STREAM	skips a segmented page (allowed-claims facts pages are small and inline); a segmented one moves to the segment reader
 src/core/page-state/history-prune.ts	planHistoryPrune	sql	META	size only (octet_length) of inline versions for the preview's bytes; segmented versions are excluded by body_storage and counted as kept
+src/core/persistence/content-author-schema.ts	text	sql	STREAM	trigger DDL: the content-author trigger compares the body columns of inline rows (both NULL on a segmented row) and body_generation for segmented rows (GST-4056)
 src/core/rules/record.ts	renderRulePage	call:serializeMarkdown	NONE	serializes a new rule page from its own short fields; reads no stored body
 src/core/ops/extraction.ts	reviewDecision	call:serializePageToMarkdown	NONE	serializes the frontmatter head with an empty body (withoutBody) for an edit_page head edit; the body is never read
 src/core/ops/get-page-body.ts	bodyBytes	field	META	

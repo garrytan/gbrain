@@ -194,6 +194,19 @@ for (const kind of testBackends()) {
         if (repo) expect(stampsOf(fileFrontmatter(slug))).toEqual(STORED);
       });
 
+      // Value: protects=GST-4056 a remote put_page over a live page whose first-ingest columns are empty leaves them empty; fails_when=the replacement request's mcp:put_page channel or its time fills source_kind / ingested_via / ingested_at; why_new=the row above seeds every column; seam=none; no_claim=edit_page (covered by #10330 above)
+      test('a remote put_page does not fill the empty first-ingest columns of an existing page (GST-4056)', async () => {
+        const slug = 'inbox/put-empty-columns';
+        const before = await seed(slug, STORED, 'external_untrusted');
+        await engine.executeRaw('UPDATE pages SET source_kind = NULL, ingested_via = NULL, ingested_at = NULL WHERE source_id = $1 AND slug = $2', ['default', slug]);
+        const current = await read(slug);
+        const replaced = serializePageToMarkdown({ ...before.page, compiled_truth: 'Captured body, replaced' }, before.tags);
+        await call('put_page', { slug, content: replaced, expected_revision: current.revision });
+        expect((await page(slug)).page.compiled_truth).toContain('replaced');
+        expect(await engine.executeRaw('SELECT source_kind, ingested_via, ingested_at FROM pages WHERE source_id = $1 AND slug = $2', ['default', slug]))
+          .toEqual([{ source_kind: null, ingested_via: null, ingested_at: null }]);
+      });
+
       // Value: protects=remote append_page on an unclassified captured page keeps stored stamps and the lowering marker; fails_when=append re-derives the page higher or drops stamps; why_new=prior rows cover edit_page/put_page/capture only; seam=none; no_claim=segmented splice path (inline page only)
       test('a remote append_page keeps the stored stamps and does not raise an unclassified page', async () => {
         const slug = 'inbox/append-stamps';

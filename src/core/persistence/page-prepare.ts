@@ -188,12 +188,13 @@ function putProvenance(row: WriteRequest, snapshot: PageSnapshot | null, parsed:
   const managedPut = row.operation === 'put_page' && !!row.worktree_id;
   keepStoredProvenance(parsed.frontmatter, snapshot?.page.frontmatter);
   if (!managedPut) return undefined;
+  const first = snapshot?.page;
+  if (row.authority.remote && first && !first.deleted_at && !(first.source_kind && first.ingested_via && first.ingested_at)) return undefined;
   const tags = [...new Set([...(snapshot?.tags ?? []), ...parsed.tags])].sort();
   if (snapshot && !snapshot.page.deleted_at && digest(canonical(snapshot.page, snapshot.tags)) === digest(canonical(parsed, tags))) {
     return undefined;
   }
   const string = (value: unknown) => typeof value === 'string' && value ? value : undefined;
-  const first = snapshot?.page;
   const via = row.authority.remote ? 'mcp:put_page' : 'put_page';
   // Historical frontmatter was caller-controlled. Only trusted provenance
   // columns may supply a prior channel or timestamp for the first-write record.

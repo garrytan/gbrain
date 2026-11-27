@@ -309,7 +309,11 @@ export function defineTranscriptPartChurnCases(opts: { getEngine: () => BrainEng
     // A brain from before v341: no content author; contextual re-embedding moved updated_at past ingested_at.
     for (const page of parts) {
       await engine.updatePageContextualRetrievalState(page.slug, 'default', 'title', 'corpus-example');
-      await engine.executeRaw('UPDATE pages SET content_author = NULL, content_author_hash = NULL WHERE source_id = $1 AND slug = $2', ['default', page.slug]);
+      await engine.transaction(async tx => {
+        await tx.executeRaw('ALTER TABLE pages DISABLE TRIGGER pages_content_author');
+        await tx.executeRaw('UPDATE pages SET content_author = NULL, content_author_hash = NULL WHERE source_id = $1 AND slug = $2', ['default', page.slug]);
+        await tx.executeRaw('ALTER TABLE pages ENABLE TRIGGER pages_content_author');
+      });
     }
     await engine.executeRaw(CONTENT_AUTHOR_BACKFILL_SQL);
     const again = await ingest(engine, path);
