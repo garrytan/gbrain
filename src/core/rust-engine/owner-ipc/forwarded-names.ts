@@ -23,3 +23,6 @@ export const MULTIUSER_FORWARDED_OPERATIONS: ReadonlySet<string> = new Set([
 export function forwardsWhole(name: string, multiuser: boolean): boolean {
   return OWNER_FORWARDED_OPERATIONS.has(name) || (multiuser && MULTIUSER_FORWARDED_OPERATIONS.has(name));
 }
+
+/** The whole operation that runs a registry operation on the brain owner (owner-ops.ts runOperation). */
+export const OWNER_RUN_OPERATION = 'runOperation';

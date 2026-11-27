@@ -46,3 +46,17 @@ export function servedBrainFor(engine: object): object | undefined {
 export function servedBrainMethod(name: unknown): name is string {
   return typeof name === 'string' && SERVED_BRAIN_METHODS.has(name);
 }
+
+/**
+ * The protocol v3 connection of a served engine, as a symbol property (like its store stand-in), so a wrapper that
+ * forwards property reads (a view, a recording proxy) reaches it: a remote whole operation is sent on it.
+ */
+const SERVED_CONNECTION: unique symbol = Symbol.for('gbrain.served-connection') as never;
+export function registerServedConnection(engine: object, connection: object): void {
+  Object.defineProperty(engine, SERVED_CONNECTION, { value: connection, configurable: true, enumerable: false, writable: false });
+}
+export function unregisterServedConnection(engine: object): void { delete (engine as Record<symbol, unknown>)[SERVED_CONNECTION]; }
+export function servedConnectionOf(engine: object): object | undefined {
+  const connection = (engine as Record<symbol, unknown>)[SERVED_CONNECTION];
+  return connection && typeof connection === 'object' ? connection : undefined;
+}

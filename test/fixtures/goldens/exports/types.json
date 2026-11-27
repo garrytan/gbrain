@@ -1755,6 +1755,7 @@
           "readGlobalMaintenanceDeaths: (spec: { deaths: number; }) => Promise<GlobalMaintenanceDeaths>",
           "readGraduationGateRow: (opts?: { withRunSetting?: boolean; }) => Promise<GraduationGateRow | null>",
           "readGroupSpendTotals: (budgetKey: string) => Promise<GroupSpendRow>",
+          "readGuestDeleteRow: (sourceId: string, slug: string) => Promise<GuestDeleteRow>",
           "readGuestSourceRow: (sourceId: string) => Promise<GuestSourceLookupRow>",
           "readHandoverRow: (by: \"id\" | \"plan_hash\", value: string) => Promise<Record<string, unknown> | null>",
           "readHeadBlockerRows: (ids: readonly string[], hostId: string | null, opts?: HeadBlockerReadOpts) => Promise<HeadBlockerRow[]>",
@@ -5141,6 +5142,7 @@
           "readGlobalMaintenanceDeaths: (spec: { deaths: number; }) => Promise<GlobalMaintenanceDeaths>",
           "readGraduationGateRow: (opts?: { withRunSetting?: boolean; }) => Promise<GraduationGateRow | null>",
           "readGroupSpendTotals: (budgetKey: string) => Promise<GroupSpendRow>",
+          "readGuestDeleteRow: (sourceId: string, slug: string) => Promise<GuestDeleteRow>",
           "readGuestSourceRow: (sourceId: string) => Promise<GuestSourceLookupRow>",
           "readHandoverRow: (by: \"id\" | \"plan_hash\", value: string) => Promise<Record<string, unknown> | null>",
           "readHeadBlockerRows: (ids: readonly string[], hostId: string | null, opts?: HeadBlockerReadOpts) => Promise<HeadBlockerRow[]>",
@@ -9941,6 +9943,7 @@
           "readGlobalMaintenanceDeaths: (spec: { deaths: number; }) => Promise<GlobalMaintenanceDeaths>",
           "readGraduationGateRow: (opts?: { withRunSetting?: boolean; }) => Promise<GraduationGateRow | null>",
           "readGroupSpendTotals: (budgetKey: string) => Promise<GroupSpendRow>",
+          "readGuestDeleteRow: (sourceId: string, slug: string) => Promise<GuestDeleteRow>",
           "readGuestSourceRow: (sourceId: string) => Promise<GuestSourceLookupRow>",
           "readHandoverRow: (by: \"id\" | \"plan_hash\", value: string) => Promise<Record<string, unknown> | null>",
           "readHeadBlockerRows: (ids: readonly string[], hostId: string | null, opts?: HeadBlockerReadOpts) => Promise<HeadBlockerRow[]>",
@@ -10996,6 +10999,16 @@
           "worldOnly: boolean"
         ],
         "name": "ForgetTargetSpec"
+      },
+      {
+        "kind": "interface",
+        "members": [
+          "guest: boolean",
+          "hidden: boolean",
+          "kept: boolean",
+          "writer: string | null"
+        ],
+        "name": "GuestDeleteRow"
       },
       {
         "kind": "interface",
@@ -16022,6 +16035,7 @@
           "readGlobalMaintenanceDeaths: (spec: { deaths: number; }) => Promise<jobsChecks.GlobalMaintenanceDeaths>",
           "readGraduationGateRow: (opts?: { withRunSetting?: boolean; }) => Promise<connectGateImpl.GraduationGateRow | null>",
           "readGroupSpendTotals: (budgetKey: string) => Promise<spendLog.GroupSpendRow>",
+          "readGuestDeleteRow: (sourceId: string, slug: string) => Promise<GuestDeleteRow>",
           "readGuestSourceRow: (sourceId: string) => Promise<GuestSourceLookupRow>",
           "readHandoverRow: (by: \"id\" | \"plan_hash\", value: string) => Promise<Record<string, unknown> | null>",
           "readHeadBlockerRows: (ids: readonly string[], hostId: string | null, opts?: headBlockerImpl.HeadBlockerReadOpts) => Promise<headBlockerImpl.HeadBlockerRow[]>",

@@ -530,6 +530,7 @@ test/engine-parity/segmented-ledger-reads.test.ts
 test/engine-parity/segmented-mirror-effects.test.ts
 test/engine-parity/segmented-purge-writes.test.ts
 test/engine-parity/segmented-rewrite.test.ts
+test/engine-parity/served-remote-writes.test.ts
 test/engine-parity/session-state-cap.test.ts
 test/engine-parity/session-state.test.ts
 test/engine-parity/shared-skill-members.test.ts
@@ -635,6 +636,7 @@ test/engine-parity/writer-versions.test.ts
 test/engine-sql-fact-relink-attempts.test.ts
 test/engine-sql-fact-relink-writes.test.ts
 test/engine-sql-facts-keyset.test.ts
+test/engine-sql-guest-delete-row.test.ts
 test/engine-swap-managed-storage.test.ts
 test/engine-swap-refresh-drain.test.ts
 test/enrich-owner-contact.test.ts

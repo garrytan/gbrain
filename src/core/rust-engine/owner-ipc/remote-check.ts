@@ -18,7 +18,8 @@
  */
 import { storeMultiuser } from '../access-self-check.ts';
 import { rustMultiuserFromEnv } from '../multiuser-switch.ts';
-import { OWNER_IPC_REMOTE_READS, ownerIpcRefusal } from './routes.ts';
+import { OWNER_IPC_REMOTE_READS, OWNER_IPC_REMOTE_SIDE_WRITES, ownerIpcRefusal } from './routes.ts';
+import { remoteWholeOperationCall } from '../served/remote-whole-ops.ts';
 
 /** The store the owner serves, when its engine has one open (a Rust engine), else none. */
 function servedStore(engine: object): object | null {
@@ -57,7 +58,7 @@ export function remoteFrameMark(remote: boolean, ownerCapabilities: readonly str
  * The refusal for frame `frame` (member `member`) on the owner of `engine` when the owner must not run it for a remote caller, else null.
  * `principalRemote` is the authenticated principal's remote flag when the connection has one.
  */
-export function ownerRemoteRefusal(engine: object, frame: Record<string, unknown>, member: string, principalRemote?: boolean): Error | null {
+export function ownerRemoteRefusal(engine: object, frame: Record<string, unknown>, member: string, principalRemote?: boolean, servedWire = false): Error | null {
   if (!ownerRemoteCheckOn(engine)) return null;
   const marked = frame.remote === true;
   if (principalRemote === true && !marked) {
@@ -65,7 +66,10 @@ export function ownerRemoteRefusal(engine: object, frame: Record<string, unknown
   }
   const remote = principalRemote ?? marked;
   if (!remote) return null;
-  if (frame.t === 'fn') return ownerIpcRefusal(member, 'a remote caller\'s whole operation is not run by the brain owner');
+  // Over the served wire only, a whole operation of the closed list runs (served/remote-whole-ops.ts); never on the socket.
+  if (frame.t === 'fn') return servedWire && remoteWholeOperationCall('fn', member, frame.args) ? null
+    : ownerIpcRefusal(member, 'a remote caller\'s whole operation is not run by the brain owner');
+  if (servedWire && OWNER_IPC_REMOTE_SIDE_WRITES.has(member)) return null; // the scope-checked usage stamp (served/remote-side-writes.ts)
   if (!OWNER_IPC_REMOTE_READS.has(member)) return ownerIpcRefusal(member, 'a remote caller\'s write is not run by the brain owner');
   return null;
 }

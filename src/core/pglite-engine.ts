@@ -3120,6 +3120,7 @@ export class PGLiteEngine implements BrainEngine {
   readBeliefCoverageEvents(sourceId: string) { return beliefLedgerImpl.readBeliefCoverageEvents(this, sourceId); }
   hasCompanyBrainReceipt(sourceId: string) { return cliReadsImpl.hasCompanyBrainReceipt(this.cliReads, sourceId); }
   readGuestSourceRow(sourceId: string) { return cliReadsImpl.readGuestSourceRow(this.cliReads, sourceId); }
+  readGuestDeleteRow(sourceId: string, slug: string) { return cliReadsImpl.readGuestDeleteRow(this.cliReads, sourceId, slug); }
   listGuestSourceIds(sourceIds: readonly string[]) { return cliReadsImpl.listGuestSourceIds(this.cliReads, sourceIds); }
   hasGuestSource() { return cliReadsImpl.hasGuestSource(this.cliReads); }
   readPageTrustRows(lookup: PageTrustLookup) { return cliReadsImpl.readPageTrustRows(this.cliReads, lookup); }

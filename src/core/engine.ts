@@ -272,6 +272,8 @@ export interface FactWithdrawalClaim { visibility: 'private' | 'world'; fact: st
 export interface OwnerReachSpec { id: number; sourceId: string; identity: readonly string[]; satisfied: readonly string[] }
 /** `readGuestSourceRow`: the source's guest_sources row (null fields without one) and whether row-level security hides guest_sources. */
 export interface GuestSourceLookupRow { hidden: boolean; source_id: string | null; writers: string[] | null; trust_ceiling: string | null }
+/** `readGuestDeleteRow`: one page's guest records (all false, no writer, when the page does not exist). */
+export interface GuestDeleteRow { hidden: boolean; guest: boolean; kept: boolean; writer: string | null }
 /** `readPageTrustRows` input: page ids, and (source_id, slug) keys read live unless `includeDeleted`. */
 export interface PageTrustLookup { ids?: readonly number[]; keys?: ReadonlyArray<{ source_id: string; slug: string }>; includeDeleted?: boolean }
 /** One page's trust fields; `byId` marks a row found by id, `flagged` an activation-suppressed page, `guest` a page in a guest source, `precedence` the class of source it came from (eligibility/precedence.ts, C3). */
@@ -1640,6 +1642,8 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
   hasCompanyBrainReceipt(sourceId: string): Promise<boolean>;
   /** The source's guest_sources row and whether row-level security hides guest_sources; throws the missing-table error on an old schema. */
   readGuestSourceRow(sourceId: string): Promise<GuestSourceLookupRow>;
+  /** A page's guest records for a remote delete: whether row-level security hides guest_sources, whether its source is a guest source, whether the owner kept it (guest_promotions) and its guest mark's `<kind>:<id>` writer; throws the missing-table error on an old schema. */
+  readGuestDeleteRow(sourceId: string, slug: string): Promise<GuestDeleteRow>;
   /** The guest sources (config `guest: true` or a guest_sources row) among `sourceIds`, in no particular order. */
   listGuestSourceIds(sourceIds: readonly string[]): Promise<string[]>;
   /** Whether any source is a guest source. */

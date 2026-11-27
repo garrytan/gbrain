@@ -21,7 +21,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { serveOwnerEngine, type OwnerEngineServer } from '../src/core/rust-engine/owner-ipc/server.ts';
 import { connectOwner, installOwnerClient } from '../src/core/rust-engine/owner-ipc/client.ts';
 import {
-  OWNER_IPC_REMOTE_DENY, OWNER_IPC_REMOTE_HAND_READS, OWNER_IPC_REMOTE_READS, OWNER_IPC_REMOTE_TYPED_READS, OWNER_IPC_ROUTES,
+  OWNER_IPC_REMOTE_DENY, OWNER_IPC_REMOTE_HAND_READS, OWNER_IPC_REMOTE_READS, OWNER_IPC_REMOTE_SIDE_WRITES, OWNER_IPC_REMOTE_TXN_SETTINGS, OWNER_IPC_REMOTE_TYPED_READS, OWNER_IPC_ROUTES,
 } from '../src/core/rust-engine/owner-ipc/routes.ts';
 import { OWNER_IPC_TYPED_CONFIRMING_READS, OWNER_IPC_TYPED_READS } from '../src/core/rust-engine/owner-ipc/typed-member-classes.ts';
 import { OWNER_IPC_CONFIRMING_READS } from '../src/core/rust-engine/owner-ipc/confirming-reads.ts';
@@ -115,6 +115,18 @@ describe('the remote read list guard', () => {
   test('the guard fails on a typed write and on a member that is neither a typed read nor hand-listed', () => {
     expect(remoteListProblems({ remote: ['putPage'], ...REAL }).some(p => p.startsWith('putPage: a typed write'))).toBe(true);
     expect(remoteListProblems({ remote: ['notAMember'], ...REAL })).toEqual(['notAMember: not a typed read and not on the frozen hand list']);
+  });
+
+  test('the remote side-write list is exactly bumpPageRetrievals (any addition waits for a ruling), and it is not a read', () => {
+    expect([...OWNER_IPC_REMOTE_SIDE_WRITES]).toEqual(['bumpPageRetrievals']);
+    expect([...OWNER_IPC_REMOTE_SIDE_WRITES].filter(member => OWNER_IPC_REMOTE_READS.has(member))).toEqual([]);
+    expect([...OWNER_IPC_REMOTE_SIDE_WRITES].filter(member => Object.hasOwn(OWNER_IPC_REMOTE_DENY, member))).toEqual([]);
+  });
+
+  test('the remote in-transaction list is exactly beginSnapshotRead: it sets the caller\'s own transaction, stays denied outside one, and is not a read', () => {
+    expect([...OWNER_IPC_REMOTE_TXN_SETTINGS]).toEqual(['beginSnapshotRead']);
+    expect([...OWNER_IPC_REMOTE_TXN_SETTINGS].filter(member => !Object.hasOwn(OWNER_IPC_REMOTE_DENY, member))).toEqual([]);
+    expect([...OWNER_IPC_REMOTE_TXN_SETTINGS].filter(member => OWNER_IPC_REMOTE_READS.has(member) || OWNER_IPC_REMOTE_SIDE_WRITES.has(member))).toEqual([]);
   });
 
   test('every denied member names its reason', () => {

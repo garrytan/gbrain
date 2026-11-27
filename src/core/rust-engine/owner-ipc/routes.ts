@@ -102,6 +102,22 @@ export const OWNER_IPC_REMOTE_TYPED_READS: readonly string[] = [
   'listPageQuoteTiers',
   // write-request-reads: a remote caller reads its own write receipts and a memory proposal's state.
   'readWriteRequest', 'listWriteRequestRows', 'readMemoryProposal',
+  // search-caller-refusals: a remote fuzzy get_page drops the private-only candidates in its snapshot (ops/pages.ts).
+  'readPrivateOnlySlugs',
+  // The remote reads the remote-write files make once their writes cross (batch 3): admin-counts, credential-grant-writes,
+  // fence-row-trust, owner-write-privacy, page-mutation-reads, plain-member-writes, query-filters, remote-access-matrix,
+  // remote-links, source-scope-reads, takes-prepare, timeline-add, unbound-claim, world-only-spelling-read,
+  // write-request-cancel. Each is a typed read the server runs under the caller's record with the remote mark.
+  'computeFactFingerprints', 'filterPageIdsByFrontmatter', 'findExactSlug', 'getWorktreeBinding', 'hasGuestSource',
+  'listContestedProposalPairs', 'listFactRowsByIds', 'listFactsForRelevance', 'listFactsFromQuotedPages',
+  'listFenceHoldRows', 'listFenceRowTrust', 'listHeldFenceCells', 'listOwnerTierFacts', 'listPageRefsByIds',
+  'listPageStatusByRef', 'listPagesTitledIn', 'listSharedSkillPackRoots', 'listSlotRows', 'matchSavedFacts',
+  'pageAwaitsRederive', 'readAccessTokenWriteGrant', 'readAdmissionSource', 'readAdmittedPageRefs',
+  'readFenceOverlayRows', 'readHeldPageRows', 'readIdentitySiblingCandidates', 'readJournalLimitRows',
+  'readLinkContextMatches', 'readLinkContextOriginPages', 'readOAuthClientWriteGrant',
+  'readOwnerOnlySourceConfig', 'readPageTrustRows', 'readRowTrustRows', 'readSourceMembership', 'readSourceRow',
+  'readStoredSlugSpellings', 'readWriteRequestsByRequestIds', 'readWriteVisibilityProbe', 'readWriterSlugFence',
+  'sharedSkillPackTablePresent', 'wordLexemes',
 ];
 
 /**
@@ -115,7 +131,7 @@ const DECIDE = 'the decide store: the owner\'s paid-provider spend, proposals an
 export const OWNER_IPC_REMOTE_DENY: Readonly<Record<string, string>> = {
   readCommitLog: 'the commit log lists every key family\'s write ids and origins, across all callers',
   lastCommitPosition: 'a commit position from the log; the served side answers positions from the store itself',
-  beginSnapshotRead: 'opens a snapshot on the server that outlives the call; not a plain read',
+  beginSnapshotRead: 'opens a snapshot on the server that outlives the call; not a plain read (inside a transaction the caller holds it may cross: OWNER_IPC_REMOTE_TXN_SETTINGS)',
   readStoredBodyBytes: 'the stored body bytes before any visibility or quoting is applied',
   readPageBodySizes: 'body sizes of every page, private ones included, reveal what exists',
   readFieldUsageSamples: 'samples frontmatter values across every page, private ones included',
@@ -130,6 +146,24 @@ export const OWNER_IPC_REMOTE_DENY: Readonly<Record<string, string>> = {
   ...Object.fromEntries(['readDecideState', 'dailyDecideSpend', 'listDecideSpendBySlot', 'listDecideReceiptStats', 'getDecideProposal',
     'listDecideProposals', 'getDecideReviewProposal', 'listDecideCalibrations', 'getDecideCalibration'].map(m => [m, DECIDE])),
 };
+
+/**
+ * Engine members that write and that a remote caller may still send, over the served wire only (ruled 2026-11-26): the
+ * usage stamp a remote read makes in process too (last-retrieved.ts bumpLastRetrievedAt), best-effort and idempotent. The
+ * brain server stamps only page ids the caller may read and refuses the call otherwise (served/remote-side-writes.ts). It
+ * is NOT a read: it stays out of OWNER_IPC_REMOTE_READS, and test/rust-owner-ipc-remote.test.ts pins this list to exactly
+ * this one member.
+ */
+export const OWNER_IPC_REMOTE_SIDE_WRITES: ReadonlySet<string> = new Set(['bumpPageRetrievals']);
+
+/**
+ * Members a remote caller may send only on a transaction it holds (the served wire's `txn`), never outside one: each
+ * sets that transaction and nothing beyond it. `beginSnapshotRead` makes the caller's own transaction one snapshot, or
+ * read-only; the transaction ends with the caller's commit or rollback, so the snapshot never outlives it. A remote
+ * fuzzy get_page reads its candidates this way in process (ops/pages.ts). Outside a transaction it stays on
+ * OWNER_IPC_REMOTE_DENY; test/rust-owner-ipc-remote.test.ts pins this list to exactly this one member.
+ */
+export const OWNER_IPC_REMOTE_TXN_SETTINGS: ReadonlySet<string> = new Set(['beginSnapshotRead']);
 
 /**
  * Forwarded members a remote caller may send to the owner: the frozen hand list and the typed additions above. Every

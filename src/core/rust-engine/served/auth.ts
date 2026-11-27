@@ -23,6 +23,7 @@
  * connection and refuses new work as soon as it fails.
  */
 import type { BrainEngine } from '../../engine.ts';
+import type { CallerAccess } from '../../search/private-visibility.ts';
 import { servedAuthRefused } from './errors.ts';
 
 export const OWNER_TOKEN_IDS_CONFIG_KEY = 'rust_server.owner_token_ids';
@@ -37,6 +38,11 @@ export interface AuthenticatedPrincipal {
   floorRemote: boolean;
   /** Epoch ms after which the credential stops working (undefined: does not expire). */
   expiresAt?: number;
+  /**
+   * The caller access record the store built for this principal (B3): every call runs under it and a frame claiming
+   * another is refused (owner-ipc/frame-access.ts). Unset for the owner's floor, whose frames narrow its trusted view.
+   */
+  record?: CallerAccess;
 }
 
 export const LOCAL_OWNER: AuthenticatedPrincipal = Object.freeze({ kind: 'local_owner', key: 'local_owner', floorRemote: false });

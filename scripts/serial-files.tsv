@@ -15,6 +15,7 @@ test/rust-served-follower-serve.serial.test.ts	R1	R1: sets GBRAIN_RUST_MULTIUSER
 test/rust-served-http-owner-gate.serial.test.ts	R1	R1: sets GBRAIN_RUST_MULTIUSER in process.env so the in-process owner of one on-disk Rust brain serves protocol v3 to a served client that the HTTP apps run on
 test/rust-served-mcp.serial.test.ts	R1	R1: sets GBRAIN_RUST_MULTIUSER in process.env so the in-process owner of one on-disk Rust brain serves protocol v3 to the served MCP client the cases compare against the embedded brain
 test/rust-served-read-position.serial.test.ts	R1	R1: sets GBRAIN_RUST_MULTIUSER and GBRAIN_RUST_COMMIT_LOG in process.env so the in-process owner of one on-disk Rust brain serves protocol v3 to two served client engines
+test/rust-served-remote-writes.serial.test.ts	R1	R1: sets GBRAIN_RUST_MULTIUSER in process.env so the in-process owner of one on-disk Rust brain serves protocol v3 to a served client the hostile-client cases drive
 test/rust-served-store-returning.serial.test.ts	R1	R1: sets GBRAIN_RUST_MULTIUSER in process.env so the in-process owner of one on-disk Rust brain serves protocol v3 to a served client engine
 test/unmanaged-push-every-site-gst2456.serial.test.ts	R1	R1: mutates HOME, GBRAIN_HOME, PATH and GBRAIN_GIT_ALLOW_FILE_TRANSPORT for real commit-push, hook, helper and sources pushes to local bare remotes
 test/unmanaged-push-history-scan-8902.serial.test.ts	R1	R1: mutates HOME, GBRAIN_HOME and GBRAIN_GIT_ALLOW_FILE_TRANSPORT for real policy, scaffolding, sources push and bootstrap pushes to local bare remotes

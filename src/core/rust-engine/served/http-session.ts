@@ -6,6 +6,7 @@
  * else refuses `permission_denied` before a tool runs. With the switch off nothing here applies.
  */
 import { storeMultiuser } from '../access-self-check.ts';
+import { servedMultiuserClient } from './remote-whole-ops.ts';
 
 /**
  * True when `engine` is a Rust brain this process serves over HTTP in multi-user mode. The store's resolved mode decides
@@ -17,15 +18,6 @@ export function rustHttpServing(engine: { kind?: unknown; openStoreIfOpen?: (mem
   if (servedMultiuserClient(engine)) return true;
   const store = engine.openStoreIfOpen?.('serveHttp');
   return !!store && storeMultiuser(store);
-}
-
-/**
- * True for a served client (it reaches a brain server over protocol v3 and has no store) whose server runs multi-user:
- * its capabilities mirror the server's hello, which lists `multi_writer` exactly then.
- */
-function servedMultiuserClient(engine: { capabilities?: ReadonlySet<string> }): boolean {
-  const caps = engine.capabilities;
-  return !!caps && caps.has('served') && caps.has('multi_writer');
 }
 
 type SessionLike = import('../../../mcp/session-dispatch.ts').PrincipalSessionRunner;

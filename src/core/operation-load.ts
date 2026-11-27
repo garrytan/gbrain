@@ -11,6 +11,7 @@
  */
 import { MULTIUSER_FORWARDED_OPERATIONS } from './rust-engine/owner-ipc/forwarded-names.ts';
 import { rustMultiuserFromEnv } from './rust-engine/multiuser-switch.ts';
+import { claimedAuth, finishRemoteWholeOperation, remoteWholeOperation, remoteWholeOperationForm, servedMultiuserClient } from './rust-engine/served/remote-whole-ops.ts';
 import type { Operation } from './ops/contract.ts';
 import { withOutputRedaction } from './search/output-redaction.ts';
 import { withEngineScope } from './engine-scope.ts';
@@ -165,7 +166,9 @@ export function finalizeOperation(op: Operation): void {
   const scoped: Operation['handler'] = (ctx, params) => withEngineScope(ctx.engine,
     () => withRemoteCaller(isRemoteCaller() || ctx.remote !== false, () => handler(ctx, params)));
   // Multi-user Rust: a trusted local client of the brain's owner sends these writes whole (owner-ipc/forwarded-names.ts).
-  op.handler = MULTIUSER_FORWARDED_OPERATIONS.has(op.name) ? forwardedToOwner(op.name, scoped) : scoped;
+  const local = MULTIUSER_FORWARDED_OPERATIONS.has(op.name) ? forwardedToOwner(op.name, scoped) : scoped;
+  // Multi-user Rust, served client: a remote caller's write crosses whole (rust-engine/served/remote-whole-ops.ts).
+  op.handler = remoteWholeOperation(op.name) ? remoteToServer(op.name, local) : local;
 }
 
 /** The handler, sent whole to the Rust owner when this process is its trusted local client in multi-user mode. */
@@ -175,6 +178,17 @@ function forwardedToOwner(name: string, scoped: Operation['handler']): Operation
     const { forwardOwnerOperation } = await import('./rust-engine/owner-ipc/whole-op.ts');
     const forwarded = await forwardOwnerOperation(ctx, name, params);
     return forwarded ? forwarded.result : scoped(ctx, params);
+  };
+}
+
+/** The handler, sent whole to the brain server when a remote caller runs it on a served client of a multi-user server. */
+function remoteToServer(name: string, local: Operation['handler']): Operation['handler'] {
+  return async (ctx, params) => {
+    const remote = ctx.remote !== false || isRemoteCaller();
+    if ((ctx.engine?.kind as string) !== 'rust' || !remote || ctx.dryRun || !servedMultiuserClient(ctx.engine)
+      || !remoteWholeOperationForm(name, params, claimedAuth(ctx))) return local(ctx, params);
+    const { forwardRemoteWholeOperation } = await import('./rust-engine/owner-ipc/whole-op.ts');
+    return finishRemoteWholeOperation(name, ctx, (await forwardRemoteWholeOperation(ctx, name, params)).result);
   };
 }
 

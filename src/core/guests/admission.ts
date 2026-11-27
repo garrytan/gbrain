@@ -17,7 +17,7 @@ import { normalizeReaders } from '../access/principals.ts';
 import { ownerMemberId } from '../access/owner.ts';
 import type { Principal } from '../persistence/model.ts';
 import type { GuestSource } from './sources.ts';
-import { GUEST_SOURCES_HIDDEN_SQL, type GuestAttribution } from './note.ts';
+import type { GuestAttribution } from './note.ts';
 import { schemaAdmissionRefusal } from '../persistence/schema-admission.ts';
 import { isMissingSchemaObject } from '../utils.ts';
 
@@ -124,13 +124,10 @@ export function guestNoteNotYours(slug: string): OperationError {
  * A remote delete of a page in a guest source: refused when the owner promoted it (guest_promotions) and when its guest
  * mark names another writer than `principal` (a writer deletes only what it saved). Checked at submission and in publication.
  */
-export async function refuseRemoteGuestDelete(exec: Pick<BrainEngine, 'executeRaw' | 'ownsSchemaTables'>, sourceId: string, slug: string, principal: Principal): Promise<void> {
-  const [page] = await exec.executeRaw<{ hidden: boolean; guest: boolean; kept: boolean; writer: string | null }>(
-    `SELECT ${GUEST_SOURCES_HIDDEN_SQL} AS hidden, EXISTS (SELECT 1 FROM guest_sources g WHERE g.source_id = p.source_id) AS guest, EXISTS (SELECT 1 FROM guest_promotions g WHERE g.guest_page_id = p.id) AS kept,
-       (SELECT m.writer_kind || ':' || m.writer_id FROM guest_marks m WHERE m.page_id = p.id) AS writer FROM pages p WHERE p.source_id = $1 AND p.slug = $2 LIMIT 1`, [sourceId, slug])
-    .catch(e => schemaBehindGuests(exec, e));
-  if (page?.hidden) throw guestSourcesUnreadable(sourceId);
-  if (!page?.guest && !page?.kept) return;
+export async function refuseRemoteGuestDelete(exec: Pick<BrainEngine, 'executeRaw' | 'readGuestDeleteRow' | 'ownsSchemaTables'>, sourceId: string, slug: string, principal: Principal): Promise<void> {
+  const page = await exec.readGuestDeleteRow(sourceId, slug).catch(e => schemaBehindGuests(exec, e));
+  if (page.hidden) throw guestSourcesUnreadable(sourceId);
+  if (!page.guest && !page.kept) return;
   if (page.kept) throw guestPagePromoted(slug);
   if (page.writer !== principalKey(principal)) throw guestNoteNotYours(slug);
 }

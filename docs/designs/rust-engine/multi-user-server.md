@@ -283,6 +283,75 @@ publication path, which calls a few store methods directly (`shared-skills/rust-
 records the page keys its `lockPageKeys` took on the server, so held-key checks answer as in process. A plain member
 called on a transaction must be one the owner forwards; the call keeps the frame's caller access record and deadline.
 
+### Remote writes over the served wire
+
+An agent-facing (remote) caller of a served client (an MCP request over HTTP or stdio, a non-application job authority, a
+remote verified writer) writes only through **whole operations of one closed list**, never through single engine members.
+The list is `REMOTE_WHOLE_OPERATIONS` in `src/core/rust-engine/served/remote-whole-ops.ts`:
+
+| Operation | Served parity proof |
+|---|---|
+| `put_page` | `credential-grant-writes`, `owner-write-privacy`, `unbound-claim`, `world-only-spelling-read` |
+| `put_pages`, `capture` | `remote-links`, `plain-member-writes` |
+| `delete_page` (soft delete only), `add_tag`, `remove_tag`, `add_link`, `remove_link`, `remember`, `forget`, `restore_page`, `edit_page` | `served-remote-writes` |
+| `add_timeline_entry` | `timeline-add` |
+| `revert_version` | `page-mutation-reads` |
+| `takes_add`, `takes_update`, `takes_supersede`, `takes_resolve`, `takes_remove` | `takes-prepare` |
+| `cancel_write_request` | `write-request-cancel`, `admin-counts` |
+| `request_tools` (persist form only) | `request-tools-persist` |
+
+`test/rust-served-remote-whole-ops.test.ts` requires each listed operation to be a write operation with a parity file that is
+a `served` row of `test/engine-parity/rust-served-set.tsv`, with one named exception, `request_tools` (below). A remote
+`delete_page` is a soft delete: the operation refuses a remote purge (`permission_denied`) and a remote retention purge
+(`invalid_params`) before it deletes, on the server as in process. Its guest-note check reads the engine member
+`readGuestDeleteRow`; a Rust brain keeps no guest marks or promotions, so no page there is a guest note it refuses.
+
+How one crosses:
+
+- The client sends `runOperation(name, params, context, { auth })` with the remote mark: `context` holds only the plain keys
+  of `REMOTE_CONTEXT_KEYS` (source, admission origin, federated sources, agent label, transport, takes holders), and `auth`
+  is the caller's grant without its bearer token.
+- K (owner-ipc/remote-check.ts) lets a remote whole operation through only on the served wire and only when it is on the
+  list; on the owner socket (v2) every remote whole operation is still refused. The served session refuses it for any
+  principal other than the brain owner's floor (until ruling A1 lifts, that is every other principal).
+- The server runs the operation's own handler with `ctx.remote` true and the remote caller mark on, under the access record
+  B3 proved for the connection (for the owner's floor: the client's narrowing claim). The claimed grant is a narrowing claim
+  too: the server checks the operation's scope against it again and refuses `permission_denied` before anything runs.
+- Fencing and replay are the owner's: its persistence journal and claim fences, unchanged. A journaled operation's request id
+  is the wire request id, so a retry after a restart is answered by the journal's own receipt, never a second write.
+- Remote single-member writes stay refused, with one exception below. Remote reads cross only as the typed reads of
+  `OWNER_IPC_REMOTE_READS`.
+
+**The one side write.** `OWNER_IPC_REMOTE_SIDE_WRITES` (owner-ipc/routes.ts) holds exactly `bumpPageRetrievals`, the usage
+stamp a remote read (`get_page`, `query`, `search`) makes in process too. It feeds ranking and sampling, so a forged stamp
+could move what other callers see: the server resolves each id to its page and stamps only when the caller may read every
+one (served/remote-side-writes.ts); one id outside the caller's read scope refuses the whole call and stamps nothing. The
+stamp stays best-effort: a failed stamp never fails the read. `test/rust-owner-ipc-remote.test.ts` pins the list to that one
+member; any addition waits for a ruling.
+
+**The one transaction setting.** `OWNER_IPC_REMOTE_TXN_SETTINGS` (owner-ipc/routes.ts) holds exactly `beginSnapshotRead`.
+A remote caller may send it only on a transaction it holds (a frame with `txn`), where it makes that transaction one
+snapshot or read-only and ends with the caller's own commit or rollback. A remote fuzzy `get_page` reads its candidates
+this way in process (ops/pages.ts). Outside a transaction it stays on `OWNER_IPC_REMOTE_DENY`, at the client and at the
+server, and a write inside the caller's transaction stays refused as anywhere else. `test/rust-owner-ipc-remote.test.ts`
+pins the list to that one member.
+
+**The one parameter form.** `request_tools` is a read-scope operation marked `mutating`: only its persist form writes (the
+caller's OAuth client row and its `surface_change` audit row). `REMOTE_WHOLE_PARAM_FORMS` (served/remote-whole-ops.ts) lets
+it cross only as `{surface}` without `tools`, for a claimed grant with a client id; the client and the server both check
+the form. Its listing and descriptor forms read the operation registry in the client process, and the stdio session widen
+(no client id) changes the client's own session, so they run on the client as before. A `{surface, tools}` call runs on the
+client and sends its inner persist whole. The caller's `surfaceCeiling` crosses as a narrowing claim: the brain server has
+no ceiling of its own, so the claim can only lower the default `full`, and a value that is not a surface name is refused
+before anything runs. The persist rate limit is the server's, per client id. After the server's answer, the client runs
+the caller's tools/list_changed hook, as the in-process persist does. Until A1 lifts only the owner's floor sends it, and
+that floor may already set any client's surface (`gbrain auth rescope-client`); a non-owner principal's persist for a client
+id that is not its own needs its own check then.
+
+**Follow-up (A1).** Once per-user access lifts, a non-owner principal's remote `put_page` needs its own privacy and
+visibility parity case (its readers, a private page it may not see, an owner-only source): today only the owner's floor sends
+remote whole operations, so `owner-write-privacy` covers the owner's own key only.
+
 ### Client file limits
 
 The client opens the file once without following a final symlink, refuses anything that is not a regular file, and

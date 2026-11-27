@@ -13,6 +13,8 @@ import { OperationError, type OperationContext } from '../../ops/contract.ts';
 import { importFromContent, importFromFile, importImageFile } from '../../import-file.ts';
 import { importManagedFiles } from '../../persistence/import-mutations.ts';
 import { ownerHandoff, ownerIpcRefusal } from './routes.ts';
+import { isRemoteCaller } from '../../remote-caller.ts';
+import { remoteOperationContext, remoteWholeOperationForm } from '../served/remote-whole-ops.ts';
 import { PERSISTENCE_CLOSING_MESSAGE } from '../../persistence/service.ts';
 import { snapshotStatus, snapshotStore, type SnapshotStoreOptions } from '../store-snapshot.ts';
 import type { OwnerWholeOperation } from './server.ts';
@@ -29,9 +31,11 @@ const CONTEXT_KEYS: ReadonlySet<string> = new Set(['sourceId', 'admissionOrigin'
   'localFederatedSourceIds', 'agentLabel', 'deferEmbeds'] satisfies Array<keyof ForwardedOperationContext>);
 
 async function runOperation(engine: BrainEngine, config: GBrainConfig | undefined, name: unknown, params: unknown,
-  context: unknown): Promise<ForwardedOperationResult> {
+  context: unknown, remoteClaim?: unknown): Promise<ForwardedOperationResult> {
   const multiuser = (engine as { openStoreIfOpen?: (m: string) => { multiuser?: boolean } | null }).openStoreIfOpen?.('runOperation')?.multiuser === true;
-  if (typeof name !== 'string' || !forwardsWhole(name, multiuser)) {
+  // A remote caller's whole operation of the closed list (served wire only; K let it through) runs too.
+  if (typeof name !== 'string' || !(forwardsWhole(name, multiuser)
+    || (multiuser && isRemoteCaller() && remoteWholeOperationForm(name, params, (remoteClaim as { auth?: unknown } | null | undefined)?.auth)))) {
     throw ownerIpcRefusal(String(name), 'the brain owner runs only page writes and imports whole');
   }
   if (!params || typeof params !== 'object' || Array.isArray(params)) throw ownerIpcRefusal(name, 'its parameters are not an object');
@@ -42,11 +46,15 @@ async function runOperation(engine: BrainEngine, config: GBrainConfig | undefine
   for (const [key, value] of Object.entries(context && typeof context === 'object' ? context : {})) {
     if (CONTEXT_KEYS.has(key) && value !== undefined) carried[key] = value;
   }
+  // A remote caller's whole operation (served wire only, closed list; served/remote-whole-ops.ts) runs as the in-process
+  // remote call does: ctx.remote true, under the caller's grant as a narrowing claim, its scope checked again here.
+  const remote = isRemoteCaller() ? remoteOperationContext(name, operationsByName[name]!, context, remoteClaim) : null;
   const ctx = {
     ...carried,
+    ...(remote ?? {}),
     engine,
     config: config ?? ({ engine: engine.kind } as GBrainConfig),
-    remote: false,
+    remote: remote !== null,
     dryRun: false,
     logger: { info: (m: string) => { logs.push(['info', m]); }, warn: (m: string) => { logs.push(['warn', m]); }, error: (m: string) => { logs.push(['error', m]); } },
     emitNotice: (notice: Notice) => { notices.push(notice); },
@@ -73,7 +81,7 @@ export function ownerWholeOperations(opts: { config?: GBrainConfig } = {}): Read
     importFromFile: (engine, ...args) => importFromFile(engine, ...(args as Args<typeof importFromFile>)),
     importImageFile: (engine, ...args) => importImageFile(engine, ...(args as Args<typeof importImageFile>)),
     importManagedFiles: (engine, ...args) => importManagedFiles(engine, ...(args as Args<typeof importManagedFiles>)),
-    [OWNER_RUN_OPERATION]: (engine, name, params, context) => runOperation(engine, opts.config, name, params, context)
+    [OWNER_RUN_OPERATION]: (engine, name, params, context, remoteClaim) => runOperation(engine, opts.config, name, params, context, remoteClaim)
       .catch((error: unknown) => { throw handedOverIfClosing(engine, name, error); }),
     snapshotStore: (engine, target, options) => snapshotStore(engine, String(target), options as SnapshotStoreOptions),
     snapshotStatus: (_engine, opId) => Promise.resolve(snapshotStatus(String(opId))),

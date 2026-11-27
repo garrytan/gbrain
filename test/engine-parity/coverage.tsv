@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2450/2479
+# covered: 2451/2480
 # lifecycle: 12/12
 # pages: 141/142
 # search: 8/8
@@ -75,7 +75,7 @@
 # loop_mutes: 8/8
 # source_archive: 6/6
 # entity_identities: 5/5
-# cli_reads_import: 16/16
+# cli_reads_import: 17/17
 # wanted_links: 2/2
 # write_misc: 125/141
 # repair_bookkeeping: 59/59
@@ -159,17 +159,17 @@ withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
 listCatalogRelations	lifecycle	yes	1	no	yes	yes	serves
 readCatalogSchemaVersion	lifecycle	yes	1	no	yes	yes	serves
 listCatalogForeignKeys	lifecycle	yes	1	no	yes	yes	serves
-getPage	pages	yes	299	yes	yes	yes	serves
+getPage	pages	yes	302	yes	yes	yes	serves
 readPageSnapshot	pages	yes	114	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	7	no	yes	yes	serves
 lockPageKeys	pages	yes	20	no	yes	yes	serves
-putPage	pages	yes	1378	yes	yes	yes	serves
+putPage	pages	yes	1385	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	45	yes	yes	yes	serves
 deletePages	pages	yes	10	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	2	yes	yes	yes	serves
-softDeletePage	pages	yes	344	yes	yes	yes	serves
+softDeletePage	pages	yes	345	yes	yes	yes	serves
 softDeletePages	pages	yes	4	yes	yes	yes	serves
 restorePage	pages	yes	18	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	12	no	yes	yes	serves
@@ -440,7 +440,7 @@ replaceDerivedLinks	links	yes	18	no	yes	yes	serves
 replaceDerivedLinksBatch	links	yes	1	no	yes	yes	serves
 removeLink	links	yes	3	no	yes	yes	serves
 removeLinksByPagesAndSource	links	yes	1	yes	yes	yes	serves
-getLinks	links	yes	42	yes	yes	yes	serves
+getLinks	links	yes	43	yes	yes	yes	serves
 getBacklinks	links	yes	16	yes	yes	yes	serves
 listLinkSources	links	yes	2	yes	yes	yes	serves
 findByTitleFuzzy	links	yes	5	no	yes	yes	serves
@@ -461,7 +461,7 @@ addTag	tags	yes	43	yes	yes	yes	serves
 removeTag	tags	yes	2	no	yes	yes	serves
 pruneFrontmatterTags	tags	yes	3	no	yes	yes	serves
 addPageTagsById	tags	yes	1	no	yes	yes	serves
-getTags	tags	yes	14	yes	yes	yes	serves
+getTags	tags	yes	15	yes	yes	yes	serves
 sampleEffectiveDates	timeline	yes	1	no	yes	yes	serves
 sampleEffectiveDateSources	timeline	yes	1	no	yes	yes	serves
 readMaxTimelineEntryId	timeline	yes	1	no	yes	yes	serves
@@ -1998,6 +1998,7 @@ readSyncDispatchRow	cli_reads_import	yes	1	no	yes	yes	serves
 readRetainedSources	cli_reads_import	yes	1	no	yes	yes	serves
 hasCompanyBrainReceipt	cli_reads_import	yes	1	no	yes	yes	serves
 readGuestSourceRow	cli_reads_import	yes	1	no	yes	yes	serves
+readGuestDeleteRow	cli_reads_import	yes	1	no	yes	yes	serves
 listGuestSourceIds	cli_reads_import	yes	1	no	yes	yes	serves
 hasGuestSource	cli_reads_import	yes	1	no	yes	yes	serves
 readPageTrustRows	cli_reads_import	yes	21	no	yes	yes	serves
