@@ -276,8 +276,8 @@ On by default as `section`: `search` and `query` deliver a **long
 non-conversation hit** in its section under the implied `auto`, the way `auto`
 already delivers conversations whole. `gbrain config set search.long_page_unit
 window` (or `page`) picks another unit, and `gbrain config set
-search.long_page_unit off` keeps every hit its ranked chunk, as before the
-default changed (approved default flip, gbrain-evals#653). Every other hit keeps its ranked chunk
+search.long_page_unit off` keeps every non-conversation hit its ranked chunk,
+as before the default changed (approved default flip, gbrain-evals#653). Every other hit keeps its ranked chunk
 unchanged. The value is a delivery unit from the table above and the unit
 algorithms are the same; nothing selects passages by term overlap, so the
 delivered unit is always the one around the ranked hit.
