@@ -23,10 +23,13 @@
  *      refused at the client and at the server; the persist writes the client row on the server; the caller's surface
  *      ceiling crosses as a narrowing claim (a surface above it is refused, nothing written), and a ceiling that is not a
  *      surface name is refused before anything runs.
+ *    - a remote delete_page crosses whole and soft-deletes on the server; a purge (or the internal retention flag) is
+ *      refused there even when the client claims a local caller, and a grant without write is refused, nothing removed.
  *    Every case also holds on the config route (the served arm runs the parity files on both).
  * 2. Fails on: a server that runs any remote whole operation, trusts a client's dispatch for the scope check, keeps a
  *    client-supplied authority key, stamps a page the caller cannot read, or lets a remote caller's transaction setting
- *    cross outside its own transaction, or runs a request_tools form other than the persist or above the claimed ceiling.
+ *    cross outside its own transaction, runs a request_tools form other than the persist or above the claimed ceiling, or
+ *    purges a page for a remote caller.
  * 3. Seam: none below the engine: a real owner, a real v3 listener, a real served client, raw frames through the client.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
@@ -224,5 +227,25 @@ describeAddon('remote writes over the served wire', () => {
     expect(await send('verbs', 'starter')).toBe('ok');
     const row = await owner.readOauthClient('rt-capped');
     expect({ surface: row?.surface, surface_set_by: row?.surface_set_by }).toEqual({ surface: 'verbs', surface_set_by: 'self' });
+  });
+
+  test('a remote delete_page crosses whole and soft-deletes on the server; a purge is refused even with a forged local claim, and a grant without write is refused, nothing removed', async () => {
+    await owner.putPage('notes/doomed', NOTE('Doomed', 'Deleted remotely.'));
+    await owner.putPage('notes/stays', NOTE('Stays', 'Not purged.'));
+    const revisionOf = async (slug: string) => (await owner.getPage(slug))?.knowledge_revision;
+    const del = await dispatchToolCall(client, 'delete_page', { slug: 'notes/doomed', expected_revision: await revisionOf('notes/doomed') }, STDIO as never);
+    expect({ isError: del.isError === true, live: await owner.getPage('notes/doomed') }).toEqual({ isError: false, live: null });
+    const conn = servedConnectionOf(client) as unknown as Conn;
+    const grant = { clientId: 'c', scopes: ['read', 'write'] };
+    const rev = await revisionOf('notes/stays');
+    const send = (extra: Record<string, unknown>, context: Record<string, unknown>, auth: unknown) =>
+      codeOf(withRemoteCaller(true, () => conn.request('fn', OWNER_RUN_OPERATION, ['delete_page', { slug: 'notes/stays', expected_revision: rev, ...extra }, context, { auth }])));
+    expect({
+      // `remote: false` is outside the plain context list: the server runs the delete as a remote caller's.
+      purge: await send({ purge: true }, { remote: false }, grant),
+      retention: await send({ purge: true, retention: true }, { remote: false }, grant),
+      readOnly: await send({}, {}, { clientId: 'c', scopes: ['read'] }),
+    }).toEqual({ purge: 'permission_denied', retention: 'invalid_params', readOnly: 'permission_denied' });
+    expect((await owner.getPage('notes/stays'))?.compiled_truth).toBe('Not purged.');
   });
 });

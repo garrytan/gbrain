@@ -2,8 +2,8 @@
  * BrainEngine parity — the typed reads the CLI import and extract paths ran through `executeRaw`.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
- *  - Contract: listSourceRecords, readSourceIncarnation, readSyncDispatchRow, readRetainedSources, hasCompanyBrainReceipt, readGuestSourceRow, listGuestSourceIds,
- *    hasGuestSource, readPageTrustRows, readRowTrustRows, readDatabaseClock, listLinkPageMetadata, listLinkPageMetadataForSlugs,
+ *  - Contract: listSourceRecords, readSourceIncarnation, readSyncDispatchRow, readRetainedSources, hasCompanyBrainReceipt, readGuestSourceRow, readGuestDeleteRow,
+ *    listGuestSourceIds, hasGuestSource, readPageTrustRows, readRowTrustRows, readDatabaseClock, listLinkPageMetadata, listLinkPageMetadataForSlugs,
  *    listAttendedOriginSlugs, listStoredTimelineRows and
  *    filterPagesAtRevision return the same observable result on every engine arm (PGLite always; Postgres with
  *    DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1), and so do the page labels pageActivationVerdicts builds
@@ -113,6 +113,25 @@ describe('engine parity: CLI import reads', () => {
       unknown: await engine.readGuestSourceRow('no-such-source'),
     };
     expect(rows).toEqual({ visitors: none, plain: none, unknown: none });
+    return rows;
+  });
+
+  parityTest('readGuestDeleteRow finds no guest_sources row, guest mark or promotion for a page of a config-only guest or a plain source, and is not hidden', { methods: ['putPage', 'softDeletePage', 'readGuestDeleteRow'] }, async (engine, backend) => {
+    await createSource(engine, backend, 'visitors', { guest: true });
+    await createSource(engine, backend, 'plain');
+    await note(engine, 'notes/visit', 'visitors');
+    await note(engine, 'notes/kept', 'plain');
+    await note(engine, 'notes/gone', 'plain');
+    await engine.softDeletePage('notes/gone', { sourceId: 'plain' });
+    const none = { hidden: false, guest: false, kept: false, writer: null };
+    const rows = {
+      visitor: await engine.readGuestDeleteRow('visitors', 'notes/visit'),
+      plain: await engine.readGuestDeleteRow('plain', 'notes/kept'),
+      deleted: await engine.readGuestDeleteRow('plain', 'notes/gone'),
+      otherSource: await engine.readGuestDeleteRow('visitors', 'notes/kept'),
+      unknown: await engine.readGuestDeleteRow('no-such-source', 'notes/visit'),
+    };
+    expect(rows).toEqual({ visitor: none, plain: none, deleted: none, otherSource: none, unknown: none });
     return rows;
   });
 

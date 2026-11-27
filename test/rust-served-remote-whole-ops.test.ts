@@ -7,9 +7,10 @@
  *    not local-only, and names the served parity file that proves it, which must be a `served` row of the served set.
  *    One named exception: request_tools, a read-scope operation marked `mutating` that crosses only in its persist form
  *    (`{surface}` without `tools`, for a caller grant with an OAuth client id); its other forms run on the client.
- * 2. Fails on: an operation added to the list with no served parity proof, a read or local-only operation on the list
- *    other than the named exception, a proof file missing from the served set, a parameter form on an operation that is
- *    not listed, or a request_tools form other than the persist form crossing.
+ * 2. Fails on: a page lifecycle write (put_page, delete_page, restore_page) left off the list, an operation added to
+ *    the list with no served parity proof, a read or local-only operation on the list other than the named exception, a
+ *    proof file missing from the served set, a parameter form on an operation that is not listed, or a request_tools
+ *    form other than the persist form crossing.
  * 3. Seam: none; the constant, the operation registry and the manifest as they are.
  */
 import { describe, expect, test } from 'bun:test';
@@ -23,8 +24,8 @@ const served = new Set(readFileSync(join(ROOT, 'test/engine-parity/rust-served-s
   .filter(line => line.split('\t')[1] === 'served').map(line => line.split('\t')[0]));
 
 describe('the closed list of remote whole operations', () => {
-  test('put_page is on it', () => {
-    expect(Object.hasOwn(REMOTE_WHOLE_OPERATIONS, 'put_page')).toBe(true);
+  test('the page lifecycle writes are on it: put_page, delete_page and restore_page', () => {
+    expect(['put_page', 'delete_page', 'restore_page'].filter(name => !Object.hasOwn(REMOTE_WHOLE_OPERATIONS, name))).toEqual([]);
   });
 
   // The named exception: a read-scope operation that writes in one parameter form only (Operation.mutating).
