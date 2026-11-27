@@ -30,6 +30,7 @@ import { sha256 } from '../src/core/persistence/digest.ts';
 import { declarePersistenceProtocol } from '../src/core/persistence/protocol.ts';
 import { withCoordinatedWrite } from '../src/core/persistence/context.ts';
 import { prepareSharedSkillMutation, submitSharedSkillMutation } from '../src/core/shared-skills/publication.ts';
+import { refuseNewCaseCollisions } from '../src/core/shared-skills/case-collisions.ts';
 import { setSharedSkillPolicy } from '../src/core/shared-skills/policy.ts';
 import type { SharedSkillPolicy } from '../src/core/shared-skills/model.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -176,3 +177,13 @@ for (const [name, url] of backends) {
     }, url), 120_000);
   });
 }
+
+describe('the case check compares every pair of spellings', () => {
+  const [A, B, C] = ['GUIDE.md', 'Guide.md', 'guide.md'].map(name => `skills/conventions/${name}`);
+  // Value: protects=removing one of three old spellings is not refused; fails_when=only first-versus-other pairs are kept, so Guide.md and guide.md look new once GUIDE.md goes; why_new=the pairs were keyed by the group's first spelling; seam=pure function; no_claim=none
+  test('removing one spelling of an old three-way collision passes, and adding a fourth refuses', () => {
+    expect(() => refuseNewCaseCollisions('default', [A, B, C], [B, C], true)).not.toThrow();
+    const D = 'skills/conventions/gUIDE.md';
+    expect(() => refuseNewCaseCollisions('default', [A, B, C], [A, B, C, D], true)).toThrow(`${D} collides with`);
+  });
+});

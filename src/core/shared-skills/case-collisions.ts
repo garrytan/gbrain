@@ -8,7 +8,7 @@ export function foldSkillPath(path: string): string {
 /**
  * The pairs of entries one case-insensitive checkout would store as one: two spellings of a file or directory that
  * differ only by letter case, or a file whose folded path is also a directory of another path. Each pair is keyed by
- * its two spellings, so the same collision has the same key in every inventory.
+ * its two spellings in sorted order, so the same collision has the same key in every inventory.
  */
 function caseCollisions(paths: Iterable<string>): Map<string, [string, string]> {
   const kinds = new Map<string, Set<'file' | 'dir'>>();
@@ -25,7 +25,10 @@ function caseCollisions(paths: Iterable<string>): Map<string, [string, string]> 
     const folded = foldSkillPath(entry);
     (spellings.get(folded) ?? spellings.set(folded, []).get(folded)!).push(entry);
   }
-  for (const [first, ...others] of spellings.values()) for (const other of others) found.set(`${first}\n${other}`, [first, other]);
+  // Every pair in a group, so removing one spelling of three never makes the other two look new.
+  for (const group of spellings.values()) {
+    for (let i = 0; i < group.length; i++) for (let j = i + 1; j < group.length; j++) found.set(`${group[i]}\n${group[j]}`, [group[i], group[j]]);
+  }
   return found;
 }
 
