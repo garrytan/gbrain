@@ -498,7 +498,7 @@ async function callMcpTool(ctx: ServeHttpContext, state: McpRequestState, reques
         warn: (msg: string) => console.error(`[WARN] ${msg}`),
         error: (msg: string) => console.error(`[ERROR] ${msg}`),
       },
-    }));
+    }), authInfo.member);
   } catch (e) {
     // dispatchToolCall absorbs OperationError + Error and returns
     // isError:true; only an unexpected throw lands here. Treat as the

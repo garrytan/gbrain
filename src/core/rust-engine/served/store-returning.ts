@@ -7,9 +7,11 @@ export const STORE_RETURNING_MEMBERS: ReadonlySet<string> = new Set([
   'worktreeClaimStore', 'writerAdminStore', 'writerReleaseStore', 'publicationJournalStore', 'chronicleStore',
   // The managed-mode stores (store-members/managed-hold.ts): a client of a multi-writer server reaches them outside a
   // server-held transaction (a remove_link's links-fence projection, Git effects, topology), so they cross the same way.
-  'manualLinkStore', 'topologyStore', 'gitEffectStore', 'gitDurabilityStore',
+  'manualLinkStore', 'topologyStore', 'gitEffectStore', 'gitDurabilityStore', 'refreshStore', 'groupPublishStore',
 ]);
 export const SERVED_STORE_CALL = 'servedStoreCall';
+/** Protocol v3 only: the method names of the store a member returns, so the client's store has them as its own keys. */
+export const SERVED_STORE_KEYS = 'servedStoreKeys';
 
 /**
  * Store methods (`StoreBrain`) that engine code outside the members calls on the store itself (the shared-skill
