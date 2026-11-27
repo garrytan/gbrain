@@ -31,6 +31,7 @@ import { STORE_MEMBERS } from './rust-engine/store-members/index.ts';
 import { brainWithCallDeadline, endOptimisticTransactions, runOptimisticTransaction, type OptimisticTransactions } from './rust-engine/optimistic-transaction.ts';
 import { servedCapabilities, storeCapabilities } from './rust-engine/store-capabilities.ts';
 import { rustMultiuserFromEnv, rustMultiuserSubSwitch } from './rust-engine/multiuser-switch.ts';
+import { refuseUnfencedLeaseCall } from './rust-engine/fence-dispatch.ts';
 import { existingHostIdFor, hostIdFor } from './persistence/identity.ts';
 import { noteRustEngine } from './persistence/managed-operations.ts';
 import { RECEIPT_STOP_OWNERS } from './rust-engine/receipt-stops.ts';
@@ -643,6 +644,7 @@ for (const [member, impl] of Object.entries(STORE_MEMBERS)) {
     enumerable: false,
     value: async function served(this: RustEngine, ...args: unknown[]): Promise<unknown> {
       const store = this.openStoreIfOpen(member) ?? await this.storeFor(member, args);
+      refuseUnfencedLeaseCall(this, member, args); // decision A: a registered process must send its host fence
       await this._admit(member);
       const brain = this.multiuser && !this._txScope ? brainWithCallDeadline(store.brain) : store.brain;
       // Multi-user lane L4: a store in multi-user mode runs the member with its answer in context (access-self-check.ts).

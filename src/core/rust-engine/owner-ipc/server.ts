@@ -42,6 +42,7 @@
  *   member waits too; other members run as before. A held call that reaches its deadline ends `owner_unavailable`,
  *   reason `earlier_call_running`, not retryable: it never ran and tells nothing about the earlier write yet.
  */
+import { runAsOwnerClientCall } from '../fence-dispatch.ts';
 import net, { type Server, type Socket } from 'node:net';
 import { chmodSync, lstatSync, unlinkSync } from 'node:fs';
 import type { BrainEngine } from '../../engine.ts';
@@ -683,7 +684,8 @@ export async function serveOwnerEngine(
     const readDeadlineAt = typeof frame.read_deadline_at === 'number' ? frame.read_deadline_at : undefined;
     let access: CallerAccess | null;
     try { access = frame.access === undefined ? null : callerAccessOf(member, decodeValue(frame.access as Wire)); } catch (error) { refuse(error); return; }
-    const invoke = () => readDeadlineAt === undefined ? target(...args) : withReadDeadline(readDeadlineAt, () => target(...args));
+    // A client's call runs exempt from the owner's host-fence refusal: the owner's registration is not the client's.
+    const invoke = () => runAsOwnerClientCall(() => readDeadlineAt === undefined ? target(...args) : withReadDeadline(readDeadlineAt, () => target(...args)));
     // The call runs under the caller's access record, re-checked by withCallerAccess, or under none when it had none.
     // A v3 call runs inside its session's scope too (served/session.ts: the remote mark, a transaction binding).
     const scoped = () => access ? withCallerAccess(access, invoke) : withoutCallerAccess(invoke);

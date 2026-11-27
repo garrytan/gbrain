@@ -19,6 +19,7 @@
  * when it stops, so two holders in one process never clear each other's.
  */
 import type { LeaseToken, WriteOrigin } from '../rust-engine/store-members/leases.ts';
+import { TAKEN_UNFENCED, type FenceOpts } from '../engine-sql/lease-token.ts';
 
 /** How long a host registration lives without a renewal (ms): the consumer heartbeat renews it every 10 s. */
 export const HOST_FENCE_TTL_MS = 60_000;
@@ -86,6 +87,20 @@ export function fenceOpts(engine: object): { fence?: LeaseToken } {
   return fence ? { fence } : {};
 }
 
+/**
+ * The options a claim or handle keeps for every later call on it: `{ fence }` when it was taken under one, else the
+ * TAKEN_UNFENCED mark, so a call on a claim taken before any registration is not refused by the Rust engine's dispatch
+ * after a registration appears (rust-engine/fence-dispatch.ts). The mark is a symbol key: no store or SQL engine sees it.
+ */
+export function takenFenceOpts(fence: LeaseToken | null | undefined): FenceOpts {
+  return fence ? { fence } : { [TAKEN_UNFENCED]: true };
+}
+
+/** `takenFenceOpts` of the registration current now: what a handle taken now keeps for its later calls. */
+export function boundFenceOpts(engine: object): FenceOpts {
+  return takenFenceOpts(fenceFor(engine));
+}
+
 /** `opts` with the registered fence added, or `opts` itself when there is none (so an unfenced call's options are unchanged). */
 export function withFence<T extends object | undefined>(engine: object, opts: T): T | (NonNullable<T> & { fence: LeaseToken }) {
   const fence = fenceFor(engine);
@@ -148,10 +163,7 @@ export function claimFenceGroups<T>(engine: object, items: readonly T[], tokenOf
 }
 
 /** `{ fence }` for a write on claim `token`: the fence it was stamped under; a claim stamped elsewhere uses the engine's. */
-export function claimFenceOpts(engine: object, token: string | null | undefined): { fence?: LeaseToken } {
-  if (token && claimFences.has(token)) {
-    const fence = claimFences.get(token);
-    return fence ? { fence } : {};
-  }
+export function claimFenceOpts(engine: object, token: string | null | undefined): FenceOpts {
+  if (token && claimFences.has(token)) return takenFenceOpts(claimFences.get(token));
   return fenceOpts(engine);
 }
