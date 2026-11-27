@@ -593,7 +593,7 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
           surfaceCeiling: surface,
           resultRows: resultRowsForRequest(req.headers.get(GBRAIN_CLIENT_HEADER), await resolveResultRowsMode(engine, fileConfig)), // C1; row shape only, never authority
           ...(isGbrainThinClient(req.headers.get(GBRAIN_CLIENT_HEADER)) ? { thinClient: true } : {}), // large pages: default body mode only, never authority
-        }));
+        }), auth.auth?.member);
         // Same status taxonomy as the OAuth transport (denied_after_list /
         // success_with_warnings feed the amendment-33 metric + E4 usage).
         const status = requestLogStatusForResult(result);
