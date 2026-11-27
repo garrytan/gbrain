@@ -475,6 +475,24 @@ for (const kind of testBackends()) {
       expect(parseMarkdown(fs.readFileSync(path.join(root, `${slug}.md`), 'utf8'), slug).frontmatter.ingested_at).toBe(original);
     }, { databaseUrl }), 120_000);
 
+    // Value: protects=GST-4037 a managed put with explicit provenance stamps the first write's channel, so the first-ingest columns stay as stored; fails_when=the import's own time or source_uri reaches the columns beside the first write's channel; why_new=no managed row passes explicit provenance; seam=none; no_claim=remote puts (provenance-stamps-7873)
+    test('GST-4037: a managed put with explicit provenance keeps the first-ingest columns as stored', () => managedBrain(async ({ engine, ctx }) => {
+      const slug = 'inbox/managed-reingest';
+      await operationsByName.put_page.handler(ctx, { slug, content: '---\ntitle: Seeded\ntype: note\n---\nCaptured body\n' });
+      await settleManagedGitEffects(engine);
+      await withManagedFixtureWrite(engine, ['default'], tx => tx.executeRaw(`UPDATE pages SET source_kind = 'webhook', source_uri = 'https://example.invalid/first',
+        ingested_via = 'webhook', ingested_at = '2026-01-02T03:04:05.123456Z'::timestamptz WHERE source_id = 'default' AND slug = $1`, [slug]));
+      const columns = () => engine.executeRaw(`SELECT source_kind, source_uri, ingested_via, to_char(ingested_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US') AS micros
+        FROM pages WHERE source_id = 'default' AND slug = $1`, [slug]);
+      const before = await columns();
+      const seeded = (await engine.readPageSnapshot(slug, { sourceId: 'default' }))!;
+      await operationsByName.put_page.handler(ctx, { slug, content: '---\ntitle: Seeded\ntype: note\n---\nCaptured body, rewritten\n', expected_revision: seeded.revision,
+        source_kind: 'capture-cli', source_uri: 'https://example.invalid/second', ingested_via: 'capture-cli' });
+      await settleManagedGitEffects(engine);
+      expect((await engine.readPageSnapshot(slug, { sourceId: 'default' }))!.page.compiled_truth).toContain('rewritten');
+      expect(await columns()).toEqual(before);
+    }, { databaseUrl }), 120_000);
+
     test('#8009: a page sync holds as file_drift is listed held with its code, never planned; the apply writes exactly the previewed count', () => managedBrain(async brain => {
       const { engine, root } = brain;
       const [clear, held] = ['inbox/managed-clear', 'inbox/managed-held'];

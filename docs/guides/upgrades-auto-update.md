@@ -125,6 +125,18 @@ the newest published release if it is newer than yours (#6662). Windows
 PowerShell 5.1 has no `&&`, so on Windows the steps print one per line; run
 them in order and stop if the tag check fails.
 
+On Windows, `gbrain upgrade` runs through Bun's `gbrain.exe` launcher in
+Bun's bin directory (the one `bun pm bin -g` reports, which honors a bunfig
+`globalBinDir`; else `BUN_INSTALL_BIN`, `<BUN_INSTALL>\bin` or `~\.bun\bin`), and Windows keeps a running launcher open, so
+`bun remove -g gbrain` leaves it behind and the next `bun add -g` fails with
+`failed to link gbrain: EEXIST`. Windows does allow renaming a running
+executable, so before each add (and before the restore) the upgrade renames a
+leftover launcher to `gbrain.exe.stale.<pid>`; the next upgrade deletes those
+once nothing holds them. Only that one file in Bun's bin directory is ever
+moved, and only when it is small enough to be Bun's launcher. When even the
+restore fails, the printed recovery, one step per line, includes the same move
+(#10538).
+
 <a id="release-channel"></a>
 ### Which version counts as available
 

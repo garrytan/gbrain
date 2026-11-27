@@ -252,20 +252,36 @@ export function stripKoreanParticle(term: string): string {
  * chunk search all read this, so a count never disagrees with the rows.
  */
 export function cjkMatchGroups(query: string): string[][] {
-  const items: Array<{ term: string } | 'OR'> = [];
+  const seen = new Set<string>();
+  return cjkMatchAlternatives(query).map(alt => alt.terms).filter(terms => {
+    const key = JSON.stringify([...terms].sort());
+    return !seen.has(key) && !!seen.add(key);
+  });
+}
+
+/**
+ * cjkMatchGroups with the quoted phrases of each alternative (GST-4037): the any-term fallback relaxes only an
+ * alternative's unquoted words, so a chunk it returns always holds every quoted phrase of the alternative it matched.
+ * Alternatives with the same words but different quotes relax differently, so both are kept.
+ */
+export function cjkMatchAlternatives(query: string): Array<{ terms: string[]; phrases: string[] }> {
+  const items: Array<{ term: string; quoted: boolean } | 'OR'> = [];
   for (const [, quoted, word] of query.matchAll(/"([^"]*)(?:"|$)|([^\s"]+)/g)) {
-    if (quoted !== undefined) { const phrase = quoted.trim(); if (phrase) items.push({ term: phrase }); }
+    if (quoted !== undefined) { const phrase = quoted.trim(); if (phrase) items.push({ term: phrase, quoted: true }); }
     else if (word!.toUpperCase() === 'OR') items.push('OR');
-    else items.push({ term: stripKoreanParticle(word!) });
+    else items.push({ term: stripKoreanParticle(word!), quoted: false });
   }
-  const alternatives: string[][] = [[]];
+  const alternatives: Array<Array<{ term: string; quoted: boolean }>> = [[]];
   for (const item of items) {
-    if (item !== 'OR') alternatives[alternatives.length - 1]!.push(item.term);
+    if (item !== 'OR') alternatives[alternatives.length - 1]!.push(item);
     else if (alternatives[alternatives.length - 1]!.length) alternatives.push([]);
   }
   const seen = new Set<string>();
-  return alternatives.filter(group => group.length).map(group => Array.from(new Set(group))).filter(group => {
-    const key = JSON.stringify([...group].sort());
+  return alternatives.filter(group => group.length).map(group => ({
+    terms: Array.from(new Set(group.map(item => item.term))),
+    phrases: Array.from(new Set(group.filter(item => item.quoted).map(item => item.term))),
+  })).filter(({ terms, phrases }) => {
+    const key = JSON.stringify([[...terms].sort(), [...phrases].sort()]);
     return !seen.has(key) && !!seen.add(key);
   });
 }

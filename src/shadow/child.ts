@@ -34,7 +34,7 @@ import { FollowChild, type FollowEvent, type FollowStore } from './follow-child.
 import { appendFault, appendLedgerRows, writeSummaryFile, type ShadowLedgerRow, type ShadowSummaryFile } from './ledger.ts';
 import { newMirrorCounters, type MirrorCounters } from './mirror.ts';
 import { createWriteComparer } from './write-compare-child.ts';
-import { readReceipt, recordLostCount, sentPath, WriteTally } from './write-compare.ts';
+import { droppedWeight, readOwed, sampleWeight, WriteTally } from './write-compare.ts';
 import { appendRecall, IntervalGate, recallEligible, RECALL_INTERVAL_MS, scoreRecall, type RankedKey } from './recall.ts';
 import { isShadowReadMember, SHADOW_READ_MEMBERS, type ShadowReadMember } from './reads.ts';
 import { readSeedRecord } from './seed.ts';
@@ -75,6 +75,8 @@ export interface ShadowChildDeps {
   exit?: (code: number) => void;
   exitDeadlineMs?: number;
   flushMs?: number;
+  /** The obligation pass (default 10 s): a seam for tests. */
+  passMs?: number;
   childId?: string;
   now?: () => number;
   /** The approved readiness policy's hash, an evidence epoch input (evidence-epoch.ts); default `policyHash(READINESS_POLICY)` (engine-swap/policy.ts): the approved policy's hash, not an in-force one. */
@@ -390,9 +392,16 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
   };
 
   // Write comparisons (write-compare.ts): sampled page and link writes replayed on a scratch store, counted under the current epoch.
-  const writes = createWriteComparer({ dir: shadowDir, load, tally: new WriteTally(shadowDir, curEpoch, () => !deleted()), alive: () => !deleted(), openEngine: deps.openEngine, onError: recordRustError });
   const session = deps.session ?? process.env.GBRAIN_SHADOW_SESSION ?? '';
+  const writes = createWriteComparer({ dir: shadowDir, load, tally: new WriteTally(shadowDir, curEpoch, () => !deleted(), process.pid, session, now), alive: () => !deleted(), openEngine: deps.openEngine, onError: recordRustError });
   const ask = createAsker(deps.writeControl, session);
+  // A client child's (or a retired one's) lost lines are written on the same 2 s beat, never one durable write per verdict.
+  const lineFlusher = setInterval(() => { try { writes.flush(); } catch { /* the lines stay held; the next beat tries again */ } }, deps.flushMs ?? 2_000);
+  (lineFlusher as { unref?: () => void }).unref?.();
+  // Every 10 s: one more save of what could not be saved, the lines held, and the obligations of sessions that are gone (an owner child settles them). A save that keeps failing for a minute with outcomes held ends this child: the
+  // supervisor restarts it, and the next owner books what it never settled, so the session is not held open for good by one child's failing save.
+  const obligationPass = setInterval(() => { try { if (writes.pass()) { flush(true); deps.exit?.(1); } } catch { /* a failed pass is retried at the next one */ } }, deps.passMs ?? 10_000);
+  (obligationPass as { unref?: () => void }).unref?.();
 
   /** A call that never returns keeps its slot: that is what bounds the pile. */
   const trackStall = (call: Promise<unknown>): void => { stalled.add(call); const settled = (): void => { stalled.delete(call); }; call.then(settled, settled); };
@@ -542,10 +551,10 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
   for await (const line of rl) {
     if (!line) continue;
     let event: { t?: string; counters?: MirrorCounters; pid?: number; dropped?: number };
-    try { event = JSON.parse(line); } catch { continue; }
+    try { event = JSON.parse(line); } catch { const w = sampleWeight(`${line}\n`); if (w > 0) { received += w; writes.unreadable(w); } continue; } // a write line that cannot be read still stands for the samples its text states: settled once, as `uncomparable`
     if (event.t === 'apply' || event.t === 'watermark' || event.t === 'depth' || event.t === 'rpc') { follow.handle(event as FollowEvent); continue; }
     if (event.t === 'answer') { ask.answer(event as never); continue; }
-    if (event.t === 'write') { received += 1 + (Number.isInteger(event.dropped) && event.dropped! > 0 ? Math.min(event.dropped!, 10_000) : 0); writes.handle(event as never, line.length); continue; } // the weight the serving process counted when it sent the line (supervisor.ts sampleWeight)
+    if (event.t === 'write') { received += 1 + droppedWeight(event.dropped); writes.handle(event as never, line.length); continue; } // the weight the serving process counted when it sent the line (write-compare.ts sampleWeight)
     if (event.t === 'stats' && event.counters) { summary.primary = { ...newMirrorCounters(), ...event.counters }; summary.primary_pid = event.pid; continue; }
     if (event.t !== 'read' || paused) continue;
     if (pending.length >= SHADOW_CHILD_QUEUE_BOUND) { summary.child_shed++; continue; }
@@ -556,32 +565,24 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
     const timer = setTimeout(() => { summary.child_shed += pending.length; writes.abandon(); flush(true); deps.exit!(0); }, deps.exitDeadlineMs ?? SHADOW_CHILD_EXIT_DEADLINE_MS);
     (timer as { unref?: () => void }).unref?.();
   }
-  // The serving process wrote down how many write samples it sent us before it ended our stdin (a receipt); what it sent and we never read was dropped in its pipe at its exit, and is counted once (supervisor.ts recordSent).
-  // The difference is written as lost samples (durable appends, split so none is cut; the owner child folds them into the tally exactly once), and the receipt is removed ONLY when every one is down and the final tally save has landed (below): a fault line
-  // is a signal, never a settlement, so a failed append keeps the receipt and status reads no evidence. A receipt that is there and cannot be read is a fault line and stays too.
-  let receiptSettled = false; // the deficit (if any) is on disk: the receipt goes only once the final tally save has landed too
-  const receipt = readReceipt(shadowDir, session);
-  const epoch = readEpoch(shadowDir)?.epoch_id;
-  const faultLine = (detail: string): void => { try { appendFault(shadowDir, { ts: new Date(now()).toISOString(), kind: 'write_samples_unrecorded', detail, ...(epoch ? { epoch_id: epoch } : {}) }); } catch { /* disk: the receipt stays, which is what status reads */ } };
-  if (receipt === 'unreadable') faultLine(`sent_count_unreadable file=write-sent.${session.replace(/[^A-Za-z0-9_-]/g, '_')}.json`);
-  else if (receipt !== null) {
-    const missing = Math.max(0, receipt.sent - received);
-    const done = missing === 0 ? 0 : epoch === undefined ? 0 : recordLostCount(shadowDir, epoch, 'pipe_unflushed', missing); // this worker's own receipt is its own samples whatever stamp it carries: booked under the epoch on disk, never dropped
-    if (done >= missing) receiptSettled = true;
-    else faultLine(`pipe_unflushed n=${missing - done}`);
-  }
+  // The serving process wrote down, durably and before any line reached the pipe, how many write samples it owes this session (`write-owed.<session>.json`). What it owed and this child never read was dropped in its pipe at its exit: it is
+  // booked as `pipe_unflushed`, settled in this child's own saves. A file that is there and cannot be read stays, and status reads it as no evidence.
+  const owedRecord = readOwed(shadowDir, session);
+  if (owedRecord !== null && owedRecord !== 'unreadable') writes.missing(Math.max(0, owedRecord.owed - received));
   // The serving process ended our stdin: nothing it was asked can still be answered. A queued rerun ends as skipped.
   ask.closeAll(); waiter.close(); // a rerun waiting for a quiet window ends now, as skipped
   for (const task of reruns.drop()) record(task.event, task.c, task.rustMs, task.rows, 'skipped:child_closing');
   await drain();
   await reruns.idle();
   await recalling;
-  // The sent count is removed only now, with the deficit recorded AND this child's own outcomes saved: a failed final save (or a death or the exit deadline before it) leaves it, and the next owner worker books the whole count as
-  // receipt_orphaned (more than was lost, never less); with it gone, status would read measured with an outcome that was only ever in memory.
-  if ((await writes.idle()) && receiptSettled) { try { rmSync(sentPath(shadowDir, session), { force: true }); } catch { /* the receipt stays: the next owner worker settles it, or status reads no evidence */ } }
+  // The owed file is removed only now, once the serving process closed it and the settled count read back from disk covers everything it owed: a failed final save (or a death or the exit deadline before it) leaves it, and the next owner
+  // worker books what was never settled as receipt_orphaned (more than was lost, never less); with it gone, status would read measured with an outcome that was only ever in memory.
+  if (await writes.idle()) { try { writes.finish(); } catch { /* the file stays: the next owner worker settles it, or status reads no evidence */ } }
   await follow.close();
   clearInterval(heartbeat);
   clearInterval(flusher);
+  clearInterval(lineFlusher);
+  clearInterval(obligationPass);
   flush(true);
   if (engine) { try { await engine.disconnect(); } catch { /* exiting anyway */ } }
   return handled;

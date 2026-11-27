@@ -3267,6 +3267,7 @@
     "secret_store_unwritable": 1,
     "segmented_mirror_writer_gate": 1,
     "serve_build_drift": 1,
+    "serve_build_skew": 1,
     "serve_port_in_use": 1,
     "serve_self_exit_suppressed": 1,
     "serve_status_only": 1,
