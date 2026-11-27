@@ -1231,7 +1231,9 @@ describe('supervisor sample accounting (a sample is owed in a durable record bef
         h.disk.failing = true;
         h.sup.owe(1); // the owe-only flush is queued for the next turn ...
         await h.respawn(0); // ... and the worker exits before it runs: the exit-time record cannot be written and is kept
+        const afterExit = h.attempts.length;
         await turn(); // the queued flush runs now, with no worker
+        expect(h.attempts.length).toBe(afterExit); // and finds nothing left to write: no second attempt for a session whose worker is gone
         h.disk.failing = false; h.sup.publishKeptNow();
         expect(h.owed(0)).toMatchObject({ owed: 2, child_exited: true });
         new WriteTally(h.dir, epoch, () => true, process.pid, 'owner').recover();
