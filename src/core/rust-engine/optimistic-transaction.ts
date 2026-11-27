@@ -14,6 +14,10 @@
  * scope ends, so a late call of the callback is refused and cannot commit), rolled back, and the call ends `timeout`
  * reason `transaction_deadline`. Once the callback has resolved the timer is disarmed before the commit is sent; the
  * store makes the last deadline check when the commit runs, and its answer is the result.
+ *
+ * Signal: checked before the first attempt, after each attempt opens (a run again may have waited for keys), after the
+ * callback resolves and after a lost commit. An abort seen at any of these rolls back and ends the call with an
+ * `AbortError`, so a cancelled call never commits. An abort that lands while the commit itself runs keeps the commit.
  */
 import type { AsyncLocalStorage } from 'node:async_hooks';
 import type { TransactionOptions } from '../engine.ts';
@@ -163,6 +167,7 @@ async function runAttempt<T>(
   rerun: { keys: string[]; age: { value?: number } },
   run: (scope: RustTransactionScope) => Promise<T>,
 ): Promise<Attempt<T>> {
+  const signal = opts?.signal;
   const rootBrain = (await engine.storeFor('transaction')).brain;
   const { Pool, Brain } = engine.addon as unknown as Executor;
   const pool = new Pool(1);
@@ -180,6 +185,12 @@ async function runAttempt<T>(
       rerun.age.value ??= await brain.transactionAge() as number;
     } catch (error) {
       throw mapStoreError(error, { member: 'transaction' });
+    }
+    // An abort that landed while this attempt waited (a run again queues for the keys it lost on) ends it before the
+    // callback runs: a cancelled call never runs its callback again, and never commits.
+    if (signal?.aborted) {
+      await settle(brain.rollbackTransaction());
+      throw transactionAborted(signal);
     }
     let value: T;
     try {
@@ -200,6 +211,11 @@ async function runAttempt<T>(
     }
     scope.live = false;
     if (scope.ended) throw mapStoreError({ code: 'store_closed' }, { member: 'transaction' });
+    // An abort while the callback ran rolls the attempt back, as Postgres does: nothing commits after a cancel.
+    if (signal?.aborted) {
+      await settle(brain.rollbackTransaction());
+      throw transactionAborted(signal);
+    }
     try {
       // The position it committed at, kept on its scope (`lastCommitPosition` on the transaction's engine).
       scope.committedAt = await brain.commitTransaction() as CommitPosition;
@@ -221,7 +237,10 @@ async function runAttempt<T>(
   }
 }
 
-/** `disconnect`: waits up to `waitMs` for open attempts, then ends the rest (their later calls reject `engine_closed`). */
+/**
+ * `disconnect`: waits up to `waitMs` for open attempts, then ends the rest (their later calls reject `engine_closed`)
+ * and drops them from `state.open`.
+ */
 export async function endOptimisticTransactions(state: OptimisticTransactions, waitMs: number): Promise<void> {
   if (state.open.size === 0) return;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -232,7 +251,9 @@ export async function endOptimisticTransactions(state: OptimisticTransactions, w
   // Every attempt is ended and every rollback sent before any is awaited: an attempt waiting for a key another
   // holds runs its rollback only after the holder's rollback gives the key back.
   const scopes = [...state.open.keys()];
-  for (const scope of scopes) { scope.ended = true; scope.live = false; }
+  // An ended attempt leaves the open list now, even if its callback never settles: a later connect starts with none,
+  // and its disconnect does not wait for an attempt of the store that closed.
+  for (const scope of scopes) { scope.ended = true; scope.live = false; state.open.delete(scope); }
   await Promise.all(scopes.map((scope) => settle(scope.brain.rollbackTransaction())));
   await Promise.all(scopes.map((scope) => settle(scope.brain.close())));
 }
