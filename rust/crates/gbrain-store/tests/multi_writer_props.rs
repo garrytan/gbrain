@@ -32,6 +32,9 @@ use std::thread;
 /// Every case opens a real store directory and starts threads, so the counts are small.
 const CASES: u32 = 24;
 
+/// The most runs of one transaction body a retrying writer makes before the case fails.
+const MAX_ATTEMPTS: usize = 100;
+
 fn config(cases: u32) -> ProptestConfig {
     ProptestConfig {
         cases,
@@ -273,7 +276,9 @@ fn p_b_facts_of_one_entity_read_back_in_commit_order_multi_writer() {
             (0..per_writer)
                 .map(|n| {
                     let text = format!("fact {i} {n}");
-                    loop {
+                    // A real caller's loop: a commit refused `write_conflict` runs the whole transaction body again from a fresh
+                    // read, a bounded number of times. Any other refusal, and a conflict that outlasts the bound, fail the case.
+                    for _attempt in 0..MAX_ATTEMPTS {
                         let tx = s.begin_with(host(i)).unwrap_or_else(|e| panic!("{e}"));
                         let args = serde_json::from_value(json!({
                             "input": {"fact": text, "entity_slug": "people/alice", "source": "chat"}, "sourceId": "default",
@@ -282,9 +287,11 @@ fn p_b_facts_of_one_entity_read_back_in_commit_order_multi_writer() {
                         let id = tx.store().insert_fact(&args).unwrap()["id"].as_u64().unwrap();
                         match s.commit_position(tx) {
                             Ok(position) => return (position, id, text.clone()),
-                            Err(e) => assert_eq!(e.code, WRITE_CONFLICT, "an untyped refusal: {e}"),
+                            Err(e) if e.code == WRITE_CONFLICT => continue,
+                            Err(e) => panic!("an untyped refusal: {e}"),
                         }
                     }
+                    panic!("writer {i} still had write_conflict after {MAX_ATTEMPTS} runs of its transaction")
                 })
                 .collect::<Vec<(CommitPosition, u64, String)>>()
         });

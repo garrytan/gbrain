@@ -35,7 +35,7 @@ export type MwCaseId = typeof MW_CASE_IDS[number];
  * new id: `<id>.<name>`. A variant is an engine-level scenario with its own members and engine cells (no store cells).
  * Its parityTest name is the row's `<id> <title>` followed by `: <variant title>`, and its `mwCase` is the dotted id.
  */
-export const MW_VARIANT_IDS = ['C06.partition', 'C21.log-off'] as const;
+export const MW_VARIANT_IDS = ['C06.partition', 'C17.served', 'C21.log-off'] as const;
 export type MwVariantId = typeof MW_VARIANT_IDS[number];
 
 /**
@@ -435,6 +435,22 @@ export const MW_CASES: readonly MwCase[] = [
       'rust-mu': RUNS,
       'store-single': RUNS, 'store-optimistic': RUNS,
     },
+    variants: [
+      {
+        id: 'C17.served',
+        of: 'C17',
+        title: 'the first opener of a brain is its owner and a served client elects nothing',
+        invariant: 'the first process to open a brain directory is its owner; two served v3 clients that connect, write and disconnect never take or claim ownership (they report no owner role, hold no store, and the owner role, its server and its brain stay with the first opener, which keeps serving a client that connects after they left)',
+        reference: 'standalone',
+        members: ['putPage', 'getPage'],
+        cells: {
+          pglite: na('PGLite refuses a second opener by design: there is no owner election and no served client'),
+          postgres: na('a SQL engine elects no owner and serves no v3 listener: every connection is the same kind of client of the database'),
+          rust: na('the plain Rust arm is single-user: it serves no v3 listener (listenServed refuses engine_capability_missing, reason served), so there is no served client to elect nothing'),
+          'rust-mu': RUNS,
+        },
+      },
+    ],
   },
   {
     id: 'C18',

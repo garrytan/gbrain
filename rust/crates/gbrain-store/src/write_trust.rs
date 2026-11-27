@@ -386,15 +386,75 @@ mod tests {
     }
 
     /// C12: with several writers a second transaction begins while the first is open and starts with an empty write
-    /// context, never the first's. Twin of
-    /// `embedded_one_owner_a_second_transaction_waits_for_the_writer_and_starts_with_an_empty_context`; pending on the
-    /// optimistic-transaction lane (`Store::begin_with`), whose adapter lives in `tests/common/mu.rs` and is not
-    /// visible to a unit test.
+    /// context, never the first's; each keeps its own context to its end, and neither leaks into the store afterwards. Twin of
+    /// `embedded_one_owner_a_second_transaction_waits_for_the_writer_and_starts_with_an_empty_context`, on a store with
+    /// multi-user mode on (asserted), where explicit transactions are optimistic and take no writer gate.
     #[test]
-    #[ignore = "multi_writer"]
     fn a_second_transaction_begins_beside_the_first_and_starts_with_an_empty_context_multi_writer()
     {
-        panic!("pending on L1 optimistic transactions: Store::begin_with");
+        use crate::transactions::{TxnMode, TxnOptions};
+        use std::sync::mpsc;
+        use std::time::Duration;
+
+        let s = crate::test_support::mu_store();
+        assert!(
+            s.multiuser(),
+            "the store did not resolve multi-user mode on"
+        );
+        let tier = strings(&[WRITE_TRUST_TIER]);
+        let optimistic = || TxnOptions {
+            mode: TxnMode::Optimistic,
+            ..TxnOptions::default()
+        };
+        let tx1 = s.begin_with(optimistic()).unwrap();
+        tx1.store()
+            .apply_write_trust(&tier, &strings(&["agent_written"]))
+            .unwrap();
+        std::thread::scope(|scope| {
+            let (began, began_rx) = mpsc::channel();
+            let (go_on, go_on_rx) = mpsc::channel::<()>();
+            let (shared, names) = (&s, &tier);
+            let second = scope.spawn(move || {
+                let tx2 = shared.begin_with(optimistic()).unwrap();
+                began
+                    .send(tx2.store().read_write_trust(names).unwrap())
+                    .unwrap();
+                go_on_rx.recv().unwrap();
+                tx2.store()
+                    .apply_write_trust(names, &strings(&["operator_curated"]))
+                    .unwrap();
+                let own = tx2.store().read_write_trust(names).unwrap();
+                tx2.commit().unwrap();
+                own
+            });
+            // The second transaction begins while the first is still open (it is not held off), and its context is empty.
+            assert_eq!(
+                began_rx
+                    .recv_timeout(Duration::from_secs(10))
+                    .expect("a second transaction did not begin while the first was open"),
+                vec![None],
+                "the second transaction started with the first's write context"
+            );
+            // The first still has its own context, untouched by the second's start.
+            assert_eq!(
+                tx1.store().read_write_trust(&tier).unwrap(),
+                vec![Some("agent_written".to_string())]
+            );
+            go_on.send(()).unwrap();
+            assert_eq!(
+                second.join().unwrap(),
+                vec![Some("operator_curated".to_string())],
+                "the second transaction did not keep its own context"
+            );
+            // The second ended; the first's context is still its own.
+            assert_eq!(
+                tx1.store().read_write_trust(&tier).unwrap(),
+                vec![Some("agent_written".to_string())],
+                "the second transaction's context leaked into the first"
+            );
+            tx1.commit().unwrap();
+        });
+        assert_eq!(s.read_write_trust(&tier).unwrap(), vec![None]);
     }
 
     #[test]
