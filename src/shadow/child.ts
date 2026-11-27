@@ -34,7 +34,7 @@ import { FollowChild, type FollowEvent, type FollowStore } from './follow-child.
 import { appendFault, appendLedgerRows, writeSummaryFile, type ShadowLedgerRow, type ShadowSummaryFile } from './ledger.ts';
 import { newMirrorCounters, type MirrorCounters } from './mirror.ts';
 import { createWriteComparer } from './write-compare-child.ts';
-import { carriedRefusals, PILOT_WRITES, readReceipt, recordLostCount, sentPath, WriteTally } from './write-compare.ts';
+import { carriedRefusals, PILOT_WRITES, readReceipt, recordLostParts, sentPath, WriteTally } from './write-compare.ts';
 import { appendRecall, IntervalGate, recallEligible, RECALL_INTERVAL_MS, scoreRecall, type RankedKey } from './recall.ts';
 import { isShadowReadMember, SHADOW_READ_MEMBERS, type ShadowReadMember } from './reads.ts';
 import { readSeedRecord } from './seed.ts';
@@ -315,12 +315,12 @@ function settleReceipt(shadowDir: string, session: string, received: number, rec
   // other lost sample, including any count the two ends disagree on, is booked as qualifying: never fewer against the share.
   const nonqualifying = receipt.sent_qualifying === undefined ? 0 : Math.min(missing, Math.max(0, (receipt.sent - receipt.sent_qualifying) - (received - receivedQualifying)));
   const qualifying = missing - nonqualifying;
-  let short = 0;
-  for (const [reason, n] of [['pipe_unflushed', qualifying], ['pipe_unflushed_nonqualifying', nonqualifying]] as const) {
-    const done = n === 0 ? 0 : epoch === undefined ? 0 : recordLostCount(shadowDir, epoch, reason, n); // this worker's own receipt is its own samples whatever stamp it carries: booked under the epoch on disk, never dropped
-    if (done < n) { short += n - done; faultLine(`${reason} n=${n - done}`); }
-  }
-  return short === 0;
+  if (missing === 0) return true;
+  // One append for both counts (recordLostParts): a failure books neither, the receipt stays and the next owner settles it once. This worker's own receipt is its own samples whatever
+  // stamp it carries: booked under the epoch on disk, never dropped.
+  if (epoch !== undefined && recordLostParts(shadowDir, epoch, [['pipe_unflushed', qualifying], ['pipe_unflushed_nonqualifying', nonqualifying]])) return true;
+  faultLine(`pipe_unflushed n=${missing}`);
+  return false;
 }
 
 /** Runs the child loop until stdin closes. Resolves with the number of events handled. */

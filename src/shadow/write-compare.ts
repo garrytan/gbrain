@@ -210,6 +210,20 @@ export function recordLostCount(dir: string, epoch: string, reason: string, n: n
   while (done < n) { const k = Math.min(n - done, MAX_LOST_PER_RECORD); if (!recordLost(dir, epoch, reason, k)) break; done += k; }
   return done;
 }
+/**
+ * Records lost samples under several reasons and says whether every one is on disk. Up to `MAX_LOST_PER_RECORD` in all they go in ONE append, so a failure books none of them and
+ * a retry books each count once; a larger total falls back to `recordLostCount` per reason (where a retry after a partial failure can book a part twice, more than was lost, never less).
+ */
+export function recordLostParts(dir: string, epoch: string, parts: ReadonlyArray<readonly [reason: string, n: number]>): boolean {
+  const todo = parts.filter(([, n]) => n > 0);
+  const total = todo.reduce((sum, [, n]) => sum + n, 0);
+  if (total === 0) return true;
+  if (todo.some(([, n]) => !Number.isInteger(n))) return false;
+  if (total > MAX_LOST_PER_RECORD) return todo.every(([reason, n]) => recordLostCount(dir, epoch, reason, n) === n);
+  const path = lostPath(dir, process.pid);
+  const text = todo.map(([reason, n]) => (JSON.stringify({ epoch_id: epoch, reason }) + '\n').repeat(n)).join('');
+  try { appendFileSync(path, text, { flag: 'a', mode: 0o600 }); flushFile(path); flushDirectory(dir); return true; } catch { return false; } // silent-read-ok: false keeps the receipt, which status reads as no evidence
+}
 /** The lost lines past what `applied` took, per file: the complete lines' end offset and the reasons of this epoch's (another epoch's are retired and skipped; a line that is not readable, or an unfinished one whose writer is dead, counts as `lost_unreadable`). */
 function readLost(dir: string, epoch: string, applied: Record<string, number> = {}): Array<{ name: string; end: number; reasons: string[]; unreadable?: true }> {
   let names: string[] = [];
@@ -325,8 +339,7 @@ export class WriteTally {
         if (!(age > STALE_RECEIPT_MS || (r.pid !== undefined && r.pid > 1 && r.pid !== this.pid && !running(r.pid)))) continue;
         // What that worker had read is unknown, so every sample it was sent is booked (more than was lost, never less); only the qualifying ones count against the share, when the receipt says how many.
         const q = r.sent_qualifying ?? r.sent;
-        if (recordLostCount(this.dir, epoch, 'receipt_orphaned', q) < q) continue; // a receipt that names another epoch is settled like any other (it can only be hand-written: commands write none)
-        if (r.sent - q > 0 && recordLostCount(this.dir, epoch, 'receipt_orphaned_nonqualifying', r.sent - q) < r.sent - q) continue;
+        if (!recordLostParts(this.dir, epoch, [['receipt_orphaned', q], ['receipt_orphaned_nonqualifying', r.sent - q]])) continue; // one append: a failure books neither; a receipt that names another epoch is settled like any other (it can only be hand-written: commands write none)
         if (readEpoch(this.dir)?.epoch_id !== epoch) return; // the epoch moved while this was booked: the receipt stays for the new owner
         rmSync(path, { force: true });
       }
