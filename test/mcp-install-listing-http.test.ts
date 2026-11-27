@@ -76,10 +76,10 @@ async function rpc(bearer: string, method: string, params?: unknown): Promise<an
 }
 
 const listed = async (bearer: string) => (await rpc(bearer, 'tools/list')).tools.map((t: { name: string }) => t.name).sort();
-const VERBS_LISTING = [...filterOpsForSurface(operations, 'verbs').map(o => o.name), 'request_tools'].sort();
+const VERBS_LISTING = [...filterOpsForSurface(operations, 'verbs').map(o => o.name), 'correct', 'request_tools'].sort();
 
 describe('install-default grants list the memory verbs over HTTP', () => {
-  test('a provisioned memory-writer lists the verbs and request_tools, and an unlisted write stays callable', async () => {
+  test('a provisioned memory-writer lists the verbs, correct and request_tools, and an unlisted write stays callable', async () => {
     const created = await withEnv({ GBRAIN_HOME: home }, () => provisionHarnessGrant(engine,
       { name: 'listing-writer-example', harness: 'generic', url: `${base}/mcp`, profile: 'memory-writer' }, 'test'));
     expect(created.grant.surface).toBe('full');
