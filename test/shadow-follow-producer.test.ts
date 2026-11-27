@@ -401,6 +401,17 @@ describe('members that write more than their arguments name', () => {
     expect(relations(items).sort()).toEqual(['decide_spend', 'decide_state', 'decision_receipts']);
   });
 
+  test('trust allow add and remove report the allow rule row they wrote, by id', async () => {
+    const h = followHarness(engine);
+    const added = await h.engine.addTrustAllowRule({ sourceId: 'default', uriPrefix: 'https://feeds.example.com/', reasonFamily: null, createdBy: 'local_cli:owner', reason: null });
+    const again = await h.engine.addTrustAllowRule({ sourceId: 'default', uriPrefix: 'https://feeds.example.com/', reasonFamily: null, createdBy: 'local_cli:owner', reason: null });
+    const ruleId = String(added.row!.id);
+    await h.engine.removeTrustAllowRule(Number(ruleId), 'local_cli:owner');
+    const items = h.batches.flatMap((b) => b.items) as Invalidation[];
+    expect([added.created, again.created]).toEqual([true, false]);
+    expect(rows(items, 'trust_allow_rules').map((i) => i.selector)).toEqual([{ id: ruleId }, { id: ruleId }, { id: ruleId }]);
+  });
+
   test('deleting pages also reports the owner marks and the slug stores it scrubs', async () => {
     await engine.putPage('people/sven', PAGE('Sven'));
     const h = followHarness(engine);

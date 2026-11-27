@@ -1065,6 +1065,30 @@ fn fixtures() -> Vec<(&'static str, Vec<SeedRow>)> {
             ])],
         ),
         (
+            "trust_allow_rules",
+            vec![
+                row(&[
+                    ("id", "91"),
+                    ("source_id", "default"),
+                    ("uri_prefix", "https://feeds.example.com/"),
+                    ("reason_family", "standing_instruction"),
+                    ("created_by", "local_cli:owner"),
+                    ("created_at", "2026-07-01 00:00:00+00"),
+                    ("reason", "fixture"),
+                ]),
+                row(&[
+                    ("id", "92"),
+                    ("source_id", "default"),
+                    ("uri_prefix", "https://feeds.example.com/"),
+                    ("reason_family", "standing_instruction"),
+                    ("created_by", "local_cli:owner"),
+                    ("created_at", "2026-06-01 00:00:00+00"),
+                    ("removed_at", "2026-06-02 00:00:00+00"),
+                    ("removed_by", "local_cli:owner"),
+                ]),
+            ],
+        ),
+        (
             "wanted_links",
             vec![row(&[
                 ("id", "101"),
