@@ -12,3 +12,14 @@ export function noteJsonDocumentDelegated(): void {
 export function jsonDocumentDelegated(): boolean {
   return delegated;
 }
+
+let readerGone = false;
+
+/** The EPIPE handlers record that the reader closed fd 1/2, so the exit that follows is not a command bug. */
+export function noteJsonReaderGone(): void {
+  readerGone = true;
+}
+
+export function jsonReaderGone(): boolean {
+  return readerGone;
+}

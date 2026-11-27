@@ -44,6 +44,7 @@
  */
 
 import { noteInterrupted } from './read-heartbeat.ts';
+import { noteJsonReaderGone } from './json-document-delegation.ts';
 
 export const CLEANUP_DEADLINE_MS = 3_000;
 
@@ -256,6 +257,7 @@ export function installSignalHandlers(opts: { keepServingOnLogEpipe?: boolean } 
   attach(process.stdout, 'error', (err: NodeJS.ErrnoException) => {
     if (err.code === 'EPIPE' && !keepServing) {
       if (forwardToSignalOwner('SIGPIPE')) return;
+      noteJsonReaderGone();
       void triggerCleanupAndExit(0);
     }
   });
@@ -264,6 +266,7 @@ export function installSignalHandlers(opts: { keepServingOnLogEpipe?: boolean } 
   attach(process.stderr, 'error', (err: NodeJS.ErrnoException) => {
     if (err.code === 'EPIPE' && !keepServing) {
       if (forwardToSignalOwner('SIGPIPE')) return;
+      noteJsonReaderGone();
       // No stderr means no useful logs on the way out; still cleanup.
       void triggerCleanupAndExit(0);
     }
