@@ -144,7 +144,7 @@ scanTextColumns	lifecycle	yes	6	no	yes	yes	serves
 pauseManagedPersistence	lifecycle	yes	1	no	yes	yes	serves
 restoreManagedPersistence	lifecycle	no	0	no	-	-	-
 withManagedPersistencePaused	lifecycle	yes	7	no	yes	yes	serves
-getPage	pages	yes	294	yes	yes	yes	serves
+getPage	pages	yes	295	yes	yes	yes	serves
 readPageSnapshot	pages	yes	121	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	8	no	yes	yes	serves
 lockPageKeys	pages	yes	17	no	yes	yes	serves
@@ -666,11 +666,11 @@ readFactTrustTier	facts	yes	2	no	yes	yes	serves
 listFenceFactRowNums	facts	yes	2	no	yes	yes	serves
 readLiveFactRowTier	facts	yes	1	no	yes	yes	serves
 insertFact	facts	yes	202	yes	yes	yes	serves
-insertFacts	facts	yes	291	no	yes	yes	serves
+insertFacts	facts	yes	292	no	yes	yes	serves
 deleteFactsForPage	facts	yes	8	no	yes	yes	serves
 expireFact	facts	yes	98	no	yes	yes	serves
-listFactsByEntity	facts	yes	67	yes	yes	yes	serves
-listFactsSince	facts	yes	48	yes	yes	yes	serves
+listFactsByEntity	facts	yes	68	yes	yes	yes	serves
+listFactsSince	facts	yes	49	yes	yes	yes	serves
 listFactsKeyset	facts	yes	11	no	yes	yes	serves
 listFactsBySession	facts	yes	13	yes	yes	yes	serves
 listSupersessions	facts	yes	7	yes	yes	yes	serves
