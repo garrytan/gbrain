@@ -387,6 +387,20 @@ export async function preparePageAdmission(ctx: OperationContext,
     serverComposed?: true }
 ): Promise<{ prior: WriteRequest; admission?: undefined; typeWarning?: undefined; slugAdvisory?: undefined; secretsRedacted?: undefined }
   | { prior?: undefined; admission: WriteAdmission; typeWarning: PageTypeWarning | null; slugAdvisory: string | null; secretsRedacted: SecretsRedacted | null }> {
+  // A body over the page ceiling can never be admitted: refuse it as a caller error before the journal
+  // reserves intent bytes, so an oversized write never reads as retryable queue_capacity.
+  const body = input.params.content;
+  const bodyBytes = (input.operation === 'put_page' || input.operation === 'capture') && typeof body === 'string' && body.length > PAGE_MAX_BYTES / 3
+    ? Buffer.byteLength(body, 'utf-8') : 0;
+  if (bodyBytes > PAGE_MAX_BYTES) {
+    throw new OperationError('request_too_large', contentSizeHold(bodyBytes, PAGE_MAX_BYTES)!.message,
+      `Nothing was admitted or written, and the same content is refused on every retry. Pages up to ${PAGE_MAX_BYTES} bytes are stored and searchable; send a smaller page.`);
+  }
+  // secrets.on_write: a remote write's text is screened before anything reads it, so a refused or redacted value is never
+  // journaled and every guard below checks the parameters that are. A server-composed resubmit carries stored text the
+  // caller never sent, so only what its operation screened is screened.
+  const screened = input.serverComposed ? { params: input.params, redacted: null } : screenWriteSecrets(ctx, input.operation, input.params);
+  input = { ...input, params: screened.params };
   if (input.operation === 'put_page' && ['kind', 'preview', 'backup_reference'].some(key => Object.hasOwn(input.params, key))) {
     if (ctx.remote !== false || input.managedFileImport !== true || !OWNER_FILE_INTENTS.has(String(input.params.kind)) ||
       ['preview', 'backup_reference'].some(key => Object.hasOwn(input.params, key))) {
@@ -418,18 +432,6 @@ export async function preparePageAdmission(ctx: OperationContext,
     throw new OperationError('invalid_params', 'keep_hidden_rows is reserved for trusted local ingestion.',
       'Drop keep_hidden_rows and submit the page without it; a remote put_page already keeps the rows its caller could not read.');
   }
-  // A body over the page ceiling can never be admitted: refuse it as a caller error before the journal
-  // reserves intent bytes, so an oversized write never reads as retryable queue_capacity.
-  const body = input.params.content;
-  const bodyBytes = (input.operation === 'put_page' || input.operation === 'capture') && typeof body === 'string' && body.length > PAGE_MAX_BYTES / 3
-    ? Buffer.byteLength(body, 'utf-8') : 0;
-  if (bodyBytes > PAGE_MAX_BYTES) {
-    throw new OperationError('request_too_large', contentSizeHold(bodyBytes, PAGE_MAX_BYTES)!.message,
-      `Nothing was admitted or written, and the same content is refused on every retry. Pages up to ${PAGE_MAX_BYTES} bytes are stored and searchable; send a smaller page.`);
-  }
-  // secrets.on_write: a remote write's text is screened before anything reads it, so a refused or redacted value is never journaled.
-  // A server-composed resubmit carries stored text the caller never sent, so only what its operation screened is screened.
-  const screened = input.serverComposed ? { params: input.params, redacted: null } : screenWriteSecrets(ctx, input.operation, input.params);
   const { page_batch: _forged, timeline_section: _section, [GUEST_NOTE_INTENT_KEY]: _guestNote, ...params } = screened.params;
   const p: Record<string, unknown> = { ...params, ...parseMutationPrecondition(params) };
   if (p.content_origin !== undefined) contentOriginTier(p.content_origin);

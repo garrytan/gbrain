@@ -51,7 +51,7 @@ function secretInWrite(operation: string, findings: SecretFinding[], mode: OnWri
  * Admission screen for a remote write's parameters: unchanged when the policy is off, the caller is local or nothing
  * is found; a refusal under block; under redact the parameters with every claimed value (and its echoes in other
  * fields) replaced, with the count and pattern names. Text is screened as it will be stored, without U+0000
- * (stripPageTextNul), so a value split by NUL bytes is found; a redacted write's text comes back without them.
+ * (stripPageTextNul), so a value split by NUL bytes is found; only a string that held a claimed value comes back without them.
  */
 export function screenWriteSecrets(ctx: Pick<OperationContext, 'remote'>, operation: string, params: Record<string, unknown>):
   { params: Record<string, unknown>; redacted: SecretsRedacted | null } {
@@ -65,7 +65,7 @@ export function screenWriteSecrets(ctx: Pick<OperationContext, 'remote'>, operat
   if (!findings.length) return { params, redacted: null };
   if (mode === 'block') throw secretInWrite(operation, findings, mode);
   let at = 0;
-  return { params: mapStored(params, () => applyRedaction(plans[at++]!)) as Record<string, unknown>,
+  return { params: mapStored(params, text => { const out = applyRedaction(plans[at++]!); return out === stripNul(text) ? text : out; }) as Record<string, unknown>,
     redacted: { count: findings.length, patterns: patternsOf(findings) } };
 }
 

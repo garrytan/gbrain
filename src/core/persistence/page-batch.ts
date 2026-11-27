@@ -92,6 +92,9 @@ interface Repeats { repeatOf: (number | undefined)[]; refusals: Map<number, Oper
  * that slug is refused on its own, naming the other indexes; the rest of the
  * batch is written.
  */
+/** GST-4024: a slug holding a secret-shaped value is never echoed back in a reply or a refusal; its entry index names it. */
+const slugHoldsSecret = (slug: string) => scanText(stripNul(slug)).length > 0;
+
 function findRepeats(pages: BatchPage[]): Repeats {
   const bySlug = new Map<string, number[]>();
   pages.forEach((page, index) => bySlug.set(normalizeSlug(page.slug), [...(bySlug.get(normalizeSlug(page.slug)) ?? []), index]));
@@ -104,8 +107,9 @@ function findRepeats(pages: BatchPage[]): Repeats {
     if (indexes.every(index => same(pages[index]!, first))) { for (const index of indexes.slice(1)) repeatOf[index] = indexes[0]; continue; }
     for (const index of indexes) {
       const others = indexes.filter(other => other !== index).map(other => `pages[${other}]`).join(', ');
-      refusals.set(index, invalid(`Slug ${pages[index]!.slug} appears at pages[${index}] and ${others} with different content or options; none of them was written. The other pages of this batch were.`,
-        `Keep one version of ${pages[index]!.slug}: send it alone in a new put_pages call with a new request_id. Identical repeats of a page are written once and need no change.`));
+      const slug = slugHoldsSecret(pages[index]!.slug) ? null : pages[index]!.slug;
+      refusals.set(index, invalid(`${slug ? `Slug ${slug}` : 'The slug'} appears at pages[${index}] and ${others} with different content or options; none of them was written. The other pages of this batch were.`,
+        `Keep one version of ${slug ?? `pages[${index}]`}: send it alone in a new put_pages call with a new request_id. Identical repeats of a page are written once and need no change.`));
     }
   }
   return { repeatOf, refusals };
@@ -125,13 +129,8 @@ async function readBatch(ctx: OperationContext, batchId: string): Promise<WriteR
 }
 
 function pageEntry(result: PageResult): Record<string, unknown> {
-  const base = { index: result.index, slug: result.slug, ...(result.repeatOf !== undefined ? { repeat_of: result.repeatOf } : {}) };
-  if (result.refusal) {
-    // GST-4024: a slug that itself holds the secret the screen refused is never echoed back; the index names the entry.
-    const { slug: _slug, ...unnamed } = base;
-    const secretSlug = result.refusal.canonicalCode === 'secret_in_write' && scanText(stripNul(result.slug)).length > 0;
-    return { ...(secretSlug ? unnamed : base), state: 'refused', error: result.refusal.toJSON() };
-  }
+  const base = { index: result.index, ...(slugHoldsSecret(result.slug) ? {} : { slug: result.slug }), ...(result.repeatOf !== undefined ? { repeat_of: result.repeatOf } : {}) };
+  if (result.refusal) return { ...base, state: 'refused', error: result.refusal.toJSON() };
   if (!result.row) return { ...base, state: 'not_admitted' };
   const row = result.row;
   const warning = { ...(result.typeWarning ? { type_warning: result.typeWarning } : {}), ...(result.secretsRedacted ? { secrets_redacted: result.secretsRedacted } : {}) };
@@ -293,7 +292,8 @@ export async function submitPageBatch(ctx: OperationContext, params: Record<stri
   const first = attempted[0];
   if (first instanceof OperationError && first.code === 'permission_denied'
     && attempted.every(entry => entry instanceof OperationError && entry.code === first.code && entry.message === first.message)) throw first;
-  const conflicts = prepared.flatMap((entry, index) => entry instanceof OperationError && entry.code === 'idempotency_conflict' ? [pages[index]!.slug] : []);
+  const conflicts = prepared.flatMap((entry, index) => entry instanceof OperationError && entry.code === 'idempotency_conflict'
+    ? [slugHoldsSecret(pages[index]!.slug) ? `pages[${index}]` : pages[index]!.slug] : []);
   if (conflicts.length) {
     throw opError('idempotency_conflict', `Batch ${batchId} was already accepted with different content for ${conflicts.join(', ')}. Nothing new was admitted.`,
       `Replays must repeat the batch exactly (same pages, same order). To check the original batch, call put_pages with only request_id ${batchId}; to write the changed pages, send them in a new put_pages call with a new request_id.`);

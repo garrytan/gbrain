@@ -117,6 +117,20 @@ describe('secrets.on_write block', () => {
       expect(result.pages[1].slug).toBeUndefined();
       expect(JSON.stringify(result.pages[1].error)).toContain('secret_in_write');
       expect(result.pages[0]).toMatchObject({ index: 0, slug: 'notes/clean-neighbour' });
+
+      const repeated = await call(remote(), 'put_pages', { pages: [{ slug, content: '# One\n' }, { slug, content: '# Two\n' }], request_id: randomUUID() });
+      expect(JSON.stringify(repeated).toLowerCase()).not.toContain(TOKEN.toLowerCase());
+      expect(repeated.pages.map((p: { index: number; state: string }) => [p.index, p.state])).toEqual([[0, 'refused'], [1, 'refused']]);
+    });
+  });
+
+  test('a reserved kind hidden by NUL bytes stays refused when the write also carries a token (redact)', async () => {
+    await withMode('redact', async () => {
+      const before = Number((await engine.executeRaw<{ n: unknown }>("SELECT count(*) AS n FROM persistence_requests r WHERE r::text LIKE '%managed_sync_%'"))[0]!.n);
+      for (const kind of ['managed\u0000_sync_import', 'managed\u0000_sync_' + TOKEN]) {
+        await call(remote(), 'capture', { content: 'A note with ' + TOKEN + ' in it', kind }).catch(() => null);
+      }
+      expect(Number((await engine.executeRaw<{ n: unknown }>("SELECT count(*) AS n FROM persistence_requests r WHERE r::text LIKE '%managed_sync_%'"))[0]!.n)).toBe(before);
     });
   });
 
