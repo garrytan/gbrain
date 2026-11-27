@@ -453,6 +453,7 @@ test/engine-parity/unrestricted-caller-reads.test.ts	2	0
 test/engine-parity/unrestricted-fact-list-reads.test.ts	2	0
 test/engine-parity/unrestricted-member-page-reads.test.ts	1	0
 test/engine-parity/valid-time-member-reads.test.ts	3	0
+test/engine-parity/vector-candidate-window.test.ts	2	0
 test/engine-parity/vector-options.test.ts	4	0
 test/engine-parity/version-preimage.test.ts	4	0
 test/engine-parity/versions-raw.test.ts	22	0
