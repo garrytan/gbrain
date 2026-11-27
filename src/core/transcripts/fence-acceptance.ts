@@ -31,7 +31,7 @@ const PROJECTION_KEYS = `ARRAY['embedding','embedded_at','embedding_model','embe
 export interface OutsideFenceItem { source_id: string; slug: string; type: string; facts: number; world_facts: number; takes: number; links: number }
 export interface OutsideFencePage extends OutsideFenceItem {
   page_id: number; fingerprint: string; imported_transcript: boolean; content_hash: string;
-  /** An imported transcript whose live text the v342 backfill attributed to the importer as `legacy:` (never offered for acceptance). */
+  /** An imported transcript whose live text the v343 backfill attributed to the importer as `legacy:` (never offered for acceptance). */
   legacy_transcript: boolean;
 }
 export interface FenceAcceptance { page_id: number; source_id: string; slug: string; fingerprint: string; accepted_at: string; content_hash?: string }

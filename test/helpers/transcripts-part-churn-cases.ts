@@ -291,7 +291,7 @@ export function defineTranscriptPartChurnCases(opts: { getEngine: () => BrainEng
     expect(again.partsDeleted).toBe(0);
   }), 180_000);
 
-  test('a legacy split session keeps its pinned part size through contextual re-embedding and the v341 backfill (GST-4056)', () => withDir(async (dir) => {
+  test('a legacy split session keeps its pinned part size through contextual re-embedding and the v343 backfill (GST-4056)', () => withDir(async (dir) => {
     const engine = opts.getEngine();
     const id = `legacy-ceiling-${randomUUID().slice(0, 8)}`;
     const base = baseSlugOf(id);
@@ -306,7 +306,7 @@ export function defineTranscriptPartChurnCases(opts: { getEngine: () => BrainEng
       await engine.unsetConfig('pages.max_bytes');
     }
     expect(parts.length).toBeGreaterThanOrEqual(3);
-    // A brain from before v341: no content author; contextual re-embedding moved updated_at past ingested_at.
+    // A brain from before v342: no content author; contextual re-embedding moved updated_at past ingested_at.
     for (const page of parts) {
       await engine.updatePageContextualRetrievalState(page.slug, 'default', 'title', 'corpus-example');
       await engine.executeRaw('UPDATE pages SET content_author = NULL, content_author_hash = $3 WHERE source_id = $1 AND slug = $2', ['default', page.slug, EXACT_AUTHOR_MARK]);

@@ -12,7 +12,7 @@
  *    importer's, a timestamp comparison drops a genuine page after contextual re-embedding, or a remote write replaces the
  *    first-ingest record with its own channel.
  *    A coordinated tag change (inline or segmented) keeps it; a raw rewrite that keeps the hash drops it; the importer
- *    re-importing unchanged text takes it back. Migration v342's backfill stamps a legacy importer or connector page the
+ *    re-importing unchanged text takes it back. Migration v343's backfill stamps a legacy importer or connector page the
  *    earlier rule trusted (a page only its first-ingest stamp vouched for is honored by speaker markers only), and never a
  *    page a remote writer is on record for, in the journal or in the page's archived versions.
  * 3. Repo-less brains (no repository): in-memory PGLite, and Postgres when DATABASE_URL is set.
@@ -192,8 +192,8 @@ for (const backend of testBackends()) describe(`[${backend}] importer trust foll
     expect(await trust(slug)).toEqual(UNTRUSTED);
   });
 
-  /** A page as a brain before migration v341 holds it: no content author (written past the trigger, as no writer can). */
-  /** A page as an upgrade finds it before v342: no author. An exact write, so no DDL lock races a background chunk writer. */
+  /** A page as a brain before migration v342 holds it: no content author (written past the trigger, as no writer can). */
+  /** A page as an upgrade finds it before v343: no author. An exact write, so no DDL lock races a background chunk writer. */
   const legacy = (slug: string, sourceId = 'default') => engine.executeRaw(
     'UPDATE pages SET content_author = NULL, content_author_hash = $3 WHERE source_id = $1 AND slug = $2', [sourceId, slug, EXACT_AUTHOR_MARK]);
   async function author(slug: string, sourceId = 'default') {
@@ -202,7 +202,7 @@ for (const backend of testBackends()) describe(`[${backend}] importer trust foll
     return row!;
   }
 
-  test('the v342 backfill stamps a genuine legacy imported page, which then survives re-embedding, tag changes and a second backfill', async () => {
+  test('the v343 backfill stamps a genuine legacy imported page, which then survives re-embedding, tag changes and a second backfill', async () => {
     const id = randomUUID().slice(0, 8);
     const slug = `conversations/sessions/2026-01-02-codex-${id}`;
     await importer(slug, transcript(id, 'Short body.'));
@@ -221,7 +221,7 @@ for (const backend of testBackends()) describe(`[${backend}] importer trust foll
     expect(await trust(slug)).toEqual(TRUSTED);
   });
 
-  test('the v342 backfill stamps a legacy imported page whose only remote request was a committed no-op', async () => {
+  test('the v343 backfill stamps a legacy imported page whose only remote request was a committed no-op', async () => {
     const id = randomUUID().slice(0, 8);
     const slug = `conversations/sessions/2026-01-02-codex-${id}`;
     const content = transcript(id, 'Short body.');
@@ -252,7 +252,7 @@ for (const backend of testBackends()) describe(`[${backend}] importer trust foll
     expect(await copied()).toEqual({ content_author: null, stamped: false });
   });
 
-  test('the v342 backfill never stamps a legacy page a remote writer edited before maintenance moved its revision', async () => {
+  test('the v343 backfill never stamps a legacy page a remote writer edited before maintenance moved its revision', async () => {
     const id = randomUUID().slice(0, 8);
     const slug = `conversations/sessions/2026-01-02-codex-${id}`;
     await importer(slug, transcript(id, 'Short body.'));
@@ -265,7 +265,7 @@ for (const backend of testBackends()) describe(`[${backend}] importer trust foll
     expect(await trust(slug)).toEqual(UNTRUSTED);
   });
 
-  test('the v342 backfill never stamps a legacy page whose remote write requests were compacted', async () => {
+  test('the v343 backfill never stamps a legacy page whose remote write requests were compacted', async () => {
     const id = randomUUID().slice(0, 8);
     const slug = `conversations/sessions/2026-01-02-codex-${id}`;
     await importer(slug, transcript(id, 'Short body.'));
@@ -286,7 +286,7 @@ for (const backend of testBackends()) describe(`[${backend}] importer trust foll
     expect(await trust(slug)).toEqual(UNTRUSTED);
   });
 
-  test('the v342 backfill stamps a legacy connector page in a connector source only', async () => {
+  test('the v343 backfill stamps a legacy connector page in a connector source only', async () => {
     await engine.executeRaw("INSERT INTO sources (id, name, config) VALUES ('texts', 'texts', '{\"kind\":\"imessage\"}'::jsonb) ON CONFLICT (id) DO NOTHING");
     const slug = `imessage/2026-01-02-${randomUUID().slice(0, 8)}`;
     const content = ['---', 'type: conversation', 'title: Chat', `speaker_owner: ${JSON.stringify({ label: 'Me', basis: 'is_from_me', turns: 1 })}`, '---', '',
@@ -367,7 +367,7 @@ for (const backend of testBackends()) describe(`[${backend}] importer trust foll
     expect(await author(genuine)).toEqual({ content_author: VIA, stamped: true });
   });
 
-  test('the v342 backfill never stamps a page a remote writer edited before a tag change and a rename', async () => {
+  test('the v343 backfill never stamps a page a remote writer edited before a tag change and a rename', async () => {
     const id = randomUUID().slice(0, 8);
     const slug = `conversations/sessions/2026-01-02-codex-${id}`;
     await importer(slug, transcript(id, 'Short body.'));
@@ -382,7 +382,7 @@ for (const backend of testBackends()) describe(`[${backend}] importer trust foll
     expect(await trust(renamed)).toEqual(UNTRUSTED);
   });
 
-  test('the v342 backfill counts a remote add_link as a text write (a managed add_link edits the links fence)', async () => {
+  test('the v343 backfill counts a remote add_link as a text write (a managed add_link edits the links fence)', async () => {
     const id = randomUUID().slice(0, 8);
     const slug = `conversations/sessions/2026-01-02-codex-${id}`;
     await importer(slug, transcript(id, 'Short body.'));
@@ -397,7 +397,7 @@ for (const backend of testBackends()) describe(`[${backend}] importer trust foll
     expect(await author(slug)).toEqual({ content_author: null, stamped: false });
   });
 
-  test('the v342 backfill gives a page whose live revision is a compacted local edit no author', async () => {
+  test('the v343 backfill gives a page whose live revision is a compacted local edit no author', async () => {
     const id = randomUUID().slice(0, 8);
     const slug = `conversations/sessions/2026-01-02-codex-${id}`;
     await importer(slug, transcript(id, 'Short body.'));
@@ -496,7 +496,7 @@ for (const backend of testBackends()) describe(`[${backend}] importer trust foll
     expect((await readSpeakerOwners(engine, [{ source_id: 'default', slug }]))[0]?.status).toBe('trusted');
   });
 
-  test.skipIf(backend !== 'postgres')('the v342 backfill never stamps a page a write changed while the backfill waited for its row', async () => {
+  test.skipIf(backend !== 'postgres')('the v343 backfill never stamps a page a write changed while the backfill waited for its row', async () => {
     const id = randomUUID().slice(0, 8);
     const slug = `conversations/sessions/2026-01-02-codex-${id}`;
     await importer(slug, transcript(id, 'Short body.'));
@@ -521,7 +521,7 @@ for (const backend of testBackends()) describe(`[${backend}] importer trust foll
     expect(await author(slug)).toEqual({ content_author: null, stamped: false });
   });
 
-  test('the v342 backfill honors a page only its first-ingest stamp vouches for in speaker markers, not in fence acceptance', async () => {
+  test('the v343 backfill honors a page only its first-ingest stamp vouches for in speaker markers, not in fence acceptance', async () => {
     const id = randomUUID().slice(0, 8);
     const slug = `conversations/sessions/2026-01-02-codex-${id}`;
     const content = transcript(id, 'Short body.');

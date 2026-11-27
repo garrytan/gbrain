@@ -246,7 +246,7 @@ Some unmapped columns are expected, not losses:
 | Column | Why it shows in `unmapped_columns` | Readers |
 | --- | --- | --- |
 | `pages.generation` | unmapped, known value: the primary's cache clock; the Rust store keeps 1 | the `query_cache` freshness check (`query_cache` is not copied) and the dedupe plan fence (`identity-decisions.ts`, applied only when `p.generation = pl.generation`), which a Rust identity-decisions family must replace. The store refuses `applyIdentityDecisions` today, so no read differs yet |
-| `pages.content_author`, `pages.content_author_hash` | unmapped, any value: who wrote the page's live text and the hash they wrote (migration v341, GST-4056); the Rust store keeps neither | the importer-trust reads (`identity/speaker-owner.ts`, `transcripts/importer-provenance.ts`) run SQL on the primary only, so no store read differs yet; a Rust family serving them must keep both columns first |
+| `pages.content_author`, `pages.content_author_hash` | unmapped, any value: who wrote the page's live text and the hash they wrote (migration v342, GST-4056); the Rust store keeps neither | the importer-trust reads (`identity/speaker-owner.ts`, `transcripts/importer-provenance.ts`) run SQL on the primary only, so no store read differs yet; a Rust family serving them must keep both columns first |
 
 ## The seed calls
 

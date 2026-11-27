@@ -19,10 +19,10 @@
  *   `tags`): a verified author stays and its hash follows the content hash (a tag change restamps the hash); a page with
  *   none keeps none. No declaration takes over identical text, so a remote write of identical text, a tag change, a
  *   re-import that changes only tags or contextual re-embedding never moves it.
- * - An exact copy (an engine migration, the v342 backfill) sets `content_author_hash` to `EXACT_AUTHOR_MARK`: the page
+ * - An exact copy (an engine migration, the v343 backfill) sets `content_author_hash` to `EXACT_AUTHOR_MARK`: the page
  *   then holds exactly the given author (none when it is NULL), whatever the text and the stored author were.
  *
- * Columns and trigger come from migration v341, the backfill of existing pages from v342 (its own transaction, so the
+ * Columns and trigger come from migration v342, the backfill of existing pages from v343 (its own transaction, so the
  * DDL's lock is released before the scan).
  */
 import { HASH_EPHEMERAL_FRONTMATTER_KEYS } from '../utils.ts';
