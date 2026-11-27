@@ -210,7 +210,8 @@ the preview shows it first, and an owner that is already set is kept. No key is
 rebound: the receipt lists each live token or OAuth client bound to no member with
 the `gbrain auth rescope --token|--client <name> --member <owner>` command that
 binds it, so you bind your own keys on purpose.
-Each key setup mints writes to the run's source and reads a fixed list: that source,
+Each key setup mints writes to the run's source (the source the harness is pinned to:
+`--source`, `GBRAIN_SOURCE` or a Codex setup receipt; otherwise `sources.default`) and reads a fixed list: that source,
 the `company` source when it exists (`--shape company`), and every source federated
 when the key is minted. The preview names the list and how many pages `company` holds,
 how many of them are imported calls, and that every member reads them all, calls they
@@ -224,6 +225,9 @@ the key's write source, setup blocks the key instead and names the commands that
 or revoke it. Unfederating a source does not take it away from these keys either:
 `gbrain sources unfederate <id>` lists each member key that still reads it, with the
 `gbrain auth rescope --token <name> --sources <ids>` command that drops it.
+A re-run on another source moves a key setup minted with a list to write there and
+keeps its secret; a key setup did not mint that way, or whose list was changed by hand,
+is skipped with the `gbrain auth rescope` command that moves it.
 Keys minted before this (the default grant) are never changed. When the same run
 adds the `company` source (`--shape company`), setup labels the people first and then
 gives their new keys `company`; `company` itself stays out of default search.
@@ -269,7 +273,8 @@ a brain setup cannot read refuses (`setup_serves_unreadable`).
 `gbrain doctor` fails `unlabeled_people_folders` when such a brain has a
 `people/<name>/` folder with pages and no rule naming its readers.
 `gbrain access serves several --members ...` does the labelling alone (preview, then
-`--yes`).
+`--yes`); without `--source` it labels `GBRAIN_SOURCE`, then `sources.default`, and the
+directory it runs from never decides where member keys write.
 
 ### A member's key into their harness
 
