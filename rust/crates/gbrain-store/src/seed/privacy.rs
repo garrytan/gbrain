@@ -16,6 +16,7 @@ pub(super) const RELATIONS: &[(&str, &Relation)] = &[
     ("fact_withdrawals", &FACT_WITHDRAWALS),
     ("page_purges", &PAGE_PURGES),
     ("oauth_clients", &OAUTH_CLIENTS),
+    ("guest_sources", &GUEST_SOURCES),
 ];
 
 /// Maps the family's "newly stored" answer to the row's outcome.
@@ -201,3 +202,28 @@ fn import_oauth_client(tx: &mut dyn KvWrite, row: &Row, _: &mut Losses) -> Resul
 
 #[cfg(test)]
 mod tests;
+
+// ---- guest_sources -------------------------------------------------------------------------
+
+static GUEST_SOURCES: Relation = Relation {
+    key: &["source_id"],
+    columns: &[
+        ("source_id", Kept),
+        ("writers", Kept),
+        ("trust_ceiling", Kept),
+        ("created_at", Unmapped(None)),
+    ],
+    import: import_guest_source,
+};
+
+/// A guest source's record (guest_sources.rs), its writers in the primary's order. Imported after the pages, so the
+/// trust stamp's guest rules never refuse the seed's own page rows. The row's time is not kept.
+fn import_guest_source(tx: &mut dyn KvWrite, row: &Row, _: &mut Losses) -> Result<Outcome> {
+    let source = row.req("source_id")?;
+    require_source(&*tx, &source)?;
+    let writers = row.text_array("writers")?.unwrap_or_default();
+    let ceiling = row.req("trust_ceiling")?;
+    Ok(stored(crate::guest_sources::seed_row(
+        tx, &source, writers, ceiling,
+    )?))
+}

@@ -39,10 +39,9 @@ an update from the stored tier and origin, and stores `unknown` as no tier.
 
 Rust guesses and gaps (1x parity):
 
-- The guest-source rules of the trigger are not built: `source_writer_restricted`, `guest_attribution_missing`,
-  `guest_page_immutable`, the per-source tier ceiling and the `writer_coordinator_required` refusal of a role
-  that cannot read `guest_sources`. The Rust store has no `guest_sources` table, so every source reads as a
-  non-guest source.
+- The guest-source rules of the trigger are built in `guest_sources.rs` (`guard_page`, `guard_row`, `cap_at`) and run
+  by the page, fact, take and timeline writers ([guest_sources.md](guest_sources.md)). The `writer_coordinator_required`
+  refusal of a role that cannot read `guest_sources` is not reachable: the store has no row-level security.
 - A refusal carries the trigger's message without the `trust_raise_refused: ` prefix (the code holds it) and
   without the trigger's DETAIL JSON (`op`, `writer`, `from`, `to`, `backfill`).
 - A stored tier that names no tier reads as `unknown` (`TrustTier::stored`, as `storedTrustTier`); PGLite's
@@ -144,7 +143,7 @@ Rust guesses and gaps (1x parity):
 - A move back to `pending` that another pending proposal already holds refuses with `constraint_violation`, where
   Postgres raises a unique violation; a status, action or table the CHECK constraints refuse refuses with
   `invalid_argument`. A source that does not exist refuses as the foreign key does.
-- The guest-source rules are not modelled (there is no `guest_sources` table).
+- The guest-source rules run in the writers, not in `stamp` itself: `stamp` reads no records ([guest_sources.md](guest_sources.md)).
 
 Not built (they still run through `executeRaw`, which the Rust engine refuses): the reads that also read `fact_purges`
 (the store keeps that table now, rust/docs/store/facts.md "The fact purge ledger", but these reads do not read it yet:

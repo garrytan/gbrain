@@ -14,8 +14,8 @@ and has no keys of its own.
 | `brain.readSourceIncarnation(sourceId)` | `{ config, incarnation }`, or `null` for an unknown id | `readSourceIncarnation` |
 | `brain.hasCompanyBrainReceipt(sourceId)` | always `false` | `hasCompanyBrainReceipt` |
 | `brain.readGuestSourceRow(sourceId)` | always `{ hidden: false, source_id: null, writers: null, trust_ceiling: null }` | `readGuestSourceRow` |
-| `brain.listGuestSourceIds(sourceIds)` | the given ids, each once and in id order, of sources whose config says guest | `listGuestSourceIds` |
-| `brain.hasGuestSource()` | whether any source's config says guest | `hasGuestSource` |
+| `brain.listGuestSourceIds(sourceIds)` | the given ids, each once and in id order, of guest sources (the config says guest, or the source has a guest row) | `listGuestSourceIds` |
+| `brain.hasGuestSource()` | whether any source is a guest source (config or guest row) | `hasGuestSource` |
 | `brain.readPageTrustRows({ ids?, keys?, includeDeleted? })` | one row per page found: by id (deleted pages too) and by `{ source_id, slug }` key (live pages unless `includeDeleted`); `{ id, source_id, slug, trust_tier, write_origin, flagged, guest, byId }` | `readPageTrustRows` |
 | `brain.readRowTrustRows({ table, ids })` | one row per `timeline_entries`, `facts` or `takes` id found, in id order; `{ id, trust_tier, write_origin, flagged, contested }` (`contested` is always null for a timeline row). Any other table refuses `invalid_argument` | `readRowTrustRows` |
 | `brain.readDatabaseClock()` | the store clock, `YYYY-MM-DDTHH:MM:SS.ffffffZ` in UTC | `readDatabaseClock` |
@@ -29,14 +29,12 @@ Each answer below is what Postgres gives for a brain that never wrote the missin
 
 - **Ingestion receipts.** The store keeps no `source_ingestion_receipts`, so `hasCompanyBrainReceipt` is `false`.
   The company-brain profile then reads the source as one that has not finished an ingestion.
-- **Guest sources.** The store has no `guest_sources` table and no row-level security. A guest source is a source
-  whose config has `guest` set to `true` or to the text `"true"`, as the SQL `config->>'guest' = 'true'` reads it.
-  `readGuestSourceRow` is never hidden and never finds a row. This is the Postgres answer for a source that is a
-  guest by config with no `guest_sources` row, so the import guard in `guests/admission.ts` lets the write through,
-  as it does on Postgres for that source. No `guest_sources` row can exist on Rust: `guests/sources.ts` adds one
-  through `executeRaw`, which the engine refuses with `engine_capability_missing`, so the guest admission is loud
-  on Rust and the read stays true. Page trust stamping matches too, because the trigger's guest rules key on a
-  `guest_sources` row only.
+- **Guest sources.** The store has no row-level security. A guest source is a source whose config has `guest` set to
+  `true` or to the text `"true"`, as the SQL `config->>'guest' = 'true'` reads it, or one with a guest row (`guestSourceSql`). `readGuestSourceRow` is never hidden.
+  It finds the source's `guest_sources` row when `upsertGuestSource` wrote one ([guest_sources.md](guest_sources.md)),
+  and no row for a source that is a guest by config alone or is not a guest: the Postgres answer for those sources, so
+  the import guard in `guests/admission.ts` lets the write through, as it does on Postgres for them. Page trust stamping
+  reads the row for the guest-source rules ([guest_sources.md](guest_sources.md)).
 - **Page trust.** A page reads the `trust_tier` and `write_origin` its last write stamped
   ([`write_trust.md`](write_trust.md), "Page stamping"); a page written by an undeclared writer reads
   `trust_tier: 'unknown'` and `write_origin: null`. `flagged` is `activationSuppressedSql`: the page's tier is at or
