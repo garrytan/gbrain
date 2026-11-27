@@ -134,12 +134,13 @@ export class PGLiteEngine implements BrainEngine {
 const HELPER = `
 import { type BrainEngine, PostgresEngine } from './engine.ts';
 export async function castHelper(engine: BrainEngine): Promise<void> { await (engine as PostgresEngine).sql.unsafe('DELETE FROM pages'); }
+export async function exprOnlyHelper(engine: BrainEngine): Promise<void> { await (engine as PostgresEngine).sql.unsafe('DELETE FROM links'); }
 export class Helper { async run(engine: BrainEngine): Promise<void> { await (engine as any).sql.unsafe('UPDATE pages SET title = 1'); } }
 `;
 
 const CASES = `
 import { type BrainEngine, PGLiteEngine, PostgresEngine } from './engine.ts';
-import { castHelper, Helper } from './helper.ts';
+import { castHelper, exprOnlyHelper, Helper } from './helper.ts';
 
 export async function castInCallback(engine: BrainEngine) { await engine.transaction(async tx => { await (tx as PostgresEngine).sql.unsafe('INSERT'); }); }
 export async function doubleCast(engine: BrainEngine) { await engine.transaction(async tx => { await (tx as unknown as { sql: any }).sql.unsafe('INSERT'); }); }
@@ -147,6 +148,7 @@ export async function anyElement(engine: BrainEngine) { await engine.transaction
 export async function destructured(engine: BrainEngine) { await engine.transaction(async tx => { const { sql } = tx as PostgresEngine; await sql.unsafe('INSERT'); }); }
 export async function aliased(engine: BrainEngine) { await engine.transaction(async tx => { const pg = tx as PostgresEngine; await pg.sql.unsafe('INSERT'); }); }
 export async function viaHelper(engine: BrainEngine) { await engine.transaction(async tx => { await castHelper(tx); }); }
+export async function viaExpression(engine: BrainEngine) { await engine.transaction(tx => exprOnlyHelper(tx)); }
 export async function viaMethod(engine: BrainEngine) { await engine.transaction(async tx => { await new Helper().run(tx); }); }
 async function namedWork(tx: BrainEngine) { await (tx as PostgresEngine).sql.unsafe('INSERT'); }
 export async function named(engine: BrainEngine) { await engine.transaction(namedWork); }
@@ -175,7 +177,7 @@ describe('driver-accessor scan catches each escape form', () => {
     expect(ts.getPreEmitDiagnostics(program).map(d => ts.flattenDiagnosticMessageText(d.messageText, '\n'))).toEqual([]);
   });
 
-  test.each(['castInCallback', 'doubleCast', 'anyElement', 'destructured', 'aliased', 'castHelper', 'Helper.run', 'namedWork', 'directTx', 'typedField', 'pgliteDb', 'nestedTx', 'viaWrapper', 'viaWrapperOfWrapper'])('%s is caught', fn => {
+  test.each(['castInCallback', 'doubleCast', 'anyElement', 'destructured', 'aliased', 'castHelper', 'exprOnlyHelper', 'Helper.run', 'namedWork', 'directTx', 'typedField', 'pgliteDb', 'nestedTx', 'viaWrapper', 'viaWrapperOfWrapper'])('%s is caught', fn => {
     expect(caught.has(fn), [...caught].join(', ')).toBe(true);
   });
 

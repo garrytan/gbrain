@@ -177,7 +177,7 @@ export function scanDriverAccessors(program: ts.Program, opts: { root: string; i
       }
       ts.forEachChild(node, visit);
     };
-    ts.forEachChild(fn.body, visit);
+    visit(fn.body);
   };
 
   // Every call in scope, once; transaction wrappers are found over this list.
