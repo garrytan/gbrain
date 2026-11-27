@@ -39,7 +39,7 @@ describe('resolveBrainstormChatModel', () => {
   });
 
   test('falls back to the gateway default model when nothing is configured', () => {
-    expect(resolveBrainstormChatModel({})).toBe('anthropic:claude-sonnet-4-6');
+    expect(resolveBrainstormChatModel({})).toBe('anthropic:claude-sonnet-5-5');
   });
 });
 

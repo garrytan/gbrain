@@ -691,13 +691,22 @@ static FACTS: Relation = Relation {
     import: import_fact,
 };
 
-fn import_fact(tx: &mut dyn KvWrite, row: &Row, _: &mut Losses) -> Result<Outcome> {
+fn import_fact(tx: &mut dyn KvWrite, row: &Row, losses: &mut Losses) -> Result<Outcome> {
     let id = row.req_id("id")?;
     if read_fact(&*tx, id)?.is_some() {
         return Ok(Outcome::Skipped);
     }
     let source_id = row.text_or("source_id", "default");
     require_source(&*tx, &source_id)?;
+    let created_at_us = row.req_ts("created_at")?;
+    // The store cannot hold an unknown event date yet (#10288), so an undated fact keeps its save time here.
+    let valid_from_us = match row.ts("valid_from")? {
+        Some(at) => at,
+        None => {
+            losses.add("fact_unknown_event_date");
+            created_at_us
+        }
+    };
     let record = FactRecord {
         id,
         source_id,
@@ -707,7 +716,7 @@ fn import_fact(tx: &mut dyn KvWrite, row: &Row, _: &mut Losses) -> Result<Outcom
         visibility: row.text_or("visibility", "private"),
         notability: row.text_or("notability", "medium"),
         context: row.text("context"),
-        valid_from_us: row.req_ts("valid_from")?,
+        valid_from_us,
         valid_until_us: row.ts("valid_until")?,
         expired_at_us: row.ts("expired_at")?,
         superseded_by: row.id("superseded_by")?,
@@ -720,7 +729,7 @@ fn import_fact(tx: &mut dyn KvWrite, row: &Row, _: &mut Losses) -> Result<Outcom
         embedding_model: row.text("embedding_model"),
         embedded_text_hash: row.text("embedded_text_hash"),
         embedded_at_us: row.ts("embedded_at")?,
-        created_at_us: row.req_ts("created_at")?,
+        created_at_us,
         row_num: row.i32("row_num")?,
         source_markdown_slug: row.text("source_markdown_slug"),
         claim_metric: row.text("claim_metric"),

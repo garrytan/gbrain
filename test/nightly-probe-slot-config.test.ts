@@ -59,7 +59,7 @@ describe('models.eval.cross_modal.slot_{a,b,c} (D12)', () => {
       const routes = await resolveNightlyProbeModelRoutes(engine);
       expect(routes.slots.A).toBe('claude-cli:claude-opus-5-5');
       expect(routes.slots.B).toBeUndefined();
-      expect(routes.slots.C).toBe('anthropic:claude-haiku-4-5-20251001');
+      expect(routes.slots.C).toBe('anthropic:claude-haiku-5-5');
 
       await runConfigCapture(['unset', 'models.eval.cross_modal.slot_a']);
       await runConfigCapture(['unset', 'models.eval.cross_modal.slot_c']);

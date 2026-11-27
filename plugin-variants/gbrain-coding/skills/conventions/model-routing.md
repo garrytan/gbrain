@@ -12,10 +12,10 @@ Four tiers:
 
 | Tier | Purpose | Default | Examples |
 |---|---|---|---|
-| `utility` | fast classification, expansion, verdict, dedup | `claude-haiku-4-5-20251001` | query expansion, facts contradiction classifier, dream triage judge (prefers `models.dream.triage`) |
-| `reasoning` | default chat, synthesis, generation | `claude-sonnet-4-6` | gateway chat, dream synthesize, patterns, facts extraction |
-| `deep` | slow, expensive reasoning | `claude-opus-4-7` | `gbrain think`, auto-think, cross-modal eval slot B |
-| `subagent` | multi-turn tool loop (capability-gated) | `claude-sonnet-4-6` | `gbrain agent run` |
+| `utility` | fast classification, expansion, verdict, dedup | `claude-haiku-5-5` | query expansion, facts contradiction classifier, dream triage judge (prefers `models.dream.triage`) |
+| `reasoning` | default chat, synthesis, generation | `claude-sonnet-5-5` | gateway chat, dream synthesize, patterns, facts extraction |
+| `deep` | slow, expensive reasoning | `claude-opus-5-5` | `gbrain think`, auto-think, cross-modal eval slot B |
+| `subagent` | multi-turn tool loop (capability-gated) | `claude-sonnet-5-5` | `gbrain agent run` |
 
 The Default column shows the Anthropic defaults — used when
 `ANTHROPIC_API_KEY` is present (Anthropic wins when both keys exist) and kept

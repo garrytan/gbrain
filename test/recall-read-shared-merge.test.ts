@@ -42,7 +42,7 @@ for (const kind of testBackends()) {
       await engine.executeRaw('INSERT INTO access_members (id) VALUES ($1)', ['alice-example']);
       const entity = async (slug: string, title: string, source: string) => {
         await importFromContent(engine, slug, `---\ntitle: ${title}\ntype: company\n---\n\n# ${title}\n`, { noEmbed: true, sourceId: source });
-        await asOwner(engine, tx => tx.insertFact({ fact: `${title} harbor ledger fact from ${source}`, entity_slug: slug, source: 'note', visibility: 'world', embedding: null }, { source_id: source }));
+        await asOwner(engine, tx => tx.insertFact({ valid_from: new Date(), fact: `${title} harbor ledger fact from ${source}`, entity_slug: slug, source: 'note', visibility: 'world', embedding: null }, { source_id: source }));
       };
       for (const source of [PRIVATE_ALICE, 'company']) await entity('companies/acme-example', 'Acme Example', source);
       for (const source of ['company', 'team']) await entity('companies/dana-example', 'Dana Example', source);

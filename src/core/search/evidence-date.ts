@@ -193,7 +193,7 @@ export function titledPageHeader(header: string, title: string | null | undefine
   return clean ? `${header} ${clean}` : header;
 }
 
-type HeaderHit = { page_id: number; title?: string | null; chunk_text?: string | null; fact_row?: { valid_from: string; valid_until: string | null; observed?: string } };
+type HeaderHit = { page_id: number; title?: string | null; chunk_text?: string | null; fact_row?: { valid_from: string | null; valid_until: string | null; observed?: string } };
 
 /**
  * The date header line (with its newline) for each delivered block, read for

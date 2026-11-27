@@ -129,9 +129,11 @@ Retrieve saved facts and (with `query`) budget-packed page snippets.
   reference implementation also accepts relative phrases like `"8 hours ago"`,
   `"6 weeks ago"` and `"last month"` as a convenience; only ISO 8601 is part
   of the frozen contract.) The window
-  is measured on event time (`valid_from`, falling back to `created_at`) and
-  composes with `entity` and `session_id` in the same query, before the
-  per-arm limit. An unparseable value is rejected with `invalid_params`.
+  is measured on event time (`valid_from`); a fact with an unknown event date
+  is left out unless `include_undated: true` (additive, full surface, #10288),
+  which also returns undated facts saved inside the window. It composes with
+  `entity` and `session_id` in the same query, before the per-arm limit. An
+  unparseable value is rejected with `invalid_params`.
 - `limit` is a PER-ARM cap (facts and search results each).
 - `question`: optional string (at most 2,000 characters). The FACTS arm then
   returns active facts (every fact, expired and superseded included, with
@@ -195,7 +197,7 @@ Response — an additive SUPERSET of the plain facts envelope on EVERY call
 | `total` | int | count of facts returned |
 | `results[]` | array | search arm only: `slug`, `title`, `chunk`, `evidence`, `create_safety`, `provenance` (origin page slug), `source_id` (additive since #4830: the source the hit came from; on a federated read each hit names its own source, and a hit that carries none is labeled only when the read's scope is a single source, never a blind `default`) |
 | `search_degraded` | string? | present when keyword-only fallback fired |
-| `facts_order` | string | `relevance` (question passed) or `newest` |
+| `facts_order` | string | `relevance` (question passed, or query with no fact selector) or `newest` |
 | `facts[].relevance` | number? | question calls only: the ranking score (about 0 to 2.1); not a probability and not comparable across calls |
 | `facts_degraded` | object? | question calls only: `reason` (`keyword_only_no_embedding_provider`, `keyword_only_embedding_disabled`, `embed_timeout`, `embed_unavailable`, `no_query_terms`, `facts_embedding_column_missing`) and `unembedded` (facts in scope without a comparable embedding; the `facts_unembedded` notice carries the `gbrain embed --stale --facts` preview) |
 | `facts_calibration` | object? | question calls only, informational (additive since #6590): present when semantic matching ranked the facts on an embedding model whose fact admission floors were never measured; `status` (`unmeasured`) and `model_key` (`provider:model@dims`, the key doctor `fact_admission_floors` reports). A short or empty `facts[]` is then weaker evidence of "nothing matched". It never replaces `facts_degraded`; one `facts_calibration_unmeasured` notice (kind `info`) per brain per session explains it |
@@ -203,9 +205,12 @@ Response — an additive SUPERSET of the plain facts envelope on EVERY call
 | `budget_packing` | object? | present only when a valid `budget_policy` is supplied; effective policy and per-arm accounting |
 
 A call that passes `query` without `question` and without `entity`,
-`session_id`, `since` or `supersessions` returns its facts newest first, as v1
-always has, and carries a `recall_hint` notice (kind `info`) whose `fix.mcp` is
-the same call with `question` set to the query.
+`session_id`, `since` or `supersessions` ranks its facts by relevance to the
+query, as if `question` were the query (`facts_order: relevance`; #10225).
+A query is read as keywords, so a fact that holds every query word is kept
+however long it is. Before, it returned the newest facts with a `recall_hint` notice, and agents
+answered from facts unrelated to the query. A call with none of `query`,
+`question` or a fact selector still returns the newest facts.
 
 `budget_packing` contains `policy` (effective `facts_first | query_first`),
 `applied` (whether the requested budget policy applied), `reason`, and `facts` /
@@ -281,7 +286,8 @@ Save ONE fact with mandatory attribution.
   Empty ⇒ `provenance_required` error with a fix.
 - `entity`: set whenever the fact is about a specific person/company/project —
   entity-scoped recall will not find unattributed facts.
-- `valid_from` (ISO 8601): when the fact became true. Omitted ⇒ write time.
+- `valid_from` (ISO 8601): when the fact became true. Omitted ⇒ unknown: stored as
+  null, returned by `recall` as `valid_from: null` and left out of `since` windows.
 - `infer_entity` (additive, boolean, default `true`): when `entity` is omitted,
   the server may link the fact to the one entity page its text names exactly
   (zero LLM; a second competing name, a bare first name or an ambiguous match

@@ -1764,6 +1764,7 @@
     "recall.grep",
     "recall.include_expired",
     "recall.include_pending",
+    "recall.include_undated",
     "recall.limit",
     "recall.max_chars",
     "recall.min_trust",

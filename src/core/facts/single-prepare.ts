@@ -30,7 +30,7 @@ export interface SingleFactIntent {
    */
   page_slug?: string;
   /** A typed new fact's claim slot (remember): it never supersedes a typed fact in another slot (typed-claim.ts sameClaimSlot). Unset (untyped): not checked. */
-  slot?: { claim_metric: string | null; claim_unit: string | null; claim_period: string | null; valid_from: Date | string };
+  slot?: { claim_metric: string | null; claim_unit: string | null; claim_period: string | null; valid_from: Date | string | null };
 }
 /** Preparation time kept back after the embed (a quarter of what is left, at most this): the dedup reads still run. */
 const EMBED_RESERVE_MS = 5_000;

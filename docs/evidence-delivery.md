@@ -82,8 +82,8 @@ Per-call params on `search`, `query`, `recall`:
 
 - `return_unit`: `chunk` | `window` | `section` | `page` | `auto`. Default from
   config `search.return_unit` (default `auto`).
-- `search.long_page_unit` (config only, default `off`): `window` | `section` |
-  `page` for long non-conversation hits under the implied `auto`; see
+- `search.long_page_unit` (config only, default `section`): `off` | `window` |
+  `section` | `page` for long non-conversation hits under the implied `auto`; see
   [Long pages](#long-pages-searchlong_page_unit).
 - `search.long_page_min_chars` (config only, default 20,000): the
   rendered-body length in characters at which a page counts as long for
@@ -272,10 +272,12 @@ changes this; see the next section.
 
 ### Long pages (`search.long_page_unit`)
 
-Off by default. `gbrain config set search.long_page_unit section` (or `window`,
-`page`; `off` turns it back off) makes `search` and `query` deliver a **long
-non-conversation hit** in that unit under the implied `auto`, the way `auto`
-already delivers conversations whole. Every other hit keeps its ranked chunk
+On by default as `section`: `search` and `query` deliver a **long
+non-conversation hit** in its section under the implied `auto`, the way `auto`
+already delivers conversations whole. `gbrain config set search.long_page_unit
+window` (or `page`) picks another unit, and `gbrain config set
+search.long_page_unit off` keeps every non-conversation hit its ranked chunk,
+as before the default changed (approved default flip, gbrain-evals#653). Every other hit keeps its ranked chunk
 unchanged. The value is a delivery unit from the table above and the unit
 algorithms are the same; nothing selects passages by term overlap, so the
 delivered unit is always the one around the ranked hit.
@@ -286,7 +288,7 @@ delivered unit is always the one around the ranked hit.
 |---|---|---|---|
 | 1 | `return_unit` on the call | always (`auto` included: an explicit `auto` keeps every non-conversation chunk) | that unit |
 | 2 | `search.return_unit` set to anything but `auto` | `return_unit` omitted | that unit, every hit |
-| 3 | `search.long_page_unit` (not `off`) | `return_unit` omitted, `search.return_unit` unset or `auto`, no explicit `token_budget`, and the hit is a long non-conversation page | that unit (`delivered.reason: "long_page"`) |
+| 3 | `search.long_page_unit` (unset is `section`; not `off`) | `return_unit` omitted, `search.return_unit` unset or `auto`, no explicit `token_budget`, and the hit is a long non-conversation page | that unit (`delivered.reason: "long_page"`) |
 | 4 | implied `auto` | everything else | conversations whole, other hits their ranked chunk |
 
 The policy is resolved at the `search`/`query` caller and passed to the
@@ -578,8 +580,9 @@ warning naming the minimum server version.
 - **Non-mutation.** The stage returns new result objects and never mutates or
   caches expanded text.
 - **Bounded work.** One engine query per request (with `search.long_page_unit`
-  on and a long page among the hits: plus one size preflight and one bounded
-  long-page fetch, see [Long pages](#long-pages-searchlong_page_unit)). It reads each hit page's
+  on, the default: plus one size preflight when a non-conversation hit is
+  present, and one bounded long-page fetch when a long page is among the hits,
+  see [Long pages](#long-pages-searchlong_page_unit)). It reads each hit page's
   body once (bounded by the import size cap) plus the chunks within
   ±`return_window` of each hit; each block ≤ 60,000 characters (under the
   64 KiB output-redaction field limit).
