@@ -148,6 +148,7 @@ test/enforced-member-writes-setting.serial.test.ts
 test/enforced-member-writes.serial.test.ts
 test/enforced-member.serial.test.ts
 test/engine-parity/alias-fanout-reads.test.ts
+test/engine-parity/backlinks-hidden-target.test.ts
 test/engine-parity/chunk-page-segmented.test.ts
 test/engine-parity/chunk-safe-fence.test.ts
 test/engine-parity/chunk-vector-overflow.test.ts
