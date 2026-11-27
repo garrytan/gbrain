@@ -115,10 +115,10 @@ export const REASON_LOG_OPTIONS: readonly string[] = ['-z', '--first-parent', '-
 /**
  * The second `git log` gbrain runs in an untrusted checkout, the direction-evidence history read (persistence/git-gap.ts
  * `readPathHistory`): a raw listing (modes and full blob ids, no patch) of every commit, merges against their first
- * parent, with no renames, so only tree entries are compared and no filter, textconv or external diff runs. Every option
- * is required.
+ * parent, in topological order (commit clocks may be skewed), with no renames, so only tree entries are compared and no
+ * filter, textconv or external diff runs. Every option is required.
  */
-export const HISTORY_LOG_OPTIONS: readonly string[] = ['-z', '--raw', '--no-abbrev', '--full-history', '--root', '--diff-merges=first-parent', '--no-renames', '--no-relative',
+export const HISTORY_LOG_OPTIONS: readonly string[] = ['-z', '--raw', '--no-abbrev', '--full-history', '--topo-order', '--root', '--diff-merges=first-parent', '--no-renames', '--no-relative',
   '--no-ext-diff', '--no-textconv', '--no-show-signature', '--format=%x1e%H%x1f%ct'];
 /** Each `log` shape allowed: its options exactly, all of them. */
 const LOG_SHAPES: ReadonlyArray<readonly string[]> = [REASON_LOG_OPTIONS, HISTORY_LOG_OPTIONS];

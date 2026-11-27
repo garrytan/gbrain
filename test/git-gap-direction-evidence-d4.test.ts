@@ -9,6 +9,7 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import { exportBodyLedger, inlineExportMarkdown, readExportPage, readExportWithdrawals, segmentedExportHead, segmentedExportMarkdown } from '../src/core/export-snapshot.ts';
 import { createSegmentedPage } from './helpers/segmented-page.ts';
 import { decideDirection } from '../src/core/persistence/git-gap.ts';
+import { assertHardenedGitArgs, HISTORY_LOG_OPTIONS, REASON_LOG_OPTIONS } from '../src/core/hardened-git.ts';
 import { readConversionDecisions, writeConversionFile } from '../src/core/persistence/git-conversion.ts';
 import { censusGitGap, describeGitGap, type GitGapPage } from '../src/commands/sources-git-gap.ts';
 import { dbAheadOfGitEntry } from '../src/commands/doctor/checks/db-ahead-of-git.ts';
@@ -32,6 +33,14 @@ function commitAll(root: string, message: string): void {
 }
 
 describe('decideDirection (d4 classifier)', () => {
+  test('the hardened history shape requires ancestry order without relaxing the reason-trailer shape', () => {
+    const history = ['log', ...HISTORY_LOG_OPTIONS, '--end-of-options', 'HEAD', '--'];
+    expect(HISTORY_LOG_OPTIONS).toContain('--topo-order');
+    expect(() => assertHardenedGitArgs(history)).not.toThrow();
+    expect(() => assertHardenedGitArgs(history.filter(arg => arg !== '--topo-order'))).toThrow();
+    expect(() => assertHardenedGitArgs(['log', ...REASON_LOG_OPTIONS, '--end-of-options', 'HEAD', '--'])).not.toThrow();
+    expect(() => assertHardenedGitArgs(['log', ...HISTORY_LOG_OPTIONS, '--ext-diff', '--end-of-options', 'HEAD', '--'])).toThrow();
+  });
   const v = (id: number, digest: string) => ({ id, digest });
   const b = (oid: string, digest: string | null) => ({ oid, digest });
   test('each state from content alone', () => {
@@ -206,6 +215,34 @@ for (const backend of testBackends()) describe(`git-gap direction evidence (d4):
     // Its archived versions cannot be compared by content, so any one of them may be a revert: not a one-sided move.
     await engine.executeRaw("INSERT INTO page_versions (page_id, compiled_truth, frontmatter, snapshot_at) VALUES ($1, 'An archived state.', '{}', now() - interval '1 day')", [id]);
     expect(await evidence()).toMatchObject({ kind: 'no_evidence', basis: 'segmented' });
+  }, 120000);
+
+  test('clock-skewed merged ancestry cannot turn a shared newer state into a one-sided Git verdict', async () => {
+    const root = tempDir('git-gap-skewed-merge-');
+    git(root, 'init', '-q');
+    git(root, 'checkout', '-qb', 'main');
+    await engine.executeRaw("UPDATE sources SET local_path=$1 WHERE id='default'", [root]);
+    await body('notes/g', 'Body A.');
+    const a = await rendered('notes/g');
+    const commitAt = async (message: string, day: string) => withEnv({ GIT_AUTHOR_DATE: `${day}T12:00:00Z`, GIT_COMMITTER_DATE: `${day}T12:00:00Z` }, () => commitAll(root, message));
+    put(root, 'notes/g.md', a);
+    await commitAt('A (ancestor, later clock)', '2026-01-20');
+    git(root, 'branch', 'side');
+    put(root, 'notes/g.md', a.replace('Body A.', 'Body C.'));
+    await commitAt('C on main', '2026-01-10');
+    git(root, 'checkout', '-q', 'side');
+    put(root, 'notes/g.md', a.replace('Body A.', 'Body B.'));
+    await commitAt('B on side', '2026-01-05');
+    git(root, 'checkout', '-q', 'main');
+    // Keep main's C while retaining side's B as merged ancestry. Default date order reads A before B.
+    await withEnv({ GIT_AUTHOR_DATE: '2026-01-21T12:00:00Z', GIT_COMMITTER_DATE: '2026-01-21T12:00:00Z' }, () => git(root, 'merge', '-q', '--no-ff', '-s', 'ours', 'side', '-m', 'keep C'));
+    await body('notes/g', 'Body B.');
+    await engine.createVersion('notes/g');
+    await body('notes/g', 'Body A.');
+    const pages: GitGapPage[] = [];
+    await censusGitGap(engine, 'default', { sample: 0, evidence: true, collect: page => { pages.push(page); } });
+    expect(pages.find(page => page.slug === 'notes/g')).toMatchObject({ state: 'git_ahead', databaseAlsoMoved: true,
+      evidence: { kind: 'both_moved', basis: 'conflicting_history' } });
   }, 120000);
 
   test('a Git revert under a database edit is both_moved: the path\'s history keeps a blob it held again', async () => {
