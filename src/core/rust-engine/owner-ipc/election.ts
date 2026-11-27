@@ -8,6 +8,11 @@
  * exited, is waited for; once the lock is free this process takes it. A client whose owner exits runs the election
  * again on its next call (client.ts `rejoin`, RustEngine `_takeOver`); its calls in flight end `owner_unavailable`
  * (routes.ts `ownerGone`, `outcome_unknown`) and are never sent again, since the owner may have started them.
+ *
+ * Decision R, multi-user mode only (this process's switch, or a `refused` frame the owner marked `multiuser`): an owner
+ * with no free connection (`owner_busy` connections) is waited out past `waitMs`, with a backoff, until the caller's
+ * deadline (OWNER_BUSY_BUDGET_MS when it has none); there the election ends `timeout` (`not_sent`). With the mode off
+ * that refusal ends the election at once.
  */
 import { chmodSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
@@ -15,9 +20,10 @@ import type { BrainEngine } from '../../engine.ts';
 import { opError } from '../../ops/contract.ts';
 import { tryAcquireNativeLock, type NativeLockHandle } from '../../persistence/native-lock.ts';
 import { parseGlobalFlags } from '../../cli-options.ts';
-import { connectOwner, type OwnerConnection } from './client.ts';
+import { callDeadline, connectOwner, ownerBusyWaitable, type OwnerConnection } from './client.ts';
 import { recordOwnedRustBrain } from '../owned-brains.ts';
-import { canonicalDatabasePath, ownerLockPath, ownerSocketPath } from './protocol.ts';
+import { OWNER_BUSY_BUDGET_MS, canonicalDatabasePath, ownerBusyBackoffMs, ownerLockPath, ownerSocketPath } from './protocol.ts';
+import { ownerConnectTimeout } from './routes.ts';
 import { serveOwnerEngine, type OwnerEngineServer, type OwnerServerOptions } from './server.ts';
 
 /** How long a process keeps trying to become the owner or reach it before it reports `owner_unavailable`. */
@@ -61,8 +67,12 @@ export async function electOwner(engine: BrainEngine, databasePath: string, opts
   const storeDir = canonicalDatabasePath(databasePath);
   mkdirSync(storeDir, { recursive: true, mode: 0o700 });
   if (process.platform !== 'win32') chmodSync(storeDir, 0o700);
-  const deadline = Date.now() + (opts.waitMs ?? OWNER_ELECTION_WAIT_MS);
+  const startedAt = Date.now();
+  const deadline = startedAt + (opts.waitMs ?? OWNER_ELECTION_WAIT_MS);
   let lastError: unknown;
+  // Set by the first `owner_busy` connections refusal in multi-user mode: the election then waits until this time.
+  let busyUntil: number | undefined;
+  let busyAttempts = 0;
   for (;;) {
     const lock = await tryAcquireNativeLock(lockPath);
     if (lock) {
@@ -83,11 +93,18 @@ export async function electOwner(engine: BrainEngine, databasePath: string, opts
       try {
         return { role: 'client', connection: await connectOwner(socketPath, { timeoutMs: Math.max(250, deadline - Date.now()) }) };
       } catch (error) {
+        if (ownerBusyWaitable(error)) {
+          busyUntil ??= callDeadline().deadlineAt ?? startedAt + OWNER_BUSY_BUDGET_MS;
+          if (Date.now() >= busyUntil) throw ownerConnectTimeout(Date.now() - startedAt, `socket=${socketPath}`);
+          lastError = error;
+          await new Promise(r => setTimeout(r, Math.min(busyUntil! - Date.now(), ownerBusyBackoffMs(busyAttempts++))));
+          continue;
+        }
         if (!retryable(error)) throw error;
         lastError = error;
       }
     }
-    if (Date.now() >= deadline) break;
+    if (Date.now() >= Math.max(deadline, busyUntil ?? 0)) break;
     await new Promise(r => setTimeout(r, ELECTION_POLL_MS));
   }
   throw opError('owner_unavailable',

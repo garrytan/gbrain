@@ -19,8 +19,13 @@
  *   permission bits, else `owner_ipc_peer_refused` (`socket_owner`, `socket_mode`). After it connects, it reads the
  *   owner's uid from the kernel and refuses any other (`peer_uid`). An owner that refuses the connection (another user,
  *   or `owner_busy` with too many connections) sends a `refused` frame, and the connect rejects with its error. None
- *   of these is retried by the election. Where peer uids cannot be read (Windows, other Unixes) only the socket checks
- *   run.
+ *   of these is retried by the election, except `owner_busy` in multi-user mode (below). Where peer uids cannot be read
+ *   (Windows, other Unixes) only the socket checks run.
+ * - Decision R, multi-user mode only (the owner's hello lists the remote check, or this process's switch is on): a call
+ *   the owner refuses with `owner_busy` (queue_full, inflight_bytes) never ran and the owner forgot it, so the client
+ *   sends the same frame again after a backoff (protocol.ts ownerBusyBackoffMs) until the caller's deadline
+ *   (OWNER_BUSY_BUDGET_MS when it has none); there the call ends `timeout` (`not_started`). The election does the same
+ *   for `owner_busy` connections (election.ts). With the mode off, `owner_busy` reaches the caller at once.
  * - A remote caller (callerIsRemote) sends only the read members of OWNER_IPC_REMOTE_READS; any other member is
  *   refused here with `engine_capability_missing` and nothing is sent. A local caller's calls are unchanged.
  * - The socket holds the event loop open only while a call is in flight, so a finished CLI command exits.
@@ -45,14 +50,15 @@ import { RUST_ENGINE_MEMBERS } from '../members.ts';
 import { STORE_MEMBERS } from '../store-members/index.ts';
 import { decodeError, decodeValue, encodeValue, OwnerIpcEncodeError, type Wire } from './codec.ts';
 import {
-  OWNER_IPC_MAX_FRAME_BYTES, OWNER_IPC_VERSION, frameLine, ownerSocketPath, readFrames, type OwnerHello,
+  OWNER_BUSY_BUDGET_MS, OWNER_IPC_MAX_FRAME_BYTES, OWNER_IPC_VERSION, frameLine, ownerBusyBackoffMs, ownerSocketPath, readFrames,
+  type OwnerHello,
 } from './protocol.ts';
 import {
   OWNER_IPC_CALLBACK_KEYS, OWNER_IPC_REMOTE_READS, OWNER_IPC_ROUTES, ownerCallCancelled, ownerCallTimeout, ownerGone, ownerIpcProtocol, ownerIpcRefusal,
   ownerPeerRefused, isOwnerHandoff, ownerHandoff, ownerMemberOnlyReads,
 } from './routes.ts';
 import { rustMultiuserFromEnv } from '../multiuser-switch.ts';
-import { ownerEngineCapabilities, remoteFrameMark } from './remote-check.ts';
+import { OWNER_REMOTE_CHECK_CAP, ownerEngineCapabilities, remoteFrameMark } from './remote-check.ts';
 import { HELD_ROW_HOOK, HELD_ROW_MEMBERS, HELD_ROW_TAG, withHeldRowHook } from './held-row.ts';
 import { setDeadlineTimer, type DeadlineTimer } from './timer.ts';
 
@@ -71,6 +77,10 @@ export interface OwnerConnection {
 
 interface Pending {
   member: string;
+  /** True while a call refused `owner_busy` waits to be sent again: the owner holds no copy of it. */
+  waiting?: () => boolean;
+  /** Takes an `owner_busy` answer in multi-user mode (true), or leaves it to end the call (false). */
+  onBusy?: (error: unknown) => boolean;
   resolve(value: unknown): void;
   reject(error: unknown): void;
   callbacks: Map<string, (...args: unknown[]) => void>;
@@ -78,6 +88,16 @@ interface Pending {
 }
 
 const connections = new WeakMap<object, OwnerConnection>();
+/** Marks an `owner_busy` connect refusal whose owner said it runs in multi-user mode (`refused` frame `multiuser`). */
+const MULTIUSER_REFUSAL = Symbol('ownerMultiuserRefusal');
+
+/** True when `error` is an owner's `owner_busy` connections refusal and multi-user mode is on, here or on the owner. */
+export function ownerBusyWaitable(error: unknown): boolean {
+  const e = error as { code?: unknown; reason?: unknown } | null;
+  return e?.code === 'owner_busy' && e.reason === 'connections'
+    && (rustMultiuserFromEnv() || (e as { [MULTIUSER_REFUSAL]?: unknown })[MULTIUSER_REFUSAL] === true);
+}
+
 /**
  * Waits until the old owner has closed `connection` (it does right after it finished its handoff), at most
  * HANDOFF_CLOSE_WAIT_MS, so the election that follows looks for the next owner, not the one leaving.
@@ -132,6 +152,11 @@ export function callDeadline(): { deadlineAt?: number; readDeadlineAt?: number }
     ...(candidates.length ? { deadlineAt: Math.min(...candidates) } : {}),
     ...(typeof read === 'number' ? { readDeadlineAt: read } : {}),
   };
+}
+
+/** Multi-user mode as the client sees it: the owner's hello lists the remote check, or this process's switch is on. */
+function ownerMultiuser(ownerCapabilities: readonly string[]): boolean {
+  return ownerCapabilities.includes(OWNER_REMOTE_CHECK_CAP) || rustMultiuserFromEnv();
 }
 
 function abortError(member: string, signal: AbortSignal, startedAt: number, sent: boolean): Error {
@@ -283,8 +308,10 @@ export function connectOwner(legacySocketPath: string, opts: ConnectOwnerOptions
         if (hello) return;
         // The owner refused this connection before its hello (another user, too many connections); nothing was sent.
         clearTimeout(timer);
-        try { early = decodeError(frame.error as Wire); }
-        catch (cause) { early = ownerIpcProtocol('result_undecodable', null, `refused_frame ${cause instanceof Error ? cause.message : String(cause)}`); }
+        try {
+          early = decodeError(frame.error as Wire);
+          if (frame.multiuser === true && typeof early === 'object' && early !== null) Object.defineProperty(early, MULTIUSER_REFUSAL, { value: true });
+        } catch (cause) { early = ownerIpcProtocol('result_undecodable', null, `refused_frame ${cause instanceof Error ? cause.message : String(cause)}`); }
         reject(early);
         socket.destroy();
         return;
@@ -316,16 +343,20 @@ export function connectOwner(legacySocketPath: string, opts: ConnectOwnerOptions
         return;
       }
       if (frame.t !== 'result') return;
-      pending.delete(frame.id as number);
-      call.cleanup();
-      refresh();
       // An answer this process cannot read fails only its own call; the connection and other calls go on.
       let decoded: unknown;
       try { decoded = frame.ok === true ? decodeValue(frame.value as Wire) : decodeError(frame.error as Wire); }
       catch (error) {
+        pending.delete(frame.id as number);
+        call.cleanup();
+        refresh();
         call.reject(ownerIpcProtocol('result_undecodable', call.member, `id=${fieldText(frame.id)} ${error instanceof Error ? error.message : String(error)}`));
         return;
       }
+      if (frame.ok !== true && call.onBusy?.(decoded)) return;
+      pending.delete(frame.id as number);
+      call.cleanup();
+      refresh();
       if (frame.ok === true) call.resolve(decoded);
       else call.reject(decoded);
     }, () => {}, OWNER_IPC_MAX_FRAME_BYTES);
@@ -333,7 +364,10 @@ export function connectOwner(legacySocketPath: string, opts: ConnectOwnerOptions
       clearTimeout(timer);
       closed = true;
       if (!hello) { reject(early ?? Object.assign(new Error('The brain owner closed the connection before its hello.'), { code: 'ECONNRESET' })); return; }
-      for (const call of pending.values()) { call.cleanup(); call.reject(bye ? ownerHandoff(call.member, hello.pid) : ownerGone(call.member, hello.pid, true)); }
+      for (const call of pending.values()) {
+        call.cleanup();
+        call.reject(bye ? ownerHandoff(call.member, hello.pid) : ownerGone(call.member, hello.pid, call.waiting?.() !== true));
+      }
       pending.clear();
     });
 
@@ -381,22 +415,45 @@ export function connectOwner(legacySocketPath: string, opts: ConnectOwnerOptions
         ...(readDeadlineAt !== undefined ? { read_deadline_at: readDeadlineAt } : {}),
         ...(access ? { access } : {}), ...remoteFrameMark(callerIsRemote(), hello.capabilities) });
       if (line === null) return Promise.reject(ownerIpcRefusal(member, `its arguments are larger than ${OWNER_IPC_MAX_FRAME_BYTES} bytes, the most the owner socket carries`));
+      // Decision R: in multi-user mode a busy owner is waited out within the caller's deadline.
+      const busyUntil = ownerMultiuser(hello.capabilities) ? (deadlineAt ?? startedAt + OWNER_BUSY_BUDGET_MS) : undefined;
       return new Promise((resolveCall, rejectCall) => {
         let grace: DeadlineTimer | undefined;
+        let resend: ReturnType<typeof setTimeout> | undefined;
+        let busyAttempts = 0;
+        let waiting = false;
         const listeners: Array<[AbortSignal, () => void]> = [];
         const cleanup = () => {
           grace?.clear();
+          if (resend) clearTimeout(resend);
           for (const [signal, listener] of listeners) signal.removeEventListener('abort', listener);
         };
         const endLocally = (error: unknown) => {
           if (!pending.delete(id)) return;
           cleanup();
           refresh();
-          send({ t: 'cancel', id });
+          // A call waiting to be sent again is not on the owner: there is nothing to cancel.
+          if (!waiting) send({ t: 'cancel', id });
           rejectCall(error);
         };
+        // The owner refused the call and forgot it: send the same frame again after a backoff, or end `timeout` at the budget.
+        const onBusy = (error: unknown): boolean => {
+          if (busyUntil === undefined || (error as { code?: unknown } | null)?.code !== 'owner_busy') return false;
+          waiting = true;
+          const left = busyUntil - Date.now();
+          if (left <= 0) { endLocally(ownerCallTimeout(member, Date.now() - startedAt, 'queued')); return true; }
+          resend = setTimeout(() => {
+            resend = undefined;
+            if (pending.get(id) !== entry || closed || bye) return;
+            if (Date.now() >= busyUntil) { endLocally(ownerCallTimeout(member, Date.now() - startedAt, 'queued')); return; }
+            waiting = false;
+            socket.write(line);
+          }, Math.min(left, ownerBusyBackoffMs(busyAttempts++)));
+          resend.unref?.();
+          return true;
+        };
         for (const signal of signals) {
-          const listener = () => endLocally(abortError(member, signal, startedAt, true));
+          const listener = () => endLocally(abortError(member, signal, startedAt, !waiting));
           signal.addEventListener('abort', listener, { once: true });
           listeners.push([signal, listener]);
         }
@@ -404,7 +461,8 @@ export function connectOwner(legacySocketPath: string, opts: ConnectOwnerOptions
           const ms = Math.max(0, deadlineAt - Date.now());
           grace = setDeadlineTimer(() => endLocally(ownerCallTimeout(member, ms, 'sent')), ms + CLIENT_DEADLINE_GRACE_MS);
         }
-        pending.set(id, { member, resolve: resolveCall, reject: rejectCall, callbacks, cleanup });
+        const entry: Pending = { member, resolve: resolveCall, reject: rejectCall, callbacks, cleanup, waiting: () => waiting, onBusy };
+        pending.set(id, entry);
         refresh();
         socket.write(line);
       });

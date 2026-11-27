@@ -250,6 +250,13 @@ no connection comes back, a call ends `owner_unavailable`, `outcome_unknown` if 
 retries `owner_busy` with backoff inside the caller's deadline (60 s when there is none), so a caller sees `timeout`
 only at its own deadline (decision R).
 
+The owner socket does the same in multi-user mode only (`owner-ipc/client.ts`, `owner-ipc/election.ts`). A call
+refused `queue_full` or `inflight_bytes` never ran and the owner forgot it, so the client sends the same frame again
+after a backoff (25 ms, doubling to 1 s). At the caller's deadline it ends `timeout` (`not_started`). An election
+refused `connections` connects again past its short wait. At the deadline it ends `timeout` (`not_sent`). The client
+reads the mode from the owner's hello (`remote_check`), from the owner's `refused` frame (`multiuser: true`, added in
+multi-user mode only), or from its own switch. With the mode off, `owner_busy` reaches the caller at once, as before.
+
 Positions: on the single-writer store every commit is alone in its batch, so the server returns
 `{ sequence: <commit sequence>, index: 0 }`, which is exact. On the optimistic store
 (`GBRAIN_RUST_CONCURRENT_WRITES=1`) several transactions share a sequence, so the server returns no position and a
@@ -1106,7 +1113,7 @@ true. All at trunk `3e79ea5896`.
 | `test/rust-owner-failover.test.ts:89-119`, `:149-151` | exactly one survivor owns the brain | split (M4 failover is a fenced primary) |
 | `test/rust-owner-clients.test.ts:30-36` | one owner plus sixteen client processes | split: multi-writer twin asserts no busy error and every page present |
 | `test/rust-engine-lock-owner.serial.test.ts:29-54` | the serve that holds the lock names itself | split |
-| `test/rust-owner-ipc-limits.test.ts:80-91`, `:156-166`, `:291-301` | the owner refuses past its caps with `owner_busy` | split; see decision R |
+| `test/rust-owner-ipc-limits.test.ts:80-91`, `:156-166`, `:291-301` | the owner refuses past its caps with `owner_busy` | split: the multi-user twins in `test/rust-owner-ipc-busy-retry.serial.test.ts` wait out the busy owner (decision R) |
 | `test/rust-owner-ipc-remote-mark-tools.test.ts:318`, `:337` | a transaction or whole operation from a second process is refused | change (the server needs it) |
 | `test/persistence-consumer-election.test.ts:247-258` | a forced sync consumer beside a live serving consumer on the same host logs `two_consumers_on_host` | valid: the plan keeps one full consumer per host (`docs/designs/RUST_ENGINE.md` D20 table); many writers do not need many full consumers |
 | `test/db-lock-election.test.ts:46-57` | one holder per tick through the token-fenced cycle lease (`src/core/db-lock.ts:249-260`) | valid; keep |
@@ -1145,7 +1152,8 @@ and Q (before G6's optimistic-store part).
   (`test/rust-owner-ipc-limits.test.ts`); D20 says a second process never gets a busy error.
   Options: 1) keep the caps, and have the client retry `owner_busy` inside the caller's deadline, so a
   caller sees `timeout` only when its own deadline passes; 2) queue without a bound. Recommendation 1:
-  bounded memory stays, and no caller sees a busy error before its deadline.
+  bounded memory stays, and no caller sees a busy error before its deadline. Built (option 1) on the served
+  wire and, in multi-user mode, on the owner socket (see "Request ids, positions and busy owners").
 - **S. Commit log shape.** Options: 1) logical records (changed keys and operations) with a size cap,
   and a snapshot install for a follower past the cap; 2) physical page shipping from redb.
   Recommendation 1: it does not tie the format to redb's file layout, which the bake-off may replace.

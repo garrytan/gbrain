@@ -60,7 +60,7 @@ import {
   OWNER_IPC_ROUTES, ownerBusy, ownerCallTimeout, ownerEarlierCallRunning, ownerIpcProtocol, ownerIpcRefusal, ownerMemberOnlyReads,
   ownerPeerRefused, ownerResponseTooLarge, ownerHandoff,
 } from './routes.ts';
-import { ownerHelloCapabilities, ownerRemoteRefusal } from './remote-check.ts';
+import { ownerHelloCapabilities, ownerRemoteCheckOn, ownerRemoteRefusal } from './remote-check.ts';
 import { heldRowHook } from './held-row.ts';
 import { membersWaitingFor } from './confirming-reads.ts';
 import { setDeadlineTimer, type DeadlineTimer } from './timer.ts';
@@ -561,7 +561,7 @@ export async function serveOwnerEngine(
       socket.once('close', () => { clearTimeout(drain); refused.delete(socket); });
       socket.end(last());
     };
-    const refuseConnection = (error: unknown) => holdRefused(() => frameLine({ t: 'refused', error: encodeError(error) })!);
+    const refuseConnection = (error: unknown, mark: { multiuser?: true } = {}) => holdRefused(() => frameLine({ t: 'refused', error: encodeError(error), ...mark })!);
     if (peerCred?.ok) {
       const peer = peerUid(socket, peerCred.read);
       if (peer !== uid) {
@@ -569,7 +569,7 @@ export async function serveOwnerEngine(
         return;
       }
     }
-    if (sockets.size >= maxConnections) { refuseConnection(ownerBusy('connections', null, maxConnections)); return; }
+    if (sockets.size >= maxConnections) { refuseConnection(ownerBusy('connections', null, maxConnections), ownerRemoteCheckOn(engine) ? { multiuser: true } : {}); return; }
     sockets.add(socket);
     const calls = new Map<number, PendingCall>();
     // `helloed` turns on with a hello of this version. `refused` turns on with a hello of another version: the owner

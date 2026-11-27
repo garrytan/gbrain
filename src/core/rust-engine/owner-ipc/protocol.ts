@@ -19,8 +19,11 @@
  *   owner -> client  { t: 'hello', version, pid, kind, capabilities, serve }
  *   owner -> client  { t: 'cb', id, key, args }                     a void notification callback of call `id`
  *   owner -> client  { t: 'result', id, ok, value | error }         the call's end; exactly one per call
- *   owner -> client  { t: 'refused', error }                        the connection is refused before its hello
- *                                                                    (another OS user, or too many connections); it closes
+ *   owner -> client  { t: 'refused', error, multiuser? }            the connection is refused before its hello
+ *                                                                    (another OS user, or too many connections); it closes.
+ *                                                                    A multi-user owner adds `multiuser: true` to its
+ *                                                                    `owner_busy` refusal, so a client waits it out
+ *                                                                    (decision R); an older client ignores the field
  *   owner -> client  { t: 'bye' }                                   multi-user owner only, last frame as it hands the brain
  *                                                                    over: it read nothing after it, so a call still unanswered
  *                                                                    never ran and the client sends it to the next owner
@@ -35,6 +38,8 @@
  * `owner_unavailable`. Frames over OWNER_IPC_MAX_FRAME_BYTES are refused (`response_too_large` for a reply).
  * The owner bounds its memory across every client: past OWNER_IPC_MAX_QUEUED waiting calls, OWNER_IPC_MAX_INFLIGHT_BYTES
  * of held call frames, or OWNER_IPC_MAX_CONNECTIONS connections it refuses with `owner_busy` (retryable) and runs nothing.
+ * In multi-user mode the client waits a busy owner out (decision R): it sends a refused call again, and the election
+ * connects again, after OWNER_BUSY_BACKOFF backoff, until the caller's deadline (OWNER_BUSY_BUDGET_MS when it has none).
  */
 import type { Socket } from 'node:net';
 import { realpathSync } from 'node:fs';
@@ -56,6 +61,12 @@ export const OWNER_IPC_MAX_QUEUED = 1024;
 export const OWNER_IPC_MAX_INFLIGHT_BYTES = 256 * 1024 * 1024;
 /** Client connections the owner keeps open at once; one more gets a `refused` frame and is closed. */
 export const OWNER_IPC_MAX_CONNECTIONS = 256;
+/** How long a multi-user caller with no deadline of its own waits out a busy owner before it gets `timeout`. */
+export const OWNER_BUSY_BUDGET_MS = 60_000;
+/** The wait before the next try at a busy owner: 25 ms, doubling to at most 1 s. */
+export function ownerBusyBackoffMs(attempt: number): number {
+  return Math.min(1_000, 25 * 2 ** Math.min(6, attempt));
+}
 /** Refusals the owner holds open at once, and how long it waits for a refused peer to close before it destroys the socket. */
 export const OWNER_IPC_REFUSED_LIMIT = 64;
 export const OWNER_IPC_REFUSED_DRAIN_MS = 1000;
@@ -107,7 +118,7 @@ export type OwnerFrame =
   | { t: 'cb'; id: number; key: string; args: Wire }
   | { t: 'result'; id: number; ok: true; value: Wire }
   | { t: 'result'; id: number; ok: false; error: Wire }
-  | { t: 'refused'; error: Wire };
+  | { t: 'refused'; error: Wire; multiuser?: true };
 
 /** Serializes a frame; null when it is over the frame cap. */
 export function frameLine(frame: object, maxBytes = OWNER_IPC_MAX_FRAME_BYTES): string | null {

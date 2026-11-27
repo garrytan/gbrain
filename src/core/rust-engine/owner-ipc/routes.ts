@@ -295,6 +295,17 @@ export function ownerCallTimeout(member: string, ms: number, stage: 'queued' | '
 }
 
 /**
+ * In multi-user mode the election waited out an owner with no free connection (`owner_busy` connections) until the
+ * caller's deadline, and none freed: nothing was sent, so the call never ran.
+ */
+export function ownerConnectTimeout(ms: number, detail: string): OperationError {
+  return opError('timeout',
+    `The brain's owner had no free connection within ${ms} ms, so nothing was sent and nothing ran.`,
+    'Retry the same call; it waits again within its own deadline. If it keeps timing out, too many processes hold the brain open: check the owner\'s log.',
+    { reason: 'not_sent', retryable: true, detail: `via=owner_ipc deadline_ms=${ms} owner_busy=connections ${detail}` });
+}
+
+/**
  * The caller's AbortSignal fired. Before the call was sent it never ran: `cancelled`. After it was sent the owner is
  * told to stop it, but a call the owner already started is not interrupted (the store does not observe the abort), so
  * a write can still commit: the outcome is unknown, as for a sent call's timeout, and rerunning the call could repeat
