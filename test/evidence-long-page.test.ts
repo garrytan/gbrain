@@ -81,9 +81,9 @@ describe('off path', () => {
     }
   });
 
-  test('an unknown stored value reads as off; config set refuses it', async () => {
+  test('an unknown or blank stored value reads as off; config set refuses it', async () => {
     const chunk = await mcpCall(engine, 'search', { query: 'renewal fee', return_unit: 'chunk' });
-    expect((await withConfig(engine, { [KEY]: 'sentence' }, () => mcpCall(engine, 'search', { query: 'renewal fee' }))).bytes).toBe(chunk.bytes);
+    for (const stored of ['sentence', '', '  ']) expect((await withConfig(engine, { [KEY]: stored }, () => mcpCall(engine, 'search', { query: 'renewal fee' }))).bytes).toBe(chunk.bytes);
     expect(longPageUnitValueProblem('section')).toBeNull();
     expect(searchConfigValueRefusal(KEY, 'sentence')?.message).toContain('off, window, section, page');
     expect(longPageMinCharsValueProblem('20000')).toBeNull();

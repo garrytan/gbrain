@@ -386,7 +386,7 @@ export function longPageMinCharsValueProblem(value: string): string | null {
  */
 export async function withLongPagePolicy(engine: BrainEngine, plan: EvidencePlan | null): Promise<EvidencePlan | null> {
   if (!plan || plan.unit !== 'auto' || plan.explicitUnit || plan.budgetExplicit) return plan;
-  const raw = (await engine.getConfig(LONG_PAGE_UNIT_CONFIG_KEY).catch(() => 'off'))?.trim() || 'section';
+  const raw = (await engine.getConfig(LONG_PAGE_UNIT_CONFIG_KEY).catch(() => 'off'))?.trim() ?? 'section';
   if (raw !== 'window' && raw !== 'section' && raw !== 'page') return plan;
   const min = (await engine.getConfig(LONG_PAGE_MIN_CHARS_CONFIG_KEY).catch(() => null)) ?? '';
   return { ...plan, longPage: { unit: raw, minChars: longPageMinCharsValueProblem(min) ? DEFAULT_LONG_PAGE_MIN_CHARS : Number(min.trim()) } };
