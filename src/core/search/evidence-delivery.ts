@@ -781,16 +781,16 @@ function planBlock(page: ChunkWindowPage, hits: SearchResult[], requested: Exclu
   if (page.chunks.length === 0 && page.row_limited) return fallbackBlock(best, hits, 'row_limit');
   const { text, timelineAt } = pageEvidenceText(page, includeTimeline);
   const textBytes = Buffer.byteLength(text, 'utf8');
-  // Stored spans place a chunk where it was cut, so identical text under two headings anchors on the ranked one; only
-  // chunks with a missing or stale span are found by text search. Above 1 MiB the text is never whitespace-folded whole.
+  // Stored spans place a chunk where it was cut, so identical text under two headings anchors on the ranked one; a chunk with a
+  // missing or stale span takes its place from the in-order text search over every chunk. Above 1 MiB nothing is folded whole.
   const stored = locateChunksByStoredSpans(text, timelineAt, page.chunks);
   const placed = new Set(stored.map(sp => sp.id));
-  const truthChunks = page.chunks.filter(c => c.chunk_source === 'compiled_truth' && !placed.has(c.id));
-  const timelineChunks = page.chunks.filter(c => c.chunk_source === 'timeline' && !placed.has(c.id));
-  const spans = textBytes > SPAN_ONLY_LOCATE_BYTES ? stored : [
+  const spans = textBytes > SPAN_ONLY_LOCATE_BYTES || placed.size === page.chunks.length ? stored : [
     ...stored,
-    ...locateChunks(timelineAt < 0 ? text : text.slice(0, timelineAt - TIMELINE_SEPARATOR.length), truthChunks),
-    ...(timelineAt < 0 ? [] : locateChunks(text.slice(timelineAt), timelineChunks).map(sp => ({ ...sp, start: sp.start + timelineAt, end: sp.end + timelineAt }))),
+    ...[
+      ...locateChunks(timelineAt < 0 ? text : text.slice(0, timelineAt - TIMELINE_SEPARATOR.length), page.chunks.filter(c => c.chunk_source === 'compiled_truth')),
+      ...(timelineAt < 0 ? [] : locateChunks(text.slice(timelineAt), page.chunks.filter(c => c.chunk_source === 'timeline')).map(sp => ({ ...sp, start: sp.start + timelineAt, end: sp.end + timelineAt }))),
+    ].filter(sp => !placed.has(sp.id)),
   ].sort((a, b) => a.chunk_index - b.chunk_index);
   const doc = buildDoc(text, spans);
   return blockFromDoc(page, hits, doc, hits.map(h => locateAnchor(doc, h, textBytes <= SPAN_ONLY_LOCATE_BYTES)), requested, radius, textBytes > DEFAULT_INLINE_BODY_BYTES);

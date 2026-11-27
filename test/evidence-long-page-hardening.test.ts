@@ -76,6 +76,14 @@ describe('the ranked chunk is anchored by its stored span', () => {
       expect(results[0].delivered.unmapped_chunk_ids).toBeUndefined();
     });
   }
+
+  test('a missing span on a chunk that repeats an earlier passage is searched after its placed predecessor, not at the first copy', async () => {
+    const chunks = spanned(body, [{ text: '## Original' }, { text: PAYMENT }, { text: '## Amendment' }, { text: PAYMENT, at: amendmentAt, missing: true }]);
+    const { results } = await deliverEvidence(stubEngine(body, chunks), [hitOn(chunks, 3)], sectionPlan, {});
+    expect(results[0].delivered.unit).toBe('section');
+    expect(results[0].chunk_text.startsWith('## Amendment')).toBe(true);
+    expect(results[0].chunk_text).not.toContain('## Original');
+  });
 });
 
 describe('a second ranked passage on the same long page under a tight budget', () => {
@@ -119,6 +127,7 @@ describe('the long-page deadline covers the fence-overlay reads', () => {
     const started = Date.now();
     const { results, delivery } = await deliverEvidence(engine, [hitOn(chunks, 0)], autoPlan(20000), {}, { longPages: longPages(150) });
     expect(overlayReads).toBe(1);
+    // gstack-timing-ok: the overlay read never settles, so only the 150 ms deadline can end the call well inside this bound.
     expect(Date.now() - started).toBeLessThan(2_000);
     expect(results[0].chunk_text).toBe(chunks[0].chunk_text);
     expect(results[0].delivered).toMatchObject({ unit: 'chunk', reason: 'long_page_chunk' });
