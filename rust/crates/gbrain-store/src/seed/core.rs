@@ -31,6 +31,9 @@ pub(super) const RELATIONS: &[(&str, &Relation)] = &[
     ("timeline_entries", &TIMELINE),
     ("slug_aliases", &SLUG_ALIASES),
     ("page_aliases", &PAGE_ALIASES),
+    // The purge tombstones come before the facts they guard: a reconcile that finds a claim saved again after its purge was
+    // cleared must remove the stale tombstone first, or the fact is refused (`purged_content`) and the pass never ends.
+    ("fact_purges", &super::state::FACT_PURGES),
     ("facts", &FACTS),
     ("takes", &TAKES),
 ];
