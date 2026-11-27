@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2457/2484
+# covered: 2458/2484
 # lifecycle: 12/12
 # pages: 141/142
 # search: 8/8
@@ -78,7 +78,7 @@
 # entity_identities: 5/5
 # cli_reads_import: 16/16
 # wanted_links: 2/2
-# write_misc: 123/138
+# write_misc: 124/138
 # repair_bookkeeping: 59/59
 # write_attribution: 5/5
 # telemetry: 14/14
@@ -134,10 +134,10 @@ listCatalogRelations	lifecycle	yes	1	no	yes	yes	serves
 readCatalogSchemaVersion	lifecycle	yes	1	no	yes	yes	serves
 listCatalogForeignKeys	lifecycle	yes	1	no	yes	yes	serves
 getPage	pages	yes	289	yes	yes	yes	serves
-readPageSnapshot	pages	yes	104	no	yes	yes	serves
-readPageSnapshotsBatch	pages	yes	7	no	yes	yes	serves
+readPageSnapshot	pages	yes	105	no	yes	yes	serves
+readPageSnapshotsBatch	pages	yes	8	no	yes	yes	serves
 lockPageKeys	pages	yes	17	no	yes	yes	serves
-putPage	pages	yes	1367	yes	yes	yes	serves
+putPage	pages	yes	1369	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	45	yes	yes	yes	serves
@@ -649,7 +649,7 @@ readFactTrustTier	facts	yes	2	no	yes	yes	serves
 listFenceFactRowNums	facts	yes	2	no	yes	yes	serves
 readLiveFactRowTier	facts	yes	1	no	yes	yes	serves
 insertFact	facts	yes	199	yes	yes	yes	serves
-insertFacts	facts	yes	278	no	yes	yes	serves
+insertFacts	facts	yes	282	no	yes	yes	serves
 deleteFactsForPage	facts	yes	8	no	yes	yes	serves
 expireFact	facts	yes	94	no	yes	yes	serves
 listFactsByEntity	facts	yes	66	yes	yes	yes	serves
@@ -673,7 +673,7 @@ hasPositionedPageFacts	facts	yes	1	no	yes	yes	serves
 hasFenceAbsentHold	facts	yes	1	no	yes	yes	serves
 listPageTakeRowNums	facts	yes	1	no	yes	yes	serves
 expireFenceFacts	facts	yes	2	no	yes	yes	serves
-refreshFenceFactFields	facts	yes	2	no	yes	yes	serves
+refreshFenceFactFields	facts	yes	3	no	yes	yes	serves
 clearChangedTakeResolutions	facts	yes	2	no	yes	yes	serves
 writeFenceTakeResolutions	facts	yes	4	no	yes	yes	serves
 detachFenceFactRows	facts	yes	1	no	yes	yes	serves
@@ -682,8 +682,8 @@ moveGuardedFenceRows	facts	yes	1	no	yes	yes	serves
 listTrustedPrivateCopies	facts	yes	1	no	yes	yes	serves
 readLiveFenceFactAt	facts	yes	1	no	yes	yes	serves
 listFactsAboveWriter	facts	yes	2	no	yes	yes	serves
-readRowTrustTier	facts	yes	1	no	yes	yes	serves
-setRowTrustTier	facts	yes	1	no	yes	yes	serves
+readRowTrustTier	facts	yes	4	no	yes	yes	serves
+setRowTrustTier	facts	yes	2	no	yes	yes	serves
 readTierProjectionPage	facts	yes	1	no	yes	yes	serves
 readPageInlineBody	facts	yes	2	no	yes	yes	serves
 allocateBodyOccurrenceIds	segmented_body	yes	43	no	yes	yes	serves
@@ -839,7 +839,7 @@ clearFenceHoldRows	persistence_journal	yes	1	no	yes	yes	serves
 readFenceHoldFiles	persistence_journal	yes	1	no	yes	yes	serves
 readLiveGenerationRow	persistence_journal	yes	6	no	yes	yes	serves
 activateGenerationRows	persistence_journal	yes	20	no	yes	yes	serves
-recordHeldGenerationRow	persistence_journal	yes	13	no	yes	yes	serves
+recordHeldGenerationRow	persistence_journal	yes	14	no	yes	yes	serves
 readGitHoldRecords	persistence_journal	yes	3	no	yes	yes	serves
 readGitHoldRetryRequest	persistence_journal	yes	2	no	yes	yes	serves
 readGitHoldReportInputs	persistence_journal	yes	2	no	yes	yes	serves
@@ -1456,7 +1456,7 @@ listFreshExtractionOutcomes	facts_cycle	yes	1	no	yes	yes	serves
 listFenceRowGroups	facts_cycle	yes	1	no	yes	yes	serves
 readFactSubject	facts_cycle	yes	1	no	yes	yes	serves
 factsOrAliasesMayMatch	facts_cycle	yes	1	no	yes	yes	serves
-listFactsForPage	facts_cycle	yes	21	no	yes	yes	serves
+listFactsForPage	facts_cycle	yes	23	no	yes	yes	serves
 countLegacyFactsPending	facts_cycle	yes	1	no	yes	yes	serves
 countUnconsolidatedFactsBySource	facts_cycle	yes	2	no	yes	yes	serves
 findBulkFactDays	facts_cycle	yes	2	no	yes	yes	serves
@@ -1480,11 +1480,11 @@ readPageFileOrigin	facts_cycle_sites	yes	3	no	yes	yes	serves
 listFenceRowClaims	facts_cycle_sites	yes	1	no	yes	yes	serves
 adoptFactIntoFence	facts_cycle_sites	yes	2	no	yes	yes	serves
 listFenceRowSupersession	facts_cycle_sites	yes	1	no	yes	yes	serves
-setFactSupersededBy	facts_cycle_sites	yes	1	no	yes	yes	serves
+setFactSupersededBy	facts_cycle_sites	yes	2	no	yes	yes	serves
 listHeldWideningFactIds	facts_cycle_sites	yes	1	no	yes	yes	serves
-expireFactInPlace	facts_cycle_sites	yes	1	no	yes	yes	serves
+expireFactInPlace	facts_cycle_sites	yes	2	no	yes	yes	serves
 expireAndDetachFact	facts_cycle_sites	yes	1	no	yes	yes	serves
-updateFenceFactCells	facts_cycle_sites	yes	1	no	yes	yes	serves
+updateFenceFactCells	facts_cycle_sites	yes	2	no	yes	yes	serves
 listExpirableFactIdsOfDeletedPage	facts_cycle_sites	yes	1	no	yes	yes	serves
 readDeletedPageBody	facts_cycle_sites	yes	1	no	yes	yes	serves
 expireFactsByIds	facts_cycle_sites	yes	1	no	yes	yes	serves
@@ -1688,7 +1688,7 @@ listInactiveTakeIds	facts_repair	yes	1	no	yes	yes	serves
 expireCapturedFacts	facts_repair	yes	1	no	yes	yes	serves
 listExpiredFactIds	facts_repair	yes	1	no	yes	yes	serves
 readEntityRehomeState	facts_repair	yes	1	no	yes	yes	serves
-rehomeEntityFacts	facts_repair	yes	4	no	yes	yes	serves
+rehomeEntityFacts	facts_repair	yes	5	no	yes	yes	serves
 restoreConsolidationTie	facts_repair	yes	1	no	yes	yes	serves
 listLiveDuplicateRows	facts_repair	yes	1	no	yes	yes	serves
 supersedeDuplicateFacts	facts_repair	yes	1	no	yes	yes	serves
@@ -1922,7 +1922,7 @@ findAnomalies	salience_enrich	yes	9	yes	yes	yes	serves
 countZeroWeightWithTakes	salience_enrich	yes	1	no	yes	yes	serves
 listGlobalPurgeWithdrawals	trust	yes	1	no	yes	yes	serves
 hasCoveringFactWithdrawal	trust	yes	6	no	yes	yes	serves
-insertFactWithdrawal	trust	yes	68	no	yes	yes	serves
+insertFactWithdrawal	trust	yes	69	no	yes	yes	serves
 isFactWithdrawn	trust	yes	5	no	yes	yes	serves
 isFactPurged	trust	yes	8	no	yes	yes	serves
 listFactWithdrawalDates	trust	yes	3	no	yes	yes	serves
@@ -1938,7 +1938,7 @@ queueWithdrawalReview	trust	yes	1	no	yes	yes	serves
 listSegmentedPagesBySlug	trust	yes	1	no	yes	yes	serves
 bumpWithdrawnPageRevisions	trust	yes	1	no	yes	yes	serves
 readPageRevisions	trust	yes	2	no	yes	yes	serves
-appendFactForgetReason	trust	yes	1	no	yes	yes	serves
+appendFactForgetReason	trust	yes	2	no	yes	yes	serves
 readFactWithdrawnRow	trust	yes	1	no	yes	yes	serves
 readFactWithdrawnBacking	trust	yes	1	no	yes	yes	serves
 upsertWriteGateReceipt	trust	yes	34	no	yes	yes	serves
@@ -1999,13 +1999,13 @@ readSourceState	write_misc	yes	18	no	yes	yes	serves
 readAdmissionSource	write_misc	yes	2	no	yes	yes	serves
 sharedSkillPackTablePresent	write_misc	yes	1	no	yes	yes	serves
 listSharedSkillPackRoots	write_misc	yes	1	no	yes	yes	serves
-getWorktreeBinding	write_misc	yes	26	no	yes	yes	serves
+getWorktreeBinding	write_misc	yes	30	no	yes	yes	serves
 listHostTopologyRows	write_misc	yes	2	no	yes	yes	serves
 listWorktreeMembers	write_misc	yes	2	no	yes	yes	serves
-worktreeClaimStore	write_misc	yes	41	no	yes	yes	serves
+worktreeClaimStore	write_misc	yes	42	no	yes	yes	serves
 readWriterAdminState	write_misc	yes	11	no	yes	yes	serves
-readWorktreeManifest	write_misc	yes	1	no	yes	yes	serves
-writerAdminStore	write_misc	yes	3	no	yes	yes	serves
+readWorktreeManifest	write_misc	yes	5	no	yes	yes	serves
+writerAdminStore	write_misc	yes	7	no	yes	yes	serves
 writerReleaseStore	write_misc	yes	13	no	yes	yes	serves
 publicationJournalStore	write_misc	yes	2	no	yes	yes	serves
 chronicleStore	write_misc	yes	2	no	yes	yes	serves
@@ -2057,7 +2057,7 @@ attachSourcePath	write_misc	yes	14	no	yes	yes	serves
 readAtomGeneration	write_misc	yes	2	no	yes	yes	serves
 recordAtomGenerationBump	write_misc	yes	2	no	yes	yes	serves
 addPersistenceCounters	write_misc	yes	4	no	yes	yes	serves
-gitDurabilityStore	write_misc	no	0	no	-	-	-
+gitDurabilityStore	write_misc	yes	4	no	yes	yes	serves
 gitEffectStore	write_misc	no	0	no	-	-	-
 topologyStore	write_misc	yes	1	no	yes	yes	serves
 manualLinkStore	write_misc	no	0	no	-	-	-
@@ -2584,9 +2584,9 @@ countConversationPipelinePages	doctor_facts_trust	yes	1	no	yes	yes	serves
 listPersistentWriterContention	doctor_facts_trust	yes	1	no	yes	yes	serves
 countRowTrustTiers	doctor_facts_trust	yes	1	no	yes	yes	serves
 countLegacyUnknownBySource	doctor_facts_trust	yes	1	no	yes	yes	serves
-listTrustColumns	doctor_facts_trust	yes	1	no	yes	yes	serves
-listTrustClaimTargets	doctor_facts_trust	yes	1	no	yes	yes	serves
-countClaimLiftedRows	doctor_facts_trust	yes	1	no	yes	yes	serves
+listTrustColumns	doctor_facts_trust	yes	3	no	yes	yes	serves
+listTrustClaimTargets	doctor_facts_trust	yes	2	no	yes	yes	serves
+countClaimLiftedRows	doctor_facts_trust	yes	2	no	yes	yes	serves
 readDoctorSources	doctor_sources	yes	1	no	yes	yes	serves
 listGuestSourceRows	doctor_sources	yes	2	no	yes	yes	serves
 listCheckoutRoots	doctor_sources	yes	1	no	yes	yes	serves

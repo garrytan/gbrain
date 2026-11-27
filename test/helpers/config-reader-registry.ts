@@ -29,6 +29,7 @@ export const INTERNAL_CONFIG_STATE: readonly InternalConfigState[] = [
   { key: 'dedupe.auto.', prefix: true, reason: 'the per-class switch gbrain dedupe auto --off/--on writes (entities/evidence/auto.ts, dedupe.auto.c2 and dedupe.auto.c7); planAutoLinks reads it' },
   { key: 'version', reason: 'schema version stamp written by migrate.ts' },
   { key: 'persistence.writer_admin_lock', reason: 'the writer administration lock gbrain writer lock/unlock writes (persistence/admin-contract.ts); writer claim, activate and transfer refuse while it is set, so it is not a config set knob' },
+  { key: 'correct.receipt.', prefix: true, reason: 'one receipt per correction (rules/correct.ts): which step a correct call reached and what is next; written only by correct, gbrain rules approve and retire' },
   { key: 'policy.approved.', prefix: true, reason: 'the owner-approved agent policy record per scope (policy/store.ts); written only by an owner-confirmed gbrain policy command, refused to config set' },
   { key: 'transcripts.archive.pinned_timezone.', prefix: true, reason: 'the timezone the conversation archive pinned for a source on its first run (transcripts/archive.ts); a hand edit would re-slice every archived day' },
   { key: 'transcripts.archive.audience.', prefix: true, reason: 'the audience (personal or shared) the conversation archive last ran under per source (transcripts/archive.ts); it decides when earlier pages are kept to the owner' },

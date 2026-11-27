@@ -100,7 +100,7 @@ export async function readBeliefState(tx: BrainEngine, sourceId: string, slugs: 
   const entityPageOf = new Map((entityPages ?? []).map(([slug, id]) => [slug, Number(id)]));
   const factRows = facts ? facts.map(toFact) : null;
   const takeRows = takes ? takes.map(toTake) : null;
-  // Fingerprints computed here (not known or cached, which already are) take a claim's pre-v341 fingerprint where its history has it.
+  // Fingerprints computed here (not known or cached, which already are) take a claim's pre-v353 fingerprint where its history has it.
   const fresh = <T extends { th?: string }>(rows: T[] | null, text: (r: T) => string) => (rows ?? []).filter(r => r.th === undefined || !knownFp.has(r.th))
     .filter(r => mayHaveLegacyFingerprint(text(r)));
   const freshFacts = fresh(factRows, f => f.fact), freshTakes = fresh(takeRows, k => k.claim);

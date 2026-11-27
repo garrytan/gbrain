@@ -48,7 +48,7 @@ for (const kind of testBackends()) {
       const out = await dispatchToolCall(engine, op, {}, opts);
       const text = out.content.map(c => c.text).join('\n');
       let json: Record<string, unknown> = {};
-      try { json = JSON.parse(text); } catch { /* an error envelope */ }
+      try { json = JSON.parse(out.content[0]?.text ?? ''); } catch { /* an error envelope */ }
       return { isError: out.isError === true, text, json };
     }
 

@@ -237,7 +237,7 @@ describe('engine parity: belief ledger writes', () => {
   );
 
   parityTest(
-    'the pre-v341 fingerprint probes find no claim that holds no character the folds disagree on, and no tombstone for an empty probe list',
+    'the pre-v353 fingerprint probes find no claim that holds no character the folds disagree on, and no tombstone for an empty probe list',
     { methods: ['readLegacyClaimFingerprints', 'readLegacyBeliefTombstones'] },
     async (engine) => {
       const got = {

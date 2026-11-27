@@ -7,6 +7,7 @@
  *   gbrain household mark <slug> <event> [--on YYYY-MM-DD] [--due YYYY-MM-DD] [--note <text>] [--json]
  *   gbrain household list [--source <id>] [--json]
  *   gbrain household replace [--about <slug> [--role <role>]] [--source <id>] [--json]
+ *   gbrain household template [...]   H2's household template (household-template.ts)
  *
  * Every path dispatches through the trusted-local op layer (handleToolCall, remote: false), so the CLI and MCP share
  * one behavior. GBrain never acts: nothing here buys, pays, books, calls or sends.
@@ -17,6 +18,7 @@ import { exitCliError, usageError } from '../cli/cli-error.ts';
 import { HOUSEHOLD_SUBCOMMANDS, ROUTERS, subcommandHelpRequested } from '../cli/subcommands.ts';
 import { HOUSEHOLD_EVENTS } from '../core/ops/household.ts';
 import { HOUSEHOLD_KINDS } from '../core/household/record.ts';
+import { runHouseholdTemplate } from './household-template.ts';
 
 export { HOUSEHOLD_SUBCOMMANDS as SUBCOMMANDS } from '../cli/subcommands.ts';
 
@@ -43,6 +45,9 @@ export function printUsage(): void {
     '  list    [--source <id>] [--json]                                     every record, ranked',
     '  replace [--about slug,slug [--role adult|child|helper|pet|home|other]] [--source <id>] [--json]',
     '          recompute record readers from the placement table; --about narrows the records about a subject to adults first',
+    '  template [--household-members role:id,...|none] [--owner <id>] [--source <id>] [--harness <h>] [--yes] [--json]',
+    '          the household template (members, groups, folder rules, one 0600 key file per member); preview first, --yes applies',
+    '  template --status [--receipt <id>] | --resume <receipt id> --yes      the run\'s receipt with a read proof per member; finish a run',
     '',
     `Kinds: ${HOUSEHOLD_KINDS.join(', ')}. One example per kind:`,
     ...Object.values(ADD_SHAPES).map(s => `  ${s}`),
@@ -84,6 +89,9 @@ function parseFlags(args: string[]): { values: Record<string, unknown>; words: s
   return { values, words };
 }
 
+const TEMPLATE_VALUES = new Set(['--household-members', '--owner', '--source', '--harness', '--receipt', '--resume']);
+const TEMPLATE_SWITCHES = new Set(['--yes', '--status', '--json']);
+
 const pick = (values: Record<string, unknown>, allowed: readonly string[]) => Object.fromEntries(Object.entries(values).filter(([k]) => allowed.includes(k)));
 
 function print(json: boolean, result: unknown, human: string): void {
@@ -94,6 +102,22 @@ export async function runHousehold(engine: BrainEngine, args: string[]): Promise
   const [sub, ...rest] = args;
   const json = args.includes('--json');
   if (!sub || subcommandHelpRequested(args, ROUTERS.household)) { printUsage(); return; }
+  if (sub === 'template') {
+    try {
+      const value = (flag: string): string | undefined => { const i = rest.indexOf(flag); return i < 0 ? undefined : rest[i + 1]; };
+      for (let i = 0; i < rest.length; i++) {
+        const a = rest[i]!;
+        if (TEMPLATE_SWITCHES.has(a)) continue;
+        if (!TEMPLATE_VALUES.has(a)) throw usageError(`Unknown flag for gbrain household template: ${a}.`, `Use one of: ${[...TEMPLATE_VALUES, ...TEMPLATE_SWITCHES].join(', ')}.`, { code: 'unknown_flag' });
+        const v = rest[++i];
+        if (v === undefined || v.startsWith('--')) throw usageError(`${a} needs a value.`, 'For example: gbrain household template --household-members adult:adult-b,helper:helper,chat:family-chat');
+      }
+      await runHouseholdTemplate(engine, rest, json, value);
+    } catch (e) {
+      exitCliError(e, 'household', { json });
+    }
+    return;
+  }
   const { values, words } = parseFlags(rest.filter(a => a !== '--json'));
   try {
     if (sub === 'due' || sub === 'list') {
@@ -125,7 +149,7 @@ export async function runHousehold(engine: BrainEngine, args: string[]): Promise
       print(json, result, `Checked ${result.checked} household record(s); re-placed ${result.replaced.length}.`);
       return;
     }
-    throw usageError(`Unknown household subcommand: ${sub}.`, 'Use one of: gbrain household due, add, mark, list or replace.', { code: 'unknown_command' });
+    throw usageError(`Unknown household subcommand: ${sub}.`, 'Use one of: gbrain household due, add, mark, list, replace or template.', { code: 'unknown_command' });
   } catch (e) {
     exitCliError(e, 'household', { json });
   }

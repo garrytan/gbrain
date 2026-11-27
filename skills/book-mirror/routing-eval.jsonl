@@ -1,8 +1,8 @@
 // Routing eval fixtures for skills/book-mirror. Each intent contains
 // at least one trigger string as substring (structural matcher
 // requirement) while still paraphrasing real user phrasing.
-// Adversarial cases at the bottom guard the media-ingest <-> book-mirror
-// routing regression flagged by R1 + R2 (IRON RULE).
+// Adversarial cases at the bottom keep media-ingest and book-mirror
+// routing apart.
 {"intent":"Please make a personalized version of this book using the brain context","expected_skill":"book-mirror"}
 {"intent":"Mirror this book — left column the chapters, right column my actual life","expected_skill":"book-mirror"}
 {"intent":"Run a two-column book analysis with brain context","expected_skill":"book-mirror"}
