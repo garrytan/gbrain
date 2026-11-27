@@ -300,7 +300,9 @@ describe('the swap report names each write type criterion 5 does not compare', (
     const named = new Set(['content_chunks', 'tags', 'page_aliases', 'timeline_entries', 'takes', 'facts', 'open_loops', 'sources', 'owner_only_marks',
       'decide_state', 'decide_spend', 'decision_receipts', 'decide_calibrations', 'decide_proposals', 'decide_review_proposals', 'decide_review_queue', 'decide_sweep_deferred']);
     // The other line carries these, so the lines name them as sampled and no count is dropped.
-    const other = new Set(['raw_sql', 'unmapped', 'other', 'config', 'wanted_links', 'entity_identities', 'raw_data', 'files', 'page_versions', 'synthesis_evidence', 'code_edges_chunk']);
+    const other = new Set(['raw_sql', 'unmapped', 'other', 'config', 'wanted_links', 'entity_identities', 'raw_data', 'files', 'page_versions', 'synthesis_evidence', 'code_edges_chunk',
+      // The trunk's chronicle ledger row (upsertChronicleRow, src/shadow/write-map.ts) is a non-pilot write counted on the other line.
+      'chronicle_page_state']);
     const stray = Object.keys(WRITE_MAP).filter(op => !PILOT_WRITES.has(op)).map(writeFamily)
       .filter(f => !named.has(f) && !other.has(f) && !/^(pages|links):[A-Za-z]+$/.test(f));
     expect(stray).toEqual([]);

@@ -260,6 +260,8 @@ export const READ_ONLY_MEMBERS: ReadonlySet<string> = new Set([
   'dailyDecideSpend', 'decideConflictNoEntityCounts', 'decideSlotUsage',
   'normalizeFenceLines', 'sampleEffectiveDates', 'sampleEffectiveDateSources', 'sharedSkillPackTablePresent',
   'storedTimelineRowsByPageIds',
+  // Sets transaction-local settings (the persistence identity and write context) and writes no row: the raw set_config statement it replaced was never a write to follow or compare.
+  'setWriteContext',
   // The read-view digest cache read (the name carries a read prefix; listed so the class is explicit).
   'readPageViewDigest',
   // Batch 11 typed reads (page purge port, caller-links, chronicle): row locks and statements that only read.
@@ -383,7 +385,7 @@ export const UNMAPPED_WRITE_MEMBERS: ReadonlySet<string> = new Set([
   'setEffectTransactionLimits', 'setFactSupersededBy', 'setLocalStatementTimeout', 'setOauthClientReadSharedRevision',
   'setOauthClientRevision', 'setOauthClientTokenTtl', 'setPageType', 'setProjectionChunkerVersion', 'setPurgeEffectData',
   'setPurgeProbeTimeout', 'setPurgeVersionBody', 'setSourceChunkerVersion', 'setSourceContextualMode',
-  'setTakeSupersededBy', 'setWriteContext', 'settleFactsReconcile', 'settleFreshnessMarker', 'settleGenerationMember',
+  'setTakeSupersededBy', 'settleFactsReconcile', 'settleFreshnessMarker', 'settleGenerationMember',
   'settleMuteRecheck', 'settleNoopEmbeddingRows', 'settlePageEmbeddingReservation', 'settleSpendReservation',
   'settleSpendWithLog', 'settleWakeForget', 'settleWakeWatch', 'shareLockWriteCredential', 'softDeleteDerivedPages',
   'softDeleteOauthClient', 'stampConversationSourceWindows', 'stampDeferredProjectionJob', 'stampDreamPageProvenance',
