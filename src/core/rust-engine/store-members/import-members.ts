@@ -3,6 +3,7 @@
  */
 import { storeCall, type StoreMember } from './common.ts';
 import type { ChunkMove } from '../../page-state/chunk-moves.ts';
+import type { ChunkReuseRow } from '../../types.ts';
 
 /** `{ chunker_version }` of a live, unsegmented page (0 when it has none), or null. */
 export const getPageSealState: StoreMember<[pageId: number], { chunker_version: number | null } | null> = async (brain, pageId) => {
@@ -16,3 +17,6 @@ export const moveChunkIndexes: StoreMember<[pageId: number, waves: readonly (rea
     id: move.id, to: move.to, projected_byte_start: move.projected_byte_start ?? null, projected_byte_end: move.projected_byte_end ?? null,
   })))));
 };
+
+export const getChunkReuseRows: StoreMember<[slug: string, opts?: { sourceId?: string }], ChunkReuseRow[]> = (brain, slug, opts) =>
+  storeCall({ member: 'getChunkReuseRows', slug, sourceId: opts?.sourceId }, () => brain.getChunkReuseRows(slug, opts?.sourceId ?? null));

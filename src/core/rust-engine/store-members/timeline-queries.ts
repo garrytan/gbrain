@@ -8,8 +8,9 @@
  */
 import { finalizeLastSeen } from '../../chronicle/last-seen.ts';
 import type { ChronicleTimelineOpts, ChronicleTimelineRow, LastSeenResult, PageReadScope } from '../../types.ts';
-import { storeCall, takeOptions, type StoreMember } from './common.ts';
-import type { TimelineDetailRefresh, TimelineRowRemoval } from '../../engine-sql/timeline.ts';
+import type { OwnTimelineRow } from '../../engine-sql/timeline-reads.ts';
+import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
+import type { CanonicalTimelineRow, TimelineDetailRefresh, TimelineRowRemoval } from '../../engine-sql/timeline.ts';
 
 // The chronicle reads never read these PageReadScope keys on PGLite either. `excludePrivate` is not here: the SQL
 // engines apply a privacy filter for it, so it refuses.
@@ -54,4 +55,25 @@ export const removeTimelineRows: StoreMember<[pageId: number, rows: TimelineRowR
 /** Refreshes the details of the page's kept timeline rows. */
 export const updateTimelineDetails: StoreMember<[pageId: number, rows: TimelineDetailRefresh[]], void> = async (brain, pageId, rows) => {
   await storeCall({ member: 'updateTimelineDetails' }, () => brain.updateTimelineDetails(pageId, rows));
+};
+
+export const insertCanonicalTimelineRows: StoreMember<[pageId: number, rows: CanonicalTimelineRow[]], void> = async (brain, pageId, rows) => {
+  await storeCall({ member: 'insertCanonicalTimelineRows' }, () => brain.insertCanonicalTimelineRows(pageId, rows));
+};
+
+const INT32_MAX = 2 ** 31 - 1;
+
+/** A value the SQL engines bind as an `integer`: one that is not an int4 is refused rather than guessed at. */
+function int32(member: string, id: number): number {
+  if (!Number.isInteger(id) || Math.abs(id) > INT32_MAX) refuseMember(member, 'an id that is not a 32-bit integer');
+  return id;
+}
+
+const ownRow = (r: OwnTimelineRow): OwnTimelineRow =>
+  ({ id: Number(r.id), date: r.date, source: r.source, summary: r.summary, detail: r.detail });
+
+export const listStoredTimelineRowsOrdered: StoreMember<[pageId: number], OwnTimelineRow[]> = async (brain, pageId) => {
+  const id = int32('listStoredTimelineRowsOrdered', pageId);
+  const rows: OwnTimelineRow[] = await storeCall({ member: 'listStoredTimelineRowsOrdered' }, () => brain.listStoredTimelineRowsOrdered(id));
+  return rows.map(ownRow);
 };

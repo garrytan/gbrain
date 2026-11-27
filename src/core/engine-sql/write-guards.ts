@@ -77,3 +77,9 @@ export async function readLivePageBody(exec: LegacyUnscopedRead, slug: string, o
       WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL`, [opts.sourceId, slug]);
   return row ?? null;
 }
+
+/** The stored `trust_tier` of the page `slug` names in the source, live or a tombstone (trust/page-write.ts storedPageTier), or null without one. */
+export async function readStoredPageTier(exec: LegacyUnscopedRead, sourceId: string, slug: string): Promise<string | null> {
+  const [row] = await exec.executeRaw<{ trust_tier: string }>('SELECT trust_tier FROM pages WHERE source_id = $1 AND slug = $2', [sourceId, slug]);
+  return row ? row.trust_tier : null;
+}

@@ -1,26 +1,26 @@
 /**
  * Chunk members (BrainEngine upsertChunks, sealChunks, getChunks, deleteChunks). A chunk's text vector (`embedding`) is
  * stored with it (rust/docs/store/embeddings.md); an image vector (`embedding_image`) is not, so a chunk that carries
- * one is refused.
+ * one is refused, and so is an `embeddingColumn` that names another column than the `embedding` vector column.
  */
 import type { Chunk, ChunkInput } from '../../types.ts';
-import { prepareChunks } from '../chunk-input.ts';
+import { prepareChunks, textColumnModel } from '../chunk-input.ts';
 import { toChunk } from '../store-codec.ts';
 import { sanitizeRemoteBody } from '../../remote-body.ts';
 import { isRevisionRejection, mapStoreError } from '../store-errors.ts';
 import type { StoreBrain } from '../store.ts';
 import { namedSourceIds, refuseMember, storeCall, takeOptions, throwIfAborted, type StoreMember } from './common.ts';
 
-type UpsertOpts = { sourceId?: string; expectedRevision?: string; deferSeal?: true; signal?: AbortSignal; auditSite?: unknown };
+type UpsertOpts = { sourceId?: string; expectedRevision?: string; sealChunkerVersion?: number; pageId?: number; deferSeal?: true; embeddingColumn?: unknown; signal?: AbortSignal; auditSite?: unknown };
 
 /** Sends the chunks to the store and maps a revision rejection. `seal` is PGLite's `sealChunks` (replace and seal). */
-async function writeChunks(brain: StoreBrain, slug: string, chunks: ChunkInput[], options: Record<string, unknown>, member: string): Promise<void> {
+async function writeChunks(brain: StoreBrain, slug: string, chunks: ChunkInput[], options: Record<string, unknown>, member: string, columnModel?: string): Promise<void> {
   for (const chunk of chunks) {
     if (chunk.embedding_image !== undefined) refuseMember(member, 'chunk image vectors are not stored');
   }
   const sourceId = options.sourceId as string | undefined;
   try {
-    await brain.upsertChunks(slug, await prepareChunks(brain, chunks), options);
+    await brain.upsertChunks(slug, await prepareChunks(brain, chunks, columnModel), options);
   } catch (error) {
     const current = isRevisionRejection(error)
       ? ((await brain.readPageSnapshot(slug, { sourceId, includeDeleted: true }).catch(() => null))?.revision ?? null)
@@ -30,10 +30,16 @@ async function writeChunks(brain: StoreBrain, slug: string, chunks: ChunkInput[]
 }
 
 export const upsertChunks: StoreMember<[slug: string, chunks: ChunkInput[], opts?: UpsertOpts], void> = async (brain, slug, chunks, opts) => {
-  // `deferSeal` only matters to a write that seals, which `upsertChunks` does not do; it changes nothing here.
-  const options = takeOptions('upsertChunks', opts, ['sourceId', 'expectedRevision'], ['signal', 'auditSite', 'deferSeal']);
+  // `sealChunkerVersion` goes as the text PGLite binds (`String(version)`), which the store casts to a smallint as
+  // Postgres does. `pageId` and `deferSeal` only matter to a write with `sealChunkerVersion`; the store ignores them otherwise.
+  // `embeddingColumn` (import's resolved write column) is served for the store's one vector column (`textColumnModel`)
+  // and stays here: it only picks the model label of a chunk that names none.
+  const { embeddingColumn, ...options } = takeOptions('upsertChunks', opts,
+    ['sourceId', 'expectedRevision', 'sealChunkerVersion', 'pageId', 'deferSeal', 'embeddingColumn'], ['signal', 'auditSite']);
+  if (options.sealChunkerVersion !== undefined) options.sealChunkerVersion = String(options.sealChunkerVersion);
   throwIfAborted(opts?.signal);
-  await writeChunks(brain, slug, chunks, options, 'upsertChunks');
+  const columnModel = textColumnModel('upsertChunks', embeddingColumn);
+  await writeChunks(brain, slug, chunks, options, 'upsertChunks', columnModel);
 };
 
 /**
@@ -54,11 +60,11 @@ export const sealChunks: StoreMember<[slug: string, chunks: ChunkInput[], opts?:
     await writeChunks(brain, slug, chunks, { sourceId, expectedRevision: opts?.expectedRevision ?? current.revision, seal: true, searchTimeline }, 'sealChunks');
   };
 
-export const getChunks: StoreMember<[slug: string, opts?: { sourceId?: string; sourceIds?: string[]; includeEmbedding?: boolean; includeUnsealed?: boolean }], Chunk[]> =
+export const getChunks: StoreMember<[slug: string, opts?: { sourceId?: string; sourceIds?: string[]; includeEmbedding?: boolean; includeUnsealed?: boolean; requireSafeChunks?: boolean }], Chunk[]> =
   async (brain, slug, opts) => {
-    const { sourceIds, sourceId, includeEmbedding, includeUnsealed } =
-      takeOptions('getChunks', opts, ['sourceId', 'sourceIds', 'includeEmbedding', 'includeUnsealed']) as
-        { sourceId?: unknown; sourceIds?: unknown[]; includeEmbedding?: boolean; includeUnsealed?: boolean };
+    const { sourceIds, sourceId, includeEmbedding, includeUnsealed, requireSafeChunks } =
+      takeOptions('getChunks', opts, ['sourceId', 'sourceIds', 'includeEmbedding', 'includeUnsealed', 'requireSafeChunks']) as
+        { sourceId?: unknown; sourceIds?: unknown[]; includeEmbedding?: boolean; includeUnsealed?: boolean; requireSafeChunks?: boolean };
     // PGLite reads `sourceIds` when it is not empty and otherwise the one `sourceId` (default `default`). An id that
     // names no source (an empty string) matches nothing there, and the store would read it as "no scope" and answer
     // for every source, so a scope that names no source is answered here with no chunks and never forwarded.
@@ -68,7 +74,9 @@ export const getChunks: StoreMember<[slug: string, opts?: { sourceId?: string; s
     // Chunks of one slug from several sources come back in an order PGLite leaves to the database (the sort key ties
     // across sources), so a read over more than one source is refused, not guessed.
     if (named.length > 1) refuseMember('getChunks', 'a read over several sources');
-    const scope = { sourceId: named[0]!, includeEmbedding: includeEmbedding === true, includeUnsealed: includeUnsealed === true };
+    // `requireSafeChunks` (safeChunksFilter): a page chunked before the fence chunker version has no chunks to read.
+    const scope = { sourceId: named[0]!, includeEmbedding: includeEmbedding === true, includeUnsealed: includeUnsealed === true,
+      requireSafeChunks: requireSafeChunks === true };
     const rows: Chunk[] = await storeCall({ member: 'getChunks', slug }, () => brain.getChunks(slug, scope));
     return rows.map((row) => toChunk(row));
   };

@@ -25,4 +25,13 @@ export const CONTENT_MEMBERS = {
   deleteTimelineRows: 'timeline',
   hasSegmentStorage: 'page_body',
   listLinkEndpointPages: 'links',
+  insertCanonicalTimelineRows: 'timeline',
+  applyLinkTemporalRows: 'links',
+  writeManualLinkTransitions: 'links',
+  removeManualLinkTransitions: 'links',
+  readLinkRelationshipEvidence: 'links',
+  writeLinkRelationshipState: 'links',
+  linkRelationshipKeysForOrigin: 'links',
+  linkRelationshipKeysForPages: 'links',
+  staleLinkRelationshipKeys: 'links',
 } as const satisfies Partial<Record<keyof BrainEngine, MemberClass>>;

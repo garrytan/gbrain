@@ -93,4 +93,13 @@ export const PERSISTENCE_MEMBERS = {
   stampEffectClaim: 'persistence_journal',
   markProjectionRebuildFailed: 'persistence_journal',
   lockOverdueHold: 'persistence_journal',
+  retryEffectRow: 'persistence_journal',
+  hasRearmableTargets: 'persistence_journal',
+  listTrueUpRequests: 'persistence_journal',
+  trueUpReservations: 'persistence_journal',
+  readMirrorGateRows: 'persistence_journal',
+  advanceEffectRow: 'persistence_journal',
+  retryBusyEffectRow: 'persistence_journal',
+  requeueEffectRow: 'persistence_journal',
+  parkEffectRow: 'persistence_journal',
 } as const satisfies Partial<Record<keyof BrainEngine, MemberClass>>;

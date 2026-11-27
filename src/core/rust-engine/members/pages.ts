@@ -35,4 +35,5 @@ export const PAGES_MEMBERS = {
   readDatabaseClock: 'pages',
   readLivePageBody: 'pages',
   lockSourceForUpdate: 'sources',
+  readStoredPageTier: 'pages',
 } as const satisfies Partial<Record<keyof BrainEngine, MemberClass>>;

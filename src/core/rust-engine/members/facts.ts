@@ -78,4 +78,5 @@ export const FACTS_MEMBERS = {
   listTrustProposals: 'pages', // held: no Rust store member yet; served later as 'facts'
   listFenceFactRows: 'facts',
   listFenceRetireCandidates: 'facts',
+  deleteStalePageWriteGateReceipts: 'facts',
 } as const satisfies Partial<Record<keyof BrainEngine, MemberClass>>;

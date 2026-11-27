@@ -17,6 +17,35 @@ import type { SqlFragment } from './fragment.ts';
 import { joinFragments } from './fragment.ts';
 import { sqlFragment } from './fragment.ts';
 import { trustedSql } from './fragment.ts';
+/** `trueUpRequests`' candidates (`EFFECT_BYTES_SQL` and the unsettled states written out): $1 request ids. */
+export const TRUE_UP_REQUESTS_SQL = `SELECT r.id,r.intent,r.authority,r.outcome,r.error_message,r.error_detail,r.client_request_id,
+      r.terminal_reservation,r.principal_kind,r.principal_id,r.compacted,
+      COALESCE((SELECT SUM(octet_length(data::text)+octet_length(kind)+1024) FROM persistence_effects e WHERE e.request_id=r.id),0)::text AS effect_bytes,
+      EXISTS(SELECT 1 FROM persistence_effects e WHERE e.request_id=r.id AND e.state IN ('queued','running')) AS unfinished
+    FROM persistence_requests r WHERE r.id=ANY($1::uuid[]) AND r.state IN ('committed','failed','conflict','cancelled')`;
+
+/**
+ * `trueUpRequests`' compare-and-set (`EFFECT_BYTES_SQL`, the unsettled states and `TRUE_UP_CLAMP_SQL` written out): $1
+ * request ids, $2 the reservations read, $3 what each receipt keeps, $4 the effect bytes each was sized with. A request
+ * shrinks only while its reservation and effect bytes are unchanged and no effect is unsettled; the freed bytes leave the
+ * brain and principal counters, clamped at zero, and each clamped counter adds one to `persistence.true_up.clamped`.
+ */
+export const TRUE_UP_RESERVATIONS_SQL = `WITH t AS (SELECT * FROM unnest($1::uuid[],$2::bigint[],$3::bigint[],$4::bigint[]) AS t(id,old,kept,effects)),
+      done AS (UPDATE persistence_requests r SET terminal_reservation=t.kept FROM t
+        WHERE r.id=t.id AND r.terminal_reservation=t.old
+          AND NOT EXISTS (SELECT 1 FROM persistence_effects e WHERE e.request_id=r.id AND e.state IN ('queued','running'))
+          AND COALESCE((SELECT SUM(octet_length(data::text)+octet_length(kind)+1024) FROM persistence_effects e WHERE e.request_id=r.id),0)=t.effects
+        RETURNING r.principal_kind,r.principal_id,t.old-t.kept AS freed),
+      d AS (SELECT k.key,SUM(done.freed) AS freed FROM done
+        CROSS JOIN LATERAL (VALUES ('brain'),('principal:'||done.principal_kind||':'||done.principal_id)) AS k(key) GROUP BY k.key),
+      released AS (UPDATE persistence_counters c SET terminal_bytes=c.terminal_bytes-LEAST(d.freed,c.terminal_bytes) FROM d WHERE c.key=d.key),
+      clamped AS (INSERT INTO config(key,value) SELECT 'persistence.true_up.clamped',k.n::text FROM (SELECT count(*) FROM d JOIN persistence_counters c ON c.key=d.key WHERE d.freed>c.terminal_bytes) AS k(n) WHERE k.n>0
+      ON CONFLICT (key) DO UPDATE SET value=(CASE WHEN config.value ~ '^[0-9]+$' THEN config.value::bigint ELSE 0 END+EXCLUDED.value::bigint)::text)
+      SELECT COALESCE(SUM(freed),0)::text AS freed FROM done`;
+
+/** One request `trueUpRequests` shrinks: the reservation it read, what the receipt keeps and the effect bytes it sized. */
+export interface TrueUpReservation { id: string; old: number; kept: number; effects: string }
+
 /** `PROJECTION_RETRY_READY_SQL` (projections.ts) as a fragment: a queue row `j` out of its retry cooldown. */
 export function projectionRetryReadyFragment(): SqlFragment {
   return sqlFragment`${trustedSql(PROJECTION_RETRY_READY_TEXT)}`;
@@ -314,4 +343,16 @@ export async function selectProjectionWindowJobs(exec: LegacyUnscopedRead, curso
 /** Marks a job still queued at `job.revision` that no live claim holds `rebuild_failed`, starting its retry window. */
 export async function markProjectionRebuildFailed(exec: SqlExecutor, job: ProjectionJobRef): Promise<void> {
   await exec.executeRaw(MARK_PROJECTION_REBUILD_FAILED_SQL, [job.sourceIncarnation, job.slug, job.revision]);
+}
+
+export function listTrueUpRequests<R = Record<string, unknown>>(exec: LegacyUnscopedRead, ids: readonly string[]): Promise<R[]> {
+  return exec.executeRaw<R>(TRUE_UP_REQUESTS_SQL, [[...ids]]);
+}
+
+/** Shrinks each unchanged settled request to what its receipt keeps; returns the bytes given back. */
+export async function trueUpReservations(exec: SqlExecutor, rows: readonly TrueUpReservation[]): Promise<number> {
+  if (!rows.length) return 0;
+  const [freed] = await exec.executeRaw<{ freed: string }>(TRUE_UP_RESERVATIONS_SQL,
+    [rows.map(r => r.id), rows.map(r => r.old), rows.map(r => r.kept), rows.map(r => r.effects)]);
+  return Number(freed?.freed ?? 0);
 }

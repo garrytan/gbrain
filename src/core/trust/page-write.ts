@@ -81,9 +81,9 @@ export function pageGateTrust(row: Pick<WriteRequest, 'operation' | 'intent'>, t
   return stored && compareTrust(trust.tier, OWNER_TIER_FLOOR) < 0 ? { ...trust, tier: minTrust(trust.tier, stored) } : trust;
 }
 
-export async function storedPageTier(engine: BrainEngine, sourceId: string, slug: string): Promise<TrustTier | null> {
-  const [row] = await engine.executeRaw<{ trust_tier: string }>('SELECT trust_tier FROM pages WHERE source_id = $1 AND slug = $2', [sourceId, slug]);
-  return row ? storedTrustTier(row.trust_tier) : null;
+export async function storedPageTier(engine: Pick<BrainEngine, 'readStoredPageTier'>, sourceId: string, slug: string): Promise<TrustTier | null> {
+  const tier = await engine.readStoredPageTier(sourceId, slug);
+  return tier === null ? null : storedTrustTier(tier);
 }
 
 /**

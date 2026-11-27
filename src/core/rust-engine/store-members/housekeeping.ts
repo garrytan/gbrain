@@ -14,6 +14,7 @@ import type { ReceiptBudget } from '../../engine-sql/persistence-housekeeping.ts
 import type { SegmentedProjectionFilter } from '../../engine-sql/persistence-housekeeping.ts';
 import { requestRow } from '../store-codec.ts';
 import type { ProjectionJobRef } from '../../engine-sql/persistence-housekeeping.ts';
+import type { TrueUpReservation } from '../../engine-sql/persistence-housekeeping.ts';
 
 /** Principal rows, then the topology-change rows; no relation size, so `tableBytes` is null. */
 export const readCapacityForecastInputs: StoreMember<[opts?: { light?: boolean }], CapacityForecastInputs> = (brain, opts) =>
@@ -58,3 +59,11 @@ export const selectProjectionWindowJobs: StoreMember<[cursor: Pick<ProjectionSca
 export const markProjectionRebuildFailed: StoreMember<[job: ProjectionJobRef], void> = async (brain, job) => {
   await storeCall({ member: 'markProjectionRebuildFailed' }, () => brain.markProjectionRebuildFailed({ sourceIncarnation: job.sourceIncarnation, slug: job.slug, revision: job.revision }));
 };
+
+/** Effect bytes and `unfinished` come from the request's effect rows, as the Postgres statement reads them. */
+export const listTrueUpRequests: StoreMember<[ids: readonly string[]], Record<string, unknown>[]> = (brain, ids) =>
+  storeCall({ member: 'listTrueUpRequests' }, () => brain.listTrueUpRequests([...ids]));
+
+/** The true-up's compare-and-set and counter release in one store write; the freed bytes come back as text. */
+export const trueUpReservations: StoreMember<[rows: readonly TrueUpReservation[]], number> = async (brain, rows) =>
+  rows.length ? Number(await storeCall({ member: 'trueUpReservations' }, () => brain.trueUpReservations(rows.map(r => ({ ...r }))))) : 0;

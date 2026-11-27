@@ -1,3 +1,51 @@
+import type { LegacyUnscopedRead } from './brands.ts';
+/** `advanceEffectRow`: $1 id, $2 token, $3 the slug the cursor moves to. The text `advanceEffectCursor` has always sent. */
+export const ADVANCE_EFFECT_SQL = `UPDATE persistence_effects SET state='queued',data=jsonb_set(
+    CASE WHEN kind='embedding' THEN jsonb_set(data,'{embedding_attempt_base}',to_jsonb(attempts)) ELSE data-'target_failures'-'failing_target' END,'{after_slug}',to_jsonb($3::text)),
+    execution_token=NULL,claim_expires_at=NULL,claim_owner=NULL,next_attempt_at=now(),error_code=NULL,
+    updated_at=now()
+    WHERE id=$1 AND execution_token=$2::uuid AND recovery IS NULL AND set_config('gbrain.persistence_protocol','2',true)='2'`;
+
+/** `requeueEffectRow`: $1 id, $2 token, $3 the data, $4 the reason, $5 the delay in ms. The text `requeueEffect` has always sent. */
+export const REQUEUE_EFFECT_SQL = `UPDATE persistence_effects SET state='queued',data=$3::text::jsonb,execution_token=NULL,claim_expires_at=NULL,claim_owner=NULL,error_code=$4,
+    next_attempt_at=now()+($5::double precision*interval '1 millisecond'),updated_at=now()
+    WHERE id=$1 AND execution_token=$2::uuid AND recovery IS NULL AND set_config('gbrain.persistence_protocol','2',true)='2'`;
+
+
+/**
+ * The effects `rearmWithheldTargets` re-arms (alias `e`): $1 the request ids, $2 the parked error code. A Git or
+ * embedding effect, unclaimed and not recovering, not settled, with a target parked under $2, whose request's
+ * withdrawal mirror has committed.
+ */
+export const REARMABLE_SQL = `e.request_id=ANY($1::uuid[])
+    AND e.kind IN ('git','embedding') AND e.state IN ('queued','failed') AND e.execution_token IS NULL AND e.recovery IS NULL AND NOT (e.data ? 'settled')
+    AND EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(e.data->'parked','[]'::jsonb)) AS p(target) WHERE p.target->>'error_code'=$2)
+    AND EXISTS (SELECT 1 FROM persistence_effects m WHERE m.request_id=e.request_id AND m.kind='withdrawal-mirror' AND m.state='committed')`;
+
+/** `hasRearmableTargets`: $1 the request ids, $2 the parked error code. The text `hasRearmableTargets` has always sent. */
+export const HAS_REARMABLE_SQL = `SELECT 1 FROM persistence_effects e WHERE ${REARMABLE_SQL} LIMIT 1`;
+
+/** `retryEffectRow`: $1 id, $2 token, $3 the reason, $4 the delay in ms. The text `retryEffect` has always sent. */
+export const RETRY_EFFECT_SQL = `UPDATE persistence_effects SET state='queued',execution_token=NULL,claim_expires_at=NULL,claim_owner=NULL,error_code=$3,
+    next_attempt_at=now()+($4::double precision*interval '1 millisecond'),updated_at=now()
+    WHERE id=$1 AND execution_token=$2::uuid AND set_config('gbrain.persistence_protocol','2',true)='2'`;
+
+/** `readMirrorGateRows`: $1 the request ids. The text `mirrorGates` has always sent. */
+export const MIRROR_GATE_ROWS_SQL = `SELECT request_id::text AS request_id,state,data FROM persistence_effects WHERE kind='withdrawal-mirror' AND (state<>'committed' OR data ? 'published')
+      AND request_id=ANY($1::uuid[])`;
+
+/** One withdrawal mirror that gates its request (`mirrorGates`). */
+export interface MirrorGateRow { request_id: string; state: string; data: Record<string, unknown> }
+
+/** `retryBusyEffectRow`: $1 id, $2 token, $3 the busy streak patch, $4 the delay in ms. The text `retryBusyEffect` has always sent. */
+export const RETRY_BUSY_EFFECT_SQL = `UPDATE persistence_effects SET state='queued',execution_token=NULL,claim_expires_at=NULL,claim_owner=NULL,error_code='writer_busy',
+    data=data||$3::text::jsonb,next_attempt_at=now()+($4::double precision*interval '1 millisecond'),updated_at=now()
+    WHERE id=$1 AND execution_token=$2::uuid AND set_config('gbrain.persistence_protocol','2',true)='2'`;
+
+/** `parkEffectRow`: $1 id, $2 token, $3 the data. The text `parkEffect` has always sent. */
+export const PARK_EFFECT_SQL = `UPDATE persistence_effects SET state='failed',data=$3::text::jsonb,execution_token=NULL,claim_expires_at=NULL,claim_owner=NULL,
+    error_code='targets_parked',updated_at=now() WHERE id=$1 AND execution_token=$2::uuid AND recovery IS NULL AND set_config('gbrain.persistence_protocol','2',true)='2'`;
+
 /** `stampEffectClaim`: claims effect `id` under `token`; `ownerJson` is the `claim_owner` stamp (`effectClaimStamp`). */
 export interface EffectClaim { id: EffectId; token: string; ownerJson: string }
 /** `stampEffectClaim`: $1 id, $2 token, $3 the owner stamp. The text `claimPersistenceEffect` has always sent. */
@@ -66,4 +114,39 @@ export async function lockEffectGuard(exec: EffectExec, worktreeId: string | nul
 export async function stampEffectClaim<R = Record<string, unknown>>(exec: EffectExec, claim: EffectClaim): Promise<R | null> {
   const [row] = await exec.executeRaw<R>(STAMP_EFFECT_CLAIM_SQL, [claim.id, claim.token, claim.ownerJson]);
   return row ?? null;
+}
+
+/** Requeues a claimed effect after `delayMs` with error code `reason` (a claim under recovery too). */
+export async function retryEffectRow(exec: EffectExec, claim: EffectClaimRef & { reason: string; delayMs: number }): Promise<void> {
+  await exec.executeRaw(RETRY_EFFECT_SQL, [claim.id, claim.token, claim.reason, claim.delayMs]);
+}
+
+/** Whether one of these requests has a target parked under `code` that its committed withdrawal mirror re-arms. */
+export async function hasRearmableTargets(exec: LegacyUnscopedRead, requestIds: readonly string[], code: string): Promise<boolean> {
+  return (await exec.executeRaw(HAS_REARMABLE_SQL, [[...requestIds], code])).length > 0;
+}
+
+/** The withdrawal mirrors that gate these requests: each one not committed, or committed with its publications. */
+export async function readMirrorGateRows(exec: LegacyUnscopedRead, requestIds: readonly string[]): Promise<MirrorGateRow[]> {
+  return exec.executeRaw<MirrorGateRow>(MIRROR_GATE_ROWS_SQL, [[...requestIds]]);
+}
+
+/** Requeues a claimed effect with its scan cursor at `slug`. */
+export async function advanceEffectRow(exec: EffectExec, claim: EffectClaimRef & { slug: string }): Promise<void> {
+  await exec.executeRaw(ADVANCE_EFFECT_SQL, [claim.id, claim.token, claim.slug]);
+}
+
+/** Requeues a claimed effect as `writer_busy` after `delayMs`, merging the busy streak `dataJson` into its data. */
+export async function retryBusyEffectRow(exec: EffectExec, claim: EffectClaimRef & { dataJson: string; delayMs: number }): Promise<void> {
+  await exec.executeRaw(RETRY_BUSY_EFFECT_SQL, [claim.id, claim.token, claim.dataJson, claim.delayMs]);
+}
+
+/** Requeues a claimed effect with replacement data `dataJson`, error code `reason` and a wait of `delayMs`. */
+export async function requeueEffectRow(exec: EffectExec, claim: EffectClaimRef & { dataJson: string; reason: string | null; delayMs: number }): Promise<void> {
+  await exec.executeRaw(REQUEUE_EFFECT_SQL, [claim.id, claim.token, claim.dataJson, claim.reason, claim.delayMs]);
+}
+
+/** Fails a claimed effect as `targets_parked` with data `dataJson`. */
+export async function parkEffectRow(exec: EffectExec, claim: EffectClaimRef & { dataJson: string }): Promise<void> {
+  await exec.executeRaw(PARK_EFFECT_SQL, [claim.id, claim.token, claim.dataJson]);
 }

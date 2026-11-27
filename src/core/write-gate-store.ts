@@ -81,10 +81,8 @@ export async function recordPageGateReceipt(tx: Exec, input: {
  * verdict of the content it replaced, so receipts on the page for any other
  * content hash are removed (an allowed benign rewrite stops being suppressed).
  */
-export async function clearStalePageGateReceipts(tx: Exec, input: { slug: string; sourceId: string; contentHash: string | null }): Promise<void> {
-  await tx.executeRaw(`DELETE FROM write_gate_receipts r USING pages p
-    WHERE r.target_table = 'pages' AND r.target_id = p.id::text AND p.source_id = $1 AND p.slug = $2 AND r.content_hash IS DISTINCT FROM $3`,
-  [input.sourceId, input.slug, input.contentHash]);
+export async function clearStalePageGateReceipts(tx: Pick<BrainEngine, 'deleteStalePageWriteGateReceipts'>, input: { slug: string; sourceId: string; contentHash: string | null }): Promise<void> {
+  await tx.deleteStalePageWriteGateReceipts(input.sourceId, input.slug, input.contentHash);
 }
 
 /** Dedupe key for a held row: its kind plus the normalized text of every gated field. */

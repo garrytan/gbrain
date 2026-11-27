@@ -202,3 +202,8 @@ export async function getWriteGateHoldRow(exec: LegacyUnscopedRead, id: number):
   return rows[0] ? toHoldRow(rows[0]) : null;
 }
 
+export async function deleteStalePageWriteGateReceipts(exec: SqlExecutor, sourceId: string, slug: string, contentHash: string | null): Promise<void> {
+  await exec.executeRaw(`DELETE FROM write_gate_receipts r USING pages p
+    WHERE r.target_table = 'pages' AND r.target_id = p.id::text AND p.source_id = $1 AND p.slug = $2 AND r.content_hash IS DISTINCT FROM $3`,
+  [sourceId, slug, contentHash]);
+}

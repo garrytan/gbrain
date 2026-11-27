@@ -53,7 +53,7 @@ export type ExposureReason = 'bot_harness' | 'channel_plugin' | 'multi_channel_c
 export type ExposureServes = 'one' | 'several' | null;
 
 /** brainServes for the warning; null when it cannot be read, so an install route never fails on its warning. */
-export async function exposureServes(engine: Pick<BrainEngine, 'getConfig' | 'executeRaw'>): Promise<ExposureServes> {
+export async function exposureServes(engine: Pick<BrainEngine, 'getConfig' | 'listActiveAccessMembers'>): Promise<ExposureServes> {
   try {
     return (await brainServes(engine)).serves;
   } catch {

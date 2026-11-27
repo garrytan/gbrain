@@ -22,8 +22,7 @@ export function withValidTimeAdvisory(row: WriteRequest, prepared: PreparedMutat
   prepared.apply = async (tx, preimage) => {
     const outcome = await apply(tx, preimage);
     if (prepared.noop) return outcome;
-    const [after] = await tx.executeRaw<BodyRow>(`SELECT frontmatter, compiled_truth, timeline, body_storage, content_hash FROM pages
-      WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL`, [row.source_id, row.slug]);
+    const after = await tx.readLivePageBody(row.slug, { sourceId: row.source_id });
     if (!after) return outcome;
     const before = preimage && !preimage.page.deleted_at
       ? { frontmatter: asObject(preimage.page.frontmatter), body: bodyKey(preimage.page as BodyRow) } : null;

@@ -31,3 +31,7 @@ export const listGatedMirrorRequests: StoreMember<[hostId: string, gateCode: str
  */
 export const selectClaimableEffect: StoreMember<[hostId: string, deadOwners: readonly string[]], Record<string, unknown> | null> =
   (brain, hostId, deadOwners) => storeCall({ member: 'selectClaimableEffect' }, () => brain.selectClaimableEffect(hostId, [...deadOwners]));
+
+/** The request's stored effects, in kind order, or only its Git effect; a non-uuid request id refuses as `::uuid` does. */
+export const readRequestEffects: StoreMember<[requestId: string, kind?: 'git'], RequestEffectState[]> =
+  (brain, requestId, kind) => storeCall({ member: 'readRequestEffects' }, () => brain.readRequestEffects(requestId, kind ?? null));

@@ -5,7 +5,7 @@
 import type { AccessTokenWriteGrant, AdmissionRate, ClaimedWriteRow, CompletedWriteRow, CounterRow, OAuthClientWriteGrant, PublicationEffectsSpec, WriteCompletion, WriteRequestInsert, WriteRequestProgress } from '../engine-sql/persistence-journal.ts';
 import type { CapacityForecastInputs, ProjectionJobRef } from '../engine-sql/persistence-housekeeping.ts';
 import type { ClaimRelease, ClaimRenewal, SourceMembership, TopologyChange } from '../engine-sql/persistence-claims.ts';
-import type { EffectClaim, EffectClaimRef, EffectWorktreeOwner } from '../engine-sql/persistence-effect-worker.ts';
+import type { EffectClaim, EffectClaimRef, EffectWorktreeOwner, MirrorGateRow } from '../engine-sql/persistence-effect-worker.ts';
 import type { RequestEffectState } from '../engine-sql/persistence-effect-scans.ts';
 import type { ManagedRootBindingRow, PersistenceTable } from '../engine-sql/connect-gate.ts';
 import type { WriteContextInput, WriteContextResult } from '../engine-sql/transaction-settings.ts';
@@ -31,6 +31,7 @@ import type { SegmentedProjectionFilter } from '../engine-sql/persistence-housek
 import type { IdleProbeRow } from '../engine-sql/persistence-idle-probe.ts';
 import type { IdleProbeSpec } from '../engine-sql/persistence-idle-probe.ts';
 import type { ReservedConnection } from '../engine.ts';
+import type { TrueUpReservation } from '../engine-sql/persistence-housekeeping.ts';
 
 export interface PersistenceMembers {
   // Write-journal statements (engine-sql/persistence-journal.ts): the text journal.ts, limits.ts and held-reads.ts sent through executeRaw.
@@ -216,4 +217,22 @@ export interface PersistenceMembers {
    * unreleased, or the write still deferred on the same pending import and past its limit (`expireDeferredWrites`).
    */
   lockOverdueHold(hold: OverdueHold): Promise<boolean>;
+  /** Requeues a claimed effect after `delayMs` with error code `reason`, a claim under recovery included. */
+  retryEffectRow(claim: EffectClaimRef & { reason: string; delayMs: number }): Promise<void>;
+  /** Whether one of these requests has a target parked under `code` that its committed withdrawal mirror re-arms (`hasRearmableTargets`). */
+  hasRearmableTargets(requestIds: readonly string[], code: string): Promise<boolean>;
+  /** The terminal requests among `ids` with their effect bytes and whether an effect is unfinished, in sequence order. */
+  listTrueUpRequests<R = Record<string, unknown>>(ids: readonly string[]): Promise<R[]>;
+  /** Inside the true-up's transaction, after its counter locks: shrinks each unchanged settled request to what its receipt keeps and releases the freed bytes from the counters; returns the bytes given back. */
+  trueUpReservations(rows: readonly TrueUpReservation[]): Promise<number>;
+  /** The withdrawal mirrors that gate these requests (`mirrorGates`): each not committed, or committed with its publications. */
+  readMirrorGateRows(requestIds: readonly string[]): Promise<MirrorGateRow[]>;
+  /** Requeues a claimed effect (no recovery) due now with its scan cursor at `slug` (`advanceEffectCursor`). */
+  advanceEffectRow(claim: EffectClaimRef & { slug: string }): Promise<void>;
+  /** Requeues a claimed effect as `writer_busy` after `delayMs`, merging `dataJson` (the busy streak) into its data. */
+  retryBusyEffectRow(claim: EffectClaimRef & { dataJson: string; delayMs: number }): Promise<void>;
+  /** Requeues a claimed effect (no recovery) with data `dataJson`, error code `reason`, after `delayMs`. */
+  requeueEffectRow(claim: EffectClaimRef & { dataJson: string; reason: string | null; delayMs: number }): Promise<void>;
+  /** Fails a claimed effect (no recovery) as `targets_parked` with data `dataJson`. */
+  parkEffectRow(claim: EffectClaimRef & { dataJson: string }): Promise<void>;
 }
