@@ -221,6 +221,8 @@ export interface AddSourceOpts {
     gbrainioCommand?: string;
     /** One address or @domain per line; their threads become owner-only pages (`g_private_senders_file`). */
     privateSendersFile?: string;
+    /** Override Gmail ingest tiers; omit to use the access mode's default. */
+    ingestTiers?: boolean;
   };
   /**
    * Register a meetings-kind source (meeting notes from a provider API). The

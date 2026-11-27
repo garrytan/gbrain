@@ -162,6 +162,7 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
         '                    [--access vault|command|env] [--token-command "<cmd>"] [--token-env <VAR>]   (non-vault Google access: gog/gcloud/gateway)\n' +
         '                    [--access gbrainio] [--gbrainio-command <path>]   (Gmail read through a gbrain.io terminal)\n' +
         '                    [--private-senders-file <path>]   (threads with these addresses or @domains become owner-only pages)\n' +
+        '                    [--ingest-tiers | --no-ingest-tiers]   (sort Gmail into full / record / skipped tiers; on by default only for --access gbrainio)\n' +
         '       apple-contacts kind: --helper-host <host> --token-file <0600 json> [--helper-port <port>] [--proxy socks5h://host:port] [--contacts-dir <dir>] [--record git|database] [--dir <path>]',
     );
     process.exit(2);
@@ -237,6 +238,15 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
         .filter(Boolean);
       continue;
     }
+    if (a === '--ingest-tiers' || a === '--no-ingest-tiers') {
+      const ingestTiers = a === '--ingest-tiers';
+      if (gTuning.ingestTiers !== undefined && gTuning.ingestTiers !== ingestTiers) {
+        console.error('Error: Pass either --ingest-tiers or --no-ingest-tiers, not both.');
+        process.exit(2);
+      }
+      gTuning.ingestTiers = ingestTiers;
+      continue;
+    }
     if (parseGoogleAddFlag(a, args[i + 1], gTuning)) { i++; continue; }
     if (a === '--scope') {
       const scope = args[++i];
@@ -288,6 +298,10 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
   }
   if (gKind && (remoteUrl || localPath || ghKind)) {
     console.error('Error: --kind google is mutually exclusive with --url, --path, and --kind github.');
+    process.exit(2);
+  }
+  if (!gKind && gTuning.ingestTiers !== undefined) {
+    console.error(`Error: ${gTuning.ingestTiers ? '--ingest-tiers' : '--no-ingest-tiers'} requires --kind google.`);
     process.exit(2);
   }
   if (gKind && !gAccount) {
@@ -1983,6 +1997,7 @@ Subcommands:
   add <id> --path <p> [--name <n>] [--federated|--no-federated] [--force] [--json]
                                     Register a new source. --path must be a git repo
                                     with committed files; --force registers a plain directory (sync imports it without Git).
+                                    --kind google: [--ingest-tiers | --no-ingest-tiers]   (sort Gmail into full / record / skipped tiers; on by default only for --access gbrainio)
   list [--json]                     List registered sources with page counts.
   writer status|movement|claim|activate|transfer  Inspect ownership, prove data moves, activate or transfer (see writer --help).
   reconcile <id> <slug> --brain <id> Preview or apply a guarded file/database repair (see reconcile --help).

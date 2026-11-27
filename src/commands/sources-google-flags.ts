@@ -21,6 +21,7 @@ export interface GoogleAddTuning {
   loopsExcludeLabels?: string[];
   gbrainioCommand?: string;
   privateSendersFile?: string;
+  ingestTiers?: boolean;
 }
 
 export const defaultGoogleAddTuning = (): GoogleAddTuning => ({ historyDays: 90, calendarId: DEFAULT_CALENDAR_ID });

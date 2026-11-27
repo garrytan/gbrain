@@ -44,7 +44,7 @@ export function parseSourceLifecycleArgs(args: string[], generatedId = randomUUI
   const flags = new Set<string>();
   const positionals: string[] = [];
   const booleans = new Set(['json', 'dry-run', 'yes', 'confirm-destructive', 'keep-storage', 'force',
-    'federated', 'no-federated', 'no-federate', 'refederate', 'no-harden']);
+    'federated', 'no-federated', 'no-federate', 'refederate', 'no-harden', 'ingest-tiers', 'no-ingest-tiers']);
   const valued = new Set(['request-id', 'expected-incarnation', 'brain', 'path', 'url', 'name', 'clone-dir',
     'pat-file', 'kind', 'account', 'access', 'token-command', 'token-env', 'gbrainio-command', 'private-senders-file', 'services', 'history-days',
     'future-days', 'loops-exclude-labels', 'contacts-dir', 'calendar-id', 'scope', 'repos', 'dir', 'app-id', 'app-pem', 'app-install',
@@ -82,7 +82,7 @@ export function parseSourceLifecycleArgs(args: string[], generatedId = randomUUI
     source_id: id, request_id: requestId, ...(incarnation ? { expected_incarnation: incarnation } : {}),
     ...(dryRun ? { dry_run: true } : {}) };
   const common = new Set(['request-id', 'expected-incarnation', 'brain', 'json', 'dry-run']);
-  const allowed = verb === 'add' ? new Set([...common, ...valued, 'federated', 'no-federated', 'force', 'no-harden'])
+  const allowed = verb === 'add' ? new Set([...common, ...valued, 'federated', 'no-federated', 'force', 'no-harden', 'ingest-tiers', 'no-ingest-tiers'])
     : new Set([...common, ...(verb === 'set-path' ? ['path', 'force'] : []),
       ...(['remove', 'purge'].includes(verb) ? ['yes', 'confirm-destructive', 'keep-storage'] : []),
       ...(verb === 'restore' ? ['no-federate', 'refederate'] : [])]);
@@ -116,8 +116,8 @@ export function parseSourceLifecycleArgs(args: string[], generatedId = randomUUI
     `Give exactly one of --path (a local directory), --url (an https Git remote) or --kind (${CONNECTOR_SOURCE_KINDS.join(', ')}).`);
   // The kinds each kind-specific option applies to.
   const optionKinds: Record<string, readonly string[]> = {
-    ...Object.fromEntries(['account', 'access', 'token-command', 'gbrainio-command', 'private-senders-file', 'services', 'future-days', 'loops-exclude-labels', 'calendar-id']
-      .map(key => [key, ['google']])),
+    ...Object.fromEntries(['account', 'access', 'token-command', 'gbrainio-command', 'private-senders-file', 'services', 'future-days',
+      'loops-exclude-labels', 'calendar-id', 'ingest-tiers', 'no-ingest-tiers'].map(key => [key, ['google']])),
     'contacts-dir': ['google', 'apple-contacts'],
     ...Object.fromEntries(['helper-host', 'helper-port', 'proxy', 'token-file'].map(key => [key, ['apple-contacts']])),
     ...Object.fromEntries(['scope', 'repos', 'app-id', 'app-pem', 'app-install'].map(key => [key, ['github']])),
@@ -135,7 +135,7 @@ export function parseSourceLifecycleArgs(args: string[], generatedId = randomUUI
     dir: CONNECTOR_SOURCE_KINDS.filter(k => k !== 'imessage'),
   };
   for (const [key, kinds] of Object.entries(optionKinds)) {
-    if (!values.has(key)) continue;
+    if (!values.has(key) && !flags.has(key)) continue;
     if (!kind) throw invalid(`--${key} requires --kind ${kinds.join(' or ')}.`, `Add --kind ${kinds.join(' or --kind ')} for --${key}, or remove --${key}.`);
     if (!kinds.includes(kind)) throw invalid(`--${key} requires --kind ${kinds.join(' or ')}.`,
       `--${key} configures a ${kinds.join(' or ')} source: use --kind ${kinds.join(' or --kind ')}, or remove --${key} from this ${kind} source.`);
@@ -166,6 +166,9 @@ export function parseSourceLifecycleArgs(args: string[], generatedId = randomUUI
       appInstallId: number('app-install') };
   }
   if (kind === 'google') {
+    if (flags.has('ingest-tiers') && flags.has('no-ingest-tiers')) throw invalid('Choose one Gmail ingest tier setting.',
+      'Pass either --ingest-tiers or --no-ingest-tiers, not both.');
+    const ingestTiers = flags.has('ingest-tiers') ? true : flags.has('no-ingest-tiers') ? false : undefined;
     const account = values.get('account')?.trim().toLowerCase();
     const access = values.get('access') ?? 'vault';
     const services = (values.get('services') ?? (access === 'gbrainio' ? 'gmail' : 'gmail,calendar,contacts')).split(',').map(value => value.trim().toLowerCase()).filter(Boolean);
@@ -192,6 +195,7 @@ export function parseSourceLifecycleArgs(args: string[], generatedId = randomUUI
       'Pass --contacts-dir as one or more segments of a-z, 0-9, - and _ (e.g. --contacts-dir contacts); it is relative to the source directory.');
     opts.google = { account, services, historyDays: number('history-days', 90)!, calendarId: values.get('calendar-id') ?? DEFAULT_CALENDAR_ID,
       ...(contactsDir ? { contactsDir } : {}),
+      ...(ingestTiers !== undefined ? { ingestTiers } : {}),
       ...(futureDays !== undefined ? { futureDays } : {}), ...(loopsExcludeLabels.length > 0 ? { loopsExcludeLabels } : {}),
       dir: absolute(values.get('dir') ?? defaultCloneDir(`${id}-google`)), access: access as 'vault' | 'command' | 'env' | 'gbrainio',
       tokenCommand: values.get('token-command'), tokenEnv: values.get('token-env'),
