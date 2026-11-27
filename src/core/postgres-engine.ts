@@ -1870,6 +1870,7 @@ export class PostgresEngine implements BrainEngine {
         }, { alwaysTransaction: true, jitOff: true, settings: () => ({ statement_timeout: String(remainingVectorBudget(deadline)) }) });
       },
       opts?.onVectorPoolMeta,
+      !!stmt.indexWalkSql,
     );
     return rows.map(rowToSearchResult);
   }
@@ -1923,12 +1924,13 @@ export class PostgresEngine implements BrainEngine {
     const deadline = performance.now() + remainingMs;
     const shape = statementFor(true);
     const walk = indexWalk && !!shape.indexWalkSql;
+    const joined = !!shape.indexWalkSql && !walk && !(scopeScan && shape.scopeScanSql) && !exact;
     return this.withScopedReadTransaction(opts?.sourceIds, opts?.sourceId, async tx => {
       const stmt = statementFor(await chunkManifestReads(this, this.engineSqlOn(tx)));
       const bound = [...stmt.params];
       bound[stmt.innerLimitIdx] = exact ? null : innerLimit;
       return run(tx, (scopeScan && stmt.scopeScanSql) || (walk && stmt.indexWalkSql) || (exact ? stmt.exactSql : stmt.sql), bound as Parameters<typeof tx.unsafe>[1]);
-    }, { alwaysTransaction: true, jitOff: true, settings: () => vectorScanSettings(iterative, innerLimit, maxScanTuples, deadline, opts?.hnswIterativeScan, walk ? shape.indexWalkOverfetch : undefined, !!shape.indexWalkSql && !walk && !(scopeScan && shape.scopeScanSql) && !exact) });
+    }, { alwaysTransaction: true, jitOff: true, settings: () => vectorScanSettings(iterative, innerLimit, maxScanTuples, deadline, opts?.hnswIterativeScan, walk ? shape.indexWalkOverfetch : undefined, joined, joined) });
   }
 
   async getEmbeddingsByChunkIds(ids: number[], column: string = 'embedding'): Promise<Map<number, Float32Array>> {
