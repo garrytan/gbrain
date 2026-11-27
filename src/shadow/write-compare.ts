@@ -132,6 +132,9 @@ export interface WriteTallyFile {
   lost_applied?: Record<string, number>;
   /** Write samples each session (`sessionKey`) has had settled, whatever the epoch: carried into a new epoch together with `lost_applied` and `applied` (a count and the cursor that stops its source being added again are one ledger). Written in the same rename as the outcomes it stands for. */
   settled?: Record<string, number>;
+  /** The part of `settled` that was page and link writes (`QUALIFYING` lines, `sampleQualifyingWeight`), written in the same rename as `settled` and carried with it. Only a credit known to be one counts, so orphan recovery books more
+   * lost page and link writes than it would otherwise, never fewer. */
+  settled_qualifying?: Record<string, number>;
   /** The highest line number (`n`) of each writer's (`w`, `<pid>.<nonce>`) credited lost lines this file has taken: a line retried after a partial append carries the same numbers, so it is added once however much of the first try reached the file. Travels with `settled` and `lost_applied`. */
   line_seq?: Record<string, number>;
   /** Lost lines of this epoch that name no session (an older writer's): their obligation is unknown, so status reads no evidence for the epoch. */
@@ -148,7 +151,7 @@ function loadTally(dir: string): WriteTallyFile | null {
   let text: string;
   try { text = readFileSync(writeTallyPath(dir), 'utf8'); } catch (e) { if ((e as NodeJS.ErrnoException).code === 'ENOENT') return null; throw e; }
   const f = JSON.parse(text) as WriteTallyFile;
-  if (!(f?.version === 1 && typeof f.epoch_id === 'string' && OUTCOMES.every((o) => count(f[o])) && counts(f.capability_missing_by_family) && counts(f.uncomparable_by_reason) && (f.applied === undefined || counts(f.applied)) && (f.lost_applied === undefined || counts(f.lost_applied)) && (f.settled === undefined || counts(f.settled)) && (f.line_seq === undefined || counts(f.line_seq)) && (f.legacy_lines === undefined || count(f.legacy_lines)) && Array.isArray(f.in_flight) && f.in_flight.every(Number.isInteger))) throw new Error('not a write tally');
+  if (!(f?.version === 1 && typeof f.epoch_id === 'string' && OUTCOMES.every((o) => count(f[o])) && counts(f.capability_missing_by_family) && counts(f.uncomparable_by_reason) && (f.applied === undefined || counts(f.applied)) && (f.lost_applied === undefined || counts(f.lost_applied)) && (f.settled === undefined || counts(f.settled)) && (f.settled_qualifying === undefined || counts(f.settled_qualifying)) && (f.line_seq === undefined || counts(f.line_seq)) && (f.legacy_lines === undefined || count(f.legacy_lines)) && Array.isArray(f.in_flight) && f.in_flight.every(Number.isInteger))) throw new Error('not a write tally');
   return f;
 }
 
@@ -206,6 +209,21 @@ export const MAX_DROPPED = 10_000;
  * all use, so a line settles exactly the weight it was owed and never more. A count that is not a whole number from 1 to 99,999 is no count at all (a line the sampler did not write): 0.
  */
 export const droppedWeight = (n: unknown): number => (Number.isInteger(n) && (n as number) >= 1 && (n as number) <= 99_999 ? Math.min(n as number, MAX_DROPPED) : 0);
+/**
+ * How many of a line's samples (`sampleWeight`) are qualifying writes: the page and link writes criterion 5 compares (`PILOT_WRITES`; every other write is sent as capability_missing). The sample itself counts when the op the sampler
+ * wrote as its second key (`{"t":"write","op":"<name>"`) is one, never a name inside a page; the earlier losses it carries always count (which write each was is not known, so never as fewer). The supervisor counts it for the owed record
+ * and the child for what it read, from the same bytes, so the lost page and link writes are the difference.
+ */
+export function sampleQualifyingWeight(line: string): number {
+  const weight = sampleWeight(line);
+  if (weight === 0) return 0;
+  const op = /^\{"t":"write","op":"([A-Za-z]{1,60})"/.exec(line)?.[1];
+  return weight - 1 + (op !== undefined && PILOT_WRITES.has(op) ? 1 : 0);
+}
+/** Lost-line reasons that are not page and link writes: such a sample would have been sent as capability_missing, so the owner folds it there under its own name, counted and visible, never against the compared share. */
+export const LOST_NONQUALIFYING: ReadonlySet<string> = new Set(['pipe_unflushed_nonqualifying', 'receipt_orphaned_nonqualifying']);
+/** Lost-line reasons that settle page and link writes (`settled_qualifying`); a line of any other reason settles only `settled`, so the qualifying part of a session is never overstated. */
+const QUALIFYING_LINE_REASONS: ReadonlySet<string> = new Set(['pipe_unflushed', 'receipt_orphaned']);
 
 /** The name a session has in file names, in the tally's `settled` map and on lost lines. */
 export const sessionKey = (session: string): string => session.replace(/[^A-Za-z0-9_-]/g, '_');
@@ -218,14 +236,16 @@ export const sessionKey = (session: string): string => session.replace(/[^A-Za-z
 export const owedPath = (dir: string, session: string): string => join(dir, `write-owed.${sessionKey(session)}.json`);
 const OWED_NAME = /^write-owed\.([A-Za-z0-9_-]+)\.json$/;
 const MAX_OWED = 1_000_000_000_000;
-export interface OwedRecord { v: 1; session: string; serving_pid: number; child_pid?: number; owed: number; closed: boolean; child_exited: boolean }
+/** `owed_qualifying`: how many of `owed` were page and link writes (`sampleQualifyingWeight`); absent in a record of an older serving process, which counts every owed sample as one. */
+export interface OwedRecord { v: 1; session: string; serving_pid: number; child_pid?: number; owed: number; owed_qualifying?: number; closed: boolean; child_exited: boolean }
 function parseOwed(path: string): OwedRecord | null | 'unreadable' {
   let text: string;
   try { text = readFileSync(path, 'utf8'); } catch (e) { return (e as NodeJS.ErrnoException).code === 'ENOENT' ? null : 'unreadable'; }
   try {
     const f = JSON.parse(text) as Partial<OwedRecord>;
     if (f?.v !== 1 || typeof f.session !== 'string' || !Number.isSafeInteger(f.owed) || f.owed! < 0 || f.owed! > MAX_OWED || !Number.isSafeInteger(f.serving_pid) || typeof f.closed !== 'boolean' || typeof f.child_exited !== 'boolean' || (f.child_pid !== undefined && !Number.isSafeInteger(f.child_pid))) return 'unreadable';
-    return { v: 1, session: f.session, serving_pid: f.serving_pid!, ...(f.child_pid !== undefined ? { child_pid: f.child_pid } : {}), owed: f.owed!, closed: f.closed, child_exited: f.child_exited };
+    if (f.owed_qualifying !== undefined && (!Number.isSafeInteger(f.owed_qualifying) || f.owed_qualifying < 0 || f.owed_qualifying > f.owed!)) return 'unreadable';
+    return { v: 1, session: f.session, serving_pid: f.serving_pid!, ...(f.child_pid !== undefined ? { child_pid: f.child_pid } : {}), owed: f.owed!, ...(f.owed_qualifying !== undefined ? { owed_qualifying: f.owed_qualifying } : {}), closed: f.closed, child_exited: f.child_exited };
   } catch { return 'unreadable'; }
 }
 /** The owed record of `session`: the record, null (none), or `'unreadable'` (there, and not usable: never the same as none). */
@@ -294,14 +314,18 @@ function firstCopies(lines: LostLine[], seen: Record<string, number>): LostLine[
   return lines.filter((x) => { if (x.w === null || x.n === null) return true; if (x.n <= (seen[x.w] ?? 0)) return false; seen[x.w] = x.n; return true; });
 }
 /** Lost samples that no tally has taken yet: `outcomes` of `epoch` (status reads any as no evidence, like a standing in-flight mark) and, per session, the samples every epoch's lines would settle. */
-export function unfoldedLines(dir: string, epoch: string | null, taken?: Record<string, number>, lineSeq?: Record<string, number>): { outcomes: number; bySession: Record<string, number> } {
-  const out = { outcomes: 0, bySession: {} as Record<string, number> };
+export function unfoldedLines(dir: string, epoch: string | null, taken?: Record<string, number>, lineSeq?: Record<string, number>): { outcomes: number; bySession: Record<string, number>; qualifyingBySession: Record<string, number> } {
+  const out = { outcomes: 0, bySession: {} as Record<string, number>, qualifyingBySession: {} as Record<string, number> };
   if (epoch === null) return out;
   const seen = { ...lineSeq };
   for (const l of readLost(dir, epoch, taken)) {
     const lines = firstCopies(l.lines, seen);
     out.outcomes += lines.filter((x) => x.thisEpoch).length + (l.unreadable ? 1 : 0);
-    for (const x of lines) if (x.session) out.bySession[x.session] = (out.bySession[x.session] ?? 0) + 1;
+    for (const x of lines) {
+      if (!x.session) continue;
+      out.bySession[x.session] = (out.bySession[x.session] ?? 0) + 1;
+      if (QUALIFYING_LINE_REASONS.has(x.reason)) out.qualifyingBySession[x.session] = (out.qualifyingBySession[x.session] ?? 0) + 1;
+    }
   }
   return out;
 }
@@ -351,7 +375,7 @@ const running = (pid: number): boolean => { try { process.kill(pid, 0); return t
 export const SAVE_FAILURE_EXIT_MS = 60_000;
 const NO_EPOCH_REASON = 'no_epoch';
 const RETIRED_REASON = 'epoch_retired';
-interface Batch { seq: number; delta: WriteTallyFile; credit: number; ending: boolean }
+interface Batch { seq: number; delta: WriteTallyFile; credit: number; creditQualifying: number; ending: boolean }
 
 /**
  * The write tally (swap criterion 5). The file changes only inside one cross-process lock, as a read-modify-write of THIS child's unsaved verdicts
@@ -390,7 +414,10 @@ export class WriteTally {
   }
   /** How long saves have been failing in a row while this child holds outcomes it could not save (0 when they are not). */
   stuckMs(): number { return this.failingSince === null ? 0 : this.now() - this.failingSince; }
-  private credit(file: WriteTallyFile, key: string, n: number): void { (file.settled ??= {})[key] = (file.settled[key] ?? 0) + n; }
+  private credit(file: WriteTallyFile, key: string, n: number, qualifying = 0): void {
+    (file.settled ??= {})[key] = (file.settled[key] ?? 0) + n;
+    if (qualifying > 0) (file.settled_qualifying ??= {})[key] = (file.settled_qualifying[key] ?? 0) + Math.min(n, qualifying);
+  }
   /** One locked read-modify-write: dead pids recovered, then this child's unsaved batches, then `change`. False when nothing was saved (the batches are kept). `fresh`: a mark under this pid is from an earlier process that had it. */
   private update(change?: (file: WriteTallyFile) => void, fresh = false): boolean {
     const epoch = this.epoch();
@@ -405,7 +432,7 @@ export class WriteTally {
         if (current.epoch_id !== epoch) { retiredNow = true; return; } // a child of a retired epoch must not replace the current epoch's file
         const saved = loadTally(this.dir);
         // A new epoch starts its outcomes at zero and keeps the settlement ledger whole: `settled`, the cursors that stop its sources being added again (`lost_applied`, `applied`) travel together.
-        const file = saved?.epoch_id === epoch ? saved : { ...blank(epoch), ...(saved?.settled ? { settled: { ...saved.settled } } : {}), ...(saved?.lost_applied ? { lost_applied: { ...saved.lost_applied } } : {}), ...(saved?.line_seq ? { line_seq: { ...saved.line_seq } } : {}), ...(saved?.applied ? { applied: { ...saved.applied } } : {}) };
+        const file = saved?.epoch_id === epoch ? saved : { ...blank(epoch), ...(saved?.settled ? { settled: { ...saved.settled } } : {}), ...(saved?.settled_qualifying ? { settled_qualifying: { ...saved.settled_qualifying } } : {}), ...(saved?.lost_applied ? { lost_applied: { ...saved.lost_applied } } : {}), ...(saved?.line_seq ? { line_seq: { ...saved.line_seq } } : {}), ...(saved?.applied ? { applied: { ...saved.applied } } : {}) };
         file.applied ??= {};
         const dead = file.in_flight.filter((p) => (p === this.pid ? fresh : !running(p)));
         for (const p of dead) applyVerdict(file, 'unexplained_difference', undefined, 1);
@@ -419,8 +446,8 @@ export class WriteTally {
         file.line_seq ??= {};
         for (const l of lost) {
           for (const x of firstCopies(l.lines, file.line_seq)) {
-            if (x.thisEpoch) { applyVerdict(file, 'uncomparable', x.reason, 1); if (x.session === null) file.legacy_lines = (file.legacy_lines ?? 0) + 1; }
-            if (x.session) { this.credit(file, x.session, 1); credited.add(x.session); }
+            if (x.thisEpoch) { applyVerdict(file, LOST_NONQUALIFYING.has(x.reason) ? 'capability_missing' : 'uncomparable', x.reason, 1); if (x.session === null) file.legacy_lines = (file.legacy_lines ?? 0) + 1; }
+            if (x.session) { this.credit(file, x.session, 1, QUALIFYING_LINE_REASONS.has(x.reason) ? 1 : 0); credited.add(x.session); }
           }
           file.lost_applied[l.name] = l.end;
         }
@@ -429,14 +456,15 @@ export class WriteTally {
           for (const [k, n] of Object.entries(b.delta.capability_missing_by_family)) bump(file.capability_missing_by_family, k, n);
           for (const [k, n] of Object.entries(b.delta.uncomparable_by_reason)) bump(file.uncomparable_by_reason, k, n);
           if (b.ending) file.in_flight = file.in_flight.filter((p) => p !== this.pid);
-          if (b.credit > 0 && this.key) { this.credit(file, this.key, b.credit); credited.add(this.key); }
+          if (b.credit > 0 && this.key) { this.credit(file, this.key, b.credit, b.creditQualifying); credited.add(this.key); }
           file.applied[this.id] = b.seq;
         }
         for (const w of Object.keys(file.line_seq)) if (w !== this.id && !running(Number.parseInt(w, 10))) delete file.line_seq[w]; // a gone writer's numbers: its file was taken to the end above
         if (!Object.keys(file.line_seq).length) delete file.line_seq;
         if (file.settled) { // a session whose owed file is gone is settled for good (it was credited on an earlier save): its entry goes
           const owed = listOwed(this.dir);
-          if (!owed.failed) for (const k of Object.keys(file.settled)) if (!owed.keys.includes(k) && !credited.has(k)) delete file.settled[k];
+          if (!owed.failed) for (const k of Object.keys(file.settled)) if (!owed.keys.includes(k) && !credited.has(k)) { delete file.settled[k]; if (file.settled_qualifying) delete file.settled_qualifying[k]; }
+          if (file.settled_qualifying && !Object.keys(file.settled_qualifying).length) delete file.settled_qualifying;
         }
         change?.(file);
         file.updated_at = new Date().toISOString();
@@ -512,7 +540,14 @@ export class WriteTally {
         const orphaned = rec.child_exited || (rec.child_pid !== undefined && rec.child_pid > 1 && !running(rec.child_pid)) || (rec.closed && age > STALE_RECEIPT_MS) || (rec.serving_pid > 1 && !running(rec.serving_pid) && age > STALE_RECEIPT_MS);
         if (!orphaned && !rec.closed) continue;
         const missing = rec.owed - ((tally?.settled?.[key] ?? 0) + (lines.bySession[key] ?? 0));
-        if (orphaned && missing > 0) { if (recordLostCount(this.dir, epoch, 'receipt_orphaned', missing, key) < missing) continue; booked = true; }
+        if (orphaned && missing > 0) {
+          // Only the lost page and link writes count against the share: the owed qualifying count less the qualifying part already settled (a record with no qualifying count: all of them). Each part is lines tagged with the session,
+          // so a retry after one part landed recomputes the rest from what is on disk and books nothing twice.
+          const qualifying = rec.owed_qualifying === undefined ? missing : Math.min(missing, Math.max(0, rec.owed_qualifying - ((tally?.settled_qualifying?.[key] ?? 0) + (lines.qualifyingBySession[key] ?? 0))));
+          if (qualifying > 0 && recordLostCount(this.dir, epoch, 'receipt_orphaned', qualifying, key) < qualifying) continue;
+          if (missing - qualifying > 0 && recordLostCount(this.dir, epoch, 'receipt_orphaned_nonqualifying', missing - qualifying, key) < missing - qualifying) continue;
+          booked = true;
+        }
         removable.push({ key, owed: rec.owed });
       }
       if (booked && !this.update()) return;
@@ -544,7 +579,7 @@ export class WriteTally {
     return this.retired ? this.flushJournal() : saved && written;
   }
   /** Counts one outcome; `ends` is a replay's own verdict, which removes its mark. `credit`: how many of the session's owed samples this outcome settles (saved in the same batch as the outcome, or written as lines tagged with the session). */
-  note(outcome: WriteOutcome, key?: string, n = 1, ends = false, credit = 0): void {
+  note(outcome: WriteOutcome, key?: string, n = 1, ends = false, credit = 0, creditQualifying = 0): void {
     const epoch = this.epoch();
     if (!this.alive()) return;
     if (epoch === null || this.retired) { // a client child (another process owns the store), or a child whose epoch was retired: it records nothing in the tally; its verdict is written as lost lines for the owner to add up
@@ -554,17 +589,26 @@ export class WriteTally {
       return;
     }
     let batch = this.pending.at(-1);
-    if (!batch || this.pending.length === this.sealed) this.pending.push(batch = { seq: ++this.seq, delta: blank(epoch), credit: 0, ending: false });
+    if (!batch || this.pending.length === this.sealed) this.pending.push(batch = { seq: ++this.seq, delta: blank(epoch), credit: 0, creditQualifying: 0, ending: false });
     applyVerdict(batch.delta, outcome, key, n);
-    batch.credit += credit;
+    batch.credit += credit; batch.creditQualifying += Math.min(credit, creditQualifying);
     batch.ending ||= ends;
     this.update();
   }
-  /** `n` samples the pipe never delivered (the serving process owed them, the child never read them): `uncomparable` `pipe_unflushed`, settling that many. */
-  missing(n: number): void {
+  /**
+   * `n` samples the pipe never delivered (the serving process owed them, the child never read them), settling that many: `nonqualifying` of them were writes the shadow never compares (capability_missing `pipe_unflushed_nonqualifying`),
+   * the rest page and link writes (`uncomparable` `pipe_unflushed`).
+   */
+  missing(n: number, nonqualifying = 0): void {
     if (n <= 0 || !this.alive()) return;
-    if (this.epoch() === null) { const settles = this.key ? n : 0; this.addJournal('pipe_unflushed', true, settles); this.addJournal('pipe_unflushed', false, n - settles); return; }
-    this.note('uncomparable', 'pipe_unflushed', n, false, n);
+    const other = Math.min(n, Math.max(0, nonqualifying)); const q = n - other;
+    if (this.epoch() === null) {
+      const settles = this.key ? 1 : 0;
+      for (const [reason, k] of [['pipe_unflushed', q], ['pipe_unflushed_nonqualifying', other]] as const) { this.addJournal(reason, true, k * settles); this.addJournal(reason, false, k * (1 - settles)); }
+      return;
+    }
+    if (q > 0) this.note('uncomparable', 'pipe_unflushed', q, false, q, q);
+    if (other > 0) this.note('capability_missing', 'pipe_unflushed_nonqualifying', other, false, other, 0);
   }
   /**
    * At the end of this child's input, after its final save: removes this session's owed file when the serving process closed it and the settled count read back from disk covers what was owed. True when the file is gone or there was none.

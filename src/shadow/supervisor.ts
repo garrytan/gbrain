@@ -26,7 +26,7 @@ import { readEpoch } from './evidence-epoch.ts';
 import { appendFault, type ShadowFault } from './ledger.ts';
 import type { MirrorTransport } from './mirror.ts';
 import { readShadowState } from './state.ts';
-import { sampleWeight, writeOwed } from './write-compare.ts';
+import { sampleQualifyingWeight, sampleWeight, writeOwed } from './write-compare.ts';
 
 export interface ShadowSupervisorOptions {
   dir: string;
@@ -110,6 +110,8 @@ export class ShadowSupervisor implements MirrorTransport {
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   /** Write samples (with the losses they carry) accepted for the current child, sent or staged: the count the owed record states, so the child can settle what its pipe never delivered. */
   private acceptedWeight = 0;
+  /** The part of `acceptedWeight` that is page and link writes (`sampleQualifyingWeight`; samples owed with no line count as such): the owed record states it, so the child books only those lost against the share. */
+  private acceptedQualifying = 0;
   private owedWritten = ''; // the record `writeOwedRecord` last made durable (session, count and flags)
   private oweDirty = false; // `owe` raised the accepted weight and the record is not durable yet
   private childExited = false;
@@ -165,7 +167,7 @@ export class ShadowSupervisor implements MirrorTransport {
     }
     this.flight.add(entry); if (weight > 0) this.sampleBytes += entry.bytes;
     this.staged.push({ line, entry }); this.stagedBytes += line.length;
-    this.acceptedWeight += weight;
+    this.acceptedWeight += weight; this.acceptedQualifying += sampleQualifyingWeight(line);
     this.scheduleFlush();
     return true;
   }
@@ -176,7 +178,7 @@ export class ShadowSupervisor implements MirrorTransport {
    */
   owe(n: number): boolean {
     if (!this.session || !this.child || this.disabledReason || !Number.isInteger(n) || n < 1) return false;
-    this.acceptedWeight += n; this.oweDirty = true;
+    this.acceptedWeight += n; this.acceptedQualifying += n; this.oweDirty = true; // which write each was is not known: counted as page and link writes, never as fewer
     this.scheduleFlush();
     return true;
   }
@@ -218,10 +220,10 @@ export class ShadowSupervisor implements MirrorTransport {
     if (!this.session) return true;
     const exited = childExited || this.childExited;
     closed ||= this.closedRecord;
-    const mark = `${this.session}:${this.acceptedWeight}:${closed}:${exited}`;
+    const mark = `${this.session}:${this.acceptedWeight}:${this.acceptedQualifying}:${closed}:${exited}`;
     if (this.owedWritten === mark) return true;
     try {
-      this.o.writeOwed(this.o.dir, { v: 1, session: this.session, serving_pid: process.pid, ...(this.child?.pid ? { child_pid: this.child.pid } : {}), owed: this.acceptedWeight, closed, child_exited: exited });
+      this.o.writeOwed(this.o.dir, { v: 1, session: this.session, serving_pid: process.pid, ...(this.child?.pid ? { child_pid: this.child.pid } : {}), owed: this.acceptedWeight, owed_qualifying: this.acceptedQualifying, closed, child_exited: exited });
       this.owedWritten = mark; this.closedRecord = closed; this.childExited = exited;
       return true;
     } catch { return false; }
@@ -346,7 +348,7 @@ export class ShadowSupervisor implements MirrorTransport {
       });
       this.child = child;
       this.stdinRef = child.stdin as never;
-      this.dropStaged(); this.oweDirty = false; this.session = session; this.acceptedWeight = 0; this.owedWritten = ''; this.childExited = false; this.closedRecord = false;
+      this.dropStaged(); this.oweDirty = false; this.session = session; this.acceptedWeight = 0; this.acceptedQualifying = 0; this.owedWritten = ''; this.childExited = false; this.closedRecord = false;
       liveSupervisors.add(this); watchProcessExit();
       this.controlBuffer = '';
       this.lastHeartbeat = this.o.now();
