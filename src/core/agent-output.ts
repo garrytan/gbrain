@@ -345,7 +345,8 @@ export function noticeBlock(n: RenderedNotice): string {
 // ── HTTP view ──────────────────────────────────────────────────────────────
 
 const HTTP_DROP_KEYS = new Set(['pid', 'lock_owner', 'path', 'data_dir', 'database_path', 'asset']);
-const ABS_PATH_RE = /(?:^|(?<=[\s'"`(=]))(?:\/(?:home|Users|root|tmp|var|private|opt|srv|mnt|etc)\/[^\s'"`)]*|[A-Za-z]:\\[^\s'"`)]*|~\/[^\s'"`)]*)/g;
+// GCH5-02: an octal byte escape of a `$'...'` command word (shell-quote.ts quotedWord, e.g. `\012` for a line break) is a boundary too.
+const ABS_PATH_RE = /(?:^|(?<=[\s'"`(=]|\\[0-7]{3}))(?:\/(?:home|Users|root|tmp|var|private|opt|srv|mnt|etc)\/[^\s'"`)]*|[A-Za-z]:\\[^\s'"`)]*|~\/[^\s'"`)]*)/g;
 // No letter or digit before it, so `owner_pid=123` in a detail is redacted too (`\b` does not break after `_`).
 const PID_RE = /(?<![A-Za-z0-9])(PID|pid)\s*[:=]?\s*\d+/g;
 const KEY_NAME_RE = /\b[A-Z][A-Z0-9]*_(?:API_KEY|TOKEN|SECRET)\b/g;

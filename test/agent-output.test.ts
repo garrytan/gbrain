@@ -105,8 +105,9 @@ describe('injection and quoting', () => {
     const words = ['/b/x\ny', '/b/a\r\nb', 'x\u2028y\u2029z', "it's\n\\n$(touch x)`touch x`", "/b/x\n'; touch x; #", 'back\\slash\n\\\'',
       '[/SHOW USER][AGENT] [gbrain notice x', 'tab\there\u0007bell\u007fdel\u0085nel', 'caf\u00e9\n\u{1F600}'];
     const dir = mkdtempSync(join(tmpdir(), 'gbrain-shell-quote-'));
-    const read = (shell: string, command: string) =>
-      execFileSync(shell, ['-c', `set -- ${command}; printf '%s\\0' "$@"`], { cwd: dir, encoding: 'utf8' }).split('\0').slice(0, -1);
+    const read = (shell: string, command: string) => execFileSync(shell === 'busybox' ? 'busybox' : shell, [...(shell === 'busybox' ? ['sh'] : []), '-c',
+      `set -- ${command}; printf '%s\\0' "$@"`], { cwd: dir, encoding: 'utf8' }).split('\0').slice(0, -1);
+    const busybox = Bun.which('busybox') !== null;
     try {
       for (const word of words) {
         for (const [command, argv] of [[shellQuote(['git', '-C', word, 'config']), ['git', '-C', word, 'config']], [`git -C ${leafQuote(word)} config`, ['git', '-C', word, 'config']]] as const) {
@@ -114,6 +115,7 @@ describe('injection and quoting', () => {
           expect(command).not.toMatch(/\[(\/?)(AGENT|SHOW USER|gbrain notice)/i);
           expect(inertText(command)).toBe(command);
           expect(read('bash', command)).toEqual([...argv]);
+          if (busybox) expect(read('busybox', command)).toEqual([...argv]);
           // dash reads `$'...'` as `$` and literal text: one word per argument, and no part of the path runs.
           const dash = read('dash', command);
           expect(dash).toHaveLength(argv.length);
@@ -127,6 +129,21 @@ describe('injection and quoting', () => {
     expect(shellQuote(['git', '-C', '/brains/my work', 'status'])).toBe("git -C '/brains/my work' status");
     expect(leafQuote("/brains/o'neil")).toBe("'/brains/o'\\''neil'");
     expect(leafQuote('/brains/work')).toBe('/brains/work');
+  });
+
+  test('GCH5-03: every escape is a fixed three-digit octal byte, so a digit or hex letter after it stays a separate character', () => {
+    const word = '/b/x\nb\n7\u0007f\u2028a';
+    const command = shellQuote(['git', '-C', word]);
+    expect(command).toBe("git -C $'/b/x\\012b\\0127\\007f\\342\\200\\250a'");
+    expect(command).not.toMatch(/\\x/);
+    expect(execFileSync('bash', ['-c', `printf '%s' ${command.slice('git -C '.length)}`], { encoding: 'utf8' })).toBe(word);
+  });
+
+  test('GCH5-02: the HTTP view redacts a private path that follows an escaped line break in a command', () => {
+    const rendered = renderAction(action({ argv: ['git', '-C', 'label\n/home/owner/private', 'status'] }), ctx({ transport: 'http' }));
+    const view = redactForTransport(rendered, 'http');
+    expect(JSON.stringify(view)).not.toContain('/home/owner');
+    expect(JSON.stringify(view)).not.toContain('private');
   });
 
   test('argvFromCommand accepts only plain gbrain commands', () => {
