@@ -40,6 +40,11 @@ export async function readLivePageFrontmatter(exec: TimedRawRead, sourceId: stri
   return page ?? null;
 }
 
+/** An executor reduced to the raw path with no options: a scoped transaction's executor and an engine's own `executeRaw` both fit. */
+export interface PlainRawRead {
+  executeRaw<R = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<R[]>;
+}
+
 export interface IgnoredLabelPageRow { type: string | null; frontmatter: Record<string, unknown> | null }
 
 /**
@@ -48,4 +53,28 @@ export interface IgnoredLabelPageRow { type: string | null; frontmatter: Record<
  */
 export interface TimedRawRead {
   executeRaw<R = Record<string, unknown>>(sql: string, params?: unknown[], opts?: { timeoutMs?: number }): Promise<R[]>;
+}
+
+/**
+ * The stored `chunker_version` of the page row with id `pageId`, live, soft-deleted or segmented, as
+ * `{ chunker_version }`; null when no row has the id (search/safe-chunks.ts provenanceDistrusted: a negative version
+ * is a body write that removed a protected fence).
+ */
+export async function readPageChunkerVersion(exec: TimedRawRead, pageId: number): Promise<{ chunker_version: number | null } | null> {
+  const [row] = await exec.executeRaw<{ chunker_version: number | null }>('SELECT chunker_version FROM pages WHERE id = $1', [pageId]);
+  return row ? { chunker_version: row.chunker_version === null ? null : Number(row.chunker_version) } : null;
+}
+
+/**
+ * Whether the image page at `slug` of the source (any row, live or soft-deleted) carries chunks sealed past the
+ * safe-chunk fence, as `{ has_visual }` (whether any chunk holds an image vector); null when no row passes the fence
+ * (import-file.ts importImageFile: an unchanged image whose index is complete is skipped). The fence test is written
+ * out (`safeChunksFilter('p')`, SAFE_FENCE_CHUNKER_VERSION 4); the caller raw-SQL pins rebuild it from the builder.
+ */
+export async function readImageSealProbe(exec: PlainRawRead, sourceId: string, slug: string): Promise<{ has_visual: boolean } | null> {
+  const [row] = await exec.executeRaw<{ has_visual: boolean }>(
+    `SELECT EXISTS (SELECT 1 FROM content_chunks c WHERE c.page_id = p.id AND c.embedding_image IS NOT NULL) AS has_visual
+         FROM pages p WHERE p.source_id = $1 AND p.slug = $2 AND p.chunker_version >= 4`,
+    [sourceId, slug]);
+  return row ? { has_visual: row.has_visual === true } : null;
 }

@@ -54,6 +54,8 @@ const INTERFACE_METHODS: readonly string[] = [
   'listSourceRecords', 'readSourceIncarnation', 'hasCompanyBrainReceipt', 'readGuestSourceRow',
   // entity reads and writer state: the ignored-privacy-label notice reads, the committed page's frontmatter, the writer-admin state, and whether this role owns the schema tables.
   'readIgnoredPrivacyLabelPages', 'readLivePageFrontmatter', 'ownsSchemaTables',
+  // Part C: the image page's seal probe and any page's chunker version (engine-sql/entity-reads.ts), the reads an unchanged-image re-import makes.
+  'readImageSealProbe', 'readPageChunkerVersion',
   // Cycle-lock leases
   'acquireCycleLock', 'refreshCycleLock', 'releaseCycleLock', 'readCycleLocks', 'deleteCycleLock', 'deleteCycleLockIfStale',
   // Alias fan-out reads (engine-sql/alias-fanout-reads.ts; master text pinned by test/n3-sql-move-parity.test.ts)

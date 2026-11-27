@@ -181,8 +181,9 @@ describe('EO4 RLS scope inventory (master)', () => {
     const scoping = astScoping(capture.ast);
 
     const callSites = Object.values(capture.ast).reduce((a, m) => a + m.directCallSites, 0);
-    expect(callSites).toBe(36);
-    expect(Object.values(capture.ast).filter((m) => m.directCallSites > 0).length).toBe(35);
+    // Part C adds readImageSealProbe (a page by source and slug, and its chunks), scoped like readPageSnapshot and getChunks: 37 call sites in 36 methods.
+    expect(callSites).toBe(37);
+    expect(Object.values(capture.ast).filter((m) => m.directCallSites > 0).length).toBe(36);
 
     const byMethod = new Map<string, RuntimeObservation[]>();
     for (const [key, obs] of Object.entries(capture.runtime)) {

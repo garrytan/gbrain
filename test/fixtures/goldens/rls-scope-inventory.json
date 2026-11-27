@@ -2898,6 +2898,19 @@
           "*"
         ]
       },
+      "readImageSealProbe#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "scoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": [
+          "src-a"
+        ]
+      },
       "readLedgerSource#batch": {
         "flagOffLanes": [
           "pool"
@@ -2943,6 +2956,17 @@
         "flagOnScopes": []
       },
       "readManagedModeRows#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readPageChunkerVersion#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -3971,7 +3995,7 @@
       }
     },
     "static": {
-      "callSites": 36,
+      "callSites": 37,
       "directMethods": {
         "_searchKeywordCJK": 1,
         "countChunklessPagesWithContent": 1,
@@ -4000,6 +4024,7 @@
         "listStaleFrontmatterKeyPages": 1,
         "listStalePagesForExtraction": 1,
         "readEmbeddingStateCounts": 1,
+        "readImageSealProbe": 1,
         "readPageSnapshot": 1,
         "readPageSnapshotsBatch": 1,
         "runVectorAttempt": 1,
@@ -4428,6 +4453,7 @@
         "readGuestSourceRow": "none",
         "readHealthMemoClock": "none",
         "readIgnoredPrivacyLabelPages": "none",
+        "readImageSealProbe": "direct",
         "readJournalLimitRows": "none",
         "readLedgerSource": "none",
         "readLinkContextMatches": "none",
@@ -4456,6 +4482,7 @@
         "readOwnerOnlySourcesPresent": "none",
         "readPageAliasRows": "none",
         "readPageBodySizes": "none",
+        "readPageChunkerVersion": "none",
         "readPageEmbeddingBudget": "none",
         "readPageIndexingState": "none",
         "readPageOrigin": "none",

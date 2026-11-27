@@ -184,7 +184,7 @@ export function epochWatch(dir: string, now: () => number = Date.now, ttlMs = 1_
  * store-members/**, store-codec.ts, members.ts). It is an epoch input: bump it with any change to that mapping.
  * test/shadow-evidence.test.ts pins it to a digest of those files, so a change that forgets to bump it fails CI.
  */
-export const SHADOW_ADAPTER_VERSION = 13;
+export const SHADOW_ADAPTER_VERSION = 14;
 
 /** The adapter identity an epoch records: the adapter version, the engine ABI and the addon's catalog version. */
 export function adapterIdentity(abi: number, catalog: string, adapterVersion: number = SHADOW_ADAPTER_VERSION): string {

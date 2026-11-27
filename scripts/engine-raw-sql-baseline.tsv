@@ -579,7 +579,6 @@ src/core/identity/owner.ts	execute_raw	4	GST-3216 PR 1: the owner identity resol
 src/core/identity/speaker-owner.ts	execute_raw	2	GST-3216 PR 2: the speaker-owner trust read joins a page's live revision to its write request, source kind and member bindings in one statement, and the connector stamp reads a source's bound members; both move behind typed reads when the access and journal tables get engine methods
 src/core/imessage/imessage-source.ts	execute_raw	3	#9634, pre-ratchet: reads the source row (incarnation, local_path, config), checks a page slug exists, and stamps sources.last_sync_at/newest_content_at; no typed engine method exists yet
 src/core/import-chunk-reuse.ts	execute_raw	1
-src/core/import-file.ts	execute_raw	1
 src/core/import-identity.ts	execute_raw	1
 src/core/ingestion/applied-captures.ts	execute_raw	5
 src/core/last-retrieved.ts	execute_raw	1
@@ -1114,7 +1113,7 @@ src/core/search/query-cache.ts	execute_raw	9
 src/core/search/relational-chain.ts	execute_raw	1
 src/core/search/relational-recall.ts	execute_raw	3
 src/core/search/retrieval-coverage.ts	execute_raw	2
-src/core/search/safe-chunks.ts	execute_raw	2
+src/core/search/safe-chunks.ts	execute_raw	1
 src/core/search/saved-facts-match.ts	execute_raw	2
 src/core/search/slot-history.ts	execute_raw	1	GBRA-574 F #9674 (opened before this ratchet): the readable-page lookup that maps a bare name tag to the page later written at <dir>/<tag>
 src/core/search/telemetry.ts	execute_raw	2

@@ -379,6 +379,8 @@ export const RUST_ENGINE_MEMBERS = {
   getWorktreeBinding: 'raw_sql',
   readIgnoredPrivacyLabelPages: 'pages',
   readLivePageFrontmatter: 'pages',
+  readImageSealProbe: 'pages',
+  readPageChunkerVersion: 'pages',
   hasExtractedEvents: 'raw_sql',
   insertDecideCalibration: 'eval_capture',
   insertDecideProposal: 'eval_capture',

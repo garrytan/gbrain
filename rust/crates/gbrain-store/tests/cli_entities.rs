@@ -775,3 +775,38 @@ fn inbound_linkers_count_each_linking_page_once() {
             .is_empty()
     );
 }
+
+#[test]
+fn page_chunker_version_and_image_seal_probe_read_one_page_record() {
+    let dir = TempDir::new("cli-chunker-version");
+    let store = open(&dir);
+    put(
+        &store,
+        "default",
+        "images/a.png",
+        json!({"type": "image", "title": "A", "compiled_truth": "caption", "frontmatter": {}}),
+    );
+    let id = store.read_page_titles_by_id(&[1]).unwrap()[0].id as i64;
+    let version = store.read_page_chunker_version(id).unwrap().unwrap();
+    // A put page is not sealed past the fence, so the seal probe answers no row.
+    assert!(version.chunker_version.unwrap_or(0) < 4);
+    assert!(
+        store
+            .read_image_seal_probe("default", "images/a.png")
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        store
+            .read_image_seal_probe("default", "images/none.png")
+            .unwrap()
+            .is_none()
+    );
+    assert!(store.read_page_chunker_version(999_999).unwrap().is_none());
+    assert!(store.read_page_chunker_version(0).unwrap().is_none());
+    assert!(
+        store
+            .read_page_chunker_version(i64::from(i32::MAX) + 1)
+            .is_err()
+    );
+}

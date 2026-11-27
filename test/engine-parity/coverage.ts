@@ -168,7 +168,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'listAccessTokens', 'listActiveAccessMembers', 'listAwaitingMemoryProposals', 'listMemoryProposalRows',
     'listOwnerProposalRows', 'listSharedSkillPackRoots', 'listSynopsisSourceIds', 'purgeMemoryProposals', 'readAdmissionSource', 'readHealthMemoClock', 'readMemoryProposal', 'readOpCheckpointKeys',
     'readPendingProposalSummary', 'readSourceState', 'sharedSkillPackTablePresent'],
-  entity_reads: ['readIgnoredPrivacyLabelPages', 'readLivePageFrontmatter'],
+  entity_reads: ['readIgnoredPrivacyLabelPages', 'readLivePageFrontmatter', 'readImageSealProbe', 'readPageChunkerVersion'],
   owner_only: ['ownerOnlyMarkTriggers'],
   wanted_links: ['lockRegisteredSourceIds', 'replaceWantedLinkRows'],
   salience_enrich: ['batchLoadEmotionalInputs', 'setEmotionalWeightBatch', 'getRecentSalience', 'listEnrichCandidates', 'findAnomalies'],

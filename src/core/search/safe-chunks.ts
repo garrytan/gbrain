@@ -178,8 +178,8 @@ export function belowSafeChunkFence(chunkerVersion: number | null | undefined): 
 /** #6803: the importer's refusal of a distrusted image without a successful fresh OCR pass; the sweep counts it as `ocr_required`. */
 export const OCR_REQUIRED_ERROR = 'This image had protected OCR, so indexing it requires successful fresh OCR. Enable OCR and reimport the image.';
 
-export async function provenanceDistrusted(engine: Pick<BrainEngine, 'executeRaw'>, pageId: number): Promise<boolean> {
-  const [row] = await engine.executeRaw<{ chunker_version: number | null }>('SELECT chunker_version FROM pages WHERE id = $1', [pageId]);
+export async function provenanceDistrusted(engine: Pick<BrainEngine, 'readPageChunkerVersion'>, pageId: number): Promise<boolean> {
+  const row = await engine.readPageChunkerVersion(pageId);
   return (row?.chunker_version ?? 0) < 0;
 }
 

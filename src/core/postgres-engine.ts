@@ -1364,6 +1364,9 @@ export class PostgresEngine implements BrainEngine {
   isFolderRestricted(sourceId: string, slug: string) { return this.preparationRead(exec => accessControlImpl.isFolderRestricted(unscopedExecutor(exec, 'access: folder rule read ran unscoped through executeRaw'), sourceId, slug)); }
   readIgnoredPrivacyLabelPages(sourceId: string, scope: { slugs: readonly string[] } | { since: string }, opts?: { limit?: number; timeoutMs?: number }) { return entityReadsImpl.readIgnoredPrivacyLabelPages(this, sourceId, scope, opts); }
   readLivePageFrontmatter(sourceId: string, slug: string, opts?: { timeoutMs?: number }) { return entityReadsImpl.readLivePageFrontmatter(this, sourceId, slug, opts); }
+  // Page content (a page by source and slug, and its chunks): under the RLS scope flag it runs scoped to the page's source, as readPageSnapshot and getChunks do.
+  readImageSealProbe(sourceId: string, slug: string) { return this.withScopedReadTransaction(undefined, sourceId, tx => entityReadsImpl.readImageSealProbe(scopedRead(this.engineSqlOn(tx)), sourceId, slug)); }
+  readPageChunkerVersion(pageId: number) { return entityReadsImpl.readPageChunkerVersion(this, pageId); }
   listLocalPathSources() { return this.ownRawRead(exec => sourcesImpl.listLocalPathSources(exec)); }
   listSourceRoutingRows() { return this.ownRawRead(exec => sourcesImpl.listSourceRoutingRows(exec)); }
   countDefaultSourceSplit() { return this.ownRawRead(exec => sourcesImpl.countDefaultSourceSplit(exec)); }

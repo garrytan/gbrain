@@ -582,7 +582,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'getStats': OOS.stats, 'getHealth': OOS.stats,
   'getConfig': OOS.config, 'setConfig': OOS.config, 'unsetConfig': OOS.config, 'listConfigKeys': OOS.config, 'getAllConfig': OOS.config, 'getConfigValues': OOS.config,
   // import guards (typed reads and writes the default import path runs)
-  'listLocalPathSources': 'sources', 'listSourceRoutingRows': 'sources', 'countDefaultSourceSplit': 'sources', 'listActiveSourceConfigs': 'sources', 'markSourceSynced': 'sources', 'listSourceRecords': OOS.cliReadsImport, 'readIgnoredPrivacyLabelPages': OOS.entityReads, 'readLivePageFrontmatter': OOS.callerRawSql, 'readGuestSourceRow': OOS.cliReadsImport, 'ownsSchemaTables': OOS.journal, 'readWriterAdminState': OOS.writerAdmin,
+  'listLocalPathSources': 'sources', 'listSourceRoutingRows': 'sources', 'countDefaultSourceSplit': 'sources', 'listActiveSourceConfigs': 'sources', 'markSourceSynced': 'sources', 'listSourceRecords': OOS.cliReadsImport, 'readIgnoredPrivacyLabelPages': OOS.entityReads, 'readLivePageFrontmatter': OOS.callerRawSql, 'readGuestSourceRow': OOS.cliReadsImport, 'ownsSchemaTables': OOS.journal, 'readWriterAdminState': OOS.writerAdmin, 'readImageSealProbe': OOS.callerRawSql, 'readPageChunkerVersion': OOS.callerRawSql,
   'readManagedModeRows': OOS.importGuards, 'getSourceStrictness': OOS.importGuards, 'readPersistenceBrainId': OOS.importGuards,
   'readLocalWriterRow': OOS.importGuards, 'insertLocalWriterRow': OOS.importGuards, 'readTransactionSettings': OOS.importGuards,
   'applyTransactionSettings': OOS.importGuards, 'readLedgerSource': OOS.importGuards, 'isFolderRestricted': OOS.importGuards,
@@ -1271,6 +1271,10 @@ export const SQL_CASES: SqlCase[] = [
  * scoping is pinned, including the search paths that open transactions.
  */
 export const EXTRA_READ_CASES: SqlCase[] = [
+  // Out-of-scope reads (not SQL-text domains) whose RLS scoping the inventory still pins. The image seal probe reads one page by (source_id, slug) and its content_chunks;
+  // the chunker version reads one page by id. Both run unscoped on the pool through the engine's raw path, as master's executeRaw calls did.
+  ...variants('readImageSealProbe', [['default', (e) => e.readImageSealProbe(SRC, SLUG)]]),
+  ...variants('readPageChunkerVersion', [['default', (e) => e.readPageChunkerVersion(1)]]),
   ...variants('searchKeyword', [
     ['fts', (e) => e.searchKeyword('alice example')],
     ['fts+sourceIds', (e) => e.searchKeyword('alice example', { sourceIds: SRCS })],
