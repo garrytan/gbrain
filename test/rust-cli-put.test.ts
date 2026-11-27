@@ -1,5 +1,5 @@
 /**
- * `gbrain put` of one page on a brain with no managed persistence, through the real CLI, on every engine arm.
+ * `gbrain put` and `gbrain get` of pages on a brain with no managed persistence, through the real CLI, on every engine arm.
  *
  * Every CLI write registers the CLI's local writer first (persistence/identity.ts registerLocalWriter), then admits,
  * journals and publishes the page, then runs post-write housekeeping; `get` reads the page snapshot. On the Rust engine
@@ -75,38 +75,64 @@ function run(at: { home: string; cwd: string }, args: string[]): { status: numbe
 
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 const TIME = /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:?\d{2})/g;
-/** The answer without ids, timestamps and this run's slug token, which differ between brains and runs. */
+/**
+ * The answer without the values that differ between brains and runs: uuids (request ids, revisions), timestamps, this
+ * run's slug token, and the numeric row ids (`id`, `page_id`), since the Postgres arm writes into a shared test
+ * database whose sequences earlier runs advanced.
+ */
 function comparable(stdout: string, token: string): unknown {
-  return JSON.parse(stdout.split(token).join('TOKEN').replace(UUID, '<uuid>').replace(TIME, '<time>'));
+  return JSON.parse(stdout.split(token).join('TOKEN').replace(UUID, '<uuid>').replace(TIME, '<time>'),
+    (key, value) => (key === 'id' || key === 'page_id') && typeof value === 'number' ? '<id>' : value);
 }
 
-/** Puts one page, then reads it back; both through the CLI with --json. */
-function putThenGet(arm: Arm, token: string): { put: unknown; get: unknown } {
+type Outcome = { puts: unknown[]; gets: unknown[]; stored: string[] };
+
+/**
+ * Puts two pages, then rewrites the first, all through the CLI with --json; then reads both back, as JSON and as the
+ * stored markdown `gbrain get` prints.
+ */
+function putThenGet(arm: Arm, token: string): Outcome {
   const at = brain(arm);
-  const slug = `notes/put-parity-${token}`;
-  const content = `---\ntype: note\ntitle: Put parity\ntags: [probe]\n---\n# Put parity\n\nOne page written by gbrain put on a brain with no managed persistence.\n`;
-  const put = run(at, ['put', slug, '--content', content, '--json']);
-  if (put.status !== 0) throw new Error(`${arm} put exited ${put.status}: ${put.stdout.trim() || put.stderr.trim().slice(-2000)}`);
-  const get = run(at, ['get', slug, '--json']);
-  if (get.status !== 0) throw new Error(`${arm} get exited ${get.status}: ${get.stdout.trim() || get.stderr.trim().slice(-2000)}`);
-  return { put: comparable(put.stdout, token), get: comparable(get.stdout, token) };
+  const first = `notes/put-parity-${token}`;
+  const second = `notes/put-parity-${token}-two`;
+  const page = (title: string, line: string) => `---\ntype: note\ntitle: ${title}\ntags: [probe]\n---\n# ${title}\n\n${line}\n`;
+  const step = (args: string[]) => {
+    const r = run(at, args);
+    if (r.status !== 0) throw new Error(`${arm} ${args.slice(0, 2).join(' ')} exited ${r.status}: ${r.stdout.trim() || r.stderr.trim().slice(-2000)}`);
+    return r.stdout;
+  };
+  const put = (slug: string, content: string, extra: string[] = []) => step(['put', slug, '--content', content, ...extra, '--json']);
+  const created = put(first, page('Put parity', 'One page written by gbrain put on a brain with no managed persistence.'));
+  const revision = String((JSON.parse(created) as { revision: string }).revision);
+  const outputs = [
+    created,
+    put(second, page('Second page', 'A second page, so the write path runs on a brain that already holds a page.')),
+    // The first page again, so an update of a stored page (with the revision the create returned) runs too.
+    put(first, page('Put parity', 'The first page again, rewritten.'), ['--expected-revision', revision]),
+  ];
+  const puts = outputs.map(stdout => comparable(stdout, token));
+  const gets = [first, second].map(slug => comparable(step(['get', slug, '--json']), token));
+  const stored = [first, second].map(slug => step(['get', slug]).split(token).join('TOKEN'));
+  return { puts, gets, stored };
 }
 
 describe('gbrain put on a brain with no managed persistence', () => {
   const token = randomUUID().slice(0, 8);
-  let pglite: { put: unknown; get: unknown };
+  let pglite: Outcome;
 
-  test('PGLite: the put commits and the page reads back', () => {
+  test('PGLite: the puts commit and the pages read back', () => {
     pglite = putThenGet('pglite', token);
-    expect(pglite.put).toMatchObject({ slug: 'notes/put-parity-TOKEN', state: 'committed', status: 'created_or_updated', persistence: { mode: 'database' } });
-    expect(pglite.get).toMatchObject({ slug: 'notes/put-parity-TOKEN', title: 'Put parity' });
-  }, 180_000);
+    for (const put of pglite.puts) expect(put).toMatchObject({ state: 'committed', status: 'created_or_updated', persistence: { mode: 'database' } });
+    expect(pglite.gets[0]).toMatchObject({ slug: 'notes/put-parity-TOKEN', title: 'Put parity' });
+    expect(pglite.gets[1]).toMatchObject({ slug: 'notes/put-parity-TOKEN-two', title: 'Second page' });
+    expect(pglite.stored[0]).toContain('The first page again, rewritten.');
+  }, 240_000);
 
-  test.skipIf(!DATABASE_URL)('Postgres: the same answer and the same stored page as PGLite', () => {
+  test.skipIf(!DATABASE_URL)('Postgres: the same answers and the same stored pages as PGLite', () => {
     expect(putThenGet('postgres', token)).toEqual(pglite);
-  }, 180_000);
+  }, 240_000);
 
-  test.skipIf(!HAVE_ADDON)('Rust: the same answer and the same stored page as PGLite', () => {
+  test.skipIf(!HAVE_ADDON)('Rust: the same answers and the same stored pages as PGLite', () => {
     expect(putThenGet('rust', token)).toEqual(pglite);
-  }, 180_000);
+  }, 240_000);
 });
