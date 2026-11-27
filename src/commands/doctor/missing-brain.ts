@@ -1,13 +1,14 @@
 /**
- * Doctor's pre-connect refusal for a configured PGLite brain that is not there
- * (unmounted drive, moved folder). Doctor must never create the thing it
+ * Doctor's pre-connect refusal for a configured PGLite or Rust brain that is not
+ * there (unmounted drive, moved folder). Doctor must never create the thing it
  * checks: connecting to a missing PGLite path builds a new empty brain, which
- * a plain run then migrates and reports healthy. This reuses `gbrain serve`'s
+ * a plain run then migrates and reports healthy, and a Rust connect creates a
+ * new empty store directory (owner election and the store's `open_dir`). This reuses `gbrain serve`'s
  * status-only probe (`probeStatus`, src/mcp/status-mode.ts), file reads only,
  * so doctor and serve agree on what "missing" means.
  */
 import { existsSync, statSync } from 'node:fs';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { getMountsPath, loadMounts } from '../../core/brain-registry.ts';
 import { configPath, gbrainPath, loadConfig } from '../../core/config.ts';
 import { opError, OperationError } from '../../core/ops/contract.ts';
@@ -20,20 +21,31 @@ import { probeStatus, statusFix, type StatusModeState } from '../../mcp/status-m
  * PGLite's own `PG_VERSION` marker (an empty mount point an unmounted drive leaves, or a folder holding only
  * stray files). A path that is a plain file (a graduated brain's tombstone) is not this check's to judge.
  */
-function connectWouldCreate(dir: string): boolean {
+function connectWouldCreate(dir: string, engine: LocalEngine = 'pglite'): boolean {
   // One stat, no existence pre-test: a path that cannot be stat'ed (gone, or vanished mid-check as a drive unmounts) is
   // refused as missing, never read as "the brain is there".
   let st;
   try { st = statSync(dir); } catch { return true; }
-  return st.isDirectory() && !existsSync(join(dir, 'PG_VERSION'));
+  if (!st.isDirectory()) return false;
+  // A Rust store directory holds its FORMAT file and its record file (rust/crates/gbrain-store/src/format.rs); a folder
+  // with neither is what `open_dir` would turn into a new empty store.
+  return engine === 'rust' ? !existsSync(join(dir, 'FORMAT')) && !existsSync(join(dir, 'records.redb')) : !existsSync(join(dir, 'PG_VERSION'));
 }
 
-/** The folder the connector opens for this engine config, or undefined when it opens no local folder (Postgres). A leftover `database_url` does not change that. */
+/** The engines whose connect opens a local folder, which a connect to a missing path would create. */
+type LocalEngine = 'pglite' | 'rust';
+
+/**
+ * The folder the connector opens for this engine config, or undefined when it opens no local folder (Postgres). A leftover
+ * `database_url` does not change that. A Rust brain names its store directory in `database_path` (no default; a relative or
+ * absent path is refused by the connector itself before anything is created).
+ */
 function localFolder(engine: string | undefined, databasePath: string | undefined, fallback?: string): string | undefined {
-  return engine === 'pglite' ? databasePath ?? fallback : undefined;
+  if (engine === 'pglite') return databasePath ?? fallback;
+  return engine === 'rust' && databasePath && isAbsolute(databasePath) ? databasePath : undefined;
 }
 
-interface MissingState extends Pick<StatusModeState, 'config_path' | 'brain_path'> { mount?: string }
+interface MissingState extends Pick<StatusModeState, 'config_path' | 'brain_path'> { mount?: string; engine: LocalEngine }
 
 /** The selected brain's PGLite folder, whether or not it is there; null when a connect opens no local folder or the probe leaves the case to doctor's own diagnostics. */
 function selectedDatastore(brainId: string): MissingState | null {
@@ -43,22 +55,27 @@ function selectedDatastore(brainId: string): MissingState | null {
     // silent-read-ok: a mounts.json that does not load is not a missing brain; the registry loads the same file and fails with its own error before any folder is opened, so nothing can be created
     try { mount = loadMounts().find((m) => m.id === brainId && m.enabled !== false); } catch { return null; }
     const dir = mount && localFolder(mount.engine, mount.database_path);
-    return mount && dir ? { config_path: getMountsPath(), brain_path: dir, mount: mount.id } : null;
+    return mount && dir ? { config_path: getMountsPath(), brain_path: dir, mount: mount.id, engine: 'pglite' } : null;
+  }
+  const cfg = loadConfig();
+  // probeStatus reads PGLite folders only: a Rust brain's store directory is judged here, with its own markers.
+  if (cfg?.engine === 'rust') {
+    const dir = localFolder(cfg.engine, cfg.database_path);
+    return dir ? { config_path: configPath(), brain_path: dir, engine: 'rust' } : null;
   }
   const state = probeStatus();
   // Graduated, repair failed, no config: doctor's own diagnostics own those, and none of them connects. A lock reported held
   // still gets the folder test: an unreadable leftover lock reads as held while no process holds it, and the connect would
   // take that lock and build an empty brain in a folder with no PG_VERSION.
   if (state && state.reason !== 'missing_brain' && state.reason !== 'lock_held') return null;
-  const cfg = loadConfig();
   const dir = cfg && localFolder(cfg.engine, cfg.database_path, gbrainPath('brain.pglite'));
-  return dir ? { config_path: configPath(), brain_path: dir } : null;
+  return dir ? { config_path: configPath(), brain_path: dir, engine: 'pglite' } : null;
 }
 
 /** The selected brain's PGLite folder when a connect would create it; null for everything else. */
 function missingState(brainId: string): MissingState | null {
   const found = selectedDatastore(brainId);
-  return found?.brain_path && connectWouldCreate(found.brain_path) ? found : null;
+  return found?.brain_path && connectWouldCreate(found.brain_path, found.engine) ? found : null;
 }
 
 /** The refusal to render, or null when the selected brain is not configured-but-missing. */
@@ -81,7 +98,9 @@ export function isMissingBrainRefusal(e: unknown): e is OperationError {
  */
 export function guardMissingBrainAtLock(brainId = 'host'): () => void {
   const target = selectedDatastore(brainId);
-  if (!target?.brain_path) return () => {};
+  // The kernel-lock guard is PGLite's: a Rust connect takes the owner lock (owner-ipc/election.ts), not this one, so a Rust
+  // store moved during the connect itself is not seen here; the pre-connect refusal above covers a store already gone.
+  if (!target?.brain_path || target.engine === 'rust') return () => {};
   // pgliteLockDirFor names a datastore the way acquireLock does (canonical path + the lock folder), so the two spellings compare equal.
   const ours = pgliteLockDirFor(target.brain_path);
   return installPgliteCreateGuard((lockedDir) => {
@@ -96,7 +115,9 @@ function refusalFor(found: MissingState): OperationError {
   // `gbrain init` rewrites the HOST config, so it is only offered for the host brain, never as the way to recreate a mount.
   const recreate = found.mount
     ? `Creating a new empty datastore for mount \`${found.mount}\` is your decision (the old notes would not be in it); \`gbrain init\` is not the way, it rewrites the host brain's config.`
-    : `Creating a new empty brain is \`gbrain init --pglite --no-embedding --path ${where}\`, which is your decision (the old notes would not be in it).`;
+    : found.engine === 'rust'
+      ? `Creating a new empty store there is your decision (the old notes would not be in it): the next command that opens this brain creates it.`
+      : `Creating a new empty brain is \`gbrain init --pglite --no-embedding --path ${where}\`, which is your decision (the old notes would not be in it).`;
   const subject = found.mount ? `The datastore of mount \`${found.mount}\`` : 'The brain';
   return opError('brain_missing',
     `${subject} configured in ${state.config_path} is not at ${where} (an unmounted drive or a moved folder?), so doctor did not check it. Nothing was created there.`,
