@@ -412,6 +412,7 @@ export const PAGES_MEMBERS = {
   gitEffectStore: 'raw_sql',
   topologyStore: 'raw_sql',
   manualLinkStore: 'raw_sql',
+  persistenceUpkeepStore: 'persistence_journal',
   readWorktreeManifest: 'persistence_journal',
   // Writer status (engine-sql/writer-status.ts).
   readWriterDiagnosticRows: 'persistence_journal',

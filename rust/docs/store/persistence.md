@@ -883,6 +883,45 @@ counter row changes nothing. recoverPublication and upgradeRecoveryStaging move 
 admission), which a user's Rust brain refuses while `managed_persistence` is held; the managed-mode
 families beside this one are in `managed-mode.md`. The owner pending-wait read in `owner-activity.ts` stays raw SQL.
 
+## Upkeep
+
+`persistenceUpkeepStore()` (`src/core/engine-sql/persistence-upkeep.ts`, store `persistence/upkeep.rs`, one
+`persistenceUpkeep(op, args)` binding) carries the write journal's upkeep statements:
+
+- Receipt compaction (`compactReceipt` in `src/core/persistence/journal.ts`): `lockCompactionReceipt` answers the
+  request row with `eligible_age` (null for a receipt with no completion time when a cutoff is given, as SQL's NULL
+  comparison is), `open_cursor` (a `managed-sync` checkpoint of its run whose cursor is not done) and `open_pass` (a
+  `managed-sync-pass` checkpoint of its pass whose telemetry outcome is `open`), or null; `hasUnfinishedEffect`,
+  `requestEffectBytes` (`EFFECT_BYTES_SQL` summed, as text), `newestSyncReceiptId` (the worktree's newest committed
+  `managed_sync_*` request by completion time, then sequence), `markReceiptCompacted` (no intent, no error message,
+  compacted, the reservation given; `updated_at` unchanged) and `releaseTerminalBytes` (each named counter once, never
+  below zero). `limitCompactionWaits` sets Postgres's transaction-local waits and changes nothing here: the store
+  runs one write transaction at a time.
+- Effect claim upkeep (`rearmWithheldTargets` and `effectClaimKeeper` in `src/core/persistence/effect-journal.ts`):
+  `lockRearmableEffects` is `REARMABLE_SQL` (the same rule as `hasRearmableTargets`), in id order; `rearmEffect`
+  queues an unclaimed effect with no recovery again, due now, with the data given; `renewHeldEffectClaim` renews a
+  running claim under its token for two minutes, also while the effect holds a recovery record.
+
+- The preparation-attempt counters (`floorPreparationAttempts`, `chargePreparationAttempt` in journal.ts): a floor
+  raises a queued or running request's count to the limit; a charge adds one to a request running under the token and
+  answers the new count (null when no claim matched).
+- A write receipt's health facts (`writeHealthFacts`): `readHealthFacts(roots)` answers each root, a worktree id or
+  `db:<source incarnation>`, with its head request (the first pending one by sequence: queued, running or recovering, a
+  held recovery record or, on a worktree, a released deferred write), the first started sequences, and the recovery,
+  owner and inspection flags, as the SQL's lateral join does. An uppercase worktree id matches no row, as `w.id::text`
+  does not.
+- The segment sweep's owned sources (`sweepSegmentStorage`): `listOwnedBoundSources(hostId)`, the sources bound to an
+  active worktree that host owns, in source id order.
+- An effect attempt (effects.ts): `nextScanSlug` is the next slug of the source in byte order (soft-deleted pages
+  included, as the SQL reads `pages` unfiltered), `effectRecovering` whether the effect holds a recovery record (null
+  for no effect), and `recordSkippedTarget` appends to the effect's `skipped` list under its claim token while the list
+  is shorter than the limit. `recordFailure`'s source read is the existing `readSourceMembership`.
+- The queue vacuum (`vacuumPersistenceQueues`) runs on PGLite only, so a Rust brain answers 0 with no store call, as
+  Postgres does (`test/persistence-upkeep-rust-noop.test.ts`).
+
+Pinned by `test/engine-parity/receipt-compaction-step.test.ts`, `test/engine-parity/effect-claim-upkeep.test.ts` and
+`test/engine-parity/journal-upkeep-steps.test.ts`.
+
 ## TypeScript members with no stored state
 
 | Member | Answer | Why |

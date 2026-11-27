@@ -1109,7 +1109,6 @@ src/core/persistence/import-mutations.ts#importPlanned	capability_refusal_swallo
 src/core/persistence/import-mutations.ts#importPlanned	promise_catch_empty	1
 src/core/persistence/index-lock-reclaim.ts#owner	catch_empty	1
 src/core/persistence/index-lock-reclaim.ts#readIndexLockReclaims	catch_empty	1
-src/core/persistence/journal.ts#writeHealthFacts	capability_refusal_swallowed	1
 src/core/persistence/journal.ts#writeHealthFacts	promise_catch_empty	1
 src/core/persistence/label-edit.ts#withStoredLabels	catch_empty	1
 src/core/persistence/landing-gaps.ts#readLandingGaps	capability_refusal_swallowed	2

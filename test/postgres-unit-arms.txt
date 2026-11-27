@@ -261,6 +261,7 @@ test/engine-parity/doctor-terminal.test.ts
 test/engine-parity/dream-config-members.test.ts
 test/engine-parity/dream-cycle-sites.test.ts
 test/engine-parity/edge-proposals-cli.test.ts
+test/engine-parity/effect-claim-upkeep.test.ts
 test/engine-parity/effect-scans.test.ts
 test/engine-parity/embed-stale-work.test.ts
 test/engine-parity/embedding-catalog.test.ts
@@ -370,6 +371,7 @@ test/engine-parity/jobs-worker-liveness.test.ts
 test/engine-parity/jobs.test.ts
 test/engine-parity/journal-purge-terminal.test.ts
 test/engine-parity/journal-typed-sites.test.ts
+test/engine-parity/journal-upkeep-steps.test.ts
 test/engine-parity/keyword-visibility.test.ts
 test/engine-parity/label-guard-tiers.test.ts
 test/engine-parity/labelled-access-allowed.test.ts
@@ -470,6 +472,7 @@ test/engine-parity/read-shared-sources.test.ts
 test/engine-parity/reads-privacy.test.ts
 test/engine-parity/reason-tombstones.test.ts
 test/engine-parity/recall-members.test.ts
+test/engine-parity/receipt-compaction-step.test.ts
 test/engine-parity/rechunk-chunk-ids.test.ts
 test/engine-parity/referrer-reads.test.ts
 test/engine-parity/refusal-blocker-sites.test.ts
@@ -533,6 +536,7 @@ test/engine-parity/search-space-separators.test.ts
 test/engine-parity/search.test.ts
 test/engine-parity/segment-pending-stamp.test.ts
 test/engine-parity/segment-regions.test.ts
+test/engine-parity/segment-sweep-managed.test.ts
 test/engine-parity/segmented-body.test.ts
 test/engine-parity/segmented-callers.test.ts
 test/engine-parity/segmented-embedding.test.ts

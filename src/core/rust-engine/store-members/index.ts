@@ -155,6 +155,7 @@ import * as gitDurability from './git-durability.ts';
 import * as gitEffects from './git-effects.ts';
 import * as topologyStore from './topology-store.ts';
 import * as manualLinks from './manual-links.ts';
+import * as persistenceUpkeep from './persistence-upkeep.ts';
 import * as writerStatus from './writer-status.ts';
 import * as collateStoreReads from './collate-store-reads.ts';
 import * as writeAttribution from './write-attribution.ts';
@@ -333,6 +334,8 @@ export const STORE_MEMBERS = {
   ...gitEffects,
   ...topologyStore,
   ...manualLinks,
+  // The write journal's upkeep statements (rust/docs/store/persistence.md, "Upkeep").
+  ...persistenceUpkeep,
   ...writerStatus,
   // Reads callers once ran through executeRaw: feedback, pins, credentials (rust/docs/store).
   ...collateStoreReads,
