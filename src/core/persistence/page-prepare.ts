@@ -1222,9 +1222,7 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
     source_kind: typeof p.source_kind === 'string' ? p.source_kind : null,
     source_uri: typeof p.source_uri === 'string' ? p.source_uri : null,
     ingested_via: typeof p.ingested_via === 'string' ? p.ingested_via : null,
-    // GST-4037 D: a remote put_page or append_page over a stored page keeps its first-ingest record too.
     keepIngestColumns: row.operation === 'edit_page' || (row.authority.remote && (row.operation === 'put_page' || row.operation === 'append_page')),
-    // GST-4056: a remote writer's text is authored by its operation, whatever its intent carries.
     content_author: row.authority.remote ? `mcp:${row.operation}` : typeof p.ingested_via === 'string' ? p.ingested_via : null,
     ...(gateTrust ? { writeGate: gateInput(gateTrust, row.id) } : {}),
     // Provenance compares the caller's page with the stored one, so it runs before the server's trust marker is stamped.

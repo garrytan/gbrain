@@ -288,10 +288,7 @@ export async function importFromContent(
      * reach the guardrail input.
      */
     keepIngestColumns?: boolean;
-    /**
-     * GST-4056: the channel of this write, stored as the page's content author (PageInput.content_author). Default:
-     * `ingested_via`, this write's own provenance. A connector passes `connector:<connector>`; never a remote caller's value.
-     */
+    /** GST-4056: this write's channel, stored as the page's content author (default `ingested_via`; a connector passes `connector:<kind>`). */
     content_author?: string | null;
     /** Wave B: who stages a segmented body (the journaled request's principal); unset: the local maintenance principal, kind `import`. */
     segmentedOwner?: SegmentedStagingOwner;
