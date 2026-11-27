@@ -2786,6 +2786,7 @@
     "consent_required": 1,
     "consent_timeout": 1,
     "consumers_without_heartbeat": 1,
+    "contact_page_owned": 1,
     "content_filter_owned": 1,
     "content_null_bytes": 1,
     "content_receipt_stale": 1,

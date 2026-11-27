@@ -59,6 +59,7 @@ import { prepareFactsBackstop, type FactsBackstopStatus } from './effect-facts.t
 import { CONNECTOR_FACTS_PAGE_LIMIT } from '../connectors/api-source.ts';
 import type { GoogleSourceConfig } from '../google/types.ts';
 import { isTrustTier, minTrust } from '../trust/tier.ts';
+import { CONNECTOR_AUTHOR_PREFIX } from './content-author-schema.ts';
 
 interface ConnectorLease { handle: DbLockHandle; signal: AbortSignal; }
 type ConnectorIntentKind = 'connector_v2_import' | 'connector_v2_delete' | 'connector_v2_checkpoint' | 'connector_v2_google_receipts';
@@ -757,6 +758,9 @@ export class ManagedConnectorSync {
   }
   async page(slug: string) {
     slug = slugifyPath(`${slug}.md`);
+    // An owner check reads the page this run's own outstanding write leaves, not the one before it: a contact whose
+    // write outlived its item wait still owns its path when a second contact resolves to the same one (#10450).
+    await this.awaitPagePending(slug);
     const reads = callReads(this.engine);
     await this.recover(slug, reads);
     const snapshot = await materializedSnapshot(this.engine, await this.engine.readPageSnapshot(slug, { sourceId: this.sourceId }));
@@ -1109,7 +1113,9 @@ export class ManagedConnectorSync {
         if (this.binding || prepared.noop !== true) return false;
       } else {
         const databaseOnly = !this.binding || !prepared.file && await strictPrivateImport(reads, this.sourceId, intent.content ?? '', sourcePath ?? `${slug}.md`, snapshot);
-        const verdict = await inspectUnchanged(reads, { prepared, snapshot, sourcePath, databaseOnly });
+        // #10559: like working-tree sync (#5751), a pending contextual-mode stamp is waived: a no-op publication never
+        // stamps it, so admitting it wrote a receipt for the same unchanged page on every sweep that re-fetched it.
+        const verdict = await inspectUnchanged(reads, { prepared, snapshot, sourcePath, databaseOnly, waive: ['contextual_mode'] });
         if (verdict.admitReason) return false;
       }
       await prepared.validate?.(reads);
@@ -1412,7 +1418,7 @@ export async function prepareConnectorMutation(engine: BrainEngine, row: WriteRe
   let prepared: PreparedContentImport | undefined;
   const tier = 'external_untrusted';
   const result = await importFromContent(engine, row.slug, content, { sourceId: row.source_id, sourcePath: p.sourcePath,
-    filename: basename(p.sourcePath).replace(/\.mdx?$/i, ''), noEmbed: true, allowEmptyOverwrite: true, activePack,
+    filename: basename(p.sourcePath).replace(/\.mdx?$/i, ''), noEmbed: true, allowEmptyOverwrite: true, activePack, content_author: `${CONNECTOR_AUTHOR_PREFIX}${p.connector}`,
     // #5575 A3: connector free text (mail bodies, invite descriptions, issue text) is external and gated.
     writeGate: { tier, origin: { channel: `connector:${p.connector}`, connector: String(p.connector), source_uri: p.sourcePath }, requestId: row.id },
     prepareFrontmatter: page => {

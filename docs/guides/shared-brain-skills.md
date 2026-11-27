@@ -137,6 +137,31 @@ audience and class, or fork it under the publishing skill's own directory.
 A remote editor's refusal names only the shared file, never the other skills
 that hold it.
 
+The same refusal applies when a skill that readers cannot see is the only one
+holding the file. A readers file in a skill with a narrower SKILL.md audience,
+or in a private skill, is not public, so publishing it through a public skill
+refuses. This includes a rewrite of a shared file that gives the hidden file to
+another, public skill, and an adoption batch that lists the hidden skill
+unchanged. Narrow the file's audience to match, or fork it. A new file that no
+skill held before publishes.
+
+That refusal's reason is `shared_file_hidden_holder`. A publication also
+refuses when a skill that holds the file narrows its own SKILL.md audience in
+it, and another skill in the same publication would show the file to the
+callers the holder stops showing it to. That refusal's reason is
+`shared_file_holder_narrowed`. Keep the holder's audience, or fork the file.
+Both reasons stay under the code `local_conflict`. A queued publication that is
+refused keeps its reason in the waiter's answer and in a replay.
+
+Paths are compared the way a case-insensitive checkout (macOS, Windows) stores
+them. A publication that adds a path differing only by letter case from a path
+another skill publishes, such as `skills/conventions/guide.md` next to
+`skills/conventions/Guide.md`, or a file inside a directory whose name folds to
+another skill's file, refuses `local_conflict` and writes nothing. Use the
+exact spelling the other skill publishes to share the file, or pick another
+name. A remote editor's refusal names only the path it proposed. A pack that
+already holds such a pair keeps publishing its other changes.
+
 Beyond the fresh-setup default, the owner approves a versioned policy through
 `set_skill_policy`, not through an editor's content update. For example, the
 following **MCP arguments** approve only prose and the tools used by the default

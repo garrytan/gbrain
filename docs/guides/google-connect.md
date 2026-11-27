@@ -294,9 +294,22 @@ title, phone numbers and user-created contact groups:
   group it cannot name at all is carried as its raw `contactGroups/<id>`. A
   renamed or deleted group reaches a page when that contact next changes, or
   on `gbrain sync --full`.
+- `emails:` and `phones:` hold the values on the contact card itself. In a
+  Google Workspace domain Google also returns every address and phone on the
+  account the card is linked to, aliases included; those are left out, so a
+  card no longer picks up an alias that belongs to someone else's account. A
+  card with no address of its own still keeps the linked account's primary
+  address, so it can be matched.
 - A contact with phones but no email gets a page too; one with no name
-  either lives at `contact-<id-hash>` (never at its phone number). A contact
-  with neither emails nor phones renders nothing.
+  either lives at `contact-<id-hash>` (never at its phone number), and so
+  does a contact whose name has no Latin letters or digits (`张三`), which
+  keeps its name as the page title. A contact with neither emails nor phones
+  renders nothing.
+- <a id="contact_page_owned"></a>`contact_page_owned`: when the path a
+  contact renders to already belongs to another contact, the contact is
+  refused before anything is written or its old page removed, retried on the
+  next sync and held after repeated refusals (`gbrain sources status <id>`).
+  Rename one of the two contacts in Google, or remove the other page.
 
 The contacts cursor is bound to the field mask that minted it: the People
 API rejects a sync token reused with different request parameters, so the

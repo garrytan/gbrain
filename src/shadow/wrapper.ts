@@ -20,9 +20,10 @@
 import { AsyncResource } from 'node:async_hooks';
 import type { BrainEngine } from '../core/engine.ts';
 import { registerEngineView } from '../core/persistence/switches.ts';
+import { query as renderPgliteTemplate } from '@electric-sql/pglite/template';
 import { callerAccessRecord } from '../core/search/private-visibility.ts';
 import { CAPTURE_BUDGET_BYTES, CaptureTooLargeError, encodeArgs, encodeValue } from './codec.ts';
-import { followRaw, followScope, followWrite, laneCall, newTxLane, startedWithin, type FollowContext, type FollowOptions, type Frame, type LaneEntry, type TxLane } from './follow.ts';
+import { followRaw, followScope, followWrite, laneCall, laneHeld, newTxLane, startedWithin, type FollowContext, type FollowOptions, type Frame, type LaneEntry, type TxLane } from './follow.ts';
 import type { CapturedRead, MirrorCounters, UsageField } from './mirror.ts';
 import { isShadowReadMember, SHADOW_TRANSACTION_MEMBERS } from './reads.ts';
 import { sqlWrites } from './sql-writes.ts';
@@ -74,11 +75,11 @@ const SYNC_MEMBERS: ReadonlySet<PropertyKey> = new Set(['registerBeforeDisconnec
 
 /** Call order of the member calls the hold point sees (`held`): a held call waits in this order, whichever gate holds it. */
 let callOrder = 0;
-type Held = (() => void) & { order?: number };
-/** Queues a held call by call order, so one the other gate held first keeps its place ahead of later calls. */
-function enqueue(queue: Array<() => void>, order: number, start: () => void): void {
+type Held = (() => void) & { order?: number; entry?: LaneEntry };
+/** Queues a held call by call order, so one the other gate held first keeps its place ahead of later calls; `entry`: the lane call it was made from (follow.ts `laneHeld`). */
+function enqueue(queue: Array<() => void>, order: number, start: () => void, entry: LaneEntry | undefined): void {
   const at = queue.findIndex((w) => ((w as Held).order ?? -Infinity) > order);
-  const item: Held = Object.assign(start, { order });
+  const item: Held = Object.assign(start, { order, entry });
   if (at < 0) queue.push(item); else queue.splice(at, 0, item);
 }
 
@@ -133,6 +134,16 @@ function mayWrite(name: string, args: unknown[]): boolean {
   return true;
 }
 
+/** The driver handles an engine exposes: `get sql()` (Postgres) and `get db()` (PGLite). */
+const DRIVER_HANDLES: ReadonlySet<PropertyKey> = new Set(['sql', 'db']);
+/** Driver handle members that send a statement from its text: postgres.js `unsafe`, PGLite `query` and `exec` (and PGLite's `sql` template, wrapped beside them). */
+const DRIVER_STATEMENT_MEMBERS: ReadonlySet<PropertyKey> = new Set(['unsafe', 'query', 'exec']);
+
+/** A postgres.js query not sent yet: it sends itself through its `handle` when first awaited or started (`execute`, `forEach`, a cursor). */
+function isUnsentQuery(value: unknown): boolean {
+  return value instanceof Promise && (value as { executed?: unknown }).executed === false && typeof (value as { handle?: unknown }).handle === 'function';
+}
+
 /** A real method, not an accessor: `get sql()` hands out the driver client, a function with its own properties that a bound copy would lose. */
 function isMethod(target: object, prop: PropertyKey): boolean {
   for (let o: object | null = target; o; o = Object.getPrototypeOf(o)) {
@@ -140,6 +151,136 @@ function isMethod(target: object, prop: PropertyKey): boolean {
     if (d) return !d.get && !d.set;
   }
   return true;
+}
+
+/** What a described statement (`.describe()`, which plans it and runs nothing) passes the hold point as: a read. */
+const DESCRIBED_SQL = 'SELECT 1';
+
+/** A promise that settles the first time the connection settles `query`: its own resolve or reject, or the pair a cursor read with `for await` assigns before each batch. */
+function settledOf(query: Record<string, any>): Promise<unknown> {
+  const done = new Promise<unknown>((ok, fail) => {
+    for (const [name, end] of [['resolve', ok], ['reject', fail]] as const) {
+      const wrap = (fn: unknown): unknown => (typeof fn === 'function' ? (x: unknown) => { end(x); return (fn as (x: unknown) => unknown)(x); } : fn);
+      let current = wrap(query[name]);
+      Object.defineProperty(query, name, { configurable: true, enumerable: true, get: () => current, set: (fn: unknown) => { current = wrap(fn); } });
+    }
+  });
+  done.catch(() => undefined); // the caller sees the outcome on the query itself
+  return done;
+}
+
+/** Leads a statement that holds a structural value this file cannot render, so the follower reads it as unparsable (an invalidation), never as a read. */
+const UNREADABLE_DRIVER_SQL = 'UNREADABLE_DRIVER_FRAGMENT';
+
+/**
+ * The text postgres.js sends for a tagged template, as the follower and sampler must see it: an identifier (`sql('pages')`) is its quoted name, a
+ * query fragment is its own text in place, a column builder (`sql({...})`) is what it builds, and only a plain value becomes `$n`. Mirrors
+ * postgres.js `stringify` (vendor/postgres/src/types.js); a value it cannot render puts UNREADABLE_DRIVER_SQL first.
+ */
+function taggedText(strings: readonly string[], args: readonly unknown[], options: unknown): { text: string; params: unknown[] } {
+  const state = { params: [] as unknown[], unreadable: false };
+  const text = renderTagged(strings, args, state, options);
+  return { text: state.unreadable ? `${UNREADABLE_DRIVER_SQL} ${text}` : text, params: state.params };
+}
+type RenderState = { params: unknown[]; unreadable: boolean };
+const isQueryFragment = (v: unknown): v is { strings: string[]; args: unknown[] } =>
+  v instanceof Promise && Array.isArray((v as { strings?: unknown }).strings) && Array.isArray((v as { args?: unknown }).args);
+function renderTagged(strings: readonly string[], args: readonly unknown[], state: RenderState, options: unknown): string {
+  let text = strings[0] ?? '';
+  for (let i = 1; i < strings.length; i++) text += renderValue(text, args[i - 1], state, options) + strings[i];
+  return text;
+}
+function renderValue(before: string, value: unknown, state: RenderState, options: unknown): string {
+  if (isQueryFragment(value)) return renderTagged(value.strings, value.args, state, options);
+  if (Array.isArray(value) && isQueryFragment(value[0])) {
+    return value.map((q) => { if (isQueryFragment(q)) return ' ' + renderTagged(q.strings, q.args, state, options); state.unreadable = true; return ''; }).join('');
+  }
+  const kind = value && typeof value === 'object' ? (value as object).constructor?.name : undefined;
+  if (kind === 'Identifier' && typeof (value as { value?: unknown }).value === 'string') return (value as { value: string }).value;
+  if (kind === 'Parameter') { state.params.push((value as { value?: unknown }).value); return `$${state.params.length}`; }
+  if (kind === 'Builder' || (value && typeof value === 'object' && typeof (value as { build?: unknown }).build === 'function')) {
+    try {
+      const built = (value as { build: (...a: unknown[]) => unknown }).build(before, state.params, [], options);
+      if (typeof built === 'string') return built;
+      if (Array.isArray(built)) return built.join(',');
+    } catch { /* falls through to unreadable */ }
+    state.unreadable = true;
+    return '';
+  }
+  state.params.push(value);
+  return `$${state.params.length}`;
+}
+
+/**
+ * The driver handle a transaction engine exposes (`sql` on Postgres, `db` on PGLite), seen through the same wrapping as `executeRaw`, so a statement sent on it is
+ * followed, sampled and ordered like one sent through the engine. A postgres.js query (a tagged template or `unsafe`) is sent when it is first awaited or started, so
+ * it is wrapped then (`lazy`): one built as a fragment of another query is never sent on its own, and its text is what postgres.js sends (taggedText). Every other member is
+ * the driver's own, called on the driver and keeping its own properties.
+ */
+function viewOfDriver(handle: object, asRaw: (text: string, params: unknown[], send: () => unknown) => unknown): object {
+  const raw = handle as Record<PropertyKey, any> & ((...args: unknown[]) => unknown);
+  /**
+   * Routes a postgres.js query through the wrapping when it is sent. Every way to send one (`await`, `.then`, `.catch`, `.finally`, `.execute()`,
+   * `.forEach()`, a cursor) calls its `handle`, so the wrapping takes `handle` and the query stays the driver's own promise: a cancelled or failed
+   * query rejects to its own caller, a cursor ends as it does without the shadow, and the statement is handed to the driver one microtask after it is
+   * sent, as postgres.js does. A described statement (`.describe()`) runs nothing, so it passes the hold point as a read. A value that is not one
+   * unsent query (a helper, a fragment builder) is returned as it is.
+   */
+  const lazy = (out: unknown, text: string, params: unknown[]): unknown => {
+    if (!isUnsentQuery(out)) return out;
+    const query = out as Promise<unknown> & Record<string, any>;
+    query.handle = function shadowHandle(): Promise<void> {
+      if (query.executed) return Promise.resolve();
+      query.executed = true;
+      const done = settledOf(query);
+      let sent = false;
+      const send = (): Promise<unknown> => {
+        if (!sent) { sent = true; void Promise.resolve().then(() => query.handler(query)); }
+        return done;
+      };
+      try {
+        const routed = query.onlyDescribe ? asRaw(DESCRIBED_SQL, [], send) : asRaw(text, params, send);
+        // The wrapping's own outcome is the query's, which its caller holds; a wrapping that failed before the statement went out still sends it.
+        if (isThenable(routed)) routed.then(undefined, () => { send(); }); else send();
+      } catch { send(); }
+      return Promise.resolve();
+    };
+    return query;
+  };
+  const members = new Map<PropertyKey, { original: unknown; wrapped: unknown }>();
+  const statement = (prop: PropertyKey, fn: Function): Function => {
+    if (prop === 'sql') return function driverTemplate(strings: TemplateStringsArray, ...values: unknown[]) { // PGLite's tagged template
+      let rendered: { query: string; params: unknown[] };
+      try { rendered = renderPgliteTemplate(strings, ...values); } catch { rendered = { query: UNREADABLE_DRIVER_SQL, params: [] }; }
+      return asRaw(rendered.query, rendered.params, () => fn.call(raw, strings, ...values));
+    };
+    if (prop === 'unsafe') return function driverUnsafe(text: unknown, params?: unknown, ...rest: unknown[]) { const out = fn.call(raw, text, params, ...rest); return typeof text === 'string' ? lazy(out, text, Array.isArray(params) ? params : []) : out; };
+    // PGLite sends at the call: the statement goes through the wrapping before it is made.
+    return function driverStatement(text: unknown, ...rest: unknown[]) {
+      return typeof text === 'string' ? asRaw(text, Array.isArray(rest[0]) ? rest[0] : [], () => fn.call(raw, text, ...rest)) : fn.call(raw, text, ...rest);
+    };
+  };
+  const view = new Proxy(raw, {
+    apply(fn, _this, args) { // a postgres.js tagged template: sql`UPDATE ... ${value}`
+      const out = Reflect.apply(fn, raw, args);
+      const strings = args[0] as { raw?: unknown } | undefined;
+      if (!Array.isArray(strings) || !Array.isArray(strings.raw)) return out;
+      const { text, params } = taggedText(strings as string[], args.slice(1), raw.options);
+      return lazy(out, text, params);
+    },
+    get(handleTarget, prop) {
+      const value = Reflect.get(handleTarget, prop, handleTarget);
+      if (typeof value !== 'function') return value;
+      const memo = members.get(prop);
+      if (memo && memo.original === value) return memo.wrapped;
+      const wrapped = DRIVER_STATEMENT_MEMBERS.has(prop) || (prop === 'sql' && typeof raw !== 'function') ? statement(prop, value)
+        // Called with the driver as `this`, and keeps its own properties (postgres.js `sql.typed.bigint`, `sql.types`).
+        : new Proxy(value, { apply: (fn, _this, args) => Reflect.apply(fn, raw, args) });
+      members.set(prop, { original: value, wrapped });
+      return wrapped;
+    },
+  });
+  return view;
 }
 
 function buildProxy<E extends BrainEngine>(engine: E, sink: ShadowSink, opts: ShadowWrapperOptions, inTransaction: boolean, frame: Frame | null, txWrites: TxWrites | null): E {
@@ -245,12 +386,12 @@ function buildProxy<E extends BrainEngine>(engine: E, sink: ShadowSink, opts: Sh
     const sampled = (): Array<{ done: Promise<void> }> => (scope && outermost ? [...scope.running].filter((c) => !c.callback) : []);
     const laneCalls = (): LaneEntry[] => (lane ? [...lane.running].filter((c) => !c.callback && (outermost || (mine !== undefined && c !== mine && startedWithin(c, mine)))) : []);
     // With no sampler scope, a callback that returned a plain value and left nothing held or running ends at once, as it would without the shadow.
-    if (!scope && !isThenable(out) && !lane?.gate && !laneCalls().length) return out;
+    if (!scope && !isThenable(out) && !(lane && laneHeld(lane, mine)) && !laneCalls().length) return out;
     const drain = async (): Promise<void> => {
       const until = Date.now() + DRAIN_MS;
       for (;;) {
         if (scope?.gate) { await scope.gate; continue; }
-        if (lane?.gate) { await lane.gate; continue; }
+        if (lane?.gate && laneHeld(lane, mine)) { await lane.gate; continue; } // a hold that lets this nested transaction's calls through lets it end too
         const open = [...sampled(), ...laneCalls()];
         if (!open.length) return;
         if (Date.now() >= until) { if (sampled().length) { try { scope!.unsettled('drain_timeout'); } catch { /* the shadow never fails a call */ } } return; } // the transaction ends as it would without the shadow; its unfinished samples are uncomparable
@@ -290,11 +431,12 @@ function buildProxy<E extends BrainEngine>(engine: E, sink: ShadowSink, opts: Sh
   const held = (name: PropertyKey, fn: Function, scope: TxScope | undefined, lane: TxLane | undefined): Function => SYNC_MEMBERS.has(name) ? fn : function heldMember(this: unknown, ...args: unknown[]) {
     const order = ++callOrder;
     const callback = hasFunctionArg(args);
+    const caller = lane ? laneCall.getStore() : undefined; // the lane call this one is made from: a hold may let a nested transaction's own calls through
     if (scope) scope.inflight++; // counted from the call to the settling of its promise, queued ones included (beforeCommit pins nothing while one is open)
     const start = (): unknown => {
       // A held call starts later from whichever call opens its gate: bound to its own caller's async context, so request-scoped state (a stored slug spelling, a caller record) stays its own.
-      const queue = scope?.gate ? scope.waiters : lane?.gate ? lane.waiters : undefined;
-      if (queue) return new Promise((resolve, reject) => { enqueue(queue, order, AsyncResource.bind(() => { try { resolve(start()); } catch (error) { reject(error); } })); });
+      const queue = scope?.gate ? scope.waiters : lane && laneHeld(lane, caller) ? lane.waiters : undefined;
+      if (queue) return new Promise((resolve, reject) => { enqueue(queue, order, AsyncResource.bind(() => { try { resolve(start()); } catch (error) { reject(error); } }), caller); });
       // In the lane from before the member is entered (a callback member can run its callback at once), until it settles; its own pre-read finds this entry and does not wait for it.
       let settle!: () => void;
       const entry: LaneEntry | undefined = lane ? { callback, done: new Promise<void>((r) => { settle = r; }), parent: laneCall.getStore() } : undefined;
@@ -360,23 +502,44 @@ function buildProxy<E extends BrainEngine>(engine: E, sink: ShadowSink, opts: Sh
     return kind === 'raw' ? followRaw(ctx, fn) : followWrite(ctx, name, fn);
   };
 
+  /** The full wrapping of one engine member: the shadow read or transaction wrapper or the follower's, then the sampler's notes and wrap, the writer observer and the hold point. */
+  const compose = (prop: PropertyKey, value: Function, target: E): Function => {
+    let wrapped: Function;
+    if (isShadowReadMember(prop)) wrapped = wrapRead(prop, value);
+    else if (TX_MEMBERS.has(prop)) wrapped = wrapTransaction(value);
+    else if (follow && typeof prop === 'string') wrapped = wrapFollowed(prop, value, target);
+    else wrapped = value.bind(target);
+    const scope = txWrites?.scope;
+    if (scope && typeof prop === 'string' && !isShadowReadMember(prop) && !TX_MEMBERS.has(prop)) wrapped = noted(prop, wrapped, scope, txWrites!.path);
+    if (opts.writes && typeof prop === 'string' && !isShadowReadMember(prop) && !TX_MEMBERS.has(prop)) wrapped = opts.writes.wrap(prop, wrapped, { engine, inTransaction, mayWrite, scope, nested: txWrites?.nested });
+    if (opts.onCommittedWrite && typeof prop === 'string' && !isShadowReadMember(prop) && !TX_MEMBERS.has(prop)) wrapped = wrapObserved(prop, wrapped);
+    if (scope || txWrites?.lane) wrapped = held(prop, wrapped, scope, txWrites?.lane);
+    if (prop === 'withReservedConnection' && opts.writes && !inTransaction) { const reserved = wrapped; wrapped = function laneReserved(this: unknown, callback: unknown, ...rest: unknown[]) { return reserved.call(this, typeof callback === 'function' ? (conn: unknown) => (callback as (conn: unknown) => unknown)(laneConnection(conn)) : callback, ...rest); }; }
+    return wrapped;
+  };
+
+  /**
+   * Sends one driver statement (`send`) as if it were `executeRaw(text, params)`: the follower publishes its raw-SQL items, the sampler notes it, the writer observer
+   * marks the transaction, and the hold point keeps its place behind a running shadow pre-read. `params` serve only that look at the statement; `send` sends it as written.
+   */
+  const asRaw = (target: E, text: string, params: unknown[], send: () => unknown): unknown =>
+    compose('executeRaw', function driverStatement() { return send(); }, target).call(target, text, params);
+
+  const driverViews = new WeakMap<object, object>();
+  const driverView = (handle: object, target: E): object => {
+    let view = driverViews.get(handle);
+    if (!view) { view = viewOfDriver(handle, (text, params, send) => asRaw(target, text, params, send)); driverViews.set(handle, view); }
+    return view;
+  };
+
   const proxy = new Proxy(engine, {
     get(target, prop) {
       const value = Reflect.get(target, prop, target);
+      if (inTransaction && txWrites && DRIVER_HANDLES.has(prop) && value && (typeof value === 'object' || typeof value === 'function') && !isMethod(target, prop)) return driverView(value, target);
       if (typeof value !== 'function' || !isMethod(target, prop)) return value;
       const hit = cache.get(prop);
       if (hit && hit.original === value) return hit.wrapped;
-      let wrapped: Function;
-      if (isShadowReadMember(prop)) wrapped = wrapRead(prop, value);
-      else if (TX_MEMBERS.has(prop)) wrapped = wrapTransaction(value);
-      else if (follow && typeof prop === 'string') wrapped = wrapFollowed(prop, value, target);
-      else wrapped = value.bind(target);
-      const scope = txWrites?.scope;
-      if (scope && typeof prop === 'string' && !isShadowReadMember(prop) && !TX_MEMBERS.has(prop)) wrapped = noted(prop, wrapped, scope, txWrites!.path);
-      if (opts.writes && typeof prop === 'string' && !isShadowReadMember(prop) && !TX_MEMBERS.has(prop)) wrapped = opts.writes.wrap(prop, wrapped, { engine, inTransaction, mayWrite, scope, nested: txWrites?.nested });
-      if (opts.onCommittedWrite && typeof prop === 'string' && !isShadowReadMember(prop) && !TX_MEMBERS.has(prop)) wrapped = wrapObserved(prop, wrapped);
-      if (scope || txWrites?.lane) wrapped = held(prop, wrapped, scope, txWrites?.lane);
-      if (prop === 'withReservedConnection' && opts.writes && !inTransaction) { const reserved = wrapped; wrapped = function laneReserved(this: unknown, callback: unknown, ...rest: unknown[]) { return reserved.call(this, typeof callback === 'function' ? (conn: unknown) => (callback as (conn: unknown) => unknown)(laneConnection(conn)) : callback, ...rest); }; }
+      const wrapped = compose(prop, value, target);
       cache.set(prop, { original: value, wrapped });
       return wrapped;
     },

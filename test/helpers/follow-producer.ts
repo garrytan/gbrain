@@ -261,3 +261,253 @@ export async function nestedFollowedWritesStayInTheirSavepoint(primary: BrainEng
   if (ms > 1_500) throw new Error(`a write inside a nested transaction waited on that transaction (${ms} ms)`);
   if (h.batches.flatMap((b) => b.items).some((i) => i.kind === 'relation' && i.reason === 'pre_read_busy')) throw new Error('a nested write was planned pre_read_busy');
 }
+
+/** Writes keep their submission order while a sibling nested transaction runs: an unset sent before a set of the same key never lands after it. */
+export async function writesKeepOrderBesideNestedTransaction(primary: BrainEngine): Promise<void> {
+  const h = followHarness(primary);
+  await primary.setConfig('test.follow.order', 'first');
+  let release!: () => void; const latch = new Promise<void>((r) => { release = r; });
+  await h.engine.transaction(async (tx) => {
+    const sibling = tx.transaction(async (nested) => { await latch; await nested.getConfig('test.follow.order'); });
+    const unset = tx.unsetConfig('test.follow.order');
+    await new Promise((r) => setTimeout(r, 20));
+    const set = tx.setConfig('test.follow.order', 'replacement');
+    setTimeout(release, 50);
+    await Promise.all([sibling, unset, set]);
+  });
+  const [row] = await primary.executeRaw<{ value: string }>("SELECT value FROM config WHERE key = 'test.follow.order'");
+  if (row?.value !== 'replacement') throw new Error(`the unset landed after the later set (value ${JSON.stringify(row?.value)})`);
+}
+
+/**
+ * A statement sent straight to the transaction's driver handle (`tx.sql` on Postgres, `tx.db` on PGLite) while a sibling's shadow pre-read fails:
+ * the failed read must not undo it, and the follower must see its table, as it does for the same statement sent through `executeRaw`.
+ */
+export async function driverWriteSurvivesFailedPreRead(primary: BrainEngine): Promise<void> {
+  const proto = Object.getPrototypeOf(primary) as Record<string, unknown>;
+  proto.testBadPreRead = async () => undefined;
+  // The failing pre-read is on another table, so the follower's pages item can only come from the driver writes (items on one table merge).
+  WRITE_MAP.testBadPreRead = { tables: ['tags'], plan: () => [{ relation: 'tags', sel: { tag: 'driver' }, del: true }] };
+  restorers.push(() => { delete proto.testBadPreRead; delete WRITE_MAP.testBadPreRead; });
+  const h = followHarness(primary, { preReadSql: 'SELECT 1/(extract(epoch FROM clock_timestamp()) * 0)::int FROM pg_sleep(0.3)' });
+  await primary.putPage('people/driver', PAGE('Driver'));
+  await primary.putPage('people/driver-two', PAGE('Driver Two'));
+  await h.engine.transaction(async (tx) => {
+    const driver = (tx as unknown as { sql?: any; db?: any });
+    const send = (text: string): Promise<unknown> => (primary.kind === 'postgres' ? driver.sql.unsafe(text) : driver.db.query(text));
+    await Promise.all([
+      (tx as unknown as { testBadPreRead(): Promise<void> }).testBadPreRead(),
+      (async () => { // sent once the pre-read has opened its savepoint
+        await new Promise((r) => setTimeout(r, 50));
+        await send("UPDATE pages SET title = 'Driver Write' WHERE slug = 'people/driver'");
+      })(),
+      (async () => {
+        await new Promise((r) => setTimeout(r, 60));
+        if (primary.kind === 'postgres') await driver.sql`UPDATE pages SET title = ${'Tagged Write'} WHERE slug = ${'people/driver-two'}`;
+        else await driver.db.query('UPDATE pages SET title = $1 WHERE slug = $2', ['Tagged Write', 'people/driver-two']);
+      })(),
+    ]);
+  });
+  const lost = [
+    ...((await primary.getPage('people/driver'))?.title === 'Driver Write' ? [] : ['the driver page update']),
+    ...((await primary.getPage('people/driver-two'))?.title === 'Tagged Write' ? [] : ['the parameterized driver update']),
+  ];
+  if (lost.length) throw new Error(`the failed shadow pre-read rolled back driver writes that reported success: ${lost.join(', ')}`);
+  const items = h.batches.flatMap((b) => b.items);
+  if (!items.some((i) => i.kind === 'relation' && i.relation === 'pages' && i.reason === 'raw_sql')) throw new Error(`the follower did not see the driver writes: ${JSON.stringify(items)}`);
+}
+
+/**
+ * Postgres only: a postgres.js query built as a fragment of another query (sql`... ${sql`slug = ${v}`}`) is never sent on its own through the driver
+ * handle's wrapping, a query keeps its own members (`.values()`), and the follower still sees the statement.
+ */
+export async function driverFragmentStaysAFragment(primary: BrainEngine): Promise<void> {
+  const h = followHarness(primary);
+  await primary.putPage('people/fragment', PAGE('Fragment'));
+  let values: unknown;
+  await h.engine.transaction(async (tx) => {
+    const sql = (tx as unknown as { sql: any }).sql;
+    await sql`UPDATE pages SET title = ${'Fragment Write'} WHERE ${sql`slug = ${'people/fragment'}`}`;
+    values = await sql`SELECT title FROM pages WHERE slug = ${'people/fragment'}`.values();
+  });
+  if ((await primary.getPage('people/fragment'))?.title !== 'Fragment Write') throw new Error('the update built from a fragment did not land');
+  if (JSON.stringify(values) !== JSON.stringify([['Fragment Write']])) throw new Error(`.values() lost its row shape: ${JSON.stringify(values)}`);
+  const items = h.batches.flatMap((b) => b.items);
+  if (!items.some((i) => i.kind === 'relation' && i.relation === 'pages' && i.reason === 'raw_sql')) throw new Error(`the follower did not see the update: ${JSON.stringify(items)}`);
+}
+
+/**
+ * Postgres only: a driver statement whose write target or write comes from a structural interpolation (an identifier
+ * `sql('pages')`, a column builder `sql({...})`, or a query fragment holding the write itself) is seen by the follower
+ * as the statement postgres.js sends, never as a read.
+ */
+export async function driverStructuralWriteIsSeen(primary: BrainEngine): Promise<void> {
+  await primary.putPage('people/structural', PAGE('Structural'));
+  const pageId = Number((await primary.getPage('people/structural'))!.id);
+  const cases: Array<[string, (sql: any) => Promise<unknown>]> = [
+    ['an identifier as the UPDATE target', (sql) => sql`UPDATE ${sql('pages')} SET title = ${'Identifier Write'} WHERE slug = ${'people/structural'}`],
+    ['a column builder in the INSERT', (sql) => sql`INSERT INTO ${sql('tags')} ${sql({ page_id: pageId, tag: 'builder' }, 'page_id', 'tag')} ON CONFLICT DO NOTHING`],
+    ['a modifying CTE given as a fragment', (sql) => sql`WITH w AS (${sql`UPDATE pages SET title = ${'Cte Write'} WHERE slug = ${'people/structural'} RETURNING id`}) SELECT count(*) FROM w`],
+  ];
+  const missed: string[] = [];
+  for (const [name, run] of cases) {
+    const h = followHarness(primary);
+    await h.engine.transaction(async (tx) => { await run((tx as unknown as { sql: any }).sql); });
+    const items = h.batches.flatMap((b) => b.items);
+    const relation = name.includes('INSERT') ? 'tags' : 'pages';
+    if (!items.some((i) => i.kind === 'invalid' || (i.kind === 'relation' && i.relation === relation))) missed.push(`${name}: ${JSON.stringify(items)}`);
+    restoreFollowProbes();
+  }
+  if ((await primary.getPage('people/structural'))?.title !== 'Cte Write') throw new Error('the structural driver writes did not land');
+  if (!(await primary.getTags('people/structural')).includes('builder')) throw new Error('the builder insert did not land');
+  if (missed.length) throw new Error(`the follower read a driver write as a read:\n${missed.join('\n')}`);
+}
+
+/** Postgres only: a driver helper with its own properties (`sql.typed.bigint`, `sql.types.bigint`) keeps them through the shadow's view of the handle. */
+export async function driverHelpersKeepTheirProperties(primary: BrainEngine): Promise<void> {
+  const h = followHarness(primary);
+  const got = await h.engine.transaction(async (tx) => {
+    const sql = (tx as unknown as { sql: any }).sql;
+    const [a] = await sql`SELECT ${sql.typed.bigint(1n)}::bigint AS n`;
+    const [b] = await sql`SELECT ${sql.types.bigint(2n)}::bigint AS n`;
+    return [a.n, b.n];
+  });
+  if (JSON.stringify(got.map(String)) !== JSON.stringify(['1', '2'])) throw new Error(`typed helpers returned ${got.map(String)}`);
+}
+
+/** PGLite only: a write sent with the transaction handle's tagged template (`tx.db.sql`) is seen by the follower. */
+export async function pgliteTemplateWriteIsSeen(primary: BrainEngine): Promise<void> {
+  await primary.putPage('people/template', PAGE('Template'));
+  const h = followHarness(primary);
+  await h.engine.transaction(async (tx) => {
+    const db = (tx as unknown as { db: any }).db;
+    await db.sql`UPDATE pages SET title = ${'Template Write'} WHERE slug = ${'people/template'}`;
+  });
+  if ((await primary.getPage('people/template'))?.title !== 'Template Write') throw new Error('the template write did not land');
+  const items = h.batches.flatMap((b) => b.items);
+  if (!items.some((i) => i.kind === 'relation' && i.relation === 'pages' && i.reason === 'raw_sql')) throw new Error(`the follower did not see the template write: ${JSON.stringify(items)}`);
+}
+
+/**
+ * A nested transaction that waits for a later call of its enclosing transaction, while an outer write waits for the nested one: the committed result is
+ * the one the same calls give with shadow off. Two cases: the nested transaction waits for a later outer read and then rolls back (the driver runs the
+ * outer delete inside the nested savepoint, so the rollback undoes it), and it waits for a later outer write (that write must not overtake the earlier one).
+ */
+export async function nestedThatWaitsForALaterCallMatchesShadowOff(primary: BrainEngine): Promise<void> {
+  const rolledBack = async (eng: BrainEngine) => {
+    await primary.setConfig('test.follow.trapped', 'present');
+    let opened!: () => void; const nestedOpen = new Promise<void>((r) => { opened = r; });
+    let flush!: () => void; const flushed = new Promise<void>((r) => { flush = r; });
+    await eng.transaction(async (tx) => {
+      const nested = tx.transaction(async (inner) => { await inner.executeRaw('SELECT 1'); opened(); await flushed; throw new Error('nested rollback'); })
+        .catch((e: Error) => { if (e.message !== 'nested rollback') throw e; });
+      await nestedOpen;
+      const write = tx.unsetConfig('test.follow.trapped');
+      await tx.executeRaw('SELECT 1'); // a later outer call the nested transaction waits for
+      flush();
+      await write;
+      await nested;
+    });
+    return (await primary.getConfig('test.follow.trapped')) ?? 'none';
+  };
+  const overtaken = async (eng: BrainEngine) => {
+    await primary.setConfig('test.follow.order', 'original');
+    let opened!: () => void; const nestedOpen = new Promise<void>((r) => { opened = r; });
+    let release!: () => void; const latch = new Promise<void>((r) => { release = r; });
+    await eng.transaction(async (tx) => {
+      const nested = tx.transaction(async (inner) => { await inner.executeRaw('SELECT 1'); opened(); await latch; });
+      await nestedOpen;
+      const unset = tx.unsetConfig('test.follow.order');
+      await tx.setConfig('test.follow.order', 'replacement'); // a later outer write the nested transaction waits for
+      release();
+      await Promise.all([nested, unset]);
+    });
+    return (await primary.getConfig('test.follow.order')) ?? 'none';
+  };
+  const wrong: string[] = [];
+  for (const [name, run] of [['a nested rollback after a later outer read', rolledBack], ['a later outer write', overtaken]] as const) {
+    const off = await run(primary);
+    const on = await run(followHarness(primary).engine);
+    if (on !== off) wrong.push(`${name}: '${on}' with shadow on, '${off}' with shadow off`);
+  }
+  if (wrong.length) throw new Error(`shadow mode changed what a transaction committed: ${wrong.join('; ')}`);
+}
+
+/** Postgres only: a driver query started with `.execute()` or `.forEach()` waits behind a shadow pre-read like an awaited one, so the pre-read's failed savepoint never undoes it. */
+export async function driverNativeExecutionWaitsForPreRead(primary: BrainEngine): Promise<void> {
+  const proto = Object.getPrototypeOf(primary) as Record<string, unknown>;
+  proto.testBadPreRead = async () => undefined;
+  WRITE_MAP.testBadPreRead = { tables: ['tags'], plan: () => [{ relation: 'tags', sel: { tag: 'driver' }, del: true }] };
+  restorers.push(() => { delete proto.testBadPreRead; delete WRITE_MAP.testBadPreRead; });
+  const h = followHarness(primary, { preReadSql: 'SELECT 1/(extract(epoch FROM clock_timestamp()) * 0)::int FROM pg_sleep(0.3)' });
+  await primary.putPage('people/execute', PAGE('Execute'));
+  await primary.putPage('people/for-each', PAGE('For Each'));
+  await h.engine.transaction(async (tx) => {
+    const sql = (tx as unknown as { sql: any }).sql;
+    await Promise.all([
+      (tx as unknown as { testBadPreRead(): Promise<void> }).testBadPreRead(),
+      (async () => { await new Promise((r) => setTimeout(r, 50)); await sql.unsafe("UPDATE pages SET title = 'Execute Write' WHERE slug = 'people/execute'").execute(); })(),
+      (async () => { await new Promise((r) => setTimeout(r, 60)); await sql`UPDATE pages SET title = ${'For Each Write'} WHERE slug = ${'people/for-each'} RETURNING id`.forEach(() => undefined); })(),
+    ]);
+  });
+  const lost = [
+    ...((await primary.getPage('people/execute'))?.title === 'Execute Write' ? [] : ['the .execute() update']),
+    ...((await primary.getPage('people/for-each'))?.title === 'For Each Write' ? [] : ['the .forEach() update']),
+  ];
+  if (lost.length) throw new Error(`a driver query started without an await crossed the pre-read hold and was rolled back: ${lost.join(', ')}`);
+}
+
+/**
+ * Postgres only: driver queries keep their native contract with shadow on: a query started with `.then()` lands before one started after it with
+ * `.execute()`, a cursor that ends releases its transaction at once, a described write writes nothing and publishes nothing, and a cancelled query
+ * that waited behind a pre-read rejects only to its caller (no unhandled rejection).
+ */
+export async function driverQueriesKeepTheirContract(primary: BrainEngine): Promise<void> {
+  const problems: string[] = [];
+  await primary.setConfig('test.follow.native', 'original');
+  const value = async () => (await primary.executeRaw<{ value: string }>("SELECT value FROM config WHERE key = 'test.follow.native'"))[0]?.value;
+  const unseeded = wrapShadowEngine(primary, { counters: newMirrorCounters(), active: () => true, offer: () => undefined }, { sampleRate: 1, onCommittedWrite: () => undefined });
+  for (const [mode, engine] of [['unseeded shadow', unseeded], ['follow', followHarness(primary).engine]] as const) {
+    await engine.transaction(async (tx) => {
+      const sql = (tx as unknown as { sql: any }).sql;
+      const first = sql.unsafe("UPDATE config SET value = 'first' WHERE key = 'test.follow.native'").then(() => undefined);
+      const second = sql.unsafe("UPDATE config SET value = 'second' WHERE key = 'test.follow.native'").execute();
+      await Promise.all([first, second]);
+    });
+    if ((await value()) !== 'second') problems.push(`${mode}: a .then() write landed after the .execute() write made after it`);
+    await primary.setConfig('test.follow.native', 'original');
+  }
+  const h = followHarness(primary);
+  const t0 = Date.now();
+  await h.engine.transaction(async (tx) => { for await (const _rows of (tx as unknown as { sql: any }).sql`SELECT 1 WHERE false`.cursor(2)) { /* none */ } });
+  if (Date.now() - t0 > 1_000) problems.push(`an ended cursor held its transaction open for ${Date.now() - t0} ms`);
+  const before = h.batches.length;
+  await h.engine.transaction(async (tx) => { await (tx as unknown as { sql: any }).sql.unsafe("UPDATE config SET value = 'described' WHERE key = 'test.follow.native'").describe(); });
+  if ((await value()) !== 'original') problems.push('a described write changed the row');
+  const described = h.batches.slice(before).flatMap((b) => b.items);
+  if (described.length) problems.push(`a described write published ${JSON.stringify(described)}`);
+  restoreFollowProbes();
+  const slow = followHarness(primary, { preReadSql: 'SELECT pg_sleep(0.3)' });
+  await primary.putPage('people/cancel', PAGE('Cancel'));
+  const unhandled: unknown[] = [];
+  const onUnhandled = (e: unknown): void => { unhandled.push((e as { code?: unknown })?.code ?? e); };
+  process.on('unhandledRejection', onUnhandled);
+  try {
+    let caught: unknown;
+    // postgres.js fails a transaction in which a statement rejected, a cancelled one included: the transaction rejects with the same error.
+    const ended = await slow.engine.transaction(async (tx) => {
+      const busy = tx.deletePage('people/cancel'); // its pre-read holds the lane
+      await new Promise((r) => setTimeout(r, 50));
+      const q = (tx as unknown as { sql: any }).sql.unsafe('SELECT 1');
+      const handled = q.catch((e: { code?: unknown }) => e.code);
+      await q.cancel();
+      caught = await handled;
+      await busy;
+    }).then(() => 'committed', (e: { code?: unknown }) => e.code);
+    await new Promise((r) => setTimeout(r, 50));
+    if (caught !== '57014') problems.push(`the cancelled query did not reject to its caller (${String(caught)})`);
+    if (ended !== '57014') problems.push(`the transaction did not end with the cancelled query's error (${String(ended)})`);
+    if (unhandled.length) problems.push(`the cancelled query raised an unhandled rejection: ${JSON.stringify(unhandled)}`);
+  } finally { process.off('unhandledRejection', onUnhandled); }
+  if (problems.length) throw new Error(problems.join('\n'));
+}

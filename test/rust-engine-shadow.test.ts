@@ -152,17 +152,21 @@ describe('wrapper', () => {
     expect(q.counters.shed_too_large).toBe(2);
   });
 
-  test('a function-valued accessor such as the Postgres sql client keeps its identity and properties, on the engine and in a transaction', async () => {
-    const client = Object.assign(() => 'tag', { unsafe: async () => [], options: { max: 7 }, reserve: async () => ({}) });
+  test('a function-valued accessor such as the Postgres sql client keeps its identity on the engine, and its properties in a transaction', async () => {
+    const reserved = {};
+    const client = Object.assign(() => 'tag', { unsafe: async (_text: string) => ['row'], options: { max: 7 }, reserve: async () => reserved });
     const primary = fakePrimary();
     Object.defineProperty(primary, 'sql', { get: () => client });
     const engine = wrapShadowEngine(primary, sink(), { sampleRate: 1 });
     expect((engine as unknown as { sql: unknown }).sql).toBe(client);
     await engine.transaction(async (tx) => {
+      // In a transaction the handle is the shadow's view of it (its statements are seen like executeRaw): one object for every read, with the client's own members.
       const inner = (tx as unknown as { sql: typeof client }).sql;
-      expect(inner).toBe(client);
-      expect(inner.options.max).toBe(7);
-      expect(typeof inner.unsafe).toBe('function');
+      expect((tx as unknown as { sql: typeof client }).sql).toBe(inner);
+      expect(typeof inner).toBe('function');
+      expect(inner.options).toBe(client.options);
+      expect(await inner.reserve()).toBe(reserved);
+      expect(await inner.unsafe('SELECT 1')).toEqual(['row']);
     });
   });
 

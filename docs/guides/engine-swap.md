@@ -125,6 +125,7 @@ never a pass. With no shadow running, every criterion is `missing`.
    The outermost transaction's commit or rollback waits until every started sampled write has been sent, so a sampled write is never sent after its transaction ended; it also waits, at most
    2 seconds, for the calls its callback started and did not await. If one is still unfinished then, the transaction ends as it would without the shadow and the samples whose write had not finished are
    `uncomparable` (`drain_timeout`).
+   The follower's own read of the rows a write will change ([ENGINES.md](../ENGINES.md), Follow) waits the same way in each transaction, and a fault makes that wait slow: each wait lasts at most 2 seconds, so a sync whose reads all fail slowly takes longer.
    Only writes of the outermost transaction are compared; one inside a nested transaction (a savepoint) is
    `uncomparable` (`in_transaction`). A link or delete write in a transaction is `uncomparable` when any other write of the transaction, before or after it, could change what it reads back
    (`in_transaction_prior_write`, `in_transaction_later_write`): only a version row and the bookkeeping below do not count, including the `links` effect's own statements (its row locks,

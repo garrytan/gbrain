@@ -728,12 +728,14 @@ export class CalendarClient extends GoogleApiClient {
 
 // ── People (Contacts) ────────────────────────────────────────────────────────
 
+interface RawFieldMetadata { primary?: boolean; source?: { type?: string } }
+
 interface RawPerson {
   resourceName: string;
   etag?: string;
   names?: Array<{ displayName?: string; metadata?: { primary?: boolean } }>;
-  emailAddresses?: Array<{ value?: string }>;
-  phoneNumbers?: Array<{ value?: string; canonicalForm?: string }>;
+  emailAddresses?: Array<{ value?: string; metadata?: RawFieldMetadata }>;
+  phoneNumbers?: Array<{ value?: string; canonicalForm?: string; metadata?: RawFieldMetadata }>;
   organizations?: Array<{ name?: string; title?: string; metadata?: { primary?: boolean } }>;
   memberships?: Array<{ contactGroupMembership?: { contactGroupResourceName?: string } }>;
   metadata?: { deleted?: boolean };
@@ -765,6 +767,30 @@ const SYSTEM_CONTACT_GROUPS = new Set(
 /** Bounded directory walk: 1000 groups a page, ten pages; past that the result is explicitly incomplete. */
 const CONTACT_GROUP_PAGES = 10;
 
+/** People API sources of the account a card is linked to (READ_SOURCE_TYPE_PROFILE), not values written on the card. */
+const LINKED_PROFILE_SOURCES = new Set(['ACCOUNT', 'PROFILE', 'DOMAIN_PROFILE']);
+
+/**
+ * #10556: a card linked to a Google account also lists every value on that account (in a Workspace domain, the
+ * account's primary address, its aliases and its directory phone), so a card whose old address became an alias on
+ * someone else's account claimed that person's addresses and phone. A contact keeps the values on its own card (an
+ * entry with no source is the card's). A card with no address of its own keeps the linked account's primary address
+ * (else its first), and one left with neither an address nor a phone keeps the account's primary phone, so it stays
+ * matchable.
+ */
+function cardValues(p: RawPerson): { emails: string[]; phones: string[] } {
+  const pick = <T extends { metadata?: RawFieldMetadata }>(entries: T[] | undefined, value: (e: T) => string, valid: (v: string) => boolean) => {
+    const all = (entries ?? []).filter((e) => valid(value(e)));
+    const card = [...new Set(all.filter((e) => !LINKED_PROFILE_SOURCES.has(e.metadata?.source?.type ?? '')).map(value))];
+    const fallback = all.find((e) => e.metadata?.primary) ?? all[0];
+    return { card, fallback: fallback ? [value(fallback)] : [] };
+  };
+  const emails = pick(p.emailAddresses, (e) => (e.value ?? '').trim().toLowerCase(), (v) => v.includes('@'));
+  const phones = pick(p.phoneNumbers, (n) => (n.canonicalForm ?? n.value ?? '').trim(), (v) => v.length > 0);
+  const kept = emails.card.length > 0 ? emails.card : emails.fallback;
+  return { emails: kept, phones: phones.card.length > 0 || kept.length > 0 ? phones.card : phones.fallback };
+}
+
 function contactData(p: RawPerson): ContactData {
   const primaryName = p.names?.find((n) => n.metadata?.primary) ?? p.names?.[0];
   const primaryOrg = p.organizations?.find((o) => o.metadata?.primary) ?? p.organizations?.[0];
@@ -772,12 +798,7 @@ function contactData(p: RawPerson): ContactData {
     resourceName: p.resourceName,
     ...(p.etag ? { etag: p.etag } : {}),
     displayName: primaryName?.displayName ?? null,
-    emails: (p.emailAddresses ?? [])
-      .map((e) => (e.value ?? '').trim().toLowerCase())
-      .filter((e) => e.includes('@')),
-    phones: [...new Set((p.phoneNumbers ?? [])
-      .map((n) => (n.canonicalForm ?? n.value ?? '').trim())
-      .filter((n) => n.length > 0))],
+    ...cardValues(p),
     organization: primaryOrg?.name ?? null,
     title: primaryOrg?.title ?? null,
     groups: [...new Set((p.memberships ?? [])

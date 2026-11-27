@@ -14,7 +14,9 @@ import type { PostgresEngine } from '../../src/core/postgres-engine.ts';
 import type { Invalidation } from '../../src/shadow/invalidations.ts';
 import { hasDatabase } from './helpers.ts';
 import { persistencePostgresTemplate } from '../helpers/persistence-postgres.ts';
-import { busyPreReadIsRelationLevel, nestedFollowedWritesStayInTheirSavepoint, finishedNestedIsNotBusy, heldCallKeepsItsContext, heldCallRollsBackWithItsTransaction, outerWriteSurvivesNestedRollback, sampledSiblingDoesNotWaitForItself, unawaitedFollowedWriteCommits, syncThrowRollsBackHeldWrite, failedPreReadKeepsSiblingWrites, failedPreReadKeepsTransaction, followHarness, PAGE, restoreFollowProbes } from '../helpers/follow-producer.ts';
+import { publicationConcurrency, tryAcquirePublicationCapacity } from '../../src/core/persistence/pool-capacity.ts';
+import type { BrainEngine } from '../../src/core/engine.ts';
+import { busyPreReadIsRelationLevel, driverFragmentStaysAFragment, driverNativeExecutionWaitsForPreRead, driverQueriesKeepTheirContract, nestedThatWaitsForALaterCallMatchesShadowOff, driverHelpersKeepTheirProperties, driverStructuralWriteIsSeen, driverWriteSurvivesFailedPreRead, writesKeepOrderBesideNestedTransaction, nestedFollowedWritesStayInTheirSavepoint, finishedNestedIsNotBusy, heldCallKeepsItsContext, heldCallRollsBackWithItsTransaction, outerWriteSurvivesNestedRollback, sampledSiblingDoesNotWaitForItself, unawaitedFollowedWriteCommits, syncThrowRollsBackHeldWrite, failedPreReadKeepsSiblingWrites, failedPreReadKeepsTransaction, followHarness, PAGE, restoreFollowProbes } from '../helpers/follow-producer.ts';
 
 const d = hasDatabase() ? describe : describe.skip;
 
@@ -52,6 +54,23 @@ d('shadow follow producer on Postgres', () => {
     expect(items.filter((i) => i.kind !== 'rows')).toEqual([]);
   }, 60_000);
 
+  test('a transaction\'s sql handle keys the publication counter the same with shadow on as off', async () => {
+    // pool-capacity.ts ordinaryPool keys an in-process counter on tx.sql, which shadow mode replaces with a view inside a
+    // transaction. The view must be one object per transaction and pass options through, or the counter splits.
+    const measure = (e: BrainEngine) => e.transaction(async (tx) => {
+      const sql = (tx as unknown as { sql: unknown }).sql;
+      const held: Array<() => void> = [];
+      for (let release = tryAcquirePublicationCapacity(tx); release && held.length < 20; release = tryAcquirePublicationCapacity(tx)) held.push(release);
+      let nestedShares = true;
+      await tx.transaction(async (inner) => { nestedShares = (inner as unknown as { sql: unknown }).sql === sql; });
+      held.forEach((release) => release());
+      return { stable: (tx as unknown as { sql: unknown }).sql === sql, concurrency: publicationConcurrency(tx), acquired: held.length, nestedShares };
+    });
+    const off = await measure(engine);
+    const on = await measure(followHarness(engine).engine);
+    expect(off.acquired).toBeGreaterThan(0);
+    expect(on).toEqual(off);
+  }, 60_000);
   test('a failed pre-read does not abort the transaction around it', async () => { await failedPreReadKeepsTransaction(engine); }, 60_000);
   test('a failed pre-read does not undo sibling writes of the transaction that were in flight around it (pipelined)', async () => { await failedPreReadKeepsSiblingWrites(engine); }, 60_000);
   test('a pre-read waits for a running nested transaction, whose own followed write never waits for it: both commit with no stall', async () => { await busyPreReadIsRelationLevel(engine); }, 60_000);
@@ -59,6 +78,14 @@ d('shadow follow producer on Postgres', () => {
   test('with write sampling on too, a call the sampler held does not wait for itself when it is let go', async () => { await sampledSiblingDoesNotWaitForItself(engine); }, 60_000);
   test('a followed write the callback did not await is sent before the COMMIT and commits', async () => { await unawaitedFollowedWriteCommits(engine); }, 60_000);
   test('followed writes inside a nested transaction stay in its savepoint and never wait on it', async () => { await nestedFollowedWritesStayInTheirSavepoint(engine); }, 60_000);
+  test('writes keep their submission order beside a running nested transaction', async () => { await writesKeepOrderBesideNestedTransaction(engine); }, 60_000);
+  test('a driver-handle write survives a failed shadow pre-read and reaches the follower', async () => { await driverWriteSurvivesFailedPreRead(engine); }, 60_000);
+  test('a driver query fragment is never sent on its own, and a query keeps .values()', async () => { await driverFragmentStaysAFragment(engine); }, 60_000);
+  test('a driver write whose target or statement comes from an identifier, a builder or a fragment is seen as a write', async () => { await driverStructuralWriteIsSeen(engine); }, 60_000);
+  test('a driver helper keeps its own properties (sql.typed, sql.types) inside a shadowed transaction', async () => { await driverHelpersKeepTheirProperties(engine); }, 60_000);
+  test('a nested transaction that waits for a later outer call commits what it commits with shadow off (a nested rollback, a later outer write)', async () => { await nestedThatWaitsForALaterCallMatchesShadowOff(engine); }, 60_000);
+  test('a driver query started with .execute() or .forEach() waits behind a shadow pre-read', async () => { await driverNativeExecutionWaitsForPreRead(engine); }, 60_000);
+  test('driver queries keep their native contract (start order, cursors, describe, cancel) with shadow on', async () => { await driverQueriesKeepTheirContract(engine); }, 60_000);
   test('a call held behind a slow pre-read is rolled back with its transaction when the callback fails', async () => { await heldCallRollsBackWithItsTransaction(engine); }, 60_000);
   test('a write sent while a nested transaction runs is not undone by that nested rollback', async () => { await outerWriteSurvivesNestedRollback(engine); }, 60_000);
   test("a call held behind a pre-read keeps its own caller's context (a stored legacy slug spelling)", async () => { await heldCallKeepsItsContext(engine); }, 60_000);

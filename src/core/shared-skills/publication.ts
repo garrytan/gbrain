@@ -21,6 +21,7 @@ import { hostIdFor } from '../persistence/identity.ts';
 import { withCoordinatedWrite } from '../persistence/context.ts';
 import { requestAttribution } from '../persistence/attribution.ts';
 import { normalizeSkillFiles, skillMetadata, skillName, skillPath } from './manifest.ts';
+import { refuseNewCaseCollisions } from './case-collisions.ts';
 import { forgetSharedPacks } from './knowledge-guard.ts';
 import { assertSkillCapability, assertStoredSkillCapability, publicationEnabled, readSharedSkillPolicy, setSharedSkillPolicy } from './policy.ts';
 import { SHARED_SKILL_LIMITS, type SharedSkillFile, type SharedSkillPolicy, type SharedSkillPutInput, type SkillMetadata, type StoredSkillFile, type StoredSkillRevision } from './model.ts';
@@ -155,9 +156,10 @@ function packInventory(pack: PackRow | undefined, keys: HeadKey[], sourceId: str
   if (names.size !== active.size) throw inventoryError('revision_conflict', 'The sealed pack inventory omits current skill heads.', sourceId);
   return inventory;
 }
-async function heads(engine: BrainEngine, sourceId: string, incarnation: string, packId: string, names: string[]): Promise<StoredSkillRevision[]> {
+/** The named heads' revisions; with `metadataOnly`, only name, metadata and deleted, never file content. */
+async function heads(engine: BrainEngine, sourceId: string, incarnation: string, packId: string, names: string[], metadataOnly = false): Promise<StoredSkillRevision[]> {
   if (!names.length) return [];
-  return engine.executeRaw<StoredSkillRevision>(`SELECT r.* FROM shared_skill_heads h JOIN shared_skill_revisions r
+  return engine.executeRaw<StoredSkillRevision>(`SELECT ${metadataOnly ? 'r.name,r.metadata,r.deleted' : 'r.*'} FROM shared_skill_heads h JOIN shared_skill_revisions r
     ON r.source_id=h.source_id AND r.source_incarnation=h.source_incarnation AND r.pack_id=h.pack_id AND r.name=h.name AND r.revision=h.revision
     WHERE h.source_id=$1 AND h.source_incarnation=$2::uuid AND h.pack_id=$3 AND h.name=ANY($4::text[]) ORDER BY h.name`, [sourceId, incarnation, packId, names]);
 }
@@ -350,8 +352,10 @@ export async function submitSharedSkillMutation(ctx: OperationContext, operation
       { fix: skillHeadFix(sourceId, packId, name) });
   }
   const replacement = new Map(proposals.flatMap(p => p.files).filter(f => f.path.startsWith('skills/conventions/')).map(f => [f.path, f]));
-  refuseDependentWidening(sourceId, current.filter(head => dependents.includes(head.name) && !head.deleted)
-    .map(head => ({ name: head.name, files: reachableAfterReplacement(head.name, head.files, replacement) })), current, ctx.remote === false);
+  const rebuiltDependents = current.filter(head => dependents.includes(head.name) && !head.deleted)
+    .map(head => ({ name: head.name, metadata: head.metadata, files: reachableAfterReplacement(head.name, head.files, replacement) }));
+  refuseDependentWidening(sourceId, rebuiltDependents, current, ctx.remote === false);
+  await refuseHiddenExposure(ctx.engine, sourceId, source.incarnation, packId, inventory, proposals, rebuiltDependents, current, policy.policy.audiences, ctx.remote === false);
   const manifestBytes = canonicalRead(root, 'skillpack.json');
   if (!pack && manifestBytes && (!adoption || adoption.mode === 'proposal')) {
     throw opError('approval_required', 'An unadopted skillpack already exists on disk. A trusted host must adopt its complete reviewed inventory before individual skill publication.',
@@ -404,6 +408,12 @@ export async function submitSharedSkillMutation(ctx: OperationContext, operation
     }
     extraFiles[path] = content;
   }
+  const inventoryPaths = ['skillpack.json', ...inventory.flatMap(entry => entry.files.map(file => file.path))];
+  // A dependent is compared with the files it keeps once the shared files are replaced, as prepare rebuilds it.
+  const rebuiltPaths = new Map(rebuiltDependents.map(entry => [entry.name, entry.files.map(file => file.path)]));
+  refuseNewCaseCollisions(sourceId, inventoryPaths, ['skillpack.json', ...Object.keys(extraFiles), ...allProposedFiles.map(file => file.path),
+    ...inventory.filter(entry => !proposals.some(p => p.name === entry.name))
+      .flatMap(entry => rebuiltPaths.get(entry.name) ?? entry.files.map(file => file.path))], ctx.remote === false);
   const touched = new Set([...allProposedFiles.map(f => f.path), ...current.filter(r => affected.some(p => p.name === r.name)).flatMap(r => r.files.map(f => f.path)), ...Object.keys(extraFiles)]);
   for (const [path, expectedHash] of Object.entries(adoption?.expected_hashes ?? {})) {
     if (path !== 'skillpack.json') skillPath(path);
@@ -487,12 +497,19 @@ export async function prepareSharedSkillMutation(engine: BrainEngine, row: Write
       files };
   });
   // A request accepted before this check existed is checked here too, before it touches the checkout.
-  refuseDependentWidening(row.source_id, revisions.filter(revision => !proposals.some(p => p.name === revision.name)), current, false);
+  const rebuiltDependents = revisions.filter(revision => !proposals.some(p => p.name === revision.name) && !revision.deleted);
+  refuseDependentWidening(row.source_id, rebuiltDependents, current, false);
+  // The approved audiences do not depend on the legacy flag, and apply refuses a request whose policy epoch changed.
+  const approved = (await readSharedSkillPolicy(engine, row.source_id, row.source_incarnation, false)).policy.audiences;
+  await refuseHiddenExposure(engine, row.source_id, row.source_incarnation, intent.pack_id, inventory, proposals, rebuiltDependents, current, approved, false);
   const revisionByName = new Map(revisions.map(r => [r.name, r]));
   const next = [...inventory.filter(entry => !revisionByName.has(entry.name)), ...revisions.filter(entry => !entry.deleted).map(entry => ({
     name: entry.name, revision: entry.revision, files: entry.files.map(({ content: _content, ...file }) => file),
   }))];
   const allFiles = new Set(next.flatMap(entry => entry.files.map(file => file.path)));
+  // A request accepted before the case check existed is checked here too, before it touches the checkout.
+  refuseNewCaseCollisions(row.source_id, ['skillpack.json', ...inventory.flatMap(entry => entry.files.map(file => file.path))],
+    ['skillpack.json', ...Object.keys(intent.extra_files), ...allFiles], false);
   const changedFiles = new Map<string, StoredSkillFile | null>();
   for (const file of proposals.flatMap(p => p.files)) changedFiles.set(file.path, file);
   for (const file of current.filter(r => revisions.some(p => p.name === r.name)).flatMap(r => r.files)) if (!allFiles.has(file.path)) changedFiles.set(file.path, null);
@@ -648,11 +665,131 @@ function refuseDependentWidening(sourceId: string, rebuilt: Array<{ name: string
     if (conflicted) holders++;
   }
   if (!reasons.length) return;
-  const bounded = (items: string[]) => items.slice(0, 3).join('; ') + (items.length > 3 ? `; and ${items.length - 3} more` : '');
   const what = detailed ? bounded(reasons)
     : `${bounded([...paths])} would reach a wider audience or another file class in ${holders} other skill${holders === 1 ? '' : 's'} that already hold${holders === 1 ? 's' : ''} it`;
   throw opError('local_conflict', `The publication was refused: ${what}. Nothing was written.`,
     `Another skill in source ${sourceId} already publishes the shared file with a narrower audience or another file class, and this publication would change it there without that skill being reviewed. Give the file the same file_class and an audience no wider than the other skill already has, or fork it under this skill's own directory and point depends_on there, then submit again with a new request_id.`);
+}
+
+/** At most three items, so a refusal stays inside a queued request's receipt reservation however many skills it names. */
+const bounded = (items: string[], separator = '; ') => items.slice(0, 3).join(separator) + (items.length > 3 ? `${separator}and ${items.length - 3} more` : '');
+
+/**
+ * Who can read a file through one skill. The catalog shows a file only when both the skill's SKILL.md audience and the
+ * file's own audience admit the caller under the source policy's approved audiences, and never shows a private skill to a
+ * remote caller (catalog.ts).
+ */
+function effectiveAudience(metadata: Pick<SkillMetadata, 'private' | 'audience'>, file: Pick<StoredSkillFile, 'audience'>, approved: string[]): string[] {
+  if (metadata.private) return [];
+  const skill = metadata.audience.filter(audience => approved.includes(audience));
+  const own = file.audience.filter(audience => approved.includes(audience));
+  if (skill.includes('readers')) return own;
+  if (own.includes('readers')) return skill;
+  return own.filter(audience => skill.includes(audience));
+}
+
+/** The callers both audiences admit, where 'readers' admits every principal (policy.ts approvedFiles). */
+function overlap(left: string[], right: string[]): string[] {
+  if (left.includes('readers')) return right;
+  if (right.includes('readers')) return left;
+  return left.filter(audience => right.includes(audience));
+}
+
+type Holder = { name: string; files: Array<Pick<StoredSkillFile, 'path' | 'audience'>>; metadata: Pick<SkillMetadata, 'private' | 'audience'> };
+type Exposure = { prior: Set<string>; after: Set<string> };
+
+/**
+ * The shared convention files this publication would show to callers no sealed holder showed them to: through a
+ * proposal, or through another skill the rewrite gives the file. The audiences come only from the affected skills, so
+ * a republication that keeps every file's reach reads no other skill's head. An affected skill vouches only for the
+ * callers it showed the file to before and still shows it to now, so a holder that drops the file or narrows its own
+ * audience cannot hand its old reach to another skill.
+ */
+function exposureCandidates(affected: Holder[], sealed: StoredSkillRevision[], approved: string[]): Map<string, Exposure> {
+  const found = new Map<string, Exposure>();
+  const entry = (path: string) => found.get(path) ?? found.set(path, { prior: new Set(), after: new Set() }).get(path)!;
+  for (const skill of affected) {
+    for (const file of skill.files) if (file.path.startsWith('skills/conventions/')) effectiveAudience(skill.metadata, file, approved).forEach(a => entry(file.path).after.add(a));
+  }
+  for (const skill of affected) {
+    const was = sealed.find(revision => revision.name === skill.name && !revision.deleted);
+    for (const file of was?.files ?? []) {
+      const now = skill.files.find(kept => kept.path === file.path);
+      if (!found.has(file.path) || !now) continue;
+      overlap(effectiveAudience(was!.metadata, file, approved), effectiveAudience(skill.metadata, now, approved)).forEach(a => entry(file.path).prior.add(a));
+    }
+  }
+  for (const [path, { prior, after }] of found) if (prior.has('readers') || [...after].every(a => prior.has(a))) found.delete(path);
+  return found;
+}
+
+/**
+ * The skills that hold one of those files and that the publication does not change. Their files come from the sealed
+ * inventory and only their head metadata is read, never file content, and only when a file can reach new callers.
+ */
+async function unchangedHolders(engine: BrainEngine, sourceId: string, incarnation: string, packId: string, inventory: PackSkill[],
+  affected: Holder[], candidates: Map<string, Exposure>): Promise<Holder[]> {
+  if (!candidates.size) return [];
+  const holding = inventory.filter(entry => !affected.some(skill => skill.name === entry.name) && entry.files.some(file => candidates.has(file.path)));
+  if (!holding.length) return [];
+  const rows = await heads(engine, sourceId, incarnation, packId, holding.map(entry => entry.name), true);
+  return rows.filter(row => !row.deleted).map(row => ({ name: row.name, files: holding.find(entry => entry.name === row.name)!.files, metadata: row.metadata }));
+}
+
+/**
+ * A publication must not show a shared convention file to callers that no sealed holder already showed it to while
+ * a skill that keeps holding it hides it from them. A readers file in a skill whose SKILL.md audience is narrower, or
+ * that is private, is not public. Only a skill that held the file before and keeps it can authorize a new reach, and
+ * only as far as every such skill now shows it. A file that no skill held before, or that no holder keeps, has nothing to hide.
+ */
+async function refuseHiddenExposure(engine: BrainEngine, sourceId: string, incarnation: string, packId: string, inventory: PackSkill[],
+  proposals: Holder[], rebuilt: Holder[], sealed: StoredSkillRevision[], approved: string[], detailed: boolean): Promise<void> {
+  const affected = [...proposals, ...rebuilt];
+  const candidates = exposureCandidates(affected, sealed, approved);
+  const unchanged = await unchangedHolders(engine, sourceId, incarnation, packId, inventory, affected, candidates);
+  const reasons: string[] = [];
+  const paths: string[] = [];
+  const holders = new Set<string>();
+  let narrowing = 0;
+  for (const [path, { prior, after }] of candidates) {
+    const sealedHolds = (name: string) => sealed.some(revision => revision.name === name && !revision.deleted && revision.files.some(file => file.path === path));
+    const keeps = (skill: Holder) => skill.files.some(file => file.path === path);
+    const reach = (skills: Holder[]) => skills.flatMap(skill => skill.files.filter(file => file.path === path).flatMap(file => effectiveAudience(skill.metadata, file, approved)));
+    for (const a of reach(unchanged)) prior.add(a);
+    // 'readers' covers every principal (policy.ts approvedFiles), so a file some holder already shows to readers cannot widen.
+    if (prior.has('readers')) continue;
+    // Every skill that held the file and keeps it, whether this publication changes it or not. A new reach is authorized
+    // only as far as each of them now shows the file, so a skill that keeps hiding it limits every other skill's gain,
+    // including a skill in the same batch, while a sole holder may still widen its own publication.
+    const keepers = [...affected.filter(skill => sealedHolds(skill.name) && keeps(skill)), ...unchanged.filter(keeps)];
+    if (!keepers.length) continue;
+    const shown = (skill: Holder) => new Set(reach([skill]));
+    const covers = (audiences: Set<string>, a: string) => audiences.has('readers') || audiences.has(a);
+    const common = keepers.map(shown).reduce((left, right) => left.has('readers') ? right : new Set([...left].filter(a => covers(right, a))));
+    const authorized = new Set([...prior, ...common]);
+    if ([...after].every(a => covers(authorized, a))) continue;
+    const remaining = keepers.filter(skill => [...after].some(a => !covers(shown(skill), a)));
+    // A holder in this publication that now shows the file to fewer callers than it did: its own narrowing limits the
+    // other skill's gain, so the refusal says so instead of reading as a hidden skill the caller never touched.
+    const was = (skill: Holder) => sealed.find(revision => revision.name === skill.name && !revision.deleted)!;
+    const narrowed = remaining.filter(skill => affected.includes(skill) && reach([{ ...skill, ...was(skill) }]).some(a => !covers(shown(skill), a)));
+    paths.push(path);
+    for (const skill of remaining) holders.add(skill.name);
+    if (narrowed.length === remaining.length) narrowing++;
+    const names = bounded(remaining.map(skill => `skills/${skill.name}`), ', ');
+    reasons.push(narrowed.length === remaining.length
+      ? `${path} would reach a wider audience than ${names} ${remaining.length === 1 ? 'gives' : 'give'} it after narrowing ${remaining.length === 1 ? 'its' : 'their'} own audience in this publication`
+      : `${path} would reach a wider audience than ${names} ${remaining.length === 1 ? 'gives' : 'give'} it`);
+  }
+  if (!reasons.length) return;
+  const count = holders.size;
+  const what = detailed ? bounded(reasons)
+    : `${bounded(paths)} would reach a wider audience than the ${count} skill${count === 1 ? '' : 's'} that already hold${count === 1 ? 's' : ''} it give${count === 1 ? 's' : ''} it`;
+  const selfNarrowed = narrowing === reasons.length;
+  throw opError('local_conflict', `The publication was refused: ${what}. Nothing was written.`, selfNarrowed
+    ? `A skill in source ${sourceId} that holds the shared file narrows its own audience in this publication, and another skill would show the file to the callers it stops showing it to. A skill that keeps a shared file limits every other skill's audience for it, so keep the holder's audience, or fork the file under the gaining skill's own directory and point depends_on there, then submit again with a new request_id.`
+    : `A skill in source ${sourceId} holds the shared file but shows it to fewer callers, because its SKILL.md audience is narrower or it is private, and this publication would show the file to more callers through another skill. Give the file an audience no wider than that skill gives it, or fork it under the publishing skill's own directory and point depends_on there, then submit again with a new request_id.`,
+    { reason: selfNarrowed ? 'shared_file_holder_narrowed' : 'shared_file_hidden_holder' });
 }
 
 /** An import regenerates skillpack.json from the sealed heads, so a skill the checkout declares but never published would vanish from it. */
