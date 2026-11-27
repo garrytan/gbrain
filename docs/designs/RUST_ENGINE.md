@@ -567,8 +567,10 @@ Rust store was 570 MB on disk. Keyword top-10 was identical to PGLite for 71 of 
 - (a) Page writes: `put_page` p50/p95 was 40.4/56.1 ms on Rust and 28.0 ms on PGLite (1.4x). Writes/s at 1, 4 and 16
   clients were 22.6, 36.5 and 38.6 on Rust and 51, 56 and 56 on PGLite.
 - (b) Hybrid search: p50 was 152 ms on Rust and 88 ms on PGLite.
-- (c) Page listing: `list_pages` p50 was 36 ms on Rust and 2 ms on PGLite, until the updated-order keyed lookup lands
-  (https://github.com/garrytan/gbrain/pull/10328).
+- (c) Page listing: `list_pages` p50 was 36 ms on Rust and 2 ms on PGLite. The measured build had no keyed lookups; the
+  updated-order keyed lookup (store format 12, https://github.com/garrytan/gbrain/pull/10328) is in this head, and
+  `rust/bench/keyed-lookups/RESULTS.md` measures `list_pages` at 1.4 ms p50 after it. The other rows were not re-measured
+  with the keyed lookups (store formats 9 and 12).
 - (d) Single-client reads: 25 per second on Rust and 35 on PGLite. At 4 and 16 clients Rust was about 3x faster (65 and
   59 against 23 and 21).
 - (e) Multi-user mode was not measured on this build.
