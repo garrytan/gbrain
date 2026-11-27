@@ -8,6 +8,7 @@ test/engine-parity/access-members.test.ts	served
 test/engine-parity/access-migrate.test.ts	served	
 test/engine-parity/access-policy.test.ts	served	
 test/engine-parity/access-sort-order.test.ts	served	
+test/engine-parity/access-tokens.test.ts	served	
 test/engine-parity/admin-http.test.ts	served	
 test/engine-parity/admin-unowned-http.test.ts	served	
 test/engine-parity/alias-trust.test.ts	served	
@@ -86,6 +87,7 @@ test/engine-parity/generation-write-parity.test.ts	served
 test/engine-parity/git-durability-credential.test.ts	served	
 test/engine-parity/harness-consumer-stop.test.ts	served	
 test/engine-parity/holding-page-purges.test.ts	served	
+test/engine-parity/hot-memory-meta.test.ts	served	
 test/engine-parity/import-folder-stamp.test.ts	served	
 test/engine-parity/import-path.test.ts	served	
 test/engine-parity/import-writes.test.ts	served	
@@ -102,9 +104,11 @@ test/engine-parity/meetings-sync.test.ts	served
 test/engine-parity/memory-mutation-reads.test.ts	served	
 test/engine-parity/mention-pass.test.ts	served	
 test/engine-parity/oauth-clients.test.ts	served	
+test/engine-parity/oauth-dcr.test.ts	served	
 test/engine-parity/oauth-http.test.ts	served	
 test/engine-parity/oauth-lifecycle.test.ts	served	
 test/engine-parity/oauth-revocation.test.ts	served	
+test/engine-parity/ontology-propose.test.ts	served	
 test/engine-parity/open-pages.test.ts	served	
 test/engine-parity/owner-recovery-scans.test.ts	served	
 test/engine-parity/page-fence-writes.test.ts	served	
@@ -134,6 +138,7 @@ test/engine-parity/purge-verify.test.ts	served
 test/engine-parity/purge-writes.test.ts	served	
 test/engine-parity/put-page-missing-link.test.ts	served	
 test/engine-parity/read-shared-revision.test.ts	served	
+test/engine-parity/read-shared-sources.test.ts	served	
 test/engine-parity/refusal-swallow-health.test.ts	served	
 test/engine-parity/refusal-swallow-sites.test.ts	served	
 test/engine-parity/refusal-swallows-lane4.test.ts	served	
