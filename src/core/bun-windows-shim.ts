@@ -13,6 +13,7 @@
 import { existsSync, lstatSync, readdirSync, renameSync, rmSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
+import { execFileSync } from './spawn.ts';
 
 const SHIM = 'gbrain.exe';
 const STALE_SHIM = /^gbrain\.exe\.stale(\.\d+)*$/;
@@ -37,15 +38,28 @@ export function bunShimDir(env: NodeJS.ProcessEnv = process.env, askBun?: () => 
   return join(env.USERPROFILE || env.HOME || homedir(), '.bun', 'bin');
 }
 
-/** Deletes launchers an earlier upgrade moved aside. One a process still holds stays for a later run. */
+/** Bun's own answer for its global bin directory (`bun pm bin -g`). */
+export function askBunForBinDir(env: NodeJS.ProcessEnv = process.env): string {
+  return execFileSync('bun', ['pm', 'bin', '-g'], { env, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 15_000 });
+}
+
+/**
+ * Deletes launchers an earlier upgrade moved aside: only regular files small enough to be Bun's launcher, so a backup of
+ * a real binary under the same name stays. One a process still holds stays for a later run.
+ */
 export function removeStaleShims(dir: string): string[] {
-  if (!existsSync(dir)) return [];
+  let names: string[] = [];
+  try {
+    names = readdirSync(dir);
+  } catch { // silent-read-ok: cleanup is best-effort; an unlistable bin dir keeps its stale launchers and the move still runs
+  }
   const removed: string[] = [];
-  for (const name of readdirSync(dir)) {
+  for (const name of names) {
     if (!STALE_SHIM.test(name)) continue;
     const path = join(dir, name);
     try {
-      if (!lstatSync(path).isFile()) continue;
+      const stat = lstatSync(path);
+      if (!stat.isFile() || stat.size > MAX_SHIM_BYTES) continue;
       rmSync(path);
       removed.push(path);
     } catch {
@@ -68,7 +82,10 @@ export function moveAsideOrphanedShim(dir: string, platform: NodeJS.Platform = p
   for (let n = 1; existsSync(to); n++) to = join(dir, `${SHIM}.stale.${pid}.${n}`);
   try {
     const stat = lstatSync(from);
-    if (!stat.isFile() || stat.size > MAX_SHIM_BYTES) return null;
+    if (!stat.isFile() || stat.size > MAX_SHIM_BYTES) {
+      console.error(`Left ${from} in place: it is not Bun's launcher (${stat.isFile() ? `${stat.size} bytes` : 'not a regular file'}); bun add may fail with EEXIST.`);
+      return null;
+    }
     renameSync(from, to);
   } catch (err) {
     console.error(`Could not move ${from} aside (${(err as NodeJS.ErrnoException).code ?? String(err)}); bun add may fail with EEXIST.`);

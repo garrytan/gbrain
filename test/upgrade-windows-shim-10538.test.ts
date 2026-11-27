@@ -97,6 +97,14 @@ describe('#10538 moving an orphaned launcher aside', () => {
     expect(readdirSync(bin).sort()).toEqual(['gbrain.exe.stale-notes.txt', 'gbrain.exe.stale.9', 'gbrain.exe.staleX']);
     expect(existsSync(join(outside, 'gbrain.exe.stale.1'))).toBe(true);
     expect(removeStaleShims(join(bin, 'missing'))).toEqual([]);
+    expect(removeStaleShims(join(bin, 'gbrain.exe.stale-notes.txt'))).toEqual([]);
+  });
+
+  test('a stale-named file too large to be Bun\'s launcher (a backup of a real binary) is never deleted', () => {
+    const bin = tempDir('backup');
+    writeFileSync(join(bin, 'gbrain.exe.stale'), Buffer.alloc(2 * 1024 * 1024));
+    expect(removeStaleShims(bin)).toEqual([]);
+    expect(existsSync(join(bin, 'gbrain.exe.stale'))).toBe(true);
   });
 });
 
@@ -108,10 +116,16 @@ describe('#10538 reinstall hint', () => {
     expect(win.slice(1)).toEqual([
       'git ls-remote --exit-code --tags https://github.com/garrytan/gbrain refs/tags/v0.60.777.0',
       'bun remove -g gbrain',
-      `If ${shim} is still there, move it aside: Move-Item -Force "${shim}" "${shim}.stale"`,
+      `If ${shim} is still there, move it aside: Move-Item -LiteralPath '${shim}' -Destination '${shim}.stale' -Force`,
       'bun add -g --backend=copyfile github:garrytan/gbrain#v0.60.777.0',
-      'If the add fails, restore 0.60.734.0 with: bun add -g --backend=copyfile github:garrytan/gbrain#v0.60.734.0',
+      `If the add fails, move ${shim} aside the same way again, then restore 0.60.734.0 with: bun add -g --backend=copyfile github:garrytan/gbrain#v0.60.734.0`,
     ]);
+  });
+
+  test('the PowerShell step passes the path literally: no $ expansion, no wildcard brackets, quotes doubled', () => {
+    const step = reinstallHintLines('1.0.0.0', '0.9.0.0', 'win32', "C:\\Users\\o'brien [$x]\\.bun\\bin")[3];
+    expect(step).toContain("Move-Item -LiteralPath 'C:\\Users\\o''brien [$x]\\.bun\\bin\\gbrain.exe' -Destination 'C:\\Users\\o''brien [$x]\\.bun\\bin\\gbrain.exe.stale' -Force");
+    expect(step).not.toContain('"');
   });
 
   test('POSIX keeps the guarded one-liner and the restore line, with no launcher step', () => {
@@ -126,7 +140,7 @@ describe('#10538 reinstall hint', () => {
  * `bun remove` leaves gbrain.exe, and the fake `bun add` refuses with EEXIST while it exists. failAdd 'target' makes
  * the target's add write a partial launcher and fail (the restore then meets that launcher); 'all' fails every add.
  */
-async function windowsUpgrade(failAdd: 'none' | 'target' | 'all' = 'none', opts: { bunfigBinDir?: boolean } = {}) {
+async function windowsUpgrade(failAdd: 'none' | 'target' | 'all' | 'link' = 'none', opts: { bunfigBinDir?: boolean; removeExit?: number } = {}) {
   const home = tempDir('upgrade');
   const bunInstall = join(home, '.bun');
   const bin = join(home, 'path-bin');
@@ -148,7 +162,7 @@ async function windowsUpgrade(failAdd: 'none' | 'target' | 'all' = 'none', opts:
     'printf "bun:%s\\n" "$*" >> "$HOME/calls.log"',
     'case "$1" in',
     '  pm) echo "$B"; exit 0;;',
-    '  remove) rm -rf "$G/node_modules/gbrain" "$B/gbrain.bunx"; exit 0;;',
+    `  remove) rm -rf "$G/node_modules/gbrain" "$B/gbrain.bunx"; exit ${opts.removeExit ?? 0};;`,
     '  add)',
     '    ver="${4##*#v}"',
     '    if [ -e "$B/gbrain.exe" ]; then echo "error: failed to link gbrain: EEXIST" >&2; exit 1; fi',
@@ -156,6 +170,7 @@ async function windowsUpgrade(failAdd: 'none' | 'target' | 'all' = 'none', opts:
     '    mkdir -p "$G/node_modules/gbrain/src"',
     '    echo \'{"name":"gbrain","repository":"github:garrytan/gbrain"}\' > "$G/node_modules/gbrain/package.json"',
     '    echo "if (process.argv[2] === \'--version\') console.log(\'gbrain $ver\');" > "$G/node_modules/gbrain/src/cli.ts"',
+    `    if [ "${failAdd}" = link ] && [ "$ver" = "${TARGET}" ]; then echo "error: failed to link gbrain" >&2; exit 1; fi`,
     '    echo "launcher $ver" > "$B/gbrain.exe"; echo meta > "$B/gbrain.bunx"',
     '    echo "{\\"dependencies\\":{\\"gbrain\\":\\"$4\\"}}" > "$G/package.json"',
     '    exit 0;;',
@@ -189,7 +204,8 @@ async function windowsUpgrade(failAdd: 'none' | 'target' | 'all' = 'none', opts:
   };
 }
 
-describe('#10538 Windows upgrade with a held gbrain.exe launcher', () => {
+// The fakes are POSIX shell scripts on a ':'-separated PATH, so this simulation runs everywhere but native Windows.
+describe.skipIf(process.platform === 'win32')('#10538 Windows upgrade with a held gbrain.exe launcher', () => {
   test('the leftover launcher is moved aside after bun remove, so the add links and the upgrade completes', async () => {
     const r = await windowsUpgrade();
     expect(r.out).not.toContain('EEXIST');
@@ -218,6 +234,21 @@ describe('#10538 Windows upgrade with a held gbrain.exe launcher', () => {
     expect(r.errors.at(-1)).toMatchObject({ phase: 'pinned-reinstall', to_version: TARGET });
   }, 60_000);
 
+  test('a package that extracted but never linked its launcher is not taken as installed; the previous version is restored', async () => {
+    const r = await windowsUpgrade('link');
+    expect(r.out).not.toContain('Upgrade complete');
+    expect(r.stderr).toContain(`Restored gbrain ${VERSION}.`);
+    expect(r.launcher).toBe(`launcher ${VERSION}\n`);
+  }, 60_000);
+
+  test('a remove that exits non-zero after deleting the package still gets the launcher moved aside before the restore', async () => {
+    const r = await windowsUpgrade('none', { removeExit: 1 });
+    expect(r.calls).not.toContain(`#v${TARGET}`);
+    expect(r.stderr).toContain(`Restored gbrain ${VERSION}.`);
+    expect(r.out).not.toContain('EEXIST');
+    expect(r.launcher).toBe(`launcher ${VERSION}\n`);
+  }, 60_000);
+
   test('when the restore fails too, the printed recovery is one step per line, the recorded one numbered, neither with &&', async () => {
     const r = await windowsUpgrade('all');
     const expected = reinstallHintLines(TARGET, VERSION, 'win32', r.shims);
@@ -225,10 +256,11 @@ describe('#10538 Windows upgrade with a held gbrain.exe launcher', () => {
     const printed = r.stderr.slice(r.stderr.indexOf('Restore failed.')).split('\n').slice(1, 1 + expected.length).map(l => l.trim());
     expect(printed).toEqual(expected);
     expect(printed.some(l => l.includes('&&'))).toBe(false);
-    expect(printed.at(-1)).toBe(`If the add fails, restore ${VERSION} with: bun add -g --backend=copyfile github:garrytan/gbrain#v${VERSION}`);
+    expect(printed.at(-1)).toBe(`If the add fails, move ${join(r.shims, 'gbrain.exe').replaceAll('/', '\\')} aside the same way again, then restore ${VERSION} with: bun add -g --backend=copyfile github:garrytan/gbrain#v${VERSION}`);
     const hint = r.errors.at(-1)?.hint as string;
     expect(hint).toBe(`${expected[0]} ${expected.slice(1).map((line, i) => `(${i + 1}) ${line}`).join(' ')}`);
-    expect(hint).toContain(`(5) If the add fails, restore ${VERSION}`);
+    expect(hint).toContain(`(5) If the add fails, move `);
+    expect(hint.endsWith(`restore ${VERSION} with: bun add -g --backend=copyfile github:garrytan/gbrain#v${VERSION}`)).toBe(true);
     expect(hint).not.toContain('&&');
   }, 60_000);
 });

@@ -46,9 +46,9 @@ describe('#6662 reinstall hint', () => {
     expect(win.slice(1)).toEqual([
       'git ls-remote --exit-code --tags https://github.com/garrytan/gbrain refs/tags/v0.60.213.0',
       'bun remove -g gbrain',
-      'If C:\\Users\\a\\.bun\\bin\\gbrain.exe is still there, move it aside: Move-Item -Force "C:\\Users\\a\\.bun\\bin\\gbrain.exe" "C:\\Users\\a\\.bun\\bin\\gbrain.exe.stale"',
+      "If C:\\Users\\a\\.bun\\bin\\gbrain.exe is still there, move it aside: Move-Item -LiteralPath 'C:\\Users\\a\\.bun\\bin\\gbrain.exe' -Destination 'C:\\Users\\a\\.bun\\bin\\gbrain.exe.stale' -Force",
       'bun add -g --backend=copyfile github:garrytan/gbrain#v0.60.213.0',
-      'If the add fails, restore 0.60.200.0 with: bun add -g --backend=copyfile github:garrytan/gbrain#v0.60.200.0',
+      'If the add fails, move C:\\Users\\a\\.bun\\bin\\gbrain.exe aside the same way again, then restore 0.60.200.0 with: bun add -g --backend=copyfile github:garrytan/gbrain#v0.60.200.0',
     ]);
   });
 
