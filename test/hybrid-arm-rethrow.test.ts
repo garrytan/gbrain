@@ -209,10 +209,9 @@ describe('no PGLite or Postgres path raises engine_capability_missing', () => {
     // topology-stop.ts raises it only behind `!servesRawSql(engine)`, which is false on PGLite and Postgres: the Rust engine's named
     // refusal of a topology change (unbound-claim-rust). The parked-push retry's refusal goes through a named helper in rust-engine/errors.ts.
     // mcp/engine-access-refusal.ts refuses a remote caller only on an engine without `access_control`; PGLite and Postgres report it,
-    // so they never reach that call (pinned by the next test). commands/core.ts raises it the same way: `core remove` refuses on a
-    // brain that cannot close core edit notices. core/access/handover.ts raises it the same way: a handover's apply and undo
+    // so they never reach that call (pinned by the next test). core/access/handover.ts raises it the same way: a handover's apply and undo
     // refuse on a brain without raw SQL before they write (refuseHandoverWrites).
-    expect(callers.sort()).toEqual(['commands/core.ts', 'core/access/handover.ts', 'core/persistence/skill-activation.ts', 'core/persistence/topology-stop.ts',
+    expect(callers.sort()).toEqual(['core/access/handover.ts', 'core/persistence/skill-activation.ts', 'core/persistence/topology-stop.ts',
       'core/shared-skills/publication.ts', 'core/sql-engine-kind.ts', 'mcp/engine-access-refusal.ts']);
     // Each shared-skill call sits behind isRustBrain, so a PGLite or Postgres brain never reaches it.
     // test-reads-source-ok[structural]: the guard proves where the only raiser is called from, which no runtime probe can show.

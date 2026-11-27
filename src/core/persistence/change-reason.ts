@@ -10,7 +10,7 @@
 import { relative, sep } from 'node:path';
 import { opError } from '../ops/contract.ts';
 import { scanTextSpans } from '../secret-scan.ts';
-import { privatePagesFilterFragment } from '../search/private-visibility.ts';
+import type { BrainEngine } from '../engine.ts';
 import type { GitCommitNote } from './effect-model.ts';
 import { sourceCanonicalGit } from './git-door.ts';
 import type { SqlEngine, WriteRequest } from './model.ts';
@@ -70,17 +70,18 @@ export function withoutReasonNote(note: GitCommitNote): GitCommitNote | undefine
   return { subject: note.subject, line: note.line, ...(trailers.length ? { trailers } : {}) };
 }
 
-async function pageWorldVisible(engine: SqlEngine, sourceId: string, slug: string): Promise<boolean> {
-  const [page] = await engine.executeRaw<{ world: boolean }>(
-    `SELECT ${privatePagesFilterFragment('p')} AS world FROM pages p WHERE p.source_id = $1 AND p.slug = $2 AND p.deleted_at IS NULL`, [sourceId, slug]);
-  return page?.world === true;
+/** The engine view the commit-note helpers read: the page's world visibility (engine-sql/page-visibility.ts). */
+type ReasonEngine = Pick<BrainEngine, 'readPageWorldVisible'>;
+
+function pageWorldVisible(engine: ReasonEngine, sourceId: string, slug: string): Promise<boolean> {
+  return engine.readPageWorldVisible(sourceId, slug);
 }
 
 /**
  * The note a file commits with, checked against its page's visibility at commit time: a page that is not world-visible
  * any more (a later member of its group, or a later write, made it private) commits without its reason.
  */
-export async function visibleCommitNote(engine: SqlEngine, sourceId: string, slug: unknown, note: GitCommitNote | undefined): Promise<GitCommitNote | undefined> {
+export async function visibleCommitNote(engine: ReasonEngine, sourceId: string, slug: unknown, note: GitCommitNote | undefined): Promise<GitCommitNote | undefined> {
   if (!note || typeof slug !== 'string' || withoutReasonNote(note) === note) return note;
   return await pageWorldVisible(engine, sourceId, slug) ? note : withoutReasonNote(note);
 }
@@ -89,7 +90,7 @@ export async function visibleCommitNote(engine: SqlEngine, sourceId: string, slu
  * A strict group, once every member has applied and before its one commit: each member's note checked as above, and a
  * member whose reason is dropped reports `git: 'private'` on its receipt.
  */
-export async function settleGroupCommitNotes(engine: SqlEngine, members: Array<{ row: Pick<WriteRequest, 'source_id' | 'slug'>; note: GitCommitNote | undefined; outcome: Record<string, unknown> }>): Promise<Array<GitCommitNote | undefined>> {
+export async function settleGroupCommitNotes(engine: ReasonEngine, members: Array<{ row: Pick<WriteRequest, 'source_id' | 'slug'>; note: GitCommitNote | undefined; outcome: Record<string, unknown> }>): Promise<Array<GitCommitNote | undefined>> {
   const notes: Array<GitCommitNote | undefined> = [];
   for (const { row, note, outcome } of members) {
     const visible = await visibleCommitNote(engine, row.source_id, row.slug, note);

@@ -29,7 +29,7 @@ fn guest(config: &serde_json::Map<String, Value>) -> bool {
 }
 
 impl Store {
-    /// `readSharedSourceRows()`: every live source with its config, guest flag, bound members
+    /// `readSharedSourceRows()`: every live source with its config, guest flag (config or guest row), bound members
     /// and the brain owner's member id.
     pub fn read_shared_source_rows(&self) -> Result<Vec<Value>> {
         let read = self.read()?;
@@ -37,17 +37,19 @@ impl Store {
         let mut sources = all_sources(&*read)?;
         sources.retain(|s| !s.archived);
         sources.sort_by(|a, b| a.id.as_bytes().cmp(b.id.as_bytes()));
-        Ok(sources
-            .iter()
-            .map(|s| {
-                json!({
-                    "id": s.id,
-                    "config": Value::Object(s.config.clone()),
-                    "guest": guest(&s.config),
-                    "owners": Vec::<String>::new(),
-                    "owner_member": owner,
-                })
-            })
-            .collect())
+        let mut rows = Vec::with_capacity(sources.len());
+        for s in &sources {
+            // `guestSourceSql`: the config says guest, or the source has a guest row.
+            let is_guest =
+                guest(&s.config) || crate::guest_sources::read_guest_row(&*read, &s.id)?.is_some();
+            rows.push(json!({
+                "id": s.id,
+                "config": Value::Object(s.config.clone()),
+                "guest": is_guest,
+                "owners": Vec::<String>::new(),
+                "owner_member": owner,
+            }));
+        }
+        Ok(rows)
     }
 }

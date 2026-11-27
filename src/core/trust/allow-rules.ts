@@ -99,32 +99,23 @@ function normalize(r: Record<string, unknown>): TrustAllowRule {
 }
 
 /** Adds a rule, or returns the active rule with the same (source, prefix, family). */
-export async function addTrustAllowRule(engine: Pick<BrainEngine, 'executeRaw'>, input: TrustAllowRuleInput, by: Principal | null): Promise<{ rule: TrustAllowRule; created: boolean }> {
+export async function addTrustAllowRule(engine: Pick<BrainEngine, 'addTrustAllowRule'>, input: TrustAllowRuleInput, by: Principal | null): Promise<{ rule: TrustAllowRule; created: boolean }> {
   const rule = normalizeTrustAllowRule(input);
-  const [source] = await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE id = $1 AND NOT archived', [rule.sourceId]);
-  if (!source) {
+  const added = await engine.addTrustAllowRule({ sourceId: rule.sourceId, uriPrefix: rule.uriPrefix, reasonFamily: rule.reasonFamily, createdBy: principalLabel(by), reason: rule.reason });
+  if (!added.source_active) {
     throw opError('invalid_params', `Source ${rule.sourceId} is not an active source on this brain.`, 'Pass --source with an active source id; gbrain sources list shows them.');
   }
-  const [inserted] = await engine.executeRaw<Record<string, unknown>>(
-    `INSERT INTO trust_allow_rules (source_id, uri_prefix, reason_family, created_by, reason) VALUES ($1, $2, $3, $4, $5)
-      ON CONFLICT DO NOTHING RETURNING *`, [rule.sourceId, rule.uriPrefix, rule.reasonFamily, principalLabel(by), rule.reason]);
-  if (inserted) return { rule: normalize(inserted), created: true };
-  const [existing] = await engine.executeRaw<Record<string, unknown>>(
-    `SELECT * FROM trust_allow_rules WHERE removed_at IS NULL AND source_id = $1
-       AND uri_prefix IS NOT DISTINCT FROM $2 AND reason_family IS NOT DISTINCT FROM $3 ORDER BY id LIMIT 1`,
-    [rule.sourceId, rule.uriPrefix, rule.reasonFamily]);
-  return { rule: normalize(existing!), created: false };
+  return { rule: normalize(added.row!), created: added.created };
 }
 
 /** Marks a rule removed (the row stays as the receipt). Null when no active rule has that id. */
-export async function removeTrustAllowRule(engine: Pick<BrainEngine, 'executeRaw'>, id: number, by: Principal | null): Promise<TrustAllowRule | null> {
-  const [row] = await engine.executeRaw<Record<string, unknown>>(
-    'UPDATE trust_allow_rules SET removed_at = now(), removed_by = $2 WHERE id = $1 AND removed_at IS NULL RETURNING *', [id, principalLabel(by)]);
+export async function removeTrustAllowRule(engine: Pick<BrainEngine, 'removeTrustAllowRule'>, id: number, by: Principal | null): Promise<TrustAllowRule | null> {
+  const row = await engine.removeTrustAllowRule(id, principalLabel(by));
   return row ? normalize(row) : null;
 }
 
-export async function getTrustAllowRule(engine: Pick<BrainEngine, 'executeRaw'>, id: number): Promise<TrustAllowRule | null> {
-  const [row] = await engine.executeRaw<Record<string, unknown>>('SELECT * FROM trust_allow_rules WHERE id = $1', [id]);
+export async function getTrustAllowRule(engine: Pick<BrainEngine, 'readTrustAllowRule'>, id: number): Promise<TrustAllowRule | null> {
+  const row = await engine.readTrustAllowRule(id);
   return row ? normalize(row) : null;
 }
 

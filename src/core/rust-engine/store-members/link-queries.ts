@@ -44,12 +44,11 @@ import type {
 } from '../../engine-sql/link-reads.ts';
 import type { PageTypeProbe } from '../../engine-sql/cli-reads-ops.ts';
 import type { LongPageSizeRow } from '../../search/long-page-sizes.ts';
-import { getFtsLanguage } from '../../fts-language.ts';
 import { CONNECTOR_SOURCE_KINDS } from '../../persistence/connector-kinds.ts';
 import type { EntityTypeFilter } from '../../schema-pack/entity-types.ts';
 import { mapStoreError, storeErrorCode } from '../store-errors.ts';
 import type { StoreBrain } from '../store.ts';
-import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
+import { refuseMember, storeCall, storeFtsConfig, takeOptions, type StoreMember } from './common.ts';
 import { getConfig } from './config.ts';
 import { linkRelationshipKeysTouching, refreshOnStore, temporalStore } from './link-refresh.ts';
 import { readPageSnapshot } from './pages.ts';
@@ -578,11 +577,11 @@ export const readLongPageSizes: StoreMember<[ids: readonly number[], scope: Page
     return rows.map(r => ({ id: Number(r.id), chars: Number(r.chars), bytes: Number(r.bytes) }));
   };
 
-/** Each word to its English lexemes; another full-text configuration refuses (the store has only English). */
+/** Each word to its lexemes under the configured full-text search configuration (`english` or `german`; others refuse). */
 export const wordLexemes: StoreMember<[words: string[]], Map<string, string[]>> =
   async (brain, words) => {
-    if (getFtsLanguage() !== 'english') refuseMember('wordLexemes', `the ${getFtsLanguage()} text search configuration`);
-    const rows: Array<{ w: string; lexemes: string[] }> = await storeCall({ member: 'wordLexemes' }, () => brain.wordLexemes(words));
+    const config = storeFtsConfig('wordLexemes');
+    const rows: Array<{ w: string; lexemes: string[] }> = await storeCall({ member: 'wordLexemes' }, () => brain.wordLexemes(words, config));
     return new Map(rows.map(r => [r.w, r.lexemes]));
   };
 

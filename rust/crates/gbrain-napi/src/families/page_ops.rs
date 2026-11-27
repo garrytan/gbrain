@@ -273,6 +273,33 @@ impl Brain {
         })
     }
 
+    /// `readAdmittedPageDateFields(refs, { sourceId?, sourceIds?, excludePrivate?, minTrust?, suppressFlagged? })`:
+    /// `[{ source_id, slug, frontmatter, import_filename }]`.
+    #[napi]
+    pub fn read_admitted_page_date_fields<'env>(
+        &self,
+        env: &'env Env,
+        refs: Value,
+        scope: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_admitted_page_date_fields(
+                &required::<Vec<_>>(refs, "readAdmittedPageDateFields refs")?,
+                &required(scope, "readAdmittedPageDateFields scope")?,
+            )
+        })
+    }
+
+    /// `readPageDateFieldsByIds(ids)`: `[{ id, slug, frontmatter, import_filename }]`.
+    #[napi]
+    pub fn read_page_date_fields_by_ids<'env>(
+        &self,
+        env: &'env Env,
+        ids: Vec<f64>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_page_date_fields_by_ids(&ids))
+    }
+
     /// `readPageSynopses(refs, { sourceId?, sourceIds?, excludePrivate?, minTrust?, suppressFlagged? })`:
     /// `[{ page_id, slug, source_id, title, type, synopsis }]`.
     #[napi]

@@ -12,7 +12,6 @@ import { folderAccessForAll } from '../access/caller.ts';
 import { memberIdentity } from '../access/members.ts';
 import { ownerMemberId } from '../access/owner.ts';
 import { MEMBER_PAGE_PREFIX } from '../access/principals.ts';
-import { pageNotVisibleError } from '../persistence/page-visibility.ts';
 import { slugUnderBoundPrefixes } from '../ops/context.ts';
 import { ownedPageWithdrawalSubject } from '../access/member-facts.ts';
 import { isHoldingSlug } from '../facts-fence.ts';
@@ -55,8 +54,9 @@ export async function prepareFactEmbedding(fact: string, signal?: AbortSignal, d
   return { embedding: null, embedding_model: null, degraded: true };
 }
 /**
- * `excludePrivate`: the caller cannot read private pages. A withdrawal whose withdrawn rows all sit on pages it
- * cannot read is refused exactly as a page it may not see is, so the refusal never confirms a claim it cannot see.
+ * `excludePrivate`: the caller cannot read private pages. It gets the plain fact_withdrawn refusal with no `withdrawn`
+ * detail, whether the withdrawn rows sit on pages it can read, on pages it cannot read, or on no page at all, so the
+ * refusal never tells those cases apart and never carries anything read from a page the caller may not see.
  * `remote`: GST-2346, a remote save onto a member page meets only memberPageWithdrawal's withdrawals.
  */
 export async function assertFactNotWithdrawn(engine: BrainEngine, sourceId: string, input: SingleFactIntent, opts: { excludePrivate?: boolean; remote?: boolean } = {}): Promise<void> {
@@ -94,16 +94,18 @@ async function memberPageWithdrawal(engine: BrainEngine, sourceId: string, input
 }
 
 /**
- * The refusal for a claim `isFactWithdrawn` matched. `withdrawn` comes from the withdrawal ledger alone (never a purge):
- * the most specific subject first, then the newest withdrawal, among withdrawals the caller can see the withdrawn rows of
- * (or that no row backs). It covers the exact normalized claim only.
+ * The refusal for a claim `isFactWithdrawn` matched. A caller that reads private pages (`excludePrivate` off) gets the
+ * `withdrawn` detail from the withdrawal ledger alone (never a purge): the most specific subject first, then the newest
+ * withdrawal. It covers the exact normalized claim only. Any other caller gets the plain refusal with no detail.
  */
 export async function factWithdrawnRefusal(engine: BrainEngine, sourceId: string, input: SingleFactIntent, opts: { excludePrivate?: boolean } = {}): Promise<OperationError> {
+  // A caller that cannot read private pages gets the same plain refusal for every withdrawal (see assertFactNotWithdrawn).
+  if (opts.excludePrivate === true) return withdrawnRefusal(undefined);
   const met = await engine.readClaimWithdrawal({
     sourceId, visibility: input.visibility, fact: input.fact, entitySlug: input.entity_slug,
-    ownPage: ownedPageWithdrawalSubject(input.page_slug), excludePrivate: opts.excludePrivate === true,
+    ownPage: ownedPageWithdrawalSubject(input.page_slug), excludePrivate: false,
   });
-  return met.hidden ? pageNotVisibleError() : withdrawnRefusal(met.row ?? undefined);
+  return withdrawnRefusal(met.row ?? undefined);
 }
 export const CANDIDATE_FUSION_KEY = 'facts.candidate_fusion';
 export type CandidateFusion = 'rrf_free' | 'interleave';

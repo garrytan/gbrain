@@ -1,4 +1,5 @@
 import type { BrainEngine, LinkBatchInput } from './engine.ts';
+import type { Page } from './types.ts';
 import { extractPageLinks, unwrapWikilink, resolvedLinkCandidate,
   isCrossSourceLinksEnabled, type LinkCandidate, type LinkExtractionPack, type PageLinksResult, type SlugResolver } from './link-extraction.ts';
 import { isSourceFederated } from './sources-load.ts';
@@ -9,7 +10,7 @@ import { collectWantedLinks, isWantedPagesEnabled, wantedReadAt } from './wanted
 import { readLineGrammarSettings } from './line-grammar.ts';
 import { DerivedLinkSettingsChangedError } from './derived-links.ts';
 import { isSegmentedPage } from './page-body/page-shape.ts';
-import { extractSegmentedPageLinks } from './page-body/segment-links.ts';
+import { extractSegmentedPageLinks, segmentedTemporalBody } from './page-body/segment-links.ts';
 import type { TemporalBody } from './link-temporal-apply.ts';
 
 export interface LinkPageMetadata {
@@ -183,8 +184,16 @@ export async function replaceFileLinks(engine: BrainEngine, slug: string, source
   const result = await engine.replaceDerivedLinks({ slug, sourceId, expectedRevision: snapshot.revision,
     sourceIncarnation: snapshot.sourceIncarnation }, rows, { includeFrontmatter, preserveExisting: true,
     includeLegacyNullProducer: false,
-    expectedEndpoints: capturedLinkEndpoints(rows, metadata) });
+    expectedEndpoints: capturedLinkEndpoints(rows, metadata), ...await storedTemporalBody(engine, snapshot.page, sourceId) });
   return result.created;
+}
+
+/**
+ * The publication's temporal inputs come from the stored body. A segmented body cannot be read as one string, so its
+ * inputs are read block by block (as the database pass does); any other page keeps the publication's own read.
+ */
+async function storedTemporalBody(engine: BrainEngine, page: Page, sourceId: string): Promise<{ temporalBody?: TemporalBody }> {
+  return isSegmentedPage(page) ? { temporalBody: await segmentedTemporalBody(engine, { id: Number(page.id), slug: page.slug, source_id: sourceId }) } : {};
 }
 
 /**
@@ -204,7 +213,7 @@ export async function replacePageFileLinks(engine: BrainEngine, slug: string, so
     from_source_id: sourceId, to_source_id: sourceId, origin_source_id: sourceId }));
   const result = await engine.replaceDerivedLinks({ slug, sourceId, expectedRevision: snapshot.revision,
     sourceIncarnation: snapshot.sourceIncarnation }, rows, { includeFrontmatter, preserveExisting: true,
-    includeLegacyNullProducer: false });
+    includeLegacyNullProducer: false, ...await storedTemporalBody(engine, snapshot.page, sourceId) });
   return result.created;
 }
 

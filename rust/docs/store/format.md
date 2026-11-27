@@ -68,6 +68,14 @@ came in without a format bump. An older build at the same format ignores its mar
 purge marked, and it corrupts nothing. The next store-format bump must make an older build refuse a
 store that holds `h 0x0C` marks. Owner: lane 4, until another lane takes the next format bump.
 
+Second known case: the owner's allow rules (`trust_allow_rules`, keys `t 0x0f` and `t 0x10`, `trust/allow_rules.rs`)
+came in at format 8 without a bump. A format-8 build without the family ignores those keys: it applies no allow rule,
+so its write gate screens stricter, never looser, and `trust allow list` shows nothing. No scan in this build raises
+`store_corrupt` on them (`tests/allow_rules_older_build.rs`: the copy check with and without its manifest, the keyword
+index check, the snapshot copy, the read-only open, the keyspace catalog, the shadow follow's digest reads and the
+neighbouring trust reads). The next store-format bump must make an older build refuse a store that holds `t 0x0f`
+records. Owner: lane 4, until another lane takes the next format bump.
+
 Pinned by `older_build_tests` in `crates/gbrain-store/src/lib.rs`: a format-3 brain opened by a build
 that knows `[1, 2]`, and the next format against every build from format 1 on, with and without
 `FORMAT`, compare every file byte for byte before and after the refused open.

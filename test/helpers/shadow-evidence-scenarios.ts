@@ -90,6 +90,7 @@ export function defineEvidenceScenarios(ctx: EvidenceScenarioContext): void {
         const validBy = Date.now() + 30_000;
         while (Date.now() < validBy && !(await attached.supervisor.request<{ valid: boolean }>('state')).valid) await new Promise((resolve) => setTimeout(resolve, 100));
         expect((await attached.supervisor.request<{ valid: boolean }>('state')).valid).toBe(true);
+        // pregate-literal: SHADOW_ADAPTER_VERSION=10 the number 10 on the next line is test data (a count, size, index or slice), not the adapter version
         await attached.engine.searchVector(vec(3), { limit: 10 });
         await attached.follower!.settle();
         const deadline = Date.now() + 60_000;
@@ -98,6 +99,7 @@ export function defineEvidenceScenarios(ctx: EvidenceScenarioContext): void {
         attached.supervisor.stop();
         attached.reconciler!.stop();
         expect(lines).toHaveLength(1);
+        // pregate-literal: SHADOW_ADAPTER_VERSION=10 ref_size 10 is the top-ten recall size, not the adapter version
         expect(lines[0]).toMatchObject({ vector: 1, primary: 1, ref_size: 10 }); // the real Rust engine returned the exact top ten
       });
     } finally { rmSync(home, { recursive: true, force: true }); }

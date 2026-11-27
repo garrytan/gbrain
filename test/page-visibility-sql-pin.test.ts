@@ -2,7 +2,7 @@
  * The page visibility guards (engine-sql/page-visibility.ts) send Postgres the statement persistence/page-visibility.ts
  * sent through `executeRaw` before they became typed members: the same text and the same bound values.
  *
- * Protects: remoteTargetHidden, remotePageAccess, authorizePageVisibility's probe and storedOwnerSpeaksForItself keep
+ * Protects: remoteTargetHidden, remotePageAccess, the reason path's world-visibility read (persistence/change-reason.ts), authorizePageVisibility's probe and storedOwnerSpeaksForItself keep
  * their exact Postgres statements,
  * under the no-caller rendering and under a caller with a reader identity and a private-readable grant.
  * Fails when a member's text or parameter order drifts from the statement the caller wrote by hand.
@@ -10,8 +10,9 @@
  */
 import { describe, expect, test } from 'bun:test';
 import { PostgresEngine } from '../src/core/postgres-engine.ts';
-import { callerAccessAllowedSql, privatePagesFilterForCaller, readPolicyFragment, withCallerAccess } from '../src/core/search/private-visibility.ts';
+import { callerAccessAllowedSql, privatePagesFilterForCaller, privatePagesFilterFragment, readPolicyFragment, withCallerAccess } from '../src/core/search/private-visibility.ts';
 import { ANY_OWNER_ONLY_SQL, OWNER_ONLY_LINEAGE_PRESENT_SQL, ownerOnlyLineageReadable, ownerOnlySourceSql } from '../src/core/access/owner-only.ts';
+import { renderWriterReadPolicy } from '../src/core/engine-sql/remote-links.ts';
 import { makeFakeSql } from './helpers/fake-postgres-sql.ts';
 
 const CALLERS = {
@@ -54,6 +55,17 @@ describe('page visibility guards send the hand-written Postgres statement', () =
   }
 
   for (const [name, caller] of Object.entries(CALLERS)) {
+    test(`readPageWorldVisible, ${name} caller`, async () => {
+      const under = <T>(fn: () => Promise<T>) => (caller ? withCallerAccess(caller, fn) : fn());
+      const old = await sent(/FROM pages/, e => under(() => e.executeRaw(
+        `SELECT ${privatePagesFilterFragment('p')} AS world FROM pages p WHERE p.source_id = $1 AND p.slug = $2 AND p.deleted_at IS NULL`, ['default', 'notes/a'])));
+      const typed = await sent(/FROM pages/, e => under(() => e.readPageWorldVisible('default', 'notes/a')));
+      expect(old).toHaveLength(1);
+      expect(typed).toEqual(old);
+    });
+  }
+
+  for (const [name, caller] of Object.entries(CALLERS)) {
     test(`readWriteVisibilityProbe, ${name} caller`, async () => {
       const under = <T>(fn: () => Promise<T>) => (caller ? withCallerAccess(caller, fn) : fn());
       const old = await sent(/access_members/, e => under(() => e.executeRaw(
@@ -68,6 +80,22 @@ describe('page visibility guards send the hand-written Postgres statement', () =
       const owner = `read_source.id = $1 AND`;
       expect(old[0].text.split(owner)).toHaveLength(2);
       expect(typed).toEqual([{ text: old[0].text.replace(owner, 'read_source.id = $3 AND'), params: [...old[0].params, 'default'] }]);
+    });
+  }
+
+  // hiddenUnder's fallback for a slug with no live row: the statement persistence/page-visibility.ts sent through executeRaw.
+  for (const [name, writer] of Object.entries({
+    'unlabelled one-identity': { identities: [['member:alice-example', 'group:team-a']], satisfiedRuleIds: [], folderCoverage: [], owner: false, labelledOnly: false },
+    'labelled-only under a rule': { identities: [['member:carol-example']], satisfiedRuleIds: ['work:team'], folderCoverage: [], owner: false, labelledOnly: true },
+    'no identity': { identities: [], satisfiedRuleIds: [], folderCoverage: [], owner: false, labelledOnly: false },
+  } as const)) for (const hide of [true, false]) {
+    test(`readPageHiddenFromWriter, ${name} writer, hide ${hide}`, async () => {
+      const policy = { ...writer, identities: writer.identities.map(i => [...i]), satisfiedRuleIds: [...writer.satisfiedRuleIds], folderCoverage: [...writer.folderCoverage] };
+      const old = await sent(/FROM pages/, e => e.executeRaw(`SELECT 1 FROM pages WHERE source_id=$1 AND slug=$2
+      AND NOT (${renderWriterReadPolicy(policy, 'pages', hide)}) LIMIT 1`, ['default', 'notes/a']));
+      const typed = await sent(/FROM pages/, e => e.readPageHiddenFromWriter('default', 'notes/a', policy, hide));
+      expect(old).toHaveLength(1);
+      expect(typed).toEqual(old);
     });
   }
 

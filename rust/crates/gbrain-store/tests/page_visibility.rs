@@ -22,6 +22,15 @@ fn put(store: &Store, slug: &str, frontmatter: Value) {
     store.put_page(slug, &input, &opts).unwrap();
 }
 
+fn put_typed(store: &Store, slug: &str, page_type: &str, frontmatter: Value) {
+    let input: PageInput = serde_json::from_value(
+        json!({"type": page_type, "title": slug, "compiled_truth": "body", "frontmatter": frontmatter}),
+    )
+    .unwrap();
+    let opts: PutPageOptions = serde_json::from_value(json!({"sourceId": "default"})).unwrap();
+    store.put_page(slug, &input, &opts).unwrap();
+}
+
 fn seeded(dir: &TempDir) -> Store {
     let store = open(dir);
     put(&store, "notes/open", json!({}));
@@ -108,9 +117,12 @@ fn hidden_judges_the_labelled_only_conjunct() {
             identity: ids(identity),
             satisfied_rule_ids: ids(satisfied),
             caller_record: true,
-            labelled_only: labelled.then(|| LabelledOnly {
-                identity: ids(identity),
-                satisfied_rule_ids: ids(satisfied),
+            labelled_only: labelled.then(|| {
+                Box::new(LabelledOnly {
+                    identity: ids(identity),
+                    satisfied_rule_ids: ids(satisfied),
+                    ..Default::default()
+                })
             }),
             ..Default::default()
         }
@@ -140,9 +152,84 @@ fn hidden_judges_the_labelled_only_conjunct() {
     assert!(hidden("notes/open", &policy(&carol, &satisfied, true)));
     // Empty terms name nothing (an invalid identity or rule id empties them).
     let mut none = policy(&carol, &satisfied, true);
-    none.labelled_only = Some(LabelledOnly::default());
+    none.labelled_only = Some(Box::default());
     assert!(hidden("notes/carol", &none));
     assert!(hidden("ruled/page", &none));
+}
+
+/// `readPageHiddenFromWriter`: the writer's policy judged on the row of a slug, live or soft-deleted (the statement of
+/// `hiddenUnder`'s fallback has no `deleted_at` test), and false for a slug with no row.
+#[test]
+fn hidden_from_writer_judges_a_soft_deleted_row_like_a_live_one() {
+    let dir = TempDir::new("visibility-writer-hidden");
+    let store = open(&dir);
+    let rows = [
+        ("open", json!({})),
+        ("names-bob", json!({"readable_by": ["member:bob"]})),
+        ("names-alice", json!({"readable_by": ["member:alice"]})),
+        ("private", json!({"visibility": "private"})),
+    ];
+    for (name, frontmatter) in &rows {
+        put(&store, &format!("notes/{name}"), frontmatter.clone());
+        put(&store, &format!("gone/{name}"), frontmatter.clone());
+        store
+            .soft_delete_page(&format!("gone/{name}"), Some("default"))
+            .unwrap();
+    }
+    let ids = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    let policy = |identity: &[&str], labelled: bool| PrivacyPolicy {
+        identity: ids(identity),
+        caller_record: true,
+        labelled_only: labelled.then(|| {
+            Box::new(LabelledOnly {
+                identity: ids(identity),
+                satisfied_rule_ids: vec![],
+                lineage: false,
+                member: None,
+            })
+        }),
+        ..Default::default()
+    };
+    let hidden = |slug: &str, policy: &PrivacyPolicy, hide: bool| {
+        store
+            .read_page_hidden_from_writer("default", slug, policy, hide, true)
+            .unwrap()
+    };
+    let bob = policy(&["member:bob"], false);
+    for prefix in ["notes", "gone"] {
+        // A row that names another reader hides the slug, whether or not the row is deleted; one that names the writer does not.
+        assert!(
+            hidden(&format!("{prefix}/names-alice"), &bob, true),
+            "{prefix}"
+        );
+        assert!(
+            !hidden(&format!("{prefix}/names-bob"), &bob, true),
+            "{prefix}"
+        );
+        assert!(!hidden(&format!("{prefix}/open"), &bob, true), "{prefix}");
+        // The privacy part hides a private page only when asked.
+        assert!(hidden(&format!("{prefix}/private"), &bob, true), "{prefix}");
+        assert!(
+            !hidden(&format!("{prefix}/private"), &bob, false),
+            "{prefix}"
+        );
+        // A labelled-only writer reads only a page that names it, soft-deleted or not.
+        let carol = policy(&["member:carol"], true);
+        assert!(hidden(&format!("{prefix}/open"), &carol, true), "{prefix}");
+        assert!(
+            hidden(&format!("{prefix}/names-bob"), &carol, true),
+            "{prefix}"
+        );
+    }
+    let names_carol = policy(&["member:bob", "member:carol"], true);
+    assert!(!hidden("gone/names-bob", &names_carol, true));
+    // No row, in this source or another: nothing is hidden.
+    assert!(!hidden("notes/missing", &bob, true));
+    assert!(
+        !store
+            .read_page_hidden_from_writer("other", "notes/names-alice", &bob, true, true)
+            .unwrap()
+    );
 }
 
 #[test]
@@ -498,4 +585,340 @@ fn private_only_slugs_names_a_slug_every_scoped_row_of_which_is_hidden() {
     assert!(read(Some("second"), Some(&[]), false).is_empty());
     // Soft-deleted rows count with include_deleted: notes/gone is open, so it is not named.
     assert_eq!(read(Some("default"), None, true), ["notes/private"]);
+}
+
+/// A remote read of a labelled-only caller, as the TypeScript member sends it: its identity and the rules it satisfies, a
+/// caller record, the lineage member-access part (`ownerRead`) and, with `lineage`, the labelled-only origin walk.
+fn labelled_read(lineage: bool) -> PrivacyPolicy {
+    let identity = vec!["member:carol".to_string(), "group:team".to_string()];
+    let satisfied = vec!["default:carol-rule".to_string()];
+    PrivacyPolicy {
+        honor_aliases: true,
+        entity_privacy: true,
+        identity: identity.clone(),
+        satisfied_rule_ids: satisfied.clone(),
+        caller_record: true,
+        owner_read: lineage,
+        labelled_only: Some(Box::new(LabelledOnly {
+            identity,
+            satisfied_rule_ids: satisfied,
+            lineage,
+            member: None,
+        })),
+        ..Default::default()
+    }
+}
+
+fn link_input(store: &Store, from: &str, to: &str) {
+    let options: AddLinkOptions = serde_json::from_value(json!({
+        "linkType": "synthesized_from", "linkSource": "concept-provenance", "context": ""
+    }))
+    .unwrap();
+    store.add_link(from, to, &options).unwrap();
+}
+
+/// `gbrain_access_origin_labelled_for` (v308), branch by branch: a derived page with no label of its own is read by a
+/// labelled-only caller with lineage on only when it has an origin and every origin names the caller. The rows are the
+/// parity case's (test/engine-parity/labelled-only-reads.test.ts), judged here by the store alone.
+#[test]
+fn hidden_walks_the_labelled_origin_of_a_derived_page() {
+    let dir = TempDir::new("visibility-labelled-walk");
+    let store = open(&dir);
+    put(&store, "open/plain", json!({}));
+    put(
+        &store,
+        "open/origin-carol",
+        json!({"readable_by": ["member:carol"]}),
+    );
+    put(
+        &store,
+        "open/origin-bob",
+        json!({"readable_by": ["member:bob"]}),
+    );
+    put(
+        &store,
+        "open/readers-group",
+        json!({"readable_by": ["group:team"]}),
+    );
+    put(
+        &store,
+        "open/was-carol",
+        json!({"readable_by": ["member:carol"]}),
+    );
+    store
+        .update_slug("open/was-carol", "open/now-carol", Some("default"))
+        .unwrap();
+    store.put_access_policy_state("default").unwrap();
+    let rule: AccessRuleRecord = serde_json::from_value(json!({
+        "source_id": "default", "rule_id": "carol-rule", "prefix": "ruled/",
+        "readable_by": ["member:carol"], "revision": 1,
+    }))
+    .unwrap();
+    store.put_access_rule(rule).unwrap();
+    put(&store, "ruled/open", json!({}));
+    let world = |fm: Value| {
+        let mut fm = fm;
+        fm["visibility"] = json!("world");
+        fm
+    };
+    let chronicle =
+        |depth: &str| json!({"captured_via": "life-chronicle:x", "event": {"depth": depth}});
+    // (slug, type, frontmatter, inputs, read with lineage on)
+    let rows: Vec<(&str, &str, Value, Vec<&str>, bool)> = vec![
+        (
+            "w01",
+            "atom",
+            json!({"source_slug": "open/origin-carol"}),
+            vec![],
+            true,
+        ),
+        (
+            "w02",
+            "atom",
+            json!({"source_slug": "open/origin-bob"}),
+            vec![],
+            false,
+        ),
+        ("w03", "atom", json!({}), vec![], false),
+        (
+            "w04",
+            "atom",
+            json!({"source_slug": "open/plain"}),
+            vec![],
+            false,
+        ),
+        (
+            "w05",
+            "atom",
+            json!({"source_slug": "open/was-carol"}),
+            vec![],
+            true,
+        ),
+        (
+            "w06",
+            "concept",
+            json!({"synthesized_by": "x"}),
+            vec!["open/origin-carol", "open/readers-group"],
+            true,
+        ),
+        (
+            "w07",
+            "concept",
+            json!({"synthesized_by": "x"}),
+            vec!["open/origin-carol", "open/plain"],
+            false,
+        ),
+        (
+            "w08",
+            "concept",
+            json!({"synthesized_by": "x"}),
+            vec!["walk/w01"],
+            true,
+        ),
+        (
+            "w09",
+            "concept",
+            json!({"synthesized_by": "x"}),
+            vec![],
+            false,
+        ),
+        (
+            "w10",
+            "question",
+            json!({}),
+            vec!["open/origin-carol"],
+            true,
+        ),
+        ("w11", "concept", json!({}), vec![], false),
+        ("w12", "event", chronicle("open/origin-carol"), vec![], true),
+        ("w13", "event", chronicle("open/nowhere"), vec![], false),
+        ("w14", "event", json!({}), vec![], false),
+        (
+            "w15",
+            "note",
+            json!({"derived_from": ["open/origin-carol.md", "open/origin-bob"]}),
+            vec![],
+            false,
+        ),
+        (
+            "w16",
+            "note",
+            json!({"derived_from": ["open/origin-carol.md", null]}),
+            vec![],
+            false,
+        ),
+        (
+            "w16b",
+            "note",
+            json!({"derived_from": [null]}),
+            vec![],
+            false,
+        ),
+        ("w17", "note", json!({"derived_from": []}), vec![], false),
+        (
+            "w18",
+            "note",
+            json!({"derived_from": "open/nowhere"}),
+            vec![],
+            false,
+        ),
+        ("w19", "note", json!({"derived_from": 5}), vec![], false),
+        (
+            "w20",
+            "note",
+            json!({"derived_from": "ruled/open"}),
+            vec![],
+            true,
+        ),
+        (
+            "w21",
+            "note",
+            json!({"derived_from": "open/readers-group"}),
+            vec![],
+            true,
+        ),
+        (
+            "w22",
+            "atom",
+            json!({"source_slug": "open/origin-carol", "derived_from": "open/plain"}),
+            vec![],
+            false,
+        ),
+        ("w23", "note", json!({"derived_from": null}), vec![], false),
+        (
+            "w24",
+            "note",
+            json!({"readable_by": ["member:carol"], "derived_from": "open/plain"}),
+            vec![],
+            true,
+        ),
+    ];
+    for (id, kind, fm, inputs, _) in &rows {
+        let slug = format!("walk/{id}");
+        put_typed(&store, &slug, kind, world(fm.clone()));
+        for input in inputs {
+            link_input(&store, &slug, input);
+        }
+    }
+    let hidden = |id: &str, policy: &PrivacyPolicy| {
+        store
+            .read_page_hidden_from_caller("default", &format!("walk/{id}"), policy)
+            .unwrap()
+    };
+    for (id, _, _, _, on) in &rows {
+        assert_eq!(
+            !hidden(id, &labelled_read(true)),
+            *on,
+            "{id} with lineage on"
+        );
+        // Without lineage a derived page that names nobody is hidden, whatever its origins say; only w24 names the member.
+        assert_eq!(
+            !hidden(id, &labelled_read(false)),
+            *id == "w24",
+            "{id} with lineage off"
+        );
+    }
+}
+
+/// A version names its own readers: the live page's readers do not label it, a rule the caller satisfies on the live
+/// page does, and with lineage so does a derived live page whose origins all name the caller. A reason is withheld when
+/// the successor snapshot fails the same test.
+#[test]
+fn get_versions_judges_the_labelled_conjunct_of_a_snapshot() {
+    let dir = TempDir::new("visibility-labelled-versions");
+    let store = open(&dir);
+    put(
+        &store,
+        "open/origin-carol",
+        json!({"readable_by": ["member:carol"]}),
+    );
+    store.put_access_policy_state("default").unwrap();
+    let rule: AccessRuleRecord = serde_json::from_value(json!({
+        "source_id": "default", "rule_id": "carol-rule", "prefix": "ruled/",
+        "readable_by": ["member:carol"], "revision": 1,
+    }))
+    .unwrap();
+    store.put_access_rule(rule).unwrap();
+    let rewrite = |slug: &str, old: Value, live: Value| {
+        put(&store, slug, old);
+        store
+            .create_version_with(slug, Some("default"), Some("why"))
+            .unwrap();
+        put(&store, slug, live);
+    };
+    rewrite(
+        "open/v-old-carol",
+        json!({"readable_by": ["member:carol"]}),
+        json!({"readable_by": ["member:carol", "member:bob"]}),
+    );
+    rewrite(
+        "open/v-old-bob",
+        json!({"readable_by": ["member:bob"]}),
+        json!({"readable_by": ["member:carol", "member:bob"]}),
+    );
+    rewrite(
+        "open/v-live-readers",
+        json!({}),
+        json!({"readable_by": ["member:carol"]}),
+    );
+    rewrite("ruled/v-open", json!({}), json!({}));
+    rewrite(
+        "open/v-derived",
+        json!({"derived_from": "open/origin-carol"}),
+        json!({"derived_from": "open/origin-carol"}),
+    );
+    let listed = |slug: &str, policy: &PrivacyPolicy| {
+        let options = gbrain_store::pages::VersionsOptions {
+            exclude_private: Some(policy.clone()),
+            ..Default::default()
+        };
+        store.get_versions(slug, &options).unwrap().len()
+    };
+    for (slug, off, on) in [
+        ("open/v-old-carol", 1, 1),
+        ("open/v-old-bob", 0, 0),
+        ("open/v-live-readers", 0, 0),
+        ("ruled/v-open", 1, 1),
+        ("open/v-derived", 0, 1),
+    ] {
+        assert_eq!(
+            listed(slug, &labelled_read(false)),
+            off,
+            "{slug} with lineage off"
+        );
+        assert_eq!(
+            listed(slug, &labelled_read(true)),
+            on,
+            "{slug} with lineage on"
+        );
+    }
+    // The first snapshot's reason: its successor is the live page (not judged here), so it shows; the reason of a snapshot
+    // whose successor snapshot fails the labelled test is withheld.
+    put(
+        &store,
+        "open/v-reason",
+        json!({"readable_by": ["member:carol"]}),
+    );
+    store
+        .create_version_with("open/v-reason", Some("default"), Some("one"))
+        .unwrap();
+    put(&store, "open/v-reason", json!({}));
+    store
+        .create_version_with("open/v-reason", Some("default"), Some("two"))
+        .unwrap();
+    put(
+        &store,
+        "open/v-reason",
+        json!({"readable_by": ["member:carol"]}),
+    );
+    let options = gbrain_store::pages::VersionsOptions {
+        exclude_private: Some(labelled_read(false)),
+        ..Default::default()
+    };
+    let rows = store.get_versions("open/v-reason", &options).unwrap();
+    assert_eq!(rows.len(), 1);
+    assert!(
+        rows[0]["replaced_because"].is_null(),
+        "the successor names nobody: the reason is withheld"
+    );
 }

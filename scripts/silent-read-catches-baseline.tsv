@@ -110,12 +110,10 @@ src/commands/doctor/checks/fence-integrity.ts#fenceIntegrityResult	promise_catch
 src/commands/doctor/checks/folder-access.ts#runFolderAccess	promise_catch_empty	1
 src/commands/doctor/checks/foreign-writers.ts#checkoutOf	catch_empty	1
 src/commands/doctor/checks/foreign-writers.ts#enforceGuardSince	catch_empty	1
-src/commands/doctor/checks/foreign-writers.ts#pendingEffectPaths	capability_refusal_swallowed	1
 src/commands/doctor/checks/foreign-writers.ts#pendingEffectPaths	catch_empty	1
 src/commands/doctor/checks/foreign-writers.ts#readReflog	catch_empty	1
 src/commands/doctor/checks/foreign-writers.ts#reflogs	catch_empty	1
 src/commands/doctor/checks/foreign-writers.ts#reflogs>walk	catch_empty	1
-src/commands/doctor/checks/foreign-writers.ts#repositories	capability_refusal_swallowed	1
 src/commands/doctor/checks/foreign-writers.ts#repositories	catch_empty	2
 src/commands/doctor/checks/git-convergence.ts#sourceRoots	promise_catch_empty	1
 src/commands/doctor/checks/git-convergence.ts#unwatchedDurableRoots	capability_refusal_swallowed	1
@@ -765,9 +763,7 @@ src/core/embedding-migration-retention.ts#assertRetainedEmbeddingRebuildability	
 src/core/embedding-migration.ts#applyEmbeddingMigration	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/embedding-migration.ts#planEmbeddingMigration	capability_refusal_swallowed	2
 src/core/embedding-migration.ts#planEmbeddingMigration	catch_empty	3
-src/core/embedding-migration.ts#readDimPinnedWidths	capability_refusal_swallowed	1
 src/core/embedding-migration.ts#readDimPinnedWidths	catch_empty	1
-src/core/embedding-migration.ts#readMigrationStatus	capability_refusal_swallowed	4
 src/core/embedding-migration.ts#readMigrationStatus	catch_empty	12
 src/core/embedding-migration.ts#resolveRerankerPlan	catch_empty	1
 src/core/embedding-migration.ts#runSchemaTransition	capability_refusal_swallowed	1
@@ -1112,7 +1108,6 @@ src/core/persistence/import-mutations.ts#importPlanned	capability_refusal_swallo
 src/core/persistence/import-mutations.ts#importPlanned	promise_catch_empty	1
 src/core/persistence/index-lock-reclaim.ts#owner	catch_empty	1
 src/core/persistence/index-lock-reclaim.ts#readIndexLockReclaims	catch_empty	1
-src/core/persistence/journal.ts#writeHealthFacts	capability_refusal_swallowed	1
 src/core/persistence/journal.ts#writeHealthFacts	promise_catch_empty	1
 src/core/persistence/label-edit.ts#withStoredLabels	catch_empty	1
 src/core/persistence/landing-gaps.ts#readLandingGaps	capability_refusal_swallowed	2
@@ -1612,9 +1607,7 @@ src/core/verbs/entity-names.ts#lookupOne	promise_catch_empty	1
 src/core/verbs/entity-references.ts#readRowReferences	promise_catch_empty	1
 src/core/verbs/entity-text-mentions.ts#probe	promise_catch_empty	1
 src/core/verbs/entity-variants.ts#nameVariantsEnabled	promise_catch_empty	1
-src/core/verbs/entity-variants.ts#readPossibleDuplicates	capability_refusal_swallowed	1
 src/core/verbs/entity-variants.ts#readPossibleDuplicates	catch_empty	1
-src/core/verbs/entity-variants.ts#resolveNameVariant	capability_refusal_swallowed	2
 src/core/verbs/usage-log.ts#readVerbUsage	catch_empty	1
 src/core/wanted-links.ts#isRemoteWantedPagesEnabled	promise_catch_empty	1
 src/core/wanted-links.ts#isWantedPagesEnabled	promise_catch_empty	1

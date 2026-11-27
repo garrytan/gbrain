@@ -29,6 +29,8 @@ describe('engine parity: owner_only', () => {
     'ownerOnlyMarkTriggers names a dropped trigger and ensure recreates it on a table the role owns',
     { methods: ['executeRaw', 'ownerOnlyMarkTriggers'], requires: 'raw_sql' },
     async (engine) => {
+      // Named permanent loss (docs/designs/RUST_ENGINE.md#named-permanent-losses): a dropped Postgres trigger; a Rust
+      // brain has no SQL triggers and marks in code, so nothing can go missing.
       await engine.executeRaw('DROP TRIGGER gbrain_owner_only_row_deleted_trg ON takes');
       const read = await engine.ownerOnlyMarkTriggers();
       const ensured = await engine.ownerOnlyMarkTriggers({ ensure: true });

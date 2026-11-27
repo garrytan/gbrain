@@ -193,8 +193,8 @@ export async function enforcedAccess(engine: BrainEngine, command: string): Prom
 /** Refuses a named source the member cannot read: another member's personal source, or one that is not registered (the same refusal, so the two read alike). */
 export async function checkEnforcedSource(engine: BrainEngine, command: string, sourceId: string): Promise<void> {
   const ea = await enforcedAccess(engine, command);
-  const [row] = ea.hiddenSources.has(sourceId) ? [] : await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE id = $1 AND archived = false', [sourceId]);
-  if (!row) await refuseEnforced(command, 'target_not_readable', { engine });
+  const row = ea.hiddenSources.has(sourceId) ? null : await engine.readSourceRow(sourceId);
+  if (!row || row.archived) await refuseEnforced(command, 'target_not_readable', { engine });
 }
 
 /** Every source an operation's arguments name: --source (unless the operation owns a param called source), --source-id, --source-ids. */
@@ -367,20 +367,30 @@ type PageView = 'readable' | 'hidden' | 'missing';
  */
 export async function memberPageView(engine: BrainEngine, ea: EnforcedAccess, sourceId: string, slug: string): Promise<PageView> {
   if (ea.hiddenSources.has(sourceId)) return 'hidden';
-  const { withCallerAccess, readPolicyFragment, folderRulesAllowedSql, labelledOnlyForSql } = await import('../core/search/private-visibility.ts');
+  const { withCallerAccess } = await import('../core/search/private-visibility.ts');
   const { access } = ea;
-  const labelled = access.labelledOnly ? ' AND ' + labelledOnlyForSql('p', [access.identity], access.satisfiedRuleIds) : '';
+  const labelled = access.labelledOnly === true;
   let view: PageView = 'missing';
   for (const candidate of [...new Set([slug, slug.toLowerCase(), normalizeSlug(slug)])]) { // the op writes normalizeSlug(slug)
-    const policy = withCallerAccess(access, () => readPolicyFragment('p', access.identity, true, access.satisfiedRuleIds)) + labelled;
-    const [row] = await engine.executeRaw<{ ok: boolean }>('SELECT (' + policy + ') AS ok FROM pages p WHERE p.source_id = $1 AND p.slug = $2 LIMIT 1', [sourceId, candidate]);
-    if (row) { if (!row.ok) return 'hidden'; view = 'readable'; continue; }
-    const folder = withCallerAccess(access, () => folderRulesAllowedSql('p', access.satisfiedRuleIds))
-      + (access.labelledOnly ? ' AND ' + labelledOnlyForSql('p', [access.identity], access.satisfiedRuleIds, false) : '');
-    const [rule] = await engine.executeRaw<{ ok: boolean }>('SELECT (' + folder + ') AS ok FROM (SELECT $1::text AS source_id, $2::text AS slug, gbrain_access_folder_rules($1, $2) AS folder_rule_ids) p', [sourceId, candidate]);
-    if (!rule?.ok) return 'hidden';
+    const readable = await withCallerAccess(access, () => engine.readMemberPageReadable(sourceId, candidate, access.identity, access.satisfiedRuleIds, labelled));
+    if (readable !== null) { if (!readable) return 'hidden'; view = 'readable'; continue; }
+    if (!await slugFolderRulesAdmit(engine, access, sourceId, candidate, labelled)) return 'hidden';
   }
   return view;
+}
+
+/**
+ * Whether the folder rules a new slug would sit under let the member read it: every covering rule is one the member
+ * satisfies and no prefix of its record reads as nobody (folderRulesAllowedSql); a labelled-only member also needs one
+ * covering rule that names it (labelledOnlyForSql with no readers: a create names a member only through a rule).
+ */
+async function slugFolderRulesAdmit(engine: BrainEngine, access: EnforcedAccess['access'], sourceId: string, slug: string, labelled: boolean): Promise<boolean> {
+  const [{ validPrefix, validQualifiedRuleId, ruleCovers }, { isValidSourceId }] = await Promise.all([import('../core/access/folder-rules.ts'), import('../core/source-id.ts')]);
+  const rules = await engine.readSlugFolderRules(sourceId, slug) ?? [];
+  const satisfied = access.satisfiedRuleIds.every(validQualifiedRuleId) ? access.satisfiedRuleIds : [];
+  const covered = (access.folderCoverage ?? []).some(c => !isValidSourceId(c.source_id) || (c.prefix !== '' && !validPrefix(c.prefix))
+    || (c.prefix === '' ? c.source_id === sourceId : c.source_id === sourceId && ruleCovers(slug, c.prefix)));
+  return !covered && rules.every(id => satisfied.includes(id)) && (!labelled || rules.some(id => satisfied.includes(id)));
 }
 
 const LABEL_KEYS = ['visibility', 'readable_by', 'access', 'confidentiality', 'pinned_question', 'derived_from'] as const;
@@ -423,8 +433,7 @@ export async function markdownLabels(content: string | null, slug: string): Prom
 
 /** The stored page a label check compares against; a segmented page (no body string) refuses, so the check never reads an empty body as no labels. */
 async function storedPage(engine: BrainEngine, sourceId: string, slug: string) {
-  const [row] = await engine.executeRaw<{ type: string | null; frontmatter: unknown; compiled_truth: string | null; timeline: string | null; body_storage: 'inline' | 'segmented' | null; body_bytes: number | null }>(
-    'SELECT type, frontmatter, compiled_truth, timeline, body_storage, body_bytes FROM pages WHERE source_id = $1 AND slug = $2 LIMIT 1', [sourceId, normalizeSlug(slug)]);
+  const row = await engine.readStoredPageLabels(sourceId, normalizeSlug(slug));
   if (row) (await import('../core/page-body/page-shape.ts')).assertInlineBody({ ...row, slug, source_id: sourceId }, 'enforced_member_label_check');
   return row ? { ...row, frontmatter: typeof row.frontmatter === 'string' ? JSON.parse(row.frontmatter) : row.frontmatter } : null;
 }
@@ -446,7 +455,11 @@ export async function checkEnforcedWrite(engine: BrainEngine, command: string, o
   const ea = await enforcedAccess(engine, command);
   const source = typeof params.source_id === 'string' && params.source_id ? params.source_id : sourceId ?? 'default';
   if (ea.hiddenSources.has(source)) return refuseEnforced(command, 'target_not_readable', { engine });
-  if (opName === 'remember') return checkEnforcedRemember(engine, command, ea, source, params);
+  if (opName === 'remember') {
+    await checkEnforcedRemember(engine, command, ea, source, params);
+    await hiddenSlugsNamed(engine, command, []); // as for every write below: a refusal of the output guard's read comes before the fact is saved
+    return;
+  }
   if (opName === 'get_write_request') {
     if (!await ownEnforcedReceipt(params.request_id)) params.request_id = (await import('node:crypto')).randomUUID();
     return;
@@ -454,6 +467,7 @@ export async function checkEnforcedWrite(engine: BrainEngine, command: string, o
   for (const slug of writeTargets(opName, params)) {
     if (await memberPageView(engine, ea, source, slug) === 'hidden') return refuseEnforced(command, 'target_not_readable', { engine });
   }
+  await hiddenSlugsNamed(engine, command, []); // the output guard's read, asked of nothing, so a refusal of it comes before any write
   const slug = String(params.slug ?? '');
   if (opName === 'put_page') {
     const content = typeof params.content === 'string' ? params.content : '';
@@ -543,17 +557,21 @@ export async function namesHiddenPage(engine: BrainEngine, command: string, resu
   };
   walk(result, 0);
   if (!strings.size) return false;
+  const hidden = await hiddenSlugsNamed(engine, command, [...strings]);
+  return hidden === null || hidden.length > 0;
+}
+
+/**
+ * The slugs among `slugs` that name a page the member cannot read and that no page it reads carries (the typed read behind
+ * the output guard), or null when the record the guard judges by cannot be built. A write runs it first with no slugs, so an
+ * engine that refuses the read (a Rust brain whose member reads by lineage or a labelled-only grant) refuses before the write.
+ */
+async function hiddenSlugsNamed(engine: BrainEngine, command: string, slugs: string[]): Promise<string[] | null> {
   const ea = await enforcedAccess(engine, command);
-  const [{ withCallerAccess, callerAccessAllowedSql, privacyPartSql }, { remoteCallerAccess }] = await Promise.all([
-    import('../core/search/private-visibility.ts'), import('../core/access/caller.ts')]);
+  const [{ withCallerAccess }, { remoteCallerAccess }] = await Promise.all([import('../core/search/private-visibility.ts'), import('../core/access/caller.ts')]);
   const read = await remoteCallerAccess(engine, undefined, [], 'stdio', null, ea.member, true).catch(() => null);
-  if (!read) return true;
-  const policy = withCallerAccess({ ...read, hidePrivate: true, owner: false, privateReadableSources: [] }, () => '(' + callerAccessAllowedSql('p') + ' AND ' + privacyPartSql('p') + ')');
-  const hidden = ea.hiddenSources.size ? '(NOT (' + policy + ') OR p.source_id = ANY($2::text[]))' : 'NOT (' + policy + ')';
-  const rows = await engine.executeRaw<{ slug: string; hidden: boolean }>('SELECT p.slug, ' + hidden + ' AS hidden FROM pages p WHERE p.slug = ANY($1::text[])',
-    ea.hiddenSources.size ? [[...strings], [...ea.hiddenSources]] : [[...strings]]);
-  const visible = new Set(rows.filter(r => !r.hidden).map(r => r.slug));
-  return rows.some(r => r.hidden && !visible.has(r.slug));
+  if (!read) return null;
+  return withCallerAccess({ ...read, hidePrivate: true, owner: false, privateReadableSources: [] }, () => engine.readHiddenPageSlugs(slugs, [...ea.hiddenSources]));
 }
 
 export const WITHHELD_LINE = (command: string) => 'gbrain: ' + commandLabel(command) + ' finished; its output is withheld under ' + ENFORCED_MEMBER_ENV + '\n';

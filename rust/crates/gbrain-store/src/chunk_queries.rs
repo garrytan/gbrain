@@ -8,7 +8,8 @@
 //! listChunklessPagesWithContent, findCodeDefinitions, listSymbolTypesForName,
 //! findCodeRefChunks, countOversizedEmbedSkips, countOrphanChunks, countCodeChunkPages,
 //! codeChunksExist, currentCodeChunksExist, listQualifiedSymbolNames, listWithdrawalChunks,
-//! deleteChunksForPages, deleteChunksExcept, listContextualModeCandidates, resolveFrozenHits.
+//! deleteChunksForPages, deleteChunksExcept, listContextualModeCandidates, resolveFrozenHits,
+//! listSymbolLanguages, listSupportedChunkIds, listSymbolChunkIds, listWalkChunkRows and readReindexSpendInputs (`walk_reads`).
 //!
 //! Every member reads records other families own (pages, chunks, sources) through their
 //! `pub(crate)` readers; the two deletes remove chunk rows through the chunks family's
@@ -39,6 +40,7 @@ use std::collections::{BTreeMap, HashMap};
 
 mod segment_regions;
 mod site_reads;
+mod walk_reads;
 mod window_reads;
 pub use segment_regions::SegmentHit;
 pub use site_reads::{
@@ -46,6 +48,10 @@ pub use site_reads::{
     FrozenHitsInput, QualifiedNamesInput, UnsealedPagesInput, WithdrawalChunksInput, WithdrawalKey,
 };
 pub(crate) use site_reads::{Policy as PageReadPolicy, served};
+pub use walk_reads::{
+    ReindexSpendInput, SupportedChunkIdsInput, SymbolChunkIdsInput, SymbolLanguagesInput,
+    WalkChunkRowsInput,
+};
 
 /// `listChunklessPagesWithContent`'s default batch size.
 const DEFAULT_CHUNKLESS_BATCH: u64 = 50;

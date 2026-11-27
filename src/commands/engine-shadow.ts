@@ -31,7 +31,7 @@ import { seedStatus, shadowStatusDocument } from '../shadow/status-document.ts';
 import { installWriterHooks, primaryTakesWriterHooks, removeWriterHooks } from '../shadow/writer-hooks.ts';
 import { buildProvisionalReport, renderProvisionalMarkdown, writeProvisionalReport } from '../shadow/report.ts';
 import {
-  brainIdentity, DEFAULT_SHADOW_QUEUE_BOUND, DEFAULT_SHADOW_SAMPLE_RATE, DEFAULT_SHADOW_WRITE_SAMPLE_RATE, readShadowState, writeSampleRate, shadowBrainKey, shadowDirFor, shadowStatePath,
+  brainIdentity, DEFAULT_SHADOW_QUEUE_BOUND, DEFAULT_SHADOW_SAMPLE_RATE, DEFAULT_SHADOW_WRITE_SAMPLE_RATE, OPT_IN_WRITE_SAMPLE_RATE, readShadowState, writeSampleRate, shadowBrainKey, shadowDirFor, shadowStatePath,
   SHADOW_STATE_VERSION, writeShadowState, type ShadowState,
 } from '../shadow/state.ts';
 
@@ -116,7 +116,9 @@ The report is provisional and always says NOT READY.`;
 
 class UsageError extends Error {}
 
-interface StartOpts { plan: boolean; yes: boolean; expect: string | null; sampleRate: number; writeSampleRate: number; queueBound: number }
+interface StartOpts { plan: boolean; yes: boolean; expect: string | null; sampleRate: number; writeSampleRate: number; queueBound: number;
+  /** True when --write-sample-rate was given; otherwise the brain's default applies (writeSampleRateFor). */
+  writeSampleRateGiven?: boolean }
 
 function parseStart(args: string[]): StartOpts {
   const o: StartOpts = { plan: false, yes: false, expect: null, sampleRate: DEFAULT_SHADOW_SAMPLE_RATE, writeSampleRate: DEFAULT_SHADOW_WRITE_SAMPLE_RATE, queueBound: DEFAULT_SHADOW_QUEUE_BOUND };
@@ -138,6 +140,7 @@ function parseStart(args: string[]): StartOpts {
       const n = Number(value());
       if (!Number.isFinite(n) || n <= 0 || n > 1) throw new UsageError('--write-sample-rate must be a number above 0 and at most 1');
       o.writeSampleRate = n;
+      o.writeSampleRateGiven = true;
     } else if (a === '--queue-bound') {
       const n = Number(value());
       if (!Number.isInteger(n) || n < 1 || n > 100_000) throw new UsageError('--queue-bound must be a whole number from 1 to 100000');
@@ -305,10 +308,34 @@ async function readStorage(brain: ResolvedBrain, deps: EngineShadowDeps, now: ()
   }
 }
 
+/**
+ * The write sample rate of this start: the flag's; else the default on a brain known to use managed storage (it cannot
+ * opt in to the swap); else every write. An unread mode counts as a brain that can opt in (D1): it fails toward more
+ * checking, so an opt-in brain whose mode read failed still reaches criterion 5's bar.
+ */
+function writeSampleRateFor(o: StartOpts, storage: ManagedStorageRecord | null | undefined): number {
+  if (o.writeSampleRateGiven) return o.writeSampleRate;
+  return storage?.managed === true ? DEFAULT_SHADOW_WRITE_SAMPLE_RATE : OPT_IN_WRITE_SAMPLE_RATE;
+}
+
+/** The plan line that says why every write is compared, or null when the flag set the rate or the brain is managed. */
+function everyWriteLine(o: StartOpts, storage: ManagedStorageRecord | null | undefined): string | null {
+  if (o.writeSampleRateGiven || storage?.managed === true) return null;
+  if (storage?.managed === false) {
+    return `write comparisons: every write (rate ${OPT_IN_WRITE_SAMPLE_RATE}), because this brain can opt in to the engine swap; each save is about 2x slower while the shadow runs`;
+  }
+  return `write comparisons: storage could not be read (${storage?.reason ?? 'unknown'}); every write is compared (rate ${OPT_IN_WRITE_SAMPLE_RATE}) in case this brain can opt in to the engine swap; `
+    + 'if this brain uses managed storage, each save is about 2x slower until gbrain engine shadow start runs again and reads the mode';
+}
+
 async function start(
   brain: ResolvedBrain, o: StartOpts, deps: EngineShadowDeps,
   out: (l: string) => void, err: (l: string) => void, now: () => Date,
 ): Promise<number> {
+  // A brain that can opt in to the swap (no managed storage, or a mode that could not be read) compares every write unless
+  // --write-sample-rate says otherwise (D26, ask D; D1): criterion 5's bar is then reachable inside the 5-day shadow.
+  const storage = await readStorage(brain, deps, now);
+  o = { ...o, writeSampleRate: writeSampleRateFor(o, storage) };
   const { plan, hash } = shadowPlan(brain.key, brain.engine, brain.dir, o);
   if (o.plan || !o.yes) {
     out(`Shadow mode plan for brain ${plan.brain} (${plan.primary_engine}):`);
@@ -317,11 +344,13 @@ async function start(
     out(`  write sample rate ${plan.write_sample_rate}: that share of page and link writes is checked on a throwaway Rust store (a write inside a transaction is not checked, and a PGLite brain samples no writes); a checked write first waits (at most 2 s) for one read of the rows it touches`);
     for (const w of plan.writes) out(`  writes: ${w}`);
     out(`  never writes: ${plan.never_writes.join(', ')}`);
-    const line = storageLine(await readStorage(brain, deps, now));
+    const line = storageLine(storage);
     if (line) out(`  storage: ${line}`);
+    const every = everyWriteLine(o, storage);
+    if (every) out(`  ${every}`);
     out(`  the installed Rust engine addon is loaded and verified now`);
     out(`plan_hash: ${hash}`);
-    out(`To turn it on: gbrain engine shadow start --yes --expect ${hash}${o.sampleRate !== DEFAULT_SHADOW_SAMPLE_RATE ? ` --sample-rate ${o.sampleRate}` : ''}${o.writeSampleRate !== DEFAULT_SHADOW_WRITE_SAMPLE_RATE ? ` --write-sample-rate ${o.writeSampleRate}` : ''}${o.queueBound !== DEFAULT_SHADOW_QUEUE_BOUND ? ` --queue-bound ${o.queueBound}` : ''}`);
+    out(`To turn it on: gbrain engine shadow start --yes --expect ${hash}${o.sampleRate !== DEFAULT_SHADOW_SAMPLE_RATE ? ` --sample-rate ${o.sampleRate}` : ''}${o.writeSampleRateGiven ? ` --write-sample-rate ${o.writeSampleRate}` : ''}${o.queueBound !== DEFAULT_SHADOW_QUEUE_BOUND ? ` --queue-bound ${o.queueBound}` : ''}`);
     return o.plan ? 0 : 3;
   }
   if (o.expect !== hash) {
@@ -337,7 +366,6 @@ async function start(
     err('Shadow mode stays off; nothing was written.');
     return 1;
   }
-  const storage = await readStorage(brain, deps, now);
   mkdirSync(brain.dir, { recursive: true, mode: 0o700 });
   // The writer-evidence epoch: this seed's first start. A restart keeps it, so evidence already gathered stays in the window.
   // `stop` records a gap row when it removes the hooks (nothing recorded writers after that), so a restart after it still refuses.

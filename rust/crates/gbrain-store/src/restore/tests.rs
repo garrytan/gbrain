@@ -259,6 +259,32 @@ fn a_record_of_a_kind_this_build_has_not_classified_fails_closed() {
 }
 
 #[test]
+fn a_brain_holding_a_guest_source_refuses_restore_by_name() {
+    // A guest-source record carries the guest write rules, authority nothing revokes: restore leaves tag 0 unclassified.
+    let store = store();
+    store
+        .upsert_source(&SourceInput {
+            id: "guest-a".into(),
+            ..Default::default()
+        })
+        .unwrap();
+    store
+        .upsert_guest_source("guest-a", &["w".into()], "unknown")
+        .unwrap();
+    assert_eq!(
+        store.restore_census(&[]).unwrap().unclassified,
+        ["tag 0x30"]
+    );
+    assert_eq!(
+        store
+            .restore_quarantine(&default_only())
+            .unwrap_err()
+            .message,
+        "unclassified_state: 1 (tag 0x30)"
+    );
+}
+
+#[test]
 fn the_known_lists_match_the_key_files() {
     let tags = |text: &str, pattern: &str| -> BTreeSet<u8> {
         let re = regex_lite(pattern);
@@ -1477,5 +1503,42 @@ fn keyed_lookup_entries_are_classified_and_another_family_still_refuses() {
     assert_eq!(
         store.restore_census(&[]).unwrap().unclassified,
         ["tag 0x7e"]
+    );
+}
+
+/// A brain that keeps keyed lookups (`~k`) and a guest mark (`~g`, `guest_marks.rs`) refuses restore by name: the
+/// keyed family is classified, the guest-mark family is not, so the escape tag still refuses as `tag 0x7e`.
+#[test]
+fn a_keyed_brain_holding_a_guest_mark_still_refuses_restore_by_name() {
+    let store = store();
+    let input: PageInput = serde_json::from_value(serde_json::json!({
+        "type": "note", "title": "Alpha", "compiled_truth": "red apple",
+    }))
+    .unwrap();
+    let opts: PutPageOptions =
+        serde_json::from_value(serde_json::json!({"sourceId": "default"})).unwrap();
+    store.put_page("notes/a", &input, &opts).unwrap();
+    assert_eq!(
+        store.restore_census(&[]).unwrap().unclassified,
+        Vec::<String>::new(),
+        "a keyed brain alone restores"
+    );
+    let mark: crate::guest_marks::GuestMarkInsert = serde_json::from_value(serde_json::json!({
+        "sourceId": "default", "slug": "notes/a", "audienceMember": "alice-example", "groupSlug": "team-a",
+        "senderLabel": "Agent One", "writerKind": "oauth_client", "writerId": "broker-a",
+        "requestId": "00000000-0000-4000-8000-000000000001",
+    }))
+    .unwrap();
+    store.insert_guest_mark(&mark).unwrap();
+    assert_eq!(
+        store.restore_census(&[]).unwrap().unclassified,
+        ["tag 0x7e"]
+    );
+    assert_eq!(
+        store
+            .restore_quarantine(&default_only())
+            .unwrap_err()
+            .message,
+        "unclassified_state: 1 (tag 0x7e)"
     );
 }
