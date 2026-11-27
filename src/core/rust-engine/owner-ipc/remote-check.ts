@@ -10,9 +10,11 @@
  * hello, lane L3), it passes that principal's remote flag: the owner applies the principal's flag, and a frame whose
  * own mark says local while the principal is remote is refused as a mismatch. With multi-user mode off nothing changes.
  *
- * The owner reads the mode from the store it serves (I-0.v2: the environment switch or the brain's config row); a
- * client holds no store of the brain, so it marks frames by the environment switch, and an owner not in multi-user
- * mode ignores the mark.
+ * The owner reads the mode from the store it serves (I-0.v2: the environment switch or the brain's config row) and, in
+ * multi-user mode, lists OWNER_REMOTE_CHECK_CAP in its hello `capabilities` (audit row B3). A client holds no store of
+ * the brain, so it marks frames when the owner's hello lists the check, or by its own environment switch (an owner
+ * from before the hello listed it); an owner not in multi-user mode ignores the mark. The mark is a hello-only
+ * capability: a client never copies it into its own engine's capabilities (ownerEngineCapabilities).
  */
 import { storeMultiuser } from '../access-self-check.ts';
 import { rustMultiuserFromEnv } from '../multiuser-switch.ts';
@@ -30,9 +32,25 @@ export function ownerRemoteCheckOn(engine: object): boolean {
   return store ? storeMultiuser(store) : rustMultiuserFromEnv();
 }
 
-/** The `remote` mark a client adds to a frame in multi-user mode (none otherwise, so a v2 frame is byte-identical). */
-export function remoteFrameMark(remote: boolean): { remote?: true } {
-  return remote && rustMultiuserFromEnv() ? { remote: true } : {};
+/** The hello capability an owner in multi-user mode lists: it applies the remote check to marked frames. */
+export const OWNER_REMOTE_CHECK_CAP = 'remote_check';
+
+/** The capabilities an owner's hello lists: its engine's, plus the remote check when it applies one. */
+export function ownerHelloCapabilities(engine: object, engineCapabilities: readonly string[]): string[] {
+  return ownerRemoteCheckOn(engine) ? [...engineCapabilities, OWNER_REMOTE_CHECK_CAP] : [...engineCapabilities];
+}
+
+/** An owner hello's capabilities without the hello-only remote check: what a client's engine reports as its own. */
+export function ownerEngineCapabilities(helloCapabilities: readonly string[]): string[] {
+  return helloCapabilities.filter(c => c !== OWNER_REMOTE_CHECK_CAP);
+}
+
+/**
+ * The `remote` mark a client adds to a frame when the owner applies the check (its hello lists it, or the client's
+ * own environment switch is on); none otherwise, so a v2 frame is byte-identical.
+ */
+export function remoteFrameMark(remote: boolean, ownerCapabilities: readonly string[] = []): { remote?: true } {
+  return remote && (ownerCapabilities.includes(OWNER_REMOTE_CHECK_CAP) || rustMultiuserFromEnv()) ? { remote: true } : {};
 }
 
 /**
