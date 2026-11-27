@@ -624,6 +624,11 @@ export class PostgresEngine implements BrainEngine {
     return refuseAborted(this.engineSqlOn(this.sql));
   }
 
+  /** engineSql without the aborted-request refusal (master's plain engineSql): a cleanup write such as the body-staging abort mark must land for a cancelled request. */
+  private get cleanupSql(): SqlExecutor {
+    return this.engineSqlOn(this.sql);
+  }
+
   /** engineSql whose statements a read-only session default refused (25006) run once more in BEGIN READ WRITE, as executeRaw's do (#7183). */
   private get autocommitSql(): SqlExecutor {
     return refuseAborted(postgresExecutor(this.sql, {
@@ -2517,9 +2522,9 @@ export class PostgresEngine implements BrainEngine {
   listSweepStalePages(q: sweepReadsImpl.SweepStalePagesQuery) { return sweepReadsImpl.listSweepStalePages(this, q); }
   listSweepDeferredPages(q: sweepReadsImpl.SweepDeferredPagesQuery) { return sweepReadsImpl.listSweepDeferredPages(this, q); }
   listPageRefsForSlugs(slugs: readonly string[]) { return sweepReadsImpl.listPageRefsForSlugs(this, slugs); }
-  readMayActFor(via: MayActForVia, key: string): Promise<string[] | string | null> { return accessControlImpl.readMayActFor(this, via, key); }
+  readMayActFor(via: MayActForVia, key: string): Promise<string[] | string | null> { return this.ownRawRead(raw => accessControlImpl.readMayActFor(raw, via, key)); }
   readJobPrincipal(principal: { kind: JobPrincipalKind; id: string }) { return this.ownRawRead(exec => accessControlImpl.readJobPrincipal(exec, principal)); }
-  readAudiencePrincipals(memberIds: readonly string[], groupIds: readonly string[]): Promise<AudiencePrincipalRows> { return accessControlImpl.readAudiencePrincipals(this, memberIds, groupIds); }
+  readAudiencePrincipals(memberIds: readonly string[], groupIds: readonly string[]): Promise<AudiencePrincipalRows> { return this.ownRawRead(raw => accessControlImpl.readAudiencePrincipals(raw, memberIds, groupIds)); }
   // The folder-rule policy members (engine-sql/access-policy.ts), on this handle: a transaction's own clone inside one.
   readAccessStoreConfig(sourceId: string) { return accessPolicyImpl.readAccessStoreConfig(this, sourceId); }
   writeAccessStoreConfig(sourceId: string, store: string) { return accessPolicyImpl.writeAccessStoreConfig(this, sourceId, store); }
@@ -2588,7 +2593,7 @@ export class PostgresEngine implements BrainEngine {
   setOauthClientTokenTtl(clientId: string, ttlSeconds: number) { return accessCredentials.setOauthClientTokenTtl(this, clientId, ttlSeconds); }
   insertOauthClientGrant(row: OauthClientGrantInsert) { return accessCredentials.insertOauthClientGrant(this, row); }
   readTokenLifetimeClampedClients() { return accessCredentials.readTokenLifetimeClampedClients(this); }
-  readScopeSourceConfigs(ids: readonly string[], lock?: ScopeSourceLock) { return accessCredentials.readScopeSourceConfigs(this, ids, lock); }
+  readScopeSourceConfigs(ids: readonly string[], lock?: ScopeSourceLock) { return this.ownRawRead(raw => accessCredentials.readScopeSourceConfigs(raw, ids, lock)); }
   readOauthClientForUpdate(clientId: string) { return clientGrants.readOauthClientForUpdate(this, clientId); }
   readLiveOauthClients() { return clientGrants.readLiveOauthClients(this); }
   listAccessTokenRows() { return clientGrants.listAccessTokenRows(this); }
@@ -2713,8 +2718,8 @@ export class PostgresEngine implements BrainEngine {
   listLocalPathSources() { return sourcesImpl.listLocalPathSources(unscopedExecutor(this.engineSql, 'sources: source resolution read it unscoped through executeRaw')); }
   listSourcePathRows() { return sourcesImpl.listSourcePathRows(unscopedExecutor(this.engineSql, 'sources: sources add read it unscoped through executeRaw')); }
   readPlainSyncSource(sourceId: string) { return sourcesImpl.readPlainSyncSource(unscopedExecutor(this.engineSql, 'sources: plain-directory sync read it unscoped through executeRaw'), sourceId); }
-  readOwnerOnlySourcesPresent() { return sourcesImpl.readOwnerOnlySourcesPresent(unscopedExecutor(this.engineSql, 'sources: the owner-only check read it unscoped through executeRaw'), ownerOnlyLineageReadable(this)); }
-  readOwnerOnlySourceConfig(sourceId: string) { return sourcesImpl.readOwnerOnlySourceConfig(unscopedExecutor(this.engineSql, 'sources: the owner-only check read it unscoped through executeRaw'), sourceId); }
+  readOwnerOnlySourcesPresent() { return this.preparationRead(exec => sourcesImpl.readOwnerOnlySourcesPresent(unscopedExecutor(refuseAborted(exec), 'sources: the owner-only check read it unscoped through executeRaw'), ownerOnlyLineageReadable(this))); }
+  readOwnerOnlySourceConfig(sourceId: string) { return this.preparationRead(exec => sourcesImpl.readOwnerOnlySourceConfig(unscopedExecutor(refuseAborted(exec), 'sources: the owner-only check read it unscoped through executeRaw'), sourceId)); }
   listSourceRoutingRows() { return sourcesImpl.listSourceRoutingRows(unscopedExecutor(this.engineSql, 'sources: source resolution read it unscoped through executeRaw')); }
   countDefaultSourceSplit() { return sourcesImpl.countDefaultSourceSplit(unscopedExecutor(this.engineSql, 'sources: the default-write guard read it unscoped through executeRaw')); }
   listStaleSyncSourceIds() { return sourcesImpl.listStaleSyncSourceIds(unscopedExecutor(this.engineSql, 'sources: the advisor read it unscoped through executeRaw')); }
@@ -2722,7 +2727,7 @@ export class PostgresEngine implements BrainEngine {
   readSoleSourceId() { return this.engineSqlRead(exec => sourcesImpl.readSoleSourceId(unscopedExecutor(exec, 'sources: the corpus source check read it unscoped through executeRaw'))); }
   readFirstSourceId() { return this.engineSqlRead(exec => sourcesImpl.readFirstSourceId(unscopedExecutor(exec, 'sources: doctor origin_twins read it unscoped through executeRaw'))); }
   lockAllSourceRows(mode: 'update' | 'share') { return sourcesImpl.lockAllSourceRows(this.autocommitSql, mode); }
-  readSourceRow(sourceId: string) { return sourcesImpl.readSourceRow(unscopedExecutor(this.engineSql, 'sources: source checks read it unscoped through executeRaw'), sourceId); }
+  readSourceRow(sourceId: string) { return this.engineSqlRead(exec => sourcesImpl.readSourceRow(unscopedExecutor(exec, 'sources: source checks read it unscoped through executeRaw'), sourceId)); }
   readLiveSlugAliases(sourceId: string, targets: readonly string[]) { return this.engineSqlRead(exec => linkSlugReadsImpl.readLiveSlugAliases(unscopedExecutor(exec, 'link preparation: the live alias targets read unscoped through executeRaw'), sourceId, targets)); }
   readSourceSlugProbe(sourceId: string, afterId: number) { return this.engineSqlRead(exec => linkSlugReadsImpl.readSourceSlugProbe(unscopedExecutor(exec, 'link preparation: the source slug fingerprint read unscoped through executeRaw'), sourceId, afterId)); }
   readStoredSlugSpellings(key: string, scope: slugSpellingsImpl.StoredSpellingScope, after: string, keys?: readonly string[] | null) { return this.engineSqlRead(exec => slugSpellingsImpl.readStoredSlugSpellings(unscopedExecutor(exec, 'slug params: the stored-spelling scan read unscoped through executeRaw'), key, scope, after, keys)); }
@@ -4793,7 +4798,7 @@ export class PostgresEngine implements BrainEngine {
   async flipBodyGeneration(input: BodyFlipInput): Promise<BodyFlipResult> { return pageBodyImpl.flipBodyGeneration(this.engineSql, input); }
   async sealSegmentedPage(pageId: number, opts?: { timelineLead?: string }): Promise<void> { return pageBodyImpl.sealSegmentedPage(this.engineSql, pageId, opts?.timelineLead); }
   async openBodyStaging(input: BodyStagingInput): Promise<void> { return pageBodyImpl.openBodyStaging(this.engineSql, input); }
-  async setBodyStagingState(id: string, state: BodyStagingState, opts?: { commitRequestId?: string | null }): Promise<void> { return pageBodyImpl.setBodyStagingState(this.engineSql, id, state, opts); }
+  async setBodyStagingState(id: string, state: BodyStagingState, opts?: { commitRequestId?: string | null }): Promise<void> { return pageBodyImpl.setBodyStagingState(this.cleanupSql, id, state, opts); }
   async sweepSegments(opts?: SegmentSweepOptions): Promise<SegmentSweepResult> { return pageBodyImpl.sweepSegments(this.engineSql, opts); }
   hasSegmentStorage() { return this.preparationRead(exec => writeGuardsImpl.hasSegmentStorage(unscopedExecutor(exec, 'page body: segment storage probe ran unscoped through executeRaw'))); }
   async readSegmentDerivations(pageId: number, opts?: { kind?: SegmentDerivationKind; occurrenceIds?: readonly number[] }): Promise<SegmentDerivationRow[]> {
@@ -5334,7 +5339,7 @@ export class PostgresEngine implements BrainEngine {
   private configRead<T>(run: (sql: ReturnType<typeof postgres>) => Promise<T>): Promise<T> {
     throwIfRequestAborted(); // a cancelled request starts no config read, as executeRaw refused it (R2)
     const deadlineAt = this._pageTransaction ? undefined : readDeadline();
-    if (deadlineAt === undefined) return this.connRetry(() => run(this.sql));
+    if (deadlineAt === undefined) return this.connRetry(() => { throwIfRequestAborted(); return run(this.sql); }); // every attempt: a request that aborts during the reconnect sends no retry
     return runDeadlineRead(this.sql, deadlineAt, run, this.checkoutGauge, cancelSettleMs(), readDeadlineSignal());
   }
 
