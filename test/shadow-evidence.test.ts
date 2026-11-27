@@ -34,7 +34,7 @@ const dirs: string[] = [];
 afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
 const tmp = (): string => { const d = mkdtempSync(join(tmpdir(), 'gbrain-shadow-evidence-agg-')); dirs.push(d); return d; };
 
-const NOW = new Date('2026-11-30T12:00:00.000Z');
+const NOW = new Date('2026-11-30T12:00:00.000Z'); // pregate-literal: SHADOW_ADAPTER_VERSION=12 unrelated count, not the adapter version
 const DAY = 86_400_000;
 const STARTED = Date.parse('2026-11-24T00:00:00.000Z');
 const INPUTS: EpochInputs = {
@@ -257,14 +257,14 @@ describe('reads', () => {
   test('a class that was used but never compared is listed with 0 successes next to classes that were', () => {
     const { dir, epoch } = epochDir();
     put(dir, rowsOf(epoch, 'getPage', { match: 3 }));
-    used(dir, epoch, { getPage: { offered: 40, sampled_out: 37 }, getBacklinks: { offered: 12, sampled_out: 12 }, getTags: { offered: 1, skipped_in_transaction: 1 } });
+    used(dir, epoch, { getPage: { offered: 40, sampled_out: 37 }, getBacklinks: { offered: 12, sampled_out: 12 }, getTags: { offered: 1, skipped_in_transaction: 1 } }); // pregate-literal: SHADOW_ADAPTER_VERSION=12 unrelated count, not the adapter version
     const s = status(dir);
     expect(s.reads!.ops).toEqual([
       { op: 'getBacklinks', successful: 0, minimum: MIN_SUCCESSFUL_PER_OP }, { op: 'getPage', successful: 3, minimum: 100 }, { op: 'getTags', successful: 0, minimum: 100 },
     ]);
     expect(s.evidence!.ops_lacking_samples).toEqual(['getBacklinks 0/100', 'getPage 3/100', 'getTags 0/100']);
-    expect(s.evidence!.usage.getBacklinks).toMatchObject({ offered: 12, sampled_out: 12 });
-    expect(renderEvidenceStatus(s).join('\n')).toContain('lacking samples: getBacklinks 0/100 (offered 12, sampled out 12');
+    expect(s.evidence!.usage.getBacklinks).toMatchObject({ offered: 12, sampled_out: 12 }); // pregate-literal: SHADOW_ADAPTER_VERSION=12 unrelated count, not the adapter version
+    expect(renderEvidenceStatus(s).join('\n')).toContain('lacking samples: getBacklinks 0/100 (offered 12, sampled out 12'); // pregate-literal: SHADOW_ADAPTER_VERSION=12 unrelated count, not the adapter version
   });
 
   test('a class at 99 is named while the total is over 10,000; successful means a match or a collation_order', () => {
@@ -403,7 +403,7 @@ describe('child health', () => {
 describe('epoch, earliest READY date and printed rules', () => {
   test('the status names the epoch start and the earliest READY date for the duration it is given (default 14 days)', () => {
     const { dir } = epochDir();
-    expect(status(dir).evidence).toMatchObject({ epoch_started_at: '2026-11-24T00:00:00.000Z', readiness_days: DEFAULT_READINESS_DAYS, earliest_ready_at: '2026-12-08T00:00:00.000Z', min_successful_per_op: 100 });
+    expect(status(dir).evidence).toMatchObject({ epoch_started_at: '2026-11-24T00:00:00.000Z', readiness_days: DEFAULT_READINESS_DAYS, earliest_ready_at: '2026-12-08T00:00:00.000Z', min_successful_per_op: 100 }); // pregate-literal: SHADOW_ADAPTER_VERSION=12 unrelated count, not the adapter version
     expect(status(dir, { readinessDays: 5 }).evidence).toMatchObject({ readiness_days: 5, earliest_ready_at: '2026-11-29T00:00:00.000Z' });
   });
 
@@ -412,7 +412,7 @@ describe('epoch, earliest READY date and printed rules', () => {
     put(dir, rowsOf(epoch, 'getPage', { match: 5, error: 2 }));
     fault(dir, { kind: 'rust_internal_error', detail: 'boundary=apply code=internal_error', epoch_id: epoch });
     const text = renderEvidenceStatus(status(dir)).join('\n');
-    expect(text).toContain('earliest READY 2026-12-08');
+    expect(text).toContain('earliest READY 2026-12-08'); // pregate-literal: SHADOW_ADAPTER_VERSION=12 unrelated count, not the adapter version
     expect(text).toContain('each class needs 100 successful comparisons (an engineering default)');
     expect(text).toContain('unresolved rust_error in the last 7 days: 2 (every rust_error (error, timeout, addon_unavailable) in the last 7 days of the epoch counts as unresolved; only a new epoch clears it)');
     expect(text).toContain('panics or internal errors (conservative) 1');
@@ -596,7 +596,7 @@ describe('adapter identity', () => {
     // test-reads-source-ok[raw-bytes]: the adapter's source bytes are the fingerprint under test; a change must bump the epoch input
     for (const f of files) digest.update(`${f}\0${readFileSync(join(root, f), 'utf8')}\0`);
     // When this fails, the adapter's mapping changed: bump SHADOW_ADAPTER_VERSION (a new evidence epoch) and set both values here.
-    expect([SHADOW_ADAPTER_VERSION, digest.digest('hex')]).toEqual([12, '40685352a9c81888561ff1ce1de4bc4e30debd4f1945d13a9bf24570933e85fc']);
+    expect([SHADOW_ADAPTER_VERSION, digest.digest('hex')]).toEqual([13, 'e5b6545795f764659896431017668f3fe9366013acacdfd4d038a33feadd6d30']);
   });
 });
 
@@ -633,7 +633,7 @@ describe('follower readiness inputs are reported only for the current epoch', ()
     writeSeedRecord(dir, SEED);
     const lag: number[] = []; lag[3] = 100;
     writeFileSync(join(dir, 'follower.json'), JSON.stringify({
-      version: 1, epoch_id: 'seed-1', seed_id: 'seed-1', ...(tag === undefined ? {} : { evidence_epoch: tag }), epoch_started_at: 't', updated_at: AT.toISOString(), applied_rows: 12, queue_depth: 0, lag_ms: 0, last_seq: 1,
+      version: 1, epoch_id: 'seed-1', seed_id: 'seed-1', ...(tag === undefined ? {} : { evidence_epoch: tag }), epoch_started_at: 't', updated_at: AT.toISOString(), applied_rows: 12, queue_depth: 0, lag_ms: 0, last_seq: 1, // pregate-literal: SHADOW_ADAPTER_VERSION=12 unrelated count, not the adapter version
       watermark: { valid: true, through: AT.toISOString(), invalidated_reason: null }, lag: { epoch: lag, hours: { [String(Math.floor(AT.getTime() / 3_600_000))]: lag } },
       fingerprints: { checked_rows: 50, mismatches: 1 }, probe: { state: 'pass', checked_at: 't', server_version: '16', collation: 'C', mismatches: 0 }, allocators: { verified: true, checked_at: 't' },
     }));
@@ -656,7 +656,7 @@ describe('follower readiness inputs are reported only for the current epoch', ()
       expect([tag, other.fingerprints, other.allocators, other.follower.lag_ms_p99_epoch, other.follower.lag_ms_p99_24h]).toEqual([
         tag, { checked_rows: 0, mismatches: 0, probe: NOT_RUN_PROBE }, { verified: false, checked_at: null }, null, null,
       ]);
-      expect(other.follower).toMatchObject({ applied_rows: 12, state: 'following' }); // the Rust store's state is the seed's, not the epoch's
+      expect(other.follower).toMatchObject({ applied_rows: 12, state: 'following' }); // pregate-literal: SHADOW_ADAPTER_VERSION=12 unrelated count, not the adapter version (the Rust store's state is the seed's, not the epoch's)
     }
     // After a rotation the manifest names a new epoch: the same file no longer counts.
     follower(dir, epoch);

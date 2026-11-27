@@ -44,10 +44,11 @@ rows outlive a deleted source, as in Postgres.
 | `listConversationPageFrontmatter(sourceId)` | served |
 
 `listExtractablePages` keeps the backlog count's predicate for one source, skips a page whose current content has a
-completed or held `managed-atoms` checkpoint, and skips a page whose ledger row for its current content is tombstoned or
-partial. It returns the newest pages first (`updated_at` descending), at most `limit`, only of `affectedSlugs` when the
-run names them. The backlog count applies the same two disposition exclusions, with a partial cap counted only when it
-is at or above `maxInputChars`.
+completed or held `managed-atoms` checkpoint, skips a page whose ledger row for its current content is tombstoned or
+partial, and skips a page whose current input is held by an atom generation (#10270; the caller passes the live
+`holdIds`). It returns the newest pages first (`updated_at` descending), at most `limit`, only of `affectedSlugs` when
+the run names them. The backlog count applies the same exclusions, with a partial cap counted only when it is at or
+above `maxInputChars`.
 
 A page ledger write is pinned to the page discovery read: the page id, the source's incarnation, the source, the slug,
 the content hash and the knowledge revision must still match on a live page, or the write stores nothing and answers
