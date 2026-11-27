@@ -61,6 +61,11 @@ export interface TwoHostBrain {
   cli(host: HostName, args: string[]): Promise<CliRun>;
   /** The serve's stderr so far (never carries the token). */
   serveLog(): string;
+  /** Stops `gbrain serve` and keeps every file: the brain, the token and the certificate stay for `restartServer`. */
+  stopServer(): Promise<void>;
+  /** Starts `gbrain serve` again on the same address and port, over the same brain; resolves once it listens. */
+  restartServer(): Promise<void>;
+  /** Stops the serve and removes every file of both hosts. */
   stop(): Promise<void>;
 }
 
@@ -110,11 +115,35 @@ export async function startTwoHostBrain(opts: { address?: string } = {}): Promis
 
   let serve: ReturnType<typeof Bun.spawn> | undefined;
   let log = '';
+  const stopServer = async () => {
+    const running = serve;
+    serve = undefined;
+    if (!running) return;
+    try { (running.stdin as { end?: () => void } | undefined)?.end?.(); } catch { /* closed */ }
+    try { running.kill(); } catch { /* gone */ }
+    await Promise.race([running.exited, Bun.sleep(10_000)]);
+  };
   const stop = async () => {
-    try { (serve?.stdin as { end?: () => void } | undefined)?.end?.(); } catch { /* closed */ }
-    try { serve?.kill(); } catch { /* gone */ }
-    if (serve) await Promise.race([serve.exited, Bun.sleep(10_000)]);
+    await stopServer();
     rmSync(root, { recursive: true, force: true });
+  };
+  /** Starts the serve on `port` (0: any free port) and returns the port it listens on. */
+  const startServe = async (port: number): Promise<number> => {
+    const proc = Bun.spawn(['bun', 'run', CLI, 'serve'], {
+      cwd: root, stdin: 'pipe', stdout: 'pipe', stderr: 'pipe',
+      env: serverEnv({ GBRAIN_RUST_SERVER_LISTEN: `${address}:${port}`, GBRAIN_RUST_SERVER_TLS_CERT: tls.cert, GBRAIN_RUST_SERVER_TLS_KEY: tls.key }),
+    });
+    serve = proc;
+    void new Response(proc.stdout as ReadableStream).text();
+    const from = log.length;
+    return readPort(proc, chunk => { log += chunk; }, () => log.slice(from));
+  };
+  let listenPort = 0;
+  const restartServer = async () => {
+    if (!listenPort) throw new Error('restartServer: the server never listened');
+    await stopServer();
+    const port = await startServe(listenPort);
+    if (port !== listenPort) throw new Error(`restartServer: gbrain serve listens on ${port}, not ${listenPort}`);
   };
   try {
     // The server brain exists before the serve: one page written embedded, then its id and the owner token.
@@ -124,15 +153,11 @@ export async function startTwoHostBrain(opts: { address?: string } = {}): Promis
     token = /gbrain_[A-Za-z0-9_-]+/.exec(minted.stdout)?.[0] ?? '';
     if (!token) throw new Error('auth create --rust-server-owner printed no token');
 
-    serve = Bun.spawn(['bun', 'run', CLI, 'serve'], {
-      cwd: root, stdin: 'pipe', stdout: 'pipe', stderr: 'pipe',
-      env: serverEnv({ GBRAIN_RUST_SERVER_LISTEN: `${address}:0`, GBRAIN_RUST_SERVER_TLS_CERT: tls.cert, GBRAIN_RUST_SERVER_TLS_KEY: tls.key }),
-    });
-    void new Response(serve.stdout as ReadableStream).text();
-    const port = await readPort(serve, chunk => { log += chunk; }, () => log);
+    const port = await startServe(0);
+    listenPort = port;
     const url = `gbrain+tls://${address}:${port}`;
     writeConfig(clientHome, { engine: 'rust', rust_server: { url, token_env: 'GBRAIN_RUST_SERVER_TOKEN', ca_file: tls.cert } });
-    return { root, address, port, listen: `${address}:${port}`, url, token, brainId, tls, serverHome, clientHome, cli, serveLog: () => log, stop };
+    return { root, address, port, listen: `${address}:${port}`, url, token, brainId, tls, serverHome, clientHome, cli, serveLog: () => log, stopServer, restartServer, stop };
   } catch (error) {
     await stop();
     throw error;

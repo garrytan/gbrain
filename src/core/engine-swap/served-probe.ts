@@ -15,6 +15,7 @@
  */
 import { connectServed, type ConnectServedOptions, type ServedConnection } from '../rust-engine/served/client.ts';
 import { parseListenAddress } from '../rust-engine/served/listener.ts';
+import type { SwapDestinationEvidence } from './destination.ts';
 
 export type ServedProbeReason = 'unreachable' | 'tls_failed' | 'not_served' | 'refused' | 'not_multi_writer' | 'wrong_brain';
 
@@ -25,7 +26,10 @@ export type ServedProbeVerdict =
 export interface ServedProbeInput {
   /** The `host:port` the plan bound (destination.ts evidence `listen`). */
   listen: string;
-  /** The persistence brain id of the brain being swapped (`readPersistenceBrainId`). */
+  /**
+   * The persistence brain id the server must report (`readPersistenceBrainId`): the store brain id the plan bound
+   * (`plannedProbeTarget`), never the brain name the plan resolves (`host`).
+   */
   expectedBrainId: string;
   /** An owner server token of that brain (served/owner-token.ts). Never printed. */
   token?: string;
@@ -35,6 +39,16 @@ export interface ServedProbeInput {
   timeoutMs?: number;
   /** Test seam: the client to connect with (default `connectServed`). */
   connect?: (url: string, opts: ConnectServedOptions) => Promise<ServedConnection>;
+}
+
+/**
+ * What the swap run probes for an approved plan: the address and the store brain id its config evidence bound (both
+ * are in the plan hash), or null when the plan bound none (no evidence, a probe, refused config evidence), and then
+ * there is no served destination to check.
+ */
+export function plannedProbeTarget(evidence: SwapDestinationEvidence | null | undefined): Pick<ServedProbeInput, 'listen' | 'expectedBrainId'> | null {
+  if (!evidence || evidence.source !== 'config' || !evidence.served || !evidence.listen || !evidence.store_brain_id) return null;
+  return { listen: evidence.listen, expectedBrainId: evidence.store_brain_id };
 }
 
 /** The served-client URL of a listen address: always TLS, since only a non-loopback TLS listen counts at plan time. */
@@ -103,7 +117,9 @@ export async function probeServedDestination(input: ServedProbeInput): Promise<S
     const brainId = typeof seen === 'string' && seen !== '' ? seen : null;
     if (brainId !== input.expectedBrainId) {
       return { ok: false, url, reason: 'wrong_brain', brain_id: brainId,
-        detail: brainId ? `the brain server serves brain ${brainId}, not ${input.expectedBrainId}` : 'the brain server has no brain id' };
+        detail: brainId
+          ? `the brain server serves brain ${brainId}, not ${input.expectedBrainId}, the brain the plan bound: the store changed after the plan, or the server serves another store`
+          : 'the brain server has no brain id' };
     }
     return { ok: true, url, server_id: hello.server_id, brain_id: brainId };
   } finally {

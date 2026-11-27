@@ -9,7 +9,8 @@
  * 3. Existing coverage: none; the plan's config-only check is test/engine-swap-multi-host.test.ts.
  * 4. Seams: ok, unreachable, tls_failed, refused and wrong_brain run against the real `gbrain serve` with
  *    GBRAIN_RUST_SERVER_LISTEN on a non-loopback interface address and a self-signed certificate (test/helpers/two-host-brain.ts,
- *    real CLI, real addon). not_served runs against a real HTTPS server and a silent TCP server on that address.
+ *    real CLI, real addon); unreachable also runs against that serve stopped, then restarted on the same port. The plan's
+ *    store-id binding runs against the served store's real FORMAT file. not_served runs against a real HTTPS server and a silent TCP server on that address.
  *    not_multi_writer cannot come from a real served Rust brain, since the listener starts only in multi-user mode,
  *    which always lists multi_writer: its row runs L3's real owner server and TLS listener over an engine whose
  *    capabilities omit it, beside a control row where the same engine lists it and passes.
@@ -20,7 +21,9 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
-import { probeServedDestination, probeUrl } from '../src/core/engine-swap/served-probe.ts';
+import { plannedProbeTarget, probeServedDestination, probeUrl } from '../src/core/engine-swap/served-probe.ts';
+import { configDestination } from '../src/core/engine-swap/destination.ts';
+import { readStoreBrainId } from '../src/shadow/store-identity.ts';
 import { serveOwnerEngine, type OwnerEngineServer } from '../src/core/rust-engine/owner-ipc/server.ts';
 import { listenServed, type ServedListener } from '../src/core/rust-engine/served/listener.ts';
 import { OWNER_TOKEN_IDS_CONFIG_KEY } from '../src/core/rust-engine/served/auth.ts';
@@ -70,6 +73,11 @@ describe.skipIf(!HAVE_TWO_HOST_ADDON || !ADDRESS)('the probe against a real serv
     const v = await probe({ token: 'gbrain_not_a_real_owner_token' });
     expect(v).toMatchObject({ ok: false, reason: 'refused' });
     expect(JSON.stringify(v)).not.toContain('gbrain_not_a_real_owner_token');
+    // DECISION A: the refusal's detail never carries a token, the one sent or the server's real one.
+    if (v.ok) throw new Error('refused probe passed');
+    expect(v.detail).not.toContain('gbrain_not_a_real_owner_token');
+    expect(v.detail).not.toContain(brain.token);
+    expect(JSON.stringify(v)).not.toContain(brain.token);
   });
 
   test('wrong_brain: the server serves another brain than the one the plan swaps', async () => {
@@ -81,6 +89,40 @@ describe.skipIf(!HAVE_TWO_HOST_ADDON || !ADDRESS)('the probe against a real serv
     const port = await freePort(ADDRESS!);
     expect(await probe({ listen: `${ADDRESS}:${port}` })).toMatchObject({ ok: false, reason: 'unreachable' });
   });
+
+  test('the brain id in the served store\'s FORMAT is the id the server reports, so the plan can bind it before the cutover', async () => {
+    // The two-host server's brain lives in <root>/server/db; the swap's store is <shadow dir>/store, the same kind of store.
+    expect(readStoreBrainId(join(brain.root, 'server', 'db'))).toBe(brain.brainId);
+    expect(await probe()).toMatchObject({ ok: true, brain_id: brain.brainId });
+  });
+
+  test('the run probes what the plan bound: the right store id passes, a store id from a stale plan is wrong_brain', async () => {
+    const env = { GBRAIN_RUST_MULTIUSER: '1', GBRAIN_RUST_SERVER_LISTEN: brain.listen, GBRAIN_RUST_SERVER_TLS_CERT: brain.tls.cert, GBRAIN_RUST_SERVER_TLS_KEY: brain.tls.key };
+    const bound = plannedProbeTarget(configDestination('host', { env, storeBrainId: () => readStoreBrainId(join(brain.root, 'server', 'db')) }))!;
+    expect(bound).toEqual({ listen: brain.listen, expectedBrainId: brain.brainId });
+    expect(await probe(bound)).toMatchObject({ ok: true, brain_id: brain.brainId });
+    const stale = plannedProbeTarget(configDestination('host', { env, storeBrainId: () => OTHER_BRAIN }))!;
+    const v = await probe(stale);
+    expect(v).toMatchObject({ ok: false, reason: 'wrong_brain', brain_id: brain.brainId });
+    if (v.ok) throw new Error('stale plan passed');
+    expect(v.detail).toContain('the brain the plan bound');
+    // The brain name the plan resolves is not what the server reports.
+    expect(await probe({ expectedBrainId: 'host' })).toMatchObject({ ok: false, reason: 'wrong_brain' });
+  });
+
+  test('a stopped server is unreachable within the timeout, and the probe passes again once it serves again', async () => {
+    await brain.stopServer();
+    const started = Date.now();
+    const v = await probe({ timeoutMs: 2_000 });
+    const elapsed = Date.now() - started;
+    expect(v).toMatchObject({ ok: false, reason: 'unreachable' });
+    // Connect and identity each wait at most timeoutMs; a refused connection answers at once.
+    expect(elapsed).toBeLessThan(2 * 2_000 + 1_500);
+    if (v.ok) throw new Error('stopped server passed');
+    expect(v.detail).not.toContain(brain.token);
+    await brain.restartServer();
+    expect(await probe()).toMatchObject({ ok: true, brain_id: brain.brainId });
+  }, 180_000);
 });
 
 describe.skipIf(!ADDRESS)('the probe against something on the address that is not a brain server', () => {
