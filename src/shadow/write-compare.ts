@@ -584,17 +584,17 @@ export class WriteTally {
   }
   /**
    * `n` samples the pipe never delivered (the serving process owed them, the child never read them): `uncomparable` `pipe_unflushed`, settling that many. `windowLost`: the session's owed record was the open marker of a window the serving
-   * process never closed (a crash): the first of the `n` stands for a whole window of unknown size, booked as one `write_window_lost` (status reads no evidence for the rest of the epoch), the rest are `pipe_unflushed`.
+   * process never closed (a crash): the first of the `n` stands for a whole window of unknown size, booked as one `write_window_lost` (status reads no evidence for the rest of the epoch), the rest are `pipe_unflushed` (booked first: the window's one goes last).
    */
   missing(n: number, windowLost = 0): void {
     if (n <= 0 || !this.alive()) return;
     const lost = Math.min(Math.max(0, windowLost), n);
     if (this.epoch() === null) {
-      for (const [reason, count] of [[WINDOW_LOST_REASON, lost], ['pipe_unflushed', n - lost]] as const) { const settles = this.key ? count : 0; this.addJournal(reason, true, settles); this.addJournal(reason, false, count - settles); }
+      for (const [reason, count] of [['pipe_unflushed', n - lost], [WINDOW_LOST_REASON, lost]] as const) { const settles = this.key ? count : 0; this.addJournal(reason, true, settles); this.addJournal(reason, false, count - settles); }
       return;
     }
-    if (lost > 0) this.note('uncomparable', WINDOW_LOST_REASON, lost, false, lost);
     if (n - lost > 0) this.note('uncomparable', 'pipe_unflushed', n - lost, false, n - lost);
+    if (lost > 0) this.note('uncomparable', WINDOW_LOST_REASON, lost, false, lost); // the window's one is booked LAST (as `obligations` does): a save that only partly lands leaves a deficit the next owner books as the window, exactly once
   }
   /**
    * At the end of this child's input, after its final save: removes this session's owed file when the serving process closed it and the settled count read back from disk covers what was owed. True when the file is gone or there was none.

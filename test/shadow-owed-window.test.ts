@@ -207,6 +207,65 @@ describe('OWC ship-p1 R2: a first marker that was renamed and then threw is repl
     } finally { r.done(); }
   });
 
+  test('R3: the second window\'s marker renamed and then threw, after a window closed normally: the repair replaces it (the cached close record must not stand in for it)', async () => {
+    const r = rig({ owedWindowMs: 20 });
+    try {
+      expect(r.sup.send(sample(0))).toBe(true); await sleep(80); expect(r.owed()).toMatchObject({ v: 1, owed: 1 }); // a window closed: its record is cached as written
+      r.state.fault = 'after-rename'; expect(r.sup.send(sample(1))).toBe(false); expect(r.owed()).toMatchObject({ v: 2, owed: 2 });
+      r.state.fault = null; await sleep(80);
+      expect(r.owed()).toMatchObject({ v: 1, owed: 1 }); // was still v:2 owing 2: the repair wrote nothing and cleared its own flag
+      expect(ownerPass(r.dir, r.epoch)[WINDOW_LOST_REASON]).toBeUndefined(); // no phantom window
+    } finally { r.done(); }
+  });
+
+  // The lesson of R3: a repair path must not trust what an EARLIER window left in the cache. Each path again, after a window that closed normally (its record cached as written), with the next marker renamed and then thrown.
+  const afterNormalWindow = async (r: ReturnType<typeof rig>): Promise<void> => {
+    expect(r.sup.send(sample(0))).toBe(true); await sleep(80); expect(r.owed()).toMatchObject({ v: 1, owed: 1 });
+    r.state.fault = 'after-rename'; expect(r.sup.send(sample(1))).toBe(false); expect(r.owed()).toMatchObject({ v: 2, owed: 2 });
+  };
+  test('R3 lesson: after a normal window, the worker exits once the disk recovers: the exit-time record replaces the stray marker, and nothing is booked as a lost window', async () => {
+    const r = rig({ owedWindowMs: 20 });
+    try {
+      await afterNormalWindow(r); r.state.fault = null; r.children[0]!.emit('exit', 1, null);
+      expect(r.owed()).toMatchObject({ v: 1, owed: 1, child_exited: true });
+      expect(ownerPass(r.dir, r.epoch)[WINDOW_LOST_REASON]).toBeUndefined();
+    } finally { r.done(); }
+  });
+  test('R3 lesson: after a normal window, stop/drain/exit-hook (closeOwed) replaces the stray marker with the close record of what was accepted', async () => {
+    const r = rig({ owedWindowMs: 20 });
+    try {
+      await afterNormalWindow(r); r.state.fault = null; r.sup.closeOwed();
+      expect(r.owed()).toMatchObject({ v: 1, owed: 1, closed: true });
+      expect(ownerPass(r.dir, r.epoch)[WINDOW_LOST_REASON]).toBeUndefined();
+    } finally { r.done(); }
+  });
+  test('R3 lesson: after a normal window, a pending retry (the disk failing for a while) still replaces the stray marker when the disk recovers', async () => {
+    const r = rig({ owedWindowMs: 20 });
+    try {
+      await afterNormalWindow(r); r.state.fault = 'before-rename'; await sleep(60); expect(r.owed()).toMatchObject({ v: 2, owed: 2 });
+      r.state.fault = null; await sleep(60);
+      expect(r.owed()).toMatchObject({ v: 1, owed: 1 }); expect(ownerPass(r.dir, r.epoch)[WINDOW_LOST_REASON]).toBeUndefined();
+    } finally { r.done(); }
+  });
+  test('R3 lesson: after a normal window, the next sample opens a fresh marker over the stray one and the window closes with exactly what was accepted', async () => {
+    const r = rig({ owedWindowMs: 20 });
+    try {
+      await afterNormalWindow(r); r.state.fault = null;
+      expect(r.sup.send(sample(2))).toBe(true); expect(r.owed()).toMatchObject({ v: 2, owed: 2 }); await sleep(80);
+      expect(r.owed()).toMatchObject({ v: 1, owed: 2 }); expect(r.children[0]!.writes).toEqual([sample(0), sample(2)]);
+    } finally { r.done(); }
+  });
+  test('R3 lesson: after a normal window, a close record that renamed and then threw (a half-finished save) owes exactly what was accepted; the retry no-ops on it, and a kill books that, not a window', async () => {
+    const r = rig({ owedWindowMs: 20 });
+    try {
+      expect(r.sup.send(sample(0))).toBe(true); await sleep(80); expect(r.owed()).toMatchObject({ v: 1, owed: 1 });
+      expect(r.sup.send(sample(1))).toBe(true); r.state.fault = 'after-rename'; await sleep(60);
+      expect(r.owed()).toMatchObject({ v: 1, owed: 2 }); expect(r.children[0]!.writes).toEqual([sample(0)]); // the close is in doubt: the second sample was not sent
+      cpSync(r.dir, r.dir + '-killed', { recursive: true }); dirs.push(r.dir + '-killed');
+      recoveredExactlyOrHeld(r.dir + '-killed', r.epoch, 2); expect(ownerPass(r.dir + '-killed', r.epoch)[WINDOW_LOST_REASON]).toBeUndefined();
+      r.state.fault = null; await sleep(60); expect(r.children[0]!.writes).toEqual([sample(0), sample(1)]);
+    } finally { r.done(); }
+  });
   test('the exit-time write fails as well: nothing is hidden, the marker stands and reads as the one lost window (fail closed), never as measured', () => {
     const r = rig();
     try {
@@ -511,6 +570,24 @@ describe('OWC: the child books a window the serving process never closed', () =>
   test('an open marker (v:2) at the end of the input: the child books ONE write_window_lost (not pipe_unflushed) and settles the session; the owner pass then books nothing more', async () => {
     expect(await run({ v: 2, owed: 1, serving_pid: deadPid(), child_pid: deadPid(), open_until: Date.now() + 60_000 }, '')).toEqual({ by: { [WINDOW_LOST_REASON]: 1 }, settled: { 'sess-1': 1 }, fileLeft: true, after: { [WINDOW_LOST_REASON]: 1 }, gone: false }); // the child leaves an unclosed record; the owner pass books nothing twice and keeps it as the tombstone
   }, 30_000);
+  test('R4: an open marker owing 2 at the end of input, and only the FIRST booking of the child lands (its next save fails and it dies): the next owner books exactly one write_window_lost, and the whole credit', () => {
+    const dir = tmp(); const { epoch } = tallyOn(dir); passing(dir, epoch);
+    writeOwed(dir, { v: 2, session: 'w1', serving_pid: deadPid(), child_pid: deadPid(), owed: 2, closed: false, child_exited: false, open_until: 1 });
+    const child = new WriteTally(dir, () => epoch, () => true, process.pid, 'w1');
+    const real = WriteTally.prototype.note; let calls = 0;
+    const spy = spyOn(WriteTally.prototype, 'note').mockImplementation(function (this: WriteTally, ...args: Parameters<typeof real>) { if (calls++ === 0) return real.apply(this, args); }); // only the first booking is durable
+    try { child.missing(2, 1); } finally { spy.mockRestore(); }
+    const owner = ownerPass(dir, epoch);
+    expect(owner[WINDOW_LOST_REASON]).toBe(1); // was 2: the sentinel landed first, and the owner booked the rest as a second window
+    expect(readWriteTally(dir, epoch)!.settled?.w1).toBe(2); expect(stat(dir)).toMatchObject({ state: 'capability_missing', write_windows_lost: 1 });
+  });
+  test('R4: the client child (no epoch) journals the plain samples before the window sentinel', () => {
+    const dir = tmp(); const order: string[] = [];
+    const child = new WriteTally(dir, () => null, () => true, process.pid, 'w1');
+    const spy = spyOn(child as unknown as { addJournal(reason: string, settles: boolean, n: number): void }, 'addJournal').mockImplementation((reason: string) => { order.push(reason); });
+    try { child.missing(3, 1); } finally { spy.mockRestore(); }
+    expect(order.filter((r, i) => order.indexOf(r) === i)).toEqual(['pipe_unflushed', WINDOW_LOST_REASON]);
+  });
   test('a full record (v:1) the child did not get everything of is booked pipe_unflushed, as before (no window was lost)', async () => {
     expect(await run({ v: 1, owed: 1, closed: true }, '')).toEqual({ by: { pipe_unflushed: 1 }, settled: { 'sess-1': 1 }, fileLeft: false, after: { pipe_unflushed: 1 }, gone: true });
   }, 30_000);

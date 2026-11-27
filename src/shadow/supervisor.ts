@@ -214,7 +214,7 @@ export class ShadowSupervisor implements MirrorTransport {
   private openWindow(): boolean {
     if (!this.session) return false;
     const rec: OwedRecord = { v: 2, session: this.session, serving_pid: process.pid, ...(this.child?.pid ? { child_pid: this.child.pid } : {}), owed: this.acceptedWeight + 1, closed: false, child_exited: false, open_until: this.o.now() + this.o.owedWindowMs };
-    try { this.o.writeOwed(this.o.dir, rec); } catch { this.markerStray = true; this.armStrayRepair(); return false; } // the marker may stand: a retry replaces it with a record that states what was accepted, with or without another sample
+    try { this.o.writeOwed(this.o.dir, rec); } catch { this.markerStray = true; this.owedWritten = ''; this.armStrayRepair(); return false; } // the marker may stand: a retry replaces it with a record that states what was accepted, with or without another sample
     this.markerStray = false; this.owedWritten = `${this.session}:open:${rec.owed}`; this.windowOpen = true;
     return true;
   }
