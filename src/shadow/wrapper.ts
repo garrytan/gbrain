@@ -176,7 +176,7 @@ function buildProxy<E extends BrainEngine>(engine: E, sink: ShadowSink, opts: Sh
     const scope = outer ? outer.scope : opts.writes?.scope(engine);
     const writes: TxWrites = { wrote: false, scope, nested: !!outer, path: outer && scope ? [...outer.path, scope.open()] : [] };
     const call = (scope: Frame | null) => fn.apply(engine, [
-      (tx: BrainEngine) => beforeCommit(drained(() => (callback as (tx: BrainEngine) => unknown)(tx && typeof tx === 'object' ? buildProxy(tx, sink, opts, true, scope, writes) : tx), writes.scope), tx, outer ? undefined : writes.scope),
+      (tx: BrainEngine) => beforeCommit(drained(() => (callback as (tx: BrainEngine) => unknown)(tx && typeof tx === 'object' ? buildProxy(tx, sink, opts, true, scope, writes) : tx), writes.scope, !outer), tx, outer ? undefined : writes.scope),
       ...rest,
     ]);
     const out = follow ? followScope(followCtx(engine, frame, inTransaction), false, call) : call(null);
@@ -201,7 +201,7 @@ function buildProxy<E extends BrainEngine>(engine: E, sink: ShadowSink, opts: Sh
    * most DRAIN_MS; a followed write sends its statement only after its own pre-read). So a held write, and a write still on its way, reach the
    * connection before the transaction's COMMIT or ROLLBACK (or its savepoint's), as they would without the shadow, never after it.
    */
-  const drained = (callback: () => unknown, scope: TxScope | undefined): unknown => {
+  const drained = (callback: () => unknown, scope: TxScope | undefined, outermost: boolean): unknown => {
     if (!scope) return callback();
     let out: unknown;
     try { out = callback(); } catch (error) { out = Promise.reject(error); } // a callback that throws at once is drained too
@@ -209,7 +209,8 @@ function buildProxy<E extends BrainEngine>(engine: E, sink: ShadowSink, opts: Sh
       const until = Date.now() + DRAIN_MS;
       for (;;) {
         if (scope.gate) { await scope.gate; continue; }
-        const open = [...scope.running].filter((c) => !c.callback);
+        // Only the outermost transaction waits for unawaited calls: a nested one's scope also holds the enclosing transaction's calls, which may be waiting for it.
+        const open = outermost ? [...scope.running].filter((c) => !c.callback) : [];
         if (!open.length) return;
         if (Date.now() >= until) { try { scope.unsettled('drain_timeout'); } catch { /* the shadow never fails a call */ } return; } // the transaction ends as it would without the shadow; its unfinished samples are uncomparable
         await Promise.race([Promise.all(open.map((c) => c.done)), new Promise((r) => { setTimeout(r, Math.max(0, until - Date.now())); })]);
@@ -296,7 +297,7 @@ function buildProxy<E extends BrainEngine>(engine: E, sink: ShadowSink, opts: Sh
       if (typeof callback !== 'function') return target.transaction(callback, ...rest);
       const scope = opts.writes!.scope(engine, { followed: false }); // the lane's writes are not published to the follower: they do not move the write counter
       const writes: TxWrites = { wrote: false, scope, nested: false, path: [] };
-      return committed(target.transaction((tx: BrainEngine) => beforeCommit(drained(() => (callback as (tx: BrainEngine) => unknown)(tx && typeof tx === 'object' ? buildProxy(tx, quietSink, quiet, true, null, writes) : tx), scope), tx, scope), ...rest), scope);
+      return committed(target.transaction((tx: BrainEngine) => beforeCommit(drained(() => (callback as (tx: BrainEngine) => unknown)(tx && typeof tx === 'object' ? buildProxy(tx, quietSink, quiet, true, null, writes) : tx), scope, true), tx, scope), ...rest), scope);
     }) });
   };
 
