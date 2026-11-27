@@ -7,7 +7,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import {
   __setDocsRefForTests, argvFromCommand, deriveNext, docsUrl, inertText, noticeBlock, orderNotices, paramRef,
   redactForTransport, renderAction, renderCliError, renderNotice, shellQuote, toAgentError,
-  type Action, type Effect, type Notice, type RenderContext,
+  type Action, type Decision, type Effect, type Notice, type RenderContext,
 } from '../src/core/agent-output.ts';
 import { agentBlock, renderCliNotices } from '../src/core/agent-markers.ts';
 import { opError, withRelationGuard } from '../src/core/ops/contract.ts';
@@ -152,6 +152,160 @@ describe('injection and quoting', () => {
     expect(argvFromCommand('gbrain x | sh')).toBeUndefined();
     expect(argvFromCommand('rm -rf /')).toBeUndefined();
     expect(argvFromCommand('gbrain $(whoami)')).toBeUndefined();
+  });
+});
+
+describe('GCH5-06: no raw control character reaches the reader', () => {
+  /** A control a terminal acts on: C0 except tab, DEL and C1. */
+  const RAW = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/;
+
+  test('inertText writes BEL, ESC, C1, DEL and NUL as three-digit octal bytes and keeps tab', () => {
+    expect(inertText('a\u0007b\u001b[2Jc\u001b]0;t\u0007d\u0085e\u009bf\u007fg\u0000h\ti'))
+      .toBe('a\\007b\\033[2Jc\\033]0;t\\007d\\302\\205e\\302\\233f\\177g\\000h\ti');
+  });
+
+  test('a hostile escape sequence renders inert through a notice block and an [AGENT] block', () => {
+    const hostile = 'x\u001b]0;owned\u0007\u001b[2J\u009b31m';
+    const n: Notice = { code: 'empty_retrieval', kind: 'degraded', why: `No match for ${hostile}`, user_message: hostile };
+    expect(noticeBlock(renderNotice(n, ctx()))).not.toMatch(RAW);
+    expect(agentBlock({ why: hostile }, { showUser: hostile })).not.toMatch(RAW);
+  });
+
+  test('the HTTP view masks a private path that follows a raw ESC in a user message', () => {
+    const rendered = renderAction(action({ actor: 'user', user_message: 'Git cannot commit page files in label\u001b/home/owner/private: set an identity.' }), ctx({ transport: 'http' }));
+    const view = JSON.stringify(redactForTransport(rendered, 'http'));
+    expect(view).not.toContain('/home/owner');
+    expect(view).not.toContain('private');
+  });
+});
+
+describe('GCH5-05: a cut never splits a character or an escape, and no command is cut or impossible', () => {
+  const bash = (command: string) => execFileSync('bash', ['-c', `set -- ${command}; printf '%s\\0' "$@"`], { encoding: 'utf8' }).split('\0').slice(0, -1);
+
+  test('the inertText cut keeps a surrogate pair whole', () => {
+    const s = inertText(`${'x'.repeat(1998)}\u{1F600}tail`);
+    expect(s.isWellFormed()).toBe(true);
+    expect(s.length).toBeLessThanOrEqual(2_000);
+    expect(s.endsWith('…')).toBe(true);
+  });
+
+  test('the inertText cut never ends inside a \\NNN escape', () => {
+    for (const tail of ['\\033tail', '\u001btail', '\u0085tail']) {
+      for (let pad = 1990; pad <= 1999; pad++) {
+        const s = inertText(`${'x'.repeat(pad)}${tail}${'y'.repeat(20)}`);
+        expect(s.length).toBeLessThanOrEqual(2_000);
+        expect(s).not.toMatch(/\\[0-7]{0,2}…$/);
+      }
+    }
+  });
+
+  test('an argument with NUL or a lone surrogate gets no command; argv keeps the exact value', () => {
+    for (const word of ['a\u0000b', 'a\ud800b', 'a\udc00']) {
+      const argv = ['git', '-C', word, 'status'];
+      const rendered = renderAction(action({ argv }), ctx());
+      expect(rendered.argv).toEqual(argv);
+      expect(rendered.command).toBeUndefined();
+    }
+  });
+
+  test('a quoted argument longer than 2,000 characters prints whole and bash reads it back', () => {
+    const word = 'p q'.repeat(900);
+    const rendered = renderAction(action({ argv: ['git', '-C', word, 'status'] }), ctx());
+    expect(rendered.command).not.toContain('…');
+    expect(bash(rendered.command!)).toEqual(['git', '-C', word, 'status']);
+  });
+
+  test('an [AGENT] block prints a step without its command when the command does not fit, never a cut command', () => {
+    const n: Notice = { code: 'empty_retrieval', kind: 'degraded', why: 'w', fix: action({ argv: ['git', '-C', 'p q'.repeat(400), 'status'] }) };
+    const { stdout } = renderCliNotices([renderNotice(n, ctx())], { json: false, tty: false });
+    const next = stdout!.split('\n').find(l => l.startsWith('next:'))!;
+    expect(next).not.toContain("'");
+    expect(next).toContain('--json');
+  });
+});
+
+describe('GCH5-06 (d1): the HTTP view masks a private path after a raw control in structured argv too', () => {
+  for (const [name, ctl] of [['ESC', '\u001b'], ['BEL', '\u0007'], ['C1 NEL', '\u0085']] as const) {
+    test(`argv, verify.argv and preview_argv with a path after ${name}`, () => {
+      const word = `label${ctl}/home/owner/private`;
+      const a = action({ argv: ['git', '-C', word, 'status'], verify: { argv: ['git', '-C', word, 'log'] }, preview_argv: ['git', '-C', word, 'diff'], user_message: `in ${word}` });
+      const view = JSON.stringify(redactForTransport(renderAction(a, ctx({ transport: 'http', isCallable: () => false })), 'http'));
+      expect(view).not.toContain('/home/owner');
+      expect(view).not.toContain('private');
+      const local = renderAction(a, ctx());
+      expect(local.argv).toEqual(['git', '-C', word, 'status']);
+      expect(local.verify?.argv).toEqual(['git', '-C', word, 'log']);
+      expect(local.preview_argv).toEqual(['git', '-C', word, 'diff']);
+    });
+  }
+});
+
+describe('GCH5-05 (d4): argv no shell can carry escalates without running anything', () => {
+  const argv = ['git', '-C', 'a\u0000b', 'status'];
+
+  test('no command, next is report, argv exact, and why names the argument but not its value', () => {
+    for (const transport of ['cli', 'stdio', 'http'] as const) {
+      const r = renderAction(action({ argv }), ctx({ transport, isCallable: () => false }));
+      expect(r.command).toBeUndefined();
+      expect(r.argv).toEqual(argv);
+      expect(r.next).toBe('report');
+      expect(r.why).toContain('Command unavailable: argv[2] holds a NUL byte');
+      expect(r.why).not.toContain('a\\000b');
+    }
+    const lone = renderAction(action({ argv: ['gbrain', 'get', 'x\ud800'] }), ctx());
+    expect(lone.next).toBe('report');
+    expect(lone.why).toContain('argv[2] is not valid text');
+  });
+
+  test('a callable MCP step keeps its own next', () => {
+    const r = renderAction(action({ argv, mcp: { tool: 'get_page', arguments: { slug: 'x' } } }), ctx());
+    expect(r.command).toBeUndefined();
+    expect(r.next).toBe('run');
+    expect(r.mcp?.tool).toBe('get_page');
+  });
+
+  test('TTY, non-TTY and JSON views: an unavailable note, never a raw value or a bare next', () => {
+    const n = renderNotice({ code: 'empty_retrieval', kind: 'degraded', why: 'w', fix: action({ argv }) }, ctx({ transport: 'cli', isCallable: () => false }));
+    const tty = renderCliNotices([n], { json: false, tty: true }).stderr!;
+    expect(tty).toContain('  Fix: (command unavailable;');
+    expect(tty).not.toContain('\u0000');
+    const block = renderCliNotices([n], { json: false, tty: false }).stdout!;
+    expect(block.split('\n').find(l => l.startsWith('next:'))).toBe('next: report: (command unavailable; why says which argument, --json shows the exact argv)');
+    expect(block).not.toContain('\u0000');
+    expect(renderCliNotices([n], { json: true, tty: false }).json![0].fix!.argv).toEqual(argv);
+  });
+
+  test('a long valid command is a different state: it keeps its command and its next', () => {
+    const r = renderAction(action({ argv: ['gbrain', 'get', 'p q'.repeat(900)] }), ctx({ transport: 'cli' }));
+    expect(r.next).toBe('run');
+    expect(r.command).toBe(`gbrain get '${'p q'.repeat(900)}'`);
+  });
+});
+
+describe('GCH5-05 (d3): decision options print a whole command, the too-long note or the unavailable note', () => {
+  const decide = (argv: string[]): Decision => ({ id: 'd', question: 'q?', options: [{ id: 'a', label: 'A', argv }], default: 'a', default_reason: 'r' });
+  const views = (d: Decision) => {
+    const n = renderNotice({ code: 'empty_retrieval', kind: 'degraded', why: 'w', decisions: [d] }, ctx({ transport: 'cli' }));
+    return [renderCliNotices([n], { json: false, tty: true }).stderr!, renderCliNotices([n], { json: false, tty: false }).stdout!];
+  };
+
+  test('a 1,200-character argument prints the too-long note, never a cut command', () => {
+    for (const out of views(decide(['gbrain', 'x', 'p q'.repeat(400)]))) {
+      const line = out.split('\n').find(l => l.includes('a: A'))!;
+      expect(line).toContain('(run: (the command is too long for this line; read it from --json))');
+      expect(line).not.toContain("'p q");
+      expect(line).not.toContain('…');
+    }
+  });
+
+  test('a NUL or lone-surrogate argument prints the unavailable note', () => {
+    for (const [word, reason] of [['a\u0000b', 'holds a NUL byte'], ['a\udc00', 'is not valid text']] as const) {
+      for (const out of views(decide(['gbrain', 'x', word]))) {
+        expect(out).toContain(`(run: Command unavailable: argv[2] ${reason}`);
+        expect(out).not.toContain('\u0000');
+        expect(out.isWellFormed()).toBe(true);
+      }
+    }
   });
 });
 
