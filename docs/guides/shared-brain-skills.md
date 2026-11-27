@@ -137,6 +137,14 @@ audience and class, or fork it under the publishing skill's own directory.
 A remote editor's refusal names only the shared file, never the other skills
 that hold it.
 
+The same refusal applies when a skill that readers cannot see is the only one
+holding the file. A readers file in a skill with a narrower SKILL.md audience,
+or in a private skill, is not public, so publishing it through a public skill
+refuses. This includes a rewrite of a shared file that gives the hidden file to
+another, public skill, and an adoption batch that lists the hidden skill
+unchanged. Narrow the file's audience to match, or fork it. A new file that no
+skill held before publishes.
+
 Beyond the fresh-setup default, the owner approves a versioned policy through
 `set_skill_policy`, not through an editor's content update. For example, the
 following **MCP arguments** approve only prose and the tools used by the default

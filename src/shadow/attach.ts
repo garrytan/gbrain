@@ -150,7 +150,7 @@ export function attachShadowParts<E extends BrainEngine>(engine: E, dir: string,
   // A sample the pipe refuses, or a read-back left running at disconnect, is recorded for the owner child to count `uncomparable`: one line appended without a lock to this process's own file (this process never
   // writes the tally, whose lock could stall a write; see recordLost). With no epoch yet there is nothing to count under: the count then rides on the next line the child accepts, as it always did.
   const sampling = reads && deps.recordsWriteComparisons && hasCapability(engine, 'postgres_admin');
-  const writes = sampling ? createWriteSampler({ rate: writeSampleRate(state), random: deps.random, send: (line) => supervisor.send(line), generation: writeGeneration(follower), active: () => supervisor.active(), owe: (n) => supervisor.owe(n), lost: (reason) => { const epoch = readEpoch(dir)?.epoch_id; return epoch !== undefined && recordLost(dir, epoch, reason); } }) : undefined;
+  const writes = sampling ? createWriteSampler({ rate: writeSampleRate(state), random: deps.random, send: (line) => supervisor.send(line), generation: writeGeneration(follower), active: () => supervisor.active(), owe: (n) => supervisor.owe(n), refuse: (n) => !!readEpoch(dir) && supervisor.oweRefused(n), lost: (reason) => { const epoch = readEpoch(dir)?.epoch_id; return epoch !== undefined && recordLost(dir, epoch, reason); } }) : undefined;
   return { engine: wrapShadowEngine(engine, sink, { sampleRate: state.sample_rate, random: deps.random, follow, onCommittedWrite, writes }), queue, supervisor, follower, reconciler, observer, lsnWatch: watch };
 }
 
