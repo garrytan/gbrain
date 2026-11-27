@@ -314,7 +314,7 @@ export async function readHeldConcepts(engine: Sql, model: boolean): Promise<{ h
 async function readHeldConceptRows(engine: Sql, model: boolean): Promise<{ held: Array<{ source_id: string; slug: string }>; kept: RebuildKept[] }> {
   const rows = await engine.executeRaw<{ id: number; source_id: string; slug: string; private: boolean; members_private: boolean }>(`SELECT p.id, p.source_id, p.slug,
     NOT ${privacyPartSql('p')} AS private,
-    EXISTS (SELECT 1 FROM derivation_inputs d JOIN pages m ON m.id::text = d.input_id AND d.input_table = 'pages'
+    EXISTS (SELECT 1 FROM derivation_inputs d JOIN pages m ON m.id = CASE WHEN d.input_id ~ '^[0-9]+$' THEN d.input_id::bigint END AND d.input_table = 'pages'
       WHERE d.derived_table = 'pages' AND d.derived_id = p.id::text AND m.deleted_at IS NULL AND NOT (${privatePagesFilterFragment('m')})) AS members_private
     FROM pages p WHERE ${HELD_SQL} ORDER BY p.source_id, p.slug`);
   const kept: RebuildKept[] = [];
