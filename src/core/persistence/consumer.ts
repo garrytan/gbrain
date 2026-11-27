@@ -1124,7 +1124,7 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
     const ceiling = readPublicationCeilingMs(this.engine);
     const prep = startPreparation(async signal => {
       signal.addEventListener('abort', () => cancel.abort(signal.reason), { once: true });
-      await faultPoint('consumer:preparing', { requestId: row.request_id, writeId: row.id, sourceId: row.source_id, operation: row.operation, signal });
+      await faultPoint('consumer:preparing', { requestId: row.request_id, writeId: row.id, sourceId: row.source_id, operation: row.operation, signal, clock });
       // Phase 4.3: a single page write prepares against one config read instead of one per key.
       return this.prepare(this.engine.kind === 'postgres' && singleWrite(row)
         && await writeSwitchOn(this.engine, 'single_write_group').catch(() => true) ? await preparationConfigView(this.engine) : this.engine,

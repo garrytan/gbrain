@@ -6111,7 +6111,8 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
 - **Doctor.** `rust_engine_addon` checks the installed addon when shadow mode is on and is not applicable otherwise.
 - **Writer observations (swap eligibility).** While shadow mode is on, each process that writes to the brain through
   gbrain notes itself in `engine_writer_observations`: its host id, the name its database connections carry, its
-  command kind and gbrain version, and when it first and last wrote. The note runs after the write committed, in its
+  command kind and gbrain version, the write protocol it speaks (`write_protocol`: 2 in this build; an older build's row
+  has none), and when it first and last wrote. The note runs after the write committed, in its
   own short transaction, at most every 10 minutes per process; a rolled-back transaction leaves none. A brain without
   a shadow keeps the table empty.
 - **Writer hooks (Postgres brains).** `start --yes` adds one statement-level trigger, `gbrain_writer_note`, to every
@@ -6154,7 +6155,11 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   with the rights of whichever role is current when it fires. A process claim resolves a connection's rows only
   while the claim is inside the window too, so an expired claim cannot hide a current writer. The process-side note
   runs under a 50 ms lock timeout and a 2 s statement timeout, so a busy evidence table ends it as a recorded
-  failure instead of holding one of the brain's connections.
+  failure instead of holding one of the brain's connections. A writer of an
+  older build counts too: a row seen since the current evidence epoch began (not only in the last 7 days) with no
+  `write_protocol`, or one below 2, is named in `eligibility.legacy_write_writers`, and an epoch manifest that is there and
+  cannot be read counts as one more unknown path (no manifest at all means no epoch yet). A brain where the migration that
+  adds the column has not run cannot read the evidence, so the swap refuses.
   A fault or pass record that is
   torn, has no time, lacks a count or carries a count of the wrong type is incomplete evidence and counts too. Criterion 11 reads
   NOT READY on any evidence it cannot prove, so a gap nobody thought of fails closed. In particular, shadow mode
@@ -6286,7 +6291,7 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   not scored. Tied rows at the cutoff count only for the top-ten places the strictly better rows leave, and a reference whose last row
   (of 50) still ties the cutoff is not scored. A stable rerun compares digests: the whole answer, and for a ranked read its rows without scores in a fixed order, so the same
   rows in another order or with other scores are an `order_diff` (closed as matched on the reads that ignore order). The comparator
-  version is 3 (it was 1): a running shadow opens a new evidence epoch, so records written under the earlier rules never count. Known limits, not fixed here: a position that does not move proves nothing was written but says nothing about a change that is not WAL-logged (an unlogged table), and a server in recovery (a hot standby or read replica) is never proven; and a read the caller was authorized to make that
+  version is 4 (it was 1): a running shadow opens a new evidence epoch, so records written under the earlier rules never count. Known limits, not fixed here: a position that does not move proves nothing was written but says nothing about a change that is not WAL-logged (an unlogged table), and a server in recovery (a hot standby or read replica) is never proven; and a read the caller was authorized to make that
   returns a private page still reads `private_row_returned` and pauses comparison (it fails closed).
 - **Status fields.** `status --json` adds: `follower.state` (`not_seeded`, `needs_reseed`, `stopped`, `invalid`, `behind`,
   `following`), `follower.action` (the reseed steps, or `null`), `lag_ms`, `lag_ms_p99_24h` and `lag_ms_p99_epoch` (a power-of-two bucket upper bound, not an exact
@@ -6296,7 +6301,7 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   `mismatches`, and a `probe`, described below); `allocators`;
   `seed`; `primary_refreshes` (`nonterminal_rows`: primary `gbrain sources refresh` rows that are neither completed nor
   aborted, counted by the last full pass, with its `checked_at`; `null` before one; a swap must drain them first, and
-  this is a reading, not the swap's own check); and `write_comparisons` (the pilot page and link writes only; `capability_missing` until a comparison has a verdict (`comparable` or `unexplained_difference`), and while any replay has none). The
+  this is a reading, not the swap's own check); and `write_comparisons` (the pilot page and link writes only; `capability_missing` until a comparison has a verdict (`comparable` or `unexplained_difference`), and while any replay has none or a sample owed to a session is not yet settled, `outstanding_sessions`). The
   `write_comparisons` and `fingerprints` counts are totals for the current evidence epoch. An epoch is not a seed: `epoch_id`
   names the candidate whose evidence counts (the seed, the Rust addon's SHA-256, the comparator and adapter versions, the
   capability set and the hash of the swap's readiness policy, `src/core/engine-swap/policy.ts`), and a change to any of them
