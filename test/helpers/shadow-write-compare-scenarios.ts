@@ -1722,6 +1722,19 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       expect(putEvents(inbox)[2]!.outcome).toBeUndefined(); // a full sample (before the drain: in_transaction_busy on Postgres)
       expect(Boolean(putEvents(inbox)[2]!.moved)).toBe(false);
     }, 120_000);
+
+    test('a pipelined edit with the follower wired is compared and does not wait for itself', async () => {
+      await fresh();
+      const { inbox, wrapped } = prod();
+      const snapshot = await primary().readPageSnapshot('companies/acme-example');
+      const started = Date.now();
+      // The version row's follow pre-read holds the call lane, so the edit is held there; when the lane opens, the edit's sample must not count itself among the calls ahead of it.
+      await wrapped.transaction(async (tx) => { await Promise.all([tx.createVersion('companies/acme-example', { sourceId: 'default', preimage: snapshot } as never), tx.putPage('companies/acme-example', page('Acme Edited'), { sourceId: 'default', inline: true })]); });
+      const took = Date.now() - started;
+      await until(() => putEvents(inbox).length >= 1);
+      expect(putEvents(inbox)[0]!.outcome).toBeUndefined(); // a full sample, not in_transaction_busy
+      expect(took).toBeLessThan(1_500); // the sampler's wait for calls ahead of it is 2 s: waiting for itself would use all of it
+    }, 120_000);
   });
 
   describe('a CLI that sends many samples and exits at once loses none uncounted (received + counted lost == sent)', () => {
