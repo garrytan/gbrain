@@ -237,7 +237,8 @@ rewrites often can keep thousands of copies of itself (#9737). The brain owner
 removes them with `gbrain pages prune-history` (local CLI only; a thin client
 is refused). Pick the pages: one slug, `--prefix <p>`, `--type <t>` or
 `--all`, with `--source <id>` to stay in one source. Pick what goes:
-`--keep N` keeps each page's newest N versions, `--older-than 30d` only takes
+`--keep N` keeps each page's newest N versions (segmented versions count toward
+N and are never removed), `--older-than 30d` only takes
 versions saved before then (the two combine), and `--version <id>` names exact
 versions of one slug. A slug that names a page in more than one source needs
 `--source`.

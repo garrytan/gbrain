@@ -68,7 +68,7 @@ Every non-localOnly operation on the MCP surface: 198 tools across 33 areas. **S
 
 | Tool | Description | Scope | Starter | Gate |
 |---|---|---|---|---|
-| `correct` | The user corrected you: saves their standing rule and replaces fact_id with corrected_fact (or withdraws it). | write | yes |  |
+| `correct` | Only when the user corrects a wrong fact or asks for a standing rule: saves the rule and replaces fact_id with corrected_fact (or withdraws it); over MCP it often waits for owner approval first. | write | yes |  |
 
 ## discovery
 

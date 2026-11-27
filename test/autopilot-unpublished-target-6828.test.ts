@@ -65,7 +65,10 @@ function harness(label: string, opts: { spec?: string; cache?: string } = {}): H
   writeFileSync(join(globalRoot, 'package.json'), JSON.stringify({ dependencies: { gbrain: opts.spec ?? 'github:garrytan/gbrain#latest-stable' } }));
   writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({ name: 'gbrain', repository: { url: 'git+https://github.com/garrytan/gbrain.git' } }));
 
-  const driver = join(pkgDir, 'src', 'cli.ts');
+  // #10536: the upgrade's post-swap checks run the package's own src/cli.ts, so it stands in for the installed release by
+  // handing off to the gbrain recorder on PATH; the autopilot driver lives beside it.
+  writeFileSync(join(pkgDir, 'src', 'cli.ts'), "const r = Bun.spawnSync(['gbrain', ...process.argv.slice(2)], { stdio: ['inherit', 'inherit', 'inherit'] });\nprocess.exit(r.exitCode ?? 1);\n");
+  const driver = join(pkgDir, 'src', 'autopilot-driver.ts');
   writeFileSync(driver, [
     'const fetched: string[] = [];',
     'globalThis.fetch = (async (url: unknown) => {',

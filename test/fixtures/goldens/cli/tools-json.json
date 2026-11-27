@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 336050,
-    "stdoutSha256": "7b262907aa8014dc82469457a6622cb89cf3c321bb711d2b85aeded1989ca822",
+    "stdoutBytes": 336173,
+    "stdoutSha256": "16b97302f64d2b48eaba0eb5b2909720a5549e3acd315dd7ae560f39be62939d",
     "toolNames": [
       "remember",
       "entity",
@@ -4838,7 +4838,7 @@
         "scope": "read"
       },
       {
-        "description": "The user corrected you: saves their standing rule and replaces fact_id with corrected_fact (or withdraws it). Branch on state and next.",
+        "description": "Only when the user corrects a wrong fact or asks for a standing rule: saves the rule and replaces fact_id with corrected_fact (or withdraws it); over MCP it often waits for owner approval first. Anything else to save: call remember. Branch on state and next.",
         "idempotent": true,
         "local_only": false,
         "mutating": true,

@@ -642,6 +642,7 @@
     "secret_store_unwritable",
     "segmented_mirror_writer_gate",
     "serve_build_drift",
+    "serve_build_skew",
     "serve_port_in_use",
     "serve_self_exit_suppressed",
     "serve_status_only",
