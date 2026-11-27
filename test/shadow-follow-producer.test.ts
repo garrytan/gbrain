@@ -14,7 +14,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
-import { busyPreReadIsRelationLevel, failedPreReadKeepsSiblingWrites, failedPreReadKeepsTransaction, followHarness, PAGE, restoreFollowProbes } from './helpers/follow-producer.ts';
+import { busyPreReadIsRelationLevel, syncThrowRollsBackHeldWrite, failedPreReadKeepsSiblingWrites, failedPreReadKeepsTransaction, followHarness, PAGE, restoreFollowProbes } from './helpers/follow-producer.ts';
 import { mergeItems, type Invalidation } from '../src/shadow/invalidations.ts';
 import { isShadowReadMember, SHADOW_TRANSACTION_MEMBERS } from '../src/shadow/reads.ts';
 import { sqlWrites } from '../src/shadow/sql-writes.ts';
@@ -257,6 +257,7 @@ describe('a failed pre-read', () => {
   test('does not abort the transaction around it', async () => { await failedPreReadKeepsTransaction(engine); });
   test('does not undo sibling writes of the transaction that were in flight around it', async () => { await failedPreReadKeepsSiblingWrites(engine); });
   test('never waits for a running nested transaction: the write is relation-level (pre_read_busy) and every write commits', async () => { await busyPreReadIsRelationLevel(engine); });
+  test('a callback that throws at once rolls back the write its pre-read held', async () => { await syncThrowRollsBackHeldWrite(engine); });
 });
 
 describe('raw SQL write targets', () => {

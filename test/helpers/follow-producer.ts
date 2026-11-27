@@ -115,3 +115,25 @@ export async function busyPreReadIsRelationLevel(primary: BrainEngine): Promise<
   const items = h.batches.flatMap((b) => b.items);
   if (!items.some((i) => i.kind === 'relation' && i.reason === 'pre_read_busy')) throw new Error(`no pre_read_busy item: ${JSON.stringify(items)}`);
 }
+
+/**
+ * A callback that throws at once, after starting a slow statement and a followed delete (whose pre-read waits for the statement): the delete is held
+ * by the lane, and the transaction's ROLLBACK must wait until it has been sent, so the delete is rolled back with everything else.
+ */
+export async function syncThrowRollsBackHeldWrite(primary: BrainEngine): Promise<void> {
+  const h = followHarness(primary);
+  await primary.putPage('people/held', PAGE('Held'));
+  let pending: Promise<unknown> | undefined;
+  let threw = false;
+  try {
+    await h.engine.transaction(((tx: BrainEngine) => {
+      void tx.executeRaw('SELECT pg_sleep(0.2)').catch(() => undefined);
+      pending = tx.deletePage('people/held');
+      throw new Error('abort');
+    }) as never);
+  } catch (error) { threw = (error as Error).message === 'abort'; }
+  await pending?.catch(() => undefined);
+  await new Promise((r) => setTimeout(r, 300));
+  if (!threw) throw new Error('the transaction did not report the callback error');
+  if (!(await primary.getPage('people/held'))) throw new Error('the held delete committed after the transaction rolled back');
+}
