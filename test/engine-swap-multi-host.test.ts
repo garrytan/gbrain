@@ -9,10 +9,11 @@
  * plan hash). (3) The public command is driven here; readiness and plan units are covered in
  * engine-swap-readiness.test.ts and engine-swap-cli.test.ts. This proves eligibility only: moving a two-host brain
  * through shadow mode and back is a separate acceptance item that waits for the server (lane L3). (4) Seam: the
- * injected destination probe stands in for the server until it exists; the switch is set with withEnv.
+ * injected destination probe stands in for the server until it exists; the switch is set with withEnv; the disk reading
+ * is fixed, and the byte-identical cases write to the disk between their two plans (diskMoves) so a live reading fails them.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { closeSync, fsyncSync, mkdtempSync, openSync, rmSync, writeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -67,12 +68,22 @@ async function run(extra: Partial<EngineSwapCliDeps> & { hosts?: number | null }
   const code = await runEngineSwap(['--to', 'rust', '--plan', '--json'], {
     openEngine: async () => Object.assign(Object.create(engine), { disconnect: async () => undefined }) as BrainEngine,
     readShadowStatus: async () => status(hosts), now: NOW,
-    home, dataDir: home, resolveBrain: () => 'host', cliBrain: null,
+    // A fixed disk reading: the real one moves whenever anything writes to the shared disk (diskMoves), which is not under test here.
+    home, dataDir: home, freeBytes: () => 64 * 2 ** 30, resolveBrain: () => 'host', cliBrain: null,
     out: t => { stdout += t; },
     writeError: (e, o) => { const r = renderCliError(e, { json: o.json, command: 'engine swap', tty: false }); error = r.stdout ?? r.stderr ?? ''; return r.exitCode; },
     ...deps,
   });
   return { code, stdout, error, plan: stdout ? JSON.parse(stdout) : null };
+}
+/**
+ * Another process writing to the same disk between two plan reads, made deterministic: 32 MiB written and synced into the
+ * test's home, so the file system's free space differs from the first read. Two plans compared byte for byte must not see it.
+ */
+let writes = 0;
+function diskMoves(): void {
+  const fd = openSync(join(home, `disk-moves-${writes++}.bin`), 'w');
+  try { const mib = Buffer.alloc(1024 * 1024, 7); for (let i = 0; i < 32; i++) writeSync(fd, mib); fsyncSync(fd); } finally { closeSync(fd); }
 }
 const elig = (plan: { criteria: Array<{ n: number; state: string; detail: string }> }) => plan.criteria.find(c => c.n === 11)!;
 
@@ -170,6 +181,7 @@ describe('with the switch off nothing changes', () => {
     await withEnv({ [SWITCH]: undefined }, async () => {
       for (const hosts of [1, 2, null]) {
         const base = await run({ hosts });
+        diskMoves();
         const withProbe = await run({ hosts, resolveDestination: served });
         expect(withProbe.stdout).toBe(base.stdout);
         expect(withProbe.plan.plan_hash).toBe(base.plan.plan_hash);
@@ -180,6 +192,7 @@ describe('with the switch off nothing changes', () => {
 
   test('with the switch on, a single-host plan keeps its exact JSON and hash; the destination stays out of the JSON', async () => {
     const off = await withEnv({ [SWITCH]: undefined }, () => run({ hosts: 1 }));
+    diskMoves();
     await withEnv({ [SWITCH]: '1' }, async () => {
       const noEvidence = await run({ hosts: 1 });
       expect(noEvidence.stdout).toBe(off.stdout);
