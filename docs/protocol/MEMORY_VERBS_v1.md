@@ -129,9 +129,11 @@ Retrieve saved facts and (with `query`) budget-packed page snippets.
   reference implementation also accepts relative phrases like `"8 hours ago"`,
   `"6 weeks ago"` and `"last month"` as a convenience; only ISO 8601 is part
   of the frozen contract.) The window
-  is measured on event time (`valid_from`, falling back to `created_at`) and
-  composes with `entity` and `session_id` in the same query, before the
-  per-arm limit. An unparseable value is rejected with `invalid_params`.
+  is measured on event time (`valid_from`); a fact with an unknown event date
+  is left out unless `include_undated: true` (additive, full surface, #10288),
+  which also returns undated facts saved inside the window. It composes with
+  `entity` and `session_id` in the same query, before the per-arm limit. An
+  unparseable value is rejected with `invalid_params`.
 - `limit` is a PER-ARM cap (facts and search results each).
 - `question`: optional string (at most 2,000 characters). The FACTS arm then
   returns active facts (every fact, expired and superseded included, with
