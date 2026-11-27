@@ -278,7 +278,9 @@ const MAPPED: &[Mapped] = &[
     },
     Mapped {
         table: "page_aliases",
-        prefix: &[keys::ALIAS, ALIAS_BY_PAGE],
+        // The page-side row aliases.rs writes (`PAGE_ALIAS_BY_SLUG`): a literal, as a read of a kind
+        // declared there (tests/key_registry.rs).
+        prefix: &[keys::ALIAS, 0x03],
         columns: &[
             "source_id",
             "alias_norm",
