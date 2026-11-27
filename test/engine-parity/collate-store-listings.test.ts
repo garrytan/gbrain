@@ -407,15 +407,14 @@ describe('store listings come out by byte', () => {
   });
 });
 
-// Row 32k-3: `gbrain guests grant-owner-clients` checks that the source is a guest source with raw SQL (`SELECT 1 FROM guest_sources`,
-// src/commands/guests.ts), before it lists any credential. A parity case counts a typed refusal as a pass, so this reads each arm itself:
-// PGLite and Postgres name a source that is not a guest source and exit 2; Rust refuses loudly with engine_capability_missing, answers
-// nothing (a wrong "not a guest source" would send the operator to `guests init`), and writes nothing.
-describe('guests grant-owner-clients checks the guest source with raw SQL (row 32m-3)', () => {
-  const RAW_SQL = "This brain's engine does not support executeRaw yet (it needs the raw_sql capability), so nothing ran.";
+// Row 32m-3 (closed): `gbrain guests grant-owner-clients` checks that the source is a guest source before it lists any credential
+// (src/commands/guests.ts). The check is the typed `hasGuestSourceRow` member (rust-engine/main c7f9bfd036), and a Rust brain answers
+// it from its guest_sources record (84bbfa31596b). A parity case counts a typed refusal as a pass, so this reads each arm itself: for a
+// source that is not a guest source, every arm prints the same line, exits 2 and writes nothing. A refusal on any arm fails the case.
+describe('guests grant-owner-clients checks the guest source through a typed member (row 32m-3)', () => {
   const NOT_GUEST = 'Source "not-guest" is not a guest source. Set one up with: gbrain guests init --source not-guest';
 
-  test('PGLite and Postgres exit 2 for a source that is not a guest source; Rust refuses engine_capability_missing and writes nothing', async () => {
+  test('every engine exits 2 for a source that is not a guest source, prints the same line and writes nothing', async () => {
     const outcomes: unknown[] = [];
     for (const arm of arms()) {
       await resetArm(arm);
@@ -446,8 +445,7 @@ describe('guests grant-owner-clients checks the guest source with raw SQL (row 3
         unchanged: JSON.stringify(await engine.listOauthClients()) === before,
       });
     }
-    expect(outcomes).toEqual(arms().map(arm => arm.backend === 'rust'
-      ? { backend: 'rust', returned: false, code: 'engine_capability_missing', message: RAW_SQL, exits: [], printed: [], unchanged: true }
-      : { backend: arm.backend, returned: false, code: null, message: 'EXIT', exits: [2], printed: [NOT_GUEST], unchanged: true }));
+    expect(outcomes).toEqual(arms().map(arm =>
+      ({ backend: arm.backend, returned: false, code: null, message: 'EXIT', exits: [2], printed: [NOT_GUEST], unchanged: true })));
   }, 60_000);
 });
