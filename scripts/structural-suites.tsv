@@ -398,7 +398,7 @@ test/scripts/run-verify-parallel.test.ts	guard registration ⇒ execution covera
 test/scripts/run-verify-parallel.test.ts	run-verify-parallel.sh — no-timeout-binary fallback rc capture (regression)	8	readFileSync
 test/scripts/serial-files.test.ts	scripts/serial-files.tsv (serial lane manifest)	5	readFileSync
 test/scripts/silent-read-catches.test.ts	what counts	10	readFileSync
-test/scripts/sql-move-check.test.ts	sql-move-check: the real engine-sql copies	3	readFileSync
+test/scripts/sql-move-check.test.ts	sql-move-check: the real engine-sql copies	2	readFileSync
 test/scripts/stable-daily.test.ts	stable-daily.yml	2	readFileSync
 test/scripts/stress-gate.test.ts	docs anchors	1	readFileSync
 test/scripts/stress-gate.test.ts	gate plan	8	readFileSync
