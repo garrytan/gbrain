@@ -288,7 +288,12 @@ export interface SeedImportResult {
  * Opens (or creates) the brain store at `databasePath`. A second open of the same directory rejects `rust_store_locked`.
  * A created brain records `embedding` as its embedding identity; an existing brain keeps its own.
  */
-export async function openRustStore(addon: object, databasePath: string, embedding?: { model: string; dimensions: number }): Promise<RustStore> {
+export async function openRustStore(
+  addon: object,
+  databasePath: string,
+  embedding?: { model: string; dimensions: number },
+  opts: { createMissing?: boolean } = {},
+): Promise<RustStore> {
   const { Pool, Brain } = addon as StoreAddon;
   const pool = new Pool(STORE_POOL_THREADS);
   const brain = new Brain(pool);
@@ -297,6 +302,8 @@ export async function openRustStore(addon: object, databasePath: string, embeddi
       schemaVersion: LATEST_SCHEMA_VERSION, createdBy: 'gbrain', chunkStrategy: SEED_CHUNK_STRATEGY,
       writeGateDetectorVersion: WRITE_GATE_DETECTOR_VERSION,
       ...(embedding ? { embeddingModel: embedding.model, embeddingDimensions: embedding.dimensions } : {}),
+      // Sent only when the store must already be there, so every other open sends what it always sent.
+      ...(opts.createMissing === false ? { createMissing: false } : {}),
     });
   } catch (error) {
     await pool.shutdown(0).catch(() => undefined);
