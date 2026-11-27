@@ -10,6 +10,8 @@ export const STORE_RETURNING_MEMBERS: ReadonlySet<string> = new Set([
   'manualLinkStore', 'topologyStore', 'gitEffectStore', 'gitDurabilityStore', 'refreshStore', 'groupPublishStore',
 ]);
 export const SERVED_STORE_CALL = 'servedStoreCall';
+/** Protocol v3 only: the method names of the store a member returns, so the client's store has them as its own keys. */
+export const SERVED_STORE_KEYS = 'servedStoreKeys';
 
 /**
  * Store methods (`StoreBrain`) that engine code outside the members calls on the store itself (the shared-skill

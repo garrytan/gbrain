@@ -17,7 +17,7 @@ import { PERSISTENCE_CLOSING_MESSAGE } from '../../persistence/service.ts';
 import { snapshotStatus, snapshotStore, type SnapshotStoreOptions } from '../store-snapshot.ts';
 import type { OwnerWholeOperation } from './server.ts';
 import { IMPORT_CLIENT_FILE, importClientFile } from '../served/client-files.ts';
-import { SERVED_BRAIN_CALL, SERVED_STORE_CALL, STORE_RETURNING_MEMBERS, servedBrainMethod } from '../served/store-returning.ts';
+import { SERVED_BRAIN_CALL, SERVED_STORE_CALL, SERVED_STORE_KEYS, STORE_RETURNING_MEMBERS, servedBrainMethod } from '../served/store-returning.ts';
 import {
   forwardsWhole, OWNER_RUN_OPERATION, type ForwardedOperationContext, type ForwardedOperationResult,
   type WholeOperationName,
@@ -88,6 +88,12 @@ export function ownerWholeOperations(opts: { config?: GBrainConfig } = {}): Read
       await rust._admit?.(method);
       const brain = (await rust.storeFor(method)).brain;
       return (brain[method] as (...a: unknown[]) => Promise<unknown>).apply(brain, Array.isArray(args) ? args : []);
+    },
+    // Protocol v3 only: the method names of a store a member returns (served/engine.ts servedStore).
+    [SERVED_STORE_KEYS]: async (engine: BrainEngine, member: unknown) => {
+      if (typeof member !== 'string' || !STORE_RETURNING_MEMBERS.has(member)) throw ownerIpcRefusal(String(member), 'it does not return a store');
+      const store = await (engine as unknown as Record<string, () => Promise<Record<string, unknown>>>)[member]();
+      return Object.keys(store).filter(key => typeof store[key] === 'function');
     },
     // Protocol v3 only: one method of a store a member returns (served/engine.ts STORE_RETURNING_MEMBERS).
     [SERVED_STORE_CALL]: async (engine: BrainEngine, member: unknown, method: unknown, args: unknown) => {

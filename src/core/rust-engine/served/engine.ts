@@ -22,7 +22,7 @@ import { connectServed, type ServedConnection } from './client.ts';
 import { SERVED_TXN_CONFLICT_REASON, servedTransactionContention } from './errors.ts';
 import { recordHeldPageKeys, type HeldPageKeys } from '../../page-state/guards.ts';
 import type { PageKey } from '../../page-state/types.ts';
-import { SERVED_BRAIN_CALL, SERVED_STORE_CALL, STORE_RETURNING_MEMBERS, registerServedBrain, unregisterServedBrain } from './store-returning.ts';
+import { SERVED_BRAIN_CALL, SERVED_STORE_CALL, SERVED_STORE_KEYS, STORE_RETURNING_MEMBERS, registerServedBrain, unregisterServedBrain } from './store-returning.ts';
 
 export const RUST_SERVER_URL_ENV = 'GBRAIN_RUST_SERVER_URL';
 export const RUST_SERVER_TOKEN_ENV = 'GBRAIN_RUST_SERVER_TOKEN';
@@ -67,15 +67,30 @@ function brainProxy(connection: ServedConnection, ref: string | undefined): obje
   });
 }
 
-function storeProxy(connection: ServedConnection, member: string, ref: string | undefined): object {
-  return new Proxy({}, {
-    get: (_target, prop) => {
-      if (typeof prop !== 'string' || prop === 'then') return undefined;
-      return (...args: unknown[]) => ref
-        ? connection.request('call', `${member}.${prop}`, args, { txn: ref })
-        : connection.request('fn', SERVED_STORE_CALL, [member, prop, args]);
-    },
-  });
+/** The method names of each store-returning member, per connection (they do not change while it lives). */
+const storeKeys = new WeakMap<ServedConnection, Map<string, Promise<string[]>>>();
+
+/**
+ * The store a member returns, on a served client: an object with the owner store's method names as its own keys (so a
+ * spread or a wrapper keeps every method), each crossing as `<member>.<method>` inside a transaction, or as the whole
+ * operation `servedStoreCall` on the engine itself.
+ */
+async function servedStore(connection: ServedConnection, member: string, ref: string | undefined): Promise<object> {
+  let perMember = storeKeys.get(connection);
+  if (!perMember) { perMember = new Map(); storeKeys.set(connection, perMember); }
+  let keys = perMember.get(member);
+  if (!keys) {
+    keys = connection.request('fn', SERVED_STORE_KEYS, [member]) as Promise<string[]>;
+    perMember.set(member, keys);
+    keys.catch(() => perMember!.delete(member));
+  }
+  const store: Record<string, (...args: unknown[]) => Promise<unknown>> = {};
+  for (const prop of await keys) {
+    store[prop] = (...args: unknown[]) => (ref
+      ? connection.request('call', `${member}.${prop}`, args, { txn: ref })
+      : connection.request('fn', SERVED_STORE_CALL, [member, prop, args])) as Promise<unknown>;
+  }
+  return store;
 }
 
 /**
@@ -102,7 +117,7 @@ function transactionHandle(engine: object, connection: ServedConnection, ref: st
             return value;
           }
         : STORE_RETURNING_MEMBERS.has(member)
-          ? async () => storeProxy(connection, member, ref)
+          ? () => servedStore(connection, member, ref)
         : route === 'refuse'
           ? () => Promise.reject(ownerIpcRefusal(member, 'reserved connections and engine callbacks do not cross the connection to the brain server'))
           : (...args: unknown[]) => connection.request('call', member, args, { txn: ref });
@@ -187,7 +202,7 @@ export async function connectServedEngine(engine: object, target: ServedTarget):
   }
   for (const member of STORE_RETURNING_MEMBERS) {
     if (missingOnRustOwner(connection.hello, member) !== null) continue;
-    Object.defineProperty(record, member, { value: async () => storeProxy(connection, member, undefined), writable: true, configurable: true, enumerable: false });
+    Object.defineProperty(record, member, { value: () => servedStore(connection, member, undefined), writable: true, configurable: true, enumerable: false });
   }
   if (connection.caps.has('txn')) {
     for (const member of ['transaction', 'transactionDirect'] as const) {
