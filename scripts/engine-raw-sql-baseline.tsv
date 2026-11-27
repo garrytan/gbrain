@@ -398,7 +398,7 @@ src/core/cycle/edge-contradictions.ts	execute_raw	13
 src/core/cycle/edge-contradictions.ts	sql_template	1
 src/core/cycle/extract-atoms-generation.ts	execute_raw	4
 src/core/cycle/extract-atoms-input.ts	execute_raw	6
-src/core/cycle/extract-atoms-page-state.ts	execute_raw	4
+src/core/cycle/extract-atoms-page-state.ts	execute_raw	8	GST-4020: latest-scan read, atom inventory, reused-atom hash move and renamed-origin read sit with the module's scan-state SQL until extract_atoms state moves behind engine methods
 src/core/cycle/extract-atoms-stamp.ts	execute_raw	1
 src/core/cycle/extract-atoms.ts	execute_raw	6
 src/core/cycle/extract-facts.ts	execute_raw	13
@@ -803,7 +803,7 @@ src/core/persistence/git-conversion.ts	execute_raw	16
 src/core/persistence/git-declared.ts	execute_raw	7
 src/core/persistence/git-door.ts	execute_raw	1
 src/core/persistence/git-durability-administration.ts	execute_raw	4
-src/core/persistence/git-durability-policy.ts	execute_raw	2
+src/core/persistence/git-durability-policy.ts	execute_raw	3	GST-3743: foreignCheckout reads the source row beside the durability policy reads
 src/core/persistence/git-gap.ts	execute_raw	5
 src/core/persistence/git-push-holds.ts	execute_raw	1
 src/core/persistence/graduation-copy.ts	execute_raw	36

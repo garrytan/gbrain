@@ -998,12 +998,10 @@ async function prepareSyncMutation(unbounded: BrainEngine, row: WriteRequest, _c
   const overlay = digest(canonical(parsed, parsed.tags)) !== digest(canonical({ ...ready.parsedPage, type: renamedType ?? ready.parsedPage.type }, tags));
   const fenceFixes = ready.result.fences_normalized ?? [];
   if (overlay && p.companyApproval) throw companyWritebackRefusal(row, p, fenceFixes);
-  // #5409: a read-only mirror keeps its canonical metadata in the database only; its checkout stays the remote's bytes.
+  // #5409: a read-only mirror keeps its canonical metadata in the database only; its checkout stays the remote's bytes. GST-3743: so does every import of a checkout nothing on this host commits (foreignCheckout).
   enterClaimStep(clock, 'mirror_check', undefined, 'db');
-  const mirrorReadOnly = overlay && await sourceMirrorReadOnly(engine, row.source_id);
-  // GST-3743: nothing on this host commits a foreign checkout's files, so every import of its pass stays database-only.
-  const foreign = await sliceMemo(unbounded, `foreign\0${row.source_id}`, () => foreignCheckout(engine, row.source_id, binding));
-  const canonicalFile = overlay && !mirrorReadOnly && !foreign && writeThroughConfigured(await engine.getConfig('sync.write_through')) ? serializePageToMarkdown(renderedPage, tags) : null;
+  const databaseOnlyReason = overlay && await sourceMirrorReadOnly(engine, row.source_id) ? 'mirror_read_only' as const : await sliceMemo(unbounded, `foreign\0${row.source_id}`, () => foreignCheckout(engine, row.source_id, binding)) ? 'foreign_checkout' as const : undefined;
+  const canonicalFile = overlay && !databaseOnlyReason && writeThroughConfigured(await engine.getConfig('sync.write_through')) ? serializePageToMarkdown(renderedPage, tags) : null;
   const writeback = canonicalWritebackNeeded(row, p, p.content, canonicalFile);
   // A rename projects against the moved page (same id), so its pinned timeline rows carry over.
   enterClaimStep(clock, 'canonical_projections', undefined, 'db');
@@ -1022,7 +1020,7 @@ async function prepareSyncMutation(unbounded: BrainEngine, row: WriteRequest, _c
     deferEmbedding: p.processingOptions?.noEmbed || p.embedDeferred === true, ...(!(p.processingOptions?.noEmbed || p.embedDeferred === true) && ready.noop && !moved && snapshot && await chunksEmbeddedAsIs(engine, snapshot.page.id) ? { embeddingCurrent: true } : {}),
     ...(ready.afterCommit || renamed ? { afterCommit: async (target: BrainEngine) => { await published.afterCommit?.(target); } } : {}),
     ...(writeback ? { file: { root, path: join(root, p.path), content: canonicalFile, expectedBeforeHash: p.rawHash } } : {}),
-    ...(mirrorReadOnly ? { databaseOnlyReason: 'mirror_read_only' as const } : foreign ? { databaseOnlyReason: 'foreign_checkout' as const } : {}),
+    ...(databaseOnlyReason ? { databaseOnlyReason } : {}),
     apply: async (tx, preimage) => {
       let applied = ready;
       if (renamed) {

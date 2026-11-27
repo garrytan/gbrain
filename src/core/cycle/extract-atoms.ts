@@ -97,10 +97,9 @@ import { OperationError } from '../ops/contract.ts';
 import { isOpPageSlug } from '../ops/context.ts';
 import type { WriteReceipt } from '../persistence/types.ts';
 import { acceptedPendingReceipt } from '../persistence/accepted-pending.ts';
-import { AtomPageStateError, MAX_DETERMINISTIC_FAILURES, moveReusedAtoms, readAtomPageIdentity, renamedOriginAtoms, reusableAtomScan, writeAtomPageState, type AtomPageInput } from './extract-atoms-page-state.ts';
+import { AtomPageStateError, MAX_DETERMINISTIC_FAILURES, readAtomPageIdentity, retireRenamedOriginAtoms, reuseUnchangedAtoms, writeAtomPageState, type AtomPageInput } from './extract-atoms-page-state.ts';
 import { pageSnapshotKey } from '../page-snapshot-batch.ts';
 import { heldRowsForCaller } from '../eligibility/fence-overlay.ts';
-import { retireDerivedPages, ATOM_RETIRED_BY_EXTRACT } from '../persistence/derived-retirement-hold.ts';
 import { atomGenerationOrigin, atomInputPin, heldAtomInputExclusionSql, heldLine, publishUnmanagedAtoms, resolveTranscriptAtomSlug, resolveTranscriptKeys, transcriptRoot } from './extract-atoms-generation.ts';
 import { currentHoldIds, heldForInput } from '../generations/publish.ts';
 import { ATOM_TYPES, ATOMS_RESPONSE_SCHEMA } from './extract-atoms-schema.ts';
@@ -1057,12 +1056,6 @@ export async function runPhaseExtractAtoms(
   async function stampAtomsScanHash(item: AtomPageInput, inputSha256?: string): Promise<void> {
     await writeAtomPageState(engine, sourceId, item, 'complete', inputSha256);
   }
-  /** GST-4020: a complete re-extraction of a renamed page supersedes the extractor atoms that still name its old slugs. */
-  async function retireRenamedOrigins(item: AtomPageInput): Promise<string[]> {
-    const slugs = await renamedOriginAtoms(engine, sourceId, item.slug);
-    if (slugs.length) await retireDerivedPages(engine, sourceId, slugs, ATOM_RETIRED_BY_EXTRACT);
-    return slugs;
-  }
   /** Large pages A7: a page's watermark moves past the text this item read once its writes committed (a pending batch keeps the old one). */
   async function commitAtomsWatermark(item: ExtractAtomsItem, input: ExtractAtomsInput, published: readonly { state: string }[]): Promise<void> {
     if (item.kind === 'page' && item.identity && input.plan && published.every(receipt => receipt.state === 'committed')) await commitExtractionPlan(engine, item.identity.pageId, input.plan);
@@ -1170,10 +1163,8 @@ export async function runPhaseExtractAtoms(
       if (!opts.dryRun && !truncated && await heldForInput(engine, atomGenerationOrigin(sourceId, item).key, origin ? atomOriginPin(origin) : atomInputPin(item))) { duplicatesSkipped++; continue; }
       // GST-4020 (#10435): an edit that leaves the model input unchanged (a takes or private facts row) reuses the atoms.
       const reused = !opts.dryRun && !origin && item.kind === 'page' && !truncated && input.inputSha256
-        ? await reusableAtomScan(engine, sourceId, item, input.inputSha256, { visibility, date: contentDate ? String(contentDate) : null }) : null;
+        ? await reuseUnchangedAtoms(engine, sourceId, item, input.inputSha256, { visibility, date: contentDate ? String(contentDate) : null }, opts.signal) : null;
       if (reused && item.kind === 'page') {
-        throwIfAborted(opts.signal, 'extract_atoms');
-        await moveReusedAtoms(engine, sourceId, reused, item.contentHash);
         await atomFiles?.write(reused, []);
         await stampAtomsScanHash(item, input.inputSha256);
         await commitAtomsWatermark(item, input, []);
@@ -1235,11 +1226,8 @@ export async function runPhaseExtractAtoms(
           writeRequests.push(...published);
           // GST-4020: an empty result never retires the page's own atoms (GBRA-161 D4), but atoms that still name a slug
           // the page was renamed from carry the visibility it had then; once the page is private they go.
-          if (!origin && item.kind === 'page' && !truncated && visibility === 'private') {
-            throwIfAborted(opts.signal, 'extract_atoms');
-            const renamed = await retireRenamedOrigins(item);
-            if (renamed.length) await atomFiles?.write([], renamed);
-          }
+          const renamed = !origin && item.kind === 'page' && !truncated && visibility === 'private' ? await retireRenamedOriginAtoms(engine, sourceId, item.slug, opts.signal) : [];
+          if (renamed.length) await atomFiles?.write([], renamed);
           if (!origin && truncated) await recordPartialDisposition(engine, sourceId, item, maxInputChars);
           else if (!origin && item.kind === 'page') await stampAtomsScanHash(item, input.inputSha256);
           else if (!origin && item.kind === 'transcript') await stampTranscriptTombstone(engine, sourceId, item.filePath, item.contentHash);
@@ -1388,7 +1376,7 @@ export async function runPhaseExtractAtoms(
         throwIfAborted(opts.signal, 'extract_atoms');
         const outcome = await publishUnmanagedAtoms(engine, sourceId, item, unmanagedAtoms, provenanceLinks, { partial: truncated, runId, originLabel });
         if (outcome.state === 'held') continue;
-        const renamed = item.kind === 'page' && !truncated ? await retireRenamedOrigins(item) : [];
+        const renamed = item.kind === 'page' && !truncated ? await retireRenamedOriginAtoms(engine, sourceId, item.slug, opts.signal) : [];
         await atomFiles?.write(unmanagedAtoms.map(atom => atom.slug), [...outcome.retired, ...renamed]);
         if (truncated) await recordPartialDisposition(engine, sourceId, item, maxInputChars);
         else if (item.kind === 'page') await stampAtomsScanHash(item, input.inputSha256);

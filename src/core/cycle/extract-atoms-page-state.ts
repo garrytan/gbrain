@@ -2,6 +2,8 @@ import type { SqlEngine } from '../persistence/model.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
 import { stableJson } from '../persistence/digest.ts';
 import type { BrainEngine } from '../engine.ts';
+import { throwIfAborted } from '../abort-check.ts';
+import { ATOM_RETIRED_BY_EXTRACT, retireDerivedPages } from '../persistence/derived-retirement-hold.ts';
 
 /**
  * gbrain#4148: consecutive same-content failures of a content-deterministic
@@ -119,19 +121,27 @@ export async function reusableAtomScan(engine: SqlEngine, sourceId: string, item
 const renamedFromSql = `SELECT alias_slug FROM slug_aliases WHERE source_id=$1 AND canonical_slug=$2 AND notes='rename'
   UNION SELECT old_slug FROM slug_rename_history WHERE source_id=$1 AND new_slug=$2`;
 
-/** GST-4020: move reused atoms onto the page's current content hash, as a completed generation does (atoms adapter completeItems). */
-export async function moveReusedAtoms(engine: SqlEngine, sourceId: string, slugs: readonly string[], contentHash: string): Promise<void> {
-  if (!slugs.length) return;
-  await engine.executeRaw(`UPDATE pages SET frontmatter = frontmatter || jsonb_build_object('source_hash', $1::text)
-    WHERE source_id=$2 AND type='atom' AND slug = ANY($3::text[]) AND deleted_at IS NULL`, [contentHash.slice(0, 16), sourceId, [...slugs]]);
+/**
+ * GST-4020: reuse the atoms reusableAtomScan finds, moving them onto the page's current content hash as a completed
+ * generation does (atoms adapter completeItems); null when the page has to be extracted. A stop before the move writes nothing.
+ */
+export async function reuseUnchangedAtoms(engine: SqlEngine, sourceId: string, item: AtomPageInput, inputSha256: string,
+  page: { visibility: string; date: string | null }, signal?: AbortSignal): Promise<string[] | null> {
+  const slugs = await reusableAtomScan(engine, sourceId, item, inputSha256, page);
+  if (!slugs) return null;
+  throwIfAborted(signal, 'extract_atoms');
+  if (slugs.length) await engine.executeRaw(`UPDATE pages SET frontmatter = frontmatter || jsonb_build_object('source_hash', $1::text)
+    WHERE source_id=$2 AND type='atom' AND slug = ANY($3::text[]) AND deleted_at IS NULL`, [item.contentHash.slice(0, 16), sourceId, slugs]);
+  return slugs;
 }
 
 /**
- * GST-4020: the live extractor atoms of an unmanaged page that still name a slug the page was renamed from. Their
- * origin is this page, so a re-extraction of it supersedes them; left live they keep the visibility of the page as it
- * was before the rename.
+ * GST-4020: retire the live extractor atoms of an unmanaged page that still name a slug the page was renamed from, and
+ * return their slugs. Their origin is this page, so a complete re-extraction of it supersedes them; left live they keep
+ * the visibility of the page as it was before the rename.
  */
-export async function renamedOriginAtoms(engine: SqlEngine, sourceId: string, slug: string): Promise<string[]> {
+export async function retireRenamedOriginAtoms(engine: BrainEngine, sourceId: string, slug: string, signal?: AbortSignal): Promise<string[]> {
+  throwIfAborted(signal, 'extract_atoms');
   const rows = await engine.executeRaw<{ slug: string }>(
     `SELECT a.slug FROM pages a
       WHERE a.source_id=$1 AND a.type='atom' AND a.deleted_at IS NULL
@@ -139,7 +149,9 @@ export async function renamedOriginAtoms(engine: SqlEngine, sourceId: string, sl
         AND COALESCE(a.frontmatter->>'extracted_by', '') LIKE 'extract\\_atoms%'
         AND a.frontmatter->>'source_slug' = ANY(ARRAY(${renamedFromSql}))`,
     [sourceId, slug]);
-  return rows.map(row => row.slug);
+  const slugs = rows.map(row => row.slug);
+  if (slugs.length) await retireDerivedPages(engine, sourceId, slugs, ATOM_RETIRED_BY_EXTRACT);
+  return slugs;
 }
 
 const LEGACY_KEYS = ['atoms_scan_hash', 'atoms_fail_hash', 'atoms_fail_count'];
