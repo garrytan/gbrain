@@ -180,9 +180,13 @@ fn hidden_from_writer_judges_a_soft_deleted_row_like_a_live_one() {
     let policy = |identity: &[&str], labelled: bool| PrivacyPolicy {
         identity: ids(identity),
         caller_record: true,
-        labelled_only: labelled.then(|| LabelledOnly {
-            identity: ids(identity),
-            satisfied_rule_ids: vec![],
+        labelled_only: labelled.then(|| {
+            Box::new(LabelledOnly {
+                identity: ids(identity),
+                satisfied_rule_ids: vec![],
+                lineage: false,
+                member: None,
+            })
         }),
         ..Default::default()
     };
