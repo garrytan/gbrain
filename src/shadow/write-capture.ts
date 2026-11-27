@@ -41,12 +41,14 @@ export interface WriteSamplerOptions {
 }
 /** What the sampler keeps of one outermost transaction (wrapper.ts hands it to every engine proxy of it): the writes it makes, in order, and the putPage samples it took. */
 export interface TxScope {
-  /** Set while a sampled write reads its preimage on the transaction's connection: the wrapper holds other members until it is open again. */
+  /** Set while a sampled write waits for the calls ahead of it and reads its preimage on the transaction's connection: the wrapper holds other members until it is open again, and resolves when it opens. */
   gate: Promise<void> | null;
+  /** Calls held while the gate is closed, in call order (the wrapper queues them): when it opens they start one by one, and a call that closes it again leaves the rest queued. */
+  waiters: Array<() => void>;
   /** Member calls on the transaction that have started and not yet settled, queued ones included (the wrapper counts them). */
   inflight: number;
-  /** Member calls the wrapper let run (not held by the gate) that have not settled yet, in the order they ran: the ones a sampled write waits for. */
-  running: Set<{ name: string; done: Promise<void> }>;
+  /** Member calls the wrapper let run (not held by the gate) that have not settled yet, in the order they ran: the ones a sampled write waits for. `callback`: the call took a function (a nested transaction, a bounded read), which may be waiting for a call held behind the gate. */
+  running: Set<{ name: string; callback: boolean; done: Promise<void> }>;
   /** A member that may write is about to run, inside the nested transactions `path` names (none: the outermost). */
   note(name: string, args: unknown[], path?: number[]): void;
   /** A nested transaction (savepoint) opened: its id. */
@@ -60,8 +62,8 @@ export interface TxScope {
 }
 export interface WriteSampler {
   wrap(name: string, fn: Function, ctx: { engine: any; inTransaction: boolean; mayWrite: (name: string, args: unknown[]) => boolean; scope?: TxScope; nested?: boolean }): Function;
-  /** The scope of an outermost transaction opened on `engine`. */
-  scope(engine: BrainEngine): TxScope;
+  /** The scope of an outermost transaction opened on `engine`. `followed` false: the transaction's writes are not published to the follower (the warm single-write lane), so they do not move the write counter. */
+  scope(engine: BrainEngine, opts?: { followed?: boolean }): TxScope;
   /** At disconnect: waits up to `ms` for the read-backs still running; any left are counted `readback_abandoned` and send nothing later. */
   settle(ms: number): Promise<void>;
 }
@@ -209,11 +211,23 @@ const pageKey = (name: string, args: unknown[]): string => { const r = pageRefs(
 /** The target page as the transaction commits it (beforeCommit): its revision, and its compared fields as `readBackText` writes them. */
 interface Pin { revision: string; text: string }
 interface TxSample { at: number; key: string; op: string; bad?: string; pin?: Pin; read?: (then: unknown[][]) => void }
-interface Scope extends TxScope { root: BrainEngine; log: Array<{ name: string; key: string; args?: unknown[]; path: number[]; kind?: 'bookkeeping' | 'seal' }>; samples: TxSample[]; nested: number }
+interface Scope extends TxScope { root: BrainEngine; followed: boolean; log: Array<{ name: string; key: string; args?: unknown[]; path: number[]; kind?: 'bookkeeping' | 'seal' }>; samples: TxSample[]; nested: number }
 
 const PREIMAGE_REASONS: ReadonlySet<string> = new Set(['preimage_too_large', 'preimage_timeout', 'soft_deleted_page', 'fact_overlay']);
-/** Members whose call runs a callback: one still running may be waiting for a call held behind the gate, so a sampled write never waits for it. */
-const CALLBACK_MEMBERS: ReadonlySet<string> = new Set(['transaction', 'transactionDirect', 'withReservedConnection']);
+/**
+ * Closes the gate of `scope`: until the returned function runs, the wrapper holds every new member call of the transaction. Opening it starts the held calls in order, each
+ * at once, until one closes the gate again (a held sampled write); the rest stay queued for that one. Each call is woken once, however many writes are queued.
+ */
+export function holdGate(scope: TxScope): () => void {
+  let resolve!: () => void;
+  scope.gate = new Promise<void>((r) => { resolve = r; });
+  let opened = false;
+  return () => {
+    if (opened) return;
+    opened = true; scope.gate = null; resolve();
+    while (!scope.gate && scope.waiters.length) scope.waiters.shift()!();
+  };
+}
 
 /** True when every call in `calls` settles within `ms`. */
 const settledWithin = async (calls: Promise<void>[], ms: number): Promise<boolean> => {
@@ -257,7 +271,8 @@ export function createWriteSampler(o: WriteSamplerOptions): WriteSampler {
   /** Read-backs still running; `abandoned` is set when settle() has counted one, so it sends nothing later (a sample is counted once). */
   const reading = new Set<{ abandoned: boolean; done: Promise<void> }>();
   /** Off the request path, and nothing in it may escape: an encode that throws (a segmented page's body getters) is one more uncomparable sample. */
-  const readBackAndSend = (engine: BrainEngine, name: string, args: unknown[], encoded: unknown[], targets: PageRef[], pre: PreImage, result: unknown, before: number | undefined, then: unknown[][] = [], pin?: Pin): void => {
+  /** `own`: how much the sampled write itself moves the write counter (one follow batch; none in a transaction the follower does not see), so only a move beyond it is another write. */
+  const readBackAndSend = (engine: BrainEngine, name: string, args: unknown[], encoded: unknown[], targets: PageRef[], pre: PreImage, result: unknown, before: number | undefined, then: unknown[][] = [], pin?: Pin, own = 1): void => {
     const sample = { abandoned: false, done: Promise.resolve() };
     sample.done = (async () => {
       try {
@@ -267,7 +282,7 @@ export function createWriteSampler(o: WriteSamplerOptions): WriteSampler {
         // too, because the fence exempts the write's own target rows, which a concurrent same-process write can change (a link's context, a page's contextual-retrieval mode). The one exemption: an in-transaction putPage
         // whose fence completed and whose page was pinned just before the commit: the fence and the pin (the revision and every compared field of the page, read again here) cover its target rows, so the counter does not also decide.
         // A fence that failed marks the sample moved. Without a completed fence the counter decides, as it always did.
-        const counterMoved = before !== undefined && after !== undefined && after - before > 1;
+        const counterMoved = before !== undefined && after !== undefined && after - before > own;
         const fence = hasCapability(engine, 'postgres_admin') ? await fenced(engine, name, args, targets, pre, result, back, pin?.revision) : undefined;
         const pinMoved = pin !== undefined && readBackText(encodeValue({ pages: [back.pages[0]], links: [] })) !== pin.text;
         const moved = fence === undefined ? counterMoved : fence !== 'clear' || pinMoved || (pin === undefined && counterMoved);
@@ -286,10 +301,9 @@ export function createWriteSampler(o: WriteSamplerOptions): WriteSampler {
     const s: TxSample = { at: scope.log.length, key: pageKey(name, args), op: name };
     scope.samples.push(s);
     const ahead = [...scope.running];
-    if (ahead.some((c) => CALLBACK_MEMBERS.has(c.name))) { s.bad = 'in_transaction_busy'; return Promise.resolve(run()); }
+    if (ahead.some((c) => c.callback)) { s.bad = 'in_transaction_busy'; return Promise.resolve(run()); }
     const before = o.generation?.();
-    let open!: () => void;
-    scope.gate = new Promise<void>((resolve) => { open = () => { scope.gate = null; resolve(); }; });
+    const open = holdGate(scope);
     return (async () => {
       let encoded: unknown[] = []; let pre: PreImage | undefined; let targets: PageRef[] = [];
       try {
@@ -304,7 +318,7 @@ export function createWriteSampler(o: WriteSamplerOptions): WriteSampler {
       try { sent = run(); } finally { open(); } // sent before other members are let go: they keep their order behind it
       let result: unknown;
       try { result = await sent; } catch (error) { s.bad ??= 'primary_write_failed'; throw error; }
-      if (pre) s.read = (then) => readBackAndSend(scope.root, name, args, encoded, targets, pre!, result, before, then, s.pin);
+      if (pre) s.read = (then) => readBackAndSend(scope.root, name, args, encoded, targets, pre!, result, before, then, s.pin, scope.followed ? 1 : 0);
       return result;
     })();
   };
@@ -352,9 +366,10 @@ export function createWriteSampler(o: WriteSamplerOptions): WriteSampler {
         })();
       };
     },
-    scope(root) {
+    scope(root, opts) {
+      const followed = opts?.followed !== false;
       const sc: Scope = {
-        root, log: [], samples: [], gate: null, inflight: 0, running: new Set(), nested: 0,
+        root, log: [], samples: [], gate: null, waiters: [], inflight: 0, running: new Set(), nested: 0, followed,
         note: (name, args, path = []) => { sc.log.push({ name, key: name === 'putPage' || name === 'createVersion' || name === STAMP ? pageKey(name, args) : '', path, ...(name === STAMP ? { args } : {}), ...(BOOKKEEPING_MEMBERS.has(name) ? { kind: 'bookkeeping' as const } : name === SEAL_MEMBER ? { kind: 'seal' as const } : {}), ...(name === 'executeRaw' ? { kind: rawKind(args) } : {}) }); },
         beforeCommit: async (tx) => {
           try {
@@ -363,7 +378,7 @@ export function createWriteSampler(o: WriteSamplerOptions): WriteSampler {
             if (!pending.length) return;
             // A call still running (pipelined, not awaited) may send statements inside the savepoint below, which is rolled back: nothing is read, and the sample is not comparable.
             if (sc.inflight > 0) { for (const s of pending) s.bad ??= 'in_transaction_busy'; return; }
-            let open!: () => void; sc.gate = new Promise<void>((resolve) => { open = () => { sc.gate = null; resolve(); }; });
+            const open = holdGate(sc);
             try {
               for (const s of pending) {
                 const [source, slug] = s.key.split('\0');

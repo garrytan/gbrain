@@ -173,7 +173,7 @@ function buildProxy<E extends BrainEngine>(engine: E, sink: ShadowSink, opts: Sh
     const scope = outer ? outer.scope : opts.writes?.scope(engine);
     const writes: TxWrites = { wrote: false, scope, nested: !!outer, path: outer && scope ? [...outer.path, scope.open()] : [] };
     const call = (scope: Frame | null) => fn.apply(engine, [
-      (tx: BrainEngine) => beforeCommit((callback as (tx: BrainEngine) => unknown)(tx && typeof tx === 'object' ? buildProxy(tx, sink, opts, true, scope, writes) : tx), tx, outer ? undefined : writes.scope),
+      (tx: BrainEngine) => beforeCommit(drained((callback as (tx: BrainEngine) => unknown)(tx && typeof tx === 'object' ? buildProxy(tx, sink, opts, true, scope, writes) : tx), writes.scope), tx, outer ? undefined : writes.scope),
       ...rest,
     ]);
     const out = follow ? followScope(followCtx(engine, frame, inTransaction), false, call) : call(null);
@@ -190,6 +190,17 @@ function buildProxy<E extends BrainEngine>(engine: E, sink: ShadowSink, opts: Sh
     const notify = (): void => { try { if (wrote()) observe(); } catch { /* the shadow never fails a call */ } };
     if (!isThenable(out)) { notify(); return out; }
     return out.then((value: unknown) => { notify(); return value; });
+  };
+
+  /**
+   * Holds a transaction callback's outcome, resolved or rejected, until no sampled write holds the gate (write-capture.ts `holdGate`) and every call held behind it has been sent:
+   * a sampled write waiting for the calls ahead of it, and the calls queued behind it, are then sent before the transaction's COMMIT or ROLLBACK (or its savepoint's), as they
+   * would be without the shadow, never after it on a connection that is no longer in the transaction.
+   */
+  const drained = (out: unknown, scope: TxScope | undefined): unknown => {
+    if (!scope || (!isThenable(out) && !scope.gate)) return out;
+    const drain = async (): Promise<void> => { while (scope.gate) await scope.gate; };
+    return Promise.resolve(out).then(async (value: unknown) => { await drain(); return value; }, async (error: unknown) => { await drain(); throw error; });
   };
 
   /** Gives the sampler its last look inside the outermost transaction, once its callback has finished and before the commit (TxScope.beforeCommit); a callback that rejected is rolled back and gets none. Never fails the write. */
@@ -214,15 +225,15 @@ function buildProxy<E extends BrainEngine>(engine: E, sink: ShadowSink, opts: Sh
 
   /**
    * While a sampled write waits for the calls ahead of it and reads its preimage on the transaction's connection, other members wait, so the statements keep their order on it.
-   * A held call looks at the gate again when it is let go: a sampled write let go just before it may have closed it again. A call that runs is in `scope.running` until it
-   * settles (the calls a sampled write waits for). A member that returns a plain value (never a statement) is never held: held, it would return a promise.
+   * Held calls queue in call order and are started one by one when the gate opens (write-capture.ts `holdGate`); a held sampled write that closes it again keeps the rest queued. A call that runs is in
+   * `scope.running` until it settles (the calls a sampled write waits for). A member that returns a plain value (never a statement) is never held: held, it would return a promise.
    */
   const gated = (name: PropertyKey, fn: Function, scope: TxScope): Function => SYNC_MEMBERS.has(name) ? fn : function gatedMember(this: unknown, ...args: unknown[]) {
     scope.inflight++; // counted from the call to the settling of its promise, queued ones included (beforeCommit pins nothing while one is open)
     const start = (): unknown => {
-      if (scope.gate) return scope.gate.then(start);
+      if (scope.gate) return new Promise((resolve, reject) => { scope.waiters.push(() => { try { resolve(start()); } catch (error) { reject(error); } }); });
       const sent = fn.apply(this, args);
-      if (isThenable(sent)) { const call = { name: String(name), done: sent.then(() => undefined, () => undefined) }; scope.running.add(call); void call.done.then(() => scope.running.delete(call)); }
+      if (isThenable(sent)) { const call = { name: String(name), callback: hasFunctionArg(args), done: sent.then(() => undefined, () => undefined) }; scope.running.add(call); void call.done.then(() => scope.running.delete(call)); }
       return sent;
     };
     let out: unknown;
@@ -262,9 +273,9 @@ function buildProxy<E extends BrainEngine>(engine: E, sink: ShadowSink, opts: Sh
     const quietSink: ShadowSink = { ...sink, active: () => false };
     return new Proxy(conn, { get: (target, prop) => (prop !== 'transaction' ? Reflect.get(target, prop, target) : function laneTransaction(callback: unknown, ...rest: unknown[]) {
       if (typeof callback !== 'function') return target.transaction(callback, ...rest);
-      const scope = opts.writes!.scope(engine);
+      const scope = opts.writes!.scope(engine, { followed: false }); // the lane's writes are not published to the follower: they do not move the write counter
       const writes: TxWrites = { wrote: false, scope, nested: false, path: [] };
-      return committed(target.transaction((tx: BrainEngine) => beforeCommit((callback as (tx: BrainEngine) => unknown)(tx && typeof tx === 'object' ? buildProxy(tx, quietSink, quiet, true, null, writes) : tx), tx, scope), ...rest), scope);
+      return committed(target.transaction((tx: BrainEngine) => beforeCommit(drained((callback as (tx: BrainEngine) => unknown)(tx && typeof tx === 'object' ? buildProxy(tx, quietSink, quiet, true, null, writes) : tx), scope), tx, scope), ...rest), scope);
     }) });
   };
 
