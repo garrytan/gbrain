@@ -352,8 +352,9 @@ on its next turn, so no OpenClaw command runs and the gateway does not reload:
   OpenClaw has no memory provider. Setup and doctor warn when a live agent on
   `dmScope: main` has none ([skill_resolver_owner_unverified](#skill_resolver_owner_unverified)).
 - `--require-owner-sender`: fail closed. With no memory audience from
-  OpenClaw, the main session counts as the owner's only for a turn from one of
-  the `--owner-sender` ids, so with none set it is always another person's
+  OpenClaw, the main session counts as the owner's only for a verified owner
+  turn from one of the `--owner-sender` ids (the checks under
+  [session classes](#session-classes)), so with none set it is always another person's
   DM (conversation pins and rule, no brief, no owner-only skill).
   `--no-require-owner-sender` turns it off. It is off by default, so an
   existing single-user install keeps treating its main session as the owner's.
