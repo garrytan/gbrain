@@ -216,6 +216,16 @@ describe('secrets.on_write block', () => {
     });
   });
 
+  test('a token that a NUL byte ends, before letters the stored page joins on, is refused', async () => {
+    await withMode('block', async () => {
+      const npm = 'npm_' + ['Qw3Er5Ty7U', 'i9Op1As3Df', '5Gh7Jk9Lz1', 'Xc3Vb5'].join('');
+      const error = await refusal(() => call(remote(), 'put_page', { slug: 'notes/block-nul-tail', content: '# Tail\n\nkey ' + npm + '\u0000abc\n' }));
+      expect(error.canonical ?? error.code).toBe('secret_in_write');
+      expect(error.detail).toBe('npm_token');
+      expect(await page('notes/block-nul-tail')).toBeNull();
+    });
+  });
+
   test('documentation placeholders, masks and environment variable names pass', async () => {
     const DOC_DB_URL = `${'postgres'}://user:password@localhost:5432/app`;
     const MASK = '***';
@@ -264,6 +274,17 @@ describe('secrets.on_write redact', () => {
       const stored = (await page('notes/redact-nul'))!.compiled_truth;
       expect(stored).toContain('The key is <REDACTED:github_token>.');
       expect(stored).not.toContain(TOKEN);
+    });
+  });
+
+  test('a token that a NUL byte ends, before letters the stored page joins on, is stored redacted', async () => {
+    await withMode('redact', async () => {
+      const npm = 'npm_' + ['Qw3Er5Ty7U', 'i9Op1As3Df', '5Gh7Jk9Lz1', 'Xc3Vb5'].join('');
+      const result = await call(remote(), 'put_page', { slug: 'notes/redact-nul-tail', content: '# Tail\n\nThe key is ' + npm + '\u0000abc.\n' });
+      expect(result.secrets_redacted).toEqual({ count: 1, patterns: ['npm_token'] });
+      const stored = (await page('notes/redact-nul-tail'))!.compiled_truth;
+      expect(stored).toContain('The key is <REDACTED:npm_token>abc.');
+      expect(stored).not.toContain(npm);
     });
   });
 
