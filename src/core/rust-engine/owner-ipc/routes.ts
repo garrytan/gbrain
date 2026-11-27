@@ -118,6 +118,14 @@ export const OWNER_IPC_REMOTE_TYPED_READS: readonly string[] = [
   'readOwnerOnlySourceConfig', 'readPageTrustRows', 'readRowTrustRows', 'readSourceMembership', 'readSourceRow',
   'readStoredSlugSpellings', 'readWriteRequestsByRequestIds', 'readWriteVisibilityProbe', 'readWriterSlugFence',
   'sharedSkillPackTablePresent', 'wordLexemes',
+  // Lane 2b member refusals (cli-reads-ops, caller-typed-reads, mention-coverage): the typed reads not already listed above.
+  // cli-reads-ops: a remote whois by phone number lists its candidates under the caller's excludePrivate.
+  'listExactIdentityCandidates',
+  // caller-typed-reads: the remote facts delta reads each fact's provenance.
+  'listFactProvenance',
+  // mention-coverage: a world-only caller's backlinks and coverage, under the caller's referrer scope.
+  'listReferrerTargetSources', 'readMentionIndexStatus', 'countLivePagesInSource', 'countReferrerRows',
+  'readReferrerPageDetails', 'readReferrerRows',
 ];
 
 /**
