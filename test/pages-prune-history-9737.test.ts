@@ -214,5 +214,24 @@ for (const kind of testBackends()) {
       const hash = /plan_hash: (ph_[0-9a-f]+)/.exec(out.join(''))?.[1];
       expect(out.join('')).toContain(`Apply, only after the user agrees: gbrain pages prune-history --type 'meeting notes' --keep 1 --yes --expect ${hash}`);
     });
+
+    test('GST-4026: --keep counts segmented versions among the newest it keeps, never deletes them, and the preview reports what stays', async () => {
+      const slug = `notes/segmented-${kind}`;
+      const segmented = async (pageId: number) => Number((await engine.executeRaw<{ id: number | string }>(
+        "INSERT INTO page_versions (page_id, compiled_truth, body_storage, body_generation) VALUES ($1, NULL, 'segmented', 1) RETURNING id", [pageId]))[0]!.id);
+      const pageId = (await put(slug, 's1')).id;
+      const older = await segmented(pageId);
+      for (const body of ['s2', 's3', 's4']) { await createPageVersion(engine, slug, 'default'); await put(slug, body); }
+      const newest = await segmented(pageId);
+      const inline = (await engine.executeRaw<{ id: number | string }>("SELECT id FROM page_versions WHERE page_id = $1 AND body_storage = 'inline' ORDER BY id", [pageId])).map(r => Number(r.id));
+      expect(inline).toHaveLength(3);
+      const plan = await planHistoryPrune(engine, { slug, sourceId: 'default', keep: 2 });
+      // The newest two are the segmented version and the newest inline one: the two older inline versions go, the older segmented one stays.
+      expect(plan.pages.map(p => p.version_ids)).toEqual([inline.slice(0, 2)]);
+      expect(plan.pages[0]).toMatchObject({ versions_total: 5, versions_pruned: 2, versions_kept: 3 });
+      await applyHistoryPrune(engine, plan);
+      const left = (await engine.executeRaw<{ id: number | string }>('SELECT id FROM page_versions WHERE page_id = $1 ORDER BY id', [pageId])).map(r => Number(r.id));
+      expect(left).toEqual([older, inline[2]!, newest]);
+    });
   });
 }

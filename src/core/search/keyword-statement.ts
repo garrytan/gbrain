@@ -57,9 +57,12 @@ export function buildKeywordMatch(query: string, opts: SearchOpts | undefined, h
     const groups = cjkMatchGroups(query);
     const terms = [...new Set(groups.flat())];
     if (terms.length === 0) return null;
+    // GST-4037: each term binds once however many OR alternatives name it, so a long OR query stays far from the bind limit.
+    const likeParam = new Map<string, number>();
     const alternatives = groups.map(group => group.map(term => {
-      params.push(`%${escapeLikePattern(term)}%`);
-      return `cc.chunk_text ${term.toLowerCase() === term.toUpperCase() ? 'LIKE' : 'ILIKE'} $${params.length} ESCAPE '\\'`;
+      let n = likeParam.get(term);
+      if (n === undefined) likeParam.set(term, n = params.push(`%${escapeLikePattern(term)}%`));
+      return `cc.chunk_text ${term.toLowerCase() === term.toUpperCase() ? 'LIKE' : 'ILIKE'} $${n} ESCAPE '\\'`;
     }).join(' AND '));
     predicate = alternatives.length === 1 ? alternatives[0]! : `(${alternatives.map(alt => `(${alt})`).join(' OR ')})`;
     rank = () => terms.map(term => {

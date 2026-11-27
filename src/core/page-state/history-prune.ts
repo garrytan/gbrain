@@ -8,7 +8,7 @@
  * refuses `preview_changed` unless the hash still matches, then deletes exactly those ids, one page at a time under the
  * page lock (`pruneInlineVersionsById`). The live page is never touched: a saved version is a copy of an earlier state.
  *
- * Kept whatever the bounds say: the newest `keep` versions of each page, versions newer than `older_than`, every
+ * Kept whatever the bounds say: the newest `keep` versions of each page (segmented ones count, GST-4026), versions newer than `older_than`, every
  * version of an agent_policy page (its audit trail) or of a soft-deleted page, and segmented versions (their own
  * retention, `versions.segmented_max_per_page`). Reads and writes the database only, so repo-less and repo-backed
  * brains behave the same. Trusted local CLI only: no operation exposes it.
@@ -24,7 +24,7 @@ export interface HistoryPruneSelection {
   type?: string;
   all?: boolean;
   sourceId?: string;
-  /** Keep this many newest inline versions of each page. */
+  /** Keep this many newest versions of each page; a segmented version counts toward them and is never pruned. */
   keep?: number;
   /** Only versions saved more than this many hours ago. */
   olderThanHours?: number;
@@ -71,15 +71,15 @@ const PAGE_FILTER = `($1::text IS NULL OR p.source_id = $1) AND ($2::text IS NUL
 export async function planHistoryPrune(engine: BrainEngine, sel: HistoryPruneSelection): Promise<HistoryPrunePlan> {
   const filter = [sel.sourceId ?? null, sel.slug ?? null, sel.prefix ?? null, sel.type ?? null];
   const rows = await engine.executeRaw<Row>(`WITH v AS (
-      SELECT pv.id, pv.page_id, pv.snapshot_at,
+      SELECT pv.id, pv.page_id, pv.snapshot_at, pv.body_storage IS DISTINCT FROM 'segmented' AS inline,
              octet_length(COALESCE(pv.compiled_truth, '')) + octet_length(COALESCE(pv.timeline, '')) AS bytes,
              row_number() OVER (PARTITION BY pv.page_id ORDER BY pv.id DESC) AS rk,
              count(*) OVER (PARTITION BY pv.page_id) AS total
         FROM page_versions pv JOIN pages p ON p.id = pv.page_id
-       WHERE pv.body_storage IS DISTINCT FROM 'segmented' AND p.deleted_at IS NULL AND p.type IS DISTINCT FROM $5 AND ${PAGE_FILTER})
+       WHERE p.deleted_at IS NULL AND p.type IS DISTINCT FROM $5 AND ${PAGE_FILTER})
     SELECT p.source_id, p.slug, v.page_id, v.id, v.snapshot_at, v.bytes, v.total
       FROM v JOIN pages p ON p.id = v.page_id
-     WHERE ($6::int IS NULL OR v.rk > $6) AND ($7::int IS NULL OR v.snapshot_at < now() - $7::int * interval '1 hour')
+     WHERE v.inline AND ($6::int IS NULL OR v.rk > $6) AND ($7::int IS NULL OR v.snapshot_at < now() - $7::int * interval '1 hour')
        AND ($8::int[] IS NULL OR v.id = ANY($8::int[]))
      ORDER BY p.source_id, p.slug, v.id`,
   [...filter, AGENT_POLICY_TYPE, sel.keep ?? null, sel.olderThanHours ?? null, sel.versionIds ?? null]);

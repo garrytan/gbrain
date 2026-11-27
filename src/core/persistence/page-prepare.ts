@@ -1222,7 +1222,9 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
     source_kind: typeof p.source_kind === 'string' ? p.source_kind : null,
     source_uri: typeof p.source_uri === 'string' ? p.source_uri : null,
     ingested_via: typeof p.ingested_via === 'string' ? p.ingested_via : null,
-    keepIngestColumns: row.operation === 'edit_page',
+    // #10330, GST-4037: an edit, an append or a remote rewrite of a stored page is not a new ingestion, with or without a
+    // repository (a remote caller's stamps are server-owned, so its put_page never re-ingests; a local one may, explicitly).
+    keepIngestColumns: row.operation === 'edit_page' || row.operation === 'append_page' || (row.operation === 'put_page' && row.authority.remote === true),
     ...(gateTrust ? { writeGate: gateInput(gateTrust, row.id) } : {}),
     // Provenance compares the caller's page with the stored one, so it runs before the server's trust marker is stamped.
     prepareFrontmatter: page => {
@@ -1331,8 +1333,9 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
         async () => pinMode ? (await tx.executeRaw<{ mode: string | null }>(`UPDATE sources SET config=CASE WHEN config->>'slug_root_mode' IS NULL
           THEN jsonb_set(${SOURCE_CONFIG_OBJECT_SQL},'{slug_root_mode}',to_jsonb($2::text)) ELSE config END WHERE id=$1 RETURNING config->>'slug_root_mode' AS mode`,
         [row.source_id, pinMode]))[0] : undefined,
-        async () => { if (provenance) await tx.executeRaw(`UPDATE pages SET source_kind=$3,ingested_via=$4,ingested_at=$5::timestamptz
-          WHERE source_id=$1 AND slug=$2`, [row.source_id, row.slug, provenance.source_kind, provenance.ingested_via, provenance.ingested_at]); },
+        // A stored first-ingest time stays as the column holds it (microseconds; a JS Date keeps milliseconds).
+        async () => { if (provenance) await tx.executeRaw(`UPDATE pages SET source_kind=$3,ingested_via=$4,ingested_at=CASE WHEN $6::boolean THEN ingested_at ELSE $5::timestamptz END
+          WHERE source_id=$1 AND slug=$2`, [row.source_id, row.slug, provenance.source_kind, provenance.ingested_via, provenance.ingested_at, snapshot?.page.ingested_at != null]); },
         async () => { if (lean) ({ removedTimeline, contested } = projectedRows(await project?.(tx, applied?.pageId))); },
       ]) as [unknown, { mode: string | null } | undefined, unknown, unknown];
       if (pinMode && pinned?.mode !== pinMode) throw pageRefusal('revision_conflict', 'The source slug-root mode changed during preparation.', row,
