@@ -55,6 +55,25 @@ describe('gbrain setup --serves several: which brain and which source (GST-4043)
     try { expect(await members(m)).toEqual([]); } finally { await m.disconnect(); }
   }, 480_000);
 
+  test('a brain the operator chose with GBRAIN_BRAIN_ID gets the members, never the host brain', async () => {
+    const b = box();
+    expect((await gbrain(b, ['init', '--pglite', '--no-embedding', '--json'])).exitCode).toBe(0);
+    const mountDb = join(b.root, 'mount.pglite');
+    const mount = await createEngine({ engine: 'pglite', database_path: mountDb });
+    await mount.connect({ engine: 'pglite', database_path: mountDb });
+    await mount.initSchema();
+    await mount.disconnect();
+    const mountsPath = join(b.home, '.gbrain', 'mounts.json');
+    writeFileSync(mountsPath, JSON.stringify({ version: 1, mounts: [{ id: 'example-mount', path: join(b.root, 'mount-clone'), engine: 'pglite', database_path: mountDb, enabled: true }] }), { mode: 0o600 });
+    const env = { ...CLEAN, HOME: b.home, GBRAIN_HOME: b.home, GBRAIN_MOUNTS_PATH: mountsPath, GBRAIN_BRAIN_ID: 'example-mount', OPENCLAW_STATE_DIR: join(b.root, 'openclaw-state'), OPENCLAW_PROFILE: undefined, HERMES_HOME: join(b.root, 'hermes-home') };
+    const r = await runCli(['setup', 'claude-code', '--serves', 'several', '--members', ROSTER.join(','), '--open-history', '--json', '--gbrain-bin', b.bin], { env, cwd: b.root, timeoutMs: 240_000 });
+    expect(r.exitCode, r.stdout + r.stderr).toBe(0);
+    expect(await inHost(b, members)).toEqual([]);
+    const m = await createEngine({ engine: 'pglite', database_path: mountDb });
+    await m.connect({ engine: 'pglite', database_path: mountDb });
+    try { expect(await members(m)).toEqual(expect.arrayContaining(ROSTER)); } finally { await m.disconnect(); }
+  }, 480_000);
+
   test('--members=<ids> labels the people; GBRAIN_SOURCE labels them in that source, and a re-run there moves the keys an earlier run minted', async () => {
     const b = box();
     expect((await gbrain(b, ['init', '--pglite', '--no-embedding', '--json'])).exitCode).toBe(0);
@@ -105,7 +124,9 @@ describe('gbrain setup --serves several: which brain and which source (GST-4043)
     expect(r.exitCode, r.stdout + r.stderr).toBe(0);
     const doc = JSON.parse(r.stdout);
     expect(doc.serves.receipt.source_id).toBe('company');
-    expect(doc.serves.company_first).toMatchObject({ source: 'company', action: 'created' });
+    expect(doc.serves.company_first).toMatchObject({ source: 'company', action: 'created', federated: false });
+    const listed = JSON.parse((await gbrain(b, ['sources', 'list', '--json'])).stdout) as { sources: Array<{ id: string; federated: boolean }> };
+    expect(listed.sources.find(s => s.id === 'company')?.federated).toBe(false);
     expect((await inHost(b, keyRows)).map(k => k.source_id)).toEqual(['company', 'company']);
     expect(existsSync(join(b.home, '.claude.json'))).toBe(true);
   }, 480_000);

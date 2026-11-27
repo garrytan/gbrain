@@ -33,6 +33,7 @@ import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import type { Decision, Notice } from '../core/agent-output.ts';
 import { gbrainPath } from '../core/config.ts';
+import { getCliOptions } from '../core/cli-options.ts';
 import { probeBlock, removeBlock, spliceBlock, type BlockMarkers } from '../core/managed-block.ts';
 import { writeUnlessChanged } from '../core/setup/brain-first.ts';
 import { bunSpawnSync } from '../core/spawn.ts';
@@ -291,10 +292,16 @@ export interface LayoutOutcome {
   household?: { result: TemplateResult | null; argv: string[]; detail?: string };
 }
 
-/** A gbrain child on the host brain (GBRAIN_BRAIN_ID=host, as the labelling children); `source` pins it to one source through GBRAIN_SOURCE (null: the caller's environment as it is). */
+/**
+ * GST-4043: the brain setup's gbrain children open: the one the operator chose (--brain, GBRAIN_BRAIN_ID), else host, so
+ * a .gbrain-mount or registered mount around the directory setup runs from never redirects them.
+ */
+export const childBrainId = (): string => getCliOptions().brain || process.env.GBRAIN_BRAIN_ID || 'host';
+
+/** A gbrain child on childBrainId(), as the labelling children; `source` pins it to one source through GBRAIN_SOURCE (null: the caller's environment as it is). */
 type Run = (argv: string[], stdin?: string, source?: string | null) => { code: number; stdout: string; stderr: string };
 const run: Run = (argv, stdin, source) => {
-  const env = { ...process.env, GBRAIN_BRAIN_ID: 'host', ...(source ? { GBRAIN_SOURCE: source } : {}) };
+  const env = { ...process.env, GBRAIN_BRAIN_ID: childBrainId(), ...(source ? { GBRAIN_SOURCE: source } : {}) };
   const child = bunSpawnSync(argv, { stdin: stdin === undefined ? 'ignore' : new TextEncoder().encode(stdin), stdout: 'pipe', stderr: 'pipe', env });
   return { code: child.exitCode ?? 1, stdout: child.stdout?.toString() ?? '', stderr: child.stderr?.toString() ?? '' };
 };
@@ -440,7 +447,7 @@ function searchFinds(exec: Run, launcher: string, title: string, source: string 
 }
 
 /** The company source: kept when it exists, else added on a gbrain-owned folder beside the default source's content root. */
-function ensureCompanySource(exec: Run, launcher: string, dryRun: boolean): NonNullable<LayoutOutcome['company']> {
+function ensureCompanySource(exec: Run, launcher: string, dryRun: boolean, federation: string[] = []): NonNullable<LayoutOutcome['company']> {
   const failed = (detail: string) => ({ source: COMPANY_SOURCE, action: 'failed' as const, federated: null, root: null, detail });
   const listed = exec([launcher, 'sources', 'list', '--json'], undefined, null);
   let sources: Array<{ id: string; local_path: string | null; federated: boolean }> = [];
@@ -453,7 +460,7 @@ function ensureCompanySource(exec: Run, launcher: string, dryRun: boolean): NonN
   const st = lstatSync(root, { throwIfNoEntry: false });
   if (st && (!st.isDirectory() || readdirSync(root).length > 0)) return failed(`${root} already exists and is not an empty folder; move it or add a folder yourself with gbrain sources add ${COMPANY_SOURCE} --path <folder>`);
   mkdirSync(root, { recursive: true });
-  const add = exec([launcher, 'sources', 'add', COMPANY_SOURCE, '--path', root, '--json'], undefined, null);
+  const add = exec([launcher, 'sources', 'add', COMPANY_SOURCE, '--path', root, ...federation, '--json'], undefined, null);
   if (add.code !== 0) return failed(lastLine(add.stderr || add.stdout));
   let federated = false;
   try { const doc = JSON.parse(add.stdout) as { federated?: unknown; config?: { federated?: unknown } }; federated = doc.federated === true || doc.config?.federated === true; } catch { /* unreadable: not federated */ }
@@ -462,10 +469,11 @@ function ensureCompanySource(exec: Run, launcher: string, dryRun: boolean): NonN
 
 /**
  * GST-4043: setup labels the people before the layout step runs, so a --shape company run whose members are labelled
- * in source company (its pinned source) adds that source first.
+ * in source company (its pinned source) adds that source first. The brain still serves one person then, so the source
+ * is added --no-federated: a one-person brain's default would put company pages in default search.
  */
 export const labelsInCompany = (shape: BrainShape | undefined, team: boolean, source: string | undefined): boolean => source === COMPANY_SOURCE && !team && hasCompany(shape);
-export const companySourceFirst = (launcher: string, dryRun: boolean): NonNullable<LayoutOutcome['company']> => ensureCompanySource(run, launcher, dryRun);
+export const companySourceFirst = (launcher: string, dryRun: boolean): NonNullable<LayoutOutcome['company']> => ensureCompanySource(run, launcher, dryRun, ['--no-federated']);
 
 /**
  * The layout for this run. `instructionsPath` is the file the brain-first block lives in (null when the harness has
