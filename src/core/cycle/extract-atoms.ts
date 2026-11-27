@@ -97,10 +97,9 @@ import { OperationError } from '../ops/contract.ts';
 import { isOpPageSlug } from '../ops/context.ts';
 import type { WriteReceipt } from '../persistence/types.ts';
 import { acceptedPendingReceipt } from '../persistence/accepted-pending.ts';
-import { AtomPageStateError, MAX_DETERMINISTIC_FAILURES, readAtomPageIdentity, retireRenamedOriginAtoms, reuseUnchangedAtoms, writeAtomPageState, type AtomPageInput } from './extract-atoms-page-state.ts';
-import { pageSnapshotKey } from '../page-snapshot-batch.ts';
+import { AtomPageStateError, canonicalPageInputs, MAX_DETERMINISTIC_FAILURES, PAGE_ATOMS_CURRENT_EXCLUSION_SQL, readAtomPageIdentity, reuseUnchangedAtoms, scanStillCurrentSql, writeAtomPageState, type AtomPageInput } from './extract-atoms-page-state.ts';
 import { heldRowsForCaller } from '../eligibility/fence-overlay.ts';
-import { atomGenerationOrigin, atomInputPin, heldAtomInputExclusionSql, heldLine, publishUnmanagedAtoms, resolveTranscriptAtomSlug, resolveTranscriptKeys, transcriptRoot } from './extract-atoms-generation.ts';
+import { atomGenerationOrigin, atomInputPin, heldAtomInputExclusionSql, heldLine, publishUnmanagedAtoms, resolveTranscriptAtomSlug, resolveTranscriptKeys, retireRenamedOriginAtoms, transcriptRoot } from './extract-atoms-generation.ts';
 import { currentHoldIds, heldForInput } from '../generations/publish.ts';
 import { ATOM_TYPES, ATOMS_RESPONSE_SCHEMA } from './extract-atoms-schema.ts';
 import { parseAtomsOutcome } from './extract-atoms-parse.ts';
@@ -141,8 +140,6 @@ const LEGACY_EXTRACTABLE_TYPES = [
 const SYNTHESIS_OUTPUT_TYPES = new Set<string>(['atom', 'concept']);
 
 const PAGE_DISCOVERY_BUDGET = 50;
-/** Canonical page snapshots discovery reads per statement. */
-const PAGE_SNAPSHOT_BATCH = 50;
 const MIN_PAGE_CHARS_FOR_EXTRACTION = 500;
 /** `compiled_truth` has >= `param` characters: octet_length reads a TOASTed size from its header and a character is
  *  1-4 bytes, so only bodies of param..4x param bytes are decompressed (length() decompressed all: 1.3 s at 50k). */
@@ -161,15 +158,6 @@ const RAW_SOURCE_HOLDER_EXCLUSION_SQL =
 // tombstone until releasePartialDispositions clears it under a raised cap.
 // #7391: the backlog count passes the current cap, so a row recorded below it
 // (one the phase's release clears) counts before any phase has run.
-// GST-4020: a page's state row for its current content settles it only while it is the page's newest row (a revert to
-// content scanned before a newer extraction is extracted again: the atoms live now are the newer content's) and no
-// world withdrawal of the page's claims (subject the page or '*') was recorded after it (the extraction read the claim).
-const scanStillCurrentSql = (scan: string) => `NOT EXISTS (
-    SELECT 1 FROM extract_atoms_page_state newer
-    WHERE newer.source_incarnation=${scan}.source_incarnation AND newer.page_id=${scan}.page_id AND newer.updated_at > ${scan}.updated_at)
-  AND NOT EXISTS (
-    SELECT 1 FROM fact_withdrawals w
-    WHERE w.source_id=p.source_id AND w.visibility='world' AND w.subject IN ('*', p.slug) AND w.withdrawn_at > ${scan}.updated_at)`;
 const pageScanStateExclusionSql = (maxInputChars?: string) => `AND NOT EXISTS (
   SELECT 1 FROM extract_atoms_page_state scan
   WHERE scan.source_incarnation=(SELECT s.incarnation FROM sources s WHERE s.id=p.source_id)
@@ -178,21 +166,6 @@ const pageScanStateExclusionSql = (maxInputChars?: string) => `AND NOT EXISTS (
     AND ${scanStillCurrentSql('scan')}
 )`;
 const PAGE_SCAN_STATE_EXCLUSION_SQL = pageScanStateExclusionSql();
-// An unmanaged atom on the page's current content hash settles it, unless a world withdrawal recorded after the page's
-// completed scan of that content means the extraction read a claim since withdrawn (GST-4020, #10332).
-const PAGE_ATOMS_CURRENT_EXCLUSION_SQL = `AND (NOT EXISTS (
-    SELECT 1 FROM pages atom
-    WHERE atom.type = 'atom' AND atom.source_id = p.source_id
-      AND atom.frontmatter->>'source_hash' = substring(p.content_hash from 1 for 16)
-      AND COALESCE(atom.frontmatter->>'managed_extraction', '') <> 'true'
-      AND atom.deleted_at IS NULL
-  ) OR EXISTS (
-    SELECT 1 FROM extract_atoms_page_state done
-    JOIN fact_withdrawals w ON w.source_id=p.source_id AND w.visibility='world' AND w.subject IN ('*', p.slug) AND w.withdrawn_at > done.updated_at
-    WHERE done.source_incarnation=(SELECT s.incarnation FROM sources s WHERE s.id=p.source_id)
-      AND done.page_id=p.id AND done.content_hash=p.content_hash AND done.tombstoned
-  ))`;
-
 /**
  * Pure allowlist policy: the legacy floor (minus floor types the pack declares not extractable, #5756: the floor
  * covers only types the pack is silent about) UNION the pack's `extractable: true` types, MINUS synthesis outputs.
@@ -484,23 +457,7 @@ export async function discoverExtractablePages(
       slug: string;
       content_hash: string;
     }>(sql, params);
-    // GST-4020 (#10332): the input is the page's canonical body (withdrawn claims marked, as a read of the page sees
-    // them), read at the row discovery found; a page that moved since waits for the next run.
-    const pages: AtomPageInput[] = [];
-    for (let start = 0; start < rows.length;) {
-      if (opts.signal?.aborted || opts.stopSignal?.aborted) break;
-      const { snapshots, covered } = await engine.readPageSnapshotsBatch(rows.slice(start, start + PAGE_SNAPSHOT_BATCH)
-        .map(row => ({ slug: row.slug, sourceId })));
-      for (const r of rows.slice(start, start + Math.max(covered, 1))) {
-        const snapshot = snapshots.get(pageSnapshotKey(sourceId, r.slug));
-        if (!snapshot || Number(snapshot.page.id) !== Number(r.id) || snapshot.revision !== r.knowledge_revision
-          || snapshot.sourceIncarnation !== r.source_incarnation || snapshot.page.content_hash !== r.content_hash) continue;
-        pages.push({ slug: r.slug, content: snapshot.page.compiled_truth, contentHash: r.content_hash,
-          identity: { pageId: r.id, sourceIncarnation: r.source_incarnation, revision: r.knowledge_revision } });
-      }
-      start += Math.max(covered, 1);
-    }
-    return pages;
+    return await canonicalPageInputs(engine, sourceId, rows, opts);
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[extract_atoms] page-discovery query failed: ${msg}`);
@@ -1226,7 +1183,7 @@ export async function runPhaseExtractAtoms(
           writeRequests.push(...published);
           // GST-4020: an empty result never retires the page's own atoms (GBRA-161 D4), but atoms that still name a slug
           // the page was renamed from carry the visibility it had then; once the page is private they go.
-          const renamed = !origin && item.kind === 'page' && !truncated && visibility === 'private' ? await retireRenamedOriginAtoms(engine, sourceId, item.slug, opts.signal) : [];
+          const renamed = !origin && item.kind === 'page' && !truncated && visibility === 'private' ? await retireRenamedOriginAtoms(engine, sourceId, item.slug, { runId, originLabel, signal: opts.signal }) : [];
           if (renamed.length) await atomFiles?.write([], renamed);
           if (!origin && truncated) await recordPartialDisposition(engine, sourceId, item, maxInputChars);
           else if (!origin && item.kind === 'page') await stampAtomsScanHash(item, input.inputSha256);
@@ -1376,7 +1333,7 @@ export async function runPhaseExtractAtoms(
         throwIfAborted(opts.signal, 'extract_atoms');
         const outcome = await publishUnmanagedAtoms(engine, sourceId, item, unmanagedAtoms, provenanceLinks, { partial: truncated, runId, originLabel });
         if (outcome.state === 'held') continue;
-        const renamed = item.kind === 'page' && !truncated ? await retireRenamedOriginAtoms(engine, sourceId, item.slug, opts.signal) : [];
+        const renamed = item.kind === 'page' && !truncated ? await retireRenamedOriginAtoms(engine, sourceId, item.slug, { runId, originLabel, signal: opts.signal }) : [];
         await atomFiles?.write(unmanagedAtoms.map(atom => atom.slug), [...outcome.retired, ...renamed]);
         if (truncated) await recordPartialDisposition(engine, sourceId, item, maxInputChars);
         else if (item.kind === 'page') await stampAtomsScanHash(item, input.inputSha256);

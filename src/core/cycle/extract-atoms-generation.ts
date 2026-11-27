@@ -11,7 +11,10 @@ import { ATOM_KIND, atomGenerationAdapter, atomOwnerKey, atomPagePin, TRANSCRIPT
 import { markdownItem } from '../generations/adapters/page.ts';
 import type { GenerationKey } from '../generations/contract.ts';
 import { publishGeneration } from '../generations/publish.ts';
+import { originGone } from '../generations/proofs.ts';
+import { throwIfAborted } from '../abort-check.ts';
 import type { ExtractAtomsItem } from './extract-atoms-input.ts';
+import { renamedOriginSlugs } from './extract-atoms-page-state.ts';
 import { relativeEscapesRoot } from '../path-confine.ts';
 
 /**
@@ -32,6 +35,24 @@ export async function publishUnmanagedAtoms(engine: BrainEngine, sourceId: strin
   }
   if (outcome.state === 'held') console.error(heldLine(opts.originLabel, key, outcome.reason));
   return outcome;
+}
+
+/**
+ * GST-4020: retire, through each old key's generation, the atoms a page's earlier extraction left under a slug a rename
+ * moved it from (renamedOriginSlugs). The page is gone from that slug, so the old key's input is gone (`originGone`); a
+ * page since created there, or atoms no live generation records, are held and left live. Returns the retired slugs.
+ */
+export async function retireRenamedOriginAtoms(engine: BrainEngine, sourceId: string, slug: string,
+  opts: { runId: string; originLabel: string; signal?: AbortSignal }): Promise<string[]> {
+  const retired: string[] = [];
+  for (const from of await renamedOriginSlugs(engine, sourceId, slug)) {
+    throwIfAborted(opts.signal, 'extract_atoms');
+    const key: GenerationKey = { kind: ATOM_KIND, sourceId, ownerKey: atomOwnerKey({ kind: 'page', slug: from }) };
+    const outcome = await publishGeneration(engine, atomGenerationAdapter, { key, items: [], proof: originGone(), runId: opts.runId, context: { postCommit: [] } });
+    if (outcome.state === 'held') console.error(heldLine(opts.originLabel, key, outcome.reason));
+    else retired.push(...outcome.retired);
+  }
+  return retired;
 }
 
 /** GBRA-161: the input pin an unmanaged item was read at (a page's is bound to its row and revision, see atomPagePin). */
