@@ -17,6 +17,9 @@
  *  - Seam: `_chat` / `_transcripts` / `_pages` (the phase's own test seams) instead of a model call; real engines.
  */
 import { describe, expect } from 'bun:test';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { ChatResult } from '../../src/core/ai/gateway.ts';
 import { runExtractExplain } from '../../src/commands/extract-explain.ts';
@@ -25,6 +28,7 @@ import { LAST_EXTRACT_ATOMS_AT_KEY, sourcesWithStaleExtractAtomsRun } from '../.
 import { atomsExistingForHashes, countExtractAtomsBacklog, discoverExtractablePages, runPhaseExtractAtoms, tombstonedTranscriptsForHashes } from '../../src/core/cycle/extract-atoms.ts';
 import { releasePartialDispositions, stampTranscriptTombstone } from '../../src/core/cycle/extract-atoms-input.ts';
 import { createSource, parityArms } from './harness.ts';
+import { isCapabilityRefusal } from './arm-capabilities.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
 const { parityTest } = parityArms(testBackends());
@@ -256,5 +260,35 @@ describe('refusal-swallow extract sites', () => {
     // Atom slugs carry today's date; compare them without it.
     const slugs = (await engine.listPages({ type: 'atom' } as never)).map(p => p.slug.replace(/\d{4}-\d{2}-\d{2}/, 'DATE')).sort();
     return { first, second, slugs, calls };
+  });
+
+  parityTest('extract-atoms.ts:651 a configured session corpus is read, or the phase refuses by name: never a quiet skip', {
+    methods: ['putPage'], requires: 'raw_sql',
+  }, async (engine) => {
+    // The session corpus resolves each file's source through archive.ts, which reads with raw SQL. A Rust brain cannot
+    // answer that yet, and a bare catch used to turn the refusal into "no transcripts": the phase reported its pages
+    // and skipped every corpus file with no sign. Until archive.ts is typed the phase refuses by name instead.
+    await engine.putPage('meetings/short', page('meeting', 'Short', 'Too short to extract.'));
+    const brainDir = mkdtempSync(join(tmpdir(), 'extract-corpus-'));
+    try {
+      const corpusDir = join(brainDir, 'corpus');
+      mkdirSync(corpusDir);
+      writeFileSync(join(corpusDir, '2026-01-05-planning.md'), 'A synthetic session about durable decisions. '.repeat(60));
+      let calls = 0;
+      try {
+        const result = await runPhaseExtractAtoms(engine, {
+          brainDir, _loadConfig: async () => ({ dream: { synthesize: { session_corpus_dir: corpusDir } } }) as never,
+          _chat: async () => { calls++; return reply('[]'); },
+        });
+        const d = result.details as { transcripts_processed?: number } | undefined;
+        return { status: result.status, transcripts: d?.transcripts_processed ?? null, calls };
+      } catch (error) {
+        // No model spend before the refusal.
+        expect({ refused: isCapabilityRefusal(error, 'raw_sql'), calls }).toEqual({ refused: true, calls: 0 });
+        throw error;
+      }
+    } finally {
+      rmSync(brainDir, { recursive: true, force: true });
+    }
   });
 });
