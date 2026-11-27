@@ -12,6 +12,7 @@
  * committed `managed_sync_delete` receipt; once that receipt is compacted it is no longer recognized.
  */
 import type { BrainEngine } from '../engine.ts';
+import { syncRows } from '../engine-sql/managed-sync-store.ts';
 
 export const SYNC_DELETE_TOMBSTONE_OP = 'sync-delete-tombstone';
 
@@ -21,12 +22,7 @@ export const SYNC_DELETE_TOMBSTONE_OP = 'sync-delete-tombstone';
  */
 export async function recordSyncDeleteTombstone(tx: Pick<BrainEngine, 'executeRaw'>,
   row: { source_id: string; source_incarnation: string; slug: string; request_id: string }, p: { passId?: string; runId?: string }): Promise<void> {
-  await tx.executeRaw(`INSERT INTO op_checkpoints (op, fingerprint, completed_keys, updated_at)
-    SELECT $1, p.id::text, jsonb_build_array(jsonb_build_object('source_id', p.source_id, 'incarnation', $2::text, 'page_id', p.id, 'slug', p.slug,
-      'source_path', p.source_path, 'pass_id', $3::text, 'run_id', $4::text, 'request_id', $5::text, 'deleted_at', p.deleted_at)), now()
-    FROM pages p WHERE p.source_id = $6 AND p.slug = $7 AND p.deleted_at = now()
-    ON CONFLICT (op, fingerprint) DO UPDATE SET completed_keys = EXCLUDED.completed_keys, updated_at = now()`,
-  [SYNC_DELETE_TOMBSTONE_OP, row.source_incarnation, p.passId ?? null, p.runId ?? null, row.request_id, row.source_id, row.slug]);
+  await syncRows(tx, 'delete_tombstone_record', [SYNC_DELETE_TOMBSTONE_OP, row.source_incarnation, p.passId ?? null, p.runId ?? null, row.request_id, row.source_id, row.slug]);
 }
 
 /**

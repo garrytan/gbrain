@@ -112,7 +112,7 @@ export function readOrphanedManagedSyncFailureRows<F = Record<string, unknown>>(
 }
 
 /**
- * The commit targets of the freshness samples (persistence/sync-freshness.ts `SAMPLE_WHERE`, the same predicate text): a
+ * The commit targets of the freshness samples (engine-sql/managed-sync-store.ts `freshness_aggregate`, the same predicate text): a
  * committed `managed_sync_import` receipt of worktree `$1`'s source incarnation `$2` that landed in the last `$3` hours,
  * imported from a recorded commit and not a working-tree import; newest receipt first then byte target, at most `$4`.
  */

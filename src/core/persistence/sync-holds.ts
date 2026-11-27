@@ -68,6 +68,7 @@ import { requestGitHoldRetry as requestGitHoldRetryOver } from '../engine-sql/gi
 import { GIT_HOLD_RETRY_OP, readGitHoldRecords as readGitHoldRecordsOver, readGitHoldRetryRequest as readGitHoldRetryRequestOver, readGitHoldReportInputs as readGitHoldReportInputsOver, type GitHoldRecordsQuery, type GitHoldReportInputs } from '../engine-sql/sync-hold-reads.ts';
 export { GIT_HOLD_OP, GIT_HOLD_RETRY_OP, GIT_HOLD_SUMMARY_OP };
 import { SYNC_IMPORT_PROVENANCE_OP } from './sync-pass-pages-sql.ts';
+import { syncRows } from '../engine-sql/managed-sync-store.ts';
 export { SYNC_IMPORT_PROVENANCE_OP };
 /** One row per source incarnation: the blocked requests recent managed syncs converted in place. */
 export { SYNC_CONVERSION_KEEP, SYNC_CONVERSION_OP, type SyncConversion };
@@ -505,7 +506,7 @@ export interface DeletionCandidate { path: string; page_id: number | null; slug:
  */
 export async function settledDeletionHolds(tx: Exec, sourceId: string, candidates: readonly DeletionCandidate[] | undefined): Promise<string[]> {
   if (!candidates?.length) return [];
-  const live = await tx.executeRaw<{ id: string; slug: string }>('SELECT id::text AS id, slug FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND (id = ANY($2::bigint[]) OR slug = ANY($3::text[]))',
+  const live = await syncRows<{ id: string; slug: string }>(tx, 'settled_live_pages',
     [sourceId, candidates.flatMap(c => c.page_id === null ? [] : [c.page_id]), candidates.flatMap(c => c.slug === null ? [] : [c.slug])]);
   const ids = new Set(live.map(row => row.id)), slugs = new Set(live.map(row => row.slug));
   return candidates.filter(c => (c.page_id === null || !ids.has(String(c.page_id))) && (c.slug === null || !slugs.has(c.slug))).map(c => c.path);
@@ -513,7 +514,7 @@ export async function settledDeletionHolds(tx: Exec, sourceId: string, candidate
 
 /** GST-2568: the fingerprints of a source's holds; a managed pass reads them before it runs to count the holds it released (`releasedHoldCount`). */
 export async function sourceHoldFingerprints(engine: Exec, sourceId: string): Promise<Set<string>> {
-  const rows = await engine.executeRaw<{ fingerprint: string }>("SELECT fingerprint FROM op_checkpoints WHERE op=$1 AND completed_keys->0->>'source_id'=$2", [GIT_HOLD_OP, sourceId]);
+  const rows = await syncRows<{ fingerprint: string }>(engine, 'hold_fingerprints', [GIT_HOLD_OP, sourceId]);
   return new Set(rows.map(row => row.fingerprint));
 }
 
@@ -528,7 +529,7 @@ export async function releasedHoldCount(engine: Exec, sourceId: string, before: 
 export async function heldGitPaths(tx: Exec, sourceId: string, incarnation: string, paths: readonly string[]): Promise<Set<string>> {
   if (!paths.length) return new Set();
   const byPrint = new Map(paths.map(path => [gitHoldFingerprint(sourceId, incarnation, path), path]));
-  const rows = await tx.executeRaw<{ fingerprint: string }>('SELECT fingerprint FROM op_checkpoints WHERE op=$1 AND fingerprint=ANY($2::text[])', [GIT_HOLD_OP, [...byPrint.keys()]]);
+  const rows = await syncRows<{ fingerprint: string }>(tx, 'held_fingerprints', [GIT_HOLD_OP, [...byPrint.keys()]]);
   return new Set(rows.map(row => byPrint.get(row.fingerprint)!));
 }
 /**
@@ -640,8 +641,7 @@ export async function holdBasisMoved(engine: Pick<BrainEngine, 'executeRaw'>, so
     ? hold.meta.keep_deleted : undefined;
   const watched = paths.flatMap(path => { const hold = holds.get(path); return hold?.code === 'concurrent_write' && hold.page_id != null && hold.meta.page_revision ? [Number(hold.page_id)]
     : kept(hold) ? [Number(kept(hold)!.page_id)] : []; });
-  const rows = watched.length ? await engine.executeRaw<{ id: number; revision: string; deleted: boolean }>('SELECT id, knowledge_revision::text AS revision, deleted_at IS NOT NULL AS deleted FROM pages WHERE source_id=$1 AND id=ANY($2::int[])',
-    [sourceId, watched]) : [];
+  const rows = watched.length ? await syncRows<{ id: number; revision: string; deleted: boolean }>(engine, 'pages_basis', [sourceId, watched]) : [];
   const revisions = new Map(rows.map(row => [Number(row.id), row.revision]));
   const tombstones = new Map(rows.filter(row => row.deleted).map(row => [Number(row.id), row.revision]));
   return new Set(paths.filter(path => {
@@ -1196,10 +1196,8 @@ export async function readGitHoldRetryPaths(engine: RetryReader, sourceId: strin
 export async function clearGitHoldRetryPaths(engine: Exec, sourceId: string, incarnation: string, taken: string[]): Promise<void> {
   if (!taken.length) return;
   const fingerprint = summaryFingerprint(sourceId, incarnation);
-  await engine.executeRaw(`UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,paths}',
-      (SELECT COALESCE(jsonb_agg(p),'[]'::jsonb) FROM jsonb_array_elements_text(completed_keys->0->'paths') p WHERE NOT (p = ANY($3::text[])))),
-      updated_at=now() WHERE op=$1 AND fingerprint=$2`, [GIT_HOLD_RETRY_OP, fingerprint, taken]);
-  await engine.executeRaw(`DELETE FROM op_checkpoints WHERE op=$1 AND fingerprint=$2 AND jsonb_array_length(completed_keys->0->'paths')=0`, [GIT_HOLD_RETRY_OP, fingerprint]);
+  await syncRows(engine, 'retry_paths_remove', [GIT_HOLD_RETRY_OP, fingerprint, taken]);
+  await syncRows(engine, 'retry_paths_prune', [GIT_HOLD_RETRY_OP, fingerprint]);
 }
 
 /**

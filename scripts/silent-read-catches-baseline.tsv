@@ -852,9 +852,7 @@ src/core/git/push-credential.ts#readCredentialRefusalFile	catch_empty	1
 src/core/git/push-credential.ts#recordCredentialRefusalFile	catch_empty	1
 src/core/git/range-secret-scan.ts#pageWriteCommits	catch_empty	1
 src/core/git/range-secret-scan.ts#stagedScanPublishRefusal	catch_empty	1
-src/core/git/redact-finish.ts#secretPublishMaintenance	capability_refusal_swallowed	2
 src/core/git/redact-finish.ts#secretPublishMaintenance	catch_empty	2
-src/core/git/redact-finish.ts#secretPublishMaintenance	promise_catch_empty	1
 src/core/git/redact-finish.ts#sourceRoots	capability_refusal_swallowed	1
 src/core/git/redact-finish.ts#sourceRoots	catch_empty	1
 src/core/git/skipped-paths.ts#validGitDir	catch_empty	1
@@ -1080,7 +1078,6 @@ src/core/persistence/drift-conflicts.ts#twinReading	capability_refusal_swallowed
 src/core/persistence/effect-git.ts#restoreIndex	catch_empty	1
 src/core/persistence/effect-retry.ts#retryIndexLockParks	capability_refusal_swallowed	1
 src/core/persistence/effect-retry.ts#retryIndexLockParks	catch_empty	1
-src/core/persistence/effects.ts#claimAndRecoverEffect	capability_refusal_swallowed	1
 src/core/persistence/effects.ts#runPersistenceEffects	promise_catch_empty	1
 src/core/persistence/engine-graduation.ts#existingRunError<anon@1>	catch_empty	1
 src/core/persistence/engine-graduation.ts#graduationStatus	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
@@ -1103,21 +1100,17 @@ src/core/persistence/graduation-inventory.ts#schemaVersion	catch_empty	1
 src/core/persistence/graduation-serve-guard.ts#readGraduationManifestSummary	catch_empty	1
 src/core/persistence/graduation-target.ts#probeTarget<anon@1>	catch_empty	1
 src/core/persistence/graduation-verify.ts#replayProbe	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
-src/core/persistence/group-publish.ts#publishGroup	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/persistence/group-publish.ts#publishGroup<anon@5>	promise_catch_empty	1
 src/core/persistence/head-blocker.ts#readHeadBlockers	promise_catch_empty	1
 src/core/persistence/head-blocker.ts#readQueuedHeadBlockers	promise_catch_empty	1
 src/core/persistence/identity.ts#readMachineId	catch_empty	1
 src/core/persistence/identity.ts#rotateLocalWriter	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
-src/core/persistence/import-mutations.ts#importPlanned	capability_refusal_swallowed	2
 src/core/persistence/import-mutations.ts#importPlanned	promise_catch_empty	1
 src/core/persistence/index-lock-reclaim.ts#owner	catch_empty	1
 src/core/persistence/index-lock-reclaim.ts#readIndexLockReclaims	catch_empty	1
 src/core/persistence/journal.ts#writeHealthFacts	capability_refusal_swallowed	1
 src/core/persistence/journal.ts#writeHealthFacts	promise_catch_empty	1
 src/core/persistence/label-edit.ts#withStoredLabels	catch_empty	1
-src/core/persistence/landing-gaps.ts#readLandingGaps	capability_refusal_swallowed	2
-src/core/persistence/landing-gaps.ts#readLandingGaps	promise_catch_empty	1
 src/core/persistence/links-preparation.ts#prepareAutomaticLinks	promise_catch_empty	1
 src/core/persistence/local-edit-adoption.ts#adoptLocalEditsOn	promise_catch_empty	1
 src/core/persistence/local-edit-adoption.ts#landedAdoptionCommit	catch_empty	1
@@ -1141,7 +1134,6 @@ src/core/persistence/purge-deleted.ts#expireRecordedTombstones	capability_refusa
 src/core/persistence/put-page-screen.ts#unchangedPutPage	capability_refusal_swallowed	1
 src/core/persistence/put-page-screen.ts#unchangedPutPage	catch_empty	1
 src/core/persistence/recovery-resolve.ts#scanStuckRecoveries	promise_catch_empty	1
-src/core/persistence/refresh-barrier.ts#deferredWaiting	capability_refusal_swallowed	1
 src/core/persistence/refresh-retry-hint.ts#refreshRetryHint	promise_catch_empty	1
 src/core/persistence/resolve-paths.ts#resolveSourcePaths	promise_catch_empty	1
 src/core/persistence/root-registry.ts#isGitDirectory	catch_empty	1
@@ -1161,13 +1153,9 @@ src/core/persistence/sync-drain.ts#readPreparationBudgets>read	promise_catch_emp
 src/core/persistence/sync-entry-fault.ts#committedContentOrMissing	catch_empty	1
 src/core/persistence/sync-entry-fault.ts#danglingLink	catch_empty	1
 src/core/persistence/sync-freshness.ts#readFreshnessTarget	promise_catch_empty	1
-src/core/persistence/sync-ghosts.ts#countSyncGhosts	capability_refusal_swallowed	1
-src/core/persistence/sync-ghosts.ts#countSyncGhosts	promise_catch_empty	1
-src/core/persistence/sync-ghosts.ts#startScan<anon@2>	capability_refusal_swallowed	1
 src/core/persistence/sync-git-stream.ts#loadCleanProbes	catch_empty	1
 src/core/persistence/sync-git-stream.ts#probeDirtiness	catch_empty	1
 src/core/persistence/sync-git-stream.ts#racyFloor	catch_empty	1
-src/core/persistence/sync-group.ts#admitGroup	capability_refusal_swallowed	1	sync 13b: the trunk's capability-refusal rule also follows a promise a transaction callback returns; this managed-persistence path never runs on a Rust brain, which refuses managed mode (managed_persistence) before it
 src/core/persistence/sync-group.ts#resolveGrouping	promise_catch_empty	1
 src/core/persistence/sync-group.ts#whole	promise_catch_empty	1
 src/core/persistence/sync-held-deletions.ts#proveHeldDeletions	promise_catch_empty	2
@@ -1193,7 +1181,6 @@ src/core/persistence/sync-prepare.ts#prepareSyncMutation	promise_catch_empty	2
 src/core/persistence/sync-prescreen.ts#prescreenSyncEntries	promise_catch_empty	1
 src/core/persistence/sync-prescreen.ts#releaseKeepDbDrift	catch_empty	1
 src/core/persistence/sync-reasons.ts#withManagedReasonNotices	promise_catch_empty	1
-src/core/persistence/sync-run.ts#admitPendingWrite	capability_refusal_swallowed	1	sync 13b: the trunk's capability-refusal rule also follows a promise a transaction callback returns; this managed-persistence path never runs on a Rust brain, which refuses managed mode (managed_persistence) before it
 src/core/persistence/sync-run.ts#admitWindowGroup	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/persistence/sync-run.ts#admitWindowGroup	promise_catch_empty	1
 src/core/persistence/sync-run.ts#deferChangedEntry	catch_empty	1
@@ -1209,24 +1196,16 @@ src/core/persistence/sync-status.ts#readSyncStatus	promise_catch_empty	1
 src/core/persistence/sync-status.ts#unblockSync	promise_catch_empty	1
 src/core/persistence/sync-status.ts#workingHashOf	catch_empty	1
 src/core/persistence/sync-stop-class.ts#fileUnchangedSinceFreeze	catch_empty	1
-src/core/persistence/sync-tail.ts#runSyncTail	capability_refusal_swallowed	2
-src/core/persistence/sync-tail.ts#runSyncTail	promise_catch_empty	1
 src/core/persistence/sync-tree-reuse.ts#readTreeLevelReusing	promise_catch_empty	1
 src/core/persistence/sync-waivers.ts#unchangedSyncImport	catch_empty	1
-src/core/persistence/sync-waivers.ts#waiveNoopRun	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
-src/core/persistence/sync-waivers.ts#waivePrescreenedRun	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/persistence/sync-waivers.ts#waivePrescreenedRun	promise_catch_empty	1
 src/core/persistence/sync-waivers.ts#waiverBatchEnabled	promise_catch_empty	1
 src/core/persistence/sync-write-diagnostic.ts#managedSyncWriteDiagnostic	catch_empty	1
-src/core/persistence/topology-clone.ts#runManagedSourceClone<anon@1>	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
-src/core/persistence/topology-recovery.ts#finishTopologyClone<anon@1>	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/persistence/unbound-pages.ts#entries	catch_empty	1
 src/core/persistence/unbound-source.ts#readDatabaseOnlyActivatedSources	catch_empty	1
 src/core/persistence/unsourced-put-fork.ts#noteSuppressedSourceFlip	catch_empty	1	landed on master (#9915, #9939) after this guard was written; known debt, fix by a typed degraded marker
 src/core/persistence/worktree-lease.ts#foreignWaiterAhead	catch_empty	1
 src/core/persistence/worktree-refresh.ts#boundedMemberSync>drain	promise_catch_empty	1
-src/core/persistence/worktree-refresh.ts#fenceAndMerge	capability_refusal_swallowed	2	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
-src/core/persistence/worktree-refresh.ts#fenceDraining	capability_refusal_swallowed	1	sync 13b: the trunk's capability-refusal rule also follows a promise a transaction callback returns; this managed-persistence path never runs on a Rust brain, which refuses managed mode (managed_persistence) before it
 src/core/persistence/worktree-refresh.ts#ownCommits	catch_empty	1
 src/core/persistence/worktree-refresh.ts#reachedTargetSince	catch_empty	1
 src/core/persistence/worktree-refresh.ts#underMemberLeases>held	promise_catch_empty	1

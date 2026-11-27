@@ -34,6 +34,8 @@ import { assertDrainLease } from './sync-lease.ts';
 import { faultPoint } from './fault-points.ts';
 import { SYNC_SLICE_OP } from './sync-slices.ts';
 import { passFingerprint } from './sync-pass-row.ts';
+import { syncRows } from '../engine-sql/managed-sync-store.ts';
+import { fenceOpts } from './host-fence.ts';
 
 type CompanySync = ReturnType<typeof currentCompanyBrainSync>;
 
@@ -75,10 +77,7 @@ export async function resolveManagedCursor(engine: BrainEngine, input: { sourceI
   readOnly?: boolean; foldIn?: boolean }): Promise<CursorResolution> {
   const { sourceId, incarnation, company, assertActive } = input;
   const canonical = managedCursorKey(incarnation, company);
-  const rows = (await engine.executeRaw<CursorRow>(`SELECT fingerprint AS key, COALESCE(completed_keys->0->>'done','false')='true' AS done,
-      completed_keys->0->>'companyReceiptId' AS company_receipt_id, completed_keys->0->>'runId' AS run_id
-    FROM op_checkpoints WHERE op='managed-sync' AND completed_keys->0->>'sourceId'=$1 AND completed_keys->0->>'incarnation'=$2
-    ORDER BY updated_at DESC, fingerprint COLLATE "C"`, [sourceId, incarnation])).filter(row => (row.company_receipt_id ?? null) === (company?.receiptId ?? null));
+  const rows = (await syncRows<CursorRow>(engine, 'cursor_rows', [sourceId, incarnation])).filter(row => (row.company_receipt_id ?? null) === (company?.receiptId ?? null));
   assertActive();
   const unfinished = rows.filter(row => !row.done);
   const winner = unfinished.find(row => row.key === canonical) ?? unfinished[0] ?? (company ? rows.find(row => row.key === canonical) ?? rows[0] : undefined);
@@ -154,20 +153,17 @@ export async function retireOrphanSliceRecords(engine: BrainEngine, sourceId: st
 
 /** A finished cursor row and its frozen manifest, unless another cursor still names that run. */
 async function deleteFinishedCursor(tx: BrainEngine, key: string): Promise<void> {
-  const [row] = await tx.executeRaw<{ run_id: string | null }>(`DELETE FROM op_checkpoints WHERE op='managed-sync' AND fingerprint=$1
-    AND COALESCE(completed_keys->0->>'done','false')='true' RETURNING completed_keys->0->>'runId' AS run_id`, [key]);
-  if (row?.run_id) await tx.executeRaw(`DELETE FROM op_checkpoints WHERE op='managed-sync-manifest' AND fingerprint=$1
-    AND NOT EXISTS (SELECT 1 FROM op_checkpoints c WHERE c.op='managed-sync' AND c.completed_keys->0->>'runId'=$1)`, [row.run_id]);
+  const [row] = await syncRows<{ run_id: string | null }>(tx, 'finished_cursor_delete', [key], fenceOpts(tx));
+  if (row?.run_id) await syncRows(tx, 'manifest_delete_unshared', [row.run_id]);
 }
 
 /** The incarnation's path-slice records (sync-slices.ts): only a non-company cursor run cuts its target into slices. */
 async function deleteSliceRecords(tx: BrainEngine, sourceId: string, incarnation: string): Promise<void> {
   const prefix = `${sourceId}:${incarnation}:`;
-  await tx.executeRaw('DELETE FROM op_checkpoints WHERE op=$1 AND left(fingerprint, length($2))=$2', [SYNC_SLICE_OP, prefix]);
+  await syncRows(tx, 'prefix_delete', [SYNC_SLICE_OP, prefix]);
 }
 async function busyRequest(engine: BrainEngine, sourceId: string, key: string): Promise<WriteRequest | null> {
-  const open = await engine.executeRaw<WriteRequest>(`SELECT * FROM persistence_requests WHERE source_id=$1 AND intent->>'cursorKey'=$2
-    AND (state IN ('queued','running','recovering') OR recovery IS NOT NULL) ORDER BY sequence`, [sourceId, key]);
+  const open = await syncRows<WriteRequest>(engine, 'cursor_open_requests', [sourceId, key]);
   return open.find(request => request.state !== 'queued' || request.recovery || request.publication_started) ?? null;
 }
 
@@ -177,8 +173,7 @@ async function busyRequest(engine: BrainEngine, sourceId: string, key: string): 
  * longer qualifies.
  */
 async function supersede(engine: BrainEngine, row: CursorRow, input: { sourceId: string; incarnation: string; fence: (tx: BrainEngine) => Promise<void> }): Promise<WriteRequest | 'kept' | null> {
-  const open = await engine.executeRaw<WriteRequest>(`SELECT * FROM persistence_requests WHERE source_id=$1 AND intent->>'cursorKey'=$2
-    AND (state IN ('queued','running','recovering') OR recovery IS NOT NULL) ORDER BY sequence`, [input.sourceId, row.key]);
+  const open = await syncRows<WriteRequest>(engine, 'cursor_open_requests', [input.sourceId, row.key]);
   const busy = open.find(request => request.state !== 'queued' || request.recovery || request.publication_started);
   if (busy) return busy;
   // One row per transaction, as `cancelRows` does: holding several request rows at once deadlocks against claim renewals.
@@ -186,7 +181,7 @@ async function supersede(engine: BrainEngine, row: CursorRow, input: { sourceId:
     await engine.transaction(async tx => {
       await lockCounters(tx, ['brain', principalKey(requestPrincipal(request)), ...(request.worktree_id ? [`worktree:${request.worktree_id}`] : [])]);
       await input.fence(tx);
-      const [current] = await tx.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE id=$1::uuid FOR UPDATE', [request.id]);
+      const [current] = await syncRows<WriteRequest>(tx, 'request_for_update', [request.id]);
       if (!current || isTerminal(current) || current.execution_token !== request.execution_token || current.publication_started || current.recovery) return;
       await completeWrite(tx, current, 'cancelled', {}, { code: 'cancelled', message: SUPERSEDED_BY_ADOPTION_MESSAGE, detail: { superseded_cursor: row.key } });
     });

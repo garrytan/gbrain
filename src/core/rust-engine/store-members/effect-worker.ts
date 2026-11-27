@@ -1,6 +1,6 @@
 /**
  * The effect worker statements the Rust store answers (engine-sql/persistence-effect-worker.ts): the claim stamp
- * (stampEffectClaim), the lease renewal (renewEffectClaim), the statements that settle a claim (advanceEffectRow,
+ * (stampEffectClaim), the recovery's claim stamp (claimEffectRecovery), the lease renewal (renewEffectClaim), the statements that settle a claim (advanceEffectRow,
  * completeEffectRow, retryEffectRow, retryBusyEffectRow, requeueEffectRow, parkEffectRow, failEffectRow) and the
  * withdrawal-mirror gate read (readMirrorGateRows), the effect guard's locks (lockEffectGuard), the re-arm probe
  * (hasRearmableTargets) and the consumer's idle probe (probeIdleWork).
@@ -34,6 +34,12 @@ async function settle(brain: Parameters<StoreMember<[], unknown>>[0], member: st
 /** The claimed row, or null when no effect has the id. */
 export const stampEffectClaim: StoreMember<[claim: EffectClaim], Record<string, unknown> | null> = (brain, claim) =>
   storeCall({ member: 'stampEffectClaim' }, () => brain.stampEffectClaim({ ...claim, id: String(claim.id) }));
+
+/** The claimed row, or null when the effect holds no recovery record; refuses as the executeRaw it replaced did while the managed_persistence hold is on. */
+export const claimEffectRecovery = async function claimEffectRecovery(this: unknown, brain: StoreBrain, claim: EffectClaim): Promise<Record<string, unknown> | null> {
+  if (!managedServed(this)) return heldRefusal(this);
+  return storeCall({ member: 'claimEffectRecovery' }, () => brain.claimEffectRecovery({ ...claim, id: String(claim.id) }));
+};
 
 /** The claimed rows of up to `limit` ready single-file Git effects of one worktree (#5530), in claim order. */
 /** Refuses as the executeRaw it replaced did while the managed_persistence hold is on (managed-hold.ts). */

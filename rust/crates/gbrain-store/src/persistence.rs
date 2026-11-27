@@ -70,6 +70,8 @@ use serde_json::{Map, Value, json};
 mod binding_reads;
 mod checkpoint_rows;
 mod checkpoint_validation;
+#[cfg(test)]
+mod claim_fence_tests;
 mod connector_attempts;
 mod connector_orphans;
 mod diagnostic_checkpoints;
@@ -83,14 +85,21 @@ mod freshness;
 mod git_durability;
 mod git_effects;
 mod git_holds;
+mod group_publish_store;
 mod head_blocker;
 mod housekeeping;
 mod identity_downgrade;
 mod idle_probe;
 mod image_seal;
 mod journal_redaction;
+mod lane_head;
+#[cfg(test)]
+mod lane_head_tests;
 #[cfg(test)]
 mod lease_order_tests;
+mod managed_sync_run_store;
+mod managed_sync_status;
+mod managed_sync_store;
 mod noop_settle;
 mod notifier;
 mod op_checkpoint;
@@ -110,6 +119,7 @@ mod publication;
 mod purge_effects;
 mod receipt_compaction;
 mod receipt_list;
+mod refresh_store;
 mod retained_sources;
 mod sync_conversions;
 mod sync_orphan_reads;
@@ -123,6 +133,7 @@ mod worktree_admission;
 mod worktree_claim_tests;
 mod worktree_rows;
 mod worktrees;
+pub(crate) use worktrees::worktree_owner_host;
 mod write_claim_terms;
 mod writer_status;
 mod writer_status_queue;
@@ -144,6 +155,7 @@ pub use identity_downgrade::IdentityDowngradeSpec;
 pub use idle_probe::IdleProbeSpec;
 pub use image_seal::{ImageSealChunkRef, ImageSealPageRef, ImageSealRow};
 pub use journal_redaction::{RedactRequestArgs, SweepChunkArgs};
+pub use lane_head::{LaneHeadSpec, TransientCharge};
 pub use noop_settle::NoopSettleCandidateSpec;
 pub(crate) use notifier::remove_source_rows as remove_notifier_source_rows;
 pub use notifier::{
@@ -154,6 +166,7 @@ pub use op_checkpoint::AtomGenerationBump;
 pub use topology_store::{TopologyRead, TopologyWrite};
 mod trust_scan_cursor;
 
+pub use group_publish_store::{GroupRead, GroupWrite};
 pub(crate) use op_checkpoint::{
     delete_op_checkpoint_in, list_op_checkpoint_records_in, op_checkpoint_completed_keys,
 };
@@ -175,6 +188,7 @@ pub use purge_effects::{
     GitEffectsCarryingArgs, PageGitEffectsArgs, PurgeEffectDataArgs, PurgeGitEffectRow,
 };
 pub use receipt_list::{IncarnationRequestFilter, WriteRequestListFilter};
+pub use refresh_store::{RefreshRead, RefreshWrite};
 pub use sync_pass_pages::{SyncImportPageQuery, SyncImportPageWindow};
 pub use sync_run_reads::SyncAdmissionEffectsQuery;
 pub use topology::TopologyChangeInsert;
@@ -704,7 +718,11 @@ pub(crate) fn read_counter(read: &dyn KvRead, key: &str) -> Result<Option<Counte
     get_json(read, &counter_key(key)?)
 }
 
-fn write_counter(tx: &mut dyn KvWrite, key: &str, counter: &CounterRecord) -> Result<()> {
+pub(crate) fn write_counter(
+    tx: &mut dyn KvWrite,
+    key: &str,
+    counter: &CounterRecord,
+) -> Result<()> {
     counter.check(key)?;
     put_json(tx, &counter_key(key)?, counter)
 }
@@ -1003,8 +1021,8 @@ pub(crate) fn guard_deferred_transition(old: &str, new: &str) -> Result<()> {
     Err(violation(DEFERRED_CLAIM_REFUSED))
 }
 
-/// `CLAIM_STAMP_SQL`: running, the token, the lease and the first phase. `passed_sync` is false:
-/// it asks for an earlier queued sync row on the same worktree, and every worktree here is null.
+/// `CLAIM_STAMP_SQL`: running, the token, the lease and the first phase. `passed_sync` asks for an
+/// earlier queued sync row on the same worktree (a request on no worktree has none).
 /// `seen_sequence` is the newest sequence for a sync row: requests are never deleted on this
 /// engine, so `max(sequence)` is the last sequence handed out.
 pub(crate) fn stamp_write_claim_in(
@@ -1023,6 +1041,17 @@ pub(crate) fn stamp_write_claim_in(
         return Err(violation(DEFERRED_CLAIM_REFUSED));
     }
     let now = env.now_micros();
+    // `EXISTS (SELECT 1 FROM persistence_requests earlier WHERE earlier.worktree_id=r.worktree_id AND earlier.sequence<r.sequence
+    //   AND earlier.state='queued' AND COALESCE(earlier.intent->>'kind','') LIKE 'managed_sync_%')`.
+    let passed_sync = match write_claim_terms::worktree_of(&record) {
+        Some(worktree) => all_requests(&*tx)?.iter().any(|earlier| {
+            write_claim_terms::worktree_of(earlier).as_deref() == Some(worktree.as_str())
+                && earlier.sequence < record.sequence
+                && earlier.state == "queued"
+                && sync_kind(&earlier.intent)
+        }),
+        None => false,
+    };
     record.state = "running".into();
     record.updated_at_us = now;
     record.blocked_reason = None;
@@ -1036,7 +1065,7 @@ pub(crate) fn stamp_write_claim_in(
         .insert("claim_phase".into(), phase.unwrap_or(Value::Null));
     write_request(tx, &record)?;
     let mut row = record.to_row();
-    row["passed_sync"] = json!(false);
+    row["passed_sync"] = json!(passed_sync);
     row["seen_sequence"] = if sync_kind(&record.intent) {
         json!(max_sequence(&*tx)?.to_string())
     } else {

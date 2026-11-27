@@ -30,7 +30,7 @@ pub(crate) fn read_config(read: &dyn KvRead, key: &str) -> Result<Option<String>
     }
 }
 
-fn scan_config(read: &dyn KvRead, prefix: &str) -> Result<Vec<(String, String)>> {
+pub(crate) fn scan_config(read: &dyn KvRead, prefix: &str) -> Result<Vec<(String, String)>> {
     let mut out = Vec::new();
     let mut bad = false;
     scan_prefix(

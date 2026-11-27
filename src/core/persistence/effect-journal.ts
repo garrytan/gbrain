@@ -19,7 +19,7 @@ import { refreshFenceClear } from './worktree-refresh-schema.ts';
 import { pageBatchChildRequestIds } from './page-batch-id.ts';
 import { EFFECT_FAULT_POINTS, faultPoint } from './fault-points.ts';
 import { REARMABLE_SQL } from '../engine-sql/persistence-effect-worker.ts';
-import { bindClaimFence, claimFenceOpts, fenceOpts } from './host-fence.ts';
+import { bindClaimFence, bindClaimFences, claimFenceOpts, fenceOpts } from './host-fence.ts';
 
 /**
  * `snapshot` is the publication's final read of the page, including deleted rows, in this transaction.
@@ -240,7 +240,10 @@ export async function claimCoalescedGitEffects(engine: BrainEngine, hostId: stri
     // One statement (engine-sql/persistence-effect-worker.ts CLAIM_COALESCED_GIT_EFFECTS_SQL): the worktree-wide
     // conditions (owner, refresh fence, recovery blocks) are one InitPlan, so the claim walks persistence_effects_pending
     // in order and stops at `limit` rows instead of probing every ready effect of the worktree.
-    return tx.claimCoalescedGitEffects<PersistenceEffect>({ hostId, worktreeId, limit, deadOwners, ownerJson: JSON.stringify(claimOwner()) });
+    const fence = fenceOpts(tx);
+    const claimed = await tx.claimCoalescedGitEffects<PersistenceEffect>({ hostId, worktreeId, limit, deadOwners, ownerJson: JSON.stringify(claimOwner()), ...fence });
+    bindClaimFences(claimed.map(row => row.execution_token), fence.fence ?? null);
+    return claimed;
   }, { pipelineFirst: isPersistenceDeclaration });
   return rows.sort((a, b) => Number(a.id) - Number(b.id));
 }

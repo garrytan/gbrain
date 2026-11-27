@@ -151,6 +151,8 @@ export type ConfirmProof = { ok: true; mark: LevelMark; pages: string[]; records
  */
 export async function proveConfirm(exec: Exec, input: { sourceId: string; incarnation: string; passId: string; base: LevelMark; recorded?: ReadonlySet<number>; postgres: boolean;
   parallel?: boolean; self?: string; across?: boolean }): Promise<ConfirmProof> {
+  // A Rust brain keeps no transaction ids (`xmin`, `age`, the `txid_*` snapshot functions) to prove a reused table from: no proof, a whole read.
+  if ((exec as { kind?: string }).kind === 'rust') return { ok: false, reason: 'no_xids', mark: null };
   const scope = `${input.sourceId}:${input.incarnation}`;
   const params = [input.sourceId, CONFIRM_OPS, scope, input.base.xmin, input.passId, input.self ?? null, input.base.snapshot ?? null, input.base.own ?? null];
   // Two plain scans: compiling them (JIT, which the planner's cost picks at 600k) cost more than running them (about 200 ms).

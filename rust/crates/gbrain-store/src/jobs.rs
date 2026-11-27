@@ -292,6 +292,17 @@ pub(crate) fn live_lock_token(read: &dyn KvRead, id: &str, now: i64) -> Result<O
         .map(|l| l.acquisition_token))
 }
 
+/// The holder of cycle lock `id` while its lease is live: `(holder_pid, holder_host)`.
+pub(crate) fn live_lock_holder(
+    read: &dyn KvRead,
+    id: &str,
+    now: i64,
+) -> Result<Option<(i64, Option<String>)>> {
+    Ok(get_json::<LockRecord>(read, &lock_key(id))?
+        .filter(|l| l.ttl_expires_at > now)
+        .map(|l| (l.holder_pid, l.holder_host)))
+}
+
 fn last_id(key: &[u8]) -> Option<i64> {
     let tail: [u8; 8] = key.get(key.len().checked_sub(8)?..)?.try_into().ok()?;
     Some((u64::from_be_bytes(tail) ^ (1 << 63)) as i64)

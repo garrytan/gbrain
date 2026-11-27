@@ -595,10 +595,31 @@ impl Store {
   a stale holder fails at commit even if it started before the takeover.
 - Job claims, effect claims and write claims keep their current token fields and add `epoch`.
 
-- **I-5, managed mode limit (2026-11-25).** Managed mode's topology locks (`withTopologyLocks`) stay native file locks
-  on the checkout (`GBRAIN_HOME/locks`) on every engine for the single-host phase, and are replaced with I-5 leases once
-  the lease work is on the multi-user branch; no stub lease is used before then. File locks do not fence writers on
-  two hosts, so managed mode on Rust is single-host until that swap.
+- **I-5, managed mode (lane LM slice 3, 2026-11-25; closes the 2026-11-25 managed mode limit).** On a multi-user Rust store,
+  managed mode's locks (`withTopologyLocks`, the worktree lock of every publication, effect, recovery, transfer and
+  lifecycle step, and the refresh lock) are I-5 leases plus the owner host's native file lock, in one double guard:
+  `managed:topology:<brain_id>`, `managed:worktree:<worktree_id>` and `managed:refresh:<worktree_id>` (60 s, renewed every
+  10 s while held), the lease first and the native lock second, released in reverse
+  (`src/core/persistence/managed-lock.ts`). The lease fences store writes across hosts and processes; the native lock stays
+  because a lease cannot stop a paused process from touching files it already holds a path to, so a paused writer still
+  blocks a same-host successor's file work until it exits. A checkout lives on its owner host and is never replicated. The
+  holder of a lease is the operation's own process registration (`process:<host>:<pid>:<nonce>`, taken before the first
+  managed lock, never another process's token); an operation holds an immutable record of its host fence and its managed
+  tokens, and every protected write transaction asserts those exact tokens inside the writing transaction
+  (`managed-operations.ts`), so old work never borrows a replacement epoch. Claims carry epochs in `~L 0x05` side records
+  (group followers, coalesced Git effects, refresh rows and managed sync checkpoints join the job, write, effect, drain-lease
+  and cycle-lock families). PGLite, Postgres and a single-host Rust store keep the native locks and are unchanged.
+  The expiry window (what this does and does not guarantee): the store checks a lease's expiry when `assert` runs inside
+  the writing transaction, not at commit. A writer that asserted a live lease can still commit after the lease's expiry
+  time while nobody has taken the lease over. A takeover that commits between the assert and the commit puts the lease row
+  in the transaction's read set and refuses the commit (`write_conflict`; the retry refuses `lease_lost`): a multi-user
+  store runs explicit transactions optimistically, so the takeover lands and the late transaction keeps nothing.
+  That late commit is safe: no other holder exists, and the owner host's native lock still excludes a same-host successor
+  from the checkout files. Takeover fencing and expiry at commit are different properties; only the first is provided.
+  Waiting for a managed lease polls `acquire` within the caller's own deadline and ends with the caller's existing busy
+  answer (`write_pending`, `writer_lock_unavailable`); the store has no waiter order. Fairness for a background writer
+  (the effect worker) comes from the native layer, which stays: its waiter marker orders writers of one host. Across hosts
+  there is no such priority yet.
 
 - **I-5, cycle lock fence (2026-11-25).** On a multi-user store the cycle lock carries the host fence (the I-5 epoch
   and token), so a host that lost its lease cannot run a cycle. Under optimistic transactions an old-epoch commit is

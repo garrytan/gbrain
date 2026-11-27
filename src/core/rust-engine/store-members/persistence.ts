@@ -20,7 +20,7 @@
 import type { RemirrorEffectState } from '../../engine-sql/segmented-mirror-effects.ts';
 import type { LocalWriterInsert, LocalWriterRow } from '../../engine-sql/persistence-state.ts';
 import type { AccessTokenWriteGrant, AdmissionRate, ClaimedWriteRow, CompletedWriteRow, CounterRow, OAuthClientWriteGrant, OutstandingBySource, PublicationEffectsSpec, WithdrawalEffectsSpec, WriteCancellation, WriteCancelResult, WriteCompletion, WriteRequestGroupInsert, WriteRequestInsert, WriteRequestListFilter, WriteRequestProgress, HeldCoverageRow, TerminalIntentCompaction } from '../../engine-sql/persistence-journal.ts';
-import type { ClaimExpiry, ClaimHeadSpec, ClaimRelease, ClaimRenewal, ConsumerProbe, ConsumerRenewal, ConsumerRowKey, ConsumerRowRead, SourceMembership, TopologyChange, TopologyChangeInsert } from '../../engine-sql/persistence-claims.ts';
+import type { ClaimExpiry, ClaimHeadSpec, ClaimRelease, ClaimRenewal, LaneHeadSpec, LaneHeadStamp, TransientCharge, ConsumerProbe, ConsumerRenewal, ConsumerRowKey, ConsumerRowRead, SourceMembership, TopologyChange, TopologyChangeInsert } from '../../engine-sql/persistence-claims.ts';
 import type { LedgerSource } from '../../engine-sql/belief.ts';
 import type { SourceStateRow } from '../../engine-sql/write-misc.ts';
 import type { SourceCheckoutRoot, UnembeddedPageSummary, WriteWatermarkRow } from '../../engine-sql/applied-watermark-reads.ts';
@@ -32,6 +32,7 @@ import { requestRow, topologyRow, uuidText, withDates } from '../store-codec.ts'
 import { withdrawalEffectsData } from '../../engine-sql/persistence-journal.ts';
 import { requireTextColumn, storeCall, type StoreMember } from './common.ts';
 import type { RustEngine } from '../../rust-engine.ts';
+import { heldRefusal, managedServed } from './managed-hold.ts';
 import type { StoreBrain } from '../store.ts';
 import { readOauthClient } from './jobs-oauth-clients.ts';
 import { readBrainMode } from './writer-release.ts';
@@ -233,9 +234,42 @@ export const readOwnerHostBinding: StoreMember<[worktreeId: string], string | nu
   (await storeCall({ member: 'readOwnerHostBinding' }, () => brain.readOwnerHostBinding(worktreeId))) as string | null;
 
 /** The claim stamp; `passed_sync` is false and the refresh barrier never refuses (this engine has no worktrees). */
-export const stampWriteClaim: StoreMember<[id: string, token: string, leaseMs: number, phaseJson: string, opts?: FenceOpts], ClaimedWriteRow | null> =
-  async (brain, id, token, leaseMs, phaseJson, opts) =>
-    requestRow<ClaimedWriteRow>(await storeCall({ member: 'stampWriteClaim' }, () => brain.stampWriteClaim({ id, token, leaseMs, phaseJson, ...(opts?.fence ? { fence: opts.fence } : {}) })));
+// A brain that does not serve managed mode (a user's, while the hold is on) keeps the old answer: `passed_sync` false.
+export const stampWriteClaim = async function stampWriteClaim(this: RustEngine, brain: StoreBrain, id: string, token: string, leaseMs: number, phaseJson: string, opts?: FenceOpts): Promise<ClaimedWriteRow | null> {
+  const claimed = requestRow<ClaimedWriteRow>(await storeCall({ member: 'stampWriteClaim' }, () => brain.stampWriteClaim({ id, token, leaseMs, phaseJson, ...(opts?.fence ? { fence: opts.fence } : {}) })));
+  return claimed && !managedServed(this) ? { ...claimed, passed_sync: false } : claimed;
+};
+
+/**
+ * The lane head claim's read and stamp and the owner's reclaim of a released write (#5984, #6007). Each replaced a statement
+ * `journal.ts` sent through executeRaw, so while the managed_persistence hold is on (a user's Rust brain) each refuses as that
+ * executeRaw did (managed-hold.ts). A multi-user store checks the caller's host fence on the read and records the claim's lease
+ * epoch on the stamp and the reclaim, as the FIFO claim does.
+ */
+export const selectClaimableLaneHead = async function selectClaimableLaneHead(this: RustEngine, brain: StoreBrain, spec: LaneHeadSpec): Promise<WriteRequest | null> {
+  if (!managedServed(this)) return heldRefusal(this);
+  return requestRow<WriteRequest>(await storeCall({ member: 'selectClaimableLaneHead' }, () => brain.selectClaimableLaneHead({
+    hostId: spec.hostId, worktreeId: spec.worktreeId, run: spec.run, seenSequence: spec.seenSequence, nonce: spec.nonce, priority: spec.priority,
+    ...(spec.fence ? { fence: spec.fence } : {}) })));
+};
+
+export const stampLaneHeadClaim = async function stampLaneHeadClaim(this: RustEngine, brain: StoreBrain, stamp: LaneHeadStamp): Promise<(WriteRequest & { seen_sequence: string }) | null> {
+  if (!managedServed(this)) return heldRefusal(this);
+  return requestRow<WriteRequest & { seen_sequence: string }>(await storeCall({ member: 'stampLaneHeadClaim' }, () => brain.stampLaneHeadClaim({
+    id: stamp.id, token: stamp.token, leaseMs: stamp.leaseMs, phaseJson: stamp.phaseJson, ...(stamp.fence ? { fence: stamp.fence } : {}) })));
+};
+
+export const reclaimReleasedWrite = async function reclaimReleasedWrite(this: RustEngine, brain: StoreBrain, stamp: LaneHeadStamp): Promise<WriteRequest | null> {
+  if (!managedServed(this)) return heldRefusal(this);
+  return requestRow<WriteRequest>(await storeCall({ member: 'reclaimReleasedWrite' }, () => brain.reclaimReleasedWrite({
+    id: stamp.id, token: stamp.token, leaseMs: stamp.leaseMs, phaseJson: stamp.phaseJson, ...(stamp.fence ? { fence: stamp.fence } : {}) })));
+};
+
+export const chargeTransientInterruption = async function chargeTransientInterruption(this: RustEngine, brain: StoreBrain, charge: TransientCharge): Promise<{ transient_interruptions: number } | null> {
+  if (!managedServed(this)) return heldRefusal(this);
+  return storeCall({ member: 'chargeTransientInterruption' }, () => brain.chargeTransientInterruption({ id: charge.id, token: charge.token, baseMs: charge.baseMs, maxMs: charge.maxMs,
+    ...(charge.fence ? { fence: charge.fence } : {}) })) as Promise<{ transient_interruptions: number } | null>;
+};
 
 /** The completion; this engine keeps no persistence effects, so the queued effect size is 0. */
 export const completeWriteRow: StoreMember<[completion: WriteCompletion], CompletedWriteRow | null> = async (brain, completion) =>
