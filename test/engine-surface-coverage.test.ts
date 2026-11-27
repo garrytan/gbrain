@@ -203,7 +203,7 @@ const INTERFACE_METHODS: readonly string[] = [
   // Write attribution reads (engine-sql/write-attribution.ts; covered by test/engine-parity/write-attribution.test.ts)
   'readWriteAttributionNames', 'readPageRevisionAttribution', 'readVersionAttributions', 'readOldestVersionAttribution', 'readRowAttribution',
   // CLI export and segmented-body reads (engine-sql/export-reads.ts; covered by test/engine-parity/cli-reads-export.test.ts)
-  'listExportPageKeys', 'readExportWithdrawalLedgerBytes', 'listExportWithdrawals', 'readExportPageRows', 'normalizeFenceLines', 'readSegmentedPageHead',
+  'listExportPageKeys', 'readExportWithdrawalLedgerBytes', 'listExportWithdrawals', 'listPurgeTombstones', 'readExportPageRows', 'normalizeFenceLines', 'readSegmentedPageHead',
   'readBodyManifestRows', 'readBodyManifestMeta', 'readBodyManifestOutline', 'listForcedCutSeqs', 'readManifestSeqAt', 'readSegmentedVersionBodyBytes',
   'listAccessPolicySourceIds', 'setLocalStatementTimeout',
   'probePageTypes',
@@ -638,7 +638,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'enrollSharedSkillMember', 'rebindSharedSkillMember', 'leaveSharedSkillMember', 'issueSharedSkillDeliveryBatch', 'readSharedSkillDeliveryBatch',
   'acknowledgeSharedSkillDeliveryBatch',
   // The page-write reads and upkeep that belong to no other domain (engine-sql/write-misc.ts).
-  'readSourceState', 'readAdmissionSource', 'sharedSkillPackTablePresent', 'listSharedSkillPackRoots', 'getWorktreeBinding', 'listHostTopologyRows', 'listWorktreeMembers', 'isSourceClaimed', 'hasExtractedEvents', 'listActiveAccessMembers', 'hasLabelledOnlyMember', 'hasLabelledOnlyMemberAmong', 'expireMemoryProposals', 'listAwaitingMemoryProposals', 'purgeMemoryProposals', 'attachSourcePath', 'readMemoryProposal', 'readPendingProposalSummary', 'listMemoryProposalRows', 'listOwnerProposalRows',
+  'readSourceState', 'readAdmissionSource', 'sharedSkillPackTablePresent', 'listSharedSkillPackRoots', 'getWorktreeBinding', 'listHostTopologyRows', 'listHostRepositoryRoots', 'listPendingGitEffectPaths', 'listWorktreeMembers', 'isSourceClaimed', 'hasExtractedEvents', 'listActiveAccessMembers', 'hasLabelledOnlyMember', 'hasLabelledOnlyMemberAmong', 'expireMemoryProposals', 'listAwaitingMemoryProposals', 'purgeMemoryProposals', 'attachSourcePath', 'readMemoryProposal', 'readPendingProposalSummary', 'listMemoryProposalRows', 'listOwnerProposalRows',
   'worktreeClaimStore', 'readWriterAdminState', 'writerAdminStore',
   'readWorktreeManifest', 'writerReleaseStore', 'addPersistenceCounters', 'publicationJournalStore', 'gitDurabilityStore', 'gitEffectStore', 'topologyStore', 'manualLinkStore',
   'readWriterDiagnosticRows', 'readWriterStatusRows', 'listOnboardingSources', 'listBlockingEffectRows', 'listActiveWorktreeRefreshRows',

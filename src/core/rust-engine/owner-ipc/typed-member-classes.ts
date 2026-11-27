@@ -106,7 +106,7 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'listDreamJobCreatedAt', 'listDreamPageIds', 'listDreamQueueCandidates', 'listDueWakeWatches',
   'listEdgeContradictionCandidates', 'listEffectRecoveries', 'listEmbeddingStores', 'listEntityHintPages',
   'listEntityIdentityRows', 'listEvalCandidateQueries', 'listExactIdentityCandidates', 'listExactRescanChunks',
-  'listExpirableFactIdsOfDeletedPage', 'listExpiredFactIds', 'listExportPageKeys', 'listExportWithdrawals',
+  'listExpirableFactIdsOfDeletedPage', 'listExpiredFactIds', 'listExportPageKeys', 'listExportWithdrawals', 'listPurgeTombstones',
   'listExtractionPendingPages', 'listExtractorFactsForClassification', 'listFactContextsForPurgeProbe',
   'listFactHoldingRefs', 'listFactIdsStillOnPage', 'listFactProvenance', 'listFactRelinkOutcomes', 'listFactRowsByIds', 'listFactSourcePages',
   'listFactWithdrawalDates', 'listFactWithdrawalKeys', 'listFactsAbsorbJobsByKeyPrefix',
@@ -358,7 +358,7 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'listSharedSkillFollowSources', 'listSlugPathCandidates', 'listSourceBindingsForMovement', 'listSourceIds',
   'listStaleEmbeddingEffects', 'listStalledCatchupRows', 'listStuckWorktreeRefreshes', 'listSweepDeferredPages',
   'listSweepStalePages', 'listTerminalFailureBatch', 'listTimelineHistoryBatch', 'listTopResolvedTakesForHolder',
-  'listTruncatedMarkdownBodies', 'listTrustClaimTargets', 'listTrustColumns', 'listUnboundSourcePages',
+  'listHostRepositoryRoots', 'listPendingGitEffectPaths', 'listTruncatedMarkdownBodies', 'listTrustClaimTargets', 'listTrustColumns', 'listUnboundSourcePages',
   'listUnfinishedManagedSyncCursors', 'listUnpricedDerivationModels', 'listUnreadablePrivacyHoldIds',
   'listUnretiredPagesBySlugPattern', 'listUntiledSegmentedPageRows', 'listVisibilityCandidatePages',
   'listVolunteerChannels', 'listWorktreeBlockerRequests', 'listWorktreeIds', 'listWorktreeMembers', 'lockActiveAccessTokens',
@@ -987,7 +987,7 @@ export const OWNER_IPC_TYPED_CONFIRMING_READS: Readonly<Record<string, string>> 
   // The page purge port's own typed writes and the read that confirms each (continued):
   // Ember's ruling B (option 2): the day row is shared by parallel extractions, so no read confirms one delta (see the note in
   // confirming-reads.ts and docs/designs/RUST_ENGINE.md); the rollup writer never reruns a call whose reply was lost.
-  upsertExtractRollupDay: 'a read of that day\'s extract_rollup_7d row for that kind and source (the row doctor\'s extract_health reads; no typed member lists it yet)',
+  upsertExtractRollupDay: 'a read of that day\'s extract_rollup_7d row for that kind and source (doctor\'s extract_health reads it summed over 7 days with readExtractRollup7d; no read returns the one day row)',
   insertTakeGrade: 'readTakeGrade for that key',
   deleteTakeGrade: 'readTakeGrade for that key',
   upsertTakeHorizon: 'listTakeHorizons for that take',

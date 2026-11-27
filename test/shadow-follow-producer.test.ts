@@ -449,6 +449,10 @@ describe('write map coverage', () => {
     }
   });
 
+  test('the typed reads the doctor and the purge parity cases added are read-only (no write plan)', () => {
+    for (const name of ['listPurgeTombstones', 'listHostRepositoryRoots', 'listPendingGitEffectPaths']) expect(memberKind(name)).toBe('read_name');
+  });
+
   test('every mapped, ignored, raw, schema and read-named-write entry names a real engine member', () => {
     const real = new Set(protoMembers());
     const listed = [...Object.keys(WRITE_MAP), ...IGNORED_MEMBERS, ...RAW_MEMBERS, ...SCHEMA_MEMBERS, ...READ_ONLY_MEMBERS, ...UNMAPPED_WRITE_MEMBERS, 'withReservedConnection'];

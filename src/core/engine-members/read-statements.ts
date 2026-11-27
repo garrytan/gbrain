@@ -4,7 +4,7 @@
  */
 import type { AbandonedTakeRow, HeldFenceTakeRow, HeldFenceTakeSpec, HolderResolvedTakeRow, McpResolvedSpec, PageTierRef, PurgeTakesSpec, TakePreimage, TakePreimageRead, TakeTrustRef, TakesLeavingFence } from '../engine-sql/takes-reads.ts';
 import type { AmendmentNotAppliedRow, AmendmentsNotAppliedSpec, BeliefHistoryRowQuery, CoreEditNoticeRow, CorePageRow, CorePageRowSpec, CursorEditionRow, PageIdRef, PageVersionEditionRow, TrustScanRow, TrustScanRowSpec, TrustScanTable, UnscannedTrustSpec, ValidTimeIdentityRow, ValidTimeIdentitySpec, ValidTimePickSpec } from '../engine-sql/trust-tier-reads.ts';
-import type { BodyManifestMeta, BodyManifestOutline, BodyManifestRow, ExportPageKey, ExportPageKeyQuery, ExportPageRow, ExportWithdrawalRow, NormalizedFenceLines, SegmentedPageHead } from '../engine-sql/export-reads.ts';
+import type { BodyManifestMeta, BodyManifestOutline, BodyManifestRow, ExportPageKey, ExportPageKeyQuery, ExportPageRow, ExportWithdrawalRow, FactPurgeTombstone, TakePurgeTombstone, NormalizedFenceLines, SegmentedPageHead } from '../engine-sql/export-reads.ts';
 import type { BriefEntityPageOpts, BriefEntityPageRow, ReflexPageMatch, ReflexPageRow, ReflexScope } from '../engine-sql/reflex-reads.ts';
 import type * as BriefReadsSql from '../engine-sql/brief-reads.ts';
 import type * as ConceptRebuildSql from '../engine-sql/concept-rebuild.ts';
@@ -52,6 +52,8 @@ export interface ReadStatementMembers {
   readExportWithdrawalLedgerBytes(sourceId: string): Promise<number>;
   /** gbrain export: the source's withdrawals and purge tombstones, by visibility, fact hash and subject (engine-sql/export-reads.ts). */
   listExportWithdrawals(sourceId: string): Promise<ExportWithdrawalRow[]>;
+  /** The source's fact purge tombstones (by visibility, subject, fact hash) and take purge tombstones (by subject, claim hash), in byte order, with request id, actor and reason. */
+  listPurgeTombstones(sourceId: string): Promise<{ facts: FactPurgeTombstone[]; takes: TakePurgeTombstone[] }>;
   /** gbrain export: the live pages among `ids` with their tags in tag order, in no set order (engine-sql/export-reads.ts). */
   readExportPageRows(ids: readonly string[]): Promise<ExportPageRow[]>;
   /** gbrain export: each body and timeline lower-cased with whitespace runs made one space, line by line (engine-sql/export-reads.ts). */

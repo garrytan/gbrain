@@ -1668,6 +1668,10 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
   getWorktreeBinding(sourceId: string, hostId: string | null): Promise<WorktreeBinding | null>;
   /** Every worktree host `hostId` binds, with its owner, epoch, state and topology generation, in no set order (the topology lock's local read). */
   listHostTopologyRows(hostId: string): Promise<HostTopologyRow[]>;
+  /** Every host binding of `hostId` with a local path, with the source a worktree binding names on it (or null), by byte path (doctor foreign_writers). */
+  listHostRepositoryRoots(hostId: string): Promise<Array<{ local_path: string; source_id: string | null }>>;
+  /** The queued and running git effects that name a relative path, with their source and worktree roots (doctor foreign_writers). */
+  listPendingGitEffectPaths(hostId: string | null): Promise<Array<{ rel: string; source_path: string | null; worktree_path: string | null }>>;
   /** The source bindings of one worktree, by byte source id. */
   listWorktreeMembers(worktreeId: string): Promise<Array<{ source_id: string; relative_path: string }>>;
   /**

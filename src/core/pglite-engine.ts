@@ -1675,6 +1675,7 @@ export class PGLiteEngine implements BrainEngine {
   listExportPageKeys(q: exportReadsImpl.ExportPageKeyQuery) { return exportReadsImpl.listExportPageKeys(this, q); }
   readExportWithdrawalLedgerBytes(sourceId: string) { return exportReadsImpl.readExportWithdrawalLedgerBytes(this, sourceId); }
   listExportWithdrawals(sourceId: string) { return exportReadsImpl.listExportWithdrawals(this, sourceId); }
+  listPurgeTombstones(sourceId: string) { return exportReadsImpl.listPurgeTombstones(this, sourceId); }
   readExportPageRows(ids: readonly string[]) { return exportReadsImpl.readExportPageRows(this, ids); }
   normalizeFenceLines(bodies: readonly string[], timelines: readonly string[]) { return exportReadsImpl.normalizeFenceLines(this, bodies, timelines); }
   readSegmentedPageHead(pageId: number) { return exportReadsImpl.readSegmentedPageHead(this, pageId); }
@@ -3151,6 +3152,8 @@ export class PGLiteEngine implements BrainEngine {
   listSharedSkillPackRoots(hostId: string) { return writeMiscImpl.listSharedSkillPackRoots(this.writeMiscReads, hostId); }
   getWorktreeBinding(sourceId: string, hostId: string | null) { return writeMiscImpl.getWorktreeBinding(this.writeMiscReads, sourceId, hostId); }
   listHostTopologyRows(hostId: string) { return writeMiscImpl.listHostTopologyRows(this.writeMiscReads, hostId); }
+  listHostRepositoryRoots(hostId: string) { return writeMiscImpl.listHostRepositoryRoots(this.writeMiscReads, hostId); }
+  listPendingGitEffectPaths(hostId: string | null) { return writeMiscImpl.listPendingGitEffectPaths(this.writeMiscReads, hostId); }
   listWorktreeMembers(worktreeId: string) { return writeMiscImpl.listWorktreeMembers(this.writeMiscReads, worktreeId); }
   worktreeClaimStore(): Promise<WorktreeClaimStore> { return worktreeClaimImpl.worktreeClaimStore(this); }
   readWriterAdminState(opts?: WriterAdminStateOptions): Promise<string> { return writerAdminImpl.readWriterAdminState(this, opts); }

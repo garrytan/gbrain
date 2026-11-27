@@ -90,6 +90,9 @@ export const getWorktreeBinding: StoreMember<[sourceId: string, hostId: string |
 /** Each host binding of `hostId` with its worktree's owner, epoch, state and topology generation (gbrain-store `persistence::worktrees`). */
 export const listHostTopologyRows: StoreMember<[hostId: string], HostTopologyRow[]> = (brain, hostId) =>
   storeCall({ member: 'listHostTopologyRows' }, () => brain.listHostTopologyRows(hostId));
+/** Served from the store's host and source binding records (worktrees.rs host_repository_roots_in). */
+export const listHostRepositoryRoots: StoreMember<[hostId: string], Array<{ local_path: string; source_id: string | null }>> = (brain, hostId) =>
+  storeCall({ member: 'listHostRepositoryRoots' }, () => brain.listHostRepositoryRoots(hostId)) as Promise<Array<{ local_path: string; source_id: string | null }>>;
 
 /** The source bindings of one worktree, by byte source id. */
 export const listWorktreeMembers: StoreMember<[worktreeId: string], Array<{ source_id: string; relative_path: string }>> = (brain, worktreeId) =>
@@ -245,3 +248,6 @@ export const listPagesNamingReader: StoreMember<[principal: string, opts?: { liv
   const rows = await storeCall({ member: 'listPagesNamingReader' }, () => brain.listPagesNamingReader(principal, limit, opts.live === true)) as PageNamingReaderRow[];
   return rows.map(r => ({ slug: r.slug, source_id: r.source_id }));
 };
+/** Served from the store's effect, source and host binding records (worktrees.rs pending_git_effect_paths_in). */
+export const listPendingGitEffectPaths: StoreMember<[hostId: string | null], Array<{ rel: string; source_path: string | null; worktree_path: string | null }>> = (brain, hostId) =>
+  storeCall({ member: 'listPendingGitEffectPaths' }, () => brain.listPendingGitEffectPaths(hostId)) as Promise<Array<{ rel: string; source_path: string | null; worktree_path: string | null }>>;
