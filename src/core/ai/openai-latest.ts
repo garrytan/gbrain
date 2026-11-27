@@ -37,7 +37,9 @@
  * Tier mapping mirrors the Anthropic ladder in TIER_DEFAULTS:
  *   utility → cheapest class (luna | nano | mini), reasoning/subagent → mid
  *   class (terra, else the flagship), deep → top class (sol | pro, else the
- *   bare family alias).
+ *   bare family alias). A family with no bare alias names each tier on its
+ *   own release (gpt-6-luna, gpt-6.2-sol), so a tier it lacks comes from the
+ *   newest family of the same generation that has it.
  */
 
 import { readFileSync, writeFileSync, mkdirSync, renameSync, statSync } from 'node:fs';
@@ -116,13 +118,6 @@ export function parseOpenAIChatId(id: string): ParsedOpenAIChatId | null {
   return { id, family: [Number(m[1]), Number(m[2] ?? 0)], suffix };
 }
 
-/**
- * Priced for exact metering where a feature names the model (the #6188 fence
- * repair default), but not eligible as a discovered tier default: one priced
- * member of a newer family would otherwise become every tier's default.
- */
-const METERED_ONLY: ReadonlySet<string> = new Set(['gpt-6.1-sol', 'gpt-6.2-sol', 'gpt-6-luna', 'gpt-6-astra', 'gpt-6.2-astra']);
-
 function familyCmp(a: [number, number], b: [number, number]): number {
   return a[0] !== b[0] ? a[0] - b[0] : a[1] - b[1];
 }
@@ -139,8 +134,7 @@ function pickBySuffix(members: ParsedOpenAIChatId[], order: readonly string[]): 
  * Rank the account's model ids into per-tier defaults. Only ids with a
  * canonical pricing row are eligible (see module header); returns null when
  * nothing usable matched. `newestUnpriced` reports the newest in-grammar id
- * that lost eligibility to a missing pricing row; a METERED_ONLY id is priced,
- * so it is neither eligible nor reported.
+ * that lost eligibility to a missing pricing row.
  */
 export function rankOpenAIChatModels(
   ids: string[],
@@ -149,7 +143,7 @@ export function rankOpenAIChatModels(
   const parsed = ids.map(parseOpenAIChatId).filter((p): p is ParsedOpenAIChatId => p !== null);
   if (parsed.length === 0) return { tiers: null };
 
-  const eligible = parsed.filter((p) => priced(p.id) && !METERED_ONLY.has(p.id));
+  const eligible = parsed.filter((p) => priced(p.id));
   const skipped = parsed.filter((p) => !priced(p.id));
   const newestSkipped = skipped.sort((a, b) => familyCmp(b.family, a.family))[0];
 
@@ -157,7 +151,11 @@ export function rankOpenAIChatModels(
 
   const newestFamily = eligible.reduce((best, p) =>
     familyCmp(p.family, best) > 0 ? p.family : best, eligible[0].family);
-  const members = eligible.filter((p) => familyCmp(p.family, newestFamily) === 0);
+  const newest = eligible.filter((p) => familyCmp(p.family, newestFamily) === 0);
+  const members = newest.some((p) => p.suffix === '')
+    ? newest
+    : [...newest, ...eligible.filter((p) => p.family[0] === newestFamily[0] && familyCmp(p.family, newestFamily) < 0
+        && !newest.some((n) => n.suffix === p.suffix)).sort((a, b) => familyCmp(b.family, a.family))];
   // Only surface an unpriced id when its family is strictly NEWER than the
   // newest priced family — accounts often still list obsolete unpriced ids
   // (legacy families), and warning about those tells a release engineer to

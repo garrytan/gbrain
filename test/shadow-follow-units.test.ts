@@ -19,6 +19,8 @@ import { countFingerprintMismatches, differingCodePoints, probeRecord, PROBE_COR
 import { FollowChild, type FollowStore } from '../src/shadow/follow-child.ts';
 import { appendPass, buildFollowStatus, lagBucket, lagP99, NOT_RUN_PROBE, readFollowerFile, type FollowStatus } from '../src/shadow/follow-status.ts';
 import { openReadSource } from '../src/shadow/read-pool.ts';
+import { ShadowFollower } from '../src/shadow/follower.ts';
+import type { Invalidation } from '../src/shadow/invalidations.ts';
 import { Reconciler } from '../src/shadow/reconcile.ts';
 import { writeSeedRecord, type SeedRecord } from '../src/shadow/seed.ts';
 import { SHADOW_STATE_VERSION, shadowBrainKey, shadowDirFor, writeShadowState, type ShadowState } from '../src/shadow/state.ts';
@@ -318,6 +320,14 @@ describe('fingerprint probe v2: per-code-point answers', () => {
     expect(record({})).toMatchObject({ state: 'pass', differing_code_points: [], differing_code_points_total: 0 });
   });
 
+  test('purge tombstones fail the probe while code points differ: they keep only a hash, so a purged claim could be saved again', () => {
+    const meta = { differing_code_points: ['U+1680'], differing_code_points_total: 1, facts_with_differing_code_points: 0 };
+    expect(record({ ...meta, fact_purges_unverifiable: 3 })).toMatchObject({ state: 'fail', fact_purges_unverifiable: 3 });
+    expect(record({ ...meta, fact_purges_unverifiable: 0 })).toMatchObject({ state: 'pass' });
+    // No differing code point: every claim hashes alike, so tombstones are checkable and do not matter.
+    expect(record({ fact_purges_unverifiable: 3 })).toMatchObject({ state: 'pass' });
+  });
+
   test('a corpus row that differs with no differing code point to explain it still fails', () => {
     expect(record({ corpus_mismatches: 2, corpus_mismatch_rows: ['seeded 0001'] })).toMatchObject({ state: 'fail', corpus_mismatches: 2 });
     expect(record({ corpus_mismatches: 2, differing_code_points_total: 3, facts_with_differing_code_points: 0 })).toMatchObject({ state: 'pass' });
@@ -524,5 +534,25 @@ describe('shadow read source', () => {
       await expect(reads.read(async () => 1)).rejects.toThrow(/closed/);
       expect(connect).toHaveBeenCalledTimes(2);
     } finally { connect.mockRestore(); disconnect.mockRestore(); }
+  });
+});
+
+describe('the follower\'s two write counts', () => {
+  const follower = () => new ShadowFollower({ reads: { pauseMs: 0, read: async () => { throw new Error('no reads'); }, close: async () => {} } as never, send: () => true, rpc: async () => { throw new Error('no child'); } });
+  const batch = (seq: number, items: Invalidation[]) => ({ seq, committed_at: 0, items });
+  const rows = (relation: string): Invalidation => ({ kind: 'rows', relation, selector: { id: '1' }, before_keys: null });
+
+  test('`published` counts every batch (the stable rerun and the mirror read it); `pageLinkWrites` counts only a batch that can change a row a write comparison reads, so the process\'s own bookkeeping never moves it', async () => {
+    const f = follower();
+    f.publish(batch(1, [rows('persistence_effects'), { kind: 'relation', relation: 'persistence_requests', reason: 'raw_sql' }])); // journal rows
+    f.publish(batch(2, [rows('link_transitions'), rows('config'), { kind: 'relation', relation: 'memory_proposals', reason: 'raw_sql' }]));
+    expect([f.published, f.pageLinkWrites]).toEqual([2, 0]);
+    f.publish(batch(3, [rows('pages')]));
+    f.publish(batch(4, [rows('persistence_effects'), rows('links')]));
+    f.publish(batch(5, [{ kind: 'relation', relation: 'pages', reason: 'raw_sql' }]));
+    f.publish(batch(6, [{ kind: 'relation', relation: 'links', reason: 'raw_sql' }]));
+    f.publish(batch(7, [{ kind: 'invalid', reason: 'unmapped_write:somethingNew' }])); // a write nothing can describe may have changed them: it counts
+    expect([f.published, f.pageLinkWrites]).toEqual([7, 5]);
+    await f.settle();
   });
 });

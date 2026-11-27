@@ -4157,7 +4157,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "idempotent": true,
     "writeInference": "none",
     "outputRedaction": "no_stored_text",
-    "description": "The user corrected you: saves their standing rule and replaces fact_id with corrected_fact (or withdraws it). Branch on state and next.",
+    "description": "Only when the user corrects a wrong fact or asks for a standing rule: saves the rule and replaces fact_id with corrected_fact (or withdraws it); over MCP it often waits for owner approval first. Anything else to save: call remember. Branch on state and next.",
     "params": {
       "rule": {
         "type": "string",
@@ -4711,7 +4711,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "outputRedaction": {
       "exempt": "admin-scoped job introspection: job params and results are operator data, not retrieved brain text"
     },
-    "description": "Get job status and details by ID. Agent-scoped tokens (no admin) see only jobs they own.",
+    "description": "Get job status and details by ID. Remote callers see only the jobs they submitted, unless bound to the brain owner.",
     "params": {
       "id": {
         "type": "number",
@@ -4730,7 +4730,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "outputRedaction": {
       "exempt": "admin-scoped job introspection: job params and results are operator data, not retrieved brain text"
     },
-    "description": "Wait until a job is completed, failed, dead or cancelled (at most 55 s per call), then return it like get_job plus terminal. terminal: false means it is still running: call again. Agent-scoped tokens (no admin) wait only on jobs they own.",
+    "description": "Wait until a job is completed, failed, dead or cancelled (at most 55 s per call), then return it like get_job plus terminal. terminal: false means it is still running: call again. Remote callers wait only on the jobs they submitted, unless bound to the brain owner.",
     "params": {
       "id": {
         "type": "number",
@@ -4753,7 +4753,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "outputRedaction": {
       "exempt": "admin-scoped job introspection: job params and results are operator data, not retrieved brain text"
     },
-    "description": "List background jobs with optional status/queue/name filters; pass fields to project each job to the columns you need. Use when checking queued or failed work. Needs admin scope (agent-scoped tokens see only jobs they own).",
+    "description": "List background jobs with optional status/queue/name filters; pass fields to project each job to the columns you need. Use when checking queued or failed work. Needs admin scope; remote callers (agent-scoped tokens too) see only the jobs they submitted, unless bound to the brain owner.",
     "params": {
       "status": {
         "type": "string",
@@ -4835,7 +4835,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "outputRedaction": {
       "exempt": "admin-scoped job introspection: job params and results are operator data, not retrieved brain text"
     },
-    "description": "Get structured progress for a running job. Agent-scoped tokens (no admin) see only jobs they own.",
+    "description": "Get structured progress for a running job. Remote callers see only the jobs they submitted, unless bound to the brain owner.",
     "params": {
       "id": {
         "type": "number",
@@ -5027,7 +5027,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "outputRedaction": {
       "exempt": "watch bookkeeping: job, request and cron ids, states and times, never retrieved brain text"
     },
-    "description": "This tool notifies you: it has gbrain wake this conversation through Wakeshift when job id finishes (completed, failed, dead or cancelled), so you can stop polling. Call it right after submitting a long job, then end your turn or keep working. The wake names the job and says to call get_job for the result; it carries no page text. Agent-scoped tokens watch only jobs they own. If no wake arrives, call wait_job.",
+    "description": "This tool notifies you: it has gbrain wake this conversation through Wakeshift when job id finishes (completed, failed, dead or cancelled), so you can stop polling. Call it right after submitting a long job, then end your turn or keep working. The wake names the job and says to call get_job for the result; it carries no page text. Remote callers watch only the jobs they submitted, unless bound to the brain owner. If no wake arrives, call wait_job.",
     "params": {
       "id": {
         "type": "number",
@@ -6872,7 +6872,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "valid_from": {
         "type": "string",
-        "description": "#4206: ISO 8601 event time for the extracted facts — use when the turn is historical (importing an old transcript) so facts do not get stamped with import time. Fallback only: a date the extractor derives from the turn itself wins. Default: now()."
+        "description": "#4206: ISO 8601 event time for the extracted facts — use when the turn is historical (importing an old transcript) so facts do not get stamped with import time. Fallback only: a date the extractor derives from the turn itself wins. Omitted: the event date stays unknown."
       },
       "source_slug": {
         "type": "string",
@@ -6910,7 +6910,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "query": {
         "type": "string",
-        "description": "Also search pages (results[])."
+        "description": "Search pages and rank facts."
       },
       "budget_tokens": {
         "type": "number",
@@ -6940,6 +6940,11 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       "since": {
         "type": "string",
         "description": "ISO 8601 or \"8 hours ago\"."
+      },
+      "include_undated": {
+        "type": "boolean",
+        "description": "With since: also facts with no event date saved inside the window.",
+        "fullSurfaceOnly": true
       },
       "session_id": {
         "type": "string",

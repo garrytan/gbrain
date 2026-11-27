@@ -16,7 +16,7 @@
 #          (default: merge-base with origin/master, falling back to HEAD~1)
 #      A file that does not exist in the base ref is removed (its pre-fix
 #      state is nonexistence).
-#   3. Runs `bun test <test-file>` and parses the pass/fail counts.
+#   3. Runs `bun test <test-file>` and counts individual failed test results.
 #   4. Restores the source files (also on ^C / error — trap'd).
 #
 # Exit codes:
@@ -95,17 +95,19 @@ for f in "${SOURCES[@]}"; do
 done
 
 OUT="$(mktemp "${TMPDIR:-/tmp}/discriminate-out.XXXXXX")"
-bun test --timeout=60000 "$TEST_FILE" > "$OUT" 2>&1
+NO_COLOR=1 FORCE_COLOR=0 bun test --timeout=60000 "$TEST_FILE" > "$OUT" 2>&1
 TEST_EXIT=$?
 restore
 trap - EXIT INT TERM
 
-FAILS="$(grep -Eo '^[[:space:]]*[0-9]+ fail' "$OUT" | grep -Eo '[0-9]+' | tail -1)"
+FAILS="$(awk '/^[(]fail[)] .+/ { count++ } END { print count+0 }' "$OUT")"
 PASSES="$(grep -Eo '^[[:space:]]*[0-9]+ pass' "$OUT" | grep -Eo '[0-9]+' | tail -1)"
-FAILS="${FAILS:-0}"
 PASSES="${PASSES:-0}"
 
 echo "[discriminate] pre-fix run: exit=$TEST_EXIT pass=$PASSES fail=$FAILS (full output: $OUT)" >&2
+if grep -q '^# Unhandled error between tests' "$OUT"; then
+  echo "[discriminate] Bun reported an unhandled error outside a test; reverting the fix commonly leaves a test import unresolved." >&2
+fi
 
 if [ "$TEST_EXIT" -eq 0 ]; then
   echo "[discriminate] DOES NOT DISCRIMINATE: $TEST_FILE passes with the fix reverted." >&2

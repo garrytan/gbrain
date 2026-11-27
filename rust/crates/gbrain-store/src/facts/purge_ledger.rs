@@ -329,6 +329,62 @@ pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Resul
     Ok(())
 }
 
+/// The shadow seed (`seed/state.rs`): stores a tombstone copied from another engine, with its own request id, actor, reason
+/// and time. `false` when the key is held.
+pub(crate) fn seed_fact_purge(
+    tx: &mut dyn KvWrite,
+    parts: [&str; 4],
+    request_id: Option<String>,
+    note: (Option<String>, Option<String>),
+    purged_at_us: i64,
+) -> Result<bool> {
+    let [source_id, visibility, subject, fact_hash] = parts;
+    no_nul(
+        "seed fact_purges",
+        &[
+            ("source_id", source_id),
+            ("visibility", visibility),
+            ("subject", subject),
+            ("fact_hash", fact_hash),
+            ("actor", note.0.as_deref().unwrap_or("")),
+            ("reason", note.1.as_deref().unwrap_or("")),
+        ],
+    )?;
+    if !VISIBILITIES.contains(&visibility) {
+        return Err(StoreError::invalid(format!(
+            "seed fact_purges: visibility must be private or world, not \"{visibility}\""
+        )));
+    }
+    let k = key(&parts);
+    if tx.get(&k)?.is_some() {
+        return Ok(false);
+    }
+    put_json(
+        tx,
+        &k,
+        &PurgeRecord {
+            request_id,
+            actor: note.0,
+            reason: note.1,
+            purged_at_us,
+        },
+    )?;
+    Ok(true)
+}
+
+/// The shadow follow (`seed/follow/remove_state.rs`): removes the tombstone of the key. `false` when there is none.
+pub(crate) fn remove_fact_purge(tx: &mut dyn KvWrite, parts: [&str; 4]) -> Result<bool> {
+    if parts.iter().any(|p| p.contains('\0')) {
+        return Ok(false);
+    }
+    let k = key(&parts);
+    if tx.get(&k)?.is_none() {
+        return Ok(false);
+    }
+    tx.delete(&k)?;
+    Ok(true)
+}
+
 impl Store {
     /// `insertFactPurge`: stores the tombstone; false when the same key exists (`ON CONFLICT DO
     /// NOTHING`), which keeps its columns.

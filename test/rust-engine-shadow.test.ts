@@ -23,7 +23,11 @@ import { MirrorQueue, newMirrorCounters, type CapturedRead } from '../src/shadow
 import { managedFilesystemDatastorePath, registerManagedFilesystemEngine } from '../src/core/persistence/filesystem-guard.ts';
 import { SHADOW_READ_MEMBERS } from '../src/shadow/reads.ts';
 import { buildProvisionalReport, renderProvisionalMarkdown } from '../src/shadow/report.ts';
-import { ShadowSupervisor } from '../src/shadow/supervisor.ts';
+import { closeAllOwedAtExit, sampleWeight, ShadowSupervisor } from '../src/shadow/supervisor.ts';
+import { createWriteSampler } from '../src/shadow/write-capture.ts';
+import { ensureEpoch } from '../src/shadow/evidence-epoch.ts';
+import { buildFollowStatus } from '../src/shadow/follow-status.ts';
+import { owedPath, readOwed, writeOwed, type OwedRecord } from '../src/shadow/write-compare.ts';
 import { wrapShadowEngine, type ShadowSink } from '../src/shadow/wrapper.ts';
 import { shadowChildArgv } from '../src/shadow/attach.ts';
 import { parseBenchmarkEngineKind, createBenchmarkBrain, RustEngineAddonUnavailableError } from '../src/eval/longmemeval/harness.ts';
@@ -721,4 +725,246 @@ describe('eval --engine rust', () => {
     await expect(runBrainBench(corpus, { harnesses: ['openclaw'], suites: [TRUST_SUITES[0]] as never, includeHoldout: true, llm: false, engine: 'rust' }))
       .rejects.toThrow('--engine rust does not run the memory-trust suites');
   });
+});
+
+// A pipe whose write callbacks the test fires by hand: what Bun does (a callback fires once the bytes have left for the kernel pipe, `drain` never fires, `writableLength` reads 0).
+class HeldPipeChild extends EventEmitter {
+  held: Array<{ line: string; cb: (error?: Error | null) => void }> = [];
+  writes: string[] = []; // every line handed to the pipe, in order
+  owedAtWrite: number[] = []; // what the owed record said at each write (a test seam)
+  onWrite?: () => void;
+  ended = false;
+  stdin = Object.assign(new EventEmitter(), {
+    writable: true, destroyed: false, writableLength: 0, unref() {},
+    write: (line: string, cb: (error?: Error | null) => void): boolean => { this.writes.push(line); this.onWrite?.(); this.held.push({ line, cb }); return false; }, // false: Bun says "backpressure" for most lines of a burst
+    end: () => { this.ended = true; if (this.held.length === 0) queueMicrotask(() => this.stdin.emit('finish')); },
+  });
+  stdout = Object.assign(new PassThrough(), { unref() {} });
+  pid = 4343;
+  unref() {}
+  kill() { return true; }
+  flush(n = this.held.length, error?: Error): void { for (const h of this.held.splice(0, n)) h.cb(error ?? null); if (this.ended && this.held.length === 0) queueMicrotask(() => this.stdin.emit('finish')); }
+}
+
+describe('supervisor sample accounting (a sample is owed in a durable record before it is sent; the child settles it, or books it lost)', () => {
+  const sample = (i: number, pad = 400, extra = ''): string => `{"t":"write","op":"putPage","i":${i},"pad":"${'x'.repeat(pad)}"${extra}}\n`;
+  const turn = (): Promise<void> => new Promise((resolve) => { setImmediate(resolve); });
+  function harness(overrides: Record<string, unknown> = {}) {
+    const children: HeldPipeChild[] = []; const sessions: string[] = []; const faults: ShadowFault[] = []; const owedWrites: number[] = [];
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-sample-accounting-'));
+    const sup = new ShadowSupervisor({
+      dir, argv: ['g'], spawn: ((_cmd: string, _args: string[], options: { env: Record<string, string> }) => { const c = new HeldPipeChild(); c.onWrite = () => { c.owedAtWrite.push((readOwed(dir, sessions[children.indexOf(c)]!) as { owed: number } | null)?.owed ?? -1); }; children.push(c); sessions.push(options.env.GBRAIN_SHADOW_SESSION!); return c; }) as never,
+      recordFault: (f: ShadowFault) => faults.push(f), stillEnabled: () => true, maxBufferedBytes: 1_000, drainMs: 60, retryMs: 10,
+      writeOwed: (d: string, rec: OwedRecord) => { owedWrites.push(rec.owed); writeOwed(d, rec); }, ...overrides,
+    } as never);
+    return { sup, children, sessions, faults, dir, owedWrites, owed: (i = 0) => readOwed(dir, sessions[i]!), done: () => { sup.stop(); rmSync(dir, { recursive: true, force: true }); } };
+  }
+
+  test('a sample is accepted at once but its owed record is written in a later turn, never inside the caller; the lines reach the pipe after it, in order, one record per turn', async () => {
+    const h = harness({ maxBufferedBytes: 1_000_000 });
+    expect(h.sup.send(sample(0))).toBe(true); expect(h.sup.send('{"t":"read","n":1}\n')).toBe(true); expect(h.sup.send(sample(1))).toBe(true); expect(h.sup.send('{"t":"read","n":2}\n')).toBe(true);
+    expect(h.owedWrites).toEqual([]); // nothing durable inside send(): the fsync is off the request's synchronous path
+    expect(h.children[0]!.writes).toEqual([]); // a read behind a staged sample waits too, so order holds
+    await turn();
+    expect(h.owedWrites).toEqual([2]); // one record for the whole turn, stating everything accepted
+    expect(h.children[0]!.owedAtWrite).toEqual([2, 2, 2, 2]); // the record was on disk before the first line reached the pipe
+    expect(h.children[0]!.writes.map((l) => /"i":(\d)|"n":(\d)/.exec(l)!.slice(1).find(Boolean))).toEqual(['0', '1', '1', '2']);
+    expect(h.owed()).toMatchObject({ v: 1, owed: 2, closed: false, child_exited: false, serving_pid: process.pid });
+    h.done();
+  });
+
+  test('a read with nothing staged goes to the pipe at once, as before', () => {
+    const h = harness();
+    expect(h.sup.send('{"t":"read","n":1}\n')).toBe(true);
+    expect(h.children[0]!.writes).toHaveLength(1);
+    expect(h.owedWrites).toEqual([]);
+    h.done();
+  });
+
+  test('a sample that would pass the byte budget of samples still staged or in the pipe is refused; a write() that returns false alone is not, and a read is not refused for size', async () => {
+    const h = harness();
+    expect([0, 1, 2, 3].map((i) => h.sup.send(sample(i)))).toEqual([true, true, true, false]); // 3 x ~444 bytes pass 1,000 before the 4th is offered
+    expect(h.sup.send('{"t":"read","pad":"' + 'y'.repeat(900) + '"}\n')).toBe(true); // a read, a follower line, an ask answer: no new refusal while the stage is under its own bound
+    await turn();
+    h.children[0]!.flush(1);
+    expect(h.sup.send(sample(4))).toBe(true); // one left the pipe: room again
+    h.sup.closeOwed();
+    expect(h.owed()).toMatchObject({ owed: 4, closed: true }); // the refused sample is not owed: its sender counts it send_shed
+    h.done();
+  });
+
+  test('a failing owed write sends nothing: the lines stay staged, the owed count is exact, the stage is bounded for lines of every kind, and everything goes out in order once the record can be written', async () => {
+    const h = harness({ maxBufferedBytes: 1_000_000, maxStagedBytes: 3_000 });
+    h.sup.send(sample(0)); // creates the session
+    mkdirSync(join(h.dir, `write-owed.${h.sessions[0]}.json.${process.pid}.tmp`)); // the record cannot be written (EISDIR stands for ENOSPC)
+    await turn(); await new Promise((r) => setTimeout(r, 40));
+    expect(h.children[0]!.writes).toEqual([]); // no sample reaches the child unless the record that owes it is on disk
+    let refused = 0; for (let i = 0; i < 50; i++) if (!h.sup.send('{"t":"read","pad":"' + 'r'.repeat(500) + '"}\n')) refused++;
+    expect(refused).toBeGreaterThan(0); // sustained reads behind the stuck sample cannot grow memory without bound (was: lines of any kind other than samples were never refused for size)
+    expect(h.sup.send(sample(1))).toBe(false); expect(h.sup.send('{"t":"read"}\n')).toBe(false);
+    rmSync(join(h.dir, `write-owed.${h.sessions[0]}.json.${process.pid}.tmp`), { recursive: true });
+    await new Promise((r) => setTimeout(r, 60)); // the retry
+    expect(h.owed()).toMatchObject({ owed: 1 }); // exact: only the accepted sample is owed
+    expect(h.children[0]!.writes[0]).toContain('"i":0'); // the sample goes first, then the reads, in the order they came
+    expect(h.children[0]!.writes.length).toBeGreaterThan(1);
+    h.done();
+  });
+
+  test('drain returns as soon as every callback has fired and the child\'s input has ended, and at once when nothing was sent', async () => {
+    const h = harness();
+    await h.sup.drain(5_000); // no child yet: nothing to wait for
+    h.sup.send(sample(0)); h.sup.send(sample(1));
+    const started = Date.now();
+    const waiting = h.sup.drain(5_000); // hands the staged lines to the pipe, in order
+    h.children[0]!.flush(); // every callback fires, the child's stdin is ended, and it says it finished
+    await waiting;
+    expect(Date.now() - started).toBeLessThan(2_000);
+    expect(h.children[0]!.ended).toBe(true);
+    expect(h.owed()).toMatchObject({ owed: 2, closed: true });
+    h.done();
+  });
+
+  test('a pipe that does not flush within the bound does not hold the process: drain returns at the bound, and stop() closes the record with every sample that was accepted', async () => {
+    const h = harness();
+    for (let i = 0; i < 3; i++) h.sup.send(sample(i));
+    const started = Date.now();
+    await h.sup.drain(60);
+    const waited = Date.now() - started;
+    expect(waited).toBeGreaterThanOrEqual(50);
+    expect(waited).toBeLessThan(1_000);
+    h.sup.stop();
+    expect(h.owed()).toMatchObject({ owed: 3, closed: true }); // the child books 3 minus what it read; whatever the callbacks said
+    h.done();
+  });
+
+  test('a clean disconnect (drain, then stop) closes the record once: stop writes nothing the drain already made durable', async () => {
+    const h = harness();
+    h.sup.send(sample(0)); h.sup.send(sample(1));
+    const waiting = h.sup.drain(5_000);
+    h.children[0]!.flush();
+    await waiting;
+    const writes = h.owedWrites.length;
+    expect(h.owed()).toMatchObject({ owed: 2, closed: true });
+    h.sup.stop();
+    expect(h.owedWrites.length).toBe(writes); // before: stop() wrote the receipt again, and the next worker counted two samples that had arrived as lost
+    h.done();
+  });
+
+  test('a record that could not be written at stop() leaves the older one (a count that is too low, never a hidden mismatch) and no fault line stands for it', async () => {
+    const h = harness();
+    h.sup.send(sample(0)); await turn(); // owed 1, durable
+    h.sup.send(sample(1));
+    mkdirSync(join(h.dir, `write-owed.${h.sessions[0]}.json.${process.pid}.tmp`)); // the next record cannot be written
+    h.sup.stop();
+    expect(h.owed()).toMatchObject({ owed: 1, closed: false });
+    expect(h.faults).toEqual([]); // was: a write_samples_unrecorded fault `sent_count n=2`
+    h.done();
+  });
+
+  test('the exit hook closes the record of every supervisor with a running child, counting lines still staged, and a stopped one already closed its own', () => {
+    const a = harness(); const b = harness(); const c = harness();
+    a.sup.send(sample(0)); b.sup.send(sample(0)); b.sup.send(sample(1)); c.sup.send(sample(0));
+    b.sup.stop();
+    expect(b.owed()).toMatchObject({ owed: 2, closed: true });
+    rmSync(owedPath(b.dir, b.sessions[0]!));
+    closeAllOwedAtExit(); // nothing has had a turn yet: every line is still staged, and the record counts them
+    expect(a.owed()).toMatchObject({ owed: 1, closed: true }); expect(c.owed()).toMatchObject({ owed: 1, closed: true });
+    expect(a.children[0]!.writes).toHaveLength(1); // the staged line is handed to the pipe after the record, so a pipe that can still deliver gets it
+    expect(b.owed()).toBeNull(); // stopped: not live, nothing more to write
+    a.done(); b.done(); c.done();
+  });
+
+  test('a child that exits is marked in its record, durably, with the exact count, and its staged lines are dropped (the next owner worker books them); a respawned child has a record of its own', async () => {
+    let clock = 1_000_000;
+    const h = harness({ now: () => clock, minBackoffMs: 10, maxBackoffMs: 10 });
+    h.sup.send(sample(0)); h.sup.send(sample(1));
+    h.children[0]!.emit('exit', 1, null);
+    expect(h.owed(0)).toMatchObject({ owed: 2, child_exited: true, child_pid: 4343 }); // written before anything about the session is reset
+    await turn();
+    expect(h.children[0]!.writes).toEqual([]); // the dead child's staged lines never go anywhere
+    clock += 100;
+    expect(h.sup.send(sample(2))).toBe(true);
+    expect(h.children).toHaveLength(2);
+    await turn();
+    expect(h.owed(1)).toMatchObject({ owed: 1, child_exited: false });
+    expect(h.sessions[0]).not.toBe(h.sessions[1]);
+    h.done();
+  });
+
+  test('G2: owe(n) adds n to the owed weight durably in a later turn, with no line sent; a failing owed write is retried, and it needs a running child', async () => {
+    const h = harness({ maxBufferedBytes: 1_000_000 });
+    expect(h.sup.owe(2)).toBe(false); // no child yet: nothing to owe it to
+    h.sup.send(sample(0)); await turn();
+    expect(h.owed()).toMatchObject({ owed: 1 });
+    expect(h.sup.owe(3)).toBe(true);
+    expect(h.owedWrites).toEqual([1]); // nothing durable inside the call
+    await turn();
+    expect(h.owed()).toMatchObject({ owed: 4, closed: false }); // 1 sent + 3 owed with no line
+    expect(h.children[0]!.writes).toHaveLength(1); // no line went to the pipe for them
+    mkdirSync(join(h.dir, `write-owed.${h.sessions[0]}.json.${process.pid}.tmp`)); // the next record cannot be written
+    h.sup.owe(2); await turn(); await new Promise((r) => setTimeout(r, 30));
+    expect(h.owed()).toMatchObject({ owed: 4 });
+    rmSync(join(h.dir, `write-owed.${h.sessions[0]}.json.${process.pid}.tmp`), { recursive: true });
+    await new Promise((r) => setTimeout(r, 60)); // the retry
+    expect(h.owed()).toMatchObject({ owed: 6 });
+    h.sup.closeOwed(); expect(h.owed()).toMatchObject({ owed: 6, closed: true });
+    h.done();
+  });
+
+  test('G3: wired together, a sampler whose follow-up loss-only line is refused by the real supervisor leaves the remainder owed in the durable record, so owed exceeds what a worker can settle and status cannot read measured', async () => {
+    const h = harness({ maxBufferedBytes: 50 }); // the main line (about 100 bytes) fills the byte budget: the next sample line is refused
+    let refuse = 10_001;
+    const sampler = createWriteSampler({ rate: 1, random: () => 0, active: () => true, send: (line) => { if (refuse > 0) { refuse--; return false; } return h.sup.send(line); }, owe: (n) => h.sup.owe(n) });
+    const fn = async () => 1; const ctx = { engine: {}, inTransaction: false, mayWrite: () => true };
+    const wrap = () => (sampler.wrap('addTag', fn, ctx as never) as () => Promise<unknown>)();
+    for (let i = 0; i < 10_001; i++) await wrap();
+    await wrap(); await turn();
+    const weights = h.children[0]!.writes.map(sampleWeight);
+    expect(weights).toEqual([10_001]); // the main line (1 + 10,000); the extra line was refused by the supervisor
+    expect(h.owed()).toMatchObject({ owed: 10_002 }); // and the one remaining sample is owed, durably: 10,001 + 1 (was 10,001: it waited only in memory)
+    h.done();
+  });
+
+  test('a line whose write throws at the flush is still owed (the record was written first): the child books it lost; it was accepted, not refused', async () => {
+    const h = harness();
+    h.sup.send(sample(0));
+    h.children[0]!.stdin.write = () => { throw new Error('closed'); };
+    expect(h.sup.send(sample(1))).toBe(true); // was false: the write threw inside send() and the line was not counted
+    await turn();
+    h.sup.closeOwed();
+    expect(h.owed()).toMatchObject({ owed: 2, closed: true });
+    h.done();
+  });
+
+  test('a sample weighs 1 plus the earlier losses it carries (its last field); a page key named dropped, nested or not, changes nothing', () => {
+    expect(sampleWeight(sample(0, 10, ',"dropped":4'))).toBe(5);
+    expect(sampleWeight(`{"t":"write","op":"putPage","args":[{"frontmatter":{"dropped":9}}],"pre":{"dropped":7}}\n`)).toBe(1);
+    expect(sampleWeight(`{"t":"write","op":"putPage","args":[{"a":{"b":1,"dropped":8}}]}\n`)).toBe(1);
+    expect(sampleWeight(`{"t":"write","op":"putPage","dropped":99999999}\n`)).toBe(1); // not a count we wrote (too long): the line is one sample
+    expect(sampleWeight(sample(0, 10, ',"dropped":99999'))).toBe(10_001);
+    expect(sampleWeight('{"t":"read","op":"getPage"}\n')).toBe(0);
+    expect(sampleWeight('{"t":"stats"}\n')).toBe(0);
+    const h = harness({ maxBufferedBytes: 1_000_000 });
+    h.sup.send(sample(0, 10, ',"dropped":4')); h.sup.send('{"t":"read"}\n'); h.sup.send(`{"t":"write","args":[{"frontmatter":{"dropped":9}}]}\n`);
+    h.sup.closeOwed();
+    expect(h.owed()).toMatchObject({ owed: 5 + 1 });
+    h.done();
+  });
+});
+
+describe('Bun child stdin write callbacks (what the sample accounting stands on)', () => {
+  test('each write callback fires once, after the bytes leave: most are still pending while the reader sleeps, all fire once it reads, none with an error', async () => {
+    const { spawn } = await import('node:child_process');
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-bun-pipe-'));
+    const child = spawn('sh', ['-c', `sleep 0.5; cat > "${join(dir, 'out')}"`], { stdio: ['pipe', 'ignore', 'ignore'] });
+    try {
+      let fired = 0; let failed = 0; const line = 'x'.repeat(1_999) + '\n';
+      for (let i = 0; i < 300; i++) child.stdin!.write(line, (error) => { fired++; if (error) failed++; });
+      expect(fired).toBeLessThan(300); // 600,000 bytes against a 64 KB pipe and a sleeping reader: not all can have left
+      expect(child.stdin!.writableLength).toBe(0); // Bun reports an empty buffer while it holds hundreds of KB: why the count is ours
+      child.stdin!.end();
+      const start = Date.now(); while (fired < 300 && Date.now() - start < 10_000) await new Promise((r) => setTimeout(r, 20));
+      expect({ fired, failed }).toEqual({ fired: 300, failed: 0 });
+    } finally { child.kill(); rmSync(dir, { recursive: true, force: true }); }
+  }, 30_000);
 });

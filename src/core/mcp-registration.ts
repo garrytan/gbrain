@@ -28,7 +28,7 @@ export type RegistrationHarness = 'claude-code' | 'codex' | 'hermes' | 'opencode
 export interface RegistrationProfile { surface: McpSurface; advertise: McpSurface | null }
 
 /**
- * starter, listing only the seven memory verbs and request_tools
+ * starter, listing only the seven memory verbs, correct and request_tools
  * (`serve --surface starter --advertise verbs`): every new registration's
  * profile from 2026-10-24 (gbrain-evals#191; harness-evals#70 approved the
  * verbs listing on 2026-10-25), and still the default everywhere but Codex.

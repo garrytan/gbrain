@@ -1139,6 +1139,69 @@ fn resolve_alias_follows_a_rename_alias_and_require_unambiguous_refuses_two_cand
     );
 }
 
+/// A page the caller may not see at an aliased slug fails closed: the read answers nothing, and the
+/// alias target never stands in for it. A slug that holds no page answers the alias. A page the
+/// caller may see keeps its identity, and a read with no `excludePrivate` (a trusted local caller)
+/// is unchanged.
+#[test]
+fn a_hidden_page_at_an_aliased_slug_fails_closed() {
+    let dir = TempDir::new("pages-alias-hidden-exact");
+    let store = open(&dir);
+    let private: PageInput = serde_json::from_value(json!({
+        "type": "person", "title": "Hidden", "compiled_truth": "hidden",
+        "frontmatter": { "visibility": "private" },
+    }))
+    .unwrap();
+    let readers: PageInput = serde_json::from_value(json!({
+        "type": "person", "title": "Readers", "compiled_truth": "readers",
+        "frontmatter": { "readable_by": ["bob-example"] },
+    }))
+    .unwrap();
+    let policy = json!({ "honorAliases": true, "entityPrivacy": true });
+    let read = |slug: &str, exclude: bool| {
+        let mut v = json!({
+            "resolveAlias": true, "preserveExactIdentity": true,
+            "requireLiveSource": true, "sourceId": "default",
+        });
+        if exclude {
+            v["excludePrivate"] = policy.clone();
+        }
+        store
+            .read_page_snapshot(slug, &scope(v))
+            .unwrap()
+            .map(|s| s["page"]["slug"].as_str().unwrap().to_string())
+    };
+    for (old, new) in [
+        ("people/never-written", "people/target-missing"),
+        ("people/hidden-private", "people/target-private"),
+        ("people/hidden-readers", "people/target-readers"),
+        ("people/open-twin", "people/target-open"),
+    ] {
+        put(&store, old, "before the move");
+        assert_eq!(store.update_slug(old, new, None).unwrap(), 1);
+    }
+    for (slug, input) in [
+        ("people/hidden-private", &private),
+        ("people/hidden-readers", &readers),
+    ] {
+        store
+            .put_page(slug, input, &PutPageOptions::default())
+            .unwrap();
+    }
+    put(&store, "people/open-twin", "recreated");
+    let missing = read("people/never-written", true);
+    assert_eq!(missing.as_deref(), Some("people/target-missing"));
+    for hidden in ["people/hidden-private", "people/hidden-readers"] {
+        assert_eq!(read(hidden, true), None);
+        // The trusted local read still sees the page at the slug itself.
+        assert_eq!(read(hidden, false).as_deref(), Some(hidden));
+    }
+    assert_eq!(
+        read("people/open-twin", true).as_deref(),
+        Some("people/open-twin")
+    );
+}
+
 #[test]
 fn an_alias_read_follows_a_rename_alias_and_an_exact_slug_wins() {
     let dir = TempDir::new("pages-snapshot-alias");

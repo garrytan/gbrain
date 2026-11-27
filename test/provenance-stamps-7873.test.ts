@@ -126,6 +126,22 @@ for (const kind of testBackends()) {
         }
       });
 
+      // Value: protects=#10330 a remote edit_page keeps the page's first-ingest columns (channel and microsecond timestamp) as stored; fails_when=the edit's own mcp:edit_page channel or its time reaches source_kind / ingested_via / ingested_at; why_new=the row above checks only the frontmatter stamps; seam=none; no_claim=segmented bodies (same option, other write path)
+      test('a remote edit_page keeps the first-ingest database columns as stored (#10330)', async () => {
+        const slug = 'inbox/edit-columns';
+        await seed(slug, STORED, 'unknown');
+        await engine.executeRaw(`UPDATE pages SET ingested_at = '2026-01-02T03:04:05.123456Z'::timestamptz WHERE source_id = $1 AND slug = $2`, ['default', slug]);
+        const columns = () => engine.executeRaw<{ source_kind: string | null; ingested_via: string | null; micros: string }>(
+          `SELECT source_kind, ingested_via, to_char(ingested_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US') AS micros
+             FROM pages WHERE source_id = 'default' AND slug = $1`, [slug]);
+        const before = await columns();
+        expect(before).toEqual([{ source_kind: 'webhook', ingested_via: 'webhook', micros: '2026-01-02T03:04:05.123456' }]);
+        const result = await edit(slug, [['Captured body', 'Captured body, edited']]);
+        expect(result.noop).toBe(false);
+        expect((await page(slug)).page.compiled_truth).toContain('edited');
+        expect(await columns()).toEqual(before);
+      });
+
       test('a remote edit_page that only forges stamps is a no-op', async () => {
         const slug = 'inbox/edit-noop';
         const before = await seed(slug, STORED, 'external_untrusted');

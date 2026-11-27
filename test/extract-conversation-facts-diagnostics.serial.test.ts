@@ -264,11 +264,13 @@ describe('#5364 diagnostics across workers, sources, CLI, and cycle', () => {
     expect(result.orphan_facts_cleaned).toBe(1);
     expect(result.facts_inserted).toBeGreaterThan(0);
     const rows = await engine.executeRaw<{ fact: string }>(
-      `SELECT fact FROM facts WHERE source_id = 'speaker-a' AND source_markdown_slug = $1 AND source = 'cli:extract-conversation-facts'`,
+      `SELECT fact FROM facts WHERE source_id = 'speaker-a' AND source_markdown_slug = $1 AND source = 'cli:extract-conversation-facts' AND expired_at IS NULL`,
       [slug],
     );
     expect(rows.map(r => r.fact)).not.toContain('stale partial-run fact');
     expect(rows).toHaveLength(result.facts_inserted);
+    // #10443: the prior run's fact leaves the active set but keeps its row, expired.
+    expect(await engine.executeRaw(`SELECT 1 FROM facts WHERE source_id = 'speaker-a' AND fact = 'stale partial-run fact' AND expired_at IS NOT NULL`)).toHaveLength(1);
   });
 
   test('embedding-width drift fails the run before any page is attempted (D15 preflight)', async () => {

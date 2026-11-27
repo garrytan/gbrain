@@ -506,6 +506,13 @@ gbrain sources set-sync <id> <on|off> [--dry-run] [--expect <on|off>]
                                Off: autopilot cycles work only on pages changed since
                                the last cycle, so a file edited on disk is picked up
                                by the next explicit sync, not by the cycle.
+gbrain sources set-extract-atoms <id> <on|off> [--dry-run] [--expect <on|off>]
+                               Include or keep the source out of provider-based atom
+                               extraction (config.extract_atoms; default on). Off: its
+                               pages stay synced and searchable, the cycle, dream
+                               --drain and the auto-drain skip it, and doctor counts
+                               its pages apart instead of warning. Preview-first like
+                               set-sync.
 gbrain sources rebind <id> [--expect <current-push-urls>] [--yes] [--json]
                                iMessage sources: record a changed push destination
                                for the source's .gbrain-owned/ folder. Previews

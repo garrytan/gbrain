@@ -12,7 +12,7 @@
  *   as this brain's and refused every restart. The home now comes from `ps -E`.
  */
 import { describe, expect, test } from 'bun:test';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -64,9 +64,14 @@ describe('#9725: another brain\'s serve on the same macOS host', () => {
 test.skipIf(process.platform !== 'linux')('doctor ignores a sync that exited or is an unreaped zombie after ps listed it, but not a live sync whose brain home is unknown', async () => {
   const dir = mkdtempSync(join(tmpdir(), 'gbrain-restart-ps-'));
   const running = Bun.spawn(['/bin/sleep', '30'], { env: {} });
-  const holder = Bun.spawn(['/bin/sh', '-c', '/bin/true & echo $!; exec /bin/sleep 30'], { env: {}, stdout: 'pipe' });
+  // The background child blocks on the holder's stdin until the holder has exec'd sleep, which never reaps it. A child
+  // that exited before the exec would be reaped by the shell itself and leave no /proc entry to read.
+  const holder = Bun.spawn(['/bin/sh', '-c', 'exec 3<&0; read _ <&3 & echo $!; exec /bin/sleep 30 3<&-'], { env: {}, stdin: 'pipe', stdout: 'pipe' });
   try {
     const zombie = Number(new TextDecoder().decode((await holder.stdout.getReader().read()).value).trim());
+    for (let i = 0; i < 250 && readFileSync(`/proc/${holder.pid}/comm`, 'utf8').trim() !== 'sleep'; i++) await Bun.sleep(20);
+    expect(readFileSync(`/proc/${holder.pid}/comm`, 'utf8').trim()).toBe('sleep');
+    holder.stdin.end();
     for (let i = 0; i < 100 && !readFileSync(`/proc/${zombie}/stat`, 'utf8').includes(') Z '); i++) await Bun.sleep(20);
     expect(readFileSync(`/proc/${zombie}/stat`, 'utf8')).toContain(') Z ');
     writeFileSync(join(dir, 'ps'), `#!/bin/sh\nprintf '%s\\n' '2147483647 1 00:01 gbrain sync' '${zombie} 1 00:01 gbrain sync' '${running.pid} 1 00:01 gbrain sync'\n`, { mode: 0o700 });
@@ -75,6 +80,7 @@ test.skipIf(process.platform !== 'linux')('doctor ignores a sync that exited or 
       expect(plan?.manual.map(step => step.pid)).toEqual([running.pid]);
     });
   } finally {
+    holder.stdin.end();
     running.kill();
     holder.kill();
     await Promise.all([running.exited, holder.exited]);
@@ -160,6 +166,112 @@ describe('#9483: a serve run by an operator-named unit or a container supervisor
       expect(handed.status).toBe('ok');
       expect(handed.message).toContain('upgrades restart serve pid 40 through the launcher self_upgrade.serve_launcher declares');
     });
+  });
+});
+
+describe('#10291: a jobs worker run by a container process manager', () => {
+  const home = '/srv/brain-example';
+  const command = 'gbrain jobs work --queue source-a --max-rss 5120';
+  const workerSources = (rows: ReturnType<ProcessSources['processTable']>): ProcessSources => ({
+    home, exclude: [], heartbeats: async () => [], supervisor: () => null, workers: () => [], processTable: () => rows,
+  });
+  const foreignWorker = async () => (await collectHostProcesses(workerSources([
+    { pid: 30, ppid: 1, command: `/usr/bin/tini -s -- ${command}`, started_ms: 900, gbrain_home: home },
+    { pid: 40, ppid: 30, command, started_ms: 1_000, gbrain_home: home },
+  ])))[0]!;
+
+  test('undeclared: the upgrade refusal still names the foreign parent and manual restart', async () => {
+    const plan = planRestart([await foreignWorker()], ctx());
+    expect(plan.steps).toEqual([]);
+    const manual = 'worker pid 40 (build not recorded) is not run by a jobs supervisor this restart can relaunch (its parent, pid 30 (`tini`), is not a process this restart recognises as gbrain): stop it (`kill 40`, SIGTERM drains its jobs) and start `gbrain jobs work` again the way it was launched, or run workers under `gbrain jobs supervisor start --detach`.';
+    expect(plan.manual[0]?.instruction).toBe(manual);
+    expect(restartRefusal(plan, ['gbrain', 'upgrade'], false)?.code).toBe('restart_refused');
+  });
+
+  test('declared: the upgrade hands off a foreign-managed worker and verifies a new worker for this brain', async () => {
+    const worker = await foreignWorker();
+    const plan = planRestart([worker], ctx({ expected: NEW, workerLauncher: LAUNCHER }));
+    expect(plan.manual).toEqual([]);
+    expect(plan.steps).toEqual([{ kind: 'handoff', role: 'worker', pid: 40, started_ms: 1_000, launcher: LAUNCHER, command }]);
+    expect(restartRefusal(plan, ['gbrain', 'upgrade'], false)).toBeNull();
+    const terminateCalls: unknown[][] = [];
+    const exec: RestartExecutor = { run: () => ({ status: 0, output: '' }), terminate: (...args) => { terminateCalls.push(args); return 'stopped'; }, supervisorPid: () => null, sleep: async () => {} };
+    const [result] = await runRestartSteps(plan, exec);
+    expect(terminateCalls).toEqual([[40, 1_000, 'worker']]);
+    expect(result?.detail).toBe('stopped worker pid 40; the launcher self_upgrade.worker_launcher declares starts it again');
+    const warm = { before: { state: 'absent' as const }, after: { state: 'absent' as const } };
+    const missing = `worker did not come back after it was stopped for the launcher self_upgrade.worker_launcher declares to start again: start it with \`${command}\` the way it was launched.`;
+    const replacement = { pid: 140, ppid: 1, command, started_ms: 9_000, gbrain_home: home };
+    const collect = (gbrain_home: string | undefined) => collectHostProcesses({
+      ...workerSources([{ ...replacement, gbrain_home }]), workers: () => [{ pid: 140, version: NEW }],
+    });
+    expect(restartProblems(plan, [], 5_000, warm)).toEqual([missing]);
+    expect(restartProblems(plan, await collect('/srv/brain-b-example'), 5_000, warm)).toEqual([missing]);
+    expect(restartProblems(plan, await collect(undefined), 5_000, warm)).toContain(missing);
+    const [fresh] = await collect(home);
+    expect(restartProblems(plan, [{ ...fresh!, started_ms: 2_000 }], 5_000, warm)).toContain(missing);
+    expect(restartProblems(plan, [{ ...fresh!, version: OLD, install_version: NEW }], 5_000, warm)).toContain(missing);
+    expect(restartProblems(plan, [{ ...fresh!, version: null }], 5_000, warm)).toContain(missing);
+    expect(restartProblems(plan, [{ ...fresh!, ppid: 20 }], 5_000, warm)).toContain(missing);
+    expect(restartProblems(plan, [{ ...fresh!, version: null, install_version: NEW }], 5_000, warm)).toEqual([]);
+    expect(restartProblems(plan, [fresh!], 5_000, warm)).toEqual([]);
+  });
+
+  test('declared: each handed-off worker needs its own replacement launched the same way', async () => {
+    const other = 'gbrain jobs work --queue source-b --max-rss 5120';
+    const workers = await collectHostProcesses(workerSources([
+      { pid: 30, ppid: 1, command: `/usr/bin/tini -s -- ${command}`, started_ms: 900, gbrain_home: home },
+      { pid: 40, ppid: 30, command, started_ms: 1_000, gbrain_home: home },
+      { pid: 31, ppid: 1, command: `/usr/bin/tini -s -- ${other}`, started_ms: 900, gbrain_home: home },
+      { pid: 41, ppid: 31, command: other, started_ms: 1_000, gbrain_home: home },
+    ]));
+    const plan = planRestart(workers, ctx({ expected: NEW, workerLauncher: LAUNCHER }));
+    expect(plan.steps.map(step => step.kind === 'handoff' ? step.command : null).sort()).toEqual([command, other]);
+    const warm = { before: { state: 'absent' as const }, after: { state: 'absent' as const } };
+    const back = (rows: Array<{ pid: number; command: string }>) => collectHostProcesses({
+      ...workerSources(rows.map(row => ({ ...row, ppid: 1, started_ms: 9_000, gbrain_home: home }))),
+      workers: () => rows.map(row => ({ pid: row.pid, version: NEW })),
+    });
+    const missingOther = `worker did not come back after it was stopped for the launcher self_upgrade.worker_launcher declares to start again: start it with \`${other}\` the way it was launched.`;
+    expect(restartProblems(plan, await back([{ pid: 140, command }]), 5_000, warm)).toEqual([missingOther]);
+    expect(restartProblems(plan, await back([{ pid: 140, command }, { pid: 141, command: other }]), 5_000, warm)).toEqual([]);
+  });
+
+  test('declared: an unread worker stays manual and a gbrain-supervised worker still restarts with its supervisor', async () => {
+    const worker = await foreignWorker();
+    const configured = ctx({ workerLauncher: LAUNCHER });
+    for (const over of [{ home_unread: true }, { args: undefined }, { started_ms: null }]) {
+      const plan = planRestart([{ ...worker, ...over }], configured);
+      expect(plan.steps).toEqual([]);
+      expect(plan.manual.map(step => step.pid)).toEqual([40]);
+    }
+    const supervisor: HostProcess = { pid: 20, ppid: null, role: 'supervisor', version: OLD, started_ms: 900, args: ['jobs', 'supervisor', 'start', '--detach'] };
+    const plan = planRestart([supervisor, { ...worker, ppid: 20, unclassified_parent: undefined }], configured);
+    expect(plan.manual).toEqual([]);
+    expect(plan.steps).toMatchObject([{ kind: 'supervisor', pid: 20, workers: [40] }]);
+  });
+
+  test.skipIf(process.platform !== 'linux')('doctor stops warning about an externally launched worker when the repo-less brain declares it', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-worker-launcher-'));
+    const running = Bun.spawn(['/bin/sleep', '30'], { env: { GBRAIN_HOME: dir } });
+    try {
+      mkdirSync(join(dir, '.gbrain'));
+      writeFileSync(join(dir, 'ps'), `#!/bin/sh\nprintf '%s\\n' '2147483647 1 00:02 /usr/bin/tini -s -- ${command}' '${running.pid} 2147483647 00:01 ${command}'\n`, { mode: 0o700 });
+      await withEnv({ GBRAIN_HOME: dir, GBRAIN_SELF_UPGRADE_MODE: 'auto', PATH: `${dir}:${process.env.PATH}` }, async () => {
+        const config = { engine: 'pglite', database_path: join(dir, '.gbrain', 'brain.db') };
+        const configPath = join(dir, '.gbrain', 'config.json');
+        writeFileSync(configPath, JSON.stringify(config));
+        expect(checkSelfUpgradeHealth(await upgradeRestartReadiness()).status).toBe('warn');
+        writeFileSync(configPath, JSON.stringify({ ...config, self_upgrade: { worker_launcher: 'external' } }));
+        const health = checkSelfUpgradeHealth(await upgradeRestartReadiness());
+        expect(health.status).toBe('ok');
+        expect(health.message).toContain(`upgrades restart worker pid ${running.pid} through the launcher self_upgrade.worker_launcher declares`);
+      });
+    } finally {
+      running.kill();
+      await running.exited;
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

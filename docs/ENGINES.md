@@ -1731,8 +1731,9 @@ addon, and refusing a missing or mismatched one, belong to the loader (below), n
 
 - **Capabilities.** The engine reports a capability only when it serves every `BrainEngine` member of that
   capability (`src/core/rust-engine/store-capabilities.ts`). Today that is `schema`, `sources`, `config`, `page_versions`, `tags`, `embeddings`, `keyword_search`, `vector_search`,
-  `links`, `timeline`, `graph`, `facts`, `takes`, `files`, `code_edges`, `salience`, `raw_data`, `eval_capture`,
-  `ingest_log`, `dream_verdicts`, `contradictions` and `ontology`.
+  `graph`, `facts`, `files`, `salience`, `raw_data`, `eval_capture`, `ingest_log`, `dream_verdicts`, `contradictions` and
+  `ontology`. `links`, `timeline`, `takes` and `code_edges` are not reported: each still has a member that refuses
+  (listed under "What a Rust brain serves now").
   Each member it does not serve refuses `engine_capability_missing` with the capability as `reason` (`raw_sql`,
   `pages`, `search`, ...), the member in `detail`, and `written=nothing`, before any work.
   `src/core/rust-engine/members.ts` maps every member to its capability; the type fails when a new `BrainEngine`
@@ -1741,9 +1742,12 @@ addon, and refusing a missing or mismatched one, belong to the loader (below), n
   holder opens the store and serves it on `<database_path>/.gbrain-owner.sock` (`ownerRole` `'owner'`). Any other
   process is a `'client'` that forwards each call; transactions refuse there. Limits and errors:
   `docs/designs/RUST_ENGINE.md` ("Process model").
-- **SQL-only paths.** Code that only works through SQL (migrations, cycle locks, engine migration and graduation,
+- **SQL-only paths.** Code that only works through SQL (migrations, engine migration and graduation,
   embed backfill, page-body staging) takes the kind as `EngineKind`, narrows it with `sqlEngineKind` or
-  `isRustEngineKind` (`src/core/sql-engine-kind.ts`), and refuses a Rust brain with `engine_capability_missing` reason `raw_sql` instead of treating it as Postgres.
+  `isRustEngineKind` (`src/core/sql-engine-kind.ts`), and refuses a Rust brain with `engine_capability_missing` reason `raw_sql` instead of treating it as Postgres. Cycle locks
+  are not wholly SQL-only: a Rust brain serves `acquireCycleLock`, `refreshCycleLock` and `releaseCycleLock`
+  (`src/core/rust-engine/store-members/jobs.ts:12-20`), and `readCycleLocks`, `deleteCycleLock` and `deleteCycleLockIfStale`
+  still refuse with `engine_capability_missing` (capability `minion_queue`, `src/core/rust-engine/members.ts:328-330`).
 - **On the CLI.** Commands that need raw SQL (`import`, `sources add` and others) refuse `engine_capability_missing`.
   When the source lookup is refused on a Rust brain and a source was selected (`GBRAIN_SOURCE`, a `.gbrain-source`
   file, `sources.default`) or the brain holds a source besides `default`, the command stops with that refusal instead
@@ -1781,7 +1785,8 @@ that is not connected refuses `engine_closed`. These members run on the store (`
   `getContradictionCacheEntry`, `putContradictionCacheEntry`, `sweepContradictionCache`, `getDreamVerdict`,
   `putDreamVerdict`, `sweepDreamVerdicts`, `putRawData`, `getRawData`, `upsertFile`, `getFile`, `listFilesForPage`,
   `addCodeEdges`, `deleteCodeEdgesForChunks`, `getCallersOf`, `getCalleesOf` and `getEdgesByChunk`. They make the
-  `contradictions`, `dream_verdicts`, `raw_data`, `files` and `code_edges` capabilities complete. `getRawData` and the
+  `contradictions`, `dream_verdicts`, `raw_data` and `files` capabilities complete. `code_edges` is not: the three
+  code traversal cache members `getCodeTraversalCache`, `putCodeTraversalCache` and `clearCodeTraversalCache` refuse. `getRawData` and the
   code-edge reads refuse `excludePrivate: true` with `engine_capability_missing` instead of ignoring it. Each store
   write is one transaction, so a refusal leaves nothing written. Per-member contracts are in
   `rust/docs/store/` (`contradictions.md`, `dream.md`, `raw_files.md`, `code_edges.md`).
@@ -1790,20 +1795,23 @@ that is not connected refuses `engine_closed`. These members run on the store (`
   `getSourceStrictness`, `addTag`, `removeTag`, `getTags`, `pruneFrontmatterTags`, `addPageTagsById`. These are the
   members that make the `config`, `sources`, `tags` and `schema` capabilities complete. The store keeps each tag's
   claim (`added` or `frontmatter`) as PGLite's `tags.tag_source` does, so an import prune removes only the tags the
-  import claimed. `getSource` reads `last_commit`, `contextual_retrieval_mode` and `trust_frontmatter_overrides` as
-  null, null and false: only the sync anchor and source admin SQL write those columns, and neither runs on a Rust brain.
+  import claimed. `getSource` returns the stored `last_commit` (null until `advanceSourceCommit` has recorded one), and reads
+  `contextual_retrieval_mode` and `trust_frontmatter_overrides` as null and false: the store keeps no value for those two
+  columns (`rust/crates/gbrain-store/src/sources.rs`, `SourceDetailRow`).
 - Pages: `getPage`, `readPageSnapshot`, `putPage`, `deletePage`, `softDeletePage`, `restorePage`, `listPages`,
   `resolveSlugs`. A stale `expectedRevision` refuses with `PageRevisionConflictError`, as on PGLite.
 - Versions, chunks and timeline: `createVersion`, `getVersions`, `revertToVersion`, `upsertChunks`, `sealChunks`,
   `getChunks`, `getChunkPage`, `getChunkWindows`, `countChunklessPagesWithContent`, `listChunklessPagesWithContent`,
   `deleteChunks`, `addTimelineEntry`, `addTimelineEntriesBatch`, `getTimeline`, `getTimelineForDate`, `getSince`,
-  `getOnThisDay`, `getLastSeen` and `upsertEventProjection`. `page_versions` and `timeline` are reported. `chunks`
-  stays unreported, because `deleteChunksExcept`, `setChunkerVersion`, `writeTextProjectionSeal`, `moveChunkIndexes` and
+  `getOnThisDay`, `getLastSeen` and `upsertEventProjection`. `page_versions` is reported. `timeline` is not, because
+  `removeTimelineRows`, `updateTimelineDetails`, `readRowTrustRows`, `listStoredTimelineRowsOrdered` and
+  `deleteTimelineRows` still refuse. `chunks` stays unreported, because `deleteChunksExcept`, `setChunkerVersion`, `writeTextProjectionSeal`, `moveChunkIndexes` and
   `getChunkReuseRows` still refuse. Reads: `rust/docs/store/chunk_queries.md` and `timeline_queries.md`.
 - Links and graph: `addLink`, `addLinksBatch`, `removeLink`, `getLinks`, `getBacklinks`, `traverseGraph`,
   `traversePaths`, `traversePathsDetailed`, and the link reads in `rust/docs/store/link_queries.md` (`getBacklinkCounts`,
   `getAdjacencyBoosts`, `relationalFanout`, `findOrphanPages`, `supersedingPageSlugs`, `pagesLinkingTo`, ...). Every
-  member of `links` and `graph` is served, so both capabilities are reported.
+  member of `graph` is served, so `graph` is reported. `links` is not: `lockRegisteredSourceIds`, `replaceWantedLinkRows`,
+  `readLinkContextMatches`, `readLinkContextOriginPages` and `listAmendmentsNotApplied` still refuse.
 - Vectors and embeddings: `searchVector` and `searchTakesVector` (an exact scan over the stored vectors, scored as
   pgvector scores them), the embedding state members (`getEmbeddingsByChunkIds`, `cosinesByChunkIds`, `listStaleChunks`,
   `setPageEmbeddingSignature`, `updateTakeEmbeddings`, ...) and `upsertChunks` and `sealChunks` with the vector a chunk
@@ -1819,12 +1827,13 @@ that is not connected refuses `engine_closed`. These members run on the store (`
   (`facts`; `rust/docs/store/facts.md`). A caller policy these members cannot honour
   refuses `engine_capability_missing`. Contracts: `rust/docs/store/facts.md`, `ontology.md`, `eval_capture.md`.
 - Takes, salience, stats and the ingest log, alias and slug members, and the extraction and page-listing reads:
-  `rust/docs/store/takes.md`, `salience.md`, `stats.md`, `aliases.md`, `extraction.md` and `page_ops.md`. The `takes`,
-  `salience` and `ingest_log` capabilities are reported.
+  `rust/docs/store/takes.md`, `salience.md`, `stats.md`, `aliases.md`, `extraction.md` and `page_ops.md`. The `salience` and `ingest_log`
+  capabilities are reported; `takes` is not, because `matchTakeRows`, `deleteTakeRows`, `listLiveTakesByIds` and
+  `findTakeId` still refuse.
 - Facts and ontology claims, page operations, raw data and files, eval capture, dream verdicts, contradiction runs and
   the code call graph: `rust/docs/store/facts.md`, `ontology.md`, `page_ops.md`, `raw_files.md`, `eval_capture.md`,
   `dream.md`, `contradictions.md` and `code_edges.md`. The `facts`, `raw_data`, `files`, `eval_capture`,
-  `dream_verdicts`, `contradictions` and `code_edges` capabilities are reported; `pages` is not (`page_ops.md` says why).
+  `dream_verdicts` and `contradictions` capabilities are reported; `code_edges` and `pages` are not (`page_ops.md` says why for `pages`).
 - Keyword and title search: `searchKeyword`, `searchKeywordChunks`, `countKeywordPages`, `searchKeywordPages`,
   `searchTitles` and `findByTitleFuzzy`. They rank with a port of PostgreSQL's `ts_rank`, `ts_rank_cd` and
   `websearch_to_tsquery` (english), so their answers match PGLite's (`rust/docs/store/keyword.md`). Every member of
@@ -1833,7 +1842,8 @@ that is not connected refuses `engine_closed`. These members run on the store (`
   `readSegmentTexts`, `stageManifestRows`, `readManifest`, `stageSegmentChunks`, `createSegmentedPageShell`,
   `flipBodyGeneration`, `openBodyStaging`, `setBodyStagingState`, `readSegmentDerivations`, `upsertSegmentDerivations`,
   `retireSegmentDerivations`, `sealSegmentedPage` and `refreshPageBody`. `sweepSegments` still refuses, and so does
-  a segmented page written inside `transaction` (the store has none), so the `page_body` capability stays unreported.
+  a segmented page written inside `transaction` (the member refuses on a Rust brain; the store has a native
+  `beginTransaction` that no TypeScript member exposes), so the `page_body` capability stays unreported.
   A whole-body `putPage` over a segmented page refuses, as on PGLite (`rust/docs/store/page_body.md`), and so does a
   plain (unsealed) `upsertChunks`, `invalid_state` before it writes.
 
@@ -1846,8 +1856,9 @@ way PGLite does, refuses `engine_capability_missing` and writes nothing. These a
 - a `putPage` with a `source_path` into a source in source-root slug mode whose directory is below its repository root
   (only the files on disk can say whether another page already holds that file, and the store cannot read them);
 - `listPages` with `listColumnsOnly`;
-- `resolveSlugs` when no live page has exactly that slug, because PGLite goes on to a fuzzy title match the store does
-  not have, so an empty answer would be wrong to give;
+- `resolveSlugs` when the store's answer is empty (`src/core/rust-engine/store-members/pages.ts:81`). The store answers
+  the live page with exactly that slug, else up to five fuzzy matches (trigram title similarity or a slug containing the
+  text); the member passes a non-empty answer through;
 - a `getChunks` or `getChunkPage` over more than one distinct `sourceIds` entry;
 - a vector search with `where`, a date bound, `minTrust` or `suppressFlagged` (`rust/docs/store/vectors.md`);
 - an input of a raw-data, page-operation, salience, facts, ontology, chronicle or code-edge read the store cannot
@@ -1887,11 +1898,15 @@ runs on PGLite alone without the flag.
 
 **Transactions and the belief ledger.** Both stay refused on the Rust engine, on purpose.
 
-- `transaction`, `transactionDirect` and `lockPageKeys` refuse `transactions`. The store makes each write atomic on
-  its own, but it has no handle that spans several calls, and `lockPageKeys` throws outside a transaction on PGLite, so
-  there is nothing for it to hold. Code that passes settings into a transaction (the write attribution, trust and
-  maintenance settings in `src/core/persistence/context.ts`) does it with `set_config` and `current_setting` through
-  `tx.executeRaw`, which needs SQL. A Rust transaction would carry those values on a typed context instead.
+- `transaction`, `transactionDirect` and `lockPageKeys` refuse `transactions`, and so do `readTransactionSettings`,
+  `applyTransactionSettings`, `beginSnapshotRead`, `declarePersistence` and `requireSynchronousCommit`
+  (`src/core/rust-engine/members.ts`; `store-members/transactions.ts` exports nothing). The store has a native
+  transaction handle that spans several calls (`brain.beginTransaction`, `rust/crates/gbrain-napi/src/families/transactions.rs:24`);
+  no TypeScript member exposes it. `lockPageKeys` throws outside a transaction on PGLite. Code that passes settings into a
+  transaction (the write attribution, trust and maintenance settings in `src/core/persistence/context.ts`) reads and
+  applies them with the typed members `readTransactionSettings` and `applyTransactionSettings` (`context.ts:35,46`); the
+  SQL engines run them as `current_setting` and `set_config` (`src/core/engine-sql/transaction-settings.ts`), and a Rust
+  brain refuses both.
 - `belief_ledger` is a subsystem, not a `BrainEngine` member: `src/core/belief/` appends and reads belief events through
   `executeRaw`. The Rust engine never reports `raw_sql` (design D18), so the ledger refuses until its reads and appends
   have typed members. Nothing in the Rust engine writes belief events today.
@@ -1925,7 +1940,7 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   afterwards cannot cause a false difference. The copy stops as soon as a call's arguments or result pass about
   1 MiB (every value counts, even a null), so a huge result is counted as too large and never built. A
   call that stays stuck in the Rust engine holds one of four slots; past that new reads are recorded as `timeout` (stalled) without being replayed and the child goes
-  quiet so it is restarted. When a process closes, reads still queued are handed to the child and the child records them: it drops the CLI's pipe handlers so a closed pipe cannot kill it, drains what it received, writes its ledger and summary, and exits at most 30 seconds after its input ends (the parent's kill timer dies with the parent, so the child carries its own deadline). Finished comparisons are written every 2 seconds. A read still queued when a process is killed, or one the child had not yet written when it is killed, is lost. The child restarts with backoff, and mirroring turns itself off after 5 child exits in 10 minutes, a
+  quiet so it is restarted. When a process closes, it first waits up to 2 seconds for its pipe to the child to flush (Bun drops what a pipe still holds when a process exits), then reads still queued are handed to the child and the child records them: it drops the CLI's pipe handlers so a closed pipe cannot kill it, drains what it received, writes its ledger and summary, and exits at most 30 seconds after its input ends (the parent's kill timer dies with the parent, so the child carries its own deadline). Finished comparisons are written every 2 seconds. A read still queued when a process is killed, or one the child had not yet written when it is killed, is lost. The child restarts with backoff, and mirroring turns itself off after 5 child exits in 10 minutes, a
   child silent for 60 seconds is killed, and a privacy divergence pauses comparison.
 - **What a privacy divergence is.** Before any equality check, every row of the Rust result is tested against the call's own
   arguments, and one hit records `privacy_diverged` and pauses mirroring (a plain `diff` can never hide it). A hit is a row with
@@ -1974,7 +1989,8 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
 - **Doctor.** `rust_engine_addon` checks the installed addon when shadow mode is on and is not applicable otherwise.
 - **Writer observations (swap eligibility).** While shadow mode is on, each process that writes to the brain through
   gbrain notes itself in `engine_writer_observations`: its host id, the name its database connections carry, its
-  command kind and gbrain version, and when it first and last wrote. The note runs after the write committed, in its
+  command kind and gbrain version, the write protocol it speaks (`write_protocol`: 2 in this build; an older build's row
+  has none), and when it first and last wrote. The note runs after the write committed, in its
   own short transaction, at most every 10 minutes per process; a rolled-back transaction leaves none. A brain without
   a shadow keeps the table empty.
 - **Writer hooks (Postgres brains).** `start --yes` adds one statement-level trigger, `gbrain_writer_note`, to every
@@ -2017,7 +2033,11 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   with the rights of whichever role is current when it fires. A process claim resolves a connection's rows only
   while the claim is inside the window too, so an expired claim cannot hide a current writer. The process-side note
   runs under a 50 ms lock timeout and a 2 s statement timeout, so a busy evidence table ends it as a recorded
-  failure instead of holding one of the brain's connections.
+  failure instead of holding one of the brain's connections. A writer of an
+  older build counts too: a row seen since the current evidence epoch began (not only in the last 7 days) with no
+  `write_protocol`, or one below 2, is named in `eligibility.legacy_write_writers`, and an epoch manifest that is there and
+  cannot be read counts as one more unknown path (no manifest at all means no epoch yet). A brain where the migration that
+  adds the column has not run cannot read the evidence, so the swap refuses.
   A fault or pass record that is
   torn, has no time, lacks a count or carries a count of the wrong type is incomplete evidence and counts too. Criterion 11 reads
   NOT READY on any evidence it cannot prove, so a gap nobody thought of fails closed. In particular, shadow mode
@@ -2074,7 +2094,14 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
 - **Follow.** A seeded brain is followed while shadow mode is on. Each committed write through the wrapped engine is
   read back from the brain, in its own short read-only `REPEATABLE READ` transaction (on Postgres, a dedicated
   one-connection pool, so the serving pool is never used), and applied to the Rust store, so stored ids and fact
-  fingerprints stay identical. A rolled-back transaction changes nothing. The coverage watermark says whether every
+  fingerprints stay identical. A rolled-back transaction changes nothing. Inside a transaction, the rows a write will
+  delete or re-key, and the page ids it names, are read first in a savepoint that only that read uses. A nested
+  transaction still running is waited for first (without holding the others), then the transaction's other calls
+  already running, each wait at most 2 seconds, and later calls are held until the write is sent, so a failed read can
+  never undo another statement of the transaction. A call that starts a callback during that wait makes the read skip at
+  once, and so does a call that does not finish in time: that write is described relation-level instead. The transaction's
+  end waits until no read holds the lane, and at most 2 seconds for calls it started and did not await. Statements sent
+  straight through the driver (`tx.sql`, `tx.db`) are not seen by the lane. The coverage watermark says whether every
   committed write is in the store. It goes invalid on a shed, a gap in the write sequence, a failed read, a relation
   the follower cannot describe row by row (which then needs a pass for that relation), or rows the store had to
   displace. **Every session that owns the store starts invalid**, even after a clean stop, and becomes valid again
@@ -2149,7 +2176,7 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   not scored. Tied rows at the cutoff count only for the top-ten places the strictly better rows leave, and a reference whose last row
   (of 50) still ties the cutoff is not scored. A stable rerun compares digests: the whole answer, and for a ranked read its rows without scores in a fixed order, so the same
   rows in another order or with other scores are an `order_diff` (closed as matched on the reads that ignore order). The comparator
-  version is 3 (it was 1): a running shadow opens a new evidence epoch, so records written under the earlier rules never count. Known limits, not fixed here: a position that does not move proves nothing was written but says nothing about a change that is not WAL-logged (an unlogged table), and a server in recovery (a hot standby or read replica) is never proven; and a read the caller was authorized to make that
+  version is 4 (it was 1): a running shadow opens a new evidence epoch, so records written under the earlier rules never count. Known limits, not fixed here: a position that does not move proves nothing was written but says nothing about a change that is not WAL-logged (an unlogged table), and a server in recovery (a hot standby or read replica) is never proven; and a read the caller was authorized to make that
   returns a private page still reads `private_row_returned` and pauses comparison (it fails closed).
 - **Status fields.** `status --json` adds: `follower.state` (`not_seeded`, `needs_reseed`, `stopped`, `invalid`, `behind`,
   `following`), `follower.action` (the reseed steps, or `null`), `lag_ms`, `lag_ms_p99_24h` and `lag_ms_p99_epoch` (a power-of-two bucket upper bound, not an exact
@@ -2159,7 +2186,7 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   `mismatches`, and a `probe`, described below); `allocators`;
   `seed`; `primary_refreshes` (`nonterminal_rows`: primary `gbrain sources refresh` rows that are neither completed nor
   aborted, counted by the last full pass, with its `checked_at`; `null` before one; a swap must drain them first, and
-  this is a reading, not the swap's own check); and `write_comparisons` (the pilot page and link writes only; `capability_missing` until a comparison has a verdict (`comparable` or `unexplained_difference`), and while any replay has none). The
+  this is a reading, not the swap's own check); and `write_comparisons` (the pilot page and link writes only; `capability_missing` until a comparison has a verdict (`comparable` or `unexplained_difference`), and while any replay has none or a sample owed to a session is not yet settled, `outstanding_sessions`). The
   `write_comparisons` and `fingerprints` counts are totals for the current evidence epoch. An epoch is not a seed: `epoch_id`
   names the candidate whose evidence counts (the seed, the Rust addon's SHA-256, the comparator and adapter versions, the
   capability set and the hash of the swap's readiness policy, `src/core/engine-swap/policy.ts`), and a change to any of them
@@ -2187,7 +2214,7 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   database's `collation`, `ctype`, `locale_provider` (`c` libc, `i` ICU, `b` builtin) and `locale` (`datlocale` on Postgres 17,
   `daticulocale` on 16, `null` where absent), `differing_code_points` (the first 50 as `U+XXXX`) with
   `differing_code_points_total`, `corpus_mismatches` with `corpus_mismatch_rows` (the first five row names, never text) and
-  `facts_with_differing_code_points`. `state` is `fail` when code points differ and at least one stored fact holds one, or when
+  `facts_with_differing_code_points`. When code points differ the probe also counts the primary's `fact_purges` rows (`fact_purges_unverifiable`; a count, never a hash; a dirty pass for `facts` or `fact_purges` runs the probe again, and if that probe errors the pass clears the recorded verdict to `not_run` and does not restore coverage): a tombstone keeps only the claim's hash, so its claim cannot be checked for a differing code point. `state` is `fail` when code points differ and at least one stored fact holds one or any purge tombstone exists, or when
   a corpus row or the fixed corpus differs and no differing code point explains it; otherwise `pass`, and a pass still lists the
   differing code points so a swap report can name them. A probe that errors is `not_run`. A glibc `en_US.utf8` host differs
   (U+0085, U+1680, circled letters and more); a C-ctype host differs on every cased non-ASCII letter, so it fails once a fact

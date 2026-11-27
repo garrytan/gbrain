@@ -8,7 +8,7 @@ import { hasDatabase } from './helpers.ts';
 import { isolatedPersistencePostgres } from '../helpers/persistence-postgres.ts';
 import { configureGateway, resetGateway } from '../../src/core/ai/gateway.ts';
 import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
-import { detailOnEverySurface, hiddenBackingOmitsDetail, mostSpecificSubjectFirst, receiptKeepsDetail,
+import { detailOnEverySurface, hiddenBackingOmitsDetail, mostSpecificSubjectFirst, receiptKeepsDetail, storedDetailStaysLocal, relaxedPrivacyStillPlain,
   singleWriterSameRule } from '../helpers/withdrawn-detail-scenarios.ts';
 
 const d = hasDatabase() ? describe : describe.skip;
@@ -22,9 +22,11 @@ d('fact_withdrawn refusals carry the withdrawal (Postgres)', () => {
   }, 120_000);
   afterEach(async () => { resetGateway(); await disposePersistenceConsumer(engine); await close(); });
 
-  test('one identical object on stdio, HTTP, local and batch refusals', () => detailOnEverySurface(engine), 60_000);
+  test('the object on local refusals only; stdio, HTTP and batch refusals carry none', () => detailOnEverySurface(engine), 60_000);
   test('the most specific subject first, then the newest', () => mostSpecificSubjectFirst(engine), 60_000);
-  test('no object when the caller cannot read the withdrawn rows', () => hiddenBackingOmitsDetail(engine), 60_000);
-  test('a failed receipt keeps the object for get_write_request and replay', () => receiptKeepsDetail(engine), 60_000);
+  test('a remote refusal is byte-identical whether the withdrawn rows are hidden, visible or absent', () => hiddenBackingOmitsDetail(engine), 60_000);
+  test('a remote failed receipt carries no object in get_write_request or replay', () => receiptKeepsDetail(engine), 60_000);
+  test('a stored withdrawal detail reaches a trusted local reader only', () => storedDetailStaysLocal(engine), 60_000);
+  test('relaxed remote page privacy still gives a remote caller no withdrawal detail', () => relaxedPrivacyStillPlain(engine), 60_000);
   test('the single-fact writer applies the same rule; a purge supplies no object', () => singleWriterSameRule(engine), 60_000);
 });

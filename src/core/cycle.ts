@@ -2332,7 +2332,7 @@ async function runCycleUnscoped(
           summary: 'no database connected',
           details: { reason: 'no_database' },
         });
-      } else if (brainDir === null) {
+      } else if (brainDir === null && await engine.getConfig('dream.synthesize.since') == null) {
         phaseResults.push(skipNoBrainDir('synthesize'));
       } else {
         progress.start('cycle.synthesize');

@@ -728,7 +728,15 @@ with `unbound_source`, and so do `remember` about an existing entity page and
 `forget` or `forget_fact` of a claim that a canonical file carries (their
 frozen code stays `unavailable`, with `write_error: owner_unavailable` and the
 same detail and fix; a claim that only database-only pages carry is still
-withdrawn, database-only). What works:
+withdrawn, database-only). On a read-only mirror (`gbrain sources
+mirror-readonly`, or a clone gbrain owns) that `forget` refusal says so, with
+`detail: read_only_mirror`: the mirror's upstream repository is the
+authoritative copy, so remove the claim there and update the mirror from it
+(`gbrain sync --source <id>` on a brain that is not managed; a managed brain
+binds the source first with `gbrain sources writer claim`, then runs
+`gbrain sources refresh <id>`), or make the source writable with
+`gbrain sources mirror-writable <id>` and bind it before forgetting again
+(#10067). What works:
 
 1. **Write the file, commit, sync** (the classic write path). Write or edit
    `<checkout>/<slug>.md`, check generated frontmatter with
@@ -850,7 +858,8 @@ credential-shaped value turns up, it blocks a push, leaves an entry out of
 compiled context, skips a relay, or is replaced in output with a
 `<REDACTED:pattern>` token (for example `<REDACTED:url_credentials>`). The
 stored page never changes: redaction applies to what a caller receives, not
-to your files or database.
+to your files or database, unless the brain host turns on
+[`secrets.on_write`](#secret_in_write) for remote writes.
 
 | Where | What happens | What to do |
 | --- | --- | --- |
@@ -861,10 +870,40 @@ to your files or database.
 | Retrieval output | The value is replaced with `<REDACTED:pattern>`; everything else in the result is unchanged. | Nothing. Read the page on the brain host if you need the value (see what stays raw below). |
 | Page reads | Not redacted. | See [what stays raw by design](#what-stays-raw-by-design). |
 | Configured providers | Not redacted yet. | See [what stays raw by design](#what-stays-raw-by-design). |
+| Remote page writes, when the brain host sets `secrets.on_write` | `block`: refused with `secret_in_write` before anything is saved. `redact`: saved with each value replaced by `<REDACTED:pattern>`, and the result's `secrets_redacted` gives the count and pattern names. Off by default. | See [secrets in remote writes](#secret_in_write). |
 
 An allowlist entry stops pushes and compiled context from refusing a
 finding. It does not turn off retrieval redaction: search and recall still
 replace an allowlisted value.
+
+<a id="secret_in_write"></a>
+### Secrets in remote writes
+
+A brain that serves agents over MCP can screen the page text they write, so a
+credential an agent pastes is never stored where every reader and model
+provider sees it. On the brain host, `gbrain config set secrets.on_write block`
+refuses such a write with `secret_in_write` and saves nothing;
+`gbrain config set secrets.on_write redact` saves it with each value replaced
+by `<REDACTED:pattern>` and reports `secrets_redacted: { count, patterns }`.
+`off` is the default. The setting lives in the host's `~/.gbrain/config.json`,
+so no remote caller can change it, and a value other than these three screens
+as `block`.
+
+It covers `put_page`, `put_pages` (per page), `edit_page` (the new text, not
+the `old_text` it replaces), `append_page`, `capture`, `add_timeline_entry`,
+the `takes_*` writes and `remember`. A chunked upload is screened on its whole
+assembled body at `commit_page_upload`, so a value split across two
+`upload_page_part` calls is found; the upload is discarded with its parts and
+nothing is written, under `redact` too, because an uploaded body is bound to
+the SHA-256 declared at begin and is never rewritten. Local CLI writes, sync
+and imports are not screened. Refusals and receipts name pattern names and a
+count, never the value. Documentation stand-ins pass: the AWS documentation's
+example key id, a database URL whose user and password are the words user and
+password, masks such as `***`, and
+environment variable names.
+
+**Say to your agent:** *"Write down how the deploy is wired, but name the
+secret that holds the token instead of pasting it."*
 
 ### Shapes this scanner catches
 

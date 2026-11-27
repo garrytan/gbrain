@@ -218,7 +218,7 @@ for (const kind of testBackends()) {
               [SRC, spec.slug, `Harbor fact planning ${canary(`${o}.fact`)}`]);
             continue;
           }
-          const remembered = await dispatchToolCall(engine, 'remember', { fact: `Harbor fact planning ${canary(`${o}.fact`)}`, provenance: 'fixture', entity: spec.slug, visibility: 'world' }, { remote: false, sourceId: SRC });
+          const remembered = await dispatchToolCall(engine, 'remember', { fact: `Harbor fact planning ${canary(`${o}.fact`)}`, provenance: 'fixture', entity: spec.slug, visibility: 'world', valid_from: '2026-01-01' }, { remote: false, sourceId: SRC });
           if (remembered.isError) throw new Error(`fixture remember: ${remembered.content.map(c => c.text).join(' ')}`);
         }
         for (const [name, member] of [['owner', OWNER], ['alice', 'alice-example'], ['bob', 'bob-example'], ['unbound', null]] as const) {

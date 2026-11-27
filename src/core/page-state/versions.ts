@@ -130,6 +130,23 @@ export async function pruneHoldingPageVersions(tx: BrainEngine, pageId: number):
 }
 
 /**
+ * #9737: the owner's `gbrain pages prune-history` removes exactly the inline saved versions its approved plan named, under
+ * the caller's page lock, and records the gap like every other prune. Segmented versions keep their own retention, and an
+ * agent_policy page or a soft-deleted page keeps every version, and so does a page no longer at the source and slug the
+ * plan named (renamed or moved since the preview) or no longer of the type a --type plan selected. Returns the versions deleted.
+ */
+export async function pruneInlineVersionsById(tx: BrainEngine, page: { pageId: number; sourceId: string; slug: string; type?: string | null; keep?: number | null }, versionIds: readonly number[]): Promise<number> {
+  const pageId = page.pageId;
+  if (!versionIds.length) return 0;
+  const pruned = await tx.executeRaw<{ id: number }>(`DELETE FROM page_versions WHERE page_id = $1 AND id = ANY($2::int[])
+    AND body_storage IS DISTINCT FROM 'segmented' AND EXISTS (SELECT 1 FROM pages WHERE id = $1 AND source_id = $4 AND slug = $5 AND ($6::text IS NULL OR type = $6) AND deleted_at IS NULL AND type IS DISTINCT FROM $3)
+    AND ($7::int IS NULL OR id NOT IN (SELECT k.id FROM page_versions k WHERE k.page_id = $1 ORDER BY k.id DESC LIMIT $7))
+    RETURNING id`, [pageId, [...versionIds], AGENT_POLICY_TYPE, page.sourceId, page.slug, page.type ?? null, page.keep ?? null]);
+  await markPrunedHistory(tx, pageId, pruned.map(row => Number(row.id)));
+  return pruned.length;
+}
+
+/**
  * GBRA-217: after a prune, the retained snapshot just before each pruned one has lost its successor (`successor_pruned`,
  * so a remote reader is never shown its reason: the successor's visibility can no longer be checked), and the page has
  * lost history (`version_history_gap_at`, read by valid-time answers).

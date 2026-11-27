@@ -27,7 +27,8 @@
  * and the managed-rows coverage read (parameters renumbered); same statements, same order. The publication authorization's
  * locking local writer read (persistence/authority.ts) is the typed readLocalWriterRow, whose statement is the one the
  * identity check already sent (credential_hash added, columns reordered); same row, same FOR SHARE, same order. Both entries
- * were re-captured with CAPTURE_FOLD_NOOP=1 and differ only in that statement.
+ * were re-captured with CAPTURE_FOLD_NOOP=1 and differ only in that statement. GST-4037 rewrites put_page's provenance
+ * update one-for-one so a managed rewrite keeps the stored `ingested_at` (a CASE on a sixth parameter); same statement, same order.
  * CAPTURE_FOLD_NOOP=1 rewrites the fixture for the engine under test (only ever from the pre-hook commit).
  */
 import { describe, expect, test } from 'bun:test';

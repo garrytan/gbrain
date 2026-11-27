@@ -149,12 +149,15 @@ school or job). The user's filing rules from
 `_brain-filing-rules.json` are read at runtime; the agent decides per-page
 where content lands within those sanctioned directories.
 
-Brain page format:
+Brain page format for `originals/` on `gbrain-base-v2`. For `ideas/` on v2,
+use `type: concept` with `subtype: idea`. For other routes or packs, use the
+active source's declared type and the applicable subtype.
 
 ```markdown
 ---
 title: "[Title or first line]"
-type: original
+type: concept
+subtype: original
 source_type: "[local|dropbox|backblaze|gmail-takeout|mbox|pst]"
 source_path: "[path within the allow-listed scan_paths]"
 date: "YYYY-MM-DD"  # date from the file metadata or content
