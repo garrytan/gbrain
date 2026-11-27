@@ -142,25 +142,6 @@ for (const kind of testBackends()) {
         expect(await columns()).toEqual(before);
       });
 
-      // Value: protects=GST-4037 a remote append_page and put_page of a stored page keep its first-ingest columns, as edit_page does (#10330); fails_when=the write's own mcp channel or its time reaches source_kind / ingested_via / ingested_at; why_new=the #10330 row covers edit_page only; seam=none; no_claim=segmented bodies
-      for (const op of ['append_page', 'put_page'] as const) {
-        test(`a remote ${op} keeps the first-ingest database columns as stored (GST-4037)`, async () => {
-          const slug = `inbox/${op.replace('_', '-')}-columns`;
-          await seed(slug, STORED, 'unknown');
-          await engine.executeRaw(`UPDATE pages SET ingested_at = '2026-01-02T03:04:05.123456Z'::timestamptz WHERE source_id = $1 AND slug = $2`, ['default', slug]);
-          const columns = () => engine.executeRaw<{ source_kind: string | null; ingested_via: string | null; micros: string }>(
-            `SELECT source_kind, ingested_via, to_char(ingested_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US') AS micros
-               FROM pages WHERE source_id = 'default' AND slug = $1`, [slug]);
-          const before = await columns();
-          expect(before).toEqual([{ source_kind: 'webhook', ingested_via: 'webhook', micros: '2026-01-02T03:04:05.123456' }]);
-          const current = await read(slug);
-          if (op === 'append_page') await call('append_page', { slug, text: 'Appended line', request_id: crypto.randomUUID(), expected_revision: current.revision });
-          else await call('put_page', { slug, content: current.content.replace('Captured body', 'Captured body, rewritten'), expected_revision: current.revision });
-          expect((await page(slug)).page.compiled_truth).toMatch(/Appended line|rewritten/);
-          expect(await columns()).toEqual(before);
-        });
-      }
-
       test('a remote edit_page that only forges stamps is a no-op', async () => {
         const slug = 'inbox/edit-noop';
         const before = await seed(slug, STORED, 'external_untrusted');

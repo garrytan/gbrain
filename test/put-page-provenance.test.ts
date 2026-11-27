@@ -280,14 +280,15 @@ describe('put_page provenance — CV12 COALESCE-preserve UPDATE', () => {
       expected_revision: (await engine.readPageSnapshot('wiki/p3a-local-then-remote', { sourceId: 'default' }))!.revision,
     });
 
-    // GST-4037: a remote caller cannot supply provenance (the server stamps
-    // mcp:put_page), so its rewrite of a stored page is not a new ingestion:
-    // the page keeps its first-ingest columns, as a remote edit_page does
-    // (#10330) and a repository brain's put_page always did. A local write
-    // that names new provenance still re-ingests (the test above).
+    // Remote second write is itself a provenance write (server-stamped),
+    // so COALESCE(EXCLUDED.source_kind='mcp:put_page', pages.source_kind='capture-cli')
+    // resolves to EXCLUDED's non-null value: 'mcp:put_page'. This is the
+    // honest answer — the MOST RECENT ingestion source is mcp:put_page,
+    // and the system says so. CV12 first-write-wins applies when the second
+    // write OMITS provenance entirely (covered by the earlier test); when
+    // the second write IS an ingestion, it gets to record itself.
     const prov = await readProvenance('wiki/p3a-local-then-remote');
-    expect(prov.source_kind).toBe('capture-cli');
-    expect(prov.ingested_via).toBe('put_page');
+    expect(prov.source_kind).toBe('mcp:put_page');
   });
 
   test('a remote timeline entry, tag or link keeps the page provenance and ignores supplied stamps (#8667)', async () => {

@@ -210,13 +210,12 @@ function putProvenance(row: WriteRequest, snapshot: PageSnapshot | null, parsed:
   return stamp;
 }
 /**
- * #10330, GST-4037: an edit, an append or a put whose stamps are server-owned (a remote caller's, or a managed put's) is
- * not a new ingestion, with or without a repository, so the import keeps the stored first-ingest columns and the
- * provenance update keeps a stored ingested_at as the column holds it (microseconds; a JS Date keeps milliseconds).
- * Only an unmanaged local put_page may re-ingest, explicitly.
+ * #10330: an edit of a stored page is not a new ingestion, so the import keeps its first-ingest columns. A managed
+ * put_page stamps the first write's provenance (putProvenance), so its import keeps them too, and the provenance update
+ * keeps a stored ingested_at as the column holds it (microseconds; a JS Date keeps milliseconds).
  */
 function keepsIngestColumns(row: WriteRequest): boolean {
-  return row.operation === 'edit_page' || row.operation === 'append_page' || (row.operation === 'put_page' && (row.authority.remote === true || !!row.worktree_id));
+  return row.operation === 'edit_page' || (row.operation === 'put_page' && !!row.worktree_id);
 }
 function serverOwnsProvenance(row: WriteRequest): boolean {
   return (row.operation === 'put_page' && !!row.worktree_id) || (row.authority.remote === true && CALLER_CONTENT_OPERATIONS.includes(row.operation));
