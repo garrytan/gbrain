@@ -6,7 +6,7 @@
  *
  * The request charges no counters (`counterKeys: []`), so a case that lists counter rows sees only the rows it seeds.
  */
-import { fenceOpts } from '../../src/core/persistence/host-fence.ts';
+import { bindClaimFence, claimFenceOpts, fenceOpts } from '../../src/core/persistence/host-fence.ts';
 import { ensureProcessRegistration } from '../../src/core/persistence/managed-registration.ts';
 import { randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../../src/core/engine.ts';
@@ -84,11 +84,16 @@ export async function settleTypedEffects(engine: BrainEngine, settle: (kind: str
     const token = randomUUID();
     await engine.transaction(async tx => {
       await declarePersistenceProtocol(tx);
-      await tx.stampEffectClaim({ id: effect.id, token, ownerJson: JSON.stringify({ token, owner: { pid: 1, nonce: 'collate', start: 'collate' } }) });
+      // The worker's own claim (claimPersistenceEffect) and settle (effect-journal.ts): the stamp carries this process's
+      // host fence, when it holds a registration, and each settle carries the fence its claim was stamped under.
+      const fence = fenceOpts(tx);
+      const claimed = await tx.stampEffectClaim({ id: effect.id, token, ownerJson: JSON.stringify({ token, owner: { pid: 1, nonce: 'collate', start: 'collate' } }), ...fence });
+      if (claimed) bindClaimFence(token, fence.fence ?? null);
       const how = settle(effect.kind);
-      if (how.to === 'failed') await tx.failEffectRow({ id: effect.id, token, reason: how.reason });
-      else if (how.to === 'parked') await tx.parkEffectRow({ id: effect.id, token, dataJson: JSON.stringify(how.data) });
-      else await tx.retryBusyEffectRow({ id: effect.id, token, dataJson: JSON.stringify(how.data), delayMs: 3_600_000 });
+      const claim = { id: effect.id, token, ...claimFenceOpts(tx, token) };
+      if (how.to === 'failed') await tx.failEffectRow({ ...claim, reason: how.reason });
+      else if (how.to === 'parked') await tx.parkEffectRow({ ...claim, dataJson: JSON.stringify(how.data) });
+      else await tx.retryBusyEffectRow({ ...claim, dataJson: JSON.stringify(how.data), delayMs: 3_600_000 });
     });
     settled++;
   }
