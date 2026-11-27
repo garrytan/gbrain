@@ -667,6 +667,15 @@ describe('every sample the child was sent ends in the tally (sample accounting)'
     for (const q of [-1, 6, 2.5, null, '3']) { write(q); expect(readReceipt(dir, 'sess-q')).toBe('unreadable'); }
   });
 
+  test('a refusal count the serving process could not read (six digits) is not credited by the child either, so lost page and link writes still count as pipe_unflushed', async () => {
+    // The serving process counted this line as one sample, no refusals (supervisor.ts sampleWeight reads at most five digits), then sent 10 putPage and 5 other samples the pipe lost.
+    const other = '{"t":"write","op":"updatePageContextualRetrievalState","outcome":"capability_missing","family":"pages:updatePageContextualRetrievalState","dropped":100000}\n';
+    const { dir, epoch } = await childWithSent(16, [other], undefined, 10);
+    const t = readWriteTally(dir, epoch)!;
+    expect(t.uncomparable_by_reason.pipe_unflushed).toBe(10); // before: 0, the child credited 10,000 refusals the receipt never counted and booked nothing
+    expect(t.capability_missing_by_family.pipe_unflushed_nonqualifying).toBe(5);
+  }, 60_000);
+
   test('a sent count written before it carried the qualifying count books every lost sample pipe_unflushed, as before (never fewer against the share)', async () => {
     const other = '{"t":"write","op":"updatePageContextualRetrievalState","outcome":"capability_missing","family":"pages:updatePageContextualRetrievalState"}\n';
     const { dir, epoch } = await childWithSent(10, ['{"t":"write","op":"putPage"}\n', other]);
@@ -797,6 +806,18 @@ describe('every sample the child was sent ends in the tally (sample accounting)'
       expect(existsSync(receiptFile(dir, 'dead'))).toBe(false);
     }
   });
+
+  test('an orphaned receipt that says how many samples qualified books only those as receipt_orphaned; the rest are capability_missing receipt_orphaned_nonqualifying', async () => {
+    await withEnv({ GBRAIN_HOME: tmp() }, async () => {
+      const dir = tmp(); writeSeedRecord(dir, SEED);
+      writeFileSync(receiptFile(dir, 'dead-q'), JSON.stringify({ session: 'dead-q', sent: 25, sent_qualifying: 4, pid: deadPid() }));
+      const epoch = await runChild(dir, 'sess-q');
+      const t = readWriteTally(dir, epoch)!;
+      expect(t.uncomparable_by_reason).toEqual({ receipt_orphaned: 4 }); // before: 25, every sample of the dead session counted against the share
+      expect(t.capability_missing_by_family).toMatchObject({ receipt_orphaned_nonqualifying: 21 });
+      expect(readdirSync(dir).filter((n) => n.startsWith('write-sent.'))).toEqual([]);
+    });
+  }, 60_000);
 
   test('a receipt a dead session left is settled exactly once by an owner worker (receipt_orphaned); a live pid, a pid we cannot trust and a count we cannot trust are left alone', async () => {
     await withEnv({ GBRAIN_HOME: tmp() }, async () => {
