@@ -157,8 +157,12 @@ describe('multi-writer support matrix', () => {
     expect(mwCase('C22').needs).toBe('commit_log');
     expect(mwCase('C22').members).toEqual(['putPage', 'transaction', 'readCommitLog', 'lastCommitPosition']);
     for (const id of ['C13', 'C17', 'C21'] as const) expect(mwCell(id, 'pglite').status, `${id} pglite`).toBe('n/a');
-    // C16 drives the Rust commit-log format upgrade: n/a on plain Rust, runs on rust-mu; PostgreSQL has no scenario yet (pending).
-    expect(mwCell('C16', 'postgres').status).toBe('pending');
+    // C16 drives the Rust commit-log format upgrade: n/a on plain Rust, runs on rust-mu. PostgreSQL keeps no log: its schema
+    // upgrade under concurrent initSchema openers is the C16.schema variant, which runs on Postgres only.
+    expect(mwCell('C16', 'postgres').status).toBe('n/a');
+    expect(mwVariantCell('C16.schema', 'postgres').status).toBe('runs');
+    for (const arm of ['pglite', 'rust', 'rust-mu'] as const) expect(mwVariantCell('C16.schema', arm).status, arm).toBe('n/a');
+    expect(mwVariant('C16.schema').needs).toBeUndefined();
     expect(mwCell('C16', 'rust').status).toBe('n/a');
     expect(mwCell('C16', 'rust-mu').status).toBe('runs');
     expect(mwCase('C16').needs).toBe('commit_log');
