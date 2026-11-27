@@ -185,6 +185,7 @@ export const WRITE_MAP: Record<string, WriteSpec> = {
   replaceDerivedAliases: { tables: ['page_aliases'], plan: (a) => [{ relation: 'page_aliases', sel: { source_id: a[1], slug: a[0] }, del: true }] },
   updateSourceConfig: { tables: ['sources', 'owner_only_marks'], plan: (a) => [{ relation: 'sources', sel: { id: a[0] } }, ...OWNER_MARKS] },
   upsertGuestSource: { tables: ['guest_sources'], plan: (a) => [{ relation: 'guest_sources', sel: { source_id: a[0] } }] },
+  insertGuestMark: { tables: ['guest_marks'], plan: (a) => [child('guest_marks', a[0]?.slug, a[0]?.sourceId)] },
   createVersion: { tables: ['page_versions'], plan: (a) => [child('page_versions', a[0], a[1]?.sourceId, true)] },
   // The owner's allow rules (trust/allow-rules.ts): an add writes one row the reply names (a new one, or the active one
   // already holding its key, which it leaves unchanged); a remove marks the rule `id` removed, keeping the row.
@@ -225,6 +226,8 @@ export const IGNORED_MEMBERS: ReadonlySet<string> = new Set([
   'connect', 'connectForRestore', 'connectWithHeldLock', 'disconnect', 'reconnect', 'initSchema', 'registerBeforeDisconnect',
   'closeRetainingLock', 'holdsDatastoreLock', 'batchRetry', 'applyTransactionSettings', 'applyForwardReferenceBootstrap',
   'lockPageKeys', 'lockRegisteredSourceIds', 'keywordBoundedRead', 'rewriteLinks', 'matchTakeRows',
+  // Reads a guest source's writers and sets gbrain.guest_note for the transaction; it writes no row.
+  'claimGuestNotePublication',
   // Writes only persistence_requests (a request's takeHoldersUsed), which the shadow does not copy (seed/not_copied.rs: MachineLocal).
   'recordTakeHoldersUsed',
   // Locks.

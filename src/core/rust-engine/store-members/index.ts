@@ -5,6 +5,7 @@
 import type { BrainEngine } from '../../engine.ts';
 import * as mentionPass from './mention-pass.ts';
 import * as guestSources from './guest-sources.ts';
+import * as guestNotes from './guest-notes.ts';
 import * as chunks from './chunks.ts';
 import * as config from './config.ts';
 import * as graph from './graph.ts';
@@ -238,6 +239,7 @@ export const STORE_MEMBERS = {
   // The mention pass and the gazetteer, extract snapshot and explain reads (rust/docs/store/mention-state.md).
   ...mentionPass,
   ...guestSources,
+  ...guestNotes,
   initSchema,
   ...config, ...sources, ...tags, ...versions, ...chunks, ...search, ...links, ...graph, ...timeline,
   getPage: pages.getPage, readPageSnapshot: pages.readPageSnapshot, putPage: pages.putPage, deletePage: pages.deletePage,
