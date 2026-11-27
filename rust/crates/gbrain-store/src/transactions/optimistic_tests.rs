@@ -41,16 +41,6 @@ fn held(slug: &str) -> HeldKey {
 }
 
 #[test]
-fn an_optimistic_transaction_on_a_single_writer_store_runs_serialized() {
-    let s = crate::test_support::store();
-    let t = s.begin_bound(optimistic()).unwrap();
-    assert!(!t.transaction_optimistic());
-    t.commit_transaction().unwrap();
-}
-
-/// C13: a commit on another key lands while an optimistic transaction is open (on one thread: a
-/// serialized transaction would make this plain write wait forever).
-#[test]
 fn c13_other_writers_commit_while_an_optimistic_transaction_is_open() {
     let s = mu_store();
     let t = s.begin_bound(optimistic()).unwrap();

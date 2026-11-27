@@ -440,8 +440,12 @@ fn explicit_transactions_conflict_with_a_typed_error_and_ids_stay_unique_multi_w
                 let tx = s
                     .begin_with(optimistic_options(i))
                     .unwrap_or_else(|e| panic!("{e}"));
-                let id = page_id(&put(&tx, &format!("p/{i}-{round}"), "inside a transaction"));
-                put(&tx, "shared/hot", &format!("tx {i} {round}"));
+                let id = page_id(&put(
+                    tx.store(),
+                    &format!("p/{i}-{round}"),
+                    "inside a transaction",
+                ));
+                put(tx.store(), "shared/hot", &format!("tx {i} {round}"));
                 match s.commit_position(tx) {
                     Ok(_) => {
                         ids.push(id);
@@ -482,7 +486,7 @@ fn a_commit_on_the_same_key_as_an_open_transaction_conflicts_or_waits_multi_writ
     store
         .single_flight(&tx, &[key()])
         .unwrap_or_else(|e| panic!("{e}"));
-    put(&tx, "notes/a", "from the transaction");
+    put(tx.store(), "notes/a", "from the transaction");
     let s = store.clone();
     let other = thread::spawn(move || {
         // The younger transaction waits at its single flight until the holder ends; a commit refused as stale runs again.
@@ -492,7 +496,7 @@ fn a_commit_on_the_same_key_as_an_open_transaction_conflicts_or_waits_multi_writ
                 .unwrap_or_else(|e| panic!("{e}"));
             s.single_flight(&tx, &[key()])
                 .unwrap_or_else(|e| panic!("{e}"));
-            put(&tx, "notes/a", "from another writer");
+            put(tx.store(), "notes/a", "from another writer");
             match s.commit_position(tx) {
                 Ok(position) => return position,
                 Err(e) => assert_eq!(e.code, WRITE_CONFLICT, "an untyped refusal: {e}"),
@@ -536,7 +540,7 @@ fn a_plain_write_on_a_flown_key_makes_the_holders_commit_a_typed_conflict_multi_
             }],
         )
         .unwrap_or_else(|e| panic!("{e}"));
-    put(&tx, "notes/a", "from the transaction");
+    put(tx.store(), "notes/a", "from the transaction");
     put(&store, "notes/a", "from a plain write");
     let refused = store
         .commit_position(tx)
@@ -562,7 +566,7 @@ fn a_commit_on_another_key_lands_while_a_transaction_is_open_multi_writer() {
     let tx = store
         .begin_with(optimistic_options(1))
         .unwrap_or_else(|e| panic!("{e}"));
-    put(&tx, "notes/a", "from the transaction");
+    put(tx.store(), "notes/a", "from the transaction");
     let s = store.clone();
     let other = thread::spawn(move || put(&s, "notes/b", "from another writer"));
     thread::sleep(std::time::Duration::from_millis(100));

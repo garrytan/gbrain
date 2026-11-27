@@ -109,8 +109,7 @@ pub use gbrain_store::transactions::Transaction as MuTxn;
 /// The multi-user members of `Store` no lane has landed yet, as the frozen interfaces spell them. Landed and called on `Store`
 /// directly: `begin_with` and `single_flight` (I-1), `last_commit_time` (I-4.v2) and `read_commit_log` (I-4).
 pub trait MuStore {
-    /// I-1 and I-2 `Transaction::commit(self) -> Result<CommitPosition>`: the real `Transaction::commit_at`
-    /// (`Store::commit_transaction_at`).
+    /// I-1 and I-2 `Transaction::commit(self) -> Result<CommitPosition>`: the real `Transaction::commit`.
     fn commit_position(&self, txn: MuTxn) -> MuResult<CommitPosition>;
     /// A follower applies the given commit records, in order, to its own brain and returns the position of the last one
     /// (`None` for no records). Pending: the commit-log lane has `commit_log::apply_record(&mut dyn KvWrite, &CommitRecord)`, a
@@ -124,7 +123,7 @@ pub trait MuStore {
 
 impl MuStore for Store {
     fn commit_position(&self, txn: MuTxn) -> MuResult<CommitPosition> {
-        txn.commit_at()
+        txn.commit()
     }
     fn apply_log(&self, _records: &[CommitRecord]) -> MuResult<Option<CommitPosition>> {
         pending(

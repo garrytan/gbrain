@@ -83,6 +83,11 @@ What a record holds:
   is logged as `raise_counter` (replayed as a max).
 - A rolled-back or dropped explicit transaction leaves no data in the log: its writes are dropped uncommitted, and
   the commit that carries its id sequences forward holds `raise_counter` ops and nothing else.
+- An abandoned explicit transaction (rolled back, dropped, or a run whose commit was refused) leaves at most one
+  record, and only when it took ids: that one record of `raise_counter` ops is intended. It is how a follower learns
+  the ids the abandoned run handed out, so a follower that takes over as primary never hands them out again (ids
+  stay unique across a failover). One that took no id leaves no record. Pinned by
+  `tests/commit_log.rs::an_abandoned_transaction_logs_one_counter_record_only_when_it_took_ids` on both stores.
 - Origin: the open's host id and incarnation (a UUID v7 per open), and the writer `<principal_kind>:<principal_id>`
   from the write trust context or the first journal request the write admitted; empty when unknown. Write ids: the
   persistence request ids the write admitted or ran for. Inside an explicit transaction they belong to the statement
