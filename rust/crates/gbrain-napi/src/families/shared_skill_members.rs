@@ -35,6 +35,18 @@ impl Brain {
         })
     }
 
+    /// `listSharedMemberMigrationRows(sourceId)`: the members following the source, by adapter.
+    #[napi]
+    pub fn list_shared_member_migration_rows<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_shared_member_migration_rows(&source_id)
+        })
+    }
+
     /// `countSharedSkillMembers()`: every member, active or not.
     #[napi]
     pub fn count_shared_skill_members<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {

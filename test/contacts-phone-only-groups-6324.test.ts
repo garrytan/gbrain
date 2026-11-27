@@ -173,6 +173,8 @@ function harness(state: Partial<GoogleSourceState> = {}, opts: { idLookup?: bool
   };
   const engine = {
     async getConfig() { return null; },
+    // The trunk reads identity links through the typed member; this fake holds none, as its executeRaw answered [] for that read.
+    async listEntityIdentityRows() { return []; },
     async executeRaw(sql: string, params: unknown[]) {
       if (sql.includes("frontmatter->>'google_contact_id'")) {
         if (opts.idLookup === false) return [];

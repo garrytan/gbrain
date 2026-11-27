@@ -36,6 +36,7 @@ import { storedTrustTier } from '../trust/tier.ts';
 import { ensureWellFormed } from '../text-safe.ts';
 import { valueHash } from '../chronicle/ontology.ts';
 import { openedFactRowSql } from '../persistence/context.ts';
+import { PROFILE_METRIC_SQL_PATTERN } from '../profile/facets.ts';
 
 export type EmbeddingCast = '::vector' | '::halfvec';
 
@@ -741,6 +742,7 @@ export async function findTrajectory(exec: LegacyUnscopedRead, opts: import('../
         AND expired_at IS NULL
         ${remoteFilter ? visibilityClause(['world']) : sqlFragment``}${privacyClause(opts)}
         AND ${trustedSql(projectionEligibleSql('facts', 'facts', undefined))}
+        AND (claim_metric IS NULL OR claim_metric !~* ${PROFILE_METRIC_SQL_PATTERN})
         ${metric !== null ? sqlFragment`AND claim_metric = ${metric}` : sqlFragment``}
         ${kind === 'metric' ? sqlFragment`AND claim_metric IS NOT NULL` : sqlFragment``}
         ${kind === 'event' ? sqlFragment`AND event_type IS NOT NULL` : sqlFragment``}

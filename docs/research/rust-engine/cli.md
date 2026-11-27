@@ -1,16 +1,17 @@
 # CLI contract map
 
-Reference: gbrain `master` at `8bbfd0b5e8` (VERSION `0.60.733.0`). Every file:line below is in that commit. The agent-facing CLI contract the Rust port must keep is the command names, flags, `--json` output, stdout/stderr split and exit codes.
+Reference: gbrain `master` at `8bbfd0b5e8` (VERSION `0.60.733.0`), facts refreshed to master `116d737413` (2026-11-24, VERSION `0.60.769.0`). Line numbers on facts that did not change are at `8bbfd0b5e8`. New or changed facts cite `116d737413`. The agent-facing CLI contract the Rust port must keep is the command names, flags, `--json` output, stdout/stderr split and exit codes.
 
-The CI-enforced list of public names is `docs/contracts/public-surface.json` in gbrain: 220 `cli-command`, 613 `cli-flag`, 707 `exit-code`, 503 `config-key`. Flattened copies are in [data/](data/) (`cli-commands-and-flags.txt`, `exit-codes.txt`, `config-keys.txt`, `ops-summary.tsv`). Regenerate them with `bun docs/research/rust-engine/scripts/dump-contract-data.ts <gbrain-checkout> docs/research/rust-engine/data`.
+The CI-enforced list of public names is `docs/contracts/public-surface.json` in gbrain: 237 `cli-command`, 652 `cli-flag`, 773 `exit-code`, 527 `config-key`. Flattened copies are in [data/](data/) (`cli-commands-and-flags.txt`, `exit-codes.txt`, `config-keys.txt`, `ops-summary.tsv`). Regenerate them with `bun docs/research/rust-engine/scripts/dump-contract-data.ts <gbrain-checkout> docs/research/rust-engine/data`.
 
-How the 220 commands split:
+How the 237 commands split:
 
 | Kind | Where defined | Count | Covered in |
 |---|---|---|---|
-| Op-backed commands (generated from an operation's `cliHints`) | `src/core/ops/*.ts` -> `src/core/operation-manifest.generated.ts` | 85 visible names + 3 aliases (115 ops have a CLI name; 30 are hidden) | Part A |
-| CLI-only commands (command table) | `src/cli/command-table.ts` + `src/cli/commands/*.ts` (+ `src/commands/*.ts`) | 132 records | Part B |
-| Usage class (agent-core / occasional / admin / setup / dev / hidden) for all 220 | gbrain `skills/`, MCP instructions, gbrain-evals call sites | 220 rows | Part C |
+| Op-backed commands (generated from an operation's `cliHints`) | `src/core/ops/*.ts` -> `src/core/operation-manifest.generated.ts` | 86 visible names + 3 aliases (117 ops have a CLI name; 31 are hidden) | Part A |
+| CLI-only commands (command table) | `src/cli/command-table.ts` + `src/cli/commands/*.ts` (+ `src/commands/*.ts`) | 136 records | Part B |
+| Subcommand names listed in the public surface (no record of their own) | `gbrain skillpack doctor`, `gbrain skillpack health`, and every `gbrain skills index`, `library`, `pin`, `resolve` name, read from `SKILLPACK_SUBCOMMANDS` (`src/commands/skillpack.ts:121`) and `SKILLS_RESOLVER_CLI` (`src/commands/skill-resolver.ts:36`) by `scripts/build-public-surface.ts:58-63` | 12 names | Part B (section 2.7) |
+| Usage class (agent-core / occasional / admin / setup / dev / hidden) for all 237 | gbrain `skills/`, MCP instructions, gbrain-evals call sites | 237 rows | Part C |
 
 Nine names are both an op and a CLI-only command (`capture`, `advisor`, `sync`, `orphans`, `think`, `salience`, `anomalies`, `transcripts`, `whoknows`). At the top level the CLI-only command wins (`src/cli/main.ts:525`). Every op, hidden or not, is also reachable as `gbrain call <op> '<json>'`.
 
@@ -19,14 +20,14 @@ Evidence limits: the CLI was not executed. gbrain needs Bun >= 1.4.4 and the res
 Contents:
 
 - Part A. Op-backed commands and the shared CLI machinery: dispatch, argv parsing from `ParamDef`, global flags, agent contract v1 (`--json` documents, notices, error envelope), exit codes, the full op-command table, and detailed JSON examples for the agent-critical commands.
-- Part B. CLI-only commands: dispatch phases, thin-client modes, flag validation, help, the full 132-record table by category, detailed sections for `init`, `import`, `sync`, `export`, `embed`, `extract`, `serve`, `doctor`, `status`, `jobs`, `eval`, `config`, `sources`, `capture`, `dream`, `upgrade`, `frontmatter`, `agent`, and portability risks.
+- Part B. CLI-only commands: dispatch phases, thin-client modes, flag validation, help, the full 136-record table by category, detailed sections for `init`, `import`, `sync`, `export`, `embed`, `extract`, `serve`, `doctor`, `status`, `jobs`, `eval`, `config`, `sources`, `capture`, `dream`, `upgrade`, `frontmatter`, `agent`, and portability risks.
 - Part C. Which commands agents and evals use.
 
 # Part A. Op-backed commands and the shared CLI machinery
 
 Scope: the commands generated from operations (`cliHints.name` / aliases), plus the generic dispatch, argv parsing, output rendering, agent contract v1 and exit-code machinery they run on. CLI_ONLY command-table commands are out of scope here (other research part), except where they shadow an op name (section 0).
 
-Source: gbrain (`github.com/garrytan/gbrain`) at `8bbfd0b5e8`. Every file:line below was read in that checkout. Nothing in the repo was modified.
+Source: gbrain (`github.com/garrytan/gbrain`) at `8bbfd0b5e8`, with changed facts read at `116d737413`. Every file:line below was read in one of those checkouts. Nothing in the repo was modified.
 
 Evidence caveat: the CLI could not be executed on this host. `package.json` requires Bun `>=1.4.4` and `src/core/bun-floor.ts` refuses to run on the installed 1.3.14 (`GBrain requires Bun 1.4.4 or newer (found Bun 1.3.14)`). All JSON examples below come from tests, from code literals, or from read-only Bun scripts that imported the handler-free manifest and command table (`local scratch scripts, not committed`, outside the repo). No live `--json` capture was done.
 
@@ -36,20 +37,20 @@ Evidence caveat: the CLI could not be executed on this host. `package.json` requ
 
 | Item | Count / fact | Evidence |
 |---|---|---|
-| Operations in manifest | 204 | `operation-manifest.generated.ts`, ops-summary.tsv |
-| Ops with a CLI name (`cliHints.name`) | 115 | dumped via `OPERATION_MANIFEST` |
-| CLI name, visible (`cliOps` map) | 85 | `src/cli/op-manifest.ts:13-17` (hidden excluded) |
+| Operations in manifest | 206 | `operation-manifest.generated.ts`, ops-summary.tsv |
+| Ops with a CLI name (`cliHints.name`) | 117 | dumped via `OPERATION_MANIFEST` |
+| CLI name, visible (`cliOps` map) | 86 | `src/cli/op-manifest.ts:13-17` (hidden excluded) |
 | CLI alias entries (`cliAliases`) | 3: `link-add`->`add_link`, `link-rm`->`remove_link`, `get_links`->`get_links` | `buildCliAliases`, `src/cli/flag-validation.ts:22-43` |
-| Hidden ops with a CLI name | 30 | `cliHints.hidden` |
+| Hidden ops with a CLI name | 31 | `cliHints.hidden` |
 | Of those, also a CLI_ONLY table name (shadowed) | 9: `capture`, `advisor`, `sync`, `orphans`, `think`, `salience`, `anomalies`, `transcripts`, `whoknows` | CLI_ONLY wins: `src/cli/main.ts:525` runs before `runSharedOperation` (`main.ts:530`) |
-| Hidden, not shadowed, not an alias | 21 | top-level dispatch -> `unknown_command` (`main.ts:546`); reachable only via `gbrain call` (section 1.4) or a CLI_ONLY router (e.g. `purge-deleted` via `src/commands/pages.ts`) |
+| Hidden, not shadowed, not an alias | 22 | top-level dispatch -> `unknown_command` (`main.ts:546`); reachable only via `gbrain call` (section 1.4) or a CLI_ONLY router (e.g. `purge-deleted` via `src/commands/pages.ts`). `reveal-secret` (`src/core/ops/secrets.ts:65`) is one of them |
 | Ops with no CLI name at all | 89 | MCP-only; reachable via `gbrain call <op>` |
-| Op CLI rows flagged `mutating` | 41 of 115 | manifest `mutating` |
+| Op CLI rows flagged `mutating` | 41 of 117 | manifest `mutating` |
 | Op CLI rows flagged `localOnly` (thin client refuses) | 17 | `localOnly` (`main.ts:600-604`) |
 | Op CLI rows flagged `cliOnly` (not an MCP tool) | 15 | `cliOnly` in ops-summary.tsv |
 | Visible ops that the CLI lists by a different name than the op | e.g. `get`->`get_page`, `put`->`put_page`, `list`->`list_pages`, `tags`->`get_tags`, `links`->`get_links`, `backlinks`->`get_backlinks`, `timeline`->`get_timeline`, `stats`->`get_stats`, `find`->`find_pages`, `history`->`get_versions`, `link`->`add_link`, `unlink`->`remove_link`, `tag`->`add_tag`, `untag`->`remove_tag`, `delete`->`delete_page` | `cliHints.name` vs `op.name` |
 
-Exit-code registry: 707 codes; 658 of them exit 1 (section 5).
+Exit-code registry: 773 codes; 724 of them exit 1 (section 5).
 
 ---
 
@@ -163,14 +164,14 @@ Details in sections 2.5 and 3.
 
 #### 2.1 Shape
 
-Every op param is `op.params[name]` (`ParamDef`, `src/core/ops/contract.ts`). The CLI reads these fields from the manifest: `type` (string, number, integer, boolean, object, array), `required`, `enum`, `default`, `items`, `cliKeyValue`, `cliRange`, and `op.cliHints` (`name`, `positional[]`, `stdin`, `hidden`, `aliases`). A dump of the 115 CLI-backed ops is in section 4.
+Every op param is `op.params[name]` (`ParamDef`, `src/core/ops/contract.ts`). The CLI reads these fields from the manifest: `type` (string, number, integer, boolean, object, array), `required`, `enum`, `default`, `items`, `cliKeyValue`, `cliRange`, and `op.cliHints` (`name`, `positional[]`, `stdin`, `hidden`, `aliases`). A dump of the 117 CLI-backed ops is in section 4.
 
 #### 2.2 Tokens
 
 | Token | Rule | Lines |
 |---|---|---|
 | `--` | Ends options once. Later tokens are positionals even if they start with `--`. | `main.ts:1091` |
-| `--key=value` | Splits on the first `=`, key `-` -> `_`. `json` and `dry_run` are booleans (`json=false` parses false). Known param: typed value. | `:1093-1110` |
+| `--key=value` | Splits on the first `=`, and the key turns `-` into `_`. `json` and `dry_run` are booleans (`json=false` parses false). A known boolean param takes only `true` or `false` after `=`. Any other value is a usage error that names the flag (`opBooleanValue`, `src/cli/op-param-values.ts:39`), so `--purge=0` is refused and never read as on. Known non-boolean param: typed value. | `main.ts:1099-1115` |
 | `--no-<flag>` | If `<flag>` is a boolean param, sets it to `false`. | `:1114-1120` |
 | `--flag` (boolean) | Sets `true`. A following literal `true`/`false` is consumed as its value (#4602). Any other next token stays positional. | `:1122-1133` |
 | `--json`, `--dry-run` | CLI-local booleans, same literal rule (`:1134-1143`). Not on the wire. | `:1134-1143` |
@@ -335,7 +336,7 @@ Revision conflict (`test/pending-write-exit.serial.test.ts:207`): `write_error:'
 
 ### 4. Every op-backed CLI command
 
-Generated from the 115 ops that have `cliHints.name`, using the manifest (`OPERATION_MANIFEST`), the alias map, and the handler scan. Grouped by the inventory `area`.
+Generated from the 117 ops that have `cliHints.name`, using the manifest (`OPERATION_MANIFEST`), the alias map, and the handler scan. Grouped by the inventory `area`.
 
 How to read the columns:
 
@@ -488,6 +489,12 @@ Notes on the table:
 | `connectors_status` **[hidden]** [cliOnly] [localOnly] | `connectors_status` | - | --provider | no | read | ops/connectors.ts:29 | getConfig | Per-provider chat-connector status: strategies, whether a credential is present and from where  |
 | `connector_sync` **[hidden]** [cliOnly] [localOnly] | `connector_sync` | - | --provider* --full --dry-run --limit | yes | write | ops/connectors.ts:77 | runConnectorSync | Sync a chat provider's conversation history into the brain: list new conversations since the wa |
 
+##### Area: secrets (1 CLI ops)
+
+| CLI name (aliases) | Operation | Positional | Key flags (`*` required) | Mut | Scope | Handler | Engine / core calls | Returns (op description, cut) |
+|---|---|---|---|---|---|---|---|---|
+| `reveal-secret` **[hidden]** | `reveal_secret` | - | --id* | no | read | ops/secrets.ts:65 | entryRow, occurrencesOf, reveal | Return the original value behind a <REDACTED:rule:ss_...> marker. Needs a token whose operation |
+
 ##### Area: takes (5 CLI ops)
 
 | CLI name (aliases) | Operation | Positional | Key flags (`*` required) | Mut | Scope | Handler | Engine / core calls | Returns (op description, cut) |
@@ -514,7 +521,7 @@ Notes on the table:
 | `sources_status` **[hidden]** | `sources_status` | - | --id* | no | read | ops/sources.ts:304 | getSourceStatus, readCompanyBrainSourceStatus, readAppliedWatermark | Per-source diagnostic. Returns clone_state ("healthy" / "missing" / "not-a-dir" / "no-git" / "u |
 | `sources_resolve_path` **[hidden]** | `sources_resolve_path` | - | --id* --paths* | no | read | ops/sources.ts:365 | resolveSourcePaths, readPolicyOpts | Read-only: what gbrain did with each file path of a source, by its own rules. Per path: the slu |
 
-##### Area: insights (7 CLI ops)
+##### Area: insights (8 CLI ops)
 
 | CLI name (aliases) | Operation | Positional | Key flags (`*` required) | Mut | Scope | Handler | Engine / core calls | Returns (op description, cut) |
 |---|---|---|---|---|---|---|---|---|
@@ -525,6 +532,7 @@ Notes on the table:
 | `find-contradictions` | `find_contradictions` | - | --slug --severity{enum} --limit --min-trust{enum} | no | read | ops/insights.ts:215 | loadContradictionsTrend | Return suspected-contradiction findings from the most recent `gbrain eval suspected-contradicti |
 | `whoknows` **[hidden]** | `find_experts` | <topic> | --limit --explain --source-ids | no | read | ops/insights.ts:151 | loadActivePackBestEffort, readPolicyOpts, findExperts | Answers 'who in my brain knows about <topic>'. Returns ranked person/company pages by expertise |
 | `find-trajectory` | `find_trajectory` | - | --entity-slug --metric --kind{enum} --since --until --limit | no | read | ops/insights.ts:301 | findTrajectory | Return the chronological claim trajectory for an entity (typed metric values over time, plus au |
+| `learned` | `learned` | - | --since --limit --stats | no | read | ops/learned.ts:16 | learningTablePresent, learnedStats, readLearned | What the brain learned since you last looked. New facts its extractors saved, facts that disagr |
 
 ##### Area: chronicle (6 CLI ops)
 
@@ -598,12 +606,12 @@ Notes on the table:
 - Verdict and single exit: `setCliExitVerdict` (`src/core/cli-force-exit.ts:236`) stores the verdict and mirrors `process.exitCode`. `runCli` (`src/cli/main.ts:2857`) exits once with `flushThenExit(currentExitCode())` after `main()` resolves. A fatal rejection goes to `exitOnFatalCliError` (`main.ts:2872`), then `writeFatalCliError` (`src/cli/cli-error.ts:159`), which defaults to exit 1.
 - Under `--json` the envelope's `exit_code` is not included on op paths. Only the fallback document (guarded commands) carries `exit_code` (`agent-output.ts:942-951`).
 
-#### 5.2 Distinct exit values (from `exit-codes.txt`, 707 codes)
+#### 5.2 Distinct exit values (from `exit-codes.txt`, 773 codes)
 
 | Exit | Codes (count) | Meaning (docs/guides/exit-codes.md) | Representative codes |
 |---|---|---|---|
 | 0 | 3 | ok; or a "nothing ran" success | `maintenance_disabled`, `maintenance_owned_by_serve`, `maintenance_owned_by_autopilot` |
-| 1 | 658 | failed; error envelope, follow `fix.next`, retry only if `retryable` | `not_found`, `page_not_found`, `revision_conflict`, `internal_error`, `database_error`, `command_failed` (no explicit exit: default 1) |
+| 1 | 724 | failed; error envelope, follow `fix.next`, retry only if `retryable` | `not_found`, `page_not_found`, `revision_conflict`, `internal_error`, `database_error`, `command_failed` (no explicit exit: default 1) |
 | 2 | 14 | usage error or invalid input | `invalid_params`, `unknown_flag`, `unknown_command`, `skill_source_invalid`, `setup_harness_unsupported` |
 | 3 | 12 | `confirmation_required`: nothing ran, consent payload | `confirmation_required`, `migration_declined`, `enforced_member_refused`, `restart_refused`, `forget_requires_owner` |
 | 4 | 1 | push not confirmed | `push_unconfirmed` |
@@ -620,7 +628,7 @@ Notes on the table:
 | 124 | 1 (+ literal) | the command's deadline elapsed | `timeout` |
 | 130 | 1 (+ literal) | interrupted (SIGINT) | `interrupted` |
 
-Counts sum to 707 (3+658+14+12+1+1+4+4+1+1+1+1+1+1+2+1+1). Tally from `docs/research/rust-engine/data/exit-codes.txt`.
+Counts sum to 773 (3+724+14+12+1+1+4+4+1+1+1+1+1+1+2+1+1). Tally from `docs/research/rust-engine/data/exit-codes.txt`.
 
 Exit 15 is listed in `docs/guides/exit-codes.md` and `docs/protocol/AGENT_OPERATOR_v1.md` for `get --as-of` with no edition in force. No registry entry has `exit: 15`, and grep finds no `exit(15)` or `Verdict(15)` emitter in `src/`. Treat it as **doc-only** until a runtime path is found (open question 7.6).
 
@@ -871,11 +879,11 @@ Each entry says where the shape comes from: **[test]** a file that asserts it, *
 # Part B. CLI-only commands
 
 Source: gbrain (`github.com/garrytan/gbrain`) at master `8bbfd0b5e8`, VERSION `0.60.733.0`. Read-only research; nothing in the gbrain repo was modified.
-Scope: every `CLI_ONLY` command (the 132 records in `src/cli/command-table.ts`, which includes `capture`, `forget`, `call`), plus the pre-table fast paths in `src/cli.ts` (`--version`, `version`, bare `gbrain`, `--help`/`-h`, and the skill-resolver hook lane).
+Scope: every `CLI_ONLY` command (the 136 records in `src/cli/command-table.ts`, which includes `capture`, `forget`, `call`), plus the pre-table fast paths in `src/cli.ts` (`--version`, `version`, bare `gbrain`, `--help`/`-h`, and the skill-resolver hook lane).
 
-Verification note: `/usr/bin/bun` is 1.3.14 and gbrain requires `>=1.4.4` (`package.json` `engines`). The CLI refuses to run any command except `--version` on this machine, so `--help` text here was read from source (`src/cli/help/*.ts`, `src/commands/*.ts`), not captured by running the binary. Counts and membership were checked by importing `src/cli/command-table.ts` directly and comparing with `test/fixtures/goldens/cli/membership-sets.json` (CLI_ONLY 132, CLI_ONLY_SELF_HELP 105, SELF_HELP_WITHOUT_ENGINE 45, STARTUP_HOOK_SKIP_COMMANDS 9, THIN_CLIENT_REFUSED_COMMANDS 47). Those counts match exactly.
+Verification note: `/usr/bin/bun` is 1.3.14 and gbrain requires `>=1.4.4` (`package.json` `engines`). The CLI refuses to run any command except `--version` on this machine, so `--help` text here was read from source (`src/cli/help/*.ts`, `src/commands/*.ts`), not captured by running the binary. Counts and membership were checked by importing `src/cli/command-table.ts` directly and comparing with `test/fixtures/goldens/cli/membership-sets.json` (CLI_ONLY 136, CLI_ONLY_SELF_HELP 109, SELF_HELP_WITHOUT_ENGINE 48, STARTUP_HOOK_SKIP_COMMANDS 9, THIN_CLIENT_REFUSED_COMMANDS 51). Those counts match exactly at `116d737413`.
 
-Phase counts (from the table): `pre-connect` 46, `pre-connect-own-engine` 9, deferred-persistence 3 (`capture`, `forget`, `call`), `post-connect` 74. Thin-client modes: `none` 82, `refuse` 43, `route-then-refuse` 7. `--json` declared on the record: `document` 15, `ndjson` 1 (`bench`), plus per-subcommand ndjson on `eval` (export, replay, gate).
+Phase counts (from the table): `pre-connect` 46, `pre-connect-own-engine` 10, deferred-persistence 3 (`capture`, `forget`, `call`), `post-connect` 77. Thin-client modes: `none` 82, `refuse` 47, `route-then-refuse` 7. `--json` declared on the record: `document` 15, `ndjson` 1 (`bench`), plus per-subcommand ndjson on `eval` (export, replay, gate).
 
 Items that are dual-lane (CLI_ONLY and also an operation, so an MCP op exists): `capture`, `forget`, `sync`, `orphans`, `salience`, `anomalies`, `advisor`, `whoknows`, `transcripts`, `think`, `recall` (golden `membership-sets.json`, `cliOnlyNameAlsoAnOp`). Those dispatch to the CLI handler, not the op lane.
 
@@ -889,7 +897,7 @@ Items that are dual-lane (CLI_ONLY and also an operation, so an MCP op exists): 
 |---|---|---|
 | Bun gate | `src/cli.ts:68` calls `exitOnUnsupportedBun` (`src/core/runtime-version.ts:64`) | Refuses every command with exit 1 when Bun is below the floor. Only `--version` and `version` print the version and exit 0 on an unsupported Bun. |
 | Fast-path classifier | `src/cli.ts:27` `cliFastPath(argv, env)` | Parses global flags, then returns `'help'` for no command or `--help`/`-h`; `'version'` for `--version`/`version`; `'skill-resolver-lane'` for `hook user-prompt` or `hook session-start` when `GBRAIN_HOOK_LANE=skill-resolver`, `GBRAIN_ENFORCED_MEMBER` is unset, and no `--help` is present. |
-| Fast-path runner | `src/cli.ts:60` `runFastPath` | Runs `runCliPreflight()` then prints the top help (`src/cli/top-help.ts:8`) or `gbrain <VERSION>`. The skill-resolver lane runs `runSkillResolverLaneFastPath` (`src/cli.ts:42`) and never loads `src/cli/main.ts`. |
+| Fast-path runner | `src/cli.ts:60` `runFastPath` | Runs `runCliPreflight()` then prints the top help (`src/cli/top-help.ts:8`) or `gbrain <VERSION>`. The skill-resolver lane runs `runSkillResolverLaneFastPath` (`src/cli.ts:42`) and never loads `src/cli/main.ts`. Its worker starts for both `user-prompt` and `session-start` unless `GBRAIN_HOOKS=0` (`src/cli.ts:51`). |
 | Full path | `src/cli.ts:67-88` | Installs cleanup signal handlers and stdout pipe delivery, then `import('./cli/main.ts').then(m => m.runCli())`. |
 
 The fast paths load no operation or command module, so `--version` stays cheap. The table comment (`command-table.ts:22-25`) says each `load` is a string-literal dynamic import so `bun build --compile` bundles everything while `--version` loads none of them.
@@ -904,14 +912,14 @@ Kill switch for the hook lane: `GBRAIN_HOOKS=0` (`src/cli.ts:44-46`).
 - Derived sets: `CLI_ONLY` (`:459`), `CLI_ONLY_SELF_HELP` (`:466`), `THIN_CLIENT_REFUSED_COMMANDS` (`:483`, excludes `cache`, `quarantine`, `jobs`), `STARTUP_HOOK_SKIP_COMMANDS` (`:492`).
 - `findCliCommand` (`:454`) is the lookup the dispatcher uses.
 
-Records with `selfHelp` are excluded from the generic one-line help stub (105 records). The 27 CLI_ONLY records without `selfHelp` are: `publish`, `check-backlinks`, `lint`, `report`, `apply-migrations`, `repair-jsonb`, `doctor`, `smoke-test`, `call`, `import`, `files`, `serve`, `autopilot`, `reconcile-links`, `diag`, `status`, `calibration`, `onboard`, `notability-eval`, `code-def`, `code-refs`, `reindex-code`, `reindex-search-vector`, `reindex-frontmatter`, `code-callers`, `code-callees`, `repos`. Eight of them have a lazy curated help module (`apply-migrations`, `doctor`, `import`, `serve`, `autopilot`, `diag`, `status`, `onboard`), which `main()` prints first (`main.ts:384-386`). The other 19 get the generic stub `printCliOnlyHelp` (`main.ts:396-400`) unless the handler prints its own help (not checked per command).
+Records with `selfHelp` are excluded from the generic one-line help stub (109 records). The 27 CLI_ONLY records without `selfHelp` are: `publish`, `check-backlinks`, `lint`, `report`, `apply-migrations`, `repair-jsonb`, `doctor`, `smoke-test`, `call`, `import`, `files`, `serve`, `autopilot`, `reconcile-links`, `diag`, `status`, `calibration`, `onboard`, `notability-eval`, `code-def`, `code-refs`, `reindex-code`, `reindex-search-vector`, `reindex-frontmatter`, `code-callers`, `code-callees`, `repos`. Eight of them have a lazy curated help module (`apply-migrations`, `doctor`, `import`, `serve`, `autopilot`, `diag`, `status`, `onboard`), which `main()` prints first (`main.ts:384-386`). The other 19 get the generic stub `printCliOnlyHelp` (`main.ts:396-400`) unless the handler prints its own help (not checked per command).
 
 #### 1.3 Dispatch pipeline (`handleCliOnly`, `src/cli/main.ts:1881`)
 
 `main()` (`src/cli/main.ts:289`) runs first: preflight (`runCliPreflight`), global flags (`parseGlobalFlags`, `setCliOptions`), help and version (`:305`, `:310`), enforced-member gate (`:316` onward), `--tools-json`, and `helpRequested` (`:332`, `cliHelpRequested`). Then the update marker and backup nag run for non-help invocations (`maybeEmitUpdateMarker`, `:196`). Command aliasing and routing come next (`ask` maps to `query`, `routeCommand` for `search --exact`). Help handling is at `:384-398`. After that:
 
 - `cliOnlyFlagArgs` (`:403`, `src/cli/main.ts:1301`) splits `--flag=value` tokens for CLI-only commands (`src/cli/flag-equals.ts`).
-- `printSelfHelpWithoutEngine` (`:406`, table at `:131`) answers help for 45 records before any engine work.
+- `printSelfHelpWithoutEngine` (`:406`, table at `:131`) answers help for 48 records before any engine work.
 - `strictArgsRefusal` (`:416`, `src/cli/strict-args.ts:151`) refuses unknown tokens for destructive subcommands (exit 2).
 - Unknown-flag validation (`:491-502`) and curated-flag validation (`src/cli/help/validate.ts:33`).
 - `if (CLI_ONLY.has(command))` (`:525`) then `handleCliOnly` under the slow-read heartbeat. Anything else goes to `runSharedOperation` (`:542`), where an unknown command gets `unknown_command` exit 2 (`:546`).
@@ -929,7 +937,7 @@ Records with `selfHelp` are excluded from the generic one-line help stub (105 re
 | 6 | `connectCliOnlyEngine` (`:2498`) | `connectEngine({ probeOnly, oneShotRead })` (`:2525`). `probeOnly` is set for `startup: 'observational'` records (`embed`, `trust`) and `jobs supervisor status`. `serve` degraded mode on Postgres only (`GBRAIN_SERVE_DEGRADED=0` disables). Other failures throw. |
 | 7 | `dispatchConnectedCommand` (`:1857`) inside `configSnapshot.run`, then `finishCliTeardown` (never for `serve`, `:1905-1906`) | Calls `record.load().run(engine, args, ctx)` for `post-connect` records. |
 
-Pre-connect-own-engine records (9 table records plus the 3 deferred ones) are in stage 2. The module opens its own engine through `ctx.connectEngine` (`CliDispatchContext`, `command-table.ts:~50-60`). They skip stage 6 and the dispatcher's teardown.
+Pre-connect-own-engine records (10 table records plus the 3 deferred ones) are in stage 2. The module opens its own engine through `ctx.connectEngine` (`CliDispatchContext`, `command-table.ts:~50-60`). They skip stage 6 and the dispatcher's teardown.
 
 `connectEngine` (`:2705`) and `completeEngineStartup` (`:2743`) are the shared connect path. `completeEngineStartup` runs migrations and config merge for observational commands once consent is granted (`CliDispatchContext.completeStartup`).
 
@@ -947,7 +955,7 @@ A thin client is an install with `remote_mcp` set in config; it routes operation
 
 Routed subcommands seen in the source (`src/commands/thin-client-routing.ts`, matched by case label and MCP op name): `cache stats`, `takes` list/search/add/update/supersede/resolve/scorecard/calibration, `jobs stats` (`get_job_stats`), `quarantine list`, `search modes/stats/tune`. `jobs list`, `jobs get`, `jobs wait` are engine-free thin routes in the dispatcher (`main.ts:~2440`, prepareConnectedDispatch). `sources` has no thin route in `thin-client-routing.ts`: its records are refused unless the dispatcher handles them first (`sources pull --path` is DB-free on any install; its branch sits just before the `CLI_ONLY` dispatch in `main()`).
 
-Thin-refused set (47): `access, advisor, apply-migrations, beliefs, call, code-callees, code-callers, code-def, code-refs, compile-context, config, decide, diag, dream, edge-proposals, embed, embeddings, enrich, eval, export, extract, extract-conversation-facts, facts, feedback, files, guests, integrity, memory-proposals, migrate, orphans, pages, pricing, projections, questions, repair, repair-jsonb, retrieval-upgrade, serve, sources, storage, sweep, sync, takes, transcripts, trust, wakeshift, watch`. The `route-then-refuse` records among them (`beliefs`, `sources`, `takes`, `wakeshift`) answer their routed subcommands first and refuse the rest. `cache`, `quarantine` and `jobs` are route-then-refuse but are not in the set; they run their own route-or-refuse branch.
+Thin-refused set (51): `access, advisor, apple-contacts, apply-migrations, beliefs, call, code-callees, code-callers, code-def, code-refs, compile-context, config, decide, dedupe, diag, dream, edge-proposals, embed, embeddings, enrich, eval, export, extract, extract-conversation-facts, facts, feedback, files, guests, identity, integrity, memory-proposals, migrate, orphans, pages, pricing, projections, questions, repair, repair-jsonb, retrieval-upgrade, secrets, serve, sources, storage, sweep, sync, takes, transcripts, trust, wakeshift, watch`. The `route-then-refuse` records among them (`beliefs`, `sources`, `takes`, `wakeshift`) answer their routed subcommands first and refuse the rest. `cache`, `quarantine` and `jobs` are route-then-refuse but are not in the set; they run their own route-or-refuse branch.
 
 Refused by `bootstrap` and `hook` by design: they must never enter the refused set (ENG-2 comment, `command-table.ts:201-205`).
 
@@ -966,7 +974,7 @@ Refused by `bootstrap` and `hook` by design: they must never enter the refused s
 - Exempt from validation (`flag-validation.ts:70-75`): `call` (arbitrary `--param`), `config` (arbitrary `set` values), `jobs submit` (payload params), `eval brainbench` (own exit-code contract 0/1/2).
 - Op-backed commands use `findUnknownOpFlag` (`src/cli/flag-validation.ts`) against the op's params.
 - Unknown flag: `unknown flag <flag> for 'gbrain <command>'`, exit 2, code `unknown_flag` (`main.ts:491-502`, `src/cli/cli-error.ts:137`). Did-you-mean from the curated help flags, else the registry. `--json` gets one envelope whose legacy keys are `{status:'error', reason:'invalid_flag', message}` (`main.ts:502`).
-- `--` ends options; tokens after it are never flags (`findUnknownFlag`, `src/cli/flag-equals.ts:347`).
+- `--` ends options; tokens after it are never flags (`findUnknownFlag`, `src/cli/flag-equals.ts:199`).
 - Curated help typed flags (number, enum) are checked against their values before dispatch (`src/cli/help/validate.ts:33-47`), error with `flagValueError`.
 - Strict subcommands (`src/cli/strict-args.ts:41`): destructive subcommands declare the exact flags they consume and refuse any other token with exit 2 (`strictArgsRefusal`, `main.ts:416`). Example: `pages purge-deleted` accepts `--dry-run --json --yes --retry-parked --older-than`; `--source` is refused with a reason.
 
@@ -976,7 +984,7 @@ Refused by `bootstrap` and `hook` by design: they must never enter the refused s
 - Grammar (`src/cli/subcommands.ts:1-17`, `helpFlagRequested` and `subcommandHelpRequested`): `--help`/`-h` anywhere before `--` asks for help, including in a flag-value slot. A bare `help` is help only as the first token for router commands with `bareHelpFirst` (`pages help`), or after a subcommand (`pages purge-deleted help`). Help never runs the command.
 - Routers (`ROUTERS`, `subcommands.ts:49`, 13 entries): `pages`, `cache`, `integrity`, `hook`, `search`, `edge-proposals`, `memory-proposals`, `schema`, `config`, `quarantine`, `core`, `loops`, `guests`. `printRouterHelp` (`src/cli/router-help.ts:35`) prints the router's usage (`ROUTER_MODULES` lazy loader).
 - Curated help (lazy `help:` on the record, `src/cli/help/*.ts`): `apply-migrations`, `autopilot`, `diag`, `doctor`, `import`, `onboard`, `serve`, `status`. `printCuratedHelp` (`src/cli/help/render.ts:50`). Under `--json`, curated help prints one JSON document: `{command, ...spec, contract_version}` (`render.ts:53`).
-- Self-help: 105 records print their own usage (`selfHelp`), reached through the dispatcher (help branch `main.ts:384-398`). 45 of them answer help without a brain (`SELF_HELP_WITHOUT_ENGINE`, `main.ts:131`, pinned by `test/cli-help-without-brain.test.ts`).
+- Self-help: 109 records print their own usage (`selfHelp`), reached through the dispatcher (help branch `main.ts:384-398`). 48 of them answer help without a brain (`SELF_HELP_WITHOUT_ENGINE`, `main.ts:131`, pinned by `test/cli-help-without-brain.test.ts`).
 - Generic stub: a CLI_ONLY record with no `selfHelp` and no curated help prints `Usage: gbrain <cmd>` plus "run gbrain --help for the full command list" (`printCliOnlyHelp`, `main.ts:789`). This stub is what the `selfHelp` flag was added to avoid.
 - Help-gate test: `test/cli-help-no-side-effects*.serial.test.ts` runs every listed subcommand's help (`src/cli/subcommands.ts` header).
 
@@ -984,9 +992,9 @@ Refused by `bootstrap` and `hook` by design: they must never enter the refused s
 
 - Guard: `agentJsonGuardMode(argv)` (`src/cli/json-guard.ts:16`). It returns a mode only when the record declares `json` (or `jsonSubcommands[<first positional>]`) and `--json` is present (`jsonRequested`, `src/core/cli-force-exit.ts:914`). Otherwise no guard, and stdout is whatever the handler prints.
 - Document mode: one JSON document on stdout via `writeJsonDocument` (`src/core/cli-force-exit.ts:928`). NDJSON mode: `writeNdjsonLine` (one line per record, used by `eval export`, `eval replay`, `eval gate`, `bench`).
-- Missing-document safety (E11): in document mode, an exit-0 run that wrote no document records `json_document_missing` (`json-guard.ts:24-30`).
+- Missing-document safety (E11): in document mode, an exit-0 run that wrote no document records `json_document_missing` (`json-guard.ts:24-30`). No fallback document is written when a sanitized re-run already wrote the command's own `--json` document to the shared stdout (`jsonDocumentDelegated`, `src/core/cli-force-exit.ts:848`).
 - Error envelope: `renderCliError` (`src/core/agent-output.ts:868`) prints `AgentEnvelope` (`agent-output.ts:99`) as JSON under `--json`: `error`, `code`, `reason?`, `message`, `suggestion`, `why?`, `fix?`, `docs?`, `docs_cmd[]`, `class`, `retryable`, `notices?`, `contract_version: 1`, plus optional `detail`, `write_request`, `fence`, etc. On a TTY, stderr gets `Error [code]: msg`, `Fix:`, `Why:`, `Docs:`.
-- Exit code for an error is `exitCodeForCode(env.code, env.reason)` from `src/core/error-catalogue.ts`. The full mapping is in `docs/research/rust-engine/data/exit-codes.txt` (707 lines). Most codes are 1; `invalid_params` and `unknown_flag` and `unknown_command` are 2; `confirmation_required` is 3; `timeout` is 124; `graduation_in_progress` and `migrations_running` are 75; `serve_unhealthy_exit` is 69.
+- Exit code for an error is `exitCodeForCode(env.code, env.reason)` from `src/core/error-catalogue.ts`. The full mapping is in `docs/research/rust-engine/data/exit-codes.txt` (773 lines). Most codes are 1; `invalid_params` and `unknown_flag` and `unknown_command` are 2; `confirmation_required` is 3; `timeout` is 124; `graduation_in_progress` and `migrations_running` are 75; `serve_unhealthy_exit` is 69.
 - Declared-but-not-used: `jobs`, `status`, `config`, `frontmatter`, `backup`, `bootstrap`, `connect`, `export`, `files`, `call`, `autopilot`, `sources`, `takes`, `watch`, `storage` have no `json` on their record even though several print JSON (see section 4.3).
 
 #### 1.9 Exit codes (constants)
@@ -1015,7 +1023,7 @@ Refused by `bootstrap` and `hook` by design: they must never enter the refused s
 
 ---
 
-### 2. CLI-only command table (132 records)
+### 2. CLI-only command table (136 records)
 
 Column key. Thin: `none`, `refuse`, `route` (route-then-refuse). `--json`: the record's declared contract (`document`, `ndjson`, or `—` for none; `—` does not mean the command prints no JSON, see section 4.3). Attributes: `SH` selfHelp, `HELP` curated help module, `SKIP` skipStartupHooks, `RO` read_only, `OBS` startup observational, `SLOW` slowRead heartbeat, `RS` routes_source (`--source-id` where noted), `EOO` end_of_options, `DEF` deferred-persistence. Phase: `pre` pre-connect, `own` pre-connect-own-engine, `post` post-connect.
 
@@ -1026,7 +1034,7 @@ Subcommands come from the module's switch cases, the `ROUTERS` inventory (`src/c
 | Command | Phase | Thin | `--json` | Attributes | Subcommands / key flags / notes |
 |---|---|---|---|---|---|
 | `init` | pre | none | document | SH | No subcommands. Flags: `--pglite`, `--supabase`, `--url`, `--prefer-postgres`, `--allow-docker`, `--no-embedding`, `--embedding-model`, `--embedding-dimensions`, `--migrate-only`, `--mcp-only`, `--issuer-url`, `--mcp-url`, `--oauth-client-id/-secret`, `--force`, `--json`, `--non-interactive`, `--schema-pack`, `--surface`, `--content-root`, `--git`/`--no-git`. Section 3.1. |
-| `setup` | pre | none | document | SH | Harness orchestrator. Harnesses: `claude-code`, `codex`, plus others named in help (`pi`, `cursor`). Flags: `--dry-run`, `--remove`, `--json`, `--instructions-only`, `--surface`, `--stdio-member`, `--pglite`, `--no-embedding`, `--yes`, `--skill-loading`. Source: `src/commands/setup.ts:133-134`. |
+| `setup` | pre | none | document | SH | Harness orchestrator. Harnesses: `claude-code`, `codex`, plus others named in help (`pi`, `cursor`). Flags: `--dry-run`, `--remove`, `--json`, `--instructions-only`, `--surface`, `--stdio-member`, `--pglite`, `--no-embedding`, `--yes`, `--skill-loading`. `hermes` registers its MCP server through `hermes mcp add` before it writes the rule and hook (`src/commands/setup.ts:137`). `--open-history` and `--owner <id>` apply only with `--serves several` (`setup.ts:370-376`). Source: `src/commands/setup.ts:133-134`. |
 | `connect` | pre | none | — | SH | `claude-code`, `codex`, `opencode`, `perplexity`, `generic`. Flags: `--token`, `--client-id`, `--client-secret`, `--oauth`, `--register`, `--install`, `--instructions-only`, `--force`, `--json`. |
 | `bootstrap` | pre | none | — | SH | Subcommands: `attach`, `claude-code`, `codex`, `opencode`, `status`, `interview`, `render`, `contract`, `repo`, `hooks`, `verify` (only one that needs the engine; manages its own connection), `harness`, `uninstall`. Flags include `--harness`, `--dry-run`, `--no-hooks`, `--gbrain-bin`, `--delete-brain --confirm` (uninstall). Shells out to `crontab` and `Bun.spawn`. |
 | `remote` | pre | none | — | SH | Thin-client remote config (MCP URL and token). |
@@ -1037,7 +1045,7 @@ Subcommands come from the module's switch cases, the `ROUTERS` inventory (`src/c
 | `resolvers` | pre | none | — | SH | Skill resolver management (no sub labels found). |
 | `mounts` | pre | none | — | SH | `add`, `list`/`ls`, `remove`/`rm`, `enable`, `disable`, `trust-frontmatter`, `untrust-frontmatter`. Multi-brain mounts (`--brain` target). |
 | `notices` | pre | none | — | SH | Lists agent notices. |
-| `engine` | pre | none | — | SH | `engine status [--json] [--probe]`: which engine and URL source, engine-free (golden help line in `help-and-errors.json`). Source: `src/cli/commands/engine.ts`, `src/commands/engine-status.ts`. |
+| `engine` | pre | none | — | SH | `engine status [--json] [--probe]`: which engine and URL source, engine-free (golden help line in `help-and-errors.json`). `--probe` also prints `brain_ref`, a one-way reference to the brain (`src/commands/engine-status.ts:93`, `:110`). `engine shadow` takes `start`, `status`, `stop`, `report`, `seed`, `reconcile` (`src/commands/engine-shadow.ts:186-209`). `engine swap --to rust --plan` previews moving the brain to the Rust engine and writes nothing (`src/commands/engine-swap.ts:44`, dispatch at `src/cli/commands/engine.ts:12-26`). Source: `src/cli/commands/engine.ts`, `src/commands/engine-status.ts`. |
 | `embeddings` | pre | refuse | — | SH | `enable --embedding-model <p:model>` (opens the selected brain itself, `--brain`), `prewarm`. Thin refusal hint: changes brain host config. |
 | `reinit-pglite` | pre | none | — | SH | Wipe-and-reinit PGLite at a new vector width. Flags: `--path`, `--pglite`, `--embedding-dimensions`, `--embedding-model`, `--no-sync`, `--yes`, `--json`. Moves the datastore to `<path>.bak`. DB-only pages and `remember` facts are not carried over (`src/cli/commands/reinit-pglite.ts` header). |
 | `pglite-repair` | pre | none | — | SH | Diagnose and repair a torn-WAL PGLite data dir. Flags: `--dry-run` (read-only), `--yes`, `--expect`, `--legacy-lock`, `--path`, `--json`. Never connects an engine (`src/cli/commands/pglite-repair.ts` / `src/commands/pglite-repair.ts` header). |
@@ -1082,7 +1090,9 @@ Subcommands come from the module's switch cases, the `ROUTERS` inventory (`src/c
 | `status` | post | none | — (record) | HELP, SLOW | Brain status snapshot. Section 3.9. |
 | `diag` | post | refuse | document | HELP, RO, SLOW | Diagnostic bundle. Flags: `--json`, `--budget-ms` (default 30000), `--query`. Every section has `elapsed_ms` and `status` (`ok`, `not_read`, `not_applicable`, `error`). |
 | `orphans` | post | refuse | — | SH, SLOW | Orphan page report. |
+| `dedupe` | post | refuse | — | SH, SLOW | Likely-duplicate person and company pages with evidence and a class (`clean`, `likely`, `weak`, `thin`, `conflict`). `--preview` is read-only. Also `confirm`, `reject`, `reconcile`, `link-contacts`, `classes`, `sample` (help in `src/commands/dedupe.ts:36-100`, record at `command-table.ts:353`). |
 | `repair` | post | refuse | — | SH | Repair kinds with dry-run/apply contract (`REPAIR_HELP`). Thin refusal: repairs publish coordinated writes. |
+| `secrets` | post | refuse | — | SH | `list`, `reveal <id>`, `restore <id>` (`--apply --expect <hash>`), `key status\|export\|import`, `backup` (`--restore <object>`). The secret store keeps the originals that redaction replaced with `<REDACTED:rule:ss_...>` markers, encrypted with a key kept on the host (help in `src/commands/secrets.ts:20-34`, record at `command-table.ts:345`). Trusted local CLI only. The MCP twin is the hidden `reveal_secret` op (section 4). |
 | `repair-jsonb` | pre | refuse | — | — | JSONB repair (Postgres). No help record. |
 | `integrity` | pre | refuse | — | SH | `check`, `auto`, `review`, `reset-progress`. |
 | `maintain` | post | none | — | SH | Maintenance modes (`--schedule`, `--unschedule` are engine-free, GBRA-438). Usage block in `commands/maintain.ts`. |
@@ -1166,15 +1176,16 @@ Subcommands come from the module's switch cases, the `ROUTERS` inventory (`src/c
 | `access` | post | refuse | — | SH | Per-member read access (GBRA-218). Subcommands: `add`, `kind`, `labelled-only`, `disable`, `enable`, `set`, `rm`, `list`, `link`, `unlink`, `links`, `source`, `remove`, `show`, `clear`, `reads-restricted`, `member`, `owner`, `members-read-lineage`, `serves`, `group`, `who-can-read`, `check`. Usage prints before the engine (SELF_HELP_WITHOUT_ENGINE). |
 | `guests` | post | refuse | — | SH | Guest source set-up: `init`, `promote`, `grant-owner-clients`. Trusted local CLI only (GBRA-504). |
 | `connectors` | post | none | — | SH | `providers`, `auth`, `status`, `sync`, `logout`. Usage in `commands/connectors/index.ts`. |
+| `apple-contacts` | post | refuse | — | SH | `write <verb>` (adds `fill`, `add-value`, `create`, `group-add`. Changes `set`, `remove-value`, `group-remove`, `delete`, `merge`), `status`, `enrich status\|dry-run`. Writes Apple Contacts through GBrain Helper. Every write needs the `apple_contacts.write` config key on, and the change verbs also need `apple_contacts.destructive_writes` (both off by default). Refused on a thin client because the owner signing key lives on the brain host (help in `src/commands/apple-contacts.ts:29-50`, record at `command-table.ts:418`). |
 
 #### 2.7 Skills
 
 | Command | Phase | Thin | `--json` | Attributes | Subcommands / key flags / notes |
 |---|---|---|---|---|---|
-| `bundled-skill` | pre | none | document | SH, RO, SKIP | Bundled skill inspection (read-only). |
-| `skill-resolver` | pre | none | — | SH, SKIP | `skills index`, `skills resolve` (GBRA-377). Engine-free on every install shape. Hook lane shares the module (`src/core/skills/resolver/*`). |
+| `bundled-skill` | pre | none | document | SH, RO, SKIP | Bundled skill inspection (read-only). `--json` with no name also gives `skills_root`, the skills folder this gbrain was installed with, or null for a single-file binary (`installedSkillsRoot`, `src/cli/commands/bundled-skill.ts:56`, `:98`). A name that moved to another catalog prints where it went (`bundled-skill.ts:104-110`). |
+| `skill-resolver` | pre | none | — | SH, SKIP | `skills index <build\|status\|remove>` (flags `--catalog`, `--dir`, `--from-json`, `--claude-plugins`, `--routing`, `--harness`, `--scope`, `--session`, `--bundled`, `--json`, `--shadow`), `skills resolve` (flags `--catalog`, `--text`, `--previous`, `--input-json`, `--session`, `--harness`, `--exclude`, `--top-k`, `--min-match`, `--top-gate`, `--shadow-log`, `--explain-target`, `--expect-catalog`, `--load-hint`, `--shadow`, `--json`, `--fail-open`, `--reset-session`, `--names-only`), `skills library` (`--out`, `--json`) and `skills pin <add\|remove\|list>` (`--catalog`, `--line`, `--json`). The flag lists are `SKILLS_RESOLVER_CLI` (`src/commands/skill-resolver.ts:36-41`), and `src/cli/command-route.ts:14` sends these `skills` subcommands here. Exit 0 on success, 1 on a runtime error (`--fail-open` makes it exit 0 with an empty block), 2 on a usage error (`skill-resolver.ts:8-13`). Engine-free on every install shape. Hook lane shares the module (`src/core/skills/resolver/*`). |
 | `skillify` | pre | none | — | SH | Create a skill from a brain or session (no subcommand labels found). |
-| `skillpack` | pre | none | — | SH | About 35 subcommands (module scan): `list`, `scaffold`, `reference`, `pin`, `unpin`, `restore`, `status`, `sync`, `setup`, `migrate-fence`, `scrub-legacy-fence-rows`, `harvest`, `diff`, `check`, `health`, `search`, `info`, `registry`, `doctor`, `init`, `init-brain-pack`, `pack`, `endorse`, `remove`, `install`, `uninstall`, `source`, `dir`, `config`, `pages`. Restores and installs write host state. |
+| `skillpack` | pre | none | — | SH | 26 subcommands (`SKILLPACK_SUBCOMMANDS`, `src/commands/skillpack.ts:121`): `list`, `scaffold`, `reference`, `pin`, `unpin`, `restore`, `status`, `sync`, `setup`, `migrate-fence`, `scrub-legacy-fence-rows`, `harvest`, `diff`, `check`, `health`, `search`, `info`, `registry`, `doctor`, `init`, `init-brain-pack`, `pack`, `endorse`, `remove`, `install`, `uninstall`. `health` and `doctor` are the two listed in the public surface (`scripts/build-public-surface.ts:63`). `install` and `uninstall` only print a removal error and exit 2 (`skillpack.ts:211-222`). `status` marks a skill that moved to another catalog as `moved` (`skillpack.ts:365`, `:378-381`). Restores and installs write host state. |
 | `skillpack-check` | pre | none | — | SH | Skillpack consistency check. |
 | `skillopt` | post | none | — | SH | Skill optimisation loop (help in `src/core/skillopt/help.ts`). |
 
@@ -1190,12 +1201,13 @@ Subcommands come from the module's switch cases, the `ROUTERS` inventory (`src/c
 | `projections` | own | refuse | — | SH | Projections drain. Output modes: `human-tty`, `human-plain`, `json`, `quiet`. Refuses a resident-held PGLite brain before opening an engine (`#5401`). |
 | `core` | post | none | — | SH | Always-loaded core memory: `list`, `show`, `status`, `add`, `remove`, `diff`, `ack`, `init`, `suggest`. Router (`ROUTERS.core`). |
 | `loops` | post | none | — | SH, RS | Open loops: `list`, `show`, `done`, `drop`, `mute`, `unmute`. Router (`ROUTERS.loops`). |
-| `waiting` | post | none | — | SH, RS | Open-loop waiting list (`runWaiting` in `loops.ts`). |
+| `waiting` | own | none | — | SH, RS | Open-loop waiting list (`runWaiting` in `loops.ts`). The record opens its own engine. When a live serve owns a PGLite brain, the `open_loops` read goes through that serve's persistence socket, and a persistence error is reported through `reportPersistenceCliError` (`src/cli/commands/waiting.ts:11-33`, record at `command-table.ts:403`). |
 | `friction` | pre | none | — | SH | `log`, `render`, `list`, `summary`, `diff`. |
+| `identity` | post | refuse | — | SH | `identity [--member <id>] [--json]` shows who gbrain takes the brain's owner to be and the signals behind it (owner member email, owner-owned Google source accounts, linked external ids). Trusted local CLI only, because it prints personal identifiers (help in `src/commands/identity.ts:10-19`, record at `command-table.ts:366`). |
 
 #### 2.9 Counts check
 
-Reconciled against `src/cli/command-table.ts` after writing: all 132 records appear exactly once in the section 2 tables (checked by script that parses the table rows). Groups are by primary use; some commands also fit a neighbouring group.
+Reconciled against `src/cli/command-table.ts` after writing: all 136 records appear exactly once in the section 2 tables (checked by script that parses the table rows). Groups are by primary use; some commands also fit a neighbouring group.
 
 ---
 
@@ -1209,6 +1221,7 @@ Evidence labels: `[code]` = read in source, `[fixture]` = from a test fixture or
 - Usage [help `src/commands/init.ts:1837-1880`]: `gbrain init [flags]`. Examples: `--pglite` (local, no API key), `--supabase` (interactive), `--url postgresql://...`, `--mcp-only --issuer-url ... --mcp-url ... --oauth-client-id ... --oauth-client-secret ...` (thin-client mode), `--prefer-postgres [--allow-docker]` (install ladder: env URL, Supabase token, local PG, docker, PGLite).
 - Key flags [code, from the handler]: `--pglite`, `--supabase`, `--url`, `--local-postgres`, `--prefer-postgres`, `--allow-docker`, `--allow-create-db`, `--no-embedding`, `--embedding-model`, `--embedding-dimensions`, `--chat-model`, `--expansion-model`, `--search-mode`, `--schema-pack`, `--surface`, `--migrate-only`, `--mcp-only`, `--mcp-url`, `--issuer-url`, `--oauth-client-id`, `--oauth-client-secret`, `--content-root`, `--git`/`--no-git`, `--db-only`, `--path`, `--key`, `--non-interactive`, `--force`, `--skip-embed-check`, `--json`. Full registry: `src/core/cli-flag-registry.generated.ts` entry `init`.
 - JSON document [fixture `test/fixtures/agent-contract/v1/journey/init-first-run.json`]: top-level `status` (`"success"`), `engine` (`"pglite"`), `path`, `pages` (0), `embedding_check` (`{ok, skipped}`), `content` (`{version, brain_id, source_id, source_incarnation, root, repository_kind, backup, status, stage, pending_actions[], owned_root, fresh_root_activation, root_identity}`), `notices[]` (each with `code`, `kind`, `why`, `fix`). Paths and UUIDs are placeholders in the fixture.
+- A config that already names the `rust` engine is reported and left unchanged, and the store is never opened (`keptEngineConfig`, `reportKeptRustBrain`, `src/commands/init.ts:126-127`). `--non-interactive` with no engine flag keeps the PGLite or Postgres brain the config already names (`init.ts:193`). A database URL from the environment takes precedence over the kept brain. That is `GBRAIN_DATABASE_URL`, or `DATABASE_URL` unless Bun auto-loaded it from a `.env` file in the current directory (`effectiveEnvDatabaseUrl`, `src/core/config.ts:686-702`, used at `init.ts:196` and `:235-241`).
 - Exit: `0` on success. Errors use the error-catalogue exit for their code (`migrations_running` is 75). The handler's own exit codes were not traced.
 - Thin: `none` (init creates a local brain). The thin-client MCP-only form (`--mcp-only`) writes only config.
 
@@ -1280,6 +1293,7 @@ Evidence labels: `[code]` = read in source, `[fixture]` = from a test fixture or
 - Exit: `0` when no `fail` check; `1` when any check fails (`src/commands/doctor.ts:551`). With `--alert`, the exit is the alert report's (`17` act, `18` unknown; `printAlertReport`, `doctor.ts:536`).
 - Other `--json` docs in the same family: `doctor --locks --json` prints `{status: 'ok'|'blockers_found', blockers}` or `{status:'unavailable', reason:'no_engine'}` or `{status:'not_applicable', engine}` (`doctor.ts:660-682`).
 - Backup coverage (`backup status --json`) has its own baseline [fixture, exit 1 in baseline]: `$.assets[].{detail, fix_argv, id, kind, state}`, 26 keys in total.
+- Before any connect, a configured PGLite brain whose folder is missing or empty is refused with `brain_missing` (exit 1), so doctor never creates a new empty brain. Runs that never connect (`--fast`, a filesystem-only `--only`) are not refused (`src/cli/commands/doctor.ts:41-48`, `src/commands/doctor/missing-brain.ts:65`).
 - Thin client: `doctor` is `none`, and `src/core/doctor-remote.ts` (`RemoteDoctorReport`) renders the remote MCP `run_doctor` result instead.
 
 #### 3.9 `status` (and `stats`)
@@ -1334,12 +1348,14 @@ Evidence labels: `[code]` = read in source, `[fixture]` = from a test fixture or
 - `config get` for `self_upgrade.*` reads the file plane only; missing key exits 1 with `Config key not found: <key>` (`config.ts:661-672`).
 - `config set <key> <value>`: arbitrary value strings (flag validation exempt). `config unset <key>` and `unset --pattern <prefix>`. `config show`.
 - DB-connection keys are engine-free (`tryRunConfigEngineFree`, `main.ts:1987`) so `config set database_url` works while the database is down.
-- Keys: the inventory `config-keys.txt` (502 lines) lists the keys read by the code.
+- `secrets.on_push` is a file-plane key that takes only `redact` or `refuse`, and any other value exits 1 (`src/commands/config.ts:67`, `:578-585`).
+- Keys: the inventory `config-keys.txt` (527 lines) lists the keys read by the code.
 
 #### 3.13 `sources`
 
 - Phase `post-connect`, thin `route-then-refuse` (no MCP route in `thin-client-routing.ts`; refused unless a dispatcher branch handles the subcommand), selfHelp, `slowRead` for `sources status`.
-- Subcommands [code `src/commands/sources.ts` case labels]: `add`, `archive`, `archived`, `attach`, `canonical`, `clear`, `connect`, `current`, `default`, `detach`, `federate`, `git-gap`, `git-reconcile`, `guard`, `harden`, `host-repo`, `inspect`, `list`, `mirror-readonly`, `mirror-writable`, `pull`, `purge`, `push`, `pushed`, `reconcile`, `record-origin`, `refresh`, `reindex`, `remove`, `rename`, `reset-upstream`, `resolve-path`, `restore`, `retry-held`, `rotate`, `set`, `set-calendar`, `set-cr-mode`, `set-path`, `set-pull-strategy`, `set-strategy`, `set-sync`, `set-trust`, `shared-skills`, `show`, `status`, `tracked-branch`, `unfederate`, `unharden`, `webhook`, `writer`, `writers`, `audit`, `reclone`, `demo company-brain`.
+- Subcommands [code `src/commands/sources.ts` case labels]: `add`, `archive`, `archived`, `attach`, `canonical`, `clear`, `connect`, `current`, `default`, `detach`, `federate`, `git-gap`, `git-reconcile`, `guard`, `harden`, `host-repo`, `inspect`, `list`, `mirror-readonly`, `mirror-writable`, `pull`, `purge`, `push`, `pushed`, `reconcile`, `record-origin`, `refresh`, `reindex`, `remove`, `rename`, `reset-upstream`, `resolve-path`, `restore`, `retry-held`, `rotate`, `set`, `set-calendar`, `set-cr-mode`, `set-path`, `set-pull-strategy`, `set-strategy`, `set-sync`, `set-trust`, `shared-skills`, `show`, `status`, `tracked-branch`, `unfederate`, `unharden`, `webhook`, `writer`, `writers`, `audit`, `reclone`, `demo company-brain`, `rebind` (`src/commands/sources.ts:1920`).
+- `sources add --kind` takes `github`, `google`, `meetings`, `slack`, `imessage` or `apple-contacts` (`src/commands/sources.ts:155`). `rebind <id> [--yes]` records a changed push destination for an iMessage source's folder and shows a preview first.
 - Engine-free branches before the dispatcher: `sources inspect`, `sources connect` (probe-only), `sources demo company-brain` (`main.ts`, the `sources` branches before the `CLI_ONLY` dispatch), `sources pull --path <dir>` (DB-free durability pull for the harden cron, never opens PGLite).
 - Persistence subcommands go through the deferred-persistence delegate: `writer`, `reconcile`, `add`, `remove`, `archive`, `restore`, `purge`, `set-path`, `reclone` (`main.ts:1933`). `sources remove|archive|purge default` is refused (usage error, exit 2, `persistence-delegate.ts:98-103`).
 - `sources list --json` baseline [fixture, exit 0, 8 keys]: `$.sources[].{federated, id, last_sync_at, local_path, mirror_read_only, …}`.
@@ -1360,6 +1376,7 @@ Evidence labels: `[code]` = read in source, `[fixture]` = from a test fixture or
 - Subcommands: `retriage [flags]` (`--help` has its own usage) and `reset-key <key>` / `reset-key --list`. Default run: phases and budget.
 - Flags seen in the handler and registry: `--phase`, `--once`, `--dry-run`, `--json`, `--input <file>`, `--from`, `--to`, `--date`, `--window`, `--source`, `--source-id`, `--drain`, `--pull`, `--dir`, `--limit`, `--list`, `--max-usd`, `--threshold`, `--audit-rejects`, `--cancel-unmatched`, `--reconcile-queue`, `--eval-run`, `--unsafe-bypass-dream-guard`, `--yes`, `--force`, `--install`.
 - Baseline `dream --json` [fixture, exit 0, 32 keys, depth 2]: `$.brain_dir`, `$.duration_ms`, `$.phases[]` with `{details, duration_ms, pages_recomputed, …}`.
+- A named `--phase` that skipped with reason `no_database` makes the run exit with `database_error` (no engine available) (`src/commands/dream.ts:912-920`).
 - Engine calls: `getConfig` [code `src/commands/dream.ts`]; the cycle itself lives under `src/core/cycle/`.
 - Fixture: `test/fixtures/dream-budget-schema-v1.jsonl`.
 
@@ -1397,6 +1414,7 @@ Evidence labels: `[code]` = read in source, `[fixture]` = from a test fixture or
 - Phase `post-connect`, thin `none`, selfHelp, `routes_source`. Dual lane: `think` is also an operation (`cliOnlyNameAlsoAnOp`, golden `membership-sets.json`).
 - Thin client: dispatcher routes to `runThinkCli`, which calls the remote `think` op via `callRemoteTool` (180 s timeout, `main.ts:~800` `think` special case). `--save` and `--take` stay server-gated; the CLI warns on thin clients.
 - Local: `runThink` plus `persistSynthesis`. `--save` and `--take` are honored on the local CLI (`remote=false`) [module header `src/commands/think.ts`].
+- A managed `--save` or `--take` that is accepted but still publishing prints the answer, then exits 10 with the receipt and its poll command. A later refusal still prints every accepted receipt first (`src/commands/think.ts:144-156`).
 - The module header says "Reads ANTHROPIC_API_KEY from the env; degrades to gather-only output with a warning if missing." That line may predate the current AI gateway and was not checked against the code. Treat it as unverified.
 
 #### 3.19 `agent run` (and `logs`, `register`)
@@ -1462,7 +1480,7 @@ These are facts the Rust port should not infer from the record table alone:
 6. Exempt from unknown-flag validation: `call`, `config`, `jobs submit`, `eval brainbench` (`src/cli/flag-validation.ts:70-75`). Keep the exemptions; CI reads brainbench exit 0/1/2.
 7. Dual-lane commands (CLI_ONLY and also an operation): `capture`, `forget`, `sync`, `orphans`, `salience`, `anomalies`, `advisor`, `whoknows`, `transcripts`, `think`, `recall`. For each, the CLI handler and the MCP op may differ (the CLI reads its own flags). The `membership-sets.json` golden lists them as `cliOnlyNameAlsoAnOp`.
 8. Phase ordering is contract. `test/fixtures/goldens/cli/dispatch-phase.json` and `membership-sets.json` pin: help before flag validation, flag validation before connect, thin-client guard before the table step, `agent register` guards before connect, and `bootstrap`/`hook` never in the thin-client refused set (ENG-2).
-9. Engine-free commands are contract. 45 records answer `--help` without a brain (`SELF_HELP_WITHOUT_ENGINE`), and several run with no brain at all (`init`, `setup`, `hook`, `bootstrap` except `verify`, `pglite-repair`, `db-repair`, `engine status`, `eval` no-DB subcommands, `conversation-parser` pure subcommands). `test/cli-help-without-brain.test.ts` runs the CLI with an empty `GBRAIN_HOME` and requires exit 0 plus real help.
+9. Engine-free commands are contract. 48 records answer `--help` without a brain (`SELF_HELP_WITHOUT_ENGINE`), and several run with no brain at all (`init`, `setup`, `hook`, `bootstrap` except `verify`, `pglite-repair`, `db-repair`, `engine status`, `eval` no-DB subcommands, `conversation-parser` pure subcommands). `test/cli-help-without-brain.test.ts` runs the CLI with an empty `GBRAIN_HOME` and requires exit 0 plus real help.
 
 #### 4.4 Open questions for the main agent
 
@@ -1513,7 +1531,7 @@ Fixtures and tests (in gbrain `test/`):
 - `fixtures/goldens/jobs/handler-registry.json`, `fixtures/goldens/setup/fresh-setup-migration-ledger.json`.
 - Tests named in this report: `test/cli-command-table.test.ts`, `test/cli-flag-validation.test.ts`, `test/cli-help-without-brain.test.ts`, `test/cli-help-no-side-effects-{2,3,4}.serial.test.ts`, `test/hook-command.serial.test.ts`, `test/terminal-schema-missing-6904.test.ts`, `test/doctor-alert-w4.test.ts`, `test/fix-routing.test.ts`, `test/persistence-file-import.test.ts`, `test/thin-client-contract-skew.test.ts`.
 
-Inventory (in `docs/research/rust-engine/data/`): `cli-commands-and-flags.txt` (flags per public command), `ops-summary.tsv` (204 ops; CLI_ONLY cross-check), `exit-codes.txt` (error code to exit code).
+Inventory (in `docs/research/rust-engine/data/`): `cli-commands-and-flags.txt` (flags per public command), `ops-summary.tsv` (206 ops; CLI_ONLY cross-check), `exit-codes.txt` (error code to exit code).
 
 
 
@@ -1533,7 +1551,7 @@ Each command gets one class by its primary purpose. Eval use and agent reference
 - **hidden/internal**: harness-invoked (`hook`), aliases (`get_links`, `link-add`, `link-rm`), plumbing with no agent or skill references (`conversation-parser`, `compile-context`, `protocol`, `founder`).
 - **MCP classes**: `hidden/internal` = not in the public contract (18 ops; CLI-only or local-only). `agent-core` = verbs or instruction-named ops. `agent-occasional` = starter surface, or any skill/doc/instruction/eval reference. `admin/maintenance` = everything else.
 
-### C.1 CLI commands (220)
+### C.1 CLI commands (237)
 
 Columns: skills/ = refs in `skills/` excluding `migrations/`; migration = refs in `skills/migrations/`; agent docs = refs in templates and the top-level agent guides; plugin/instr = refs in `plugin/skills/` (mirror) plus `src/mcp/instructions.ts`, `openclaw.plugin.json`, `src/openclaw-context-engine.ts`, `plugin/README.md`; MCP op = the op whose `cliHints` names this CLI command (`ops-summary.tsv`); eval use = verified call site, `classify only` = listed in the eval's write-path set, `MCP:` = reached only through MCP; phase = command-table dispatch phase (`pre`/`post`/`-` = op-dispatched, not in the table).
 
@@ -1544,219 +1562,238 @@ Columns: skills/ = refs in `skills/` excluding `migrations/`; migration = refs i
 | 3 | `agent` | agent-occasional | 15 | 0 | 7 | 15 | - | - | post |
 | 4 | `anomalies` | agent-occasional | 1 | 0 | 0 | 1 | `find_anomalies` | - | post |
 | 5 | `append` | agent-occasional | 3 | 0 | 0 | 3 | - | - | pre |
-| 6 | `apply-migrations` | admin/maintenance | 12 | 81 | 8 | 12 | - | Y: shim.py:574, nightly/smokes/harness.ts | pre |
-| 7 | `attribution` | admin/maintenance | 0 | 2 | 0 | 0 | `get_write_attribution` | - | - |
-| 8 | `auth` | setup/install | 3 | 19 | 1 | 3 | - | Y: p5-brain.ts:168, lifecycle-experiment.ts:213 | pre |
-| 9 | `autopilot` | admin/maintenance | 9 | 10 | 8 | 8 | - | - | post |
-| 10 | `backfill` | admin/maintenance | 0 | 0 | 0 | 0 | - | - | post |
-| 11 | `backlinks` | agent-core | 8 | 0 | 4 | 7 | `get_backlinks` | - | - |
-| 12 | `backup` | admin/maintenance | 2 | 3 | 3 | 2 | - | - | pre |
-| 13 | `beliefs` | dev/eval-only | 0 | 0 | 0 | 0 | - | - | post |
-| 14 | `bench` | dev/eval-only | 0 | 0 | 0 | 0 | - | - | pre |
-| 15 | `book-mirror` | agent-occasional | 7 | 4 | 0 | 7 | - | - | post |
-| 16 | `bootstrap` | setup/install | 32 | 6 | 52 | 29 | - | - | pre |
-| 17 | `brain-skillpack` | agent-occasional | 0 | 0 | 0 | 0 | `list_brain_skillpack` | - | - |
-| 18 | `brainstorm` | agent-occasional | 0 | 0 | 0 | 0 | - | - | post |
-| 19 | `bundled-skill` | setup/install | 0 | 0 | 0 | 0 | - | - | pre |
-| 20 | `cache` | admin/maintenance | 0 | 1 | 0 | 0 | - | - | pre |
-| 21 | `calibration` | agent-occasional | 1 | 0 | 0 | 1 | - | - | post |
-| 22 | `call` | agent-core | 8 | 6 | 5 | 6 | - | Y: lifecycle/drivers.ts:93, p4-stream/run.ts:209, facts-absorb-gate.ts:171 | pre |
-| 23 | `cancel-write-request` | agent-occasional | 0 | 0 | 0 | 0 | `cancel_write_request` | - | - |
-| 24 | `capture` | agent-occasional | 22 | 0 | 1 | 21 | `capture` | classify only: cat41/classify.ts:54 | pre |
-| 25 | `check-backlinks` | admin/maintenance | 11 | 10 | 1 | 11 | - | - | pre |
-| 26 | `check-resolvable` | admin/maintenance | 11 | 2 | 0 | 5 | - | - | pre |
-| 27 | `check-update` | admin/maintenance | 0 | 2 | 1 | 0 | - | - | pre |
-| 28 | `chronicle-backfill` | admin/maintenance | 0 | 2 | 0 | 0 | `chronicle_backfill` | - | - |
-| 29 | `claw-test` | dev/eval-only | 0 | 0 | 0 | 0 | - | - | pre |
-| 30 | `code-callees` | agent-occasional | 0 | 0 | 0 | 0 | - | - | post |
-| 31 | `code-callers` | agent-occasional | 0 | 4 | 0 | 0 | - | - | post |
-| 32 | `code-def` | agent-occasional | 0 | 2 | 0 | 0 | - | - | post |
-| 33 | `code-refs` | agent-occasional | 0 | 3 | 0 | 0 | - | - | post |
-| 34 | `compile-context` | hidden/internal | 0 | 1 | 1 | 0 | - | - | pre |
-| 35 | `config` | admin/maintenance | 50 | 91 | 16 | 48 | - | Y: p5-brain.ts:164, p4-stream/run.ts:207, shim.py:625 | post |
-| 36 | `connect` | setup/install | 9 | 2 | 0 | 9 | - | - | pre |
-| 37 | `connectors` | admin/maintenance | 14 | 0 | 3 | 14 | - | - | post |
-| 38 | `context-pack` | agent-core | 0 | 0 | 2 | 0 | `context_pack` | - | - |
-| 39 | `conversation-parser` | hidden/internal | 5 | 0 | 0 | 5 | - | - | post |
-| 40 | `core` | agent-occasional | 2 | 0 | 0 | 0 | - | - | post |
-| 41 | `creds` | setup/install | 0 | 0 | 0 | 0 | - | - | pre |
-| 42 | `day` | agent-occasional | 2 | 2 | 0 | 2 | `chronicle_day` | - | - |
-| 43 | `db-repair` | admin/maintenance | 14 | 0 | 5 | 13 | - | - | pre |
-| 44 | `decide` | dev/eval-only | 1 | 16 | 4 | 0 | - | - | pre |
-| 45 | `delete` | admin/maintenance | 5 | 1 | 1 | 5 | `delete_page` | - | - |
-| 46 | `delete-skill` | agent-occasional | 0 | 0 | 0 | 0 | `delete_skill` | - | - |
-| 47 | `delta` | agent-core | 0 | 0 | 2 | 0 | `delta` | - | - |
-| 48 | `diag` | admin/maintenance | 1 | 0 | 0 | 1 | - | - | post |
-| 49 | `doctor` | admin/maintenance | 74 | 130 | 34 | 72 | - | Y: shim.py:582, shim.py:905 (quiesce gate) | pre |
-| 50 | `dream` | admin/maintenance | 18 | 30 | 1 | 18 | - | Y: chronicle-lift.ts:232 (dream --phase chronicle) | pre |
-| 51 | `edge-proposals` | admin/maintenance | 0 | 3 | 0 | 0 | - | - | post |
-| 52 | `edges-backfill` | admin/maintenance | 1 | 1 | 0 | 1 | - | - | post |
-| 53 | `embed` | admin/maintenance | 12 | 20 | 7 | 12 | - | Y: lifecycle-experiment.ts:251 (embed --stale) | post |
-| 54 | `embeddings` | admin/maintenance | 0 | 0 | 0 | 0 | - | - | pre |
-| 55 | `engine` | setup/install | 16 | 0 | 2 | 16 | - | - | pre |
-| 56 | `enrich` | agent-occasional | 1 | 1 | 0 | 1 | - | - | post |
-| 57 | `entity` | agent-core | 7 | 1 | 4 | 6 | `entity` | - | - |
-| 58 | `entity-identity-link` | admin/maintenance | 0 | 0 | 0 | 0 | `entity_identity_link` | - | - |
-| 59 | `entity-identity-list` | admin/maintenance | 0 | 0 | 0 | 0 | `entity_identity_list` | - | - |
-| 60 | `entity-identity-unlink` | admin/maintenance | 0 | 0 | 0 | 0 | `entity_identity_unlink` | - | - |
-| 61 | `errors` | agent-occasional | 3 | 0 | 2 | 2 | - | - | pre |
-| 62 | `eval` | dev/eval-only | 31 | 14 | 4 | 16 | - | Y: scripts/run-shootout-phase1.sh:188 | post |
-| 63 | `export` | admin/maintenance | 0 | 1 | 0 | 0 | - | Y: predictive/cli-arm.ts:183 | post |
-| 64 | `extract` | admin/maintenance | 17 | 38 | 10 | 17 | - | Y: lifecycle-experiment.ts:158, p5-agent.ts:115 | post |
-| 65 | `extract-conversation-facts` | agent-occasional | 6 | 3 | 0 | 6 | - | Y: workload-suites/bench.ts:258 | post |
-| 66 | `extract-entities` | agent-occasional | 0 | 0 | 0 | 0 | `extract_entities` | - | - |
-| 67 | `extraction-pending` | admin/maintenance | 0 | 0 | 0 | 0 | `extraction_pending` | - | - |
-| 68 | `extraction-review` | admin/maintenance | 0 | 0 | 0 | 0 | `extraction_review` | - | - |
-| 69 | `facts` | agent-occasional | 1 | 4 | 0 | 1 | - | - | pre |
-| 70 | `features` | admin/maintenance | 4 | 0 | 0 | 3 | - | - | post |
-| 71 | `feedback` | admin/maintenance | 0 | 1 | 0 | 0 | - | - | post |
-| 72 | `fetch` | agent-occasional | 0 | 0 | 0 | 0 | `fetch` | - | - |
-| 73 | `files` | agent-occasional | 25 | 16 | 0 | 25 | - | - | post |
-| 74 | `find` | agent-occasional | 2 | 0 | 4 | 1 | `find_pages` | - | - |
-| 75 | `find-contradictions` | agent-occasional | 2 | 0 | 0 | 2 | `find_contradictions` | - | - |
-| 76 | `find-trajectory` | agent-occasional | 0 | 0 | 0 | 0 | `find_trajectory` | - | - |
-| 77 | `forget` | agent-core | 6 | 2 | 0 | 6 | - | MCP: correction-adapters.ts:102 | pre |
-| 78 | `founder` | hidden/internal | 0 | 3 | 1 | 0 | - | - | post |
-| 79 | `friction` | agent-occasional | 7 | 0 | 0 | 7 | - | - | pre |
-| 80 | `frontmatter` | admin/maintenance | 14 | 8 | 7 | 14 | - | - | pre |
-| 81 | `get` | agent-core | 38 | 4 | 8 | 36 | `get_page` | Y (argv): write-contract-gen.ts:166-169 | - |
-| 82 | `get_links` | hidden/internal | 0 | 0 | 0 | 0 | - | - | - |
-| 83 | `git` | agent-occasional | 10 | 1 | 8 | 10 | - | Y (argv, not run): write-contract-gen.ts:145 | pre |
-| 84 | `google` | setup/install | 13 | 1 | 1 | 13 | - | - | pre |
-| 85 | `graph` | agent-occasional | 3 | 4 | 1 | 3 | `traverse_graph` | - | - |
-| 86 | `graph-query` | agent-occasional | 19 | 9 | 5 | 19 | - | - | post |
-| 87 | `guests` | admin/maintenance | 0 | 0 | 0 | 0 | - | - | post |
-| 88 | `health` | admin/maintenance | 13 | 2 | 0 | 13 | `get_health` | - | - |
-| 89 | `history` | agent-occasional | 3 | 2 | 0 | 3 | `get_versions` | - | - |
-| 90 | `hook` | hidden/internal | 0 | 0 | 0 | 0 | - | - | pre |
-| 91 | `import` | agent-occasional | 10 | 0 | 1 | 10 | - | Y: p5-agent.ts:80, chronicle-lift.ts:222 | post |
-| 92 | `init` | setup/install | 17 | 12 | 16 | 17 | - | Y: cat40/gbrain-arm.ts:396, p5-brain.ts:160, shim.py:571 | pre |
-| 93 | `integrations` | setup/install | 0 | 12 | 3 | 0 | - | - | pre |
-| 94 | `integrity` | admin/maintenance | 0 | 0 | 0 | 0 | - | - | pre |
-| 95 | `jobs` | admin/maintenance | 72 | 74 | 6 | 67 | - | Y: memory-trust/flag-rate.ts:182, p8-write-cost.ts:132, shim.py:499 | post |
-| 96 | `join-brain` | agent-occasional | 0 | 0 | 0 | 0 | `join_brain` | - | - |
-| 97 | `last-seen` | agent-occasional | 0 | 0 | 0 | 0 | `chronicle_last_seen` | - | - |
-| 98 | `leave-brain` | agent-occasional | 0 | 0 | 0 | 0 | `leave_brain` | - | - |
-| 99 | `link` | agent-occasional | 12 | 0 | 7 | 12 | `add_link` | classify only: cat41/classify.ts:54 | - |
-| 100 | `link-add` | hidden/internal | 0 | 0 | 0 | 0 | - | - | - |
-| 101 | `link-rm` | hidden/internal | 0 | 0 | 0 | 0 | - | - | - |
-| 102 | `link-sources` | agent-occasional | 3 | 0 | 0 | 3 | `list_link_sources` | - | - |
-| 103 | `links` | agent-occasional | 1 | 0 | 0 | 1 | `get_links` | - | - |
-| 104 | `lint` | admin/maintenance | 3 | 10 | 1 | 3 | - | - | pre |
-| 105 | `list` | agent-occasional | 5 | 0 | 4 | 4 | `list_pages` | - | - |
-| 106 | `loops` | agent-occasional | 6 | 0 | 1 | 6 | - | - | post |
-| 107 | `lsd` | agent-occasional | 8 | 0 | 0 | 8 | - | - | post |
-| 108 | `maintain` | admin/maintenance | 10 | 0 | 1 | 8 | - | - | post |
-| 109 | `mcp` | setup/install | 56 | 2 | 6 | 54 | - | - | post |
-| 110 | `memory-proposals` | admin/maintenance | 0 | 0 | 0 | 0 | - | - | post |
-| 111 | `memory-settings` | admin/maintenance | 0 | 0 | 0 | 0 | `get_memory_settings` | - | - |
-| 112 | `migrate` | admin/maintenance | 9 | 15 | 2 | 9 | - | - | post |
-| 113 | `models` | admin/maintenance | 8 | 3 | 0 | 7 | - | Y: shim.py:642 | post |
-| 114 | `mounts` | admin/maintenance | 3 | 3 | 1 | 3 | - | - | pre |
-| 115 | `notability-eval` | dev/eval-only | 0 | 0 | 0 | 0 | - | - | post |
-| 116 | `notices` | agent-occasional | 4 | 0 | 0 | 4 | - | - | pre |
-| 117 | `on-this-day` | agent-occasional | 0 | 0 | 0 | 0 | `chronicle_on_this_day` | - | - |
-| 118 | `onboard` | setup/install | 15 | 0 | 6 | 13 | - | - | post |
-| 119 | `ontology` | agent-occasional | 0 | 0 | 0 | 0 | `ontology_get` | - | - |
-| 120 | `ontology-add` | agent-occasional | 0 | 0 | 0 | 0 | `ontology_propose` | - | - |
-| 121 | `ontology-contradictions` | agent-occasional | 0 | 0 | 0 | 0 | `ontology_conflicts` | - | - |
-| 122 | `ontology-dimensions` | agent-occasional | 0 | 0 | 0 | 0 | `ontology_dimensions` | - | - |
-| 123 | `orient` | agent-occasional | 0 | 0 | 0 | 0 | `volunteer_chronicle` | - | - |
-| 124 | `orphans` | admin/maintenance | 1 | 0 | 0 | 1 | `find_orphans` | - | post |
-| 125 | `pages` | agent-occasional | 4 | 2 | 0 | 4 | - | - | post |
-| 126 | `pglite-repair` | admin/maintenance | 3 | 0 | 0 | 3 | - | - | pre |
-| 127 | `post-upgrade` | admin/maintenance | 1 | 14 | 8 | 1 | - | - | pre |
-| 128 | `pricing` | admin/maintenance | 7 | 2 | 0 | 7 | - | - | post |
-| 129 | `projections` | admin/maintenance | 0 | 1 | 0 | 0 | - | - | pre |
-| 130 | `protocol` | hidden/internal | 0 | 0 | 0 | 0 | - | - | pre |
-| 131 | `providers` | setup/install | 2 | 0 | 0 | 0 | - | - | pre |
-| 132 | `prune-skill-revisions` | admin/maintenance | 0 | 0 | 0 | 0 | `prune_skill_revisions` | - | - |
-| 133 | `publish` | admin/maintenance | 19 | 9 | 0 | 19 | - | - | pre |
-| 134 | `put` | agent-core | 17 | 3 | 2 | 17 | `put_page` | Y: predictive/cli-arm.ts (put); write-contract-gen.ts | - |
-| 135 | `put-pages` | agent-occasional | 0 | 0 | 0 | 0 | `put_pages` | - | - |
-| 136 | `put-skill` | agent-occasional | 0 | 0 | 0 | 0 | `put_skill` | - | - |
-| 137 | `quarantine` | admin/maintenance | 0 | 0 | 0 | 0 | - | - | post |
-| 138 | `query` | agent-core | 59 | 7 | 10 | 56 | `query` | MCP: shim.py STARTER_CALLS | - |
-| 139 | `questions` | agent-occasional | 0 | 0 | 0 | 0 | - | - | post |
-| 140 | `rank-entities` | agent-occasional | 0 | 0 | 0 | 0 | `rank_entities` | - | - |
-| 141 | `rate` | agent-occasional | 0 | 1 | 0 | 0 | `rate_answer` | - | - |
-| 142 | `recall` | agent-core | 21 | 3 | 4 | 20 | - | Y: predictive/cli-arm.ts:193; facts-absorb-gate.ts:171 (via call) | post |
-| 143 | `reconcile-links` | admin/maintenance | 0 | 3 | 0 | 0 | - | - | post |
-| 144 | `reindex` | admin/maintenance | 0 | 12 | 0 | 0 | - | - | post |
-| 145 | `reindex-code` | admin/maintenance | 0 | 5 | 0 | 0 | - | - | post |
-| 146 | `reindex-frontmatter` | admin/maintenance | 0 | 3 | 0 | 0 | - | - | post |
-| 147 | `reindex-search-vector` | admin/maintenance | 0 | 0 | 0 | 0 | - | - | post |
-| 148 | `reinit-pglite` | admin/maintenance | 1 | 0 | 0 | 1 | - | - | pre |
-| 149 | `remember` | agent-core | 5 | 1 | 4 | 4 | `remember` | Y (argv): write-contract-gen.ts:123 | - |
-| 150 | `remote` | setup/install | 0 | 0 | 0 | 0 | - | - | pre |
-| 151 | `repair` | admin/maintenance | 14 | 44 | 4 | 12 | - | - | post |
-| 152 | `repair-jsonb` | admin/maintenance | 0 | 0 | 3 | 0 | - | - | pre |
-| 153 | `report` | admin/maintenance | 0 | 7 | 0 | 0 | - | classify only: cat41/classify.ts:54 | pre |
-| 154 | `repos` | admin/maintenance | 0 | 1 | 0 | 0 | - | - | post |
-| 155 | `resolvers` | agent-occasional | 0 | 0 | 0 | 0 | - | - | pre |
-| 156 | `restore` | admin/maintenance | 10 | 2 | 1 | 9 | `restore_page` | - | - |
-| 157 | `retain-skill-revision` | admin/maintenance | 0 | 0 | 0 | 0 | `retain_skill_revision` | - | - |
-| 158 | `retrieval-upgrade` | admin/maintenance | 0 | 0 | 0 | 0 | - | - | post |
-| 159 | `revert` | admin/maintenance | 1 | 1 | 0 | 1 | `revert_version` | - | - |
-| 160 | `routing-eval` | dev/eval-only | 2 | 0 | 0 | 2 | - | - | pre |
-| 161 | `salience` | agent-occasional | 1 | 0 | 0 | 1 | `get_recent_salience` | - | post |
-| 162 | `schema` | agent-occasional | 96 | 1 | 0 | 93 | - | - | pre |
-| 163 | `search` | agent-core | 63 | 6 | 10 | 60 | `search` | Y (search modes): shim.py:641, cat40/rerank-pool-replay.ts:688 | - |
-| 164 | `search-by-image` | agent-occasional | 0 | 0 | 0 | 0 | `search_by_image` | - | - |
-| 165 | `search-exact` | agent-occasional | 0 | 0 | 0 | 0 | `search_exact` | - | - |
-| 166 | `self-upgrade` | admin/maintenance | 10 | 0 | 2 | 10 | - | - | pre |
-| 167 | `serve` | agent-core | 28 | 29 | 12 | 28 | - | Y: cat40/gbrain-arm.ts:93, shim.py:684 | post |
-| 168 | `set-skill-policy` | admin/maintenance | 0 | 0 | 0 | 0 | `set_skill_policy` | - | - |
-| 169 | `setup` | setup/install | 10 | 0 | 15 | 11 | - | - | pre |
-| 170 | `since` | agent-occasional | 0 | 0 | 0 | 0 | `chronicle_since` | - | - |
-| 171 | `skill` | agent-occasional | 1 | 0 | 0 | 0 | `get_skill` | - | - |
-| 172 | `skill-asset` | agent-occasional | 0 | 0 | 0 | 0 | `get_skill_asset` | - | - |
-| 173 | `skill-policy` | admin/maintenance | 0 | 0 | 0 | 0 | `get_skill_policy` | - | - |
-| 174 | `skill-resolver` | agent-occasional | 0 | 0 | 0 | 0 | - | - | pre |
-| 175 | `skill-retention` | admin/maintenance | 0 | 0 | 0 | 0 | `get_skill_retention` | - | - |
-| 176 | `skillify` | agent-occasional | 8 | 0 | 0 | 0 | - | - | pre |
-| 177 | `skillopt` | dev/eval-only | 13 | 5 | 0 | 9 | - | - | post |
-| 178 | `skillpack` | setup/install | 22 | 12 | 6 | 12 | - | - | pre |
-| 179 | `skillpack-check` | dev/eval-only | 4 | 0 | 0 | 4 | - | - | pre |
-| 180 | `skills` | agent-occasional | 5 | 0 | 8 | 3 | `list_skills` | - | - |
-| 181 | `smoke-test` | dev/eval-only | 5 | 0 | 0 | 4 | - | - | pre |
-| 182 | `sources` | admin/maintenance | 40 | 87 | 12 | 40 | - | Y: p5-brain.ts:161, lifecycle-experiment.ts:208, write-contract-gen.ts:152 | post |
-| 183 | `stats` | admin/maintenance | 6 | 12 | 5 | 5 | `get_stats` | Y: cat41/scenarios.ts:186 | - |
-| 184 | `status` | admin/maintenance | 0 | 0 | 0 | 0 | - | - | post |
-| 185 | `storage` | admin/maintenance | 6 | 1 | 0 | 6 | - | - | post |
-| 186 | `storage-find` | agent-occasional | 4 | 0 | 4 | 3 | `storage_find` | - | - |
-| 187 | `storage-get` | agent-occasional | 1 | 0 | 0 | 1 | `storage_get` | - | - |
-| 188 | `storage-list` | agent-occasional | 0 | 0 | 0 | 0 | `storage_list` | - | - |
-| 189 | `storage-register` | admin/maintenance | 1 | 0 | 0 | 1 | `storage_register` | - | - |
-| 190 | `storage-update` | admin/maintenance | 1 | 0 | 0 | 1 | `storage_update` | - | - |
-| 191 | `sweep` | admin/maintenance | 6 | 0 | 6 | 6 | - | Y: p5-brain.ts:194 | post |
-| 192 | `sync` | admin/maintenance | 62 | 44 | 16 | 61 | `sync_brain` | Y: predictive/cli-arm.ts (sync), write-contract-gen.ts:131 | post |
-| 193 | `sync-brain-skills` | agent-occasional | 0 | 0 | 0 | 0 | `sync_brain_skills` | - | - |
-| 194 | `synthesize` | agent-core | 0 | 0 | 0 | 0 | `synthesize` | - | - |
-| 195 | `tag` | agent-occasional | 1 | 0 | 0 | 1 | `add_tag` | classify only: cat41/classify.ts:54 | - |
-| 196 | `tags` | agent-occasional | 1 | 0 | 0 | 1 | `get_tags` | - | - |
-| 197 | `takes` | agent-occasional | 3 | 7 | 1 | 3 | - | - | post |
-| 198 | `takes-calibration` | agent-occasional | 0 | 0 | 0 | 0 | `takes_calibration` | - | - |
-| 199 | `takes-list` | agent-occasional | 0 | 0 | 0 | 0 | `takes_list` | - | - |
-| 200 | `takes-scorecard` | agent-occasional | 0 | 0 | 0 | 0 | `takes_scorecard` | - | - |
-| 201 | `takes-search` | agent-occasional | 0 | 0 | 0 | 0 | `takes_search` | - | - |
-| 202 | `think` | agent-occasional | 3 | 3 | 1 | 3 | `think` | MCP: shim.py FULL_SURFACE_CALLS | post |
-| 203 | `timeline` | agent-occasional | 7 | 3 | 4 | 6 | `get_timeline` | - | - |
-| 204 | `timeline-add` | agent-occasional | 7 | 0 | 3 | 7 | `add_timeline_entry` | classify only: cat41/classify.ts:54 | - |
-| 205 | `transcripts` | agent-occasional | 17 | 1 | 4 | 15 | `get_recent_transcripts` | - | post |
-| 206 | `trust` | admin/maintenance | 0 | 0 | 0 | 0 | - | - | post |
-| 207 | `unlink` | agent-occasional | 1 | 0 | 0 | 1 | `remove_link` | - | - |
-| 208 | `untag` | agent-occasional | 0 | 0 | 0 | 0 | `remove_tag` | - | - |
-| 209 | `upgrade` | admin/maintenance | 9 | 69 | 13 | 9 | - | - | pre |
-| 210 | `volunteer-context` | agent-core | 0 | 0 | 0 | 0 | `volunteer_context` | - | - |
-| 211 | `waiting` | agent-occasional | 13 | 1 | 2 | 13 | - | - | post |
-| 212 | `wakeshift` | agent-occasional | 0 | 0 | 0 | 0 | - | - | post |
-| 213 | `wanted` | agent-occasional | 1 | 0 | 0 | 1 | `wanted_pages` | - | - |
-| 214 | `watch` | agent-occasional | 0 | 0 | 0 | 0 | - | - | post |
-| 215 | `whoami` | agent-core | 0 | 0 | 0 | 0 | `whoami` | - | - |
-| 216 | `whois` | agent-occasional | 8 | 0 | 1 | 8 | `whois` | - | - |
-| 217 | `whoknows` | agent-occasional | 4 | 0 | 0 | 4 | `find_experts` | - | post |
-| 218 | `write-conflicts` | admin/maintenance | 0 | 0 | 0 | 0 | `list_write_conflicts` | - | - |
-| 219 | `write-request` | agent-occasional | 22 | 0 | 2 | 22 | `get_write_request` | - | - |
-| 220 | `write-requests` | agent-occasional | 0 | 0 | 0 | 0 | `list_write_requests` | - | - |
+| 6 | `apple-contacts` | admin/maintenance | 0 | 0 | 0 | 0 | - | - | post |
+| 7 | `apply-migrations` | admin/maintenance | 12 | 81 | 8 | 12 | - | Y: shim.py:574, nightly/smokes/harness.ts | pre |
+| 8 | `attribution` | admin/maintenance | 0 | 2 | 0 | 0 | `get_write_attribution` | - | - |
+| 9 | `auth` | setup/install | 3 | 19 | 1 | 3 | - | Y: p5-brain.ts:168, lifecycle-experiment.ts:213 | pre |
+| 10 | `autopilot` | admin/maintenance | 9 | 10 | 8 | 8 | - | - | post |
+| 11 | `backfill` | admin/maintenance | 0 | 0 | 0 | 0 | - | - | post |
+| 12 | `backlinks` | agent-core | 8 | 0 | 4 | 7 | `get_backlinks` | - | - |
+| 13 | `backup` | admin/maintenance | 2 | 3 | 3 | 2 | - | - | pre |
+| 14 | `beliefs` | dev/eval-only | 0 | 0 | 0 | 0 | - | - | post |
+| 15 | `bench` | dev/eval-only | 0 | 0 | 0 | 0 | - | - | pre |
+| 16 | `book-mirror` | agent-occasional | 7 | 4 | 0 | 7 | - | - | post |
+| 17 | `bootstrap` | setup/install | 32 | 6 | 52 | 29 | - | - | pre |
+| 18 | `brain-skillpack` | agent-occasional | 0 | 0 | 0 | 0 | `list_brain_skillpack` | - | - |
+| 19 | `brainstorm` | agent-occasional | 0 | 0 | 0 | 0 | - | - | post |
+| 20 | `bundled-skill` | setup/install | 0 | 0 | 0 | 0 | - | - | pre |
+| 21 | `cache` | admin/maintenance | 0 | 1 | 0 | 0 | - | - | pre |
+| 22 | `calibration` | agent-occasional | 1 | 0 | 0 | 1 | - | - | post |
+| 23 | `call` | agent-core | 8 | 6 | 5 | 6 | - | Y: lifecycle/drivers.ts:93, p4-stream/run.ts:209, facts-absorb-gate.ts:171 | pre |
+| 24 | `cancel-write-request` | agent-occasional | 0 | 0 | 0 | 0 | `cancel_write_request` | - | - |
+| 25 | `capture` | agent-occasional | 22 | 0 | 1 | 21 | `capture` | classify only: cat41/classify.ts:54 | pre |
+| 26 | `check-backlinks` | admin/maintenance | 11 | 10 | 1 | 11 | - | - | pre |
+| 27 | `check-resolvable` | admin/maintenance | 11 | 2 | 0 | 5 | - | - | pre |
+| 28 | `check-update` | admin/maintenance | 0 | 2 | 1 | 0 | - | - | pre |
+| 29 | `chronicle-backfill` | admin/maintenance | 0 | 2 | 0 | 0 | `chronicle_backfill` | - | - |
+| 30 | `claw-test` | dev/eval-only | 0 | 0 | 0 | 0 | - | - | pre |
+| 31 | `code-callees` | agent-occasional | 0 | 0 | 0 | 0 | - | - | post |
+| 32 | `code-callers` | agent-occasional | 0 | 4 | 0 | 0 | - | - | post |
+| 33 | `code-def` | agent-occasional | 0 | 2 | 0 | 0 | - | - | post |
+| 34 | `code-refs` | agent-occasional | 0 | 3 | 0 | 0 | - | - | post |
+| 35 | `compile-context` | hidden/internal | 0 | 1 | 1 | 0 | - | - | pre |
+| 36 | `config` | admin/maintenance | 50 | 91 | 16 | 48 | - | Y: p5-brain.ts:164, p4-stream/run.ts:207, shim.py:625 | post |
+| 37 | `connect` | setup/install | 9 | 2 | 0 | 9 | - | - | pre |
+| 38 | `connectors` | admin/maintenance | 14 | 0 | 3 | 14 | - | - | post |
+| 39 | `context-pack` | agent-core | 0 | 0 | 2 | 0 | `context_pack` | - | - |
+| 40 | `conversation-parser` | hidden/internal | 5 | 0 | 0 | 5 | - | - | post |
+| 41 | `core` | agent-occasional | 2 | 0 | 0 | 0 | - | - | post |
+| 42 | `creds` | setup/install | 0 | 0 | 0 | 0 | - | - | pre |
+| 43 | `day` | agent-occasional | 2 | 2 | 0 | 2 | `chronicle_day` | - | - |
+| 44 | `db-repair` | admin/maintenance | 14 | 0 | 5 | 13 | - | - | pre |
+| 45 | `decide` | dev/eval-only | 1 | 16 | 4 | 0 | - | - | pre |
+| 46 | `dedupe` | admin/maintenance | 0 | 0 | 0 | 0 | - | scored from a saved `dedupe --preview --json` file, not run: person-dedupe.ts:343 (gbrain-evals) | post |
+| 47 | `delete` | admin/maintenance | 5 | 1 | 1 | 5 | `delete_page` | - | - |
+| 48 | `delete-skill` | agent-occasional | 0 | 0 | 0 | 0 | `delete_skill` | - | - |
+| 49 | `delta` | agent-core | 0 | 0 | 2 | 0 | `delta` | - | - |
+| 50 | `diag` | admin/maintenance | 1 | 0 | 0 | 1 | - | - | post |
+| 51 | `doctor` | admin/maintenance | 74 | 130 | 34 | 72 | - | Y: shim.py:582, shim.py:905 (quiesce gate) | pre |
+| 52 | `dream` | admin/maintenance | 18 | 30 | 1 | 18 | - | Y: chronicle-lift.ts:232 (dream --phase chronicle) | pre |
+| 53 | `edge-proposals` | admin/maintenance | 0 | 3 | 0 | 0 | - | - | post |
+| 54 | `edges-backfill` | admin/maintenance | 1 | 1 | 0 | 1 | - | - | post |
+| 55 | `embed` | admin/maintenance | 12 | 20 | 7 | 12 | - | Y: lifecycle-experiment.ts:251 (embed --stale) | post |
+| 56 | `embeddings` | admin/maintenance | 0 | 0 | 0 | 0 | - | - | pre |
+| 57 | `engine` | setup/install | 16 | 0 | 2 | 16 | - | - | pre |
+| 58 | `enrich` | agent-occasional | 1 | 1 | 0 | 1 | - | - | post |
+| 59 | `entity` | agent-core | 7 | 1 | 4 | 6 | `entity` | - | - |
+| 60 | `entity-identity-link` | admin/maintenance | 0 | 0 | 0 | 0 | `entity_identity_link` | - | - |
+| 61 | `entity-identity-list` | admin/maintenance | 0 | 0 | 0 | 0 | `entity_identity_list` | - | - |
+| 62 | `entity-identity-unlink` | admin/maintenance | 0 | 0 | 0 | 0 | `entity_identity_unlink` | - | - |
+| 63 | `errors` | agent-occasional | 3 | 0 | 2 | 2 | - | - | pre |
+| 64 | `eval` | dev/eval-only | 31 | 14 | 4 | 16 | - | Y: scripts/run-shootout-phase1.sh:188 | post |
+| 65 | `export` | admin/maintenance | 0 | 1 | 0 | 0 | - | Y: predictive/cli-arm.ts:183 | post |
+| 66 | `extract` | admin/maintenance | 17 | 38 | 10 | 17 | - | Y: lifecycle-experiment.ts:158, p5-agent.ts:115 | post |
+| 67 | `extract-conversation-facts` | agent-occasional | 6 | 3 | 0 | 6 | - | Y: workload-suites/bench.ts:258 | post |
+| 68 | `extract-entities` | agent-occasional | 0 | 0 | 0 | 0 | `extract_entities` | - | - |
+| 69 | `extraction-pending` | admin/maintenance | 0 | 0 | 0 | 0 | `extraction_pending` | - | - |
+| 70 | `extraction-review` | admin/maintenance | 0 | 0 | 0 | 0 | `extraction_review` | - | - |
+| 71 | `facts` | agent-occasional | 1 | 4 | 0 | 1 | - | - | pre |
+| 72 | `features` | admin/maintenance | 4 | 0 | 0 | 3 | - | - | post |
+| 73 | `feedback` | admin/maintenance | 0 | 1 | 0 | 0 | - | - | post |
+| 74 | `fetch` | agent-occasional | 0 | 0 | 0 | 0 | `fetch` | - | - |
+| 75 | `files` | agent-occasional | 25 | 16 | 0 | 25 | - | - | post |
+| 76 | `find` | agent-occasional | 2 | 0 | 4 | 1 | `find_pages` | - | - |
+| 77 | `find-contradictions` | agent-occasional | 2 | 0 | 0 | 2 | `find_contradictions` | - | - |
+| 78 | `find-trajectory` | agent-occasional | 0 | 0 | 0 | 0 | `find_trajectory` | - | - |
+| 79 | `forget` | agent-core | 6 | 2 | 0 | 6 | - | MCP: correction-adapters.ts:102 | pre |
+| 80 | `founder` | hidden/internal | 0 | 3 | 1 | 0 | - | - | post |
+| 81 | `friction` | agent-occasional | 7 | 0 | 0 | 7 | - | - | pre |
+| 82 | `frontmatter` | admin/maintenance | 14 | 8 | 7 | 14 | - | - | pre |
+| 83 | `get` | agent-core | 38 | 4 | 8 | 36 | `get_page` | Y (argv): write-contract-gen.ts:166-169 | - |
+| 84 | `get_links` | hidden/internal | 0 | 0 | 0 | 0 | - | - | - |
+| 85 | `git` | agent-occasional | 10 | 1 | 8 | 10 | - | Y (argv, not run): write-contract-gen.ts:145 | pre |
+| 86 | `google` | setup/install | 13 | 1 | 1 | 13 | - | - | pre |
+| 87 | `graph` | agent-occasional | 3 | 4 | 1 | 3 | `traverse_graph` | - | - |
+| 88 | `graph-query` | agent-occasional | 19 | 9 | 5 | 19 | - | - | post |
+| 89 | `guests` | admin/maintenance | 0 | 0 | 0 | 0 | - | - | post |
+| 90 | `health` | admin/maintenance | 13 | 2 | 0 | 13 | `get_health` | - | - |
+| 91 | `history` | agent-occasional | 3 | 2 | 0 | 3 | `get_versions` | - | - |
+| 92 | `hook` | hidden/internal | 0 | 0 | 0 | 0 | - | - | pre |
+| 93 | `identity` | admin/maintenance | 0 | 0 | 0 | 0 | - | - | post |
+| 94 | `import` | agent-occasional | 10 | 0 | 1 | 10 | - | Y: p5-agent.ts:80, chronicle-lift.ts:222 | post |
+| 95 | `init` | setup/install | 17 | 12 | 16 | 17 | - | Y: cat40/gbrain-arm.ts:396, p5-brain.ts:160, shim.py:571 | pre |
+| 96 | `integrations` | setup/install | 0 | 12 | 3 | 0 | - | - | pre |
+| 97 | `integrity` | admin/maintenance | 0 | 0 | 0 | 0 | - | - | pre |
+| 98 | `jobs` | admin/maintenance | 72 | 74 | 6 | 67 | - | Y: memory-trust/flag-rate.ts:182, p8-write-cost.ts:132, shim.py:499 | post |
+| 99 | `join-brain` | agent-occasional | 0 | 0 | 0 | 0 | `join_brain` | - | - |
+| 100 | `last-seen` | agent-occasional | 0 | 0 | 0 | 0 | `chronicle_last_seen` | - | - |
+| 101 | `learned` | agent-occasional | 0 | 0 | 0 | 0 | `learned` | - | - |
+| 102 | `leave-brain` | agent-occasional | 0 | 0 | 0 | 0 | `leave_brain` | - | - |
+| 103 | `link` | agent-occasional | 12 | 0 | 7 | 12 | `add_link` | classify only: cat41/classify.ts:54 | - |
+| 104 | `link-add` | hidden/internal | 0 | 0 | 0 | 0 | - | - | - |
+| 105 | `link-rm` | hidden/internal | 0 | 0 | 0 | 0 | - | - | - |
+| 106 | `link-sources` | agent-occasional | 3 | 0 | 0 | 3 | `list_link_sources` | - | - |
+| 107 | `links` | agent-occasional | 1 | 0 | 0 | 1 | `get_links` | - | - |
+| 108 | `lint` | admin/maintenance | 3 | 10 | 1 | 3 | - | - | pre |
+| 109 | `list` | agent-occasional | 5 | 0 | 4 | 4 | `list_pages` | - | - |
+| 110 | `loops` | agent-occasional | 6 | 0 | 1 | 6 | - | - | post |
+| 111 | `lsd` | agent-occasional | 8 | 0 | 0 | 8 | - | - | post |
+| 112 | `maintain` | admin/maintenance | 10 | 0 | 1 | 8 | - | - | post |
+| 113 | `mcp` | setup/install | 56 | 2 | 6 | 54 | - | - | post |
+| 114 | `memory-proposals` | admin/maintenance | 0 | 0 | 0 | 0 | - | - | post |
+| 115 | `memory-settings` | admin/maintenance | 0 | 0 | 0 | 0 | `get_memory_settings` | - | - |
+| 116 | `migrate` | admin/maintenance | 9 | 15 | 2 | 9 | - | - | post |
+| 117 | `models` | admin/maintenance | 8 | 3 | 0 | 7 | - | Y: shim.py:642 | post |
+| 118 | `mounts` | admin/maintenance | 3 | 3 | 1 | 3 | - | - | pre |
+| 119 | `notability-eval` | dev/eval-only | 0 | 0 | 0 | 0 | - | - | post |
+| 120 | `notices` | agent-occasional | 4 | 0 | 0 | 4 | - | - | pre |
+| 121 | `on-this-day` | agent-occasional | 0 | 0 | 0 | 0 | `chronicle_on_this_day` | - | - |
+| 122 | `onboard` | setup/install | 15 | 0 | 6 | 13 | - | - | post |
+| 123 | `ontology` | agent-occasional | 0 | 0 | 0 | 0 | `ontology_get` | - | - |
+| 124 | `ontology-add` | agent-occasional | 0 | 0 | 0 | 0 | `ontology_propose` | - | - |
+| 125 | `ontology-contradictions` | agent-occasional | 0 | 0 | 0 | 0 | `ontology_conflicts` | - | - |
+| 126 | `ontology-dimensions` | agent-occasional | 0 | 0 | 0 | 0 | `ontology_dimensions` | - | - |
+| 127 | `orient` | agent-occasional | 0 | 0 | 0 | 0 | `volunteer_chronicle` | - | - |
+| 128 | `orphans` | admin/maintenance | 1 | 0 | 0 | 1 | `find_orphans` | - | post |
+| 129 | `pages` | agent-occasional | 4 | 2 | 0 | 4 | - | - | post |
+| 130 | `pglite-repair` | admin/maintenance | 3 | 0 | 0 | 3 | - | - | pre |
+| 131 | `post-upgrade` | admin/maintenance | 1 | 14 | 8 | 1 | - | - | pre |
+| 132 | `pricing` | admin/maintenance | 7 | 2 | 0 | 7 | - | - | post |
+| 133 | `projections` | admin/maintenance | 0 | 1 | 0 | 0 | - | - | pre |
+| 134 | `protocol` | hidden/internal | 0 | 0 | 0 | 0 | - | - | pre |
+| 135 | `providers` | setup/install | 2 | 0 | 0 | 0 | - | - | pre |
+| 136 | `prune-skill-revisions` | admin/maintenance | 0 | 0 | 0 | 0 | `prune_skill_revisions` | - | - |
+| 137 | `publish` | admin/maintenance | 19 | 9 | 0 | 19 | - | - | pre |
+| 138 | `put` | agent-core | 17 | 3 | 2 | 17 | `put_page` | Y: predictive/cli-arm.ts (put); write-contract-gen.ts | - |
+| 139 | `put-pages` | agent-occasional | 0 | 0 | 0 | 0 | `put_pages` | - | - |
+| 140 | `put-skill` | agent-occasional | 0 | 0 | 0 | 0 | `put_skill` | - | - |
+| 141 | `quarantine` | admin/maintenance | 0 | 0 | 0 | 0 | - | - | post |
+| 142 | `query` | agent-core | 59 | 7 | 10 | 56 | `query` | MCP: shim.py STARTER_CALLS | - |
+| 143 | `questions` | agent-occasional | 0 | 0 | 0 | 0 | - | - | post |
+| 144 | `rank-entities` | agent-occasional | 0 | 0 | 0 | 0 | `rank_entities` | - | - |
+| 145 | `rate` | agent-occasional | 0 | 1 | 0 | 0 | `rate_answer` | - | - |
+| 146 | `recall` | agent-core | 21 | 3 | 4 | 20 | - | Y: predictive/cli-arm.ts:193; facts-absorb-gate.ts:171 (via call) | post |
+| 147 | `reconcile-links` | admin/maintenance | 0 | 3 | 0 | 0 | - | - | post |
+| 148 | `reindex` | admin/maintenance | 0 | 12 | 0 | 0 | - | - | post |
+| 149 | `reindex-code` | admin/maintenance | 0 | 5 | 0 | 0 | - | - | post |
+| 150 | `reindex-frontmatter` | admin/maintenance | 0 | 3 | 0 | 0 | - | - | post |
+| 151 | `reindex-search-vector` | admin/maintenance | 0 | 0 | 0 | 0 | - | - | post |
+| 152 | `reinit-pglite` | admin/maintenance | 1 | 0 | 0 | 1 | - | - | pre |
+| 153 | `remember` | agent-core | 5 | 1 | 4 | 4 | `remember` | Y (argv): write-contract-gen.ts:123 | - |
+| 154 | `remote` | setup/install | 0 | 0 | 0 | 0 | - | - | pre |
+| 155 | `repair` | admin/maintenance | 14 | 44 | 4 | 12 | - | - | post |
+| 156 | `repair-jsonb` | admin/maintenance | 0 | 0 | 3 | 0 | - | - | pre |
+| 157 | `report` | admin/maintenance | 0 | 7 | 0 | 0 | - | classify only: cat41/classify.ts:54 | pre |
+| 158 | `repos` | admin/maintenance | 0 | 1 | 0 | 0 | - | - | post |
+| 159 | `resolvers` | agent-occasional | 0 | 0 | 0 | 0 | - | - | pre |
+| 160 | `restore` | admin/maintenance | 10 | 2 | 1 | 9 | `restore_page` | - | - |
+| 161 | `retain-skill-revision` | admin/maintenance | 0 | 0 | 0 | 0 | `retain_skill_revision` | - | - |
+| 162 | `retrieval-upgrade` | admin/maintenance | 0 | 0 | 0 | 0 | - | - | post |
+| 163 | `revert` | admin/maintenance | 1 | 1 | 0 | 1 | `revert_version` | - | - |
+| 164 | `routing-eval` | dev/eval-only | 2 | 0 | 0 | 2 | - | - | pre |
+| 165 | `salience` | agent-occasional | 1 | 0 | 0 | 1 | `get_recent_salience` | - | post |
+| 166 | `schema` | agent-occasional | 96 | 1 | 0 | 93 | - | - | pre |
+| 167 | `search` | agent-core | 63 | 6 | 10 | 60 | `search` | Y (search modes): shim.py:641, cat40/rerank-pool-replay.ts:688 | - |
+| 168 | `search-by-image` | agent-occasional | 0 | 0 | 0 | 0 | `search_by_image` | - | - |
+| 169 | `search-exact` | agent-occasional | 0 | 0 | 0 | 0 | `search_exact` | - | - |
+| 170 | `secrets` | admin/maintenance | 0 | 0 | 0 | 0 | - | - | post |
+| 171 | `self-upgrade` | admin/maintenance | 10 | 0 | 2 | 10 | - | - | pre |
+| 172 | `serve` | agent-core | 28 | 29 | 12 | 28 | - | Y: cat40/gbrain-arm.ts:93, shim.py:684 | post |
+| 173 | `set-skill-policy` | admin/maintenance | 0 | 0 | 0 | 0 | `set_skill_policy` | - | - |
+| 174 | `setup` | setup/install | 10 | 0 | 15 | 11 | - | - | pre |
+| 175 | `since` | agent-occasional | 0 | 0 | 0 | 0 | `chronicle_since` | - | - |
+| 176 | `skill` | agent-occasional | 1 | 0 | 0 | 0 | `get_skill` | - | - |
+| 177 | `skill-asset` | agent-occasional | 0 | 0 | 0 | 0 | `get_skill_asset` | - | - |
+| 178 | `skill-policy` | admin/maintenance | 0 | 0 | 0 | 0 | `get_skill_policy` | - | - |
+| 179 | `skill-resolver` | agent-occasional | 0 | 0 | 0 | 0 | - | - | pre |
+| 180 | `skill-retention` | admin/maintenance | 0 | 0 | 0 | 0 | `get_skill_retention` | - | - |
+| 181 | `skillify` | agent-occasional | 8 | 0 | 0 | 0 | - | - | pre |
+| 182 | `skillopt` | dev/eval-only | 13 | 5 | 0 | 9 | - | - | post |
+| 183 | `skillpack` | setup/install | 22 | 12 | 6 | 12 | - | - | pre |
+| 184 | `skillpack doctor` | setup/install | 0 | 0 | 0 | 0 | - | - | pre |
+| 185 | `skillpack health` | setup/install | 1 | 0 | 0 | 1 | - | - | pre |
+| 186 | `skillpack-check` | dev/eval-only | 4 | 0 | 0 | 4 | - | - | pre |
+| 187 | `skills` | agent-occasional | 5 | 0 | 8 | 3 | `list_skills` | - | - |
+| 188 | `skills index` | agent-occasional | 2 | 0 | 4 | 1 | - | - | pre |
+| 189 | `skills index build` | agent-occasional | 2 | 0 | 4 | 1 | - | - | pre |
+| 190 | `skills index remove` | agent-occasional | 0 | 0 | 0 | 0 | - | - | pre |
+| 191 | `skills index status` | agent-occasional | 0 | 0 | 0 | 0 | - | - | pre |
+| 192 | `skills library` | agent-occasional | 0 | 0 | 0 | 0 | - | - | pre |
+| 193 | `skills pin` | agent-occasional | 0 | 0 | 0 | 0 | - | - | pre |
+| 194 | `skills pin add` | agent-occasional | 0 | 0 | 0 | 0 | - | - | pre |
+| 195 | `skills pin list` | agent-occasional | 0 | 0 | 0 | 0 | - | - | pre |
+| 196 | `skills pin remove` | agent-occasional | 0 | 0 | 0 | 0 | - | - | pre |
+| 197 | `skills resolve` | agent-occasional | 2 | 0 | 4 | 1 | - | - | pre |
+| 198 | `smoke-test` | dev/eval-only | 5 | 0 | 0 | 4 | - | - | pre |
+| 199 | `sources` | admin/maintenance | 40 | 87 | 12 | 40 | - | Y: p5-brain.ts:161, lifecycle-experiment.ts:208, write-contract-gen.ts:152 | post |
+| 200 | `stats` | admin/maintenance | 6 | 12 | 5 | 5 | `get_stats` | Y: cat41/scenarios.ts:186 | - |
+| 201 | `status` | admin/maintenance | 0 | 0 | 0 | 0 | - | - | post |
+| 202 | `storage` | admin/maintenance | 6 | 1 | 0 | 6 | - | - | post |
+| 203 | `storage-find` | agent-occasional | 4 | 0 | 4 | 3 | `storage_find` | - | - |
+| 204 | `storage-get` | agent-occasional | 1 | 0 | 0 | 1 | `storage_get` | - | - |
+| 205 | `storage-list` | agent-occasional | 0 | 0 | 0 | 0 | `storage_list` | - | - |
+| 206 | `storage-register` | admin/maintenance | 1 | 0 | 0 | 1 | `storage_register` | - | - |
+| 207 | `storage-update` | admin/maintenance | 1 | 0 | 0 | 1 | `storage_update` | - | - |
+| 208 | `sweep` | admin/maintenance | 6 | 0 | 6 | 6 | - | Y: p5-brain.ts:194 | post |
+| 209 | `sync` | admin/maintenance | 62 | 44 | 16 | 61 | `sync_brain` | Y: predictive/cli-arm.ts (sync), write-contract-gen.ts:131 | post |
+| 210 | `sync-brain-skills` | agent-occasional | 0 | 0 | 0 | 0 | `sync_brain_skills` | - | - |
+| 211 | `synthesize` | agent-core | 0 | 0 | 0 | 0 | `synthesize` | - | - |
+| 212 | `tag` | agent-occasional | 1 | 0 | 0 | 1 | `add_tag` | classify only: cat41/classify.ts:54 | - |
+| 213 | `tags` | agent-occasional | 1 | 0 | 0 | 1 | `get_tags` | - | - |
+| 214 | `takes` | agent-occasional | 3 | 7 | 1 | 3 | - | - | post |
+| 215 | `takes-calibration` | agent-occasional | 0 | 0 | 0 | 0 | `takes_calibration` | - | - |
+| 216 | `takes-list` | agent-occasional | 0 | 0 | 0 | 0 | `takes_list` | - | - |
+| 217 | `takes-scorecard` | agent-occasional | 0 | 0 | 0 | 0 | `takes_scorecard` | - | - |
+| 218 | `takes-search` | agent-occasional | 0 | 0 | 0 | 0 | `takes_search` | - | - |
+| 219 | `think` | agent-occasional | 3 | 3 | 1 | 3 | `think` | MCP: shim.py FULL_SURFACE_CALLS | post |
+| 220 | `timeline` | agent-occasional | 7 | 3 | 4 | 6 | `get_timeline` | - | - |
+| 221 | `timeline-add` | agent-occasional | 7 | 0 | 3 | 7 | `add_timeline_entry` | classify only: cat41/classify.ts:54 | - |
+| 222 | `transcripts` | agent-occasional | 17 | 1 | 4 | 15 | `get_recent_transcripts` | - | post |
+| 223 | `trust` | admin/maintenance | 0 | 0 | 0 | 0 | - | - | post |
+| 224 | `unlink` | agent-occasional | 1 | 0 | 0 | 1 | `remove_link` | - | - |
+| 225 | `untag` | agent-occasional | 0 | 0 | 0 | 0 | `remove_tag` | - | - |
+| 226 | `upgrade` | admin/maintenance | 9 | 69 | 13 | 9 | - | - | pre |
+| 227 | `volunteer-context` | agent-core | 0 | 0 | 0 | 0 | `volunteer_context` | - | - |
+| 228 | `waiting` | agent-occasional | 13 | 1 | 2 | 13 | - | - | post |
+| 229 | `wakeshift` | agent-occasional | 0 | 0 | 0 | 0 | - | - | post |
+| 230 | `wanted` | agent-occasional | 1 | 0 | 0 | 1 | `wanted_pages` | - | - |
+| 231 | `watch` | agent-occasional | 0 | 0 | 0 | 0 | - | - | post |
+| 232 | `whoami` | agent-core | 0 | 0 | 0 | 0 | `whoami` | - | - |
+| 233 | `whois` | agent-occasional | 8 | 0 | 1 | 8 | `whois` | - | - |
+| 234 | `whoknows` | agent-occasional | 4 | 0 | 0 | 4 | `find_experts` | - | post |
+| 235 | `write-conflicts` | admin/maintenance | 0 | 0 | 0 | 0 | `list_write_conflicts` | - | - |
+| 236 | `write-request` | agent-occasional | 22 | 0 | 2 | 22 | `get_write_request` | - | - |
+| 237 | `write-requests` | agent-occasional | 0 | 0 | 0 | 0 | `list_write_requests` | - | - |
+
+The 17 rows for names added in the public surface at `116d737413` (`apple-contacts`, `dedupe`, `identity`, `learned`, `secrets`, `skillpack doctor`, `skillpack health`, and the `skills index`, `skills library`, `skills pin` and `skills resolve` names) were counted at that commit with `rg -o 'gbrain <name>\b'` over the same surfaces. The skills/ surface for those counts was the `SKILL.md` files, `RESOLVER.md`, `_AGENT_README.md` and `conventions/*.md`. The older rows keep their counts from `8bbfd0b5e8`, so the two sets may differ slightly in method. None of the five new single-word commands is named in `skills/`, in the agent guides or in `src/mcp/instructions.ts`, so their classes follow what each command does and their agent use is unverified. The `skills index`, `library`, `pin` and `resolve` rows are classed like `skill-resolver`, the record that runs them.
 

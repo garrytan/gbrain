@@ -52,18 +52,50 @@ async function claimedWrite(engine: BrainEngine, slug: string) {
   return claimed!;
 }
 
+/**
+ * The engine, with every transaction handle it gives out recording the sources `lockSourceForUpdate` was called for.
+ * Calls still reach the engine's own members, so the harness counts them too.
+ */
+function countingLocks(engine: BrainEngine, locked: string[]): BrainEngine {
+  const wrapTx = (tx: BrainEngine): BrainEngine => new Proxy(tx, {
+    get(target, prop) {
+      const value = Reflect.get(target, prop, target);
+      if (prop === 'lockSourceForUpdate') {
+        return async (sourceId: string) => { locked.push(sourceId); return (value as BrainEngine['lockSourceForUpdate']).call(target, sourceId); };
+      }
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+  return new Proxy(engine, {
+    get(target, prop) {
+      const value = Reflect.get(target, prop, target);
+      if (prop === 'transaction' || prop === 'transactionDirect') {
+        return (fn: (tx: BrainEngine) => Promise<unknown>, ...rest: unknown[]) =>
+          (value as (...a: unknown[]) => Promise<unknown>).call(target, (tx: BrainEngine) => fn(wrapTx(tx)), ...rest);
+      }
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+}
+
 describe('engine parity: the publication transaction\'s exclusive source lock', () => {
-  parityTest('a sourceExclusive mutation publishes through publishMutation and commits', {
-    methods: ['readSourceMembership', 'transaction', 'transactionDirect'],
+  // The lock must go through the typed member `lockSourceForUpdate` on every arm: a raw lock inside the journal store
+  // (`journal.lockSource`, a SELECT ... FOR UPDATE) still locks on the SQL engines but is not the member the purge path
+  // pins and the Rust arm serves, so a purge on a Rust owner would publish without it. Keep `lockSourceForUpdate` in
+  // `methods` and the call count below: a merge that drops either lets that regression back in (075a30ef45 did).
+  parityTest('a sourceExclusive mutation takes its source lock through lockSourceForUpdate once, publishes and commits', {
+    methods: ['readSourceMembership', 'transaction', 'transactionDirect', 'lockSourceForUpdate'],
     timeout: 60_000,
   }, async (engine) => {
     const row = await claimedWrite(engine, 'notes/parity-exclusive');
     let applied = 0;
+    const locked: string[] = [];
     const prepared: PreparedMutation = { observedRevision: null, sourceExclusive: true, apply: async () => { applied++; return { applied }; } };
-    const done = await publishMutation(engine, row, prepared);
+    const done = await publishMutation(countingLocks(engine, locked), row, prepared);
     expect(applied).toBe(1);
+    expect(locked).toEqual(['default']);
     expect({ state: done.state, error: done.error_code ?? null }).toEqual({ state: 'committed', error: null });
-    return { state: done.state, error: done.error_code ?? null, outcome: done.outcome, applied };
+    return { state: done.state, error: done.error_code ?? null, outcome: done.outcome, applied, locked };
   });
 
   parityTest('lockSourceForUpdate answers nothing for a known source, an unknown one and an empty id, outside a transaction', {

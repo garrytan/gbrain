@@ -24,6 +24,8 @@ import type { FolderRule } from './folder-rules.ts';
 import { appliedRules, ensurePolicyState, getRevision, listRevisions, lockSource, readAccessStore, writeAccessStore, type AccessStore } from './policy.ts';
 import { APPROVED_FILE, commitPolicyFile, isGitWorkTree, POLICY_FILE, sourcePolicyRoot, syncGitPolicy } from './policy-git.ts';
 import { serializePolicyYaml } from './folder-rules.ts';
+import { ownerConnectionFor } from '../rust-engine/owner-ipc/client.ts';
+import { ownerIpcRefusal } from '../rust-engine/owner-ipc/routes.ts';
 
 export interface MigratePreview {
   source_id: string;
@@ -71,6 +73,8 @@ export async function previewMigrate(engine: BrainEngine, sourceId: string, requ
 
 export async function migrateAccessStore(engine: BrainEngine, sourceId: string, requested?: AccessStore): Promise<{ id: string; from: AccessStore | null; to: AccessStore; phase: string; receipts: Record<string, unknown> }> {
   const p = await previewMigrate(engine, sourceId, requested);
+  // The store switch below runs in a transaction, which does not cross the owner socket: refuse before any write.
+  if (ownerConnectionFor(engine)) throw ownerIpcRefusal('transaction', 'gbrain access rule migrate switches the store inside one');
   await ensurePolicyState(engine, sourceId);
   let job = await unfinished(engine, sourceId);
   if (!job) {

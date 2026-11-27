@@ -57,6 +57,8 @@ import { reviewedWriterIntent } from './helpers/writer-admin-intent.ts';
 import { loadRustAddon } from '../src/core/rust-engine/addon-loader.ts';
 import { detectAddonTarget } from '../src/core/rust-engine/addon-target.ts';
 import { errorShape, readScript } from './helpers/owner-ipc-child.ts';
+import { migrateAccessStore } from '../src/core/access/policy-migrate.ts';
+import { readAccessStore } from '../src/core/access/policy.ts';
 import { currentSubmissionAuthority, withSubmissionAuthority, type SubmissionAuthority } from '../src/core/minions/submission-authority.ts';
 
 const CHILD = join(import.meta.dir, 'helpers', 'owner-ipc-child.ts');
@@ -235,6 +237,18 @@ describe('two or more client processes on one owner', () => {
         expect((error as OperationError).detail).toContain(`member=${member}`);
         expect((error as OperationError).detail).toContain('via=owner_ipc');
       }
+    } finally { close(); }
+  });
+
+  // The store switch of `gbrain access rule migrate` runs in a transaction, which does not cross the owner socket: a
+  // client refuses before any write, so no journal row or policy file is left behind to block a later migration.
+  test('access rule migrate from a client refuses before any write', async () => {
+    await owner.executeRaw("INSERT INTO sources (id, name) VALUES ('migr', 'migr') ON CONFLICT (id) DO NOTHING");
+    const { engine, close } = await clientOf(ownerSocketPath(db));
+    try {
+      const error = await migrateAccessStore(engine, 'migr', 'database').then(() => null, e => e);
+      expect([(error as OperationError).code, (error as OperationError).detail?.includes('via=owner_ipc')]).toEqual(['engine_capability_missing', true]);
+      expect([await owner.readUnfinishedAccessMigration('migr'), await readAccessStore(owner, 'migr')]).toEqual([null, null]);
     } finally { close(); }
   });
 
@@ -1321,10 +1335,10 @@ describe('a Rust owner whose engine does not report persistence_journal', () => 
       const calls: Array<[string, (e: BrainEngine) => Promise<unknown>]> = [
         ['executeRaw', e => e.executeRaw('SELECT 1')],
         // transaction is served in process now; a client refuses it with the owner-socket refusal (tested above).
-        // A member the Rust store does not serve (capability facts). Main join (da99c637a7): listFactsReconcileBacklog,
-        // the cli-members line's example, is served since the join took rust-engine/main's page_facts_reconcile store
-        // reads, and main's example lockOAuthClient is served by the cli-members line's job queue members.
-        ['readFactTableCatalog', e => e.readFactTableCatalog()],
+        // A member the Rust store does not serve (capability facts): listUnarchivedSourceRows, the source ids the claim-conflict
+        // scan walks. The earlier examples are served now: listFactsReconcileBacklog (main join da99c637a7), lockOAuthClient (the
+        // cli-members line) and, in batch 14, readFactTableCatalog (lane 4 sweep-facts-rust cd03205999, rust-5a 5ad596fad1).
+        ['listUnarchivedSourceRows', e => e.listUnarchivedSourceRows()],
       ];
       for (const [member, call] of calls) {
         expect(member in STORE_MEMBERS).toBe(false);

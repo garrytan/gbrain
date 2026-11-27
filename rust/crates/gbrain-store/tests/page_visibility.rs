@@ -5,7 +5,8 @@ mod common;
 
 use common::{TempDir, open};
 use gbrain_store::Store;
-use gbrain_store::facts::{OwnerOnlyForm, PrivacyPolicy};
+use gbrain_store::access_rules::AccessRuleRecord;
+use gbrain_store::facts::{LabelledOnly, OwnerOnlyForm, PrivacyPolicy};
 use gbrain_store::links::AddLinkOptions;
 use gbrain_store::page_visibility::{CallerPageAccessRow, PageRef, WriteVisibilityProbe};
 use gbrain_store::pages::{PageInput, PutPageOptions};
@@ -73,6 +74,75 @@ fn hidden_judges_the_row_by_the_policy() {
             .read_page_hidden_from_caller("other", "notes/private", &read_policy())
             .unwrap()
     );
+}
+
+/// The labelled-only conjunct of a stored write's writer (`labelledOnlyForSql`): the page names one of the identities, or a
+/// folder rule stamped on it is one the writer satisfies; the rest of the policy still applies, so it only narrows.
+#[test]
+fn hidden_judges_the_labelled_only_conjunct() {
+    let dir = TempDir::new("visibility-labelled");
+    let store = seeded(&dir);
+    put(
+        &store,
+        "notes/carol",
+        json!({"readable_by": ["member:carol"]}),
+    );
+    put(&store, "notes/team", json!({"readable_by": "group:team"}));
+    put(&store, "notes/nobody", json!({"readable_by": 5}));
+    store.put_access_policy_state("default").unwrap();
+    for (id, prefix, readers) in [
+        ("carol-rule", "ruled/", "member:carol"),
+        ("alice-rule", "alices/", "member:alice"),
+    ] {
+        let rule: AccessRuleRecord = serde_json::from_value(json!({
+            "source_id": "default", "rule_id": id, "prefix": prefix, "readable_by": [readers], "revision": 1,
+        }))
+        .unwrap();
+        store.put_access_rule(rule).unwrap();
+    }
+    put(&store, "ruled/page", json!({}));
+    put(&store, "alices/page", json!({}));
+    let policy = |identity: &[&str], satisfied: &[&str], labelled: bool| {
+        let ids = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        PrivacyPolicy {
+            identity: ids(identity),
+            satisfied_rule_ids: ids(satisfied),
+            caller_record: true,
+            labelled_only: labelled.then(|| LabelledOnly {
+                identity: ids(identity),
+                satisfied_rule_ids: ids(satisfied),
+            }),
+            ..Default::default()
+        }
+    };
+    let hidden = |slug: &str, policy: &PrivacyPolicy| {
+        store
+            .read_page_hidden_from_caller("default", slug, policy)
+            .unwrap()
+    };
+    let carol = ["member:carol", "group:team"];
+    let satisfied = ["default:carol-rule"];
+    // Without the conjunct the open page is readable; with it, a page that names nobody and has no stamped rule is not.
+    assert!(!hidden("notes/open", &policy(&carol, &[], false)));
+    assert!(hidden("notes/open", &policy(&carol, &[], true)));
+    // Named by the member, or by a group it is in.
+    assert!(!hidden("notes/carol", &policy(&carol, &[], true)));
+    assert!(!hidden("notes/team", &policy(&carol, &[], true)));
+    assert!(hidden("notes/team", &policy(&["member:carol"], &[], true)));
+    // Named by another member, or by a readable_by that does not normalize: hidden by the conjunct and by the rest.
+    assert!(hidden("notes/alice", &policy(&carol, &[], true)));
+    assert!(hidden("notes/nobody", &policy(&carol, &[], true)));
+    // A stamped rule the writer satisfies names it; one it does not satisfy hides the page whatever the conjunct says.
+    assert!(!hidden("ruled/page", &policy(&carol, &satisfied, true)));
+    assert!(hidden("ruled/page", &policy(&carol, &[], true)));
+    assert!(hidden("alices/page", &policy(&carol, &satisfied, true)));
+    // A rule satisfied but stamped on no page names nothing: an open page stays hidden for a labelled-only writer.
+    assert!(hidden("notes/open", &policy(&carol, &satisfied, true)));
+    // Empty terms name nothing (an invalid identity or rule id empties them).
+    let mut none = policy(&carol, &satisfied, true);
+    none.labelled_only = Some(LabelledOnly::default());
+    assert!(hidden("notes/carol", &none));
+    assert!(hidden("ruled/page", &none));
 }
 
 #[test]
@@ -160,6 +230,24 @@ fn write_probe_names_what_an_identity_could_open() {
     assert_eq!(read("notes/missing"), probe(None, false, false));
     assert_eq!(read("notes/private"), probe(Some(false), false, false));
     assert_eq!(read("notes/alice"), probe(Some(true), false, false));
+}
+
+#[test]
+fn write_probe_reports_a_labelled_only_member() {
+    let dir = TempDir::new("visibility-probe-labelled");
+    let store = seeded(&dir);
+    let any = || {
+        let read = store.read_write_visibility_probe("default", "notes/open", &read_policy());
+        read.unwrap().any_labelled
+    };
+    let spec: gbrain_store::access_members::AccessMemberInsert =
+        serde_json::from_value(json!({ "id": "carol" })).unwrap();
+    store.insert_access_member(&spec).unwrap();
+    assert!(!any());
+    store
+        .set_access_member_labelled_only("carol", true)
+        .unwrap();
+    assert!(any());
 }
 
 #[test]
@@ -324,4 +412,90 @@ fn the_open_form_hides_every_page_that_names_readers_and_reads_the_store_flag_fo
         .unwrap();
     assert!(!hidden("atoms/from-alice", &open(&[])));
     assert!(hidden("atoms/from-alice", &access_policy(&[])));
+}
+
+#[test]
+fn privacy_hidden_judges_the_live_page_by_the_privacy_part_alone() {
+    let dir = TempDir::new("visibility-privacy-hidden");
+    let store = seeded(&dir);
+    put(&store, "notes/aliased", json!({"access": "private"}));
+    put(
+        &store,
+        "notes/shown",
+        json!({"access": "private", "visibility": "world"}),
+    );
+    let hidden = |slug: &str, honor_aliases: bool| {
+        store
+            .read_page_privacy_hidden("default", slug, honor_aliases)
+            .unwrap()
+    };
+    assert_eq!(hidden("notes/private", false), Some(true));
+    assert_eq!(hidden("notes/open", true), Some(false));
+    // The readers list is the member-access part, not the privacy part.
+    assert_eq!(hidden("notes/alice", true), Some(false));
+    // A soft-deleted page and a missing one have no live row.
+    assert_eq!(hidden("notes/gone", true), None);
+    assert_eq!(hidden("notes/missing", true), None);
+    assert_eq!(
+        store
+            .read_page_privacy_hidden("other", "notes/open", true)
+            .unwrap(),
+        None
+    );
+    // `access: private` hides only while the aliases are honoured, and never against a stated visibility.
+    assert_eq!(hidden("notes/aliased", true), Some(true));
+    assert_eq!(hidden("notes/aliased", false), Some(false));
+    assert_eq!(hidden("notes/shown", true), Some(false));
+}
+
+#[test]
+fn private_only_slugs_names_a_slug_every_scoped_row_of_which_is_hidden() {
+    let dir = TempDir::new("visibility-private-only");
+    let store = seeded(&dir);
+    store
+        .upsert_source(&SourceInput {
+            id: "second".into(),
+            ..Default::default()
+        })
+        .unwrap();
+    let input: PageInput = serde_json::from_value(
+        json!({"type": "note", "title": "t", "compiled_truth": "body", "frontmatter": {}}),
+    )
+    .unwrap();
+    let opts: PutPageOptions = serde_json::from_value(json!({"sourceId": "second"})).unwrap();
+    store.put_page("notes/private", &input, &opts).unwrap();
+    let slugs: Vec<String> = [
+        "notes/private",
+        "notes/open",
+        "notes/gone",
+        "notes/never",
+        "notes/private",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect();
+    let read = |source_id: Option<&str>, source_ids: Option<&[&str]>, deleted: bool| {
+        store
+            .read_private_only_slugs(
+                &slugs,
+                source_id.map(str::to_owned),
+                source_ids.map(|ids| ids.iter().map(|s| s.to_string()).collect()),
+                deleted,
+                &read_policy(),
+            )
+            .unwrap()
+    };
+    // One source: its only row of notes/private is hidden; notes/gone has no live row.
+    assert_eq!(read(Some("default"), None, false), ["notes/private"]);
+    // Both sources, or every source: notes/private is open in `second`.
+    assert!(read(None, Some(&["default", "second"]), false).is_empty());
+    assert!(read(None, None, false).is_empty());
+    // A non-empty array wins over the scalar; an empty one does not.
+    assert_eq!(
+        read(Some("second"), Some(&["default"]), false),
+        ["notes/private"]
+    );
+    assert!(read(Some("second"), Some(&[]), false).is_empty());
+    // Soft-deleted rows count with include_deleted: notes/gone is open, so it is not named.
+    assert_eq!(read(Some("default"), None, true), ["notes/private"]);
 }

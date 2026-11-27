@@ -6,12 +6,14 @@
  */
 import { mkdirSync, renameSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { buildBenchStatus, renderBenchStatus, type BenchStatus } from './bench.ts';
 import { SHADOW_OUTCOMES, type ShadowOutcome } from './classify.ts';
 import { buildEvidenceStatus, renderEvidenceStatus, type EvidenceStatus } from './evidence.ts';
 import { readFaults, readShadowSummary, type ShadowFault, type ShadowSummary } from './ledger.ts';
 import { storageLine, storageReport, type StorageReport } from './managed-gate.ts';
 import type { ShadowState } from './state.ts';
 import { readSeedRecord, type SeedRecord } from './seed.ts';
+import { SLUG_NOT_NORMAL_GAP } from './seed-gaps.ts';
 
 export const PROVISIONAL_VERDICT = 'NOT READY' as const;
 
@@ -37,6 +39,8 @@ export interface ProvisionalReport {
   seed: ReportSeed | null;
   /** The swap-readiness evidence of the current epoch: reads, search arms, child health and the rules behind them (evidence.ts). */
   evidence: EvidenceStatus;
+  /** Criterion 8 from the engine-bench receipt (bench.ts): reported, never gating; this brain's own speed is not measured. */
+  bench: BenchStatus;
 }
 
 export interface ReportSeed {
@@ -76,6 +80,7 @@ function whyNotReady(seed: ReportSeed | null): string[] {
     if (seed.unseeded_gap_rows_total > 0) {
       why.push(`${seed.unseeded_gap_rows_total} rows of the brain have no Rust home yet (unseeded gap rows); reads that touch them can differ, and a swap is refused while any remain.`);
     }
+    if ((seed.unseeded_gap_rows[SLUG_NOT_NORMAL_GAP] ?? 0) > 0) why.push('Some pages or slug aliases are stored under a slug that is not in normal form: run the slug-spelling repair (PR 10168) first.');
   }
   why.push('Writes are not compared yet, and readiness rules arrive with the full report in S4.');
   return why;
@@ -119,6 +124,7 @@ export function buildProvisionalReport(dir: string, brain: string, state: Shadow
     recent_faults: readFaults(dir, 10),
     seed,
     evidence: buildEvidenceStatus({ dir, now }),
+    bench: buildBenchStatus({ dir, primaryEngine: state?.primary_engine ?? null }).bench,
   };
 }
 
@@ -131,7 +137,13 @@ export function renderProvisionalMarkdown(r: ProvisionalReport): string {
   const storage = storageLine(r.storage);
   if (storage) lines.push(`Storage: ${storage}.`);
   lines.push(`Window: ${r.window.first_event_at ?? 'no comparisons yet'} to ${r.window.last_event_at ?? '-'}.`);
-  lines.push(renderSeedLine(r.seed), '', ...renderEvidenceStatus(r.evidence), '');
+  // Lines are appended one at a time: a spread into push() throws RangeError past a few hundred thousand arguments.
+  lines.push(renderSeedLine(r.seed), '');
+  for (const l of renderEvidenceStatus(r.evidence)) lines.push(l);
+  lines.push('');
+  lines.push('## Speed', '');
+  for (const l of renderBenchStatus(r.bench)) lines.push(l.replace(/^( *)/, (m) => `${' '.repeat(Math.max(0, m.length - 2))}- `));
+  lines.push('');
   const cols: ShadowOutcome[] = [...SHADOW_OUTCOMES];
   lines.push(`| operation | total | ${cols.join(' | ')} |`);
   lines.push(`|---|---:|${cols.map(() => '---:').join('|')}|`);

@@ -8,6 +8,8 @@
 import { describe, expect, test } from 'bun:test';
 import { archiveLine, buildInitFirstRunNotices, setupFirstRunNotices, upkeepLine } from '../src/commands/init-first-run.ts';
 import { costMatrixSentence } from '../src/core/search/mode-advice.ts';
+import { renderCliNotices } from '../src/core/agent-markers.ts';
+import { cliRenderContext, inertText, renderNotice } from '../src/core/agent-output.ts';
 import { withEnv } from './helpers/with-env.ts';
 
 const searchMode = { mode: 'balanced' as const, reason: 'Balanced default for a new brain.' };
@@ -220,3 +222,23 @@ describe('the conversation archive line (GST-2768)', () => {
     expect(n.user_message).toContain('Nothing needs an answer now');
   });
 });
+
+describe('the [SHOW USER] relay of the first-run summary', () => {
+  const showUser = (block: string) => block.split('[SHOW USER]\n')[1]!.split('\n[/SHOW USER]')[0]!;
+
+  test('setup and init relay the whole summary, through to "Nothing needs an answer now", never cut mid-text', () => {
+    const inputs = { searchMode: { mode: 'conservative' as const, reason: 'No chat key.' }, writeback: true, upkeep: { embedding: false }, archive: { state: 'on' as const, embedding: false } };
+    const [initBundle] = buildInitFirstRunNotices(inputs);
+    for (const harness of ['Claude Code', 'Codex']) {
+      const [n] = setupFirstRunNotices([{ ...initBundle, contract_version: 1 }], harness, { reportBack: false });
+      expect(n.user_message!.length).toBeGreaterThan(1_000);
+      const { stdout } = renderCliNotices([renderNotice(n, cliRenderContext())], { json: false, tty: false });
+      const relayed = showUser(stdout!);
+      expect(relayed).toBe(inertText(n.user_message!, Number.MAX_SAFE_INTEGER));
+      expect(relayed.endsWith("Nothing needs an answer now; tell me any time if you want to change any of these, and I'll apply it.")).toBe(true);
+    }
+    const { stdout } = renderCliNotices([renderNotice(initBundle, cliRenderContext())], { json: false, tty: false });
+    expect(showUser(stdout!).endsWith("and I'll apply it.")).toBe(true);
+  });
+});
+

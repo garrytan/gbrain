@@ -38,7 +38,6 @@ import { maintenanceTransaction } from '../persistence/attribution.ts';
 import { coordinatedDatabaseWrite } from '../persistence/database-write.ts';
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
 import { afterCursor, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairScope } from './core.ts';
-import { requireRawSql } from '../rust-engine/errors.ts';
 
 export interface PagelessEntity {
   source_id: string;
@@ -121,8 +120,6 @@ export const factsRehomeRepair: RepairHandler = {
   },
   async apply(ctx, entry): Promise<RepairItemOutcome> {
     const { entity, hash, last } = entry as RehomeItem;
-    // The move reads both pages and rekeys the facts through raw SQL, so a Rust brain stops here by name, before its first write.
-    requireRawSql(ctx.engine, 'repair facts-rehome fact write');
     const target = entity.target!;
     const move = async (tx: BrainEngine): Promise<boolean> => {
       const state = await tx.readEntityRehomeState(entity.source_id, entity.slug, target);

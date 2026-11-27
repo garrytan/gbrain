@@ -89,9 +89,14 @@ reproduce byte for byte. Each file is written by `test/helpers/golden.ts` as
   SDK auth router's nested routes and `#<n>` ordinals for handler objects shared
   across routes. Captured at the move-only extraction commit; the same test proves
   it describes the registrations in `serve-http/routes.json`.
-- `exports/runtime.json`, `exports/types.json` (`test/export-surface-golden.test.ts`,
-  `export-runtime-v1` / `export-types-v1`): runtime export names per package.json
-  subpath, engine prototype-chain methods, and a checker-printed type surface.
+- `exports/runtime.json`, `exports/types.json`, `exports/error-codes.json`
+  (`test/export-surface-golden.test.ts`, `export-runtime-v1` / `export-types-v2` /
+  `error-codes-v1`): runtime export names per package.json subpath, engine
+  prototype-chain methods, a checker-printed type surface, and every registered
+  error code. The type surface prints the `RegistryCode` union as its alias name;
+  `exports/error-codes.json` pins its members sorted, one per line, so registering
+  a code in `src/core/error-registry.ts` adds one line there and two PRs that each
+  add a code do not conflict.
   `test/fixtures/export-consumer/consumer.ts` imports every subpath by package name
   and is typechecked by `bun run typecheck`.
 

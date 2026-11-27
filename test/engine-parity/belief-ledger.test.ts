@@ -237,6 +237,21 @@ describe('engine parity: belief ledger writes', () => {
   );
 
   parityTest(
+    'the pre-v341 fingerprint probes find no claim that holds no character the folds disagree on, and no tombstone for an empty probe list',
+    { methods: ['readLegacyClaimFingerprints', 'readLegacyBeliefTombstones'] },
+    async (engine) => {
+      const got = {
+        none: await engine.readLegacyClaimFingerprints('default', ['Acme will win the market', 'a b']),
+        empty: await engine.readLegacyClaimFingerprints('default', []),
+        tombstones: await engine.readLegacyBeliefTombstones('default', [{ kind: 'fact', claimFp: 'fp1', claim: 'Acme will win the market' }, { kind: 'take', claimFp: 'tp1', claim: 'a b' }]),
+        noProbes: await engine.readLegacyBeliefTombstones('default', []),
+      };
+      expect(got).toEqual({ none: [], empty: [], tombstones: [], noProbes: [] });
+      return got;
+    },
+  );
+
+  parityTest(
     'redactions: copies read by subject or by field hash, a release binds the publication and hash; a take purge tombstone reads back',
     { methods: ['insertTakePurge', 'insertBeliefRedaction', 'readBeliefRedactions', 'releaseBeliefRedactions', 'readBeliefTombstones'] },
     async (engine) => {
@@ -343,6 +358,43 @@ describe('engine parity: belief ledger writes', () => {
       expect(answer.pendingR1).toEqual(['gone/page', 'notes-x', 'notes/a']);
       expect(answer.latest).toEqual({ event_type: 'coverage.started', run: 'r1', idIsNumber: true });
       expect(answer.counts).toEqual({ r1: 2, r2: 1, none: 0 });
+      return answer;
+    },
+  );
+
+  parityTest(
+    'the drift scan reads: candidate slugs newest first with a tie in byte order, and a slug\'s newest event without coverage and backfill events',
+    { methods: ['putPage', 'transaction', 'insertFact', 'insertBeliefEvents', 'mintBeliefLifetime', 'listBeliefDriftCandidates', 'readNewestBeliefEvent'] },
+    async (engine) => {
+      const page = (tx: BrainEngine, slug: string) => tx.putPage(slug, { type: 'note', title: slug, compiled_truth: 'body', timeline: '' });
+      const inc = await incarnationOf(engine);
+      // Oldest first: a page-less fact's entity, a lifetime with no page, two pages written in one transaction (one updated_at), then
+      // the newest page. PGLite stamps milliseconds, so each step waits one out.
+      const tick = () => new Promise(resolve => setTimeout(resolve, 25));
+      await engine.insertFact({ fact: 'db only', entity_slug: 'people/q-example', visibility: 'world', source: 'test', embedding: null }, { source_id: 'default' });
+      await tick();
+      await engine.mintBeliefLifetime({ lifetime: '00000000-0000-4000-8000-0000000000aa', sourceId: 'default', incarnation: inc, slug: 'ghost/l', pageId: 1 });
+      await tick();
+      await engine.transaction(async tx => { await page(tx, 'notes/b'); await page(tx, 'notes/a'); });
+      await tick();
+      await page(engine, 'notes-x');
+      const ev = (key: string, ord: number, over: Record<string, unknown>) => event(inc, key, ord, { slug: 'notes/a', subject_kind: 'page', subject_key: 'page:notes/a',
+        event_type: 'page.published', origin: 'live', ...over });
+      await engine.insertBeliefEvents([ev('ae01', 0, { state_hash: 'h1' }), ev('ae02', 1, { state_hash: 'h2', subject_kind: 'fact', subject_key: 'fact:1' }),
+        ev('ae03', 2, { state_hash: 'h3', origin: 'backfill' }), ev('ae04', 3, { state_hash: 'h4', subject_kind: 'coverage', subject_key: COVERAGE_KEY }),
+        ev('ae05', 4, { state_hash: 'h5', slug: 'notes/b', subject_key: 'page:notes/b' })]);
+      const newest = await engine.readNewestBeliefEvent('default', inc, 'notes/a');
+      const answer = {
+        candidates: await engine.listBeliefDriftCandidates('default', inc),
+        otherIncarnation: await engine.listBeliefDriftCandidates('default', '11111111-1111-4111-8111-111111111111'),
+        newest: newest && { state_hash: newest.state_hash, idIsNumber: Number.isSafeInteger(newest.id), recordedAtIso: /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{3}Z$/.test(newest.recorded_at) },
+        other: (await engine.readNewestBeliefEvent('default', inc, 'notes/b'))?.state_hash,
+        none: await engine.readNewestBeliefEvent('default', inc, 'notes-x'),
+        wrongIncarnation: await engine.readNewestBeliefEvent('default', '11111111-1111-4111-8111-111111111111', 'notes/a'),
+      };
+      expect(answer.candidates).toEqual(['notes-x', 'notes/a', 'notes/b', 'ghost/l', 'people/q-example']);
+      expect({ otherIncarnation: answer.otherIncarnation, newest: answer.newest, other: answer.other, none: answer.none, wrongIncarnation: answer.wrongIncarnation }).toEqual({ otherIncarnation: ['notes-x', 'notes/a', 'notes/b', 'people/q-example'],
+        newest: { state_hash: 'h2', idIsNumber: true, recordedAtIso: true }, other: 'h5', none: null, wrongIncarnation: null });
       return answer;
     },
   );

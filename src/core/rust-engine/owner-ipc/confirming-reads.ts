@@ -119,6 +119,8 @@ export const OWNER_IPC_WHOLE_OP_CONFIRMING_READS: Readonly<Record<string, string
   importFromFile: 'getPage for the slug of that file',
   importImageFile: 'getPage for the slug of that file',
   importManagedFiles: 'getPage for each slug the call named',
+  snapshotStore: 'nothing: a snapshot writes only a new directory, so the brain is as it was; ask snapshotStatus for the operation id',
+  snapshotStatus: 'nothing: it only reads what the owner remembers',
 };
 
 /**

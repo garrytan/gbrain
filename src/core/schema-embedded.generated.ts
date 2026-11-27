@@ -289,6 +289,8 @@ CREATE INDEX IF NOT EXISTS idx_pages_slug_basename ON pages (source_id, (regexp_
 -- index (idx_pages_title_lower_hash, a hash index: a page title has no length limit, #9779) is not here: v240 and
 -- v326 build it online, and this file replays on every boot, where a plain CREATE INDEX would block page writes.
 CREATE INDEX IF NOT EXISTS idx_pages_slug_trgm ON pages USING GIN (slug gin_trgm_ops);
+-- v335: idx_pages_spelling_key (the key of every stored slug spelling, src/core/slug-spelling-key.ts) is not here for the
+-- same reason: v335 builds it online, and a replay of this file on an upgrading brain would build it with a plain CREATE INDEX.
 -- v0.13.1 #170: avoids 14.6s seqscan on large brains when listing pages newest-first.
 CREATE INDEX IF NOT EXISTS idx_pages_updated_at_desc ON pages (updated_at DESC);
 -- v0.18.0: source-scoped scans (per /plan-eng-review Section 4).
@@ -3557,6 +3559,22 @@ DO \$rls\$ BEGIN
   IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
     ALTER TABLE write_gate_receipts ENABLE ROW LEVEL SECURITY;
     ALTER TABLE write_gate_holds ENABLE ROW LEVEL SECURITY;
+  END IF;
+END \$rls\$;
+
+CREATE TABLE IF NOT EXISTS write_gate_hold_rechecks (
+  id               BIGSERIAL PRIMARY KEY,
+  source_id        TEXT NOT NULL REFERENCES sources(id) ON DELETE CASCADE,
+  hold_id          BIGINT NOT NULL,
+  observed_version TEXT NOT NULL,
+  survivor_ids     BIGINT[] NOT NULL DEFAULT '{}',
+  queued_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS write_gate_hold_rechecks_queue_idx ON write_gate_hold_rechecks (queued_at, id);
+CREATE INDEX IF NOT EXISTS write_gate_hold_rechecks_hold_idx ON write_gate_hold_rechecks (hold_id);
+DO \$rls\$ BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles r WHERE pg_has_role(current_user, r.oid, 'USAGE') AND (r.rolbypassrls OR r.rolsuper)) THEN
+    ALTER TABLE write_gate_hold_rechecks ENABLE ROW LEVEL SECURITY;
   END IF;
 END \$rls\$;
 -- END GENERATED from src/core/write-gate-schema.ts (WRITE_GATE_SCHEMA_SQL)

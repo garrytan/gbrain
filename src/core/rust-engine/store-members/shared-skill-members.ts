@@ -24,6 +24,7 @@ import type {
   SharedSkillPolicyWrite, SharedSkillRevisionKey, SharedSkillRevisionWrite,
 } from '../../engine-sql/shared-skill-members.ts';
 import type { StoredSkillRevision } from '../../shared-skills/model.ts';
+import type { SharedMemberMigrationRow } from '../../engine-sql/shared-skill-members.ts';
 import { withDates } from '../store-codec.ts';
 import { storeErrorCode } from '../store-errors.ts';
 import { readSharedSkillServingEpoch } from './access-grants.ts';
@@ -134,3 +135,7 @@ export const readSharedSkillDeliveryBatch: StoreMember<[token: string, installat
 export const acknowledgeSharedSkillDeliveryBatch: StoreMember<[spec: SharedSkillBatchAcknowledge], void> = async (brain, spec) => {
   await call('acknowledgeSharedSkillDeliveryBatch', () => brain.acknowledgeSharedSkillDeliveryBatch({ ...spec, evidence: spec.evidence ?? null }));
 };
+
+/** The members following the source, by byte order of adapter, then installation id, with the stage of the acknowledged batch. */
+export const listSharedMemberMigrationRows: StoreMember<[sourceId: string], SharedMemberMigrationRow[]> = async (brain, sourceId) =>
+  await storeCall({ member: 'listSharedMemberMigrationRows' }, () => brain.listSharedMemberMigrationRows(sourceId)) as SharedMemberMigrationRow[];

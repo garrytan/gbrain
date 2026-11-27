@@ -51,6 +51,7 @@ import {
   SWAPPED_REASON,
 } from '../core/self-upgrade.ts';
 import { prepareSwapReceipt, settleAutopilotSwap } from '../core/self-upgrade-swap.ts';
+import { installAddonWithInstalledBinary } from './rust-addon-upgrade.ts';
 import { logSelfUpgrade } from '../core/audit/self-upgrade-audit.ts';
 import { readHostBun } from '../core/bun-floor.ts';
 import { detectInstallMethod, readInstallTargetFloor } from './upgrade.ts';
@@ -517,6 +518,7 @@ export async function attemptAutopilotSelfUpgrade(
     }
     const swap = settleAutopilotSwap(VERSION, latestVersion, swapError, receiptPath);
     if (!swap.relaunch) return;
+    installAddonWithInstalledBinary({ ...process.env, GBRAIN_SKIP_STARTUP_HOOKS: '1' }); // relaunch runs no post-upgrade; outside the swap's deadline
 
     if (!mayContinue()) return;
     // Swap done + smoke-verified by `upgrade --swap-only`. Exit cleanly so the

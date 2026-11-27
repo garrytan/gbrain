@@ -473,6 +473,129 @@ fn an_owner_with_no_member_identity_reaches_only_a_fact_on_no_page() {
 }
 
 #[test]
+fn an_owner_bound_to_a_member_reaches_the_facts_whose_pages_it_reads() {
+    let b = brain("memory-mutation-reads-owner-reach-member");
+    page(&b, "people/e-example", json!({}), None);
+    page(&b, "notes/open", json!({}), None);
+    page(
+        &b,
+        "notes/private",
+        json!({ "visibility": "private" }),
+        None,
+    );
+    page(
+        &b,
+        "notes/alice",
+        json!({ "readable_by": ["member:alice-example"] }),
+        None,
+    );
+    page(
+        &b,
+        "notes/bob",
+        json!({ "readable_by": ["member:bob-example"] }),
+        None,
+    );
+    page(&b, "notes/deleted", json!({}), None);
+    page(
+        &b,
+        "people/hidden-example",
+        json!({ "visibility": "private" }),
+        None,
+    );
+    let entity = Some("people/e-example");
+    let free = claim(&b, "free", None, "notes/never-written", "world", 1);
+    let open = claim(&b, "open", None, "notes/open", "world", 2);
+    let private = claim(&b, "private", None, "notes/private", "world", 3);
+    let alice = claim(&b, "alice", None, "notes/alice", "world", 4);
+    let bob = claim(&b, "bob", None, "notes/bob", "world", 5);
+    let deleted = claim(&b, "deleted", None, "notes/deleted", "world", 6);
+    let about_open = claim(&b, "about open", entity, "notes/never-written", "world", 7);
+    let about_hidden = claim(
+        &b,
+        "about hidden",
+        Some("people/hidden-example"),
+        "notes/open",
+        "world",
+        8,
+    );
+    let open_page_hidden_entity = claim(
+        &b,
+        "hidden entity",
+        Some("people/hidden-example"),
+        "notes/never-written",
+        "world",
+        9,
+    );
+    let member = claim(
+        &b,
+        "member",
+        None,
+        "memory/members/alice-example",
+        "world",
+        10,
+    );
+    b.soft_delete_page("notes/deleted", None).unwrap();
+    let reach = |id: u64, policy: Value| {
+        let spec = match policy {
+            Value::Null => json!({ "id": id, "sourceId": "default" }),
+            policy => json!({ "id": id, "sourceId": "default", "policy": policy }),
+        };
+        b.owner_reaches_fact(&args::<OwnerReachQuery>(spec))
+            .unwrap()
+    };
+    let alice_policy = |extra: Value| {
+        let mut policy = json!({ "honorAliases": true, "entityPrivacy": true, "ownerOnly": "off",
+            "identity": ["member:alice-example"] });
+        for (key, value) in extra.as_object().unwrap() {
+            policy[key] = value.clone();
+        }
+        policy
+    };
+    let policy = alice_policy(json!({}));
+    assert!(reach(free, policy.clone()));
+    assert!(reach(open, policy.clone()));
+    assert!(reach(about_open, policy.clone()));
+    // The page's readers name the owner's member, or another one.
+    assert!(reach(alice, policy.clone()));
+    assert!(!reach(bob, policy.clone()));
+    assert!(!reach(private, policy.clone()));
+    // A deleted page record still judges the fact, by its own fields as any page: open here.
+    assert!(reach(deleted, policy.clone()));
+    // The entity page is judged as the provenance page is.
+    assert!(!reach(about_hidden, policy.clone()));
+    assert!(!reach(open_page_hidden_entity, policy.clone()));
+    // An owned memory page is never reached, and a fact of another source or no fact is not.
+    assert!(!reach(member, policy.clone()));
+    assert!(!reach(free + 1000, policy.clone()));
+    let other = b
+        .owner_reaches_fact(&args::<OwnerReachQuery>(
+            json!({ "id": free, "sourceId": "other", "policy": policy.clone() }),
+        ))
+        .unwrap();
+    assert!(!other);
+    // The short member-access form hides a page that names readers whoever the identity is.
+    let short = alice_policy(json!({ "open": true }));
+    assert!(reach(open, short.clone()) && reach(free, short.clone()));
+    assert!(!reach(alice, short.clone()));
+    // A privacy alias counts unless the process setting is off.
+    page(&b, "notes/aliased", json!({ "access": "private" }), None);
+    let aliased = claim(&b, "aliased", None, "notes/aliased", "world", 11);
+    assert!(!reach(aliased, policy.clone()));
+    assert!(reach(
+        aliased,
+        alice_policy(json!({ "honorAliases": false }))
+    ));
+    // An owner with no valid member principal first reads no page, whatever the policy says: the rule is FALSE.
+    for identity in [json!([]), json!(["group:ops"]), json!(["member:Alice"])] {
+        let unbound = alice_policy(json!({ "identity": identity }));
+        assert!(reach(free, unbound.clone()), "no page: reached");
+        assert!(!reach(open, unbound.clone()));
+        assert!(!reach(deleted, unbound.clone()));
+    }
+    assert!(reach(free, Value::Null) && !reach(open, Value::Null));
+}
+
+#[test]
 fn the_remote_floor_hides_owner_only_facts_in_its_form() {
     let b = brain("memory-mutation-reads-floor-owner-only");
     page(&b, "notes/open", json!({}), None);

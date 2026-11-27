@@ -10,7 +10,8 @@
  *   skills.resolver.top_k, min_match, top_gate, pinned, per_harness.<harness>.{top_k,min_match,top_gate,dirs}
  *                                      the hook lane's turn settings (src/core/skills/resolver/config.ts)
  *   skills.resolver.router, router_model, router_timeout_ms, router_max_usd_per_day,
- *   router_base_url, router_api_key_env, router_usd_per_mtok
+ *   router_base_url, router_api_key_env, router_usd_per_mtok, router_extra_body,
+ *   router_prompt_version
  *                                      the model picker (src/core/skills/resolver/router.ts)
  *
  * A missing file is created with only these keys: no engine, no database, so
@@ -23,7 +24,7 @@ import { existsSync, readFileSync, statSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { atomicWriteTextFile } from '../bootstrap/atomic-write.ts';
 import { setCliExitVerdict } from '../cli-force-exit.ts';
-import { laneTurnSettings, validateMinMatch, validateOwnerSenders, validatePinned, validateRouterBaseUrl, validateRouterKeyEnv, validateRouterMaxUsd, validateRouterModel, validateRouterTimeout, validateRouterUsdPerMtok, validateSessionStart, validateSessionTokenBudget, validateSkillDirs, validateTopGate, validateTopK } from '../skills/resolver/config.ts';
+import { laneTurnSettings, routerSettings, validateMinMatch, validateOwnerSenders, validatePinned, validateRouterBaseUrl, validateRouterExtraBody, validateRouterKeyEnv, validateRouterMaxUsd, validateRouterModel, validateRouterPromptVersion, validateRouterTimeout, validateRouterUsdPerMtok, validateSessionStart, validateSessionTokenBudget, validateSkillDirs, validateTopGate, validateTopK } from '../skills/resolver/config.ts';
 
 const CONFIG_CAP_BYTES = 1024 * 1024;
 const isPlainObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
@@ -92,10 +93,10 @@ export function setResolverHarness(read: Exclude<ResolverConfigRead, { state: 'u
 
 export const SKILL_RESOLVER_KEY_PREFIX = 'skills.resolver.';
 /** The leaves `gbrain config set|unset|get` accepts (harnesses is setup's: --skill-loading resolve|off). */
-export const SKILL_RESOLVER_CONFIG_LEAVES = ['enabled', 'session_token_budget', 'auto_rebuild', 'lane_payload_chars', 'top_k', 'min_match', 'top_gate', 'pinned', 'per_harness.<harness>.top_k', 'per_harness.<harness>.min_match', 'per_harness.<harness>.top_gate', 'per_harness.<harness>.dirs', 'per_harness.<claude-code|codex>.session_start', 'per_harness.hermes.owner_sender_ids', 'router', 'router_model', 'router_timeout_ms', 'router_max_usd_per_day', 'router_base_url', 'router_api_key_env', 'router_usd_per_mtok'] as const;
+export const SKILL_RESOLVER_CONFIG_LEAVES = ['enabled', 'session_token_budget', 'auto_rebuild', 'lane_payload_chars', 'top_k', 'min_match', 'top_gate', 'pinned', 'per_harness.<harness>.top_k', 'per_harness.<harness>.min_match', 'per_harness.<harness>.top_gate', 'per_harness.<harness>.dirs', 'per_harness.<claude-code|codex>.session_start', 'per_harness.hermes.owner_sender_ids', 'router', 'router_model', 'router_timeout_ms', 'router_max_usd_per_day', 'router_base_url', 'router_api_key_env', 'router_usd_per_mtok', 'router_extra_body', 'router_prompt_version'] as const;
 const PER_HARNESS_LEAF = /^per_harness\.([a-z-]+)\.(top_k|min_match|top_gate|dirs|session_start|owner_sender_ids)$/;
 
-function parseLeafValue(leaf: string, value: string): { ok: true; value: boolean | number | string | string[] | number[] } | { ok: false; error: string } {
+function parseLeafValue(leaf: string, value: string): { ok: true; value: boolean | number | string | string[] | number[] | Record<string, unknown> } | { ok: false; error: string } {
   const turnKey = leaf.match(PER_HARNESS_LEAF)?.[2] ?? leaf;
   const key = `${SKILL_RESOLVER_KEY_PREFIX}${leaf}`;
   try {
@@ -111,6 +112,8 @@ function parseLeafValue(leaf: string, value: string): { ok: true; value: boolean
     if (leaf === 'router_base_url') return { ok: true, value: validateRouterBaseUrl(value, key) };
     if (leaf === 'router_api_key_env') return { ok: true, value: validateRouterKeyEnv(value, key) };
     if (leaf === 'router_usd_per_mtok') return { ok: true, value: validateRouterUsdPerMtok(value.split(',').map(x => /^\d+(\.\d+)?$/.test(x.trim()) ? Number(x.trim()) : NaN), key) };
+    if (leaf === 'router_extra_body') { let j: unknown = null; try { j = JSON.parse(value); } catch { /* not JSON: the validator names the shape */ } return { ok: true, value: validateRouterExtraBody(j, key) }; }
+    if (leaf === 'router_prompt_version') return { ok: true, value: validateRouterPromptVersion(/^\d+$/.test(value) ? Number(value) : NaN, key) };
     if (turnKey === 'owner_sender_ids') return { ok: true, value: validateOwnerSenders(value.split(',').map(s => s.trim()).filter(Boolean), key) };
   } catch (e) { return { ok: false, error: (e as Error).message.slice(key.length + 1) }; }
   if (leaf === 'enabled' || leaf === 'auto_rebuild' || leaf === 'router') {
@@ -170,8 +173,12 @@ export function runSkillResolverConfigKey(args: string[], home: string): boolean
   const skills = (doc.skills && typeof doc.skills === 'object' && !Array.isArray(doc.skills) ? doc.skills : {}) as Record<string, unknown>;
   if (Object.keys(section).length) skills.resolver = section; else delete skills.resolver;
   if (Object.keys(skills).length) doc.skills = skills; else delete doc.skills;
+  const text = `${JSON.stringify(doc, null, 2)}\n`;
+  if (Buffer.byteLength(text) > CONFIG_CAP_BYTES) return fail(`${key}: the config file would be over 1 MB, which gbrain cannot read back. Nothing was written.`);
   if (Object.keys(doc).length === 0) unlinkSync(read.path);
-  else atomicWriteTextFile(read.path, `${JSON.stringify(doc, null, 2)}\n`, { freshMode: 0o600 });
+  else atomicWriteTextFile(read.path, text, { freshMode: 0o600 });
   console.log(action === 'set' ? `Set ${key} = ${JSON.stringify(holder[field])} (file plane: ${read.path})` : `Unset ${key} (file plane)`);
+  const invalid = !nested && leaf.startsWith('router') ? routerSettings(section).invalid : null;
+  if (invalid) console.error(`[config] warning: ${invalid} Until this is fixed the picker does not run, and turns with router on report config_invalid.`);
   return true;
 }

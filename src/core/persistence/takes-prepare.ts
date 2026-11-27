@@ -256,27 +256,25 @@ async function prepare(engine: BrainEngine, row: WriteRequest, config: GBrainCon
   const prepared=await preparePageMutation(engine,row,config,{content:next,expectedRevision:snapshot.revision});
   return {...prepared,validate:async tx=>{
     await prepared.validate?.(tx);
-    if (allocated!==undefined && (await tx.executeRaw('SELECT 1 FROM takes WHERE page_id=$1 AND row_num=$2',[snapshot.page.id,allocated])).length) {
+    if (allocated!==undefined && await tx.findTakeId(snapshot.page.id,allocated)!==null) {
       throw takesRefusal('revision_conflict',`Take row #${allocated} was recorded on ${row.slug} while this write was prepared.`,row,
         `Another writer recorded take row #${allocated} on ${row.slug} after this request read the page.`);
     }
     for (const holder of requiredHolders) await authorizeTakeHolder(tx,row.authority,holder);
-    await tx.executeRaw(`UPDATE persistence_requests
-      SET authority=jsonb_set(authority,'{takeHoldersUsed}',$2::text::jsonb)
-      WHERE id=$1::uuid`, [row.id, JSON.stringify([...requiredHolders].sort())]);
+    await tx.recordTakeHoldersUsed(row.id,[...requiredHolders].sort());
   },apply:async tx=>{
     const outcome=await prepared.apply(tx);
     if (!prepared.noop) {
       const batch:TakeBatchInput[]=changed.map(t=>edit.toBatchInput(snapshot.page.id,t,
         t.rowNum===oldRow?Number(result.new_row):null));
       if (batch.length) await tx.addTakesBatch(batch);
-      if (removedRow!==undefined) await tx.executeRaw('DELETE FROM takes WHERE page_id=$1 AND row_num=$2',[snapshot.page.id,removedRow]);
+      if (removedRow!==undefined) await tx.deleteTakeRows(snapshot.page.id,[removedRow]);
       if (acceptedRemoval!==null && !await transitionTrustProposal(tx,acceptedRemoval,'pending','accepted')) throw new Error(`trust proposal tp${acceptedRemoval} is no longer pending`);
       if (row.operation==='takes_resolve') {
         const t=changed[0];
         await tx.resolveTake(snapshot.page.id,t.rowNum,{quality:t.resolvedQuality!,outcome:t.resolvedOutcome,
           value:t.resolvedValue,unit:t.resolvedUnit,source:t.resolvedEvidence,resolvedBy:t.resolvedBy!});
-        await tx.executeRaw('UPDATE takes SET resolved_at=$3::timestamptz WHERE page_id=$1 AND row_num=$2',[snapshot.page.id,t.rowNum,t.resolvedAt]);
+        await tx.stampTakeResolvedAt(snapshot.page.id,t.rowNum,t.resolvedAt!);
       }
       const written=allocated!==undefined?await tx.readTakeRowTrust(snapshot.page.id,allocated):null;
       if (written && contestedOld) result.contested=await recordContestedTake(tx,{sourceId:row.source_id,oldId:contestedOld.id,oldTier:storedTrustTier(contestedOld.tier),

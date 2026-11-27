@@ -107,6 +107,7 @@ keyset batches in key order. The relations come in groups, each in its own file 
 | `dream_synthesis_completions` | the completion and its time | |
 | `wake_crons`, `wake_cron_runs`, `wake_forgets`, `wake_terms_acceptances` | the row with its id and time, and the pending forget index | a second pending forget of one user is `constraint_violation` |
 | `mcp_request_log_rollup` | the lifetime tally per token | a null token name is the key `''`, as the family keys it |
+| `chronicle_page_state` | the ledger row with every column and its original `decided_at` and `updated_at` (`chronicle_ledger/seeded.rs`), not run through `upsertChronicleRow`'s decision rewrite | the source, then the page, must be seeded, as `upsertChronicleRow` checks them: else `source_not_found` or `page_not_found`, and nothing is written; deleting a page removes its rows and their digest entries |
 
 Every id counter and sequence of these families is raised past the highest id copied. A row whose source or page is
 missing is `source_not_found` or `page_not_found`.
@@ -129,7 +130,7 @@ every other op are machine-local.
 | `minion_jobs` | `gbrain jobs list` is empty. The seed counts the jobs that are not finished, so swap on a drained queue. A Postgres brain of an older release can hold budget-owner rows here; none carry |
 | `minion_inbox`, `minion_attachments`, `minion_budget_log`, `minion_lease_pressure_log`, `minion_self_fix_log`, `subagent_messages`, `subagent_tool_executions`, `subagent_rate_leases` | job runtime goes with the jobs: `gbrain agent logs`, `gbrain jobs stats` and `gbrain jobs watch` show no earlier runs |
 | `wake_subscriptions` | open watches are not carried and never wake. A watch copied without its job or write request would wake on the first tick, so none is copied. (`wake_crons` is copied: a lost cron would make every `watch_cron` read `not_found`) |
-| `search_telemetry`, `mcp_request_log`, `chat_usage_log`, `ingest_log`, `page_retrievals`, `retrieval_events`, `retrieval_event_pages`, `retrieval_event_links`, `eval_*`, `migration_impact_log`, `think_ab_results`, `take_nudge_log` | logs and counters start at zero: `gbrain search stats`, per-client usage in `gbrain auth`, `get_usage`. Lifetime request totals carry in `mcp_request_log_rollup` |
+| `search_telemetry`, `mcp_request_log`, `chat_usage_log`, `access_read_log`, `ingest_log`, `page_retrievals`, `retrieval_events`, `retrieval_event_pages`, `retrieval_event_links`, `eval_*`, `migration_impact_log`, `think_ab_results`, `take_nudge_log` | logs and counters start at zero: `gbrain search stats`, per-client usage in `gbrain auth`, `get_usage`. Lifetime request totals carry in `mcp_request_log_rollup` |
 | `query_cache`, `code_traversal_cache`, `conversation_parser_llm_cache`, `dream_verdicts`, `take_grade_cache`, `extract_rollup_7d`, `page_view_digests`, `mention_gazetteer_entries`, `page_generation_clock` | caches the next read or run rebuilds; `dream_verdicts` means each transcript is triaged again (a paid call); cached query results recompute (`page_generation_clock` is the query cache's clock, and no store read uses it) |
 | `page_segment_texts`, `page_body_manifest`, `page_segment_derivations`, `page_segment_derivation_purges`, `page_segment_derivation_purge_pages`, `page_body_staging*` | a segmented page reads as its shell, without its text or its sealed keyword vector (`segmented_body`) |
 | `persistence_*`, `write_gate_holds`, `write_gate_receipts`, `op_checkpoints` (except the rows below), `op_checkpoint_paths`, `gbrain_cycle_locks`, `sync_notifier_*`, `sync_wanted_markers`, `session_context_state`, `extract_atoms_*_state`, `page_mention_state`, `mention_index_status`, `reason_purge_tombstones`, `planner_stats_*`, `trust_policy_state`, `file_migration_ledger`, `engine_writer_observations`, `engine_writer_sessions`, `engine_writer_coverage_gaps` | the write path, locks, checkpoints and run state of the primary machine; an interrupted bulk operation starts again; the swap's writer evidence starts empty |
@@ -150,7 +151,7 @@ relation when that family reaches master, in the same PR as the store bridge tha
 | `oauth_codes` | `rust-engine/oauth-http-rust` | an OAuth handshake in flight restarts |
 | `oauth_grant_audit`, `guest_marks`, `guest_promotions` | none found | grant audit and guest promotion history are not listed |
 | `guest_sources`, `context_volunteer_events`, `retrieval_feedback` | `rust-engine/collate-equal` | guest writer lists and tier ceilings are not enforced; doctor volunteer counts and feedback history start empty |
-| `chronicle_page_state`, `chronicle_judge_reservations` | `rust-engine/chronicle-decision-rust` | `hasExtractedEvents` and chronicle ledger stats differ; the 24-hour judge cap restarts at zero |
+| `chronicle_judge_reservations` | `rust-engine/main` (`chronicle_ledger.rs`; not seeded) | the 24-hour judge cap restarts at zero |
 | `page_embedding_budget` | `rust-engine/main` | held large pages could embed without consent |
 | `entity_identities`, `link_relationships`, `link_transitions`, `fact_purges` | `rust-engine/main` | entity identity unions, link temporal state and the fact purge guard are missing |
 | `derivation_inputs`, `needs_rederive` | `rust-engine/derivation-trust`; `derivation_inputs` also on `rust-engine/sweep-facts-rust` | rows derived from owner-only inputs, and rows the primary hides for re-derivation, show |
@@ -192,7 +193,7 @@ Its Rust family must reach master first. "Branch" is the newest branch with a re
 | `shared_skill_state` | 1 / 1 / 1 | `shared_skill_members.rs` | `rust-engine/cli-members-next` f2283364a4 | no |
 | `shared_skill_heads`, `shared_skill_revisions`, `shared_skill_policies`, `shared_skill_policy_audit` | 3, 3, 1, 1 / same / 0 | `shared_skill_catalog.rs` | `rust-engine/cli-members-next` f2283364a4 | no |
 | `shared_skill_packs` | 1 / 1 / 0 | `shared_skill_publication.rs` | `rust-engine/cli-members-next` f2283364a4 | no |
-| `chronicle_page_state` | 0 / 4 / 0 | `chronicle_ledger.rs`, `chronicle_state.rs` | `rust-engine/page-mutation-reads` cb983366e3 (also `rust-engine/chronicle-decision-rust` e4420913f5) | no |
+| `chronicle_page_state` | 0 / 4 / 0 | `chronicle_ledger.rs`, `chronicle_state.rs` | `rust-engine/main` (now seeded: `seed/chronicle.rs`) | yes |
 | `link_relationships`, `link_transitions` | 0 / 68, 7 / 0 | `link_queries/link_temporal.rs` | `rust-engine/main` 0ce95bbf7f | yes |
 | `sync_identity_downgrades` | 0 / 1 / 0 | `persistence/identity_downgrade.rs` (reader); `persistence/op_checkpoint.rs` (writer, on main) | `rust-engine/identity-downgrade-rust` 73096ca1f8 | writer only |
 | `access_tokens` | 0 / 3 / 2 | `jobs/access_tokens.rs` | `rust-engine/main` 0ce95bbf7f (newer: `rust-engine/page-mutation-reads` cb983366e3) | yes |

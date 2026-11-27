@@ -59,6 +59,23 @@ export async function readPageLabelRow(engine: RawSql, sourceId: string, slug: s
   return row ? { id: Number(row.id), frontmatter: row.frontmatter ?? null } : null;
 }
 
+/** The tiers a label guard over a page raises to (trust/page-write.ts `labelGuardTier`). */
+export interface LabelGuardTiers { owner_set: string | null; priors: (string | null)[] | null }
+
+/**
+ * The page's label guard tier (`owner_set`, GST-2521) and the prior tier of every `lower_page` proposal of the page since
+ * the owner last accepted one that was not a labels-only accept (`priors`, GST-2518), as `labelGuardTier` reads them.
+ */
+export async function readLabelGuardTiers(engine: RawSql, pageId: number): Promise<LabelGuardTiers> {
+  const [guard] = await engine.executeRaw<LabelGuardTiers>(`SELECT
+      (SELECT tier FROM page_label_guards WHERE page_id = $1) AS owner_set,
+      ARRAY(SELECT before_state->>'prior_tier' FROM trust_proposals WHERE target_table = 'pages' AND target_id = $1 AND action = 'lower_page' AND status <> 'accepted'
+        AND id > COALESCE((SELECT max(id) FROM trust_proposals WHERE target_table = 'pages' AND target_id = $1 AND action = 'lower_page' AND status = 'accepted'
+          AND after_state->>'resolution' IS DISTINCT FROM 'labels_applied'), 0)) AS priors`,
+    [pageId]);
+  return { owner_set: guard?.owner_set ?? null, priors: guard?.priors ?? [] };
+}
+
 /** Sets the page's label guard to `tier`, stamped now, or with null removes it. */
 export async function writePageLabelGuard(engine: RawSql, pageId: number, tier: TrustTier | null): Promise<void> {
   if (tier === null) {

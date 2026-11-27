@@ -211,6 +211,9 @@ impl crate::kv::Kv for FaultyKv {
     fn snapshot(&self) -> crate::Result<Box<dyn crate::kv::KvRead>> {
         self.inner.snapshot()
     }
+    fn versioned_snapshot(&self) -> crate::Result<(Box<dyn crate::kv::KvRead + Send>, u64)> {
+        self.inner.versioned_snapshot()
+    }
     fn begin_write(&self) -> crate::Result<Box<dyn crate::kv::KvWrite>> {
         self.begin_write_exclusive()
     }

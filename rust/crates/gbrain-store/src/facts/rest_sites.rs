@@ -358,6 +358,7 @@ impl Store {
                 && !hidden_by_policy(&*read, row, &q.exclude_private)?
                 && !hidden_by_deleted_page(&*read, row)?
                 && !hidden_by_quarantine(&*read, row)?
+                && !super::hidden_by_rederive(&*read, row)?
                 && trust.admits(&*read, "facts", row.id, row.tier())?)
         };
         let mut out = Vec::new();

@@ -4,7 +4,7 @@
  * with counts as numbers; only the two completion times of `readWedgeSignals` cross as ISO text and come back as `Date`s.
  */
 import type {
-  PrivateQueueHealthRow, QueueDivergence, QueueDivergenceSpec, QueueHealthSignals, QueueHealthSpec, QueueWedgeRow, QueueWedgeSignals, WaitingByQueueRow,
+  PrivateQueueHealthRow, QueueDivergence, QueueDivergenceSpec, QueueHealthSignals, QueueHealthSpec, QueueWedgeRow, QueueWedgeSignals, UntakenWaitingJobs, WaitingByQueueRow,
 } from '../../engine-sql/jobs-health.ts';
 import { withDates } from '../store-codec.ts';
 import { storeCall, type StoreMember } from './common.ts';
@@ -34,8 +34,14 @@ export const readWedgeSignals: StoreMember<[queue: string, handlerNames: readonl
 export const readOldestWaitingAge: StoreMember<[queue: string, opts?: { signal?: AbortSignal }], number | null> =
   (brain, queue) => call('readOldestWaitingAge', () => brain.readOldestWaitingAge(queue));
 
+export const readUntakenWaitingJobs: StoreMember<[name: string, thresholdHours: number], UntakenWaitingJobs | null> =
+  (brain, name, thresholdHours) => call('readUntakenWaitingJobs', () => brain.readUntakenWaitingJobs(name, thresholdHours));
+
 export const countWaitingJobs: StoreMember<[excludeFactsAbsorb: boolean], number> =
   (brain, excludeFactsAbsorb) => call('countWaitingJobs', () => brain.countWaitingJobs(excludeFactsAbsorb));
+
+export const countWaitingJobsForNames: StoreMember<[queue: string, names: readonly string[]], number> =
+  (brain, queue, names) => call('countWaitingJobsForNames', () => brain.countWaitingJobsForNames(queue, [...names]));
 
 export const listStuckActiveJobsByName: StoreMember<[], Array<{ name: string; n: number }>> =
   (brain) => call('listStuckActiveJobsByName', () => brain.listStuckActiveJobsByName());

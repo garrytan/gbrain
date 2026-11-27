@@ -31,6 +31,8 @@
 //! - The reads of `gbrain repair generations` add no keys (`generations/repair.rs`, members
 //!   readGenerationItemsByIds, listUnmatchedGenerationRows, listRestorableGenerationRows,
 //!   listHeldGenerationRows and readHeldGenerationProposal).
+//! - The doctor's generation reads add no keys (`generations/doctor_reads.rs`, members
+//!   listLiveGenerationRetirements and listHeldGenerations).
 //! - The fence evidence reads of `generations/fence-evidence.ts` and the fence restore reads of
 //!   `generations/fence-restore.ts` add no keys (`generations/fence_evidence.rs`, members
 //!   listRecordedFenceItemKeys, hasBodylessPageVersion and listFenceVersionBodies;
@@ -67,10 +69,12 @@ use std::collections::BTreeSet;
 mod activations;
 mod atom_reads;
 mod chronicle_events;
-mod derivation_inputs;
+pub(crate) mod derivation_inputs;
+mod doctor_reads;
 mod fence_evidence;
 mod fence_restore;
 mod lost_fence;
+pub mod needs_rederive;
 mod page_rows;
 mod repair;
 pub use activations::ActivationRecordInput;
@@ -174,7 +178,7 @@ struct GenerationRecord {
 struct ItemRecord {
     identity_hash: String,
     action: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "crate::jsonb::de_opt_value")]
     preimage: Option<Value>,
     #[serde(default)]
     preimage_bytes: Option<i32>,
@@ -555,6 +559,15 @@ fn optional_text<'a>(name: &'a str, value: &'a Option<String>) -> Option<(&'a st
 }
 
 impl Store {
+    /// `hasFenceAbsentHold(sourceId, kind, ownerKey)` (`engine-sql/fence-projection.ts`): whether the
+    /// held row of the key was held because a write dropped its fence (`state='held' AND
+    /// held_reason='fence_absent'`).
+    pub fn has_fence_absent_hold(&self, key: &GenerationKey) -> Result<bool> {
+        check_key("hasFenceAbsentHold", key)?;
+        let read = self.read()?;
+        held_for(&*read, key, "fence_absent")
+    }
+
     /// `readLiveGenerationRow(key)`: the live row of `key` with the items it owns, or null.
     pub fn read_live_generation_row(&self, key: &GenerationKey) -> Result<Value> {
         check_key("readLiveGenerationRow", key)?;
@@ -1564,6 +1577,7 @@ pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Resul
     }
     activations::remove_source_activations(tx, source_id)?;
     derivation_inputs::remove_source_edges(tx, source_id)?;
+    needs_rederive::remove_source_rows(tx, source_id)?;
     delete_attempts_under(tx, &attempt_index_prefix(&[source_id]))?;
     for (k, _) in collect_prefix(&*tx, &valve_prefix(&[source_id]), false, usize::MAX)? {
         tx.delete(&k)?;
@@ -1869,6 +1883,7 @@ mod tests {
     fn an_attempt_and_a_reader_page_put_in_one_write_set_the_flag() {
         let store = store();
         put_open_page(&store, "notes/closed");
+        assert_eq!(store.get_config(FLAG).unwrap(), None);
         store
             .write(|tx| {
                 let record = AttemptRecord {

@@ -68,6 +68,18 @@ fn drop_index_row(tx: &mut dyn KvWrite, entry: &TimelineRecord) -> Result<()> {
     Ok(())
 }
 
+/// The foreign key a timeline move onto a missing survivor would break, in statement order: `page_id` when the twin
+/// holds an entry, else `event_page_id` when an event projection names it, else none.
+pub(crate) fn twin_timeline_reference(
+    read: &dyn crate::kv::KvRead,
+    twin: u64,
+) -> Result<Option<&'static str>> {
+    if !page_entries(read, twin)?.is_empty() {
+        return Ok(Some("page_id"));
+    }
+    Ok((!projections(read, twin)?.is_empty()).then_some("event_page_id"))
+}
+
 /// Moves the twin's timeline entries to the survivor (the module docs). The caller has refused equal ids.
 pub(crate) fn move_twin_timeline(tx: &mut dyn KvWrite, twin: u64, survivor: u64) -> Result<()> {
     let mut touched: BTreeSet<u64> = BTreeSet::from([twin, survivor]);

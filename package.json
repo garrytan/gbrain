@@ -48,9 +48,9 @@
   },
   "scripts": {
     "dev": "bun run src/cli.ts",
-    "build": "bun build --compile --no-compile-autoload-bunfig --define GBRAIN_BUILD_COMMIT=\\\"$(git rev-parse HEAD)\\\" --outfile bin/gbrain src/cli.ts src/core/skills/resolver/hook-worker.ts",
+    "build": "bun build --compile --bytecode --format=esm --no-compile-autoload-bunfig --define GBRAIN_BUILD_COMMIT=\\\"$(git rev-parse HEAD)\\\" --outfile bin/gbrain src/cli.ts src/core/skills/resolver/hook-worker.ts",
     "rust:build": "bun rust/scripts/build.ts",
-    "build:all": "bun build --compile --no-compile-autoload-bunfig --define GBRAIN_BUILD_COMMIT=\\\"$(git rev-parse HEAD)\\\" --target=bun-darwin-arm64 --outfile bin/gbrain-darwin-arm64 src/cli.ts src/core/skills/resolver/hook-worker.ts && bun build --compile --no-compile-autoload-bunfig --define GBRAIN_BUILD_COMMIT=\\\"$(git rev-parse HEAD)\\\" --target=bun-linux-x64 --outfile bin/gbrain-linux-x64 src/cli.ts src/core/skills/resolver/hook-worker.ts",
+    "build:all": "bun build --compile --bytecode --format=esm --no-compile-autoload-bunfig --define GBRAIN_BUILD_COMMIT=\\\"$(git rev-parse HEAD)\\\" --target=bun-darwin-arm64 --outfile bin/gbrain-darwin-arm64 src/cli.ts src/core/skills/resolver/hook-worker.ts && bun build --compile --bytecode --format=esm --no-compile-autoload-bunfig --define GBRAIN_BUILD_COMMIT=\\\"$(git rev-parse HEAD)\\\" --target=bun-linux-x64 --outfile bin/gbrain-linux-x64 src/cli.ts src/core/skills/resolver/hook-worker.ts",
     "build:admin": "cd admin && bun run build && cd .. && bun run scripts/build-admin-embedded.ts",
     "build:admin-embedded": "bun run scripts/build-admin-embedded.ts",
     "build:schema": "bun run scripts/build-schema.ts",
@@ -113,7 +113,7 @@
     "ci:ubicloud": "bun run scripts/ci-ubicloud.ts",
     "ci:ubicloud:diff": "bun run scripts/ci-ubicloud.ts --diff",
     "ci:select-e2e": "bun run scripts/select-e2e.ts",
-    "typecheck": "node --max-old-space-size=8192 node_modules/typescript/bin/tsc --noEmit --incremental --tsBuildInfoFile node_modules/.cache/gbrain-typecheck.tsbuildinfo",
+    "typecheck": "node --max-old-space-size=12288 node_modules/typescript/bin/tsc --noEmit --incremental --tsBuildInfoFile node_modules/.cache/gbrain-typecheck.tsbuildinfo",
     "check:jsonb": "bash scripts/check-jsonb-pattern.sh",
     "check:jsonb-params": "node scripts/check-jsonb-params.mjs",
     "check:search-path": "bash scripts/check-search-path.sh",
@@ -268,7 +268,7 @@
     "bun": ">=1.4.4"
   },
   "license": "MIT",
-  "version": "0.60.770.0",
+  "version": "0.60.774.0",
   "overrides": {
     "@aws-sdk/util-format-url": "3.972.9",
     "@ai-sdk/provider-utils": "4.0.56",

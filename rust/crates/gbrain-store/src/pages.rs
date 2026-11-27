@@ -518,7 +518,7 @@ impl VersionRecord {
     }
 }
 
-/// `validateSlug` (`src/core/utils.ts`): returns the slug lower-cased.
+/// `validateSlug` (`src/core/utils.ts`): returns the slug in its normal form, lower-cased and then composed to Unicode NFC.
 pub fn validate_slug(slug: &str) -> Result<String> {
     let bad = |why: &str| {
         Err(StoreError::new(
@@ -548,7 +548,9 @@ pub fn validate_slug(slug: &str) -> Result<String> {
     if lower.contains("%2e") || lower.contains("%2f") || lower.contains("%5c") {
         return bad("URL-encoded path separators are not allowed in slugs.");
     }
-    Ok(lower)
+    // The one slug normal form (`normalizeSlug`, src/core/utils.ts): lowercase, then Unicode NFC. NFC runs last because
+    // lowercasing can leave a sequence that is not composed.
+    Ok(unicode_normalization::UnicodeNormalization::nfc(lower.as_str()).collect())
 }
 
 fn blank(text: &str) -> bool {
@@ -707,7 +709,7 @@ fn store_page(
 /// trigger applies to that UPDATE. A raise is kept only under a promotion that covers it (the caller's
 /// `withTrustPromotion`); otherwise an undeclared writer is refused and a declared one keeps the
 /// stored tier. The origin is the one the statement sets. Nothing for an unknown page id.
-fn restore_page_trust_in(
+pub(crate) fn restore_page_trust_in(
     tx: &mut dyn KvWrite,
     id: u64,
     tier: crate::trust::TrustTier,
@@ -2064,6 +2066,11 @@ impl Store {
                 {
                     continue;
                 }
+                // `rederiveHiddenSql('pages', 'p')`: a page a purge marked in `needs_rederive`
+                // shows no saved version until it is derived again.
+                if crate::generations::needs_rederive::is_marked(&*read, "pages", page.id)? {
+                    continue;
+                }
                 // A row that does not parse is kept as `None` in key (id) order: it is never listed,
                 // and as a successor it counts as withholding, so the version before it shows no
                 // reason (fail closed) instead of taking the next readable row as its successor.
@@ -2134,6 +2141,31 @@ impl Store {
                 v
             })
             .collect())
+    }
+
+    /// `readPageVersionRow(versionId, pageId)`: the whole row of version `versionId` of page `pageId`
+    /// (`SELECT * FROM page_versions WHERE id = $1 AND page_id = $2`, the row `createVersion`
+    /// returns), or null.
+    pub fn read_page_version_row(&self, version_id: i64, page_id: i64) -> Result<Value> {
+        let (Ok(version_id), Ok(page_id)) = (u64::try_from(version_id), u64::try_from(page_id))
+        else {
+            return Ok(Value::Null);
+        };
+        let read = self.read()?;
+        let mut found = None;
+        scan_prefix(
+            &*read,
+            &keys::version_prefix(page_id),
+            false,
+            &mut |_, v| match serde_json::from_slice::<VersionRecord>(v) {
+                Ok(row) if row.id == version_id => {
+                    found = Some(row);
+                    false
+                }
+                _ => true,
+            },
+        )?;
+        Ok(found.map_or(Value::Null, |row| row.to_created_json()))
     }
 
     /// `readLatestVersionId(pageId)`: the page's newest version id, or none when it keeps no

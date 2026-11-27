@@ -15,11 +15,14 @@
  *    and the constraint, table and schema names. The Postgres `detail` line (the key values) is not reproduced.
  *  - Every other code stays on the original error, which already carries it (`invalid_slug`, `empty_overwrite`, ...).
  */
+import type { Capability } from '../engine-capabilities.ts';
 import { opError } from '../ops/contract.ts';
 import { originAlreadyClaimed } from '../persistence/origin-guard.ts';
 import { PageMissingError } from '../engine-errors.ts';
 import { PageRevisionConflictError, PageSnapshotAmbiguousError } from '../page-state/types.ts';
 import { READ_ONLY_SQLSTATE } from '../postgres-engine/read-write-transactions.ts';
+import { capabilityMissing } from './errors.ts';
+import { RUST_ENGINE_MEMBERS } from './members.ts';
 
 export interface StoreErrorContext {
   member: string;
@@ -70,9 +73,17 @@ export function mapStoreError(error: unknown, ctx: StoreErrorContext): unknown {
       return new PageSnapshotAmbiguousError();
     case 'constraint_violation':
       return factsUniqueViolation(error);
+    case 'unmodeled_input':
+      // An input the store does not read as Postgres does: refused by name, before anything is written.
+      return refusalFor(ctx.member, detail);
     default:
       return error;
   }
+}
+
+/** `engine_capability_missing` for `member`, under the capability the member table gives it, naming what was refused. */
+function refusalFor(member: string, what: string): Error {
+  return capabilityMissing((RUST_ENGINE_MEMBERS as Record<string, string>)[member] as Capability, `${member} (${what})`);
 }
 
 /** The unique indexes of the facts table the store enforces, by the name Postgres reports. */

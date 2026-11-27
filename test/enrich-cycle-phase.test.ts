@@ -9,6 +9,7 @@ import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:tes
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { runPhaseEnrichThin } from '../src/core/cycle/enrich-thin.ts';
+import { __setChatTransportForTests, resetGateway } from '../src/core/ai/gateway.ts';
 
 let engine: PGLiteEngine;
 
@@ -23,6 +24,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
+  resetGateway();
   await resetPgliteState(engine);
 });
 
@@ -37,11 +39,33 @@ async function seedStub(slug: string, title: string) {
 }
 
 describe('runPhaseEnrichThin', () => {
-  test('disabled by default → skipped with enable hint', async () => {
-    const r = await runPhaseEnrichThin(engine, {});
-    expect(r.status).toBe('skipped');
-    expect(r.details.reason).toBe('disabled');
-    expect(String(r.details.enable_hint)).toContain('cycle.enrich_thin.enabled true');
+  test('disabled by default → skipped with enable hint, even with a chat key configured', async () => {
+    for (const withKey of [false, true]) {
+      resetGateway();
+      if (withKey) __setChatTransportForTests(async () => { throw new Error('no chat call expected'); });
+      const r = await runPhaseEnrichThin(engine, {});
+      expect(r.status).toBe('skipped');
+      expect(r.details.reason).toBe('disabled');
+      expect(String(r.details.enable_hint)).toContain('cycle.enrich_thin.enabled true');
+    }
+  });
+
+  test('a stored true runs with a $0.50 brain-wide cap and 3 pages per source, and no daily cap (dry-run)', async () => {
+    await engine.setConfig('cycle.enrich_thin.enabled', 'true');
+    const r = await runPhaseEnrichThin(engine, { dryRun: true });
+    expect(r.status).toBe('ok');
+    expect(r.details).toMatchObject({ max_total_cost_usd: 0.5, max_pages_per_tick: 3, max_cost_usd: 1 });
+    expect(r.details.daily).toMatchObject({ max_daily_cost_usd: 'off', max_daily_pages: 'off' });
+    await engine.setConfig('cycle.enrich_thin.enabled', 'false');
+    expect((await runPhaseEnrichThin(engine, {})).details.reason).toBe('disabled');
+  });
+
+  test('stored caps are kept: an explicit brain-wide cap is not replaced by the new default', async () => {
+    await engine.setConfig('cycle.enrich_thin.enabled', 'true');
+    await engine.setConfig('cycle.enrich_thin.max_total_cost_usd', '5');
+    await engine.setConfig('cycle.enrich_thin.max_pages_per_tick', '7');
+    const r = await runPhaseEnrichThin(engine, { dryRun: true });
+    expect(r.details).toMatchObject({ max_total_cost_usd: 5, max_pages_per_tick: 7 });
   });
 
   test('enabled with no thin pages → ok, nothing enriched (dry-run, no spend)', async () => {
@@ -89,13 +113,13 @@ describe('runPhaseEnrichThin', () => {
     // Before Fix E, max_cost_usd was parsed into cfg but never passed to
     // runEnrichCore nor surfaced — one source could drain the whole tick.
     // Now it's the per-source ceiling (min(per_source, brain_wide_remaining))
-    // and appears in details. Defaults: per-source 1.0, brain-wide 5.0.
+    // and appears in details. Defaults: per-source 1.0, brain-wide 0.5.
     await engine.setConfig('cycle.enrich_thin.enabled', 'true');
     await engine.setConfig('cycle.enrich_thin.max_cost_usd', '0.5');
     const r = await runPhaseEnrichThin(engine, { dryRun: true });
     expect(r.status).toBe('ok');
     expect(r.details.max_cost_usd).toBe(0.5);
-    expect(r.details.max_total_cost_usd).toBe(5.0); // brain-wide default unchanged
+    expect(r.details.max_total_cost_usd).toBe(0.5); // brain-wide default unchanged
   });
 
   test("#2504: max_cost_usd accepts 'off' (uncapped per-source; brain-wide still governs)", async () => {
@@ -108,7 +132,7 @@ describe('runPhaseEnrichThin', () => {
     expect(r.status).toBe('ok');
     // Details report the operator's spelling, never Infinity→null.
     expect(r.details.max_cost_usd).toBe('off');
-    expect(r.details.max_total_cost_usd).toBe(5.0);
+    expect(r.details.max_total_cost_usd).toBe(0.5);
   });
 
   test("#2504: both cost knobs 'off' still runs (fully uncapped tick)", async () => {

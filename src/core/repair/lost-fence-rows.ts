@@ -41,7 +41,6 @@ import { takesPreparation } from '../takes-write.ts';
 import { setRowTier } from '../trust/page-handlers.ts';
 import { compareTrust, isTrustTier, storedTrustTier, type TrustTier } from '../trust/tier.ts';
 import { afterCursor, repairRequestId, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairListing, type RepairScope } from './core.ts';
-import { requireRawSql } from '../rust-engine/errors.ts';
 
 const DOCS = 'docs/guides/repair.md#lost-fence-rows';
 const COMMAND = 'gbrain repair lost-fence-rows';
@@ -252,8 +251,6 @@ export const lostFenceRowsRepair: RepairHandler = {
     if (!now || now.revision !== page.revision || stableJson(now.rows) !== stableJson(page.rows)) return changed('the page or its lost rows changed since the preview');
     const planned = await plannedPage(ctx.engine, page);
     if (typeof planned === 'string') return changed(planned);
-    // The restore is a put_page (lane 7's writer): an engine without raw SQL stops here, before it.
-    requireRawSql(ctx.engine, 'repair lost-fence-rows page write');
     try {
       await submitPageMutation(ctx, { operation: 'put_page', params: { slug: page.slug, source_id: page.source_id, content: planned.content, expected_revision: page.revision,
         request_id: await repairRequestId(ctx, 'lost-fence-rows', entry, page.revision) } });

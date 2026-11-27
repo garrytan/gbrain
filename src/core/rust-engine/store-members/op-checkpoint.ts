@@ -92,6 +92,16 @@ export const writeOpCheckpointRecord: StoreMember<[op: string, fingerprint: stri
   async (brain, op, fingerprint, completedKeys) => {
     await storeCall({ member: 'writeOpCheckpointRecord' }, () => brain.writeOpCheckpointRecord(op, fingerprint, completedKeys));
   };
+/** The atom generation a page's content keys on (op_checkpoint.rs `read_atom_generation`). */
+export const readAtomGeneration: StoreMember<[pageId: number, contentHash: string], number> = (brain, pageId, contentHash) =>
+  storeCall({ member: 'readAtomGeneration' }, () => brain.readAtomGeneration(pageId, contentHash));
+
+/** A page's atom generation bump (op_checkpoint.rs `record_atom_generation_bump`); the store keeps no extract_atoms_page_state rows. */
+export const recordAtomGenerationBump: StoreMember<[sourceId: string, incarnation: string, pageId: number, keepContentHash: string | null, keepGeneration: number | null], void> =
+  async (brain, sourceId, incarnation, pageId, keepContentHash, keepGeneration) => {
+    await storeCall({ member: 'recordAtomGenerationBump' }, () =>
+      brain.recordAtomGenerationBump({ sourceId, incarnation, pageId, keepContentHash, keepGeneration }));
+  };
 /** The checkpoints stamped more than `ttlDays` days ago and not exempt deleted with their paths; how many. */
 export const purgeStaleCheckpoints: StoreMember<[ttlDays: number], number> = (brain, ttlDays) =>
   storeCall({ member: 'purgeStaleCheckpoints' }, () => brain.purgeStaleCheckpoints(ttlDays));
@@ -100,3 +110,9 @@ export const purgeStaleCheckpoints: StoreMember<[ttlDays: number], number> = (br
  * through `executeRaw`, which this engine refuses), so none is stale.
  */
 export const purgeStaleAppliedCaptures: StoreMember<[ttlDays: number], number> = async () => 0;
+
+/** One soak counter added to (persistence/op_checkpoint.rs `add_soak_counter_event_in`, one store write). */
+export const addSoakCounterEvent: StoreMember<[op: string, day: string, kind: string, n: number], void> = async (brain, op, day, kind, n) => {
+  await storeCall({ member: 'addSoakCounterEvent' }, () => brain.addSoakCounterEvent(op, day, kind, n));
+};
+

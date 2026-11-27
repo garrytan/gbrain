@@ -30,7 +30,7 @@ import { planFactPurge } from '../../src/core/facts/purge.ts';
 import { collectFactCandidates } from '../../src/core/search/fact-relevance.ts';
 import { getEmbeddingModel } from '../../src/core/ai/gateway.ts';
 import { runPageToLinkCore } from '../../src/core/schema-pack/page-to-link.ts';
-import { createSource, parityArms } from './harness.ts';
+import { createSource, parityArms, type ParityBackend } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
 const { parityTest } = parityArms(testBackends());
@@ -52,18 +52,18 @@ function ctxFor(engine: BrainEngine): OperationContext {
  * order. The rows at odd positions are then rewritten, so heap order is not id order: ordered by distance alone, the
  * tied rows come back out of id order on PGLite and Postgres (seen: positions 7, 2, 4, 6, 1 and 6, 4, 1).
  */
-async function seedTiedFacts(engine: BrainEngine, model: string, tied: number[]): Promise<number[]> {
+async function seedTiedFacts(engine: BrainEngine, backend: ParityBackend, model: string, tied: number[]): Promise<number[]> {
   const rows = Array.from({ length: 8 }, (_, i) => ({ fact: `Ana keeps tied bee colony ${i}`, entity_slug: null, kind: 'fact', visibility: 'world',
-    source: 'test', embedding: tied.includes(i) ? SAME : FAR, embedding_model: model }));
-  await engine.insertFacts(rows as never, { source_id: SRC });
-  const ids = (await engine.executeRaw<{ id: number }>(`SELECT id FROM facts WHERE source_id = $1 ORDER BY id`, [SRC])).map(r => Number(r.id));
-  await engine.executeRaw(`UPDATE facts SET source = 'test' WHERE id = ANY($1::bigint[])`, [ids.filter((_, i) => i % 2 === 1)]);
+    source: 'test', embedding: tied.includes(i) ? SAME : FAR, embedding_model: model, row_num: null, source_markdown_slug: 'notes/seed' }));
+  const ids = (await engine.insertFacts(rows as never, { source_id: SRC })).ids.map(Number).sort((a, b) => a - b);
+  // Heap order exists only on the SQL engines; the Rust store keeps rows by key, so there is nothing to shuffle there.
+  if (backend !== 'rust') await engine.executeRaw(`UPDATE facts SET source = 'test' WHERE id = ANY($1::bigint[])`, [ids.filter((_, i) => i % 2 === 1)]);
   return ids;
 }
 
 describe('a limit over tied sort keys cuts the same rows on every engine arm', () => {
-  parityTest('the purge receipt probe lists tied nearest facts by fact id', { methods: ['insertFacts', 'loadPurgeTarget', 'executeRaw'], requires: 'raw_sql' }, async (engine) => {
-    const ids = await seedTiedFacts(engine, 'test:model', [1, 2, 4, 6, 7]);
+  parityTest('the purge receipt probe lists tied nearest facts by fact id', { methods: ['insertFacts', 'loadPurgeTarget'] }, async (engine, backend) => {
+    const ids = await seedTiedFacts(engine, backend, 'test:model', [1, 2, 4, 6, 7]);
     const target = (await engine.loadPurgeTarget(ids[7]!, SRC))!;
     const plan = await planFactPurge(engine, target, false);
     const receipt = await verifyFactPurge(engine, { target, plan, dryRun: true }) as unknown as { vector_probe: { status: string; candidates: Array<{ fact_id: number }> } };
@@ -89,12 +89,15 @@ describe('a limit over tied sort keys cuts the same rows on every engine arm', (
     return { completion: receipt.completion, exit_code: receipt.exit_code };
   });
 
-  parityTest('file_list returns the first 100 files by file id when slug and filename tie', { methods: ['executeRaw'], requires: 'raw_sql' }, async (engine) => {
+  parityTest('file_list returns the first 100 files by file id when slug and filename tie', { methods: ['upsertCliFileRow', 'listReadableFileRows'] }, async (engine, backend) => {
     const op = operations.find(o => o.name === 'file_list')!;
-    // 120 files of one page and one filename; storage paths run opposite to ids, and every third row is rewritten so heap order is not id order.
-    await engine.executeRaw(`INSERT INTO files (page_slug, filename, storage_path, content_hash)
-      SELECT 'tie/page', 'same.txt', 'tie/' || lpad((121 - g)::text, 3, '0'), 'h' FROM generate_series(1, 120) g`);
-    await engine.executeRaw(`UPDATE files SET mime_type = 'text/plain' WHERE id % 3 = 0`);
+    // 120 files of one page and one filename, through the typed write `gbrain files upload` uses; storage paths run opposite to
+    // ids, and on the SQL engines every third row is rewritten so heap order is not id order (the Rust store has no heap).
+    for (let g = 1; g <= 120; g++) {
+      await engine.upsertCliFileRow({ page_slug: 'tie/page', filename: 'same.txt', storage_path: `tie/${String(121 - g).padStart(3, '0')}`, mime_type: null,
+        size_bytes: 0, content_hash: 'h' }, {});
+    }
+    if (backend !== 'rust') await engine.executeRaw(`UPDATE files SET mime_type = 'text/plain' WHERE id % 3 = 0`);
     const first100 = Array.from({ length: 100 }, (_, i) => `tie/${String(120 - i).padStart(3, '0')}`);
     const all = await op.handler(ctxFor(engine), {}) as Array<{ storage_path: string }>;
     expect(all.map(r => r.storage_path)).toEqual(first100);
@@ -120,8 +123,8 @@ describe('a limit over tied sort keys cuts the same rows on every engine arm', (
     return { would_convert: rule.would_convert, converted: rule.converted, unresolved: rule.unresolved };
   });
 
-  parityTest('the fact pool nearest arm lists tied nearest facts by fact id', { methods: ['insertFacts', 'executeRaw'], requires: 'raw_sql' }, async (engine) => {
-    const ids = await seedTiedFacts(engine, getEmbeddingModel(), [1, 4, 6]);
+  parityTest('the fact pool nearest arm lists tied nearest facts by fact id', { methods: ['insertFacts'] }, async (engine, backend) => {
+    const ids = await seedTiedFacts(engine, backend, getEmbeddingModel(), [1, 4, 6]);
     const pool = await collectFactCandidates(engine, 'zzqx', { sourceIds: [SRC], worldOnly: true, excludePrivate: false }, SAME,
       { depth: { keyword: 5, cosine: 3, entity: 5 } });
     const ranks = pool.candidates.map(c => ids.indexOf(c.id));

@@ -30,6 +30,7 @@ import type { BrainEngine } from '../../src/core/engine.ts';
 import { FACTS_FENCE_BEGIN, FACTS_FENCE_END } from '../../src/core/facts-fence.ts';
 import { lockReconcileRevision } from '../../src/core/facts/reconcile-watermark.ts';
 import { withEngineScope } from '../../src/core/engine-scope.ts';
+import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
 import { noteSchemaVersion } from '../../src/core/migrate-pending.ts';
 import { LATEST_SCHEMA_VERSION } from '../../src/core/schema-migrations/latest.generated.ts';
 
@@ -646,6 +647,53 @@ describe('engine parity: purge, withdrawal, relink and fence repair statements',
     expect(closed).toEqual({ open: 'default-row', openFloor: null, chat: 'chat-row', chatFloor: null });
     expect(fn).toEqual({ open: 'default-row', openFloor: 'default-row', chat: 'chat-row', chatFloor: null });
     return { before, closed, fn };
+  });
+
+  // A remote caller always reads inside a caller record, which renders the floor without the live pending-coverage test
+  // and, for the owner, without the owner-only test; `restricted: false` renders the short member-access form. Each of
+  // these is a floor the store models, so the Rust member must answer them rather than stop.
+  parityTest('findActiveSingleFact under the remote provenance floor answers inside a caller record: a member, the owner, and a brain with no member-access restrictions', { methods: ['findActiveSingleFact'] }, async (engine, backend) => {
+    const seed = new Seed(engine);
+    await putCallerPages(engine);
+    // A page derived from a page that names readers: the full form's origin walk hides it, and the short form a brain
+    // with no member-access restrictions renders does not, even when the store's restriction flag is set (here by
+    // notes/readers), as for a caller whose flag read is stale.
+    await engine.putPage('notes/lineage', note('Lineage', '', { derived_from: ['notes/readers'] }));
+    const pages = ['notes/open', 'notes/private', 'notes/readers', 'notes/lineage', 'memory/members/alice-example'];
+    for (const page of pages) await seed.fence([{ label: page, fact: 'Likes tea', row_num: 1, source_markdown_slug: page, entity_slug: 'people/a' }]);
+    const records = {
+      member: { identity: ['member:alice-example'] },
+      owner: { owner: true, identity: ['member:alice-example'] },
+      open: { restricted: false, identity: ['member:alice-example'] },
+      ownerOpen: { owner: true, restricted: false, identity: ['member:alice-example'] },
+    } as const;
+    const find = async (sourceId: string, pageSlug: string | null) => {
+      const row = await engine.findActiveSingleFact({ sourceId, entitySlug: 'people/a', visibility: 'private', fact: 'likes tea', attributedTo: null, pageSlug, remoteFloor: true });
+      return row === null ? null : seed.name(row.id);
+    };
+    const readPages = async () => {
+      const out: Record<string, string | null> = {};
+      for (const p of [...pages, null]) out[p ?? 'none'] = await find(SRC, p);
+      return out;
+    };
+    const asRecords = async (read: () => Promise<unknown>) => {
+      const out: Record<string, unknown> = { none: await read() };
+      for (const [name, record] of Object.entries(records)) out[name] = await withCallerAccess({ ...record, identity: [...record.identity] }, read);
+      return out;
+    };
+    const byPage = await asRecords(readPages);
+    // The floor judges every provenance page by the empty identity, so the caller's own member page stays hidden too.
+    const floor = { 'notes/open': 'notes/open', 'notes/private': null, 'notes/readers': null, 'notes/lineage': null, 'memory/members/alice-example': null, none: 'notes/open' };
+    const short = { ...floor, 'notes/lineage': 'notes/lineage' };
+    expect(byPage).toEqual({ none: floor, member: floor, owner: floor, open: short, ownerOpen: short });
+    // An owner-only source: with no schema version the closed form hides every fact for any caller but the owner.
+    await createSource(engine, backend, 'fact-chat', { kind: 'imessage' });
+    await seed.one('chat-row', { fact: 'Likes tea', entity_slug: 'people/a' }, 'fact-chat');
+    const ownerOnly = await asRecords(async () => ({ open: await find(SRC, 'notes/open'), chat: await find('fact-chat', null) }));
+    const hidden = { open: null, chat: null };
+    const shown = { open: 'notes/open', chat: 'chat-row' };
+    expect(ownerOnly).toEqual({ none: hidden, member: hidden, owner: shown, open: hidden, ownerOpen: shown });
+    return { byPage, ownerOnly };
   });
 
   parityTest('listSingleFactMetadata reads the fence position, trust tier and claim slot of the named facts', { methods: ['listSingleFactMetadata'] }, async (engine) => {

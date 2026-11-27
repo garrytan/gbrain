@@ -1,8 +1,8 @@
 //! Takes: the reads behind the doctor, onboarding, purge, fence import, scorecard, supersession
 //! repair and calibration admin sites, the take trust reads, the reads and the delete of
-//! `gbrain extract takes` (rust/docs/store/takes-reads.md), the grade_takes verdict cache, the
-//! take horizons, and the wave writes of `gbrain calibration --undo-wave` with the nudge log.
-//! Same shape as `../takes.rs`.
+//! `gbrain extract takes` (rust/docs/store/takes-reads.md), the two writes of the takes
+//! publication's prepare step, the grade_takes verdict cache, the take horizons, and the wave
+//! writes of `gbrain calibration --undo-wave` with the nudge log. Same shape as `../takes.rs`.
 
 use gbrain_store::takes::{
     HeldFenceTakeSpec, IncomingTake, LiveTakeAt, McpResolvedInput, PurgeTakesInput,
@@ -339,6 +339,50 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.find_take_id(page_id as i64, row_num as i64))
     }
+
+    /// `listTakeHoldersAtRows(pageId, rowNums)`: the distinct holders at those row numbers, sorted.
+    #[napi]
+    pub fn list_take_holders_at_rows<'env>(
+        &self,
+        env: &'env Env,
+        page_id: f64,
+        row_nums: Vec<f64>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let rows: Vec<i64> = row_nums.iter().map(|n| *n as i64).collect();
+            s.list_take_holders_at_rows(page_id as i64, &rows)
+        })
+    }
+
+    /// `stampTakeResolvedAt(pageId, rowNum, resolvedAt)`: resolves when the take's `resolved_at` is set.
+    #[napi]
+    pub fn stamp_take_resolved_at<'env>(
+        &self,
+        env: &'env Env,
+        page_id: f64,
+        row_num: f64,
+        resolved_at: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.stamp_take_resolved_at(page_id as i64, row_num as i64, &resolved_at)
+        })
+    }
+
+    /// `recordTakeHoldersUsed(requestId, holders)`: resolves when the request's
+    /// `authority.takeHoldersUsed` is set.
+    #[napi]
+    pub fn record_take_holders_used<'env>(
+        &self,
+        env: &'env Env,
+        request_id: String,
+        holders: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let holders: Vec<String> = required(holders, "recordTakeHoldersUsed holders")?;
+            s.record_take_holders_used(&request_id, &holders)
+        })
+    }
+
     /// `readTakeGrade({ takeId, promptVersion, judgeModelId, evidenceSignature })`:
     /// `{ verdict, confidence, applied }` or null.
     #[napi]

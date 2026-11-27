@@ -919,14 +919,39 @@ describe('engine parity: minion queue', () => {
       // S1 is touched last, so it sorts after S2 and S3 despite being created first.
       await engine.pauseJob(s1);
       await engine.resumeJob(s1);
+      // The hours=0 cut-off is now(): PGLite's clock ticks in milliseconds, so a read in the resume's millisecond saw
+      // S1's updated_at equal to now() and left it out, while Postgres and Rust (microseconds) kept it. Let the clock
+      // move past the resume, so every arm reads S1 as older than the cut-off.
+      await Bun.sleep(20);
       const r$ = (ids: number[]) => ids.map(id => id - s1);
-      return {
+      const out = {
         all: r$(await engine.listStaleWaitingJobIds('stale', -1, 10)), limited: r$(await engine.listStaleWaitingJobIds('stale', -1, 2)),
         now: r$(await engine.listStaleWaitingJobIds('stale', 0, 10)), fresh: await engine.listStaleWaitingJobIds('stale', 24, 10),
         other: r$(await engine.listStaleWaitingJobIds('other', -1, 10)), nobody: await engine.listStaleWaitingJobIds('nobody', -1, 10), zero: await engine.listStaleWaitingJobIds('stale', -1, 0),
         counts: [await engine.countTtlExpiredWaiting('stale', -1), await engine.countTtlExpiredWaiting('stale', 0), await engine.countTtlExpiredWaiting('stale', 24), await engine.countTtlExpiredWaiting('other', -1), await engine.countTtlExpiredWaiting('nobody', -1)],
         ids: r$([s2, s3, other, running]),
       };
+      const [d2, d3] = out.ids;
+      expect({ now: out.now, countNow: out.counts[1] }).toEqual({ now: [d2, d3, 0], countNow: 3 });
+      return out;
+    });
+
+  parityTest('the hours=0 stale read and count include a waiting job resumed just before them, round after round',
+    { methods: ['admitJob', 'pauseJob', 'resumeJob', 'listStaleWaitingJobIds', 'countTtlExpiredWaiting'], timeout: 120_000 }, async (engine) => {
+      // Ten resume-then-read rounds: before the clock moved past the resume, PGLite left the resumed job out of about
+      // half of them, so this failed on PGLite on almost every run.
+      const rounds: Array<{ listed: boolean; counted: number }> = [];
+      for (let i = 0; i < 10; i++) {
+        const name = `tie-${i}`;
+        await add(engine, name);
+        const resumed = await add(engine, name);
+        await engine.pauseJob(resumed);
+        await engine.resumeJob(resumed);
+        await Bun.sleep(20);
+        rounds.push({ listed: (await engine.listStaleWaitingJobIds(name, 0, 10)).includes(resumed), counted: await engine.countTtlExpiredWaiting(name, 0) });
+      }
+      expect(rounds).toEqual(Array(10).fill({ listed: true, counted: 2 }));
+      return rounds;
     });
 
   parityTest('listUnfinishedJobsByName lists every unfinished job of the names by id, whatever its status, and no finished one',

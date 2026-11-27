@@ -24,6 +24,7 @@
  * Postgres); the relevance rules are built here.
  */
 import type { BrainEngine } from '../engine.ts';
+import { embeddingsDisabled } from '../embedding-disabled.ts';
 import type { ProjectionReadinessScope } from './projection-readiness.ts';
 
 /**
@@ -104,8 +105,12 @@ export function countPendingProjections(engine: Pick<BrainEngine, 'countPendingP
   return engine.countPendingProjectionPages(scope, relevance);
 }
 
-/** Pages in scope held from embedding: a held or capped budget row that still applies, on a page no `embed_skip` marker keeps out of embedding for good. */
-export function countEmbeddingHeld(engine: Pick<BrainEngine, 'countEmbeddingHeldPages'>, scope: ProjectionReadinessScope, relevance: CoverageRelevance): Promise<ScopedCount | null> {
+/**
+ * Pages in scope held from embedding: a held or capped budget row that still applies, on a page no `embed_skip` marker keeps out of embedding for good.
+ * Null on a brain with embeddings off on purpose, where a held page is no degradation.
+ */
+export async function countEmbeddingHeld(engine: Pick<BrainEngine, 'countEmbeddingHeldPages' | 'getConfig'>, scope: ProjectionReadinessScope, relevance: CoverageRelevance): Promise<ScopedCount | null> {
+  if (await embeddingsDisabled(engine)) return null;
   return engine.countEmbeddingHeldPages(scope, relevance);
 }
 

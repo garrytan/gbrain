@@ -22,7 +22,6 @@ import { segmentedRegionContains } from '../page-body/segment-lines.ts';
 import { countOutsideCode, locateOutsideCode } from '../fence-scan.ts';
 import { SEGMENTED_SAMPLE } from './timeline.ts';
 import { afterCursor, repairRequestId, type RepairHandler, type RepairItem, type RepairScope, type RepairCursor } from './core.ts';
-import { requireRawSql } from '../rust-engine/errors.ts';
 
 /**
  * The page with every below-sentinel fence moved into its body, or null when
@@ -92,7 +91,6 @@ export const connectorFencesRepair: RepairHandler = {
     if (!snapshot) return false;
     const next = relocateTimelineFences(snapshot.page);
     if (!next) return false;
-    requireRawSql(ctx.engine, 'repair connector-fences page write');
     await submitPageMutation(ctx, { operation: 'put_page', params: { slug: item.slug, source_id: item.source_id,
       content: serializePageToMarkdown({ ...snapshot.page, ...next }, snapshot.tags), expected_revision: snapshot.revision,
       request_id: await repairRequestId(ctx, 'connector-fences', item, snapshot.revision) } });

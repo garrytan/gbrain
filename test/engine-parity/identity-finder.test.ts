@@ -12,7 +12,9 @@
  *    evidence fill and `gbrain dedupe reconcile` stopped on a Rust brain; a Rust answer that drifts from the SQL
  *    engines' (a missed key, a different fingerprint, a group linked twice) now fails here. The evidence fill writes
  *    back the decisions it read, so a Rust apply that refused the `decided_at` text its own list returns
- *    (`2026-11-18 00:00:00+00`) stopped the fill.
+ *    (`2026-11-18 00:00:00+00`) stopped the fill. A `decided_at` with a non-ASCII character where the zone is looked for
+ *    made the Rust apply panic (a byte slice inside a character); it must refuse as the SQL cast does, write nothing,
+ *    and keep non-ASCII slugs and deciders as they were sent.
  *  - Why existing coverage misses it: pages.test.ts reads the key rows and runs the sweep a sync starts (one changed
  *    page, `near`), not the finder's whole answer, the evidence fill or the sweep over every company;
  *    test/entity-duplicates.test.ts and test/entity-company-auto-link.test.ts run on PGLite only.
@@ -77,6 +79,22 @@ describe('engine parity: the identity work that reads entity key rows', () => {
   );
 
   parityTest(
+    'listEntityKeyRows with collapsed reads the retired pages a dedupe collapse made, and without it only the live unretired ones (master #10313)',
+    { methods: ['putPage', 'listEntityKeyRows'] },
+    async (engine) => {
+      await engine.putPage('people/dana-example', person('Dana Example', { email: 'dana@example.com' }));
+      await engine.putPage('people/dana-example-2', person('Dana Example', { email: 'dana@example.com', merged_into: 'people/dana-example', dedupe_collapse: { at: '2026-11-25' } }));
+      await engine.putPage('people/dana-example-3', person('Dana Example', { email: 'dana@example.com', merged_into: '  ', dedupe_collapse: null }));
+      await engine.putPage('people/dana-example-4', person('Dana Example', { email: 'dana@example.com', merged_into: 'people/dana-example' }));
+      const read = async (collapsed?: boolean) => (await engine.listEntityKeyRows({ types: ['person'], keys: ['email'], limit: 50, ...(collapsed ? { collapsed } : {}) })).map(r => r.slug);
+      const out = { live: await read(), collapsed: await read(true) };
+      expect(out.collapsed).toEqual(['people/dana-example-2']);
+      expect(out.live).toEqual(['people/dana-example', 'people/dana-example-3']);
+      return out;
+    },
+  );
+
+  parityTest(
     'fillDecisionEvidence fills a bare "different" decision with its pages\' fingerprints once, in the database only',
     { methods: ['putPage', 'listEntityKeyRows', 'listIdentityDecisions', 'applyIdentityDecisions'] },
     async (engine) => {
@@ -129,4 +147,43 @@ describe('engine parity: the identity work that reads entity key rows', () => {
       return steps;
     },
   );
+
+  parityTest('applyIdentityDecisions refuses a non-ASCII decided_at without writing, and keeps non-ASCII slugs and deciders', {
+    methods: ['putPage', 'applyIdentityDecisions', 'listIdentityDecisions'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, OTHER);
+    const slug = 'people/zo\u00eb-example';
+    await engine.putPage(slug, person('Zo\u00eb Example'));
+    await engine.putPage(slug, person('Zo\u00eb Example'), { sourceId: OTHER });
+    const decision = (decided_at: string) => ({
+      decision_id: '00000000000000cd', verdict: 'different' as const, members: [ref('default', slug), ref(OTHER, slug)],
+      group_id: null, entity_id: null, canonical: null, decided_by: 'Zo\u00eb \u6771\u4eac', decided_at, origin: 'database' as const,
+      home_source_id: null, git_blob: null,
+    });
+    // Byte 19 falls inside a character in each: the SQL cast refuses them, and so must the Rust apply.
+    // Each arm refuses the text as not a timestamp, before any write: Postgres with 22007 (invalid input syntax for
+    // timestamptz), PGLite's driver with "Invalid Date" before the statement, Rust with invalid_argument naming
+    // decided_at. A panic surfaced as internal_error, or any other failure, keeps its own code and fails the case.
+    const classify = (e: unknown) => {
+      const x = e as { code?: unknown; message?: unknown };
+      const message = String(x.message ?? '');
+      const invalid = x.code === '22007' || message === 'Invalid Date'
+        || (x.code === 'invalid_argument' && message.includes('decided_at is not a timestamp'));
+      return invalid ? 'not_a_timestamp' : `${String(x.code)}: ${message.slice(0, 80)}`;
+    };
+    const refused: Array<{ text: string; outcome: string }> = [];
+    for (const text of ['2026-11-18 00:00:0\u00e9+00', '2026-11-18 00:00:\u2160+00', '\u{1f600}\u{1f600}\u{1f600}\u{1f600}\u{1f600}\u{1f600}']) {
+      const outcome = await engine.applyIdentityDecisions({ upsert: [decision(text)] }).then(() => 'applied', classify);
+      refused.push({ text, outcome });
+    }
+    const afterRefusals = (await engine.listIdentityDecisions()).decisions.length;
+    await engine.applyIdentityDecisions({ upsert: [decision('2026-11-18T00:00:00Z')] });
+    const [kept] = (await engine.listIdentityDecisions()).decisions;
+    const result = { refused, afterRefusals, kept: { decided_by: kept?.decided_by, members: kept?.members, day: kept?.decided_at.slice(0, 10) } };
+    expect(result.refused.map(r => r.outcome)).toEqual(['not_a_timestamp', 'not_a_timestamp', 'not_a_timestamp']);
+    expect(result.afterRefusals).toBe(0);
+    expect(result.kept).toEqual({ decided_by: 'Zo\u00eb \u6771\u4eac', members: [ref('default', slug), ref(OTHER, slug)], day: '2026-11-18' });
+    return result;
+  });
+
 });

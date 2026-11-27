@@ -34,7 +34,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect } from 'bun:test';
-import { parityArms } from './harness.ts';
+import { parityArms, restrictFolder } from './harness.ts';
 import { isCapabilityRefusal } from './arm-capabilities.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { withEnv } from '../helpers/with-env.ts';
@@ -136,6 +136,21 @@ describe('engine parity: remote mention links', () => {
     const policy = { identities: [], satisfiedRuleIds: [], folderCoverage: [], owner: false, labelledOnly: false };
     return (await engine.readLinkTargetPages('default', ['people/alice-example', 'companies/acme-example', 'people/ghost-example'], policy))
       .sort((a, b) => a.slug.localeCompare(b.slug));
+  });
+
+  // A writer with no identity reads in a record of its own folder coverage: a page under a prefix the record names is
+  // not readable, and a prefix pending only in the store's state does not hide a page from it (the record's coverage is
+  // the whole pending test, as coverageSql reads it inside a record). The Rust arm once refused this writer.
+  parityTest('readLinkTargetPages judges an empty writer whose record names folder coverage like the SQL engines', {
+    methods: ['addLinksBatch', 'readLinkTargetPages'],
+  }, async (engine, backend) => {
+    await seed(engine);
+    await restrictFolder(engine, backend, 'default', 'companies/', 'pending');
+    const policy = { identities: [], satisfiedRuleIds: [], folderCoverage: [{ source_id: 'default', prefix: 'people/' }], owner: false, labelledOnly: false };
+    const rows = (await engine.readLinkTargetPages('default', ['people/alice-example', 'companies/acme-example', 'notes/links-origin'], policy))
+      .sort((a, b) => a.slug.localeCompare(b.slug));
+    expect(rows.map(r => `${r.slug}:${r.readable}`)).toEqual(['companies/acme-example:true', 'notes/links-origin:true', 'people/alice-example:false']);
+    return rows;
   });
 
   parityTest('the facts backstop extraction reads see a page\'s waiting and finished facts-absorb jobs', {

@@ -4,7 +4,12 @@ Part of the store contract in [rust/README.md](../../README.md) ("The brain stor
 
 Pages are keyed `(source_id, slug)`; `sourceId` defaults to `default`, and a source that does not
 exist rejects `source_not_found`. Slugs go through PGLite's `validateSlug` (`invalid_slug`) and are
-lower-cased. A `Page` is PGLite's `Page` plus `page_kind`; every date (`created_at`, `updated_at`,
+stored in its one normal form (`normalizeSlug`): lower-cased, then composed to Unicode NFC, so a decomposed
+`zoe\u0308` is stored as `zo\u00eb`. The store keeps no other spelling: it cannot hold a page under a capitalised
+or decomposed slug that PGLite or Postgres still store from before slugs were normalized, so a write addressed to
+such an exact stored spelling (`withStoredSlug`, master #9944) finds no page here. That is a named typed stop
+(the parity case "every write by the exact spelling of a capital-stored page ..." refuses with capability `pages`),
+listed as row 50 of docs/designs/RUST_ENGINE.md. A `Page` is PGLite's `Page` plus `page_kind`; every date (`created_at`, `updated_at`,
 `updated_at_iso`, `deleted_at`, `effective_date`, `ingested_at`) is an ISO string with microseconds
 (`2026-08-10T12:00:00.000123Z`) or `null`, and the TypeScript wrapper turns them into `Date`.
 A page's `knowledge_revision` is a UUID that changes when its type, kind, title, body, timeline,

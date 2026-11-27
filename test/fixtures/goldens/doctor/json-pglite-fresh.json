@@ -1324,14 +1324,14 @@
         {
           "category": "meta",
           "elapsed_ms": "<volatile>",
-          "message": "1410 column(s) verified against live schema",
+          "message": "1416 column(s) verified against live schema",
           "name": "schema_columns",
           "status": "ok"
         },
         {
           "category": "meta",
           "elapsed_ms": "<volatile>",
-          "message": "All 196 table(s) the applied migrations create exist.",
+          "message": "All 197 table(s) the applied migrations create exist.",
           "name": "schema_missing_tables",
           "status": "ok"
         },
@@ -2953,8 +2953,37 @@
         {
           "category": "brain",
           "elapsed_ms": "<volatile>",
+          "message": "The nightly cycle has not recorded anything it learned yet.",
+          "name": "learning_note",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "delivered_sessions": 0,
+            "last_session": null,
+            "max_sessions": 3,
+            "reason": "not_new_install",
+            "state": "off",
+            "window_ends_at": null
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "The first-session suggestion is off: this brain was not created by a gbrain setup run (an upgrade, a restored or imported brain, or an older install), so there is no first session to suggest for. Details: gbrain onboarding status.",
+          "name": "first_session_suggestion",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "elapsed_ms": "<volatile>",
           "message": "No memory proposals await the owner.",
           "name": "memory_proposals_pending",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "elapsed_ms": "<volatile>",
+          "message": "No agent policy is set; policy_check answers none (gbrain policy init sets one).",
+          "name": "policy_valid",
           "status": "ok"
         },
         {
@@ -3723,6 +3752,19 @@
         {
           "category": "brain",
           "details": {
+            "by_source": [],
+            "count": 0,
+            "docs": "docs/guides/repair.md#slug-spelling",
+            "truncated": false
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "No page is stored under an older spelling of its name.",
+          "name": "legacy_slug_spellings",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
             "parked": 0
           },
           "elapsed_ms": "<volatile>",
@@ -3948,6 +3990,17 @@
           "elapsed_ms": "<volatile>",
           "message": "No likely duplicate person or company pages.",
           "name": "entity_duplicates",
+          "status": "ok"
+        },
+        {
+          "category": "brain",
+          "details": {
+            "classes": [],
+            "links": 0
+          },
+          "elapsed_ms": "<volatile>",
+          "message": "No person pages linked or collapsed automatically in the last 24 hours.",
+          "name": "dedupe_auto_links",
           "status": "ok"
         },
         {
@@ -4499,7 +4552,7 @@
         {
           "category": "meta",
           "elapsed_ms": "<volatile>",
-          "message": "Active pack gbrain-base-v2@1.7.0+e142684a is current (no successor declared)",
+          "message": "Active pack gbrain-base-v2@1.7.0+b64f249b is current (no successor declared)",
           "name": "pack_upgrade_available",
           "status": "ok"
         },

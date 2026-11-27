@@ -13,12 +13,14 @@
  *    gateway's test transport, so nothing leaves the machine.
  */
 import { afterAll, afterEach, describe, expect, test } from 'bun:test';
+import { createHash } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { __setPickerTransportForTests, PickerHttpError, type PickerRequest } from '../src/core/skills/resolver/router-http.ts';
 import { buildSkillIndex, resolveSkills } from '../src/core/skills/resolver/index.ts';
-import { parsePickerReply, PICKER_DESCRIPTION_CHARS, readRouterSpend, routerTimeoutMs } from '../src/core/skills/resolver/router.ts';
+import { parsePickerReply, PICKER_DESCRIPTION_CHARS, PICKER_MAX_OUTPUT_TOKENS, PICKER_PICKS, PICKER_PROMPT_VERSION, PICKER_REASONING_OUTPUT_TOKENS, pickerPrompt, readRouterSpend, routerTimeoutMs } from '../src/core/skills/resolver/router.ts';
+import { catalogFile } from '../src/core/skills/resolver/paths.ts';
 import { routerSettings } from '../src/core/skills/resolver/config.ts';
 import { canonicalLookup } from '../src/core/model-pricing.ts';
 
@@ -72,6 +74,31 @@ describe('parsePickerReply', () => {
     expect(parsePickerReply('{"needed": true, "skills": ["zz"]}', known)).toEqual({ code: 'no_known_ids' });
     expect(parsePickerReply('I think a', known)).toEqual({ code: 'parse_failed' });
     expect(parsePickerReply('{"needed": "yes", "skills": []}', known)).toEqual({ code: 'parse_failed' });
+  });
+});
+
+describe('the picker prompt version', () => {
+  test('the request shape a model can be trained on is pinned to PICKER_PROMPT_VERSION', () => {
+    const shape = JSON.stringify({ prompt: pickerPrompt([{ id: 'gbrain:people', description: 'Look up a person' }, { id: 'gbrain:bare', description: '' }]), PICKER_DESCRIPTION_CHARS, PICKER_MAX_OUTPUT_TOKENS, PICKER_REASONING_OUTPUT_TOKENS, PICKER_PICKS });
+    const pinned: Record<number, string> = { 1: '8e10264d1ba3604ae0e96028efba13474c9350982bd7b35d22ce16ac23ae9f11' };
+    expect({ version: PICKER_PROMPT_VERSION, sha256: createHash('sha256').update(shape).digest('hex') }).toEqual({ version: PICKER_PROMPT_VERSION, sha256: pinned[PICKER_PROMPT_VERSION]! });
+  });
+
+  test('picker.json records the prompt version', async () => {
+    const h = await home(null);
+    expect(JSON.parse(readFileSync(catalogFile(h, 'c', 'picker.json'), 'utf8')).prompt_version).toBe(PICKER_PROMPT_VERSION);
+  });
+
+  test('router_prompt_version other than the one gbrain sends turns the picker off: config_invalid, no call', async () => {
+    const stale = await home({ router: true, router_prompt_version: PICKER_PROMPT_VERSION + 1 });
+    reply('{"needed": true, "skills": ["gbrain:people"]}');
+    const out = (await turn(stale, 'write the weekly status reports')).output;
+    expect(out.router).toMatchObject({ answered_by: 'words', fallback: { code: 'config_invalid' }, est_usd: 0 });
+    expect(calls.length).toBe(0);
+    const current = await home({ router: true, router_prompt_version: PICKER_PROMPT_VERSION });
+    expect((await turn(current, 'who is alice')).output.router?.answered_by).toBe('picker');
+    expect(calls.length).toBe(1);
+    expect(routerSettings({ router: true, router_prompt_version: 0 }).invalid).toStartWith('skills.resolver.router_prompt_version must be');
   });
 });
 
@@ -147,7 +174,7 @@ describe('the picker in a turn', () => {
 
   test('a slow picker is cut off at router_timeout_ms and the words answer', async () => {
     const h = await home({ router: true, router_timeout_ms: 200 });
-    reply('{"needed": true, "skills": ["gbrain:people"]}', 2000);
+    reply('{"needed": true, "skills": ["gbrain:people"]}', 5000);
     const t0 = performance.now();
     const out = (await turn(h, 'write the weekly status reports')).output;
     expect(performance.now() - t0).toBeLessThan(1500);
@@ -157,7 +184,7 @@ describe('the picker in a turn', () => {
 
   test('a turn cut off after its call went out reports the reservation the ledger keeps', async () => {
     const h = await home({ router: true, router_timeout_ms: 200 });
-    reply('{"needed": true, "skills": ["gbrain:people"]}', 2000);
+    reply('{"needed": true, "skills": ["gbrain:people"]}', 5000);
     const out = (await turn(h, 'write the weekly status reports')).output;
     expect(out.router?.fallback).toEqual({ code: 'timeout' });
     expect(out.router!.est_usd).toBeGreaterThan(0);
@@ -281,6 +308,16 @@ describe('a compat: model on an OpenAI-compatible endpoint', () => {
     expect(spend).toBeCloseTo(r.output.router!.est_usd, 6);
   });
 
+  test('the reservation counts router_extra_body as billable input', async () => {
+    const spent = async (extra: Record<string, unknown>) => {
+      const h = await home(compat({ router_base_url: `http://127.0.0.1:${server.port}/nousage/v1`, router_usd_per_mtok: [1, 2], ...extra }));
+      await resolveSkills({ message: 'who is alice', harness: 'claude-code' }, { home: h, catalogs: ['c'], router: true, env });
+      return (await readRouterSpend(h)).charged_usd;
+    };
+    const body = { chat_template_kwargs: { note: 'x'.repeat(3000) } };
+    expect(await spent({ router_extra_body: body }) - await spent({})).toBeCloseTo(Buffer.byteLength(JSON.stringify(body)) / 1e6, 6);
+  });
+
   test('partial or non-finite token counts keep the whole reservation, and the ledger stays a number', async () => {
     for (const route of ['partial', 'huge']) {
       const h = await home(compat({ router_base_url: `http://127.0.0.1:${server.port}/${route}/v1`, router_usd_per_mtok: [1, 2] }));
@@ -298,6 +335,27 @@ describe('a compat: model on an OpenAI-compatible endpoint', () => {
     const r = await resolveSkills({ message: 'who is alice', harness: 'claude-code' }, { home: h, catalogs: ['c'], router: true, env });
     expect(r.output.router?.est_usd).toBe(0.00102);
     expect((await readRouterSpend(h)).charged_usd).toBe(0.00102);
+  });
+
+  test('router_extra_body adds fields to the compat request but never replaces the ones the picker owns', async () => {
+    seen.length = 0;
+    const h = await home(compat({ router_usd_per_mtok: [0, 0], router_extra_body: { reasoning_effort: 'none', temperature: 0.2, chat_template_kwargs: { enable_thinking: false } } }));
+    const r = await resolveSkills({ message: 'who is alice', harness: 'claude-code' }, { home: h, catalogs: ['c'], router: true, env });
+    expect(r.output.router?.answered_by).toBe('picker');
+    expect(seen[0]!.body).toMatchObject({ model: 'acme/picker-1', reasoning_effort: 'none', temperature: 0.2, chat_template_kwargs: { enable_thinking: false } });
+    expect(seen[0]!.body.messages.map((m: any) => m.role)).toEqual(['system', 'user']);
+  });
+
+  test('router_extra_body takes only sampling and reasoning controls, and refuses non-objects, oversized bodies and non-compat models', () => {
+    const c = { router: true, router_model: 'compat:acme/picker-1', router_base_url: 'https://models.example.com/v1' };
+    for (const k of ['model', 'messages', 'stream', 'n', 'max_tokens', 'max_completion_tokens', 'n_predict', 'max_new_tokens', 'min_tokens', 'best_of', 'ignore_eos', 'tools', 'tool_choice', 'response_format', 'logit_bias', 'stop']) {
+      expect(routerSettings({ ...c, router_extra_body: { [k]: 1 } }).invalid).toStartWith('skills.resolver.router_extra_body must be');
+    }
+    expect(routerSettings({ ...c, router_extra_body: { temperature: 0, top_p: 1, top_k: 20, min_p: 0, seed: 1, presence_penalty: 0, frequency_penalty: 0, repetition_penalty: 1, reasoning_effort: 'low', thinking: { type: 'disabled' }, chat_template_kwargs: { enable_thinking: false } } }).invalid).toBeNull();
+    for (const v of [[], 'reasoning_effort=none', null, 3, { chat_template_kwargs: { pad: 'x'.repeat(4096) } }]) expect(routerSettings({ ...c, router_extra_body: v }).invalid).toStartWith('skills.resolver.router_extra_body must be');
+    expect(routerSettings({ ...c, router_extra_body: { reasoning_effort: 'none' } })).toMatchObject({ invalid: null, extraBody: { reasoning_effort: 'none' } });
+    expect(routerSettings({ router: true, router_model: 'anthropic:claude-haiku-5-5', router_extra_body: { top_p: 1 } }).invalid).toStartWith('skills.resolver.router_extra_body applies only');
+    expect(routerSettings({ router: true, router_extra_body: { top_p: 1 } }).invalid).toStartWith('skills.resolver.router_extra_body applies only');
   });
 
   test('router_usd_per_mtok takes two or three prices, never four', async () => {
@@ -450,5 +508,20 @@ describe('the daily spend cap', () => {
     await turn(h, 'zzqx');
     expect(first).toBeGreaterThan(0);
     expect((await readRouterSpend(h)).charged_usd).toBeGreaterThan(first);
+  });
+});
+
+describe('the picker and deprecated skills', () => {
+  test('the picker is never offered a deprecated skill, and a pick of one is not shown', async () => {
+    const h = tmp();
+    const f = join(tmp('skrouter-src-'), 'catalog.json');
+    writeFileSync(f, JSON.stringify([...SKILLS, { id: 'gbrain:old-people', name: 'old-people', description: 'Look up what the brain knows about a person', deprecated: true }]));
+    await buildSkillIndex({ catalog: 'c', fromJson: f }, { home: h });
+    writeFileSync(join(h, 'config.json'), JSON.stringify({ skills: { resolver: { router: true } } }));
+    reply('{"needed": true, "skills": ["gbrain:old-people"]}');
+    const out = (await turn(h, 'who is alice')).output;
+    expect(calls.length).toBe(1);
+    expect(JSON.stringify(calls[0])).not.toContain('old-people');
+    expect(out.suggestions.map(s => s.id)).not.toContain('gbrain:old-people');
   });
 });

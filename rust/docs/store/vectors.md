@@ -33,6 +33,33 @@ one committed snapshot.
 - One row per page, its best chunk (ties: the lower chunk id). Rows sort by score, then page id, then chunk
   id; `offset` and `limit` apply after the sort.
 
+## How searchVector reads (the bounded scan)
+
+The answer is the full scan's, byte for byte; only the reading order changes. Reading a page and its
+chunks costs far more than scoring a vector, so the store scores first and reads only the pages that can rank:
+
+1. Every chunk vector of the cached index is scored (`1 - (embedding <=> q)`, the same arithmetic as
+   above), split across the machine's cores when there are at least 4,096 vectors. Helper threads come
+   from one process-wide budget (cores minus one), so concurrent searches share the cores.
+2. Each page gets a bound: the largest of `raw * f` over its best and worst raw score and every factor `f`
+   the call can apply (1 and each source factor). A product is monotone in the raw for a fixed factor, so
+   no chunk of the page can score above it. A NaN raw gives a NaN bound, which ranks first.
+3. Pages are read in bound order. Each read applies every filter, the model guard and the source factor
+   above, with the same code the full scan runs. The best `offset + limit` hits are kept; the scan stops
+   when the next page's bound ranks strictly below the last kept hit (a tie is still read, since a lower
+   page id wins it).
+
+The full scan still answers a call when the stored vectors have more than one width (so the width refusal
+stays the one above), when a source factor is not a finite number, and when `GBRAIN_RUST_VECTOR_SCAN=full`
+is set (the bench's reference; read on every call). With no model and an embedding migration running, the
+bounded scan returns no rows at once, as the full scan would.
+
+Measured with `rust/bench/vector-scan.sh` (an invented corpus, 1536 dims, 2 chunks per page on average,
+limit 50, 8 vCPU Xeon 6975P-C): unfiltered p50 165 ms before and 8.6 ms after at 10,000 pages, 887 ms
+before and 28.5 ms after at 50,000 pages. A filter that keeps few pages reads more of them before the top
+settles (a 4% source at 50,000 pages: 239 ms before, 74 ms after). `cosinesByChunkIds` still reads every
+page (about 590 ms at 50,000 pages).
+
 ## searchTakesVector
 
 Active takes with a vector, nearest first (ties: the lower take id; PGLite leaves a tie to the database).
@@ -55,7 +82,8 @@ the shape `searchTakes` returns, with the cosine as `score`.
   `different vector dimensions <query> and <stored>`, as soon as the scan compares the first vector the
   filters admit. When the filters admit no vector, or the brain has none, nothing is compared and the
   answer is `[]` (PGLite fails the same way). The dimension check runs before the model guard.
-- **No candidate pool.** Every admitted vector is scored, so the HNSW pool knobs
+- **No candidate pool.** Every admitted vector can rank (the bounded scan above only skips pages that
+  cannot), so the HNSW pool knobs
   (`vectorLegacyGuard`, `hnswIterativeScan`) change nothing and `onVectorPoolMeta` is never called.
 - **`excludePrivate`.** A truthy one hides the pages the page policy hides, as `facts/privacy.rs`
   `page_hidden` reads it (`privatePagesFilterForCaller('p')`: private visibility or access, derived pages
@@ -83,8 +111,8 @@ the shape `searchTakes` returns, with the cosine as `score`.
   drops per page before ranking (`activationSuppressedSql`, `trust::activation_suppressed`), so a limit counts only
   kept pages. A flag in another family, or on a page above `agent_written`, suppresses nothing.
 - **Take options.** The store applies `exclude_private`, `min_trust` and `suppress_flagged` to
-  `searchTakesVector`. The TypeScript member (`store-members/vectors.ts`) still refuses `excludePrivate`,
-  `eligibility.floor` and `eligibility.suppressFlagged` with `engine_capability_missing` until it sends them.
+  `searchTakesVector`; the TypeScript member (`store-members/vectors.ts`) sends `excludePrivate`,
+  `eligibility.floor` and `eligibility.suppressFlagged` as those three.
 - **One vector column.** The store keeps only the text column `embedding`, as the embedding members do.
   An `embeddingColumn` that names another column (`embedding_image`, a registered column), and a brain
   whose config sets `search_embedding_column` or `embedding_columns`, refuse with

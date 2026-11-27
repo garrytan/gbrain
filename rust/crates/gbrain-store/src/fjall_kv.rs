@@ -284,6 +284,21 @@ impl Kv for FjallKv {
         }))
     }
 
+    fn versioned_snapshot(&self) -> Result<(Box<dyn KvRead + Send>, u64)> {
+        let snap = self.db.snapshot();
+        let version = match snap_get(&snap, &self.data, SEQ_KEY)? {
+            Some(bytes) => decode_seq(&bytes)?,
+            None => 0,
+        };
+        Ok((
+            Box::new(Snap {
+                snap,
+                data: self.data.clone(),
+            }),
+            version,
+        ))
+    }
+
     fn begin_write(&self) -> Result<Box<dyn KvWrite>> {
         let turn = self.turn.take();
         Ok(Box::new(Writer {
@@ -300,19 +315,4 @@ impl Kv for FjallKv {
     }
 }
 
-impl OccBase for FjallKv {
-    fn versioned_snapshot(&self) -> Result<(Box<dyn KvRead + Send>, u64)> {
-        let snap = self.db.snapshot();
-        let version = match snap_get(&snap, &self.data, SEQ_KEY)? {
-            Some(bytes) => decode_seq(&bytes)?,
-            None => 0,
-        };
-        Ok((
-            Box::new(Snap {
-                snap,
-                data: self.data.clone(),
-            }),
-            version,
-        ))
-    }
-}
+impl OccBase for FjallKv {}

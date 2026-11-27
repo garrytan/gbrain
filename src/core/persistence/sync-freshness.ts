@@ -60,6 +60,7 @@ export type BehindReader = (root: string, from: string) => Promise<{ commits: nu
 export type CommitTimeReader = (root: string, shas: string[]) => Promise<Map<string, number>>;
 
 const SHA = /^[0-9a-f]{40}([0-9a-f]{24})?$/;
+/** Kept in step with engine-sql/sync-status-reads.ts FRESHNESS_TARGETS_SQL, which lists the same samples' targets. */
 const SAMPLE_WHERE = `r.worktree_id=$1::uuid AND r.source_incarnation=$2::uuid AND r.state='committed' AND COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%'
     AND r.completed_at > now() - ($3::int * interval '1 hour') AND r.intent->>'kind'='managed_sync_import' AND r.intent->>'from' IS NOT NULL
     AND COALESCE(r.intent->>'working','false') <> 'true'`;
@@ -99,13 +100,25 @@ const num = (value: unknown): number | null => value === null || value === undef
 interface BindingRow { source_id: string; worktree_id: string; source_incarnation: string; root: string | null; last_commit: string | null }
 interface AggregateRow { samples: number | string; s50: unknown; s95: unknown; embedded: number | string; e50: unknown; e95: unknown; pending: number | string }
 
+/**
+ * Each bound source of a live incarnation (of `sourceIds` when given) by byte source id: its worktree, incarnation, root
+ * (this host's checkout, else the source's registered path) and last imported commit, through the typed binding,
+ * worktree-binding and source reads every engine serves.
+ */
+async function freshnessBindings(engine: BrainEngine, sourceIds: string[] | null, hostId: string | null): Promise<BindingRow[]> {
+  const out: BindingRow[] = [];
+  for (const b of await engine.listSourceBindingsForMovement(sourceIds)) {
+    const [binding, source] = await Promise.all([hostId ? engine.getWorktreeBinding(b.source_id, hostId) : null, engine.getSource(b.source_id)]);
+    out.push({ source_id: b.source_id, worktree_id: b.worktree_id, source_incarnation: b.source_incarnation,
+      root: binding?.worktree_id === b.worktree_id && binding.local_path ? binding.local_path : source?.local_path ?? null, last_commit: source?.last_commit ?? null });
+  }
+  return out;
+}
+
 /** The freshness of every bound managed source (or of `sourceIds`); a source without a binding is omitted. */
 export async function readSyncFreshness(engine: BrainEngine, opts: { sourceIds?: string[]; commitTimes?: CommitTimeReader; behind?: BehindReader } = {}): Promise<SourceFreshness[]> {
   const { existingHostIdFor } = await import('./identity.ts');
-  const bindings = await engine.executeRaw<BindingRow>(`SELECT b.source_id, b.worktree_id::text AS worktree_id, b.source_incarnation::text AS source_incarnation, COALESCE(h.local_path, s.local_path) AS root, s.last_commit
-    FROM persistence_source_bindings b JOIN sources s ON s.id=b.source_id AND s.incarnation=b.source_incarnation
-    LEFT JOIN persistence_host_bindings h ON h.worktree_id=b.worktree_id AND h.host_id::text=$2
-    WHERE ($1::text[] IS NULL OR b.source_id=ANY($1::text[])) ORDER BY b.source_id COLLATE "C"`, [opts.sourceIds ?? null, existingHostIdFor(engine)]);
+  const bindings = await freshnessBindings(engine, opts.sourceIds ?? null, existingHostIdFor(engine));
   const commitTimes = opts.commitTimes ?? readGitCommitTimes;
   const behindOf = opts.behind ?? readGitBehind;
   const out: SourceFreshness[] = [];
@@ -114,9 +127,8 @@ export async function readSyncFreshness(engine: BrainEngine, opts: { sourceIds?:
     const behind = lag && { commits: lag.commits, oldest_seconds: lag.oldest === null ? null : Math.max(0, Math.round(Date.now() / 1000 - lag.oldest)) };
     const empty: SourceFreshness = { source_id: b.source_id, window_hours: FRESHNESS_WINDOW_HOURS, commit_to_searchable: { samples: 0, p50_seconds: null, p95_seconds: null },
       commit_to_embedded: { samples: 0, p50_seconds: null, p95_seconds: null, pending: 0 }, commits: 0, unresolved_commits: 0, waiting_commits: behind ? behind.commits : null, behind };
-    const targets = (await engine.executeRaw<{ target: string }>(`SELECT r.intent->>'target' AS target FROM persistence_requests r WHERE ${SAMPLE_WHERE}
-      GROUP BY 1 ORDER BY max(r.completed_at) DESC, (r.intent->>'target') COLLATE "C" LIMIT ${FRESHNESS_MAX_TARGETS}`, [b.worktree_id, b.source_incarnation, FRESHNESS_WINDOW_HOURS]))
-      .map(row => row.target).filter(target => typeof target === 'string' && SHA.test(target));
+    const targets = (await engine.listFreshnessTargets(b.worktree_id, b.source_incarnation, FRESHNESS_WINDOW_HOURS, FRESHNESS_MAX_TARGETS))
+      .filter(target => typeof target === 'string' && SHA.test(target));
     if (!targets.length) { out.push(empty); continue; }
     const dated = b.root ? await commitTimes(b.root, targets).catch(() => new Map<string, number>()) : new Map<string, number>();
     const times = Object.fromEntries(targets.filter(t => dated.has(t)).map(t => [t, dated.get(t)!]));

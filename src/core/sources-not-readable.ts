@@ -24,6 +24,7 @@ import type { OperationContext } from './ops/contract.ts';
 import { opError } from './ops/contract.ts';
 import { federatedSearchScope } from './ops/context.ts';
 import { hostFix } from './ops/op-fix.ts';
+import { isEngineCapabilityRefusal } from './engine-capability-refusal.ts';
 import { resolveExcludePrivatePages } from './search/private-visibility.ts';
 
 const UNSCOPED_READ_OPS: ReadonlySet<string> = new Set(['search', 'query', 'recall', 'list_pages']);
@@ -46,7 +47,10 @@ export async function assertUnscopedReadReachesPages(op: string, params: Record<
       facts: op === 'recall' || op === 'query',
       excludePrivate: await resolveExcludePrivatePages(ctx.engine, ctx.remote),
     });
-  } catch {
+  } catch (e) {
+    // A probe that fails never fails the read; an engine that refuses it is reported rather than answering the empty
+    // read as a clean miss.
+    if (isEngineCapabilityRefusal(e)) throw e;
     return;
   }
   if (!refuse) return;

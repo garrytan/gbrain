@@ -125,8 +125,12 @@ function rankingScope(member: string, opts: PageReadPolicy | undefined): Record<
  * Ids the SQL engines cast to `bigint[]`: a non-integer is refused (the cast fails there). An id below 1 or past
  * `Number.MAX_SAFE_INTEGER` names no page the store can hold, so it matches nothing, as in the SQL, and is dropped.
  */
-function bigintIds(member: string, ids: readonly number[]): number[] {
-  for (const id of ids) if (!Number.isInteger(id)) refuseMember(member, 'a page id that is not an integer');
+function bigintIds(_member: string, ids: readonly number[]): number[] {
+  // A page id that is no integer is bad input: reject it as the `$1::bigint[]` cast does (22P02), not as a missing
+  // capability, so a caller that tells a failed read from an empty one sees the same error on every engine.
+  for (const id of ids) {
+    if (!Number.isInteger(id)) throw Object.assign(new Error(`invalid input syntax for type bigint: "${id}"`), { code: '22P02' });
+  }
   return ids.filter(id => id >= 1 && Number.isSafeInteger(id));
 }
 
@@ -482,12 +486,18 @@ export const entityGraphCoverage: StoreMember<[filter: EntityTypeFilter], { enti
 
 /**
  * How many live unquarantined entity pages there are and how many have an inbound link or a timeline entry. The store
- * reads every page, so it has no sample to draw: a `samplePercent` refuses.
+ * reads every page. A 100 percent sample draws every row (TABLESAMPLE BERNOULLI (100)), so it is served as the whole
+ * population; a lower percent is a random draw no other engine can match, so it refuses by name. Doctor and onboard
+ * ask for a sample only on Postgres. A malformed percent fails with the SQL engines' message (engine-sql/link-reads.ts).
  */
 export const entityFeatureCoverage: StoreMember<[filter: EntityTypeFilter, feature: 'links' | 'timeline', opts?: { samplePercent?: number }], { sampleSize: number; matched: number }> =
   async (brain, filter, feature, opts) => {
-    if (opts?.samplePercent !== undefined) refuseMember('entityFeatureCoverage', 'a TABLESAMPLE percent (the store reads every page)');
     if (feature !== 'links' && feature !== 'timeline') refuseMember('entityFeatureCoverage', `the feature ${String(feature)}`);
+    const pct = opts?.samplePercent;
+    if (pct !== undefined && !(Number.isFinite(pct) && pct > 0 && pct <= 100)) {
+      throw new Error(`entityFeatureCoverage: samplePercent must be a number in (0, 100], got ${String(pct)}`);
+    }
+    if (pct !== undefined && pct !== 100) refuseMember('entityFeatureCoverage', `a TABLESAMPLE of ${pct} percent (a random draw; the store reads every page)`);
     const r: { sampleSize: number; matched: number } = await storeCall({ member: 'entityFeatureCoverage' },
       () => brain.entityFeatureCoverage({ filter, feature }));
     return { sampleSize: Number(r.sampleSize), matched: Number(r.matched) };

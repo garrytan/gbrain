@@ -645,7 +645,9 @@ describe('engine parity: segmented page bodies, one call at a time', () => {
       await engine.flipBodyGeneration(flipInput(pageId, 0, stagingId, [LONG]));
       await engine.setBodyStagingState(stagingId, 'committed');
       const inline = await engine.putPage('notes/short', { type: 'note', title: 'Short', compiled_truth: 'a short inline body', timeline: '' });
-      const rows = await engine.pageCollapseFacts([pageId, inline.id], [pageId, inline.id]);
+      // The SQL has no ORDER BY, so PGLite and Postgres may return the two rows in either order: compare them by page.
+      const rows = (await engine.pageCollapseFacts([pageId, inline.id], [pageId, inline.id]))
+        .sort((a, b) => Number(a.id !== pageId) - Number(b.id !== pageId));
       const view = rows.map((r) => ({ page: r.id === pageId ? 'segmented' : 'inline', body_chars: r.body_chars, hashed: r.body !== null,
         lead: r.lead?.slice(0, 30) ?? null }));
       const segmented = view.find((r) => r.page === 'segmented');

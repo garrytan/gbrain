@@ -21,7 +21,7 @@ import { APPLE_CONTACTS_PENDING_DELETES_OP, APPLE_CONTACTS_REVIEW_OP } from '../
 import { syncLockId } from '../../db-lock.ts';
 import { MANAGED_SYNC_PASS_OP, summaryFingerprint } from '../../engine-sql/sync-hold-store.ts';
 import type {
-  ManagedSyncFailureRow, SyncHeadRequestRow, SyncRecoveryProbeRow, SyncStatusCommittedRow, SyncStatusProbeOptions, SyncStatusSourceRow,
+  IdentityDowngradeCarry, IdentityDowngradeOldPage, IdentityRemedySideRow, ManagedSyncFailureRow, SyncHeadRequestRow, SyncRecoveryProbeRow, SyncStatusCommittedRow, SyncStatusProbeOptions, SyncStatusSourceRow,
 } from '../../engine-sql/sync-status-reads.ts';
 import type { SourceStateRow } from '../../engine-sql/write-misc.ts';
 import type { CycleLockRow, SourceDetailRow, SourceRow } from '../../engine.ts';
@@ -29,7 +29,7 @@ import { SYNC_ADMISSION_KEY, SYNC_ADMISSION_SETTING_PARAMS } from '../../persist
 import { SYNC_DELETES_WITHHELD_OP } from '../../persistence/sync-pass-row.ts';
 import { IDENTITY_DOWNGRADE_OP } from '../../persistence/sync-status-sql.ts';
 import type { StoreBrain } from '../store.ts';
-import { storeCall, type StoreMember } from './common.ts';
+import { refuseMember, storeCall, type StoreMember } from './common.ts';
 
 interface CheckpointRow { fingerprint: string; completed_keys: unknown; updated_at: string }
 type JsonObject = Record<string, unknown>;
@@ -183,6 +183,11 @@ export const readManagedSyncFailureRows: StoreMember<[sourceIds: readonly string
   return out;
 };
 
+/** The commit targets of a worktree's freshness samples, from the store's request records (gbrain-store `persistence::freshness`). */
+export const listFreshnessTargets: StoreMember<[worktreeId: string, incarnation: string, windowHours: number, limit: number], string[]> =
+  (brain, worktreeId, incarnation, windowHours, limit) =>
+    storeCall({ member: 'listFreshnessTargets' }, () => brain.listFreshnessTargets(worktreeId, incarnation, windowHours, Math.max(1, Math.floor(limit))));
+
 /** The failure rows of live source incarnations whose cursor row is gone. */
 export const readOrphanedManagedSyncFailureRows: StoreMember<[sourceIds: readonly string[] | null], Array<{ failure: never }>> = async (brain, sourceIds) => {
   const member = 'readOrphanedManagedSyncFailureRows';
@@ -210,6 +215,23 @@ export const readSyncHeadRequestRow: StoreMember<[sourceId: string, opts?: SyncS
 export const readSyncRecoveryProbeRow: StoreMember<[sourceId: string, opts?: SyncStatusProbeOptions], SyncRecoveryProbeRow> = async (_brain, _sourceId, opts) => {
   opts?.signal?.throwIfAborted();
   return { n: 0, request_id: null, slug: null, blocked: null };
+};
+
+/** The soft-deleted page a downgrade record names (gbrain-store `persistence::identity_downgrade`), or null. */
+export const readIdentityDowngradeOldPage: StoreMember<[sourceId: string, path: string, slug: string], IdentityDowngradeOldPage | null> = (brain, sourceId, path, slug) =>
+  storeCall({ member: 'readIdentityDowngradeOldPage', sourceId }, () => brain.readIdentityDowngradeOldPage(sourceId, path, slug));
+
+/** What an old page carries into a downgrade record (the store's facts, links and alias rows). */
+export const countIdentityDowngradeCarry: StoreMember<[sourceId: string, slug: string, pageId: number], IdentityDowngradeCarry> = (brain, sourceId, slug, pageId) => {
+  if (!Number.isSafeInteger(pageId) || pageId < 1) refuseMember('countIdentityDowngradeCarry', 'a page id that is not a positive integer');
+  return storeCall({ member: 'countIdentityDowngradeCarry', sourceId }, () => brain.countIdentityDowngradeCarry(sourceId, slug, pageId));
+};
+
+/** One page of the source by id or slug, deleted or not, as the identity remedy binds it, or null. */
+export const readIdentityRemedySide: StoreMember<[sourceId: string, by: { pageId: number } | { slug: string }], IdentityRemedySideRow | null> = (brain, sourceId, by) => {
+  if ('pageId' in by && (!Number.isSafeInteger(by.pageId) || by.pageId < 1)) refuseMember('readIdentityRemedySide', 'a page id that is not a positive integer');
+  return storeCall({ member: 'readIdentityRemedySide', sourceId }, () =>
+    brain.readIdentityRemedySide(sourceId, 'pageId' in by ? by.pageId : null, 'slug' in by ? by.slug : null));
 };
 
 /** The open identity-downgrade records, oldest first, each with the live slugs at its new path (null when none). */

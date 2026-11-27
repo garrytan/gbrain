@@ -40,6 +40,7 @@ import {
 } from './minions/embed-backfill-admission.ts';
 import { git, hasOriginRemote, isDetachedHead, unique } from './sync-git.ts';
 import { readManagedMode } from './persistence/managed-mode.ts';
+import { rethrowCapabilityRefusal } from './engine-capability-refusal.ts';
 
 /**
  * Walk ONE source's working tree and sum tokens for every syncable file.
@@ -437,6 +438,17 @@ function manualDrainCommands(sources: CostGateSource[]): string[] {
   );
 }
 
+/** The embed-backfill jobs still queued or running. A refused count surfaces; another failed read counts none. */
+export async function countQueuedBackfills(engine: Pick<BrainEngine, 'countJobsByStatus'>): Promise<number> {
+  try {
+    const counts = await engine.countJobsByStatus({ name: 'embed-backfill', statuses: ['waiting', 'active', 'delayed', 'waiting-children'] });
+    return counts.reduce((sum, row) => sum + (Number(row.count) || 0), 0);
+  } catch (error) { // silent-read-ok: the count only words an FYI line of the deferred path, which never blocks
+    rethrowCapabilityRefusal(error);
+    return 0;
+  }
+}
+
 /**
  * v0.42.42.0 (#2139): the inline-embed cost gate, shared by BOTH `sync --all`
  * and single-source `sync` so the spend surface is consistent. Runs at the
@@ -485,17 +497,7 @@ export async function runInlineCostGate(
     // Deferred path: print an FYI, NEVER block. The backfill cap is the real
     // money gate.
     const capUsd = await resolveBackfillCapUsd(engine);
-    let queuedBackfills = 0;
-    try {
-      const r = await engine.executeRaw<{ n: number }>(
-        `SELECT COUNT(*)::int AS n FROM minion_jobs
-          WHERE name = 'embed-backfill'
-            AND status IN ('waiting','active','delayed','waiting-children')`,
-      );
-      queuedBackfills = Number(r[0]?.n) || 0;
-    } catch {
-      queuedBackfills = 0;
-    }
+    const queuedBackfills = await countQueuedBackfills(engine);
     const deferredMsg =
       `${label}: embedding deferred to backfill jobs ` +
       `(capped $${formatUsdLimit(capUsd)}/source/24h, not charged by this sync). ` +

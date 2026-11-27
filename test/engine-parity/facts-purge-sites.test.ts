@@ -32,6 +32,8 @@ import { pageMeta, publishSegmentedPage, segmentText, sha256 } from '../helpers/
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine, NewFact } from '../../src/core/engine.ts';
 import { CONVERSATION_FACTS_SOURCE_PREFIX } from '../../src/core/facts/conversation-publication.ts';
+import { dispatchToolCall } from '../../src/mcp/dispatch.ts';
+import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -463,6 +465,84 @@ describe('engine parity: purge, purge receipt and held-fact move statements of t
     };
     expect(answers).toEqual({ all: ['ctx one', 'ctx two'], afterFirst: ['ctx two'], afterAll: [], beliefs: [] });
     return answers;
+  });
+
+  parityTest('listFactContextsForPurgeProbe is a keyset read: the lowest 1000 live ids with a context above the cursor, in id order', {
+    methods: ['insertFacts', 'expireFact', 'listFactContextsForPurgeProbe'],
+    timeout: 120_000,
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'other');
+    const label = (n: number) => `ctx ${String(n).padStart(4, '0')}`;
+    const batch = async (from: number, to: number, sourceId = SRC) => {
+      const out = [];
+      for (let n = from; n <= to; n++) {
+        // Row 5 has a blank context and row 7 none, so the probe passes them by.
+        const context = n === 5 ? '' : n === 7 ? null : sourceId === SRC ? label(n) : `other ${n}`;
+        out.push({ fact: `fact ${n} of ${sourceId}`, entity_slug: null, kind: 'fact', visibility: 'world', source: 'fence', source_markdown_slug: 'notes/contexts', row_num: nextRow(engine), context });
+      }
+      const res = await engine.insertFacts(out as never, { source_id: sourceId });
+      expect(res.inserted).toBe(to - from + 1);
+      return res.ids.map(Number);
+    };
+    // The other source's ids sit inside the range of this source's ids, so a read that drops the source test fails.
+    const low = await batch(1, 500);
+    const other = await batch(1, 3, 'other');
+    await batch(501, 1010);
+    await engine.expireFact(low[9]!); // row 10
+    const page = async (after: number) => {
+      const got = await engine.listFactContextsForPurgeProbe(SRC, after);
+      const ids = got.map(r => Number(r.id));
+      expect(ids.every((id, i) => i === 0 || id > ids[i - 1]!)).toBe(true);
+      expect(ids.every(id => id > after)).toBe(true);
+      return { contexts: got.map(r => r.context), last: ids.at(-1) ?? null };
+    };
+    const first = await page(0);
+    const second = await page(first.last!);
+    const third = await page(second.last!);
+    // A cursor that is another source's id starts after it, with this source's next row.
+    const fromOther = await page(other[0]!);
+    const live = (from: number, to: number) => Array.from({ length: to - from + 1 }, (_, i) => from + i).filter(n => n !== 5 && n !== 7 && n !== 10).map(label);
+    expect(first.contexts).toEqual(live(1, 1003));
+    expect(second.contexts).toEqual(live(1004, 1010));
+    expect(third.contexts).toEqual([]);
+    expect(fromOther.contexts.slice(0, 2)).toEqual([label(501), label(502)]);
+    expect(fromOther.contexts.length).toBe(510);
+    return { first: first.contexts, second: second.contexts, third: third.contexts, fromOther: fromOther.contexts };
+  });
+
+  // On a Rust brain the receipt's ledger reads (listBeliefEventsForPurgeProbe, listFactContextsForPurgeProbe) are served
+  // and the source records no belief events, so the CLI call passes the purge's pre-write check
+  // (persistence/fact-purge-path-members.ts) and equals PGLite. The MCP call is refused as host-only first.
+  parityTest('purge_fact gives CLI and MCP callers the same belief_events and fact_context reports when the brain records no belief events', {
+    methods: ['insertFact', 'listBeliefEventsForPurgeProbe', 'listFactContextsForPurgeProbe'],
+    timeout: 120_000,
+  }, async (engine) => {
+    const target = await fact(engine, 'Alice likes oolong tea', { entity_slug: 'people/alice', context: 'said at lunch' });
+    const quoting = await fact(engine, 'Bob met Alice', { entity_slug: 'people/bob', context: 'Bob said alice likes oolong tea at lunch' });
+    const call = async (name: string, params: Record<string, unknown>, remote: boolean) => {
+      const res = await dispatchToolCall(engine, name, params, { remote });
+      const text = res.content[0]!.text!;
+      // A refused CLI call ends the case with its error envelope (an engine refusal stops the Rust arm by name).
+      if (!remote && res.isError === true) throw Object.assign(new Error(text), JSON.parse(text) as Record<string, unknown>);
+      return { isError: res.isError === true, text };
+    };
+    try {
+      const mcp = await call('purge_fact', { id: target, dry_run: true }, true);
+      const dry = JSON.parse((await call('purge_fact', { id: target, dry_run: true }, false)).text) as Record<string, unknown>;
+      const run = await call('purge_fact', { id: target, confirm: dry.confirm_token, expected_revision: dry.expected_revision, request_id: REQ }, false);
+      const stores = (JSON.parse(run.text) as { stores: { store: string }[] }).stores;
+      const out = {
+        mcp: { isError: mcp.isError, code: (JSON.parse(mcp.text) as { error?: string; code?: string }).code ?? (JSON.parse(mcp.text) as { error?: string }).error },
+        // The receipt text, with the generated id of the quoting fact named by relation.
+        cli: { isError: run.isError, ledger: JSON.stringify(stores.filter(s => s.store === 'belief_events' || s.store === 'fact_context')).replaceAll(`"f${quoting}"`, '"f<quoting>"') },
+      };
+      expect(out.cli.isError).toBe(false);
+      expect(JSON.parse(out.cli.ledger)).toEqual([{ store: 'belief_events', status: 'not_present', removed: 0 },
+        expect.objectContaining({ store: 'fact_context', status: 'out_of_scope', reason: 'source_prose', remaining: 1, items: ['f<quoting>'] })]);
+      return out;
+    } finally {
+      await disposePersistenceConsumer(engine).catch(() => undefined);
+    }
   });
 
   parityTest('listPageSourcePathsForPurge lists the distinct relative file paths of pages and their versions, skipping absolute and parent paths', {

@@ -130,7 +130,7 @@ export async function countLabelFacts(raw: EngineRawRead, sourceIds: string[], c
        AND f.superseded_by IS NULL AND NOT EXISTS (SELECT 1 FROM facts g WHERE g.superseded_by=f.id)
        AND NOT EXISTS (SELECT 1 FROM open_loops l WHERE l.fact_id=f.id)
        AND NOT EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id=f.source_id AND w.visibility=f.visibility
-         AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact), gbrain_fact_fingerprint_v1(f.fact)) AND (w.subject='*' OR w.subject=f.entity_slug))
+         AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact), gbrain_fact_fingerprint_v2(f.fact), gbrain_fact_fingerprint_v1(f.fact)) AND (w.subject='*' OR w.subject=f.entity_slug))
      LIMIT $5`, [sourceIds, args.segmentSource, args.contextLike, args.labelLine, cap + 1, args.terminalSource, args.nonExtractableSource]);
   return { count: Math.min(rows.length, cap), capped: rows.length > cap };
 }
@@ -181,7 +181,7 @@ export async function listExtractorFactsForClassification(raw: EngineRawRead, so
            ${trustedSql(expiryTextSql('c.expired'))} AS expired_at,
            p.id AS page_id, p.deleted_at IS NOT NULL AS page_deleted,
            EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id=c.source_id AND w.visibility=c.visibility
-             AND w.fact_hash IN (gbrain_fact_fingerprint(c.fact), gbrain_fact_fingerprint_v1(c.fact))
+             AND w.fact_hash IN (gbrain_fact_fingerprint(c.fact), gbrain_fact_fingerprint_v2(c.fact), gbrain_fact_fingerprint_v1(c.fact))
              AND (w.subject='*' OR w.subject=c.entity_slug)) AS withdrawn,
            EXISTS (SELECT 1 FROM facts a WHERE a.source_id=c.source_id AND a.visibility=c.visibility
              AND gbrain_fact_fingerprint(a.fact)=c.fingerprint AND a.source_markdown_slug=c.slug AND a.expired_at IS NULL
@@ -209,7 +209,7 @@ export const PURGED_PAGE_SQL = `EXISTS (SELECT 1 FROM page_purges pp WHERE pp.so
 /** The exclusion predicates over alias f; constant text with no input. */
 export const PURGED_EXCLUDED_SQL = {
   withdrawn: `EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id = f.source_id AND w.visibility = f.visibility
-    AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact), gbrain_fact_fingerprint_v1(f.fact)) AND (w.subject = '*' OR w.subject = f.entity_slug))`,
+    AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact), gbrain_fact_fingerprint_v2(f.fact), gbrain_fact_fingerprint_v1(f.fact)) AND (w.subject = '*' OR w.subject = f.entity_slug))`,
   superseded: 'f.superseded_by IS NOT NULL',
   referenced: 'EXISTS (SELECT 1 FROM facts g WHERE g.superseded_by = f.id)',
   open_loop: 'EXISTS (SELECT 1 FROM open_loops o WHERE o.fact_id = f.id)',
@@ -261,7 +261,7 @@ export async function listUnwithdrawnFacts(raw: EngineRawRead, sourceIds: string
            r.retired_at, ${trustedSql(instantTextSql('f.expired_at'))} AS expired_at, r.preimage, gbrain_fact_fingerprint(f.fact) AS fingerprint,
            p.id AS page_id, p.deleted_at IS NOT NULL AS page_deleted, p.version_history_gap_at IS NOT NULL AS history_gap,
            EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id = f.source_id AND w.visibility = f.visibility
-             AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact), gbrain_fact_fingerprint_v1(f.fact))
+             AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact), gbrain_fact_fingerprint_v2(f.fact), gbrain_fact_fingerprint_v1(f.fact))
              AND ${trustedSql(withdrawalCoversFactSql('w', 'f'))}) AS withdrawn,
            EXISTS (SELECT 1 FROM facts a WHERE a.source_id = f.source_id AND a.source_markdown_slug = r.slug
              AND a.expired_at IS NULL AND (a.valid_until IS NULL OR a.valid_until > now())
@@ -357,7 +357,7 @@ export async function listOntologyFactCandidates(raw: EngineRawRead, sourceIds: 
            ${trustedSql(expiryTextSql('f.expired_at'))} AS expired_at,
            EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id=f.source_id AND w.visibility=f.visibility
              AND (w.subject='*' OR w.subject=f.entity_slug)
-             AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact), gbrain_fact_fingerprint_v1(f.fact))) AS withdrawn,
+             AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact), gbrain_fact_fingerprint_v2(f.fact), gbrain_fact_fingerprint_v1(f.fact))) AS withdrawn,
            f.consolidated_into IS NOT NULL AS consolidated,
            ${trustedSql(DUPLICATE_SQL('f'))} AS duplicate
       FROM facts f

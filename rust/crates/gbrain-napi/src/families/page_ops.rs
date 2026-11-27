@@ -150,6 +150,16 @@ impl Brain {
         })
     }
 
+    /// `listMarkdownPageSlugs(sourceId)`: `string[]`.
+    #[napi]
+    pub fn list_markdown_page_slugs<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_markdown_page_slugs(&source_id))
+    }
+
     /// `listAllPageRefs()`: `[{ slug, source_id, updated_at }]`.
     #[napi]
     pub fn list_all_page_refs<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {

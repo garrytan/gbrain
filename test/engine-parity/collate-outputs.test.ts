@@ -15,8 +15,8 @@
  *  - Why existing coverage misses it: the cases used keys that sort the same in every locale, checked list lengths or
  *    sorted the lists first, and CI's Postgres runs in C.UTF-8. Every case here mixes `a-z`, `ab`, `a.b` and `a_b`; run
  *    it against an en_US Postgres to see it fail.
- *  - Seam: none. Pages, tags and links go through the engine writers; receipts, readers and persistence rows are the
- *    rows the writers leave, inserted with raw SQL because no engine method writes them.
+ *  - Seam: none. Pages, tags, links and segment derivations go through the engine writers; pages no writer stores as
+ *    given (an unknown reader, an upper-case or `_` slug) and persistence rows are inserted with raw SQL.
  */
 import { describe, expect } from 'bun:test';
 import { randomUUID } from 'node:crypto';
@@ -39,6 +39,14 @@ const SOURCES = ['ab', 'a-z'];
 const note = (title: string) => ({ type: 'note' as const, title, compiled_truth: `body of ${title}`, timeline: '' });
 
 async function insertPage(engine: BrainEngine, sourceId: string, slug: string, extra: { type?: string; frontmatter?: Record<string, unknown> } = {}): Promise<void> {
+  await engine.putPage(slug, { type: (extra.type ?? 'note') as never, title: slug, compiled_truth: 'body', timeline: '', frontmatter: extra.frontmatter ?? {} }, { sourceId });
+}
+
+/**
+ * A page row written by harness SQL, for seeds no engine writer stores as given: a readable_by naming an unknown member,
+ * or a slug with an upper-case letter or `_` (putPage normalizes those), so the Rust arm stops on its raw_sql refusal.
+ */
+async function rawPage(engine: BrainEngine, sourceId: string, slug: string, extra: { type?: string; frontmatter?: Record<string, unknown> } = {}): Promise<void> {
   await engine.executeRaw(
     `INSERT INTO pages (source_id, slug, type, title, compiled_truth, timeline, frontmatter) VALUES ($1, $2, $3, $2, 'body', '', $4::text::jsonb)`,
     [sourceId, slug, extra.type ?? 'note', JSON.stringify(extra.frontmatter ?? {})]);
@@ -46,21 +54,21 @@ async function insertPage(engine: BrainEngine, sourceId: string, slug: string, e
 
 describe('in-statement samples and lists keep byte order', () => {
   parityTest('the unpriced-model check samples the byte-first three pages', {
-    methods: ['executeRaw', 'putPage'], requires: 'raw_sql',
+    methods: ['putPage', 'upsertSegmentDerivations', 'listUnpricedDerivationModels'],
   }, async (engine, backend) => {
     const keys: string[] = [];
+    const pageIds: number[] = [];
     for (const source of SOURCES) {
       await createSource(engine, backend, source);
       for (const slug of MIXED_SLUGS) {
-        await engine.putPage(`notes/${slug}`, note(slug), { sourceId: source });
+        pageIds.push(Number((await engine.putPage(`notes/${slug}`, note(slug), { sourceId: source })).id));
         keys.push(`${source}:notes/${slug}`);
       }
     }
-    await engine.executeRaw(
-      `INSERT INTO page_segment_derivations (page_id, pipeline, occurrence_id, pipeline_version, segment_sha256, context_hash, state, receipt)
-       SELECT p.id, 'synopsis', 1, 1, decode(repeat('aa', 32), 'hex'), decode(repeat('bb', 32), 'hex'), 'skipped', $1::text::jsonb
-         FROM pages p WHERE p.source_id = ANY($2::text[])`,
-      [JSON.stringify({ kind: 'unpriced_model', model: 'acme:unpriced-sample' }), SOURCES]);
+    await engine.upsertSegmentDerivations(pageIds.map(pageId => ({
+      pageId, kind: 'synopsis' as const, occurrenceId: 1, version: 1, segmentSha256: new Uint8Array(32).fill(0xaa), contextHash: new Uint8Array(32).fill(0xbb),
+      state: 'skipped' as const, output: null, receipt: { kind: 'unpriced_model', model: 'acme:unpriced-sample' },
+    })));
     const [check] = await derivationUnpricedModelEntry.run({ engine } as unknown as DoctorContext) as Array<{ status: string; message: string; details: any }>;
     const samples = check!.details.models[0].samples as string[];
     expect(check!.status).toBe('warn');
@@ -75,8 +83,8 @@ describe('in-statement samples and lists keep byte order', () => {
     // The byte-first source holds the byte-last slug, so a sample built from two separate minimums names no page.
     await createSource(engine, backend, 'ab');
     await createSource(engine, backend, 'a-z');
-    await insertPage(engine, 'ab', 'notes/a-z', { frontmatter: { readable_by: ['member:ghost'] } });
-    await insertPage(engine, 'a-z', 'notes/ab', { frontmatter: { readable_by: ['member:ghost'] } });
+    await rawPage(engine, 'ab', 'notes/a-z', { frontmatter: { readable_by: ['member:ghost'] } });
+    await rawPage(engine, 'a-z', 'notes/ab', { frontmatter: { readable_by: ['member:ghost'] } });
     await engine.setConfig('access.restrictions_present', '1');
     const checks = await memberAccessEntry.run({ engine, progress: { heartbeat() {} } } as unknown as DoctorContext) as Array<{ name: string; message: string; details: any }>;
     const unknown = checks.find(c => c.name === 'access_unknown_readers')!;
@@ -121,7 +129,7 @@ describe('in-statement samples and lists keep byte order', () => {
   });
 
   parityTest('schema-pack detect samples a prefix\'s page types by byte type', {
-    methods: ['executeRaw'], requires: 'raw_sql',
+    methods: ['putPage', 'pagePrefixSamples'],
   }, async (engine) => {
     for (const [i, type] of MIXED_IDS.entries()) await insertPage(engine, 'default', `docs/p-${i}`, { type });
     const result = await runDetect(engine, { minPagesPerPrefix: 2 });
@@ -134,8 +142,8 @@ describe('in-statement samples and lists keep byte order', () => {
     methods: ['executeRaw'], requires: 'raw_sql',
   }, async (engine) => {
     // `top/` leads on count; the five MIXED_IDS prefixes tie at 2 pages, and the LIMIT keeps only two of them.
-    for (let i = 0; i < 3; i++) await insertPage(engine, 'default', `top/p-${i}`);
-    for (const id of MIXED_IDS) for (let i = 0; i < 2; i++) await insertPage(engine, 'default', `${id}/p-${i}`);
+    for (let i = 0; i < 3; i++) await rawPage(engine, 'default', `top/p-${i}`);
+    for (const id of MIXED_IDS) for (let i = 0; i < 2; i++) await rawPage(engine, 'default', `${id}/p-${i}`);
     const result = await runDetect(engine, { minPagesPerPrefix: 2, maxTypes: 3 });
     const prefixes = result.prefixes.map(p => p.prefix);
     expect(prefixes).toEqual(['top/', ...byteOrder(MIXED_IDS).slice(0, 2).map(id => `${id}/`)]);

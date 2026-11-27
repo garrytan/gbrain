@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto';
 import { FACTS_FENCE_BEGIN, FACTS_FENCE_END, parseFactsFence, parseFactsFenceFor, renderFactsTable, type ParsedFact } from '../facts-fence.ts';
-import type { PageWithdrawal } from '../page-state/types.ts';
+import type { GlobalPurgeMarker, PageWithdrawal } from '../page-state/types.ts';
 import { OperationError } from '../ops/contract.ts';
-import { normalizeLoweredClaim } from './withdrawal-schema.ts';
+import { legacyFingerprintV2Sql, mayHaveLegacyFingerprint, normalizeLoweredClaim } from './withdrawal-schema.ts';
 
 export const WITHDRAWAL_MARKER_LIMIT = 16_384;
 /** A withdrawal reads a held row's `entity` cell wherever writes let it be (memory/unattributed, GST-2492). */
@@ -147,6 +147,41 @@ export function partialFenceRuns(text: string, entryOpen: boolean): { head: numb
     open = null;
   }
   return { head, tail: open === null ? text.length : Math.max(open, 0) };
+}
+
+/**
+ * `withdrawals` plus, for each fence claim of `texts` whose fingerprint changed at fact_fingerprint_v3 (v341), a copy of
+ * every ledger row stored under its pre-v341 fingerprint (legacyFingerprintV2Sql: only a hash no current fingerprint can
+ * equal) keyed by its current one, so the
+ * overlay strikes or drops the row as it does on every engine. With `global`, a '*' purge tombstone stored under the old
+ * fingerprint is added the same way (resolveGlobalPurges looks up current fingerprints only). Before v341 Postgres folded
+ * the locale's `[[:space:]]`; PGLite's already was the explicit list, so there no claim has two fingerprints. Runs no
+ * query unless a fence claim holds a character the folds may disagree on.
+ */
+export async function withLegacyLedgerRows(query: <T>(sql: string, params?: unknown[]) => Promise<T[]>, texts: readonly string[],
+  withdrawals: PageWithdrawal[], global?: { sourceId: string; marker?: GlobalPurgeMarker }): Promise<PageWithdrawal[]> {
+  const claims = new Set<string>();
+  for (const text of texts) {
+    if (!text.includes('gbrain:facts:begin')) continue;
+    for (const block of withdrawalFenceBlocks(text)) for (const f of block.parsed.facts) if (mayHaveLegacyFingerprint(f.claim)) claims.add(f.claim);
+  }
+  const marker = global?.marker && global.marker.count > 0 ? global.marker : undefined;
+  if (!claims.size || (!withdrawals.length && !marker)) return withdrawals;
+  const pairs = await query<{ fp: string; v2: string }>(`SELECT DISTINCT x.fp, x.v2
+    FROM (SELECT gbrain_fact_fingerprint(c) AS fp, ${legacyFingerprintV2Sql('c')} AS v2 FROM unnest($1::text[]) AS c) x WHERE x.v2 IS NOT NULL`, [[...claims]]);
+  if (!pairs.length) return withdrawals;
+  const current = new Map<string, string[]>();
+  for (const { fp, v2 } of pairs) current.set(v2, [...current.get(v2) ?? [], fp]);
+  const legacy = [...withdrawals];
+  if (marker) {
+    const rows = await query<{ w: PageWithdrawal }>(`SELECT jsonb_build_object('visibility',visibility,'fact_hash',fact_hash,
+        'withdrawn_at',min(purged_at),'purged',true) AS w
+      FROM fact_purges WHERE source_id=$1 AND subject='*' AND fact_hash=ANY($2::text[]) ${marker.world_only ? "AND visibility='world'" : ''}
+      GROUP BY visibility,fact_hash ORDER BY visibility,fact_hash`, [global!.sourceId, [...current.keys()]]);
+    legacy.push(...rows.map(r => typeof r.w === 'string' ? JSON.parse(r.w) as PageWithdrawal : r.w));
+  }
+  const aliases = legacy.flatMap(w => (current.get(w.fact_hash) ?? []).map(fp => ({ ...w, fact_hash: fp })));
+  return aliases.length ? [...withdrawals, ...aliases] : withdrawals;
 }
 
 /** Apply hashes from DB-normalized companion text to the original Markdown. */

@@ -19,6 +19,7 @@ import { randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
 import type { IdleWaiter } from './idle-wait.ts';
 import { consumerConnectionRoute } from '../persistence/consumer-lane.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 
 export const SYNC_WAKE_CHANNEL = 'minion_jobs';
 export const SYNC_WAKE_POLL_MS_DEFAULT = 1_000;
@@ -66,7 +67,7 @@ async function listenSql(engine: BrainEngine, reason: SyncQueueWakeChoice['reaso
   return routed.sql as ListenSql;
 }
 
-/** Start the wake for one worker's idle waiter and log one line naming the mode. Never throws: a failed or unverified LISTEN polls instead. */
+/** Start the wake for one worker's idle waiter and log one line naming the mode. A failed or unverified LISTEN polls instead; only an engine capability refusal throws. */
 export async function startSyncQueueWake(engine: BrainEngine, waiter: Pick<IdleWaiter, 'wake' | 'idle'>,
   opts: { queue: string; env?: Record<string, string | undefined>; log?: (line: string) => void }): Promise<SyncQueueWake> {
   const env = opts.env ?? process.env;
@@ -95,6 +96,8 @@ export async function startSyncQueueWake(engine: BrainEngine, waiter: Pick<IdleW
       }
       await listener.unlisten().catch(() => {});
     } catch (error) {
+      // An engine that refuses the probe is not a failed LISTEN: the refusal reaches the worker.
+      rethrowCapabilityRefusal(error);
       log(`[gbrain jobs] sync-queue wake: LISTEN failed (${error instanceof Error ? error.message : String(error)})`);
     }
     choice = { mode: 'poll', reason: 'listen_unverified' };

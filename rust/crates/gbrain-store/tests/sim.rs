@@ -122,6 +122,9 @@ impl Kv for RecKv {
     fn snapshot(&self) -> Result<Box<dyn KvRead>, StoreError> {
         self.inner.snapshot()
     }
+    fn versioned_snapshot(&self) -> Result<(Box<dyn KvRead + Send>, u64), StoreError> {
+        self.inner.versioned_snapshot()
+    }
     fn begin_write(&self) -> Result<Box<dyn KvWrite>, StoreError> {
         Ok(Box::new(RecWrite {
             inner: self.inner.begin_write()?,

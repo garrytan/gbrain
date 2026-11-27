@@ -119,6 +119,7 @@ const remember: Operation = {
     claim_value: { type: 'number', description: 'Typed claim value (finite number).', fullSurfaceOnly: true },
     claim_unit: { type: 'string', description: 'Typed claim unit, e.g. USD.', fullSurfaceOnly: true },
     claim_period: { type: 'string', description: 'Typed claim period, e.g. monthly.', fullSurfaceOnly: true },
+    facet: { type: 'string', description: 'Profile facet (diet, allergy, size.shoe, brand, style, constraint, schedule, household, other); no entity: your own profile.', fullSurfaceOnly: true },
   },
   mutating: true,
   scope: 'write',
@@ -130,6 +131,7 @@ const remember: Operation = {
       const { runRememberBatch } = await import('./remember-batch.ts');
       return runRememberBatch(ctx, p, remember.handler, (code, message, suggestion) => verbError(code as never, message, suggestion));
     }
+    p = await (await import('./profile/remember.ts')).profileRemember(ctx, p);
     const { unquoteFactText } = await import('./search/transcript-quote.ts');
     // #8377: a fact an agent copied out of a quoted read (recall, context_pack, hot memory) is stored without the fence.
     const fact = typeof p.fact === 'string' ? (ctx.remote === false ? p.fact : unquoteFactText(p.fact)).trim() : '';
@@ -301,6 +303,8 @@ const entity: Operation = {
     }
     const name = typeof p.name === 'string' ? p.name.trim() : '';
     if (!name) {
+      const slug = typeof p.slug === 'string' ? p.slug.trim() : '';
+      if (slug) throw verbError('invalid_params', 'entity takes name, not slug.', `Pass the slug as name: entity {name: ${JSON.stringify(slug)}}.`);
       throw verbError(
         'invalid_params',
         'name must be a non-empty string.',

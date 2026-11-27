@@ -62,6 +62,12 @@ does not work on a Rust brain on this landing: the CLI export path runs inside `
 `engine_capability_missing`. Data that exists only in the Rust brain is not recovered by importing the original
 Markdown.
 
+An older build at the same format can open a brain that holds keys it does not know, and ignores
+them. Known case: the re-derive queue (`needs_rederive`, keys `h 0x0C`, `generations/needs_rederive.rs`)
+came in without a format bump. An older build at the same format ignores its marks: it shows the rows a
+purge marked, and it corrupts nothing. The next store-format bump must make an older build refuse a
+store that holds `h 0x0C` marks. Owner: lane 4, until another lane takes the next format bump.
+
 Pinned by `older_build_tests` in `crates/gbrain-store/src/lib.rs`: a format-3 brain opened by a build
 that knows `[1, 2]`, and the next format against every build from format 1 on, with and without
 `FORMAT`, compare every file byte for byte before and after the refused open.

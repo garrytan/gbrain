@@ -20,4 +20,25 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.list_source_request_rows(&source_id))
     }
+
+    /// `listFreshnessTargets(worktreeId, incarnation, windowHours, limit)`: the commit targets of
+    /// the worktree's freshness samples, newest first.
+    #[napi]
+    pub fn list_freshness_targets<'env>(
+        &self,
+        env: &'env Env,
+        worktree_id: String,
+        incarnation: String,
+        window_hours: f64,
+        limit: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_freshness_targets(
+                &worktree_id,
+                &incarnation,
+                window_hours.floor() as i64,
+                limit.max(1.0).floor() as usize,
+            )
+        })
+    }
 }

@@ -159,7 +159,7 @@ export async function applyPassRound(engine: BrainEngine, level: ShadowLevel, in
       if (!grantSees(level, entry, input.grantPrefixes) && !entry.result.settled) settleAs(entry, { settled: true, action: 'none', classAction: 'none' });
     }
   }
-  if (input.heldDeletions && !input.remote && input.admission === 'normal') await applyHeldDeletions(engine, level, input.context, state.heldDeletions);
+  if (input.heldDeletions && !input.remote && input.admission === 'normal') await applyHeldDeletions(engine, level, input.context, state.heldDeletions, input.passId);
   await applyDeleteValve(engine, level, input, state);
   if (input.remote) {
     // #6948: a remote pass writes no hold, so a path several live pages claim is left as it is for the owner's pass to hold.

@@ -16,7 +16,7 @@ use super::purge_probe::{holds_claim, swept};
 use super::{DERIVATION_PURGE, DERIVATION_PURGE_BY_SOURCE, DerivationRecord, kind_key, violation};
 use crate::Store;
 use crate::facts::purge_probe::{EachRow, ProbeCell, ProbeRow, each_json};
-use crate::kv::{KvRead, scan_prefix};
+use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::links::no_nul;
 use crate::pages::PageRecord;
 use crate::sources::read_source;
@@ -101,6 +101,23 @@ pub(super) fn records_of_source(read: &dyn KvRead, source_id: &str) -> Result<Ve
         }
     }
     Ok(out)
+}
+
+/// A source delete's cascade to the sweep records of the source (`page_segment_derivation_purges.source_id ... ON DELETE
+/// CASCADE`): removes each record the source index names, with its index entry. A record's page notes live in the record,
+/// so they go with it. The open-time repair (`backfill_source_index`) indexes every record before any write is admitted,
+/// so the index names them all.
+pub(crate) fn remove_source_records(tx: &mut dyn KvWrite, source_id: &str) -> Result<()> {
+    let mut requests: Vec<String> = Vec::new();
+    scan_prefix(&*tx, &source_index_prefix(source_id), false, &mut |_, v| {
+        requests.push(String::from_utf8_lossy(v).into_owned());
+        true
+    })?;
+    for request in requests {
+        tx.delete(&record_key(&request))?;
+        tx.delete(&index_key(source_id, &request))?;
+    }
+    Ok(())
 }
 
 /// Records indexed per write transaction by the open-time repair.
@@ -426,6 +443,9 @@ mod tests {
                 self.scans.clone(),
                 self.gets.clone(),
             )))
+        }
+        fn versioned_snapshot(&self) -> Result<(Box<dyn KvRead + Send>, u64)> {
+            self.inner.versioned_snapshot()
         }
         fn begin_write(&self) -> Result<Box<dyn KvWrite>> {
             self.begins.fetch_add(1, Ordering::SeqCst);

@@ -30,7 +30,7 @@ import { CALENDAR_HORIZON_DAYS, CalendarSyncWindow, planCalendarPage, staleCalen
 import { CalendarClient, calendarUnreadableStatus, CONTACT_PERSON_FIELDS, GoogleCursorExpiredError, GoogleSyncTokenRejectedError, PeopleClient } from './google-clients.ts';
 import { calendarRelPath, contactIdSlug, personSlugFromContact, renderCalendarEventPage, renderPersonPage } from './google-render.ts';
 import { contactHoldKey, DEFAULT_CALENDAR_ID, eventHoldKey, type CalendarEventData, type ContactData, type GoogleSourceState } from './types.ts';
-import { deletePageByRelPath, importRendered, type ActivePack, type GoogleSyncDeps, type GoogleSyncSummary } from './sweep-shared.ts';
+import { deletePageByRelPath, importRendered, markPartial, type ActivePack, type GoogleSyncDeps, type GoogleSyncSummary } from './sweep-shared.ts';
 import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 import { identityLinksOn, linkGoogleContacts, unlinkGoogleContactPage } from './contact-identity.ts';
 
@@ -264,7 +264,7 @@ async function throughHolds(deps: GoogleSyncDeps, summary: GoogleSyncSummary, ho
     deps.log(`[google] ${JSON.stringify(item.key)} failed (${classified.code}): ${classified.message}; `
       + (classified.class === 'content' ? `counted toward a hold (see: gbrain sources status ${deps.sourceId})` : 'retried on the next sync'));
     if (wasHeld) return true;
-    summary.status = 'partial';
+    markPartial(summary, `${JSON.stringify(item.key)} failed (${classified.code}): ${classified.message}`, true);
     return false;
   }
 }
@@ -493,7 +493,7 @@ async function reconcileCalendarWindow(deps: GoogleSyncDeps, listedIds: Readonly
   const { massReconcileAllowed } = await import('../../commands/sync.ts');
   if (gone.length > 200 && !massReconcileAllowed()) {
     deps.log(`[google] mass-delete guard refused ${gone.length} deletes for source ${deps.sourceId}`);
-    summary.status = 'partial';
+    markPartial(summary, `mass-delete guard refused ${gone.length} calendar deletes`);
     return;
   }
   for (const relPath of gone) await deletePageByRelPath(deps, relPath, summary);

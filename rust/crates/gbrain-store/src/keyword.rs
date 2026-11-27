@@ -69,7 +69,6 @@ mod vector_cache;
 mod walk;
 
 pub use cjk::{CjkBound, CjkKeywordResult, CjkRun, CjkTerm};
-pub(crate) use filters::served;
 pub use filters::{AfterKey, DateBound, KeywordOptions};
 pub(crate) use filters::{DateWindow, frontmatter_holds, parse_trust_floor};
 pub(crate) use index::read_state as read_index_state;

@@ -343,6 +343,67 @@ impl Store {
         Ok(found.as_ref().map(member_json).unwrap_or(Value::Null))
     }
 
+    /// `listSharedMemberMigrationRows(sourceId)`: the members whose follow policy's `sources` names `sourceId` (an
+    /// object key, or a string element of an array, as jsonb `?` tests), by byte order of adapter and then by
+    /// installation id, at most 4096: each with its epoch, active flag, the approved incarnation
+    /// (`follow_policy->'sources'->>sourceId`), its views, and the `stage` of the evidence of its acknowledged batch at
+    /// its epoch and acknowledged sequence (null when that batch is absent or unacknowledged).
+    pub fn list_shared_member_migration_rows(&self, source_id: &str) -> Result<Value> {
+        let read = self.read()?;
+        let mut members: Vec<MemberRecord> = all_members(&*read)?
+            .into_iter()
+            .filter(|m| match m.follow_policy.get("sources") {
+                Some(Value::Object(map)) => map.contains_key(source_id),
+                Some(Value::Array(items)) => items.iter().any(|v| v.as_str() == Some(source_id)),
+                Some(Value::String(s)) => s == source_id,
+                _ => false,
+            })
+            .collect();
+        members.sort_by(|a, b| {
+            a.adapter
+                .as_bytes()
+                .cmp(b.adapter.as_bytes())
+                .then_with(|| a.installation_id.cmp(&b.installation_id))
+        });
+        members.truncate(4096);
+        let mut rows = Vec::with_capacity(members.len());
+        for m in &members {
+            let approved = m
+                .follow_policy
+                .get("sources")
+                .and_then(|s| s.as_object())
+                .and_then(|map| map.get(source_id))
+                .and_then(crate::cli_reads::entities::arrow_text);
+            let mut stage: Option<String> = None;
+            scan_prefix(
+                &*read,
+                &batches_prefix(&m.installation_id),
+                false,
+                &mut |_, v| {
+                    if let Ok(b) = serde_json::from_slice::<BatchRecord>(v)
+                        && b.epoch == m.epoch
+                        && b.sequence == m.acknowledged_sequence
+                        && b.acknowledged_at_us.is_some()
+                    {
+                        stage = b
+                            .evidence
+                            .as_ref()
+                            .and_then(|e| e.get("stage"))
+                            .and_then(crate::cli_reads::entities::arrow_text);
+                        return false;
+                    }
+                    true
+                },
+            )?;
+            rows.push(json!({
+                "installation_id": m.installation_id, "adapter": m.adapter, "epoch": m.epoch, "active": m.active,
+                "approved_incarnation": approved, "desired_view": m.desired_view,
+                "acknowledged_view": m.acknowledged_view, "stage": stage,
+            }));
+        }
+        Ok(Value::Array(rows))
+    }
+
     /// `countSharedSkillMembers()`: every member, active or not.
     pub fn count_shared_skill_members(&self) -> Result<i64> {
         let mut n = 0i64;

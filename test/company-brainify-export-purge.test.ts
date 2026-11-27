@@ -92,6 +92,30 @@ describe('company-brainify export: only files that got the read ship', () => {
     expect(text).not.toContain("holds nothing the pass didn't read");
   });
 
+  test('re-auditing an existing shared brain carries the sanitized tree into the purge clone and lists every page in it', () => {
+    const block = fenceContaining('brainify-reaudit-');
+    const dir = tmp();
+    const checkout = join(dir, 'checkout');
+    write(checkout, 'people/alice-example.md', 'Staff engineer.\n');
+    write(checkout, 'people/bob-example.md', 'Never flagged by a scan.\n');
+    write(checkout, 'meetings/staff-sync.md', 'Payments review.\n');
+    write(checkout, 'conversations/chat.md', 'Outside the purged folders.\n');
+    const run = bash(block + '\necho "STAGING=$STAGING"', checkout, { HOME: join(dir, 'home') });
+    expect(run.status).toBe(0);
+    const staging = run.stdout.match(/STAGING=(.*)/)![1];
+    expect(readFileSync(`${staging}.export-list`, 'utf8')).toBe('meetings/staff-sync.md\npeople/alice-example.md\npeople/bob-example.md\n');
+    const clone = join(dir, 'clone');
+    write(clone, 'people/alice-example.md', 'Staff engineer. Salary 200k.\n');
+    write(clone, 'people/bob-example.md', 'Never flagged by a scan.\n');
+    write(clone, 'meetings/staff-sync.md', 'Payments review.\n');
+    const step1 = fenceContaining('Sanitize: strip sensitive content before history purge');
+    const guard = step1.slice(step1.indexOf(`for d in ${PURGE_DIRS}; do\n  [ -d "$STAGING/$d" ]`), step1.indexOf('SANITIZED=""'));
+    const purge = bash(guard, clone, { STAGING: staging });
+    expect(purge.status).toBe(0);
+    expect(purge.stdout).not.toContain('ABORT');
+    expect(readFileSync(join(clone, 'people/alice-example.md'), 'utf8')).toBe('Staff engineer.\n');
+  });
+
   test('the purge stops when the shared repo keeps a page that is not on the export list', () => {
     const step1 = fenceContaining('Sanitize: strip sensitive content before history purge');
     const start = step1.indexOf(`for d in ${PURGE_DIRS}; do\n  [ -d "$STAGING/$d" ]`);

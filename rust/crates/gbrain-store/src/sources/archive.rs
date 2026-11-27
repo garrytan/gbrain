@@ -92,7 +92,7 @@ fn unverified(r: &SourceRecord) -> bool {
 }
 
 /// Every page record of one source, soft-deleted pages included.
-fn source_pages(read: &dyn KvRead, source_id: &str) -> Result<Vec<PageRecord>> {
+pub(crate) fn source_pages(read: &dyn KvRead, source_id: &str) -> Result<Vec<PageRecord>> {
     let mut out = Vec::new();
     let mut failure = None;
     if source_id.contains('\0') {
@@ -271,15 +271,77 @@ impl Store {
             crate::persistence::remove_source_binding_in(tx, id, &record.incarnation)?;
             crate::trust::write_gate::remove_source_holds(tx, id)?;
             crate::eval_capture::remove_source_retrieved_slugs(tx, id)?;
+            crate::retrieval_feedback::remove_source_rows(tx, id)?;
+            crate::volunteer_events::remove_source_rows(tx, id)?;
             tx.delete(&source_key(id))?;
             Ok(true)
         })
     }
 }
 
+/// The managed lifecycle's remove (`topologyStore().deleteSourceIncarnation`,
+/// `sourceIncarnationDeleteStatement`): when the source row still has `incarnation`, it goes with
+/// its pages (the foreign keys cascade on Postgres) and the rows that name the source outside a
+/// foreign key (`removedSourceScrubCtes`, gated on the row going). The binding, the sync cursors
+/// and the OAuth refusal are the caller's own statements. Returns whether the row went.
+pub(crate) fn delete_source_incarnation_in(
+    tx: &mut dyn crate::kv::KvWrite,
+    id: &str,
+    incarnation: &str,
+) -> Result<bool> {
+    let Some(record) = read_source(&*tx, id)? else {
+        return Ok(false);
+    };
+    if !record.incarnation.eq_ignore_ascii_case(incarnation) {
+        return Ok(false);
+    }
+    for page in source_pages(&*tx, id)? {
+        crate::pages::remove_page(tx, &page)?;
+    }
+    crate::cascade::remove_source_rows(tx, id)?;
+    rescrub_removed_source_in(tx, id)?;
+    tx.delete(&source_key(id))?;
+    Ok(true)
+}
+
+/// `removedSourceRescrubStatement`: the rows that name the source outside a foreign key, ungated.
+pub(crate) fn rescrub_removed_source_in(tx: &mut dyn crate::kv::KvWrite, id: &str) -> Result<()> {
+    crate::trust::write_gate::remove_source_holds(tx, id)?;
+    crate::eval_capture::remove_source_retrieved_slugs(tx, id)?;
+    crate::retrieval_feedback::remove_source_rows(tx, id)?;
+    crate::volunteer_events::remove_source_rows(tx, id)?;
+    Ok(())
+}
+
+/// The managed retire's page batch (`topologyStore().deletePageBatch`): up to `limit` of the
+/// source's pages go, in page id order (the SQL's `LIMIT` takes any; only the count is read).
+pub(crate) fn delete_page_batch_in(
+    tx: &mut dyn crate::kv::KvWrite,
+    id: &str,
+    limit: usize,
+) -> Result<usize> {
+    let mut pages = source_pages(&*tx, id)?;
+    pages.sort_by_key(|p| p.id);
+    pages.truncate(limit);
+    for page in &pages {
+        crate::pages::remove_page(tx, page)?;
+    }
+    Ok(pages.len())
+}
+
+/// `EXPIRED_ARCHIVE_SQL` on one source record at `now`.
+pub(crate) fn source_expired(record: &SourceRecord, now: i64) -> bool {
+    expired(record, now)
+}
+
+/// How many pages the source has (`count(*) FROM pages WHERE source_id=$1`).
+pub(crate) fn source_page_count_in(read: &dyn KvRead, id: &str) -> Result<usize> {
+    Ok(source_pages(read, id)?.len())
+}
+
 /// The `cursors` step of the source delete: the `managed-sync` op checkpoints whose first
 /// completed key names the source (`completed_keys->0->>'sourceId'`).
-fn remove_sync_cursors(tx: &mut dyn crate::kv::KvWrite, source_id: &str) -> Result<()> {
+pub(crate) fn remove_sync_cursors(tx: &mut dyn crate::kv::KvWrite, source_id: &str) -> Result<()> {
     const OP: &str = "managed-sync";
     let rows = crate::persistence::list_op_checkpoint_records_in(&*tx, OP)?;
     let doomed: Vec<String> = rows

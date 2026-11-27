@@ -149,7 +149,7 @@ describe('engine parity: link reads', () => {
   );
 
   parityTest(
-    'entityFeatureCoverage: a 100 percent sample is the whole population (the Rust store declines a sample)',
+    'entityFeatureCoverage: a 100 percent sample is the whole population',
     { methods: ['putPage', 'addLink', 'entityFeatureCoverage'] },
     async (engine) => {
       await put(engine, 'people/alice-example', 'person');

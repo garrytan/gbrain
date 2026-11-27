@@ -88,3 +88,22 @@ Differences from PGLite:
 The legacy HTTP transport (`src/mcp/http-transport.ts`, `logRequest`) writes its request
 log row through `logMcpRequest`, and `lifetimeUsage` (`src/core/mcp-request-log-retention.ts`) reads through
 `readMcpLifetimeUsage`, which also absorbs the tally-table probe `rollupTablePresent` used to make.
+
+## Access read log
+
+`access_read_log` (GST-2476 gap 1) holds one row per read a non-owner member or audience made. The read-log writer
+(`src/core/access/read-log.ts`) appends rows in batches and prunes them; `gbrain access log` and `gbrain access who-read`
+(`src/commands/access-read-log.ts`) read them. The SQL is in `src/core/engine-sql/access-read-log.ts`; the store keeps the
+rows in `access_read_log.rs`, under `a 0x11 <id BE8>` with ids from `next_access_read_log_id`.
+
+| Member | Result |
+| --- | --- |
+| `insertAccessReadLogRows(rows)` | appends each row with the next id. A `created_at` that is not ISO text, a page id that is not a whole `int4` or a NUL in text refuses the batch (`invalid_argument`) and writes nothing. |
+| `pruneAccessReadLog(days, maxRows)` | deletes the rows logged before `now - days`, then the rows whose id is at most the highest id less `maxRows`. |
+| `readAccessReadLog({ since, member, limit })` | the rows at or after `since`, newest first (a tie by the higher id), at most `limit`; with `member`, its rows and the rows whose audience names `member:<member>`. |
+| `listAccessReadPageRefs(slug, sourceId)` | `{ id, source_id, slug }` of every stored page with the slug (in the source when given), soft-deleted ones too, by source id in byte order. |
+| `readAccessReadsOfPages({ pageIds, since, limit })` | the rows at or after `since` that name one of the page ids, newest first, at most `limit`. |
+| `tallyAccessReadsOfPages({ pageIds, since })` | `{ who, reads, last_at }` per reader of those rows: the member, else the audience joined by `+` (an empty audience is the empty text), else `(unbound)`; the latest last read first, a tie by who in byte order. |
+
+A read row lists each page id as `source:slug` (a soft-deleted page too), or `#<id>` for a page no longer stored. Times
+cross the binding as ISO text. Page deletes and purges leave the rows, as on PGLite and Postgres.

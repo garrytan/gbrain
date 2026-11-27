@@ -41,6 +41,7 @@ import { localHostId } from '../../src/core/persistence/identity.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { DoctorContext, DoctorEntry } from '../../src/commands/doctor/context.ts';
 import type { Check } from '../../src/commands/doctor.ts';
+import { requireManagedPersistence } from '../../src/core/rust-engine/errors.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -143,9 +144,13 @@ describe('doctor persistence reads sort text keys by byte', () => {
     return out;
   });
 
+  // managed_persistence held for callers: the check reads writes waiting on a managed worktree, and such a write is only
+  // admitted through admitWrite, which refuses on an engine without managed_persistence (persistence/journal.ts). The case
+  // takes the same guard before it seeds the waiting write, so the Rust arm stops by name where a real write would.
   parityTest('owner_host_stale lists the sources bound to a stale owner by byte id', {
-    methods: ['executeRaw', 'transaction'], requires: 'raw_sql',
+    methods: ['executeRaw', 'transaction'], requires: 'managed_persistence',
   }, async (engine, backend) => {
+    requireManagedPersistence(engine, 'admitWrite', 'a write to a managed worktree checks its refresh fence, owner and binding');
     const { ownerHostStaleCheck } = await import('../../src/commands/doctor/checks/owner-host-stale.ts');
     const home = mkdtempSync(join(tmpdir(), 'gbrain-collate-owner-stale-'));
     try {

@@ -137,6 +137,15 @@ describe('GST-3452 sync_freshness: a first sync stopped by a usage limit', () =>
     expect(entries(result.details)[0]).toMatchObject({ code: 'sync_no_successful_sync' });
   });
 
+  test('a partial run names why it ended partial in the doctor result', async () => {
+    await addSource('mail');
+    await addSyncJob('mail', 'completed', { status: 'partial', partial_causes: ['mail sweep failed: upstream error', 'run aborted'] });
+    const result = await checkSyncFreshness(engine);
+    expect(result.status).toBe('fail');
+    expect(entries(result.details)[0]).toMatchObject({ code: 'sync_no_successful_sync', result: 'completed (partial: mail sweep failed: upstream error; run aborted)' });
+    expect(result.message).toContain('mail sweep failed: upstream error');
+  });
+
   test('the code is registered as a warning that clears on its own', () => {
     expect(CODES.sync_usage_limited.class).toBe('retryable');
   });

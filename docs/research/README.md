@@ -70,7 +70,7 @@ The evidence or change that would make this worth trying again.
 
 | Research | What it is |
 |---|---|
-| [Rust rewrite research maps](rust-engine/README.md) | Maps of what TypeScript gbrain and gbrain-evals do today (storage engine, agent contract, jobs, tests, evals), pinned to one commit. The plan of record is [docs/designs/RUST_ENGINE.md](../designs/RUST_ENGINE.md) (PR #9593); the draft [PLAN.md](../plans/PLAN.md) is kept as research. |
+| [Rust rewrite research maps](rust-engine/README.md) | Maps of what TypeScript gbrain and gbrain-evals do today (storage engine, agent contract, jobs, tests, evals), pinned to a reference commit, with five maps refreshed to a later one (see the pin table in that README). The plan of record is [docs/designs/RUST_ENGINE.md](../designs/RUST_ENGINE.md) (PR #9593); the draft [PLAN.md](../plans/PLAN.md) is kept as research. |
 | [executeRaw calls on the CLI path](rust-cli-executeraw-map.md) | Each `executeRaw` call that `import`, `extract` and seven read commands make on a PGLite brain, with the typed member that can replace it on a Rust brain. Pinned to one commit. |
 | [The page write path on a Rust brain](rust-put-write-path.md) | Every SQL statement one `put` of a new page runs on a PGLite brain, with the typed member, owner and size that serve it on a Rust brain. Pinned to one commit. |
 | [Rust engine census](rust-census.md) | Every CLI command and MCP tool run on a Rust brain, a PGLite brain and a Postgres brain from one fixture, with the first refusal, the member or raw SQL each one hits, and the failures grouped into ranked work packages of about one day. Re-run with `bun scripts/rust-census/census.ts`. |

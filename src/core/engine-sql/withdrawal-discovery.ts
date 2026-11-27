@@ -62,6 +62,7 @@ const SPLIT_FENCE_SLOTS_SQL = `SELECT m.page_id,p.slug,m.region,
 const CLAIM_KEYS_SQL = `WITH w AS (
       SELECT w.visibility,w.fact_hash,COALESCE(w.subject,'*') AS subject,gbrain_fact_normalize(COALESCE(w.claim,
         (SELECT f.fact FROM facts f WHERE f.source_id=$1 AND f.visibility=w.visibility AND gbrain_fact_fingerprint(f.fact)=w.fact_hash LIMIT 1),
+        (SELECT f.fact FROM facts f WHERE f.source_id=$1 AND f.visibility=w.visibility AND gbrain_fact_fingerprint_v2(f.fact)=w.fact_hash LIMIT 1),
         (SELECT f.fact FROM facts f WHERE f.source_id=$1 AND f.visibility=w.visibility AND gbrain_fact_fingerprint_v1(f.fact)=w.fact_hash LIMIT 1))) AS norm
       FROM jsonb_to_recordset($2::text::jsonb) w(visibility text,fact_hash text,subject text,claim text)
     ) SELECT * FROM w`;
@@ -77,7 +78,7 @@ const CLAIM_MATCHES_SQL = `SELECT DISTINCT i.id,i.ambiguous
       FROM jsonb_to_recordset($1::text::jsonb) i(id integer,slug text,claim text,visibility text,ambiguous boolean)
       JOIN jsonb_to_recordset($2::text::jsonb) w(visibility text,fact_hash text,subject text)
         ON (i.visibility IS NULL OR i.visibility=w.visibility) AND (w.subject='*' OR w.subject=i.slug)
-          AND w.fact_hash IN (gbrain_fact_fingerprint(i.claim),gbrain_fact_fingerprint_v1(i.claim))`;
+          AND w.fact_hash IN (gbrain_fact_fingerprint(i.claim),gbrain_fact_fingerprint_v2(i.claim),gbrain_fact_fingerprint_v1(i.claim))`;
 
 const INLINE_FENCE_PAGES_SQL = `SELECT p.id,p.slug,p.compiled_truth,p.timeline FROM pages p
       WHERE p.source_id=$1 AND p.id>$3 AND ($5::text[] IS NULL OR p.slug=ANY($5::text[]))

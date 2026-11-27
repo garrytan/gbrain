@@ -20,8 +20,28 @@ import type { FileFinding, PageFinding, ScanRecord } from '../fence-repair/censu
 import type { PageReadScope } from '../types.ts';
 import type * as ProjectionBacklogSql from '../engine-sql/projection-backlog.ts';
 import type * as DoctorJoinSql from '../engine-sql/doctor-join.ts';
+import type * as SlugSpellingRepairSql from '../engine-sql/slug-spelling-repair.ts';
 
 export interface DoctorMembers {
+  // The legacy_slug_spellings check and gbrain repair slug-spelling (engine-sql/slug-spelling-repair.ts).
+  /** The tables of `tables` that row-level security applies to for the running role, in name order. */
+  readRowSecurityTables(tables: readonly string[]): Promise<string[]>;
+  /** Pages of every source (deleted included) whose slug has a capital or a non-printable-ASCII character, id above `afterId`, id order, 5000 a call. */
+  listSlugSpellingCandidates(afterId: number): Promise<SlugSpellingRepairSql.SlugSpellingCandidateRow[]>;
+  /** The database's server encoding (`SHOW server_encoding`; the spelling key needs UTF8). */
+  readServerEncoding(): Promise<string>;
+  /** The tables on the search path that row-level security applies to for the running role, in name order. */
+  readRowSecurityBrainTables(): Promise<string[]>;
+  /** The source row the slug-spelling preview reads (checkout, incarnation, slug-root mode), or null. */
+  readSlugRepairSource(sourceId: string): Promise<SlugSpellingRepairSql.SlugRepairSourceRow | null>;
+  /** One source's pages (deleted included) that may not be normal, id above `afterId`, id order, 5000 a call. */
+  listSourceSlugSpellingCandidates(sourceId: string, afterId: number): Promise<SlugSpellingRepairSql.SourceSlugSpellingCandidateRow[]>;
+  /** The source's pages other than `excludeId` whose spelling index key is one of `keys` (or, keys null, whose scan key is `scanKey`), id order. */
+  readSpellingKeyPages(sourceId: string, keys: readonly string[] | null, scanKey: string, excludeId: number): Promise<SlugSpellingRepairSql.SpellingKeyPageRow[]>;
+  /** The page row the slug-spelling move re-reads under its locks, or null. */
+  readSlugRepairPage(pageId: number, sourceId: string): Promise<SlugSpellingRepairSql.SourceSlugSpellingCandidateRow | null>;
+  /** The slug of page `pageId` when it belongs to `sourceId`, or null. */
+  readPageSlugInSource(pageId: number, sourceId: string): Promise<string | null>;
   // Doctor reads (engine-sql/doctor-reads.ts): the statements doctor checks ran through executeRaw.
 
   // Doctor reads, second set (engine-sql/doctor-derived.ts): the statements more doctor checks and their repairs ran through executeRaw.
@@ -69,6 +89,12 @@ export interface DoctorMembers {
   listOrphanGenerationCandidates(sourceIds: readonly string[], kind: string | null): Promise<DoctorDerivedSql.OrphanGenerationCandidateRow[]>;
   /** The atom provenance drift counts (none when the aggregate returned no row). */
   readAtomProvenanceCounts(): Promise<DoctorDerivedSql.AtomProvenanceCounts | undefined>;
+  /** The unchanged-body recheck's drifted atom groups of live inline pages, by page id then source hash (at most 200). */
+  listBodyRecheckGroups(): Promise<DoctorDerivedSql.BodyRecheckGroup[]>;
+  /** The body storage and body columns of the page with this id, or null. */
+  readBodyRecheckPage(pageId: number): Promise<DoctorDerivedSql.BodyRecheckPage | null>;
+  /** The newest 20 inline versions of the page that hold a body, newest first. */
+  listBodyRecheckVersions(pageId: number): Promise<DoctorDerivedSql.BodyRecheckVersion[]>;
   /** The 7-day extract rollup per kind; `withExpected: false` is the pre-v141 text. */
   readExtractRollup7d(withExpected: boolean): Promise<DoctorDerivedSql.ExtractRollupRow[]>;
   /** `extract --explain <kind>`: that kind's 7-day extract rollup aggregate (null columns when it has none). */
@@ -118,6 +144,8 @@ export interface DoctorMembers {
   listStaleEmbeddingEffects(sourceIds: string[] | null): Promise<DoctorPersistenceSql.StaleEmbeddingEffectRow[]>;
   /** Source bindings whose source is gone or was re-created, by source id, up to `limit` when given. */
   listOrphanBindingRows(limit: number | null): Promise<DoctorPersistenceSql.OrphanBindingRow[]>;
+  /** The online-built request indexes by name, in order: valid, missing (valid null) or building (phase set); a purge's preparation read too. */
+  readRequestIndexStates(names: readonly string[]): Promise<DoctorPersistenceSql.RequestIndexRow[]>;
   /** The persistence identity as text, or null when the schema has no `persistence_brain` row. */
   readPersistenceBrainIdText(): Promise<string | null>;
   /** Every managed worktree id. */
@@ -250,6 +278,12 @@ export interface DoctorMembers {
   listOrphanWorkspaceSources(suffix: string): Promise<Array<{ id: string }>>;
   /** Live clients that look self-registered with a scope matching `scopeRegex`; null when the grant audit schema is absent. */
   listPrivilegedDcrClients(scopeRegex: string): Promise<DoctorAccSql.PrivilegedDcrClient[] | null>;
+  /** Live pages whose `readable_by` names no valid reader, by source then slug (the first `limit`), each with the total. */
+  listMalformedReaderPages(limit: number): Promise<DoctorAccSql.MalformedReaderPageRow[]>;
+  /** Readers pages name that match no live member or group (or a group with no member), each with its page count and first page. */
+  listUnknownReaders(limit: number): Promise<DoctorAccSql.UnknownReaderRow[]>;
+  /** Live pages written in the last `days` days that gained `readable_by` since their newest earlier version, newest first. */
+  listRecentReaderNarrowings(days: number, limit: number): Promise<DoctorAccSql.ReaderNarrowingRow[]>;
   /** What the MCP request log occupies, in bytes (the engine's own measure). */
   readMcpRequestLogBytes(): Promise<number>;
   /** The MCP request log's row count: an estimate on Postgres, a count bounded to `limit` rows elsewhere. */

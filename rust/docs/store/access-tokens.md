@@ -3,18 +3,15 @@
 Part of the Minion jobs family ([jobs.md](jobs.md), next to [oauth-clients.md](oauth-clients.md)); the rules in
 [rust/README.md](../../README.md) ("The brain store") apply.
 
-The store keeps only the `access_tokens` columns the legacy-token mint, the read-floor command, the write grant read, the requester-scope read and the write-attribution name read touch. The SQL for the
-PGLite and PostgreSQL engines is in `src/core/engine-sql/access-tokens.ts`; the store serves the same members. Every other
-reader and writer of the table (verify, list, revoke, rescope, rotate, the read-side grant reads) is still raw SQL and stops on a Rust
-brain.
+The store keeps only the `access_tokens` columns the legacy-token mint, the read-floor command, the write grant read, the requester-scope read and the write-attribution name read
 touch. The SQL for the PGLite and PostgreSQL engines is in `src/core/engine-sql/access-tokens.ts` (mint, floor) and
 `src/core/engine-sql/access-credentials.ts` (list, grant read, liveness, revokes, the bearer check); the store serves the
 same members. Only `readLiveAccessToken` (the member-key setup compares it to the key file) and doctor's
 `listActiveAccessTokenRows` (the whole `SELECT *` row, cli-reads-doctor-acc.md) return a token hash; the
 store never logs one. The member binding columns (`member_id`, `may_act_for`, the four attest columns and
 `reads_unscoped`) are read and written by the credential binding members below. The grant edits of `gbrain auth rescope
---token` (`--sources`, `--operations`, `--takes-holders`, `--private-*`) and `--migrate-legacy` use the grant write members
-below; rotate is still raw SQL and stops on a Rust brain.
+--token` (`--sources`, `--operations`, `--takes-holders`, `--private-*`), `--attest-sources` and `--migrate-legacy` use the grant write and binding members
+below, so `gbrain auth rescope --token` marks the source on a Rust brain as on PGLite and Postgres (the bare-name form still stops on raw SQL in `resolveRescopeTarget`).
 
 | Member | Returns |
 | --- | --- |
@@ -25,13 +22,13 @@ below; rotate is still raw SQL and stops on a Rust brain.
 | `brain.readAccessTokenWriteGrant(id)` | `{ id, scopes, permissions, private_pages, private_facts, source_grant, source_id, federated_read, allowed_operations, takes_holders, grant_revision, revoked_at }` of the token, revoked ones included (`revoked_at` as ISO text, or null), or null for an id no token has. The grant `authorizeWrite` re-checks for a write a legacy token owns ([journal.md](journal.md)) |
 | `brain.readLiveAccessTokenScope(id)` | `{ reads_unscoped, created_at }` of the token when it is not revoked (`created_at` as ISO text; `reads_unscoped` as the stored opt-out time in ISO text, or null), or null for a revoked token or an id no token has |
 | `brain.setAccessTokenMinTrust(id, tier)` | null. Sets the token's read floor, or clears it with null. An id no token has changes nothing |
-| `brain.listAccessTokens()` | every token, revoked ones too, newest first (`ORDER BY created_at DESC`; a tie by id): `{ id, name, scopes, created_at, last_used_at, revoked_at, private_pages, private_facts, member_id }`, the columns `gbrain auth list` prints. `last_used_at` is the stored last-use time as ISO text, or null until stamped |
+| `brain.listAccessTokens()` | every token, revoked ones too, newest first (`ORDER BY created_at DESC`; a tie by id): `{ id, name, scopes, created_at, last_used_at, revoked_at, private_pages, private_facts, member_id, source_grant, source_id, federated_read, grant_revision, read_shared_revision }`, the columns `gbrain auth list` prints, including the grant columns its `write: ... reads: ... (+ shared)` line needs. `last_used_at` is the stored last-use time as ISO text, or null until stamped |
 | `brain.readActiveAccessTokenGrant(id)` | `{ permissions, private_pages }` of the token not revoked with this id, or null; the TypeScript member returns the field the caller asked for |
 | `brain.readAccessToken(id)` | the whole row of the token with this id (a UUID, so any case), revoked or not, or null: the same columns as `readActiveAccessTokenByHash` below, without `token_hash`. It serves the legacy-token read of `readJobPrincipal` (`SELECT * FROM access_tokens WHERE id = $1`); the TypeScript member makes the three times Dates. An id that is not a UUID finds nothing, where PostgreSQL refuses it with 22P02 |
 | `brain.accessTokenLive(id)` | whether a token not revoked has this id, compared as text (`id::text = $1`) |
 | `brain.revokeAccessTokensNamed(name)` | the ids it revoked, by id: stamps `revoked_at` on every token not revoked with exactly this name, in one write |
 | `brain.revokeAccessToken(id)` | the name of the token not revoked with this id after stamping its `revoked_at`, or null |
-| `brain.readActiveAccessTokenByHash(hash)` | the whole row (`SELECT *`) of the token not revoked with this hash, or null: the kept columns, `created_at` as ISO text, and `last_used_at` as ISO text (null until a check stamps it). It leaves out `token_hash`; the TypeScript member adds back the hash the caller passed and makes `created_at` a Date, as PGLite and PostgreSQL return them |
+| `brain.readActiveAccessTokenByHash(hash)` | the whole row (`SELECT *`) of the token not revoked with this hash, or null: the kept columns, `created_at` as ISO text, and `last_used_at` as ISO text (null until a check stamps it). It leaves out `token_hash`; the TypeScript member adds back the hash the caller passed and makes `created_at` a Date, as PGLite and PostgreSQL return them. A record that does not parse is skipped, so one damaged record does not refuse every sign-in, unless it could be the token asked for. That is a JSON record whose `token_hash` is this hash, or a record that is not JSON at all and whose bytes hold this hash, and then the read fails closed. The skip is silent (no log or counter) |
 | `brain.listUnboundTokenNames()` | the distinct names of the tokens not revoked and bound to no member, in byte order (`SELECT DISTINCT name COLLATE "C" ... ORDER BY name`) |
 | `brain.readLiveAccessToken(name)` | `{ member_id, token_hash, source_grant, source_id, federated_read, permissions }` of the token not revoked with exactly this name, or null. When several share the name, the oldest (then the lowest id) answers |
 | `brain.recordTokenSetupReads(name, reads)` | null. Sets `setup_reads` to `reads` in the `permissions` object of every token not revoked with this name, keeping the other fields, in one write; a token whose `permissions` is not an object is left alone |
@@ -62,10 +59,10 @@ engine by `src/commands/serve-http.ts`) and `validateToken` in `src/mcp/http-tra
 `touchAccessTokenLastUsed` stamps `last_used_at` (below). The remote job principal check
 (`assertCurrentRemoteJobPrincipal` in `src/core/minions/submission-authority.ts`) reads a legacy token through
 `readJobPrincipal`, which calls `readAccessToken`. `rescopeInTransaction` (`src/core/grants/legacy-token.ts`, behind
-`gbrain auth rescope`) calls `lockActiveAccessTokens`, then `bindCredential` for `--member` and `--attest-*`, and
-`writeAccessTokenGrant` and `writeAccessTokenPrivateGrant` for the grant flags; the active-source check is
-`listUnarchivedSourceIds` and the scope-source check reads the token's own `attest_sources` through
-`readCredentialBindingForUpdate`. `migrateLegacyTokens` (`auth rescope --migrate-legacy`) calls `lockLegacyAccessTokens`.
+`gbrain auth rescope --token`) calls `lockActiveAccessTokens` and the grant-write members. For binding flags,
+`runRescope` (`src/commands/auth.ts`) awaits `rescopeLegacyToken`, then separately calls `bindCredential` for `--member`
+and `--attest-*`. The active-source check uses `filterUnarchivedSourceIds`; the scope-source check reads the token's own
+`attest_sources` through `readCredentialBindingForUpdate`. `migrateLegacyTokens` (`auth rescope --migrate-legacy`) calls `lockLegacyAccessTokens`.
 
 ## Member binding
 
@@ -82,15 +79,16 @@ write a token's binding are served from these records (gbrain-store `jobs::crede
 | `readLiveMember('legacy_token', id)`, `readMayActFor('legacy_token', id)` | `brain.readLiveCredential`: the member and may_act_for of the token not revoked whose id text is exactly `id`, or null |
 | `readAccessTokenAttest(id)`, `readOauthClientAttest(clientId, { lock? })` | `brain.readCredentialAttest(kind, id)`: the attest columns and `member_id` of the token whose id text is exactly `id` with its `revoked_at`, or of the client with its `client_id`, `deleted_at`, `grant_types` and `confidential` (a secret hash is stored); a revoked token and a deleted client are read too, and `null` for no row | `attestRightOf` (access/actor.ts) reads a stored principal's right with them and leaves out a revoked or deleted row itself. The lock has nothing to wait for: the store runs one write at a time. |
 | `readAccessCredentials({ tokenName })`, `readAccessCredentials({ memberId })` | `brain.readAccessCredentials`: the active tokens with that name, oldest first (a tie by id); or the active tokens bound to the member by name in byte order (a tie by id), then the live clients by client id in byte order. The SQL sorts with `COLLATE "C"` and the same tie-break, so an `en_US` Postgres gives the same order |
+| `listOwnerCredentialRows(memberId)` | `brain.listOwnerCredentialRows`: `[{ kind, id, name, row }]`, the tokens not revoked and the clients not deleted bound to the member, a token's row its grant columns and `min_trust` (as `jsonb_build_object` builds them), a client's row the whole row less `client_secret_hash` (as `to_jsonb(c) - 'client_secret_hash'` prints it), by kind, name and id in byte order (`COLLATE "C"` in the SQL) |
 | `readAccessTokenWriteGrant(id)` | `brain.readAccessTokenWriteGrant`: the grant columns and `revoked_at` of the token with this id, revoked or not, or null; the write re-check refuses a revoked token with PGLite's text ([journal.md](journal.md)) |
-(`assertScopeSourceGrant`): the sources' share locks go through `lockRegisteredSourceIds` and their marks through
-`getSource`, so that branch works on a Rust brain too. `setMinTrust` and `setTokenMinTrust`
-`authorizeWrite` (`src/core/persistence/authority.ts`) calls `readAccessTokenWriteGrant` through the journal member of
-the same name when it re-checks a write a legacy token owns. `credentialScopeFor` (`src/core/access/requester-scope.ts`)
-calls `readLiveAccessTokenScope` for an agent job's legacy token, so the requester-scope gate compares its real creation
-time with the time the brain began to serve several people.
-`authorizeWrite` (`src/core/persistence/authority.ts`) reads `readAccessTokenWriteGrant` (journal.md): `findActiveAccessTokens`
-answers whether the token is live, and a live token's write stops on `engine_capability_missing`.
+
+`assertScopeSourceGrant` reads marked source configs through `readScopeSourceConfigs` and a token's own `attest_sources`
+through `readCredentialBindingForUpdate`; both reads are served on Rust.
+
+`authorizeWrite` (`src/core/persistence/authority.ts`) calls `readAccessTokenWriteGrant` when it re-checks a write a legacy
+token owns. It rejects a missing or revoked token and checks the current grant; the grant read itself is served on Rust.
+`credentialScopeFor` (`src/core/access/requester-scope.ts`) calls `readLiveAccessTokenScope` for an agent job's legacy token,
+so the requester-scope gate compares its real creation time with the time the brain began to serve several people.
 
 ## Constraints
 
@@ -111,7 +109,8 @@ A refused write leaves the row as it was (no row on an insert).
 `brain.touchAccessTokenLastUsed(id, unified)` stamps `last_used_at` with the store clock, at most once a minute: it skips a
 token stamped in the last 60 seconds, a token that is not there, and (when `unified` is true) a token with no `source_grant`,
 which is the legacy-shape row `resolveTokenGrant` converts first. With `unified` false it stamps any row. The id is
-compared lower-cased. A caller does not wait for it (`touchTokenLastUsed` ignores the result).
+compared lower-cased. It reads first and opens a write only when a stamp is due, and the write checks again. A caller does
+not wait for it (`touchTokenLastUsed` ignores the result).
 
 `brain.convertLegacyAccessTokenGrant(id, columns)` is the first-read conversion `resolveTokenGrant`
 (`src/core/grants/legacy-token.ts`, given the engine by both bearer checks and `gbrain access`) runs on a token with no

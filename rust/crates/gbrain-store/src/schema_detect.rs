@@ -1,5 +1,6 @@
 //! The three page-shape reads of `gbrain schema detect` (`engine-sql/schema-detect.ts`): `pageTypeTotals`,
-//! `pagePrefixSamples` and `countPagesByTypeForSource`.
+//! `pagePrefixSamples` and `countPagesByTypeForSource`; and the schema-pack path-prefix probes
+//! `countLivePagesAtPathPrefix` (lint) and `probeUntypedPathPrefix` (sync), which read every source's live pages.
 //!
 //! Each reads the live pages (`deleted_at` unset) of one source. A page's type is never null (`pages.type` is NOT
 //! NULL), so an untyped page has the empty type. A prefix is the slug up to and including its first `/` when at least
@@ -39,6 +40,22 @@ pub struct PagePrefixSamplesArgs {
 pub struct PageTypeCountsArgs {
     pub source_id: String,
     pub limit: u64,
+}
+
+/// `countLivePagesAtPathPrefix` input.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct PathPrefixArgs {
+    pub prefix: String,
+}
+
+/// `probeUntypedPathPrefix` input: the source when one is named (a null or empty id is every source).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct UntypedPathPrefixArgs {
+    pub prefix: String,
+    #[serde(default)]
+    pub source_id: Option<String>,
 }
 
 /// The slug's prefix: up to and including the first `/`, or `None` when the slug starts with `/`.
@@ -113,5 +130,45 @@ impl Store {
                 .map(|(t, cnt)| json!({ "type": t, "cnt": cnt }))
                 .collect(),
         ))
+    }
+
+    /// The live pages (every source) whose source path is `LIKE '<prefix>%'` (`\\` escapes, `%` and `_` wildcards in the
+    /// prefix too); a page with no source path never matches.
+    fn live_pages_at_path_prefix(&self, prefix: &str) -> Result<Vec<PageRecord>> {
+        let pattern = format!("{prefix}%");
+        let read = self.read()?;
+        let mut out = Vec::new();
+        for p in all_pages(&*read)? {
+            if p.deleted_at_us.is_some() {
+                continue;
+            }
+            if let Some(path) = p.source_path.as_deref()
+                && crate::facts::like(path, &pattern, false)?
+            {
+                out.push(p);
+            }
+        }
+        Ok(out)
+    }
+
+    /// `countLivePagesAtPathPrefix`: the live pages under the path prefix (schema-pack lint).
+    pub fn count_live_pages_at_path_prefix(&self, a: &PathPrefixArgs) -> Result<Value> {
+        Ok(json!(self.live_pages_at_path_prefix(&a.prefix)?.len()))
+    }
+
+    /// `probeUntypedPathPrefix`: `{ count, sample }` of the untyped live pages under the path prefix, in the source when
+    /// one is named; the sample is the first ten slugs in byte order, empty when the count is 0 (schema-pack sync).
+    pub fn probe_untyped_path_prefix(&self, a: &UntypedPathPrefixArgs) -> Result<Value> {
+        let source = a.source_id.as_deref().filter(|s| !s.is_empty());
+        let mut slugs: Vec<String> = self
+            .live_pages_at_path_prefix(&a.prefix)?
+            .into_iter()
+            .filter(|p| p.page_type.is_empty() && source.is_none_or(|s| s == p.source_id))
+            .map(|p| p.slug)
+            .collect();
+        let count = slugs.len();
+        slugs.sort();
+        slugs.truncate(10);
+        Ok(json!({ "count": count, "sample": slugs }))
     }
 }

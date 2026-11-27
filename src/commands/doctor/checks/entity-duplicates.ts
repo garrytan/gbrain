@@ -27,6 +27,7 @@ import { resolveNameVariant, VARIANT_ROW_COLUMNS } from '../../../core/verbs/ent
 import { doctorVerify } from '../check-fix.ts';
 import { DUPLICATE_KINDS, findDuplicateGroups } from '../../../core/entities/duplicates.ts';
 import { decidedSets, identityDrift, type IdentityDrift } from '../../../core/entities/identity-decisions.ts';
+import { AUTO_DECIDED_BY, autoLinksSince, collapsesSince } from '../../../core/entities/evidence/auto.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
 import { sortSourcesById } from '../../../core/source-rows.ts';
 import type { IdentityDecisionsRead, PendingIdentityMember } from '../../../core/engine-sql/identity-decisions.ts';
@@ -190,3 +191,37 @@ function driftLine(d: IdentityDrift): string {
 }
 
 export const entityDuplicatesEntry: DoctorEntry = { name: 'entity_duplicates', emits: ['entity_duplicates'], run: runEntityDuplicates };
+
+const AUTO_NAME = 'dedupe_auto_links';
+
+/**
+ * dedupe_auto_links (GST-3609 PR C): what gbrain dedupe auto --apply did in the last 24 hours, by class: the person links
+ * it recorded (C2) and the same-source pages it collapsed (C7), each class with its reject, undo and off commands.
+ */
+async function runDedupeAutoLinks(ctx: DoctorContext): Promise<Check[]> {
+  const engine = connectedEngine(ctx);
+  const checks: Check[] = [];
+  ctx.progress.heartbeat(AUTO_NAME);
+  try {
+    const since = Date.now() - 86_400_000;
+    const byClass = new Map<string, string[]>();
+    for (const d of autoLinksSince(await engine.listIdentityDecisions(), since)) {
+      const cls = d.decided_by.slice(AUTO_DECIDED_BY.length);
+      byClass.set(cls, [...byClass.get(cls) ?? [], d.decision_id]);
+    }
+    for (const c of await collapsesSince(engine, since)) byClass.set(c.class, [...byClass.get(c.class) ?? [], c.collapse]);
+    const classes = [...byClass].map(([cls, ids]) => ({ class: cls, links: ids.length,
+      reject: cls === 'C7' ? 'gbrain dedupe reject <collapse id>' : 'gbrain dedupe reject <identity id>',
+      undo: `gbrain dedupe undo ${ids.slice(0, SHOWN).join(' ')}`, off: `gbrain dedupe auto --off ${cls}` }));
+    const total = classes.reduce((n, c) => n + c.links, 0);
+    const text = classes.map(c => `${c.class} ${c.links} (a wrong one for good: ${c.reject}; undo: ${c.undo}${c.links > SHOWN ? ` and ${c.links - SHOWN} more` : ''}; all of them: ${c.off})`).join('; ');
+    checks.push({ name: 'dedupe_auto_links', status: 'ok',
+      message: total ? `${total} person page pair(s) linked or collapsed automatically in the last 24 hours: ${text}.` : 'No person pages linked or collapsed automatically in the last 24 hours.',
+      details: { links: total, classes } });
+  } catch (err) {
+    checks.push({ name: 'dedupe_auto_links', status: 'warn', message: `Automatic person links and collapses could not be read: ${err instanceof Error ? err.message : String(err)}. Health is unknown.` });
+  }
+  return checks;
+}
+
+export const dedupeAutoLinksEntry: DoctorEntry = { name: 'dedupe_auto_links', emits: ['dedupe_auto_links'], run: runDedupeAutoLinks };
