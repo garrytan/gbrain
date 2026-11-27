@@ -484,8 +484,8 @@ ownsSchemaTables	import_guards	no	0	no	-	-	-
 readManagedModeRows	import_guards	yes	1	no	yes	yes	serves
 getSourceStrictness	import_guards	yes	1	no	yes	yes	serves
 readPersistenceBrainId	import_guards	yes	1	no	yes	yes	serves
-readLocalWriterRow	import_guards	yes	1	no	yes	yes	refuses:persistence_journal
-insertLocalWriterRow	import_guards	yes	1	no	yes	yes	refuses:persistence_journal
+readLocalWriterRow	import_guards	yes	1	no	yes	yes	serves
+insertLocalWriterRow	import_guards	yes	1	no	yes	yes	serves
 readTransactionSettings	import_guards	yes	1	no	yes	yes	serves
 applyTransactionSettings	import_guards	yes	2	no	yes	yes	serves
 readLedgerSource	import_guards	yes	1	no	yes	yes	refuses:persistence_journal
