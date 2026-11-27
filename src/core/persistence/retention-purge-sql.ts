@@ -81,3 +81,18 @@ export function managedPurgeCandidatesSql(): string {
       WHERE p.deleted_at IS NOT NULL AND p.deleted_at < now() - ($1 || ' hours')::interval AND ${purgeHoldsSql('p', 's', '$2::int[]')} AND p.id <> ALL($3::int[])
       ORDER BY p.deleted_at ASC, p.source_id COLLATE "C" ASC, p.slug COLLATE "C" ASC`;
 }
+
+/** purge-deleted.ts readRederiveHeldConcepts: the concept tombstones a purge input hid, whose re-derive mark is at their delete. */
+export const REDERIVE_HELD_CONCEPTS_SQL = `SELECT p.id FROM pages p WHERE p.deleted_at IS NOT NULL AND p.type = 'concept'
+    AND EXISTS (SELECT 1 FROM needs_rederive n WHERE n.derived_table = 'pages' AND n.derived_id = p.id::text AND n.marked_at = p.deleted_at)`;
+/** purge-deleted.ts purgeExpired (the `only` filter's read); `$1` hours. */
+export const EXPIRED_PAGES_SQL = `SELECT id, source_id, slug FROM pages WHERE deleted_at IS NOT NULL AND deleted_at < now() - ($1 || ' hours')::interval`;
+/** purge-deleted.ts purgeExpired (the in-purge recheck's read); `$1` hours. */
+export const EXPIRED_PAGE_IDS_SQL = `SELECT id FROM pages WHERE deleted_at IS NOT NULL AND deleted_at < now() - ($1 || ' hours')::interval`;
+
+/** purge-deleted.ts purgeOwedPages: the owed pages expired past `$2` hours under every page hold; `$1` the page ids. */
+export function owedExpiredPagesSql(): string {
+  return `SELECT p.id, p.source_id, p.slug FROM pages p WHERE p.id = ANY($1::int[])
+    AND p.deleted_at IS NOT NULL AND p.deleted_at < now() - ($2 || ' hours')::interval AND ${identityDowngradePurgeHold('p')} AND ${atomRetirementPurgeHold('p')}
+    AND ${derivedRetirementPurgeHold('p')} AND ${derivedOriginPurgeHold('p')} ORDER BY p.deleted_at, p.id`;
+}

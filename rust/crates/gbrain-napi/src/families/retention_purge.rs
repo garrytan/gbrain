@@ -162,4 +162,44 @@ impl Brain {
             s.list_expiring_origin_pages(&hours, honor_aliases)
         })
     }
+
+    /// `listRederiveHeldConceptIds()`: resolves the held concept tombstones' ids, by id.
+    #[napi]
+    pub fn list_rederive_held_concept_ids<'env>(
+        &self,
+        env: &'env Env,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_rederive_held_concept_ids())
+    }
+
+    /// `listExpiredPages(hours)`: resolves `[{ id, source_id, slug }]`, by id.
+    #[napi]
+    pub fn list_expired_pages<'env>(
+        &self,
+        env: &'env Env,
+        hours: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_expired_pages(&hours))
+    }
+
+    /// `listExpiredPageIds(hours)`: resolves the expired tombstones' ids, by id.
+    #[napi]
+    pub fn list_expired_page_ids<'env>(
+        &self,
+        env: &'env Env,
+        hours: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_expired_page_ids(&hours))
+    }
+
+    /// `listOwedExpiredPages(ids, hours)`: resolves `[{ id, source_id, slug }]`, oldest first.
+    #[napi]
+    pub fn list_owed_expired_pages<'env>(
+        &self,
+        env: &'env Env,
+        ids: Vec<i64>,
+        hours: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_owed_expired_pages(&ids, &hours))
+    }
 }

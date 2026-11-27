@@ -4230,6 +4230,29 @@ const PINS: Pin[] = [
     texts: () => ["SELECT current_setting('jit') AS jit", 'BEGIN READ WRITE; SET LOCAL jit = off; SET LOCAL statement_timeout = 120000', `SELECT p.id, p.source_id, p.slug FROM pages p
       WHERE p.deleted_at IS NOT NULL AND p.deleted_at < now() - ($1 || ' hours')::interval AND (p.type = 'atom' OR NOT ${privacyPartSql('p')}) ORDER BY p.id`, 'COMMIT'],
   },
+  {
+    from: 'src/core/persistence/purge-deleted.ts:34 readRederiveHeldConcepts, at 85ad984039',
+    case: { method: 'listRederiveHeldConceptIds', variant: 'default', run: e => e.listRederiveHeldConceptIds() },
+    texts: [`SELECT p.id FROM pages p WHERE p.deleted_at IS NOT NULL AND p.type = 'concept'
+    AND EXISTS (SELECT 1 FROM needs_rederive n WHERE n.derived_table = 'pages' AND n.derived_id = p.id::text AND n.marked_at = p.deleted_at)`],
+  },
+  {
+    from: 'src/core/persistence/purge-deleted.ts:450 purgeOwedPages, at 85ad984039',
+    case: { method: 'listOwedExpiredPages', variant: 'default', run: e => e.listOwedExpiredPages([1, 2], '72') },
+    texts: () => [`SELECT p.id, p.source_id, p.slug FROM pages p WHERE p.id = ANY($1::int[])
+    AND p.deleted_at IS NOT NULL AND p.deleted_at < now() - ($2 || ' hours')::interval AND ${identityDowngradePurgeHold('p')} AND ${atomRetirementPurgeHold('p')}
+    AND ${derivedRetirementPurgeHold('p')} AND ${derivedOriginPurgeHold('p')} ORDER BY p.deleted_at, p.id`],
+  },
+  {
+    from: 'src/core/persistence/purge-deleted.ts:494 purgeExpired (the only filter), at 85ad984039',
+    case: { method: 'listExpiredPages', variant: 'default', run: e => e.listExpiredPages('72') },
+    texts: [`SELECT id, source_id, slug FROM pages WHERE deleted_at IS NOT NULL AND deleted_at < now() - ($1 || ' hours')::interval`],
+  },
+  {
+    from: 'src/core/persistence/purge-deleted.ts:499 purgeExpired (the recheck), at 85ad984039',
+    case: { method: 'listExpiredPageIds', variant: 'default', run: e => e.listExpiredPageIds('72') },
+    texts: [`SELECT id FROM pages WHERE deleted_at IS NOT NULL AND deleted_at < now() - ($1 || ' hours')::interval`],
+  },
 ];
 
 type PinPrivacy = 'none' | 'caller' | 'floor';

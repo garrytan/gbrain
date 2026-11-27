@@ -1871,6 +1871,10 @@ export const DOMAIN_OF: Record<string, string> = {
   'listReleasedPurgeOrigins': OOS.callerRawSql,
   'listManagedPurgeCandidates': OOS.callerRawSql,
   'listExpiringOriginPages': OOS.callerRawSql,
+  'listRederiveHeldConceptIds': OOS.callerRawSql,
+  'listExpiredPages': OOS.callerRawSql,
+  'listExpiredPageIds': OOS.callerRawSql,
+  'listOwedExpiredPages': OOS.callerRawSql,
   'hasExtractedEvents': OOS.writeMisc,
   'upsertChronicleRow': OOS.callerRawSql,
   // the write-time chronicle decision's other statements (engine-sql/chronicle-ledger.ts)

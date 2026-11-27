@@ -174,6 +174,7 @@ pub use receipt_list::{IncarnationRequestFilter, WriteRequestListFilter};
 pub use retention_purge::{
     ExpiringOrigin, ManagedPurgeCandidate, PurgeFailureRow, ReleasedPurgeOrigin,
 };
+pub(crate) use retention_purge::{identity_downgrade_open, origin_parked};
 pub use sync_pass_pages::{SyncImportPageQuery, SyncImportPageWindow};
 pub use sync_run_reads::SyncAdmissionEffectsQuery;
 pub use topology::TopologyChangeInsert;

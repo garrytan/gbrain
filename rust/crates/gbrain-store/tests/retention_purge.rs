@@ -6,6 +6,7 @@ mod common;
 
 use common::{TempDir, open};
 use gbrain_store::Store;
+use gbrain_store::page_ops::PurgeOptions;
 use gbrain_store::pages::{PageInput, PutPageOptions};
 use gbrain_store::persistence::PurgeFailureRow;
 use serde_json::{Value, json};
@@ -201,4 +202,67 @@ fn every_member_refuses_a_nul_in_its_op() {
     assert!(store.delete_purge_park_record("a\0b", "k").is_err());
     assert!(store.mark_purge_parks_inactive("op", "a\0b").is_err());
     assert!(store.drop_rearmed_purge_parks("op", "a\0b").is_err());
+}
+
+#[test]
+fn purge_deleted_pages_keeps_an_origin_park_and_an_open_downgrade_and_refuses_a_downgrade_time_it_cannot_read()
+ {
+    let (_dir, store) = brain("retention-purge-holds");
+    put(&store, "h/plain");
+    let parked = put(&store, "h/parked");
+    let down = put(&store, "h/down");
+    let closed = put(&store, "h/closed");
+    for slug in ["h/plain", "h/parked", "h/down", "h/closed"] {
+        store.soft_delete_page(slug, Some("default")).unwrap();
+    }
+    store
+        .upsert_derived_origin_park(parked, &json!({ "slug": "h/parked" }))
+        .unwrap();
+    let deleted_at = |id: i64| {
+        store.list_released_purge_origins(&[id], &[], "0").unwrap()[0]
+            .deleted_at
+            .clone()
+    };
+    let open = json!([{ "old_deleted_at": deleted_at(down) }]);
+    let kept = json!([{ "old_deleted_at": deleted_at(closed), "disposition": "kept" }]);
+    store
+        .write_op_checkpoint_record("sync-identity-downgrade", &down.to_string(), Some(&open))
+        .unwrap();
+    store
+        .write_op_checkpoint_record("sync-identity-downgrade", &closed.to_string(), Some(&kept))
+        .unwrap();
+    let preview = store
+        .purge_deleted_pages(
+            0.0,
+            &serde_json::from_value::<PurgeOptions>(json!({ "dryRun": true })).unwrap(),
+        )
+        .unwrap();
+    let mut slugs: Vec<String> = serde_json::from_value(preview["slugs"].clone()).unwrap();
+    slugs.sort();
+    assert_eq!(slugs, vec!["h/closed", "h/plain"]);
+    let bad = json!([{ "old_deleted_at": "not a time" }]);
+    store
+        .write_op_checkpoint_record("sync-identity-downgrade", &parked.to_string(), Some(&bad))
+        .unwrap();
+    assert!(
+        store
+            .purge_deleted_pages(0.0, &PurgeOptions::default())
+            .is_err()
+    );
+}
+
+#[test]
+fn the_held_concepts_are_the_concept_tombstones_marked_at_their_delete() {
+    let (_dir, store) = brain("retention-held-concepts");
+    let id = put(&store, "c/plain");
+    store.soft_delete_page("c/plain", Some("default")).unwrap();
+    assert_eq!(
+        store.list_rederive_held_concept_ids().unwrap(),
+        Vec::<u64>::new()
+    );
+    assert_eq!(store.list_expired_page_ids("0").unwrap(), vec![id as u64]);
+    assert_eq!(
+        store.list_expired_page_ids("1000").unwrap(),
+        Vec::<u64>::new()
+    );
 }

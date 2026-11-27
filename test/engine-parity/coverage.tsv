@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2468/2495
+# covered: 2472/2499
 # lifecycle: 12/12
 # pages: 141/142
 # search: 8/8
@@ -33,7 +33,7 @@
 # config: 7/7
 # import_guards: 13/13
 # persistence_journal: 282/285
-# retention_purge: 12/12
+# retention_purge: 16/16
 # label_door: 6/6
 # page_purge: 46/46
 # mention_pass: 40/40
@@ -134,20 +134,20 @@ withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
 listCatalogRelations	lifecycle	yes	1	no	yes	yes	serves
 readCatalogSchemaVersion	lifecycle	yes	1	no	yes	yes	serves
 listCatalogForeignKeys	lifecycle	yes	1	no	yes	yes	serves
-getPage	pages	yes	289	yes	yes	yes	serves
+getPage	pages	yes	290	yes	yes	yes	serves
 readPageSnapshot	pages	yes	104	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	7	no	yes	yes	serves
 lockPageKeys	pages	yes	17	no	yes	yes	serves
-putPage	pages	yes	1374	yes	yes	yes	serves
+putPage	pages	yes	1377	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	45	yes	yes	yes	serves
 deletePages	pages	yes	10	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	2	yes	yes	yes	serves
-softDeletePage	pages	yes	350	yes	yes	yes	serves
+softDeletePage	pages	yes	353	yes	yes	yes	serves
 softDeletePages	pages	yes	4	yes	yes	yes	serves
 restorePage	pages	yes	22	yes	yes	yes	serves
-purgeDeletedPages	pages	yes	12	no	yes	yes	serves
+purgeDeletedPages	pages	yes	14	no	yes	yes	serves
 listPages	pages	yes	22	yes	yes	yes	serves
 findPages	pages	yes	5	no	yes	yes	serves
 countPagesBy	pages	yes	1	no	yes	yes	serves
@@ -221,7 +221,7 @@ readLivePagesByIds	pages	yes	1	no	yes	yes	serves
 listStaleAtoms	pages	yes	2	no	yes	yes	serves
 getPageSealState	pages	yes	6	no	yes	yes	serves
 refreshPageOrigin	pages	yes	10	no	yes	yes	serves
-readLivePageIdBySlug	pages	yes	17	no	yes	yes	serves
+readLivePageIdBySlug	pages	yes	20	no	yes	yes	serves
 readPageTierRef	pages	yes	1	no	yes	yes	serves
 readPageTierRows	pages	yes	1	no	yes	yes	serves
 pageHasFrontmatterKey	pages	yes	1	no	yes	yes	serves
@@ -1078,9 +1078,9 @@ listWriterVersions	persistence_journal	yes	2	no	yes	yes	serves
 recentWriterVersions	persistence_journal	yes	2	no	yes	yes	serves
 readSegmentedGateEvidence	persistence_journal	yes	3	no	yes	yes	serves
 readLiveJobIds	persistence_journal	yes	1	no	yes	yes	serves
-releaseStaleOriginParkHolds	retention_purge	yes	1	no	yes	yes	serves
-listOwedPurgeRecords	retention_purge	yes	1	no	yes	yes	serves
-pruneOwedPurgeRecords	retention_purge	yes	1	no	yes	yes	serves
+releaseStaleOriginParkHolds	retention_purge	yes	2	no	yes	yes	serves
+listOwedPurgeRecords	retention_purge	yes	2	no	yes	yes	serves
+pruneOwedPurgeRecords	retention_purge	yes	2	no	yes	yes	serves
 pruneOriginParkRecords	retention_purge	yes	1	no	yes	yes	serves
 prunePurgeParkRecords	retention_purge	yes	1	no	yes	yes	serves
 recordPurgeFailureRecord	retention_purge	yes	2	no	yes	yes	serves
@@ -1089,7 +1089,11 @@ markPurgeParksInactive	retention_purge	yes	1	no	yes	yes	serves
 dropRearmedPurgeParks	retention_purge	yes	1	no	yes	yes	serves
 listReleasedPurgeOrigins	retention_purge	yes	1	no	yes	yes	serves
 listManagedPurgeCandidates	retention_purge	yes	1	no	yes	yes	serves
-listExpiringOriginPages	retention_purge	yes	1	no	yes	yes	serves
+listExpiringOriginPages	retention_purge	yes	2	no	yes	yes	serves
+listRederiveHeldConceptIds	retention_purge	yes	1	no	yes	yes	serves
+listExpiredPages	retention_purge	yes	1	no	yes	yes	serves
+listExpiredPageIds	retention_purge	yes	2	no	yes	yes	serves
+listOwedExpiredPages	retention_purge	yes	1	no	yes	yes	serves
 readPrivacyOrigin	label_door	yes	2	no	yes	yes	serves
 listOriginDependents	label_door	yes	2	no	yes	yes	serves
 listCheckoutFiles	label_door	yes	2	no	yes	yes	serves
@@ -1139,7 +1143,7 @@ recordDerivationPurgeRow	page_purge	yes	4	no	yes	yes	serves
 continueDerivationSweep	page_purge	yes	2	no	yes	yes	serves
 listDerivationClaimForms	page_purge	yes	10	no	yes	yes	serves
 listPurgeOrigins	page_purge	yes	2	no	yes	yes	serves
-upsertDerivedOriginPark	page_purge	yes	7	no	yes	yes	serves
+upsertDerivedOriginPark	page_purge	yes	10	no	yes	yes	serves
 recordOwedPurgeRows	page_purge	yes	5	no	yes	yes	serves
 deleteOriginHoldRows	page_purge	yes	4	no	yes	yes	serves
 readSegmentedPageSealed	mention_pass	yes	2	no	yes	yes	serves
@@ -1764,7 +1768,7 @@ recordDerivationEdges	facts_trust	yes	13	no	yes	yes	serves
 expireDerivedFacts	facts_trust	yes	3	no	yes	yes	serves
 deactivateDerivedTakes	facts_trust	yes	3	no	yes	yes	serves
 softDeleteDerivedPages	facts_trust	yes	3	no	yes	yes	serves
-markNeedsRederive	facts_trust	yes	4	no	yes	yes	serves
+markNeedsRederive	facts_trust	yes	5	no	yes	yes	serves
 readMemberPageWithdrawal	facts_trust	yes	3	no	yes	yes	serves
 readFactVisibility	facts_trust	yes	4	no	yes	yes	serves
 readReplacementTarget	facts_trust	yes	6	no	yes	yes	serves

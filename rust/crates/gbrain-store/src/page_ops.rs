@@ -25,8 +25,8 @@
 //! page or the version is segmented, before it writes anything.
 //!
 //! `purgeDeletedPages` keeps the tombstones PGLite's derived and atom retirement holds keep
-//! (`PurgeHolds`); rust/docs/store/page_ops.md cites each rule and names the two `op_checkpoints`
-//! holds it does not apply.
+//! (`PurgeHolds`) and the two `op_checkpoints` holds (an open identity downgrade, an origin park);
+//! rust/docs/store/page_ops.md cites each rule.
 
 use crate::env::{Env, iso, parse_iso};
 use crate::error::{Result, StoreError};
@@ -633,9 +633,8 @@ pub(crate) fn restorable_atoms(pages: &[PageRecord]) -> HashSet<u64> {
 /// The purge holds that read only the page rows and `config`, at `now` (PGLite's statement clock): the
 /// derived retirement hold (`derivedRetirementPurgeHold`, `derived-retirement-hold.ts:38-41`) and the
 /// atom retirement hold (`atomRetirementPurgeHold`, `atom-retirement-hold.ts:80-84`). Each window is
-/// open while `deleted_at > now - days`. The two `op_checkpoints` holds are applied by the retention
-/// purge's candidate reads (`persistence/retention_purge.rs`), not by `purge_deleted_pages`: see
-/// `rust/docs/store/page_ops.md`.
+/// open while `deleted_at > now - days`. `purge_deleted_pages` applies the two `op_checkpoints` holds
+/// beside these (`persistence::identity_downgrade_open`, `persistence::origin_parked`).
 pub(crate) struct PurgeHolds {
     now: i64,
     restore_days: i64,
@@ -1029,7 +1028,7 @@ impl Store {
     /// `purgeDeletedPages(olderThanHours, { dryRun?, excludeIds? })`: the pages soft-deleted more
     /// than `floor(hours)` hours ago (an age that is NaN, negative or not finite is refused with
     /// `invalid_argument` before anything is read or written), minus `excludeIds` and the pages a retirement hold
-    /// keeps (`PurgeHolds`), ordered by `deleted_at`, then slug. Each purged page goes through
+    /// (`PurgeHolds`), an open identity downgrade or an origin park keeps, ordered by `deleted_at`, then slug. Each purged page goes through
     /// `remove_page` and `scrub_purged_slugs`, as `deletePages` does. A dry run returns
     /// `{ slugs, count, pages: [{ slug, source_id, deleted_at }] }`; a real run removes them in one
     /// transaction and returns the same three fields.
@@ -1052,12 +1051,19 @@ impl Store {
             let cutoff = now.saturating_sub(hours.saturating_mul(3_600_000_000));
             let all = all_pages(read)?;
             let holds = PurgeHolds::read(read, &all, now)?;
-            let mut pages: Vec<PageRecord> = all
-                .into_iter()
-                .filter(|p| p.deleted_at_us.is_some_and(|d| d < cutoff))
-                .filter(|p| !excluded.contains(&(p.id as i64)))
-                .filter(|p| !holds.holds(p))
-                .collect();
+            let mut pages: Vec<PageRecord> = Vec::new();
+            for p in all {
+                if !p.deleted_at_us.is_some_and(|d| d < cutoff)
+                    || excluded.contains(&(p.id as i64))
+                    || holds.holds(&p)
+                    // The two `op_checkpoints` holds: an open rename-identity downgrade (#6729) and an origin park (GST-2689).
+                    || crate::persistence::identity_downgrade_open(read, &p)?
+                    || crate::persistence::origin_parked(read, &p)?
+                {
+                    continue;
+                }
+                pages.push(p);
+            }
             pages.sort_by(|a, b| {
                 a.deleted_at_us
                     .cmp(&b.deleted_at_us)

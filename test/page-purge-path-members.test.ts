@@ -249,13 +249,13 @@ describe('the purge path calls only what the list names', () => {
     expect(await purgePathStops({ kind: 'pglite' })).toEqual([]);
     expect(await purgePathStops({ kind: 'postgres' })).toEqual([]);
     const stops = await purgePathStops({ kind: 'rust' });
-    // A delete_page purge has no stop left on main: every member it calls is served (the retention purge keeps the raw
-    // reads of its unmanaged expiry).
+    // A delete_page purge has no stop left on main: every member it calls is served.
     for (const stop of stops) expect(PURGE_PATH).toContain(stop.entry);
     expect(stops.map(stop => stop.name)).toEqual(PURGE_PATH
       .filter(entry => entry.entry !== 'retention' && ('site' in entry ? entry.stop : entry.refuses || rustMemberCapability(entry.member) !== null))
       .map(purgeEntryName));
-    expect((await purgePathStops({ kind: 'rust' }, 'retention')).length).toBeGreaterThan(stops.length);
+    // The retention purge's raw reads are typed members now (engine-sql/retention-purge.ts): it adds no stop.
+    expect(await purgePathStops({ kind: 'rust' }, 'retention')).toEqual(stops);
   });
 
   test('every stop another lane owns names its due date, in the list and in the refusal detail', async () => {

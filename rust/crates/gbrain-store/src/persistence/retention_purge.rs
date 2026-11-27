@@ -162,6 +162,38 @@ fn jsonb_concat(left: Option<&Value>, right: Value) -> Value {
     }
 }
 
+/// The identity-downgrade record of `page` is open (`identityDowngradePurgeHold`): no `disposition`, and the page is
+/// soft-deleted at the record's `old_deleted_at` instant. Text the timestamptz cast cannot parse refuses, as the cast does.
+pub(crate) fn identity_downgrade_open(read: &dyn KvRead, page: &PageRecord) -> Result<bool> {
+    let Some(row) = get_json::<HousekeepingRow>(
+        read,
+        &parent_key(IDENTITY_DOWNGRADE_OP, &page.id.to_string())?,
+    )?
+    else {
+        return Ok(false);
+    };
+    let Some(doc) = first_doc(&row) else {
+        return Ok(false);
+    };
+    if field_text(doc, "disposition").is_some() {
+        return Ok(false);
+    }
+    let Some(at) = field_text(doc, "old_deleted_at") else {
+        return Ok(false);
+    };
+    let at = parse_timestamptz(&at, "old_deleted_at").map_err(|_| {
+        StoreError::invalid(format!(
+            "invalid input syntax for type timestamp with time zone: \"{at}\""
+        ))
+    })?;
+    Ok(page.deleted_at_us == Some(at))
+}
+
+/// An origin park (op `derived-origin-park`) holds `page` (`derivedOriginPurgeHold`).
+pub(crate) fn origin_parked(read: &dyn KvRead, page: &PageRecord) -> Result<bool> {
+    Ok(get_json::<HousekeepingRow>(read, &parent_key(PARK_OP, &page.id.to_string())?)?.is_some())
+}
+
 /// The holds a released-origin read keeps (`identityDowngradePurgeHold`, `atomRetirementPurgeHold`,
 /// `derivedRetirementPurgeHold`): true when one of them keeps `page`.
 struct RetentionHolds {
@@ -175,35 +207,8 @@ impl RetentionHolds {
         })
     }
 
-    /// The identity-downgrade record of the page is open: no `disposition`, and the page is soft-deleted at the record's
-    /// `old_deleted_at` instant. Text the timestamptz cast cannot parse refuses, as the cast does.
-    fn identity_downgrade_open(read: &dyn KvRead, page: &PageRecord) -> Result<bool> {
-        let Some(row) = get_json::<HousekeepingRow>(
-            read,
-            &parent_key(IDENTITY_DOWNGRADE_OP, &page.id.to_string())?,
-        )?
-        else {
-            return Ok(false);
-        };
-        let Some(doc) = first_doc(&row) else {
-            return Ok(false);
-        };
-        if field_text(doc, "disposition").is_some() {
-            return Ok(false);
-        }
-        let Some(at) = field_text(doc, "old_deleted_at") else {
-            return Ok(false);
-        };
-        let at = parse_timestamptz(&at, "old_deleted_at").map_err(|_| {
-            StoreError::invalid(format!(
-                "invalid input syntax for type timestamp with time zone: \"{at}\""
-            ))
-        })?;
-        Ok(page.deleted_at_us == Some(at))
-    }
-
     fn holds(&self, read: &dyn KvRead, page: &PageRecord) -> Result<bool> {
-        Ok(self.retirement.holds(page) || Self::identity_downgrade_open(read, page)?)
+        Ok(self.retirement.holds(page) || identity_downgrade_open(read, page)?)
     }
 }
 
@@ -551,6 +556,86 @@ impl Store {
             });
         }
         Ok(out)
+    }
+
+    /// `listRederiveHeldConceptIds()`: the concept tombstones whose re-derive mark (`needs_rederive`, table `pages`) was set
+    /// at their own delete instant, by id.
+    pub fn list_rederive_held_concept_ids(&self) -> Result<Vec<u64>> {
+        let read = self.read()?;
+        let read: &dyn KvRead = &*read;
+        let mut out = Vec::new();
+        for page in all_pages(read)? {
+            let Some(deleted) = page.deleted_at_us else {
+                continue;
+            };
+            if page.page_type == "concept"
+                && crate::generations::needs_rederive::marked_at(read, "pages", page.id)?
+                    == Some(deleted)
+            {
+                out.push(page.id);
+            }
+        }
+        out.sort_unstable();
+        Ok(out)
+    }
+
+    /// `listExpiredPages(hours)`: every tombstone deleted before now minus `hours`, by id.
+    pub fn list_expired_pages(&self, hours: &str) -> Result<Vec<ExpiringOrigin>> {
+        let read = self.read()?;
+        let cutoff = cutoff_us(self.env.now_micros(), hours)?;
+        let mut pages: Vec<ExpiringOrigin> = all_pages(&*read)?
+            .into_iter()
+            .filter(|p| p.deleted_at_us.is_some_and(|at| at < cutoff))
+            .map(|p| ExpiringOrigin {
+                id: p.id,
+                source_id: p.source_id,
+                slug: p.slug,
+            })
+            .collect();
+        pages.sort_by_key(|p| p.id);
+        Ok(pages)
+    }
+
+    /// `listExpiredPageIds(hours)`: the ids of `listExpiredPages`.
+    pub fn list_expired_page_ids(&self, hours: &str) -> Result<Vec<u64>> {
+        Ok(self
+            .list_expired_pages(hours)?
+            .into_iter()
+            .map(|p| p.id)
+            .collect())
+    }
+
+    /// `listOwedExpiredPages(ids, hours)`: the tombstones among `ids` deleted before now minus `hours` that no
+    /// identity-downgrade, atom-retirement, derived-retirement or origin-park hold keeps, by `deleted_at`, then id.
+    pub fn list_owed_expired_pages(&self, ids: &[i64], hours: &str) -> Result<Vec<ExpiringOrigin>> {
+        let read = self.read()?;
+        let read: &dyn KvRead = &*read;
+        let now = self.env.now_micros();
+        let cutoff = cutoff_us(now, hours)?;
+        let mut pages = Vec::new();
+        for id in id_set(ids) {
+            if let Some(page) = read_page_by_id(read, id)?
+                && page.deleted_at_us.is_some_and(|at| at < cutoff)
+            {
+                pages.push(page);
+            }
+        }
+        let holds = RetentionHolds::read(read, &all_pages(read)?, now)?;
+        let mut kept = Vec::new();
+        for page in pages {
+            if !holds.holds(read, &page)? && !origin_parked(read, &page)? {
+                kept.push(page);
+            }
+        }
+        kept.sort_by(|a, b| a.deleted_at_us.cmp(&b.deleted_at_us).then(a.id.cmp(&b.id)));
+        Ok(kept
+            .into_iter()
+            .map(|p| ExpiringOrigin {
+                id: p.id,
+                source_id: p.source_id,
+                slug: p.slug,
+            })
+            .collect())
     }
 }
 

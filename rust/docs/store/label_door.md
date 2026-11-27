@@ -88,10 +88,16 @@ text, and a page-keyed record joins its page only when its fingerprint is the pa
 - `listExpiringOriginPages(hours)`: the tombstones deleted before the cutoff that are origins (`is_origin`), by id. The
   TypeScript member passes `honorAliases`.
 
+- `listRederiveHeldConceptIds()`: the concept tombstones whose `needs_rederive` mark (table `pages`) was set at their own
+  delete instant, by id.
+- `listExpiredPages(hours)` and `listExpiredPageIds(hours)`: every tombstone deleted before the cutoff, by id (the
+  statements have no order; the callers use them as sets).
+- `listOwedExpiredPages(ids, hours)`: the tombstones among `ids` deleted before the cutoff under the identity-downgrade,
+  retirement and origin-park holds, by `deleted_at`, then id.
+
 An hour count is text, as the statements bind it; text that is not a finite number refuses, as the interval cast does.
-The unmanaged expiry's own reads (`purgeExpired` and `readRederiveHeldConcepts` in `persistence/purge-deleted.ts`) still
-run through `executeRaw`, so the retention purge on a Rust brain stops at the pre-write check before it writes anything
-(`persistence/purge-path-members.ts`).
+With these members the retention purge has no raw-SQL stop on a Rust brain (`persistence/purge-path-members.ts`), and the
+store's `purgeDeletedPages` applies all four page holds (page_ops.md, "The purgeDeletedPages holds").
 
 ## What still refuses
 

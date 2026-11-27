@@ -71,20 +71,16 @@ export interface PurgePathMember<E extends string = 'retention'> extends Base<E>
 export interface PurgePathSite<E extends string = 'retention'> extends Base<E> { site: string; guarded?: string; stop?: string }
 export type PurgePathEntry<E extends string = 'retention'> = PurgePathMember<E> | PurgePathSite<E>;
 
-const { ours, retention, beliefProbe, requestIndexes } = PURGE_OWNERS;
+const { ours, beliefProbe, requestIndexes } = PURGE_OWNERS;
 const { nov25 } = PURGE_DUE;
 const served = (owner: string, ...members: Array<keyof BrainEngine & string>): PurgePathMember[] => members.map(member => ({ member, owner }));
 
 /**
- * Retention-only raw sites: the expiry of a brain without managed persistence (purgeExpired's unmanaged branch). The
- * carry's parks, the owed-purge records and the managed candidate selection are typed members the Rust store serves
- * (engine-sql/retention-purge.ts, listed below); these reads are not yet, so a retention purge on a Rust brain still
- * stops here, before it writes anything.
+ * Retention-only raw sites that stop a Rust purge. None is left: the carry's parks, the owed-purge records, the
+ * candidate selection and the unmanaged expiry's reads are typed members the Rust store serves (engine-sql/
+ * retention-purge.ts, listed below). A new retention-only raw site goes here with its owner.
  */
-const RETENTION_STOPS: PurgePathSite[] = [
-  ['<anonymous> (persistence/purge-deleted.ts)', "purgeExpired's unmanaged expiry: the expired-page reads of its purge transaction (the `only` filter's and the recheck's)"],
-  ['readRederiveHeldConcepts (persistence/purge-deleted.ts)', 'the rebuild-held concept read of an automatic unmanaged purge'],
-].map(([site, what]) => ({ site: site!, owner: retention, entry: 'retention' as const, stop: `${what} runs through raw SQL` }));
+const RETENTION_STOPS: PurgePathSite[] = [];
 
 /**
  * Raw sites a purge reaches on PGLite and Postgres whose branch a Rust brain does not take. The Rust purge, with raw
@@ -98,6 +94,7 @@ const GUARDED_SITES: PurgePathSite[] = [
   ['readManagedMode (persistence/managed-mode.ts)', 'a Rust brain reads readManagedModeRows (isRustBrain branch)'],
   ['scan (persistence/topology-recovery.ts)', 'managesWorktrees: a brain without managed_persistence has no worktree to scan'],
   ['vacuumPersistenceQueues (persistence/journal.ts)', 'runs on PGLite only'],
+  ['<anonymous> (persistence/purge-deleted.ts)', 'expireRecordedTombstones deletes only the tombstones listRecordedTombstones lists, and the Rust store lists none'],
   ['releaseAbandonedClaims (persistence/effect-journal.ts)', 'abandonedClaimCutoff: PGLite only'],
   ['pipelined (page-state/transactions.ts)', 'the journal statements of the PGLite and Postgres persistence consumer; a Rust brain journals through the typed persistence members listed below'],
   ['<anonymous> (persistence/journal.ts)', 'the journal statements of the PGLite and Postgres consumer; a Rust brain uses the typed persistence members'],
@@ -185,7 +182,8 @@ export const PURGE_PATH: readonly PurgePathEntry[] = [
     // records and the source writer note, the managed and released candidate reads, and the carry's expiring-origin read
     'releaseStaleOriginParkHolds', 'listOwedPurgeRecords', 'pruneOwedPurgeRecords', 'pruneOriginParkRecords', 'prunePurgeParkRecords',
     'recordPurgeFailureRecord', 'deletePurgeParkRecord', 'markPurgeParksInactive', 'dropRearmedPurgeParks', 'listReleasedPurgeOrigins',
-    'listManagedPurgeCandidates', 'listExpiringOriginPages',
+    'listManagedPurgeCandidates', 'listExpiringOriginPages', 'listRederiveHeldConceptIds', 'listExpiredPages', 'listExpiredPageIds',
+    'listOwedExpiredPages',
     // the unmanaged expiry's engine purge and its recorded-tombstone read
     'purgeDeletedPages', 'listRecordedTombstones',
     // config and the background ticks that share the consumer

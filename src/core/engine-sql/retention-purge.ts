@@ -18,9 +18,9 @@ import type { BrainEngine } from '../engine.ts';
 import { privacyPartSql } from '../search/private-visibility.ts';
 import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
 import {
-  CLEAR_PURGE_PARK_SQL, DROP_REARMED_PURGE_PARKS_SQL, MARK_PURGE_PARKS_INACTIVE_SQL, OWED_PURGES_SQL, PRUNE_ORIGIN_PARKS_SQL,
-  PRUNE_OWED_PURGES_SQL, PRUNE_PURGE_PARKS_SQL, RECORD_PURGE_FAILURE_SQL, RELEASE_STALE_HOLDS_SQL, managedPurgeCandidatesSql,
-  releasedPurgeOriginsSql,
+  CLEAR_PURGE_PARK_SQL, DROP_REARMED_PURGE_PARKS_SQL, EXPIRED_PAGE_IDS_SQL, EXPIRED_PAGES_SQL, MARK_PURGE_PARKS_INACTIVE_SQL,
+  OWED_PURGES_SQL, PRUNE_ORIGIN_PARKS_SQL, PRUNE_OWED_PURGES_SQL, PRUNE_PURGE_PARKS_SQL, RECORD_PURGE_FAILURE_SQL,
+  REDERIVE_HELD_CONCEPTS_SQL, RELEASE_STALE_HOLDS_SQL, managedPurgeCandidatesSql, owedExpiredPagesSql, releasedPurgeOriginsSql,
 } from '../persistence/retention-purge-sql.ts';
 
 type Raw = Pick<BrainEngine, 'executeRaw'>;
@@ -106,4 +106,30 @@ export async function listExpiringOriginPages(exec: Raw, hours: string): Promise
       WHERE p.deleted_at IS NOT NULL AND p.deleted_at < now() - (${hours} || ' hours')::interval AND (p.type = 'atom' OR NOT ${trustedSql(privacyPartSql('p'))}) ORDER BY p.id`);
   const rows = await exec.executeRaw<{ id: number; source_id: string; slug: string }>(text, params, bounded);
   return rows.map(row => ({ id: Number(row.id), source_id: row.source_id, slug: row.slug }));
+}
+
+/** One expired tombstone: its id, source and slug. */
+export interface ExpiredPage { id: number; source_id: string; slug: string }
+
+const expired = (rows: Array<{ id: number | string; source_id: string; slug: string }>): ExpiredPage[] =>
+  rows.map(row => ({ id: Number(row.id), source_id: row.source_id, slug: row.slug }));
+
+/** The concept tombstones a purge input hid whose re-derive mark is still open at their delete (#9653), by no order. */
+export async function listRederiveHeldConceptIds(exec: Raw): Promise<number[]> {
+  return (await exec.executeRaw<{ id: number | string }>(REDERIVE_HELD_CONCEPTS_SQL)).map(row => Number(row.id));
+}
+
+/** Every tombstone expired past `hours`, with its source and slug, in no order. */
+export async function listExpiredPages(exec: Raw, hours: string): Promise<ExpiredPage[]> {
+  return expired(await exec.executeRaw<{ id: number | string; source_id: string; slug: string }>(EXPIRED_PAGES_SQL, [hours]));
+}
+
+/** The ids of every tombstone expired past `hours`, in no order. */
+export async function listExpiredPageIds(exec: Raw, hours: string): Promise<number[]> {
+  return (await exec.executeRaw<{ id: number | string }>(EXPIRED_PAGE_IDS_SQL, [hours])).map(row => Number(row.id));
+}
+
+/** The pages among `ids` expired past `hours` that no page hold keeps (identity downgrade, retirements, origin park), oldest first. */
+export async function listOwedExpiredPages(exec: Raw, ids: readonly number[], hours: string): Promise<ExpiredPage[]> {
+  return expired(await exec.executeRaw<{ id: number | string; source_id: string; slug: string }>(owedExpiredPagesSql(), [[...ids], hours]));
 }

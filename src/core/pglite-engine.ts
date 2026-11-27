@@ -2155,6 +2155,10 @@ export class PGLiteEngine implements BrainEngine {
   listReleasedPurgeOrigins(release: readonly number[], excludeIds: readonly number[], hours: string) { return retentionPurgeImpl.listReleasedPurgeOrigins(this, release, excludeIds, hours); }
   listManagedPurgeCandidates(hours: string, release: readonly number[], hold: readonly number[]) { return retentionPurgeImpl.listManagedPurgeCandidates(this, hours, release, hold); }
   listExpiringOriginPages(hours: string) { return retentionPurgeImpl.listExpiringOriginPages(this, hours); }
+  listRederiveHeldConceptIds() { return retentionPurgeImpl.listRederiveHeldConceptIds(this); }
+  listExpiredPages(hours: string) { return retentionPurgeImpl.listExpiredPages(this, hours); }
+  listExpiredPageIds(hours: string) { return retentionPurgeImpl.listExpiredPageIds(this, hours); }
+  listOwedExpiredPages(ids: readonly number[], hours: string) { return retentionPurgeImpl.listOwedExpiredPages(this, ids, hours); }
   deleteOriginHoldRows(op: 'derived-origin-park' | 'owed-page-purge', pageIds: readonly number[]) { return originHoldsImpl.deleteOriginHoldRows(this, op, pageIds); }
   readDeletePageRequest(sourceId: string, requestId: string) { return factsPurgeImpl.readDeletePageRequest(this.rawRead, sourceId, requestId); }
   listPurgeEffects(requestId: string) { return factsPurgeImpl.listPurgeEffects(this.rawRead, requestId); }

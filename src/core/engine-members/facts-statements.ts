@@ -402,6 +402,14 @@ export interface FactsStatementMembers {
   listManagedPurgeCandidates(hours: string, release: readonly number[], hold: readonly number[]): Promise<RetentionPurgeSql.ManagedPurgeCandidate[]>;
   /** The soft-deleted privacy origins expired past `hours`, by id. Read the alias-honoring setting first. Reads pages. */
   listExpiringOriginPages(hours: string): Promise<RetentionPurgeSql.ExpiringOrigin[]>;
+  /** The concept tombstones whose re-derive mark is open at their delete (purge-deleted.ts readRederiveHeldConcepts). */
+  listRederiveHeldConceptIds(): Promise<number[]>;
+  /** Every tombstone expired past `hours` (purge-deleted.ts purgeExpired, the `only` filter's read). */
+  listExpiredPages(hours: string): Promise<RetentionPurgeSql.ExpiredPage[]>;
+  /** The ids of every tombstone expired past `hours` (purge-deleted.ts purgeExpired, the in-purge recheck's read). */
+  listExpiredPageIds(hours: string): Promise<number[]>;
+  /** The owed pages among `ids` expired past `hours` under every page hold, oldest first (purge-deleted.ts purgeOwedPages). */
+  listOwedExpiredPages(ids: readonly number[], hours: string): Promise<RetentionPurgeSql.ExpiredPage[]>;
   /** The newest delete_page request of the source with this request id, null for none. Reads persistence_requests. */
   readDeletePageRequest(sourceId: string, requestId: string): Promise<FactsPurgeSql.DeletePageRequestRow | null>;
   /** The request's effects in kind order, each with whether any target is parked. Reads persistence_effects. */

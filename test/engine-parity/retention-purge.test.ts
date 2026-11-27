@@ -36,6 +36,8 @@ import {
   releaseStaleHolds,
 } from '../../src/core/persistence/derived-origin-hold.ts';
 import { PURGE_PARK_OP, clearPurgePark, notePurgeSourceWriter, prunePurgeParks, purgeParkKey, recordPurgeFailure } from '../../src/core/persistence/purge-parks.ts';
+import { purgeDeletedPagesCoordinated } from '../../src/core/persistence/purge-deleted.ts';
+import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -231,5 +233,70 @@ describe('engine parity: the retention purge bookkeeping', () => {
     expect(after.a).toBeNull();
     expect(after.c).not.toBeNull();
     return { noneMarked, inactive, marked, markedAgain, rearmed, otherRearmed, after };
+  });
+  parityTest('the expiry reads list every expired tombstone, the held concepts, and the owed pages no hold keeps, oldest first', {
+    methods: ['putPage', 'softDeletePage', 'readLivePageIdBySlug', 'upsertDerivedOriginPark', 'markNeedsRederive', 'listRederiveHeldConceptIds',
+      'listExpiredPages', 'listExpiredPageIds', 'listOwedExpiredPages'],
+  }, async (engine, backend) => {
+    const ids: Record<string, number> = {};
+    for (const slug of ['e/first', 'e/parked', 'e/downgrade', 'e/live']) ids[slug] = await put(engine, slug);
+    ids['e/concept'] = await put(engine, 'e/concept', { synthesized_by: 'synthesize_concepts' }, SRC, 'concept');
+    ids['e/unmarked'] = await put(engine, 'e/unmarked', {}, SRC, 'concept');
+    for (const slug of ['e/first', 'e/parked', 'e/downgrade', 'e/concept']) await engine.softDeletePage(slug);
+    await engine.markNeedsRederive('pages', [String(ids['e/concept'])], SRC, null, 'input_purged', [String(ids['e/concept'])]);
+    // A concept tombstone with no re-derive mark holds nothing.
+    await engine.softDeletePage('e/unmarked');
+    await parkDerivedOrigin(engine, park(ids['e/parked']!, 'e/parked'));
+    await recordIdentityDowngrade(engine, backend, SRC, 'e/downgrade', {});
+    const slugOf = new Map(Object.entries(ids).map(([slug, id]) => [id, slug]));
+    const bySlug = (rows: Array<{ id: number; slug: string; source_id: string }>) => rows.map(row => ({ slug: row.slug, source_id: row.source_id, idMatches: slugOf.get(row.id) === row.slug })).sort((a, b) => (a.slug < b.slug ? -1 : 1));
+    const held = (await engine.listRederiveHeldConceptIds()).map(id => slugOf.get(id));
+    const expired = bySlug(await engine.listExpiredPages('0'));
+    const expiredIds = (await engine.listExpiredPageIds('0')).map(id => slugOf.get(id)).sort();
+    const young = await engine.listExpiredPageIds('1000');
+    const owed = (await engine.listOwedExpiredPages(Object.values(ids), '0')).map(row => slugOf.get(row.id));
+    expect(held).toEqual(['e/concept']);
+    expect(owed).toEqual(['e/first', 'e/concept', 'e/unmarked']);
+    return { held, expired, expiredIds, young, owed };
+  });
+
+  parityTest('purgeDeletedPages leaves an origin park\'s tombstone and an open identity downgrade\'s tombstone, in the preview and the purge', {
+    methods: ['putPage', 'softDeletePage', 'readLivePageIdBySlug', 'upsertDerivedOriginPark', 'purgeDeletedPages'],
+  }, async (engine, backend) => {
+    const ids: Record<string, number> = {};
+    for (const slug of ['h/plain', 'h/parked', 'h/downgrade', 'h/closed']) ids[slug] = await put(engine, slug);
+    for (const slug of ['h/plain', 'h/parked', 'h/downgrade', 'h/closed']) await engine.softDeletePage(slug);
+    await parkDerivedOrigin(engine, park(ids['h/parked']!, 'h/parked'));
+    await recordIdentityDowngrade(engine, backend, SRC, 'h/downgrade', {});
+    await recordIdentityDowngrade(engine, backend, SRC, 'h/closed', { disposition: 'kept' });
+    const preview = await engine.purgeDeletedPages(0, { dryRun: true });
+    const purged = await engine.purgeDeletedPages(0);
+    const after = await engine.purgeDeletedPages(0, { dryRun: true });
+    expect(preview.slugs).toEqual(purged.slugs);
+    expect([...purged.slugs].sort()).toEqual(['h/closed', 'h/plain']);
+    return { preview: preview.slugs, purged: purged.slugs, count: purged.count, after: after.slugs };
+  });
+
+  parityTest('a retention purge of an unmanaged brain removes the expired tombstones and keeps the parked origin and the downgrade', {
+    methods: ['putPage', 'softDeletePage', 'readLivePageIdBySlug', 'upsertDerivedOriginPark', 'purgeDeletedPages', 'listExpiredPageIds',
+      'listExpiringOriginPages', 'releaseStaleOriginParkHolds', 'pruneOwedPurgeRecords', 'listOwedPurgeRecords', 'getPage'],
+  }, async (engine, backend) => {
+    const ids: Record<string, number> = {};
+    for (const slug of ['p/plain', 'p/parked', 'p/downgrade', 'p/live']) ids[slug] = await put(engine, slug);
+    for (const slug of ['p/plain', 'p/parked', 'p/downgrade']) await engine.softDeletePage(slug);
+    await parkDerivedOrigin(engine, park(ids['p/parked']!, 'p/parked'));
+    await recordIdentityDowngrade(engine, backend, SRC, 'p/downgrade', {});
+    try {
+      const result = await purgeDeletedPagesCoordinated(engine, 0);
+      const present = async (slug: string) => {
+        const page = await engine.getPage(slug, { sourceId: SRC, includeDeleted: true } as never) as { deleted_at?: unknown } | null;
+        return page === null ? 'gone' : page.deleted_at ? 'tombstone' : 'live';
+      };
+      const pages = Object.fromEntries(await Promise.all(['p/plain', 'p/parked', 'p/downgrade', 'p/live'].map(async slug => [slug, await present(slug)])));
+      expect(pages).toEqual({ 'p/plain': 'gone', 'p/parked': 'tombstone', 'p/downgrade': 'tombstone', 'p/live': 'live' });
+      return { slugs: result.slugs, count: result.count, failed: result.failed, pages };
+    } finally {
+      await disposePersistenceConsumer(engine).catch(() => undefined);
+    }
   });
 });

@@ -1,5 +1,5 @@
 /**
- * A page purge on a Rust brain refuses before it writes anything.
+ * A page purge on a Rust brain refuses before it writes anything, while a stop is listed; the retention purge has none.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Protects: delete_page --purge and the retention purge on a Rust brain stop at the pre-write check
@@ -21,7 +21,7 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import { operationsByName, type OperationContext } from '../src/core/operations.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { purgeDeletedPagesCoordinated } from '../src/core/persistence/purge-deleted.ts';
-import { PURGE_PATH, purgeEntryName, purgePathStops } from '../src/core/persistence/purge-path-members.ts';
+import { purgePathStops } from '../src/core/persistence/purge-path-members.ts';
 import { openRustBrain, removeBrainDir, rustArmAddonPath, type RustBrainDir } from './engine-parity/rust-arm.ts';
 
 const required = process.env.GBRAIN_TEST_RUST_ADDON_REQUIRED === '1';
@@ -115,33 +115,28 @@ describe('a page purge on a Rust brain refuses before any write', () => {
     expect(await readsOf(engine, slugs, ids)).toEqual(before);
   }, 120_000);
 
-  rustRun('the retention purge refuses at the same check and leaves the tombstone and the journal as they were', async () => {
+  rustRun('the retention purge passes the check on a Rust brain and removes the expired tombstone, nothing else', async () => {
     const engine = brain!.engine as unknown as BrainEngine;
     const ctx = localCtx(engine);
     await operationsByName.put_page!.handler(ctx, { slug: 'notes/expired', content: page('expired', [], 'Gone soon.'), request_id: randomUUID() });
+    await operationsByName.put_page!.handler(ctx, { slug: 'notes/kept', content: page('kept', [], 'Still here.'), request_id: randomUUID() });
     const snapshot = await engine.readPageSnapshot('notes/expired', { sourceId: SRC });
     await operationsByName.delete_page!.handler(ctx, { slug: 'notes/expired', request_id: randomUUID(), expected_revision: snapshot?.revision });
     await disposePersistenceConsumer(engine);
-    const id = Number((await engine.getPage('notes/expired', { sourceId: SRC, includeDeleted: true }) as unknown as R).id);
-    const before = await readsOf(engine, ['notes/expired'], [id]);
-    expect((before['notes/expired'] as R).page).toMatchObject({ deleted: true });
+    const ids = ['notes/expired', 'notes/kept'].map(async slug => Number((await engine.getPage(slug, { sourceId: SRC, includeDeleted: true }) as unknown as R).id));
+    const [, keptId] = await Promise.all(ids);
+    // The kept page reads as before; the journal's byte counters move, since the expiry redacts the expired page's rows.
+    const before = (await readsOf(engine, ['notes/kept'], [keptId!]))['notes/kept'];
+    expect(await purgePathStops(engine, 'retention')).toEqual([]);
 
-    const [first] = await purgePathStops(engine, 'retention');
-    expect(first).toBeDefined();
-    const calls: string[] = [];
-    const refusal = await purgeDeletedPagesCoordinated(recording(engine, calls), 0).then(() => null, (error: unknown) => error as { code?: string; message?: string; detail?: string });
-    expect(refusal?.code).toBe('engine_capability_missing');
-    expect(`${refusal?.message} ${refusal?.detail}`).toContain(first!.name);
-    expect(`${refusal?.message} ${refusal?.detail}`).toContain(first!.owner);
-    expect(calls.filter(call => WRITES.includes(call))).toEqual([]);
-    expect(await readsOf(engine, ['notes/expired'], [id])).toEqual(before);
+    const result = await purgeDeletedPagesCoordinated(engine, 0);
+    await disposePersistenceConsumer(engine);
+    expect(result.slugs).toContain('notes/expired');
+    expect(await engine.getPage('notes/expired', { sourceId: SRC, includeDeleted: true })).toBeNull();
+    expect((await readsOf(engine, ['notes/kept'], [keptId!]))['notes/kept']).toEqual(before);
   }, 120_000);
 
-  test('the first stop of each entry point is on the list with an owner', async () => {
-    const stops = [(await purgePathStops({ kind: 'rust' }))[0], (await purgePathStops({ kind: 'rust' }, 'retention'))[0]];
-    for (const stop of stops) {
-      expect(stop?.owner).toMatch(/^lane \d+/);
-      expect(PURGE_PATH.map(purgeEntryName)).toContain(stop!.name);
-    }
+  test('the retention purge has no stop on a Rust brain', async () => {
+    expect(await purgePathStops({ kind: 'rust' }, 'retention')).toEqual([]);
   });
 });

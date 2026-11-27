@@ -113,7 +113,7 @@ outer catch of the retrieval reflex in `src/core/context/reflex.ts`.
 
 PGLite's purge (`purgeDeletedPages`, `src/core/engine-sql/pages.ts:329`) skips a tombstone that one
 of four holds keeps (`pages.ts:349-353` for the dry run, `:370-380` for the delete). The store
-applies the two that read only the page row and `config`; it does not apply the other two:
+applies all four:
 
 - Derived retirement (`derivedRetirementPurgeHold`,
   `src/core/persistence/derived-retirement-hold.ts:38-41`): the page's `retired_by` text is one of
@@ -135,13 +135,13 @@ applies the two that read only the page row and `config`; it does not apply the 
 - Both windows are open while `deleted_at` is strictly after `now` minus the days. PGLite runs in
   `Etc/GMT0`, so a day is 24 hours. Text compares in byte order.
 - Sync identity downgrade (`op_checkpoints`, op `sync-identity-downgrade`, `pages.ts:349`) and
-  derived origin park (`derivedOriginPurgeHold`, `src/core/persistence/derived-origin-hold.ts:31`)
-  are not applied here. The store does keep these rows now (`parkDerivedOrigin` writes the park
-  through `upsertDerivedOriginPark`, `persistence/origin_holds.rs`), and the retention purge's
-  managed candidate read applies both (label_door.md, "The retention purge's bookkeeping"). The one
-  caller that reaches this purge on the retention path, the unmanaged expiry (`purgeExpired`), still
-  stops on a Rust brain at the pre-write check, so this purge must add both holds before that stop
-  lifts.
+  derived origin park (`derivedOriginPurgeHold`, `src/core/persistence/derived-origin-hold.ts:31`):
+  the store keeps both rows (`recordIdentityDowngrades` through `writeOpCheckpointRecord`, the park through
+  `upsertDerivedOriginPark`). A downgrade holds while its record has no `disposition` and the page is
+  soft-deleted at the record's `old_deleted_at` instant (text the timestamptz cast refuses, refuses
+  here); a park holds while its row exists. Both are `persistence::identity_downgrade_open` and
+  `persistence::origin_parked`, the same rules as the retention purge's reads (label_door.md, "The
+  retention purge's bookkeeping").
 
 Each purged page goes through `remove_page`, the eval-candidate scrub and the alias and rename-history
 scrub, as `deletePages` does.

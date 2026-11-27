@@ -414,7 +414,7 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'listLatestTakeGrades', 'listLiveConceptMemberRevisions', 'listOriginDependents', 'listPageLinkStreams', 'listPageMirrorFacts',
   'listPageMirrorTakeHashes', 'listPagePurgeRows', 'listPagePurgeTombstones', 'listPageQuoteTiers', 'listPageSecretOccurrences', 'listPageSegmentShas',
   'listPageTimelineReceipts', 'listPageVersionBodiesForPurge', 'listPageVersionSourcePaths', 'listPendingTakeProposals', 'listProposeTakesCandidatePages', 'listPurgeClaimFacts',
-  'listPurgeClaimTakes', 'listPurgeOrigins', 'listOwedPurgeRecords', 'listReleasedPurgeOrigins', 'listManagedPurgeCandidates', 'listExpiringOriginPages', 'listPurgeSegmentClaims', 'listQueuedPagePurges', 'listRejectedTakeProposalClaims', 'listRequestsForSlugs',
+  'listPurgeClaimTakes', 'listPurgeOrigins', 'listOwedPurgeRecords', 'listReleasedPurgeOrigins', 'listManagedPurgeCandidates', 'listExpiringOriginPages', 'listRederiveHeldConceptIds', 'listExpiredPages', 'listExpiredPageIds', 'listOwedExpiredPages', 'listPurgeSegmentClaims', 'listQueuedPagePurges', 'listRejectedTakeProposalClaims', 'listRequestsForSlugs',
   'listTakeHorizons', 'listTakeProposalTombstones', 'listWaveAppliedTakeIds', 'listWriteRequestsByRequestId', 'lockHeldConcept', 'lockLiveConceptMembers',
   'lockSourceForUpdate', 'readCatalogSchemaVersion', 'readDerivationPurgeState', 'readEffectBytes', 'readExtractReceiptSeal',
   'readExtractReceiptSlot', 'readHeadBlockerRows', 'readHeldConcept', 'readConceptStatedKinds', 'readRebuildAccess', 'readHeldConceptRows', 'readIncompleteSyncReceipt', 'readIncompleteSyncReceiptRows', 'readJournalCeiling',

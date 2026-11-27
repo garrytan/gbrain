@@ -33,10 +33,8 @@ import { readUnreviewedSyncTombstones, syncDeleteHeld } from './sync-delete-tomb
  * `deleted_at` it set). A concept a person or a sync deleted has no such mark and expires on time; the consented and
  * explicit purges remove a kept one.
  */
-async function readRederiveHeldConcepts(engine: Pick<BrainEngine, 'executeRaw'>): Promise<number[]> {
-  const rows = await engine.executeRaw<{ id: number | string }>(`SELECT p.id FROM pages p WHERE p.deleted_at IS NOT NULL AND p.type = 'concept'
-    AND EXISTS (SELECT 1 FROM needs_rederive n WHERE n.derived_table = 'pages' AND n.derived_id = p.id::text AND n.marked_at = p.deleted_at)`);
-  return rows.map(row => Number(row.id));
+async function readRederiveHeldConcepts(engine: Pick<BrainEngine, 'listRederiveHeldConceptIds'>): Promise<number[]> {
+  return engine.listRederiveHeldConceptIds();
 }
 
 /**
@@ -434,9 +432,7 @@ function originParked(parks: DerivedOriginPark[]): DeletedPagePurge['blocked'] {
 async function purgeOwedPages(engine: BrainEngine, config: OperationContext['config'], olderThanHours: number, ids: readonly number[], only?: PurgeFilter) {
   const out = { slugs: [] as string[], blocked: [] as DeletedPagePurge['blocked'], failed: 0, reparked: [] as DerivedOriginPark[] };
   if (!ids.length) return out;
-  const rows = await engine.executeRaw<{ id: number; source_id: string; slug: string }>(`SELECT p.id, p.source_id, p.slug FROM pages p WHERE p.id = ANY($1::int[])
-    AND p.deleted_at IS NOT NULL AND p.deleted_at < now() - ($2 || ' hours')::interval AND ${identityDowngradePurgeHold('p')} AND ${atomRetirementPurgeHold('p')}
-    AND ${derivedRetirementPurgeHold('p')} AND ${derivedOriginPurgeHold('p')} ORDER BY p.deleted_at, p.id`, [[...ids], String(Math.max(0, Math.floor(olderThanHours)))]);
+  const rows = await engine.listOwedExpiredPages(ids, String(Math.max(0, Math.floor(olderThanHours))));
   for (const row of rows) {
     if (only && !only(row)) continue;
     try {
@@ -478,15 +474,12 @@ async function purgeExpired(engine: BrainEngine, olderThanHours: number, opts: {
     const reparked = [...recorded.reparked];
     const result = await maintenanceTransaction(engine, async tx => {
       await declarePersistenceProtocol(tx);
-      const unlisted = opts.only ? (await tx.executeRaw<{ id: number; source_id: string; slug: string }>(
-        `SELECT id, source_id, slug FROM pages WHERE deleted_at IS NOT NULL AND deleted_at < now() - ($1 || ' hours')::interval`,
-        [String(Math.max(0, Math.floor(olderThanHours)))])).filter(page => !opts.only!(page)).map(page => Number(page.id)) : [];
+      const unlisted = opts.only ? (await tx.listExpiredPages(String(Math.max(0, Math.floor(olderThanHours))))).filter(page => !opts.only!(page)).map(page => page.id) : [];
       const excludeIds = [...exclude, ...unlisted];
       const skip = new Set(excludeIds);
-      const expiring = await tx.executeRaw<{ id: number }>(`SELECT id FROM pages WHERE deleted_at IS NOT NULL AND deleted_at < now() - ($1 || ' hours')::interval`,
-        [String(Math.max(0, Math.floor(olderThanHours)))]);
+      const expiring = await tx.listExpiredPageIds(String(Math.max(0, Math.floor(olderThanHours))));
       // GST-2689: the recheck parks, in this transaction, each origin a page written after the carry still depends on; the delete's hold skips it.
-      reparked.push(...await parkUncarriedInPurge(tx, expiring.map(page => Number(page.id)).filter(id => !skip.has(id))));
+      reparked.push(...await parkUncarriedInPurge(tx, expiring.filter(id => !skip.has(id))));
       const purged = await tx.purgeDeletedPages(olderThanHours, excludeIds.length ? { excludeIds } : undefined);
       const bySource = new Map<string, string[]>();
       for (const page of purged.pages ?? []) bySource.set(page.source_id, [...bySource.get(page.source_id) ?? [], page.slug]);

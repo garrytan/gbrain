@@ -1,7 +1,8 @@
 /**
  * The retention purge's bookkeeping (BrainEngine releaseStaleOriginParkHolds, listOwedPurgeRecords, pruneOwedPurgeRecords,
  * pruneOriginParkRecords, prunePurgeParkRecords, recordPurgeFailureRecord, deletePurgeParkRecord, markPurgeParksInactive,
- * dropRearmedPurgeParks, listReleasedPurgeOrigins, listManagedPurgeCandidates and listExpiringOriginPages; SQL in
+ * dropRearmedPurgeParks, listReleasedPurgeOrigins, listManagedPurgeCandidates, listExpiringOriginPages, listRederiveHeldConceptIds,
+ * listExpiredPages, listExpiredPageIds and listOwedExpiredPages; SQL in
  * engine-sql/retention-purge.ts), served from the store's page records and its op checkpoint rows (gbrain-store
  * `persistence/retention_purge.rs`; rust/docs/store/label_door.md, "The retention purge's bookkeeping").
  *
@@ -64,3 +65,15 @@ export const listManagedPurgeCandidates: Member<'listManagedPurgeCandidates'> = 
 
 export const listExpiringOriginPages: Member<'listExpiringOriginPages'> = (brain, hours) =>
   storeCall({ member: 'listExpiringOriginPages' }, () => brain.listExpiringOriginPages(hours, honorAliases()));
+
+export const listRederiveHeldConceptIds: Member<'listRederiveHeldConceptIds'> = async (brain) =>
+  ((await storeCall({ member: 'listRederiveHeldConceptIds' }, () => brain.listRederiveHeldConceptIds())) as unknown[]).map(Number);
+
+export const listExpiredPages: Member<'listExpiredPages'> = (brain, hours) =>
+  storeCall({ member: 'listExpiredPages' }, () => brain.listExpiredPages(hours));
+
+export const listExpiredPageIds: Member<'listExpiredPageIds'> = async (brain, hours) =>
+  ((await storeCall({ member: 'listExpiredPageIds' }, () => brain.listExpiredPageIds(hours))) as unknown[]).map(Number);
+
+export const listOwedExpiredPages: Member<'listOwedExpiredPages'> = (brain, ids, hours) =>
+  storeCall({ member: 'listOwedExpiredPages' }, () => brain.listOwedExpiredPages([...ids], hours));
