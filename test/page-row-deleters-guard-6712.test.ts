@@ -38,6 +38,7 @@ const REVIEWED: Record<string, { count: number; why: string }> = {
   'src/core/transcripts/archive.ts': { count: 1, why: 'repo-less database mode only; a managed brain deletes stale day parts through the coordinator and a repo brain removes the files and syncs' },
   'src/core/persistence/purge-deleted.ts': { count: 1, why: 'unmanaged retention (expireRecordedTombstones); a managed brain purges through delete_page --purge' },
   'src/commands/migrate-engine.ts': { count: 1, why: 'engine migration copy, outside any source write' },
+  'src/core/engine-swap/failback-copy.ts': { count: 1, why: 'engine swap failback removes a page the Rust engine no longer holds from the fenced old primary, inside the swap run\'s transaction behind its write fence; a managed brain cannot swap (engine_swap_refused managed_storage), so it never runs on one' },
   'src/core/github-source.ts': { count: 2, why: 'GitHub connector source, not a managed Git checkout' },
   'src/core/google/google-source.ts': { count: 1, why: 'Google connector source' },
   'src/core/google/sweep-shared.ts': { count: 1, why: 'Google connector sweep' },

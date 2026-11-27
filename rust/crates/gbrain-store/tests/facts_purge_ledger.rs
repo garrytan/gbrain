@@ -288,3 +288,66 @@ fn the_global_purge_lookup_answers_the_asked_star_tombstones_in_order() {
             .is_empty()
     );
 }
+
+#[test]
+fn the_purge_tombstones_list_each_source_tombstone_with_its_request_in_byte_order() {
+    let b = brain("purge-tombstones");
+    for (visibility, subject, hash) in [
+        ("world", "people/b-example", "h2"),
+        ("private", "people/b-example", "h1"),
+        ("world", "people/a-example", "h9"),
+        ("world", "people/a-example", "H3"),
+    ] {
+        assert!(
+            b.insert_fact_purge(&tombstone(visibility, subject, hash))
+                .unwrap()
+        );
+    }
+    let mut elsewhere = tombstone("world", "people/a-example", "h0");
+    let other: gbrain_store::sources::SourceInput = args(json!({ "id": "other" }));
+    b.upsert_source(&other).unwrap();
+    elsewhere.source_id = "other".into();
+    b.insert_fact_purge(&elsewhere).unwrap();
+    for (subject, claim) in [("people/b-example", "c1"), ("people/a-example", "c2")] {
+        let row: gbrain_store::facts::take_purges::TakePurgeInsert = args(json!({
+            "sourceId": "default", "subject": subject, "claimHash": claim, "requestId": REQUEST }));
+        b.insert_take_purge(&row).unwrap();
+    }
+    let listed = b.list_purge_tombstones("default").unwrap();
+    let request = REQUEST.to_lowercase();
+    let fact = |visibility: &str, subject: &str, hash: &str| {
+        json!({ "subject": subject, "visibility": visibility, "fact_hash": hash,
+            "request_id": request, "actor": "owner:local", "reason": "test" })
+    };
+    assert_eq!(
+        listed["facts"],
+        json!([
+            fact("private", "people/b-example", "h1"),
+            fact("world", "people/a-example", "H3"),
+            fact("world", "people/a-example", "h9"),
+            fact("world", "people/b-example", "h2"),
+        ])
+    );
+    assert_eq!(
+        listed["takes"],
+        json!([
+            { "subject": "people/a-example", "claim_hash": "c2", "request_id": request },
+            { "subject": "people/b-example", "claim_hash": "c1", "request_id": request },
+        ])
+    );
+    assert_eq!(
+        b.list_purge_tombstones("other").unwrap()["facts"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        b.list_purge_tombstones("missing").unwrap(),
+        json!({ "facts": [], "takes": [] })
+    );
+    assert_eq!(
+        b.list_purge_tombstones("de\0fault").unwrap_err().code,
+        INVALID_ARGUMENT
+    );
+}

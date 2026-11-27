@@ -108,7 +108,7 @@ Totals (68 kinds): 60 served, 3 preview-only, 2 partly served, 1 stops, 2 unprov
 | `repair unwithdrawn-facts fact write` | `src/core/repair/unwithdrawn-facts.ts:243` | unwithdrawn-facts | no | none on the apply | none |
 | `repair fact-claim-dates page write` | `src/core/repair/fact-claim-dates.ts:222` | fact-claim-dates | no | none on the page move | none |
 | `member=executeRaw` | `src/core/repair/slug-spelling.ts` | slug-spelling | no | `test/engine-parity/repair-slug-spelling.test.ts` | 50 |
-| `engine_capability_missing` (raw_sql) on a remote write over a slug with only a soft-deleted row | `src/core/persistence/page-visibility.ts:97-101` (`hiddenUnder`) | not a repair kind | n/a | `test/engine-parity/owner-write-privacy.test.ts` ("loss (32e-d-1 raw fallback)"), passes on the Rust arm at 78a31fe57e | 53 |
+| `engine_capability_missing` (raw_sql) on a remote write over a slug with only a soft-deleted row | `src/core/persistence/page-visibility.ts:97-101` (`hiddenUnder`) | not a repair kind | n/a | `test/engine-parity/owner-write-privacy.test.ts` (a plain member's put_page over a soft-deleted page, equal on all 3 engines since row 32e-d-2 closed at 81ad460608) | 53 |
 
 Each stop refuses before its first write (`outcome=none written=nothing`). Owner of the remaining repair stops: the post-freeze lane.
 
@@ -137,7 +137,7 @@ Database-only fact rows (phase 4) now apply on Rust through `tightenDatabaseFact
 
 - **Page writes of three explicit kinds.** `private-labels`, `fact-claim-dates` (page move) and `visibility` (page items, fenced fact rows) stop at their page write. Each needs its label or page write to publish on Rust.
 - **Fact writes of two explicit kinds.** `unwithdrawn-facts` (apply) and `open-facts` (apply and undo) still lock and write facts through raw SQL.
-- **The page-visibility fallback (row 32e-d-2; the loss that was row 53 of the repair close-out).** `read_page_hidden_from_caller` (`rust/crates/gbrain-store/src/page_visibility.rs`) already judges a soft-deleted row. It needs the stored writer's policy as a `PrivacyPolicy`: the identity (`writerIdentities`), the folder access, the owner record and the hide flag. `writerIdentities` returns one identity set per audience entry, and `PrivacyPolicy` holds one, so the lane can serve single-identity writers and keep the refusal for an audience write.
+- **The page-visibility fallback (row 32e-d-2; the loss that was row 53 of the repair close-out). Closed at 81ad460608: the deleted row is judged by `readPageHiddenFromWriter`; the text below is the earlier estimate.** `read_page_hidden_from_caller` (`rust/crates/gbrain-store/src/page_visibility.rs`) already judges a soft-deleted row. It needs the stored writer's policy as a `PrivacyPolicy`: the identity (`writerIdentities`), the folder access, the owner record and the hide flag. `writerIdentities` returns one identity set per audience entry, and `PrivacyPolicy` holds one, so the lane can serve single-identity writers and keep the refusal for an audience write.
 - **Unproven paths.** `attribution-backfill` and `provenance` need a Rust case with rows. `orphan-bindings` and `file-drift` need seeds that do not use raw SQL.
 - **Estimate (estimate, not measured):** the page-visibility fallback is about 1 to 1.5 days. The page and fact writes depend on the page-write lane and are not estimated here.
 

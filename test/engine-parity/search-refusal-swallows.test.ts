@@ -5,8 +5,9 @@
  *  - Contract: the image-vector probe (search/image-vector-presence.ts, BrainEngine.hasChunkImageVectors) answers
  *    false on a text-only brain on every engine; the semantic query-cache clear (BrainEngine.clearQueryCache) answers
  *    0 on a brain with no cache rows on every engine; the two-pass code walk (search/two-pass.ts expandAnchors) adds
- *    the near-symbol anchor and the neighbor its unresolved edge names on PGLite and Postgres, and an engine that cannot
- *    run those lookups refuses with engine_capability_missing instead of walking without them. Every engine arm returns
+ *    the near-symbol anchor and the neighbor its unresolved edge names on every engine (the symbol lookups are the typed
+ *    read listSymbolChunkIds, master's statements on PGLite and Postgres), and an engine that cannot run them refuses with engine_capability_missing instead of
+ *    walking without them. Every engine arm returns
  *    the same rows or stops on the typed refusal (PGLite always; Postgres with DATABASE_URL; the Rust arm with
  *    GBRAIN_TEST_RUST_ARM=1).
  *  - Regression: each read sent raw SQL inside a catch that answered a default, so on a Rust brain the probe read as
@@ -63,7 +64,7 @@ describe('engine parity: search reads that must not swallow an engine refusal', 
     });
 
   parityTest('the two-pass walk adds the near-symbol anchor and the neighbor its unresolved edge names',
-    { methods: ['putPage', 'sealChunks', 'getChunks', 'addCodeEdges', 'getEdgesByChunk'] }, async (engine) => {
+    { methods: ['putPage', 'sealChunks', 'getChunks', 'addCodeEdges', 'getEdgesByChunk', 'listSymbolChunkIds'] }, async (engine) => {
       await engine.putPage('src/a', codePage('src/a'));
       await installChunks(engine, 'src/a', [sym(0, 'function start() { helper(); }', 'mod.start'), sym(1, 'function other() {}', 'mod.other')]);
       await engine.putPage('src/b', codePage('src/b'));
@@ -76,7 +77,15 @@ describe('engine parity: search reads that must not swallow an engine refusal', 
       const out = {
         nearSymbol: view(await expandAnchors(engine, [anchor], { nearSymbol: 'mod.anchor', sourceId: 'default' })),
         walk: view(await expandAnchors(engine, [anchor], { walkDepth: 1, sourceId: 'default' })),
+        // The typed lookup itself (below its limit, so every engine returns the same rows): scoped by source, any source
+        // when none is named. Sorted: the SQL engines return rows in plan order.
+        targets: sorted((await engine.listSymbolChunkIds('edge_targets', ['mod.helper', 'mod.anchor', 'mod.none'], 'default')).map(id => ids.get(id)!)),
+        near: (await engine.listSymbolChunkIds('near_symbol', ['mod.anchor'])).map(id => ids.get(id)),
+        otherSource: await engine.listSymbolChunkIds('near_symbol', ['mod.helper'], 'no-such-source'),
       };
+      expect(out.targets).toEqual(['src/b#0', 'src/b#1']);
+      expect(out.near).toEqual(['src/b#1']);
+      expect(out.otherSource).toEqual([]);
       expect(out.nearSymbol).toEqual(['src/a#0:0:anchor', 'src/b#1:0:anchor']);
       expect(out.walk).toEqual(['src/a#0:0:anchor', 'src/b#0:1:neighbor']);
       return out;

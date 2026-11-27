@@ -35,7 +35,9 @@ use super::{PrivacyPolicy, QUARANTINE_KEY, VisibilityWidening};
 use crate::Store;
 use crate::env::iso;
 use crate::error::Result;
-use crate::keyword::{or_of_lexemes, plainto_tsquery, to_tsvector, ts_matches, ts_rank_cd};
+use crate::keyword::{
+    FtsConfig, or_of_lexemes, plainto_tsquery_in, to_tsvector_in, ts_matches, ts_rank_cd,
+};
 use crate::kv::KvRead;
 use crate::links::no_nul;
 use crate::pages::read_page;
@@ -98,6 +100,9 @@ pub struct RelevanceQuery {
     /// The entity arm's named entity.
     pub entity: Option<EntityRef>,
     pub limit: f64,
+    /// The text search configuration (`GBRAIN_FTS_LANGUAGE`): absent is `english`; `german` is
+    /// the other one ported, and any other name refuses.
+    pub fts_config: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -295,8 +300,9 @@ impl Store {
             Some(arg) => Some((to_halfvec(&parse_vector(&arg.literal)?, None)?, arg)),
             None => None,
         };
+        let config = FtsConfig::parse(q.fts_config.as_deref())?;
         let query = if keyword {
-            match or_of_lexemes(&plainto_tsquery(&q.terms)?) {
+            match or_of_lexemes(&plainto_tsquery_in(config, &q.terms)?) {
                 Some(query) => Some(query),
                 None => return Ok(Vec::new()),
             }
@@ -330,7 +336,7 @@ impl Store {
                         row.fact,
                         row.entity_slug.as_deref().unwrap_or("").replace('-', " ")
                     );
-                    let vector = to_tsvector(&document)?;
+                    let vector = to_tsvector_in(config, &document)?;
                     if !ts_matches(&vector, query) {
                         continue;
                     }

@@ -81,6 +81,14 @@ export async function readGuestSourceRow(exec: LegacyUnscopedRead, sourceId: str
   return row ?? { hidden: false, source_id: null, writers: null, trust_ceiling: null };
 }
 
+/**
+ * Whether guest_sources holds a row for `sourceId` (guests grant-owner-clients: the source must be set up by `guests
+ * init`). The row alone, not guestSourceSql: a source whose config says guest but has no row is not a guest source here.
+ */
+export async function hasGuestSourceRow(exec: LegacyUnscopedRead, sourceId: string): Promise<boolean> {
+  return (await exec.executeRaw('SELECT 1 FROM guest_sources WHERE source_id = $1', [sourceId])).length > 0;
+}
+
 /** The guest sources among `sourceIds` (guestSourceSql), in no particular order. */
 export async function listGuestSourceIds(exec: LegacyUnscopedRead, sourceIds: readonly string[]): Promise<string[]> {
   if (sourceIds.length === 0) return [];

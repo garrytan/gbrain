@@ -165,6 +165,10 @@ Rules:
   | 9 | Batch 15 (soak counter, request index states, page window chunk reads, concept rebuild, slug-spelling repair, loud search refusals and the members tail) |
   | 10 | Sync 19, dac09d5610 (batch 15 merged with master c341d40de3) |
   | 11 | Batch 15b (labelled-only policy on Rust, the purge-receipt and purge-ledger members of the fact purge path) |
+  | 12 | `rust-engine/labelled-only-reads-rust` (row 32e-b-2: labelled-only and lineage reads, `callerReference` in `private-provenance.ts`). Provisional, main's 11 plus one; the trunk renumbers at intake. `rust-engine/enforced-member-writes-rust` claims a provisional number too | this branch, merged with `rust-engine/main` 85ad984039 |
+  | 12 | `rust-engine/enforced-member-writes-rust` (provisional, main's 11 plus one; the trunk renumbers at intake): the enforced member CLI's four reads in `store-members/page-mutation-reads.ts` |
+  | 12 | `rust-engine/enforced-member-writes-rust` claims a provisional number (main's 11 plus one; the trunk renumbers at intake): the enforced member CLI's four reads in `store-members/page-mutation-reads.ts` |
+  | 12 | `rust-engine/labelled-only-create-rust` claims a provisional number (main's 11 plus one, as the enforced-member branch's row above; the trunk renumbers both at intake): the writer's hidden-page read `readPageHiddenFromWriter` in `store-members/remote-links.ts` |
 
 Reserved tags:
 
@@ -203,6 +207,7 @@ Reserved tags:
 | entity_identities | `i` | `ENTITY_IDENTITY` | yes |
 | persistence_journal, the `derived_generations` ledger (with its attempt counters and valve windows), the `derivation_inputs` edges and their input index (`h 0x0A`, `h 0x0B`) | `h` | `DERIVED_GENERATION` | no (a source delete removes its rows) |
 | access_rules (folder rules, pending prefixes, policy state and revisions; the module owns the sub-tags) | `z` | `ACCESS_RULES` | no |
+| guest_sources (writers and trust ceiling of each guest source) | `0` | `GUEST_SOURCE` | no (a source delete removes its row) |
 | reason_purge_tombstones | `1` | `REASON_TOMBSTONE` | no |
 | session_state | `y` | `SESSION_STATE` | no |
 | access_members | `x`, sub-tags `0x01` members, `0x02` groups, `0x03` group members | `ACCESS_MEMBERS` | no |
@@ -240,7 +245,7 @@ change to this table and to `keys.rs`.
 ### Tag registry
 
 The one-byte tags on `rust-engine/main` are the "Key layout" and "Reserved tags" tables above: every capital letter,
-every small letter but `x` and `y`, and the digits `1` and `2`. The "Reserved tags" row for `x` (`ACCESS_MEMBERS`)
+every small letter but `x` and `y`, and the digits `1` and `2` (and `0` on rust-engine/guest-sources-rust). The "Reserved tags" row for `x` (`ACCESS_MEMBERS`)
 records a claim whose constant is still only on the access branches, listed below as a branch claim. This table lists every other tag claimed on any
 branch, and the reserved ones, with the owner who claimed it. The rules:
 
@@ -261,13 +266,14 @@ branch, and the reserved ones, with the owner who claimed it. The rules:
 |---|---|---|---|
 | `x` | `ACCESS_MEMBERS` | interfaces lane (session a9fd5b22) | branch rust-engine/access-rules-rust (row 32a-1) and the access branches stacked on it |
 | `y` | `SESSION_STATE` | not named on the branch; the trunk names it at intake | branch rust-engine/sync-checkpoint and the branches that contain 4601da37e0 |
-| `0` | `GUEST_SOURCE` | not named on the branch; the trunk names it at intake | branch rust-engine/collate-equal |
+| `0` | `GUEST_SOURCE` | lane 6 (guest sources, row 32m-3) | branch rust-engine/guest-sources-rust (from rust-engine/collate-equal 4573663d7f) |
 | `3` | `SECRET_STORE` | lane 10 | reserved (the trunk holds it for the secret store) |
 | `~` | `FAMILY_ESCAPE` | core | main once this lands: the escape for two-byte family tags |
 | `~k` | `KEYED_INDEX` | the keyed-lookups lane | branch rust-engine/keyed-lookups (store format 9: the keyed lookups of `keyed_index.rs`) |
 | `~e` | `PAGE_EXTRACTION_STATE` | lane 8 (rust-members-tail) | branch rust-engine/rust-members-tail: the `page_extraction_state` family (the extraction watermark and partial-input receipt of a page); a hard page delete removes the page's rows; the tag `2` stays free |
+| `~g` | `GUEST_MARK` | lane 6 (guest-note save) | branch rust-engine/guest-note-save-rust: the `guest_marks` family (who a guest note was saved for); a hard page delete removes the page's mark |
 
-Free one-byte tags: the digits `4` to `9` (approved rows only) and punctuation other than `~`, which stays unclaimed
+Free one-byte tags: the digit `0` (released: the guest-source claim of rust-engine/collate-equal did not land, and guest sources stay refused on Rust), the digits `4` to `9` (approved rows only) and punctuation other than `~`, which stays unclaimed
 unless a reviewed change to this table names it.
 
 `rust/crates/gbrain-store/tests/keys_registry.rs` fails when two constants of `keys.rs` take one tag byte (or one
@@ -928,7 +934,7 @@ Slug renames and page aliases.
 - **Depends on:** `updateSlug` moves the page key (`P`) from the old slug to the new one through core's `pages::rename_page` (built; "Core hooks"). This family versions the page first (`pages::snapshot_in`), then calls `rename_page`, then records the alias, moves its own slug bindings (`page_aliases`, statements 7 and 8 of "Rename slug rows"), and calls `cascade::rename_slug_rows` for the facts records. Links, chunks, tags, timeline and versions follow the page id and need no change.
 - **Estimate:** about 5 to 6 days.
 - **Notes:** Same capability (`pages`) as page_ops and extraction. `resolveSlugWithAliasDetailed` returns how the slug was found; keep its result fields exact.
-- **Known gap:** the Rust store keeps no `alias_text` and no `case_sensitive` flag on `page_aliases` rows, so `resolveCaseSensitiveAliases` is always empty, `readPageAliasRows` gives `alias_text: null`, and `replaceDerivedAliases` stays unserved until alias storage exists (`rust/docs/store/alias_fanout_reads.md`). `findPagesByTitles`, `resolveAliases` and `aliasCanonicalRefs` with `excludePrivate` serve a caller's reader identity and private-readable grant; they refuse with `engine_capability_missing` for a caller whose policy differs in any other way (folder rules, lineage, an owner read), and the caller's fail-open fallback reads that as no rows.
+- **Known gap:** the Rust store keeps no `alias_text` and no `case_sensitive` flag on `page_aliases` rows, so `resolveCaseSensitiveAliases` is always empty, `readPageAliasRows` gives `alias_text: null`, and `replaceDerivedAliases` stays unserved until alias storage exists (`rust/docs/store/alias_fanout_reads.md`). `findPagesByTitles`, `resolveAliases` and `aliasCanonicalRefs` with `excludePrivate` serve modelled reader identities, private-readable grants, folder rules, labelled-only and member-lineage page policies, and owner records when the SQL text matches a freshly rendered reference record. Unmodelled caller policies, including a labelled-only audience of several identities, refuse with `engine_capability_missing`, and the caller's fail-open fallback reads that as no rows.
 - **Parity cases (11, in `sync-aliases.test.ts` and `alias-trust.test.ts`):**
   - `sync-aliases.test.ts`: updateSlug renames a page in place, keeps its chunks, and returns 0 when the old slug is absent
   - `sync-aliases.test.ts`: updateSlug is source-scoped and rejects a path-traversal new slug
@@ -2047,9 +2053,9 @@ and write provenance on content rows, and the trust records.
     derivation rows a rewritten segment may hold (`deleteRewrittenSegmentDerivations`), the version read
     (`listPurgeVersionBodies`, `purge_version_bodies.rs`), and `createVersion` with the purge's `preimage`.
   - `resolveAliases` serves the floor, the flagged-page filter and `excludePrivate` on both the alias page and its
-    title shadow (`alias-trust.test.ts`), a caller's reader identity and private-readable grant included; it still
-    refuses `excludePrivate` for a caller whose member pages, grants or lineage widen the page policy, and the search
-    fan-out reads that refusal as no aliases.
+    title shadow (`alias-trust.test.ts`), including modelled reader identities, private-readable grants, folder rules,
+    labelled-only and member-lineage page policies, and owner records. Unmodelled caller policies, including a
+    labelled-only audience of several identities, still refuse `excludePrivate`, and the search fan-out reads that refusal as no aliases.
   - Not yet built: the scan cursor, the claim and `max(id)` reads of the eligibility scan, and the admin slug and lifetime reads still go through `executeRaw`. The takes members keep
     their refusal.
   - Pinned by `test/engine-parity/trust-reads.test.ts` and `test/engine-parity/trust-tier-reads.test.ts` on all three engines.

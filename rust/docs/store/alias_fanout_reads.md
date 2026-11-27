@@ -35,8 +35,9 @@ TypeScript members return `[]` with no call when a list is empty, as the SQL mem
 The TypeScript `findPagesByTitles` member passes `excludePrivate` through `storePagePolicy`
 (`src/core/rust-engine/store-members/private-provenance.ts`). A caller whose record holds a reader identity and a
 private-readable grant, the folder rules it satisfies and the pending prefixes its record holds is served: the store
-reads them from the policy (`facts/privacy.rs`). A caller whose policy differs in any other way (an audience, lineage,
-an owner read, a labelled-only grant) gets the typed `engine_capability_missing` refusal. The caller in `alias-fanout.ts` keeps master's
+reads them from the policy (`facts/privacy.rs`). Modelled labelled-only and member-lineage page policies are also served when their SQL text matches a fresh
+reference record. A caller whose text matches none of the supported references, including a labelled-only audience
+of several identities, gets the typed `engine_capability_missing` refusal. The caller in `alias-fanout.ts` keeps master's
 `.catch(() => [])`, so that caller reads the refusal as no title hit, as it read a refused raw statement before.
 
 Differences from PGLite:

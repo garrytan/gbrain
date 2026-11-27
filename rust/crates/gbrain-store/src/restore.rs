@@ -37,15 +37,16 @@ use std::collections::{BTreeMap, BTreeSet};
 /// `test/restore.rs` compares it with the constants of `keys.rs`.
 const KNOWN_TAGS: &[u8] = b"MCSPIKTVJjWLlUOEDGopekbFNAQYZHgsnrquRcXBwvdmtafixzyh1";
 /// The tags of `keys.rs` this restore deliberately leaves unclassified, so a record under one refuses by name
-/// (`unclassified_state`) until a restore step classifies it: the secret store (`3`, `secret_store.rs`) and the two-byte
+/// (`unclassified_state`) until a restore step classifies it: the guest sources (`0`, `guest_sources.rs`; each record
+/// carries the guest write rules, authority nothing revokes), the secret store (`3`, `secret_store.rs`) and the two-byte
 /// family escape (`~`, `keys::family_tag`), except the families in `KNOWN_FAMILIES`. `test/restore.rs` checks
 /// `KNOWN_TAGS` plus this list against `keys.rs`.
 #[cfg(test)]
-const UNCLASSIFIED_TAGS: &[u8] = b"3~";
+const UNCLASSIFIED_TAGS: &[u8] = b"03~";
 /// The two-byte families under the escape `~` (`keys::family_tag`) this restore classifies: the
 /// keyed lookups (`~k`, `keyed_index.rs`), entries derived from page, chunk and link records that
 /// every `Store::write` keeps in step, so a restore's own writes carry them along. A record under
-/// any other family still refuses as `tag 0x7e`.
+/// any other family (the guest marks `~g` among them) still refuses as `tag 0x7e`.
 const KNOWN_FAMILIES: &[[u8; 2]] = &[keys::KEYED_INDEX];
 /// The `jobs` sub-tags (`jobs.rs` lists them); a later one may hold authority (a token table).
 const JOBS_SUBTAGS: &[u8] = &[

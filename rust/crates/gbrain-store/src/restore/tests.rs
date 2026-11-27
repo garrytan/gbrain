@@ -259,6 +259,32 @@ fn a_record_of_a_kind_this_build_has_not_classified_fails_closed() {
 }
 
 #[test]
+fn a_brain_holding_a_guest_source_refuses_restore_by_name() {
+    // A guest-source record carries the guest write rules, authority nothing revokes: restore leaves tag 0 unclassified.
+    let store = store();
+    store
+        .upsert_source(&SourceInput {
+            id: "guest-a".into(),
+            ..Default::default()
+        })
+        .unwrap();
+    store
+        .upsert_guest_source("guest-a", &["w".into()], "unknown")
+        .unwrap();
+    assert_eq!(
+        store.restore_census(&[]).unwrap().unclassified,
+        ["tag 0x30"]
+    );
+    assert_eq!(
+        store
+            .restore_quarantine(&default_only())
+            .unwrap_err()
+            .message,
+        "unclassified_state: 1 (tag 0x30)"
+    );
+}
+
+#[test]
 fn the_known_lists_match_the_key_files() {
     let tags = |text: &str, pattern: &str| -> BTreeSet<u8> {
         let re = regex_lite(pattern);

@@ -15,6 +15,7 @@ import type { BrainEngine } from '../engine.ts';
 import type { SearchResult } from '../types.ts';
 import { effectiveInfluence, loadFeedbackSettings } from '../feedback/settings.ts';
 import { NEUTRAL_WEIGHT } from '../feedback/store.ts';
+import { rethrowCapabilityMissing } from '../rust-engine/errors.ts';
 
 export interface FeedbackStageMeta {
   applied: boolean;
@@ -33,26 +34,17 @@ export function feedbackMultiplier(weight: number, influence: number): number {
   return 1 + influence * 2 * (weight - NEUTRAL_WEIGHT);
 }
 
+/**
+ * Each page's content hash and its learned weight (`readPageFeedbackWeights`, halved toward neutral after an edit),
+ * neutral without a weight row.
+ */
 async function readPageFeedback(
   engine: BrainEngine,
   pageIds: number[],
 ): Promise<Map<number, { content_hash: string | null; weight: number }>> {
-  const rows = await engine.executeRaw<{ id: number | string; content_hash: string | null; weight: number | string | null }>(
-    `SELECT p.id, p.content_hash,
-            CASE WHEN w.weight IS NULL THEN NULL
-                 WHEN p.content_hash IS DISTINCT FROM w.content_hash
-                   THEN ${NEUTRAL_WEIGHT} + (w.weight - ${NEUTRAL_WEIGHT}) / 2
-                 ELSE w.weight END AS weight
-       FROM pages p
-       LEFT JOIN retrieval_weights w
-         ON w.source_id = p.source_id AND w.element_kind = 'page' AND w.element_key = p.slug
-      WHERE p.id = ANY($1::int[])`,
-    [pageIds],
-  );
+  const rows = await engine.readPageFeedbackWeights(pageIds);
   const out = new Map<number, { content_hash: string | null; weight: number }>();
-  for (const r of rows) {
-    out.set(Number(r.id), { content_hash: r.content_hash, weight: r.weight == null ? NEUTRAL_WEIGHT : Number(r.weight) });
-  }
+  for (const r of rows) out.set(r.id, { content_hash: r.content_hash, weight: r.weight ?? NEUTRAL_WEIGHT });
   return out;
 }
 
@@ -98,7 +90,9 @@ export async function applyFeedbackStage(
     const unscored = keyed.filter(k => !k.scored);
     scored.sort((a, b) => (b.key! - a.key!) || (a.index - b.index));
     return [...scored, ...unscored].map(k => k.r);
-  } catch {
+  } catch (e) {
+    // An engine that cannot serve the read refuses: the refusal surfaces, never a quietly unboosted list.
+    rethrowCapabilityMissing(e);
     stageErrors++;
     meta = { applied: false, boosted: 0, errored: true };
     return results;

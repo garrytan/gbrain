@@ -130,6 +130,28 @@ export async function clearUnkeptChunkVectors(raw: EngineRawRead, pageId: number
   await raw(text, params);
 }
 
+/** A chunk's id and its recorded embedding input hash. */
+export interface ChunkInputHash { id: number; embedding_input_hash: string | null }
+
+/** Every stored chunk of the page with its recorded embedding input hash (page-state/contextual-proof.ts). */
+export async function readChunkInputHashes(raw: EngineRawRead, pageId: number): Promise<ChunkInputHash[]> {
+  // chunk-visibility-ok: the contextual-mode proof compares every stored chunk row of the page, as before
+  return raw<ChunkInputHash>('SELECT id,embedding_input_hash FROM content_chunks WHERE page_id=$1', [pageId]);
+}
+
+/** Clears the vector in `column` and its embedding record on the named chunks of the page and marks them pending now. */
+export async function clearChunkEmbeddingsByIds(raw: EngineRawRead, pageId: number, column: KeepColumn, ids: readonly number[]): Promise<void> {
+  const { text, params } = renderFragment(sqlFragment`UPDATE content_chunks SET ${trustedSql(quoteIdentifier(column.name))}=NULL,
+    embedded_at=NULL,embedded_text_hash=NULL,embedding_input_hash=NULL,embedding_pending_since=now() WHERE page_id=${pageId} AND id=ANY(${[...ids]}::int[])`);
+  await raw(text, params);
+}
+
+/** Records `hashes[i]` as the embedding input hash of the page's chunk `ids[i]`. */
+export async function writeChunkInputHashes(raw: EngineRawRead, pageId: number, ids: readonly number[], hashes: readonly string[]): Promise<void> {
+  await raw(`UPDATE content_chunks c SET embedding_input_hash=proof.hash
+    FROM unnest($2::int[],$3::text[]) AS proof(id,hash) WHERE c.page_id=$1 AND c.id=proof.id`, [pageId, [...ids], [...hashes]]);
+}
+
 /**
  * `chunkModelMatchesSql` (embedding-invalidation.ts) over the chunk's `model` as a fragment: built from its text, with
  * `model` bound in place of its model parameter (as chunks.ts currentSpaceChunkFragment does), so the two cannot drift.

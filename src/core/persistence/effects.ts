@@ -115,9 +115,7 @@ export async function selectedEffectPage(engine: BrainEngine, effect: Persistenc
   let slug = effect.data.slug;
   if (effect.data.source_scan || effect.kind === 'withdrawal-mirror') {
     // The slug order never reaches output: ORDER BY and `slug>$2` both use the default collation, so they agree and the cursor pages through every slug once.
-    const [row] = await engine.executeRaw<{ slug: string }>('SELECT slug FROM pages WHERE source_id=$1 AND ($2::text IS NULL OR slug>$2) ORDER BY slug LIMIT 1',
-      [effect.source_id, effect.data.after_slug ?? null]);
-    slug = row?.slug;
+    slug = await (await engine.persistenceUpkeepStore()).nextScanSlug(effect.source_id, effect.data.after_slug ?? null) ?? undefined;
   }
   if (!slug) return null;
   return engine.readPageSnapshot(slug, { sourceId: effect.source_id, includeDeleted: true });
@@ -162,9 +160,7 @@ export function __setEffectRenewalIntervalForTests(ms: number | null): () => voi
 export function effectRenewalInterval(): number { return effectRenewalIntervalMs; }
 
 async function recordSkippedTarget(engine: BrainEngine, effect: PersistenceEffect, target: SkippedTarget): Promise<void> {
-  await engine.executeRaw(`UPDATE persistence_effects SET data=jsonb_set(data,'{skipped}',COALESCE(data->'skipped','[]'::jsonb)||$3::text::jsonb)
-    WHERE id=$1 AND execution_token=$2::uuid AND jsonb_array_length(COALESCE(data->'skipped','[]'::jsonb))<$4`,
-  [effect.id, effect.execution_token, JSON.stringify([target]), SKIPPED_TARGET_LIMIT]);
+  await (await engine.persistenceUpkeepStore()).recordSkippedTarget(effect.id, effect.execution_token, JSON.stringify([target]), SKIPPED_TARGET_LIMIT);
 }
 
 /** Record a scan target as skipped and move past it without writing the page or its file. */
@@ -663,9 +659,9 @@ async function recordFailure(engine: BrainEngine, effect: PersistenceEffect, err
   // Source replacement is final only without recovery. Unknown physical bytes
   // retain their record and continue to block this root for explicit repair.
   if (code === 'source_changed' && !effect.recovery) {
-    const [current] = await engine.executeRaw<{ recovering: boolean }>('SELECT recovery IS NOT NULL AS recovering FROM persistence_effects WHERE id=$1', [effect.id]);
-    const [source] = await engine.executeRaw<{ incarnation: string; archived: boolean }>('SELECT incarnation,archived FROM sources WHERE id=$1', [effect.source_id]);
-    if (!current?.recovering && (!source || source.archived || source.incarnation !== effect.source_incarnation)) { await failEffect(engine, effect, code); return; }
+    const recovering = await (await engine.persistenceUpkeepStore()).effectRecovering(effect.id);
+    const source = await engine.readSourceMembership(effect.source_id);
+    if (!recovering && (!source || source.archived || source.incarnation !== effect.source_incarnation)) { await failEffect(engine, effect, code); return; }
   }
   if (effect.kind === 'embedding') {
     if (error instanceof EmbeddingDisabledError || error instanceof EmbeddingCredentialError || code === 'embedding_unconfigured') {
@@ -714,8 +710,7 @@ async function recordFailure(engine: BrainEngine, effect: PersistenceEffect, err
     derived.counted.push({ effect, code: failureCode });
     return;
   }
-  const [current] = await engine.executeRaw<{ recovering: boolean }>('SELECT recovery IS NOT NULL AS recovering FROM persistence_effects WHERE id=$1', [effect.id]);
-  if (current?.recovering) { await retryEffect(engine, effect, code, 30_000); return; }
+  if (await (await engine.persistenceUpkeepStore()).effectRecovering(effect.id)) { await retryEffect(engine, effect, code, 30_000); return; }
   // GBRA-133: a target a .gitignore rule excludes fails the same way on every attempt; it parks at once, naming the rule.
   if (code === 'git_target_ignored') { await parkEffectTarget(engine, effect, code, target, (error as OperationError).detail); return; }
   // A retried parked target has exactly one authorized attempt; otherwise the
@@ -1124,3 +1119,6 @@ async function runEffectPass(engine: BrainEngine, config: GBrainConfig, opts: Ef
   }
   return attempted;
 }
+
+/** @internal Test seam: the failure and skipped-target steps of an effect attempt, for the step-level parity cases. */
+export const __effectFailureStepsForTests = { recordFailure, recordSkippedTarget };
