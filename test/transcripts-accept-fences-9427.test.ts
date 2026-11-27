@@ -205,11 +205,13 @@ async function cli(args: string[]): Promise<{ doc: Record<string, unknown>; exit
     expect(((await cli([])).doc.not_eligible as Array<{ slug: string }>).map(p => p.slug)).toContain(TRANSCRIPTS[0]);
   }, 60_000);
 
-  test('GST-4026: an acceptance recorded before it carried a content hash keeps the timestamp rule', async () => {
+  test('GST-4026, GST-4056: an acceptance recorded before it carried a content hash holds while the importer authored the live text', async () => {
     await acceptAll();
     const stored = JSON.parse((await engine.getConfig(FENCE_ACCEPTANCE_KEY))!) as Array<Record<string, unknown>>;
     await engine.setConfig(FENCE_ACCEPTANCE_KEY, JSON.stringify(stored.map(({ content_hash: _hash, ...entry }) => entry)));
     await engine.executeRaw("UPDATE pages SET updated_at = updated_at + interval '1 minute' WHERE slug = $1", [TRANSCRIPTS[0]]);
+    expect(await listed()).toEqual([EMAIL, REMOTE].sort());
+    await conversation(TRANSCRIPTS[0]!, undefined, 'Session, edited by hand');
     expect(await listed()).toEqual([EMAIL, TRANSCRIPTS[0]!, REMOTE].sort());
   }, 60_000);
 }
