@@ -628,19 +628,23 @@ impl Store {
   | worktree heartbeats and bindings: `stamp_worktree_heartbeats`, `release_worktree_bindings` | none on multiuser | LM's (worktree-bound persistence) | LM |
   | lock-skip capability asserts: `claimCoalescedGitEffects`, `lockHeldConcept`, `lockLiveConceptMembers`, `topologyStore` | not a lease | L0's | L0 |
 
-  Lease families with their own token and TTL and no host fence. None of them is a host-writer claim under I-5. A
-  follow-up fences each one that has a path outside a fenced claim, due 2026-12-02 (owner L5). Each fix is fail-first
-  in its own commit, so a stale host can no longer renew or release past the fence:
+  Lease families that kept their own token and TTL now carry the I-5 fence too (2026-11-26 follow-up, owner L5). Each
+  TypeScript caller passes the registration (`fenceOpts`), so a stale host is refused on every path, also the paths
+  that run outside a fenced claim. Each fix is fail-first in its own commit. Rust tests are in
+  `tests/lease_fences.rs` unless named otherwise; the caller tests are in `test/rust-multiuser-lease-fences.test.ts`.
 
-  | # | Member (Rust) | Own fence, or paths inside a fenced claim (there the claim's finish is refused, not each lease write) | Paths not under a fenced claim | Follow-up |
+  | # | Member (Rust) | Fence | Stale-host test (refused at commit, nothing changes) | Caller that carries it |
   |---|---|---|---|---|
-  | 1 | `claim_notifier_lease`, `release_notifier_lease`, `holds_notifier_lease` | its own fence column: a stale owner's claim after a takeover is refused (`test/engine-parity/notifier.test.ts`, "claimNotifierLease: first claim wins ... expiry hands it over", the `stale` case) | `write_notifier_state` does not check the notifier fence at commit | check the notifier fence in the state write |
-  | 2 | `claim_housekeeping_turn` | TTL only | every path | I-5 fence |
-  | 3 | `renew_private_queue_lease` | owner token + TTL | every path | I-5 fence |
-  | 4 | `claim_segmented_projection`, `renew_segmented_projection_claim`, `release_segmented_projection_claim` | inside a fenced write claim: `page-prepare.ts`, `page-append.ts`, `segmented-apply.ts` (the consumer's `afterCommit`) | `rebuildPendingSegmentedProjections` from the consumer loop and `gbrain projections`; `buildSegmentedProjection` from `embedding-readiness.ts`, `repair/secret-spans.ts`, `repair/segmented-tiling.ts`, `facts/purge.ts`, `streamed-import.ts` | I-5 fence |
-  | 5 | `renew_deferred_replacement_claim`, `release_deferred_replacement_claim` | none | `continueDeferredProjection` from `import-file.ts` (`afterCommit`) and `rebuildPendingPageProjections`; `drainProjections` from `src/cli/commands/projections.ts` and `migrate-engine.ts` | I-5 fence |
-  | 6 | `claim_wake_forgets`, `claim_wake_watch` (settled by token) | TTL only | every path (`wakeshift/drain.ts`) | I-5 fence |
-  | 7 | `take_page_embedding_lease`, `renew_page_embedding_lease`, `release_page_embedding_lease` | inside a fenced effect claim: `persistence/effects.ts` `embedPage`; inside a fenced job claim: `contextual-reindex-per-chunk` handler; under the cycle lock: `cycle/synthesize.ts` | `gbrain embed` (`commands/embed.ts` `embedAllStale`); `embedStalePages` from `repair/safe-chunks.ts`, `repair/contextual-mode.ts`, `repair/secret-spans.ts`; `embedStaleForSource` from `remediation/run.ts`; `embedSegmentedRows`; the other `reembedPageWithContextualRetrieval` callers | I-5 fence |
+  | 1 | `write_notifier_state`, `write_notifier_coverage` | the notifier's own lease (host, owner, fence), read only on a multi-user store; its claim already refused a stale owner (`test/engine-parity/notifier.test.ts`, the `stale` case) | `lf1_a_notifier_that_lost_its_lease_cannot_write_its_state_or_coverage`, `lf1_with_the_mode_off_a_notifier_write_does_not_read_the_lease` | `commit-notifier.ts` sends the lease it holds |
+  | 2 | `claim_housekeeping_turn`, `complete_housekeeping_turn` | I-5 fence | `lf2_a_stale_host_cannot_claim_or_complete_a_housekeeping_turn` | `persistence/housekeeping-turn.ts` |
+  | 3 | `renew_private_queue_lease_fenced` | I-5 fence | `lf3_a_stale_host_cannot_renew_a_private_queue_lease` | `MinionQueue.renewPrivateQueueLease` |
+  | 4 | `claim_/renew_/release_segmented_projection_claim_fenced` | I-5 fence | `src/persistence/projection_queue.rs`: `lf4_a_stale_host_cannot_claim_renew_or_release_a_segmented_projection` | `page-body/projection.ts` (claim, the renewal in the sealing transaction, release) |
+  | 5 | `renew_/release_deferred_replacement_claim_fenced` | I-5 fence | `src/persistence/projection_queue.rs`: `lf5_a_stale_host_cannot_renew_or_release_a_deferred_replacement_claim` | `page-state/projections.ts` (`continueDeferredProjectionStep`, `continueDeferredProjection`) |
+  | 6 | `claim_wake_watch_fenced`, `settle_wake_watch`, `claim_wake_forgets`, `settle_wake_forget` | I-5 fence | `lf6_a_stale_host_cannot_claim_or_settle_a_wake_watch_or_forget` | `wakeshift/drain.ts` |
+  | 7 | `take_/renew_/release_page_embedding_lease` | I-5 fence, taken once per lease | `tests/fences_jobs.rs`: `lf7_a_stale_host_cannot_take_renew_or_release_a_page_embedding_lease` | `page-embedding-lease.ts` `acquirePageEmbeddingLease` |
+
+  With no host registered (a one-shot command) these members are unchanged: the fence is the registration's, and
+  an unregistered process has none. With the switch off no caller sends one.
 
   These have no lease, so they are not in the table: `claim_take_proposal` (a state change with `acted_by`),
   `claim_file_page` (file ownership), `write_source_sync_heartbeat` (a timestamp), and the budget and spend
