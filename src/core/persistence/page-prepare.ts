@@ -39,6 +39,9 @@ import { recordedPathFromFileUri, scannerSlugRootMode, scannerSourcePath } from 
 import { engineMutationPrecondition, parseMutationPrecondition } from './preconditions.ts';
 import { assertPurgeParams } from './purge-params.ts';
 import { authorizeWrite, slugDisclosable } from './authority.ts';
+import { admitPolicyFrontmatter } from '../policy/admission.ts';
+import { admitRuleFrontmatter } from '../rules/admission.ts';
+import { admitActionFrontmatter } from '../ledger/admission.ts';
 import { remoteLabelsChecked, defaultSourceMemberWriter, defaultSourceWriterIsOwner, defaultSourceWriterReaders, ownerRewriteOf, storedWriterReadsHeld } from './page-visibility.ts';
 import { loadFenceChunkOverlay } from '../eligibility/fence-overlay.ts';
 import { findLiveFileClaimants, type FileClaimant, type FileClaimTarget } from './file-claims.ts';
@@ -1208,7 +1211,7 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
   const lean = options.coordinated === true && !targetDeleted && row.operation !== 'restore_page' && !versionTags;
   enterClaimStep(clock, 'import_content', undefined, 'db');
   const result = await importFromContent(engine, row.slug, content, {
-    ...source, noEmbed: true, remote: row.authority.remote || p.keep_hidden_rows === true, restoreHeldRows: p.keep_hidden_rows === true || !await storedWriterReadsHeld(engine, row.authority), activePack, fences: projected ? 'coordinated' : 'lenient', coordinated: lean, boundedChunkWrites: options.boundedChunkWrites,
+    ...source, noEmbed: true, remote: row.authority.remote || p.keep_hidden_rows === true, restoreHeldRows: p.keep_hidden_rows === true || !await storedWriterReadsHeld(engine, row.authority), householdOwner: () => storedWriterReadsHeld(engine, row.authority), activePack, fences: projected ? 'coordinated' : 'lenient', coordinated: lean, boundedChunkWrites: options.boundedChunkWrites,
     segmentedOwner: { kind: row.operation === 'edit_page' ? 'edit' : 'put', principalKind: row.principal_kind, principalId: row.principal_id, baseRevision: observedRevision },
     ...(lean ? { existingSnapshot: snapshot } : {}),
     // #6259: only owner-tier intents keep gate-owned markers; an ordinary put_page, local or remote, has them stripped.
@@ -1226,6 +1229,8 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
       if (labelGuard) heldLabels = holdPrivacyLabels(page.frontmatter, snapshot?.page.frontmatter, labelGuard);
       stampPageTrustMarker(row, page.frontmatter, trust, storedTier, snapshot?.page.frontmatter);
       defaultSourceWriterReaders(defaultSourceWriter, page.frontmatter, snapshot?.page, defaultSourceOwner, ownerRewrite);
+      admitPolicyFrontmatter(row.authority.remote, row.slug, page, snapshot?.page.type); admitRuleFrontmatter(row.authority.remote, row.slug, page, snapshot?.page.type);
+      admitActionFrontmatter(row.authority.remote, row.slug, page, snapshot?.page.type);
       if (privateRequest) assertPrivateRequestKept(row, page.frontmatter);
     },
     prepare: async value => { prepared = value; return value.result; },

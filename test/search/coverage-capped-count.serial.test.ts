@@ -3,7 +3,7 @@
  *
  * The count of waiting pages that could affect a query used to read an unordered first 1000 pages, so its answer
  * moved with the order pages were written in; it is now min(every match in scope, cap). To stay cheap when a word
- * matches few of many waiting pages, the word test can read the v340 trigram index (idx_pages_projection_waiting_words)
+ * matches few of many waiting pages, the word test can read the v352 trigram index (idx_pages_projection_waiting_words)
  * instead of testing every waiting page, and the statement runs unprepared so Postgres plans it for its bound words
  * (a cached generic plan tested every page: about 18 ms against 3 ms at 10,000 waiting pages). A count past
  * COVERAGE_COUNT_TIMEOUT_MS is unknown (null), never zero.

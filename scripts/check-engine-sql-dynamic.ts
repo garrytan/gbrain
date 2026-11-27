@@ -42,6 +42,8 @@ const EXEMPT_FILES: Record<string, string> = {
 };
 
 const CONSTANT_ALLOWLIST: Record<string, string> = {
+  SPELLING_KEY_SQL: 'src/core/slug-spelling-key.ts: the constant spelling-index key expression over pages.slug (no input); the migration v335 index uses the same text, so the planner matches it',
+  SCAN_KEY_SQL: 'src/core/slug-spelling-key.ts: the constant ASCII scan key expression over pages.slug (no input)',
   EFFECT_BYTES_SQL: 'src/core/persistence/receipt-bytes.ts: constant per-row byte expression over persistence_effects columns (no input); spliced by engine-sql/page-purge-journal.ts readEffectBytes',
   ENRICH_ORDER_SQL: 'src/core/types.ts: ORDER BY text keyed by the EnrichCandidatesOpts order union (whitelisted enum)',
   SOURCE_CONFIG_OBJECT_SQL: 'src/core/source-config-sql.ts: static sources.config coercion expression (no input)',
@@ -57,17 +59,21 @@ const CONSTANT_ALLOWLIST: Record<string, string> = {
   ACTIVATION_SERVED_REVISION: 'src/core/search/safe-chunks.ts: the constant v153 served-index marker uuid (#9192); no input',
   UNBACKED_FACT_SQL: 'src/core/engine-sql/fact-relink-writes.ts: constant live-row-on-an-unbacked-name-key predicate over the facts alias f (unbackedEntitySql plus LIVE_FACT_SQL); no input',
   ACTIVE_UNLINKED_FACT_SQL: 'src/core/engine-sql/fact-relink-writes.ts: constant live-row-with-no-entity predicate over the facts alias f; no input',
+  REDACT_PURGED_KEYS_LEGACY_SQL: 'src/core/belief/legacy-fingerprint.ts: the constant purged-key redaction UPDATE with the legacySubjectKeysSql CTE over the constant factFingerprintV2Sql (placeholders $1 to $4 bound by redactPurgedBeliefKeys); no input',
   FACT_POOL_COLUMNS: 'src/core/engine-sql/facts-trust.ts: constant select list of the facts pool columns (no input)',
   RELEASE_STAGED_CTE: 'src/core/persistence/limits.ts: constant CTE releasing upload reservations of a preceding gone CTE (no input)',
   EXPIRED_ARCHIVE_SQL: 'src/core/engine-sql/sources.ts: constant archive-window-elapsed predicate over sources (no input)',
   UNVERIFIED_ARCHIVE_SQL: 'src/core/engine-sql/sources.ts: constant missing-or-epoch archive-time predicate over sources (no input)',
   CREDENTIAL_RESEAL_HELD: 'src/core/page-state/credential-reseal-hold.ts: constant live-credential-re-chunk-hold predicate over the pages alias p; the op and producer are module constants (no input)',
   NOT_CONVERSATION_SLOT_SQL: 'src/core/chronicle/ontology.ts: constant conversation-source prefix exclusion over the facts source column (no input)',
-  SPELLING_KEY_SQL: 'src/core/slug-spelling-key.ts: constant spelling-key expression over pages.slug (template of ASCII capital constants; the index and the lookup share this one text) (no input)',
-  SCAN_KEY_SQL: 'src/core/slug-spelling-key.ts: constant ASCII-only key expression over pages.slug built from SPELLING_KEY_SQL (no input)',
 };
 
 const VETTED_BUILDERS: Record<string, string> = {
+  catalogIdentifierSql: 'src/core/engine-sql/eval-harness-reads.ts: a table or column name read from information_schema (listTextBearingColumns), double-quoted with every double quote doubled; no values',
+  catalogScanHeadSql: 'src/core/engine-sql/eval-harness-reads.ts: constant slug, page id and entity projections over alias x, with catalog column names quoted by catalogIdentifierSql; no values',
+  catalogScanColumnSql: 'src/core/engine-sql/eval-harness-reads.ts: one catalog column of alias x, quoted by catalogIdentifierSql, cast to text; no values',
+  catalogScanJoinSql: 'src/core/engine-sql/eval-harness-reads.ts: the constant LEFT JOIN of pages on alias x\'s page id, or nothing; no values',
+  catalogScanLiveSql: 'src/core/engine-sql/eval-harness-reads.ts: constant live-row predicates (expired_at, deleted_at, takes.active, the page join) chosen by which catalog columns exist; no values',
   // access-grants.ts builders
   tokenGrantColumnList: 'src/core/engine-sql/access-grants.ts (from grants/model.ts): joins only TOKEN_GRANT_ROW_COLUMNS constant names, filtered by which ones pg_attribute reports present; no values',
   // facts-rest-sites builders (facts-trust.ts, facts-recall.ts)
@@ -77,8 +83,8 @@ const VETTED_BUILDERS: Record<string, string> = {
   contestedReadableSql: 'src/core/engine-sql/facts-trust.ts: constant active and readable predicate over a caller-given constant facts alias; the policy picks among constant fragments (privateFactFilterForCaller, projectionEligibleSql) and binds no value',
   memberReadsSql: 'src/core/engine-sql/facts-trust.ts: ownerReadPolicyFragment or readPolicyFragment over a constant page alias; identities and rule ids are checked by validIdentity and validQualifiedRuleId before they are quoted in (see those entries)',
   withdrawalReachedFactSql: 'src/core/access/member-facts.ts: constant withdrawal-reached-fact predicate over caller withdrawal and fact aliases; no values',
-  // belief-ledger.ts builders (pre-v341 fingerprint probes)
-  factFingerprintV2Sql: 'src/core/facts/withdrawal-schema.ts: the pre-v341 fingerprint expression with the caller\'s constant column or alias name substituted for `claim`, over the FACT_SPACE_CLASS and FINGERPRINT_PUNCTUATION constants; no values',
+  // belief-ledger.ts builders (pre-v353 fingerprint probes)
+  factFingerprintV2Sql: 'src/core/facts/withdrawal-schema.ts: the pre-v353 fingerprint expression with the caller\'s constant column or alias name substituted for `claim`, over the FACT_SPACE_CLASS and FINGERPRINT_PUNCTUATION constants; no values',
   legacyFingerprintV2Sql: 'src/core/facts/withdrawal-schema.ts: CASE over the same constants around factFingerprintV2Sql of the caller\'s constant column or alias name; no values',
   // facts-doctor.ts builders
   entityLinkableSql: 'src/core/engine-sql/facts-doctor.ts: returns the constant ENTITY_LINKABLE_SQL predicate (attribution.ts) over the facts alias f; no values',
@@ -170,6 +176,8 @@ const VETTED_BUILDERS: Record<string, string> = {
   buildHardExcludeClause: 'src/core/search/sql-ranking.ts: LIKE-escaped and SQL-escaped slug prefix literals (buildLikePrefixLiteral), the ranked-search hard-exclude clause',
   buildRecencyComponentSql: 'src/core/search/sql-ranking.ts: inlines LIKE literals + numeric coefficients from the decay map, as master (planner behavior)',
   readPolicyFragment: 'src/core/search/private-visibility.ts: accessAllowedForAllSql (readers identities checked by validIdentity before they are quoted in) AND the constant privacyPartSql or TRUE over a caller page alias; no values',
+  hiddenSlugsPolicySql: 'src/core/engine-sql/page-mutation-reads.ts: callerAccessAllowedSql and the constant privacyPartSql over the constant alias p (the output guard\'s per-row test); no values',
+  memberViewPolicySql: 'src/core/engine-sql/page-mutation-reads.ts: readPolicyFragment over the constant alias p, ANDed (labelled-only member) with labelledOnlyForSql over the same alias, whose identities pass validIdentity and rule ids validQualifiedRuleId before they are quoted in; no values',
   renderWriterReadPolicy: 'src/core/engine-sql/remote-links.ts: readPolicyFragment over a code-provided alias, ANDed (labelled-only writer) with labelledOnlyForSql, whose identities pass validIdentity and rule ids validQualifiedRuleId before they are quoted in; no values',
   privacyPartSql: 'src/core/search/private-visibility.ts: the constant privacy part (snapshot, derived-origin and declared-lineage tests) over a code-provided page alias; no values',
   privatePagesFilterFragment: 'src/core/search/private-visibility.ts: constant visibility predicate over a caller alias',
@@ -247,6 +255,8 @@ const VETTED_BUILDERS: Record<string, string> = {
   retiredPageSql: 'src/core/entities/resolve.ts: constant retired-page frontmatter predicate over a caller alias; no values',
   holdAppliesToPageSql: 'src/core/write-gate-binding.ts: constant hold-reaches-page predicate over caller-given constant aliases and column expressions; no values',
   holdOwnedByDeletedPageSql: 'src/core/write-gate-binding.ts: constant hold-owned-by-purged-page predicate over caller-given constant aliases and column expressions; no values',
+  guestPredicateSql: 'src/core/engine-sql/cli-reads-import.ts: constant guest predicate (guestSourceSql, or the config record alone) over caller-given constant aliases; no values',
+  precedenceSql: 'src/core/eligibility/precedence.ts: constant source-precedence CASE over caller-given constant aliases and a constant guest predicate; class names come from a constant list; no values',
   noteKeptHoldsCte: 'src/core/write-gate-binding.ts: constant data-modifying CTE that notes the holds a purge keeps for another page, over caller-given constant aliases and column expressions (a sub-select of the purge CTE, never a value); no values',
   holdResidueOfDeletedPageSql: 'src/core/write-gate-binding.ts: constant hold-left-behind-by-purged-page predicate over caller-given constant aliases and column expressions; no values',
   privacyLabelKeySql: 'src/core/search/ignored-privacy-labels.ts: constant has-a-privacy-label-key predicate (code-constant PRIVACY_LABEL_KEYS) over a caller alias; no values',

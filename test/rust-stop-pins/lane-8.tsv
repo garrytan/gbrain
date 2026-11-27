@@ -3,4 +3,3 @@
 # Columns (tab separated): parity file, case name, member that refused, owner, due date (YYYY-MM-DD, UTC), what Rust declines.
 # A row lets the case stop on that member's typed refusal (GBRAIN_TEST_RUST_ARM=1). The run fails when the case stops on another member, when the
 # due date has passed (the row goes red at 00:00 UTC on the day after the due date), or when the case no longer stops (remove the row).
-test/engine-parity/forget-reach-reads.test.ts	ownerReachesFact for an owner bound to a member reads its pages under the owner read rule	ownerReachesFact	lane 8 a28f9a86-adb1-4879-b078-42377e8aaade	2026-11-26	Declines an owner bound to a member, whose pages the owner read rule (lineage) judges; the store does not model it.

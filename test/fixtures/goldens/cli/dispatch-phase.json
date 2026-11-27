@@ -388,6 +388,13 @@
         "thinClient": "none",
         "thinClientRoutedSubcommands": []
       },
+      "claims": {
+        "hasSwitchCase": true,
+        "phase": "post-connect",
+        "preConnectRules": [],
+        "thinClient": "refuse",
+        "thinClientRoutedSubcommands": []
+      },
       "claw-test": {
         "hasSwitchCase": false,
         "phase": "pre-connect",
@@ -521,6 +528,13 @@
         "phase": "post-connect",
         "preConnectRules": [],
         "thinClient": "none",
+        "thinClientRoutedSubcommands": []
+      },
+      "correct": {
+        "hasSwitchCase": true,
+        "phase": "post-connect",
+        "preConnectRules": [],
+        "thinClient": "refuse",
         "thinClientRoutedSubcommands": []
       },
       "creds": {
@@ -1072,6 +1086,13 @@
         "thinClient": "none",
         "thinClientRoutedSubcommands": []
       },
+      "household": {
+        "hasSwitchCase": true,
+        "phase": "post-connect",
+        "preConnectRules": [],
+        "thinClient": "refuse",
+        "thinClientRoutedSubcommands": []
+      },
       "identity": {
         "hasSwitchCase": true,
         "phase": "post-connect",
@@ -1166,6 +1187,13 @@
           "wait",
           "stats"
         ]
+      },
+      "ledger": {
+        "hasSwitchCase": true,
+        "phase": "post-connect",
+        "preConnectRules": [],
+        "thinClient": "refuse",
+        "thinClientRoutedSubcommands": []
       },
       "lint": {
         "hasSwitchCase": false,
@@ -1319,6 +1347,13 @@
         "thinClient": "none",
         "thinClientRoutedSubcommands": []
       },
+      "onboarding": {
+        "hasSwitchCase": true,
+        "phase": "post-connect",
+        "preConnectRules": [],
+        "thinClient": "refuse",
+        "thinClientRoutedSubcommands": []
+      },
       "orphans": {
         "hasSwitchCase": true,
         "phase": "post-connect",
@@ -1350,6 +1385,13 @@
           }
         ],
         "thinClient": "none",
+        "thinClientRoutedSubcommands": []
+      },
+      "policy": {
+        "hasSwitchCase": true,
+        "phase": "post-connect",
+        "preConnectRules": [],
+        "thinClient": "refuse",
         "thinClientRoutedSubcommands": []
       },
       "post-upgrade": {
@@ -1411,6 +1453,13 @@
             ]
           }
         ],
+        "thinClient": "refuse",
+        "thinClientRoutedSubcommands": []
+      },
+      "propose": {
+        "hasSwitchCase": true,
+        "phase": "post-connect",
+        "preConnectRules": [],
         "thinClient": "refuse",
         "thinClientRoutedSubcommands": []
       },
@@ -1694,6 +1743,13 @@
           }
         ],
         "thinClient": "none",
+        "thinClientRoutedSubcommands": []
+      },
+      "rules": {
+        "hasSwitchCase": true,
+        "phase": "post-connect",
+        "preConnectRules": [],
+        "thinClient": "refuse",
         "thinClientRoutedSubcommands": []
       },
       "salience": {
@@ -2145,6 +2201,13 @@
           }
         ],
         "thinClient": "none",
+        "thinClientRoutedSubcommands": []
+      },
+      "value": {
+        "hasSwitchCase": true,
+        "phase": "post-connect",
+        "preConnectRules": [],
+        "thinClient": "refuse",
         "thinClientRoutedSubcommands": []
       },
       "waiting": {

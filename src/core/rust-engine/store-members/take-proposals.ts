@@ -28,7 +28,11 @@ const claimRow = (row: unknown): TakeProposalClaim | null =>
   row === null || row === undefined ? null : withDates(row as TakeProposalClaim, ['acted_at']);
 
 export const listPendingTakeProposals: StoreMember<[opts: { sourceId?: string; limit: number }], TakeProposalRow[]> = async (brain, opts) => {
-  const spec: Record<string, unknown> = { limit: opts.limit };
+  // The SQL engines clamp the same way before they bind LIMIT; an infinity reaches an end, and NaN fails as Postgres
+  // fails the bigint LIMIT parameter (22P02) instead of crossing the addon as a JSON null.
+  const limit = Math.max(1, Math.min(500, Math.trunc(opts.limit)));
+  if (Number.isNaN(limit)) throw Object.assign(new Error('invalid input syntax for type bigint: "NaN"'), { code: '22P02' });
+  const spec: Record<string, unknown> = { limit };
   if (opts.sourceId) spec.sourceId = opts.sourceId;
   const rows = await storeCall({ member: 'listPendingTakeProposals' }, () => brain.listPendingTakeProposals(spec)) as unknown[];
   return rows.map(row => proposalRow(row)!);

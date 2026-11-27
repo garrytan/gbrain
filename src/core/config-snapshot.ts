@@ -146,6 +146,12 @@ export async function withoutRequestConfigSnapshot<T>(fn: () => Promise<T>): Pro
   }
 }
 
+/** Run a read-only `fn` reading config live; unlike withoutRequestConfigSnapshot, the request's snapshot stays in place. */
+export async function withLiveConfigRead<T>(fn: () => Promise<T>): Promise<T> {
+  const store = requestSnapshot.getStore();
+  return store ? requestSnapshot.run({ held: store.held, live: true }, fn) : fn();
+}
+
 function snapshotRows(engine: BulkConfigReader, held: RequestSnapshot): Promise<Map<string, string> | null> {
   held.rows ??= requestSnapshot.run({ held, live: true }, () => loadConfigSnapshot(engine))
     .then(rows => rows ? new Map(Object.entries(rows)) : null);
@@ -214,4 +220,26 @@ export function requestSnapshotRead<T>(engine: object, key: string, load: () => 
   let read = held.reads.get(key) as Promise<T> | undefined;
   if (!read) held.reads.set(key, read = requestSnapshot.run({ held, live: true }, load));
   return read;
+}
+
+/**
+ * L1 agent policy: config keys only an owner-confirmed path writes (the policy approvals, the
+ * brain-first settings and C2's standing-rule confirmations). Both engines' setConfig and unsetConfig refuse them outside
+ * withReservedConfigWrite, which src/core/policy/authority.ts enters carrying the owner's proof, and
+ * copyMigrationConfig enters to copy the rows a brain already holds, unchanged, to its new engine.
+ */
+export const RESERVED_CONFIG_PREFIXES = ['policy.approved.', 'brain_first.', 'rules.confirmed.'] as const;
+const reservedWriteScope = new AsyncLocalStorage<true>();
+
+export function withReservedConfigWrite<T>(fn: () => Promise<T>): Promise<T> {
+  return reservedWriteScope.run(true, fn);
+}
+
+export function reservedConfigWriteRefused(key: string): boolean {
+  return RESERVED_CONFIG_PREFIXES.some(prefix => key.startsWith(prefix)) && reservedWriteScope.getStore() !== true;
+}
+
+export function assertReservedConfigWrite(key: string): void {
+  if (!reservedConfigWriteRefused(key)) return;
+  throw Object.assign(new Error(`${key} is reserved: only an owner-confirmed gbrain policy command writes it, so nothing was changed.`), { name: 'ReservedConfigKeyError', code: 'policy_approval_reserved' });
 }

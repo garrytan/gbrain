@@ -8,6 +8,7 @@ import { capabilityMissing } from '../errors.ts';
 import { RUST_ENGINE_MEMBERS } from '../members.ts';
 import { mapStoreError, type StoreErrorContext } from '../store-errors.ts';
 import type { StoreBrain } from '../store.ts';
+import { getFtsLanguage } from '../../fts-language.ts';
 
 /** A member implemented on the store: `brain` first, then the arguments of the BrainEngine member it serves. */
 export type StoreMember<Args extends unknown[], R> = (brain: StoreBrain, ...args: Args) => Promise<R>;
@@ -37,6 +38,19 @@ export function takeOptions(member: string, opts: object | undefined, supported:
 }
 
 /** Refuses a member whose arguments need something the store does not have. */
+/** The text search configurations the store ports (keyword/stem.rs, keyword/stem_german.rs). */
+const STORE_FTS_CONFIGS = ['english', 'german'] as const;
+
+/**
+ * The configuration `GBRAIN_FTS_LANGUAGE` names, for a member that parses text at query time: `english` or `german`.
+ * Any other configuration refuses, because the store has no Snowball port for it.
+ */
+export function storeFtsConfig(member: string, what = 'the text search configuration'): 'english' | 'german' {
+  const config = getFtsLanguage();
+  if ((STORE_FTS_CONFIGS as readonly string[]).includes(config)) return config as 'english' | 'german';
+  return refuseMember(member, `no Snowball port for ${what} ${config}`);
+}
+
 export function refuseMember(member: string, what: string): never {
   throw capabilityMissing(memberCapability(member), `${member} (${what})`);
 }

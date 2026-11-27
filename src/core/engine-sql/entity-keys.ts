@@ -34,6 +34,8 @@ export interface EntityKeyRowsOpts {
   members?: ReadonlyArray<{ source_id: string; slug: string }>;
   /** Pages one of whose `fields` values reads as one of `values` in a form the finder's key normalizers produce. */
   tokens?: { values: string[]; fields: string[] };
+  /** Instead of live unretired pages: the retired pages a dedupe collapse made (a `merged_into` and a `dedupe_collapse` record, core/entities/evidence/collapse.ts). */
+  collapsed?: boolean;
 }
 
 export async function listEntityKeyRows(exec: LegacyUnscopedRead, opts: EntityKeyRowsOpts): Promise<EntityKeyRow[]> {
@@ -52,7 +54,9 @@ export async function listEntityKeyRows(exec: LegacyUnscopedRead, opts: EntityKe
      WHERE p.deleted_at IS NULL
        AND s.archived IS NOT TRUE
        AND p.type = ANY(${opts.types}::text[])
-       AND NOT ${trustedSql(retiredPageSql('p'))}
+       AND (CASE WHEN ${opts.collapsed === true}::boolean
+              THEN p.frontmatter -> 'dedupe_collapse' IS NOT NULL AND btrim(COALESCE(p.frontmatter ->> 'merged_into', '')) <> ''
+              ELSE NOT ${trustedSql(retiredPageSql('p'))} END)
        AND (${members === null}::boolean OR (p.source_id, p.slug) IN (
              SELECT * FROM unnest(${(members ?? []).map(m => m.source_id)}::text[], ${(members ?? []).map(m => m.slug)}::text[])))
        AND (${tokens === null}::boolean OR EXISTS (

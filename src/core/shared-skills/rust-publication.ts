@@ -16,6 +16,11 @@ export function isRustBrain(engine: unknown): boolean {
   return (engine as { kind?: unknown }).kind === 'rust';
 }
 
+/** A Rust brain this process reaches as a client of its owner (gbrain serve): the skill store here is the owner's alone. */
+export function isRustClient(engine: unknown): boolean {
+  return isRustBrain(engine) && (engine as { ownerRole?: unknown }).ownerRole === 'client';
+}
+
 async function call<T>(engine: BrainEngine, member: string, run: (brain: StoreBrain) => Promise<unknown>): Promise<T> {
   const rust = engine as unknown as RustEngine & { _admit(member: string): Promise<void>; storeFor(member: string): Promise<{ brain: StoreBrain }> };
   await rust._admit(member);

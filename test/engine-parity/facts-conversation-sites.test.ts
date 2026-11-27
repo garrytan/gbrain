@@ -21,8 +21,8 @@
  *    `archiveSource` and `restrictFolder` write the rest with SQL, and the Rust arm stops there on the typed raw_sql refusal.
  *    The write journal (persistence_requests, persistence_counters) is seeded through the typed journal members
  *    (`readSourceMembership`, `lockPersistenceCounters`, `insertWriteRequest`, `stampWriteClaim`, `completeWriteRow`), so its four
- *    reads are compared on queued, failed, committed and other-slug batch requests as well as on the empty journal; the one
- *    write with no typed member, marking a request compacted, is a local `executeRaw` fixture that the Rust arm stops on. The
+ *    reads are compared on queued, failed, committed and other-slug batch requests as well as on the empty journal; a
+ *    request is compacted through the typed `compactTerminalIntent` member, so every arm, the Rust one included, compares. The
  *    request join is also pinned by the SQL text pin (test/facts-conversation-sites-sql-pin.test.ts). Generated values (ids)
  *    are compared by relation, never by value.
  */
@@ -107,9 +107,12 @@ async function settleBatch(engine: BrainEngine, id: string, state: 'committed' |
   });
 }
 
-/** Marks a request compacted: no typed member does it (the compaction pass is housekeeping), so this is a raw fixture. */
+/** Compacts a settled request through the typed compaction member (journal.ts finishTerminal's step), on every engine. */
 async function markCompacted(engine: BrainEngine, id: string): Promise<void> {
-  await engine.executeRaw('UPDATE persistence_requests SET compacted = true WHERE id = $1::uuid', [id]);
+  await engine.transaction(async tx => {
+    await tx.lockPersistenceCounters(WRITER_KEYS);
+    await tx.compactTerminalIntent({ id, left: 1500, reservation: 4096, counterKeys: WRITER_KEYS });
+  });
 }
 
 const win = (occurrence: number, ordinal: number, sha: string) => ({ occurrence_id: occurrence, window_ordinal: ordinal, window_text_sha: sha });
@@ -126,12 +129,9 @@ describe('engine parity: group 5 facts conversation publication and relink state
     return { spent, batches, stored, counters };
   });
 
-  // Named Rust stop: markCompacted seeds through executeRaw, which the Rust engine refuses. The typed compaction writer
-  // compactReceipt (persistence/journal.ts) is owned by lane 7 (a22a4d34); when it lands, seed through it and this case
-  // goes equal on Rust.
   parityTest('the write journal reads see seeded batch requests: spent ids, unsettled and failed batches in order, stored entries and counters', {
     methods: ['readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest', 'stampWriteClaim', 'completeWriteRow', 'transaction',
-      'findSpentConversationRequest', 'listConversationBatchRequests', 'readStoredConversationEntry', 'readPrincipalCounters'],
+      'findSpentConversationRequest', 'listConversationBatchRequests', 'readStoredConversationEntry', 'readPrincipalCounters', 'compactTerminalIntent'],
   }, async (engine) => {
     const entry = (generation: string, attempt: number) => ({ generation, attempt, slug: PAGE, text: `window ${generation}` });
     const queued = await enqueueBatch(engine, req(1), [entry('g1', 1), entry('g2', 2)]);

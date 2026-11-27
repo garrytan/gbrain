@@ -207,9 +207,8 @@ export async function assertGuestReaders(engine: Pick<BrainEngine, 'getConfig'>,
  * requires of a listed writer's page write; any other write to a guest source, such as one admitted before its source
  * became a guest source, is refused there (source_writer_restricted or guest_attribution_missing) with no read here.
  */
-export async function assertGuestWriterAtPublication(tx: Pick<BrainEngine, 'executeRaw'>, row: { source_id: string; principal_kind: string; principal_id: string; id: string }): Promise<void> {
-  const [guest] = await tx.executeRaw<{ writers: string[] }>(
-    "SELECT writers, set_config('gbrain.guest_note', $2, true) AS guest_note FROM guest_sources WHERE source_id = $1 FOR SHARE", [row.source_id, row.id]);
+export async function assertGuestWriterAtPublication(tx: Pick<BrainEngine, 'claimGuestNotePublication'>, row: { source_id: string; principal_kind: string; principal_id: string; id: string }): Promise<void> {
+  const guest = await tx.claimGuestNotePublication(row.source_id, row.id);
   if (!guest || !guest.writers.includes(`${row.principal_kind}:${row.principal_id}`)) throw sourceWriterRestricted(row.source_id);
 }
 
@@ -217,13 +216,12 @@ export async function assertGuestWriterAtPublication(tx: Pick<BrainEngine, 'exec
  * The guest mark, written in the publication transaction right after the page row. A mark that writes no row (the page
  * row is not there to mark) throws, so the publication rolls back instead of leaving a guest page with no mark.
  */
-export async function insertGuestMark(tx: Pick<BrainEngine, 'executeRaw'>, row: { source_id: string; slug: string; principal_kind: string; principal_id: string; request_id: string },
+export async function insertGuestMark(tx: Pick<BrainEngine, 'insertGuestMark'>, row: { source_id: string; slug: string; principal_kind: string; principal_id: string; request_id: string },
   note: GuestAttribution, audience: string): Promise<void> {
-  const marked = await tx.executeRaw(`INSERT INTO guest_marks (page_id, source_id, slug_at_write, audience_member, group_slug, sender_label, saved_at, writer_kind, writer_id, request_id)
-    SELECT p.id, p.source_id, p.slug, $3, $4, $5, now(), $6, $7, $8 FROM pages p WHERE p.source_id = $1 AND p.slug = $2 RETURNING page_id`,
-    [row.source_id, row.slug, audience, note.group, note.sender_label, row.principal_kind, row.principal_id, row.request_id]);
-  if (marked.length !== 1) {
-    throw new OperationError('storage_error', `The guest mark for ${row.slug} wrote ${marked.length} rows instead of one, so the guest note was not saved. Nothing was written.`,
+  const marked = await tx.insertGuestMark({ sourceId: row.source_id, slug: row.slug, audienceMember: audience, groupSlug: note.group,
+    senderLabel: note.sender_label, writerKind: row.principal_kind, writerId: row.principal_id, requestId: row.request_id });
+  if (marked !== 1) {
+    throw new OperationError('storage_error', `The guest mark for ${row.slug} wrote ${marked} rows instead of one, so the guest note was not saved. Nothing was written.`,
       'Retry the save with a new request_id; if it fails the same way, run gbrain doctor --json on the brain host and report the result.');
   }
 }

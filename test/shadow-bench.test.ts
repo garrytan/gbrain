@@ -16,7 +16,7 @@ import { join } from 'node:path';
 import { runEngineShadow } from '../src/commands/engine-shadow.ts';
 import { evaluateReadiness, type ShadowStatus } from '../src/core/engine-swap/readiness.ts';
 import { readBoundedFile } from '../src/shadow/bench-file.ts';
-import { benchSummaryPath, EXPECTED_METRICS, EXPECTED_OPS, importBenchReceipt, MAX_RECEIPT_BYTES } from '../src/shadow/bench-receipt.ts';
+import { BENCH_DOCS, benchSummaryPath, EXPECTED_METRICS, EXPECTED_OPS, importBenchReceipt, MAX_RECEIPT_BYTES } from '../src/shadow/bench-receipt.ts';
 import { MAX_METRICS_PER_PAIR, MAX_OPERATIONS_PER_PAIR } from '../src/shadow/bench-receipt.ts';
 import { classifyBench, readBenchSummary } from '../src/shadow/bench.ts';
 import { buildProvisionalReport, renderProvisionalMarkdown } from '../src/shadow/report.ts';
@@ -274,7 +274,9 @@ describe('refusals keep the earlier evidence and say how to fix it', () => {
   test('schema 2 gives the exact text and never tells the agent to edit the receipt', async () => {
     await withShadow(async (c) => {
       const x = await c.run(['bench', '--import', c.file(receipt((r) => { r.schema_version = 2; })), '--json']);
-      expect(x.err).toContain('schema_version 2 is unsupported (expected 1); previous bench evidence unchanged [invalid_params; docs/ENGINES.md#rust-engine-shadow-mode]');
+      expect(x.err).toContain('schema_version 2 is unsupported (expected 1); previous bench evidence unchanged [invalid_params; docs/guides/engine-shadow-bench.md]');
+      // The pointer must name a page that exists and explains the command (it moved out of ENGINES.md).
+      expect(readFileSync(join(import.meta.dir, '..', BENCH_DOCS), 'utf8')).toContain('gbrain engine shadow bench --import');
       expect(x.err).toContain('Do not edit the receipt to make it pass');
     });
   });
@@ -695,7 +697,9 @@ function readyDoc(): ShadowStatus {
     epoch_id: 'e1', epoch_started_at: '2026-11-10T00:00:00Z',
     follower: { state: 'following', lag_ms: 0, lag_ms_p99_24h: 900, lag_ms_p99_epoch: 1200, queue_depth: 0, applied_rows: 5000, coverage_watermark: { valid: true, through: 'x', invalidated_reason: null } },
     reconcile: { state: 'idle', consecutive_clean_full_passes: 3 },
-    write_comparisons: { state: 'on', sample_rate: 1, comparable: 1500, unexplained_difference: 0, uncomparable: 2, capability_missing: 0 },
+    // 100 qualifying writes a day up to 2026-12-01: criterion 5's bar is the 1,000 cap (engine-swap/readiness.ts).
+    write_comparisons: { state: 'on', sample_rate: 1, comparable: 1500, unexplained_difference: 0, uncomparable: 2, capability_missing: 0,
+      qualifying_writes: { by_day: Object.fromEntries(Array.from({ length: 20 }, (_, i) => [new Date(Date.parse('2026-12-01T00:00:00Z') - i * 86_400_000).toISOString().slice(0, 10), 100])), first_seen: '2026-11-10T00:00:00Z' } },
     fingerprints: { checked_rows: 900, mismatches: 0, probe: { state: 'pass', checked_at: '2026-11-30T00:00:00Z', server_version: '16', collation: 'C' } },
     allocators: { verified: true, checked_at: '2026-11-30T00:00:00Z' },
     seed: { seed_id: 's', finished_at: '2026-11-10T01:00:00Z', unseeded_gap_rows_total: 0 },

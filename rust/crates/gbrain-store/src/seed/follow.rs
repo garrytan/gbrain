@@ -1042,6 +1042,7 @@ const DEPENDENTS: &[(&str, &[Dependent])] = &[
                 &[("synthesis_page_id", "id"), ("take_page_id", "id")],
             ),
             ("page_facts_reconcile", &[("page_id", "id")]),
+            ("chronicle_page_state", &[("page_id", "id")]),
         ],
     ),
     (

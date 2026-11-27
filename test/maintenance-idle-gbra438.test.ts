@@ -123,13 +123,14 @@ for (const kind of testBackends()) {
       for (let i = 0; i < 120; i++) await engine.putPage(`walk/w${i}`, { type: 'concept', title: `W${i}`, compiled_truth: `W${i} is a plain page.` });
       const total = (await engine.getAllSlugs({ sourceId: 'default' })).size;
       const controller = new AbortController();
-      const slugs = engine.getAllSlugs.bind(engine);
-      engine.getAllSlugs = (async (o: Parameters<typeof slugs>[0]) => { const rows = await slugs(o); setTimeout(() => controller.abort(), 0); return rows; }) as typeof slugs;
+      const getPage = engine.getPage.bind(engine);
+      let armed = false;
+      engine.getPage = ((...args: Parameters<typeof getPage>) => { if (!armed) { armed = true; setTimeout(() => controller.abort(), 0); } return getPage(...args); }) as typeof getPage;
       let scanned: number;
       try {
         scanned = (await runExtractFacts(engine, { sourceId: 'default', signal: controller.signal })).pagesScanned;
       } finally {
-        engine.getAllSlugs = slugs;
+        engine.getPage = getPage;
       }
       expect(total).toBeGreaterThanOrEqual(120);
       expect(scanned).toBeLessThan(total);

@@ -190,6 +190,9 @@
               "maxItems": 3
             }
           }
+        },
+        "audiences": {
+          "const": 1
         }
       }
     },

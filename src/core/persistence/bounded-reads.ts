@@ -97,12 +97,12 @@ export function isSharedReadFailure(error: unknown): boolean {
  * under `withReadDeadline` (postgres-engine.ts `preparationRead`), so every preparer view wraps them, with or without
  * `engineReads`. The label stands in for the statement text on the claim stamp's `last_sql`.
  */
-export const TYPED_PREPARATION_READS: ReadonlySet<string> = new Set(['getSource', 'getConfigValues', 'readManagedModeRows', 'getSourceStrictness',
+export const TYPED_PREPARATION_READS: ReadonlySet<string> = new Set(['getSource', 'getConfigValues', 'readManagedModeRows', 'readRequestIndexStates', 'getSourceStrictness',
   'readPersistenceBrainId', 'readLocalWriterRow', 'readLedgerSource', 'isFolderRestricted', 'listSourceLocalPaths', 'getChunkReuseRows', 'getPageSealState',
   'readJournalLimitRows', 'readWriteRequest', 'readWriteRequestById', 'readHeldPageRows', 'readHeldCoverageRows',
   'readSourceState', 'readAdmissionSource', 'listLinkEndpointPages', 'sharedSkillPackTablePresent', 'listSharedSkillPackRoots',
   'readSourceMembership', 'getWorktreeBinding', 'readLiveMember', 'readCredentialMemberId', 'readAccessTokenAttest', 'readOauthClientAttest', 'readLinkedMember', 'readFolderAccess',
-  'listGuestSourceIds', 'readDatabaseClock', 'listStoredTimelineRowsOrdered', 'matchTakeRows',
+  'listGuestSourceIds', 'hasGuestSourceRow', 'readDatabaseClock', 'listStoredTimelineRowsOrdered', 'matchTakeRows',
   'listFactWithdrawalDates', 'listCorePageRows', 'lockRegisteredSourceIds',
   'getConfig', 'getAllConfig', 'listConfigKeys', 'readStoredConfigValue', 'readPageSnapshot', 'getPage',
   'findDuplicatePage', 'findByTitleFuzzy', 'searchKeyword',
@@ -111,8 +111,12 @@ export const TYPED_PREPARATION_READS: ReadonlySet<string> = new Set(['getSource'
   'listPurgeClaimFacts', 'listPurgeClaimTakes', 'listQueuedPagePurges', 'listPageLinkStreams', 'listPagePurgeTombstones',
   'listForcedCutSeqs', 'readSegmentedVersionBodyBytes',
   'listChunkedOccurrences', 'readRetiredChunkVectors', 'hasStaleSegmentChunks', 'readLiveSlugAliases', 'readSourceSlugProbe', 'readSegmentedLivePage', 'normalizeFenceLines', 'listGlobalPurgeWithdrawals',
-  'readPagePrivacyHidden', 'readLinkTargetPages', 'readWriteVisibilityProbe',
-  'hasPositionedPageFacts', 'hasFenceAbsentHold', 'listPageTakeRowNums', 'readPageInlineBody']);
+  'readPagePrivacyHidden', 'readLinkTargetPages', 'readPageHiddenFromWriter', 'readSlugFolderRules', 'readWriteVisibilityProbe',
+  'hasPositionedPageFacts', 'hasFenceAbsentHold', 'listPageTakeRowNums', 'readPageInlineBody',
+  // The access, page-visibility, grant and source reads a preparation makes (caller identity, folder rules, writer fences, credential
+  // grants, source rows): each ran as a raw statement through this view's `executeRaw` before it became a typed member.
+  'readWriterSlugFence', 'readOAuthClientWriteGrant', 'readAccessTokenWriteGrant', 'shareLockWriteCredential', 'readSourceRow',
+  'readMayActFor', 'readAudiencePrincipals', 'readScopeSourceConfigs', 'readOwnerOnlySourcesPresent', 'readOwnerOnlySourceConfig']);
 
 /**
  * Engine members that return a store over the engine. The view binds them to itself, so the store's raw statements go

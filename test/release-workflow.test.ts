@@ -76,7 +76,10 @@ describe('release.yml ↔ binary-self-update asset contract', () => {
     // its sorted-join comparison string must stay in sync with the matrix and
     // with the Rust engine addon files `gbrain engine install rust` downloads.
     const all = [...EXPECTED_ASSETS, ...RUST_ADDON_ASSETS, 'gbrain-skill-resolver.mjs', 'gbrain-skill-resolver.mjs.sha256'];
-    expect(WORKFLOW).toContain(`if [ "$assets" = "${all.sort().join(',')}" ]`);
+    // The check is a subset check (the eval-gates pin workflow attaches one more asset later), so the sorted-join string is
+    // the `expected` list; test/eval-gates-pin.test.ts runs the check against each missing name.
+    expect(WORKFLOW).toContain(`expected="${all.sort().join(',')}"`);
+    expect(WORKFLOW).toContain('complete=true');
   });
 
   test('release tag derives from the VERSION file, v-prefixed', () => {
@@ -185,6 +188,9 @@ describe('release.yml ↔ gbrain engine install rust', () => {
     expect(smoke).toContain('engine install rust --json');
     expect(smoke).toContain('.rust_addon.installed == true and .rust_addon.override == false and .probe.ok == true');
     expect(smoke).toContain('"$gbrain" stats --json');
+    // The attestation read sends the job's read-only token: keyless calls share 60 an hour per runner IP.
+    expect(smoke).toContain('GH_TOKEN: ${{ github.token }}');
+    expect(smoke).toMatch(/permissions:\n\s+contents: read\n\s+attestations: read\n/);
   });
 });
 

@@ -35,7 +35,7 @@ export async function resolveGlobalPurges(query: ReadQuery, sourceId: string, ma
  * Normalize filesystem bytes with the exact ledger fingerprint rules before comparing them. `global` names the
  * snapshot's source and '*' purge marker, resolved against this text's fence rows (not the stored page's). On a SQL
  * query the lines fold the explicit whitespace list (FACT_SPACE_CLASS, as every fingerprint does) and a withdrawal or
- * purge stored under a fence claim's pre-v341 Postgres fingerprint is aliased in (withLegacyLedgerRows).
+ * purge stored under a fence claim's pre-v353 Postgres fingerprint is aliased in (withLegacyLedgerRows).
  */
 export async function overlayCanonicalBodies(query: ReadQuery, body: string, timeline: string, withdrawals: PageWithdrawal[],
   global?: { sourceId: string; marker?: GlobalPurgeMarker }): Promise<{ compiled_truth: string; timeline: string }> {
@@ -53,7 +53,7 @@ export async function overlayCanonicalBodies(query: ReadQuery, body: string, tim
 /**
  * `overlayCanonicalBodies` through typed engine members: the line normalization is `normalizeFenceLines` and the `*`
  * purge lookup is `listGlobalPurgeWithdrawals`, so an engine without raw SQL (the Rust engine) overlays the same way. An
- * engine with raw SQL also aliases the pre-v341 Postgres fingerprints in, as the SQL form does; the Rust store never held
+ * engine with raw SQL also aliases the pre-v353 Postgres fingerprints in, as the SQL form does; the Rust store never held
  * one.
  */
 export async function overlayCanonicalBodiesTyped(engine: Pick<BrainEngine, 'normalizeFenceLines' | 'listGlobalPurgeWithdrawals'>
@@ -75,7 +75,7 @@ export async function overlayCanonicalBodiesTyped(engine: Pick<BrainEngine, 'nor
 interface OverlayReads {
   normalize(): Promise<{ body: string | null; timeline: string | null } | undefined>;
   purges(sourceId: string, marker: GlobalPurgeMarker, normalizedTexts: readonly string[]): Promise<PageWithdrawal[]>;
-  /** The ledger with the rows stored under a fence claim's pre-v341 fingerprint added (SQL engines only). */
+  /** The ledger with the rows stored under a fence claim's pre-v353 fingerprint added (SQL engines only). */
   legacy?(ledger: PageWithdrawal[], pending?: { sourceId: string; marker?: GlobalPurgeMarker }): Promise<PageWithdrawal[]>;
 }
 
@@ -97,7 +97,10 @@ async function overlayWith(reads: OverlayReads, body: string, timeline: string, 
  * The normalized body and timeline fingerprints feed only the withdrawal overlay,
  * so the statement computes them only for a page with withdrawals (as the batch
  * reader in page-snapshot-batch.ts does): per-line regexp over the whole body
- * was most of the cost of every snapshot read.
+ * was most of the cost of every snapshot read. The withdrawals are read as
+ * `visibility IN (...) AND subject IN ('*', slug)`, seeks on fact_withdrawals'
+ * (source_id, visibility, subject, fact_hash) key; `subject='*' OR subject=slug`
+ * scanned the table on every read (#9350).
  *
  * An alias-resolving read first runs the exact-slug statement: an exact match
  * outranks every alias match, so a hit is the row the alias statement would
@@ -153,8 +156,8 @@ async function readSnapshotStatement(query: ReadQuery, slug: string, opts?: Page
     FROM chosen p
     CROSS JOIN LATERAL (SELECT COALESCE((SELECT jsonb_agg(jsonb_build_object('visibility',w.visibility,'fact_hash',w.fact_hash,'withdrawn_at',w.withdrawn_at)
       ORDER BY w.visibility COLLATE "C",w.fact_hash COLLATE "C") FROM (SELECT visibility,fact_hash,min(withdrawn_at) AS withdrawn_at
-        FROM fact_withdrawals WHERE source_id=p.source_id AND (subject='*' OR subject=p.slug)
-        ${opts?.excludePrivate ? "AND visibility='world'" : ''} GROUP BY visibility,fact_hash) w), '[]'::jsonb)
+        FROM fact_withdrawals WHERE source_id=p.source_id AND visibility IN (${opts?.excludePrivate ? "'world'" : "'private','world'"}) AND subject IN ('*',p.slug)
+        GROUP BY visibility,fact_hash) w), '[]'::jsonb)
       || COALESCE((SELECT jsonb_agg(jsonb_build_object('visibility',x.visibility,'fact_hash',x.fact_hash,'withdrawn_at',x.purged_at,'purged',true)
         ORDER BY x.visibility COLLATE "C",x.fact_hash COLLATE "C") FROM (SELECT visibility,fact_hash,min(purged_at) AS purged_at
           FROM fact_purges WHERE source_id=p.source_id AND subject=p.slug

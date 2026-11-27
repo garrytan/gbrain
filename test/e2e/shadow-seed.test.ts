@@ -26,7 +26,7 @@ import { loadRustEngineAddon } from '../../src/core/rust-engine/addon-loader.ts'
 import { readSeedRecord, runSeed } from '../../src/shadow/seed.ts';
 import { shadowBrainKey, shadowDirFor } from '../../src/shadow/state.ts';
 import { withEnv } from '../helpers/with-env.ts';
-import { expectSeedReadParity, fillSeedFixture, insertSeedFixtureJobs, primaryDigests, seedInto } from '../helpers/shadow-seed-fixture.ts';
+import { expectSeedReadParity, fillSeedFixture, insertSeedFixtureJobs, primaryDigests, seedAllowRules, seedInto } from '../helpers/shadow-seed-fixture.ts';
 
 const TARGET = detectAddonTarget();
 const BUILT = join(import.meta.dir, '..', '..', 'rust', 'target', 'addon', `gbrain_engine.${TARGET ?? 'unsupported'}.node`);
@@ -85,6 +85,16 @@ d('shadow seed from Postgres', () => {
     expect(existsSync(dir)).toBe(false);
     expect(readSeedRecord(dir)).toBeNull();
     expect(await primaryDigests(engine)).toEqual(before);
+  }, 60_000);
+
+  withAddon('the owner allow rules arrive on Rust with the same rows, ids and removed-rule receipts, and count as no gap', async () => {
+    const out = await seedAllowRules(engine, addon, tempDir(), 'postgres');
+    expect(out.primary.length).toBe(2);
+    expect(out.primary[1]!.removed_at).not.toBeNull();
+    expect(out.rust).toEqual(out.primary);
+    expect(out.next).toBe(Math.max(...out.primary.map(r => r.id)) + 1);
+    expect(out.record.relations.trust_allow_rules?.imported).toBe(2);
+    expect(out.record.unseeded_gap_rows.trust_allow_rules ?? 0).toBe(0);
   }, 60_000);
 
   withAddon('the seeded store answers the same reads as the primary', async () => {

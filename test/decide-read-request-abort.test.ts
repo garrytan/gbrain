@@ -88,6 +88,8 @@ const MOVED_CALLS: Record<string, (engine: BrainEngine) => Promise<unknown>> = {
   listAccessTokens: (e) => e.listAccessTokens(),
   hasNotifierCoverage: (e) => e.hasNotifierCoverage(),
   readOpCheckpointKeys: (e) => e.readOpCheckpointKeys('op', 'fingerprint'),
+  listHostRepositoryRoots: (e) => e.listHostRepositoryRoots('host-a'),
+  listPendingGitEffectPaths: (e) => e.listPendingGitEffectPaths('host-a'),
   readHealthMemoClock: (e) => e.readHealthMemoClock(),
   listSynopsisSourceIds: (e) => e.listSynopsisSourceIds(),
   expireMemoryProposals: (e) => e.expireMemoryProposals('reason'),

@@ -15,19 +15,20 @@ import { chunkFenceMarker, FENCE_TRUST_ORIGIN, fenceTrustMarker, lowestFenceTrus
 import { decodeFenceCell, isSeparatorRow, parseRowCells } from '../fence-shared.ts';
 import { needsDataEnvelope, parseContested, renderTrustedText, trustFields, type Contested, type TrustFields } from './labels.ts';
 import { GUEST_ORIGIN, guestView, loadGuestMarks, unattributedGuest, type GuestStamp } from '../guests/marker.ts';
+import { isPrecedence } from './precedence.ts';
 
 const withFlag = (fields: TrustFields, flagged: unknown): TrustFields => (flagged === true ? { ...fields, unconfirmed: true } : fields);
 
 interface PageRef {
   page_id?: number | null; source_id?: string | null; slug: string; chunk_text?: string | null;
-  trust_tier?: string; origin?: string; unconfirmed?: true; contested?: Contested; guest?: GuestStamp;
+  trust_tier?: string; origin?: string; unconfirmed?: true; contested?: Contested; guest?: GuestStamp; precedence?: string;
   /** A saved-fact row (search/facts-arm.ts): labeled with the fact's own tier, not a page's. */
   fact_row?: { id: number };
 }
 
 type FenceRowExec = Pick<BrainEngine, 'listFenceRowTrust'>;
 type HeldExec = Pick<BrainEngine, 'listHeldFenceCells'>;
-type TrustExec = Pick<BrainEngine, 'executeRaw' | 'readPageTrustRows' | 'readRowTrustRows' | 'listHeldFenceCells' | 'listFenceRowTrust'>;
+type TrustExec = Pick<BrainEngine, 'executeRaw' | 'readPageTrustRows' | 'readRowTrustRows' | 'listHeldFenceCells' | 'listFenceRowTrust' | 'readGuestMarks'>;
 
 const key = (source: string | null | undefined, slug: string) => `${source ?? 'default'}\u0000${slug}`;
 
@@ -46,7 +47,8 @@ export async function loadPageTrust(engine: TrustExec, refs: readonly PageRef[],
     includeDeleted: opts.includeDeleted === true }) : [];
   const marks = rows.some(r => r.guest === true) ? await loadGuestMarks(engine, rows.filter(r => r.guest === true).map(r => Number(r.id))) : null;
   for (const row of rows) {
-    const base = withFlag(trustFields(row.trust_tier, row.write_origin), row.flagged);
+    const labeled = withFlag(trustFields(row.trust_tier, row.write_origin), row.flagged);
+    const base: TrustFields = isPrecedence(row.precedence) ? { ...labeled, precedence: row.precedence } : labeled;
     const fields: TrustFields = row.guest === true
       ? { ...base, trust_tier: minTrust(base.trust_tier, 'external_untrusted'), origin: GUEST_ORIGIN, guest: guestView(marks?.get(Number(row.id)) ?? unattributedGuest(), opts.guestWriter === true) }
       : base;
@@ -86,6 +88,7 @@ export async function stampPageTrust<T extends PageRef>(engine: TrustExec, rows:
     row.origin = fields.guest ? GUEST_ORIGIN : lowered ? FENCE_TRUST_ORIGIN : fields.origin;
     if (fields.guest) row.guest = fields.guest;
     if (fields.unconfirmed) row.unconfirmed = true;
+    if (fields.precedence) row.precedence = fields.precedence;
   }
   await applyFenceRowTrust(engine, pageRows);
   return floor ? rows.filter(row => admitsTrust(row.trust_tier as TrustTier, floor)) : rows;
@@ -224,7 +227,8 @@ export async function stampRowTrust<T extends object>(
   const byId = new Map<number, TrustFields>();
   try {
     for (const row of await engine.readRowTrustRows({ table, ids })) {
-      const fields = withFlag(trustFields(row.trust_tier, row.write_origin), row.flagged);
+      const labeled = withFlag(trustFields(row.trust_tier, row.write_origin), row.flagged);
+      const fields: TrustFields = isPrecedence(row.precedence) ? { ...labeled, precedence: row.precedence } : labeled;
       const c = parseContested(row.contested);
       byId.set(Number(row.id), c ? { ...fields, contested: c } : fields);
     }

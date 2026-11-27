@@ -12,6 +12,11 @@ mod archive;
 pub use archive::{
     ArchivedSource, ArchivedSourceListRow, ExpiredArchivedSource, SourceDeleteImpact,
 };
+pub(crate) use archive::{
+    delete_page_batch_in, delete_source_incarnation_in, remove_sync_cursors,
+    rescrub_removed_source_in, source_expired, source_page_count_in,
+    source_pages as all_source_pages,
+};
 
 pub const DEFAULT_SOURCE: &str = "default";
 
@@ -331,6 +336,7 @@ impl Store {
                 record.name = input.name.clone();
             }
             if input.local_path.is_some() {
+                crate::guest_sources::refuse_local_path_on_guest(&*tx, &input.id)?;
                 record.local_path = input.local_path.clone();
             }
             if last_sync.is_some() {

@@ -115,6 +115,13 @@ describe('status-only serve: lock contention → recovery in place (a)', () => {
     expect(status.why).toContain(String(status.lock_owner.pid));
     expect(status.why).toContain(status.brain_path);
     expect(status.lock_owner.transport).toBe('stdio');
+    // Roadmap PR 2: two agent sessions (Claude Code and Codex) on one brain is the ordinary case: the owner is named
+    // with its start time, and the answer says nothing needs fixing.
+    expect(Number.isNaN(Date.parse(status.lock_owner.started_at))).toBe(false);
+    expect(status.why).toContain(`started ${status.lock_owner.started_at}`);
+    expect(status.expected).toBe(true);
+    expect(status.why).toContain('nothing needs fixing');
+    expect(status.user_message).toContain('nothing needs fixing');
     expect(status.fix.next).toBe('tell_user_to_run');
     expect(status.user_message).toBeTruthy();
     expect(status.decisions[0].options.map((o: { id: string }) => o.id)).toEqual(['close_owner', 'share_http']);

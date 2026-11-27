@@ -24,7 +24,7 @@ import type { ReadEligibility } from './policy.ts';
 
 type Exec = Pick<BrainEngine, 'executeRaw'>;
 /** pageActivationVerdicts reads page trust through the typed member; guest marks are still read raw. */
-type PageExec = Pick<BrainEngine, 'executeRaw' | 'readPageTrustRows'>;
+type PageExec = Pick<BrainEngine, 'executeRaw' | 'readPageTrustRows' | 'readGuestMarks'>;
 
 export interface ActivationRef { table: EligibilityTable; id: number }
 

@@ -26,8 +26,16 @@ import type { ManagedStorageRecord } from './managed-gate.ts';
 export const SHADOW_STATE_VERSION = 1;
 /** Default share of eligible reads mirrored (`shadow.read_sample` in the plan). */
 export const DEFAULT_SHADOW_SAMPLE_RATE = 0.1;
+/** Default share of eligible page and link writes compared (`shadow.write_sample` in the plan, D13); separate from the read share. */
+export const DEFAULT_SHADOW_WRITE_SAMPLE_RATE = 0.05;
 /** Default bound on queued mirror events in the serving process. */
 export const DEFAULT_SHADOW_QUEUE_BOUND = 256;
+/**
+ * The write sample rate of an opt-in shadow: a brain that can opt in to the swap (one without managed storage, D25)
+ * compares every write (D26, ask D), so criterion 5's bar is reachable inside the 5-day shadow. Each save is about 2x
+ * slower while it runs. Recorded in the state as `write_sample_rate`; the write comparison reads it.
+ */
+export const OPT_IN_WRITE_SAMPLE_RATE = 1;
 
 export interface ShadowState {
   version: number;
@@ -37,6 +45,9 @@ export interface ShadowState {
   /** ISO time `stop` ran, when it has. */
   stopped_at?: string;
   sample_rate: number;
+  /** Share of writes compared (`shadow.write_sample`). `start` sets OPT_IN_WRITE_SAMPLE_RATE on a brain that can opt in to
+   * the swap (no managed storage). Absent in a state written before it existed, or for any other brain: the default applies. */
+  write_sample_rate?: number;
   queue_bound: number;
   /** The plan hash `start --yes --expect` confirmed. */
   plan_hash: string;
@@ -63,6 +74,12 @@ export interface ShadowState {
   writer_coverage_stopped_at?: string;
 }
 
+/** The write sample share: the state's own when it is a share above 0 and at most 1, else the default (a bad hand edit is never an always-on sample). */
+export function writeSampleRate(state: Pick<ShadowState, 'write_sample_rate'>): number {
+  const n = state.write_sample_rate;
+  return typeof n === 'number' && n > 0 && n <= 1 ? n : DEFAULT_SHADOW_WRITE_SAMPLE_RATE;
+}
+
 /** The identity of the brain a config opens, without credentials. Null when the config names no brain store. */
 export function brainIdentity(config: Pick<EngineConfig, 'engine' | 'database_path' | 'database_url'>): { engine: string; identity: string } | null {
   const engine: NonNullable<EngineConfig['engine']> = config.engine ?? (config.database_url ? 'postgres' : 'pglite');
@@ -82,7 +99,9 @@ export function brainIdentity(config: Pick<EngineConfig, 'engine' | 'database_pa
       if (!config.database_path) return null;
       return { engine, identity: `pglite:${resolve(config.database_path)}` };
     case 'rust':
-      return null; // shadow mode follows a PGLite or Postgres brain; a Rust brain has no primary to mirror
+      // A Rust brain is its store directory, as a PGLite brain is its data directory.
+      if (!config.database_path) return null;
+      return { engine, identity: `rust:${resolve(config.database_path)}` };
     default: {
       const unreachable: never = engine;
       return unreachable;

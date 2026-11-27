@@ -26,6 +26,7 @@ import { RUST_ENGINE_MEMBERS } from './rust-engine/members.ts';
 import { openRustStore, seedEmbeddingIdentity, type RustStore, type StoreBrain } from './rust-engine/store.ts';
 import { opError } from './ops/contract.ts';
 import { transactionAborted } from './postgres-engine/transaction-abort.ts';
+import { withManagedPersistencePaused as withManagedPersistencePausedOver, type ManagedPauseOutcome } from './engine-sql/eval-harness-reads.ts';
 import { mapStoreError } from './rust-engine/store-errors.ts';
 import { STORE_MEMBERS } from './rust-engine/store-members/index.ts';
 import { servedCapabilities } from './rust-engine/store-capabilities.ts';
@@ -87,6 +88,12 @@ export interface OpenRustEngineOptions {
   databasePath: string;
   /** How long `connect` waits to become the owner or reach it (owner-ipc/election.ts); tests shorten it. */
   ownerWaitMs?: number;
+  /**
+   * False: the store must already be there (the CLI's connect to an existing brain). Owner election makes no folder,
+   * the store is checked again under the owner lock, and the store's own open creates nothing; a missing store is refused
+   * with `brain_missing`. Unset or true creates a missing store, as an embedded open or a seed does.
+   */
+  createStore?: boolean;
 }
 
 /**
@@ -126,6 +133,14 @@ function isReadMember(member: string): boolean {
 }
 
 /** Builds the Rust engine around an addon the loader has already verified. Nothing is opened or written yet. */
+/** Throws the `brain_missing` refusal when the Rust store at `databasePath` is not there (src/commands/doctor/missing-brain.ts). */
+async function refuseMissingStore(databasePath: string): Promise<void> {
+  const { rustStoreGuard } = await import('../commands/doctor/missing-brain.ts');
+  const { configPath } = await import('./config.ts');
+  const verdict = rustStoreGuard(databasePath, configPath(), 'serve', false);
+  if (typeof verdict !== 'string') throw verdict;
+}
+
 export function openRustEngine(opts: OpenRustEngineOptions): RustEngine {
   return new RustEngine(opts);
 }
@@ -175,7 +190,11 @@ export class RustEngine implements BrainEngine {
     this.addon = opts.addon;
     this.databasePath = opts.databasePath;
     this._ownerWaitMs = opts.ownerWaitMs;
+    this._createStore = opts.createStore !== false;
   }
+
+  /** `OpenRustEngineOptions.createStore`. */
+  private readonly _createStore: boolean;
 
   /** True between `connect()` and `disconnect()`. */
   get connected(): boolean { return this._connected; }
@@ -238,6 +257,7 @@ export class RustEngine implements BrainEngine {
       role = await electOwner(this as unknown as BrainEngine, this.databasePath, {
         wholeOperations: ownerWholeOperations({ config: (this._savedConfig ?? undefined) as GBrainConfig | undefined }),
         ...(this._ownerWaitMs !== undefined ? { waitMs: this._ownerWaitMs } : {}),
+        ...(this._createStore ? {} : { createStore: false }),
         // Holding the owner lock: open the store before the socket serves, so no client call reaches this engine
         // without it. A call this process makes meanwhile waits for the open (`storeFor`), and ends at once when its
         // caller cancels or its deadline passes.
@@ -248,7 +268,10 @@ export class RustEngine implements BrainEngine {
           this._claiming = true;
           let store: RustStore;
           try {
-            store = await openRustStore(this.addon, this.databasePath, await seedEmbeddingIdentity(this));
+            // Holding the owner lock: a store that must be there is checked again, so one moved during the election is
+            // refused, not recreated (the store's open refuses too, `createMissing`).
+            if (!this._createStore) await refuseMissingStore(this.databasePath);
+            store = await openRustStore(this.addon, this.databasePath, await seedEmbeddingIdentity(this), { createMissing: this._createStore });
             if (generation !== this._generation) {
               await store.close().catch(() => undefined);
               throw abandoned();
@@ -509,6 +532,11 @@ export class RustEngine implements BrainEngine {
     const config = this._savedConfig;
     await this.disconnect();
     await this.connect(config);
+  }
+
+  /** The evals' harness pause around fn, over the two typed store members (engine-sql/eval-harness-reads.ts). */
+  withManagedPersistencePaused<T>(fn: () => Promise<T>): Promise<ManagedPauseOutcome<T>> {
+    return withManagedPersistencePausedOver(this, fn);
   }
 
   registerBeforeDisconnect(stop: () => Promise<void>): () => void {

@@ -79,6 +79,46 @@ export async function listFactSourcePages(raw: EngineRawRead, ids: readonly numb
   return rows.map(r => ({ id: Number(r.id), page_id: Number(r.page_id), slug: r.slug, title: r.title, type: r.type }));
 }
 
+/** A fact's holding page ref (`listFactHoldingRefs`): its source, `source_markdown_slug` as `slug`, and its entity. */
+export interface FactHoldingRefRow { id: number; source_id: string; slug: string | null; entity_slug: string | null }
+
+/**
+ * Each of `ids`'s source, holding page slug and entity (search/evidence-date.ts `factObservationDates`, for facts
+ * that do not carry their holding slug), facts of any source and any state; a missing id has no row. The rows come
+ * in no set order. The text is the one evidence-date.ts sent (pinned in test/engine-sql-caller-raw-sql-pins.test.ts).
+ */
+export async function listFactHoldingRefs(raw: EngineRawRead, ids: readonly number[]): Promise<FactHoldingRefRow[]> {
+  if (!ids.length) return [];
+  const rows = await raw<{ id: number | string; source_id: string; slug: string | null; entity_slug: string | null }>(
+    'SELECT id, source_id, source_markdown_slug AS slug, entity_slug FROM facts WHERE id = ANY($1::bigint[])', [[...ids]]);
+  return rows.map(r => ({ ...r, id: Number(r.id) }));
+}
+
+/** A typed-claim fact of `listTypedClaimFactsAtPages`. `id` is a JS number; `valid_from` is whatever the driver hands back. */
+export interface TypedClaimFactRow {
+  id: number;
+  source_markdown_slug: string;
+  source_id: string;
+  entity_slug: string;
+  claim_metric: string;
+  claim_period: string | null;
+  valid_from: Date | string;
+}
+
+/**
+ * The facts arm's superseded-claim read (search/facts-arm.ts stampSupersededClaims): the typed-claim facts held on
+ * one of `pageSlugs` about one of `entitySlugs`, of any source and any state (expired, superseded and consolidated
+ * rows count). The rows come in no set order. The text is the one the arm sent (pinned in
+ * test/engine-sql-caller-raw-sql-pins.test.ts).
+ */
+export async function listTypedClaimFactsAtPages(raw: EngineRawRead, pageSlugs: readonly string[], entitySlugs: readonly string[]): Promise<TypedClaimFactRow[]> {
+  const rows = await raw<{ id: number | string; source_markdown_slug: string; source_id: string; entity_slug: string; claim_metric: string; claim_period: string | null; valid_from: Date | string }>(
+    `SELECT f.id, f.source_markdown_slug, f.source_id, f.entity_slug, f.claim_metric, f.claim_period, f.valid_from FROM facts f
+     WHERE f.source_markdown_slug = ANY($1::text[]) AND f.entity_slug = ANY($2::text[]) AND f.claim_metric IS NOT NULL`,
+    [[...pageSlugs], [...entitySlugs]]);
+  return rows.map(r => ({ ...r, id: Number(r.id) }));
+}
+
 /**
  * The pool facts nearest `vector.literal` by cosine distance under the pool's read policy, closest first, with `similarity` on rows
  * whose embedding is comparable. With `hnswIterativeScan` the read is wrapped in the iterative-scan settings of

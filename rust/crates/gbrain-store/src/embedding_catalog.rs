@@ -128,3 +128,145 @@ impl Store {
         }
     }
 }
+
+/// The tables whose `embedding` column the store answers for (`PRIMARY_EMBEDDING_TABLES`).
+const EMBEDDING_TABLES: [&str; 4] = ["content_chunks", "facts", "query_cache", "takes"];
+
+impl Store {
+    /// `readEmbeddingColumnTypmod(table)`: `[{ dim }]` with the store's one vector width for an
+    /// embedding table, or `[]` for another table or a store with no width yet (an absent column).
+    pub fn read_embedding_column_typmod(&self, table: &str) -> Result<Vec<Value>> {
+        if !EMBEDDING_TABLES.contains(&table) {
+            return Ok(Vec::new());
+        }
+        let read = self.read()?;
+        let first = first_chunk_vector(&*read)?;
+        Ok(match known_width(&*read, first.as_ref())? {
+            Some(dim) => vec![json!({ "dim": dim })],
+            None => Vec::new(),
+        })
+    }
+
+    /// `readEmbeddingSignatureCensus()`: the live pages per stored embedding signature, the five
+    /// largest groups by count; ties by signature, a missing signature last.
+    pub fn read_embedding_signature_census(&self) -> Result<Vec<Value>> {
+        let read = self.read()?;
+        let mut groups: std::collections::BTreeMap<Option<String>, u64> =
+            std::collections::BTreeMap::new();
+        for page in crate::pages::all_pages(&*read)? {
+            if page.deleted_at_us.is_some() {
+                continue;
+            }
+            *groups
+                .entry(crate::embeddings::read_signature(&*read, page.id)?)
+                .or_default() += 1;
+        }
+        let mut rows: Vec<(Option<String>, u64)> = groups.into_iter().collect();
+        rows.sort_by(|(sa, a), (sb, b)| {
+            b.cmp(a).then_with(|| match (sa, sb) {
+                (Some(x), Some(y)) => x.cmp(y),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => std::cmp::Ordering::Equal,
+            })
+        });
+        Ok(rows
+            .into_iter()
+            .take(5)
+            .map(|(signature, pages)| json!({ "signature": signature, "pages": pages }))
+            .collect())
+    }
+
+    /// `countUnembeddedLiveFacts(excludedSources)`: unexpired facts with no vector whose `source`
+    /// is not one of `excluded`.
+    pub fn count_unembedded_live_facts(&self, excluded: &[String]) -> Result<u64> {
+        let read = self.read()?;
+        let mut n = 0;
+        for source in all_sources(&*read)? {
+            n += source_rows(&*read, &source.id)?
+                .iter()
+                .filter(|f| {
+                    f.embedding.is_none()
+                        && f.expired_at_us.is_none()
+                        && !excluded.iter().any(|s| s == &f.source)
+                })
+                .count() as u64;
+        }
+        Ok(n)
+    }
+
+    /// `countSynopsisTierPages()`: live pages whose stored contextual retrieval mode is
+    /// `per_chunk_synopsis`.
+    pub fn count_synopsis_tier_pages(&self) -> Result<u64> {
+        let read = self.read()?;
+        let mut n = 0;
+        for page in crate::pages::all_pages(&*read)? {
+            if page.deleted_at_us.is_none()
+                && crate::aliases::contextual_retrieval_mode(&*read, page.id)?.as_deref()
+                    == Some("per_chunk_synopsis")
+            {
+                n += 1;
+            }
+        }
+        Ok(n)
+    }
+
+    /// `countEmbedSkipNullChunks()`: stored chunks with no vector on pages (deleted ones too)
+    /// whose frontmatter has an `embed_skip` key.
+    pub fn count_embed_skip_null_chunks(&self) -> Result<u64> {
+        let read = self.read()?;
+        let mut n = 0;
+        for page in crate::pages::all_pages(&*read)? {
+            if !page.frontmatter.contains_key("embed_skip") {
+                continue;
+            }
+            n += crate::chunks::read_chunks(&*read, page.id)?
+                .iter()
+                .filter(|c| !c.embed.has_vector())
+                .count() as u64;
+        }
+        Ok(n)
+    }
+
+    /// `readFalseStampedChunkCounts(signature, model)` (#4305): the live pages stamped `signature`
+    /// (no `embed_skip`, no budget hold that applies) that carry an embedded chunk whose model is
+    /// set and matches neither `model` nor, at the signature's width, its bare tail; with every
+    /// embedded chunk of those pages and their text length in characters.
+    pub fn read_false_stamped_chunk_counts(&self, signature: &str, model: &str) -> Result<Value> {
+        let read = self.read()?;
+        let width_text = signature.rsplit_once(':').map_or(signature, |(_, w)| w);
+        let tail = model.split_once(':').map_or(model, |(_, t)| t);
+        let (mut pages, mut chunks, mut chars) = (0u64, 0u64, 0u64);
+        for page in crate::pages::all_pages(&*read)? {
+            if page.deleted_at_us.is_some()
+                || page.frontmatter.contains_key("embed_skip")
+                || crate::embeddings::read_signature(&*read, page.id)?.as_deref() != Some(signature)
+                || crate::embeddings::stale_work::budget_limited(&*read, &page)?
+            {
+                continue;
+            }
+            let embedded: Vec<_> = crate::chunks::read_chunks(&*read, page.id)?
+                .into_iter()
+                .filter(|c| c.embed.has_vector())
+                .collect();
+            let off_model = embedded.iter().any(|c| {
+                let Some(label) = c.meta.get("model").and_then(Value::as_str) else {
+                    return false;
+                };
+                let matches =
+                    label == model || (label == tail && c.embed.dims.to_string() == width_text);
+                !matches
+            });
+            if !off_model {
+                continue;
+            }
+            pages += 1;
+            chunks += embedded.len() as u64;
+            chars += embedded
+                .iter()
+                .map(|c| c.chunk_text.chars().count() as u64)
+                .sum::<u64>();
+        }
+        Ok(json!({ "pages": pages, "chunks": chunks, "chars": chars }))
+    }
+}
