@@ -330,17 +330,18 @@ test('concurrent same-ID callers replay a winner committed between lookup and li
     await local(engine, f.registration, async () => {
       const { preview } = await runReconcilePreview(engine, { source_id: f.id, slug: f.slug });
       const params = { source_id: f.id, slug: f.slug, preview, request_id: randomUUID() };
-      const executeRaw = engine.executeRaw;
+      // The receipt lookup is the typed readWriteRequest member.
+      const readWriteRequest = engine.readWriteRequest;
       let release!: () => void, paused!: () => void, reads = 0;
       const held = new Promise<void>(resolve => { release = resolve; });
       const reached = new Promise<void>(resolve => { paused = resolve; });
-      engine.executeRaw = async function(this: BrainEngine, sql: string, values?: unknown[]) {
-        const result = await executeRaw.call(this, sql, values);
-        if (sql.includes('SELECT * FROM persistence_requests WHERE principal_kind=') && values?.[2] === params.request_id && ++reads === pauseLookup) {
+      engine.readWriteRequest = async function(this: BrainEngine, principalKind: string, principalId: string, requestId: string) {
+        const result = await readWriteRequest.call(this, principalKind, principalId, requestId);
+        if (requestId === params.request_id && ++reads === pauseLookup) {
           paused(); await held;
         }
         return result;
-      } as BrainEngine['executeRaw'];
+      } as BrainEngine['readWriteRequest'];
       try {
         const delayed = runReconcileApply(engine, params);
         await reached;
@@ -350,7 +351,7 @@ test('concurrent same-ID callers replay a winner committed between lookup and li
         expect(await delayed).toMatchObject({ state: 'committed', request_id: params.request_id, revision: winner.revision });
         expect(await engine.executeRaw('SELECT id FROM persistence_requests WHERE source_id=$1', [f.id])).toHaveLength(1);
         await expect(runReconcileApply(engine, { ...params, request_id: randomUUID() })).rejects.toMatchObject({ code: 'source_changed' });
-      } finally { release(); engine.executeRaw = executeRaw; }
+      } finally { release(); engine.readWriteRequest = readWriteRequest; }
     });
   }
 }), 120_000);

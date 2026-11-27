@@ -14,6 +14,8 @@ import { join } from 'path';
 import { runSources } from '../src/commands/sources.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { readScopeSourceConfigs } from '../src/core/engine-sql/access-credentials.ts';
+import { listSourceRecords } from '../src/core/engine-sql/cli-reads-import.ts';
+import { listActiveAccessMembers } from '../src/core/engine-sql/write-misc.ts';
 
 // ── Stub engine that records queries ───────────────────────
 
@@ -53,6 +55,10 @@ function makeStub(rowsByPattern: Record<string, unknown[]> = {}): {
     // The scope-source check (access/attest-sources.ts) reads through the typed readScopeSourceConfigs member; it runs
     // the real engine-sql member over the recording executeRaw, so it sends and answers the statement the raw path did.
     readScopeSourceConfigs: (ids: readonly string[], lock?: 'share' | 'update') => readScopeSourceConfigs({ executeRaw } as never, ids, lock),
+    // The source listing and the access member read are typed members too; each runs its real engine-sql statement over
+    // the recording executeRaw, so the fake rows above still answer them.
+    listSourceRecords: () => listSourceRecords({ executeRaw } as never),
+    listActiveAccessMembers: () => listActiveAccessMembers({ executeRaw } as never),
     setConfig,
     transaction: async (fn: (tx: BrainEngine) => Promise<unknown>) => fn(engine),
     // Unused methods throw if called accidentally during these tests.

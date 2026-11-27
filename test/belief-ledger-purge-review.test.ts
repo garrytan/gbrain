@@ -390,11 +390,12 @@ for (const engineCase of testBackends().map(beliefEngineCase)) {
     test('#26: a retention removal does not take the source exclusively; an owner purge does', async () => {
       const r = await collect<Record<string, unknown>>(report => brain(async b => {
         const exclusive: string[] = [];
-        const proto = Object.getPrototypeOf(b.engine) as { executeRaw: (sql: string, ...rest: unknown[]) => Promise<unknown> };
-        const original = proto.executeRaw;
-        proto.executeRaw = function (this: unknown, sql: string, ...rest: unknown[]) {
-          if (/^SELECT id FROM sources WHERE id=\$1 FOR UPDATE$/.test(sql)) exclusive.push(sql);
-          return original.call(this, sql, ...rest);
+        // The lock is the typed member `lockSourceForUpdate` (it runs through the executor, not `executeRaw`), so count its calls.
+        const proto = Object.getPrototypeOf(b.engine) as { lockSourceForUpdate: (sourceId: string) => Promise<void> };
+        const original = proto.lockSourceForUpdate;
+        proto.lockSourceForUpdate = function (this: unknown, sourceId: string) {
+          exclusive.push(sourceId);
+          return original.call(this, sourceId);
         };
         try {
           await b.put('notes/old-example', beliefPage({ prose: 'Old.' }));
@@ -407,7 +408,7 @@ for (const engineCase of testBackends().map(beliefEngineCase)) {
           exclusive.length = 0;
           await purgePage(b, 'notes/vault-example');
           report({ retention, purge: exclusive.length });
-        } finally { proto.executeRaw = original; }
+        } finally { proto.lockSourceForUpdate = original; }
       }));
       expect(r).toEqual({ retention: 0, purge: 1 });
     }, 240_000);

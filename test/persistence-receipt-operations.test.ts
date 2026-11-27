@@ -7,7 +7,6 @@ import { localHostId, withVerifiedLocalRegistration, type LocalGrant, type Local
 import { submissionAuthority } from '../src/core/persistence/authority.ts';
 import { admitWrite, getWriteRequest } from '../src/core/persistence/journal.ts';
 import { sha256 } from '../src/core/persistence/digest.ts';
-import { readSourceMembership as readSourceMembershipStatement } from '../src/core/engine-sql/persistence-claims.ts';
 
 const RECEIPTS = ['get_write_request', 'list_write_requests', 'cancel_write_request'];
 let engine: PGLiteEngine;
@@ -126,15 +125,13 @@ describe('own-principal write receipt operations', () => {
   test('authorization query failures fail closed rather than using optional diagnostic fallback', async () => {
     const row = await accept();
     let queries = 0;
-    const proxy = new Proxy(engine, { get(target, key, receiver) {
+    const proxy = new Proxy(engine, { get(target, key) {
       if (key === 'executeRaw') return async (...args: Parameters<typeof engine.executeRaw>) => {
         if (args[0].includes('WITH roots AS')) queries++;
-        if (args[0].startsWith('SELECT incarnation,archived FROM sources')) throw new Error('AUTHORIZATION_DATABASE_UNAVAILABLE');
         return target.executeRaw(...args);
       };
-      // The authorization's source read is the typed readSourceMembership member: it issues its statement through this
-      // proxy's executeRaw, so the injected failure above reaches it as it reached master's raw read.
-      if (key === 'readSourceMembership') return (sourceId: string, opts?: { lock?: boolean | 'update' }) => readSourceMembershipStatement(receiver, sourceId, opts);
+      // The authorization's source read is the typed readSourceMembership member.
+      if (key === 'readSourceMembership') return async () => { throw new Error('AUTHORIZATION_DATABASE_UNAVAILABLE'); };
       const value = Reflect.get(target, key);
       return typeof value === 'function' ? value.bind(target) : value;
     } });
@@ -242,10 +239,11 @@ describe('own-principal write receipt operations', () => {
   test('cancellation rechecks its own operation grant after preflight under the transaction lock', async () => {
     const row = await accept();
     let narrowed = false;
+    // The preflight receipt read is the typed readWriteRequest; narrow the grant right after it.
     const proxy = new Proxy(engine, { get(target, property) {
-      if (property === 'executeRaw') return async (sql: string, params?: unknown[]) => {
-        const result = await target.executeRaw(sql, params);
-        if (!narrowed && sql.startsWith('SELECT * FROM persistence_requests WHERE principal_kind=')) {
+      if (property === 'readWriteRequest') return async (...args: Parameters<typeof engine.readWriteRequest>) => {
+        const result = await target.readWriteRequest(...args);
+        if (!narrowed) {
           narrowed = true;
           await setGrant(owner, { operations: ['put_page', 'get_write_request', 'list_write_requests'] });
         }

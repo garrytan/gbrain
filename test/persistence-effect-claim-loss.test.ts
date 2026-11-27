@@ -33,6 +33,14 @@ function dropAfterGitClaim(engine: BrainEngine): BrainEngine {
   });
 }
 
+/**
+ * The engine calls a dropped connection fails: the raw statements and transactions, the binding lookup, and the effect
+ * worker members that carry the claim and settle statements the pass once sent through executeRaw.
+ */
+const DROPPABLE = new Set(['transactionDirect', 'executeRaw', 'transaction', 'getWorktreeBinding', 'stampEffectClaim', 'renewEffectClaim',
+  'advanceEffectRow', 'completeEffectRow', 'retryEffectRow', 'retryBusyEffectRow', 'requeueEffectRow', 'parkEffectRow', 'failEffectRow',
+  'readMirrorGateRows', 'lockEffectGuard', 'hasRearmableTargets']);
+
 async function queueEffects(engine: BrainEngine, git: Record<string, unknown>): Promise<void> {
   const [{ incarnation, worktree }] = await engine.executeRaw<{ incarnation: string; worktree: string }>(
     "SELECT source_incarnation::text AS incarnation, worktree_id::text AS worktree FROM persistence_source_bindings WHERE source_id='default'");
@@ -79,8 +87,7 @@ for (const backend of testBackends()) describe(`[${backend}] an effect pass that
       const flaky = new Proxy(engine, {
         get(target, prop) {
           const value = Reflect.get(target, prop, target);
-          // The binding lookup is the typed getWorktreeBinding (master sent it through executeRaw); a dropped connection fails it too.
-          if (prop === 'transactionDirect' || prop === 'executeRaw' || prop === 'transaction' || prop === 'getWorktreeBinding') return drop(value.bind(target));
+          if (typeof prop === 'string' && DROPPABLE.has(prop)) return drop(value.bind(target));
           return typeof value === 'function' ? value.bind(target) : value;
         },
       });
@@ -106,10 +113,11 @@ for (const backend of testBackends()) describe(`[${backend}] an effect pass that
             return out;
           };
         }
-        if (prop === 'executeRaw') {
-          return async (sql: string, params?: unknown[]) => {
-            const out = await target.executeRaw(sql, params);
-            if (fired && sql.startsWith("UPDATE persistence_effects SET state='queued'")) abort.abort();
+        if (prop === 'retryEffectRow') {
+          // The give-back's statement (retryEffect): abort once the first claim is back in the queue.
+          return async (claim: Parameters<BrainEngine['retryEffectRow']>[0]) => {
+            const out = await target.retryEffectRow(claim);
+            if (fired) abort.abort();
             return out;
           };
         }

@@ -41,7 +41,8 @@ afterAll(async () => {
 test('simultaneous bounded waiters retain one unresolved receipt read until settlement', async () => withEnv(env, async () => {
   const release = Promise.withResolvers<never[]>();
   let reads = 0;
-  const proxy = new Proxy(engine, { get(target, key) {
+  const proxy = new Proxy(engine, { get(target, key, receiver) {
+    if (key === 'readWriteRequestProgress') return progressThroughRaw(receiver);
     if (key === 'executeRaw') return async (sql: string, params?: unknown[]) => {
       if (sql === WRITE_PROGRESS_SQL) { reads++; return release.promise; }
       return target.executeRaw(sql, params);
@@ -67,7 +68,8 @@ test('simultaneous bounded waiters retain one unresolved receipt read until sett
 test('shutdown drains an uncancellable receipt read without scheduling another', async () => withEnv(env, async () => {
   const release = Promise.withResolvers<never[]>();
   let reads = 0, stopped = false;
-  const proxy = new Proxy(engine, { get(target, key) {
+  const proxy = new Proxy(engine, { get(target, key, receiver) {
+    if (key === 'readWriteRequestProgress') return progressThroughRaw(receiver);
     if (key === 'executeRaw') return async (sql: string, params?: unknown[]) => {
       if (sql === WRITE_PROGRESS_SQL) { reads++; return release.promise; }
       return target.executeRaw(sql, params);
@@ -93,7 +95,8 @@ test('shutdown drains an uncancellable receipt read without scheduling another',
 
 test.each(['queued', 'committed'] as const)('coalesced receipt reads preserve each result while the first waiter is %s', firstState => withEnv(env, async () => {
   const rows = Array.from({ length: 2 }, () => ({ id: randomUUID(), request_id: randomUUID(), state: 'queued' } as import('../src/core/persistence/model.ts').WriteRequest));
-  const proxy = new Proxy(engine, { get(target, key) {
+  const proxy = new Proxy(engine, { get(target, key, receiver) {
+    if (key === 'readWriteRequestProgress') return progressThroughRaw(receiver);
     if (key === 'executeRaw') return async (sql: string, params?: unknown[]) => {
       if (sql === WRITE_PROGRESS_SQL) {
         await Bun.sleep(20);
@@ -117,7 +120,8 @@ test('a stalled receipt read does not hide another request that already committe
   const release = Promise.withResolvers<never[]>();
   const rows = Array.from({ length: 2 }, () => ({ id: randomUUID(), request_id: randomUUID(), state: 'queued' } as import('../src/core/persistence/model.ts').WriteRequest));
   let entered = false;
-  const proxy = new Proxy(engine, { get(target, key) {
+  const proxy = new Proxy(engine, { get(target, key, receiver) {
+    if (key === 'readWriteRequestProgress') return progressThroughRaw(receiver);
     if (key === 'executeRaw') return async (sql: string, params?: unknown[]) => {
       if (sql === WRITE_PROGRESS_SQL) {
         if (params?.[0] === rows[0].id) { entered = true; return release.promise; }
@@ -144,7 +148,8 @@ test.each([false, true])('a shorter receipt waiter cannot abort another caller\'
   const row = { id: randomUUID(), request_id: randomUUID(), state: 'queued' } as import('../src/core/persistence/model.ts').WriteRequest;
   const other = sameId ? row : { ...row, id: randomUUID(), request_id: randomUUID() };
   let ownerSignal: AbortSignal | undefined;
-  const proxy = new Proxy(engine, { get(target, key) {
+  const proxy = new Proxy(engine, { get(target, key, receiver) {
+    if (key === 'readWriteRequestProgress') return progressThroughRaw(receiver);
     if (key === 'kind') return 'postgres';
     if (key === 'executeRaw') return async (...args: Parameters<typeof engine.executeRaw>) => {
       if (args[0] === WRITE_PROGRESS_SQL) {
@@ -169,7 +174,8 @@ test.each([false, true])('a shorter receipt waiter cannot abort another caller\'
 test('distinct stalled receipt reads stay capped and shutdown drains every retained read', async () => withEnv(env, async () => {
   const releases = Array.from({ length: 4 }, () => Promise.withResolvers<never[]>());
   let reads = 0, stopped = false;
-  const proxy = new Proxy(engine, { get(target, key) {
+  const proxy = new Proxy(engine, { get(target, key, receiver) {
+    if (key === 'readWriteRequestProgress') return progressThroughRaw(receiver);
     if (key === 'executeRaw') return async (sql: string, params?: unknown[]) => {
       if (sql === WRITE_PROGRESS_SQL) {
         const release = releases[reads++];
@@ -554,7 +560,8 @@ test('process-local diagnostic errors never retain arbitrary driver codes or mes
 test('an uncancellable PGLite scheduler phase stays observed and awaited through stop', async () => withEnv(env, async () => {
   const release = Promise.withResolvers<never[]>();
   let entered = false, stopped = false;
-  const proxy = new Proxy(engine, { get(target, key) {
+  const proxy = new Proxy(engine, { get(target, key, receiver) {
+    if (key === 'readWriteRequestProgress') return progressThroughRaw(receiver);
     if (key === 'executeRaw') return async (...args: Parameters<typeof engine.executeRaw>) => {
       if (String(args[0]).startsWith('SELECT brain_id,enabled,to_jsonb(persistence_brain)')) {
         expect(args[2]?.signal).toBeUndefined();
@@ -882,18 +889,28 @@ test('a local waiter wakes an idle owner for a claim-only tick instead of waitin
 }), 5000);
 
 /** #5984 (CEO-A7, DX-A3): classified waits with an in-process completion handoff. */
+/**
+ * The progress poll is the typed readWriteRequestProgress member; these proxies script the statement it runs
+ * (WRITE_PROGRESS_SQL), so the member goes through the proxy's executeRaw with the same text and arguments.
+ */
+function progressThroughRaw(engine: { executeRaw: PGLiteEngine['executeRaw'] }) {
+  return async (id: string, opts?: { signal?: AbortSignal }) => {
+    const [row] = await engine.executeRaw(WRITE_PROGRESS_SQL, [id], opts as never);
+    return row ?? null;
+  };
+}
+
 function countingProxy(target: PGLiteEngine, onRead?: (sql: string, params?: unknown[]) => unknown) {
   const counts = { progress: 0, full: 0 };
-  const proxy = new Proxy(target, { get(base, key) {
+  const proxy = new Proxy(target, { get(base, key, receiver) {
+    if (key === 'readWriteRequestProgress') return progressThroughRaw(receiver);
     if (key === 'executeRaw') return async (sql: string, params?: unknown[], opts?: unknown) => {
       if (sql === WRITE_PROGRESS_SQL) counts.progress++;
-      // Only the waiter's own reads count; publication itself reads its receipt (clearResolvedRecovery).
-      if (sql === 'SELECT * FROM persistence_requests WHERE id=$1::uuid' && new Error().stack?.includes('awaitWrite')) counts.full++;
       const replaced = onRead?.(sql, params);
       if (replaced !== undefined) return replaced;
       return base.executeRaw(sql, params as unknown[], opts as never);
     };
-    // The full receipt read through the typed readWriteRequestById. Only the waiter's own reads count.
+    // The full receipt read (the typed readWriteRequestById). Only the waiter's own reads count; publication reads its receipt too.
     if (key === 'readWriteRequestById') return (id: string, opts?: { signal?: AbortSignal }) => {
       if (new Error().stack?.includes('awaitWrite')) counts.full++;
       return base.readWriteRequestById(id, opts);

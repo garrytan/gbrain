@@ -46,6 +46,27 @@ function counting(target: PGLiteEngine) {
       statements.push(`getConfigValues ${JSON.stringify(keys)}`);
       return obj.getConfigValues(keys);
     };
+    // The vacuum's segment storage probe is a typed member (engine-sql/write-guards.ts) that runs one statement.
+    if (key === 'hasSegmentStorage') return () => {
+      statements.push('hasSegmentStorage');
+      return obj.hasSegmentStorage();
+    };
+    // The memory proposal expiry, awaiting read and purge are typed members (engine-sql/write-misc.ts); one statement each.
+    if (key === 'expireMemoryProposals' || key === 'listAwaitingMemoryProposals' || key === 'purgeMemoryProposals') {
+      return (...args: unknown[]) => {
+        statements.push(key);
+        return (obj[key] as (...a: unknown[]) => Promise<unknown>).apply(obj, args);
+      };
+    }
+    // The journal's claim probe, stale-claim expiry, receipt budget read, compactable-receipt list, projection queue
+    // reads and the idle probe are typed members (engine-sql/persistence-*.ts); one statement each.
+    if (key === 'probeIdleWork' || key === 'hasClaimableWrite' || key === 'expireStaleWriteClaims' || key === 'readReceiptBudget'
+      || key === 'listCompactableReceipts' || key === 'listPendingSegmentedProjections' || key === 'selectProjectionWindowJobs') {
+      return (...args: unknown[]) => {
+        statements.push(key);
+        return (obj[key] as (...a: unknown[]) => Promise<unknown>).apply(obj, args);
+      };
+    }
     const value = Reflect.get(obj, key);
     return typeof value === 'function' ? value.bind(obj) : value;
   } });
