@@ -14,7 +14,15 @@ import { relationRead } from './seed.ts';
 import { MAX_PRE_LINKS, MAX_PRE_PAGES, movedOutsideFootprint, PILOT_WRITES, pageRefs, pageSet, readBack, writeFamily, type PageRef, type PreImage, type WriteEvent } from './write-compare.ts';
 import { sqlWrites } from './sql-writes.ts';
 import { memberKind } from './write-map.ts';
-import { COMPLETE_WRITE_PURGE_PROBE_SQL, COMPLETE_WRITE_SQL, ENSURE_COUNTERS_SQL, LOCK_COUNTERS_SQL, PUBLICATION_EFFECTS_SQL } from '../core/engine-sql/persistence-journal.ts';
+import { COMPLETE_WRITE_PURGE_PROBE_SQL, COMPLETE_WRITE_SQL, ENSURE_COUNTERS_SQL, LOCK_COUNTERS_SQL, LOCK_WRITE_REQUEST_SQL, PUBLICATION_EFFECTS_SQL } from '../core/engine-sql/persistence-journal.ts';
+import { PERSISTENCE_DECLARATION_SQL } from '../core/engine-sql/persistence-declaration.ts';
+import { publicationJournalStatements } from '../core/engine-sql/publication-journal.ts';
+import { REMOVE_TIMELINE_ROWS_SQL, UPDATE_TIMELINE_DETAILS_SQL } from '../core/engine-sql/timeline.ts';
+import { DELETE_TAKE_ROWS_SQL } from '../core/engine-sql/takes.ts';
+import { DELETE_STALE_PAGE_WRITE_GATE_RECEIPTS_SQL } from '../core/engine-sql/trust-write-gate.ts';
+import { WRITE_OP_CHECKPOINT_RECORDS_SQL } from '../core/engine-sql/op-checkpoint.ts';
+import { SYNC_PASS_ROW_SQL } from '../core/engine-sql/sync-hold-store.ts';
+import { ADVANCE_SYNC_CHECKPOINT_SQL } from '../core/engine-sql/sources.ts';
 
 /** How long the preimage read may hold a sampled write. */
 export const PREIMAGE_TIMEOUT_MS = 2_000;
@@ -162,22 +170,51 @@ export function bookkeepingStatements(sqls: readonly string[]): boolean {
   }
   return wrote;
 }
+/** True when every statement parses and is read-only or writes only bookkeeping tables (none need write): a member that sends only these changes nothing the comparison reads. An empty list, or a statement the parser cannot read, makes it false. */
+export function noComparedWrites(sqls: readonly string[]): boolean {
+  if (!sqls.length) return false;
+  for (const sql of sqls) {
+    let writes; try { writes = sqlWrites(sql); } catch { return false; }
+    if (writes.some((w) => w.kind !== 'relation' || !BOOKKEEPING.has(w.relation))) return false;
+  }
+  return true;
+}
 /**
  * Typed journal members and every statement each one sends (engine-sql/persistence-journal.ts): the counter rows' create-and-lock before a journaled page write, and the
  * request's completion after it, and the publication's effects insert (insertPublicationEffects, which writes only persistence_effects: judged bookkeeping by its statement text,
- * pinned by test/helpers/shadow-write-compare-scenarios.ts; a change that makes it write another table drops it back to an ordinary write). They were raw statements the rule above judged bookkeeping; as members their text is hidden from rawKind, so each is judged here by the
- * same rule on the statements it sends. A member whose statements stop passing that rule is an ordinary write again. (upsertWriteGateReceipt is not listed: it stays an
+ * pinned by test/helpers/shadow-write-compare-scenarios.ts; a change that makes it write another table drops it back to an ordinary write), and the publication's read-only declaration and
+ * row locks. They were raw statements the rule above judged bookkeeping, or read-only ones never noted at all; as members their text is hidden from rawKind, so each is judged here by the
+ * same rule on the statements it sends (noComparedWrites: read-only or bookkeeping-only). A member whose statements stop passing that rule is an ordinary write again. (upsertWriteGateReceipt is not listed: it stays an
  * ordinary write, which fails closed.)
  */
-export const JOURNAL_MEMBER_STATEMENTS: ReadonlyMap<string, readonly string[]> = new Map([
+const PUBLICATION_JOURNAL_SQL = publicationJournalStatements();
+export const JOURNAL_MEMBER_STATEMENTS: ReadonlyMap<string, readonly string[]> = new Map<string, readonly string[]>([
   ['lockPersistenceCounters', [ENSURE_COUNTERS_SQL, LOCK_COUNTERS_SQL]],
   ['completeWriteRow', [COMPLETE_WRITE_SQL, COMPLETE_WRITE_PURGE_PROBE_SQL]],
   // The publication's effects insert (persistence_effects only): a raw statement the rule judged bookkeeping until the journal moved onto this member.
   ['insertPublicationEffects', [PUBLICATION_EFFECTS_SQL]],
+  // The publication's opening statements (coordinator.ts publishMutation, before its page write): the protocol declaration (settings and the brain row FOR SHARE)
+  // and the request row lock (SELECT ... FOR UPDATE). As raw statements they wrote nothing, so they were never noted; as typed members they are, and an
+  // unjudged member before the page write made every published put_page and sync import page write `in_transaction_prior_write`.
+  ['declarePersistence', PERSISTENCE_DECLARATION_SQL],
+  ['lockWriteRequest', [LOCK_WRITE_REQUEST_SQL]],
+  // The publication journal store: the factory sends nothing, and the store's calls run on the transaction unseen by the wrapper, so it is judged by every
+  // statement the store can send (reads, row locks, and persistence_requests / persistence_counters / persistence_effects writes). Unknown (null): an ordinary write.
+  ...(PUBLICATION_JOURNAL_SQL ? [['publicationJournalStore', PUBLICATION_JOURNAL_SQL] as const] : []),
+  // A page publication's own writes after its page write (persistence/canonical-projections.ts, import-file.ts, the sync import's checkpoint): timeline rows
+  // and takes (not compared), the page's stale write-gate receipts, op checkpoints and the sync pass row, and the source's sync checkpoint. Each was a raw
+  // statement the rule above judged bookkeeping by its table; as a typed member it was an ordinary later write, so every such page write was `in_transaction_later_write`.
+  ['removeTimelineRows', [REMOVE_TIMELINE_ROWS_SQL]],
+  ['updateTimelineDetails', [UPDATE_TIMELINE_DETAILS_SQL]],
+  ['deleteTakeRows', [DELETE_TAKE_ROWS_SQL]],
+  ['deleteStalePageWriteGateReceipts', [DELETE_STALE_PAGE_WRITE_GATE_RECEIPTS_SQL]],
+  ['writeOpCheckpointRecords', [WRITE_OP_CHECKPOINT_RECORDS_SQL]],
+  ['writeSyncPassRow', SYNC_PASS_ROW_SQL],
+  ['advanceSyncCheckpoint', ADVANCE_SYNC_CHECKPOINT_SQL],
 ]);
 /** The closing text seal of an imported page (engine-sql/write-guards.ts sealImportedPage): the statement AFTER_PAGE_WRITE matched by text while it was raw, pinned by test/shadow-follow-producer.test.ts. */
 const SEAL_MEMBER = 'sealImportedPage';
-const BOOKKEEPING_MEMBERS: ReadonlySet<string> = new Set([...JOURNAL_MEMBER_STATEMENTS].filter(([, sqls]) => bookkeepingStatements(sqls)).map(([name]) => name));
+const BOOKKEEPING_MEMBERS: ReadonlySet<string> = new Set([...JOURNAL_MEMBER_STATEMENTS].filter(([, sqls]) => noComparedWrites(sqls)).map(([name]) => name));
 const pageKey = (name: string, args: unknown[]): string => { const r = pageRefs(name === STAMP ? 'putPage' : name, name === STAMP ? [args[0], undefined, { sourceId: args[1] }] : args)[0]; return r ? `${r.source}\0${r.slug}` : ''; };
 
 interface TxSample { at: number; key: string; op: string; bad?: string; read?: (then: unknown[][]) => void }
