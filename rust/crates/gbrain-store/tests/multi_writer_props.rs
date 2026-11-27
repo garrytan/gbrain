@@ -17,7 +17,7 @@
 mod common;
 
 use common::mu::{CommitPosition, MuStore, TxnMode, TxnOptions, WriteOrigin};
-use common::{StoreMode, TempDir, open_in};
+use common::{StoreMode, TempDir, open_in, open_mu};
 use gbrain_store::Store;
 use gbrain_store::error::*;
 use gbrain_store::journal::{JournalLimits, PageMutation, WriteAdmission};
@@ -248,7 +248,7 @@ fn run_property<S: Strategy>(
 fn p_b_facts_of_one_entity_read_back_in_commit_order_multi_writer() {
     run_property((1usize..=4, 1usize..=4), |(writers, per_writer)| {
         let dir = TempDir::new("p-b");
-        let store = Arc::new(open_in(&dir, StoreMode::Optimistic));
+        let store = Arc::new(open_mu(&dir));
         let s = store.clone();
         let committed = together(writers, move |i| {
             (0..per_writer)
@@ -259,7 +259,7 @@ fn p_b_facts_of_one_entity_read_back_in_commit_order_multi_writer() {
                         "input": {"fact": text, "entity_slug": "people/alice", "source": "chat"}, "sourceId": "default",
                     }))
                     .unwrap();
-                    tx.insert_fact(&args).unwrap();
+                    tx.store().insert_fact(&args).unwrap();
                     (s.commit_position(tx).unwrap_or_else(|e| panic!("{e}")), text)
                 })
                 .collect::<Vec<(CommitPosition, String)>>()
@@ -287,7 +287,7 @@ fn p_b_facts_of_one_entity_read_back_in_commit_order_multi_writer() {
 fn p_d_a_write_with_a_replaced_leases_token_is_refused_multi_writer() {
     run_property((1usize..=3, 1usize..=4), |(takeovers, stale_writes)| {
         let dir = TempDir::new("p-d");
-        let store = Arc::new(open_in(&dir, StoreMode::Optimistic));
+        let store = Arc::new(open_mu(&dir));
         let mut tokens = Vec::new();
         for holder in 0..=takeovers {
             thread::sleep(std::time::Duration::from_millis(2));
@@ -322,15 +322,16 @@ fn p_d_a_write_with_a_replaced_leases_token_is_refused_multi_writer() {
 fn p_e_a_read_with_a_writes_token_sees_that_write_multi_writer() {
     run_property(1usize..=8, |writes| {
         let dir = TempDir::new("p-e");
-        let store = open_in(&dir, StoreMode::Optimistic);
+        let store = open_mu(&dir);
         for n in 0..writes {
             let tx = store.begin_with(host(n)).unwrap_or_else(|e| panic!("{e}"));
-            tx.put_page(
-                &format!("e/{n}"),
-                &page("acknowledged"),
-                &PutPageOptions::default(),
-            )
-            .unwrap();
+            tx.store()
+                .put_page(
+                    &format!("e/{n}"),
+                    &page("acknowledged"),
+                    &PutPageOptions::default(),
+                )
+                .unwrap();
             let position = store.commit_position(tx).unwrap_or_else(|e| panic!("{e}"));
             let log = store
                 .read_commit_log(None, 10_000)

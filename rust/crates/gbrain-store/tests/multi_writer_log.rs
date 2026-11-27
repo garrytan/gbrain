@@ -451,7 +451,7 @@ fn second_host_promotion_keeps_clock_floor_and_positions_multi_writer() {
             .unwrap_or_else(|e| panic!("{e}"));
         for i in 0..6 {
             let tx = begin_host(&a.store, i);
-            put(&tx, &format!("hand/{i}"), "committed on host A");
+            put(tx.store(), &format!("hand/{i}"), "committed on host A");
             commit_host(&a.store, tx);
         }
         let (a_records, a_last) = log_since(&a.store, None);
@@ -500,7 +500,7 @@ fn second_host_promotion_keeps_clock_floor_and_positions_multi_writer() {
         let mut positions = Vec::new();
         for i in 0..4 {
             let tx = begin_host(&b.store, 10 + i);
-            put(&tx, &format!("after/{i}"), "committed on host B");
+            put(tx.store(), &format!("after/{i}"), "committed on host B");
             positions.push(commit_host(&b.store, tx));
         }
         assert!(
@@ -528,7 +528,7 @@ fn second_host_promotion_keeps_clock_floor_and_positions_multi_writer() {
         )
         .unwrap_or_else(|e| panic!("{e}"));
         let late = begin_host(&a.store, 1);
-        put(&late, "late/write", "from the old primary");
+        put(late.store(), "late/write", "from the old primary");
         let refused = a.store.commit_position(late).unwrap_err();
         assert_lost(
             &refused,

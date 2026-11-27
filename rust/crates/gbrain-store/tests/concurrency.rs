@@ -9,7 +9,7 @@
 mod common;
 
 use common::mu::{MuStore, SingleFlightKey, TxnMode, TxnOptions, WriteOrigin};
-use common::{StoreMode, TempDir, both_modes, open_in};
+use common::{StoreMode, TempDir, both_modes, open_in, open_mu};
 use gbrain_store::Store;
 use gbrain_store::chunks::{ChunkInput, UpsertChunksOptions};
 use gbrain_store::error::*;
@@ -413,7 +413,7 @@ fn optimistic_options(i: usize) -> TxnOptions {
 #[ignore = "multi_writer"]
 fn explicit_transactions_conflict_with_a_typed_error_and_ids_stay_unique_multi_writer() {
     let dir = TempDir::new("conc-tx-typed");
-    let store = Arc::new(open_in(&dir, StoreMode::Optimistic));
+    let store = Arc::new(open_mu(&dir));
     drop(
         store
             .begin_with(optimistic_options(0))
@@ -427,8 +427,12 @@ fn explicit_transactions_conflict_with_a_typed_error_and_ids_stay_unique_multi_w
                 let tx = s
                     .begin_with(optimistic_options(i))
                     .unwrap_or_else(|e| panic!("{e}"));
-                let id = page_id(&put(&tx, &format!("p/{i}-{round}"), "inside a transaction"));
-                put(&tx, "shared/hot", &format!("tx {i} {round}"));
+                let id = page_id(&put(
+                    tx.store(),
+                    &format!("p/{i}-{round}"),
+                    "inside a transaction",
+                ));
+                put(tx.store(), "shared/hot", &format!("tx {i} {round}"));
                 match s.commit_position(tx) {
                     Ok(_) => {
                         ids.push(id);
@@ -456,7 +460,7 @@ fn explicit_transactions_conflict_with_a_typed_error_and_ids_stay_unique_multi_w
 #[ignore = "multi_writer"]
 fn a_commit_on_the_same_key_as_an_open_transaction_conflicts_or_waits_multi_writer() {
     let dir = TempDir::new("conc-tx-same-key");
-    let store = Arc::new(open_in(&dir, StoreMode::Optimistic));
+    let store = Arc::new(open_mu(&dir));
     put(&store, "notes/a", "before");
     let tx = store
         .begin_with(optimistic_options(1))
@@ -468,7 +472,7 @@ fn a_commit_on_the_same_key_as_an_open_transaction_conflicts_or_waits_multi_writ
     store
         .single_flight(&tx, &[key])
         .unwrap_or_else(|e| panic!("{e}"));
-    put(&tx, "notes/a", "from the transaction");
+    put(tx.store(), "notes/a", "from the transaction");
     let s = store.clone();
     let other = thread::spawn(move || put(&s, "notes/a", "from another writer"));
     thread::sleep(std::time::Duration::from_millis(100));
@@ -491,12 +495,12 @@ fn a_commit_on_the_same_key_as_an_open_transaction_conflicts_or_waits_multi_writ
 #[ignore = "multi_writer"]
 fn a_commit_on_another_key_lands_while_a_transaction_is_open_multi_writer() {
     let dir = TempDir::new("conc-tx-other-key");
-    let store = Arc::new(open_in(&dir, StoreMode::Optimistic));
+    let store = Arc::new(open_mu(&dir));
     put(&store, "notes/a", "before");
     let tx = store
         .begin_with(optimistic_options(1))
         .unwrap_or_else(|e| panic!("{e}"));
-    put(&tx, "notes/a", "from the transaction");
+    put(tx.store(), "notes/a", "from the transaction");
     let s = store.clone();
     let other = thread::spawn(move || put(&s, "notes/b", "from another writer"));
     thread::sleep(std::time::Duration::from_millis(100));

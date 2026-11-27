@@ -63,6 +63,17 @@ pub fn open_concurrent(dir: &TempDir) -> Store {
     Store::open_dir(&dir.path().join("brain"), options).unwrap()
 }
 
+/// Opens the test brain in multi-user mode on the concurrent store (`mode::open_options_mu`): what an
+/// optimistic explicit transaction (`begin_with(TxnMode::Optimistic)`) needs. Any other brain refuses one.
+#[allow(dead_code)]
+pub fn open_mu(dir: &TempDir) -> Store {
+    Store::open_dir(
+        &dir.path().join("brain"),
+        mode::open_options_mu(StoreMode::Optimistic),
+    )
+    .unwrap()
+}
+
 /// Opens the test brain in an explicit mode, whatever `GBRAIN_RUST_CONCURRENT_WRITES` says.
 pub fn open_in(dir: &TempDir, mode: StoreMode) -> Store {
     let options = OpenOptions {
