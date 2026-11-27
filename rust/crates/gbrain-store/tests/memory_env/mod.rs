@@ -92,7 +92,13 @@ pub fn brain_in(name: &str, mode: StoreMode) -> Brain {
 
 /// An optimistic brain with the multi-user switch explicitly on, on the injected clock: protected members then need a fence.
 pub fn brain_mu(name: &str) -> Brain {
-    brain_with(name, true, true)
+    let brain = brain_with(name, true, true);
+    // The resolved state, asserted at the open: a brain that lost the switch fails here, never runs a twin as a plain one.
+    assert!(
+        brain.store.multiuser(),
+        "the store did not resolve multi-user mode on"
+    );
+    brain
 }
 
 fn brain_with(name: &str, concurrent: bool, multiuser: bool) -> Brain {
@@ -158,5 +164,11 @@ pub fn open_at_with(
         multiuser,
         ..OpenOptions::default()
     };
-    Store::open_kv(kv, clock, options).unwrap()
+    let store = Store::open_kv(kv, clock, options).unwrap();
+    assert_eq!(
+        store.multiuser(),
+        multiuser,
+        "the store did not resolve the multi-user switch the open asked for"
+    );
+    store
 }

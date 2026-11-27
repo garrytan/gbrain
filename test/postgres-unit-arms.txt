@@ -940,6 +940,7 @@ test/migration-persistence-request-slug-index.test.ts
 test/mirror-keep-deleted.test.ts
 test/mirror-readonly-write-through-7098.test.ts
 test/moved-pages-gst2584.test.ts
+test/multi-writer-c18-claims.test.ts
 test/multi-writer-harness.test.ts
 test/n3-sql-move-parity.test.ts
 test/notifier-passed-freshness-marker-7941.test.ts
