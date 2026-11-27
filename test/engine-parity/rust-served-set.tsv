@@ -97,6 +97,7 @@ test/engine-parity/label-guard-tiers.test.ts	served
 test/engine-parity/large-page.test.ts	served	
 test/engine-parity/lifecycle.test.ts	served	
 test/engine-parity/managed-on-rust.test.ts	served	
+test/engine-parity/mcp-get-tags.test.ts	served	
 test/engine-parity/meetings-sync.test.ts	served	
 test/engine-parity/memory-mutation-reads.test.ts	served	
 test/engine-parity/mention-pass.test.ts	served	
@@ -213,6 +214,7 @@ test/engine-parity/worktree-terms.test.ts	served
 test/engine-parity/write-attribution.test.ts	served	
 test/engine-parity/write-guards.test.ts	served	
 test/engine-parity/write-misc.test.ts	served	
+test/engine-parity/write-request-reads.test.ts	served	
 test/engine-parity/writer-admin.test.ts	served	
 test/engine-parity/writer-release.test.ts	served	
 test/engine-parity/writer-status.test.ts	served	
