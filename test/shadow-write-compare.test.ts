@@ -819,6 +819,27 @@ describe('every sample the child was sent ends in the tally (sample accounting)'
     });
   }, 60_000);
 
+  test('an orphaned receipt is booked in one durable append: a failure after part of it would land can never book the qualifying count twice', async () => {
+    await withEnv({ GBRAIN_HOME: tmp() }, async () => {
+      const dir = tmp(); writeSeedRecord(dir, SEED);
+      writeFileSync(receiptFile(dir, 'dead-a'), JSON.stringify({ session: 'dead-a', sent: 25, sent_qualifying: 4, pid: deadPid() }));
+      // The first append of lost samples to the journal lands; a second one fails (a full disk for a moment).
+      const durable = await import('../src/core/fs-durable.ts');
+      const original = durable.flushFile; let lostFlushes = 0;
+      const spy = spyOn(durable, 'flushFile').mockImplementation((path: string) => {
+        if (path.includes('write-lost.') && ++lostFlushes === 2) throw new Error('ENOSPC');
+        return original(path);
+      });
+      let epoch: string;
+      try { epoch = await runChild(dir, 'sess-a1'); } finally { spy.mockRestore(); }
+      expect(await runChild(dir, 'sess-a2')).toBe(epoch);
+      const t = readWriteTally(dir, epoch)!;
+      expect(t.uncomparable_by_reason.receipt_orphaned).toBe(4); // before: 8, the qualifying count booked by the try whose second append failed and again by the retry
+      expect(t.capability_missing_by_family.receipt_orphaned_nonqualifying).toBe(21);
+      expect(existsSync(receiptFile(dir, 'dead-a'))).toBe(false);
+    });
+  }, 60_000);
+
   test('a receipt a dead session left is settled exactly once by an owner worker (receipt_orphaned); a live pid, a pid we cannot trust and a count we cannot trust are left alone', async () => {
     await withEnv({ GBRAIN_HOME: tmp() }, async () => {
       const dir = tmp(); writeSeedRecord(dir, SEED);
