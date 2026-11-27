@@ -169,7 +169,7 @@ Rules:
   | 12 | `rust-engine/enforced-member-writes-rust` (provisional, main's 11 plus one; the trunk renumbers at intake): the enforced member CLI's four reads in `store-members/page-mutation-reads.ts` |
   | 12 | `rust-engine/enforced-member-writes-rust` claims a provisional number (main's 11 plus one; the trunk renumbers at intake): the enforced member CLI's four reads in `store-members/page-mutation-reads.ts` |
   | 12 | `rust-engine/labelled-only-create-rust` claims a provisional number (main's 11 plus one, as the enforced-member branch's row above; the trunk renumbers both at intake): the writer's hidden-page read `readPageHiddenFromWriter` in `store-members/remote-links.ts` |
-  | 15 | `rust-engine/lineage-fact-reads-rust` (row 32e-b-4: a member's fact reads under `access.members_read_lineage`, the provenance judgment in `store-members/private-provenance.ts`). Provisional: the trunk took 13; expected landing order 32e-b-6=14, 32e-b-4=15, 32e-b-7=16; the trunk renumbers at intake |
+  | 14 | `rust-engine/lineage-fact-reads-rust` (row 32e-b-4: a member's fact reads under `access.members_read_lineage`, the provenance judgment in `store-members/private-provenance.ts`). provisional: the trunk took 13; expected landing order 32e-b-4=14, 32e-b-7=15; 32e-b-6 takes none; the trunk renumbers at intake |
 
 Reserved tags:
 
