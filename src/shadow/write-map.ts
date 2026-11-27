@@ -255,6 +255,7 @@ const READ_PREFIX = /^(get|list|count|find|search|read|resolve|has|is|sum|cosine
 /** Read-only members whose names do not start with a read prefix (search-read helpers). */
 export const READ_ONLY_MEMBERS: ReadonlySet<string> = new Set([
   'probePurgeDerivations',
+  'assertAtomStateStore', // the extract_atoms state gate: a no-op on SQL engines, a refusal or a no-op on the Rust store, never a write
   'activeEmbeddingColId', 'aliasCanonicalRefs', 'generatedPagesIn', 'livePageIdsAt', 'pageCollapseFacts', 'pagesLinkingTo',
   'slugsEndingIn', 'supersedingPageSlugs',
   'dailyDecideSpend', 'decideConflictNoEntityCounts', 'decideSlotUsage',
