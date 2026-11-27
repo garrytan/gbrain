@@ -159,7 +159,7 @@ export interface GBrainConfig {
   expansion_model?: string;
   /**
    * Default chat model for `gateway.chat()` callers (v0.27+).
-   * Default: "anthropic:claude-sonnet-4-6" (dateless per Anthropic's v0.31.12+ model-ID format).
+   * Default: "anthropic:claude-sonnet-5-5" (dateless per Anthropic's v0.31.12+ model-ID format).
    */
   chat_model?: string;
   /**
@@ -306,6 +306,7 @@ export interface GBrainConfig {
     autopilot_launcher?: 'external';
     /** #9483: a launcher outside gbrain's serve service starts serve again when it exits (`gbrain upgrade` stops serve and waits for it, or restarts the systemd unit serve runs in). */
     serve_launcher?: 'external';
+    worker_launcher?: 'external';
   };
 
   /**
@@ -1453,7 +1454,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'search.return_budget_conversation',
   'search.return_budget_max_remote',
   'search.auto_packing',
-  'search.long_page_unit', 'search.long_page_min_chars', // F2: delivery unit for long (rendered body >= min_chars, default 20000) non-conversation hits under an implied auto: off (default) | window | section | page (search/evidence-delivery.ts)
+  'search.long_page_unit', 'search.long_page_min_chars', // F2: delivery unit for long (rendered body >= min_chars, default 20000) non-conversation hits under an implied auto: off | window | section (default) | page (search/evidence-delivery.ts)
   'search.evidence_date_header', // C1: one-line date header per delivered block (default off; search/evidence-date.ts)
   'search.evidence_titles', 'search.query_budget_unit', // GBRA-205, default off: titles on page date headers and think <page> tags (search/evidence-date.ts); query token_budget as the delivery hard cap, chunk | auto (search/evidence-packing.ts)
   'search.evidence_tail_trim', // GBRA-156: protected top-3 tail trim of auto conversation blocks (default off; search/evidence-tail-trim.ts)
@@ -1579,6 +1580,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'conversation_parser.llm_fallback_enabled',
   // Dream cycle config
   'dream.synthesize.session_corpus_dir', 'dream.synthesize.conversation_pages', // #4419 conversation pages feed synthesis
+  'dream.synthesize.since',
   'dream.synthesize.meeting_transcripts_dir',
   'dream.synthesize.last_completion_ts',
   'dream.synthesize.verdict_model',
@@ -1703,6 +1705,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   'self_upgrade.last_applied_version',
   'self_upgrade.autopilot_launcher',
   'self_upgrade.serve_launcher',
+  'self_upgrade.worker_launcher',
   // Misc
   'artifacts_sync_mode',
   'cross_project_learnings',

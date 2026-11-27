@@ -101,6 +101,7 @@ test/conversation-facts-keep-quiet-gst3170.test.ts
 test/conversation-facts-outcome-marker-purge-7778.test.ts
 test/conversation-facts-oversized-sidecar.test.ts
 test/conversation-facts-purged-claim-7438.test.ts
+test/conversation-facts-soft-expire-10443.test.ts
 test/cycle-world-fence-rows.test.ts
 test/cycle/derived-write-through-commit.test.ts
 test/cycle/dream-reverse-write-commit.test.ts
@@ -160,6 +161,7 @@ test/engine-parity/decide-store.test.ts
 test/engine-parity/extraction.test.ts
 test/engine-parity/facts.test.ts
 test/engine-parity/field-usage.test.ts
+test/engine-parity/hidden-exact-identity.test.ts
 test/engine-parity/ignored-privacy-label-reads.test.ts
 test/engine-parity/import-command.test.ts
 test/engine-parity/import-path.test.ts
@@ -237,6 +239,7 @@ test/facts-home-review-gst2492.test.ts
 test/facts-insert-guards-7105.test.ts
 test/facts-publication-large-fence-6898.test.ts
 test/facts-subject-infer-7405.test.ts
+test/facts-unknown-event-date-10288.test.ts
 test/federation-exposure-private-9068.test.ts
 test/fence-absent-append-keeps-rows.test.ts
 test/fence-fact-append.test.ts

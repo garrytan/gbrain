@@ -16,7 +16,7 @@ import { runDedupe } from '../src/commands/dedupe.ts';
 import { OperationError } from '../src/core/ops/contract.ts';
 import { classifyPairs, samplePairs, type ClassifiedPair } from '../src/core/entities/evidence/classes.ts';
 import { classesOf, combine, type Signal } from '../src/core/entities/evidence/combine.ts';
-import { sensitivityOf, type PersonPage } from '../src/core/entities/evidence/people.ts';
+import { readPeople, sensitivityOf, type PersonPage } from '../src/core/entities/evidence/people.ts';
 import { emailSignals, parseAddress, type EmailIndex } from '../src/core/entities/evidence/email.ts';
 import { EXA_CACHE_PREFIX, EXA_SEARCH_URL, EXA_SPENT_KEY, EXA_SWITCH_KEY, exaQueryFor, exaSettings, profileUrl, resultMatches, type ExaSettings } from '../src/core/entities/evidence/exa.ts';
 
@@ -367,5 +367,108 @@ describe('evidence rules', () => {
     expect(emailSignals(index, new Map(), a, page({ handles: new Set(['e:info@example.invalid']) }))).toEqual({ signals: [], disabled: 'role address' });
     expect(parseAddress('"Alice Example" <Alice@Example.invalid>')).toEqual({ address: 'alice@example.invalid', name: 'Alice Example' });
     expect(parseAddress('bob@example.invalid')).toEqual({ address: 'bob@example.invalid', name: null });
+  });
+});
+
+describe('Exa clue fallbacks on a repo-less brain', () => {
+  const slug = 'people/alice-clue-example';
+  const queryFor = async (frontmatter: Record<string, unknown>, title = 'Alice Clue Example') => {
+    await person(slug, title, frontmatter);
+    return exaQueryFor((await readPeople(engine, '', true)).get(`default\t${slug}`)!);
+  };
+
+  test.each(['org', 'current_company', 'affiliation', 'works_at', 'headline'] as const)(
+    'uses structured %s when the canonical clue is missing',
+    async field => {
+      expect(await queryFor({ [field]: 'Acme Example' })).toEqual({
+        query: 'Alice Clue Example Acme Example', name: 'Alice Clue Example', clue: 'Acme Example',
+      });
+    },
+  );
+
+  test('prefers the existing company or role and uses a fixed fallback order', async () => {
+    expect(await queryFor({ company: ' Acme  Example ', role: 'Engineer', org: 'Beta Example' }))
+      .toMatchObject({ query: 'Alice Clue Example Acme Example' });
+    expect(await queryFor({ role: 'Engineer', current_company: 'Beta Example' }))
+      .toMatchObject({ query: 'Alice Clue Example Engineer' });
+    expect(await queryFor({ domain: 'acme-example.com', headline: 'Engineer', affiliation: 'Beta Example', org: 'Gamma Example', current_company: 'Delta Example' }))
+      .toMatchObject({ query: 'Alice Clue Example Delta Example' });
+    expect(await queryFor({ employer: 'Acme Example', organization: 'Beta Example' }))
+      .toMatchObject({ query: 'Alice Clue Example Acme Example' });
+    expect(await queryFor({ organization: 'Beta Example' })).toMatchObject({ query: 'Alice Clue Example Beta Example' });
+    expect(await queryFor({ position: 'Engineer' })).toMatchObject({ query: 'Alice Clue Example Engineer' });
+    expect(await queryFor({ job_title: 'Engineer' })).toMatchObject({ query: 'Alice Clue Example Engineer' });
+  });
+
+  test('uses only the domain label and still requires a clue word in the result title', async () => {
+    const result = await queryFor({ domain: 'acme-sample.com' });
+    expect(result).toEqual({ query: 'Alice Clue Example acme-sample', name: 'Alice Clue Example', clue: 'acme-sample' });
+    expect(await queryFor({ website: 'https://www.acme-sample.co.uk/' })).toEqual(result);
+    if (!('query' in result)) throw new Error('Expected a domain-derived query');
+    expect(resultMatches(result, 'Alice Clue Example — Acme')).toBe(true);
+    expect(resultMatches(result, 'Alice Clue Example — Unrelated')).toBe(false);
+    expect(resultMatches(result, 'Alice Other Example — Acme')).toBe(false);
+  });
+
+  test('does not send contact values, website paths or queries, notes, or a repeated page title', async () => {
+    for (const domain of ['gmail.com', 'https://www.outlook.com/', 'yahoo.com', 'icloud.com', 'proton.me', 'pm.me', 'hotmail.com',
+      'https://acme-example.com/private', 'acme-example.com?private=value', 'acme-example.com#private', 'acme12345.com', 'team.example.invalid']) {
+      expect(await queryFor({ domain })).toEqual({ blocked: 'no_clue' });
+    }
+    for (const org of ['alice@example.invalid', 'Acme +1 555-555-0100', 'acme-example.com/private', 'https://acme-example.com?private=value', 'a'.repeat(81)]) {
+      expect(await queryFor({ org })).toEqual({ blocked: 'no_clue' });
+    }
+    expect(await queryFor({ company: 'https://acme-example.com/private', org: 'Acme Example' })).toEqual({ blocked: 'no_clue' });
+    expect(await queryFor({ company: 'Acme +1 555/555/0100' })).toEqual({ blocked: 'no_clue' });
+    expect(await queryFor({ org: 'Acme\nPrivate notes' })).toEqual({ blocked: 'no_clue' });
+    expect(await queryFor({ title: 'Alice Clue Example', notes: 'Acme Example', email: 'alice@acme-example.com' })).toEqual({ blocked: 'no_clue' });
+    expect(await queryFor({ current_company: 'Acme Example', visibility: 'private' })).toEqual({ blocked: 'private' });
+    expect(await queryFor({ current_company: 'Acme Example', tags: ['Family'] })).toEqual({ blocked: 'family' });
+    expect(await queryFor({ current_company: 'Acme Example', minor: true })).toEqual({ blocked: 'minor' });
+    expect(await queryFor({ org: 'Acme Example' }, 'https://example.invalid/private')).toEqual({ blocked: 'no_name' });
+    expect(await queryFor({ org: 'Acme Example' }, 'alice＠example.invalid')).toEqual({ blocked: 'no_name' });
+  });
+
+  test('sends the title of a visible company linked by works_at, not its slug or link context', async () => {
+    const page = 'contacts/link-clue-example';
+    await engine.executeRaw(`INSERT INTO sources(id,name,config) VALUES('source-private','source-private','{"owner_only":true}'::jsonb) ON CONFLICT DO NOTHING`);
+    await person('people/link-clue-example', 'Link Clue Example', { role: 'Engineer' });
+    await person(page, 'Link Clue Example', {}, 'people-b');
+    await put('companies/slug-not-title', 'company', 'Acme Example', {});
+    await put('companies/private-target', 'company', 'Private Example', { confidentiality: 'secret' });
+    await put('companies/untyped-target', 'company', 'Unrelated Example', {});
+    await put('companies/owner-target', 'company', 'Owner Example', {}, 'source-private');
+    await put('notes/not-company', 'note', 'Unrelated Note', {});
+    for (const [target, type, source] of [['companies/slug-not-title', 'works_at'], ['companies/private-target', 'works_at'],
+      ['companies/untyped-target', 'mentions'], ['notes/not-company', 'works_at'], ['companies/owner-target', 'works_at', 'source-private']] as const) {
+      // gbrain-allow-direct-insert: test fixture edges
+      await engine.addLink(page, target, 'Do not send this context', type, 'manual', undefined, undefined,
+        { fromSourceId: 'people-b', toSourceId: source ?? 'default' });
+    }
+    const sent: string[] = [];
+    const fake = (async (_url: string, init: RequestInit) => {
+      const { query } = JSON.parse(String(init.body)) as { query: string };
+      sent.push(query);
+      return new Response(JSON.stringify({ results: [{ title: query, url: 'https://linkedin.com/in/link-clue-example' }] }));
+    }) as unknown as typeof fetch;
+    const { pairs } = await classifyPairs(engine, { exa: { mode: 'live', settings: settings(), apiKey: 'test-key', fetch: fake } });
+    expect(sent.filter(query => query.startsWith('Link Clue Example')).sort()).toEqual(['Link Clue Example Acme Example', 'Link Clue Example Engineer']);
+    expect(one(pairs, 'Link Clue Example').signals).toEqual(['X1']);
+
+    const second = 'contacts/recheck-clue-example';
+    await person('people/recheck-clue-example', 'Recheck Clue Example', { role: 'Accountant' });
+    await person(second, 'Recheck Clue Example', {}, 'people-b');
+    // gbrain-allow-direct-insert: test fixture edges
+    await engine.addLink(second, 'companies/slug-not-title', '', 'works_at', 'manual', undefined, undefined,
+      { fromSourceId: 'people-b', toSourceId: 'default' });
+    const recheck = (async (url: string, init: RequestInit) => {
+      if (JSON.parse(String(init.body)).query === 'Recheck Clue Example Accountant') {
+        await put('companies/slug-not-title', 'company', 'Acme Example', { visibility: 'private' });
+      }
+      return fake(url, init);
+    }) as unknown as typeof fetch;
+    const { report } = await classifyPairs(engine, { exa: { mode: 'live', settings: settings(), apiKey: 'test-key', fetch: recheck } });
+    expect(sent.filter(query => query.startsWith('Recheck Clue Example'))).toEqual(['Recheck Clue Example Accountant']);
+    expect(report.exa).toMatchObject({ withdrawn: 1 });
   });
 });

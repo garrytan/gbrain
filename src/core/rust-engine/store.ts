@@ -219,7 +219,7 @@ export interface FactFingerprints {
 /** A primary table the seed leaves behind on purpose, and the read that differs on the seeded store. */
 export interface SeedNotCopied {
   table: string;
-  kind: 'jobs' | 'telemetry' | 'cache' | 'machine_local' | 'segmented_body';
+  kind: 'jobs' | 'telemetry' | 'cache' | 'machine_local' | 'segmented_body' | 'lock_anchor';
   read: string;
   /** Rows of the table that are brain state: counted as the gap `gap`, not lost. */
   gap_rows: { gap: string; column: string; equals: string } | null;

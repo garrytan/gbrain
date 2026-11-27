@@ -476,7 +476,7 @@ src/core/facts/contested-claims.ts	execute_raw	1
 src/core/facts/conversation-entity-hints.ts	execute_raw	1
 src/core/facts/conversation-incremental.ts	execute_raw	1
 src/core/facts/conversation-memo.ts	execute_raw	4
-src/core/facts/conversation-publication.ts	execute_raw	24
+src/core/facts/conversation-publication.ts	execute_raw	23	#10443: publication narrows the expired copies of a claim it narrows to private, so kept history never shows the claim wider than its replacement (one UPDATE, the conversation facts area converts as a whole)
 src/core/facts/conversation-relink-carry.ts	execute_raw	1
 src/core/facts/conversation-relink.ts	execute_raw	7	GBRA-574 F #9674 (opened before this ratchet): +1 the relink --unbacked read of name-tag rows
 src/core/facts/dead-absorb-retry.ts	execute_raw	2
@@ -499,7 +499,6 @@ src/core/facts/purge-overlay.ts	execute_raw	1
 src/core/facts/purge-reasons.ts	execute_raw	8
 src/core/facts/purge-verify.ts	execute_raw	2
 src/core/facts/purge.ts	execute_raw	40	GBRA-574 F #9674 (opened before this ratchet): +1 the purge plan reads whether a fact sits on an unbacked name tag
-src/core/facts/question-recall.ts	execute_raw	1
 src/core/facts/reconcile-watermark.ts	execute_raw	6
 src/core/facts/relink-publish.ts	execute_raw	8
 src/core/facts/relink.ts	execute_raw	5
@@ -660,7 +659,7 @@ src/core/notifier/nudge.ts	execute_raw	1
 src/core/notifier/resident.ts	execute_raw	3
 src/core/notifier/status.ts	execute_raw	1
 src/core/notifier/store.ts	execute_raw	15
-src/core/oauth-grants.ts	sql_template	29	#9364 refresh families: the v338 table probe, the family column on issue, the rotation record and its grace wipe, the replay lookup (owner read, then the owning client lock before the rotation row), the family revocation (tokens, sealed pairs, the owning client lock), the client-revoke and expiry sweeps (the grace-window wipe and the expired-record delete, each skipping locked rows); all run inside the OAuth client-row lock transaction, which has no engine method yet; converts with the rest of the OAuth grant lifecycle
+src/core/oauth-grants.ts	sql_template	30	#9364 refresh families: the v338 table probe, the family column on issue, the rotation record and its grace wipe, the replay lookup (owner read, then the owning client lock before the rotation row), the family revocation (tokens, sealed pairs, the owning client lock), the client-revoke and expiry sweeps (the grace-window wipe and the expired-record delete, each skipping locked rows); all run inside the OAuth client-row lock transaction, which has no engine method yet; converts with the rest of the OAuth grant lifecycle; GST-4024: revoking a rotated refresh token also clears its sealed pair under the same client lock
 src/core/oauth-provider.ts	sql_template	22
 src/core/onboard/checks.ts	execute_raw	5
 src/core/onboard/first-session.ts	execute_raw	3	first-session suggestion: the onboarding.first_session record compare-and-swap in config (insert and update) and the pointer read of recent world-visible pages under remoteReadFloorSql; converts with setup-history.ts
@@ -1102,7 +1101,7 @@ src/core/search/entity-facts.ts	execute_raw	1
 src/core/search/evidence-date.ts	execute_raw	3
 src/core/search/evidence-delivery.ts	execute_raw	2
 src/core/search/exact-scan.ts	execute_raw	2
-src/core/search/fact-relevance.ts	execute_raw	14	came from master #9627 (held private facts, database-only untrack), which landed after this ratchet was cut; GBRA-574 F #9674 (opened before this ratchet): +1 poolUnbackedKeys, the name-tag lookup for the slot-history arm
+src/core/search/fact-relevance.ts	execute_raw	15	came from master #9627 (held private facts, database-only untrack), which landed after this ratchet was cut; GBRA-574 F #9674 (opened before this ratchet): +1 poolUnbackedKeys, the name-tag lookup for the slot-history arm; GST-4039: +1 readPooledFacts, ranked recall's second read moved here from question-recall.ts (which drops to 0) so it reuses the pool's read-policy predicate
 src/core/search/facts-arm.ts	execute_raw	3
 src/core/search/feedback-boost.ts	execute_raw	1
 src/core/search/frontmatter-where.ts	execute_raw	1
@@ -1239,7 +1238,7 @@ src/core/verbs/entity-references.ts	execute_raw	1
 src/core/verbs/entity-source.ts	execute_raw	1
 src/core/verbs/entity-text-mentions.ts	execute_raw	1
 src/core/verbs/entity-variants.ts	execute_raw	4
-src/core/wakeshift/drain.ts	execute_raw	10
+src/core/wakeshift/drain.ts	execute_raw	11	GST-4023: one live read at delivery (owner binding plus the credential's current scope) so an owner-bound watch reads the whole queue only while it still holds admin, as agentOwnerFence does; the wakeshift tables have no engine methods yet
 src/core/wakeshift/forget.ts	sql_template	6
 src/core/wakeshift/spool.ts	execute_raw	3
 src/core/wakeshift/terms.ts	execute_raw	2

@@ -353,7 +353,8 @@ the request log. Removing a member stays a brain-host command
 (`gbrain access member rm`).
 
 New `memory-reader`, `memory-writer` and `coding-agent` grants are callable on
-the full surface and list the seven memory verbs plus `request_tools`, which
+the full surface and list the seven memory verbs, `correct` (when the grant
+can write) and `request_tools`, which
 returns any other tool's schema (`gbrain auth clients` shows the surface as
 `full (set by install)`); `gbrain agent register` daily-driver and coding-agent
 clients without `--surface` do the same. Their operation snapshot is still the
@@ -531,8 +532,9 @@ Fix it by binding first:
   `gbrain auth rescope --token <name> --may-act-for <members>`, and have its
   harness name each request's audience. For a local stdio agent, label each
   person and bind its server with
-  `gbrain setup <harness> --serves several --members <id,...>`
-  (`--stdio-member <member>` when one person alone uses it).
+  `gbrain setup claude-code --members <id,...>` or `gbrain setup codex --members <id,...>`
+  (`--stdio-member <member>` when one person alone uses it); for another harness, preview
+  `gbrain access serves several --members <id,...>`, then apply it with `--yes`.
 - Narrowing only, which leaves the credential unbound: when the channels sit
   in different sources, grant one audience's source with
   `gbrain auth rescope --token <name> --sources <source>` (or for a new harness

@@ -20,6 +20,8 @@ import { relationRead } from './seed.ts';
 export const FOLLOW_QUEUE_BOUND = 1024;
 export const FOLLOW_CHUNK_KEYS = 500;
 const FOLLOW_CHUNK_BYTES = 2 * 1024 * 1024;
+/** The relations a write comparison reads back (write-compare.ts `readBack`): pages and the links among them. */
+const COMPARED_RELATIONS: ReadonlySet<string> = new Set(['pages', 'links']);
 const TYPED = new Set(['smallint', 'integer', 'bigint', 'uuid', 'text', 'character varying']);
 
 let lastGeneration = 0;
@@ -51,6 +53,11 @@ export class ShadowFollower implements InvalidationSink {
   lastInvalidatedAt = 0;
   /** Batches accepted by `publish` in this process: the stable rerun compares it before and after its primary read (checks.ts). */
   published = 0;
+  /**
+   * Batches accepted by `publish` that can change a row a write comparison reads: one naming `pages` or `links` (rows or a whole relation), or an `invalid` item (a write nothing can describe, so it may have).
+   * The write sampler's `generation` (attach.ts `writeGeneration`): this process's own bookkeeping (journal, effect and lease rows, a link's transition rows) does not move it.
+   */
+  pageLinkWrites = 0;
   private readonly queue: InvalidationBatch[] = [];
   private draining: Promise<void> | null = null;
   private lastSeq: number | null = null;
@@ -66,6 +73,7 @@ export class ShadowFollower implements InvalidationSink {
   publish(batch: InvalidationBatch): void {
     try {
       this.published++;
+      if (batch.items.some((item) => item.kind === 'invalid' || COMPARED_RELATIONS.has(item.relation))) this.pageLinkWrites++;
       if (this.queue.length >= FOLLOW_QUEUE_BOUND) { this.invalidate('queue_overflow'); return; }
       this.queue.push(batch);
       this.draining ??= new Promise<void>((resolve) => setImmediate(() => { void this.drain().finally(resolve); }));

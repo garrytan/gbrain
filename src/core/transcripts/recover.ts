@@ -51,6 +51,7 @@ async function userlessCodexSessions(engine: BrainEngine, sourceId: string): Pro
       WHERE source_id = $1
         AND deleted_at IS NULL
         AND frontmatter->'transcript_import'->>'harness' = 'codex'
+        AND frontmatter->'transcript_import'->>'format' IS NULL
       GROUP BY 1`,
     [sourceId],
   );

@@ -250,6 +250,7 @@ export interface RestartContext {
   autopilotLauncher?: AutopilotLauncher | null;
   /** #9483: `self_upgrade.serve_launcher external`: something outside gbrain's serve service starts serve again when it exits. */
   serveLauncher?: AutopilotLauncher | null;
+  workerLauncher?: AutopilotLauncher | null;
 }
 
 /**
@@ -262,7 +263,9 @@ export interface RestartContext {
  */
 export interface AutopilotLauncher { kind: 'cron' | 'declared'; wait_ms: number; pid: number | null }
 
-export const launcherName = (launcher: AutopilotLauncher, role: 'autopilot' | 'serve' = 'autopilot') => launcher.kind === 'cron'
+type HandoffRole = 'autopilot' | 'serve' | 'worker';
+
+export const launcherName = (launcher: AutopilotLauncher, role: HandoffRole = 'autopilot') => launcher.kind === 'cron'
   ? 'this brain\'s gbrain cron line' : `the launcher self_upgrade.${role}_launcher declares`;
 
 /** Before the swap the installed build is not known yet: every process is stale. */
@@ -292,7 +295,7 @@ export type RestartStep =
   | { kind: 'service'; role: 'serve' | 'autopilot'; argv: string[]; pids: number[] }
   | { kind: 'supervisor'; pid: number; workers: number[]; stop: string[]; start: string[]; pid_file: string | null }
   | { kind: 'stop'; role: 'mcp'; pid: number; started_ms: number | null }
-  | { kind: 'handoff'; role: 'autopilot' | 'serve'; pid: number; started_ms: number | null; launcher: AutopilotLauncher; command?: string }
+  | { kind: 'handoff'; role: HandoffRole; pid: number; started_ms: number | null; launcher: AutopilotLauncher; command?: string }
   | { kind: 'replace_copy'; root: string; bun_install: string; from: string | null; to: string; pids: number[] };
 
 export interface ManualStep { role: ProcessRole; pid: number; version: string | null; argv: string[]; instruction: string }
@@ -339,8 +342,8 @@ export function planRestart(processes: readonly HostProcess[], ctx: RestartConte
   const addService = (role: 'serve' | 'autopilot', pid: number) => services.set(role, [...(services.get(role) ?? []), pid]);
   const handoffs = new Map<number, Extract<RestartStep, { kind: 'handoff' }>>();
   const launcherOf = (p: HostProcess) => (ctx.autopilotLauncher?.pid === p.pid && p.started_ms !== null && p.args ? ctx.autopilotLauncher : null);
-  const addHandoff = (p: HostProcess, launcher: AutopilotLauncher) => handoffs.set(p.pid, p.role === 'serve'
-    ? { kind: 'handoff', role: 'serve', pid: p.pid, started_ms: p.started_ms, launcher, command: launchedAs(p)! }
+  const addHandoff = (p: HostProcess, launcher: AutopilotLauncher) => handoffs.set(p.pid, p.role === 'serve' || p.role === 'worker'
+    ? { kind: 'handoff', role: p.role, pid: p.pid, started_ms: p.started_ms, launcher, command: launchedAs(p)! }
     : { kind: 'handoff', role: 'autopilot', pid: p.pid, started_ms: p.started_ms, launcher });
   const units = new Map<string, Extract<RestartStep, { kind: 'service' }>>();
   const runsUnder = (p: HostProcess, service: ServiceHandle | null) => !!service && service.pid !== null && (p.pid === service.pid || !!p.ancestors?.includes(service.pid));
@@ -400,6 +403,7 @@ export function planRestart(processes: readonly HostProcess[], ctx: RestartConte
         if (parent?.role === 'supervisor' && parent.args) supervisors.set(parent.pid, [...(supervisors.get(parent.pid) ?? []), p.pid]);
         else if (parent?.role === 'autopilot' && runsUnder(parent, ctx.autopilotService)) addService('autopilot', parent.pid);
         else if (parent?.role === 'autopilot' && launcherOf(parent)) addHandoff(parent, launcherOf(parent)!);
+        else if (p.ppid === null && ctx.workerLauncher && !p.home_unread && p.args && p.started_ms !== null) addHandoff(p, ctx.workerLauncher);
         else kill(p, `${label(p)} is not run by a jobs supervisor this restart can relaunch${parent?.role === 'autopilot' ? ' (its autopilot runs under no installed service)' : ''}${p.unclassified_parent ? ` (its parent, pid ${p.unclassified_parent.pid} (\`${p.unclassified_parent.executable}\`), is not a process this restart recognises as gbrain)` : ''}: stop it (\`kill ${p.pid}\`, SIGTERM drains its jobs) and start \`gbrain jobs work\` again the way it was launched, or run workers under \`gbrain jobs supervisor start --detach\`.`);
         break;
       case 'mcp':
@@ -428,8 +432,8 @@ export interface RunResult { status: number | null; output: string }
 
 export interface RestartExecutor {
   run: (argv: string[], env?: Record<string, string>) => RunResult | Promise<RunResult>;
-  /** SIGTERM the MCP server or autopilot at pid only if it is still the process the plan saw: 'changed' when the pid now names another process. */
-  terminate: (pid: number, startedMs: number | null, role: 'mcp' | 'autopilot' | 'serve') => 'stopped' | 'gone' | 'changed';
+  /** SIGTERM the pid only if it is still the process the plan saw: 'changed' when the pid now names another process. */
+  terminate: (pid: number, startedMs: number | null, role: 'mcp' | HandoffRole) => 'stopped' | 'gone' | 'changed';
   /** The live supervisor's pid now (read from its PID file, the default one when null), or null. */
   supervisorPid: (pidFile: string | null) => number | null;
   sleep: (ms: number) => Promise<void>;
@@ -517,11 +521,16 @@ export function restartProblems(plan: RestartPlan, processes: readonly HostProce
     else if (mismatched.has(p)) problems.push(`${label(p)} reports no build and was started from an install that holds v${p.install_version}${from}.`);
     else if (!p.version && (p.started_ms === null || p.started_ms < restartStartedMs)) problems.push(`${label(p)} reports no build and started before the restart.`);
   }
+  const claimed = new Set<number>();
   for (const step of plan.steps) {
     if (step.kind === 'stop' || step.kind === 'replace_copy') continue;
-    if (step.kind === 'handoff' && step.role === 'serve') {
-      if (!fresh.some(p => p.role === 'serve' && p.started_ms !== null && p.started_ms >= restartStartedMs)) {
-        problems.push(`serve did not come back after it was stopped for ${launcherName(step.launcher, 'serve')} to start again: start it with \`${step.command}\` the way it was launched.`);
+    if (step.kind === 'handoff' && step.role !== 'autopilot') {
+      // Each handoff needs its own replacement; a worker's must also be launched the same way (its queue and limits).
+      const back = fresh.find(p => !claimed.has(p.pid) && p.role === step.role && p.started_ms !== null && p.started_ms >= restartStartedMs
+        && (p.role !== 'worker' || (!p.home_unread && p.ppid === null && (p.version ?? p.install_version) === plan.expected && launchedAs(p) === step.command)));
+      if (back) claimed.add(back.pid);
+      else {
+        problems.push(`${step.role} did not come back after it was stopped for ${launcherName(step.launcher, step.role)} to start again: start it with \`${step.command}\` the way it was launched.`);
       }
       continue;
     }

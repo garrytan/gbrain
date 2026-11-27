@@ -728,7 +728,15 @@ with `unbound_source`, and so do `remember` about an existing entity page and
 `forget` or `forget_fact` of a claim that a canonical file carries (their
 frozen code stays `unavailable`, with `write_error: owner_unavailable` and the
 same detail and fix; a claim that only database-only pages carry is still
-withdrawn, database-only). What works:
+withdrawn, database-only). On a read-only mirror (`gbrain sources
+mirror-readonly`, or a clone gbrain owns) that `forget` refusal says so, with
+`detail: read_only_mirror`: the mirror's upstream repository is the
+authoritative copy, so remove the claim there and update the mirror from it
+(`gbrain sync --source <id>` on a brain that is not managed; a managed brain
+binds the source first with `gbrain sources writer claim`, then runs
+`gbrain sources refresh <id>`), or make the source writable with
+`gbrain sources mirror-writable <id>` and bind it before forgetting again
+(#10067). What works:
 
 1. **Write the file, commit, sync** (the classic write path). Write or edit
    `<checkout>/<slug>.md`, check generated frontmatter with

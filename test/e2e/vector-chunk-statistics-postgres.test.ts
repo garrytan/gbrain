@@ -14,8 +14,14 @@
  * statement on the index.
  *
  *   1. precondition: with autovacuum off and nothing analyzed, the pooled
- *      statement does NOT use the index (an undersized fixture fails here);
- *   2. after refreshProjectionStatistics alone, it does.
+ *      statement does NOT use the index when sorting is allowed (an
+ *      undersized fixture fails here);
+ *   2. the engine's real pooled attempt still walks the index, because an
+ *      HNSW-ordered pooled attempt turns sorting off (#10500): the planner
+ *      can no longer pick the sort, with or without statistics;
+ *   3. after refreshProjectionStatistics alone, the planner picks the index
+ *      even with sorting allowed (what PGLite and statements without an
+ *      index walk rely on).
  *
  * Runs in a dedicated 64-dim database with default planner costs, created on
  * the E2E server and dropped in afterAll.
@@ -47,13 +53,19 @@ let engine: PostgresEngine;
 const usesIndex = (plan: unknown) => JSON.stringify(plan).includes('"Index Name":"idx_chunks_embedding"');
 const scans = (plan: unknown) => JSON.stringify(plan).match(/"Node Type":"[^"]+"/g)?.join(' > ') ?? '';
 type Run = (tx: { unsafe: (sql: string, params: unknown[]) => Promise<Record<string, unknown>[]> }, sql: string, bound: unknown[]) => Promise<Record<string, unknown>[]>;
-/** EXPLAIN of the first pooled attempt searchVector runs after a rejected index walk: same statement, transaction and scan settings. */
-async function pooledPlan(): Promise<unknown> {
+/**
+ * EXPLAIN of the first pooled attempt searchVector runs after a rejected index walk: same statement, transaction and scan settings.
+ * With sortAllowed, enable_sort goes back on inside that transaction, so the plan is the planner's own choice between the index and a sort.
+ */
+async function pooledPlan(sortAllowed: boolean): Promise<unknown> {
   const opts = { limit: 50, embeddingColumn: column };
   const stmt = buildVectorSearchStatement({ dialect: 'postgres', embedding: query, limit: 50, offset: 0, opts });
   const attempt = { innerLimit: stmt.innerLimit, maxScanTuples: POOL_MAX_SCAN_TUPLES, remainingMs: 8_000, exact: false };
   const run = (engine as unknown as { runVectorAttempt: (s: unknown, a: unknown, i: boolean, o: unknown, r: Run) => Promise<Record<string, unknown>[]> }).runVectorAttempt;
-  const [row] = await run.call(engine, () => stmt, attempt, true, opts, (tx, sql, bound) => tx.unsafe(`EXPLAIN (FORMAT JSON) ${sql}`, bound));
+  const [row] = await run.call(engine, () => stmt, attempt, true, opts, async (tx, sql, bound) => {
+    if (sortAllowed) await tx.unsafe(`SELECT set_config('enable_sort', 'on', true)`, []);
+    return tx.unsafe(`EXPLAIN (FORMAT JSON) ${sql}`, bound);
+  });
   return row?.['QUERY PLAN'];
 }
 
@@ -101,15 +113,17 @@ async function pooledPlan(): Promise<unknown> {
   test('stats-less content_chunks sorts every candidate; the import/sync refresh restores the index plan', async () => {
     const [before] = await engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM pg_stats WHERE tablename = 'content_chunks'`);
     expect(before!.n).toBe(0);
-    const stale = await pooledPlan();
+    const stale = await pooledPlan(true);
     expect(usesIndex(stale), `precondition: the stats-less pooled plan already uses the index (${scans(stale)}); grow PAGES`).toBe(false);
+    const ordered = await pooledPlan(false);
+    expect(usesIndex(ordered), `the engine's pooled attempt sorts without statistics: ${scans(ordered)}`).toBe(true);
 
     expect(await refreshProjectionStatistics(engine)).toBe(true);
     const after = await engine.executeRaw<{ column: string }>(
       `SELECT tablename || '.' || attname AS column FROM pg_stats WHERE (tablename = 'content_chunks' AND attname IN ('model', 'modality', 'page_id'))
          OR (tablename = 'pages' AND attname = 'deleted_at') ORDER BY 1`);
     expect(after.map(r => r.column)).toEqual(['content_chunks.modality', 'content_chunks.model', 'content_chunks.page_id', 'pages.deleted_at']);
-    const fresh = await pooledPlan();
+    const fresh = await pooledPlan(true);
     expect(usesIndex(fresh), scans(fresh)).toBe(true);
   }, 60_000);
 });

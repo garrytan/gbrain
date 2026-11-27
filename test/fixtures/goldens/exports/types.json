@@ -2327,7 +2327,7 @@
           "exact_lookup?: \"title\" | \"slug\" | \"identifier\" | undefined",
           "exact_match_boost?: number | undefined",
           "fact_id?: string | undefined",
-          "fact_row?: { id: number; valid_from: string; valid_until: string | null; source?: string; from_quoted_page?: true; observed?: string; observed_unavailable?: true; contested_unavailable?: true; history_unavailable?: true; } | undefined",
+          "fact_row?: { id: number; valid_from: string | null; valid_until: string | null; source?: string; from_quoted_page?: true; observed?: string; observed_unavailable?: true; contested_unavailable?: true; history_unavailable?: true; } | undefined",
           "feedback_boost?: number | undefined",
           "follow_up?: { op: \"recall\"; args: Record<string, string>; } | undefined",
           "fused_score?: number | undefined",
@@ -3638,7 +3638,7 @@
           "search?: { adaptive_return?: boolean; adaptive_return_entity_max?: number; adaptive_return_other_max?: number; adaptive_return_min_keep?: number; vector_legacy_guard?: boolean; hnsw_iterative_scan?: string; cjk_keyword_deadline_ms?: number; keyword_statement_timeout_ms?: number; } | undefined",
           "search_embedding_column?: string | undefined",
           "secrets?: { on_push?: \"redact\" | \"refuse\"; on_write?: \"off\" | \"redact\" | \"block\"; } | undefined",
-          "self_upgrade?: { mode?: \"auto\" | \"notify\" | \"off\"; channel?: \"stable\" | \"alpha\" | \"latest\"; mode_prompted?: boolean; quiet_hours?: { start?: number; end?: number; tz?: string; }; failed_versions?: string[]; attempting_version?: string; last_check_ts?: number; last_applied_version?: string; autopilot_launcher?: \"external\"; serve_launcher?: \"external\"; } | undefined",
+          "self_upgrade?: { mode?: \"auto\" | \"notify\" | \"off\"; channel?: \"stable\" | \"alpha\" | \"latest\"; mode_prompted?: boolean; quiet_hours?: { start?: number; end?: number; tz?: string; }; failed_versions?: string[]; attempting_version?: string; last_check_ts?: number; last_applied_version?: string; autopilot_launcher?: \"external\"; serve_launcher?: \"external\"; worker_launcher?: \"external\"; } | undefined",
           "serve_cli_socket?: boolean | undefined",
           "serve_vector_prewarm?: boolean | undefined",
           "storage?: unknown",
@@ -5129,6 +5129,7 @@
           "excludePrivate?: boolean | undefined",
           "fingerprint?: boolean | undefined",
           "grep?: string | undefined",
+          "includeUndated?: boolean | undefined",
           "kinds?: FactKind[] | undefined",
           "limit?: number | undefined",
           "offset?: number | undefined",
@@ -5179,7 +5180,7 @@
           "source_session: string | null",
           "superseded_by: number | null",
           "trust_tier?: \"user_confirmed\" | \"operator_curated\" | \"tool_observed\" | \"agent_written\" | \"unknown\" | \"external_untrusted\" | undefined",
-          "valid_from: Date",
+          "valid_from: Date | null",
           "valid_until: Date | null",
           "visibility: FactVisibility",
           "write_origin?: Record<string, unknown> | null | undefined"
@@ -5383,7 +5384,7 @@
           "notability?: \"low\" | \"medium\" | \"high\" | undefined",
           "source: string",
           "source_session?: string | null | undefined",
-          "valid_from?: Date | undefined",
+          "valid_from?: Date | null | undefined",
           "valid_until?: Date | null | undefined",
           "value?: string | null | undefined",
           "visibility?: FactVisibility | undefined"
@@ -6575,7 +6576,7 @@
         "kind": "function",
         "name": "importFromContent",
         "signature": [
-          "(engine: BrainEngine, slug: string, content: string, opts?: { prepare?: (prepared: PreparedContentImport) => Promise<ImportResult>; history?: VersionHistory; coordinated?: boolean; boundedChunkWrites?: true; existingSnapshot?: PageSnapshot | null; prepareFrontmatter?: (page: ParsedPage) => void; noEmbed?: boolean; sourceId?: string; filename?: string; sourcePath?: string; sourceRoot?: string; fileTimes?: { birthtime?: Date; mtime?: Date; firstCommit?: Date; }; forceRechunk?: boolean; activePack?: ParseOpts[\"activePack\"]; source_kind?: string | null; source_uri?: string | null; ingested_via?: string | null; segmentedOwner?: SegmentedStagingOwner; reuseSegments?: SegmentedImport; remote?: boolean; restoreHeldRows?: boolean; householdOwner?: () => Promise<boolean>; preserveGateMarkers?: boolean; allowEmptyOverwrite?: boolean; overrideTier?: unknown; writeGate?: WriteGateInput; holdNoncanonicalPrivate?: boolean; beforeCommit?: (tx: BrainEngine, slug: string) => Promise<void>; expectedBaseRevision?: string | null; onPostCommitEmbedding?: (complete: () => Promise<ImportEmbeddingResult>) => void; } & ImportFenceOptions) => Promise<ImportResult>"
+          "(engine: BrainEngine, slug: string, content: string, opts?: { prepare?: (prepared: PreparedContentImport) => Promise<ImportResult>; history?: VersionHistory; coordinated?: boolean; boundedChunkWrites?: true; existingSnapshot?: PageSnapshot | null; prepareFrontmatter?: (page: ParsedPage) => void; noEmbed?: boolean; sourceId?: string; filename?: string; sourcePath?: string; sourceRoot?: string; fileTimes?: { birthtime?: Date; mtime?: Date; firstCommit?: Date; }; forceRechunk?: boolean; activePack?: ParseOpts[\"activePack\"]; source_kind?: string | null; source_uri?: string | null; ingested_via?: string | null; keepIngestColumns?: boolean; segmentedOwner?: SegmentedStagingOwner; reuseSegments?: SegmentedImport; remote?: boolean; restoreHeldRows?: boolean; householdOwner?: () => Promise<boolean>; preserveGateMarkers?: boolean; allowEmptyOverwrite?: boolean; overrideTier?: unknown; writeGate?: WriteGateInput; holdNoncanonicalPrivate?: boolean; beforeCommit?: (tx: BrainEngine, slug: string) => Promise<void>; expectedBaseRevision?: string | null; onPostCommitEmbedding?: (complete: () => Promise<ImportEmbeddingResult>) => void; } & ImportFenceOptions) => Promise<ImportResult>"
         ]
       },
       {
@@ -12279,7 +12280,7 @@
           "exact_lookup?: \"title\" | \"slug\" | \"identifier\" | undefined",
           "exact_match_boost?: number | undefined",
           "fact_id?: string | undefined",
-          "fact_row?: { id: number; valid_from: string; valid_until: string | null; source?: string; from_quoted_page?: true; observed?: string; observed_unavailable?: true; contested_unavailable?: true; history_unavailable?: true; } | undefined",
+          "fact_row?: { id: number; valid_from: string | null; valid_until: string | null; source?: string; from_quoted_page?: true; observed?: string; observed_unavailable?: true; contested_unavailable?: true; history_unavailable?: true; } | undefined",
           "feedback_boost?: number | undefined",
           "follow_up?: { op: \"recall\"; args: Record<string, string>; } | undefined",
           "fused_score?: number | undefined",

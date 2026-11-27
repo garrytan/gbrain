@@ -42,6 +42,7 @@ import { lowerToDerivedTier, readDerivationDeclaration, recordTaintEdges, type D
 import { derivationWriteTrust, raisePageLabelGuard, recordAgentPageLowering, storedPageTier } from '../trust/page-write.ts';
 import { sameInstantTies } from '../facts/claim-ties.ts';
 import type { LabelEdit } from './label-edit.ts';
+import { refuseRuleFactTarget } from '../rules/admission.ts';
 import { factPreimages, recordConsolidationGeneration } from '../generations/adapters/fact-rows.ts';
 
 export interface MaintenanceAuthority {
@@ -437,7 +438,7 @@ export async function submitMaintenanceConsolidation(engine: BrainEngine, author
     const observed = cluster.find(f => f.id === fact.id)!;
     if (fact.value.fact !== observed.fact || fact.value.entity_slug !== slug || fact.value.confidence !== observed.confidence ||
       fact.value.source !== observed.source || fact.value.source_session !== observed.source_session ||
-      Date.parse(String(fact.value.valid_from)) !== observed.valid_from.getTime()) {
+      (fact.value.valid_from == null ? null : Date.parse(String(fact.value.valid_from))) !== (observed.valid_from?.getTime() ?? null)) {
       throw opError('revision_conflict', 'The consolidation input changed after clustering.',
         `A fact on ${slug} in '${sourceId}' was edited after clustering; nothing was submitted. The next consolidate run re-clusters the current facts.`);
     }
@@ -563,6 +564,7 @@ const READ_BACK_TEXT: Record<NonNullable<ReturnType<typeof fenceCellReadBackProb
  * their step, and its preparation reads of `facts` run bounded by the remaining budget (`boundedReads`).
  */
 async function prepareFactFenceAdoption(unbounded: BrainEngine, row: WriteRequest, config: GBrainConfig, clock?: ClaimPhaseClock): Promise<PreparedMutation> {
+  refuseRuleFactTarget(row.slug);
   const engine = boundedReads(unbounded, clock);
   const p = row.intent!;
   const facts = p.facts as FactFenceAssignment[];
@@ -774,7 +776,7 @@ async function prepareMaintenanceKind(engine: BrainEngine, row: WriteRequest, co
   const p = row.intent;
   const facts = p.facts as FactSnapshot[];
   const pages = p.pages as EvidencePage[];
-  if (sameInstantTies(facts.map(f => ({ id: f.id, at: Date.parse(String(f.value.valid_from)), metric: (f.value.claim_metric as string | null) ?? null,
+  if (sameInstantTies(facts.filter(f => f.value.valid_from != null).map(f => ({ id: f.id, at: Date.parse(String(f.value.valid_from)), metric: (f.value.claim_metric as string | null) ?? null,
     unit: (f.value.claim_unit as string | null) ?? null, period: (f.value.claim_period as string | null) ?? null }))).length) {
     return { observedRevision: p.expected_revision as string, noop: true, apply: async () => ({ status: 'skipped', reason: 'same_instant_typed_claims', noop: true,
       facts_consolidated: 0, takes_written: 0 }) };
@@ -794,7 +796,7 @@ async function prepareMaintenanceKind(engine: BrainEngine, row: WriteRequest, co
   // The chain closes each fact at its successor's valid_from. A fenced fact is closed in its fence row, published with the
   // take on this page, and its row derives from that cell; an unfenced fact has no fence row and is closed in the database.
   // A fenced fact whose fence is on another page stays open: this publication does not write that file.
-  const chronological = [...facts].sort((a, b) => Date.parse(String(a.value.valid_from)) - Date.parse(String(b.value.valid_from)) || a.id - b.id);
+  const chronological = facts.filter(f => f.value.valid_from != null).sort((a, b) => Date.parse(String(a.value.valid_from)) - Date.parse(String(b.value.valid_from)) || a.id - b.id);
   const closes = consolidationCloses(chronological, f => ({ text: String(f.value.fact), value: f.value.claim_value })).map(({ member, next }) => ({ fact: member, until: String(next.value.valid_from) }));
   const fenceCloses = new Map(closes.filter(c => c.fact.value.row_num !== null && c.fact.value.source_markdown_slug === row.slug)
     .map(c => [Number(c.fact.value.row_num), c]));

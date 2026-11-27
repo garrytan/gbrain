@@ -52,7 +52,7 @@ import { upsertFactRow, parseFactsFence, formatFenceDate } from '../facts-fence.
 import { withHeldFactsFence } from './unfenced-facts.ts';
 import { unparsedFenceRefusal } from '../fence-repair/refusal.ts';
 import type { OperationError } from '../ops/contract.ts';
-import { extractFactsFromFenceText } from './extract-from-fence.ts';
+import { extractFactsFromFenceText, pageFactDate } from './extract-from-fence.ts';
 import { logStubGuardEvent } from './stub-guard-audit.ts';
 import { isFactWithdrawn } from './withdrawal.ts';
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
@@ -63,6 +63,7 @@ import { recordFlaggedRow, type GatedRowDecision } from '../write-gate-store.ts'
 import type { TaintInput, WriteTrust } from '../trust/tier.ts';
 import { gitChildEnv } from '../git-env.ts';
 import { readOnlyCheckout } from '../persistence/mirror-read-only.ts';
+import { refuseRuleFactTarget } from '../rules/admission.ts';
 import { bodyUnread } from '../page-body/page-shape.ts';
 import { bestEffortStoredBodyMirror, fileBodyMatchesStored, fileDatabaseDriftToken, mirrorFileBody, readStoredBody } from './file-body-guard.ts';
 import { relativeEscapesRoot } from '../path-confine.ts';
@@ -99,7 +100,8 @@ export interface FenceInputFact {
   visibility: FactVisibility;
   /** Defaults to 1.0 when undefined (matches engine.insertFact behavior). */
   confidence?: number;
-  validFrom?: Date;
+  /** The event date; null or omitted: unknown, an empty fence cell (#10288). */
+  validFrom?: Date | null;
   /**
    * MEMORY_VERBS v1 (c5): remember's ttl → valid_until. Written to the
    * fence cell losslessly (formatFenceDate); the DB column derives from it on
@@ -270,6 +272,11 @@ export async function commitFactFenceFile(
   recordWriteFailure(slug, sourceId, ['git_durability_commit_failed'], filePath);
 }
 
+/** #10288: the date an empty fence cell on this page projects to (the page's fact date), as sync reads it. */
+async function bodyFactDate(engine: BrainEngine, slug: string, body: string): Promise<Date | undefined> {
+  return pageFactDate({ slug, frontmatter: parseMarkdown(body, `${slug}.md`).frontmatter, timeZone: await engine.getConfig('brain.timezone') }) ?? undefined;
+}
+
 /**
  * Stub-create body for a new entity page. Minimum frontmatter so the
  * page validates as gbrain-canonical markdown and survives an
@@ -332,6 +339,7 @@ export async function writeFactsToFence(
   /** #5575 I2: a deriver's taint; the new rows get its tier and input edges. Unmanaged path only. */
   derivation?: { trust: WriteTrust; inputs: readonly TaintInput[] },
 ): Promise<FenceWriteResult> {
+  refuseRuleFactTarget(target.slug);
   if (await managedPersistenceEnabled(engine)) {
     // The coordinator owns the canonical file on a managed brain: publish the
     // fence rows through its fact intent instead of editing the file here.
@@ -345,9 +353,7 @@ export async function writeFactsToFence(
     const { inserted, ids } = await publishManagedEntityFacts(engine, target.sourceId, target.slug, kept);
     return { inserted, ids, ...withdrawnSkipped };
   }
-  if (target.localPath === null) {
-    return { inserted: 0, ids: [], legacyFallback: true };
-  }
+  if (target.localPath === null) return { inserted: 0, ids: [], legacyFallback: true };
   if (facts.length === 0) {
     return { inserted: 0, ids: [] };
   }
@@ -532,7 +538,7 @@ export async function writeFactsToFence(
           confidence:  f.confidence ?? 1.0,
           visibility:  f.visibility,
           notability:  f.notability ?? 'medium',
-          validFrom:   formatFenceDate(f.validFrom ?? new Date()),
+          validFrom:   f.validFrom ? formatFenceDate(f.validFrom) : undefined,
           // MEMORY_VERBS v1 (c5): remember's ttl threads through to the fence
           // cell — was hard-coded undefined, which silently dropped expiry on
           // this path. extractFactsFromFenceText derives the DB column from it.
@@ -567,7 +573,7 @@ export async function writeFactsToFence(
         return { inserted: 0, ids: [], fenceWriteFailed: true };
       }
 
-      const allExtracted = extractFactsFromFenceText(parsed.facts, target.slug, target.sourceId);
+      const allExtracted = extractFactsFromFenceText(parsed.facts, target.slug, target.sourceId, { pageEffectiveDate: await bodyFactDate(engine, target.slug, tmpBody) });
       const newRowSet = new Set(assignedRowNums);
       const toInsert = allExtracted.filter(r => newRowSet.has(r.row_num));
 

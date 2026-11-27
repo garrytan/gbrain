@@ -267,7 +267,7 @@ describe('reads', () => {
     expect(renderEvidenceStatus(s).join('\n')).toContain('lacking samples: getBacklinks 0/100 (offered 12, sampled out 12');
   });
 
-  test('a class at 99 is named while the total is over 10,000; successful means a match or a collation_order', () => {
+  test('a class at 99 is named while the total is over 10,000; successful means a match or a collation_order', () => { // pregate-literal: SHADOW_ADAPTER_VERSION=10 an unrelated 10 (a count or size), not the adapter version
     const { dir, epoch } = epochDir();
     put(dir, rowsOf(epoch, 'getPage', { match: 10_500 }));
     put(dir, rowsOf(epoch, 'listPages', { match: 99, stale: 40, inconclusive: 3, order_diff: 5, error: 2, capability_missing: 1 }));
@@ -596,7 +596,7 @@ describe('adapter identity', () => {
     // test-reads-source-ok[raw-bytes]: the adapter's source bytes are the fingerprint under test; a change must bump the epoch input
     for (const f of files) digest.update(`${f}\0${readFileSync(join(root, f), 'utf8')}\0`);
     // When this fails, the adapter's mapping changed: bump SHADOW_ADAPTER_VERSION (a new evidence epoch) and set both values here.
-    expect([SHADOW_ADAPTER_VERSION, digest.digest('hex')]).toEqual([11, '86ab4a3539e97a8a70a7df860a8579815a200f736352117cb0bd8ae5cadea31b']);
+    expect([SHADOW_ADAPTER_VERSION, digest.digest('hex')]).toEqual([12, '7ed7ff02377522076abcccf14c083bcce6929dc0ad9bd3bbcd69bc0e7d4bfaed']);
   });
 });
 

@@ -55,7 +55,7 @@ import { unchangedPutPage } from '../persistence/put-page-screen.ts';
 import { ownerMemberId } from '../access/owner.ts';
 import { SPEAKER_OWNER_KEY } from '../identity/speaker-owner.ts';
 import { canonicalJson } from '../remediation-step.ts';
-import type { FileDiagnostics, ParsedSession, TranscriptAdapter, TranscriptFormat } from './types.ts';
+import { TRANSCRIPT_PROVIDER_ERROR, TRANSCRIPT_PROVIDER_RE, type FileDiagnostics, type ParsedSession, type TranscriptAdapter, type TranscriptFormat } from './types.ts';
 import { detectAdapter, type DetectResult } from './detect.ts';
 import {
   loadImportRedactionPatterns,
@@ -86,6 +86,7 @@ export interface TranscriptsIngestOpts {
   paths: string[];
   /** Explicit format wins over detection. */
   format?: TranscriptFormat;
+  provider?: string;
   /** Per-file format harness discovery already established; used when no explicit format is set. */
   discoveredFormats?: ReadonlyMap<string, TranscriptFormat>;
   /** Parse + redact + render + report; ZERO engine writes. */
@@ -127,7 +128,7 @@ export interface TranscriptsIngestOpts {
 
 export interface IngestSessionOutcome {
   sessionId: string;
-  harness: TranscriptFormat;
+  harness: string;
   baseSlug: string;
   parts: number;
   /** Per-part import statuses (dry-run: 'planned'; 'pending': accepted, not yet published). */
@@ -223,6 +224,9 @@ export async function runTranscriptsIngest(
   engine: BrainEngine,
   opts: TranscriptsIngestOpts,
 ): Promise<TranscriptsIngestResult> {
+  if (opts.provider !== undefined && !TRANSCRIPT_PROVIDER_RE.test(opts.provider)) {
+    throw new Error(TRANSCRIPT_PROVIDER_ERROR);
+  }
   const result: TranscriptsIngestResult = {
     files: [],
     pages: { imported: 0, skipped: 0, errored: 0, planned: 0, pending: 0 },
@@ -323,7 +327,7 @@ export async function runTranscriptsIngest(
 
         const outcome: IngestSessionOutcome = {
           sessionId: session.meta.sessionId,
-          harness: session.meta.harness,
+          harness: opts.provider ?? session.meta.harness,
           baseSlug: '',
           parts: 0,
           statuses: [],
@@ -352,9 +356,9 @@ export async function runTranscriptsIngest(
           pageCeiling ??= opts.dryRun ? Math.floor(PAGE_MAX_BYTES * PAGE_CEILING_FILL) : await transcriptPageCeiling(engine);
           const stored = opts.dryRun
             ? { layout: 'single' as const, partTargetBytes: pageCeiling, existingSlug: null, titleOverCap: false, unmarked: false }
-            : await storedTranscriptLayout(engine, opts.sourceId ?? 'default', session.meta, pageCeiling);
+            : await storedTranscriptLayout(engine, opts.sourceId ?? 'default', session.meta, pageCeiling, opts.provider);
           if (ownerMember === undefined) ownerMember = opts.dryRun ? null : await ownerMemberId(engine);
-          const rendered = renderSessionParts(redacted, { sourcePath: path, layout: stored.layout, partTargetBytes: stored.partTargetBytes, existing: stored.titleOverCap,
+          const rendered = renderSessionParts(redacted, { sourcePath: path, layout: stored.layout, partTargetBytes: stored.partTargetBytes, existing: stored.titleOverCap, provider: opts.provider,
             ...(stored.unmarked ? {} : { owner: { member: ownerMember } }) });
           if (stored.existingSlug) adoptExistingBaseSlug(rendered, stored.existingSlug);
           outcome.baseSlug = rendered.baseSlug;
@@ -426,6 +430,7 @@ async function importSession(engine: BrainEngine, opts: TranscriptsIngestOpts, r
   rendered: RenderSessionResult; outcome: IngestSessionOutcome; result: TranscriptsIngestResult;
 }): Promise<boolean> {
   const { coordinator, items, path, session, redacted, rendered, outcome, result } = run;
+  const sourceKind = `transcript:${outcome.harness}`;
   // The RESOLVED base slug: identity dedup can resolve part 1 to an
   // EXISTING page under a different slug (same session id, changed
   // title or corrected start date) — raw-data writes and stale-part
@@ -437,7 +442,7 @@ async function importSession(engine: BrainEngine, opts: TranscriptsIngestOpts, r
     let r: { slug: string; status: 'imported' | 'skipped' | 'error' };
     try {
       await preserveForeignFrontmatter(engine, opts.sourceId ?? 'default', part);
-      const provenance = { source_kind: `transcript:${session.meta.harness}`, source_uri: path, ingested_via: 'cli:transcripts-ingest' };
+      const provenance = { source_kind: sourceKind, source_uri: path, ingested_via: 'cli:transcripts-ingest' };
       r = coordinator
         ? await submitTranscriptPart(coordinator, engine, opts.sourceId, part, provenance)
         : await importFromContent(engine, part.slug, part.content, {
@@ -483,7 +488,6 @@ async function importSession(engine: BrainEngine, opts: TranscriptsIngestOpts, r
   // the pages and then died before putRawData, and hash-skips
   // would otherwise make that hole permanent.
   if (redacted.session.meta.raw) {
-    const rawSource = `transcript:${session.meta.harness}`;
     // Skipped re-runs COMPARE, never assume: existence alone is
     // not freshness — a private pattern added AFTER the first
     // import must refresh the stored copy, and a prior run can
@@ -498,7 +502,7 @@ async function importSession(engine: BrainEngine, opts: TranscriptsIngestOpts, r
       // re-imported, see the "resurrects the page" e2e). No
       // includeDeleted flag: the probe must never read through a
       // soft-delete the hash check did not.
-      const existing = await engine.getRawData(resolvedBaseSlug, rawSource, {
+      const existing = await engine.getRawData(resolvedBaseSlug, sourceKind, {
         sourceId: opts.sourceId,
       });
       // Key-order-insensitive compare: JSONB hands keys back in
@@ -511,7 +515,7 @@ async function importSession(engine: BrainEngine, opts: TranscriptsIngestOpts, r
           canonicalJson(JSON.parse(JSON.stringify(redacted.session.meta.raw)));
     }
     if (needsRaw) {
-      await engine.putRawData(resolvedBaseSlug, rawSource, redacted.session.meta.raw, {
+      await engine.putRawData(resolvedBaseSlug, sourceKind, redacted.session.meta.raw, {
         sourceId: opts.sourceId,
       });
     }
@@ -706,9 +710,9 @@ export async function transcriptPageCeiling(engine: BrainEngine): Promise<number
  * trusted, a part 2 at part 1's slug plus `-p2` counts whoever wrote it. A `part_bytes` is accepted only between PART_TARGET_BYTES
  * (or the ceiling, when that is lower) and the current ceiling.
  */
-async function storedTranscriptLayout(engine: BrainEngine, sourceId: string, meta: ParsedSession['meta'], pageCeiling: number):
+async function storedTranscriptLayout(engine: BrainEngine, sourceId: string, meta: ParsedSession['meta'], pageCeiling: number, provider?: string):
   Promise<{ layout: TranscriptLayout; partTargetBytes: number; existingSlug: string | null; titleOverCap: boolean; unmarked: boolean }> {
-  const [first, second] = [transcriptPartId(meta, 1), transcriptPartId(meta, 2)];
+  const [first, second] = [transcriptPartId(meta, 1, provider), transcriptPartId(meta, 2, provider)];
   const rows = await engine.executeRaw<{ slug: string; title: string; fid: string; ti: unknown; trusted: boolean; marked: boolean }>(
     `SELECT p.slug, p.title, p.frontmatter->>'id' AS fid, p.frontmatter->'transcript_import' AS ti,
             (p.frontmatter->'${SPEAKER_OWNER_KEY}') IS NOT NULL AS marked,

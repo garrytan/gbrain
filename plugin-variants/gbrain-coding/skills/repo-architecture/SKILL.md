@@ -35,7 +35,7 @@ This skill guarantees:
    - About a person → `people/{name-slug}.md`
    - About a company → `companies/{name-slug}.md`
    - A reusable concept/framework → `concepts/{slug}.md`
-   - An original idea → `originals/{slug}.md`
+   - Original thinking → `originals/{slug}.md`; product or business idea → `ideas/{slug}.md`. On `gbrain-base-v2`, write `type: concept` with `subtype: original` or `subtype: idea`, respectively.
    - A meeting → `meetings/{slug}.md`
    - Media content → `media/{type}/{slug}.md`
    - Raw data import → `sources/{slug}.md`
