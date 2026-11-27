@@ -60,7 +60,10 @@ A success message from a tool is not proof.
 ⛔ **PRIVATE REPO PERSISTENCE.** This workspace is the durable self: identity,
 memory, brain, skills, schedules. After meaningful changes, ensure it reaches the
 private remote (`gbrain sources push` does this with a secret scan; it refuses
-public remotes). Never let valuable work exist only on one machine. If something
+public remotes). On a managed canonical worktree `gbrain sources push` is refused
+(`writer_coordinator_required`): do not retry it; write pages through gbrain
+(`put_page` / capture), check the writer with `gbrain sources writer status --probe
+--json`, and commit non-page files with `gbrain git commit-push`. Never let valuable work exist only on one machine. If something
 seems broken, the one command to run is `gbrain doctor`.
 
 ## Per-message gates
