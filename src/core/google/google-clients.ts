@@ -732,7 +732,7 @@ interface RawPerson {
   resourceName: string;
   etag?: string;
   names?: Array<{ displayName?: string; metadata?: { primary?: boolean } }>;
-  emailAddresses?: Array<{ value?: string }>;
+  emailAddresses?: Array<{ value?: string; metadata?: { primary?: boolean; source?: { type?: string } } }>;
   phoneNumbers?: Array<{ value?: string; canonicalForm?: string }>;
   organizations?: Array<{ name?: string; title?: string; metadata?: { primary?: boolean } }>;
   memberships?: Array<{ contactGroupMembership?: { contactGroupResourceName?: string } }>;
@@ -765,6 +765,25 @@ const SYSTEM_CONTACT_GROUPS = new Set(
 /** Bounded directory walk: 1000 groups a page, ten pages; past that the result is explicitly incomplete. */
 const CONTACT_GROUP_PAGES = 10;
 
+/**
+ * #10556: in a Workspace domain the People API also returns every address on
+ * the account a card is linked to (source DOMAIN_PROFILE / PROFILE). Keep the
+ * card's own addresses; only a card with none falls back to the profile's
+ * primary address so it stays matchable.
+ */
+function contactEmails(entries: NonNullable<RawPerson['emailAddresses']>): string[] {
+  const norm = (e: { value?: string }) => (e.value ?? '').trim().toLowerCase();
+  const valid = entries.filter((e) => norm(e).includes('@'));
+  const fromProfile = (e: (typeof valid)[number]) => {
+    const t = e.metadata?.source?.type;
+    return t === 'DOMAIN_PROFILE' || t === 'PROFILE';
+  };
+  let kept = valid.filter((e) => !fromProfile(e));
+  if (kept.length === 0) kept = valid.filter((e) => e.metadata?.primary).slice(0, 1);
+  if (kept.length === 0) kept = valid.slice(0, 1);
+  return [...new Set(kept.map(norm))];
+}
+
 function contactData(p: RawPerson): ContactData {
   const primaryName = p.names?.find((n) => n.metadata?.primary) ?? p.names?.[0];
   const primaryOrg = p.organizations?.find((o) => o.metadata?.primary) ?? p.organizations?.[0];
@@ -772,9 +791,7 @@ function contactData(p: RawPerson): ContactData {
     resourceName: p.resourceName,
     ...(p.etag ? { etag: p.etag } : {}),
     displayName: primaryName?.displayName ?? null,
-    emails: (p.emailAddresses ?? [])
-      .map((e) => (e.value ?? '').trim().toLowerCase())
-      .filter((e) => e.includes('@')),
+    emails: contactEmails(p.emailAddresses ?? []),
     phones: [...new Set((p.phoneNumbers ?? [])
       .map((n) => (n.canonicalForm ?? n.value ?? '').trim())
       .filter((n) => n.length > 0))],
