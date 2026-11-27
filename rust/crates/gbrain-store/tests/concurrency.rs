@@ -467,13 +467,86 @@ fn explicit_transactions_conflict_with_a_typed_error_and_ids_stay_unique_multi_w
     assert_eq!(store.count_pages(None).unwrap(), (WRITERS * 6 + 1) as u64);
 }
 
-/// C15: a transaction that names the same key as an open single flight waits for it (it is not refused and not lost), then
-/// lands after it. Twin of the same-key half of `embedded_one_owner_an_open_transaction_holds_off_other_commits_until_it_ends`.
-/// The other writer is a second transaction naming the key: a single flight holds a key against transactions that name it, and a
-/// write that does not take the flight is ordered by the commit check (the next test).
+/// C15 (I-1: `single_flight` orders transactions only): a plain write on a key an open optimistic transaction has read and written
+/// is not held off, and there is no store-wide key gate: it lands while the transaction is still open. The transaction's commit is
+/// then refused with a typed `write_conflict` (the plain write changed what it read), nothing is lost (the plain write's value is
+/// stored and the transaction's write is absent), and the same transaction run again from a fresh read commits and its value lands.
+/// Twin of the same-key half of `embedded_one_owner_an_open_transaction_holds_off_other_commits_until_it_ends`, where the one
+/// writer gate holds the plain write off until the transaction ends.
 #[test]
-fn a_commit_on_the_same_key_as_an_open_transaction_conflicts_or_waits_multi_writer() {
+fn a_plain_write_on_the_same_key_as_an_open_transaction_goes_through_and_the_commit_conflicts_multi_writer()
+ {
     let dir = TempDir::new("conc-tx-same-key");
+    let store = Arc::new(open_mu(&dir));
+    put(&store, "notes/a", "before");
+    let key = || SingleFlightKey {
+        source_id: "default".into(),
+        slug: "notes/a".into(),
+    };
+    let body_of = |s: &Store| {
+        s.read_page_snapshot("notes/a", &ReadScope::default())
+            .unwrap()
+            .unwrap()["page"]["compiled_truth"]
+            .clone()
+    };
+    // One run of the transaction: it names the key, reads the page (the read set), and writes over it.
+    let run = || {
+        let tx = store
+            .begin_with(optimistic_options(1))
+            .unwrap_or_else(|e| panic!("{e}"));
+        store
+            .single_flight(&tx, &[key()])
+            .unwrap_or_else(|e| panic!("{e}"));
+        let seen = body_of(tx.store());
+        put(tx.store(), "notes/a", "from the transaction");
+        (tx, seen)
+    };
+    let (tx, seen) = run();
+    assert_eq!(
+        seen, "before",
+        "the transaction did not read the stored page"
+    );
+    // A plain write on the held key: it is not a transaction, so the flight does not hold it.
+    let s = store.clone();
+    let plain = thread::spawn(move || put(&s, "notes/a", "from a plain write"));
+    thread::sleep(std::time::Duration::from_millis(100));
+    assert!(
+        plain.is_finished(),
+        "a plain write waited for a key an open transaction named: a store-wide key gate"
+    );
+    plain.join().unwrap();
+    // The commit is refused, typed and retryable.
+    let refused = store
+        .commit_position(tx)
+        .expect_err("the transaction committed over a write it had not read");
+    assert_eq!(refused.code, WRITE_CONFLICT, "{refused}");
+    // Nothing is lost: the plain write's value is stored and the transaction's write is absent.
+    assert_eq!(
+        body_of(&store),
+        "from a plain write",
+        "the refused transaction left its write, or the plain write was lost"
+    );
+    // The rerun, from a fresh read, commits and its value lands.
+    let (rerun, seen) = run();
+    assert_eq!(
+        seen, "from a plain write",
+        "the rerun did not read the plain write"
+    );
+    store
+        .commit_position(rerun)
+        .unwrap_or_else(|e| panic!("the rerun was refused: {e}"));
+    assert_eq!(
+        body_of(&store),
+        "from the transaction",
+        "the rerun's value did not land"
+    );
+}
+
+/// C15: single flight orders transactions: a second transaction that names the key an open one holds waits at its own single flight
+/// (it is not refused and not lost), then lands after it.
+#[test]
+fn a_second_transaction_naming_a_held_key_waits_for_the_holder_multi_writer() {
+    let dir = TempDir::new("conc-tx-flight-order");
     let store = Arc::new(open_mu(&dir));
     put(&store, "notes/a", "before");
     let key = || SingleFlightKey {
@@ -506,7 +579,7 @@ fn a_commit_on_the_same_key_as_an_open_transaction_conflicts_or_waits_multi_writ
     thread::sleep(std::time::Duration::from_millis(100));
     assert!(
         !other.is_finished(),
-        "a commit on the held key landed while its single flight was open"
+        "a transaction on the held key landed while the holder's single flight was open"
     );
     let first = store.commit_position(tx).unwrap_or_else(|e| panic!("{e}"));
     let second = other.join().unwrap();
@@ -519,41 +592,6 @@ fn a_commit_on_the_same_key_as_an_open_transaction_conflicts_or_waits_multi_writ
         .unwrap()
         .unwrap();
     assert!(page.to_string().contains("from another writer"), "{page}");
-}
-
-/// C15: a plain write that does not take the flight is not held by it; it lands, and the holder, which read the page it then wrote
-/// over, is refused at commit with a typed `write_conflict` and nothing it wrote is kept (the plain write is never lost).
-#[test]
-fn a_plain_write_on_a_flown_key_makes_the_holders_commit_a_typed_conflict_multi_writer() {
-    let dir = TempDir::new("conc-tx-plain-write");
-    let store = Arc::new(open_mu(&dir));
-    put(&store, "notes/a", "before");
-    let tx = store
-        .begin_with(optimistic_options(1))
-        .unwrap_or_else(|e| panic!("{e}"));
-    store
-        .single_flight(
-            &tx,
-            &[SingleFlightKey {
-                source_id: "default".into(),
-                slug: "notes/a".into(),
-            }],
-        )
-        .unwrap_or_else(|e| panic!("{e}"));
-    put(tx.store(), "notes/a", "from the transaction");
-    put(&store, "notes/a", "from a plain write");
-    let refused = store
-        .commit_position(tx)
-        .expect_err("the holder committed over a write it never read");
-    assert_eq!(refused.code, WRITE_CONFLICT, "{refused}");
-    assert_eq!(
-        store
-            .read_page_snapshot("notes/a", &ReadScope::default())
-            .unwrap()
-            .unwrap()["page"]["compiled_truth"],
-        "from a plain write",
-        "the refused transaction left its write, or the plain write was lost"
-    );
 }
 
 /// C13: a commit on another key lands while a transaction is open. Twin of the other-keys half of

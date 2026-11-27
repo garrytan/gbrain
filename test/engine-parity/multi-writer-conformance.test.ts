@@ -39,7 +39,7 @@ import { rustLeases, type RustLeases, type WriteOrigin } from '../../src/core/ru
 import { withEnv } from '../helpers/with-env.ts';
 import { parityArms, type ParityBackend, type ParityContext, rustArmModeProblem, rustArmMultiuser, rustMultiuserView } from './harness.ts';
 import { clearHostRegistration, fenceOpts, hostLeaseName, setHostRegistration } from '../../src/core/persistence/host-fence.ts';
-import { assertRustCommitLogResolved, assertRustMultiuserResolved, loadRustArmAddon, openRustBrainAt, removeBrainDir, resolvedMultiuser, RUST_MULTIUSER_CONFIG_KEY } from './rust-arm.ts';
+import { assertRustCommitLogResolved, assertRustMultiuserResolved, installMuConnect, loadRustArmAddon, openRustBrainAt, removeBrainDir, resolvedMultiuser, RUST_MULTIUSER_CONFIG_KEY, rustServedRequested, type MuConnectable } from './rust-arm.ts';
 import { openRustEngine, type RustEngine } from '../../src/core/rust-engine.ts';
 import { listenServed } from '../../src/core/rust-engine/served/listener.ts';
 import { mintOwnerServerToken } from '../../src/core/rust-engine/served/owner-token.ts';
@@ -87,7 +87,7 @@ const BUSY_CODES = new Set(['store_locked', 'pglite_busy', 'owner_unavailable', 
  * `n` served clients (protocol v3 over a loopback listener, owner server token) of the Rust brain `owner` is the owner of, and a
  * `close` that ends them and the listener (not the owner). Only a multi-user owner serves: the listener refuses otherwise.
  */
-async function servedClients(owner: BrainEngine, n: number): Promise<{ clients: RustEngine[]; close: () => Promise<void> }> {
+async function servedClients(owner: BrainEngine, n: number, tokenName = 'c21-owner-token'): Promise<{ clients: RustEngine[]; close: () => Promise<void> }> {
   const brain = owner as unknown as RustEngine;
   const dir = brain.databasePath;
   const server = brain.ownerServer();
@@ -96,7 +96,7 @@ async function servedClients(owner: BrainEngine, n: number): Promise<{ clients: 
   const clients: RustEngine[] = [];
   const close = async () => { for (const c of clients) await c.disconnect().catch(() => undefined); await listener.close().catch(() => undefined); };
   try {
-    const { token } = await mintOwnerServerToken(owner, 'c21-owner-token');
+    const { token } = await mintOwnerServerToken(owner, tokenName);
     for (let i = 0; i < n; i++) {
       const client = openRustEngine({ addon: await loadRustArmAddon(), databasePath: dir, served: { url: `gbrain+tcp://127.0.0.1:${listener.port}`, token } });
       clients.push(client);
@@ -898,13 +898,21 @@ describe('engine parity: multi-writer conformance', () => {
   //    started as handed over and finishes the rest, and the client sends the handed-over calls again to the next owner, so
   //    every call succeeds, none is lost and no call ends `owner_unavailable`. Plain Rust ends such calls
   //    `owner_unavailable` (outcome unknown), so that half is multi-user only.
+  //  - Served arm (GBRAIN_TEST_RUST_SERVED=1): the arm's engine is a served client that elects nothing; the raw second opener reaches the
+  //    owner behind the arm. The owner's exit is not the client's to make, so the handover half is not run there (`C17.served` below).
   //  PGLite refuses a second opener by design (n/a).
   parityTest('C17 a second opener becomes a client, never an error', { methods: ['putPage', 'getPage'], mwCase: 'C17' }, async (engine, backend, ctx) => {
     await engine.putPage('notes/c17-a', NOTE('A', 'written by the first opener'));
     const second = await ctx.sameBrainEngine();
+    // The served arm (GBRAIN_TEST_RUST_SERVED=1): the arm's engine is a served v3 client of the brain's owner (which runs in this
+    // process, behind the arm), so it elects nothing and is not the first opener; the raw second opener below is the one that
+    // reaches the owner. The first-opener half is `C17.served`, which opens its own brain.
+    const served = backend === 'rust' && rustServedRequested();
     if (backend === 'rust') {
-      expect((engine as unknown as { ownerRole?: string }).ownerRole, 'the first opener is not the owner').toBe('owner');
-      expect((second as unknown as { ownerRole?: string }).ownerRole, 'the second opener did not become a client of the owner').toBe('client');
+      const role = (e: unknown) => (e as { ownerRole?: string | null }).ownerRole ?? null;
+      if (served) expect(role(engine), 'a served client claims ownership').not.toBe('owner');
+      else expect(role(engine), 'the first opener is not the owner').toBe('owner');
+      expect(role(second), 'the second opener did not become a client of the owner').toBe('client');
     }
     expect((await second.getPage('notes/c17-a'))?.compiled_truth, 'the second opener does not see the first\'s write').toBe('written by the first opener');
     await second.putPage('notes/c17-b', NOTE('B', 'written by the second opener'));
@@ -914,7 +922,8 @@ describe('engine parity: multi-writer conformance', () => {
     expect(refused.filter(code => BUSY_CODES.has(code)), 'a call in flight got a busy error').toEqual([]);
     expect(refused, 'a call in flight was refused').toEqual([]);
     let handedOver = 0;
-    if (backend === 'rust' && rustArmMultiuser() !== 'off') {
+    // The owner's exit is the owner's own disconnect, which a served client behind the arm cannot make: the served arm skips this half.
+    if (backend === 'rust' && rustArmMultiuser() !== 'off' && !served) {
       const calls = Array.from({ length: 48 }, (_, i) => second.putPage(`notes/c17-h${i}`, NOTE(`H${i}`, `in flight at the handover ${i}`)));
       // Let the calls reach the owner (a call still unread in the socket when the owner closes ends outcome_unknown, which is
       // the same race a crash has); the owner then exits with some answered, some running and some queued.
@@ -930,6 +939,93 @@ describe('engine parity: multi-writer conformance', () => {
       handedOver = 48;
     }
     return { secondOpened: true, mutuallyVisible: true, inFlightRefused: refused.length, handedOver: handedOver > 0 };
+  });
+
+  // C17, variant `C17.served`: the first process to open a brain directory is its owner, and a served client elects nothing. Runs on the
+  // rust-mu arm (both routes), on the plain arm and on the served arm alike (GBRAIN_TEST_RUST_SERVED=1, where each case's engine is a
+  // served v3 client): the case opens its own brain, so what it proves does not depend on which engine the arm hands it.
+  //  1. The case's engine opens a new brain directory first: it is the owner (mode and commit log asserted on it, by the arm's route), and
+  //     a raw second opener of that directory becomes an owner-socket client of it.
+  //  2. It serves a loopback v3 listener and two served clients connect. A served client reports a client role (never `owner`: it has no
+  //     election at all), holds no store and no owner server, and reports `served`. The owner is still the owner, with the same server.
+  //  3. Each served client writes; the owner and the other client see both writes; the owner is still the owner, and a raw opener of
+  //     the directory still becomes a client of it (so no served client took the directory lock).
+  //  4. The served clients disconnect and their listener closes. The owner still owns the brain (role, server, its own reads and writes),
+  //     a raw opener still becomes its client, and a served client that connects afterwards to a new listener of the owner is served.
+  //  The arm's own engine is an owner on the plain arm and a served client on the served arm; it never claims ownership either way.
+  parityTest('C17 a second opener becomes a client, never an error: the first opener of a brain is its owner and a served client elects nothing', { methods: ['putPage', 'getPage'], mwCase: 'C17.served' }, async (engine) => {
+    const route = rustMultiuserView();
+    expect(route, 'C17.served runs on the rust-mu arm only: its brain must be multi-user').not.toBe('off');
+    const role = (e: unknown) => (e as { ownerRole?: string | null }).ownerRole ?? null;
+    const caps = (e: unknown) => (e as { capabilities: ReadonlySet<string> }).capabilities;
+    expect(role(engine) === 'owner', `the arm's engine is ${rustServedRequested() ? 'a served client, which never owns' : 'the owner of its own brain'}, and it reports ${role(engine)}`).toBe(!rustServedRequested());
+    // The arm's own engine does its own write and read (the harness counts the members the case calls on it).
+    await engine.putPage('notes/c17s-arm', NOTE('Arm', 'written through the arm\'s own engine'));
+    expect((await engine.getPage('notes/c17s-arm'))?.compiled_truth).toBe('written through the arm\'s own engine');
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-c17-served-'));
+    const owner = openRustEngine({ addon: await loadRustArmAddon(), databasePath: dir });
+    installMuConnect(owner as unknown as MuConnectable, route as 'env' | 'config', () => undefined);
+    const nets: Awaited<ReturnType<typeof servedClients>>[] = [];
+    try {
+      await owner.connect({ engine: 'rust', database_path: dir } as never);
+      // 1. the first opener is the owner, in the mode the arm runs (asserted on it, not assumed).
+      expect(role(owner), 'the first opener of the directory is not its owner').toBe('owner');
+      assertRustMultiuserResolved(owner, route as 'env' | 'config');
+      assertRustCommitLogResolved(owner);
+      const server = owner.ownerServer();
+      expect(server, 'the owner has no owner server').not.toBeNull();
+      await owner.putPage('notes/c17s-owner', NOTE('Owner', 'written by the first opener'));
+      /** The owner is still the owner: its role, its server, its own calls, and a raw opener of the directory is its client. */
+      const ownerStays = async (when: string) => {
+        expect(role(owner), `${when}: the first opener is no longer the owner`).toBe('owner');
+        expect(owner.ownerServer(), `${when}: the owner's server changed`).toBe(server);
+        const opener = await openRustBrainAt(dir, route as 'env' | 'config');
+        try {
+          expect(role(opener), `${when}: a raw opener of the directory did not become a client of the owner`).toBe('client');
+          expect((await opener.getPage('notes/c17s-owner'))?.compiled_truth, `${when}: the opener does not see the owner's write`).toBe('written by the first opener');
+        } finally { await opener.disconnect().catch(() => undefined); }
+        expect((await owner.getPage('notes/c17s-owner'))?.compiled_truth, `${when}: the owner does not serve its own read`).toBe('written by the first opener');
+      };
+      await ownerStays('before any served client');
+      // 2. two served clients connect: a client role, no election, no store.
+      const net = await servedClients(owner as unknown as BrainEngine, 2, 'c17-served-token');
+      nets.push(net);
+      const [a, b] = net.clients as [RustEngine, RustEngine];
+      for (const [who, client] of [['A', a], ['B', b]] as const) {
+        expect(role(client), `served client ${who} claims ownership`).not.toBe('owner');
+        expect(client.ownerServer(), `served client ${who} runs an owner server`).toBeNull();
+        expect(client.multiuser, `served client ${who} holds a store of its own`).toBe(false);
+        expect(caps(client).has('served'), `served client ${who} does not report served`).toBe(true);
+      }
+      await ownerStays('after the served clients connected');
+      // 3. each served client writes; everyone sees both; the owner is still the owner.
+      await a.putPage('notes/c17s-a', NOTE('A', 'written by served client A'));
+      await b.putPage('notes/c17s-b', NOTE('B', 'written by served client B'));
+      for (const [who, reader] of [['the owner', owner], ['served client A', a], ['served client B', b]] as const) {
+        expect((await reader.getPage('notes/c17s-a'))?.compiled_truth, `${who} does not see A's write`).toBe('written by served client A');
+        expect((await reader.getPage('notes/c17s-b'))?.compiled_truth, `${who} does not see B's write`).toBe('written by served client B');
+      }
+      for (const [who, client] of [['A', a], ['B', b]] as const) expect(role(client), `served client ${who} claims ownership after its write`).not.toBe('owner');
+      await ownerStays('after the served clients wrote');
+      // 4. the served clients leave: the owner still owns and serves.
+      await net.close();
+      nets.length = 0;
+      await ownerStays('after the served clients disconnected');
+      await owner.putPage('notes/c17s-after', NOTE('After', 'written by the owner after the clients left'));
+      const late = await servedClients(owner as unknown as BrainEngine, 1, 'c17-served-token-late');
+      nets.push(late);
+      const [c] = late.clients as [RustEngine];
+      expect(role(c), 'a served client that connected afterwards claims ownership').not.toBe('owner');
+      expect((await c.getPage('notes/c17s-after'))?.compiled_truth, 'a client that connected after the others left is not served').toBe('written by the owner after the clients left');
+      await c.putPage('notes/c17s-late', NOTE('Late', 'written by a late served client'));
+      expect((await owner.getPage('notes/c17s-late'))?.compiled_truth, 'the owner does not see the late client\'s write').toBe('written by a late served client');
+      await ownerStays('after a late served client');
+      return { ownerIsFirstOpener: true, servedClientsElectNothing: true, ownerKeepsTheBrain: true, servedAfterClientsLeft: true };
+    } finally {
+      for (const n of nets) await n.close().catch(() => undefined);
+      await owner.disconnect().catch(() => undefined);
+      removeBrainDir(dir);
+    }
   });
 
   // C18: many writers, every row family, no busy error: 64 writers in 8 processes. This process and seven writer processes

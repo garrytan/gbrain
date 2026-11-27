@@ -139,6 +139,7 @@
 # multi-writer C15 [compare]: pglite=runs postgres=runs rust=runs rust-mu=runs store-single=runs store-optimistic=runs
 # multi-writer C16 [standalone, needs commit_log]: pglite=n/a postgres=pending(L6 harness) rust=n/a rust-mu=runs store-single=runs store-optimistic=runs
 # multi-writer C17 [standalone]: pglite=n/a postgres=runs rust=n/a rust-mu=runs store-single=runs store-optimistic=runs
+# multi-writer C17.served [standalone]: pglite=n/a postgres=n/a rust=n/a rust-mu=runs store-single=n/a store-optimistic=n/a
 # multi-writer C18 [standalone]: pglite=n/a postgres=runs rust=pending(L3 server) rust-mu=pending(L3 server) store-single=runs store-optimistic=runs
 # multi-writer C19 [standalone]: pglite=n/a postgres=runs rust=runs rust-mu=runs store-single=runs store-optimistic=runs
 # multi-writer C20 [compare]: pglite=runs postgres=runs rust=runs rust-mu=runs store-single=runs store-optimistic=runs
@@ -158,11 +159,11 @@ withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
 listCatalogRelations	lifecycle	yes	1	no	yes	yes	serves
 readCatalogSchemaVersion	lifecycle	yes	1	no	yes	yes	serves
 listCatalogForeignKeys	lifecycle	yes	1	no	yes	yes	serves
-getPage	pages	yes	298	yes	yes	yes	serves
+getPage	pages	yes	299	yes	yes	yes	serves
 readPageSnapshot	pages	yes	114	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	7	no	yes	yes	serves
 lockPageKeys	pages	yes	20	no	yes	yes	serves
-putPage	pages	yes	1377	yes	yes	yes	serves
+putPage	pages	yes	1378	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	45	yes	yes	yes	serves

@@ -3086,16 +3086,23 @@ fn page_created_us(s: &Store, slug: &str) -> i64 {
 #[test]
 #[ignore = "multi_writer"]
 fn c22_follower_replay_keeps_commit_times_rising_and_row_times_above_the_floor_multi_writer() {
-    use memory_env::{Clock, T0, open_at};
-    let mode = memory_env::StoreMode::Optimistic;
+    use memory_env::{Clock, T0};
+    const PRIMARY_HOST: &str = "a0000000-0000-4000-8000-0000000000a1";
+    const FOLLOWER_HOST: &str = "b0000000-0000-4000-8000-0000000000b1";
     let (primary_dir, follower_dir) = (TempDir::new("c22-primary"), TempDir::new("c22-follower"));
     let (primary_at, follower_at) = (
         primary_dir.path().join("brain"),
         follower_dir.path().join("brain"),
     );
-    // Every open below goes through `open_at`, which opens in multi-user mode explicitly (and with the commit log, once the log
-    // lane's open option is in the tree). Row times are compared with a floor only, and each batch writes FRESH slugs: a page that
+    // Every open below goes through `open_at`: multi-user mode and the commit log both on, asserted by the adapter's open (a replay
+    // needs the log, and the log is what `read_commit_log` and `last_commit_time` answer from). Row times are compared with a floor only, and each batch writes FRESH slugs: a page that
     // already exists keeps its old `created_at`, which would say nothing about the clock at this open.
+    let open_at = |dir: &Path, clock: Arc<Clock>, host: &str| -> Store {
+        std::fs::create_dir_all(dir).unwrap();
+        mu::open_logged(&dir.join("records.redb"), true, clock, host)
+            .unwrap_or_else(|e| panic!("{e}"))
+            .store
+    };
     let write_fresh = |s: &Store, prefix: &str| -> Vec<i64> {
         for n in 0..4 {
             put(s, &format!("{prefix}/{n}"), "a row written after open");
@@ -3106,7 +3113,7 @@ fn c22_follower_replay_keeps_commit_times_rising_and_row_times_above_the_floor_m
     };
 
     // The primary commits through explicit optimistic transactions; the log it keeps is the replay input.
-    let primary = open_at(&primary_at, Clock::at(T0), mode);
+    let primary = open_at(&primary_at, Clock::at(T0), PRIMARY_HOST);
     primary
         .read_commit_log(None, 1)
         .unwrap_or_else(|e| panic!("{e}"));
@@ -3125,7 +3132,7 @@ fn c22_follower_replay_keeps_commit_times_rising_and_row_times_above_the_floor_m
     // Reopen the primary on a clock below the persisted floor: the floor read at open is the persisted one, and fresh rows written
     // after the open sit at or above it.
     drop(primary);
-    let reopened = open_at(&primary_at, Clock::at(floor - 5_000_000), mode);
+    let reopened = open_at(&primary_at, Clock::at(floor - 5_000_000), PRIMARY_HOST);
     assert_eq!(
         reopened
             .last_commit_time()
@@ -3137,7 +3144,7 @@ fn c22_follower_replay_keeps_commit_times_rising_and_row_times_above_the_floor_m
         .unwrap_or_else(|e| panic!("{e}"));
 
     // The follower: its clock reads far below the applied floor. It is given every record, applies them in order, and is promoted.
-    let follower = open_at(&follower_at, Clock::at(floor - 10_000_000), mode);
+    let follower = open_at(&follower_at, Clock::at(floor - 10_000_000), FOLLOWER_HOST);
     let applied = follower
         .apply_log(&log.records)
         .unwrap_or_else(|e| panic!("{e}"));
@@ -3186,7 +3193,7 @@ fn c22_follower_replay_keeps_commit_times_rising_and_row_times_above_the_floor_m
     // above that latest commit time: a store that forgot its floor would stamp them from the lagging clock.
     drop(follower);
     let behind = latest - 10_000_000;
-    let again = open_at(&follower_at, Clock::at(behind), mode);
+    let again = open_at(&follower_at, Clock::at(behind), FOLLOWER_HOST);
     assert_eq!(
         again.last_commit_time().unwrap_or_else(|e| panic!("{e}")),
         Some(latest),
