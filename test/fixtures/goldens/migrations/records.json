@@ -1,6 +1,6 @@
 {
   "golden": {
-    "count": 337,
+    "count": 336,
     "gaps": [
       17,
       18,
@@ -112,7 +112,7 @@
       "widenIdentityIndex": "86a6176bd7637d964dbc1d3cd3b1bdfa3ca0161e1ee248c37d7380a1471282e6",
       "withSchemaLockTimeout": "95605bd3004955e11e936c7a4aa6889319b401098abf9db18ef3e48da2c3fc59"
     },
-    "latest": 342,
+    "latest": 341,
     "records": [
       {
         "handler": {
@@ -5552,28 +5552,15 @@
       {
         "handler": "absent",
         "idempotent": true,
-        "name": "content_author_attribution",
+        "name": "atom_scan_input_digest",
         "sql": {
-          "length": 2385,
-          "sha256": "1e4a00cf482d28d8d1ea4f720e043aac9af8129d677a4487bb78304b86cfc830"
+          "length": 94,
+          "sha256": "4d0561b9d7b02f2b210da5dd5c3c8b90352e3e8624f5c0519e82e29f194993d0"
         },
         "sqlFor": "absent",
         "transaction": "absent",
         "verify": "absent",
         "version": 341
-      },
-      {
-        "handler": "absent",
-        "idempotent": true,
-        "name": "content_author_backfill",
-        "sql": {
-          "length": 3674,
-          "sha256": "74d7897eea9566ef314896020ca38128ad53bd463a00ac3a19a4f7e84e9a29a2"
-        },
-        "sqlFor": "absent",
-        "transaction": "absent",
-        "verify": "absent",
-        "version": 342
       }
     ],
     "versions": [
@@ -5912,8 +5899,7 @@
       338,
       339,
       340,
-      341,
-      342
+      341
     ]
   },
   "normalizer": "migrations-record-v1"

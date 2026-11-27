@@ -17,6 +17,7 @@ import type { MinionJobContext } from '../src/core/minions/types.ts';
 import { UnrecoverableError } from '../src/core/minions/errors.ts';
 import { syncLockId } from '../src/core/db-lock.ts';
 import { claimWorktree } from '../src/core/persistence/ownership.ts';
+import { markGitDurable } from './helpers/git-fixture.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { readBlockedManagedSyncs } from '../src/core/persistence/sync-blocked.ts';
@@ -49,6 +50,8 @@ function job(id: number, data: Record<string, unknown>, progress: unknown[]): Mi
 async function blockedSource(engine: BrainEngine) {
   const id = `blocked-${randomUUID().replace(/-/g, '').slice(0, 16)}`; sources.push(id);
   const root = join(home, id); mkdirSync(join(root, 'people'), { recursive: true }); git(root, 'init', '-q');
+  // GST-3743: write-back reaches a non-default checkout only when this host commits it (durable); a foreign one stays database-only.
+  markGitDurable(root);
   writeFileSync(join(root, 'a.md'), note('Alpha one.'));
   commit(root, 'one');
   await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');

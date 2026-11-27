@@ -177,6 +177,24 @@ function affectedSkills(current: PackSkill[], name: string, files: StoredSkillFi
   const changedShared = new Map(files.filter(f => f.path.startsWith('skills/conventions/')).map(({ content: _content, ...file }) => [file.path, stableJson(file)]));
   return current.filter(row => row.name === name || row.files.some(file => changedShared.has(file.path) && changedShared.get(file.path) !== stableJson(file)));
 }
+/**
+ * The files a dependent would hold once the proposed shared files replace its copies, found by walking depends_on
+ * the way rebuildDependentClosure does but without copying or re-encoding any content. Files that become unreachable
+ * drop out. A missing dependency or a cycle stops the walk here; preparation reports those errors.
+ */
+function reachableAfterReplacement(name: string, previous: StoredSkillFile[], replacements: Map<string, StoredSkillFile>): StoredSkillFile[] {
+  const available = new Map(previous.map(file => [file.path, file]));
+  for (const [path, file] of replacements) available.set(path, file);
+  const reached = new Map<string, StoredSkillFile>();
+  const pending = [`skills/${name}/SKILL.md`];
+  for (let path = pending.pop(); path !== undefined; path = pending.pop()) {
+    const file = available.get(path);
+    if (!file || reached.has(path)) continue;
+    reached.set(path, file);
+    pending.push(...file.depends_on);
+  }
+  return [...reached.values()];
+}
 function rebuildDependentClosure(name: string, previous: StoredSkillFile[], replacements: Map<string, StoredSkillFile>): StoredSkillFile[] {
   const available = new Map(previous.map(file => [file.path, file]));
   for (const [path, file] of replacements) if (path.startsWith('skills/conventions/')) available.set(path, file);
@@ -331,6 +349,9 @@ export async function submitSharedSkillMutation(ctx: OperationContext, operation
       `A skill that shares files with ${packId}/${name} changed while this publication was being admitted, so nothing was accepted. Read ${packId}/${name} again and resubmit with a new request_id.`,
       { fix: skillHeadFix(sourceId, packId, name) });
   }
+  const replacement = new Map(proposals.flatMap(p => p.files).filter(f => f.path.startsWith('skills/conventions/')).map(f => [f.path, f]));
+  refuseDependentWidening(sourceId, current.filter(head => dependents.includes(head.name) && !head.deleted)
+    .map(head => ({ name: head.name, files: reachableAfterReplacement(head.name, head.files, replacement) })), current, ctx.remote === false);
   const manifestBytes = canonicalRead(root, 'skillpack.json');
   if (!pack && manifestBytes && (!adoption || adoption.mode === 'proposal')) {
     throw opError('approval_required', 'An unadopted skillpack already exists on disk. A trusted host must adopt its complete reviewed inventory before individual skill publication.',
@@ -465,6 +486,8 @@ export async function prepareSharedSkillMutation(engine: BrainEngine, row: Write
       deleted: target.name === intent.name && row.operation === 'delete_skill',
       files };
   });
+  // A request accepted before this check existed is checked here too, before it touches the checkout.
+  refuseDependentWidening(row.source_id, revisions.filter(revision => !proposals.some(p => p.name === revision.name)), current, false);
   const revisionByName = new Map(revisions.map(r => [r.name, r]));
   const next = [...inventory.filter(entry => !revisionByName.has(entry.name)), ...revisions.filter(entry => !entry.deleted).map(entry => ({
     name: entry.name, revision: entry.revision, files: entry.files.map(({ content: _content, ...file }) => file),
@@ -595,6 +618,41 @@ function refuseLossyAdoption(sourceId: string, proposal: { name: string; files: 
     : 'Resubmit the import with its full file set and the same private, requirements, description and triggers values as the published skill';
   throw opError('local_conflict', `skills/${proposal.name} was not adopted: ${reasons.join('; ')}. ${remedy}; nothing was written and no file was deleted.`,
     `skills/${proposal.name} in source ${sourceId} is already published, and adopting this proposal would lose or widen what it was published with. ${remedy}. Check the skill's visibility and file set after publishing.`);
+}
+
+/**
+ * A publication rebuilds every other skill that holds a changed shared convention file with the proposed copy. Those
+ * skills did not propose anything, so none of their files may reach a wider audience or change file class through the
+ * rebuild: a restricted convention would otherwise become readable through a skill nobody reviewed. Content changes and
+ * narrower audiences still apply. Refusing happens before anything is written. Only a trusted local caller is told
+ * which skills hold the file (`detailed`); a remote caller or a queued request's receipt names only the shared paths it
+ * proposed, so a hidden skill's name and file class stay hidden. Both messages are bounded whatever the closure size.
+ */
+function refuseDependentWidening(sourceId: string, rebuilt: Array<{ name: string; files: StoredSkillFile[] }>, sealed: StoredSkillRevision[], detailed: boolean): void {
+  const reasons: string[] = [];
+  const paths = new Set<string>();
+  let holders = 0;
+  for (const dependent of rebuilt) {
+    const was = sealed.find(revision => revision.name === dependent.name && !revision.deleted);
+    let conflicted = false;
+    for (const file of dependent.files) {
+      const prior = was?.files.find(candidate => candidate.path === file.path);
+      if (!prior) continue;
+      // 'readers' covers every principal (policy.ts approvedFiles), so a file already published to readers cannot widen.
+      const widens = !prior.audience.includes('readers') && file.audience.some(audience => !prior.audience.includes(audience));
+      if (!widens && file.file_class === prior.file_class) continue;
+      conflicted = true; paths.add(file.path);
+      reasons.push(widens ? `skills/${dependent.name} would publish ${file.path} to a wider audience`
+        : `skills/${dependent.name} would publish ${file.path} as ${file.file_class} instead of ${prior.file_class}`);
+    }
+    if (conflicted) holders++;
+  }
+  if (!reasons.length) return;
+  const bounded = (items: string[]) => items.slice(0, 3).join('; ') + (items.length > 3 ? `; and ${items.length - 3} more` : '');
+  const what = detailed ? bounded(reasons)
+    : `${bounded([...paths])} would reach a wider audience or another file class in ${holders} other skill${holders === 1 ? '' : 's'} that already hold${holders === 1 ? 's' : ''} it`;
+  throw opError('local_conflict', `The publication was refused: ${what}. Nothing was written.`,
+    `Another skill in source ${sourceId} already publishes the shared file with a narrower audience or another file class, and this publication would change it there without that skill being reviewed. Give the file the same file_class and an audience no wider than the other skill already has, or fork it under this skill's own directory and point depends_on there, then submit again with a new request_id.`);
 }
 
 /** An import regenerates skillpack.json from the sealed heads, so a skill the checkout declares but never published would vanish from it. */

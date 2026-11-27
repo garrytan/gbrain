@@ -2896,7 +2896,8 @@
           "4 fail_count integer/int4 NOT NULL DEFAULT 0",
           "5 tombstoned boolean/bool NOT NULL DEFAULT false",
           "6 updated_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
-          "7 partial_input_chars integer/int4 NULL"
+          "7 partial_input_chars integer/int4 NULL",
+          "8 input_sha256 text/text NULL"
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },

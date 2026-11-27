@@ -93,7 +93,7 @@ const ROWS: readonly Row[] = [
   ['eval_contradictions_cache', 'out_of_scope', 'probed_reported', 'chunk_a_hash chunk_b_hash model_id prompt_version truncation_policy verdict', 'verdict'],
   ['eval_contradictions_runs', 'out_of_scope', 'probed_reported', 'run_id judge_model prompt_version source_tier_breakdown report_json', 'report_json'],
   ['eval_takes_quality_runs', 'out_of_scope', 'probed_reported', 'receipt_sha8_corpus receipt_sha8_prompt receipt_sha8_models receipt_sha8_rubric rubric_version verdict dim_scores receipt_json receipt_disk_path', 'receipt_json'],
-  ['extract_atoms_page_state', 'out_of_scope', 'no_memory_text', 'content_hash'],
+  ['extract_atoms_page_state', 'out_of_scope', 'no_memory_text', 'content_hash input_sha256'],
   ['extract_atoms_transcript_state', 'out_of_scope', 'no_memory_text', 'source_id file_path content_hash'],
   ['extract_rollup_7d', 'out_of_scope', 'no_memory_text', 'kind source_id halt_reasons'],
   ['fact_purges', 'out_of_scope', 'text_free_ledger', 'source_id visibility subject fact_hash actor reason'],

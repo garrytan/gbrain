@@ -1244,6 +1244,7 @@ CREATE TABLE IF NOT EXISTS extract_atoms_page_state (
   tombstoned BOOLEAN NOT NULL DEFAULT false,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   partial_input_chars INTEGER,
+  input_sha256 TEXT,
   PRIMARY KEY (source_incarnation, page_id, content_hash)
 );
 CREATE INDEX IF NOT EXISTS extract_atoms_page_state_tombstoned_idx

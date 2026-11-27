@@ -1968,6 +1968,12 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   write effects or its writer coordination locks. The residual risk is to the evidence: a write the owner process or an effect worker
   applies outside the wrapped engine is not seen by shadow mode, so the comparison for it may differ; such a write
   shows up as a difference or a miss in the counts, never as silent equality.
+- **Parallel sync and import.** A Postgres `gbrain sync` that imports on worker connections (a full sync at the default
+  concurrency, an incremental sync of more than 100 files, or `--concurrency` above 1) and a `gbrain import --workers N`
+  with N above 1 wrap each worker like the primary engine, when the worker opened the same database URL as the primary:
+  its page and link writes are sampled for write comparisons (each worker has its own sampler, which finishes its
+  read-backs before the worker disconnects), followed into the Rust store, and noted as this process's writes for swap
+  eligibility. A worker on another database URL is left unwrapped.
 - **No network in the background.** Only `gbrain engine install rust`, `gbrain post-upgrade` and autopilot's automatic upgrade download the addon. `start --yes`, the child
   and `gbrain doctor` only use an addon that is already installed; without one, `start --yes` refuses and stays off, `gbrain doctor` fails
   the `rust_engine_addon` check, and the child records `addon_unavailable` (`rust_engine_addon_missing`, reason `not_installed`).

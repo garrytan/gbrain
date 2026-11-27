@@ -1977,6 +1977,8 @@ CREATE TABLE IF NOT EXISTS extract_atoms_page_state (
   -- #6503 (migration v240): the max_input_chars cap a cut page was read under;
   -- discovery skips it until the cap rises. NULL when not partial.
   partial_input_chars INTEGER,
+  -- GST-4020 (migration v341): digest of the model input a complete scan read.
+  input_sha256 TEXT,
   PRIMARY KEY (source_incarnation, page_id, content_hash)
 );
 CREATE INDEX IF NOT EXISTS extract_atoms_page_state_tombstoned_idx

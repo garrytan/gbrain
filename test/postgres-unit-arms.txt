@@ -216,6 +216,7 @@ test/extract-all-stamp-intersection.serial.test.ts
 test/extract-atoms-concurrent-run-7923.test.ts
 test/extract-atoms-input-truncated-6503.test.ts
 test/extract-atoms-raised-cap-drain-7391.test.ts
+test/extract-atoms-scan-input-gst4020.test.ts
 test/extract-atoms-world-fence-rows.test.ts
 test/extract-endpoint-revision.serial.test.ts
 test/extract-entities-managed.test.ts
@@ -816,6 +817,7 @@ test/share-about-member-gst2897.test.ts
 test/shared-content-freshness.test.ts
 test/shared-skills-adoption-keeps-files.test.ts
 test/shared-skills-catalog.test.ts
+test/shared-skills-import-closure.test.ts
 test/shared-skills-retention-capacity.test.ts
 test/shared-skills-source-opt-out.test.ts
 test/shared-skills-writer-boundary.test.ts
