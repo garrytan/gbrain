@@ -24,6 +24,7 @@ import {
   deriveDelegatedTimeoutSeconds,
   maybeDelegateSyncToServe,
   parseDelegatedSyncArgs,
+  serveBuildSkewError,
 } from '../src/commands/sync-delegate.ts';
 import { CLI_FLAG_REGISTRY } from '../src/core/cli-flag-registry.generated.ts';
 import { getCliOptions, setCliOptions } from '../src/core/cli-options.ts';
@@ -305,5 +306,23 @@ describe('maybeDelegateSyncToServe brain + source gates (F3)', () => {
       // exits 1 with 0 fails. `?? 0`: Bun ignores an undefined assignment.
       process.exitCode = savedExitCode ?? 0;
     }
+  });
+});
+
+describe('#10537 serveBuildSkewError', () => {
+  const stale = "Export named 'hostIdFor' not found in module '/x/src/core/persistence/identity.ts'.";
+  test('a missing named export (Bun or Node wording) becomes serve_build_skew; on a local brain it says to stop the serve instead of GBRAIN_SYNC_NO_DELEGATE=1', () => {
+    for (const message of [stale, "The requested module './identity.ts' does not provide an export named 'hostIdFor'"]) {
+      const error = serveBuildSkewError(new Error(message), { pid: 99, canRunBeside: false });
+      expect(error?.code).toBe('serve_build_skew');
+      expect(error?.message).toContain('the running gbrain serve (PID 99)');
+      expect(error?.message).toContain(message);
+      expect(error?.suggestion).toContain('gbrain upgrade --restart-only');
+      expect(error?.suggestion).toContain('stop the serve (PID 99)');
+      expect(error?.suggestion).not.toContain('GBRAIN_SYNC_NO_DELEGATE');
+    }
+  });
+  test('any other failure is left alone', () => {
+    expect(serveBuildSkewError(new Error('disk full'), { pid: 99, canRunBeside: true })).toBeNull();
   });
 });

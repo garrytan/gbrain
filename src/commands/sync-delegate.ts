@@ -38,8 +38,9 @@
  * ones. Every rung that cannot delegate falls back to today's own consumer
  * with ONE actionable line, never a refusal: an unsupported flag, a missing
  * socket, GBRAIN_SERVE_SYNC_IPC=0, an older serve (`unknown_kind` /
- * `stale_serve` / `unsupported_kind`), a serve bound to another source, or a
- * serve that dies mid-drain (the durable cursor resumes in-process). Only an
+ * `stale_serve` / `unsupported_kind`, or a heartbeat build older than this CLI,
+ * #10537), a serve bound to another source, or a serve that dies mid-drain (the
+ * durable cursor resumes in-process). Only an
  * authorization refusal of the hand-off is terminal, thrown as the same
  * OperationError the in-process path would raise.
  */
@@ -70,7 +71,7 @@ import {
   type SyncStatusResponse,
   type WireSyncResult,
 } from '../core/context/sync-ipc.ts';
-import { OperationError } from '../core/ops/contract.ts';
+import { OperationError, opError } from '../core/ops/contract.ts';
 import { SYNC_FLAGS, syncFlagsRouted, type SyncFlagSpec } from '../core/sync-flags.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import type { ConsumerRow } from '../core/persistence/consumer-heartbeat.ts';
@@ -313,9 +314,10 @@ export async function maybeDelegateSyncToServe(dataDir: string, args: string[], 
   });
   if (polled.kind === 'lost') { await setVerdict(1); return true; }
   if (polled.kind === 'failed') {
-    if (polled.error instanceof OperationError) {
+    const error = serveBuildSkewError(polled.error, { pid: holder.pid, canRunBeside: false }) ?? polled.error;
+    if (error instanceof OperationError) {
       const { reportPersistenceCliError } = await import('./persistence-delegate.ts');
-      if (await reportPersistenceCliError(polled.error, args.includes('--json'))) return true;
+      if (await reportPersistenceCliError(error, args.includes('--json'))) return true;
     }
     serr(`[sync] delegated sync failed inside the serve: ${polled.error.message}`);
     await setVerdict(1);
@@ -323,6 +325,28 @@ export async function maybeDelegateSyncToServe(dataDir: string, args: string[], 
   }
   await printDelegatedResult(polled.result, options, { args, sourceId: polled.status.sourceId ?? sourceId ?? 'default', json: args.includes('--json') });
   return true;
+}
+
+const RESTART_SERVE = '`gbrain upgrade --restart-only` (add `--stop-mcp` for a serve an agent harness started, then reconnect gbrain there)';
+
+/** #10537: what a lazy import throws inside a serve whose module graph no longer matches the install on disk (Bun, Node). */
+const STALE_MODULE_GRAPH = /Export named '[^']+' not found in module|does not provide an export named/;
+
+/**
+ * #10537: a delegated sync that failed inside the serve because the serve's code no longer matches the install on disk
+ * (an upgrade swapped the files under a running serve), as the typed error naming both builds and the restart; null for
+ * any other failure. `canRunBeside` is true where GBRAIN_SYNC_NO_DELEGATE=1 runs the sync beside the serve (Postgres).
+ */
+export function serveBuildSkewError(error: Error, ctx: { pid: number; serveVersion?: string | null; canRunBeside: boolean }): OperationError | null {
+  if (!STALE_MODULE_GRAPH.test(error.message)) return null;
+  const serve = `the running gbrain serve (PID ${ctx.pid}${ctx.serveVersion ? `, v${ctx.serveVersion}` : ''})`;
+  return opError('serve_build_skew',
+    `The sync could not run inside ${serve}: it still runs the gbrain build it started with, and that code no longer matches the gbrain installed on disk (this CLI is v${VERSION}). The serve reported: ${error.message}`,
+    `Restart the serve onto the installed build: ${RESTART_SERVE}. ${ctx.canRunBeside ? 'To sync now without it, re-run with GBRAIN_SYNC_NO_DELEGATE=1.' : `Or stop the serve (PID ${ctx.pid}) and re-run gbrain sync.`}`,
+    { fix: { ask_user: true, argv: ['gbrain', 'upgrade', '--restart-only'], consent: [], actor: 'agent', requires_exclusive: false,
+      why: 'Restarts every gbrain process on this host onto the installed build, drain-first, and verifies they all report one build.',
+      user_message: `A gbrain serve (PID ${ctx.pid}) still runs an older build than the one installed, so sync could not run inside it. Restart it onto the installed build with \`gbrain upgrade --restart-only\`?`,
+      verify: { argv: ['gbrain', 'doctor', '--only', 'runtime_build_skew', '--json'] }, docs: 'docs/guides/troubleshooting.md#runtime-build-skew' } });
 }
 
 function startRefusalText(resp: { error?: string; jobId?: string }): string {
@@ -507,7 +531,7 @@ export type ManagedDelegationOutcome =
   | { kind: 'delegated'; result: SyncResult; pid: number }
   /** Not delegated; `reason` names the rung, `line` is the one line printed (null when nothing was printed). */
   | { kind: 'own_consumer'; reason: 'opted_out' | 'not_host' | 'not_postgres' | 'not_managed' | 'no_owner' | 'owner_not_serve' | 'probe_failed'
-      | 'kill_switch' | 'unsupported_flag' | 'no_socket' | 'older_serve' | 'serve_refused' | 'serve_lost'; line: string | null };
+      | 'kill_switch' | 'unsupported_flag' | 'no_socket' | 'build_skew' | 'older_serve' | 'serve_refused' | 'serve_lost'; line: string | null };
 
 /**
  * #6543: only a forced rung (the serve cannot take the run) really runs a consumer beside the serve; on the others this
@@ -589,6 +613,13 @@ export async function maybeDelegateManagedSyncToServe(engine: BrainEngine, args:
     return own('no_socket', fallbackLine(pid, 'the running gbrain serve exposes no sync IPC socket (older gbrain, or GBRAIN_SERVE_SYNC_IPC=0 on the serve)', false,
       sameBuild ? `That serve already runs this gbrain version (v${VERSION}), so restarting it changes nothing here: unset GBRAIN_SERVE_SYNC_IPC=0 on the serve, or read its log for why its sync IPC did not start.` : undefined));
   }
+  // #10537: a serve older than this CLI keeps the code it started with, and after an upgrade on disk its next lazy import
+  // loads the new files into that old module graph, so the drain fails on a missing export. It cannot take this run.
+  const { compareWriterVersions } = await import('../core/persistence/writer-versions.ts');
+  if (owner.version && (compareWriterVersions(owner.version, VERSION) ?? 0) < 0) {
+    return own('build_skew', fallbackLine(pid, `the running gbrain serve is v${owner.version} and this CLI is v${VERSION}, and a serve keeps the build it started with`, true,
+      `Restart it onto the installed build: ${RESTART_SERVE}.`), true);
+  }
   // 5. The hand-off: this CLI's durable writer registration (the one its own consumer would run under).
   dispatch.endSyncDispatchRead();
   const { registerLocalWriter } = await import('../core/persistence/identity.ts');
@@ -641,7 +672,7 @@ export async function maybeDelegateManagedSyncToServe(engine: BrainEngine, args:
     : `[sync] a live gbrain serve (PID ${pid}) owns this host's writes — running the managed catch-up inside it as this CLI's writer (job ${jobId}; Ctrl-C aborts, the cursor is durable).`);
   const polled = await pollDelegatedJob({ sock, secret, jobId, pid, alive: ownerAlive, signal: opts.signal });
   if (polled.kind === 'lost') return own('serve_lost', '[sync] continuing the catch-up with this process\'s own consumer; the durable cursor resumes where the serve left it.');
-  if (polled.kind === 'failed') throw polled.error;
+  if (polled.kind === 'failed') throw serveBuildSkewError(polled.error, { pid, serveVersion: owner.version, canRunBeside: true }) ?? polled.error;
   const { result, pagesAffectedTotal } = syncResultFromWire(polled.result);
   if (pagesAffectedTotal > polled.result.pagesAffected.length) {
     serr(`[sync] (+${pagesAffectedTotal - polled.result.pagesAffected.length} more pages affected — list truncated for the IPC wire)`);
