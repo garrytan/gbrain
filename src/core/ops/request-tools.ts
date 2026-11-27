@@ -175,6 +175,16 @@ async function widenStdioSession(ctx: OperationContext, requested: 'verbs' | 'st
   };
 }
 
+/**
+ * The answer to a persisted surface: runs the caller's tools/list_changed hook when it has one. A served client of a
+ * multi-user Rust brain server calls it too, after the server ran the persist (rust-engine/served/remote-whole-ops.ts).
+ */
+export async function persistedSurfaceAnswer(ctx: OperationContext, surface: string): Promise<Record<string, unknown>> {
+  if (!ctx.notifyToolListChanged) return { persisted: true, surface, note: 're-issue tools/list to see the new catalog' };
+  const sent = await ctx.notifyToolListChanged().then(() => true, () => false);
+  return { persisted: true, surface, note: sent ? 'tools/list_changed was sent; re-issue tools/list to see the new catalog' : 're-issue tools/list to see the new catalog' };
+}
+
 const request_tools: Operation = {
   name: 'request_tools',
   idempotent: false,
@@ -298,9 +308,7 @@ const request_tools: Operation = {
         new: requested,
         via: 'request_tools',
       });
-      if (!ctx.notifyToolListChanged) return { persisted: true, surface: requested, note: 're-issue tools/list to see the new catalog' };
-      const sent = await ctx.notifyToolListChanged().then(() => true, () => false);
-      return { persisted: true, surface: requested, note: sent ? 'tools/list_changed was sent; re-issue tools/list to see the new catalog' : 're-issue tools/list to see the new catalog' };
+      return persistedSurfaceAnswer(ctx, requested);
     }
 
     // A widenable stdio session lists what request_tools {surface} can add, not only what it serves now.

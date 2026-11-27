@@ -14,7 +14,7 @@ import { importFromContent, importFromFile, importImageFile } from '../../import
 import { importManagedFiles } from '../../persistence/import-mutations.ts';
 import { ownerHandoff, ownerIpcRefusal } from './routes.ts';
 import { isRemoteCaller } from '../../remote-caller.ts';
-import { remoteOperationContext, remoteWholeOperation } from '../served/remote-whole-ops.ts';
+import { remoteOperationContext, remoteWholeOperationForm } from '../served/remote-whole-ops.ts';
 import { PERSISTENCE_CLOSING_MESSAGE } from '../../persistence/service.ts';
 import { snapshotStatus, snapshotStore, type SnapshotStoreOptions } from '../store-snapshot.ts';
 import type { OwnerWholeOperation } from './server.ts';
@@ -34,7 +34,8 @@ async function runOperation(engine: BrainEngine, config: GBrainConfig | undefine
   context: unknown, remoteClaim?: unknown): Promise<ForwardedOperationResult> {
   const multiuser = (engine as { openStoreIfOpen?: (m: string) => { multiuser?: boolean } | null }).openStoreIfOpen?.('runOperation')?.multiuser === true;
   // A remote caller's whole operation of the closed list (served wire only; K let it through) runs too.
-  if (typeof name !== 'string' || !(forwardsWhole(name, multiuser) || (multiuser && isRemoteCaller() && remoteWholeOperation(name)))) {
+  if (typeof name !== 'string' || !(forwardsWhole(name, multiuser)
+    || (multiuser && isRemoteCaller() && remoteWholeOperationForm(name, params, (remoteClaim as { auth?: unknown } | null | undefined)?.auth)))) {
     throw ownerIpcRefusal(String(name), 'the brain owner runs only page writes and imports whole');
   }
   if (!params || typeof params !== 'object' || Array.isArray(params)) throw ownerIpcRefusal(name, 'its parameters are not an object');
