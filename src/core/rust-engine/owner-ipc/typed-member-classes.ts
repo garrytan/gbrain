@@ -166,7 +166,7 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'readAdmissionSource', 'readAgentClientSpend', 'readAudiencePrincipals', 'readBeliefHistoryRows',
   'readBodyManifestMeta', 'readBodyManifestOutline', 'readBodyManifestRows', 'readCallerPageAccess',
   'readCanonicalTwin', 'readCapacityForecastInputs', 'readChatUsage', 'readChildCompletions', 'readChronicleBackfillBatch',
-  'readChunkVectorColumn', 'readClientBudgetUsd', 'readClientOpUsage', 'readConsolidationTakesMaxRowNum',
+  'readChunkVectorColumn', 'countEmbedSkipNullChunks', 'countSynopsisTierPages', 'countUnembeddedLiveFacts', 'readEmbeddingColumnTypmod', 'readEmbeddingSignatureCensus', 'readFalseStampedChunkCounts', 'readClientBudgetUsd', 'readClientOpUsage', 'readConsolidationTakesMaxRowNum',
   'readConversationSlotValueHash', 'readCounterRows', 'readCurrentWriteTrust', 'readCursorEdition',
   'readDatabaseClock', 'readDeletePageRequest', 'readDeletedPageBody', 'readDreamDeferralReceipt',
   'readDreamJobStatus', 'readDreamPreRunRevision', 'readDreamSourceIncarnation', 'readDreamVerifyEpoch',

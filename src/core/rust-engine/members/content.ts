@@ -286,6 +286,12 @@ export const CONTENT_MEMBERS = {
 
   // embeddings: the vector catalog (engine-sql/embedding-catalog.ts), read from the per-vector records
   readChunkVectorColumn: 'embeddings',
+  readEmbeddingColumnTypmod: 'embeddings',
+  readEmbeddingSignatureCensus: 'embeddings',
+  countUnembeddedLiveFacts: 'embeddings',
+  countSynopsisTierPages: 'embeddings',
+  countEmbedSkipNullChunks: 'embeddings',
+  readFalseStampedChunkCounts: 'embeddings',
   readEmbeddingIdentity: 'embeddings',
   listEmbeddingStores: 'embeddings',
   hasStoredVectors: 'embeddings',
