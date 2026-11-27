@@ -270,11 +270,19 @@ async function serveRustBrain(owned: RustBrainDir): Promise<RustBrainDir> {
   Object.defineProperty(client, 'openStore', { value: (member: string) => owner.openStore(member), configurable: true, writable: true });
   // The arm closes the server with the client (closeRustBrain); the client's own disconnect and reconnect stay its own.
   servedBehind.set(client, async () => { await listener.close(); await owner.disconnect(); });
+  Object.defineProperty(client, SERVED_OWNER, { value: owner, configurable: true, enumerable: false });
   return { engine: client, dir: owned.dir };
 }
 
 /** The server behind a served arm engine, closed after the engine (closeRustBrain). */
 const servedBehind = new WeakMap<object, () => Promise<void>>();
+/**
+ * The owner engine behind a served arm engine (the same process), for test-only state a case sets on its engine. A symbol
+ * property, not a side table, so the harness's recording proxy (which forwards property reads) finds it.
+ */
+const SERVED_OWNER: unique symbol = Symbol('gbrain.test.served-owner') as never;
+/** The owner engine a served arm engine reaches, or undefined for any other engine. */
+export function servedOwnerOf(engine: object): object | undefined { return (engine as Record<symbol, object | undefined>)[SERVED_OWNER]; }
 
 /** Disconnects an arm engine and, for the served variant, the listener and owner behind it. */
 export async function closeRustBrain(engine: { disconnect(): Promise<void> }): Promise<void> {

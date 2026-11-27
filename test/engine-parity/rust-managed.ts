@@ -13,6 +13,7 @@
 import type { Capability } from '../../src/core/engine-capabilities.ts';
 import { servedCapabilities } from '../../src/core/rust-engine/store-capabilities.ts';
 import { RUST_MANAGED_FLAG, rustManagedRequested } from './arm-capabilities.ts';
+import { servedOwnerOf } from './rust-arm.ts';
 
 export { RUST_MANAGED_FLAG, rustManagedRequested };
 
@@ -24,6 +25,9 @@ export function liftManagedHold<E extends object>(engine: E): E {
   // The hold is a real hold: the lift is only ever this one in-memory set, and the source still withholds the capability.
   if (servedCapabilities().has('managed_persistence')) throw new Error('liftManagedHold: the Rust engine already reports managed_persistence; remove the lift');
   caps.add('managed_persistence');
+  // A served arm engine's members run on its owner engine, whose own set decides the hold there: lift it on both.
+  const owner = servedOwnerOf(engine) as { capabilities?: Set<Capability> } | undefined;
+  if (owner?.capabilities instanceof Set) owner.capabilities.add('managed_persistence');
   return engine;
 }
 
