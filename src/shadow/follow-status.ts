@@ -176,7 +176,7 @@ export function buildFollowStatus(dir: string, state: ShadowState | null, now: D
   // A sample count only a fault line names (a command that could not publish its sent count, a client worker that could not write its count down) is a deficit nobody recorded: it blocks measured for the rest of this epoch (a new epoch clears it), even if the count was written down afterwards.
   const unrecorded = epoch ? readFaults(dir, Infinity).filter((f) => f.kind === 'write_samples_unrecorded' && /^(sent_count|no_epoch) n=/.test(f.detail) && (f.epoch_id === epoch.epoch_id || (f.epoch_id === undefined && Date.parse(f.ts) >= Date.parse(epoch.started_at)))).length : 0;
   const legacy = writes?.legacy_lines ?? 0;
-  const windowsLost = writes?.uncomparable_by_reason?.write_window_lost ?? 0; // windows a crash lost, of unknown size: no evidence for the rest of this epoch (not in `unresolved`: nothing will ever settle them, so the swap's wait must not wait for them)
+  const windowsLost = Math.max(writes?.uncomparable_by_reason?.write_window_lost ?? 0, snapshot.windowFiles); // windows a crash lost, of unknown size: no evidence for the rest of this epoch (not in `unresolved`: nothing will ever settle them, so the swap's wait must not wait for them)
   const unresolved = (writes?.in_flight.length ?? 0) + snapshot.unfolded + receipts.length + unrecorded + snapshot.outstanding.length + (snapshot.unstable ? 1 : 0) + legacy; // a lost sample no tally has taken yet reads as no evidence, like a replay with no verdict
   const everyPass = readPasses(dir);
   const passes = epoch ? everyPass.filter((p) => p.epoch_id === epoch.epoch_id && Date.parse(p.started_at) >= Date.parse(epoch.started_at)) : everyPass;

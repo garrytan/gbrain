@@ -226,15 +226,17 @@ const MAX_OWED = 1_000_000_000_000;
 /**
  * `v: 1` is every record the serving process writes outside a flush window. `v: 2` is the OPEN MARKER of a window (`open_until`: epoch ms): `owed` is one more than it has accepted for the pipe, so every reader sees an unsettled session, and a crash
  * leaves it for the child or an owner worker to book as one `write_window_lost`. An older reader parses only `v: 1`: it reads a marker as unreadable, which is no evidence, never a settled session (it books and removes nothing).
+ * `booked_epoch` (v:2 only): the TOMBSTONE a worker leaves in place of the marker once the window is booked into that epoch. The file stays, so an older reader (which cannot read it) keeps reading the epoch as unresolved, and a reader of this
+ * version counts it as one lost window. A tombstone that names another epoch is stale: the next pass removes it.
  */
-export interface OwedRecord { v: 1 | 2; session: string; serving_pid: number; child_pid?: number; owed: number; closed: boolean; child_exited: boolean; open_until?: number }
+export interface OwedRecord { v: 1 | 2; session: string; serving_pid: number; child_pid?: number; owed: number; closed: boolean; child_exited: boolean; open_until?: number; booked_epoch?: string }
 function parseOwed(path: string): OwedRecord | null | 'unreadable' {
   let text: string;
   try { text = readFileSync(path, 'utf8'); } catch (e) { return (e as NodeJS.ErrnoException).code === 'ENOENT' ? null : 'unreadable'; }
   try {
     const f = JSON.parse(text) as Partial<OwedRecord>;
-    if ((f?.v !== 1 && f?.v !== 2) || (f.v === 2) !== (f.open_until !== undefined) || (f.open_until !== undefined && (!Number.isSafeInteger(f.open_until) || f.open_until < 0)) || typeof f.session !== 'string' || !Number.isSafeInteger(f.owed) || f.owed! < 0 || f.owed! > MAX_OWED || !Number.isSafeInteger(f.serving_pid) || typeof f.closed !== 'boolean' || typeof f.child_exited !== 'boolean' || (f.child_pid !== undefined && !Number.isSafeInteger(f.child_pid))) return 'unreadable';
-    return { v: f.v, session: f.session, serving_pid: f.serving_pid!, ...(f.child_pid !== undefined ? { child_pid: f.child_pid } : {}), owed: f.owed!, closed: f.closed, child_exited: f.child_exited, ...(f.open_until !== undefined ? { open_until: f.open_until } : {}) };
+    if ((f?.v !== 1 && f?.v !== 2) || (f.v === 2) !== (f.open_until !== undefined) || (f.open_until !== undefined && (!Number.isSafeInteger(f.open_until) || f.open_until < 0)) || (f.booked_epoch !== undefined && (f.v !== 2 || typeof f.booked_epoch !== 'string' || f.booked_epoch === '')) || typeof f.session !== 'string' || !Number.isSafeInteger(f.owed) || f.owed! < 0 || f.owed! > MAX_OWED || !Number.isSafeInteger(f.serving_pid) || typeof f.closed !== 'boolean' || typeof f.child_exited !== 'boolean' || (f.child_pid !== undefined && !Number.isSafeInteger(f.child_pid))) return 'unreadable';
+    return { v: f.v, session: f.session, serving_pid: f.serving_pid!, ...(f.child_pid !== undefined ? { child_pid: f.child_pid } : {}), owed: f.owed!, closed: f.closed, child_exited: f.child_exited, ...(f.open_until !== undefined ? { open_until: f.open_until } : {}), ...(f.booked_epoch !== undefined ? { booked_epoch: f.booked_epoch } : {}) };
   } catch { return 'unreadable'; }
 }
 /** The owed record of `session`: the record, null (none), or `'unreadable'` (there, and not usable: never the same as none). */
@@ -327,23 +329,25 @@ const SNAPSHOT_TRIES = 3;
  * differs, and the read is repeated (at most `SNAPSHOT_TRIES`), then read as unresolved (`unstable`), never as measured. `outstanding`: sessions whose owed count is above what is settled (or whose file cannot be read), by name.
  * Reading the owed files first could let a later settled sample hide an earlier unsettled one.
  */
-export interface WriteSnapshot { writes: WriteTallyFile | null; unfolded: number; outstanding: string[]; unstable: boolean }
+export interface WriteSnapshot { writes: WriteTallyFile | null; unfolded: number; outstanding: string[]; unstable: boolean; windowFiles: number }
 export function readWriteSnapshot(dir: string, epoch: string | null, between?: (stage: 'tally' | 'lines' | 'owed') => void): WriteSnapshot { // `between`: a seam for tests, called after each read
   for (let attempt = 0; attempt < SNAPSHOT_TRIES; attempt++) {
     const before = tallyIdentity(dir);
     const writes = readWriteTally(dir, epoch); between?.('tally');
     const lines = unfoldedLines(dir, epoch, writes?.lost_applied, writes?.line_seq); between?.('lines');
     const owed = epoch === null ? { keys: [], failed: false } : listOwed(dir); between?.('owed');
-    const outstanding: string[] = owed.failed ? ['write-owed.*'] : [];
+    const outstanding: string[] = owed.failed ? ['write-owed.*'] : []; let windowFiles = 0; // windowFiles: settled open markers and tombstones of THIS epoch, each one lost window (an older owner can credit a window's samples under another reason, so the file is the record)
     for (const key of owed.keys) {
       const rec = readOwed(dir, key);
       if (rec === null) continue; // removed since the listing: settled before the tally's identity is read again
       if (rec === 'unreadable') { outstanding.push(`write-owed.${key}.json`); continue; }
+      if (rec.booked_epoch !== undefined && rec.booked_epoch !== epoch) continue; // a tombstone of another epoch: nothing of this one
       if (rec.owed > (writes?.settled?.[key] ?? 0) + (lines.bySession[key] ?? 0)) outstanding.push(`write-owed.${key}.json`);
+      else if (rec.v === 2) windowFiles++;
     }
-    if (tallyIdentity(dir) === before) return { writes, unfolded: lines.outcomes, outstanding, unstable: false };
+    if (tallyIdentity(dir) === before) return { writes, unfolded: lines.outcomes, outstanding, unstable: false, windowFiles };
   }
-  return { writes: readWriteTally(dir, epoch), unfolded: 0, outstanding: [], unstable: true };
+  return { writes: readWriteTally(dir, epoch), unfolded: 0, outstanding: [], unstable: true, windowFiles: 0 };
 }
 
 const MAX_KEYS = 64;
@@ -511,7 +515,7 @@ export class WriteTally {
     if (epoch === null || !this.alive() || this.retired || readEpoch(this.dir)?.epoch_id !== epoch) return;
     try {
       const names = readdirSync(this.dir);
-      let booked = false; const removable: Array<{ key: string; owed: number }> = [];
+      let booked = false; const removable: Array<{ key: string; owed: number; tomb?: OwedRecord }> = []; const stale: string[] = [];
       let tally: WriteTallyFile | null = null; try { tally = loadTally(this.dir); } catch { return; } // silent-read-ok: a tally that cannot be read settles nothing now
       const lines = unfoldedLines(this.dir, epoch, tally?.lost_applied, tally?.line_seq);
       for (const name of names) {
@@ -519,6 +523,7 @@ export class WriteTally {
         if (key === undefined || key === this.key) continue; // this child's own session is settled at the end of its input
         const path = join(this.dir, name); const rec = parseOwed(path);
         if (rec === null || rec === 'unreadable') continue;
+        if (rec.booked_epoch !== undefined) { if (rec.booked_epoch !== epoch) stale.push(key); continue; } // a tombstone: it stays for as long as its epoch does, and goes with it
         const age = Date.now() - statSync(path).mtimeMs;
         const orphaned = rec.child_exited || (rec.child_pid !== undefined && rec.child_pid > 1 && !running(rec.child_pid)) || (rec.closed && age > STALE_RECEIPT_MS) || (rec.serving_pid > 1 && !running(rec.serving_pid) && age > STALE_RECEIPT_MS);
         if (!orphaned && !rec.closed) continue;
@@ -529,13 +534,14 @@ export class WriteTally {
           if (window > 0 && recordLostCount(this.dir, epoch, WINDOW_LOST_REASON, window, key) < window) continue;
           booked = true;
         }
-        removable.push({ key, owed: rec.owed });
+        removable.push({ key, owed: rec.owed, ...(rec.v === 2 ? { tomb: rec } : {}) });
       }
       if (booked && !this.update()) return;
       for (const r of removable) {
         let fresh: WriteTallyFile | null = null; try { fresh = loadTally(this.dir); } catch { continue; } // silent-read-ok: the file stays; status reads its deficit
-        if ((fresh?.settled?.[r.key] ?? 0) >= r.owed) removeOwed(this.dir, r.key);
+        if ((fresh?.settled?.[r.key] ?? 0) >= r.owed) { if (r.tomb) writeOwed(this.dir, { ...r.tomb, booked_epoch: epoch }); else removeOwed(this.dir, r.key); } // a booked window stays as a tombstone (see OwedRecord): the one thing an older reader cannot misread
       }
+      for (const key of stale) removeOwed(this.dir, key);
       for (const name of names.filter((n) => RECEIPT_NAME.test(n))) {
         const path = join(this.dir, name); const r = parseReceipt(path);
         if (r === null || r === 'unreadable') continue;

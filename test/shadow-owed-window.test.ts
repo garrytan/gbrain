@@ -55,7 +55,8 @@ describe('OWC: a window of owed samples (design C: open marker, full record at c
     const owner = new WriteTally(dir, () => epoch, () => true, process.pid); owner.recover(); owner.save();
     expect(readWriteTally(dir, epoch)!.uncomparable_by_reason).toEqual({ write_window_lost: 1 }); // was receipt_orphaned: 5 (samples the window held are booked under the old, silent-count reason)
     expect(stat(dir)).toMatchObject({ state: 'capability_missing', comparable: 1000, unexplained_difference: 0, write_windows_lost: 1 }); // not measured for the rest of the epoch; was measured
-    expect(readdirSync(dir).filter((n) => n.startsWith('write-owed.'))).toEqual([]); // settled: the file is gone
+    const files = readdirSync(dir).filter((n) => n.startsWith('write-owed.')); expect(files).toHaveLength(1); // settled, and kept: a v:2 tombstone naming this epoch (an older reader cannot read it, so it keeps reading the epoch as unresolved)
+    expect(parseTomb(dir, files[0]!)).toMatchObject({ v: 2, booked_epoch: epoch });
     const again = new WriteTally(dir, () => epoch, () => true, process.pid); again.recover(); again.save();
     expect(readWriteTally(dir, epoch)!.uncomparable_by_reason).toEqual({ write_window_lost: 1 }); // once
   }, 60_000);
@@ -122,6 +123,7 @@ function rig(overrides: Record<string, unknown> = {}) {
   const internals = sup as unknown as { windowOpen: boolean; closing: boolean; windowTimer: { hasRef(): boolean } | null; flushStaged(): boolean };
   return { dir, epoch, sup, children, sessions, written, state, dead, internals, owed: (i = 0) => readOwed(dir, sessions[i]!), done: () => sup.stop() };
 }
+const parseTomb = (dir: string, name: string): unknown => JSON.parse(readFileSync(join(dir, name), 'utf8'));
 const ownerPass = (dir: string, epoch: string): Record<string, number> => { const o = new WriteTally(dir, () => epoch, () => true, process.pid); o.recover(); o.save(); return readWriteTally(dir, epoch)!.uncomparable_by_reason; };
 
 describe('OWC: the window on the supervisor', () => {
@@ -178,6 +180,40 @@ describe('OWC: the window on the supervisor', () => {
       r.state.fault = null; r.sup.closeOwed(); // stop, drain and the exit hook all close: the stray marker is replaced, so a crash cannot read it as a lost window
       expect(r.owed()).toMatchObject({ v: 1, owed: 0, closed: true });
       expect(ownerPass(r.dir, r.epoch)).toEqual({}); // nothing owed, nothing lost
+    } finally { r.done(); }
+  });
+});
+
+describe('OWC ship-p1 R2: a first marker that was renamed and then threw is replaced without waiting for another sample or a shutdown', () => {
+  test('the worker exits after the disk recovers: the exit-time record replaces the marker (v:1, nothing owed), so the next owner books no window and status stays measured', () => {
+    const r = rig();
+    try {
+      r.state.fault = 'after-rename'; expect(r.sup.send(sample(0))).toBe(false);
+      expect(r.owed()).toMatchObject({ v: 2, owed: 1 });
+      r.state.fault = null; r.children[0]!.emit('exit', 1, null);
+      expect(r.owed()).toMatchObject({ v: 1, owed: 0, child_exited: true });
+      expect(ownerPass(r.dir, r.epoch)).toEqual({}); expect(stat(r.dir).state).toBe('measured');
+    } finally { r.done(); }
+  });
+
+  test('a quiet process (no further sample, no exit, no stop): the retry timer replaces the marker by itself, and keeps trying while the disk keeps failing', async () => {
+    const r = rig();
+    try {
+      r.state.fault = 'after-rename'; expect(r.sup.send(sample(0))).toBe(false);
+      r.state.fault = 'before-rename'; await sleep(60); expect(r.owed()).toMatchObject({ v: 2 }); // the disk still fails: the marker stands, the retry goes on
+      r.state.fault = null; await sleep(60);
+      expect(r.owed()).toMatchObject({ v: 1, owed: 0 }); expect(r.internals.windowOpen).toBe(false);
+      expect(ownerPass(r.dir, r.epoch)).toEqual({}); expect(stat(r.dir).state).toBe('measured');
+    } finally { r.done(); }
+  });
+
+  test('the exit-time write fails as well: nothing is hidden, the marker stands and reads as the one lost window (fail closed), never as measured', () => {
+    const r = rig();
+    try {
+      r.state.fault = 'after-rename'; expect(r.sup.send(sample(0))).toBe(false);
+      r.state.fault = 'before-rename'; r.children[0]!.emit('exit', 1, null); // the exit-time record cannot be written: the marker stands
+      expect(r.owed()).toMatchObject({ v: 2 });
+      expect(stat(r.dir).state).not.toBe('measured');
     } finally { r.done(); }
   });
 });
@@ -382,7 +418,7 @@ describe('OWC F3: a window is booked once, by whichever pass finds its session o
       expect(readOwed(dir, key)).toMatchObject({ v: 2 }); // the child lives and the record is not closed: not orphaned
       await serving.killWorker();
       expect(ownerPass(dir, epoch)).toEqual({ write_window_lost: 1 });
-      expect(readWriteTally(dir, epoch)!.settled?.[key]).toBe(1); expect(readOwed(dir, key)).toBeNull();
+      expect(readWriteTally(dir, epoch)!.settled?.[key]).toBe(1); expect(readOwed(dir, key)).toMatchObject({ v: 2, booked_epoch: epoch });
       expect(ownerPass(dir, epoch)).toEqual({ write_window_lost: 1 }); // nothing more
     } finally { await serving.kill(); }
   }, 60_000);
@@ -403,7 +439,7 @@ describe('OWC F3: a window is booked once, by whichever pass finds its session o
       expect(readWriteTally(dir, epoch)!.uncomparable_by_reason).toEqual({ write_window_lost: 1 }); expect(readOwed(dir, key)).not.toBeNull();
       await serving.killWorker();
       expect(ownerPass(dir, epoch)).toEqual({ write_window_lost: 1 }); // the pass found nothing left to book
-      expect(readWriteTally(dir, epoch)!.settled?.[key]).toBe(1); expect(readOwed(dir, key)).toBeNull();
+      expect(readWriteTally(dir, epoch)!.settled?.[key]).toBe(1); expect(readOwed(dir, key)).toMatchObject({ v: 2, booked_epoch: epoch });
     } finally { await serving.kill(); }
   }, 60_000);
 });
@@ -416,7 +452,7 @@ describe('OWC F4: a lost window is always countable, even when the reason map is
     writeOwed(dir, { v: 2, session: 'w1', serving_pid: deadPid(), child_pid: deadPid(), owed: 1, closed: false, child_exited: false, open_until: 1 });
     const booked = ownerPass(dir, epoch);
     expect(booked[WINDOW_LOST_REASON]).toBe(1); expect(booked.other).toBeUndefined(); expect(Object.keys(booked)).toHaveLength(65);
-    expect(readdirSync(dir).filter((n) => n.startsWith('write-owed.'))).toEqual([]); // settled and removed
+    expect(readOwed(dir, 'w1')).toMatchObject({ v: 2, booked_epoch: epoch }); // settled, kept as the tombstone
     const again = new WriteTally(dir, () => epoch, () => true, process.pid, 'w2'); again.note('comparable', undefined, 1, false, 0); again.save(); // a later save folds again
     expect(readWriteTally(dir, epoch)!.uncomparable_by_reason[WINDOW_LOST_REASON]).toBe(1);
     const w = stat(dir);
@@ -424,6 +460,36 @@ describe('OWC F4: a lost window is always countable, even when the reason map is
     const verdict = evaluateReadiness({ write_comparisons: { ...w } } as unknown as ShadowStatus, NOW);
     const row = verdict.criteria.find((c) => c.n === 5)!;
     expect(row.state).not.toBe('pass'); expect(row.detail).toContain('1 write window(s) lost in a crash');
+  });
+});
+
+describe('OWC ship-p1 R1: a settled window loss is still a loss to every reader (the tombstone)', () => {
+  const orphan = (dir: string, key = 'w1'): void => writeOwed(dir, { v: 2, session: key, serving_pid: deadPid(), child_pid: deadPid(), owed: 3, closed: false, child_exited: false, open_until: 1 });
+  test('after the window is booked the v:2 file stays as a tombstone: the frozen 692d2614c9 parser still cannot read it (an older reader keeps reading the epoch as unresolved), this version counts it, and a second pass books nothing', () => {
+    const dir = tmp(); const { epoch } = tallyOn(dir); passing(dir, epoch); orphan(dir);
+    expect(ownerPass(dir, epoch)).toEqual({ receipt_orphaned: 2, write_window_lost: 1 });
+    expect(oldBooks(dir, 'w1')).toBe('skips'); // what the older status and swap reader sees: an unreadable file, no evidence
+    expect(oldParseOwed(owedPath(dir, 'w1'))).toBe('unreadable');
+    expect(stat(dir)).toMatchObject({ state: 'capability_missing', write_windows_lost: 1 }); expect(stat(dir).outstanding_sessions ?? []).toEqual([]); // booked: nothing is outstanding in this version
+    expect(ownerPass(dir, epoch)).toEqual({ receipt_orphaned: 2, write_window_lost: 1 }); expect(readOwed(dir, 'w1')).toMatchObject({ v: 2, booked_epoch: epoch });
+  });
+  test('an older owner credited the window under another reason (its reason map was full, so the journal line folded into other): the file is the record, and this version still reads one lost window', () => {
+    const dir = tmp(); const { epoch } = tallyOn(dir); passing(dir, epoch, { uncomparable: 64, uncomparable_by_reason: Object.fromEntries(Array.from({ length: 64 }, (_, i) => [`reason_${i}`, 1])) });
+    orphan(dir);
+    const older = new WriteTally(dir, () => epoch, () => true, process.pid, 'w1'); older.note('uncomparable', 'other', 3, false, 3); older.save(); // settles all 3 samples with no write_window_lost anywhere
+    expect(readWriteTally(dir, epoch)!.uncomparable_by_reason.write_window_lost).toBeUndefined();
+    expect(stat(dir)).toMatchObject({ state: 'capability_missing', write_windows_lost: 1 }); // was measured: the loss was invisible
+    const s = stat(dir); expect(s.comparable).toBe(1000); expect(s.unexplained_difference).toBe(0);
+    ownerPass(dir, epoch); expect(readOwed(dir, 'w1')).toMatchObject({ v: 2, booked_epoch: epoch }); // the pass keeps it as the tombstone
+    expect(stat(dir)).toMatchObject({ state: 'capability_missing', write_windows_lost: 1 });
+  });
+  test('a tombstone of another epoch counts for nothing in this one, and the next pass removes it; a tombstone parses only as v:2', () => {
+    const dir = tmp(); const { epoch } = tallyOn(dir); passing(dir, epoch);
+    writeOwed(dir, { v: 2, session: 'w1', serving_pid: 1, owed: 3, closed: false, child_exited: false, open_until: 1, booked_epoch: 'an-earlier-epoch' });
+    expect(stat(dir)).toMatchObject({ state: 'measured' }); expect(stat(dir).write_windows_lost).toBeUndefined();
+    expect(ownerPass(dir, epoch)).toEqual({}); expect(readOwed(dir, 'w1')).toBeNull();
+    writeFileSync(owedPath(dir, 'w2'), JSON.stringify({ v: 1, session: 'w2', serving_pid: 1, owed: 1, closed: true, child_exited: false, booked_epoch: epoch }) + '\n');
+    expect(readOwed(dir, 'w2')).toBe('unreadable');
   });
 });
 
@@ -443,7 +509,7 @@ describe('OWC: the child books a window the serving process never closed', () =>
     return { by: tally.uncomparable_by_reason, settled: tally.settled, fileLeft, after, gone: readOwed(dir, 'sess-1') === null };
   });
   test('an open marker (v:2) at the end of the input: the child books ONE write_window_lost (not pipe_unflushed) and settles the session; the owner pass then books nothing more', async () => {
-    expect(await run({ v: 2, owed: 1, serving_pid: deadPid(), child_pid: deadPid(), open_until: Date.now() + 60_000 }, '')).toEqual({ by: { [WINDOW_LOST_REASON]: 1 }, settled: { 'sess-1': 1 }, fileLeft: true, after: { [WINDOW_LOST_REASON]: 1 }, gone: true }); // the child leaves an unclosed record; the owner pass books nothing twice
+    expect(await run({ v: 2, owed: 1, serving_pid: deadPid(), child_pid: deadPid(), open_until: Date.now() + 60_000 }, '')).toEqual({ by: { [WINDOW_LOST_REASON]: 1 }, settled: { 'sess-1': 1 }, fileLeft: true, after: { [WINDOW_LOST_REASON]: 1 }, gone: false }); // the child leaves an unclosed record; the owner pass books nothing twice and keeps it as the tombstone
   }, 30_000);
   test('a full record (v:1) the child did not get everything of is booked pipe_unflushed, as before (no window was lost)', async () => {
     expect(await run({ v: 1, owed: 1, closed: true }, '')).toEqual({ by: { pipe_unflushed: 1 }, settled: { 'sess-1': 1 }, fileLeft: false, after: { pipe_unflushed: 1 }, gone: true });

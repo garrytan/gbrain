@@ -118,6 +118,7 @@ export class ShadowSupervisor implements MirrorTransport {
   private stagedBytes = 0;
   private flushScheduled = false;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
+  private strayTimer: ReturnType<typeof setTimeout> | null = null;
   /** Write samples (with the losses they carry) accepted for the current child, sent or staged: the count the owed record states, so the child can settle what its pipe never delivered. */
   private acceptedWeight = 0;
   private owedWritten = ''; // the record `writeOwedRecord` last made durable (session, count and flags)
@@ -213,7 +214,7 @@ export class ShadowSupervisor implements MirrorTransport {
   private openWindow(): boolean {
     if (!this.session) return false;
     const rec: OwedRecord = { v: 2, session: this.session, serving_pid: process.pid, ...(this.child?.pid ? { child_pid: this.child.pid } : {}), owed: this.acceptedWeight + 1, closed: false, child_exited: false, open_until: this.o.now() + this.o.owedWindowMs };
-    try { this.o.writeOwed(this.o.dir, rec); } catch { this.markerStray = true; return false; }
+    try { this.o.writeOwed(this.o.dir, rec); } catch { this.markerStray = true; this.armStrayRepair(); return false; } // the marker may stand: a retry replaces it with a record that states what was accepted, with or without another sample
     this.markerStray = false; this.owedWritten = `${this.session}:open:${rec.owed}`; this.windowOpen = true;
     return true;
   }
@@ -236,7 +237,7 @@ export class ShadowSupervisor implements MirrorTransport {
    * unless the record that owes it is on disk. True when nothing is left staged.
    */
   private flushStaged(closed = false): boolean {
-    if (this.staged.length === 0 && !this.oweDirty) return true;
+    if (this.staged.length === 0 && !this.oweDirty && !this.markerStray) return true; // a stray marker is replaced even when nothing is staged
     if (this.windowOpen) this.closing = true; // before the write: it may rename and then throw (see `closing`)
     if (!this.writeOwedRecord(closed)) { this.scheduleRetry(); return false; }
     this.oweDirty = false; this.markerStray = false; this.endWindow();
@@ -249,6 +250,13 @@ export class ShadowSupervisor implements MirrorTransport {
       } catch { this.forget(entry); }
     }
     return true;
+  }
+
+  /** A marker that may stand with nothing staged behind it has no flush coming: this timer replaces it with the record of what was accepted (nothing), so a quiet process does not stay unsettled. It keeps its own timer: a pending retry makes `send` skip the window. */
+  private armStrayRepair(): void {
+    if (this.strayTimer) return;
+    this.strayTimer = setTimeout(() => { this.strayTimer = null; if (this.markerStray && !this.windowOpen) this.flushStaged(); } /* a failed write schedules its own retry */, this.o.retryMs);
+    (this.strayTimer as { unref?: () => void }).unref?.();
   }
 
   private scheduleRetry(): void {
@@ -266,7 +274,7 @@ export class ShadowSupervisor implements MirrorTransport {
     if (this.owedWritten === mark) return true;
     try {
       this.o.writeOwed(this.o.dir, { v: 1, session: this.session, serving_pid: process.pid, ...(this.child?.pid ? { child_pid: this.child.pid } : {}), owed: this.acceptedWeight, closed, child_exited: exited });
-      this.owedWritten = mark; this.closedRecord = closed; this.childExited = exited;
+      this.owedWritten = mark; this.closedRecord = closed; this.childExited = exited; this.markerStray = false; // a full record replaced any marker this process left
       return true;
     } catch { return false; }
   }
@@ -294,6 +302,7 @@ export class ShadowSupervisor implements MirrorTransport {
     for (const { entry } of lines) this.forget(entry);
     this.endWindow();
     if (this.retryTimer) { clearTimeout(this.retryTimer); this.retryTimer = null; }
+    if (this.strayTimer) { clearTimeout(this.strayTimer); this.strayTimer = null; }
   }
 
   /**
@@ -453,7 +462,7 @@ export class ShadowSupervisor implements MirrorTransport {
 
   private onExit(child: ChildProcess | null, code: number | null, signal: string | null): void {
     if (child && this.child !== child) return;
-    if (child && this.acceptedWeight > 0) this.writeOwedRecord(false, true); // durable before anything about this session is reset: the next owner worker settles what the dead child never did
+    if (child && (this.acceptedWeight > 0 || this.markerStray)) this.writeOwedRecord(false, true); // durable before anything about this session is reset: the next owner worker settles what the dead child never did
     this.dropStaged();
     this.child = null; liveSupervisors.delete(this);
     this.clearWatchdog();
