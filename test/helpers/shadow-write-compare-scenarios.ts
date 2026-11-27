@@ -1679,6 +1679,9 @@ export function defineFenceNegatives(ctx: WriteCompareContext): void {
       await operationsByName.put_page.handler(opCtx(wrapped), { slug: 'notes/control', content: '---\ntitle: Control\ntype: note\n---\nControl mentions [[people/alice-example]].\n' });
       await until(() => ofPage(inbox, 'notes/control').length >= 1);
       expect(Boolean(ofPage(inbox, 'notes/control')[0]!.moved)).toBe(false);
+      // The page's links effect adds its mention link after the commit, and that link write is sampled and read back too: wait for its sample, so its
+      // read-back (a getPage on the primary) is over before a test arms `between` for the next write's read-back, and cannot take that hook.
+      await until(() => inbox.some((e) => e.op === 'addLinksBatch'));
     }
     /** Alice and Bob exist and are linked. A link write between them copies both pages and the links between the two; a put of Alice copies only Alice. */
     const linked = async () => { await fresh(); await primary().putPage('people/bob-example', page('Bob Example')); await primary().addLink('people/alice-example', 'people/bob-example', 'knows', 'knows'); };
