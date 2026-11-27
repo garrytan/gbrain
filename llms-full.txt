@@ -6232,10 +6232,13 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   on the transaction's driver handle (`tx.sql` as a tagged template or `unsafe`, `tx.db.query`, `tx.db.exec`, or on
   PGLite the `tx.db.sql` template) goes through the lane and the follower as `executeRaw` does, however it is started
   (awaited, `execute()`, `forEach()` or a cursor), as the text the driver sends. A structural value the shadow cannot
-  render makes that write an invalidation, and `describe()` counts as a read. Only the handle's `begin`, `savepoint`
-  and `reserve` are not seen. A nested transaction that waits for a later call of its enclosing transaction while a
-  read waits for it stalls until the 2-second bound; the read then skips, the write is sent at once, described
-  relation-level, and the later calls follow it, so the transaction commits what it commits with shadow off. The coverage watermark says whether every
+  render makes that write an invalidation, and `describe()` counts as a read. Such a write is followed; when it is
+  sampled it counts as `capability_missing` in the `raw_sql` family and is not compared. The handle's other members are not seen,
+  including ones that send a statement: postgres.js `file`, `notify` and `savepoint`, and PGLite `transaction`,
+  `describeQuery`, `listen` and `execProtocol*`. A nested transaction that waits for a later call of its enclosing
+  transaction while a read waits for it stalls until the 2-second bound; the read then skips, the write is sent at
+  once, described relation-level, and the later calls follow it, so the transaction commits what it commits with
+  shadow off. The coverage watermark says whether every
   committed write is in the store. It goes invalid on a shed, a gap in the write sequence, a failed read, a relation
   the follower cannot describe row by row (which then needs a pass for that relation), or rows the store had to
   displace. **Every session that owns the store starts invalid**, even after a clean stop, and becomes valid again
