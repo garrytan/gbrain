@@ -128,6 +128,9 @@ describe('renderers', () => {
     expect(renderMemoryText([tool])).toBe('[2026-11-01] - Prefers aisle seats (from a tool, not confirmed by you)\n');
     expect(renderMuseBlock([tool])).toContain('- Prefers aisle seats (from a tool, not confirmed by you)');
     expect(renderMemoryText([fact({})])).toBe('[2026-11-01] - Eats vegetarian\n');
+    // #10288: a fact with no event date exports as a plain item that imports back.
+    expect(renderMemoryText([fact({ valid_from: '' })])).toBe('- Eats vegetarian\n');
+    expect(planImport(renderMemoryText([fact({ valid_from: '' })]), 'memory-text').items.map(i => i.fact)).toEqual(['Eats vegetarian']);
   });
 
   test('a fact from an outside source keeps its label too, in every format', () => {

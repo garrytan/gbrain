@@ -27,13 +27,13 @@ beforeAll(async () => {
     // Two different people who share a name and slug, one per source.
     await importFromContent(engine, 'people/sam-example',
       `---\ntitle: Sam Example\ntype: person\n---\n\n# Sam Example\n\nThe ${source} Sam.\n`, { noEmbed: true, sourceId: source });
-    await asOwner(engine, tx => tx.insertFact({ fact: `fact about the ${source} Sam`, entity_slug: 'people/sam-example', source: 'note', visibility: 'world', embedding: null }, { source_id: source }));
+    await asOwner(engine, tx => tx.insertFact({ valid_from: new Date(), fact: `fact about the ${source} Sam`, entity_slug: 'people/sam-example', source: 'note', visibility: 'world', embedding: null }, { source_id: source }));
     // One person with a page in each source, linked by an identity group.
     await importFromContent(engine, 'people/theo-example',
       `---\ntitle: Theo Example\ntype: person\n---\n\n# Theo Example\n`, { noEmbed: true, sourceId: source });
-    await asOwner(engine, tx => tx.insertFact({ fact: `theo fact from ${source}`, entity_slug: 'people/theo-example', source: 'note', visibility: 'world', embedding: null }, { source_id: source }));
+    await asOwner(engine, tx => tx.insertFact({ valid_from: new Date(), fact: `theo fact from ${source}`, entity_slug: 'people/theo-example', source: 'note', visibility: 'world', embedding: null }, { source_id: source }));
   }
-  await asOwner(engine, tx => tx.insertFact({ fact: 'only-default fact', entity_slug: 'people/uma-example', source: 'note', visibility: 'world', embedding: null }, { source_id: 'default' }));
+  await asOwner(engine, tx => tx.insertFact({ valid_from: new Date(), fact: 'only-default fact', entity_slug: 'people/uma-example', source: 'note', visibility: 'world', embedding: null }, { source_id: 'default' }));
   await linkEntityIdentity(engine, { entityId: 'theo', slug: 'people/theo-example', sourceId: 'default' });
   await linkEntityIdentity(engine, { entityId: 'theo', slug: 'people/theo-example', sourceId: 'team' });
 });

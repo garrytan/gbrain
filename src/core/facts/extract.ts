@@ -79,7 +79,7 @@ export async function resolveFactsExtractionModel(engine?: BrainEngine): Promise
   const resolved = await resolveModelDetailed(engine ?? null, {
     configKey: 'facts.extraction_model',
     tier: 'reasoning',
-    fallback: 'anthropic:claude-sonnet-4-6',
+    fallback: 'anthropic:claude-sonnet-5-5',
   });
   // resolveModel returns bare model ids when resolving via tier defaults; ensure
   // the result keeps a provider prefix so gateway.chat() can route it (and slash

@@ -139,9 +139,9 @@ export function staleReason(proposal: Pick<ProposalRow, 'source_id'>, oldF: Pair
   return null;
 }
 
-/** The old fact's validity end on accept (supersede-interval.ts's rule), or undefined when the pair carries no dates. */
-const acceptedUntil = (oldF: PairFact, newF: PairFact): Date | undefined =>
-  oldF.valid_from ? supersededValidUntil({ valid_from: oldF.valid_from, valid_until: oldF.valid_until }, newF.valid_from ? new Date(newF.valid_from) : null) : undefined;
+/** The old fact's validity end on accept (supersede-interval.ts's rule; an old fact with no event date has no lower bound). */
+const acceptedUntil = (oldF: PairFact, newF: PairFact, now?: Date): Date =>
+  supersededValidUntil({ valid_from: oldF.valid_from ?? null, valid_until: oldF.valid_until }, newF.valid_from ? new Date(newF.valid_from) : null, now);
 
 /** The old fact's fence row struck as superseded (with `#N` when the new fact lives on the same page), ending where the rule says. */
 export function planAcceptFence(body: string, oldF: PairFact, newF: PairFact, today: string): { body: string; before: ParsedFact; after: ParsedFact } | null {
@@ -149,7 +149,7 @@ export function planAcceptFence(body: string, oldF: PairFact, newF: PairFact, to
   const before = parseFactsFence(body).facts.find((f) => f.rowNum === oldF.row_num);
   if (!before) return null;
   const newRow = newF.source_markdown_slug === oldF.source_markdown_slug && newF.row_num !== null ? newF.row_num : null;
-  const until = acceptedUntil(oldF, newF);
+  const until = acceptedUntil(oldF, newF, new Date(today));
   const struck = strikeFenceRow(body, oldF.row_num, (f) => supersededFact(f, today, newRow, until && formatFenceDate(until)));
   if (struck === null) return null;
   const after = parseFactsFence(struck).facts.find((f) => f.rowNum === oldF.row_num);

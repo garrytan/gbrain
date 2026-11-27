@@ -1048,8 +1048,8 @@ async function runPipelineBodyInner(
       visibility,
       confidence: f.confidence,
       // #4206: extractor-derived date wins; then the caller's event time
-      // (historical imports); then import time.
-      validFrom: factEventTime(f, ctx) ?? new Date(),
+      // (historical imports); otherwise unknown (#10288).
+      validFrom: factEventTime(f, ctx) ?? null,
       embedding: f.embedding ?? null,
       embedding_model: f.embedding_model ?? null, attributedTo: f.attributed_to ?? undefined,
       sessionId: f.source_session ?? null,

@@ -265,10 +265,10 @@ describe('H1a keyless MCP journey (stdio)', () => {
     // The imported pages, plus memory/unattributed: a fact remembered without an entity is a row of its fence (GBRA-190 G4).
     expect(result.results.length).toBe(PAGES + 1);
     // Keyless on purpose: keyword-only is how this brain was set up, not a degraded result, so no degraded notice.
-    // A recall that passes only `query` still carries the recall_hint (TC7) naming `question`.
-    expect(noticeBlocks(recalled).map(b => b.split('\n')[0])).toEqual(['[gbrain notice recall_hint kind=info]']);
-    expect(recalled._meta?.gbrain_notices?.map((n: { code: string }) => n.code)).toEqual(['recall_hint']);
-    expect(result.facts_order).toBe('newest');
+    // A recall that passes only `query` ranks its facts by that query (#10225), so it carries no notice at all.
+    expect(noticeBlocks(recalled)).toEqual([]);
+    expect(recalled._meta?.gbrain_notices).toBeUndefined();
+    expect(result.facts_order).toBe('relevance');
 
     // A brain missing the key it is configured to use still gets the degraded notice: its own prefixed block
     // (the model sees it), mirrored in _meta.
@@ -279,9 +279,9 @@ describe('H1a keyless MCP journey (stdio)', () => {
     expect(degraded.content[0].text.startsWith(NOTICE_PREFIX)).toBe(false);
     expect(JSON.stringify(body(degraded))).toContain(MARKER);
     const blocks = noticeBlocks(degraded);
-    expect(blocks.map(b => b.split('\n')[0])).toEqual(['[gbrain notice degraded_recall kind=degraded]', '[gbrain notice recall_hint kind=info]']);
+    expect(blocks.map(b => b.split('\n')[0])).toEqual(['[gbrain notice degraded_recall kind=degraded]']);
     expect(blocks[0]).toContain('never as "the brain has nothing on this"');
-    expect(degraded._meta?.gbrain_notices?.map((n: { code: string }) => n.code)).toEqual(['degraded_recall', 'recall_hint']);
+    expect(degraded._meta?.gbrain_notices?.map((n: { code: string }) => n.code)).toEqual(['degraded_recall']);
     journeyGolden('recall-degraded.json', degraded, { home: missingKeyHome });
     await missingKey.close();
 

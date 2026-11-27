@@ -476,7 +476,7 @@ src/core/facts/contested-claims.ts	execute_raw	1
 src/core/facts/conversation-entity-hints.ts	execute_raw	1
 src/core/facts/conversation-incremental.ts	execute_raw	1
 src/core/facts/conversation-memo.ts	execute_raw	4
-src/core/facts/conversation-publication.ts	execute_raw	24
+src/core/facts/conversation-publication.ts	execute_raw	23	#10443: publication narrows the expired copies of a claim it narrows to private, so kept history never shows the claim wider than its replacement (one UPDATE, the conversation facts area converts as a whole)
 src/core/facts/conversation-relink-carry.ts	execute_raw	1
 src/core/facts/conversation-relink.ts	execute_raw	7	GBRA-574 F #9674 (opened before this ratchet): +1 the relink --unbacked read of name-tag rows
 src/core/facts/dead-absorb-retry.ts	execute_raw	2
