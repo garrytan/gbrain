@@ -287,6 +287,28 @@
         ],
         "flagOnScopes": []
       },
+      "chargeTransientInterruption#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "claimEffectRecovery#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "claimHousekeepingTurn#default": {
         "flagOffLanes": [
           "pool"
@@ -7594,6 +7616,17 @@
         ],
         "flagOnScopes": []
       },
+      "reclaimReleasedWrite#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "recordAccessMigrationPhase#default": {
         "flagOffLanes": [
           "pool"
@@ -8477,6 +8510,39 @@
         ],
         "flagOnScopes": []
       },
+      "selectClaimableLaneHead#default": {
+        "flagOffLanes": [
+          "tx"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": []
+      },
+      "selectClaimableLaneHead#fifo": {
+        "flagOffLanes": [
+          "tx"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": []
+      },
+      "selectClaimableLaneHead#priority": {
+        "flagOffLanes": [
+          "tx"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": []
+      },
       "selectClaimableWrite#default": {
         "flagOffLanes": [
           "tx"
@@ -8661,6 +8727,17 @@
         "flagOnScopes": []
       },
       "stampEffectClaim#default": {
+        "flagOffLanes": [
+          "tx"
+        ],
+        "flagOffOpensTransaction": true,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "tx"
+        ],
+        "flagOnScopes": []
+      },
+      "stampLaneHeadClaim#default": {
         "flagOffLanes": [
           "tx"
         ],
@@ -9308,9 +9385,11 @@
         "cancelWriteRow": "none",
         "capSessionStatePerClient": "none",
         "carryConceptIncomingLinks": "none",
+        "chargeTransientInterruption": "none",
         "chronicleStore": "none",
         "chunkRead": "none",
         "claimCoalescedGitEffects": "none",
+        "claimEffectRecovery": "none",
         "claimFilePage": "none",
         "claimHousekeepingTurn": "none",
         "claimNextJob": "none",
@@ -9790,6 +9869,7 @@
         "getWriteGateHoldRow": "none",
         "gitDurabilityStore": "none",
         "gitEffectStore": "none",
+        "groupPublishStore": "none",
         "hasAccessPolicyState": "none",
         "hasActiveAuditMarker": "none",
         "hasActiveFactText": "none",
@@ -11404,6 +11484,7 @@
         "recentWriterVersions": "none",
         "rechainBeliefPriorHash": "none",
         "reclaimBudgetReservations": "none",
+        "reclaimReleasedWrite": "none",
         "reclaimStalledJobs": "none",
         "reconnect": "none",
         "recordAccessMigrationPhase": "none",
@@ -11436,6 +11517,7 @@
         "refreshFenceFactFields": "none",
         "refreshPageBody": "none",
         "refreshPageOrigin": "none",
+        "refreshStore": "none",
         "registerBeforeDisconnect": "none",
         "registerFileRow": "none",
         "registerPurgeRedaction": "none",
@@ -11551,6 +11633,7 @@
         "rewriteTimelineRow": "none",
         "rlsScopeBindingEnabled": "none",
         "runMigration": "none",
+        "runSyncStatement": "none",
         "runUnsafe": "none",
         "runVectorAttempt": "direct",
         "sampleEffectiveDateSources": "none",
@@ -11573,6 +11656,7 @@
         "searchVector": "direct",
         "secretEntryExists": "none",
         "selectClaimableEffect": "none",
+        "selectClaimableLaneHead": "none",
         "selectClaimableWrite": "none",
         "selectFactsReconcileDrain": "none",
         "selectProjectionWindowJobs": "none",
@@ -11643,6 +11727,7 @@
         "stampDeferredProjectionJob": "none",
         "stampDreamPageProvenance": "none",
         "stampEffectClaim": "none",
+        "stampLaneHeadClaim": "none",
         "stampPageFrontmatter": "none",
         "stampPageIngest": "none",
         "stampTakeResolvedAt": "none",
