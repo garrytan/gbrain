@@ -22,7 +22,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import { registerEngineView } from '../core/persistence/switches.ts';
 import { callerAccessRecord } from '../core/search/private-visibility.ts';
 import { CAPTURE_BUDGET_BYTES, CaptureTooLargeError, encodeArgs, encodeValue } from './codec.ts';
-import { followRaw, followScope, followWrite, type FollowContext, type FollowOptions, type Frame } from './follow.ts';
+import { followRaw, followScope, followWrite, laneCall, newTxLane, startedWithin, type FollowContext, type FollowOptions, type Frame, type LaneEntry, type TxLane } from './follow.ts';
 import type { CapturedRead, MirrorCounters, UsageField } from './mirror.ts';
 import { isShadowReadMember, SHADOW_TRANSACTION_MEMBERS } from './reads.ts';
 import { sqlWrites } from './sql-writes.ts';
@@ -63,7 +63,7 @@ export interface ShadowWrapperOptions {
 }
 
 /** Whether the outermost transaction saw a write, and (with write comparisons on) the sampler's scope of it; shared by the transaction engine proxies it hands out. `nested`: inside a savepoint. */
-interface TxWrites { wrote: boolean; scope?: TxScope; nested: boolean; /** Ids of the nested transactions (savepoints) this proxy runs in, outermost first: the writes it notes are dropped if one of them rolls back. */ path: number[] }
+interface TxWrites { wrote: boolean; scope?: TxScope; nested: boolean; /** Ids of the nested transactions (savepoints) this proxy runs in, outermost first: the writes it notes are dropped if one of them rolls back. */ path: number[]; /** The outermost transaction's call lane (follow.ts): a follow pre-read holds it while its savepoint is open. Set when follow is on. */ lane?: TxLane }
 
 const TX_MEMBERS: ReadonlySet<PropertyKey> = new Set(SHADOW_TRANSACTION_MEMBERS);
 /** How long a transaction's end waits for calls its callback started and did not await (`drained`). */
@@ -166,7 +166,7 @@ function buildProxy<E extends BrainEngine>(engine: E, sink: ShadowSink, opts: Sh
 
   const follow = opts.follow;
   const followCtx = (target: unknown, at: Frame | null, inTx: boolean): FollowContext =>
-    ({ follow: follow!, shadowActive: () => sink.active(), engine: target, frame: at, inTransaction: inTx });
+    ({ follow: follow!, shadowActive: () => sink.active(), engine: target, frame: at, inTransaction: inTx, lane: inTx ? txWrites?.lane : undefined });
 
   const wrapTransaction = (fn: Function): Function => function shadowTransaction(this: unknown, callback: unknown, ...rest: unknown[]) {
     if (typeof callback !== 'function') return fn.apply(engine, [callback, ...rest]);
@@ -174,9 +174,9 @@ function buildProxy<E extends BrainEngine>(engine: E, sink: ShadowSink, opts: Sh
     // that a caught inner rollback undid does not make the outer transaction look like it wrote.
     const outer = txWrites;
     const scope = outer ? outer.scope : opts.writes?.scope(engine);
-    const writes: TxWrites = { wrote: false, scope, nested: !!outer, path: outer && scope ? [...outer.path, scope.open()] : [] };
+    const writes: TxWrites = { wrote: false, scope, nested: !!outer, path: outer && scope ? [...outer.path, scope.open()] : [], lane: outer ? outer.lane : follow ? newTxLane() : undefined };
     const call = (scope: Frame | null) => fn.apply(engine, [
-      (tx: BrainEngine) => beforeCommit(drained(() => (callback as (tx: BrainEngine) => unknown)(tx && typeof tx === 'object' ? buildProxy(tx, sink, opts, true, scope, writes) : tx), writes.scope, !outer), tx, outer ? undefined : writes.scope),
+      (tx: BrainEngine) => beforeCommit(drained(() => (callback as (tx: BrainEngine) => unknown)(tx && typeof tx === 'object' ? buildProxy(tx, sink, opts, true, scope, writes) : tx), writes.scope, writes.lane, !outer), tx, outer ? undefined : writes.scope),
       ...rest,
     ]);
     const out = follow ? followScope(followCtx(engine, frame, inTransaction), false, call) : call(null);
@@ -196,27 +196,57 @@ function buildProxy<E extends BrainEngine>(engine: E, sink: ShadowSink, opts: Sh
   };
 
   /**
-   * Runs a transaction callback and holds its outcome, resolved, rejected or thrown at once, until no sampled write holds the gate (write-capture.ts
-   * `holdGate`) and every call the callback started and did not await has been sent: a call that takes no callback is waited for until it settles (at
-   * most DRAIN_MS; a followed write sends its statement only after its own pre-read). So a held write, and a write still on its way, reach the
-   * connection before the transaction's COMMIT or ROLLBACK (or its savepoint's), as they would without the shadow, never after it.
+   * Runs a transaction callback and holds its outcome, resolved, rejected or thrown at once, until no sampled write holds the sampler's gate (write-capture.ts
+   * `holdGate`), no follow pre-read holds the call lane (follow.ts `holdLane`), and every call the callback started and did not await has been sent: a call
+   * that takes no callback is waited for until it settles (at most DRAIN_MS; a followed write sends its statement only after its own pre-read, a held call
+   * only once its gate opens). So a held write, and a write still on its way, reach the connection before the transaction's COMMIT or ROLLBACK (or its
+   * savepoint's), as they would without the shadow, never after it.
    */
-  const drained = (callback: () => unknown, scope: TxScope | undefined, outermost: boolean): unknown => {
-    if (!scope) return callback();
+  const drained = (callback: () => unknown, scope: TxScope | undefined, lane: TxLane | undefined, outermost: boolean): unknown => {
+    if (!scope && !lane) return callback();
+    // A callback that throws at once is drained too: its calls may already be held or waiting, and the ROLLBACK must not go first.
     let out: unknown;
-    try { out = callback(); } catch (error) { out = Promise.reject(error); } // a callback that throws at once is drained too
+    try { out = callback(); } catch (error) { out = Promise.reject(error); }
+    // The outermost transaction waits for every unawaited call. A nested one waits only for the lane calls started inside it: the sampler's scope and the
+    // lane also hold the enclosing transaction's other calls, which may be waiting for it.
+    const mine = outermost || !lane ? undefined : laneCall.getStore();
+    const sampled = (): Array<{ done: Promise<void> }> => (scope && outermost ? [...scope.running].filter((c) => !c.callback) : []);
+    const laneCalls = (): LaneEntry[] => (lane ? [...lane.running].filter((c) => !c.callback && (outermost || (mine !== undefined && c !== mine && startedWithin(c, mine)))) : []);
+    // With no sampler scope, a callback that returned a plain value and left nothing held or running ends at once, as it would without the shadow.
+    if (!scope && !isThenable(out) && !lane?.gate && !laneCalls().length) return out;
     const drain = async (): Promise<void> => {
       const until = Date.now() + DRAIN_MS;
       for (;;) {
-        if (scope.gate) { await scope.gate; continue; }
-        // Only the outermost transaction waits for unawaited calls: a nested one's scope also holds the enclosing transaction's calls, which may be waiting for it.
-        const open = outermost ? [...scope.running].filter((c) => !c.callback) : [];
+        if (scope?.gate) { await scope.gate; continue; }
+        if (lane?.gate) { await lane.gate; continue; }
+        const open = [...sampled(), ...laneCalls()];
         if (!open.length) return;
-        if (Date.now() >= until) { try { scope.unsettled('drain_timeout'); } catch { /* the shadow never fails a call */ } return; } // the transaction ends as it would without the shadow; its unfinished samples are uncomparable
+        if (Date.now() >= until) { if (sampled().length) { try { scope!.unsettled('drain_timeout'); } catch { /* the shadow never fails a call */ } } return; } // the transaction ends as it would without the shadow; its unfinished samples are uncomparable
         await Promise.race([Promise.all(open.map((c) => c.done)), new Promise((r) => { setTimeout(r, Math.max(0, until - Date.now())); })]);
       }
     };
     return Promise.resolve(out).then(async (value: unknown) => { await drain(); return value; }, async (error: unknown) => { await drain(); throw error; });
+  };
+
+  /**
+   * Every member call of a transaction goes through its lane: while a follow pre-read holds it, the call waits (in call order) and starts once the
+   * lane opens; a call that runs is in `lane.running` until it settles. A member that returns a plain value (never a statement) is never held.
+   */
+  const laned = (name: PropertyKey, fn: Function, lane: TxLane): Function => SYNC_MEMBERS.has(name) ? fn : function lanedMember(this: unknown, ...args: unknown[]) {
+    const start = (): unknown => {
+      // A held call starts later from whichever call opens the lane: bound to its own caller's async context, so request-scoped state (a stored slug spelling, a caller record) stays its own.
+      if (lane.gate) return new Promise((resolve, reject) => { lane.waiters.push(AsyncResource.bind(() => { try { resolve(start()); } catch (error) { reject(error); } })); });
+      // Running from before the member is entered (a callback member can run its callback at once), until it settles; its own pre-read finds this entry and does not wait for it.
+      let settle!: () => void;
+      const call: LaneEntry = { callback: hasFunctionArg(args), done: new Promise<void>((r) => { settle = r; }), parent: laneCall.getStore() };
+      const leave = (): void => { lane.running.delete(call); settle(); };
+      lane.running.add(call);
+      let sent: unknown;
+      try { sent = laneCall.run(call, () => fn.apply(this, args)); } catch (error) { leave(); throw error; }
+      if (isThenable(sent)) sent.then(leave, leave); else leave(); // registered before the caller's own await, so a call that settled is gone when the caller goes on
+      return sent;
+    };
+    return start();
   };
 
   /** Gives the sampler its last look inside the outermost transaction, once its callback has finished and before the commit (TxScope.beforeCommit); a callback that rejected is rolled back and gets none. Never fails the write. */
@@ -297,7 +327,7 @@ function buildProxy<E extends BrainEngine>(engine: E, sink: ShadowSink, opts: Sh
       if (typeof callback !== 'function') return target.transaction(callback, ...rest);
       const scope = opts.writes!.scope(engine, { followed: false }); // the lane's writes are not published to the follower: they do not move the write counter
       const writes: TxWrites = { wrote: false, scope, nested: false, path: [] };
-      return committed(target.transaction((tx: BrainEngine) => beforeCommit(drained(() => (callback as (tx: BrainEngine) => unknown)(tx && typeof tx === 'object' ? buildProxy(tx, quietSink, quiet, true, null, writes) : tx), scope, true), tx, scope), ...rest), scope);
+      return committed(target.transaction((tx: BrainEngine) => beforeCommit(drained(() => (callback as (tx: BrainEngine) => unknown)(tx && typeof tx === 'object' ? buildProxy(tx, quietSink, quiet, true, null, writes) : tx), scope, undefined, true), tx, scope), ...rest), scope);
     }) });
   };
 
@@ -325,6 +355,7 @@ function buildProxy<E extends BrainEngine>(engine: E, sink: ShadowSink, opts: Sh
       if (scope && typeof prop === 'string' && !isShadowReadMember(prop) && !TX_MEMBERS.has(prop)) wrapped = noted(prop, wrapped, scope, txWrites!.path);
       if (opts.writes && typeof prop === 'string' && !isShadowReadMember(prop) && !TX_MEMBERS.has(prop)) wrapped = opts.writes.wrap(prop, wrapped, { engine, inTransaction, mayWrite, scope, nested: txWrites?.nested });
       if (opts.onCommittedWrite && typeof prop === 'string' && !isShadowReadMember(prop) && !TX_MEMBERS.has(prop)) wrapped = wrapObserved(prop, wrapped);
+      if (txWrites?.lane) wrapped = laned(prop, wrapped, txWrites.lane); // inside the sampler's gate: a call it holds joins the lane only when it really starts
       if (scope) wrapped = gated(prop, wrapped, scope);
       if (prop === 'withReservedConnection' && opts.writes && !inTransaction) { const reserved = wrapped; wrapped = function laneReserved(this: unknown, callback: unknown, ...rest: unknown[]) { return reserved.call(this, typeof callback === 'function' ? (conn: unknown) => (callback as (conn: unknown) => unknown)(laneConnection(conn)) : callback, ...rest); }; }
       cache.set(prop, { original: value, wrapped });

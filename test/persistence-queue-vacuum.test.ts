@@ -37,3 +37,15 @@ test('small queues are left alone; a queue that grew past its recorded size is v
   expect(await vacuumed()).toEqual(['VACUUM (ANALYZE) persistence_counters']);
   await engine.executeRaw("DELETE FROM persistence_counters WHERE key LIKE 'bench-%'");
 });
+
+// A Rust brain has no page_write_guards table (the shadow seed names it a not-copied lock anchor), and PGLite's heap-size probe reads
+// pg_class: the upkeep must not send it a statement, so it cannot fail there.
+test('a Rust brain runs no statement in the queue upkeep', async () => {
+  const sent: string[] = [];
+  const rust = {
+    kind: 'rust',
+    async executeRaw(sql: string) { sent.push(sql); throw new Error('a Rust brain has no pg_class and no page_write_guards'); },
+  } as unknown as BrainEngine;
+  expect(await vacuumPersistenceQueues(rust)).toBe(0);
+  expect(sent).toEqual([]);
+});

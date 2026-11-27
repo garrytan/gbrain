@@ -63,6 +63,7 @@ import { recordFlaggedRow, type GatedRowDecision } from '../write-gate-store.ts'
 import type { TaintInput, WriteTrust } from '../trust/tier.ts';
 import { gitChildEnv } from '../git-env.ts';
 import { readOnlyCheckout } from '../persistence/mirror-read-only.ts';
+import { refuseRuleFactTarget } from '../rules/admission.ts';
 import { bodyUnread } from '../page-body/page-shape.ts';
 import { bestEffortStoredBodyMirror, fileBodyMatchesStored, fileDatabaseDriftToken, mirrorFileBody, readStoredBody } from './file-body-guard.ts';
 import { relativeEscapesRoot } from '../path-confine.ts';
@@ -338,6 +339,7 @@ export async function writeFactsToFence(
   /** #5575 I2: a deriver's taint; the new rows get its tier and input edges. Unmanaged path only. */
   derivation?: { trust: WriteTrust; inputs: readonly TaintInput[] },
 ): Promise<FenceWriteResult> {
+  refuseRuleFactTarget(target.slug);
   if (await managedPersistenceEnabled(engine)) {
     // The coordinator owns the canonical file on a managed brain: publish the
     // fence rows through its fact intent instead of editing the file here.
@@ -351,9 +353,7 @@ export async function writeFactsToFence(
     const { inserted, ids } = await publishManagedEntityFacts(engine, target.sourceId, target.slug, kept);
     return { inserted, ids, ...withdrawnSkipped };
   }
-  if (target.localPath === null) {
-    return { inserted: 0, ids: [], legacyFallback: true };
-  }
+  if (target.localPath === null) return { inserted: 0, ids: [], legacyFallback: true };
   if (facts.length === 0) {
     return { inserted: 0, ids: [] };
   }

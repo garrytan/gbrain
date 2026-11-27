@@ -64,6 +64,7 @@ import { readTaintInputs, derivedWriteTrust, recordTaintEdges } from '../trust/t
 import { applyGateDecision, derivedGateConfig, derivedGateInput, emptyGateTally, mergeGateTally, type GateTally } from '../trust/derived-gate.ts';
 import { decideFactWrite } from '../write-gate-store.ts';
 import { commitExtractionPlan, planExtraction, readPageWatermark, type InputTruncated } from '../extraction-watermark.ts';
+import { offRulePage } from '../rules/admission.ts';
 
 // The notability-filter vocabulary lives in notability-filter.ts; re-exported for existing importers.
 export { NOTABILITY_FILTERS, coerceNotabilityFilter, type FactNotabilityFilter } from './notability-filter.ts';
@@ -907,9 +908,9 @@ async function runPipelineBodyInner(
     // D4: notability filter applied post-extraction, pre-insert.
     if (filter === 'high-only' && f.notability !== 'high') continue;
 
-    const resolved = f.entity_slug
+    const resolved = offRulePage(f.entity_slug
       ? await resolveEntitySlugWithSource(ctx.engine, ctx.sourceId, f.entity_slug)
-      : null;
+      : null);
     const resolvedSlug = resolved?.source === 'fallback_slugify' ? null : resolved?.slug ?? null;
     const resolutionSource = resolved?.source ?? null;
 

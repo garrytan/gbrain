@@ -11,7 +11,7 @@ import { DIGEST_SESSION_SETTINGS, digestQuery } from '../core/persistence/gradua
 import { CAPTURE_BUDGET_BYTES, encodeArgs, encodeValue } from './codec.ts';
 import { pageSearchVectorSql } from '../core/fts-language.ts';
 import { relationRead } from './seed.ts';
-import { MAX_PRE_LINKS, MAX_PRE_PAGES, movedOutsideFootprint, PILOT_WRITES, pageRefs, pageSet, readBack, readBackText, writeFamily, type PageRef, type PreImage, type WriteEvent } from './write-compare.ts';
+import { MAX_DROPPED, MAX_PRE_LINKS, MAX_PRE_PAGES, movedOutsideFootprint, PILOT_WRITES, pageRefs, pageSet, readBack, readBackText, writeFamily, type PageRef, type PreImage, type WriteEvent } from './write-compare.ts';
 import { sqlWrites } from './sql-writes.ts';
 import { memberKind } from './write-map.ts';
 import { COMPLETE_WRITE_PURGE_PROBE_SQL, COMPLETE_WRITE_SQL, ENSURE_COUNTERS_SQL, LOCK_COUNTERS_SQL, PUBLICATION_EFFECTS_SQL } from '../core/engine-sql/persistence-journal.ts';
@@ -36,6 +36,8 @@ export interface WriteSamplerOptions {
   active: () => boolean;
   /** Records a sample that will never reach the child (`send_shed`, `readback_abandoned`) for the child to count uncomparable; false when it could not be recorded, and the count then rides on the next accepted line. */
   lost?: (reason: string) => boolean;
+  /** Makes `n` samples the sampler could not send owed in the serving process's durable record (supervisor.ts `owe`), so the worker books them and status cannot read measured past them; false when it could not (no running worker), and they then wait in the sampler as a refused send's do. */
+  owe?: (n: number) => boolean;
   /** How long the preimage read may hold a write; default PREIMAGE_TIMEOUT_MS (a seam for tests). */
   preimageTimeoutMs?: number;
 }
@@ -264,9 +266,19 @@ export function createWriteSampler(o: WriteSamplerOptions): WriteSampler {
   const unsaid: string[] = []; // reasons of losses the journal could not take: the next accepted line carries their count, and settle() retries them
   const send = (event: WriteEvent): void => {
     try {
-      let line = JSON.stringify({ ...event, ...(unsaid.length ? { dropped: unsaid.length } : {}) }) + '\n';
-      if (Buffer.byteLength(line) > MAX_SAMPLE_BYTES) line = JSON.stringify({ t: 'write', op: event.op, outcome: 'uncomparable', reason: 'sample_too_large', ...(unsaid.length ? { dropped: unsaid.length } : {}) }) + '\n';
-      if (o.send(line)) unsaid.length = 0; else if (!o.lost?.('send_shed')) unsaid.push('send_shed');
+      const carry = Math.min(unsaid.length, MAX_DROPPED); // a line carries at most what the weight rule counts; the rest waits for later lines, never cleared unsaid
+      let line = JSON.stringify({ ...event, ...(carry ? { dropped: carry } : {}) }) + '\n';
+      if (Buffer.byteLength(line) > MAX_SAMPLE_BYTES) line = JSON.stringify({ t: 'write', op: event.op, outcome: 'uncomparable', reason: 'sample_too_large', ...(carry ? { dropped: carry } : {}) }) + '\n';
+      if (o.send(line)) {
+        unsaid.splice(0, carry);
+        // What the line could not carry goes out now, in the same flush, as loss-only lines of at most MAX_DROPPED each (each is one more uncomparable sample plus its losses, owed and settled like any line): nothing is left waiting in memory for a later sampled write. A refusal stops it; the rest waits exactly as a refused send's does.
+        while (unsaid.length > 0) {
+          const more = Math.min(unsaid.length, MAX_DROPPED);
+          if (!o.send(JSON.stringify({ t: 'write', op: event.op, outcome: 'uncomparable', reason: 'send_shed', dropped: more }) + '\n')) break;
+          unsaid.splice(0, more);
+        }
+        if (unsaid.length > 0 && o.owe?.(unsaid.length)) unsaid.length = 0; // a refusal ended the drain: what is left is owed durably (the worker books it as lost), never left only in memory
+      } else if (!o.lost?.('send_shed')) unsaid.push('send_shed');
     } catch { /* the shadow never fails a write */ }
   };
   const uncomparable = (op: string, reason: string): void => send({ t: 'write', op, outcome: 'uncomparable', reason });

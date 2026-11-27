@@ -371,7 +371,7 @@ const commit_page_upload: Operation = {
     // secrets.on_write: every call that would submit a sealed body screens it whole, including one that lost the seal
     // race or resumes after a crash, so a secret split across parts is found; a refused upload is discarded.
     if (!submitted) {
-      const secret = await screenUploadedSecrets(ctx, stagedUploadParts(ctx.engine, bodyRef));
+      const secret = await screenUploadedSecrets(ctx, () => stagedUploadParts(ctx.engine, bodyRef));
       if (secret) {
         await abortUpload(ctx.engine, row.id);
         throw secret;

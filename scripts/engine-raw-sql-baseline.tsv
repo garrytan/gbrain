@@ -499,7 +499,6 @@ src/core/facts/purge-overlay.ts	execute_raw	1
 src/core/facts/purge-reasons.ts	execute_raw	8
 src/core/facts/purge-verify.ts	execute_raw	2
 src/core/facts/purge.ts	execute_raw	40	GBRA-574 F #9674 (opened before this ratchet): +1 the purge plan reads whether a fact sits on an unbacked name tag
-src/core/facts/question-recall.ts	execute_raw	1
 src/core/facts/reconcile-watermark.ts	execute_raw	6
 src/core/facts/relink-publish.ts	execute_raw	8
 src/core/facts/relink.ts	execute_raw	5
@@ -1102,7 +1101,7 @@ src/core/search/entity-facts.ts	execute_raw	1
 src/core/search/evidence-date.ts	execute_raw	3
 src/core/search/evidence-delivery.ts	execute_raw	2
 src/core/search/exact-scan.ts	execute_raw	2
-src/core/search/fact-relevance.ts	execute_raw	14	came from master #9627 (held private facts, database-only untrack), which landed after this ratchet was cut; GBRA-574 F #9674 (opened before this ratchet): +1 poolUnbackedKeys, the name-tag lookup for the slot-history arm
+src/core/search/fact-relevance.ts	execute_raw	15	came from master #9627 (held private facts, database-only untrack), which landed after this ratchet was cut; GBRA-574 F #9674 (opened before this ratchet): +1 poolUnbackedKeys, the name-tag lookup for the slot-history arm; GST-4039: +1 readPooledFacts, ranked recall's second read moved here from question-recall.ts (which drops to 0) so it reuses the pool's read-policy predicate
 src/core/search/facts-arm.ts	execute_raw	3
 src/core/search/feedback-boost.ts	execute_raw	1
 src/core/search/frontmatter-where.ts	execute_raw	1

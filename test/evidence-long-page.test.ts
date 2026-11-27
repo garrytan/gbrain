@@ -27,6 +27,9 @@ import {
 import { searchConfigValueRefusal } from '../src/core/search/config-values.ts';
 import { leanRow } from '../src/core/search/lean-rows.ts';
 import { runThink } from '../src/core/think/index.ts';
+import { prepareMarkdownChunks } from '../src/core/markdown-chunks.ts';
+import { installFixtureChunks } from './helpers/page-projection.ts';
+import { asOwner } from './helpers/owner-tier.ts';
 import { CONVERSATION_PAGE, DECIDING, LONG_SLUG, MEDIUM_SLUG, mcpCall, opCall, seedLongPages, withConfig } from './helpers/long-page-fixture.ts';
 
 const GOLDEN = join(import.meta.dir, 'fixtures/goldens/evidence-delivery/long-page-on-path.json');
@@ -299,6 +302,21 @@ describe('selection limits (size preflight)', () => {
     const sel = await selectLongPages(sized({ 1: half, 2: half, 3: 25_000 }), plan, [hit(1), hit(2), hit(3)], {});
     expect([...sel.longPages!.pages]).toEqual([1, 3]);
     expect([...sel.longPages!.kept]).toEqual([[2, 'long_page_bytes']]);
+  });
+
+  test('detail low counts the timeline toward the byte limit too: the long-page read returns it whatever the detail', async () => {
+    const slug = 'notes/timeline-heavy-example';
+    const compiled_truth = `## Summary\n\n${'The archive summary is kept here for reference. '.repeat(500)}`;
+    const timeline = `- 2026-01-01 ${'x'.repeat(LONG_PAGE_MAX_INPUT_BYTES)}`;
+    await asOwner(engine, tx => tx.putPage(slug, { type: 'note' as never, title: slug, compiled_truth, timeline, frontmatter: {} }));
+    await installFixtureChunks(engine, slug, await prepareMarkdownChunks({ compiled_truth, timeline }));
+    const page = await engine.getPage(slug);
+    expect(compiled_truth.length).toBeGreaterThanOrEqual(DEFAULT_LONG_PAGE_MIN_CHARS);
+    for (const scope of [{ detail: 'low' as const }, {}]) {
+      const sel = await selectLongPages(engine, plan, [hit(page!.id, slug)], scope);
+      expect([...sel.longPages!.pages]).toEqual([]);
+      expect([...sel.longPages!.kept]).toEqual([[page!.id, 'long_page_bytes']]);
+    }
   });
 
   test('conversation and saved-fact hits are never preflighted', async () => {

@@ -192,6 +192,23 @@ describe('secrets.on_write block', () => {
     });
   });
 
+  test('a token split by NUL bytes across upload parts is refused at commit, since the stored page joins it back (GST-4042)', async () => {
+    await withMode('block', async () => {
+      const slug = 'notes/block-upload-nul';
+      const split = TOKEN.slice(0, 12) + '\u0000' + TOKEN.slice(12, 24) + '\u0000\u0000' + TOKEN.slice(24);
+      const text = '# Upload\n\nThe key is ' + split + ' and nothing else.\n';
+      const cut = text.indexOf('\u0000\u0000') + 1;
+      const session = await call(remote(), 'begin_page_upload', { slug, mode: 'create', total_bytes: Buffer.byteLength(text), sha256: hex(text), request_id: randomUUID() });
+      for (const [part, piece] of [text.slice(0, cut), text.slice(cut)].entries()) {
+        await call(remote(), 'upload_page_part', { upload_id: session.upload_id, part, text: piece, part_sha256: hex(piece) });
+      }
+      expectSecretRefusal(await refusal(() => call(remote(), 'commit_page_upload', { upload_id: session.upload_id })));
+      expect(await page(slug)).toBeNull();
+      const [staging] = await engine.executeRaw<{ state: string }>('SELECT state FROM page_body_stagings WHERE id = $1::uuid', [session.upload_id]);
+      expect(staging!.state).toBe('aborted');
+    });
+  });
+
   test('a sealed upload resumed by a later commit is screened too, so a crash after sealing cannot skip the screen', async () => {
     const slug = 'notes/block-upload-resumed';
     const text = '# Upload\n\nThe key is ' + TOKEN + '.\n';
@@ -301,6 +318,17 @@ describe('secrets.on_write redact', () => {
     await withMode('redact', async () => {
       const slug = 'notes/redact-upload';
       const text = '# Upload\n\nThe key is ' + TOKEN + '.\n';
+      const session = await call(remote(), 'begin_page_upload', { slug, mode: 'create', total_bytes: Buffer.byteLength(text), sha256: hex(text), request_id: randomUUID() });
+      await call(remote(), 'upload_page_part', { upload_id: session.upload_id, part: 0, text, part_sha256: hex(text) });
+      expectSecretRefusal(await refusal(() => call(remote(), 'commit_page_upload', { upload_id: session.upload_id })));
+      expect(await page(slug)).toBeNull();
+    });
+  });
+
+  test('a chunked upload holding a token split by a NUL byte is refused too, never stored joined (GST-4042)', async () => {
+    await withMode('redact', async () => {
+      const slug = 'notes/redact-upload-nul';
+      const text = '# Upload\n\nThe key is ' + TOKEN.slice(0, 12) + '\u0000' + TOKEN.slice(12) + '.\n';
       const session = await call(remote(), 'begin_page_upload', { slug, mode: 'create', total_bytes: Buffer.byteLength(text), sha256: hex(text), request_id: randomUUID() });
       await call(remote(), 'upload_page_part', { upload_id: session.upload_id, part: 0, text, part_sha256: hex(text) });
       expectSecretRefusal(await refusal(() => call(remote(), 'commit_page_upload', { upload_id: session.upload_id })));
