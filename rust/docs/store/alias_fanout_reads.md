@@ -19,8 +19,8 @@ The by-alias key is empty. The by-page key of a derived row (origin `declared` o
 `setPageAliases` writes them. Unit tests write rows through `Store::set_page_aliases` and
 `Store::replace_derived_aliases` and read them back here, so a layout change in `aliases.rs` fails them. A row this
 reader does not know refuses with `store_corrupt`, and the read does not drop what the row holds: a by-alias key with a
-value, a by-page value that is not `{ c, t? }`, or a by-alias key with no by-page key. The title read walks the page
-records ([pages.md](pages.md)).
+value, a by-page value that is not `{ c, t? }`, or a by-alias key with no by-page key. The title read finds its pages by the keyed title entries
+([keyed-index.md](keyed-index.md)) and reads their records ([pages.md](pages.md)).
 
 | JS | Resolves | Mirrors |
 | --- | --- | --- |

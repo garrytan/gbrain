@@ -70,6 +70,18 @@ pub fn module_exports(mut exports: Object, env: Env) -> napi::Result<()> {
     Ok(())
 }
 
+/// The write path's process-wide timings (`gbrain_store::commit_profile`), for the benches:
+/// `{ writes, write_body_ns, commits, commit_ns, redb_commit_ns }`. With `reset` true the counters
+/// are zeroed after they are read.
+#[napi]
+pub fn commit_profile(reset: Option<bool>) -> napi::Result<serde_json::Value> {
+    let profile = gbrain_store::commit_profile::snapshot();
+    if reset == Some(true) {
+        gbrain_store::commit_profile::reset();
+    }
+    serde_json::to_value(profile).map_err(|e| napi::Error::from_reason(e.to_string()))
+}
+
 // ---------------------------------------------------------------------------------------------
 // Typed arrays
 // ---------------------------------------------------------------------------------------------

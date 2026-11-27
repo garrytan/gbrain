@@ -255,10 +255,19 @@ pub(crate) fn token_match(haystack: &str, term: &str) -> bool {
 fn walk_scope(
     read: &dyn KvRead,
     scope: &CoverageScope,
+    visit: impl FnMut(&PageRecord, ProjectionClass) -> bool,
+) -> Result<()> {
+    walk_pages_in_scope(read, all_pages(read)?, scope, visit)
+}
+
+/// [`walk_scope`] over `pages` only.
+fn walk_pages_in_scope(
+    read: &dyn KvRead,
+    mut pages: Vec<PageRecord>,
+    scope: &CoverageScope,
     mut visit: impl FnMut(&PageRecord, ProjectionClass) -> bool,
 ) -> Result<()> {
     let mut sources = Sources::new(read);
-    let mut pages = all_pages(read)?;
     pages.sort_unstable_by_key(|page| page.id);
     for page in pages {
         if !in_scope(read, &mut sources, &page, scope, true)? {
@@ -396,18 +405,24 @@ impl Store {
         let read = self.read()?;
         let read = &*read;
         let (mut pending, mut by_design) = (false, false);
-        walk_scope(read, scope, |page, cls| {
-            if served(page) {
-                return true;
-            }
-            if cls == ProjectionClass::Protected {
-                by_design = true;
-                true
-            } else {
-                pending = true;
-                false
-            }
-        })?;
+        // A served page returns at once below, so only the unserved ones are walked (`keyed_index.rs`).
+        walk_pages_in_scope(
+            read,
+            crate::keyed_index::unserved_pages(read)?,
+            scope,
+            |page, cls| {
+                if served(page) {
+                    return true;
+                }
+                if cls == ProjectionClass::Protected {
+                    by_design = true;
+                    true
+                } else {
+                    pending = true;
+                    false
+                }
+            },
+        )?;
         Ok(ReadinessRow {
             pending,
             by_design: !pending && by_design,

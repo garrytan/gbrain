@@ -1192,20 +1192,8 @@ impl Store {
     /// `hasSupersedeEdges()`: whether any link has `link_type = 'supersedes'`, on any page in
     /// any source (the SQL probe reads `links` alone).
     pub fn has_supersede_edges(&self) -> Result<bool> {
-        let read = self.read()?;
-        let mut found = false;
-        let mut failed = None;
-        scan_prefix(&*read, &[keys::LINK], false, &mut |_, v| {
-            match serde_json::from_slice::<LinkRecord>(v) {
-                Ok(link) => found = link.link_type == SUPERSEDES,
-                Err(e) => failed = Some(StoreError::from(e)),
-            }
-            !found && failed.is_none()
-        })?;
-        match failed {
-            Some(e) => Err(e),
-            None => Ok(found),
-        }
+        // The supersedes links have their own keyed entries (`keyed_index.rs`).
+        crate::keyed_index::has_supersedes(&*self.read()?)
     }
 
     /// `supersedingPageSlugs(ids, policy?)`: the distinct `[{ to_page_id, by_slug }]` rows of

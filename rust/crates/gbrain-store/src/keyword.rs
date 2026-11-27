@@ -38,13 +38,16 @@
 //! Keys: every record of this family starts with `keys::TRIGRAM` (`R`). The bytes after the tag are
 //! this file's to define; document them here. `R 0x00` is the keyword index state
 //! (`keys::keyword_index_state`): while it exists, every `Store::write` handle tracks the chunks
-//! and pages a write touches (`keyword/index_writer.rs`) and rebuilds their postings when the
+//! and pages a write touches (`keyword/index_writer.rs`) and stages their postings when the
 //! statement ends. `R 0x01 len term page_id index` is a chunk posting and `R 0x02 len term
 //! page_id` a page posting, each valued with the lexeme's positions and weights; `R 0x03 len
 //! trigram page_id` holds one raw title trigram (`findByTitleFuzzy`); `R 0x04 len
 //! basename page_id` maps a slug basename to its page; `R 0x05 page_id index` and `R 0x06
-//! page_id` are the forward records that list a document's postings (`keyword/index.rs`). The
-//! members read them through `keyword/walk.rs` once the state is complete.
+//! page_id` are the forward records that list a document's postings (`keyword/index.rs`).
+//! `R 0x07 page_id index` and `R 0x08 page_id` are pending records, a document's postings as the
+//! last write left them, and `R 0x09` counts them; a later write folds them into the postings
+//! (`keyword/pending.rs`, store format 13). The members read the postings, with the pending
+//! records applied, through `keyword/walk.rs` once the state is complete.
 //!
 //! See docs/designs/RUST_ENGINE_INTERFACES.md.
 
@@ -59,6 +62,7 @@ mod index_build;
 mod index_writer;
 mod page_search;
 pub(crate) mod parser;
+mod pending;
 mod rank;
 mod stem;
 pub(crate) mod stem_german;
@@ -79,6 +83,8 @@ pub(crate) use index_build::{
 };
 pub use index_build::{KeywordIndexReport, KeywordIndexState};
 pub(crate) use index_writer::IndexingWriter;
+#[cfg(test)]
+pub(crate) use pending::fold_all as fold_pending;
 pub use titles::{TitleAttempt, TitleAttemptKind};
 pub(crate) use titles::{check_page_vector, check_sealed_page_vector};
 
