@@ -102,14 +102,11 @@ export async function connectorSpeakerOwnerStamp(engine: BrainEngine, sourceId: 
   return people.every(m => m.id === owner) ? { member: owner } : null;
 }
 
-/**
- * The SQL predicate: page alias `p`'s live revision was written by a trusted local importer. Joins `r` and `s`. With no
- * request, a writer's stamp vouches only while no later write moved the page past it (importerWroteLiveRevisionSql).
- */
+/** The SQL predicate: page alias `p`'s live revision was written by a trusted local importer. Joins `r` and `s`. */
 function trustedWriterSql(writers: string): string {
   const connector = `s.config->>'kind' IN (${SPEAKER_OWNER_CONNECTOR_KINDS.map(k => `'${k}'`).join(',')})`;
   return `CASE WHEN p.revision_write_request_id IS NULL
-                 THEN (p.ingested_via IN (${writers}) AND p.ingested_at >= p.updated_at) OR (p.ingested_via IS NULL AND ${connector})
+                 THEN p.ingested_via IN (${writers}) OR (p.ingested_via IS NULL AND ${connector})
             WHEN r.intent IS NOT NULL
                  THEN r.principal_kind = 'local_cli' AND (r.intent->>'ingested_via' IN (${writers})
                       OR (r.operation = 'submit_job' AND r.intent->>'kind' = 'connector_v2_import' AND ${connector}))

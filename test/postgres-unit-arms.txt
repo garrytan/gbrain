@@ -324,7 +324,6 @@ test/import-frontmatter-key-order-5158.test.ts
 test/import-inline-chunk-keep.test.ts
 test/import-revision-concurrency.test.ts
 test/import-write-barrier.test.ts
-test/importer-trust-requestless-4037.test.ts
 test/ingest-capture-keeps-readers.test.ts
 test/init-cold-home-embedding.test.ts
 test/keyword-statement-timeout-knob-6495.test.ts

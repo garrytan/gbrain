@@ -46,7 +46,7 @@ export async function listOutsideFencePages(engine: BrainEngine): Promise<Outsid
     `WITH listed AS (SELECT p.id AS page_id, p.source_id, p.slug, p.type, sum(x.facts)::int AS facts, sum(x.world_facts)::int AS world_facts,
             sum(x.takes)::int AS takes, sum(x.links)::int AS links, md5(string_agg(x.k, ',' ORDER BY x.k)) AS fingerprint,
             bool_and(p.revision_write_request_id IS NULL) AS direct, COALESCE(max(p.content_hash), '') AS content_hash,
-            bool_and(p.type = 'conversation' AND p.frontmatter ? 'transcript_import' AND (p.revision_write_request_id IS NULL OR ${importerWroteLiveRevisionSql('p', 'r', '$1')})
+            bool_and(p.type = 'conversation' AND p.frontmatter ? 'transcript_import' AND ${importerWroteLiveRevisionSql('p', 'r', '$1')}
                      AND COALESCE(r.intent->>'ingested_via', p.ingested_via) = $1) AS importer_stamped,
             bool_and(p.revision_write_request_id IS NOT NULL OR p.ingested_at >= p.updated_at) AS stamp_current
        FROM (SELECT fp.id AS page_id, 1 AS facts, CASE WHEN f.visibility = 'world' THEN 1 ELSE 0 END AS world_facts, 0 AS takes, 0 AS links, 'f' || f.id || ':' || md5((to_jsonb(f) - ${PROJECTION_KEYS} - 'consolidated_at' - 'consolidated_into')::text) AS k
