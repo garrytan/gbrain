@@ -664,7 +664,9 @@ fn write_page_as(
 ) -> Result<()> {
     let before = read_page_by_id(&*tx, record.id)?;
     crate::facts::page_purges::refuse_purged_page(&*tx, before.as_ref(), record)?;
+    let ceiling = guard_guest_page(&*tx, before.as_ref(), record)?;
     let mut stamped = stamp_page_trust(before.as_ref(), record, set)?;
+    cap_page_tier(&mut stamped, ceiling);
     // `gbrain_stamp_revision_attribution`: the actor of the write that set the live revision.
     stamped.revision_receipt = crate::write_receipt::stamp_revision(
         before
@@ -727,10 +729,11 @@ pub(crate) fn restore_page_trust_in(
         content_changed: false,
         origin_set: true,
     };
+    let ceiling = guard_guest_page(&*tx, Some(&before), &before)?;
     let stamped = stamp(&context, TrustTable::Pages, row)?;
     let mut record = before.clone();
-    record.trust_tier =
-        (stamped.tier != TrustTier::Unknown).then(|| stamped.tier.as_str().to_owned());
+    let tier = crate::guest_sources::cap_at(stamped.tier, ceiling);
+    record.trust_tier = (tier != TrustTier::Unknown).then(|| tier.as_str().to_owned());
     record.write_origin = match stamped.origin {
         OriginStamp::Keep => origin,
         OriginStamp::Set(set) => set,
@@ -811,6 +814,48 @@ fn stamp_page_trust(
         OriginStamp::Set(origin) => origin,
     };
     Ok(out)
+}
+
+/// The guest-source rules of the trust trigger for this page write (guest_sources.rs `guard_page`): the content
+/// compared is the stamp's, without `deleted_at`, so a soft delete or restore passes. Answers the ceiling to cap at.
+fn guard_guest_page(
+    read: &dyn KvRead,
+    before: Option<&PageRecord>,
+    record: &PageRecord,
+) -> Result<Option<crate::trust::TrustTier>> {
+    use crate::guest_sources::{GuardOp, guard_page};
+    let op = match before {
+        None => GuardOp::Insert,
+        Some(old) => GuardOp::Update {
+            content_changed: old.source_id != record.source_id
+                || old.slug != record.slug
+                || old.page_type != record.page_type
+                || old.page_kind != record.page_kind
+                || old.title != record.title
+                || old.compiled_truth != record.compiled_truth
+                || old.timeline != record.timeline
+                || crate::trust::page_frontmatter_content(&old.frontmatter)
+                    != crate::trust::page_frontmatter_content(&record.frontmatter),
+        },
+    };
+    let context = crate::write_trust::stamp_context::current()?;
+    guard_page(
+        read,
+        before.map(|b| b.source_id.as_str()),
+        &record.source_id,
+        op,
+        &context,
+    )
+}
+
+/// A stamped page's tier capped at its guest source's ceiling, on every exit of the trigger.
+fn cap_page_tier(page: &mut PageRecord, ceiling: Option<crate::trust::TrustTier>) {
+    let tier = crate::trust::TrustTier::stored(page.trust_tier.as_deref());
+    let capped = crate::guest_sources::cap_at(tier, ceiling);
+    if capped != tier {
+        page.trust_tier =
+            (capped != crate::trust::TrustTier::Unknown).then(|| capped.as_str().to_owned());
+    }
 }
 
 /// An origin (`source_path`) in the form PGLite compares two of them: as stored, and on Windows
@@ -1268,6 +1313,7 @@ pub(crate) fn put_page_in(
     let page_kind = input.page_kind.clone().unwrap_or_else(|| "markdown".into());
     let new_version = new_page_chunker_version(input.chunker_version)?;
 
+    let existed = existing.is_some();
     let record = match existing {
         None => PageRecord {
             id: next_id(tx, NEXT_PAGE_ID)?,
@@ -1368,6 +1414,11 @@ pub(crate) fn put_page_in(
     // `putPage` is `INSERT ... ON CONFLICT DO UPDATE`: the `BEFORE INSERT` purge trigger fires for the
     // insert attempt, so a tombstoned hash is refused here even when the page already holds it.
     crate::facts::page_purges::refuse_purged_page(&*tx, None, &record)?;
+    // The trust trigger's guest rules fire for the insert attempt too: a page that already exists is refused as a
+    // create (`source_writer_restricted` ... create its pages) before the update's own check runs.
+    if existed {
+        guard_guest_page(&*tx, None, &record)?;
+    }
     write_page_setting_vector(tx, &record)?;
     if let Some(stamp) = &options.contextual_retrieval {
         crate::aliases::stamp_contextual_retrieval(tx, record.id, stamp)?;
@@ -1977,7 +2028,9 @@ impl Store {
                 }
                 None => page,
             };
-            let mut row = snapshot_in(tx, &*self.env, &page)?;
+            // A caller's preimage keeps its tags in the order given, as PGLite's insert does; a page
+            // read sorts them.
+            let mut row = snapshot_in_with(tx, &*self.env, &page, options.preimage.is_none())?;
             // A segmented prune can delete the snapshot it follows; a reason never brings it back.
             let key = keys::version(page.id, row.id);
             if let Some(reason) = reason
@@ -2014,6 +2067,11 @@ impl Store {
                 // A row that does not parse is kept as `None` in key (id) order: it is never listed,
                 // and as a successor it counts as withholding, so the version before it shows no
                 // reason (fail closed) instead of taking the next readable row as its successor.
+                // The labelled-only conjunct of a version asks its live page once, however many versions it has.
+                let live_labelled = match policy {
+                    Some(policy) => crate::facts::live_labelled(&*read, &page, policy)?,
+                    None => None,
+                };
                 let mut versions: Vec<Option<VersionRecord>> = Vec::new();
                 scan_prefix(
                     &*read,
@@ -2041,6 +2099,7 @@ impl Store {
                                             &next.page_type,
                                             &next.frontmatter,
                                             policy,
+                                            live_labelled,
                                         )
                                     })
                                 })
@@ -2060,6 +2119,7 @@ impl Store {
                             &row.page_type,
                             &row.frontmatter,
                             policy,
+                            live_labelled,
                         )
                     }) {
                         rows.push((row, reason));
@@ -2257,11 +2317,14 @@ impl VersionPreimage {
         out.tags = self.tags.clone();
         out.source_path = self.source_path.clone();
         // The snapshot's writer is the stored revision's only when the read is that revision, as the
-        // attribution trigger copies `write_*` only then: a stale read keeps them NULL.
-        if self.revision != page.knowledge_revision {
+        // attribution trigger copies `write_*` only then: a stale read keeps them NULL. The revision
+        // is a uuid, so any spelling of the stored one is the stored one, and it is kept lower-case,
+        // as the `::uuid` cast stores it.
+        let revision = self.revision.to_ascii_lowercase();
+        if revision != page.knowledge_revision.to_ascii_lowercase() {
             out.revision_receipt = RevisionReceipt::default();
         }
-        out.knowledge_revision = self.revision.clone();
+        out.knowledge_revision = revision;
         out.deleted_at_us = match (self.deleted, page.deleted_at_us) {
             (false, _) => None,
             (true, Some(at)) => Some(at),
@@ -2350,12 +2413,24 @@ pub(crate) fn snapshot_in(
     env: &dyn Env,
     page: &PageRecord,
 ) -> Result<VersionRecord> {
+    snapshot_in_with(tx, env, page, true)
+}
+
+/// `snapshot_in` with the tags sorted (a page read) or kept in the given order (a caller's preimage).
+fn snapshot_in_with(
+    tx: &mut dyn KvWrite,
+    env: &dyn Env,
+    page: &PageRecord,
+    sort_tags: bool,
+) -> Result<VersionRecord> {
     let context = crate::write_trust::stamp_context::current()?;
     // `gbrain_stamp_version_attribution` casts the request on every row inserted into `page_versions`.
     context.attribution.refuse_request_not_uuid()?;
     let id = next_id(tx, NEXT_VERSION_ID)?;
     let mut tags = page.tags.clone();
-    tags.sort();
+    if sort_tags {
+        tags.sort();
+    }
     let segmented = crate::page_body::segmented_reference(&*tx, page.id)?;
     // `snapshot_version_trust`: the snapshot copies the page's stamped tier and origin. No store
     // caller supplies its own, so the backfill branch never applies.

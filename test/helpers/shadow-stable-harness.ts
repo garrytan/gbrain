@@ -69,7 +69,7 @@ export async function startRig(opts: RigOptions): Promise<Rig> {
   const applied: Rig['applied'] = [];
   const store: FollowStore = {
     replaceRelationRows: async (_id, relation, _gen, keys) => { applied.push({ relation: String(relation), keys: (keys as unknown[]).length }); return APPLIED; },
-    replaceInterval: async () => APPLIED, relationDigest: async () => ({ rows: 0, digest: '' }), relationEntries: async () => [], allocatorCheck: async () => [],
+    replaceInterval: async () => APPLIED, relationDigest: async () => ({ rows: 0, digest: '' }), relationEntries: async () => [], allocatorCheck: async () => [], allocatorAdvance: async () => [],
     factFingerprints: async (texts) => texts.map(() => ({ fingerprint: 'a', fingerprint_v1: 'b' })),
     seedPlan: async () => ({ relations: [{ relation: 'config', key: ['key'], removable: true }], carried: [], not_copied: [], gap_columns: [] }) as never,
     ...o.store,

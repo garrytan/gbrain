@@ -36,7 +36,7 @@ const RESULT = { upserted: 1, deleted: 0, skipped_older: 0, displaced: 0, droppe
 function fakeStore(over: Partial<FollowStore> = {}): FollowStore {
   return {
     replaceRelationRows: async () => RESULT, replaceInterval: async () => RESULT, relationDigest: async () => ({ rows: 0, digest: '' }),
-    relationEntries: async () => [], allocatorCheck: async () => [], factFingerprints: async (texts) => texts.map(() => ({ fingerprint: 'a', fingerprint_v1: 'b' })),
+    relationEntries: async () => [], allocatorCheck: async () => [], allocatorAdvance: async () => [], factFingerprints: async (texts) => texts.map(() => ({ fingerprint: 'a', fingerprint_v1: 'b' })),
     seedPlan: async () => ({ relations: [], carried: [], not_copied: [], gap_columns: [] }) as never, ...over,
   };
 }
@@ -413,7 +413,8 @@ describe('status --json', () => {
       coverage_watermark: { valid: false, through: null, invalidated_reason: 'not_started' },
     });
     expect(json.reconcile.state).toBe('never_run');
-    expect(json.write_comparisons).toEqual({ state: 'capability_missing', sample_rate: 0.05, comparable: 0, unexplained_difference: 0, uncomparable: 0, capability_missing: 0 });
+    expect(json.write_comparisons).toEqual({ state: 'capability_missing', sample_rate: 0.05, comparable: 0, unexplained_difference: 0, uncomparable: 0, capability_missing: 0,
+      qualifying_writes: { by_day: {}, first_seen: null, in_transaction_by_day: {} } });
     expect(json.fingerprints).toEqual({ checked_rows: 0, mismatches: 0, probe: {
       state: 'not_run', checked_at: null, server_version: null, collation: null, mismatches: 0, ctype: null, locale_provider: null, locale: null,
       differing_code_points: [], differing_code_points_total: 0, corpus_mismatches: 0, corpus_mismatch_rows: [], facts_with_differing_code_points: 0,
@@ -446,7 +447,7 @@ describe('shadowReadiness (the S5a reading rules)', () => {
     epoch_id: 'e', epoch_started_at: 't',
     follower: { state: 'following', action: null, lag_ms: 0, lag_ms_p99_24h: 4, lag_ms_p99_epoch: 4, queue_depth: 0, applied_rows: 1, coverage_watermark: { valid: true, through: 't', invalidated_reason: null } },
     reconcile: { state: 'ok', last_pass: null, consecutive_clean_full_passes: 1, next_full_pass_due: null },
-    write_comparisons: { state: 'capability_missing', sample_rate: 1, comparable: 0, unexplained_difference: 0, uncomparable: 0, capability_missing: 0 },
+    write_comparisons: { state: 'capability_missing', sample_rate: 1, comparable: 0, unexplained_difference: 0, uncomparable: 0, capability_missing: 0, qualifying_writes: { by_day: {}, first_seen: null } },
     fingerprints: { checked_rows: 1, mismatches: 0, probe: { ...NOT_RUN_PROBE, state: 'pass', checked_at: 't', server_version: '17', collation: 'C' } },
     seed: { seed_id: 'e', finished_at: 't', unseeded_gap_rows_total: 0 }, allocators: { verified: true, checked_at: 't' },
     primary_refreshes: { nonterminal_rows: 0, checked_at: 't' },

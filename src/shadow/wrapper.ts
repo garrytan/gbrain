@@ -27,6 +27,7 @@ import { isShadowReadMember, SHADOW_TRANSACTION_MEMBERS } from './reads.ts';
 import { sqlWrites } from './sql-writes.ts';
 import type { TxScope, WriteSampler } from './write-capture.ts';
 import { IGNORED_WRITE_MEMBERS, memberKind } from './write-map.ts';
+import { QUALIFYING_WRITE_OPS } from './write-bar.ts';
 
 export interface ShadowSink {
   readonly counters: MirrorCounters;
@@ -38,6 +39,8 @@ export interface ShadowSink {
   token?(): { gen?: number; lsn?: string };
   /** False once mirroring stopped in this process (state off, restart budget spent, privacy pause). */
   active(): boolean;
+  /** Notes one call of a qualifying write member (write-bar.ts): criterion 5's bar counts every call, compared or not. */
+  noteWrite?(op: string, inTransaction?: boolean): void;
 }
 
 export interface ShadowWrapperOptions {
@@ -261,6 +264,12 @@ function buildProxy<E extends BrainEngine>(engine: E, sink: ShadowSink, opts: Sh
     return kind === 'raw' ? followRaw(ctx, fn) : followWrite(ctx, name, fn);
   };
 
+  /** Counts each call of a qualifying write (outside or inside a transaction) on the write meter; never fails the call. */
+  const countWrite = (name: string, fn: Function): Function => function shadowCountedWrite(this: unknown, ...args: unknown[]) {
+    try { if (sink.active()) sink.noteWrite?.(name, inTransaction); } catch { /* the shadow never fails a call */ }
+    return fn.apply(this, args);
+  };
+
   const proxy = new Proxy(engine, {
     get(target, prop) {
       const value = Reflect.get(target, prop, target);
@@ -278,6 +287,7 @@ function buildProxy<E extends BrainEngine>(engine: E, sink: ShadowSink, opts: Sh
       if (opts.onCommittedWrite && typeof prop === 'string' && !isShadowReadMember(prop) && !TX_MEMBERS.has(prop)) wrapped = wrapObserved(prop, wrapped);
       if (scope) wrapped = gated(prop, wrapped, scope);
       if (prop === 'withReservedConnection' && opts.writes && !inTransaction) { const reserved = wrapped; wrapped = function laneReserved(this: unknown, callback: unknown, ...rest: unknown[]) { return reserved.call(this, typeof callback === 'function' ? (conn: unknown) => (callback as (conn: unknown) => unknown)(laneConnection(conn)) : callback, ...rest); }; }
+      if (sink.noteWrite && typeof prop === 'string' && QUALIFYING_WRITE_OPS.has(prop)) wrapped = countWrite(prop, wrapped);
       cache.set(prop, { original: value, wrapped });
       return wrapped;
     },

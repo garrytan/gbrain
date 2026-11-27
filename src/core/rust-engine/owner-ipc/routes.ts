@@ -31,7 +31,10 @@ import {
 
 export type OwnerIpcRoute = 'local' | 'forward' | 'refuse';
 
-const LOCAL: ReadonlySet<string> = new Set(['kind', 'capabilities', 'connect', 'disconnect', 'reconnect', 'registerBeforeDisconnect']);
+// withManagedPersistencePaused runs its callback on the caller's side and reaches the owner only through its two typed
+// members (pauseManagedPersistence, restoreManagedPersistence), which are forwarded.
+const LOCAL: ReadonlySet<string> = new Set(['kind', 'capabilities', 'connect', 'disconnect', 'reconnect', 'registerBeforeDisconnect',
+  'withManagedPersistencePaused']);
 const REFUSE: ReadonlySet<string> = new Set(['transaction', 'transactionDirect', 'withReservedConnection', 'holdSchemaMigrationLock', 'keywordBoundedRead',
   'worktreeClaimStore', 'writerAdminStore']);
 

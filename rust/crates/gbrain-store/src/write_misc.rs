@@ -113,6 +113,7 @@ impl Store {
             let Some(mut record) = read_source(&*tx, source_id)? else {
                 return Ok(false);
             };
+            crate::guest_sources::refuse_local_path_on_guest(&*tx, source_id)?;
             record.local_path = Some(local_path.to_owned());
             if let Some(name) = name {
                 record.name = Some(name.to_owned());

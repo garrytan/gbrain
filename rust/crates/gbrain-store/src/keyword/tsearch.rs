@@ -25,6 +25,7 @@
 
 use super::parser::{TokenType, parse};
 use super::stem::{english_stem, pg_lower};
+use super::stem_german::german_stem;
 use crate::error::{Result, StoreError};
 use std::cmp::Ordering;
 
@@ -237,10 +238,37 @@ struct ParsedWord {
     pos: u16,
 }
 
-/// The dictionary the `english` configuration maps a token type to.
+/// The dictionary a configuration maps a token type to.
 enum Dict {
     EnglishStem,
+    GermanStem,
     Simple,
+}
+
+/// A text search configuration the store implements. `english` and `german` map the same token
+/// types to their Snowball dictionary (PostgreSQL's `snowball_create.sql` gives every Latin-script
+/// Snowball configuration the mapping of `english`); `simple` lowercases every one of those types.
+/// Any other configuration name has no port and is refused by [`FtsConfig::parse`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum FtsConfig {
+    #[default]
+    English,
+    German,
+    Simple,
+}
+
+impl FtsConfig {
+    /// The configuration `GBRAIN_FTS_LANGUAGE` names; `None` (absent) is `english`, the default.
+    pub(crate) fn parse(name: Option<&str>) -> Result<FtsConfig> {
+        match name.unwrap_or("english") {
+            "english" => Ok(FtsConfig::English),
+            "german" => Ok(FtsConfig::German),
+            "simple" => Ok(FtsConfig::Simple),
+            other => Err(StoreError::invalid(format!(
+                "no Snowball port for the {other} text search configuration"
+            ))),
+        }
+    }
 }
 
 fn english_dict(ty: TokenType) -> Option<Dict> {
@@ -259,12 +287,13 @@ fn english_dict(ty: TokenType) -> Option<Dict> {
 /// without taking a position; a stopword takes a position and emits no word; a lexeme longer than
 /// `MAXSTRLEN` bytes (lowercasing can lengthen a token) takes its position and is dropped.
 fn parsetext(text: &str) -> Vec<ParsedWord> {
-    parsetext_in(text, false)
+    parsetext_in(text, FtsConfig::English)
 }
 
-/// [`parsetext`] for `english`, or with `simple` for the `simple` configuration: every token type
-/// `english` maps goes to the `simple` dictionary (lowercased, no stemming, no stopwords).
-fn parsetext_in(text: &str, simple: bool) -> Vec<ParsedWord> {
+/// [`parsetext`] under `config`: `english` or `german` stem with their Snowball dictionary; `simple`
+/// sends every token type `english` maps to the `simple` dictionary (lowercased, no stemming, no
+/// stopwords).
+fn parsetext_in(text: &str, config: FtsConfig) -> Vec<ParsedWord> {
     let mut out = Vec::new();
     let mut pos: u32 = 0;
     for (ty, token) in parse(text) {
@@ -273,10 +302,15 @@ fn parsetext_in(text: &str, simple: bool) -> Vec<ParsedWord> {
         if token.len() >= MAXSTRLEN {
             continue;
         }
-        let dict = english_dict(ty).map(|d| if simple { Dict::Simple } else { d });
+        let dict = english_dict(ty).map(|d| match (config, d) {
+            (FtsConfig::Simple, _) => Dict::Simple,
+            (FtsConfig::German, Dict::EnglishStem) => Dict::GermanStem,
+            (_, d) => d,
+        });
         let lexeme = match dict {
             None => continue,
             Some(Dict::EnglishStem) => english_stem(token),
+            Some(Dict::GermanStem) => german_stem(token),
             Some(Dict::Simple) => {
                 let lowered = pg_lower(token);
                 if lowered.is_empty() {
@@ -338,7 +372,12 @@ pub(crate) fn to_tsvector(text: &str) -> Result<TsVector> {
 
 /// `to_tsvector('simple', text)`.
 pub(crate) fn to_tsvector_simple(text: &str) -> Result<TsVector> {
-    make_tsvector(parsetext_in(text, true))
+    make_tsvector(parsetext_in(text, FtsConfig::Simple))
+}
+
+/// `to_tsvector(config, text)`.
+pub(crate) fn to_tsvector_in(config: FtsConfig, text: &str) -> Result<TsVector> {
+    make_tsvector(parsetext_in(text, config))
 }
 
 /// `setweight(vector, weight)`: every position gets the weight; lexemes without positions stay
@@ -501,8 +540,8 @@ pub(crate) struct TsQuery {
 /// final array is the reverse).
 struct QueryBuilder {
     pushed: Vec<QItem>,
-    /// Operands parse under the `simple` configuration instead of `english`.
-    simple: bool,
+    /// The configuration the operands parse under (`english` unless set).
+    config: FtsConfig,
     /// `curop - op`: the bytes of operand text pushed so far (each operand plus its NUL).
     sumlen: usize,
 }
@@ -511,7 +550,7 @@ impl QueryBuilder {
     fn new() -> Self {
         QueryBuilder {
             pushed: Vec::new(),
-            simple: false,
+            config: FtsConfig::English,
             sumlen: 0,
         }
     }
@@ -552,7 +591,7 @@ impl QueryBuilder {
     /// `pushval_morph`: parse one operand's text and push its lexemes, joined by `qoperator`,
     /// with stopword placeholders for the stopwords between them.
     fn pushval_morph(&mut self, text: &str, qoperator: Op) -> Result<()> {
-        let words = parsetext_in(text, self.simple);
+        let words = parsetext_in(text, self.config);
         if words.is_empty() {
             self.push_stop();
             return Ok(());
@@ -821,8 +860,13 @@ pub(crate) fn plainto_tsquery(text: &str) -> Result<TsQuery> {
 
 /// `plainto_tsquery('simple', text)`.
 pub(crate) fn plainto_tsquery_simple(text: &str) -> Result<TsQuery> {
+    plainto_tsquery_in(FtsConfig::Simple, text)
+}
+
+/// `plainto_tsquery(config, text)`.
+pub(crate) fn plainto_tsquery_in(config: FtsConfig, text: &str) -> Result<TsQuery> {
     let mut b = QueryBuilder::new();
-    b.simple = true;
+    b.config = config;
     if !text.is_empty() {
         b.pushval_morph(text, Op::And)?;
     }

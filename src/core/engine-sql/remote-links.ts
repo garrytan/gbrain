@@ -14,7 +14,7 @@
 import { labelledOnlyForSql, privacyPartSql, readPolicyFragment, withCallerAccess, type FolderCoverage } from '../search/private-visibility.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
 import type { EffectExec } from './persistence-effect-worker.ts';
-import { sqlFragment, trustedSql } from './fragment.ts';
+import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
 
 /** The settings the links effect's transaction opens with: synchronous commit, a 1s lock wait and a 5s statement limit. */
 export const EFFECT_TRANSACTION_LIMITS_SQL = "SELECT set_config('synchronous_commit','on',true),set_config('lock_timeout','1s',true),set_config('statement_timeout','5s',true)";
@@ -79,6 +79,17 @@ export async function readLinkTargetPages(exec: LegacyUnscopedRead, sourceId: st
     (${trustedSql(privacyPartSql('p'))}) AS visible
     FROM pages p WHERE p.source_id=${sourceId} AND p.slug=ANY(${[...slugs]}::text[]) AND p.deleted_at IS NULL`);
   return rows;
+}
+
+/**
+ * readPageHiddenFromWriter: whether some row of (`sourceId`, `slug`), live or soft-deleted, fails the writer's read policy
+ * (member access, then the privacy part when `hidePrivate`); false when the slug has no row. A write over a slug with no
+ * live row is judged on it, so a write never republishes a deleted page the writer could not have read.
+ */
+export async function readPageHiddenFromWriter(exec: Pick<EffectExec, 'executeRaw'>, sourceId: string, slug: string, policy: WriterReadPolicy, hidePrivate: boolean): Promise<boolean> {
+  const { text, params } = renderFragment(sqlFragment`SELECT 1 FROM pages WHERE source_id=${sourceId} AND slug=${slug}
+      AND NOT (${trustedSql(renderWriterReadPolicy(policy, 'pages', hidePrivate))}) LIMIT 1`);
+  return (await exec.executeRaw(text, params)).length > 0;
 }
 
 /** rearmLinksEffects's arguments: the source, the requests whose `links` effects re-arm, and optionally their slugs. */

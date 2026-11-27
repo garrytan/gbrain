@@ -949,12 +949,11 @@ async function migrateConsent(engine: BrainEngine, args: string[], flags: Return
 }
 
 /**
- * The status census, the plan and the apply read and rewrite vector columns with raw SQL. The Rust store fixes its
- * vector width when the brain is created (docs/designs/RUST_ENGINE.md loss row 48), so every mode refuses there before
- * it reads anything (after the flag checks, which touch no engine) instead of reporting a census with fields quietly
- * missing.
+ * The plan and the apply read and rewrite vector columns with raw SQL. The Rust store fixes its vector width when the
+ * brain is created (docs/designs/RUST_ENGINE.md loss row 48), so they refuse there before they read anything (after the
+ * flag checks, which touch no engine). The `--status` census reads only typed engine members, so it answers on Rust too.
  */
-const RUST_MIGRATION_STOP = 'migrate embeddings (the Rust store fixes its vector width at creation; status, plan and apply read vector columns with raw SQL)';
+const RUST_MIGRATION_STOP = 'migrate embeddings (the Rust store fixes its vector width at creation; plan and apply rewrite vector columns with raw SQL)';
 
 /** The usage error for a run that names no `--to` target; `exit` is the run's own exit. */
 function missingTarget(exit: (code: number) => never): never {
@@ -981,9 +980,9 @@ export async function runMigrateEmbeddings(
   const flags = parseMigrateEmbeddingsFlags(args);
   // A run that is no status read and names no target is a usage error on every engine, before any engine check.
   if (!args.includes('--status') && !flags.to) missingTarget(exit);
-  requireRawSql(engine, RUST_MIGRATION_STOP);
   // ── Read-only status surface (D6). No env refusal (it REPORTS env), no
-  // mutation, no spend — the mid-incident "where am I?" command.
+  // mutation, no spend — the mid-incident "where am I?" command. Every read it makes is a typed engine member, so a
+  // Rust brain answers it too; only the migration below refuses there.
   if (args.includes('--status')) {
     const report = await readMigrationStatus(engine);
     const envPresence = detectEnvPresence();
@@ -1002,6 +1001,7 @@ export async function runMigrateEmbeddings(
         : null;
       const cfg = loadConfig();
       if (cfg?.database_url) identity = { engine: 'postgres', target: redactPgUrl(cfg.database_url) };
+      else if (cfg?.engine === 'rust' && cfg.database_path) identity = { engine: 'rust', target: cfg.database_path };
       else if (cfg?.database_path) identity = { engine: 'pglite', target: cfg.database_path };
       else identity = { engine: cfg?.engine ?? 'pglite', target: 'default path' };
     } catch { /* informational */ }
@@ -1068,6 +1068,7 @@ export async function runMigrateEmbeddings(
     }
     exit(0);
   }
+  requireRawSql(engine, RUST_MIGRATION_STOP);
 
   if (!flags.to) missingTarget(exit);
 

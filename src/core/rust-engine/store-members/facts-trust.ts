@@ -28,10 +28,9 @@
  */
 import type { BrainEngine } from '../../engine.ts';
 import { grantedPrivateFactSql } from '../../access/member-facts.ts';
-import { getFtsLanguage } from '../../fts-language.ts';
 import { privateFactFilterForReader } from '../../search/private-visibility.ts';
 import { CORRECTION_CUE } from '../../search/saved-facts-match.ts';
-import { refuseMember, storeCall, type StoreMember } from './common.ts';
+import { refuseMember, storeCall, storeFtsConfig, type StoreMember } from './common.ts';
 import { storePrivacyPolicy } from './private-provenance.ts';
 import { poolArgs } from './fact-pool.ts';
 import { withDates } from '../store-codec.ts';
@@ -43,7 +42,7 @@ type Row = Record<string, unknown>;
 export const listFactsForRelevance: Member<'listFactsForRelevance'> = async (brain, q) => {
   const member = 'listFactsForRelevance';
   if (q.arm === 'entity_ended') refuseMember(member, 'the history arm reads the withdrawal ledger');
-  if (q.arm === 'keyword' && getFtsLanguage() !== 'english') refuseMember(member, `the keyword arm in FTS language ${getFtsLanguage()}`);
+  const ftsConfig = q.arm === 'keyword' ? storeFtsConfig(member, 'the keyword arm in FTS language') : undefined;
   if (q.vector && q.vector.type !== 'halfvec') refuseMember(member, 'a vector-typed facts embedding column');
   const pool = poolArgs(member, q.scope, q.filters);
   const rows: Row[] = await storeCall({ member }, () => brain.listFactsForRelevance({
@@ -53,6 +52,7 @@ export const listFactsForRelevance: Member<'listFactsForRelevance'> = async (bra
     terms: q.terms ?? '',
     ...(q.entity ? { entity: { sourceId: q.entity.sourceId, slug: q.entity.slug } } : {}),
     limit: q.limit,
+    ...(ftsConfig ? { ftsConfig } : {}),
   }));
   return rows.map(row => withDates(row, ['valid_from', 'valid_until', 'created_at']) as unknown as Awaited<ReturnType<BrainEngine['listFactsForRelevance']>>[number]);
 };
@@ -72,7 +72,7 @@ const STORE_CORRECTION_CUE = String.raw`\m(correction|retract(s|ed|ing|ion)?|dis
 
 export const matchSavedFacts: Member<'matchSavedFacts'> = async (brain, q) => {
   const member = 'matchSavedFacts';
-  if (getFtsLanguage() !== 'english') refuseMember(member, `FTS language ${getFtsLanguage()}`);
+  const ftsConfig = storeFtsConfig(member, 'FTS language');
   if (q.cue !== STORE_CORRECTION_CUE) refuseMember(member, 'a correction cue other than CORRECTION_CUE');
   if (q.worldOnly && grantedPrivateFactSql('f') !== 'FALSE') refuseMember(member, 'visibility widened by a private-facts grant');
   const rows: Row[] = await storeCall({ member }, () => brain.matchSavedFacts({
@@ -84,6 +84,7 @@ export const matchSavedFacts: Member<'matchSavedFacts'> = async (brain, q) => {
     excludePrivate: storePrivacyPolicy(member, q.excludePrivate, () => privateFactFilterForReader('facts'), { callerReaders: true }),
     worldOnly: q.worldOnly,
     minTrust: q.minTrust || null,
+    ftsConfig,
   }));
   return rows.map(row => withDates(row, ['at', 'created_at']) as unknown as Awaited<ReturnType<BrainEngine['matchSavedFacts']>>[number]);
 };
@@ -118,8 +119,8 @@ export const readEntityNewestFacts: Member<'readEntityNewestFacts'> = async (bra
 
 export const matchHeadStems: Member<'matchHeadStems'> = async (brain, heads, terms) => {
   const member = 'matchHeadStems';
-  if (getFtsLanguage() !== 'english') refuseMember(member, `FTS language ${getFtsLanguage()}`);
+  const ftsConfig = storeFtsConfig(member, 'FTS language');
   if (heads.length === 0) return [];
-  const rows: Array<{ h: string; i: Array<number | string> }> = await storeCall({ member }, () => brain.matchHeadStems([...heads], [...terms]));
+  const rows: Array<{ h: string; i: Array<number | string> }> = await storeCall({ member }, () => brain.matchHeadStems([...heads], [...terms], ftsConfig));
   return rows.map(row => ({ h: row.h, i: row.i.map(Number) }));
 };

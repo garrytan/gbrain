@@ -112,6 +112,14 @@ export function servesRawSql(engine: object): boolean {
   return reports(engine, 'raw_sql');
 }
 
+/**
+ * Whether `engine` runs a `transaction` body. `initGuestSource` asks it: without `transactions` (the Rust engine) it runs
+ * the same steps one after another, each atomic on its own. PGLite, Postgres and transaction handles answer true.
+ */
+export function servesTransactions(engine: object): boolean {
+  return reports(engine, 'transactions');
+}
+
 /** True unless `engine` carries a capability set without `capability`; an object with no set (a handle, a fake) passes. */
 function reports(engine: object, capability: Capability): boolean {
   const caps = (engine as { capabilities?: ReadonlySet<Capability> }).capabilities;

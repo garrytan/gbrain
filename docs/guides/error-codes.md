@@ -2215,7 +2215,7 @@ More: [docs/guides/enforced-member.md#refused](../../docs/guides/enforced-member
 |---|---|---|---|---|---|---|
 | The brain's engine does not implement the capability this call needs (reason names it), so the call was refused before any work and nothing was written. | The Rust engine preview grows one capability at a time. A call that needs a capability it does not report is refused up front instead of running part of the way; detail names the member, the capability and whether anything was written (written=nothing unless the outcome is partial or unknown). | Run the call on a pglite or postgres brain, or wait for a gbrain release whose Rust engine reports the capability. | agent | `repeat the read that failed` | 1 | no |
 
-Reasons: `raw_sql`, `persistence_journal`, `managed_persistence`, `minion_queue`, `access_control`, `belief_ledger`, `single_owner`, `postgres_admin`, `schema`, `transactions`, `sources`, `config`, `pages`, `page_versions`, `page_body`, `tags`, `chunks`, `embeddings`, `keyword_search`, `vector_search`, `links`, `timeline`, `graph`, `facts`, `takes`, `files`, `code_edges`, `salience`, `health`, `raw_data`, `eval_capture`, `telemetry`, `entity_identities`, `ingest_log`, `dream_verdicts`, `contradictions`, `ontology`, `session_state`.
+Reasons: `raw_sql`, `persistence_journal`, `managed_persistence`, `minion_queue`, `access_control`, `belief_ledger`, `single_owner`, `postgres_admin`, `schema`, `transactions`, `sources`, `config`, `pages`, `page_versions`, `page_body`, `tags`, `chunks`, `embeddings`, `keyword_search`, `vector_search`, `links`, `timeline`, `graph`, `facts`, `takes`, `files`, `code_edges`, `salience`, `health`, `raw_data`, `eval_capture`, `telemetry`, `entity_identities`, `ingest_log`, `dream_verdicts`, `contradictions`, `ontology`, `session_state`, `guest_sources`.
 
 More: [docs/ENGINES.md#the-rust-engine-shell](../../docs/ENGINES.md#the-rust-engine-shell)
 
@@ -2305,9 +2305,11 @@ More: [docs/ENGINES.md#opening-an-engine-from-settings-experimental](../../docs/
 |---|---|---|---|---|---|---|
 | The move to another engine (`gbrain engine swap`) was refused before anything changed; the current engine keeps authority. | A swap needs a settled, unmanaged brain and readiness evidence that cannot be waived: managed storage, unfinished worktree refreshes, failing readiness criteria, more than one writer host, a team brain, a lagging follower, differing digests or fingerprints, an engine-selecting override, or host access that would change. Each reason has one recovery row in docs/guides/engine-swap.md. | Correct the request using the message above, then retry. Run: gbrain engine swap --to rust --plan --json | agent | `repeat the read that failed` | 1 | no |
 
-Reasons: `refresh_unsettled`, `managed_storage`, `no_shadow`, `not_ready`, `multiple_writer_hosts`, `writer_coverage_unknown`, `team_brain`, `follower_behind`, `digest_mismatch`, `route_override`, `host_access_unbound`, `host_access_changed`, `fingerprint_semantics_differ`.
+Reasons: `refresh_unsettled`, `managed_storage`, `no_shadow`, `not_ready`, `multiple_writer_hosts`, `writer_coverage_unknown`, `team_brain`, `follower_behind`, `digest_mismatch`, `route_override`, `host_access_unbound`, `host_access_changed`, `fingerprint_semantics_differ`, `folder_rules_unserved`, `remote_access_unserved`, `brain_in_use`, `verification_incomplete`, `checkpoint_unavailable`, `failback_unavailable`, `failback_mismatch`.
 
 Override: reason `refresh_unsettled`: retryable, exit 1, retryable.
+
+Override: reason `failback_mismatch`: unavailable, exit 1, not retryable.
 
 Override: reason `managed_storage`: consent, exit 3, not retryable.
 
@@ -2330,6 +2332,16 @@ Override: reason `host_access_changed`: consent, exit 3, not retryable.
 Override: reason `digest_mismatch`: unavailable, exit 1, not retryable.
 
 Override: reason `fingerprint_semantics_differ`: unavailable, exit 1, not retryable.
+
+Override: reason `folder_rules_unserved`: unavailable, exit 1, not retryable.
+
+Override: reason `remote_access_unserved`: unavailable, exit 1, not retryable.
+
+Override: reason `brain_in_use`: retryable, exit 1, retryable.
+
+Override: reason `verification_incomplete`: unavailable, exit 1, not retryable.
+
+Override: reason `checkpoint_unavailable`: unavailable, exit 1, not retryable.
 
 More: [docs/guides/engine-swap.md#refusals](../../docs/guides/engine-swap.md#refusals)
 
@@ -2421,7 +2433,7 @@ More: [docs/guides/repair.md#rename-identity](../../docs/guides/repair.md#rename
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| `remember`, or an owner `gbrain trust release` that writes a held fact into its entity page's `## Facts` table (a managed brain), refused a claim that was explicitly forgotten for this subject (wire `invalid_params`, message prefix `fact_withdrawn:`); nothing was saved, and a refused release leaves the fact held. | A forgotten claim stays withdrawn: remembering the same normalized text does not restore it, and a claim forgotten without an entity is withdrawn for every entity. The additive `withdrawn` object (`at`, `subject`: an entity slug or `all_entities`, `visibility`) says when and how widely the exact claim was forgotten; it covers that exact claim only, and its absence carries no meaning. | Do not retry the same text. Tell the user the claim was forgotten (withdrawn.at, withdrawn.subject); if it is still true, remember it in new words. To link a fact saved without an entity, remember it with entity and replaces set to its fact id instead of forgetting it. For a refused release, do not retry it: drop the hold (gbrain trust drop h<id>) unless the user wants the claim back in new words. | agent | `repeat the read that failed` | 1 | no |
+| `remember`, or an owner `gbrain trust release` that writes a held fact into its entity page's `## Facts` table (a managed brain), refused a claim that was explicitly forgotten for this subject (wire `invalid_params`, message prefix `fact_withdrawn:`); nothing was saved, and a refused release leaves the fact held. | A forgotten claim stays withdrawn: remembering the same normalized text does not restore it, and a claim forgotten without an entity is withdrawn for every entity. The additive `withdrawn` object (`at`, `subject`: an entity slug or `all_entities`, `visibility`) says when and how widely the exact claim was forgotten; it covers that exact claim only, is sent only to a caller that reads private pages (a remote caller gets the refusal without it), and its absence carries no meaning. | Do not retry the same text. Tell the user the claim was forgotten (with withdrawn.at and withdrawn.subject when the refusal carries them); if it is still true, remember it in new words. To link a fact saved without an entity, remember it with entity and replaces set to its fact id instead of forgetting it. For a refused release, do not retry it: drop the hold (gbrain trust drop h<id>) unless the user wants the claim back in new words. | agent | `repeat the read that failed` | 1 | no |
 
 ### facts_absorb_write_refused
 
