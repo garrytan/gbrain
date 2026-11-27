@@ -804,6 +804,7 @@ async function runPipelineBodyInner(
   const { cosineSimilarity } = await import('./classify.ts');
   const { writeFactsToFence, lookupSourceLocalPath } = await import('./fence-write.ts');
   const { isFactWithdrawn } = await import('./withdrawal.ts');
+  const { offRulePage } = await import('../rules/admission.ts');
 
   if (abortSignal?.aborted) {
     return { inserted: 0, duplicate: 0, superseded: 0, fact_ids: [], entity_slugs: [] };
@@ -907,9 +908,9 @@ async function runPipelineBodyInner(
     // D4: notability filter applied post-extraction, pre-insert.
     if (filter === 'high-only' && f.notability !== 'high') continue;
 
-    const resolved = f.entity_slug
+    const resolved = offRulePage(f.entity_slug
       ? await resolveEntitySlugWithSource(ctx.engine, ctx.sourceId, f.entity_slug)
-      : null;
+      : null);
     const resolvedSlug = resolved?.source === 'fallback_slugify' ? null : resolved?.slug ?? null;
     const resolutionSource = resolved?.source ?? null;
 

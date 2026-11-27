@@ -37,6 +37,7 @@ import { derivationWriteTrust, newHoldingPageFrontmatter } from '../trust/page-w
 import { minTrust, type TaintInput, type WriteTrust } from '../trust/tier.ts';
 import { applyGateDecision, derivedGateConfig, derivedGateInput, emptyGateTally } from '../trust/derived-gate.ts';
 import { decideFactWrite, recordFlaggedRow, type GatedRowDecision } from '../write-gate-store.ts';
+import { refuseRuleFactTarget } from '../rules/admission.ts';
 
 const requestFix = (row: WriteRequest): Action => row.principal_kind === 'local_cli'
   ? readFix(`Reads fact request ${row.request_id}'s durable receipt: its state and recorded error, read-only.`, { argv: ['gbrain', 'write-request', '--', row.request_id] })
@@ -104,6 +105,7 @@ export async function prepareManagedFactsMutation(engine: BrainEngine, row: Writ
       'Managed fact extraction runs only for an extract_facts intent under an unconfined writer, and this request is limited to slug prefixes, a restricted namespace or a delegation, or carries another intent.',
       'record single facts with remember instead, or ask the user to run the extraction from a writer whose grant is not confined.');
   }
+  refuseRuleFactTarget(row.slug, ...(p.facts ?? []).map(fact => fact.entity_slug));
   const embedded = p.facts?.some(fact => fact.embedding !== null && fact.embedding !== undefined);
   const validate = async (tx: BrainEngine, lock = false) => {
     if (embedded) {

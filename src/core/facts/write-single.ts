@@ -107,6 +107,7 @@ export async function writeSingleFact(
   const managed = await managedPersistenceEnabled(engine);
 
   const { resolveEntitySlugWithSource } = await import('../entities/resolve.ts');
+  const { refuseRuleFactTarget } = await import('../rules/admission.ts');
   const { decideSingleFact } = await import('./single-prepare.ts');
   const { resolveExcludePrivatePages } = await import('../search/private-visibility.ts');
   const { writeFactsToFence, lookupSourceLocalPath } = await import('./fence-write.ts');
@@ -125,6 +126,7 @@ export async function writeSingleFact(
   const resolved = entityRef
     ? await resolveEntitySlugWithSource(engine, sourceId, entityRef)
     : null;
+  refuseRuleFactTarget(entityRef, resolved?.slug);
   // #5504: a slug the resolver invented is not an entity. Unmanaged writes
   // store NULL (nothing for the stub guard to refuse); the managed intent keeps
   // it database-only as attribution. Decided before the dedup lookup so the
