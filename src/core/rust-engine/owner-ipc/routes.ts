@@ -101,7 +101,13 @@ export const OWNER_IPC_REMOTE_TYPED_READS: readonly string[] = [
   // mcp-get-tags: a remote get_tags quotes the tags of a quoted page.
   'listPageQuoteTiers',
   // write-request-reads: a remote caller reads its own write receipts and a memory proposal's state.
-  'readWriteRequest', 'listWriteRequestRows', 'readMemoryProposal',
+  'readWriteRequest', 'listWriteRequestRows',
+  // ITER
+  'filterPageIdsByFrontmatter', 'listFactsForRelevance', 'listFactsFromQuotedPages', 'listHeldFenceCells', 'listOwnerTierFacts', 'listPagesTitledIn', 'listSlotRows', 'matchSavedFacts', 'pageAwaitsRederive', 'readAdmissionSource', 'readOauthClient', 'readOwnerOnlySourceConfig', 'readPageTrustRows', 'readRowTrustRows', 'readSourceRow', 'readStoredSlugSpellings', 'readWriteRequestsByRequestIds', 'readWriteVisibilityProbe', 'readWriterSlugFence',
+  'computeFactFingerprints', 'hasGuestSource', 'listContestedProposalPairs', 'listFenceHoldRows', 'listFenceRowTrust', 'listPageRefsByIds', 'readAccessTokenWriteGrant', 'readFenceOverlayRows', 'readHeldPageRows', 'readOAuthClientWriteGrant', 'readSourceMembership', 'sharedSkillPackTablePresent', 'wordLexemes',
+  'findExactSlug', 'listPageStatusByRef', 'listSharedSkillPackRoots', 'readAdmittedPageRefs', 'readLinkContextMatches',
+  'getWorktreeBinding', 'listFactRowsByIds', 'readIdentitySiblingCandidates', 'readLinkContextOriginPages',
+  'readJournalLimitRows',
 ];
 
 /**

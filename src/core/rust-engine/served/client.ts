@@ -38,6 +38,7 @@ import { opError } from '../../ops/contract.ts';
 import { grouperTableOf } from '../owner-ipc/client.ts';
 import { currentReadPosition } from './read-position.ts';
 import { HELD_ROW_HOOK, HELD_ROW_TAG } from '../owner-ipc/held-row.ts';
+import { remoteWholeOperationCall } from './remote-whole-ops.ts';
 
 const DEFAULT_BUSY_BUDGET_MS = 60_000;
 const DEFAULT_RECONNECT_MS = 10_000;
@@ -424,7 +425,7 @@ export async function connectServed(url: string, opts: ConnectServedOptions = {}
   const request = (kind: 'call' | 'fn', member: string, args: unknown[], ropts: { txn?: string } = {}): Promise<unknown> => {
     const remote = callerIsRemote();
     // The same refusal a local second process gives, before anything is sent; the server checks again on its side.
-    if (remote && (kind === 'fn' || !OWNER_IPC_REMOTE_READS.has(member)) && !ropts.txn) {
+    if (remote && !remoteWholeOperationCall(kind, member, args) && (kind === 'fn' || !OWNER_IPC_REMOTE_READS.has(member)) && !ropts.txn) {
       return Promise.reject(ownerIpcRefusal(member, kind === 'fn' ? 'a remote caller\'s whole operation is not sent to the brain owner' : 'a remote caller\'s write is not sent to the brain owner'));
     }
     if (closedByUser) return Promise.reject(servedGone(member, false));

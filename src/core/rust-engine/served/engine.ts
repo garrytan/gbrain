@@ -22,7 +22,7 @@ import { connectServed, type ServedConnection } from './client.ts';
 import { SERVED_TXN_CONFLICT_REASON, servedTransactionContention } from './errors.ts';
 import { recordHeldPageKeys, type HeldPageKeys } from '../../page-state/guards.ts';
 import type { PageKey } from '../../page-state/types.ts';
-import { SERVED_BRAIN_CALL, SERVED_STORE_CALL, SERVED_STORE_KEYS, STORE_RETURNING_MEMBERS, registerServedBrain, unregisterServedBrain } from './store-returning.ts';
+import { SERVED_BRAIN_CALL, SERVED_STORE_CALL, SERVED_STORE_KEYS, STORE_RETURNING_MEMBERS, registerServedBrain, registerServedConnection, unregisterServedBrain, unregisterServedConnection } from './store-returning.ts';
 
 export const RUST_SERVER_URL_ENV = 'GBRAIN_RUST_SERVER_URL';
 export const RUST_SERVER_TOKEN_ENV = 'GBRAIN_RUST_SERVER_TOKEN';
@@ -193,6 +193,7 @@ export async function connectServedEngine(engine: object, target: ServedTarget):
   connection.txProxy = ref => transactionHandle(engine, connection, ref);
   const refusals: string[] = [];
   registerServedBrain(engine, brainProxy(connection, undefined));
+  registerServedConnection(engine, connection);
   // A member the server's engine lacks refuses as the Rust engine in process does, its known stop included.
   for (const member of Object.keys(RECEIPT_STOP_OWNERS)) {
     const missing = missingOnRustOwner(connection.hello, member);
@@ -215,6 +216,7 @@ export async function connectServedEngine(engine: object, target: ServedTarget):
   return () => {
     for (const member of ['transaction', 'transactionDirect', ...STORE_RETURNING_MEMBERS, ...refusals]) delete record[member];
     unregisterServedBrain(engine);
+    unregisterServedConnection(engine);
     undo();
   };
 }

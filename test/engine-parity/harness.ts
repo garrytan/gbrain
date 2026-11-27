@@ -53,7 +53,7 @@ import { itemSetHash } from '../../src/core/generations/publish.ts';
 import { IDENTITY_DOWNGRADE_OP } from '../../src/core/persistence/sync-status-sql.ts';
 import {
   archiveRustSource, closeRustBrain, createRustSource, newRustBrain, putRustOpCheckpointRow, rustPageDeletedAt, rustAccessBrain, openRustBrain, DIVERGENCE_NORMALIZERS, readDivergences, removeBrainDir, rustArmRequested, rustMemberCapability, rustRefusal, type DivergenceRow, createRustMember, type MemberSeed, rustMuRoute, rustServedRequested, openRustBrainAt, installMuConnect, type MuConnectable, type RustMuRoute,
-  openServedPeer,
+  openServedPeer, recordServedCalls,
 } from './rust-arm.ts';
 import { isEngineMember, readStopPins, refusalFacts, rustServes, rustServesCapability, setupRefusalStep, setupStep, today, type StopPin } from './rust-refusals.ts';
 
@@ -997,6 +997,7 @@ export function parityArms(backends: readonly TestBackend[]): ParitySuite {
         // The engine object the scenario receives. Write operations key their persistence consumer on it, so it is the
         // one the harness stops when the case ends (stopWriteQueue).
         const given = recordingEngine(arm.engine, calls, refusals);
+        recordServedCalls(arm.engine, calls); // a served arm: the members its server runs for the case count too
         let scenarioFailed = false;
         try {
           if (arm.backend === 'rust') {
@@ -1439,6 +1440,7 @@ function mwHandle<T>(arm: ParityArm, label: LedgerArm, scenario: ParityScenario<
           servedPeerEngine: () => servedPeerOf(arm, calls, refusals),
       };
       const given = recordingEngine(arm.engine, calls, refusals);
+      recordServedCalls(arm.engine, calls);
       return {
         run: () => scenario(given, arm.backend, ctx), calls, refusals, capabilities: arm.engine.capabilities as ReadonlySet<string> | undefined,
         finish: async (failed: boolean) => {

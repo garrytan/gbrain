@@ -285,6 +285,7 @@ async function serveRustBrain(owned: RustBrainDir): Promise<RustBrainDir> {
     await listener.close(); await owner.disconnect();
   });
   Object.defineProperty(client, SERVED_OWNER, { value: owner, configurable: true, enumerable: false });
+  servedSinks.set(owner, wrapOwnerMembers(owner));
   Object.defineProperty(client, SERVED_PEER, { configurable: true, enumerable: false, value: async (): Promise<RustEngine> => {
     const peerToken = `${SERVED_ARM_TOKEN}_peer_${++servedPeerCount}`;
     servedArmTokens.set(peerToken, `served-arm-peer-${servedPeerCount}`);
@@ -308,6 +309,31 @@ const SERVED_OWNER: unique symbol = Symbol('gbrain.test.served-owner') as never;
 export function servedOwnerOf(engine: object): object | undefined { return (engine as Record<symbol, object | undefined>)[SERVED_OWNER]; }
 
 const SERVED_PEER: unique symbol = Symbol('gbrain.test.served-peer') as never;
+
+/**
+ * The members the served arm's owner engine runs for a case count as the case's calls: a remote whole operation (put_page
+ * from an agent-facing caller) runs its members on the server, never on the client the case holds. The owner engine's
+ * members are wrapped once (recording into the current case's set), and each case names its set (recordServedCalls).
+ */
+const servedSinks = new WeakMap<object, { current: Set<string> | null }>();
+function wrapOwnerMembers(owner: RustEngine): { current: Set<string> | null } {
+  const sink = { current: null as Set<string> | null };
+  const record = owner as unknown as Record<string, unknown>;
+  for (const member of Object.keys(RUST_ENGINE_MEMBERS)) {
+    const value = record[member];
+    if (typeof value !== 'function') continue;
+    Object.defineProperty(owner, member, { configurable: true, writable: true, enumerable: false, value: function (this: unknown, ...args: unknown[]) {
+      sink.current?.add(member);
+      return (value as (...a: unknown[]) => unknown).apply(this === undefined ? owner : this, args);
+    } });
+  }
+  return sink;
+}
+/** Records into `calls` the members the served arm's server runs from now on (no-op for any other engine). */
+export function recordServedCalls(engine: object, calls: Set<string>): void {
+  const sink = servedSinks.get((engine as Record<symbol, object | undefined>)[SERVED_OWNER] ?? {});
+  if (sink) sink.current = calls;
+}
 /**
  * A second served client of the same brain server as the served arm engine `engine`: a new protocol v3 connection with
  * its own owner token (its own principal, request ids and transactions), for multi-client cases (multi-writer C21). It
