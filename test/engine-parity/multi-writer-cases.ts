@@ -35,7 +35,7 @@ export type MwCaseId = typeof MW_CASE_IDS[number];
  * new id: `<id>.<name>`. A variant is an engine-level scenario with its own members and engine cells (no store cells).
  * Its parityTest name is the row's `<id> <title>` followed by `: <variant title>`, and its `mwCase` is the dotted id.
  */
-export const MW_VARIANT_IDS = ['C06.partition', 'C21.log-off'] as const;
+export const MW_VARIANT_IDS = ['C06.partition', 'C17.served', 'C21.log-off'] as const;
 export type MwVariantId = typeof MW_VARIANT_IDS[number];
 
 /**
@@ -435,6 +435,22 @@ export const MW_CASES: readonly MwCase[] = [
       'rust-mu': RUNS,
       'store-single': RUNS, 'store-optimistic': RUNS,
     },
+    variants: [
+      {
+        id: 'C17.served',
+        of: 'C17',
+        title: 'the first opener of a brain is its owner and a served client elects nothing',
+        invariant: 'the first process to open a brain directory is its owner; two served v3 clients that connect, write and disconnect never take or claim ownership (they report no owner role, hold no store, and the owner role, its server and its brain stay with the first opener, which keeps serving a client that connects after they left)',
+        reference: 'standalone',
+        members: ['putPage', 'getPage'],
+        cells: {
+          pglite: na('PGLite refuses a second opener by design: there is no owner election and no served client'),
+          postgres: na('a SQL engine elects no owner and serves no v3 listener: every connection is the same kind of client of the database'),
+          rust: na('the plain Rust arm is single-user: it serves no v3 listener (listenServed refuses engine_capability_missing, reason served), so there is no served client to elect nothing'),
+          'rust-mu': RUNS,
+        },
+      },
+    ],
   },
   {
     id: 'C18',
@@ -499,7 +515,7 @@ export const MW_CASES: readonly MwCase[] = [
     invariant: 'a write acknowledged on connection A is seen by B given the token',
     reference: 'standalone',
     needs: 'commit_log',
-    scope: 'Rust in multi-user mode with the commit log on (rust-mu, both routes): the brain\'s owner serves a loopback v3 listener, two served clients write and read, and the token is the cp1: position of the write (a served client\'s acknowledgement, or the owner\'s own lastCommitPosition). An owner-socket client of the same brain (ctx.sameBrainEngine) reads the same writes, but the owner socket sends no token, so only the served connections prove the token is carried and waited for. The read with the log off is the variant C21.log-off.',
+    scope: 'Rust in multi-user mode with the commit log on (rust-mu, both routes), two served v3 connections that write and read, and the token is the cp1: position of the write (a served client\'s acknowledgement, or on the owning arm the owner\'s own lastCommitPosition). On the served arm the arm\'s engine is a served client that owns nothing, so the second connection is ctx.servedPeerEngine() (its own owner token and principal on the arm\'s server). On the non-served rust-mu arm the engine owns its brain and serves a loopback v3 listener of its own; an owner-socket client of the same brain (ctx.sameBrainEngine) reads the same writes, but the owner socket sends no token, so only the served connections prove the token is carried and waited for. Both arms assert multi-user mode and the commit log on every engine involved. The read with the log off is the variant C21.log-off.',
     members: ['putPage', 'getPage'],
     storeTests: {
       runnable: ['c21_read_your_writes_token_on_a_second_connection'],

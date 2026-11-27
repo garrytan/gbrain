@@ -139,6 +139,7 @@
 # multi-writer C15 [compare]: pglite=runs postgres=runs rust=runs rust-mu=runs store-single=runs store-optimistic=runs
 # multi-writer C16 [standalone, needs commit_log]: pglite=n/a postgres=pending(L6 harness) rust=n/a rust-mu=runs store-single=runs store-optimistic=runs
 # multi-writer C17 [standalone]: pglite=n/a postgres=runs rust=n/a rust-mu=runs store-single=runs store-optimistic=runs
+# multi-writer C17.served [standalone]: pglite=n/a postgres=n/a rust=n/a rust-mu=runs store-single=n/a store-optimistic=n/a
 # multi-writer C18 [standalone]: pglite=n/a postgres=runs rust=pending(L3 server) rust-mu=pending(L3 server) store-single=runs store-optimistic=runs
 # multi-writer C19 [standalone]: pglite=n/a postgres=runs rust=runs rust-mu=runs store-single=runs store-optimistic=runs
 # multi-writer C20 [compare]: pglite=runs postgres=runs rust=runs rust-mu=runs store-single=runs store-optimistic=runs
@@ -158,11 +159,11 @@ withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
 listCatalogRelations	lifecycle	yes	1	no	yes	yes	serves
 readCatalogSchemaVersion	lifecycle	yes	1	no	yes	yes	serves
 listCatalogForeignKeys	lifecycle	yes	1	no	yes	yes	serves
-getPage	pages	yes	301	yes	yes	yes	serves
+getPage	pages	yes	302	yes	yes	yes	serves
 readPageSnapshot	pages	yes	114	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	7	no	yes	yes	serves
 lockPageKeys	pages	yes	20	no	yes	yes	serves
-putPage	pages	yes	1384	yes	yes	yes	serves
+putPage	pages	yes	1385	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	45	yes	yes	yes	serves
@@ -885,7 +886,7 @@ readSyncPassRow	persistence_journal	yes	1	no	yes	yes	serves
 readLiveSyncPassRows	persistence_journal	yes	1	no	yes	yes	serves
 writeSyncPassRow	persistence_journal	yes	2	no	yes	yes	serves
 readSyncStatusSourceRow	persistence_journal	yes	5	no	yes	yes	serves
-readSyncStatusCommittedRow	persistence_journal	yes	1	no	yes	yes	serves
+readSyncStatusCommittedRow	persistence_journal	yes	3	no	yes	yes	serves
 readManagedSyncCursorHeader	persistence_journal	yes	2	no	yes	yes	serves
 readRetiredManagedSyncCursor	persistence_journal	yes	2	no	yes	yes	serves
 readManagedSyncFailureRows	persistence_journal	yes	2	no	yes	yes	serves
@@ -1072,7 +1073,7 @@ markProjectionRebuildFailed	persistence_journal	yes	5	no	yes	yes	serves
 listGatedMirrorRequests	persistence_journal	yes	2	no	yes	yes	serves
 listEffectRecoveries	persistence_journal	yes	1	no	yes	yes	serves
 selectClaimableEffect	persistence_journal	yes	10	no	yes	yes	serves
-readRequestEffects	persistence_journal	yes	14	no	yes	yes	serves
+readRequestEffects	persistence_journal	yes	16	no	yes	yes	serves
 readSourceRequestById	persistence_journal	yes	1	no	yes	yes	serves
 listSourceRequestsByRequestId	persistence_journal	yes	2	no	yes	yes	serves
 listRetryTrackedEffects	persistence_journal	yes	2	no	yes	yes	serves
@@ -1091,8 +1092,8 @@ advanceEffectRow	persistence_journal	yes	1	no	yes	yes	serves
 completeEffectRow	persistence_journal	yes	3	no	yes	yes	serves
 retryEffectRow	persistence_journal	yes	2	no	yes	yes	serves
 retryBusyEffectRow	persistence_journal	yes	3	no	yes	yes	serves
-requeueEffectRow	persistence_journal	yes	1	no	yes	yes	serves
-parkEffectRow	persistence_journal	yes	5	no	yes	yes	serves
+requeueEffectRow	persistence_journal	yes	3	no	yes	yes	serves
+parkEffectRow	persistence_journal	yes	7	no	yes	yes	serves
 failEffectRow	persistence_journal	yes	5	no	yes	yes	serves
 readMirrorGateRows	persistence_journal	yes	2	no	yes	yes	serves
 lockEffectGuard	persistence_journal	yes	1	no	yes	yes	serves
@@ -2019,7 +2020,7 @@ listSharedSkillPackRoots	write_misc	yes	1	no	yes	yes	serves
 getWorktreeBinding	write_misc	yes	40	no	yes	yes	serves
 listHostTopologyRows	write_misc	yes	2	no	yes	yes	serves
 listWorktreeMembers	write_misc	yes	2	no	yes	yes	serves
-worktreeClaimStore	write_misc	yes	75	no	yes	yes	serves
+worktreeClaimStore	write_misc	yes	77	no	yes	yes	serves
 readWriterAdminState	write_misc	yes	10	no	yes	yes	serves
 readWorktreeManifest	write_misc	yes	1	no	yes	yes	serves
 writerAdminStore	write_misc	yes	3	no	yes	yes	serves
@@ -2474,7 +2475,7 @@ listOlderDriftReceiptSlugs	doctor_persistence	yes	2	no	yes	yes	serves
 readPublicationRefusals	doctor_persistence	yes	2	no	yes	yes	serves
 countParkedEffects	doctor_persistence	yes	2	no	yes	yes	serves
 listParkedEffects	doctor_persistence	yes	2	no	yes	yes	serves
-listGitPushHoldRows	doctor_persistence	yes	2	no	yes	yes	serves
+listGitPushHoldRows	doctor_persistence	yes	4	no	yes	yes	serves
 listStalledCatchupRows	doctor_persistence	yes	3	no	yes	yes	serves
 listParkedGroupRows	doctor_persistence	yes	3	no	yes	yes	serves
 readStaleEmbeddingCounts	doctor_persistence	yes	2	no	yes	yes	serves

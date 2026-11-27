@@ -308,6 +308,10 @@ describe('multi-writer support matrix', () => {
     }
     expect(mwCase('C21').members).toEqual(['putPage', 'getPage']);
     expect(mwCase('C21').scope).toMatch(/owner socket sends no token/);
+    // The served arm has its own second connection (the arm's engine owns nothing), the owning rust-mu arm serves its own listener.
+    expect(mwCase('C21').scope).toMatch(/served arm.*owns nothing.*ctx\.servedPeerEngine\(\)/);
+    expect(mwCase('C21').scope).toMatch(/owns its brain and serves a loopback v3 listener/);
+    expect(mwCase('C21').scope).toMatch(/every engine involved/);
     // The variant is for engine arms only and runs once, on rust-mu; its own brain is multi-user with the log off.
     const v = mwVariant('C21.log-off');
     expect(v.of).toBe('C21');
@@ -321,6 +325,37 @@ describe('multi-writer support matrix', () => {
     expect(conformance).toMatch(/GBRAIN_RUST_COMMIT_LOG: undefined/);
     expect(conformance).toMatch(/assertRustMultiuserResolved\(engine, route/);
     expect(conformance).toMatch(/assertRustCommitLogResolved\(engine\)/);
+    // C21 itself: the served arm takes its second connection from the harness, the owning arm serves its own listener, and mode and log are asserted on every engine involved.
+    expect(conformance).toMatch(/b = await ctx\.servedPeerEngine\(\)/);
+    expect(conformance).toMatch(/net = await servedClients\(engine, 2\)/);
+    expect(conformance).toMatch(/for \(const \[who, e, isServed\] of involved\) \{\s*assertRustMultiuserResolved\(e, route[^;]*;\s*assertRustCommitLogResolved\(e\);/);
+  });
+
+  test('C17.served pins the first opener as owner and a served client electing nothing: engine arms only, runs on rust-mu (plain and served arm), n/a elsewhere with its reason', () => {
+    const v = mwVariant('C17.served');
+    expect(v.of).toBe('C17');
+    expect(v.reference).toBe('standalone');
+    expect(v.members).toEqual(['putPage', 'getPage']);
+    expect(v.invariant).toMatch(/first process to open a brain directory is its owner/);
+    expect(v.invariant).toMatch(/served v3 clients.*never take or claim ownership/);
+    expect(mwVariantCell('C17.served', 'rust-mu').status).toBe('runs');
+    for (const [arm, why] of [['pglite', /no owner election and no served client/], ['postgres', /elects no owner and serves no v3 listener/], ['rust', /serves no v3 listener.*reason served/]] as const) {
+      const cell = mwVariantCell('C17.served', arm);
+      expect(cell.status, `C17.served ${arm}`).toBe('n/a');
+      expect(cell.status === 'n/a' ? cell.why : '', `C17.served ${arm} reason`).toMatch(why);
+    }
+    // The scenario asserts what the matrix says: the owner is the first opener in the arm's mode, a served client reports no owner
+    // role, no owner server and no store, and the owner (role, server) stays with the first opener after the clients write and leave.
+    const conformance = read('test', 'engine-parity', 'multi-writer-conformance.test.ts');
+    const scenario = conformance.slice(conformance.indexOf("mwCase: 'C17.served'"), conformance.indexOf("mwCase: 'C18'"));
+    expect(scenario).toMatch(/the first opener of the directory is not its owner/);
+    expect(scenario).toMatch(/assertRustMultiuserResolved\(owner, route/);
+    expect(scenario).toMatch(/assertRustCommitLogResolved\(owner\)/);
+    expect(scenario).toMatch(/claims ownership/);
+    expect(scenario).toMatch(/ownerServer\(\), `served client/);
+    expect(scenario).toMatch(/holds a store of its own/);
+    expect(scenario).toMatch(/after the served clients disconnected/);
+    expect(scenario).toMatch(/raw opener of the directory did not become a client of the owner/);
   });
 
   test('a compared case has an SQL arm that runs it (or none runs it yet), and the standalone ones are the cases the arms cannot all run alike', () => {
