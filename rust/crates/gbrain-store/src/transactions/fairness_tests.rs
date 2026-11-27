@@ -15,6 +15,19 @@ fn with_deadline(ms: u64) -> TxnOptions {
     }
 }
 
+/// Waits until `n` transactions wait in line for page `slug` (see `occ_kv_fairness_tests::until_waiting`).
+fn until_waiting(s: &Store, slug: &str, n: usize) {
+    let key: HeldKey = ("default".into(), slug.into());
+    let end = Instant::now() + Duration::from_secs(30);
+    while s.flights.waiting(&key) < n {
+        assert!(
+            Instant::now() < end,
+            "{n} waiter(s) never got in line for {slug}"
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    }
+}
+
 fn page(slug: &str) -> PageKeyHint {
     PageKeyHint {
         source_id: "default".into(),
@@ -41,7 +54,7 @@ fn a_newcomer_never_takes_a_page_key_ahead_of_a_waiter() {
             go_rx.recv().unwrap();
             t.commit_transaction().map(|_| ())
         });
-        std::thread::sleep(Duration::from_millis(40));
+        until_waiting(&s, "p", 1);
         assert!(
             !waiter.is_finished(),
             "round {round}: the waiter did not wait"
@@ -84,8 +97,8 @@ fn waiters_for_one_page_key_take_it_in_the_order_they_came() {
                 std::thread::sleep(Duration::from_millis(2));
                 t.commit_transaction().map(|_| ())
             }));
-            // Each waiter reaches the key before the next one starts.
-            std::thread::sleep(Duration::from_millis(30));
+            // Each waiter is in line before the next one starts.
+            until_waiting(&s, "p", i + 1);
         }
         holder.commit_transaction().unwrap();
         for w in waiters {
@@ -122,7 +135,7 @@ fn a_younger_holder_is_refused_behind_an_older_waiter_and_nothing_deadlocks() {
         // Now holding p and q, it asks for the younger one's key.
         o.hold_page_keys(&[page("r")], false).map(|_| ())
     });
-    std::thread::sleep(Duration::from_millis(40));
+    until_waiting(&s, "p", 1);
     assert!(!waiter.is_finished(), "the older transaction did not wait");
     let err = younger.hold_page_keys(&[page("p")], false).unwrap_err();
     assert_eq!(err.code, WRITE_CONFLICT, "{}", err.message);

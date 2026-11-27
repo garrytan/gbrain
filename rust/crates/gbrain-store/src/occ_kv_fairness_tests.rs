@@ -13,6 +13,16 @@ fn after(ms: u64) -> Option<Instant> {
     Some(Instant::now() + Duration::from_millis(ms))
 }
 
+/// Waits until `n` callers wait in `key`'s line: arrival order is what the lock saw, not what a sleep
+/// hoped for (a loaded machine can start a thread later than a fixed pause allows).
+fn until_waiting(locks: &KeyLocks, key: &[u8], n: usize) {
+    let end = Instant::now() + Duration::from_secs(30);
+    while locks.waiting(key) < n {
+        assert!(Instant::now() < end, "{n} waiter(s) never got in line");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+}
+
 /// A key freed while a retry waits for it goes to that retry, never to one that asks a moment later.
 #[test]
 fn a_newcomer_never_takes_a_key_lock_ahead_of_a_waiter() {
@@ -28,7 +38,7 @@ fn a_newcomer_never_takes_a_key_lock_ahead_of_a_waiter() {
             go_rx.recv().unwrap();
             drop(g);
         });
-        std::thread::sleep(Duration::from_millis(40));
+        until_waiting(&locks, b"hot", 1);
         assert!(
             !waiter.is_finished(),
             "round {round}: the waiter did not wait"
@@ -69,8 +79,8 @@ fn waiters_for_one_key_lock_take_it_in_the_order_they_came() {
                 std::thread::sleep(Duration::from_millis(2));
                 drop(g);
             }));
-            // Each waiter reaches the key before the next one starts.
-            std::thread::sleep(Duration::from_millis(30));
+            // Each waiter is in line before the next one starts.
+            until_waiting(&locks, b"hot", i + 1);
         }
         drop(first);
         for w in waiters {
@@ -92,7 +102,7 @@ fn a_waiter_that_times_out_lets_the_next_one_through() {
     let first = locks.acquire(&one(b"hot"), None).unwrap();
     let l = locks.clone();
     let quitter = std::thread::spawn(move || l.acquire(&one(b"hot"), after(60)).map(|_| ()));
-    std::thread::sleep(Duration::from_millis(20));
+    until_waiting(&locks, b"hot", 1);
     let l = locks.clone();
     let patient = std::thread::spawn(move || l.acquire(&one(b"hot"), after(10_000)).map(|_| ()));
     assert_eq!(quitter.join().unwrap().unwrap_err().code, TIMEOUT);

@@ -310,6 +310,14 @@ fn key_wait_timeout() -> StoreError {
 }
 
 impl KeyLocks {
+    /// Test only: how many callers wait in `key`'s line right now (a test waits for a waiter to be in
+    /// line before it starts the next one, instead of assuming a sleep was long enough).
+    #[cfg(test)]
+    fn waiting(&self, key: &[u8]) -> usize {
+        let table = self.table.lock().unwrap_or_else(|p| p.into_inner());
+        table.queued.get(key).map_or(0, VecDeque::len)
+    }
+
     /// Takes every key in `keys`, in order, waiting for each one that another owner holds or that
     /// earlier callers already wait for: waiters for one key take it in the order they came. With a
     /// deadline, a wait that reaches it ends `timeout` (reason `key_wait`) and gives back every key

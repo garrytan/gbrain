@@ -299,6 +299,12 @@ impl Drop for FlightGrant<'_> {
 }
 
 impl SingleFlight {
+    /// Test only: how many transactions wait in `key`'s line right now (see `KeyLocks::waiting`).
+    #[cfg(test)]
+    pub(crate) fn waiting(&self, key: &HeldKey) -> usize {
+        lock(&self.table).queued.get(key).map_or(0, VecDeque::len)
+    }
+
     /// Takes `keys` (sorted, unique) for `owner` of age `age`. A key `owner` already holds is skipped.
     /// A key another owner holds, or that earlier callers already wait for, is waited for, up to
     /// `deadline`, in arrival order: waiters for one key take it first come, first served. The caller
