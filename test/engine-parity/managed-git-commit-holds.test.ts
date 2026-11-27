@@ -195,6 +195,9 @@ describe('engine parity: a managed Git commit that cannot be made is loud in gbr
       owner_host: 'this_host', root: '<home>/checkout' });
     expect(hold!.last_error).toEqual(identityError);
     expect(status.lines.some(line => line.includes('ASK THE USER: Git cannot commit page files in <home>/checkout'))).toBe(true);
+    // F2-02: the question prints once, on its hold; Next points at it instead of repeating it.
+    expect(status.text.split(String(next.user_message)).length - 1).toBe(1);
+    expect(status.text).toContain('\n  ASK THE USER first: the question on the hold above.');
     expect(status.json.git_push_holds).toEqual([]);
     expect(status.lines.some(line => line.includes('git commits held: 0 retrying, 1 parked (git_unavailable)')
       && line.includes('at step commit-tree (reason: identity_missing)'))).toBe(true);

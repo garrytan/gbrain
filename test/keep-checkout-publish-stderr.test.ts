@@ -49,6 +49,14 @@ function leakyChild(): string {
   return cli;
 }
 
+/** SEC-01: a publish child that reports push_unconfirmed in JSON with git's stderr in its suggestion, or an outcome that is not one. */
+function structuredChild(doc: Record<string, unknown>, code = 1): string {
+  const dir = mkdtempSync(join(tmpdir(), 'gbrain-a7689d79-child-')); scratch.push(dir);
+  const cli = join(dir, 'gbrain-child');
+  writeFileSync(cli, `#!/bin/sh\ncat <<'JSON'\n${JSON.stringify(doc)}\nJSON\nexit ${code}\n`, { mode: 0o755 });
+  return cli;
+}
+
 /** Another clone pushes a commit, so the checkout's next push is not a fast-forward and goes to the publish child. */
 function moveRemote(repo: Repo, home: string): void {
   const other = join(home, 'other');
@@ -86,6 +94,24 @@ if (testBackends().includes('pglite')) describe('a7689d79 pushGitRoot through a 
     expect(gitDiagnosticOf(op)).toEqual(DIAGNOSTIC);
     expect(op.suggestion).toContain('exit 1, reason remote_unreachable');
     expect(leaked(`${op.message} ${op.suggestion ?? ''} ${op.detail ?? ''} ${JSON.stringify(op)}`)).toEqual([]);
+  }), 120_000);
+
+  test('SEC-01: a child that reports push_unconfirmed with git\'s words, or an outcome that is not one, copies none of them', () => withBrain('pglite', async ({ home }) => {
+    const repo = makeRepo(home, 'single');
+    harden(repo);
+    moveRemote(repo, home);
+    writeFileSync(join(repo.root, 'local.md'), 'local\n');
+    git(repo.root, 'add', 'local.md'); git(repo.root, 'commit', '-q', '-m', 'Local commit');
+    const reported = structuredChild({ code: 'push_unconfirmed', message: `The commit is durable locally but no push to origin/main was confirmed.`,
+      suggestion: `git push failed (network, credentials, branch protection, or a remote that kept moving): ${STDERR}. Rerun gbrain git commit-push.`, retryable: true });
+    const pushes = [reported, structuredChild({ outcome: SECRETS[0] }, 0)];
+    const errors = [];
+    for (const child of pushes) errors.push(await withEnv({ GBRAIN_JOB_CHILD_CLI: child }, () => pushGitRoot(repo.root).then(() => null, (e: unknown) => e)) as OperationError);
+    expect(errors.map(e => ({ code: e.code, diagnostic: gitDiagnosticOf(e) ?? null }))).toEqual([
+      { code: 'push_unconfirmed', diagnostic: DIAGNOSTIC },
+      { code: 'push_unconfirmed', diagnostic: { phase: 'push', step: 'commit-push', reason: 'other' } }]);
+    expect(errors[1]!.suggestion).toContain('outcome unreadable, reason other');
+    for (const op of errors) expect(leaked(`${op.message} ${op.suggestion ?? ''} ${op.detail ?? ''} ${JSON.stringify(op)}`)).toEqual([]);
   }), 120_000);
 });
 

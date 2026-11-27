@@ -81,6 +81,9 @@ describe('GCH-01: a diagnostic keeps a step and a reason code, never git\'s word
   test('a step that is not a plain subcommand name is stored as git', () => {
     expect(gitDiagnostic('commit', 'add; rm -rf /', 'x').step).toBe('git');
     expect(gitDiagnostic('commit', 'commit-tree', 'x').step).toBe('commit-tree');
+    // SEC-02: only a step gbrain runs is kept; a plain-looking word that is not one (a value, a token) is git.
+    expect(gitDiagnostic('commit', 'private-token', 'x').step).toBe('git');
+    expect(gitDiagnostic('push', 'config', 'x').step).toBe('config');
   });
 
   test('an identity failure carries identity; a push-phase git_unavailable becomes a push hold with its reason', () => {
@@ -135,6 +138,9 @@ describe('F1 (slice 4): a push hold carries the same fixed-shape diagnostic', ()
       last_error: { phase: 'push', step: 'push', line: "fatal: unable to access 'https://alice-example:pa/ss@git.example.invalid/' sk_live_8fJ2kQ9xZ7vP3mN1" } }));
     expect(legacy!.last_error).toEqual({ phase: 'push', step: 'push', reason: 'other' });
     expect(JSON.stringify(legacy)).not.toMatch(/sk_live_|pa\/ss|alice-example|git\.example/);
+    // SEC-02: a stored step that is no step gbrain runs reads as git, in the JSON and in the text built from it.
+    const [odd] = await pushHolds(row({ codes: ['git_push_unavailable'], root: null, last_error: { phase: 'push', step: 'private-token', reason: 'other' } }));
+    expect(odd!.last_error).toEqual({ phase: 'push', step: 'git', reason: 'other' });
     const [none] = await pushHolds(row({ codes: ['git_push_unavailable'], root: null, last_error: null }));
     expect(none!.last_error).toBeNull();
   });

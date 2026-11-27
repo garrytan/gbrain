@@ -652,7 +652,7 @@ export async function gitRootAhead(root: string, signal?: AbortSignal): Promise<
       const upstream = await git(session, ['rev-parse', '--symbolic-full-name', '@{upstream}']);
       // GCH-03a: an upstream that is configured but has no tracking ref here (pruned after a failed push, or never
       // fetched) may still owe a push, so it counts as ahead and pushGitRoot decides (ls-remote, scan, push or hold).
-      if (upstream.code !== 0) return configuredUpstream(session);
+      if (upstream.code !== 0) return (await branchUpstream(session)) !== null;
       throw withGitDiagnostic(opError('git_push_unavailable', 'Cannot tell whether the canonical checkout has commits its upstream lacks; its push will retry.',
         `git rev-list could not count the commits past the checkout's upstream ${upstream.stdout.trim()}, so gbrain does not know whether a commit still owes a push. Nothing is lost locally and the worker tries again on a later pass. If it keeps failing, check the checkout with git status and git fsck on the brain host.`,
         { fix: effectStatusFix }), gitDiagnostic('push', 'rev-list', count.stderr));
@@ -660,16 +660,35 @@ export async function gitRootAhead(root: string, signal?: AbortSignal): Promise<
   } catch (error) { throw pushPhaseFailure(error); }
 }
 
+/** The current branch's push destination: its branch, remote and merge ref (always under refs/heads/). */
+type BranchUpstream = { branch: string; remote: string; ref: string };
+
 /**
- * GCH-03a: whether the current branch names an upstream to push to, read as pushCommittedRoot reads it
- * (`branch.<name>.remote` and `branch.<name>.merge`, a remote other than `.`); false on a detached HEAD.
+ * GCH-01: the one reading of where the current branch pushes, shared by gitRootAhead's fallback and pushCommittedRoot,
+ * so the probe never says "ahead" for a destination the push would not use. null when there is none (a detached HEAD,
+ * no `branch.<name>.remote` / `.merge`, or the remote `.`). A destination git would misread throws `git_push_unavailable`
+ * with diagnostic { phase: push, step: config, reason: upstream_invalid }, so the effect is a push hold and pushes
+ * nowhere: a merge ref outside refs/heads/ (it would land as refs/heads/<that ref>), or a remote name with no
+ * `remote.<name>.url` or `.pushurl` (git would read it as a path). A remote written as a URL or a path is kept.
  */
-async function configuredUpstream(session: GitSession): Promise<boolean> {
-  const branch = await git(session, ['symbolic-ref', '--quiet', '--short', 'HEAD']);
-  if (branch.code !== 0) return false;
-  const remote = await git(session, ['config', '--get', `branch.${branch.stdout.trim()}.remote`]);
-  const merge = await git(session, ['config', '--get', `branch.${branch.stdout.trim()}.merge`]);
-  return remote.code === 0 && merge.code === 0 && !!remote.stdout.trim() && remote.stdout.trim() !== '.' && !!merge.stdout.trim();
+async function branchUpstream(session: GitSession): Promise<BranchUpstream | null> {
+  const head = await git(session, ['symbolic-ref', '--quiet', '--short', 'HEAD']);
+  if (head.code !== 0) return null;
+  const branch = head.stdout.trim();
+  const remote = await git(session, ['config', '--get', `branch.${branch}.remote`]);
+  const merge = await git(session, ['config', '--get', `branch.${branch}.merge`]);
+  const name = remote.stdout.trim(), ref = merge.stdout.trim();
+  if (remote.code !== 0 || merge.code !== 0 || !name || name === '.' || !ref) return null;
+  const invalid = (why: string) => withGitDiagnostic(opError('git_push_unavailable', 'The canonical commit is durable locally; its push waits until the checkout\'s upstream names a real branch.',
+    `${why} Nothing was pushed and nothing is lost locally; the worker retries on a later pass. Point the upstream at the right branch on the brain host (git branch --set-upstream-to=<remote>/<branch>).`,
+    { fix: effectStatusFix }), gitDiagnostic('push', 'config', undefined, 'upstream_invalid'));
+  if (!/^refs\/heads\/[^\s]/.test(ref)) throw invalid(`branch.${branch}.merge does not name a branch under refs/heads/, so a push would create a branch of that name on the remote.`);
+  if (!/[:/]/.test(name)) {
+    const url = await git(session, ['config', '--get', `remote.${name}.url`]);
+    const pushUrl = url.code === 0 ? url : await git(session, ['config', '--get', `remote.${name}.pushurl`]);
+    if (pushUrl.code !== 0 || !pushUrl.stdout.trim()) throw invalid(`branch.${branch}.remote names a remote with no URL configured, so git would read the name as a path.`);
+  }
+  return { branch, remote: name, ref };
 }
 
 /** Git's refusal of a push because the remote branch moved (LC_ALL=C keeps it untranslated). */
@@ -724,20 +743,17 @@ export function pushPhaseFailure(error: unknown): unknown {
 async function pushCommittedRoot(root: string, signal: AbortSignal | undefined, scanBudgetMs: number): Promise<{ push: 'committed'; integrated?: number; redaction?: PushRedaction } | { push: 'skipped'; reason: 'no_tracking_remote' }> {
   let fromBackground: PushRedaction | undefined;
   const result = await withSession(root, signal, undefined, false, async session => {
-    const branch = await git(session, ['symbolic-ref', '--quiet', '--short', 'HEAD']);
-    if (branch.code !== 0) return { push: 'skipped', reason: 'no_tracking_remote' } as const;
-    const remote = await git(session, ['config', '--get', `branch.${branch.stdout.trim()}.remote`]);
-    const merge = await git(session, ['config', '--get', `branch.${branch.stdout.trim()}.merge`]);
-    if (remote.code !== 0 || merge.code !== 0 || !remote.stdout.trim() || remote.stdout.trim() === '.') return { push: 'skipped', reason: 'no_tracking_remote' } as const;
+    const upstream = await branchUpstream(session);
+    if (!upstream) return { push: 'skipped', reason: 'no_tracking_remote' } as const;
     const head = await git(session, ['rev-parse', '--verify', 'HEAD']);
     if (head.code !== 0) throw gitFailure('Cannot read the canonical checkout\'s HEAD.', 'git rev-parse HEAD failed, so nothing was scanned or pushed.');
-    const sha = pushableHead(root, head.stdout.trim()), short = merge.stdout.trim().replace(/^refs\/heads\//, ''), ref = `refs/heads/${short}`;
+    const sha = pushableHead(root, head.stdout.trim()), short = upstream.ref.replace(/^refs\/heads\//, ''), ref = `refs/heads/${short}`;
     const redact = onPushMode() === 'redact';
     if (redact && backgroundPublish(root).state === 'running') throw backgroundRunning(root);
     const unavailable = () => opError('git_push_unavailable', 'The canonical commit is durable locally; its push will retry.',
-      `git push to ${remote.stdout.trim()} failed (network, credentials or a remote that refused it). Nothing is lost locally and the worker pushes again on a later pass; gbrain never pulls or rebases the checkout. If it keeps failing, check the remote and its credentials with git push on the brain host.`,
+      `git push to ${upstream.remote} failed (network, credentials or a remote that refused it). Nothing is lost locally and the worker pushes again on a later pass; gbrain never pulls or rebases the checkout. If it keeps failing, check the remote and its credentials with git push on the brain host.`,
       { fix: effectStatusFix });
-    const listed = await git(session, ['ls-remote', '--', remote.stdout.trim(), ref]);
+    const listed = await git(session, ['ls-remote', '--', upstream.remote, ref]);
     if (listed.code !== 0) throw withGitDiagnostic(unavailable(), gitDiagnostic('push', 'ls-remote', listed.stderr));
     const tip = listed.stdout.split('\n').map(line => line.split('\t')).find(([, name]) => name === ref)?.[0] ?? '';
     if (redact) fromBackground = settleBackground(root, tip);
@@ -748,17 +764,17 @@ async function pushCommittedRoot(root: string, signal: AbortSignal | undefined, 
         if (refusal && (refusal.code !== 'publish_secret_found' || onPushMode() !== 'redact')) throw heldSecret(root, refusal);
         if (!refusal) {
           signal?.throwIfAborted();
-          const push = await git(session, ['push', `--force-with-lease=${ref}:${tip}`, '--', remote.stdout.trim(), `${sha}:${ref}`]);
+          const push = await git(session, ['push', `--force-with-lease=${ref}:${tip}`, '--', upstream.remote, `${sha}:${ref}`]);
           if (push.code === 0) return { push: 'committed' } as const;
           if (!NON_FAST_FORWARD.test(push.stderr) && !STALE_LEASE.test(push.stderr)) throw withGitDiagnostic(unavailable(), gitDiagnostic('push', 'push', push.stderr));
         }
       } else if (!tip) throw heldSecret(root, opError('publish_scan_unreadable',
-        `${remote.stdout.trim()} has no branch ${short}, and the secret scan of the whole history a first push would create it with ran past its in-process budget. Nothing was pushed.`,
-        `Check that the checkout's upstream (branch.${branch.stdout.trim()}.merge) names a branch the remote should have (git ls-remote --heads ${remote.stdout.trim()}). If the branch was deleted or renamed on purpose, point the upstream at the right branch, or review the history and push the branch yourself; gbrain never creates a remote branch from history it has not scanned.`,
+        `${upstream.remote} has no branch ${short}, and the secret scan of the whole history a first push would create it with ran past its in-process budget. Nothing was pushed.`,
+        `Check that the checkout's upstream (branch.${upstream.branch}.merge) names a branch the remote should have (git ls-remote --heads ${upstream.remote}). If the branch was deleted or renamed on purpose, point the upstream at the right branch, or review the history and push the branch yourself; gbrain never creates a remote branch from history it has not scanned.`,
         { detail: JSON.stringify({ unreadable: scan.unreadable }), fix: { ask_user: true, consent: [], actor: 'user', requires_exclusive: false,
-          argv: ['git', '-C', root, 'ls-remote', '--heads', '--', remote.stdout.trim()],
+          argv: ['git', '-C', root, 'ls-remote', '--heads', '--', upstream.remote],
           why: 'Read-only: lists the branches the remote has, to check the checkout\'s upstream.',
-          user_message: `The remote ${remote.stdout.trim()} has no branch ${short} for ${root}, and its whole history is too large to scan here, so nothing was pushed. Should the checkout's upstream point at another branch, or will you review the history and push this branch yourself?`,
+          user_message: `The remote ${upstream.remote} has no branch ${short} for ${root}, and its whole history is too large to scan here, so nothing was pushed. Should the checkout's upstream point at another branch, or will you review the history and push this branch yourself?`,
           docs: 'docs/guides/shared-checkout-git.md#publish_scan_unreadable' } }));
     }
     signal?.throwIfAborted();
@@ -822,6 +838,9 @@ async function publishKeepingCheckout(root: string, signal?: AbortSignal, head?:
   try { doc = JSON.parse(child.stdout.trim()); } catch { /* reported below */ }
   if (!child.error && doc?.outcome === 'pushed') return { push: 'committed', ...(Number(doc.integrated) ? { integrated: Number(doc.integrated) } : {}),
     ...(doc.redaction && typeof doc.redaction === 'object' ? { redaction: { ...(doc.redaction as PushRedaction), ...(Array.isArray(doc.notices) ? { notices: doc.notices } : {}) } } : {}) };
+  // SEC-01: the child's own push_unconfirmed carries git's stderr in its suggestion; it is read once, in memory, for a
+  // reason code like the stderr below, and the parent writes its own words. Its other codes keep gbrain's own text.
+  if (doc && doc.code === 'push_unconfirmed') throw unconfirmedPublish(root, `outcome push_unconfirmed`, gitDiagnostic('push', 'commit-push', typeof doc.suggestion === 'string' ? doc.suggestion : ''));
   if (doc && typeof doc.code === 'string' && typeof doc.message === 'string') {
     if (head && onPushMode() === 'redact' && overBudget(doc.code, typeof doc.detail === 'string' ? doc.detail : null)) {
       startBackgroundPublish(root, head, remoteTip, cli);
@@ -833,9 +852,16 @@ async function publishKeepingCheckout(root: string, signal?: AbortSignal, head?:
   }
   // a7689d79: the child's stderr can carry a token, a private path or a URL password, so it is read once, in memory, for
   // a reason code (git-diagnostic.ts) and never copied into the message, the stored effect or sync status.
-  const diagnostic = gitDiagnostic('push', 'commit-push', child.stderr);
-  throw withGitDiagnostic(opError('push_unconfirmed', 'The canonical commit is durable locally; its push will retry.',
-    `The remote branch moved and the keep-checkout publish did not report a push (${child.error ? `exit ${String(child.error.code ?? child.error.signal ?? 'unknown')}` : `outcome ${String(doc?.outcome ?? 'unreadable')}`}, reason ${diagnostic.reason}). Nothing is lost locally; the worker pushes again on a later pass. To see git's own words, run gbrain git commit-push --push-only --keep-checkout --scan-secrets --path ${shellQuote(root)} on the brain host.`,
+  // SEC-01: an outcome is printed only when it is one the child reports; anything else is `unreadable`.
+  const outcome = typeof doc?.outcome === 'string' && /^[a-z_]{1,32}$/.test(doc.outcome) && doc.outcome !== 'pushed' ? doc.outcome : 'unreadable';
+  const exit = child.error ? String(child.error.code ?? child.error.signal ?? 'unknown').replace(/[^A-Za-z0-9_-]/g, '').slice(0, 16) || 'unknown' : null;
+  throw unconfirmedPublish(root, exit ? `exit ${exit}` : `outcome ${outcome}`, gitDiagnostic('push', 'commit-push', child.stderr));
+}
+
+/** a7689d79/SEC-01: the publish child did not report a push; the error names how it ended and a reason code, never git's words. */
+function unconfirmedPublish(root: string, ended: string, diagnostic: GitDiagnostic): OperationError {
+  return withGitDiagnostic(opError('push_unconfirmed', 'The canonical commit is durable locally; its push will retry.',
+    `The remote branch moved and the keep-checkout publish did not report a push (${ended}, reason ${diagnostic.reason}). Nothing is lost locally; the worker pushes again on a later pass. To see git's own words, run gbrain git commit-push --push-only --keep-checkout --scan-secrets --path ${shellQuote(root)} on the brain host.`,
     { fix: effectStatusFix, retryable: true }), diagnostic);
 }
 

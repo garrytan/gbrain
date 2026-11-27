@@ -29,6 +29,7 @@ import { claimWorktree, getWorktreeBinding } from '../src/core/persistence/owner
 import { runPersistenceEffects } from '../src/core/persistence/effects.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { readSyncStatus } from '../src/core/persistence/sync-status.ts';
+import { writePendingDeletes } from '../src/core/apple-contacts/review-status.ts';
 import { runSyncStatus } from '../src/commands/sync/operator.ts';
 import { scanText } from '../src/core/secret-scan.ts';
 import { recordCommit, resetLedgerCacheForTests } from '../src/core/git/commit-ledger.ts';
@@ -384,6 +385,12 @@ describe('#8896 through the effect worker', () => {
       expect(text).toContain(`\n    ASK THE USER: ${hold.fix.user_message}`);
       expect(text).toContain('Next: nothing gbrain runs on its own; it waits on the user');
       expect(text).not.toContain('holds nothing');
+      // F2-01: with a held deletion waiting on the user too, the reason and its origin name the same decision.
+      await writePendingDeletes(w.engine, w.sourceId, ['contact-1'], { code: 'apple_contacts_delete_floor', contacts: 3, owned: 10, since: new Date().toISOString() });
+      const mixed = await readSyncStatus(w.engine, w.sourceId);
+      expect({ needs_human: mixed.needs_human, reason: mixed.human_reason, from: mixed.needs_human_from })
+        .toEqual({ needs_human: true, reason: mixed.held_deletes!.human_reason, from: null });
+      await writePendingDeletes(w.engine, w.sourceId, [], null);
 
       writeFileSync(join(c.root, '.gbrain-scan-allow'), `${scanText(`Deploy token ${token}\n`)[0]!.fingerprint}\n`);
       await w.runEffects();

@@ -127,6 +127,20 @@ for (const kind of testBackends()) describe(`GCH-03 a removal retried while the 
     expect((await readGitPushHolds(engine, ['default'])).map(h => ({ retrying: h.retrying, codes: h.codes }))).toEqual([{ retrying: 1, codes: ['git_push_unavailable'] }]);
   }), 300_000);
 
+  test('GCH-01: with the tracking ref pruned and an upstream that names no branch, the removal stays a push hold that names it', () => withBrain(kind, async ({ engine, home, ctx }) => {
+    const repo = await managedRepo(engine, home);
+    const id = await deleteWithRefusedPush(engine, repo, ctx('default'));
+    git(repo.root, 'update-ref', '-d', 'refs/remotes/origin/main');
+    git(repo.root, 'config', 'branch.main.merge', 'refs/tags/release');
+    await release(engine);
+    await pass(engine);
+    const held = (await gitEffects(engine)).find(e => e.id === id)!;
+    expect({ state: held.state, error_code: held.error_code, last_error: held.last_error })
+      .toEqual({ state: 'queued', error_code: 'git_push_unavailable', last_error: { phase: 'push', step: 'config', reason: 'upstream_invalid' } });
+    expect((await readGitPushHolds(engine, ['default'])).map(h => ({ codes: h.codes, last_error: h.last_error }))).toEqual([{ codes: ['git_push_unavailable'], last_error: { phase: 'push', step: 'config', reason: 'upstream_invalid' } }]);
+    expect(git(repo.root, 'ls-remote', 'origin').includes('refs/heads/refs/tags/')).toBe(false);
+  }), 300_000);
+
   test('GCH-03a: a grouped pass with the tracking ref pruned pushes the removal with the other target', () => withBrain(kind, async ({ engine, home, ctx }) => {
     const repo = await managedRepo(engine, home);
     const id = await deleteWithRefusedPush(engine, repo, ctx('default'));
@@ -211,6 +225,37 @@ if (testBackends().includes('pglite')) describe('GCH-03 gitRootAhead and publish
     const pushes = repo.pushes();
     expect(await effectGit.publishGitEffect(repo.root, 'gone.md', undefined, true)).toEqual({ git: 'skipped', reason: 'target_absent', push: 'committed' });
     expect(repo.pushes()).toBe(pushes + 1);
+    expect(remoteHead(repo)).toBe(head(repo));
+  }), 120_000);
+
+  test('GCH-01: an upstream that names no branch, or a remote with no URL, is a push hold and pushes nowhere', () => withBrain('pglite', async ({ home }) => {
+    const repo = makeRepo(home, 'single');
+    removedAndUnpushed(repo);
+    git(repo.root, 'update-ref', '-d', 'refs/remotes/origin/main');
+    const pushes = repo.pushes();
+    const held = async (run: () => Promise<unknown>) => {
+      const error = await run().then(() => null, (e: unknown) => e);
+      return { code: (error as OperationError | null)?.code ?? null, diagnostic: gitDiagnosticOf(error) ?? null };
+    };
+    const invalid: Awaited<ReturnType<typeof held>> = { code: 'git_push_unavailable', diagnostic: { phase: 'push', step: 'config', reason: 'upstream_invalid' } };
+    // A merge ref under refs/tags/ would otherwise become refs/heads/refs/tags/release on the remote.
+    git(repo.root, 'config', 'branch.main.merge', 'refs/tags/release');
+    expect(await held(() => effectGit.gitRootAhead(repo.root))).toEqual(invalid);
+    expect(await held(() => effectGit.publishGitEffect(repo.root, 'gone.md', undefined, true))).toEqual(invalid);
+    expect(await held(() => effectGit.pushGitRoot(repo.root))).toEqual(invalid);
+    expect(git(repo.root, 'ls-remote', 'origin').includes('refs/heads/refs/tags/')).toBe(false);
+    // A remote name with no remote.<name>.url would otherwise be read by git as a path, here a repository beside HEAD.
+    git(repo.root, 'config', 'branch.main.merge', 'refs/heads/main');
+    git(repo.root, 'init', '-q', '--bare', 'backup');
+    git(repo.root, 'config', 'branch.main.remote', 'backup');
+    expect(await held(() => effectGit.gitRootAhead(repo.root))).toEqual(invalid);
+    expect(await held(() => effectGit.pushGitRoot(repo.root))).toEqual(invalid);
+    expect(git(join(repo.root, 'backup'), 'for-each-ref').trim()).toBe('');
+    expect(repo.pushes()).toBe(pushes);
+    // A URL in branch.main.remote is a real destination: it pushes.
+    git(repo.root, 'config', 'branch.main.remote', git(repo.root, 'config', '--get', 'remote.origin.url').trim());
+    expect(await effectGit.gitRootAhead(repo.root)).toBe(true);
+    expect(await effectGit.publishGitEffect(repo.root, 'gone.md', undefined, true)).toEqual({ git: 'skipped', reason: 'target_absent', push: 'committed' });
     expect(remoteHead(repo)).toBe(head(repo));
   }), 120_000);
 

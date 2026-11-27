@@ -295,7 +295,8 @@ export async function runSyncStatus(engine: BrainEngine, args: string[]): Promis
   if (connector) console.log(`  connector: ${connector.stopped ? 'STOPPED, ' : ''}the last ${connector.consecutive} run(s) ended on ${connector.code}${connector.slug ? ` at ${connector.slug}` : ''}: ${connector.message}`);
   for (const notice of notices) console.log(`  [gbrain notice ${notice.code}] ${notice.why}`);
   if (rendered.next) console.log(`  Next: ${rendered.next.command ?? rendered.next.argv?.join(' ')}\n  Why: ${rendered.next.why}`
-    + (askingHolds(status).some(ask => ask.fix.user_message === status.next?.user_message) ? `\n  ASK THE USER: ${status.next?.user_message}` : ''));
+    // F2-02: a next step that is a hold's question points at the hold, where the question is printed once.
+    + (askingHolds(status).some(ask => ask.fix.user_message === status.next?.user_message) ? '\n  ASK THE USER first: the question on the hold above.' : ''));
   // F2a: with no step for gbrain to run, a listed hold that asks the user still waits on a person: never "holds nothing".
   else if (askingHolds(status).length) console.log('  Next: nothing gbrain runs on its own; it waits on the user (ASK THE USER above). Nothing moves until they answer.');
   else console.log('  Next: nothing; the source is synced and holds nothing.');

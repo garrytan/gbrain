@@ -10,7 +10,7 @@
 
 /** Every reason a stored diagnostic can carry; anything git said that matches none of them is `other`. */
 export const GIT_REASONS = ['identity_missing', 'index_locked', 'timeout', 'permission_denied', 'disk_full', 'hook_rejected',
-  'filter_failed', 'not_a_repository', 'object_missing', 'auth_failed', 'remote_unreachable', 'other'] as const;
+  'filter_failed', 'not_a_repository', 'object_missing', 'auth_failed', 'remote_unreachable', 'upstream_invalid', 'other'] as const;
 export type GitReason = typeof GIT_REASONS[number];
 
 export interface GitDiagnostic {
@@ -48,9 +48,14 @@ export function gitReason(stderr: string | undefined): GitReason {
   return REASON_TESTS.find(([, test]) => test.test(text))?.[0] ?? 'other';
 }
 
-/** A step name is stored only when it is a plain git subcommand name; anything else is `git`. */
-export const GIT_STEP = /^[a-z][a-z-]{0,30}$/;
-const stepName = (step: string) => GIT_STEP.test(step) ? step : 'git';
+/**
+ * SEC-02: the steps a diagnostic can name, the git subcommands the Git effect runs (plus `commit-push`, the publish
+ * child); anything else, written by a caller or read from a stored row, is `git`, so a value never rides in as a step.
+ */
+export const GIT_STEPS: ReadonlySet<string> = new Set(['add', 'check-ignore', 'commit', 'commit-push', 'commit-tree', 'config', 'diff', 'diff-index',
+  'diff-tree', 'fetch', 'git', 'hash-object', 'ls-files', 'ls-remote', 'ls-tree', 'maintenance', 'merge-base', 'mktree', 'push', 'read-tree',
+  'reset', 'rev-list', 'rev-parse', 'rm', 'status', 'symbolic-ref', 'update-index', 'update-ref', 'write-tree']);
+const stepName = (step: unknown) => typeof step === 'string' && GIT_STEPS.has(step) ? step : 'git';
 
 /** The diagnostic of one failed git step. `reason` overrides the classifier (a caller that knows why). */
 export function gitDiagnostic(phase: GitDiagnostic['phase'], step: string, stderr: string | undefined, reason?: GitReason): GitDiagnostic {
@@ -73,7 +78,7 @@ export function gitDiagnosticOf(error: unknown): GitDiagnostic | undefined {
 
 /**
  * A stored diagnostic as a fixed-shape object, so every engine prints the same bytes (jsonb reorders keys). Only the
- * phase, a plain step name and a listed reason code survive; anything else an older release stored (git's own stderr
+ * phase, a listed step name and a listed reason code survive; anything else an older release stored (git's own stderr
  * line) is dropped, never printed. The commit holds and the push holds both read their `last_error` through it.
  */
 export function storedGitDiagnostic(value: unknown): GitDiagnostic | null {
@@ -82,5 +87,5 @@ export function storedGitDiagnostic(value: unknown): GitDiagnostic | null {
   if (typeof v.step !== 'string') return null;
   const identity = v.identity === true || v.reason === 'identity_missing';
   const reason: GitReason = identity ? 'identity_missing' : (GIT_REASONS as readonly unknown[]).includes(v.reason) ? v.reason as GitReason : 'other';
-  return { phase: v.phase === 'push' ? 'push' : 'commit', step: GIT_STEP.test(v.step) ? v.step : 'git', reason, ...(identity ? { identity: true as const } : {}) };
+  return { phase: v.phase === 'push' ? 'push' : 'commit', step: stepName(v.step), reason, ...(identity ? { identity: true as const } : {}) };
 }
