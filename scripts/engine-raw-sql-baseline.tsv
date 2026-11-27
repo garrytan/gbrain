@@ -351,7 +351,7 @@ src/core/persistence/atom-maintenance.ts	execute_raw	16
 src/core/persistence/authority.ts	execute_raw	3
 src/core/persistence/bounded-reads.ts	execute_raw	10
 src/core/persistence/capacity-view.ts	execute_raw	1
-src/core/persistence/change-reason.ts	execute_raw	2
+src/core/persistence/change-reason.ts	execute_raw	1
 src/core/persistence/compaction-pass.ts	execute_raw	1
 src/core/persistence/config-snapshot.ts	execute_raw	2
 src/core/persistence/connector-account-mismatch.ts	execute_raw	1
