@@ -101,6 +101,11 @@ export interface RustTransactionScope {
 const transactionContext = new AsyncLocalStorage<RustTransactionScope[]>();
 /** How long `disconnect` waits for an open transaction to finish before it rolls it back (milliseconds). */
 const TRANSACTION_SHUTDOWN_WAIT_MS = 5_000;
+
+function transactionCancelledWhileWaiting(): Error {
+  return opError('cancelled', 'The transaction was cancelled while it waited for the open transaction to finish; nothing was written.',
+    'Retry the transaction, or give it a signal that allows a longer wait.', { detail: 'member=transaction' });
+}
 /** Threads of the transaction executor: one, so the calls of the transaction that holds the writer never wait for the pool. */
 const TRANSACTION_POOL_THREADS = 1;
 /** Members that run on their own admission (the transaction members) rather than the writer gate. */
@@ -159,7 +164,8 @@ export class RustEngine implements BrainEngine {
   /** Transaction setting names set on this engine's connection so far (store-members/transactions.ts). */
   readonly _seenSettings = new Set<string>();
   /** The open transaction and the promise that settles when it ends: the writer gate. */
-  private _writer: { scope: RustTransactionScope; done: Promise<void> } | null = null;
+  /** The open transaction, if any. `release` frees the gate; it is idempotent, so a forced shutdown and the transaction's own end can both call it. */
+  private _writer: { scope: RustTransactionScope; done: Promise<void>; release: () => void } | null = null;
   /** The transaction executor's pool, made on the first transaction and shut down by `disconnect`. */
   private _txPool: { shutdown(waitMs: number): Promise<unknown> } | null = null;
 
@@ -368,14 +374,14 @@ export class RustEngine implements BrainEngine {
     while (this._writer) {
       const open = this._writer.done;
       if (!signal) { await open; continue; }
+      // An abort that came before the listener was added fired no event, so the signal itself is read after adding it.
+      if (signal.aborted) throw transactionCancelledWhileWaiting();
       let onAbort: (() => void) | undefined;
       const aborted = new Promise<'aborted'>((resolve) => { onAbort = () => resolve('aborted'); signal.addEventListener('abort', onAbort, { once: true }); });
+      if (signal.aborted) onAbort!();
       const outcome = await Promise.race([open.then(() => 'open' as const), aborted]);
       signal.removeEventListener('abort', onAbort!);
-      if (outcome === 'aborted' || signal.aborted) {
-        throw opError('cancelled', 'The transaction was cancelled while it waited for the open transaction to finish; nothing was written.',
-          'Retry the transaction, or give it a signal that allows a longer wait.', { detail: 'member=transaction' });
-      }
+      if (outcome === 'aborted' || signal.aborted) throw transactionCancelledWhileWaiting();
     }
   }
 
@@ -398,13 +404,19 @@ export class RustEngine implements BrainEngine {
       rootBrain = (await this.storeFor('transaction')).brain;
       if (!this._writer) break;
     }
-    let release!: () => void;
-    const done = new Promise<void>((resolve) => { release = resolve; });
+    // The waits above can end after an abort with no writer left to wait for; nothing has opened yet, so it rejects here.
+    if (signal?.aborted) throw transactionCancelledWhileWaiting();
+    let resolveDone!: () => void;
+    const done = new Promise<void>((resolve) => { resolveDone = resolve; });
     const { Pool, Brain } = this.addon as { Pool: new (threads: number) => { shutdown(waitMs: number): Promise<unknown> }; Brain: new (pool: unknown) => StoreBrain };
     this._txPool ??= new Pool(TRANSACTION_POOL_THREADS);
     const brain = new Brain(this._txPool);
     const scope: RustTransactionScope = { root: this, brain, live: true, ended: false, settings: new Map() };
-    this._writer = { scope, done };
+    const release = (): void => {
+      if (this._writer?.scope === scope) this._writer = null;
+      resolveDone();
+    };
+    this._writer = { scope, done, release };
     try {
       try {
         await brain.beginTransaction(rootBrain, opts?.readOnly === true);
@@ -434,7 +446,6 @@ export class RustEngine implements BrainEngine {
       scope.settings.clear();
       await brain.clearWriteTrust().catch(() => undefined);
       await brain.close().catch(() => undefined);
-      if (this._writer?.scope === scope) this._writer = null;
       release();
     }
   }
@@ -451,6 +462,9 @@ export class RustEngine implements BrainEngine {
     open.scope.ended = true;
     await open.scope.brain.rollbackTransaction().catch(() => undefined);
     await open.scope.brain.close().catch(() => undefined);
+    // The callback may never return, so the gate is freed here: the writes that wait on it settle, and a reconnected
+    // engine starts with no writer. `ended` keeps the old callback from doing any more work in the closed transaction.
+    open.release();
   }
   async reconnect(_ctx?: { error?: unknown }): Promise<void> {
     if (!this._savedConfig) return; // never connected; nothing to restore
