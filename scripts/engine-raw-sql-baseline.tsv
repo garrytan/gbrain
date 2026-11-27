@@ -398,7 +398,7 @@ src/core/cycle/edge-contradictions.ts	execute_raw	13
 src/core/cycle/edge-contradictions.ts	sql_template	1
 src/core/cycle/extract-atoms-generation.ts	execute_raw	4
 src/core/cycle/extract-atoms-input.ts	execute_raw	6
-src/core/cycle/extract-atoms-page-state.ts	execute_raw	8	GST-4020: latest-scan read, atom inventory, reused-atom hash move and renamed-origin read sit with the module's scan-state SQL until extract_atoms state moves behind engine methods
+src/core/cycle/extract-atoms-page-state.ts	execute_raw	10	GST-4020: latest-scan read, atom inventory, reused-atom hash move, the locked origin re-read, the discovery read clock and renamed-origin read sit with the module's scan-state SQL until extract_atoms state moves behind engine methods
 src/core/cycle/extract-atoms-stamp.ts	execute_raw	1
 src/core/cycle/extract-atoms.ts	execute_raw	6
 src/core/cycle/extract-facts.ts	execute_raw	13

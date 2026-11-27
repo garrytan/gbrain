@@ -55,6 +55,10 @@ const put = (engine: BrainEngine, sourceId: string, body: string, frontmatter: R
   engine.putPage(slug, { type: 'note', title: 'Launch review', compiled_truth: body, timeline: '', frontmatter }, { sourceId });
 const run = (engine: BrainEngine, sourceId: string, chat: ReturnType<typeof copyingChat>['chat']) => runPhaseExtractAtoms(engine, { sourceId, _chat: chat, _transcripts: [] });
 
+const withExtraTake = (body: string, row: number) => body.replace(`| 1 | ${HIDDEN_TAKE_ROW} | take | brain | 0.6 | 2026-01 | test |`,
+  `| 1 | ${HIDDEN_TAKE_ROW} | take | brain | 0.6 | 2026-01 | test |
+| ${row} | Acme-example will hire reviewer ${row} | take | brain | 0.7 | 2026-02 | test |`);
+
 describe('GST-4020 extract_atoms input and skip', () => {
   const engines: Array<{ backend: string; engine: BrainEngine }> = [];
   let closePostgres: (() => Promise<void>) | undefined;
@@ -218,5 +222,112 @@ describe('GST-4020 extract_atoms input and skip', () => {
     await put(engine, sourceId, PROSE('canaryalpha3301') + '\n\nOne more line.', {}, B);
     await run(engine, sourceId, copyingChat().chat);
     expect((await liveAtoms(engine, sourceId)).map(a => a.text).join('\n')).toContain('canarybeta3302');
+  }, 120_000);
+
+  test('a reused atom keeps its trust tier and its writer', async () => {
+    for (const { backend, engine } of engines) {
+      const sourceId = await fresh(backend, engine);
+      await put(engine, sourceId, WORLD_PAGE_BODY);
+      await run(engine, sourceId, copyingChat().chat);
+      const tiers = () => engine.executeRaw<{ slug: string; trust_tier: string | null; principal: string | null }>(
+        `SELECT slug, trust_tier, revision_principal_kind AS principal FROM pages WHERE source_id=$1 AND type='atom' AND deleted_at IS NULL ORDER BY slug`, [sourceId]);
+      const before = await tiers();
+      expect(before.length, backend).toBeGreaterThan(0);
+      await put(engine, sourceId, withExtraTake(WORLD_PAGE_BODY, 2));
+      const again = copyingChat();
+      await run(engine, sourceId, again.chat);
+      expect(again.prompts.length, backend).toBe(0);
+      const after = await tiers();
+      expect(after.map(a => [a.slug, a.trust_tier]), backend).toEqual(before.map(a => [a.slug, a.trust_tier]));
+      for (const atom of after) expect(atom.principal, backend).not.toBeNull();
+    }
+  }, 120_000);
+
+  test('after a withdrawal rescan finds nothing, a fence-only edit extracts again instead of reusing the old atom', async () => {
+    for (const { backend, engine } of engines) {
+      const sourceId = await fresh(backend, engine);
+      const withdrawn = 'Acme-example withdrawn launch claim canarywithdrawn3303';
+      const body = `${WORLD_PAGE_BODY}\n\n${renderFactsTable([fact(1, withdrawn)])}`;
+      await put(engine, sourceId, body);
+      await run(engine, sourceId, copyingChat().chat);
+      await engine.executeRaw('INSERT INTO fact_withdrawals(source_id, visibility, subject, fact_hash) VALUES($1,$2,$3,gbrain_fact_fingerprint($4))', [sourceId, 'world', SLUG, withdrawn]);
+      const empty = copyingChat(true);
+      await run(engine, sourceId, empty.chat);
+      expect(empty.prompts.length, backend).toBe(1);
+      await put(engine, sourceId, withExtraTake(body, 2));
+      const again = copyingChat();
+      await run(engine, sourceId, again.chat);
+      expect(again.prompts.length, backend).toBe(1);
+    }
+  }, 120_000);
+
+  test('a revert after a partial extraction of newer text extracts again', async () => {
+    const { engine } = engines.find(e => e.backend === 'pglite') ?? engines[0]!;
+    const sourceId = await fresh('partial-revert', engine);
+    await put(engine, sourceId, PROSE('canaryalpha3301'));
+    const chat = copyingChat();
+    await run(engine, sourceId, chat.chat);
+    await engine.setConfig('cycle.extract_atoms.max_input_chars', '1000');
+    try {
+      await put(engine, sourceId, `${PROSE('canarybeta3302')}\n\n${PROSE('a longer review')}`);
+      await run(engine, sourceId, chat.chat);
+    } finally { await engine.setConfig('cycle.extract_atoms.max_input_chars', '0'); }
+    expect(chat.prompts.length).toBe(2);
+    await engine.executeRaw(`DELETE FROM page_extraction_state WHERE pipeline='extract_atoms'`);
+    await put(engine, sourceId, PROSE('canaryalpha3301'));
+    expect(await countExtractAtomsBacklog(engine, sourceId)).toBe(1);
+    await run(engine, sourceId, chat.chat);
+    expect(chat.prompts.length).toBe(3);
+  }, 120_000);
+
+  test('an old name another page now holds is left alone: no held generation is written for that page', async () => {
+    const { engine } = engines.find(e => e.backend === 'pglite') ?? engines[0]!;
+    const sourceId = await fresh('occupied-slug', engine);
+    const A = 'notes/old-name', B = 'notes/new-name';
+    await put(engine, sourceId, PROSE('canaryrename3306'), {}, A);
+    await run(engine, sourceId, copyingChat().chat);
+    await renamePageOntoSlug(engine, { sourceId, oldSlug: A, newSlug: B, to: B + '.md' });
+    await put(engine, sourceId, `${PROSE('canaryrename3306')}\n\nOne more line.`, { access: 'confidential' }, B);
+    await put(engine, sourceId, 'Stub.', {}, A);
+    await run(engine, sourceId, copyingChat().chat);
+    const held = await engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM derived_generations WHERE source_id=$1 AND state='held'`, [sourceId]);
+    expect(Number(held[0]!.n)).toBe(0);
+  }, 120_000);
+
+  test('a page whose held-row read fails is left pending and the rest of the run goes on', async () => {
+    const { engine } = engines.find(e => e.backend === 'pglite') ?? engines[0]!;
+    const sourceId = await fresh('held-read', engine);
+    const table = renderFactsTable([fact(1, 'Acme-example retained launch claim canaryretained3305')]);
+    await put(engine, sourceId, `${PROSE('canaryalpha3301')}\n\n${table}`, {}, 'notes/a-broken');
+    await put(engine, sourceId, `${PROSE('canarybeta3302')}\n\n${table}`, {}, 'notes/b-healthy');
+    await put(engine, sourceId, `${PROSE('canaryheld3304')}\n\n${table}`, {}, 'notes/c-healthy');
+    const target = engine as unknown as { readFenceOverlayRows: (...args: unknown[]) => Promise<unknown> };
+    const original = target.readFenceOverlayRows;
+    target.readFenceOverlayRows = async (...args: unknown[]) => {
+      if (JSON.stringify(args).includes('notes/a-broken')) throw new Error('fence overlay read failed');
+      return original.apply(engine, args);
+    };
+    const chat = copyingChat();
+    try {
+      await run(engine, sourceId, chat.chat);
+    } finally { target.readFenceOverlayRows = original; }
+    expect(chat.prompts.some(p => p.includes('canarybeta3302'))).toBe(true);
+    expect(chat.prompts.some(p => p.includes('canaryheld3304'))).toBe(true);
+    expect(chat.prompts.some(p => p.includes('canaryalpha3301'))).toBe(false);
+  }, 120_000);
+
+  test('a withdrawal recorded while the model reads the page keeps the page offered', async () => {
+    for (const { backend, engine } of engines) {
+      const sourceId = await fresh(backend, engine);
+      const withdrawn = 'Acme-example withdrawn launch claim canarywithdrawn3303';
+      await put(engine, sourceId, `${PROSE('the launch')}\n\n${renderFactsTable([fact(1, withdrawn), fact(2, 'Acme-example retained launch claim canaryretained3305')])}`);
+      const inner = copyingChat();
+      const chat = async (opts: ChatOpts) => {
+        await engine.executeRaw('INSERT INTO fact_withdrawals(source_id, visibility, subject, fact_hash) VALUES($1,$2,$3,gbrain_fact_fingerprint($4))', [sourceId, 'world', SLUG, withdrawn]);
+        return inner.chat(opts);
+      };
+      await run(engine, sourceId, chat);
+      expect(await countExtractAtomsBacklog(engine, sourceId), backend).toBe(1);
+    }
   }, 120_000);
 });

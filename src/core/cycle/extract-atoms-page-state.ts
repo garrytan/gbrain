@@ -2,6 +2,8 @@ import type { SqlEngine } from '../persistence/model.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
 import { stableJson } from '../persistence/digest.ts';
 import type { BrainEngine } from '../engine.ts';
+import { maintenanceTransaction } from '../persistence/attribution.ts';
+import { withTrustKeep } from '../persistence/context.ts';
 import { throwIfAborted } from '../abort-check.ts';
 import { pageSnapshotKey } from '../page-snapshot-batch.ts';
 
@@ -24,6 +26,8 @@ export interface AtomPageInput {
   content: string;
   contentHash: string;
   identity?: AtomPageIdentity;
+  /** GST-4020: database time just before discovery read this input; a completed scan is stamped at it, not after inference. */
+  readAt?: string;
 }
 
 export class AtomPageStateError extends Error {
@@ -59,8 +63,8 @@ export async function writeAtomPageState(
   if (!item.identity) throw new AtomPageStateError('unpinned');
   const { pageId, sourceIncarnation, revision } = item.identity;
   const [row] = await engine.executeRaw<{ fail_count: number }>(
-    `INSERT INTO extract_atoms_page_state (source_incarnation, page_id, content_hash, fail_count, tombstoned, input_sha256)
-      SELECT s.incarnation, p.id, p.content_hash, $7::integer, $8::boolean, $9::text
+    `INSERT INTO extract_atoms_page_state (source_incarnation, page_id, content_hash, fail_count, tombstoned, input_sha256, updated_at)
+      SELECT s.incarnation, p.id, p.content_hash, $7::integer, $8::boolean, $9::text, CASE WHEN $8::boolean THEN COALESCE($10::timestamptz, now()) ELSE now() END
       FROM pages p JOIN sources s ON s.id=p.source_id
       WHERE p.id=$1 AND s.incarnation=$2::uuid AND p.source_id=$3 AND p.slug=$4
         AND p.content_hash=$5 AND p.knowledge_revision=$6::uuid AND p.deleted_at IS NULL
@@ -68,10 +72,10 @@ export async function writeAtomPageState(
       ON CONFLICT (source_incarnation, page_id, content_hash) DO UPDATE
         SET fail_count=extract_atoms_page_state.fail_count + EXCLUDED.fail_count,
             tombstoned=EXCLUDED.tombstoned, input_sha256=EXCLUDED.input_sha256,
-            updated_at=CASE WHEN EXCLUDED.tombstoned THEN now() ELSE extract_atoms_page_state.updated_at END
+            updated_at=CASE WHEN EXCLUDED.tombstoned THEN EXCLUDED.updated_at ELSE extract_atoms_page_state.updated_at END
       RETURNING fail_count`,
     [pageId, sourceIncarnation, sourceId, item.slug, item.contentHash, revision,
-      outcome === 'failure' ? 1 : 0, outcome === 'complete', outcome === 'complete' ? inputSha256 ?? null : null]).catch((error: unknown) => {
+      outcome === 'failure' ? 1 : 0, outcome === 'complete', outcome === 'complete' ? inputSha256 ?? null : null, item.readAt ?? null]).catch((error: unknown) => {
     const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined;
     throw new AtomPageStateError(code === '42P01' ? 'schema' : code === '42501' ? 'denied' : 'storage');
   });
@@ -103,18 +107,22 @@ export async function reusableAtomScan(engine: SqlEngine, sourceId: string, item
   // The same content offered again with nothing withdrawn since its scan is an explicit re-run: it extracts as before.
   if (!scan?.tombstoned || scan.partial_input_chars !== null || Number(scan.fail_count) >= MAX_DETERMINISTIC_FAILURES
     || scan.input_sha256 !== inputSha256 || (scan.content_hash === item.contentHash && !scan.withdrawn_since)) return null;
-  const atoms = await engine.executeRaw<{ slug: string; source_slug: string; visibility: string | null; date: string | null; source_hash: string | null }>(
+  const atoms = await engine.executeRaw<{ slug: string; source_slug: string; visibility: string | null; date: string | null; source_hash: string | null;
+    predates_withdrawal: boolean }>(
     `SELECT a.slug, a.frontmatter->>'source_slug' AS source_slug, a.frontmatter->>'visibility' AS visibility,
-       a.frontmatter->>'date' AS date, a.frontmatter->>'source_hash' AS source_hash
+       a.frontmatter->>'date' AS date, a.frontmatter->>'source_hash' AS source_hash,
+       EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id=$1 AND w.visibility='world' AND w.subject IN ('*', $2)
+         AND w.withdrawn_at > a.updated_at) AS predates_withdrawal
       FROM pages a
       WHERE a.source_id=$1 AND a.type='atom' AND a.deleted_at IS NULL
         AND COALESCE(a.frontmatter->>'managed_extraction', '') <> 'true'
         AND (a.frontmatter->>'source_slug' = ANY(ARRAY[$2::text] || ARRAY(${renamedFromSql}))
-          OR a.id IN (SELECT l.to_page_id FROM links l WHERE l.from_page_id=$3 AND l.link_source='atom-provenance'))`,
+          OR a.id IN (SELECT l.to_page_id FROM links l WHERE l.from_page_id=$3 AND l.link_source='atom-provenance'))
+      FOR UPDATE OF a`,
     [sourceId, item.slug, item.identity.pageId]);
   const scanned = scan.content_hash.slice(0, 16), current = item.contentHash.slice(0, 16);
   const fits = atoms.every(atom => atom.source_slug === item.slug && (atom.source_hash === scanned || atom.source_hash === current)
-    && sameInstant(atom.date, page.date) && !(page.visibility === 'private' && atom.visibility !== 'private'));
+    && sameInstant(atom.date, page.date) && !(page.visibility === 'private' && atom.visibility !== 'private') && !atom.predates_withdrawal);
   return fits ? atoms.map(atom => atom.slug) : null;
 }
 
@@ -124,22 +132,31 @@ const sameInstant = (a: string | null, b: string | null) => {
   return Number.isNaN(at) || Number.isNaN(bt) ? (a ?? null) === (b ?? null) : at === bt;
 };
 
-/** SQL (params $1 source id, $2 slug): every slug a rename moved the page now at $2 away from. */
-const renamedFromSql = `SELECT alias_slug FROM slug_aliases WHERE source_id=$1 AND canonical_slug=$2 AND notes='rename'
-  UNION SELECT old_slug FROM slug_rename_history WHERE source_id=$1 AND new_slug=$2`;
+/** SQL (params $1 source id, $2 slug): every slug a rename moved the page now at $2 away from that no live page holds now. */
+const renamedFromSql = `SELECT r.slug FROM (SELECT alias_slug AS slug FROM slug_aliases WHERE source_id=$1 AND canonical_slug=$2 AND notes='rename'
+  UNION SELECT old_slug FROM slug_rename_history WHERE source_id=$1 AND new_slug=$2) r
+  WHERE NOT EXISTS (SELECT 1 FROM pages occ WHERE occ.source_id=$1 AND occ.slug=r.slug AND occ.deleted_at IS NULL)`;
 
 /**
  * GST-4020: reuse the atoms reusableAtomScan finds, moving them onto the page's current content hash as a completed
  * generation does (atoms adapter completeItems); null when the page has to be extracted. A stop before the move writes nothing.
  */
-export async function reuseUnchangedAtoms(engine: SqlEngine, sourceId: string, item: AtomPageInput, inputSha256: string,
+export async function reuseUnchangedAtoms(engine: BrainEngine, sourceId: string, item: AtomPageInput, inputSha256: string,
   page: { visibility: string; date: string | null }, signal?: AbortSignal): Promise<string[] | null> {
-  const slugs = await reusableAtomScan(engine, sourceId, item, inputSha256, page);
-  if (!slugs) return null;
+  if (!item.identity || !await reusableAtomScan(engine, sourceId, item, inputSha256, page)) return null;
   throwIfAborted(signal, 'extract_atoms');
-  if (slugs.length) await engine.executeRaw(`UPDATE pages SET frontmatter = frontmatter || jsonb_build_object('source_hash', $1::text)
-    WHERE source_id=$2 AND type='atom' AND slug = ANY($3::text[]) AND deleted_at IS NULL`, [item.contentHash.slice(0, 16), sourceId, slugs]);
-  return slugs;
+  const { pageId, revision } = item.identity;
+  return maintenanceTransaction(engine, tx => withTrustKeep(tx, ['pages'], async () => {
+    const [origin] = await tx.executeRaw(`SELECT 1 FROM pages WHERE id=$1 AND source_id=$2 AND slug=$3 AND content_hash=$4
+      AND knowledge_revision=$5::uuid AND deleted_at IS NULL FOR UPDATE`, [pageId, sourceId, item.slug, item.contentHash, revision]);
+    const slugs = origin ? await reusableAtomScan(tx, sourceId, item, inputSha256, page) : null;
+    if (!slugs) return null;
+    if (slugs.length) await tx.executeRaw(`UPDATE pages SET frontmatter = frontmatter || jsonb_build_object('source_hash', $1::text)
+      WHERE source_id=$2 AND type='atom' AND slug = ANY($3::text[]) AND deleted_at IS NULL AND frontmatter->>'source_slug' = $4`,
+      [item.contentHash.slice(0, 16), sourceId, slugs, item.slug]);
+    await writeAtomPageState(tx, sourceId, item, 'complete', inputSha256);
+    return slugs;
+  }));
 }
 
 /**
@@ -172,14 +189,21 @@ export const scanStillCurrentSql = (scan: string) => `NOT EXISTS (
     SELECT 1 FROM fact_withdrawals w
     WHERE w.source_id=p.source_id AND w.visibility='world' AND w.subject IN ('*', p.slug) AND w.withdrawn_at > ${scan}.updated_at)`;
 
-// An unmanaged atom on the page's current content hash settles it, unless a world withdrawal recorded after the page's
-// completed scan of that content means the extraction read a claim since withdrawn (GST-4020, #10332).
+// An unmanaged atom on the page's current content hash settles it, unless the page's newest scan read other content (a
+// revert after a newer, possibly partial, extraction) or a world withdrawal recorded after the page's completed scan of
+// that content means the extraction read a claim since withdrawn (GST-4020, #10332).
 export const PAGE_ATOMS_CURRENT_EXCLUSION_SQL = `AND (NOT EXISTS (
     SELECT 1 FROM pages atom
     WHERE atom.type = 'atom' AND atom.source_id = p.source_id
       AND atom.frontmatter->>'source_hash' = substring(p.content_hash from 1 for 16)
       AND COALESCE(atom.frontmatter->>'managed_extraction', '') <> 'true'
       AND atom.deleted_at IS NULL
+  ) OR EXISTS (
+    SELECT 1 FROM extract_atoms_page_state newer
+    WHERE newer.source_incarnation=(SELECT s.incarnation FROM sources s WHERE s.id=p.source_id)
+      AND newer.page_id=p.id AND newer.content_hash<>p.content_hash
+      AND newer.updated_at > COALESCE((SELECT max(cur.updated_at) FROM extract_atoms_page_state cur
+        WHERE cur.source_incarnation=newer.source_incarnation AND cur.page_id=p.id AND cur.content_hash=p.content_hash), '-infinity'::timestamptz)
   ) OR EXISTS (
     SELECT 1 FROM extract_atoms_page_state done
     JOIN fact_withdrawals w ON w.source_id=p.source_id AND w.visibility='world' AND w.subject IN ('*', p.slug) AND w.withdrawn_at > done.updated_at
@@ -201,6 +225,7 @@ export async function canonicalPageInputs(engine: BrainEngine, sourceId: string,
   const pages: AtomPageInput[] = [];
   for (let start = 0; start < rows.length;) {
     if (opts.signal?.aborted || opts.stopSignal?.aborted) break;
+    const [clock] = await engine.executeRaw<{ at: string }>(`SELECT clock_timestamp()::text AS at`);
     const { snapshots, covered } = await engine.readPageSnapshotsBatch(rows.slice(start, start + PAGE_SNAPSHOT_BATCH).map(row => ({ slug: row.slug, sourceId })));
     const step = Math.max(covered, 1);
     for (const r of rows.slice(start, start + step)) {
@@ -208,7 +233,7 @@ export async function canonicalPageInputs(engine: BrainEngine, sourceId: string,
       if (!snapshot || Number(snapshot.page.id) !== Number(r.id) || snapshot.revision !== r.knowledge_revision
         || snapshot.sourceIncarnation !== r.source_incarnation || snapshot.page.content_hash !== r.content_hash) continue;
       pages.push({ slug: r.slug, content: snapshot.page.compiled_truth, contentHash: r.content_hash,
-        identity: { pageId: r.id, sourceIncarnation: r.source_incarnation, revision: r.knowledge_revision } });
+        identity: { pageId: r.id, sourceIncarnation: r.source_incarnation, revision: r.knowledge_revision }, readAt: clock?.at });
     }
     start += step;
   }

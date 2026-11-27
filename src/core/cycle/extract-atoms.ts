@@ -1100,13 +1100,13 @@ export async function runPhaseExtractAtoms(
     // item, so a quote can only verify against text the model actually saw.
     // #6503: a cut item is extracted once from its head and gets a partial
     // disposition instead of a completion stamp (extract-atoms-input.ts).
-    const input = item.kind === 'page'
-      ? extractAtomsInput(item, maxInputChars, (await readPageWatermark(engine, sourceId, item.slug, 'extract_atoms')).stored,
-        await heldRowsForCaller(engine, true, { sourceId, slug: item.slug, compiled_truth: item.content }))
-      : extractAtomsInput(item, maxInputChars);
-    const { promptContent, truncated } = input;
     let origin: AtomOrigin | null = null;
     try {
+      const input = item.kind === 'page'
+        ? extractAtomsInput(item, maxInputChars, (await readPageWatermark(engine, sourceId, item.slug, 'extract_atoms')).stored,
+          await heldRowsForCaller(engine, true, { sourceId, slug: item.slug, compiled_truth: item.content }))
+        : extractAtomsInput(item, maxInputChars);
+      const { promptContent, truncated } = input;
       origin = managed ? { ...await readAtomOrigin(engine, managed, item), ...(truncated ? { partialInputChars: maxInputChars } : {}) } : null;
       const sourcePage = item.kind === 'page' ? await engine.getPage(item.slug, { sourceId }) : null;
       const contentDate = await (item.kind === 'page' ? atomSourceDate(engine, sourcePage) : transcriptAtomSourceDate(engine, item.content, sourceDate(item.filePath, ''))); // #6720, #7268: captured with the input, before inference
@@ -1122,7 +1122,6 @@ export async function runPhaseExtractAtoms(
       const reused = !opts.dryRun && !origin && !atomFiles && item.kind === 'page' && !truncated && input.inputSha256
         ? await reuseUnchangedAtoms(engine, sourceId, item, input.inputSha256, { visibility, date: contentDate ? String(contentDate) : null }, opts.signal) : null;
       if (reused && item.kind === 'page') {
-        await stampAtomsScanHash(item, input.inputSha256);
         await commitAtomsWatermark(item, input, []);
         duplicatesSkipped++;
         continue;
