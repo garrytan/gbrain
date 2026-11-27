@@ -27,6 +27,7 @@ import type * as FactTextRepairSql from '../engine-sql/fact-text-repair.ts';
 import type * as LabelRepairSql from '../engine-sql/label-repair-reads.ts';
 import type * as SegmentedPurgeWritesSql from '../engine-sql/segmented-purge-writes.ts';
 import type * as OriginHoldsSql from '../engine-sql/origin-holds.ts';
+import type * as RetentionPurgeSql from '../engine-sql/retention-purge.ts';
 import type * as PagePurgeJournalSql from '../engine-sql/page-purge-journal.ts';
 import type * as PagePurgeSql from '../engine-sql/page-purge.ts';
 import type * as PagePurgeSweepSql from '../engine-sql/page-purge-sweep.ts';
@@ -376,6 +377,31 @@ export interface FactsStatementMembers {
   recordOwedPurgeRows(pageId: number, requestId: string): Promise<OriginHoldsSql.OwedPurgeRows>;
   /** Removes the park or owed-purge records of these pages; how many. Writes op_checkpoints; run it in the purge transaction. */
   deleteOriginHoldRows(op: 'derived-origin-park' | 'owed-page-purge', pageIds: readonly number[]): Promise<number>;
+  // The retention purge's bookkeeping (engine-sql/retention-purge.ts): op_checkpoints parks and records, the carry's origin read, the candidate selection.
+  /** Drops the owner purge a park of `op` holds once its page's tombstone is not the one recorded. Writes op_checkpoints. */
+  releaseStaleOriginParkHolds(op: string): Promise<void>;
+  /** The owed-purge records of `op` whose tombstone still exists as recorded, by fingerprint. Reads op_checkpoints and pages. */
+  listOwedPurgeRecords(op: string): Promise<Array<{ owed: RetentionPurgeSql.OwedPurgeRecord | string }>>;
+  /** Drops the owed-purge records of `op` whose tombstone changed. Writes op_checkpoints. */
+  pruneOwedPurgeRecords(op: string): Promise<void>;
+  /** Drops the parks of `op` whose page is no tombstone. Writes op_checkpoints. */
+  pruneOriginParkRecords(op: string): Promise<void>;
+  /** Drops the failure records of `op` whose tombstone changed. Writes op_checkpoints. */
+  prunePurgeParkRecords(op: string): Promise<void>;
+  /** Records one more failure of a tombstone. Writes op_checkpoints. */
+  recordPurgeFailureRecord(row: RetentionPurgeSql.PurgeFailureRow): Promise<void>;
+  /** Removes one failure record. Writes op_checkpoints. */
+  deletePurgeParkRecord(op: string, key: string): Promise<void>;
+  /** Marks the failure records of a source whose writer is not active. Writes op_checkpoints. */
+  markPurgeParksInactive(op: string, sourceId: string): Promise<void>;
+  /** Drops the marked failure records of a source whose writer is active again; how many. Writes op_checkpoints. */
+  dropRearmedPurgeParks(op: string, sourceId: string): Promise<number>;
+  /** The parked origins a manual purge's preview counts as released, under the purge's other holds. Reads pages and op_checkpoints. */
+  listReleasedPurgeOrigins(release: readonly number[], excludeIds: readonly number[], hours: string): Promise<RetentionPurgeSql.ReleasedPurgeOrigin[]>;
+  /** The managed purge's candidates under every hold, oldest tombstone first. Reads pages, sources and op_checkpoints. */
+  listManagedPurgeCandidates(hours: string, release: readonly number[], hold: readonly number[]): Promise<RetentionPurgeSql.ManagedPurgeCandidate[]>;
+  /** The soft-deleted privacy origins expired past `hours`, by id. Read the alias-honoring setting first. Reads pages. */
+  listExpiringOriginPages(hours: string): Promise<RetentionPurgeSql.ExpiringOrigin[]>;
   /** The newest delete_page request of the source with this request id, null for none. Reads persistence_requests. */
   readDeletePageRequest(sourceId: string, requestId: string): Promise<FactsPurgeSql.DeletePageRequestRow | null>;
   /** The request's effects in kind order, each with whether any target is parked. Reads persistence_effects. */

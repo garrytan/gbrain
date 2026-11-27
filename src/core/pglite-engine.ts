@@ -177,6 +177,7 @@ import * as pagePurgeJournalImpl from './engine-sql/page-purge-journal.ts';
 import * as purgeStoresImpl from './engine-sql/purge-stores.ts';
 import * as purgeReceiptImpl from './engine-sql/purge-receipt.ts';
 import * as originHoldsImpl from './engine-sql/origin-holds.ts';
+import * as retentionPurgeImpl from './engine-sql/retention-purge.ts';
 import type { DerivedOriginPark } from './persistence/derived-origin-hold.ts';
 import * as headBlockerImpl from './engine-sql/head-blocker.ts';
 import * as checkpointValidationImpl from './engine-sql/checkpoint-validation.ts';
@@ -2165,6 +2166,18 @@ export class PGLiteEngine implements BrainEngine {
   listPurgeOrigins(ids: readonly number[], recheckParked: boolean) { return originHoldsImpl.listPurgeOrigins(this, ids, recheckParked); }
   upsertDerivedOriginPark(pageId: number, park: DerivedOriginPark) { return originHoldsImpl.upsertDerivedOriginPark(this, pageId, park); }
   recordOwedPurgeRows(pageId: number, requestId: string) { return originHoldsImpl.recordOwedPurgeRows(this, pageId, requestId); }
+  releaseStaleOriginParkHolds(op: string) { return retentionPurgeImpl.releaseStaleOriginParkHolds(this, op); }
+  listOwedPurgeRecords(op: string) { return retentionPurgeImpl.listOwedPurgeRecords(this, op); }
+  pruneOwedPurgeRecords(op: string) { return retentionPurgeImpl.pruneOwedPurgeRecords(this, op); }
+  pruneOriginParkRecords(op: string) { return retentionPurgeImpl.pruneOriginParkRecords(this, op); }
+  prunePurgeParkRecords(op: string) { return retentionPurgeImpl.prunePurgeParkRecords(this, op); }
+  recordPurgeFailureRecord(row: retentionPurgeImpl.PurgeFailureRow) { return retentionPurgeImpl.recordPurgeFailureRecord(this, row); }
+  deletePurgeParkRecord(op: string, key: string) { return retentionPurgeImpl.deletePurgeParkRecord(this, op, key); }
+  markPurgeParksInactive(op: string, sourceId: string) { return retentionPurgeImpl.markPurgeParksInactive(this, op, sourceId); }
+  dropRearmedPurgeParks(op: string, sourceId: string) { return retentionPurgeImpl.dropRearmedPurgeParks(this, op, sourceId); }
+  listReleasedPurgeOrigins(release: readonly number[], excludeIds: readonly number[], hours: string) { return retentionPurgeImpl.listReleasedPurgeOrigins(this, release, excludeIds, hours); }
+  listManagedPurgeCandidates(hours: string, release: readonly number[], hold: readonly number[]) { return retentionPurgeImpl.listManagedPurgeCandidates(this, hours, release, hold); }
+  listExpiringOriginPages(hours: string) { return retentionPurgeImpl.listExpiringOriginPages(this, hours); }
   deleteOriginHoldRows(op: 'derived-origin-park' | 'owed-page-purge', pageIds: readonly number[]) { return originHoldsImpl.deleteOriginHoldRows(this, op, pageIds); }
   readDeletePageRequest(sourceId: string, requestId: string) { return factsPurgeImpl.readDeletePageRequest(this.rawRead, sourceId, requestId); }
   listPurgeEffects(requestId: string) { return factsPurgeImpl.listPurgeEffects(this.rawRead, requestId); }

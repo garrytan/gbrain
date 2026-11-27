@@ -109,6 +109,7 @@ mod purge_effects;
 mod receipt_compaction;
 mod receipt_list;
 mod retained_sources;
+mod retention_purge;
 mod sync_conversions;
 mod sync_orphan_reads;
 mod sync_pass_pages;
@@ -177,6 +178,9 @@ pub use purge_effects::{
     GitEffectsCarryingArgs, PageGitEffectsArgs, PurgeEffectDataArgs, PurgeGitEffectRow,
 };
 pub use receipt_list::{IncarnationRequestFilter, WriteRequestListFilter};
+pub use retention_purge::{
+    ExpiringOrigin, ManagedPurgeCandidate, PurgeFailureRow, ReleasedPurgeOrigin,
+};
 pub use sync_pass_pages::{SyncImportPageQuery, SyncImportPageWindow};
 pub use sync_run_reads::SyncAdmissionEffectsQuery;
 pub use topology::TopologyChangeInsert;
