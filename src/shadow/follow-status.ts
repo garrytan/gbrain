@@ -16,7 +16,8 @@ import { WRITE_CLIENT_LIMIT, WRITE_COVERAGE_LIMIT, WRITE_PGLITE_LIMIT } from '..
 import { readEpoch } from './evidence-epoch.ts';
 import { readSeedRecord, RESEED_STEPS } from './seed.ts';
 import { writeSampleRate, type ShadowState } from './state.ts';
-import { readWriteTally } from './write-compare.ts';
+import { readWriteTally, unfoldedLost } from './write-compare.ts';
+import { readQualifyingWrites, type QualifyingWrites } from './write-bar.ts';
 
 export interface ProbeRecord {
   state: 'pass' | 'fail' | 'not_run'; checked_at: string | null; server_version: string | null; collation: string | null; mismatches: number;
@@ -135,6 +136,8 @@ export interface FollowStatus {
   write_comparisons: {
     state: 'capability_missing' | 'measured'; sample_rate: number | null; comparable: number; unexplained_difference: number; uncomparable: number; capability_missing: number;
     unresolved_replays?: number; capability_missing_by_family?: Record<string, number>; uncomparable_by_reason?: Record<string, number>;
+    /** The brain's qualifying write calls by day (write-bar.ts), the source of criterion 5's bar; null when unreadable. */
+    qualifying_writes: QualifyingWrites | null;
   };
   fingerprints: { checked_rows: number; mismatches: number; probe: ProbeRecord };
   seed: { seed_id: string | null; finished_at: string | null; unseeded_gap_rows_total: number | null };
@@ -154,6 +157,7 @@ export function buildFollowStatus(dir: string, state: ShadowState | null, now: D
   // yet nothing is filtered (the status carries no epoch_id, so readiness reads it as missing).
   const counted = live && (!epoch || live.evidence_epoch === epoch.epoch_id) ? live : null;
   const writes = readWriteTally(dir, epoch?.epoch_id ?? null);
+  const unresolved = (writes?.in_flight.length ?? 0) + unfoldedLost(dir, epoch?.epoch_id ?? null, writes?.lost_applied); // a lost sample no tally has taken yet reads as no evidence, like a replay with no verdict
   const everyPass = readPasses(dir);
   const passes = epoch ? everyPass.filter((p) => p.epoch_id === epoch.epoch_id && Date.parse(p.started_at) >= Date.parse(epoch.started_at)) : everyPass;
   const last = passes.at(-1) ?? null;
@@ -189,10 +193,11 @@ export function buildFollowStatus(dir: string, state: ShadowState | null, now: D
       next_full_pass_due: lastFull ? new Date(Date.parse(lastFull.finished_at) + NIGHTLY_MS).toISOString() : null,
     },
     write_comparisons: {
-      state: writes && !writes.in_flight.length && writes.comparable + writes.unexplained_difference > 0 ? 'measured' : 'capability_missing', sample_rate: state ? writeSampleRate(state) : null,
+      state: writes && !unresolved && writes.comparable + writes.unexplained_difference > 0 ? 'measured' : 'capability_missing', sample_rate: state ? writeSampleRate(state) : null,
       comparable: writes?.comparable ?? 0, unexplained_difference: writes?.unexplained_difference ?? 0, uncomparable: writes?.uncomparable ?? 0, capability_missing: writes?.capability_missing ?? 0,
-      ...(writes?.in_flight.length ? { unresolved_replays: writes.in_flight.length } : {}),
+      ...(unresolved ? { unresolved_replays: unresolved } : {}),
       ...(writes ? { capability_missing_by_family: writes.capability_missing_by_family, uncomparable_by_reason: writes.uncomparable_by_reason } : {}),
+      qualifying_writes: readQualifyingWrites(dir, now),
     },
     fingerprints: { checked_rows: counted?.fingerprints.checked_rows ?? 0, mismatches: counted?.fingerprints.mismatches ?? 0, probe: counted?.probe ?? NOT_RUN_PROBE },
     seed: { seed_id: seed?.seed_id ?? null, finished_at: seed?.finished_at ?? null, unseeded_gap_rows_total: seed?.unseeded_gap_rows_total ?? null },

@@ -574,10 +574,22 @@ export function callerReadersAllowedSql(alias: string, row: 'page' | 'snapshot' 
 
 type LabelledRecord = Pick<CallerAccess, 'identity' | 'audienceIdentities' | 'satisfiedRuleIds' | 'lineage' | 'owner'>;
 
+/**
+ * The two sets the SQL renderer applies for a caller's identity and satisfied folder rules: a whole set is emptied when any entry
+ * of it is invalid (readersAllowedSql and labelledOnlySql: validIdentity; folderRulesAllowedSql and labelledOnlySql:
+ * validQualifiedRuleId), so a caller holding one invalid entry reads nothing through that set. An engine that matches entries one
+ * by one (the Rust store) must be sent these sets, never the raw ones.
+ */
+export function sqlAppliedSets(identity: readonly string[], satisfiedRuleIds: readonly string[]): { identity: string[]; satisfiedRuleIds: string[] } {
+  return {
+    identity: identity.length && validIdentity(identity) ? [...identity] : [],
+    satisfiedRuleIds: satisfiedRuleIds.length && satisfiedRuleIds.every(validQualifiedRuleId) ? [...satisfiedRuleIds] : [],
+  };
+}
+
 /** GBRA-108 design 1: every principal a labelled-only read may be named by (the identity, or each audience entry's). */
 function labelledIdentity(access: Pick<LabelledRecord, 'identity' | 'audienceIdentities'>): string[] {
-  const identity = [...new Set([...access.identity, ...access.audienceIdentities.flat()])].sort();
-  return identity.length && validIdentity(identity) ? identity : [];
+  return sqlAppliedSets([...new Set([...access.identity, ...access.audienceIdentities.flat()])].sort(), []).identity;
 }
 
 /**
@@ -586,7 +598,7 @@ function labelledIdentity(access: Pick<LabelledRecord, 'identity' | 'audienceIde
  * is not a valid qualified id). The Rust store takes them as data (`LabelledOnly`), so both engines judge the same sets.
  */
 export function labelledOnlyTerms(access: Pick<LabelledRecord, 'identity' | 'audienceIdentities' | 'satisfiedRuleIds'>): { identity: string[]; satisfiedRuleIds: string[] } {
-  return { identity: labelledIdentity(access), satisfiedRuleIds: access.satisfiedRuleIds.every(validQualifiedRuleId) ? [...access.satisfiedRuleIds] : [] };
+  return { identity: labelledIdentity(access), satisfiedRuleIds: sqlAppliedSets([], access.satisfiedRuleIds).satisfiedRuleIds };
 }
 
 /**

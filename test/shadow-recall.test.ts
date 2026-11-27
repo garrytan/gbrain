@@ -54,6 +54,7 @@ describe('scoring', () => {
     expect([recallEligible([0, { limit: 10 }]), recallEligible([0, {}]), recallEligible([0, { limit: 9 }]), recallEligible([0, { limit: 10, offset: 5 }])]).toEqual([true, true, false, false]);
   });
   test('every reference row tied with the tenth is a true neighbour, whichever the engine returned', () => {
+    // pregate-literal: SHADOW_ADAPTER_VERSION=13 the number 13 on the next line is test data (a count, size, index or date), not the adapter version
     const tied = ref(13, (i) => (i < 9 ? 1 - i / 100 : 0.5)); // c9, c10, c11 and c12 tie at the cutoff
     expect(scoreRecall(tied, rows(ids(0, 10)), rows([...ids(0, 9), 'c12']))).toMatchObject({ vector: 1 });
     expect(scoreRecall(tied, rows(ids(0, 10)), rows([...ids(0, 9), 'c13']))).toMatchObject({ vector: 0.9 });

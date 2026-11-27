@@ -43,6 +43,13 @@ member-access part alone (the page's readers, and the origin of a derived page):
   cleared) guarantees whenever the config says unrestricted. A reader identity reaches the policy only through a
   page's readers, so the same holds for a member caller
   (`test/engine-parity/unrestricted-member-page-reads.test.ts`).
+- `readPageWorldVisible(sourceId, slug)` is the reason path's read (`persistence/change-reason.ts`): a commit keeps
+  its change reason only while the page is world-visible. It renders `privatePagesFilterFragment('p')` (the anonymous
+  read policy) under an anonymous restricted record with the caller's identity and grant emptied, maps it through
+  `storePageTextPolicy` and asks `brain.readCallerPageAccess` for the one pair: `true` when the page is live and
+  passes. As in the SQL fragment, the caller's folder coverage still hides a page under a covered prefix (the store
+  applies coverage for the empty identity too), and an owner caller's policy is sent with the owner-only test off. It
+  adds no store method. The capability is `pages`.
 - `readWriterSlugFence(principal)` reads a `local_cli` or `local_stdio` writer's stored grant ceiling
   (`brain.readLocalWriter`) and returns its `slugPrefixes`, or `null`. For an `oauth_client` it reads the stored
   client record (`brain.readOauthClient`) and returns its `bound_slug_prefixes` (its `delegated_slug_prefixes` for a
@@ -52,8 +59,8 @@ member-access part alone (the page's readers, and the origin of a derived page):
 ## Differences from PGLite
 
 - **A page with no live row.** When the earlier checks in `authorizePageVisibility` have not already decided a remote
-  write, the check judges a page that has only a soft-deleted row (or no row) with a raw statement, and a Rust brain
-  refuses that statement with `engine_capability_missing`. A page with a live row is judged through the typed reads.
+  write, `hiddenUnder` uses `readPageHiddenFromWriter` to judge any soft-deleted row under the writer's policy, including
+  privacy when required; no row is not hidden. Rust serves this read too ([remote-links.md](remote-links.md)).
 - **Owner-only sources.** A page policy for a caller that is not the owner ends with the owner-only test
   (`ownerOnlyAllowedSql`). The member reads which form the policy text carries and sends it as `ownerOnly`
   (`ownerOnlyFormIn`): `fn` when the text holds `ownerOnlyPageSql(alias, 'fn')`, `closed` when it holds

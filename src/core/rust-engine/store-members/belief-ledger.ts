@@ -5,7 +5,7 @@
  *
  * `readBeliefTombstones` answers the fact half from the fact purge ledger and the take half from the take purge ledger.
  * `readLegacyClaimFingerprints` and `readLegacyBeliefTombstones` make no store call: they find a claim recorded, or purged, under the
- * Postgres fingerprint from before fact_fingerprint_v3 (v341, which folded whitespace by the locale). The store has always
+ * Postgres fingerprint from before fact_fingerprint_v3 (v353, which folded whitespace by the locale). The store has always
  * folded the one explicit list, so no claim of it has an older fingerprint and both answer none.
  * The state reads (`readBeliefStateRows`, `readBeliefFactsById`; trust/belief_state.rs) read every part: the store keeps
  * no per-transaction write counters, so `counts` is null, as on a database with `track_counts` off.
@@ -30,7 +30,7 @@ export const readBeliefTombstones: Member<'readBeliefTombstones'> = async (brain
   return answer.fps;
 };
 
-// A Rust brain holds no pre-v341 Postgres fingerprint (header), so there is nothing to alias.
+// A Rust brain holds no pre-v353 Postgres fingerprint (header), so there is nothing to alias.
 export const readLegacyClaimFingerprints: Member<'readLegacyClaimFingerprints'> = async () => [];
 
 export const readLegacyBeliefTombstones: Member<'readLegacyBeliefTombstones'> = async () => [];

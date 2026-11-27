@@ -176,7 +176,7 @@ describe('#6764 doctor: free relink first, paid re-extraction only for rows it t
     expect(fix.argv).toEqual(['gbrain', 'facts', 'relink', '--conversation', '--source', 'default', '--slugs', `${MEETING},${OTHER}`]);
     expect(fix.preview_argv).toEqual([...fix.argv!, '--dry-run']);
     expect(renderAction(fix as never, cliRenderContext()).next).toBe('run');
-    expect(before.message).toContain('link them for free (preview first): gbrain facts relink --conversation');
+    expect(before.message).toContain(`link them for free: ${fix.argv!.join(' ')} (add --dry-run to preview`);
     expect((await cli(engine, fix.preview_argv!.slice(2))).code).toBe(0);
     expect((await unlinkedFactsStats(engine, ['default']))!.window.conversation).toBe(3);
     expect((await cli(engine, fix.argv!.slice(2))).code).toBe(0);

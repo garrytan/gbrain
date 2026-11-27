@@ -56,3 +56,21 @@ test('a user cached under the raw id is looked up again once the listing is a da
   expect(body).toContain('**Bob Example**');
   expect(body).not.toContain('**UBOB000001**');
 }, 120_000);
+
+test('#10220 a user first seen on a later day of the same run is named from that run\'s one listing', async () => {
+  const fake: FakeSlack = { teamId: 'TACME00002', calls: [], users: { UALICE0001: { name: 'Alice Example' }, UCAROL0001: { name: 'Carol Example' } }, channels: [
+    { id: 'CALPHA0001', name: 'alpha', messages: [{ ts: slackTs(NOW - 3 * HOUR), user: 'UALICE0001', text: 'Alpha day, only Alice posted.' }] },
+    { id: 'CBRAVO0001', name: 'bravo', messages: [{ ts: slackTs(NOW - 2 * HOUR), user: 'UCAROL0001', text: 'Bravo day, only Carol posted.' }] },
+  ] };
+  const config = { kind: 'slack', s_channels: 'CALPHA0001,CBRAVO0001', s_record: 'database', federated: false };
+  await engine.executeRaw('INSERT INTO sources(id,name,local_path,config) VALUES($1,$1,NULL,$2::text::jsonb)', ['slack-later-day', JSON.stringify(config)]);
+  await runSlackSync(engine, 'slack-later-day', parseSlackSourceConfig(config, ''), { ...options }, {
+    api: slackApi({ token: slackTestToken(), userAgent: 'gbrain-test', fetchImpl: slackFetch(fake), sleep: async () => {}, minDelayMs: 0, now: () => NOW }), now: () => NOW });
+  const dayBody = async (text: string) => (await engine.executeRaw<{ body: string }>(
+    `SELECT compiled_truth AS body FROM pages WHERE source_id='slack-later-day' AND deleted_at IS NULL AND compiled_truth LIKE $1`, [`%${text}%`]))[0]?.body ?? '';
+  expect(fake.calls.filter(c => c === 'users.list').length).toBe(1);
+  expect(await dayBody('only Alice posted')).toContain('**Alice Example**');
+  const bravo = await dayBody('only Carol posted');
+  expect(bravo).toContain('**Carol Example**');
+  expect(bravo).not.toContain('**UCAROL0001**');
+}, 120_000);

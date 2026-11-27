@@ -1,13 +1,16 @@
-# Moving a brain to the Rust engine: the swap plan
+# Moving a brain to the Rust engine: the engine swap
 
 The Rust engine is opt-in. An existing brain moves to it by an engine swap, after a shadow has run beside the current
 engine long enough to prove it gives the same answers (docs/designs/RUST_ENGINE.md, "Shadow mode and swap"). This
-guide covers the read-only plan, which is what this release ships. The run (`--yes --expect <hash>`), `--resume`,
-`--status` and failback (`--to postgres` or `--to pglite`) arrive in a later release.
+guide covers the read-only plan, the run for a PGLite or Postgres brain, and failback, the way back to the old engine.
 
 **Say to your agent:** *"Is my brain ready to move to the Rust engine?"*
 
 **Say to your agent:** *"Show me the engine swap plan and what still blocks it."*
+
+**Say to your agent:** *"Move my brain to the Rust engine with the plan I just read."*
+
+**Say to your agent:** *"Move my brain back from the Rust engine to the engine it used before."*
 
 <a id="plan"></a>
 ## The plan
@@ -37,14 +40,168 @@ status --json` prints for this brain; with no shadow for it, the verdict is `NOT
 - the free disk space where the brain lives;
 - a plan hash that binds the verdict, each criterion's state and the routes, and ignores the time and the free space.
 
-Two plan items wait for the run's machinery, and the plan names them instead of guessing:
+The plan also prints:
 
-- **Capability report.** It compares what this brain uses with what the Rust engine serves, read through the addon
-  loader. That wiring lands with the CLI connect PR, so the report comes with the run.
-- **Expected write pause.** The pause is the drain plus the final digest, measured under the write fence the run
-  builds. The plan has no fence to measure.
+- **The readiness policy** in force and its hash (below).
+- **The capability report.** The capabilities the Rust engine serves, and, for each one your current engine reports
+  that Rust does not, the engine members that refuse there.
+- **The expected write pause.** An estimate of how long writes are refused during a run: the drain of pending requests
+  plus two digest passes over the brain's rows, with the inputs it used. It is printed, never bound into the plan hash.
+- **Blockers.** What the Rust engine cannot serve for this brain yet. A run refuses while any is listed:
+  folder rules (`folder_rules_unserved`) and remote callers (`remote_access_unserved`).
 
-`READY` is evidence, not permission. A `NOT READY` plan can be read but not run. There is no readiness override.
+`READY` is evidence, not permission. A `NOT READY` plan can be read but not run. There is no readiness override; the only
+dated policy change is criterion 1's shorter shadow minimum below, which the plan prints with its ruling and end.
+
+<a id="run"></a>
+## The run
+
+```bash
+gbrain engine swap --to rust --yes --expect <hash>   # run the plan with that hash
+gbrain engine swap --status [--json]                 # the recorded run, without opening the brain
+gbrain engine swap --to rust --resume [--json]       # continue a stopped run from its last state
+```
+
+The command never prompts. Without `--yes` it answers `confirmation_required` (exit 3) with the plan hash to approve.
+A run checks, before it writes anything: that the plan for the brain as it is now has the hash you approved
+(`preview_changed` otherwise), the blockers above, the readiness verdict, the routes, that no other process holds the
+brain (`brain_in_use`), and that the Rust engine addon loads. Then it goes through these states, each recorded (0600,
+under `.gbrain/engine-swap/`) before the next starts:
+
+1. **Checkpoint.** A PGLite brain: a copy of the data directory, written and verified: it loads into a fresh PGLite
+   with the same row count in every table. A Postgres brain: a `pg_dump --format custom` of its database, verified
+   when `pg_restore --list` lists data for every table. A later step checks its hash again and never uses a checkpoint
+   that changed. See [the checkpoint](#checkpoint).
+2. **Fence.** Pending requests are drained, then every table of the old brain gets a database-enforced write fence:
+   a write that is not part of this run is refused. The fence stays after the swap; it is the way back.
+3. **Verify.** A final reconcile copies anything the shadow missed, the Rust id counters are raised to at least the old
+   brain's highest ids (sequence values included), a second reconcile must find nothing left to repair, the fingerprint
+   probe must pass, and every copied relation must have the same row count and digest on both engines.
+4. **Switch and probe.** The config file is switched to the Rust store, then a fresh `gbrain` process opens the brain
+   the normal way and must report the Rust engine at that store. Only then does the run report success. If the probe
+   fails, the config is put back at once.
+
+A run that stops (a kill, a full disk, a failed digest, a failed probe) keeps its last state and a diagnostic id;
+`--status` shows them and `--resume` continues. Until the switch, the old engine keeps authority.
+
+<a id="checkpoint"></a>
+### The checkpoint
+
+The checkpoint is written under the gbrain home (`.gbrain/engine-swap/<brain>/checkpoint-<run>.tar` for PGLite,
+`.dump` for Postgres), never in a brain repo. The directory is 0700 and the file 0600. It holds every page, fact and
+token of the brain, so gbrain never prints or uploads it; the run record keeps only its path, size and SHA-256.
+
+On a Postgres brain the run needs `pg_dump` and `pg_restore` at the server's major version or newer, and free space
+under the gbrain home at least the size of the database (`pg_database_size`, an upper bound for the compressed dump).
+Both are checked before anything is written (`checkpoint_unavailable`). The dump is taken before the write fence, so
+a write that lands between the dump and the fence is in the fenced database but not in the dump: the fenced database
+is the exact way back, and the dump protects against losing that database.
+
+The run never deletes a checkpoint. Keep it until you have accepted the swap and no longer need the way back to the
+old engine; then delete the file yourself.
+
+When the config file holds the Postgres `database_url`, the switch moves it into a 0600 file beside the run record
+(`previous-route-<run>.json`) and a failed probe or a rollback puts it back. The URL is never in the run record or in
+`--status` output.
+
+<a id="resume"></a>
+### Resume
+
+`--resume` re-checks what the previous steps left (the checkpoint hash, the fence) and continues from the recorded
+state. A checkpoint file the run wrote but never recorded is replaced, never trusted. A second run of the same brain
+is refused while one is recorded and not finished.
+
+<a id="fingerprint-rule"></a>
+### The fingerprint rule
+
+Facts are deduplicated by a fingerprint of their normalized text (lower case, collapsed whitespace). Before authority
+moves, in either direction, the run probes the Postgres or PGLite engine's fingerprint function against the Rust
+engine's. The rule is the probe's own:
+
+- If the server's `lower()` or whitespace class differs from the Rust engine on some characters, the run stops only
+  when a stored fact holds one of them (`fingerprint_semantics_differ`, with the count of such facts, never their text).
+- If no character differs, any mismatch in the probe's test corpus stops the run.
+
+Stock Postgres differs from the Rust engine on dozens of rare characters (for example U+0085, next line, which the
+Rust engine treats as whitespace and Postgres does not), on libc and ICU alike, so its probe always reports corpus
+mismatches. A brain whose facts hold none of those characters is not affected and swaps. PGLite differs on none.
+
+<a id="failback"></a>
+## Failback: back to the old engine
+
+After a swap, the old engine is not kept current; failback copies the Rust store back under a write fence.
+
+```bash
+gbrain engine swap --to pglite --plan              # or --to postgres: what is copied back, every loss; read only
+gbrain engine swap --to pglite --yes --expect <hash>
+gbrain engine swap --to pglite --resume            # finish a failback that stopped after its switch
+```
+
+`--to` must name the engine the brain swapped from. Failback needs a succeeded swap whose old primary still records the
+run at cutover (`failback_unavailable` otherwise). It reads the Rust engine only through the read calls it serves (the
+page, tags, links, timeline, chunks with embeddings, raw data, takes, files of each page, then facts, open loops,
+config keys and sources) and compares them with the same calls on the old primary. The Rust store's shadow digests
+are not used: writes made after the swap never update them.
+
+The plan shows, before anything is written:
+
+- how many pages changed, were added or were removed on Rust, and the same counts for facts, open loops, config keys
+  and sources;
+- the two accepted losses with their counts: `page_version_collapse` (a page changed on Rust gets one new version on
+  the old primary for all its Rust-side edits) and `new_row_ids` (a page created on Rust gets a new row id; facts,
+  takes and files keep theirs);
+- the closed list of what failback does not carry: every table of the old primary no Rust read call returns (its
+  rows stay as they were at the swap) and every column of a carried table no read call returns;
+- the known limits: the shadow digests above; files with no page, which no Rust read call lists; and a fact's fence
+  row, event type, dimension and attribution columns, which no read call returns, so a fact added on Rust after the
+  swap makes failback refuse by name (`failback_unavailable`) instead of losing them;
+- the [fingerprint rule](#fingerprint-rule).
+
+A run checks the plan hash (`preview_changed`), that no other process owns the Rust store or uses the old primary
+(`brain_in_use`) and the routes. Then, each step recorded in the swap's run record:
+
+1. **Copy.** Only what differs is written to the old primary, as the swap run, so its write fence lets these writes
+   and no others through. The Rust store is never written; it stays as a recovery point.
+2. **Verify.** Both engines are read again and must agree on every read call (`failback_mismatch` names the first
+   parts that differ), and the reverse fingerprint probe must pass.
+3. **Switch.** The config names the old engine again (and its saved Postgres `database_url`). A last read of both
+   engines must still agree, or the config goes back to the Rust engine.
+4. **Release and probe.** The write fence is dropped and the old primary's graduation row closed in one transaction,
+   and a fresh `gbrain` process must open the old engine.
+
+A brain that fails back can swap again later with a new plan.
+
+<a id="collation_order_differs"></a>
+### Lists whose order changes: `collation_order_differs`
+
+The Rust engine lists text keys in byte order, as PGLite does. A Postgres brain whose collation is not byte order (libc
+`en_US`, or any ICU locale) lists some of them in its own order, so a few lists answer differently after the swap. This
+is a named loss, never a refusal. The plan (and `--plan --json`, field `collation`) names each such list in one of
+three classes: the same rows in another order, different rows in a capped list, and the sites not traced to their
+output; it counts the text sorts that do not change. A C or POSIX Postgres brain and a PGLite brain get no list. When
+the shadow's fingerprint probe has not recorded the source collation, the plan says so and lists every site. Repair
+previews made before the swap must be run again: a preview's list order, and so its approval hash, can change.
+
+<a id="remote-callers"></a>
+### Remote callers after a swap
+
+A brain with remote callers (access tokens, OAuth clients or remote MCP) does not swap yet (`remote_access_unserved`).
+Once it can, one named loss stays: a remote read by the brain owner on a Rust brain refuses by name
+(`engine_capability_missing`, "the owner lineage read") until the Rust store models the owner's lineage read. Other
+remote callers, and the local CLI, read what they read on the old engine. The swap plan lists it under "Named loss for
+remote callers".
+
+<a id="policy"></a>
+## The readiness policy
+
+Criterion 1's minimum shadow duration is a policy value, not a flag: 14 days by default (D14), or a number of days with
+an expiry date, or "not required", as an approved ruling sets it. The plan prints it and its hash; the hash is part of
+the plan hash, so a change needs a new plan. An expired value falls back to 14 days. A policy can also carry a dated
+override: it names the ruling (words, time, place), the brains it covers (every opt-in brain, or one brain by
+`brain_ref`, a digest of the brain's persistence identity) and an expiry date. The plan prints it and whether it applies
+here; after the expiry the policy's own duration stands. Today one override is listed (`c1-opt-in-short-shadow`: 5 days
+for every opt-in brain until the end of Tue 2026-12-08 PST). Privacy, fingerprints, topology,
+platform, capabilities, recovery drills, caught-up following and the final digests are never part of a policy.
 
 <a id="readiness"></a>
 ## Readiness criteria
@@ -52,7 +209,8 @@ Two plan items wait for the run's machinery, and the plan names them instead of 
 The plan reads the shadow status (`gbrain engine shadow status --json`). A missing or malformed field is `missing`,
 never a pass. With no shadow running, every criterion is `missing`.
 
-1. At least 14 days of shadowing in the epoch, follower lag p99 under 60 s, three consecutive clean reconcile passes,
+1. At least 14 days of shadowing in the epoch (5 days for every opt-in brain until the end of Tue 2026-12-08 PST: the
+   opt-in swap opens Thu 2026-12-03, and the plan names the override and its end; a new Rust build starts a new epoch), follower lag p99 under 60 s, three consecutive clean reconcile passes,
    no unseeded gap rows, and a follower that is caught up. "Caught up" needs the follower's current lag, queue depth
    and coverage watermark in the status; a status that leaves any of them out is `missing`, never a pass, and a
    follower with lag, a queue or an invalid watermark fails.
@@ -62,8 +220,24 @@ never a pass. With no shadow running, every criterion is `missing`.
 4. The search arms agree: trigram exactly; keyword and title exactly under the `ts_rank` ranker (or E1 and E2 at
    least equal to PGLite and Postgres under the default ranker); vector recall@10 at least 0.98 and at least the
    primary's.
-5. Zero unexplained differences on at least 1,000 comparable write comparisons. A shadow that cannot compare writes
-   (`capability_missing`) has no evidence. **A criterion 5 pass covers page and link writes only.** For a sampled
+5. Zero unexplained differences on at least the brain's own write bar of compared writes:
+   `min(1000, max(100, window x W))`. The window is criterion 1's shadow minimum in force (5 days while the opt-in
+   override applies, until the end of Tue 2026-12-08 PST; 14 days after). W is the brain's qualifying writes a day
+   (`putPage`, `deletePage`, `addLink`, `addLinksBatch`, `removeLink`), from the shadow's own call counts with
+   sampled-out calls included, over the window (a shorter call history is scaled to a per-day rate). The plan names
+   the bar, the window, how W was computed and the compared count. Below the floor of 100 the check stays closed. A
+   shadow that cannot compare writes (`capability_missing`) has no evidence. A brain that can opt in (one without
+   managed storage) shadows with every write compared by default (rate 1.0; `--write-sample-rate` overrides it), so on
+   Postgres the bar is reachable in 5 days when its writes can be compared; each save is about 2x slower while that
+   shadow runs. When start cannot read the storage mode, it also compares every write and says so in the plan; if that
+   brain does use managed storage, each save is about 2x slower until `gbrain engine shadow start` runs again and reads
+   the mode. A PGLite brain samples no writes (below), so it cannot pass criterion 5 yet. A brain with fewer than 20 qualifying writes a day cannot reach the floor
+   in a 5-day shadow.
+   When the compared writes fall short of the bar, the plan says why: `write_bar_not_reached` with the share of the
+   epoch's qualifying writes that were compared, the writes that cannot be (in a transaction, `uncomparable`,
+   `capability_missing`), and after how many days of shadow the bar is reached at that share; or
+   `write_bar_unreachable` when none was compared. The bar is never lowered and an uncompared write never counts.
+   **A criterion 5 pass covers the pilot page and link writes only.** For a sampled
    `putPage`, `deletePage`, `addLink`, `addLinksBatch` or `removeLink`, shadow mode copies the rows the write touches from
    your brain, applies the same write to a throwaway Rust store built from that copy (never the live shadow store, never
    your brain), and compares the changed pages and links. The throwaway store holds copies of page content, which may be
@@ -71,8 +245,7 @@ never a pass. With no shadow running, every criterion is `missing`.
    who runs gbrain, never in a shared temp directory), for one comparison only: it is deleted when the comparison ends,
    however it ends, and a killed shadow's leftovers are swept the next time shadow mode starts. The shadow's own evidence
    files hold no page content. The comparison counts as `comparable` when the two read-backs match and `unexplained_difference` when they do not.
-   A write that cannot be checked (the copy could not be read or loaded, the write failed on either side, it ran inside a
-   transaction, another write landed in between, it touched too many rows, a copied page is soft-deleted, the source holds
+   A write that cannot be checked (the copy could not be read or loaded, the write failed on either side, another write landed in between, it touched too many rows, a copied page is soft-deleted, the source holds
    a withdrawn or purged fact (the primary then serves a redacted body the copy does not have), the Rust store cannot keep
    a copied column, or the shadow could not record that a comparison was starting) is `uncomparable` and never counts as
    `comparable`. On a Postgres brain, which other processes can write, a data fence catches another writer: every copied row
@@ -109,12 +282,26 @@ never a pass. With no shadow running, every criterion is `missing`.
    `capability_missing` and this criterion is `missing` (no evidence), not a pass; `gbrain engine shadow status` says how
    many replays have no result yet. Once a comparison has a verdict (`comparable` or `unexplained_difference`) and no mark stands, the state is `measured`, and the pass rule is unchanged. The
    sample share is the write sample rate, 0.05 unless `gbrain engine shadow start --write-sample-rate <rate>` (above 0,
-   at most 1) sets another; it is separate from the read sample rate. Every sampled write of another family is counted
+   at most 1) sets another; it is separate from the read sample rate. Above about a 0.05 sample rate, bursts of writes only add `queue_full` (uncomparable) samples, because the child replays one write at a time and holds at most 16 in all (the one replaying and those waiting). A sampled write that never reaches a verdict (the pipe refused it, its read-back was still running at disconnect, or it was still queued when the child hit its exit deadline) is counted `uncomparable` as `send_shed`, `readback_abandoned` or `child_exit_deadline`, never dropped and never comparable. The serving process records the first two in a small file beside the tally without taking the tally's lock, so a busy lock can never stall a write; the shadow child adds them to the tally, and until it has, `gbrain engine shadow status` reads them as replays with no verdict, so no evidence; a journal that cannot be read, or that ends in an unfinished line while its writer is alive, reads the same way, and an unfinished line whose writer is gone is counted once as `lost_unreadable`. Every sampled write of another family is counted
    `capability_missing`, by family, never compared, so `gbrain engine shadow status` and the swap plan name the families sampled so far, which stay unchecked. A sampled write outside a transaction waits (at most 2 seconds) for one small read of the rows it
-   touches before it runs; if that read is slow, the write goes ahead untouched. `put_page` and import run their page
-   write inside a transaction, so those are `uncomparable`: only link operations outside a transaction (`add_link`,
-   `remove_link`, a by-mention extract batch) can make a write `comparable`. Comparing a page write that ran inside a
-   transaction is a planned follow-up, not part of this check.
+   touches before it runs; if that read is slow, the write goes ahead untouched. `put_page` and the page write of an import (sync included) run inside a
+   transaction, and a sampled one can now be compared too: it reads the same rows on the transaction's own connection before it sends the write, in a
+   savepoint that is always rolled back, and it is read back and sent only after the transaction commits. A transaction that rolls back drops its samples, and
+   one that holds several pages sends one sample per page after the commit. The savepoint is taken only when the page write is the only call running on the
+   transaction (the transaction's other calls wait behind the read, so their statements keep their order); when another call has started and not finished, which is how a pipelined
+   import sends its writes together, nothing is read and the sample is `uncomparable` (`in_transaction_busy`), because that call's later statements would run inside the savepoint and be rolled back with it.
+   Inside a transaction only `put_page` is compared, and only in the outermost transaction; a link or delete write in one, or a `put_page` inside a nested transaction (a savepoint), is
+   `uncomparable` (`in_transaction`). A page write is also `uncomparable` when: another write to anything the comparison reads came before it in the same transaction
+   (`in_transaction_prior_write`; a version row from `createVersion`, a `putPage` of another page, and a write to a bookkeeping table do not count); the same page is written twice
+   in the transaction (`in_transaction_same_page`); a later write in it changes the page or its links (`in_transaction_later_write`; the chunk, alias, tag and projection writes an
+   import makes after the page do not count, and the contextual-retrieval stamp it makes is replayed with the write; a write inside a nested transaction that rolled back is forgotten; a raw write counts as bookkeeping only when every table it writes is `persistence_counters`, `persistence_effects`, `persistence_requests`, `op_checkpoints`, `write_gate_receipts`, `sources`, `timeline_entries`, `takes`, `content_chunks`, `page_projection_jobs` or `config`, except that one `LOCK TABLE` statement standing alone is bookkeeping whatever table it names (it changes no row), while a batch that holds a lock among other statements is checked whole by the table rule; and the three page updates a sync or `put_page` makes after the write are matched by their exact text, so a changed statement is an ordinary write); or it carries an option the Rust store does not take (`unknown_option`: only `sourceId`,
+   `allowEmptyOverwrite`, `expectedRevision`, `force`, `inline` and `contextualRetrieval` are carried).
+   **Limits, named plainly.** (1) An import page write (the one a sync makes, and the one `put_page` makes, which write through the same import) sends the `contextualRetrieval` option unless the page's resolved mode is `none`. The Rust store takes the option and stores the same stamp as the primary, so a default-mode sync import or `put_page` page write is compared like any other, and counts toward this criterion. (2) A new page whose import adds tags comes out `uncomparable` as `moved`, because the tag write moves the page's revision after the page is written; the same page imported again with its tags unchanged can be comparable. (3) On a Postgres brain, creating a page through `put_page` or a managed sync can be comparable, but an update of an existing page sends its version row in the same wave as the page write, so it is `uncomparable` as `in_transaction_busy`; a managed sync that updates a source whose sync state is recorded (`sources.last_commit`) can also be `uncomparable` as `preimage_not_loaded`, because the Rust store does not keep that column. (4) The warm single-write lane (a reserved connection's own transaction, which the persistence consumer lends to single writes) is sampled like any other transaction: the preimage is read after its first statement, so a first statement sent ahead of BEGIN's answer stays first, and the same fail-closed reasons apply. Reads, follow and writer evidence for that lane are unchanged. **Chunks, tags, aliases, timeline entries and takes are not compared**, so a criterion 5 pass still covers the pilot page and link writes only.
+   Criterion 5 covers the pilot page and link writes (putPage, deletePage, addLink, addLinksBatch, removeLink) only (#10350, #10360, #10382, #10390). These write types are not compared and get named lines in the swap report: chunks, tags, aliases, timeline entries, takes, facts, fact withdrawals, open loops, sources, owner-only marks and the decide store.
+
+   The swap report prints one line under criterion 5 for each of those types: `chunks: sampled 3 (content_chunks 3)`, or `chunks: not sampled` when the shadow sampled none. A type reads the `capability_missing_by_family` keys named for it: chunks `content_chunks`; tags `tags`; aliases `page_aliases`; timeline entries `timeline_entries`; takes `takes`; facts `facts`; open loops `open_loops`; sources `sources`; owner-only marks `owner_only_marks`; the decide store the eight keys `decide_state`, `decide_spend`, `decision_receipts`, `decide_calibrations`, `decide_proposals`, `decide_review_proposals`, `decide_review_queue` and `decide_sweep_deferred`, summed, with the count of each key that was sampled in parentheses. Fact withdrawals has no key of its own, so its line reads `fact withdrawals: not sampled separately (counted under pages:updateSlug <n>)`. One more line, `other write families sampled: <key n, ...>`, lists every other sampled key (or `none`), so no sampled count is hidden. In `--json` the same lines are `lines` on the criterion 5 row; `detail` and every other field are unchanged. The tally keeps at most 64 keys and files the rest under `other`, so a very wide mix of writes can move a named type's count onto that key.
+
+   The last line is criterion 5's named loss, and it reads the same here. Named loss: only putPage, deletePage, addLink, addLinksBatch and removeLink are compared, so these other page and link writes are counted capability_missing and are not compared: pages:deletePages, pages:softDeletePage, pages:softDeletePages, pages:restorePage, pages:purgeDeletedPages, pages:updateSlug, pages:refreshPageBody, pages:refreshPageOrigin, pages:updatePageContextualRetrievalState, pages:stripStaleFrontmatterKeys, pages:markPagesExtractedBatch, pages:markPagesAttendanceBlocked, pages:setPageEmbeddingSignature, pages:setChunkerVersion, pages:writeTextProjectionSeal, pages:revertToVersion, pages:setEmotionalWeightBatch, pages:invalidateWithdrawnPages, pages:createSegmentedPageShell, pages:sealSegmentedPage, pages:flipBodyGeneration, links:removeLinksByPagesAndSource, links:replaceDerivedLinks, links:replaceDerivedLinksBatch. A write that touches several tables is counted under its first table only, so the side effects of deletePages, purgeDeletedPages and updateSlug (aliases, open loops, owner-only marks, fact withdrawals) land under pages:* keys, and a type's line above reads only the writes whose first table it is.
 6. Zero `privacy_diverged` events (the field is absent, not zero, while any privacy check of the last 7 days is unsettled, so criterion 6 has no evidence until it settles).
 7. Zero fingerprint mismatches, a passed fingerprint probe and a passed allocator verification.
 8. Speed: paired bench samples. **Reported, not gating.** D23 (the maintainer's C1 ruling of 2026-11-19) makes the
@@ -228,5 +415,64 @@ A host would read something different through its planned credential. Needs the 
 <a id="fingerprint_semantics_differ"></a>
 ### `fingerprint_semantics_differ`
 
-The fingerprint probe failed: collation or server semantics differ between the engines. Report it; not retried until
-the engine or the source host changes.
+The fingerprint probe found a stored fact whose fingerprint would differ between the engines, or, on a server whose
+characters all agree, a probe mismatch (see [the fingerprint rule](#fingerprint-rule)). Stock Postgres reports corpus
+mismatches on rare characters; that alone does not refuse. Report it; not retried until the facts, the engine or the
+source host change.
+
+<a id="folder_rules_unserved"></a>
+### `folder_rules_unserved`
+
+The brain has folder rules (`.gbrain/access.yml` in a source, or access rule rows). The Rust engine cannot edit them
+yet (`gbrain access rule add`, `rm`, `revert` and `import` refuse on Rust), so a swapped brain could not change who
+reads its folders. It lifts by itself in a build whose Rust engine reports the `access_control` capability (every
+access-control member served, rule edits included); `gbrain engine swap --to rust --plan` then lists no folder-rule blocker.
+
+<a id="remote_access_unserved"></a>
+### `remote_access_unserved`
+
+Remote callers use the brain: an active access token, an OAuth client or remote MCP. The Rust engine does not check a
+bearer token yet, so every remote caller would be refused after the swap. Not retried until a release serves it. The
+refusal gives counts only, never a token name or hash.
+
+<a id="brain_in_use"></a>
+### `brain_in_use`
+
+Another process holds the brain: a `gbrain serve`, a shadow-serving process or a running command. The swap holds the
+brain for the whole run. Stop that process, then run the swap again. On a Postgres brain, any other gbrain session
+connected to the database counts (by its `application_name`), on any machine: stop `gbrain serve`, workers and
+autopilot first, because the write fence would refuse their writes.
+
+<a id="checkpoint_unavailable"></a>
+### `checkpoint_unavailable`
+
+A Postgres brain's recovery checkpoint cannot be taken: `pg_dump` is not installed, it is older than the server, or the
+disk under the gbrain home has less free space than the database. The message names the version or the space needed.
+Nothing was written. Install the PostgreSQL client tools at the server's version or newer, or free the space, then run
+the swap again.
+
+<a id="failback_unavailable"></a>
+### `failback_unavailable`
+
+There is no finished swap to undo: no run record, a run that never switched, a config that does not name the Rust
+engine, or an old primary that does not record the run at cutover. It also refuses when a read call cannot return
+every row (a source removed on Rust, or 1000 or more open loops of one status in a source), when a page that changed
+keeps its body in segments, or when a fact was added on Rust after the swap (its fence row, event type, dimension
+and attribution columns have no read call). Nothing was written. Read
+`gbrain engine swap --status` and report what it shows.
+
+<a id="failback_mismatch"></a>
+### `failback_mismatch`
+
+After the copy, a read call answered differently on the old primary than on the Rust engine. The Rust engine keeps
+authority and the old primary stays fenced with the partial copy, which no client reads. A write that reached the Rust
+engine during failback is the usual cause: stop every writer and run the failback plan again once; report a second
+mismatch.
+
+<a id="verification_incomplete"></a>
+### `verification_incomplete`
+
+The run could not prove the engines equal or could not finish a state: the checkpoint did not verify or changed, the
+fence could not be put in place, a reconcile failed, the id counters did not pass, or the route probe did not see the
+Rust engine. The old engine keeps authority (a failed probe undoes the switch at once), the diagnostics are in the run
+record, and `--resume` retries the step, up to three times before you report it.

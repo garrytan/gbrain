@@ -40,7 +40,7 @@ Code: `rust/crates/gbrain-store/src/link_queries.rs`, the napi methods in
 | `listPagesTitledIn(queryLower, scope)` | served |
 | `probePageTypes(sets, scope)` | served |
 | `readLongPageSizes(ids, scope, { includeTimeline })` | served |
-| `wordLexemes(words)` | served under the English text search configuration |
+| `wordLexemes(words, config?)` | served under the `english` and `german` text search configurations (`keyword/stem_german.rs`) |
 | `readLinkContextMatches(asks)` | served |
 | `readLinkContextOriginPages(ids)` | served |
 
@@ -69,7 +69,7 @@ Code: `rust/crates/gbrain-store/src/link_queries.rs`, the napi methods in
   `int[]`); ids below 1 are dropped.
 - A `relationalFanout` depth or limit, or a `relationalChainHop` `neighborCap`, that is not an integer after the clamp.
 - A `listJunkEntityHubs` threshold, chunk cap or limit that is not a safe integer, or a negative limit.
-- `wordLexemes` under any text search configuration other than English: the store has only the English stemmer.
+- `wordLexemes` under a text search configuration other than `english` or `german`: the store has no Snowball port for it.
 
 ## Keys
 

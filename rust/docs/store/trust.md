@@ -39,10 +39,9 @@ an update from the stored tier and origin, and stores `unknown` as no tier.
 
 Rust guesses and gaps (1x parity):
 
-- The guest-source rules of the trigger are not built: `source_writer_restricted`, `guest_attribution_missing`,
-  `guest_page_immutable`, the per-source tier ceiling and the `writer_coordinator_required` refusal of a role
-  that cannot read `guest_sources`. The Rust store has no `guest_sources` table, so every source reads as a
-  non-guest source.
+- The guest-source rules of the trigger are built in `guest_sources.rs` (`guard_page`, `guard_row`, `cap_at`) and run
+  by the page, fact, take and timeline writers ([guest_sources.md](guest_sources.md)). The `writer_coordinator_required`
+  refusal of a role that cannot read `guest_sources` is not reachable: the store has no row-level security.
 - A refusal carries the trigger's message without the `trust_raise_refused: ` prefix (the code holds it) and
   without the trigger's DETAIL JSON (`op`, `writer`, `from`, `to`, `backfill`).
 - A stored tier that names no tier reads as `unknown` (`TrustTier::stored`, as `storedTrustTier`); PGLite's
@@ -144,7 +143,7 @@ Rust guesses and gaps (1x parity):
 - A move back to `pending` that another pending proposal already holds refuses with `constraint_violation`, where
   Postgres raises a unique violation; a status, action or table the CHECK constraints refuse refuses with
   `invalid_argument`. A source that does not exist refuses as the foreign key does.
-- The guest-source rules are not modelled (there is no `guest_sources` table).
+- The guest-source rules run in the writers, not in `stamp` itself: `stamp` reads no records ([guest_sources.md](guest_sources.md)).
 
 Not built (they still run through `executeRaw`, which the Rust engine refuses): the reads that also read `fact_purges`
 (the store keeps that table now, rust/docs/store/facts.md "The fact purge ledger", but these reads do not read it yet:
@@ -224,9 +223,20 @@ Postgres, so a source or page delete leaves these rows, and the Rust store does 
 | `getWriteGateHoldRow` | `get_write_gate_hold_row`: a point read | `… WHERE id = $1` |
 | `decideWriteGateHold` | `decide_write_gate_hold`: only a `held` hold moves to `released` or `dropped` | `UPDATE … WHERE id = $1 AND status = 'held'` |
 
-`listTrustAllowRuleRows` (the owner's allow rules, `trust_allow_rules`) answers `[]` without a store call: the store
-keeps no allow rule, because `trust allow` writes one through `executeRaw`, which the Rust engine refuses. So
-`trust review` and the write gate's allow check read an empty rule set on Rust instead of a refusal.
+The owner's allow rules (`trust_allow_rules`, `trust/allow_rules.rs`; `gbrain trust allow add|remove|list`):
+
+| Member | Store | Mirrors |
+| --- | --- | --- |
+| `addTrustAllowRule` | `add_trust_allow_rule`: `{ source_active: false }` and nothing written when the source is missing or archived; else the rule inserted (`created: true`), or the active rule already holding (source, prefix or '', family or '') returned unchanged (`created: false`), which still uses up one id as the sequence does. The table's CHECKs (prefix 1 to 2048 characters, a known reason family, a reason up to 500 characters) refuse with `constraint_violation` and take no id (a known difference: Postgres' sequence uses one up) | `SELECT id FROM sources … NOT archived`, then `INSERT … ON CONFLICT DO NOTHING RETURNING *`, then the active row `ORDER BY id LIMIT 1` |
+| `removeTrustAllowRule` | `remove_trust_allow_rule`: an active rule gets `removed_at` and `removed_by` and frees its active key; the row stays as the receipt. Null for a removed or unknown id | `UPDATE … SET removed_at = now() … WHERE id = $1 AND removed_at IS NULL RETURNING *` |
+| `readTrustAllowRule` | `read_trust_allow_rule`: a point read, active or removed | `SELECT * … WHERE id = $1` |
+| `listTrustAllowRuleRows` | `list_trust_allow_rules`: by id; active only unless `includeRemoved`; an empty source list reads every source | `… ORDER BY id` |
+
+Keys: `t 0x0f id` (8-byte big-endian) holds every rule; `t 0x10 source \0 uri_prefix \0 reason_family` holds the active
+rule's id (the partial unique index `trust_allow_rules_active_unique`). Ids come from the `trust_allow_rules` counter. A
+source delete removes the source's rules (`ON DELETE CASCADE`). The TypeScript member answers a rule id that is not a
+whole number with Postgres' bigint error (22P02) and a whole id below 1 with null. The shadow seed copies the rules and
+the follow keeps them (`rust/docs/store/seed.md`). The family came in without a format bump (`format.md`).
 
 Not built (they still run through `executeRaw`, which the Rust engine refuses): the purge paths (`purge.ts`,
 `page-purge.ts`, `purge-slug-stores.ts`, `source-delete.ts`), `owner-actions.ts`, `release-publish.ts`, the

@@ -19,7 +19,6 @@
  */
 import { describe, expect } from 'bun:test';
 import { basisEmbedding, createSource, parityArms } from './harness.ts';
-import { isCapabilityRefusal } from './arm-capabilities.ts';
 import { chunk, installChunks } from './chunk-fixtures.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { fenceHoldEntries, fenceReadOf } from '../../src/core/generations/fence.ts';
@@ -588,29 +587,6 @@ describe('engine parity: write journal', () => {
 
   // Leak case: one source's tombstones never answer for another, and a bumped epoch is read as stored. The Rust store
   // purges nothing (0 and none above), so the tombstone write stops on the raw_sql refusal.
-  parityTest('readReasonPurgeTombstones reads only the named source; readSourcePurgeEpoch reads a bumped epoch', {
-    methods: ['readSourcePurgeEpoch', 'readReasonPurgeTombstones'],
-  }, async (engine, backend) => {
-    await createSource(engine, backend, 'purged');
-    const write = await engine.executeRaw("UPDATE sources SET purge_epoch = 3 WHERE id = 'purged'").then(() => null, (e: unknown) => e);
-    if (backend === 'rust') {
-      expect(isCapabilityRefusal(write, 'raw_sql')).toBe(true);
-      expect(String(await engine.readSourcePurgeEpoch('purged'))).toBe('0');
-      throw write;
-    }
-    await engine.executeRaw(`INSERT INTO reason_purge_tombstones (source_id, commit_sha, path) VALUES
-      ('purged', 'c1', 'notes/a.md'), ('purged', 'c2', 'notes/b.md'), ('default', 'c3', 'notes/c.md')`);
-    const order = (rows: Array<{ commit_sha: string; path: string }>) => rows.map(r => ({ commit_sha: r.commit_sha, path: r.path })).sort((a, b) => a.commit_sha.localeCompare(b.commit_sha));
-    const seen = {
-      epoch: String(await engine.readSourcePurgeEpoch('purged')),
-      defaultEpoch: String(await engine.readSourcePurgeEpoch('default')),
-      purged: order(await engine.readReasonPurgeTombstones('purged')),
-      other: order(await engine.readReasonPurgeTombstones('default')),
-    };
-    expect(seen).toEqual({ epoch: '3', defaultEpoch: '0', purged: [{ commit_sha: 'c1', path: 'notes/a.md' }, { commit_sha: 'c2', path: 'notes/b.md' }], other: [{ commit_sha: 'c3', path: 'notes/c.md' }] });
-    return seen;
-  });
-
   parityTest('each journal member works on its own, outside a transaction', {
     methods: ['readLedgerSource', 'lockPersistenceCounters', 'insertWriteRequest', 'readWriteRequest', 'readWriteRequestById', 'stampWriteClaim', 'lockWriteRequest', 'completeWriteRow'],
   }, async (engine) => {

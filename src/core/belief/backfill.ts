@@ -59,7 +59,7 @@ export async function bodySubjects(engine: BrainEngine, sourceId: string, lifeti
   const active = facts.facts.filter(f => f.active);
   // computeFactFingerprints runs the statement this read sent (engine-sql/facts-trust.ts), so a Rust brain serves it too.
   const fps = active.length ? (await engine.computeFactFingerprints(active.map(f => f.claim))).map(fp => ({ fp })) : [];
-  // A claim recorded under its pre-v341 fingerprint keeps it (legacy-fingerprint.ts), as the stream reads do.
+  // A claim recorded under its pre-v353 fingerprint keeps it (legacy-fingerprint.ts), as the stream reads do.
   const legacy = await legacyClaimFingerprints(engine, sourceId, [...active.map(f => f.claim), ...takes.takes.map(t => t.claim)]);
   const subject = lifetimeRef(lifetime);
   const groups = new Map<string, { raw: Parameters<typeof factValue>[0]; count: number }>();

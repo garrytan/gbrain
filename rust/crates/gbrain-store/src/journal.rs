@@ -808,6 +808,20 @@ struct WriterRecord {
     revoked_at_us: Option<i64>,
 }
 
+/// The ids of the local writers that are not revoked.
+pub(crate) fn active_writer_ids(read: &dyn KvRead) -> Result<Vec<String>> {
+    let mut ids = Vec::new();
+    scan_prefix(read, &[keys::WRITER], false, &mut |_, v| {
+        if let Ok(w) = serde_json::from_slice::<WriterRecord>(v)
+            && w.revoked_at_us.is_none()
+        {
+            ids.push(w.id);
+        }
+        true
+    })?;
+    Ok(ids)
+}
+
 /// The stored id and lane of the local writer `id` (case-folded key), revoked or not.
 pub(crate) fn read_writer_record(read: &dyn KvRead, id: &str) -> Result<Option<(String, String)>> {
     Ok(get_json::<WriterRecord>(read, &keys::writer(&id.to_lowercase()))?.map(|w| (w.id, w.lane)))

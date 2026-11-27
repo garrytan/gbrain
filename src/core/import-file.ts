@@ -482,7 +482,7 @@ export async function importFromContent(
     // Sort tags in place first to preserve the pre-#3694 downstream behavior
     // (parsedPage.tags was sorted by the old inline `.sort()` mutation).
     const suppliedTrustMarker = parsed.frontmatter.trust_tier; // CEO-21: the no-op check also reads the caller's own marker
-    if (parsed.type === 'household' || existing?.type === 'household' || existing?.frontmatter?.household_role !== undefined || parsed.frontmatter.household_role !== undefined) await (await import('./household/placement.ts')).householdWriteAdmission(engine, sourceId ?? 'default', slug, parsed, existing, opts.remote !== false, opts.householdOwner);
+    if (parsed.type === 'household' || existing?.type === 'household' || existing?.frontmatter?.household_role !== undefined || parsed.frontmatter.household_role !== undefined) await (await import('./household/placement.ts')).householdWriteAdmission(engine, sourceId ?? 'default', slug, parsed, existing, opts.remote !== false, opts.householdOwner); if (parsed.type === 'rule' || existing?.type === 'rule') (await import('./rules/admission.ts')).ruleWriteAdmission(slug, parsed, existing);
     if (opts.prepare) opts.prepareFrontmatter?.(parsed);
     parsed.tags.sort();
     const hash = contentHash({
@@ -1058,7 +1058,8 @@ export async function importFromFile(
   }
 
   const preInferenceParsed = parseMarkdown(content, relativePath, { validate: true });
-  const preInferenceHold = classifyImportHold(preInferenceParsed);
+  const storedSlug = preInferenceParsed.slug || slugifyPath(relativePath);
+  const preInferenceHold = classifyImportHold(preInferenceParsed, { createsPage: storedSlug.length <= 255 || !await engine.getPage(storedSlug, { sourceId: opts.sourceId, includeDeleted: true }) });
   if (preInferenceHold) {
     return { slug: slugifyPath(relativePath), status: 'skipped', chunks: 0, error: preInferenceHold.message, refusal: preInferenceHold, skip_reason: preInferenceHold.code };
   }

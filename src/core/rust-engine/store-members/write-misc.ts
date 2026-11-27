@@ -22,6 +22,7 @@ import { readOauthClient } from './jobs-oauth-clients.ts';
 import { storeCall, type StoreMember } from './common.ts';
 import { uuidText } from '../store-codec.ts';
 import { OWNER_MEMBER_KEY } from '../../search/private-visibility.ts';
+import type { GuestSourceLookupRow } from '../../engine.ts';
 
 /**
  * The source's incarnation, archived flag, local path and config, or null. `lock: 'share'` asks the SQL engines to hold
@@ -51,16 +52,17 @@ function jsonText(value: unknown): string | null {
 }
 
 /**
- * Page admission's source row. The store has no guest_sources table and no row-level security: a guest source is one
- * whose config says `guest: true` (as readGuestSourceRow), so no guest_sources row joins and nothing is hidden.
+ * Page admission's source row, with the source's guest row joined (guest_sources.rs) as the SQL engines join it. The
+ * store has no row-level security, so nothing is hidden.
  */
 export const readAdmissionSource: StoreMember<[sourceId: string], AdmissionSourceRow | null> = async (brain, sourceId) => {
   const row: SourceStateRow | null = await storeCall({ member: 'readAdmissionSource', sourceId }, () => brain.readSourceState(sourceId));
   if (!row) return null;
+  const guest: GuestSourceLookupRow = await storeCall({ member: 'readAdmissionSource', sourceId }, () => brain.readGuestSourceRow(sourceId));
   return {
     incarnation: row.incarnation, archived: row.archived, local_path: row.local_path,
     kind: jsonText(row.config.kind), role: jsonText(row.config.role),
-    guest_writers: null, guest_trust_ceiling: null, guest_sources_hidden: false,
+    guest_writers: guest.writers ?? null, guest_trust_ceiling: guest.trust_ceiling ?? null, guest_sources_hidden: false,
   };
 };
 
@@ -88,6 +90,9 @@ export const getWorktreeBinding: StoreMember<[sourceId: string, hostId: string |
 /** Each host binding of `hostId` with its worktree's owner, epoch, state and topology generation (gbrain-store `persistence::worktrees`). */
 export const listHostTopologyRows: StoreMember<[hostId: string], HostTopologyRow[]> = (brain, hostId) =>
   storeCall({ member: 'listHostTopologyRows' }, () => brain.listHostTopologyRows(hostId));
+/** Served from the store's host and source binding records (worktrees.rs host_repository_roots_in). */
+export const listHostRepositoryRoots: StoreMember<[hostId: string], Array<{ local_path: string; source_id: string | null }>> = (brain, hostId) =>
+  storeCall({ member: 'listHostRepositoryRoots' }, () => brain.listHostRepositoryRoots(hostId)) as Promise<Array<{ local_path: string; source_id: string | null }>>;
 
 /** The source bindings of one worktree, by byte source id. */
 export const listWorktreeMembers: StoreMember<[worktreeId: string], Array<{ source_id: string; relative_path: string }>> = (brain, worktreeId) =>
@@ -243,3 +248,6 @@ export const listPagesNamingReader: StoreMember<[principal: string, opts?: { liv
   const rows = await storeCall({ member: 'listPagesNamingReader' }, () => brain.listPagesNamingReader(principal, limit, opts.live === true)) as PageNamingReaderRow[];
   return rows.map(r => ({ slug: r.slug, source_id: r.source_id }));
 };
+/** Served from the store's effect, source and host binding records (worktrees.rs pending_git_effect_paths_in). */
+export const listPendingGitEffectPaths: StoreMember<[hostId: string | null], Array<{ rel: string; source_path: string | null; worktree_path: string | null }>> = (brain, hostId) =>
+  storeCall({ member: 'listPendingGitEffectPaths' }, () => brain.listPendingGitEffectPaths(hostId)) as Promise<Array<{ rel: string; source_path: string | null; worktree_path: string | null }>>;
