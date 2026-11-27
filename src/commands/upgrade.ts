@@ -499,13 +499,7 @@ function postSwapSmoke(newVersion: string, r: SmokeRecovery): boolean {
   if (!gbrain) {
     console.error(`gbrain ${newVersion || '(new version)'} was installed, but Bun's gbrain entry (${bunBinEntry()}) runs another gbrain install, so this upgrade cannot check the one it updated.`);
     console.error('Recovery: point that entry at this install (bun link in a linked checkout, or reinstall the global package), then run gbrain --help and gbrain post-upgrade.');
-    recordUpgradeError({
-      phase: 'post-swap-smoke',
-      fromVersion: r.oldVersion,
-      toVersion: newVersion || 'unknown',
-      error: 'Bun\'s gbrain entry runs another gbrain install, not the one this upgrade updated',
-      recover: 'Point Bun\'s gbrain entry at this install, then run gbrain --help and gbrain post-upgrade',
-    });
+    recordUpgradeError({ phase: 'post-swap-smoke', fromVersion: r.oldVersion, toVersion: newVersion || 'unknown', error: 'Bun\'s gbrain entry runs another gbrain install, not the one this upgrade updated', recover: 'Point Bun\'s gbrain entry at this install, then run gbrain --help and gbrain post-upgrade' });
     setCliExitVerdict(1);
     return false;
   }
@@ -519,13 +513,7 @@ function postSwapSmoke(newVersion: string, r: SmokeRecovery): boolean {
   if (gbrain === 'gbrain' && (run.error as NodeJS.ErrnoException | undefined)?.code === 'ENOENT') {
     console.error(`gbrain ${newVersion || '(new version)'} was installed, but this upgrade found no gbrain executable to check that it starts: none in Bun's bin directory and none on PATH.`);
     console.error('Recovery: add the directory gbrain is installed in to PATH, then run gbrain --help and gbrain post-upgrade.');
-    recordUpgradeError({
-      phase: 'post-swap-smoke',
-      fromVersion: r.oldVersion,
-      toVersion: newVersion || 'unknown',
-      error: 'no gbrain executable found after the swap (not in Bun\'s bin directory, not on PATH)',
-      recover: 'Add the directory gbrain is installed in to PATH, then run gbrain --help and gbrain post-upgrade',
-    });
+    recordUpgradeError({ phase: 'post-swap-smoke', fromVersion: r.oldVersion, toVersion: newVersion || 'unknown', error: 'no gbrain executable found after the swap (not in Bun\'s bin directory, not on PATH)', recover: 'Add the directory gbrain is installed in to PATH, then run gbrain --help and gbrain post-upgrade' });
     setCliExitVerdict(1);
     return false;
   }
