@@ -4588,9 +4588,12 @@ exists). An older gbrain blocked the source on the first fence it refused.
    [AGENT]   fence_holds: 1 source(s) are blocked by a file whose facts or takes fence gbrain could not import (notes). The next scheduled or manual sync recovers each with no command; to do it now run gbrain sync --source notes --no-pull. The file is then held and the rest of the source imports. 3 malformed fence(s) are known so far (gbrain doctor --only fence_integrity counts them by tier); nothing repairs them by itself until a maintenance run is active, so preview them and apply the plan the preview prints once the user agrees. Preview (read-only, no model call): gbrain repair fences. Pause automatic fence repair first with: gbrain config set fences.repair.enabled false. Recipe: docs/guides/repair.md#fences
    ```
 
-2. One sync gets the source going again: the meeting note's fence is rewritten
-   (claims and row numbers unchanged), and the other two files are held while
-   the rest imports. The old failed request stays in the journal as it was.
+2. One sync gets the source going again: the meeting note imports with its
+   fence normalized (claims and row numbers unchanged), and the other two files
+   are held while the rest imports. The old failed request stays in the journal
+   as it was. This checkout has no Git durability hook, so sync writes nothing
+   back into it: the meeting note's file keeps its malformed fence until the
+   repair below rewrites it.
 
    ```console
    $ gbrain sync --source notes --no-pull
@@ -4598,7 +4601,6 @@ exists). An older gbrain blocked the source on the first fence it refused.
    Held companies/acme-example.md: invalid_fence (no_header) in the facts fence (body), at line 6; its page is missing until the file imports. Next: gbrain repair fences --source notes --only companies/acme-example.md, then gbrain repair fences --source notes --only companies/acme-example.md --apply (docs/guides/write-refusals.md#fence-no_header)
    Held projects/widget-launch.md: invalid_fence (holder_unresolved) in the takes fence (body), row 1, column who, at line 9; its page is missing until the file imports. Next: gbrain repair fences --source notes --only projects/widget-launch.md, then gbrain repair fences --source notes --only projects/widget-launch.md --apply (docs/guides/write-refusals.md#fence-holder_unresolved)
    2 file(s) held this run, 2 held in source notes; they do not block sync. Inspect them with 'gbrain sources status notes'; then nothing repairs the fence and slug-conflict holds by itself (no maintenance run is active), so preview the content repairs with gbrain repair content --source notes (read-only, no model call: it lists each held file with its planned repair or the exact edit, kind by kind, and prints the apply command with --expect <hash>[,<hash>]), then run the apply command it prints. Preview the repair: gbrain repair content --source notes
-   Normalized fences in 1 file(s) (close_fence x1, kind_map x1). 1 file(s) under meetings/ had a malformed facts or takes fence that sync rewrote losslessly and committed (claims and existing row numbers unchanged); whatever writes them emits fences gbrain has to repair. Write facts with `remember` and takes with `takes_add` (or emit the canonical columns) so rows never need normalizing. Re-read a normalized page before editing it.
    ```
 
 3. `gbrain sources status <id>` lists each fence hold with its fence, section,
@@ -4610,16 +4612,17 @@ exists). An older gbrain blocked the source on the first fence it refused.
    Held companies/acme-example.md: invalid_fence (no_header) in the facts fence (body), at line 6; its page is missing until the file imports. Next: gbrain repair fences --source notes --only companies/acme-example.md, then gbrain repair fences --source notes --only companies/acme-example.md --apply (docs/guides/write-refusals.md#fence-no_header) Held since <time>.
    ```
 
-4. Preview. Nothing is written and no model is called. The resolver tier shows
-   its exact diff; the model tier shows the rows it will rewrite and the
-   estimated cost against what is left of today's cap.
+4. Preview. Nothing is written and no model is called. The deterministic and
+   resolver tiers show their exact diffs; the model tier shows the rows it will
+   rewrite and the estimated cost against what is left of today's cap.
 
    ```console
    $ gbrain repair fences --source notes
-   cost: 2 request ID(s), 32768 receipt bytes, 2 page(s) to re-embed, paid model ~$0.0273 ($1.0000 left under today's cap)
+   cost: 3 request ID(s), 49152 receipt bytes, 3 page(s) to re-embed, paid model ~$0.0273 ($1.0000 left under today's cap)
    llm: notes:companies/acme-example.md (no_header; rewritten by openai:gpt-6.1-sol at apply time, gated by (a)-(g); est. $0.0273)
+   deterministic: notes:meetings/2026-04-03.md (close_fence, kind_map; rows 1)
    resolver: notes:projects/widget-launch.md (holder_verified; rows 1)
-   tiers: deterministic=0, resolver=1, llm=1, held=0; model openai:gpt-6.1-sol
+   tiers: deterministic=1, resolver=1, llm=1, held=0; model openai:gpt-6.1-sol
    model caps: $0.30/page, $1.00/day ($1.0000 left today)
    -| 1 | The launch slips a week | bet | Alice Example | 0.6 | 2026-04 | standup |
    +| 1 | The launch slips a week | bet | people/alice-example | 0.6 | 2026-04 | standup |
@@ -4633,10 +4636,11 @@ exists). An older gbrain blocked the source on the first fence it refused.
 
    ```console
    $ gbrain repair fences --source notes --apply --expect <hash>
-   cost: 2 request ID(s), 32768 receipt bytes, 2 page(s) to re-embed, paid model $0.0039 spent ($0.9961 left under today's cap)
-   applied 2, skipped 0, failed 0, complete
-   repaired 2; nothing left in this selection
+   cost: 3 request ID(s), 49152 receipt bytes, 3 page(s) to re-embed, paid model $0.0039 spent ($0.9961 left under today's cap)
+   applied 3, skipped 0, failed 0, complete
+   repaired 3; nothing left in this selection
    repaired: notes:companies/acme-example tier=llm, classes=no_header, slug=companies/acme-example, mode=managed, path=companies/acme-example.md, imported=created, hold_cleared=true, committed=queued
+   repaired: notes:meetings/2026-04-03 tier=deterministic, classes=close_fence, kind_map, slug=meetings/2026-04-03, mode=managed, path=meetings/2026-04-03.md, imported=skipped, hold_cleared=false, committed=queued
    repaired: notes:projects/widget-launch tier=resolver, classes=holder_verified, slug=projects/widget-launch, mode=managed, path=projects/widget-launch.md, imported=created, hold_cleared=true, committed=queued
    ```
 
@@ -4645,8 +4649,8 @@ exists). An older gbrain blocked the source on the first fence it refused.
    the owner's persistence worker commits each repaired file with the subject
    `gbrain: repair fence in <path> (<classes>)` (a commit that batches several
    lists one `<path> (<classes>)` per body line). This checkout has no
-   durability hook, so the rewritten files (the meeting note sync normalized,
-   too) stay uncommitted: commit them the way you commit any edit.
+   durability hook, so the three rewritten files stay uncommitted: commit them
+   the way you commit any edit.
 
 6. Commit and check. Doctor `fence_integrity` is `ok` once nothing is held,
    stored malformed or waiting in the checkout.

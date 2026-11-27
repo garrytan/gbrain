@@ -23,13 +23,13 @@
  * workspace; doctor reads "listing off, resolver live".
  */
 import { afterAll, describe, expect, setDefaultTimeout, test } from 'bun:test';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runCli } from './helpers/cli-spawn.ts';
 import { withEnv } from './helpers/with-env.ts';
-import { openclawAgentPolicy, openclawCatalogName } from '../src/core/setup/openclaw-skill-plugin.ts';
+import { OPENCLAW_LOG_READ_CAP, openclawAgentPolicy, openclawCatalogName, readOpenclawLogTail } from '../src/core/setup/openclaw-skill-plugin.ts';
 import { runOpenclawCli } from '../src/core/setup/openclaw-turn-plugin.ts';
 import { OPENCLAW_SKILL_PLUGIN_CODE_VERSION } from '../src/core/setup/openclaw-skill-plugin-code.ts';
 
@@ -1065,6 +1065,139 @@ describe.skipIf(!NODE)('session classes and the session-start brief', () => {
     expect((await doctor()).status).toBe('ok');
     writeFileSync(file, JSON.stringify({ at, plugin: String(OPENCLAW_SKILL_PLUGIN_CODE_VERSION), agent: 'main', outcome: 'no_match', session_class: 'main', audience: 'unknown' }) + '\n', { flag: 'a' });
     expect((await doctor()).details.code).toBe('skill_resolver_owner_unverified');
+  });
+
+  test('GST-4004: a setup that saves --require-owner-sender while the gateway runs no turn on the code that enforces it still prints the owner note, saying the guard is not in force yet', async () => {
+    const b = box();
+    const r = await setup(b, ['--skill-loading', 'resolve', '--require-owner-sender']);
+    expectExit(r, 0);
+    expect(readState(b).agents.main.require_owner_sender).toBe(true);
+    const note = r.resolver.notes.join('\n');
+    expect(note).toContain('skill_resolver_owner_unverified');
+    expect(note).toContain('--require-owner-sender is saved');
+    expect(note).toContain('restart the gateway');
+    const dir = join(gbrainHome(b), 'skill-index', 'logs');
+    mkdirSync(dir, { recursive: true });
+    const at = new Date().toISOString();
+    writeFileSync(join(dir, 'openclaw-' + at.slice(0, 10) + '.jsonl'), JSON.stringify({ at, plugin: String(OPENCLAW_SKILL_PLUGIN_CODE_VERSION), agent: 'main', outcome: 'no_match', session_class: 'owner', audience: 'unknown' }) + '\n');
+    const again = await setup(b, ['--skill-loading', 'resolve']);
+    expectExit(again, 0);
+    expect(again.resolver.notes.join('\n')).not.toContain('skill_resolver_owner_unverified');
+  });
+
+  test('GST-4004: a refresh that runs while another setup saves --require-owner-sender keeps the guard instead of writing back the state it read first', async () => {
+    const b = box();
+    expectExit(await setup(b, ['--skill-loading', 'resolve']), 0);
+    expect(readState(b).agents.main.require_owner_sender).toBeUndefined();
+    const binDir = join(b.root, 'bin');
+    writeFileSync(join(binDir, 'openclaw-real'), FAKE_OPENCLAW);
+    chmodSync(join(binDir, 'openclaw-real'), 0o755);
+    const race = join(b.root, 'race.done');
+    writeFileSync(join(binDir, 'openclaw'), '#!/bin/sh\nif [ "$1 $2" = "gateway call" ] && [ ! -f "' + race + '" ]; then node -e \'const f=require("fs"),p=process.argv[1],s=JSON.parse(f.readFileSync(p,"utf8"));s.agents.main.require_owner_sender=true;s.agents.main.owner_sender_ids=["owner-1"];f.writeFileSync(p,JSON.stringify(s))\' "' + statePath(b) + '"; touch "' + race + '"; fi\nexec "' + join(binDir, 'openclaw-real') + '" "$@"\n');
+    chmodSync(join(binDir, 'openclaw'), 0o755);
+    const refresh = await runCli(['setup', 'openclaw', '--skills-index-only', '--json'], { env: b.env, timeoutMs: 110_000 });
+    expect(refresh.exitCode, refresh.stdout + refresh.stderr).toBe(0);
+    expect(existsSync(race)).toBe(true);
+    expect(readState(b).agents.main).toMatchObject({ mode: 'live', require_owner_sender: true, owner_sender_ids: ['owner-1'] });
+  });
+
+  test('GST-4004: the final state write waits for another run holding the state lock, refuses past 10 seconds without writing, and breaks a lock a dead run left', async () => {
+    const b = box();
+    expectExit(await setup(b, ['--skill-loading', 'resolve']), 0);
+    const before = readFileSync(statePath(b), 'utf8');
+    const lock = statePath(b) + '.lock';
+    writeFileSync(lock, '');
+    const held = await runCli(['setup', 'openclaw', '--skills-index-only', '--json', '--agent', 'main', '--operator-rule', 'Ask first.'], { env: b.env, timeoutMs: 110_000 });
+    expect(held.exitCode, held.stdout + held.stderr).not.toBe(0);
+    expect(held.stdout + held.stderr).toContain('.lock for more than 10 seconds');
+    expect(readFileSync(statePath(b), 'utf8')).toBe(before);
+    utimesSync(lock, new Date(Date.now() - 120_000), new Date(Date.now() - 120_000));
+    const stale = await runCli(['setup', 'openclaw', '--skills-index-only', '--json', '--agent', 'main', '--operator-rule', 'Ask first.'], { env: b.env, timeoutMs: 110_000 });
+    expect(stale.exitCode, stale.stdout + stale.stderr).toBe(0);
+    expect(readState(b).agents.main.operator_rule).toBe('Ask first.');
+    expect(existsSync(lock)).toBe(false);
+  });
+
+  test('GST-4004: a pin refresh and turning one agent off both take the state lock: a held lock writes nothing and says so, a dead run\'s lock is broken', async () => {
+    const b = box();
+    const ops = join(b.state, 'workspace-ops');
+    skill(join(ops, 'skills'), 'ops-runbook', 'Use when you run the ops runbook');
+    writeFileSync(join(b.state, 'openclaw.json'), JSON.stringify({ agents: { list: [{ id: 'main', workspace: join(b.state, 'workspace') }, { id: 'ops', workspace: ops }] } }));
+    const ws = ['--workspace', join(b.state, 'workspace')];
+    expectExit(await setup(b, ['--skill-loading', 'resolve', '--all-agents', ...ws]), 0);
+    const before = readFileSync(statePath(b), 'utf8');
+    const lock = statePath(b) + '.lock';
+    writeFileSync(lock, '');
+    const pin = await runCli(['skills', 'pin', 'add', 'deploy-service', '--catalog', 'openclaw-main', '--json'], { env: b.env, timeoutMs: 110_000 });
+    expect(pin.exitCode, pin.stdout + pin.stderr).toBe(0);
+    const pinDoc = JSON.parse(pin.stdout);
+    expect(pinDoc.openclaw_refresh_pending.user_message).toContain('gbrain setup openclaw --skills-index-only');
+    expect(pinDoc.openclaw_agents_updated).toBeUndefined();
+    expect(readFileSync(statePath(b), 'utf8')).toBe(before);
+    const off = await setup(b, ['--skill-loading', 'off', '--agent', 'ops', ...ws]);
+    expect(off.exitCode, off.stdout + off.stderr).not.toBe(0);
+    expect(off.stdout + off.stderr).toContain('.lock for more than 10 seconds');
+    expect(readFileSync(statePath(b), 'utf8')).toBe(before);
+    utimesSync(lock, new Date(Date.now() - 120_000), new Date(Date.now() - 120_000));
+    const pin2 = await runCli(['skills', 'pin', 'add', 'deploy-service', '--catalog', 'openclaw-main', '--json'], { env: b.env, timeoutMs: 110_000 });
+    expect(pin2.exitCode, pin2.stdout + pin2.stderr).toBe(0);
+    expect(JSON.parse(pin2.stdout).openclaw_agents_updated).toContain('main');
+    expect(readState(b).agents.main.pinned_ids).toEqual(['deploy-service']);
+    writeFileSync(lock, '');
+    utimesSync(lock, new Date(Date.now() - 120_000), new Date(Date.now() - 120_000));
+    expectExit(await setup(b, ['--skill-loading', 'off', '--agent', 'ops', ...ws]), 0);
+    expect(readState(b).agents.ops.mode).toBe('off');
+    expect(readState(b).agents.main.mode).toBe('live');
+    expect(existsSync(lock)).toBe(false);
+  }, 240_000);
+
+  test('GST-4004: a daily turn log past the read cap is read from its end, so the newest turn still counts', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-openclaw-tail-'));
+    roots.push(dir);
+    const file = join(dir, 'openclaw-2026-01-01.jsonl');
+    const last = JSON.stringify({ at: new Date().toISOString(), agent: 'main', plugin: '9', outcome: 'no_match' }) + '\n';
+    writeFileSync(file, 'x'.repeat(OPENCLAW_LOG_READ_CAP + 1000) + '\n' + last);
+    const tail = readOpenclawLogTail(file);
+    expect(Buffer.byteLength(tail)).toBe(OPENCLAW_LOG_READ_CAP);
+    expect(tail.endsWith(last)).toBe(true);
+  });
+
+  test('GST-4004: a multi-agent run that gives settings but skips a live agent for a failed catalog fails closed and names the agent, and the other agent still gets them', async () => {
+    const b = box();
+    const ops = join(b.state, 'workspace-ops');
+    skill(join(ops, 'skills'), 'ops-runbook', 'Use when you run the ops runbook');
+    const cfg = join(b.state, 'openclaw.json');
+    writeFileSync(cfg, JSON.stringify({ agents: { list: [{ id: 'main', workspace: join(b.state, 'workspace') }, { id: 'ops', workspace: ops }] } }));
+    const ws = ['--workspace', join(b.state, 'workspace')];
+    expectExit(await setup(b, ['--skill-loading', 'resolve', '--all-agents', ...ws]), 0);
+    expect(readState(b).agents.ops.mode).toBe('live');
+    rmSync(join(ops, 'skills'), { recursive: true, force: true });
+    const r = await setup(b, ['--skill-loading', 'resolve', '--all-agents', '--require-owner-sender', ...ws]);
+    expect(r.exitCode, r.stdout + r.stderr).not.toBe(0);
+    expect(r.stdout + r.stderr).toContain('skill_resolver_setup_incomplete');
+    expect(r.stdout + r.stderr).toContain('agent ops');
+    expect(readState(b).agents.main.require_owner_sender).toBe(true);
+    expect(readState(b).agents.ops.require_owner_sender).toBeUndefined();
+    expectExit(await runCli(['setup', 'openclaw', '--skills-index-only', '--json'], { env: b.env, timeoutMs: 110_000 }), 0);
+  });
+
+  test('GST-4004: doctor does not let a memory audience logged before OpenClaw\'s config last changed clear the owner warning', async () => {
+    const b = box();
+    expectExit(await setup(b, ['--skill-loading', 'resolve']), 0);
+    const dir = join(gbrainHome(b), 'skill-index', 'logs');
+    mkdirSync(dir, { recursive: true });
+    const now = Date.now();
+    const at = new Date(now - 3600_000).toISOString();
+    const file = join(dir, 'openclaw-' + new Date(now).toISOString().slice(0, 10) + '.jsonl');
+    writeFileSync(file, JSON.stringify({ at, plugin: String(OPENCLAW_SKILL_PLUGIN_CODE_VERSION), agent: 'main', outcome: 'no_match', session_class: 'owner', audience: 'host' }) + '\n');
+    const cfg = join(b.state, 'openclaw.json');
+    utimesSync(cfg, new Date(now - 7200_000), new Date(now - 7200_000));
+    const doctor = async () => JSON.parse((await runCli(['doctor', '--only', 'skill_resolver', '--json'], { env: b.env })).stdout).checks.find((c: any) => c.name === 'skill_resolver');
+    expect((await doctor()).status).toBe('ok');
+    utimesSync(cfg, new Date(now - 60_000), new Date(now - 60_000));
+    expect((await doctor()).details.code).toBe('skill_resolver_owner_unverified');
+    writeFileSync(file, JSON.stringify({ at: new Date().toISOString(), plugin: String(OPENCLAW_SKILL_PLUGIN_CODE_VERSION), agent: 'main', outcome: 'no_match', session_class: 'owner', audience: 'host' }) + '\n', { flag: 'a' });
+    expect((await doctor()).status).toBe('ok');
   });
 
   test('a briefed first turn that times out is resolved on its retry, which carries the brief once', async () => {

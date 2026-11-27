@@ -10,6 +10,103 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.780.0] - 2026-11-27
+
+**`gbrain upgrade` no longer reports a healthy upgrade as broken when Bun's bin directory is not on PATH, and `gbrain sync` no longer fails with a cryptic missing-export error when a `gbrain serve` started before the upgrade is still running.**
+
+### Fixed
+- `gbrain upgrade` now checks the release it just installed by running the updated package's own entry with the Bun that ran the upgrade (or the release binary itself) instead of looking `gbrain` up on PATH. From a shell without `~/.bun/bin` on PATH (a non-interactive bash, CI, Bun added only in `.zshrc`), a healthy upgrade used to fail its start check with `Executable not found in $PATH`, suggest a downgrade and leave a standing `upgrade_errors` warning in `gbrain doctor`. No launcher is involved, so a Windows shim, a custom `BUN_INSTALL_BIN` or another gbrain on PATH cannot stand in for the updated install. The version check, post-upgrade, the feature scan and the restart (supervisor steps included) use the same install. A release that really does not start still fails and names the way back, and a gbrain that cannot be found at all is reported as not found, without the downgrade advice (#10536, reported by @yitzhakbg).
+- `gbrain sync` on a Postgres brain no longer hands its run to a live `gbrain serve` whose recorded build is older than the CLI. Such a serve keeps the code it started with, and after an upgrade its next lazy import fails on a missing export. The sync now runs beside the serve and prints one line naming both versions and the restart (`gbrain upgrade --restart-only`). A delegated run that still fails this way inside the serve stops with `serve_build_skew`, which names the serve's pid and build, this CLI's version, the restart, and `GBRAIN_SYNC_NO_DELEGATE=1` to sync beside the serve meanwhile (#10537, reported by @yitzhakbg).
+
+<!-- behavior-change: sync_beside_older_serve_10537 -->
+
+**`gbrain setup --serves several` now labels the people on the brain and source the harness actually reads, and the OpenClaw owner-sender guard no longer reports itself in force before the gateway runs it.**
+
+<!-- behavior-change: serves_several_pinned_source_gst4043 -->
+
+### Fixed
+- `gbrain --brain <id> setup claude-code` and `codex` with `--serves several` label the people on that brain; the labelling and layout steps used to ignore `--brain` and follow the working directory.
+- `--members=<ids>` and `--members-file=<path>` work like the two-argument form in `gbrain setup`.
+- A harness pinned to one source (`--source`, `GBRAIN_SOURCE` or a Codex setup receipt) gets its people labelled and its member keys writing in that source, not in `default`. `gbrain access serves several` without `--source` labels `GBRAIN_SOURCE`, then `sources.default`; the directory it runs from never decides where member keys write. A re-run on another source moves the keys an earlier setup minted to write there and keeps their secrets; a key setup did not mint that way, or whose write source someone changed by hand, is reported as skipped with the `gbrain auth rescope` command that moves it. A key whose write source has been archived is reported as blocked and never moved.
+- `--shape company` with the harness pinned to the `company` source adds that source before labelling the people in it, instead of failing because it does not exist yet. It is added out of default search (`--no-federated`), as a source added after the switch to several people would be.
+- For a bot harness (OpenClaw, Hermes, Grok Bot, Muse), the `unscoped_multi_user_token` fix is now `gbrain config set mcp.stdio_may_act_for <members>` (`none` or a malformed list does not count), which setup can't do for that harness and which clears that harness's warning once set (a Claude Code channel plugin keeps its own). It used to name `gbrain setup <harness> --serves several --members`, which setup refuses there.
+- `gbrain setup openclaw` keeps settings another setup saved while it worked, because the gateway's own index refresh no longer writes back the state it read before an `--owner-sender` or `--require-owner-sender` run finished. In `gbrain setup openclaw`, the final read and write of the state file take a lock (`openclaw-skill-resolver.json.lock`); a run that finds it held for more than 10 seconds ends `skill_resolver_setup_incomplete` without writing, and a lock older than 30 seconds is cleared. `gbrain skills pin add` and `remove` and turning one OpenClaw agent off (`--skill-loading off --agent <id>`) take the same lock: a pin change that finds it held saves the pin, leaves the OpenClaw state alone and says to run `gbrain setup openclaw --skills-index-only` (`openclaw_refresh_pending` in `--json`), and turning an agent off ends `skill_resolver_setup_incomplete` without writing.
+- Setup and doctor read only the last 4 MiB of an OpenClaw daily turn log instead of loading the whole file.
+- `gbrain setup openclaw --require-owner-sender` still prints `skill_resolver_owner_unverified`, saying the guard is saved but not in force, until a logged turn shows the gateway running the plugin code that enforces it.
+- A multi-agent `gbrain setup openclaw` run that gives settings but skips an agent that is on (no skill directory, a failed catalog build) ends `skill_resolver_setup_incomplete` and names the agent, instead of exiting 0 while that agent keeps its earlier settings.
+- `gbrain doctor` no longer lets an OpenClaw memory audience logged before `openclaw.json` last changed clear `skill_resolver_owner_unverified`.
+
+**Atom extraction no longer writes into source folders this machine does not commit, never shows the model a withdrawn or held claim, and stops re-reading pages whose text did not change.**
+
+### Fixed
+- Derived writes (atoms, sync's frontmatter overlay) into a non-default source whose folder is a Git checkout this machine does not commit (not canonical Git, no durability) now stay in the database. Before, they left untracked files in someone else's checkout that nothing would ever commit. (GST-3743)
+- The model reads a page the way a remote reader sees it, so withdrawn claims and facts rows held from world readers are left out. Before, a withdrawn or held row reached the prompt and could come back as a world atom. On a source without managed atom maintenance, a withdrawal recorded after a page was extracted now offers that page again. (GST-4020, #10332, thanks @Kkkkkuro)
+- On a source without managed atom maintenance, a page renamed and made private no longer leaves world atoms behind under its old name, because its next extraction retires them. (GST-4020)
+- An edit that leaves the extraction input unchanged (a takes row, a private facts row) no longer calls the model: the earlier atoms move to the page's new content hash, so doctor's provenance drift check stays quiet. A revert to older text after a newer extraction still extracts again. (GST-4020, #10435, reported by @ikatsura, first fix by @Masashi-Ono0611)
+
+<!-- behavior-change: derived_writes_foreign_checkout_gst3743 -->
+<!-- behavior-change: atom_input_remote_view_gst4020 -->
+
+**On Windows, a failed `gbrain self-upgrade` no longer leaves gbrain unable to start: the old `gbrain.exe` launcher is moved out of the way before the new version is installed, and before the previous one is restored.**
+
+### Fixed
+- `gbrain upgrade` and `gbrain self-upgrade` on Windows run through Bun's `gbrain.exe` launcher, which Windows keeps open, so `bun remove -g gbrain` left it behind and the install that followed failed with `failed to link gbrain: EEXIST`. The restore failed the same way, and every later `gbrain` call printed `could not find bin metadata file` until the file was moved by hand. The upgrade now renames a leftover launcher in Bun's bin directory to `gbrain.exe.stale.<pid>` before each install and before the restore (Windows allows renaming a running program), and the next upgrade deletes those files once nothing holds them. Only that one file in Bun's bin directory (the one `bun pm bin -g` reports, else `BUN_INSTALL_BIN`, `BUN_INSTALL` or `~/.bun/bin`) is ever moved, and only when it is small enough to be Bun's launcher. A new version whose files arrived but whose launcher never linked is no longer reported as installed; the previous version is restored instead. Fixes #10538, reported by @exGeni.
+- When the restore fails too, the printed recovery now comes from the same step list as every other reinstall hint. On Windows that is one step per line (Windows PowerShell 5.1 has no `&&`), with the step that moves a leftover launcher aside, ending with the line that restores the previous version. On Windows, the recovery `gbrain doctor` shows lists the same steps, numbered.
+
+**Gmail backfill no longer misses mail at a second boundary, CJK keyword search keeps quoted phrases, and a managed `put_page` keeps a page's first-ingest record.**
+
+### Fixed
+- The Gmail backfill lists one second below every `after:` bound. Gmail does not document whether `after:` includes its own second, so a thread sharing a second with the one a saved floor started at could be left unlisted on both sides and never fetched. A checkpoint that the extra second blocks proves the next second instead, so a sweep cut off on dense mail still saves its progress.
+- A usage limit hit by the backfill's checkpoint search now stops the sweep at once, like one hit by a thread read, instead of being treated as a failed check while the sweep kept sending requests.
+- `gbrain pages prune-history --keep N` keeps each page's newest N versions counting segmented versions, which are never pruned. Before, it ranked only the other versions, so it kept more than N and the preview's kept count left the segmented ones out. The apply checks the ranks again under the page lock, so a version that segmented retention moved into the newest N since the preview is kept.
+- An acceptance from `gbrain transcripts accept-fences` on a transcript the importer wrote directly (no write request) now also holds on the page's content hash, so maintenance that moves the page's timestamps without changing it no longer puts it back on doctor's review list, and a later write that changes it still does. Acceptances recorded before this keep the timestamp rule.
+- CJK keyword search: the hybrid any-term retry keeps a quoted phrase required, so it no longer returns chunks that hold only the other words; `OR` alternatives that differ only in quotes each keep their own match; a term named by many `OR` alternatives is bound once.
+- A `put_page` on a repository brain, local or remote, keeps the page's first-ingest columns (`source_kind`, `source_uri`, `ingested_via`, `ingested_at`) as stored, `ingested_at` to the microsecond. Before, a local one that named new provenance stamped the rewrite's time and `source_uri` beside the first write's channel.
+
+**Backlinks answer the same for a page you cannot read and a page that does not exist.**
+
+### Fixed
+- `get_backlinks` now looks for the target page only among the pages the caller may read. For a remote caller, a page it cannot read gets the same answer as a page that does not exist, with or without a `type` filter. A page the caller cannot read also no longer hides a readable page with the same name in another source the caller may read. Trusted local callers get the same answers as before.
+
+**A shared skill convention file can no longer reach a wider audience through another skill's publication.**
+
+<!-- behavior-change: shared_convention_keeps_audience -->
+
+### Fixed
+- A file under `skills/conventions/` is shared by every skill that holds it. Importing a skill proposal, or a remote `put_skill`, that newly referenced such a file with a wider audience used to republish the other skills' copy to that audience. Submission and prepare now refuse it with `local_conflict` and write nothing. A request accepted by an older release is checked again at prepare. Content changes and narrower audiences still apply.
+
+**Shadow status can no longer read "measured" after a disk refuses an owed record and the shadow worker exits.**
+
+### Fixed
+- When the disk refused the owed record of a shadow session (a full disk, an I/O error) and the worker then exited, the serving command threw away the count it had not been able to write when it started the next worker, so `gbrain engine shadow status` could read "measured" with samples in no file, even after the disk recovered. The command now keeps the exact record per session, retries it (every 0.1 s at first, slowing to every 5 s) until the disk takes it, publishes it at once when the process exits, and removes nothing while it is unwritten. The next shadow worker books what was never settled once, as `uncomparable` (`receipt_orphaned`).
+- The moment a record write fails, the command leaves a marker file, `write-pending.<session>.json`, in the shadow state directory (a hard link to a file that is already there, its directory entry flushed). While a marker exists, status reads no evidence and names the file and the step to take. A marker stops the orphan booking, the settled-credit pruning and the removal of that session's owed file; samples that were already delivered are still settled as usual, and status stays blocked until the marker is gone. Every removal of an owed file (the worker's own finish, the orphan pass, the settlement pruning) now re-reads the record and the marker under the shadow tally lock before it deletes, and the command takes the same lock to publish a record and again to clear its marker, clearing it only once the record is durable, so a removal that was already under way cannot delete a newer record. The same lock covers a record written with no live worker, after the worker exited, or for a kept session; steady-state writes while a worker runs stay unlocked.
+- A sample refused while no worker runs (the restart backoff, a failed spawn), whose refusal could not be written down either, is now made owed in a record of its own (kept, marked and retried like any other) instead of waiting only in the sampler's memory. This applies once an evidence epoch exists; before that, the count of the failed refusal still rides on the next accepted line, as before.
+
+### Changed
+- `gbrain engine shadow status` and the swap report print `pending_markers` (the paths) and the operator step when a marker exists: confirm the disk is healthy, delete the marker file, then restart shadow. On a managed or owner-operated brain, this step goes through Capy Workflow Improver, never to the brain's owner by hand. A running command removes its own marker once the record is durable, so the step is only needed for a marker left behind by a command that died while it held one; nothing else clears a marker.
+- Nothing about what counts as `comparable` changes, mirroring does not pause and no default changes.
+
+### Known limits
+- The hard-link call itself can fail (a full disk can refuse a directory entry); the record is still kept and retried, but status cannot see it until the disk takes it.
+- A serving process killed before its first failed write loses the samples it had accepted but not yet written down (the count is too low, and no mismatch is hidden). If it dies while a marker exists, the marker stays and status reads no evidence until an operator deletes it.
+
+**Shadow mode now compares page edits and the links added after a page save, the two most common writes it used to skip.**
+
+### Fixed
+- Editing an existing page through put_page or sync, and the mention links a put_page adds afterwards, were counted as not comparable, so they never counted toward the Rust swap check. They are now compared. Nothing to do on upgrade.
+- A sampled write inside a transaction waits, for at most 2 seconds, for the calls that started before it, and the transaction's commit or rollback waits for every started write, so a sampled write is never sent after its transaction ends. If the wait is ever cut short, the sample is counted uncomparable with a named reason and the write goes through unchanged.
+
+**A new test fails when code sends statements straight to the database handle inside a transaction that shadow mode follows.**
+
+### Changed
+- Shadow mode only sees statements that go through the engine, so a statement sent directly to a transaction's database handle (`tx.sql`, `tx.db`, or a cast form such as `(tx as PostgresEngine).sql`) can escape its pre-read protection. A new structural test scans every code path in `src/` that starts at an engine transaction callback and fails on any such access, with the call chain that reached it. Three reviewed sites are listed with their reasons, and a second test fails if production code ever calls the index rebuild helper that one of them depends on. This is a test-only change; nothing runs differently for users.
+
+**Shadow mode now compares the page writes of a large Postgres sync or import, not only the ones the main connection makes.**
+
+### Fixed
+- A Postgres `gbrain sync` that imports on worker connections (a full sync at the default concurrency, an incremental sync of more than 100 files, or `--concurrency` above 1) or `gbrain import --workers N` with N above 1 wrote through extra connections that shadow mode never saw, so none of those saves were sampled, followed into the Rust store or counted toward the swap check. Each worker that opened the same database as the main connection now shares its mirror, follower and writer observer and has its own write sampler, which finishes its read-backs before the worker disconnects. Nothing to do on upgrade.
+- A parallel sync whose worker fails now stops the other workers taking new files and lets each finish its current file before any connection closes, as `gbrain import` already did.
+
 ## [0.60.779.0] - 2026-11-27
 
 **Three intermittent test failures are fixed at their cause, and the crash robot now records what the page and its facts rows looked like when it reports a facts-fence drift.**
