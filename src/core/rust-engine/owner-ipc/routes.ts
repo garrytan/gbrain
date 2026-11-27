@@ -57,9 +57,7 @@ export const OWNER_IPC_CALLBACK_KEYS: ReadonlySet<string> = new Set([
  * (executeRaw, lock and lease calls, settings), is refused for a remote caller at the client with
  * `engine_capability_missing` before it is sent, because the owner would run it with the owner's own authority: the
  * call does not carry the caller's remote flag, submission authority or verified writer. A new member is a write here
- * until it is added. A local caller sends every forwarded member as before. A member is added one at a time, after a
- * privacy review: it is never a write, and never a read of credentials, member identity, checkout paths or another
- * principal's journal.
+ * until it is added. A local caller sends every forwarded member as before.
  */
 export const OWNER_IPC_REMOTE_HAND_READS: ReadonlySet<string> = new Set([
   'aliasCanonicalRefs', 'batchLoadEmotionalInputs', 'cosinesByChunkIds', 'countChunklessPagesWithContent',
@@ -91,17 +89,6 @@ export const OWNER_IPC_REMOTE_HAND_READS: ReadonlySet<string> = new Set([
   'resolveSlugWithAliasDetailed', 'resolveSlugs', 'resolveSlugsByPaths', 'searchKeyword', 'searchKeywordChunks',
   'searchKeywordPages', 'searchTakes', 'searchTakesVector', 'searchTitles', 'searchVector', 'slugsEndingIn',
   'sumStaleChunkChars', 'supersedingPageSlugs', 'traverseGraph', 'traversePaths', 'traversePathsDetailed',
-  // Typed reads a remote caller's read operations make (each one in OWNER_IPC_TYPED_READS, reviewed one by one for
-  // privacy: it takes the caller's read scope, or it reads no private state). whois:
-  'listExactIdentityCandidates',
-  // get_tags, chronicle_day and the facts delta quote a page or fact by its stored type, tier and provenance:
-  'listPageQuoteTiers', 'listPageRefsByIds', 'hasGuestSource', 'readPageTrustRows', 'listFactProvenance', 'listFactsFromQuotedPages',
-  'listOwnerTierFacts',
-  // get_backlinks and the mention coverage of a remote caller:
-  'listReferrerTargetSources', 'readMentionIndexStatus', 'countLivePagesInSource', 'countReferrerRows', 'listPageStatusByRef',
-  'readReferrerPageDetails', 'readReferrerRows',
-  // Reads a remote page write makes before it writes (the write itself still refuses here):
-  'readSourceMembership', 'pageAwaitsRederive', 'sharedSkillPackTablePresent', 'readJournalLimitRows',
 ]);
 
 /**
@@ -115,6 +102,18 @@ export const OWNER_IPC_REMOTE_TYPED_READS: readonly string[] = [
   'listPageQuoteTiers',
   // write-request-reads: a remote caller reads its own write receipts and a memory proposal's state.
   'readWriteRequest', 'listWriteRequestRows', 'readMemoryProposal',
+  // cli-reads-ops: a remote whois by phone number lists its candidates under the caller's excludePrivate.
+  'listExactIdentityCandidates',
+  // trust-tier-reads: a remote get_tags and chronicle_day quote a page by its stored type and tier (listPageQuoteTiers above).
+  'listPageRefsByIds', 'hasGuestSource',
+  // caller-typed-reads: the remote facts delta reads each fact's trust tier, provenance and quoted-page origin.
+  'readPageTrustRows', 'listFactProvenance', 'listFactsFromQuotedPages', 'listOwnerTierFacts',
+  // mention-coverage: a world-only caller's backlinks and coverage, under the caller's referrer scope.
+  'listReferrerTargetSources', 'readMentionIndexStatus', 'countLivePagesInSource', 'countReferrerRows', 'listPageStatusByRef',
+  'readReferrerPageDetails', 'readReferrerRows',
+  // Reads a remote page write makes before its write (credential-grant-writes, unbound-claim, world-only-spelling-read and
+  // admin-counts still stop on the write itself).
+  'readSourceMembership', 'pageAwaitsRederive', 'sharedSkillPackTablePresent', 'readJournalLimitRows',
 ];
 
 /**
