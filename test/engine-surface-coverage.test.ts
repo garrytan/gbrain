@@ -632,6 +632,8 @@ const INTERFACE_METHODS: readonly string[] = [
   'upsertChronicleRow', 'readChronicleRow', 'hasPendingAutoChronicleRow', 'countRecentChronicleReservations', 'reserveChronicleJudgeSlot', 'pruneChronicleReservations', 'chronicleStore', 'insertConfigIfAbsent', 'readPageTruthLead',
   // The reads a page write makes before admission (engine-sql/page-mutation-reads.ts).
   'readStoredPageHead', 'readVersionSourcePath',
+  // The enforced member CLI's pre-write and output-guard reads (engine-sql/page-mutation-reads.ts).
+  'readStoredPageLabels', 'readMemberPageReadable', 'readSlugFolderRules', 'readHiddenPageSlugs',
   // The shared-skill catalog, members and delivery batches (engine-sql/shared-skill-members.ts).
   'readSharedSkillCatalogIdentity', 'listSharedSkillCatalogHeads', 'readSharedSkillPolicyRow', 'writeSharedSkillPolicy', 'writeSharedSkillRevision',
   'readSharedSkillRevision', 'listSharedSkillFollowSources', 'lockSharedSkillBrainId', 'readSharedSkillMember', 'countSharedSkillMembers',

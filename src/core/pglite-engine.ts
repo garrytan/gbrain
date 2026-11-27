@@ -3219,6 +3219,10 @@ export class PGLiteEngine implements BrainEngine {
   async insertConfigIfAbsent(key: string, value: string) { return chronicleLedger.insertConfigIfAbsent(this, key, value); }
   async readPageTruthLead(pageId: number) { return chronicleLedger.readPageTruthLead(this, pageId); }
   async readStoredPageHead(sourceId: string, slug: string) { return pageMutationReads.readStoredPageHead(this, sourceId, slug); }
+  async readStoredPageLabels(sourceId: string, slug: string) { return pageMutationReads.readStoredPageLabels(this, sourceId, slug); }
+  async readMemberPageReadable(sourceId: string, slug: string, identity: readonly string[], satisfied: readonly string[], labelled: boolean) { return pageMutationReads.readMemberPageReadable(this, sourceId, slug, identity, satisfied, labelled); }
+  async readSlugFolderRules(sourceId: string, slug: string) { return pageMutationReads.readSlugFolderRules(this, sourceId, slug); }
+  async readHiddenPageSlugs(slugs: readonly string[], hiddenSources: readonly string[]) { return pageMutationReads.readHiddenPageSlugs(this, slugs, hiddenSources); }
   async readVersionSourcePath(versionId: number, pageId: number) { return pageMutationReads.readVersionSourcePath(this, versionId, pageId); }
   async readWindowChunk(chunkId: number, pageId: number) { return pageWindowChunks.readWindowChunk(this, chunkId, pageId); }
   async countPageChunks(pageId: number) { return pageWindowChunks.countPageChunks(this, pageId); }

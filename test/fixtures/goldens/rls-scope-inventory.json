@@ -6389,6 +6389,17 @@
         ],
         "flagOnScopes": []
       },
+      "readHiddenPageSlugs#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readIdentitySiblingCandidates#default": {
         "flagOffLanes": [
           "pool"
@@ -6665,6 +6676,17 @@
         "flagOnScopes": []
       },
       "readMayActFor#stdio-config": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readMemberPageReadable#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -7363,6 +7385,17 @@
         ],
         "flagOnScopes": []
       },
+      "readSlugFolderRules#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readSlugRepairPage#default": {
         "flagOffLanes": [
           "pool"
@@ -7529,6 +7562,17 @@
         "flagOnScopes": []
       },
       "readStoredPageHead#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readStoredPageLabels#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -11220,6 +11264,7 @@
         "readHeldPageRows": "none",
         "readHeldRowVisibility": "none",
         "readHeldVersionsEdited": "none",
+        "readHiddenPageSlugs": "none",
         "readIdentityDowngradeOldPage": "none",
         "readIdentityDowngradeRows": "none",
         "readIdentityRemedySide": "none",
@@ -11311,6 +11356,7 @@
         "readMcpRequestLogPage": "none",
         "readMcpRollupPrunedBefore": "none",
         "readMeetingPage": "none",
+        "readMemberPageReadable": "none",
         "readMemberPageWithdrawal": "none",
         "readMemoryProposal": "none",
         "readMentionGenerations": "none",
@@ -11517,6 +11563,7 @@
         "readSharedSourceRows": "none",
         "readShelfPageRows": "none",
         "readSiblingGroupRows": "none",
+        "readSlugFolderRules": "none",
         "readSlugRepairPage": "none",
         "readSlugRepairSource": "none",
         "readSoakCounterRows": "none",
@@ -11553,6 +11600,7 @@
         "readStoredConfigValue": "none",
         "readStoredConversationEntry": "none",
         "readStoredPageHead": "none",
+        "readStoredPageLabels": "none",
         "readStoredPageTier": "none",
         "readStoredSlugSpellings": "none",
         "readStrandedTakeProposalClaim": "none",
