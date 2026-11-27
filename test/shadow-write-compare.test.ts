@@ -659,6 +659,33 @@ describe('every sample the child was sent ends in the tally (sample accounting)'
     });
   }
 
+  test('a lost sample counts against the share only when it was a page or link write: the rest is booked capability_missing pipe_unflushed_nonqualifying, still counted, visible and settled', async () => {
+    const other = '{"t":"write","op":"updatePageContextualRetrievalState","outcome":"capability_missing","family":"pages:updatePageContextualRetrievalState"}\n';
+    const { dir, epoch } = await childWithOwed(10, ['{"t":"write","op":"putPage"}\n', '{"t":"write","op":"putPage"}\n', other], undefined, { owed_qualifying: 6 } as never);
+    const t = readWriteTally(dir, epoch)!;
+    // 10 owed, 6 of them page and link writes; 3 read, 2 of them page and link writes: 4 such writes and 3 other samples were lost.
+    expect(t.uncomparable_by_reason).toMatchObject({ no_sample: 2, pipe_unflushed: 4 }); // before: pipe_unflushed 7
+    expect(t.capability_missing_by_family).toMatchObject({ 'pages:updatePageContextualRetrievalState': 1, pipe_unflushed_nonqualifying: 3 });
+    expect(t.comparable + t.unexplained_difference + t.uncomparable + t.capability_missing).toBe(10);
+    expect(t.settled).toEqual({ 'sess-3': 10 }); // every owed sample settled once
+    expect(existsSync(owedPath(dir, 'sess-3'))).toBe(false);
+  }, 60_000);
+
+  test('an owed record with no qualifying count (an older serving process) books every lost sample pipe_unflushed, as before: never fewer against the share', async () => {
+    const other = '{"t":"write","op":"updatePageContextualRetrievalState","outcome":"capability_missing","family":"pages:updatePageContextualRetrievalState"}\n';
+    const { dir, epoch } = await childWithOwed(10, ['{"t":"write","op":"putPage"}\n', other]);
+    const t = readWriteTally(dir, epoch)!;
+    expect(t.uncomparable_by_reason).toMatchObject({ no_sample: 1, pipe_unflushed: 8 });
+    expect(t.capability_missing_by_family.pipe_unflushed_nonqualifying).toBeUndefined();
+  }, 60_000);
+
+  test('a qualifying count from 0 to the owed count is read; any other value makes the owed record unreadable, never a guess', () => {
+    const dir = tmp();
+    const write = (q: unknown) => writeFileSync(owedPath(dir, 'sess-q'), JSON.stringify({ v: 1, session: 'sess-q', serving_pid: process.pid, owed: 5, owed_qualifying: q, closed: true, child_exited: false }) + '\n');
+    for (const q of [0, 3, 5]) { write(q); expect(readOwed(dir, 'sess-q')).toMatchObject({ owed: 5, owed_qualifying: q }); }
+    for (const q of [-1, 6, 2.5, null, '3']) { write(q); expect(readOwed(dir, 'sess-q')).toBe('unreadable'); }
+  });
+
   test('a deficit larger than 10,000 is counted whole, never cut (20,001 owed, 1 read: 20,000 counted pipe_unflushed)', async () => {
     const { dir, epoch } = await childWithOwed(20_001, ['{"t":"write","op":"putPage"}\n']);
     const t = readWriteTally(dir, epoch)!;
@@ -1075,6 +1102,53 @@ describe('S2c: a durable per-session obligation for write samples', () => {
     const directory = spyOn(durable, 'flushDirectory').mockImplementationOnce(() => { throw new Error('EIO'); });
     expect(() => owe(dir, 'sf', 1)).toThrow(); directory.mockRestore(); // renamed, directory entry not known durable: the caller must not treat it as written
     expect(() => owe(dir, 'sf', 1)).not.toThrow();
+  });
+
+  test('an orphaned session is split by what was owed and settled: only lost page and link writes are receipt_orphaned, the rest capability_missing receipt_orphaned_nonqualifying', () => {
+    const dir = tmp(); const epoch = epochOf(dir);
+    // 25 owed, 4 of them page and link writes; 5 settled already, 3 of those page and link writes: 20 lost, 1 of them a page or link write.
+    passing(dir, epoch, { settled: { sq: 5 }, settled_qualifying: { sq: 3 } });
+    owe(dir, 'sq', 25, { child_pid: deadPid(), owed_qualifying: 4 } as never);
+    worker(dir, epoch, 'owner-q').recover();
+    const t = readWriteTally(dir, epoch)!;
+    expect(t.uncomparable_by_reason).toMatchObject({ receipt_orphaned: 1 }); // before: 20
+    expect(t.capability_missing_by_family).toMatchObject({ receipt_orphaned_nonqualifying: 19 });
+    expect(existsSync(owedPath(dir, 'sq'))).toBe(false);
+  });
+
+  test('an orphan split whose second append fails books each part once on the retry (the session-tagged lines settle it), so nothing is counted twice', async () => {
+    const dir = tmp(); const epoch = epochOf(dir); passing(dir, epoch);
+    owe(dir, 'sr', 25, { child_pid: deadPid(), owed_qualifying: 4 } as never);
+    const durable = await import('../src/core/fs-durable.ts');
+    const original = durable.flushFile; let lostFlushes = 0;
+    const spy = spyOn(durable, 'flushFile').mockImplementation((path: string) => { if (path.includes('write-lost.') && ++lostFlushes === 2) throw new Error('ENOSPC'); return original(path); });
+    try { worker(dir, epoch, 'owner-r1').recover(); } finally { spy.mockRestore(); }
+    worker(dir, epoch, 'owner-r2').recover();
+    const t = readWriteTally(dir, epoch)!;
+    expect(t.uncomparable_by_reason.receipt_orphaned).toBe(4);
+    expect(t.capability_missing_by_family.receipt_orphaned_nonqualifying).toBe(21);
+    expect(existsSync(owedPath(dir, 'sr'))).toBe(false);
+  });
+
+  test('a verdict settles its page or link write in settled_qualifying, in the same save as settled; a capability_missing verdict settles only settled', () => {
+    const dir = tmp(); const epoch = epochOf(dir); passing(dir, epoch); owe(dir, 'ss', 3, { owed_qualifying: 2 } as never);
+    const w = worker(dir, epoch, 'ss');
+    w.note('comparable', undefined, 1, false, 1, 1);
+    w.note('capability_missing', 'pages:updatePageContextualRetrievalState', 1, false, 1, 0);
+    const t = readWriteTally(dir, epoch)!;
+    expect(t.settled).toEqual({ ss: 2 });
+    expect((t as { settled_qualifying?: Record<string, number> }).settled_qualifying).toEqual({ ss: 1 });
+  });
+
+  test('a client worker books its lost other writes as lines the owner folds into capability_missing pipe_unflushed_nonqualifying, settling the session', () => {
+    const dir = tmp(); const epoch = epochOf(dir); passing(dir, epoch); owe(dir, 'sc2', 5, { closed: true, owed_qualifying: 2 } as never);
+    const client = new WriteTally(dir, () => null, () => true, process.pid, 'sc2');
+    (client as unknown as { missing(n: number, nonqualifying?: number): void }).missing(5, 3); client.save();
+    worker(dir, epoch, 'owner-c').save();
+    const t = readWriteTally(dir, epoch)!;
+    expect(t.uncomparable_by_reason.pipe_unflushed).toBe(2);
+    expect(t.capability_missing_by_family.pipe_unflushed_nonqualifying).toBe(3);
+    expect(t.settled?.sc2).toBe(5);
   });
 
   test('D: a client worker that dies with buffered verdicts credits none of them: its session stays owed, and the next owner books the whole deficit once as receipt_orphaned', () => {

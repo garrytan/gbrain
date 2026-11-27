@@ -27,7 +27,7 @@ import { closeAllOwedAtExit, sampleWeight, ShadowSupervisor } from '../src/shado
 import { createWriteSampler } from '../src/shadow/write-capture.ts';
 import { ensureEpoch } from '../src/shadow/evidence-epoch.ts';
 import { buildFollowStatus } from '../src/shadow/follow-status.ts';
-import { owedPath, readOwed, writeOwed, type OwedRecord } from '../src/shadow/write-compare.ts';
+import { owedPath, readOwed, sampleQualifyingWeight, writeOwed, type OwedRecord } from '../src/shadow/write-compare.ts';
 import { wrapShadowEngine, type ShadowSink } from '../src/shadow/wrapper.ts';
 import { shadowChildArgv } from '../src/shadow/attach.ts';
 import { parseBenchmarkEngineKind, createBenchmarkBrain, RustEngineAddonUnavailableError } from '../src/eval/longmemeval/harness.ts';
@@ -777,6 +777,28 @@ describe('supervisor sample accounting (a sample is owed in a durable record bef
     h.done();
   });
 
+  test('the owed record also states how many owed samples were page and link writes (owed_qualifying), so a lost sample of any other write is not counted against the share', async () => {
+    const h = harness({ maxBufferedBytes: 1_000_000 });
+    const other = (extra = ''): string => `{"t":"write","op":"updatePageContextualRetrievalState","outcome":"capability_missing","family":"pages:updatePageContextualRetrievalState"${extra}}\n`;
+    for (const line of [sample(0, 10), sample(1, 10), other(), other(), other(',"dropped":2')]) expect(h.sup.send(line)).toBe(true);
+    h.sup.send('{"t":"read","op":"putPage"}\n'); // not a write sample: in neither count
+    await turn();
+    // 2 putPage + 2 other writes + 1 other write carrying 2 earlier refusals = 7 owed. Qualifying: the 2 putPage, and the 2 refusals (which write they were is not known, so they count as qualifying, never as fewer).
+    expect(h.owed()).toMatchObject({ owed: 7, owed_qualifying: 4 });
+    expect(h.sup.owe(3)).toBe(true); await turn(); // owed with no line behind them: which write is not known, so qualifying
+    expect(h.owed()).toMatchObject({ owed: 10, owed_qualifying: 7 });
+    h.done();
+  });
+
+  test('a sample is qualifying only by the op the sampler wrote as its second key, never by text inside the page', () => {
+    expect(sampleQualifyingWeight('{"t":"write","op":"putPage","args":[]}\n')).toBe(1);
+    for (const op of ['deletePage', 'addLink', 'addLinksBatch', 'removeLink']) expect(sampleQualifyingWeight(`{"t":"write","op":"${op}"}\n`)).toBe(1);
+    expect(sampleQualifyingWeight('{"t":"write","op":"softDeletePages","outcome":"capability_missing"}\n')).toBe(0);
+    expect(sampleQualifyingWeight('{"t":"write","op":"softDeletePages","args":[{"op":"putPage"}],"dropped":3}\n')).toBe(3); // the refusals it carries only
+    expect(sampleQualifyingWeight('{"t":"read","op":"putPage"}\n')).toBe(0);
+    expect(sampleQualifyingWeight('{"t":"write","x":{"op":"putPage"}}\n')).toBe(0);
+  });
+
   test('a read with nothing staged goes to the pipe at once, as before', () => {
     const h = harness();
     expect(h.sup.send('{"t":"read","n":1}\n')).toBe(true);
@@ -1001,6 +1023,20 @@ describe('supervisor sample accounting (a sample is owed in a durable record bef
       expect(h.owed(0)).toMatchObject({ owed: 2, child_exited: true });
       expect(h.owed(1)).toMatchObject({ owed: 4, child_exited: true }); // its own sample (staged behind the record that was never written) and the 3 owed
       expect(first).not.toBe(second);
+      h.done();
+    });
+
+    test('a kept record states its page and link writes too (owed_qualifying): published after the disk recovers, its lost non page writes are not counted against the share', async () => {
+      const h = flakyHarness();
+      const other = `{"t":"write","op":"updatePageContextualRetrievalState","outcome":"capability_missing","family":"pages:updatePageContextualRetrievalState"}\n`;
+      h.sup.send(sample(0)); await turn();
+      expect(h.owed(0)).toMatchObject({ owed: 1, owed_qualifying: 1 });
+      h.disk.failing = true;
+      expect(h.sup.send(other)).toBe(true); expect(h.sup.send(other)).toBe(true); await turn(); await wait(30); // the record for 3 samples (1 page write) cannot be written: it is kept
+      await h.respawn(0); await wait(30);
+      expect(h.owed(0)).toMatchObject({ owed: 1, owed_qualifying: 1 }); // still the old record: the disk refuses
+      h.disk.failing = false; await wait(80);
+      expect(h.owed(0)).toMatchObject({ owed: 3, owed_qualifying: 1, child_exited: true }); // was owed: 3 with no owed_qualifying, which counts all 3 as page and link writes
       h.done();
     });
 

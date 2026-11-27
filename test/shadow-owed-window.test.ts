@@ -137,7 +137,7 @@ describe('OWC: the window on the supervisor', () => {
       expect(r.children[0]!.writes).toEqual([]); // nothing is sent while the window is open: the record owes it first, and a line that is no sample waits behind the samples (order holds)
       await sleep(120);
       expect(r.written).toHaveLength(2);
-      expect(r.owed()).toEqual({ v: 1, session: r.sessions[0]!, serving_pid: process.pid, child_pid: r.dead, owed: 3, closed: false, child_exited: false }); // no open_until: the close is the full record
+      expect(r.owed()).toEqual({ v: 1, session: r.sessions[0]!, serving_pid: process.pid, child_pid: r.dead, owed: 3, owed_qualifying: 3, closed: false, child_exited: false }); // no open_until: the close is the full record; owed_qualifying: the three plain samples are page writes
       expect(r.children[0]!.writes).toEqual([sample(0), sample(1), '{"t":"read","n":1}\n', sample(2)]);
       expect(r.internals.windowOpen).toBe(false); expect(r.internals.windowTimer).toBeNull();
     } finally { r.done(); }
@@ -450,7 +450,7 @@ describe('OWC F2: the marker is v:2 and the close record is v:1, so every older 
       r.sup.send(sample(0)); r.sup.send(sample(1));
       expect(readOwed(r.dir, r.sessions[0]!)).toMatchObject({ v: 2 }); expect(oldBooks(r.dir, r.sessions[0]!)).toBe('skips');
       await sleep(100);
-      expect(oldBooks(r.dir, r.sessions[0]!)).toBe(2); expect(oldParseOwed(owedPath(r.dir, r.sessions[0]!))).toEqual(readOwed(r.dir, r.sessions[0]!) as OwedRecord);
+      expect(oldBooks(r.dir, r.sessions[0]!)).toBe(2); { const { owed_qualifying: _q, ...current } = readOwed(r.dir, r.sessions[0]!) as OwedRecord; expect(oldParseOwed(owedPath(r.dir, r.sessions[0]!))).toEqual(current); } // the frozen reader knows no owed_qualifying: it reads every other field the same
     } finally { r.done(); }
   });
 
@@ -495,7 +495,7 @@ describe('OWC F3: a window is booked once, by whichever pass finds its session o
     const serving = await servingProcess(dir, 60_000); await serving.killServing();
     const key = owedKey(dir);
     try {
-      const child = new WriteTally(dir, () => epoch, () => true, process.pid, key); child.missing(1, 1); child.save(); // the child saw the end of its input: one window (its save is durable; its finish has not removed the file yet)
+      const child = new WriteTally(dir, () => epoch, () => true, process.pid, key); child.missing(1, 0, 1); child.save(); // the child saw the end of its input: one window (its save is durable; its finish has not removed the file yet)
       expect(readWriteTally(dir, epoch)!.uncomparable_by_reason).toEqual({ write_window_lost: 1 }); expect(readOwed(dir, key)).not.toBeNull();
       await serving.killWorker();
       expect(ownerPass(dir, epoch)).toEqual({ write_window_lost: 1 }); // the pass found nothing left to book
@@ -577,7 +577,7 @@ describe('OWC: the child books a window the serving process never closed', () =>
     const child = new WriteTally(dir, () => epoch, () => true, process.pid, 'w1');
     const real = WriteTally.prototype.note; let calls = 0;
     const spy = spyOn(WriteTally.prototype, 'note').mockImplementation(function (this: WriteTally, ...args: Parameters<typeof real>) { if (calls++ === 0) return real.apply(this, args); }); // only the first booking is durable
-    try { child.missing(2, 1); } finally { spy.mockRestore(); }
+    try { child.missing(2, 0, 1); } finally { spy.mockRestore(); }
     const owner = ownerPass(dir, epoch);
     expect(owner[WINDOW_LOST_REASON]).toBe(1); // was 2: the sentinel landed first, and the owner booked the rest as a second window
     expect(readWriteTally(dir, epoch)!.settled?.w1).toBe(2); expect(stat(dir)).toMatchObject({ state: 'capability_missing', write_windows_lost: 1 });
@@ -586,7 +586,7 @@ describe('OWC: the child books a window the serving process never closed', () =>
     const dir = tmp(); const order: string[] = [];
     const child = new WriteTally(dir, () => null, () => true, process.pid, 'w1');
     const spy = spyOn(child as unknown as { addJournal(reason: string, settles: boolean, n: number): void }, 'addJournal').mockImplementation((reason: string) => { order.push(reason); });
-    try { child.missing(3, 1); } finally { spy.mockRestore(); }
+    try { child.missing(3, 0, 1); } finally { spy.mockRestore(); }
     expect(order.filter((r, i) => order.indexOf(r) === i)).toEqual(['pipe_unflushed', WINDOW_LOST_REASON]);
   });
   test('a full record (v:1) the child did not get everything of is booked pipe_unflushed, as before (no window was lost)', async () => {
@@ -738,5 +738,65 @@ describe('OWC ship-p6: no path of the supervisor writes a v:1 record over a book
       expect(readOwed(r.dir, key)).toMatchObject({ v: 2, booked_epoch: r.epoch }); // was a v:1 record, written by the keeper over the unreadable file
       await sleep(150); stays(r, key);
     } finally { try { chmodSync(owedPath(r.dir, r.sessions[0]!), 0o600); } catch { /* gone */ } r.done(); }
+  });
+});
+
+// ---- OWC with the qualifying split (landed in #10523): a lost window is booked as a window, only lost page and link writes count against the share ----
+describe('OWC with the page-and-link split: the owed record states its page and link writes, an open marker counts its one extra sample as one', () => {
+  const other = `{"t":"write","op":"updatePageContextualRetrievalState","outcome":"capability_missing","family":"pages:updatePageContextualRetrievalState"}\n`;
+  const marker = (dir: string, session: string, over: Record<string, unknown> = {}): void => writeOwed(dir, { v: 2, session, serving_pid: deadPid(), child_pid: deadPid(), owed: 6, owed_qualifying: 3, closed: false, child_exited: false, open_until: Date.now() - 1000, ...over } as OwedRecord);
+  const family = (dir: string, epoch: string): Record<string, number> => readWriteTally(dir, epoch)!.capability_missing_by_family;
+
+  test('the supervisor states owed_qualifying in the marker (accepted page and link writes + 1) and in the closing record (accepted page and link writes)', async () => {
+    const r = rig({ owedWindowMs: 40 });
+    try {
+      expect(r.sup.send(sample(0))).toBe(true); expect(r.sup.send(other)).toBe(true); expect(r.sup.send(other)).toBe(true); expect(r.sup.send(sample(1))).toBe(true);
+      expect(r.owed()).toMatchObject({ v: 2, owed: 1, owed_qualifying: 1 }); // marker: nothing accepted yet but the sample that opens the window, counted as a page write
+      await sleep(120);
+      expect(r.owed()).toMatchObject({ v: 1, owed: 4, owed_qualifying: 2, closed: false });
+    } finally { r.done(); }
+  });
+
+  test('the child at the end of its input books an open marker as one lost window, the other writes owed and never read as pipe_unflushed_nonqualifying, the page and link writes as pipe_unflushed, and the owner pass books nothing more', () => {
+    const dir = tmp(); const { epoch } = tallyOn(dir); passing(dir, epoch);
+    const key = 'qa'; marker(dir, key);
+    // 5 accepted (2 page writes, 3 other) + the marker's one: the child read none of them.
+    const child = new WriteTally(dir, () => epoch, () => true, process.pid, key); child.missing(6, 3, 1); child.save();
+    expect(readWriteTally(dir, epoch)!.uncomparable_by_reason).toEqual({ pipe_unflushed: 2, write_window_lost: 1 });
+    expect(family(dir, epoch)).toEqual({ pipe_unflushed_nonqualifying: 3 });
+    const q = JSON.parse(readFileSync(writeTallyPath(dir), 'utf8')) as { settled: Record<string, number>; settled_qualifying: Record<string, number> };
+    expect(q.settled[key]).toBe(6); expect(q.settled_qualifying[key]).toBe(3); // the window's one counts as a page and link write
+    expect(ownerPass(dir, epoch)).toEqual({ pipe_unflushed: 2, write_window_lost: 1 });
+    expect(family(dir, epoch)).toEqual({ pipe_unflushed_nonqualifying: 3 });
+  });
+
+  test('the owner pass on a crashed marker books the window once and splits the rest by owed_qualifying: receipt_orphaned for page and link writes, receipt_orphaned_nonqualifying for the others', () => {
+    const dir = tmp(); const { epoch } = tallyOn(dir); passing(dir, epoch);
+    marker(dir, 'qb');
+    expect(ownerPass(dir, epoch)).toEqual({ receipt_orphaned: 2, write_window_lost: 1 });
+    expect(family(dir, epoch)).toEqual({ receipt_orphaned_nonqualifying: 3 });
+    expect(ownerPass(dir, epoch)).toEqual({ receipt_orphaned: 2, write_window_lost: 1 }); // a second pass books nothing
+    expect(family(dir, epoch)).toEqual({ receipt_orphaned_nonqualifying: 3 });
+    expect(readOwed(dir, 'qb')).toMatchObject({ v: 2, booked_epoch: epoch, owed_qualifying: 3 }); // the tombstone keeps the qualifying count
+  });
+
+  test('a marker of a crashed window whose accepted writes were all other writes still books its one lost window, and nothing as a page or link write but that', () => {
+    const dir = tmp(); const { epoch } = tallyOn(dir); passing(dir, epoch);
+    marker(dir, 'qc', { owed: 4, owed_qualifying: 1 }); // 3 accepted, all other writes, + the marker's one
+    expect(ownerPass(dir, epoch)).toEqual({ write_window_lost: 1 });
+    expect(family(dir, epoch)).toEqual({ receipt_orphaned_nonqualifying: 3 });
+  });
+
+  test('a booked tombstone that the serving process raised afterwards books the rest split by owed_qualifying, and the keeper keeps the larger count of each', () => {
+    const dir = tmp(); const { epoch } = tallyOn(dir); passing(dir, epoch);
+    marker(dir, 'qd'); ownerPass(dir, epoch); // booked: 6 settled, 3 of them qualifying; the tombstone stays
+    writeOwed(dir, { ...(readOwed(dir, 'qd') as OwedRecord), owed: 9, owed_qualifying: 4 }); // raised afterwards: 3 more owed, 1 page write
+    expect(ownerPass(dir, epoch)).toEqual({ receipt_orphaned: 3, write_window_lost: 1 }); // 2 + 1 more page write
+    expect(family(dir, epoch)).toEqual({ receipt_orphaned_nonqualifying: 5 }); // 3 + 2 more other writes
+  });
+
+  test('an owed_qualifying above owed is an unreadable record', () => {
+    const dir = tmp(); marker(dir, 'qe', { owed: 2, owed_qualifying: 3 });
+    expect(readOwed(dir, 'qe')).toBe('unreadable');
   });
 });

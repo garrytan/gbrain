@@ -34,7 +34,7 @@ import { FollowChild, type FollowEvent, type FollowStore } from './follow-child.
 import { appendFault, appendLedgerRows, writeSummaryFile, type ShadowLedgerRow, type ShadowSummaryFile } from './ledger.ts';
 import { newMirrorCounters, type MirrorCounters } from './mirror.ts';
 import { createWriteComparer } from './write-compare-child.ts';
-import { droppedWeight, readOwed, sampleWeight, WriteTally } from './write-compare.ts';
+import { droppedWeight, readOwed, sampleQualifyingWeight, sampleWeight, WriteTally } from './write-compare.ts';
 import { appendRecall, IntervalGate, recallEligible, RECALL_INTERVAL_MS, scoreRecall, type RankedKey } from './recall.ts';
 import { isShadowReadMember, SHADOW_READ_MEMBERS, type ShadowReadMember } from './reads.ts';
 import { readSeedRecord } from './seed.ts';
@@ -546,15 +546,16 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
     return draining;
   };
 
+  let receivedQualifying = 0; // the part of `received` that is page and link writes, counted from the same bytes as the serving process counted it (write-compare.ts sampleQualifyingWeight)
   let received = 0; // write samples read from the pipe, whole lines only (a line the exit of the serving process cut short is not one)
   const rl = createInterface({ input: deps.input, crlfDelay: Infinity });
   for await (const line of rl) {
     if (!line) continue;
     let event: { t?: string; counters?: MirrorCounters; pid?: number; dropped?: number };
-    try { event = JSON.parse(line); } catch { const w = sampleWeight(`${line}\n`); if (w > 0) { received += w; writes.unreadable(w); } continue; } // a write line that cannot be read still stands for the samples its text states: settled once, as `uncomparable`
+    try { event = JSON.parse(line); } catch { const w = sampleWeight(`${line}\n`); if (w > 0) { const q = sampleQualifyingWeight(`${line}\n`); received += w; receivedQualifying += q; writes.unreadable(w, q); } continue; } // a write line that cannot be read still stands for the samples its text states: settled once, as `uncomparable`
     if (event.t === 'apply' || event.t === 'watermark' || event.t === 'depth' || event.t === 'rpc') { follow.handle(event as FollowEvent); continue; }
     if (event.t === 'answer') { ask.answer(event as never); continue; }
-    if (event.t === 'write') { received += 1 + droppedWeight(event.dropped); writes.handle(event as never, line.length); continue; } // the weight the serving process counted when it sent the line (write-compare.ts sampleWeight)
+    if (event.t === 'write') { const q = sampleQualifyingWeight(`${line}\n`); received += 1 + droppedWeight(event.dropped); receivedQualifying += q; writes.handle(event as never, line.length, q); continue; } // the weight the serving process counted when it sent the line (write-compare.ts sampleWeight)
     if (event.t === 'stats' && event.counters) { summary.primary = { ...newMirrorCounters(), ...event.counters }; summary.primary_pid = event.pid; continue; }
     if (event.t !== 'read' || paused) continue;
     if (pending.length >= SHADOW_CHILD_QUEUE_BOUND) { summary.child_shed++; continue; }
@@ -577,7 +578,13 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
   // Booked only once every replay this child took has settled, never before: a child that dies (or reaches its exit deadline) while a replay is still unsettled has credited no missing sample, so the next owner worker books the whole deficit once, the
   // window included. Booked earlier, that credit is durable at once while the replays still owed are a deficit of their own, and the owner would count the window a second time.
   await writes.idle();
-  if (owedRecord !== null && owedRecord !== 'unreadable') writes.missing(Math.max(0, owedRecord.owed - received), owedRecord.v === 2 ? 1 : 0); // a marker (v:2) the serving process never closed: one of the missing is a lost window
+  if (owedRecord !== null && owedRecord !== 'unreadable') {
+    // Only the lost page and link writes count against the share: the other writes owed less the other writes read are booked as `pipe_unflushed_nonqualifying`; every other lost sample, including any count the two ends
+    // disagree on, is `pipe_unflushed`. A record with no qualifying count (an older serving process) books every one as `pipe_unflushed`.
+    const lost = Math.max(0, owedRecord.owed - received);
+    const nonqualifying = owedRecord.owed_qualifying === undefined ? 0 : Math.min(lost, Math.max(0, (owedRecord.owed - owedRecord.owed_qualifying) - (received - receivedQualifying)));
+    writes.missing(lost, nonqualifying, owedRecord.v === 2 ? 1 : 0); // a marker (v:2) the serving process never closed: one of the missing page and link writes is a lost window
+  }
   // The owed file is removed only now, once the serving process closed it and the settled count read back from disk covers everything it owed: a failed final save (or a death or the exit deadline before it) leaves it, and the next owner
   // worker books what was never settled as receipt_orphaned (more than was lost, never less); with it gone, status would read measured with an outcome that was only ever in memory.
   if (await writes.idle()) { try { writes.finish(); } catch { /* the file stays: the next owner worker settles it, or status reads no evidence */ } }
