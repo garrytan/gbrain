@@ -285,7 +285,7 @@ or a physical projection that leaves attribution untouched):
 - `src/core/page-state/materialize.ts` (1): coordinated maintenance.
 - `src/core/page-state/rename-alias.ts` (5): the fact slug rewrite runs inside its caller's `updateSlug` transaction, and `movePageIdReferences` (#5431: page_versions, timeline_entries and links moved to the row that materialized under a fallback rename) runs inside `carryRenameIdentity`'s `maintenanceTransaction`; every caller is attributed.
 - `src/core/page-state/versions.ts` (3): `createVersion` itself, its segmented-page twin and the pruned-history marks (`successor_pruned`, `version_history_gap_at`); the caller's scope supplies the actor.
-- `src/core/persistence/canonical-projections.ts` (8): fence projection inside the request's publication.
+- `src/core/persistence/canonical-projections.ts` (6): fence projection inside the request's publication (its timeline insert, removal and detail refresh and its take-row deletion are the typed members of `engine-sql/timeline.ts` and `engine-sql/takes.ts`, run on the publication's transaction engine).
 - `src/core/persistence/change-reason.ts` (1): stamps a page write's `reason` on the snapshot its publication archived, inside that request's publication apply.
 - `src/core/persistence/connector-fact-retirement.ts` (1): the `retire_connector_facts` preparer expires a connector's own facts rows inside the page's coordinated publication.
 - `src/core/persistence/connector-google-receipts.ts` (2): request preparer.

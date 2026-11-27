@@ -29,6 +29,9 @@
  * identity check already sent (credential_hash added, columns reordered); same row, same FOR SHARE, same order. Both entries
  * were re-captured with CAPTURE_FOLD_NOOP=1 and differ only in that statement. GST-4037 rewrites put_page's provenance
  * update one-for-one so a managed rewrite keeps the stored `ingested_at` (a CASE on a sixth parameter); same statement, same order.
+ * The fence projection's facts reads (engine-sql/trust-fence.ts: the retire-candidate preimage read and guardFenceRows)
+ * bind the incoming fence once (`v.incoming`, now `$1`) and lock `FOR UPDATE OF f`; same statements, same order. Those
+ * two entries were re-captured on PGLite and on Postgres and differ only in those statements.
  * CAPTURE_FOLD_NOOP=1 rewrites the fixture for the engine under test (only ever from the pre-hook commit).
  */
 import { describe, expect, test } from 'bun:test';
