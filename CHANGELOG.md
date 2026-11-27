@@ -10,6 +10,61 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.779.0] - 2026-11-27
+
+**Three intermittent test failures are fixed at their cause, and the crash robot now records what the page and its facts rows looked like when it reports a facts-fence drift.**
+
+### Fixed
+- The zombie-process test in the upgrade-restart supervisor suite no longer fails with ENOENT on `/proc/<pid>/stat`: its background child now stays alive until the holder shell has exec'd `sleep`, so the shell can never reap it first.
+- The supervisor configuration test for a worker resumed by the startup timeout signal no longer loses the signal on a slow machine. The worker now registers its SIGTERM handler before it loads the readiness module, and the test uses the production kill grace.
+- The sync drain claims test for the live stall line no longer loses its parked step to the owner's lease renewal. The parked preparer now enters the step on its claim-phase clock, as a real preparer does. The `consumer:preparing` fault point now carries that clock.
+
+### Changed
+- When the crash robot reports a facts fence that disagrees with its facts rows, the report now says whether the stored page body holds each claim, the revision the read and the stored page carry, the facts rows' ids and row numbers, which page versions held the claim, and the last write requests on the page (#7651).
+
+**Claude Code agents now see the `correct` tool, so a standing rule the user states is saved as a rule instead of as an ordinary fact.**
+
+### Fixed
+- Claude Code's default registration (`gbrain serve --surface starter --advertise verbs`) listed only the seven memory verbs and `request_tools`. `correct` was callable but never listed, so agents told "keep this as a standing rule" saved it with `remember` and `forget` instead. A verbs listing on a wider surface (starter or full) now also lists `correct` when the connection can call it. `gbrain serve --surface verbs` is unchanged: it lists and accepts exactly the seven memory verbs.
+- `correct`'s tool description now says to call it only when the user corrects a wrong fact or asks for a standing rule, that over MCP the rule often waits for the owner's approval before anything changes, and to call `remember` for anything else the user wants saved. Agents had been calling `correct` for a plain "remember this", which left the fact unsaved until the owner approved a rule.
+
+<!-- behavior-change: correct_listed_beside_verbs_gst4058 -->
+
+**Shadow status can no longer read "measured" while a sampled write is unaccounted for, whatever kills a worker.**
+
+### Fixed
+- After a host crash, a killed shadow worker, a worker whose results could not be saved, or a disk that stopped taking writes, `gbrain engine shadow status` could read "measured" while some sampled writes were in no count. The proof that nothing was missing (a sent count, a warning line) was not tied to the results it vouched for. Each session now has a durable record of how many samples were handed to its worker, written before any of them is sent, and the worker settles each sample in the same atomic write as the count it adds. Status reads "measured" only when, for every session, nothing owed is unsettled; a session with nothing in flight blocks nothing, so a long-running brain still reads "measured" between samples.
+- A worker whose evidence epoch was replaced by a newer worker's no longer leaves its session blocked for as long as it runs, because its results are handed to the new owner as lost lines that name the session.
+- A shadow save that had landed in the file but not on disk (its directory flush failed) could be reported as saved at the next try without ever being flushed. It is now flushed first.
+- A client or replaced worker's lost lines are numbered, so a write that fails part-way and is retried whole credits each line once. A shadow save that could not read the evidence epoch manifest for a moment no longer ends the worker's saves for good; only a manifest naming a different epoch does.
+- A refused-sample count too large for one line (over 10,000) no longer settles more samples than the line was owed. The sampler puts at most 10,000 on a line and sends the rest at once as loss-only lines in the same flush (each such line counts as one more uncomparable sample), and the supervisor and the worker count a line's weight by one rule (`droppedWeight`). If the pipe refuses one of those lines, what is left is made owed in the durable record at once (`supervisor.owe`), so status reads the session as unsettled until the worker books it as lost. When there is no running worker to owe it to, the remainder rides the next accepted line instead. A swap eligibility read that cannot read the evidence epoch manifest (a torn or unreadable file, as opposed to no epoch yet) now counts as an unknown write path and refuses, instead of falling back to the 7-day window. The status document hands the one manifest read it makes for the eligibility check to that check.
+- A write line the worker could not read is counted once as `uncomparable` (`line_unreadable`), so it cannot hold its session open.
+
+### Changed
+- A sent count (`write-sent.*`) is replaced by an owed record (`write-owed.<session>.json`). `gbrain engine shadow status --json` lists unsettled sessions as `outstanding_sessions` (at most 8) and counts each once in `unresolved_replays`. Receipts, warning lines and lost lines with no session from an older version are still read, and read as no evidence for the epoch.
+- A session whose worker is gone (it was seen to exit, its process is not running, or its record is closed or abandoned for more than 10 minutes) is settled by the next shadow worker that owns the store: what it never settled is added once as `uncomparable` with reason `receipt_orphaned`. A worker whose saves keep failing for 60 seconds while it holds results it could not save exits, and its replacement books them. A client or replaced worker writes its lost lines at most every 2 seconds, not once per 256 results.
+- `gbrain engine swap --to rust --plan` waits up to 60 seconds for a moment when every sample is settled and takes the first such read; if there is none, criterion 5 reads "brain busy: no 60 s lull with all samples settled; retry when idle". The worker keeps up only below about 19 samples a second on the machine this was measured on, so a brain that writes faster than that never has such a moment, and a long sync-import holds the check closed until it finishes.
+- A new nullable column `write_protocol` on `engine_writer_observations` records which build wrote each writer row (this build writes 2). The swap's writer check (criterion 11) counts a row seen since the current evidence epoch began (not only the last 7 days) with no value, or a lower one, as an unknown write path and refuses. No row is rewritten and nothing is backfilled. On a brain where the migration has not run, the check cannot read the evidence and the swap refuses.
+- The shadow comparator version is bumped, so the next shadow worker opens a new evidence epoch; shadow days restart for brains running this build.
+- Nothing about what counts as `comparable` changes, and a lost or uncompared sample is never counted as compared. The comparison bar and the sampling defaults are unchanged.
+
+### Known limits
+- A serving process that is killed outright loses the samples it had accepted but not yet handed to the pipe. The count is too low, and no mismatch is hidden.
+- A command that exits while the disk still refuses its owed record loses the samples it had staged, with no count. The count is too low, and no mismatch is hidden.
+- A reused process number can hold a session open for up to 10 minutes.
+- A worker that dies in the middle of a replay counts that one sample twice, never fewer.
+
+**Shadow mode no longer undoes a save's own writes when one of its background reads fails.**
+
+### Fixed
+- While shadow mode follows a Postgres brain, the follower reads the rows a write is about to delete or re-key before the write runs. Inside a transaction it did that read in a savepoint, and rolling that savepoint back after a failed read (a statement timeout, a cancelled query) also undid statements the same save had sent meanwhile, such as the pipelined calls of `put_page` and sync. The save then committed without them, although each call had reported success. Now each transaction has a call lane. The read first waits for a nested transaction that is still running (without holding the others), then for the calls already running, each wait at most 2 seconds, holds later calls until its own write is sent, and only then opens its savepoint. A call ahead that is running a callback, or a call that does not finish in time, makes the read skip, so that write is described with a wider re-read and the save is untouched. The commit or rollback also waits until no read holds the lane, and at most 2 seconds for the calls the transaction started and did not await.
+- Calls inside a nested transaction and writes queued by write sampling go through the lane without waiting for themselves or for their own enclosing transaction, and a held call keeps the page scope it was called in.
+
+### Known limits
+- Statements a caller sends straight to the transaction's database handle (`tx.sql`, `tx.db`) are not seen by the lane, so a failed follower read can still undo them. A follow-up owns this.
+- A write started after an independent nested transaction that is still running can be sent ahead of a delayed write of an earlier call. This is the same on master, so it is not a change; the same follow-up owns it.
+- With shadow mode off nothing changes. With it on, a save pays at most one round trip more when a read has to wait for a call ahead of it; the measured cost is in the pull request.
+
 ## [0.60.778.0] - 2026-11-27
 
 **With no model configured, gbrain now uses the newest Claude and GPT models; recall ranks saved facts by your query; a fact saved without a date no longer shows up as a recent event; and re-extracting a conversation keeps its old facts as history.**
