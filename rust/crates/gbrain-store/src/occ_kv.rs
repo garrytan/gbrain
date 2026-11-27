@@ -191,8 +191,11 @@ impl OccBase for RedbKv {
 }
 
 /// How many ids past the ones it hands out an id sequence reserves on disk at a time (multi-user
-/// mode): one durable reservation write per this many ids of one sequence.
-const RESERVE_AHEAD: u64 = 1024;
+/// mode): one durable reservation write per this many ids of one sequence. A page body takes about
+/// one id per word occurrence, so a small reserve puts a durable write (under the sequence lock) in
+/// every few page writes; at 1024 that cost about a tenth of the write rate with 16 writers. A crash
+/// skips at most this many ids per sequence (ids are 64-bit).
+const RESERVE_AHEAD: u64 = 65536;
 
 /// One id sequence in memory.
 #[derive(Clone, Copy, Debug)]
