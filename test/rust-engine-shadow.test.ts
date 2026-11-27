@@ -1217,7 +1217,7 @@ describe('supervisor sample accounting (a sample is owed in a durable record bef
         expect(existsSync(join(h.dir, `write-pending.${s0}.json`))).toBe(true);
         h.disk.failing = false; h.settle({ [s0]: 2 });
         const until = Date.now() + 400; let cleared = false;
-        while (Date.now() < until) { h.sup.owe(1); await wait(10); h.settle({ [s0]: h.owed(0).owed as number }); if (!existsSync(join(h.dir, `write-pending.${s0}.json`))) { cleared = true; break; } } // traffic keeps arriving, each sample a flush
+        while (Date.now() < until) { h.sup.owe(1); await wait(10); h.settle({ [s0]: (h.owed(0) as { owed: number }).owed }); if (!existsSync(join(h.dir, `write-pending.${s0}.json`))) { cleared = true; break; } } // traffic keeps arriving, each sample a flush
         expect(cleared).toBe(true);
       } finally { h.done(); }
     });

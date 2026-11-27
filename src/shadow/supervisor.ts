@@ -121,6 +121,7 @@ export class ShadowSupervisor implements MirrorTransport {
   private readonly kept = new Map<string, Kept>(); // by session key: what no record on disk states yet, across worker exits, respawns and stops
   private keptTimer: ReturnType<typeof setTimeout> | null = null;
   private keptDelay: number;
+  private keptDue = 0; // when the keeper's timer fires (epoch ms)
   private refusal = ''; // the session whose kept record holds the samples refused while no worker ran (`oweRefused`)
   private childExited = false;
   private closedRecord = false; // a closed record was made durable for this session: later records stay closed
@@ -244,8 +245,9 @@ export class ShadowSupervisor implements MirrorTransport {
    */
   private writeOwedRecord(closed = false, childExited = false, locked = false): boolean {
     if (!this.session) return true;
-    const exited = childExited || this.childExited;
-    closed ||= this.closedRecord;
+    const kept = this.kept.get(sessionKey(this.session))?.rec; // a retained record's lifecycle flags only ever go up: a later write for the session cannot take back an exit or a close
+    const exited = childExited || this.childExited || kept?.child_exited === true;
+    closed ||= this.closedRecord || kept?.closed === true;
     const mark = `${this.session}:${this.acceptedWeight}:${closed}:${exited}`;
     if (this.owedWritten === mark) return true;
     const rec: OwedRecord = { v: 1, session: this.session, serving_pid: process.pid, ...(this.child?.pid ? { child_pid: this.child.pid } : {}), owed: this.acceptedWeight, closed, child_exited: exited };
@@ -294,7 +296,7 @@ export class ShadowSupervisor implements MirrorTransport {
             const rec = entry.rec; this.o.writeOwed(this.o.dir, rec); entry.rec = null; if (key === this.refusal) this.refusal = '';
             if (this.session === rec.session) { this.owedWritten = `${rec.session}:${rec.owed}:${rec.closed}:${rec.child_exited}`; this.closedRecord = rec.closed; this.childExited = rec.child_exited; } // the live session's own record: not written again by its next flush
           }
-          rmSync(pendingPath(this.o.dir, key), { force: true }); flushDirectory(this.o.dir);
+          rmSync(pendingPath(this.o.dir, key), { force: true }); entry.marked = false; flushDirectory(this.o.dir); // unlinked: if the flush throws the entry is retried, and a later failed write makes its marker again
         }, KEPT_LOCK_WAIT_MS);
         this.kept.delete(key);
       } catch { if (entry.rec && !entry.marked) entry.marked = this.markPending(entry.rec.session); } // kept: the next try (backoff) goes again
@@ -306,10 +308,14 @@ export class ShadowSupervisor implements MirrorTransport {
   /** The exit hook's try: now, without waiting for the timer. */
   publishKeptNow(): void { this.tickKept(); }
 
+  /** Arms the keeper's timer. A deadline already set that falls within one retry interval is never pushed back: samples that keep arriving cannot postpone the attempt (`soon` only ever brings it forward). */
   private armKept(soon = false): void {
-    if (this.keptTimer && !soon) return;
+    if (soon) {
+      if (this.keptTimer && this.keptDue <= Date.now() + this.o.retryMs) return;
+      this.keptDelay = this.o.retryMs;
+    } else if (this.keptTimer) return;
     if (this.keptTimer) clearTimeout(this.keptTimer);
-    if (soon) this.keptDelay = this.o.retryMs;
+    this.keptDue = Date.now() + this.keptDelay;
     this.keptTimer = setTimeout(() => {
       this.keptTimer = null;
       if (!this.tickKept()) { this.keptDelay = Math.min(this.keptDelay * 2, this.o.retryMs * 50); this.armKept(); } // backoff from retryMs (100 ms) to 5 s while it keeps failing; nothing is ever dropped to bound memory
@@ -499,7 +505,7 @@ export class ShadowSupervisor implements MirrorTransport {
   private onExit(child: ChildProcess | null, code: number | null, signal: string | null): void {
     if (child && this.child !== child) return;
     if (child && this.acceptedWeight > 0) this.writeOwedRecord(false, true, true); // durable before anything about this session is reset (or kept, marked and retried): the next owner worker settles what the dead child never did
-    this.dropStaged();
+    this.dropStaged(); this.oweDirty = false; // nothing queued is left for a flush to write: the exit-time record (written or kept) already states everything accepted
     this.child = null; if (this.kept.size === 0) liveSupervisors.delete(this);
     this.clearWatchdog();
     this.rejectRequests('child_unavailable');
