@@ -121,9 +121,13 @@ export const readSyncStatusSourceRow: StoreMember<[sourceId: string], SyncStatus
   };
 };
 
-/** No managed-sync request commits, and no Git effect or fence generation is written, while managed writes are held. */
+/**
+ * The managed-sync counts are not read here yet (an open item of the capability flip; rust/docs/store/journal.md).
+ * `git_push_held` is true without a read: it only gates sync status's push and commit hold reads (the typed
+ * `listGitPushHoldRows`), so each runs once instead of a second journal scan for the gate.
+ */
 export const readSyncStatusCommittedRow: StoreMember<[sourceId: string], SyncStatusCommittedRow> = async () =>
-  ({ n: 0, git_push_held: false, fence_held: false, last_committed_at: null });
+  ({ n: 0, git_push_held: true, fence_held: false, last_committed_at: null });
 
 /** The source incarnation's newest managed-sync cursor, the one keyed `failedKey` first. */
 export const readManagedSyncCursorHeader: StoreMember<[sourceId: string, incarnation: string, failedKey: string], { header: never; key: string } | null> =
