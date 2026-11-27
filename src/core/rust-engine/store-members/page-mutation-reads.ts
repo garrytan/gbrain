@@ -6,6 +6,7 @@
 import type { BrainEngine } from '../../engine.ts';
 import { hiddenSlugsPolicySql, memberViewPolicySql } from '../../engine-sql/page-mutation-reads.ts';
 import { currentCallerAccess, sqlAppliedSets } from '../../search/private-visibility.ts';
+import { selfChecked } from '../access-self-check.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
 import { normalizeConceptInputs, pagePolicyFlags, renderForStoreCaller, type StorePrivacyPolicy } from './private-provenance.ts';
 
@@ -28,7 +29,13 @@ export const readStoredPageLabels: Member<'readStoredPageLabels'> = (brain, sour
  * that was rendered. A caller on a brain with no member restriction renders the short form, which the store's flag
  * decides (`open`, as storePageTextPolicy sends it).
  */
-function enforcedMemberPolicy(member: string, rendered: () => string, rawIdentity: readonly string[], rawSatisfied: readonly string[]): StorePrivacyPolicy {
+export function enforcedMemberPolicy(member: string, view: 'member_view' | 'hidden_slugs', rendered: () => string, rawIdentity: readonly string[], rawSatisfied: readonly string[]): StorePrivacyPolicy {
+  return selfChecked(member, { mode: 'enforced_member_policy', view, identity: [...rawIdentity], satisfied: [...rawSatisfied] },
+    () => enforcedMemberPolicyRendered(member, rendered, rawIdentity, rawSatisfied));
+}
+
+/** The TypeScript side of `enforcedMemberPolicy`, the one the store's derivation (`enforced_member_policy`) is compared with. */
+function enforcedMemberPolicyRendered(member: string, rendered: () => string, rawIdentity: readonly string[], rawSatisfied: readonly string[]): StorePrivacyPolicy {
   const access = currentCallerAccess();
   // The SQL renderer empties a whole set when any entry of it is invalid (readersAllowedSql: validIdentity; folderRulesAllowedSql:
   // validQualifiedRuleId), so a member holding one invalid entry reads nothing through that set. The store matches entries one by
@@ -46,7 +53,7 @@ function enforcedMemberPolicy(member: string, rendered: () => string, rawIdentit
 
 export const readMemberPageReadable: Member<'readMemberPageReadable'> = async (brain, sourceId, slug, identity, satisfied, labelled) => {
   if (labelled) refuseMember('readMemberPageReadable', 'a labelled-only member (its labelled read is not served yet)');
-  const policy = enforcedMemberPolicy('readMemberPageReadable', () => memberViewPolicySql(identity, satisfied, false), identity, satisfied);
+  const policy = enforcedMemberPolicy('readMemberPageReadable', 'member_view', () => memberViewPolicySql(identity, satisfied, false), identity, satisfied);
   return await storeCall({ member: 'readMemberPageReadable', slug, sourceId }, () => brain.readMemberPageReadable(sourceId, slug, policy)) as boolean | null;
 };
 
@@ -55,7 +62,7 @@ export const readSlugFolderRules: Member<'readSlugFolderRules'> = async (brain, 
 
 export const readHiddenPageSlugs: Member<'readHiddenPageSlugs'> = async (brain, slugs, hiddenSources) => {
   const access = currentCallerAccess();
-  const policy = enforcedMemberPolicy('readHiddenPageSlugs', hiddenSlugsPolicySql, access.identity, access.satisfiedRuleIds);
+  const policy = enforcedMemberPolicy('readHiddenPageSlugs', 'hidden_slugs', hiddenSlugsPolicySql, access.identity, access.satisfiedRuleIds);
   if (!slugs.length) return [];
   return await storeCall({ member: 'readHiddenPageSlugs' }, () => brain.readHiddenPageSlugs([...slugs], [...hiddenSources], policy)) as string[];
 };

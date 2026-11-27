@@ -1332,6 +1332,23 @@ pub enum DeriveRequest {
     },
     /// `pagePolicyFlags(privacyPartSql('p')).honorAliases` (readPagePrivacyHidden).
     PrivacyPartAliases {},
+    /// `enforcedMemberPolicy` (store-members/page-mutation-reads.ts): the policy of one of the enforced member CLI's reads
+    /// around a write, for the member's `identity` and the rules it `satisfied`.
+    EnforcedMemberPolicy {
+        view: EnforcedView,
+        identity: Vec<String>,
+        satisfied: Vec<String>,
+    },
+}
+
+/// The text an enforced member read judges a page by.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EnforcedView {
+    /// `memberViewPolicySql(identity, satisfied, false)`: `readPolicyFragment('p', identity, true, satisfied)`.
+    MemberView,
+    /// `hiddenSlugsPolicySql()`: the caller's member access, then the privacy part.
+    HiddenSlugs,
 }
 
 /// The context a fixed fragment text was rendered in: a record, or none.
@@ -2649,6 +2666,69 @@ fn derive_snapshot_policy(
     }
 }
 
+/// `enforcedMemberPolicy`: the member read text, compared with the same text rendered for a fresh record of just the member's
+/// identity and rules (no labelled-only grant, lineage, audience or owner record), so the store applies exactly the text that
+/// was rendered. The sets sent are the ones the SQL applies, never the raw ones.
+fn derive_enforced_member_policy(
+    cur: &Cur,
+    s: &AccessSettings,
+    view: EnforcedView,
+    identity: &[String],
+    satisfied: &[String],
+) -> Derived {
+    let cx = Cx { s, norm: true };
+    let access = eff(cur, s);
+    let (applied_identity, applied_rules) = sql_applied_sets(identity, satisfied);
+    if applied_identity.is_empty() && !applied_rules.is_empty() {
+        return Derived::Refuse("a member whose identity holds an invalid entry beside satisfied folder rules");
+    }
+    let render = |at: &Cur| -> PageKey {
+        match view {
+            EnforcedView::MemberView => read_policy(identity, true, Some(satisfied), false, at, cx),
+            EnforcedView::HiddenSlugs => {
+                let (allowed, labelled) = caller_access(at, s);
+                PageKey::Base {
+                    access: allowed,
+                    labelled,
+                    privacy: PrivacyKey::Part {
+                        sources: vec![],
+                        part: privacy_part(at, cx),
+                    },
+                }
+            }
+        }
+    };
+    let patch = Patch {
+        identity: Some(applied_identity.clone()),
+        private_readable_sources: Some(vec![]),
+        hide_private: Some(true),
+        owner: Some(false),
+        restricted: Some(access.restricted),
+        satisfied_rule_ids: Some(applied_rules.clone()),
+        folder_coverage: Some(access.folder_coverage.clone()),
+        ..Patch::default()
+    };
+    let reference_text = render(&reference(cur, patch, false, s));
+    if render(cur) != reference_text {
+        return Derived::Refuse(
+            "a member whose labelled-only grant, lineage, audience or owner record changes the read policy",
+        );
+    }
+    let mut m = page_flags(&reference_text, s);
+    m.insert("identity".into(), json!(applied_identity));
+    m.insert("privateReadableSources".into(), json!([]));
+    m.insert("satisfiedRuleIds".into(), json!(applied_rules));
+    m.insert(
+        "folderCoverage".into(),
+        serde_json::to_value(&access.folder_coverage).unwrap_or(Value::Null),
+    );
+    m.insert("callerRecord".into(), json!(true));
+    if !access.restricted {
+        m.insert("open".into(), json!(true));
+    }
+    Derived::Value(Value::Object(m))
+}
+
 /// The derivation: what the TypeScript helper named by the request returns in this context.
 pub fn derive(ctx: &AccessContext) -> Derived {
     let cur = &ctx.record;
@@ -2700,6 +2780,11 @@ pub fn derive(ctx: &AccessContext) -> Derived {
             satisfied,
         } => derive_owner_reach(cur, s, identity, satisfied),
         DeriveRequest::WriterPolicy { policy } => derive_writer_policy(cur, s, policy),
+        DeriveRequest::EnforcedMemberPolicy {
+            view,
+            identity,
+            satisfied,
+        } => derive_enforced_member_policy(cur, s, *view, identity, satisfied),
         DeriveRequest::SnapshotPolicy {
             identity,
             private_readable_sources,
