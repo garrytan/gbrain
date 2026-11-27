@@ -27,6 +27,8 @@
 //! - `t 0x0c`: the belief ledger's suppressions ([`belief_redactions`]).
 //! - `t 0x0e page_id` (8-byte big-endian) -> `{"tier", "set_at_us"}`: a page's label guard
 //!   ([`label_guards`]).
+//! - `t 0x0f id` -> an owner allow rule; `t 0x10 source \0 uri_prefix \0 reason_family` -> the id
+//!   of the active one ([`allow_rules`]).
 //!
 //! The belief ledger's history and source reads ([`belief_history`]) and its coverage reads
 //! ([`belief_coverage`]) have no keys of their own.
@@ -46,6 +48,7 @@
 #[allow(dead_code)]
 mod stamp;
 
+pub mod allow_rules;
 pub mod belief_coverage;
 pub mod belief_events;
 pub mod belief_history;
@@ -87,6 +90,7 @@ pub(crate) fn remove_source_rows(
     source_id: &str,
 ) -> crate::Result<()> {
     withdrawals::remove_source_rows(tx, source_id)?;
+    allow_rules::remove_source_rows(tx, source_id)?;
     proposals::remove_source_rows(tx, source_id)
 }
 

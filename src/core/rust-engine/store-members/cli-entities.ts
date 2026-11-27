@@ -6,7 +6,7 @@
  * refuses for a caller whose members, grants or lineage change it. `readRetirementHop` applies the hop's page policy
  * the same way (retirementHopPolicy).
  */
-import type { EntityAnchoredPages, TextMentionPageRow, EntityCardMatch, EntityCardRow, IgnoredLabelPageRow, InboundLinkerCountRow, LivePageTypeRow, MentionDueQuery, MentionIndexRecount, MentionIndexStatusRow, NameVariantCandidateQuery, NameVariantCandidateRow, PrefixCandidateQuery, PrefixCandidateRow, PrefixTitleRow, ResolverPrivacy, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow, SlugPatternPageRow, TrigramCandidateQuery, TrigramCandidateRow, FuzzyEntityCandidateRow } from '../../engine-sql/entity-reads.ts';
+import type { EntityAnchoredPages, TextMentionPageRow, EntityCardMatch, EntityCardRow, IgnoredLabelPageRow, InboundLinkerCountRow, LivePageTypeRow, MentionDueQuery, MentionIndexRecount, MentionIndexStatusRow, NameVariantCandidateQuery, NameVariantCandidateRow, PrefixCandidateQuery, PrefixCandidateRow, PrefixTitleRow, ResolverPrivacy, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow, SlugPatternPageRow, TrigramCandidateQuery, TrigramCandidateRow, FuzzyEntityCandidateRow, NameVariantCardCandidateRow, VariantPageRow } from '../../engine-sql/entity-reads.ts';
 import { ignoredPrivacyLabels, SCAN_CAP } from '../../search/ignored-privacy-labels.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
 import { retirementHopPolicy, storePagePolicy } from './private-provenance.ts';
@@ -187,6 +187,34 @@ export const listNameVariantCandidates: StoreMember<[sourceId: string, q: NameVa
   return storeCall({ member: 'listNameVariantCandidates', sourceId }, () => brain.listNameVariantCandidates(sourceId, {
     types: [...q.types], slugPatterns: [...q.slugPatterns], probes: [...q.probes], limit: Math.max(0, Math.floor(q.limit)) }));
 };
+
+/** listNameVariantCandidates under the page policy, read as readEntityCardRows reads it; a widening caller refuses typed. */
+export const listVisibleNameVariantCandidates: StoreMember<[sourceId: string, q: NameVariantCandidateQuery, opts?: { excludePrivate?: boolean }],
+  NameVariantCandidateRow[]> = (brain, sourceId, q, opts) => {
+  takeOptions('listVisibleNameVariantCandidates', q, ['types', 'slugPatterns', 'probes', 'limit']);
+  const taken = takeOptions('listVisibleNameVariantCandidates', opts, ['excludePrivate']);
+  const policy = storePagePolicy('listVisibleNameVariantCandidates', taken.excludePrivate, { callerReaders: true });
+  return storeCall({ member: 'listVisibleNameVariantCandidates', sourceId }, () => brain.listVisibleNameVariantCandidates(sourceId, {
+    types: [...q.types], slugPatterns: [...q.slugPatterns], probes: [...q.probes], limit: Math.max(0, Math.floor(q.limit)) }, policy ?? null));
+};
+
+/** listVisibleNameVariantCandidates as entity-card rows (readEntityCardRows' columns) with their probe hits. */
+export const listNameVariantCardCandidates: StoreMember<[sourceId: string, q: NameVariantCandidateQuery, opts?: { excludePrivate?: boolean }],
+  NameVariantCardCandidateRow[]> = (brain, sourceId, q, opts) => {
+  takeOptions('listNameVariantCardCandidates', q, ['types', 'slugPatterns', 'probes', 'limit']);
+  const taken = takeOptions('listNameVariantCardCandidates', opts, ['excludePrivate']);
+  const policy = storePagePolicy('listNameVariantCardCandidates', taken.excludePrivate, { callerReaders: true });
+  return storeCall({ member: 'listNameVariantCardCandidates', sourceId }, () => brain.listNameVariantCardCandidates(sourceId, {
+    types: [...q.types], slugPatterns: [...q.slugPatterns], probes: [...q.probes], limit: Math.max(0, Math.floor(q.limit)) }, policy ?? null)) as Promise<NameVariantCardCandidateRow[]>;
+};
+
+/** The live pages at `slugs` in list order under the page policy, read as readEntityCardRows reads it. */
+export const readVisibleVariantPages: StoreMember<[sourceId: string, slugs: readonly string[], opts?: { excludePrivate?: boolean }], VariantPageRow[]> =
+  (brain, sourceId, slugs, opts) => {
+    const taken = takeOptions('readVisibleVariantPages', opts, ['excludePrivate']);
+    const policy = storePagePolicy('readVisibleVariantPages', taken.excludePrivate, { callerReaders: true });
+    return storeCall({ member: 'readVisibleVariantPages', sourceId }, () => brain.readVisibleVariantPages(sourceId, [...slugs], policy ?? null));
+  };
 
 export const countDistinctInboundLinkers: StoreMember<[sourceIds: readonly string[], slugs: readonly string[]], InboundLinkerCountRow[]> =
   (brain, sourceIds, slugs) => storeCall({ member: 'countDistinctInboundLinkers' }, () =>

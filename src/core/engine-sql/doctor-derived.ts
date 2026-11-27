@@ -27,7 +27,7 @@ export type { EngineRawRead } from './cli-reads-ops.ts';
 export const DOCTOR_DERIVED_MEMBERS: readonly string[] = [
   'readIgnoredPrivacyLabelCounts', 'countSafeIndexPending', 'countCredentialProjectionPending', 'countPagesByTypeAndOwner',
   'listRecordedTombstones', 'countDerivedVisibility', 'listUntiledSegmentedPageRows', 'listTimelineHistoryBatch',
-  'listAtomFenceCandidates', 'readPageCompiledTruths', 'readEmbeddingBacklogAge', 'listBudgetLimitedRows', 'readBudgetHoldAge',
+  'listAtomFenceCandidates', 'readPageCompiledTruths', 'readEmbeddingBacklogAge', 'readEmbedBacklogRows', 'listBudgetLimitedRows', 'readBudgetHoldAge',
   'listImageAssetFiles', 'listAmbiguousExtractionInputs', 'listExtractionInputReceipts', 'listUnpricedDerivationModels',
   'listRestorableAtomRetirements', 'countLedgerCoveredAtomRetirements', 'listLiveGenerationRetirements', 'listHeldGenerations',
   'listOrphanGenerationCandidates', 'listOntologyFactCandidates', 'readAtomProvenanceCounts',
@@ -321,6 +321,28 @@ const BACKLOG_AGE_SQL = `SELECT EXTRACT(EPOCH FROM now() - min(cc.embedding_pend
 export async function readEmbeddingBacklogAge(raw: EngineRawRead, column: string): Promise<EmbeddingBacklogAgeRow | undefined> {
   const [row] = await raw<EmbeddingBacklogAgeRow>(withEmbeddingColumn(BACKLOG_AGE_SQL, column));
   return row;
+}
+
+export interface EmbedBacklogRow { source_id: string; pending: number; unaged: number; oldest: Date | string | null }
+
+// chunk-visibility-ok: the chunkGenerationFilter('p', 'cc') predicate is inlined as literal text (check:engine-sql-dynamic forbids composed SQL), moved verbatim from sync-pending.ts readEmbedBacklog
+const EMBED_BACKLOG_ROWS_SQL = `SELECT p.source_id, count(*)::int AS pending, count(*) FILTER (WHERE cc.embedding_pending_since IS NULL)::int AS unaged,
+            min(cc.embedding_pending_since) AS oldest
+       FROM content_chunks cc JOIN pages p ON p.id = cc.page_id
+      WHERE cc."__COL__" IS NULL AND p.deleted_at IS NULL AND p.source_id = ANY($1::text[]) AND ((cc.body_generation IS NULL AND p.body_storage <> 'segmented')
+       OR (cc.body_generation <= p.body_generation
+           AND EXISTS (SELECT 1 FROM page_body_manifest lm WHERE lm.page_id = cc.page_id AND lm.occurrence_id = cc.occurrence_id
+             AND lm.staging_id IS NULL AND lm.gen_from <= p.body_generation AND (lm.gen_to IS NULL OR lm.gen_to > p.body_generation))))
+        AND NOT jsonb_exists(COALESCE(p.frontmatter, '{}'::jsonb), 'embed_skip')
+      GROUP BY p.source_id`;
+
+/**
+ * Per source among `sourceIds`: the live-body chunks of live pages (not `embed_skip`) with no vector in `column`, how
+ * many of them carry no pending-since stamp, and the oldest stamp (`gbrain sync` pending and the doctor's managed-sync
+ * latency). A source with no such chunk has no row.
+ */
+export async function readEmbedBacklogRows(raw: EngineRawRead, column: string, sourceIds: string[]): Promise<EmbedBacklogRow[]> {
+  return raw<EmbedBacklogRow>(withEmbeddingColumn(EMBED_BACKLOG_ROWS_SQL, column), [sourceIds]);
 }
 
 export interface BudgetLimitedRow { source_id: string; state: 'held' | 'capped'; reason: string; pages: number; chunks: number; chars: number }

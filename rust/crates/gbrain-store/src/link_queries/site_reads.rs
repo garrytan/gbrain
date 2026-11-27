@@ -729,13 +729,15 @@ impl Store {
         Ok(out)
     }
 
-    /// `wordLexemes(words)` under the English configuration: `[{ w, lexemes }]`, each word's
-    /// `tsvector_to_array(to_tsvector(w))` (sorted as the tsvector holds them).
-    pub fn word_lexemes(&self, words: &[String]) -> Result<Vec<Value>> {
+    /// `wordLexemes(words)` under the text search configuration `config` (absent: `english`):
+    /// `[{ w, lexemes }]`, each word's `tsvector_to_array(to_tsvector(config, w))` (sorted as the
+    /// tsvector holds them).
+    pub fn word_lexemes(&self, words: &[String], config: Option<&str>) -> Result<Vec<Value>> {
+        let config = crate::keyword::FtsConfig::parse(config)?;
         words
             .iter()
             .map(|w| {
-                let vector = crate::keyword::to_tsvector(w)?;
+                let vector = crate::keyword::to_tsvector_in(config, w)?;
                 let lexemes: Vec<&str> = vector.entries.iter().map(|e| e.lexeme.as_str()).collect();
                 Ok(json!({"w": w, "lexemes": lexemes}))
             })

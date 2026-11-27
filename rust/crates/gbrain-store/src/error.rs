@@ -7,6 +7,9 @@ pub type Result<T> = std::result::Result<T, StoreError>;
 
 /// Another process (or another handle in this process) owns the brain.
 pub const STORE_LOCKED: &str = "store_locked";
+/// `open_dir` with `OpenOptions::create_missing` false found no brain in the directory (no `FORMAT`, no record file):
+/// nothing was created.
+pub const STORE_MISSING: &str = "store_missing";
 /// `FORMAT` or the format record is not a version this build reads and writes.
 pub const FORMAT_UNKNOWN: &str = "format_unknown";
 /// The file system or the storage engine failed. The write that hit it did not commit.

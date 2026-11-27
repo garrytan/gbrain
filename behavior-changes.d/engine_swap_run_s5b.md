@@ -1,0 +1,4 @@
+---
+kind: add
+---
+New: gbrain engine swap --to rust --yes --expect <hash> moves a PGLite brain to the opt-in Rust engine; --status shows a recorded run and --resume continues it. Without --yes the command answers confirmation_required (exit 3) with the plan hash instead of usage. The run refuses before any write with engine_swap_refused for folder rules while the Rust engine does not report access_control (folder_rules_unserved), access tokens, OAuth clients or remote MCP (remote_access_unserved), a brain another process holds (brain_in_use), a NOT READY verdict or an engine-selecting override, and with preview_changed when the plan hash changed. After a swap the old PGLite brain refuses every write (the graduation fence) and the config file names the Rust store. The --plan JSON gains policy, capability_report, write_pause and blockers and drops deferred.

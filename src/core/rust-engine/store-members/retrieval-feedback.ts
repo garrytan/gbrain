@@ -1,11 +1,12 @@
 /**
- * The retrieval feedback members (BrainEngine insertRetrievalEvents, readRetrievalEvent, applyRetrievalRatings; SQL in
+ * The retrieval feedback members (BrainEngine insertRetrievalEvents, readRetrievalEvent, applyRetrievalRatings,
+ * readPageFeedbackWeights; SQL in
  * engine-sql/retrieval-feedback.ts), served from the store's feedback records (rust/crates/gbrain-store/src/retrieval_feedback.rs,
- * rust/docs/store/retrieval-feedback.md). The retention prune, the weight reset and the weight read stay raw SQL and
- * refuse on a Rust brain.
+ * rust/docs/store/retrieval-feedback.md). The retention prune and the weight reset stay raw SQL and refuse on a Rust
+ * brain.
  */
-import type { AppliedRatingRow, RetrievalEventInsert, RetrievalEventRead, RetrievalRatingBatch } from '../../engine-sql/retrieval-feedback.ts';
-import { storeCall, type StoreMember } from './common.ts';
+import type { AppliedRatingRow, PageFeedbackWeightRow, RetrievalEventInsert, RetrievalEventRead, RetrievalRatingBatch } from '../../engine-sql/retrieval-feedback.ts';
+import { refuseMember, storeCall, type StoreMember } from './common.ts';
 
 export const insertRetrievalEvents: StoreMember<[events: RetrievalEventInsert[]], void> = async (brain, events) => {
   if (!events.length) return;
@@ -14,6 +15,12 @@ export const insertRetrievalEvents: StoreMember<[events: RetrievalEventInsert[]]
     pages: e.pages.map(p => ({ source_id: p.source_id, slug: p.slug, content_hash: p.content_hash ?? null, rank: p.rank, cited: p.cited })),
     links: e.links.map(l => ({ source_id: l.source_id, edge_key: l.edge_key, to_slug: l.to_slug })),
   }))));
+};
+
+export const readPageFeedbackWeights: StoreMember<[pageIds: readonly number[]], PageFeedbackWeightRow[]> = async (brain, pageIds) => {
+  if (!pageIds.length) return [];
+  if (!pageIds.every(Number.isSafeInteger)) refuseMember('readPageFeedbackWeights', 'a page id that is not an integer');
+  return await storeCall({ member: 'readPageFeedbackWeights' }, () => brain.readPageFeedbackWeights([...pageIds])) as PageFeedbackWeightRow[];
 };
 
 export const readRetrievalEvent: StoreMember<[id: string], RetrievalEventRead | null> = async (brain, id) =>

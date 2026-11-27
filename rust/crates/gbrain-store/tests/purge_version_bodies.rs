@@ -118,5 +118,19 @@ fn a_version_with_a_preimage_keeps_the_read_revision_and_body() {
     assert_eq!(row["compiled_truth"], json!("read body"));
     assert_eq!(row["title"], json!("Read"));
     assert_eq!(row["frontmatter"], json!({"stage": "read"}));
-    assert_eq!(row["tags"], json!(["a", "b"]));
+    // A caller's preimage keeps its tags in the order given, as PGLite's version insert does.
+    assert_eq!(row["tags"], json!(["b", "a"]));
+    // A revision spelled upper-case is stored lower-case, as the `::uuid` cast stores it.
+    let upper: CreateVersionOptions = serde_json::from_value(json!({
+        "sourceId": "default",
+        "preimage": {"revision": "00000000-0000-4000-8000-0000000000AB", "title": "Read", "type": "note",
+            "frontmatter": {}, "tags": [], "compiledTruth": "read body", "timeline": null,
+            "sourcePath": null, "deleted": false},
+    }))
+    .unwrap();
+    let row = store.create_version_opts("notes/p", &upper).unwrap();
+    assert_eq!(
+        row["knowledge_revision"],
+        json!("00000000-0000-4000-8000-0000000000ab")
+    );
 }

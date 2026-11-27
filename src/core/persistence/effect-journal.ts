@@ -18,7 +18,6 @@ import { claimOwner, EXPIRED_PREPARING_CHARGE_SQL } from './claim-phase.ts';
 import { refreshFenceClear } from './worktree-refresh-schema.ts';
 import { pageBatchChildRequestIds } from './page-batch-id.ts';
 import { EFFECT_FAULT_POINTS, faultPoint } from './fault-points.ts';
-import { REARMABLE_SQL } from '../engine-sql/persistence-effect-worker.ts';
 
 /**
  * `snapshot` is the publication's final read of the page, including deleted rows, in this transaction.
@@ -196,7 +195,6 @@ export async function mirrorGates(engine: Pick<BrainEngine, 'readMirrorGateRows'
  * calls this in its own transaction; each effect pass calls it again for the
  * requests it touched, for a park that settled after a concurrent mirror commit.
  */
-const REARMABLE = REARMABLE_SQL;
 
 /** Whether any of these requests has a target rearmWithheldTargets would re-arm; a pass opens its re-arm transaction only then. */
 export async function hasRearmableTargets(engine: Pick<BrainEngine, 'hasRearmableTargets'>, requestIds: readonly string[]): Promise<boolean> {
@@ -204,20 +202,18 @@ export async function hasRearmableTargets(engine: Pick<BrainEngine, 'hasRearmabl
   return engine.hasRearmableTargets([...new Set(requestIds)], WITHHELD_BY_MIRROR);
 }
 
-export async function rearmWithheldTargets(engine: SqlEngine, requestIds: readonly string[]): Promise<number> {
+export async function rearmWithheldTargets(engine: Pick<BrainEngine, 'persistenceUpkeepStore'>, requestIds: readonly string[]): Promise<number> {
   if (!requestIds.length) return 0;
-  const rows = await engine.executeRaw<PersistenceEffect>(`SELECT e.* FROM persistence_effects e WHERE ${REARMABLE}
-    ORDER BY e.id FOR UPDATE OF e SKIP LOCKED`, [[...new Set(requestIds)], WITHHELD_BY_MIRROR]);
+  const upkeep = await engine.persistenceUpkeepStore();
+  const rows = await upkeep.lockRearmableEffects<PersistenceEffect>([...new Set(requestIds)], WITHHELD_BY_MIRROR);
   for (const effect of rows) {
     const { parked = [], ...data } = effect.data;
     const kept = parked.filter(entry => entry.error_code !== WITHHELD_BY_MIRROR);
     const scanning = data.targets !== undefined || data.source_scan === true;
     const slugs = scanning ? parked.flatMap(entry => entry.error_code === WITHHELD_BY_MIRROR && entry.slug ? [entry.slug] : []) : [];
     const retrying = [...new Set([...(data.retry_slugs ?? []), ...slugs])];
-    await engine.executeRaw(`UPDATE persistence_effects SET state='queued',data=$2::text::jsonb,error_code=NULL,claim_expires_at=NULL,claim_owner=NULL,
-      next_attempt_at=now(),updated_at=now() WHERE id=$1 AND execution_token IS NULL AND recovery IS NULL AND ${PERSISTENCE_PROTOCOL_PREDICATE}`,
-    [effect.id, JSON.stringify({ ...data, ...(kept.length ? { parked: kept } : {}), ...(retrying.length ? { retry_slugs: retrying } : {}),
-      ...(effect.kind === 'embedding' ? { embedding_attempt_base: effect.attempts } : {}) })]);
+    await upkeep.rearmEffect(effect.id, JSON.stringify({ ...data, ...(kept.length ? { parked: kept } : {}), ...(retrying.length ? { retry_slugs: retrying } : {}),
+      ...(effect.kind === 'embedding' ? { embedding_attempt_base: effect.attempts } : {}) }));
   }
   return rows.length;
 }
@@ -293,9 +289,8 @@ export function effectClaimKeeper(engine: BrainEngine, effect: PersistenceEffect
     if (performance.now() - last < intervalMs) return;
     last = performance.now();
     effectClaimWork[effect.kind] = (effectClaimWork[effect.kind] ?? 0) + 1;
-    const rows = await engine.executeRawDirect(`UPDATE persistence_effects SET claim_expires_at=now()+interval '2 minutes',updated_at=now()
-      WHERE id=$1 AND execution_token=$2::uuid AND state='running' AND ${PERSISTENCE_PROTOCOL_PREDICATE} RETURNING id`, [effect.id, effect.execution_token]);
-    if (rows.length !== 1) throw opError('write_claim_lost', 'The effect claim changed.',
+    const renewed = await (await engine.persistenceUpkeepStore()).renewHeldEffectClaim(effect.id, effect.execution_token);
+    if (!renewed) throw opError('write_claim_lost', 'The effect claim changed.',
       `Another worker took over this ${effect.kind} effect of source ${effect.source_id} (its claim expired or was reassigned), so this attempt stopped; the current holder finishes it. Inspect the owner's effects rather than retrying by hand.`,
       { fix: readFix(`Shows source ${effect.source_id}'s canonical owner with its blocking, retrying and parked effects, read-only.`,
         { argv: ['gbrain', 'sources', 'writer', 'status', '--source', effect.source_id, '--json'] }) });

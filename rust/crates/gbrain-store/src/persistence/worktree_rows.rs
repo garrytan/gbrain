@@ -275,3 +275,27 @@ mod tests {
         assert_eq!(b.source_incarnation, inc.to_lowercase());
     }
 }
+
+/// Every `persistence_source_bindings` row with its source id, in source id order.
+pub(crate) fn list_source_bindings(read: &dyn KvRead) -> Result<Vec<(String, SourceBindingRow)>> {
+    let prefix = [keys::PERSISTENCE, WORKTREES, SOURCE_BINDING];
+    let mut out = Vec::new();
+    let mut bad = false;
+    crate::kv::scan_prefix(read, &prefix, false, &mut |k, v| {
+        match serde_json::from_slice::<SourceBindingRow>(v) {
+            Ok(row) => out.push((
+                String::from_utf8_lossy(&k[prefix.len()..]).into_owned(),
+                row,
+            )),
+            Err(_) => bad = true,
+        }
+        !bad
+    })?;
+    if bad {
+        return Err(StoreError::new(
+            STORE_CORRUPT,
+            "a persistence_source_bindings record is not valid JSON",
+        ));
+    }
+    Ok(out)
+}

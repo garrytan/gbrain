@@ -116,14 +116,12 @@ function day(v: Date | string): string | null {
  * absent from the map, and a failed read returns an empty map: callers mark those rows unattributed. An engine that
  * refuses the read (`engine_capability_missing`) refuses the caller.
  */
-export async function loadGuestMarks(engine: Pick<BrainEngine, 'executeRaw'>, pageIds: readonly number[]): Promise<Map<number, GuestStamp>> {
+export async function loadGuestMarks(engine: Pick<BrainEngine, 'readGuestMarks'>, pageIds: readonly number[]): Promise<Map<number, GuestStamp>> {
   const out = new Map<number, GuestStamp>();
   const ids = [...new Set(pageIds)];
   if (!ids.length) return out;
   try {
-    const rows = await engine.executeRaw<MarkRow>(`SELECT m.page_id, m.sender_label, m.group_slug, m.audience_member, m.saved_at, m.writer_kind, m.writer_id,
-        EXISTS (SELECT 1 FROM guest_promotions g WHERE g.guest_page_id = m.page_id) AS promoted
-      FROM guest_marks m WHERE m.page_id = ANY($1::int[])`, [ids]);
+    const rows: MarkRow[] = await engine.readGuestMarks(ids);
     for (const r of rows) {
       out.set(Number(r.page_id), { sender: r.sender_label, group: r.group_slug, audience_member: r.audience_member, saved_at: day(r.saved_at),
         promoted: r.promoted === true, writer: `${r.writer_kind}:${r.writer_id}` });

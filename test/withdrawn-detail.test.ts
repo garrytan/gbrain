@@ -27,9 +27,9 @@ beforeEach(async () => {
 });
 
 describe('fact_withdrawn refusals carry the withdrawal', () => {
-  test('one identical object on stdio, HTTP, local and batch refusals', () => detailOnEverySurface(engine));
+  test('the object on local refusals only; stdio, HTTP and batch refusals carry none', () => detailOnEverySurface(engine));
   test('the most specific subject first, then the newest', () => mostSpecificSubjectFirst(engine));
-  test('no object when the caller cannot read the withdrawn rows', () => hiddenBackingOmitsDetail(engine));
-  test('a failed receipt keeps the object for get_write_request and replay', () => receiptKeepsDetail(engine));
+  test('a remote refusal is byte-identical whether the withdrawn rows are hidden, visible or absent', () => hiddenBackingOmitsDetail(engine));
+  test('a remote failed receipt carries no object in get_write_request or replay', () => receiptKeepsDetail(engine));
   test('the single-fact writer applies the same rule; a purge supplies no object', () => singleWriterSameRule(engine));
 });
