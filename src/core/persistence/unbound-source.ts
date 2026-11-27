@@ -112,7 +112,7 @@ export function readOnlyMirrorForgetError(sourceId: string, factId: number, why:
     : '';
   const error = new OperationError('owner_unavailable',
     `Source '${sourceId}' is a read-only mirror with no canonical owner, so forget cannot withdraw fact ${factId}: a page file in the mirror carries it, and gbrain never writes the mirror's checkout.`,
-    `Nothing was withdrawn. Remove the claim at the authoritative source: edit the page in the upstream repository this mirror follows, bring that commit into the mirror's checkout (a managed brain's sync does not pull, so pull it there with git), then run gbrain sync --source ${sourceId} and check with gbrain recall --include-expired that fact ${factId} is gone.${writable}`,
+    `Nothing was withdrawn. Remove the claim at the authoritative source: edit the page in the upstream repository this mirror follows, then update the mirror from it: on a brain that is not managed, gbrain sync --source ${sourceId} pulls and reindexes it; a managed brain needs the source bound first (${unboundBindCommand(sourceId, path)}), then gbrain sources refresh ${sourceId}.${writable}`,
     UNBOUND_SOURCE_DOCS);
   error.detail = 'read_only_mirror';
   error.retryable = false;

@@ -66,17 +66,23 @@ for (const kind of testBackends()) {
 
     test('a re-extraction that narrows a claim to private narrows its expired copies, so remote history never returns it', async () => {
       const QUIET = 'Alice Example is planning a surprise party';
-      await engine.executeRaw(`INSERT INTO facts (source_id, fact, kind, visibility, source, source_markdown_slug) VALUES ('default', $1, 'fact', 'world', $2, $3)`, [QUIET, LANE, SLUG]);
+      const CONTROL = 'Alice Example enjoys jazz concerts';
+      for (const fact of [`${QUIET}.`, CONTROL]) {
+        await engine.executeRaw(`INSERT INTO facts (source_id, fact, kind, visibility, source, source_markdown_slug) VALUES ('default', $1, 'fact', 'world', $2, $3)`, [fact, LANE, SLUG]);
+      }
       const narrowed = { fact: QUIET, kind: 'fact', entity_slug: null, context: null, valid_from: null, valid_until: null, source: LANE, source_session: null,
         confidence: 1, notability: 'medium', embedding: null, embedding_model: null, visibility: 'private' };
       await publishConversationFacts(engine, 'default', SLUG, [narrowed as never], { scope: 'full' });
       const copies = await engine.executeRaw<{ visibility: string; expired: boolean }>(
-        'SELECT visibility, expired_at IS NOT NULL AS expired FROM facts WHERE fact = $1 ORDER BY id', [QUIET]);
+        'SELECT visibility, expired_at IS NOT NULL AS expired FROM facts WHERE fact LIKE $1 ORDER BY id', [`${QUIET}%`]);
       expect(copies.map(c => [c.visibility, c.expired])).toEqual([['private', true], ['private', false]]);
       const auth = { token: 't', clientId: 'history-reader', scopes: ['read'], sourceId: 'default', allowedSources: ['default'] };
       const res = await dispatchToolCall(engine, 'recall', { include_expired: true, limit: 100 },
         { remote: true, transport: 'stdio', sourceId: 'default', auth, config: { engine: engine.kind } as never });
-      expect(res.content.map(c => (c as { text?: string }).text ?? '').join('\n')).not.toContain(QUIET);
+      expect(res.isError).toBeFalsy();
+      const text = res.content.map(c => (c as { text?: string }).text ?? '').join('\n');
+      expect(text).toContain(CONTROL);
+      expect(text).not.toContain(QUIET);
     });
   });
 }
