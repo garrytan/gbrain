@@ -466,8 +466,8 @@ export const MW_CASES: readonly MwCase[] = [
     },
     cells: {
       pglite: na('PGLite is in-memory and one connection: seven writer processes cannot share it'), postgres: RUNS,
-      rust: pending('L3 server', 'admitJob from a second process refuses engine_capability_missing (capability minion_queue): its policy argument carries functions (decide, parentAuthorityKind), which do not cross the owner socket, so nothing ran; 56 of 64 writers (the seven client processes) were refused. Page writes and claimNextJob from clients succeed. Needs a job-admission path a client can send (whole operation or a policy the owner builds)'),
-      'rust-mu': pending('L3 server', 'admitJob from a second process refuses engine_capability_missing (capability minion_queue): its policy argument carries functions (decide, parentAuthorityKind), which do not cross the owner socket, so nothing ran; 56 of 64 writers (the seven client processes) were refused. Page writes and claimNextJob from clients succeed. Needs a job-admission path a client can send (whole operation or a policy the owner builds)'),
+      rust: RUNS,
+      'rust-mu': RUNS,
       'store-single': RUNS, 'store-optimistic': RUNS,
     },
   },
