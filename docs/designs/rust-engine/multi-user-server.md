@@ -677,7 +677,9 @@ impl Store {
   - a call on a claim or handle taken before the registration: `takenFenceOpts` / `boundFenceOpts` give it the
     `TAKEN_UNFENCED` mark, a symbol key that no store, SQL engine or socket sees;
   - a client's call the owner runs for it over the owner socket (`runAsOwnerClientCall`);
-  - the notifier family, whose fence is its own lease;
+  - the notifier's state and coverage writes, whose fence is the notifier's own lease. That lease is itself host-fenced:
+    `claimNotifierLease` (take and renew) is in the list as `notifier_lease_claim`, so a stale host can neither keep nor
+    retake it (`lf1_a_stale_host_cannot_renew_or_retake_the_notifier_lease`);
   - any call with the switch off.
   Tests: `test/rust-multiuser-fence-dispatch.test.ts`.
 

@@ -45,8 +45,12 @@ const FORWARDERS: Record<string, string> = {
   'src/core/postgres-engine.ts': 'engine class: delegates each member to its SQL statement with the caller\'s options',
   'src/core/rust-engine/store-members/': 'Rust store members: pass the caller\'s fence to the addon unchanged',
   'src/core/engine-sql/': 'SQL statements: the SQL engines fence with their own row locks and tokens',
-  'src/core/notifier/store.ts': 'NotifierStore adapter: forwards the patch and coverage, which carry the notifier\'s lease',
   'src/core/persistence/consumer-lane.ts': 'direct-lane engine proxy: forwards the caller\'s release, which carries its fence',
+};
+
+/** Files that forward only some members, by member: their other calls are checked. */
+const MEMBER_FORWARDERS: Record<string, { members: readonly string[]; reason: string }> = {
+  'src/core/notifier/store.ts': { members: ['writeNotifierState', 'writeNotifierCoverage'], reason: 'NotifierStore adapter: forwards the patch and coverage, which carry the notifier\'s lease' },
 };
 
 /** Call sites that send no fence on purpose, keyed `file:member`, with the reason. */
@@ -141,7 +145,7 @@ function census(): CallSite[] {
     const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
     const visit = (n: ts.Node) => {
       const member = ts.isCallExpression(n) ? memberOf(n, sf) : null;
-      if (member && ts.isCallExpression(n) && !throughQueue(n, sf, file)) {
+      if (member && ts.isCallExpression(n) && !throughQueue(n, sf, file) && !MEMBER_FORWARDERS[file]?.members.includes(member)) {
         sites.push({ file, line: sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1, member, text: n.getText(sf).replace(/\s+/g, ' ').slice(0, 160), fenced: sendsFence(n, sf) });
       }
       n.forEachChild(visit);

@@ -20,6 +20,7 @@ import { DREAM_INLINE_PRIVATE_QUEUE_PREFIX, MinionQueue } from '../src/core/mini
 import { drainWakes } from '../src/core/wakeshift/drain.ts';
 import { startCommitNotifier, type NotifierStore } from '../src/core/commit-notifier.ts';
 import { memoryNotifierStore } from './helpers/notifier-memory-store.ts';
+import { claimLease as claimNotifierLease } from '../src/core/notifier/store.ts';
 import { buildSegmentedProjection } from '../src/core/page-body/projection.ts';
 import { continueDeferredProjectionStep, DEFERRED_CHUNK_CLAIM } from '../src/core/page-state/projections.ts';
 import { basisEmbedding } from './engine-parity/harness.ts';
@@ -237,6 +238,19 @@ describe('family 1, the commit notifier lease', () => {
       const refused = await refusal(() => engine.writeNotifierState('default', { state: 'running', firstDue: 'keep', lease: { hostId: HOST, ownerId: ownerA, fence: 1 } }));
       expect(refused.code).toBe('lease_lost');
       await engine.writeNotifierState('default', { state: 'running', firstDue: 'keep', lease: { hostId: HOST, ownerId: ownerB, fence: 2 } });
+    });
+  });
+});
+
+describe('family 1, the notifier lease itself is host-fenced', () => {
+  withAddon('after a takeover of the host lease the old holder cannot renew or retake the notifier lease through the notifier store', async () => {
+    await onStaleableHost(async (engine, takeOver) => {
+      const e = engine as unknown as BrainEngine;
+      const owner = 'e0000000-0000-4000-8000-0000000000c1';
+      const claim = { hostId: '00000000-0000-4000-8000-0000000025a7', ownerId: owner, kind: 'serve', pid: 1, leaseMs: 30_000 };
+      expect(await claimNotifierLease(e, claim)).toMatchObject({ owner: true, fence: 1 });
+      await takeOver();
+      expect(await refusal(() => claimNotifierLease(e, claim))).toEqual({ code: 'lease_lost', reason: 'epoch_moved' });
     });
   });
 });

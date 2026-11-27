@@ -21,6 +21,7 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import { hostIdFor } from '../persistence/identity.ts';
+import { fenceOpts } from '../persistence/host-fence.ts';
 import type { Coverage, MarkerIntent, NotifierLeaseClaim, NotifierLeaseClaimInput, NotifierLeaseHolder, NotifierSourceRow, StatePatch, WantedMarker, WantedMarkerInput } from '../engine-sql/notifier.ts';
 
 export type { Coverage, DetectionMode, NotifierSourceRow, NotifierState, StatePatch } from '../engine-sql/notifier.ts';
@@ -104,7 +105,7 @@ export type LeaseHolder = NotifierLeaseHolder;
 
 /** Claims or renews the host's notifier lease: the fencing token when this resident owns it, else the current holder. */
 export async function claimLease(engine: Pick<BrainEngine, 'claimNotifierLease'>, l: NotifierLeaseClaimInput): Promise<NotifierLeaseClaim> {
-  return engine.claimNotifierLease(l);
+  return engine.claimNotifierLease({ ...l, ...fenceOpts(engine) }); // host fence (I-5): a stale host cannot keep or retake it
 }
 
 export async function readLease(engine: Pick<BrainEngine, 'readNotifierLease'>, hostId: string): Promise<LeaseHolder | null> {

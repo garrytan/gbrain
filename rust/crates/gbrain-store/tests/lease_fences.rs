@@ -401,3 +401,48 @@ fn lf1_with_the_mode_off_a_notifier_write_does_not_read_the_lease() {
     .unwrap();
     b.store.write_notifier_state("default", &patch).unwrap();
 }
+
+/// The notifier lease itself is host-fenced: a host whose registration was taken over can neither keep (renew) its
+/// notifier lease nor take it again, so the notifier writes it fences (lf1 above) cannot outlive the host's epoch.
+#[test]
+fn lf1_a_stale_host_cannot_renew_or_retake_the_notifier_lease() {
+    let b = brain("lf1-notifier-claim", true);
+    assert!(b.store.multiuser(), "multi-user mode is on");
+    let a = b.lease("consumer:h", "a");
+    let claim = |owner: &str,
+                 fence: &LeaseToken|
+     -> gbrain_store::persistence::NotifierLeaseClaim {
+        fenced(
+            json!({ "hostId": NOTIFIER_HOST, "ownerId": owner, "kind": "serve", "pid": 101, "leaseMs": 30_000 }),
+            fence,
+        )
+    };
+    assert_eq!(
+        b.store.claim_notifier_lease(&claim(OWNER_A, &a)).unwrap()["fence"],
+        1
+    );
+    let new = b.take_over("consumer:h", &a);
+    let before = b.dump();
+    refused(
+        &b.store
+            .claim_notifier_lease(&claim(OWNER_A, &a))
+            .unwrap_err(),
+        "epoch_moved",
+    );
+    b.advance_ms(31_000); // the notifier lease lapses: a stale host still cannot take it again
+    refused(
+        &b.store
+            .claim_notifier_lease(&claim(OWNER_B, &a))
+            .unwrap_err(),
+        "epoch_moved",
+    );
+    assert_eq!(
+        b.dump(),
+        before,
+        "a refused notifier claim changed the brain"
+    );
+    assert_eq!(
+        b.store.claim_notifier_lease(&claim(OWNER_B, &new)).unwrap()["fence"],
+        2
+    );
+}

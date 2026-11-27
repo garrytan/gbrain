@@ -19,6 +19,7 @@ export const FENCED_MEMBERS = {
   drain_lease: ['writeDrainLeaseHolder', 'refreshDrainLeaseHolder', 'releaseDrainLeaseHolder'],
   consumer_rows: ['renewConsumerRow'],
   notifier_lease: ['writeNotifierState', 'writeNotifierCoverage'],
+  notifier_lease_claim: ['claimNotifierLease'],
   housekeeping_turn: ['claimHousekeepingTurn', 'completeHousekeepingTurn'],
   private_queue_lease: ['renewPrivateQueueLease'],
   segmented_projection: ['claimSegmentedProjection', 'renewSegmentedProjectionClaim', 'releaseSegmentedProjectionClaim'],
@@ -40,7 +41,8 @@ export const FENCED_CALL_ALIASES: Partial<Record<FencedFamily, readonly string[]
 /**
  * Families whose fence is a lease of their own, not the host registration, so the dispatch refusal skips them: the
  * notifier's writes carry the notifier lease (host, owner, fence), which the store checks whenever it is sent, and a
- * host registration does not mean this process holds the notifier lease. The census still checks their callers.
+ * host registration does not mean this process holds the notifier lease. The census still checks their callers. The
+ * notifier lease itself is host-fenced (`notifier_lease_claim`): a stale host can neither keep nor retake it.
  */
 export const OWN_LEASE_FAMILIES: ReadonlySet<FencedFamily> = new Set<FencedFamily>(['notifier_lease']);
 

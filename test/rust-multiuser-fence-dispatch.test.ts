@@ -83,6 +83,7 @@ const CALLS: Record<Exclude<FencedFamily, 'notifier_lease'>, Call> = {
   deferred_replacement: (e, f) => e.releaseDeferredReplacementClaim('notes/a', 'claim:a', f),
   wake_leases: (e, f) => e.claimWakeWatch(1, 60, f),
   page_embedding_lease: (e, f) => e.takePageEmbeddingLease('embed-page:1', { holderPid: 1, holderHost: 'h', acquisitionToken: randomUUID(), ttlMinutes: 10, ...f }),
+  notifier_lease_claim: (e, f) => e.claimNotifierLease({ hostId: HOST, ownerId: randomUUID(), kind: 'serve', pid: 1, leaseMs: 30_000, ...f }),
 };
 
 /** A multi-user Rust engine (asserted) with a host lease registered on it. */
