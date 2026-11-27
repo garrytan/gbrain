@@ -165,23 +165,25 @@ const MAX_INLINE = 2_000;
 /**
  * GCH5-06: a control a terminal acts on (C0 except tab, DEL, C1); line breaks are flattened before this runs. F6: the
  * bidirectional embedding, override and isolate controls (U+202A-U+202E, U+2066-U+2069) too, which reorder what a
- * terminal shows (Trojan Source).
+ * terminal shows (Trojan Source), and F6b the three bidirectional marks (U+061C ALM, U+200E LRM, U+200F RLM), which
+ * move nearby slashes, digits and punctuation. The same twelve are in shell-quote.ts UNPRINTABLE and ESCAPED.
  */
-const CONTROL_RE = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/u;
+const CONTROL_RE = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/u;
 const CONTROL_G = new RegExp(CONTROL_RE.source, 'gu');
-/** F6: the nine bidirectional embedding, override and isolate controls on their own (U+202A-U+202E, U+2066-U+2069). */
-const BIDI_G = /[\u202a-\u202e\u2066-\u2069]/gu;
+/** F6: the twelve bidirectional characters on their own: the embedding, override and isolate controls (U+202A-U+202E,
+ * U+2066-U+2069) and the marks (U+061C, U+200E, U+200F). */
+const BIDI_G = /[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/gu;
 
 /**
- * F6: error prose (an envelope's message, suggestion and why) with each bidi control written as `\NNN` octal bytes.
- * Only those nine: no line flattening and no cap, so the prose reads as it always did.
+ * F6: error prose (an envelope's message, suggestion and why) with each bidi character written as `\NNN` octal bytes.
+ * Only those twelve: no line flattening and no cap, so the prose reads as it always did.
  */
 export function bidiInert(text: string): string {
   return text.replace(BIDI_G, octalBytes);
 }
 
 /**
- * F6: JSON text for a reader (an MCP argument list, a JSON error document) with each bidi control written as a
+ * F6: JSON text for a reader (an MCP argument list, a JSON error document) with each bidi character written as a
  * `\uXXXX` escape. Lossless: JSON.parse returns exactly the value, so argv and MCP arguments stay exact.
  */
 export function jsonText(value: unknown, space?: number): string {
@@ -194,7 +196,7 @@ export function jsonText(value: unknown, space?: number): string {
  * page title renders as `(/SHOW USER]` and cannot close or open a block.
  * GCH5-06: every other control a terminal acts on (BEL, ESC, DEL, C1, NUL) is
  * written as visible `\NNN` octal bytes; tab stays. F6: so are the nine
- * bidirectional embedding, override and isolate controls. GCH5-05: a cut lands only between whole characters, never
+ * bidirectional embedding, override and isolate controls and (F6b) the three bidirectional marks. GCH5-05: a cut lands only between whole characters, never
  * inside a surrogate pair or a `\NNN` escape, and the text is well formed.
  */
 export function inertText(value: string, max: number = MAX_INLINE): string {
@@ -408,7 +410,7 @@ export function noticeBlock(n: RenderedNotice): string {
 const HTTP_DROP_KEYS = new Set(['pid', 'lock_owner', 'path', 'data_dir', 'database_path', 'asset']);
 // GCH5-02: an octal byte escape of a `$'...'` command word (shell-quote.ts quotedWord, e.g. `\012` for a line break) is a boundary too.
 // GCH5-06: a raw C0, DEL or C1 control (a structured argv value is never escaped) is a boundary as well; F6: so is a raw bidi control.
-const ABS_PATH_RE = /(?:^|(?<=[\s'"`(=\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]|\\[0-7]{3}))(?:\/(?:home|Users|root|tmp|var|private|opt|srv|mnt|etc)\/[^\s'"`)]*|[A-Za-z]:\\[^\s'"`)]*|~\/[^\s'"`)]*)/g;
+const ABS_PATH_RE = /(?:^|(?<=[\s'"`(=\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]|\\[0-7]{3}))(?:\/(?:home|Users|root|tmp|var|private|opt|srv|mnt|etc)\/[^\s'"`)]*|[A-Za-z]:\\[^\s'"`)]*|~\/[^\s'"`)]*)/g;
 // No letter or digit before it, so `owner_pid=123` in a detail is redacted too (`\b` does not break after `_`).
 const PID_RE = /(?<![A-Za-z0-9])(PID|pid)\s*[:=]?\s*\d+/g;
 const KEY_NAME_RE = /\b[A-Z][A-Z0-9]*_(?:API_KEY|TOKEN|SECRET)\b/g;
