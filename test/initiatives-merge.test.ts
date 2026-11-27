@@ -58,6 +58,14 @@ function fakeChat(reply: unknown): ChatFn {
   return async () => ({ text: JSON.stringify(reply), stopReason: 'end', model: 'test:model' });
 }
 
+const COPIED_FENCE = [
+  '<!--- gbrain:facts:begin -->', '',
+  '| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context |',
+  '|---|-------|------|------------|------------|------------|------------|-------------|--------|---------|',
+  '| 1 | The team shipped PDF export in Alpha. | fact | 1.0 | world | medium | 2026-11-27 | | test seed | |',
+  '<!--- gbrain:facts:end -->',
+].join('\n');
+
 function goodReply() {
   return {
     items: [
@@ -67,7 +75,9 @@ function goodReply() {
       { action: 'add', target: 'projects/nope', fact: 'Nope', reason: 'unknown target' },
       { action: 'skip', target: 'initiatives/beta-launch', fact: 'Standup moved to 10am', reason: 'chatter' },
     ],
-    new_projects: [{ slug: 'projects/gamma', title: 'Gamma', body: '## Overview\n\nGamma shows Alpha exports.' }],
+    // The model copies the initiative's facts fence into the new page body (seen in production): applying the plan
+    // must not import it as a second copy of the initiative's fact.
+    new_projects: [{ slug: 'projects/gamma', title: 'Gamma', body: '## Overview\n\nGamma shows Alpha exports.\n\n## Facts\n\n' + COPIED_FENCE }],
   };
 }
 
@@ -130,9 +140,28 @@ describe('finishInitiative', () => {
       `SELECT name, idempotency_key, max_attempts FROM minion_jobs WHERE id = $1`, [r.job_id]);
     expect(job).toMatchObject({ name: 'initiative_finish', idempotency_key: 'initiative_finish:default:initiatives/beta-launch', max_attempts: 3 });
   });
+
+  test('initiative_status reports the finish job and each fact\'s provenance', async () => {
+    const op = await loadOperation('initiative_status');
+    const s = await op!.handler(ctx(), { slug: 'initiatives/beta-launch' }) as Record<string, any>;
+    expect(s.finish_job).toMatchObject({ status: 'waiting', error: null });
+    expect(typeof s.finish_job.id).toBe('number');
+    expect(s.facts.recent.map((f: any) => f.provenance)).toEqual(['test seed']);
+    const none = await op!.handler(ctx(), { slug: 'initiatives/old-thing' }) as Record<string, any>;
+    expect(none.finish_job).toBeNull();
+  });
 });
 
 describe('merge plan on the page + apply', () => {
+  test('the model sees the requirements without the facts fence; the plan keeps no fence in new page bodies', async () => {
+    let prompt = '';
+    const chat: ChatFn = async (opts) => { prompt = JSON.stringify(opts); return { text: JSON.stringify(goodReply()), stopReason: 'end', model: 'test:model' }; };
+    const plan = await planMerge(engine, cfg, 'initiatives/beta-launch', { chat });
+    expect(prompt).toContain('Requirements: Alpha exports CSV and PDF.');
+    expect(prompt).not.toContain('gbrain:facts:begin');
+    expect(plan.new_projects[0].body).not.toContain('gbrain:facts');
+  });
+
   test('writeMergePlan stores a readable plan that reads back', async () => {
     const plan = await planMerge(engine, cfg, 'initiatives/beta-launch', { chat: fakeChat(goodReply()) });
     await writeMergePlan(ctx(), cfg, 'initiatives/beta-launch', plan);
@@ -163,6 +192,9 @@ describe('merge plan on the page + apply', () => {
     expect(r).toMatchObject({ dry_run: false, applied: 2, created_pages: ['projects/gamma'] });
     const gamma = await readPage(engine, SRC, 'projects/gamma');
     expect(gamma!.type).toBe('project');
+    expect(gamma!.body).toContain('Gamma shows Alpha exports.');
+    // Only the merged fact reaches the page (its own fence row); the initiative's copied fence row does not.
+    expect(gamma!.body).not.toContain('The team shipped PDF export in Alpha.');
     expect(gamma!.frontmatter.created_by).toEqual(['initiatives/beta-launch']);
     const alpha = (await liveFacts('projects/alpha')).map(f => f.fact);
     expect(alpha).toContain('Alpha exports CSV and PDF files.');

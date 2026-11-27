@@ -5887,7 +5887,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
   {
     "name": "initiative_status",
     "outputRedaction": "no_stored_text",
-    "description": "One initiative: status, recent facts collected (Slack, meetings, remember), ideas it implements, targets, Slack channels and merge state.",
+    "description": "One initiative: status, recent facts collected (Slack, meetings, remember) with provenance, ideas it implements, targets, Slack channels, merge state and the finish job (finish_job: queued, active, completed or failed).",
     "params": {
       "slug": {
         "type": "string",

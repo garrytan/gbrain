@@ -61,7 +61,7 @@ ideas/<slug>  ◀─implements─  initiatives/<slug>  ─targets─▶  project
 | List ideas or initiatives | `initiatives_list` |
 | Create an initiative | `initiative_start` (title, requirements body, `implements`, `targets`, `tracker`) |
 | Bind a Slack channel | `initiative_bind_slack` (the bot must be in the channel) |
-| Progress | `initiative_status` |
+| Progress, finish job state | `initiative_status` (`finish_job`, facts with provenance) |
 | Record a decision | `remember` with `entity: <initiative slug>` |
 | Finish | `finish_initiative` (`done` or `cancelled`; `dry_run` shows the steps) |
 | Apply the merge | `initiative_merge_apply` (`skip` item ids, `dry_run`) |
@@ -69,7 +69,10 @@ ideas/<slug>  ◀─implements─  initiatives/<slug>  ─targets─▶  project
 `finish_initiative` queues the `initiative_finish` job: a final Slack sync, the
 last facts routed, a closing message in each channel and the bot leaving it
 (`initiatives.slack.leave_on_finish`, default true), then for `done` a merge plan
-written into the initiative page (`## Merge plan`). A person reviews it (or edits
+written into the initiative page (`## Merge plan`). The job runs as the brain,
+not as the caller, so follow it with `initiative_status` (`finish_job`) rather
+than `get_job`. A plan carries facts only as items: a facts table the model
+copies into a new page's body is dropped, so a fact is never imported twice. A person reviews it (or edits
 the JSON block) and applies it with `initiative_merge_apply`; set
 `initiatives.merge.auto_apply true` to apply right away.
 

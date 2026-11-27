@@ -22,6 +22,7 @@ import { resolveModel, TIER_DEFAULTS } from '../model-config.ts';
 import { loadOperation } from '../operation-load.ts';
 import { OperationError, type OperationContext } from '../ops/contract.ts';
 import { submitPageMutation } from '../persistence/page-mutations.ts';
+import { stripFactsFence } from '../facts-fence.ts';
 import { INITIATIVE_TYPE, initiativeStatusOf, slugSegment, stringList, today, type InitiativesConfig } from './model.ts';
 import { readPage, requestIdFor, resolveUnderPrefix, updatePage, writePage } from './store.ts';
 
@@ -68,7 +69,7 @@ async function targetContexts(engine: BrainEngine, cfg: InitiativesConfig, initi
     const page = found ? await readPage(engine, cfg.sourceId, found) : null;
     if (page) {
       if (out.some(t => t.slug === page.slug)) continue;
-      out.push({ slug: page.slug, ref, exists: true, title: page.title || page.slug, body: page.body.slice(0, TARGET_BODY_CHARS),
+      out.push({ slug: page.slug, ref, exists: true, title: page.title || page.slug, body: withoutFactsFence(page.body).slice(0, TARGET_BODY_CHARS),
         facts: await liveFacts(engine, cfg.sourceId, page.slug) });
     } else {
       const slug = newProjectSlug(cfg, ref);
@@ -173,7 +174,7 @@ export function validatePlan(raw: RawPlan | null, targets: TargetContext[], meta
   const newProjects = targets.filter(t => !t.exists).map(t => {
     const p = rawProjects.find(x => x && String(x.slug ?? '').trim() === t.slug);
     const title = typeof p?.title === 'string' && p.title.trim() ? p.title.trim().slice(0, 200) : t.title;
-    const body = typeof p?.body === 'string' && p.body.trim() ? p.body.trim() : `## Overview\n\n${requirements.slice(0, 2000).trim() || title}`;
+    const body = typeof p?.body === 'string' && withoutFactsFence(p.body) ? withoutFactsFence(p.body) : `## Overview\n\n${requirements.slice(0, 2000).trim() || title}`;
     return { slug: t.slug, title, body };
   });
   return { initiative: meta.initiative, generated_at: meta.generatedAt, model: meta.model, new_projects: newProjects, items };
@@ -184,7 +185,7 @@ export async function planMerge(engine: BrainEngine, cfg: InitiativesConfig, ini
   if (!page || page.type !== INITIATIVE_TYPE) throw new OperationError('initiative_not_found', `No initiative ${initiativeSlug} in source ${cfg.sourceId}.`, 'List initiatives with initiatives_list and pass one of their slugs.');
   const facts = await liveFacts(engine, cfg.sourceId, page.slug);
   const targets = await targetContexts(engine, cfg, page.slug, stringList(page.frontmatter.targets));
-  const requirements = stripPlanSection(page.body);
+  const requirements = withoutFactsFence(stripPlanSection(page.body));
   const model = await resolveModel(engine, { configKey: MERGE_MODEL_KEY, tier: 'reasoning', fallback: TIER_DEFAULTS.reasoning });
   const chat: ChatFn = deps.chat ?? (async (opts) => (await import('../ai/gateway.ts')).chat(opts));
   const result = await chat({
@@ -198,6 +199,15 @@ export async function planMerge(engine: BrainEngine, cfg: InitiativesConfig, ini
 }
 
 /** The body without its `## Merge plan` section. */
+/**
+ * The page body without its facts fence (and the `## Facts` heading it leaves empty). Facts reach a target only
+ * through the plan's items: a fence copied into a new page's body would be imported as a second copy of every
+ * initiative fact when the page is written.
+ */
+export function withoutFactsFence(body: string): string {
+  return stripFactsFence(body).replace(/^#{1,6}\s+Facts\s*\n(?:\s*\n)*(?=#{1,6}\s|$(?![\s\S]))/gim, '').replace(/\n{3,}/g, '\n\n').trim();
+}
+
 function stripPlanSection(body: string): string {
   const at = body.indexOf(`\n${PLAN_HEADING}`) >= 0 ? body.indexOf(`\n${PLAN_HEADING}`) + 1 : body.startsWith(PLAN_HEADING) ? 0 : -1;
   if (at < 0) return body;
@@ -248,7 +258,7 @@ export function readMergePlan(body: string): MergePlan | null {
     && (ACTIONS as readonly string[]).includes(i.action) && typeof i.target === 'string');
   const newProjects = (Array.isArray(p.new_projects) ? p.new_projects : [])
     .filter(n => n && typeof n.slug === 'string' && n.slug.trim())
-    .map(n => ({ slug: n.slug.trim(), title: typeof n.title === 'string' && n.title.trim() ? n.title.trim() : titleFromSlug(n.slug), body: typeof n.body === 'string' ? n.body : '' }));
+    .map(n => ({ slug: n.slug.trim(), title: typeof n.title === 'string' && n.title.trim() ? n.title.trim() : titleFromSlug(n.slug), body: typeof n.body === 'string' ? withoutFactsFence(n.body) : '' }));
   return {
     initiative: String(p.initiative ?? ''), generated_at: String(p.generated_at ?? ''), model: String(p.model ?? ''),
     new_projects: newProjects, items: items.map(i => ({ ...i, reason: typeof i.reason === 'string' ? i.reason : '' })),
@@ -282,7 +292,7 @@ export async function applyMerge(ctx: OperationContext, cfg: InitiativesConfig, 
     if (opts.dryRun) continue;
     try {
       await writePage(wctx, {
-        sourceId: cfg.sourceId, slug: p.slug, type: 'project', title: p.title, body: p.body,
+        sourceId: cfg.sourceId, slug: p.slug, type: 'project', title: p.title, body: withoutFactsFence(p.body),
         frontmatter: { created_by: [page.slug], created: date }, requestKey: ['merge', page.slug, 'create', p.slug],
       });
     } catch (err) {

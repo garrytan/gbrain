@@ -122,7 +122,7 @@ Every non-localOnly operation on the MCP surface: 205 tools across 34 areas. **S
 | `initiative_bind_slack` | Bind a Slack channel (name or id) to an active initiative: its messages and threads are synced and their facts land on the initiative. | write |  |  |
 | `initiative_merge_apply` | Apply the merge plan of a finished (done) initiative to its target pages: facts added, replaced (old kept as history) or withdrawn, new project pages created, timeline entries linking back. | write |  |  |
 | `initiative_start` | Create an initiative: requirements as the page body, the ideas it implements, the project/concept pages it changes (targets; none = it becomes a new project), tracker key and optionally a Slack channel to bind. | write |  |  |
-| `initiative_status` | One initiative: status, recent facts collected (Slack, meetings, remember), ideas it implements, targets, Slack channels and merge state. | read |  |  |
+| `initiative_status` | One initiative: status, recent facts collected (Slack, meetings, remember) with provenance, ideas it implements, targets, Slack channels, merge state and the finish job (finish_job: queued, active, completed or failed). | read |  |  |
 | `initiatives_list` | List ideas or initiatives with status (filter by status). | read |  |  |
 
 ## insights

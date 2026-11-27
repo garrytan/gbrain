@@ -82,7 +82,7 @@ const initiatives_list: Operation = {
 const initiative_status: Operation = {
   name: 'initiative_status',
   outputRedaction: 'no_stored_text',
-  description: 'One initiative: status, recent facts collected (Slack, meetings, remember), ideas it implements, targets, Slack channels and merge state.',
+  description: 'One initiative: status, recent facts collected (Slack, meetings, remember) with provenance, ideas it implements, targets, Slack channels, merge state and the finish job (finish_job: queued, active, completed or failed).',
   params: {
     slug: { type: 'string', required: true, description: 'Initiative slug or name.' },
     facts_limit: { type: 'number', description: 'Recent facts to return (default 20, max 100).' },
@@ -97,8 +97,8 @@ const initiative_status: Operation = {
     const limit = Math.min(100, Math.max(1, Number(p.facts_limit) || 20));
     const [count] = await ctx.engine.executeRaw<{ n: number | string }>(
       `SELECT count(*) AS n FROM facts WHERE source_id = $1 AND entity_slug = $2 AND expired_at IS NULL`, [cfg.sourceId, slug]);
-    const facts = await ctx.engine.executeRaw<{ id: number; fact: string; kind: string; valid_from: string | Date; context: string | null }>(
-      `SELECT id, fact, kind, valid_from, context FROM facts WHERE source_id = $1 AND entity_slug = $2 AND expired_at IS NULL
+    const facts = await ctx.engine.executeRaw<{ id: number; fact: string; kind: string; valid_from: string | Date; source: string | null; context: string | null }>(
+      `SELECT id, fact, kind, valid_from, source, context FROM facts WHERE source_id = $1 AND entity_slug = $2 AND expired_at IS NULL
          ${ctx.remote !== false ? `AND visibility = 'world'` : ''}
         ORDER BY valid_from DESC, id DESC LIMIT $3`, [cfg.sourceId, slug, limit]);
     const ideas = [];
@@ -115,6 +115,11 @@ const initiative_status: Operation = {
     const docs = await ctx.engine.executeRaw<{ slug: string; title: string | null }>(
       `SELECT slug, title FROM pages WHERE source_id = $1 AND slug LIKE $2 AND type = 'initiative-doc' AND deleted_at IS NULL ORDER BY slug`,
       [cfg.sourceId, `${slug.replace(/[\\%_]/g, '\\$&')}/%`]);
+    // The finish job runs as the application, so the caller's own job reads (get_job) do not show it; the
+    // initiative's status reports its state instead (the caller can already read the initiative).
+    const [finishJob] = await ctx.engine.executeRaw<{ id: number | string; status: string; error_text: string | null; finished_at: string | Date | null }>(
+      `SELECT id, status, error_text, finished_at FROM minion_jobs WHERE idempotency_key = $1 ORDER BY id DESC LIMIT 1`,
+      [`initiative_finish:${cfg.sourceId}:${slug}`]);
     const sources = await ctx.engine.executeRaw<{ id: string; last_sync_at: string | Date | null }>(
       `SELECT id, last_sync_at FROM sources WHERE config->>'kind' = 'slack' AND config->>'s_channels_from' = 'initiatives' ORDER BY id`);
     return {
@@ -122,9 +127,10 @@ const initiative_status: Operation = {
       finished_at: fm.finished_at ?? null, finish_note: fm.finish_note ?? null,
       slack: { channels: slackChannelsOf(fm), released_at: fm.slack_released_at ?? null,
         sources: sources.map(s => ({ id: s.id, last_sync_at: s.last_sync_at })) },
-      facts: { count: Number(count?.n ?? 0), recent: facts.map(f => ({ id: Number(f.id), fact: f.fact, kind: f.kind, valid_from: f.valid_from, provenance: f.context })) },
+      facts: { count: Number(count?.n ?? 0), recent: facts.map(f => ({ id: Number(f.id), fact: f.fact, kind: f.kind, valid_from: f.valid_from, provenance: f.source ?? null, ...(f.context ? { context: f.context } : {}) })) },
       implements: ideas, targets, docs: docs.map(d => ({ slug: d.slug, title: d.title })),
       merge: { status: fm.merge_status ?? null, merged_at: fm.merged_at ?? null },
+      finish_job: finishJob ? { id: Number(finishJob.id), status: finishJob.status, error: finishJob.error_text ?? null, finished_at: finishJob.finished_at ?? null } : null,
     };
   },
 };

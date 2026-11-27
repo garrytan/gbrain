@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 344958,
-    "stdoutSha256": "9b0962bcf056f9e81394206f05b2add402a7728efc05f3096e5e34c18e6decb8",
+    "stdoutBytes": 345040,
+    "stdoutSha256": "12cc995a25850f0fed4ed5162bfe6a47b11f102156b5adcdf07d27377aa97b53",
     "toolNames": [
       "remember",
       "entity",
@@ -6844,7 +6844,7 @@
         "scope": "read"
       },
       {
-        "description": "One initiative: status, recent facts collected (Slack, meetings, remember), ideas it implements, targets, Slack channels and merge state.",
+        "description": "One initiative: status, recent facts collected (Slack, meetings, remember) with provenance, ideas it implements, targets, Slack channels, merge state and the finish job (finish_job: queued, active, completed or failed).",
         "idempotent": false,
         "local_only": false,
         "mutating": false,

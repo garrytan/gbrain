@@ -1280,4 +1280,4 @@ src/core/initiatives/merge.ts	execute_raw	1	TODO(initiatives): live facts of the
 src/core/initiatives/route-facts.ts	execute_raw	1	TODO(initiatives): Slack facts past the route watermark; move to a typed engine method
 src/core/initiatives/store.ts	execute_raw	2	TODO(initiatives): list idea and initiative pages by prefix; move to a typed engine method
 src/core/minions/handlers/initiative-finish.ts	execute_raw	1	TODO(initiatives): waits on the final sync job; move to a typed engine method
-src/core/ops/initiatives.ts	execute_raw	6	TODO(initiatives): status and bind lookups (facts, sources, jobs); move to typed engine methods
+src/core/ops/initiatives.ts	execute_raw	7	TODO(initiatives): status and bind lookups (facts, sources, jobs, finish job state); move to typed engine methods
