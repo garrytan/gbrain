@@ -233,13 +233,23 @@ let servedTls: { cert: Buffer; key: Buffer } | undefined;
  */
 const SERVED_ARM_TOKEN = `gbrain_served_arm_${process.pid}`;
 const SERVED_ARM_OWNER = { principal: { kind: 'legacy_token', id: 'served-arm' }, scopes: ['read', 'write', 'admin'], sourceId: 'default', hasSourceGrant: false, member: null, mayActFor: null, attest: null };
+/**
+ * The owner tokens a served arm's server accepts: the arm's own, then one per peer the arm mints (openServedPeer). Each
+ * peer token is its own owner principal (`served-arm-peer-<n>`), so its request ids and its transactions are its own.
+ */
+const servedArmTokens = new Map<string, string>([[SERVED_ARM_TOKEN, 'served-arm']]);
+let servedPeerCount = 0;
 
 function newServedOwnerBrain(): RustBrainDir {
   if (!addon) throw new Error('loadRustArmAddon has not run');
   const engine = openRustEngine({ addon, databasePath: mkdtempSync(join(tmpdir(), 'gbrain-rust-arm-')), servedOptions: {
     verify: {
-      verify: async (_engine, token) => { if (token !== SERVED_ARM_TOKEN) throw new Error('Invalid token'); return { ...SERVED_ARM_OWNER }; },
-      ownerIds: async () => new Set(['served-arm']),
+      verify: async (_engine, token) => {
+        const id = servedArmTokens.get(token);
+        if (id === undefined) throw new Error('Invalid token');
+        return { ...SERVED_ARM_OWNER, principal: { kind: 'legacy_token', id } };
+      },
+      ownerIds: async () => new Set(servedArmTokens.values()),
     },
   } });
   return { engine, dir: engine.databasePath };
@@ -269,8 +279,21 @@ async function serveRustBrain(owned: RustBrainDir): Promise<RustBrainDir> {
   await client.connect({ engine: 'rust', database_path: owned.dir } as never);
   Object.defineProperty(client, 'openStore', { value: (member: string) => owner.openStore(member), configurable: true, writable: true });
   // The arm closes the server with the client (closeRustBrain); the client's own disconnect and reconnect stay its own.
-  servedBehind.set(client, async () => { await listener.close(); await owner.disconnect(); });
+  const peers: RustEngine[] = [];
+  servedBehind.set(client, async () => {
+    for (const peer of peers.splice(0)) await peer.disconnect().catch(() => undefined);
+    await listener.close(); await owner.disconnect();
+  });
   Object.defineProperty(client, SERVED_OWNER, { value: owner, configurable: true, enumerable: false });
+  Object.defineProperty(client, SERVED_PEER, { configurable: true, enumerable: false, value: async (): Promise<RustEngine> => {
+    const peerToken = `${SERVED_ARM_TOKEN}_peer_${++servedPeerCount}`;
+    servedArmTokens.set(peerToken, `served-arm-peer-${servedPeerCount}`);
+    const peer = openRustEngine({ addon: addon!, databasePath: owned.dir, served: { url: `gbrain+tls://localhost:${listener.port}`, token: peerToken, ca: tls.cert } });
+    await peer.connect({ engine: 'rust', database_path: owned.dir } as never);
+    Object.defineProperty(peer, 'openStore', { value: (member: string) => owner.openStore(member), configurable: true, writable: true });
+    peers.push(peer);
+    return peer;
+  } });
   return { engine: client, dir: owned.dir };
 }
 
@@ -283,6 +306,17 @@ const servedBehind = new WeakMap<object, () => Promise<void>>();
 const SERVED_OWNER: unique symbol = Symbol('gbrain.test.served-owner') as never;
 /** The owner engine a served arm engine reaches, or undefined for any other engine. */
 export function servedOwnerOf(engine: object): object | undefined { return (engine as Record<symbol, object | undefined>)[SERVED_OWNER]; }
+
+const SERVED_PEER: unique symbol = Symbol('gbrain.test.served-peer') as never;
+/**
+ * A second served client of the same brain server as the served arm engine `engine`: a new protocol v3 connection with
+ * its own owner token (its own principal, request ids and transactions), for multi-client cases (multi-writer C21). It
+ * closes with the arm (closeRustBrain). Undefined for any engine that is not a served arm engine.
+ */
+export async function openServedPeer(engine: object): Promise<RustEngine | undefined> {
+  const mint = (engine as Record<symbol, (() => Promise<RustEngine>) | undefined>)[SERVED_PEER];
+  return mint ? mint() : undefined;
+}
 
 /** Disconnects an arm engine and, for the served variant, the listener and owner behind it. */
 export async function closeRustBrain(engine: { disconnect(): Promise<void> }): Promise<void> {

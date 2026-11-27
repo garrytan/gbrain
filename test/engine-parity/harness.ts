@@ -53,6 +53,7 @@ import { itemSetHash } from '../../src/core/generations/publish.ts';
 import { IDENTITY_DOWNGRADE_OP } from '../../src/core/persistence/sync-status-sql.ts';
 import {
   archiveRustSource, closeRustBrain, createRustSource, newRustBrain, putRustOpCheckpointRow, rustPageDeletedAt, rustAccessBrain, openRustBrain, DIVERGENCE_NORMALIZERS, readDivergences, removeBrainDir, rustArmRequested, rustMemberCapability, rustRefusal, type DivergenceRow, createRustMember, type MemberSeed, rustMuRoute, rustServedRequested, openRustBrainAt, installMuConnect, type MuConnectable, type RustMuRoute,
+  openServedPeer,
 } from './rust-arm.ts';
 import { isEngineMember, readStopPins, refusalFacts, rustServes, rustServesCapability, setupRefusalStep, setupStep, today, type StopPin } from './rust-refusals.ts';
 
@@ -92,6 +93,12 @@ export interface ParityContext {
    * `methods`; the harness disconnects it when the case ends.
    */
   sameBrainEngine(): Promise<BrainEngine>;
+  /**
+   * On the served Rust arm (GBRAIN_TEST_RUST_SERVED): a second served client of the same brain server, with its own token
+   * (rust-arm.ts openServedPeer), for cases about two protocol v3 connections (multi-writer C21). Every other arm throws
+   * `served_peer_unavailable` (a case that needs it is `n/a` there). Calls on it count toward `methods`.
+   */
+  servedPeerEngine(): Promise<BrainEngine>;
 }
 
 export interface ParityCaseOpts {
@@ -831,6 +838,13 @@ async function stopWriteQueue(...engines: BrainEngine[]): Promise<void> {
   if (failure !== undefined) throw failure;
 }
 
+/** A second served client of the served arm's brain server (ParityContext.servedPeerEngine); the arm closes it. */
+async function servedPeerOf(arm: ParityArm, calls: Set<string>, refusals: unknown[]): Promise<BrainEngine> {
+  const peer = arm.backend === 'rust' ? await openServedPeer(arm.engine) : undefined;
+  if (!peer) throw Object.assign(new Error(`served_peer_unavailable: the ${arm.backend} arm is not a served client of a brain server`), { code: 'served_peer_unavailable' });
+  return recordingEngine(peer as unknown as BrainEngine, calls, refusals);
+}
+
 /** A second connected engine on the brain of `arm` (ParityContext.sameBrainEngine): recorded toward `methods`, disconnected with `extra`. */
 async function sameBrainOf(arm: ParityArm, extra: BrainEngine[], calls: Set<string>, refusals: unknown[]): Promise<BrainEngine> {
   if (arm.sameBrain === undefined) throw new Error(`same_brain_unavailable: the ${arm.backend} arm cannot connect a second engine to its brain`);
@@ -973,6 +987,7 @@ export function parityArms(backends: readonly TestBackend[]): ParitySuite {
             return { engine: recordingEngine(engine, calls, refusals), config };
           },
           sameBrainEngine: () => sameBrainOf(arm, extra, calls, refusals),
+          servedPeerEngine: () => servedPeerOf(arm, calls, refusals),
         };
         const runs = armHas(arm.backend, opts.requires);
         if (!runs && missingCapability(opts.requires!).kind === 'n/a') {
@@ -1421,6 +1436,7 @@ function mwHandle<T>(arm: ParityArm, label: LedgerArm, scenario: ParityScenario<
           return { engine: recordingEngine(engine, calls, refusals), config };
         },
         sameBrainEngine: () => sameBrainOf(arm, extra, calls, refusals),
+          servedPeerEngine: () => servedPeerOf(arm, calls, refusals),
       };
       const given = recordingEngine(arm.engine, calls, refusals);
       return {
