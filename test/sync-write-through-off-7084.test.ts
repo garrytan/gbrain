@@ -12,6 +12,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { claimWorktree } from '../src/core/persistence/ownership.ts';
+import { markGitDurable } from './helpers/git-fixture.ts';
+import { settleManagedGitEffects } from './helpers/managed-brain.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -35,6 +37,8 @@ async function claimedSource(): Promise<{ sourceId: string; root: string }> {
   const root = join(home, sourceId);
   mkdirSync(join(root, 'notes'), { recursive: true });
   git(root, 'init', '-q');
+  // GST-3743: write-back reaches a non-default checkout only when this host commits it (durable); a foreign one stays database-only.
+  markGitDurable(root);
   commitPage(root, TYPED, 'typed page');
   await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
   await engine.executeRaw("INSERT INTO sources(id,name,local_path,config) VALUES($1,$1,$2,'{}')", [sourceId, root]);
@@ -94,7 +98,10 @@ test('write_through on: the same upstream edit still gets its canonical correcti
     const file = readFileSync(join(root, 'notes', 'page.md'), 'utf8');
     expect(file).toContain('title: Page');
     expect(file).toContain('alpha');
-    expect(git(root, 'status', '--porcelain')).toBe('M notes/page.md');
+    // The checkout is durable (GST-3743), so the written-back correction is committed once its Git effect settles.
+    await settleManagedGitEffects(engine, sourceId);
+    expect(git(root, 'status', '--porcelain')).toBe('');
+    expect(git(root, 'show', 'HEAD:notes/page.md')).toContain('title: Page');
   }), 120_000);
 
 // Value: protects=a read-only mirror's checkout stays clean when the default source re-syncs it through sync.repo_path (#8118);

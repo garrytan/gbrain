@@ -216,6 +216,7 @@ test/extract-all-stamp-intersection.serial.test.ts
 test/extract-atoms-concurrent-run-7923.test.ts
 test/extract-atoms-input-truncated-6503.test.ts
 test/extract-atoms-raised-cap-drain-7391.test.ts
+test/extract-atoms-scan-input-gst4020.test.ts
 test/extract-atoms-world-fence-rows.test.ts
 test/extract-endpoint-revision.serial.test.ts
 test/extract-entities-managed.test.ts
