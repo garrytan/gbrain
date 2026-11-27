@@ -6,3 +6,6 @@
 
 ### Changed
 - A Rust brain opened by this build moves to store format 17. Older builds refuse it with `format_unknown` and change nothing; upgrade gbrain to open it again. Postgres and PGLite send the same statements as before and are not affected.
+
+### Known gap
+- On a Rust brain with a session corpus directory configured (`dream.synthesize.session_corpus_dir`), the phase now refuses by name before any model call instead of skipping every corpus file without a word. Brain pages still extract on a Rust brain without a session corpus, and Postgres and PGLite are not affected. This lasts until the session corpus lookups work on the Rust store.

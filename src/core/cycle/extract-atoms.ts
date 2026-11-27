@@ -648,7 +648,8 @@ export async function runPhaseExtractAtoms(
           contentHash: d.contentHash, root: transcriptRoot(d.filePath, corpusDir, meetingDir),
         }));
       }
-    } catch {
+    } catch (err) {
+      rethrowCapabilityRefusal(err); // a refused corpus read is not "no transcripts": every corpus file would be skipped unseen
       // No transcripts available — phase no-ops cleanly.
     }
   }
