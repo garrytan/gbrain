@@ -128,6 +128,9 @@ async function runTransaction<T>(engine: object, connection: ServedConnection, f
     if (!('error' in outcome)) return outcome.value;
     if (!lostCommit(outcome.error)) throw outcome.error;
     if (attempt > SERVED_TRANSACTION_RETRIES) throw servedTransactionContention(attempt);
+    // A run over the wire holds its snapshot for round trips, so writers that lost together would meet again at once:
+    // wait a random, growing pause first (up to 5, 10, 20 ... 160 ms), so the next run starts after the winner's commit.
+    await new Promise(resolve => setTimeout(resolve, Math.random() * Math.min(5 * 2 ** (attempt - 1), 160)));
   }
 }
 
