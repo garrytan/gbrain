@@ -571,6 +571,9 @@ export async function maybeDelegateManagedSyncToServe(engine: BrainEngine, args:
   if (!owner) return own('no_owner');
   const pid = owner.pid;
   const sameBuild = owner.version === VERSION;
+  // An older serve's module graph can lack a symbol this CLI's hand-off needs, which surfaces as a bare internal_error.
+  const buildSkewFallback = (code: unknown): string | null => code === 'internal_error' && !sameBuild
+    ? `the running gbrain serve is build v${owner.version ?? 'unknown'} but this CLI is v${VERSION}, and it failed the hand-off` : null;
   if (owner.kind !== 'serve') {
     return own('owner_not_serve', `[sync] the live write owner on this host is a ${owner.kind} process (PID ${pid}), which cannot host a delegated sync; this run uses its own consumer beside it.`);
   }
@@ -627,7 +630,11 @@ export async function maybeDelegateManagedSyncToServe(engine: BrainEngine, args:
   }
   const startResp = start as Exclude<SyncStartIpcResult, typeof IPC_UNAVAILABLE | { degraded: string }>;
   if (!startResp.ok) {
-    if (startResp.refusal) throw operationErrorFromEnvelope(startResp.refusal);
+    if (startResp.refusal) {
+      const skew = buildSkewFallback(startResp.refusal.error);
+      if (skew) return own('older_serve', fallbackLine(pid, skew, true, 'Restart the serve on this version.'), true);
+      throw operationErrorFromEnvelope(startResp.refusal);
+    }
     if (startResp.error === 'unsupported_kind') {
       // #6543: a current serve that echoes the protocol with unsupported_kind is healthy with delegation off on its side: it keeps consuming.
       return own('older_serve', fallbackLine(pid, 'the running gbrain serve runs with serve-delegated managed sync off (GBRAIN_SERVE_SYNC_IPC=0 on the serve)', false, 'Unset it on the serve to run the catch-up inside it.'));
@@ -641,7 +648,11 @@ export async function maybeDelegateManagedSyncToServe(engine: BrainEngine, args:
     : `[sync] a live gbrain serve (PID ${pid}) owns this host's writes — running the managed catch-up inside it as this CLI's writer (job ${jobId}; Ctrl-C aborts, the cursor is durable).`);
   const polled = await pollDelegatedJob({ sock, secret, jobId, pid, alive: ownerAlive, signal: opts.signal });
   if (polled.kind === 'lost') return own('serve_lost', '[sync] continuing the catch-up with this process\'s own consumer; the durable cursor resumes where the serve left it.');
-  if (polled.kind === 'failed') throw polled.error;
+  if (polled.kind === 'failed') {
+    const skew = buildSkewFallback(polled.error instanceof OperationError ? polled.error.code : undefined);
+    if (skew) return own('older_serve', fallbackLine(pid, skew, true, 'Restart the serve on this version.'), true);
+    throw polled.error;
+  }
   const { result, pagesAffectedTotal } = syncResultFromWire(polled.result);
   if (pagesAffectedTotal > polled.result.pagesAffected.length) {
     serr(`[sync] (+${pagesAffectedTotal - polled.result.pagesAffected.length} more pages affected — list truncated for the IPC wire)`);
