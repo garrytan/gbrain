@@ -133,7 +133,9 @@ Rules:
   `PAGE_ROW_DEFAULTS`, `store-codec.ts` or `pages.rs`.
 - **Format.** `FORMAT_VERSION` 12 on the keyed-lookups-2 branch, 9 on the trunk (`format.rs` lists each version; that build opens formats 1 to 9 and 12), `engineAbi` 1, a `FORMAT` file plus `records.redb`. New tags and new records under
   them do not change the format version: an older build never reads a tag it does not know, and a newer build reads
-  an absent tag as "no rows". A family that changes the encoding of records that already exist on disk asks core.
+  an absent tag as "no rows". A family that changes the encoding of records that already exist on disk asks core,
+  and so does a family whose entries are derived from records that already exist, because an older build's writes
+  would leave them stale (format 9: the keyed lookups, `~k`, `rust/docs/store/keyed-index.md`).
   Format 2 keeps each chunk-stats and unfinished-request counter in its own record; a format-1 brain is upgraded in
   one write transaction when it opens, and a format-1-only build refuses a format-2 brain.
 
