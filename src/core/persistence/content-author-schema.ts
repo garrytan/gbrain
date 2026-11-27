@@ -14,12 +14,13 @@
  *   (import-file.ts `content_author`), so a repeated declaration still counts (a statement that writes the same author
  *   and hash it found declares nothing).
  * - New text: the declared author, or none when the statement declared none (a raw UPDATE, a maintenance rewrite that
- *   keeps the hash, a projection-only flip that does not carry the author, an older binary). An empty author (`NO_AUTHOR`)
- *   clears both columns even on unchanged text.
+ *   keeps the hash, a projection-only flip that does not carry the author, an older binary).
  * - The same text (title, type, body, timeline, body generation and frontmatter other than the hash-ephemeral keys and
- *   `tags`): a trusted importer or connector that declares itself takes it; otherwise a verified author stays and its
- *   hash follows the content hash (a tag change restamps the hash), so a remote write of identical text, a tag change or
- *   contextual re-embedding never moves it.
+ *   `tags`): a verified author stays and its hash follows the content hash (a tag change restamps the hash); a page with
+ *   none keeps none. No declaration takes over identical text, so a remote write of identical text, a tag change, a
+ *   re-import that changes only tags or contextual re-embedding never moves it.
+ * - An exact copy (an engine migration, the v342 backfill) sets `content_author_hash` to `EXACT_AUTHOR_MARK`: the page
+ *   then holds exactly the given author (none when it is NULL), whatever the text and the stored author were.
  *
  * Columns and trigger come from migration v341, the backfill of existing pages from v342 (its own transaction, so the
  * DDL's lock is released before the scan).
@@ -36,8 +37,8 @@ export const CONNECTOR_AUTHOR_PREFIX = 'connector:';
  * revision carries no importer request): speaker markers honor it as before, fence acceptance does not.
  */
 export const LEGACY_AUTHOR_PREFIX = 'legacy:';
-/** A declared author that clears both columns whatever the text (engine migration copying a page whose source has none). */
-export const NO_AUTHOR = '';
+/** `content_author_hash` value that sets the statement's author exactly (or none), for copies and the backfill only. */
+export const EXACT_AUTHOR_MARK = 'gbrain:exact-author';
 
 /** Principals that reach the brain from outside (MCP over HTTP, legacy tokens, stdio MCP). */
 const REMOTE_PRINCIPAL_KINDS = ['oauth_client', 'legacy_token', 'local_stdio'];
@@ -47,12 +48,6 @@ const METADATA_OPERATIONS = ['add_tag', 'remove_tag', 'add_link', 'remove_link']
 const NON_TEXT_FRONTMATTER_KEYS = [...HASH_EPHEMERAL_FRONTMATTER_KEYS, 'tags'];
 
 const list = (values: readonly string[]) => values.map(value => `'${value}'`).join(',');
-const trustedAuthorSql = (author: string) => `(${author} IN (${list(TRUSTED_IMPORTER_VIAS)}) OR starts_with(${author}, '${CONNECTOR_AUTHOR_PREFIX}'))`;
-
-/** A trusted importer or connector author: the one kind of write that takes over identical text. */
-export function isTrustedContentAuthor(author: string | null | undefined): author is string {
-  return !!author && (TRUSTED_IMPORTER_VIAS.includes(author) || author.startsWith(CONNECTOR_AUTHOR_PREFIX));
-}
 
 const strip = (row: 'NEW' | 'OLD') => `CASE WHEN jsonb_typeof(${row}.frontmatter) = 'object' THEN ${row}.frontmatter - ARRAY[${list(NON_TEXT_FRONTMATTER_KEYS)}]::text[] ELSE ${row}.frontmatter END`;
 const text = (row: 'NEW' | 'OLD') => `(${row}.type, ${row}.title, ${row}.compiled_truth, ${row}.timeline, ${row}.body_generation, ${strip(row)})`;
@@ -61,21 +56,14 @@ export const CONTENT_AUTHOR_FUNCTION_SQL = `CREATE OR REPLACE FUNCTION gbrain_gu
 DECLARE
   declared boolean := NEW.content_author IS NOT NULL AND NEW.content_author_hash IS NULL;
 BEGIN
-  IF NEW.content_author = '${NO_AUTHOR}' THEN
+  IF NEW.content_author_hash = '${EXACT_AUTHOR_MARK}' THEN
+    NEW.content_author_hash := CASE WHEN NEW.content_author IS NOT NULL THEN NEW.content_hash END;
+  ELSIF ${text('NEW')} IS NOT DISTINCT FROM ${text('OLD')} AND OLD.content_author IS NOT NULL AND OLD.content_author_hash = OLD.content_hash THEN
+    NEW.content_author := OLD.content_author;
+    NEW.content_author_hash := NEW.content_hash;
+  ELSIF ${text('NEW')} IS NOT DISTINCT FROM ${text('OLD')} THEN
     NEW.content_author := NULL;
     NEW.content_author_hash := NULL;
-  ELSIF ${text('NEW')} IS NOT DISTINCT FROM ${text('OLD')} THEN
-    IF declared AND ${trustedAuthorSql('NEW.content_author')} THEN
-      NEW.content_author_hash := NEW.content_hash;
-    ELSIF OLD.content_author IS NOT NULL AND OLD.content_author_hash = OLD.content_hash THEN
-      NEW.content_author := OLD.content_author;
-      NEW.content_author_hash := NEW.content_hash;
-    ELSIF declared THEN
-      NEW.content_author_hash := NEW.content_hash;
-    ELSE
-      NEW.content_author := NULL;
-      NEW.content_author_hash := NULL;
-    END IF;
   ELSIF declared THEN
     NEW.content_author_hash := NEW.content_hash;
   ELSE
@@ -130,7 +118,7 @@ export const CONTENT_AUTHOR_BACKFILL_SQL = `WITH remote_pages AS MATERIALIZED (
       ELSE '${LEGACY_AUTHOR_PREFIX}' || c.base END AS author
     FROM candidates c
 )
-UPDATE pages p SET content_author = legacy.author, content_author_hash = NULL FROM legacy
+UPDATE pages p SET content_author = legacy.author, content_author_hash = '${EXACT_AUTHOR_MARK}' FROM legacy
  WHERE p.id = legacy.id AND legacy.author IS NOT NULL AND p.content_author IS NULL AND p.content_hash = legacy.hash AND p.knowledge_revision = legacy.revision`;
 
 export const CONTENT_AUTHOR_SCHEMA_SQL = `ALTER TABLE pages ADD COLUMN IF NOT EXISTS content_author TEXT, ADD COLUMN IF NOT EXISTS content_author_hash TEXT;
@@ -148,8 +136,12 @@ export function contentAuthoredBySql(page: string, authors: string, opts: { lega
   return `(${page}.content_author IN (${names}) AND ${page}.content_author_hash = ${page}.content_hash)`;
 }
 
-/** The page's verified content author (its hash is the live hash), or null: what a rewrite of unchanged text carries. */
-export async function verifiedContentAuthor(exec: { executeRaw: <T>(sql: string, params?: unknown[]) => Promise<T[]> }, pageId: number | string): Promise<string | null> {
-  const [row] = await exec.executeRaw<{ author: string | null }>(`SELECT CASE WHEN content_author_hash = content_hash THEN content_author END AS author FROM pages WHERE id = $1`, [Number(pageId)]);
+/**
+ * The verified content author (its hash is the live hash) of the page at `revision`, or null when the page has none or
+ * has moved past that revision: what a rewrite of that revision's text carries.
+ */
+export async function verifiedContentAuthor(exec: { executeRaw: <T>(sql: string, params?: unknown[]) => Promise<T[]> }, pageId: number | string, revision: string): Promise<string | null> {
+  const [row] = await exec.executeRaw<{ author: string | null }>(
+    `SELECT CASE WHEN content_author_hash = content_hash AND knowledge_revision::text = $2 THEN content_author END AS author FROM pages WHERE id = $1`, [Number(pageId), revision]);
   return row?.author ?? null;
 }

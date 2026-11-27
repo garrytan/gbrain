@@ -49,6 +49,7 @@ import { scrubPurgedNameStores } from '../persistence/purge-name-stores.ts';
 import { pageSecretOccurrences, scrubPurgedSlugHolds, scrubPurgedSlugStores } from '../persistence/purge-slug-stores.ts';
 import { expireGonePageFacts } from '../facts/gone-page-facts.ts';
 import { guestSourceExclusionSql } from '../guests/derived.ts';
+import { EXACT_AUTHOR_MARK } from '../persistence/content-author-schema.ts';
 
 /**
  * PGLite can return zero rows from `INSERT ... ON CONFLICT DO UPDATE ...
@@ -198,9 +199,9 @@ export async function putPage(
         source_uri            = COALESCE(EXCLUDED.source_uri,            pages.source_uri),
         ingested_via          = COALESCE(EXCLUDED.ingested_via,          pages.ingested_via),
         ingested_at           = COALESCE(EXCLUDED.ingested_at,           pages.ingested_at),
-        -- GST-4056: this write declares its author (a NULL hash); the pages_content_author trigger settles it (content-author-schema.ts).
+        -- GST-4056: this write declares its author (a NULL hash) or sets it exactly; the pages_content_author trigger settles it (content-author-schema.ts).
         content_author        = ${contentAuthor}::text,
-        content_author_hash   = NULL
+        content_author_hash   = ${opts?.exactContentAuthor ? EXACT_AUTHOR_MARK : null}::text
       RETURNING knowledge_revision, text_projection_revision, id, source_id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at, effective_date, effective_date_source, import_filename, source_kind, source_uri, ingested_via, ingested_at
       ), ${HOLD_BIND_CTE}
       SELECT * FROM ins

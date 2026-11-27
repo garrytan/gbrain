@@ -27,12 +27,12 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { importFromContent } from '../src/core/import-file.ts';
 import { runExtractFacts } from '../src/core/cycle/extract-facts.ts';
 import { readSpeakerOwners } from '../src/core/identity/speaker-owner.ts';
-import { listOutsideFencePages } from '../src/core/transcripts/fence-acceptance.ts';
+import { FENCE_ACCEPTANCE_KEY, applyFenceAcceptance, isAccepted, listOutsideFencePages, loadFenceAcceptance, planFenceAcceptance } from '../src/core/transcripts/fence-acceptance.ts';
 import { withWriteAttribution } from '../src/core/persistence/attribution.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { registerLocalWriter, withVerifiedLocalRegistration } from '../src/core/persistence/identity.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
-import { CONTENT_AUTHOR_BACKFILL_SQL } from '../src/core/persistence/content-author-schema.ts';
+import { CONTENT_AUTHOR_BACKFILL_SQL, EXACT_AUTHOR_MARK } from '../src/core/persistence/content-author-schema.ts';
 import { rechunkWork, runSegmentedRechunk } from '../src/core/page-body/rechunk.ts';
 import { copyMigrationSources, copyPageToTarget } from '../src/commands/migrate-engine.ts';
 import { needlePageBody, sealAtOldChunker } from './helpers/rechunk-segmented-cases.ts';
@@ -193,11 +193,9 @@ for (const backend of testBackends()) describe(`[${backend}] importer trust foll
   });
 
   /** A page as a brain before migration v341 holds it: no content author (written past the trigger, as no writer can). */
-  const legacy = (slug: string, sourceId = 'default') => engine.transaction(async tx => {
-    await tx.executeRaw('ALTER TABLE pages DISABLE TRIGGER pages_content_author');
-    await tx.executeRaw('UPDATE pages SET content_author = NULL, content_author_hash = NULL WHERE source_id = $1 AND slug = $2', [sourceId, slug]);
-    await tx.executeRaw('ALTER TABLE pages ENABLE TRIGGER pages_content_author');
-  });
+  /** A page as an upgrade finds it before v342: no author. An exact write, so no DDL lock races a background chunk writer. */
+  const legacy = (slug: string, sourceId = 'default') => engine.executeRaw(
+    'UPDATE pages SET content_author = NULL, content_author_hash = $3 WHERE source_id = $1 AND slug = $2', [sourceId, slug, EXACT_AUTHOR_MARK]);
   async function author(slug: string, sourceId = 'default') {
     const [row] = await engine.executeRaw<{ content_author: string | null; stamped: boolean }>(
       'SELECT content_author, content_author_hash IS NOT DISTINCT FROM content_hash AS stamped FROM pages WHERE source_id = $1 AND slug = $2', [sourceId, slug]);
@@ -341,6 +339,56 @@ for (const backend of testBackends()) describe(`[${backend}] importer trust foll
     expect(await trust(other)).toEqual(UNTRUSTED);
   });
 
+  test('a re-import that changes only tags never makes untrusted text the importer\'s', async () => {
+    const id = randomUUID().slice(0, 8);
+    const slug = `conversations/sessions/2026-01-02-codex-${id}`;
+    const content = transcript(id, 'Short body.');
+    await importFromContent(engine, slug, content, { sourceId: 'default', noEmbed: true });
+    expect(await trust(slug)).toEqual(UNTRUSTED);
+    expect((await importer(slug, content.replace('type: conversation\n', 'type: conversation\ntags: [retagged-example]\n'))).status).toBe('imported');
+    expect((await author(slug)).content_author).not.toBe(VIA);
+    expect(await trust(slug)).toEqual(UNTRUSTED);
+  });
+
+  test('an engine copy over identical text replaces the target\'s author with the source\'s', async () => {
+    const id = randomUUID().slice(0, 8);
+    const slug = `conversations/sessions/2026-01-02-codex-${id}`;
+    await importer(slug, transcript(id, 'Short body.'));
+    await copyMigrationSources(engine, target);
+    const page = async () => (await engine.getPage(slug, { sourceId: 'default' }))!;
+    await copyPageToTarget(engine, target, await page());
+    await engine.executeRaw("UPDATE pages SET compiled_truth = compiled_truth || ' I founded acme-example.' WHERE source_id = 'default' AND slug = $1", [slug]);
+    await engine.executeRaw("UPDATE pages SET compiled_truth = replace(compiled_truth, ' I founded acme-example.', ''), content_author = 'mcp:put_page', content_author_hash = NULL WHERE source_id = 'default' AND slug = $1", [slug]);
+    expect(await author(slug)).toEqual({ content_author: 'mcp:put_page', stamped: true });
+    await copyPageToTarget(engine, target, await page());
+    const [copied] = await target.executeRaw<{ content_author: string | null; stamped: boolean }>(
+      'SELECT content_author, content_author_hash IS NOT DISTINCT FROM content_hash AS stamped FROM pages WHERE source_id = $1 AND slug = $2', ['default', slug]);
+    expect(copied).toEqual({ content_author: 'mcp:put_page', stamped: true });
+  });
+
+  test('an acceptance recorded for a page\'s exact content survives the upgrade that attributes the page as legacy', async () => {
+    const id = randomUUID().slice(0, 8);
+    const slug = `conversations/sessions/2026-01-02-codex-${id}`;
+    await importer(slug, transcript(id, 'Short body.'));
+    await runExtractFacts(engine, { sourceId: 'default' });
+    await applyFenceAcceptance(engine, await planFenceAcceptance(engine));
+    await engine.executeRaw(`UPDATE pages SET updated_at = ingested_at + interval '1 hour', revision_write_request_id = NULL, revision_principal_kind = NULL
+      WHERE source_id = 'default' AND slug = $1`, [slug]);
+    await legacy(slug);
+    await engine.executeRaw(CONTENT_AUTHOR_BACKFILL_SQL);
+    expect(await author(slug)).toEqual({ content_author: `legacy:${VIA}`, stamped: true });
+    const accepted = async () => isAccepted((await listOutsideFencePages(engine)).find(p => p.slug === slug)!, await loadFenceAcceptance(engine));
+    expect(await accepted()).toBe(true);
+    expect((await planFenceAcceptance(engine)).pages.map(p => p.slug)).not.toContain(slug);
+    const stored = JSON.parse((await engine.getConfig(FENCE_ACCEPTANCE_KEY))!) as Array<Record<string, unknown>>;
+    await engine.setConfig(FENCE_ACCEPTANCE_KEY, JSON.stringify(stored.map(({ content_hash: _hash, ...entry }) => entry)));
+    expect(await accepted()).toBe(false);
+    await engine.setConfig(FENCE_ACCEPTANCE_KEY, JSON.stringify(stored));
+    await engine.executeRaw("UPDATE pages SET compiled_truth = compiled_truth || ' I founded acme-example.' WHERE source_id = 'default' AND slug = $1", [slug]);
+    expect(await accepted()).toBe(false);
+    await engine.unsetConfig(FENCE_ACCEPTANCE_KEY);
+  });
+
   test('a timeline change that leaves the stored hash stale is never certified by an unchanged re-import', async () => {
     const id = randomUUID().slice(0, 8);
     const slug = `conversations/sessions/2026-01-02-codex-${id}`;
@@ -386,23 +434,21 @@ for (const backend of testBackends()) describe(`[${backend}] importer trust foll
     const slug = `conversations/sessions/2026-01-02-codex-${id}`;
     await importer(slug, transcript(id, 'Short body.'));
     await legacy(slug);
-    let release!: () => void;
-    const gate = new Promise<void>(resolve => { release = resolve; });
+    // The editor polls for the waiting backfill on its own connection, so the race needs two pooled connections only.
     let locked!: () => void;
     const holding = new Promise<void>(resolve => { locked = resolve; });
     const editor = engine.transaction(async tx => {
       await tx.executeRaw("UPDATE pages SET compiled_truth = compiled_truth || ' I founded acme-example.', content_hash = 'edited-' || content_hash WHERE source_id = 'default' AND slug = $1", [slug]);
       locked();
-      await gate;
+      for (let i = 0; i < 200; i++) {
+        const [{ n }] = await tx.executeRaw<{ n: number }>(
+          "SELECT count(*)::int AS n FROM pg_stat_activity WHERE pid <> pg_backend_pid() AND wait_event_type = 'Lock' AND query LIKE '%content_author%'");
+        if (n > 0) break;
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
     });
     await holding;
     const backfill = engine.executeRaw(CONTENT_AUTHOR_BACKFILL_SQL);
-    for (let i = 0; i < 100; i++) {
-      const [{ n }] = await engine.executeRaw<{ n: number }>("SELECT count(*)::int AS n FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query LIKE '%content_author%'");
-      if (n > 0) break;
-      await new Promise(resolve => setTimeout(resolve, 50));
-    }
-    release();
     await editor;
     await backfill;
     expect(await author(slug)).toEqual({ content_author: null, stamped: false });

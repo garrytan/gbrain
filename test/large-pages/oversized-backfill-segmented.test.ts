@@ -92,3 +92,33 @@ test('the backfill keeps a verified importer author on a segmented page whose te
     expect(await author()).toEqual([{ content_author: 'cli:transcripts-ingest', stamped: true }]);
   }
 }), 300_000);
+
+test('the backfill never writes its snapshot over a page that changed after it was read (GST-4056)', async () => withEnv(env, async () => {
+  for (const engine of engines) {
+    await engine.setConfig('pages.segmented_storage', 'on');
+    await engine.setConfig('content_sanity.bytes_block', '500000');
+    const slug = 'notes/backfill-raced';
+    expect((await importFromContent(engine, slug, content, { noEmbed: true })).status).toBe('imported');
+    await engine.unsetConfig('content_sanity.bytes_block');
+    const revision = async () => (await engine.readPageSnapshot(slug, { sourceId: 'default' }))!.revision;
+    const read = engine.readPageSnapshot.bind(engine);
+    let raced: string | undefined;
+    engine.readPageSnapshot = async (s, opts) => {
+      const snapshot = await read(s, opts);
+      if (s === slug && raced === undefined) {
+        raced = '';
+        await engine.addTag(slug, 'raced-example', { sourceId: 'default' });
+        raced = await revision();
+      }
+      return snapshot;
+    };
+    try {
+      const receipt = await runOversizedBackfill(engine);
+      expect(receipt.reindexed).toBe(0);
+      expect(receipt.failed).toHaveLength(1);
+    } finally {
+      engine.readPageSnapshot = read;
+    }
+    expect(await revision()).toBe(raced!);
+  }
+}), 300_000);

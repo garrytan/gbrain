@@ -129,10 +129,12 @@ async function rewritePage(engine: BrainEngine, page: Candidate, snapshot: NonNu
   const markdown = serializeMarkdown(fm, snapshot.page.compiled_truth ?? '', snapshot.page.timeline ?? '', {
     type: (snapshot.page.type as PageType) ?? 'note', title: snapshot.page.title ?? '', tags: snapshot.tags,
   });
-  // GST-4056: only the oversized marker changes, so the page keeps its verified author.
-  const author = await verifiedContentAuthor(engine, page.id);
+  // GST-4056: only the oversized marker changes, so the page keeps the verified author of the snapshot's text, and the
+  // rewrite lands only on that revision.
+  const author = await verifiedContentAuthor(engine, page.id, snapshot.revision);
   if (!managed) {
-    await importFromContent(engine, page.slug, markdown, { sourceId: page.source_id, noEmbed: true, forceRechunk: true, preserveGateMarkers: true, content_author: author });
+    await importFromContent(engine, page.slug, markdown, { sourceId: page.source_id, noEmbed: true, forceRechunk: true, preserveGateMarkers: true, content_author: author,
+      expectedBaseRevision: snapshot.revision });
     return;
   }
   const config = loadConfig() ?? { engine: engine.kind };

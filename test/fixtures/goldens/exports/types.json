@@ -5350,6 +5350,7 @@
         "members": [
           "allowEmptyOverwrite?: boolean | undefined",
           "contextualRetrieval?: { mode: string; corpusGeneration: string | null; } | undefined",
+          "exactContentAuthor?: boolean | undefined",
           "expectedRevision?: string | null | undefined",
           "force?: boolean | undefined",
           "inline?: boolean | undefined",

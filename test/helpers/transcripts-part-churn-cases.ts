@@ -33,7 +33,7 @@ import { dispatchToolCall } from '../../src/mcp/dispatch.ts';
 import { registerLocalWriter, withVerifiedLocalRegistration } from '../../src/core/persistence/identity.ts';
 import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
 import { TRANSCRIPT_MAX_PARTS } from '../../src/core/transcripts/render.ts';
-import { CONTENT_AUTHOR_BACKFILL_SQL } from '../../src/core/persistence/content-author-schema.ts';
+import { CONTENT_AUTHOR_BACKFILL_SQL, EXACT_AUTHOR_MARK } from '../../src/core/persistence/content-author-schema.ts';
 import { withEnv } from './with-env.ts';
 import { managedBrain } from './managed-brain.ts';
 
@@ -309,11 +309,7 @@ export function defineTranscriptPartChurnCases(opts: { getEngine: () => BrainEng
     // A brain from before v341: no content author; contextual re-embedding moved updated_at past ingested_at.
     for (const page of parts) {
       await engine.updatePageContextualRetrievalState(page.slug, 'default', 'title', 'corpus-example');
-      await engine.transaction(async tx => {
-        await tx.executeRaw('ALTER TABLE pages DISABLE TRIGGER pages_content_author');
-        await tx.executeRaw('UPDATE pages SET content_author = NULL, content_author_hash = NULL WHERE source_id = $1 AND slug = $2', ['default', page.slug]);
-        await tx.executeRaw('ALTER TABLE pages ENABLE TRIGGER pages_content_author');
-      });
+      await engine.executeRaw('UPDATE pages SET content_author = NULL, content_author_hash = $3 WHERE source_id = $1 AND slug = $2', ['default', page.slug, EXACT_AUTHOR_MARK]);
     }
     await engine.executeRaw(CONTENT_AUTHOR_BACKFILL_SQL);
     const again = await ingest(engine, path);

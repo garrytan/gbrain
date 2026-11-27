@@ -12,7 +12,8 @@
  * and the check re-reads the provenance each run, so a new row, a removed row or a later non-importer write puts the
  * page back on the list. Tag changes, re-embedding and other maintenance change no text, so they keep a page eligible and
  * accepted (GST-4056, GST-4026); an importer rewrite with the same rows stays accepted. An acceptance records the page's
- * content_hash it was given for. The record is the config row `transcripts.fence_acceptance` (no operation writes config),
+ * content_hash it was given for; a page the upgrade attributed as `legacy:` is never offered, and keeps an acceptance
+ * recorded before the upgrade only for that exact content. The record is the config row `transcripts.fence_acceptance` (no operation writes config),
  * and nothing in a page or its rows changes, so repo-less and repo-backed brains behave the same.
  */
 import type { BrainEngine } from '../engine.ts';
@@ -30,6 +31,8 @@ const PROJECTION_KEYS = `ARRAY['embedding','embedded_at','embedding_model','embe
 export interface OutsideFenceItem { source_id: string; slug: string; type: string; facts: number; world_facts: number; takes: number; links: number }
 export interface OutsideFencePage extends OutsideFenceItem {
   page_id: number; fingerprint: string; imported_transcript: boolean; content_hash: string;
+  /** An imported transcript whose live text the v342 backfill attributed to the importer as `legacy:` (never offered for acceptance). */
+  legacy_transcript: boolean;
 }
 export interface FenceAcceptance { page_id: number; source_id: string; slug: string; fingerprint: string; accepted_at: string; content_hash?: string }
 
@@ -40,7 +43,8 @@ export async function listOutsideFencePages(engine: BrainEngine): Promise<Outsid
     `WITH listed AS (SELECT p.id AS page_id, p.source_id, p.slug, p.type, sum(x.facts)::int AS facts, sum(x.world_facts)::int AS world_facts,
             sum(x.takes)::int AS takes, sum(x.links)::int AS links, md5(string_agg(x.k, ',' ORDER BY x.k)) AS fingerprint,
             COALESCE(max(p.content_hash), '') AS content_hash,
-            bool_and(p.type = 'conversation' AND p.frontmatter ? 'transcript_import' AND ${importerWroteLiveTextSql('p', '$1')}) AS imported_transcript
+            bool_and(p.type = 'conversation' AND p.frontmatter ? 'transcript_import' AND ${importerWroteLiveTextSql('p', '$1')}) AS imported_transcript,
+            bool_and(p.type = 'conversation' AND p.frontmatter ? 'transcript_import' AND ${importerWroteLiveTextSql('p', '$1', { legacy: true })}) AS legacy_transcript
        FROM (SELECT fp.id AS page_id, 1 AS facts, CASE WHEN f.visibility = 'world' THEN 1 ELSE 0 END AS world_facts, 0 AS takes, 0 AS links, 'f' || f.id || ':' || md5((to_jsonb(f) - ${PROJECTION_KEYS} - 'consolidated_at' - 'consolidated_into')::text) AS k
                FROM facts f JOIN pages fp ON fp.source_id = f.source_id AND fp.slug = f.source_markdown_slug
               WHERE f.row_num IS NOT NULL AND f.expired_at IS NULL
@@ -54,7 +58,8 @@ export async function listOutsideFencePages(engine: BrainEngine): Promise<Outsid
       GROUP BY p.id, p.source_id, p.slug, p.type)
      SELECT * FROM listed
       ORDER BY source_id, slug`, [IMPORTER_INGESTED_VIA]); });
-  return rows.map(row => ({ ...row, page_id: Number(row.page_id), imported_transcript: row.imported_transcript === true }));
+  return rows.map(row => ({ ...row, page_id: Number(row.page_id), imported_transcript: row.imported_transcript === true,
+    legacy_transcript: row.legacy_transcript === true }));
 }
 
 export async function loadFenceAcceptance(engine: BrainEngine): Promise<FenceAcceptance[]> {
@@ -67,9 +72,14 @@ export async function loadFenceAcceptance(engine: BrainEngine): Promise<FenceAcc
   }
 }
 
-/** An acceptance counts only for an importer-written transcript whose fence rows are exactly the ones accepted. */
+/**
+ * An acceptance counts only for an importer-written transcript whose fence rows are exactly the ones accepted. A page the
+ * upgrade attributed as `legacy:` keeps an acceptance recorded for its exact content (GST-4026's content_hash) while that
+ * text stays; a hash-less acceptance never counts for one.
+ */
 export function isAccepted(page: OutsideFencePage, acceptance: readonly FenceAcceptance[]): boolean {
-  return page.imported_transcript && acceptance.some(a => a.page_id === page.page_id && a.fingerprint === page.fingerprint);
+  return acceptance.some(a => a.page_id === page.page_id && a.fingerprint === page.fingerprint
+    && (page.imported_transcript || (page.legacy_transcript && !!a.content_hash && a.content_hash === page.content_hash)));
 }
 
 export const fenceItem = ({ source_id, slug, type, facts, world_facts, takes, links }: OutsideFencePage): OutsideFenceItem =>
