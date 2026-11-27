@@ -368,6 +368,7 @@ src/core/engine-connect.ts	module_collection	1	W6: per-engine state, or mark as 
 src/core/engine-connect.ts	process_env	2	W6: settings plane out of the core
 src/core/engine-open.ts	als_store	1	W2: engine scope (decision E) replaces ad hoc async context
 src/core/engine-scope-store.ts	als_store	1	W2: engine scope (decision E) replaces ad hoc async context
+src/core/engine-sql/eval-harness-reads.ts	module_collection	1	W6: per-engine state (the eval harness pause holder, a WeakSet keyed by engine object, so a nested pause is refused)
 src/core/entities/evidence/collapse.ts	fs_import	1	W7: filesystem boundary moves to the local app (the two person files a C7 collapse edits in a git source, read under the commit lock; same door as identity-decisions.ts)
 src/core/env-number.ts	module_collection	1	W6: per-engine state, or mark as a constant table
 src/core/env-number.ts	process_env	1	W6: settings plane out of the core

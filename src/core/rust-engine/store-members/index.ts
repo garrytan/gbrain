@@ -227,6 +227,7 @@ import * as pinnedQuestions from './pinned-questions.ts';
 import * as volunteerEvents from './volunteer-events.ts';
 import * as retrievalFeedback from './retrieval-feedback.ts';
 import * as gitGapCensus from './git-gap-census.ts';
+import * as evalHarnessReads from './eval-harness-reads.ts';
 
 const { readBrainMode: _brainModeHelper, ...writerReleaseMembers } = writerRelease;
 
@@ -440,6 +441,8 @@ export const STORE_MEMBERS = {
   // The dream cycle's persistence journal reads (rust/docs/store/dream.md, "Dream cycle statements").
   // A page publication's fence projection and fence guard statements, tier-only row changes and the unwithdrawn-facts restore (rust/docs/store/facts.md, "The fence projection's statements").
   ...fenceProjection,
+  // The memory-trust evals' harness reads (rust/docs/store/eval-harness-reads.md).
+  ...evalHarnessReads,
 } as const satisfies { [K in keyof BrainEngine]?: (brain: never, ...args: never[]) => Promise<unknown> };
 
 export type ServedMember = keyof typeof STORE_MEMBERS;

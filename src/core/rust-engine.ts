@@ -26,6 +26,7 @@ import { RUST_ENGINE_MEMBERS } from './rust-engine/members.ts';
 import { openRustStore, seedEmbeddingIdentity, type RustStore, type StoreBrain } from './rust-engine/store.ts';
 import { opError } from './ops/contract.ts';
 import { transactionAborted } from './postgres-engine/transaction-abort.ts';
+import { withManagedPersistencePaused as withManagedPersistencePausedOver, type ManagedPauseOutcome } from './engine-sql/eval-harness-reads.ts';
 import { mapStoreError } from './rust-engine/store-errors.ts';
 import { STORE_MEMBERS } from './rust-engine/store-members/index.ts';
 import { servedCapabilities } from './rust-engine/store-capabilities.ts';
@@ -508,6 +509,11 @@ export class RustEngine implements BrainEngine {
     const config = this._savedConfig;
     await this.disconnect();
     await this.connect(config);
+  }
+
+  /** The evals' harness pause around fn, over the two typed store members (engine-sql/eval-harness-reads.ts). */
+  withManagedPersistencePaused<T>(fn: () => Promise<T>): Promise<ManagedPauseOutcome<T>> {
+    return withManagedPersistencePausedOver(this, fn);
   }
 
   registerBeforeDisconnect(stop: () => Promise<void>): () => void {

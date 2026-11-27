@@ -86,6 +86,8 @@ pub mod embeddings;
 pub mod engine_migration;
 pub mod entity_identities;
 pub mod eval_capture;
+pub mod eval_harness_catalog;
+pub mod eval_harness_reads;
 pub mod extract_bookkeeping;
 pub mod extraction;
 pub mod facts;
