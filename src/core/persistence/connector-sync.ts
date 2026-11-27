@@ -1109,7 +1109,8 @@ export class ManagedConnectorSync {
         if (this.binding || prepared.noop !== true) return false;
       } else {
         const databaseOnly = !this.binding || !prepared.file && await strictPrivateImport(reads, this.sourceId, intent.content ?? '', sourcePath ?? `${slug}.md`, snapshot);
-        const verdict = await inspectUnchanged(reads, { prepared, snapshot, sourcePath, databaseOnly });
+        // A no-op publication never stamps the contextual mode (#5751), so an embedded page the mode never evaluated would be re-admitted on every walk.
+        const verdict = await inspectUnchanged(reads, { prepared, snapshot, sourcePath, databaseOnly, waive: ['contextual_mode'] });
         if (verdict.admitReason) return false;
       }
       await prepared.validate?.(reads);
