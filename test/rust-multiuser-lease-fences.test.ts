@@ -76,7 +76,7 @@ describe('lease families carry the host fence (I-5, host fence table)', () => {
     await onStaleableHost(async (engine, takeOver) => {
       const lease = await acquirePageEmbeddingLease(engine as unknown as BrainEngine, 7);
       expect(lease.busy).toBe(false);
-      const rows = async () => (await engine.readCycleLocks({ by: 'all' })).map(r => { const { db_now: _t, ...rest } = r as Record<string, unknown>; return rest; });
+      const rows = async () => (await engine.readCycleLocks({ by: 'all' })).map(r => { const { db_now: _t, ...rest } = r as unknown as Record<string, unknown>; return rest; });
       await takeOver();
       const before = await rows();
       expect(await refusal(() => lease.busy ? Promise.resolve() : lease.assertHeld(engine as unknown as BrainEngine))).toEqual({ code: 'lease_lost', reason: 'epoch_moved' });

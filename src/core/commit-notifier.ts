@@ -33,6 +33,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import type { DetectionMode, MarkerIntent, NotifierSourceRow, NotifierState, StatePatch, WantedMarker } from './notifier/store.ts';
+import type { NotifierLeaseRef } from './engine-sql/notifier.ts';
 
 export type ResidentKind = 'serve' | 'serve-http' | 'jobs-worker' | 'autopilot';
 
@@ -82,7 +83,7 @@ export interface NotifierStore {
   settleMarkers(sourceId: string, read: WantedMarker[], run: { pulled: boolean; full: boolean }): Promise<WantedMarker[]>;
   readStates(sourceIds: string[]): Promise<NotifierSourceRow[]>;
   writeState(sourceId: string, patch: StatePatch): Promise<void>;
-  writeCoverage(sourceId: string, c: { head: string | null; mode: DetectionMode; ownerHostId: string; ownerKind: string; ownerPid: number }): Promise<void>;
+  writeCoverage(sourceId: string, c: { head: string | null; mode: DetectionMode; ownerHostId: string; ownerKind: string; ownerPid: number; lease?: NotifierLeaseRef }): Promise<void>;
 }
 
 export interface CommitNotifierOptions {
@@ -313,9 +314,7 @@ export function startCommitNotifier(opts: CommitNotifierOptions): CommitNotifier
   let excluded = new Set<string>();
   let owner = false;
   let fence: number | null = null;
-  let leased = false;
-  /** The lease this notifier's state and coverage writes are made under, so a store that checks it refuses a lost one. */
-  const heldLease = () => (leased && fence !== null ? { lease: { hostId: opts.hostId, ownerId, fence } } : {});
+  let leased = false; const heldLease = () => (leased && fence !== null ? { lease: { hostId: opts.hostId, ownerId, fence } } : {}); // the lease writes name (I-5)
   let stopped = false;
   let flagReadAt = -Infinity;
   let listedAt = -Infinity;
