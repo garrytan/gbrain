@@ -318,3 +318,86 @@ fn lf6_a_stale_host_cannot_claim_or_settle_a_wake_watch_or_forget() {
     assert!(b.store.settle_wake_watch(&watch_settle(&new)).unwrap());
     assert!(b.store.settle_wake_forget(&forget_settle(&new)).unwrap());
 }
+
+// ---------------------------------------------------------------------------------------------------------------
+// Family 1: the commit notifier's own lease. Its claim already refuses a stale owner (its fence column); its state
+// and coverage writes now check that lease at commit too, so a notifier that lost its lease to another owner cannot
+// record what it saw after the hand-over.
+
+const NOTIFIER_HOST: &str = "d0000000-0000-4000-8000-0000000000e1";
+const OWNER_A: &str = "e0000000-0000-4000-8000-0000000000a1";
+const OWNER_B: &str = "e0000000-0000-4000-8000-0000000000b1";
+
+fn notifier_claim(b: &Brain, owner: &str) -> Value {
+    let claim: gbrain_store::persistence::NotifierLeaseClaim = serde_json::from_value(json!({
+        "hostId": NOTIFIER_HOST, "ownerId": owner, "kind": "serve", "pid": 101, "leaseMs": 30_000,
+    }))
+    .unwrap();
+    b.store.claim_notifier_lease(&claim).unwrap()
+}
+
+fn notifier_lease(owner: &str, fence: i64) -> Value {
+    json!({ "hostId": NOTIFIER_HOST, "ownerId": owner, "fence": fence })
+}
+
+#[test]
+fn lf1_a_notifier_that_lost_its_lease_cannot_write_its_state_or_coverage() {
+    let b = brain("lf1-notifier", true);
+    assert!(b.store.multiuser(), "multi-user mode is on");
+    assert_eq!(notifier_claim(&b, OWNER_A)["fence"], 1);
+    let state = |owner: &str, fence: i64| -> gbrain_store::persistence::NotifierStatePatch {
+        serde_json::from_value(json!({
+            "state": "running", "firstDue": "keep", "lease": notifier_lease(owner, fence),
+        }))
+        .unwrap()
+    };
+    let coverage = |owner: &str, fence: i64| -> gbrain_store::persistence::NotifierCoverage {
+        serde_json::from_value(json!({
+            "head": "abc", "mode": "watch", "ownerHostId": NOTIFIER_HOST, "ownerKind": "serve", "ownerPid": 101,
+            "lease": notifier_lease(owner, fence),
+        }))
+        .unwrap()
+    };
+    b.store
+        .write_notifier_state("default", &state(OWNER_A, 1))
+        .unwrap();
+    b.advance_ms(31_000); // owner A's lease lapses; owner B takes it at fence 2
+    assert_eq!(notifier_claim(&b, OWNER_B)["fence"], 2);
+    let before = b.dump();
+    let err = b
+        .store
+        .write_notifier_state("default", &state(OWNER_A, 1))
+        .unwrap_err();
+    assert_eq!(err.code, gbrain_store::error::LEASE_LOST, "{err}");
+    let err = b
+        .store
+        .write_notifier_coverage("default", &coverage(OWNER_A, 1))
+        .unwrap_err();
+    assert_eq!(err.code, gbrain_store::error::LEASE_LOST, "{err}");
+    assert_eq!(
+        b.dump(),
+        before,
+        "a refused notifier write changed the brain"
+    );
+    b.store
+        .write_notifier_state("default", &state(OWNER_B, 2))
+        .unwrap();
+    b.store
+        .write_notifier_coverage("default", &coverage(OWNER_B, 2))
+        .unwrap();
+}
+
+/// With the multi-user switch off the notifier writes are exactly what they were: the lease they name is not read.
+#[test]
+fn lf1_with_the_mode_off_a_notifier_write_does_not_read_the_lease() {
+    let b = brain("lf1-notifier-off", false);
+    assert!(!b.store.multiuser(), "multi-user mode is off");
+    notifier_claim(&b, OWNER_A);
+    b.advance_ms(31_000);
+    notifier_claim(&b, OWNER_B);
+    let patch: gbrain_store::persistence::NotifierStatePatch = serde_json::from_value(json!({
+        "state": "running", "firstDue": "keep", "lease": notifier_lease(OWNER_A, 1),
+    }))
+    .unwrap();
+    b.store.write_notifier_state("default", &patch).unwrap();
+}

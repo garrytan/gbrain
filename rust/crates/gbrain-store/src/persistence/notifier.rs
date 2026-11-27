@@ -151,6 +151,10 @@ pub struct NotifierStatePatch {
     pub error_given: bool,
     #[serde(default)]
     pub error: Option<NotifierStateError>,
+    /// The writer's notifier lease (lane L5, I-5 host fence table): on a multi-user store the write is refused
+    /// `lease_lost` at commit unless this owner still holds the host's lease at this fence. None: unchanged.
+    #[serde(default)]
+    pub lease: Option<NotifierLeaseRef>,
 }
 
 /// The last error of a state patch.
@@ -173,6 +177,18 @@ pub struct NotifierCoverage {
     pub owner_host_id: String,
     pub owner_kind: String,
     pub owner_pid: f64,
+    /// The writer's notifier lease, as on [`NotifierStatePatch::lease`].
+    #[serde(default)]
+    pub lease: Option<NotifierLeaseRef>,
+}
+
+/// The notifier lease a state or coverage write was made under: the host, the owner and the fence it holds.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NotifierLeaseRef {
+    pub host_id: String,
+    pub owner_id: String,
+    pub fence: f64,
 }
 
 /// One stored `sync_wanted_markers` row (the source id and intent are in the key).
@@ -311,6 +327,29 @@ pub(crate) fn read_notifier_lease_in(
 
 /// The SELECT of `holdsNotifierLease`: the row is `owner_id`'s, with `fence`, and unexpired
 /// (`expires_at > now`).
+/// Refuses a notifier write whose owner no longer holds the host's notifier lease at its fence (`lease_lost`:
+/// `not_found` with no lease row, `epoch_moved` when another owner or fence holds it, `expired` when it lapsed).
+fn assert_notifier_lease_in(
+    read: &dyn KvRead,
+    env: &dyn Env,
+    lease: &NotifierLeaseRef,
+) -> Result<()> {
+    use crate::leases::{LostReason, lease_lost};
+    let name = format!("notifier:{}", lease.host_id);
+    let epoch = lease.fence.max(0.0) as u64;
+    let Some(row) = get_json::<NotifierLeaseRecord>(read, &lease_key(&lease.host_id)?)? else {
+        return Err(lease_lost(LostReason::NotFound, &name, epoch, None));
+    };
+    let current = Some(row.fence.max(0) as u64);
+    if row.owner_id != lease.owner_id || row.fence as f64 != lease.fence {
+        return Err(lease_lost(LostReason::EpochMoved, &name, epoch, current));
+    }
+    if row.expires_at_us <= env.now_micros() {
+        return Err(lease_lost(LostReason::Expired, &name, epoch, current));
+    }
+    Ok(())
+}
+
 pub(crate) fn holds_notifier_lease_in(
     read: &dyn KvRead,
     env: &dyn Env,
@@ -1055,7 +1094,12 @@ impl Store {
 
     /// `writeNotifierState(sourceId, patch)`: one write.
     pub fn write_notifier_state(&self, source_id: &str, patch: &NotifierStatePatch) -> Result<()> {
-        self.write(|tx| write_notifier_state_in(tx, &*self.env, source_id, patch))
+        self.write(|tx| {
+            if let Some(lease) = patch.lease.as_ref().filter(|_| self.multiuser()) {
+                assert_notifier_lease_in(&*tx, &*self.env, lease)?;
+            }
+            write_notifier_state_in(tx, &*self.env, source_id, patch)
+        })
     }
 
     /// `writeNotifierCoverage(sourceId, coverage)`: one write.
@@ -1064,7 +1108,12 @@ impl Store {
         source_id: &str,
         coverage: &NotifierCoverage,
     ) -> Result<()> {
-        self.write(|tx| write_notifier_coverage_in(tx, &*self.env, source_id, coverage))
+        self.write(|tx| {
+            if let Some(lease) = coverage.lease.as_ref().filter(|_| self.multiuser()) {
+                assert_notifier_lease_in(&*tx, &*self.env, lease)?;
+            }
+            write_notifier_coverage_in(tx, &*self.env, source_id, coverage)
+        })
     }
 
     /// `recordNotifierSyncerHost(sourceId, hostId)`: one write.

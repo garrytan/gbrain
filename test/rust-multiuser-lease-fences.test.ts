@@ -18,6 +18,8 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import { acquirePageEmbeddingLease } from '../src/core/page-embedding-lease.ts';
 import { DREAM_INLINE_PRIVATE_QUEUE_PREFIX, MinionQueue } from '../src/core/minions/queue.ts';
 import { drainWakes } from '../src/core/wakeshift/drain.ts';
+import { startCommitNotifier, type NotifierStore } from '../src/core/commit-notifier.ts';
+import { memoryNotifierStore } from './helpers/notifier-memory-store.ts';
 import { buildSegmentedProjection } from '../src/core/page-body/projection.ts';
 import { continueDeferredProjectionStep, DEFERRED_CHUNK_CLAIM } from '../src/core/page-state/projections.ts';
 import { basisEmbedding } from './engine-parity/harness.ts';
@@ -177,6 +179,64 @@ describe('family 5, the deferred replacement claim', () => {
       expect(await refusal(() => continueDeferredProjectionStep(e, 'default', 'notes/moving', state, 0)))
         .toEqual({ code: 'lease_lost', reason: 'epoch_moved' });
       expect(await e.readProjectionJobReason(key)).toBe(claimed);
+    });
+  });
+});
+
+describe('family 1, the commit notifier lease', () => {
+  const HOST = '00000000-0000-4000-8000-0000000025a6';
+  const A = 'a'.repeat(40), B = 'b'.repeat(40);
+
+  /** A notifier on `store` with one managed source whose HEAD moved; returns the state and coverage writes it sent. */
+  async function notifierWrites(store: NotifierStore, t: { now: number }) {
+    const sent: Array<{ kind: string; lease?: unknown }> = [];
+    const recording: NotifierStore = {
+      ...store,
+      writeState: async (id, patch) => { sent.push({ kind: 'state', lease: patch.lease }); return store.writeState(id, patch); },
+      writeCoverage: async (id, c) => { sent.push({ kind: 'coverage', lease: c.lease }); return store.writeCoverage(id, c); },
+    };
+    const n = startCommitNotifier({
+      resident: 'serve', log: () => {}, hostId: HOST, store: recording, now: () => t.now, pollMs: 3000, quietMs: 400, heartbeatMs: 10_000,
+      firstSliceSeconds: 30, sliceSeconds: 120, maxConcurrent: 1,
+      setInterval: () => 'interval', clearInterval: () => {}, setTimeout: () => 'timer', clearTimeout: () => {},
+      readFlag: async () => true,
+      listSources: async () => [{ sourceId: 'source-a', root: '/nonexistent/source-a', gitDir: null, lastCommit: A, kind: 'managed' }],
+      lastCommit: async () => A, revParse: async () => B, syncRunning: () => false, drainHeld: async () => false,
+      startSync: async () => ({ jobId: 'job-1' }), jobStatus: () => ({ state: 'running' }),
+    });
+    await n.tick();
+    t.now += 400; await n.tick();
+    await n.stop();
+    return sent;
+  }
+
+  test('a notifier that holds the host lease sends it with every state and coverage write', async () => {
+    const t = { now: 1_000_000 };
+    const store = memoryNotifierStore({ lastCommit: () => A, leases: { rows: new Map(), now: () => t.now } });
+    const sent = await notifierWrites(store, t);
+    expect(sent.length).toBeGreaterThan(0);
+    for (const write of sent) expect(write.lease).toMatchObject({ hostId: HOST, fence: 1 });
+  });
+
+  test('with no lease (the PGLite shape) the writes carry none, as before', async () => {
+    const t = { now: 1_000_000 };
+    const sent = await notifierWrites(memoryNotifierStore({ lastCommit: () => A }), t);
+    expect(sent.length).toBeGreaterThan(0);
+    for (const write of sent) expect(write.lease).toBeUndefined();
+  });
+
+  withAddon('on a multi-user Rust brain a state write under a lost notifier lease is refused lease_lost', async () => {
+    await withEnv({ GBRAIN_RUST_MULTIUSER: '1' }, async () => {
+      const engine = await open();
+      expect(engine.openStore('test').multiuser).toBe(true);
+      const ownerA = 'e0000000-0000-4000-8000-0000000000a1', ownerB = 'e0000000-0000-4000-8000-0000000000b1';
+      const a = await engine.claimNotifierLease({ hostId: HOST, ownerId: ownerA, kind: 'serve', pid: 1, leaseMs: 30 });
+      expect(a).toMatchObject({ owner: true, fence: 1 });
+      await Bun.sleep(60);
+      expect(await engine.claimNotifierLease({ hostId: HOST, ownerId: ownerB, kind: 'serve', pid: 2, leaseMs: 60_000 })).toMatchObject({ owner: true, fence: 2 });
+      const refused = await refusal(() => engine.writeNotifierState('default', { state: 'running', firstDue: 'keep', lease: { hostId: HOST, ownerId: ownerA, fence: 1 } }));
+      expect(refused.code).toBe('lease_lost');
+      await engine.writeNotifierState('default', { state: 'running', firstDue: 'keep', lease: { hostId: HOST, ownerId: ownerB, fence: 2 } });
     });
   });
 });

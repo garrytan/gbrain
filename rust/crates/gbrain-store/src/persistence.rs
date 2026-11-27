@@ -147,7 +147,8 @@ pub use journal_redaction::{RedactRequestArgs, SweepChunkArgs};
 pub use noop_settle::NoopSettleCandidateSpec;
 pub(crate) use notifier::remove_source_rows as remove_notifier_source_rows;
 pub use notifier::{
-    NotifierCoverage, NotifierLeaseClaim, NotifierStateError, NotifierStatePatch, WantedMarkerInput,
+    NotifierCoverage, NotifierLeaseClaim, NotifierLeaseRef, NotifierStateError, NotifierStatePatch,
+    WantedMarkerInput,
 };
 pub use op_checkpoint::AtomGenerationBump;
 pub use topology_store::{TopologyRead, TopologyWrite};

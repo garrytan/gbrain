@@ -314,6 +314,8 @@ export function startCommitNotifier(opts: CommitNotifierOptions): CommitNotifier
   let owner = false;
   let fence: number | null = null;
   let leased = false;
+  /** The lease this notifier's state and coverage writes are made under, so a store that checks it refuses a lost one. */
+  const heldLease = () => (leased && fence !== null ? { lease: { hostId: opts.hostId, ownerId, fence } } : {});
   let stopped = false;
   let flagReadAt = -Infinity;
   let listedAt = -Infinity;
@@ -350,7 +352,7 @@ export function startCommitNotifier(opts: CommitNotifierOptions): CommitNotifier
     rt.state = patch.state;
     if (patch.attempts !== undefined) rt.attempts = patch.attempts;
     rt.nextRetryAt = patch.nextRetryInMs ? now() + patch.nextRetryInMs : 0;
-    await guard(`recording the notifier state of ${rt.sourceId}`, () => opts.store.writeState(rt.sourceId, patch), undefined);
+    await guard(`recording the notifier state of ${rt.sourceId}`, () => opts.store.writeState(rt.sourceId, { ...patch, ...heldLease() }), undefined);
   };
   const trace = (rt: Rt, event: Record<string, unknown>): string | null => {
     try { return opts.trace?.(rt.sourceId, { at: new Date(now()).toISOString(), source_id: rt.sourceId, resident: opts.resident, head: rt.head, last_commit: rt.lastCommit, ...event }) ?? null; }
@@ -404,7 +406,7 @@ export function startCommitNotifier(opts: CommitNotifierOptions): CommitNotifier
     if (key !== rt.coverageKey) {
       rt.coverageKey = key;
       await guard(`recording what the notifier sees of ${rt.sourceId}`, () => opts.store.writeCoverage(rt.sourceId,
-        { head: rt.head, mode: mode(rt), ownerHostId: opts.hostId, ownerKind: opts.resident, ownerPid: pid }), undefined);
+        { head: rt.head, mode: mode(rt), ownerHostId: opts.hostId, ownerKind: opts.resident, ownerPid: pid, ...heldLease() }), undefined);
     }
   };
 
