@@ -1213,68 +1213,119 @@ describe('engine parity: multi-writer conformance', () => {
   // C21: a write acknowledged on one connection is seen on another given its commit position as a token. Runs where the brain keeps a
   // commit log and serves over the network: the Rust engine in multi-user mode with the log on (`rust-mu`, both routes, which turn the
   // log on and prove it). A SQL engine and the plain Rust arm keep no log and serve no listener (n/a); PGLite has one connection.
-  //  1. The arm's engine owns the brain and serves a loopback v3 listener; two served clients A and B connect. Mode and log are asserted
-  //     on the owner and on every connection (a served client reports `served` and `commit_log`).
-  //  2. A writes, takes the token its acknowledgement carried (`readPositionToken`), and B reads with it (`withReadPosition`) and sees the
-  //     write; the tokens only grow. The owner writes in process, takes its own `lastCommitPosition` as the token, and B reads that too.
+  // The two served connections A and B come from the arm:
+  //  - on the served arm the arm's engine is a served client of its own brain server: it is A, and `ctx.servedPeerEngine()` (a second v3
+  //    connection to the same server, its own owner token and principal) is B. The arm's server keeps the log, so this brain is the one
+  //    the commit log is on for; nothing in the case owns the brain, so there is no owner write here.
+  //  - on the non-served rust-mu arm the engine owns its brain: it serves a loopback v3 listener of its own and two served clients A and B
+  //    connect to it. The owner also writes in process and takes its own `lastCommitPosition`, and an owner-socket client
+  //    (`ctx.sameBrainEngine`) reads the same writes.
+  //  1. Mode and log are asserted on every engine involved (assertRustMultiuserResolved and assertRustCommitLogResolved: the owner on its
+  //     store, a served client by the `served`, `multi_writer` and `commit_log` capabilities its server's hello reports).
+  //  2. A writes, takes the token of its write (the position its acknowledgement carried, `readPositionToken`, or on the served arm `lastCommitPosition`), and B reads with it (`withReadPosition`) and sees the
+  //     write; the tokens only grow. The same holds the other way: B writes and A reads B's token.
   //  3. A token past every commit ends `position_not_reached` within the read's deadline and returns nothing: B really carries the token
-  //     (without it the page, which exists, would be returned) and the server really compares it.
-  //  4. An owner-socket client of the same brain (`ctx.sameBrainEngine`) reads the same writes. The owner socket sends no token, so
-  //     this one proves the plain second-connection read only.
+  //     (without it the page, which exists, is returned) and the server really compares it.
+  //  4. Non-served arm only: the owner writes in process and B reads the owner's `lastCommitPosition` token, and the owner-socket client
+  //     reads the same writes. The owner socket sends no token, so that one proves the plain second-connection read only.
   parityTest('C21 read-your-writes token on a second connection', { methods: ['putPage', 'getPage'], mwCase: 'C21' }, async (engine, _backend, ctx) => {
     const route = rustMultiuserView();
     expect(route, 'C21 runs on the rust-mu arm only: its brain must be multi-user').not.toBe('off');
-    assertRustMultiuserResolved(engine, route as 'env' | 'config');
-    assertRustCommitLogResolved(engine);
     const caps = (e: unknown) => (e as { capabilities: ReadonlySet<string> }).capabilities;
-    expect(caps(engine).has('commit_log'), 'the owner does not report commit_log').toBe(true);
-    const second = await ctx.sameBrainEngine();
-    expect(caps(second).has('commit_log'), 'the owner-socket client does not report commit_log').toBe(true);
-    const net = await servedClients(engine, 2);
+    const served = caps(engine).has('served');
+    expect(served, 'the arm\'s engine is a served client exactly when the served arm is on').toBe(rustServedRequested());
+    const parse = (token: string | null) => { const m = /^cp1:(\d+)\.(\d+)$/.exec(token ?? ''); expect(m, `not a token: ${token}`).not.toBeNull(); return { sequence: Number(m![1]), index: Number(m![2]) }; };
+    let net: Awaited<ReturnType<typeof servedClients>> | undefined;
     try {
-      const [a, b] = net.clients as [RustEngine, RustEngine];
-      for (const [who, client] of [['A', a], ['B', b]] as const) {
-        expect(caps(client).has('served') && caps(client).has('commit_log'), `served client ${who} does not report served and commit_log`).toBe(true);
+      let a: BrainEngine;
+      let b: BrainEngine;
+      let ownerSocket: BrainEngine | undefined;
+      if (served) {
+        a = engine;
+        b = await ctx.servedPeerEngine();
+      } else {
+        ownerSocket = await ctx.sameBrainEngine();
+        net = await servedClients(engine, 2);
+        [a, b] = net.clients as [RustEngine, RustEngine] as unknown as [BrainEngine, BrainEngine];
       }
-      expect(readPositionToken(a), 'a client that has written nothing already has a token').toBeNull();
-      const parse = (token: string | null) => { const m = /^cp1:(\d+)\.(\d+)$/.exec(token ?? ''); expect(m, `not a token: ${token}`).not.toBeNull(); return { sequence: Number(m![1]), index: Number(m![2]) }; };
-      let previous: CommitPosition | null = null;
-      for (let n = 0; n < 8; n++) {
-        const slug = `notes/c21-a-${n}`;
-        await a.putPage(slug, NOTE(`A${n}`, `acknowledged on A ${n}`));
-        const token = readPositionToken(a)!;
-        const at = parse(token);
-        if (previous) expect(at.sequence - previous.sequence || at.index - previous.index, `the token of write ${n} did not grow`).toBeGreaterThan(0);
-        previous = at;
-        expect((await withReadPosition(token, () => b.getPage(slug)))?.compiled_truth, `connection B does not see write ${n} acknowledged on A, given token ${token}`).toBe(`acknowledged on A ${n}`);
+      const involved: Array<[string, BrainEngine, boolean]> = [['the arm\'s engine', engine, served], ['connection A', a, true], ['connection B', b, true], ...(ownerSocket ? [['the owner-socket client', ownerSocket, false] as [string, BrainEngine, boolean]] : [])];
+      for (const [who, e, isServed] of involved) {
+        assertRustMultiuserResolved(e, route as 'env' | 'config');
+        assertRustCommitLogResolved(e);
+        expect(caps(e).has('commit_log'), `${who} does not report commit_log`).toBe(true);
+        if (isServed) expect(caps(e).has('served') && caps(e).has('multi_writer'), `${who} does not report served and multi_writer`).toBe(true);
       }
-      for (let n = 0; n < 4; n++) {
-        const slug = `notes/c21-owner-${n}`;
-        await engine.putPage(slug, NOTE(`O${n}`, `acknowledged on the owner ${n}`));
-        const at = await engine.lastCommitPosition();
-        expect(at, `the owner's write ${n} left no commit position`).not.toBeNull();
-        const token = positionToken(at!);
-        expect((await engine.getPage(slug))?.compiled_truth, `the owner does not see its own write ${n}`).toBe(`acknowledged on the owner ${n}`);
-        expect((await withReadPosition(token, () => b.getPage(slug)))?.compiled_truth, `connection B does not see write ${n} acknowledged on the owner, given token ${token}`).toBe(`acknowledged on the owner ${n}`);
-        expect((await withReadPosition(token, () => second.getPage(slug)))?.compiled_truth, `the owner-socket client does not see write ${n}`).toBe(`acknowledged on the owner ${n}`);
+      expect(a === b, 'A and B are one connection').toBe(false);
+      // The token of `writer`'s newest write. A raw served client keeps the position its acknowledgement carried (`readPositionToken`). On the
+      // served arm the engines are the harness's recording wrappers, which the connection registry does not see through, so the newest commit
+      // position the server reports (`lastCommitPosition`, the case's only writer at that moment) is the token there.
+      const tokenOf = async (writer: BrainEngine): Promise<string> => {
+        if (!served) return readPositionToken(writer)!;
+        const at = await writer.lastCommitPosition();
+        expect(at, 'a served write left no commit position').not.toBeNull();
+        return positionToken(at!);
+      };
+      if (!served) {
+        expect(readPositionToken(a), 'a client that has written nothing already has a token').toBeNull();
+        expect(readPositionToken(b), 'a client that has written nothing already has a token').toBeNull();
       }
-      // A token past every commit: B waits for it until the read's deadline and returns nothing.
-      const last = (await engine.lastCommitPosition())!;
-      const future = positionToken({ sequence: last.sequence + 1_000_000, index: 0 });
+      // `writer` writes `count` pages and `reader` reads each with the writer's token; returns the last token.
+      let seen = 0;
+      const crossed = async (writer: BrainEngine, reader: BrainEngine, who: string, count: number): Promise<string> => {
+        let previous: CommitPosition | null = null;
+        let last = '';
+        for (let n = 0; n < count; n++) {
+          const slug = `notes/c21-${who}-${n}`;
+          await writer.putPage(slug, NOTE(`${who}${n}`, `acknowledged on ${who} ${n}`));
+          last = await tokenOf(writer);
+          const at = parse(last);
+          if (previous) expect(at.sequence - previous.sequence || at.index - previous.index, `the token of write ${n} on ${who} did not grow`).toBeGreaterThan(0);
+          previous = at;
+          expect((await withReadPosition(last, () => reader.getPage(slug)))?.compiled_truth, `the other connection does not see write ${n} acknowledged on ${who}, given token ${last}`).toBe(`acknowledged on ${who} ${n}`);
+          seen++;
+        }
+        return last;
+      };
+      const lastA = await crossed(a, b, 'a', 8);
+      const lastB = await crossed(b, a, 'b', 4);
+      let newest = parse(lastA).sequence > parse(lastB).sequence ? parse(lastA).sequence : parse(lastB).sequence;
+      if (!served) {
+        for (let n = 0; n < 4; n++) {
+          const slug = `notes/c21-owner-${n}`;
+          await engine.putPage(slug, NOTE(`O${n}`, `acknowledged on the owner ${n}`));
+          const at = await engine.lastCommitPosition();
+          expect(at, `the owner's write ${n} left no commit position`).not.toBeNull();
+          const token = positionToken(at!);
+          expect((await engine.getPage(slug))?.compiled_truth, `the owner does not see its own write ${n}`).toBe(`acknowledged on the owner ${n}`);
+          expect((await withReadPosition(token, () => b.getPage(slug)))?.compiled_truth, `connection B does not see write ${n} acknowledged on the owner, given token ${token}`).toBe(`acknowledged on the owner ${n}`);
+          expect((await withReadPosition(token, () => ownerSocket!.getPage(slug)))?.compiled_truth, `the owner-socket client does not see write ${n}`).toBe(`acknowledged on the owner ${n}`);
+          seen += 2;
+          newest = Math.max(newest, at!.sequence);
+        }
+        expect(newest, 'the owner\'s last position is behind a served write').toBeGreaterThanOrEqual(parse(lastA).sequence);
+      }
+      // A token past every commit: B waits for it until the read's deadline and returns nothing. Without the token the page is there.
+      expect((await b.getPage('notes/c21-a-0'))?.compiled_truth, 'the page the future read asks for does not exist').toBe('acknowledged on a 0');
+      const future = positionToken({ sequence: newest + 1_000_000, index: 0 });
       const waited = await attempt(() => withStatementDeadline({ deadlineAt: Date.now() + 300 } as never, () => withReadPosition(future, () => b.getPage('notes/c21-a-0'))));
       expect(waited.ok, 'B returned a page for a token past every commit: it does not carry the token').toBe(false);
       const why = refusalOf(waited as { ok: false; error: unknown });
       expect(why, 'B\'s read of a token past every commit ended on something else').toEqual({ code: 'timeout', reason: 'position_not_reached' });
-      return { writesSeenByB: 12, tokensGrow: true, pastTokenWaited: true };
-    } finally { await net.close(); }
+      return { writesSeenByB: seen, tokensGrow: true, pastTokenWaited: true };
+    } finally { await net?.close(); }
   });
 
   // C21, variant `C21.log-off`: the same read on a multi-user brain with the commit log off is refused. Without the log the optimistic
   // multi-user store cannot order positions, so the server hands no token to a write and refuses a token on a read (the read never runs).
   // The case opens its own multi-user brain with the log off (`withEnv`: the arm sets GBRAIN_RUST_COMMIT_LOG for its own brain), serves it,
   // writes on A, and reads on B: with a token the read ends `owner_ipc_protocol` (reason `frame_malformed`, `min_position=unsupported`) and
-  // returns nothing; without a token the same read returns the write. The arm's own brain, log on, is the contrast.
+  // returns nothing; without a token the same read returns the write. The arm's own brain, log on, is the contrast. It runs the same on
+  // the served arm: the arm's server keeps the log, so the log-off brain is not the arm's own but one the case opens and serves itself
+  // (the arm's served client is only the contrast, and proves mode and log on the way).
   parityTest('C21 read-your-writes token on a second connection: a read carrying a token is refused while the commit log is off', { methods: ['putPage', 'getPage'], mwCase: 'C21.log-off' }, async (engine) => {
+    const route = rustMultiuserView();
+    expect(route, 'C21.log-off runs on the rust-mu arm only: the arm\'s own brain must be multi-user').not.toBe('off');
+    assertRustMultiuserResolved(engine, route as 'env' | 'config');
     assertRustCommitLogResolved(engine);
     await engine.putPage('notes/c21-log-on', NOTE('On', 'written with the log on'));
     expect((await engine.getPage('notes/c21-log-on'))?.compiled_truth).toBe('written with the log on');
@@ -1289,6 +1340,10 @@ describe('engine parity: multi-writer conformance', () => {
           expect(owner.capabilities.has('commit_log' as never), 'the log-off brain reports commit_log').toBe(false);
           net = await servedClients(owner as unknown as BrainEngine, 2);
           const [a, b] = net.clients as [RustEngine, RustEngine];
+          for (const [who, client] of [['A', a], ['B', b]] as const) {
+            expect(client.capabilities.has('served' as never) && client.capabilities.has('multi_writer' as never), `served client ${who} of the log-off brain does not report served and multi_writer`).toBe(true);
+            expect(client.capabilities.has('commit_log' as never), `served client ${who} of the log-off brain reports commit_log`).toBe(false);
+          }
           await a.putPage('notes/c21-log-off', NOTE('Off', 'written with the log off'));
           expect(readPositionToken(a), 'a write on a brain with no commit log carried a token').toBeNull();
           const read = await attempt(() => withReadPosition('cp1:1.0', () => b.getPage('notes/c21-log-off')));

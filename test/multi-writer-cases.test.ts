@@ -308,6 +308,10 @@ describe('multi-writer support matrix', () => {
     }
     expect(mwCase('C21').members).toEqual(['putPage', 'getPage']);
     expect(mwCase('C21').scope).toMatch(/owner socket sends no token/);
+    // The served arm has its own second connection (the arm's engine owns nothing), the owning rust-mu arm serves its own listener.
+    expect(mwCase('C21').scope).toMatch(/served arm.*owns nothing.*ctx\.servedPeerEngine\(\)/);
+    expect(mwCase('C21').scope).toMatch(/owns its brain and serves a loopback v3 listener/);
+    expect(mwCase('C21').scope).toMatch(/every engine involved/);
     // The variant is for engine arms only and runs once, on rust-mu; its own brain is multi-user with the log off.
     const v = mwVariant('C21.log-off');
     expect(v.of).toBe('C21');
@@ -321,6 +325,10 @@ describe('multi-writer support matrix', () => {
     expect(conformance).toMatch(/GBRAIN_RUST_COMMIT_LOG: undefined/);
     expect(conformance).toMatch(/assertRustMultiuserResolved\(engine, route/);
     expect(conformance).toMatch(/assertRustCommitLogResolved\(engine\)/);
+    // C21 itself: the served arm takes its second connection from the harness, the owning arm serves its own listener, and mode and log are asserted on every engine involved.
+    expect(conformance).toMatch(/b = await ctx\.servedPeerEngine\(\)/);
+    expect(conformance).toMatch(/net = await servedClients\(engine, 2\)/);
+    expect(conformance).toMatch(/for \(const \[who, e, isServed\] of involved\) \{\s*assertRustMultiuserResolved\(e, route[^;]*;\s*assertRustCommitLogResolved\(e\);/);
   });
 
   test('C17.served pins the first opener as owner and a served client electing nothing: engine arms only, runs on rust-mu (plain and served arm), n/a elsewhere with its reason', () => {
