@@ -176,6 +176,7 @@ test/engine-parity/repair-takes-timeline.test.ts	served
 test/engine-parity/repair-twin-merge.test.ts	served	
 test/engine-parity/resident-projection.test.ts	served	
 test/engine-parity/retrieval-coverage.test.ts	served	
+test/engine-parity/search-caller-refusals.test.ts	served	
 test/engine-parity/segment-pending-stamp.test.ts	served	
 test/engine-parity/segmented-body.test.ts	served	
 test/engine-parity/segmented-callers.test.ts	served	
