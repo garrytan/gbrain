@@ -91,8 +91,17 @@ function isLoginLink(url: string): boolean {
 export function redactMailSecrets(text: string, context = ''): string {
   const about = `${context}\n${text}`;
   const spans: Array<{ start: number; end: number; kind: Kind }> = [];
+  /** Overlapping spans merge into one covering both (the wider span's kind, the first on a tie), so a shorter match never leaves the rest of a secret behind. */
   const take = (start: number, end: number, kind: Kind): void => {
-    if (!spans.some((s) => start < s.end && s.start < end)) spans.push({ start, end, kind });
+    for (let i = spans.length - 1; i >= 0; i--) {
+      const s = spans[i]!;
+      if (!(start < s.end && s.start < end)) continue;
+      if (s.end - s.start >= end - start) kind = s.kind;
+      start = Math.min(start, s.start);
+      end = Math.max(end, s.end);
+      spans.splice(i, 1);
+    }
+    spans.push({ start, end, kind });
   };
   if (LOGIN_CONTEXT_RE.test(about)) {
     for (const m of text.matchAll(URL_RE)) {

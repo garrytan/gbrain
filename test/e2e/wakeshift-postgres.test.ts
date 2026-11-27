@@ -48,6 +48,7 @@ beforeEach(async () => {
   fake.calls.length = 0;
   fake.respond.clear();
   await getEngine().executeRaw('DELETE FROM wake_subscriptions');
+  await getEngine().executeRaw('DELETE FROM wake_terms_acceptances');
   await getEngine().executeRaw('DELETE FROM minion_jobs');
 });
 

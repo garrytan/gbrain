@@ -55,6 +55,12 @@ describe('labelled one-time codes', () => {
     expect(redactMailSecrets('Verify your sign-in.\ncode: AB3DE9')).toBe(`Verify your sign-in.\ncode: ${OTP}`);
   });
 
+  test('a code match that covers only the start of a labelled password never leaves the rest of it behind', () => {
+    const out = redactMailSecrets('Your one-time password is Ab3d!xyz9q.');
+    expect(out).not.toContain('xyz9q');
+    expect(out).not.toContain('Ab3d');
+  });
+
   test('a bare "code" label counts only in a sign-in or verification message', () => {
     expect(redactMailSecrets('Verify your sign-in.\ncode: 4829-13')).toBe(`Verify your sign-in.\ncode: ${OTP}`);
     expect(redactMailSecrets('Our new office opens soon.\ncode: 4829-13')).toBe('Our new office opens soon.\ncode: 4829-13');

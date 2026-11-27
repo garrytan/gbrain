@@ -121,6 +121,10 @@ describe('secrets.on_write block', () => {
       const repeated = await call(remote(), 'put_pages', { pages: [{ slug, content: '# One\n' }, { slug, content: '# Two\n' }], request_id: randomUUID() });
       expect(JSON.stringify(repeated).toLowerCase()).not.toContain(TOKEN.toLowerCase());
       expect(repeated.pages.map((p: { index: number; state: string }) => [p.index, p.state])).toEqual([[0, 'refused'], [1, 'refused']]);
+
+      const reasoned = await refusal(() => call(remote(), 'put_pages', { pages: [{ slug, content: '# One\n', reason: 'x'.repeat(5_000) }], request_id: randomUUID() }));
+      expect(reasoned.message).toContain('pages[0]');
+      expect(reasoned.message.toLowerCase()).not.toContain(TOKEN.toLowerCase());
     });
   });
 
@@ -285,7 +289,10 @@ describe('secrets.on_write on server-composed household writes (GST-4024)', () =
         expect(page.compiled_truth).toContain('Portal key ' + TOKEN);
         expect(page.timeline).toContain('paid online');
         if (mode === 'block') {
+          const journaled = await journaledWithToken(slug);
           expectSecretRefusal(await refusal(() => call(remote(), 'household_mark', { slug, event: 'paid', on: '2026-12-02', note: 'card ' + TOKEN })));
+          expectSecretRefusal(await refusal(() => call(remote(), 'household_mark', { slug, event: 'paid', on: '2026-12-02', request_id: TOKEN })));
+          expect(await journaledWithToken(slug)).toBe(journaled);
           expect((await stored(slug)).timeline).not.toContain('2026-12-02');
         } else {
           const redacted = await call(remote(), 'household_mark', { slug, event: 'paid', on: '2026-12-02', note: 'card ' + TOKEN });
@@ -313,6 +320,10 @@ describe('secrets.on_write on server-composed household writes (GST-4024)', () =
         expect(pinned.compiled_truth).toContain('Shop key ' + TOKEN);
         if (mode === 'block') {
           expectSecretRefusal(await refusal(() => call(remote(), 'household_add', { kind: 'bill', title: 'Gas bill', due: '2026-12-09', note: 'key ' + TOKEN })));
+          const other = 'people/other-subject-example';
+          await call(local(), 'put_page', { slug: other, content: '---\ntype: person\nhousehold_role: adult\n---\n\n# Other\n' });
+          expectSecretRefusal(await refusal(() => call(remote(), 'household_add', { kind: 'bill', title: 'Gym bill', due: '2026-12-09', about: [other], about_role: 'child', note: 'key ' + TOKEN })));
+          expect((await stored(other)).frontmatter.household_role).toBe('adult');
         } else {
           const added = await call(remote(), 'household_add', { kind: 'bill', title: 'Gas bill', due: '2026-12-09', note: 'key ' + TOKEN });
           expect(added.secrets_redacted).toEqual({ count: 1, patterns: ['github_token'] });

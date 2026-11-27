@@ -71,7 +71,7 @@ function parsePages(value: unknown): BatchPage[] {
     const { reason: raw, ...rest } = record;
     let reason: string | null;
     try { reason = admitChangeReason(raw); } catch (error) {
-      if (error instanceof OperationError) error.message = `pages[${index}] (${record.slug}): ${error.message} No page of this batch was written.`;
+      if (error instanceof OperationError) error.message = `pages[${index}]${slugHoldsSecret(record.slug) ? '' : ` (${record.slug})`}: ${error.message} No page of this batch was written.`;
       throw error;
     }
     return (reason === null ? rest : { ...rest, reason }) as unknown as BatchPage;
@@ -129,8 +129,14 @@ async function readBatch(ctx: OperationContext, batchId: string): Promise<WriteR
 }
 
 function pageEntry(result: PageResult): Record<string, unknown> {
-  const base = { index: result.index, ...(slugHoldsSecret(result.slug) ? {} : { slug: result.slug }), ...(result.repeatOf !== undefined ? { repeat_of: result.repeatOf } : {}) };
-  if (result.refusal) return { ...base, state: 'refused', error: result.refusal.toJSON() };
+  const base = { index: result.index, slug: result.slug, ...(result.repeatOf !== undefined ? { repeat_of: result.repeatOf } : {}) };
+  if (result.refusal) {
+    // GST-4024: a refused entry never echoes a slug holding a secret: not one the screen refused (it may have matched only
+    // through the page's own text), nor one that scans as a secret on its own. The index names the entry.
+    const { slug: _slug, ...unnamed } = base;
+    const hide = result.refusal.canonicalCode === 'secret_in_write' || slugHoldsSecret(result.slug);
+    return { ...(hide ? unnamed : base), state: 'refused', error: result.refusal.toJSON() };
+  }
   if (!result.row) return { ...base, state: 'not_admitted' };
   const row = result.row;
   const warning = { ...(result.typeWarning ? { type_warning: result.typeWarning } : {}), ...(result.secretsRedacted ? { secrets_redacted: result.secretsRedacted } : {}) };

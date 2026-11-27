@@ -62,8 +62,6 @@ export interface WakeRow {
   job_status: string | null;
   /** GST-4010: the watcher submitted the job, or is a local stdio watch (the job owner fence at delivery time). */
   job_visible: boolean | null;
-  /** GST-4023: the watch is bound to the brain owner, which reads the whole queue only while its credential holds admin. */
-  owner_bound: boolean | null;
   started_at: Date | string | null;
   finished_at: Date | string | null;
   finished_us: string | null;
@@ -91,7 +89,6 @@ const CANDIDATES_SQL = (byId: boolean) => `
 SELECT w.id, w.event, w.target, w.target_ref, w.principal_kind, w.principal_id, w.member_id, w.wake_user, w.ws_subscription_id, w.attempts,
        ${US('w.created_at')} AS created_us,
        j.id AS job_id, j.name AS job_name, j.status AS job_status, j.started_at, j.finished_at, ${US('j.finished_at')} AS finished_us,
-       (w.member_id = (SELECT value FROM config WHERE key = 'access.owner_member')) IS TRUE AS owner_bound,
        (w.principal_kind = 'local_stdio'
          OR (((j.submission_authority->'principal'->>'kind' = w.principal_kind AND j.submission_authority->'principal'->>'id' = w.principal_id)
               OR (j.submission_authority->'principal' IS NULL AND w.principal_kind = 'oauth_client' AND j.data->>'__owner_client_id' = w.principal_id))
@@ -171,9 +168,14 @@ export async function principalLive(engine: BrainEngine, row: Pick<WakeRow, 'pri
   return identity.includes(`member:${row.member_id}`);
 }
 
-/** GST-4023: agentOwnerFence's whole-queue rule, read at delivery: the watch's credential still holds admin scope. */
-async function credentialHoldsAdmin(engine: BrainEngine, row: Pick<WakeRow, 'principal_kind' | 'principal_id'>): Promise<boolean> {
-  if (row.principal_kind === 'local_stdio') return true;
+/**
+ * GST-4023: agentOwnerFence's whole-queue rule, read live at delivery: the watch is bound to the brain owner now
+ * (config access.owner_member) and its credential still holds admin scope.
+ */
+async function ownerReadsWholeQueue(engine: BrainEngine, row: Pick<WakeRow, 'principal_kind' | 'principal_id' | 'member_id'>): Promise<boolean> {
+  if (!row.member_id) return false;
+  const [owner] = await engine.executeRaw<{ value: string }>("SELECT value FROM config WHERE key = 'access.owner_member'");
+  if (owner?.value !== row.member_id) return false;
   if (row.principal_kind === 'oauth_client') {
     const [client] = await engine.executeRaw<{ scope: string | null }>('SELECT scope FROM oauth_clients WHERE client_id = $1 AND deleted_at IS NULL', [row.principal_id]);
     return client != null && hasScope(parseScopeString(client.scope), 'admin');
@@ -238,7 +240,7 @@ async function deliver(engine: BrainEngine, api: WakeshiftApi, row: WakeRow, rep
       if (await settle(engine, row.id, lease, 'ended', { error: 'terms_not_accepted' })) report.ended++;
       return;
     }
-    if (row.event === JOB_FINISHED && row.job_id != null && row.job_visible !== true && !(row.owner_bound === true && await credentialHoldsAdmin(engine, row))) {
+    if (row.event === JOB_FINISHED && row.job_id != null && row.job_visible !== true && !(await ownerReadsWholeQueue(engine, row))) {
       await endAtWakeshift(api, row);
       if (await settle(engine, row.id, lease, 'ended', { error: 'job_not_visible' })) report.ended++;
       return;

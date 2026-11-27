@@ -412,6 +412,8 @@ const household_add: Operation = {
       await householdWriteAdmission(ctx.engine, sourceId, subject, { type: live?.type ?? (subject.startsWith('people/') ? 'person' : 'note'),
         frontmatter: { ...(live?.frontmatter ?? {}), household_role: role }, tags: [] }, snap?.page ?? null, remote);
     }
+    // GST-4024: under block, a secret in the new record is refused before any subject or record is rewritten for it.
+    if (role && !prior) screenWriteSecrets(ctx, 'household_add', { ...recordParams, ...(typeof p.request_id === 'string' ? { request_id: p.request_id } : {}) });
     const subjects = role && !prior ? await classifySubjectPages(ctx, sourceId, about, role) : { classified: [], pinned: [] };
     const result = await submitPageMutation(ctx, { operation: 'put_page', params: { ...recordParams, ...(typeof p.request_id === 'string' ? { request_id: p.request_id } : {}) } });
     const { classified, pinned } = subjects;
@@ -473,7 +475,7 @@ const household_mark: Operation = {
     if (!slug) throw invalidParam(ctx, 'household_mark', 'slug', 'household_mark: slug is required.', { example: 'household/money/bill/water' });
     refuseAccountNumbers(accountNumberFields({ note: p.note, due: p.due }));
     // GST-4024: the write below carries the stored record too, so secrets.on_write screens only the caller's note here.
-    const screened = screenWriteSecrets(ctx, 'household_mark', { note: capText(p.note) });
+    const screened = screenWriteSecrets(ctx, 'household_mark', { note: capText(p.note), ...(typeof p.request_id === 'string' ? { request_id: p.request_id } : {}) });
     const note = screened.params.note as string | null;
     const due = p.due === undefined ? null : strictDate(p.due);
     if (p.due !== undefined && !due) throw invalidParam(ctx, 'household_mark', 'due', 'household_mark: due must be YYYY-MM-DD.', { example: '2026-12-10' });
@@ -498,7 +500,7 @@ const household_mark: Operation = {
     applyEvent(ctx, read.record, fm, event, day, due);
     const timeline = [snap.page.timeline?.trim(), timelineLine(day, event, note)].filter(Boolean).join('\n');
     const result = await submitPageMutation(ctx, { operation: 'put_page', params: { slug, source_id: sourceId, expected_revision: snap.revision,
-      content: serializeRecord(fm, snap.page.title, snap.page.compiled_truth, timeline, snap.tags), ...(typeof p.request_id === 'string' ? { request_id: p.request_id } : {}) }, serverComposed: true });
+      content: serializeRecord(fm, snap.page.title, snap.page.compiled_truth, timeline, snap.tags), ...(typeof screened.params.request_id === 'string' ? { request_id: screened.params.request_id } : {}) }, serverComposed: true });
     return { ...result, slug, event, on: day, status: fm.status ?? 'active', ...(screened.redacted ? { secrets_redacted: screened.redacted } : {}) };
   },
 };
