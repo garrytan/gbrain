@@ -15,6 +15,7 @@ import { withRemoteCaller } from '../../remote-caller.ts';
 import { decodeError, decodeValue, encodeValue, type Wire } from '../owner-ipc/codec.ts';
 import { OWNER_IPC_ROUTES, ownerCallTimeout, ownerIpcRefusal, ownerMemberOnlyReads } from '../owner-ipc/routes.ts';
 import { withCallerAccess, withoutCallerAccess, type CallerAccess } from '../../search/private-visibility.ts';
+import { heldRowHook } from '../owner-ipc/held-row.ts';
 import { servedCallbackTimeout, servedProtocol, servedTransactionConflict, servedTransactionDeadline } from './errors.ts';
 import { restoreTail } from './framing.ts';
 import type { ServedCall, ServedServerOptions, ServedServerSide } from './session.ts';
@@ -69,6 +70,7 @@ export function sessionCalls(ctx: SessionCallsContext) {
   });
 
   const rebuildFunction = (wire: { [key: string]: Wire }, call: ServedCall): unknown => {
+    if (wire.heldRow === true) return heldRowHook(call.member); // the client keeps the policy's decide hook (held-row.ts)
     if (wire.grouper && typeof wire.grouper === 'object' && !Array.isArray(wire.grouper)) {
       const types = (wire.grouper.types as string[] | undefined) ?? [];
       const groups = (wire.grouper.groups as string[] | undefined) ?? [];

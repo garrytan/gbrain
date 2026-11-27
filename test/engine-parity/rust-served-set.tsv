@@ -89,6 +89,7 @@ test/engine-parity/holding-page-purges.test.ts	served
 test/engine-parity/import-folder-stamp.test.ts	served	
 test/engine-parity/import-path.test.ts	served	
 test/engine-parity/import-writes.test.ts	served	
+test/engine-parity/jobs.test.ts	served	
 test/engine-parity/journal-purge-terminal.test.ts	served	
 test/engine-parity/journal-typed-sites.test.ts	served	
 test/engine-parity/keyword-visibility.test.ts	served	
