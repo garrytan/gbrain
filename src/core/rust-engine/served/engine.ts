@@ -67,8 +67,8 @@ function brainProxy(connection: ServedConnection, ref: string | undefined): obje
   });
 }
 
-/** The method names of each store-returning member, per connection (they do not change while it lives). */
-const storeKeys = new WeakMap<ServedConnection, Map<string, Promise<string[]>>>();
+/** The method names of each store-returning member, kept on its connection (they do not change while it lives). */
+const STORE_KEYS: unique symbol = Symbol('gbrain.served-store-keys') as never;
 
 /**
  * The store a member returns, on a served client: an object with the owner store's method names as its own keys (so a
@@ -76,13 +76,13 @@ const storeKeys = new WeakMap<ServedConnection, Map<string, Promise<string[]>>>(
  * operation `servedStoreCall` on the engine itself.
  */
 async function servedStore(connection: ServedConnection, member: string, ref: string | undefined): Promise<object> {
-  let perMember = storeKeys.get(connection);
-  if (!perMember) { perMember = new Map(); storeKeys.set(connection, perMember); }
+  const holder = connection as unknown as { [STORE_KEYS]?: Map<string, Promise<string[]>> };
+  const perMember = holder[STORE_KEYS] ??= new Map();
   let keys = perMember.get(member);
   if (!keys) {
     keys = connection.request('fn', SERVED_STORE_KEYS, [member]) as Promise<string[]>;
     perMember.set(member, keys);
-    keys.catch(() => perMember!.delete(member));
+    keys.catch(() => perMember.delete(member));
   }
   const store: Record<string, (...args: unknown[]) => Promise<unknown>> = {};
   for (const prop of await keys) {
