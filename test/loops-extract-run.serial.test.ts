@@ -927,3 +927,29 @@ describe('#7289 the dedup key is the thread, direction and verbatim quote, not t
   });
 });
 
+
+describe('#10514 a re-extraction retires the thread\'s earlier open decision loops instead of stacking siblings', () => {
+  test('a later pass with a different quote leaves one open decision loop', async () => {
+    const slug = 'emails/2026/08/2026-08-25-venue-thread-10514aa';
+    const threadId = 'thread-10514aa';
+    await engine.putPage(slug, {
+      type: 'email',
+      title: 'Re: venue',
+      compiled_truth: 'Alice: Which venue should we book?\n\nAlice: Please decide on the venue soon.\n',
+      frontmatter: { thread_id: threadId, date: '2026-08-25T10:00:00Z' },
+    }, { sourceId: SRC });
+    const reply = (quote: string, text: string) => async () => ({
+      text: JSON.stringify({ commitments: [], decisions_pending: [{ text, quote }] }), stopReason: 'end',
+    });
+    chatImpl = reply('Which venue should we book?', 'Choose a venue');
+    await runLoopsExtract(engine, { slug, sourceId: SRC });
+    chatImpl = reply('Please decide on the venue soon.', 'Decide on the venue');
+    await runLoopsExtract(engine, { slug, sourceId: SRC });
+    const rows = await engine.executeRaw<{ summary: string; status: string; closed_by: string | null }>(
+      `SELECT summary, status, closed_by FROM open_loops WHERE source_id = $1 AND thread_id = $2 ORDER BY id`, [SRC, threadId]);
+    expect(rows.map((r) => [r.summary, r.status, r.closed_by])).toEqual([
+      ['Choose a venue', 'dropped', 'superseded'],
+      ['Decide on the venue', 'open', null],
+    ]);
+  });
+});
