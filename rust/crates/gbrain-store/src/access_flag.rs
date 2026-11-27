@@ -398,12 +398,15 @@ mod tests {
         //   derivation sweep records' source index (`page_body/purge_record.rs`, index keys only);
         // - the keyword test modules (`index_build/tests.rs`, `index_writer/tests.rs`), which are
         //   whole files under `#[cfg(test)]`;
+        // - `facts/owner_only_once_tests.rs`, a whole file under `#[cfg(test)]` whose counting record
+        //   file passes `begin_write` on to the store it wraps (the store still wraps that handle);
         // - `seed/v0_60_766_tests.rs`, a whole file under `#[cfg(test)]` that writes an older
         //   addon's records into an empty record file before any store opens it;
         // - `test_support.rs`'s `FaultyKv`, which wraps a record store in tests to make a write
         //   transaction fail like a disk and passes every call on (4 calls and definitions).
         let allowed: &[(&str, usize)] = &[
             ("access_flag.rs", 1),
+            ("facts/owner_only_once_tests.rs", 2),
             ("fjall_kv.rs", 1),
             ("keyword/index_build.rs", 1),
             ("keyword/index_build/tests.rs", 1),
