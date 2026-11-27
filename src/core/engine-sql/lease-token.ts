@@ -6,5 +6,12 @@
  */
 export interface LeaseToken { name: string; epoch: number; token: string }
 
+/**
+ * Marks the options of a call on a claim or handle that was taken with no fence (no host registered yet: an implicit
+ * lease), so it is finished the way it was taken even after a registration appears. A symbol key: it never reaches a
+ * store, the SQL engines or the owner socket, and the Rust engine's dispatch reads it as "unfenced on purpose".
+ */
+export const TAKEN_UNFENCED: unique symbol = Symbol.for('gbrain.fence.taken_unfenced');
+
 /** The options of a protected call: `{ fence }` on a registered host, nothing otherwise (`fenceOpts` in persistence/host-fence.ts). */
-export interface FenceOpts { fence?: LeaseToken }
+export interface FenceOpts { fence?: LeaseToken; readonly [TAKEN_UNFENCED]?: true }
