@@ -3373,6 +3373,14 @@ Reasons: `session_cwd`, `missing`, `stale`, `foreign`.
 
 More: [docs/guides/repair.md#hook-session-cwd](../../docs/guides/repair.md#hook-session-cwd)
 
+### host_fence_required
+
+<a id="host_fence_required"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A process that holds a host registration on a multi-user Rust brain called a claim or lease member without its host fence, so the engine refused the call before the store ran it and nothing was written. | With GBRAIN_RUST_MULTIUSER on, the store refuses a stale host only when the call carries the host's fence; a call with none reads as a one-shot command with no host and is let through. A registered process that leaves the fence out could let a host that lost its lease write again, so the engine refuses it. Every gbrain caller passes the fence (fenceOpts); this refusal means one does not. detail names the member. | Report the member in detail: its caller must pass the host fence (fenceOpts, claimFenceOpts, or the queue fences). Turning GBRAIN_RUST_MULTIUSER off avoids the refusal meanwhile. | host_admin | `gbrain doctor --json` | 1 | no |
+
 ### host_identity_mismatch
 
 <a id="host_identity_mismatch"></a>

@@ -42,6 +42,7 @@ import { faultPoint } from './fault-points.ts';
 import { VERSION } from '../../version.ts';
 import { LEASE_BEACON_QUEUE } from '../minions/protected-names.ts';
 import type { FenceOpts } from '../engine-sql/lease-token.ts';
+import { takenFenceOpts } from './host-fence.ts';
 
 export const DRAIN_LEASE_TTL_MINUTES = 2;
 export const DRAIN_LEASE_REFRESH_MS = 20_000;
@@ -276,7 +277,7 @@ export async function withDrainLease(engine: BrainEngine, sourceId: string, opts
       return await withRefreshingLock(engine, lockId, async (signal, handle) => {
         const lease: DrainLease = { lockId, sourceId, token: handle.acquisitionToken, signal };
         // The holder record is written, renewed and deleted under the fence the lease's cycle lock was taken under.
-        const fence: FenceOpts = handle.fence ? { fence: handle.fence } : {};
+        const fence: FenceOpts = takenFenceOpts(handle.fence);
         await writeHolderRecord(engine, sourceId, lease, opts.holder, fence);
         const beacon = setInterval(() => {
           void engine.refreshDrainLeaseHolder(lease.token, DRAIN_LEASE_TTL_MINUTES, fence).catch(() => undefined);

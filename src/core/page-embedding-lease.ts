@@ -23,7 +23,7 @@ import { randomUUID } from 'node:crypto';
 import { hostname } from 'node:os';
 import type { BrainEngine } from './engine.ts';
 import { opError, type OperationError } from './ops/contract.ts';
-import { fenceOpts } from './persistence/host-fence.ts';
+import { boundFenceOpts } from './persistence/host-fence.ts';
 import { readFix } from './ops/op-fix.ts';
 
 export const PAGE_EMBEDDING_LEASE_TTL_MINUTES = 2;
@@ -86,7 +86,7 @@ export async function acquirePageEmbeddingLease(engine: BrainEngine, pageId: num
   const token = randomUUID();
   // The host fence (multi-user Rust, I-5): taken once, so the lease is renewed and released under the fence it was
   // taken with; a host whose registration moved is refused lease_lost. Empty on every other engine and with the mode off.
-  const fence = fenceOpts(engine);
+  const fence = boundFenceOpts(engine);
   const take = () => engine.takePageEmbeddingLease(id, { holderPid: process.pid, holderHost: hostname(), acquisitionToken: token, ttlMinutes: PAGE_EMBEDDING_LEASE_TTL_MINUTES, ...fence });
   const bound = Math.min(opts.deadline ?? Infinity, Date.now() + (pageEmbeddingLeaseProbe.waitBoundMs ?? PAGE_EMBEDDING_LEASE_TTL_MINUTES * 60_000));
   for (let waitMs = 50; !await take(); waitMs = Math.min(waitMs * 2, LEASE_WAIT_MAX_MS)) {

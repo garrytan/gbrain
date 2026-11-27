@@ -12,34 +12,23 @@
  * `FenceOpts` / `LeaseToken`, or it is the `opts` a `fences.ending` callback receives). Calls through a MinionQueue
  * (`queue.completeJob`, ...) are its fenced wrappers: the wrappers' own engine calls are checked here instead. The
  * engine classes and the Rust store members only forward the options they are given, so they are not callers.
+ *
+ * The member list is persistence/fenced-members.ts, the one the Rust engine's dispatch refusal (rust-engine/fence-dispatch.ts)
+ * reads, so the census and the runtime refusal can never cover different members.
  */
 import { describe, expect, test } from 'bun:test';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import ts from 'typescript';
+import { FENCED_CALL_ALIASES, FENCED_MEMBERS, type FencedFamily } from '../src/core/persistence/fenced-members.ts';
 
 const ROOT = join(import.meta.dir, '..');
 
-/** The claim and lease members of the I-5 host fence table, by family. */
-export const FENCED_MEMBERS: Record<string, readonly string[]> = {
-  write_claims: ['stampWriteClaim', 'renewWriteClaim', 'releaseUnpublishedClaim', 'expireStaleWriteClaims', 'completeWriteRow'],
-  job_claims: ['claimNextJob', 'renewJobLease', 'completeJob', 'failJob', 'releaseWatchdogClaim', 'reclaimStalledJobs', 'killTimedOutJobs', 'killWallClockJobs'],
-  effect_claims: ['renewEffectClaim', 'advanceEffectRow', 'completeEffectRow', 'retryEffectRow', 'retryBusyEffectRow', 'requeueEffectRow', 'parkEffectRow', 'failEffectRow'],
-  cycle_lock: ['acquireCycleLock', 'refreshCycleLock', 'releaseCycleLock', 'deleteCycleLock', 'deleteCycleLockIfStale'],
-  drain_lease: ['writeDrainLeaseHolder', 'refreshDrainLeaseHolder', 'releaseDrainLeaseHolder'],
-  consumer_rows: ['renewConsumerRow'],
-  // The commit notifier writes through its NotifierStore (`store.writeState`), which forwards to these members.
-  notifier_lease: ['writeNotifierState', 'writeNotifierCoverage', 'store.writeState', 'store.writeCoverage'],
-  housekeeping_turn: ['claimHousekeepingTurn', 'completeHousekeepingTurn'],
-  private_queue_lease: ['renewPrivateQueueLease'],
-  segmented_projection: ['claimSegmentedProjection', 'renewSegmentedProjectionClaim', 'releaseSegmentedProjectionClaim'],
-  deferred_replacement: ['renewDeferredReplacementClaim', 'releaseDeferredReplacementClaim'],
-  wake_leases: ['claimWakeWatch', 'settleWakeWatch', 'claimWakeForgets', 'settleWakeForget'],
-  page_embedding_lease: ['takePageEmbeddingLease', 'renewPageEmbeddingLease', 'releasePageEmbeddingLease'],
-};
-/** Plain member names, and `receiver.member` names that count only on a receiver ending in that word. */
-const MEMBERS = new Set(Object.values(FENCED_MEMBERS).flat().filter(m => !m.includes('.')));
-const QUALIFIED = new Map(Object.values(FENCED_MEMBERS).flat().filter(m => m.includes('.')).map(m => [m.split('.')[1]!, m.split('.')[0]!]));
+/** The members, by family, and the other names they are called through: one list with the Rust engine's dispatch. */
+const MEMBERS = new Set(Object.values(FENCED_MEMBERS).flat() as string[]);
+const QUALIFIED = new Map(Object.values(FENCED_CALL_ALIASES).flat().map(m => [m.split('.')[1]!, m.split('.')[0]!]));
+const FAMILY_NAMES: Record<string, readonly string[]> = Object.fromEntries((Object.entries(FENCED_MEMBERS) as Array<[FencedFamily, readonly string[]]>)
+  .map(([family, members]) => [family, [...members, ...(FENCED_CALL_ALIASES[family] ?? [])]]));
 
 /** The census name of a member call, or null when the call is not one of the fenced members. */
 function memberOf(call: ts.CallExpression, sf: ts.SourceFile): string | null {
@@ -56,15 +45,19 @@ const FORWARDERS: Record<string, string> = {
   'src/core/postgres-engine.ts': 'engine class: delegates each member to its SQL statement with the caller\'s options',
   'src/core/rust-engine/store-members/': 'Rust store members: pass the caller\'s fence to the addon unchanged',
   'src/core/engine-sql/': 'SQL statements: the SQL engines fence with their own row locks and tokens',
-  'src/core/notifier/store.ts': 'NotifierStore adapter: forwards the patch and coverage, which carry the notifier\'s lease',
   'src/core/persistence/consumer-lane.ts': 'direct-lane engine proxy: forwards the caller\'s release, which carries its fence',
+};
+
+/** Files that forward only some members, by member: their other calls are checked. */
+const MEMBER_FORWARDERS: Record<string, { members: readonly string[]; reason: string }> = {
+  'src/core/notifier/store.ts': { members: ['writeNotifierState', 'writeNotifierCoverage'], reason: 'NotifierStore adapter: forwards the patch and coverage, which carry the notifier\'s lease' },
 };
 
 /** Call sites that send no fence on purpose, keyed `file:member`, with the reason. */
 export const UNFENCED_ALLOWED: Record<string, string> = {};
 
 /** The calls that read the registration (or a claim's own fence) at call time. */
-const FENCE_SOURCES = /\b(fenceOpts|claimFenceOpts|withFence|fenceFor|registrationOpts|registration|optsFor|sweepArgs|heldLease)\s*\(/;
+const FENCE_SOURCES = /\b(fenceOpts|claimFenceOpts|boundFenceOpts|takenFenceOpts|withFence|fenceFor|registrationOpts|registration|optsFor|sweepArgs|heldLease)\s*\(/;
 
 function walk(dir: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {
@@ -152,7 +145,7 @@ function census(): CallSite[] {
     const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
     const visit = (n: ts.Node) => {
       const member = ts.isCallExpression(n) ? memberOf(n, sf) : null;
-      if (member && ts.isCallExpression(n) && !throughQueue(n, sf, file)) {
+      if (member && ts.isCallExpression(n) && !throughQueue(n, sf, file) && !MEMBER_FORWARDERS[file]?.members.includes(member)) {
         sites.push({ file, line: sf.getLineAndCharacterOfPosition(n.getStart(sf)).line + 1, member, text: n.getText(sf).replace(/\s+/g, ' ').slice(0, 160), fenced: sendsFence(n, sf) });
       }
       n.forEachChild(visit);
@@ -178,7 +171,7 @@ describe('lease-fence caller inventory (I-5, host fence table)', () => {
 
   test('the census finds the callers of every lease family', () => {
     const found = new Set(sites.map(s => s.member));
-    const families = Object.entries(FENCED_MEMBERS).filter(([, members]) => !members.some(m => found.has(m))).map(([family]) => family);
+    const families = Object.entries(FAMILY_NAMES).filter(([, members]) => !members.some(m => found.has(m))).map(([family]) => family);
     expect(families).toEqual([]);
     expect(sites.length).toBeGreaterThan(40);
   });

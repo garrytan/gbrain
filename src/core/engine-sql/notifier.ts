@@ -25,6 +25,7 @@
  */
 import type { SqlExecutor } from './executor.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
+import type { FenceOpts } from './lease-token.ts';
 
 /** The executor the notifier statements need: master's `executeRaw` path. */
 type RawExec = Pick<SqlExecutor, 'executeRaw'>;
@@ -56,7 +57,8 @@ export interface PendingWantedMarker { intent: string; wanted_head: string | nul
 export interface NotifierLeaseHolder { owner_id: string; fence: number; resident_kind: string; pid: number | null; expires_at: string; live: boolean }
 
 /** `claimNotifierLease(l)`: the resident's host, owner token, kind, pid and lease length in milliseconds. */
-export interface NotifierLeaseClaimInput { hostId: string; ownerId: string; kind: string; pid: number; leaseMs: number }
+/** `fence`: the host fence (multi-user Rust refuses a stale host's claim or renewal lease_lost); the SQL engines ignore it. */
+export interface NotifierLeaseClaimInput extends FenceOpts { hostId: string; ownerId: string; kind: string; pid: number; leaseMs: number }
 
 /** The fencing token when the caller owns the lease, else the current holder (null when the row went away). */
 export type NotifierLeaseClaim = { owner: true; fence: number } | { owner: false; holder: NotifierLeaseHolder | null };

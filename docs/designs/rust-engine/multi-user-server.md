@@ -675,6 +675,22 @@ impl Store {
   With no host registered (a one-shot command) these members are unchanged: the fence is the registration's, and
   an unregistered process has none. With the switch off no caller sends one.
 
+  The member list of both tables lives once, in `src/core/persistence/fenced-members.ts`. Two readers use it:
+  - The caller census (`test/rust-multiuser-lease-fence-callers-inventory.test.ts`) fails when a call under `src/`
+    sends no fence and has no reasoned allow-list entry.
+  - The Rust engine's member dispatch (`src/core/rust-engine/fence-dispatch.ts`) refuses `host_fence_required`, before
+    the store runs, when a process that holds a host registration calls one of these members with no fence. The store
+    alone cannot tell such a call from a one-shot command, so the refusal stops a caller that forgot `fenceOpts`.
+  The dispatch does not refuse these calls:
+  - a call on a claim or handle taken before the registration: `takenFenceOpts` / `boundFenceOpts` give it the
+    `TAKEN_UNFENCED` mark, a symbol key that no store, SQL engine or socket sees;
+  - a client's call the owner runs for it over the owner socket (`runAsOwnerClientCall`);
+  - the notifier's state and coverage writes, whose fence is the notifier's own lease. That lease is itself host-fenced:
+    `claimNotifierLease` (take and renew) is in the list as `notifier_lease_claim`, so a stale host can neither keep nor
+    retake it (`lf1_a_stale_host_cannot_renew_or_retake_the_notifier_lease`);
+  - any call with the switch off.
+  Tests: `test/rust-multiuser-fence-dispatch.test.ts`.
+
   These have no lease, so they are not in the table: `claim_take_proposal` (a state change with `acted_by`),
   `claim_file_page` (file ownership), `write_source_sync_heartbeat` (a timestamp), and the budget and spend
   reservations (accounting).

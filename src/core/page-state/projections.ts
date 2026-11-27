@@ -11,7 +11,7 @@ import { resolveMaxChunkTokens } from '../embedding-input-limit.ts';
 import { assertPageRevision, PageProjectionConflictError, PageRevisionConflictError, type PageSnapshot, type ProjectionConflictField } from './types.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
 import { digest } from '../persistence/digest.ts';
-import { fenceOpts } from '../persistence/host-fence.ts';
+import { boundFenceOpts, fenceOpts } from '../persistence/host-fence.ts';
 import { resolveWriteColumnFromConfigRows } from '../search/embedding-column.ts';
 import { getFtsLanguage } from '../fts-language.ts';
 import { getEmbeddingModel } from '../ai/gateway.ts';
@@ -277,11 +277,9 @@ export async function continueDeferredProjectionStep(engine: BrainEngine, source
  */
 export async function continueDeferredProjection(engine: BrainEngine, sourceId: string, slug: string, until: () => boolean = () => false): Promise<'sealed' | 'more' | 'skipped' | 'held'> {
   const state: { token?: string } = {};
-  const fence = fenceOpts(engine);
-  const release = () => {
-    const claim = `${DEFERRED_CHUNK_CLAIM}:${state.token}`;
-    return (fence.fence ? engine.releaseDeferredReplacementClaim(slug, claim, fence) : engine.releaseDeferredReplacementClaim(slug, claim)).catch(() => undefined);
-  };
+  // The fence (or the TAKEN_UNFENCED mark) at the start is the one the claim is handed back under.
+  const fence = boundFenceOpts(engine);
+  const release = () => engine.releaseDeferredReplacementClaim(slug, `${DEFERRED_CHUNK_CLAIM}:${state.token}`, fence).catch(() => undefined);
   try {
     for (;;) {
       const step = await continueDeferredProjectionStep(engine, sourceId, slug, state);

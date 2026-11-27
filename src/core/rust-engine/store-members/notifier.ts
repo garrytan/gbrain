@@ -29,7 +29,7 @@ const msHolder = (h: NotifierLeaseHolder): NotifierLeaseHolder => ({ ...h, expir
 /** The fencing token when this resident owns the host's lease, else the live holder. */
 export const claimNotifierLease: StoreMember<[l: NotifierLeaseClaimInput], NotifierLeaseClaim> = async (brain, l) => {
   const claim = await storeCall({ member: 'claimNotifierLease' }, () =>
-    brain.claimNotifierLease({ hostId: l.hostId, ownerId: l.ownerId, kind: l.kind, pid: l.pid, leaseMs: l.leaseMs })) as NotifierLeaseClaim;
+    brain.claimNotifierLease({ hostId: l.hostId, ownerId: l.ownerId, kind: l.kind, pid: l.pid, leaseMs: l.leaseMs, ...(l.fence ? { fence: l.fence } : {}) })) as NotifierLeaseClaim;
   if (claim.owner || claim.holder === null) return claim;
   return { owner: false, holder: msHolder(claim.holder) };
 };

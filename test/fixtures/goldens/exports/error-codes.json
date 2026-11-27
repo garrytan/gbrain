@@ -348,6 +348,7 @@
     "held_out_overlaps_benchmark",
     "held_out_required_for_bundled",
     "hook_session_cwd",
+    "host_fence_required",
     "host_identity_mismatch",
     "host_upgrade_required",
     "hosted_repo_refused",

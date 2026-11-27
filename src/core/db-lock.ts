@@ -28,7 +28,7 @@ import { rethrowCapabilityRefusal } from './engine-capability-refusal.ts';
 import { isRustEngineKind } from './sql-engine-kind.ts';
 import { syncRows } from './engine-sql/managed-sync-store.ts';
 import { ASSERT_LEASE_SQL } from './engine-sql/cycle-locks.ts';
-import { fenceOpts } from './persistence/host-fence.ts';
+import { boundFenceOpts, fenceOpts } from './persistence/host-fence.ts';
 import type { LeaseToken } from './engine-sql/lease-token.ts';
 
 export interface DbLockHandle {
@@ -263,8 +263,8 @@ export async function tryAcquireDbLock(
     // initially; every refresh() tick bumps both ttl_expires_at AND last_refreshed_at). `gbrain sync --break-lock
     // --max-age <s>` uses last_refreshed_at (not acquired_at) to identify wedged-but-alive holders without stealing
     // healthy long-running holders that are actively refreshing.
-    // The registration at acquire time is the handle's fence for its whole life.
-    const bound = fenceOpts(engine);
+    // The registration at acquire time is the handle's fence for its whole life (none: the TAKEN_UNFENCED mark).
+    const bound = boundFenceOpts(engine);
     const held = await engine.acquireCycleLock(lockId, { holderPid: pid, holderHost: host, acquisitionToken, ttlMinutes, stealGraceSeconds, ...bound });
     if (!held) return null;
     // The UUID is the fence; the epoch text rides on the handle for diagnostics (migration-orchestration-lock.ts

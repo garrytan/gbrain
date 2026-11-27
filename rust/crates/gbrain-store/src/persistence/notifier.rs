@@ -91,6 +91,10 @@ pub struct NotifierLeaseClaim {
     pub kind: String,
     pub pid: i64,
     pub lease_ms: f64,
+    /// The host fence (I-5, lane L5): a claim or renewal under a host epoch that moved is refused `lease_lost`, so a
+    /// stale host can neither keep nor retake the notifier lease. None: unchanged.
+    #[serde(default)]
+    pub fence: Option<crate::leases::LeaseToken>,
 }
 
 /// One stored `sync_notifier_sources` row; a missing field reads as the column default.
@@ -1069,7 +1073,10 @@ pub(crate) fn read_notifier_first_due_in(read: &dyn KvRead, ids: &[String]) -> R
 impl Store {
     /// `claimNotifierLease(l)`.
     pub fn claim_notifier_lease(&self, claim: &NotifierLeaseClaim) -> Result<Value> {
-        self.write(|tx| claim_notifier_lease_in(tx, &*self.env, claim))
+        self.write(|tx| {
+            crate::fence::begin(self, tx, claim.fence.as_ref(), "claim_notifier_lease")?;
+            claim_notifier_lease_in(tx, &*self.env, claim)
+        })
     }
 
     /// `readNotifierLease(hostId)`.
