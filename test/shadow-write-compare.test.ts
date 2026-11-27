@@ -694,7 +694,7 @@ describe('every sample the child was sent ends in the tally (sample accounting)'
   test('both the lost-sample append and the fault line fail (a full disk): the sent count stays on disk and status reads no evidence, never measured', async () => {
     await withEnv({ GBRAIN_HOME: tmp() }, async () => {
       const dir = tmp(); writeSeedRecord(dir, SEED);
-      writeFileSync(receiptFile(dir, 'sess-9'), JSON.stringify({ session: 'sess-9', sent: 10 }) + '\n');
+      writeFileSync(receiptFile(dir, 'sess-9'), JSON.stringify({ session: 'sess-9', sent: 10 }) + '\n'); // pregate-literal: SHADOW_ADAPTER_VERSION=10 the receipt's sent count, not the adapter version
       mkdirSync(lostPath(dir, process.pid)); mkdirSync(faultsPath(dir)); // neither can be written (EISDIR stands for ENOSPC)
       const epoch = await runChild(dir, 'sess-9', ['{"t":"write","op":"putPage"}\n']);
       expect(existsSync(receiptFile(dir, 'sess-9'))).toBe(true); // before: removed, and nine samples were in no counter and no fault
@@ -706,7 +706,7 @@ describe('every sample the child was sent ends in the tally (sample accounting)'
   test('a fault line alone is not a settlement: with the lost-sample file blocked the sent count stays, with its fault line written', async () => {
     await withEnv({ GBRAIN_HOME: tmp() }, async () => {
       const dir = tmp(); writeSeedRecord(dir, SEED);
-      writeFileSync(receiptFile(dir, 'sess-9'), JSON.stringify({ session: 'sess-9', sent: 10 }) + '\n');
+      writeFileSync(receiptFile(dir, 'sess-9'), JSON.stringify({ session: 'sess-9', sent: 10 }) + '\n'); // pregate-literal: SHADOW_ADAPTER_VERSION=10 a count in this test, not the adapter version
       mkdirSync(lostPath(dir, process.pid));
       const epoch = await runChild(dir, 'sess-9', ['{"t":"write","op":"putPage"}\n']);
       expect(readFaults(dir).map((f) => [f.kind, f.detail])).toContainEqual(['write_samples_unrecorded', 'pipe_unflushed n=9']);
@@ -751,9 +751,9 @@ describe('every sample the child was sent ends in the tally (sample accounting)'
   test('a worker\'s own receipt is its own samples whatever epoch it names: a fresh command\'s receipt that names the previous epoch is booked under the new one, never dropped', async () => {
     await withEnv({ GBRAIN_HOME: tmp() }, async () => {
       const dir = tmp(); writeSeedRecord(dir, SEED);
-      writeFileSync(receiptFile(dir, 'sess-7'), JSON.stringify({ session: 'sess-7', sent: 10, pid: process.pid, epoch_id: 'the-previous-epoch' }));
+      writeFileSync(receiptFile(dir, 'sess-7'), JSON.stringify({ session: 'sess-7', sent: 10, pid: process.pid, epoch_id: 'the-previous-epoch' })); // pregate-literal: SHADOW_ADAPTER_VERSION=10 a count in this test, not the adapter version
       const epoch = await runChild(dir, 'sess-7', ['{"t":"write","op":"putPage"}\n']);
-      expect(readWriteTally(dir, epoch)!.uncomparable_by_reason).toMatchObject({ no_sample: 1, pipe_unflushed: 9 }); // before: removed as another epoch\'s, nothing booked (10 sent, 1 delivered)
+      expect(readWriteTally(dir, epoch)!.uncomparable_by_reason).toMatchObject({ no_sample: 1, pipe_unflushed: 9 }); // pregate-literal: SHADOW_ADAPTER_VERSION=10 a count in this test, not the adapter version; before: removed as another epoch\'s, nothing booked (10 sent, 1 delivered)
       expect(existsSync(receiptFile(dir, 'sess-7'))).toBe(false);
     });
   }, 60_000);
