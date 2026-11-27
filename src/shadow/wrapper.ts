@@ -26,7 +26,7 @@ import { followRaw, followScope, followWrite, laneCall, newTxLane, startedWithin
 import type { CapturedRead, MirrorCounters, UsageField } from './mirror.ts';
 import { isShadowReadMember, SHADOW_TRANSACTION_MEMBERS } from './reads.ts';
 import { sqlWrites } from './sql-writes.ts';
-import { sampledCall, type TxScope, type WriteSampler } from './write-capture.ts';
+import type { TxScope, WriteSampler } from './write-capture.ts';
 import { IGNORED_WRITE_MEMBERS, memberKind } from './write-map.ts';
 
 export interface ShadowSink {
@@ -70,6 +70,16 @@ const TX_MEMBERS: ReadonlySet<PropertyKey> = new Set(SHADOW_TRANSACTION_MEMBERS)
 const DRAIN_MS = 2_000;
 /** The members that return a value, not a promise: `registerBeforeDisconnect` is the only one BrainEngine declares (read off its type), `holdsDatastoreLock` the only one an engine class adds that callers reach. */
 const SYNC_MEMBERS: ReadonlySet<PropertyKey> = new Set(['registerBeforeDisconnect', 'holdsDatastoreLock']);
+
+/** Call order of the member calls the hold point sees (`held`): a held call waits in this order, whichever gate holds it. */
+let callOrder = 0;
+type Held = (() => void) & { order?: number };
+/** Queues a held call by call order, so one the other gate held first keeps its place ahead of later calls. */
+function enqueue(queue: Array<() => void>, order: number, start: () => void): void {
+  const at = queue.findIndex((w) => ((w as Held).order ?? -Infinity) > order);
+  const item: Held = Object.assign(start, { order });
+  if (at < 0) queue.push(item); else queue.splice(at, 0, item);
+}
 
 function hasFunctionArg(args: unknown[]): boolean {
   for (const arg of args) {
@@ -228,27 +238,6 @@ function buildProxy<E extends BrainEngine>(engine: E, sink: ShadowSink, opts: Sh
     return Promise.resolve(out).then(async (value: unknown) => { await drain(); return value; }, async (error: unknown) => { await drain(); throw error; });
   };
 
-  /**
-   * Every member call of a transaction goes through its lane: while a follow pre-read holds it, the call waits (in call order) and starts once the
-   * lane opens; a call that runs is in `lane.running` until it settles. A member that returns a plain value (never a statement) is never held.
-   */
-  const laned = (name: PropertyKey, fn: Function, lane: TxLane): Function => SYNC_MEMBERS.has(name) ? fn : function lanedMember(this: unknown, ...args: unknown[]) {
-    const start = (): unknown => {
-      // A held call starts later from whichever call opens the lane: bound to its own caller's async context, so request-scoped state (a stored slug spelling, a caller record) stays its own.
-      if (lane.gate) return new Promise((resolve, reject) => { lane.waiters.push(AsyncResource.bind(() => { try { resolve(start()); } catch (error) { reject(error); } })); });
-      // Running from before the member is entered (a callback member can run its callback at once), until it settles; its own pre-read finds this entry and does not wait for it.
-      let settle!: () => void;
-      const call: LaneEntry = { callback: hasFunctionArg(args), done: new Promise<void>((r) => { settle = r; }), parent: laneCall.getStore() };
-      const leave = (): void => { lane.running.delete(call); settle(); };
-      lane.running.add(call);
-      let sent: unknown;
-      try { sent = laneCall.run(call, () => fn.apply(this, args)); } catch (error) { leave(); throw error; }
-      if (isThenable(sent)) sent.then(leave, leave); else leave(); // registered before the caller's own await, so a call that settled is gone when the caller goes on
-      return sent;
-    };
-    return start();
-  };
-
   /** Gives the sampler its last look inside the outermost transaction, once its callback has finished and before the commit (TxScope.beforeCommit); a callback that rejected is rolled back and gets none. Never fails the write. */
   const beforeCommit = (out: unknown, tx: BrainEngine, scope: TxScope | undefined): unknown => {
     if (!scope || !tx || typeof tx !== 'object' || !isThenable(out)) return out;
@@ -270,28 +259,36 @@ function buildProxy<E extends BrainEngine>(engine: E, sink: ShadowSink, opts: Sh
   };
 
   /**
-   * While a sampled write waits for the calls ahead of it and reads its preimage on the transaction's connection, other members wait, so the statements keep their order on it.
-   * Held calls queue in call order and are started one by one when the gate opens (write-capture.ts `holdGate`); a held sampled write that closes it again keeps the rest queued. A call that runs is in
-   * `scope.running` until it settles (the calls a sampled write waits for). A member that returns a plain value (never a statement) is never held: held, it would return a promise.
+   * Every member call of a transaction passes one hold point. While a sampled write waits for the calls ahead of it and reads its preimage (the sampler's gate,
+   * write-capture.ts `holdGate`), or a follow pre-read holds the call lane (follow.ts `holdLane`), the call waits, so the statements keep their order on the connection;
+   * held calls queue in call order across both gates and start one by one when the gate holding them opens. A call joins `lane.running` and `scope.running` only once it
+   * passes both gates: a call one gate holds is never counted as running by the other, so a sampled write and a pre-read never wait for a call that waits for them
+   * (a pipelined version row, edit and chunk delete). A member that returns a plain value (never a statement) is never held: held, it would return a promise.
    */
-  const gated = (name: PropertyKey, fn: Function, scope: TxScope): Function => SYNC_MEMBERS.has(name) ? fn : function gatedMember(this: unknown, ...args: unknown[]) {
-    scope.inflight++; // counted from the call to the settling of its promise, queued ones included (beforeCommit pins nothing while one is open)
+  const held = (name: PropertyKey, fn: Function, scope: TxScope | undefined, lane: TxLane | undefined): Function => SYNC_MEMBERS.has(name) ? fn : function heldMember(this: unknown, ...args: unknown[]) {
+    const order = ++callOrder;
+    const callback = hasFunctionArg(args);
+    if (scope) scope.inflight++; // counted from the call to the settling of its promise, queued ones included (beforeCommit pins nothing while one is open)
     const start = (): unknown => {
-      // A held call starts later from whichever call opens the gate: bound to its own caller's async context, so request-scoped state (a stored slug spelling, a caller record) stays its own.
-      if (scope.gate) return new Promise((resolve, reject) => { scope.waiters.push(AsyncResource.bind(() => { try { resolve(start()); } catch (error) { reject(error); } })); });
-      const call = { name: String(name), callback: hasFunctionArg(args), done: Promise.resolve() };
-      // Run as this entry, so a sampled write held further in (by the follower's lane) and started later does not count its own entry among the calls ahead of it (write-capture.ts `inTransaction`).
-      const sent = sampledCall.run(call, () => fn.apply(this, args));
-      if (isThenable(sent)) {
-        const leave = (): void => { scope.running.delete(call); };
-        call.done = sent.then(leave, leave); // registered before the caller's own await, so a call that settled is gone when the caller goes on
-        scope.running.add(call);
-      }
+      // A held call starts later from whichever call opens its gate: bound to its own caller's async context, so request-scoped state (a stored slug spelling, a caller record) stays its own.
+      const queue = scope?.gate ? scope.waiters : lane?.gate ? lane.waiters : undefined;
+      if (queue) return new Promise((resolve, reject) => { enqueue(queue, order, AsyncResource.bind(() => { try { resolve(start()); } catch (error) { reject(error); } })); });
+      // In the lane from before the member is entered (a callback member can run its callback at once), until it settles; its own pre-read finds this entry and does not wait for it.
+      let settle!: () => void;
+      const entry: LaneEntry | undefined = lane ? { callback, done: new Promise<void>((r) => { settle = r; }), parent: laneCall.getStore() } : undefined;
+      const leaveLane = (): void => { lane!.running.delete(entry!); settle(); };
+      if (entry) lane!.running.add(entry);
+      let sent: unknown;
+      try { sent = entry ? laneCall.run(entry, () => fn.apply(this, args)) : fn.apply(this, args); } catch (error) { if (entry) leaveLane(); throw error; }
+      if (!isThenable(sent)) { if (entry) leaveLane(); return sent; }
+      if (entry) sent.then(leaveLane, leaveLane); // registered before the caller's own await, so a call that settled is gone when the caller goes on
+      // In the sampler's set only after the member is entered: a sampled write's own wait (taken as it is entered) never counts itself.
+      if (scope) { const call = { name: String(name), callback, done: Promise.resolve() }; const leave = (): void => { scope.running.delete(call); }; call.done = sent.then(leave, leave); scope.running.add(call); }
       return sent;
     };
     let out: unknown;
-    try { out = start(); } catch (error) { scope.inflight--; throw error; }
-    if (isThenable(out)) out.then(() => { scope.inflight--; }, () => { scope.inflight--; }); else scope.inflight--;
+    try { out = start(); } catch (error) { if (scope) scope.inflight--; throw error; }
+    if (scope) { if (isThenable(out)) out.then(() => { scope.inflight--; }, () => { scope.inflight--; }); else scope.inflight--; }
     return out;
   };
 
@@ -356,8 +353,7 @@ function buildProxy<E extends BrainEngine>(engine: E, sink: ShadowSink, opts: Sh
       if (scope && typeof prop === 'string' && !isShadowReadMember(prop) && !TX_MEMBERS.has(prop)) wrapped = noted(prop, wrapped, scope, txWrites!.path);
       if (opts.writes && typeof prop === 'string' && !isShadowReadMember(prop) && !TX_MEMBERS.has(prop)) wrapped = opts.writes.wrap(prop, wrapped, { engine, inTransaction, mayWrite, scope, nested: txWrites?.nested });
       if (opts.onCommittedWrite && typeof prop === 'string' && !isShadowReadMember(prop) && !TX_MEMBERS.has(prop)) wrapped = wrapObserved(prop, wrapped);
-      if (txWrites?.lane) wrapped = laned(prop, wrapped, txWrites.lane); // inside the sampler's gate: a call it holds joins the lane only when it really starts
-      if (scope) wrapped = gated(prop, wrapped, scope);
+      if (scope || txWrites?.lane) wrapped = held(prop, wrapped, scope, txWrites?.lane);
       if (prop === 'withReservedConnection' && opts.writes && !inTransaction) { const reserved = wrapped; wrapped = function laneReserved(this: unknown, callback: unknown, ...rest: unknown[]) { return reserved.call(this, typeof callback === 'function' ? (conn: unknown) => (callback as (conn: unknown) => unknown)(laneConnection(conn)) : callback, ...rest); }; }
       cache.set(prop, { original: value, wrapped });
       return wrapped;
