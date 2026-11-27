@@ -81,26 +81,34 @@ export async function writeAtomPageState(
  * current content would produce, so the page needs no model call; null otherwise. That holds when the page's newest
  * scan is a complete read (not partial, not a failure tombstone) of the same model input (`inputSha256`, the digest
  * stored with the scan; a scan written before digests existed never matches), and every atom it left still fits the
- * page as it stands: none is pending, none carries another date, none is world while the page is now private, and no
- * extractor atom still names a slug the page was renamed from. A page that fails any of these is extracted again.
+ * page as it stands: none is pending, none carries another date, none is world while the page is now private, no
+ * extractor atom still names a slug the page was renamed from, and every atom the page links to as its provenance is
+ * one of its own (a transcript's atom, or one bound to another page, is not). A page that fails any of these is
+ * extracted again.
  */
 export async function reusableAtomScan(engine: SqlEngine, sourceId: string, item: AtomPageInput, inputSha256: string,
   page: { visibility: string; date: string | null }): Promise<string[] | null> {
   if (!item.identity) return null;
-  const [scan] = await engine.executeRaw<{ content_hash: string; tombstoned: boolean; fail_count: number; partial_input_chars: number | null; input_sha256: string | null }>(
-    `SELECT content_hash, tombstoned, fail_count, partial_input_chars, input_sha256 FROM extract_atoms_page_state
-      WHERE source_incarnation=$1::uuid AND page_id=$2 ORDER BY updated_at DESC LIMIT 1`,
-    [item.identity.sourceIncarnation, item.identity.pageId]);
+  const [scan] = await engine.executeRaw<{ content_hash: string; tombstoned: boolean; fail_count: number; partial_input_chars: number | null;
+    input_sha256: string | null; withdrawn_since: boolean }>(
+    `SELECT scan.content_hash, scan.tombstoned, scan.fail_count, scan.partial_input_chars, scan.input_sha256,
+       EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id=$3 AND w.visibility='world' AND w.subject IN ('*', $4)
+         AND w.withdrawn_at > scan.updated_at) AS withdrawn_since
+      FROM extract_atoms_page_state scan
+      WHERE scan.source_incarnation=$1::uuid AND scan.page_id=$2 ORDER BY scan.updated_at DESC LIMIT 1`,
+    [item.identity.sourceIncarnation, item.identity.pageId, sourceId, item.slug]);
+  // The same content offered again with nothing withdrawn since its scan is an explicit re-run: it extracts as before.
   if (!scan?.tombstoned || scan.partial_input_chars !== null || Number(scan.fail_count) >= MAX_DETERMINISTIC_FAILURES
-    || scan.input_sha256 !== inputSha256) return null;
+    || scan.input_sha256 !== inputSha256 || (scan.content_hash === item.contentHash && !scan.withdrawn_since)) return null;
   const atoms = await engine.executeRaw<{ slug: string; source_slug: string; visibility: string | null; date: string | null; source_hash: string | null }>(
     `SELECT a.slug, a.frontmatter->>'source_slug' AS source_slug, a.frontmatter->>'visibility' AS visibility,
        a.frontmatter->>'date' AS date, a.frontmatter->>'source_hash' AS source_hash
       FROM pages a
       WHERE a.source_id=$1 AND a.type='atom' AND a.deleted_at IS NULL
         AND COALESCE(a.frontmatter->>'managed_extraction', '') <> 'true'
-        AND a.frontmatter->>'source_slug' = ANY(ARRAY[$2::text] || ARRAY(${renamedFromSql}))`,
-    [sourceId, item.slug]);
+        AND (a.frontmatter->>'source_slug' = ANY(ARRAY[$2::text] || ARRAY(${renamedFromSql}))
+          OR a.id IN (SELECT l.to_page_id FROM links l WHERE l.from_page_id=$3 AND l.link_source='atom-provenance'))`,
+    [sourceId, item.slug, item.identity.pageId]);
   const scanned = scan.content_hash.slice(0, 16), current = item.contentHash.slice(0, 16);
   const fits = atoms.every(atom => atom.source_slug === item.slug && (atom.source_hash === scanned || atom.source_hash === current)
     && (atom.date ?? '').slice(0, 10) === (page.date ?? '').slice(0, 10) && !(page.visibility === 'private' && atom.visibility !== 'private'));
