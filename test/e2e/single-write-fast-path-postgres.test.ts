@@ -18,7 +18,6 @@ import type { WriteRequest } from '../../src/core/persistence/model.ts';
 import { persistenceHome, revokeLocalWriter } from '../../src/core/persistence/identity.ts';
 import { installFaultHook } from '../../src/core/persistence/fault-points.ts';
 import { resetWriteSwitches } from '../../src/core/persistence/switches.ts';
-import { ADMISSION_SOURCE_SQL } from '../../src/core/persistence/preadmit-cache.ts';
 import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
 import { getWorktreeBinding } from '../../src/core/persistence/ownership.ts';
 import { tryAcquireNativeLock, type NativeLockHandle } from '../../src/core/persistence/native-lock.ts';
@@ -40,6 +39,14 @@ function countStatements(engine: BrainEngine, fragment: string): { count: () => 
     return original.call(this, sql, ...rest);
   };
   return { count: () => n, restore: () => { proto.executeRaw = original; } };
+}
+/** Counts calls of one engine member; the admission source read runs through `readAdmissionSource`, not executeRaw. */
+function countMemberCalls(engine: BrainEngine, member: 'readAdmissionSource'): { count: () => number; restore: () => void } {
+  const proto = Object.getPrototypeOf(engine) as Record<string, (...args: unknown[]) => Promise<unknown>>;
+  const original = proto[member]!;
+  let n = 0;
+  proto[member] = function (this: unknown, ...args: unknown[]) { n++; return original.apply(this, args); };
+  return { count: () => n, restore: () => { proto[member] = original; } };
 }
 /**
  * Counts the brain-identity and unlocked writer-row reads, whether sent as SQL
@@ -63,7 +70,6 @@ function countIdentityReads(engine: BrainEngine): { count: () => number; restore
   return { count: () => n, restore: () => Object.assign(proto, { executeRaw, readPersistenceBrainId, readLocalWriterRow }) };
 }
 const GROUP_COMPLETION = "UPDATE persistence_requests r SET state='committed'";
-const SOURCE_READ = ADMISSION_SOURCE_SQL;
 
 afterEach(() => { installFaultHook(undefined); resetWriteSwitches(); });
 
@@ -94,7 +100,7 @@ d('single page writes on Postgres (Phase 4.1-4.4)', () => {
 
   test('the pre-admission cache answers repeated source reads; GBRAIN_PREADMIT_CACHE=0 and persistence.preadmit_cache=false read every time', async () => {
     await managedBrain(async ({ engine, ctx }) => {
-      const reads = countStatements(engine, SOURCE_READ);
+      const reads = countMemberCalls(engine, 'readAdmissionSource');
       try {
         await put(ctx, 'notes/c-1', 'First.');
         const afterFirst = reads.count();
