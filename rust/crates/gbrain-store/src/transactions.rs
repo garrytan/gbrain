@@ -54,10 +54,13 @@
 //! transaction holds a page key (`lockPageKeys`) in memory only: no other writer can reach a held key
 //! before it ends. An optimistic transaction also takes the key in the brain's [`SingleFlight`] table,
 //! so a second transaction that names the same key waits for it (bounded by its deadline) until the
-//! holder commits or rolls back. Keys of one call are taken in sorted order. A transaction that already
-//! holds a key waits for another only when it is older than the holder; a younger one is refused with
-//! `write_conflict` and runs again, keeping its age (wait-die), so no wait cycle can form and a rerun
-//! gets through once it is the oldest. The tag stays reserved for a lock queue that outlives a transaction.
+//! holder commits or rolls back. Keys of one call are taken in sorted order. Waiters for one key take it
+//! first come, first served: a free key goes to the first waiter, and a newcomer joins the back of the
+//! queue instead of taking the key ahead of it. A transaction that already holds a key waits for another
+//! only when it is older than the holder and every waiter ahead of it (each of them holds the key
+//! first); a younger one is refused with `write_conflict` and runs again, keeping its age (wait-die), so
+//! no wait cycle can form and a rerun gets through once it is the oldest. The tag stays reserved for a lock queue that
+//! outlives a transaction.
 //!
 //! A scan callback must not call the store: the merged scan holds the transaction's state lock
 //! while it runs.
@@ -68,7 +71,7 @@
 //! own source.
 
 use std::cell::Cell;
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 use std::ops::Bound;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, MutexGuard};
@@ -202,6 +205,16 @@ fn single_flight_conflict(key: &HeldKey) -> StoreError {
     )
 }
 
+fn key_wait_timeout(key: &HeldKey) -> StoreError {
+    StoreError::timeout(
+        "key_wait",
+        format!(
+            "the transaction waited for the page key {}/{} past its deadline; nothing was committed",
+            key.0, key.1
+        ),
+    )
+}
+
 fn deadline_passed(deadline: Option<Instant>) -> bool {
     deadline.is_some_and(|at| Instant::now() >= at)
 }
@@ -220,9 +233,45 @@ fn transaction_deadline() -> StoreError {
 /// The page keys optimistic transactions hold, per open brain (see the module docs).
 #[derive(Default)]
 pub struct SingleFlight {
-    /// Each held key's owner and the owner's age.
-    held: Mutex<HashMap<HeldKey, (u64, u64)>>,
+    table: Mutex<FlightTable>,
     released: Condvar,
+}
+
+/// Each held key's owner and the owner's age and, per busy key, its waiters (owner, age) in arrival
+/// order: a free key goes to the first waiter, and a newcomer joins the back (first come, first served).
+#[derive(Default)]
+struct FlightTable {
+    held: HashMap<HeldKey, (u64, u64)>,
+    queued: HashMap<HeldKey, VecDeque<(u64, u64)>>,
+}
+
+impl FlightTable {
+    /// True when `owner` may take `key` now: nobody holds it and nobody waits ahead of `owner`.
+    fn turn(&self, key: &HeldKey, owner: u64) -> bool {
+        !self.held.contains_key(key)
+            && self
+                .queued
+                .get(key)
+                .is_none_or(|q| q.front().is_none_or(|(o, _)| *o == owner))
+    }
+
+    /// The oldest age among `key`'s holder and its queued waiters: every transaction that holds the
+    /// key before a newcomer can, each of which may then wait for a key the newcomer holds.
+    fn oldest_ahead(&self, key: &HeldKey) -> Option<u64> {
+        let holder = self.held.get(key).map(|(_, a)| *a);
+        let ahead = self.queued.get(key).into_iter().flatten().map(|(_, a)| *a);
+        holder.into_iter().chain(ahead).min()
+    }
+
+    /// Takes `owner` out of `key`'s queue.
+    fn leave(&mut self, key: &HeldKey, owner: u64) {
+        if let Some(q) = self.queued.get_mut(key) {
+            q.retain(|(o, _)| *o != owner);
+            if q.is_empty() {
+                self.queued.remove(key);
+            }
+        }
+    }
 }
 
 /// Keys one acquisition took. Dropped without [`FlightGrant::keep`], it gives them back, so a
@@ -251,11 +300,13 @@ impl Drop for FlightGrant<'_> {
 
 impl SingleFlight {
     /// Takes `keys` (sorted, unique) for `owner` of age `age`. A key `owner` already holds is skipped.
-    /// A key another owner holds is waited for, up to `deadline`, when the caller holds no key yet
-    /// (`holds_keys` false and nothing taken by this call) or is older than the holder; otherwise the
-    /// call is refused with `write_conflict` (wait-die: every wait goes from a holder to a younger
-    /// holder, or from a transaction that holds nothing, so no wait cycle can form, and a rerun that
-    /// keeps its age becomes the oldest and gets through).
+    /// A key another owner holds, or that earlier callers already wait for, is waited for, up to
+    /// `deadline`, in arrival order: waiters for one key take it first come, first served. The caller
+    /// may wait when it holds no key yet (`holds_keys` false and nothing taken by this call) or is
+    /// older than the holder and every waiter ahead of it; otherwise the call is refused with
+    /// `write_conflict` (wait-die: every wait goes from a holder to younger transactions, or from a
+    /// transaction that holds nothing, so no wait cycle can form, and a rerun that keeps its age
+    /// becomes the oldest and gets through).
     fn acquire(
         &self,
         owner: u64,
@@ -270,81 +321,80 @@ impl SingleFlight {
             keys: Vec::with_capacity(keys.len()),
             waited: false,
         };
-        let mut held = lock(&self.held);
+        let mut table = lock(&self.table);
         for key in keys {
-            let mut waited = false;
-            loop {
-                let holder_age = match held.get(key) {
-                    None => break,
-                    Some((o, _)) if *o == owner => break,
-                    Some((_, a)) => *a,
-                };
-                if (holds_keys || !grant.keys.is_empty()) && age >= holder_age {
-                    drop(held);
-                    return Err(single_flight_conflict(key));
-                }
-                grant.waited = true;
-                waited = true;
-                held = match deadline {
-                    None => self.released.wait(held).unwrap_or_else(|p| p.into_inner()),
+            if table.held.get(key).is_some_and(|(o, _)| *o == owner) {
+                continue;
+            }
+            if table.turn(key, owner) {
+                table.held.insert(key.clone(), (owner, age));
+                grant.keys.push(key.clone());
+                continue;
+            }
+            let holds = holds_keys || !grant.keys.is_empty();
+            // The waiters ahead only leave while this call waits (a newcomer joins behind it), so the
+            // check is made once.
+            if holds && table.oldest_ahead(key).is_some_and(|a| age >= a) {
+                drop(table);
+                return Err(single_flight_conflict(key));
+            }
+            table
+                .queued
+                .entry(key.clone())
+                .or_default()
+                .push_back((owner, age));
+            grant.waited = true;
+            while !table.turn(key, owner) {
+                table = match deadline {
+                    None => self.released.wait(table).unwrap_or_else(|p| p.into_inner()),
                     Some(at) => {
                         let now = Instant::now();
                         if now >= at {
-                            drop(held);
-                            return Err(StoreError::timeout(
-                                "key_wait",
-                                format!(
-                                    "the transaction waited for the page key {}/{} past its deadline; nothing was committed",
-                                    key.0, key.1
-                                ),
-                            ));
+                            table.leave(key, owner);
+                            drop(table);
+                            self.released.notify_all();
+                            return Err(key_wait_timeout(key));
                         }
                         self.released
-                            .wait_timeout(held, at - now)
+                            .wait_timeout(table, at - now)
                             .unwrap_or_else(|p| p.into_inner())
                             .0
                     }
                 };
             }
-            // A key freed just as the deadline passed is not taken after it.
-            if waited && deadline_passed(deadline) {
-                drop(held);
-                return Err(StoreError::timeout(
-                    "key_wait",
-                    format!(
-                        "the transaction waited for the page key {}/{} past its deadline; nothing was committed",
-                        key.0, key.1
-                    ),
-                ));
+            table.leave(key, owner);
+            // A key freed just as the deadline passed is not taken after it; the next waiter is.
+            if deadline_passed(deadline) {
+                drop(table);
+                self.released.notify_all();
+                return Err(key_wait_timeout(key));
             }
-            if !held.contains_key(key) {
-                held.insert(key.clone(), (owner, age));
-                grant.keys.push(key.clone());
-            }
+            table.held.insert(key.clone(), (owner, age));
+            grant.keys.push(key.clone());
         }
-        drop(held);
+        drop(table);
         Ok(grant)
     }
 
     /// Gives back the listed keys `owner` holds.
     fn release<'k>(&self, owner: u64, keys: impl Iterator<Item = &'k HeldKey>) {
-        let mut held = lock(&self.held);
+        let mut table = lock(&self.table);
         for key in keys {
-            if held.get(key).is_some_and(|(o, _)| *o == owner) {
-                held.remove(key);
+            if table.held.get(key).is_some_and(|(o, _)| *o == owner) {
+                table.held.remove(key);
             }
         }
-        drop(held);
+        drop(table);
         self.released.notify_all();
     }
 
     /// Gives back every key `owner` holds.
     fn release_all(&self, owner: u64) {
-        let mut held = lock(&self.held);
-        let before = held.len();
-        held.retain(|_, (o, _)| *o != owner);
-        let changed = held.len() != before;
-        drop(held);
+        let mut table = lock(&self.table);
+        let before = table.held.len();
+        table.held.retain(|_, (o, _)| *o != owner);
+        let changed = table.held.len() != before;
+        drop(table);
         if changed {
             self.released.notify_all();
         }
@@ -353,7 +403,7 @@ impl SingleFlight {
     /// The holder of `key`, for tests.
     #[cfg(test)]
     pub(crate) fn holder(&self, key: &HeldKey) -> Option<u64> {
-        lock(&self.held).get(key).map(|(o, _)| *o)
+        lock(&self.table).held.get(key).map(|(o, _)| *o)
     }
 }
 
@@ -1737,6 +1787,9 @@ impl KvRead for StateRead<'_> {
 
 #[cfg(test)]
 mod optimistic_tests;
+
+#[cfg(test)]
+mod fairness_tests;
 
 #[cfg(test)]
 mod review_tests;

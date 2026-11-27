@@ -161,14 +161,17 @@ drop, and its bound store's `commit_transaction` / `rollback_transaction` refuse
 - A transaction that ends without committing writes nothing back and raises the id sequences it advanced in a write of
   its own, so no id is handed out twice, also after a reopen.
 - Each id sequence also reserves its ids on disk before it hands them out (the record file's `id_reservations`
-  table, outside the commit sequence, 1024 ids ahead at a time), and the first allocation after an open starts at or
+  table, outside the commit sequence, 65536 ids ahead at a time), and the first allocation after an open starts at or
   above the reservation. So an id is not handed out twice after a crash, a kill or a forward write that never reached
   the disk either. A clean close gives back the unused part of each range, so a reopen numbers on with no gap; a crash
-  skips at most 1024 ids per sequence. Not covered: a promoted follower, whose copy carries no reservation (see
-  `occ_kv.rs`, "Id sequences").
+  skips at most 65536 ids per sequence: after a crash or a kill, the next id of each sequence can jump by up to
+  65536 (up to 1024 before), and any output that shows a raw id shows that jump. Ids are 64-bit, so they cannot run
+  out. Not covered: a promoted follower, whose copy carries no reservation (see `occ_kv.rs`, "Id sequences").
 - `holdPageKeys` also takes the keys in the brain's single-flight table until the transaction ends: sorted; a
-  transaction that holds no key, or is older than the holder, waits (bounded by the deadline, then `timeout` reason
-  `key_wait`); a younger one that already holds a key is refused and runs again keeping its age (`transactionAge()`).
+  transaction that holds no key, or is older than the holder and every waiter ahead of it, waits (bounded by the
+  deadline, then `timeout` reason `key_wait`); a younger one that already holds a key is refused and runs again keeping
+  its age (`transactionAge()`). Waiters for one key take it first come, first served: a newcomer never takes a key
+  ahead of a transaction already waiting for it. The same order holds for a rerun queued on its retry keys.
   A waiter that has read nothing reads on from after the holder's commit.
 - `deadlineAtMs` is checked at each statement and when the commit runs; past it the transaction ends `timeout` reason
   `transaction_deadline`. Once the commit is handed to the pipeline, its answer is the result.

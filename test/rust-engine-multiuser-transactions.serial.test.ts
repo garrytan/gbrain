@@ -340,3 +340,121 @@ describe('Rust engine in multi-user mode', () => {
     expect(await engine.getPage('notes/protected')).toBeNull();
   });
 });
+
+/** The rejection of `work`, with its name (an abort rejects an `AbortError`). */
+async function rejectionOf(work: Promise<unknown>): Promise<{ name?: string; code?: unknown; message: string }> {
+  try {
+    await work;
+  } catch (error) {
+    const e = error as { name?: string; code?: unknown; message: string };
+    return { name: e.name, code: e.code, message: e.message };
+  }
+  throw new Error('expected a rejection');
+}
+
+const tick = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+// A cancelled transaction never commits, wherever the abort lands before the commit: while the store opens, while a
+// run again waits for the keys an earlier run lost on, or while the callback runs. Disconnect leaves no attempt open.
+describe('Rust engine transaction cancel and disconnect', () => {
+  for (const multiuser of [false, true]) {
+    withAddon(`${multiuser ? 'on' : 'off'}: an abort while the store opens refuses before anything opens, nothing written`, async () => {
+      addon ??= await loadRustAddon({ env: { GBRAIN_RUST_ENGINE_ADDON: BUILT } });
+      if (multiuser) process.env.GBRAIN_RUST_MULTIUSER = '1'; else delete process.env.GBRAIN_RUST_MULTIUSER;
+      const path = mkdtempSync(join(tmpdir(), 'gbrain-rust-mu-'));
+      dirs.push(path);
+      const engine = openRustEngine({ addon, databasePath: path });
+      engines.push(engine);
+      const connecting = engine.connect({ engine: 'rust', database_path: path } as never);
+      const internal = engine as unknown as { _storeReady: Promise<void> | null };
+      for (let i = 0; i < 2000 && !internal._storeReady; i++) await tick(1);
+      expect(internal._storeReady).not.toBeNull();
+      const controller = new AbortController();
+      let ran = false;
+      const work = engine.transaction(async (tx) => { ran = true; await tx.putPage('notes/opening', note('Opening')); }, { signal: controller.signal });
+      controller.abort();
+      const err = await rejectionOf(work);
+      await connecting;
+      expect(err.code).toBe('cancelled');
+      expect(ran).toBe(false);
+      expect(await engine.getPage('notes/opening')).toBeNull();
+    });
+  }
+
+  withAddon('on: an abort while a run again waits for the key it lost on refuses, nothing written', async () => {
+    const engine = await open(true);
+    await engine.putPage('notes/k', note('Start'));
+    const runs = { a: 0, b: 0 };
+    const bRead = gate(); const bGo = gate(); const bRerun = gate(); const bFinish = gate();
+    const aRead = gate(); const aGo = gate();
+    const b = engine.transaction(async (tx) => {
+      runs.b++;
+      await tx.getPage('notes/k');
+      if (runs.b === 1) { bRead.open(); await bGo.wait; } else { bRerun.open(); await bFinish.wait; }
+      await tx.putPage('notes/k', note('B'));
+    });
+    await bRead.wait;
+    const controller = new AbortController();
+    const a = engine.transaction(async (tx) => {
+      runs.a++;
+      await tx.getPage('notes/k');
+      if (runs.a === 1) { aRead.open(); await aGo.wait; }
+      await tx.putPage('notes/a', note('A'));
+    }, { signal: controller.signal });
+    await aRead.wait;
+    // Both read notes/k; a write outside both makes each commit lose on it.
+    await engine.putPage('notes/k', note('Outside'));
+    bGo.open();
+    await bRerun.wait; // B runs again, holding the key it lost on
+    aGo.open();
+    await tick(200); // A lost too and now waits behind B for that key
+    expect(runs.a).toBe(1);
+    controller.abort();
+    await tick(50);
+    bFinish.open();
+    await b;
+    const err = await rejectionOf(a);
+    expect(err.name).toBe('AbortError');
+    expect(runs.a).toBe(1);
+    expect(await engine.getPage('notes/a')).toBeNull();
+    expect((await engine.getPage('notes/k'))?.title).toBe('B');
+  }, 30_000);
+
+  withAddon('on: an abort while the callback runs rolls it back, nothing written', async () => {
+    const engine = await open(true);
+    const controller = new AbortController();
+    const wrote = gate(); const go = gate();
+    const work = engine.transaction(async (tx) => {
+      await tx.putPage('notes/c', note('Cancelled'));
+      wrote.open();
+      await go.wait;
+    }, { signal: controller.signal });
+    await wrote.wait;
+    controller.abort();
+    go.open();
+    const err = await rejectionOf(work);
+    expect(err.name).toBe('AbortError');
+    expect(await engine.getPage('notes/c')).toBeNull();
+  });
+
+  withAddon('on: disconnect past its wait leaves no attempt open, and the reconnected engine writes at once', async () => {
+    const engine = await open(true);
+    const started = gate();
+    const never = new Promise<void>(() => undefined);
+    void engine.transaction(async (tx) => { await tx.putPage('notes/stuck', note('Stuck')); started.open(); await never; }).catch(() => 'ended');
+    await started.wait;
+    await engine.disconnect();
+    const state = (engine as unknown as { _optimistic: { open: Map<unknown, unknown> } })._optimistic;
+    expect(state.open.size).toBe(0);
+    await engine.connect({ engine: 'rust', database_path: (engine as unknown as { databasePath: string }).databasePath } as never);
+    const t0 = Date.now();
+    await engine.putPage('notes/after', note('After'));
+    await engine.transaction(async (tx) => { await tx.putPage('notes/after-tx', note('After tx')); });
+    expect(Date.now() - t0).toBeLessThan(2_000);
+    expect(await engine.getPage('notes/stuck')).toBeNull();
+    expect((await engine.getPage('notes/after-tx'))?.title).toBe('After tx');
+    const t1 = Date.now();
+    await engine.disconnect();
+    expect(Date.now() - t1).toBeLessThan(2_000);
+  }, 30_000);
+});
