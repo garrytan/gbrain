@@ -17,7 +17,7 @@ use crate::pages::read_page;
 use crate::persistence::topology::topology_terminal_bytes;
 use crate::persistence::{
     all_counters, all_requests, and3, extra_bool, extra_i64, extra_is_null, extra_time, json_text,
-    sql_like,
+    sql_like, worktree_owner_host,
 };
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -433,21 +433,38 @@ impl Store {
         Ok(json!({ "guard": guard, "trigger": trigger, "opaque": opaque }))
     }
 
-    /// `listRunningClaimOwners(hostId)`: the first 500 running claims that record an owner and sit on no
-    /// worktree. This engine keeps no worktree row, so a request naming one has no owning host.
-    pub fn list_running_claim_owners(&self) -> Result<Vec<Value>> {
+    /// `listRunningClaimOwners(hostId)`: the first 500 running claims that record an owner, on worktrees `host_id`
+    /// owns or on no worktree (`r.worktree_id IS NULL OR w.owner_host_id=$1`). A request naming a worktree this host
+    /// does not own, or one with no row, is not this host's to judge. With `host_id` `None` (managed mode held back
+    /// for the caller) only the claims on no worktree are listed, as before worktree owners were read.
+    pub fn list_running_claim_owners(&self, host_id: Option<&str>) -> Result<Vec<Value>> {
+        let host = host_id.map(str::to_lowercase);
         let now = self.env.now_micros();
-        let mut requests = all_requests(&*self.read()?)?;
+        let read = self.read()?;
+        let mut requests = all_requests(&*read)?;
         requests.sort_by_key(|r| r.sequence);
-        Ok(requests
-            .iter()
-            .filter(|r| r.state == "running" && worktree_of(r).is_none())
-            .filter_map(|r| {
-                let owner = r.extra.get("claim_phase")?.get("owner")?;
-                Some(json!({ "source_id": r.source_id, "owner": owner, "lapsed": claim_lapsed(r, now) }))
-            })
-            .take(500)
-            .collect())
+        let mut rows = Vec::new();
+        for r in requests.iter().filter(|r| r.state == "running") {
+            let Some(owner) = r.extra.get("claim_phase").and_then(|p| p.get("owner")) else {
+                continue;
+            };
+            let this_hosts = match worktree_of(r) {
+                None => true,
+                Some(worktree) => match &host {
+                    Some(host) => {
+                        worktree_owner_host(&*read, worktree)?.as_deref() == Some(host.as_str())
+                    }
+                    None => false,
+                },
+            };
+            if this_hosts {
+                rows.push(json!({ "source_id": r.source_id, "owner": owner, "lapsed": claim_lapsed(r, now) }));
+            }
+            if rows.len() == 500 {
+                break;
+            }
+        }
+        Ok(rows)
     }
 
     /// `listLocalEditAdoptions()`: per source, the `put_page` writes committed in the last 24 hours

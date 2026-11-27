@@ -22,7 +22,9 @@
 use super::{QUEUE, uuid_param};
 use crate::env::{Env, parse_iso, transaction_clock};
 use crate::error::{Result, STORE_CORRUPT, StoreError};
+use crate::fence;
 use crate::kv::{KvRead, KvWrite, scan_prefix};
+use crate::leases::LeaseToken;
 use crate::pages::{PageRecord, read_page};
 use crate::sources::{SourceRecord, all_sources, read_source};
 use crate::{Store, keys};
@@ -973,7 +975,22 @@ impl Store {
         slug: &str,
         claim: &str,
     ) -> Result<&'static str> {
-        self.write(|tx| claim_segmented_projection_in(tx, source_id, slug, claim))
+        self.claim_segmented_projection_fenced(source_id, slug, claim, None)
+    }
+
+    /// [`Self::claim_segmented_projection`] under the host fence (I-5, lane L5): a claim under an epoch that moved is
+    /// refused `lease_lost` and changes nothing. With no fence it is the unfenced member.
+    pub fn claim_segmented_projection_fenced(
+        &self,
+        source_id: &str,
+        slug: &str,
+        claim: &str,
+        fence: Option<&LeaseToken>,
+    ) -> Result<&'static str> {
+        self.write(|tx| {
+            fence::begin(self, tx, fence, "claim_segmented_projection")?;
+            claim_segmented_projection_in(tx, source_id, slug, claim)
+        })
     }
 
     /// `renewSegmentedProjectionClaim({ sourceId, slug }, claim)`.
@@ -983,7 +1000,21 @@ impl Store {
         slug: &str,
         claim: &str,
     ) -> Result<bool> {
-        self.write(|tx| renew_segmented_projection_claim_in(tx, source_id, slug, claim))
+        self.renew_segmented_projection_claim_fenced(source_id, slug, claim, None)
+    }
+
+    /// [`Self::renew_segmented_projection_claim`] under the host fence (I-5, lane L5).
+    pub fn renew_segmented_projection_claim_fenced(
+        &self,
+        source_id: &str,
+        slug: &str,
+        claim: &str,
+        fence: Option<&LeaseToken>,
+    ) -> Result<bool> {
+        self.write(|tx| {
+            fence::begin(self, tx, fence, "renew_segmented_projection_claim")?;
+            renew_segmented_projection_claim_in(tx, source_id, slug, claim)
+        })
     }
 
     /// `releaseSegmentedProjectionClaim({ sourceId, slug }, claim)`.
@@ -993,7 +1024,21 @@ impl Store {
         slug: &str,
         claim: &str,
     ) -> Result<()> {
-        self.write(|tx| release_segmented_projection_claim_in(tx, source_id, slug, claim))
+        self.release_segmented_projection_claim_fenced(source_id, slug, claim, None)
+    }
+
+    /// [`Self::release_segmented_projection_claim`] under the host fence (I-5, lane L5).
+    pub fn release_segmented_projection_claim_fenced(
+        &self,
+        source_id: &str,
+        slug: &str,
+        claim: &str,
+        fence: Option<&LeaseToken>,
+    ) -> Result<()> {
+        self.write(|tx| {
+            fence::begin(self, tx, fence, "release_segmented_projection_claim")?;
+            release_segmented_projection_claim_in(tx, source_id, slug, claim)
+        })
     }
 
     /// `deleteProjectionJob(job)`.
@@ -1012,12 +1057,39 @@ impl Store {
         job: &ProjectionJobRef,
         claim: &str,
     ) -> Result<()> {
-        self.write(|tx| renew_deferred_replacement_claim_in(tx, job, claim))
+        self.renew_deferred_replacement_claim_fenced(job, claim, None)
+    }
+
+    /// [`Self::renew_deferred_replacement_claim`] under the host fence (I-5, lane L5): a renewal under an epoch that
+    /// moved is refused `lease_lost` and changes nothing. With no fence it is the unfenced member.
+    pub fn renew_deferred_replacement_claim_fenced(
+        &self,
+        job: &ProjectionJobRef,
+        claim: &str,
+        fence: Option<&LeaseToken>,
+    ) -> Result<()> {
+        self.write(|tx| {
+            fence::begin(self, tx, fence, "renew_deferred_replacement_claim")?;
+            renew_deferred_replacement_claim_in(tx, job, claim)
+        })
     }
 
     /// `releaseDeferredReplacementClaim(slug, claim)`.
     pub fn release_deferred_replacement_claim(&self, slug: &str, claim: &str) -> Result<()> {
-        self.write(|tx| release_deferred_replacement_claim_in(tx, slug, claim))
+        self.release_deferred_replacement_claim_fenced(slug, claim, None)
+    }
+
+    /// [`Self::release_deferred_replacement_claim`] under the host fence (I-5, lane L5).
+    pub fn release_deferred_replacement_claim_fenced(
+        &self,
+        slug: &str,
+        claim: &str,
+        fence: Option<&LeaseToken>,
+    ) -> Result<()> {
+        self.write(|tx| {
+            fence::begin(self, tx, fence, "release_deferred_replacement_claim")?;
+            release_deferred_replacement_claim_in(tx, slug, claim)
+        })
     }
 
     /// `queuePageProjectionJob(sourceId, slug, reason)`.
@@ -1565,5 +1637,129 @@ mod tests {
         assert_eq!(job(&store).revision, next.to_lowercase());
         assert!(store.defer_projection_job(&at(next)).unwrap());
         assert!(store.rekey_projection_job(&at(next), "not-a-uuid").is_err());
+    }
+
+    // The lease-fence follow-up (lane L5; I-5, host fence table), families 4 and 5: a host whose lease was taken
+    // over can no longer claim, renew or release a projection claim. Multi-user mode is on and asserted.
+
+    fn host_lease(store: &Store, who: &str) -> LeaseToken {
+        let origin = crate::write_origin::WriteOrigin {
+            host_id: format!("{who}-host"),
+            incarnation: format!("{who}-incarnation"),
+            writer_id: "local_cli:test".into(),
+        };
+        store
+            .acquire_lease("consumer:h", &origin, 3_600_000)
+            .unwrap()
+            .expect("the lease is free")
+    }
+
+    fn take_over(store: &Store, old: &LeaseToken) -> LeaseToken {
+        store.release_lease(old).unwrap();
+        host_lease(store, "b")
+    }
+
+    fn epoch_moved(error: crate::error::StoreError) {
+        assert_eq!(error.code, crate::error::LEASE_LOST, "{error}");
+        assert_eq!(
+            crate::leases::lost_reason(&error).as_deref(),
+            Some("epoch_moved"),
+            "{error}"
+        );
+    }
+
+    fn dump(store: &Store) -> Vec<(Vec<u8>, Vec<u8>)> {
+        let mut out = Vec::new();
+        scan_prefix(&*store.read().unwrap(), &[], false, &mut |k, v| {
+            out.push((k.to_vec(), v.to_vec()));
+            true
+        })
+        .unwrap();
+        out
+    }
+
+    #[test]
+    fn lf4_a_stale_host_cannot_claim_renew_or_release_a_segmented_projection() {
+        let store = crate::test_support::mu_store();
+        assert!(store.multiuser(), "multi-user mode is on");
+        put(&store, "notes/a");
+        put(&store, "notes/b");
+        let a = host_lease(&store, "a");
+        let mine = "segmented_projecting:a";
+        assert_eq!(
+            store
+                .claim_segmented_projection_fenced("default", "notes/a", mine, Some(&a))
+                .unwrap(),
+            "claimed"
+        );
+        let new = take_over(&store, &a);
+        let before = dump(&store);
+        epoch_moved(
+            store
+                .renew_segmented_projection_claim_fenced("default", "notes/a", mine, Some(&a))
+                .unwrap_err(),
+        );
+        epoch_moved(
+            store
+                .release_segmented_projection_claim_fenced("default", "notes/a", mine, Some(&a))
+                .unwrap_err(),
+        );
+        epoch_moved(
+            store
+                .claim_segmented_projection_fenced("default", "notes/b", mine, Some(&a))
+                .unwrap_err(),
+        );
+        assert_eq!(
+            dump(&store),
+            before,
+            "a refused claim write changed the brain"
+        );
+        assert!(
+            store
+                .renew_segmented_projection_claim_fenced("default", "notes/a", mine, Some(&new))
+                .unwrap()
+        );
+    }
+
+    #[test]
+    fn lf5_a_stale_host_cannot_renew_or_release_a_deferred_replacement_claim() {
+        let store = crate::test_support::mu_store();
+        assert!(store.multiuser(), "multi-user mode is on");
+        put(&store, "notes/a");
+        let read = store.read().unwrap();
+        let incarnation = incarnation_of(&*read, "default").unwrap();
+        let key = job_key(&incarnation, "notes/a");
+        let revision = read_job(&*read, &key).unwrap().unwrap().revision;
+        drop(read);
+        let at = ProjectionJobRef {
+            source_incarnation: incarnation,
+            slug: "notes/a".into(),
+            revision,
+        };
+        let mine = "chunk_replacement_continuing:mine";
+        let a = host_lease(&store, "a");
+        store
+            .renew_deferred_replacement_claim_fenced(&at, mine, Some(&a))
+            .unwrap();
+        let new = take_over(&store, &a);
+        let before = dump(&store);
+        epoch_moved(
+            store
+                .renew_deferred_replacement_claim_fenced(&at, mine, Some(&a))
+                .unwrap_err(),
+        );
+        epoch_moved(
+            store
+                .release_deferred_replacement_claim_fenced("notes/a", mine, Some(&a))
+                .unwrap_err(),
+        );
+        assert_eq!(
+            dump(&store),
+            before,
+            "a refused claim write changed the brain"
+        );
+        store
+            .release_deferred_replacement_claim_fenced("notes/a", mine, Some(&new))
+            .unwrap();
     }
 }

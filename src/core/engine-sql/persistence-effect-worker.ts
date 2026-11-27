@@ -23,13 +23,20 @@ export type EffectId = string | number;
 /** `stampEffectClaim`: claims effect `id` under `token`; `ownerJson` is the `claim_owner` stamp (`effectClaimStamp`). */
 export interface EffectClaim { id: EffectId; token: string; ownerJson: string; fence?: LeaseToken; /** The owner keys the caller proved dead; a multi-user Rust stamp may take their running effects early. The SQL engines ignore it. */ deadOwners?: readonly string[] }
 /** `claimCoalescedGitEffects`: the host, its worktree, how many, the owners proved dead, and the `claim_owner` owner (`claimOwner()` as JSON). */
-export interface CoalescedGitClaim { hostId: string; worktreeId: string; limit: number; deadOwners: readonly string[]; ownerJson: string }
+export interface CoalescedGitClaim { hostId: string; worktreeId: string; limit: number; deadOwners: readonly string[]; ownerJson: string; fence?: LeaseToken }
 /** A held claim: the effect's id and the claim's execution token (null matches no claim). */
 export interface EffectClaimRef { id: EffectId; token: string | null; fence?: LeaseToken }
 
 /** `stampEffectClaim`: $1 id, $2 token, $3 the owner stamp. The text `claimPersistenceEffect` has always sent. */
 export const STAMP_EFFECT_CLAIM_SQL = `UPDATE persistence_effects SET state='running',execution_token=$2::uuid,claim_owner=$3::text::jsonb,
       claim_expires_at=now()+interval '2 minutes',attempts=attempts+1,updated_at=now() WHERE id=$1 RETURNING *`;
+
+/**
+ * `claimEffectRecovery` (the protocol predicate written out): claims effect $1 for its recovery under token $2 with owner
+ * stamp $3, only while it still holds a recovery record. The text `claimAndRecoverEffect` (persistence/effects.ts) has always sent.
+ */
+export const CLAIM_EFFECT_RECOVERY_SQL = `UPDATE persistence_effects SET state='running',execution_token=$2::uuid,claim_owner=$3::text::jsonb,
+      claim_expires_at=now()+interval '2 minutes',attempts=attempts+1,updated_at=now() WHERE id=$1 AND recovery IS NOT NULL AND set_config('gbrain.persistence_protocol','2',true)='2' RETURNING *`;
 
 /**
  * `claimCoalescedGitEffects`: $1 host id, $2 worktree id, $3 limit, $4 the owner keys proved dead, $5 the owner stamp.
@@ -128,6 +135,12 @@ export interface MirrorGateRow { request_id: string; state: string; data: Record
 /** Claims effect `id` under `token`: the claimed row, or null when no effect has the id. */
 export async function stampEffectClaim<R = Record<string, unknown>>(exec: EffectExec, claim: EffectClaim): Promise<R | null> {
   const [row] = await exec.executeRaw<R>(STAMP_EFFECT_CLAIM_SQL, [claim.id, claim.token, claim.ownerJson]);
+  return row ?? null;
+}
+
+/** Claims effect `id` for its recovery under `token`: the claimed row, or null when no effect with that id holds a recovery record. */
+export async function claimEffectRecovery<R = Record<string, unknown>>(exec: EffectExec, claim: EffectClaim): Promise<R | null> {
+  const [row] = await exec.executeRaw<R>(CLAIM_EFFECT_RECOVERY_SQL, [claim.id, claim.token, claim.ownerJson]);
   return row ?? null;
 }
 

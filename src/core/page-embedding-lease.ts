@@ -23,6 +23,7 @@ import { randomUUID } from 'node:crypto';
 import { hostname } from 'node:os';
 import type { BrainEngine } from './engine.ts';
 import { opError, type OperationError } from './ops/contract.ts';
+import { fenceOpts } from './persistence/host-fence.ts';
 import { readFix } from './ops/op-fix.ts';
 
 export const PAGE_EMBEDDING_LEASE_TTL_MINUTES = 2;
@@ -83,7 +84,10 @@ export async function acquirePageEmbeddingLease(engine: BrainEngine, pageId: num
   opts: { signal?: AbortSignal; deadline?: number; whileWaiting?: () => Promise<void> } = {}): Promise<PageEmbeddingLease> {
   const id = pageEmbeddingLeaseId(pageId);
   const token = randomUUID();
-  const take = () => engine.takePageEmbeddingLease(id, { holderPid: process.pid, holderHost: hostname(), acquisitionToken: token, ttlMinutes: PAGE_EMBEDDING_LEASE_TTL_MINUTES });
+  // The host fence (multi-user Rust, I-5): taken once, so the lease is renewed and released under the fence it was
+  // taken with; a host whose registration moved is refused lease_lost. Empty on every other engine and with the mode off.
+  const fence = fenceOpts(engine);
+  const take = () => engine.takePageEmbeddingLease(id, { holderPid: process.pid, holderHost: hostname(), acquisitionToken: token, ttlMinutes: PAGE_EMBEDDING_LEASE_TTL_MINUTES, ...fence });
   const bound = Math.min(opts.deadline ?? Infinity, Date.now() + (pageEmbeddingLeaseProbe.waitBoundMs ?? PAGE_EMBEDDING_LEASE_TTL_MINUTES * 60_000));
   for (let waitMs = 50; !await take(); waitMs = Math.min(waitMs * 2, LEASE_WAIT_MAX_MS)) {
     pageEmbeddingLeaseProbe.contended?.(pageId);
@@ -94,7 +98,7 @@ export async function acquirePageEmbeddingLease(engine: BrainEngine, pageId: num
   }
   let lost = false;
   const renew = async (exec: Pick<BrainEngine, 'renewPageEmbeddingLease'>) => {
-    if (!lost) lost = !await exec.renewPageEmbeddingLease(id, { acquisitionToken: token, ttlMinutes: PAGE_EMBEDDING_LEASE_TTL_MINUTES });
+    if (!lost) lost = !await exec.renewPageEmbeddingLease(id, { acquisitionToken: token, ttlMinutes: PAGE_EMBEDDING_LEASE_TTL_MINUTES, ...fence });
     return !lost;
   };
   const refresh = setInterval(() => {
@@ -106,7 +110,7 @@ export async function acquirePageEmbeddingLease(engine: BrainEngine, pageId: num
     assertHeld: async tx => { if (!await renew(tx)) throw pageEmbeddingLeaseUnavailable(pageId, true); },
     [Symbol.asyncDispose]: async () => {
       clearInterval(refresh);
-      await engine.releasePageEmbeddingLease(id, { acquisitionToken: token })
+      await engine.releasePageEmbeddingLease(id, { acquisitionToken: token, ...fence })
         .catch(() => { /* the TTL is the backstop */ });
     },
   };

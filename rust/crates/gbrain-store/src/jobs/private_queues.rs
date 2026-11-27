@@ -40,7 +40,20 @@ impl Store {
         owner_token: &str,
         lease_ms: f64,
     ) -> Result<usize> {
+        self.renew_private_queue_lease_fenced(queue, owner_token, lease_ms, None)
+    }
+
+    /// [`Self::renew_private_queue_lease`] under the host fence (I-5, lane L5): a renewal under an epoch that moved is
+    /// refused `lease_lost` and changes nothing. With no fence it is the unfenced member.
+    pub fn renew_private_queue_lease_fenced(
+        &self,
+        queue: &str,
+        owner_token: &str,
+        lease_ms: f64,
+        fence: Option<&LeaseToken>,
+    ) -> Result<usize> {
         self.write(|tx| {
+            fence::begin(self, tx, fence, "renew_private_queue_lease")?;
             let now = self.env.now_micros();
             let until = now + ms_to_us(lease_ms);
             let mut renewed = 0;

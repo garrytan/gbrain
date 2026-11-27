@@ -25,8 +25,10 @@ use super::{
 use crate::config::read_config;
 use crate::env::{Env, iso};
 use crate::error::{Result, StoreError};
+use crate::fence;
 use crate::journal::{RequestRecord, write_request};
 use crate::kv::{KvRead, KvWrite};
+use crate::leases::LeaseToken;
 use crate::timeline_queries::jsonb_text;
 use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
@@ -119,6 +121,9 @@ pub struct HousekeepingClaim {
     pub consumer_kinds: Vec<String>,
     #[serde(default)]
     pub consumer_live_ms: i64,
+    /// The host fence (I-5, lane L5): a claim under an epoch that moved is refused `lease_lost`. None: unchanged.
+    #[serde(default)]
+    pub fence: Option<LeaseToken>,
 }
 
 /// `completeHousekeepingTurn(turn)`.
@@ -127,6 +132,9 @@ pub struct HousekeepingClaim {
 pub struct HousekeepingTurn {
     pub op: String,
     pub host_id: String,
+    /// The host fence (I-5, lane L5): a completion under an epoch that moved is refused `lease_lost`.
+    #[serde(default)]
+    pub fence: Option<LeaseToken>,
 }
 
 /// The turn is free when no row exists, or when the row's stamp is older than the interval (after
@@ -553,12 +561,18 @@ pub(crate) fn read_capacity_forecast_inputs_in(
 impl Store {
     /// `claimHousekeepingTurn(claim)`: true when the turn was free and is now leased.
     pub fn claim_housekeeping_turn(&self, claim: &HousekeepingClaim) -> Result<bool> {
-        self.write(|tx| claim_housekeeping_turn_in(tx, &*self.env, claim))
+        self.write(|tx| {
+            fence::begin(self, tx, claim.fence.as_ref(), "claim_housekeeping_turn")?;
+            claim_housekeeping_turn_in(tx, &*self.env, claim)
+        })
     }
 
     /// `completeHousekeepingTurn(turn)`.
     pub fn complete_housekeeping_turn(&self, turn: &HousekeepingTurn) -> Result<()> {
-        self.write(|tx| complete_housekeeping_turn_in(tx, &*self.env, turn))
+        self.write(|tx| {
+            fence::begin(self, tx, turn.fence.as_ref(), "complete_housekeeping_turn")?;
+            complete_housekeeping_turn_in(tx, &*self.env, turn)
+        })
     }
 
     /// `readReceiptBudget(retentionKey, floorDays)`.

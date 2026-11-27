@@ -59,17 +59,17 @@ import {
   OWNER_IPC_ROUTES, ownerBusy, ownerCallTimeout, ownerEarlierCallRunning, ownerIpcProtocol, ownerIpcRefusal, ownerMemberOnlyReads,
   ownerPeerRefused, ownerResponseTooLarge, ownerHandoff,
 } from './routes.ts';
-import { ownerRemoteRefusal } from './remote-check.ts';
+import { ownerHelloCapabilities, ownerRemoteRefusal } from './remote-check.ts';
 import { heldRowHook } from './held-row.ts';
 import { membersWaitingFor } from './confirming-reads.ts';
 import { setDeadlineTimer, type DeadlineTimer } from './timer.ts';
 import { servedSession, type ServedHooks, type ServedServerOptions, type ServedServerSide, type ServedSession, type ServedCall } from '../served/session.ts';
 import { encodeLengthFrame } from '../served/framing.ts';
 import { IMPORT_CLIENT_FILE } from '../served/client-files.ts';
-import { SERVED_BRAIN_CALL, SERVED_STORE_CALL } from '../served/store-returning.ts';
+import { SERVED_BRAIN_CALL, SERVED_STORE_CALL, SERVED_STORE_KEYS } from '../served/store-returning.ts';
 
 /** Whole operations only a protocol v3 session sends. */
-const V3_ONLY_OPERATIONS: ReadonlySet<string> = new Set([IMPORT_CLIENT_FILE, SERVED_STORE_CALL, SERVED_BRAIN_CALL]);
+const V3_ONLY_OPERATIONS: ReadonlySet<string> = new Set([IMPORT_CLIENT_FILE, SERVED_STORE_CALL, SERVED_STORE_KEYS, SERVED_BRAIN_CALL]);
 
 /** A whole operation the owner runs for a client in one request (whole-op.ts); it may open its own transaction. */
 export type OwnerWholeOperation = (engine: BrainEngine, ...args: unknown[]) => Promise<unknown>;
@@ -603,7 +603,7 @@ export async function serveOwnerEngine(
           }
           conn.helloed = true;
           v2Sockets.add(socket);
-          send(hello);
+          send({ ...hello, capabilities: ownerHelloCapabilities(engine, hello.capabilities) }); // B3: lists remote_check in multi-user mode
           return;
         case 'cancel': cancelCall(calls, Number(frame.id)); return;
         case 'call': case 'fn': admit(frame, bytes, calls, send, conn.helloed); return;

@@ -25,7 +25,7 @@ use super::worktrees::{
     scan_records, source_binding_key, worktree_key,
 };
 use super::write_claim_terms::worktree_of;
-use super::{all_requests, extra_is_null, json_text};
+use super::{all_requests, extra_is_null, extra_time, json_text};
 use crate::env::Env;
 use crate::error::{CONSTRAINT_VIOLATION, Result, StoreError};
 use crate::kv::{KvRead, KvWrite};
@@ -140,6 +140,19 @@ pub enum TopologyRead {
     WorktreeOwner {
         id: String,
     },
+    WorktreeManifest {
+        id: String,
+    },
+    WorktreeManifestOwner {
+        id: String,
+    },
+    RecoveringChangesOf {
+        worktree_id: String,
+    },
+    OwnerActivity {
+        ids: Vec<String>,
+    },
+    OpenWrites {},
 }
 
 /// One write of `topologyStore()`, named by `kind`.
@@ -254,6 +267,41 @@ pub enum TopologyWrite {
         incarnation: String,
         worktree_id: String,
         relative_path: String,
+    },
+    InsertRecoveringWorktree {
+        id: String,
+        host_id: String,
+    },
+    SetWorktreeState {
+        id: String,
+        state: String,
+    },
+    RecoverWorktreeWithManifest {
+        id: String,
+        manifest: Value,
+    },
+    InsertCloneBinding {
+        source_id: String,
+        incarnation: String,
+        worktree_id: String,
+    },
+    SetChangeRecovery {
+        id: String,
+        recovery: Value,
+        only_recovering: bool,
+    },
+    CloseChange {
+        id: String,
+        state: String,
+        outcome: Value,
+    },
+    CommitChange {
+        id: String,
+        outcome: Value,
+    },
+    ResetSourceSync {
+        id: String,
+        incarnation: String,
     },
 }
 
@@ -591,7 +639,154 @@ fn topology_rows_in(
                 Value::Null,
                 |w| json!({ "owner_host_id": w.owner_host_id, "state": w.state }),
             )),
+        TopologyRead::WorktreeManifest { id } => Ok(read_worktree_record(read, &pg_uuid(id)?)?
+            .map_or(Value::Null, |w| {
+                json!({ "manifest": w.manifest.map(crate::jsonb::order) })
+            })),
+        TopologyRead::WorktreeManifestOwner { id } => Ok(read_worktree_record(read, &pg_uuid(id)?)?
+            .map_or(Value::Null, |w| {
+                json!({ "owner_host_id": w.owner_host_id, "manifest": w.manifest.map(crate::jsonb::order) })
+            })),
+        TopologyRead::OwnerActivity { ids } => owner_activity_in(read, env, ids),
+        TopologyRead::OpenWrites {} => open_writes_in(read),
+        TopologyRead::RecoveringChangesOf { worktree_id } => {
+            let w = pg_uuid(worktree_id)?;
+            // The change order never reaches output: the caller rewrites each row it lists.
+            let mut rows: Vec<_> = all_change_records(read)?
+                .into_iter()
+                .filter(|c| {
+                    c.state == "recovering" && c.worktree_ids.iter().any(|x| x.eq_ignore_ascii_case(&w))
+                })
+                .collect();
+            rows.sort_by(|a, b| a.id.cmp(&b.id));
+            Ok(Value::Array(
+                rows.iter()
+                    .map(|c| json!({ "id": c.id, "recovery": c.recovery.clone().map(crate::jsonb::order) }))
+                    .collect(),
+            ))
+        }
     }
+}
+
+/// `OPEN_WRITES_SQL`: per worktree holding a queued, deferred, running or recovering request, how many, the oldest
+/// creation time and the sources bound to it (byte order of the id, `null` when none is bound).
+fn open_writes_in(read: &dyn KvRead) -> Result<Value> {
+    let mut open: std::collections::BTreeMap<String, (i64, i64)> =
+        std::collections::BTreeMap::new();
+    for r in all_requests(read)? {
+        let Some(w) = worktree_of(&r) else {
+            continue;
+        };
+        if !matches!(
+            r.state.as_str(),
+            "queued" | "deferred" | "running" | "recovering"
+        ) {
+            continue;
+        }
+        let entry = open.entry(w).or_insert((0, r.created_at_us));
+        entry.0 += 1;
+        entry.1 = entry.1.min(r.created_at_us);
+    }
+    let all = bindings(read)?;
+    Ok(Value::Array(
+        open.into_iter()
+            .map(|(worktree, (count, oldest))| {
+                let mut sources: Vec<&str> = all
+                    .iter()
+                    .filter(|b| b.worktree_id.eq_ignore_ascii_case(&worktree))
+                    .map(|b| b.source_id.as_str())
+                    .collect();
+                sources.sort_by(|a, b| a.as_bytes().cmp(b.as_bytes()));
+                json!({
+                    "worktree_id": worktree,
+                    "open_writes": count,
+                    "oldest_open": crate::env::iso(oldest),
+                    "source_ids": if sources.is_empty() { Value::Null } else { json!(sources) },
+                })
+            })
+            .collect(),
+    ))
+}
+
+/// `OWNER_ACTIVITY_SQL`: per listed worktree that has an owner, when its owner was last active. This engine keeps
+/// no consumer row, so `live` is false and no consumer heartbeat counts (as on PGLite). `last_active` is the greatest
+/// of the worktree heartbeat, the newest committed non-sync request's `COALESCE(published_at, completed_at)` and the
+/// newest completed managed-sync request of any source's current incarnation on the worktree.
+fn owner_activity_in(read: &dyn KvRead, env: &dyn Env, ids: &[String]) -> Result<Value> {
+    let now = env.now_micros();
+    let mut wanted: Vec<String> = ids.iter().map(|id| id.to_lowercase()).collect();
+    wanted.sort();
+    wanted.dedup();
+    let requests = all_requests(read)?;
+    let mut rows = Vec::new();
+    for id in &wanted {
+        let Some(w) = read_worktree_record(read, id)? else {
+            continue;
+        };
+        let Some(owner) = w.owner_host_id.clone() else {
+            continue;
+        };
+        let here: Vec<_> = requests
+            .iter()
+            .filter(|r| worktree_of(r).as_deref() == Some(id.as_str()))
+            .collect();
+        let sync_kind = |r: &super::RequestRecord| {
+            json_text(r.intent.get("kind"))
+                .unwrap_or_default()
+                .starts_with("managed_sync_")
+        };
+        let foreground = here
+            .iter()
+            .filter(|r| r.state == "committed" && !sync_kind(r))
+            .max_by_key(|r| r.sequence)
+            .and_then(|r| extra_time(r, "published_at").or(r.completed_at_us));
+        let mut sync: Option<i64> = None;
+        let mut seen: Vec<&str> = Vec::new();
+        for r in &here {
+            if seen.contains(&r.source_id.as_str()) {
+                continue;
+            }
+            seen.push(&r.source_id);
+            let Some(source) = read_source(read, &r.source_id)? else {
+                continue;
+            };
+            let newest = here
+                .iter()
+                .filter(|q| {
+                    q.source_id == r.source_id
+                        && q.source_incarnation
+                            .eq_ignore_ascii_case(&source.incarnation)
+                        && q.state == "committed"
+                        && sync_kind(q)
+                })
+                .filter_map(|q| q.completed_at_us)
+                .max();
+            sync = sync.max(newest);
+        }
+        let last_active = [w.heartbeat_at_us, foreground, sync]
+            .into_iter()
+            .flatten()
+            .max();
+        let oldest_open = here
+            .iter()
+            .filter(|r| {
+                matches!(
+                    r.state.as_str(),
+                    "queued" | "deferred" | "running" | "recovering"
+                )
+            })
+            .map(|r| r.created_at_us)
+            .min();
+        rows.push(json!({
+            "db_now": crate::env::iso(now),
+            "worktree_id": w.id,
+            "owner_host_id": owner,
+            "live": false,
+            "last_active": last_active.map(crate::env::iso),
+            "oldest_open": oldest_open.map(crate::env::iso),
+        }));
+    }
+    Ok(Value::Array(rows))
 }
 
 fn counter(tx: &mut dyn KvWrite, key: &str, delta: CounterDelta) -> Result<()> {
@@ -950,6 +1145,143 @@ fn topology_write_in(tx: &mut dyn KvWrite, env: &dyn Env, what: &TopologyWrite) 
             put_json(tx, &source_binding_key(source_id), &record)?;
             Ok(Value::Null)
         }
+        TopologyWrite::InsertRecoveringWorktree { id, host_id } => {
+            insert_worktree_in(
+                tx,
+                env,
+                &WorktreeInsert {
+                    id: id.clone(),
+                    owner_host_id: Some(host_id.clone()),
+                    owner_epoch: Some(1),
+                    topology_generation: None,
+                    state: Some("recovering".to_string()),
+                    manifest: None,
+                },
+            )?;
+            Ok(Value::Null)
+        }
+        TopologyWrite::SetWorktreeState { id, state } => {
+            if !["active", "recovering"].contains(&state.as_str()) {
+                return Err(StoreError::new(
+                    CONSTRAINT_VIOLATION,
+                    format!("\"{state}\" is not a state this write sets"),
+                ));
+            }
+            let id = pg_uuid(id)?;
+            if let Some(mut w) = read_worktree_record(&*tx, &id)? {
+                w.state = state.clone();
+                put_json(tx, &worktree_key(&id), &w)?;
+            }
+            Ok(Value::Null)
+        }
+        TopologyWrite::RecoverWorktreeWithManifest { id, manifest } => {
+            let id = pg_uuid(id)?;
+            if let Some(mut w) = read_worktree_record(&*tx, &id)? {
+                w.state = "recovering".to_string();
+                w.manifest = Some(manifest.clone()).filter(|m| !m.is_null());
+                put_json(tx, &worktree_key(&id), &w)?;
+            }
+            Ok(Value::Null)
+        }
+        TopologyWrite::InsertCloneBinding {
+            source_id,
+            incarnation,
+            worktree_id,
+        } => {
+            // `INSERT INTO persistence_source_bindings(source_id,source_incarnation,worktree_id)`: the
+            // primary key and the worktree's foreign key refuse as Postgres refuses them.
+            let w = pg_uuid(worktree_id)?;
+            if get_json::<SourceBindingRecord>(&*tx, &source_binding_key(source_id))?.is_some() {
+                return Err(StoreError::new(
+                    CONSTRAINT_VIOLATION,
+                    format!(
+                        "duplicate key value violates unique constraint \"persistence_source_bindings_pkey\": source {source_id} is bound"
+                    ),
+                ));
+            }
+            if read_worktree_record(&*tx, &w)?.is_none() {
+                return Err(StoreError::new(
+                    CONSTRAINT_VIOLATION,
+                    "insert or update on table \"persistence_source_bindings\" violates foreign key constraint: the worktree does not exist".to_string(),
+                ));
+            }
+            let record = SourceBindingRecord {
+                source_id: source_id.clone(),
+                source_incarnation: pg_uuid(incarnation)?,
+                worktree_id: w,
+                relative_path: String::new(),
+                topology_generation: 1,
+            };
+            put_json(tx, &source_binding_key(source_id), &record)?;
+            Ok(Value::Null)
+        }
+        TopologyWrite::SetChangeRecovery {
+            id,
+            recovery,
+            only_recovering,
+        } => {
+            if let Some(mut c) = changes_by_id(&*tx, id)?
+                && (!*only_recovering || c.state == "recovering")
+            {
+                c.recovery = Some(recovery.clone()).filter(|r| !r.is_null());
+                c.updated_at_us = now;
+                put_change_record(tx, &c)?;
+            }
+            Ok(Value::Null)
+        }
+        TopologyWrite::CloseChange { id, state, outcome } => {
+            if !["committed", "failed"].contains(&state.as_str()) {
+                return Err(StoreError::new(
+                    CONSTRAINT_VIOLATION,
+                    format!("\"{state}\" is not a state a change closes in"),
+                ));
+            }
+            if let Some(mut c) = changes_by_id(&*tx, id)? {
+                // `COALESCE(outcome,'{}'::jsonb)||$3::text::jsonb`.
+                let base = c.outcome.take().unwrap_or_else(|| json!({}));
+                c.outcome = Some(jsonb_concat(base, outcome));
+                c.state = state.clone();
+                c.recovery = None;
+                c.recovery_bytes = 0;
+                c.updated_at_us = now;
+                put_change_record(tx, &c)?;
+            }
+            Ok(Value::Null)
+        }
+        TopologyWrite::CommitChange { id, outcome } => {
+            if let Some(mut c) = changes_by_id(&*tx, id)? {
+                // `outcome||$2::text::jsonb`: a null outcome stays null.
+                c.outcome = c.outcome.take().map(|base| jsonb_concat(base, outcome));
+                c.state = "committed".to_string();
+                c.updated_at_us = now;
+                put_change_record(tx, &c)?;
+            }
+            Ok(Value::Null)
+        }
+        TopologyWrite::ResetSourceSync { id, incarnation } => {
+            let inc = pg_uuid(incarnation)?;
+            if let Some(mut s) = read_source(&*tx, id)?
+                && s.incarnation.eq_ignore_ascii_case(&inc)
+            {
+                s.last_commit = None;
+                s.last_sync_at_us = None;
+                put_json(tx, &source_key(id), &s)?;
+            }
+            Ok(Value::Null)
+        }
+    }
+}
+
+/// `base||extra` of two jsonb objects: the keys of `extra` win; anything else is replaced by `extra`.
+fn jsonb_concat(base: Value, extra: &Value) -> Value {
+    match (base, extra) {
+        (Value::Object(mut left), Value::Object(right)) => {
+            for (key, value) in right {
+                left.insert(key.clone(), value.clone());
+            }
+            Value::Object(left)
+        }
+        (_, other) => other.clone(),
     }
 }
 

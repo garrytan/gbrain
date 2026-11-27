@@ -5,8 +5,8 @@
  *
  * Read policy: `excludePrivate` on the list applies the page policy (private-provenance.ts `storePagePolicy`), the
  * caller's reader identity and private-readable grant included; any other caller whose policy differs (folder rules,
- * lineage, an owner read) refuses. The store does not read owner-only sources yet, so a policy read refuses while
- * the brain has one, rather than show its pages.
+ * lineage, an owner read) refuses. The store applies the policy's owner-only rule (owner-only flags and imessage-kind
+ * sources) through the same page test readIdentitySiblingCandidates uses (privacy.rs `page_hidden`).
  *
  * Identity decisions (listEntityKeyRows, listIdentityDecisions, listRestrictedIdentityMembers, applyIdentityDecisions;
  * SQL in engine-sql/entity-keys.ts and engine-sql/identity-decisions.ts) live in gbrain-store `identity_reviews`.
@@ -15,9 +15,7 @@
  * as null (none kept), and applyIdentityDecisions refuses an upsert that carries evidence or a company sweep's plan.
  */
 import { identityPageNotFound, type CanonicalTwinRow, type EntityIdentityFilter, type EntityIdentityLinkInput, type EntityIdentityPageRow, type EntityIdentityRow, type EntityIdentityUnlinkInput } from '../../engine-sql/entity-identities.ts';
-import type { SourceRoutingRow } from '../../engine-sql/sources.ts';
-import { isOwnerOnlySourceConfig } from '../../access/owner-only.ts';
-import { refuseMember, storeCall, type StoreMember } from './common.ts';
+import { storeCall, type StoreMember } from './common.ts';
 import type { EntityKeyRow, EntityKeyRowsOpts } from '../../engine-sql/entity-keys.ts';
 import type {
   ApplyIdentityDecisionsInput, ApplyIdentityDecisionsResult, IdentityDecisionsRead, IdentityMemberRef,
@@ -49,10 +47,6 @@ export const unlinkEntityIdentityRow: StoreMember<[input: EntityIdentityUnlinkIn
 export const listEntityIdentityRows: StoreMember<[filter: EntityIdentityFilter], EntityIdentityRow[]> = async (brain, filter) => {
   const member = 'listEntityIdentityRows';
   const policy = storePagePolicy(member, filter.excludePrivate, { callerReaders: true });
-  if (policy !== undefined) {
-    const sources = (await storeCall({ member }, () => brain.listSourceRoutingRows())) as SourceRoutingRow[];
-    if (sources.some((row) => isOwnerOnlySourceConfig(row.config))) refuseMember(member, 'excludePrivate while an owner-only source exists');
-  }
   const found = (await storeCall({ member }, () => brain.listEntityIdentities({
     entity_id: filter.entityId || null,
     slug: filter.slug || null,

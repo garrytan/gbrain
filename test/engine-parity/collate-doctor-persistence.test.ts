@@ -29,6 +29,7 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import { createSource, parityArms } from './harness.ts';
 import { seedTypedRequest } from '../helpers/persistence-typed-seed.ts';
+import { seedSource, seedSourceBinding, seedWorktree } from './persistence-fixtures.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { withEnv } from '../helpers/with-env.ts';
 import { byteOrder, MIXED_IDS } from '../helpers/byte-order.ts';
@@ -148,19 +149,31 @@ describe('doctor persistence reads sort text keys by byte', () => {
   // admitted through admitWrite, which refuses on an engine without managed_persistence (persistence/journal.ts). The case
   // takes the same guard before it seeds the waiting write, so the Rust arm stops by name where a real write would.
   parityTest('owner_host_stale lists the sources bound to a stale owner by byte id', {
-    methods: ['executeRaw', 'transaction'], requires: 'managed_persistence',
+    methods: ['readSourceState', 'insertWriteRequest', 'worktreeClaimStore', 'topologyStore', 'transaction'], requires: 'managed_persistence',
   }, async (engine, backend) => {
     requireManagedPersistence(engine, 'admitWrite', 'a write to a managed worktree checks its refresh fence, owner and binding');
     const { ownerHostStaleCheck } = await import('../../src/commands/doctor/checks/owner-host-stale.ts');
     const home = mkdtempSync(join(tmpdir(), 'gbrain-collate-owner-stale-'));
     try {
-      for (const id of SRC) await createSource(engine, backend, id);
-      const [tree] = await engine.executeRaw<{ id: string }>("INSERT INTO persistence_worktrees(owner_host_id,heartbeat_at) VALUES($1::uuid,now()-interval '2 days') RETURNING id::text", [randomUUID()]);
-      for (const id of SRC) {
-        await engine.executeRaw(`INSERT INTO persistence_source_bindings(source_id,source_incarnation,worktree_id) VALUES($1,(SELECT incarnation FROM sources WHERE id=$1),$2::uuid)`, [id, tree!.id]);
-      }
-      await request(engine, { source: SRC[0], worktree: tree!.id });
-      const check = await withEnv({ GBRAIN_HOME: home }, () => ownerHostStaleCheck(engine));
+      const tree = await seedWorktree(engine, randomUUID());
+      for (const id of SRC) await seedSourceBinding(engine, id, await seedSource(engine, backend, id), tree);
+      const incarnation = String((await engine.readSourceState(SRC[0]))!.incarnation);
+      // One write waits on the worktree, admitted through the journal member (the raw insert it replaces named no counter either).
+      await engine.insertWriteRequest({ principalKind: 'local_cli', principalId: 'doctor', requestId: randomUUID(), operation: 'put_page', sourceId: SRC[0],
+        sourceIncarnation: incarnation, pageId: null, slug: 'notes/x', worktreeId: tree, topologyGeneration: null, digest: randomUUID(), intent: {}, authority: {},
+        intentBytes: 0, terminalReservation: 0, targetKind: 'page', protocolVersion: 1, admitterVersion: 'v-collate', admitterHostId: null, counterKeys: [],
+        clientRequestId: null, state: 'queued', deferredRefreshId: null });
+      // The owner's two-day quiet cannot be written (no member backdates a heartbeat): the owner read's clock moves 25 h on, as in managed-claims-on-rust.
+      const aged = new Proxy(engine, { get: (target, key) => {
+        const value = Reflect.get(target, key) as unknown;
+        if (key !== 'topologyStore') return typeof value === 'function' ? (value as (...args: unknown[]) => unknown).bind(target) : value;
+        return async () => {
+          const store = await target.topologyStore();
+          return { ...store, ownerActivity: async (...args: Parameters<typeof store.ownerActivity>) =>
+            (await store.ownerActivity(...args)).map(row => ({ ...row, db_now: new Date(Date.now() + 49 * 3_600_000).toISOString() })) };
+        };
+      } });
+      const check = await withEnv({ GBRAIN_HOME: home }, () => ownerHostStaleCheck(aged));
       const stale = detailsOf(check).stale as { source_ids: string[] }[];
       const out = { status: check.status, sourceIds: stale[0]?.source_ids, message: check.message.includes(`${SRC_BYTES.join(', ')}: owner host`) };
       expect(out).toEqual({ status: 'warn', sourceIds: SRC_BYTES, message: true });

@@ -12,10 +12,20 @@ import { storeMultiuser } from '../access-self-check.ts';
  * (I-0.v2: the environment switch OR the brain's own config row), never the environment alone: a brain that is
  * multi-user only through its config row gets the owner-only gate too.
  */
-export function rustHttpServing(engine: { kind?: unknown; openStoreIfOpen?: (member: string) => object | null }): boolean {
+export function rustHttpServing(engine: { kind?: unknown; openStoreIfOpen?: (member: string) => object | null; capabilities?: ReadonlySet<string> }): boolean {
   if (engine.kind !== 'rust') return false;
+  if (servedMultiuserClient(engine)) return true;
   const store = engine.openStoreIfOpen?.('serveHttp');
   return !!store && storeMultiuser(store);
+}
+
+/**
+ * True for a served client (it reaches a brain server over protocol v3 and has no store) whose server runs multi-user:
+ * its capabilities mirror the server's hello, which lists `multi_writer` exactly then.
+ */
+function servedMultiuserClient(engine: { capabilities?: ReadonlySet<string> }): boolean {
+  const caps = engine.capabilities;
+  return !!caps && caps.has('served') && caps.has('multi_writer');
 }
 
 type SessionLike = import('../../../mcp/session-dispatch.ts').PrincipalSessionRunner;
@@ -26,9 +36,11 @@ type SessionLike = import('../../../mcp/session-dispatch.ts').PrincipalSessionRu
  * inside the dispatcher so it answers in the usual error envelope, before any tool runs. The session is released when
  * the call ends. Off (`rustHttpServing` false), `fn` runs with no session, exactly as before.
  */
-export async function withHttpPrincipalSession<T>(engine: object, bearer: string | undefined, fn: (session: SessionLike | undefined) => Promise<T>): Promise<T> {
-  const rust = engine as { kind?: unknown; addon?: object; openStoreIfOpen?: (member: string) => object | null };
+export async function withHttpPrincipalSession<T>(engine: object, bearer: string | undefined, fn: (session: SessionLike | undefined) => Promise<T>,
+  member?: { id?: unknown } | null): Promise<T> {
+  const rust = engine as { kind?: unknown; addon?: object; openStoreIfOpen?: (member: string) => object | null; capabilities?: ReadonlySet<string> };
   if (!rustHttpServing(rust)) return fn(undefined);
+  if (servedMultiuserClient(rust)) return fn(await servedOwnerGate(engine as { getConfig(key: string): Promise<string | null> }, member));
   const { openPrincipalSession } = await import('../principal-session.ts');
   const store = rust.openStoreIfOpen!('serveHttp') as Parameters<typeof openPrincipalSession>[0];
   let opened: Awaited<ReturnType<typeof openPrincipalSession>> | null = null;
@@ -36,4 +48,18 @@ export async function withHttpPrincipalSession<T>(engine: object, bearer: string
   try { opened = await openPrincipalSession(store, bearer ?? '', rust.addon ?? {}); } catch (error) { refusal = error; }
   const session: SessionLike = opened ?? { run: () => Promise.reject(refusal) };
   try { return await fn(session); } finally { opened?.release(); }
+}
+
+/**
+ * The owner-only gate (A1) on a served client, which has no store to open a principal session in: the request's
+ * credential gets in only when it is bound to the brain's owner member (`access.owner_member`, read from the server).
+ * The owner's calls then cross to the server as remote calls under the owner's narrowing record, as any remote call
+ * does; every other credential gets the session's one `permission_denied` before a tool runs.
+ */
+async function servedOwnerGate(engine: { getConfig(key: string): Promise<string | null> }, member: { id?: unknown } | null | undefined): Promise<SessionLike> {
+  const owner = await engine.getConfig('access.owner_member');
+  if (owner && typeof member?.id === 'string' && member.id === owner) return { run: (_member, _opts, fn) => fn() };
+  const { denied } = await import('../principal-session.ts');
+  const refusal = denied(`served_client=true owner_member=${owner ? 'set' : 'unset'} credential_member=${typeof member?.id === 'string' ? 'other' : 'none'}`);
+  return { run: () => Promise.reject(refusal) };
 }

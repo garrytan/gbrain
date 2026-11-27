@@ -305,6 +305,11 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
     const engine = this.engine as { onCheckout?: unknown };
     return typeof engine.onCheckout === 'function' ? (engine.onCheckout as (listener: () => void) => () => void).bind(this.engine) : undefined;
   }
+  /**
+   * Lane LM slice 3 (gate C1): on a multi-user Rust brain the process registers its host before its first protected write
+   * (service.ts, managed-registration.ts); a tick that is due before that waits for it. Never set on any other engine.
+   */
+  registration?: Promise<unknown>;
   start(): void {
     this.stopping = false; this.abort = new AbortController(); this.effectsStop = new AbortController(); this.fullTickRequested = true; this.idleDelayMs = this.pollMs;
     // #6317: one loud line when every round-trip of this consumer goes through a transaction-mode pooler with no direct route.
@@ -340,7 +345,8 @@ export class PersistenceConsumer implements PersistenceConsumerLike {
       this.timer = undefined;
       const afterProgress = this.progressWake;
       this.progressWake = false;
-      void this.tick(afterProgress).finally(() => { const next = this.nextDelayMs ?? this.pollMs; this.nextDelayMs = undefined; this.schedule(next); });
+      const run = () => void this.tick(afterProgress).finally(() => { const next = this.nextDelayMs ?? this.pollMs; this.nextDelayMs = undefined; this.schedule(next); });
+      if (this.registration) { const waiting = this.registration; this.registration = undefined; void waiting.then(run, run); } else run();
     }, ms)));
     this.timer.unref?.();
   }

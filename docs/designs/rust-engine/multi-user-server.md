@@ -268,8 +268,16 @@ refuses with `engine_capability_missing` reason `served`: run it on the server.
 ### Stores a member returns, and the publication store calls
 
 Members that return a store object (`worktreeClaimStore`, `writerAdminStore`, `writerReleaseStore`,
-`publicationJournalStore`, `chronicleStore`) are proxies on a served client: each method crosses as
-`<member>.<method>` inside a transaction, or as the v3-only whole operation `servedStoreCall`. The shared-skill
+`publicationJournalStore`, `chronicleStore`, and the managed-mode stores `manualLinkStore`, `topologyStore`,
+`gitEffectStore`, `gitDurabilityStore`, `refreshStore`, `groupPublishStore`) are plain objects on a served client: each
+method crosses as `<member>.<method>` inside a transaction, or as the v3-only whole operation `servedStoreCall`. The
+client builds each store from the v3-only whole operation `servedStoreKeys(member)`, which answers the method names of
+the owner's store (names only, never values; only for those members), once per connection, so the store has the owner
+store's methods as its own keys and a spread or a wrapper keeps every one. `servedStoreKeys` is read-only metadata: it
+runs no store method and reads no brain data, and it needs no access beyond the store getter's own. On the owner socket
+(protocol v2) all three v3-only operations (`servedStoreCall`, `servedStoreKeys`, `servedBrainCall`) refuse with
+`engine_capability_missing` ("the owner does not run this operation for other processes"), as an unknown name does, and
+a remote caller's `servedStoreKeys` is refused like any whole operation off the closed list. The shared-skill
 publication path, which calls a few store methods directly (`shared-skills/rust-publication.ts`), reaches them as
 `brain.<method>` or `servedBrainCall`, limited to the methods `served/store-returning.ts` lists. A transaction handle
 records the page keys its `lockPageKeys` took on the server, so held-key checks answer as in process. A plain member
@@ -595,10 +603,31 @@ impl Store {
   a stale holder fails at commit even if it started before the takeover.
 - Job claims, effect claims and write claims keep their current token fields and add `epoch`.
 
-- **I-5, managed mode limit (2026-11-25).** Managed mode's topology locks (`withTopologyLocks`) stay native file locks
-  on the checkout (`GBRAIN_HOME/locks`) on every engine for the single-host phase, and are replaced with I-5 leases once
-  the lease work is on the multi-user branch; no stub lease is used before then. File locks do not fence writers on
-  two hosts, so managed mode on Rust is single-host until that swap.
+- **I-5, managed mode (lane LM slice 3, 2026-11-25; closes the 2026-11-25 managed mode limit).** On a multi-user Rust store,
+  managed mode's locks (`withTopologyLocks`, the worktree lock of every publication, effect, recovery, transfer and
+  lifecycle step, and the refresh lock) are I-5 leases plus the owner host's native file lock, in one double guard:
+  `managed:topology:<brain_id>`, `managed:worktree:<worktree_id>` and `managed:refresh:<worktree_id>` (60 s, renewed every
+  10 s while held), the lease first and the native lock second, released in reverse
+  (`src/core/persistence/managed-lock.ts`). The lease fences store writes across hosts and processes; the native lock stays
+  because a lease cannot stop a paused process from touching files it already holds a path to, so a paused writer still
+  blocks a same-host successor's file work until it exits. A checkout lives on its owner host and is never replicated. The
+  holder of a lease is the operation's own process registration (`process:<host>:<pid>:<nonce>`, taken before the first
+  managed lock, never another process's token); an operation holds an immutable record of its host fence and its managed
+  tokens, and every protected write transaction asserts those exact tokens inside the writing transaction
+  (`managed-operations.ts`), so old work never borrows a replacement epoch. Claims carry epochs in `~L 0x05` side records
+  (group followers, coalesced Git effects, refresh rows and managed sync checkpoints join the job, write, effect, drain-lease
+  and cycle-lock families). PGLite, Postgres and a single-host Rust store keep the native locks and are unchanged.
+  The expiry window (what this does and does not guarantee): the store checks a lease's expiry when `assert` runs inside
+  the writing transaction, not at commit. A writer that asserted a live lease can still commit after the lease's expiry
+  time while nobody has taken the lease over. A takeover that commits between the assert and the commit puts the lease row
+  in the transaction's read set and refuses the commit (`write_conflict`; the retry refuses `lease_lost`): a multi-user
+  store runs explicit transactions optimistically, so the takeover lands and the late transaction keeps nothing.
+  That late commit is safe: no other holder exists, and the owner host's native lock still excludes a same-host successor
+  from the checkout files. Takeover fencing and expiry at commit are different properties; only the first is provided.
+  Waiting for a managed lease polls `acquire` within the caller's own deadline and ends with the caller's existing busy
+  answer (`write_pending`, `writer_lock_unavailable`); the store has no waiter order. Fairness for a background writer
+  (the effect worker) comes from the native layer, which stays: its waiter marker orders writers of one host. Across hosts
+  there is no such priority yet.
 
 - **I-5, cycle lock fence (2026-11-25).** On a multi-user store the cycle lock carries the host fence (the I-5 epoch
   and token), so a host that lost its lease cannot run a cycle. Under optimistic transactions an old-epoch commit is
@@ -628,19 +657,23 @@ impl Store {
   | worktree heartbeats and bindings: `stamp_worktree_heartbeats`, `release_worktree_bindings` | none on multiuser | LM's (worktree-bound persistence) | LM |
   | lock-skip capability asserts: `claimCoalescedGitEffects`, `lockHeldConcept`, `lockLiveConceptMembers`, `topologyStore` | not a lease | L0's | L0 |
 
-  Lease families with their own token and TTL and no host fence. None of them is a host-writer claim under I-5. A
-  follow-up fences each one that has a path outside a fenced claim, due 2026-12-02 (owner L5). Each fix is fail-first
-  in its own commit, so a stale host can no longer renew or release past the fence:
+  Lease families that kept their own token and TTL now carry the I-5 fence too (2026-11-26 follow-up, owner L5). Each
+  TypeScript caller passes the registration (`fenceOpts`), so a stale host is refused on every path, also the paths
+  that run outside a fenced claim. Each fix is fail-first in its own commit. Rust tests are in
+  `tests/lease_fences.rs` unless named otherwise; the caller tests are in `test/rust-multiuser-lease-fences.test.ts`.
 
-  | # | Member (Rust) | Own fence, or paths inside a fenced claim (there the claim's finish is refused, not each lease write) | Paths not under a fenced claim | Follow-up |
+  | # | Member (Rust) | Fence | Stale-host test (refused at commit, nothing changes) | Caller that carries it |
   |---|---|---|---|---|
-  | 1 | `claim_notifier_lease`, `release_notifier_lease`, `holds_notifier_lease` | its own fence column: a stale owner's claim after a takeover is refused (`test/engine-parity/notifier.test.ts`, "claimNotifierLease: first claim wins ... expiry hands it over", the `stale` case) | `write_notifier_state` does not check the notifier fence at commit | check the notifier fence in the state write |
-  | 2 | `claim_housekeeping_turn` | TTL only | every path | I-5 fence |
-  | 3 | `renew_private_queue_lease` | owner token + TTL | every path | I-5 fence |
-  | 4 | `claim_segmented_projection`, `renew_segmented_projection_claim`, `release_segmented_projection_claim` | inside a fenced write claim: `page-prepare.ts`, `page-append.ts`, `segmented-apply.ts` (the consumer's `afterCommit`) | `rebuildPendingSegmentedProjections` from the consumer loop and `gbrain projections`; `buildSegmentedProjection` from `embedding-readiness.ts`, `repair/secret-spans.ts`, `repair/segmented-tiling.ts`, `facts/purge.ts`, `streamed-import.ts` | I-5 fence |
-  | 5 | `renew_deferred_replacement_claim`, `release_deferred_replacement_claim` | none | `continueDeferredProjection` from `import-file.ts` (`afterCommit`) and `rebuildPendingPageProjections`; `drainProjections` from `src/cli/commands/projections.ts` and `migrate-engine.ts` | I-5 fence |
-  | 6 | `claim_wake_forgets`, `claim_wake_watch` (settled by token) | TTL only | every path (`wakeshift/drain.ts`) | I-5 fence |
-  | 7 | `take_page_embedding_lease`, `renew_page_embedding_lease`, `release_page_embedding_lease` | inside a fenced effect claim: `persistence/effects.ts` `embedPage`; inside a fenced job claim: `contextual-reindex-per-chunk` handler; under the cycle lock: `cycle/synthesize.ts` | `gbrain embed` (`commands/embed.ts` `embedAllStale`); `embedStalePages` from `repair/safe-chunks.ts`, `repair/contextual-mode.ts`, `repair/secret-spans.ts`; `embedStaleForSource` from `remediation/run.ts`; `embedSegmentedRows`; the other `reembedPageWithContextualRetrieval` callers | I-5 fence |
+  | 1 | `write_notifier_state`, `write_notifier_coverage` | the notifier's own lease (host, owner, fence), read only on a multi-user store; its claim already refused a stale owner (`test/engine-parity/notifier.test.ts`, the `stale` case) | `lf1_a_notifier_that_lost_its_lease_cannot_write_its_state_or_coverage`, `lf1_with_the_mode_off_a_notifier_write_does_not_read_the_lease` | `commit-notifier.ts` sends the lease it holds |
+  | 2 | `claim_housekeeping_turn`, `complete_housekeeping_turn` | I-5 fence | `lf2_a_stale_host_cannot_claim_or_complete_a_housekeeping_turn` | `persistence/housekeeping-turn.ts` |
+  | 3 | `renew_private_queue_lease_fenced` | I-5 fence | `lf3_a_stale_host_cannot_renew_a_private_queue_lease` | `MinionQueue.renewPrivateQueueLease` |
+  | 4 | `claim_/renew_/release_segmented_projection_claim_fenced` | I-5 fence | `src/persistence/projection_queue.rs`: `lf4_a_stale_host_cannot_claim_renew_or_release_a_segmented_projection` | `page-body/projection.ts` (claim, the renewal in the sealing transaction, release) |
+  | 5 | `renew_/release_deferred_replacement_claim_fenced` | I-5 fence | `src/persistence/projection_queue.rs`: `lf5_a_stale_host_cannot_renew_or_release_a_deferred_replacement_claim` | `page-state/projections.ts` (`continueDeferredProjectionStep`, `continueDeferredProjection`) |
+  | 6 | `claim_wake_watch_fenced`, `settle_wake_watch`, `claim_wake_forgets`, `settle_wake_forget` | I-5 fence | `lf6_a_stale_host_cannot_claim_or_settle_a_wake_watch_or_forget` | `wakeshift/drain.ts` |
+  | 7 | `take_/renew_/release_page_embedding_lease` | I-5 fence, taken once per lease | `tests/fences_jobs.rs`: `lf7_a_stale_host_cannot_take_renew_or_release_a_page_embedding_lease` | `page-embedding-lease.ts` `acquirePageEmbeddingLease` |
+
+  With no host registered (a one-shot command) these members are unchanged: the fence is the registration's, and
+  an unregistered process has none. With the switch off no caller sends one.
 
   These have no lease, so they are not in the table: `claim_take_proposal` (a state change with `acted_by`),
   `claim_file_page` (file ownership), `write_source_sync_heartbeat` (a timestamp), and the budget and spend

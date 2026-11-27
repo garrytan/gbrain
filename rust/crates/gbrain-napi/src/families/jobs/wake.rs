@@ -9,7 +9,8 @@ use napi::bindgen_prelude::Object;
 use napi_derive::napi;
 use serde_json::Value;
 
-use crate::store_binding::{Brain, required};
+use crate::store_binding::{Brain, arg, required};
+use gbrain_store::leases::LeaseToken;
 
 #[napi]
 impl Brain {
@@ -143,15 +144,20 @@ impl Brain {
         self.run(env, move |s| s.list_due_wake_watches(ids.as_deref()))
     }
 
-    /// `claimWakeWatch(id, leaseSeconds)`: `{ lease, attempts }` or null.
+    /// `claimWakeWatch(id, leaseSeconds, fence?)`: `{ lease, attempts }` or null. A fence whose epoch moved is refused
+    /// `lease_lost` (I-5, lane L5).
     #[napi]
     pub fn claim_wake_watch<'env>(
         &self,
         env: &'env Env,
         id: i64,
         lease_seconds: i64,
+        fence: Option<Value>,
     ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| s.claim_wake_watch(id, lease_seconds))
+        self.run(env, move |s| {
+            let fence: Option<LeaseToken> = arg(fence, "claimWakeWatch fence")?;
+            s.claim_wake_watch_fenced(id, lease_seconds, fence.as_ref())
+        })
     }
 
     /// `settleWakeWatch`.

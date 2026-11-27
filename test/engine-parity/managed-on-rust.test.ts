@@ -1,9 +1,9 @@
 /**
- * Engine parity: managed mode on a Rust brain, with the user-facing hold kept (lane LM, slice 1).
+ * Engine parity: managed mode on a Rust brain (lane LM, slices 1 and 2).
  *
- * Every case lifts the `managed_persistence` hold on its own Rust test engine (rust-managed.ts `liftManagedHold`), so the
- * ordinary Rust arm runs the managed path for real; `servedCapabilities()` still withholds the capability, so a user's
- * Rust brain keeps refusing. Each case returns its answers and the arms must agree.
+ * A single-host Rust engine serves `managed_persistence` (slice 2 lifted the hold; slice 3 serves a multi-user store too),
+ * so the ordinary Rust arm runs the managed path for real. `liftManagedHold` stays in the cases and changes nothing on such
+ * an engine. Each case returns its answers and the arms must agree.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: on a claimed checkout, a put_page to the bound source commits the page and writes its file; a refusal at
@@ -15,6 +15,8 @@
  *    differently from PGLite.
  *  - Why existing coverage misses it: the managed parity files declare `requires: 'managed_persistence'`, so on the
  *    ordinary Rust arm they count the hold's refusal as stopped and never run the managed members.
+ *  - Secret publish maintenance (git/redact-finish.ts) reads the host bindings and the failed Git effects of managed mode
+ *    through gitDurabilityStore, and only where managed mode is served: no managed-table read refuses and is swallowed.
  *  - Seam: the publication fault hook (persistence/fault-points.ts); real engines, real Git checkouts.
  */
 import { execFileSync } from 'node:child_process';
@@ -28,10 +30,12 @@ import { liftManagedHold } from './rust-managed.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { withEnv } from '../helpers/with-env.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
-import { servedCapabilities } from '../../src/core/rust-engine/store-capabilities.ts';
+import { servedCapabilities, storeCapabilities } from '../../src/core/rust-engine/store-capabilities.ts';
 import { writerAdminState } from '../../src/core/persistence/admin-intent.ts';
 import { runPersistenceAdministration } from '../../src/core/persistence/administration.ts';
 import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
+import { fenceOpts } from '../../src/core/persistence/host-fence.ts';
+import { ensureProcessRegistration } from '../../src/core/persistence/managed-registration.ts';
 import { submitPageMutation } from '../../src/core/persistence/page-mutations.ts';
 import { installFaultHook, type FaultPoint } from '../../src/core/persistence/fault-points.ts';
 import { hostIdFor, localHostId, readLocalWriter } from '../../src/core/persistence/identity.ts';
@@ -39,6 +43,8 @@ import { OperationError } from '../../src/core/ops/contract.ts';
 import { runManagedSourceLifecycle } from '../../src/core/persistence/source-lifecycle.ts';
 import { movedPhysicalRoot } from '../../src/core/persistence/physical-root.ts';
 import { runPersistenceEffects } from '../../src/core/persistence/effects.ts';
+import { secretPublishMaintenance } from '../../src/core/git/redact-finish.ts';
+import { isEngineCapabilityRefusal } from '../../src/core/engine-capability-refusal.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -177,13 +183,13 @@ async function settleGitEffects(engine: BrainEngine, read: () => Promise<{ state
 
 const codeOf = (run: () => Promise<unknown>) => run().then(() => null, (e: { code?: string }) => e?.code ?? String(e));
 
-describe('managed mode on a Rust brain, hold kept for users', () => {
-  parityTest('the hold is still reported off for every user Rust engine', {
+describe('managed mode on a Rust brain', () => {
+  parityTest('managed mode is served on a single-host Rust brain and on a multi-user store', {
     methods: ['getConfig'],
   }, async (engine) => {
     await engine.getConfig('managed_on_rust_probe');
-    const out = { held: !servedCapabilities().has('managed_persistence') };
-    expect(out).toEqual({ held: true });
+    const out = { served: servedCapabilities().has('managed_persistence'), multiuser: storeCapabilities({ multiuser: true }).has('managed_persistence') };
+    expect(out).toEqual({ served: true, multiuser: true });
     return out;
   });
 
@@ -220,7 +226,7 @@ describe('managed mode on a Rust brain, hold kept for users', () => {
     await settleGitEffects(engine, gitEffects, () => gitEffectDiagnosis(root, ['notes/gina-example.md', 'notes/hank-example.md']));
     // A direct claim on the worktree now finds nothing left to coalesce.
     const worktree = (await engine.getWorktreeBinding('work', hostIdFor(engine)))!.worktree_id;
-    const left = await engine.claimCoalescedGitEffects({ hostId: hostIdFor(engine), worktreeId: worktree, limit: 5, deadOwners: [], ownerJson: '{}' });
+    const left = await engine.claimCoalescedGitEffects({ hostId: hostIdFor(engine), worktreeId: worktree, limit: 5, deadOwners: [], ownerJson: '{}', ...fenceOpts(engine) });
     const tracked = execFileSync('git', ['-C', root, 'ls-files', 'notes'], { encoding: 'utf8' }).trim().split('\n').sort();
     const pushed = execFileSync('git', ['-C', join(home, 'remote.git'), 'ls-tree', '-r', '--name-only', 'main', 'notes'], { encoding: 'utf8' }).trim().split('\n').sort();
     const out = { git: await gitStates(), tracked, pushed, left: left.length };
@@ -259,11 +265,12 @@ describe('managed mode on a Rust brain, hold kept for users', () => {
       attempts: Number(row.attempts), token: typeof row.execution_token === 'string', owner: (row.claim_owner as { owner?: unknown } | null)?.owner ?? null,
       stamped: (row.claim_owner as { token?: unknown } | null)?.token === row.execution_token, lease: row.claim_expires_at != null }))
       .sort((a, b) => a.path < b.path ? -1 : 1);
-    const first = await engine.claimCoalescedGitEffects<Record<string, unknown>>({ hostId: host, worktreeId: binding.worktree_id, limit: 2, deadOwners: [], ownerJson: owner });
-    const second = await engine.claimCoalescedGitEffects<Record<string, unknown>>({ hostId: host, worktreeId: binding.worktree_id, limit: 5, deadOwners: [], ownerJson: owner });
-    const third = await engine.claimCoalescedGitEffects<Record<string, unknown>>({ hostId: host, worktreeId: binding.worktree_id, limit: 5, deadOwners: [], ownerJson: owner });
+    await ensureProcessRegistration(engine, 'parity');
+    const first = await engine.claimCoalescedGitEffects<Record<string, unknown>>({ hostId: host, worktreeId: binding.worktree_id, limit: 2, deadOwners: [], ownerJson: owner, ...fenceOpts(engine) });
+    const second = await engine.claimCoalescedGitEffects<Record<string, unknown>>({ hostId: host, worktreeId: binding.worktree_id, limit: 5, deadOwners: [], ownerJson: owner, ...fenceOpts(engine) });
+    const third = await engine.claimCoalescedGitEffects<Record<string, unknown>>({ hostId: host, worktreeId: binding.worktree_id, limit: 5, deadOwners: [], ownerJson: owner, ...fenceOpts(engine) });
     const otherHost = await engine.claimCoalescedGitEffects<Record<string, unknown>>({ hostId: 'e0000000-0000-4000-8000-0000000000e9', worktreeId: binding.worktree_id,
-      limit: 5, deadOwners: [], ownerJson: owner });
+      limit: 5, deadOwners: [], ownerJson: owner, ...fenceOpts(engine) });
     const tokens = [...first, ...second].map(row => row.execution_token);
     const out = { seeded: seeded.length, first: shape(first), second: shape(second), third: third.length, otherHost: otherHost.length,
       distinctTokens: new Set(tokens).size === tokens.length };
@@ -286,7 +293,9 @@ describe('managed mode on a Rust brain, hold kept for users', () => {
       terminalReservation: 4096, targetKind: 'page', protocolVersion: 1, admitterVersion: 'parity', admitterHostId: host, counterKeys: ['brain'],
       clientRequestId: null, state: 'queued', deferredRefreshId: null });
     // A claimed request is a publication in flight (running under a live claim).
-    expect((await engine.stampWriteClaim(inFlight, 'c0000000-0000-4000-8000-0000000000c9', 60_000, JSON.stringify({ phase: 'parity' })))?.state).toBe('running');
+    // On a multi-user Rust brain a claim carries the process's host fence (its own registration); everywhere else `fenceOpts` is empty.
+    await ensureProcessRegistration(engine, 'parity');
+    expect((await engine.stampWriteClaim(inFlight, 'c0000000-0000-4000-8000-0000000000c9', 60_000, JSON.stringify({ phase: 'parity' }), fenceOpts(engine)))?.state).toBe('running');
     const archive = await codeOf(() => runManagedSourceLifecycle(engine, { operation: 'archive', sourceId: 'work' }));
     const after = await engine.readSourceMembership('work');
     const out = { archive, archived: after?.archived ?? null, incarnation: after?.incarnation === source.incarnation };
@@ -402,5 +411,45 @@ describe('managed mode on a Rust brain, hold kept for users', () => {
     expect(out).toEqual({ steps: ['ok', 'ok', 'ok', 'ok'], afterAdd: { file: true, links: ['notes/frank-example'] }, afterRemove: { file: false, links: [] } });
     return out;
   }));
+
+  /**
+   * Runs secret publish maintenance with `engine.executeRaw` watched: the managed-mode statements (host bindings,
+   * persistence effects) it sent that refused with a capability refusal, and the parked-push count it reported.
+   */
+  async function maintenanceRefusals(engine: BrainEngine): Promise<{ refused: string[]; retried: number }> {
+    const refused: string[] = [];
+    const own = Object.prototype.hasOwnProperty.call(engine, 'executeRaw');
+    const original = engine.executeRaw;
+    (engine as { executeRaw: unknown }).executeRaw = async function (this: BrainEngine, sql: string, params?: unknown[]) {
+      try { return await original.call(this, sql, params as never); }
+      catch (e) {
+        if (isEngineCapabilityRefusal(e) && /persistence_(host_bindings|effects)/.test(sql)) refused.push(sql.includes('persistence_effects') ? 'persistence_effects' : 'persistence_host_bindings');
+        throw e;
+      }
+    };
+    try {
+      const out = await withEnv({ GBRAIN_SECRETS_ON_PUSH: undefined }, () => secretPublishMaintenance(engine));
+      return { refused, retried: out.secret_parked_pushes_retried ?? 0 };
+    } finally {
+      if (own) (engine as { executeRaw: unknown }).executeRaw = original; else delete (engine as { executeRaw?: unknown }).executeRaw;
+    }
+  }
+
+  parityTest('secret publish maintenance on a managed checkout reads managed mode through its store: no refusal swallowed', {
+    methods: ['gitDurabilityStore', 'listAllSources'],
+    timeout: 120_000,
+  }, async (engine, backend) => withManagedCheckout(engine, backend, {}, async () => {
+    const out = await maintenanceRefusals(engine);
+    expect(out).toEqual({ refused: [], retried: 0 });
+    return out;
+  }));
+
+  parityTest('secret publish maintenance on a brain that does not serve managed mode sends no managed read to refuse', {
+    methods: ['listAllSources'],
+  }, async (engine) => {
+    const out = await maintenanceRefusals(engine);
+    expect(out).toEqual({ refused: [], retried: 0 });
+    return out;
+  });
 
 });

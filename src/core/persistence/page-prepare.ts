@@ -607,7 +607,7 @@ async function compareFileTarget(engine: BrainEngine, row: Parameters<typeof pre
       // #6693: a committed Git change sync has not imported yet (another agent's commit), on a page that records its file.
       if (!adopt.length) {
         // GST-1582: read before the check, so a write held for the import never waits on a commit the check already saw imported.
-        const [source] = await engine.executeRaw<{ last_commit: string | null }>('SELECT last_commit FROM sources WHERE id=$1', [row.source_id]);
+        const source = { last_commit: await (await engine.refreshStore()).sourceLastCommit(row.source_id) };
         if (await waitingOnWhile(options.clock, 'git', () => committedPendingImport(engine, row.source_id, root, path, options.clock?.signal))) throw pendingImportRefusal(row, options.remote === true, source?.last_commit ?? '', { root, path });
       }
       // #8109: drift confined to ordinary frontmatter keys never blocks a write that leaves the frontmatter alone.
@@ -639,7 +639,8 @@ async function compareFileTarget(engine: BrainEngine, row: Parameters<typeof pre
  */
 async function heldFileRefusal(engine: BrainEngine, row: Pick<WriteRequest, 'source_id' | 'slug'>, root: string, path: string,
   kind: 'drift' | 'occupied', remote: boolean): Promise<OperationError | null> {
-  const [source] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', [row.source_id]);
+  const incarnation = await (await engine.refreshStore()).sourceIncarnation(row.source_id);
+  const source = incarnation === null ? null : { incarnation };
   const hold = source ? await readGitHold(engine, row.source_id, source.incarnation, relative(root, path).split(sep).join('/')) : null;
   if (!hold) return null;
   const effect = kind === 'drift' ? `page ${row.slug} keeps its last good revision and` : `page ${row.slug} does not exist yet and its path`;

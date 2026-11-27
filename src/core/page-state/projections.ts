@@ -11,6 +11,7 @@ import { resolveMaxChunkTokens } from '../embedding-input-limit.ts';
 import { assertPageRevision, PageProjectionConflictError, PageRevisionConflictError, type PageSnapshot, type ProjectionConflictField } from './types.ts';
 import { sanitizeRemoteBody } from '../remote-body.ts';
 import { digest } from '../persistence/digest.ts';
+import { fenceOpts } from '../persistence/host-fence.ts';
 import { resolveWriteColumnFromConfigRows } from '../search/embedding-column.ts';
 import { getFtsLanguage } from '../fts-language.ts';
 import { getEmbeddingModel } from '../ai/gateway.ts';
@@ -255,7 +256,9 @@ export async function continueDeferredProjectionStep(engine: BrainEngine, source
     await applyMoveWaves(tx, pageId, waves.waves);
     const job = { sourceIncarnation: current.sourceIncarnation, slug, revision: current.revision };
     if (!waves.done) {
-      await tx.renewDeferredReplacementClaim(job, claim);
+      // The host fence (multi-user Rust, I-5): a host whose registration moved is refused lease_lost; none elsewhere.
+      const fence = fenceOpts(tx);
+      await (fence.fence ? tx.renewDeferredReplacementClaim(job, claim, fence) : tx.renewDeferredReplacementClaim(job, claim));
       return ['more', { ...base, moves: waves.pending, at: waves.at, fingerprint: await chunkRowsFingerprint(tx, pageId) }];
     }
     if (base.stale.length) await tx.clearChunkVectors(pageId, base.column, base.stale);
@@ -274,7 +277,11 @@ export async function continueDeferredProjectionStep(engine: BrainEngine, source
  */
 export async function continueDeferredProjection(engine: BrainEngine, sourceId: string, slug: string, until: () => boolean = () => false): Promise<'sealed' | 'more' | 'skipped' | 'held'> {
   const state: { token?: string } = {};
-  const release = () => engine.releaseDeferredReplacementClaim(slug, `${DEFERRED_CHUNK_CLAIM}:${state.token}`).catch(() => undefined);
+  const fence = fenceOpts(engine);
+  const release = () => {
+    const claim = `${DEFERRED_CHUNK_CLAIM}:${state.token}`;
+    return (fence.fence ? engine.releaseDeferredReplacementClaim(slug, claim, fence) : engine.releaseDeferredReplacementClaim(slug, claim)).catch(() => undefined);
+  };
   try {
     for (;;) {
       const step = await continueDeferredProjectionStep(engine, sourceId, slug, state);

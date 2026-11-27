@@ -15,6 +15,7 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import { CONSUMER_LIVE_MS, RESIDENT_CONSUMER_KINDS } from './consumer-heartbeat.ts';
+import { fenceOpts } from './host-fence.ts';
 
 export const HOUSEKEEPING_TURN_OP = 'consumer-housekeeping';
 export const HOUSEKEEPING_INTERVAL_MS_DEFAULT = 300_000;
@@ -34,10 +35,10 @@ export function housekeepingIntervalMs(env: Record<string, string | undefined> =
 export async function claimHousekeepingTurn(engine: Pick<BrainEngine, 'claimHousekeepingTurn'>, hostId: string, intervalMs: number, signal?: AbortSignal,
   direct?: boolean): Promise<boolean> {
   return engine.claimHousekeepingTurn({ op: HOUSEKEEPING_TURN_OP, hostId, intervalMs, leaseMs: HOUSEKEEPING_LEASE_MS,
-    consumerKinds: RESIDENT_CONSUMER_KINDS, consumerLiveMs: CONSUMER_LIVE_MS }, { signal, direct });
+    consumerKinds: RESIDENT_CONSUMER_KINDS, consumerLiveMs: CONSUMER_LIVE_MS, ...fenceOpts(engine) }, { signal, direct });
 }
 
 /** Marks the host's leased turn finished: the next one is due `intervalMs` from now. */
 export async function completeHousekeepingTurn(engine: Pick<BrainEngine, 'completeHousekeepingTurn'>, hostId: string, direct?: boolean): Promise<void> {
-  await engine.completeHousekeepingTurn({ op: HOUSEKEEPING_TURN_OP, hostId }, { direct });
+  await engine.completeHousekeepingTurn({ op: HOUSEKEEPING_TURN_OP, hostId, ...fenceOpts(engine) }, { direct });
 }

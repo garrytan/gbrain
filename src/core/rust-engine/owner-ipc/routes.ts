@@ -6,7 +6,8 @@
  * - `forward`: the call crosses the owner socket as data and runs on the owner engine. Every member that takes only
  *   data is forwarded, executeRaw included (one statement, never a transaction).
  * - `refuse`: the member takes a callback that must run against the engine (a transaction body, a reserved
- *   connection, a schema lock, a store whose calls run inside a transaction: worktreeClaimStore and writerAdminStore).
+ *   connection, a schema lock, a store whose calls run inside a transaction: worktreeClaimStore and writerAdminStore, and
+ *   the managed-mode stores, whose answer is an object of functions).
  *   Transactions do not cross the socket, so the member rejects at once with `engine_capability_missing` and nothing runs.
  *   owner-ipc/whole-op.ts can send a whole operation that needs a transaction to run inside the owner, but no entry point
  *   calls it yet: a journaled write from a client (put_page, remember) stops at write admission, which opens a transaction,
@@ -32,7 +33,10 @@ export type OwnerIpcRoute = 'local' | 'forward' | 'refuse';
 
 const LOCAL: ReadonlySet<string> = new Set(['kind', 'capabilities', 'connect', 'disconnect', 'reconnect', 'registerBeforeDisconnect']);
 const REFUSE: ReadonlySet<string> = new Set(['transaction', 'transactionDirect', 'withReservedConnection', 'holdSchemaMigrationLock', 'keywordBoundedRead',
-  'worktreeClaimStore', 'writerAdminStore']);
+  'worktreeClaimStore', 'writerAdminStore',
+  // The managed-mode stores answer an object of functions that run on the owner's store: a function does not cross the
+  // socket, so a client refuses them by name instead of receiving an empty object (lane LM; managed mode runs in the owner).
+  'gitDurabilityStore', 'gitEffectStore', 'topologyStore', 'manualLinkStore', 'refreshStore', 'groupPublishStore']);
 
 export const OWNER_IPC_ROUTES: Readonly<Record<RustEngineMember, OwnerIpcRoute>> = Object.fromEntries(
   Object.keys(RUST_ENGINE_MEMBERS).map(member => [member, LOCAL.has(member) ? 'local' : REFUSE.has(member) ? 'refuse' : 'forward']),
@@ -55,7 +59,7 @@ export const OWNER_IPC_CALLBACK_KEYS: ReadonlySet<string> = new Set([
  * call does not carry the caller's remote flag, submission authority or verified writer. A new member is a write here
  * until it is added. A local caller sends every forwarded member as before.
  */
-export const OWNER_IPC_REMOTE_READS: ReadonlySet<string> = new Set([
+export const OWNER_IPC_REMOTE_HAND_READS: ReadonlySet<string> = new Set([
   'aliasCanonicalRefs', 'batchLoadEmotionalInputs', 'cosinesByChunkIds', 'countChunklessPagesWithContent',
   'countEmbeddingHeldPages', 'countKeywordPages', 'countOnboardSignal', 'countPagesBy',
   'countPendingProjectionPages', 'countStaleChunks', 'countStaleFrontmatterKeyPages', 'countStalePagesForExtraction',
@@ -86,6 +90,52 @@ export const OWNER_IPC_REMOTE_READS: ReadonlySet<string> = new Set([
   'searchKeywordPages', 'searchTakes', 'searchTakesVector', 'searchTitles', 'searchVector', 'slugsEndingIn',
   'sumStaleChunkChars', 'supersedingPageSlugs', 'traverseGraph', 'traversePaths', 'traversePathsDetailed',
 ]);
+
+/**
+ * Typed reads (owner-ipc/typed-member-classes.ts) a remote caller may send: each one is added by name once a served
+ * parity file proves it on both multi-user routes (ruling A, batch 1). Since K the brain server runs a remote-marked
+ * read under the caller's record with the remote flag on, exactly as an in-process remote call runs, so the answer is
+ * the in-process one. The hand list above is frozen; a new remote read goes here (test/rust-owner-ipc-remote.test.ts).
+ */
+export const OWNER_IPC_REMOTE_TYPED_READS: readonly string[] = [
+  // mcp-get-tags: a remote get_tags quotes the tags of a quoted page.
+  'listPageQuoteTiers',
+  // write-request-reads: a remote caller reads its own write receipts and a memory proposal's state.
+  'readWriteRequest', 'listWriteRequestRows', 'readMemoryProposal',
+];
+
+/**
+ * Members that never cross the wire for a remote caller, each with its reason. The remote read list guard fails when
+ * any of these is added to OWNER_IPC_REMOTE_READS.
+ */
+const SECRET_STORE = 'the secret store: its entries, MACs and spans locate secret values in the brain';
+const CREDENTIALS = 'credential material: token and code hashes, challenges and credential rows';
+const READ_LOG = 'the access read log: who read which page, a privacy record of other callers';
+const DECIDE = 'the decide store: the owner\'s paid-provider spend, proposals and calibrations';
+export const OWNER_IPC_REMOTE_DENY: Readonly<Record<string, string>> = {
+  readCommitLog: 'the commit log lists every key family\'s write ids and origins, across all callers',
+  lastCommitPosition: 'a commit position from the log; the served side answers positions from the store itself',
+  beginSnapshotRead: 'opens a snapshot on the server that outlives the call; not a plain read',
+  readStoredBodyBytes: 'the stored body bytes before any visibility or quoting is applied',
+  readPageBodySizes: 'body sizes of every page, private ones included, reveal what exists',
+  readFieldUsageSamples: 'samples frontmatter values across every page, private ones included',
+  listFiles: 'host filesystem paths of the brain\'s files',
+  getCodeTraversalCache: 'a host-side cache of code traversal results, not a brain read',
+  ...Object.fromEntries(['findSecretEntryByMac', 'secretEntryExists', 'readSecretEntry', 'listSecretOccurrences', 'listSecretEntrySummaries',
+    'countSecretsByRule', 'listAllowedSecretMacs', 'listSecretKeysInUse', 'readSecretStoreSnapshot', 'listSecretHoldingPages',
+    'countUnreferencedSecretEntries', 'listPageSecretOccurrences'].map(m => [m, SECRET_STORE])),
+  ...Object.fromEntries(['readActiveAccessTokenByHash', 'readOauthCodeChallenge', 'readOauthCodeForUpdate', 'readOauthRefreshTokenForUpdate',
+    'readAccessCredentials', 'listOwnerCredentialRows', 'listAttestCredentialRows'].map(m => [m, CREDENTIALS])),
+  ...Object.fromEntries(['readAccessReadLog', 'listAccessReadPageRefs', 'readAccessReadsOfPages', 'tallyAccessReadsOfPages'].map(m => [m, READ_LOG])),
+  ...Object.fromEntries(['readDecideState', 'dailyDecideSpend', 'listDecideSpendBySlot', 'listDecideReceiptStats', 'getDecideProposal',
+    'listDecideProposals', 'getDecideReviewProposal', 'listDecideCalibrations', 'getDecideCalibration'].map(m => [m, DECIDE])),
+};
+
+/**
+ * Forwarded members a remote caller may send to the owner: the frozen hand list and the typed additions above. Every
+ * other member, a write or anything not listed, is refused for a remote caller before it is sent.
+ */
+export const OWNER_IPC_REMOTE_READS: ReadonlySet<string> = new Set([...OWNER_IPC_REMOTE_HAND_READS, ...OWNER_IPC_REMOTE_TYPED_READS]);
 
 /** The capability family a member belongs to, for the refusal's `reason`. */
 function memberCapability(member: string): Capability {

@@ -34,6 +34,7 @@ import type { BrainEngine } from '../engine.ts';
 import { STALE_CHUNKS_SQL, type SegmentedProjectionPage } from '../engine-sql/segmented-writes.ts';
 import { isQuarantined } from '../quarantine.ts';
 import { faultPoint } from '../persistence/fault-points.ts';
+import { fenceOpts } from '../persistence/host-fence.ts';
 import { sealSegmentedPage } from '../persistence/segmented-apply.ts';
 import { SEGMENTED_PROJECTION_CLAIM, type ProjectionRebuildFailure } from '../page-state/projections.ts';
 import { occurrencesWithoutChunks, stageOccurrenceChunks } from './ingest.ts';
@@ -90,7 +91,9 @@ type ProjectionClaim = string | null;
 /** Claim the page's queue row; false when another process holds it. A page with no queued row is built unclaimed (null). */
 async function claimProjection(engine: Pick<BrainEngine, 'claimSegmentedProjection'>, ref: { sourceId: string; slug: string }): Promise<ProjectionClaim | false> {
   const claim = `${SEGMENTED_PROJECTION_CLAIM}:${randomUUID()}`;
-  const outcome = await engine.claimSegmentedProjection(ref, claim);
+  // The host fence (multi-user Rust, I-5): a host whose registration moved is refused lease_lost; none elsewhere.
+  const fence = fenceOpts(engine);
+  const outcome = await (fence.fence ? engine.claimSegmentedProjection(ref, claim, fence) : engine.claimSegmentedProjection(ref, claim));
   return outcome === 'absent' ? null : outcome === 'claimed' ? claim : false;
 }
 
@@ -101,7 +104,8 @@ async function claimProjection(engine: Pick<BrainEngine, 'claimSegmentedProjecti
  */
 async function renewClaim(tx: Pick<BrainEngine, 'renewSegmentedProjectionClaim'>, ref: { sourceId: string; slug: string }, claim: ProjectionClaim): Promise<boolean> {
   if (!claim) return true;
-  return tx.renewSegmentedProjectionClaim(ref, claim);
+  const fence = fenceOpts(tx);
+  return fence.fence ? tx.renewSegmentedProjectionClaim(ref, claim, fence) : tx.renewSegmentedProjectionClaim(ref, claim);
 }
 
 /** The projections of each engine's pages running in this process, by source and slug: the newest call of each page. */
@@ -140,7 +144,8 @@ async function projectSegmentedPage(engine: BrainEngine, ref: { sourceId: string
   try {
     return await buildClaimedProjection(engine, ref, page, claim);
   } catch (error) {
-    if (claim) await engine.releaseSegmentedProjectionClaim(ref, claim).catch(() => undefined);
+    const fence = fenceOpts(engine);
+    if (claim) await (fence.fence ? engine.releaseSegmentedProjectionClaim(ref, claim, fence) : engine.releaseSegmentedProjectionClaim(ref, claim)).catch(() => undefined);
     throw error;
   }
 }
