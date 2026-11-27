@@ -382,11 +382,11 @@ export function longPageMinCharsValueProblem(value: string): string | null {
  * The F2 policy for a search/query call: only under an implied `auto` (no
  * `return_unit`, `search.return_unit` unset or `auto`, no explicit budget).
  * `snippet_chars` leaves it on; capDeliveredSnippets exempts widened rows.
- * Read errors and unknown values are `off`; an unusable threshold is the default.
+ * Unset is `section`; read errors and unknown values are `off`; an unusable threshold is the default.
  */
 export async function withLongPagePolicy(engine: BrainEngine, plan: EvidencePlan | null): Promise<EvidencePlan | null> {
   if (!plan || plan.unit !== 'auto' || plan.explicitUnit || plan.budgetExplicit) return plan;
-  const raw = (await engine.getConfig(LONG_PAGE_UNIT_CONFIG_KEY).catch(() => null))?.trim();
+  const raw = (await engine.getConfig(LONG_PAGE_UNIT_CONFIG_KEY).catch(() => 'off'))?.trim() ?? 'section';
   if (raw !== 'window' && raw !== 'section' && raw !== 'page') return plan;
   const min = (await engine.getConfig(LONG_PAGE_MIN_CHARS_CONFIG_KEY).catch(() => null)) ?? '';
   return { ...plan, longPage: { unit: raw, minChars: longPageMinCharsValueProblem(min) ? DEFAULT_LONG_PAGE_MIN_CHARS : Number(min.trim()) } };
