@@ -11,6 +11,7 @@ import { renderTakesFence } from '../../src/core/takes-fence.ts';
 import { emptyFenceBlock } from '../../src/core/generations/fence.ts';
 import { generationHeldCheck } from '../../src/commands/doctor/checks/generations.ts';
 import { readSyncStatus } from '../../src/core/persistence/sync-status.ts';
+import { runSyncStatus } from '../../src/commands/sync/operator.ts';
 import { installFaultHook } from '../../src/core/persistence/fault-points.ts';
 import { operationsByName } from '../../src/core/operations.ts';
 import { resolveRepairScope, type RepairResult } from '../../src/core/repair/core.ts';
@@ -23,6 +24,16 @@ async function repair(engine: BrainEngine, sourceId: string, selection: Generati
   const quiet = { info: () => {}, warn: () => {}, error: () => {} };
   return (await repairRunner(engine, { apply: expectHash !== undefined, noEmbed: true, logger: quiet })).run('generations', scope,
     { explicit: true, sourceFlag: sourceId, generations: selection, ...(expectHash ? { expect: expectHash } : {}) });
+}
+
+/** `gbrain sync status` as the CLI prints it (text, or `--json`). */
+async function statusText(engine: BrainEngine, sourceId: string, args: string[] = []): Promise<string> {
+  const lines: string[] = [];
+  const log = console.log, write = process.stdout.write.bind(process.stdout);
+  console.log = (...a: unknown[]) => { lines.push(a.join(' ')); };
+  process.stdout.write = ((chunk: string | Uint8Array) => { lines.push(String(chunk)); return true; }) as typeof process.stdout.write;
+  try { await runSyncStatus(engine, ['--source', sourceId, ...args]); } finally { console.log = log; process.stdout.write = write; }
+  return lines.join('\n');
 }
 
 const ROW = (n: number, claim: string) => `| ${n} | ${claim} | fact | 1.0 | world | medium | 2020-01-01 |  | chat |  |`;
@@ -100,6 +111,12 @@ describe('GBRA-161 PR 2 fence generations', () => {
           expect(String(fix.user_message)).toContain('To keep them, restore the ## Facts section. To remove them, add this empty section');
         }
         expect(status.next).toEqual(status.fence_holds[0]!.fix);
+        // F2a: the hold that asks the user sets needs_human, names itself, and the text prints ASK THE USER for it.
+        expect({ needs_human: status.needs_human, from: status.needs_human_from, reason: status.human_reason })
+          .toEqual({ needs_human: true, from: { kind: 'fence', slug: SLUG, code: 'fence_absent' }, reason: status.fence_holds[0]!.fix.user_message });
+        const text = await statusText(engine, sourceId);
+        expect(text).toContain(`fact_fence held (fence_absent) on ${SLUG}: 3 row(s) kept live; ASK THE USER: `);
+        expect(JSON.parse(await statusText(engine, sourceId, ['--json']))).toMatchObject({ needs_human: true, needs_human_from: { kind: 'fence', slug: SLUG, code: 'fence_absent' } });
         await put(SLUG, PERSON('Alice Example', `The facts section was removed in this edit.\n\n${emptyFenceBlock('facts')}`));
         expect(await liveCounts(engine, sourceId, SLUG)).toEqual({ facts: 0, takes: 0 });
         expect(await ledger(engine, sourceId, SLUG)).toEqual([{ kind: 'fact_fence', state: 'live', retired: 3, preimages: 3 }]);

@@ -168,9 +168,18 @@ you run it only to settle a [conflict](#conflicts) the owner reports.
 
 **Say to your agent:** *"My brain's Git backups stopped pushing. Find out why and get them moving again."*
 The agent reads `gbrain sync status --source <id> --json` (`git_push_holds`) or
-`gbrain doctor --json` (`parked_effects`). Effects parked after repeated push
+`gbrain doctor --json` (`parked_effects`). Each push hold names the failed git step
+and a reason code (`last_error`; the text says `at step <step> (reason: <reason>)`),
+never git's own words. Effects parked after repeated push
 failures go through `gbrain sources writer retry-effects <source> --parked-pushes`
-(preview with `--dry-run`); a conflict names the user's choice first.
+(preview with `--dry-run`); a conflict or a secret-scan hold asks the user first
+(`needs_human: true`, `ASK THE USER:` in the text). A checkout whose tracking ref
+git pruned or never fetched still pushes when an upstream is configured: the owner
+asks the remote and scans before it pushes, so a removal never completes unpushed.
+An upstream that names no branch (a `branch.<name>.merge` outside `refs/heads/`) or a
+remote with no URL is a push hold with reason `upstream_invalid` and pushes nowhere;
+fix the branch's upstream with `git branch --set-upstream-to`. When a hold asks the user,
+the text prints the question once, on the hold, and `Next` points at it.
 
 **Say to your agent:** *"My page files stopped getting committed. Find out why."*
 The agent reads `gbrain sync status --source <id> --json` (`git_commit_holds`): each

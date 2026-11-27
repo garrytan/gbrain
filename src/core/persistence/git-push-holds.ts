@@ -11,6 +11,7 @@ import type { BrainEngine } from '../engine.ts';
 import type { Action } from '../agent-output.ts';
 import { readFix } from '../ops/op-fix.ts';
 import { readIntegrateConflict, type IntegrateConflictState } from '../git/commit-push.ts';
+import { storedGitDiagnostic, type GitDiagnostic } from './git-diagnostic.ts';
 
 /** The error codes of a Git effect whose commit is local but whose push did not land (defined beside the sync status SQL that embeds them). */
 import { GIT_PUSH_CODES } from './sync-status-sql.ts';
@@ -31,6 +32,8 @@ export interface GitPushHold {
   conflict: IntegrateConflictState | null;
   /** #7378: the effects belong to a worktree the source is no longer bound to; no retry reaches them, settle-effects accounts for them. */
   former_worktree: boolean;
+  /** The newest held effect's failed step and reason code (F1, slice 4); null for an effect recorded before steps were kept. Never git's own words. */
+  last_error: GitDiagnostic | null;
   fix: Action;
 }
 
@@ -39,7 +42,7 @@ export async function readGitPushHolds(engine: BrainEngine, sourceIds?: string[]
   return rows.map(row => {
     const conflict = row.root ? readIntegrateConflict(row.root) : null;
     const hold = { source_id: row.source_id, root: row.root, retrying: Number(row.retrying), parked: Number(row.parked), codes: row.codes,
-      oldest_at: new Date(row.oldest_at).toISOString(), conflict, former_worktree: row.former_worktree === true };
+      oldest_at: new Date(row.oldest_at).toISOString(), conflict, former_worktree: row.former_worktree === true, last_error: storedGitDiagnostic(row.last_error) };
     return { ...hold, fix: gitPushFix(hold) };
   });
 }

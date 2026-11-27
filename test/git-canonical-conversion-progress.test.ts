@@ -106,6 +106,17 @@ for (const backend of testBackends()) describe('[' + backend + '] #7644: a conve
     expect(seen.find(progress => progress.phase === 'strict_pass_1')?.push).toEqual({ state: 'pushed' });
   }, { databaseUrl, setup: durableSetup }), 300_000);
 
+  test('GCH-03a: with the tracking ref pruned, the apply still pushes its door commits (never nothing_to_push)', () => managedBrain(async ({ engine, root }) => {
+    await enableDurability(engine);
+    expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');
+    await editBulk(engine);
+    git(root, 'update-ref', '-d', 'refs/remotes/origin/main');
+    const { preview } = await planGitConversion(engine, 'default');
+    const result = await applyGitConversion(engine, 'default', preview.preview_hash, { noEmbed: true, noExtract: true });
+    expect(result).toMatchObject({ status: 'converted', committed: { groups: 2 }, push: { state: 'pushed' } });
+    expect(remoteHead(root)).toBe(git(root, 'rev-parse', 'HEAD'));
+  }, { databaseUrl, setup: durableSetup }), 300_000);
+
   test('a remote that rejects the push still converts, and the receipt reports the push pending', () => managedBrain(async ({ engine, root }) => {
     await enableDurability(engine);
     expect((await performManagedSync(engine, OPTS)).status).toBe('first_sync');

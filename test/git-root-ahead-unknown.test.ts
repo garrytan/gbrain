@@ -3,8 +3,10 @@
  * cannot tell whether the checkout is ahead of its upstream.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
- *  - Contract: gitRootAhead answers false only when there is no upstream to push to (none configured, or a tracking ref
- *    never fetched). When the upstream resolves but `rev-list` cannot count past it (a damaged tracking ref), or a step
+ *  - Contract: gitRootAhead answers false only when there is no upstream to push to (none configured, or a detached
+ *    HEAD). GCH-03a: a configured upstream with no tracking ref (pruned after a failed push, or never fetched) answers
+ *    true, so the guarded push (ls-remote, scan, push or hold) decides: a removal, a grouped pass and a page walk push,
+ *    and an unreachable remote keeps the removal a queued push hold. When the upstream resolves but `rev-list` cannot count past it (a damaged tracking ref), or a step
  *    does not finish, it throws `git_push_unavailable` with diagnostic { phase: push, step: rev-list, reason }. A
  *    removal effect retried then stays queued as a push hold (git_push_holds, never git_commit_holds) and pushes once
  *    the ref is readable. In a grouped pass, a probe that cannot answer holds only the absent targets; a target that
@@ -31,7 +33,7 @@ import { gitDiagnostic, gitDiagnosticOf, withGitDiagnostic } from '../src/core/p
 import { readGitCommitHolds } from '../src/core/persistence/git-commit-holds.ts';
 import { readGitPushHolds } from '../src/core/persistence/git-push-holds.ts';
 import { testBackends } from './helpers/test-backends.ts';
-import { type Repo, bindSource, createGitCoalescingFixture, git, harden, pageSlug, pass, pauseGitEffects, putPage, release } from './helpers/git-coalescing-fixture.ts';
+import { type Repo, bindSource, createGitCoalescingFixture, effectSql, git, harden, pageSlug, pass, pauseGitEffects, putPage, release } from './helpers/git-coalescing-fixture.ts';
 
 const { makeRepo, withBrain, dispose } = createGitCoalescingFixture('gch03');
 afterAll(dispose);
@@ -99,6 +101,74 @@ for (const kind of testBackends()) describe(`GCH-03 a removal retried while the 
     expect((await gitEffects(engine)).find(e => e.id === id)).toMatchObject({ state: 'committed', outcome: { git: 'skipped', reason: 'target_absent', push: 'committed' } });
   }), 300_000);
 
+  test('GCH-03a: a removal retried after its tracking ref was pruned pushes, and is never completed unpushed', () => withBrain(kind, async ({ engine, home, ctx }) => {
+    const repo = await managedRepo(engine, home);
+    const id = await deleteWithRefusedPush(engine, repo, ctx('default'));
+    git(repo.root, 'update-ref', '-d', 'refs/remotes/origin/main');
+    const pushes = repo.pushes();
+    await release(engine);
+    await pass(engine);
+    expect(repo.pushes()).toBe(pushes + 1);
+    expect(remoteHead(repo)).toBe(head(repo));
+    expect((await gitEffects(engine)).find(e => e.id === id)).toMatchObject({ state: 'committed', outcome: { git: 'skipped', reason: 'target_absent', push: 'committed' } });
+  }), 300_000);
+
+  test('GCH-03a: with the tracking ref pruned and the remote unreachable, the removal stays a queued push hold', () => withBrain(kind, async ({ engine, home, ctx }) => {
+    const repo = await managedRepo(engine, home);
+    const id = await deleteWithRefusedPush(engine, repo, ctx('default'));
+    git(repo.root, 'update-ref', '-d', 'refs/remotes/origin/main');
+    git(repo.root, 'remote', 'set-url', 'origin', join(home, 'no-such-remote.git'));
+    await release(engine);
+    await pass(engine);
+    const held = (await gitEffects(engine)).find(e => e.id === id)!;
+    expect({ state: held.state, error_code: held.error_code, last_error: held.last_error })
+      .toEqual({ state: 'queued', error_code: 'git_push_unavailable', last_error: { phase: 'push', step: 'ls-remote', reason: 'remote_unreachable' } });
+    expect(await readGitCommitHolds(engine, ['default'])).toEqual([]);
+    expect((await readGitPushHolds(engine, ['default'])).map(h => ({ retrying: h.retrying, codes: h.codes }))).toEqual([{ retrying: 1, codes: ['git_push_unavailable'] }]);
+  }), 300_000);
+
+  test('GCH-01: with the tracking ref pruned and an upstream that names no branch, the removal stays a push hold that names it', () => withBrain(kind, async ({ engine, home, ctx }) => {
+    const repo = await managedRepo(engine, home);
+    const id = await deleteWithRefusedPush(engine, repo, ctx('default'));
+    git(repo.root, 'update-ref', '-d', 'refs/remotes/origin/main');
+    git(repo.root, 'config', 'branch.main.merge', 'refs/tags/release');
+    await release(engine);
+    await pass(engine);
+    const held = (await gitEffects(engine)).find(e => e.id === id)!;
+    expect({ state: held.state, error_code: held.error_code, last_error: held.last_error })
+      .toEqual({ state: 'queued', error_code: 'git_push_unavailable', last_error: { phase: 'push', step: 'config', reason: 'upstream_invalid' } });
+    expect((await readGitPushHolds(engine, ['default'])).map(h => ({ codes: h.codes, last_error: h.last_error }))).toEqual([{ codes: ['git_push_unavailable'], last_error: { phase: 'push', step: 'config', reason: 'upstream_invalid' } }]);
+    expect(git(repo.root, 'ls-remote', 'origin').includes('refs/heads/refs/tags/')).toBe(false);
+  }), 300_000);
+
+  test('GCH-03a: a grouped pass with the tracking ref pruned pushes the removal with the other target', () => withBrain(kind, async ({ engine, home, ctx }) => {
+    const repo = await managedRepo(engine, home);
+    const id = await deleteWithRefusedPush(engine, repo, ctx('default'));
+    await pauseGitEffects(engine, () => putPage(ctx('default'), 2));
+    git(repo.root, 'update-ref', '-d', 'refs/remotes/origin/main');
+    await release(engine);
+    await pass(engine);
+    const effects = await gitEffects(engine);
+    expect(effects.find(e => e.id === id)).toMatchObject({ state: 'committed', outcome: { git: 'skipped', reason: 'target_absent', push: 'committed' } });
+    expect(effects.find(e => e.path === `${pageSlug(2)}.md`)).toMatchObject({ state: 'committed', outcome: { push: 'committed' } });
+    expect(remoteHead(repo)).toBe(head(repo));
+  }), 300_000);
+
+  test('GCH-03a: a Git page walk that ends with the tracking ref pruned pushes before it completes', () => withBrain(kind, async ({ engine, home, ctx }) => {
+    const repo = await managedRepo(engine, home);
+    await pauseGitEffects(engine, () => putPage(ctx('default'), 2));
+    const walk = (await gitEffects(engine)).at(-1)!;
+    await effectSql(engine, `UPDATE persistence_effects SET data=data||'{"source_scan":true,"after_slug":"zzzz"}'::jsonb WHERE id=$1`, [walk.id]);
+    writeFileSync(join(repo.root, 'local.md'), 'local\n');
+    git(repo.root, 'add', 'local.md'); git(repo.root, 'commit', '-q', '-m', 'Local commit');
+    git(repo.root, 'update-ref', '-d', 'refs/remotes/origin/main');
+    expect(remoteHead(repo)).not.toBe(head(repo));
+    await release(engine);
+    await pass(engine);
+    expect(remoteHead(repo)).toBe(head(repo));
+    expect((await gitEffects(engine)).find(e => e.id === walk.id)).toMatchObject({ state: 'committed', outcome: { push: 'committed' } });
+  }), 300_000);
+
   test('a grouped pass whose probe cannot answer holds only the absent target; the other target commits and pushes', () => withBrain(kind, async ({ engine, home, ctx }) => {
     const repo = await managedRepo(engine, home);
     const id = await deleteWithRefusedPush(engine, repo, ctx('default'));
@@ -147,13 +217,59 @@ if (testBackends().includes('pglite')) describe('GCH-03 gitRootAhead and publish
     expect(repo.pushes()).toBe(pushes);
   }), 120_000);
 
-  test('no upstream configured, or a tracking ref never fetched: not ahead, as before', () => withBrain('pglite', async ({ home }) => {
+  test('GCH-03a: a configured upstream with no tracking ref is ahead, and the absent target pushes its removal', () => withBrain('pglite', async ({ home }) => {
     const repo = makeRepo(home, 'single');
     removedAndUnpushed(repo);
     git(repo.root, 'update-ref', '-d', 'refs/remotes/origin/main');
-    expect(await effectGit.gitRootAhead(repo.root)).toBe(false);
+    expect(await effectGit.gitRootAhead(repo.root)).toBe(true);
+    const pushes = repo.pushes();
+    expect(await effectGit.publishGitEffect(repo.root, 'gone.md', undefined, true)).toEqual({ git: 'skipped', reason: 'target_absent', push: 'committed' });
+    expect(repo.pushes()).toBe(pushes + 1);
+    expect(remoteHead(repo)).toBe(head(repo));
+  }), 120_000);
+
+  test('GCH-01: an upstream that names no branch, or a remote with no URL, is a push hold and pushes nowhere', () => withBrain('pglite', async ({ home }) => {
+    const repo = makeRepo(home, 'single');
+    removedAndUnpushed(repo);
+    git(repo.root, 'update-ref', '-d', 'refs/remotes/origin/main');
+    const pushes = repo.pushes();
+    const held = async (run: () => Promise<unknown>) => {
+      const error = await run().then(() => null, (e: unknown) => e);
+      return { code: (error as OperationError | null)?.code ?? null, diagnostic: gitDiagnosticOf(error) ?? null };
+    };
+    const invalid: Awaited<ReturnType<typeof held>> = { code: 'git_push_unavailable', diagnostic: { phase: 'push', step: 'config', reason: 'upstream_invalid' } };
+    // A merge ref under refs/tags/ would otherwise become refs/heads/refs/tags/release on the remote.
+    git(repo.root, 'config', 'branch.main.merge', 'refs/tags/release');
+    expect(await held(() => effectGit.gitRootAhead(repo.root))).toEqual(invalid);
+    expect(await held(() => effectGit.publishGitEffect(repo.root, 'gone.md', undefined, true))).toEqual(invalid);
+    expect(await held(() => effectGit.pushGitRoot(repo.root))).toEqual(invalid);
+    expect(git(repo.root, 'ls-remote', 'origin').includes('refs/heads/refs/tags/')).toBe(false);
+    // A remote name with no remote.<name>.url would otherwise be read by git as a path, here a repository beside HEAD.
+    git(repo.root, 'config', 'branch.main.merge', 'refs/heads/main');
+    git(repo.root, 'init', '-q', '--bare', 'backup');
+    git(repo.root, 'config', 'branch.main.remote', 'backup');
+    expect(await held(() => effectGit.gitRootAhead(repo.root))).toEqual(invalid);
+    expect(await held(() => effectGit.pushGitRoot(repo.root))).toEqual(invalid);
+    expect(git(join(repo.root, 'backup'), 'for-each-ref').trim()).toBe('');
+    expect(repo.pushes()).toBe(pushes);
+    // A URL in branch.main.remote is a real destination: it pushes.
+    git(repo.root, 'config', 'branch.main.remote', git(repo.root, 'config', '--get', 'remote.origin.url').trim());
+    expect(await effectGit.gitRootAhead(repo.root)).toBe(true);
+    expect(await effectGit.publishGitEffect(repo.root, 'gone.md', undefined, true)).toEqual({ git: 'skipped', reason: 'target_absent', push: 'committed' });
+    expect(remoteHead(repo)).toBe(head(repo));
+  }), 120_000);
+
+  test('no upstream configured, or a detached HEAD: not ahead, as before', () => withBrain('pglite', async ({ home }) => {
+    const repo = makeRepo(home, 'single');
+    removedAndUnpushed(repo);
+    git(repo.root, 'update-ref', '-d', 'refs/remotes/origin/main');
     git(repo.root, 'branch', '--unset-upstream');
     expect(await effectGit.gitRootAhead(repo.root)).toBe(false);
     expect(await effectGit.publishGitEffect(repo.root, 'gone.md', undefined, true)).toEqual({ git: 'skipped', reason: 'target_absent', push: 'skipped' });
+    git(repo.root, 'config', 'branch.main.remote', 'origin');
+    git(repo.root, 'config', 'branch.main.merge', 'refs/heads/main');
+    expect(await effectGit.gitRootAhead(repo.root)).toBe(true);
+    git(repo.root, 'checkout', '-q', '--detach');
+    expect(await effectGit.gitRootAhead(repo.root)).toBe(false);
   }), 120_000);
 });

@@ -23,6 +23,14 @@
  *    before multi-user mode turns on by default. Until then the second case proves the output on every arm: on Rust it
  *    stands lane 7's probe in by name (effects.ts effectRecoverySeam, answering "no recovery record"), and the arms
  *    compare the sync status bytes.
+ *  - Slice 4 (GCH-03a, F1, F2a): a put whose push fails is a push hold that names the step and reason (`last_error`,
+ *    the text's "at step X (reason: Y)") and pushes once the remote is back, with its tracking ref pruned (F1). A
+ *    removal whose push failed, retried after its tracking ref was pruned, pushes and never completes unpushed
+ *    (GCH-03a). A commit hold that asks the user still sets `needs_human` (from `git_commit`) while a recovery record is
+ *    `next`, so the JSON and the text's ASK THE USER agree (F2a). Rust: F1 and F2a run equal with the recovery probe
+ *    seamed (effectRecoverySeam, restored in finally). The GCH-03a removal STOPS on Rust at delete_page preparation
+ *    (file-claims.ts findLiveFileClaimants is raw SQL; the page-prepare item, due 2026-12-10). PGLite and Postgres run
+ *    every case unseamed.
  *  - Seams: retries come due at once (requeueEffectRow with delayMs 0, a typed member every arm serves). Real engines,
  *    real Git checkouts.
  */
@@ -65,7 +73,7 @@ const ctxFor = (engine: BrainEngine, sourceId: string) => ({ engine, sourceId, r
 /** What the effect worker wrote at each failed attempt (requeue or park), read at the typed member it writes through. */
 type Written = { kind: 'requeue' | 'park'; reason: string | null; data: Record<string, any> };
 
-async function withNoIdentityCheckout<T>(engine: BrainEngine, backend: ParityBackend, opts: { source?: string },
+async function withNoIdentityCheckout<T>(engine: BrainEngine, backend: ParityBackend, opts: { source?: string; identity?: boolean },
   run: (home: string, root: string, written: Written[]) => Promise<T>): Promise<T> {
   const source = opts.source ?? 'work';
   if (backend === 'rust') liftManagedHold(engine);
@@ -97,6 +105,8 @@ async function withNoIdentityCheckout<T>(engine: BrainEngine, backend: ParityBac
       execFileSync('git', ['init', '-q', '--bare', '-b', 'main', remote]);
       execFileSync('git', ['-C', root, 'remote', 'add', 'origin', remote]);
       execFileSync('git', ['-C', root, 'push', '-q', '-u', 'origin', 'main']);
+      // `identity`: the checkout itself names a commit identity, so commits succeed and only the push can fail.
+      if (opts.identity) { execFileSync('git', ['-C', root, 'config', 'user.name', 'Example']); execFileSync('git', ['-C', root, 'config', 'user.email', 'example@example.invalid']); }
       await createSource(engine, backend, source, {}, root);
       const reviewed = async (operation: string) => ({ admin_intent: operation, expected_state: await writerAdminState(engine) });
       await runPersistenceAdministration(engine, 'writer_claim', { source_id: source, path: root, ...await reviewed('writer_claim') });
@@ -185,6 +195,9 @@ describe('engine parity: a managed Git commit that cannot be made is loud in gbr
       owner_host: 'this_host', root: '<home>/checkout' });
     expect(hold!.last_error).toEqual(identityError);
     expect(status.lines.some(line => line.includes('ASK THE USER: Git cannot commit page files in <home>/checkout'))).toBe(true);
+    // F2-02: the question prints once, on its hold; Next points at it instead of repeating it.
+    expect(status.text.split(String(next.user_message)).length - 1).toBe(1);
+    expect(status.text).toContain('\n  ASK THE USER first: the question on the hold above.');
     expect(status.json.git_push_holds).toEqual([]);
     expect(status.lines.some(line => line.includes('git commits held: 0 retrying, 1 parked (git_unavailable)')
       && line.includes('at step commit-tree (reason: identity_missing)'))).toBe(true);
@@ -249,5 +262,118 @@ describe('engine parity: a managed Git commit that cannot be made is loud in gbr
       expect(status.text).not.toContain('holds nothing');
       return { sync_json: JSON.stringify(status.json), lines: status.lines.join('\n') };
     } finally { effectRecoverySeam.probe = null; }
+  }));
+
+  parityTest('F1: a put whose push fails is a push hold that names its step and reason, and it pushes once the remote is back even with its tracking ref pruned (Rust: recovery probe seamed)', {
+    methods: ['worktreeClaimStore', 'readRequestEffects', 'requeueEffectRow', 'listGitPushHoldRows', 'readSyncStatusCommittedRow'],
+    timeout: 120_000,
+  }, async (engine, backend) => withNoIdentityCheckout(engine, backend, { source: 'pushheld', identity: true }, async (home, root) => {
+    // F1 on every arm: put_page is Rust-servable, so this case runs on Rust (seamed below), unlike the removal case.
+    // SEAMED on Rust: the failed push's recordFailure runs lane 7's recovery probe (raw SQL until 20da396ebd lands,
+    // conflict row 55), so effectRecoverySeam answers "no recovery record" there; PGLite and Postgres keep their raw read.
+    if (backend === 'rust') effectRecoverySeam.probe = async () => false;
+    const tip = (ref: string) => execFileSync('git', ['-C', ref === 'remote' ? join(home, 'remote.git') : root, 'rev-parse', ref === 'remote' ? 'main' : 'HEAD'], { encoding: 'utf8' }).trim();
+    const drain = async (git: () => Promise<{ state: string; error_code?: string | null }>, until: (row: { state: string; error_code?: string | null }) => boolean) => {
+      for (let i = 0; i < 20 && !until(await git()); i++) await runPersistenceEffects(engine, { engine: engine.kind } as never, { hostId: hostIdFor(engine), limit: 20 });
+    };
+    const submit = async (operation: 'put_page' | 'delete_page', params: Record<string, unknown>) => {
+      const request_id = randomUUID();
+      await submitPageMutation(ctxFor(engine, 'pushheld') as never, { operation, params: { ...params, request_id } });
+      const row = (await engine.readWriteRequest('local_cli', (await readLocalWriter(engine, 'cli')).id, request_id))!;
+      return async () => (await engine.readRequestEffects(row.id, 'git'))[0]!;
+    };
+    try {
+      const put = await submit('put_page', { slug: 'notes/lee-example', content: '---\ntype: note\ntitle: Lee Example\n---\nWorks at widget-co.\n' });
+      await drain(put, row => row.state === 'committed');
+      expect(tip('remote')).toBe(tip('HEAD'));
+      execFileSync('git', ['-C', root, 'remote', 'set-url', 'origin', join(home, 'no-such-remote.git')]);
+      const removal = await submit('put_page', { slug: 'notes/mia-example', content: '---\ntype: note\ntitle: Mia Example\n---\nWorks at acme-example.\n' });
+      await drain(removal, row => row.state === 'queued' && !!row.error_code);
+      const held = await removal();
+      expect({ state: held.state, code: held.error_code }).toEqual({ state: 'queued', code: 'git_push_unavailable' });
+      const status = await syncStatusOutput(engine, home, 'pushheld');
+      const hold = (status.json.git_push_holds as Array<Record<string, unknown>>)[0]!;
+      expect({ codes: hold.codes, last_error: hold.last_error }).toEqual({ codes: ['git_push_unavailable'], last_error: { phase: 'push', step: 'ls-remote', reason: 'remote_unreachable' } });
+      expect(status.text).toContain('(git_push_unavailable) since <time> at step ls-remote (reason: remote_unreachable)');
+      execFileSync('git', ['-C', root, 'remote', 'set-url', 'origin', join(home, 'remote.git')]);
+      execFileSync('git', ['-C', root, 'update-ref', '-d', 'refs/remotes/origin/main']);
+      expect(tip('remote')).not.toBe(tip('HEAD'));
+      await drain(removal, row => row.state === 'committed');
+      const done = await removal();
+      expect({ state: done.state, push: (done.outcome as Record<string, unknown>).push }).toEqual({ state: 'committed', push: 'committed' });
+      expect(tip('remote')).toBe(tip('HEAD'));
+      return { held: { state: held.state, code: held.error_code }, hold: JSON.stringify(hold), done: JSON.stringify(done.outcome) };
+    } finally { effectRecoverySeam.probe = null; }
+  }));
+
+  parityTest('GCH-03a + F1: a removal whose push failed, retried after its tracking ref was pruned, pushes; the push hold names its step and reason (Rust: stops at delete_page preparation)', {
+    methods: ['worktreeClaimStore', 'readRequestEffects', 'requeueEffectRow', 'listGitPushHoldRows', 'readSyncStatusCommittedRow'],
+    timeout: 120_000,
+  }, async (engine, backend) => withNoIdentityCheckout(engine, backend, { source: 'pruned', identity: true }, async (home, root) => {
+    // STOPPED on Rust: delete_page's preparation reads live file claimants with raw SQL (file-claims.ts
+    // findLiveFileClaimants, via page-prepare.ts prepareFileTarget), the page-prepare item due 2026-12-10, so the Rust arm
+    // stops on executeRaw before any Git step; the F1 case above carries the push-hold evidence on Rust.
+    // SEAMED on Rust: the failed push's recordFailure runs lane 7's recovery probe (raw SQL until 20da396ebd lands,
+    // conflict row 55), so effectRecoverySeam answers "no recovery record" there; PGLite and Postgres keep their raw read.
+    if (backend === 'rust') effectRecoverySeam.probe = async () => false;
+    const tip = (ref: string) => execFileSync('git', ['-C', ref === 'remote' ? join(home, 'remote.git') : root, 'rev-parse', ref === 'remote' ? 'main' : 'HEAD'], { encoding: 'utf8' }).trim();
+    const drain = async (git: () => Promise<{ state: string; error_code?: string | null }>, until: (row: { state: string; error_code?: string | null }) => boolean) => {
+      for (let i = 0; i < 20 && !until(await git()); i++) await runPersistenceEffects(engine, { engine: engine.kind } as never, { hostId: hostIdFor(engine), limit: 20 });
+    };
+    const submit = async (operation: 'put_page' | 'delete_page', params: Record<string, unknown>) => {
+      const request_id = randomUUID();
+      await submitPageMutation(ctxFor(engine, 'pruned') as never, { operation, params: { ...params, request_id } });
+      const row = (await engine.readWriteRequest('local_cli', (await readLocalWriter(engine, 'cli')).id, request_id))!;
+      return async () => (await engine.readRequestEffects(row.id, 'git'))[0]!;
+    };
+    try {
+      const put = await submit('put_page', { slug: 'notes/lee-example', content: '---\ntype: note\ntitle: Lee Example\n---\nWorks at widget-co.\n' });
+      await drain(put, row => row.state === 'committed');
+      expect(tip('remote')).toBe(tip('HEAD'));
+      execFileSync('git', ['-C', root, 'remote', 'set-url', 'origin', join(home, 'no-such-remote.git')]);
+      const page = await engine.readPageSnapshot('notes/lee-example', { sourceId: 'pruned', includeDeleted: true });
+      const removal = await submit('delete_page', { slug: 'notes/lee-example', expected_revision: page!.revision });
+      await drain(removal, row => row.state === 'queued' && !!row.error_code);
+      const held = await removal();
+      expect({ state: held.state, code: held.error_code }).toEqual({ state: 'queued', code: 'git_push_unavailable' });
+      const status = await syncStatusOutput(engine, home, 'pruned');
+      const hold = (status.json.git_push_holds as Array<Record<string, unknown>>)[0]!;
+      expect({ codes: hold.codes, last_error: hold.last_error }).toEqual({ codes: ['git_push_unavailable'], last_error: { phase: 'push', step: 'ls-remote', reason: 'remote_unreachable' } });
+      expect(status.text).toContain('(git_push_unavailable) since <time> at step ls-remote (reason: remote_unreachable)');
+      execFileSync('git', ['-C', root, 'remote', 'set-url', 'origin', join(home, 'remote.git')]);
+      execFileSync('git', ['-C', root, 'update-ref', '-d', 'refs/remotes/origin/main']);
+      expect(tip('remote')).not.toBe(tip('HEAD'));
+      await drain(removal, row => row.state === 'committed');
+      const done = await removal();
+      expect({ state: done.state, outcome: done.outcome }).toEqual({ state: 'committed', outcome: { git: 'skipped', reason: 'target_absent', push: 'committed' } });
+      expect(tip('remote')).toBe(tip('HEAD'));
+      return { held: { state: held.state, code: held.error_code }, hold: JSON.stringify(hold), done: JSON.stringify(done.outcome) };
+    } finally { effectRecoverySeam.probe = null; }
+  }));
+
+  parityTest('F2a: a commit hold that asks the user still sets needs_human while a recovery record is the next step, and the text and JSON agree', {
+    methods: ['worktreeClaimStore', 'readRequestEffects', 'requeueEffectRow', 'parkEffectRow', 'listGitPushHoldRows', 'readSyncStatusCommittedRow', 'readSyncRecoveryProbeRow'],
+    timeout: 120_000,
+  }, async (engine, backend) => withNoIdentityCheckout(engine, backend, { source: 'pending' }, async (home, _root, written) => {
+    if (backend === 'rust') effectRecoverySeam.probe = async () => false;
+    const target = engine as unknown as Record<string, unknown>;
+    const probe = engine.readSyncRecoveryProbeRow.bind(engine);
+    try {
+      const { effect } = await writeUntilParked(engine, written, 'notes/kai-example', 'pending');
+      expect(effect).toEqual({ state: 'failed', code: 'targets_parked' });
+      // The seam: the recovery probe reports one request still holding a publication recovery record, so the recovery
+      // step is \`next\` (it outranks the commit hold's question) while the identity hold is still listed.
+      target.readSyncRecoveryProbeRow = async () => ({ n: 1, request_id: '00000000-0000-4000-8000-000000000001', slug: 'notes/kai-example', blocked: false });
+      const status = await syncStatusOutput(engine, home, 'pending');
+      const hold = (status.json.git_commit_holds as Array<{ fix: { next?: string; user_message?: string } }>)[0]!;
+      const next = status.json.next as { next?: string; user_message?: string };
+      expect(next.next).toBe('run');
+      expect(hold.fix.next).toBe('ask_user');
+      expect(next.user_message).not.toBe(hold.fix.user_message);
+      expect(status.text).toContain('ASK THE USER: Git cannot commit page files in <home>/checkout');
+      expect({ needs_human: status.json.needs_human, from: status.json.needs_human_from, reason: status.json.human_reason })
+        .toEqual({ needs_human: true, from: { kind: 'git_commit', code: 'git_unavailable', root: '<home>/checkout' }, reason: hold.fix.user_message });
+      return { sync_json: JSON.stringify(status.json), lines: status.lines.join('\n') };
+    } finally { target.readSyncRecoveryProbeRow = probe; effectRecoverySeam.probe = null; }
   }));
 });
