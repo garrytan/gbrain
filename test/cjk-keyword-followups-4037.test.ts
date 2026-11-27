@@ -1,8 +1,6 @@
 /**
  * GST-4037: follow-ups to #10417's CJK quoted phrases and OR.
  * A) The hybrid any-term retry keeps a quoted phrase required: it relaxes only an alternative's unquoted words.
- * B) With OR alternatives the strict pass and the any-term retry order the rows they share the same way, so OFFSET paging
- *    that crosses from one pass to the other never repeats or skips a page.
  * C) A term named by many OR alternatives binds once, so a long OR query stays far from Postgres's bind limit.
  * PGLite (repo-less).
  */
@@ -25,8 +23,6 @@ beforeAll(async () => {
   await engine.initSchema();
   await page('notes/phrase', '東京大学で研究した');
   await page('notes/partial', '研究 論文 だけ');
-  await page('notes/osaka-loud', '大阪 '.repeat(20));
-  await page('notes/osaka', '大阪 '.repeat(10));
   await page('notes/kansai', '京都 神戸 奈良');
   await page('notes/kyoto', '京都 の 記録');
   for (let i = 0; i < 3; i++) await page(`notes/tokyo-${i}`, `東京 項目${i}`);
@@ -45,16 +41,6 @@ describe('GST-4037 CJK keyword follow-ups', () => {
     const ids = (await engine.executeRaw<{ chunk_id: number }>(stage.sql, stage.params)).map(r => Number(r.chunk_id));
     const [phrase] = await engine.executeRaw<{ id: number }>("SELECT cc.id FROM content_chunks cc JOIN pages p ON p.id = cc.page_id WHERE p.slug = 'notes/phrase'");
     expect(ids).toEqual([Number(phrase!.id)]);
-  });
-
-  test('B: OFFSET paging across the strict pass and the any-term retry returns every OR match once', async () => {
-    const q = '大阪 OR 京都 神戸 奈良';
-    const first = await slugs(q, { limit: 2, offset: 0, orFallback: true });
-    const second = await slugs(q, { limit: 2, offset: 2, orFallback: true });
-    const seen = [...first, ...second];
-    expect(new Set(seen).size).toBe(seen.length);
-    expect(seen).toEqual(expect.arrayContaining(['notes/osaka-loud', 'notes/osaka', 'notes/kansai']));
-    expect(seen.indexOf('notes/kyoto')).toBe(3);
   });
 
   test('C: a term every OR alternative names is bound once, and the statements still match', async () => {

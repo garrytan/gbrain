@@ -127,10 +127,7 @@ export function buildCJKKeywordSql(query: string, ctx: CjkKeywordCtx, variant: C
     : '';
 
   const positionExpr = `COALESCE(1.0 / NULLIF(POSITION($${qRawIndex} IN cc.chunk_text), 0)::real, 0.0)`;
-  // GST-4037: with OR alternatives the strict pass scores like the any-term retry, so the rows both return come back in
-  // one order and an OFFSET page read from either pass never repeats or skips one.
-  const weighted = any || groups.length > 1;
-  const orderExpr = weighted ? `(${matchedExpr}) DESC, score DESC` : 'score DESC';
+  const orderExpr = any ? `(${matchedExpr}) DESC, score DESC` : 'score DESC';
 
   // Term-frequency count: count occurrences of each term in chunk_text via
   // (length(chunk) - length(replace(chunk, term, ''))) / length(term),
@@ -146,7 +143,7 @@ export function buildCJKKeywordSql(query: string, ctx: CjkKeywordCtx, variant: C
   // #10417: with OR alternatives the term-frequency part is held below one matched-term step, so a chunk satisfying an
   // alternative outranks every partial chunk however often (or in however boosted a source) the partial repeats a term.
   const tfPart = groups.length > 1 ? `LEAST(${tfScoreExpr}, ${MATCHED_TERM_WEIGHT - 1})` : tfScoreExpr;
-  const scoreExpr = weighted ? `(${MATCHED_TERM_WEIGHT} * (${matchedExpr}) + ${tfPart})` : tfScoreExpr;
+  const scoreExpr = any ? `(${MATCHED_TERM_WEIGHT} * (${matchedExpr}) + ${tfPart})` : tfScoreExpr;
   return assemble({ dedup, fromClause, scoreExpr, orderExpr, whereLikeClause, detailFilter, extraFilter, hardExcludeClause, visibilityClause, innerLimitIndex, limitIndex, offsetIndex, params });
 }
 
