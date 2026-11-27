@@ -30,6 +30,7 @@ import { CLIENT_GRANT_SQL } from '../src/core/engine-sql/client-grants.ts';
 import { PENDING_WRITE_HEALTH_SQL } from '../src/core/engine-sql/telemetry.ts';
 import { ABANDONED_TAKES_SQL, TOP_RESOLVED_TAKES_SQL, TAKE_PREIMAGE_SQL } from '../src/core/engine-sql/takes-reads.ts';
 import { createHash } from 'node:crypto';
+import { GUEST_SOURCES_HIDDEN_SQL } from '../src/core/guests/note.ts';
 import { sqlQueryForEngine } from '../src/core/sql-query.ts';
 
 /** get_page's chunk generation probe as its caller built it (get-page-body.ts, a role that reads page_body_manifest). */
@@ -172,6 +173,44 @@ const PINS: Pin[] = [
     texts: [`SELECT m.page_id, m.sender_label, m.group_slug, m.audience_member, m.saved_at, m.writer_kind, m.writer_id,
         EXISTS (SELECT 1 FROM guest_promotions g WHERE g.guest_page_id = m.page_id) AS promoted
       FROM guest_marks m WHERE m.page_id = ANY($1::int[])`],
+  },
+  {
+    from: 'src/core/guests/promote.ts:85 promoteGuestNote, the guest-source check of the target (at fd4967dfec)',
+    case: { method: 'hasGuestSourceRow', variant: 'promote target', run: e => e.hasGuestSourceRow('default') },
+    texts: ['SELECT 1 FROM guest_sources WHERE source_id = $1'],
+  },
+  {
+    from: 'src/core/guests/promote.ts:91 promoteGuestNote, the kept read (at fd4967dfec)',
+    case: { method: 'readGuestPromotionKept', variant: 'default', run: e => e.readGuestPromotionKept(1, 'default', 'notes/a') },
+    texts: [`SELECT 1 FROM guest_promotions g WHERE g.guest_page_id = $1 AND g.target_source_id = $2 AND g.target_slug = $3
+    AND EXISTS (SELECT 1 FROM pages t WHERE t.source_id = g.target_source_id AND t.slug = g.target_slug)`],
+  },
+  {
+    from: 'src/core/guests/promote.ts:72 linkGuestPromotion (at fd4967dfec)',
+    case: { method: 'linkGuestPromotion', variant: 'default', run: e => e.linkGuestPromotion({ guestPageId: 1, targetSource: 'default', targetSlug: 'notes/a',
+      by: { kind: 'cli', id: 'local' }, requestId: null }) },
+    texts: [`WITH relinked AS (UPDATE guest_promotions SET promoted_by_kind = $4, promoted_by_id = $5, promoted_at = now(), request_id = $6
+      WHERE guest_page_id = $1 AND target_source_id = $2 AND target_slug = $3 RETURNING id)
+    INSERT INTO guest_promotions (guest_page_id, target_source_id, target_slug, promoted_by_kind, promoted_by_id, request_id)
+    SELECT $1, $2, $3, $4, $5, $6 WHERE NOT EXISTS (SELECT 1 FROM relinked) ON CONFLICT DO NOTHING`],
+  },
+  {
+    from: 'src/core/guests/admission.ts:128 refuseRemoteGuestDelete (at fd4967dfec)',
+    case: { method: 'readGuestDeleteCheck', variant: 'default', run: e => e.readGuestDeleteCheck('guests', 'notes/a') },
+    texts: [`SELECT ${GUEST_SOURCES_HIDDEN_SQL} AS hidden, EXISTS (SELECT 1 FROM guest_sources g WHERE g.source_id = p.source_id) AS guest, EXISTS (SELECT 1 FROM guest_promotions g WHERE g.guest_page_id = p.id) AS kept,
+       (SELECT m.writer_kind || ':' || m.writer_id FROM guest_marks m WHERE m.page_id = p.id) AS writer FROM pages p WHERE p.source_id = $1 AND p.slug = $2 LIMIT 1`],
+  },
+  {
+    from: 'src/core/guests/stamp-readable.ts:33 readableGuestRefs, no page policy (at fd4967dfec)',
+    case: { method: 'readGuestRefPages', variant: 'default', run: e => e.readGuestRefPages([1], [{ source_id: 'guests', slug: 'notes/a' }], false) },
+    texts: [`SELECT p.id, p.source_id, p.slug, p.type, p.frontmatter FROM pages p
+      WHERE (p.id = ANY($1::int[]) OR (p.source_id, p.slug) IN (SELECT u.s, u.g FROM unnest($2::text[], $3::text[]) AS u(s, g)))`],
+  },
+  {
+    from: 'src/core/guests/stamp-readable.ts:33 readableGuestRefs, under the page policy (at fd4967dfec)',
+    case: { method: 'readGuestRefPages', variant: 'excludePrivate', run: e => e.readGuestRefPages([1], [{ source_id: 'guests', slug: 'notes/a' }], true) },
+    texts: () => [`SELECT p.id, p.source_id, p.slug, p.type, p.frontmatter FROM pages p
+      WHERE (p.id = ANY($1::int[]) OR (p.source_id, p.slug) IN (SELECT u.s, u.g FROM unnest($2::text[], $3::text[]) AS u(s, g))) AND ${privatePagesFilterForCaller('p')}`],
   },
   // The refusal-swallow sites (lane 8's triage) whose statements moved verbatim into typed members, at b7b18e5ab3.
   {

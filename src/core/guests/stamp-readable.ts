@@ -9,7 +9,7 @@
  */
 import type { OperationContext } from '../ops/contract.ts';
 import { federatedSearchScope } from '../ops/context.ts';
-import { currentCallerAccess, isPrivatePageForCaller, privatePagesFilterForCaller, resolveExcludePrivatePages } from '../search/private-visibility.ts';
+import { currentCallerAccess, isPrivatePageForCaller, resolveExcludePrivatePages } from '../search/private-visibility.ts';
 import { refKey, type PageRef } from '../access/page-items.ts';
 
 function sourceAdmitted(ctx: OperationContext, source: string): boolean {
@@ -30,10 +30,7 @@ export async function readableGuestRefs(ctx: OperationContext, refs: readonly Pa
   const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote);
   const ids = refs.flatMap(r => (r.kind === 'page_id' ? [r.id] : []));
   const named = refs.flatMap(r => (r.kind === 'page' ? [r] : []));
-  const rows = await ctx.engine.executeRaw<{ id: number; source_id: string; slug: string; type: string | null; frontmatter: unknown }>(
-    `SELECT p.id, p.source_id, p.slug, p.type, p.frontmatter FROM pages p
-      WHERE (p.id = ANY($1::int[]) OR (p.source_id, p.slug) IN (SELECT u.s, u.g FROM unnest($2::text[], $3::text[]) AS u(s, g)))${excludePrivate ? ` AND ${privatePagesFilterForCaller('p')}` : ''}`,
-    [ids, named.map(r => r.source_id), named.map(r => r.slug)]);
+  const rows = await ctx.engine.readGuestRefPages(ids, named.map(r => ({ source_id: r.source_id, slug: r.slug })), excludePrivate);
   const readable = new Set<string>();
   for (const row of rows) {
     if (!sourceAdmitted(ctx, row.source_id) || (excludePrivate && isPrivatePageForCaller(row))) continue;

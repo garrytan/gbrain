@@ -1653,6 +1653,14 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
   insertGuestMark(mark: GuestNotes.GuestMarkInsert): Promise<number>;
   /** The guest marks of `pageIds`, each with whether its page was promoted (guests/marker.ts loadGuestMarks). */
   readGuestMarks(pageIds: readonly number[]): Promise<GuestNotes.GuestMarkRow[]>;
+  /** Whether the owner already kept guest page `guestPageId` as the page at (targetSource, targetSlug) and that page exists (guests/promote.ts). */
+  readGuestPromotionKept(guestPageId: number, targetSource: string, targetSlug: string): Promise<boolean>;
+  /** Relinks or inserts the one promotion link of a guest page and its target (guests/promote.ts linkGuestPromotion). */
+  linkGuestPromotion(link: GuestNotes.GuestPromotionLink): Promise<void>;
+  /** What a remote delete of the page at (sourceId, slug) decides on, or null with no page there (guests/admission.ts refuseRemoteGuestDelete). */
+  readGuestDeleteCheck(sourceId: string, slug: string): Promise<GuestNotes.GuestDeleteCheckRow | null>;
+  /** The pages by id or (source_id, slug), live or soft-deleted, under the caller's page policy when `excludePrivate` (guests/stamp-readable.ts). */
+  readGuestRefPages(ids: readonly number[], keys: ReadonlyArray<{ source_id: string; slug: string }>, excludePrivate: boolean): Promise<GuestNotes.GuestRefPageRow[]>;
   /** The guest sources (config `guest: true` or a guest_sources row) among `sourceIds`, in no particular order. */
   listGuestSourceIds(sourceIds: readonly string[]): Promise<string[]>;
   /** Whether any source is a guest source. */

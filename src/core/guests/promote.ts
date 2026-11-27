@@ -67,13 +67,9 @@ async function guestNote(ctx: OperationContext, slug: string, guestSource: strin
  * promotion that inserted the same link first keeps its row (ON CONFLICT on guest_promotions_link_key, v314), so the
  * second call succeeds instead of failing on the unique key after its page was written.
  */
-export async function linkGuestPromotion(engine: Pick<BrainEngine, 'executeRaw'>, link: { guestPageId: number; targetSource: string; targetSlug: string;
+export async function linkGuestPromotion(engine: Pick<BrainEngine, 'linkGuestPromotion'>, link: { guestPageId: number; targetSource: string; targetSlug: string;
   by: { kind: string; id: string }; requestId: string | null }): Promise<void> {
-  await engine.executeRaw(`WITH relinked AS (UPDATE guest_promotions SET promoted_by_kind = $4, promoted_by_id = $5, promoted_at = now(), request_id = $6
-      WHERE guest_page_id = $1 AND target_source_id = $2 AND target_slug = $3 RETURNING id)
-    INSERT INTO guest_promotions (guest_page_id, target_source_id, target_slug, promoted_by_kind, promoted_by_id, request_id)
-    SELECT $1, $2, $3, $4, $5, $6 WHERE NOT EXISTS (SELECT 1 FROM relinked) ON CONFLICT DO NOTHING`,
-    [link.guestPageId, link.targetSource, link.targetSlug, link.by.kind, link.by.id, link.requestId]);
+  await engine.linkGuestPromotion(link);
 }
 
 export async function promoteGuestNote(ctx: OperationContext, p: Record<string, unknown>): Promise<Record<string, unknown>> {
@@ -82,15 +78,13 @@ export async function promoteGuestNote(ctx: OperationContext, p: Record<string, 
   const note = await guestNote(ctx, slug, text(p.guest_source, 'guest_source'));
   const { pageMutationSource, submitPageMutation, requestPrincipalForContext } = await import('../persistence/page-mutations.ts');
   const targetSource = pageMutationSource(ctx, { source_id: p.source_id }, 'put_page');
-  if ((await ctx.engine.executeRaw('SELECT 1 FROM guest_sources WHERE source_id = $1', [targetSource])).length) {
+  if (await ctx.engine.hasGuestSourceRow(targetSource)) {
     throw new OperationError('invalid_params', 'Source ' + targetSource + ' is a guest source; a promoted note becomes an owner page in an owner source.',
       'Pass source_id naming one of your own sources, or omit it to use your write source.');
   }
   const target = normalizeSlug(text(p.to, 'to') ?? slug);
   const result = { guest: { source_id: note.source_id, slug }, page: { source_id: targetSource, slug: target } };
-  const [kept] = await ctx.engine.executeRaw(`SELECT 1 FROM guest_promotions g WHERE g.guest_page_id = $1 AND g.target_source_id = $2 AND g.target_slug = $3
-    AND EXISTS (SELECT 1 FROM pages t WHERE t.source_id = g.target_source_id AND t.slug = g.target_slug)`, [note.id, targetSource, target]);
-  if (kept) return { status: 'already_promoted', ...result };
+  if (await ctx.engine.readGuestPromotionKept(note.id, targetSource, target)) return { status: 'already_promoted', ...result };
   const page = await ctx.engine.getPage(slug, { sourceId: note.source_id });
   if (!page) throw new OperationError('page_not_found', 'Guest note ' + slug + ' was deleted while it was promoted; nothing was written.', 'Ask the brain owner to restore it, then promote it again.');
   assertInlineBody(page, 'promote_guest_note');

@@ -3130,6 +3130,10 @@ export class PGLiteEngine implements BrainEngine {
   claimGuestNotePublication(sourceId: string, requestId: string) { return guestNotesImpl.claimGuestNotePublication(this.rawRead, sourceId, requestId); }
   insertGuestMark(mark: guestNotesImpl.GuestMarkInsert) { return guestNotesImpl.insertGuestMark(this.rawRead, mark); }
   readGuestMarks(pageIds: readonly number[]) { return guestNotesImpl.readGuestMarks(this.rawRead, pageIds); }
+  readGuestPromotionKept(guestPageId: number, targetSource: string, targetSlug: string) { return guestNotesImpl.readGuestPromotionKept(this.rawRead, guestPageId, targetSource, targetSlug); }
+  linkGuestPromotion(link: guestNotesImpl.GuestPromotionLink) { return guestNotesImpl.linkGuestPromotion(this.rawRead, link); }
+  readGuestDeleteCheck(sourceId: string, slug: string) { return guestNotesImpl.readGuestDeleteCheck(this.rawRead, sourceId, slug); }
+  readGuestRefPages(ids: readonly number[], keys: ReadonlyArray<{ source_id: string; slug: string }>, excludePrivate: boolean) { return guestNotesImpl.readGuestRefPages(this.rawRead, ids, keys, excludePrivate); }
   listGuestSourceIds(sourceIds: readonly string[]) { return cliReadsImpl.listGuestSourceIds(this.cliReads, sourceIds); }
   hasGuestSource() { return cliReadsImpl.hasGuestSource(this.cliReads); }
   readPageTrustRows(lookup: PageTrustLookup) { return cliReadsImpl.readPageTrustRows(this.cliReads, lookup); }

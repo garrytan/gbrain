@@ -2893,6 +2893,17 @@
         ],
         "flagOnScopes": []
       },
+      "linkGuestPromotion#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listAccessCoverage#default": {
         "flagOffLanes": [
           "pool"
@@ -6235,7 +6246,51 @@
         ],
         "flagOnScopes": []
       },
+      "readGuestDeleteCheck#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readGuestMarks#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readGuestPromotionKept#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readGuestRefPages#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readGuestRefPages#excludePrivate": {
         "flagOffLanes": [
           "pool"
         ],
@@ -10000,6 +10055,7 @@
         "leaveSharedSkillMember": "none",
         "linkConversationFact": "none",
         "linkEntityIdentityRow": "none",
+        "linkGuestPromotion": "none",
         "linkRead": "none",
         "linkRelationshipKeysForOrigin": "none",
         "linkRelationshipKeysForPages": "none",
@@ -11051,7 +11107,10 @@
         "readGlobalMaintenanceDeaths": "none",
         "readGraduationGateRow": "none",
         "readGroupSpendTotals": "none",
+        "readGuestDeleteCheck": "none",
         "readGuestMarks": "none",
+        "readGuestPromotionKept": "none",
+        "readGuestRefPages": "none",
         "readGuestSourceRow": "none",
         "readHandoverRow": "none",
         "readHeadBlockerRows": "none",

@@ -2872,6 +2872,10 @@ export class PostgresEngine implements BrainEngine {
   claimGuestNotePublication(sourceId: string, requestId: string) { return guestNotesImpl.claimGuestNotePublication(this.executeRaw.bind(this), sourceId, requestId); }
   insertGuestMark(mark: guestNotesImpl.GuestMarkInsert) { return guestNotesImpl.insertGuestMark(this.executeRaw.bind(this), mark); }
   readGuestMarks(pageIds: readonly number[]) { return guestNotesImpl.readGuestMarks(this.executeRaw.bind(this), pageIds); }
+  readGuestPromotionKept(guestPageId: number, targetSource: string, targetSlug: string) { return guestNotesImpl.readGuestPromotionKept(this.executeRaw.bind(this), guestPageId, targetSource, targetSlug); }
+  linkGuestPromotion(link: guestNotesImpl.GuestPromotionLink) { return guestNotesImpl.linkGuestPromotion(this.executeRaw.bind(this), link); }
+  readGuestDeleteCheck(sourceId: string, slug: string) { return guestNotesImpl.readGuestDeleteCheck(this.executeRaw.bind(this), sourceId, slug); }
+  readGuestRefPages(ids: readonly number[], keys: ReadonlyArray<{ source_id: string; slug: string }>, excludePrivate: boolean) { return guestNotesImpl.readGuestRefPages(this.executeRaw.bind(this), ids, keys, excludePrivate); }
   listGuestSourceIds(sourceIds: readonly string[]) { return this.preparationRead(exec => cliReadsImpl.listGuestSourceIds(unscopedExecutor(exec, 'cli reads: the import and extract paths ran these unscoped through executeRaw'), sourceIds)); }
   hasGuestSource() { return cliReadsImpl.hasGuestSource(this.cliReads); }
   readPageTrustRows(lookup: PageTrustLookup) { return cliReadsImpl.readPageTrustRows(this.cliReads, lookup); }

@@ -877,7 +877,6 @@ src/core/google/loops-spend.ts#readLoopsExtractDailyCap	catch_empty	1
 src/core/grants/legacy-token.ts#resolveTokenGrant	catch_empty	1	sync 13b: the read is a typed engine member on the Rust trunk; master's tree reads it through the sql tag or executeRaw, which this guard counts under another metric or not at all; the handler is unchanged from master (the in-memory conversion authorizes identically)
 src/core/grants/legacy-token.ts#touchTokenLastUsed	promise_catch_empty	1	sync 13b: the read is a typed engine member on the Rust trunk; master's tree reads it through the sql tag or executeRaw, which this guard counts under another metric or not at all; the handler is unchanged from master
 src/core/grants/service.ts#readClientCatalogProvenance	catch_empty	1
-src/core/guests/admission.ts#refuseRemoteGuestDelete	capability_refusal_swallowed	1
 src/core/guests/derived.ts#withoutGuestSources	catch_empty	1
 src/core/guests/marker.ts#loadGuestMarks	catch_empty	1
 src/core/harness/shared-skills.ts#installSharedSkillsConnection	promise_catch_empty	1
