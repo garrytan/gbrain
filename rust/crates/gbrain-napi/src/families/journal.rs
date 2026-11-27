@@ -11,7 +11,8 @@ use serde_json::Value;
 
 use gbrain_store::persistence::{Settle, TrueUpReservation, WriteRequestInsert};
 
-use crate::store_binding::{Brain, required};
+use crate::store_binding::{Brain, arg, required};
+use gbrain_store::leases::LeaseToken;
 
 #[napi]
 impl Brain {
@@ -1198,9 +1199,11 @@ impl Brain {
         source_id: String,
         slug: String,
         claim: String,
+        fence: Option<Value>,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
-            s.claim_segmented_projection(&source_id, &slug, &claim)
+            let fence: Option<LeaseToken> = arg(fence, "claimSegmentedProjection fence")?;
+            s.claim_segmented_projection_fenced(&source_id, &slug, &claim, fence.as_ref())
         })
     }
 
@@ -1213,9 +1216,11 @@ impl Brain {
         source_id: String,
         slug: String,
         claim: String,
+        fence: Option<Value>,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
-            s.renew_segmented_projection_claim(&source_id, &slug, &claim)
+            let fence: Option<LeaseToken> = arg(fence, "renewSegmentedProjectionClaim fence")?;
+            s.renew_segmented_projection_claim_fenced(&source_id, &slug, &claim, fence.as_ref())
         })
     }
 
@@ -1227,9 +1232,11 @@ impl Brain {
         source_id: String,
         slug: String,
         claim: String,
+        fence: Option<Value>,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
-            s.release_segmented_projection_claim(&source_id, &slug, &claim)
+            let fence: Option<LeaseToken> = arg(fence, "releaseSegmentedProjectionClaim fence")?;
+            s.release_segmented_projection_claim_fenced(&source_id, &slug, &claim, fence.as_ref())
         })
     }
 

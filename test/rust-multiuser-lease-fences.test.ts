@@ -18,6 +18,7 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import { acquirePageEmbeddingLease } from '../src/core/page-embedding-lease.ts';
 import { DREAM_INLINE_PRIVATE_QUEUE_PREFIX, MinionQueue } from '../src/core/minions/queue.ts';
 import { drainWakes } from '../src/core/wakeshift/drain.ts';
+import { buildSegmentedProjection } from '../src/core/page-body/projection.ts';
 import { claimHousekeepingTurn, completeHousekeepingTurn } from '../src/core/persistence/housekeeping-turn.ts';
 import { registerHostLease } from './helpers/rust-host-fence.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -129,3 +130,29 @@ describe('family 6, the wake watch and wake forget leases', () => {
     });
   });
 });
+
+describe('family 4, the segmented projection claim', () => {
+  withAddon('after a takeover the old holder cannot claim a page to project: the build is refused before it starts', async () => {
+    await withEnv({ GBRAIN_RUST_MULTIUSER: '1' }, async () => {
+      const engine = await open();
+      expect(engine.openStore('test').multiuser).toBe(true);
+      // The projector reads a page that still needs its projection, then claims its queue row under the host fence.
+      const projector = new Proxy(engine as unknown as BrainEngine, {
+        get(target, prop, receiver) {
+          if (prop === 'readSegmentedProjectionPage') {
+            return async () => ({ id: 1, body_generation: 1, knowledge_revision: 'r2', text_projection_revision: 'r1' });
+          }
+          const value = Reflect.get(target, prop, receiver);
+          return typeof value === 'function' ? value.bind(target) : value;
+        },
+      });
+      const host = await registerHostLease(projector, 'consumer:h1');
+      try {
+        await host.takeOver();
+        expect(await refusal(() => buildSegmentedProjection(projector, { sourceId: 'default', slug: 'notes/a' })))
+          .toEqual({ code: 'lease_lost', reason: 'epoch_moved' });
+      } finally { host.unregister(); }
+    });
+  });
+});
+

@@ -86,14 +86,17 @@ export const selectProjectionWindowJobs: StoreMember<[cursor: Pick<ProjectionSca
     { after: { source_incarnation: cursor.after.source_incarnation, slug: cursor.after.slug }, highWater: cursor.highWater }, retryCooldown));
 
 /** The segmented projector's queue writes, each one store write at the store's clock. */
-export const claimSegmentedProjection: StoreMember<[ref: ProjectionPageRef, claim: string], SegmentedProjectionClaimOutcome> = (brain, ref, claim) =>
-  storeCall({ member: 'claimSegmentedProjection' }, () => brain.claimSegmentedProjection(ref.sourceId, ref.slug, claim));
+export const claimSegmentedProjection: StoreMember<[ref: ProjectionPageRef, claim: string, opts?: { fence?: LeaseToken }], SegmentedProjectionClaimOutcome> = (brain, ref, claim, opts) =>
+  storeCall({ member: 'claimSegmentedProjection' }, () => opts?.fence
+    ? brain.claimSegmentedProjection(ref.sourceId, ref.slug, claim, opts.fence) : brain.claimSegmentedProjection(ref.sourceId, ref.slug, claim));
 
-export const renewSegmentedProjectionClaim: StoreMember<[ref: ProjectionPageRef, claim: string], boolean> = (brain, ref, claim) =>
-  storeCall({ member: 'renewSegmentedProjectionClaim' }, () => brain.renewSegmentedProjectionClaim(ref.sourceId, ref.slug, claim));
+export const renewSegmentedProjectionClaim: StoreMember<[ref: ProjectionPageRef, claim: string, opts?: { fence?: LeaseToken }], boolean> = (brain, ref, claim, opts) =>
+  storeCall({ member: 'renewSegmentedProjectionClaim' }, () => opts?.fence
+    ? brain.renewSegmentedProjectionClaim(ref.sourceId, ref.slug, claim, opts.fence) : brain.renewSegmentedProjectionClaim(ref.sourceId, ref.slug, claim));
 
-export const releaseSegmentedProjectionClaim: StoreMember<[ref: ProjectionPageRef, claim: string], void> = async (brain, ref, claim) => {
-  await storeCall({ member: 'releaseSegmentedProjectionClaim' }, () => brain.releaseSegmentedProjectionClaim(ref.sourceId, ref.slug, claim));
+export const releaseSegmentedProjectionClaim: StoreMember<[ref: ProjectionPageRef, claim: string, opts?: { fence?: LeaseToken }], void> = async (brain, ref, claim, opts) => {
+  await storeCall({ member: 'releaseSegmentedProjectionClaim' }, () => opts?.fence
+    ? brain.releaseSegmentedProjectionClaim(ref.sourceId, ref.slug, claim, opts.fence) : brain.releaseSegmentedProjectionClaim(ref.sourceId, ref.slug, claim));
 };
 
 export const deleteProjectionJob: StoreMember<[job: ProjectionJobRef], void> = async (brain, job) => {
