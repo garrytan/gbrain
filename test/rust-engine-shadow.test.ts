@@ -1028,7 +1028,7 @@ describe('supervisor sample accounting (a sample is owed in a durable record bef
       const { WriteTally } = await import('../src/shadow/write-compare.ts');
       const epoch = (): string => ensureEpoch(h.dir, INPUTS_S2D, NOW_S2D.getTime()).epoch_id;
       const lock = join(h.dir, 'write-comparisons.lock'); const tallyFile = join(h.dir, 'write-comparisons.json');
-      const realRead = fsm.readFileSync; let paused = false;
+      const realRead = fsm.readFileSync; let paused = false; let s0 = '';
       // The seam is the one the D1-F2 tests use: the remover's last read, the tally's settled count, taken under the lock right before it unlinks. What the serving process does next happens "while the remover is paused".
       const spy = spyOn(fsm, 'readFileSync').mockImplementation(((path: unknown, ...rest: unknown[]) => {
         const out = (realRead as (...a: unknown[]) => unknown)(path, ...rest);
@@ -1040,7 +1040,7 @@ describe('supervisor sample accounting (a sample is owed in a durable record bef
         return out;
       }) as never);
       try {
-        h.sup.send(sample(0)); await turn(); const s0 = h.sessions[0]!; h.settle({ [s0]: 1 });
+        h.sup.send(sample(0)); await turn(); s0 = h.sessions[0]!; h.settle({ [s0]: 1 });
         writeOwed(h.dir, { v: 1, session: s0, serving_pid: process.pid, owed: 1, closed: true, child_exited: true }); // the record the remover judges: settled, its session over
         new WriteTally(h.dir, epoch, () => true, process.pid, 'owner').recover(); // the owner's pass removes the settled record; the interleaving happens inside it
         expect(paused).toBe(true);
