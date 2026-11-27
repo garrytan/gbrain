@@ -242,20 +242,12 @@ function plan(ctx: FollowContext, spec: WriteSpec, args: unknown[], hold: { open
     const nested = others().filter((c) => c.callback);
     if (!nested.length) return take();
     // A nested transaction is running: wait for it first, as the driver's nested-transaction queue made the savepoint read wait before. Its own calls are never
-    // held, so it can finish; the transaction's later calls are, so none is sent ahead of this write (the driver queued them behind it too). A nested
-    // transaction still running after the bound may be waiting for one of those later calls: the hold opens, and this write waits one more bound with the
-    // lane open, as it did before the hold existed (sent now, it would run inside the nested savepoint, whose rollback would undo it). Only a nested
-    // transaction still running after that leaves this write relation-level, sent at once.
+    // held, so it can finish; the transaction's later calls are, so none is sent ahead of this write (the driver queued them behind it too). Only a nested
+    // transaction still running after the bound leaves this write relation-level, sent at once, and the later calls follow it.
     return (async () => {
       if (self) self.waitingFor = nested;
       hold.open = holdLane(lane, nested);
-      try {
-        const finished = () => settledWithin(nested.map((c) => c.done), PRE_READ_WAIT_MS);
-        let settled = await finished();
-        if (!settled) { hold.open?.(); hold.open = undefined; settled = await finished(); }
-        if (self) self.waitingFor = undefined;
-        return settled ? await take() : fallback('pre_read_busy');
-      }
+      try { const settled = await settledWithin(nested.map((c) => c.done), PRE_READ_WAIT_MS); if (self) self.waitingFor = undefined; return settled ? await take() : fallback('pre_read_busy'); }
       catch { return fallback('plan_failed'); }
       finally { if (self) self.waitingFor = undefined; }
     })();

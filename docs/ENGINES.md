@@ -2097,8 +2097,8 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   (awaited, `execute()`, `forEach()` or a cursor), as the text the driver sends. A structural value the shadow cannot
   render makes that write an invalidation, and `describe()` counts as a read. Only the handle's `begin`, `savepoint`
   and `reserve` are not seen. A nested transaction that waits for a later call of its enclosing transaction while a
-  read waits for it holds that call for 2 seconds; the lane then opens and the read waits up to 2 seconds more for the
-  nested transaction to end before it skips and the write is described relation-level. The coverage watermark says whether every
+  read waits for it stalls until the 2-second bound; the read then skips, the write is sent at once, described
+  relation-level, and the later calls follow it, so the transaction commits what it commits with shadow off. The coverage watermark says whether every
   committed write is in the store. It goes invalid on a shed, a gap in the write sequence, a failed read, a relation
   the follower cannot describe row by row (which then needs a pass for that relation), or rows the store had to
   displace. **Every session that owns the store starts invalid**, even after a clean stop, and becomes valid again
