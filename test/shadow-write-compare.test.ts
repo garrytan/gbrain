@@ -10,7 +10,7 @@
  * (GBRAIN_TEST_REQUIRE_RUST_ADDON=1 or GBRAIN_TEST_RUST_ADDON_REQUIRED=1 makes that an error; the Rust engine workflow runs it that way through its rust-store receipt lane); everything else uses fake engines or no engine.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, spyOn, test } from 'bun:test';
-import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, linkSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
@@ -33,7 +33,7 @@ import { newMirrorCounters } from '../src/shadow/mirror.ts';
 import { scratchRootDefault } from '../src/shadow/write-compare-child.ts';
 import { faultsPath, readFaults } from '../src/shadow/ledger.ts';
 import { sampleWeight } from '../src/shadow/supervisor.ts';
-import { droppedWeight, MAX_DROPPED, lostPath, movedOutsideFootprint, owedPath, pageRefs, readWriteSnapshot, readWriteTally, recordLost, sentPath, sessionKey, unfoldedLost, unfoldedLines, writeOwed, writeTallyPath, WriteTally, SAVE_FAILURE_EXIT_MS, type OwedRecord, type WriteEvent } from '../src/shadow/write-compare.ts';
+import { droppedWeight, MAX_DROPPED, lostPath, movedOutsideFootprint, owedPath, pageRefs, readOwed, readWriteSnapshot, readWriteTally, recordLost, sentPath, sessionKey, unfoldedLost, unfoldedLines, writeOwed, writeTallyPath, WriteTally, SAVE_FAILURE_EXIT_MS, type OwedRecord, type WriteEvent } from '../src/shadow/write-compare.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { defineWriteCompareScenarios, fakeComparer, page, row5, settle, tallyOn, watchPreimage } from './helpers/shadow-write-compare-scenarios.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -1637,5 +1637,98 @@ describe('S2c: every credit site settles exactly the weight it stands for', () =
     expect(t.settled?.['old-session']).toBe(4); // credited once, with the booking
     tally.note('capability_missing', 'tags', 1, false, 0); // a later save
     expect(readWriteTally(dir, epoch)!.settled?.['old-session']).toBeUndefined(); // no owed file stands for it: pruned
+  });
+});
+
+// ---- S2d: a pending marker, and one commit/delete protocol for every owed-file remover ----
+describe('S2d: a pending marker blocks status, and every owed-file remover re-reads the record and the marker under the tally lock', () => {
+  const STATE = { sample_rate: 0.1 } as never;
+  const stat = (dir: string) => buildFollowStatus(dir, STATE, NOW).write_comparisons;
+  const INPUTS = { seed_id: 's', rust_addon_sha256: 'a', comparator_version: 1, adapter_version: 'x', capability_set_hash: null, readiness_policy_hash: 'p' } as const;
+  const epochOf = (dir: string): string => ensureEpoch(dir, INPUTS, NOW.getTime()).epoch_id;
+  const owe = (dir: string, session: string, owed: number, over: Partial<OwedRecord> = {}): void => writeOwed(dir, { v: 1, session, serving_pid: process.pid, owed, closed: false, child_exited: false, ...over });
+  const passing = (dir: string, epoch: string, extra: Record<string, unknown> = {}): void => writeFileSync(writeTallyPath(dir), JSON.stringify({ version: 1, epoch_id: epoch, updated_at: '', comparable: 1000, unexplained_difference: 0, uncomparable: 0, capability_missing: 0, capability_missing_by_family: {}, uncomparable_by_reason: {}, in_flight: [], ...extra }) + '\n');
+  const worker = (dir: string, epoch: string, session: string): WriteTally => new WriteTally(dir, () => epoch, () => true, process.pid, session);
+  const deadPid = (): number => spawnSync(process.execPath, ['-e', '0']).pid!;
+  const marker = (dir: string, session: string): string => join(dir, `write-pending.${session}.json`);
+
+  test('D1-F2: an owner pass that judged an old record settled cannot remove the higher record a republish put in its place meanwhile', async () => {
+    const dir = tmp(); const epoch = epochOf(dir); const dead = deadPid();
+    owe(dir, 'sp', 1, { child_pid: dead }); passing(dir, epoch);
+    const durable = await import('../src/core/fs-durable.ts'); const real = durable.flushDirectory; let swapped = false;
+    const spy = spyOn(durable, 'flushDirectory').mockImplementation(((path: string, options?: unknown) => {
+      (real as (p: string, o?: unknown) => void)(path, options);
+      if (!swapped) { swapped = true; owe(dir, 'sp', 2, { child_pid: dead, child_exited: true }); } // the supervisor republishes while the pass is between judging and removing
+    }) as never);
+    try { worker(dir, epoch, 'owner').recover(); } finally { spy.mockRestore(); }
+    expect(swapped).toBe(true);
+    expect(readOwed(dir, 'sp')).toMatchObject({ owed: 2 }); // was removed on its cached count of 1
+    expect(stat(dir)).toMatchObject({ state: 'capability_missing', unresolved_replays: 1 });
+  });
+
+  test('D1-F2: the worker\'s own finish() cannot remove a higher record that replaced the one it judged settled', async () => {
+    const dir = tmp(); const epoch = epochOf(dir); owe(dir, 'sf2', 1, { closed: true }); passing(dir, epoch, { settled: { sf2: 1 } });
+    const fs = await import('node:fs'); const realRead = fs.readFileSync; let swapped = false;
+    const spy = spyOn(fs, 'readFileSync').mockImplementation(((p: unknown, ...rest: unknown[]) => {
+      const out = (realRead as (...a: unknown[]) => unknown)(p, ...rest);
+      if (!swapped && String(p) === writeTallyPath(dir)) { swapped = true; owe(dir, 'sf2', 2, { closed: true }); } // a republish lands right after finish() read the tally
+      return out;
+    }) as never);
+    let done: boolean;
+    try { done = worker(dir, epoch, 'sf2').finish(); } finally { spy.mockRestore(); }
+    expect(swapped).toBe(true);
+    expect(done).toBe(false);
+    expect(readOwed(dir, 'sf2')).toMatchObject({ owed: 2 });
+    expect(stat(dir)).toMatchObject({ state: 'capability_missing', outstanding_sessions: ['write-owed.sf2.json'] });
+  });
+
+  test('D1-F2: a remover that cannot take the tally lock defers and deletes nothing', () => {
+    const dir = tmp(); const epoch = epochOf(dir); owe(dir, 'sl', 1, { closed: true }); passing(dir, epoch, { settled: { sl: 1 } });
+    let done = true;
+    withLock(join(dir, 'write-comparisons.lock'), () => { done = worker(dir, epoch, 'sl').finish(); }); // another process holds the lock
+    expect(done).toBe(false);
+    expect(readOwed(dir, 'sl')).toMatchObject({ owed: 1 });
+    expect(worker(dir, epoch, 'sl').finish()).toBe(true); // the next pass, with the lock free, removes it
+  }, 15_000);
+
+  test('D1-F2: the orphan pass that cannot take the tally lock defers: a settled, dead session\'s record is not removed until the lock is free', () => {
+    const dir = tmp(); const epoch = epochOf(dir);
+    owe(dir, 'so', 1, { child_exited: true }); passing(dir, epoch, { settled: { so: 1 } });
+    withLock(join(dir, 'write-comparisons.lock'), () => { worker(dir, epoch, 'owner').recover(); }); // another process holds the lock
+    expect(readOwed(dir, 'so')).toMatchObject({ owed: 1 });
+    worker(dir, epoch, 'owner').recover();
+    expect(readOwed(dir, 'so')).toBeNull();
+  }, 15_000);
+
+  test('a pending marker keeps its session out of every remover and out of the pruning, and status blocks on it by name (counted once)', () => {
+    const dir = tmp(); const epoch = epochOf(dir);
+    owe(dir, 'sm', 1, { child_exited: true }); passing(dir, epoch, { settled: { sm: 1 } });
+    linkSync(owedPath(dir, 'sm'), marker(dir, 'sm')); // what the supervisor makes when a record write fails
+    worker(dir, epoch, 'owner').recover(); // the orphan pass: its child exited and everything is settled, which would remove the file
+    expect(existsSync(owedPath(dir, 'sm'))).toBe(true);
+    expect(stat(dir)).toMatchObject({ state: 'capability_missing', unresolved_replays: 1, outstanding_sessions: ['write-pending.sm.json'] });
+    rmSync(owedPath(dir, 'sm')); // the worker removed its own file: the marker keeps the credit
+    worker(dir, epoch, 'other').note('comparable', undefined, 1, false, 0); // an unrelated owner save runs the pruning
+    expect(readWriteTally(dir, epoch)!.settled?.sm).toBe(1); // was pruned: no owed file stood for it
+    rmSync(marker(dir, 'sm'));
+    expect(stat(dir)).toMatchObject({ state: 'measured' });
+  });
+
+  test('the orphan pass books nothing for a marked session: the stale record\'s count is not the obligation, so it is neither booked nor removed', () => {
+    const dir = tmp(); const epoch = epochOf(dir); passing(dir, epoch);
+    owe(dir, 'sb', 1, { child_exited: true }); linkSync(owedPath(dir, 'sb'), marker(dir, 'sb'));
+    worker(dir, epoch, 'owner').recover();
+    expect(readWriteTally(dir, epoch)!.uncomparable).toBe(0); // nothing booked on the stale count
+    expect(readOwed(dir, 'sb')).toMatchObject({ owed: 1 });
+    rmSync(marker(dir, 'sb')); // the marker is cleared (the full record is durable): now the pass books what is unsettled, once
+    worker(dir, epoch, 'owner').recover();
+    expect(readWriteTally(dir, epoch)!.uncomparable).toBe(1);
+  });
+
+  test('a marker that cannot be listed blocks status; it never reads as no markers', async () => {
+    const dir = tmp(); const epoch = epochOf(dir); passing(dir, epoch); owe(dir, 'sq', 0);
+    const fs = await import('node:fs'); const realList = fs.readdirSync;
+    const spy = spyOn(fs, 'readdirSync').mockImplementation(((p: unknown, ...rest: unknown[]) => { if (String(p) === dir) throw Object.assign(new Error('EACCES'), { code: 'EACCES' }); return (realList as (...a: unknown[]) => unknown)(p, ...rest); }) as never);
+    try { expect(stat(dir)).toMatchObject({ state: 'capability_missing' }); } finally { spy.mockRestore(); }
   });
 });

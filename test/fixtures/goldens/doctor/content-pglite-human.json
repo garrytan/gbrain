@@ -114,7 +114,7 @@
       "  [OK] owner_only_marks_triggers: Every owner-only delete trigger exists, so rows derived from a removed owner-only source stay owner-only",
       "  [OK] database_encoding: Skipped (PGLite is always UTF8)",
       "  [OK] schema_version: Version <latest> (latest: <latest>)",
-      "  [OK] schema_columns: 1416 column(s) verified against live schema",
+      "  [OK] schema_columns: 1417 column(s) verified against live schema",
       "  [OK] schema_missing_tables: All 198 table(s) the applied migrations create exist.",
       "  [OK] schema_function_bodies: Every function this gbrain's schema defines has its body",
       "  [OK] rls_event_trigger: Skipped (PGLite — no event trigger support)",
