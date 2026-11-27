@@ -14,6 +14,8 @@ import { ACTIVE_REFRESH_STATES_SQL } from './worktree-refresh-schema.ts';
 
 /** The error codes of a Git effect whose commit is local but whose push did not land (git-push-holds.ts re-exports it). */
 export const GIT_PUSH_CODES = ['git_push_unavailable', 'push_unconfirmed', 'integrate_conflict', 'publish_secret_found', 'publish_scan_unreadable', 'push_credential_refused'] as const;
+/** The error codes of a Git effect whose commit was not made (a commit-phase git step failed; git-commit-holds.ts). */
+export const GIT_COMMIT_CODES = ['git_unavailable'] as const;
 
 /** The op of a sync identity-downgrade record, one row per old page id (sync-identity-downgrades.ts re-exports it). */
 export const IDENTITY_DOWNGRADE_OP = 'sync-identity-downgrade';
@@ -46,11 +48,11 @@ export const syncStatusSourceParams = (sourceId: string): unknown[] =>
 
 /**
  * `sync status`'s committed read (#7010, GBRA-161 PR 2): managed-sync pages committed in the last ten minutes, whether a
- * Git effect's push is held, whether a fact or take fence generation is held, and the newest managed-sync commit of the
+ * Git effect's push or commit is held (`git_push_held` covers both), whether a fact or take fence generation is held, and the newest managed-sync commit of the
  * source's bindings. `$1` source id.
  */
 export const SYNC_STATUS_COMMITTED_SQL = `SELECT count(*) AS n, EXISTS (SELECT 1 FROM persistence_effects e
-      WHERE e.source_id=$1 AND e.kind='git' AND e.state IN ('queued','running','failed') AND e.error_code IN ('targets_parked', ${GIT_PUSH_CODES.map(code => `'${code}'`).join(',')})
+      WHERE e.source_id=$1 AND e.kind='git' AND e.state IN ('queued','running','failed') AND e.error_code IN ('targets_parked', ${[...GIT_PUSH_CODES, ...GIT_COMMIT_CODES].map(code => `'${code}'`).join(',')})
         AND NOT (e.data ? 'settled')) AS git_push_held,
       EXISTS (SELECT 1 FROM derived_generations g WHERE g.source_id=$1 AND g.kind IN ('fact_fence','take_fence') AND g.state='held') AS fence_held,
       (SELECT max(r.completed_at) FROM persistence_source_bindings b JOIN persistence_requests r ON r.worktree_id=b.worktree_id AND r.source_incarnation=b.source_incarnation

@@ -200,21 +200,26 @@ export async function listParkedEffects(raw: EngineRawRead, sourceIds: string[] 
   return raw<ParkedEffectRow>(sourceIds ? PARKED_ROWS_SCOPED_SQL : PARKED_ROWS_SQL, sourceIds ? [sourceIds] : []);
 }
 
-export interface GitPushHoldRow { source_id: string; root: string | null; former_worktree: boolean; retrying: number; parked: number; codes: string[]; oldest_at: string | Date }
+export interface GitPushHoldRow { source_id: string; root: string | null; former_worktree: boolean; retrying: number; parked: number; codes: string[]; oldest_at: string | Date;
+  /** The newest held effect's failed step (`data.last_error`, or the parked entry's), by request time then effect id; null when none recorded one. */
+  last_error: unknown }
 const GIT_PUSH_HOLDS_SQL = `WITH held AS (
-       SELECT e.source_id, e.worktree_id, e.state, r.created_at,
-              CASE WHEN e.error_code='targets_parked' THEN (SELECT p->>'error_code' FROM jsonb_array_elements(COALESCE(e.data->'parked','[]'::jsonb)) p
-                WHERE p->>'error_code'=ANY($1::text[]) LIMIT 1) ELSE e.error_code END AS code
+       SELECT e.id, e.source_id, e.worktree_id, e.state, r.created_at,
+              CASE WHEN e.error_code='targets_parked' THEN pe.entry->>'error_code' ELSE e.error_code END AS code,
+              CASE WHEN e.error_code='targets_parked' THEN pe.entry->'last_error' ELSE e.data->'last_error' END AS last_error
          FROM persistence_effects e JOIN persistence_requests r ON r.id=e.request_id
+         LEFT JOIN LATERAL (SELECT p AS entry FROM jsonb_array_elements(CASE WHEN jsonb_typeof(e.data->'parked')='array' THEN e.data->'parked' ELSE '[]'::jsonb END) p
+                WHERE p->>'error_code'=ANY($1::text[]) LIMIT 1) pe ON e.error_code='targets_parked'
         WHERE e.kind='git' AND e.state IN ('queued','running','failed') AND e.recovery IS NULL AND NOT (e.data ? 'settled')
           AND ($2::text[] IS NULL OR e.source_id=ANY($2::text[])))
      SELECT h.source_id, (SELECT b.local_path FROM persistence_host_bindings b WHERE b.worktree_id=h.worktree_id ORDER BY b.local_path COLLATE "C" LIMIT 1) AS root,
             NOT EXISTS (SELECT 1 FROM persistence_source_bindings s WHERE s.source_id=h.source_id AND s.worktree_id=h.worktree_id) AS former_worktree,
             count(*) FILTER (WHERE h.state<>'failed')::int AS retrying, count(*) FILTER (WHERE h.state='failed')::int AS parked,
-            array_agg(DISTINCT h.code COLLATE "C" ORDER BY h.code COLLATE "C") AS codes, min(h.created_at) AS oldest_at
+            array_agg(DISTINCT h.code COLLATE "C" ORDER BY h.code COLLATE "C") AS codes, min(h.created_at) AS oldest_at,
+            (array_agg(h.last_error ORDER BY h.created_at DESC, h.id DESC) FILTER (WHERE jsonb_typeof(h.last_error)='object'))[1] AS last_error
        FROM held h WHERE h.code=ANY($1::text[])
       GROUP BY h.source_id, h.worktree_id ORDER BY h.source_id COLLATE "C"`;
-/** Held Git effects per source and worktree: retrying and parked counts, the codes of `codes` that hold them and the oldest request. */
+/** Held Git effects per source and worktree: retrying and parked counts, the codes of `codes` that hold them, the oldest request and the newest failed step. */
 export async function listGitPushHoldRows(raw: EngineRawRead, codes: string[], sourceIds: string[] | null): Promise<GitPushHoldRow[]> {
   return raw<GitPushHoldRow>(GIT_PUSH_HOLDS_SQL, [codes, sourceIds]);
 }

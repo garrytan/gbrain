@@ -218,9 +218,9 @@ describe('doctor persistence reads', () => {
               parked: [{ slug: 'notes/m', error_code: 'held_by_rule' }] }]);
           expect(answers.parkedScoped).toEqual([requestOf(5)]);
           expect(answers.holds).toEqual([
-            { source_id: 'ab', root: null, former_worktree: true, retrying: 0, parked: 1, codes: ['push_credential_refused'], oldest_at: true },
+            { source_id: 'ab', root: null, former_worktree: true, retrying: 0, parked: 1, codes: ['push_credential_refused'], oldest_at: true, last_error: null },
             { source_id: 'work', root: '$HOME/checkout', former_worktree: false, retrying: 1, parked: 2,
-              codes: ['git_push_unavailable', 'integrate_conflict', 'push_unconfirmed'], oldest_at: true }]);
+              codes: ['git_push_unavailable', 'integrate_conflict', 'push_unconfirmed'], oldest_at: true, last_error: null }]);
           expect(answers.holdsScoped).toEqual(['ab']);
           return answers;
         });

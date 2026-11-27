@@ -51,7 +51,7 @@ export interface SwapPlan {
   routes: { env: string[]; services: ServiceDefinition[] };
   disk: { path: string; free_bytes: number | null };
   deferred: typeof DEFERRED_TO_S5B;
-  /** Present only for a managed brain with the multi-user switch on: what managed mode does not yet do there (MANAGED_MULTIUSER_LOSSES). */
+  /** Present only for a managed brain: what managed mode does not yet do on a Rust brain (MANAGED_RUST_LOSSES). */
   managed_known_losses?: string[];
   plan_hash: string;
 }
@@ -111,11 +111,11 @@ export async function assertNotManaged(engine: BrainEngine, destination?: Destin
 }
 
 /**
- * What a managed brain loses on a multi-user Rust destination today, named in the plan instead of refused (RUST_ENGINE.md
- * conflict row 55). Empty for an unmanaged brain or a single-host destination, and then absent from the plan.
+ * What a managed brain loses on a Rust destination today (single-host and multi-user), named in the plan instead of
+ * refused (RUST_ENGINE.md conflict row 55). Absent from the plan of an unmanaged brain.
  */
-export const MANAGED_MULTIUSER_LOSSES: readonly string[] = [
-  'A Git effect that fails (git_unavailable, a push refusal) records its failure through raw SQL (persistence/effects.ts recordFailure) until lane 7\'s typed persistenceUpkeepStore (rust-engine/managed-parity-rows 20da396ebd) reaches rust-engine/multiuser, so on a multi-user Rust brain it refuses raw_sql instead of retrying and parking. Owner: lane 7.',
+export const MANAGED_RUST_LOSSES: readonly string[] = [
+  'A Git effect that fails (git_unavailable, a push refusal) records its failure through raw SQL (persistence/effects.ts recordFailure) until lane 7\'s typed persistenceUpkeepStore (20da396ebd, on rust-engine/managed-on-rust-2b) reaches the Rust engine, so on a Rust brain it refuses raw_sql instead of retrying and parking. Owner: lane 7.',
 ];
 
 /** The plan hash binds what a run would act on, never volatile readings (time, free space). */
@@ -150,7 +150,7 @@ export async function planEngineSwap(engine: BrainEngine, deps: SwapPlanInputs =
     routes: { env: [...(deps.envNames ?? [])], services: [...(deps.services ?? [])] },
     disk: deps.disk ?? { path: '', free_bytes: null },
     deferred: DEFERRED_TO_S5B,
-    ...(managed && (deps.destination?.multiuser ?? rustMultiuserFromEnv()) ? { managed_known_losses: [...MANAGED_MULTIUSER_LOSSES] } : {}),
+    ...(managed ? { managed_known_losses: [...MANAGED_RUST_LOSSES] } : {}),
   };
   return { ...base, plan_hash: planHash(base, deps.destination) };
 }

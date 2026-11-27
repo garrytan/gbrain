@@ -59,6 +59,7 @@ import { MARKDOWN_CHUNKER_VERSION } from '../src/core/chunkers/recursive.ts';
 import { syncDeleteOrigin } from '../src/core/persistence/sync-delete-tombstones.ts';
 import { syncAdmissionEffectSql, syncAdmissionSettingSql } from '../src/core/persistence/sync-admission.ts';
 import { GIT_PUSH_CODES } from '../src/core/persistence/git-push-holds.ts';
+import { GIT_COMMIT_CODES } from '../src/core/persistence/sync-status-sql.ts';
 import { ACTIVE_REFRESH_STATES_SQL } from '../src/core/persistence/worktree-refresh-schema.ts';
 import { APPLE_CONTACTS_PENDING_DELETES_OP, APPLE_CONTACTS_REVIEW_OP } from '../src/core/apple-contacts/review-status.ts';
 import { identityDowngradeOpen } from '../src/core/sync-identity-downgrades.ts';
@@ -3639,7 +3640,7 @@ const PINS: Pin[] = [
     from: 'src/core/persistence/sync-status.ts:380 readSyncStatus (committed row) (at 21cd64e151)',
     case: { method: 'readSyncStatusCommittedRow', variant: 'default', run: e => e.readSyncStatusCommittedRow('default') },
     texts: () => [`SELECT count(*) AS n, EXISTS (SELECT 1 FROM persistence_effects e
-      WHERE e.source_id=$1 AND e.kind='git' AND e.state IN ('queued','running','failed') AND e.error_code IN ('targets_parked', ${GIT_PUSH_CODES.map(code => `'${code}'`).join(',')})
+      WHERE e.source_id=$1 AND e.kind='git' AND e.state IN ('queued','running','failed') AND e.error_code IN ('targets_parked', ${[...GIT_PUSH_CODES, ...GIT_COMMIT_CODES].map(code => `'${code}'`).join(',')})
         AND NOT (e.data ? 'settled')) AS git_push_held,
       EXISTS (SELECT 1 FROM derived_generations g WHERE g.source_id=$1 AND g.kind IN ('fact_fence','take_fence') AND g.state='held') AS fence_held,
       (SELECT max(r.completed_at) FROM persistence_source_bindings b JOIN persistence_requests r ON r.worktree_id=b.worktree_id AND r.source_incarnation=b.source_incarnation
@@ -3923,7 +3924,7 @@ const PINS: Pin[] = [
     from: 'src/core/persistence/sync-status.ts:380 readSyncStatus (committed row) (at 21cd64e151)',
     case: { method: 'readSyncStatusCommittedRow', variant: 'default', run: e => e.readSyncStatusCommittedRow('default') },
     texts: () => [`SELECT count(*) AS n, EXISTS (SELECT 1 FROM persistence_effects e
-      WHERE e.source_id=$1 AND e.kind='git' AND e.state IN ('queued','running','failed') AND e.error_code IN ('targets_parked', ${GIT_PUSH_CODES.map(code => `'${code}'`).join(',')})
+      WHERE e.source_id=$1 AND e.kind='git' AND e.state IN ('queued','running','failed') AND e.error_code IN ('targets_parked', ${[...GIT_PUSH_CODES, ...GIT_COMMIT_CODES].map(code => `'${code}'`).join(',')})
         AND NOT (e.data ? 'settled')) AS git_push_held,
       EXISTS (SELECT 1 FROM derived_generations g WHERE g.source_id=$1 AND g.kind IN ('fact_fence','take_fence') AND g.state='held') AS fence_held,
       (SELECT max(r.completed_at) FROM persistence_source_bindings b JOIN persistence_requests r ON r.worktree_id=b.worktree_id AND r.source_incarnation=b.source_incarnation

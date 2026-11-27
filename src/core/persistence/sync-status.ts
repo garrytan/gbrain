@@ -53,6 +53,7 @@ import { syncAdmissionStatus } from './sync-admission.ts';
 import type { DeletesWithheld } from './sync-markers.ts';
 import { listIdentityDowngrades, withIdentityRemedies } from '../sync-identity-downgrades.ts';
 import { readGitPushHolds, type GitPushHold } from './git-push-holds.ts';
+import { readGitCommitHolds, type GitCommitHold } from './git-commit-holds.ts';
 import { holderStalled, readDrainLease, type DrainHolder } from './sync-lease.ts';
 import { heldDeletesStatus, identityReviewStatus, type HeldDeletesStatus, type IdentityReviewStatus } from '../apple-contacts/review-status.ts';
 
@@ -202,6 +203,8 @@ export interface SyncStatus {
   connector_last_error: import('./connector-status.ts').ConnectorLastError | null;
   /** #7010: Git effects of the source whose local commit has not reached the remote (retrying or parked on a push code), with the fix; `next` falls back to a parked or conflicted one's fix. */
   git_push_holds: GitPushHold[];
+  /** Git effects whose commit was not made (a commit-phase git step failed: retrying, or parked), with the failed step (git-commit-holds.ts). */
+  git_commit_holds: GitCommitHold[];
   /**
    * GBRA-161 PR 2: pages of the source whose facts or takes fence the generation primitive held (`fence_absent`: the
    * page was written without the fence, so its rows stayed live), at most 20, each with the ask-the-user fix. `next`
@@ -479,12 +482,13 @@ export async function readSyncStatus(engine: BrainEngine, sourceId: string, opts
     : { status: 'unknown' as const, reason: 'not_read: run sync status with --detail', recovery_next: recovery.status === 'ok' && recovery.first ? recoveryAction(sourceId, recovery.first) : undefined };
   const connectorLastError = await (await import('./connector-status.ts')).readConnectorLastError(engine, sourceId);
   const gitPushHolds = committed?.git_push_held ? await readGitPushHolds(engine, [sourceId]) : [];
+  const gitCommitHolds = committed?.git_push_held ? await readGitCommitHolds(engine, [sourceId]) : [];
   const fenceHolds = committed?.fence_held ? await (await import('../generations/fence.ts')).fenceHoldEntries(engine, [sourceId]) : [];
   const settled = statusState({ human: !!(liveError?.needs_human), heldForHuman: holds.some(hold => hold.needs_human), oldest, recovery, liveJob: liveJob !== null, unfinished, lastError: !!liveError, actionable: actionable.length > 0, holds: holds.length > 0, pass: passState });
   // GST-2515: a source with nothing else pending is not synced while its checkout has commits past the last synced commit.
   // A scoped convergence keeps last_commit by design, a hold that needs a person keeps its own reason, a writeback still
   // integrating is the source's own commit, and an open worktree refresh or fence hold names its own next step.
-  const waiting = (settled[1] === 'nothing_pending' || settled[1] === 'held_by_design') && !gitPushHolds.length && !fenceHolds.length && !worktreeRefresh && source.last_commit
+  const waiting = (settled[1] === 'nothing_pending' || settled[1] === 'held_by_design') && !gitPushHolds.length && !gitCommitHolds.length && !fenceHolds.length && !worktreeRefresh && source.last_commit
     ? await commitsPastLastSync(engine, sourceId, source.last_commit) : null;
   const [state, stateReason]: [SyncStatusState, SyncStatusReason] = waiting ? ['resumable', 'commits_waiting'] : settled;
   const admission = await syncAdmissionStatus(engine, sourceId, source.incarnation,
@@ -504,13 +508,13 @@ export async function readSyncStatus(engine: BrainEngine, sourceId: string, opts
     ...(human ? { human_reason: human.human_reason } : reviewWaiting ? { human_reason: reviewWaiting.human_reason } : {}), ...(identityReviews.length ? { identity_reviews: identityReviews } : {}), ...(heldDeletes ? { held_deletes: heldDeletes } : {}),
     needs_human_from: !human ? null : 'path' in human && 'held_since' in human ? { kind: 'hold', path: human.path, slug: human.slug, code: human.code } : { kind: 'last_error', code: human.code },
     resume_argv: resume, ...blockers, cursors: detail ? await liveCursors(engine, sourceId, source.incarnation, selected?.key ?? null, failures) : [],
-    terminal_failures: terminal, connector_last_error: connectorLastError, git_push_holds: gitPushHolds, fence_holds: fenceHolds, worktree_refresh: worktreeRefresh, next: (passLeads && passNext ? passNext : next) ?? recovery_next ?? passNext ?? (stateReason === 'request_pending' && oldest.status === 'ok' && oldest.request ? { argv: ['gbrain', 'sync', ...resume], consent: [], actor: 'agent', requires_exclusive: false, verify,
+    terminal_failures: terminal, connector_last_error: connectorLastError, git_push_holds: gitPushHolds, git_commit_holds: gitCommitHolds, fence_holds: fenceHolds, worktree_refresh: worktreeRefresh, next: (passLeads && passNext ? passNext : next) ?? recovery_next ?? passNext ?? (stateReason === 'request_pending' && oldest.status === 'ok' && oldest.request ? { argv: ['gbrain', 'sync', ...resume], consent: [], actor: 'agent', requires_exclusive: false, verify,
       why: `Write request ${oldest.request.request_id} of this source is still ${oldest.request.state}${oldest.request.step ? ` (step ${oldest.request.step})` : ''}; a running owner finishes it on its own, and the next sync of this source drains it.` } satisfies Action
       : stateReason === 'commits_waiting' ? { argv: ['gbrain', 'sync', ...resume], consent: [], actor: 'agent', requires_exclusive: false, verify,
       why: `The checkout's HEAD is ${waiting} commit(s) past the last synced commit ${source.last_commit?.slice(0, 12)}; this sync imports them.` } satisfies Action
       : stateReason === 'status_unknown' ? { argv: ['gbrain', 'sync', 'status', '--source', sourceId, '--json'], consent: [], actor: 'agent', requires_exclusive: false, verify,
       why: `The oldest-blocker or recovery probe did not answer within ${SYNC_STATUS_PROBE_MS / 1000} s, so this status does not know the state (it is not reported synced). Rerun it after a short wait; gbrain doctor --json checks the database if it keeps timing out.` } satisfies Action
-      : gitPushHolds.find(hold => hold.conflict || hold.parked)?.fix ?? fenceHolds[0]?.fix ?? (worktreeRefresh?.liveness === 'unknown' ? worktreeRefresh.fix : null)),
+      : gitPushHolds.find(hold => hold.conflict || hold.parked)?.fix ?? gitCommitHolds[0]?.fix ?? fenceHolds[0]?.fix ?? (worktreeRefresh?.liveness === 'unknown' ? worktreeRefresh.fix : null)),
     state, reason: stateReason,
     oldest_blocker: oldest, recovery, checkpoint_blockers_read: detail ? { status: 'read' } : notRead('checkpoint blocker list'),
     cursors_read: detail ? { status: 'read' } : notRead('live cursor'), terminal_failures_read: detail ? { status: 'read' } : notRead('terminal-failure summary'),

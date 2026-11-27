@@ -549,6 +549,8 @@ pub(crate) fn git_push_hold_rows_in(
         parked: i64,
         codes: BTreeSet<String>,
         oldest: Option<i64>,
+        /// The newest held effect's `last_error` object, keyed by (request time, effect id).
+        last_error: Option<((i64, i64), Value)>,
     }
     type Key = (Option<String>, Option<String>);
     let mut groups: Vec<(Key, Hold)> = Vec::new();
@@ -561,16 +563,22 @@ pub(crate) fn git_push_hold_rows_in(
         let Some(r) = requests.get(&e.request_id).filter(|_| held) else {
             continue;
         };
-        let code = if e.error_code.as_deref() == Some("targets_parked") {
+        // A parked effect's code and failed step come from its first parked entry with a listed code.
+        let (code, last_error) = if e.error_code.as_deref() == Some("targets_parked") {
             match e.data.get("parked") {
                 Some(Value::Array(items)) => items
                     .iter()
-                    .filter_map(|p| json_text(p.as_object().and_then(|o| o.get("error_code"))))
-                    .find(|c| listed(c)),
-                _ => None,
+                    .filter_map(|p| {
+                        let o = p.as_object()?;
+                        let c = json_text(o.get("error_code"))?;
+                        listed(&c).then(|| (Some(c), o.get("last_error").cloned()))
+                    })
+                    .next()
+                    .unwrap_or((None, None)),
+                _ => (None, None),
             }
         } else {
-            e.error_code.clone()
+            (e.error_code.clone(), e.data.get("last_error").cloned())
         };
         let Some(code) = code.filter(|c| listed(c)) else {
             continue;
@@ -594,6 +602,12 @@ pub(crate) fn git_push_hold_rows_in(
         }
         g.codes.insert(code);
         g.oldest = Some(g.oldest.map_or(r.created_at_us, |o| o.min(r.created_at_us)));
+        if let Some(last) = last_error.filter(Value::is_object) {
+            let at = (r.created_at_us, e.id);
+            if g.last_error.as_ref().is_none_or(|(seen, _)| at > *seen) {
+                g.last_error = Some((at, last));
+            }
+        }
     }
     groups.sort_by(|(a, _), (b, _)| nulls_last(a.0.as_deref(), b.0.as_deref()));
     Ok(groups
@@ -620,6 +634,7 @@ pub(crate) fn git_push_hold_rows_in(
                 "parked": g.parked,
                 "codes": g.codes.into_iter().collect::<Vec<_>>(),
                 "oldest_at": g.oldest.map(iso),
+                "last_error": g.last_error.map(|(_, v)| v),
             })
         })
         .collect())
