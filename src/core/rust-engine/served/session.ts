@@ -404,7 +404,8 @@ export function servedSession(side: ServedServerSide, opts: ServedServerOptions,
       };
       if (closed || abort.signal.aborted) return;
       handed = true;
-      side.admit({ ...frame, args, ...(access !== undefined ? { access } : {}) }, bytes, calls, writeFrame, hooks);
+      // The resolved record, set even when undefined (the owner's trusted view): the frame's own field never survives.
+      side.admit({ ...frame, args, access }, bytes, calls, writeFrame, hooks);
     } finally {
       preparing.delete(id);
       if (!handed && tracked) state.requests.abandon(tracked);
