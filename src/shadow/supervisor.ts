@@ -241,7 +241,7 @@ export class ShadowSupervisor implements MirrorTransport {
 
   /**
    * Makes the owed record for the current session durable (once per distinct content). False when it could not be written: the exact record is then kept (`keep`) and its marker is made, so status blocks and the record is retried until it is on disk, whatever
-   * the worker does. `locked`: the write takes the tally lock (a record written after its worker may be gone is one a remover could be judging).
+   * the worker does. `locked`: the write takes the tally lock (a record written after its worker may be gone is one a remover could be judging); it always does when no worker is live, the child has exited or a record is kept for the session.
    */
   private writeOwedRecord(closed = false, childExited = false, locked = false): boolean {
     if (!this.session) return true;
@@ -250,6 +250,7 @@ export class ShadowSupervisor implements MirrorTransport {
     closed ||= this.closedRecord || kept?.closed === true;
     const mark = `${this.session}:${this.acceptedWeight}:${closed}:${exited}`;
     if (this.owedWritten === mark) return true;
+    locked ||= !this.child || exited || this.kept.has(sessionKey(this.session)); // a record written with no live worker, after the child's exit, or for a session whose record is already kept is one a remover may be judging: every such write takes the lock (a timeout is a failed write: kept and retried). A live worker's own session is settled by that worker, which is why the close at a drain stays unlocked
     const rec: OwedRecord = { v: 1, session: this.session, serving_pid: process.pid, ...(this.child?.pid ? { child_pid: this.child.pid } : {}), owed: this.acceptedWeight, closed, child_exited: exited };
     try {
       if (locked) withTallyLock(this.o.dir, () => this.o.writeOwed(this.o.dir, rec), KEPT_LOCK_WAIT_MS); else this.o.writeOwed(this.o.dir, rec);
