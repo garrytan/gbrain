@@ -611,6 +611,25 @@ const PINS: Pin[] = [
            FROM pages
           WHERE deleted_at IS NULL AND source_id = $1 AND slug = ANY($2::text[])${priv ? ` AND ${privatePagesFilterForCaller('pages')}` : ''}`],
   })),
+  ...([
+    ['all', ''],
+    ['caller', `private`],
+  ] as const).map(([variant, priv]): Pin => ({
+    // Equivalent statement, not byte for byte: the caller at 9940056d12 bound the probe list once as $4 and wrote the cap
+    // as the literal `LIMIT 201`; sqlFragment numbers each value where it appears (probes $1, $5, $6; the cap $7). The slug
+    // sort key keeps main's COLLATE "C" (the caller at b7b18e5ab3), so Postgres sorts by byte like PGLite and the store.
+    from: `src/core/verbs/entity-variants.ts:104 resolveNameVariant, entity card projection (${variant})`,
+    case: { method: 'listNameVariantCardCandidates', variant, run: e => e.listNameVariantCardCandidates('default',
+      { types: ['person'], slugPatterns: ['people/%'], probes: ['%alice%'], limit: 201 }, { excludePrivate: priv !== '' }) },
+    texts: () => [`SELECT ${CARD_ROW_COLUMNS()},
+                (SELECT count(*)::int FROM unnest($1::text[]) w WHERE pages.title ILIKE w OR pages.slug ILIKE w) AS probe_hits
+           FROM pages
+          WHERE deleted_at IS NULL AND source_id = $2
+            AND (type = ANY($3::text[]) OR slug LIKE ANY($4::text[]))
+            AND (title ILIKE ANY($5::text[]) OR slug ILIKE ANY($6::text[]))${priv ? ` AND ${privatePagesFilterForCaller('pages')}` : ''}
+          ORDER BY probe_hits DESC, length(title), slug COLLATE "C"
+          LIMIT $7`],
+  })),
   {
     from: 'src/commands/sync/plain-directory.ts:36 plainDirectorySyncRoot',
     case: { method: 'readPlainSyncSource', variant: 'default', run: e => e.readPlainSyncSource('default') },

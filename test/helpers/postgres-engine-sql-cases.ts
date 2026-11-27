@@ -1933,7 +1933,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'listCompactableReceipts': OOS.journal, 'readReceiptCompactionWindow': OOS.journal, 'listReceiptCompactionCandidates': OOS.journal,
   'countKeptFailedReceipts': OOS.journal, 'listReservationsAfter': OOS.journal, 'listTrueUpRequests': OOS.journal, 'listWriteRequestsByRequestIds': OOS.journal, 'trueUpReservations': OOS.journal,
   'readMentionIndexStatus': OOS.callerRawSql, 'countLivePagesInSource': OOS.callerRawSql, 'countMentionDueSince': OOS.callerRawSql,
-  'recountMentionIndexStatus': OOS.callerRawSql, 'listUnretiredPagesBySlugPattern': OOS.entityReads, 'listNameVariantCandidates': OOS.entityReads,
+  'recountMentionIndexStatus': OOS.callerRawSql, 'listUnretiredPagesBySlugPattern': OOS.entityReads, 'listNameVariantCandidates': OOS.entityReads, 'listVisibleNameVariantCandidates': OOS.entityReads, 'listNameVariantCardCandidates': OOS.entityReads, 'readVisibleVariantPages': OOS.entityReads,
   'countDistinctInboundLinkers': OOS.entityReads,
   'claimNotifierLease': OOS.notifier, 'listNotifierHostSourceRows': OOS.notifier,
   'readNotifierLease': OOS.notifier, 'holdsNotifierLease': OOS.notifier, 'releaseNotifierLease': OOS.notifier,
@@ -3193,6 +3193,18 @@ export const EXTRA_READ_CASES: SqlCase[] = [
   ...variants('listUnretiredPagesBySlugPattern', [['default', (e) => e.listUnretiredPagesBySlugPattern(SRC, ['people/dr-%'], 5)]]),
   ...variants('listNameVariantCandidates', [['default', (e) => e.listNameVariantCandidates(SRC,
     { types: ['person'], slugPatterns: ['people/%'], probes: ['%alice%'], limit: 5 })]]),
+  ...variants('listVisibleNameVariantCandidates', [
+    ['all', (e) => e.listVisibleNameVariantCandidates(SRC, { types: ['person'], slugPatterns: ['people/%'], probes: ['%alice%'], limit: 5 })],
+    ['caller', (e) => e.listVisibleNameVariantCandidates(SRC, { types: ['person'], slugPatterns: ['people/%'], probes: ['%alice%'], limit: 5 }, { excludePrivate: true })],
+  ]),
+  ...variants('listNameVariantCardCandidates', [
+    ['all', (e) => e.listNameVariantCardCandidates(SRC, { types: ['person'], slugPatterns: ['people/%'], probes: ['%alice%'], limit: 5 })],
+    ['caller', (e) => e.listNameVariantCardCandidates(SRC, { types: ['person'], slugPatterns: ['people/%'], probes: ['%alice%'], limit: 5 }, { excludePrivate: true })],
+  ]),
+  ...variants('readVisibleVariantPages', [
+    ['all', (e) => e.readVisibleVariantPages(SRC, [SLUG])],
+    ['caller', (e) => e.readVisibleVariantPages(SRC, [SLUG], { excludePrivate: true })],
+  ]),
   ...variants('countDistinctInboundLinkers', [['default', (e) => e.countDistinctInboundLinkers([SRC], [SLUG])]]),
   ...variants('readSourceMembership', [
     ['default', (e) => e.readSourceMembership(SRC)],
