@@ -205,17 +205,17 @@ async function plan(engine: BrainEngine, roster: string[], sourceId: string, lab
     } else {
       const held = textList(token.federated_read);
       const adds = desired.filter(s => !held.includes(s));
-      const active = new Set((await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE id = ANY($1::text[]) AND archived IS NOT TRUE', [held])).map(r => r.id));
+      const active = new Set((await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE id = ANY($1::text[]) AND archived IS NOT TRUE', [[...held, token.source_id ?? 'default']])).map(r => r.id));
       const reads = [...held.filter(s => active.has(s)), ...adds];
       const minted = setupReads(token.permissions);
-      if (token.source_id !== sourceId) {
+      if (!active.has(token.source_id ?? 'default')) {
+        keys.push({ member: id, token_name: name, path, action: 'blocked', reads: held,
+          detail: `its write source ${token.source_id} is archived, so setup leaves the key as it is and never moves where it writes; repoint it with gbrain auth rescope --token ${name} --sources <new write source>${reads.length ? `,${reads.join(',')}` : ''}, or revoke it with gbrain auth revoke ${name}` });
+      } else if (token.source_id !== sourceId) {
         const moved = [...new Set([sourceId, ...reads])];
         if (minted && sameSet(minted, held) && minted[0] === token.source_id) keys.push({ member: id, token_name: name, path, action: 'keep', reads: moved, moves: token.source_id ?? 'default', adds });
         else keys.push({ member: id, token_name: name, path, action: 'skipped', reads: held,
           detail: `it writes to ${token.source_id} and its source list (${held.join(', ')}) is not the one setup gave it, so setup leaves it as it is; to move it to ${sourceId}, run gbrain auth rescope --token ${name} --sources ${moved.join(',')}` });
-      } else if (!active.has(sourceId)) {
-        keys.push({ member: id, token_name: name, path, action: 'blocked', reads: held,
-          detail: `its write source ${sourceId} is archived, so setup leaves the key as it is and never moves where it writes; repoint it with gbrain auth rescope --token ${name} --sources <new write source>${reads.length ? `,${reads.join(',')}` : ''}, or revoke it with gbrain auth revoke ${name}` });
       } else if (adds.length && !(minted && sameSet(minted, held))) {
         keys.push({ member: id, token_name: name, path, action: 'skipped', reads: held,
           detail: `its source list (${held.join(', ')}) is not the one setup gave it${minted ? ` (${minted.join(', ')})` : ''}, so setup leaves it as it is and does not add ${adds.join(', ')}; to add them, run gbrain auth rescope --token ${name} --sources ${reads.join(',')}` });

@@ -92,6 +92,29 @@ describe('setup re-run and the member keys it minted', () => {
     await e.disconnect();
   }, 120_000);
 
+  test('a key whose write source is archived is never moved to a new write source on a re-run', async () => {
+    const e = await memoryBrain();
+    const home = tempDir('gbrain-regrant-');
+    const label = (source: string) => withEnv({ GBRAIN_HOME: home, GBRAIN_SETUP_ABORT_AFTER: undefined }, () => labelSeveral(e, ['alice-example'], source, true, true));
+    const row = async () => (await e.executeRaw<{ source_id: string; f: string[] }>("SELECT source_id, federated_read AS f FROM access_tokens WHERE name = 'member-alice-example' AND revoked_at IS NULL"))[0]!;
+    await addSource(e, 'team-a');
+    await label('team-a');
+    const before = await row();
+    expect(before.source_id).toBe('team-a');
+    await e.executeRaw("UPDATE sources SET archived = true WHERE id = 'team-a'");
+    await addSource(e, 'team-b');
+    const r = await label('team-b');
+    const after = await row();
+    expect(after.source_id).toBe('team-a');
+    expect([...after.f]).toEqual([...before.f]);
+    expect(r.applied).toBe(false);
+    expect(r.keys[0]).toMatchObject({ action: 'blocked' });
+    expect(r.keys[0]!.moves).toBeUndefined();
+    expect(r.keys[0]!.detail).toContain('write source team-a is archived');
+    expect(receiptLines(r).find(l => l.includes('alice-example:'))).toContain('BLOCKED');
+    await e.disconnect();
+  }, 120_000);
+
   test('a key a released gbrain minted (default grant, no setup_reads) is kept unchanged, never skipped', async () => {
     const { e, label, home } = await brain();
     await addMember(e, 'alice-example');

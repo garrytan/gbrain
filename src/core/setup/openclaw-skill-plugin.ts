@@ -785,9 +785,15 @@ export async function syncOpenclawSkillPlugin(opts: OpenclawSkillSyncOptions): P
  * Re-render every OpenClaw agent's pinned block from config.json into the
  * state file (gbrain skills pin add|remove). The plugin re-reads the state on
  * its next turn, so nothing reloads and no OpenClaw command runs. Returns the
- * agents whose block changed.
+ * agents whose block changed, or null when another setup run held the state lock past 10 seconds (nothing written).
+ * GST-4004: it reads and writes the state under the state lock, so a setup that saves an owner guard meanwhile is kept.
  */
-export function refreshOpenclawPins(home: string): string[] {
+export function refreshOpenclawPins(home: string): string[] | null {
+  if (!existsSync(openclawSkillStatePath(home))) return [];
+  return withOpenclawStateLock(openclawSkillStatePath(home), () => renderOpenclawPins(home));
+}
+
+function renderOpenclawPins(home: string): string[] {
   const prior = readOpenclawSkillState(home);
   if (!prior) return [];
   const changed: string[] = [];
@@ -827,8 +833,18 @@ export function removeOpenclawSkillPlugin(opts: { home: string; agents: string[]
     if (agents[id]) { agents[id] = { ...agents[id]!, mode: 'off' }; out.agents.push({ id, mode: 'off', catalog: agents[id]!.catalog, skills: 0, pins: 0, unknown_pins: [] }); }
   }
   const left = Object.values(agents).some((a) => a.mode !== 'off');
+  const statePath = openclawSkillStatePath(opts.home);
+  const lockHeld = { ...out, error: { code: 'skill_resolver_setup_incomplete' as const, message: `Another gbrain setup openclaw run held ${statePath}.lock for more than 10 seconds, so the state was not changed.`, recovery: 'partial: nothing was written; run the same command again once the other run finishes' } };
+  const writeOff = (ids: string[] | null) => withOpenclawStateLock(statePath, () => {
+    const latest = readOpenclawSkillState(opts.home);
+    if (!latest) return true;
+    const next = { ...latest.agents };
+    for (const id of ids ?? Object.keys(next)) if (next[id]) next[id] = { ...next[id]!, mode: 'off' };
+    atomicWriteTextFile(statePath, `${JSON.stringify({ ...latest, agents: next }, null, 2)}\n`, { freshMode: 0o600 });
+    return true;
+  });
   if (left && prior) {
-    if (!opts.dryRun) atomicWriteTextFile(openclawSkillStatePath(opts.home), `${JSON.stringify({ ...prior, agents }, null, 2)}\n`, { freshMode: 0o600 });
+    if (!opts.dryRun && !writeOff(opts.agents)) return lockHeld;
     out.steps.push({ step: 'state', action: 'write', detail: `${openclawSkillStatePath(opts.home)} (${(opts.agents ?? []).join(', ')} off; the plugin stays for the others)` });
     return out;
   }
@@ -840,7 +856,7 @@ export function removeOpenclawSkillPlugin(opts: { home: string; agents: string[]
     else {
       const r = bin ? (deps.run ?? runOpenclawCli)(uninstall) : { ok: false, output: 'no openclaw on PATH' };
       if (!r.ok) {
-        if (prior) atomicWriteTextFile(openclawSkillStatePath(opts.home), `${JSON.stringify({ ...prior, agents }, null, 2)}\n`, { freshMode: 0o600 });
+        if (prior && !writeOff(null)) return lockHeld;
         return { ...out, error: { code: 'skill_resolver_plugin_not_installed', message: `Every agent is off (the plugin injects nothing now), but \`${shown(uninstall)}\` did not run (${lastLine(r.output)}), so ${dir} stays in place.`, commands: [shown(uninstall)], argv: uninstall, recovery: `partial: state set to off; run the command on the OpenClaw host, then delete ${dir}` } };
       }
       try {

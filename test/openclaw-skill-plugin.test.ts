@@ -1118,6 +1118,39 @@ describe.skipIf(!NODE)('session classes and the session-start brief', () => {
     expect(existsSync(lock)).toBe(false);
   });
 
+  test('GST-4004: a pin refresh and turning one agent off both take the state lock: a held lock writes nothing and says so, a dead run\'s lock is broken', async () => {
+    const b = box();
+    const ops = join(b.state, 'workspace-ops');
+    skill(join(ops, 'skills'), 'ops-runbook', 'Use when you run the ops runbook');
+    writeFileSync(join(b.state, 'openclaw.json'), JSON.stringify({ agents: { list: [{ id: 'main', workspace: join(b.state, 'workspace') }, { id: 'ops', workspace: ops }] } }));
+    const ws = ['--workspace', join(b.state, 'workspace')];
+    expectExit(await setup(b, ['--skill-loading', 'resolve', '--all-agents', ...ws]), 0);
+    const before = readFileSync(statePath(b), 'utf8');
+    const lock = statePath(b) + '.lock';
+    writeFileSync(lock, '');
+    const pin = await runCli(['skills', 'pin', 'add', 'deploy-service', '--catalog', 'openclaw-main', '--json'], { env: b.env, timeoutMs: 110_000 });
+    expect(pin.exitCode, pin.stdout + pin.stderr).toBe(0);
+    const pinDoc = JSON.parse(pin.stdout);
+    expect(pinDoc.openclaw_refresh_pending.user_message).toContain('gbrain setup openclaw --skills-index-only');
+    expect(pinDoc.openclaw_agents_updated).toBeUndefined();
+    expect(readFileSync(statePath(b), 'utf8')).toBe(before);
+    const off = await setup(b, ['--skill-loading', 'off', '--agent', 'ops', ...ws]);
+    expect(off.exitCode, off.stdout + off.stderr).not.toBe(0);
+    expect(off.stdout + off.stderr).toContain('.lock for more than 10 seconds');
+    expect(readFileSync(statePath(b), 'utf8')).toBe(before);
+    utimesSync(lock, new Date(Date.now() - 120_000), new Date(Date.now() - 120_000));
+    const pin2 = await runCli(['skills', 'pin', 'add', 'deploy-service', '--catalog', 'openclaw-main', '--json'], { env: b.env, timeoutMs: 110_000 });
+    expect(pin2.exitCode, pin2.stdout + pin2.stderr).toBe(0);
+    expect(JSON.parse(pin2.stdout).openclaw_agents_updated).toContain('main');
+    expect(readState(b).agents.main.pinned_ids).toEqual(['deploy-service']);
+    writeFileSync(lock, '');
+    utimesSync(lock, new Date(Date.now() - 120_000), new Date(Date.now() - 120_000));
+    expectExit(await setup(b, ['--skill-loading', 'off', '--agent', 'ops', ...ws]), 0);
+    expect(readState(b).agents.ops.mode).toBe('off');
+    expect(readState(b).agents.main.mode).toBe('live');
+    expect(existsSync(lock)).toBe(false);
+  }, 240_000);
+
   test('GST-4004: a daily turn log past the read cap is read from its end, so the newest turn still counts', () => {
     const dir = mkdtempSync(join(tmpdir(), 'gbrain-openclaw-tail-'));
     roots.push(dir);
