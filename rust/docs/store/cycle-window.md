@@ -17,7 +17,7 @@ Postgres run the same SQL, now in `src/core/engine-sql/cycle-reads.ts`. The stor
 
 | Member | Notes |
 | --- | --- |
-| `readCycleListingInstant` | Now. The SQL engines move the instant back to just before the oldest transaction open on another connection (at most ten minutes), so a page that commits late still lands after the cursor. The store has one writer and no other connection, so nothing holds the instant back. |
+| `readCycleListingInstant` | The SQL engines move the instant back to just before the oldest transaction open on another connection (at most ten minutes), so a page that commits late still lands after the cursor. With multi-user mode off the store answers now: no write registers. In multi-user mode explicit transactions run optimistically, so the store keeps the start of every open write (`open_writes.rs`: each explicit transaction from its begin to its commit or rollback, each plain write for its whole call) and answers one millisecond before the oldest, never more than ten minutes before now, the same rule. |
 | `listSourceChangedPagesAfter` | The source's live pages after the cursor `(since, slug)`, ordered by `(updated_at, slug bytes)`; every page when `since` is `null`. `since` must be UTC ISO text (the shape the cursor is written in); any other shape refuses, where Postgres would cast any timestamp text. `updated_at` is UTC ISO with microseconds. |
 
 The caller compares the listing instant with the last page's `updated_at` as text: both are fixed-width UTC ISO, so text

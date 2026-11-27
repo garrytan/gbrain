@@ -97,6 +97,12 @@ impl TransactionClock {
             inner,
         }
     }
+
+    /// A clock whose transaction started at `started_us` (read when the transaction registered as
+    /// an open write, `open_writes.rs`).
+    pub(crate) fn starting_at(inner: Arc<dyn Env>, started_us: i64) -> Self {
+        TransactionClock { started_us, inner }
+    }
 }
 
 impl Env for TransactionClock {
@@ -507,6 +513,9 @@ pub struct OpenTransaction {
     doomed: Mutex<Option<StoreError>>,
     #[allow(dead_code)] // lane L2 stamps it on the write journal
     origin: Option<WriteOrigin>,
+    /// Multi-user mode: the transaction's start, registered as an open write until it ends, so the
+    /// cycle's listing instant stays before it (`open_writes.rs`, `cycle_window.rs`).
+    pub(crate) registration: crate::open_writes::Registration,
 }
 
 /// A transaction whose handles all went away without a commit or a rollback rolls back the same
@@ -518,6 +527,7 @@ impl Drop for OpenTransaction {
         if self.optimistic {
             self.flights.release_all(self.owner);
         }
+        self.registration.release();
     }
 }
 
@@ -1270,6 +1280,13 @@ impl Store {
             self.kv.begin_write_exclusive()?
         };
         let owner = NEXT_OWNER.fetch_add(1, Ordering::Relaxed);
+        // Multi-user mode: the start is read under the open-write registry's lock and kept for the
+        // transaction's clock (`bound_to`). With the mode off the clock starts as before.
+        let registration = if self.multiuser() {
+            crate::open_writes::Registration::open(&self.open_writes, &*self.env)
+        } else {
+            crate::open_writes::Registration::none()
+        };
         let tx = Arc::new(OpenTransaction {
             state: Mutex::new(State {
                 base: Some(base),
@@ -1294,6 +1311,7 @@ impl Store {
             flights: self.flights.clone(),
             doomed: Mutex::new(None),
             origin: options.origin,
+            registration,
         });
         Ok(self.bound_to(tx))
     }
@@ -1415,6 +1433,8 @@ impl Store {
     /// sequence it saw.
     pub fn commit_transaction_at(&self) -> Result<CommitPosition> {
         let tx = self.transaction()?;
+        // The open-write registration ends with the call, after the commit (or its refusal).
+        let _registered = tx.registration.release_at_exit();
         let _exclusive = lock(&tx.exclusive);
         let mut state = lock(&tx.state);
         state.base()?;
@@ -1527,6 +1547,7 @@ impl Store {
     /// transaction is a no-op.
     pub fn rollback_transaction(&self) -> Result<()> {
         let tx = self.transaction()?;
+        let _registered = tx.registration.release_at_exit();
         let _exclusive = lock(&tx.exclusive);
         let ended = {
             let mut state = lock(&tx.state);

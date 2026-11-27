@@ -21,11 +21,18 @@ pub struct SourceChangedPageRow {
 }
 
 impl Store {
-    /// The cycle's listing instant: now, as UTC ISO text with microseconds. The SQL engines move
-    /// it back to just before the oldest transaction open on another connection (at most ten
-    /// minutes); the store has one writer and no other connection, so nothing holds it back.
+    /// The cycle's listing instant, as UTC ISO text with microseconds. The SQL engines move it back
+    /// to just before the oldest transaction open on another connection, at most ten minutes back
+    /// (`src/core/engine-sql/cycle-reads.ts`). In multi-user mode explicit transactions run
+    /// optimistically and a page is stamped with its write's start, so the store does the same
+    /// with its open writes (`open_writes.rs`): one millisecond before the oldest open write's
+    /// start, never more than ten minutes before now. With multi-user mode off no write registers
+    /// and the instant is now, as before.
     pub fn read_cycle_listing_instant(&self) -> Result<String> {
-        Ok(iso(self.env.now_micros()))
+        if !self.multiuser() {
+            return Ok(iso(self.env.now_micros()));
+        }
+        Ok(iso(self.open_writes.listing_instant(&*self.env)))
     }
 
     /// Up to `limit` live pages of `source_id` after the cursor `(since, slug)`, ordered by

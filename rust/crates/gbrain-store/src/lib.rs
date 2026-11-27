@@ -46,6 +46,7 @@ pub mod leases;
 pub mod link_slug_reads;
 pub mod links;
 pub mod occ_kv;
+pub mod open_writes;
 mod owner_only;
 mod owner_only_marks;
 mod page_columns;
@@ -323,6 +324,9 @@ pub struct Store {
     pub(crate) last_position: Arc<Mutex<Option<CommitPosition>>>,
     /// `OpenOptions::multiuser` as the brain was opened; bound and sibling stores copy it.
     multiuser: bool,
+    /// The start times of this brain's open writes in multi-user mode (`open_writes.rs`), shared by
+    /// every store of the brain; the cycle's listing instant stays before the oldest.
+    pub(crate) open_writes: Arc<open_writes::OpenWrites>,
 }
 
 /// The record file of a brain directory, with one writer or many. Only for the storage bake-off:
@@ -725,6 +729,7 @@ impl Store {
             stamp_rows: multiuser.write_origin && origin.is_some(),
             origin,
             multiuser: multiuser_on,
+            open_writes: Arc::default(),
         })
         .inspect(|store| {
             if index.needs_build && store.runs_builder {
@@ -752,6 +757,7 @@ impl Store {
             log_since: self.log_since,
             last_position: self.last_position.clone(),
             multiuser: self.multiuser,
+            open_writes: self.open_writes.clone(),
         }
     }
 
@@ -803,10 +809,14 @@ impl Store {
     pub(crate) fn bound_to(&self, tx: Arc<transactions::OpenTransaction>) -> Store {
         Store {
             kv: self.kv.clone(),
-            // One time for the whole transaction, as PGLite's now() (`transactions.rs`, "Time").
-            env: Arc::new(transactions::TransactionClock::starting_now(
-                self.env.clone(),
-            )),
+            // One time for the whole transaction, as PGLite's now() (`transactions.rs`, "Time"): in
+            // multi-user mode the start the transaction registered as an open write (`open_writes.rs`).
+            env: Arc::new(match tx.registration.start() {
+                Some(started_us) => {
+                    transactions::TransactionClock::starting_at(self.env.clone(), started_us)
+                }
+                None => transactions::TransactionClock::starting_now(self.env.clone()),
+            }),
             // The cache holds committed snapshots only; a transaction reads its own uncommitted
             // writes, so its store starts with an empty cache of its own, which a savepoint or
             // transaction rollback clears (`transactions.rs`).
@@ -826,6 +836,7 @@ impl Store {
             log_since: self.log_since,
             last_position: self.last_position.clone(),
             multiuser: self.multiuser,
+            open_writes: self.open_writes.clone(),
         }
     }
 
@@ -932,6 +943,13 @@ impl Store {
                 Ok(value)
             });
         }
+        // Multi-user mode: the write is open from here until it commits or gives up, every rerun
+        // included, so the cycle's listing instant stays before its stamps (`open_writes.rs`).
+        let _open = if self.multiuser {
+            self.open_writes.open(&*self.env).1
+        } else {
+            open_writes::OpenWrite::none()
+        };
         let mut locked: std::collections::BTreeSet<Vec<u8>> = std::collections::BTreeSet::new();
         let mut attempt = 0u32;
         // One absolute deadline for every run (multi-user mode only; `None` waits as before).
