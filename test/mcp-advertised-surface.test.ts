@@ -14,10 +14,14 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { ToolListChangedNotificationSchema } from '@modelcontextprotocol/sdk/types.js';
 import { operations } from '../src/core/operations.ts';
 import { advertisedOps, filterOpsForSurface, parseAdvertiseFlag, resolveAdvertisedSurface } from '../src/mcp/surface.ts';
+import { VERB_NAMES } from '../src/core/verbs.ts';
 import { buildMcpInstructions } from '../src/mcp/instructions.ts';
 import { keylessBrainEnv } from './helpers/provider-env.ts';
 
 const CLI = join(import.meta.dir, '..', 'src', 'cli.ts');
+const VERBS = filterOpsForSurface(operations, 'verbs').map(o => o.name);
+/** What a verbs listing shows on a wider callable surface: the seven verbs, correct (GST-4058) and request_tools. */
+const VERBS_LISTING = [...VERBS, 'correct', 'request_tools'].sort();
 let home: string;
 
 function childEnv(): Record<string, string> {
@@ -54,11 +58,22 @@ afterAll(() => { rmSync(home, { recursive: true, force: true }); });
 describe('advertised surface (pure)', () => {
   test('narrows the callable list, never widens it, and keeps request_tools so the rest stays reachable', () => {
     const full = filterOpsForSurface(operations, 'full');
-    expect(advertisedOps(full, 'full', 'verbs').map(o => o.name).sort()).toEqual([...filterOpsForSurface(operations, 'verbs').map(o => o.name), 'request_tools'].sort());
+    expect(advertisedOps(full, 'full', 'verbs').map(o => o.name).sort()).toEqual(VERBS_LISTING);
     expect(advertisedOps(full.filter(o => o.name !== 'request_tools'), 'full', 'verbs').map(o => o.name)).not.toContain('request_tools');
     const verbs = filterOpsForSurface(operations, 'verbs');
     expect(advertisedOps(verbs, 'verbs', 'full')).toBe(verbs);
     expect(advertisedOps(full, 'full', null)).toBe(full);
+  });
+
+  test('GST-4058: a verbs listing on a wider callable surface adds correct; the verbs surface itself stays the seven frozen verbs', () => {
+    const starter = filterOpsForSurface(operations, 'starter');
+    expect(advertisedOps(starter, 'starter', 'verbs').map(o => o.name).sort()).toEqual(VERBS_LISTING);
+    expect(advertisedOps(starter.filter(o => o.name !== 'correct'), 'starter', 'verbs').map(o => o.name)).not.toContain('correct');
+    expect(VERB_NAMES.length).toBe(7);
+    expect(VERBS.sort()).toEqual([...VERB_NAMES].sort());
+    expect(VERBS).not.toContain('correct');
+    const verbs = filterOpsForSurface(operations, 'verbs');
+    expect(advertisedOps(verbs, 'verbs', 'verbs').map(o => o.name).sort()).toEqual([...VERB_NAMES].sort());
   });
 
   test('the --advertise flag wins over both config planes', async () => {
@@ -92,7 +107,7 @@ describe('stdio session', () => {
   test('lists the verbs, calls an unlisted tool, and lists it once request_tools describes it', async () => {
     await session([], async (client, changed) => {
       const listed = (await client.listTools()).tools.map(t => t.name);
-      expect(listed.sort()).toEqual([...filterOpsForSurface(operations, 'verbs').map(o => o.name), 'request_tools'].sort());
+      expect(listed.sort()).toEqual(VERBS_LISTING);
       expect(listed).not.toContain('put_page');
       const put = await client.callTool({ name: 'put_page', arguments: { slug: 'notes/advertised', content: '---\ntype: note\ntitle: Advertised\n---\nHidden but callable.\n' } });
       expect(put.isError).toBeFalsy();
@@ -143,7 +158,7 @@ describe('stdio session', () => {
     try {
       await session(['--surface', 'full', '--advertise', 'verbs'], async (client) => {
         const listed = (await client.listTools()).tools.map(t => t.name);
-        expect(listed.sort()).toEqual([...filterOpsForSurface(operations, 'verbs').map(o => o.name), 'request_tools'].sort());
+        expect(listed.sort()).toEqual(VERBS_LISTING);
         const instructions = client.getInstructions() ?? '';
         expect(instructions).toContain('Use `recall` before external lookup');
         expect(instructions).toContain('more are callable. Call request_tools');
@@ -163,23 +178,32 @@ describe('stdio session', () => {
     }
   }, 180_000);
 
-  test('serve --surface starter --advertise verbs (the registration default) lists the verbs and request_tools and keeps the starter tools callable', async () => {
+  test('serve --surface starter --advertise verbs (the registration default) lists the verbs, correct and request_tools and keeps the starter tools callable', async () => {
     await session(['--surface', 'starter', '--advertise', 'verbs'], async (client) => {
       const listed = (await client.listTools()).tools.map(t => t.name);
-      expect(listed.sort()).toEqual([...filterOpsForSurface(operations, 'verbs').map(o => o.name), 'request_tools'].sort());
+      expect(listed.sort()).toEqual(VERBS_LISTING);
       expect(client.getInstructions() ?? '').toContain('Use `recall` before external lookup');
       const searched = await client.callTool({ name: 'search', arguments: { query: 'advertise flag' } });
       expect(searched.isError).toBeFalsy();
       const described = await client.callTool({ name: 'request_tools', arguments: { tools: ['search'] } });
       expect(described.isError).toBeFalsy();
       expect(JSON.parse((described as { content: Array<{ text: string }> }).content[0].text).tools.map((t: { name: string }) => t.name)).toEqual(['search']);
+      const corrected = await client.callTool({ name: 'correct', arguments: { rule: 'Always call alice-example by her first name.' } });
+      expect(corrected.isError, JSON.stringify(corrected.content)).toBeFalsy();
+      expect(JSON.parse((corrected as { content: Array<{ text: string }> }).content[0].text).receipt_id).toEqual(expect.any(String));
     });
   }, 120_000);
 
-  test('the callable ceiling still blocks', async () => {
+  test('the callable ceiling still blocks, and --surface verbs lists and calls only the seven frozen verbs', async () => {
     await session(['--surface', 'verbs'], async (client) => {
+      expect((await client.listTools()).tools.map(t => t.name).sort()).toEqual([...VERB_NAMES].sort());
       const put = await client.callTool({ name: 'put_page', arguments: { slug: 'notes/blocked', content: 'x' } });
       expect(put.isError).toBe(true);
+      const corrected = await client.callTool({ name: 'correct', arguments: { rule: 'Never list this rule.' } });
+      expect(corrected.isError).toBe(true);
+    });
+    await session(['--surface', 'verbs', '--advertise', 'verbs'], async (client) => {
+      expect((await client.listTools()).tools.map(t => t.name).sort()).toEqual([...VERB_NAMES].sort());
     });
   }, 120_000);
 });

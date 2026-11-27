@@ -70,6 +70,8 @@ export interface WriteSampler {
   scope(engine: BrainEngine, opts?: { followed?: boolean }): TxScope;
   /** At disconnect: waits up to `ms` for the read-backs still running; any left are counted `readback_abandoned` and send nothing later. */
   settle(ms: number): Promise<void>;
+  /** A sampler with the same options and read-backs of its own, for a worker engine of the same brain (it settles when that worker disconnects); losses it could not record are shared with this one, so none is left behind when the worker goes. */
+  fork(): WriteSampler;
 }
 
 type Row = Record<string, string | null>;
@@ -259,11 +261,12 @@ function judge(sc: Scope, s: TxSample): string | null {
   return null;
 }
 
-export function createWriteSampler(o: WriteSamplerOptions): WriteSampler {
+/** `unsaid` is shared by a sampler and its forks: a loss one of them could not record rides on the next line any of them sends. */
+export function createWriteSampler(o: WriteSamplerOptions, unsaid: string[] = []): WriteSampler {
   const random = o.random ?? Math.random;
   const rate = Math.min(1, Math.max(0, o.rate));
   /** Samples the pipe refused since the last one it took: the next line carries the count, so a shed sample is counted `uncomparable`, never lost as if it were not sampled. */
-  const unsaid: string[] = []; // reasons of losses the journal could not take: the next accepted line carries their count, and settle() retries them
+  // `unsaid`: reasons of losses the journal could not take: the next accepted line carries their count, and settle() retries them
   const send = (event: WriteEvent): void => {
     try {
       const carry = Math.min(unsaid.length, MAX_DROPPED); // a line carries at most what the weight rule counts; the rest waits for later lines, never cleared unsaid
@@ -337,6 +340,7 @@ export function createWriteSampler(o: WriteSamplerOptions): WriteSampler {
     })();
   };
   return {
+    fork: () => createWriteSampler(o, unsaid),
     async settle(ms) {
       const idle = Promise.all([...reading].map((r) => r.done));
       let timer: ReturnType<typeof setTimeout> | undefined;
