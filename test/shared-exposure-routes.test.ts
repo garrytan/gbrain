@@ -75,6 +75,27 @@ describe('setup routes', () => {
 });
 
 describe('harness-side routes', () => {
+  test('scaffold checks whom the brain serves for both explicit harness and workspace installs', async () => {
+    const b = box();
+    const hermesHome = join(b.root, 'hermes');
+    const workspace = join(hermesHome, 'skills');
+    mkdirSync(workspace, { recursive: true });
+    const opts = { env: { ...b.env, HERMES_HOME: hermesHome }, cwd: b.root };
+    expect((await runCli(['init', '--pglite', '--no-embedding', '--non-interactive'], opts)).exitCode).toBe(0);
+    expect(json((await runCli(['access', 'serves', '--json', '--no-open-pages'], opts)).stdout)?.serves).toBe('one');
+    for (const selector of [['--harness', 'openclaw'], ['book-mirror']]) {
+      const result = await runCli(['skillpack', 'scaffold', ...selector, '--workspace', workspace, '--dry-run', '--json'], opts);
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).not.toContain(CODE);
+    }
+    expect((await runCli(['config', 'set', 'access.serves', 'several'], opts)).exitCode).toBe(0);
+    for (const selector of [['--harness', 'openclaw'], ['book-mirror']]) {
+      const result = await runCli(['skillpack', 'scaffold', ...selector, '--workspace', workspace, '--dry-run', '--json'], opts);
+      expect(result.exitCode).toBe(0);
+      expect(result.stderr).toContain(CODE);
+    }
+  }, 60_000);
+
   test('skillpack scaffold --harness openclaw warns on stderr and keeps stdout for its JSON', async () => {
     const b = box();
     const r = await runCli(['skillpack', 'scaffold', '--harness', 'openclaw', '--workspace', join(b.home, '.openclaw', 'workspace'), '--dry-run', '--json'], { env: b.env, cwd: b.root });
