@@ -37,6 +37,7 @@ import { servedGone, servedUnreachable } from './errors.ts';
 import { opError } from '../../ops/contract.ts';
 import { grouperTableOf } from '../owner-ipc/client.ts';
 import { currentReadPosition } from './read-position.ts';
+import { HELD_ROW_HOOK, HELD_ROW_TAG } from '../owner-ipc/held-row.ts';
 
 const DEFAULT_BUSY_BUDGET_MS = 60_000;
 const DEFAULT_RECONNECT_MS = 10_000;
@@ -145,6 +146,7 @@ function encodeCallArgs(args: unknown[], member: string, caps: ReadonlySet<strin
     onFunction: (fn, path): Wire => {
       const table = grouperTableOf(fn);
       if (table) return { $t: 'fn', grouper: table };
+      if (fn === HELD_ROW_HOOK) return HELD_ROW_TAG; // a job policy's decide hook stays here (owner-ipc/held-row.ts)
       const key = String(callbacks.size);
       callbacks.set(key, fn as (...a: unknown[]) => unknown);
       if (OWNER_IPC_CALLBACK_KEYS.has(lastKey(path))) return { $t: 'fn', k: key };

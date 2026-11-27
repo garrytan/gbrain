@@ -101,6 +101,11 @@ fn seen_bigint(v: &Value) -> Result<Option<i64>> {
     })
 }
 
+/// `$4::bigint` of the lane head read: refuses a text that is not a bigint, as the cast does.
+pub(super) fn check_seen(v: &Value) -> Result<()> {
+    seen_bigint(v).map(|_| ())
+}
+
 /// The rows the worktree terms read, loaded once per claim.
 pub(super) struct WorktreeClaims<'a> {
     read: &'a dyn KvRead,
@@ -168,6 +173,48 @@ impl<'a> WorktreeClaims<'a> {
                 && !sync_kind(&a.intent)
         });
         Ok(!(p && sync_kind(&r.intent) && behind_running))
+    }
+
+    /// The lane head read's terms for candidate `r` on worktree `w` (`claimNextLaneHead`), after its state, backoff, lane
+    /// and group matched: the worktree is active under `host_id` and no refresh fences it, no effect or request there
+    /// carries a recovery, no withdrawal mirror is unsettled there (of any page), no earlier request is queued, recovering,
+    /// a released deferred write or a running one of another run, and, with the switch on, no foreground write waits.
+    pub(super) fn lane_head_open(
+        &self,
+        r: &RequestRecord,
+        w: &str,
+        host_id: &str,
+        run: &str,
+        spec: &ClaimableSpec,
+        priority: bool,
+    ) -> Result<bool> {
+        let Some(row) = read_worktree_row(self.read, w)? else {
+            return Ok(false);
+        };
+        if !(row.owned_by(Some(host_id)) && row.state == "active") {
+            return Ok(false);
+        }
+        if fenced(&self.refreshes, w) || recovery_on(&self.effects, self.all, w) {
+            return Ok(false);
+        }
+        if self.effects.iter().any(|m| {
+            same(m.worktree_id.as_deref(), w)
+                && m.kind == "withdrawal-mirror"
+                && matches!(m.state.as_str(), "queued" | "running")
+        }) {
+            return Ok(false);
+        }
+        for e in self.on(w).iter().filter(|e| e.sequence < r.sequence) {
+            let other_run =
+                e.state == "running" && json_text(e.intent.get("lane")).unwrap_or_default() != run;
+            if matches!(e.state.as_str(), "queued" | "recovering")
+                || other_run
+                || released_deferred_in(self.read, e)?
+            {
+                return Ok(false);
+            }
+        }
+        Ok(!(priority && self.waiting_last(w, spec)?.is_some()))
     }
 
     /// `EXISTS (SELECT 1 FROM waiting g WHERE g.worktree_id=w AND g.last>sequence)`.

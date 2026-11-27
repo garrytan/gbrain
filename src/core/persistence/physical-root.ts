@@ -110,7 +110,7 @@ export async function claimPhysicalRoot(tx: SqlEngine, path: string, opts: Physi
 export async function preparePhysicalRootReplacement(tx: SqlEngine, stage: string, target: string,
   opts: Required<PhysicalRootClaim>): Promise<void> {
   const reservation = await reservePhysicalRoot(tx, target, opts);
-  const [owner] = await tx.executeRaw<{ owner_host_id: string; state: string }>('SELECT owner_host_id,state FROM persistence_worktrees WHERE id=$1::uuid', [opts.worktreeId]);
+  const owner = await (await (tx as unknown as Pick<BrainEngine, 'topologyStore'>).topologyStore()).worktreeOwner(opts.worktreeId);
   if (owner?.owner_host_id !== opts.hostId || owner.state !== 'recovering') throw physicalRootError('A directory replacement requires durable source recovery.');
   if (existsSync(target)) assertPhysicalRoot(target, opts);
   writePhysicalRootStamp(stage, reservation);
@@ -155,27 +155,25 @@ export async function restampPhysicalRoot(engine: BrainEngine, binding: { worktr
   const change = physicalRootDeviceChange(stamp, reservation, statSync(root, { bigint: true }));
   if (!change) return null;
   const applied = await engine.transaction(async tx => {
-    await tx.executeRaw("SELECT set_config('synchronous_commit','on',true)");
-    const [owner] = await tx.executeRaw<{ owner_host_id: string | null; manifest: Record<string, any> | null }>(
-      'SELECT owner_host_id,manifest FROM persistence_worktrees WHERE id=$1::uuid FOR UPDATE', [binding.worktree_id]);
-    const [brain] = await tx.executeRaw<{ brain_id: string }>('SELECT brain_id FROM persistence_brain WHERE singleton=1');
-    const [bound] = await tx.executeRaw<{ local_path: string; coordination_path: string }>(
-      'SELECT local_path,coordination_path FROM persistence_host_bindings WHERE worktree_id=$1::uuid AND host_id=$2::uuid', [binding.worktree_id, hostId]);
-    if (!owner || owner.owner_host_id !== hostId || brain?.brain_id !== stamp.brainId
+    const store = await tx.topologyStore();
+    await store.synchronousCommit();
+    const owner = await store.lockWorktreeManifest(binding.worktree_id);
+    const brainId = await store.brainId();
+    const bound = await store.hostBinding(binding.worktree_id, hostId);
+    if (!owner || owner.owner_host_id !== hostId || brainId !== stamp.brainId
       || bound?.local_path !== root || bound.coordination_path !== binding.coordination_path) return false;
     const manifest = owner.manifest;
     if (manifest && restampRecovery(manifest.self_transfer, change)) {
-      await tx.executeRaw('UPDATE persistence_worktrees SET manifest=$2::text::jsonb WHERE id=$1::uuid', [binding.worktree_id, JSON.stringify(manifest)]);
+      await store.setWorktreeManifest(binding.worktree_id, manifest);
     }
-    const topology = await tx.executeRaw<{ id: string; recovery: Record<string, any> | null }>(
-      "SELECT id,recovery FROM persistence_topology_changes WHERE state='recovering' AND $1::uuid=ANY(worktree_ids) FOR UPDATE", [binding.worktree_id]);
+    const topology = await store.lockRecoveringChanges(binding.worktree_id);
     for (const row of topology) {
       const identity = row.recovery?.stageIdentity, stage = row.recovery?.stage;
       if (identity?.device !== change.from || typeof stage !== 'string' || !existsSync(stage)) continue;
       const info = lstatSync(stage, { bigint: true });
       if (!info.isDirectory() || info.ino.toString() !== identity.inode || info.birthtimeNs.toString() !== identity.birthNs || info.dev.toString() !== change.to) continue;
       identity.device = change.to;
-      await tx.executeRaw('UPDATE persistence_topology_changes SET recovery=$2::text::jsonb,updated_at=now() WHERE id=$1::uuid', [row.id, JSON.stringify(row.recovery)]);
+      await store.restampChangeRecovery(row.id, row.recovery!);
     }
     return true;
   });

@@ -52,7 +52,7 @@ import {
   ownerPeerRefused, isOwnerHandoff, ownerHandoff, ownerMemberOnlyReads,
 } from './routes.ts';
 import { rustMultiuserFromEnv } from '../multiuser-switch.ts';
-import { remoteFrameMark } from './remote-check.ts';
+import { ownerEngineCapabilities, remoteFrameMark } from './remote-check.ts';
 import { HELD_ROW_HOOK, HELD_ROW_MEMBERS, HELD_ROW_TAG, withHeldRowHook } from './held-row.ts';
 import { setDeadlineTimer, type DeadlineTimer } from './timer.ts';
 
@@ -379,7 +379,7 @@ export function connectOwner(legacySocketPath: string, opts: ConnectOwnerOptions
       const line = frameLine({ t: kind, id, [kind === 'fn' ? 'name' : 'member']: member, args: wireArgs,
         ...(deadlineAt !== undefined ? { deadline_at: deadlineAt } : {}),
         ...(readDeadlineAt !== undefined ? { read_deadline_at: readDeadlineAt } : {}),
-        ...(access ? { access } : {}), ...remoteFrameMark(callerIsRemote()) });
+        ...(access ? { access } : {}), ...remoteFrameMark(callerIsRemote(), hello.capabilities) });
       if (line === null) return Promise.reject(ownerIpcRefusal(member, `its arguments are larger than ${OWNER_IPC_MAX_FRAME_BYTES} bytes, the most the owner socket carries`));
       return new Promise((resolveCall, rejectCall) => {
         let grace: DeadlineTimer | undefined;
@@ -544,7 +544,7 @@ export function installOwnerClient(engine: object, connection: OwnerConnection, 
   }
   const capabilities = record.capabilities as Set<string> | undefined;
   const own = capabilities instanceof Set ? [...capabilities] : [];
-  if (capabilities instanceof Set) { capabilities.clear(); for (const c of connection.hello.capabilities) capabilities.add(c); }
+  if (capabilities instanceof Set) { capabilities.clear(); for (const c of ownerEngineCapabilities(connection.hello.capabilities)) capabilities.add(c); }
   const key = engineKey(engine);
   connections.set(key, connection);
   if (rejoin) rejoins.set(connection, rejoin);

@@ -45,7 +45,6 @@ import { defineNormalizer, expectGolden } from './helpers/golden.ts';
 import { idleProbeStatement, type IdleProbeSpec } from '../src/core/engine-sql/persistence-idle-probe.ts';
 import { overdueDeferredWorkSql } from '../src/core/persistence/refresh-barrier.ts';
 import { claimableWriteSql, foregroundPrioritySql } from '../src/core/persistence/journal.ts';
-import { PERSISTENCE_PROTOCOL_PREDICATE } from '../src/core/persistence/protocol.ts';
 import { EXPIRED_PREPARING_CHARGE_SQL } from '../src/core/persistence/claim-phase.ts';
 import { CAPACITY_PRINCIPAL_DAYS_SQL, CAPACITY_RECLAIM_SQL, CLAIM_SEGMENTED_PROJECTION_SQL, COMPACTABLE_RECEIPTS_SQL, MARK_PROJECTION_REBUILD_FAILED_SQL,
   PROJECTION_RETRY_READY_TEXT, RECEIPT_COMPACTION_CANDIDATES_SQL, SEGMENTED_JOB_PROBES_SQL, SEGMENTED_PROJECTION_CLAIMED_TEXT, TRUE_UP_REQUESTS_SQL, TRUE_UP_RESERVATIONS_SQL, projectionWindowFragment,
@@ -56,15 +55,23 @@ import { NEWEST_SYNC_RECEIPT_EXCLUSION, OPEN_SYNC_CURSOR_EXCLUSION } from '../sr
 import { UNRESOLVED_CALLER_REFUSAL_SQL } from '../src/core/persistence/terminal-classify.ts';
 import { COMPACTED_RECEIPT_BYTES_SQL } from '../src/core/persistence/receipt-bytes.ts';
 import { CLAIMABLE_EFFECT_SQL } from '../src/core/engine-sql/persistence-effect-scans.ts';
-import { CLAIM_COALESCED_GIT_EFFECTS_SQL } from '../src/core/engine-sql/persistence-effect-worker.ts';
+import { CLAIM_COALESCED_GIT_EFFECTS_SQL, CLAIM_EFFECT_RECOVERY_SQL } from '../src/core/engine-sql/persistence-effect-worker.ts';
 import { TOPOLOGY_STORE_STATEMENTS } from '../src/core/engine-sql/topology-store.ts';
+import { REFRESH_STORE_STATEMENTS } from '../src/core/engine-sql/refresh-store.ts';
+import { GROUP_PUBLISH_STORE_STATEMENTS } from '../src/core/engine-sql/group-publish-store.ts';
 import { MANUAL_LINK_STATEMENTS } from '../src/core/engine-sql/manual-links.ts';
+import { SYNC_STATEMENTS } from '../src/core/engine-sql/managed-sync-store.ts';
+import { syncKnockOnSql } from '../src/core/persistence/sync-knock-on.ts';
+import { chunkVisibleFilter, currentTextProjectionFilter } from '../src/core/search/safe-chunks.ts';
+import { LANDING_RECEIPT_LIMIT } from '../src/core/persistence/landing-gaps.ts';
+import { databaseOnlyPageSql } from '../src/core/persistence/unbound-pages.ts';
 import { LINKS_FENCE_ORIGIN_FIELD } from '../src/core/links-fence.ts';
 import { EXPIRED_ARCHIVE_SQL } from '../src/core/engine-sql/sources.ts';
-import { ACTIVE_REFRESH_STATES_SQL } from '../src/core/persistence/worktree-refresh-schema.ts';
+import { ACTIVE_REFRESH_STATES_SQL, CHECKOUT_EFFECT_KINDS_SQL, RELEASED_DEFERRED } from '../src/core/persistence/worktree-refresh-schema.ts';
+import { PERSISTENCE_PROTOCOL_PREDICATE } from '../src/core/persistence/protocol.ts';
 import { requireSynchronousCommit, SYNCHRONOUS_COMMIT_SQL } from '../src/core/engine-sql/persistence-declaration.ts';
-import { claimHeadStatement, claimHeadText } from '../src/core/engine-sql/persistence-claims.ts';
-import { CLAIM_ORDER, FOREGROUND_WAITING_ON } from '../src/core/persistence/journal.ts';
+import { claimHeadStatement, claimHeadText, laneHeadStatement, laneHeadText, LANE_HEAD_STAMP_SQL, RECLAIM_RELEASED_SQL } from '../src/core/engine-sql/persistence-claims.ts';
+import { CLAIM_ORDER, FOREGROUND_WAITING_ON, GROUP_KEY_SQL } from '../src/core/persistence/journal.ts';
 import { DEAD_OWNER_EFFECT_SQL } from '../src/core/persistence/effect-journal.ts';
 import { refreshFenceClear } from '../src/core/persistence/worktree-refresh-schema.ts';
 import { quoteIdentifier } from '../src/core/search/embedding-column.ts';
@@ -283,6 +290,47 @@ describe('the FIFO head read copies the journal claim formula', () => {
     expect(claimHeadStatement({ ...spec, leaseHolder: null }).params).toEqual(['h', ['x'], ['f'], ['l'], 'n', '{"w":"3"}']);
     expect(claimHeadStatement({ ...spec, leaseHolder: { lockPrefix: 'p:', pid: 7, host: 'host' } }).params)
       .toEqual(['h', ['x'], ['f'], ['l'], 'n', '{"w":"3"}', 'p:', 7, 'host']);
+  });
+});
+
+describe('the lane head claim and the reclaim copy the journal statements', () => {
+  // The texts journal.ts claimNextLaneHead and reclaimReleasedWrite sent through executeRaw before the typed members, built from the journal's own fragments.
+  const laneHeadJournalText = (prio: string) => `SELECT r.* FROM persistence_requests r
+      JOIN persistence_worktrees w ON w.id=r.worktree_id
+      WHERE r.worktree_id=$2::uuid AND r.state='queued' AND ${BACKOFF_ELAPSED('r')} AND r.intent->>'lane'=$3 AND r.intent->>'group'=r.request_id::text
+        AND w.owner_host_id=$1::uuid AND w.state='active' AND ${refreshFenceClear('r')}
+        AND NOT EXISTS (SELECT 1 FROM persistence_effects blocked WHERE blocked.worktree_id=r.worktree_id AND blocked.recovery IS NOT NULL)
+        AND NOT EXISTS (SELECT 1 FROM persistence_effects mirror WHERE mirror.worktree_id=r.worktree_id
+          AND mirror.kind='withdrawal-mirror' AND mirror.state IN ('queued','running'))
+        AND NOT EXISTS (SELECT 1 FROM persistence_requests blocked WHERE blocked.worktree_id=r.worktree_id AND blocked.recovery IS NOT NULL)
+        AND NOT EXISTS (SELECT 1 FROM persistence_requests earlier WHERE earlier.worktree_id=r.worktree_id AND earlier.sequence<r.sequence
+          AND (earlier.state IN ('queued','recovering') OR ${RELEASED_DEFERRED('earlier')} OR (earlier.state='running' AND COALESCE(earlier.intent->>'lane','')<>$3)))
+        -- #5984 Phase 4.5: no new lane head while a foreground write that may go first waits (a claimed one publishes
+        -- beside the lanes), except one head after each foreground commit since this run's last head claim.
+        AND NOT ((${prio}) AND r.worktree_id IN (SELECT f.worktree_id FROM (${FOREGROUND_WAITING_ON('$5::text', '$4::bigint', 'f.worktree_id=$2::uuid')}) f))
+      ORDER BY r.sequence LIMIT 1 FOR UPDATE OF r SKIP LOCKED`;
+
+  test('selectClaimableLaneHead sends the journal text for each priority', () => {
+    for (const priority of [null, true, false] as const) expect(laneHeadText(priority)).toBe(laneHeadJournalText(foregroundPriorityText(priority)));
+    expect(laneHeadText(null)).toBe(laneHeadJournalText(foregroundPrioritySql()));
+  });
+
+  test('the lane head binds its five parameters in the journal order', () => {
+    expect(laneHeadStatement({ hostId: 'h', worktreeId: 'w', run: 'r', seenSequence: '7', nonce: 'n', priority: null }).params).toEqual(['h', 'w', 'r', '7', 'n']);
+  });
+
+  test('the lane head stamp and the reclaim are the journal statements', () => {
+    expect(LANE_HEAD_STAMP_SQL).toBe(`UPDATE persistence_requests SET state='running',
+      execution_token=$2::uuid,claim_expires_at=now()+($3::double precision*interval '1 millisecond'),
+      updated_at=now(),blocked_reason=NULL,claim_phase=$4::text::jsonb WHERE id=$1::uuid RETURNING *,(SELECT max(sequence) FROM persistence_requests)::text AS seen_sequence`);
+    expect(RECLAIM_RELEASED_SQL).toBe(`UPDATE persistence_requests SET state='running',execution_token=$2::uuid,
+    claim_expires_at=now()+($3::double precision*interval '1 millisecond'),updated_at=now(),blocked_reason=NULL,claim_phase=$4::text::jsonb
+    WHERE id=$1::uuid AND state='queued' AND recovery IS NULL AND ${BACKOFF_ELAPSED('persistence_requests')} AND ${PERSISTENCE_PROTOCOL_PREDICATE} RETURNING *`);
+  });
+
+  test('the effect recovery claim is the effects statement', () => {
+    expect(CLAIM_EFFECT_RECOVERY_SQL).toBe(`UPDATE persistence_effects SET state='running',execution_token=$2::uuid,claim_owner=$3::text::jsonb,
+      claim_expires_at=now()+interval '2 minutes',attempts=attempts+1,updated_at=now() WHERE id=$1 AND recovery IS NOT NULL AND ${PERSISTENCE_PROTOCOL_PREDICATE} RETURNING *`);
   });
 });
 
@@ -593,6 +641,80 @@ describe('the topology store sends the statements the lifecycle built, fragments
   });
 });
 
+describe('the refresh store sends the statements the refresh writer and the barrier built, fragments written out', () => {
+  const flat = (sql: string) => sql.replace(/\s+/g, ' ').trim();
+  test('the drain count carries the released-deferred and checkout-effect fragments', () => {
+    expect(flat(REFRESH_STORE_STATEMENTS.DRAIN_COUNTS_SQL)).toBe(flat(`SELECT
+    (SELECT count(*) FROM persistence_requests r WHERE r.worktree_id=$1::uuid AND (r.state IN ('queued','running','recovering') OR ${RELEASED_DEFERRED('r')}))::int AS requests,
+    (SELECT count(*) FROM persistence_effects WHERE worktree_id=$1::uuid AND kind IN ${CHECKOUT_EFFECT_KINDS_SQL} AND state IN ('queued','running'))::int AS effects,
+    ((SELECT count(*) FROM persistence_requests WHERE worktree_id=$1::uuid AND recovery IS NOT NULL)
+      +(SELECT count(*) FROM persistence_effects WHERE worktree_id=$1::uuid AND recovery IS NOT NULL))::int AS recovery`));
+  });
+  test('the import hold carries the protocol and refresh-barrier claim predicates', () => {
+    expect(flat(REFRESH_STORE_STATEMENTS.HOLD_FOR_IMPORT_SQL)).toBe(flat(`UPDATE persistence_requests SET state='deferred',deferred_import_from=$3,deferred_refresh_id=NULL,execution_token=NULL,
+    claim_expires_at=NULL,blocked_reason=NULL,claim_phase=NULL,updated_at=now()
+    WHERE id=$1::uuid AND execution_token=$2::uuid AND state='running' AND recovery IS NULL AND publication_started=false
+      AND ${PERSISTENCE_PROTOCOL_PREDICATE} AND ${REFRESH_BARRIER_CLAIM_PREDICATE} RETURNING *`));
+  });
+  test('the later-write read carries the managed-sync row fragment', () => {
+    expect(flat(REFRESH_STORE_STATEMENTS.LATER_WRITE_SQL)).toBe(flat(`SELECT r.request_id::text AS request_id FROM persistence_requests r
+    WHERE r.source_id=$1 AND r.slug=$2 AND r.sequence>$3 AND r.state='committed' AND NOT (r.operation='submit_job'
+      AND (${SYNC_KIND('r')} OR (r.intent IS NULL AND COALESCE(r.outcome->>'imported_file','')='true' AND NOT (r.outcome ? 'connector_database')))) ORDER BY r.sequence LIMIT 1`));
+  });
+});
+
+describe('the group publish store sends the statements the group claim and completion built, fragments written out', () => {
+  const flat = (sql: string) => sql.replace(/\s+/g, ' ').trim();
+  test('the follower candidates carry the group key, backoff and released-deferred fragments', () => {
+    const text = flat(GROUP_PUBLISH_STORE_STATEMENTS.FOLLOWER_CANDIDATES_SQL);
+    expect(text).toContain(flat(`SELECT id,sequence,state,${GROUP_KEY_SQL} AS grp,recovery IS NOT NULL AS recovering,NOT ${BACKOFF_ELAPSED('persistence_requests')} AS backoff,transient_interruptions>0 AS charged FROM persistence_requests`));
+    expect(text).toContain(flat(`OR ${RELEASED_DEFERRED('persistence_requests')}) ORDER BY sequence LIMIT $3),`));
+    expect(text).toContain(flat(`SELECT r.id,r.state,${GROUP_KEY_SQL} AS grp,r.recovery IS NOT NULL AS recovering,r.claim_phase`));
+  });
+  test('the claim renewal and dispatch carry the protocol predicate', () => {
+    expect(flat(GROUP_PUBLISH_STORE_STATEMENTS.RENEW_CLAIMS_SQL)).toContain(`AND ${PERSISTENCE_PROTOCOL_PREDICATE} RETURNING r.id`);
+    expect(flat(GROUP_PUBLISH_STORE_STATEMENTS.MARK_DISPATCHED_SQL)).toContain(`AND ${PERSISTENCE_PROTOCOL_PREDICATE} RETURNING r.id`);
+  });
+  test('the group completion carries the effect-byte and true-up clamp fragments', () => {
+    const text = flat(GROUP_PUBLISH_STORE_STATEMENTS.COMPLETE_GROUP_SQL);
+    expect(text).toContain(`SUM(${EFFECT_BYTES_SQL}) AS bytes`);
+    expect(text).toContain(flat(TRUE_UP_CLAMP_SQL('SELECT count(*) FROM d JOIN persistence_counters c ON c.key=d.key WHERE d.freed>c.terminal_bytes')));
+  });
+});
+
+describe('the parked-push reads and the effect requeue carry the fragment git-durability-administration.ts composed them from', () => {
+  // The fragment those statements shared before they moved (engine-sql/git-durability.ts).
+  const HELD_ON_CODES = `e.error_code=ANY($2::text[]) OR e.error_code='targets_parked'
+  AND EXISTS (SELECT 1 FROM jsonb_array_elements(COALESCE(e.data->'parked','[]'::jsonb)) p WHERE p->>'error_code'=ANY($2::text[]))`;
+  test('the parked-push request list and the former-worktree aggregate', async () => {
+    const { PARKED_PUSH_REQUESTS_SQL, FORMER_WORKTREE_HOLDS_SQL, REQUEUE_PARKED_EFFECT_SQL } = await import('../src/core/engine-sql/git-durability.ts');
+    expect(PARKED_PUSH_REQUESTS_SQL).toBe(`
+    SELECT * FROM (SELECT DISTINCT e.source_id,r.id::text AS id,r.request_id::text AS request_id,r.slug FROM persistence_effects e
+      JOIN persistence_requests r ON r.id=e.request_id
+     WHERE e.worktree_id=$1::uuid AND e.kind='git' AND e.state='failed' AND e.recovery IS NULL AND NOT (e.data ? 'settled') AND (${HELD_ON_CODES})) d
+     ORDER BY source_id COLLATE "C",request_id COLLATE "C",id COLLATE "C"`);
+    expect(FORMER_WORKTREE_HOLDS_SQL).toBe(`SELECT count(*)::int AS effects,
+      min(CASE WHEN e.error_code=ANY($2::text[]) THEN e.error_code ELSE (SELECT min(p->>'error_code') FROM jsonb_array_elements(e.data->'parked') p
+        WHERE p->>'error_code'=ANY($2::text[])) END) AS code,
+      array_agg(DISTINCT e.worktree_id::text) AS worktree_ids, (array_agg(DISTINCT r.request_id::text))[1:5] AS requests
+    FROM persistence_effects e JOIN persistence_requests r ON r.id=e.request_id WHERE e.source_id=$1 AND e.worktree_id IS DISTINCT FROM $3::uuid AND e.kind='git' AND e.state='failed'
+      AND NOT (e.data ? 'settled') AND (${HELD_ON_CODES})`);
+    expect(REQUEUE_PARKED_EFFECT_SQL).toBe(`UPDATE persistence_effects SET state='queued',data=$2::text::jsonb,error_code=NULL,
+        next_attempt_at=now(),claim_expires_at=NULL,claim_owner=NULL,updated_at=now() WHERE id=$1 AND state='failed' AND error_code IS NOT DISTINCT FROM $3
+        AND execution_token IS NULL AND recovery IS NULL RETURNING state`);
+  });
+});
+
+describe('the topology store sends the clone, recovery and restamp statements as the lifecycle sent them', () => {
+  test('the locked reads and the change updates keep their text', () => {
+    expect(TOPOLOGY_STORE_STATEMENTS.LOCK_WORKTREE_MANIFEST_SQL).toBe('SELECT owner_host_id,manifest FROM persistence_worktrees WHERE id=$1::uuid FOR UPDATE');
+    expect(TOPOLOGY_STORE_STATEMENTS.LOCK_RECOVERING_CHANGES_SQL).toBe("SELECT id,recovery FROM persistence_topology_changes WHERE state='recovering' AND $1::uuid=ANY(worktree_ids) FOR UPDATE");
+    expect(TOPOLOGY_STORE_STATEMENTS.CLOSE_CHANGE_SQL).toBe(`UPDATE persistence_topology_changes SET state=$2,recovery=NULL,recovery_bytes=0,updated_at=now(),
+    outcome=COALESCE(outcome,'{}'::jsonb)||$3::text::jsonb WHERE id=$1::uuid`);
+    expect(TOPOLOGY_STORE_STATEMENTS.COMMIT_CHANGE_SQL).toBe("UPDATE persistence_topology_changes SET state='committed',outcome=outcome||$2::text::jsonb,updated_at=now() WHERE id=$1::uuid");
+  });
+});
+
 describe('the manual link store sends the statements manual-links.ts built, fragments written out', () => {
   // The fragments persistence/manual-links.ts composed its statements from before they moved (engine-sql/manual-links.ts).
   const RELATIONSHIP = `l.from_page_id=$1 AND l.to_page_id=t.id AND t.source_id=$2 AND t.slug=$3
@@ -607,5 +729,45 @@ describe('the manual link store sends the statements manual-links.ts built, frag
       RETURNING l.to_page_id, l.link_type, l.link_source, l.origin_field IS NOT DISTINCT FROM '${LINKS_FENCE_ORIGIN_FIELD}' AS fenced`);
     expect(MANUAL_LINK_STATEMENTS.DERIVED_EDGES_SQL).toBe(`SELECT DISTINCT l.link_type COLLATE "C" AS link_type, l.link_source COLLATE "C" AS link_source FROM links l, pages t
       WHERE ${RELATIONSHIP} AND l.link_source = ANY($4::text[]) ORDER BY l.link_type COLLATE "C", l.link_source COLLATE "C"`);
+  });
+});
+
+describe('the managed sync store sends the statements the sync built, fragments written out', () => {
+  // The fragments persistence/sync-pass-run.ts, sync-discovery.ts, sync-tail-record.ts and sync-tail.ts composed their statements from
+  // before they moved (engine-sql/managed-sync-store.ts).
+  test('the page statements carry the unbound-source predicate of their alias', () => {
+    expect(SYNC_STATEMENTS.pages_by_slug.sql as string).toBe(`SELECT id, slug, source_path, knowledge_revision::text AS revision, deleted_at IS NOT NULL AS deleted, ${databaseOnlyPageSql('pages')} AS unbound, frontmatter->>'id' AS fm_id FROM pages WHERE source_id=$1 AND slug=ANY($2::text[])`);
+    expect(SYNC_STATEMENTS.database_only_pages.sql as string).toBe(`SELECT p.id FROM pages p WHERE p.id=ANY($1::bigint[]) AND (${databaseOnlyPageSql('p')} OR p.database_only_reason IS NOT DISTINCT FROM 'origin_twin')`);
+  });
+  test('the tail statements carry the obligation cap and the page cap', () => {
+    expect(SYNC_STATEMENTS.tail_record_run.sql).toContain('jsonb_array_length(op_checkpoints.completed_keys)>=16');
+    expect(SYNC_STATEMENTS.tail_record_pass.sql).toContain('jsonb_array_length(op_checkpoints.completed_keys)>=16');
+    expect(SYNC_STATEMENTS.tail_slugs.sql.endsWith(') imported LIMIT 1001')).toBe(true);
+  });
+  test('the in-flight statements carry the request-naming predicate', () => {
+    const names = `r.page_id=ANY($2::int[]) OR r.intent->>'sourcePath'=ANY($3::text[]) OR r.intent->>'path'=ANY($3::text[])`;
+    expect(SYNC_STATEMENTS.inflight_open_ids.sql as string).toBe(`SELECT r.id FROM persistence_requests r WHERE r.source_id=$1 AND r.state IN ('queued','running','recovering') AND (${names})`);
+    expect(SYNC_STATEMENTS.inflight_open_work.sql.split(names).length).toBe(3);
+  });
+});
+
+describe('the managed sync store sends the status, page-fault and freshness statements (lane LM slice 2 part B), fragments written out', () => {
+  test('knock_on_requests is the composed knock-on predicate over the request alias r', () => {
+    expect(SYNC_STATEMENTS.knock_on_requests.sql as string).toBe(`SELECT request_id::text AS request_id FROM persistence_requests r
+    WHERE r.request_id::text = ANY($1::text[]) AND ${syncKnockOnSql('r')}`);
+  });
+  test('freshness_aggregate carries the visible-chunk predicate of its aliases and the sample predicate of listFreshnessTargets', () => {
+    const sql = SYNC_STATEMENTS.freshness_aggregate.sql as string;
+    expect(sql).toContain(`WHERE cc.page_id=s.page_id AND ${chunkVisibleFilter('p', 'cc', currentTextProjectionFilter)}) ch ON true)`);
+    expect(sql).toContain(`FROM persistence_requests r JOIN c ON c.target=r.intent->>'target' WHERE r.worktree_id=$1::uuid AND r.source_incarnation=$2::uuid AND r.state='committed' AND COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%'
+    AND r.completed_at > now() - ($3::int * interval '1 hour') AND r.intent->>'kind'='managed_sync_import' AND r.intent->>'from' IS NOT NULL
+    AND COALESCE(r.intent->>'working','false') <> 'true'),`);
+  });
+  test('landing_receipts carries the receipt limit of landing-gaps.ts', () => {
+    expect((SYNC_STATEMENTS.landing_receipts.sql as string).includes(`ORDER BY r.completed_at DESC, r.sequence DESC LIMIT ${LANDING_RECEIPT_LIMIT}) w`)).toBe(true);
+  });
+  test('the page-fault statements keep the text of the typed members they sit beside', () => {
+    expect(SYNC_STATEMENTS.page_revision_writer.sql as string).toBe('SELECT knowledge_revision::text AS revision, revision_write_request_id::text AS writer FROM pages WHERE id=$1 AND source_id=$2');
+    expect(SYNC_STATEMENTS.request_writer.sql as string).toBe(`SELECT request_id::text, operation, intent->>'kind' AS kind, state, source_incarnation::text AS incarnation, page_id FROM persistence_requests WHERE id=$1::uuid`);
   });
 });

@@ -146,8 +146,8 @@ async function recoveringHeadBlocker(engine: BrainEngine, id: string, hostId: st
 async function refreshOwnerLive(worktreeId: string): Promise<boolean | null> {
   try {
     const { refreshLockPath } = await import('./worktree-refresh.ts');
-    const { tryAcquireNativeLock } = await import('./native-lock.ts');
-    const lock = await tryAcquireNativeLock(refreshLockPath(worktreeId));
+    const { probeNativeLock } = await import('./managed-lock.ts');
+    const lock = await probeNativeLock(refreshLockPath(worktreeId));
     if (!lock) return true;
     await lock.release();
     return false;

@@ -15,6 +15,8 @@ import type {
 } from '../../engine-sql/writer-status.ts';
 import type { StoreBrain } from '../store.ts';
 import { storeCall } from './common.ts';
+import { managedServed } from './managed-hold.ts';
+import type { RustEngine } from '../../rust-engine.ts';
 
 const at = (value: string | Date | null): Date | null => (value === null ? null : new Date(value));
 
@@ -47,7 +49,9 @@ export const listBlockingEffectRows = async function listBlockingEffectRows(brai
   return rows.map(row => ({ ...row, next_attempt_at: at(row.next_attempt_at) }));
 };
 
-/** `listActiveWorktreeRefreshRows(sourceId)`: no worktree refresh runs on this engine, so none is active. */
-export const listActiveWorktreeRefreshRows = async function listActiveWorktreeRefreshRows(_brain: StoreBrain, _sourceId: string | null): Promise<ActiveWorktreeRefreshRow[]> {
-  return [];
+/** `listActiveWorktreeRefreshRows(sourceId)`: the active refresh rows (of the source's worktree, or all), oldest first, with each worktree's owner and its deferred writes. */
+// A brain that does not serve managed mode (a user's, while the hold is on) has no refresh row, so it answers as it always did: none.
+export const listActiveWorktreeRefreshRows = async function listActiveWorktreeRefreshRows(this: RustEngine, brain: StoreBrain, sourceId: string | null): Promise<ActiveWorktreeRefreshRow[]> {
+  if (!managedServed(this)) return [];
+  return storeCall<ActiveWorktreeRefreshRow[]>({ member: 'listActiveWorktreeRefreshRows' }, () => brain.refreshRows({ kind: 'active_rows', sourceId }));
 };

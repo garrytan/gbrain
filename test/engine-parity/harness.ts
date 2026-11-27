@@ -52,7 +52,7 @@ const engineCapabilitiesModule = engineCapabilitiesNamespace as unknown as Recor
 import { itemSetHash } from '../../src/core/generations/publish.ts';
 import { IDENTITY_DOWNGRADE_OP } from '../../src/core/persistence/sync-status-sql.ts';
 import {
-  archiveRustSource, closeRustBrain, createRustSource, newRustBrain, putRustOpCheckpointRow, rustPageDeletedAt, rustAccessBrain, openRustBrain, DIVERGENCE_NORMALIZERS, readDivergences, removeBrainDir, rustArmRequested, rustMemberCapability, rustRefusal, type DivergenceRow, createRustMember, type MemberSeed, rustMuRoute, openRustBrainAt, installMuConnect, type MuConnectable, type RustMuRoute,
+  archiveRustSource, closeRustBrain, createRustSource, newRustBrain, putRustOpCheckpointRow, rustPageDeletedAt, rustAccessBrain, openRustBrain, DIVERGENCE_NORMALIZERS, readDivergences, removeBrainDir, rustArmRequested, rustMemberCapability, rustRefusal, type DivergenceRow, createRustMember, type MemberSeed, rustMuRoute, rustServedRequested, openRustBrainAt, installMuConnect, type MuConnectable, type RustMuRoute,
 } from './rust-arm.ts';
 import { isEngineMember, readStopPins, refusalFacts, rustServes, rustServesCapability, setupRefusalStep, setupStep, today, type StopPin } from './rust-refusals.ts';
 
@@ -130,9 +130,10 @@ export interface ParityCaseOpts {
    * and `message`, and `noEffect` (when given) must then find that nothing the case would have written exists. The case counts
    * as a known gap of the multi-user run (never as equal), and the pin FAILS when the case does not stop that way (it flips
    * back when keys open: remove the pin) or its `due` date has passed. With the switch off the option does nothing at all.
-   * Use `OWNER_ONLY_STOP()` for the pin the owner-only gate needs.
+   * Use `OWNER_ONLY_STOP()` for the pin the owner-only gate needs. A pin with `served: true` (`REMOTE_WRITE_STOP()`) is armed only
+   * on the served arm (GBRAIN_TEST_RUST_SERVED=1) while the store is multi-user: elsewhere the case runs and compares as before.
    */
-  rustMultiuserStop?: { code: string; message: string; owner: string; due: string; noEffect?: (engine: BrainEngine) => Promise<void> };
+  rustMultiuserStop?: { code: string; message: string; owner: string; due: string; noEffect?: (engine: BrainEngine) => Promise<void>; served?: true };
   /**
    * A multi-writer conformance case id (`'C04'`, a string literal: coverage.ts reads it statically). The case's row in
    * multi-writer-cases.ts decides per arm whether it runs, is n/a or pending; a `runs` cell is held to strict acceptance
@@ -195,6 +196,36 @@ export function OWNER_ONLY_STOP(noEffect?: (engine: BrainEngine) => Promise<void
   return { code: OWNER_ONLY_CODE, message: OWNER_ONLY_MESSAGE, owner: 'L4 non-owner keys', due: '2026-12-02', ...(noEffect && { noEffect }) };
 }
 
+/**
+ * The refusal a served client gives a remote caller's write on a multi-user brain, by design until per-user remote writes land: the
+ * owner's own remote put_page through a bound token ends `engine_capability_missing`, and nothing ran. Where it comes from depends on
+ * the engine the scenario hands dispatchToolCall (`site`):
+ *  - `member`: the put_page handler runs in the client process on the harness's recording engine, and its first write-side member,
+ *    `readStoredBodyBytes`, is refused by the served client's request (served/client.ts `request`), capability `pages`;
+ *  - `operation`: the scenario hands the arm's served engine itself, so the registry operation is forwarded as a whole and the served
+ *    client refuses it (owner-ipc/whole-op.ts `forwardOwnerOperation`), capability `raw_sql` (the operation names no store member).
+ */
+export const REMOTE_WRITE_CODE = 'engine_capability_missing';
+export const REMOTE_WRITE_REFUSALS = {
+  member: { message: "readStoredBodyBytes cannot run from a second process on this brain: a remote caller's write is not sent to the brain owner, so nothing ran.", capability: 'capability=pages' },
+  operation: { message: "put_page cannot run from a second process on this brain: only the trusted local CLI's operations are sent to the brain owner, so nothing ran.", capability: 'capability=raw_sql' },
+} as const;
+export type RemoteWriteSite = keyof typeof REMOTE_WRITE_REFUSALS;
+
+/**
+ * The pin for a case a served client's remote write ends on by design: armed only on the served arm while the store is multi-user;
+ * `noEffect` asserts nothing was written.
+ */
+export function REMOTE_WRITE_STOP(site: RemoteWriteSite, noEffect?: (engine: BrainEngine) => Promise<void>): NonNullable<ParityCaseOpts['rustMultiuserStop']> {
+  const refusal = REMOTE_WRITE_REFUSALS[site];
+  return { code: REMOTE_WRITE_CODE, message: `${refusal.message} (${refusal.capability})`, owner: 'L4 per-user remote writes', due: '2026-12-02', served: true, ...(noEffect && { noEffect }) };
+}
+
+/** Whether `pin` is armed on this run: the store is multi-user, and a served-only pin needs the served arm. */
+export function multiuserStopArmed(pin: NonNullable<ParityCaseOpts['rustMultiuserStop']>, mode: 'off' | 'env' | 'config' | 'ambient', served: boolean): boolean {
+  return mode !== 'off' && (pin.served !== true || served);
+}
+
 /** What a scenario throws when a multi-user store refuses its call by design (see `rustMultiuserStop`). */
 export class MultiuserStopError extends Error {
   readonly code: string;
@@ -214,6 +245,22 @@ export function stopOnOwnerOnlyRefusal(reply: unknown, mustNotContain: readonly 
   const leaked = mustNotContain.filter((needle) => text.includes(needle));
   if (leaked.length > 0) throw new Error(`the owner-only gate refused the call, yet its reply carries what the call would have returned (${leaked.join(', ')}): ${text.slice(0, 300)}`);
   throw new MultiuserStopError(OWNER_ONLY_CODE, `${OWNER_ONLY_CODE}: ${OWNER_ONLY_MESSAGE}`);
+}
+
+/**
+ * Call where a scenario sees the reply of a remote put_page. While the Rust store runs multi-user and the reply is the served client's
+ * refusal of a remote write at `site` (code, message and capability all present), throw `MultiuserStopError` (the harness accepts it
+ * only for a case that pins it with `REMOTE_WRITE_STOP(site)`). `mustNotContain` as in `stopOnOwnerOnlyRefusal`. Anything else, and any
+ * run with the switch off, returns and changes nothing.
+ */
+export function stopOnRemoteWriteRefusal(reply: unknown, site: RemoteWriteSite, mustNotContain: readonly string[] = [], mode = rustArmMultiuser()): void {
+  if (mode === 'off') return;
+  const refusal = REMOTE_WRITE_REFUSALS[site];
+  const text = typeof reply === 'string' ? reply : JSON.stringify(reply ?? '');
+  if (!text.includes(REMOTE_WRITE_CODE) || !text.includes(refusal.message) || !text.includes(refusal.capability)) return;
+  const leaked = mustNotContain.filter((needle) => text.includes(needle));
+  if (leaked.length > 0) throw new Error(`the served client refused the remote write, yet its reply carries what the call would have returned (${leaked.join(', ')}): ${text.slice(0, 300)}`);
+  throw new MultiuserStopError(REMOTE_WRITE_CODE, `${REMOTE_WRITE_CODE}: ${refusal.message} (${refusal.capability})`);
 }
 
 /** The Rust arm: a new brain directory per case (reset), removed when the arm closes. */
@@ -876,7 +923,7 @@ export function parityArms(backends: readonly TestBackend[]): ParitySuite {
       // never equal. Any multi-user run (either rust-mu route, or a lane started with the switch on) is held to the off pin this way.
       const mode = rustArmMultiuser();
       const stops = tally.multiuserStops ?? [];
-      if (stops.length > 0) console.log(`[${rustLabel} arm] ${testFile}: ${stops.length} case(s) pinned to the multi-user owner-only refusal (rustMultiuserStop, not counted as equal; the pin check allows for them): ${stops.join(' | ')}`);
+      if (stops.length > 0) console.log(`[${rustLabel} arm] ${testFile}: ${stops.length} case(s) pinned to a refusal the multi-user store gives by design (rustMultiuserStop, not counted as equal; the pin check allows for them): ${stops.join(' | ')}`);
       const better = checkRustTally(testFile, { ...tally, skipped: skipped + stops.length, ...(mode !== 'off' && { muView: true, knownGaps: muGaps.length + stops.length }) }, registered);
       if (better !== null) console.log(better);
     }
@@ -944,7 +991,7 @@ export function parityArms(backends: readonly TestBackend[]): ParitySuite {
             const caughtPins = rows.filter((row) => row.member.includes('@'));
             try {
               await checkRustArm({ name, opts, run: () => scenario(given, arm.backend, ctx), calls, refusals,
-                reference: results[0], divergence, pin, caughtPins, multiuserMode: rustArmMultiuser(), engine: given }, tally);
+                reference: results[0], divergence, pin, caughtPins, multiuserMode: rustArmMultiuser(), engine: given, served: rustServedRequested() }, tally);
             } finally {
               for (const engine of extra) await engine.disconnect().catch(() => undefined);
             }
@@ -1023,6 +1070,8 @@ export interface RustCase<T> {
   multiuserMode?: 'off' | 'env' | 'config' | 'ambient';
   /** The engine the case ran on, for the pin's `noEffect` check. */
   engine?: BrainEngine;
+  /** Whether the Rust arm is the served variant (GBRAIN_TEST_RUST_SERVED=1): a served-only `rustMultiuserStop` pin is armed only then. */
+  served?: boolean;
 }
 
 /** `member@site` of a caught refusal: the member it names and the first src/ file outside the engine that called it. */
@@ -1089,6 +1138,40 @@ function checkPin<T>(c: RustCase<T>, member: string): void {
 }
 
 /**
+ * An armed `rustMultiuserStop` pin: the outcome must be the named `MultiuserStopError` (code and message), the pin must not be past due,
+ * and `noEffect` (when given) must then find nothing written. Throws otherwise, naming the case and what it ended on.
+ */
+export async function acceptMultiuserStop(name: string, muPin: NonNullable<ParityCaseOpts['rustMultiuserStop']>, outcome: { value: unknown } | { error: unknown }, engine: BrainEngine | undefined): Promise<void> {
+  const where = `[rust] "${name}" has a rustMultiuserStop pin (${muPin.code}, ${muPin.owner}, due ${muPin.due})`;
+  if (!('error' in outcome)) throw new Error(`${where} but it returned in multi-user mode; the key is admitted now, so remove the pin and expect equal`);
+  const e = outcome.error;
+  const named = e instanceof MultiuserStopError && e.code === muPin.code && e.message.includes(muPin.message);
+  if (!named) {
+    const why = e instanceof Error ? e.message : String(e);
+    if (e instanceof Error) { e.message = `${where} but ended on something else (it is not the refusal the pin names, so fix the case or remove the pin): ${why}`; throw e; }
+    throw new Error(`${where} but ended on something else: ${why}`);
+  }
+  if (muPin.due < today()) throw new Error(`${where} has passed its due date (${muPin.owner}); open the key path or move the date`);
+  if (muPin.noEffect !== undefined) {
+    if (engine === undefined) throw new Error(`${where} has a noEffect check but the case ran with no engine`);
+    await muPin.noEffect(engine);
+  }
+}
+
+/**
+ * The same pin for a case that is not a `parityTest` (it loops over the arms itself): on the Rust arm, while the pin is armed, `body`
+ * must end on the pinned refusal (`acceptMultiuserStop`) and the function answers true, so the caller moves to the next arm. Anywhere
+ * else (another arm, the switch off, a served-only pin off the served arm) it runs `body` as it was and answers false.
+ */
+export async function pinnedMultiuserStop(arm: ParityArm, name: string, pin: NonNullable<ParityCaseOpts['rustMultiuserStop']>, body: () => Promise<unknown>): Promise<boolean> {
+  if (arm.backend !== 'rust' || !multiuserStopArmed(pin, rustArmMultiuser(), rustServedRequested())) { await body(); return false; }
+  let outcome: { value: unknown } | { error: unknown };
+  try { outcome = { value: await body() }; } catch (error) { outcome = { error }; }
+  await acceptMultiuserStop(name, pin, outcome, arm.engine);
+  return true;
+}
+
+/**
  * The Rust arm's check for one case (rust-arm.ts). A case has exactly three acceptable outcomes on Rust:
  *  - it ends on the typed refusal of a capability it reaches (a member Rust does not serve, or an option a served
  *    member declines), or on the error its `rustStop` pin names: counted as refused. A refusal by a member the engine
@@ -1111,22 +1194,9 @@ export async function checkRustArm<T>(c: RustCase<T>, tally: RustTally): Promise
     outcome = { error };
   }
   const muPin = c.opts.rustMultiuserStop;
-  if (muPin !== undefined && c.multiuserMode !== undefined && c.multiuserMode !== 'off') {
-    // A multi-user run of a case pinned to the owner-only gate: it must end on that refusal and nothing else.
-    const where = `[rust] "${c.name}" has a rustMultiuserStop pin (${muPin.code}, ${muPin.owner}, due ${muPin.due})`;
-    if (!('error' in outcome)) throw new Error(`${where} but it returned in multi-user mode; the key is admitted now, so remove the pin and expect equal`);
-    const e = outcome.error;
-    const named = e instanceof MultiuserStopError && e.code === muPin.code && e.message.includes(muPin.message);
-    if (!named) {
-      const why = e instanceof Error ? e.message : String(e);
-      if (e instanceof Error) { e.message = `${where} but ended on something else (it is not the refusal the pin names, so fix the case or remove the pin): ${why}`; throw e; }
-      throw new Error(`${where} but ended on something else: ${why}`);
-    }
-    if (muPin.due < today()) throw new Error(`${where} has passed its due date (${muPin.owner}); open the key path or move the date`);
-    if (muPin.noEffect !== undefined) {
-      if (c.engine === undefined) throw new Error(`${where} has a noEffect check but the case ran with no engine`);
-      await muPin.noEffect(c.engine);
-    }
+  if (muPin !== undefined && c.multiuserMode !== undefined && multiuserStopArmed(muPin, c.multiuserMode, c.served === true)) {
+    // A multi-user run of a case pinned to a refusal the multi-user session gives by design: it must end on that refusal and nothing else.
+    await acceptMultiuserStop(c.name, muPin, outcome, c.engine);
     (tally.multiuserStops ??= []).push(c.name);
     return;
   }

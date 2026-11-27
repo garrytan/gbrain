@@ -209,10 +209,10 @@ type PageLeaseTake = Parameters<BrainEngine['takePageEmbeddingLease']>[1];
 export const takePageEmbeddingLease: StoreMember<[leaseId: string, opts: PageLeaseTake], boolean> = (brain, leaseId, opts) =>
   storeCall({ member: 'takePageEmbeddingLease' }, () => brain.takePageEmbeddingLease(leaseId, opts));
 
-export const renewPageEmbeddingLease: StoreMember<[leaseId: string, opts: { acquisitionToken: string; ttlMinutes: number }], boolean> = (brain, leaseId, opts) =>
+export const renewPageEmbeddingLease: StoreMember<[leaseId: string, opts: Parameters<BrainEngine['renewPageEmbeddingLease']>[1]], boolean> = (brain, leaseId, opts) =>
   storeCall({ member: 'renewPageEmbeddingLease' }, () => brain.renewPageEmbeddingLease(leaseId, opts));
 
-export const releasePageEmbeddingLease: StoreMember<[leaseId: string, opts: { acquisitionToken: string }], void> = async (brain, leaseId, opts) => {
+export const releasePageEmbeddingLease: StoreMember<[leaseId: string, opts: Parameters<BrainEngine['releasePageEmbeddingLease']>[1]], void> = async (brain, leaseId, opts) => {
   await storeCall({ member: 'releasePageEmbeddingLease' }, () => brain.releasePageEmbeddingLease(leaseId, opts));
 };
 

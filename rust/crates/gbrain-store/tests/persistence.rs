@@ -768,6 +768,7 @@ fn the_housekeeping_turn_is_leased_then_waits_out_its_interval() {
     let turn = HousekeepingTurn {
         op: "persistence.housekeeping".into(),
         host_id: HOST.into(),
+        fence: None,
     };
     store.complete_housekeeping_turn(&turn).unwrap();
     // Done: the interval applies, not the lease.
@@ -792,6 +793,7 @@ fn the_housekeeping_turn_is_leased_then_waits_out_its_interval() {
         .complete_housekeeping_turn(&HousekeepingTurn {
             op: "persistence.housekeeping".into(),
             host_id: "d0000000-0000-4000-8000-0000000000d3".into(),
+            fence: None,
         })
         .unwrap();
     assert!(

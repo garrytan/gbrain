@@ -161,8 +161,8 @@ export const readChildCompletions: StoreMember<[parentId: number, lockToken: str
 
 export const listOpenJobIdsInQueue: StoreMember<[queue: string], number[]> = (brain, queue) => call('listOpenJobIdsInQueue', () => brain.listOpenJobIdsInQueue(queue));
 
-export const renewPrivateQueueLease: StoreMember<[queue: string, ownerToken: string, leaseMs: number], number> = (brain, queue, ownerToken, leaseMs) =>
-  call('renewPrivateQueueLease', () => brain.renewPrivateQueueLease(queue, ownerToken, leaseMs));
+export const renewPrivateQueueLease: StoreMember<[queue: string, ownerToken: string, leaseMs: number, opts?: FenceOpts], number> = (brain, queue, ownerToken, leaseMs, opts) =>
+  call('renewPrivateQueueLease', () => opts?.fence ? brain.renewPrivateQueueLease(queue, ownerToken, leaseMs, opts.fence) : brain.renewPrivateQueueLease(queue, ownerToken, leaseMs));
 
 export const listOwnedPrivateQueues: StoreMember<[maxQueues: number], string[]> = (brain, maxQueues) =>
   call('listOwnedPrivateQueues', () => brain.listOwnedPrivateQueues(DREAM_INLINE_PRIVATE_QUEUE_PREFIX, maxQueues));

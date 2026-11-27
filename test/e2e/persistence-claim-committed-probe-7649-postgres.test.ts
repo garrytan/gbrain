@@ -15,7 +15,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import postgres from '#postgres';
 import { randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../../src/core/engine.ts';
-import { claimHeadStatement, type ClaimHeadSpec } from '../../src/core/engine-sql/persistence-claims.ts';
+import { laneHeadStatement, type LaneHeadSpec, claimHeadStatement, type ClaimHeadSpec } from '../../src/core/engine-sql/persistence-claims.ts';
 import type { PostgresEngine } from '../../src/core/postgres-engine.ts';
 import { claimNextLaneHead, claimNextWrite } from '../../src/core/persistence/journal.ts';
 import { readRequestIndexStates } from '../../src/core/persistence/checkpoint-validation.ts';
@@ -78,11 +78,12 @@ async function claimPlans(): Promise<Record<'write' | 'laneHead', PlanNode>> {
       await explain('write', sql, params);
       return null;
     }) as BrainEngine['selectClaimableWrite'];
-    tx.executeRaw = (async (sql: string, params?: unknown[], options?: unknown) => {
-      if (!/^SELECT r\.\* FROM persistence_requests r\s+JOIN persistence_worktrees/.test(sql)) return raw(sql, params as never, options as never);
-      await explain('laneHead', sql, params, options);
-      return [];
-    }) as BrainEngine['executeRaw'];
+    // The lane head read is the typed selectClaimableLaneHead member too; plan exactly the statement it sends.
+    tx.selectClaimableLaneHead = (async (spec: LaneHeadSpec) => {
+      const { sql, params } = laneHeadStatement(spec);
+      await explain('laneHead', sql, params);
+      return null;
+    }) as BrainEngine['selectClaimableLaneHead'];
     return fn(tx);
   }, opts as never)) as PostgresEngine['transactionDirect'];
   try {

@@ -25,6 +25,7 @@ import { describe, expect } from 'bun:test';
 import { parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
+import type { PagesRecoveryRecord } from '../../src/core/persistence/model.ts';
 import { claimWorktreeBinding } from '../../src/core/engine-sql/worktree-claim.ts';
 import { requireManagedPersistence } from '../../src/core/rust-engine/errors.ts';
 import { findIncompleteSyncReceipt, findOpenPassWork, listIncompleteSyncReceipts, probeCheckpointBlocker } from '../../src/core/persistence/checkpoint-validation.ts';
@@ -37,6 +38,7 @@ const SELF = 'f0000000-0000-4000-8000-0000000000f1';
 const RUN = 'run-parity-1';
 const OTHER_RUN = 'run-parity-2';
 const worktree = (n: number) => `a1000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
+const RECOVERY_RECORD: PagesRecoveryRecord = { version: 3, target: 'pages', root: '/parity', ownerEpoch: '1', attempt: 'c1000000-0000-4000-8000-0000000000c1', files: [] };
 const request = (n: number) => `b1000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 
 interface Seed {
@@ -69,10 +71,22 @@ async function seed(engine: BrainEngine, incarnation: string, row: Seed): Promis
     authority: { scopes: ['write'] }, intentBytes: 100, terminalReservation: 4096, targetKind: 'page', protocolVersion: 1, admitterVersion: 'parity',
     admitterHostId: null, counterKeys: KEYS, clientRequestId: null, state: 'queued', deferredRefreshId: null,
   });
-  if ((row.state ?? 'queued') !== 'queued' || row.recovery) {
-    // No journal member moves an admitted row to another state or records a recovery on it: the row's state is set directly (SQL arms only).
-    await engine.executeRaw('UPDATE persistence_requests SET state=$2, recovery=$3::text::jsonb, error_code=$4 WHERE request_id=$1::uuid',
-      [requestId, row.state ?? 'queued', row.recovery ? JSON.stringify({ version: 1 }) : null, row.state === 'failed' ? 'write_failed' : null]);
+  const state = row.state ?? 'queued';
+  if (state === 'queued' && !row.recovery) return requestId;
+  // The journal's own members move the admitted row: the claim stamp (running), the recovery record, the recovery mark and the completion.
+  const token = `c1000000-0000-4000-8000-${String(row.n).padStart(12, '0')}`;
+  const { id } = (await engine.readWriteRequest('local_cli', 'parity-writer', requestId))!;
+  await engine.stampWriteClaim(id, token, 60_000, JSON.stringify({ phase: 'parity' }));
+  if (row.recovery) {
+    await engine.transaction(async tx => {
+      await (await tx.publicationJournalStore()).recordRecovery({ id, executionToken: token, recovery: RECOVERY_RECORD, bytes: 40, keys: KEYS }, true);
+    });
+  }
+  if (state === 'recovering') {
+    await engine.transaction(async tx => { await (await tx.publicationJournalStore()).markRecovering(id, token, 'publication_failed'); });
+  } else if (state !== 'queued' && state !== 'running') {
+    await engine.completeWriteRow({ id, state, outcome: {}, errorCode: state === 'failed' ? 'write_failed' : null, errorMessage: null, consumerVersion: 'parity',
+      consumerHostId: null, errorDetail: null, resultBytes: 100, counterKeys: KEYS, intentBytes: 100, retainedBytes: 100, terminalReservation: 4096, probePurges: false });
   }
   return requestId;
 }
@@ -138,7 +152,7 @@ describe('engine parity: sync checkpoint validation', () => {
   });
 
   parityTest('a blocking page receipt, a superseded one, one the settled ranges cover and a committed sibling at its index', {
-    methods: ['readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest', 'worktreeClaimStore', 'transaction'],
+    methods: ['readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest', 'readWriteRequest', 'stampWriteClaim', 'completeWriteRow', 'worktreeClaimStore', 'transaction'],
     requires: 'managed_persistence',
     timeout: 60_000,
   }, async (engine) => {
@@ -198,7 +212,7 @@ describe('engine parity: sync checkpoint validation', () => {
   });
 
   parityTest('a recovery row blocks the checkpoint and the stamp (the stamp\'s own recovery only when it is not folded), and another open managed-sync request blocks the stamp', {
-    methods: ['readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest', 'worktreeClaimStore', 'transaction'],
+    methods: ['readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest', 'readWriteRequest', 'stampWriteClaim', 'completeWriteRow', 'publicationJournalStore', 'worktreeClaimStore', 'transaction'],
     requires: 'managed_persistence',
     timeout: 60_000,
   }, async (engine) => {

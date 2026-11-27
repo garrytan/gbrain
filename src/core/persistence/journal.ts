@@ -251,7 +251,8 @@ export async function getWriteRequestById(engine: Pick<BrainEngine, 'readWriteRe
 /** #5984: the progress columns a waiter polls (engine-sql/persistence-journal.ts `readWriteRequestProgress`). */
 export { WRITE_PROGRESS_SQL, type WriteRequestProgress } from '../engine-sql/persistence-journal.ts';
 import type { CompletedWriteRow, WriteCompletion, WriteRequestProgress } from '../engine-sql/persistence-journal.ts';
-import { bindClaimFence, claimFenceOpts, fenceFor, fenceOpts } from './host-fence.ts';
+import { syncRows } from '../engine-sql/managed-sync-store.ts';
+import { bindClaimFence, bindClaimFences, claimBatchFenceOpts, claimFenceOpts, fenceFor, fenceOpts } from './host-fence.ts';
 export async function getWriteRequestProgress(engine: Pick<BrainEngine, 'readWriteRequestProgress'>, id: string, signal?: AbortSignal): Promise<WriteRequestProgress | null> {
   return engine.readWriteRequestProgress(id, { signal });
 }
@@ -498,32 +499,13 @@ export async function claimGroupFollowers(engine: BrainEngine, head: WriteReques
     await declarePersistenceProtocol(tx);
     // #5984 G6: only the group's candidate prefix is locked. Locking every next row also held a foreground write's row
     // (the first non-member) for the claim's round trips, so its recovery record and reads waited on the lane.
-    const next = await tx.executeRaw<{ id: string; state: string; grp: string | null; recovering: boolean; claim_phase: unknown }>(`WITH next AS (
-        SELECT id,sequence,state,${GROUP_KEY_SQL} AS grp,recovery IS NOT NULL AS recovering,NOT ${BACKOFF_ELAPSED('persistence_requests')} AS backoff,transient_interruptions>0 AS charged FROM persistence_requests
-        WHERE worktree_id=$1::uuid AND sequence>$2 AND (state IN ('queued','running','recovering') OR recovery IS NOT NULL OR ${RELEASED_DEFERRED('persistence_requests')}) ORDER BY sequence LIMIT $3),
-      -- v261: a member still in its transient backoff ends the group's prefix like a non-member, and so does one already
-      -- charged a transient interruption: it publishes alone, so a batch that overruns only as a whole is not retried as one.
-      bound AS (SELECT min(sequence) AS sequence FROM next WHERE grp IS DISTINCT FROM $4 OR state<>'queued' OR recovering OR backoff OR charged)
-      SELECT r.id,r.state,${GROUP_KEY_SQL} AS grp,r.recovery IS NOT NULL AS recovering,r.claim_phase
-      FROM persistence_requests r WHERE r.id IN (SELECT id FROM next WHERE sequence<COALESCE((SELECT sequence FROM bound),9223372036854775807))
-      ORDER BY r.sequence FOR UPDATE OF r`, [head.worktree_id, head.sequence, max, group]);
-    const members: string[] = [];
-    const previous = new Map<string, unknown>();
-    for (const row of next) {
-      if (row.grp !== group || row.state !== 'queued' || row.recovering) break;
-      members.push(row.id);
-      previous.set(row.id, row.claim_phase);
-    }
-    if (!members.length) return [];
-    const tokens = members.map(() => randomUUID());
     // #6278: a follower carries no phase until its wave dispatches it (`markDispatched`), so an undispatched follower is never
     // charged. #6650: it does carry its token, owner and claim time, so a consumer that proves the owner dead reclaims it with
     // the head, and writer status and doctor age the claim from when it was taken.
-    return tx.executeRaw<WriteRequest>(`UPDATE persistence_requests r SET state='running',execution_token=t.token,
-      claim_expires_at=now()+($3::double precision*interval '1 millisecond'),updated_at=now(),blocked_reason=NULL,
-      claim_phase=jsonb_build_object('token',t.token::text,'owner',$4::text::jsonb,'claimed_at',to_jsonb(now()))
-      FROM unnest($1::uuid[],$2::uuid[]) AS t(id,token) WHERE r.id=t.id AND r.state='queued' RETURNING r.*`, [members, tokens, leaseMs, JSON.stringify(claimOwner())])
-      .then(rows => rows.sort((a, b) => Number(BigInt(a.sequence) - BigInt(b.sequence))).map(row => ({ ...row, previous_claim_phase: previous.get(row.id) })));
+    const fence = fenceOpts(tx);
+    const followers = await (await tx.groupPublishStore()).claimFollowers({ worktree_id: head.worktree_id!, sequence: head.sequence }, group, max, leaseMs, claimOwner(), fence);
+    bindClaimFences(followers.map(row => row.execution_token), fence.fence ?? null);
+    return followers;
   });
 }
 
@@ -533,14 +515,11 @@ export async function claimGroupFollowers(engine: BrainEngine, head: WriteReques
  * (null keeps a member's recorded stamp, for one not yet dispatched); a single
  * string is stamped on every member with its own token.
  */
-export async function renewGroupClaims(engine: SqlEngine, rows: WriteRequest[], leaseMs = 30_000, signal?: AbortSignal,
+export async function renewGroupClaims(engine: Pick<BrainEngine, 'groupPublishStore'>, rows: WriteRequest[], leaseMs = 30_000, signal?: AbortSignal,
   stamps: string | null | Array<string | null> = null): Promise<Set<string>> {
   const perMember = Array.isArray(stamps) ? stamps.map(stamp => stamp ?? null) : rows.map(() => stamps);
-  const held = await engine.executeRaw<{ id: string }>(`UPDATE persistence_requests r SET claim_expires_at=now()+($3::double precision*interval '1 millisecond'),updated_at=now(),
-    claim_phase=COALESCE(jsonb_set(t.stamp::jsonb,'{token}',to_jsonb(t.token::text)),r.claim_phase)
-    FROM unnest($1::uuid[],$2::uuid[],$4::text[]) AS t(id,token,stamp) WHERE r.id=t.id AND r.execution_token=t.token AND r.state='running' AND ${PERSISTENCE_PROTOCOL_PREDICATE} RETURNING r.id`,
-  [rows.map(row => row.id), rows.map(row => row.execution_token), leaseMs, perMember], { signal });
-  return new Set(held.map(row => row.id));
+  const held = await (await engine.groupPublishStore()).renewClaims(rows.map((row, i) => ({ id: row.id, token: row.execution_token!, stamp: perMember[i] ?? null })), leaseMs, { signal, ...claimBatchFenceOpts(engine, rows.map(row => row.execution_token)) });
+  return new Set(held);
 }
 /**
  * #6278: a group's dispatch mark. Before a wave of members starts preparing,
@@ -549,12 +528,10 @@ export async function renewGroupClaims(engine: SqlEngine, rows: WriteRequest[], 
  * were preparing (the expired-claim reclaim, consumer.ts and effect-journal.ts)
  * and never an undispatched follower. Returns the ids whose claim still held.
  */
-export async function markDispatched(engine: SqlEngine, members: Array<{ row: WriteRequest; stamp: string }>, signal?: AbortSignal): Promise<Set<string>> {
+export async function markDispatched(engine: Pick<BrainEngine, 'groupPublishStore'>, members: Array<{ row: WriteRequest; stamp: string }>, signal?: AbortSignal): Promise<Set<string>> {
   if (!members.length) return new Set();
-  const marked = await engine.executeRaw<{ id: string }>(`UPDATE persistence_requests r SET claim_phase=jsonb_set(t.stamp::jsonb,'{token}',to_jsonb(t.token::text))
-    FROM unnest($1::uuid[],$2::uuid[],$3::text[]) AS t(id,token,stamp) WHERE r.id=t.id AND r.execution_token=t.token AND r.state='running' AND ${PERSISTENCE_PROTOCOL_PREDICATE} RETURNING r.id`,
-  [members.map(m => m.row.id), members.map(m => m.row.execution_token), members.map(m => m.stamp)], { signal });
-  return new Set(marked.map(row => row.id));
+  const marked = await (await engine.groupPublishStore()).markDispatched(members.map(m => ({ id: m.row.id, token: m.row.execution_token!, stamp: m.stamp })), { signal, ...claimBatchFenceOpts(engine, members.map(m => m.row.execution_token)) });
+  return new Set(marked);
 }
 /**
  * #6278: an abandoned preparation overran the hard ceiling, which proves it
@@ -795,8 +772,7 @@ export async function claimNextWrite(engine: BrainEngine, hostId: string, leaseM
     ]) as [unknown, WriteRequest | null];
     if (!row) return null;
     if (holderOnly && String(row.intent?.kind ?? '').startsWith('managed_sync_')) {
-      const [lease] = await tx.executeRaw<{ holder_pid: number; holder_host: string | null }>(`SELECT holder_pid, holder_host FROM gbrain_cycle_locks
-        WHERE id=$1::text AND ttl_expires_at>now() AND NOT (holder_pid=$2::integer AND holder_host IS NOT DISTINCT FROM $3::text)`, [syncLockId(row.source_id), process.pid, hostname()]);
+      const [lease] = await syncRows<{ holder_pid: number; holder_host: string | null }>(tx, 'lease_other_holder', [syncLockId(row.source_id), process.pid, hostname()]);
       if (lease && classifyHolderLiveness(lease.holder_pid, lease.holder_host ?? '', 0, { graceMs: 0 }) !== 'dead_eligible') return null;
     }
     // `passed_sync`: the claimed row went ahead of a queued sync row of its root.
@@ -826,26 +802,14 @@ export async function claimNextLaneHead(engine: BrainEngine, hostId: string, wor
   seenSequence: string | null = null): Promise<(WriteRequest & { seen_sequence: string }) | null> {
   return engine.transactionDirect(async tx => {
     await declarePersistenceProtocol(tx);
-    const [row] = await tx.executeRaw<WriteRequest>(`SELECT r.* FROM persistence_requests r
-      JOIN persistence_worktrees w ON w.id=r.worktree_id
-      WHERE r.worktree_id=$2::uuid AND r.state='queued' AND ${BACKOFF_ELAPSED('r')} AND r.intent->>'lane'=$3 AND r.intent->>'group'=r.request_id::text
-        AND w.owner_host_id=$1::uuid AND w.state='active' AND ${refreshFenceClear('r')}
-        AND NOT EXISTS (SELECT 1 FROM persistence_effects blocked WHERE blocked.worktree_id=r.worktree_id AND blocked.recovery IS NOT NULL)
-        AND NOT EXISTS (SELECT 1 FROM persistence_effects mirror WHERE mirror.worktree_id=r.worktree_id
-          AND mirror.kind='withdrawal-mirror' AND mirror.state IN ('queued','running'))
-        AND NOT EXISTS (SELECT 1 FROM persistence_requests blocked WHERE blocked.worktree_id=r.worktree_id AND blocked.recovery IS NOT NULL)
-        AND NOT EXISTS (SELECT 1 FROM persistence_requests earlier WHERE earlier.worktree_id=r.worktree_id AND earlier.sequence<r.sequence
-          AND (earlier.state IN ('queued','recovering') OR ${RELEASED_DEFERRED('earlier')} OR (earlier.state='running' AND COALESCE(earlier.intent->>'lane','')<>$3)))
-        -- #5984 Phase 4.5: no new lane head while a foreground write that may go first waits (a claimed one publishes
-        -- beside the lanes), except one head after each foreground commit since this run's last head claim.
-        AND NOT ((${foregroundPrioritySql()}) AND r.worktree_id IN (SELECT f.worktree_id FROM (${FOREGROUND_WAITING_ON('$5::text', '$4::bigint', 'f.worktree_id=$2::uuid')}) f))
-      ORDER BY r.sequence LIMIT 1 FOR UPDATE OF r SKIP LOCKED`, [hostId, worktreeId, run, seenSequence, consumerIdentity().nonce]);
+    // The lane head read and its claim stamp live in engine-sql/persistence-claims.ts (the SQL text is unchanged).
+    const row = await tx.selectClaimableLaneHead<WriteRequest>({ hostId, worktreeId, run, seenSequence, nonce: consumerIdentity().nonce,
+      priority: foregroundPriorityOverride(), ...fenceOpts(tx) });
     if (!row) return null;
     const token = randomUUID();
-    const [claimed] = await tx.executeRaw<WriteRequest & { seen_sequence: string }>(`UPDATE persistence_requests SET state='running',
-      execution_token=$2::uuid,claim_expires_at=now()+($3::double precision*interval '1 millisecond'),
-      updated_at=now(),blocked_reason=NULL,claim_phase=$4::text::jsonb WHERE id=$1::uuid RETURNING *,(SELECT max(sequence) FROM persistence_requests)::text AS seen_sequence`,
-    [row.id, token, leaseMs, claimPhaseStamp(startClaimPhase(), token)]);
+    const laneFence = fenceOpts(tx);
+    const claimed = await tx.stampLaneHeadClaim<WriteRequest & { seen_sequence: string }>({ id: row.id, token, leaseMs, phaseJson: claimPhaseStamp(startClaimPhase(), token), ...laneFence });
+    if (claimed) bindClaimFence(token, laneFence.fence ?? null);
     return claimed ? { ...claimed, previous_claim_phase: row.claim_phase } : claimed;
   });
 }
@@ -916,12 +880,8 @@ export async function prepareRecoveries(engine: BrainEngine, members: { row: Wri
   await transaction(async tx => {
     const [, counters] = await pipelined(tx, [() => declareDurablePersistence(tx), () => lockCounters(tx, ['brain', `worktree:${worktree}`])]) as [unknown, Counter[]];
     for (const c of counters) if (Number(c.recovery_bytes) + total > (c.key === 'brain' ? limits.brainRecoveryBytes : limits.worktreeRecoveryBytes)) throw capacityError('recovery bytes currently reserved by other requests');
-    const recorded = await tx.executeRaw(`WITH recorded AS (UPDATE persistence_requests r SET recovery=t.record,recovery_bytes=t.bytes,updated_at=now()
-        FROM jsonb_to_recordset($1::text::jsonb) AS t(id uuid,token uuid,record jsonb,bytes bigint)
-        WHERE r.id=t.id AND r.execution_token=t.token AND r.state='running' AND r.recovery IS NULL RETURNING r.id),
-      reserved AS (UPDATE persistence_counters SET recovery_bytes=recovery_bytes+$2 WHERE key=ANY($3::text[]) AND (SELECT count(*) FROM recorded)=$4)
-      SELECT id FROM recorded`, [JSON.stringify(members.map(member => ({ id: member.row.id, token: member.row.execution_token, record: member.record, bytes: member.bytes }))),
-      total, counters.map(c => c.key), members.length]);
+    const recorded = await (await tx.groupPublishStore()).recordRecoveries(members.map(member => ({ id: member.row.id, token: member.row.execution_token!, record: member.record, bytes: member.bytes })),
+      total, counters.map(c => c.key), claimBatchFenceOpts(tx, members.map(member => member.row.execution_token)));
     if (recorded.length !== members.length) throw opError('write_claim_lost', 'A grouped write claim changed before its recovery was recorded.',
       'Another owner pass holds one of the grouped requests; the group publishes nothing and its members publish one at a time.');
   });
@@ -938,23 +898,17 @@ export async function clearResolvedRecoveries(engine: BrainEngine, rows: WriteRe
     await declareDurablePersistence(tx);
     const keys = ['brain', ...(worktree ? [`worktree:${worktree}`] : [])];
     await lockCounters(tx, keys);
-    return tx.executeRaw<{ id: string }>(`WITH locked AS (SELECT r.id,r.recovery_bytes FROM persistence_requests r
-        JOIN jsonb_to_recordset($1::text::jsonb) AS t(id uuid,record jsonb) ON t.id=r.id
-        WHERE r.recovery=t.record AND r.worktree_id IS NOT DISTINCT FROM $3::uuid AND r.state IN ('committed','conflict','failed','cancelled') FOR UPDATE OF r),
-      released AS (UPDATE persistence_counters SET recovery_bytes=recovery_bytes-(SELECT COALESCE(SUM(recovery_bytes),0) FROM locked) WHERE key=ANY($2::text[]))
-      UPDATE persistence_requests r SET recovery=NULL,recovery_bytes=0,blocked_reason=NULL FROM locked WHERE r.id=locked.id RETURNING r.id`,
-    [JSON.stringify(resolved.map(row => ({ id: row.id, record: row.recovery }))), keys, worktree]);
-  })).map(row => row.id));
+    return (await tx.groupPublishStore()).clearRecoveries(resolved.map(row => ({ id: row.id, record: row.recovery })), keys, worktree, fenceOpts(tx));
+  })));
   for (const row of resolved) if (!cleared.has(row.id)) await clearResolvedRecovery(engine, row.id);
 }
 
 /** #6007: claims again a request this owner pass released to the queue itself, while it still holds the worktree's native lock; never before its backoff (LPH b). */
 export async function reclaimReleasedWrite(engine: BrainEngine, id: string, leaseMs = 30_000): Promise<WriteRequest | null> {
   const token = randomUUID();
-  const [claimed] = await engine.executeRawDirect<WriteRequest>(`UPDATE persistence_requests SET state='running',execution_token=$2::uuid,
-    claim_expires_at=now()+($3::double precision*interval '1 millisecond'),updated_at=now(),blocked_reason=NULL,claim_phase=$4::text::jsonb
-    WHERE id=$1::uuid AND state='queued' AND recovery IS NULL AND ${BACKOFF_ELAPSED('persistence_requests')} AND ${PERSISTENCE_PROTOCOL_PREDICATE} RETURNING *`,
-  [id, token, leaseMs, claimPhaseStamp(startClaimPhase(), token)]);
+  const reclaimFence = fenceOpts(engine);
+  const claimed = await engine.reclaimReleasedWrite<WriteRequest>({ id, token, leaseMs, phaseJson: claimPhaseStamp(startClaimPhase(), token), ...reclaimFence });
+  if (claimed) bindClaimFence(token, reclaimFence.fence ?? null);
   return claimed ?? null;
 }
 

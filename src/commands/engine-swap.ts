@@ -68,6 +68,7 @@ export function renderPlanText(p: SwapPlan): string {
     `Free disk at ${p.disk.path || '(unknown)'}: ${p.disk.free_bytes === null ? 'unknown' : `${(p.disk.free_bytes / 2 ** 30).toFixed(1)} GiB`}`,
     `Capability report: ${p.deferred.capability_report}`,
     `Expected write pause: ${p.deferred.expected_write_pause}`,
+    ...(p.managed_known_losses ?? []).map(loss => `Managed mode on a multi-user Rust brain, known loss: ${loss}`),
     p.reason ? `A run would refuse with engine_swap_refused (${p.reason}): ${SWAP_RECOVERY[p.reason].blocker}` : 'READY is evidence, not permission: the swap needs its own approval.',
     'Nothing was written.',
   ];
@@ -111,6 +112,9 @@ export interface EngineSwapCliDeps extends Pick<SwapPlanInputs, 'readShadowStatu
   home?: string;
   /** Directory whose file system the plan reports free space for (default: home). */
   dataDir?: string;
+  /** Reads the free bytes of the file system holding a path (default: statfs). The disk is shared, so two reads differ
+   * whenever anything else writes; a caller that compares two plans byte for byte passes a fixed reader. */
+  freeBytes?: (path: string) => number | null;
   /** Opens the brain without migrating it (default: the configured engine). */
   openEngine?: () => Promise<BrainEngine>;
   /** Resolves the selected brain id (default: resolveBrainId, which reads --brain, GBRAIN_BRAIN_ID and .gbrain-mount). */
@@ -162,13 +166,14 @@ export async function runEngineSwap(args: readonly string[], deps: EngineSwapCli
     const dataDir = deps.dataDir ?? home;
     // The destination is read from the destination, never from `engine`; with the switch off nothing is read at all.
     const multiuser = rustMultiuserFromEnv(deps.env);
-    const destination = multiuser ? { multiuser, expectedBrainId: brainId, destination: await resolveSwapDestination(brainId, deps.resolveDestination) } : undefined;
+    // With the switch off, `{ multiuser: false }` carries only the switch (no evidence counts; managed_storage reads it).
+    const destination = multiuser ? { multiuser, expectedBrainId: brainId, destination: await resolveSwapDestination(brainId, deps.resolveDestination) } : { multiuser: false };
     const plan = await planEngineSwap(engine, {
       readShadowStatus: deps.readShadowStatus, now: deps.now,
       destination,
       envNames: ENGINE_SELECTING_ENV.filter(v => (env[v] ?? '') !== ''),
       services: home ? serviceDefinitions(home) : [],
-      disk: { path: dataDir, free_bytes: dataDir ? freeBytes(dataDir) : null },
+      disk: { path: dataDir, free_bytes: dataDir ? (deps.freeBytes ?? freeBytes)(dataDir) : null },
     });
     out(parsed.json ? JSON.stringify(plan, null, 2) : renderPlanText(plan));
     return 0;

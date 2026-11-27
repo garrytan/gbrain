@@ -459,6 +459,7 @@ fn page_take(token: &str) -> PageLeaseTake {
         holder_host: "h".into(),
         acquisition_token: token.into(),
         ttl_minutes: 10.0,
+        fence: None,
     }
 }
 
@@ -466,6 +467,7 @@ fn page_holder(token: &str) -> PageLeaseHolder {
     PageLeaseHolder {
         acquisition_token: token.into(),
         ttl_minutes: Some(10.0),
+        fence: None,
     }
 }
 
@@ -716,4 +718,58 @@ fn g7_on_a_plain_store_the_sweeps_are_what_they_always_were() {
     assert_eq!(b.store.kill_timed_out_jobs().unwrap().len(), 1);
     assert_eq!(b.store.get_job(id).unwrap().unwrap()["status"], "dead");
     assert!(b.lease_records().is_empty());
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Lease-fence follow-up, family 7 (I-5, host fence table): the page embedding lease carries the host fence. A host
+// whose lease was taken over can no longer take, renew or release a page embedding lease: each is refused at commit
+// with `lease_lost` and changes nothing.
+
+fn fenced<T: serde::de::DeserializeOwned>(mut value: Value, fence: &LeaseToken) -> T {
+    value["fence"] = serde_json::to_value(fence).unwrap();
+    serde_json::from_value(value).unwrap()
+}
+
+fn page_take_json(token: &str) -> Value {
+    json!({ "holderPid": 7, "holderHost": "h", "acquisitionToken": token, "ttlMinutes": 10.0 })
+}
+
+fn page_holder_json(token: &str) -> Value {
+    json!({ "acquisitionToken": token, "ttlMinutes": 10.0 })
+}
+
+#[test]
+fn lf7_a_stale_host_cannot_take_renew_or_release_a_page_embedding_lease() {
+    let b = brain("lf7-embed", true);
+    assert!(b.store.multiuser(), "multi-user mode is on");
+    let a = b.lease("consumer:h", "a");
+    assert!(
+        b.store
+            .take_page_embedding_lease("embed-page:7", &fenced(page_take_json(T1), &a))
+            .unwrap()
+    );
+    let new = b.take_over("consumer:h", &a);
+    let before = b.dump();
+    let err = b
+        .store
+        .renew_page_embedding_lease("embed-page:7", &fenced(page_holder_json(T1), &a))
+        .unwrap_err();
+    refused(&err, "epoch_moved");
+    let err = b
+        .store
+        .release_page_embedding_lease("embed-page:7", &fenced(page_holder_json(T1), &a))
+        .unwrap_err();
+    refused(&err, "epoch_moved");
+    let err = b
+        .store
+        .take_page_embedding_lease("embed-page:8", &fenced(page_take_json(T2), &a))
+        .unwrap_err();
+    refused(&err, "epoch_moved");
+    assert_eq!(b.dump(), before, "a refused lease write changed the brain");
+    // The holder of the new epoch works as before.
+    assert!(
+        b.store
+            .renew_page_embedding_lease("embed-page:7", &fenced(page_holder_json(T1), &new))
+            .unwrap()
+    );
 }

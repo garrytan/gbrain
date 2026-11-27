@@ -10,6 +10,9 @@
  */
 import type { BrainEngine } from '../../engine.ts';
 import { storeCall, type StoreMember } from './common.ts';
+import { managedServed } from './managed-hold.ts';
+import type { RustEngine } from '../../rust-engine.ts';
+import type { StoreBrain } from '../store.ts';
 import { readPersistenceBrainId } from './persistence-identity.ts';
 import type { GitPushHoldRow, OrphanBindingRow, OwnerBindingRow, StalledCatchupRow } from '../../engine-sql/doctor-persistence.ts';
 
@@ -58,9 +61,14 @@ export const readCounterDrift: Member<'readCounterDrift'> = async (brain, clampe
 export const readPublicationRefusals: Member<'readPublicationRefusals'> = async brain =>
   await storeCall({ member: 'readPublicationRefusals' }, () => brain.readPublicationRefusals()) as Awaited<ReturnType<BrainEngine['readPublicationRefusals']>>;
 
-/** The store records no worktree, so a running claim on one has no owning host; `hostId` selects nothing more. */
-export const listRunningClaimOwners: Member<'listRunningClaimOwners'> = async brain =>
-  await storeCall({ member: 'listRunningClaimOwners' }, () => brain.listRunningClaimOwners()) as Awaited<ReturnType<BrainEngine['listRunningClaimOwners']>>;
+/**
+ * A running claim on a worktree is judged by the host that owns the worktree (its record); a claim on none is every host's.
+ * While the managed hold is on (store-members/managed-hold.ts) the list answers as it did before: only the claims on no
+ * worktree, since a user's Rust brain holds no managed worktree request.
+ */
+export const listRunningClaimOwners = async function (this: unknown, brain: StoreBrain, hostId: string): ReturnType<Member<'listRunningClaimOwners'>> {
+  return await storeCall({ member: 'listRunningClaimOwners' }, () => brain.listRunningClaimOwners(managedServed(this) ? hostId : null)) as Awaited<ReturnType<BrainEngine['listRunningClaimOwners']>>;
+};
 
 export const listLocalEditAdoptions: Member<'listLocalEditAdoptions'> = async brain =>
   await storeCall({ member: 'listLocalEditAdoptions' }, () => brain.listLocalEditAdoptions()) as Awaited<ReturnType<BrainEngine['listLocalEditAdoptions']>>;
@@ -144,7 +152,11 @@ export const listStaleEmbeddingEffects: Member<'listStaleEmbeddingEffects'> = (b
 export const listSourceBindingsForMovement: Member<'listSourceBindingsForMovement'> = async (brain, sourceIds) =>
   await storeCall({ member: 'listSourceBindingsForMovement' }, () => brain.movementBindingRows(sourceIds)) as Awaited<ReturnType<BrainEngine['listSourceBindingsForMovement']>>;
 export const listConsumerOwners: Member<'listConsumerOwners'> = async () => [];
-export const listStuckWorktreeRefreshes: Member<'listStuckWorktreeRefreshes'> = async () => [];
+// A brain that does not serve managed mode (a user's, while the hold is on) has no refresh row: none is stuck.
+export const listStuckWorktreeRefreshes = async function listStuckWorktreeRefreshes(this: RustEngine, brain: StoreBrain, minutes: number): ReturnType<Member<'listStuckWorktreeRefreshes'>> {
+  if (!managedServed(this)) return [];
+  return storeCall({ member: 'listStuckWorktreeRefreshes' }, () => brain.refreshRows({ kind: 'stuck', minutes })) as ReturnType<Member<'listStuckWorktreeRefreshes'>>;
+};
 /**
  * The request ids of the page and fact purges the store's `page_purges` (`F 0x0C`) and `fact_purges` (`F 0x0F`) ledgers
  * hold. The store keeps no `take_purges` row, so that arm adds nothing.

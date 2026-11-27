@@ -4428,9 +4428,9 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
    * expiry out when the row still carries `acquisitionToken`, false when the lease was lost; a holder renews inside its
    * install transaction. Release: delete this holder's row and every expired `embed-page:` row. Database clock.
    */
-  takePageEmbeddingLease(leaseId: string, opts: { holderPid: number; holderHost: string; acquisitionToken: string; ttlMinutes: number }): Promise<boolean>;
-  renewPageEmbeddingLease(leaseId: string, opts: { acquisitionToken: string; ttlMinutes: number }): Promise<boolean>;
-  releasePageEmbeddingLease(leaseId: string, opts: { acquisitionToken: string }): Promise<void>;
+  takePageEmbeddingLease(leaseId: string, opts: { holderPid: number; holderHost: string; acquisitionToken: string; ttlMinutes: number } & FenceOpts): Promise<boolean>;
+  renewPageEmbeddingLease(leaseId: string, opts: { acquisitionToken: string; ttlMinutes: number } & FenceOpts): Promise<boolean>;
+  releasePageEmbeddingLease(leaseId: string, opts: { acquisitionToken: string } & FenceOpts): Promise<void>;
   /** The chunk indexes of a page's live rows with no vector in `column` (engine-sql/page-spend.ts; `embedStalePages`). */
   listVectorlessChunkIndexes(pageId: number, column: string): Promise<number[]>;
 
