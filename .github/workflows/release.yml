@@ -88,7 +88,15 @@ jobs:
           # can repair it.
           assets="$(gh release view "v$version" --repo "$GITHUB_REPOSITORY" \
             --json assets --jq '[.assets[].name] | sort | join(",")' 2>/dev/null || true)"
-          if [ "$assets" = "gbrain-darwin-arm64,gbrain-engine-rust-darwin-arm64.node,gbrain-engine-rust-linux-x64-glibc.node,gbrain-engine-rust.sha256.json,gbrain-linux-x64,gbrain-skill-resolver.mjs,gbrain-skill-resolver.mjs.sha256" ]; then
+          # A subset check: later jobs may attach more assets (gbrain-eval-gates.pin.json,
+          # .github/workflows/eval-gates-pin.yml), and an extra asset must not read as incomplete.
+          expected="gbrain-darwin-arm64,gbrain-engine-rust-darwin-arm64.node,gbrain-engine-rust-linux-x64-glibc.node,gbrain-engine-rust.sha256.json,gbrain-linux-x64,gbrain-skill-resolver.mjs,gbrain-skill-resolver.mjs.sha256"
+          complete=true
+          IFS=, read -ra names <<< "$expected"
+          for name in "${names[@]}"; do
+            case ",$assets," in *",$name,"*) ;; *) complete=false ;; esac
+          done
+          if [ "$complete" = "true" ]; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
             echo "Release v$version already published with all assets — nothing to do."
           else
@@ -519,8 +527,9 @@ jobs:
   # way a user does (`gbrain engine install rust`: download, SHA-256 and attestation checks), then
   # opens a new Rust brain with it and no GBRAIN_RUST_ENGINE_ADDON. It runs after the release is up,
   # so a broken addon turns this run red but does not unpublish the release; stable promotion is
-  # gated separately (promote-stable.yml). The install reads attestations from the unauthenticated
-  # GitHub API, so it retries a rate-limited read.
+  # gated separately (promote-stable.yml). The install reads attestations from the GitHub API with
+  # the job's read-only token (GH_TOKEN), because the keyless limit of 60 calls an hour is shared by
+  # every job on a runner's IP address; it still retries a failed read.
   rust-addon-smoke:
     needs: [version, ci-gate, release]
     if: needs.version.outputs.exists == 'false' && needs.ci-gate.outputs.publish == 'true' && !inputs.addon_dry_run
@@ -536,6 +545,7 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: read
+      attestations: read
     steps:
       - name: Install the published addon with the published executable and open a Rust brain
         shell: bash

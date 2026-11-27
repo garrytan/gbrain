@@ -340,6 +340,67 @@ export async function listNameVariantCandidates(exec: LegacyUnscopedRead, source
   return exec.executeRaw<NameVariantCandidateRow>(text, params);
 }
 
+/**
+ * listNameVariantCandidates under the caller's page policy: with `excludePrivate`, a page the caller may not read
+ * (`privatePagesFilterForCaller`) is never a candidate. Most probe hits first, then the shortest title, then slug in
+ * byte order, at most `limit` (rank_entities' possible duplicates for a remote caller).
+ */
+export async function listVisibleNameVariantCandidates(exec: LegacyUnscopedRead, sourceId: string, q: NameVariantCandidateQuery,
+  opts: { excludePrivate?: boolean } = {}): Promise<NameVariantCandidateRow[]> {
+  const limit = Math.max(0, Math.floor(q.limit));
+  const priv = opts.excludePrivate ? sqlFragment` AND ${trustedSql(privatePagesFilterForCaller('pages'))}` : sqlFragment``;
+  const { text, params } = renderFragment(sqlFragment`SELECT slug, title, type, frontmatter,
+              (SELECT count(*)::int FROM unnest(${[...q.probes]}::text[]) w WHERE pages.title ILIKE w OR pages.slug ILIKE w) AS probe_hits
+         FROM pages
+        WHERE deleted_at IS NULL AND source_id = ${sourceId}
+          AND (type = ANY(${[...q.types]}::text[]) OR slug LIKE ANY(${[...q.slugPatterns]}::text[]))
+          AND (title ILIKE ANY(${[...q.probes]}::text[]) OR slug ILIKE ANY(${[...q.probes]}::text[]))${priv}
+        ORDER BY probe_hits DESC, length(title), slug COLLATE "C"
+        LIMIT ${limit}`);
+  return exec.executeRaw<NameVariantCandidateRow>(text, params);
+}
+
+/** One name-variant candidate as an entity-card row (`ENTITY_CARD_COLUMNS_SQL`) with its probe hits. */
+export interface NameVariantCardCandidateRow extends EntityCardRow { probe_hits: number }
+
+/**
+ * listVisibleNameVariantCandidates as entity-card rows (the entity card's name-variant arm, verbs/entity-variants.ts):
+ * the same candidates under the same page policy, with the card columns, most probe hits first, then the shortest
+ * title, then by slug, at most `limit`.
+ */
+export async function listNameVariantCardCandidates(exec: LegacyUnscopedRead, sourceId: string, q: NameVariantCandidateQuery,
+  opts: { excludePrivate?: boolean } = {}): Promise<NameVariantCardCandidateRow[]> {
+  const limit = Math.max(0, Math.floor(q.limit));
+  const priv = opts.excludePrivate ? sqlFragment` AND ${trustedSql(privatePagesFilterForCaller('pages'))}` : sqlFragment``;
+  const { text, params } = renderFragment(sqlFragment`SELECT ${trustedSql(ENTITY_CARD_COLUMNS_SQL)},
+                (SELECT count(*)::int FROM unnest(${[...q.probes]}::text[]) w WHERE pages.title ILIKE w OR pages.slug ILIKE w) AS probe_hits
+           FROM pages
+          WHERE deleted_at IS NULL AND source_id = ${sourceId}
+            AND (type = ANY(${[...q.types]}::text[]) OR slug LIKE ANY(${[...q.slugPatterns]}::text[]))
+            AND (title ILIKE ANY(${[...q.probes]}::text[]) OR slug ILIKE ANY(${[...q.probes]}::text[]))${priv}
+          ORDER BY probe_hits DESC, length(title), slug COLLATE "C"
+          LIMIT ${limit}`);
+  return exec.executeRaw<NameVariantCardCandidateRow>(text, params);
+}
+
+export interface VariantPageRow { slug: string; title: string | null; type: string | null; frontmatter: Record<string, unknown> | null }
+
+/**
+ * The live pages of the source at `slugs`, in `slugs` order (a repeated slug reads once per mention), as the
+ * name-variant rows (slug, title, type, frontmatter); with `excludePrivate`, only pages the caller may read
+ * (`privatePagesFilterForCaller`).
+ */
+export async function readVisibleVariantPages(exec: LegacyUnscopedRead, sourceId: string, slugs: readonly string[],
+  opts: { excludePrivate?: boolean } = {}): Promise<VariantPageRow[]> {
+  if (slugs.length === 0) return [];
+  const priv = opts.excludePrivate ? sqlFragment` AND ${trustedSql(privatePagesFilterForCaller('pages'))}` : sqlFragment``;
+  const { text, params } = renderFragment(sqlFragment`SELECT pages.slug, pages.title, pages.type, pages.frontmatter
+         FROM unnest(${[...slugs]}::text[]) WITH ORDINALITY AS wanted(slug, n)
+         JOIN pages ON pages.source_id = ${sourceId} AND pages.slug = wanted.slug AND pages.deleted_at IS NULL${priv}
+        ORDER BY wanted.n`);
+  return exec.executeRaw<VariantPageRow>(text, params);
+}
+
 export interface InboundLinkerCountRow { source_id: string; slug: string; n: number }
 
 /**
@@ -439,6 +500,45 @@ export async function readEntityAnchoredPages(exec: TimedRawRead, sourceId: stri
 export async function readPageTitlesById(exec: TimedRawRead, ids: readonly number[]): Promise<Array<{ id: number; title: string }>> {
   const rows = await exec.executeRaw<{ id: number; title: string }>('SELECT id, title FROM pages WHERE id = ANY($1::int[])', [[...ids]]);
   return rows.map(r => ({ id: Number(r.id), title: r.title }));
+}
+
+/**
+ * The stored `chunker_version` of the page row with id `pageId`, live, soft-deleted or segmented, as
+ * `{ chunker_version }`; null when no row has the id (search/safe-chunks.ts provenanceDistrusted: a negative version
+ * is a body write that removed a protected fence).
+ */
+export async function readPageChunkerVersion(exec: TimedRawRead, pageId: number): Promise<{ chunker_version: number | null } | null> {
+  const [row] = await exec.executeRaw<{ chunker_version: number | null }>('SELECT chunker_version FROM pages WHERE id = $1', [pageId]);
+  return row ? { chunker_version: row.chunker_version === null ? null : Number(row.chunker_version) } : null;
+}
+
+/**
+ * Whether the image page at `slug` of the source (any row, live or soft-deleted) carries chunks sealed past the
+ * safe-chunk fence, as `{ has_visual }` (whether any chunk holds an image vector); null when no row passes the fence
+ * (import-file.ts importImageFile: an unchanged image whose index is complete is skipped). The fence test is written
+ * out (`safeChunksFilter('p')`, SAFE_FENCE_CHUNKER_VERSION 4); the caller raw-SQL pins rebuild it from the builder.
+ */
+export async function readImageSealProbe(exec: TimedRawRead, sourceId: string, slug: string): Promise<{ has_visual: boolean } | null> {
+  const [row] = await exec.executeRaw<{ has_visual: boolean }>(
+    `SELECT EXISTS (SELECT 1 FROM content_chunks c WHERE c.page_id = p.id AND c.embedding_image IS NOT NULL) AS has_visual
+         FROM pages p WHERE p.source_id = $1 AND p.slug = $2 AND p.chunker_version >= 4`,
+    [sourceId, slug]);
+  return row ? { has_visual: row.has_visual === true } : null;
+}
+
+/**
+ * Up to ENTITY_ANCHORED_LIMIT live pages of the source whose slug starts with `prefix` (taken literally: `\`, `%` and
+ * `_` are escaped for LIKE), no question, synthesis or pinned-question page, newest first by
+ * `COALESCE(effective_date, updated_at)`, then by id (search/entity-anchor.ts prefixAnchoredPages). The pinned-question
+ * marker and the limit are written out, as in readEntityAnchoredPages; the caller raw-SQL pins rebuild both.
+ */
+export async function readPrefixAnchoredPages(exec: TimedRawRead, sourceId: string, prefix: string): Promise<Array<{ id: number; slug: string }>> {
+  const rows = await exec.executeRaw<{ id: number; slug: string }>(
+    `SELECT id, slug FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND slug LIKE $2
+       AND type NOT IN ('question', 'synthesis') AND NOT (frontmatter ? 'pinned_question')
+     ORDER BY COALESCE(effective_date, updated_at) DESC, id DESC LIMIT 10`,
+    [sourceId, `${prefix.replace(/[\\%_]/g, '\\$&')}%`]);
+  return rows.map(r => ({ id: Number(r.id), slug: r.slug }));
 }
 
 /** One page a text-mention probe lists; `date` is `COALESCE(effective_date, updated_at)`. */

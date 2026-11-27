@@ -15,11 +15,10 @@ import { privatePagesFilterFragment, privateProvenanceFilterFragment, remoteProv
 
 /** file, enclosing top-level declaration, fragment: why it stays plain. */
 const PLAIN: Record<string, string> = {
+  'src/core/engine-sql/belief-state.ts readBeliefStateRows privatePagesFilterFragment': 'the ledger and purge read the stored world visibility, not a caller view',
   'src/commands/sources-add-next.ts noGrantFloorNext privatePagesFilterFragment': 'local CLI hint after sources add; never a remote read',
   'src/core/ai/decide/egress.ts visiblePages privatePagesFilterFragment': 'egress policy: which pages may leave the machine, judged as world',
   'src/core/belief/backfill.ts preparePage privatePagesFilterFragment': 'maintenance: stamps the ledger visibility of each page',
-  'src/core/belief/purge.ts registerVersionCarriers privatePagesFilterFragment': 'maintenance: classifies the purged versions',
-  'src/core/engine-sql/belief-state.ts readBeliefStateRows privatePagesFilterFragment': 'the ledger and purge read the stored world visibility, not a caller view',
   'src/core/rust-engine/store-members/belief-ledger.ts readBeliefStateRows privatePagesFilterFragment': 'the Rust ledger state read: the stored world visibility, not a caller view',
   'src/core/engine-sql/dream-cycle.ts listDreamAtomPages privatePagesFilterFragment': 'dream cycle: marks a concept private when an input is (moved from cycle/synthesize-concepts.ts runPhaseSynthesizeConcepts)',
   'src/core/engine-sql/link-temporal.ts readLinkRelationshipEvidence privatePagesFilterFragment': 'write-side: records whether a link origin is public',
@@ -30,15 +29,21 @@ const PLAIN: Record<string, string> = {
   'src/core/rust-engine/store-members/facts-held.ts (module) privatePagesFilterFragment': 'write-side: the Rust member of the held-fact move plan read names the no-caller page policy it serves',
   'src/core/rust-engine/store-members/facts-held.ts readHeldRowVisibility privatePagesFilterFragment': 'write-side: whether the target page is world (the held-fact move plan read, on the Rust engine)',
   'src/core/rust-engine/store-members/dream-cycle.ts atomPolicy privatePagesFilterFragment': 'dream cycle: marks a concept private when an input is (the Rust member of listDreamAtomPages)',
-  'src/core/persistence/change-reason.ts pageWorldVisible privatePagesFilterFragment': 'write-side: whether a change reason may be published',
-  'src/core/persistence/concept-rebuild.ts ACCESS_SQL privatePagesFilterFragment': 'maintenance: compares a hidden concept\'s access with its rebuild\'s, to refuse a wider one',
-  'src/core/persistence/concept-rebuild.ts readHeldConceptRows privatePagesFilterFragment': 'maintenance: classifies a held concept\'s members as private for the purge preview; callers get a count or the local CLI',
+  'src/core/engine-sql/page-visibility.ts readPageWorldVisible privatePagesFilterFragment': 'write-side: whether a change reason may be published (persistence/change-reason.ts), judged as world',
+  'src/core/rust-engine/store-members/page-visibility.ts readPageWorldVisible privatePagesFilterFragment': 'write-side: the Rust store form of the world-visibility read a change reason is published under',
+  'src/core/engine-sql/concept-rebuild.ts ACCESS_OPEN_SQL privatePagesFilterFragment': 'maintenance: compares a hidden concept\'s access with its rebuild\'s, to refuse a wider one',
+  'src/core/engine-sql/concept-rebuild.ts readHeldConceptRows privatePagesFilterFragment': 'maintenance: classifies a held concept\'s members as private for the purge preview; callers get a count or the local CLI',
+  'src/core/rust-engine/store-members/concept-rebuild.ts readHeldConceptRows privatePagesFilterFragment': 'maintenance: the Rust store\'s policy for that same member classification, read off the same fragment',
   'src/core/engine-sql/repair-page-scans.ts listOriginClaimants privatePagesFilterFragment': 'maintenance: classifies twin pages as private',
   'src/core/persistence/rows-behind.ts scanRowsBehind privatePagesFilterFragment': 'maintenance: lineage privacy of rows behind the projection',
   'src/core/rust-engine/store-members/trust-tier-reads.ts listValidTimeIdentities privatePagesFilterFragment': 'the Rust store derives the world flag of the page under the same policy; the read itself is gated by privatePagesFilterForCaller',
   'src/core/rust-engine/store-members/entity-identities.ts listRestrictedIdentityMembers privatePagesFilterFragment': 'write-side: the Rust store judges which duplicate-decision members may be written into the home repository under the same world policy as the SQL member; local dedupe only',
   'src/core/rust-engine/store-members/repair-page-scans.ts listOriginClaimants privatePagesFilterFragment': 'maintenance: the Rust store classifies twin pages as private under the same policy',
   'src/core/rust-engine/store-members/link-temporal.ts originPolicy privatePagesFilterFragment': 'write-side: the Rust store records whether a link origin is public under the same policy',
+  'src/core/engine-sql/belief-purge-ledger.ts listPurgeCarrierVersions privatePagesFilterFragment': 'maintenance: classifies the purged versions of a fact purge, moved out of belief/purge.ts registerVersionCarriers, which classified the purged versions',
+  'src/core/rust-engine/store-members/belief-purge-ledger.ts (module) privatePagesFilterFragment': 'maintenance: the Rust member of the purge version classification names the no-caller page policy it serves',
+  'src/core/rust-engine/store-members/belief-purge-ledger.ts listPurgeCarrierVersions privatePagesFilterFragment': 'maintenance: classifies the purged versions of a fact purge on the Rust engine, under the same no-caller page policy',
+  'src/core/rust-engine/store-members/private-provenance.ts storePageTextPolicy privatePagesFilterFragment': 'classification: renders the remote read floor text so the store judges it as a record with no readers; the text is only compared, and no read uses this call',
 };
 
 const DECL = /^(?:export )?(?:async )?function\*?\s+(\w+)|^(?:export )?(?:const|let)\s+(\w+)\s*[=:]/;

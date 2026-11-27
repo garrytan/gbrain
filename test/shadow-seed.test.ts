@@ -21,6 +21,7 @@ import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { loadRustAddon, type RustAddon } from '../src/core/rust-engine/addon-loader.ts';
 import { detectAddonTarget } from '../src/core/rust-engine/addon-target.ts';
 import { openRustStore, type SeedPlan, type SeedRow } from '../src/core/rust-engine/store.ts';
+import { openRustEngine } from '../src/core/rust-engine.ts';
 import { runEngineShadow } from '../src/commands/engine-shadow.ts';
 import { buildProvisionalReport, renderProvisionalMarkdown } from '../src/shadow/report.ts';
 import {
@@ -29,7 +30,7 @@ import {
 import { countSeedGaps } from '../src/shadow/seed-gaps.ts';
 import { shadowBrainKey, shadowDirFor, writeShadowState, SHADOW_STATE_VERSION } from '../src/shadow/state.ts';
 import { withEnv } from './helpers/with-env.ts';
-import { expectSeedReadParity, fillSeedFixture, insertSeedFixtureJobs, primaryDigests, seedInto } from './helpers/shadow-seed-fixture.ts';
+import { expectSeedReadParity, fillSeedFixture, insertSeedFixtureJobs, primaryDigests, seedAllowRules, seedInto } from './helpers/shadow-seed-fixture.ts';
 
 const TARGET = detectAddonTarget();
 const BUILT = join(import.meta.dir, '..', 'rust', 'target', 'addon', `gbrain_engine.${TARGET ?? 'unsupported'}.node`);
@@ -84,6 +85,35 @@ describe('shadow seed from PGLite', () => {
     await expectSeedReadParity(primary, addon!, storePath);
   });
 
+  withAddon('a chronicle ledger row seeds with every column and its original times, as the primary reads it', async () => {
+    await fill();
+    const page = (await primary.getPage('people/alice-example', { sourceId: 'default' }))!;
+    await primary.executeRaw(`INSERT INTO chronicle_page_state
+      (source_id, page_id, content_hash, extractor_version, slug, state, reason, trigger, principal_kind, principal_id,
+       request_id, no_extract, attempts, next_attempt_at, cost_usd, unpriced, event_slugs, event_hashes, decided_at,
+       updated_at, campaign_id, attempt_cap_usd, max_attempts, pricing_policy, campaign_max_usd, cost_attempts,
+       judge_input_hash, judge_window_chars, judge_window_hash, judge_input_failures)
+      VALUES ('default', $1, 'hash-seeded', 2, 'people/alice-example', 'failed', 'judge_error', 'backfill', 'local_cli',
+       'writer-1', '6f9619ff-8b86-4d01-b42d-00cf4fc964ff', true, 2, '2026-11-20T12:00:00.123456Z', 0.0375, true,
+       ARRAY['events/a-example','events/b-example'], ARRAY['h1','h2'], '2026-11-19T08:00:00.123456Z',
+       '2026-11-19T09:30:00.654321Z', 'campaign-a', 0.50, 3, 'priced', 12.00, ARRAY[1,2], 'jh-1', 4000, 'jw-1', 1)`,
+    [Number(page.id)]);
+    const { record, storePath } = await seedHere(tempDir());
+    expect(record.relations.chronicle_page_state).toMatchObject({ imported: 1, skipped: 0, unmapped_columns: [] });
+    expect(record.unseeded_gap_rows.chronicle_page_state).toBeUndefined();
+    const key = { sourceId: 'default', pageId: Number(page.id), contentHash: 'hash-seeded', extractorVersion: 2 };
+    const rust = openRustEngine({ addon: addon!, databasePath: storePath });
+    await rust.connect({ engine: 'pglite', database_path: storePath } as never);
+    try {
+      const view = (r: unknown) => JSON.parse(JSON.stringify(r, (_k, v) => (typeof v === 'number' ? String(v) : v)));
+      const fromPrimary = await primary.readChronicleRow(key);
+      expect(fromPrimary).not.toBeNull();
+      expect(view(await rust.readChronicleRow(key))).toEqual(view(fromPrimary));
+    } finally {
+      await rust.disconnect();
+    }
+  });
+
   withAddon('the seed never writes to the primary', async () => {
     await fill();
     await insertSeedFixtureJobs(primary);
@@ -105,6 +135,17 @@ describe('shadow seed from PGLite', () => {
     expect(record.non_terminal_jobs).toBe(1);
     expect(record.losses.not_copied.find(n => n.table === 'minion_jobs')?.rows).toBe(2);
     expect(record.segmented_pages).toBe(0);
+  });
+
+  withAddon('the owner allow rules arrive on Rust with the same rows, ids and removed-rule receipts, and count as no gap', async () => {
+    addon ??= await loadRustAddon({ env: { GBRAIN_RUST_ENGINE_ADDON: BUILT } });
+    const out = await seedAllowRules(primary, addon, tempDir(), 'pglite');
+    expect(out.primary.length).toBe(2);
+    expect(out.primary[1]!.removed_at).not.toBeNull();
+    expect(out.rust).toEqual(out.primary);
+    expect(out.next).toBe(Math.max(...out.primary.map(r => r.id)) + 1);
+    expect(out.record.relations.trust_allow_rules?.imported).toBe(2);
+    expect(out.record.unseeded_gap_rows.trust_allow_rules ?? 0).toBe(0);
   });
 
   // Every logged member read appends to access_read_log, so a shadow copy of it would differ from the primary by design:

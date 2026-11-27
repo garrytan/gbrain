@@ -478,6 +478,126 @@ fn entity_anchored_pages_name_or_link_the_entity_newest_first() {
 }
 
 #[test]
+fn prefix_anchored_pages_read_the_newest_live_pages_under_a_literal_prefix() {
+    let dir = TempDir::new("cli-prefix-anchored");
+    let store = open(&dir);
+    store
+        .upsert_source(&SourceInput {
+            id: "other".into(),
+            ..Default::default()
+        })
+        .unwrap();
+    let page = |t: &str, day: u32, fm: Value| {
+        json!({"type": t, "title": "T", "compiled_truth": "body", "frontmatter": fm,
+            "effective_date": format!("2026-03-{day:02}T00:00:00.000Z"), "effective_date_source": "date"})
+    };
+    for day in 1..=12 {
+        put(
+            &store,
+            "default",
+            &format!("projects/widget/n{day:02}"),
+            page("note", day, json!({})),
+        );
+    }
+    put(
+        &store,
+        "default",
+        "projects/widget/q",
+        page("question", 20, json!({})),
+    );
+    put(
+        &store,
+        "default",
+        "projects/widget/s",
+        page("synthesis", 20, json!({})),
+    );
+    put(
+        &store,
+        "default",
+        "projects/widget/pinned",
+        page("note", 21, json!({"pinned_question": "q"})),
+    );
+    put(
+        &store,
+        "default",
+        "projects/widget/gone",
+        page("note", 22, json!({})),
+    );
+    store
+        .soft_delete_page("projects/widget/gone", Some("default"))
+        .unwrap();
+    put(
+        &store,
+        "default",
+        "projects/widget_x/lit",
+        page("note", 23, json!({})),
+    );
+    put(
+        &store,
+        "default",
+        "projects/widgetzx/like",
+        page("note", 24, json!({})),
+    );
+    put(
+        &store,
+        "other",
+        "projects/widget/elsewhere",
+        page("note", 25, json!({})),
+    );
+    let slugs = |prefix: &str| -> Vec<String> {
+        store
+            .read_prefix_anchored_pages("default", prefix)
+            .unwrap()
+            .into_iter()
+            .map(|p| p.slug)
+            .collect()
+    };
+    let widget: Vec<String> = (3..=12)
+        .rev()
+        .map(|d| format!("projects/widget/n{d:02}"))
+        .collect();
+    assert_eq!(slugs("projects/widget/"), widget);
+    // `_` is literal, as the escaped LIKE pattern reads it.
+    assert_eq!(slugs("projects/widget_"), ["projects/widget_x/lit"]);
+    assert!(slugs("projects/none/").is_empty());
+}
+
+#[test]
+fn page_chunker_version_and_image_seal_probe_read_one_page_record() {
+    let dir = TempDir::new("cli-chunker-version");
+    let store = open(&dir);
+    put(
+        &store,
+        "default",
+        "images/a.png",
+        json!({"type": "image", "title": "A", "compiled_truth": "caption", "frontmatter": {}}),
+    );
+    let id = store.read_page_titles_by_id(&[1]).unwrap()[0].id as i64;
+    let version = store.read_page_chunker_version(id).unwrap().unwrap();
+    // A put page is not sealed past the fence, so the seal probe answers no row.
+    assert!(version.chunker_version.unwrap_or(0) < 4);
+    assert!(
+        store
+            .read_image_seal_probe("default", "images/a.png")
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        store
+            .read_image_seal_probe("default", "images/none.png")
+            .unwrap()
+            .is_none()
+    );
+    assert!(store.read_page_chunker_version(999_999).unwrap().is_none());
+    assert!(store.read_page_chunker_version(0).unwrap().is_none());
+    assert!(
+        store
+            .read_page_chunker_version(i64::from(i32::MAX) + 1)
+            .is_err()
+    );
+}
+
+#[test]
 fn text_mention_pages_read_live_pages_at_the_slugs_in_the_sources() {
     let dir = TempDir::new("cli-text-mentions");
     let store = open(&dir);
@@ -724,4 +844,140 @@ fn inbound_linkers_count_each_linking_page_once() {
             .unwrap()
             .is_empty()
     );
+}
+
+#[test]
+fn visible_name_variants_skip_private_pages_under_the_policy() {
+    let dir = TempDir::new("cli-name-variants-private");
+    let store = seeded(&dir);
+    put(
+        &store,
+        "default",
+        "people/ada-private",
+        json!({"type": "person", "title": "Ada", "compiled_truth": "body", "frontmatter": {"visibility": "private"}}),
+    );
+    let world = PrivacyPolicy {
+        honor_aliases: true,
+        entity_privacy: true,
+        ..Default::default()
+    };
+    let candidates = |policy: Option<&PrivacyPolicy>| -> Vec<String> {
+        store
+            .list_visible_name_variant_candidates(
+                "default",
+                &NameVariantCandidateQuery {
+                    types: vec![],
+                    slug_patterns: vec!["people/%".into()],
+                    probes: vec!["%ada%".into()],
+                    limit: 10,
+                },
+                policy,
+            )
+            .unwrap()
+            .into_iter()
+            .map(|r| r.slug)
+            .collect()
+    };
+    assert!(candidates(None).contains(&"people/ada-private".to_string()));
+    assert!(!candidates(Some(&world)).contains(&"people/ada-private".to_string()));
+    assert_eq!(candidates(Some(&world)).len() + 1, candidates(None).len());
+
+    let wanted: Vec<String> = [
+        "people/ada-private",
+        "people/ada-2",
+        "people/missing",
+        "people/ada",
+        "people/ada-2",
+    ]
+    .iter()
+    .map(|s| s.to_string())
+    .collect();
+    let pages = |policy: Option<&PrivacyPolicy>| -> Vec<String> {
+        store
+            .read_visible_variant_pages("default", &wanted, policy)
+            .unwrap()
+            .into_iter()
+            .map(|r| r.slug)
+            .collect()
+    };
+    assert_eq!(
+        pages(None),
+        [
+            "people/ada-private",
+            "people/ada-2",
+            "people/ada",
+            "people/ada-2"
+        ]
+    );
+    assert_eq!(
+        pages(Some(&world)),
+        ["people/ada-2", "people/ada", "people/ada-2"]
+    );
+    let row = &store
+        .read_visible_variant_pages("default", &["people/ada".to_string()], None)
+        .unwrap()[0];
+    assert_eq!(
+        (row.title.as_str(), row.page_type.as_str()),
+        ("Ada", "person")
+    );
+    assert_eq!(row.frontmatter.get("identity"), Some(&json!("ada-1")));
+}
+
+#[test]
+fn name_variant_card_candidates_are_the_visible_candidates_as_card_rows() {
+    let dir = TempDir::new("cli-name-variant-cards");
+    let store = seeded(&dir);
+    put(
+        &store,
+        "default",
+        "people/ada-private",
+        json!({"type": "person", "title": "Ada", "compiled_truth": "secret body", "frontmatter": {"visibility": "private"}}),
+    );
+    let world = PrivacyPolicy {
+        honor_aliases: true,
+        entity_privacy: true,
+        ..Default::default()
+    };
+    let q = NameVariantCandidateQuery {
+        types: vec!["company".into()],
+        slug_patterns: vec!["people/%".into()],
+        probes: vec!["%ADA%".into(), "%founder%".into()],
+        limit: 10,
+    };
+    for policy in [None, Some(&world)] {
+        let cards = store
+            .list_name_variant_card_candidates("default", &q, policy)
+            .unwrap();
+        let plain = store
+            .list_visible_name_variant_candidates("default", &q, policy)
+            .unwrap();
+        let got: Vec<(&str, u64)> = cards
+            .iter()
+            .map(|r| (r.card.slug.as_str(), r.probe_hits))
+            .collect();
+        let want: Vec<(&str, u64)> = plain
+            .iter()
+            .map(|r| (r.slug.as_str(), r.probe_hits))
+            .collect();
+        assert_eq!(got, want);
+        assert_eq!(
+            cards.iter().any(|r| r.card.slug == "people/ada-private"),
+            policy.is_none()
+        );
+    }
+    let cards = store
+        .list_name_variant_card_candidates("default", &q, None)
+        .unwrap();
+    let ada = cards.iter().find(|r| r.card.slug == "people/ada").unwrap();
+    assert_eq!(
+        (ada.card.source_id.as_str(), ada.card.page_type.as_str()),
+        ("default", "person")
+    );
+    assert_eq!(ada.card.frontmatter.get("identity"), Some(&json!("ada-1")));
+    assert!(ada.card.compiled_truth.is_some());
+    assert_eq!(ada.card.last_retrieved_at, None);
+    let row = serde_json::to_value(ada).unwrap();
+    assert_eq!(row["probe_hits"], json!(1));
+    assert_eq!(row["slug"], json!("people/ada"));
+    assert_eq!(row["type"], json!("person"));
 }

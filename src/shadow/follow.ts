@@ -41,7 +41,10 @@ export interface FollowContext {
 /** Selector-targeted rows beyond this many become one relation item. */
 const MAX_TARGETS = 200;
 /** Primary-key columns by relation (seed plan order); every other copied relation is keyed by `id`. */
-const KEY_COLUMNS: Record<string, string[]> = { config: ['key'], synthesis_evidence: ['synthesis_page_id', 'take_page_id', 'take_row_num'] };
+const KEY_COLUMNS: Record<string, string[]> = {
+  config: ['key'], synthesis_evidence: ['synthesis_page_id', 'take_page_id', 'take_row_num'],
+  chronicle_page_state: ['source_id', 'page_id', 'content_hash', 'extractor_version'],
+};
 
 const isThenable = (value: unknown): value is Promise<unknown> => !!value && typeof (value as { then?: unknown }).then === 'function';
 const quote = (ident: string): string => `"${ident.replace(/"/g, '""')}"`;

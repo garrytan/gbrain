@@ -68,11 +68,11 @@ const quiet = { info() {}, warn() {}, error() {}, debug() {} };
 const page = (title: string, frontmatter: string[], body: string) => ['---', `title: ${title}`, 'type: note', ...frontmatter, '---', `# ${title}`, '', body].join('\n');
 const contextOf = (engine: object, extra: Record<string, unknown> = {}) =>
   ({ engine, config: { engine: 'pglite', embedding_disabled: true }, logger: quiet, dryRun: false, remote: false, sourceId: 'default', ...extra }) as unknown as OperationContext;
-// One engine per scenario that opens one (three), made up front so each scenario starts on an empty brain.
+// One engine per scenario that opens one (four), made up front so each scenario starts on an empty brain.
 const engines: PGLiteEngine[] = [];
 const unused: PGLiteEngine[] = [];
 beforeAll(async () => {
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0; i < 4; i++) {
     const engine = new PGLiteEngine();
     await engine.connect({});
     await engine.initSchema();
@@ -169,6 +169,25 @@ describe('the purge path calls only what the list names', () => {
     }
   }, 120000);
 
+  test('an automatic retention purge of an expired tombstone on a brain without managed persistence', async () => {
+    // The unmanaged expiry: the rebuild-held concept read, the expired-page reads of the purge transaction (the `only`
+    // filter's and the recheck's), then the engine purge.
+    const base = await freshEngine();
+    const ctx = contextOf(base);
+    try {
+      await operationsByName.put_page!.handler(ctx, { slug: 'notes/stale', content: page('stale', [], 'Stale.'), request_id: randomUUID() });
+      const snapshot = await base.readPageSnapshot('notes/stale', { sourceId: 'default' });
+      await operationsByName.delete_page!.handler(ctx, { slug: 'notes/stale', request_id: randomUUID(), expected_revision: snapshot?.revision });
+      await base.executeRaw("UPDATE pages SET deleted_at=now() - interval '100 hours' WHERE slug=$1", ['notes/stale']);
+      await disposePersistenceConsumer(base);
+      const result = await purgeDeletedPagesCoordinated(recording(base), 72, { automatic: true, only: () => true });
+      expect(result.slugs).toEqual(['notes/stale']);
+      await disposePersistenceConsumer(base);
+    } finally {
+      await base.disconnect();
+    }
+  }, 120000);
+
   test('an origin whose derived page could not be labelled: the parked, held purge', async () => {
     const base = await freshEngine();
     const ctx = contextOf(base);
@@ -230,7 +249,8 @@ describe('the purge path calls only what the list names', () => {
     expect(await purgePathStops({ kind: 'pglite' })).toEqual([]);
     expect(await purgePathStops({ kind: 'postgres' })).toEqual([]);
     const stops = await purgePathStops({ kind: 'rust' });
-    expect(stops.length).toBeGreaterThan(0);
+    // A delete_page purge has no stop left on main: every member it calls is served (the retention purge keeps the raw
+    // reads of its unmanaged expiry).
     for (const stop of stops) expect(PURGE_PATH).toContain(stop.entry);
     expect(stops.map(stop => stop.name)).toEqual(PURGE_PATH
       .filter(entry => entry.entry !== 'retention' && ('site' in entry ? entry.stop : entry.refuses || rustMemberCapability(entry.member) !== null))
@@ -242,6 +262,7 @@ describe('the purge path calls only what the list names', () => {
     const stops = (await purgePathStops({ kind: 'rust' })) as Array<{ name: string; owner: string; due?: string }>;
     expect(stops.filter(stop => stop.owner !== PURGE_OWNERS.ours && !stop.due).map(stop => stop.name)).toEqual([]);
     const error = await requirePurgePathServed({ kind: 'rust' }).then(() => null, (e: unknown) => e as { message: string; detail: string });
+    if (stops.length === 0) { expect(error).toBeNull(); return; }
     expect(error?.message).toContain(`which needs ${stops[0]!.name}: `);
     expect(error?.detail).toContain(`owner="${stops[0]!.owner}" due="${stops[0]!.due}"`);
   });

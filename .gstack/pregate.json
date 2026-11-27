@@ -84,6 +84,9 @@
     "scripts/postgres-arm-weights-postgres-only.json": [
       "test/scripts/postgres-unit-arms.test.ts"
     ],
+    "scripts/*-weights.json": [
+      "test/scripts/mine-shard-weights.test.ts"
+    ],
     "scripts/*-weights.metadata.json": [
       "test/scripts/mine-shard-weights.test.ts"
     ],

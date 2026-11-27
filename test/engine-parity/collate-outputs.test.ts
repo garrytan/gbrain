@@ -6,8 +6,7 @@
  *  - Contract: the unpriced-model check's sample pages, the unknown-reader check's sample page, traverseGraph's per-node
  *    links, findAnomalies' page_slugs, schema-pack detect's sample types and the write-failure summary's recovery
  *    blockers return the same order on every engine arm (PGLite always; Postgres with DATABASE_URL; the Rust arm with
- *    GBRAIN_TEST_RUST_ARM=1, where the raw-SQL reads stop on the typed raw_sql refusal and the store reads run):
- *    byte order, as PGLite and the Rust store sort.
+ *    GBRAIN_TEST_RUST_ARM=1): byte order, as PGLite and the Rust store sort.
  *  - Regression: `array_agg(DISTINCT ...)` and `jsonb_agg(DISTINCT ...)` sort their input by the database collation, so
  *    an en_US Postgres listed (and cut to three or five) other samples than PGLite; `min(source_id)` and `min(slug)` took
  *    each key from a different row, so the unknown-reader sample could name a page that does not exist; and the
@@ -15,8 +14,8 @@
  *  - Why existing coverage misses it: the cases used keys that sort the same in every locale, checked list lengths or
  *    sorted the lists first, and CI's Postgres runs in C.UTF-8. Every case here mixes `a-z`, `ab`, `a.b` and `a_b`; run
  *    it against an en_US Postgres to see it fail.
- *  - Seam: none. Pages, tags, links and segment derivations go through the engine writers; pages no writer stores as
- *    given (an unknown reader, an upper-case or `_` slug) and persistence rows are inserted with raw SQL.
+ *  - Seam: none. Pages (an unknown reader included), tags, links, segment derivations and persistence rows go through
+ *    the engine writers. putPage lowercases a slug, so the prefix case uses the lower-case MIXED_IDS.
  */
 import { describe, expect } from 'bun:test';
 import { randomUUID } from 'node:crypto';
@@ -36,20 +35,13 @@ const { parityTest } = parityArms(testBackends());
 /** Two source ids that sort differently by byte (`a-z` first) and under en_US (`ab` first). */
 const SOURCES = ['ab', 'a-z'];
 
+/** The MIXED_IDS that putPage stores as given (it lowercases `B`). */
+const STORED_IDS = MIXED_IDS.filter(id => id === id.toLowerCase());
+
 const note = (title: string) => ({ type: 'note' as const, title, compiled_truth: `body of ${title}`, timeline: '' });
 
 async function insertPage(engine: BrainEngine, sourceId: string, slug: string, extra: { type?: string; frontmatter?: Record<string, unknown> } = {}): Promise<void> {
   await engine.putPage(slug, { type: (extra.type ?? 'note') as never, title: slug, compiled_truth: 'body', timeline: '', frontmatter: extra.frontmatter ?? {} }, { sourceId });
-}
-
-/**
- * A page row written by harness SQL, for seeds no engine writer stores as given: a readable_by naming an unknown member,
- * or a slug with an upper-case letter or `_` (putPage normalizes those), so the Rust arm stops on its raw_sql refusal.
- */
-async function rawPage(engine: BrainEngine, sourceId: string, slug: string, extra: { type?: string; frontmatter?: Record<string, unknown> } = {}): Promise<void> {
-  await engine.executeRaw(
-    `INSERT INTO pages (source_id, slug, type, title, compiled_truth, timeline, frontmatter) VALUES ($1, $2, $3, $2, 'body', '', $4::text::jsonb)`,
-    [sourceId, slug, extra.type ?? 'note', JSON.stringify(extra.frontmatter ?? {})]);
 }
 
 describe('in-statement samples and lists keep byte order', () => {
@@ -78,16 +70,33 @@ describe('in-statement samples and lists keep byte order', () => {
   });
 
   parityTest('the unknown-reader check names one real page, the byte-first one', {
-    methods: ['executeRaw', 'setConfig'], requires: 'raw_sql',
+    // executeRaw is not declared: once the check's reads are typed (listUnknownReaders), it calls no raw SQL at all.
+    methods: ['putPage', 'setConfig'],
   }, async (engine, backend) => {
     // The byte-first source holds the byte-last slug, so a sample built from two separate minimums names no page.
     await createSource(engine, backend, 'ab');
     await createSource(engine, backend, 'a-z');
-    await rawPage(engine, 'ab', 'notes/a-z', { frontmatter: { readable_by: ['member:ghost'] } });
-    await rawPage(engine, 'a-z', 'notes/ab', { frontmatter: { readable_by: ['member:ghost'] } });
+    await insertPage(engine, 'ab', 'notes/a-z', { frontmatter: { readable_by: ['member:ghost'] } });
+    await insertPage(engine, 'a-z', 'notes/ab', { frontmatter: { readable_by: ['member:ghost'] } });
     await engine.setConfig('access.restrictions_present', '1');
-    const checks = await memberAccessEntry.run({ engine, progress: { heartbeat() {} } } as unknown as DoctorContext) as Array<{ name: string; message: string; details: any }>;
+    // Where the check still reads with raw SQL, it reports a refused read as a check error, so the case keeps the read's
+    // own error.
+    const refused: unknown[] = [];
+    const watched = new Proxy(engine, { get: (target, prop) => {
+      const value = Reflect.get(target, prop, target);
+      if (prop !== 'executeRaw' || typeof value !== 'function') return typeof value === 'function' ? value.bind(target) : value;
+      return (...args: unknown[]) => value.apply(target, args).catch((error: unknown) => { refused.push(error); throw error; });
+    } });
+    const checks = await memberAccessEntry.run({ engine: watched, progress: { heartbeat() {} } } as unknown as DoctorContext) as Array<{ name: string; message: string; details: any }>;
     const unknown = checks.find(c => c.name === 'access_unknown_readers')!;
+    if (backend === 'rust' && refused.length > 0) {
+      // Named stop, only before the typed reads merge: the check's own read (member-access.ts unknownReaders) is raw
+      // SQL, which a Rust brain refuses (raw_sql). Its typed read, listUnknownReaders, comes with rust-engine/rust-members-tail;
+      // after it the check sends no raw SQL, this branch never runs, and the case is equal. A capability refusal takes
+      // the in-test pin: rethrow it.
+      expect(unknown.message).toContain('Could not run access_unknown_readers');
+      throw refused[0];
+    }
     const sample = unknown.details.unknown[0].sample as string;
     expect(sample).toBe('a-z:notes/ab');
     expect(unknown.message).toContain('member:ghost (unknown, 2 page(s), e.g. a-z:notes/ab)');
@@ -139,14 +148,17 @@ describe('in-statement samples and lists keep byte order', () => {
   });
 
   parityTest('schema-pack detect cuts prefixes with tied counts by byte prefix', {
-    methods: ['executeRaw'], requires: 'raw_sql',
+    methods: ['putPage'],
   }, async (engine) => {
-    // `top/` leads on count; the five MIXED_IDS prefixes tie at 2 pages, and the LIMIT keeps only two of them.
-    for (let i = 0; i < 3; i++) await rawPage(engine, 'default', `top/p-${i}`);
-    for (const id of MIXED_IDS) for (let i = 0; i < 2; i++) await rawPage(engine, 'default', `${id}/p-${i}`);
+    // `top/` leads on count; the STORED_IDS prefixes tie at 2 pages, and the LIMIT keeps only two of them. putPage
+    // lowercases a slug, so the ids are the MIXED_IDS a writer stores as given: byte order puts `a-z` and `a.b` first,
+    // en_US (which skips the punctuation) puts them after `ab`.
+    for (let i = 0; i < 3; i++) await insertPage(engine, 'default', `top/p-${i}`);
+    for (const id of STORED_IDS) for (let i = 0; i < 2; i++) await insertPage(engine, 'default', `${id}/p-${i}`);
     const result = await runDetect(engine, { minPagesPerPrefix: 2, maxTypes: 3 });
     const prefixes = result.prefixes.map(p => p.prefix);
-    expect(prefixes).toEqual(['top/', ...byteOrder(MIXED_IDS).slice(0, 2).map(id => `${id}/`)]);
+    expect(prefixes).toEqual(['top/', 'a-z/', 'a.b/']);
+    expect(byteOrder(STORED_IDS).slice(0, 2)).toEqual(['a-z', 'a.b']);
     return prefixes;
   });
 

@@ -21,6 +21,7 @@ Paths under `src/` are paths in the PostgreSQL source tree. Paths under `keyword
 | `keyword/tsearch.rs` | `src/backend/tsearch/to_tsany.c`, `src/backend/tsearch/ts_parse.c`, `src/backend/utils/adt/tsvector_op.c`, `src/backend/utils/adt/tsquery.c`, `src/backend/utils/adt/tsquery_cleanup.c`, `src/backend/utils/adt/tsvector_parser.c` |
 | `keyword/rank.rs` | `src/backend/utils/adt/tsrank.c` (`ts_rank`, `ts_rank_cd`) |
 | `keyword/stem.rs` | `src/backend/snowball/dict_snowball.c` and the stopword list `src/backend/snowball/stopwords/english.stop`. It also contains a port of Snowball code: see `third-party/snowball/NOTICE.md` |
+| `keyword/stem_german.rs` | `src/backend/snowball/dict_snowball.c` and the stopword list `src/backend/snowball/stopwords/german.stop` (the same file on Postgres 16 and on master). It also contains a port of Snowball code: see `third-party/snowball/NOTICE.md` |
 | `keyword/trgm.rs` | `contrib/pg_trgm/trgm_op.c` (`similarity`, `word_similarity`, `strict_word_similarity`, `show_trgm`) and PostgreSQL's legacy CRC-32 (`src/include/utils/pg_crc.h` and `src/backend/utils/hash/pg_crc.c`: the `*_LEGACY_CRC32` macros and `pg_crc32_table`) that pg_trgm uses to shorten long trigrams |
 
 The other files in `keyword/` (`arm.rs`, `chunk_search.rs`, `filters.rs`, `page_search.rs`, `title_fuzzy.rs`,

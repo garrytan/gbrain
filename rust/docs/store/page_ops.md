@@ -50,6 +50,9 @@ hybrid search hands them that whole bag as their policy; any other key still ref
 | `brain.readLivePageFrontmatter(sourceId, slug)` | `{ type, frontmatter }` of the live page at the slug in the source, or `null` when none is live there (put_page's ignored-label notice reads the stored page back) | `readLivePageFrontmatter` |
 | `brain.readEntityAnchoredPages(sourceId, entitySlug)` | `{ entity, pages }`: the live entity page's `{ id, title }` (or `null`), then up to 10 other live pages of the source, no question, synthesis or `pinned_question` page, whose compiled truth names the entity as a word (its slug tail or title, 3 UTF-16 units or more, matched as `~* '\m(...)\M'` matches, case by PGLite's table) or that link to it by a ranking link, by `COALESCE(effective_date, updated_at)` then id, newest first | `readEntityAnchoredPages` |
 | `brain.readPageTitlesById(ids)` | `{ id, title }` of each page id, deleted or not, each once; an id outside `integer` is refused as the `::int[]` cast refuses it (the anchored rows' titles) | `readPageTitlesById` |
+| `brain.readImageSealProbe(sourceId, slug)` | `{ has_visual }` when the page record at the slug (live or soft-deleted) is sealed past the safe-chunk fence (`chunker_version >= 4`; no version reads as below it), else `null`. The store keeps no image vector, so `has_visual` is always `false`, as `sealImagePages` answers | `readImageSealProbe` (import-file.ts `importImageFile`) |
+| `brain.readPageChunkerVersion(pageId)` | `{ chunker_version }` of the page record with the id, live, soft-deleted or segmented (`null` for a record written before the store kept one), or `null` when no record has the id; an id outside `integer` is refused | `readPageChunkerVersion` (safe-chunks.ts `provenanceDistrusted`) |
+| `brain.readPrefixAnchoredPages(sourceId, prefix)` | `[{ id, slug }]`: up to 10 live pages of the source whose slug starts with `prefix` (literal: the SQL escapes `\\`, `%` and `_` for `LIKE`), no question, synthesis or pinned-question page, by `COALESCE(effective_date, updated_at)` newest first, then by id descending | `readPrefixAnchoredPages` (entity-anchor.ts `prefixAnchoredPages`) |
 | `brain.readTextMentionPages(sourceIds, slugs)` | `[{ slug, source_id, title, type, frontmatter, date }]` for each live page whose source and slug are among the given ones, `date` being `COALESCE(effective_date, updated_at)` as ISO text (the member returns a `Date`), in no set order (the entity card's text mentions) | `readTextMentionPages` |
 | `brain.readReflexLiveKeys(sourceIds, slugs, policy)` | `[{ slug, source_id }]` for each live page whose source and slug are among the given ones and that the page policy (when not `null`) does not hide, in no set order (the retrieval reflex's live-page check) | `readReflexLiveKeys` |
 | `brain.readReflexPages(sourceIds, match, policy)` | `[{ slug, source_id, title, type, frontmatter, compiled_truth }]` for the live pages of the sources that the match picks and the page policy (when not `null`) does not hide; `compiled_truth` is the bounded 64K body prefix. `match.kind` is `names` (lowered title in `titlesLc`, slug in `exactSlugs`, slug `LIKE` a `slugSuffixes` pattern, or a person page whose lowered title is `LIKE` a `surnamePatterns` pattern; by page id), `slugs`, `cjkExact` (lowered title or slug in `norms`) or `titles` (lowered title in `titlesLc`); no set order except `names` | `readReflexPages` |
@@ -110,7 +113,7 @@ outer catch of the retrieval reflex in `src/core/context/reflex.ts`.
 
 PGLite's purge (`purgeDeletedPages`, `src/core/engine-sql/pages.ts:329`) skips a tombstone that one
 of four holds keeps (`pages.ts:349-353` for the dry run, `:370-380` for the delete). The store
-applies the two that read only the page row and `config`, and the other two never match a Rust row:
+applies the two that read only the page row and `config`; it does not apply the other two:
 
 - Derived retirement (`derivedRetirementPurgeHold`,
   `src/core/persistence/derived-retirement-hold.ts:38-41`): the page's `retired_by` text is one of
@@ -133,11 +136,12 @@ applies the two that read only the page row and `config`, and the other two neve
   `Etc/GMT0`, so a day is 24 hours. Text compares in byte order.
 - Sync identity downgrade (`op_checkpoints`, op `sync-identity-downgrade`, `pages.ts:349`) and
   derived origin park (`derivedOriginPurgeHold`, `src/core/persistence/derived-origin-hold.ts:31`)
-  never match: only `executeRaw` writes those rows, through `recordIdentityDowngrades`
-  (`src/core/sync-identity-downgrades.ts`) and `parkDerivedOrigin` (`derived-origin-hold.ts`,
-  called from `src/core/repair/origin-carry.ts`), and the Rust engine refuses `executeRaw`. The
-  store serves the resumable-op checkpoints (persistence.md, "Op checkpoints"), not these rows; the
-  family that serves these writers must add both holds.
+  are not applied here. The store does keep these rows now (`parkDerivedOrigin` writes the park
+  through `upsertDerivedOriginPark`, `persistence/origin_holds.rs`), and the retention purge's
+  managed candidate read applies both (label_door.md, "The retention purge's bookkeeping"). The one
+  caller that reaches this purge on the retention path, the unmanaged expiry (`purgeExpired`), still
+  stops on a Rust brain at the pre-write check, so this purge must add both holds before that stop
+  lifts.
 
 Each purged page goes through `remove_page`, the eval-candidate scrub and the alias and rename-history
 scrub, as `deletePages` does.

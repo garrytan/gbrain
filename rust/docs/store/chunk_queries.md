@@ -17,6 +17,11 @@ methods in `rust/crates/gbrain-napi/src/families/chunk_queries.rs` and the membe
 | `findCodeDefinitions`, `listSymbolTypesForName`, `findCodeRefChunks` | served; a trust or flag scope refuses |
 | `codeChunksExist`, `currentCodeChunksExist` | served |
 | `listQualifiedSymbolNames(sourceId, symbol, { match, limit })` | served |
+| `listSymbolLanguages(sourceId, qualified)` | served (`chunk_queries/walk_reads.rs`); the code walk's language gate: distinct languages of served live pages' chunks that define the name, byte order, any `page_kind` |
+| `listSupportedChunkIds(chunkIds, languages)` | served (`walk_reads.rs`); any stored chunk row, in id order, as the SQL reads |
+| `listSymbolChunkIds(lookup, symbols, sourceId?)` | served (`walk_reads.rs`, input `{ symbols, sourceId, limit: 50 }`); the two-pass walk's near-symbol anchors and unresolved edge targets: any stored chunk row, ordered by the page's source and slug (bytes), then chunk index, then id, as the SQL statements order them, so the 50 kept past the limit are the same on every engine |
+| `listWalkChunkRows(chunkIds)` | served (`walk_reads.rs`); the structural walk's hydration: the visible chunks among the ids (a served page; `visible_chunks`, the `chunkVisibleFilter` generation rule) with their pages; the member returns them in the ids' order |
+| `readReindexSpendInputs(chunkerVersion, type)` | served (`walk_reads.rs`); see `remediation-records.md` |
 | `countOversizedEmbedSkips`, `countOrphanChunks`, `countCodeChunkPages` | served |
 | `listWithdrawalChunks`, `deleteChunksForPages` | served |
 | `listContextualModeCandidates(sourceIds)` | served |
@@ -149,6 +154,16 @@ the page projection, repair contextual-mode and evidence delivery. Each answers 
   page because the store has no chunk-id index, so the read opens only those pages. The SQL engines do not define the
   member: `segmentRegions` (`src/core/search/dedup.ts`) reads the same rows there through `keywordBoundedRead`, which
   refuses on Rust as raw SQL. Pinned by `test/engine-parity/segment-regions.test.ts`.
+
+## get_page's chunk reads
+
+- `readWindowChunk(chunkId, pageId)` (`chunk_queries/window_reads.rs`): the text chunk a `get_page` `body: 'window'`
+  read with `around_chunk_id` centers on, as `{ chunk_text, chunk_source, occurrence_id, projected_byte_start,
+  projected_byte_end }`, or null. `countPageChunks(pageId)`: `{ total, embedded }` for a `body: 'none'` read of an
+  unsegmented page. Both read the chunks of the page's live body (`chunkGenerationFilter`, `chunks::in_live_body`),
+  as `src/core/engine-sql/page-window-chunks.ts` runs them on PGLite and Postgres; a page id with no page reads as no
+  chunks. `occurrence_id` is null on an inline chunk; a span end is null when the chunk has none. `embedded` counts
+  chunks with `embedded_at` set. Pinned by `test/engine-parity/page-window-chunk-reads.test.ts`.
 
 ## Known differences
 

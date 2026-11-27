@@ -885,6 +885,19 @@ describe('runDream — synthesize targeting flags', () => {
     expect(unscoped.phases[0].details).toMatchObject({ reason: 'not_configured' });
   });
 
+  test('#10318 --input with a phase list that omits synthesize, or with no file, is a usage error', async () => {
+    const other = await dreamExit(['--phase', 'extract_atoms', '--input', join(repo, 'transcript-example.txt'), '--dry-run']);
+    expect(other.code).toBe(2);
+    expect(other.stderr).toContain('--input is read only by the synthesize phase');
+    for (const value of [[], ['']]) {
+      const missing = await dreamExit(['--phase', 'synthesize', '--dry-run', '--input', ...value]);
+      expect(missing.code).toBe(2);
+      expect(missing.stderr).toContain('--input <file>: missing value');
+    }
+    const both = await dreamJson(['--phase', 'lint', '--phase', 'synthesize', '--input', join(repo, '..', 'gbrain-dream-missing-transcript.txt')]);
+    expect(both.phases.map(p => p.phase)).toContain('synthesize');
+  });
+
   test('--date, --from and --to reach the synthesize phase as explicit targets (they bypass the cooldown)', async () => {
     const corpus = mkdtempSync(join(tmpdir(), 'gbrain-dream-corpus-'));
     try {

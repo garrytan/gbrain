@@ -498,8 +498,9 @@ pub(crate) fn embedding_dimensions(read: &dyn KvRead) -> Result<usize> {
         .unwrap_or(1536))
 }
 
-/// Replaces a page's chunks with `chunks` (an empty list removes them all). A chunk that keeps
-/// its index keeps its id; the chunk-delete hook gets the ids of the indexes that are gone. When
+/// Replaces a page's chunks with `chunks` (an empty list removes them all). On a merge a chunk that
+/// keeps its index keeps its id; a full replacement (`merge` false) gives every chunk a new id, in
+/// chunk order, as PGLite's delete-then-insert does. The chunk-delete hook gets the ids that are gone. When
 /// `seal` is set the page's `text_projection_revision` becomes its `knowledge_revision`: the
 /// chunks now describe the current text. A `certified` seal (the caller sends chunks it ran
 /// through the protected-fence sanitizer: `sealChunks`) also stamps the page `chunker_version`
@@ -557,14 +558,12 @@ pub(crate) fn replace_chunks_at(
         .values()
         .any(|old| !by_index.contains_key(&old.chunk_index));
     // The rows the write lands on: on a merge, embedded rows first follow their exact chunk to its new index.
+    // A full replacement (not a merge: the seal, the page's own re-chunk) is PGLite's delete-then-insert: every chunk
+    // gets a new id from the shared counter, in chunk order, and every old id goes to the chunk-delete hook.
     let placed = if merge {
         move_displaced_chunks(&previous, &mut old_vectors, chunks, &by_index)
     } else {
-        previous
-            .iter()
-            .filter(|(index, _)| by_index.contains_key(index))
-            .map(|(index, old)| (*index, old.clone()))
-            .collect()
+        HashMap::new()
     };
     let kept_ids: HashSet<u64> = placed.values().map(|old| old.id).collect();
     let mut removed: Vec<u64> = previous

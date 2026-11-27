@@ -63,7 +63,6 @@ import type { PageSnapshot } from '../page-state/types.ts';
 import { loadApprovedSet, previewChangedError, previewHash, retireAfterLastItem, saveApprovedSet } from '../persistence/preview-approval.ts';
 import { createProgress, startHeartbeat } from '../progress.ts';
 import { cliOptsToProgressOptions, getCliOptions } from '../cli-options.ts';
-import { requireRawSql } from '../rust-engine/errors.ts';
 
 interface DerivedRow { id: number; source_id: string; slug: string; type: string; visibility: string | null; chars: number }
 interface AtomRow extends DerivedRow { source_slug: string | null; origin_id: number | null; origin_type: string | null; origin_frontmatter: Record<string, unknown> | null; origin_folder_restricted: boolean; origin_moved_private: boolean }
@@ -166,10 +165,10 @@ async function planNamed(engine: BrainEngine, sourceIds: string[], slugs: string
  * state just before it is applied; only an atom or concept reads links.
  */
 export async function planVisibilityRepair(engine: BrainEngine, sourceIds: string[], only?: number) {
-  const [kind] = only === undefined ? [] : await engine.executeRaw<{ type: string }>('SELECT type FROM pages WHERE id=$1', [only]);
+  const [kind] = only === undefined ? [] : await engine.listPageRefsByIds([only]);
   if (only !== undefined && !kind) return { changes: [], chars: new Map<number, number>(), residuals: {} };
   const lineage = only === undefined || kind!.type === 'atom' || kind!.type === 'concept'
-    ? await planLineage(engine, sourceIds, only === undefined ? undefined : { id: only, type: kind!.type }) : null;
+    ? await planLineage(engine, sourceIds, only === undefined ? undefined : { id: only, type: kind!.type ?? '' }) : null;
   const events = await planEvents(engine, sourceIds, only);
   const aliased = await planAliases(engine, sourceIds, only);
   const parts = [...(lineage ? [lineage] : []), events, aliased];
@@ -239,9 +238,7 @@ async function applyFactItem(ctx: Parameters<RepairHandler['apply']>[0], item: R
       `${h.slice(0, 8)}-${h.slice(8, 12)}-4${h.slice(13, 16)}-a${h.slice(17, 20)}-${h.slice(20, 32)}`);
     return ((receipt.tightened as number[] | undefined) ?? []).includes(factId);
   }
-  // A fenced row is rewritten through its page's facts fence (the page write door), whose projection the Rust engine does not
-  // serve yet, so a Rust brain stops a fenced fact here by name, before its first write; a database-only row is typed above.
-  requireRawSql(ctx.engine, 'repair visibility page write');
+  // A fenced row is rewritten through its page's facts fence (the page write door); a database-only row is handled above.
   const snapshot = fact.source_markdown_slug ? await ctx.engine.readPageSnapshot(fact.source_markdown_slug, { sourceId: item.source_id }) : null;
   if (!snapshot) return false;
   if (isSegmentedPage(snapshot.page)) return leftWorld(fact, 'its page is stored in segments, which this repair does not rewrite');
@@ -249,11 +246,10 @@ async function applyFactItem(ctx: Parameters<RepairHandler['apply']>[0], item: R
   if (body === null) return leftWorld(fact, 'its row was not found in the page\'s facts fence');
   const held = await labelWrite(ctx, item, snapshot, serializePageToMarkdown({ ...snapshot.page, compiled_truth: body }, snapshot.tags), { set: {}, remove: [] });
   if (held) return held;
-  const [stored] = await ctx.engine.executeRaw<{ visibility: string; live: boolean }>('SELECT visibility, expired_at IS NULL AS live FROM facts WHERE id=$1', [factId]);
+  const stored = await ctx.engine.readFactLiveVisibility(factId);
   if (!stored || stored.visibility === 'private' || !stored.live) return true;
-  if (!await managedPersistenceEnabled(ctx.engine) && (await maintenanceTransaction(ctx.engine, tx => tx.executeRaw(
-    `UPDATE facts SET visibility='private' WHERE source_id=$1 AND id=$2 AND row_num=$3 AND visibility='world' AND expired_at IS NULL RETURNING id`,
-    [item.source_id, factId, fact.row_num]))).length > 0) return true;
+  if (!await managedPersistenceEnabled(ctx.engine) && (await maintenanceTransaction(ctx.engine, tx =>
+    tx.tightenFencedFactVisibility(item.source_id, factId, fact.row_num!))).length > 0) return true;
   return leftWorld(fact, 'its fence row was written private, but the original row is more trusted than the repair and was kept beside it');
 }
 
@@ -503,9 +499,6 @@ export const visibilityRepair: RepairHandler = {
     const item = entry as VisibilityItem;
     const target = item.target ?? item.cursor;
     if (target.phase === READERS_PHASE) return applyReaders(ctx.engine, item as ReadersItem, (snapshot, content, edit, batch) => labelWrite(ctx, { ...item, cursor: target }, snapshot, content, edit, batch));
-    // The page label guard and the page write door write through raw SQL, so a Rust brain stops a page item here by name, before
-    // its first write; a fact item (phase 4) stops only on a fenced row (applyFactItem).
-    if (target.phase !== 4) requireRawSql(ctx.engine, 'repair visibility page write');
     return retireAfterLastItem(ctx.engine, 'visibility', item.hash, !!item.last, async () => {
       if (target.phase === 4) return await applyFactItem(ctx, item, target.id);
       const snapshot = await ctx.engine.readPageSnapshot(item.slug, { sourceId: item.source_id });

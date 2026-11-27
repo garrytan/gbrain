@@ -380,6 +380,77 @@ impl Brain {
     }
 
     /// `readLivePageFrontmatter(sourceId, slug)`: the live page's type and frontmatter, or null.
+    /// `listVisibleNameVariantCandidates(sourceId, query, policy)`: the candidates under the page
+    /// policy; a `null` policy reads every page.
+    #[napi]
+    pub fn list_visible_name_variant_candidates<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        query: Value,
+        policy: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let query = required(query, "listVisibleNameVariantCandidates query")?;
+            let policy = policy
+                .map(|v| {
+                    required::<gbrain_store::facts::PrivacyPolicy>(
+                        v,
+                        "listVisibleNameVariantCandidates policy",
+                    )
+                })
+                .transpose()?;
+            s.list_visible_name_variant_candidates(&source_id, &query, policy.as_ref())
+        })
+    }
+
+    /// `listNameVariantCardCandidates(sourceId, query, policy)`: the candidates as entity-card
+    /// rows with their probe hits; a `null` policy reads every page.
+    #[napi]
+    pub fn list_name_variant_card_candidates<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        query: Value,
+        policy: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let query = required(query, "listNameVariantCardCandidates query")?;
+            let policy = policy
+                .map(|v| {
+                    required::<gbrain_store::facts::PrivacyPolicy>(
+                        v,
+                        "listNameVariantCardCandidates policy",
+                    )
+                })
+                .transpose()?;
+            s.list_name_variant_card_candidates(&source_id, &query, policy.as_ref())
+        })
+    }
+
+    /// `readVisibleVariantPages(sourceId, slugs, policy)`: the live pages at `slugs` in list order;
+    /// a `null` policy reads every page.
+    #[napi]
+    pub fn read_visible_variant_pages<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slugs: Vec<String>,
+        policy: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let policy = policy
+                .map(|v| {
+                    required::<gbrain_store::facts::PrivacyPolicy>(
+                        v,
+                        "readVisibleVariantPages policy",
+                    )
+                })
+                .transpose()?;
+            s.read_visible_variant_pages(&source_id, &slugs, policy.as_ref())
+        })
+    }
+
     #[napi]
     pub fn read_live_page_frontmatter<'env>(
         &self,
@@ -425,6 +496,42 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
             s.read_page_titles_by_id(&required::<Vec<i64>>(ids, "readPageTitlesById ids")?)
+        })
+    }
+
+    /// `readImageSealProbe(sourceId, slug)`: `{ has_visual }` of a sealed image page, or `null`.
+    #[napi]
+    pub fn read_image_seal_probe<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slug: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_image_seal_probe(&source_id, &slug))
+    }
+
+    /// `readPageChunkerVersion(pageId)`: `{ chunker_version }` of the page record, or `null`.
+    #[napi]
+    pub fn read_page_chunker_version<'env>(
+        &self,
+        env: &'env Env,
+        page_id: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_page_chunker_version(required::<i64>(page_id, "readPageChunkerVersion pageId")?)
+        })
+    }
+
+    /// `readPrefixAnchoredPages(sourceId, prefix)`: the newest live pages under the slug prefix.
+    #[napi]
+    pub fn read_prefix_anchored_pages<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        prefix: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_prefix_anchored_pages(&source_id, &prefix)
         })
     }
 }

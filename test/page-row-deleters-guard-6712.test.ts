@@ -38,10 +38,11 @@ const REVIEWED: Record<string, { count: number; why: string }> = {
   'src/core/transcripts/archive.ts': { count: 1, why: 'repo-less database mode only; a managed brain deletes stale day parts through the coordinator and a repo brain removes the files and syncs' },
   'src/core/persistence/purge-deleted.ts': { count: 1, why: 'unmanaged retention (expireRecordedTombstones); a managed brain purges through delete_page --purge' },
   'src/commands/migrate-engine.ts': { count: 1, why: 'engine migration copy, outside any source write' },
+  'src/core/engine-swap/failback-copy.ts': { count: 1, why: 'engine swap failback removes a page the Rust engine no longer holds from the fenced old primary, inside the swap run\'s transaction behind its write fence; a managed brain cannot swap (engine_swap_refused managed_storage), so it never runs on one' },
   'src/core/github-source.ts': { count: 2, why: 'GitHub connector source, not a managed Git checkout' },
   'src/core/google/google-source.ts': { count: 1, why: 'Google connector source' },
   'src/core/google/sweep-shared.ts': { count: 1, why: 'Google connector sweep' },
-  'src/core/persistence/source-lifecycle.ts': { count: 1, why: 'managed remove/purge retire batches (#7702/#8905): the whole source is being removed under its topology locks, and the final transaction deletes its row and bindings, ending the incarnation every deletion marker (op_checkpoints, keyed on source, incarnation and origin, with no cascade) is scoped to; the single-transaction cascade these batches split wrote no markers either, and a page an interrupted run left behind is re-imported at worst until the rerun finishes the removal' },
+  'src/core/engine-sql/topology-store.ts': { count: 1, why: 'managed remove/purge retire batches (#7702/#8905; the batch delete moved from persistence/source-lifecycle.ts into the topology store member deletePageBatch by lane LM managed-on-rust, batch 15): the whole source is being removed under its topology locks, and the final transaction deletes its row and bindings, ending the incarnation every deletion marker (op_checkpoints, keyed on source, incarnation and origin, with no cascade) is scoped to; the single-transaction cascade these batches split wrote no markers either, and a page an interrupted run left behind is re-imported at worst until the rerun finishes the removal' },
   'src/core/connectors/api-source.ts': { count: 1, why: 'Fireflies/Slack connector source, unmanaged only; a managed source deletes through ManagedConnectorSync' },
 };
 

@@ -64,6 +64,11 @@ export const lockApprovedFacts: Member<'lockApprovedFacts'> = async (_brain, _so
 export const expireApprovedFacts: Member<'expireApprovedFacts'> = (brain, sourceId, ids) =>
   storeCall({ member: 'expireApprovedFacts' }, () => brain.expireApprovedFacts({ sourceId, ids: wholeIds('expireApprovedFacts', ids) }));
 
+export const readFactLiveVisibility: Member<'readFactLiveVisibility'> = async (brain, factId) =>
+  ((await storeCall({ member: 'readFactLiveVisibility' }, () => brain.readFactLiveVisibility(factId))) ?? undefined) as { visibility: string; live: boolean } | undefined;
+export const tightenFencedFactVisibility: Member<'tightenFencedFactVisibility'> = (brain, sourceId, factId, rowNum) =>
+  storeCall({ member: 'tightenFencedFactVisibility' }, () =>
+    brain.tightenFencedFactVisibility({ sourceId, ids: wholeIds('tightenFencedFactVisibility', [factId]) }, rowNum));
 export const tightenDatabaseFactVisibility: Member<'tightenDatabaseFactVisibility'> = (brain, sourceId, ids) =>
   storeCall({ member: 'tightenDatabaseFactVisibility' }, () =>
     brain.tightenDatabaseFactVisibility({ sourceId, ids: wholeIds('tightenDatabaseFactVisibility', ids) }));

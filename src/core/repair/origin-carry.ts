@@ -30,17 +30,15 @@ import { isSegmentedPage } from '../page-body/page-shape.ts';
 import type { LabelEdit } from '../persistence/label-edit.ts';
 import { maintenancePreflight, publishMaintenancePages } from '../persistence/prepared-maintenance.ts';
 import { clearDerivedOriginParks, DERIVED_ORIGIN_PARKED_CODE, finishPurgeNote, parkDerivedOrigin, pruneDerivedOriginParks, readDerivedOriginParks, recordOwedPurge, type DerivedOriginPark } from '../persistence/derived-origin-hold.ts';
-import { privacyPartSql, readHonorAliases, withoutCallerAccess } from '../search/private-visibility.ts';
+import { readHonorAliases, withoutCallerAccess } from '../search/private-visibility.ts';
 import { faultPoint } from '../persistence/fault-points.ts';
 import { rethrowCapabilityMissing } from '../rust-engine/errors.ts';
 import { requirePurgePathServed } from '../persistence/purge-path-members.ts';
 import { filesInCheckout, importAtRevision, writeLabelFile } from './label-write.ts';
 
-const bounded = { timeoutMs: 120_000, jitOff: true, prepare: false };
 const PREVIEW = 'gbrain repair visibility';
 const EDIT: LabelEdit = { set: { visibility: 'private' }, remove: [] };
 /** A page whose removal can open another: hidden by the privacy rules itself, or an atom a concept's provenance names. */
-const originSql = (alias: string) => `(${alias}.type = 'atom' OR NOT ${privacyPartSql(alias)})`;
 
 export interface Origin { id: number; source_id: string; slug: string }
 interface Dependent { id: number; origin_id: number; source_id: string; slug: string; deleted: boolean }
@@ -193,9 +191,7 @@ export const CARRY_LEAD_HOURS = 24;
 async function expiringOrigins(engine: BrainEngine, olderThanHours: number): Promise<Origin[]> {
   return withoutCallerAccess(async () => {
     await readHonorAliases(engine);
-    return (await engine.executeRaw<{ id: number; source_id: string; slug: string }>(`SELECT p.id, p.source_id, p.slug FROM pages p
-      WHERE p.deleted_at IS NOT NULL AND p.deleted_at < now() - ($1 || ' hours')::interval AND ${originSql('p')} ORDER BY p.id`,
-      [String(Math.max(0, Math.floor(olderThanHours) - CARRY_LEAD_HOURS))], bounded)).map(row => ({ id: Number(row.id), source_id: row.source_id, slug: row.slug }));
+    return engine.listExpiringOriginPages(String(Math.max(0, Math.floor(olderThanHours) - CARRY_LEAD_HOURS)));
   });
 }
 

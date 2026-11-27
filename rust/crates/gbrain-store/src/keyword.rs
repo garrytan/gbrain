@@ -61,6 +61,7 @@ mod page_search;
 pub(crate) mod parser;
 mod rank;
 mod stem;
+pub(crate) mod stem_german;
 mod title_fuzzy;
 mod titles;
 mod trgm;
@@ -94,9 +95,9 @@ pub(crate) fn check_chunk_vector(chunk: &crate::chunks::ChunkRecord) -> crate::e
 pub(crate) use stem::pg_lower;
 #[allow(unused_imports)]
 pub(crate) use tsearch::{
-    TsQuery, TsVector, Weight, concat, fts_input, or_of_lexemes, phraseto_tsquery, plainto_tsquery,
-    plainto_tsquery_simple, setweight, to_tsvector, to_tsvector_simple, ts_matches,
-    websearch_to_tsquery, with_query_stack,
+    FtsConfig, TsQuery, TsVector, Weight, concat, fts_input, or_of_lexemes, phraseto_tsquery,
+    plainto_tsquery, plainto_tsquery_in, plainto_tsquery_simple, setweight, to_tsvector,
+    to_tsvector_in, to_tsvector_simple, ts_matches, websearch_to_tsquery, with_query_stack,
 };
 #[cfg(test)]
 pub(crate) use tsearch::{deep_spawns, reset_deep_spawns};

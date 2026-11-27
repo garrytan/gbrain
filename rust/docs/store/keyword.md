@@ -28,7 +28,9 @@ rankers (`keyword/rank.rs`). Their signatures are listed in the `keyword.rs` hea
 
 Every keyword member except `findByTitleFuzzy` refuses:
 
-- a text search configuration other than `english` (`getFtsLanguage()`);
+- a text search configuration other than `english` (`getFtsLanguage()`): the keyword index holds English postings.
+  The query-time readers in other families (the saved-facts match, `wordLexemes`, the facts keyword arms) also
+  serve `german` (`keyword/stem_german.rs`); a configuration without a Snowball port refuses everywhere;
 - a date bound (`afterDate`, `beforeDate`) that is not an ISO date or date-time
   (`YYYY-M-D[( |T|t)H:MM[:SS[.f…]][Z|z|±HH[:MM]]]`) or that is outside the calendar. A fraction of any length rounds
   to the nearest microsecond, a tie to the even one, as Postgres's `rint` does, and may carry into the next second.
@@ -350,7 +352,7 @@ term rarity with `rankOrFallbackByRarity`) and the store answers each statement:
 
 - `searchKeywordArm(match, rank, options)`: chunks matching `websearch_to_tsquery(match)`, scored with
   `ts_rank(vector, websearch_to_tsquery(rank))` × phrase factor × source factor, the best chunk per page, the
-  `innerLimit` (`min(limit × 3, cap × 3)`) inner window, then `offset` and `limit`.
+  `innerLimit` (`min((offset + limit) × 3, cap × 3)`) inner window, then `offset` and `limit`.
   `websearch_to_tsquery` separates words on ASCII whitespace and on the non-ASCII characters of PGLite's
   `[[:space:]]` class (U+0085, U+2000-U+200A except U+2007, U+2028, U+2029, U+205F, U+3000), as the repository's
   PGLite (0.4.3) does; PostgreSQL 18 reads only ASCII whitespace there, so the goldens taken from PGLite 0.5.16

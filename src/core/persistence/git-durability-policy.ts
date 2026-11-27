@@ -23,9 +23,9 @@
  */
 import { isDurabilityHardenedAsync } from '../brain-repo-durability.ts';
 import type { BrainEngine } from '../engine.ts';
-import type { SqlEngine } from './model.ts';
+import type { GitDurabilityCatchUpEffect } from '../engine-sql/git-durability.ts';
 import type { WorktreeBinding } from './ownership.ts';
-import { declarePersistenceProtocol, PERSISTENCE_PROTOCOL_PREDICATE } from './protocol.ts';
+import { declarePersistenceProtocol } from './protocol.ts';
 
 export const DURABILITY_NOT_ENABLED_REASON = 'durability_not_enabled';
 
@@ -45,7 +45,7 @@ export function gitDurabilityState(binding: Pick<WorktreeBinding, 'git_durabilit
   return binding?.git_durability === 'enabled' ? 'on' : binding?.git_durability === 'disabled' ? 'off' : 'unknown';
 }
 
-export interface GitDurabilityCatchUpEffect { id: string; request_id: string; relative_path: string | null; slug: string | null }
+export type { GitDurabilityCatchUpEffect } from '../engine-sql/git-durability.ts';
 
 /**
  * The Git effects of this worktree (current source incarnation) that completed
@@ -54,14 +54,9 @@ export interface GitDurabilityCatchUpEffect { id: string; request_id: string; re
  * skipped effects for the same path are left completed. Source scans and
  * recovered or claimed effects are not catch-up candidates.
  */
-export async function planGitDurabilityCatchUp(engine: SqlEngine, binding: Pick<WorktreeBinding, 'worktree_id' | 'source_id' | 'source_incarnation'>): Promise<GitDurabilityCatchUpEffect[]> {
-  return engine.executeRaw<GitDurabilityCatchUpEffect>(`
-    SELECT DISTINCT ON ((e.data->>'relative_path') COLLATE "C") e.id::text AS id,e.request_id::text AS request_id,e.data->>'relative_path' AS relative_path,e.data->>'slug' AS slug
-      FROM persistence_effects e
-     WHERE e.worktree_id=$1::uuid AND e.source_id=$2 AND e.source_incarnation=$3::uuid AND e.kind='git' AND e.state='committed'
-       AND e.outcome->>'reason'=$4 AND e.recovery IS NULL AND e.execution_token IS NULL
-       AND COALESCE((e.data->>'source_scan')::boolean,false)=false AND e.data->>'relative_path' IS NOT NULL
-     ORDER BY (e.data->>'relative_path') COLLATE "C",e.id DESC`, [binding.worktree_id, binding.source_id, binding.source_incarnation, DURABILITY_NOT_ENABLED_REASON]);
+export async function planGitDurabilityCatchUp(engine: Pick<BrainEngine, 'gitDurabilityStore'>, binding: Pick<WorktreeBinding, 'worktree_id' | 'source_id' | 'source_incarnation'>): Promise<GitDurabilityCatchUpEffect[]> {
+  return (await engine.gitDurabilityStore()).planCatchUp({ worktreeId: binding.worktree_id, sourceId: binding.source_id,
+    sourceIncarnation: binding.source_incarnation, reason: DURABILITY_NOT_ENABLED_REASON });
 }
 
 /**
@@ -70,14 +65,9 @@ export async function planGitDurabilityCatchUp(engine: SqlEngine, binding: Pick<
  * (or that is no longer skipped) is left alone; the returned ids are the rows
  * actually queued.
  */
-export async function requeueGitDurabilityCatchUp(tx: SqlEngine & Pick<BrainEngine, 'declarePersistence'>, binding: Pick<WorktreeBinding, 'worktree_id' | 'source_incarnation'>, ids: readonly string[]): Promise<string[]> {
+export async function requeueGitDurabilityCatchUp(tx: Pick<BrainEngine, 'declarePersistence' | 'gitDurabilityStore'>, binding: Pick<WorktreeBinding, 'worktree_id' | 'source_incarnation'>, ids: readonly string[]): Promise<string[]> {
   if (!ids.length) return [];
   await declarePersistenceProtocol(tx);
-  const rows = await tx.executeRaw<{ id: string }>(`
-    UPDATE persistence_effects SET state='queued',execution_token=NULL,claim_expires_at=NULL,claim_owner=NULL,error_code=NULL,outcome=NULL,
-           next_attempt_at=now(),updated_at=now(),data=data||jsonb_build_object('durability_catch_up',COALESCE((data->>'durability_catch_up')::int,0)+1)
-     WHERE id=ANY($1::text[]::bigint[]) AND kind='git' AND state='committed' AND outcome->>'reason'=$4 AND worktree_id=$2::uuid AND source_incarnation=$3::uuid
-       AND recovery IS NULL AND execution_token IS NULL AND ${PERSISTENCE_PROTOCOL_PREDICATE}
-     RETURNING id::text AS id`, [[...ids], binding.worktree_id, binding.source_incarnation, DURABILITY_NOT_ENABLED_REASON]);
-  return rows.map(row => row.id);
+  return (await tx.gitDurabilityStore()).requeueCatchUp({ worktreeId: binding.worktree_id, sourceIncarnation: binding.source_incarnation,
+    reason: DURABILITY_NOT_ENABLED_REASON }, ids);
 }

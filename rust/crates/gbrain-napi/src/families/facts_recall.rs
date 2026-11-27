@@ -31,6 +31,30 @@ impl Brain {
         self.run(env, move |s| s.list_fact_source_pages(&ids))
     }
 
+    /// `listTypedClaimFactsAtPages(pageSlugs, entitySlugs)`: resolves the typed-claim facts held on those pages about
+    /// those entities, `valid_from` as ISO text.
+    #[napi]
+    pub fn list_typed_claim_facts_at_pages<'env>(
+        &self,
+        env: &'env Env,
+        page_slugs: Vec<String>,
+        entity_slugs: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_typed_claim_facts_at_pages(&page_slugs, &entity_slugs)
+        })
+    }
+
+    /// `listFactHoldingRefs(ids)`: resolves `[{ id, source_id, slug, entity_slug }]`, each fact's holding page ref.
+    #[napi]
+    pub fn list_fact_holding_refs<'env>(
+        &self,
+        env: &'env Env,
+        ids: Vec<f64>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_fact_holding_refs(&ids))
+    }
+
     /// `listNearestFacts(args)`: resolves the pool rows nearest the vector, each with its `similarity`.
     #[napi]
     pub fn list_nearest_facts<'env>(

@@ -16,7 +16,7 @@ import { viewedEngine } from '../src/core/persistence/switches.ts';
 const isEngineView = (engine: object): boolean => viewedEngine(engine) !== engine;
 import { rustEngineAddonCheck } from '../src/commands/doctor/checks/rust-engine-addon.ts';
 import { readShadowSummary } from '../src/shadow/ledger.ts';
-import { readShadowState, shadowBrainKey, shadowDirFor } from '../src/shadow/state.ts';
+import { readShadowState, shadowBrainKey, shadowDirFor, writeSampleRate } from '../src/shadow/state.ts';
 import { ShadowSupervisor } from '../src/shadow/supervisor.ts';
 import { runShadowChild } from '../src/shadow/child.ts';
 import { Readable } from 'node:stream';
@@ -105,6 +105,8 @@ describe('gbrain engine shadow', () => {
       expect(dir.startsWith(join(home, '.gbrain', 'shadow'))).toBe(true);
       const state = readShadowState(dir)!;
       expect(state).toMatchObject({ enabled: true, plan_hash: hash, sample_rate: 0.1, primary_engine: 'pglite' });
+      // An unmanaged brain's shadow is the opt-in swap's evidence: it compares every write (rate 1.0, D26 / ask D).
+      expect(state.write_sample_rate).toBe(1);
       expect(statSync(join(dir, 'state.json')).mode & 0o777).toBe(0o600);
       // The brain itself is untouched: no PGLite directory was created.
       expect(existsSync(config.database_path!)).toBe(false);
@@ -398,4 +400,34 @@ process.exit(0);
       expect(flushedWhileOpen).toBe(1);
     });
   }, 60_000);
+});
+
+describe('the write sample rate (shadow.write_sample, D13)', () => {
+  test('start keeps it apart from the read sample rate: every write on a brain that can opt in, --write-sample-rate to change it', async () => {
+    await inHome(async (_home, config) => {
+      const dir = shadowDirFor(shadowBrainKey(config)!);
+      await startShadow(config);
+      // An unmanaged brain can opt in to the swap, so its shadow compares every write (D26, ask D).
+      expect(readShadowState(dir)).toMatchObject({ sample_rate: 0.1, write_sample_rate: 1 });
+      await runEngineShadow(['stop', '--delete'], { ...capture().deps, config: () => config });
+      const plan = capture();
+      const flags = ['--sample-rate', '0.5', '--write-sample-rate', '0.2'];
+      expect(await runEngineShadow(['start', '--plan', ...flags], { ...plan.deps, config: () => config, ...unmanagedBrain })).toBe(0);
+      const text = plan.out.join('\n');
+      expect(text).toContain('write sample rate 0.2: that share of page and link writes is checked on a throwaway Rust store');
+      expect(text).toContain('a write inside a transaction is not checked, and a PGLite brain samples no writes');
+      expect(text).toContain('--sample-rate 0.5 --write-sample-rate 0.2');
+      const hash = plan.out.find((l) => l.startsWith('plan_hash: '))!.slice('plan_hash: '.length);
+      expect(await runEngineShadow(['start', '--yes', '--expect', hash, ...flags], { ...capture().deps, config: () => config, ...unmanagedBrain, loadAddon: okAddon })).toBe(0);
+      expect(readShadowState(dir)).toMatchObject({ sample_rate: 0.5, write_sample_rate: 0.2 });
+      const c = capture();
+      for (const bad of ['0', '2', 'x']) expect(await runEngineShadow(['start', '--write-sample-rate', bad], { ...c.deps, config: () => config })).toBe(2);
+    });
+  });
+
+  test('a state with none, or a bad one, uses 0.05 and never the read rate', () => {
+    expect(writeSampleRate({})).toBe(0.05);
+    expect(writeSampleRate({ write_sample_rate: 0.3 })).toBe(0.3);
+    for (const bad of [0, -1, 2, Number.NaN]) expect(writeSampleRate({ write_sample_rate: bad })).toBe(0.05);
+  });
 });

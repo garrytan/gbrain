@@ -8,8 +8,8 @@
  *    with the mention pass (`extract --stale --catch-up`, then `--dry-run`), the by-mention pass and its `--rebuild`,
  *    `extract mentions --explain` (a name, a name on a page, a title subject), `stats`, and the pass again after an
  *    edit, after linking is turned off and after it is turned back on. One note is past the inline limit, so it is
- *    stored segmented and the mention pass scans it run by run. `extract all` (fs walk) exits 1 on every engine: its
- *    links step reads that note's body as one string and reports the page as failed.
+ *    stored segmented and the mention pass scans it run by run; `extract all` (fs walk) extracts it too, reading its
+ *    dated link evidence block by block (it read the body as one string and exited 1 on every engine).
  *  - Regression: on a Rust brain `extract all` stopped at its watermark snapshot read, the stale sweep at the mention
  *    pass's source list, and the by-mention pass and explain at the gazetteer read, each with engine_capability_missing
  *    (raw SQL), so the owner's unmanaged brain could not run its extract cron on Rust.
@@ -203,11 +203,9 @@ describe('extract and the mention reads on an unmanaged brain with a local-path 
 
   test('PGLite runs every step and the passes do work', () => {
     const pglite = results.get('pglite')!;
-    expect(pglite.filter(r => r.exitCode !== 0).map(r => r.step)).toEqual(['extract all']);
+    expect(pglite.filter(r => r.exitCode !== 0).map(r => r.step)).toEqual([]);
     const json = (step: string) => JSON.parse(pglite.find(r => r.step === step)!.stdout);
-    const all = pglite.find(r => r.step === 'extract all')!;
-    expect(all.stdout).toBe('');
-    expect(all.failure.join('\n')).toContain('notes/long-field-log');
+    expect(json('extract all').links_created).toBeGreaterThan(0);
     expect(json('extract all --source db').links_created).toBeGreaterThan(0);
     expect(json('extract --stale --catch-up').mention_links_created).toBeGreaterThan(0);
     expect(json('extract links --by-mention').links_created).toBeGreaterThan(0);

@@ -25,13 +25,17 @@
 //! vector cache), then times every query and prints one JSON object: the machine, the data size,
 //! N, and p50/p99/max in milliseconds for `searchVector`, for `cosinesByChunkIds` over the hit ids,
 //! and for the two together. `GBRAIN_RUST_VECTOR_SCAN=full` makes the store take the full scan, the
-//! path every call took before the bounded scan; the store reads it on every call.
+//! path every call took before the bounded scan, and `=walk` the candidate-window walk, the path
+//! a call takes when the window could change the bounded scan's answer; the store reads it on
+//! every call.
 //!
-//! `verify` runs every query through both paths on the same store (the tool sets and removes
+//! `verify` runs every query through the default path, the full scan and the window walk on the
+//! same store (the tool sets and removes
 //! `GBRAIN_RUST_VECTOR_SCAN` in-process, one thread) for limits 1, 10, 50 and 200 crossed with
 //! offsets 0 and 30, and every filter above, then four edges (limit 0, an offset past every page,
 //! an infinite offset, a query of another width), and compares the full `searchVector` result
-//! bytes (`serde_json` of the whole result or the refusal text). It exits 1 on any difference, or
+//! bytes (`serde_json` of the whole result or the refusal text) of each path with the full scan's.
+//! It exits 1 on any difference, or
 //! when no full scan returned a row or no bounded call ran in under half the full scan's time
 //! (the store does not report which path ran, so that is a timing check, not a record).
 
@@ -490,9 +494,9 @@ fn run(dir: &Path, n: u64, limit: u64, filter: &str) {
 
 // ---------------------------------------------------------------- verify
 
-fn with_full_scan<T>(f: impl FnOnce() -> T) -> T {
+fn with_scan<T>(path: &str, f: impl FnOnce() -> T) -> T {
     // SAFETY: the tool runs on one thread and no other thread reads the environment.
-    unsafe { std::env::set_var("GBRAIN_RUST_VECTOR_SCAN", "full") };
+    unsafe { std::env::set_var("GBRAIN_RUST_VECTOR_SCAN", path) };
     let out = f();
     unsafe { std::env::remove_var("GBRAIN_RUST_VECTOR_SCAN") };
     out
@@ -519,7 +523,7 @@ fn verify(dir: &Path, n: u64) {
     // call took under half the full scan's time (a timing sign the bounded path ran; the store
     // reports no path, so the unit test `the_bounded_scan_reads_only_the_pages_that_can_rank`
     // is the deterministic check).
-    let (mut nonempty, mut faster) = (0u64, 0u64);
+    let (mut nonempty, mut faster, mut walk_mismatches) = (0u64, 0u64, 0u64);
     let mut compare = |filter: &str,
                        limit: Value,
                        offset: Value,
@@ -530,8 +534,13 @@ fn verify(dir: &Path, n: u64) {
         let fast = store.search_vector(q, opts).map_err(|e| e.to_string());
         let fast_t = t.elapsed().as_secs_f64() * 1e3;
         let t = Instant::now();
-        let full = with_full_scan(|| store.search_vector(q, opts).map_err(|e| e.to_string()));
+        let full = with_scan("full", || {
+            store.search_vector(q, opts).map_err(|e| e.to_string())
+        });
         let full_t = t.elapsed().as_secs_f64() * 1e3;
+        let walk = with_scan("walk", || {
+            store.search_vector(q, opts).map_err(|e| e.to_string())
+        });
         fast_ms += fast_t;
         full_ms += full_t;
         compared += 1;
@@ -541,6 +550,10 @@ fn verify(dir: &Path, n: u64) {
         faster += u64::from(rows && fast_t * 2.0 < full_t);
         let a = serde_json::to_string(&fast).unwrap();
         let b = serde_json::to_string(&full).unwrap();
+        let w = serde_json::to_string(&walk).unwrap();
+        if w != b {
+            walk_mismatches += 1;
+        }
         if a != b {
             let at = a.bytes().zip(b.bytes()).take_while(|(x, y)| x == y).count();
             mismatches.push(json!({
@@ -584,10 +597,11 @@ fn verify(dir: &Path, n: u64) {
         q.resize(width, 0.25);
         compare("edge", limit, offset, 77, &q, &opts);
     }
-    let ok = mismatches.is_empty() && nonempty > 0 && faster > 0;
+    let ok = mismatches.is_empty() && walk_mismatches == 0 && nonempty > 0 && faster > 0;
     println!(
         "{}",
         json!({"compared": compared, "mismatch_count": mismatches.len(),
+               "walk_mismatch_count": walk_mismatches,
                "nonempty_full_results": nonempty, "bounded_under_half_full_time": faster,
                "mismatches": mismatches.iter().take(10).collect::<Vec<_>>(),
                "bounded_ms_total": fast_ms, "full_ms_total": full_ms})

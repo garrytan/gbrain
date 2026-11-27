@@ -9,9 +9,10 @@
  * alone). The caller picks the part: remoteReadPolicySql's choice, or `access` for a caller that refuses privacy itself.
  */
 import { ANY_OWNER_ONLY_SQL, OWNER_ONLY_LINEAGE_PRESENT_SQL, READ_SOURCE_OWNER_ONLY_SQL } from '../access/owner-only.ts';
-import { callerAccessAllowedSql, privacyPartSql, privatePagesFilterForCaller, readPolicyFragment } from '../search/private-visibility.ts';
+import { callerAccessAllowedSql, privacyPartSql, privatePagesFilterForCaller, privatePagesFilterFragment, readPolicyFragment } from '../search/private-visibility.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
-import { sqlFragment, trustedSql } from './fragment.ts';
+import type { TimedRawRead } from './entity-reads.ts';
+import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
 
 /** Which part of the page policy a visibility read applies. */
 export type PagePolicyPart = 'read' | 'access';
@@ -30,12 +31,48 @@ export async function readPageHiddenFromCaller(exec: LegacyUnscopedRead, sourceI
  * For each (source_id, slug) among `pages` that names a page row (soft-deleted rows included), whether a live row of
  * it passes the current caller's policy. One row per pair, in no set order.
  */
+/**
+ * Whether the live page `slug` of `sourceId` is world-visible: it passes the empty-identity page policy with privacy
+ * (`privatePagesFilterFragment`), so no reader identity, grant or satisfied folder rule of the caller counts. The
+ * caller's record still gives the fragment its folder coverage and owner flag. False for a missing or soft-deleted page.
+ * A write that gives a reason reads it to decide whether the reason may reach a Git commit (persistence/change-reason.ts).
+ */
+export async function readPageWorldVisible(exec: LegacyUnscopedRead, sourceId: string, slug: string): Promise<boolean> {
+  const { rows: [page] } = await exec.run<{ world: boolean }>(
+    sqlFragment`SELECT ${trustedSql(privatePagesFilterFragment('p'))} AS world FROM pages p WHERE p.source_id = ${sourceId} AND p.slug = ${slug} AND p.deleted_at IS NULL`);
+  return page?.world === true;
+}
+
 export async function readCallerPageAccess(exec: LegacyUnscopedRead, pages: readonly { source_id: string; slug: string }[], opts: { policy: PagePolicyPart }): Promise<CallerPageAccessRow[]> {
   const { rows } = await exec.run<CallerPageAccessRow>(sqlFragment`SELECT p.source_id, p.slug,
       bool_or(p.deleted_at IS NULL AND ${trustedSql(opts.policy === 'access' ? callerAccessAllowedSql('p') : privatePagesFilterForCaller('p'))}) AS readable FROM pages p
     JOIN unnest(${pages.map(p => p.source_id)}::text[], ${pages.map(p => p.slug)}::text[]) AS t(source_id, slug) ON p.source_id = t.source_id AND p.slug = t.slug
     GROUP BY p.source_id, p.slug`);
   return rows.map(r => ({ source_id: r.source_id, slug: r.slug, readable: r.readable === true }));
+}
+
+/** The sources a private-only slug read covers: a federated array wins over a scalar; neither reads every source. */
+export interface PrivateOnlySlugScope { sourceId?: string; sourceIds?: string[] }
+
+/**
+ * The slugs among `slugs` whose every in-scope page row fails the current caller's page policy
+ * (`privatePagesFilterForCaller`), live rows only unless `includeDeleted`; a slug with no such row is not named. In no
+ * set order (search/private-visibility.ts findPrivateOnlySlugs, get_page's fuzzy candidates). The text is the statement
+ * that caller sent through `executeRaw`: the scope clause binds as its second parameter, as it did there.
+ */
+export async function readPrivateOnlySlugs(exec: TimedRawRead, slugs: readonly string[], scope: PrivateOnlySlugScope = {},
+  opts: { includeDeleted?: boolean } = {}): Promise<string[]> {
+  if (slugs.length === 0) return [];
+  const scoped = scope.sourceIds && scope.sourceIds.length > 0 ? sqlFragment`AND p.source_id = ANY(${scope.sourceIds}::text[])`
+    : scope.sourceId ? sqlFragment`AND p.source_id = ${scope.sourceId}` : sqlFragment``;
+  const { text, params } = renderFragment(sqlFragment`SELECT p.slug FROM pages p
+      WHERE p.slug = ANY(${slugs}::text[])
+        ${trustedSql(opts.includeDeleted ? '' : 'AND p.deleted_at IS NULL')}
+        ${scoped}
+      GROUP BY p.slug
+      HAVING bool_and(NOT (${trustedSql(privatePagesFilterForCaller('p'))}))`);
+  const rows = await exec.executeRaw<{ slug: string }>(text, params);
+  return rows.map(r => r.slug);
 }
 
 /**

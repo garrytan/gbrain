@@ -51,8 +51,8 @@ import { PURGE_DUE, PURGE_OWNERS, entryStops, type PurgePathEntry, type PurgePat
 export type FactPurgeEntryPoint = 'purge' | 'continue';
 export type FactPurgeEntry = PurgePathEntry<'purge'>;
 
-const { ours, beliefProbe, factContextProbe, receiptReads, factPurgeTx, segmentedRewrite } = PURGE_OWNERS;
-const { nov23, nov24 } = PURGE_DUE;
+const { ours, beliefProbe, factContextProbe, receiptReads, factPurgeTx, segmentedRewrite, beliefLedger } = PURGE_OWNERS;
+const { nov23 } = PURGE_DUE;
 const served = (owner: string, ...members: Array<keyof BrainEngine & string>): FactPurgeEntry[] => members.map(member => ({ member, owner }));
 
 /**
@@ -70,11 +70,6 @@ const GUARDED_SITES: FactPurgeEntry[] = [
   ['noteProjectionRebuilds (page-state/projections.ts)', 'no query planner on Rust (D18): the page count is read only when lacksRawSql is false'],
   ['readManagedMode (persistence/managed-mode.ts)', 'a Rust brain reads readManagedModeRows (isRustBrain branch)'],
   ['overlayCanonicalBodies (page-state/snapshot.ts)', 'reached through a SQL engine\'s own readPageSnapshot; the Rust engine serves that member from its store'],
-  ['missingPreimages (belief/preimages.ts)', 'the belief batch drafts events only on a brain with a belief ledger; a Rust brain has none'],
-  ['derivedStreamSlugs (belief/purge.ts)', 'the belief-ledger purge runs only when hasBeliefEvents is true; a Rust brain has no ledger'],
-  ['redactPurgedKeys (belief/purge.ts)', 'the belief-ledger purge runs only when hasBeliefEvents is true; a Rust brain has no ledger'],
-  ['redactCarryingFields (belief/purge.ts)', 'the belief-ledger purge runs only when hasBeliefEvents is true; a Rust brain has no ledger'],
-  ['quotingSlugs (belief/purge.ts)', 'the belief-ledger purge runs only when hasBeliefEvents is true; a Rust brain has no ledger'],
 ].map(([site, guarded]) => ({ site: site!, owner: ours, guarded: guarded! }));
 
 /**
@@ -86,6 +81,8 @@ export const FACT_PURGE_PATH: readonly FactPurgeEntry[] = [
   // assertNoPendingPublication, then the belief streams of the facts.
   ...served(factPurgeTx, 'findPurgeBlockedPublication'),
   ...served(factPurgeTx, 'listPurgeStreamSlugs'),
+  // On a source that records belief events: the derived rows' belief streams (belief/purge.ts derivedStreamSlugs).
+  ...served(beliefLedger, 'listDerivedStreamSlugs'),
   // hideDerivedRows: the rows derived from the facts are hidden through their own tables and marked for re-derivation.
   ...served(factPurgeTx, 'expireDerivedFacts'),
   ...served(factPurgeTx, 'deactivateDerivedTakes'),
@@ -113,8 +110,13 @@ export const FACT_PURGE_PATH: readonly FactPurgeEntry[] = [
   // The purge effects of the git mirror.
   ...served(factPurgeTx, 'listPurgedPageRevisions'),
   ...served(factPurgeTx, 'insertPurgeEffects'),
+  // On a source that records belief events: the belief batch's preimage check, then the ledger redaction after the deletes
+  // (belief/purge.ts: purged keys, carrying fields, live and version carriers, the derived-hidden keys).
+  ...served(beliefLedger, 'listMissingPreimages', 'redactPurgedBeliefKeys', 'listBeliefCarrierEvents', 'readBeliefEventValue', 'rewriteBeliefEventFields',
+    'rechainBeliefPriorHash', 'listBeliefQuotingRows', 'listPurgeCarrierVersions', 'listKnownBeliefSubjectKeys'),
   // verifyFactPurge: the receipt.
-  { member: 'listBeliefEventsForPurgeProbe', owner: beliefProbe, due: nov24, entry: 'purge', stop: 'the receipt pages the recorded values for the purged claims; not served until e211982aba is merged' },
+  // The receipt pages the recorded values for the purged claims (trust/belief_purge.rs).
+  ...served(beliefProbe, 'listBeliefEventsForPurgeProbe'),
   ...served(factContextProbe, 'listFactContextsForPurgeProbe'),
   // The completion of a purge (also read by `--status --continue`): the effect rows, then the fingerprint count.
   ...served(receiptReads, 'listPurgeEffects'),

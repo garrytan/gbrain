@@ -13,6 +13,10 @@ A plain `upsertChunks` (no `seal`, no `sealChunkerVersion`) also follows PGLite'
 unless the page is at the safe fence version (4 or more) and the write repeats its stored chunks exactly
 (the same indexes, text, source and modality, and no metadata field set to a new value), the page's
 `chunker_version` becomes -1 before the write. A refresh of the same snapshot keeps it.
+Chunk ids follow PGLite: a seal (`sealChunks`, `upsertChunks` with `seal`) and the store's own indexing
+`putPage` replace the page's chunks, so every chunk gets a new id from the shared counter in chunk order and
+the old ids are gone (a chunk id from before reads as stale); a plain `upsertChunks` keeps the id of a chunk
+whose index it rewrites, as PGLite's `ON CONFLICT (page_id, chunk_index)` does.
 Search serves only pages in that state, as PGLite does, so a tag change, soft delete or restore hides a
 page from search until the store's indexing `putPage` or a seal indexes it again. A chunk's text vector is stored with it
 (`embeddings.md`); an image vector (`embedding_image`) is not stored, and a chunk that carries one is refused.

@@ -73,6 +73,9 @@ describe('a limit over tied sort keys cuts the same rows on every engine arm', (
     return ranks;
   });
 
+  // Named Rust stop owned by the page purge port (lane 13, rust-engine/page-purge-rust): the receipt's delete-request read and
+  // its seeded persistence_requests rows go through executeRaw, which the Rust engine refuses. When that port serves the
+  // receipt read with typed seeding, this case turns equal.
   parityTest('the page purge receipt reads the delete request of the lowest id among equal created_at', { methods: ['executeRaw'], requires: 'raw_sql' }, async (engine) => {
     const request = '6f9619ff-8b86-4d01-b42d-00cf4fc964ff';
     const [source] = await engine.executeRaw<{ incarnation: string }>(`SELECT incarnation::text AS incarnation FROM sources WHERE id=$1`, [SRC]);

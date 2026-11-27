@@ -4,22 +4,25 @@
  */
 import type { AbandonedTakeRow, HeldFenceTakeRow, HeldFenceTakeSpec, HolderResolvedTakeRow, McpResolvedSpec, PageTierRef, PurgeTakesSpec, TakePreimage, TakePreimageRead, TakeTrustRef, TakesLeavingFence } from '../engine-sql/takes-reads.ts';
 import type { AmendmentNotAppliedRow, AmendmentsNotAppliedSpec, BeliefHistoryRowQuery, CoreEditNoticeRow, CorePageRow, CorePageRowSpec, CursorEditionRow, PageIdRef, PageVersionEditionRow, TrustScanRow, TrustScanRowSpec, TrustScanTable, UnscannedTrustSpec, ValidTimeIdentityRow, ValidTimeIdentitySpec, ValidTimePickSpec } from '../engine-sql/trust-tier-reads.ts';
-import type { BodyManifestMeta, BodyManifestOutline, BodyManifestRow, ExportPageKey, ExportPageKeyQuery, ExportPageRow, ExportWithdrawalRow, NormalizedFenceLines, SegmentedPageHead } from '../engine-sql/export-reads.ts';
+import type { BodyManifestMeta, BodyManifestOutline, BodyManifestRow, ExportPageKey, ExportPageKeyQuery, ExportPageRow, ExportWithdrawalRow, FactPurgeTombstone, TakePurgeTombstone, NormalizedFenceLines, SegmentedPageHead } from '../engine-sql/export-reads.ts';
 import type { BriefEntityPageOpts, BriefEntityPageRow, ReflexPageMatch, ReflexPageRow, ReflexScope } from '../engine-sql/reflex-reads.ts';
 import type * as BriefReadsSql from '../engine-sql/brief-reads.ts';
+import type * as ConceptRebuildSql from '../engine-sql/concept-rebuild.ts';
 import type * as EmbeddingCatalogSql from '../engine-sql/embedding-catalog.ts';
 import type * as ChronicleReadsSql from '../engine-sql/chronicle-reads.ts';
-import type { EntityAnchoredPages, EntityCardMatch, EntityCardRow, ExtractionLagCounts, ExtractionLagQuery, FuzzyEntityCandidateRow, IgnoredLabelPageRow, InboundLinkerCountRow, LivePageTypeRow, MentionDueQuery, MentionIndexRecount, MentionIndexStatusRow, NameVariantCandidateQuery, NameVariantCandidateRow, PrefixCandidateQuery, PrefixCandidateRow, PrefixTitleRow, ResolverPrivacy, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow, SlugPatternPageRow, TextMentionPageRow, TrigramCandidateQuery, TrigramCandidateRow } from '../engine-sql/entity-reads.ts';
+import type { EntityAnchoredPages, EntityCardMatch, EntityCardRow, ExtractionLagCounts, ExtractionLagQuery, FuzzyEntityCandidateRow, IgnoredLabelPageRow, InboundLinkerCountRow, LivePageTypeRow, MentionDueQuery, MentionIndexRecount, MentionIndexStatusRow, NameVariantCandidateQuery, NameVariantCandidateRow, PrefixCandidateQuery, PrefixCandidateRow, PrefixTitleRow, ResolverPrivacy, RetirementHopRow, RetirementPrivacy, SiblingCandidateQuery, SiblingCandidateRow, SlugPatternPageRow, TextMentionPageRow, TrigramCandidateQuery, TrigramCandidateRow, VariantPageRow, NameVariantCardCandidateRow } from '../engine-sql/entity-reads.ts';
 import type { ExactBatchRow, ExactScanOpts } from '../search/exact-scan.ts';
 import type { ExactIdentityRow, ExactIdentityStatementOpts } from '../engine-sql/exact-identity.ts';
 import type { ExactRescanChunkRow, ExactSnippetChunkRow, ExactSnippetKey, ExtractionPendingRow, FenceOverlayIncomingRow, FenceOverlayRow, FenceRowKey, FenceRowTrust, HeldFenceCellKey, HeldFenceCellRow, LongPageSizeRow, PageTypeProbe, RankCoverageRow, UnattributedFactRow, WantedPageRow } from '../engine-sql/cli-reads-ops.ts';
 import type { FactReadableSpec, FactWithdrawalClaim, FactWithdrawalClaimSpec, ForgetTargetRow, ForgetTargetSpec, LinkedFactCopiesSpec, LinkedFactCopy, OwnerReachSpec, SourceWriteRow } from '../engine.ts';
 import type { PageReadScope } from '../types.ts';
+import type { PrivateOnlySlugScope } from '../engine-sql/page-visibility.ts';
 import type { FrontmatterWhere } from '../search/frontmatter-where.ts';
 import type { RankCoverageStatementOpts, RankEntitiesStatementOpts, RankEntityRow } from '../engine-sql/graph-rank.ts';
 import type { WithdrawalDiscoveryKind, WithdrawalDiscoveryRead, WithdrawalDiscoveryRows } from '../engine-sql/withdrawal-discovery.ts';
 import type { PageKeyRef } from '../engine-sql/trust-tier-reads.ts';
 import type * as GraduationCatalogSql from '../engine-sql/graduation-catalog.ts';
+import type * as EvalHarnessSql from '../engine-sql/eval-harness-reads.ts';
 import type { ExtractReceiptSlot, ExtractRollupDelta } from '../engine-sql/extract-bookkeeping.ts';
 import type { HorizonBasis, HorizonScanRow, TakeGrade, TakeGradeFilter, TakeGradeKey, TakeGradeRow, TakeHorizonRow, TakeNudgeFilter, TakeNudgeInput, TakeNudgeRow } from '../engine-sql/takes-reads.ts';
 import type { PageQuoteTier, PageQuoteTierSpec } from '../engine-sql/trust-tier-reads.ts';
@@ -49,6 +52,8 @@ export interface ReadStatementMembers {
   readExportWithdrawalLedgerBytes(sourceId: string): Promise<number>;
   /** gbrain export: the source's withdrawals and purge tombstones, by visibility, fact hash and subject (engine-sql/export-reads.ts). */
   listExportWithdrawals(sourceId: string): Promise<ExportWithdrawalRow[]>;
+  /** The source's fact purge tombstones (by visibility, subject, fact hash) and take purge tombstones (by subject, claim hash), in byte order, with request id, actor and reason. */
+  listPurgeTombstones(sourceId: string): Promise<{ facts: FactPurgeTombstone[]; takes: TakePurgeTombstone[] }>;
   /** gbrain export: the live pages among `ids` with their tags in tag order, in no set order (engine-sql/export-reads.ts). */
   readExportPageRows(ids: readonly string[]): Promise<ExportPageRow[]>;
   /** gbrain export: each body and timeline lower-cased with whitespace runs made one space, line by line (engine-sql/export-reads.ts). */
@@ -99,6 +104,18 @@ export interface ReadStatementMembers {
   // and PGLite read their catalog; the Rust engine reads its per-vector records (an empty store has no column yet).
   /** A `content_chunks` vector column: whether it exists and its width (null when the type is not a vector type). */
   readChunkVectorColumn(column: string): Promise<EmbeddingCatalogSql.ChunkVectorColumn>;
+  /** migrate embeddings --status: the declared width of `table`.embedding (one row, or none when absent). */
+  readEmbeddingColumnTypmod(table: string): Promise<Array<{ dim: number | null }>>;
+  /** migrate embeddings --status: live pages per stored embedding signature, the five largest groups. */
+  readEmbeddingSignatureCensus(): Promise<Array<{ signature: string | null; pages: number }>>;
+  /** migrate embeddings --status: unexpired facts with no vector outside `excludedSources`. */
+  countUnembeddedLiveFacts(excludedSources: readonly string[]): Promise<number>;
+  /** migrate embeddings --status: live pages on the per-chunk synopsis tier. */
+  countSynopsisTierPages(): Promise<number>;
+  /** migrate embeddings --status: chunks with no vector on embed_skip pages. */
+  countEmbedSkipNullChunks(): Promise<number>;
+  /** #4305: live pages stamped `signature` whose embedded chunks in `column` carry another model, with those chunks. */
+  readFalseStampedChunkCounts(column: string, signature: string, model: string): Promise<{ pages: number; chunks: number; chars: number }>;
   /** The stored embedding identity (model and width of `content_chunks.embedding`); null when the brain has no vector column. Postgres and PGLite throw when the width is unknown. */
   readEmbeddingIdentity(): Promise<EmbeddingCatalogSql.EmbeddingIdentity | null>;
   /** The tables that carry an `embedding` vector column, in PRIMARY_EMBEDDING_TABLES order. */
@@ -177,6 +194,11 @@ export interface ReadStatementMembers {
   /** Person-duplicate reads (engine-sql/entity-reads.ts): unretired pages by slug pattern, name-variant candidates, distinct inbound linkers (a page's retirement is readRetirementHop with 'none'). */
   listUnretiredPagesBySlugPattern(sourceId: string, patterns: readonly string[], limit: number): Promise<SlugPatternPageRow[]>;
   listNameVariantCandidates(sourceId: string, q: NameVariantCandidateQuery): Promise<NameVariantCandidateRow[]>;
+  /** Name-variant reads under the caller's page policy (`excludePrivate`): the candidates, and the live pages at a slug list in list order. */
+  listVisibleNameVariantCandidates(sourceId: string, q: NameVariantCandidateQuery, opts?: { excludePrivate?: boolean }): Promise<NameVariantCandidateRow[]>;
+  readVisibleVariantPages(sourceId: string, slugs: readonly string[], opts?: { excludePrivate?: boolean }): Promise<VariantPageRow[]>;
+  /** listVisibleNameVariantCandidates as entity-card rows with their probe hits (the entity card's name-variant arm). */
+  listNameVariantCardCandidates(sourceId: string, q: NameVariantCandidateQuery, opts?: { excludePrivate?: boolean }): Promise<NameVariantCardCandidateRow[]>;
   countDistinctInboundLinkers(sourceIds: readonly string[], slugs: readonly string[]): Promise<InboundLinkerCountRow[]>;
   /** The link-extraction lag row (`extractionLagStatement`) under a `timeoutMs` bound (default 10 s; PGLite ignores it). */
   readExtractionLagCounts(q: ExtractionLagQuery): Promise<ExtractionLagCounts | undefined>;
@@ -192,6 +214,14 @@ export interface ReadStatementMembers {
   readEntityAnchoredPages(sourceId: string, entitySlug: string): Promise<EntityAnchoredPages>;
   /** The title of each page id, deleted or not, in no set order. */
   readPageTitlesById(ids: readonly number[]): Promise<Array<{ id: number; title: string }>>;
+  /** `{ has_visual }` of the image page row at `slug` when it is sealed past the safe-chunk fence, else null (importImageFile). */
+  readImageSealProbe(sourceId: string, slug: string): Promise<{ has_visual: boolean } | null>;
+  /** The stored chunker version of the page row with the id (live, deleted or segmented), or null when no row has it. */
+  readPageChunkerVersion(pageId: number): Promise<{ chunker_version: number | null } | null>;
+  /** Up to 10 newest live pages of the source under a literal slug prefix, no question, synthesis or pinned-question page. */
+  readPrefixAnchoredPages(sourceId: string, prefix: string): Promise<Array<{ id: number; slug: string }>>;
+  /** The slugs whose every in-scope page row (live unless `includeDeleted`) the caller's page policy hides, in no set order. */
+  readPrivateOnlySlugs(slugs: readonly string[], scope?: PrivateOnlySlugScope, opts?: { includeDeleted?: boolean }): Promise<string[]>;
   /** The live pages at `slugs` in `sourceIds` with title, type, frontmatter and `COALESCE(effective_date, updated_at)` as `date` (the entity card's text mentions). */
   readTextMentionPages(sourceIds: readonly string[], slugs: readonly string[]): Promise<TextMentionPageRow[]>;
   /** The retrieval reflex's alias live recheck: the live pages in the scope at `slugs`, as (slug, source_id), in no set order. */
@@ -218,6 +248,14 @@ export interface ReadStatementMembers {
   countOffGridTakeWeights(): Promise<{ off_grid: number; total: number }>;
   /** How many takes the brain holds. */
   countTakes(): Promise<number>;
+  /** The languages of the served chunks of `sourceId` that define `qualified`, in byte order (the code walk's language gate). */
+  listSymbolLanguages(sourceId: string, qualified: string): Promise<string[]>;
+  /** The chunks among `chunkIds` written in one of `languages`, in id order (the code walk's mixed-language filter). */
+  listSupportedChunkIds(chunkIds: readonly number[], languages: readonly string[]): Promise<number[]>;
+  /** The two-pass walk's chunk ids defining the near symbol or the unresolved edge targets, of `sourceId` when named, at most 50. */
+  listSymbolChunkIds(lookup: 'near_symbol' | 'edge_targets', symbols: readonly string[], sourceId?: string): Promise<number[]>;
+  /** The visible chunks among `chunkIds` with their pages, in `chunkIds` order (the structural walk's hydration). */
+  listWalkChunkRows(chunkIds: readonly number[]): Promise<import('../engine-sql/chunk-reads.ts').WalkChunkRow[]>;
   /** The takes a fact purge removes: consolidated from a purged fact, or echoing the purged claim. */
   planFactPurgeTakes(spec: PurgeTakesSpec): Promise<Array<{ id: number; page_id: number }>>;
   /** The page's stored takes, row number to claim. */
@@ -326,6 +364,12 @@ export interface ReadStatementMembers {
   carryConceptIncomingLinks(sourceId: string, slug: string, incoming: readonly unknown[], oldId: number): Promise<{ id: number; carried: number } | null>;
   /** When a tombstone's `hours` recovery window ends (ISO, UTC) and whether it has; null for a live or missing page. */
   readTombstoneWindow(pageId: number, hours: number): Promise<{ until: string; past: boolean } | null>;
+  /** What on or about the concept row synthesis did not write (the stated kinds), with its bounded lead and segmented mark. */
+  readConceptStatedKinds(pageId: number, sourceId: string, slug: string, lists: ConceptRebuildSql.StatedKindLists): Promise<ConceptRebuildSql.ConceptStatedRow>;
+  /** Who may read the page row with the id, live or deleted, as the read predicate decides it; null when no row has it. */
+  readRebuildAccess(pageId: number): Promise<ConceptRebuildSql.RebuildAccess | null>;
+  /** Every held concept, by source then slug, with whether it is private and whether a live member page is. */
+  readHeldConceptRows(): Promise<ConceptRebuildSql.HeldConceptRow[]>;
   /**
    * The engine graduation inventory's catalog reads (SQL in engine-sql/graduation-catalog.ts). listCatalogRelations
    * returns the SQL relations of the current schema, or on a store with no relations (the Rust engine) its keyspace
@@ -335,6 +379,37 @@ export interface ReadStatementMembers {
   listCatalogRelations(): Promise<GraduationCatalogSql.CatalogRelations>;
   readCatalogSchemaVersion(): Promise<number | null>;
   listCatalogForeignKeys(): Promise<GraduationCatalogSql.CatalogForeignKey[]>;
+  /**
+   * The memory-trust evals' harness reads (SQL in engine-sql/eval-harness-reads.ts; trusted local, every source).
+   * getFactsByIds: each stored fact of `ids` with its expiry and successor, by id. findLiveFactsByText: the unexpired
+   * facts of one source whose text is exactly one of `texts`, by id. listPageIdSlugs: every page with its id, a
+   * soft-deleted one included, by id.
+   */
+  getFactsByIds(ids: readonly number[]): Promise<EvalHarnessSql.FactStateRow[]>;
+  findLiveFactsByText(sourceId: string, texts: readonly string[]): Promise<Array<{ id: number; fact: string }>>;
+  listPageIdSlugs(): Promise<EvalHarnessSql.PageIdSlugRow[]>;
+  /**
+   * The evals' catalog probes and text scan. hasTable / hasColumn: whether the schema has that table / column (the Rust
+   * store answers for the SQL tables whose records it keeps). listTextBearingColumns: every text-bearing column of every
+   * table (the Rust store: each text field its stored records carry, under the table its records map to or their
+   * keyspace). scanTextColumns: each such value that contains the pattern (case-insensitive), by table, column and
+   * value in UTF-8 byte order; table and column names differ on the Rust store for records no SQL table maps. The SQL
+   * engines refuse when the running role cannot read every row of a scanned table.
+   */
+  hasTable(name: string): Promise<boolean>;
+  hasColumn(table: string, column: string): Promise<boolean>;
+  listTextBearingColumns(): Promise<EvalHarnessSql.TextColumnRow[]>;
+  scanTextColumns(spec: EvalHarnessSql.TextScanSpec): Promise<EvalHarnessSql.TextScanHit[]>;
+  /**
+   * The evals' harness pause (engine-sql/eval-harness-reads.ts): pauseManagedPersistence turns managed persistence off
+   * with no mode_epoch bump and returns the prior enabled, epoch and topology change count; restoreManagedPersistence
+   * puts enabled back only while the row is still paused at that epoch with no topology change since (true when it
+   * wrote). withManagedPersistencePaused runs fn between them and reports paused_state_changed when a real mode change
+   * during fn is kept; a throw is rethrown after the restore. One pause at a time per brain (a nested one is refused).
+   */
+  pauseManagedPersistence(): Promise<EvalHarnessSql.ManagedPausePrior>;
+  restoreManagedPersistence(prior: EvalHarnessSql.ManagedPausePrior): Promise<boolean>;
+  withManagedPersistencePaused<T>(fn: () => Promise<T>): Promise<EvalHarnessSql.ManagedPauseOutcome<T>>;
   /** The page's stored takes by row number while its take_fence generation is held `fence_absent`; none otherwise. */
   listHeldFenceTakeRows(spec: HeldFenceTakeSpec): Promise<HeldFenceTakeRow[]>;
   /** The take at a page's row number with its claim and stored trust tier; null when the page has none there. */

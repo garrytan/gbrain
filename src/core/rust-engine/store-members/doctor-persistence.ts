@@ -102,6 +102,14 @@ export const listWorktreeIds: Member<'listWorktreeIds'> = async (brain) =>
 export const listOwnerBindings: Member<'listOwnerBindings'> = async (brain, hostId) =>
   storeCall({ member: 'listOwnerBindings' }, () => brain.listOwnerBindings(hostId)) as Promise<OwnerBindingRow[]>;
 
+/**
+ * The online-built request indexes: the Rust store keeps no SQL indexes; its request lookups are key scans of the request
+ * records, so no index can be missing, invalid or still being built. Every name reads valid: doctor
+ * `persistence_request_indexes` prints what a healthy SQL brain prints and `gbrain repair request-indexes` applies nothing.
+ */
+export const readRequestIndexStates: Member<'readRequestIndexStates'> = async (_brain, names) =>
+  names.map(name => ({ name, valid: true, phase: null, blocks_done: null, blocks_total: null }));
+
 // ---- empty: the store has no writer for the relation ---------------------------------------------------------------
 
 /** No consumer heartbeat is recorded (persistence_consumers has no writer). */
@@ -145,5 +153,6 @@ export const listRecentPurgeRequests: Member<'listRecentPurgeRequests'> = (brain
   storeCall({ member: 'listRecentPurgeRequests' }, () => brain.listRecentPurgeRequests(days, cap));
 /** The store records no derivation-result sweep of a fact purge. */
 export const listDerivationPurgeSweeps: Member<'listDerivationPurgeSweeps'> = async () => [];
-/** The store has no `database_only_reason` on a page, so no page was written database-only to an unbound source. */
-export const listUnboundSourcePages: Member<'listUnboundSourcePages'> = async () => [];
+/** Served from the store's page, source, binding and config records (write_guards.rs list_unbound_source_pages). */
+export const listUnboundSourcePages: Member<'listUnboundSourcePages'> = async (brain) =>
+  await storeCall({ member: 'listUnboundSourcePages' }, () => brain.listUnboundSourcePages()) as Awaited<ReturnType<BrainEngine['listUnboundSourcePages']>>;

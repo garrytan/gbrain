@@ -23,5 +23,11 @@ export function clearOAuthRequest(): void {
 
 export function ownerLoginPrompt(mcpUrl: string, requestId?: string): string {
   const continuation = requestId ? ` --oauth-request ${requestId}` : '';
-  return `Give me an owner admin login link for ${mcpUrl}. On the brain host, run gbrain mcp admin login-link --url ${mcpUrl}${continuation} using its protected owner credential. Deliver the single-use link privately and do not open it before I do.`;
+  return `Give me an owner admin login link for ${mcpUrl}. On the brain host, run gbrain mcp admin login-link --url '${mcpUrl}'${continuation} using its protected owner credential. Deliver the single-use link privately and do not open it before I do.`;
+}
+
+/** The command the owner runs in their own terminal on the brain host; its link opens in this browser, never in an agent chat. */
+export function ownerLoginCommand(mcpUrl: string, requestId?: string): string {
+  const continuation = requestId ? ` --oauth-request ${requestId}` : '';
+  return `gbrain mcp admin login-link --url '${mcpUrl}'${continuation} --admin-token-file ~/.gbrain/serve/admin-token`;
 }

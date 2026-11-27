@@ -185,6 +185,8 @@ const SWEEP: Record<string, Row> = {
   code_blast: { skip: 'code-index fixture pipeline; code-intel suites own it' },
   code_flow: { skip: 'code-index fixture pipeline; code-intel suites own it' },
   open_loops: { args: {}, content: false },
+  check_claims: { args: { text: 'PLANTMARK has 3 widgets.' }, content: false },
+  household_due: { args: {}, content: false },
   // retrieval — write/admin/agent (add_timeline_entry echoes the stored entry in its receipt)
   add_timeline_entry: { args: { slug: 'notes/n1', date: TODAY, summary: planted('new timeline'), request_id: randomUUID() } },
   ontology_propose: { skip: 'write op; returns the merged ontology row, covered by the wrapper registration test' },
@@ -204,6 +206,9 @@ const SWEEP: Record<string, Row> = {
   takes_scorecard: { args: {} },
   takes_calibration: { args: {} },
   whoami: { args: {} },
+  capabilities: { args: {} },
+  onboarding_status: { args: {} },
+  propose_jobs: { args: { days: 7 } },
   sources_list: { args: {} },
   sources_status: { args: { id: SRC } },
   sources_resolve_path: { skip: 'needs a Git checkout of the source; returns paths, slugs, states and counts, never page text; test/sources-resolve-path.test.ts owns it' },

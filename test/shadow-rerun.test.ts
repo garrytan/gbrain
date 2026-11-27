@@ -108,6 +108,7 @@ describe('the barrier', () => {
     const dir = mkdtempSync(join(tmpdir(), 'gbrain-shadow-busy-'));
     const epoch = ensureEpoch(dir, { seed_id: 's', rust_addon_sha256: null, comparator_version: 2, adapter_version: 'a', capability_set_hash: null, readiness_policy_hash: 'p' });
     const samples = new SampleRegistry();
+    // pregate-literal: SHADOW_ADAPTER_VERSION=10 10 is a sample count, not the adapter version
     const ask = { id: 1, kind: 'rerun', sid: samples.add({ op: 'listPages', args: [], at: Date.now() }, 10), epoch_id: epoch.epoch_id };
     let clock = 0;
     const handler = (idle: boolean, rpc: () => Promise<unknown>) => makeAskHandler({ engine, reads: {} as never, dir, rpc: rpc as never, samples, now: () => (clock += 20_000),
@@ -123,6 +124,7 @@ describe('the barrier', () => {
     const dir = mkdtempSync(join(tmpdir(), 'gbrain-shadow-spin-'));
     const epoch = ensureEpoch(dir, { seed_id: 's', rust_addon_sha256: null, comparator_version: 2, adapter_version: 'a', capability_set_hash: null, readiness_policy_hash: 'p' });
     const samples = new SampleRegistry();
+    // pregate-literal: SHADOW_ADAPTER_VERSION=10 the number 10 on the next line is test data (a count, size, index or slice), not the adapter version
     const ask = { id: 1, kind: 'rerun', sid: samples.add({ op: 'listPages', args: [], at: Date.now() }, 10), epoch_id: epoch.epoch_id };
     const handler = (follower: Record<string, unknown>, deadlineMs?: number) => makeAskHandler({ engine, reads: {} as never, dir, samples, rpc: (async () => ({ stamp: 1 })) as never, deadlineMs, follower: { published: 0, lastInvalidatedAt: 0, ...follower } as never });
     // pendingInvalid set, nothing queued: idle() stays false and settle() resolves at once
@@ -132,6 +134,7 @@ describe('the barrier', () => {
     // busy but not blocked: a timer and an I/O callback must run during the 300 ms wait
     let timers = 0;
     let turns = 0;
+    // pregate-literal: SHADOW_ADAPTER_VERSION=10 the number 10 on the next line is test data (a count, size, index or slice), not the adapter version
     const timer = setInterval(() => { timers++; }, 10);
     const io = setInterval(() => setImmediate(() => { turns++; }), 1);
     await expect(handler({ idle: () => false, blocked: () => null, settle: async () => {} }, 300)(ask)).rejects.toMatchObject({ code: 'busy' });
@@ -148,6 +151,7 @@ describe('rerun attempts', () => {
     const dir = mkdtempSync(join(tmpdir(), 'gbrain-shadow-attempts-'));
     const epoch = ensureEpoch(dir, { seed_id: 's', rust_addon_sha256: null, comparator_version: 3, adapter_version: 'a', capability_set_hash: null, readiness_policy_hash: 'p' });
     const samples = new SampleRegistry();
+    // pregate-literal: SHADOW_ADAPTER_VERSION=10 the number 10 on the next line is test data (a count, size, index or slice), not the adapter version
     const sid = samples.add({ op: 'listPages', args: [], at: Date.now() }, 10);
     const real = engine.listPages.bind(engine);
     let answers = 0;
@@ -171,6 +175,7 @@ describe('rerun attempts', () => {
     const rows = [{ payload: 'x', id: 9 }];
     for (const attempt of [undefined, 'nope']) expect(await handler({ id: 2, kind: 'privacy', sid, phase: 'rerun', attempt, rows })).toEqual({ verdict: 'privacy_check_moved', complete: false });
     await expect(handler({ id: 3, kind: 'vector', sid, phase: 'rerun', attempt: 'nope' })).rejects.toMatchObject({ code: 'moved' });
+    // pregate-literal: SHADOW_ADAPTER_VERSION=10 the number 10 on the next line is test data (a count, size, index or slice), not the adapter version
     for (let i = 0; i < 10; i++) await handler(ask); // more attempts than the sample keeps: the oldest are dropped
     expect(samples.get(sid)!.reruns!.size).toBe(8);
     expect(await handler({ id: 4, kind: 'privacy', sid, phase: 'rerun', attempt: a1.attempt, rows })).toEqual({ verdict: 'privacy_check_moved', complete: false });
@@ -214,11 +219,13 @@ describe('the registry\'s memory cap holds for a rerun\'s answer', () => {
     const epoch = ensureEpoch(dir, { seed_id: 's', rust_addon_sha256: null, comparator_version: 3, adapter_version: 'a', capability_set_hash: null, readiness_policy_hash: 'p' });
     const samples = new SampleRegistry(1024, 64);
     const sample = { op: 'listPages', args: [] as unknown[], at: Date.now() };
+    // pregate-literal: SHADOW_ADAPTER_VERSION=10 the number 10 on the next line is test data (a count, size, index or slice), not the adapter version
     const sid = samples.add(sample, 10);
     const handler = makeAskHandler({ engine, reads: {} as never, dir, samples, rpc: (async () => ({ stamp: 1 })) as never,
       follower: { idle: () => true, blocked: () => null, settle: async () => {}, published: 0, lastInvalidatedAt: 0 } as never, watch: { current: () => 'lsn', live: async () => 'lsn', ready: async () => {} } });
     await expect(handler({ id: 1, kind: 'rerun', sid, epoch_id: epoch.epoch_id })).rejects.toMatchObject({ code: 'too_large' });
     expect([...((sample as { reruns?: Map<string, unknown> }).reruns?.values() ?? [])].some((r) => (r as { result?: unknown }).result !== undefined)).toBe(false);
+    // pregate-literal: SHADOW_ADAPTER_VERSION=10 the number 10 on the next line is test data (a count, size, index or slice), not the adapter version
     expect(samples.totalBytes).toBe(10);
     rmSync(dir, { recursive: true, force: true });
   });

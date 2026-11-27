@@ -5,6 +5,7 @@
  * default-off byte identity, recall fact validity windows, and the
  * configurable remote budget clamp the eval relies on.
  */
+import { capabilityMissing } from '../src/core/rust-engine/errors.ts';
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { operations, type OperationContext } from '../src/core/operations.ts';
@@ -57,7 +58,7 @@ describe('deliverEvidence with the header on', () => {
   function stub(frontmatter: Record<string, unknown>) {
     return {
       async getConfig(key: string) { return key === 'brain.timezone' ? 'UTC' : null; },
-      async executeRaw() { return [{ id: 1, slug: 'chat/s', frontmatter, import_filename: null }]; },
+      async readPageDateFieldsByIds() { return [{ id: 1, slug: 'chat/s', frontmatter, import_filename: null }]; },
       async getChunkWindows() {
         return [{ page_id: 1, slug: 'chat/s', source_id: 'default', type: 'note', revision: 'r1', sealed: true, max_chunk_index: 1, row_limited: false,
           compiled_truth: body, timeline: '', chunks: chunks.map((t, i) => ({ id: 1000 + i, chunk_index: i, chunk_text: t, chunk_source: 'compiled_truth' })) }];
@@ -107,10 +108,15 @@ describe('deliverEvidence with the header on', () => {
   });
 
   test('a failed date read renders unknown and says so', async () => {
-    const engine = Object.assign(stub({}) as object, { async executeRaw() { throw new Error('boom'); } }) as never;
+    const engine = Object.assign(stub({}) as object, { async readPageDateFieldsByIds() { throw new Error('boom'); } }) as never;
     const on = await deliverEvidence(engine, [hit], plan(32000, true), {});
     expect(on.results[0].chunk_text.startsWith('[observed unknown]\n')).toBe(true);
     expect(on.delivery.fallbacks).toContain('date_header_unavailable');
+  });
+
+  test('a refused date read surfaces as the refusal, never as a quiet unknown', async () => {
+    const engine = Object.assign(stub({}) as object, { async readPageDateFieldsByIds() { throw capabilityMissing('pages', 'readPageDateFieldsByIds'); } }) as never;
+    await expect(deliverEvidence(engine, [hit], plan(32000, true), {})).rejects.toMatchObject({ code: 'engine_capability_missing' });
   });
 });
 

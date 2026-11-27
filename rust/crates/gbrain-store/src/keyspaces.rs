@@ -97,6 +97,11 @@ pub const KEYWORD_KINDS: &[KeyKind] = &[
 /// core work); they are listed under the family `core`.
 pub const KEYSPACES: &[Keyspace] = &[
     ks(
+        keys::GUEST_SOURCE,
+        "guest_sources",
+        "guest sources: writers and trust ceiling",
+    ),
+    ks(
         keys::REASON_TOMBSTONE,
         "reason_tombstones",
         "purged change reasons",

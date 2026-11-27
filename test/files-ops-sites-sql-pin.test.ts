@@ -16,6 +16,12 @@
  * `filename COLLATE "C", id`, and ops/files.ts:363 `ORDER BY storage_path COLLATE "C"`. The join kept main's members and
  * re-applied that byte order and the `id` tie-break, so the verify and list pins below carry them; nothing else in those
  * texts differs from 5e22f0c134.
+ *
+ * Master sync 18 (913e459414, files follow their page, v336): the two upload upserts of commands/files.ts and the
+ * file_upload upsert of ops/files.ts changed on master, and the pins carry master's text: the commands read the page id
+ * with a subselect on pages (source_id and slug, deleted_at IS NULL) and a conflict takes that page id and, when it is
+ * set, its slug; file_upload names the row's slug as the page has it now, read by id with FOR SHARE, and a conflict
+ * takes the slug whenever the upload binds a page. The params are unchanged. The sync and register texts did not change.
  */
 import { expect, test } from 'bun:test';
 import { PostgresEngine } from '../src/core/postgres-engine.ts';
@@ -36,20 +42,24 @@ const readable = (excludePrivate: boolean) => excludePrivate
   : 'TRUE';
 
 // src/commands/files.ts:212 uploadFile and :385 uploadRaw (the smart upload): one text.
-const CLI_UPSERT = `INSERT INTO files (page_slug, filename, storage_path, mime_type, size_bytes, content_hash, metadata)
-     VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+const CLI_UPSERT = `INSERT INTO files (page_slug, page_id, filename, storage_path, mime_type, size_bytes, content_hash, metadata)
+     VALUES ($1, (SELECT id FROM pages WHERE source_id = 'default' AND slug = $1 AND deleted_at IS NULL), $2, $3, $4, $5, $6, $7::jsonb)
      ON CONFLICT (storage_path) DO UPDATE SET
        content_hash = EXCLUDED.content_hash,
        size_bytes = EXCLUDED.size_bytes,
        mime_type = EXCLUDED.mime_type,
+       page_id = COALESCE(EXCLUDED.page_id, files.page_id),
+       page_slug = CASE WHEN EXCLUDED.page_id IS NULL THEN files.page_slug ELSE EXCLUDED.page_slug END,
        metadata = (CASE WHEN jsonb_typeof(files.metadata) = 'object' THEN files.metadata ELSE '{}'::jsonb END) || EXCLUDED.metadata`;
 // src/commands/files.ts:310 uploadRaw (the git lane).
-const RAW_UPSERT = `INSERT INTO files (source_id, page_slug, filename, storage_path, mime_type, size_bytes, content_hash, metadata)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
+const RAW_UPSERT = `INSERT INTO files (source_id, page_slug, page_id, filename, storage_path, mime_type, size_bytes, content_hash, metadata)
+       VALUES ($1, $2, (SELECT id FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL), $3, $4, $5, $6, $7, $8::jsonb)
        ON CONFLICT (storage_path) DO UPDATE SET
          content_hash = EXCLUDED.content_hash,
          size_bytes = EXCLUDED.size_bytes,
          mime_type = EXCLUDED.mime_type,
+         page_id = COALESCE(EXCLUDED.page_id, files.page_id),
+         page_slug = CASE WHEN EXCLUDED.page_id IS NULL THEN files.page_slug ELSE EXCLUDED.page_slug END,
          metadata = (CASE WHEN jsonb_typeof(files.metadata) = 'object' THEN files.metadata ELSE '{}'::jsonb END) || EXCLUDED.metadata`;
 // src/commands/files.ts:482 syncFiles (indented one level deeper than the other two).
 const SYNC_UPSERT = `INSERT INTO files (page_slug, filename, storage_path, mime_type, size_bytes, content_hash, metadata)
@@ -61,13 +71,14 @@ const SYNC_UPSERT = `INSERT INTO files (page_slug, filename, storage_path, mime_
          metadata = (CASE WHEN jsonb_typeof(files.metadata) = 'object' THEN files.metadata ELSE '{}'::jsonb END) || EXCLUDED.metadata`;
 // src/core/ops/files.ts:166 file_upload.
 const OP_UPSERT = `INSERT INTO files (page_slug, filename, storage_path, mime_type, size_bytes, content_hash, source_id, page_id, metadata)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
+         VALUES (COALESCE((SELECT p.slug FROM pages p WHERE p.id = $8 FOR SHARE), $1), $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
          ON CONFLICT (storage_path) DO UPDATE SET
            content_hash = EXCLUDED.content_hash,
            size_bytes = EXCLUDED.size_bytes,
            mime_type = EXCLUDED.mime_type,
            source_id = CASE WHEN EXCLUDED.page_id IS NULL THEN files.source_id ELSE EXCLUDED.source_id END,
            page_id = COALESCE(EXCLUDED.page_id, files.page_id),
+           page_slug = CASE WHEN EXCLUDED.page_id IS NULL THEN files.page_slug ELSE EXCLUDED.page_slug END,
            metadata = (CASE WHEN jsonb_typeof(files.metadata) = 'object' THEN files.metadata ELSE '{}'::jsonb END) || EXCLUDED.metadata`;
 // src/core/ops/files.ts:317 file_register.
 const REGISTER_UPSERT = `INSERT INTO files (page_slug, filename, storage_path, mime_type, size_bytes, content_hash, source_id, page_id, metadata)

@@ -44,6 +44,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 mod release;
+pub(crate) use release::add_persistence_counters_in;
 pub use release::{CounterDelta, ReleaseRead};
 
 /// `persistence_worktrees.state` CHECK.
@@ -133,6 +134,10 @@ pub struct HostBindingInsert {
     pub coordination_path: String,
     #[serde(default)]
     pub git_durability: Option<String>,
+    /// `upsertHostBinding` only: a cross-host accept (#10123) also takes `git_durability` when it
+    /// is set; otherwise an existing binding keeps its own.
+    #[serde(default)]
+    pub carry_durability: bool,
 }
 
 /// `insertSourceBinding(input)`.
@@ -152,13 +157,13 @@ fn prefix(tag: u8) -> Vec<u8> {
     vec![keys::PERSISTENCE, super::WORKTREES, tag]
 }
 
-fn worktree_key(id: &str) -> Vec<u8> {
+pub(super) fn worktree_key(id: &str) -> Vec<u8> {
     let mut key = prefix(WORKTREE);
     key.extend_from_slice(id.as_bytes());
     key
 }
 
-fn host_binding_key(worktree_id: &str, host_id: &str) -> Vec<u8> {
+pub(super) fn host_binding_key(worktree_id: &str, host_id: &str) -> Vec<u8> {
     let mut key = prefix(HOST_BINDING);
     key.extend_from_slice(worktree_id.as_bytes());
     key.push(0);
@@ -166,7 +171,7 @@ fn host_binding_key(worktree_id: &str, host_id: &str) -> Vec<u8> {
     key
 }
 
-fn source_binding_key(source_id: &str) -> Vec<u8> {
+pub(super) fn source_binding_key(source_id: &str) -> Vec<u8> {
     let mut key = prefix(SOURCE_BINDING);
     key.extend_from_slice(source_id.as_bytes());
     key
@@ -193,11 +198,11 @@ pub(super) fn scan_records<T: for<'de> Deserialize<'de>>(
     }
 }
 
-fn read_worktree_record(read: &dyn KvRead, id: &str) -> Result<Option<WorktreeRecord>> {
+pub(super) fn read_worktree_record(read: &dyn KvRead, id: &str) -> Result<Option<WorktreeRecord>> {
     get_json(read, &worktree_key(id))
 }
 
-fn read_host_record(
+pub(super) fn read_host_record(
     read: &dyn KvRead,
     worktree_id: &str,
     host_id: &str,
@@ -601,6 +606,86 @@ pub(crate) fn host_root_bindings_in(read: &dyn KvRead, host_id: &str) -> Result<
     Ok(out)
 }
 
+/// `listHostRepositoryRoots(hostId)`: every host binding of `host_id` (a stored binding always has a
+/// local path, so `local_path IS NOT NULL` holds for each), joined to the
+/// source bindings of its worktree (a binding with none gives one row with `source_id` null), by local
+/// path in byte order, then source id. `LEFT JOIN ... ORDER BY h.local_path COLLATE "C"` sets no order
+/// within one path; byte order of the source id makes it total here.
+pub(crate) fn host_repository_roots_in(read: &dyn KvRead, host_id: &str) -> Result<Vec<Value>> {
+    let host = uuid_param(host_id, "hostId")?;
+    let sources = scan_records::<SourceBindingRecord>(read, SOURCE_BINDING, "source binding")?;
+    let mut rows: Vec<(String, Option<String>)> = Vec::new();
+    for h in scan_records::<HostBindingRecord>(read, HOST_BINDING, "host binding")? {
+        if h.host_id != host {
+            continue;
+        }
+        let path = h.local_path.clone();
+        let named: Vec<&SourceBindingRecord> = sources
+            .iter()
+            .filter(|s| s.worktree_id == h.worktree_id)
+            .collect();
+        if named.is_empty() {
+            rows.push((path, None));
+        } else {
+            rows.extend(
+                named
+                    .into_iter()
+                    .map(|s| (path.clone(), Some(s.source_id.clone()))),
+            );
+        }
+    }
+    rows.sort();
+    Ok(rows
+        .into_iter()
+        .map(|(local_path, source_id)| json!({ "local_path": local_path, "source_id": source_id }))
+        .collect())
+}
+
+/// `listPendingGitEffectPaths(hostId)`: per queued or running `git` effect whose data names a
+/// `relative_path`, that path (`data ->> 'relative_path'`), its source's local path, and the local
+/// path of its worktree's binding on `host_id` (none without a host or a binding), at most 10,000, in
+/// effect order (Postgres sets none). A `host_id` that is not a uuid is refused as `$1::uuid` refuses it.
+pub(crate) fn pending_git_effect_paths_in(
+    read: &dyn KvRead,
+    host_id: Option<&str>,
+) -> Result<Vec<Value>> {
+    let host = host_id.map(|h| uuid_param(h, "hostId")).transpose()?;
+    let hosts: Vec<HostBindingRecord> = match &host {
+        Some(h) => scan_records::<HostBindingRecord>(read, HOST_BINDING, "host binding")?
+            .into_iter()
+            .filter(|b| &b.host_id == h)
+            .collect(),
+        None => Vec::new(),
+    };
+    let mut out = Vec::new();
+    for e in all_effects(read)? {
+        if out.len() >= 10_000 {
+            break;
+        }
+        if e.kind != "git" || !(e.state == "queued" || e.state == "running") {
+            continue;
+        }
+        let Some(rel) = e.data.get("relative_path") else {
+            continue;
+        };
+        let source_path = match &e.source_id {
+            Some(id) => read_source(read, id)?.and_then(|s| s.local_path),
+            None => None,
+        };
+        let worktree_path = e
+            .worktree_id
+            .as_ref()
+            .and_then(|w| hosts.iter().find(|b| &b.worktree_id == w))
+            .map(|b| b.local_path.clone());
+        out.push(json!({
+            "rel": crate::timeline_queries::jsonb_field_text(rel),
+            "source_path": source_path,
+            "worktree_path": worktree_path,
+        }));
+    }
+    Ok(out)
+}
+
 /// A worktree's heartbeat, as ISO text (for tests and diagnostics).
 pub(crate) fn worktree_heartbeat_in(read: &dyn KvRead, id: &str) -> Result<Option<String>> {
     let id = uuid_param(id, "worktreeId")?;
@@ -793,20 +878,33 @@ pub(crate) fn reactivate_worktree_in(tx: &mut dyn KvWrite, id: &str) -> Result<(
     put_json(tx, &worktree_key(&id), &w)
 }
 
-/// `upsertHostBinding(row)`: the accepting host's paths for the worktree. An existing binding
-/// keeps its Git durability; a new one has none. Refuses an unknown worktree, as the foreign key
-/// does.
+/// `upsertHostBinding(row)`: the accepting host's paths for the worktree. A new binding takes
+/// `git_durability`; an existing one keeps its own, except that `carry_durability` (a cross-host
+/// accept, #10123) takes `git_durability` when it is set (`COALESCE(EXCLUDED, existing)`).
+/// Refuses an unknown worktree, as the foreign key does, and a value the CHECK refuses.
 pub(crate) fn upsert_host_binding_in(
     tx: &mut dyn KvWrite,
     input: &HostBindingInsert,
 ) -> Result<()> {
     let worktree_id = uuid_param(&input.worktree_id, "worktreeId")?;
     let host_id = uuid_param(&input.host_id, "hostId")?;
+    if let Some(g) = &input.git_durability
+        && !GIT_DURABILITY.contains(&g.as_str())
+    {
+        return Err(violation(format!(
+            "\"{g}\" is not a Git durability setting"
+        )));
+    }
     if read_worktree_record(&*tx, &worktree_id)?.is_none() {
         return Err(violation(format!("worktree {worktree_id} does not exist")));
     }
-    let git_durability =
-        read_host_record(&*tx, &worktree_id, &host_id)?.and_then(|h| h.git_durability);
+    let git_durability = match read_host_record(&*tx, &worktree_id, &host_id)? {
+        None => input.git_durability.clone(),
+        Some(existing) if input.carry_durability => {
+            input.git_durability.clone().or(existing.git_durability)
+        }
+        Some(existing) => existing.git_durability,
+    };
     let record = HostBindingRecord {
         local_path: input.local_path.clone(),
         coordination_path: input.coordination_path.clone(),
@@ -934,6 +1032,16 @@ impl Store {
         host_topology_rows_in(&*self.read()?, host_id)
     }
 
+    /// `listPendingGitEffectPaths(hostId)`: the paths the queued and running git effects are about to commit.
+    pub fn list_pending_git_effect_paths(&self, host_id: Option<&str>) -> Result<Vec<Value>> {
+        pending_git_effect_paths_in(&*self.read()?, host_id)
+    }
+
+    /// `listHostRepositoryRoots(hostId)`: the host's bound local paths with the sources named on them.
+    pub fn list_host_repository_roots(&self, host_id: &str) -> Result<Vec<Value>> {
+        host_repository_roots_in(&*self.read()?, host_id)
+    }
+
     /// `listWorktreeMembers(worktreeId)`.
     pub fn list_worktree_members(&self, worktree_id: &str) -> Result<Vec<Value>> {
         worktree_members_in(&*self.read()?, worktree_id)
@@ -941,7 +1049,7 @@ impl Store {
 
     /// `readWriterAdminState()`: the writer topology as jsonb text.
     pub fn writer_admin_state_text(&self) -> Result<String> {
-        writer_admin_state_text_in(&*self.read()?, self.brain_id())
+        writer_admin_state_text_in(&*self.read()?, &self.brain_id())
     }
 
     /// The id of the worktree a prepared transfer holds, or None.
@@ -959,7 +1067,7 @@ impl Store {
         worktree_manifest_in(&*self.read()?, id)
     }
 
-    /// Records the accepting host's paths for a worktree, keeping its Git durability.
+    /// Records the accepting host's paths for a worktree (`upsert_host_binding_in`).
     pub fn upsert_host_binding(&self, input: &HostBindingInsert) -> Result<()> {
         self.write(|tx| upsert_host_binding_in(tx, input))
     }
@@ -978,7 +1086,7 @@ impl Store {
     ) -> Result<Vec<Value>> {
         content_receipt_rows_in(
             &*self.read()?,
-            self.brain_id(),
+            &self.brain_id(),
             worktree_ids,
             host_id,
             source_ids,

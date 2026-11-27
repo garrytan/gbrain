@@ -384,7 +384,7 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       },
       "grep": {
         "type": "string",
-        "description": "Only the paragraphs containing this text (case-insensitive substring, not a regex), with line numbers and total_matches.",
+        "description": "Only the paragraphs containing this text (case-insensitive substring, not a regex; an inner \"a|b\" also matches either side), with line numbers and total_matches.",
         "fullSurfaceOnly": true
       },
       "context": {
@@ -4129,6 +4129,536 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     }
   },
   {
+    "name": "check_claims",
+    "mutating": false,
+    "idempotent": true,
+    "outputRedaction": "retrieval",
+    "description": "Check the numbers in a draft against allowed-claims pages (type: facts, claims: allowed) before stating them. Per claim: supported (with the cited dated line), conflicts (lines that say another number) or not_found, which means no allowed claim covers it, not that it is false.",
+    "params": {
+      "text": {
+        "type": "string",
+        "required": true,
+        "description": "The draft to check (max 20000 characters)."
+      },
+      "source_id": {
+        "type": "string",
+        "description": "One source, or '__all__'."
+      }
+    },
+    "scope": "read",
+    "cliHints": {
+      "hidden": true
+    },
+    "area": "search"
+  },
+  {
+    "name": "correct",
+    "mutating": true,
+    "idempotent": true,
+    "writeInference": "none",
+    "outputRedaction": "no_stored_text",
+    "description": "The user corrected you: saves their standing rule and replaces fact_id with corrected_fact (or withdraws it). Branch on state and next.",
+    "params": {
+      "rule": {
+        "type": "string",
+        "description": "The rule, in the user's words."
+      },
+      "fact_id": {
+        "type": "string",
+        "description": "The wrong fact."
+      },
+      "corrected_fact": {
+        "type": "string",
+        "description": "The right fact."
+      },
+      "entity": {
+        "type": "string",
+        "description": "Subject slug."
+      },
+      "receipt_id": {
+        "type": "string",
+        "description": "Alone: that receipt's status."
+      },
+      "scope": {
+        "type": "string",
+        "enum": [
+          "me",
+          "team"
+        ],
+        "description": "me (default) or team.",
+        "fullSurfaceOnly": true
+      },
+      "checks": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "question": {
+              "type": "string"
+            },
+            "expect": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "reject": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "description": "Regression checks for gbrain rules check: [{question, expect[], reject[]}].",
+        "fullSurfaceOnly": true
+      },
+      "provenance": {
+        "type": "string",
+        "description": "Where the user said it.",
+        "fullSurfaceOnly": true
+      },
+      "content_origin": {
+        "type": "string",
+        "enum": [
+          "user_said",
+          "tool_output",
+          "inferred"
+        ],
+        "description": "user_said only; tool_output and inferred are refused.",
+        "fullSurfaceOnly": true
+      },
+      "resume": {
+        "type": "boolean",
+        "description": "With receipt_id: run the steps not yet committed.",
+        "fullSurfaceOnly": true
+      },
+      "source_id": {
+        "type": "string",
+        "description": "Write source.",
+        "fullSurfaceOnly": true
+      },
+      "request_id": {
+        "type": "string",
+        "description": "Reuse only to retry.",
+        "fullSurfaceOnly": true
+      }
+    },
+    "callShape": "{\"rule\":\"Never call alice-example the CTO.\",\"fact_id\":\"42\",\"corrected_fact\":\"Alice-example is VP Engineering.\",\"entity\":\"people/alice-example\"}",
+    "scope": "write",
+    "cliHints": {
+      "hidden": true
+    },
+    "annotations": {
+      "title": "correct",
+      "idempotentHint": true
+    },
+    "area": "correct"
+  },
+  {
+    "name": "policy_check",
+    "description": "Before you send, spend, delete, sign up, call or publish on the user's behalf outside this brain, ask whether the user's agent policy allows it. Advisory: allow, ask, deny or none (no policy), with requires_approval and any day, week or month budget left. To hold budget for a spend, call policy_reserve instead.",
+    "params": {
+      "verb": {
+        "type": "string",
+        "required": true,
+        "enum": [
+          "send",
+          "publish",
+          "spend",
+          "delete",
+          "sign_up",
+          "call",
+          "book",
+          "cancel",
+          "dispute",
+          "submit",
+          "return",
+          "use",
+          "renew",
+          "remind",
+          "other"
+        ],
+        "description": "The outside action."
+      },
+      "amount": {
+        "type": "number",
+        "description": "Money involved, with currency."
+      },
+      "currency": {
+        "type": "string",
+        "description": "Three-letter currency code for amount, like USD."
+      },
+      "merchant": {
+        "type": "string",
+        "description": "Merchant or service, when a rule may name it."
+      },
+      "to": {
+        "type": "string",
+        "enum": [
+          "self",
+          "household",
+          "known",
+          "new"
+        ],
+        "description": "Who it reaches: self, household, known or new."
+      }
+    },
+    "callShape": "{\"verb\":\"spend\",\"amount\":60,\"currency\":\"USD\",\"merchant\":\"acme-example\"}",
+    "scope": "read",
+    "mutating": false,
+    "idempotent": true,
+    "outputRedaction": {
+      "exempt": "derived decision fields (rule id, revision, state) from the owner-approved policy; no page text"
+    },
+    "cliHints": {
+      "name": "policy-check",
+      "hidden": true
+    },
+    "annotations": {
+      "title": "policy_check (advisory)",
+      "readOnlyHint": true
+    },
+    "area": "agent-policy"
+  },
+  {
+    "name": "agent_policy",
+    "description": "The user's agent policy rules that apply to you, as rows, with its state and revision. Advisory; call policy_check for one action.",
+    "params": {},
+    "scope": "read",
+    "mutating": false,
+    "idempotent": true,
+    "outputRedaction": {
+      "exempt": "the owner-approved rules written for agents to read, as rows; never the page"
+    },
+    "cliHints": {
+      "name": "agent-policy",
+      "hidden": true
+    },
+    "annotations": {
+      "title": "agent_policy (advisory)",
+      "readOnlyHint": true
+    },
+    "area": "agent-policy"
+  },
+  {
+    "name": "capabilities",
+    "description": "Which gbrain ops this installation serves and this connection can call now, listed or not, with the fix for each one that is not callable.",
+    "params": {
+      "ops": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Op names to check (default: policy_check, agent_policy, capabilities)."
+      }
+    },
+    "scope": "read",
+    "mutating": false,
+    "idempotent": true,
+    "agentCallable": true,
+    "outputRedaction": "no_stored_text",
+    "annotations": {
+      "title": "capabilities (what this connection can call)",
+      "readOnlyHint": true
+    },
+    "area": "discovery"
+  },
+  {
+    "name": "log_action",
+    "description": "After you act on the user's behalf outside this brain (send, spend, cancel, sign up...), record it. An amount needs evidence (the slug of a saved page that shows it) or estimated: true. Pass action_id to settle a policy_reserve hold or move a proposed action on. Keep request_id and retry with the same arguments.",
+    "params": {
+      "verb": {
+        "type": "string",
+        "required": true,
+        "enum": [
+          "send",
+          "publish",
+          "spend",
+          "delete",
+          "sign_up",
+          "call",
+          "book",
+          "cancel",
+          "dispute",
+          "submit",
+          "return",
+          "use",
+          "renew",
+          "remind",
+          "other"
+        ],
+        "description": "The outside action."
+      },
+      "summary": {
+        "type": "string",
+        "description": "What was done, at most 200 characters (required for a new action)."
+      },
+      "status": {
+        "type": "string",
+        "enum": [
+          "proposed",
+          "approved",
+          "done",
+          "failed",
+          "cancelled",
+          "reversed"
+        ],
+        "description": "Default done."
+      },
+      "purpose": {
+        "type": "string",
+        "enum": [
+          "buy",
+          "pay"
+        ],
+        "description": "For spend: buy or pay."
+      },
+      "counterparty": {
+        "type": "string",
+        "description": "The merchant, service or person on the other side."
+      },
+      "harness": {
+        "type": "string",
+        "description": "The agent or harness that acted."
+      },
+      "at": {
+        "type": "string",
+        "description": "When it happened (ISO time; default now)."
+      },
+      "currency": {
+        "type": "string",
+        "description": "Three-letter code for spent or saved."
+      },
+      "spent": {
+        "type": "number",
+        "description": "Money spent."
+      },
+      "saved": {
+        "type": "number",
+        "description": "Money saved, with saved_period."
+      },
+      "saved_period": {
+        "type": "string",
+        "enum": [
+          "one_time",
+          "monthly",
+          "yearly"
+        ],
+        "description": "one_time, monthly or yearly (never annualized)."
+      },
+      "estimated": {
+        "type": "boolean",
+        "description": "true when the amount is an estimate with no evidence."
+      },
+      "minutes_saved": {
+        "type": "number",
+        "description": "Estimated minutes saved (recorded, never totalled)."
+      },
+      "evidence": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "properties": {
+            "ref": {
+              "type": "string"
+            },
+            "note": {
+              "type": "string"
+            }
+          }
+        },
+        "description": "Refs to evidence: a page slug (counts as evidence when you can read it) or a URL."
+      },
+      "approval_by": {
+        "type": "string",
+        "enum": [
+          "owner",
+          "policy",
+          "none"
+        ],
+        "description": "Who approved it: owner, policy or none."
+      },
+      "approval_rule": {
+        "type": "string",
+        "description": "The policy rule id that allowed it."
+      },
+      "policy_revision": {
+        "type": "string",
+        "description": "The policy revision policy_check returned."
+      },
+      "cost_usd": {
+        "type": "number",
+        "description": "What the agent run cost, as reported by the harness."
+      },
+      "supersedes": {
+        "type": "string",
+        "description": "The action_id this entry corrects."
+      },
+      "action_id": {
+        "type": "string",
+        "description": "An action you logged or reserved, to move it on (settles a hold)."
+      },
+      "request_id": {
+        "type": "string",
+        "description": "A UUID; reuse it only to replay the same call."
+      }
+    },
+    "callShape": "{\"verb\":\"cancel\",\"summary\":\"Cancelled the acme-example trial\",\"counterparty\":\"acme-example\",\"saved\":12,\"currency\":\"USD\",\"saved_period\":\"monthly\",\"evidence\":[{\"ref\":\"inbox/acme-example-cancel\"}],\"request_id\":\"<uuid>\"}",
+    "scope": "write",
+    "mutating": true,
+    "idempotent": true,
+    "outputRedaction": {
+      "exempt": "derived ledger fields (action id, status, claim basis, which evidence refs resolved); no page text"
+    },
+    "cliHints": {
+      "name": "log-action",
+      "hidden": true
+    },
+    "annotations": {
+      "title": "log_action (action ledger)"
+    },
+    "area": "action-ledger"
+  },
+  {
+    "name": "ledger",
+    "description": "Totals of the outside actions you can read for a window: spent and saved per currency, split by evidenced, user_confirmed and estimated, by verb and by counterparty, plus live budget holds. Computed by gbrain; a window too large to read returns state partial and the narrower call.",
+    "params": {
+      "since": {
+        "type": "string",
+        "description": "Start: <n>d (default 30d) or an ISO date, at most 3660 days back."
+      },
+      "verb": {
+        "type": "string",
+        "enum": [
+          "send",
+          "publish",
+          "spend",
+          "delete",
+          "sign_up",
+          "call",
+          "book",
+          "cancel",
+          "dispute",
+          "submit",
+          "return",
+          "use",
+          "renew",
+          "remind",
+          "other"
+        ],
+        "description": "Only this verb."
+      },
+      "counterparty": {
+        "type": "string",
+        "description": "Only this counterparty."
+      }
+    },
+    "scope": "read",
+    "mutating": false,
+    "idempotent": true,
+    "outputRedaction": {
+      "exempt": "derived totals over actions the caller can read; no page text"
+    },
+    "cliHints": {
+      "name": "ledger-totals",
+      "hidden": true
+    },
+    "annotations": {
+      "title": "ledger (action totals)",
+      "readOnlyHint": true
+    },
+    "area": "action-ledger"
+  },
+  {
+    "name": "policy_reserve",
+    "description": "Before a spend, check the agent policy with its day, week and month budgets and hold the amount for 24 hours, in one step, so two agents cannot both use the last of a budget. Returns the policy_check answer and the reservation; settle it with log_action {action_id, status: \"done\", spent} after you act (with no amount the held amount is recorded as an estimate). A deny holds nothing.",
+    "params": {
+      "verb": {
+        "type": "string",
+        "required": true,
+        "enum": [
+          "send",
+          "publish",
+          "spend",
+          "delete",
+          "sign_up",
+          "call",
+          "book",
+          "cancel",
+          "dispute",
+          "submit",
+          "return",
+          "use",
+          "renew",
+          "remind",
+          "other"
+        ],
+        "description": "The outside action."
+      },
+      "amount": {
+        "type": "number",
+        "required": true,
+        "description": "The amount to hold."
+      },
+      "currency": {
+        "type": "string",
+        "required": true,
+        "description": "Three-letter currency code, like USD."
+      },
+      "summary": {
+        "type": "string",
+        "required": true,
+        "description": "What the agent is about to do, at most 200 characters."
+      },
+      "merchant": {
+        "type": "string",
+        "description": "Merchant or service, when a rule may name it."
+      },
+      "to": {
+        "type": "string",
+        "enum": [
+          "self",
+          "household",
+          "known",
+          "new"
+        ],
+        "description": "Who it reaches: self, household, known or new."
+      },
+      "purpose": {
+        "type": "string",
+        "enum": [
+          "buy",
+          "pay"
+        ],
+        "description": "For spend: buy or pay."
+      },
+      "harness": {
+        "type": "string",
+        "description": "The agent or harness that will act."
+      },
+      "request_id": {
+        "type": "string",
+        "description": "A UUID; reuse it only to replay the same call."
+      }
+    },
+    "callShape": "{\"verb\":\"spend\",\"amount\":40,\"currency\":\"USD\",\"merchant\":\"acme-example\",\"summary\":\"Reorder printer ink\",\"request_id\":\"<uuid>\"}",
+    "scope": "write",
+    "mutating": true,
+    "idempotent": true,
+    "outputRedaction": {
+      "exempt": "derived decision and budget fields from the owner-approved policy and the caller's readable actions; no page text"
+    },
+    "cliHints": {
+      "name": "policy-reserve",
+      "hidden": true
+    },
+    "annotations": {
+      "title": "policy_reserve (advisory budget hold)"
+    },
+    "area": "agent-policy"
+  },
+  {
     "name": "submit_job",
     "idempotent": false,
     "outputRedaction": {
@@ -6583,6 +7113,12 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
         "type": "boolean",
         "description": "true: add your own profile (facets, constraints, relationships, preferences).",
         "fullSurfaceOnly": true
+      },
+      "include_rules": {
+        "type": "boolean",
+        "description": "true: add your confirmed standing rules (rules field).",
+        "fullSurfaceOnly": true,
+        "actsWhenTrue": true
       }
     },
     "scope": "read",
@@ -7893,6 +8429,316 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "area": "loops"
   },
   {
+    "name": "household_due",
+    "mutating": false,
+    "idempotent": true,
+    "outputRedaction": "retrieval",
+    "description": "Household items overdue, at risk or coming up (bills, supplies, birthdays, school dates, returns, credits), ranked, each with a reason, its slug and a proposed action. Every action needs the user's yes: never buy, pay, book, call or send without it.",
+    "params": {
+      "window_days": {
+        "type": "number",
+        "description": "Days ahead (default 7)."
+      },
+      "kinds": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "enum": [
+            "supply",
+            "birthday",
+            "bill",
+            "deadline",
+            "appointment",
+            "return",
+            "credit"
+          ]
+        },
+        "description": "Only these kinds."
+      },
+      "include": {
+        "type": "string",
+        "enum": [
+          "at_risk",
+          "due",
+          "all"
+        ],
+        "description": "Default due."
+      },
+      "about": {
+        "type": "string",
+        "description": "Only records about this page slug.",
+        "fullSurfaceOnly": true
+      },
+      "handled_by": {
+        "type": "string",
+        "description": "Only records handled by this person.",
+        "fullSurfaceOnly": true
+      },
+      "as_of": {
+        "type": "string",
+        "description": "YYYY-MM-DD (default today)."
+      },
+      "limit": {
+        "type": "number",
+        "description": "Max items (default 20, max 100).",
+        "fullSurfaceOnly": true
+      },
+      "source_id": {
+        "type": "string",
+        "description": "One source.",
+        "fullSurfaceOnly": true
+      }
+    },
+    "scope": "read",
+    "annotations": {
+      "readOnlyHint": true
+    },
+    "area": "household"
+  },
+  {
+    "name": "household_add",
+    "mutating": true,
+    "idempotent": false,
+    "writeInference": "none",
+    "outputRedaction": "no_stored_text",
+    "description": "Add one household record (supply, birthday, bill, deadline, appointment, return or credit). The placement table picks its folder and who may read it; a record about a child is adults only. Refuses full account or card numbers.",
+    "params": {
+      "kind": {
+        "type": "string",
+        "required": true,
+        "enum": [
+          "supply",
+          "birthday",
+          "bill",
+          "deadline",
+          "appointment",
+          "return",
+          "credit"
+        ],
+        "description": "Record kind."
+      },
+      "title": {
+        "type": "string",
+        "required": true,
+        "description": "Short title, e.g. \"Water bill\"."
+      },
+      "slug": {
+        "type": "string",
+        "description": "Name within its folder (default: from the title)."
+      },
+      "about": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Subject page slugs, e.g. people/alice-example."
+      },
+      "about_role": {
+        "type": "string",
+        "enum": [
+          "adult",
+          "child",
+          "helper",
+          "pet",
+          "home",
+          "other"
+        ],
+        "description": "Marks every about subject's household_role (child keeps the record adults only)."
+      },
+      "child": {
+        "type": "boolean",
+        "description": "Same as about_role child."
+      },
+      "handled_by": {
+        "type": "string",
+        "description": "Who usually handles it."
+      },
+      "due": {
+        "type": "string",
+        "description": "Due date YYYY-MM-DD (bill, deadline, return, credit; a booked appointment)."
+      },
+      "recurs": {
+        "type": "string",
+        "enum": [
+          "none",
+          "weekly",
+          "monthly",
+          "quarterly",
+          "yearly"
+        ],
+        "description": "How the due date repeats."
+      },
+      "cadence": {
+        "type": "string",
+        "description": "Supply or appointment cadence, e.g. 30d, 6m."
+      },
+      "last_done": {
+        "type": "string",
+        "description": "When it was last bought or done (YYYY-MM-DD)."
+      },
+      "on": {
+        "type": "string",
+        "description": "Birthday MM-DD."
+      },
+      "lead_days": {
+        "type": "number",
+        "description": "Days before the date it turns at risk."
+      },
+      "amount": {
+        "type": "number",
+        "description": "Amount (with currency)."
+      },
+      "currency": {
+        "type": "string",
+        "description": "Three-letter currency, e.g. USD."
+      },
+      "gift": {
+        "type": "string",
+        "enum": [
+          "none",
+          "ideas",
+          "bought",
+          "given"
+        ],
+        "description": "Birthday gift state."
+      },
+      "proposed_verb": {
+        "type": "string",
+        "description": "The action to propose when due (send, spend, book, ...)."
+      },
+      "proposed_note": {
+        "type": "string",
+        "description": "One line describing that action."
+      },
+      "audience": {
+        "type": "string",
+        "enum": [
+          "adults"
+        ],
+        "description": "Keep this record to adults even when its kind is shared."
+      },
+      "school": {
+        "type": "boolean",
+        "description": "A school deadline (goes under household/school/)."
+      },
+      "note": {
+        "type": "string",
+        "description": "Body text."
+      },
+      "source_id": {
+        "type": "string",
+        "description": "Write source."
+      },
+      "request_id": {
+        "type": "string",
+        "description": "Idempotency key for a retry."
+      }
+    },
+    "scope": "write",
+    "area": "household"
+  },
+  {
+    "name": "household_mark",
+    "mutating": true,
+    "idempotent": false,
+    "writeInference": "none",
+    "outputRedaction": "no_stored_text",
+    "description": "Record what happened to a household record: done, bought, paid, booked, submitted, returned, used, gift_ideas, gift_bought, given, skip, pause, resume or archive. Adds a timeline line and updates the state in one write; never deletes. Use it for what the user says was done, never for what you plan to do.",
+    "params": {
+      "slug": {
+        "type": "string",
+        "required": true,
+        "description": "The record (from household_due)."
+      },
+      "event": {
+        "type": "string",
+        "required": true,
+        "enum": [
+          "done",
+          "bought",
+          "paid",
+          "booked",
+          "submitted",
+          "returned",
+          "used",
+          "gift_ideas",
+          "gift_bought",
+          "given",
+          "skip",
+          "pause",
+          "resume",
+          "archive"
+        ],
+        "description": "What happened."
+      },
+      "on": {
+        "type": "string",
+        "description": "Day it happened (YYYY-MM-DD); default today."
+      },
+      "due": {
+        "type": "string",
+        "description": "For booked: the booked date."
+      },
+      "note": {
+        "type": "string",
+        "description": "One line for the timeline."
+      },
+      "source_id": {
+        "type": "string",
+        "description": "Write source."
+      },
+      "request_id": {
+        "type": "string",
+        "description": "Idempotency key for a retry."
+      }
+    },
+    "scope": "write",
+    "area": "household"
+  },
+  {
+    "name": "household_replace",
+    "mutating": true,
+    "idempotent": true,
+    "writeInference": "none",
+    "outputRedaction": "no_stored_text",
+    "description": "Recompute every household record's audience and readers from the placement table (when the brain starts serving several people). With about: narrow the records about those subjects to adults, set their household_role when role is given, then re-place them. Trusted local CLI only.",
+    "params": {
+      "source_id": {
+        "type": "string",
+        "description": "Source (default: the current one)."
+      },
+      "about": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Subject page slugs to reclassify; only the records about them are re-placed."
+      },
+      "role": {
+        "type": "string",
+        "enum": [
+          "adult",
+          "child",
+          "helper",
+          "pet",
+          "home",
+          "other"
+        ],
+        "description": "The household_role to give each about subject (needs about)."
+      }
+    },
+    "scope": "write",
+    "localOnly": true,
+    "cliOnly": {
+      "argv": [
+        "gbrain",
+        "household",
+        "replace"
+      ]
+    },
+    "area": "household"
+  },
+  {
     "name": "questions_pin",
     "description": "Pin a question: gbrain keeps a cited answer current from your notes and flags sentences whose evidence changed. Idempotent. Pins made over MCP stay inactive (paid refresh) until the owner activates them; returns the first answer when a key and consent exist, else awaiting_refresh with next_action.",
     "params": {
@@ -8155,5 +9001,100 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
       ]
     },
     "area": "insights"
+  },
+  {
+    "name": "onboarding_status",
+    "mutating": false,
+    "idempotent": true,
+    "outputRedaction": "no_stored_text",
+    "description": "Whether the first-session suggestion is armed on this brain, and why not when it is off: not_new_install, not_personal, window_expired, sessions_exhausted or stopped. On this machine it also names the newest startup session's outcome (delivered, not_due, serve_not_ready, no_ipc, deadline, trimmed and the rest). Reads only; onboarding_off turns it off.",
+    "params": {},
+    "scope": "read",
+    "annotations": {
+      "readOnlyHint": true
+    },
+    "cliHints": {
+      "name": "onboarding-status",
+      "hidden": true
+    },
+    "area": "onboarding"
+  },
+  {
+    "name": "onboarding_off",
+    "mutating": true,
+    "idempotent": true,
+    "outputRedaction": "no_stored_text",
+    "description": "Turn the first-session suggestion off for this install (the owner only). Writes only the suggestion's own record, then reads it back: say it stopped only when verified is true. First-run settings and safety notices are not affected.",
+    "params": {},
+    "scope": "write",
+    "annotations": {
+      "idempotentHint": true
+    },
+    "cliHints": {
+      "name": "onboarding-off",
+      "hidden": true
+    },
+    "area": "onboarding"
+  },
+  {
+    "name": "propose_jobs",
+    "mutating": false,
+    "idempotent": true,
+    "outputRedaction": "no_stored_text",
+    "description": "Jobs your agent could take on, found in data already in the brain with no model call: people waiting on the user, threads they owe a reply, recurring meetings with no prep page, bulk senders they never wrote to, and the same question asked in two agents. Each job has a count, the pages it rests on, a sentence, and the installed skill or gbrain command that does it. The owner only. Offer one job at a time; propose_decide records the user's yes or no.",
+    "params": {
+      "days": {
+        "type": "number",
+        "description": "How many days back to look (1-90, default 7)."
+      }
+    },
+    "scope": "read",
+    "annotations": {
+      "readOnlyHint": true
+    },
+    "cliHints": {
+      "name": "propose-jobs",
+      "hidden": true
+    },
+    "area": "onboarding"
+  },
+  {
+    "name": "propose_decide",
+    "mutating": true,
+    "idempotent": true,
+    "outputRedaction": "no_stored_text",
+    "description": "Record the user's answer to one proposed job (the owner only): accepted or declined, by signal. A declined job is not offered again at session start. Writes only the first-session record, then reads it back: say it was recorded only when verified is true.",
+    "params": {
+      "signal": {
+        "type": "string",
+        "required": true,
+        "enum": [
+          "waiting_on_you",
+          "owe_reply",
+          "meeting_prep",
+          "repeat_question",
+          "bulk_senders"
+        ],
+        "description": "The job's signal, as propose_jobs returns it."
+      },
+      "decision": {
+        "type": "string",
+        "required": true,
+        "enum": [
+          "accepted",
+          "declined"
+        ],
+        "description": "The user's answer."
+      }
+    },
+    "scope": "write",
+    "annotations": {
+      "idempotentHint": true
+    },
+    "cliHints": {
+      "name": "propose-decide",
+      "hidden": true
+    },
+    "area": "onboarding"
   }
 ];

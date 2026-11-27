@@ -43,12 +43,11 @@ import type {
 } from '../../engine-sql/link-reads.ts';
 import type { PageTypeProbe } from '../../engine-sql/cli-reads-ops.ts';
 import type { LongPageSizeRow } from '../../search/long-page-sizes.ts';
-import { getFtsLanguage } from '../../fts-language.ts';
 import { CONNECTOR_SOURCE_KINDS } from '../../persistence/connector-kinds.ts';
 import type { EntityTypeFilter } from '../../schema-pack/entity-types.ts';
 import { mapStoreError, storeErrorCode } from '../store-errors.ts';
 import type { StoreBrain } from '../store.ts';
-import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
+import { refuseMember, storeCall, storeFtsConfig, takeOptions, type StoreMember } from './common.ts';
 import { getConfig } from './config.ts';
 import { linkRelationshipKeysTouching, refreshOnStore, temporalStore } from './link-refresh.ts';
 import { readPageSnapshot } from './pages.ts';
@@ -124,8 +123,12 @@ function rankingScope(member: string, opts: PageReadPolicy | undefined): Record<
  * Ids the SQL engines cast to `bigint[]`: a non-integer is refused (the cast fails there). An id below 1 or past
  * `Number.MAX_SAFE_INTEGER` names no page the store can hold, so it matches nothing, as in the SQL, and is dropped.
  */
-function bigintIds(member: string, ids: readonly number[]): number[] {
-  for (const id of ids) if (!Number.isInteger(id)) refuseMember(member, 'a page id that is not an integer');
+function bigintIds(_member: string, ids: readonly number[]): number[] {
+  // A page id that is no integer is bad input: reject it as the `$1::bigint[]` cast does (22P02), not as a missing
+  // capability, so a caller that tells a failed read from an empty one sees the same error on every engine.
+  for (const id of ids) {
+    if (!Number.isInteger(id)) throw Object.assign(new Error(`invalid input syntax for type bigint: "${id}"`), { code: '22P02' });
+  }
   return ids.filter(id => id >= 1 && Number.isSafeInteger(id));
 }
 
@@ -566,11 +569,11 @@ export const readLongPageSizes: StoreMember<[ids: readonly number[], scope: Page
     return rows.map(r => ({ id: Number(r.id), chars: Number(r.chars), bytes: Number(r.bytes) }));
   };
 
-/** Each word to its English lexemes; another full-text configuration refuses (the store has only English). */
+/** Each word to its lexemes under the configured full-text search configuration (`english` or `german`; others refuse). */
 export const wordLexemes: StoreMember<[words: string[]], Map<string, string[]>> =
   async (brain, words) => {
-    if (getFtsLanguage() !== 'english') refuseMember('wordLexemes', `the ${getFtsLanguage()} text search configuration`);
-    const rows: Array<{ w: string; lexemes: string[] }> = await storeCall({ member: 'wordLexemes' }, () => brain.wordLexemes(words));
+    const config = storeFtsConfig('wordLexemes');
+    const rows: Array<{ w: string; lexemes: string[] }> = await storeCall({ member: 'wordLexemes' }, () => brain.wordLexemes(words, config));
     return new Map(rows.map(r => [r.w, r.lexemes]));
   };
 
