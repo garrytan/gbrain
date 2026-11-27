@@ -2,7 +2,7 @@ import type { BrainEngine } from './engine.ts';
 import type { EngineConfig } from './types.ts';
 import { registerChatUsageSink, makeEngineChatUsageSink } from './ai/chat-usage.ts';
 import { constructEngine } from './engine-construct.ts';
-import { shadowHomeUsed, shadowStateFor } from '../shadow/state.ts';
+import { registerShadowSibling, shadowHomeUsed, shadowSiblingOf, shadowStateFor } from '../shadow/state.ts';
 
 /**
  * Create an engine instance based on config.
@@ -44,7 +44,9 @@ export async function createEngine(config: EngineConfig): Promise<BrainEngine> {
   const capture = cs?.captureStateFor(config);
   if (capture) {
     const { attachCapture } = await import('../shadow/capture.ts');
+    const sibling = shadowSiblingOf(out);
     out = attachCapture(out, capture.cap);
+    if (sibling) registerShadowSibling(out, sibling); // a bulk import's workers are shadowed through the capture view too (not captured: capture records the primary's calls)
   }
   const purgeWatch = cs?.capturePurgeWatchFor(config);
   if (purgeWatch) (await import('../shadow/capture.ts')).watchPurges(purgeWatch);
