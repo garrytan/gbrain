@@ -366,25 +366,26 @@ export class ReferenceModel {
       return;
     }
     if (absent && held && this.projected.get(k) === JSON.stringify(rows)) return;
-    const evidence = fence === 'facts' ? await this.factsDriftEvidence(row, rows, absent, revision)
+    const evidence = fence === 'facts' ? await this.factsDriftEvidence(row, [...new Set([...listed, ...rows])], absent, revision)
       .catch((error: unknown) => ` [evidence unreadable: ${String((error as Error)?.message ?? error).slice(0, 160)}]`) : '';
     this.violate({ class: 'projection_drift', detail: `${stage}: ${row.source_id}/${row.slug} ${fence} fence ${JSON.stringify(listed)} != rows ${JSON.stringify(rows)}${held ? ' (held fence_absent)' : ''}${evidence}` });
   }
 
   /**
    * #7651: what a facts drift looked like when it happened, so a rare CI failure names the write behind it: whether
-   * the stored body (not only the get_page read) lacks each row's claim, the revision the read and the stored page
-   * carry, which page versions held the claim, and the last write requests on the page.
+   * the stored body (not only the get_page read) holds each claim on either side, the revision the read and the stored page
+   * carry, which page versions held a claim, and the last write requests on the page.
    */
   private async factsDriftEvidence(row: { id: number; source_id: string; slug: string }, claims: string[], absent: boolean, revision: unknown): Promise<string> {
     const [page] = await this.q<{ revision: string | null; body: string }>(
       "SELECT knowledge_revision::text AS revision,COALESCE(compiled_truth,'')||chr(10)||COALESCE(timeline,'') AS body FROM pages WHERE id=$1", [row.id]);
     const facts = await this.q<{ id: number; row_num: number | null; created_at: string }>(`SELECT id,row_num,created_at::text FROM facts
-      WHERE source_id=$1 AND source_markdown_slug=$2 AND fact=ANY($3::text[]) ORDER BY id`, [row.source_id, row.slug, claims]);
-    const versions = await this.q<{ held: boolean }>(`SELECT EXISTS (SELECT 1 FROM unnest($2::text[]) AS c(claim) WHERE strpos(COALESCE(v.compiled_truth,''),c.claim)>0) AS held
+      WHERE source_id=$1 AND source_markdown_slug=$2 AND fact=ANY($3::text[])
+      AND expired_at IS NULL AND superseded_by IS NULL AND (valid_until IS NULL OR valid_until > now()) ORDER BY id`, [row.source_id, row.slug, claims]);
+    const versions = await this.q<{ held: boolean }>(`SELECT EXISTS (SELECT 1 FROM unnest($2::text[]) AS c(claim) WHERE strpos(COALESCE(v.compiled_truth,'')||chr(10)||COALESCE(v.timeline,''),c.claim)>0) AS held
       FROM page_versions v WHERE v.page_id=$1 ORDER BY v.id`, [row.id, claims]);
     const requests = await this.q<{ operation: string; state: string; error_code: string | null; sequence: string }>(`SELECT operation,state,error_code,sequence::text
-      FROM persistence_requests WHERE source_id=$1 AND slug=$2 ORDER BY sequence DESC LIMIT 6`, [row.source_id, row.slug]);
+      FROM persistence_requests WHERE source_id=$1 AND slug=$2 ORDER BY persistence_requests.sequence DESC LIMIT 6`, [row.source_id, row.slug]);
     return ` [evidence: read rev=${String(revision ?? 'none')} stored rev=${page?.revision ?? 'none'} fence=${absent ? 'absent' : 'present'}`
       + ` stored body holds=${JSON.stringify(claims.map(c => page?.body.includes(c) ?? false))}`
       + ` rows=${facts.map(f => `#${f.id}/r${f.row_num ?? '-'}@${f.created_at}`).join(',') || 'none'}`

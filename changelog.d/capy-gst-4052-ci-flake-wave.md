@@ -1,4 +1,4 @@
-**Four intermittent test failures are fixed at their cause, and the crash robot now records what the page and its facts rows looked like when it reports a facts-fence drift.**
+**Three intermittent test failures are fixed at their cause, and the crash robot now records what the page and its facts rows looked like when it reports a facts-fence drift.**
 
 ### Fixed
 - The zombie-process test in the upgrade-restart supervisor suite no longer fails with ENOENT on `/proc/<pid>/stat`: its background child now stays alive until the holder shell has exec'd `sleep`, so the shell can never reap it first.
