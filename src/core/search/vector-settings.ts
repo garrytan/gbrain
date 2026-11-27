@@ -1,7 +1,7 @@
 import { hnswEfSearchFor, HNSW_EF_SEARCH_DEFAULT } from '../vector-index.ts';
 import { remainingVectorBudget } from './vector-pool.ts';
 import { HNSW_ITERATIVE_SCAN_DEFAULT, type HnswIterativeScanMode } from './hnsw-iterative-scan.ts';
-import { INDEX_WALK_SETTINGS, JOINED_STATEMENT_SETTINGS } from './vector-statement.ts';
+import { HNSW_ORDERED_POOL_SETTINGS, INDEX_WALK_SETTINGS, JOINED_STATEMENT_SETTINGS } from './vector-statement.ts';
 
 /**
  * `walkOverfetch` (the statement's `indexWalkOverfetch`, set only for the
@@ -9,7 +9,8 @@ import { INDEX_WALK_SETTINGS, JOINED_STATEMENT_SETTINGS } from './vector-stateme
  * walk's over-fetched window: a non-iterative scan cannot return past it, and
  * an iterative one past it orders less exactly (recall@50 0.96 against 0.995).
  * `joined` (an attempt that runs the joined statement, `sql`, of a statement
- * with an index walk) adds JOINED_STATEMENT_SETTINGS.
+ * with an index walk) adds JOINED_STATEMENT_SETTINGS. `hnswOrdered` (Postgres,
+ * on the same attempts) adds HNSW_ORDERED_POOL_SETTINGS.
  */
 
 /** What each scan setting reads as when nothing set it (pgvector's defaults; NULL before the extension loads). */
@@ -24,9 +25,10 @@ export function vectorScanSettings(
   iterativeMode: HnswIterativeScanMode = HNSW_ITERATIVE_SCAN_DEFAULT,
   walkOverfetch?: number,
   joined = false,
+  hnswOrdered = false,
 ): Record<string, string> {
   const window = walkOverfetch ? candidateLimit * walkOverfetch : candidateLimit;
-  const settings: Record<string, string> = { 'hnsw.ef_search': String(hnswEfSearchFor(window)), ...(walkOverfetch ? INDEX_WALK_SETTINGS : {}), ...(joined ? JOINED_STATEMENT_SETTINGS : {}) };
+  const settings: Record<string, string> = { 'hnsw.ef_search': String(hnswEfSearchFor(window)), ...(walkOverfetch ? INDEX_WALK_SETTINGS : {}), ...(joined ? JOINED_STATEMENT_SETTINGS : {}), ...(hnswOrdered ? HNSW_ORDERED_POOL_SETTINGS : {}) };
   if (iterative) {
     settings['hnsw.iterative_scan'] = iterativeMode;
     settings['hnsw.max_scan_tuples'] = String(maxScanTuples);
