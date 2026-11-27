@@ -100,3 +100,5 @@ not stored is copied (there is no foreign key). The follower's remove deletes th
   (`cli_reads::pg_text::timestamptz_text`) answers UTC the same way.
 - The list reads at most 50 pages after reading every index entry of the pages before them, so a brain with very many
   acknowledged notices on the first pages in byte order reads those entries (not their rows) before it finds 50 pending pages.
+- `gbrain backup restore` classifies the tag `2` as known (`restore.rs` `KNOWN_TAGS`): notices hold no authority and
+  nothing runs from them, so the quarantine carries them untouched, as the PGLite restore carries `core_edit_notices`.

@@ -285,6 +285,35 @@ fn a_brain_holding_a_guest_source_refuses_restore_by_name() {
 }
 
 #[test]
+fn a_pending_core_edit_notice_neither_blocks_a_restore_nor_moves() {
+    let store = store();
+    store
+        .insert_core_edit_notice(&crate::core_edit_notices::CoreEditNoticeInput {
+            source_id: "default".into(),
+            slug: "notes/a".into(),
+            page_id: None,
+            revision: None,
+            base_revision: None,
+            base_text: Some("the base text".into()),
+            actor: "remote:agent".into(),
+        })
+        .unwrap();
+    let census = store.restore_census(&[]).unwrap();
+    assert!(
+        census.blockers.is_empty() && census.unclassified.is_empty(),
+        "{census:?}"
+    );
+    let before = dump(&store);
+    store.restore_quarantine(&default_only()).unwrap();
+    assert!(!changed_tags(&before, &dump(&store)).contains(&keys::CORE_EDIT_NOTICE));
+    let pending = store
+        .read_oldest_pending_core_edit_notice("default", "notes/a")
+        .unwrap()
+        .expect("the notice is still pending");
+    assert_eq!(pending["base_text"], "the base text");
+}
+
+#[test]
 fn the_known_lists_match_the_key_files() {
     let tags = |text: &str, pattern: &str| -> BTreeSet<u8> {
         let re = regex_lite(pattern);

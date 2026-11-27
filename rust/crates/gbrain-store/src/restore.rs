@@ -34,8 +34,10 @@ use serde_json::{Map, Value, json};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Every key tag of `keys.rs`. A tag outside this list is state this restore has not classified.
+/// The core edit notices (`2`, `core_edit_notices.rs`) hold no authority and nothing runs from them; a restore
+/// carries them untouched, as the PGLite restore carries `core_edit_notices`.
 /// `test/restore.rs` compares it with the constants of `keys.rs`.
-const KNOWN_TAGS: &[u8] = b"MCSPIKTVJjWLlUOEDGopekbFNAQYZHgsnrquRcXBwvdmtafixzyh1";
+const KNOWN_TAGS: &[u8] = b"MCSPIKTVJjWLlUOEDGopekbFNAQYZHgsnrquRcXBwvdmtafixzyh12";
 /// The tags of `keys.rs` this restore deliberately leaves unclassified, so a record under one refuses by name
 /// (`unclassified_state`) until a restore step classifies it: the guest sources (`0`, `guest_sources.rs`; each record
 /// carries the guest write rules, authority nothing revokes), the secret store (`3`, `secret_store.rs`) and the two-byte
