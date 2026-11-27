@@ -36,6 +36,45 @@ export interface FollowContext {
   engine: any;
   frame: Frame | null;
   inTransaction: boolean;
+  /** The outermost transaction's call lane (wrapper.ts): a pre-read inside the transaction takes it, so no other statement of the transaction runs while its savepoint is open. */
+  lane?: TxLane;
+}
+
+/**
+ * The member calls of one outermost transaction, as the wrapper sees them. A savepoint that is rolled back undoes every statement sent on the
+ * connection while it was open, whoever sent it, so a pre-read takes the lane: it waits for the calls already running, holds every later call
+ * until its own write has been sent, and only then reads.
+ */
+export interface TxLane {
+  /** Calls started and not yet settled; `callback`: the call took a function (a nested transaction, a bounded read), which may be waiting for a call held behind the gate. */
+  running: Set<{ callback: boolean; done: Promise<void> }>;
+  /** Set while a pre-read holds the lane; resolves when it opens. */
+  gate: Promise<void> | null;
+  /** Calls held while the gate is closed, in call order; opening it starts them one by one until one closes it again. */
+  waiters: Array<() => void>;
+}
+
+/** How long a pre-read waits for the calls already running on its transaction before it gives up (the item is then relation-level). */
+export const PRE_READ_WAIT_MS = 2_000;
+
+export const newTxLane = (): TxLane => ({ running: new Set(), gate: null, waiters: [] });
+
+/** Closes the gate of `lane`; the returned function opens it (once) and starts the held calls in order until one closes it again. */
+export function holdLane(lane: TxLane): () => void {
+  let resolve!: () => void;
+  lane.gate = new Promise<void>((r) => { resolve = r; });
+  let opened = false;
+  return () => {
+    if (opened) return;
+    opened = true; lane.gate = null; resolve();
+    while (!lane.gate && lane.waiters.length) lane.waiters.shift()!();
+  };
+}
+
+/** True when every call settles within `ms`. */
+async function settledWithin(calls: Promise<void>[], ms: number): Promise<boolean> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try { return await Promise.race([Promise.all(calls).then(() => true), new Promise<boolean>((resolve) => { timer = setTimeout(() => resolve(false), ms); })]); } finally { clearTimeout(timer); }
 }
 
 /** Selector-targeted rows beyond this many become one relation item. */
@@ -120,8 +159,12 @@ async function resolveTargets(engine: any, targets: Target[]): Promise<Invalidat
   return items;
 }
 
-/** Plans a non-late write before its call. Never rejects: any failure is the relation-level answer. */
-function plan(ctx: FollowContext, spec: WriteSpec, args: unknown[]): Invalidation[] | Promise<Invalidation[]> {
+/**
+ * Plans a non-late write before its call. Never rejects: any failure is the relation-level answer. Inside a transaction the pre-read runs in a savepoint
+ * while it holds the transaction's lane (`hold`, opened by the caller once the write is sent): it waits for the calls already running (at most PRE_READ_WAIT_MS),
+ * and a call that runs a callback, or does not settle in time, leaves the write unread (`pre_read_busy`), because the savepoint's rollback would undo its statements.
+ */
+function plan(ctx: FollowContext, spec: WriteSpec, args: unknown[], hold: { open?: () => void } = {}): Invalidation[] | Promise<Invalidation[]> {
   const fallback = (reason: string): Invalidation[] => relationItems(spec.tables, reason);
   try {
     if (spec.late) return [];
@@ -134,9 +177,20 @@ function plan(ctx: FollowContext, spec: WriteSpec, args: unknown[]): Invalidatio
         ? { kind: 'rows', relation: t.relation, selector: t.sel as Record<string, string>, before_keys: null }
         : { kind: 'relation', relation: t.relation, reason: 'relation_level' });
     }
-    // Inside a transaction a failed pre-read would abort it and fail the caller's write: it runs in a nested transaction (a savepoint).
-    const read = ctx.inTransaction ? ctx.engine.transaction((savepoint: unknown) => resolveTargets(savepoint, targets)) as Promise<Invalidation[]> : resolveTargets(ctx.engine, targets);
-    return read.catch(() => fallback('pre_read_failed'));
+    if (!ctx.inTransaction) return resolveTargets(ctx.engine, targets).catch(() => fallback('pre_read_failed'));
+    // Inside a transaction a failed pre-read would abort it and fail the caller's write: it runs in a nested transaction (a savepoint), alone on the connection.
+    const lane = ctx.lane;
+    const inSavepoint = () => (ctx.engine.transaction((savepoint: unknown) => resolveTargets(savepoint, targets)) as Promise<Invalidation[]>).catch(() => fallback('pre_read_failed'));
+    if (!lane) return inSavepoint(); // a transaction the wrapper did not open (none today): as before
+    const ahead = [...lane.running];
+    if (ahead.some((c) => c.callback)) return fallback('pre_read_busy');
+    hold.open = holdLane(lane);
+    return (async () => {
+      try {
+        if (ahead.length && !await settledWithin(ahead.map((c) => c.done), PRE_READ_WAIT_MS)) return fallback('pre_read_busy');
+        return await inSavepoint();
+      } catch { return fallback('plan_failed'); }
+    })();
   } catch {
     return fallback('plan_failed');
   }
@@ -175,9 +229,11 @@ export function followWrite(ctx: FollowContext, name: string, fn: Function): Fun
     }
     const spec = WRITE_MAP[name]!;
     const rejectItems = relationItems(spec.tables, 'write_rejected');
-    const early = plan(ctx, spec, args);
-    const run = (items: Invalidation[]) => track(ctx, call, items, (result) => lateItems(spec, args, result), rejectItems);
-    return isThenable(early) ? early.then(run) : run(early);
+    const hold: { open?: () => void } = {};
+    const early = plan(ctx, spec, args, hold);
+    // The lane opens once the write itself is sent, so the calls held behind it keep their order after it.
+    const run = (items: Invalidation[]) => { try { return track(ctx, call, items, (result) => lateItems(spec, args, result), rejectItems); } finally { hold.open?.(); } };
+    return isThenable(early) ? early.then(run, (error) => { hold.open?.(); throw error; }) : run(early);
   };
 }
 
