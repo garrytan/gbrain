@@ -309,7 +309,7 @@ function sessionClassOf(event, ctx, a, sessionKey) {
 
 // A turn the host sent no memory audience for is the owner's only when every check holds: a user trigger, a sender id
 // in owner_sender_ids that the channel context does not contradict, no senderIsOwner false from the host, and a chat
-// that is not a group or channel. The session key alone never makes a turn the owner's.
+// type that is absent or one-to-one (private, direct, dm). The session key alone never makes a turn the owner's.
 function verifiedOwner(owners, event, ctx, trigger) {
   if (trigger !== 'user') return false;
   const pick = (k) => (ctx && ctx[k] !== undefined ? ctx[k] : event && event[k]);
@@ -320,7 +320,7 @@ function verifiedOwner(owners, event, ctx, trigger) {
   const said = cc && cc.sender && cc.sender.id;
   if (said !== undefined && said !== null && String(said) !== sender) return false;
   const type = cc && cc.chat && typeof cc.chat.type === 'string' ? cc.chat.type.toLowerCase() : '';
-  return type !== 'group' && type !== 'supergroup' && type !== 'channel';
+  return type === '' || type === 'private' || type === 'direct' || type === 'dm';
 }
 
 // owner (the owner's own sessions), silent (no pins, no suggestions) or conversation (everything else, unknown included).

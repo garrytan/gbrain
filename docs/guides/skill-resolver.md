@@ -345,8 +345,8 @@ on its next turn, so no OpenClaw command runs and the gateway does not reload:
 - `--owner-sender <id>` (repeatable): only turns from these senders get
   suggestions; others get the pins only. When OpenClaw sends no memory
   audience, a turn on the main session or a direct session counts as the
-  owner's only when it is a user turn from one of these senders in a chat
-  that is not a group or channel, and every other turn there (OpenClaw's
+  owner's only when it is a user turn from one of these senders in a
+  one-to-one chat, and every other turn there (OpenClaw's
   default `session.dmScope: main` puts every DM on the main session) counts
   as another person's DM ([session classes](#session-classes)). Set it when people other than you can message the agent and
   OpenClaw has no memory provider. Setup and doctor warn when a live agent on
@@ -427,7 +427,8 @@ log line says `audience: unknown`. With `--owner-sender` or
 `owner` (logged `audience: sender`) only when every check holds: OpenClaw's
 trigger is `user`, the sender id is one of the `--owner-sender` ids, the
 channel context names no other sender, OpenClaw did not say `senderIsOwner:
-false`, and the chat type is not a group, supergroup or channel. Any other
+false`, and the chat type is absent or one-to-one (`private`, `direct` or
+`dm`; a group, a channel or any other type fails). Any other
 turn there is `direct`, so the session key alone never makes a turn the
 owner's. With an audience, owner pins and owner-only skills never
 reach a session that is not the owner's. Without one and without

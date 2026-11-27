@@ -675,13 +675,14 @@ describe.skipIf(!NODE)('session classes and the session-start brief', () => {
       ['turn', { text, sender: 'owner-1', session: 'agent:main:main', provenance: 'inter_session' }],
       ['turn', { text, sender: 'owner-1', session: 'agent:main:main', ctx: { ...dm, ...CONVERSATION('agent:main:main') } }],
       ['turn', { text, sender: 'owner-1', session: 'agent:main:telegram:group:-100', ctx: { ...CONVERSATION('agent:main:telegram:group:-100'), channelContext: { sender: { id: 'owner-1' }, chat: { id: '-100', type: 'supergroup' } } } }],
-    ], undefined, { DRIVE_LOG_LINES: '16' });
+      ['turn', { text, sender: 'owner-1', session: 'agent:main:main', ctx: { channelContext: { sender: { id: 'owner-1' }, chat: { id: 'g-1', type: 'group_dm' } } } }],
+    ], undefined, { DRIVE_LOG_LINES: '17' });
     for (const i of [0, 1]) {
       expect(out[i].appendSystemContext).toContain('Owner rule.');
       expect(out[i].appendSystemContext).toContain('"deploy-service"');
       expect(out[i].appendContext).toContain('private-ledger');
     }
-    for (const i of [2, 3, 4, 5, 6, 7, 8, 9, 14, 15]) {
+    for (const i of [2, 3, 4, 5, 6, 7, 8, 9, 14, 15, 16]) {
       const got = JSON.stringify(out[i] ?? {});
       expect(got, 'turn ' + i).not.toContain('Owner rule.');
       expect(got, 'turn ' + i).not.toContain('deploy-service');
@@ -692,7 +693,7 @@ describe.skipIf(!NODE)('session classes and the session-start brief', () => {
       ['owner', 'sender'], ['owner', 'sender'],
       ['direct', 'unknown'], ['direct', 'unknown'], ['direct', 'unknown'], ['direct', 'unknown'], ['direct', 'unknown'], ['direct', 'unknown'], ['direct', 'unknown'],
       ['group', 'unknown'], ['cron', 'unknown'], ['heartbeat', 'unknown'], ['webhook', 'unknown'], ['relay', 'unknown'],
-      ['direct', 'host'], ['group', 'host'],
+      ['direct', 'host'], ['group', 'host'], ['direct', 'unknown'],
     ]);
     const check = JSON.parse((await runCli(['doctor', '--only', 'skill_resolver', '--json'], { env: b.env })).stdout).checks.find((c: any) => c.name === 'skill_resolver');
     expect(check.details.openclaw.recent.by_audience).toMatchObject({ sender: 2 });
