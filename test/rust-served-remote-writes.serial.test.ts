@@ -19,10 +19,14 @@
  *    - a remote caller sets only its own transaction: beginSnapshotRead (owner-ipc/routes.ts OWNER_IPC_REMOTE_TXN_SETTINGS)
  *      runs on a transaction the caller holds and is refused outside one, and a write in that transaction stays refused by
  *      the server; a remote fuzzy get_page, which reads in such a snapshot, answers and hides a private candidate.
+ *    - request_tools crosses only as a surface persist for an OAuth client: its listing, descriptor and no-client forms are
+ *      refused at the client and at the server; the persist writes the client row on the server; the caller's surface
+ *      ceiling crosses as a narrowing claim (a surface above it is refused, nothing written), and a ceiling that is not a
+ *      surface name is refused before anything runs.
  *    Every case also holds on the config route (the served arm runs the parity files on both).
  * 2. Fails on: a server that runs any remote whole operation, trusts a client's dispatch for the scope check, keeps a
  *    client-supplied authority key, stamps a page the caller cannot read, or lets a remote caller's transaction setting
- *    cross outside its own transaction.
+ *    cross outside its own transaction, or runs a request_tools form other than the persist or above the claimed ceiling.
  * 3. Seam: none below the engine: a real owner, a real v3 listener, a real served client, raw frames through the client.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
@@ -185,5 +189,40 @@ describeAddon('remote writes over the served wire', () => {
       open: { isError: false, slug: 'notes/open', error: null },
       secret: { isError: true, slug: null, error: 'page_not_found' },
     });
+  });
+
+  test('request_tools crosses only as a surface persist for an OAuth client; its other forms are refused at the client and the server', async () => {
+    await owner.insertOauthClient({ client_id: 'rt-free', client_name: 'rt-free' });
+    const conn = servedConnectionOf(client) as unknown as Conn;
+    const grant = { clientId: 'rt-free', scopes: ['read'] };
+    const send = (params: Record<string, unknown>, auth: unknown, context: Record<string, unknown> = { transport: 'http' }) =>
+      codeOf(withRemoteCaller(true, () => conn.request('fn', OWNER_RUN_OPERATION, ['request_tools', params, context, { auth }])));
+    expect({
+      listing: await send({}, grant),
+      descriptor: await send({ tools: ['get_page'] }, grant),
+      combined: await send({ surface: 'verbs', tools: ['get_page'] }, grant),
+      noClient: await send({ surface: 'verbs' }, { scopes: ['read'] }),
+    }).toEqual({ listing: 'engine_capability_missing', descriptor: 'engine_capability_missing', combined: 'engine_capability_missing', noClient: 'engine_capability_missing' });
+    expect((await owner.readOauthClient('rt-free'))?.surface_set_by ?? null).toBeNull();
+    // The real path: an HTTP MCP caller's persist through dispatch runs on the server and writes the owner's client row.
+    const out = await dispatchToolCall(client, 'request_tools', { surface: 'starter' },
+      { ...STDIO, transport: 'http', surfaceCeiling: 'full', auth: { token: 't', clientId: 'rt-free', scopes: ['read'] } } as never);
+    expect({ isError: out.isError === true, persisted: (JSON.parse(out.content[0]!.text) as { persisted?: unknown }).persisted }).toEqual({ isError: false, persisted: true });
+    const row = await owner.readOauthClient('rt-free');
+    expect({ surface: row?.surface, surface_set_by: row?.surface_set_by }).toEqual({ surface: 'starter', surface_set_by: 'self' });
+  });
+
+  test('the caller\'s surface ceiling crosses as a narrowing claim: a surface above it is refused, a ceiling that is not a surface name is refused, nothing written', async () => {
+    await owner.insertOauthClient({ client_id: 'rt-capped', client_name: 'rt-capped' });
+    const conn = servedConnectionOf(client) as unknown as Conn;
+    const grant = { clientId: 'rt-capped', scopes: ['read'] };
+    const send = (surface: string, surfaceCeiling: unknown) =>
+      codeOf(withRemoteCaller(true, () => conn.request('fn', OWNER_RUN_OPERATION, ['request_tools', { surface }, { transport: 'http', surfaceCeiling }, { auth: grant }])));
+    expect({ above: await send('full', 'starter'), forged: await send('full', 'everything'), notText: await send('full', ['full']) })
+      .toEqual({ above: 'permission_denied', forged: 'engine_capability_missing', notText: 'engine_capability_missing' });
+    expect((await owner.readOauthClient('rt-capped'))?.surface_set_by ?? null).toBeNull();
+    expect(await send('verbs', 'starter')).toBe('ok');
+    const row = await owner.readOauthClient('rt-capped');
+    expect({ surface: row?.surface, surface_set_by: row?.surface_set_by }).toEqual({ surface: 'verbs', surface_set_by: 'self' });
   });
 });

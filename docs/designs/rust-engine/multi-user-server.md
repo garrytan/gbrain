@@ -298,10 +298,11 @@ The list is `REMOTE_WHOLE_OPERATIONS` in `src/core/rust-engine/served/remote-who
 | `revert_version` | `page-mutation-reads` |
 | `takes_add`, `takes_update`, `takes_supersede`, `takes_resolve`, `takes_remove` | `takes-prepare` |
 | `cancel_write_request` | `write-request-cancel`, `admin-counts` |
+| `request_tools` (persist form only) | `request-tools-persist` |
 
 `test/rust-served-remote-whole-ops.test.ts` requires each listed operation to be a write operation with a parity file that is
-a `served` row of `test/engine-parity/rust-served-set.tsv`. Not listed yet: `delete_page` (a remote delete reaches a raw-SQL
-guest check on every Rust brain) and `request_tools` (a read-scope operation that writes the caller's own client row).
+a `served` row of `test/engine-parity/rust-served-set.tsv`, with one named exception, `request_tools` (below). Not listed
+yet: `delete_page` (a remote delete reaches a raw-SQL guest check on every Rust brain).
 
 How one crosses:
 
@@ -332,6 +333,18 @@ snapshot or read-only and ends with the caller's own commit or rollback. A remot
 this way in process (ops/pages.ts). Outside a transaction it stays on `OWNER_IPC_REMOTE_DENY`, at the client and at the
 server, and a write inside the caller's transaction stays refused as anywhere else. `test/rust-owner-ipc-remote.test.ts`
 pins the list to that one member.
+
+**The one parameter form.** `request_tools` is a read-scope operation marked `mutating`: only its persist form writes (the
+caller's OAuth client row and its `surface_change` audit row). `REMOTE_WHOLE_PARAM_FORMS` (served/remote-whole-ops.ts) lets
+it cross only as `{surface}` without `tools`, for a claimed grant with a client id; the client and the server both check
+the form. Its listing and descriptor forms read the operation registry in the client process, and the stdio session widen
+(no client id) changes the client's own session, so they run on the client as before. A `{surface, tools}` call runs on the
+client and sends its inner persist whole. The caller's `surfaceCeiling` crosses as a narrowing claim: the brain server has
+no ceiling of its own, so the claim can only lower the default `full`, and a value that is not a surface name is refused
+before anything runs. The persist rate limit is the server's, per client id. After the server's answer, the client runs
+the caller's tools/list_changed hook, as the in-process persist does. Until A1 lifts only the owner's floor sends it, and
+that floor may already set any client's surface (`gbrain auth rescope-client`); a non-owner principal's persist for a client
+id that is not its own needs its own check then.
 
 **Follow-up (A1).** Once per-user access lifts, a non-owner principal's remote `put_page` needs its own privacy and
 visibility parity case (its readers, a private page it may not see, an owner-only source): today only the owner's floor sends

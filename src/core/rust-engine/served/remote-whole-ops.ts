@@ -16,10 +16,12 @@
  *  - For the owner's floor the caller's grant the client sends (`auth`) is a narrowing claim, as the access record is
  *    (B3): it can only take scopes away, and the server checks the operation's scope against it again.
  *  - The client strips the bearer token from the grant it sends.
+ *  - One operation crosses in one parameter form only (REMOTE_WHOLE_PARAM_FORMS): request_tools, as a surface persist.
  * Fencing and replay: the owner's persistence journal and claim fences, unchanged; a journaled operation reuses the wire
  * request id (served/session.ts), so a retry after a restart is answered by the journal's own receipt, never a second write.
  */
 import { opError, type Operation, type OperationContext } from '../../ops/contract.ts';
+import type { McpSurface } from '../../../mcp/surface.ts';
 import { operationScopesAllowed } from '../../scope.ts';
 import { ownerIpcRefusal } from '../owner-ipc/routes.ts';
 import { OWNER_RUN_OPERATION } from '../owner-ipc/forwarded-names.ts';
@@ -52,11 +54,36 @@ export const REMOTE_WHOLE_OPERATIONS: Readonly<Record<string, string>> = {
   cancel_write_request: 'test/engine-parity/write-request-cancel.test.ts',
   capture: 'test/engine-parity/plain-member-writes.test.ts',
   put_pages: 'test/engine-parity/remote-links.test.ts',
+  // Ruled 2026-11-27: a read-scope operation marked `mutating` (test/rust-served-remote-whole-ops.test.ts names it), and
+  // only in its persist form (REMOTE_WHOLE_PARAM_FORMS): it writes the caller's own OAuth client row and its audit row.
+  request_tools: 'test/engine-parity/request-tools-persist.test.ts',
+};
+
+/**
+ * Operations that cross whole only in one form of their parameters (for the caller's claimed grant); any other form runs
+ * on the client, as before. request_tools crosses only as the persist `{surface}` without `tools`, for a grant with an
+ * OAuth client id: the listing and descriptor forms read the operation registry in the client process, and the stdio
+ * session widen (no client id) changes the client's own session. A `{surface, tools}` call runs on the client and sends
+ * its inner persist whole (the handler calls the registered, wrapped handler).
+ */
+export const REMOTE_WHOLE_PARAM_FORMS: Readonly<Record<string, (params: Record<string, unknown>, auth: Record<string, unknown> | null) => boolean>> = {
+  request_tools: (params, auth) => params.surface !== undefined && params.tools === undefined
+    && typeof auth?.clientId === 'string' && auth.clientId !== '',
 };
 
 /** True when `name` is a whole operation a remote caller may send over the served wire. */
 export function remoteWholeOperation(name: unknown): name is string {
   return typeof name === 'string' && Object.hasOwn(REMOTE_WHOLE_OPERATIONS, name);
+}
+
+/** True when operation `name` with `params`, for the caller's claimed grant `auth`, crosses whole over the served wire. */
+export function remoteWholeOperationForm(name: unknown, params: unknown, auth: unknown): boolean {
+  if (!remoteWholeOperation(name)) return false;
+  const form = REMOTE_WHOLE_PARAM_FORMS[name];
+  if (!form) return true;
+  if (!params || typeof params !== 'object' || Array.isArray(params)) return false;
+  const grant = auth && typeof auth === 'object' && !Array.isArray(auth) ? auth as Record<string, unknown> : null;
+  return form(params as Record<string, unknown>, grant);
 }
 
 /** True for a served client (no store of its own) whose brain server runs multi-user (its hello lists `multi_writer`). */
@@ -73,12 +100,31 @@ export function claimedAuth(ctx: OperationContext): Record<string, unknown> | nu
   return rest;
 }
 
-/** The context fields a remote whole operation carries besides the claim (plain data only). */
-export const REMOTE_CONTEXT_KEYS = ['sourceId', 'admissionOrigin', 'localFederatedSourceIds', 'agentLabel', 'transport', 'takesHoldersAllowList'] as const;
+/**
+ * The context fields a remote whole operation carries besides the claim (plain data only). `surfaceCeiling` (the MCP
+ * server's surface ceiling, read by request_tools) is a narrowing claim: the brain server has no ceiling of its own
+ * ('full'), so the claim can only lower it, and a value that is not a surface name is refused.
+ */
+export const REMOTE_CONTEXT_KEYS = ['sourceId', 'admissionOrigin', 'localFederatedSourceIds', 'agentLabel', 'transport', 'takesHoldersAllowList', 'surfaceCeiling'] as const;
 
-/** True for a call of `runOperation` (args `[name, ...]`) whose operation is on the closed list. */
+/** The surface names a claimed `surfaceCeiling` may hold (mcp/surface.ts McpSurface). */
+const SURFACE_CEILINGS: ReadonlySet<string> = new Set(['verbs', 'starter', 'full'] satisfies McpSurface[]);
+
+/** True for a call of `runOperation` (args `[name, params, context, { auth }]`) whose operation and form are on the closed list. */
 export function remoteWholeOperationCall(kind: unknown, member: unknown, args: unknown): boolean {
-  return kind === 'fn' && member === OWNER_RUN_OPERATION && Array.isArray(args) && remoteWholeOperation(args[0]);
+  return kind === 'fn' && member === OWNER_RUN_OPERATION && Array.isArray(args)
+    && remoteWholeOperationForm(args[0], args[1], (args[3] as { auth?: unknown } | null | undefined)?.auth);
+}
+
+/**
+ * The client's last step for a remote whole operation whose answer needs state in the caller's process: request_tools
+ * runs the caller's tools/list_changed hook after a persist the brain server ran, as the in-process persist does.
+ */
+export async function finishRemoteWholeOperation(name: string, ctx: OperationContext, result: unknown): Promise<unknown> {
+  const answer = result as { persisted?: unknown; surface?: unknown } | null;
+  if (name !== 'request_tools' || answer?.persisted !== true || typeof answer.surface !== 'string') return result;
+  const { persistedSurfaceAnswer } = await import('../../ops/request-tools.ts');
+  return persistedSurfaceAnswer(ctx, answer.surface);
 }
 
 /**
@@ -88,6 +134,10 @@ export function remoteWholeOperationCall(kind: unknown, member: unknown, args: u
  */
 export function remoteOperationContext(name: string, op: Operation, context: unknown, claim: unknown): Record<string, unknown> {
   if (!remoteWholeOperation(name)) throw ownerIpcRefusal(name, 'a remote caller\'s whole operation is not run by the brain owner');
+  const ceiling = (context as Record<string, unknown> | null)?.surfaceCeiling;
+  if (ceiling !== undefined && !(typeof ceiling === 'string' && SURFACE_CEILINGS.has(ceiling))) {
+    throw ownerIpcRefusal(name, 'its claimed surface ceiling is not a surface name');
+  }
   const auth = (claim as { auth?: unknown } | null)?.auth;
   // A remote caller with no grant (an MCP stdio client of the owner's own process) runs with none, as in process.
   if (auth === null || auth === undefined) return contextKeys(context);
