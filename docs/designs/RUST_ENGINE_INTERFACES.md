@@ -100,7 +100,7 @@ Keys are byte strings compared byte by byte. The first byte is the tag.
 | `S` | sources | core |
 | `P` / `I` | page by `(source, slug)` / page id to page key | core (pages) |
 | `K` | chunk by `(page id, chunk index)` | core (chunks) |
-| `T` | keyword postings | core (search) |
+| `T` | legacy word postings (none from store format 14; the keyword index is under `R`) | core (search) |
 | `V` | page versions | core (versions) |
 | `J` / `j` | journal requests | core (journal) |
 | `W` | local writers | core (journal) |
@@ -149,8 +149,9 @@ Rules:
   | 11 | Refresh evidence reads (head 2) | `66e6c7ae` | planned |
   | 12 | Keyed lookups 2 (PR 10328, stacked on PR 10277) | `7896376b` | planned, lands after the Nov 26 shadow release |
   | 13 | Packed keyword index | `7896376b` | planned |
+  | 14 | Drop the legacy word index (`rust-engine/drop-legacy-word-index`) | this change | shipped on its branch, lands in order |
 
-  The next free number is 14. A head that takes a number that is not its own in this table renumbers before it lands.
+  The next free number is 15. A head that takes a number that is not its own in this table renumbers before it lands.
 
 - **`SHADOW_ADAPTER_VERSION` ledger** (`src/shadow/evidence-epoch.ts`). One version per distinct adapter source (the
   digest of `store-members/**`, `store-codec.ts` and `members.ts` that `test/shadow-evidence.test.ts` pins). A lander
@@ -453,8 +454,8 @@ decided the write is allowed. The contract is the "Segment chunks" comment in `c
   for visible chunks, so a staged chunk is not searchable. `count_chunks` counts every chunk record, staged and
   retired included, as PGLite does.
 - **Publish.** The flip calls `publish_segment_chunks` in its transaction. It records the page's new generation and
-  the manifest `byte_start` of each live occurrence, and writes or removes the postings of the chunks whose
-  visibility changed.
+  the manifest `byte_start` of each live occurrence. It writes no postings: the legacy word postings are gone since
+  store format 14, and the keyword index (`keyword/index_writer.rs`) keeps its own postings.
 - **`get_chunks` filters by the current body generation.** It returns the visible chunks only, in PGLite's document
   order: segment chunks whose occurrence has a live offset by `(byte_start, local_ordinal, chunk_index)`, then the
   rest by `(local_ordinal, inline last, chunk_index)`. The output has no segment fields, as PGLite's `getChunks`
@@ -1465,7 +1466,7 @@ Keyword search members of the keyword_search capability (all served), and title 
 - **Store and binding:** `searchKeyword` (`search_keyword`; the hybrid arm is in `keyword/arm.rs`), `countKeywordPages` (`count_keyword_pages`), `searchKeywordPages` (`search_keyword_pages`), `searchTitles` (`search_titles`), `searchKeywordChunks` (`search_keyword_chunks`), `findByTitleFuzzy` (`find_by_title_fuzzy`).
 - **Postgres tables:** `content_chunks.search_vector`, `pages.search_vector`, title trigrams.
 - **Keys:** The keyword index of store format 4 under the `R` tag (`TRIGRAM`), one kind byte after the tag: `0x00` the index state, `0x01` chunk and `0x02` page lexeme postings, `0x03` title trigrams, `0x04` slug basenames, `0x05`/`0x06` forward records (`keys.rs`, `rust/docs/store/keyword.md`, "Keys"). Until the state is complete every member scans the live pages and rebuilds vectors from text.
-- **Depends on:** The family writes the `ts_rank` and `ts_rank_cd` compatibility rankers (design D5) in `keyword/rank.rs` over vectors built from the row text; the core `T` postings are not used; the facts keyword arm reuses the rankers. Ports `pg_trgm` similarity for `findByTitleFuzzy` and `searchTitles`; the takes family reuses it.
+- **Depends on:** The family writes the `ts_rank` and `ts_rank_cd` compatibility rankers (design D5) in `keyword/rank.rs` over vectors built from the row text; the core `T` postings are gone since store format 14 and were not used before it; the facts keyword arm reuses the rankers. Ports `pg_trgm` similarity for `findByTitleFuzzy` and `searchTitles`; the takes family reuses it.
 - **Estimate:** about 5 days: 3 for the members, about 2 for the `ts_rank` ranker (a judgment; the ranker came to this family after the first estimate).
 - **Notes:** Every keyword case must match PGLite exactly, order and score within `1e-6`; `search.tsv` is empty.
 - **Parity cases (4, in `links.test.ts`, `search.test.ts`):**
