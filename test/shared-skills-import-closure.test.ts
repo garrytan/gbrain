@@ -236,7 +236,7 @@ for (const [name, url] of backends) {
       const before = { heads: await heads(f), checkout: checkout(f.root) };
       const outcome = await put(f, f.editor, 'beta', [prose('beta', 'Now uses the guide.', [GUIDE]), guide(['readers'])])
         .then(() => 'published', (error: { code?: string; message?: string }) => `${error.code}: ${error.message}`);
-      expect(outcome).toBe(`local_conflict: The publication was refused: ${GUIDE} would reach a wider audience than the 1 other skill that already holds it gives it. Nothing was written.`);
+      expect(outcome).toBe(`local_conflict: The publication was refused: ${GUIDE} would reach a wider audience than the 1 skill that already holds it gives it. Nothing was written.`);
       expect({ heads: await heads(f), reader: await readerCopy(f, 'beta'), checkout: checkout(f.root) })
         .toEqual({ heads: before.heads, reader: 'skill_asset_not_found', checkout: before.checkout });
     }, url), 120_000);
@@ -279,12 +279,24 @@ for (const [name, url] of backends) {
         const outcome = await put(f, caller, 'beta', [prose('beta', 'Use the root.', [ROOT]), root([GUIDE]), guide(['readers'])], proposer === 'private' ? { private: true } : {})
           .then(() => 'published', (error: { code?: string; message?: string }) => `${error.code}: ${error.message}`);
         expect(outcome).toBe(proposer === 'public'
-          ? `local_conflict: The publication was refused: ${GUIDE} would reach a wider audience than the 1 other skill that already holds it gives it. Nothing was written.`
+          ? `local_conflict: The publication was refused: ${GUIDE} would reach a wider audience than the 1 skill that already holds it gives it. Nothing was written.`
           : `local_conflict: The publication was refused: ${GUIDE} would reach a wider audience than skills/alpha gives it. Nothing was written.`);
         expect({ heads: await heads(f), reader: await readerCopy(f, 'gamma'), checkout: checkout(f.root) })
           .toEqual({ heads: before.heads, reader: 'skill_asset_not_found', checkout: before.checkout });
       }, url), 120_000);
     }
+
+    // Value: protects=a hidden skill's own edit cannot hand its file to a public skill through a shared rewrite; fails_when=the proposal that keeps hiding the file is not counted as a holder, so gamma shows it to readers; why_new=the holder check skipped proposals; seam=none; no_claim=none
+    test('a hidden skill that rewrites a shared file so a public skill gains its convention refuses', () => fixture(async f => {
+      expect((await put(f, f.local, 'gamma', [prose('gamma', 'Use the root.', [ROOT]), root()]) as { state?: string }).state).toBe('committed');
+      expect((await put(f, f.local, 'alpha', [{ ...prose('alpha', 'Use the root.', [ROOT, GUIDE]), audience: RESTRICTED }, root(), guide(['readers'])]) as { state?: string }).state).toBe('committed');
+      const before = { heads: await heads(f), checkout: checkout(f.root) };
+      const outcome = await put(f, f.editor, 'alpha', [{ ...prose('alpha', 'Use the root.', [ROOT, GUIDE]), audience: RESTRICTED }, root([GUIDE]), guide(['readers'])])
+        .then(() => 'published', (error: { code?: string; message?: string }) => `${error.code}: ${error.message}`);
+      expect(outcome).toBe(`local_conflict: The publication was refused: ${GUIDE} would reach a wider audience than the 1 skill that already holds it gives it. Nothing was written.`);
+      expect({ heads: await heads(f), reader: await readerCopy(f, 'gamma'), checkout: checkout(f.root) })
+        .toEqual({ heads: before.heads, reader: 'skill_asset_not_found', checkout: before.checkout });
+    }, url), 120_000);
 
     // Value: protects=adding a brand-new helper to a convention that a restricted skill also holds still publishes; fails_when=the restricted skill, which gains the helper in the same publication, counts as a holder that hides it; why_new=the new check must not over-refuse; seam=none; no_claim=none
     test('a new helper added to a convention that a restricted skill also holds publishes', () => fixture(async f => {
@@ -306,7 +318,7 @@ for (const [name, url] of backends) {
       const before = { heads: await heads(f), checkout: checkout(f.root) };
       const outcome = await put(f, f.editor, 'beta', [{ ...prose('beta', 'Now uses the guide.', [GUIDE]), audience: RESTRICTED }, guide(RESTRICTED)])
         .then(() => 'published', (error: { code?: string; message?: string }) => `${error.code}: ${error.message}`);
-      expect(outcome).toBe(`local_conflict: The publication was refused: ${GUIDE} would reach a wider audience than the 1 other skill that already holds it gives it. Nothing was written.`);
+      expect(outcome).toBe(`local_conflict: The publication was refused: ${GUIDE} would reach a wider audience than the 1 skill that already holds it gives it. Nothing was written.`);
       expect({ heads: await heads(f), checkout: checkout(f.root) }).toEqual(before);
     }, url), 120_000);
 

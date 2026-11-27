@@ -729,14 +729,17 @@ async function refuseHiddenExposure(engine: BrainEngine, sourceId: string, incar
   const holders = new Set<string>();
   for (const [path, { prior, after }] of candidates) {
     const sealedHolds = (name: string) => sealed.some(revision => revision.name === name && !revision.deleted && revision.files.some(file => file.path === path));
-    const remaining = [
-      ...rebuilt.filter(skill => sealedHolds(skill.name) && skill.files.some(file => file.path === path)),
-      ...unchanged.filter(skill => skill.files.some(file => file.path === path)),
-    ];
-    if (!remaining.length) continue;
-    for (const skill of unchanged) for (const file of skill.files) if (file.path === path) effectiveAudience(skill.metadata, file, approved).forEach(a => prior.add(a));
+    const keeps = (skill: Holder) => skill.files.some(file => file.path === path);
+    const reach = (skills: Holder[]) => skills.flatMap(skill => skill.files.filter(file => file.path === path).flatMap(file => effectiveAudience(skill.metadata, file, approved)));
+    for (const a of reach(unchanged)) prior.add(a);
     // 'readers' covers every principal (policy.ts approvedFiles), so a file some holder already shows to readers cannot widen.
-    if (prior.has('readers') || [...after].every(a => prior.has(a))) continue;
+    if (prior.has('readers')) continue;
+    const others = [...rebuilt.filter(skill => sealedHolds(skill.name) && keeps(skill)), ...unchanged.filter(keeps)];
+    // Another skill that keeps hiding the file limits every new reach. A proposal that keeps hiding it limits only the
+    // reach a rebuilt skill gains, since a proposal's own new audience is the change under review.
+    const authorized = new Set([...prior, ...(others.length ? [] : reach(proposals))]);
+    const remaining = others.length ? others : proposals.filter(skill => sealedHolds(skill.name) && keeps(skill));
+    if (!remaining.length || [...(others.length ? after : reach(rebuilt))].every(a => authorized.has(a))) continue;
     paths.push(path);
     for (const skill of remaining) holders.add(skill.name);
     reasons.push(`${path} would reach a wider audience than ${bounded(remaining.map(skill => `skills/${skill.name}`), ', ')} ${remaining.length === 1 ? 'gives' : 'give'} it`);
@@ -744,9 +747,9 @@ async function refuseHiddenExposure(engine: BrainEngine, sourceId: string, incar
   if (!reasons.length) return;
   const count = holders.size;
   const what = detailed ? bounded(reasons)
-    : `${bounded(paths)} would reach a wider audience than the ${count} other skill${count === 1 ? '' : 's'} that already hold${count === 1 ? 's' : ''} it give${count === 1 ? 's' : ''} it`;
+    : `${bounded(paths)} would reach a wider audience than the ${count} skill${count === 1 ? '' : 's'} that already hold${count === 1 ? 's' : ''} it give${count === 1 ? 's' : ''} it`;
   throw opError('local_conflict', `The publication was refused: ${what}. Nothing was written.`,
-    `Another skill in source ${sourceId} holds the shared file but shows it to fewer callers, because its SKILL.md audience is narrower or it is private, and this publication would show the file to more callers without that skill being reviewed. Give the file an audience no wider than that skill gives it, or fork it under this skill's own directory and point depends_on there, then submit again with a new request_id.`);
+    `A skill in source ${sourceId} holds the shared file but shows it to fewer callers, because its SKILL.md audience is narrower or it is private, and this publication would show the file to more callers through another skill. Give the file an audience no wider than that skill gives it, or fork it under the publishing skill's own directory and point depends_on there, then submit again with a new request_id.`);
 }
 
 /** An import regenerates skillpack.json from the sealed heads, so a skill the checkout declares but never published would vanish from it. */
