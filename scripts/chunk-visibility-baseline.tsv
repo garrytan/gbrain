@@ -3,7 +3,6 @@ src/commands/doctor/checks/vector-plan.ts	2
 src/commands/reindex-multimodal.ts	4
 src/core/code-graph-readiness.ts	1
 src/core/code-intel/read-scope.ts	1
-src/core/code-intel/recursive-walk.ts	2
 src/core/embed-stale-images.ts	1
 src/core/embedding-invalidation.ts	3
 src/core/embedding-migration-retention.ts	1

@@ -131,26 +131,20 @@ export async function writeImpactLogRow(
   details?: Record<string, unknown>,
 ): Promise<void> {
   try {
-    await engine.executeRaw(
-      `INSERT INTO migration_impact_log (
-         remediation_id, metric_name, metric_before, metric_after,
-         job_id, source_id, brain_id, started_at, idempotency_key,
-         applied_by, details
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::text::jsonb)`,
-      [
-        attribution.remediation_id,
-        metricName,
-        metricBefore,
-        metricAfter,
-        attribution.job_id ?? null,
-        attribution.source_id ?? null,
-        attribution.brain_id ?? null,
-        attribution.started_at ?? new Date().toISOString(),
-        attribution.idempotency_key ?? null,
-        attribution.applied_by ?? null,
-        JSON.stringify(details ?? {}),
-      ],
-    );
+    // engine-sql/remediation-records.ts; the Rust store keeps no impact log and refuses by name.
+    await engine.insertImpactLogRow({
+      remediation_id: attribution.remediation_id,
+      metric_name: metricName,
+      metric_before: metricBefore,
+      metric_after: metricAfter,
+      job_id: attribution.job_id ?? null,
+      source_id: attribution.source_id ?? null,
+      brain_id: attribution.brain_id ?? null,
+      started_at: attribution.started_at ?? new Date().toISOString(),
+      idempotency_key: attribution.idempotency_key ?? null,
+      applied_by: attribution.applied_by ?? null,
+      details: details ?? {},
+    });
   } catch (err) {
     rethrowCapabilityRefusal(err); // closeStepImpact reports a refused write on the step; it is not a failed one
     process.stderr.write(

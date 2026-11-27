@@ -442,6 +442,9 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   // The memory-trust evals' harness reads (engine-sql/eval-harness-reads.ts): SELECTs over the catalog, facts and pages; the
   // store functions (eval_harness_reads.rs, eval_harness_catalog.rs) only `self.read`.
   'getFactsByIds', 'findLiveFactsByText', 'listPageIdSlugs', 'hasTable', 'hasColumn', 'listTextBearingColumns', 'scanTextColumns',
+  // The code walk's language gate and mixed-language filter, the two-pass walk's symbol chunk lookup (engine-sql/chunk-reads.ts) and the reindex spend estimate
+  // (engine-sql/remediation-records.ts): SELECTs only; the store answers each from a read snapshot.
+  'listSymbolLanguages', 'listSupportedChunkIds', 'listSymbolChunkIds', 'listWalkChunkRows', 'readReindexSpendInputs',
 ];
 
 const nothingSetting = 'nothing: the setting lasts only for the call, so running it again repeats no write';
@@ -521,6 +524,7 @@ export const OWNER_IPC_TYPED_CONFIRMING_READS: Readonly<Record<string, string>> 
   blankPurgeCoreEditNotices: 'probePurgeDerivations for that purge',
   deletePageViewDigests: 'probePurgeDerivations for that purge',
   writePageViewDigest: nothingDigest,
+  insertImpactLogRow: 'nothing: the store keeps no migration impact log and refuses the write by name before any work, so running it again writes nothing',
   deleteRewrittenSegmentDerivations: 'readSegmentDerivations for that page',
   deleteUnstagedSegmentChunks: 'getChunks for that page generation',
   // The segmented write path's writes (engine-sql/segmented-writes.ts).
