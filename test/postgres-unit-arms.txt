@@ -635,7 +635,10 @@ test/engine-parity/writer-versions.test.ts
 test/engine-sql-fact-relink-attempts.test.ts
 test/engine-sql-fact-relink-writes.test.ts
 test/engine-sql-facts-keyset.test.ts
+test/engine-swap-failback.test.ts
 test/engine-swap-managed-storage.test.ts
+test/engine-swap-pg-fence.test.ts
+test/engine-swap-pg-source.test.ts
 test/engine-swap-refresh-drain.test.ts
 test/enrich-owner-contact.test.ts
 test/entity-company-auto-link.test.ts

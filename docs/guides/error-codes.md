@@ -2305,9 +2305,11 @@ More: [docs/ENGINES.md#opening-an-engine-from-settings-experimental](../../docs/
 |---|---|---|---|---|---|---|
 | The move to another engine (`gbrain engine swap`) was refused before anything changed; the current engine keeps authority. | A swap needs a settled, unmanaged brain and readiness evidence that cannot be waived: managed storage, unfinished worktree refreshes, failing readiness criteria, more than one writer host, a team brain, a lagging follower, differing digests or fingerprints, an engine-selecting override, or host access that would change. Each reason has one recovery row in docs/guides/engine-swap.md. | Correct the request using the message above, then retry. Run: gbrain engine swap --to rust --plan --json | agent | `repeat the read that failed` | 1 | no |
 
-Reasons: `refresh_unsettled`, `managed_storage`, `no_shadow`, `not_ready`, `multiple_writer_hosts`, `writer_coverage_unknown`, `team_brain`, `follower_behind`, `digest_mismatch`, `route_override`, `host_access_unbound`, `host_access_changed`, `fingerprint_semantics_differ`.
+Reasons: `refresh_unsettled`, `managed_storage`, `no_shadow`, `not_ready`, `multiple_writer_hosts`, `writer_coverage_unknown`, `team_brain`, `follower_behind`, `digest_mismatch`, `route_override`, `host_access_unbound`, `host_access_changed`, `fingerprint_semantics_differ`, `folder_rules_unserved`, `remote_access_unserved`, `brain_in_use`, `verification_incomplete`, `checkpoint_unavailable`, `failback_unavailable`, `failback_mismatch`.
 
 Override: reason `refresh_unsettled`: retryable, exit 1, retryable.
+
+Override: reason `failback_mismatch`: unavailable, exit 1, not retryable.
 
 Override: reason `managed_storage`: consent, exit 3, not retryable.
 
@@ -2330,6 +2332,16 @@ Override: reason `host_access_changed`: consent, exit 3, not retryable.
 Override: reason `digest_mismatch`: unavailable, exit 1, not retryable.
 
 Override: reason `fingerprint_semantics_differ`: unavailable, exit 1, not retryable.
+
+Override: reason `folder_rules_unserved`: unavailable, exit 1, not retryable.
+
+Override: reason `remote_access_unserved`: unavailable, exit 1, not retryable.
+
+Override: reason `brain_in_use`: retryable, exit 1, retryable.
+
+Override: reason `verification_incomplete`: unavailable, exit 1, not retryable.
+
+Override: reason `checkpoint_unavailable`: unavailable, exit 1, not retryable.
 
 More: [docs/guides/engine-swap.md#refusals](../../docs/guides/engine-swap.md#refusals)
 
