@@ -189,6 +189,23 @@ passes the D17 bar (D19). Needs the user's topology decision.
 
 This row stops refusing only with `GBRAIN_RUST_MULTIUSER=1` and a destination that is a served multi-user Rust brain (the multi-user Rust build, default off); every other criterion still applies.
 
+The plan reads that destination from this host's configuration only, because no server can serve the brain before the
+swap. The host that swaps becomes the brain server, so its configuration counts only when all of these hold:
+
+- `GBRAIN_RUST_MULTIUSER=1`.
+- `GBRAIN_RUST_SERVER_LISTEN` is the `host:port` you serve on. A server started with only the `--rust-listen` flag does
+  not count, because the plan cannot see that flag: set `GBRAIN_RUST_SERVER_LISTEN` to the address you serve on.
+- The address is not a loopback address, and `GBRAIN_RUST_SERVER_TLS_CERT` and `GBRAIN_RUST_SERVER_TLS_KEY` are set
+  (the plan checks the names only). The other writer hosts must reach the server.
+- This host names no server of its own: no `rust_server.url` in its config and no `GBRAIN_RUST_SERVER_URL`. Those make a
+  Rust engine on this host a client of that server, so it cannot serve the swapped brain. Set them on the other hosts only.
+
+The row's detail says "accepted on config only" or "not accepted (config only)" with the reason, and the plan hash binds
+the listen address. The swap run checks the live server at that address after its switch; when the server does not answer
+as a served multi-user Rust brain for this brain, the run gives authority back to Postgres.
+
+**Say to your agent:** *"Check whether my brain, written from two machines, can move to the Rust server."*
+
 <a id="writer_coverage_unknown"></a>
 ### `writer_coverage_unknown`
 
