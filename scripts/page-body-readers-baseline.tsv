@@ -783,3 +783,7 @@ src/core/ops/household.ts	classifySubjectPages	field	SEGW	household record write
 src/core/ops/household.ts	replaceHouseholdRecords	field	SEGW	household record writer (GST-3825 H1): rewrites the whole small record or subject page under its revision; asserts the page is inline (assertInlineBody) and refuses a segmented one
 src/core/ops/household.ts	household_mark	field	SEGW	household record writer (GST-3825 H1): rewrites the whole small record or subject page under its revision; asserts the page is inline (assertInlineBody) and refuses a segmented one
 src/core/policy/store.ts	readPolicyPage	field	INLINE	the policy page is a small fence written inline by gbrain policy; a segmented one reads as empty, so it is malformed and every verb asks
+src/core/initiatives/store.ts	readPage	field	INLINE	refuses a segmented page (assertInlineBody in readPage); lifecycle pages are small and rewritten whole. TODO(initiatives): move to section edits
+src/core/initiatives/store.ts	writePage	call:serializeMarkdown	INLINE	refuses a segmented page (assertInlineBody in readPage); lifecycle pages are small and rewritten whole. TODO(initiatives): move to section edits
+src/core/initiatives/store.ts	writePage	field	INLINE	refuses a segmented page (assertInlineBody in readPage); lifecycle pages are small and rewritten whole. TODO(initiatives): move to section edits
+src/core/initiatives/store.ts	updatePage	field	INLINE	refuses a segmented page (assertInlineBody in readPage); lifecycle pages are small and rewritten whole. TODO(initiatives): move to section edits

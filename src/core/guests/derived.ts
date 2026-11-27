@@ -39,6 +39,7 @@ export const GUEST_DERIVED_PRODUCERS = {
   edge_contradictions: { guest: 'none', reason: NO_ROWS },
   claim_conflicts: { guest: 'none', reason: NO_ROWS },
   drift: { guest: 'none', reason: NO_ROWS },
+  ideas: { guest: 'none', reason: 'Reads idea and initiative pages in the initiatives source and rewrites idea frontmatter only.' },
   standing_questions: { guest: 'none', reason: 'Answers through search like any reader; its evidence pointers name pages and copy no text.' },
   chronicle: { guest: 'skip', sites: ['src/core/cycle/chronicle.ts'] },
   facts_drain: { guest: 'none', reason: 'Runs queued facts-absorb jobs; facts_backstop never queues one for a guest page.' },

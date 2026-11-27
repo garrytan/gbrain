@@ -167,7 +167,7 @@ export async function loadEntityNames(engine: BrainEngine, sourceId: string, opt
   const list = (v: unknown): string[] => Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : typeof v === 'string' ? [v] : [];
   for (const row of rows.slice(0, max)) {
     if (!isFactEntityPage(row.slug, row.type)) {
-      linkable ??= new Set((await (await import('../mentions/policy.ts')).loadLinkableTypes(engine, sourceId).catch(() => ({ types: [] as string[] }))).types);
+      linkable ??= new Set((await (await import('../mentions/policy.ts')).loadFactTargetTypes(engine, sourceId).catch(() => ({ types: [] as string[] }))).types);
       if (row.type == null || !linkable.has(row.type)) continue;
     }
     const aliases = list(row.aliases);

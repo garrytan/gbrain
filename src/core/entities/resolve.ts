@@ -515,7 +515,7 @@ export async function resolveStrictEntityReference(
   let linkable: Set<string> | null = null;
   const isEntity = async (r: { slug: string; type: string | null }) => {
     if (isFactEntityPage(r.slug, r.type)) return true;
-    linkable ??= new Set((await (await import('../mentions/policy.ts')).loadLinkableTypes(engine, source_id).catch(() => ({ types: [] as string[] }))).types);
+    linkable ??= new Set((await (await import('../mentions/policy.ts')).loadFactTargetTypes(engine, source_id).catch(() => ({ types: [] as string[] }))).types);
     return r.type != null && linkable.has(r.type);
   };
   const pick = async (found: Array<{ slug: string; type: string | null }>, arm: StrictResolutionArm): Promise<StrictResolution | null> => {

@@ -36,6 +36,7 @@ import { repairJsonbHandler } from '../core/minions/handlers/repair-jsonb.ts';
 import { makeSyncRetryFailedHandler } from '../core/minions/handlers/sync-retry-failed.ts';
 import { makeSyncHandler } from '../core/minions/handlers/sync.ts';
 import { makeUnifyTypesHandler } from '../core/minions/handlers/unify-types.ts';
+import { makeInitiativeFinishHandler } from '../core/minions/handlers/initiative-finish.ts';
 import { runJobsAuthorizeLegacy } from './jobs/authorize-legacy.ts';
 import { runJobsSubmit } from './jobs/submit.ts';
 import { runJobsWait } from './jobs/wait.ts';
@@ -128,6 +129,8 @@ export const GATEWAY_REFRESH_JOB_NAMES = new Set([
   // Open-loop commitment extraction (google source kind): same judge shape
   // as chronicle_extract, same stale-gateway failure class.
   'loops_extract',
+  // finish_initiative's job plans the merge with a gateway chat call.
+  'initiative_finish',
 ]);
 
 function registerBuiltinJob(
@@ -546,6 +549,7 @@ export async function registerBuiltinHandlers(
   registerBuiltinJob(worker, engine, 'extract-conversation-facts', makeExtractConversationFactsHandler(engine));
   registerBuiltinJob(worker, engine, 'chronicle_extract', makeChronicleExtractHandler(engine));
   registerBuiltinJob(worker, engine, 'loops_extract', makeLoopsExtractHandler(engine));
+  registerBuiltinJob(worker, engine, 'initiative_finish', makeInitiativeFinishHandler(engine));
   registerBuiltinJob(worker, engine, 'enrich', makeEnrichHandler(engine));
   worker.register('lint-fix', makeLintFixHandler(engine));
   worker.register('integrity-auto', integrityAutoHandler);

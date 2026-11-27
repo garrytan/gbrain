@@ -1,0 +1,92 @@
+# gbrain-initiatives — ideas and initiatives on top of gbrain-base-v2.
+#
+# Two page types and the edges between them and the "core" (project and
+# concept pages that describe the current state):
+#
+#   ideas/<slug>        type idea        anyone's proposal; never a fact source
+#                                        or fact target; status open | planned |
+#                                        implemented | obsolete | rejected | withdrawn
+#   initiatives/<slug>  type initiative  time-boxed work; facts from its bound
+#                                        Slack channels attach here (fact_target);
+#                                        status active | done | cancelled
+#   initiatives/<slug>/<doc>  type initiative-doc  supporting design documents
+#
+#   initiative --implements--> idea          (frontmatter `implements:`)
+#   initiative --targets-->    project|concept (frontmatter `targets:`)
+#   project    --created_by--> initiative    (written by merge_initiative)
+#   idea       --similar_to--> idea|initiative (written by the ideas phase)
+#
+# Path prefixes match anywhere in a slug, so a brain that namespaces its pages
+# (e.g. `acme/initiatives/x`) gets the same types. See docs/guides/initiatives.md.
+
+api_version: gbrain-schema-pack-v1
+name: gbrain-initiatives
+version: 1.0.0
+description: Ideas and initiatives (time-boxed work with Slack channels) that merge into project and concept pages when finished
+author: GBrain contributors
+license: MIT
+gbrain_min_version: 0.60.0
+extends: gbrain-base-v2
+borrow_from: []
+mapping_rules: []
+phases: []
+
+page_types:
+  - name: idea
+    primitive: concept
+    path_prefixes: [ideas/]
+    aliases: []
+    extractable: false
+    expert_routing: false
+  - name: initiative
+    primitive: concept
+    path_prefixes: [initiatives/]
+    aliases: []
+    extractable: false
+    expert_routing: false
+    fact_target: true
+  # A supporting document of an initiative (design notes, decision log, FAQ),
+  # filed under the initiative's slug with an explicit `type: initiative-doc`.
+  # Neither a fact source nor a fact target: planned design is not status quo.
+  - name: initiative-doc
+    primitive: concept
+    path_prefixes: []
+    aliases: []
+    extractable: false
+    expert_routing: false
+  # gbrain-base-v2 folds `initiative` into `project` as an alias; initiative is
+  # its own type here, so project keeps only `workstream`.
+  - name: project
+    primitive: concept
+    path_prefixes: [projects/, project/]
+    aliases: [workstream]
+    extractable: false
+    expert_routing: false
+
+link_types:
+  - name: implements
+    inverse: implemented_by
+    inference:
+      target_type: idea
+  - name: targets
+    inverse: targeted_by
+  - name: created_by
+    inverse: created
+    inference:
+      target_type: initiative
+  - name: similar_to
+    inverse: similar_to
+
+frontmatter_links:
+  - page_type: initiative
+    fields: [implements]
+    link_type: implements
+  - page_type: initiative
+    fields: [targets]
+    link_type: targets
+  - page_type: project
+    fields: [created_by]
+    link_type: created_by
+  - page_type: concept
+    fields: [created_by]
+    link_type: created_by

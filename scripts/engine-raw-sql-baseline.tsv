@@ -1275,3 +1275,9 @@ src/shadow/writer-hooks.ts	execute_raw	21	the maintainer-approved writer hooks o
 src/shadow/writer-observations.ts	execute_raw	4	swap eligibility's writer observations live in the primary only while a Rust shadow follows it (Rust never holds them): one upsert per writing process after commit under a SET LOCAL lock timeout and statement timeout (two statements), and the eligibility read; the primary's own table by design
 src/commands/policy.ts	execute_raw	1	GST-3824 L1: gbrain policy status reads the last policy_check/agent_policy fetch per client from mcp_request_log
 src/core/policy/store.ts	execute_raw	1	GST-3824 L1: the policy page revision author (pages.revision_principal_kind/id), which no engine read returns
+src/core/initiatives/ideas.ts	execute_raw	2	TODO(initiatives): similar-idea vector lookups over pages and chunks; move to a typed engine method
+src/core/initiatives/merge.ts	execute_raw	1	TODO(initiatives): live facts of the initiative; move to a typed engine method
+src/core/initiatives/route-facts.ts	execute_raw	1	TODO(initiatives): Slack facts past the route watermark; move to a typed engine method
+src/core/initiatives/store.ts	execute_raw	2	TODO(initiatives): list idea and initiative pages by prefix; move to a typed engine method
+src/core/minions/handlers/initiative-finish.ts	execute_raw	1	TODO(initiatives): waits on the final sync job; move to a typed engine method
+src/core/ops/initiatives.ts	execute_raw	7	TODO(initiatives): status and bind lookups (facts, sources, jobs, finish job state); move to typed engine methods

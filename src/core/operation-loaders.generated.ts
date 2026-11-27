@@ -28,6 +28,7 @@ const load_graph_rank = () => import('./ops/graph-rank.ts') as Promise<Record<st
 const load_household = () => import('./ops/household.ts') as Promise<Record<string, unknown>>;
 const load_image = () => import('./ops/image.ts') as Promise<Record<string, unknown>>;
 const load_ingest_log = () => import('./ops/ingest-log.ts') as Promise<Record<string, unknown>>;
+const load_initiatives = () => import('./ops/initiatives.ts') as Promise<Record<string, unknown>>;
 const load_insights = () => import('./ops/insights.ts') as Promise<Record<string, unknown>>;
 const load_jobs = () => import('./ops/jobs.ts') as Promise<Record<string, unknown>>;
 const load_learned = () => import('./ops/learned.ts') as Promise<Record<string, unknown>>;
@@ -209,6 +210,13 @@ export const OPERATION_LOADERS: Record<string, readonly [() => Promise<Record<st
   "takes_supersede": [load_takes, "takesOperations"],
   "takes_remove": [load_takes, "takesOperations"],
   "takes_rebuild": [load_takes, "takesOperations"],
+  "initiatives_list": [load_initiatives, "initiativeOperations"],
+  "initiative_status": [load_initiatives, "initiativeOperations"],
+  "initiative_start": [load_initiatives, "initiativeOperations"],
+  "initiative_bind_slack": [load_initiatives, "initiativeOperations"],
+  "finish_initiative": [load_initiatives, "initiativeOperations"],
+  "initiative_merge_apply": [load_initiatives, "initiativeOperations"],
+  "idea_submit": [load_initiatives, "initiativeOperations"],
   "whoami": [load_sources, "sourcesOperations"],
   "sources_add": [load_sources, "sourcesOperations"],
   "sources_list": [load_sources, "sourcesOperations"],

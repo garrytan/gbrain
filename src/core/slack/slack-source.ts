@@ -43,6 +43,10 @@ import { VERSION } from '../../version.ts';
 import { SlackChannelUnavailableError, slackApi, type SlackApi } from './client.ts';
 import { nextSlackDay, renderSlackDay, skippedMessage, slackAlignToDay, slackDayFingerprint, slackDayKey, slackDayStartMs, slackPagePath } from './render.ts';
 import type { SlackAccount, SlackChannelInfo, SlackMessage, SlackSourceConfig, SlackUser } from './types.ts';
+import {
+  dynamicSlackChannels, emptyIntakeCounts, initiativesConfigFor, routeFactsAfterSync, syncIntakeChannel,
+  type SlackInitiativesDeps, type SlackIntakeChannelState,
+} from './intake-sync.ts';
 
 /** The user list is re-read when a message names a user it lacks, or once this old. */
 const USERS_MAX_AGE_MS = 7 * 86_400_000;
@@ -65,6 +69,8 @@ export interface SlackState extends Record<string, unknown> {
   users_listed_at: string | null;
   account?: ConnectorAccount | null;
   item_holds?: unknown;
+  /** Intake mode (`s_mode: intake`): per channel, the messages handed to the idea intake. */
+  intake?: Record<string, SlackIntakeChannelState>;
 }
 
 const emptyState = (): SlackState => ({ channels: {}, users: {}, users_listed_at: null });
@@ -73,6 +79,8 @@ export interface SlackSyncDeps {
   /** Test seam: an API bound to a fake transport. */
   api?: SlackApi;
   now?: () => number;
+  /** Test seams for dynamic channels, fact routing and intake. */
+  initiatives?: SlackInitiativesDeps;
 }
 
 interface Summary extends PublishSummary { status: 'synced' | 'partial'; failedFiles: number }
@@ -156,12 +164,24 @@ async function runSlackSyncInner(engine: BrainEngine, sourceId: string, cfg: Sla
     state.account = resolved;
   }
 
+  // channels_from: initiatives adds the channels active initiatives name, read now (never part of the identity).
+  const skippedChannels: Array<{ channel: string; reason: string }> = [];
+  const dynamic = cfg.channelsFrom === 'initiatives' ? (await dynamicSlackChannels(engine, deps.initiatives)).filter(id => !cfg.channels.includes(id)) : [];
+  const channels = [...cfg.channels, ...dynamic];
+  const skipChannel = (channel: string, error: unknown) => {
+    const reason = error instanceof Error ? error.message : String(error);
+    skippedChannels.push({ channel, reason });
+    process.stderr.write(`[slack] ${sourceId}: skipped initiative channel ${channel}: ${reason}\n`);
+  };
+
   // First sync of a channel: refuse the run, with the fix, when the app cannot read it (plan item 1).
+  // An initiative's channel the app cannot read is skipped and reported instead.
   const infos = new Map<string, SlackChannelInfo>();
-  for (const id of cfg.channels) {
+  for (const id of channels) {
     if (state.channels[id]) continue;
     try { infos.set(id, await api.conversationInfo(id, signal)); } catch (e) {
       if (e instanceof ConnectorRateLimitedError && e.retryAt) await recordRateLimit(engine, sourceId, e.retryAt);
+      if (dynamic.includes(id) && !runScoped(e)) { skipChannel(id, e); continue; }
       throw translate(sourceId, cfg, e);
     }
   }
@@ -304,11 +324,32 @@ async function runSlackSyncInner(engine: BrainEngine, sourceId: string, cfg: Sla
     for (const day of Object.keys(ch.days)) if (slackDayStartMs(nextSlackDay(day), cfg.timezone) <= horizon) delete ch.days[day];
   };
 
+  const intakeCounts = emptyIntakeCounts();
+  const initiativesCfg = cfg.mode === 'intake' ? await initiativesConfigFor(engine, deps.initiatives) : null;
+  const intakeChannel = async (channelId: string) => {
+    const info = infos.get(channelId) ?? await api!.conversationInfo(channelId, signal);
+    const ch = state.channels[channelId] ??= { committed_to: null, window: null, name: info.name, private: info.isPrivate, days: {} };
+    Object.assign(ch, { name: info.name, private: info.isPrivate });
+    const intake = (state.intake ??= {})[channelId] ??= { since: null, messages: {} };
+    await syncIntakeChannel({ engine, api: api!, cfg, account, channel: { id: channelId, name: info.name }, state: intake, users: state.users, ensureUsers,
+      runStart, counts: intakeCounts, initiatives: initiativesCfg!, deps: deps.initiatives ?? {}, signal,
+      log: line => process.stderr.write(line + '\n') });
+    ch.committed_to = new Date(runStart).toISOString();
+  };
+
   try {
-    for (const channelId of cfg.channels) {
+    for (const channelId of channels) {
+      if (skippedChannels.some(skipped => skipped.channel === channelId)) continue;
       if (!holds.shouldAttempt(channelId)) continue;
-      await handle(channelId, () => syncChannel(channelId), null);
+      const work = () => cfg.mode === 'intake' ? intakeChannel(channelId) : syncChannel(channelId);
+      if (dynamic.includes(channelId)) {
+        // An initiative's channel the app can no longer read is skipped, never held.
+        await handle(channelId, async () => {
+          try { await work(); } catch (e) { if (!(e instanceof SlackChannelUnavailableError)) throw e; skipChannel(channelId, e); }
+        }, null);
+      } else await handle(channelId, work, null);
     }
+    if (intakeCounts.failed > 0) summary.failedFiles += intakeCounts.failed;
     if (summary.failedFiles > 0) summary.status = 'partial';
     state.item_holds = holds.finish();
     await save(true);
@@ -328,7 +369,12 @@ async function runSlackSyncInner(engine: BrainEngine, sourceId: string, cfg: Sla
   }
 
   await afterConnectorPublish(ctx, opts);
-  return {
+  const routing = cfg.channelsFrom === 'initiatives' && cfg.mode !== 'intake'
+    ? await routeFactsAfterSync(engine, sourceId, Object.fromEntries(Object.entries(state.channels).map(([id, c]) => [id, c.name])), deps.initiatives)
+    : null;
+  if (routing) process.stderr.write(`[slack] ${sourceId}: initiative fact routing: ${'error' in routing ? `failed (${routing.error})`
+    : `${routing.routed} routed, ${routing.skipped} skipped${routing.errors.length ? `, ${routing.errors.length} errors` : ''}`}\n`);
+  const result: SyncResult = {
     status: summary.status === 'partial' ? 'partial' : summary.added + summary.modified + summary.deleted > 0 ? 'synced' : 'up_to_date',
     fromCommit: null, toCommit: '', added: summary.added, modified: summary.modified, deleted: summary.deleted, renamed: 0,
     chunksCreated: summary.chunksCreated, embedded: summary.embedded, pagesAffected: summary.pagesAffected,
@@ -337,4 +383,9 @@ async function runSlackSyncInner(engine: BrainEngine, sourceId: string, cfg: Sla
       reason: summary.failedFiles > 0 ? 'connector_item_failures' as const : signal?.aborted ? 'timeout' as const : 'connector_partial' as const } : {}),
     ...connectorHoldsResult(sourceId, holds.summary()),
   };
+  return Object.assign(result, {
+    ...(skippedChannels.length ? { slackChannelsSkipped: skippedChannels } : {}),
+    ...(routing ? { initiativeRouting: routing } : {}),
+    ...(cfg.mode === 'intake' ? { slackIntake: intakeCounts } : {}),
+  });
 }

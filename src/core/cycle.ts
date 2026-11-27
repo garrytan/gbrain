@@ -90,6 +90,7 @@ export type CyclePhase =
   // (writes reports/drift-<date>; auto_update mutates nothing).
   | 'drift'
   | 'standing_questions' // C4 pinned questions (src/core/questions/phase.ts)
+  | 'ideas' // ideas lifecycle: status from initiatives + similar-idea clustering (src/core/initiatives/ideas-phase.ts)
   // #5876 — Life Chronicle events from meeting/conversation/calendar pages (default ON).
   | 'chronicle'
   // Lane D — runs queued facts-absorb jobs on PGLite (no job worker there); bounded per run and per day.
@@ -196,6 +197,7 @@ export const ALL_PHASES: CyclePhase[] = [
   // drift report page gets embedded same-cycle. Report-only in v1.
   'drift',
   'standing_questions', // C4 pinned questions (global); BEFORE embed so question pages embed same-cycle.
+  'ideas', // ideas lifecycle (global); BEFORE embed so idea pages it rewrites embed same-cycle.
   // #5876 — Life Chronicle events (global). BEFORE embed so event pages embed same-cycle.
   'chronicle',
   // Lane D — automatic facts drain (PGLite). BEFORE embed so new facts embed same-cycle.
@@ -366,6 +368,7 @@ const NEEDS_LOCK_PHASES: ReadonlySet<CyclePhase> = new Set([
   // #2653 — writes the reports/drift-<date> page.
   'drift',
   'standing_questions', // C4: writes pinned answers and question pages.
+  'ideas', // writes idea page frontmatter (status, similar).
   'edge_contradictions', // writes proposals and (apply mode) closure lines
   'claim_conflicts', // writes decide_proposals rows
   // #5876 — writes event pages, projections and the chronicle ledger.
@@ -2850,6 +2853,13 @@ async function runCycleUnscoped(
       checkAborted(cycleSignal);
       if (!engine) phaseResults.push({ phase: 'standing_questions', status: 'skipped', duration_ms: 0, summary: 'no database connected', details: { reason: 'no_database' } });
       else { const { result, duration_ms } = await timePhase(async () => (await import('./questions/phase.ts')).runPhaseStandingQuestions(engine, { dryRun, signal: cycleSignal }), 'standing_questions'); phaseResults.push({ ...result, duration_ms }); }
+      await safeYield(opts.yieldBetweenPhases);
+    }
+
+    if (phases.includes('ideas')) { // ideas lifecycle (src/core/initiatives/ideas-phase.ts)
+      checkAborted(cycleSignal);
+      if (!engine) phaseResults.push({ phase: 'ideas', status: 'skipped', duration_ms: 0, summary: 'no database connected', details: { reason: 'no_database' } });
+      else { const { result, duration_ms } = await timePhase(async () => (await import('./initiatives/phase-entry.ts')).runIdeasCyclePhase(engine, { dryRun, signal: cycleSignal }), 'ideas'); phaseResults.push({ ...result, duration_ms }); }
       await safeYield(opts.yieldBetweenPhases);
     }
 

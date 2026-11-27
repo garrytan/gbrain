@@ -155,6 +155,12 @@ const PageTypeSchema = z.object({
   subtypes: z.array(SubtypeMatchSchema).optional(),
   /** Frontmatter fields that hold one identity per entity (an account or registry id); the duplicate finder treats a shared value as a key and a different value as a veto (core/entities/duplicates.ts). */
   identity_keys: z.array(z.string().min(1)).optional(),
+  /**
+   * Facts may attach to pages of this type (fact extraction resolves an
+   * entity to it, held facts move to it). The built-in targets (concept,
+   * project, deal and the identity types) stay targets without the flag.
+   */
+  fact_target: z.boolean().optional(),
 }).strict();
 
 const FrontmatterLinkSchema = z.object({

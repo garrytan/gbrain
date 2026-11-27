@@ -60,6 +60,7 @@ import { persistenceOperations } from './ops/persistence.ts';
 import { searchOperations } from './ops/search.ts';
 import { searchExactOperations } from './ops/search-exact.ts';
 import { takesOperations } from './ops/takes.ts';
+import { initiativeOperations } from './ops/initiatives.ts';
 import { tagsOperations } from './ops/tags.ts';
 import { linksOperations } from './ops/links.ts';
 import { timelineOperations } from './ops/timeline.ts';
@@ -205,6 +206,7 @@ export const operations: Operation[] = [
   // v0.28: Takes + think (takes_list, takes_search, think) + v0.30
   // calibration aggregates (takes_scorecard, takes_calibration) — ops/takes.ts
   ...takesOperations,
+  ...initiativeOperations, // ideas + initiatives lifecycle — ops/initiatives.ts
   // v0.28: whoami + scoped sources management — ops/sources.ts
   ...sourcesOperations,
   // WP4 (T9): discovery + pull-based per-client surface unlock (D4/D5/D9) —

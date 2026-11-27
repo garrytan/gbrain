@@ -31,6 +31,7 @@ export const PHASE_SCOPE: Record<CyclePhase, PhaseScope> = {
   calibration_profile: 'global',
   drift: 'global',
   standing_questions: 'global',
+  ideas: 'global',
   edge_contradictions: 'global',
   claim_conflicts: 'global',
   chronicle: 'global',

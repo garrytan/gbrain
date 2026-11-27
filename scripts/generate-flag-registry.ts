@@ -58,7 +58,7 @@ const EXTRA_FLAGS: Record<string, string[]> = {
   // `forget --purge` hands off from there to src/commands/forget-purge.ts.
   forget: ['--reason', '--request-id', '--purge', '--dry-run', '--yes', '--match', '--status', '--vacuum', '--all-subjects'],
   // sources add reads the meetings and slack options as bare names in src/commands/sources-lifecycle-args.ts (its valued set).
-  sources: ['--provider', '--transcript', '--lookback-days', '--sync-interval-min', '--record', '--visibility', '--channels', '--timezone', '--max-requests', '--skip'],
+  sources: ['--provider', '--transcript', '--lookback-days', '--sync-interval-min', '--record', '--visibility', '--channels', '--timezone', '--max-requests', '--skip', '--channels-from', '--mode'],
   // transcripts archive setup-import (setup's history import) parses its flags in src/commands/transcripts-archive-setup-import.ts (two levels deep).
   transcripts: ['--harness', '--created-by-setup', '--blocker', '--stage', '--offer', '--decision', '--no-extract', '--deadline-ms'],
 };

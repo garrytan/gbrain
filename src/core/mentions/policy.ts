@@ -148,3 +148,14 @@ export async function loadLinkableTypes(engine: Pick<BrainEngine, 'getConfig'>, 
   const pack = await loadSourcePack(engine, sourceId, opts);
   return { types: linkableTypesFor(pack, policy), pack };
 }
+
+/** Pack types declared `fact_target: true` (facts may attach to them), sorted. */
+export function factTargetTypesFor(pack: PackTypes | null): string[] {
+  return (pack?.page_types ?? []).filter(pt => (pt as { fact_target?: boolean }).fact_target === true).map(pt => pt.name).sort();
+}
+
+/** Types beyond the built-in fact entities that facts may attach to: the source pack's linkable entity types plus its fact targets. */
+export async function loadFactTargetTypes(engine: Pick<BrainEngine, 'getConfig'>, sourceId: string): Promise<{ types: string[] }> {
+  const { types, pack } = await loadLinkableTypes(engine, sourceId);
+  return { types: [...new Set([...types, ...factTargetTypesFor(pack)])].sort() };
+}
