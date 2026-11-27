@@ -403,6 +403,7 @@ src/core/engine-sql/mention-pass.ts	MENTION_CANDIDATES_MATCHING_SQL	sql	STREAM	m
 src/core/engine-sql/mention-pass.ts	MENTION_CANDIDATES_ALL_SQL	sql	STREAM	moved from src/core/mentions/pass.ts pagesMatchingNames, same statement. segmented pages are selected by id without a body (each is a candidate; pageMentions streams it)
 src/core/engine-sql/mention-pass.ts	MENTION_DUE_PAGES_SQL	sql	INLINE	moved from src/core/mentions/pass.ts reconcileSource, same statement. reads body_storage; a segmented row is scanned block by block (pageMentions)
 src/core/engine-sql/mention-pass.ts	listAliasDuePages	sql	STREAM	moved from src/core/mentions/pass.ts refreshAliases, same statement. segmented pages excluded in SQL
+src/core/engine-sql/page-mutation-reads.ts	PAGE_MUTATION_READS_SQL	sql	INLINE	storedPageLabels, moved from src/cli/enforced-member.ts storedPage: the caller refuses a segmented page with assertInlineBody before its body is read
 src/core/minions/handlers/facts-absorb.ts	makeFactsAbsorbHandler	field	STREAM	
 src/core/minions/handlers/subagent-oneshot.ts	planOneshotWrites	call:serializeMarkdown	SEGW	
 src/core/ops/admin.ts	get_versions	field	SEGW	lane 1e: segmented versions return metadata only
@@ -739,7 +740,6 @@ src/eval/longmemeval/call-plan.ts	planPages	call:prepareMarkdownChunks	INLINE
 src/cli/enforced-member.ts	checkEnforcedWrite	field	INLINE	the stored page comes from storedPage, which refuses a segmented page (assertInlineBody)
 src/cli/enforced-member.ts	markdownLabels	field	NONE	not a stored page body: the parsed markdown a put or a committed file submits
 src/cli/enforced-member.ts	pageLabels	field	INLINE	reads a page from storedPage (segmented refused by assertInlineBody) or parsed submitted markdown
-src/cli/enforced-member.ts	storedPage	sql	INLINE	refuses a segmented page with assertInlineBody before its body is read
 src/commands/doctor/checks/atom-body-recheck.ts	unchangedBodyAtoms	call:contentHash	INLINE	doctor atom_provenance_drift re-check (#6825): the group query joins only inline pages, and a page read back segmented is skipped (isSegmentedPage), keeping its drift verdict; compares a page_versions edition with the live body
 src/commands/doctor/checks/atom-body-recheck.ts	unchangedBodyAtoms	field	INLINE	doctor atom_provenance_drift re-check (#6825): the group query joins only inline pages, and a page read back segmented is skipped (isSegmentedPage), keeping its drift verdict; compares a page_versions edition with the live body
 src/core/engine-sql/trust-tier-reads.ts	PV_BODY_KEY	sql	META	moved from valid-time-read.ts bodyKey: md5 over an inline version's body columns, content_hash for a segmented one; no text leaves the database

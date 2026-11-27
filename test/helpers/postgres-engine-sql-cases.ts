@@ -98,6 +98,7 @@ const OOS = {
   pageBody: 'out-of-scope:page-body (Wave B segmented storage, born in engine-sql/page-body.ts; pinned by test/engine-sql-page-body.test.ts)',
   cycleLocks: 'out-of-scope:cycle-locks (gbrain_cycle_locks leases, born in engine-sql/cycle-locks.ts; pinned by test/engine-parity/cycle-locks.test.ts)',
   chronicleExecutor: 'out-of-scope:chronicle-executor (statements chronicle callers ran through executeRaw, moved into engine-sql/chronicle-executor.ts; pinned byte-identical by test/chronicle-executor-sql-pin.test.ts)',
+  enforcedMemberReads: 'out-of-scope:enforced-member-reads (born from the executeRaw reads of src/cli/enforced-member.ts, in engine-sql/page-mutation-reads.ts; pinned by test/engine-parity/enforced-member-reads.test.ts)',
   callerRawSql: 'out-of-scope:caller-raw-sql (statements callers ran through executeRaw, now typed members; pinned byte-identical by test/engine-sql-caller-raw-sql-pins.test.ts)',
   linkReads: 'out-of-scope:link-reads (born in engine-sql/link-reads.ts; pinned by test/engine-parity/link-reads.test.ts)',
   linkTemporal: 'out-of-scope:link-temporal (born in engine-sql/link-temporal.ts, search-vector.ts, retrieval-coverage.ts; pinned by test/engine-parity/link-temporal.test.ts)',
@@ -1924,6 +1925,10 @@ export const DOMAIN_OF: Record<string, string> = {
   // the reads a page write makes before admission (engine-sql/page-mutation-reads.ts)
   'readStoredPageHead': OOS.callerRawSql,
   'readVersionSourcePath': OOS.callerRawSql,
+  'readStoredPageLabels': OOS.enforcedMemberReads,
+  'readMemberPageReadable': OOS.enforcedMemberReads,
+  'readSlugFolderRules': OOS.enforcedMemberReads,
+  'readHiddenPageSlugs': OOS.enforcedMemberReads,
   // get_page's chunk reads (engine-sql/page-window-chunks.ts)
   'readWindowChunk': OOS.callerRawSql,
   'countPageChunks': OOS.callerRawSql,
@@ -3376,6 +3381,10 @@ export const EXTRA_READ_CASES: SqlCase[] = [
   // the reads a page write makes before admission (engine-sql/page-mutation-reads.ts)
   ...variants('readStoredPageHead', [['default', (e) => e.readStoredPageHead('default', 'notes/a')]]),
   ...variants('readVersionSourcePath', [['default', (e) => e.readVersionSourcePath(1, 1)]]),
+  ...variants('readStoredPageLabels', [['default', (e) => e.readStoredPageLabels('default', 'notes/a')]]),
+  ...variants('readMemberPageReadable', [['default', (e) => e.readMemberPageReadable('default', 'notes/a', [], [], false)]]),
+  ...variants('readSlugFolderRules', [['default', (e) => e.readSlugFolderRules('default', 'notes/a')]]),
+  ...variants('readHiddenPageSlugs', [['default', (e) => e.readHiddenPageSlugs(['notes/a'], [])]]),
   // get_page's chunk reads (engine-sql/page-window-chunks.ts)
   ...variants('readWindowChunk', [['default', (e) => e.readWindowChunk(1, 1)]]),
   ...variants('countPageChunks', [['default', (e) => e.countPageChunks(1)]]),

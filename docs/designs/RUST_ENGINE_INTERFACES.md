@@ -166,6 +166,7 @@ Rules:
   | 10 | Sync 19, dac09d5610 (batch 15 merged with master c341d40de3) |
   | 11 | Batch 15b (labelled-only policy on Rust, the purge-receipt and purge-ledger members of the fact purge path) |
   | 12 | `rust-engine/labelled-only-reads-rust` (row 32e-b-2: labelled-only and lineage reads, `callerReference` in `private-provenance.ts`). Provisional, main's 11 plus one; the trunk renumbers at intake. `rust-engine/enforced-member-writes-rust` claims a provisional number too | this branch, merged with `rust-engine/main` 85ad984039 |
+  | 12 | `rust-engine/enforced-member-writes-rust` (provisional, main's 11 plus one; the trunk renumbers at intake): the enforced member CLI's four reads in `store-members/page-mutation-reads.ts` |
 
 Reserved tags:
 
