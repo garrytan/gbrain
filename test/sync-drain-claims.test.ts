@@ -36,6 +36,7 @@ import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { resolveBulkSettings } from '../src/core/persistence/sync-group.ts';
 import { preparationConfigView } from '../src/core/persistence/config-snapshot.ts';
 import { installFaultHook } from '../src/core/persistence/fault-points.ts';
+import { enterClaimStep } from '../src/core/persistence/claim-phase.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
@@ -441,9 +442,13 @@ describe('live stall line during a pass (B6)', () => {
         const probe = engineStallProbe(engine, id);
         const reads = headReadsOf(probe);
         const parkedLines = () => parkedStallLines(err.stalledAt(), reads.list, parkedAt);
-        // The first member parks in preparation, honouring its signal; the stamp gains the step a preparer would enter (the keys a renewal writes).
+        // The first member parks in preparation, honouring its signal. It enters the step on its claim clock as a preparer
+        // does, so the owner's lease renewals (which rewrite the whole stamp from that clock) keep it, and the stamp gains it
+        // now (the keys a renewal writes) instead of at the next renewal.
         installFaultHook(async (at, detail) => {
           if (at !== 'consumer:preparing' || detail.sourceId !== id || parkedAt) return;
+          if (!detail.clock) throw new Error('consumer:preparing carried no claim clock');
+          enterClaimStep(detail.clock, 'origin_check', detail.signal, 'db');
           await engine.executeRaw(`UPDATE persistence_requests SET claim_phase = claim_phase || '{"step":"origin_check","waiting_on":"db"}'::jsonb WHERE request_id=$1::uuid`, [detail.requestId]);
           parkedAt = Date.now();
           await new Promise<void>(resolve => { void released.then(resolve); detail.signal?.addEventListener('abort', () => resolve(), { once: true }); });
