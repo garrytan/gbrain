@@ -70,6 +70,7 @@ test.skipIf(process.platform !== 'linux')('doctor ignores a sync that exited or 
   try {
     const zombie = Number(new TextDecoder().decode((await holder.stdout.getReader().read()).value).trim());
     for (let i = 0; i < 250 && readFileSync(`/proc/${holder.pid}/comm`, 'utf8').trim() !== 'sleep'; i++) await Bun.sleep(20);
+    expect(readFileSync(`/proc/${holder.pid}/comm`, 'utf8').trim()).toBe('sleep');
     holder.stdin.end();
     for (let i = 0; i < 100 && !readFileSync(`/proc/${zombie}/stat`, 'utf8').includes(') Z '); i++) await Bun.sleep(20);
     expect(readFileSync(`/proc/${zombie}/stat`, 'utf8')).toContain(') Z ');
@@ -79,6 +80,7 @@ test.skipIf(process.platform !== 'linux')('doctor ignores a sync that exited or 
       expect(plan?.manual.map(step => step.pid)).toEqual([running.pid]);
     });
   } finally {
+    holder.stdin.end();
     running.kill();
     holder.kill();
     await Promise.all([running.exited, holder.exited]);
