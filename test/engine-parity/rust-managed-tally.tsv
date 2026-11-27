@@ -42,7 +42,7 @@ test/engine-parity/chunk-vector-overflow.test.ts	1	0
 test/engine-parity/chunks.test.ts	21	0
 test/engine-parity/cli-capabilities.test.ts	2	0
 test/engine-parity/cli-reads-export.test.ts	18	0
-test/engine-parity/cli-reads-import.test.ts	21	0
+test/engine-parity/cli-reads-import.test.ts	22	0
 test/engine-parity/cli-reads-ops.test.ts	24	0
 test/engine-parity/code-eval-salience.test.ts	13	0
 test/engine-parity/collate-aggregated-lists.test.ts	5	0
@@ -106,7 +106,7 @@ test/engine-parity/entity-basename.test.ts	3	0
 test/engine-parity/entity-card-option-reads.test.ts	6	0
 test/engine-parity/entity-card-timeline.test.ts	2	0
 test/engine-parity/entity-fuzzy.test.ts	3	0
-test/engine-parity/entity-identities.test.ts	9	4
+test/engine-parity/entity-identities.test.ts	13	0
 test/engine-parity/entity-names-siblings.test.ts	1	0
 test/engine-parity/entity-reads.test.ts	14	0
 test/engine-parity/export-bytes.test.ts	2	0
@@ -369,6 +369,7 @@ test/engine-parity/segmented-ledger-reads.test.ts	5	0
 test/engine-parity/segmented-mirror-effects.test.ts	2	0
 test/engine-parity/segmented-purge-writes.test.ts	7	0
 test/engine-parity/segmented-rewrite.test.ts	4	0
+test/engine-parity/served-remote-writes.test.ts	6	0
 test/engine-parity/session-state-cap.test.ts	13	0
 test/engine-parity/session-state.test.ts	7	0
 test/engine-parity/shared-skill-members.test.ts	10	1
