@@ -15,6 +15,7 @@ pub mod access_members;
 pub mod access_migrations;
 pub mod access_policy;
 pub mod access_rules;
+pub mod atom_state;
 mod cascade;
 pub mod chronicle_reads;
 pub mod chunks;
@@ -1185,11 +1186,11 @@ mod older_build_tests {
             assert_refused(&dir, &known, n + 1);
             let _ = fs::remove_dir_all(dir.parent().unwrap());
         }
-        // This build's own list is the case above with n = FORMAT_VERSION.
-        assert_eq!(
-            FORMAT_VERSIONS,
-            (1..=FORMAT_VERSION).collect::<Vec<_>>().as_slice()
-        );
+        // This build's own list: formats 1 to 8 in a row, then the formats it adds (formats the
+        // trunk allotted to other lanes are skipped), in order, ending at FORMAT_VERSION.
+        assert_eq!(&FORMAT_VERSIONS[..8], &[1, 2, 3, 4, 5, 6, 7, 8]);
+        assert!(FORMAT_VERSIONS.windows(2).all(|w| w[0] < w[1]));
+        assert_eq!(FORMAT_VERSIONS.last(), Some(&FORMAT_VERSION));
     }
 }
 

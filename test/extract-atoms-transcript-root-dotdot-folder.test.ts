@@ -41,7 +41,7 @@ describe('transcriptRoot with a transcript in a folder whose name starts with tw
 
   test('the generation key of a meetings/..drafts transcript keeps the meetings label and its folder', async () => {
     const file = join(MEETINGS, '..drafts', 't.md');
-    const engine = { executeRaw: async () => [] } as unknown as BrainEngine;
+    const engine = { executeRaw: async () => [], listLiveTranscriptGenerations: async () => [] } as unknown as BrainEngine; // holds no live generation
     const keys = await resolveTranscriptKeys(engine, 'default',
       [{ filePath: file, contentHash: 'h1', root: transcriptRoot(file, CORPUS, MEETINGS) }], true);
     expect(keys.get(file)).toBe('meetings/..drafts/t.md');

@@ -18,7 +18,6 @@
  */
 import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 import type { BrainEngine } from '../engine.ts';
-import type { SqlEngine } from '../persistence/model.ts';
 import { truncateUtf8 } from '../text-safe.ts';
 import { corpusTextForExtraction } from '../context/corpus-segments.ts';
 import { AtomPageStateError, type AtomPageInput } from './extract-atoms-page-state.ts';
@@ -121,11 +120,7 @@ export async function releasePartialDispositions(engine: BrainEngine, sourceId: 
  */
 export async function stampTranscriptTombstone(engine: BrainEngine, sourceId: string, filePath: string, contentHash: string): Promise<void> {
   try {
-    await engine.executeRaw(
-      `INSERT INTO extract_atoms_transcript_state (source_id, file_path, content_hash, fail_count, tombstoned, updated_at)
-       VALUES ($1, $2, $3, 0, TRUE, now())
-       ON CONFLICT (source_id, file_path, content_hash) DO UPDATE SET tombstoned = TRUE, updated_at = now()`,
-      [sourceId, filePath, contentHash.slice(0, 16)]);
+    await engine.stampAtomTranscriptTombstone(sourceId, filePath, contentHash.slice(0, 16)); // engine-sql/extract-atoms-state.ts
   } catch (err) {
     rethrowCapabilityRefusal(err); // fail-soft, but a refused write is not a lost one: it would re-spend the transcript every cycle
     /* fail-soft: transcript stays rediscoverable */
@@ -138,30 +133,19 @@ export async function stampTranscriptTombstone(engine: BrainEngine, sourceId: st
  * discovery read (the same predicate `writeAtomPageState` uses), so a page
  * that changed under the run records nothing and stays retryable.
  */
-export async function recordPartialDisposition(engine: SqlEngine, sourceId: string, item: ExtractAtomsItem, maxInputChars: number): Promise<void> {
+export async function recordPartialDisposition(engine: Pick<BrainEngine, 'recordAtomTranscriptPartial' | 'recordAtomPagePartial'>, sourceId: string, item: ExtractAtomsItem, maxInputChars: number): Promise<void> {
   if (item.kind === 'transcript') {
-    await engine.executeRaw(
-      `INSERT INTO extract_atoms_transcript_state (source_id, file_path, content_hash, fail_count, tombstoned, partial_input_chars, updated_at)
-       VALUES ($1, $2, $3, 0, FALSE, $4, now())
-       ON CONFLICT (source_id, file_path, content_hash) DO UPDATE SET partial_input_chars=EXCLUDED.partial_input_chars, updated_at=now()`,
-      [sourceId, item.filePath, item.contentHash.slice(0, 16), maxInputChars]);
+    await engine.recordAtomTranscriptPartial(sourceId, item.filePath, item.contentHash.slice(0, 16), maxInputChars); // engine-sql/extract-atoms-state.ts
     return;
   }
   if (!item.identity) throw new AtomPageStateError('unpinned');
-  const rows = await engine.executeRaw(
-    `INSERT INTO extract_atoms_page_state (source_incarnation, page_id, content_hash, fail_count, tombstoned, partial_input_chars)
-      SELECT s.incarnation, p.id, p.content_hash, 0, false, $7::integer
-      FROM pages p JOIN sources s ON s.id=p.source_id
-      WHERE p.id=$1 AND s.incarnation=$2::uuid AND p.source_id=$3 AND p.slug=$4
-        AND p.content_hash=$5 AND p.knowledge_revision=$6::uuid AND p.deleted_at IS NULL
-      FOR SHARE OF p, s
-      ON CONFLICT (source_incarnation, page_id, content_hash) DO UPDATE
-        SET partial_input_chars=EXCLUDED.partial_input_chars, updated_at=now()
-      RETURNING page_id`,
-    [item.identity.pageId, item.identity.sourceIncarnation, sourceId, item.slug, item.contentHash, item.identity.revision, maxInputChars])
+  const { pageId, sourceIncarnation, revision } = item.identity;
+  const written = await engine.recordAtomPagePartial( // engine-sql/extract-atoms-state.ts
+    { pageId, sourceIncarnation, sourceId, slug: item.slug, contentHash: item.contentHash, revision }, maxInputChars)
     .catch((error: unknown) => {
+      rethrowCapabilityRefusal(error); // an engine that cannot keep the row refuses by name, never "storage"
       const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined;
       throw new AtomPageStateError(code === '42P01' ? 'schema' : code === '42501' ? 'denied' : 'storage');
     });
-  if (!rows.length) throw new AtomPageStateError('changed');
+  if (!written) throw new AtomPageStateError('changed');
 }

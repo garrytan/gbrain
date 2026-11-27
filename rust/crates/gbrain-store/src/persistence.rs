@@ -150,8 +150,8 @@ pub use topology_store::{TopologyRead, TopologyWrite};
 mod trust_scan_cursor;
 
 pub(crate) use op_checkpoint::{
-    delete_op_checkpoint_in, list_op_checkpoint_records_in, managed_atom_discovery_skips_in,
-    op_checkpoint_completed_keys,
+    ManagedAtomSkips, delete_op_checkpoint_in, list_op_checkpoint_records_in,
+    managed_atom_discovery_skips_in, op_checkpoint_completed_keys,
 };
 pub use origin_holds::PurgeOrigin;
 #[cfg(test)]

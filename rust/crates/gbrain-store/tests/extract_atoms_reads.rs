@@ -199,3 +199,68 @@ fn release_deletes_only_this_sources_checkpoints_below_the_cap() {
             .contains("invalid input syntax for type integer")
     );
 }
+
+#[test]
+fn a_tombstoned_or_partial_ledger_row_leaves_discovery_and_the_backlog() {
+    let dir = TempDir::new("extract-atoms-ledger");
+    let store = open(&dir);
+    put(
+        &store,
+        "meetings/m",
+        json!({ "type": "meeting", "title": "M", "compiled_truth": body() }),
+    );
+    let row = store
+        .list_extractable_pages(&query(json!({})))
+        .unwrap()
+        .remove(0);
+    let backlog = |cap: i64| {
+        store
+            .count_atom_extraction_backlog(&args(json!({
+                "sourceId": "default", "types": ["meeting"], "minChars": 500, "maxInputChars": cap,
+            })))
+            .unwrap()
+    };
+    assert_eq!(backlog(1000), 1);
+    let pin: gbrain_store::atom_state::AtomPagePin = args(json!({
+        "pageId": row["id"], "sourceIncarnation": row["source_incarnation"], "sourceId": "default", "slug": "meetings/m",
+        "contentHash": row["content_hash"], "revision": row["knowledge_revision"],
+    }));
+    // A failure is not a disposition: the page stays.
+    assert_eq!(
+        store.write_atom_page_state(&pin, 1, false).unwrap(),
+        json!(1)
+    );
+    assert_eq!(
+        slugs(&store.list_extractable_pages(&query(json!({}))).unwrap()),
+        vec!["meetings/m"]
+    );
+    // A partial cap below the current cap counts in the backlog (the next run releases it) but leaves discovery.
+    assert_eq!(
+        store.record_atom_page_partial(&pin, 500).unwrap(),
+        row["id"]
+    );
+    assert!(
+        store
+            .list_extractable_pages(&query(json!({})))
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(backlog(1000), 1);
+    assert_eq!(backlog(500), 0);
+    store
+        .release_partial_atom_dispositions("default", 1000)
+        .unwrap();
+    assert_eq!(
+        slugs(&store.list_extractable_pages(&query(json!({}))).unwrap()),
+        vec!["meetings/m"]
+    );
+    // A tombstone leaves both.
+    store.write_atom_page_state(&pin, 0, true).unwrap();
+    assert!(
+        store
+            .list_extractable_pages(&query(json!({})))
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(backlog(1000), 0);
+}

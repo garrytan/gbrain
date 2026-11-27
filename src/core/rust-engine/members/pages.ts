@@ -274,6 +274,12 @@ export const PAGES_MEMBERS = {
   readAtomGeneration: 'persistence_journal',
   recordAtomGenerationBump: 'persistence_journal',
   releasePartialAtomDispositions: 'persistence_journal',
+  writeAtomPageState: 'persistence_journal',
+  recordAtomPagePartial: 'persistence_journal',
+  recordAtomTranscriptPartial: 'persistence_journal',
+  stampAtomTranscriptTombstone: 'persistence_journal',
+  strikeAtomTranscript: 'persistence_journal',
+  moveGenerationLocator: 'persistence_journal',
   readSyncImportPageRows: 'persistence_journal',
   // A managed sync run's journal reads and the sync.admission stamp and probes (sync-admitted.ts, sync-concurrent-write.ts,
   // sync-admission.ts): persistence_journal's request, page receipt, checkpoint and cycle-lock rows.

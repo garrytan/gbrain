@@ -7,9 +7,8 @@
 //! payload pointer, opted in (`extract_atoms` is not `false`), with a compiled truth of at least `minChars`
 //! characters, not a connector page of an opted-out connector source, and no live, unmanaged atom of the source
 //! carrying its content hash's first 16 characters as `source_hash`. It also skips a page whose current content has
-//! a completed or held `managed-atoms` checkpoint, which the store does keep. The `extract_atoms_page_state`
-//! exclusion finds nothing here: the store keeps no page state (`assertAtomStateStore` refuses before a run could
-//! write any). Rows come newest first (`ORDER BY p.updated_at DESC`), at most `limit`, optionally only of the named
+//! a completed or held `managed-atoms` checkpoint, and a page whose `extract_atoms_page_state` row for its current
+//! content (`atom_state.rs`) is tombstoned or partial. Rows come newest first (`ORDER BY p.updated_at DESC`), at most `limit`, optionally only of the named
 //! slugs.
 
 use super::atom_backlog::ConnectorExclusion;
@@ -107,12 +106,18 @@ impl Store {
             if !long_enough {
                 continue;
             }
-            if skips.contains(&(
+            if skips.contains_key(&(
                 page.source_id.clone(),
                 incarnation.clone(),
                 page.id.to_string(),
                 hash.to_string(),
             )) {
+                continue;
+            }
+            // `PAGE_SCAN_STATE_EXCLUSION_SQL`: a tombstoned or partial row for the page's current content.
+            if crate::atom_state::page_state(&*read, incarnation, page.id, hash)?
+                .is_some_and(|row| row.tombstoned || row.partial_input_chars.is_some())
+            {
                 continue;
             }
             if let Some(connectors) = &query.connector_exclusion

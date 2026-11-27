@@ -2,7 +2,8 @@
  * The extract_atoms state-store gate (`assertAtomStateStore`, cycle/extract-atoms.ts): an engine that keeps no
  * extract_atoms page or transcript state refuses after discovery and before the first model call, so a run that could
  * not record what it settles never spends the model. With no work the gate is not asked, and the phase reports
- * no_work. The Rust arm of test/engine-parity/refusal-swallow-extract.test.ts pins the same on the Rust store.
+ * no_work. Every engine of this tree keeps the state (the Rust store from store format 17), so the gate passes on each;
+ * this file pins what an engine that refuses it does.
  */
 import { afterAll, beforeAll, beforeEach, expect, test } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';

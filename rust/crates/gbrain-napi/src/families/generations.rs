@@ -17,6 +17,49 @@ use gbrain_store::generations::{
 
 #[napi]
 impl Brain {
+    /// `listLiveTranscriptGenerations(sourceId, kind, keyPrefix)`: the live generations whose key starts with the prefix.
+    #[napi]
+    pub fn list_live_transcript_generations<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        kind: String,
+        key_prefix: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_live_transcript_generations(&source_id, &kind, &key_prefix)
+        })
+    }
+
+    /// `moveGenerationLocator(id, locator)`: resolves null.
+    #[napi]
+    pub fn move_generation_locator<'env>(
+        &self,
+        env: &'env Env,
+        id: i64,
+        locator: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.move_generation_locator(id, &locator))
+    }
+
+    /// `readLiveGenerationLocator(sourceId, kind, ownerKey)`: `{ locator }` or null.
+    #[napi]
+    pub fn read_live_generation_locator<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        kind: String,
+        owner_key: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_live_generation_locator(&gbrain_store::generations::GenerationKey {
+                source_id,
+                kind,
+                owner_key,
+            })
+        })
+    }
+
     /// `readLiveGenerationRow(key)`: resolves the live row with its owned items, or null.
     #[napi]
     pub fn read_live_generation_row<'env>(

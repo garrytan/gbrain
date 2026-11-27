@@ -112,6 +112,130 @@ impl Brain {
         })
     }
 
+    /// `readAtomPageIdentity(sourceId, slug, contentHash)`: `{ id, incarnation, knowledge_revision }` or null.
+    #[napi]
+    pub fn read_atom_page_identity<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slug: String,
+        content_hash: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_atom_page_identity(&source_id, &slug, &content_hash)
+        })
+    }
+
+    /// `writeAtomPageState(pin, failIncrement, tombstone)`: the row's fail count, or null when the page changed.
+    #[napi]
+    pub fn write_atom_page_state<'env>(
+        &self,
+        env: &'env Env,
+        pin: Option<Value>,
+        fail_increment: i32,
+        tombstone: bool,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let pin: gbrain_store::atom_state::AtomPagePin = arg(pin, "writeAtomPageState pin")?;
+            s.write_atom_page_state(&pin, fail_increment, tombstone)
+        })
+    }
+
+    /// `recordAtomPagePartial(pin, maxInputChars)`: the page id, or null when the page changed.
+    #[napi]
+    pub fn record_atom_page_partial<'env>(
+        &self,
+        env: &'env Env,
+        pin: Option<Value>,
+        max_input_chars: i32,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let pin: gbrain_store::atom_state::AtomPagePin = arg(pin, "recordAtomPagePartial pin")?;
+            s.record_atom_page_partial(&pin, max_input_chars)
+        })
+    }
+
+    /// `recordAtomTranscriptPartial(sourceId, filePath, contentHash, maxInputChars)`: resolves null.
+    #[napi]
+    pub fn record_atom_transcript_partial<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        file_path: String,
+        content_hash: String,
+        max_input_chars: i32,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.record_transcript_partial(&source_id, &file_path, &content_hash, max_input_chars)
+        })
+    }
+
+    /// `stampAtomTranscriptTombstone(sourceId, filePath, contentHash)`: resolves null.
+    #[napi]
+    pub fn stamp_atom_transcript_tombstone<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        file_path: String,
+        content_hash: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.stamp_transcript_tombstone(&source_id, &file_path, &content_hash)
+        })
+    }
+
+    /// `strikeAtomTranscript(sourceId, filePath, contentHash)`: the transcript's failure count.
+    #[napi]
+    pub fn strike_atom_transcript<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        file_path: String,
+        content_hash: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.strike_transcript(&source_id, &file_path, &content_hash)
+        })
+    }
+
+    /// `listTombstonedTranscripts(sourceId, hashes)`: `{ file_path, content_hash }` rows.
+    #[napi]
+    pub fn list_tombstoned_transcripts<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        hashes: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_tombstoned_transcripts(&source_id, &hashes)
+        })
+    }
+
+    /// `listConversationPageFrontmatter(sourceId)`: `{ slug, frontmatter }` rows.
+    #[napi]
+    pub fn list_conversation_page_frontmatter<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_conversation_page_frontmatter(&source_id)
+        })
+    }
+
+    /// `readLivePageSourcePath(sourceId, slug)`: `{ source_path }` or null.
+    #[napi]
+    pub fn read_live_page_source_path<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slug: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_live_page_source_path(&source_id, &slug)
+        })
+    }
+
     /// `listExtractablePages(query)`: the pages awaiting atom extraction in one source, newest first.
     #[napi]
     pub fn list_extractable_pages<'env>(

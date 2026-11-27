@@ -3,6 +3,7 @@
  * Declarations moved verbatim out of engine.ts; `BrainEngine` extends this interface, so the member set is unchanged.
  */
 import type * as ExtractAtomsReadsSql from '../engine-sql/extract-atoms-reads.ts';
+import type * as ExtractAtomsStateSql from '../engine-sql/extract-atoms-state.ts';
 import type * as AtomBacklogSql from '../engine-sql/atom-backlog.ts';
 import type * as DoctorAccSql from '../engine-sql/doctor-acc.ts';
 import type * as DoctorBrainSql from '../engine-sql/doctor-brain.ts';
@@ -231,6 +232,29 @@ export interface DoctorMembers {
   releasePartialAtomDispositions(sourceId: string, maxInputChars: number): Promise<void>;
   /** Passes when the engine keeps extract_atoms page and transcript state; refuses by name when it does not. */
   assertAtomStateStore(): Promise<void>;
+  // The extract_atoms ledger writes and transcript-key reads (engine-sql/extract-atoms-state.ts).
+  /** The live page of `sourceId` with this slug and content hash: id, source incarnation and revision; null when none. */
+  readAtomPageIdentity(sourceId: string, slug: string, contentHash: string): Promise<{ id: number; incarnation: string; knowledge_revision: string } | null>;
+  /** The pinned page's ledger row gains `failIncrement` failures (tombstoned when `tombstone`): its fail count, or null when the page changed. */
+  writeAtomPageState(pin: ExtractAtomsStateSql.AtomPagePin, failIncrement: number, tombstone: boolean): Promise<number | null>;
+  /** The pinned page's ledger row records the cut input cap; false when the page changed. */
+  recordAtomPagePartial(pin: ExtractAtomsStateSql.AtomPagePin, maxInputChars: number): Promise<boolean>;
+  /** The transcript's ledger row records the cut input cap. */
+  recordAtomTranscriptPartial(sourceId: string, filePath: string, contentHash: string, maxInputChars: number): Promise<void>;
+  /** The transcript's ledger row is tombstoned. */
+  stampAtomTranscriptTombstone(sourceId: string, filePath: string, contentHash: string): Promise<void>;
+  /** One more failure of the transcript: its count. */
+  strikeAtomTranscript(sourceId: string, filePath: string, contentHash: string): Promise<number | null>;
+  /** The live generations of the source and kind whose owner key starts with `keyPrefix`. */
+  listLiveTranscriptGenerations(sourceId: string, kind: string, keyPrefix: string): Promise<ExtractAtomsStateSql.LiveTranscriptGeneration[]>;
+  /** Points the generation `id` at `locator`. */
+  moveGenerationLocator(id: number, locator: string): Promise<void>;
+  /** The `source_path` frontmatter of the live page of the source with this slug; undefined when none. */
+  readLivePageSourcePath(sourceId: string, slug: string): Promise<{ source_path: string | null } | undefined>;
+  /** The locator of the live generation of the source, kind and owner key; undefined when none. */
+  readLiveGenerationLocator(sourceId: string, kind: string, ownerKey: string): Promise<{ locator: string | null } | undefined>;
+  /** The slug and frontmatter of each live conversation page of the source. */
+  listConversationPageFrontmatter(sourceId: string): Promise<Array<{ slug: string; frontmatter: unknown }>>;
   /** The sources with a live page, by id in byte order (the extract_atoms_backlog roster). */
   listAtomBacklogSourceIds(): Promise<Array<{ source_id: string }>>;
   /** The projection queue by class (pending text, failed, sealable and reimport images, protected, archived) in a read scope, the age of the oldest job that needs work, and the database time of the count. */

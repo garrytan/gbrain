@@ -556,7 +556,7 @@ pub(crate) fn page_columns(
 /// record of every page still in the source. Core removes the source's pages first, which already
 /// removes their records through [`remove_page_rows`], so this normally finds nothing; it makes the
 /// cascade hold whatever order core calls it in. `extract_atoms_page_state`, the table Postgres
-/// cascades here, has no records in this engine.
+/// cascades here, is `atom_state.rs`, which the cascade calls itself.
 pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Result<()> {
     for page in all_pages(&*tx)? {
         if page.source_id == source_id {

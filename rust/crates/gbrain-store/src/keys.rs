@@ -165,6 +165,9 @@ pub fn family_text(tag: [u8; 2], parts: &[&str]) -> Vec<u8> {
 /// the first version of this family on a branch used tag `2`, which `rust-engine/main` keeps free; no store holds a record
 /// of the family under `2`.
 pub const PAGE_EXTRACTION_STATE: [u8; 2] = family_tag(b'e');
+/// Family `atom_state` (`atom_state.rs`, store format 17): the extract_atoms page and transcript ledgers, `~a 0x01 <page id>
+/// <incarnation> 0x00 <content hash>` and `~a 0x02 <source> 0x00 <file path> 0x00 <content hash>`.
+pub const ATOM_EXTRACTION_STATE: [u8; 2] = family_tag(b'a');
 
 pub fn text(tag: u8, parts: &[&str]) -> Vec<u8> {
     let mut key = vec![tag];

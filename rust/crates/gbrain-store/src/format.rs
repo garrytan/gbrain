@@ -40,9 +40,16 @@ use std::path::Path;
 ///   access member links, whose scans started on it (`access_key_split.rs`). The upgrade moves the
 ///   one record in the one transaction, or refuses a record under `x 0x04` it cannot classify with
 ///   `shadow_reseed_required`. A build that keeps both kinds at `x 0x04` refuses a format-8 brain.
-pub const FORMAT_VERSION: u32 = 8;
+/// - 17 (the trunk's allotment; formats 9 to 16 belong to other lanes and are not opened by this
+///   build): the store keeps the extract_atoms page and transcript ledgers (`atom_state.rs`, family `~a`), so the
+///   extract_atoms phase records what it settles (completed, failed, tombstoned and partial items) and its discovery,
+///   tombstone read and backlog count skip them. The upgrade writes no record: a format-8 brain has no ledger row. A
+///   build that stops before format 17 neither reads the rows (it would extract settled items again) nor drops them with
+///   their page (a deleted page's rows would outlive it), so it refuses a format-17 brain. The trunk may renumber this
+///   at merge by landing order: change this constant only; every test and the upgrade read it.
+pub const FORMAT_VERSION: u32 = 17;
 /// Every format version this build can open. Addon exports list these as `formatVersions`.
-pub const FORMAT_VERSIONS: &[u32] = &[1, 2, 3, 4, 5, 6, 7, FORMAT_VERSION];
+pub const FORMAT_VERSIONS: &[u32] = &[1, 2, 3, 4, 5, 6, 7, 8, FORMAT_VERSION];
 
 pub const FORMAT_FILE: &str = "FORMAT";
 pub const RECORDS_FILE: &str = "records.redb";

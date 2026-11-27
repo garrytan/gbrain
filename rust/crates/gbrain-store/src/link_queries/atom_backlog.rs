@@ -8,14 +8,17 @@
 //! connector source, and no live, unmanaged atom of the same source carries its content hash's first 16
 //! characters as `source_hash`.
 //!
-//! Two statement exclusions find nothing to read here: the `managed-atoms` checkpoints and the
-//! `extract_atoms_page_state` rows (held, tombstoned and partial dispositions). The store has no writer of
-//! either, so a page is never excluded by them; `maxInputChars` is accepted for that reason and unused.
+//! The statement's two disposition exclusions: a page whose current content has a completed or held
+//! `managed-atoms` checkpoint (whose `partial`, when set, is at or above `maxInputChars`), and a page whose
+//! `extract_atoms_page_state` row for its current content (`atom_state.rs`) is tombstoned or records a partial cap at or
+//! above `maxInputChars`.
 
 use crate::Store;
 use crate::cli_reads::pg_text::fm_text;
 use crate::error::Result;
+use crate::kv::KvRead;
 use crate::pages::{PageRecord, all_pages};
+use crate::persistence::managed_atom_discovery_skips_in;
 use crate::sources::all_sources;
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};
@@ -39,9 +42,8 @@ pub struct AtomBacklogQuery {
     pub source_id: Option<String>,
     pub types: Vec<String>,
     pub min_chars: usize,
-    /// Accepted and unused: it bounds the partial dispositions the store never records.
+    /// The current input cap: a partial disposition recorded below it counts (it is released on the next run).
     #[serde(default)]
-    #[allow(dead_code)]
     pub max_input_chars: Option<i64>,
     #[serde(default)]
     pub connector_exclusion: Option<ConnectorExclusion>,
@@ -59,15 +61,71 @@ fn is_unmanaged_atom(page: &PageRecord) -> bool {
         && fm_text(&page.frontmatter, "managed_extraction").unwrap_or_default() != "true"
 }
 
+/// The `managed-atoms` page checkpoints that skip a page: `(sourceId, incarnation, pageId, contentHash)` with the
+/// checkpoint's `partial`, as text (`managed_atom_discovery_skips_in` keeps completed and held ones).
+type ManagedSkips = crate::persistence::ManagedAtomSkips;
+
+fn managed_atom_skips(read: &dyn KvRead) -> Result<ManagedSkips> {
+    managed_atom_discovery_skips_in(read)
+}
+
+/// The backlog's two disposition exclusions for one page at its current content (module docs).
+fn settled_for_backlog(
+    skips: &ManagedSkips,
+    read: &dyn KvRead,
+    source_id: &str,
+    incarnation: &str,
+    page_id: u64,
+    hash: &str,
+    max_input_chars: Option<i64>,
+) -> Result<bool> {
+    let at_cap = |partial: i64| max_input_chars.is_none_or(|cap| partial >= cap);
+    let key = (
+        source_id.to_owned(),
+        incarnation.to_owned(),
+        page_id.to_string(),
+        hash.to_owned(),
+    );
+    if let Some(partial) = skips.get(&key) {
+        match partial {
+            None => return Ok(true),
+            Some(text) => {
+                let value: i64 = text.trim().parse::<i32>().map(i64::from).map_err(|_| {
+                    crate::error::StoreError::invalid(format!(
+                        "invalid input syntax for type integer: \"{text}\""
+                    ))
+                })?;
+                if at_cap(value) {
+                    return Ok(true);
+                }
+            }
+        }
+    }
+    Ok(
+        crate::atom_state::page_state(read, incarnation, page_id, hash)?.is_some_and(|row| {
+            row.tombstoned
+                || row
+                    .partial_input_chars
+                    .is_some_and(|p| at_cap(i64::from(p)))
+        }),
+    )
+}
+
 impl Store {
     /// `countAtomExtractionBacklog(query)`: the live pages awaiting atom extraction in the query's source scope.
     pub fn count_atom_extraction_backlog(&self, query: &AtomBacklogQuery) -> Result<u64> {
         let read = self.read()?;
         let pages = all_pages(&*read)?;
-        let kinds: BTreeMap<String, Option<String>> = all_sources(&*read)?
+        let sources = all_sources(&*read)?;
+        let incarnations: BTreeMap<String, String> = sources
+            .iter()
+            .map(|s| (s.id.clone(), s.incarnation.clone()))
+            .collect();
+        let kinds: BTreeMap<String, Option<String>> = sources
             .into_iter()
             .map(|s| (s.id, fm_text(&s.config, "kind")))
             .collect();
+        let skips = managed_atom_skips(&*read)?;
         let atoms: BTreeSet<(&str, String)> = pages
             .iter()
             .filter(|p| is_unmanaged_atom(p))
@@ -114,6 +172,19 @@ impl Store {
                 }
             }
             if atoms.contains(&(page.source_id.as_str(), hash_head(hash))) {
+                continue;
+            }
+            if let Some(incarnation) = incarnations.get(&page.source_id)
+                && settled_for_backlog(
+                    &skips,
+                    &*read,
+                    &page.source_id,
+                    incarnation,
+                    page.id,
+                    hash,
+                    query.max_input_chars,
+                )?
+            {
                 continue;
             }
             count += 1;

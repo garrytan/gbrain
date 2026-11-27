@@ -701,6 +701,7 @@ fn store_page(
     index_origin(tx, before, Some(record))?;
     crate::page_index::reindex_page(tx, before, Some(record))?;
     crate::access_flag::mark_restricted(tx, record)?;
+    crate::atom_state::on_page_write(tx, before, record)?;
     crate::page_projection::queue_page_projection(tx, before, Some(record))
 }
 

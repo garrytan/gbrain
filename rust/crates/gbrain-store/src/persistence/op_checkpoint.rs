@@ -716,16 +716,19 @@ fn first_key_text(row: &HousekeepingRow, field: &str) -> Option<String> {
         .and_then(crate::timeline_queries::jsonb_field_text)
 }
 
+/// `(sourceId, incarnation, pageId, contentHash)` of a skipping checkpoint, with its `partial` as text.
+pub(crate) type ManagedAtomSkips =
+    std::collections::BTreeMap<(String, String, String, String), Option<String>>;
+
 /// The `managed-atoms` checkpoints that make extraction discovery skip a page: `(sourceId, incarnation, pageId,
 /// contentHash)` of each page checkpoint that completed (no `failure`) or is held (`held = 'true'`), as text (the
-/// `MANAGED_ATOM_DISCOVERY_SQL` test). A row whose first key lacks a field matches no page.
-pub(crate) fn managed_atom_discovery_skips_in(
-    read: &dyn KvRead,
-) -> Result<std::collections::BTreeSet<(String, String, String, String)>> {
+/// `MANAGED_ATOM_DISCOVERY_SQL` test), each with its `partial` as text (the backlog count compares it with the input
+/// cap). A row whose first key lacks a field matches no page.
+pub(crate) fn managed_atom_discovery_skips_in(read: &dyn KvRead) -> Result<ManagedAtomSkips> {
     let mut prefix = vec![keys::PERSISTENCE, super::HOUSEKEEPING];
     prefix.extend_from_slice(MANAGED_ATOMS_OP.as_bytes());
     prefix.push(0);
-    let mut out = std::collections::BTreeSet::new();
+    let mut out = std::collections::BTreeMap::new();
     let mut bad = false;
     scan_prefix(read, &prefix, false, &mut |_k, v| {
         match serde_json::from_slice::<HousekeepingRow>(v) {
@@ -741,7 +744,10 @@ pub(crate) fn managed_atom_discovery_skips_in(
                         first_key_text(&row, "contentHash"),
                     )
                 {
-                    out.insert((source, incarnation, page, hash));
+                    out.insert(
+                        (source, incarnation, page, hash),
+                        first_key_text(&row, "partial"),
+                    );
                 }
             }
             Err(_) => bad = true,
@@ -782,10 +788,9 @@ impl Store {
 
     /// `recordAtomGenerationBump(...)`: upserts the page's ledger row `[{ generation, keep, keep_generation }]`
     /// (generation 1, or the stored one plus 1), stamped now, and deletes the `managed-atoms` checkpoints of the source's
-    /// page whose `contentHash` is not the kept one. The store keeps no `extract_atoms_page_state` rows, so that
-    /// statement deletes nothing here.
+    /// page whose `contentHash` is not the kept one, and the page's extract_atoms state rows of the incarnation whose
+    /// content hash is not the kept one (`atom_state::drop_other_contents`).
     pub fn record_atom_generation_bump(&self, a: &AtomGenerationBump) -> Result<()> {
-        let _ = &a.incarnation;
         let fingerprint = a.page_id.to_string();
         self.write(|tx| {
             let key = parent_key(ATOM_GENERATION_OP, &fingerprint)?;
@@ -828,14 +833,15 @@ impl Store {
             for fp in gone {
                 delete_op_checkpoint_in(tx, MANAGED_ATOMS_OP, &fp)?;
             }
-            Ok(())
+            let page_id = u64::try_from(a.page_id).unwrap_or(u64::MAX);
+            crate::atom_state::drop_other_contents(tx, &a.incarnation, page_id, a.keep_content_hash.as_deref())
         })
     }
 
     /// `releasePartialAtomDispositions(sourceId, maxInputChars)`: the `managed-atoms` checkpoints of the source whose
     /// `partial` is below the cap are deleted with their paths (`(completed_keys->0->>'partial')::integer < $2`; a row
-    /// with no `partial` stays). The store keeps no `extract_atoms_page_state` or `extract_atoms_transcript_state`
-    /// rows, so the two state updates clear nothing here.
+    /// with no `partial` stays), and the partial cap of the source's page and transcript state rows recorded below it
+    /// is cleared (`atom_state::release_partial_rows`).
     pub fn release_partial_atom_dispositions(
         &self,
         source_id: &str,
@@ -888,7 +894,12 @@ impl Store {
             for fp in gone {
                 delete_op_checkpoint_in(tx, MANAGED_ATOMS_OP, &fp)?;
             }
-            Ok(())
+            crate::atom_state::release_partial_rows(
+                tx,
+                self.env.now_micros(),
+                source_id,
+                max_input_chars,
+            )
         })
     }
 

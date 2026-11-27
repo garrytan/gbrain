@@ -568,6 +568,84 @@ impl Store {
         held_for(&*read, key, "fence_absent")
     }
 
+    /// `listLiveTranscriptGenerations(sourceId, kind, keyPrefix)`: `{ id, owner_key, locator, input_pin }` of each live
+    /// generation of the source and kind whose owner key starts with `keyPrefix` (`owner_key LIKE keyPrefix || '%'`; the
+    /// TypeScript member refuses a prefix with a wildcard), in owner-key byte order.
+    pub fn list_live_transcript_generations(
+        &self,
+        source_id: &str,
+        kind: &str,
+        key_prefix: &str,
+    ) -> Result<Value> {
+        no_nul(
+            "listLiveTranscriptGenerations",
+            &[
+                ("source_id", source_id),
+                ("kind", kind),
+                ("key_prefix", key_prefix),
+            ],
+        )?;
+        let read = self.read()?;
+        let prefix = pointer_prefix(&[source_id, kind]);
+        let mut ids = Vec::new();
+        let mut failure = None;
+        scan_prefix(&*read, &prefix, false, &mut |k, v| {
+            let rest = &k[prefix.len()..];
+            let Some(at) = rest.iter().rposition(|b| *b == 0) else {
+                failure = Some(corrupt("pointer"));
+                return false;
+            };
+            if &rest[at + 1..] == b"live" && rest[..at].starts_with(key_prefix.as_bytes()) {
+                match keys::be8(v) {
+                    Some(id) => ids.push(id),
+                    None => {
+                        failure = Some(corrupt("pointer"));
+                        return false;
+                    }
+                }
+            }
+            true
+        })?;
+        if let Some(e) = failure {
+            return Err(e);
+        }
+        let mut out = Vec::new();
+        for id in ids {
+            let record = read_record(&*read, id)?.ok_or_else(|| corrupt("pointer target"))?;
+            out.push(json!({
+                "id": record.id, "owner_key": record.owner_key, "locator": record.locator, "input_pin": record.input_pin,
+            }));
+        }
+        Ok(Value::Array(out))
+    }
+
+    /// `moveGenerationLocator(id, locator)`: the generation `id` points at `locator`, stamped now; nothing for an
+    /// unknown id.
+    pub fn move_generation_locator(&self, id: i64, locator: &str) -> Result<()> {
+        no_nul("moveGenerationLocator", &[("locator", locator)])?;
+        let Ok(id) = u64::try_from(id) else {
+            return Ok(());
+        };
+        self.write(|tx| {
+            let Some(mut record) = read_record(&*tx, id)? else {
+                return Ok(());
+            };
+            record.locator = Some(locator.to_owned());
+            record.updated_at_us = self.env.now_micros();
+            put_json(tx, &record_key(id), &record)
+        })
+    }
+
+    /// `readLiveGenerationLocator(sourceId, kind, ownerKey)`: `{ locator }` of the live generation, or null.
+    pub fn read_live_generation_locator(&self, key: &GenerationKey) -> Result<Value> {
+        check_key("readLiveGenerationLocator", key)?;
+        let read = self.read()?;
+        Ok(match pointed_record(&*read, key, "live")? {
+            Some(record) => json!({ "locator": record.locator }),
+            None => Value::Null,
+        })
+    }
+
     /// `readLiveGenerationRow(key)`: the live row of `key` with the items it owns, or null.
     pub fn read_live_generation_row(&self, key: &GenerationKey) -> Result<Value> {
         check_key("readLiveGenerationRow", key)?;

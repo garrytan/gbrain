@@ -313,7 +313,7 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'countRecentChronicleReservations', 'hasPendingAutoChronicleRow', 'readChronicleRow', 'readPageTruthLead', 'readStoredPageHead', 'readVersionSourcePath',
   // Added when the batch 10 lanes merged (cli-members-next and the lanes after it): each reads only (a row-lock read included),
   // as its engine-sql function and the Rust store function it calls show (test/rust-owner-ipc-read-classes.test.ts scans both).
-  'accessTokenLive', 'assertAtomStateStore', 'countAtomExtractionBacklog', 'listAtomSourceHashes', 'listExtractablePages', 'listSourcePageAtomTitles', 'listTombstonedTranscripts', 'countChunkColumnCoverage', 'countClaimLiftedRows',
+  'accessTokenLive', 'assertAtomStateStore', 'countAtomExtractionBacklog', 'listAtomSourceHashes', 'listExtractablePages', 'listSourcePageAtomTitles', 'listTombstonedTranscripts', 'readAtomPageIdentity', 'listLiveTranscriptGenerations', 'readLivePageSourcePath', 'readLiveGenerationLocator', 'listConversationPageFrontmatter', 'countChunkColumnCoverage', 'countClaimLiftedRows',
   'countCompactedCallerRefusals', 'countConversationPipelinePages', 'countCredentialProjectionPending',
   'countDatedMeetingPages', 'countDefaultSourceFiles', 'countDerivedVisibility', 'countDistinctInboundLinkers',
   'countImageModalityMismatches', 'countLedgerCoveredAtomRetirements', 'countLegacyUnknownBySource',
@@ -634,6 +634,12 @@ export const OWNER_IPC_TYPED_CONFIRMING_READS: Readonly<Record<string, string>> 
   // Additive: a rerun bumps the generation once more, which only re-keys the page's next atom extraction (a rebuildable run key).
   recordAtomGenerationBump: 'readAtomGeneration for that page (the generation moved on)',
   releasePartialAtomDispositions: 'listExtractablePages for that source (the released items are offered again)',
+  writeAtomPageState: 'listExtractablePages for that source (a settled page leaves discovery)',
+  recordAtomPagePartial: 'listExtractablePages for that source (a partial page leaves discovery)',
+  recordAtomTranscriptPartial: 'listTombstonedTranscripts for that source and hash',
+  stampAtomTranscriptTombstone: 'listTombstonedTranscripts for that source and hash',
+  strikeAtomTranscript: 'the count it returns (a SELECT of the row it writes)',
+  moveGenerationLocator: 'readLiveGenerationLocator for that generation',
   closeOpenLoop: 'listOpenLoops for that source', upsertOpenLoop: 'listOpenLoops for that source',
   completeSubagentToolExecution: 'summarizeSubagentToolExecutions for that job',
   failSubagentToolExecution: 'summarizeSubagentToolExecutions for that job',

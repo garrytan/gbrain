@@ -416,6 +416,7 @@ import * as doctorPagesImpl from './engine-sql/doctor-pages.ts';
 import * as doctorTalliesImpl from './engine-sql/doctor-tallies.ts';
 import * as doctorSearchImpl from './engine-sql/doctor-search.ts';
 import * as extractAtomsReadsImpl from './engine-sql/extract-atoms-reads.ts';
+import * as extractAtomsStateImpl from './engine-sql/extract-atoms-state.ts';
 import * as atomBacklogImpl from './engine-sql/atom-backlog.ts';
 import type { AtomBacklogQuery } from './engine-sql/atom-backlog.ts';
 import * as projectionBacklogImpl from './engine-sql/projection-backlog.ts';
@@ -1853,6 +1854,17 @@ export class PGLiteEngine implements BrainEngine {
   listSourcePageAtomTitles(sourceId: string, sourceSlug: string) { return extractAtomsReadsImpl.listSourcePageAtomTitles(this, sourceId, sourceSlug); }
   releasePartialAtomDispositions(sourceId: string, maxInputChars: number) { return extractAtomsReadsImpl.releasePartialAtomDispositions(this, sourceId, maxInputChars); }
   async assertAtomStateStore() { /* the extract_atoms state tables are part of the schema */ }
+  readAtomPageIdentity(sourceId: string, slug: string, contentHash: string) { return extractAtomsStateImpl.readAtomPageIdentity(this, sourceId, slug, contentHash); }
+  writeAtomPageState(pin: extractAtomsStateImpl.AtomPagePin, failIncrement: number, tombstone: boolean) { return extractAtomsStateImpl.writeAtomPageState(this, pin, failIncrement, tombstone); }
+  recordAtomPagePartial(pin: extractAtomsStateImpl.AtomPagePin, maxInputChars: number) { return extractAtomsStateImpl.recordAtomPagePartial(this, pin, maxInputChars); }
+  recordAtomTranscriptPartial(sourceId: string, filePath: string, contentHash: string, maxInputChars: number) { return extractAtomsStateImpl.recordAtomTranscriptPartial(this, sourceId, filePath, contentHash, maxInputChars); }
+  stampAtomTranscriptTombstone(sourceId: string, filePath: string, contentHash: string) { return extractAtomsStateImpl.stampAtomTranscriptTombstone(this, sourceId, filePath, contentHash); }
+  strikeAtomTranscript(sourceId: string, filePath: string, contentHash: string) { return extractAtomsStateImpl.strikeAtomTranscript(this, sourceId, filePath, contentHash); }
+  listLiveTranscriptGenerations(sourceId: string, kind: string, keyPrefix: string) { return extractAtomsStateImpl.listLiveTranscriptGenerations(this, sourceId, kind, keyPrefix); }
+  moveGenerationLocator(id: number, locator: string) { return extractAtomsStateImpl.moveGenerationLocator(this, id, locator); }
+  readLivePageSourcePath(sourceId: string, slug: string) { return extractAtomsStateImpl.readLivePageSourcePath(this, sourceId, slug); }
+  readLiveGenerationLocator(sourceId: string, kind: string, ownerKey: string) { return extractAtomsStateImpl.readLiveGenerationLocator(this, sourceId, kind, ownerKey); }
+  listConversationPageFrontmatter(sourceId: string) { return extractAtomsStateImpl.listConversationPageFrontmatter(this, sourceId); }
   listAtomBacklogSourceIds() { return doctorSearchImpl.listAtomBacklogSourceIds(this.rawRead); }
   readProjectionBacklog(scope: PageReadScope) { return projectionBacklogImpl.readProjectionBacklog(this.rawRead, scope); }
   listGitImageHoldCounts(sourceIds: string[]) { return doctorSearchImpl.listGitImageHoldCounts(this.rawRead, sourceIds); }

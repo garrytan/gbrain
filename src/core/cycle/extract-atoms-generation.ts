@@ -72,9 +72,7 @@ export async function resolveTranscriptKeys(engine: BrainEngine, sourceId: strin
   dryRun: boolean, kind: string = ATOM_KIND): Promise<Map<string, string>> {
   const own = new Map(transcripts.map(t => [t.filePath, t.root ? `${t.root.label}/${relative(resolve(t.root.path), resolve(t.filePath)).split(sep).join('/')}` : t.filePath]));
   if (!transcripts.length) return own;
-  const live = await engine.executeRaw<{ id: number; owner_key: string; locator: string | null; input_pin: string | null }>(
-    `SELECT id, owner_key, locator, input_pin FROM derived_generations WHERE source_id=$1 AND kind=$2 AND state='live' AND owner_key LIKE $3`,
-    [sourceId, kind, `${TRANSCRIPT_KEY_PREFIX}%`]);
+  const live = await engine.listLiveTranscriptGenerations(sourceId, kind, TRANSCRIPT_KEY_PREFIX); // engine-sql/extract-atoms-state.ts
   const located = new Set<string>();
   for (const t of transcripts) {
     const at = live.find(row => row.locator === t.filePath);
@@ -87,7 +85,7 @@ export async function resolveTranscriptKeys(engine: BrainEngine, sourceId: strin
     if (!moved) continue;
     claimed.add(moved.owner_key);
     own.set(t.filePath, moved.owner_key.slice(TRANSCRIPT_KEY_PREFIX.length));
-    if (!dryRun) await engine.executeRaw('UPDATE derived_generations SET locator=$2, updated_at=now() WHERE id=$1', [moved.id, t.filePath]);
+    if (!dryRun) await engine.moveGenerationLocator(moved.id, t.filePath); // engine-sql/extract-atoms-state.ts
   }
   return own;
 }
@@ -99,11 +97,8 @@ export async function resolveTranscriptKeys(engine: BrainEngine, sourceId: strin
 export async function resolveTranscriptAtomSlug(engine: BrainEngine, sourceId: string, title: string, item: { filePath: string; transcriptKey?: string },
   undatedDate: string, atomSlug: (title: string, srcRef: string, sourcePageSlug: string | undefined, undatedDate: string) => string): Promise<string> {
   const legacy = atomSlug(title, item.filePath, undefined, undatedDate);
-  const [held] = await engine.executeRaw<{ source_path: string | null }>(
-    `SELECT frontmatter->>'source_path' AS source_path FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL`, [sourceId, legacy]);
+  const held = await engine.readLivePageSourcePath(sourceId, legacy); // engine-sql/extract-atoms-state.ts
   if (!held || held.source_path === item.filePath || !held.source_path) return legacy;
-  const [mine] = await engine.executeRaw<{ locator: string | null }>(
-    `SELECT locator FROM derived_generations WHERE source_id=$1 AND kind=$2 AND owner_key=$3 AND state='live'`,
-    [sourceId, ATOM_KIND, atomOwnerKey({ kind: 'transcript', transcriptKey: item.transcriptKey ?? item.filePath })]);
+  const mine = await engine.readLiveGenerationLocator(sourceId, ATOM_KIND, atomOwnerKey({ kind: 'transcript', transcriptKey: item.transcriptKey ?? item.filePath }));
   return mine?.locator === held.source_path ? legacy : atomSlug(title, item.filePath, item.transcriptKey ?? item.filePath, undatedDate);
 }

@@ -25,6 +25,7 @@ use crate::trust::WriteTrust;
 
 pub(crate) fn remove_page_rows(tx: &mut dyn KvWrite, page: &PageRecord) -> Result<()> {
     crate::extraction::remove_page_rows(tx, page)?;
+    crate::atom_state::remove_page_rows(tx, page.id)?;
     crate::aliases::remove_page_rows(tx, page)?;
     crate::page_body::remove_page_rows(tx, page)?;
     crate::takes::remove_page_rows(tx, page)?;
@@ -73,6 +74,7 @@ pub(crate) fn remove_source_rows(tx: &mut dyn KvWrite, source_id: &str) -> Resul
     crate::takes::nudges::remove_source_rows(tx, source_id)?;
     crate::takes::proposals::remove_source_rows(tx, source_id)?;
     crate::extraction::remove_source_rows(tx, source_id)?;
+    crate::atom_state::remove_source_rows(tx, source_id)?;
     crate::trust::remove_source_rows(tx, source_id)?;
     crate::facts::loops::remove_source_rows(tx, source_id)?;
     crate::persistence::remove_notifier_source_rows(tx, source_id)?;

@@ -764,7 +764,8 @@ export async function runPhaseExtractAtoms(
       const { indexTranscriptPages, resolveTranscriptPageSlugs } = await import('../transcripts/discover.ts');
       transcriptPageIndex = await indexTranscriptPages(engine, sourceId);
       resolveTranscriptPages = resolveTranscriptPageSlugs;
-    } catch {
+    } catch (err) {
+      rethrowCapabilityRefusal(err); // a refused index read is not an unavailable index: atoms would lose their page edge
       // Index unavailable — atoms still import, they just carry no edge.
       transcriptPageIndex = null;
       resolveTranscriptPages = null;
@@ -938,18 +939,7 @@ export async function runPhaseExtractAtoms(
     if (item.kind === 'transcript') {
       if (!item.filePath) return null;
       try {
-        const rows = await engine.executeRaw<{ cnt: number | string }>(
-          `INSERT INTO extract_atoms_transcript_state
-             (source_id, file_path, content_hash, fail_count, updated_at)
-           VALUES ($1, $2, $3, 1, now())
-           ON CONFLICT (source_id, file_path, content_hash)
-           DO UPDATE SET fail_count = extract_atoms_transcript_state.fail_count + 1,
-                         updated_at = now()
-           RETURNING fail_count AS cnt`,
-          [sourceId, item.filePath, hash16],
-        );
-        const cnt = rows[0]?.cnt;
-        return cnt == null ? null : Number(cnt);
+        return await engine.strikeAtomTranscript(sourceId, item.filePath, hash16); // engine-sql/extract-atoms-state.ts
       } catch (err) {
         rethrowCapabilityRefusal(err); // a strike that is refused is not a strike that failed: the phase must say it cannot run
         // A strike that never lands means this transcript never tombstones and

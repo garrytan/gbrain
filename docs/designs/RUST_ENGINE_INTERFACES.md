@@ -265,6 +265,7 @@ branch, and the reserved ones, with the owner who claimed it. The rules:
 | `3` | `SECRET_STORE` | lane 10 | reserved (the trunk holds it for the secret store) |
 | `~` | `FAMILY_ESCAPE` | core | main once this lands: the escape for two-byte family tags |
 | `~e` | `PAGE_EXTRACTION_STATE` | lane 8 (rust-members-tail) | branch rust-engine/rust-members-tail: the `page_extraction_state` family (the extraction watermark and partial-input receipt of a page); a hard page delete removes the page's rows; the tag `2` stays free |
+| `~a` | `ATOM_EXTRACTION_STATE` | lane 7 (extract-atoms-state) | branch rust-engine/extract-atoms-state (store format 17): the `atom_state` family, the extract_atoms page and transcript ledgers (`~a 0x01 <page id BE8> <incarnation> 0x00 <content hash>`, `~a 0x02 <source> 0x00 <file path> 0x00 <content hash>`); a hard page delete, a soft delete or restore and a source move drop a page's rows (`rust/docs/store/extract-atoms.md`) |
 
 Free one-byte tags: the digits `4` to `9` (approved rows only) and punctuation other than `~`, which stays unclaimed
 unless a reviewed change to this table names it.

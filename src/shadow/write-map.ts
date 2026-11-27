@@ -405,7 +405,7 @@ export const UNMAPPED_WRITE_MEMBERS: ReadonlySet<string> = new Set([
   // Lane 16 repair applies (engine-sql/repair-applies.ts, atom-generation.ts).
   'detachFenceRowFacts', 'expireApprovedFacts', 'linkStruckDuplicateFacts', 'lockApprovedFacts', 'moveFactClaimDates',
   'recordAtomGenerationBump',
-  'releasePartialAtomDispositions',
+  'releasePartialAtomDispositions', 'writeAtomPageState', 'recordAtomPagePartial', 'recordAtomTranscriptPartial', 'stampAtomTranscriptTombstone', 'strikeAtomTranscript', 'moveGenerationLocator',
   'restoreConsolidationTie', 'restoreExtractorFact', 'supersedeDuplicateFacts', 'tightenDatabaseFactVisibility',
   // Batch 11 typed writes (page purge port, take grades, horizons and proposals, chronicle ledger, connector stamps, sync conversions,
   // source rename): not mapped to a write plan yet, so they publish invalid like the rest of the list.

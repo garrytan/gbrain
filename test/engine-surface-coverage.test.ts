@@ -275,7 +275,7 @@ const INTERFACE_METHODS: readonly string[] = [
   'countSegmentedRecentPages',
   'countPagesHiddenByPrefix',
   'listGitImageHoldCounts',
-  'countAtomExtractionBacklog', 'listAtomBacklogSourceIds', 'listExtractablePages', 'listAtomSourceHashes', 'listTombstonedTranscripts', 'listSourcePageAtomTitles', 'releasePartialAtomDispositions', 'assertAtomStateStore',
+  'countAtomExtractionBacklog', 'listAtomBacklogSourceIds', 'listExtractablePages', 'listAtomSourceHashes', 'listTombstonedTranscripts', 'listSourcePageAtomTitles', 'releasePartialAtomDispositions', 'assertAtomStateStore', 'readAtomPageIdentity', 'listLiveTranscriptGenerations', 'readLivePageSourcePath', 'readLiveGenerationLocator', 'listConversationPageFrontmatter', 'writeAtomPageState', 'recordAtomPagePartial', 'recordAtomTranscriptPartial', 'stampAtomTranscriptTombstone', 'strikeAtomTranscript', 'moveGenerationLocator',
   // Doctor reads of the checks from the main join (engine-sql/doctor-join.ts; covered by test/engine-parity/doctor-join-checks.test.ts)
   'listAccessMemberStatuses',
   'listAccessGroupMemberships',

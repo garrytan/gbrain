@@ -254,7 +254,7 @@ export const cases: Case[] = [
       assert.equal(addon.engineAbi, 1);
       assert.match(addon.engineBuild, /^[0-9a-f]{64}$/);
       assert.equal(addon.catalogVersion, 0);
-      assert.deepEqual(addon.formatVersions, [1, 2, 3, 4, 5, 6, 7, 8]);
+      assert.deepEqual(addon.formatVersions, [1, 2, 3, 4, 5, 6, 7, 8, 17]); // 9 to 16 are allotted to other lanes (rust/docs/store/format.md)
     },
   },
   {

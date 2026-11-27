@@ -202,11 +202,7 @@ export async function indexTranscriptPages(
 ): Promise<TranscriptPageIndex> {
   const bySessionKey = new Map<string, string[]>();
   let pagesScanned = 0;
-  const rows = await engine.executeRaw<{ slug: string; frontmatter: unknown }>(
-    `SELECT slug, frontmatter FROM pages
-     WHERE type = 'conversation' AND source_id = $1 AND deleted_at IS NULL`,
-    [sourceId],
-  );
+  const rows = await engine.listConversationPageFrontmatter(sourceId); // engine-sql/extract-atoms-state.ts
   for (const row of rows) {
     pagesScanned++;
     const fm = (typeof row.frontmatter === 'string' ? JSON.parse(row.frontmatter) : row.frontmatter) as
