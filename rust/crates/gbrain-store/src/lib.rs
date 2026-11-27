@@ -608,12 +608,15 @@ impl Store {
         // Multi-user mode: every accepted transaction gets a strictly increasing commit time, kept
         // durable with its data, from this open on (its own upkeep writes included). An adapter reused
         // from an open with the mode on keeps no commit clock into one with it off.
+        // Multi-user mode also reserves each id range on disk before it hands an id out (`occ_kv.rs`,
+        // "Id sequences"), so no id is handed out twice across a crash; with the mode off nothing changes.
         if !read_only {
             if multiuser_on {
                 kv.set_commit_clock(env.clone(), None)?;
             } else {
                 kv.clear_commit_clock();
             }
+            kv.set_id_reservation(multiuser_on);
         }
         let mut log_enabled = false;
         let (stored, created) = match stored {

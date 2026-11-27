@@ -227,6 +227,13 @@ pub trait Kv: Send + Sync {
     /// Stops the commit clock (`set_commit_clock`), if one runs: an open with multi-user mode off on
     /// a reused adapter writes no commit time.
     fn clear_commit_clock(&self) {}
+    /// Turns durable id reservation on or off (multi-user mode; `occ_kv.rs`, "Id sequences"): with it
+    /// on, a range of ids is reserved on disk before any id in it is handed out, so a reopen after a
+    /// crash never hands one out again. Called only while nothing else writes (a brain's open). A
+    /// store that keeps no reservation ignores it.
+    fn set_id_reservation(&self, on: bool) {
+        let _ = on;
+    }
     /// The newest durable commit time (`None` before the first, or when no commit clock ever ran).
     fn last_commit_time(&self) -> Result<Option<i64>> {
         crate::redb_kv::read_commit_time(&*self.snapshot()?)

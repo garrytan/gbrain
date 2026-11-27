@@ -386,7 +386,8 @@ mod tests {
         //   `RedbSink`'s three redb transactions on the new record file a store snapshot fills: no
         //   brain store has that file open, so no store write handle exists to flag, and the
         //   follower's replica write (`follower.rs`), which copies a primary's records, already
-        //   flagged there, onto a record file no store has open),
+        //   flagged there, onto a record file no store has open, and the id-range reservation write,
+        //   which touches only the `id_reservations` table and never a page record),
         //   `fjall_kv.rs`, and
         //   `occ_kv.rs` (its trait methods, the deadline-bounded locked begin, the commit onto
         //   the base store, and two in its `sim` feature test module);
@@ -429,7 +430,7 @@ mod tests {
             ("lib.rs", 7),
             ("occ_kv.rs", 8),
             ("page_body/purge_record.rs", 1),
-            ("redb_kv.rs", 8),
+            ("redb_kv.rs", 9),
             ("seed/v0_60_766_tests.rs", 1),
             ("test_support.rs", 4),
             ("transactions.rs", 4),

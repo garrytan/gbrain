@@ -22,6 +22,11 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 const TABLE: TableDefinition<&[u8], &[u8]> = TableDefinition::new("kv");
+/// Durable id reservations (multi-user mode, `occ_kv.rs` "Id sequences"): per id sequence key, the id below which every
+/// id may already have been handed out, so a reopen after a crash starts at or above it. A table of its own, written in
+/// commits outside the commit sequence: no `M\0seq` bump, no commit record, no conflict check, and not in the `kv` table
+/// that store snapshots and followers copy. Absent on a brain multi-user mode never allocated on.
+const RESERVATIONS: TableDefinition<&[u8], u64> = TableDefinition::new("id_reservations");
 /// The commit sequence. It sorts just before the store's id counters (`M` + `next_...`), which
 /// every commit that creates a record also writes, so such a commit changes one B-tree leaf for
 /// both instead of two. No store key equals it: a store meta key is `M` and a name, and no name
@@ -173,6 +178,40 @@ impl RedbKv {
         }
         w.bump_and_commit()?;
         Ok(value)
+    }
+
+    /// The durable id reservation of sequence `key` (`RESERVATIONS`), `None` when there is none.
+    pub(crate) fn id_reservation(&self, key: &[u8]) -> Result<Option<u64>> {
+        let tx = self.db.begin_read().map_err(map)?;
+        let table = match tx.open_table(RESERVATIONS) {
+            Ok(table) => table,
+            Err(redb::TableError::TableDoesNotExist(_)) => return Ok(None),
+            Err(e) => return Err(map(e)),
+        };
+        Ok(table.get(key).map_err(map)?.map(|v| v.value()))
+    }
+
+    /// Sets (`Some`) or removes (`None`) id reservations in one durable commit that is not counted in the commit
+    /// sequence. Never called while this thread holds a write transaction of this file.
+    pub(crate) fn set_id_reservations(&self, set: &[(Vec<u8>, Option<u64>)]) -> Result<()> {
+        let mut tx = self.db.begin_write().map_err(map)?;
+        tx.set_durability(Durability::Immediate)
+            .map_err(|e| StoreError::io(format!("record store: {e}")))?;
+        {
+            let mut table = tx.open_table(RESERVATIONS).map_err(map)?;
+            for (key, value) in set {
+                match value {
+                    Some(v) => {
+                        table.insert(key.as_slice(), *v).map_err(map)?;
+                    }
+                    None => {
+                        table.remove(key.as_slice()).map_err(map)?;
+                    }
+                }
+            }
+        }
+        tx.commit().map_err(map)?;
+        Ok(())
     }
 
     /// Opens (creating if absent) the record file at `path`. A second open of the same file,
