@@ -1,0 +1,2 @@
+### For contributors
+- Five byte-order parity cases no longer seed with raw SQL. Tied deletion, update and due times now come from writing the rows in one transaction, and pages with an unknown reader or a punctuated prefix go through putPage. Four of the five now compare equal on the Rust engine. The fifth, the doctor's unknown-reader check, now stops on the check's own raw read instead of on its seed.

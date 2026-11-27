@@ -219,3 +219,53 @@ fn a_take_vector_is_current_only_at_the_claim_revision() {
     assert!(has(&b, "takes"));
     assert!(stale().is_empty());
 }
+
+#[test]
+fn the_status_reads_answer_widths_census_and_unembedded_counts_as_postgres_does() {
+    let b = brain("catalog-status");
+    // No width yet: every embedding table reads as absent, any other table too.
+    assert!(b.read_embedding_column_typmod("facts").unwrap().is_empty());
+    b.set_config("embedding_dimensions", "8").unwrap();
+    for table in ["content_chunks", "facts", "query_cache", "takes"] {
+        assert_eq!(
+            b.read_embedding_column_typmod(table).unwrap(),
+            vec![json!({ "dim": 8 })],
+            "{table}"
+        );
+    }
+    assert!(b.read_embedding_column_typmod("pages").unwrap().is_empty());
+    page(&b, "notes/a");
+    page(&b, "notes/b");
+    assert_eq!(
+        b.read_embedding_signature_census().unwrap(),
+        vec![json!({ "signature": null, "pages": 2 })]
+    );
+    assert_eq!(b.count_synopsis_tier_pages().unwrap(), 0);
+    assert_eq!(b.count_embed_skip_null_chunks().unwrap(), 0);
+    assert_eq!(
+        b.count_unembedded_live_facts(&["audit:terminal".to_string()])
+            .unwrap(),
+        0
+    );
+    let fact = |source: &str| -> InsertFactArgs {
+        de(
+            json!({ "input": { "fact": format!("from {source}"), "source": source }, "sourceId": "default" }),
+        )
+    };
+    b.insert_fact(&fact("chat")).unwrap();
+    b.insert_fact(&fact("audit:terminal")).unwrap();
+    assert_eq!(
+        b.count_unembedded_live_facts(&["audit:terminal".to_string()])
+            .unwrap(),
+        1
+    );
+    // A false stamp needs a vector of another model under the target signature; with none, nothing counts.
+    assert_eq!(
+        b.read_false_stamped_chunk_counts(
+            "openai:text-embedding-3-large:8",
+            "openai:text-embedding-3-large"
+        )
+        .unwrap(),
+        json!({ "pages": 0, "chunks": 0, "chars": 0 })
+    );
+}

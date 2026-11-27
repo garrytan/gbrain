@@ -139,9 +139,10 @@ function buildFetch(fx: FakeGoogle): FetchImpl {
   const json = (body: unknown, status = 200, headers: Record<string, string> = {}): Response =>
     new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json', ...headers } });
 
-  return async (url: string): Promise<Response> => {
+  return async (url: string, init?: RequestInit): Promise<Response> => {
     const u = new URL(url);
     fx.calls.push(u.pathname + (u.search ? u.search : ''));
+    if (init?.signal?.aborted && u.pathname.endsWith('/users/me/messages')) throw new DOMException('The operation was aborted.', 'AbortError');
 
     if (u.hostname === 'oauth2.googleapis.com') {
       fx.tokenPosts++;
@@ -219,10 +220,13 @@ function buildFetch(fx: FakeGoogle): FetchImpl {
     }
 
     if (u.pathname.includes('/people/me/connections')) {
+      // #10246: like the People API, send a person's `metadata` (and with it a tombstone's `deleted`) only when the field mask asks.
+      const masked = (people: unknown[]) => (u.searchParams.get('personFields') ?? '').split(',').includes('metadata')
+        ? people : people.map((p) => { const { metadata: _metadata, ...rest } = p as Record<string, unknown>; return rest; });
       if (u.searchParams.get('syncToken')) {
-        return json({ connections: fx.contactsDelta, nextSyncToken: 'ppl-sync-2' });
+        return json({ connections: masked(fx.contactsDelta), nextSyncToken: 'ppl-sync-2' });
       }
-      return json({ connections: fx.contacts, nextSyncToken: 'ppl-sync-1' });
+      return json({ connections: masked(fx.contacts), nextSyncToken: 'ppl-sync-1' });
     }
 
     return json({ error: { message: `unhandled ${u.pathname}` } }, 400);

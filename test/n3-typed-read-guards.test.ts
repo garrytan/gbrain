@@ -38,6 +38,7 @@ const CALLS: Record<string, (engine: BrainEngine) => Promise<unknown>> = {
   readSegmentedVersionBodyBytes: (e) => e.readSegmentedVersionBodyBytes(1, 1),
   listCoveredSources: (e) => e.listCoveredSources('subject'),
   listExportWithdrawals: (e) => e.listExportWithdrawals('default'),
+  listPurgeTombstones: (e) => e.listPurgeTombstones('default'),
   readExportWithdrawalLedgerBytes: (e) => e.readExportWithdrawalLedgerBytes('default'),
   readQueueHealthSignals: (e) => e.readQueueHealthSignals(SPEC),
   listWaitingByQueue: (e) => e.listWaitingByQueue(),

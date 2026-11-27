@@ -327,11 +327,12 @@ or a physical projection that leaves attribution untouched):
 Three generation writes moved into typed engine members, so the engine layer holds their statements and the grep above no longer counts their callers; each still runs inside the same transaction as before: the atom completion stamp (`generations/adapters/atoms.ts` calls `stampPageFrontmatter`, `engine-sql/derivation-trust.ts`), the fact before-state restore (`generations/adapters/fact-rows.ts` `restoreFactRow` calls `restoreFactPreimage`, `engine-sql/facts.ts`) and the kept-row renumbering (`generations/fence-evidence.ts` `moveKeptRows` calls `moveKeptFactRows`, `engine-sql/generation-fence-evidence.ts`).
 
 Unattributed (on unmanaged brains these would write with `NULL` attribution).
-The list is empty: `gbrain extract` timeline walks, enrichment and meeting
-timeline extraction run as tiered derivers since #5575 (I2). A new writer
-that cannot be attributed yet is declared here:
+`gbrain extract` timeline walks, enrichment and meeting timeline extraction
+run as tiered derivers since #5575 (I2). A new writer that cannot be
+attributed yet is declared here:
 
 <!-- write-attribution-unattributed:start -->
+- `src/core/engine-swap/failback-copy.ts` (5): an engine swap failback writes the Rust engine's answer for each changed page, its tags, and the takes and facts that supersede others back into the fenced old primary, in the swap run's own transactions behind its write fence. It runs only during a failback, so it records no actor yet.
 <!-- write-attribution-unattributed:end -->
 
 ## The privacy boundary

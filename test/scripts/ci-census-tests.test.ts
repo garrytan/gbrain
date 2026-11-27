@@ -41,7 +41,7 @@ describe('ci-census-tests.sh', () => {
   });
 
   test('leaves out E2E, serial, slow and setup files', () => {
-    for (const file of files) expect(file, file).not.toMatch(/^test\/e2e\/|\.(serial|slow)\.test\.ts$|^test\/setup\.test\.ts$/);
+    for (const file of files) expect(file, file).not.toMatch(/^test\/e2e\/|\.(serial|slow)\.test\.ts$|^test\/setup(?:-migrations)?\.test\.ts$/);
   });
 
   test('refuses arguments it does not know', () => {

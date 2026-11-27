@@ -11,7 +11,8 @@
  *  - Why existing coverage misses it: the kinds' own tests (test/repair-*.test.ts, test/persistence-*.test.ts,
  *    test/connector-checkpoint-identity.test.ts, test/loops-close-fact.serial.test.ts) run on PGLite or Postgres
  *    only, and the runner's parity file (repair-runner.test.ts) previews these kinds on empty brains only.
- *  - Seam: none. Generated values (run ids, the brain id, incarnations, ids, timestamps) are compared by shape.
+ *  - Seam: none. Rows go in through typed writers (orphan bindings through the claim store). Generated values (run ids,
+ *    the brain id, incarnations, ids, timestamps) are compared by shape.
  */
 import { describe, expect } from 'bun:test';
 import { randomUUID } from 'node:crypto';
@@ -128,15 +129,17 @@ describe('engine parity: bookkeeping repair kinds on seeded brains', () => {
   }));
 
   parityTest('repair orphan-bindings deletes the bindings of a removed source and of a replaced incarnation, and keeps a live one', {
-    methods: ['readPersistenceBrainId', 'listAllSources', 'listOrphanBindings', 'deleteOrphanBinding'], requires: 'raw_sql', timeout: 60_000,
+    methods: ['readPersistenceBrainId', 'listAllSources', 'listOrphanBindings', 'deleteOrphanBinding', 'transaction', 'worktreeClaimStore'], timeout: 60_000,
   }, async (engine, backend) => withHome(async () => {
     await createSource(engine, backend, 'side', {}, '/var/tmp/gbrain-parity-side');
     await createSource(engine, backend, 'kept', {}, '/var/tmp/gbrain-parity-kept');
-    const bind = async (sourceId: string, incarnation: string) => {
-      const [worktree] = await engine.executeRaw<{ id: string }>('INSERT INTO persistence_worktrees DEFAULT VALUES RETURNING id');
-      await engine.executeRaw('INSERT INTO persistence_source_bindings (source_id, source_incarnation, worktree_id) VALUES ($1, $2::uuid, $3::uuid)',
-        [sourceId, incarnation, worktree!.id]);
-    };
+    // An ownerless worktree and its source binding, through the claim store's typed writers (the rows a claim stores).
+    const bind = async (sourceId: string, incarnation: string) => engine.transaction(async (tx) => {
+      const store = await tx.worktreeClaimStore();
+      const worktreeId = randomUUID();
+      await store.insertWorktree({ id: worktreeId, ownerHostId: null });
+      await store.insertSourceBinding({ sourceId, incarnation, worktreeId, relativePath: '' });
+    });
     await bind('gone', randomUUID());
     await bind('side', randomUUID());
     await bind('kept', await incarnationOf(engine, 'kept'));

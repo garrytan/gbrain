@@ -652,6 +652,17 @@ pub(crate) fn store_take(tx: &mut dyn KvWrite, take: &TakeRecord) -> Result<()> 
     let content_changed = old
         .as_ref()
         .is_some_and(|o| (&o.claim, &o.kind, &o.holder) != (&take.claim, &take.kind, &take.holder));
+    let source = crate::guest_sources::page_source(&*tx, take.page_id)?;
+    crate::guest_sources::guard_row(
+        &*tx,
+        crate::guest_sources::GuardTable::Takes,
+        source.as_deref(),
+        if old.is_none() {
+            crate::guest_sources::GuardOp::Insert
+        } else {
+            crate::guest_sources::GuardOp::Update { content_changed }
+        },
+    )?;
     let mut stamped = take.clone();
     stamped.trust = stamp_row(
         TrustTable::Takes,

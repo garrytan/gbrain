@@ -38,7 +38,7 @@ export async function implicitPlacement(engine: BrainEngine, sourceId: string, s
   const [entry] = await whoCanRead(engine, slug, sourceId);
   if (!entry) return null;
   const picked = await pickedBy(engine, sourceId);
-  const [row] = await engine.executeRaw<{ config: unknown }>('SELECT config FROM sources WHERE id = $1', [sourceId]);
+  const row = await engine.readSourceRow(sourceId);
   const noGrantReads = sourceId === 'default' || parseSourceConfig(row?.config).federated === true;
   const who = entry.members !== 'every_source_reader'
     ? `Members who may read it: ${entry.members.join(', ') || 'none'}.`
@@ -69,7 +69,10 @@ export async function withImplicitPlacement<R>(ctx: { engine: BrainEngine; remot
     const slug = typeof written.slug === 'string' ? written.slug : String(params.slug);
     const placement = await implicitPlacement(ctx.engine, sourceId, slug);
     return placement ? { ...written, placement } as R : result;
-  } catch {
+  } catch (e) {
+    // The notice is advice about a page that is already written, so another failure leaves the put's result as it is; an
+    // engine that cannot answer one of its reads says so (the put's own typed refusal), instead of dropping the notice unseen.
+    if ((e as { code?: unknown } | null)?.code === 'engine_capability_missing') throw e;
     return result;
   }
 }

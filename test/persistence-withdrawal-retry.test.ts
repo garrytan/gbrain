@@ -67,6 +67,15 @@ for (const boundary of ['admission-counter', 'completed-withdrawal'] as const) {
               }
               return nested.lockPersistenceCounters(...args);
             };
+            // The counter lock moved off executeRaw onto the typed lockPersistenceCounters (journal.ts lockCounters); the same
+            // confirmed abort fails it at the same point of the admission.
+            if (key === 'lockPersistenceCounters') return async (...args: Parameters<BrainEngine['lockPersistenceCounters']>) => {
+              if (!injected && boundary === 'admission-counter') {
+                injected = aborted = true;
+                throw Object.assign(new Error('confirmed counter statement abort'), { code: '55P03' });
+              }
+              return nested.lockPersistenceCounters(...args);
+            };
             const value = Reflect.get(nested, key); return typeof value === 'function' ? value.bind(nested) : value;
           } });
           return (target.transaction as any)(async (tx: BrainEngine) => {

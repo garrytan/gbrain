@@ -60,6 +60,7 @@ export const RENAMED: Readonly<Record<string, string>> = {
   GBRAIN_SKIP_LAUNCHD_E2E: 'GBRAIN_TEST_SKIP_LAUNCHD',
   GBRAIN_ENFORCE_E5_BUDGET: 'GBRAIN_TEST_ENFORCE_E5_BUDGET',
   GBRAIN_REQUIRE_COMPILE: 'GBRAIN_TEST_REQUIRE_COMPILE',
+  GBRAIN_TEST_HOUSEHOLD_LIVE: 'GBRAIN_TEST_LIVE_HOUSEHOLD',
 };
 
 /** Whether the scrub deletes `name` from a test process's environment. */

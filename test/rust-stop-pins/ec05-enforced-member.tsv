@@ -1,0 +1,3 @@
+# Parity cases that stop on a typed refusal on the Rust arm although the Rust engine serves the member. Edited by hand.
+# Columns (tab separated): parity file, case name, member that refused, owner, due date (YYYY-MM-DD, UTC), what Rust declines.
+test/engine-parity/enforced-member-reads.test.ts	a labelled-only member read of a page names the member on the SQL engines and stops on Rust	readMemberPageReadable	interfaces lane (session a9fd5b22)	2026-11-29	A labelled-only member under GBRAIN_ENFORCED_MEMBER: the store does not model the labelled-only conjunct (labelledOnlyForSql) for an existing page, so readMemberPageReadable refuses engine_capability_missing before any read, and a put by that member writes nothing. Leaves with row 32e-b-2 (labelled-only remote reads)

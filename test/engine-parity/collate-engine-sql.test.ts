@@ -13,7 +13,8 @@
  *    than on PGLite and Rust brains.
  *  - Why existing coverage misses it: the cases used keys that sort the same in every locale, and CI's Postgres
  *    runs in C.UTF-8. Every case here mixes `a-z`, `a/z` and `ab`; run it against an en_US Postgres to see it fail.
- *  - Seam: none. Raw SQL only stamps times no engine writer sets (updated_at, deleted_at, first_due_at).
+ *  - Seam: none. Cases that need tied times (updated_at, deleted_at, first_due_at) write the rows in one transaction,
+ *    whose start time every engine stamps on each row.
  */
 import { describe, expect } from 'bun:test';
 import { createSource, parityArms, recordFenceRetirement } from './harness.ts';
@@ -422,12 +423,13 @@ describe('page listings sort and page by byte slug and source id', () => {
   });
 
   parityTest('purgeDeletedPages previews the pages of one deletion time by byte slug', {
-    methods: ['putPage', 'softDeletePage', 'purgeDeletedPages', 'executeRaw'], requires: 'raw_sql',
+    methods: ['putPage', 'transaction', 'softDeletePage', 'purgeDeletedPages'],
   }, async (engine) => {
     await putAll(engine, TEXT.map((k) => `d/${k}`));
-    for (const k of TEXT) await engine.softDeletePage(`d/${k}`);
-    await engine.executeRaw(`UPDATE pages SET deleted_at = now() - interval '3 days' WHERE slug LIKE 'd/%'`);
-    const out = (await engine.purgeDeletedPages(24, { dryRun: true })).pages!.map((p) => p.slug);
+    // One transaction stamps every tombstone with its start time (now()), so the deletion times tie.
+    await engine.transaction(async (tx) => { for (const k of TEXT) await tx.softDeletePage(`d/${k}`); });
+    // A 0-hour window takes every tombstone deleted before this statement.
+    const out = (await engine.purgeDeletedPages(0, { dryRun: true })).pages!.map((p) => p.slug);
     expect(out).toEqual(BYTES.map((k) => `d/${k}`));
     return out;
   });
@@ -509,11 +511,13 @@ describe('entity, graph, salience and enrich reads sort by byte', () => {
 
   // The Rust store cannot stamp one updated_at on many pages, so the tie that makes the slug decide stops it here.
   parityTest('getRecentSalience and the updated enrich order cut a tie of updated time by byte source id and slug', {
-    methods: ['putPage', 'getRecentSalience', 'listEnrichCandidates', 'executeRaw'], requires: 'raw_sql',
+    methods: ['putPage', 'transaction', 'getRecentSalience', 'listEnrichCandidates'],
   }, async (engine, backend) => {
     for (const source of SOURCES) await createSource(engine, backend, source);
-    for (const source of SOURCES) for (const k of TEXT) await engine.putPage(`people/${k}`, { type: 'person', title: k, compiled_truth: 'Stub.', timeline: '' }, { sourceId: source });
-    await engine.executeRaw(`UPDATE pages SET updated_at = now() - interval '1 hour', salience_touched_at = NULL WHERE slug LIKE 'people/%'`);
+    // One transaction stamps every page with its start time (now()), so the updated times tie; no page is touched.
+    await engine.transaction(async (tx) => {
+      for (const source of SOURCES) for (const k of TEXT) await tx.putPage(`people/${k}`, { type: 'person', title: k, compiled_truth: 'Stub.', timeline: '' }, { sourceId: source });
+    });
     const want = ['a-z', 'ab'].flatMap((s) => BYTES.map((k) => `${s}:people/${k}`)).slice(0, 4);
     const salience = (await engine.getRecentSalience({ days: 7, limit: 4 })).map((r) => `${r.source_id}:${r.slug}`);
     const updated = (await engine.listEnrichCandidates({ types: ['person'], thinThreshold: 100, order: 'updated', limit: 4 })).map((r) => `${r.source_id}:${r.slug}`);
@@ -532,12 +536,14 @@ describe('entity, graph, salience and enrich reads sort by byte', () => {
 
 describe('hold, notifier and withdrawal reads sort by byte', () => {
   parityTest('listSourceWantedMarkers keeps its order for markers of one due time', {
-    methods: ['upsertWantedMarker', 'listSourceWantedMarkers', 'executeRaw'], requires: 'raw_sql',
+    methods: ['transaction', 'upsertWantedMarker', 'listSourceWantedMarkers'],
   }, async (engine) => {
-    for (const intent of ['full', 'pull', 'freshness'] as const) {
-      await engine.upsertWantedMarker({ sourceId: 'default', intent, wantedHead: intent === 'freshness' ? 'abc' : null, requestedBy: 'webhook' });
-    }
-    await engine.executeRaw(`UPDATE sync_wanted_markers SET first_due_at = '2026-08-10T12:00:00Z'::timestamptz WHERE source_id = 'default'`);
+    // One transaction stamps every marker with its start time (now()), so the due times tie.
+    await engine.transaction(async (tx) => {
+      for (const intent of ['full', 'pull', 'freshness'] as const) {
+        await tx.upsertWantedMarker({ sourceId: 'default', intent, wantedHead: intent === 'freshness' ? 'abc' : null, requestedBy: 'webhook' });
+      }
+    });
     const out = (await engine.listSourceWantedMarkers('default')).map((m) => m.intent);
     expect(out).toEqual(['freshness', 'full', 'pull']);
     return out;

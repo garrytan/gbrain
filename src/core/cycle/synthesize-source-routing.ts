@@ -26,7 +26,7 @@
  * (`transcriptSourceHold`, #7869, #7870). Dry runs resolve read-only.
  */
 
-import { lstatSync, realpathSync } from 'node:fs';
+import { existsSync, lstatSync, realpathSync } from 'node:fs';
 import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import type { PhaseResult } from '../cycle.ts';
@@ -34,6 +34,7 @@ import { corpusSpoolDir } from '../context/corpus-segments.ts';
 import { resolveCorpusFileSource, type CorpusFileLocation, type CorpusFileSource } from '../context/corpus-source.ts';
 import { CONVERSATION_PAGE_URI_PREFIX, type DiscoveredTranscript } from './transcript-discovery.ts';
 import { UnrecoverableError } from '../minions/types.ts';
+import { STORAGE_ROLE } from '../storage-manifest/door.ts';
 
 export interface SessionSourceRouting {
   /** Corpus files of other sources (`corpus_source_other`), counted by the source each belongs to. */
@@ -81,13 +82,17 @@ export async function corpusFileOwner(engine: BrainEngine, filePath: string, cor
   return location ? resolveCorpusFileSource(engine, corpusDir, basename(filePath), location, opts) : null;
 }
 
-/** The transcripts this cycle may synthesize into `sourceId`, each corpus file pinned; every other corpus file is counted in `routing`. */
+/**
+ * The transcripts this cycle may synthesize into `sourceId`, each corpus file pinned; every other corpus file is counted in `routing`.
+ * `sessionsOnly` (a global cycle's turn for another source, #8669) keeps that source's corpus files only: meeting transcripts and
+ * conversation pages stay with the cycle's own source.
+ */
 export async function keepSessionSourceTranscripts<T extends DiscoveredTranscript>(engine: BrainEngine, transcripts: T[],
-  opts: { corpusDir: string | null; sourceId: string; readOnly?: boolean }, routing: SessionSourceRouting): Promise<Array<T & { corpusSource?: CorpusSourcePin }>> {
+  opts: { corpusDir: string | null; sourceId: string; readOnly?: boolean; sessionsOnly?: boolean }, routing: SessionSourceRouting): Promise<Array<T & { corpusSource?: CorpusSourcePin }>> {
   const kept: Array<T & { corpusSource?: CorpusSourcePin }> = [];
   for (const t of transcripts) {
     const owner = await corpusFileOwner(engine, t.filePath, opts.corpusDir, opts);
-    if (!owner) kept.push(t);
+    if (!owner) { if (!opts.sessionsOnly) kept.push(t); }
     else if (!owner.ok) routing.held[owner.reason] = (routing.held[owner.reason] ?? 0) + 1;
     else if (owner.sourceId !== opts.sourceId) routing.corpus_source_other[owner.sourceId] = (routing.corpus_source_other[owner.sourceId] ?? 0) + 1;
     else kept.push({ ...t, corpusSource: { raw_source: t.filePath, corpus_dir: opts.corpusDir!, incarnation: owner.incarnation } });
@@ -134,6 +139,66 @@ export async function refuseChangedSessionSource(engine: BrainEngine,
   const release = corpusHoldRelease([changed]);
   throw new UnrecoverableError(`session_source_changed: ${changed}: the session of ${pin.raw_source} no longer resolves to source ${sourceId} as it did when this job was queued, so nothing was synthesized or written. ${changed === 'corpus_source_other' ? 'It synthesizes when the dream runs for its own source.'
     : release.fix.length ? `It synthesizes after ${release.fix.at(-1)}.` : `It stays held: ${release.stays[0] ?? changed}.`}`);
+}
+
+/**
+ * #8669: a global cycle (no --source) runs synthesize once, for one source that owns captured sessions, in turn, so the
+ * sessions of every source are synthesized under their own source with the phase's own cooldown, budget, daily cap and
+ * completion guards. The turn is state, not a setting. Only a live source with a checkout takes a turn: an archived or
+ * missing source, or one without a checkout, never does, and its sessions stay held or counted as they were.
+ */
+const SYNTHESIS_TURN_KEY = 'dream.synthesize.rotation_turn';
+/** The other owning sources the rotation knows: the cycle's own run replaces them, any other run adds what it saw. */
+const SYNTHESIS_OWNERS_KEY = 'dream.synthesize.rotation_owners';
+
+async function turnCheckouts(engine: BrainEngine): Promise<Map<string, string>> {
+  const rows = await engine.executeRaw<{ id: string; local_path: string | null }>("SELECT id, local_path FROM sources WHERE archived = false AND config->>'role' IS DISTINCT FROM $1", [STORAGE_ROLE]);
+  return new Map(rows.flatMap(r => r.local_path && isAbsolute(r.local_path) && existsSync(r.local_path) ? [[r.id, resolve(r.local_path)] as const] : []));
+}
+
+/** The source this global cycle synthesizes and its checkout, or null for the cycle's own source. */
+async function synthesisTurn(engine: BrainEngine, home: string): Promise<{ sourceId: string; brainDir: string } | null> {
+  const turn = await engine.getConfig(SYNTHESIS_TURN_KEY);
+  if (!turn || turn === home) return null;
+  const brainDir = (await turnCheckouts(engine)).get(turn);
+  return brainDir ? { sourceId: turn, brainDir } : null;
+}
+
+/**
+ * A rotating cycle's turn (null when the cycle names a source or a target), and `settle`, which labels the phase result
+ * with the turn's source and, outside a dry run, passes the turn on.
+ */
+export async function synthesisRotation(engine: BrainEngine, home: string, rotates: boolean): Promise<{
+  turn: { sourceId: string; brainDir: string } | null; settle: (result: PhaseResult, dryRun: boolean) => Promise<void>;
+} | null> {
+  if (!rotates) return null;
+  const note = (what: string, err: unknown) => process.stderr.write(`[dream] synthesize rotation: ${what} (${err instanceof Error ? err.message : String(err)}); this cycle stays on source ${home}.\n`);
+  let turn: { sourceId: string; brainDir: string } | null = null;
+  try { turn = await synthesisTurn(engine, home); } catch (err) { note('could not read the turn', err); } // capability-refusal-ok: a brain that cannot list its sources (an old schema, an engine refusal) synthesizes its own source, as before the rotation
+  return { turn, settle: async (result, dryRun) => {
+    if (turn) result.details = { ...result.details, source_id: turn.sourceId };
+    if (dryRun) return;
+    try { await passSynthesisTurn(engine, home, turn?.sourceId ?? home, result); } catch (err) { note('could not pass the turn', err); } // capability-refusal-ok: the turn stays where it was; the phase result already stands
+  } };
+}
+
+/**
+ * Passes the turn to the next source after the one that ran, by id, among the cycle's own and the known owners (so a run
+ * that failed before discovery still moves the turn forward); a cooldown or budget skip keeps it.
+ */
+async function passSynthesisTurn(engine: BrainEngine, home: string, ran: string, result: PhaseResult): Promise<void> {
+  if (result.status === 'skipped' && (result.details.reason === 'cooldown_active' || result.details.reason === 'insufficient_cycle_budget')) return;
+  const routing = result.details.source_routing as SessionSourceRouting | undefined;
+  const seen = Object.keys(routing?.corpus_source_other ?? {});
+  const raw = await engine.getConfig(SYNTHESIS_OWNERS_KEY);
+  let stored: unknown = [];
+  try { stored = JSON.parse(raw ?? '[]'); } catch { /* silent-read-ok: a malformed owners list is rebuilt from this run's routing and rewritten below */ }
+  const known = Array.isArray(stored) ? stored.filter((id): id is string => typeof id === 'string') : [];
+  const checkouts = await turnCheckouts(engine);
+  const owners = [...new Set(ran === home && routing ? seen : [...known, ...seen])].filter(id => id !== home && checkouts.has(id)).sort();
+  if (owners.join('\n') !== known.join('\n') || !Array.isArray(stored)) await engine.setConfig(SYNTHESIS_OWNERS_KEY, JSON.stringify(owners));
+  const order = [home, ...owners].sort();
+  await engine.setConfig(SYNTHESIS_TURN_KEY, order.find(id => id > ran) ?? order[0]!);
 }
 
 /**

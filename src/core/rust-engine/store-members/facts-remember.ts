@@ -8,7 +8,8 @@
  *
  * An id that is not a whole number refuses rather than guess at PGLite's `bigint` error, and so does a time that is not
  * an ISO instant: the callers pass ids from rows and `toISOString()` text, so the refusal is a guard, never a path they
- * take. `readReplacementTarget` and `readClaimWithdrawal` under `excludePrivate` serve the remote provenance floor
+ * take. Two exceptions answer as Postgres does: `readReplacementTarget` fails a fractional id with the bigint cast error,
+ * and `expireSupersededFact` / `restoreSupersededFact` read Postgres timestamp text (`2026-03-01 00:00:00+00`). `readReplacementTarget` and `readClaimWithdrawal` under `excludePrivate` serve the remote provenance floor
  * (`storeFloorPolicy`: no caller record, or a member, owner or unrestricted record), and `readMemberPageWithdrawal` the
  * page policy of a page's member, or the owner read rule for the brain owner (`storeMemberReadPolicy`); any other
  * caller refuses.
@@ -31,6 +32,40 @@ function wholeId(member: string, id: number | null): void {
 
 function instant(member: string, what: string, value: string | null): void {
   if (value !== null && (!ISO_INSTANT.test(value) || Number.isNaN(Date.parse(value)))) refuseMember(member, `${what} that is not an ISO instant`);
+}
+
+/** Postgres timestamptz text with a date, a time and a zone: `T` or a space between them, a `Z` or an hour offset. */
+const PG_INSTANT = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,6}))?\s*(Z|[+-]\d{2}(?::?\d{2})?)$/i;
+
+/**
+ * A time the SQL engines bind as `timestamptz`, as the ISO instant the store reads: an ISO instant passes as it is, and
+ * the Postgres text form (`2026-03-01 00:00:00+00`) is read the way Postgres reads it. Any other text (a date alone, a
+ * zone name, a word like `now`) refuses, because the store would have to guess Postgres' wider parser.
+ */
+function pgInstant(member: string, what: string, value: string | null): string | null {
+  if (value === null || (ISO_INSTANT.test(value) && !Number.isNaN(Date.parse(value)))) return value;
+  const m = PG_INSTANT.exec(value);
+  if (m) {
+    const [y, mo, d, h, mi, sec] = m.slice(1, 7).map(Number) as [number, number, number, number, number, number];
+    const zone = m[8]!.toUpperCase();
+    const offset = zone === 'Z' ? 0 : (zone[0] === '-' ? -1 : 1) * (Number(zone.slice(1, 3)) * 60 + Number(zone.slice(1).replace(':', '').slice(2) || 0));
+    const local = Date.UTC(y, mo - 1, d, h, mi, sec);
+    const real = new Date(local);
+    if (h < 24 && mi < 60 && sec < 60 && real.getUTCFullYear() === y && real.getUTCMonth() === mo - 1 && real.getUTCDate() === d) {
+      const fraction = m[7] ? `.${m[7]}` : '';
+      return `${new Date(local - offset * 60_000).toISOString().slice(0, 19)}${fraction}Z`;
+    }
+  }
+  return refuseMember(member, `${what} that is not an ISO instant or Postgres timestamp text`);
+}
+
+/** A bigint id: a fraction fails as Postgres fails the `bigint` cast (22P02); NaN, an infinity or past 2^53 refuses. */
+function bigintId(member: string, id: number): void {
+  if (Number.isSafeInteger(id)) return;
+  if (Number.isFinite(id) && Math.abs(id) <= Number.MAX_SAFE_INTEGER) {
+    throw Object.assign(new Error(`invalid input syntax for type bigint: "${String(id)}"`), { code: '22P02' });
+  }
+  refuseMember(member, 'an id that is not a whole number');
 }
 
 const fact = (row: Row): Row => withDates(withVector(row), FACT_DATES);
@@ -86,8 +121,8 @@ export const readPairFactRow: Member<'readPairFactRow'> = async (brain, id, lock
 export const expireSupersededFact: Member<'expireSupersededFact'> = async (brain, q) => {
   wholeId('expireSupersededFact', q.oldId);
   wholeId('expireSupersededFact', q.newId);
-  instant('expireSupersededFact', 'an until', q.until);
-  return storeCall({ member: 'expireSupersededFact', sourceId: q.sourceId }, () => brain.expireSupersededFact({ oldId: q.oldId, sourceId: q.sourceId, newId: q.newId, until: q.until }));
+  const until = pgInstant('expireSupersededFact', 'an until', q.until);
+  return storeCall({ member: 'expireSupersededFact', sourceId: q.sourceId }, () => brain.expireSupersededFact({ oldId: q.oldId, sourceId: q.sourceId, newId: q.newId, until }));
 };
 
 export const retireSupersededFact: Member<'retireSupersededFact'> = async (brain, q) => {
@@ -101,13 +136,13 @@ export const restoreSupersededFact: Member<'restoreSupersededFact'> = async (bra
   wholeId('restoreSupersededFact', q.oldId);
   wholeId('restoreSupersededFact', q.supersededBy);
   wholeId('restoreSupersededFact', q.expectedSupersededBy);
-  instant('restoreSupersededFact', 'an expiredAt', q.expiredAt);
-  instant('restoreSupersededFact', 'a validUntil', q.validUntil);
-  return storeCall({ member: 'restoreSupersededFact', sourceId: q.sourceId }, () => brain.restoreSupersededFact({ ...q }));
+  const expiredAt = pgInstant('restoreSupersededFact', 'an expiredAt', q.expiredAt);
+  const validUntil = pgInstant('restoreSupersededFact', 'a validUntil', q.validUntil);
+  return storeCall({ member: 'restoreSupersededFact', sourceId: q.sourceId }, () => brain.restoreSupersededFact({ ...q, expiredAt, validUntil }));
 };
 
 export const readReplacementTarget: Member<'readReplacementTarget'> = async (brain, q) => {
-  wholeId('readReplacementTarget', q.targetId);
+  bigintId('readReplacementTarget', q.targetId);
   const excludePrivate = q.excludePrivate ? storeFloorPolicy('readReplacementTarget') : undefined;
   const row: Row | null = await storeCall({ member: 'readReplacementTarget', sourceId: q.sourceId }, () =>
     brain.readReplacementTarget({ targetId: q.targetId, sourceId: q.sourceId, excludePrivate, ownPage: q.ownPage ?? null, lock: q.lock ?? false }));
