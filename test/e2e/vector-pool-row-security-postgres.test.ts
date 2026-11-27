@@ -86,13 +86,12 @@ import { hasDatabase } from './helpers.ts';
     } finally {
       walk.mockRestore();
     }
-    const exactBound = [...stmt.params];
-    exactBound[stmt.innerLimitIdx] = null;
-    const exact = await engine.transaction(tx => tx.executeRaw<Record<string, unknown>>(stmt.exactSql, exactBound));
+    // HNSW is approximate and each fresh database builds its own graph, so the reference is the pooled attempt on this graph, never the exact rows.
+    const pooledRows = await attempt(statementFor, { innerLimit: stmt.innerLimit, maxScanTuples: POOL_MAX_SCAN_TUPLES, remainingMs: 8_000, exact: false }, true, searchOpts, (tx, sql, bound) => tx.unsafe(sql, bound));
     const visible = await engine.executeRaw<{ id: number }>('SELECT id FROM pages');
     expect(results).toHaveLength(20);
     expect(results!.every(row => visible.some(page => page.id === row.page_id))).toBe(true);
-    expect(results!.map(row => `${row.slug}#${row.chunk_id}`)).toEqual(exact.filter(row => row.page_id != null).map(row => `${row.slug}#${row.chunk_id}`));
+    expect(results!.map(row => `${row.slug}#${row.chunk_id}`)).toEqual(pooledRows.filter(row => row.page_id != null).map(row => `${row.slug}#${row.chunk_id}`));
   }, 60_000);
 
   test('a source scope the reader cannot see statistics for takes its share from the counted pages', async () => {

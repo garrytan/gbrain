@@ -154,7 +154,10 @@ export const JOINED_STATEMENT_SETTINGS: Readonly<Record<string, string>> = { ena
  * by widening (`hnsw.max_scan_tuples` bounds it), so the pool goes straight
  * to the exact fallback, which keeps its sort. PGLite keeps the planner's
  * choice: it has no exact fallback, so a sorted window is its only complete
- * answer, and no deadline or row security.
+ * answer, and no deadline or row security. Statements without a walk (a type
+ * or date filter, a scope under INDEX_WALK_MIN_SCOPE_SHARE) keep the planner's
+ * choice too: their filters are selective, where a sorted exact window is the
+ * cheap plan.
  */
 export const HNSW_ORDERED_POOL_SETTINGS: Readonly<Record<string, string>> = { enable_sort: 'off' };
 
@@ -265,7 +268,9 @@ function scopeSourceIds(opts?: SearchOpts): string[] | undefined {
  * count, when given and sampled, replaces the share-of-reltuples chunk
  * estimate, and without statistics its page counts give the share: `pg_stats`
  * hides `pages.source_id` from a role that reads through row-level security
- * (#10500), and has no row before the first ANALYZE.
+ * (#10500), and has no row before the first ANALYZE. Both counts are the
+ * reader's visible pages, which is what the walk's window counts: row-security
+ * quals apply in the chunk scan, below its LIMIT.
  */
 export function sourceScope(stats: PageSourceStats | undefined, opts?: SearchOpts, counted?: ScopeChunkCount): VectorScope | undefined {
   const allPages = Number(counted?.all_pages ?? 0);
