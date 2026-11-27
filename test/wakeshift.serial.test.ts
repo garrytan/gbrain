@@ -219,6 +219,37 @@ describe('access', () => {
     }
   });
 
+  test('an owner-bound watch stops reading the whole queue once its client\'s granted source is archived (GST-4023)', async () => {
+    writeConfig({ enabled: true, url: fake.url, terms_url: 'https://example.com/terms', privacy_url: 'https://example.com/privacy' });
+    await engine.executeRaw("INSERT INTO access_members (id) VALUES ('owner-example') ON CONFLICT (id) DO UPDATE SET disabled_at = NULL, tombstoned_at = NULL");
+    await engine.setConfig('access.owner_member', 'owner-example');
+    await engine.executeRaw("INSERT INTO sources (id, name) VALUES ('source-archive-example', 'source-archive-example') ON CONFLICT (id) DO UPDATE SET archived = false");
+    await engine.executeRaw(`INSERT INTO oauth_clients (client_id, client_name, scope, member_id, source_id) VALUES ('client-owner', 'client-owner', 'read write admin', 'owner-example', 'source-archive-example')
+      ON CONFLICT (client_id) DO UPDATE SET deleted_at = NULL, scope = EXCLUDED.scope, member_id = EXCLUDED.member_id, source_id = EXCLUDED.source_id`);
+    const owner = { remote: true, transport: 'http' as const, sourceId: 'source-archive-example', auth: { token: 't', clientId: 'client-owner', principal: { kind: 'oauth_client' as const, id: 'client-owner' }, scopes: ['admin', 'write', 'read'] } };
+    try {
+      const before = await seedJob('active', 'client-a');
+      const after = await seedJob('active', 'client-a');
+      const step = body(await dispatchToolCall(engine, 'watch_job', { id: before }, owner));
+      expect(body(await dispatchToolCall(engine, 'accept_wakeshift_terms', { terms_version: step.terms_version }, owner))).toMatchObject({ accepted: true });
+      for (const id of [before, after]) expect(body(await dispatchToolCall(engine, 'watch_job', { id }, owner))).toMatchObject({ watching: true });
+
+      await finish(before);
+      expect(await drainWakes(engine)).toMatchObject({ delivered: 1, ended: 0 });
+
+      await engine.executeRaw("UPDATE sources SET archived = true WHERE id = 'source-archive-example'");
+      await finish(after);
+      expect(await drainWakes(engine)).toMatchObject({ delivered: 0, ended: 1 });
+      expect(emits()).toHaveLength(1);
+      expect(await engine.executeRaw('SELECT target, state, last_error FROM wake_subscriptions ORDER BY id'))
+        .toEqual([{ target: String(before), state: 'delivered', last_error: null }, { target: String(after), state: 'ended', last_error: 'job_not_visible' }]);
+    } finally {
+      await engine.executeRaw("DELETE FROM config WHERE key = 'access.owner_member'");
+      await engine.executeRaw("UPDATE oauth_clients SET source_id = NULL WHERE client_id = 'client-owner'");
+      await engine.executeRaw("UPDATE access_members SET disabled_at = now(), tombstoned_at = now() WHERE id = 'owner-example'");
+    }
+  });
+
   test('ownership that moves while a drain tick is delivering takes effect for the rest of that tick (GST-4023)', async () => {
     writeConfig({ enabled: true, url: fake.url, terms_url: 'https://example.com/terms', privacy_url: 'https://example.com/privacy' });
     await engine.executeRaw("INSERT INTO access_members (id) VALUES ('owner-example'), ('next-owner-example') ON CONFLICT (id) DO UPDATE SET disabled_at = NULL, tombstoned_at = NULL");

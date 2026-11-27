@@ -277,6 +277,15 @@ describe('secrets.on_write redact', () => {
     });
   });
 
+  test('a bare copy of a labelled value, joined only by removing a NUL byte, is stored redacted', async () => {
+    await withMode('redact', async () => {
+      const opaque = ['q7hv2lz9', 'kp4rt6wm', '8yb3nc5x', 'd1fg0js'].join('');
+      const split = opaque.slice(0, 10) + '\u0000' + opaque.slice(10);
+      await call(remote(), 'put_page', { slug: 'notes/redact-nul-echo', content: '# Echo\n\nAuthorization: Bearer ' + opaque + '\n\nbare copy ' + split + ' end\n' });
+      expect((await page('notes/redact-nul-echo'))!.compiled_truth).not.toContain(opaque);
+    });
+  });
+
   test('a token that a NUL byte ends, before letters the stored page joins on, is stored redacted', async () => {
     await withMode('redact', async () => {
       const npm = 'npm_' + ['Qw3Er5Ty7U', 'i9Op1As3Df', '5Gh7Jk9Lz1', 'Xc3Vb5'].join('');

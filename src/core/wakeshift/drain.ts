@@ -176,7 +176,12 @@ async function ownerReadsWholeQueue(engine: BrainEngine, row: Pick<WakeRow, 'pri
   if (!row.member_id) return false;
   const [live] = await engine.executeRaw<{ owner: string | null; client_scope: string | null; token: boolean; token_scopes: unknown }>(
     `SELECT (SELECT value FROM config WHERE key = 'access.owner_member') AS owner,
-            (SELECT scope FROM oauth_clients WHERE $1 = 'oauth_client' AND client_id = $2 AND deleted_at IS NULL) AS client_scope,
+            (SELECT c.scope FROM oauth_clients c WHERE $1 = 'oauth_client' AND c.client_id = $2 AND c.deleted_at IS NULL
+               AND (to_jsonb(c)->>'source_id' IS NULL OR EXISTS (SELECT 1 FROM sources s WHERE s.id = to_jsonb(c)->>'source_id'
+                 AND NOT COALESCE((to_jsonb(s)->>'archived')::boolean, false)))
+               AND (COALESCE(jsonb_array_length(NULLIF(to_jsonb(c)->'federated_read', 'null'::jsonb)), CASE WHEN to_jsonb(c)->>'source_id' IS NULL THEN 0 ELSE 1 END) = 0
+                 OR EXISTS (SELECT 1 FROM sources s WHERE NOT COALESCE((to_jsonb(s)->>'archived')::boolean, false)
+                   AND s.id IN (SELECT jsonb_array_elements_text(COALESCE(NULLIF(to_jsonb(c)->'federated_read', 'null'::jsonb), jsonb_build_array(to_jsonb(c)->>'source_id'))))))) AS client_scope,
             EXISTS (SELECT 1 FROM access_tokens WHERE $1 = 'legacy_token' AND id::text = $2 AND revoked_at IS NULL) AS token,
             (SELECT scopes FROM access_tokens WHERE $1 = 'legacy_token' AND id::text = $2 AND revoked_at IS NULL) AS token_scopes`,
     [row.principal_kind, row.principal_id]);

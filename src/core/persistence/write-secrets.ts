@@ -59,21 +59,23 @@ export function screenWriteSecrets(ctx: Pick<OperationContext, 'remote'>, operat
   if (ctx.remote === false) return { params, redacted: null };
   const mode = onWriteMode();
   if (mode === 'off') return { params, redacted: null };
+  const echoValues = new Map<string, string>();
   const plan = (value: unknown, form: (text: string) => string) => {
     const plans: RedactionPlan[] = [];
-    const echoValues = new Map<string, string>();
     mapStored(value, text => (plans.push(planRedaction(form(text), { allowlist: allowlist(), echoValues })), text));
     return plans;
   };
   const rawPlans = plan(params, text => text);
   let at = 0;
   const rawRedacted = mapStored(params, () => applyRedaction(rawPlans[at++]!));
-  const plans = plan(rawRedacted, stripNul);
+  let nul = false;
+  mapStored(params, text => (nul ||= text.includes('\u0000'), text));
+  const plans = nul ? plan(rawRedacted, stripNul) : [];
   const findings = [...rawPlans, ...plans].flatMap(p => p.redactions);
   if (!findings.length) return { params, redacted: null };
   if (mode === 'block') throw secretInWrite(operation, findings, mode);
   at = 0;
-  return { params: mapStored(rawRedacted, text => { const out = applyRedaction(plans[at++]!); return out === stripNul(text) ? text : out; }) as Record<string, unknown>,
+  return { params: (nul ? mapStored(rawRedacted, text => { const out = applyRedaction(plans[at++]!); return out === stripNul(text) ? text : out; }) : rawRedacted) as Record<string, unknown>,
     redacted: { count: findings.length, patterns: patternsOf(findings) } };
 }
 
