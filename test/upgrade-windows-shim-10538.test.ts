@@ -14,7 +14,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, 
 import { tmpdir } from 'os';
 import { join, resolve } from 'path';
 
-import { bunShimDir, moveAsideOrphanedShim, removeStaleShims } from '../src/core/bun-windows-shim.ts';
+import { bunShimDir, moveAsideOrphanedShim, removeStaleShims } from '../src/commands/upgrade-windows-shim.ts';
 import { reinstallHintLines } from '../src/commands/upgrade.ts';
 import { VERSION } from '../src/version.ts';
 

@@ -27,7 +27,7 @@ import {
   readPackageTarget,
   type TargetFloor,
 } from '../core/bun-floor.ts';
-import { askBunForBinDir, bunShimDir, moveAsideOrphanedShim } from '../core/bun-windows-shim.ts';
+import { askBunForBinDir, bunShimDir, moveAsideOrphanedShim } from './upgrade-windows-shim.ts';
 
 const GBRAIN_GITHUB_REPO = 'garrytan/gbrain';
 

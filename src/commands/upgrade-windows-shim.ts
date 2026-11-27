@@ -13,7 +13,7 @@
 import { existsSync, lstatSync, readdirSync, renameSync, rmSync } from 'fs';
 import { homedir } from 'os';
 import { join } from 'path';
-import { execFileSync } from './spawn.ts';
+import { execFileSync } from '../core/spawn.ts';
 
 const SHIM = 'gbrain.exe';
 const STALE_SHIM = /^gbrain\.exe\.stale(\.\d+)*$/;
