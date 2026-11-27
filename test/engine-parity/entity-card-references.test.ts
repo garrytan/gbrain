@@ -1,6 +1,6 @@
 /**
  * BrainEngine parity: the full entity card of a found entity with referrers, read through the `entity` tool by a
- * trusted local caller on every engine arm.
+ * trusted local caller and by a remote caller on every engine arm.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: the card is the same on PGLite, Postgres and Rust, every field but the lookup latency and the page's
@@ -9,7 +9,13 @@
  *    get_backlinks continuation. A local caller counts the private referrer too.
  *  - Regression: a read on the card path that a Rust brain refuses. Before the referrer reads were typed, the whole
  *    lookup answered engine_capability_missing (executeRaw, raw_sql) on a Rust brain.
- *  - Why existing coverage misses it: the entity card tests (test/entity-card-*.test.ts) run on PGLite only.
+ *  - Contract: a remote caller (read scope, no private-page grant) gets the same card on every arm with the private
+ *    referrer left out of the groups and the count: 13 meetings and 2 notes.
+ *  - Regression: an engine that ignores the caller's page policy on the card's referrer reads shows the private note to
+ *    a remote caller, or counts it.
+ *  - Why existing coverage misses it: the entity card tests (test/entity-card-*.test.ts) run on PGLite only;
+ *    entity-card-option-reads.test.ts reads the untrusted referrer groups through readReferrerGroups, not the card
+ *    the `entity` tool answers, and pins last_touched.last_retrieved_at after a search, so this file does not repeat it.
  *  - Seam: dispatchToolCall, the MCP tools/call path both transports share; the card is parsed from its text block. An
  *    `engine_capability_missing` answer is rethrown, so an arm that refuses a read on the card path ends on the typed
  *    refusal. The backup check is off: its once-per-process background refresh is not part of the card.
@@ -24,11 +30,14 @@ import { withEnv } from '../helpers/with-env.ts';
 const { parityTest } = parityArms(testBackends());
 
 const LOCAL = { remote: false, transport: 'stdio' as const, sourceId: 'default' };
+/** A remote caller with a read-scope credential on `default` and no private-page grant. */
+const REMOTE = { remote: true, transport: 'http' as const, sourceId: 'default',
+  auth: { token: 'parity', clientId: 'parity', clientName: 'parity', scopes: ['read'], sourceId: 'default' } as never };
 
 /** One `entity` tools/call: the parsed card body (or the error text) and the notice codes. */
-async function entity(engine: Parameters<typeof dispatchToolCall>[0], name: string) {
+async function entity(engine: Parameters<typeof dispatchToolCall>[0], name: string, caller: typeof LOCAL | typeof REMOTE = LOCAL) {
   const res = await withEnv({ GBRAIN_BACKUP_CHECK: 'off' },
-    () => dispatchToolCall(engine, 'entity', { name }, { ...LOCAL, noticeLedger: new NoticeLedger() }));
+    () => dispatchToolCall(engine, 'entity', { name }, { ...caller, noticeLedger: new NoticeLedger() }));
   const blocks = res.content.map(c => (c as { text?: string }).text ?? '');
   const text = blocks.find(b => b.trimStart().startsWith('{')) ?? blocks.join('\n');
   const meta = (res as { _meta?: { gbrain_notices?: Array<{ code?: string }> } })._meta;
@@ -96,6 +105,22 @@ describe('engine parity: the entity card reference groups', () => {
       const groups = (card?.referenced_by ?? []) as Array<{ canonical_type: string; total: number; rows: Array<{ slug: string }>; next?: unknown }>;
       expect(groups.map(g => [g.canonical_type, g.total, g.rows.length, g.next !== undefined])).toEqual([['meeting', 13, 10, true], ['note', 3, 3, false]]);
       expect(groups[0]!.rows[0]!.slug).toBe('meetings/2026-03-13');
+      return view;
+    });
+
+  parityTest('a remote caller sees the same full card on every arm, with the private referrer left out',
+    { methods: ['putPage', 'addLink', 'readEntityCardRows', 'readReferrerGroupRows', 'readReferrerPageDetails', 'readMentionIndexStatus', 'countLivePagesInSource'] },
+    async (engine) => {
+      await seed(engine);
+      const view = cardView(await entity(engine, 'Alice Example', REMOTE));
+      const card = view.body?.card as Record<string, any> | undefined;
+      expect(view.error).toBeNull();
+      expect(view.body?.found).toBe(true);
+      expect(card?.references_unavailable).toBeUndefined();
+      expect(card?.referenced_by_count).toBe(15);
+      const groups = (card?.referenced_by ?? []) as Array<{ canonical_type: string; total: number; rows: Array<{ slug: string }>; next?: unknown }>;
+      expect(groups.map(g => [g.canonical_type, g.total, g.rows.length, g.next !== undefined])).toEqual([['meeting', 13, 10, true], ['note', 2, 2, false]]);
+      expect(groups.flatMap(g => g.rows.map(r => r.slug))).not.toContain('notes/secret');
       return view;
     });
 });

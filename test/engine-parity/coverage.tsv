@@ -148,7 +148,7 @@ getPage	pages	yes	294	yes	yes	yes	serves
 readPageSnapshot	pages	yes	121	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	8	no	yes	yes	serves
 lockPageKeys	pages	yes	17	no	yes	yes	serves
-putPage	pages	yes	1428	yes	yes	yes	serves
+putPage	pages	yes	1429	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	45	yes	yes	yes	serves
@@ -330,8 +330,8 @@ listRelationshipNoteRows	link_temporal	yes	9	no	yes	yes	serves
 edgeValidityCounts	link_temporal	yes	2	no	yes	yes	serves
 listPageStatusByRef	link_temporal	yes	3	no	yes	yes	serves
 listRecordMetadataRows	link_temporal	yes	4	no	yes	yes	serves
-readReferrerGroupRows	link_temporal	yes	4	no	yes	yes	serves
-readReferrerPageDetails	link_temporal	yes	3	no	yes	yes	serves
+readReferrerGroupRows	link_temporal	yes	5	no	yes	yes	serves
+readReferrerPageDetails	link_temporal	yes	4	no	yes	yes	serves
 readPageReferenceDate	link_temporal	yes	2	no	yes	yes	serves
 readReferrerTargetCounts	link_temporal	yes	4	no	yes	yes	serves
 listReferrerTargetSources	link_temporal	yes	4	no	yes	yes	serves
@@ -424,7 +424,7 @@ listFactsFencePages	extraction	no	0	no	-	-	-
 listSweepStalePages	extraction	yes	1	no	yes	yes	serves
 listSweepDeferredPages	extraction	no	0	no	-	-	-
 listPageRefsForSlugs	extraction	yes	1	no	yes	yes	serves
-addLink	links	yes	170	yes	yes	yes	serves
+addLink	links	yes	171	yes	yes	yes	serves
 addLinksBatch	links	yes	42	yes	yes	yes	serves
 replaceDerivedLinks	links	yes	19	no	yes	yes	serves
 replaceDerivedLinksBatch	links	yes	1	no	yes	yes	serves
@@ -1199,8 +1199,8 @@ readPageNameText	mention_pass	yes	1	no	yes	yes	serves
 listFrontmatterAliasNorms	mention_pass	yes	1	no	yes	yes	serves
 listRejectedDeclarationPages	mention_pass	yes	1	no	yes	yes	serves
 readMentionLastPass	entity_reads	yes	1	no	yes	yes	serves
-readMentionIndexStatus	entity_reads	yes	4	no	yes	yes	serves
-countLivePagesInSource	entity_reads	yes	3	no	yes	yes	serves
+readMentionIndexStatus	entity_reads	yes	5	no	yes	yes	serves
+countLivePagesInSource	entity_reads	yes	4	no	yes	yes	serves
 countMentionDueSince	entity_reads	yes	2	no	yes	yes	serves
 recountMentionIndexStatus	entity_reads	yes	1	no	yes	yes	serves
 countPagesDueForMentions	entity_reads	yes	1	no	yes	yes	serves
@@ -1217,7 +1217,7 @@ readNamedEntitySlugs	entity_reads	yes	2	no	yes	yes	serves
 findFuzzyEntityCandidates	entity_reads	yes	3	no	yes	yes	serves
 findExactBasenameCandidates	entity_reads	yes	2	no	yes	yes	serves
 readRetirementHop	entity_reads	yes	7	no	yes	yes	serves
-readEntityCardRows	entity_reads	yes	6	no	yes	yes	serves
+readEntityCardRows	entity_reads	yes	7	no	yes	yes	serves
 listUnretiredPagesBySlugPattern	entity_reads	yes	2	no	yes	yes	serves
 listNameVariantCandidates	entity_reads	yes	3	no	yes	yes	serves
 listVisibleNameVariantCandidates	entity_reads	yes	1	no	yes	yes	serves
