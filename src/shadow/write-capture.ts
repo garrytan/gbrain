@@ -59,6 +59,8 @@ export interface TxScope {
   beforeCommit(tx: BrainEngine): Promise<void>;
   /** The transaction committed: the samples are judged against the writes it made, read back and sent. A rolled-back transaction never calls this. */
   commit(): void;
+  /** The transaction ends while calls it started are still running (the wrapper's drain gave up waiting): every sample whose write has not finished is uncomparable with `reason`. */
+  unsettled(reason: string): void;
 }
 export interface WriteSampler {
   wrap(name: string, fn: Function, ctx: { engine: any; inTransaction: boolean; mayWrite: (name: string, args: unknown[]) => boolean; scope?: TxScope; nested?: boolean }): Function;
@@ -394,6 +396,7 @@ export function createWriteSampler(o: WriteSamplerOptions): WriteSampler {
             } finally { open(); }
           } catch { /* the shadow never fails a write */ } // silent-read-ok: nothing is read or sent here, and a sample without its pin keeps the counter and the write's returned revision // capability-refusal-ok: the sampler never fails or changes a primary write
         },
+        unsettled: (reason) => { for (const s of sc.samples) if (!s.read) s.bad ??= reason; },
         open: () => ++sc.nested,
         drop: (id) => { for (let i = sc.log.length - 1; i >= 0; i--) if (sc.log[i]!.path.includes(id)) { sc.log.splice(i, 1); for (const s of sc.samples) if (s.at > i) s.at--; } },
         commit: () => { for (const s of sc.samples) { const bad = s.bad ?? judge(sc, s); if (bad || !s.read) uncomparable(s.op, bad ?? 'in_transaction'); else s.read(s.op === 'putPage' ? sc.log.filter((w, i) => i > s.at && w.name === STAMP && w.key === s.key).map((w) => w.args!) : []); } },
