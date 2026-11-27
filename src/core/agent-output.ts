@@ -162,17 +162,39 @@ export function cliRenderContext(overrides: Partial<RenderContext> = {}): Render
 const MARKER_RE = /\[(\/?)(AGENT|SHOW USER|gbrain notice)/gi;
 const MAX_INLINE = 2_000;
 
-/** GCH5-06: a control a terminal acts on (C0 except tab, DEL, C1); line breaks are flattened before this runs. */
-const CONTROL_RE = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/u;
+/**
+ * GCH5-06: a control a terminal acts on (C0 except tab, DEL, C1); line breaks are flattened before this runs. F6: the
+ * bidirectional embedding, override and isolate controls (U+202A-U+202E, U+2066-U+2069) too, which reorder what a
+ * terminal shows (Trojan Source).
+ */
+const CONTROL_RE = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/u;
 const CONTROL_G = new RegExp(CONTROL_RE.source, 'gu');
+/** F6: the nine bidirectional embedding, override and isolate controls on their own (U+202A-U+202E, U+2066-U+2069). */
+const BIDI_G = /[\u202a-\u202e\u2066-\u2069]/gu;
+
+/**
+ * F6: error prose (an envelope's message, suggestion and why) with each bidi control written as `\NNN` octal bytes.
+ * Only those nine: no line flattening and no cap, so the prose reads as it always did.
+ */
+export function bidiInert(text: string): string {
+  return text.replace(BIDI_G, octalBytes);
+}
+
+/**
+ * F6: JSON text for a reader (an MCP argument list, a JSON error document) with each bidi control written as a
+ * `\uXXXX` escape. Lossless: JSON.parse returns exactly the value, so argv and MCP arguments stay exact.
+ */
+export function jsonText(value: unknown, space?: number): string {
+  return JSON.stringify(value, null, space).replace(BIDI_G, ch => `\\u${ch.charCodeAt(0).toString(16).padStart(4, '0')}`);
+}
 
 /**
  * Neutralise interpolated text for any agent-visible channel: newlines become
  * spaces and marker tokens lose their opening bracket, so `[/SHOW USER]` in a
  * page title renders as `(/SHOW USER]` and cannot close or open a block.
  * GCH5-06: every other control a terminal acts on (BEL, ESC, DEL, C1, NUL) is
- * written as visible `\NNN` octal bytes; tab stays. Bidirectional controls are
- * not escaped here. GCH5-05: a cut lands only between whole characters, never
+ * written as visible `\NNN` octal bytes; tab stays. F6: so are the nine
+ * bidirectional embedding, override and isolate controls. GCH5-05: a cut lands only between whole characters, never
  * inside a surrogate pair or a `\NNN` escape, and the text is well formed.
  */
 export function inertText(value: string, max: number = MAX_INLINE): string {
@@ -362,7 +384,7 @@ export function orderNotices<T extends { kind: NoticeKind }>(notices: readonly T
 }
 
 function renderedStep(fix: RenderedAction): string | undefined {
-  if (fix.mcp) return `${fix.mcp.tool} ${JSON.stringify(fix.mcp.arguments)}`;
+  if (fix.mcp) return `${fix.mcp.tool} ${jsonText(fix.mcp.arguments)}`;
   return fix.command;
 }
 
@@ -385,8 +407,8 @@ export function noticeBlock(n: RenderedNotice): string {
 
 const HTTP_DROP_KEYS = new Set(['pid', 'lock_owner', 'path', 'data_dir', 'database_path', 'asset']);
 // GCH5-02: an octal byte escape of a `$'...'` command word (shell-quote.ts quotedWord, e.g. `\012` for a line break) is a boundary too.
-// GCH5-06: a raw C0, DEL or C1 control (a structured argv value is never escaped) is a boundary as well.
-const ABS_PATH_RE = /(?:^|(?<=[\s'"`(=\u0000-\u001f\u007f-\u009f]|\\[0-7]{3}))(?:\/(?:home|Users|root|tmp|var|private|opt|srv|mnt|etc)\/[^\s'"`)]*|[A-Za-z]:\\[^\s'"`)]*|~\/[^\s'"`)]*)/g;
+// GCH5-06: a raw C0, DEL or C1 control (a structured argv value is never escaped) is a boundary as well; F6: so is a raw bidi control.
+const ABS_PATH_RE = /(?:^|(?<=[\s'"`(=\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]|\\[0-7]{3}))(?:\/(?:home|Users|root|tmp|var|private|opt|srv|mnt|etc)\/[^\s'"`)]*|[A-Za-z]:\\[^\s'"`)]*|~\/[^\s'"`)]*)/g;
 // No letter or digit before it, so `owner_pid=123` in a detail is redacted too (`\b` does not break after `_`).
 const PID_RE = /(?<![A-Za-z0-9])(PID|pid)\s*[:=]?\s*\d+/g;
 const KEY_NAME_RE = /\b[A-Z][A-Z0-9]*_(?:API_KEY|TOKEN|SECRET)\b/g;
@@ -475,8 +497,9 @@ export function buildEnvelope(p: EnvelopeParts, ctx: RenderContext): AgentEnvelo
   return {
     error: p.error,
     code: p.code,
-    message: p.message,
-    suggestion,
+    // F6: prose fields carry no raw bidi control (before the HTTP redaction, so the path mask sees the escape).
+    message: bidiInert(p.message),
+    suggestion: bidiInert(suggestion),
     docs: docsUrl(docs),
     ...(p.detail !== undefined ? { detail: p.detail } : {}),
     ...(p.protocol_version !== undefined ? { protocol_version: p.protocol_version } : {}),
@@ -487,7 +510,7 @@ export function buildEnvelope(p: EnvelopeParts, ctx: RenderContext): AgentEnvelo
     ...(p.withdrawn !== undefined ? { withdrawn: p.withdrawn } : {}),
     ...(p.writable_source_ids !== undefined ? { writable_source_ids: p.writable_source_ids } : {}),
     ...(p.reason !== undefined ? { reason: p.reason } : {}),
-    ...(p.why !== undefined ? { why: p.why } : {}),
+    ...(p.why !== undefined ? { why: bidiInert(p.why) } : {}),
     ...(fix ? { fix } : {}),
     docs_cmd: ['gbrain', 'errors', p.code],
     class: codeClass(p.code, p.reason),
@@ -867,7 +890,7 @@ function genericEnvelope(e: unknown, ctx: AgentErrorContext): AgentEnvelope {
   try { message = e instanceof Error ? e.message : String(e); } catch { /* hostile value: keep the placeholder */ }
   const where = ctx.op ?? ctx.command ?? 'this operation';
   return {
-    error: 'internal_error', code: 'internal_error', message: redactUrlsInText(redactConnectionInfo(redactForTransport(message, ctx.transport))),
+    error: 'internal_error', code: 'internal_error', message: bidiInert(redactUrlsInText(redactConnectionInfo(redactForTransport(message, ctx.transport)))),
     suggestion: `Server-side failure in ${where}, not a caller mistake. Run \`gbrain doctor --json\` on the brain host; if it repeats, report it to the user.`,
     docs_cmd: ['gbrain', 'errors', 'internal_error'], class: 'server', retryable: false, contract_version: CONTRACT_VERSION,
   };
@@ -919,9 +942,9 @@ export function projectionConflictLine(e: unknown, command: string): string | nu
 export function renderCliError(e: unknown, opts: { json: boolean; command: string; tty: boolean }): CliErrorRender {
   const env = toAgentError(e, { transport: 'cli', command: opts.command, render: cliRenderContext() });
   const exitCode = exitCodeForCode(env.code, env.reason);
-  if (opts.json) return { stdout: `${JSON.stringify(env, null, 2)}\n`, exitCode };
+  if (opts.json) return { stdout: `${jsonText(env, 2)}\n`, exitCode };
   const lines = [`Error [${env.code}]: ${env.message}`];
-  const relay = env.fix && !env.fix.command && env.fix.mcp ? `call ${env.fix.mcp.tool} over MCP with ${JSON.stringify(env.fix.mcp.arguments)}` : undefined;
+  const relay = env.fix && !env.fix.command && env.fix.mcp ? `call ${env.fix.mcp.tool} over MCP with ${jsonText(env.fix.mcp.arguments)}` : undefined;
   lines.push(`Fix: ${env.fix?.command ?? relay ?? env.suggestion}`);
   if (env.why) lines.push(`Why: ${env.why}`);
   if (env.docs) lines.push(`Docs: ${env.docs}`);
@@ -956,7 +979,8 @@ export function toolResultWithNotices(result: unknown, notices: readonly Notice[
 
 /** MCP error result: exactly one content block holding the envelope. */
 export function toolErrorResult(envelope: AgentEnvelope): ToolResultShape {
-  return { content: [{ type: 'text', text: JSON.stringify(envelope, null, 2) }], isError: true };
+  // F6: the JSON text holds no raw bidi control; JSON.parse returns the exact envelope.
+  return { content: [{ type: 'text', text: jsonText(envelope, 2) }], isError: true };
 }
 
 /**

@@ -368,3 +368,55 @@ describe('GCH5-05 (d2): hold text is chosen from the whole message budget, so no
     }
   });
 });
+
+describe('F6: a bidirectional control in the checkout name cannot reorder the printed question or command', () => {
+  /** The nine embedding, override and isolate controls (Trojan Source): U+202A-U+202E and U+2066-U+2069. */
+  const BIDI = /[\u202a-\u202e\u2066-\u2069]/;
+  // Each folder name shows its letters in a different order than the one git receives.
+  const hostile = ['/brains/\u202Ekrow\u202C/notes', '/brains/a\u2067b c\u2069d', '/brains/\u202Atxt\u202D\u2066x\u2068y\u202B'];
+
+  test('the identity fix command, why and user_message hold no raw bidi control; the printed git -C reads back to the exact path', async () => {
+    for (const root of hostile) {
+      const [hold] = await holds(row({ root, owner_root: root, last_error: identity }));
+      const rendered = renderAction(hold!.fix, cliRenderContext());
+      for (const text of [rendered.command!, rendered.why, rendered.user_message!]) expect(text).not.toMatch(BIDI);
+      expect(rendered.user_message!.startsWith(`Git cannot commit page files in ${leafQuote(root)}: `)).toBe(true);
+      expect(bashArgv(`git -C ${leafQuote(root)}`)).toEqual({ argv: ['git', '-C', root], ran: false });
+      expect(bashArgv(rendered.command!)).toEqual({ argv: ['git', '-C', root, 'config', '--show-origin', '--get-regexp', '^user\\.'], ran: false });
+    }
+  });
+
+  test('the parked why holds no raw bidi control, and its git -C status reads back to the exact path', async () => {
+    for (const root of hostile) {
+      const [hold] = await holds(row({ root, owner_root: root, last_error: { phase: 'commit', step: 'add', reason: 'filter_failed' } }));
+      const rendered = renderAction(hold!.fix, cliRenderContext());
+      expect(rendered.why).not.toMatch(BIDI);
+      expect(rendered.why).toContain(`git -C ${leafQuote(root)} status`);
+      expect(bashArgv(`git -C ${leafQuote(root)} status`)).toEqual({ argv: ['git', '-C', root, 'status'], ran: false });
+    }
+  });
+
+  test('the HTTP view of the identity fix masks a private path that follows a raw U+202E in the checkout name', async () => {
+    const root = 'label\u202e/home/owner/private';
+    const [hold] = await holds(row({ root, owner_root: root, last_error: identity }));
+    const view = JSON.stringify(redactForTransport(renderAction(hold!.fix, { ...cliRenderContext(), transport: 'http' }), 'http'));
+    expect(view).not.toContain('/home/owner');
+    expect(view).not.toContain('private');
+  });
+
+  test('a long checkout path full of bidi controls still gets whole commands or none in the identity question and parked why', async () => {
+    for (let n = 120; n <= 240; n += 6) {
+      const root = `/brains/${'\u202e'.repeat(n)}x`;
+      for (const last_error of [identity, { phase: 'commit', step: 'add', reason: 'filter_failed' } as const]) {
+        const [hold] = await holds(row({ root, owner_root: root, last_error }));
+        const rendered = renderAction(hold!.fix, cliRenderContext());
+        for (const text of [rendered.why, rendered.user_message ?? '']) {
+          expect(text).not.toMatch(BIDI);
+          expect(text.length).toBeLessThanOrEqual(2_000);
+          expect(text.endsWith('…')).toBe(false);
+          if (text.includes('git -C')) expect(text).toContain(`git -C ${leafQuote(root)}`);
+        }
+      }
+    }
+  });
+});
