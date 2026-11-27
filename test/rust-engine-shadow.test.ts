@@ -1011,6 +1011,17 @@ describe('supervisor sample accounting (a sample is owed in a durable record bef
       h.done();
     });
 
+    test('ship-r2: stop() before the queued owe flush runs keeps the close: the queued flush (writes still failing) rebuilds the record with no worker, and the kept record still publishes closed', async () => {
+      const h = flakyHarness({ retryMs: 60_000 });
+      try {
+        h.sup.send(sample(0)); await turn();
+        h.disk.failing = true; h.sup.owe(1); h.sup.stop(); // stop() leaves the owe-only flush queued; its closed record cannot be written and is kept
+        await turn(); // the queued flush runs with no worker and the disk still refusing
+        h.disk.failing = false; h.sup.publishKeptNow();
+        expect(h.owed(0)).toMatchObject({ owed: 2, closed: true });
+      } finally { h.done(); }
+    });
+
     // ---- D1 (second read of the plan): the marker's own durability, the live-worker window, refused samples ----
     test('D1-F1: the marker\'s directory entry is flushed after the link; a failed flush leaves it unpublished and it is retried until the flush succeeds', async () => {
       const durable = await import('../src/core/fs-durable.ts');
