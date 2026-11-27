@@ -550,7 +550,7 @@ src/core/google/google-source.ts	execute_raw	5	+1 GST-3452: re-tier pages whose 
 src/core/google/ingest-tiers.ts	execute_raw	1	GST-3452: which participants have a person page (one alias read per thread, as counterparty.ts does, until the Google connector moves behind engine methods)
 src/core/google/loop-catchup.ts	execute_raw	8
 src/core/google/loops-exclusion.ts	execute_raw	4
-src/core/google/loops-extract.ts	execute_raw	1
+src/core/google/loops-extract.ts	execute_raw	2	#10514 supersede statement retiring older llm_extract loops on a re-extracted thread
 src/core/google/loops-reciprocity.ts	execute_raw	1
 src/core/google/people-calendar-sweep.ts	execute_raw	3
 src/core/google/provenance.ts	execute_raw	1	GST-3849: which pages came from Google (one read of pages keyed by Google source ids, for purge and eval suppression, until the Google connector moves behind engine methods)
