@@ -14,14 +14,15 @@ export const MW_LEDGER_ENV = 'GBRAIN_TEST_MW_LEDGER';
 /**
  * The arm labels a ledger line carries. The `rust-mu` view has two routes to the multi-user switch (the environment variable
  * and the brain's config row), and each is its own label so a run says which one it was; both read the matrix's one `rust-mu`
- * cell (`cellArm`).
+ * cell (`cellArm`). `rust-mu-ambient` is the Rust arm of a process that started with GBRAIN_RUST_MULTIUSER=1 (the self-check
+ * lane, kept through the preload by GBRAIN_TEST_KEEP_AMBIENT_ENV=1): its store is multi-user too, so it reads the same cell.
  */
-export const LEDGER_ARMS = ['pglite', 'postgres', 'rust', 'rust-mu-env', 'rust-mu-config'] as const;
+export const LEDGER_ARMS = ['pglite', 'postgres', 'rust', 'rust-mu-env', 'rust-mu-config', 'rust-mu-ambient'] as const;
 export type LedgerArm = typeof LEDGER_ARMS[number];
 
 /** The matrix cell a ledger arm label reads. */
 export function cellArm(arm: LedgerArm): MwEngineArm {
-  return arm === 'rust-mu-env' || arm === 'rust-mu-config' ? 'rust-mu' : arm;
+  return arm === 'rust-mu-env' || arm === 'rust-mu-config' || arm === 'rust-mu-ambient' ? 'rust-mu' : arm;
 }
 
 export const LEDGER_OUTCOMES = ['pass', 'fail', 'pending', 'n/a', 'prerequisite_missing'] as const;

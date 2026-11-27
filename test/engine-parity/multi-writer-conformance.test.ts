@@ -37,7 +37,7 @@ import type { PageInput } from '../../src/core/types.ts';
 import type { LeaseToken, FenceOpts } from '../../src/core/engine-sql/lease-token.ts';
 import { rustLeases, type RustLeases, type WriteOrigin } from '../../src/core/rust-engine/store-members/leases.ts';
 import { withEnv } from '../helpers/with-env.ts';
-import { parityArms, type ParityBackend, type ParityContext, rustArmModeProblem, rustArmMultiuser, rustMultiuserView } from './harness.ts';
+import { parityArms, type ParityBackend, type ParityContext, rustArmModeProblem, rustArmMultiuser, rustMultiuserSwitch, rustMultiuserView } from './harness.ts';
 import { clearHostRegistration, fenceOpts, hostLeaseName, setHostRegistration } from '../../src/core/persistence/host-fence.ts';
 import { assertRustCommitLogResolved, assertRustMultiuserResolved, installMuConnect, loadRustArmAddon, openRustBrainAt, removeBrainDir, resolvedMultiuser, RUST_MULTIUSER_CONFIG_KEY, rustServedRequested, type MuConnectable } from './rust-arm.ts';
 import { openRustEngine, type RustEngine } from '../../src/core/rust-engine.ts';
@@ -865,7 +865,7 @@ describe('engine parity: multi-writer conformance', () => {
     if (backend !== 'rust') throw new Error(`C16 drives the Rust commit-log format upgrade; there is no ${backend} scenario yet`);
     const mode = rustArmMultiuser();
     expect(mode, 'C16 upgrades a brain by opening it in multi-user mode: the arm must be multi-user').not.toBe('off');
-    const route = rustMultiuserView();
+    const route = rustMultiuserSwitch();
     // The commit log format (rust/crates/gbrain-store/src/format.rs LOG_FORMAT_VERSION, 16 since lane L2's renumber
     // e435301421; the addon does not export it). gbrain-store tests/commit_log.rs pins the same number.
     const LOG_FORMAT_VERSION = 16;
@@ -994,7 +994,7 @@ describe('engine parity: multi-writer conformance', () => {
   //     a raw opener still becomes its client, and a served client that connects afterwards to a new listener of the owner is served.
   //  The arm's own engine is an owner on the plain arm and a served client on the served arm; it never claims ownership either way.
   parityTest('C17 a second opener becomes a client, never an error: the first opener of a brain is its owner and a served client elects nothing', { methods: ['putPage', 'getPage'], mwCase: 'C17.served' }, async (engine) => {
-    const route = rustMultiuserView();
+    const route = rustMultiuserSwitch();
     expect(route, 'C17.served runs on the rust-mu arm only: its brain must be multi-user').not.toBe('off');
     const role = (e: unknown) => (e as { ownerRole?: string | null }).ownerRole ?? null;
     const caps = (e: unknown) => (e as { capabilities: ReadonlySet<string> }).capabilities;
@@ -1269,7 +1269,7 @@ describe('engine parity: multi-writer conformance', () => {
   //  4. Non-served arm only: the owner writes in process and B reads the owner's `lastCommitPosition` token, and the owner-socket client
   //     reads the same writes. The owner socket sends no token, so that one proves the plain second-connection read only.
   parityTest('C21 read-your-writes token on a second connection', { methods: ['putPage', 'getPage'], mwCase: 'C21' }, async (engine, _backend, ctx) => {
-    const route = rustMultiuserView();
+    const route = rustMultiuserSwitch();
     expect(route, 'C21 runs on the rust-mu arm only: its brain must be multi-user').not.toBe('off');
     const caps = (e: unknown) => (e as { capabilities: ReadonlySet<string> }).capabilities;
     const served = caps(engine).has('served');
@@ -1363,7 +1363,7 @@ describe('engine parity: multi-writer conformance', () => {
   // the served arm: the arm's server keeps the log, so the log-off brain is not the arm's own but one the case opens and serves itself
   // (the arm's served client is only the contrast, and proves mode and log on the way).
   parityTest('C21 read-your-writes token on a second connection: a read carrying a token is refused while the commit log is off', { methods: ['putPage', 'getPage'], mwCase: 'C21.log-off' }, async (engine) => {
-    const route = rustMultiuserView();
+    const route = rustMultiuserSwitch();
     expect(route, 'C21.log-off runs on the rust-mu arm only: the arm\'s own brain must be multi-user').not.toBe('off');
     assertRustMultiuserResolved(engine, route as 'env' | 'config');
     assertRustCommitLogResolved(engine);

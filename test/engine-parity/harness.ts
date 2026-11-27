@@ -25,7 +25,8 @@
  * A multi-writer conformance case declares `mwCase: 'Cnn'` (a string literal, read statically by coverage.ts too) and takes
  * no `requires`: its row in multi-writer-cases.ts says per arm whether it runs, is n/a or is pending, and a `runs` cell is
  * held to strict acceptance (`checkMwArm`). The Rust arm has two labels, `rust` and, with GBRAIN_TEST_RUST_MU_ARM=1, `rust-mu`
- * (the same arm with the multi-user switch on).
+ * (the same arm with the multi-user switch on). A process started with GBRAIN_RUST_MULTIUSER=1 (the self-check lane) labels it
+ * `rust-mu-ambient`, which reads the `rust-mu` cell.
  *
  * `methods` is read statically by `test/engine-parity/coverage.ts` to build
  * `test/engine-parity/coverage.tsv`, so it must be an array literal of
@@ -53,7 +54,7 @@ import { itemSetHash } from '../../src/core/generations/publish.ts';
 import { IDENTITY_DOWNGRADE_OP } from '../../src/core/persistence/sync-status-sql.ts';
 import {
   archiveRustSource, closeRustBrain, createRustSource, newRustBrain, putRustOpCheckpointRow, rustPageDeletedAt, rustAccessBrain, openRustBrain, DIVERGENCE_NORMALIZERS, readDivergences, removeBrainDir, rustArmRequested, rustMemberCapability, rustRefusal, type DivergenceRow, createRustMember, type MemberSeed, rustMuRoute, rustServedRequested, openRustBrainAt, installMuConnect, type MuConnectable, type RustMuRoute,
-  openServedPeer, recordServedCalls,
+  openServedPeer, assertRustCommitLogResolved, assertRustMultiuserResolved, recordServedCalls,
 } from './rust-arm.ts';
 import { isEngineMember, readStopPins, refusalFacts, rustServes, rustServesCapability, setupRefusalStep, setupStep, today, type StopPin } from './rust-refusals.ts';
 
@@ -180,6 +181,16 @@ const AMBIENT_MULTIUSER = process.env.GBRAIN_RUST_MULTIUSER === '1';
 export function rustArmMultiuser(env: Record<string, string | undefined> = process.env, ambient = AMBIENT_MULTIUSER): 'off' | 'env' | 'config' | 'ambient' {
   const view = rustMultiuserView(env);
   return view !== 'off' ? view : ambient ? 'ambient' : 'off';
+}
+
+/**
+ * How this process turns multi-user mode on for the Rust brains a scenario opens itself: `env` (GBRAIN_RUST_MULTIUSER=1, set
+ * by the rust-mu env route or present when the process started, the ambient lane), `config` (the brain's config row) or `off`.
+ * A scenario that opens its own owner or second opener and asserts the mode it resolved passes this route.
+ */
+export function rustMultiuserSwitch(env: Record<string, string | undefined> = process.env, ambient = AMBIENT_MULTIUSER): 'off' | 'env' | 'config' {
+  const mode = rustArmMultiuser(env, ambient);
+  return mode === 'ambient' ? 'env' : mode;
 }
 
 /**
@@ -874,23 +885,27 @@ export function parityArms(backends: readonly TestBackend[]): ParitySuite {
   // GBRAIN_TEST_RUST_MU_ARM=1 is the Rust arm with the multi-user switch on (label `rust-mu`); it implies the Rust arm.
   const muRoute = rustMuRoute();
   const selected: ParityBackend[] = [...backends, ...(rustArmRequested() || muRoute !== null ? ['rust' as const] : [])];
-  const rustLabel: 'rust' | 'rust-mu-env' | 'rust-mu-config' = muRoute === null ? 'rust' : `rust-mu-${muRoute}`;
+  const rustLabel: 'rust' | 'rust-mu-env' | 'rust-mu-config' | 'rust-mu-ambient' = muRoute !== null ? `rust-mu-${muRoute}` : rustArmMultiuser() === 'ambient' ? 'rust-mu-ambient' : 'rust';
   const armLabel = (arm: ParityArm): LedgerArm => (arm.backend === 'rust' ? rustLabel : arm.backend);
   const testFile = callerTestFile(new Error().stack);
   const tally: RustTally = { compared: 0, refused: 0, diverged: 0, standalone: 0, stops: [] };
   const multiuserBefore = { set: false, value: undefined as string | undefined };
-  // rust-mu view only: the commit log sub-switch (read only while the store is multi-user, from the environment alone).
+  // rust-mu view, and the ambient lane for a file with multi-writer cases: the commit log sub-switch (read only while the store
+  // is multi-user, from the environment alone).
   const commitLogBefore = { set: false, value: undefined as string | undefined };
   // Cases this file declared, and the ones the Rust arm skipped on an `n/a` capability (rust-tally.ts).
   let registered = 0;
   let skipped = 0;
   // rust-mu view only: compared cases the matrix runs on `rust` but holds pending on `rust-mu` (counted as the off pin counts them).
   const muGaps: string[] = [];
+  // Multi-writer cases this file declared: on the ambient lane they turn the commit log on for the arm's lifetime.
+  let mwRegistered = 0;
   const restoreMultiuser = (): void => {
-    if (!multiuserBefore.set) return;
-    multiuserBefore.set = false;
-    if (multiuserBefore.value === undefined) delete process.env.GBRAIN_RUST_MULTIUSER;
-    else process.env.GBRAIN_RUST_MULTIUSER = multiuserBefore.value;
+    if (multiuserBefore.set) {
+      multiuserBefore.set = false;
+      if (multiuserBefore.value === undefined) delete process.env.GBRAIN_RUST_MULTIUSER;
+      else process.env.GBRAIN_RUST_MULTIUSER = multiuserBefore.value;
+    }
     if (!commitLogBefore.set) return;
     commitLogBefore.set = false;
     if (commitLogBefore.value === undefined) delete process.env.GBRAIN_RUST_COMMIT_LOG;
@@ -911,8 +926,18 @@ export function parityArms(backends: readonly TestBackend[]): ParitySuite {
         commitLogBefore.set = true;
         commitLogBefore.value = process.env.GBRAIN_RUST_COMMIT_LOG;
         process.env.GBRAIN_RUST_COMMIT_LOG = '1';
+      } else if (rustLabel === 'rust-mu-ambient' && mwRegistered > 0) {
+        // The ambient lane (the process started with GBRAIN_RUST_MULTIUSER=1) runs the multi-writer rows with the commit log on,
+        // as the rust-mu view does: the sub-switch is set for the arm's lifetime and restored after, and the arm's first brain
+        // proves both switches resolved below. Other parity files on the lane keep the lane's own environment.
+        commitLogBefore.set = true;
+        commitLogBefore.value = process.env.GBRAIN_RUST_COMMIT_LOG;
+        process.env.GBRAIN_RUST_COMMIT_LOG = '1';
       }
       for (const backend of selected) opened.push(await openArm(backend, backend === 'rust' && muRoute !== null ? muRoute : undefined));
+      if (commitLogBefore.set && muRoute === null) {
+        for (const arm of opened) if (arm.backend === 'rust') { assertRustMultiuserResolved(arm.engine, 'env'); assertRustCommitLogResolved(arm.engine); }
+      }
     } catch (error) {
       for (const arm of opened) await arm.close();
       restoreMultiuser();
@@ -946,6 +971,7 @@ export function parityArms(backends: readonly TestBackend[]): ParitySuite {
   function parityTest<T>(name: string, opts: ParityCaseOpts, scenario: ParityScenario<T>): void {
     registered++;
     if (opts.mwCase !== undefined) {
+      mwRegistered++;
       // A multi-writer case no selected arm runs (every cell pending or n/a) must not read as a pass in a plain Bun run: it is
       // registered as a todo that names the owners, and its per-arm ledger lines are still written when the ledger is on.
       const row = mwEntry(opts.mwCase);
@@ -972,7 +998,7 @@ export function parityArms(backends: readonly TestBackend[]): ParitySuite {
         // rust-mu view: a compared case the matrix runs on `rust` but holds pending on `rust-mu` is a known gap of the
         // multi-user view, not a regression. It stays skipped (its scenario did not run, so it is never counted as equal);
         // the pin check allows for it by name (rust-tally.ts `knownGaps`), so everything else is still held to the off pin.
-        if (muRoute !== null && row.reference === 'compare' && mwArmPlan(row, 'rust').action === 'run' && mwArmPlan(row, rustLabel).action === 'skip') muGaps.push(row.id);
+        if (rustLabel !== 'rust' && row.reference === 'compare' && mwArmPlan(row, 'rust').action === 'run' && mwArmPlan(row, rustLabel).action === 'skip') muGaps.push(row.id);
         return;
       }
       for (const arm of arms) {
