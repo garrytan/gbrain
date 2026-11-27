@@ -561,8 +561,6 @@ src/core/schema-pack/unify-types-handler.ts	execute_raw	1
 src/core/schema-verify.ts	execute_raw	2
 src/core/search-vector-backfill.ts	execute_raw	3
 src/core/search/dedup.ts	execute_raw	1
-src/core/search/evidence-date.ts	execute_raw	3
-src/core/search/feedback-boost.ts	execute_raw	1
 src/core/search/projection-statistics.ts	execute_raw	11
 src/core/search/query-cache-gate.ts	execute_raw	2
 src/core/search/query-cache.ts	execute_raw	6

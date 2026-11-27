@@ -116,13 +116,15 @@ export async function matchQueryFacts(engine: BrainEngine, query: string, scope:
 
 /**
  * When each fact was said (evidence-date.ts `factObservationDates`, under the caller's page read policy), or null
- * when the read failed: its rows then carry `observed_unavailable` and the response is marked degraded.
+ * when the read failed: its rows then carry `observed_unavailable` and the response is marked degraded. An engine
+ * that cannot serve the read refuses: the refusal propagates, never a quiet degraded marker.
  */
 async function observedDates(engine: BrainEngine, facts: FactCandidate[], readScope: PageReadScope | undefined): Promise<{ dates: Map<number, string> | null; timeZone: string | null }> {
   const timeZone = (await engine.getConfig('brain.timezone').catch(() => null))?.trim() || null;
   try {
     return { dates: await factObservationDates(engine, facts, timeZone, readScope), timeZone };
-  } catch {
+  } catch (e) {
+    rethrowCapabilityMissing(e);
     return { dates: null, timeZone };
   }
 }

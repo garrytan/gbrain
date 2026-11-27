@@ -366,7 +366,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
     ],
 
   // facts_recall: the recall pool's candidate reads (nearest, slot, call-off, entity pairs, unbacked keys) and its final row read
-  facts_recall: ['readFactsEmbeddingColumn', 'listNearestFacts', 'listFactSourcePages', 'listTypedClaimFactsAtPages', 'listSlotRows', 'listPoolUnbackedKeys', 'listCallOffCueFacts', 'listPoolEntityPairs', 'listFactRowsByIds',
+  facts_recall: ['readFactsEmbeddingColumn', 'listNearestFacts', 'listFactSourcePages', 'listFactHoldingRefs', 'listTypedClaimFactsAtPages', 'listSlotRows', 'listPoolUnbackedKeys', 'listCallOffCueFacts', 'listPoolEntityPairs', 'listFactRowsByIds',
     'listReadablePageSlugs'],
 
   // facts_conversation: conversation fact publication and relink
@@ -439,7 +439,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'attachSourcePath', 'readMemoryProposal', 'readPendingProposalSummary', 'listMemoryProposalRows', 'listOwnerProposalRows',
     'readOpCheckpointKeys', 'writeOpCheckpointKeys', 'appendOpCheckpointPaths', 'deleteOpCheckpoint', 'deleteOpCheckpointPaths',
     'readOpCheckpointRecord', 'writeOpCheckpointRecord',
-    'readOpCheckpointRecords', 'writeOpCheckpointRecords', 'readGitGapSourceRow', 'countGitGapLivePages', 'markTransactionReadOnly', 'listGitGapNewestPages', 'countGitGapUnreadFacts', 'readGitGapPageBatch', 'countGitGapFactsOnPages', 'countGitGapTimelineOnPages', 'readGitGapSourceRows', 'readRetrievalEvent', 'insertRetrievalEvents', 'applyRetrievalRatings', 'readVolunteerUsage', 'insertVolunteerEvents', 'deleteVolunteerEventsOlderThan', 'readPinnedQuestion', 'listPinnedQuestions', 'insertPinnedQuestion', 'listOwnerCredentialRows', 'listSharedMemberMigrationRows', 'listMarkdownPageSlugs', 'listAdminClientRows', 'readAtomGeneration', 'recordAtomGenerationBump', 'readSyncImportPageRows', 'declareSyncImportPageCursor', 'fetchSyncImportPageCursor',
+    'readOpCheckpointRecords', 'writeOpCheckpointRecords', 'readGitGapSourceRow', 'countGitGapLivePages', 'markTransactionReadOnly', 'listGitGapNewestPages', 'countGitGapUnreadFacts', 'readGitGapPageBatch', 'countGitGapFactsOnPages', 'countGitGapTimelineOnPages', 'readGitGapSourceRows', 'readRetrievalEvent', 'readPageFeedbackWeights', 'insertRetrievalEvents', 'applyRetrievalRatings', 'readVolunteerUsage', 'insertVolunteerEvents', 'deleteVolunteerEventsOlderThan', 'readPinnedQuestion', 'listPinnedQuestions', 'insertPinnedQuestion', 'listOwnerCredentialRows', 'listSharedMemberMigrationRows', 'listMarkdownPageSlugs', 'listAdminClientRows', 'readAtomGeneration', 'recordAtomGenerationBump', 'readSyncImportPageRows', 'declareSyncImportPageCursor', 'fetchSyncImportPageCursor',
     'readAdmittedWriteRequests', 'readPageRevisionWriter', 'readRevisionWriterRequest', 'writeSyncAdmissionStamp', 'readSyncAdmissionEffects',
     'readHealthMemoClock', 'listSynopsisSourceIds', 'readSynopsisTierSources', 'setSourceContextualMode',
     'revokeAccessTokensNamed', 'revokeAccessToken', 'deleteOAuthClient', 'readAccessGroups', 'listPagesNamingReader', 'countOpenPages', 'hasSynopsisFrontmatterOverride',
@@ -483,7 +483,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
   // large_page: the remote put_page large-page guard's stored body size read (engine-sql/large-page.ts)
   large_page: ['readStoredBodyBytes', 'readPageBodySizes'],
   // relational_reads: the relational recall arm's page reads (engine-sql/relational-reads.ts)
-  relational_reads: ['readAdmittedPageRefs', 'readPageSynopses', 'readSeedTitleSlugs'],
+  relational_reads: ['readAdmittedPageRefs', 'readAdmittedPageDateFields', 'readPageDateFieldsByIds', 'readPageSynopses', 'readSeedTitleSlugs'],
   trust_fence: ['listFenceFactRows', 'restorePageTrust', 'listHeldRows', 'listGuardedTakeRows'],
   trust_proposals: ['insertTrustProposal', 'getTrustProposal', 'listTrustProposals', 'pendingTrustProposalsFor',
     'updatePendingTrustProposalAfter', 'transitionTrustProposal', 'listPendingContradictions', 'listUnreadablePrivacyHoldIds'],

@@ -301,6 +301,7 @@ test/engine-parity/fact-relink-writes.test.ts
 test/engine-parity/fact-trajectory-widening.test.ts
 test/engine-parity/fact-update-guard.test.ts
 test/engine-parity/fact-visibility-widening.test.ts
+test/engine-parity/facts-arm-query-strict.test.ts
 test/engine-parity/facts-conversation-sites.test.ts
 test/engine-parity/facts-cycle-sites.test.ts
 test/engine-parity/facts-cycle.test.ts
@@ -522,6 +523,7 @@ test/engine-parity/schema-detect.test.ts
 test/engine-parity/search-caller-refusals.test.ts
 test/engine-parity/search-cjk.test.ts
 test/engine-parity/search-deep-query.test.ts
+test/engine-parity/search-feedback-and-date-headers.test.ts
 test/engine-parity/search-privacy-retention.test.ts
 test/engine-parity/search-privacy.test.ts
 test/engine-parity/search-private-fence.test.ts

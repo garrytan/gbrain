@@ -3369,6 +3369,17 @@
         ],
         "flagOnScopes": []
       },
+      "listFactHoldingRefs#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "listFactIdsBySourcePrefix#default": {
         "flagOffLanes": [
           "pool"
@@ -5665,6 +5676,28 @@
         ],
         "flagOnScopes": []
       },
+      "readAdmittedPageDateFields#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readAdmittedPageDateFields#scoped": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
       "readAtomOriginInput#default": {
         "flagOffLanes": [
           "pool"
@@ -6874,6 +6907,28 @@
         "flagOnScopes": []
       },
       "readOwnerOnlySourcesPresent#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readPageDateFieldsByIds#default": {
+        "flagOffLanes": [
+          "pool"
+        ],
+        "flagOffOpensTransaction": false,
+        "flagOn": "unscoped",
+        "flagOnLanes": [
+          "pool"
+        ],
+        "flagOnScopes": []
+      },
+      "readPageFeedbackWeights#default": {
         "flagOffLanes": [
           "pool"
         ],
@@ -10220,6 +10275,7 @@
         "listExtractionPendingPages": "none",
         "listExtractorFactsForClassification": "none",
         "listFactContextsForPurgeProbe": "none",
+        "listFactHoldingRefs": "none",
         "listFactIdsBySourcePrefix": "none",
         "listFactIdsStillOnPage": "none",
         "listFactProvenance": "none",
@@ -10922,6 +10978,7 @@
         "readAdmissionRate": "none",
         "readAdmissionSample": "none",
         "readAdmissionSource": "none",
+        "readAdmittedPageDateFields": "none",
         "readAdmittedPageRefs": "none",
         "readAdmittedWriteRequests": "none",
         "readAgentClientSpend": "none",
@@ -11259,9 +11316,11 @@
         "readPageChunkerVersion": "none",
         "readPageCompiledTruths": "none",
         "readPageDatabaseOnlyReason": "none",
+        "readPageDateFieldsByIds": "none",
         "readPageEmbeddingBudget": "none",
         "readPageExtractionReceipt": "none",
         "readPageExtractionWatermark": "none",
+        "readPageFeedbackWeights": "none",
         "readPageFileOrigin": "none",
         "readPageFolderRulesAllowed": "none",
         "readPageHiddenFromCaller": "none",

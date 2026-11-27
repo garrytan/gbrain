@@ -143,6 +143,7 @@ export const JOBS_MEMBERS = {
   deleteVolunteerEventsOlderThan: 'telemetry',
   insertRetrievalEvents: 'telemetry',
   readRetrievalEvent: 'telemetry',
+  readPageFeedbackWeights: 'telemetry',
   applyRetrievalRatings: 'telemetry',
   patchOauthClient: 'minion_queue',
   insertAccessToken: 'minion_queue',
