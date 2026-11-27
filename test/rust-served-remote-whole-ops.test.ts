@@ -24,12 +24,14 @@ describe('the closed list of remote whole operations', () => {
     expect(Object.hasOwn(REMOTE_WHOLE_OPERATIONS, 'put_page')).toBe(true);
   });
 
-  test('every listed operation is a registered write operation that is not local-only', () => {
+  test('every listed operation is a registered write operation that is not CLI-only; only takes_remove is local-only', () => {
     const bad = Object.keys(REMOTE_WHOLE_OPERATIONS).filter(name => {
       const op = operationsByName[name];
-      return !op || op.scope !== 'write' || op.localOnly === true || op.cliOnly === true;
+      return !op || op.scope !== 'write' || op.cliOnly !== undefined;
     });
     expect(bad).toEqual([]);
+    // A local-only operation is refused for every remote MCP caller by the dispatch; it is listed only for the in-process path.
+    expect(Object.keys(REMOTE_WHOLE_OPERATIONS).filter(name => operationsByName[name]?.localOnly === true)).toEqual(['takes_remove']);
   });
 
   test('every listed operation names a served parity file that is a served row of the served set', () => {
