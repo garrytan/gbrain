@@ -32,6 +32,7 @@ import { fenceBody, withoutBody } from '../page-body/page-shape.ts';
 import { pipelined, transactionMemo } from '../page-state/transactions.ts';
 import { prepareCanonicalProjections } from './canonical-projections.ts';
 import { sliceMemo } from './slice-memo.ts';
+import { foreignCheckout } from './git-durability-policy.ts';
 import { withoutSafetyAssessments } from './reconcile-safety.ts';
 import { digest, sha256 } from './digest.ts';
 import { preserveProtectedTakes } from './protected-takes.ts';
@@ -1000,7 +1001,9 @@ async function prepareSyncMutation(unbounded: BrainEngine, row: WriteRequest, _c
   // #5409: a read-only mirror keeps its canonical metadata in the database only; its checkout stays the remote's bytes.
   enterClaimStep(clock, 'mirror_check', undefined, 'db');
   const mirrorReadOnly = overlay && await sourceMirrorReadOnly(engine, row.source_id);
-  const canonicalFile = overlay && !mirrorReadOnly && writeThroughConfigured(await engine.getConfig('sync.write_through')) ? serializePageToMarkdown(renderedPage, tags) : null;
+  // GST-3743: nothing on this host commits a foreign checkout's files, so every import of its pass stays database-only.
+  const foreign = await sliceMemo(unbounded, `foreign\0${row.source_id}`, () => foreignCheckout(engine, row.source_id, binding));
+  const canonicalFile = overlay && !mirrorReadOnly && !foreign && writeThroughConfigured(await engine.getConfig('sync.write_through')) ? serializePageToMarkdown(renderedPage, tags) : null;
   const writeback = canonicalWritebackNeeded(row, p, p.content, canonicalFile);
   // A rename projects against the moved page (same id), so its pinned timeline rows carry over.
   enterClaimStep(clock, 'canonical_projections', undefined, 'db');
@@ -1019,7 +1022,7 @@ async function prepareSyncMutation(unbounded: BrainEngine, row: WriteRequest, _c
     deferEmbedding: p.processingOptions?.noEmbed || p.embedDeferred === true, ...(!(p.processingOptions?.noEmbed || p.embedDeferred === true) && ready.noop && !moved && snapshot && await chunksEmbeddedAsIs(engine, snapshot.page.id) ? { embeddingCurrent: true } : {}),
     ...(ready.afterCommit || renamed ? { afterCommit: async (target: BrainEngine) => { await published.afterCommit?.(target); } } : {}),
     ...(writeback ? { file: { root, path: join(root, p.path), content: canonicalFile, expectedBeforeHash: p.rawHash } } : {}),
-    ...(mirrorReadOnly ? { databaseOnlyReason: 'mirror_read_only' as const } : {}),
+    ...(mirrorReadOnly ? { databaseOnlyReason: 'mirror_read_only' as const } : foreign ? { databaseOnlyReason: 'foreign_checkout' as const } : {}),
     apply: async (tx, preimage) => {
       let applied = ready;
       if (renamed) {
