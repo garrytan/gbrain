@@ -345,13 +345,17 @@ describe('engine parity: the eval harness reads', () => {
     const page = await engine.putPage('notes/raw-scalar', { type: 'note', title: 'Raw', compiled_truth: 'A page with raw data.' });
     await engine.putRawData('notes/raw-scalar', 'crm', { placeholder: 'x' });
     await engine.putRawData('notes/raw-scalar', 'mail', { placeholder: 'y' });
-    const [first, second] = (await engine.readPageRedactionRows(page.id, 'default', 'notes/raw-scalar')).rawData;
+    await engine.putRawData('notes/raw-scalar', 'web', { placeholder: 'z' });
+    const [first, second, third] = (await engine.readPageRedactionRows(page.id, 'default', 'notes/raw-scalar')).rawData;
     await engine.setRawDataValue(page.id, first!.id, 4815162342);
     await engine.setRawDataValue(page.id, second!.id, true);
+    // JavaScript writes 1e-7 with an exponent; Postgres prints a jsonb number as plain decimals.
+    await engine.setRawDataValue(page.id, third!.id, 1e-7);
     const hits = await engine.scanTextColumns({ pattern: '4815162342', activeOnly: false });
     const result = { number: hits.map(h => [h.value, h.slug]), boolean: (await engine.scanTextColumns({ pattern: 'true', activeOnly: false }))
-      .some(h => h.value === 'true' && h.slug === 'notes/raw-scalar') };
-    expect(result).toEqual({ number: [['4815162342', 'notes/raw-scalar']], boolean: true });
+      .some(h => h.value === 'true' && h.slug === 'notes/raw-scalar'),
+      exponent: (await engine.scanTextColumns({ pattern: '0.0000001', activeOnly: false })).map(h => [h.value, h.slug]) };
+    expect(result).toEqual({ number: [['4815162342', 'notes/raw-scalar']], boolean: true, exponent: [['0.0000001', 'notes/raw-scalar']] });
     return result;
   });
 

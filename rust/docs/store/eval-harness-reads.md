@@ -38,7 +38,8 @@ The store has no SQL catalog, so the catalog reads and the text scan answer from
 - **Columns.** A JSON object record is read field by field. A string field is a text column. An object
   or array field is a `jsonb` column, read as its compact JSON text (Postgres reads a `text[]` as
   `{a,b}`). A number or boolean is text only in a jsonb field (the `jsonb::de_value` fields,
-  listed in `JSONB_FIELDS`), as the SQL scan reads a whole jsonb `42` as `42`; any other number or
+  listed in `JSONB_FIELDS`), as the SQL scan reads a whole jsonb `42` as `42`, in Postgres's plain decimal text (`1e-7` reads as
+  `0.0000001`); any other number or
   boolean is a SQL number or boolean column, not text. A config row is raw text (it may parse as
   JSON), so it is one text column, `value`, read as UTF-8, as is any other stored value that is not
   a JSON object. Keys are not read, except the text columns some keys hold: a config row's `key`, a

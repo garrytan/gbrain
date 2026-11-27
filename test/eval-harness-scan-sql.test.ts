@@ -8,9 +8,11 @@
  *  - Regression: the scan used unqualified names (a temporary table of the same name was read instead), joined every
  *    page_id to pages.id (a uuid page_id aborted the whole scan with 42883), and a role that row security filtered got
  *    an empty answer, which reads as "the text is gone" (also when the table's only text column is a domain over
- *    text, which the visibility check did not count as text).
+ *    text, which the visibility check did not count as text), and a pause that waited on the brain row lock read the
+ *    topology count from before the wait, so a brain-wide change committed meanwhile failed its restore.
  *  - Why existing coverage misses it: the engine parity file runs only gbrain's own tables as their owner, and the
- *    byte-for-byte pins answer the catalog with a recorder.
+ *    byte-for-byte pins answer the catalog with a recorder; the pins also cannot show what a pause sees after it
+ *    waits on another connection's lock.
  *  - Seam: none. Real PGLite and, with DATABASE_URL, real Postgres; the row security case needs a real role.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
@@ -121,6 +123,43 @@ describe.if(backends.includes('postgres'))('scanTextColumns on Postgres', () => 
       const refused = await tx.scanTextColumns({ pattern: 'unreadabletoken', activeOnly: false, tables: ['facts'] }).then(() => 'ok', (e: Error) => e.message);
       expect(refused).toBe('scanTextColumns: the running role cannot read every row of facts, pages; run the scan as the table owner or a BYPASSRLS role');
     });
+  }, 120_000);
+
+  test('a harness pause that waits on a committing brain-wide change counts it, so its restore still succeeds', async () => {
+    const store = await engine.writerReleaseStore();
+    await store.setBrainEnabled(true);
+    let locked!: () => void;
+    let release!: () => void;
+    const holding = new Promise<void>(r => { locked = r; });
+    const gate = new Promise<void>(r => { release = r; });
+    // Another connection holds the brain row lock and records a brain-wide topology change, then commits.
+    const change = (engine as PostgresEngine).transaction(async tx => {
+      await tx.executeRaw('SELECT 1 FROM persistence_brain WHERE singleton = 1 FOR UPDATE');
+      await tx.executeRaw(`INSERT INTO persistence_topology_changes (principal_id, request_id, digest, operation, source_id, state)
+        VALUES (gen_random_uuid(), gen_random_uuid(), 'eval-scan', 'writer_activate', '*', 'committed')`);
+      locked();
+      await gate;
+    });
+    try {
+      await holding;
+      const pausing = engine.pauseManagedPersistence();
+      let done = false;
+      void pausing.then(() => { done = true; }, () => { done = true; });
+      await Bun.sleep(300);
+      const waited = !done;
+      release();
+      await change;
+      const prior = await pausing;
+      const [{ n }] = await engine.executeRaw<{ n: string }>("SELECT count(*)::text AS n FROM persistence_topology_changes WHERE source_id = '*'");
+      const result = { waited, counted: prior.topology_changes === n, restored: await engine.restoreManagedPersistence(prior),
+        enabled: JSON.parse(await engine.readWriterAdminState()).brain.enabled };
+      expect(result).toEqual({ waited: true, counted: true, restored: true, enabled: true });
+    } finally {
+      release();
+      await change.catch(() => undefined);
+      await engine.executeRaw("DELETE FROM persistence_topology_changes WHERE digest = 'eval-scan'");
+      await store.setBrainEnabled(false);
+    }
   }, 120_000);
 
   test('a harness restore that waits on a committing deactivation keeps the deactivation', async () => {

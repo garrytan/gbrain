@@ -428,18 +428,6 @@ fn jsonb_field(key: &[u8], field: &str) -> bool {
         .any(|(prefix, fields)| key.starts_with(prefix) && fields.contains(&field))
 }
 
-/// The jsonb text of a whole-value number or boolean. A whole number that reached the store as a
-/// float (a JavaScript number) prints without `.0`, as the SQL engines store `JSON.stringify`'s
-/// text.
-fn scalar_text(v: &Value) -> String {
-    match v.as_f64() {
-        Some(f) if v.is_f64() && f.fract() == 0.0 && f.abs() < 9_007_199_254_740_992.0 => {
-            format!("{f:.0}")
-        }
-        _ => v.to_string(),
-    }
-}
-
 /// One text column of a stored value: its name, its text and its kind (`text` or `jsonb`).
 type TextColumn = (String, String, &'static str);
 
@@ -484,9 +472,11 @@ fn text_columns(
                     Value::Object(_) | Value::Array(_) => {
                         out.push((field.clone(), v.to_string(), "jsonb"))
                     }
-                    Value::Number(_) | Value::Bool(_) if jsonb_field(key, field) => {
-                        out.push((field.clone(), scalar_text(v), "jsonb"))
-                    }
+                    Value::Number(_) | Value::Bool(_) if jsonb_field(key, field) => out.push((
+                        field.clone(),
+                        crate::cli_reads::pg_text::jsonb_text(v),
+                        "jsonb",
+                    )),
                     _ => {}
                 }
             }
@@ -818,6 +808,19 @@ mod tests {
         assert_eq!(cols, vec![("data".to_string(), "42".to_string(), "jsonb")]);
         let (cols, _) = text_columns("raw/raw", &raw, br#"{"data":4815162342.0}"#);
         assert_eq!(cols[0].1, "4815162342");
+        for (stored, printed) in [
+            ("1e-7", "0.0000001"),
+            ("-1.5e-7", "-0.00000015"),
+            ("1e21", "1000000000000000000000"),
+            ("1.2345678901234568e20", "123456789012345680000"),
+            ("0.30000000000000004", "0.30000000000000004"),
+            ("-2.0", "-2"),
+            ("0.0", "0"),
+        ] {
+            let value = format!(r#"{{"data":{stored}}}"#);
+            let (cols, _) = text_columns("raw/raw", &raw, value.as_bytes());
+            assert_eq!(cols[0].1, printed, "{stored}");
+        }
         let (cols, _) = text_columns("raw/raw", &raw, br#"{"data":1.5}"#);
         assert_eq!(cols[0].1, "1.5");
         let (cols, _) = text_columns("x", b"x", br#"{"data":true}"#);
