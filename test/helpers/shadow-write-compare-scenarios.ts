@@ -9,6 +9,8 @@ import { join } from 'node:path';
 import { evaluateReadiness, WRITE_CLIENT_LIMIT, WRITE_COVERAGE_LIMIT, WRITE_COVERAGE_NAMED, WRITE_PGLITE_LIMIT, type ShadowStatus } from '../../src/core/engine-swap/readiness.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { importFile } from '../../src/core/import-file.ts';
+import { assertPreparedFactWithdrawals } from '../../src/core/facts/withdrawal.ts';
+import { writePageAliases } from '../../src/core/mentions/pass.ts';
 import { operationsByName, type OperationContext } from '../../src/core/operations.ts';
 import { performSync } from '../../src/commands/sync.ts';
 import { claimWorktree } from '../../src/core/persistence/ownership.ts';
@@ -106,10 +108,10 @@ function fenceKit(ctx: WriteCompareContext) {
     const putEvents = (inbox: WriteEvent[]) => inbox.filter((e) => e.op === 'putPage');
     const sampled = (inbox: WriteEvent[], op: string) => inbox.filter((e) => e.op === op && e.outcome === undefined);
     /** The real wrapper with the real follower as its sink, the follower's write count as the sampler's `generation` (attach.ts), and the real data fence where the brain has one. The follower reads nothing (no child): only its publish counters matter here. */
-    function prod(opts: { generation?: () => number | undefined; send?: (line: string) => boolean } = {}) {
+    function prod(opts: { generation?: () => number | undefined; send?: (line: string) => boolean; preimageTimeoutMs?: number } = {}) {
       const follower = new ShadowFollower({ reads: { pauseMs: 0, read: async () => { throw new Error('no reads in this rig'); }, close: async () => {} } as never, send: () => true, rpc: async () => { throw new Error('no child in this rig'); } });
       const inbox: WriteEvent[] = [];
-      const sampler = createWriteSampler({ rate: 1, generation: opts.generation ?? writeGeneration(follower), send: opts.send ?? ((line) => { inbox.push(JSON.parse(line)); return true; }), active: () => true });
+      const sampler = createWriteSampler({ rate: 1, generation: opts.generation ?? writeGeneration(follower), send: opts.send ?? ((line) => { inbox.push(JSON.parse(line)); return true; }), active: () => true, preimageTimeoutMs: opts.preimageTimeoutMs });
       const sink = { counters: newMirrorCounters(), offer: () => {}, active: () => true };
       return { follower, inbox, wrapped: wrapShadowEngine(primary(), sink, { sampleRate: 0, follow: { sink: follower }, writes: sampler }) };
     }
@@ -1723,17 +1725,60 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       expect(Boolean(putEvents(inbox)[2]!.moved)).toBe(false);
     }, 120_000);
 
-    test('a pipelined edit with the follower wired is compared and does not wait for itself', async () => {
+    // The import pipeline (import-file.ts `applyPrepared`; every sync import runs it too), whose calls Postgres starts at once (`pipelined`): the withdrawal check,
+    // the version row (an existing page with a preimage), the edit (with the contextual-retrieval stamp after it in the 'none' mode), the chunk delete (all
+    // chunks, all but the kept ones, or none for a segmented page) and the alias writes. The version row is in the pipeline when the caller passes the page's preimage
+    // (a managed write: persistence/coordinator.ts); an unmanaged import writes it first, on its own. Every subset the import sends, in its order, plus pairs and a second edit.
+    const IMPORT_ORDERS: string[][] = [
+      ['createVersion', 'putPage'], ['putPage', 'deleteChunks'], ['withdrawals', 'putPage'], ['putPage', 'aliases'],
+      ...['', 'createVersion'].flatMap((v) => ['putPage', 'putPage+stamp'].flatMap((p) => ['', 'deleteChunks', 'deleteChunksExcept'].map((d) => ['withdrawals', v, p, d, 'aliases'].filter(Boolean)))),
+      ['putPage', 'deleteChunks', 'putPage:alice'], ['createVersion', 'putPage', 'putPage:alice', 'deleteChunks', 'aliases'],
+    ];
+    test.each(IMPORT_ORDERS.map((calls) => [calls.join(', '), calls] as const))('pipelined in one transaction with the follower wired (%s): each edit waits only for the calls before it and is compared', async (_name, calls) => {
       await fresh();
-      const { inbox, wrapped } = prod();
-      const snapshot = await primary().readPageSnapshot('companies/acme-example');
+      // A sampled write that waits more than 50 ms for the calls ahead of it is uncomparable (in_transaction_busy): one that waited for itself, or for a call queued behind it, would.
+      const { inbox, wrapped } = prod({ preimageTimeoutMs: 50 });
+      const slug = 'companies/acme-example';
+      const snapshot = await primary().readPageSnapshot(slug);
+      const edit = (to: string, title: string, stamp: boolean) => async (tx: BrainEngine) => { await tx.putPage(to, page(title), { sourceId: 'default', inline: true }); if (stamp) await tx.updatePageContextualRetrievalState(to, 'default', 'none', null); };
+      const thunk = (call: string): ((tx: BrainEngine) => Promise<unknown>) => {
+        switch (call) {
+          case 'withdrawals': return (tx) => assertPreparedFactWithdrawals(tx, 'default', 'Acme Pipelined.', '', slug);
+          case 'createVersion': return (tx) => tx.createVersion(slug, { sourceId: 'default', preimage: snapshot } as never);
+          case 'putPage': return edit(slug, 'Acme Pipelined', false);
+          case 'putPage+stamp': return edit(slug, 'Acme Pipelined', true);
+          case 'putPage:alice': return edit('people/alice-example', 'Alice Pipelined', false);
+          case 'deleteChunks': return (tx) => tx.deleteChunks(slug, { sourceId: 'default' });
+          case 'deleteChunksExcept': return (tx) => tx.deleteChunksExcept(slug, [], { sourceId: 'default' });
+          case 'aliases': return (tx) => writePageAliases(tx, slug, 'default', { ...(page('Acme Pipelined') as object as { title: string; type: string; compiled_truth: string; timeline: string }), frontmatter: {} }, null, null);
+          default: throw new Error(`unknown call ${call}`);
+        }
+      };
       const started = Date.now();
-      // The version row's follow pre-read holds the call lane, so the edit is held there; when the lane opens, the edit's sample must not count itself among the calls ahead of it.
-      await wrapped.transaction(async (tx) => { await Promise.all([tx.createVersion('companies/acme-example', { sourceId: 'default', preimage: snapshot } as never), tx.putPage('companies/acme-example', page('Acme Edited'), { sourceId: 'default', inline: true })]); });
+      await wrapped.transaction(async (tx) => { await Promise.all(calls.map((c) => thunk(c)(tx))); });
       const took = Date.now() - started;
-      await until(() => putEvents(inbox).length >= 1);
-      expect(putEvents(inbox)[0]!.outcome).toBeUndefined(); // a full sample, not in_transaction_busy
-      expect(took).toBeLessThan(1_500); // the sampler's wait for calls ahead of it is 2 s: waiting for itself would use all of it
+      const edits = calls.filter((c) => c.startsWith('putPage')).length;
+      await until(() => putEvents(inbox).length >= edits);
+      // The first edit has no write ahead of it in the transaction, so it is compared. A second edit after it is compared or, by the existing rule, uncomparable for
+      // that earlier write (in_transaction_prior_write); never in_transaction_busy, which is what a wait for itself or for a call behind it gives.
+      const events = putEvents(inbox);
+      expect(events.length).toBe(edits);
+      expect(events.filter((e) => !e.outcome).map((e) => (e.args as unknown[])[0])).toContain(slug);
+      expect(events.filter((e) => e.outcome).map((e) => e.reason).filter((r) => r !== 'in_transaction_prior_write')).toEqual([]);
+      expect((await primary().getPage(slug))?.title).toBe('Acme Pipelined'); // the edit committed with the calls beside it
+      expect(took).toBeLessThan(1_000); // the follower's pre-read waits up to 2 s for calls ahead of it: a pre-read and a call waiting for each other would use all of it
+    }, 120_000);
+
+    test('a real import of a changed page with the follower wired (withdrawal check, edit, chunk delete and aliases pipelined on Postgres; the version row goes first, on its own) is compared and does not wait', async () => {
+      await fresh();
+      const { inbox, wrapped } = prod({ preimageTimeoutMs: 50 });
+      const root = ctx.tempDir(); const file = join(root, 'pipelined.md');
+      const sync = async (body: string) => { writeFileSync(file, `---\ntype: note\ntitle: Pipelined\n---\n\n${body}\n`); const at = Date.now(); await importFile(wrapped as never, file, 'notes/pipelined.md', { noEmbed: true }); return Date.now() - at; };
+      await sync('First body of the page.');
+      const took = await sync('A changed body of the page.');
+      await until(() => putEvents(inbox).length >= 2);
+      expect(putEvents(inbox).map((e) => e.outcome ?? 'compared')).toEqual(['compared', 'compared']);
+      expect(took).toBeLessThan(1_500);
     }, 120_000);
   });
 
