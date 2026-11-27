@@ -66,7 +66,7 @@ Works with Claude Code, Cursor, Windsurf, and any MCP client that supports stdio
 On Claude Code, `gbrain setup claude-code` writes and verifies this registration
 for you ([setup guide](../guides/setup.md)). No server, no tunnel, no token needed. Works on both PGLite and Postgres engines.
 `--surface full` serves every operation; `--advertise verbs` lists only the seven
-memory verbs and `request_tools` in tools/list, and `request_tools` returns any
+memory verbs, `correct` and `request_tools` in tools/list, and `request_tools` returns any
 other tool's schema. A bare `gbrain serve` lists everything. For a client that cannot hold the full
 catalog, `--surface verbs` exposes exactly the seven-verb memory protocol
 (`recall`, `remember`, `entity`, `synthesize`, `forget`, `context_pack`,
@@ -83,7 +83,7 @@ connection per call ([warm CLI socket](../guides/cli-socket.md)).
 listing fewer tools to the agent, set `mcp.advertised_surface`:
 
 ```bash
-gbrain config set mcp.advertised_surface verbs   # list the 7 verbs; everything else stays callable
+gbrain config set mcp.advertised_surface verbs   # list the 7 verbs, correct and request_tools; everything else stays callable
 ```
 
 Unset is the recommended default. In a held-out agent benchmark, listing only
@@ -99,7 +99,7 @@ that session's list (the server sends `tools/list_changed`). On the OAuth HTTP
 server, a client that set its own surface (`request_tools` with `surface`, or
 `gbrain auth rescope-client`) has that surface listed in full, and a client an
 install default set up (`gbrain auth clients` shows `full (set by install)`)
-lists the memory verbs and `request_tools` whatever the server's `--advertise`
+lists the memory verbs, `correct` and `request_tools` whatever the server's `--advertise`
 or `mcp.advertised_surface` says; `gbrain auth rescope-client <client_id>
 --surface full` lists everything for it. Unset advertises the whole callable
 set. When `request_tools` with `surface` changes a client's surface, the OAuth
