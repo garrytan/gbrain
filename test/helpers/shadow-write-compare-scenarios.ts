@@ -1427,7 +1427,9 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       const said = JSON.parse(out.trim().split('\n').at(-1)!) as { sent: number; refused: number };
       await until(() => existsSync(done), (readerSleep + 30) * 1000); // the child outlives its parent: it reads what the pipe holds, then counts what it was never sent
       const t = readWriteTally(home, readEpoch(home)!.epoch_id)!;
-      return { ...said, received: t.uncomparable_by_reason.no_sample ?? 0, lost: t.uncomparable_by_reason.pipe_unflushed ?? 0, total: t.comparable + t.unexplained_difference + t.uncomparable + t.capability_missing, files: readdirSync(home) };
+      // `cut`: the pipe holds a prefix of the stream, so at most its LAST line can be cut short (seen on macOS, whose pipe takes part of a write); the child reads that line, cannot parse it and settles it
+      // `line_unreadable` (src/shadow/child.ts), so it is neither received whole nor lost in the pipe, and it is still counted.
+      return { ...said, received: t.uncomparable_by_reason.no_sample ?? 0, lost: t.uncomparable_by_reason.pipe_unflushed ?? 0, cut: t.uncomparable_by_reason.line_unreadable ?? 0, reasons: t.uncomparable_by_reason, total: t.comparable + t.unexplained_difference + t.uncomparable + t.capability_missing, files: readdirSync(home) };
     }
 
     test('a reader that catches up while the CLI waits: every sample is received and counted, none is lost', async () => {
@@ -1443,8 +1445,9 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
         expect(r.refused).toBe(0);
         expect(r.lost).toBeGreaterThan(0);
         expect(r.received).toBeLessThan(r.sent);
-        expect(r.received + r.lost).toBe(r.sent);
-        expect(r.total).toBe(r.sent);
+        expect(r.cut, JSON.stringify(r.reasons)).toBeLessThanOrEqual(1); // only the last line in the pipe can be cut short
+        expect(r.received + r.cut + r.lost, JSON.stringify(r.reasons)).toBe(r.sent); // every sample is received whole, read cut short, or counted lost in the pipe: exactly
+        expect(r.total, JSON.stringify(r.reasons)).toBe(r.sent);
       }, 120_000);
     }
   });
