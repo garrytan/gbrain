@@ -138,6 +138,15 @@ export const OWNER_IPC_REMOTE_DENY: Readonly<Record<string, string>> = {
 };
 
 /**
+ * Engine members that write and that a remote caller may still send, over the served wire only (ruled 2026-11-26): the
+ * usage stamp a remote read makes in process too (last-retrieved.ts bumpLastRetrievedAt), best-effort and idempotent. The
+ * brain server stamps only page ids the caller may read and refuses the call otherwise (served/remote-side-writes.ts). It
+ * is NOT a read: it stays out of OWNER_IPC_REMOTE_READS, and test/rust-owner-ipc-remote.test.ts pins this list to exactly
+ * this one member.
+ */
+export const OWNER_IPC_REMOTE_SIDE_WRITES: ReadonlySet<string> = new Set(['bumpPageRetrievals']);
+
+/**
  * Forwarded members a remote caller may send to the owner: the frozen hand list and the typed additions above. Every
  * other member, a write or anything not listed, is refused for a remote caller before it is sent.
  */

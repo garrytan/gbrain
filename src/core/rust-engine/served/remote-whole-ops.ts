@@ -46,6 +46,10 @@ export const REMOTE_WHOLE_OPERATIONS: Readonly<Record<string, string>> = {
   takes_supersede: 'test/engine-parity/takes-prepare.test.ts',
   takes_resolve: 'test/engine-parity/takes-prepare.test.ts',
   takes_remove: 'test/engine-parity/takes-prepare.test.ts',
+  // Ruled 2026-11-26 (option A): a caller's own queued write, and the other remote page writes.
+  cancel_write_request: 'test/engine-parity/write-request-cancel.test.ts',
+  capture: 'test/engine-parity/plain-member-writes.test.ts',
+  put_pages: 'test/engine-parity/remote-links.test.ts',
 };
 
 /** True when `name` is a whole operation a remote caller may send over the served wire. */

@@ -32,7 +32,7 @@ import { encodeError, encodeValue, type Wire } from '../owner-ipc/codec.ts';
 import {
   OWNER_IPC_VERSION_V3, SERVED_SERVER_CAPS, parsePositionToken, positionToken, type OwnerHello,
 } from '../owner-ipc/protocol.ts';
-import { OWNER_IPC_REMOTE_READS, ownerIpcRefusal, ownerMemberOnlyReads } from '../owner-ipc/routes.ts';
+import { OWNER_IPC_REMOTE_READS, OWNER_IPC_REMOTE_SIDE_WRITES, ownerIpcRefusal, ownerMemberOnlyReads } from '../owner-ipc/routes.ts';
 import { OWNER_RUN_OPERATION } from '../owner-ipc/whole-op.ts';
 import { frameAccessWire } from '../owner-ipc/frame-access.ts';
 import { remoteWholeOperationCall } from './remote-whole-ops.ts';
@@ -312,7 +312,7 @@ export function servedSession(side: ServedServerSide, opts: ServedServerOptions,
       replyDirect(id, member, ownerIpcRefusal(member, 'a remote whole operation of a principal other than the brain owner waits for per-user access'));
       return;
     }
-    if (remote && !remoteWholeOperationCall(kind, member, frame.args) && (kind === 'fn' || !OWNER_IPC_REMOTE_READS.has(member))) {
+    if (remote && !remoteWholeOperationCall(kind, member, frame.args) && !(kind === 'call' && OWNER_IPC_REMOTE_SIDE_WRITES.has(member)) && (kind === 'fn' || !OWNER_IPC_REMOTE_READS.has(member))) {
       replyDirect(id, member, ownerIpcRefusal(member, kind === 'fn'
         ? 'a remote caller\'s whole operation is not sent to the brain owner'
         : 'a remote caller\'s write is not sent to the brain owner'));

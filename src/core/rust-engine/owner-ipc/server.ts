@@ -67,6 +67,7 @@ import { servedSession, type ServedHooks, type ServedServerOptions, type ServedS
 import { encodeLengthFrame } from '../served/framing.ts';
 import { IMPORT_CLIENT_FILE } from '../served/client-files.ts';
 import { SERVED_BRAIN_CALL, SERVED_STORE_CALL, SERVED_STORE_KEYS } from '../served/store-returning.ts';
+import { remoteSideWrite } from '../served/remote-side-writes.ts';
 
 /** Whole operations only a protocol v3 session sends. */
 const V3_ONLY_OPERATIONS: ReadonlySet<string> = new Set([IMPORT_CLIENT_FILE, SERVED_STORE_CALL, SERVED_STORE_KEYS, SERVED_BRAIN_CALL]);
@@ -665,7 +666,7 @@ export async function serveOwnerEngine(
       const route = (OWNER_IPC_ROUTES as Record<string, string>)[member];
       const method = (engine as unknown as Record<string, unknown>)[member];
       if (route !== 'forward' || typeof method !== 'function') { refuse(ownerIpcRefusal(member, 'it is not sent across the owner socket')); return; }
-      target = (...args) => (method as (...a: unknown[]) => Promise<unknown>).apply(engine, args);
+      target = remoteSideWrite(engine, member, method as (...a: unknown[]) => Promise<unknown>);
     }
     let args: unknown[];
     try {

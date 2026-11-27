@@ -18,7 +18,7 @@
  */
 import { storeMultiuser } from '../access-self-check.ts';
 import { rustMultiuserFromEnv } from '../multiuser-switch.ts';
-import { OWNER_IPC_REMOTE_READS, ownerIpcRefusal } from './routes.ts';
+import { OWNER_IPC_REMOTE_READS, OWNER_IPC_REMOTE_SIDE_WRITES, ownerIpcRefusal } from './routes.ts';
 import { remoteWholeOperationCall } from '../served/remote-whole-ops.ts';
 
 /** The store the owner serves, when its engine has one open (a Rust engine), else none. */
@@ -69,6 +69,7 @@ export function ownerRemoteRefusal(engine: object, frame: Record<string, unknown
   // Over the served wire only, a whole operation of the closed list runs (served/remote-whole-ops.ts); never on the socket.
   if (frame.t === 'fn') return servedWire && remoteWholeOperationCall('fn', member, frame.args) ? null
     : ownerIpcRefusal(member, 'a remote caller\'s whole operation is not run by the brain owner');
+  if (servedWire && OWNER_IPC_REMOTE_SIDE_WRITES.has(member)) return null; // the scope-checked usage stamp (served/remote-side-writes.ts)
   if (!OWNER_IPC_REMOTE_READS.has(member)) return ownerIpcRefusal(member, 'a remote caller\'s write is not run by the brain owner');
   return null;
 }
