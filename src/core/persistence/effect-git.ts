@@ -6,7 +6,7 @@ import { gitDurabilityPolicy } from './git-durability-policy.ts';
 import type { WorktreeBinding } from './ownership.ts';
 import { OperationError, opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
-import { gitDiagnostic, withGitDiagnostic, type GitDiagnostic } from './git-diagnostic.ts';
+import { gitDiagnostic, gitDiagnosticOf, withGitDiagnostic, type GitDiagnostic } from './git-diagnostic.ts';
 import { adoptedBy, type GitCommitNote } from './effect-model.ts';
 import { persistenceHome } from './identity.ts';
 import { nativeFileTarget } from './native-file-target.ts';
@@ -679,6 +679,23 @@ const OWNER_SCAN_BUDGET_MS = 10_000;
  */
 export type PushRedaction = { values: number; rebuilt: number; notices?: unknown[] } & Record<string, unknown>;
 export async function pushGitRoot(root: string, signal?: AbortSignal, scanBudgetMs = OWNER_SCAN_BUDGET_MS): Promise<{ push: 'committed'; integrated?: number; redaction?: PushRedaction } | { push: 'skipped'; reason: 'no_tracking_remote' }> {
+  try { return await pushCommittedRoot(root, signal, scanBudgetMs); } catch (error) { throw pushPhaseFailure(error); }
+}
+
+/**
+ * The commit is already local when the push runs, so a git step that did not finish there (a timeout or a spawn error,
+ * which `git()` throws as `git_unavailable`) is a push hold, not a commit that was never made: every caller of
+ * pushGitRoot gets `git_push_unavailable` with the push phase, and `gbrain sync status` lists it under git_push_holds.
+ */
+export function pushPhaseFailure(error: unknown): unknown {
+  if (!(error instanceof OperationError) || error.code !== 'git_unavailable') return error;
+  const diag = gitDiagnosticOf(error);
+  return withGitDiagnostic(opError('git_push_unavailable', 'The canonical commit is durable locally; its push will retry.',
+    `${error.suggestion ?? error.message} The commit itself is local and nothing is lost; the worker pushes again on a later pass.`, { fix: error.fix }),
+    { phase: 'push', step: diag?.step ?? 'push', line: diag?.line ?? null });
+}
+
+async function pushCommittedRoot(root: string, signal: AbortSignal | undefined, scanBudgetMs: number): Promise<{ push: 'committed'; integrated?: number; redaction?: PushRedaction } | { push: 'skipped'; reason: 'no_tracking_remote' }> {
   let fromBackground: PushRedaction | undefined;
   const result = await withSession(root, signal, undefined, false, async session => {
     const branch = await git(session, ['symbolic-ref', '--quiet', '--short', 'HEAD']);

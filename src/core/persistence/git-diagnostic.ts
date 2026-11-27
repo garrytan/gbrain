@@ -39,9 +39,11 @@ export function sanitizeGitStderr(stderr: string): string | null {
   for (const control of CONTROLS) text = text.replace(control, '');
   text = stripUrlSecrets(text)
     .replace(/\b([\w.-]+):[^\s@/:]+@([\w.-]+):/g, '$1:<REDACTED>@$2:')
-    .replace(/\b(proxy-authorization|authorization)\s*:\s*\S+(?:[ \t]+\S+)?/gi, '$1: <REDACTED>')
+    // An Authorization header's whole value goes (Basic, Bearer, Digest with its nonce and response, any scheme).
+    .replace(/\b(proxy-authorization|authorization)[ \t]*[:=][^\r\n]*/gi, '$1: <REDACTED>')
     .replace(/\b(bearer|basic|token)[ \t]+[A-Za-z0-9._~+/=-]{8,}/gi, '$1 <REDACTED>')
-    .replace(/\b([\w-]*(?:token|secret|passw(?:or)?d|pwd|api[_-]?key|access[_-]?key|private[_-]?key|auth)[\w-]*)[ \t]*[=:][ \t]*("[^"]*"|'[^']*'|[^\s"']+)/gi, '$1=<REDACTED>');
+    // key=value, key: value, and JSON or quoted keys ("access_token":"value").
+    .replace(/(["']?)\b([\w-]*(?:token|secret|passw(?:or)?d|pwd|api[_-]?key|access[_-]?key|private[_-]?key|auth|credential|session)[\w-]*)\1[ \t]*[=:][ \t]*("[^"]*"|'[^']*'|[^\s"',;}]+)/gi, '$2=<REDACTED>');
   text = applyRedaction(planRedaction(text));
   const line = text.split('\n').map(l => l.trim()).find(Boolean);
   if (!line) return null;

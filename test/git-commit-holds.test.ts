@@ -17,8 +17,7 @@
 import { describe, expect, test } from 'bun:test';
 import { GIT_DIAGNOSTIC_LINE_MAX, gitDiagnostic, gitDiagnosticOf, sanitizeGitStderr } from '../src/core/persistence/git-diagnostic.ts';
 import { gitCommitHoldLine, readGitCommitHolds } from '../src/core/persistence/git-commit-holds.ts';
-import { gitFailure } from '../src/core/persistence/effect-git.ts';
-import { pushPhaseFailure } from '../src/core/persistence/effects.ts';
+import { gitFailure, pushPhaseFailure } from '../src/core/persistence/effect-git.ts';
 import { OperationError } from '../src/core/ops/contract.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 
@@ -34,6 +33,13 @@ describe('sanitizeGitStderr', () => {
     const out = sanitizeGitStderr('error: alice:pa55word@git.example.invalid:acme.git token=abcd1234efgh GITHUB_TOKEN: ghx_value99 Basic dXNlcjpwYXNzd29yZA== https://u:p@ss@h.example.invalid/x')!;
     for (const secret of ['pa55word', 'abcd1234efgh', 'ghx_value99', 'dXNlcjpwYXNzd29yZA', 'p@ss']) expect(out).not.toContain(secret);
     expect(out).toContain('git.example.invalid');
+  });
+
+  test('quoted JSON keys and a Digest Authorization header leave nothing secret', () => {
+    const json = sanitizeGitStderr('error: helper said {"access_token":"fakeQueryToken1234","note":"x"}')!;
+    expect(json).not.toContain('fakeQueryToken1234');
+    const digest = sanitizeGitStderr('fatal: Authorization: Digest username="u", nonce="dcd98b7102dd2f0e", response="6629fae49393a05397450978507c4ef1"')!;
+    for (const secret of ['dcd98b7102dd2f0e', '6629fae49393a05397450978507c4ef1']) expect(digest).not.toContain(secret);
   });
 
   test('a secret the scanner recognizes is redacted', () => {

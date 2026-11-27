@@ -42,7 +42,7 @@ import { isSourceDbOnlySlug } from './source-storage.ts';
 import { advanceEffectCursor, claimCoalescedGitEffects, claimPersistenceEffect, completeEffect, effectClaimStamp, effectClaimKeeper, failEffect, hasRearmableTargets, mirrorGates, parkEffect, rearmWithheldTargets, renewPersistenceEffectClaim, requeueEffect, retryBusyEffect, retryEffect, singleFileGitEffect, type MirrorGate } from './effect-journal.ts';
 import { guardEffectSource, recoverEffectPublication, reserveEffectRecovery } from './effect-recovery.ts';
 import { commitGitTargets, DURABILITY_NOT_ENABLED, gitRootAhead, publishGitEffect, pushGitRoot, type GitEffectOwner } from './effect-git.ts';
-import { gitDiagnosticOf, withGitDiagnostic, type GitDiagnostic } from './git-diagnostic.ts';
+import { gitDiagnosticOf, type GitDiagnostic } from './git-diagnostic.ts';
 import { retryIndexLockParks } from './effect-retry.ts';
 import { assertSegmentedMirrorGate, resumeGatedMirrors } from './segmented-mirror-gate.ts';
 import { gitDurabilityPolicy } from './git-durability-policy.ts';
@@ -738,19 +738,6 @@ async function recordFailure(engine: BrainEngine, effect: PersistenceEffect, err
   await parkEffectTarget(engine, { ...effect, data }, code, target, undefined, lastError);
 }
 
-/**
- * The commit of these effects is already local when the push runs, so a git step that did not finish there (a timeout or
- * a spawn error, which `git()` throws as `git_unavailable`) is a push hold, not a commit that was never made: it is
- * recorded as `git_push_unavailable` with the push phase, and `gbrain sync status` lists it under git_push_holds.
- */
-export function pushPhaseFailure(error: unknown): unknown {
-  if (!(error instanceof OperationError) || error.code !== 'git_unavailable') return error;
-  const diag = gitDiagnosticOf(error);
-  return withGitDiagnostic(opError('git_push_unavailable', 'The canonical commit is durable locally; its push will retry.',
-    `${error.suggestion ?? error.message} The commit itself is local and nothing is lost; the worker pushes again on a later pass.`, { fix: error.fix }),
-    { phase: 'push', step: diag?.step ?? 'push', line: diag?.line ?? null });
-}
-
 /** The failed step's diagnostic as the effect stores it (`data.last_error`, and on a parked entry); none for other errors. */
 const lastErrorOf = (error: unknown) => gitDiagnosticOf(error);
 
@@ -1151,7 +1138,7 @@ async function runEffectPass(engine: BrainEngine, config: GBrainConfig, opts: Ef
       lock = await takeLock(binding);
       if (!lock) throw writerBusy(items[0]!.effect);
       pushed = await pushGitRoot(root, opts.signal);
-    } catch (error) { failure = pushPhaseFailure(error); } finally { await lock?.release(); }
+    } catch (error) { failure = error; } finally { await lock?.release(); }
     await (await import('../git/redact-finish.ts')).settleIfRedacted(engine, root, pushed);
     for (const { effect, outcome, target } of items) {
       try {
