@@ -8,6 +8,7 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 
 import { applyContactPage, type ContactPageIO } from '../src/core/contact-page-apply.ts';
+import { classifyConnectorError } from '../src/core/connectors/item-holds.ts';
 import { contactIdSlug, personSlugFromContact, renderPersonPage } from '../src/core/google/google-render.ts';
 import type { ContactData } from '../src/core/google/types.ts';
 import { appleBaseSlug, appleContactRender, appleTombstoneSlugs, renderAppleContactPage } from '../src/core/apple-contacts/render.ts';
@@ -97,7 +98,10 @@ for (const provider of ['google', 'apple'] as const) {
       d.pages.set(d.path, { owner: 'someone-else', body: 'keep this' });
       d.pages.set(`${DIR}/old-name.md`, { owner: id, body: 'old' });
       const before = structuredClone([...d.pages]);
-      await expect(applyContactPage(id, false, d.io)).rejects.toThrow(/belongs to another contact/);
+      const refused = await applyContactPage(id, false, d.io).then(() => null, (e: unknown) => e);
+      expect(String(refused)).toContain('belongs to another contact');
+      // A content failure counts toward a hold, so a lasting collision is held instead of re-blocking the contacts cursor on every sync.
+      expect(classifyConnectorError(refused)).toMatchObject({ code: 'contact_page_owned', scope: 'item', class: 'content' });
       expect([...d.pages]).toEqual(before);
       expect(d.writes).toEqual([]);
       expect(d.removes).toEqual([]);

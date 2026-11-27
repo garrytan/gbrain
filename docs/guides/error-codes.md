@@ -1553,6 +1553,16 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 
 More: [docs/guides/troubleshooting.md#consumers-without-heartbeat](../../docs/guides/troubleshooting.md#consumers-without-heartbeat)
 
+### contact_page_owned
+
+<a id="contact_page_owned"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A contact's page path belongs to another contact, so the contact was refused and nothing was written or removed; it is held after repeated refusals. | Two contacts rendered to the same page path (a contact-id path or a disambiguated name path another contact already owns); writing would overwrite the other contact's page. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/google-connect.md#contact_page_owned](../../docs/guides/google-connect.md#contact_page_owned)
+
 ### content_filter_owned
 
 <a id="content_filter_owned"></a>

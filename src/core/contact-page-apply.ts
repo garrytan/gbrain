@@ -13,6 +13,8 @@
  *   - a rename lands the new page first, then retires the one it owned at the old path, so a run that dies in
  *     between leaves the contact with a page rather than none.
  */
+import { opError } from './ops/contract.ts';
+
 export interface ContactPageIO {
   /** The source_path of the live page this contact owns, or null. */
   existingPath(): Promise<string | null>;
@@ -53,7 +55,8 @@ export async function applyContactPage(contactId: string, deleted: boolean, io: 
     return;
   }
   if (owner !== null && owner !== contactId) {
-    throw new Error(`Contact page ${rendered.relPath} belongs to another contact; contact ${contactId} was not written and its existing page was kept.`);
+    throw opError('contact_page_owned', `Contact page ${rendered.relPath} belongs to another contact.`,
+      `Contact ${contactId} was not written and its existing page was kept; it is retried on the next sync and held after repeated refusals. Rename one of the two contacts, or remove the other page, to clear it.`);
   }
   await io.write(rendered.relPath, rendered.markdown);
   if (existingPath && existingPath !== rendered.relPath && await io.owner(existingPath) === contactId) {
