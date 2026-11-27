@@ -603,8 +603,7 @@ export async function serveOwnerEngine(
           }
           conn.helloed = true;
           v2Sockets.add(socket);
-          // In multi-user mode the hello also lists the remote check, so a client marks a remote caller's frames (B3).
-          send({ ...hello, capabilities: ownerHelloCapabilities(engine, hello.capabilities) });
+          send({ ...hello, capabilities: ownerHelloCapabilities(engine, hello.capabilities) }); // B3: lists remote_check in multi-user mode
           return;
         case 'cancel': cancelCall(calls, Number(frame.id)); return;
         case 'call': case 'fn': admit(frame, bytes, calls, send, conn.helloed); return;
