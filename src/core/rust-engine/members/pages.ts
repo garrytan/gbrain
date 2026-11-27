@@ -246,6 +246,7 @@ export const PAGES_MEMBERS = {
   readBeliefCoverageEvents: 'belief_ledger',
   hasCompanyBrainReceipt: 'sources',
   readGuestSourceRow: 'sources',
+  readGuestDeleteRow: 'pages',
   listGuestSourceIds: 'sources',
   hasGuestSource: 'sources',
   getSourceStrictness: 'sources',

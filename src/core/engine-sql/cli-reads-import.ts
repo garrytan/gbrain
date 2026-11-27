@@ -5,7 +5,7 @@
  * brain answers from its store (rust/crates/gbrain-store/src/cli_reads/import.rs).
  */
 import type {
-  GuestSourceLookupRow, LinkPageMetadataRow, PageAtRevisionRef, PageTrustLookup, PageTrustRow, RowTrustLookup, RowTrustRow,
+  GuestDeleteRow, GuestSourceLookupRow, LinkPageMetadataRow, PageAtRevisionRef, PageTrustLookup, PageTrustRow, RowTrustLookup, RowTrustRow,
   SourceIncarnationRow, SourceRecordRow, StoredTimelineRow,
 } from '../engine.ts';
 import { GUEST_SOURCES_HIDDEN_SQL, guestSourceSql } from '../guests/note.ts';
@@ -79,6 +79,23 @@ export async function readGuestSourceRow(exec: LegacyUnscopedRead, sourceId: str
     FROM (SELECT 1) AS one LEFT JOIN guest_sources g ON g.source_id = ${sourceId}`);
   const [row] = await exec.executeRaw<GuestSourceLookupRow>(text, params);
   return row ?? { hidden: false, source_id: null, writers: null, trust_ceiling: null };
+}
+
+/**
+ * One page's guest records for a remote delete (guests/admission.ts refuseRemoteGuestDelete): whether row-level security
+ * hides guest_sources, whether a guest_sources row lists the page's source, whether a guest_promotions row kept it and the
+ * `<kind>:<id>` writer of its guest mark. A page that does not exist answers all false with no writer. A schema behind the
+ * guest-notes migration throws the missing-table error.
+ */
+export async function readGuestDeleteRow(exec: LegacyUnscopedRead, sourceId: string, slug: string): Promise<GuestDeleteRow> {
+  const { text, params } = renderFragment(sqlFragment`SELECT ${trustedSql(GUEST_SOURCES_HIDDEN_SQL)} AS hidden,
+      EXISTS (SELECT 1 FROM guest_sources g WHERE g.source_id = p.source_id) AS guest,
+      EXISTS (SELECT 1 FROM guest_promotions g WHERE g.guest_page_id = p.id) AS kept,
+      (SELECT m.writer_kind || ':' || m.writer_id FROM guest_marks m WHERE m.page_id = p.id) AS writer
+    FROM pages p WHERE p.source_id = ${sourceId} AND p.slug = ${slug} LIMIT 1`);
+  const [row] = await exec.executeRaw<GuestDeleteRow>(text, params);
+  return row ? { hidden: row.hidden === true, guest: row.guest === true, kept: row.kept === true, writer: row.writer ?? null }
+    : { hidden: false, guest: false, kept: false, writer: null };
 }
 
 /** The guest sources among `sourceIds` (guestSourceSql), in no particular order. */

@@ -31,8 +31,9 @@ import { OWNER_RUN_OPERATION } from '../owner-ipc/forwarded-names.ts';
  * (test/rust-served-remote-whole-ops.test.ts checks every file is a `served` row of test/engine-parity/rust-served-set.tsv).
  */
 export const REMOTE_WHOLE_OPERATIONS: Readonly<Record<string, string>> = {
-  // Not listed: delete_page (a remote delete reaches a raw-SQL guest check on every Rust brain, guests/admission.ts).
   put_page: 'test/engine-parity/credential-grant-writes.test.ts',
+  // A soft delete only: purge-params.ts refuses a remote purge or retention before the delete runs.
+  delete_page: 'test/engine-parity/served-remote-writes.test.ts',
   add_tag: 'test/engine-parity/served-remote-writes.test.ts',
   remove_tag: 'test/engine-parity/served-remote-writes.test.ts',
   add_timeline_entry: 'test/engine-parity/timeline-add.test.ts',

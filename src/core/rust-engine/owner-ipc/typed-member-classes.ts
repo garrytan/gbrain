@@ -183,7 +183,7 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   'readFactWithdrawalClaim', 'readFactWithdrawnBacking', 'readFactWithdrawnRow', 'readFactsEmbeddingColumn',
   'readFactsFtsIndexState', 'readFenceOverlayRows', 'readFenceRowNumHint', 'readFenceRowOccupant', 'readFileOwner',
   'readFolderAccess', 'readForgetTarget', 'readGlobalMaintenanceDeaths', 'readGraduationGateRow',
-  'readGroupSpendTotals', 'readGuestSourceRow', 'readHealthMemoClock', 'readHeldAccessState', 'readHeldConfigValue',
+  'readGroupSpendTotals', 'readGuestDeleteRow', 'readGuestSourceRow', 'readHealthMemoClock', 'readHeldAccessState', 'readHeldConfigValue',
   'readHeldCoverageRows', 'readHeldPageLocation', 'readHeldPageRows', 'readHeldRowVisibility',
   'readHeldVersionsEdited', 'readIdentitySiblingCandidates', 'readSiblingGroupRows', 'readIgnoredPrivacyLabelPages', 'readInlinePageRegions',
   'readJobInsight', 'readJobSourceState', 'readJobSpendTree', 'readJobStats', 'readJournalLimitRows',
