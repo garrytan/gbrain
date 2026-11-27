@@ -152,7 +152,12 @@ async function runTransactionOnce<T>(engine: object, connection: ServedConnectio
     await connection.txn('rollback', { txn: ref }).catch(() => undefined);
     throw error;
   }
-  await connection.txn('commit', { txn: ref });
+  const committedAt = await connection.txn('commit', { txn: ref });
+  // A committed transaction's own handle answers the position it committed at, also after it ended, as in process; the
+  // server sends it with the commit reply (null when the brain keeps no commit log or nothing was written).
+  if (missingOnRustOwner(connection.hello, 'lastCommitPosition') === null) {
+    Object.defineProperty(tx, 'lastCommitPosition', { value: async () => committedAt ?? null, writable: true, configurable: true, enumerable: false });
+  }
   // A released savepoint's keys stay held by its parent; a rolled-back one's do not (page-state/guards.ts).
   if (parentHeld) for (const key of (tx as unknown as { _heldPageKeys: HeldPageKeys })._heldPageKeys.keys) parentHeld.keys.add(key);
   return value;

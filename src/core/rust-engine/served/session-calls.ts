@@ -218,13 +218,22 @@ export function sessionCalls(ctx: SessionCallsContext) {
     }
     if (op === 'commit') open.end.commit(); else open.end.rollback(Object.assign(new Error('rolled back by the client'), { rolledBackByClient: true }));
     void settled.then(
-      () => writeFrame({ t: 'result', id, ok: true, value: null }),
+      // A commit answers the position its transaction committed at (the client's handle reports it after the end).
+      async () => writeFrame({ t: 'result', id, ok: true, value: op === 'commit' ? encodeValue(await committedPosition(open.engine)) : null }),
       (error: unknown) => writeFrame(op === 'rollback' && (error as { rolledBackByClient?: boolean })?.rolledBackByClient
         ? { t: 'result', id, ok: true, value: null }
         : { t: 'result', id, ok: false, error: encodeErr(error) }),
     );
   };
   const txnSettled = new Map<string, Promise<unknown>>();
+
+  /** The position a committed transaction's engine reports (`lastCommitPosition`), or null (no commit log, or none). */
+  const committedPosition = async (engine: unknown): Promise<unknown> => {
+    const read = (engine as { lastCommitPosition?: () => Promise<unknown> } | null)?.lastCommitPosition;
+    if (typeof read !== 'function') return null;
+    // A brain with no commit log refuses the read; the commit reply then carries null, as it always did.
+    try { return (await read.call(engine)) ?? null; } catch { return null; }
+  };
 
   const closeCalls = () => {
     for (const [cb, pending] of callbacks) { clearTimeout(pending.timer); callbacks.delete(cb); pending.reject(servedCallbackTimeout(pending.call.member, 0)); }
