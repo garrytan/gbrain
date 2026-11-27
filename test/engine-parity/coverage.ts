@@ -532,7 +532,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
   doctor_sources: ['readDoctorSources', 'listGuestSourceRows', 'listCheckoutRoots', 'listPendingRoster', 'countDefaultSourceFiles'],
   session_state: ['upsertSessionState', 'readSessionCursor', 'readDeltaSessionRow', 'readCheckpointManifestRow', 'writeCheckpointManifest', 'ageOutSessionState', 'capSessionStatePerClient'],
   doctor_join: ['listAccessMemberStatuses', 'listAccessGroupMemberships', 'listPagesReadByNobody', 'listRulePagesReadByNobody', 'listGoogleSourceMembers', 'listOwnerMemberLinks'],
-  commit_log: ['readCommitLog', 'lastCommitPosition'],
+  commit_log: ['readCommitLog', 'lastCommitPosition', 'listEntityFactsInCommitOrder'],
 };
 
 /**

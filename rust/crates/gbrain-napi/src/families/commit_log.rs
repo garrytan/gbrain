@@ -1,5 +1,6 @@
 //! The commit log and commit positions for TypeScript (multi-user mode; rust/docs/store/commit-log.md):
-//! `Brain#readCommitLog(after | null, limit)` and `Brain#lastCommitPosition()`, the store side of the
+//! `Brain#readCommitLog(after | null, limit)`, `Brain#lastCommitPosition()` and
+//! `Brain#listEntityFactsInCommitOrder(sourceId, entitySlug, afterSequence | null, limit)`, the store side of the
 //! engine members of the same names (src/core/rust-engine/store-members/commit-log.ts).
 //!
 //! Positions cross as `{ sequence, index }` JavaScript numbers. A `sequence` must be a safe integer below
@@ -105,6 +106,54 @@ impl Brain {
     pub fn last_commit_position<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
         self.run(env, |s| {
             s.last_commit_position().map(position_out).transpose()
+        })
+    }
+
+    /// `listEntityFactsInCommitOrder(sourceId, entitySlug, afterSequence | null, limit)`: up to `limit` (at most
+    /// 10,000) facts of one entity as `[{ sequence, fact_id }]`, in the order the writers committed them
+    /// (conformance C11), after `afterSequence` (null: from the first). Empty on a store not in multi-user mode.
+    #[napi]
+    pub fn list_entity_facts_in_commit_order<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        entity_slug: String,
+        after_sequence: Option<f64>,
+        limit: Option<u32>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let after = after_sequence
+                .map(|a| {
+                    if a.fract() == 0.0 && (0.0..SAFE_LIMIT).contains(&a) {
+                        Ok(a as u64)
+                    } else {
+                        Err(invalid(format!(
+                            "afterSequence must be an integer from 0 to 2^53 - 1, not {a}"
+                        )))
+                    }
+                })
+                .transpose()?;
+            let rows = s.list_entity_facts_in_commit_order(
+                &source_id,
+                &entity_slug,
+                after,
+                limit.unwrap_or(1000).min(10_000) as usize,
+            )?;
+            rows.iter()
+                .map(|r| {
+                    if r.sequence as f64 >= SAFE_LIMIT || r.fact_id as f64 >= SAFE_LIMIT {
+                        return Err(StoreError::new(
+                            gbrain_store::error::INVALID_STATE,
+                            format!(
+                                "entity fact sequence {} (fact {}) is past what a JavaScript number holds",
+                                r.sequence, r.fact_id
+                            ),
+                        ));
+                    }
+                    Ok(json!({ "sequence": r.sequence, "fact_id": r.fact_id }))
+                })
+                .collect::<Result<Vec<Value>, StoreError>>()
+                .map(Value::Array)
         })
     }
 }

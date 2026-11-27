@@ -1067,6 +1067,7 @@ export class PostgresEngine implements BrainEngine {
   // The commit log is the Rust store's (engine-members/commit-log.ts): a SQL engine refuses both members.
   readCommitLog(_after: CommitPosition | null, _limit: number): Promise<never> { return commitLogMissing('readCommitLog'); }
   lastCommitPosition(): Promise<never> { return commitLogMissing('lastCommitPosition'); }
+  listEntityFactsInCommitOrder(_sourceId: string, _entitySlug: string, _opts: { afterSequence?: number; limit: number }): Promise<never> { return commitLogMissing('listEntityFactsInCommitOrder'); }
 
   async transactionDirect<T>(fn: (engine: BrainEngine) => Promise<T>, opts?: TransactionOptions): Promise<T> {
     const conn = !this._pageTransaction && this.connectionManager?.isDualPoolActive()

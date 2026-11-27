@@ -10174,6 +10174,7 @@
         "listEmbeddingStores": "none",
         "listEnabledLabelledOnlyMemberIds": "none",
         "listEnrichCandidates": "none",
+        "listEntityFactsInCommitOrder": "none",
         "listEntityHintPages": "none",
         "listEntityIdentityRows": "none",
         "listEntityKeyRows": "none",

@@ -144,8 +144,16 @@ describe('multi-writer support matrix', () => {
     }
   });
 
-  test('the design rules hold: C11 is pending everywhere, C13, C17 and C21 are n/a on PGLite, C21 and C22 need the commit log, which only rust-mu keeps', () => {
-    for (const arm of MW_ENGINE_ARMS) expect(mwCell('C11', arm).status, `C11 ${arm}`).toBe('pending');
+  test('the design rules hold: C11 and C22 run only on rust-mu, C13, C17 and C21 are n/a on PGLite, C11, C21 and C22 need the commit log, which only rust-mu keeps', () => {
+    // C11: commit order per entity is a multi-user Rust guarantee, read through the commit-log capability; every other arm is n/a.
+    for (const arm of ['pglite', 'postgres', 'rust'] as const) {
+      const cell = mwCell('C11', arm);
+      expect(cell.status, `C11 ${arm}`).toBe('n/a');
+      expect('why' in cell ? cell.why : '', `C11 ${arm} says why`).toBe('not applicable: commit order is a multi-user Rust guarantee');
+    }
+    expect(mwCell('C11', 'rust-mu').status).toBe('runs');
+    expect(mwCase('C11').needs).toBe('commit_log');
+    expect(mwCase('C11').members).toContain('listEntityFactsInCommitOrder');
     // C22: a SQL engine and a Rust engine with the log off keep no commit log (they refuse commit_log), so n/a; rust-mu keeps one and runs it.
     // (Plain checks, not asymmetric matchers: bun's toMatchObject replaces the checked field of the shared matrix with the matcher.)
     for (const arm of ['pglite', 'postgres', 'rust'] as const) {
@@ -172,7 +180,7 @@ describe('multi-writer support matrix', () => {
   });
 
   // Rows whose scenario exists only in multi-user mode: plain Rust is n/a, rust-mu runs (the log, its upgrade, the owner handover).
-  const MULTIUSER_ONLY = ['C13', 'C16', 'C17', 'C21', 'C22'];
+  const MULTIUSER_ONLY = ['C11', 'C13', 'C16', 'C17', 'C21', 'C22'];
 
   test('rust-mu runs what rust runs and waits on the same owner where rust waits; the multi-user-only rows are n/a on plain Rust and run on rust-mu', () => {
     for (const id of MULTIUSER_ONLY) {
@@ -192,7 +200,7 @@ describe('multi-writer support matrix', () => {
 
   test('the single-writer Rust arm runs every case whose invariant holds there; the rest wait for a second connection, a new rule, or the multi-writer work', () => {
     expect(MW_CASES.filter(c => c.cells.rust.status !== 'runs').map(c => [c.id, c.cells.rust.status])).toEqual([
-      ['C11', 'pending'], ['C13', 'n/a'], ['C16', 'n/a'], ['C17', 'n/a'], ['C18', 'pending'], ['C21', 'n/a'], ['C22', 'n/a'],
+      ['C11', 'n/a'], ['C13', 'n/a'], ['C16', 'n/a'], ['C17', 'n/a'], ['C18', 'pending'], ['C21', 'n/a'], ['C22', 'n/a'],
     ]);
   });
 
@@ -362,11 +370,10 @@ describe('multi-writer support matrix', () => {
     for (const row of MW_CASES) {
       const runsOnAnEngine = MW_ENGINE_ARMS.some(arm => row.cells[arm].status === 'runs');
       const referenceable = (['pglite', 'postgres'] as const).filter(arm => row.cells[arm].status === 'runs');
-      // C11 is pending on every arm: it is compared once an arm runs it, so a reference must exist by then.
       if (row.reference === 'compare' && runsOnAnEngine) expect(referenceable.length, `${row.id} compares against an arm that runs it`).toBeGreaterThan(0);
     }
-    // C13, C16, C17, C18, C19, C21, C22 need a second connection, spread their load over connections, or run on no arm yet.
-    expect(MW_CASES.filter(c => c.reference === 'standalone').map(c => c.id)).toEqual(['C13', 'C16', 'C17', 'C18', 'C19', 'C21', 'C22']);
+    // C11, C13, C16, C17, C18, C19, C21, C22 need a second connection or the commit log, spread their load over connections, or run on no arm yet.
+    expect(MW_CASES.filter(c => c.reference === 'standalone').map(c => c.id)).toEqual(['C11', 'C13', 'C16', 'C17', 'C18', 'C19', 'C21', 'C22']);
   });
 
   test('the Rust store tests the matrix names exist: plain where the case runs, ignored where it is pending', () => {

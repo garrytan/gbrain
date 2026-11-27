@@ -70,9 +70,9 @@ export const ENGINE_CAPABILITIES = [
   /** The session cursor and checkpoint manifest of context_pack and delta (`session_context_state`, key tag `y`). */
   'session_state',
   /**
-   * The commit log and commit positions (`readCommitLog`, `lastCommitPosition`): a Rust store in multi-user mode with the
-   * commit log on (rust/docs/store/commit-log.md). No SQL engine reports it; the Rust engine reports it only while its
-   * store keeps a log, and refuses both members naming it otherwise.
+   * The commit log and commit positions (`readCommitLog`, `lastCommitPosition`, `listEntityFactsInCommitOrder`): a Rust
+   * store in multi-user mode with the commit log on (rust/docs/store/commit-log.md). No SQL engine reports it; the Rust
+   * engine reports it only while its store keeps a log, and refuses the members naming it otherwise.
    */
   'commit_log',
 ] as const;

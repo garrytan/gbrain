@@ -7,6 +7,7 @@ export const LEDGER_MEMBERS = {
   // commit_log unless the store keeps a log.
   readCommitLog: 'implemented',
   lastCommitPosition: 'implemented',
+  listEntityFactsInCommitOrder: 'implemented',
   // Group D (takes, salience and code-edge reads)
   countOffGridTakeWeights: 'takes',
   countTakes: 'takes',

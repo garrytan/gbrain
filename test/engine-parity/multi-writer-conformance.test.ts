@@ -671,27 +671,67 @@ describe('engine parity: multi-writer conformance', () => {
     return { facts: first.length, lost: 0, repeated: 0, stable: true, pagesAddUp: true };
   });
 
-  // C11: the order of one entity's facts a reader sees is commit order. New rule (SQL reads order facts by
-  // created_at, id, which is not commit order), pending on every engine until facts carry a sequence assigned at commit.
-  // No engine member returns a commit position yet, so the body checks the part that is observable: a fact acknowledged
-  // before another began reads before it, across rounds of concurrent appends. When a typed position member exists it
-  // replaces this check with the exact commit-position comparison.
-  parityTest('C11 per-entity order equals commit order', { methods: ['insertFact', 'listFactsByEntity'], mwCase: 'C11' }, async (engine) => {
-    const rounds = 5;
-    const perRound = 4;
-    const roundOf = new Map<string, number>();
-    for (let round = 0; round < rounds; round++) {
-      await together(perRound, async (w) => {
-        const text = `fact r${round} w${w}`;
-        roundOf.set(text, round);
-        await engine.insertFact({ fact: text, entity_slug: 'people/alice-example', source: 'mcp:remember' }, { source_id: SRC });
-      });
+  // C11: the order of one entity's facts a reader sees is commit order. A multi-user Rust guarantee: a multi-user store gives
+  // each new fact of an entity the next number of that entity's sequence inside the transaction that stores it, and
+  // `listEntityFactsInCommitOrder` reads the facts in that order. Runs where the engine keeps a commit log (`rust-mu`, both
+  // routes); a SQL engine and a Rust engine with the log off refuse the read with `engine_capability_missing` (reason
+  // `commit_log`), so those cells are `n/a`. Existing fact reads (`listFactsByEntity`) keep their own order and are not
+  // compared here. Eight writers each commit four transactions that append one fact to one entity, with a second entity's
+  // appends in flight; each transaction's own engine reports the position it committed at. The read order must equal the
+  // order of those positions, with one number per fact, from 1, no gap, and pages that add up to the whole.
+  parityTest('C11 per-entity order equals commit order', {
+    methods: ['insertFact', 'transaction', 'lastCommitPosition', 'listEntityFactsInCommitOrder', 'listFactsByEntity'], mwCase: 'C11',
+  }, async (engine) => {
+    const order = (a: CommitPosition, b: CommitPosition) => a.sequence - b.sequence || a.index - b.index;
+    const key = (p: CommitPosition) => `${p.sequence}.${p.index}`;
+    const entity = 'people/charlie-example';
+    const other = 'companies/widget-co';
+    const writers = 8;
+    const each = 4;
+    const committed = (await together(writers, async (w) => {
+      const mine: Array<{ id: number; at: CommitPosition }> = [];
+      for (let n = 0; n < each; n++) {
+        // A transaction that loses its commit runs its callback again; the last run's id and engine are the committed ones.
+        let id = 0;
+        let inTx: Pick<BrainEngine, 'lastCommitPosition'> | undefined;
+        await engine.transaction(async (tx) => {
+          inTx = tx;
+          // Event times that run against commit order (a later writer's fact happened earlier), so the event-time order of
+          // the existing read cannot stand in for commit order.
+          const valid_from = new Date(Date.UTC(2020, 0, 1 + (writers - w) * each - n));
+          const out = await tx.insertFact({ fact: `c11 ${w} ${n}`, entity_slug: entity, source: 'mcp:remember', valid_from }, { source_id: SRC });
+          expect(out.status).toBe('inserted');
+          id = Number(out.id);
+        });
+        const at = await inTx!.lastCommitPosition();
+        expect(at, 'a committed transaction reports no position').not.toBeNull();
+        mine.push({ id, at: at! });
+        // Another entity's append between them: it takes its own sequence and never shows in this entity's order.
+        if (n % 2 === 0) await engine.insertFact({ fact: `c11 other ${w} ${n}`, entity_slug: other, source: 'mcp:remember' }, { source_id: SRC });
+      }
+      return mine;
+    })).flat();
+    expect(new Set(committed.map(c => c.id)).size, 'a fact id was handed out twice').toBe(writers * each);
+    expect(new Set(committed.map(c => key(c.at))).size, 'two transactions share a commit position').toBe(writers * each);
+    const byCommit = [...committed].sort((a, b) => order(a.at, b.at)).map(c => c.id);
+    const read = await engine.listEntityFactsInCommitOrder(SRC, entity, { limit: 500 });
+    expect(read.map(r => r.fact_id), 'the per-entity order is not the commit order').toEqual(byCommit);
+    expect(read.map(r => r.sequence), 'the per-entity sequence has a gap or a repeat').toEqual(byCommit.map((_, i) => i + 1));
+    const paged: number[] = [];
+    for (let after: number | undefined; ;) {
+      const page = await engine.listEntityFactsInCommitOrder(SRC, entity, { afterSequence: after, limit: 5 });
+      if (page.length === 0) break;
+      paged.push(...page.map(r => r.fact_id));
+      after = page[page.length - 1]!.sequence;
     }
-    const newestFirst = (await engine.listFactsByEntity(SRC, 'people/alice-example', { limit: 500 })).map((f: FactRow) => f.fact);
-    const oldestFirst = [...newestFirst].reverse().map(text => roundOf.get(text)!);
-    expect(oldestFirst, 'a fact acknowledged earlier reads after one acknowledged later').toEqual([...oldestFirst].sort((a, b) => a - b));
-    expect(newestFirst).toHaveLength(rounds * perRound);
-    return { facts: newestFirst.length, roundsInOrder: true };
+    expect(paged, 'the pages of the order do not add up to the order').toEqual(byCommit);
+    // No fact is lost: the existing read holds the same facts (in its own order).
+    const listed = (await engine.listFactsByEntity(SRC, entity, { limit: 500 })).map((f: FactRow) => Number(f.id));
+    expect([...listed].sort((a, b) => a - b), 'the order lost or added a fact').toEqual([...byCommit].sort((a, b) => a - b));
+    const others = await engine.listEntityFactsInCommitOrder(SRC, other, { limit: 500 });
+    expect(others.map(r => r.sequence), 'the other entity\'s sequence is not its own').toEqual(others.map((_, i) => i + 1));
+    expect(others).toHaveLength(writers * (each / 2));
+    return { facts: read.length, commitOrder: true, contiguous: true, pagesAddUp: true, otherEntityOwnSequence: true };
   });
 
   // C12: two transactions each read their own uncommitted writes and never the other's. Opened together; one commits,

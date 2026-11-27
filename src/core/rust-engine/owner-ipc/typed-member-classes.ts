@@ -19,7 +19,7 @@ export const OWNER_IPC_TYPED_READS: readonly string[] = [
   // The commit log and commit positions (engine-members/commit-log.ts; the store's read_commit_log and last_commit_position
   // only read a snapshot or a held position). Local-only: a page lists every key family's write ids and origins, so it is
   // not sent to a remote caller (the served side reads the log from the store, not through this member).
-  'readCommitLog', 'lastCommitPosition',
+  'readCommitLog', 'lastCommitPosition', 'listEntityFactsInCommitOrder',
   // repair-rust batches 6b and 6c: the segmented-write reads, the embed and provenance reads, the secret store reads and the secret-spans page reads
   // (engine-sql/segmented-writes.ts, page-spend.ts, embedding-provenance.ts, secret-store.ts, secret-spans-rows.ts; the store functions only `self.read`).
   // readSecretStoreSnapshot reads both tables from one snapshot and writes nothing.

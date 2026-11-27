@@ -43,7 +43,7 @@ import { withAccessStore } from './rust-engine/access-self-check.ts';
 import { servedServerOptionsFor } from './rust-engine/served/serve-listen.ts';
 import type { ServedServerOptions } from './rust-engine/served/session.ts';
 import { connectServedEngine, type ServedTarget } from './rust-engine/served/engine.ts';
-import type { CommitLogPage, CommitPosition } from './engine-members/commit-log.ts';
+import type { CommitLogPage, CommitPosition, EntityFactCommitPosition } from './engine-members/commit-log.ts';
 import * as commitLog from './rust-engine/store-members/commit-log.ts';
 
 /**
@@ -624,6 +624,9 @@ export class RustEngine implements BrainEngine {
   /** engine-members/commit-log.ts; refused naming commit_log unless the store keeps a commit log. */
   readCommitLog(after: CommitPosition | null, limit: number): Promise<CommitLogPage> { return commitLog.readCommitLog(this as never, after, limit); }
   lastCommitPosition(): Promise<CommitPosition | null> { return commitLog.lastCommitPosition(this as never); }
+  listEntityFactsInCommitOrder(sourceId: string, entitySlug: string, opts: { afterSequence?: number; limit: number }): Promise<EntityFactCommitPosition[]> {
+    return commitLog.listEntityFactsInCommitOrder(this as never, sourceId, entitySlug, opts);
+  }
 
   registerBeforeDisconnect(stop: () => Promise<void>): () => void {
     this._beforeDisconnect.add(stop);
