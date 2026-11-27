@@ -190,6 +190,14 @@ describe('a brain whose storage mode cannot be read does not block the seed', ()
     expect(busy.err.join('\n')).toContain('Stop `gbrain serve`');
     expect(existsSync(busy.dir)).toBe(false);
   });
+
+  test('help says a brain that cannot be opened stops the seed with exit 1, the way the command behaves', async () => {
+    const lines: string[] = [];
+    expect(await runEngineShadow(['--help'], { out: (l) => lines.push(l), err: (l) => lines.push(l) })).toBe(0);
+    const help = lines.join('\n').replace(/\s+/g, ' ');
+    expect(help).toContain('a mode it cannot read does not stop the seed');
+    expect(help).toContain('A brain that cannot be opened stops the seed: exit 1, `could not open the brain (pglite_busy)` while another process holds a PGLite brain, and nothing is written.');
+  });
 });
 
 describe('engine shadow seed opens the configured brain without writing to it', () => {

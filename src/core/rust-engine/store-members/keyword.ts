@@ -86,7 +86,8 @@ type Member = 'searchKeyword' | 'searchKeywordChunks' | 'countKeywordPages' | 's
 /** Checks every option `member` gets, refusing one it cannot answer exactly, and returns the store options. */
 function keywordOptions(member: Member, query: string, opts: (SearchOpts & { timeoutMs?: number }) | undefined): Record<string, unknown> {
   if (typeof query !== 'string') refuseMember(member, 'a query that is not a string');
-  if (getFtsLanguage() !== 'english') refuseMember(member, `the ${getFtsLanguage()} text search configuration`);
+  // Pages are found through the keyword index, whose postings the store builds with the English stemmer.
+  if (getFtsLanguage() !== 'english') refuseMember(member, `the keyword index holds English postings; FTS language ${getFtsLanguage()}`);
   const o = (opts ?? {}) as Record<string, unknown>;
   const pageGrain = member !== 'searchKeywordChunks';
   for (const [key, value] of Object.entries(o)) {
@@ -250,7 +251,7 @@ export const searchKeyword: StoreMember<[query: string, opts?: SearchOpts], Sear
     console.warn(`[gbrain] Warning: search limit clamped from ${opts.limit} to ${cap}`);
   }
   options.limit = limit;
-  options.innerLimit = Math.min(limit * 3, cap * 3);
+  options.innerLimit = Math.min((offset + limit) * 3, cap * 3);
   options.offset = offset;
   // PGLite's CJK branch returns before the strict statement and its retries.
   if (hasCJK(query)) return searchCjk(brain, 'searchKeyword', query, opts, options, true);

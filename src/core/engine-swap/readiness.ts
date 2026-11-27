@@ -7,9 +7,10 @@
  * D23 (the maintainer's C1 ruling of 2026-11-19) makes the speed bar gate only turning Rust on by default, not the
  * opt-in swap.
  */
-import { DEFAULT_SHADOW_MIN_DAYS } from './policy.ts';
+import { DEFAULT_SHADOW_MIN_DAYS, effectiveShadowMin, READINESS_POLICY, type ReadinessPolicy } from './policy.ts';
 import type { SwapRefusalReason } from './refusals.ts';
 import { destinationAllowsManyWriters, destinationNote, type DestinationOptions } from './destination.ts';
+import { describeShortfall, describeWriteBar, writeBar, type QualifyingWrites } from '../../shadow/write-bar.ts';
 
 /** The fields S5a reads; S3 owns the document. Counts are epoch-scoped totals unless the name says otherwise. */
 export interface ShadowStatus {
@@ -33,13 +34,15 @@ export interface ShadowStatus {
     unexplained_difference?: number;
     uncomparable?: number;
     capability_missing?: number;
+    /** The brain's qualifying write calls by day (shadow/write-bar.ts): the source of criterion 5's bar. */
+    qualifying_writes?: QualifyingWrites | null;
     /** Sampled writes outside the page and link pilot, by family (shadow/write-compare.ts). */
     capability_missing_by_family?: Record<string, number>;
   };
   fingerprints?: {
     checked_rows?: number;
     mismatches?: number;
-    probe?: { state?: 'pass' | 'fail' | 'not_run'; checked_at?: string; server_version?: string; collation?: string; mismatches?: number };
+    probe?: { state?: 'pass' | 'fail' | 'not_run'; checked_at?: string; server_version?: string; collation?: string; locale_provider?: string | null; locale?: string | null; mismatches?: number };
   };
   allocators?: { verified?: boolean; checked_at?: string };
   seed?: { seed_id?: string; finished_at?: string | null; unseeded_gap_rows_total?: number };
@@ -85,6 +88,8 @@ export interface CriterionRow {
   detail: string;
   /** Criterion 8 only: measured and reported, never gating (D23). */
   gating: boolean;
+  /** Criterion 5 only: one line per write type it does not compare, then the named loss. The text report prints them under the row; `detail` is unchanged. */
+  lines?: string[];
 }
 
 export interface ReadinessVerdict {
@@ -96,17 +101,38 @@ export interface ReadinessVerdict {
   missing_fields: string[];
 }
 
-/** Criterion 1's minimum shadow duration: the readiness policy's default (policy.ts, frozen for the Dec 1 swap). */
+/** Criterion 1's default minimum shadow duration (policy.ts); the policy in force may shorten it for a dated window. */
 export const MIN_SHADOW_DAYS = DEFAULT_SHADOW_MIN_DAYS;
 export const MAX_LAG_P99_MS = 60_000;
 export const MIN_CLEAN_RECONCILES = 3;
 export const MIN_TOTAL_READS = 10_000;
-export const MIN_WRITE_COMPARISONS = 1_000;
 export const MIN_VECTOR_RECALL = 0.98;
 export const MIN_BENCH_PAIRS = 100;
 
 /** What a criterion 5 pass covers, said wherever write comparisons are shown (the shadow status line, this report). */
-export const WRITE_COVERAGE_LIMIT = 'a criterion 5 pass covers page and link writes only';
+export const WRITE_COVERAGE_LIMIT = 'a criterion 5 pass covers the pilot page and link writes only';
+/** The lane owner's wording for what criterion 5 leaves uncompared; the swap report appends it to the criterion 5 detail. */
+export const WRITE_COVERAGE_NAMED = 'Criterion 5 covers the pilot page and link writes (putPage, deletePage, addLink, addLinksBatch, removeLink) only (#10350, #10360, #10382, #10390). These write types are not compared and get named lines in the swap report: chunks, tags, aliases, timeline entries, takes, facts, fact withdrawals, open loops, sources, owner-only marks and the decide store.';
+/**
+ * The named write types and the `capability_missing_by_family` keys each one reads, in the order of WRITE_COVERAGE_NAMED. A key is the first table of the
+ * sampled member (`writeFamily`, src/shadow/write-compare.ts), so a type's line reads only the writes whose first table it is.
+ * Fact withdrawals has no key of its own (only `updateSlug` writes them, and it is counted as `pages:updateSlug`), so its line reads that key.
+ */
+const WRITE_NAMED_TYPES: ReadonlyArray<readonly [string, readonly string[]]> = [
+  ['chunks', ['content_chunks']],
+  ['tags', ['tags']],
+  ['aliases', ['page_aliases']],
+  ['timeline entries', ['timeline_entries']],
+  ['takes', ['takes']],
+  ['facts', ['facts']],
+  ['open loops', ['open_loops']],
+  ['sources', ['sources']],
+  ['owner-only marks', ['owner_only_marks']],
+  ['decide store', ['decide_state', 'decide_spend', 'decision_receipts', 'decide_calibrations', 'decide_proposals', 'decide_review_proposals', 'decide_review_queue', 'decide_sweep_deferred']],
+];
+const FACT_WITHDRAWALS_FAMILY = 'pages:updateSlug';
+/** A named loss, not a fix: what the sentence above does not say. It is the last line under criterion 5 and the last limit in the guide. */
+export const WRITE_COVERAGE_LOSS = 'Named loss: only putPage, deletePage, addLink, addLinksBatch and removeLink are compared, so these other page and link writes are counted capability_missing and are not compared: pages:deletePages, pages:softDeletePage, pages:softDeletePages, pages:restorePage, pages:purgeDeletedPages, pages:updateSlug, pages:refreshPageBody, pages:refreshPageOrigin, pages:updatePageContextualRetrievalState, pages:stripStaleFrontmatterKeys, pages:markPagesExtractedBatch, pages:markPagesAttendanceBlocked, pages:setPageEmbeddingSignature, pages:setChunkerVersion, pages:writeTextProjectionSeal, pages:revertToVersion, pages:setEmotionalWeightBatch, pages:invalidateWithdrawnPages, pages:createSegmentedPageShell, pages:sealSegmentedPage, pages:flipBodyGeneration, links:removeLinksByPagesAndSource, links:replaceDerivedLinks, links:replaceDerivedLinksBatch. A write that touches several tables is counted under its first table only, so the side effects of deletePages, purgeDeletedPages and updateSlug (aliases, open loops, owner-only marks, fact withdrawals) land under pages:* keys, and a type\'s line above reads only the writes whose first table it is.';
 /** And on which brains: a PGLite brain's single connection cannot bound the read a sampled write waits for, so it samples no writes and criterion 5 stays missing. */
 export const WRITE_PGLITE_LIMIT = 'PGLite brains record no write comparisons';
 /** And by whom: only the shadow child that owns the Rust store records; a client child adds no evidence and can never make criterion 5 pass. */
@@ -114,7 +140,7 @@ export const WRITE_CLIENT_LIMIT = 'client shadow children record no write compar
 
 const DAY_MS = 86_400_000;
 
-type Check = { state: CriterionState; detail: string };
+type Check = { state: CriterionState; detail: string; lines?: string[] };
 
 function num(v: unknown): v is number { return typeof v === 'number' && Number.isFinite(v); }
 
@@ -158,7 +184,7 @@ function guarded(r: Reader, body: () => Check): Check {
   return r.missing.length > before ? missingCheck(r.missing.slice(before)) : out;
 }
 
-function shadowDuration(r: Reader, now: Date): Check {
+function shadowDuration(r: Reader, now: Date, policy: ReadinessPolicy): Check {
   return guarded(r, () => {
     const started = r.s('epoch_started_at');
     const p99 = r.n('follower.lag_ms_p99_epoch');
@@ -174,12 +200,14 @@ function shadowDuration(r: Reader, now: Date): Check {
     if (!Number.isFinite(t)) return { state: 'fail', detail: `epoch_started_at is not a time: ${started}` };
     const days = (now.getTime() - t) / DAY_MS;
     const fails: string[] = [];
-    if (days < MIN_SHADOW_DAYS) fails.push(`${days.toFixed(1)} of ${MIN_SHADOW_DAYS} days in the epoch`);
+    // The duration is the only part of criterion 1 a policy sets (policy.ts); lag and clean reconciles always apply.
+    const min = effectiveShadowMin(policy, now);
+    if (min.required && days < min.days) fails.push(`${days.toFixed(1)} of ${min.days} days in the epoch`);
     if (p99 >= MAX_LAG_P99_MS) fails.push(`follower lag p99 ${p99} ms (needs under ${MAX_LAG_P99_MS})`);
     if (clean < MIN_CLEAN_RECONCILES) fails.push(`${clean} of ${MIN_CLEAN_RECONCILES} consecutive clean reconcile passes`);
     return fails.length
       ? { state: 'fail', detail: fails.join('; ') }
-      : { state: 'pass', detail: `${days.toFixed(1)} days, lag p99 ${p99} ms, ${clean} clean reconciles` };
+      : { state: 'pass', detail: `${days.toFixed(1)} days (minimum ${min.required ? `${min.days}` : 'not required'}), lag p99 ${p99} ms, ${clean} clean reconciles` };
   });
 }
 
@@ -233,23 +261,52 @@ function searchArms(r: Reader): Check {
   });
 }
 
-function writeComparisons(r: Reader): Check {
+/** The per-type lines for criterion 5: each named type with its sampled count, or "not sampled"; then every other sampled key; then the named loss. */
+function uncoveredWriteLines(byFamily: Record<string, unknown>): string[] {
+  const count = (k: string): number => { const n = byFamily[k]; return num(n) && n > 0 ? n : 0; };
+  const named = new Set(WRITE_NAMED_TYPES.flatMap(([, keys]) => keys));
+  const lines = WRITE_NAMED_TYPES.map(([type, keys]) => {
+    const seen = keys.filter(count).map((k) => `${k} ${count(k)}`);
+    return seen.length ? `${type}: sampled ${keys.reduce((n, k) => n + count(k), 0)} (${seen.join(', ')})` : `${type}: not sampled`;
+  });
+  lines.splice(6, 0, `fact withdrawals: not sampled separately (counted under ${FACT_WITHDRAWALS_FAMILY} ${count(FACT_WITHDRAWALS_FAMILY)})`);
+  const other = Object.keys(byFamily).filter((k) => !named.has(k) && count(k)).map((k) => `${k} ${count(k)}`);
+  return [...lines, `other write families sampled: ${other.length ? other.join(', ') : 'none'}`, WRITE_COVERAGE_LOSS];
+}
+
+/**
+ * Criterion 5: zero unexplained differences on at least the brain's own write bar of compared writes (write-bar.ts:
+ * min(1000, max(100, window x W)), the window being criterion 1's shadow minimum in force).
+ */
+function writeComparisons(r: Reader, now: Date, policy: ReadinessPolicy): Check {
   const out = guarded(r, () => {
     const state = r.s('write_comparisons.state');
     const comparable = r.n('write_comparisons.comparable');
     const unexplained = r.n('write_comparisons.unexplained_difference');
-    if (state === undefined || comparable === undefined || unexplained === undefined) return { state: 'missing', detail: '' };
+    const history = r.get<QualifyingWrites>('write_comparisons.qualifying_writes',
+      v => typeof v === 'object' && v !== null && typeof (v as QualifyingWrites).by_day === 'object' && (v as QualifyingWrites).by_day !== null);
+    if (state === undefined || comparable === undefined || unexplained === undefined || history === undefined) return { state: 'missing', detail: '' };
     // A shadow that cannot compare writes never passes (S3 rule: capability_missing refuses, like a missing field).
     if (state === 'capability_missing') return { state: 'missing', detail: 'no evidence: write_comparisons.state is capability_missing' };
+    const min = effectiveShadowMin(policy, now);
+    const bar = writeBar(history, min.required ? min.days : DEFAULT_SHADOW_MIN_DAYS, now);
+    const how = describeWriteBar(bar);
     const fails: string[] = [];
-    if (comparable < MIN_WRITE_COMPARISONS) fails.push(`${comparable} of ${MIN_WRITE_COMPARISONS} comparable write comparisons`);
+    if (comparable < bar.bar) {
+      fails.push(`${comparable} of ${bar.bar} compared writes`);
+      fails.push(describeShortfall(history, bar, comparable, r.peek<string>('epoch_started_at'), {
+        uncomparable: r.peek<number>('write_comparisons.uncomparable') ?? 0, capability_missing: r.peek<number>('write_comparisons.capability_missing') ?? 0 }, now));
+    }
     if (unexplained > 0) fails.push(`${unexplained} unexplained differences`);
-    return fails.length ? { state: 'fail', detail: fails.join('; ') } : { state: 'pass', detail: `${comparable} comparable, zero unexplained` };
+    return fails.length
+      ? { state: 'fail', detail: `${fails.join('; ')} (${how})` }
+      : { state: 'pass', detail: `${comparable} compared writes, at least ${bar.bar}, zero unexplained (${how})` };
   });
   // The coverage limit rides on every outcome. Only page and link writes are compared; every other write family is capability_missing.
-  const named = Object.entries(r.peek<Record<string, number>>('write_comparisons.capability_missing_by_family') ?? {}).filter(([, n]) => num(n) && n > 0).map(([f, n]) => `${f} ${n}`);
-  const limit = `${WRITE_COVERAGE_LIMIT}; ${WRITE_PGLITE_LIMIT}; ${WRITE_CLIENT_LIMIT}; every other write family is capability_missing${named.length ? ` (sampled so far: ${named.join(', ')})` : ''}`;
-  return { ...out, detail: out.detail ? `${out.detail}; ${limit}` : limit };
+  const byFamily = r.peek<Record<string, number>>('write_comparisons.capability_missing_by_family') ?? {};
+  const named = Object.entries(byFamily).filter(([, n]) => num(n) && n > 0).map(([f, n]) => `${f} ${n}`);
+  const limit = `${WRITE_COVERAGE_LIMIT}; ${WRITE_PGLITE_LIMIT}; ${WRITE_CLIENT_LIMIT}; every other write family is capability_missing${named.length ? ` (sampled so far: ${named.join(', ')})` : ''}; ${WRITE_COVERAGE_NAMED}`;
+  return { ...out, detail: out.detail ? `${out.detail}; ${limit}` : limit, lines: uncoveredWriteLines(typeof byFamily === 'object' && byFamily !== null ? byFamily : {}) };
 }
 
 function fingerprintsAndAllocators(r: Reader): Check {
@@ -353,16 +410,16 @@ export const CRITERIA: ReadonlyArray<{ n: number; name: string }> = [
  * criterion is `missing` and the verdict is NOT READY (`no_shadow`). `opts` carries the destination evidence for
  * criterion 11 only; without it, or with the multi-user switch off, the result is what it was before it existed.
  */
-export function evaluateReadiness(doc: ShadowStatus | null, now: Date = new Date(), opts?: DestinationOptions): ReadinessVerdict {
+export function evaluateReadiness(doc: ShadowStatus | null, now: Date = new Date(), policy: ReadinessPolicy = READINESS_POLICY, opts?: DestinationOptions): ReadinessVerdict {
   const r = new Reader(doc);
   // Writers on many hosts stop refusing only for a served multi-user Rust destination with the switch on (destination.ts).
   const elig = eligibility(r, destinationAllowsManyWriters(opts), destinationNote(opts));
   const checks: Check[] = [
-    shadowDuration(r, now),
+    shadowDuration(r, now, policy),
     readCoverage(r),
     zeroCounts(r, [['reads.rust_error_unresolved_7d', 'unresolved rust_error'], ['reads.diverged_unexplained_7d', 'unexplained diverged']]),
     searchArms(r),
-    writeComparisons(r),
+    writeComparisons(r, now, policy),
     zeroCounts(r, [['privacy_diverged', 'privacy_diverged']]),
     fingerprintsAndAllocators(r),
     speed(r),
@@ -381,7 +438,7 @@ export function evaluateReadiness(doc: ShadowStatus | null, now: Date = new Date
     const f = doc!.follower!;
     checks[0] = { state: 'fail', detail: `the follower is behind: lag ${f.lag_ms ?? 0} ms, queue ${f.queue_depth ?? 0}, coverage watermark ${f.coverage_watermark?.valid === false ? 'invalid' : 'valid'}` };
   }
-  const criteria = CRITERIA.map((c, i) => ({ ...c, state: checks[i]!.state, detail: checks[i]!.detail, gating: c.n !== 8 }));
+  const criteria = CRITERIA.map((c, i) => ({ ...c, state: checks[i]!.state, detail: checks[i]!.detail, gating: c.n !== 8, ...(checks[i]!.lines ? { lines: checks[i]!.lines } : {}) }));
   const ready = criteria.every(c => !c.gating || c.state === 'pass');
   let reason: SwapRefusalReason | null = null;
   if (!ready) {

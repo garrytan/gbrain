@@ -67,7 +67,7 @@ use serde_json::{Value, json};
 use std::collections::BTreeSet;
 
 mod activations;
-mod atom_reads;
+pub(crate) mod atom_reads;
 mod chronicle_events;
 pub(crate) mod derivation_inputs;
 mod doctor_reads;

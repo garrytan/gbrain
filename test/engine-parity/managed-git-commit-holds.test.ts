@@ -18,7 +18,7 @@
  *    sync status; no test fed a secret through a git step's stderr.
  *  - Rust: the failure record's recovery probe (persistence/effects.ts recordFailure) is raw SQL, so on a Rust brain
  *    (single-host and multi-user) the lifecycle case stops on a typed raw_sql refusal at the first failed attempt
- *    (docs/designs/RUST_ENGINE.md conflict row 55). WAITING: it must run equal on the Rust arms once lane 7's typed
+ *    (docs/designs/RUST_ENGINE.md conflict row 55a). WAITING: it must run equal on the Rust arms once lane 7's typed
  *    effectRecovering (20da396ebd) reaches rust-engine/multiuser (it rides rust-engine/managed-on-rust-2b to main), and
  *    before multi-user mode turns on by default. Until then the second case proves the output on every arm: on Rust it
  *    stands lane 7's probe in by name (effects.ts effectRecoverySeam, answering "no recovery record"), and the arms
@@ -313,7 +313,7 @@ describe('engine parity: a managed Git commit that cannot be made is loud in gbr
   }, async (engine, backend) => withNoIdentityCheckout(engine, backend, { source: 'pushheld', identity: true, slowPushRecord: true }, async (home, root) => {
     // F1 on every arm: put_page is Rust-servable, so this case runs on Rust (seamed below), unlike the removal case.
     // SEAMED on Rust: the failed push's recordFailure runs lane 7's recovery probe (raw SQL until 20da396ebd lands,
-    // conflict row 55), so effectRecoverySeam answers "no recovery record" there; PGLite and Postgres keep their raw read.
+    // conflict row 55a), so effectRecoverySeam answers "no recovery record" there; PGLite and Postgres keep their raw read.
     if (backend === 'rust') effectRecoverySeam.probe = async () => false;
     const tip = (ref: string) => execFileSync('git', ['-C', ref === 'remote' ? join(home, 'remote.git') : root, 'rev-parse', ref === 'remote' ? 'main' : 'HEAD'], { encoding: 'utf8' }).trim();
     const submit = async (operation: 'put_page' | 'delete_page', params: Record<string, unknown>) => {
@@ -355,7 +355,7 @@ describe('engine parity: a managed Git commit that cannot be made is loud in gbr
     // findLiveFileClaimants, via page-prepare.ts prepareFileTarget), the page-prepare item due 2026-12-10, so the Rust arm
     // stops on executeRaw before any Git step; the F1 case above carries the push-hold evidence on Rust.
     // SEAMED on Rust: the failed push's recordFailure runs lane 7's recovery probe (raw SQL until 20da396ebd lands,
-    // conflict row 55), so effectRecoverySeam answers "no recovery record" there; PGLite and Postgres keep their raw read.
+    // conflict row 55a), so effectRecoverySeam answers "no recovery record" there; PGLite and Postgres keep their raw read.
     if (backend === 'rust') effectRecoverySeam.probe = async () => false;
     const tip = (ref: string) => execFileSync('git', ['-C', ref === 'remote' ? join(home, 'remote.git') : root, 'rev-parse', ref === 'remote' ? 'main' : 'HEAD'], { encoding: 'utf8' }).trim();
     const submit = async (operation: 'put_page' | 'delete_page', params: Record<string, unknown>) => {

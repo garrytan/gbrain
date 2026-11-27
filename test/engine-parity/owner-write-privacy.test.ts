@@ -22,6 +22,7 @@ import { servedOwnerOf } from './rust-arm.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { addMember, bindCredential } from '../../src/core/access/members.ts';
 import { setOwner } from '../../src/core/access/owner.ts';
+import { proposeRevision } from '../../src/core/access/policy.ts';
 import { mintLegacyToken } from '../../src/core/token-mint.ts';
 import { GBrainOAuthProvider } from '../../src/core/oauth-provider.ts';
 import { sqlQueryForEngine } from '../../src/core/sql-query.ts';
@@ -165,25 +166,43 @@ describe('engine parity: the brain owner\'s own remote put_page', () => {
     expect(arms().length).toBeGreaterThan(0);
   }, 240_000);
 
-  // loss (32e-d-1 raw fallback): a plain member's put_page over a slug with only a soft-deleted row. The opening probe sees that row
-  // (it names readers), so the check is not decided early, readLinkTargetPages returns no live row, and hiddenUnder runs its raw fallback
-  // (page-visibility.ts executeRaw). The Rust engine refuses a raw statement with engine_capability_missing; PGLite and Postgres run it.
-  // Not a parityTest: the harness fails a case that caught a refusal. Either way nothing is written: no live row, no version, the deleted row as it was.
-  test('loss (32e-d-1 raw fallback): a plain member\'s put_page over a soft-deleted page that names readers is refused (on Rust with engine_capability_missing) and writes nothing', async () => {
+  // The deleted-row fallback of the same check (readPageHiddenFromWriter) must fail the write too: a swallowed failure would read as "not hidden"
+  // and republish a deleted page the writer may not read.
+  test('a failure of the hidden-writer read refuses a write over a soft-deleted page and publishes nothing', async () => {
     for (const arm of arms()) {
       await resetArm(arm);
-      const { engine } = arm;
-      await seed(engine, arm.backend);
+      const engine = arm.engine as unknown as Record<string, (...args: unknown[]) => Promise<unknown>>;
+      await seed(arm.engine, arm.backend);
+      await addMember(arm.engine, 'bob-example');
+      await arm.engine.putPage('notes/gone', { type: 'note', title: 'gone', compiled_truth: 'First.', timeline: '', frontmatter: { readable_by: [OWNER] } }, { sourceId: SRC });
+      await arm.engine.softDeletePage('notes/gone', { sourceId: SRC });
+      const snapshot = async () => { const row = await arm.engine.getPage('notes/gone', { sourceId: SRC, includeDeleted: true }); return { live: await arm.engine.getPage('notes/gone', { sourceId: SRC }), row: row && [row.deleted_at !== null, row.compiled_truth], pages: await arm.engine.countSourcePages(SRC, { includeDeleted: true }), versions: (await arm.engine.getVersions('notes/gone', { sourceId: SRC })).length }; };
+      const before = await snapshot();
+      const original = engine.readPageHiddenFromWriter!; let thrown = 0;
+      engine.readPageHiddenFromWriter = function () { thrown++; return Promise.reject(new Error('injected read failure')); };
+      const out = await ownerPut(arm.engine, 'notes/gone', '---\ntitle: gone\n---\nSecond.', undefined, 'bob-example').finally(() => { engine.readPageHiddenFromWriter = original; });
+      expect({ backend: arm.backend, fired: thrown > 0, failed: ['internal_error', 'storage_error'].includes(out), after: await snapshot() }).toEqual({ backend: arm.backend, fired: true, failed: true, after: before });
+    }
+    expect(arms().length).toBeGreaterThan(0);
+  }, 120_000);
+
+  // A plain member's put_page over a slug with only a soft-deleted row. The opening probe sees that row (it names readers), so the check is
+  // not decided early and readLinkTargetPages returns no live row; the row is then judged by readPageHiddenFromWriter, on every arm, and the
+  // write is refused as an unseen page. Nothing is written: no live row, no version, the deleted row as it was.
+  for (const shape of [{ name: 'names readers', frontmatter: { readable_by: [OWNER] } as Record<string, unknown>, rules: [] as Array<{ id: string; prefix: string; readable_by: string[] }> }, { name: 'sits under a folder rule that lists only the owner', frontmatter: {}, rules: [{ id: 'owner-only', prefix: 'notes/', readable_by: [`member:${OWNER}`] }] }]) {
+    parityTest(`a plain member's put_page over a soft-deleted page that ${shape.name} is refused as an unseen page and writes nothing on every arm`, { methods: ['readLinkTargetPages'], timeout: 120_000 }, async (engine, backend) => {
+      await seed(engine, backend);
       await addMember(engine, 'bob-example');
-      await engine.putPage('notes/gone', { type: 'note', title: 'Gone', compiled_truth: 'First.', timeline: '', frontmatter: { readable_by: [OWNER] } }, { sourceId: SRC });
+      if (shape.rules.length) await proposeRevision(engine, SRC, shape.rules, { origin: 'cli', store: 'database' });
+      await engine.putPage('notes/gone', { type: 'note', title: 'Gone', compiled_truth: 'First.', timeline: '', frontmatter: shape.frontmatter }, { sourceId: SRC });
       await engine.softDeletePage('notes/gone', { sourceId: SRC });
       const snapshot = async () => { const row = await engine.getPage('notes/gone', { sourceId: SRC, includeDeleted: true }); return { live: await engine.getPage('notes/gone', { sourceId: SRC }), row: row && [row.deleted_at !== null, row.compiled_truth, row.frontmatter, row.knowledge_revision], pages: await engine.countSourcePages(SRC, { includeDeleted: true }), versions: (await engine.getVersions('notes/gone', { sourceId: SRC })).length }; };
       const before = await snapshot();
       const out = await ownerPut(engine, 'notes/gone', '---\ntitle: Gone\n---\nSecond.', undefined, 'bob-example', false);
-      // PGLite and Postgres run the raw statement, find the hidden deleted row and refuse as an unseen page; Rust refuses the raw statement itself.
-      expect({ backend: arm.backend, out, after: await snapshot() }).toEqual({ backend: arm.backend, out: arm.backend === 'rust' ? 'engine_capability_missing' : 'page_not_found', after: before });
+      const result = { out, after: await snapshot() };
+      expect(result).toEqual({ out: 'page_not_found', after: before });
       expect(before).toMatchObject({ live: null, pages: 1, versions: 0 });
-    }
-    expect(arms().length).toBeGreaterThan(0);
-  }, 120_000);
+      return JSON.parse(JSON.stringify(result).replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, '<id>')) as typeof result;
+    });
+  }
 });

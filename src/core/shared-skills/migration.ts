@@ -13,7 +13,7 @@ import { sharedSkillSourcePolicyOrPreserve } from './setup-source-policy.ts';
 import { INVENTORY_LIMIT_CEILINGS, readInventoryLimits, type InventoryLimits } from './inventory-limits.ts';
 import { SHARED_SKILL_LIMITS } from './model.ts';
 import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
-import { isRustBrain, rustHeads, rustPack } from './rust-publication.ts';
+import { isRustBrain, isRustClient, rustHeads, rustPack } from './rust-publication.ts';
 
 export type MigrationPublication = 'disabled' | 'prose_only' | 'consent_required';
 export interface SharedMigrationStage {
@@ -174,6 +174,15 @@ export async function runSharedSkillsMigration(ctx: OperationContext, options: {
       row.stages.push({ stage, status: row.status, reason, ...(conflictCode ? { code: conflictCode } : {}) });
       await persist();
     };
+    // A client of a Rust brain's owner cannot read the owner-only skill store. That is host action named by its code,
+    // never a conflict: a conflict ends the run partial, and partial runs count toward the wedge.
+    const ownerOnly = async (stage: SharedMigrationStage['stage']) => {
+      row.status = 'action_required';
+      row.stages.push({ stage, status: 'action_required', code: 'owner_unavailable', reason: `owner_unavailable: this run is a client of the process that owns this Rust brain `
+        + `(such as gbrain serve, a sync or an import), and only the owner reads its shared-skill store, so source ${source.id}'s skillpack.json change was not checked and nothing changed. `
+        + 'Run gbrain apply-migrations again when no other gbrain process holds this brain.' });
+      await persist();
+    };
     if (sourcePolicy.mode === 'preserve_files') {
       if (sourcePolicy.unverified) row.policy_unverified = true;
       row.member_installations = await inspectSharedMemberMigration(ctx.engine, source.id, source.incarnation);
@@ -215,13 +224,24 @@ export async function runSharedSkillsMigration(ctx: OperationContext, options: {
       if (prior?.inventory && (!row.inventory || !sameInventory(prior.inventory.hashes, row.inventory.hashes))) {
         const original = { ...prior.inventory.hashes }, current = { ...row.inventory?.hashes };
         delete original['skillpack.json']; delete current['skillpack.json'];
+        const digest = row.inventory ? inventoryDigest(row.inventory.hashes) : null;
+        const accepted = digest !== null && options.acceptReviewedInventory?.[source.id] === digest;
+        const filesDiffer = !row.inventory || !sameInventory(original, current);
+        // Only the sealed manifest hash tells a skillpack.json edit the sealed publication made from a local one, and a
+        // client of a Rust brain's owner cannot read it: that one case waits for the owner. A difference on disk is a
+        // conflict without it. The deferral keeps the reviewed inventory and its completed stage (the moved-root guard).
+        const client = isRustClient(ctx.engine);
+        if (client && !filesDiffer && !accepted) {
+          row.inventory = prior.inventory;
+          row.stages.push(...(prior.stages ?? []).filter(stage => stage.stage === 'inventory' && stage.status === 'complete'));
+          await ownerOnly('inventory');
+          continue;
+        }
         const reviewed = prior.inventory;
         // A sealed read that fails keeps the inventory taken before the edit, so a retry still compares against it.
-        const sealed = { manifest_hash: await sealedManifestHash(ctx.engine, source.id, source.incarnation)
+        const sealed = client ? null : { manifest_hash: await sealedManifestHash(ctx.engine, source.id, source.incarnation)
           .catch((error: unknown) => { row.inventory = reviewed; throw error; }) };
-        const digest = row.inventory ? inventoryDigest(row.inventory.hashes) : null;
-        if ((!row.inventory || !sameInventory(original, current) || sealed?.manifest_hash !== row.inventory.hashes['skillpack.json'])
-          && (digest === null || options.acceptReviewedInventory?.[source.id] !== digest)) {
+        if ((filesDiffer || (sealed !== null && sealed.manifest_hash !== row.inventory!.hashes['skillpack.json'])) && !accepted) {
           const changed = changedInventoryPaths(prior.inventory.hashes, row.inventory?.hashes ?? {});
           row.inventory = prior.inventory;
           throw opError('local_conflict', `Files changed since migration inventory; preserve edits and review the checkpoint before retrying. Changed: ${changed.slice(0, 20).join(', ')}${changed.length > 20 ? ` and ${changed.length - 20} more` : ''}.`

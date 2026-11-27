@@ -22,7 +22,6 @@
  */
 import { VERSION } from '../../version.ts';
 import type { BrainEngine } from '../engine.ts';
-import type { SqlEngine } from './model.ts';
 
 export const PURGE_PARK_OP = 'purge-deleted-park';
 export const PURGE_PARK_LIMIT = 5;
@@ -50,32 +49,28 @@ export async function readPurgeParks(engine: Pick<BrainEngine, 'listPurgeParks'>
 }
 
 /** Drops the records of tombstones that were purged, restored or deleted again; the purge runs it before it reads. */
-export async function prunePurgeParks(engine: SqlEngine): Promise<void> {
-  await engine.executeRaw(`DELETE FROM op_checkpoints o WHERE o.op=$1 AND NOT ${LIVE_TOMBSTONE}`, [PURGE_PARK_OP]);
+export async function prunePurgeParks(engine: Pick<BrainEngine, 'prunePurgeParkRecords'>): Promise<void> {
+  await engine.prunePurgeParkRecords(PURGE_PARK_OP);
 }
 
-export async function recordPurgeFailure(engine: SqlEngine, park: Pick<PurgePark, 'source_id' | 'slug' | 'deleted_us' | 'code' | 'reason'>): Promise<void> {
+export async function recordPurgeFailure(engine: Pick<BrainEngine, 'recordPurgeFailureRecord'>, park: Pick<PurgePark, 'source_id' | 'slug' | 'deleted_us' | 'code' | 'reason'>): Promise<void> {
   const first: PurgePark = { ...park, failures: 1, failed_at: new Date().toISOString(), version: VERSION };
-  await engine.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES($1,$2,$3::text::jsonb)
-    ON CONFLICT (op,fingerprint) DO UPDATE SET updated_at=now(), completed_keys=jsonb_build_array((op_checkpoints.completed_keys->0)
-      || jsonb_build_object('failures', COALESCE((op_checkpoints.completed_keys->0->>'failures')::int, 0) + 1, 'code', $4::text, 'reason', $5::text, 'failed_at', $6::text, 'version', $7::text))`,
-  [PURGE_PARK_OP, purgeParkKey(park.source_id, park.slug, park.deleted_us), JSON.stringify([first]), park.code, park.reason, first.failed_at, VERSION]);
+  await engine.recordPurgeFailureRecord({ op: PURGE_PARK_OP, key: purgeParkKey(park.source_id, park.slug, park.deleted_us), first: JSON.stringify([first]),
+    code: park.code, reason: park.reason, failedAt: first.failed_at, version: VERSION });
 }
 
-export async function clearPurgePark(engine: SqlEngine, key: string): Promise<void> {
-  await engine.executeRaw('DELETE FROM op_checkpoints WHERE op=$1 AND fingerprint=$2', [PURGE_PARK_OP, key]);
+export async function clearPurgePark(engine: Pick<BrainEngine, 'deletePurgeParkRecord'>, key: string): Promise<void> {
+  await engine.deletePurgeParkRecord(PURGE_PARK_OP, key);
 }
 
 /**
  * A source whose writer is not active: its records are marked, so they rearm once it is active again.
  * An active source: the records marked while it was not are dropped (the rearm) and their count returned.
  */
-export async function notePurgeSourceWriter(engine: SqlEngine, sourceId: string, active: boolean): Promise<number> {
+export async function notePurgeSourceWriter(engine: Pick<BrainEngine, 'markPurgeParksInactive' | 'dropRearmedPurgeParks'>, sourceId: string, active: boolean): Promise<number> {
   if (!active) {
-    await engine.executeRaw(`UPDATE op_checkpoints SET completed_keys=jsonb_build_array((completed_keys->0) || '{"inactive_seen":true}'::jsonb)
-      WHERE op=$1 AND completed_keys->0->>'source_id'=$2 AND completed_keys->0->>'inactive_seen' IS NULL`, [PURGE_PARK_OP, sourceId]);
+    await engine.markPurgeParksInactive(PURGE_PARK_OP, sourceId);
     return 0;
   }
-  return (await engine.executeRaw(`DELETE FROM op_checkpoints WHERE op=$1 AND completed_keys->0->>'source_id'=$2
-    AND completed_keys->0->>'inactive_seen'='true' RETURNING 1`, [PURGE_PARK_OP, sourceId])).length;
+  return engine.dropRearmedPurgeParks(PURGE_PARK_OP, sourceId);
 }

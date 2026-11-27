@@ -15,7 +15,7 @@
  * as null (none kept), and applyIdentityDecisions refuses an upsert that carries evidence or a company sweep's plan.
  */
 import { identityPageNotFound, type CanonicalTwinRow, type EntityIdentityFilter, type EntityIdentityLinkInput, type EntityIdentityPageRow, type EntityIdentityRow, type EntityIdentityUnlinkInput } from '../../engine-sql/entity-identities.ts';
-import { storeCall, type StoreMember } from './common.ts';
+import { refuseMember, storeCall, type StoreMember } from './common.ts';
 import type { EntityKeyRow, EntityKeyRowsOpts } from '../../engine-sql/entity-keys.ts';
 import type {
   ApplyIdentityDecisionsInput, ApplyIdentityDecisionsResult, IdentityDecisionsRead, IdentityMemberRef,

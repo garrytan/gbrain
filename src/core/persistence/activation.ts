@@ -74,7 +74,7 @@ export interface ActivationWarning {
   fix: Action;
 }
 /** #5182: the sources whose Git effects activation would leave skipped, by the same policy the effect runner applies. */
-async function gitDurabilityWarnings(bindings: WorktreeBinding[]): Promise<{ warnings?: ActivationWarning[] }> {
+export async function gitDurabilityWarnings(bindings: WorktreeBinding[]): Promise<{ warnings?: ActivationWarning[] }> {
   const warnings: ActivationWarning[] = [];
   for (const binding of bindings) {
     const state = gitDurabilityState(binding);

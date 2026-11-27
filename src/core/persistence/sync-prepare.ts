@@ -331,7 +331,7 @@ export function screenSyncImport(input: SyncImportScreenInput): { screen: Import
   const newerWorkingTree = !input.companyApproval && !!base && !input.lineEndingOnly && input.rawHash !== sha256(content) && !sameCanonicalImport(base, parsedInput);
   const gateSource = input.writeGateSource;
   const gateTrust = gateSource ? ownerPageTrust({ frontmatter: parsedInput.frontmatter, sourceConfig: gateSource.config, channel: 'managed_sync_import', sourceUri: sourcePath }) : null;
-  const screen = screenImportContent({ content, path: `${slug}.md`, activePack, expectedSlug: resolveSlugForPath(sourcePath), fences: 'coordinated', holdNoncanonicalPrivate: true,
+  const screen = screenImportContent({ content, path: `${slug}.md`, activePack, expectedSlug: resolveSlugForPath(sourcePath), createsPage: !snapshot, fences: 'coordinated', holdNoncanonicalPrivate: true,
     ...(input.normalize === false ? { normalize: false } : {}),
     slugExempt: declared => snapshot?.page.source_path != null && syncOriginPath(snapshot.page.source_path) === syncOriginPath(sourcePath) && declared === snapshot.page.slug,
     slugConflictMessage: (found, expected) => frontmatterSlugConflictMessage(sourcePath, found, expected),

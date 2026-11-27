@@ -2385,6 +2385,18 @@ export interface EngineConfig {
    * `token_env` names the environment variable that holds the owner server token; the token itself is never in config.
    */
   rust_server?: { url?: string; token_env?: string; ca_file?: string };
+  /**
+   * Rust: false when this open must find the store already there (the CLI's connect to an existing brain,
+   * src/core/engine-connect.ts): owner election makes no folder and the store's open creates nothing. Unset (an embedded
+   * `openEngine`, a seed, a test) creates the store when it is missing, as before.
+   */
+  create_store?: boolean;
+  /**
+   * Rust: set by `toEngineConfig` for the brain the gbrain config names (every CLI command that opens it). With
+   * `create_store` unset, the open creates a missing store only for a brain that never had one, and refuses a moved or
+   * missing store with `brain_missing` (src/commands/doctor/missing-brain.ts `rustStoreGuard`).
+   */
+  guard_store?: boolean;
 }
 
 // Errors

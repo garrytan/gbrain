@@ -48,7 +48,17 @@ impl Brain {
         self.run(env, move |s| s.read_guest_source_row(&source_id))
     }
 
-    /// `listGuestSourceIds(sourceIds)`: the ids whose source config says guest.
+    /// `hasGuestSourceRow(sourceId)`: whether the source has a guest row.
+    #[napi]
+    pub fn has_guest_source_row<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.has_guest_source_row(&source_id))
+    }
+
+    /// `listGuestSourceIds(sourceIds)`: the ids of guest sources (config says guest, or a guest row).
     #[napi]
     pub fn list_guest_source_ids<'env>(
         &self,

@@ -153,6 +153,43 @@ describe('engine parity: remote mention links', () => {
     return rows;
   });
 
+  // readPageHiddenFromWriter: whether some row of a slug, live or soft-deleted, fails the writer's read policy (member access, then the
+  // privacy part when `hide`); false when the slug has no row. A write over a slug with no live row is judged on it (page-visibility.ts
+  // hiddenUnder), so a soft-deleted page answers the same on every arm: a row that names nobody the writer is hides it, a private tombstone
+  // hides only under `hide`.
+  parityTest('readPageHiddenFromWriter judges a live, a soft-deleted and an absent page like the SQL engines', {
+    methods: ['putPage', 'softDeletePage', 'readPageHiddenFromWriter'],
+  }, async (engine) => {
+    const put = (slug: string, frontmatter: Record<string, unknown>) => engine.putPage(slug, { type: 'note', title: slug, compiled_truth: `${slug} fixture.`, timeline: '', frontmatter }, { sourceId: 'default' });
+    const rows = { 'notes/open': {}, 'notes/names-bob': { readable_by: ['bob-example'] }, 'notes/names-alice': { readable_by: ['alice-example'] }, 'notes/names-carol': { readable_by: ['carol-example'] },
+      'notes/private': { visibility: 'private' }, 'notes/private-names-bob': { visibility: 'private', readable_by: ['bob-example'] } } as const;
+    for (const [slug, frontmatter] of Object.entries(rows)) { await put(slug, frontmatter); await put(`gone/${slug}`, frontmatter); await engine.softDeletePage(`gone/${slug}`, { sourceId: 'default' }); }
+    const policies = {
+      bob: { identities: [['member:bob-example']], satisfiedRuleIds: [], folderCoverage: [], owner: false, labelledOnly: false },
+      carol: { identities: [['member:carol-example']], satisfiedRuleIds: [], folderCoverage: [], owner: false, labelledOnly: true },
+      nobody: { identities: [], satisfiedRuleIds: [], folderCoverage: [], owner: false, labelledOnly: false },
+      // One identity holding an entry that is not a valid identity: the SQL text empties the whole set, so the writer reads as one with no
+      // identity and a row that names readers is hidden from it, though the valid entry beside the bad one names it (mixed-set forwarding).
+      mixed: { identities: [['member:bob-example', 'not a valid entry!']], satisfiedRuleIds: [], folderCoverage: [], owner: false, labelledOnly: false },
+      'mixed labelled-only': { identities: [['member:carol-example', 'not a valid entry!']], satisfiedRuleIds: [], folderCoverage: [], owner: false, labelledOnly: true },
+      // The writer's folder coverage (a pending prefix in its record) hides every row under the prefix from it, labelled-only or not.
+      covered: { identities: [['member:bob-example']], satisfiedRuleIds: [], folderCoverage: [{ source_id: 'default', prefix: 'gone/' }], owner: false, labelledOnly: false },
+      'covered labelled-only': { identities: [['member:carol-example']], satisfiedRuleIds: [], folderCoverage: [{ source_id: 'default', prefix: 'gone/' }], owner: false, labelledOnly: true },
+    };
+    const ask = engine;
+    const answers: Record<string, boolean> = {};
+    for (const [name, policy] of Object.entries(policies)) for (const hide of [true, false]) {
+      for (const slug of [...Object.keys(rows), ...Object.keys(rows).map(s => `gone/${s}`), 'notes/absent']) answers[`${name}/${hide ? 'hide' : 'show'}/${slug}`] = await ask.readPageHiddenFromWriter('default', slug, policy, hide);
+    }
+    // A soft-deleted row that names readers other than the writer hides the slug, an absent slug hides nothing, and a private tombstone hides only under `hide`.
+    expect({ goneNamesAlice: answers['bob/hide/gone/notes/names-alice'], goneNamesBob: answers['bob/hide/gone/notes/names-bob'], absent: answers['bob/hide/notes/absent'],
+      privateHidden: answers['bob/hide/gone/notes/private'], privateShown: answers['bob/show/gone/notes/private'], goneNamesCarol: answers['carol/hide/gone/notes/names-carol'], goneOpenForCarol: answers['carol/hide/gone/notes/open'],
+      coveredGone: answers['covered/hide/gone/notes/names-bob'], coveredLive: answers['covered/hide/notes/names-bob'], coveredLabelled: answers['covered labelled-only/hide/gone/notes/names-carol'],
+      mixedNamesBob: answers['mixed/hide/gone/notes/names-bob'], mixedLiveNamesBob: answers['mixed/hide/notes/names-bob'], mixedOpen: answers['mixed/hide/notes/open'], mixedLabelled: answers['mixed labelled-only/hide/gone/notes/names-carol'] })
+      .toEqual({ goneNamesAlice: true, goneNamesBob: false, absent: false, privateHidden: true, privateShown: false, goneNamesCarol: false, goneOpenForCarol: true, coveredGone: true, coveredLive: false, coveredLabelled: true, mixedNamesBob: true, mixedLiveNamesBob: true, mixedOpen: false, mixedLabelled: true });
+    return answers;
+  });
+
   parityTest('the facts backstop extraction reads see a page\'s waiting and finished facts-absorb jobs', {
     methods: ['hasPendingFactsExtraction', 'hasCompletedFactsExtraction', 'admitJob', 'claimNextJob', 'completeJob'],
   }, async (engine) => {

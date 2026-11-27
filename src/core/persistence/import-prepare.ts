@@ -97,6 +97,7 @@ function managedImportRefusal(refusal: ContentRefusal, sourcePath: string): Oper
     : refusal.code === 'visibility_noncanonical' ? `Write visibility: private on its own frontmatter line of ${sourcePath} (lowercase key and value), then import it again.`
     : refusal.code === 'readers_noncanonical' ? `Write the readers key of ${sourcePath} as readable_by (lowercase, with an underscore) on its own frontmatter line, remove any other spelling, then import it again. ${READERS_FIX_EFFECT}`
     : refusal.code === 'tag_too_long' ? `Shorten the tag the message names in ${sourcePath}, or split it into shorter tags, then import it again.`
+    : refusal.code === 'slug_too_long' ? `Move ${sourcePath} to a shorter path (or give it a shorter slug: line) so its slug is at most 255 characters, then import it again.`
     : `Fix line ${refusal.line ?? '?'} of ${sourcePath}${refusal.key ? ` (key "${refusal.key}")` : ''}: one line per key with its whole value quoted. Run gbrain frontmatter validate on the file to see every problem, then import it again.`;
   return contentRefusalError(refusal, suggestion, { legacy_error: 'invalid_params' });
 }

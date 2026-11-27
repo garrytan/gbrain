@@ -10,7 +10,7 @@
  *  2. Fails on: a shared engine left open past the session or a disabled step
  *     (a second process could not open the brain), or a shared open that starts
  *     a second embedded Postgres instead of reusing the first.
- *  3. The setup ledger golden in test/setup.test.ts pins that the shared runs
+ *  3. The setup ledger golden in test/setup-migrations.test.ts pins that the shared runs
  *     write the same records as before.
  *  4. No seams: real PGLite datastores in temp directories.
  */

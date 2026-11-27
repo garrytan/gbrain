@@ -146,6 +146,19 @@ export async function tightenDatabaseFactVisibility(raw: EngineRawRead, sourceId
   [sourceId, [...factIds]]));
 }
 
+/** A fact's visibility and whether it is unexpired, in any source; undefined for no such fact. */
+export async function readFactLiveVisibility(raw: EngineRawRead, factId: number): Promise<{ visibility: string; live: boolean } | undefined> {
+  const [row] = await raw<{ visibility: string; live: boolean }>('SELECT visibility, expired_at IS NULL AS live FROM facts WHERE id=$1', [factId]);
+  return row;
+}
+
+/** Makes the named world fact of the source at fence row `rowNum` private when it is unexpired; the ids it changed. */
+export async function tightenFencedFactVisibility(raw: EngineRawRead, sourceId: string, factId: number, rowNum: number): Promise<number[]> {
+  return ids(await raw<{ id: number | string }>(
+    `UPDATE facts SET visibility='private' WHERE source_id=$1 AND id=$2 AND row_num=$3 AND visibility='world' AND expired_at IS NULL RETURNING id`,
+    [sourceId, factId, rowNum]));
+}
+
 // ---------------------------------------------------------------------------------------------------------------------
 // moved-pages (src/core/persistence/moved-pages.ts readMovedPage, the access comparison)
 // ---------------------------------------------------------------------------------------------------------------------

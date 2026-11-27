@@ -28,6 +28,7 @@ keys.
 | `brain.hasSegmentStorage()` | `true` when any segment text or body staging record exists | `hasSegmentStorage` |
 | `brain.detachPageOrigin(pageId, reason)` | nothing. The page, live or a tombstone, forgets `source_path` and `source_uri` and records `reason` as its `database_only_reason`; its `knowledge_revision` stays | `detachPageOrigin` |
 | `brain.readPageDatabaseOnlyReason(sourceId, slug)` | the page's `database_only_reason`, live or a tombstone, or `null` without one or without a page | `readPageDatabaseOnlyReason` |
+| `brain.listUnboundSourcePages()` | `[{ source_id, pages, bound, local_path }]`: per source with live pages marked `unbound_source` and no file path or uri once edge whitespace is trimmed, how many, whether the source holds a worktree binding at its incarnation, and its local path (for `default` with none, `sync.repo_path`), by source id in byte order | `listUnboundSourcePages` (doctor `unbound_source`) |
 | `brain.bumpPageKnowledgeRevision(pageId)` | nothing. The page, live or a tombstone, takes a new `knowledge_revision`, and its `text_projection_revision` is cleared | `bumpPageKnowledgeRevision` |
 | `brain.removePageFrontmatterKeys(sourceId, pageId, keys)` | nothing. Removes `keys` from the frontmatter of the live page of the source; only a page that held one changes, and it takes a new revision | `removePageFrontmatterKeys` |
 | `brain.setPageType(sourceId, slug, type)` | nothing. Sets the page's `type`, live or a tombstone; a changed type takes a new revision | `setPageType` |

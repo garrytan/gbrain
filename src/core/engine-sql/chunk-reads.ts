@@ -12,7 +12,7 @@
  */
 import { DEF_TYPES } from '../chunkers/def-types.ts';
 import type { CodeReadScope } from '../code-intel/read-scope.ts';
-import { SAFE_FENCE_CHUNKER_VERSION, chunkGenerationFilter, requiresSafeChunks, safeChunksFilter, servedTextProjectionFilter } from '../search/safe-chunks.ts';
+import { SAFE_FENCE_CHUNKER_VERSION, chunkGenerationFilter, chunkVisibleFilter, requiresSafeChunks, safeChunksFilter, servedTextProjectionFilter } from '../search/safe-chunks.ts';
 import type { PageReadScope } from '../types.ts';
 import type { SqlExecutor } from './executor.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
@@ -224,6 +224,98 @@ export async function listQualifiedSymbolNames(
         LIMIT ${opts.limit}`,
   );
   return found.map(r => r.symbol_name_qualified);
+}
+
+/**
+ * The distinct languages of the chunks of served live pages of `sourceId` that define `qualified`, in byte order
+ * (the recursive code walk's language gate). Not only code pages: a namesake in any served page counts.
+ */
+export async function listSymbolLanguages(exec: LegacyUnscopedRead, sourceId: string, qualified: string): Promise<string[]> {
+  const found = await rows<{ language: string }>(exec,
+    // Byte order (COLLATE "C"), as PGLite and the Rust store sort; master's text had no ORDER BY (its caller only asks
+    // whether some language is supported, so the order never changed an answer).
+    // chunk-visibility-ok: the served projection filter of codeReadFilter is master's visibility test here
+    sqlFragment`SELECT DISTINCT content_chunks.language COLLATE "C" AS language
+         FROM content_chunks
+         JOIN pages p ON p.id = content_chunks.page_id
+        WHERE p.source_id = ${sourceId} AND ${codeFilter({})}
+          AND content_chunks.symbol_name_qualified = ${qualified}
+          AND content_chunks.language IS NOT NULL
+        ORDER BY language`,
+  );
+  return found.map(r => r.language);
+}
+
+/**
+ * Which of the chunks `chunkIds` are written in one of `languages`, in id order (the walk keeps only edges whose origin
+ * chunk is in a supported language). Any stored chunk row, as master's read: the edges named them.
+ */
+export async function listSupportedChunkIds(exec: LegacyUnscopedRead, chunkIds: readonly number[], languages: readonly string[]): Promise<number[]> {
+  if (chunkIds.length === 0 || languages.length === 0) return [];
+  const found = await rows<{ id: number | string }>(exec,
+    // chunk-visibility-ok: reads the language of chunk ids an edge read already returned, as master did
+    sqlFragment`SELECT id FROM content_chunks WHERE id = ANY(${[...chunkIds]}::int[]) AND language = ANY(${[...languages]}::text[]) ORDER BY id`,
+  );
+  return found.map(r => Number(r.id));
+}
+
+/** How many chunk ids one two-pass symbol lookup returns (master's `LIMIT 50`, the walk's per-hop neighbor cap). */
+export const SYMBOL_CHUNK_LOOKUP_LIMIT = 50;
+
+/**
+ * The two-pass walk's symbol chunk lookups (search/two-pass.ts): `near_symbol` reads the chunks defining the one
+ * near-symbol name, `edge_targets` the chunks defining any unresolved edge target; each on pages of `sourceId` when one
+ * is named, at most 50. Master's statements had no ORDER BY, so past the limit the plan chose the rows (and on PGLite
+ * the choice could change once the plan was cached). These order by the page's source and slug in byte order, then
+ * the chunk's index, then its id: the same 50 rows in the same order on every engine (the Rust store sorts the same
+ * key, rust/docs/store/chunk_queries.md). Pinned by test/two-pass-symbol-order-sql-pin.test.ts.
+ */
+export async function listSymbolChunkIds(
+  exec: LegacyUnscopedRead, lookup: 'near_symbol' | 'edge_targets', symbols: readonly string[], sourceId?: string,
+): Promise<number[]> {
+  if (symbols.length === 0) return [];
+  const names = lookup === 'near_symbol' ? [symbols[0]!] : [...symbols];
+  const found = await rows<{ id: number | string }>(exec, sourceId
+    // chunk-visibility-ok: code symbol anchors and targets: code pages are never segmented (chooseBodyStorage)
+    ? sqlFragment`SELECT cc.id FROM content_chunks cc
+         JOIN pages p ON p.id = cc.page_id
+        WHERE cc.symbol_name_qualified = ANY(${names}::text[]) AND p.source_id = ${sourceId}
+        ORDER BY p.source_id COLLATE "C", p.slug COLLATE "C", cc.chunk_index, cc.id
+        LIMIT ${SYMBOL_CHUNK_LOOKUP_LIMIT}`
+    // chunk-visibility-ok: code symbol anchors and targets: code pages are never segmented (chooseBodyStorage)
+    : sqlFragment`SELECT cc.id FROM content_chunks cc
+         JOIN pages p ON p.id = cc.page_id
+        WHERE cc.symbol_name_qualified = ANY(${names}::text[])
+        ORDER BY p.source_id COLLATE "C", p.slug COLLATE "C", cc.chunk_index, cc.id
+        LIMIT ${SYMBOL_CHUNK_LOOKUP_LIMIT}`,
+  );
+  return found.map(r => Number(r.id));
+}
+
+/** One chunk the structural walk added, with its page (search/two-pass.ts hydrateChunks). */
+export interface WalkChunkRow {
+  slug: string; page_id: number; title: string; type: string; source_id: string;
+  chunk_id: number; chunk_index: number; chunk_text: string; chunk_source: string;
+}
+
+/**
+ * The visible chunks among `chunkIds` and their pages (the structural walk's hydration), in `chunkIds` order: the
+ * walk's order, so search results with tied scores keep it on every engine. Master's statement, with no ORDER BY
+ * (the rows are put in input order here); an absent or invisible chunk returns no row.
+ */
+export async function listWalkChunkRows(exec: LegacyUnscopedRead, chunkIds: readonly number[]): Promise<WalkChunkRow[]> {
+  if (chunkIds.length === 0) return [];
+  const found = await rows<WalkChunkRow>(exec,
+    // chunk-visibility-ok: chunkVisibleFilter is this read's visibility test, as master's hydrateChunks had it
+    sqlFragment`SELECT p.slug, p.id as page_id, p.title, p.type, p.source_id,
+            cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source
+       FROM content_chunks cc
+       JOIN pages p ON p.id = cc.page_id
+       WHERE cc.id = ANY(${[...chunkIds]}::int[]) AND ${trustedSql(chunkVisibleFilter('p', 'cc'))}`,
+  );
+  const at = new Map(chunkIds.map((id, i) => [Number(id), i] as const));
+  return found.map(r => ({ ...r, page_id: Number(r.page_id), chunk_id: Number(r.chunk_id), chunk_index: Number(r.chunk_index) }))
+    .sort((a, b) => (at.get(a.chunk_id) ?? 0) - (at.get(b.chunk_id) ?? 0));
 }
 
 /** One withdrawal key: a subject slug (`*` for every page) and the LIKE patterns a chunk's lowered text must all match. */

@@ -195,3 +195,47 @@ fn the_status_lists_the_weights_by_byte_of_source_and_key() {
     assert_eq!(status["counts"]["top_client_share_7d"], 1.0);
     assert!(status["counts"]["last_rating_at"].is_string());
 }
+
+/// A page in the default source; returns its id.
+fn put_id(b: &gbrain_store::Store, slug: &str) -> f64 {
+    let input: PageInput = serde_json::from_value(
+        json!({ "type": "note", "title": slug, "compiled_truth": format!("{slug} body") }),
+    )
+    .unwrap();
+    let options: PutPageOptions = serde_json::from_value(json!({})).unwrap();
+    b.put_page(slug, &input, &options).unwrap()["id"]
+        .as_f64()
+        .unwrap()
+}
+
+#[test]
+fn the_page_weight_read_widens_the_real_and_halves_it_after_an_edit() {
+    let b = brain("retrieval-feedback-page-weights");
+    let a = put_id(&b, "a");
+    let unrated = put_id(&b, "b");
+    b.insert_retrieval_events(&events(
+        json!([{ "id": "e1", "client_id": "c", "op": "query" }]),
+    ))
+    .unwrap();
+    // The batch rates with a null content hash, so the page's own hash differs and the weight reads halved.
+    b.apply_retrieval_ratings(&batch("e1", 1, &[("default", "a")]))
+        .unwrap();
+    let rows = b
+        .read_page_feedback_weights(&[unrated, a, 999_999.0, 1.5])
+        .unwrap();
+    let ids: Vec<f64> = rows.iter().map(|r| r["id"].as_f64().unwrap()).collect();
+    assert_eq!(ids, vec![a.min(unrated), a.max(unrated)]);
+    let rated = rows.iter().find(|r| r["id"].as_f64() == Some(a)).unwrap();
+    let neutral = rows
+        .iter()
+        .find(|r| r["id"].as_f64() == Some(unrated))
+        .unwrap();
+    // 0.5 + (0.19999999f32 widened - 0.5) / 2, in double precision.
+    assert_eq!(
+        rated["weight"].as_f64().unwrap(),
+        0.5 + (f64::from(0.19999999f32) - 0.5) / 2.0
+    );
+    assert!(rated["content_hash"].is_string());
+    assert_eq!(neutral["weight"], Value::Null);
+    assert!(b.read_page_feedback_weights(&[]).unwrap().is_empty());
+}

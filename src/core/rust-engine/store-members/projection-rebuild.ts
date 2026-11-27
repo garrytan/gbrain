@@ -25,6 +25,16 @@ function keepColumn(member: string, column: KeepColumn): { dimensions: number } 
   return { dimensions: column.dimensions };
 }
 
+export const readChunkInputHashes: Member<'readChunkInputHashes'> = (brain, pageId) =>
+  storeCall({ member: 'readChunkInputHashes' }, () => brain.readChunkInputHashes(pageId));
+export const clearChunkEmbeddingsByIds: Member<'clearChunkEmbeddingsByIds'> = async (brain, pageId, column, ids) => {
+  keepColumn('clearChunkEmbeddingsByIds', column);
+  await storeCall({ member: 'clearChunkEmbeddingsByIds' }, () => brain.clearChunkEmbeddingsByIds(pageId, [...ids]));
+};
+export const writeChunkInputHashes: Member<'writeChunkInputHashes'> = async (brain, pageId, ids, hashes) => {
+  await storeCall({ member: 'writeChunkInputHashes' }, () => brain.writeChunkInputHashes(pageId, [...ids], [...hashes]));
+};
+
 export const listQueuedPageProjections: Member<'listQueuedPageProjections'> = (brain, filter) =>
   storeCall({ member: 'listQueuedPageProjections' }, () => brain.listQueuedPageProjections({
     limit: filter.limit, retryCooldown: filter.retryCooldown, notAfter: filter.notAfter,

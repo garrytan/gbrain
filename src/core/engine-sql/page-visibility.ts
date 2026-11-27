@@ -9,7 +9,7 @@
  * alone). The caller picks the part: remoteReadPolicySql's choice, or `access` for a caller that refuses privacy itself.
  */
 import { ANY_OWNER_ONLY_SQL, OWNER_ONLY_LINEAGE_PRESENT_SQL, READ_SOURCE_OWNER_ONLY_SQL } from '../access/owner-only.ts';
-import { callerAccessAllowedSql, privacyPartSql, privatePagesFilterForCaller, readPolicyFragment } from '../search/private-visibility.ts';
+import { callerAccessAllowedSql, privacyPartSql, privatePagesFilterForCaller, privatePagesFilterFragment, readPolicyFragment } from '../search/private-visibility.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
 import type { TimedRawRead } from './entity-reads.ts';
 import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
@@ -31,6 +31,18 @@ export async function readPageHiddenFromCaller(exec: LegacyUnscopedRead, sourceI
  * For each (source_id, slug) among `pages` that names a page row (soft-deleted rows included), whether a live row of
  * it passes the current caller's policy. One row per pair, in no set order.
  */
+/**
+ * Whether the live page `slug` of `sourceId` is world-visible: it passes the empty-identity page policy with privacy
+ * (`privatePagesFilterFragment`), so no reader identity, grant or satisfied folder rule of the caller counts. The
+ * caller's record still gives the fragment its folder coverage and owner flag. False for a missing or soft-deleted page.
+ * A write that gives a reason reads it to decide whether the reason may reach a Git commit (persistence/change-reason.ts).
+ */
+export async function readPageWorldVisible(exec: LegacyUnscopedRead, sourceId: string, slug: string): Promise<boolean> {
+  const { rows: [page] } = await exec.run<{ world: boolean }>(
+    sqlFragment`SELECT ${trustedSql(privatePagesFilterFragment('p'))} AS world FROM pages p WHERE p.source_id = ${sourceId} AND p.slug = ${slug} AND p.deleted_at IS NULL`);
+  return page?.world === true;
+}
+
 export async function readCallerPageAccess(exec: LegacyUnscopedRead, pages: readonly { source_id: string; slug: string }[], opts: { policy: PagePolicyPart }): Promise<CallerPageAccessRow[]> {
   const { rows } = await exec.run<CallerPageAccessRow>(sqlFragment`SELECT p.source_id, p.slug,
       bool_or(p.deleted_at IS NULL AND ${trustedSql(opts.policy === 'access' ? callerAccessAllowedSql('p') : privatePagesFilterForCaller('p'))}) AS readable FROM pages p

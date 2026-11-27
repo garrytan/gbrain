@@ -21,9 +21,9 @@ const BODY_RECHECK_GROUPS: usize = 200;
 /// `BODY_RECHECK_VERSIONS` (`src/core/engine-sql/doctor-derived.ts`).
 const BODY_RECHECK_VERSIONS: usize = 20;
 use crate::aliases::{read_slug_alias, renamed_to};
-use crate::chunks::read_chunks;
+use crate::chunks::{keyed_chunks, read_chunks, segmented};
 use crate::config::read_config;
-use crate::env::parse_iso;
+use crate::env::{iso, parse_iso};
 use crate::error::Result;
 use crate::facts::privacy::{EDGE_SPACE, alias_private, snapshot_fields_allow};
 use crate::kv::KvRead;
@@ -67,22 +67,65 @@ fn live(page: Option<PageRecord>) -> Option<PageRecord> {
     page.filter(|p| p.deleted_at_us.is_none())
 }
 
-/// A pending-since stamp and whether it has a vector: what the backlog statement reads of a chunk.
-fn backlog_chunks(read: &dyn KvRead) -> Result<(Option<i64>, i64)> {
-    let (mut oldest, mut unaged) = (None::<i64>, 0i64);
+/// One source's chunks with no vector: how many, how many carry no pending-since stamp, and the
+/// oldest stamp.
+#[derive(Default)]
+struct Backlog {
+    pending: i64,
+    unaged: i64,
+    oldest: Option<i64>,
+}
+
+/// The chunks of live pages (not `embed_skip`) with no vector, per source. `sources` keeps only
+/// those source ids (`p.source_id = ANY($1)`). `live_body` keeps only the chunks of the page's
+/// live body (`chunkGenerationFilter('p', 'cc')`: an inline chunk of a page that is not segmented,
+/// a segment chunk of a published occurrence at or below the page's generation); without it every
+/// stored chunk counts, as the doctor's backlog age statement reads them.
+fn backlog_scan(
+    read: &dyn KvRead,
+    sources: Option<&HashSet<&str>>,
+    live_body: bool,
+) -> Result<BTreeMap<String, Backlog>> {
+    let mut out: BTreeMap<String, Backlog> = BTreeMap::new();
     for page in all_pages(read)? {
-        if page.deleted_at_us.is_some() || page.frontmatter.contains_key("embed_skip") {
+        if page.deleted_at_us.is_some()
+            || page.frontmatter.contains_key("embed_skip")
+            || sources.is_some_and(|s| !s.contains(page.source_id.as_str()))
+        {
             continue;
         }
-        for chunk in read_chunks(read, page.id)? {
+        let chunks = if live_body {
+            keyed_chunks(read, page.id, Some(segmented(&page)))?
+                .into_iter()
+                .map(|(_, c)| c)
+                .collect()
+        } else {
+            read_chunks(read, page.id)?
+        };
+        for chunk in chunks {
             if chunk.embed.has_vector() {
                 continue;
             }
+            let row = out.entry(page.source_id.clone()).or_default();
+            row.pending += 1;
             match chunk.embed.pending_since_us {
-                Some(since) => oldest = Some(oldest.map_or(since, |o| o.min(since))),
-                None => unaged += 1,
+                Some(since) => row.oldest = Some(row.oldest.map_or(since, |o| o.min(since))),
+                None => row.unaged += 1,
             }
         }
+    }
+    Ok(out)
+}
+
+/// The oldest pending-since stamp and the unstamped count over every live chunk with no vector.
+fn backlog_chunks(read: &dyn KvRead) -> Result<(Option<i64>, i64)> {
+    let (mut oldest, mut unaged) = (None::<i64>, 0i64);
+    for row in backlog_scan(read, None, false)?.into_values() {
+        unaged += row.unaged;
+        oldest = match (oldest, row.oldest) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
+        };
     }
     Ok((oldest, unaged))
 }
@@ -233,6 +276,27 @@ impl Store {
     /// per chunk, so `column` names the only column there is. The backfill time is a config key
     /// the Rust store never writes; with none (or text that is not an ISO instant) `backfilled`
     /// is NULL, as in a PGLite brain that never ran the backfill.
+    /// `readEmbedBacklogRows(column, sourceIds)`: per source among `sourceIds`, the live-body chunks
+    /// of live pages (not `embed_skip`) with no vector (`pending`), the ones with no pending-since
+    /// stamp (`unaged`) and the oldest stamp as ISO text (`oldest`). A source with none has no row;
+    /// rows come in byte order of the source id. `column` names the only vector column there is.
+    pub fn read_embed_backlog_rows(&self, _column: &str, source_ids: &[String]) -> Result<Value> {
+        let read = self.read()?;
+        let wanted: HashSet<&str> = source_ids.iter().map(String::as_str).collect();
+        let rows: Vec<Value> = backlog_scan(&*read, Some(&wanted), true)?
+            .into_iter()
+            .map(|(source_id, row)| {
+                json!({
+                    "source_id": source_id,
+                    "pending": row.pending,
+                    "unaged": row.unaged,
+                    "oldest": row.oldest.map(iso),
+                })
+            })
+            .collect();
+        Ok(Value::Array(rows))
+    }
+
     pub fn read_embedding_backlog_age(&self, _column: &str) -> Result<Value> {
         let read = self.read()?;
         let now = self.env.now_micros();

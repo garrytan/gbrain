@@ -8,7 +8,7 @@ import type { AttendanceWindowRow, CardFindQuery, CardHitRow, CardListQuery, Cha
 import { storeCall, takeOptions, type StoreMember } from './common.ts';
 import { memberAccessPolicy } from './access-policies.ts';
 import { storePagePolicy, storePageTextPolicy } from './private-provenance.ts';
-import { currentCallerAccess, privatePagesFilterFragment } from '../../search/private-visibility.ts';
+import { currentCallerAccess, privatePagesFilterFragment, sqlAppliedSets } from '../../search/private-visibility.ts';
 import type { OwnerOnlyForm } from '../../access/owner-only.ts';
 import type { BeliefCoverageEventRow } from '../../engine-sql/belief-ledger.ts';
 
@@ -134,15 +134,22 @@ export const readChatCensusRows: StoreMember<[sourceIds: readonly string[], chat
 export const readWhoCanReadRows: StoreMember<[slug: string, sourceId: string | undefined, form: OwnerOnlyForm], WhoCanReadRow[]> = async (brain, slug, sourceId, form) =>
   (await storeCall({ member: 'readWhoCanReadRows' }, () => brain.readWhoCanReadRows(slug, sourceId || null, form === 'closed' ? 'closed' : 'fn'))) as WhoCanReadRow[];
 
+/**
+ * The SQL empties a whole identity or satisfied set when any entry of it is invalid (readersAllowedSql, folderRulesAllowedSql), so
+ * both members send the store the sets the SQL applies (`sqlAppliedSets`), never the raw ones: the store matches entries one by one.
+ * An identity emptied that way is judged by the store with no satisfied rules, as `satisfiedFor` does for an empty identity.
+ */
 export const readPageAccessAllowed: StoreMember<[sourceId: string, slug: string, identity: readonly string[]], boolean> = async (brain, sourceId, slug, identity) => {
   const access = currentCallerAccess();
-  const policy = memberAccessPolicy(identity, access.satisfiedRuleIds);
-  return (await storeCall({ member: 'readPageAccessAllowed' }, () => brain.readPageAccessAllowed(sourceId, slug, [...identity], policy))) === true;
+  const applied = sqlAppliedSets(identity, access.satisfiedRuleIds);
+  const policy = memberAccessPolicy(applied.identity, applied.satisfiedRuleIds, identity);
+  return (await storeCall({ member: 'readPageAccessAllowed' }, () => brain.readPageAccessAllowed(sourceId, slug, applied.identity, policy))) === true;
 };
 
 export const readPageFolderRulesAllowed: StoreMember<[sourceId: string, slug: string, satisfied: readonly string[]], boolean> = async (brain, sourceId, slug, satisfied) => {
-  const policy = memberAccessPolicy(null, satisfied);
-  return (await storeCall({ member: 'readPageFolderRulesAllowed' }, () => brain.readPageFolderRulesAllowed(sourceId, slug, [...satisfied], policy))) === true;
+  const { satisfiedRuleIds } = sqlAppliedSets([], satisfied);
+  const policy = memberAccessPolicy(null, satisfiedRuleIds);
+  return (await storeCall({ member: 'readPageFolderRulesAllowed' }, () => brain.readPageFolderRulesAllowed(sourceId, slug, satisfiedRuleIds, policy))) === true;
 };
 
 export const countLineageClosingRules: StoreMember<[ruleIds: readonly string[], sourceId: string], number> = async (brain, ruleIds, sourceId) =>

@@ -55,7 +55,6 @@ const SITES: Record<Member, Record<string, { count: number; why: string }>> = {
   },
   executeRawDirect: {
     'src/core/persistence/consumer-lane.ts': { count: 1, why: 'consumerStatementEngine returns the engine unchanged unless engine.kind is postgres' },
-    'src/core/persistence/effect-journal.ts': { count: 1, why: 'effectClaimKeeper renews a managed effect claim once its renewal interval passes; lane 7 types it (persistenceUpkeepStore, rust-engine/managed-parity-rows e9420e70dc). Until that merges, a managed mirror that runs past the interval on a single-host Rust brain refuses raw_sql (named in the lane LM slice 2 READY); a multi-user store refuses managed persistence at admission' },
   },
   keywordBoundedRead: {
     'src/core/search/dedup.ts': { count: 1, why: 'segmentRegions asks engine.readSegmentRegions first, which the Rust engine defines' },

@@ -67,7 +67,6 @@ effect, request, binding, worktree and source records: see "Writer status" in [p
 | `readLiveConsumerSummary()` | `{ live: "0", oldest_hours: null }` | no consumer heartbeat is recorded |
 | `listConsumerOwners()`, `listStuckWorktreeRefreshes()` | `[]` | the store records no consumer or refresh row |
 | `listDerivationPurgeSweeps()` | `[]` | no derivation-result sweep of a fact purge is recorded |
-| `listUnboundSourcePages()` | `[]` | a page has no `database_only_reason` |
 | `listOverwriteCandidates()` | `[]` | page versions carry no link to the request that wrote them |
 | `readWriterVersionCutoff()` | the epoch | the store has no migration cutoff, so every request counts as after it |
 

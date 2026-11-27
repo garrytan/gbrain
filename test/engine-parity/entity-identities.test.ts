@@ -375,9 +375,12 @@ describe('entity identity union: a refused Rust read is not "no identity"', () =
     }) as unknown as BrainEngine;
     const viaStore: BrainEngine['listEntityIdentityRows'] = (filter) =>
       (STORE_MEMBERS.listEntityIdentityRows as (b: unknown, f: unknown) => Promise<never>)(brain, filter);
-    // A lineage caller still widens the page policy past what the store reads, so the store member refuses typed.
+    // A member's lineage read is served now (row 32e-b-2: test/engine-parity/labelled-only-reads.test.ts, and the translator cases in
+    // test/rust-private-reads-policy.test.ts). A labelled-only member speaking for an audience of several identities still widens
+    // the page policy past what the store reads, so the store member refuses typed.
     const widened = <T>(fn: () => Promise<T>) => withCallerAccess({
-      identity: ['member:alice-example'], hidePrivate: true, lineage: true,
+      identity: ['member:alice-example'], hidePrivate: true, labelledOnly: true,
+      audienceIdentities: [['member:alice-example'], ['member:bob-example']],
     }, fn);
     const run = (engine: BrainEngine) => widened(() => unionLinksAcrossIdentity(engine, 'people/alice-example', base, 'in',
       { sourceId: 'default', excludePrivate: true } as never));

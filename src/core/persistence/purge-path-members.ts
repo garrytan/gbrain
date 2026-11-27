@@ -30,11 +30,13 @@ import { refusePurgeEntryStop } from '../rust-engine/errors.ts';
 export const PURGE_OWNERS = {
   /** The page purge port itself: members and sites it serves or has still to serve. */
   ours: 'lane 13',
+  /** The retention purge's raw-SQL stops (RETENTION_STOPS): moved to lane 4 to land before 2026-11-30. */
+  retention: 'lane 4',
   /** The receipt reads and probes of the purge verification (facts/purge-verify.ts). */
   receipts: 'lane 13 step 3',
   /** The receipt's four reads (source-prose scan, source path, purge request, purge effects): rust-engine/rust-5a 90e7bea933 (not merged here). */
   receiptReads: 'lane 4 (rust-5a 90e7bea933)',
-  /** The recorded-value probe of the receipt's ledger report: rust-engine/rust-belief-purge e211982aba serves it (not merged here). */
+  /** The recorded-value probe of the receipt's ledger report: rust-engine/rust-belief-purge e211982aba serves it (carried here). */
   beliefProbe: 'lane 3 (rust-belief-purge e211982aba)',
   /** The fact-context probe of the receipt's ledger report. */
   factContextProbe: 'lane 4 (rust-5a 90e7bea933)',
@@ -44,6 +46,8 @@ export const PURGE_OWNERS = {
   factPurgeTx: 'lane 4 (rust-5a bc4cc890fe)',
   /** The segmented rewrite statements and their chunk probes, typed and served on Rust by segmented-staging-2 (34fa27c472): Ember's ruling, Nov 21. */
   segmentedRewrite: 'trunk (segment-pending-stamp f71c844551, contains 34fa27c472)',
+  /** The belief-ledger half of a purge (belief/purge.ts, belief/preimages.ts): typed members the Rust store serves (rust-engine/purge-ledger-sites). */
+  beliefLedger: 'lane 3 (purge-ledger-sites)',
 } as const;
 
 /**
@@ -67,22 +71,20 @@ export interface PurgePathMember<E extends string = 'retention'> extends Base<E>
 export interface PurgePathSite<E extends string = 'retention'> extends Base<E> { site: string; guarded?: string; stop?: string }
 export type PurgePathEntry<E extends string = 'retention'> = PurgePathMember<E> | PurgePathSite<E>;
 
-const { ours, beliefProbe, requestIndexes } = PURGE_OWNERS;
-const { nov24, nov25 } = PURGE_DUE;
+const { ours, retention, beliefProbe, requestIndexes } = PURGE_OWNERS;
+const { nov25 } = PURGE_DUE;
 const served = (owner: string, ...members: Array<keyof BrainEngine & string>): PurgePathMember[] => members.map(member => ({ member, owner }));
 
-/** Retention-only raw sites: the carry's parks and the candidate selection of purgeDeletedPagesCoordinated. */
+/**
+ * Retention-only raw sites: the expiry of a brain without managed persistence (purgeExpired's unmanaged branch). The
+ * carry's parks, the owed-purge records and the managed candidate selection are typed members the Rust store serves
+ * (engine-sql/retention-purge.ts, listed below); these reads are not yet, so a retention purge on a Rust brain still
+ * stops here, before it writes anything.
+ */
 const RETENTION_STOPS: PurgePathSite[] = [
-  ['releaseStaleHolds (persistence/derived-origin-hold.ts)', 'the stale-hold release (op_checkpoints UPDATE)'],
-  ['readOwedPurges (persistence/derived-origin-hold.ts)', 'the owed-purge read'],
-  ['pruneOwedPurges (persistence/derived-origin-hold.ts)', 'the owed-purge prune'],
-  ['pruneDerivedOriginParks (persistence/derived-origin-hold.ts)', 'the park prune'],
-  ['<anonymous> (repair/origin-carry.ts)', 'expiringOrigins: the expired-origin read'],
-  ['selectPurgeCandidates (persistence/purge-deleted.ts)', 'the candidate selection'],
-  ['prunePurgeParks (persistence/purge-parks.ts)', 'the purge park prune'],
-  ['notePurgeSourceWriter (persistence/purge-parks.ts)', 'the source writer note'],
-  ['readHeldConceptRows (persistence/concept-rebuild.ts)', 'the held concept read'],
-].map(([site, what]) => ({ site: site!, owner: ours, entry: 'retention' as const, stop: `${what} runs through raw SQL` }));
+  ['<anonymous> (persistence/purge-deleted.ts)', "purgeExpired's unmanaged expiry: the expired-page reads of its purge transaction (the `only` filter's and the recheck's)"],
+  ['readRederiveHeldConcepts (persistence/purge-deleted.ts)', 'the rebuild-held concept read of an automatic unmanaged purge'],
+].map(([site, what]) => ({ site: site!, owner: retention, entry: 'retention' as const, stop: `${what} runs through raw SQL` }));
 
 /**
  * Raw sites a purge reaches on PGLite and Postgres whose branch a Rust brain does not take. The Rust purge, with raw
@@ -112,12 +114,6 @@ const GUARDED_SITES: PurgePathSite[] = [
   ['isMirrorOnlyPage (persistence/mirror-read-only.ts)', 'a worktree file target: a brain without managed_persistence binds no worktree'],
   ['isUnboundSourcePage (persistence/unbound-source.ts)', 'a worktree file target: a brain without managed_persistence binds no worktree'],
   ['readSyncImportProvenance (persistence/sync-holds.ts)', 'a worktree file target: a brain without managed_persistence binds no worktree'],
-  ['derivedStreamSlugs (belief/purge.ts)', 'the belief-ledger purge runs only when hasBeliefEvents is true; a Rust brain has no ledger'],
-  ['pageLifetimesOf (belief/purge.ts)', 'the belief-ledger purge runs only when hasBeliefEvents is true; a Rust brain has no ledger'],
-  ['pagePurgeClaims (belief/purge.ts)', 'the belief-ledger purge runs only when hasBeliefEvents is true; a Rust brain has no ledger'],
-  ['redactPurgedKeys (belief/purge.ts)', 'the belief-ledger purge runs only when hasBeliefEvents is true; a Rust brain has no ledger'],
-  ['redactCarryingFields (belief/purge.ts)', 'the belief-ledger purge runs only when hasBeliefEvents is true; a Rust brain has no ledger'],
-  ['quotingSlugs (belief/purge.ts)', 'the belief-ledger purge runs only when hasBeliefEvents is true; a Rust brain has no ledger'],
 ].map(([site, guarded]) => ({ site: site!, owner: ours, guarded: guarded! }));
 
 /**
@@ -134,7 +130,13 @@ export const PURGE_PATH: readonly PurgePathEntry[] = [
   // verifyPagePurge: the receipt. Its store probes (`countPurgeProbe`) are served, the fact purge's `fingerprint` and
   // `claim_text` probes included.
   // ledgerReports: runs for every purge whose page has fact claims, belief ledger or not.
-  { member: 'listBeliefEventsForPurgeProbe', owner: beliefProbe, due: nov24, stop: 'the receipt pages the recorded values for the purged claims; not served until e211982aba is merged' },
+  // The receipt pages the recorded values for the purged claims (trust/belief_purge.rs).
+  ...served(beliefProbe, 'listBeliefEventsForPurgeProbe'),
+  // The belief-ledger steps on a source that records belief events (belief/purge.ts): the derived rows' streams, the page's
+  // lifetimes and claim inventory, the purged-key and carrying-field redactions, the live carriers and the derived-hidden keys.
+  ...served(PURGE_OWNERS.beliefLedger, 'listDerivedStreamSlugs', 'listPageBeliefLifetimes', 'listPagePurgeLiveClaims', 'listPageVersionFenceBodies',
+    'listLifetimeClaimEvents', 'listMissingPreimages', 'redactPurgedBeliefKeys', 'listBeliefCarrierEvents', 'readBeliefEventValue', 'rewriteBeliefEventFields',
+    'rechainBeliefPriorHash', 'listBeliefQuotingRows', 'listKnownBeliefSubjectKeys'),
   // The members the purge calls and the Rust engine serves.
   ...served(ours,
     // the purge itself
@@ -174,6 +176,18 @@ export const PURGE_PATH: readonly PurgePathEntry[] = [
     'readPageEmbeddingBudget', 'readPageIndexingState', 'readSegmentedEmbedPage', 'releasePageEmbeddingLease', 'takePageEmbeddingLease',
     'hasSegmentStorage', 'getSource', 'getSourceStrictness', 'listOnboardingSources', 'listSharedSkillPackRoots', 'sharedSkillPackTablePresent',
     'registerBeforeDisconnect', 'applyTransactionSettings', 'readTransactionSettings', 'setWriteContext', 'transaction', 'transactionDirect',
+    // the managed Git effect runner the purge's publication effects reach (effects.ts): typed members the Rust store serves (rust-members-tail)
+    'claimCoalescedGitEffects', 'gitEffectStore',
+    // the held concept read of the retention purge (persistence/concept-rebuild.ts): a typed member the Rust store serves since concept-rebuild-rust, no longer a raw-SQL stop
+    'readHeldConceptRows',
+    // the retention purge's bookkeeping (engine-sql/retention-purge.ts), typed members the Rust store serves since lane 4
+    // retention-purge-rust: the stale-hold release, the owed-purge records and their prune, the park prunes, the failure
+    // records and the source writer note, the managed and released candidate reads, and the carry's expiring-origin read
+    'releaseStaleOriginParkHolds', 'listOwedPurgeRecords', 'pruneOwedPurgeRecords', 'pruneOriginParkRecords', 'prunePurgeParkRecords',
+    'recordPurgeFailureRecord', 'deletePurgeParkRecord', 'markPurgeParksInactive', 'dropRearmedPurgeParks', 'listReleasedPurgeOrigins',
+    'listManagedPurgeCandidates', 'listExpiringOriginPages',
+    // the unmanaged expiry's engine purge and its recorded-tombstone read
+    'purgeDeletedPages', 'listRecordedTombstones',
     // config and the background ticks that share the consumer
     'getConfig', 'getConfigValues', 'getAllConfig', 'setConfig', 'expireMemoryProposals', 'listAwaitingMemoryProposals', 'purgeMemoryProposals',
     'ensureDreamMapConfigRow', 'lockDreamMapConfigRow', 'writeDreamMapConfigRow',

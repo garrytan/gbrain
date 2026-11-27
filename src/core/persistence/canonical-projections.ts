@@ -617,7 +617,8 @@ export function compileCanonicalProjections(page: ParsedPage, slug: string, sour
   const scan=scanCanonicalFences({ ...page, slug });
   if(scan.defects.length) throw fenceOperationError(scan.defects[0]!, slug, sourceId);
   const fields:Array<[FenceSection,string]>=[['body',page.compiled_truth],['timeline',page.timeline ?? '']];
-  return { factRows: extractFactsFromFenceText(scan.facts,slug,sourceId,{ pageEffectiveDate: factDate }), takes: scan.takes, sections: scan.sections, quoted: scan.quoting ? quotedFenceRows(fields) : null };
+  return { factRows: extractFactsFromFenceText(scan.facts,slug,sourceId,{ pageEffectiveDate: factDate }), takes: scan.takes, sections: scan.sections, quoted: scan.quoting ? quotedFenceRows(fields) : null,
+    untilCells: new Set(scan.facts.filter(f => f.validUntil?.trim()).map(f => f.rowNum)) };
 }
 
 /**
@@ -660,7 +661,7 @@ export async function prepareCanonicalProjections(engine: BrainEngine, page: Par
   prior: PageSnapshot | null, writer: ProjectionWriter, policy?: TimelineWritePolicy): Promise<(tx: BrainEngine, pageId?: number) => Promise<CanonicalProjectionResult>> {
   // #7247: a fence row without a valid_from takes the page's stated date, as extract_facts does, never the import time.
   const factDate = pageFactDate({ slug, frontmatter: page.frontmatter, timeZone: await engine.getConfig('brain.timezone') });
-  const { factRows, takes, quoted, sections } = compileCanonicalProjections(page, slug, sourceId, factDate);
+  const { factRows, takes, quoted, sections, untilCells } = compileCanonicalProjections(page, slug, sourceId, factDate);
   // #6259: a page the content-quality gate hid as junk projects no facts or takes. Rows projected before it
   // was quarantined are left as they are (hiding them would need a new row state); only new projection stops.
   const projectFences = !isQuarantined(page.frontmatter);
@@ -733,7 +734,7 @@ export async function prepareCanonicalProjections(engine: BrainEngine, page: Par
     const expireFacts = (ids: number[]) => () => tx.expireFenceFacts(sourceId, slug, incoming, ids);
     // #6574: every fence row's fields refresh in one statement, not one round trip per row.
     const fieldRows = JSON.stringify([...new Map(factRows.map(fact => [fact.row_num, fact])).values()].map(fact => ({ row_num: fact.row_num, kind: fact.kind, notability: fact.notability,
-      context: fact.context, valid_from: fact.valid_from?.toISOString() ?? null, valid_until: fact.valid_until?.toISOString() ?? null,
+      context: fact.context, valid_from: fact.valid_from?.toISOString() ?? null, valid_until: fact.valid_until?.toISOString() ?? null, until_cell: untilCells.has(fact.row_num),
       expired_at: fact.expired_at?.toISOString() ?? null, source: fact.source, confidence: fact.confidence, claim_metric: fact.claim_metric ?? null,
       claim_value: fact.claim_value ?? null, claim_unit: fact.claim_unit ?? null, claim_period: fact.claim_period ?? null, attributed_to: fact.attributed_to ?? null })));
     const factFields = () => factRows.length ? tx.refreshFenceFactFields(sourceId, slug, fieldRows) : Promise.resolve();

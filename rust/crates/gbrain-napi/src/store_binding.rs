@@ -95,6 +95,9 @@ pub struct BrainOpenOptions {
     pub write_origin: Option<bool>,
     /// This machine's host id (`host.json`), the write origin's `host_id`.
     pub host_id: Option<String>,
+    /// False: the directory must already hold a brain; nothing is created and the open rejects `store_missing`.
+    /// Absent or true creates a missing brain, as before.
+    pub create_missing: Option<bool>,
 }
 
 #[napi]
@@ -277,6 +280,9 @@ impl Brain {
                     host_id: options.host_id,
                     log_retention_bytes: None,
                 };
+                if let Some(create) = options.create_missing {
+                    opts.create_missing = create;
+                }
             }
             // Holding the slot while opening makes a second `open` on this handle wait, then see
             // the brain open.
