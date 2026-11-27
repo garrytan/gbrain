@@ -440,9 +440,12 @@ export async function stampWriteClaim(exec: SqlExecutor, id: string, token: stri
   return claimed ?? null;
 }
 
+/** The one statement `lockWriteRequest` sends (a row lock, no row written): the shadow write sampler judges the member by it (shadow/write-capture.ts). */
+export const LOCK_WRITE_REQUEST_SQL = 'SELECT * FROM persistence_requests WHERE id=$1::uuid FOR UPDATE';
+
 /** Request `id` locked FOR UPDATE until the transaction ends, or null. */
 export async function lockWriteRequest(exec: SqlExecutor, id: string): Promise<WriteRequest | null> {
-  const [row] = await exec.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE id=$1::uuid FOR UPDATE', [id]);
+  const [row] = await exec.executeRaw<WriteRequest>(LOCK_WRITE_REQUEST_SQL, [id]);
   return row ?? null;
 }
 

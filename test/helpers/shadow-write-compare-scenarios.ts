@@ -21,12 +21,20 @@ import { buildFollowStatus, readFollowerFile, renderFollowStatus } from '../../s
 import { newMirrorCounters } from '../../src/shadow/mirror.ts';
 import { writeSeedRecord } from '../../src/shadow/seed.ts';
 import { wrapShadowEngine } from '../../src/shadow/wrapper.ts';
-import { completeWriteRow, insertPublicationEffects, lockPersistenceCounters } from '../../src/core/engine-sql/persistence-journal.ts';
+import { completeWriteRow, insertPublicationEffects, lockPersistenceCounters, lockWriteRequest } from '../../src/core/engine-sql/persistence-journal.ts';
+import { declarePersistence } from '../../src/core/engine-sql/persistence-declaration.ts';
+import { publicationJournalStatements, sqlPublicationJournalStore } from '../../src/core/engine-sql/publication-journal.ts';
+import { removeTimelineRows, updateTimelineDetails } from '../../src/core/engine-sql/timeline.ts';
+import { deleteTakeRows } from '../../src/core/engine-sql/takes.ts';
+import { deleteStalePageWriteGateReceipts } from '../../src/core/engine-sql/trust-write-gate.ts';
+import { writeOpCheckpointRecords } from '../../src/core/engine-sql/op-checkpoint.ts';
+import { writeSyncPassRow } from '../../src/core/engine-sql/sync-hold-store.ts';
+import { advanceSyncCheckpoint } from '../../src/core/engine-sql/sources.ts';
 import { sqlWrites } from '../../src/shadow/sql-writes.ts';
 import { sealImportedPage } from '../../src/core/engine-sql/write-guards.ts';
 import { renderFragment } from '../../src/core/engine-sql/fragment.ts';
 import { pageSearchVectorSql } from '../../src/core/fts-language.ts';
-import { bookkeepingStatements, createWriteSampler, JOURNAL_MEMBER_STATEMENTS, PUT_PAGE_OPTIONS, readPreimage } from '../../src/shadow/write-capture.ts';
+import { bookkeepingStatements, createWriteSampler, JOURNAL_MEMBER_STATEMENTS, noComparedWrites, PUT_PAGE_OPTIONS, readPreimage } from '../../src/shadow/write-capture.ts';
 import { createWriteComparer } from '../../src/shadow/write-compare-child.ts';
 import { openRustEngine, type RustEngineAddonHandle } from '../../src/core/rust-engine.ts';
 import { readWriteTally, WriteTally, type WriteEvent } from '../../src/shadow/write-compare.ts';
@@ -1032,7 +1040,7 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
     test('the journal members the sampler treats as bookkeeping send only the statements it judged: each typed member, on both dialects, sends exactly its mapped statements and nothing else', async () => {
       const record = async (dialect: 'postgres' | 'pglite', run: (exec: never) => Promise<unknown>) => {
         const sent: string[] = [];
-        await run({ dialect, executeRaw: async (sql: string) => { sent.push(sql); return []; } } as never);
+        await run({ dialect, executeRaw: async (sql: string) => { sent.push(sql); return []; }, run: async (fragment: never) => { sent.push(renderFragment(fragment).text); return { rows: [] }; } } as never);
         return sent;
       };
       const [ensure, lockSql] = JOURNAL_MEMBER_STATEMENTS.get('lockPersistenceCounters')!;
@@ -1047,8 +1055,50 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       for (const dialect of ['postgres', 'pglite'] as const) {
         expect(await record(dialect, (exec) => insertPublicationEffects(exec, { requestId: '00000000-0000-4000-8000-000000000000', revision: null, sourceId: 'default', sourceIncarnation: '00000000-0000-4000-8000-000000000001', worktreeId: null, effects: [{ kind: 'links', data: {} }] } as never))).toEqual([effects[0]!]);
       }
-      expect([...JOURNAL_MEMBER_STATEMENTS.keys()].sort()).toEqual(['completeWriteRow', 'insertPublicationEffects', 'lockPersistenceCounters']); // upsertWriteGateReceipt is not bookkeeping: it stays an ordinary write
+      const declarations = JOURNAL_MEMBER_STATEMENTS.get('declarePersistence')!;
+      const [lockRequest] = JOURNAL_MEMBER_STATEMENTS.get('lockWriteRequest')!;
+      for (const dialect of ['postgres', 'pglite'] as const) {
+        const declared = [
+          ...await record(dialect, (exec) => declarePersistence(exec)),
+          ...await record(dialect, (exec) => declarePersistence(exec, { lockTimeout: '1s', statementTimeout: '5s' })),
+          ...await record(dialect, (exec) => declarePersistence(exec, { lockTimeout: '1s', statementTimeout: '5s', idleInTransaction: '1s' })),
+        ];
+        expect(declared).toEqual([...declarations]);
+        expect(await record(dialect, (exec) => lockWriteRequest(exec, '00000000-0000-4000-8000-000000000000'))).toEqual([lockRequest!]);
+        // A page publication's own writes after its page write: each sends exactly its mapped statements.
+        const only = (name: string) => [...JOURNAL_MEMBER_STATEMENTS.get(name)!];
+        expect(await record(dialect, (exec) => removeTimelineRows(exec, 1, []))).toEqual(only('removeTimelineRows'));
+        expect(await record(dialect, (exec) => updateTimelineDetails(exec, 1, []))).toEqual(only('updateTimelineDetails'));
+        expect(await record(dialect, (exec) => deleteTakeRows(exec, 1, []))).toEqual(only('deleteTakeRows'));
+        expect(await record(dialect, (exec) => deleteStalePageWriteGateReceipts(exec, 'default', 'x', null))).toEqual(only('deleteStalePageWriteGateReceipts'));
+        expect(await record(dialect, (exec) => writeOpCheckpointRecords(exec, 'op', [{ fingerprint: 'f', record: {} }]))).toEqual(only('writeOpCheckpointRecords'));
+        const passRows = [
+          ...await record(dialect, (exec) => writeSyncPassRow(exec, 'default', 'i', {}, {})),
+          ...await record(dialect, (exec) => writeSyncPassRow(exec, 'default', 'i', {}, { clock: true })),
+          ...await record(dialect, (exec) => writeSyncPassRow(exec, 'default', 'i', {}, { onlyOpen: true })),
+          ...await record(dialect, (exec) => writeSyncPassRow(exec, 'default', 'i', {}, { onlyOpen: true, clock: true })),
+        ];
+        expect(passRows).toEqual(only('writeSyncPassRow'));
+        expect(await record(dialect, (exec) => advanceSyncCheckpoint(exec, { sourceId: 'default', incarnation: 'i', commit: 'c', from: null, acceptAtCommit: false, slugMode: 'm', keepPinnedSlugMode: false } as never))).toEqual(only('advanceSyncCheckpoint'));
+      }
+      for (const [name, sqls] of JOURNAL_MEMBER_STATEMENTS) expect([name, noComparedWrites(sqls)]).toEqual([name, true]);
+      expect([...JOURNAL_MEMBER_STATEMENTS.keys()].sort()).toEqual(['advanceSyncCheckpoint', 'completeWriteRow', 'declarePersistence', 'deleteStalePageWriteGateReceipts', 'deleteTakeRows', 'insertPublicationEffects', 'lockPersistenceCounters', 'lockWriteRequest', 'publicationJournalStore', 'removeTimelineRows', 'updateTimelineDetails', 'writeOpCheckpointRecords', 'writeSyncPassRow']); // upsertWriteGateReceipt is not bookkeeping: it stays an ordinary write
     }, 30_000);
+
+    test('the publication journal store is judged by every statement it can send: each method is driven, each statement is read-only or bookkeeping, and a statement that writes a compared table makes it an ordinary write', () => {
+      const sqls = publicationJournalStatements();
+      expect(sqls).not.toBeNull();
+      expect(JOURNAL_MEMBER_STATEMENTS.get('publicationJournalStore')).toEqual(sqls!);
+      const store = sqlPublicationJournalStore({ executeRaw: async () => [] } as never);
+      expect(sqls!.length).toBeGreaterThanOrEqual(Object.keys(store).length); // one statement per method at least (recordRecovery and the staging pair have more)
+      for (const sql of sqls!) expect(noComparedWrites([sql])).toBe(true);
+      expect(sqls!.some((sql) => /UPDATE persistence_requests/.test(sql))).toBe(true); // the counter can find a write
+      expect(noComparedWrites([...sqls!, 'UPDATE pages SET title = title'])).toBe(false);
+      expect(noComparedWrites([...sqls!, "INSERT INTO links (from_page_id) VALUES (1)"])).toBe(false);
+      expect(noComparedWrites([])).toBe(false);
+      for (const sql of JOURNAL_MEMBER_STATEMENTS.get('declarePersistence')!) expect(noComparedWrites([sql])).toBe(true);
+      expect(noComparedWrites(JOURNAL_MEMBER_STATEMENTS.get('lockWriteRequest')!)).toBe(true);
+    });
 
     test('insertPublicationEffects is bookkeeping only while its statement writes persistence_effects and nothing else: a statement that writes another table is an ordinary write', () => {
       const [effects] = JOURNAL_MEMBER_STATEMENTS.get('insertPublicationEffects')!;
