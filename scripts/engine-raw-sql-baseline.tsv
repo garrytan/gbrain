@@ -872,7 +872,7 @@ src/core/persistence/plain-directory-drift.ts	execute_raw	2	#8079: reads and rec
 src/core/persistence/pre-activation-release.ts	execute_raw	7
 src/core/persistence/preadmit-cache.ts	execute_raw	4
 src/core/persistence/preparation-budget.ts	execute_raw	1
-src/core/persistence/prepared-maintenance.ts	execute_raw	15	GST-3612: the think take preparer reads back the take row id its takes_add wrote (page_id, row_num) inside the publication transaction, as the consolidation preparer does, so the derivation lowers that take; no typed engine method reads one take by row yet; GST-4039: +1 the consolidation preparer reads the cluster's save times (created_at never changes) to place undated facts in the valid_until chain; the fact snapshot shape and its row hash stay unchanged
+src/core/persistence/prepared-maintenance.ts	execute_raw	14	GST-3612: the think take preparer reads back the take row id its takes_add wrote (page_id, row_num) inside the publication transaction, as the consolidation preparer does, so the derivation lowers that take; no typed engine method reads one take by row yet
 src/core/persistence/preview-approval.ts	execute_raw	3
 src/core/persistence/protocol.ts	execute_raw	2
 src/core/persistence/provider.ts	execute_raw	1

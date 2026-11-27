@@ -7,5 +7,5 @@
 - `recall` with a query or question made only of two-letter words or dates (`AI`, `2026`) now ranks the facts holding those words instead of returning none. (GST-4039)
 - A saved fact that holds every word of a recall query is now always in the candidate pool, even when more than 100 facts match only some of the words and rank higher. (GST-4039)
 - Ranked recall now rereads its matched facts under the full read policy (visibility, private provenance, trust and the call's filters), so a fact made private between the two reads is not returned. (GST-4039)
-- Doctor `fact_bulk_dates` no longer reports facts with no event date as one bulk-loaded day with no date. Consolidation now places an undated fact in the timeline at its save time, so an older dated value and a newer undated one are no longer both left open. (GST-4039)
+- Doctor `fact_bulk_dates` no longer reports facts with no event date as one bulk-loaded day with no date. (GST-4039)
 - In Codex, the first-session suggestion is no longer lost (`last_session.outcome: "no_ipc"`) when the SessionStart hook runs before `gbrain serve` has bound its socket: the hook now waits for the serve the way it already did for Claude Code. A first session whose context pack takes longer than the 800 ms answer budget still gets its first-session section. (GST-4041)

@@ -774,11 +774,7 @@ async function prepareMaintenanceKind(engine: BrainEngine, row: WriteRequest, co
   const p = row.intent;
   const facts = p.facts as FactSnapshot[];
   const pages = p.pages as EvidencePage[];
-  // A fact with no event date (#10288) takes its place at its save time, which never changes; ties are read on the same time.
-  const savedAt = new Map((await engine.executeRaw<{ id: number; created_at: Date | string }>(
-    'SELECT id,created_at FROM facts WHERE source_id=$1 AND id=ANY($2::integer[])', [row.source_id, facts.map(f => f.id)])).map(r => [Number(r.id), new Date(r.created_at).toISOString()]));
-  const eventAt = (f: FactSnapshot) => (f.value.valid_from != null ? String(f.value.valid_from) : savedAt.get(f.id));
-  if (sameInstantTies(facts.filter(f => eventAt(f) !== undefined).map(f => ({ id: f.id, at: Date.parse(eventAt(f)!), metric: (f.value.claim_metric as string | null) ?? null,
+  if (sameInstantTies(facts.filter(f => f.value.valid_from != null).map(f => ({ id: f.id, at: Date.parse(String(f.value.valid_from)), metric: (f.value.claim_metric as string | null) ?? null,
     unit: (f.value.claim_unit as string | null) ?? null, period: (f.value.claim_period as string | null) ?? null }))).length) {
     return { observedRevision: p.expected_revision as string, noop: true, apply: async () => ({ status: 'skipped', reason: 'same_instant_typed_claims', noop: true,
       facts_consolidated: 0, takes_written: 0 }) };
@@ -798,8 +794,8 @@ async function prepareMaintenanceKind(engine: BrainEngine, row: WriteRequest, co
   // The chain closes each fact at its successor's valid_from. A fenced fact is closed in its fence row, published with the
   // take on this page, and its row derives from that cell; an unfenced fact has no fence row and is closed in the database.
   // A fenced fact whose fence is on another page stays open: this publication does not write that file.
-  const chronological = facts.filter(f => eventAt(f) !== undefined).sort((a, b) => Date.parse(eventAt(a)!) - Date.parse(eventAt(b)!) || a.id - b.id);
-  const closes = consolidationCloses(chronological, f => ({ text: String(f.value.fact), value: f.value.claim_value })).map(({ member, next }) => ({ fact: member, until: eventAt(next)! }));
+  const chronological = facts.filter(f => f.value.valid_from != null).sort((a, b) => Date.parse(String(a.value.valid_from)) - Date.parse(String(b.value.valid_from)) || a.id - b.id);
+  const closes = consolidationCloses(chronological, f => ({ text: String(f.value.fact), value: f.value.claim_value })).map(({ member, next }) => ({ fact: member, until: String(next.value.valid_from) }));
   const fenceCloses = new Map(closes.filter(c => c.fact.value.row_num !== null && c.fact.value.source_markdown_slug === row.slug)
     .map(c => [Number(c.fact.value.row_num), c]));
   const databaseCloses = closes.filter(c => c.fact.value.row_num === null);
