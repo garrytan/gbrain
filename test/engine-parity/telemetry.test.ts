@@ -269,7 +269,7 @@ describe('engine parity: telemetry', () => {
       'listAccessReadPageRefs', 'logChatUsage', 'logMcpRequest', 'pruneAccessReadLog', 'pruneChronicleReservations',
       'pruneMcpRequestLogBatch', 'readAccessReadLog', 'readAccessReadsOfPages', 'readChatUsage', 'readChronicleRow',
       'readClientOpUsage', 'readMcpLifetimeUsage', 'readMcpLogPruneCutoff', 'readMcpRequestLogBytes',
-      'readMcpRequestLogPage', 'readMcpRollupPrunedBefore', 'readPendingWriteHealth', 'readRetrievalEvent',
+      'readMcpRequestLogPage', 'readMcpRollupPrunedBefore', 'readPageFeedbackWeights', 'readPendingWriteHealth', 'readRetrievalEvent',
       'readSearchStats', 'readVolunteerUsage', 'recordSearchTelemetry', 'reserveChronicleJudgeSlot',
       'tallyAccessReadsOfPages', 'upsertChronicleRow',
     ]);

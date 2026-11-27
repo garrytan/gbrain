@@ -121,6 +121,8 @@ pub const ACCESS_MEMBERS: u8 = b'x';
 /// Family `access_rules` (`access_rules.rs`): folder rules, pending prefixes, policy state and
 /// revisions. The byte after the tag names the table; the module owns the sub-tags.
 pub const ACCESS_RULES: u8 = b'z';
+/// Family `guest_sources` (`guest_sources.rs`): one record per guest source row. Every letter was taken, so the tag is a digit.
+pub const GUEST_SOURCE: u8 = b'0';
 /// Family `reason_tombstones` (`reason_tombstones.rs`): the purged `(commit, path)` pairs of
 /// `reason_purge_tombstones`, `1 source \0 commit \0 path`. Every letter is taken, so this family
 /// uses a digit; `y` is `SESSION_STATE`.
@@ -131,7 +133,7 @@ pub const REASON_TOMBSTONE: u8 = b'1';
 /// Family `secret_store` (`secret_store.rs`): the `secret_store` entries and the `secret_store_occurrence` rows. The byte
 /// after the tag names the record (`ENTRY`, `BY_MAC`, `BY_ENTRY`, `OCCURRENCE`, `BY_SLUG`, `BY_PAGE` in that module).
 /// The digit `3`: every letter is taken or reserved across the lanes (`x` by `ACCESS_MEMBERS`, `y` by
-/// `SESSION_STATE`), and `0` and `1` are `GUEST_SOURCE` and `REASON_TOMBSTONE`; `2` is left free on purpose.
+/// `SESSION_STATE`), and `1` is `REASON_TOMBSTONE`; `0` (released by the guest-source claim) and `2` are free.
 pub const SECRET_STORE: u8 = b'3';
 
 // The one-byte tag space is nearly full (docs/designs/RUST_ENGINE_INTERFACES.md, "Tag registry"). A digit `4`-`9`
@@ -140,6 +142,11 @@ pub const SECRET_STORE: u8 = b'3';
 /// after both. `~` (0x7E) sorts after every letter and digit, so the two-byte families sit after the one-byte tags,
 /// each in its own contiguous range. No one-byte family ever takes `~`.
 pub const FAMILY_ESCAPE: u8 = b'~';
+
+/// Family `keyed_index` (`keyed_index.rs`, store format 9), the two-byte tag `~k`: the keyed lookups, entries derived
+/// from page, chunk, link and link transition records. The byte after the tag names the lookup
+/// (`keyed_index::CHUNK_ID` and the rest; `rust/docs/store/keyed-index.md`).
+pub const KEYED_INDEX: [u8; 2] = family_tag(b'k');
 
 /// The two-byte tag of a family under `FAMILY_ESCAPE`. `family` is never `0x00` (the storage adapter's byte).
 pub const fn family_tag(family: u8) -> [u8; 2] {
@@ -165,6 +172,10 @@ pub fn family_text(tag: [u8; 2], parts: &[&str]) -> Vec<u8> {
 /// the first version of this family on a branch used tag `2`, which `rust-engine/main` keeps free; no store holds a record
 /// of the family under `2`.
 pub const PAGE_EXTRACTION_STATE: [u8; 2] = family_tag(b'e');
+
+/// Family `guest_marks` (`guest_marks.rs`): who a guest note was saved for, one record per guest page, `~g <page id>`. A
+/// two-byte family tag: the one-byte tags are taken.
+pub const GUEST_MARK: [u8; 2] = family_tag(b'g');
 
 pub fn text(tag: u8, parts: &[&str]) -> Vec<u8> {
     let mut key = vec![tag];

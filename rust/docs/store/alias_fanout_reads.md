@@ -19,8 +19,8 @@ The by-alias key is empty. The by-page key of a derived row (origin `declared` o
 `setPageAliases` writes them. Unit tests write rows through `Store::set_page_aliases` and
 `Store::replace_derived_aliases` and read them back here, so a layout change in `aliases.rs` fails them. A row this
 reader does not know refuses with `store_corrupt`, and the read does not drop what the row holds: a by-alias key with a
-value, a by-page value that is not `{ c, t? }`, or a by-alias key with no by-page key. The title read walks the page
-records ([pages.md](pages.md)).
+value, a by-page value that is not `{ c, t? }`, or a by-alias key with no by-page key. The title read finds its pages by the keyed title entries
+([keyed-index.md](keyed-index.md)) and reads their records ([pages.md](pages.md)).
 
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
@@ -35,8 +35,9 @@ TypeScript members return `[]` with no call when a list is empty, as the SQL mem
 The TypeScript `findPagesByTitles` member passes `excludePrivate` through `storePagePolicy`
 (`src/core/rust-engine/store-members/private-provenance.ts`). A caller whose record holds a reader identity and a
 private-readable grant, the folder rules it satisfies and the pending prefixes its record holds is served: the store
-reads them from the policy (`facts/privacy.rs`). A caller whose policy differs in any other way (an audience, lineage,
-an owner read, a labelled-only grant) gets the typed `engine_capability_missing` refusal. The caller in `alias-fanout.ts` keeps master's
+reads them from the policy (`facts/privacy.rs`). Modelled labelled-only and member-lineage page policies are also served when their SQL text matches a fresh
+reference record. A caller whose text matches none of the supported references, including a labelled-only audience
+of several identities, gets the typed `engine_capability_missing` refusal. The caller in `alias-fanout.ts` keeps master's
 `.catch(() => [])`, so that caller reads the refusal as no title hit, as it read a refused raw statement before.
 
 Differences from PGLite:

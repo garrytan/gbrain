@@ -176,4 +176,21 @@ impl Brain {
             s.allocator_check(&seed_id, &primary_max)
         })
     }
+
+    /// `allocatorAdvance(seedId, primaryFloor)`: raises every id counter to at least the floor, the
+    /// primary's highest id as text, and resolves the `allocatorCheck` report taken after the
+    /// write. `primaryFloor` is `{ [relation]: text | null }`; a counter is never lowered.
+    #[napi]
+    pub fn allocator_advance<'env>(
+        &self,
+        env: &'env Env,
+        seed_id: String,
+        primary_floor: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let floors: BTreeMap<String, Option<String>> =
+                required(primary_floor, "allocatorAdvance primaryFloor")?;
+            s.allocator_advance(&seed_id, &floors)
+        })
+    }
 }

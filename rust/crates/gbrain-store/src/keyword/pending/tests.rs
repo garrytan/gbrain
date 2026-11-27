@@ -1,6 +1,6 @@
 //! Pending keyword postings: reads answer as the scan while records are pending, a failed fold
-//! keeps the store as it was, a format-8 brain opens as format 13 with the same answers, and a
-//! damaged pending record is refused.
+//! keeps the store as it was, a brain at format 8, 9 or 12 opens as format 13 with the same answers,
+//! an older build refuses a format-13 brain, and a damaged pending record is refused.
 
 use std::sync::Arc;
 
@@ -129,18 +129,12 @@ fn a_fold_that_fails_keeps_the_store_as_it_was() {
     });
 }
 
-/// A brain at every format this build opens from 8 on (8 here; 8, 9 and 12 once the trunk's
-/// earlier formats are merged in) opens at this build's format with the same answers, and its next
-/// writes stage pending records that every read applies.
+/// A brain at every format this build opens from 8 on (8, 9 and 12) opens at this build's format
+/// with the same answers, and its next writes stage pending records that every read applies.
 #[test]
 fn a_brain_at_each_earlier_format_from_8_opens_at_this_format_with_the_same_answers() {
-    let earlier: Vec<u32> = crate::FORMAT_VERSIONS
-        .iter()
-        .copied()
-        .filter(|v| *v >= 8 && *v < FORMAT_VERSION)
-        .collect();
-    assert!(earlier.contains(&8));
-    for version in earlier {
+    assert_eq!(earlier_formats(), [8, 9, 12]);
+    for version in earlier_formats() {
         let kv = mem_kv();
         let store = open(&kv).unwrap();
         with_fold_at(1, || corpus(&store));
@@ -175,43 +169,111 @@ fn a_brain_at_each_earlier_format_from_8_opens_at_this_format_with_the_same_answ
     }
 }
 
-/// A build that stops at format 8 (its list ends at 8) refuses a brain this build wrote, before it
-/// changes anything.
+/// The formats this build opens from 8 on below its own: each one an older build stopped at.
+fn earlier_formats() -> Vec<u32> {
+    crate::FORMAT_VERSIONS
+        .iter()
+        .copied()
+        .filter(|v| *v >= 8 && *v < FORMAT_VERSION)
+        .collect()
+}
+
+/// Every record of the store, key and value.
+fn dump(kv: &Arc<dyn Kv>) -> Vec<(Vec<u8>, Vec<u8>)> {
+    let snap = kv.snapshot().unwrap();
+    let mut out = Vec::new();
+    scan_prefix(&*snap, &[], false, &mut |k, v| {
+        out.push((k.to_vec(), v.to_vec()));
+        true
+    })
+    .unwrap();
+    out
+}
+
+/// A format-12 brain (its keyed entries built, no pending record) opens at this build's format
+/// with every other record byte for byte as it was: the step from 12 writes only the format record.
+/// Its keyed entries are not rebuilt, and nothing is staged.
 #[test]
-fn a_build_that_stops_at_format_8_refuses_a_brain_this_build_wrote() {
+fn a_format_12_brain_upgrades_writing_only_the_format_record() {
+    assert!(earlier_formats().contains(&12));
+    let kv = mem_kv();
+    let store = open(&kv).unwrap();
+    with_fold_at(1, || corpus(&store));
+    assert!(pending_keys(&store).is_empty());
+    // A record under the keyed tag that no stored record derives: a rebuild would drop it.
+    let mut marker = keys::KEYED_INDEX.to_vec();
+    marker.extend_from_slice(b"\xffmarker");
+    store
+        .write(|w| {
+            w.put(&marker, b"")?;
+            let mut stored: StoredFormat = get_json(&*w, &keys::meta("format"))?.unwrap();
+            stored.format_version = 12;
+            put_json(w, &keys::meta("format"), &stored)
+        })
+        .unwrap();
+    drop(store);
+    let format_key = keys::meta("format");
+    let others = |kv: &Arc<dyn Kv>| -> Vec<(Vec<u8>, Vec<u8>)> {
+        dump(kv)
+            .into_iter()
+            .filter(|(k, _)| *k != format_key)
+            .collect()
+    };
+    let before = others(&kv);
+    let store = open(&kv).unwrap();
+    assert_eq!(store.info().format_version, FORMAT_VERSION);
+    let stored: StoredFormat = get_json(&*store.read().unwrap(), &keys::meta("format"))
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored.format_version, FORMAT_VERSION);
+    drop(store);
+    assert!(
+        others(&kv) == before,
+        "the step from format 12 changed a record"
+    );
+}
+
+/// A build that stops at any earlier format this build opens from 8 on (its list ends there: 8,
+/// 9 or 12) refuses a brain this build wrote, before it changes anything.
+#[test]
+fn every_build_that_stops_before_this_format_refuses_a_brain_this_build_wrote() {
+    assert_eq!(earlier_formats(), [8, 9, 12]);
     let kv = mem_kv();
     let store = open(&kv).unwrap();
     with_fold_at(i64::MAX, || {
         put(&store, "notes/a", "Alpha", "red apple", "", json!({}))
     });
+    assert!(!pending_keys(&store).is_empty());
     drop(store);
-    let before: Vec<(Vec<u8>, Vec<u8>)> = {
-        let snap = kv.snapshot().unwrap();
-        let mut out = Vec::new();
-        scan_prefix(&*snap, &[], false, &mut |k, v| {
-            out.push((k.to_vec(), v.to_vec()));
-            true
-        })
-        .unwrap();
-        out
-    };
-    let err = Store::open_kv_in(
-        kv.clone(),
-        Arc::new(SystemEnv),
-        OpenOptions::default(),
-        &[1, 2, 3, 4, 5, 6, 7, 8],
-    )
-    .err()
-    .unwrap();
-    assert_eq!(err.code, crate::error::FORMAT_UNKNOWN);
-    let snap = kv.snapshot().unwrap();
-    let mut after = Vec::new();
-    scan_prefix(&*snap, &[], false, &mut |k, v| {
-        after.push((k.to_vec(), v.to_vec()));
-        true
-    })
-    .unwrap();
-    assert_eq!(after, before);
+    let before = dump(&kv);
+    for last in earlier_formats() {
+        let older: Vec<u32> = crate::FORMAT_VERSIONS
+            .iter()
+            .copied()
+            .filter(|v| *v <= last)
+            .collect();
+        let err = Store::open_kv_in(
+            kv.clone(),
+            Arc::new(SystemEnv),
+            OpenOptions::default(),
+            &older,
+        )
+        .err()
+        .unwrap_or_else(|| {
+            panic!("a build that stops at format {last} opened a format-{FORMAT_VERSION} brain")
+        });
+        assert_eq!(err.code, crate::error::FORMAT_UNKNOWN, "{}", err.message);
+        assert!(
+            err.message
+                .contains(&format!("store format {FORMAT_VERSION}")),
+            "{}",
+            err.message
+        );
+        assert!(
+            dump(&kv) == before,
+            "the refused open by the format-{last} build changed records"
+        );
+    }
 }
 
 #[test]

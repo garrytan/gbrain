@@ -213,6 +213,78 @@ fn backlog_age_reads_the_oldest_pending_chunk_without_a_vector() {
     );
 }
 
+#[test]
+fn embed_backlog_rows_count_each_asked_sources_pending_chunks_in_byte_order() {
+    let b = brain("derived-health-backlog-rows");
+    b.clock.set(T0);
+    let asked = ["default".to_string(), "a-z".to_string()];
+    assert_eq!(
+        b.read_embed_backlog_rows("embedding", &asked).unwrap(),
+        json!([])
+    );
+    for id in ["a-z", "ab"] {
+        b.upsert_source(&SourceInput {
+            id: id.into(),
+            name: Some(id.into()),
+            ..SourceInput::default()
+        })
+        .unwrap();
+    }
+    let chunk = |i: i64, text: &str| -> ChunkInput {
+        args(json!({ "chunk_index": i, "chunk_text": text, "chunk_source": "compiled_truth" }))
+    };
+    let in_source = |source: &str| UpsertChunksOptions {
+        source_id: Some(source.into()),
+        ..UpsertChunksOptions::default()
+    };
+    let put_in = |source: &str, slug: &str, extra: Value| {
+        let mut input =
+            json!({ "type": "note", "title": slug, "compiled_truth": format!("{slug} body") });
+        input
+            .as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        let options = PutPageOptions {
+            source_id: Some(source.into()),
+            index: Some(false),
+            ..PutPageOptions::default()
+        };
+        b.put_page(slug, &args::<PageInput>(input), &options)
+            .unwrap();
+    };
+    put_in("default", "notes/a", json!({}));
+    b.upsert_chunks(
+        "notes/a",
+        &[chunk(0, "alpha"), chunk(1, "beta")],
+        &in_source("default"),
+    )
+    .unwrap();
+    b.clock.advance(30_000_000);
+    put_in("a-z", "notes/b", json!({}));
+    b.upsert_chunks("notes/b", &[chunk(0, "gamma")], &in_source("a-z"))
+        .unwrap();
+    // A skipped page and a source that was not asked for do not count.
+    put_in(
+        "a-z",
+        "notes/skipped",
+        json!({ "frontmatter": { "embed_skip": true } }),
+    );
+    b.upsert_chunks("notes/skipped", &[chunk(0, "delta")], &in_source("a-z"))
+        .unwrap();
+    put_in("ab", "notes/c", json!({}));
+    b.upsert_chunks("notes/c", &[chunk(0, "epsilon")], &in_source("ab"))
+        .unwrap();
+    let t0 = gbrain_store::env::iso(T0);
+    let t30 = gbrain_store::env::iso(T0 + 30_000_000);
+    assert_eq!(
+        b.read_embed_backlog_rows("embedding", &asked).unwrap(),
+        json!([
+            { "source_id": "a-z", "pending": 1, "unaged": 0, "oldest": t30 },
+            { "source_id": "default", "pending": 2, "unaged": 0, "oldest": t0 },
+        ])
+    );
+}
+
 // ---- countCredentialProjectionPending -----------------------------------------------------------
 
 #[test]

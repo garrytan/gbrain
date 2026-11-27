@@ -14,8 +14,9 @@ listed as row 50 of docs/designs/RUST_ENGINE.md. A `Page` is PGLite's `Page` plu
 (`2026-08-10T12:00:00.000123Z`) or `null`, and the TypeScript wrapper turns them into `Date`.
 A page's `knowledge_revision` is a UUID that changes when its type, kind, title, body, timeline,
 frontmatter, deletion or tags change. `text_projection_revision` is `null` until chunks are
-installed for that revision. `listPages` and `resolveSlugs` scan every page; there are no
-secondary indexes yet.
+installed for that revision. `resolveSlugs` scans every page. `listPages` sorted by `updated_at` with no type, tag or
+slug filter walks the updated-order keyed lookup ([keyed-index.md](keyed-index.md)) and reads only the pages it
+returns; any other `listPages` scans every page.
 
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
@@ -54,7 +55,9 @@ secondary indexes yet.
 - `createVersion(slug, { preimage })` versions the caller's page read instead of the stored page, as
   `createPageVersion(..., preimage)` does: the read revision, title, type, frontmatter, tags, source path and deletion,
   and on an inline page the read body. A segmented page keeps the stored body reference (live generation, bytes and
-  hash): a fact purge versions the page after its generation flip.
+  hash): a fact purge versions the page after its generation flip. The preimage's tags keep the order given (a page
+  read sorts them), and its revision is stored lower-case. The writer and request of the stored revision are copied
+  only when the preimage is that revision, matched case-insensitively; a stale preimage keeps them empty.
 - `pruneHoldingPageVersions(pageId)` is the holding-page cap a fence fact append runs after its snapshot: it keeps the
   page's newest `LARGE_PAGE_VERSIONS_KEPT` versions that are not segmented, deletes at most 100 of the older ones,
   oldest first, marks the history as every prune does and answers how many it deleted (0 for an unknown page).

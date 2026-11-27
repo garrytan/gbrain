@@ -31,6 +31,7 @@ export function writeEpoch(dir: string, opts: { build?: EpochBuild | null; addon
   return ensureEpoch(dir, {
     seed_id: SEED.seed_id, rust_addon_sha256: opts.addon === undefined ? ADDON_SHA : opts.addon, comparator_version: 1, adapter_version: 'abi1.catalog1',
     capability_set_hash: 'caps', readiness_policy_hash: 'policy',
+  // pregate-literal: SHADOW_ADAPTER_VERSION=11 the number 11 on the next line is test data (a date, index or count), not the adapter version
   }, Date.parse('2026-11-26T12:00:00Z'), opts.build === null ? undefined : (opts.build ?? BUILD));
 }
 

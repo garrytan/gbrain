@@ -1224,7 +1224,7 @@ marker — pending migrations, not an access outage. **Safety clause: the action
 hardcoded `gbrain db-repair` — never a command parsed from the marker.**
 
 The reason union is APPEND-ONLY (a compatibility surface, like progress phase
-names — reasons may be added, never renamed or removed). All 16:
+names — reasons may be added, never renamed or removed). All 19:
 
 | Reason | Meaning |
 |---|---|
@@ -1244,6 +1244,7 @@ names — reasons may be added, never renamed or removed). All 16:
 | `schema_missing` | 42P01/42703 — pending migrations (`gbrain apply-migrations --yes`; excluded from the db-repair marker on the MCP mid-operation path, where it usually means code skew) |
 | `pgvector_missing` | the vector extension is absent — auto tier creates it |
 | `storage_corrupt` | XX001/XX002, or an XX000 such as `unexpected chunk number … for toast value` or `tuple concurrently deleted` — stored data is damaged; db-repair stops at manual and names the first step, `gbrain repair orphan-children` (preview, includes the torn-TOAST probe; [orphan children](guides/repair.md#orphan-children)) |
+| `storage_interrupted` | XX000 `could not open file …` / `could not read block … in file …` ending `Interrupted system call` — PostgreSQL's read of a data file was interrupted (EINTR) on the host; not damaged data, so no repair is offered; db-repair stops at manual: check the host's storage and PostgreSQL log, then the original job or write receipt before resubmitting |
 | `tls_required_default` | `postgres_tls_required`: gbrain's TLS default met a non-local server without TLS — db-repair stops at manual; turn TLS on at the server or add `sslmode=disable` ([TLS](#tls-for-postgres-connections)) |
 | `unknown` | unclassified — redacted error + `gbrain doctor` |
 
@@ -1832,8 +1833,9 @@ that is not connected refuses `engine_closed`. These members run on the store (`
   a segmented page written inside `transaction` (the store has none), so the `page_body` capability stays unreported.
   A whole-body `putPage` over a segmented page refuses, as on PGLite (`rust/docs/store/page_body.md`), and so does a
   plain (unsealed) `upsertChunks`, `invalid_state` before it writes.
-- Vector search: `searchVector`, `searchTakesVector` and `cosinesByChunkIds` (an exact scan over the stored vectors,
-  scored as pgvector scores them; `rust/docs/store/vectors.md`, `rust/docs/store/embeddings.md`). The `vector_search`
+- Vector search: `searchVector` and `searchTakesVector` (an exact scan over the stored vectors, scored as pgvector
+  scores them) and `cosinesByChunkIds` (the same score, read from only the pages that hold the asked chunk ids, found
+  by key; `rust/docs/store/vectors.md`, `rust/docs/store/keyed-index.md`, `rust/docs/store/embeddings.md`). The `vector_search`
   capability is reported, so hybrid search reads its vector arm. The store has one vector column, PGLite's `embedding`.
 
 A served member never drops what it cannot keep. An option or input the store has no home for, or cannot answer the
@@ -2162,7 +2164,7 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   `mismatches`, and a `probe`, described below); `allocators`;
   `seed`; `primary_refreshes` (`nonterminal_rows`: primary `gbrain sources refresh` rows that are neither completed nor
   aborted, counted by the last full pass, with its `checked_at`; `null` before one; a swap must drain them first, and
-  this is a reading, not the swap's own check); and `write_comparisons` (page and link writes only; `capability_missing` until a comparison has a verdict (`comparable` or `unexplained_difference`), and while any replay has none). The
+  this is a reading, not the swap's own check); and `write_comparisons` (the pilot page and link writes only; `capability_missing` until a comparison has a verdict (`comparable` or `unexplained_difference`), and while any replay has none). The
   `write_comparisons` and `fingerprints` counts are totals for the current evidence epoch. An epoch is not a seed: `epoch_id`
   names the candidate whose evidence counts (the seed, the Rust addon's SHA-256, the comparator and adapter versions, the
   capability set and the hash of the swap's readiness policy, `src/core/engine-swap/policy.ts`), and a change to any of them
@@ -2195,7 +2197,7 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   differing code points so a swap report can name them. A probe that errors is `not_run`. A glibc `en_US.utf8` host differs
   (U+0085, U+1680, circled letters and more); a C-ctype host differs on every cased non-ASCII letter, so it fails once a fact
   holds one.
-- **Provisional report.** The verdict is always `NOT READY`: write comparisons cover page and link writes only,
+- **Provisional report.** The verdict is always `NOT READY`: write comparisons cover the pilot page and link writes only,
   and the readiness decision comes later in the plan
   (`docs/designs/RUST_ENGINE.md`, Phase S). Until the Rust engine serves reads, comparisons record
   `capability_missing`.

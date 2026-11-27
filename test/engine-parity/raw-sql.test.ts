@@ -18,13 +18,18 @@
  *  - Seam: none. Real engines. Raw SQL is the method under test here, the one
  *    family where a case may call it.
  */
-import { describe, expect } from 'bun:test';
+import { describe, expect, test } from 'bun:test';
 import { parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { buildEntityCard } from '../../src/core/verbs/entity-card.ts';
 import { entityLookupFault, FAULT_MESSAGE } from '../helpers/entity-lookup-fault.ts';
+import { PostgresEngine } from '../../src/core/postgres-engine.ts';
+import { IGNORED_WRITE_MEMBERS, memberKind } from '../../src/shadow/write-map.ts';
+import { withReadDeadline } from '../../src/core/read-deadline.ts';
+import { unexplainedReadRoutes } from '../helpers/read-route-allowance.ts';
+import { rethrowByDesignStop } from '../helpers/rust-by-design-stop.ts';
 
-const { parityTest } = parityArms(testBackends());
+const { parityTest, arms } = parityArms(testBackends());
 
 const PAGE = (title: string, body: string) => ({ type: 'note' as const, title, compiled_truth: body, timeline: '' });
 
@@ -35,9 +40,10 @@ describe('engine parity: raw_sql', () => {
     async (engine) => {
       await engine.putPage('notes/raw-a', PAGE('Raw A', 'first'));
       await engine.putPage('notes/raw-b', PAGE('Raw B', 'second'));
+      // The Rust arm's stop, by design (RUST_ENGINE.md row 60): no SQL dialect.
       const scalar = await engine.executeRaw<{ n: number; s: string; nothing: null }>(
         'SELECT $1::int + 1 AS n, $2::text AS s, NULL AS nothing', [41, 'text'],
-      );
+      ).catch((e: unknown) => rethrowByDesignStop(e, 'executeRaw', '55'));
       expect(scalar).toEqual([{ n: 42, s: 'text', nothing: null }]);
       const pages = await engine.executeRaw<{ slug: string; title: string }>(
         `SELECT slug, title FROM pages WHERE slug LIKE $1 AND deleted_at IS NULL ORDER BY slug`, ['notes/raw-%'],
@@ -52,7 +58,8 @@ describe('engine parity: raw_sql', () => {
     { methods: ['putPage', 'executeRawDirect', 'transaction'], requires: 'raw_sql' },
     async (engine) => {
       await engine.putPage('notes/direct', PAGE('Direct', 'body'));
-      const direct = await engine.executeRawDirect<{ slug: string }>('SELECT slug FROM pages WHERE slug = $1', ['notes/direct']);
+      const direct = await engine.executeRawDirect<{ slug: string }>('SELECT slug FROM pages WHERE slug = $1', ['notes/direct'])
+        .catch((e: unknown) => rethrowByDesignStop(e, 'executeRawDirect', '55'));
       // Inside a transaction the tx handle's direct read sees the tx's own uncommitted write.
       const inTx = await engine.transaction(async (tx) => {
         await tx.putPage('notes/direct-tx', PAGE('Direct tx', 'body'));
@@ -70,7 +77,7 @@ describe('engine parity: raw_sql', () => {
       await engine.runMigration(9_000_001, `
         CREATE TABLE IF NOT EXISTS parity_raw_probe (id int PRIMARY KEY, label text NOT NULL);
         INSERT INTO parity_raw_probe (id, label) VALUES (1, 'one'), (2, 'two');
-      `);
+      `).catch((e: unknown) => rethrowByDesignStop(e, 'runMigration', '55'));
       const rows = await engine.executeRaw<{ id: number; label: string }>('SELECT id, label FROM parity_raw_probe ORDER BY id');
       await engine.runMigration(9_000_002, 'DROP TABLE parity_raw_probe;');
       const gone = await engine.executeRaw<{ present: boolean }>(`SELECT to_regclass('parity_raw_probe') IS NOT NULL AS present`);
@@ -85,7 +92,8 @@ describe('engine parity: raw_sql', () => {
     async (engine) => {
       await engine.putPage('notes/bounded', PAGE('Bounded', 'body'));
       const read = await engine.keywordBoundedRead((db) =>
-        db.executeRaw<{ slug: string }>('SELECT slug FROM pages WHERE slug = $1', ['notes/bounded']));
+        db.executeRaw<{ slug: string }>('SELECT slug FROM pages WHERE slug = $1', ['notes/bounded']))
+        .catch((e: unknown) => rethrowByDesignStop(e, 'keywordBoundedRead', '55'));
       const thrown = await engine.keywordBoundedRead(async () => { throw new Error('read refused'); })
         .then(() => 'no error', (e: unknown) => (e instanceof Error ? e.message : String(e)));
       const after = (await engine.getPage('notes/bounded'))?.title ?? null;
@@ -119,4 +127,100 @@ describe('engine parity: raw_sql', () => {
       return observed;
     },
   );
+});
+
+/**
+ * Postgres arm only: a write never travels a read route. PostgresEngine's typed reads run through preparationRead,
+ * engineSqlRead and ownRawRead and the abort-aware read getters (writeMiscReads, cliReads); under a read deadline those
+ * open BEGIN READ ONLY, so a write routed through one passes every case without a deadline and fails in production under
+ * one. (1) No write member (WRITE_MAP, UNMAPPED_WRITE_MEMBERS, IGNORED_WRITE_MEMBERS) enters a read route other than as
+ * a locking read (`unbounded`). (2) Every read route refuses a write statement on each of its executor's entry points,
+ * with and without a read deadline, before it is sent, and still answers a read.
+ */
+const READ_ROUTES = ['preparationRead', 'engineSqlRead', 'ownRawRead'] as const;
+const postgresTest = testBackends().includes('postgres') ? test : test.skip;
+
+describe('engine parity: raw_sql (Postgres read routes)', () => {
+  postgresTest('no write member runs on a read route, and every read route refuses a write statement', async () => {
+    // (1) Each write member is entered with every read route replaced by a recorder; a route entry stops the call before SQL.
+    type Probe = Record<string, unknown> & { _pageTransaction: unknown; transaction: unknown };
+    const probe = new PostgresEngine() as unknown as Probe;
+    let entered: string | null = null;
+    for (const route of READ_ROUTES) {
+      probe[route] = (_fn: unknown, unbounded?: boolean) => { entered ??= unbounded ? `${route}(unbounded)` : route; return Promise.reject(new Error('read route entered')); };
+    }
+    probe.transaction = (run: (tx: unknown) => unknown) => {
+      const tx = Object.create(probe) as Probe;
+      tx._pageTransaction = {};
+      tx.transaction = (inner: (t: unknown) => unknown) => inner(tx);
+      return run(tx);
+    };
+    const members = new Set<string>();
+    for (let proto = Object.getPrototypeOf(probe); proto && proto !== Object.prototype; proto = Object.getPrototypeOf(proto)) {
+      for (const name of Object.getOwnPropertyNames(proto)) {
+        if (typeof Object.getOwnPropertyDescriptor(proto, name)?.value === 'function') members.add(name);
+      }
+    }
+    const isWrite = (name: string) => ['mapped', 'unmapped'].includes(memberKind(name)) || IGNORED_WRITE_MEMBERS.has(name);
+    const enteredBy = async (name: string) => {
+      entered = null;
+      try {
+        const result = (probe[name] as (...a: unknown[]) => unknown)('example', 'example', 'example', 'example');
+        if (result instanceof Promise) await Promise.race([result.catch(() => undefined), Bun.sleep(5)]);
+      } catch { /* an argument the member rejects before any route */ }
+      return entered as string | null;
+    };
+    // The engine's private route helpers are routes themselves, not members.
+    const ROUTE_HELPERS = new Set<string>([...READ_ROUTES, 'decideRead', 'engineRead', 'timelineBoundedRead', 'writeMiscRead', 'jitOffRead', 'configRead']);
+    const writes = [...members].filter(name => !ROUTE_HELPERS.has(name) && isWrite(name)).sort();
+    expect(writes.length).toBeGreaterThan(100);
+    const writesOnRoutes: Array<[string, string]> = [];
+    for (const name of writes) {
+      const route = await enteredBy(name);
+      if (route) writesOnRoutes.push([name, route]);
+    }
+    const onReadRoute = unexplainedReadRoutes(writesOnRoutes);
+    // The recorder sees a read member enter its route (the scan is not blind).
+    expect(await enteredBy('getSource')).toBe('preparationRead');
+    expect(onReadRoute).toEqual([]);
+
+    // (2) On the open Postgres arm: each route, each entry point, with and without a read deadline.
+    const arm = arms().find(a => a.backend === 'postgres');
+    expect(arm).toBeDefined();
+    const engine = arm!.engine as unknown as Record<string, unknown>;
+    type Exec = { executeRaw: (sql: string, params?: unknown[]) => Promise<unknown>; query?: (sql: string, params?: unknown[]) => Promise<unknown>;
+      unsafe?: (sql: string, params: unknown[]) => Promise<unknown>; transaction?: (fn: (tx: Exec) => Promise<unknown>) => Promise<unknown> };
+    const WRITE = "UPDATE config SET value=value WHERE key='parity.read-route.none'";
+    const CTE_WRITE = "WITH gone AS (DELETE FROM config WHERE key='parity.read-route.none' RETURNING key) SELECT count(*) FROM gone";
+    const routes: Array<[string, <T>(fn: (exec: Exec) => Promise<T>) => Promise<T>]> = [
+      ...READ_ROUTES.map(route => [route, <T>(fn: (exec: Exec) => Promise<T>) => (engine[route] as (f: typeof fn) => Promise<T>).call(engine, fn)] as [string, <T>(fn: (exec: Exec) => Promise<T>) => Promise<T>]),
+      ...(['writeMiscReads', 'cliReads'] as const).map(getter => [getter, <T>(fn: (exec: Exec) => Promise<T>) => fn(engine[getter] as Exec)] as [string, <T>(fn: (exec: Exec) => Promise<T>) => Promise<T>]),
+    ];
+    const outcome = (run: () => Promise<unknown>) => run().then(() => 'sent', (error: { code?: unknown }) => error?.code === 'read_route_write' ? 'refused' : `failed:${String(error?.code ?? error)}`);
+    const observed: Record<string, string> = {};
+    const expected: Record<string, string> = {};
+    for (const deadline of [false, true]) {
+      const under = <T>(fn: () => Promise<T>) => deadline ? withReadDeadline(Date.now() + 30_000, fn) : fn();
+      for (const [name, route] of routes) {
+        const label = `${name}${deadline ? ' (read deadline)' : ''}`;
+        const entries: Record<string, (exec: Exec) => Promise<unknown>> = {
+          executeRaw: exec => exec.executeRaw(WRITE),
+          'executeRaw CTE': exec => exec.executeRaw(CTE_WRITE),
+          ...(name === 'ownRawRead' ? {} : {
+            query: (exec: Exec) => exec.query!(WRITE),
+            unsafe: (exec: Exec) => exec.unsafe!(WRITE, []),
+            // Under a deadline the route's executor is already inside its READ ONLY transaction and has no nested transaction().
+            ...(deadline ? {} : { 'transaction executeRaw': (exec: Exec) => exec.transaction!(tx => tx.executeRaw(WRITE)) }),
+          }),
+        };
+        for (const [entry, send] of Object.entries(entries)) {
+          observed[`${label} ${entry}`] = await outcome(() => under(() => route(send)));
+          expected[`${label} ${entry}`] = 'refused';
+        }
+        observed[`${label} read`] = await outcome(() => under(() => route(exec => exec.executeRaw('SELECT 1 AS one'))));
+        expected[`${label} read`] = 'sent';
+      }
+    }
+    expect(observed).toEqual(expected);
+  }, 60_000);
 });

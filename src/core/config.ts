@@ -1643,6 +1643,7 @@ export const KNOWN_CONFIG_KEYS: readonly string[] = [
   // A11: IANA timezone for offset-less frontmatter datetimes in effective_date.
   // Unset → UTC (date-only values are always UTC calendar dates). Validated at set time.
   'brain.timezone',
+  'rules.session_start', // C2 (opt-in, off until the cross-harness eval passes): the session-start standing-rules section
   // A12 (opt-in, default off): undated new pages in git-backed sources take the
   // file's git first-commit date as their effective-date fallback on full import.
   'sync.git_first_commit_dates',
@@ -1985,6 +1986,8 @@ export function toEngineConfig(config: GBrainConfig): EngineConfig {
     database_url: config.database_url,
     database_path: config.database_path,
     keyword_statement_timeout_ms: config.search?.keyword_statement_timeout_ms,
+    // A configured Rust brain's store is never quietly replaced by an empty one (EngineConfig.guard_store).
+    ...(config.engine === 'rust' ? { guard_store: true } : {}),
   };
 }
 

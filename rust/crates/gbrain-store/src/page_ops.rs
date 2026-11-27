@@ -25,8 +25,8 @@
 //! page or the version is segmented, before it writes anything.
 //!
 //! `purgeDeletedPages` keeps the tombstones PGLite's derived and atom retirement holds keep
-//! (`PurgeHolds`); rust/docs/store/page_ops.md cites each rule and names the two holds that never
-//! match a store row.
+//! (`PurgeHolds`); rust/docs/store/page_ops.md cites each rule and names the two `op_checkpoints`
+//! holds it does not apply.
 
 use crate::env::{Env, iso, parse_iso};
 use crate::error::{Result, StoreError};
@@ -202,7 +202,7 @@ fn jsonb_text(value: &Value) -> String {
 }
 
 /// `frontmatter ->> key`.
-fn fm_text(frontmatter: &Map<String, Value>, key: &str) -> Option<String> {
+pub(crate) fn fm_text(frontmatter: &Map<String, Value>, key: &str) -> Option<String> {
     frontmatter.get(key).and_then(json_text)
 }
 
@@ -630,19 +630,20 @@ pub(crate) fn restorable_atoms(pages: &[PageRecord]) -> HashSet<u64> {
         .collect()
 }
 
-/// The purge holds a Rust store row can meet, at `now` (PGLite's statement clock): the derived
-/// retirement hold (`derivedRetirementPurgeHold`, `derived-retirement-hold.ts:38-41`) and the atom
-/// retirement hold (`atomRetirementPurgeHold`, `atom-retirement-hold.ts:80-84`). Each window is open
-/// while `deleted_at > now - days`. The two `op_checkpoints` holds never match here: see
+/// The purge holds that read only the page rows and `config`, at `now` (PGLite's statement clock): the
+/// derived retirement hold (`derivedRetirementPurgeHold`, `derived-retirement-hold.ts:38-41`) and the
+/// atom retirement hold (`atomRetirementPurgeHold`, `atom-retirement-hold.ts:80-84`). Each window is
+/// open while `deleted_at > now - days`. The two `op_checkpoints` holds are applied by the retention
+/// purge's candidate reads (`persistence/retention_purge.rs`), not by `purge_deleted_pages`: see
 /// `rust/docs/store/page_ops.md`.
-struct PurgeHolds {
+pub(crate) struct PurgeHolds {
     now: i64,
     restore_days: i64,
     restorable_atoms: HashSet<u64>,
 }
 
 impl PurgeHolds {
-    fn read(read: &dyn KvRead, pages: &[PageRecord], now: i64) -> Result<Self> {
+    pub(crate) fn read(read: &dyn KvRead, pages: &[PageRecord], now: i64) -> Result<Self> {
         Ok(Self {
             now,
             restore_days: restore_days(read)?,
@@ -650,7 +651,7 @@ impl PurgeHolds {
         })
     }
 
-    fn holds(&self, page: &PageRecord) -> bool {
+    pub(crate) fn holds(&self, page: &PageRecord) -> bool {
         let Some(deleted) = page.deleted_at_us else {
             return false;
         };
@@ -679,6 +680,21 @@ fn pages_by_slugs(read: &dyn KvRead, source: &str, slugs: &[String]) -> Result<V
     }
     pages.sort_by_key(|p| p.id);
     Ok(pages)
+}
+
+/// The pages `find_duplicate_in` can pick for `query`: those keyed by its content hash or
+/// frontmatter `id` in the source (`keyed_index.rs`).
+fn duplicate_candidates(
+    read: &dyn KvRead,
+    source_id: &str,
+    query: &DuplicateQuery,
+) -> Result<Vec<PageRecord>> {
+    crate::keyed_index::duplicate_candidates(
+        read,
+        source_id,
+        &query.hash,
+        query.frontmatter_id.as_deref(),
+    )
 }
 
 fn find_duplicate_in(
@@ -949,7 +965,11 @@ impl Store {
         query: &DuplicateQuery,
     ) -> Result<Option<Value>> {
         let read = self.read()?;
-        Ok(find_duplicate_in(&all_pages(&*read)?, source_id, query))
+        Ok(find_duplicate_in(
+            &duplicate_candidates(&*read, source_id, query)?,
+            source_id,
+            query,
+        ))
     }
 
     /// `findDuplicatePages(sourceId, inputs)`: one `findDuplicatePage` answer per input.
@@ -962,11 +982,16 @@ impl Store {
             return Ok(Vec::new());
         }
         let read = self.read()?;
-        let pages = all_pages(&*read)?;
-        Ok(queries
+        queries
             .iter()
-            .map(|q| find_duplicate_in(&pages, source_id, q))
-            .collect())
+            .map(|q| {
+                Ok(find_duplicate_in(
+                    &duplicate_candidates(&*read, source_id, q)?,
+                    source_id,
+                    q,
+                ))
+            })
+            .collect()
     }
 
     /// `softDeletePages(slugs, { sourceId })`: hides each live page of the source whose slug is

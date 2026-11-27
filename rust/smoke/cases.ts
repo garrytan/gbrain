@@ -254,11 +254,12 @@ export const cases: Case[] = [
       assert.equal(addon.engineAbi, 1);
       assert.match(addon.engineBuild, /^[0-9a-f]{64}$/);
       assert.equal(addon.catalogVersion, 0);
-      // Formats 1 to 8 in a row, then the formats this build adds, in order (formats the trunk allotted to other lanes
-      // are skipped); never pinned as a literal.
-      const versions: number[] = addon.formatVersions;
-      assert.deepEqual(versions.slice(0, 8), [1, 2, 3, 4, 5, 6, 7, 8]);
-      assert.ok(versions.every((v, i) => i === 0 || v > versions[i - 1]!), `formatVersions ${versions}`);
+      // Formats 1 to 9, then 12, then the newest this build writes (never pinned as a literal); formats 10 and 11 are
+      // allotted to other lanes and are not opened.
+      const newest = Math.max(...addon.formatVersions);
+      assert.ok(newest > 12, `newest store format ${newest}`);
+      const own = [...Array.from({ length: 9 }, (_, i) => i + 1), 12, newest];
+      assert.deepEqual(addon.formatVersions, own);
     },
   },
   {
@@ -569,7 +570,7 @@ export const cases: Case[] = [
         assert.equal(first.isOpen, false);
         const opened = await first.open(dir, { schemaVersion: 319 });
         assert.equal(opened.created, true);
-        assert.equal(opened.format_version, addon.formatVersions.at(-1)); // the store's current format, from the addon's own list (line 257 pins the whole list)
+        assert.equal(opened.format_version, addon.formatVersions.at(-1)); // the store's current format, from the addon's own list (the metadata case pins the whole list)
         assert.match(opened.brain_id, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
         assert.equal(first.isOpen, true);
 

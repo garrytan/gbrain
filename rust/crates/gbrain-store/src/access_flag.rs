@@ -398,6 +398,8 @@ mod tests {
         //   derivation sweep records' source index (`page_body/purge_record.rs`, index keys only);
         // - the keyword test modules (`index_build/tests.rs`, `index_writer/tests.rs`), which are
         //   whole files under `#[cfg(test)]`;
+        // - `keyed_index/tests.rs`, a whole file under `#[cfg(test)]` that writes what a format-8
+        //   build leaves (no keyed entries) before the brain opens again;
         // - `seed/v0_60_766_tests.rs`, a whole file under `#[cfg(test)]` that writes an older
         //   addon's records into an empty record file before any store opens it;
         // - `test_support.rs`'s `FaultyKv`, which wraps a record store in tests to make a write
@@ -405,6 +407,7 @@ mod tests {
         let allowed: &[(&str, usize)] = &[
             ("access_flag.rs", 1),
             ("fjall_kv.rs", 1),
+            ("keyed_index/tests.rs", 1),
             ("keyword/index_build.rs", 1),
             ("keyword/index_build/tests.rs", 1),
             ("keyword/index_writer/tests.rs", 2),
@@ -442,7 +445,8 @@ mod tests {
         assert_eq!(write.matches("write_chain(").count(), 2);
         let chain = &lib[lib.find("fn write_chain<T>").unwrap()..];
         let chain = &chain[..chain.find("\n}\n").unwrap()];
-        assert!(chain.contains("access_flag::FlaggingWriter(inner)"));
+        assert!(chain.contains("keyed_index::KeyedWriter::new(inner)"));
+        assert!(chain.contains("access_flag::FlaggingWriter(&mut keyed)"));
 
         // `bump_page_retrievals` writes with `Store::write`, never a raw handle.
         let ops = code("page_ops/retrievals.rs");

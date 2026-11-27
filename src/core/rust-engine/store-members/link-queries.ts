@@ -33,6 +33,7 @@ import { relationshipFilterSql, type EdgeTemporalOpts } from '../../link-validit
 import { applyTemporalEvidence } from '../../link-temporal-apply.ts';
 import { possibleWantedRows } from '../../wanted-links-store.ts';
 import type { LinkBatchInput } from '../../engine.ts';
+import type { RustEngine } from '../../rust-engine.ts';
 import { assertPageRevision, PageRevisionConflictError, type PageSnapshot } from '../../page-state/types.ts';
 import type {
   AdjacencyRow, ChainHopEdge, ChainHopOpts, PageReadPolicy, PageReadScope, RelationalFanoutOpts, RelationalFanoutRow,
@@ -43,12 +44,11 @@ import type {
 } from '../../engine-sql/link-reads.ts';
 import type { PageTypeProbe } from '../../engine-sql/cli-reads-ops.ts';
 import type { LongPageSizeRow } from '../../search/long-page-sizes.ts';
-import { getFtsLanguage } from '../../fts-language.ts';
 import { CONNECTOR_SOURCE_KINDS } from '../../persistence/connector-kinds.ts';
 import type { EntityTypeFilter } from '../../schema-pack/entity-types.ts';
 import { mapStoreError, storeErrorCode } from '../store-errors.ts';
 import type { StoreBrain } from '../store.ts';
-import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
+import { refuseMember, storeCall, storeFtsConfig, takeOptions, type StoreMember } from './common.ts';
 import { getConfig } from './config.ts';
 import { linkRelationshipKeysTouching, refreshOnStore, temporalStore } from './link-refresh.ts';
 import { readPageSnapshot } from './pages.ts';
@@ -278,15 +278,22 @@ export const replaceDerivedLinks: StoreMember<[origin: DerivedLinkOrigin, links:
     return result!;
   };
 
-export const replaceDerivedLinksBatch: StoreMember<[items: readonly DerivedLinkBatchItem[]], Counts[]> =
-  async (brain, items) => {
-    const wire = items.map(item => derivedItem('replaceDerivedLinksBatch', item.origin, item.links, item.opts));
-    if (!wire.length) return [];
-    const prepared = await prepareDerived(brain, items.map(item => item.origin), items.map(item => item.opts));
-    const results = await publish(brain, 'replaceDerivedLinksBatch', items.map(item => item.origin), wire);
-    for (const [i, item] of items.entries()) await finishDerived(brain, prepared[i]!, wire[i]!, item.opts);
-    return results;
-  };
+/**
+ * The whole batch runs in ONE store transaction, as PGLite runs it: the links, wanted pages, temporal evidence and
+ * relationship state of every origin commit together, with one durable sync, and the call resolves only after that
+ * commit. Any failure rolls the whole batch back (the caller, `replaceDerivedLinksBatchOrReplay`, then replays it
+ * page by page). Already inside a transaction (a bound clone), the batch is one more part of it.
+ */
+export const replaceDerivedLinksBatch = async function replaceDerivedLinksBatch(this: RustEngine, brain: StoreBrain,
+  items: readonly DerivedLinkBatchItem[]): Promise<Counts[]> {
+  if (items.length && !this._txScope) return this.transaction(tx => tx.replaceDerivedLinksBatch(items));
+  const wire = items.map(item => derivedItem('replaceDerivedLinksBatch', item.origin, item.links, item.opts));
+  if (!wire.length) return [];
+  const prepared = await prepareDerived(brain, items.map(item => item.origin), items.map(item => item.opts));
+  const results = await publish(brain, 'replaceDerivedLinksBatch', items.map(item => item.origin), wire);
+  for (const [i, item] of items.entries()) await finishDerived(brain, prepared[i]!, wire[i]!, item.opts);
+  return results;
+};
 
 // ---------------------------------------------------------------------------------------------------------------------
 // Provenance
@@ -570,11 +577,11 @@ export const readLongPageSizes: StoreMember<[ids: readonly number[], scope: Page
     return rows.map(r => ({ id: Number(r.id), chars: Number(r.chars), bytes: Number(r.bytes) }));
   };
 
-/** Each word to its English lexemes; another full-text configuration refuses (the store has only English). */
+/** Each word to its lexemes under the configured full-text search configuration (`english` or `german`; others refuse). */
 export const wordLexemes: StoreMember<[words: string[]], Map<string, string[]>> =
   async (brain, words) => {
-    if (getFtsLanguage() !== 'english') refuseMember('wordLexemes', `the ${getFtsLanguage()} text search configuration`);
-    const rows: Array<{ w: string; lexemes: string[] }> = await storeCall({ member: 'wordLexemes' }, () => brain.wordLexemes(words));
+    const config = storeFtsConfig('wordLexemes');
+    const rows: Array<{ w: string; lexemes: string[] }> = await storeCall({ member: 'wordLexemes' }, () => brain.wordLexemes(words, config));
     return new Map(rows.map(r => [r.w, r.lexemes]));
   };
 

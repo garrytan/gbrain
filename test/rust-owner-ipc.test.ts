@@ -39,6 +39,8 @@ import { storePagePolicy } from '../src/core/rust-engine/store-members/private-p
 import { decodeError, decodeValue, encodeValue } from '../src/core/rust-engine/owner-ipc/codec.ts';
 import { withRequestSignal } from '../src/core/request-signal.ts';
 import { withReadDeadline } from '../src/core/read-deadline.ts';
+import { withStatementDeadline } from '../src/core/statement-deadline.ts';
+import { withManagedPersistencePaused } from '../src/core/engine-sql/eval-harness-reads.ts';
 import { requestSignal } from '../src/core/request-signal.ts';
 import { OperationError } from '../src/core/ops/contract.ts';
 import { maybeDelegateLocalOperation } from '../src/core/persistence/local-client.ts';
@@ -328,6 +330,28 @@ describe('deadlines, cancel and permits', () => {
       // The pool still serves: a fast call after the timeouts completes.
       expect(await engine.getPage('nothing-here')).toBeNull();
     } finally { close(); }
+  });
+
+  // Value: protects=a harness pause whose callback outlasts the caller's read or statement deadline still restores the
+  // brain through the owner; fails_when=the forwarded restore carries the expired deadline and the owner refuses it, so
+  // the brain stays at enabled=false; why_new=the deadline tests above call one member, never a pause and its restore;
+  // seam=a PGLite engine served as the owner; no_claim=the Rust store's own restore (engine parity covers it)
+  test('a harness pause restores the brain when its callback outlasts the read or statement deadline', async () => {
+    const { engine, close } = await clientOf(server.socketPath);
+    try {
+      for (const scope of ['read', 'statement'] as const) {
+        await (await owner.writerReleaseStore()).setBrainEnabled(true);
+        const run = () => withManagedPersistencePaused(engine, async () => { await Bun.sleep(300); return 'slow'; });
+        const out = scope === 'read' ? await withReadDeadline(Date.now() + 150, run)
+          : await withStatementDeadline({ startedAt: Date.now(), deadlineAt: Date.now() + 150, expired: false }, run);
+        const enabled = (JSON.parse(await owner.readWriterAdminState()) as { brain: { enabled: boolean } }).brain.enabled;
+        expect({ scope, out, enabled }).toEqual({ scope, out: { result: 'slow', restore: 'restored' }, enabled: true });
+      }
+      expect(await settled()).toMatchObject({ active: 0, queued: 0 });
+    } finally {
+      await (await owner.writerReleaseStore()).setBrainEnabled(false);
+      close();
+    }
   });
 
   // Value: protects=a write whose answer never came back after the send is reported unknown with the read that confirms
@@ -1335,10 +1359,11 @@ describe('a Rust owner whose engine does not report persistence_journal', () => 
       const calls: Array<[string, (e: BrainEngine) => Promise<unknown>]> = [
         ['executeRaw', e => e.executeRaw('SELECT 1')],
         // transaction is served in process now; a client refuses it with the owner-socket refusal (tested above).
-        // A member the Rust store does not serve (capability facts): listUnarchivedSourceRows, the source ids the claim-conflict
-        // scan walks. The earlier examples are served now: listFactsReconcileBacklog (main join da99c637a7), lockOAuthClient (the
-        // cli-members line) and, in batch 14, readFactTableCatalog (lane 4 sweep-facts-rust cd03205999, rust-5a 5ad596fad1).
-        ['listUnarchivedSourceRows', e => e.listUnarchivedSourceRows()],
+        // A member the Rust store does not serve (capability facts): readFactsFtsIndexState, the keyword-index state read
+        // (store-members/facts-write-path.ts keeps it refused). The earlier examples are served now: listFactsReconcileBacklog
+        // (main join da99c637a7), lockOAuthClient (the cli-members line), in batch 14 readFactTableCatalog (lane 4
+        // sweep-facts-rust cd03205999, rust-5a 5ad596fad1) and, in batch 16, listUnarchivedSourceRows (lane4-facts-tail-stops).
+        ['readFactsFtsIndexState', e => e.readFactsFtsIndexState('idx_facts_fts')],
       ];
       for (const [member, call] of calls) {
         expect(member in STORE_MEMBERS).toBe(false);

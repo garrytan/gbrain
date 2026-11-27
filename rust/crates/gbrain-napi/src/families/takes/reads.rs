@@ -14,6 +14,7 @@ use napi::bindgen_prelude::Object;
 use napi_derive::napi;
 use serde_json::Value;
 
+use super::whole;
 use crate::store_binding::{Brain, required};
 
 #[napi]
@@ -50,7 +51,9 @@ impl Brain {
         env: &'env Env,
         page_id: f64,
     ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| s.list_take_rows_for_page(page_id as i64))
+        self.run(env, move |s| {
+            s.list_take_rows_for_page(whole(page_id, "pageId")?)
+        })
     }
 
     /// `listHeldFenceTakeRows({ sourceId, kind, ownerKey, pageId })`: the page's takes while its fence generation is held.
@@ -88,7 +91,7 @@ impl Brain {
         row_num: f64,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
-            s.read_take_row_trust(page_id as i64, row_num as i64)
+            s.read_take_row_trust(whole(page_id, "pageId")?, whole(row_num, "rowNum")?)
         })
     }
 
@@ -96,7 +99,7 @@ impl Brain {
     /// quarantined }` or null.
     #[napi]
     pub fn read_take_trust_ref<'env>(&self, env: &'env Env, id: f64) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| s.read_take_trust_ref(id as i64))
+        self.run(env, move |s| s.read_take_trust_ref(whole(id, "id")?))
     }
 
     /// `countMcpResolvedTakes({ sourceIds, holders, excludePrivate })`: resolves the count.
@@ -257,7 +260,9 @@ impl Brain {
         env: &'env Env,
         page_id: f64,
     ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| s.read_page_tier_ref(page_id as i64))
+        self.run(env, move |s| {
+            s.read_page_tier_ref(whole(page_id, "pageId")?)
+        })
     }
 
     /// `readPageTierRows(ids)`: `[{ id, source_id, slug, trust_tier }]`.
@@ -282,7 +287,7 @@ impl Brain {
         key: String,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
-            s.page_has_frontmatter_key(page_id as i64, &key)
+            s.page_has_frontmatter_key(whole(page_id, "pageId")?, &key)
         })
     }
 
@@ -296,7 +301,7 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
             let fence: TakesLeavingFence = required(fence, "listTakeIdsLeavingFence fence")?;
-            s.list_take_ids_leaving_fence(page_id as i64, &fence)
+            s.list_take_ids_leaving_fence(whole(page_id, "pageId")?, &fence)
         })
     }
 
@@ -312,7 +317,7 @@ impl Brain {
         self.run(env, move |s| {
             let ids: Vec<i64> = required(ids, "listTakePreimages ids")?;
             let incoming: Vec<IncomingTake> = required(incoming, "listTakePreimages incoming")?;
-            s.list_take_preimages(page_id as i64, &ids, &incoming)
+            s.list_take_preimages(whole(page_id, "pageId")?, &ids, &incoming)
         })
     }
 
@@ -337,7 +342,9 @@ impl Brain {
         page_id: f64,
         row_num: f64,
     ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| s.find_take_id(page_id as i64, row_num as i64))
+        self.run(env, move |s| {
+            s.find_take_id(whole(page_id, "pageId")?, whole(row_num, "rowNum")?)
+        })
     }
 
     /// `listTakeHoldersAtRows(pageId, rowNums)`: the distinct holders at those row numbers, sorted.
@@ -349,8 +356,11 @@ impl Brain {
         row_nums: Vec<f64>,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
-            let rows: Vec<i64> = row_nums.iter().map(|n| *n as i64).collect();
-            s.list_take_holders_at_rows(page_id as i64, &rows)
+            let rows: Vec<i64> = row_nums
+                .iter()
+                .map(|n| whole(*n, "rowNums"))
+                .collect::<Result<_, _>>()?;
+            s.list_take_holders_at_rows(whole(page_id, "pageId")?, &rows)
         })
     }
 
@@ -364,7 +374,11 @@ impl Brain {
         resolved_at: String,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
-            s.stamp_take_resolved_at(page_id as i64, row_num as i64, &resolved_at)
+            s.stamp_take_resolved_at(
+                whole(page_id, "pageId")?,
+                whole(row_num, "rowNum")?,
+                &resolved_at,
+            )
         })
     }
 
@@ -455,7 +469,7 @@ impl Brain {
         env: &'env Env,
         take_id: f64,
     ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| s.read_take_claim(take_id as i64))
+        self.run(env, move |s| s.read_take_claim(whole(take_id, "takeId")?))
     }
 
     /// `upsertTakeHorizon({ takeId, claimSha256, horizonDate, basis })`: resolves when stored.
@@ -478,7 +492,9 @@ impl Brain {
         env: &'env Env,
         take_id: f64,
     ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| s.delete_take_horizon(take_id as i64))
+        self.run(env, move |s| {
+            s.delete_take_horizon(whole(take_id, "takeId")?)
+        })
     }
 
     /// `listTakeHorizons(takeIds | null)`: `[{ take_id, horizon_date, basis, set_at, claim_sha256, claim }]`.

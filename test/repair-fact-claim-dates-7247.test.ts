@@ -94,7 +94,7 @@ async function refusal(run: () => Promise<unknown>): Promise<OperationError> {
 async function expectFinding(engine: BrainEngine, dated: number) {
   const finding = await factBulkDatesCheck(engine);
   expect(finding.status).toBe('warn');
-  expect(finding.message).toContain('record when the facts were loaded, not when they happened');
+  expect(finding.message).toContain('often a bulk load that stamped the day it ran onto every row');
   expect(finding.fix).toMatchObject({ argv: ['gbrain', 'repair', 'fact-claim-dates', '--source', 'default', '--json'] });
   const [day] = finding.details!.days as Array<Record<string, any>>;
   expect(day).toMatchObject({ source_id: 'default', day: DAY, facts: 248, dated_claims: dated });

@@ -330,8 +330,9 @@ export function mountOwnerLoginLinks(app: Express, ctx: ServeHttpContext): void 
 </style></head><body><div class="box">
 <div class="logo">GBrain</div>
 <div class="msg">⚠️ This admin link has expired, was already used, or the server has restarted.</div>
-<div class="hint"><b>Ask the server administrator or the harness hosting this server for a fresh link:</b>
-<div class="prompt">Run gbrain mcp admin login-link --url ${mcpResourceUrl.toString().replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!))} using the protected owner credential. If connecting OAuth, restart authorization in the native client and include its new --oauth-request ID.</div>
+<div class="hint"><b>If this is your brain, run this in your own terminal on the computer that runs it, then open the new link in this browser (never in a chat with an assistant):</b>
+<div class="prompt">gbrain mcp admin login-link --url &#39;${mcpResourceUrl.toString().replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!))}&#39; --admin-token-file ~/.gbrain/serve/admin-token</div>
+If a connector is waiting, restart it from its Add step first and add its new --oauth-request ID. If someone else runs the brain host, ask them for the link.
 </div></div></body></html>`);
       return;
     }

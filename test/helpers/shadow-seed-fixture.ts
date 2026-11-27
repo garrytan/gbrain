@@ -84,3 +84,35 @@ export async function primaryDigests(primary: BrainEngine): Promise<Record<strin
   }
   return out;
 }
+
+/**
+ * Seeds the owner's allow rules (one active, one removed) from `primary` into a fresh Rust store and returns what each
+ * engine lists: the same rules, ids and receipts on both. A store that does not copy `trust_allow_rules` lists none and
+ * counts the rows as a gap.
+ */
+export async function seedAllowRules(primary: BrainEngine, addon: RustAddon, dir: string, primaryEngine: 'pglite' | 'postgres') {
+  const add = (sourceId: string, uriPrefix: string, reasonFamily: string | null) =>
+    primary.addTrustAllowRule({ sourceId, uriPrefix, reasonFamily, createdBy: 'local_cli:owner', reason: 'seed parity' });
+  await add('default', 'https://feeds.example.com/', 'standing_instruction');
+  const removed = await add('default', 'https://old.example.com/', null);
+  await primary.removeTrustAllowRule(Number(removed.row!.id), 'local_cli:owner');
+  const { record, storePath } = await seedInto(primary, addon, dir, primaryEngine);
+  const rust = openRustEngine({ addon, databasePath: storePath });
+  await rust.connect({ engine: 'pglite', database_path: storePath } as never);
+  const view = (rows: Array<Record<string, unknown>>) => rows.map(r => ({
+    id: Number(r.id), source_id: r.source_id, uri_prefix: r.uri_prefix, reason_family: r.reason_family, created_by: r.created_by,
+    created_at: new Date(r.created_at as string | Date).toISOString(), removed_at: r.removed_at ? new Date(r.removed_at as string | Date).toISOString() : null,
+    removed_by: r.removed_by, reason: r.reason,
+  }));
+  try {
+    return {
+      record,
+      primary: view(await primary.listTrustAllowRuleRows({ includeRemoved: true })),
+      rust: view(await rust.listTrustAllowRuleRows({ includeRemoved: true })),
+      // The next add on the Rust brain takes the id after the seeded ones, as the primary's sequence would.
+      next: Number((await rust.addTrustAllowRule({ sourceId: 'default', uriPrefix: 'https://new.example.com/', reasonFamily: null, createdBy: 'local_cli:owner', reason: null })).row!.id),
+    };
+  } finally {
+    await rust.disconnect();
+  }
+}

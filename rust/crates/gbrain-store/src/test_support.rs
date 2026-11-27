@@ -132,6 +132,9 @@ pub(crate) enum FaultOp {
     Put,
     /// `delete`, with the key deleted.
     Delete,
+    /// `commit`, of a transaction that put a key `fail_on` accepts (the commit fails and the
+    /// transaction is dropped, so nothing it wrote is kept).
+    Commit,
 }
 
 /// A record store whose write transactions fail the way a failing disk does: a call in `ops`
@@ -150,6 +153,8 @@ struct FaultyWrite {
     code: &'static str,
     ops: &'static [FaultOp],
     fail_on: fn(&[u8]) -> bool,
+    /// Whether this transaction put a key `fail_on` accepts (what a `Commit` fault waits for).
+    wrote_match: bool,
 }
 
 impl FaultyWrite {
@@ -184,6 +189,7 @@ impl crate::kv::KvRead for FaultyWrite {
 impl crate::kv::KvWrite for FaultyWrite {
     fn put(&mut self, key: &[u8], value: &[u8]) -> crate::Result<()> {
         self.check(FaultOp::Put, key)?;
+        self.wrote_match |= (self.fail_on)(key);
         self.inner.put(key, value)
     }
     fn delete(&mut self, key: &[u8]) -> crate::Result<()> {
@@ -191,6 +197,12 @@ impl crate::kv::KvWrite for FaultyWrite {
         self.inner.delete(key)
     }
     fn commit(self: Box<Self>) -> crate::Result<u64> {
+        if self.ops.contains(&FaultOp::Commit) && self.wrote_match {
+            return Err(crate::StoreError::new(
+                self.code,
+                "injected storage failure",
+            ));
+        }
         self.inner.commit()
     }
 }
@@ -211,6 +223,7 @@ impl crate::kv::Kv for FaultyKv {
             code: self.code,
             ops: self.ops,
             fail_on: self.fail_on,
+            wrote_match: false,
         }))
     }
     fn version(&self) -> crate::Result<u64> {

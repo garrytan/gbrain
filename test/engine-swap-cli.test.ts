@@ -19,6 +19,9 @@ import { existsSync } from 'node:fs';
 import { withEnv } from './helpers/with-env.ts';
 import { CODES } from '../src/core/error-registry.ts';
 import { SWAP_RECOVERY, SWAP_REFUSAL_REASONS } from '../src/core/engine-swap/refusals.ts';
+import { WRITE_COVERAGE_LIMIT, WRITE_COVERAGE_LOSS, WRITE_COVERAGE_NAMED, type ShadowStatus } from '../src/core/engine-swap/readiness.ts';
+import { PILOT_WRITES, writeFamily } from '../src/shadow/write-compare.ts';
+import { WRITE_MAP } from '../src/shadow/write-map.ts';
 
 let engine: PGLiteEngine;
 let home: string;
@@ -81,18 +84,39 @@ describe('engine swap --plan', () => {
     expect(plan.routes.env).toEqual(['GBRAIN_DATABASE_URL']);
     expect(plan.routes.services).toEqual([{ name: 'com.gbrain.serve.plist', kind: 'launchd', sets: ['GBRAIN_DATABASE_URL'] }]);
     expect(typeof plan.disk.free_bytes).toBe('number');
-    expect(Object.keys(plan.deferred).sort()).toEqual(['capability_report', 'expected_write_pause']);
+    // The policy in force at the real clock: the opt-in override's 5 days until the end of Dec 8 PST, 14 days after.
+    expect(plan.policy.text).toMatch(/minimum shadow duration (5 days until 2026-12-09T08:00:00\.000Z|14 days)/);
+    expect(plan.policy.hash).toMatch(/^[0-9a-f]{16}$/);
+    expect(Array.isArray(plan.capability_report.served)).toBe(true);
+    expect(plan.write_pause.seconds).toBeGreaterThanOrEqual(1);
+    expect(plan.blockers).toEqual([]);
     expect(plan.plan_hash).toMatch(/^[0-9a-f]{16}$/);
     expect(r.stdout).not.toContain('VALUECANARY');
   });
 
-  test('the human plan names the verdict, every criterion and the deferred items, and no value', async () => {
+  test('the human plan states the way back, its known limits, what failback does not carry and the fingerprint rule', async () => {
+    const r = await run(['--to', 'rust', '--plan']);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain('Way back: After a swap, the old engine is not kept current; failback');
+    expect(r.stdout).toContain('Known limit: The Rust store\'s shadow digests are written only by the seed and the follower');
+    expect(r.stdout).toContain('Failback accepted losses (counted by its plan): page_version_collapse, new_row_ids');
+    expect(r.stdout).toMatch(/Failback does not carry \(no Rust read call returns it, or failback does not write it back\), \d+ table\(s\): .*page_versions/);
+    expect(r.stdout).toContain('Fingerprint rule (the probe\'s own rule, both directions)');
+    const json = JSON.parse((await run(['--to', 'rust', '--plan', '--json'])).stdout);
+    expect(json.way_back.losses.not_carried_tables).toContain('page_versions');
+    expect(json.way_back.known_limits.length).toBe(3);
+    expect(r.stdout).toContain('Named loss for remote callers: A remote read by the brain owner on a Rust brain refuses by name');
+    expect(json.way_back.remote_limits.length).toBe(1);
+  });
+
+  test('the human plan names the verdict, every criterion, the policy, the capability report and the write pause, and no value', async () => {
     const r = await run(['--to', 'rust', '--dry-run']);
     expect(r.code).toBe(0);
     expect(r.stdout).toContain('verdict: NOT READY (no_shadow)');
     expect(r.stdout).toContain('8. [reported] speed (reported, not gating: D23)');
     expect(r.stdout).toContain('Capability report: ');
-    expect(r.stdout).toContain('Expected write pause: ');
+    expect(r.stdout).toContain('Expected write pause: about ');
+    expect(r.stdout).toMatch(/Readiness policy: minimum shadow duration (5 days until 2026-12-09T08:00:00\.000Z|14 days)/);
     expect(r.stdout).toContain('Nothing was written.');
     expect(r.stdout).not.toContain('VALUECANARY');
   });
@@ -106,10 +130,11 @@ describe('engine swap --plan', () => {
   });
 
   test.each([
-    [['--to', 'rust'], 'add --plan'],
-    [['--to', 'rust', '--yes', '--expect', 'abc'], 'not supported yet: --yes --expect'],
-    [['--to', 'postgres', '--plan'], '--to postgres is not available'],
-    [['--plan'], '--to (missing) is not available'],
+    [['--to', 'rust', '--yes'], '--yes needs --expect'],
+    [['--to', 'rust', '--plan', '--resume'], 'Use one of'],
+    [['--to', 'rust', '--bogus'], 'Not a flag of engine swap: --bogus'],
+    [['--to', 'mysql', '--plan'], '--to mysql is not an engine'],
+    [['--plan'], '--to (missing) is not an engine'],
   ])('%j is refused as usage, before the brain is opened', async (args, text) => {
     let opened = false;
     const r = await run(args as string[], { openEngine: async () => { opened = true; throw new Error('opened'); } });
@@ -197,5 +222,118 @@ describe('engine_swap_refused recovery table', () => {
     for (const k of ['blocker', 'authority', 'side_effects', 'retry'] as const) expect(row[k].length).toBeGreaterThan(10);
     expect(row.anchor).toBe(`docs/guides/engine-swap.md#${reason}`);
     expect(guide).toContain(`<a id="${reason}"></a>`);
+  });
+});
+
+describe('the swap report names each write type criterion 5 does not compare', () => {
+  const NAMED_LOSS = 'Named loss: only putPage, deletePage, addLink, addLinksBatch and removeLink are compared, so these other page and link writes are counted capability_missing and are not compared: pages:deletePages, pages:softDeletePage, pages:softDeletePages, pages:restorePage, pages:purgeDeletedPages, pages:updateSlug, pages:refreshPageBody, pages:refreshPageOrigin, pages:updatePageContextualRetrievalState, pages:stripStaleFrontmatterKeys, pages:markPagesExtractedBatch, pages:markPagesAttendanceBlocked, pages:setPageEmbeddingSignature, pages:setChunkerVersion, pages:writeTextProjectionSeal, pages:revertToVersion, pages:setEmotionalWeightBatch, pages:invalidateWithdrawnPages, pages:createSegmentedPageShell, pages:sealSegmentedPage, pages:flipBodyGeneration, links:removeLinksByPagesAndSource, links:replaceDerivedLinks, links:replaceDerivedLinksBatch. A write that touches several tables is counted under its first table only, so the side effects of deletePages, purgeDeletedPages and updateSlug (aliases, open loops, owner-only marks, fact withdrawals) land under pages:* keys, and a type\'s line above reads only the writes whose first table it is.';
+  const sampled = (byFamily: Record<string, unknown>) => ({
+    write_comparisons: { state: 'measured', sample_rate: 1, comparable: 5, unexplained_difference: 0, uncomparable: 0, capability_missing: 0, capability_missing_by_family: byFamily,
+      // The write bar's call history (write-bar.ts); empty here, so the bar is its floor and 5 compared writes fail it.
+      qualifying_writes: { by_day: {}, first_seen: null } },
+  }) as unknown as ShadowStatus;
+  const plan = async (doc: ShadowStatus, json: boolean) => {
+    const r = await run(['--to', 'rust', '--plan', ...(json ? ['--json'] : [])], { readShadowStatus: async () => doc });
+    return json ? JSON.parse(r.stdout) as { criteria: Array<Record<string, unknown>> } : r.stdout;
+  };
+  const MIXED = { content_chunks: 3, tags: 1, decide_state: 2, decide_spend: 1, 'pages:updateSlug': 4, 'pages:softDeletePage': 1, raw_sql: 2, takes: 0, facts: 'x', other: 5 };
+  const MIXED_LINES = [
+    'chunks: sampled 3 (content_chunks 3)',
+    'tags: sampled 1 (tags 1)',
+    'aliases: not sampled',
+    'timeline entries: not sampled',
+    'takes: not sampled',
+    'facts: not sampled',
+    'fact withdrawals: not sampled separately (counted under pages:updateSlug 4)',
+    'open loops: not sampled',
+    'sources: not sampled',
+    'owner-only marks: not sampled',
+    'decide store: sampled 3 (decide_state 2, decide_spend 1)',
+    'other write families sampled: pages:updateSlug 4, pages:softDeletePage 1, raw_sql 2, other 5',
+    NAMED_LOSS,
+  ];
+
+  test('some families sampled and some not give exactly these lines, in the JSON row and in the text report', async () => {
+    const row = ((await plan(sampled(MIXED), true)) as { criteria: Array<Record<string, unknown>> }).criteria.find(c => c.n === 5)!;
+    expect(row.lines).toEqual(MIXED_LINES);
+    const text = (await plan(sampled(MIXED), false)) as string;
+    expect(text).toContain(`\n${MIXED_LINES.map(l => `       ${l}`).join('\n')}\n`);
+  });
+
+  test('with nothing sampled every named type reads not sampled and the other line reads none', async () => {
+    const row = ((await plan(sampled({}), true)) as { criteria: Array<Record<string, unknown>> }).criteria.find(c => c.n === 5)!;
+    expect(row.lines).toEqual([
+      'chunks: not sampled', 'tags: not sampled', 'aliases: not sampled', 'timeline entries: not sampled', 'takes: not sampled', 'facts: not sampled',
+      'fact withdrawals: not sampled separately (counted under pages:updateSlug 0)',
+      'open loops: not sampled', 'sources: not sampled', 'owner-only marks: not sampled', 'decide store: not sampled',
+      'other write families sampled: none', NAMED_LOSS,
+    ]);
+  });
+
+  test('the JSON row only gains lines: the old keys and the old sentence are unchanged, and no other criterion has lines', async () => {
+    const doc = (await plan(sampled(MIXED), true)) as { criteria: Array<Record<string, unknown>> };
+    const row = doc.criteria.find(c => c.n === 5)!;
+    expect(Object.keys(row).sort()).toEqual(['detail', 'gating', 'lines', 'n', 'name', 'state']);
+    expect(row.state).toBe('fail');
+    expect(String(row.detail).endsWith(WRITE_COVERAGE_NAMED)).toBe(true);
+    expect(String(row.detail)).toContain('sampled so far: content_chunks 3, tags 1, decide_state 2, decide_spend 1, pages:updateSlug 4, pages:softDeletePage 1, raw_sql 2, other 5');
+    expect(String(row.detail)).not.toContain('Named loss');
+    expect(doc.criteria.filter(c => c.n !== 5 && 'lines' in c)).toEqual([]);
+  });
+
+  test('the sentence, the guide and the named loss are pinned', () => {
+    expect(WRITE_COVERAGE_NAMED).toBe('Criterion 5 covers the pilot page and link writes (putPage, deletePage, addLink, addLinksBatch, removeLink) only (#10350, #10360, #10382, #10390). These write types are not compared and get named lines in the swap report: chunks, tags, aliases, timeline entries, takes, facts, fact withdrawals, open loops, sources, owner-only marks and the decide store.');
+    const guide = readFileSync(join(import.meta.dir, '..', 'docs', 'guides', 'engine-swap.md'), 'utf8');
+    expect(guide).toContain(WRITE_COVERAGE_NAMED);
+    expect(guide).toContain(NAMED_LOSS);
+  });
+
+  test('the named loss names every page and link write that is not a pilot write, and no other', () => {
+    // The set the code counts as capability_missing under pages:<op> or links:<op>: the family writeFamily gives each non-pilot WRITE_MAP member.
+    const fromCode = Object.keys(WRITE_MAP).filter(op => !PILOT_WRITES.has(op)).map(op => writeFamily(op)).filter(f => /^(pages|links):/.test(f));
+    expect(fromCode.length).toBe(24);
+    const guide = readFileSync(join(import.meta.dir, '..', 'docs', 'guides', 'engine-swap.md'), 'utf8');
+    // WRITE_COVERAGE_LOSS is the evaluated string, so the guide holds the same text with no source escape.
+    // The guide mentions pages:updateSlug elsewhere (the fact withdrawals line), so read only its named-loss paragraph.
+    const guideLoss = guide.slice(guide.indexOf('Named loss:')).split('\n')[0]!;
+    expect(guideLoss).toBe(WRITE_COVERAGE_LOSS);
+    for (const text of [WRITE_COVERAGE_LOSS, guideLoss]) {
+      const named = text.match(/\b(?:pages|links):[A-Za-z]\w*/g) ?? [];
+      expect(named.length).toBe(fromCode.length);
+      expect(new Set(named)).toEqual(new Set(fromCode));
+    }
+    // The sentence names exactly the five pilot writes.
+    const pilot = /the pilot page and link writes \(([^)]*)\) only/.exec(WRITE_COVERAGE_NAMED)![1]!.split(', ');
+    expect(new Set(pilot)).toEqual(new Set(PILOT_WRITES));
+    expect(WRITE_COVERAGE_NAMED).not.toContain('covers page and link writes only');
+  });
+
+  test('the short coverage sentence says the pilot writes, in the report, the status line, the guide and ENGINES.md', () => {
+    expect(WRITE_COVERAGE_LIMIT).toBe('a criterion 5 pass covers the pilot page and link writes only');
+    const docs = ['docs/guides/engine-swap.md', 'docs/ENGINES.md', 'llms-full.txt'].map(f => readFileSync(join(import.meta.dir, '..', f), 'utf8'));
+    expect(docs[0]).toContain(`**A criterion 5 pass covers the pilot page and link writes only.**`);
+    expect(docs[0]).toContain('so a criterion 5 pass still covers the pilot page and link writes only');
+    for (const doc of docs.slice(1)) {
+      expect(doc).toContain('`write_comparisons` (the pilot page and link writes only;');
+      expect(doc).toContain('write comparisons cover the pilot page and link writes only');
+    }
+    for (const doc of docs) expect(doc).not.toMatch(/(?:covers?|\() ?page and link writes only/);
+  });
+
+  test('every write family a non-pilot write is counted under is named, a pages or links key, or on the other line', () => {
+    const named = new Set(['content_chunks', 'tags', 'page_aliases', 'timeline_entries', 'takes', 'facts', 'open_loops', 'sources', 'owner_only_marks',
+      'decide_state', 'decide_spend', 'decision_receipts', 'decide_calibrations', 'decide_proposals', 'decide_review_proposals', 'decide_review_queue', 'decide_sweep_deferred']);
+    // The other line carries these, so the lines name them as sampled and no count is dropped.
+    const other = new Set(['raw_sql', 'unmapped', 'other', 'config', 'wanted_links', 'entity_identities', 'raw_data', 'files', 'page_versions', 'synthesis_evidence', 'code_edges_chunk',
+      // The trunk's chronicle ledger row (upsertChronicleRow, src/shadow/write-map.ts) is a non-pilot write counted on the other line.
+      'chronicle_page_state',
+      // The guest-source record, guest marks and trust allow rules (src/shadow/write-map.ts) are non-pilot writes counted on the other line.
+      'guest_sources', 'guest_marks', 'trust_allow_rules']);
+    const stray = Object.keys(WRITE_MAP).filter(op => !PILOT_WRITES.has(op)).map(writeFamily)
+      .filter(f => !named.has(f) && !other.has(f) && !/^(pages|links):[A-Za-z]+$/.test(f));
+    expect(stray).toEqual([]);
+    // No named type is also on the other line, and fact withdrawals never has a family of its own.
+    expect([...other].filter(f => named.has(f))).toEqual([]);
+    expect(Object.keys(WRITE_MAP).map(writeFamily)).not.toContain('fact_withdrawals');
   });
 });

@@ -14,7 +14,7 @@ import { outstandingCapacityDetail, retryWriteAdmission, waitOutRefreshFence } f
 import { PreadmitBrainChanged } from './preadmit-cache.ts';
 import { pipelined } from '../page-state/transactions.ts';
 import { backgroundPaused, backgroundWorktreeInactive, declaredBackground, readBackgroundPauseShare, resolveAdmissionOrigin, type AdmissionOrigin } from './admission-origin.ts';
-import { EFFECT_BYTES_SQL, RECEIPT_RESERVATION_FLOOR, receiptReservation, retainedReceiptBytes } from './receipt-bytes.ts';
+import { RECEIPT_RESERVATION_FLOOR, receiptReservation, retainedReceiptBytes } from './receipt-bytes.ts';
 import { writeHealth, type WriteHealthFacts } from './health.ts';
 import { OWNER_READ_BUDGET_MS, startOwnerRead } from './owner-activity.ts';
 import { assertBackgroundOwner } from './owner-verification.ts';
@@ -36,6 +36,7 @@ import { CAPACITY_VERIFY } from './capacity-verify.ts';
 import { readManagedMode } from './managed-mode.ts';
 import { hostIdFor } from './identity.ts';
 import { MANAGED_SYNC_PASS_OP } from './sync-pass-row.ts';
+import type { PersistenceUpkeepStore } from '../engine-sql/persistence-upkeep.ts';
 import { BACKOFF_ELAPSED } from './transient-retry.ts';
 import { segmentWriteScope } from '../page-body/ingest.ts';
 import { sameAttestedActor } from '../access/member-facts.ts';
@@ -561,15 +562,13 @@ export async function markDispatched(engine: SqlEngine, members: Array<{ row: Wr
  * claim finishes it `preparation_stalled`. Token-free (the claim was released
  * at the budget), terminal rows are left alone.
  */
-export async function floorPreparationAttempts(engine: SqlEngine, id: string, limit: number): Promise<void> {
-  await engine.executeRaw(`UPDATE persistence_requests SET preparation_attempts=GREATEST(preparation_attempts,$2::integer),updated_at=now()
-    WHERE id=$1::uuid AND state IN ('queued','running') AND ${PERSISTENCE_PROTOCOL_PREDICATE}`, [id, limit]);
+export async function floorPreparationAttempts(engine: Pick<BrainEngine, 'persistenceUpkeepStore'>, id: string, limit: number): Promise<void> {
+  await (await engine.persistenceUpkeepStore()).floorPreparationAttempts(id, limit);
 }
 /** #6278: charges one preparation attempt to a claim this owner still holds (before finishing it `preparation_stalled`). */
-export async function chargePreparationAttempt(engine: SqlEngine, row: WriteRequest): Promise<number> {
-  const [charged] = await engine.executeRaw<{ preparation_attempts: number }>(`UPDATE persistence_requests SET preparation_attempts=preparation_attempts+1,updated_at=now()
-    WHERE id=$1::uuid AND execution_token=$2::uuid AND state='running' AND ${PERSISTENCE_PROTOCOL_PREDICATE} RETURNING preparation_attempts`, [row.id, row.execution_token]);
-  return charged?.preparation_attempts ?? (row.preparation_attempts ?? 0) + 1;
+export async function chargePreparationAttempt(engine: Pick<BrainEngine, 'persistenceUpkeepStore'>, row: WriteRequest): Promise<number> {
+  const charged = await (await engine.persistenceUpkeepStore()).chargePreparationAttempt(row.id, row.execution_token);
+  return charged ?? (row.preparation_attempts ?? 0) + 1;
 }
 
 /**
@@ -1119,9 +1118,8 @@ export async function vacuumPersistenceQueues(engine: BrainEngine): Promise<numb
 export async function sweepSegmentStorage(engine: BrainEngine): Promise<void> {
   if (!await engine.hasSegmentStorage()) return;
   if (!await readManagedMode(engine)) { await engine.sweepSegments({ expireStagings: true }); return; }
-  const owned = await engine.executeRaw<{ source_id: string }>(`SELECT s.source_id FROM persistence_source_bindings s
-    JOIN persistence_worktrees w ON w.id=s.worktree_id WHERE w.owner_host_id=$1::uuid AND w.state='active'`, [hostIdFor(engine)]);
-  for (const { source_id: sourceId } of owned) {
+  const owned = await (await engine.persistenceUpkeepStore()).listOwnedBoundSources(hostIdFor(engine));
+  for (const sourceId of owned) {
     const writes = await segmentWriteScope(engine, sourceId);
     await writes(exec => exec.sweepSegments({ sourceId, expireStagings: true }));
   }
@@ -1149,12 +1147,10 @@ export const OPEN_SYNC_CURSOR_EXCLUSION = (r: string) => `AND NOT (${r}.intent ?
 export const NEWEST_SYNC_RECEIPT_EXCLUSION = (r: string) => `AND NOT (${r}.state='committed' AND ${r}.worktree_id IS NOT NULL AND (${r}.intent ? 'runId' OR ${r}.intent ? 'passId')
       AND COALESCE(${r}.intent->>'kind','') LIKE 'managed_sync_%' AND ${r}.id=(SELECT n.id FROM persistence_requests n WHERE n.worktree_id=${r}.worktree_id
         AND n.state='committed' AND COALESCE(n.intent->>'kind','') LIKE 'managed_sync_%' ORDER BY n.completed_at DESC, n.sequence DESC LIMIT 1))`;
-export async function newestSyncReceipt(tx: SqlEngine, row: Pick<WriteRequest, 'id' | 'state' | 'intent' | 'worktree_id'>): Promise<boolean> {
+export async function newestSyncReceipt(upkeep: Pick<PersistenceUpkeepStore, 'newestSyncReceiptId'>, row: Pick<WriteRequest, 'id' | 'state' | 'intent' | 'worktree_id'>): Promise<boolean> {
   const intent = row.intent as { runId?: unknown; passId?: unknown; kind?: unknown } | null;
   if (row.state !== 'committed' || !row.worktree_id || (typeof intent?.runId !== 'string' && typeof intent?.passId !== 'string') || !String(intent?.kind ?? '').startsWith('managed_sync_')) return false;
-  const [newest] = await tx.executeRaw<{ id: string }>(`SELECT id FROM persistence_requests WHERE worktree_id=$1::uuid AND state='committed'
-    AND COALESCE(intent->>'kind','') LIKE 'managed_sync_%' ORDER BY completed_at DESC, sequence DESC LIMIT 1`, [row.worktree_id]);
-  return newest?.id === row.id;
+  return await upkeep.newestSyncReceiptId(row.worktree_id) === row.id;
 }
 /** What one compaction pass did (#6696 A11): receipts compacted, reservation bytes it freed, candidates it left and why. */
 export interface ReceiptCompactionResult { compacted: number; freed_bytes: number; skipped_by_reason: Record<string, number> }
@@ -1192,29 +1188,22 @@ export async function compactReceipt(engine: BrainEngine, row: Pick<WriteRequest
   requireTransactions(engine, 'compactReceipt', 'it rechecks the receipt under its row lock and releases the counters in one transaction');
   return engine.transaction(async tx => {
     await declarePersistenceProtocol(tx);
-    await tx.executeRaw("SET LOCAL lock_timeout = '2s'");
-    await tx.executeRaw("SET LOCAL statement_timeout = '15s'");
+    const upkeep = await tx.persistenceUpkeepStore();
+    await upkeep.limitCompactionWaits();
     const keys = ['brain', principalKey(requestPrincipal(row as WriteRequest))];
     await lockCounters(tx, keys);
-    const [current] = await tx.executeRaw<WriteRequest & { eligible_age: boolean; open_cursor: boolean; open_pass: boolean }>(`SELECT r.*,
-        ($2::timestamptz IS NULL OR r.completed_at < $2::timestamptz) AS eligible_age,
-        EXISTS (SELECT 1 FROM op_checkpoints c WHERE r.intent ? 'runId' AND c.op='managed-sync' AND c.completed_keys->0->>'runId'=r.intent->>'runId'
-          AND COALESCE(c.completed_keys->0->>'done','false')<>'true') AS open_cursor,
-        COALESCE(${OPEN_SYNC_PASS_SQL('r')}, false) AS open_pass
-      FROM persistence_requests r WHERE r.id=$1::uuid FOR UPDATE OF r`, [row.id, opts.completedBefore ?? null]);
+    const current = await upkeep.lockCompactionReceipt<WriteRequest>(row.id, opts.completedBefore ?? null);
     if (!current || current.compacted || current.recovery || !isTerminal(current)) return { skipped: 'changed' };
     if (!(opts.states ?? COMPACTABLE_STATES).includes(current.state) || !current.eligible_age) return { skipped: 'changed' };
-    const unfinished = await tx.executeRaw("SELECT 1 FROM persistence_effects WHERE request_id=$1::uuid AND state<>'committed' LIMIT 1", [row.id]);
-    if (unfinished.length) return { skipped: 'unfinished_effect' };
+    if (await upkeep.hasUnfinishedEffect(row.id)) return { skipped: 'unfinished_effect' };
     if (current.open_cursor) return { skipped: 'open_sync_cursor' };
     if (current.open_pass) return { skipped: 'open_sync_pass' };
-    if (await newestSyncReceipt(tx, current)) return { skipped: 'newest_sync_receipt' };
-    const [effects] = await tx.executeRaw<{ bytes: string }>(`SELECT COALESCE(SUM(${EFFECT_BYTES_SQL}),0)::text AS bytes
-      FROM persistence_effects WHERE request_id=$1::uuid`, [row.id]);
-    const retained = Math.min(Number(current.terminal_reservation), retainedReceiptBytes(current, { stage: 'compacted', effects: Number(effects.bytes) }));
+    if (await newestSyncReceipt(upkeep, current)) return { skipped: 'newest_sync_receipt' };
+    const effectBytes = await upkeep.requestEffectBytes(row.id);
+    const retained = Math.min(Number(current.terminal_reservation), retainedReceiptBytes(current, { stage: 'compacted', effects: Number(effectBytes) }));
     const freed = Number(current.terminal_reservation) - retained;
-    await tx.executeRaw('UPDATE persistence_requests SET intent=NULL,compacted=true,error_message=NULL,terminal_reservation=$2 WHERE id=$1::uuid', [row.id, retained]);
-    await tx.executeRaw('UPDATE persistence_counters SET terminal_bytes=terminal_bytes-LEAST($2::bigint,terminal_bytes) WHERE key=ANY($1::text[])', [keys, freed]);
+    await upkeep.markReceiptCompacted(row.id, retained);
+    await upkeep.releaseTerminalBytes(keys, freed);
     return { freed_bytes: freed };
   });
 }
@@ -1260,32 +1249,7 @@ export async function writeHealthFacts(engine: BrainEngine, rows: WriteRequest[]
   const roots = [...new Set(pending.map(row => row.worktree_id ?? `db:${row.source_incarnation}`))];
   const abort = new AbortController();
   const observed_at = new Date().toISOString();
-  const query = engine.executeRaw<{ root: string; sequence: string | null; started_sequence: string | null; started_unlaned: string | null; recovery_required: boolean; owner_unavailable: boolean; inspect_owner: boolean }>(`
-    WITH roots AS (SELECT unnest($1::text[]) AS root)
-    SELECT roots.root,head.sequence::text,head.started_sequence::text,head.started_unlaned::text,COALESCE(head.inspect_owner,false) AS inspect_owner,
-      COALESCE(head.recovering,false) OR EXISTS (SELECT 1 FROM persistence_effects e
-        WHERE e.worktree_id=w.id AND e.recovery IS NOT NULL)
-        OR EXISTS (SELECT 1 FROM persistence_worktree_refreshes f WHERE f.worktree_id=w.id AND f.state='recovery_required') AS recovery_required,
-      w.id IS NOT NULL AND (w.state<>'active' OR w.owner_host_id IS NULL) AS owner_unavailable
-    FROM roots LEFT JOIN persistence_worktrees w ON w.id::text=roots.root
-    LEFT JOIN LATERAL (
-      (SELECT r.sequence,(SELECT s.sequence FROM persistence_requests s WHERE s.worktree_id=w.id
-          AND (s.state IN ('running','recovering') OR s.recovery IS NOT NULL) ORDER BY s.sequence LIMIT 1) AS started_sequence,
-        (SELECT s.sequence FROM persistence_requests s WHERE s.worktree_id=w.id
-          AND (s.state IN ('running','recovering') OR s.recovery IS NOT NULL)
-          AND NOT (s.state='running' AND s.recovery IS NULL AND s.operation='submit_job') ORDER BY s.sequence LIMIT 1) AS started_unlaned,
-        ${STUCK_RECOVERY('r')} AS recovering,
-        r.blocked_reason IN ('unexpected_file_bytes','unexpected_staging_bytes') AS inspect_owner FROM persistence_requests r
-        WHERE r.worktree_id=w.id AND (r.state IN ('queued','running','recovering') OR r.recovery IS NOT NULL OR ${RELEASED_DEFERRED('r')})
-        ORDER BY r.sequence LIMIT 1)
-      UNION ALL
-      (SELECT r.sequence,(SELECT s.sequence FROM persistence_requests s WHERE s.worktree_id IS NULL AND s.source_incarnation=r.source_incarnation
-          AND s.state IN ('running','recovering') ORDER BY s.sequence LIMIT 1) AS started_sequence,NULL::bigint AS started_unlaned,
-        ${STUCK_RECOVERY('r')} AS recovering,
-        r.blocked_reason IN ('unexpected_file_bytes','unexpected_staging_bytes') AS inspect_owner FROM persistence_requests r
-        WHERE r.worktree_id IS NULL AND r.source_incarnation=CASE WHEN roots.root LIKE 'db:%' THEN substring(roots.root FROM 4)::uuid END
-        AND r.state IN ('queued','running','recovering') ORDER BY r.sequence LIMIT 1)
-    ) head ON true`, [roots], { signal: engine.kind === 'postgres' ? abort.signal : undefined })
+  const query = engine.persistenceUpkeepStore().then(upkeep => upkeep.readHealthFacts(roots, { signal: engine.kind === 'postgres' ? abort.signal : undefined }))
     .catch(() => null).finally(() => { if (healthQueries.get(engine) === query) healthQueries.delete(engine); });
   healthQueries.set(engine, query);
   // GBRA-248: owner facts read beside the head facts, inside the same 500 ms budget.

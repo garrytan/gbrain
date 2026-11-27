@@ -22,6 +22,7 @@ SETUP
                                      Supabase token > local PG > docker > PGLite)
   engine status [--json] [--probe]   Which engine + URL source, engine-free
   engine swap --to rust --plan       Preview moving the brain to the Rust engine (read only)
+                                     (--yes --expect <hash> runs it; --status, --resume)
   db-repair [--yes] [--json]         Diagnose/fix Postgres access, engine-free
                                      (--yes --apply-rewrites for config rewrites)
   migrate --to <postgres|pglite>     Move the brain between engines (PGLite -> Postgres graduates: plan, then --yes --expect)
@@ -124,6 +125,8 @@ TOOLS
   feedback <status|reset>            retrieval feedback: learned page weights; rate answers with gbrain rate
   transcripts <ingest|status|recent> v0.46: import agent session logs + chat exports (local-only)
   onboarding <status|off> [--json]   First-session suggestion: why it shows or not; turn it off
+  propose [--days N] [--json]        Jobs your agent could take on, from what is already in the brain
+  value [--json]                     What your brain holds and has done for you, as counts
   dream [--dry-run] [--json]         Run the overnight maintenance cycle once (cron-friendly).
                                      See also: autopilot --install (continuous daemon).
   compile-context --target <t>       Compile a deterministic, scanned, budgeted context
@@ -144,6 +147,8 @@ OPEN LOOPS (Gmail/Calendar/Contacts connector — v0.47)
   waiting [--top N] [--json]         Who is waiting on you, what you promised, context to respond
   loops list|show|done|drop|mute     Inspect and manage open loops (mute sender <email>)
   claims check "<draft>"             Check a draft's numbers against your allowed-claims facts pages
+  correct "<rule>" [--fact-id N]     Save the user's correction as a standing rule and fix the fact
+  rules list|show|approve|check      Standing rules your agents load (also retire)
   household due|add|mark|list        Bills, supplies, birthdays and school dates: what is at risk at home
   core list|show|status|add|remove   Always-loaded core memory (also diff|ack|init|suggest)
   creds list|remove|export|import    Generic credential vault (redacted output; encrypted bundles)
