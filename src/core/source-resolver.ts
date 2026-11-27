@@ -707,7 +707,9 @@ async function assertSourceExists(engine: BrainEngine, id: string): Promise<void
  */
 async function nearestSourceId(engine: BrainEngine, id: string): Promise<string | null> {
   try {
-    const sources = sortSourcesById(await engine.listAllSources()).map(({ id: sourceId, name }) => ({ id: sourceId, name: name as string | null }));
+    // listSourceRecords is a bounded typed read (statement-deadline.ts): inside a doctor check it ends at the deadline, as master's statement did.
+    const sources = sortSourcesById((await engine.listSourceRecords()).filter(row => row.archived === false))
+      .map(({ id: sourceId, name }) => ({ id: sourceId, name: name as string | null }));
     const named = sources.filter(s => s.name === id);
     if (named.length === 1) return named[0]!.id;
     const prefixed = sources.filter(s => s.id.startsWith(id) || (s.name ?? '').startsWith(id));

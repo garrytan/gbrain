@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 330/656
+# covered: 332/656
 # mention_pass: 0/1
 # belief_purge: 0/2
 # connect_gate: 0/4
@@ -29,9 +29,9 @@
 # page_visibility: 0/2
 # write_guards: 0/6
 # access_members: 0/1
-# cli_reads_import: 0/9
+# cli_reads_import: 1/9
 # lifecycle: 9/9
-# pages: 33/44
+# pages: 34/44
 # search: 7/7
 # search_reads: 9/9
 # chunks: 22/32
@@ -284,7 +284,7 @@ hasSegmentStorage	write_guards	no	0	no	-	-	-
 readLivePageBody	write_guards	no	0	no	-	-	-
 readStoredPageTier	write_guards	no	0	no	-	-	-
 readLinkedMember	access_members	no	0	no	-	-	-
-listSourceRecords	cli_reads_import	no	0	no	-	-	-
+listSourceRecords	cli_reads_import	yes	1	no	yes	yes	serves
 readGuestSourceRow	cli_reads_import	no	0	no	-	-	-
 readSourceIncarnation	cli_reads_import	no	0	no	-	-	-
 hasCompanyBrainReceipt	cli_reads_import	no	0	no	-	-	-
@@ -333,7 +333,7 @@ listSourceLocalPaths	pages	yes	1	no	yes	yes	serves
 listLocalPathSources	pages	no	0	no	-	-	-
 listSourceRoutingRows	pages	no	0	no	-	-	-
 countDefaultSourceSplit	pages	no	0	no	-	-	-
-readSourceRow	pages	no	0	no	-	-	-
+readSourceRow	pages	yes	1	no	yes	yes	serves
 markSourceSynced	pages	yes	1	no	yes	yes	serves
 listActiveSourceConfigs	pages	no	0	no	-	-	-
 readOwnerOnlySourcesPresent	pages	no	0	no	-	-	-
