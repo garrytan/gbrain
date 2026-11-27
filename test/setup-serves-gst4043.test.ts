@@ -16,13 +16,15 @@
 import { afterAll, describe, expect, test } from 'bun:test';
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import type { BrainEngine } from '../src/core/engine.ts';
+import { createEngine } from '../src/core/engine-factory.ts';
+import type { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runCli } from './helpers/cli-spawn.ts';
 import { box, CLEAN, gbrain, openBrainFile, removeTempDirs, ROSTER, setup, type Box } from './helpers/setup-serves-box.ts';
 
 afterAll(removeTempDirs);
 
-const members = async (engine: PGLiteEngine) => (await engine.executeRaw<{ id: string }>('SELECT id FROM access_members ORDER BY id')).map(r => r.id);
+const members = async (engine: BrainEngine) => (await engine.executeRaw<{ id: string }>('SELECT id FROM access_members ORDER BY id')).map(r => r.id);
 const keyRows = async (engine: PGLiteEngine) => engine.executeRaw<{ name: string; id: string; source_id: string }>('SELECT name, id, source_id FROM access_tokens WHERE name = ANY($1::text[]) AND revoked_at IS NULL ORDER BY name', [ROSTER.map(m => `member-${m}`)]);
 async function inHost<T>(b: Box, read: (e: PGLiteEngine) => Promise<T>): Promise<T> {
   const e = await openBrainFile(b.home);
@@ -34,8 +36,8 @@ describe('gbrain setup --serves several: which brain and which source (GST-4043)
     const b = box();
     expect((await gbrain(b, ['init', '--pglite', '--no-embedding', '--json'])).exitCode).toBe(0);
     const mountDb = join(b.root, 'mount.pglite');
-    const mount = new PGLiteEngine();
-    await mount.connect({ engine: 'pglite', database_path: mountDb } as never);
+    const mount = await createEngine({ engine: 'pglite', database_path: mountDb });
+    await mount.connect({ engine: 'pglite', database_path: mountDb });
     await mount.initSchema();
     await mount.disconnect();
     const mountsPath = join(b.home, '.gbrain', 'mounts.json');
@@ -48,8 +50,8 @@ describe('gbrain setup --serves several: which brain and which source (GST-4043)
     const r = await runCli(['setup', 'claude-code', '--serves', 'several', '--members', ROSTER.join(','), '--open-history', '--json', '--gbrain-bin', b.bin], { env, cwd: project, timeoutMs: 240_000 });
     expect(r.exitCode, r.stdout + r.stderr).toBe(0);
     expect(await inHost(b, members)).toEqual(expect.arrayContaining(ROSTER));
-    const m = new PGLiteEngine();
-    await m.connect({ engine: 'pglite', database_path: mountDb } as never);
+    const m = await createEngine({ engine: 'pglite', database_path: mountDb });
+    await m.connect({ engine: 'pglite', database_path: mountDb });
     try { expect(await members(m)).toEqual([]); } finally { await m.disconnect(); }
   }, 480_000);
 

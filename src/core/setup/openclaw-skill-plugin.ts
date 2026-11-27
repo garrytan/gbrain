@@ -483,11 +483,15 @@ export function readOpenclawLogTail(path: string): string {
  */
 function withOpenclawStateLock<T>(path: string, fn: () => T): T | null {
   const lock = `${path}.lock`;
+  const claim = (): boolean => {
+    try { closeSync(openSync(lock, 'wx', 0o600)); return true; } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === 'EEXIST') return false;
+      throw e;
+    }
+  };
   const deadline = Date.now() + 10_000;
   for (;;) {
-    try { closeSync(openSync(lock, 'wx', 0o600)); break; } catch (e) {
-      if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e;
-    }
+    if (claim()) break;
     let age = 0;
     try { age = Date.now() - statSync(lock).mtimeMs; } catch { continue; } // silent-read-ok: the holder released the lock between the two calls, so try again
     if (age > 30_000) { rmSync(lock, { force: true }); continue; }
