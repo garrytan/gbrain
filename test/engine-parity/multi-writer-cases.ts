@@ -515,7 +515,7 @@ export const MW_CASES: readonly MwCase[] = [
     invariant: 'a write acknowledged on connection A is seen by B given the token',
     reference: 'standalone',
     needs: 'commit_log',
-    scope: 'Rust in multi-user mode with the commit log on (rust-mu, both routes): the brain\'s owner serves a loopback v3 listener, two served clients write and read, and the token is the cp1: position of the write (a served client\'s acknowledgement, or the owner\'s own lastCommitPosition). An owner-socket client of the same brain (ctx.sameBrainEngine) reads the same writes, but the owner socket sends no token, so only the served connections prove the token is carried and waited for. The read with the log off is the variant C21.log-off.',
+    scope: 'Rust in multi-user mode with the commit log on (rust-mu, both routes), two served v3 connections that write and read, and the token is the cp1: position of the write (a served client\'s acknowledgement, or on the owning arm the owner\'s own lastCommitPosition). On the served arm the arm\'s engine is a served client that owns nothing, so the second connection is ctx.servedPeerEngine() (its own owner token and principal on the arm\'s server). On the non-served rust-mu arm the engine owns its brain and serves a loopback v3 listener of its own; an owner-socket client of the same brain (ctx.sameBrainEngine) reads the same writes, but the owner socket sends no token, so only the served connections prove the token is carried and waited for. Both arms assert multi-user mode and the commit log on every engine involved. The read with the log off is the variant C21.log-off.',
     members: ['putPage', 'getPage'],
     storeTests: {
       runnable: ['c21_read_your_writes_token_on_a_second_connection'],
