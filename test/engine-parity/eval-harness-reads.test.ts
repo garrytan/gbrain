@@ -33,10 +33,12 @@
  *    restore; a failed restore after a throw was lost (a string or a frozen error); activeOnly kept a deleted page's
  *    wanted links (SQL), aliases and sealed timeline (Rust) and a fact past its valid_until; Rust left out the link
  *    relationships and transitions under activeOnly, a token in a config key, a page alias and a whole jsonb number or
- *    boolean; equal values came back in different orders before the limit.
+ *    boolean; equal values came back in different orders before the limit. Review round 3: a restore that threw before
+ *    returning a promise hid fn's error; activeOnly kept the aliases of a hard-deleted page; Rust read a whole jsonb
+ *    number with an exponent (1e-7) and a derived alias's display text only outside page_aliases.
  *  - Seam: real engines; ids and timestamps are compared by shape, not by literal. The both-errors case alone replaces
- *    the engine's restoreManagedPersistence with a rejecting stub (deleted in finally): no real store fails a restore
- *    on demand.
+ *    the engine's restoreManagedPersistence with a rejecting, then a throwing, stub (deleted in finally): no real store
+ *    fails a restore on demand.
  */
 import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -323,19 +325,31 @@ describe('engine parity: the eval harness reads', () => {
   });
 
   parityTest('scanTextColumns finds a page alias, and activeOnly leaves out the aliases of a deleted page', {
-    methods: ['putPage', 'setPageAliases', 'softDeletePages', 'scanTextColumns'],
+    methods: ['putPage', 'setPageAliases', 'replaceDerivedAliases', 'softDeletePages', 'deletePage', 'scanTextColumns'],
   }, async (engine) => {
     await engine.putPage('companies/aliased-live', { type: 'company', title: 'Live', compiled_truth: 'A company.' });
     await engine.putPage('companies/aliased-gone', { type: 'company', title: 'Gone', compiled_truth: 'A company.' });
+    await engine.putPage('companies/aliased-purged', { type: 'company', title: 'Purged', compiled_truth: 'A company.' });
     await engine.setPageAliases('companies/aliased-live', 'default', ['AliasLiveToken']);
     await engine.setPageAliases('companies/aliased-gone', 'default', ['AliasGoneToken']);
+    await engine.setPageAliases('companies/aliased-purged', 'default', ['AliasPurgedToken']);
+    // A derived alias keeps its display text, which can differ from the normalized alias (two spaces here, one there).
+    await engine.replaceDerivedAliases('companies/aliased-live', 'default',
+      [{ alias_norm: 'aliasdisplay token', origin: 'declared', case_sensitive: false, alias_text: 'AliasDisplay  Token' }]);
     await engine.softDeletePages(['companies/aliased-gone'], { sourceId: 'default' });
+    // A hard delete removes the page and leaves its alias rows behind; they are no longer live.
+    await engine.deletePage('companies/aliased-purged', { sourceId: 'default' });
+    const inAliases = async (token: string) => (await engine.scanTextColumns({ pattern: token, activeOnly: false, tables: ['page_aliases'] }))
+      .map(h => [h.value, h.slug]);
     const result = {
       all: { live: await found(engine, 'aliaslivetoken'), gone: await found(engine, 'aliasgonetoken') },
-      live: { live: await found(engine, 'aliaslivetoken', { activeOnly: true }), gone: await found(engine, 'aliasgonetoken', { activeOnly: true }) },
+      live: { live: await found(engine, 'aliaslivetoken', { activeOnly: true }), gone: await found(engine, 'aliasgonetoken', { activeOnly: true }),
+        purged: await found(engine, 'aliaspurgedtoken', { activeOnly: true }) },
       slugs: await slugsByToken(engine, ['aliaslivetoken'], true),
+      displayText: await inAliases('aliasdisplay  token'),
     };
-    expect(result).toEqual({ all: { live: true, gone: true }, live: { live: true, gone: false }, slugs: { aliaslivetoken: ['companies/aliased-live'] } });
+    expect(result).toEqual({ all: { live: true, gone: true }, live: { live: true, gone: false, purged: false },
+      slugs: { aliaslivetoken: ['companies/aliased-live'] }, displayText: [['AliasDisplay  Token', 'companies/aliased-live']] });
     return result;
   });
 
@@ -543,6 +557,10 @@ describe('engine parity: the eval harness reads', () => {
         await engine.withManagedPersistencePaused(async () => { throw 'import failed as text'; }).then(() => 'resolved', errorOf),
         await engine.withManagedPersistencePaused(async () => { throw frozen; }).then(() => 'resolved', errorOf),
       ];
+      // A restore that throws before it returns a promise.
+      target.restoreManagedPersistence = () => { throw restoreFailure; };
+      outcomes.push(await engine.withManagedPersistencePaused(async () => { throw new Error('import failed before a throwing restore'); })
+        .then(() => 'resolved', errorOf));
     } finally {
       delete (target as Partial<typeof target>).restoreManagedPersistence;
     }
@@ -552,6 +570,7 @@ describe('engine parity: the eval harness reads', () => {
       { name: 'object', message: 'import failed', restoreError: true, errors: null },
       { name: 'AggregateError', message: 'withManagedPersistencePaused: fn failed and the restore failed; the brain may still be paused', restoreError: true, errors: ['import failed as text', 'restore'] },
       { name: 'AggregateError', message: 'withManagedPersistencePaused: fn failed and the restore failed; the brain may still be paused', restoreError: true, errors: ['frozen import failed', 'restore'] },
+      { name: 'object', message: 'import failed before a throwing restore', restoreError: true, errors: null },
     ] });
     return result;
   });

@@ -25,8 +25,8 @@ The store has no SQL catalog, so the catalog reads and the text scan answer from
 
 - **Mapped tables.** These SQL tables take their own name: `pages`, `content_chunks`, `facts`, `takes`,
   `timeline_entries`, `sources`, `write_gate_receipts`, `write_gate_holds`, `trust_proposals`,
-  `page_aliases` (its `source_id`, `alias_norm`, `slug` and `origin`; the `case_sensitive` and
-  `alias_text` of a derived alias are in the page-side copy, which keeps its keyspace name) and
+  `page_aliases` (the page-side alias row: `source_id`, `slug`, `alias_norm` and `origin` from its
+  key, `case_sensitive` and `alias_text` from its value; the alias-side copy keeps its keyspace name) and
   `page_purges`. `hasTable` and `hasColumn` answer from this list. They answer `true` for a mapped
   table and its columns even when the store holds no row, and `false` for every other name.
 - **Every other record** takes its keyspace (`keyspaces.rs`) as its table: `<family>/<kind or records>`,
@@ -43,8 +43,8 @@ The store has no SQL catalog, so the catalog reads and the text scan answer from
   boolean is a SQL number or boolean column, not text. A config row is raw text (it may parse as
   JSON), so it is one text column, `value`, read as UTF-8, as is any other stored value that is not
   a JSON object. Keys are not read, except the text columns some keys hold: a config row's `key`, a
-  `page_purges` key's `source_id` and `content_hash`, and a `page_aliases` row's four columns (its
-  value is empty). A value the store keeps hex-encoded, such as a segment text, is not found,
+  `page_purges` key's `source_id` and `content_hash`, and a `page_aliases` row's four key columns
+  (with the `alias_text` its value holds for a derived alias). A value the store keeps hex-encoded, such as a segment text, is not found,
   just as the SQL scan skips a `bytea` column.
 - **Attribution.** A hit's `slug` is the record's own slug field: for a fact, `entity_slug` then
   `source_markdown_slug`; otherwise `slug`, `page_slug` or `entity_slug`. When the record has none of
@@ -54,8 +54,9 @@ The store has no SQL catalog, so the catalog reads and the text scan answer from
 - **activeOnly.** It leaves out a record with `expired_at` or `deleted_at` set, a fact past its
   `valid_until`, an inactive take, and any record whose page is deleted: by its `page_id`, a wanted
   link's `origin_page_id`, a page id in its key (the page id index, the page body rows and the sealed
-  search timeline), for a fence fact by its `source_id` and `source_markdown_slug`, or for a page
-  alias by the source and slug in its key. It also leaves out the derived index keyspaces (search
+  search timeline), or for a fence fact by its `source_id` and `source_markdown_slug`. It keeps a page
+  alias only while a live page has the source and slug in its key (a hard-deleted page leaves its
+  alias rows behind). It also leaves out the derived index keyspaces (search
   postings, trigrams, vectors, link and timeline indexes, chunk and timeline query state): what they
   copy is read from the records they index, and a deleted page's index entries cannot be told from a
   live one's by their values. The link query keyspace is read: it holds the wanted links and the link

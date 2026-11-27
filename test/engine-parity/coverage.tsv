@@ -151,7 +151,7 @@ lockPageKeys	pages	yes	17	no	yes	yes	serves
 putPage	pages	yes	1433	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
-deletePage	pages	yes	45	yes	yes	yes	serves
+deletePage	pages	yes	46	yes	yes	yes	serves
 deletePages	pages	yes	10	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	2	yes	yes	yes	serves
 softDeletePage	pages	yes	355	yes	yes	yes	serves
@@ -785,7 +785,7 @@ resolveSlugWithAlias	sync_aliases	yes	3	yes	yes	yes	serves
 resolveSlugWithAliasDetailed	sync_aliases	yes	1	yes	yes	yes	serves
 resolveAliases	sync_aliases	yes	22	no	yes	yes	serves
 setPageAliases	sync_aliases	yes	54	no	yes	yes	serves
-replaceDerivedAliases	sync_aliases	yes	18	no	yes	yes	serves
+replaceDerivedAliases	sync_aliases	yes	19	no	yes	yes	serves
 refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	4	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	2	no	yes	yes	serves

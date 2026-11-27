@@ -278,8 +278,15 @@ const MAPPED: &[Mapped] = &[
     },
     Mapped {
         table: "page_aliases",
-        prefix: &[keys::ALIAS, ALIAS_ROW],
-        columns: &["source_id", "alias_norm", "slug", "origin"],
+        prefix: &[keys::ALIAS, ALIAS_BY_PAGE],
+        columns: &[
+            "source_id",
+            "alias_norm",
+            "slug",
+            "origin",
+            "case_sensitive",
+            "alias_text",
+        ],
     },
     Mapped {
         table: "page_purges",
@@ -294,8 +301,10 @@ const MAPPED: &[Mapped] = &[
     },
 ];
 
-/// The kind byte of a `page_aliases` row (`k 0x02 source \0 alias_norm \0 slug \0 origin`) and of
-/// its copy seen from the page (`k 0x03 source \0 slug \0 alias_norm \0 origin`), aliases.rs.
+/// The kind byte of a `page_aliases` row seen from the alias (`k 0x02 source \0 alias_norm \0 slug
+/// \0 origin`, an empty value) and from the page (`k 0x03 source \0 slug \0 alias_norm \0 origin`,
+/// whose value holds a derived alias's `case_sensitive` and `alias_text`), aliases.rs. The page-side
+/// row is the one mapped to `page_aliases`, so its alias text is read with it.
 const ALIAS_ROW: u8 = 0x02;
 const ALIAS_BY_PAGE: u8 = 0x03;
 /// The sub-tag after `q <source> \0` of a wanted link record (wanted_links.rs).
@@ -433,8 +442,8 @@ type TextColumn = (String, String, &'static str);
 
 /// The text columns of one stored record: `(column, text)` for each string field and the compact
 /// JSON text of each object or array field of a JSON object, plus the text columns its key holds
-/// (`page_purges`: `source_id` and `content_hash`; a config row: `key`; a `page_aliases` row, whose
-/// value is empty: `source_id`, `alias_norm`, `slug` and `origin`); a config row (raw text) or any
+/// (`page_purges`: `source_id` and `content_hash`; a config row: `key`; a `page_aliases` row:
+/// `source_id`, `slug`, `alias_norm` and `origin`, with the `alias_text` of its value); a config row (raw text) or any
 /// other value is the whole value as `value`, read as UTF-8.
 fn text_columns(
     table: &str,
@@ -455,12 +464,19 @@ fn text_columns(
         return (out, None);
     }
     if table == "page_aliases" {
-        let names = ["source_id", "alias_norm", "slug", "origin"];
-        let out = names
+        let names = ["source_id", "slug", "alias_norm", "origin"];
+        let mut out: Vec<TextColumn> = names
             .iter()
             .zip(key_parts(key, 2))
             .map(|(name, part)| (name.to_string(), text(part), "text"))
             .collect();
+        if let Ok(crate::aliases::DerivedAliasValue {
+            alias_text: Some(alias_text),
+            ..
+        }) = serde_json::from_slice(value)
+        {
+            out.push(("alias_text".into(), alias_text, "text"));
+        }
         return (out, None);
     }
     let (mut out, record) = match serde_json::from_slice::<Value>(value) {
@@ -621,6 +637,11 @@ impl Store {
             .filter(|p| p.deleted_at_us.is_some())
             .map(|p| (p.source_id.as_str(), p.slug.as_str()))
             .collect();
+        let live_keys: BTreeSet<(&str, &str)> = pages
+            .iter()
+            .filter(|p| p.deleted_at_us.is_none())
+            .map(|p| (p.source_id.as_str(), p.slug.as_str()))
+            .collect();
         let tables: Option<BTreeSet<&str>> = q
             .tables
             .as_ref()
@@ -651,8 +672,10 @@ impl Store {
                 .or_else(|| key_page_id(k));
             let alias = alias_owner(k);
             if q.active_only {
+                // An alias counts only while its page is live: a hard-deleted page leaves its alias
+                // rows behind.
                 if alias.as_ref().is_some_and(|(source, slug)| {
-                    deleted_keys.contains(&(source.as_str(), slug.as_str()))
+                    !live_keys.contains(&(source.as_str(), slug.as_str()))
                 }) {
                     return;
                 }
@@ -825,27 +848,39 @@ mod tests {
         assert_eq!(cols[0].1, "1.5");
         let (cols, _) = text_columns("x", b"x", br#"{"data":true}"#);
         assert!(cols.is_empty());
-        // A page alias row is its key.
-        let mut key = vec![keys::ALIAS, ALIAS_ROW];
-        key.extend_from_slice(b"default\0acme\0companies/acme\0frontmatter");
-        assert_eq!(table_of(&key), "page_aliases");
-        let (cols, _) = text_columns("page_aliases", &key, b"");
+        // A page alias row is its page-side key, with a derived alias's text from its value.
+        let mut by_page = vec![keys::ALIAS, ALIAS_BY_PAGE];
+        by_page.extend_from_slice(b"default\0companies/acme\0acme corp\0declared");
+        assert_eq!(table_of(&by_page), "page_aliases");
+        let (cols, _) = text_columns(
+            "page_aliases",
+            &by_page,
+            &serde_json::to_vec(&crate::aliases::DerivedAliasValue {
+                case_sensitive: false,
+                alias_text: Some("Acme  Corp".into()),
+            })
+            .unwrap(),
+        );
         assert_eq!(
             cols.iter()
                 .map(|c| (c.0.as_str(), c.1.as_str()))
                 .collect::<Vec<_>>(),
             vec![
                 ("source_id", "default"),
-                ("alias_norm", "acme"),
                 ("slug", "companies/acme"),
-                ("origin", "frontmatter")
+                ("alias_norm", "acme corp"),
+                ("origin", "declared"),
+                ("alias_text", "Acme  Corp")
             ]
         );
+        let (cols, _) = text_columns("page_aliases", &by_page, b"");
+        assert_eq!(cols.len(), 4);
         let owner = Some(("default".to_string(), "companies/acme".to_string()));
-        assert_eq!(alias_owner(&key), owner);
-        let mut by_page = vec![keys::ALIAS, ALIAS_BY_PAGE];
-        by_page.extend_from_slice(b"default\0companies/acme\0acme\0declared");
         assert_eq!(alias_owner(&by_page), owner);
+        let mut key = vec![keys::ALIAS, ALIAS_ROW];
+        key.extend_from_slice(b"default\0acme corp\0companies/acme\0declared");
+        assert_ne!(table_of(&key), "page_aliases");
+        assert_eq!(alias_owner(&key), owner);
         // A page purge's source and content hash are in its key.
         let mut key = vec![keys::FACT, 0x0C];
         key.extend_from_slice(b"default\0abc123\0");

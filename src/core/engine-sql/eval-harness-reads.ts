@@ -144,7 +144,8 @@ export function catalogScanJoinSql(t: TextScanTable): string {
 /**
  * The live-row filters of activeOnly: an unexpired, undeleted row, a fact not past its valid_until, an active take, a
  * row of no deleted page (by its page id or a wanted link's origin page, a fence row by its source and
- * source_markdown_slug, a page alias by its source and slug).
+ * source_markdown_slug), and a page alias of a live page by its source and slug (a hard-deleted page leaves its alias
+ * rows behind).
  */
 export function catalogScanLiveSql(t: TextScanTable, activeOnly: boolean): string {
   if (!activeOnly) return '';
@@ -158,7 +159,7 @@ export function catalogScanLiveSql(t: TextScanTable, activeOnly: boolean): strin
       ? ` AND NOT EXISTS (SELECT 1 FROM ${qualified(t, 'pages')} q WHERE q."source_id" = x."source_id" AND q."slug" = x."source_markdown_slug" AND q."deleted_at" IS NOT NULL)`
       : '',
     t.table === 'page_aliases' && t.all.has('source_id') && t.all.has('slug')
-      ? ` AND NOT EXISTS (SELECT 1 FROM ${qualified(t, 'pages')} q WHERE q."source_id" = x."source_id" AND q."slug" = x."slug" AND q."deleted_at" IS NOT NULL)`
+      ? ` AND EXISTS (SELECT 1 FROM ${qualified(t, 'pages')} q WHERE q."source_id" = x."source_id" AND q."slug" = x."slug" AND q."deleted_at" IS NULL)`
       : '',
   ].join('');
 }
@@ -347,9 +348,13 @@ export async function withManagedPersistencePaused<T>(
     try {
       result = await fn();
     } catch (error) {
-      let restoreFailure: { error: unknown } | null = null;
-      await restoreUncancelled(engine, prior).catch((restoreError: unknown) => { restoreFailure = { error: restoreError }; });
-      throw restoreFailure ? withRestoreError(error, (restoreFailure as { error: unknown }).error) : error;
+      // try/catch, not .catch(): a restore that throws before it returns a promise must not hide fn's error.
+      try {
+        await restoreUncancelled(engine, prior);
+      } catch (restoreError) {
+        throw withRestoreError(error, restoreError);
+      }
+      throw error;
     }
     const restored = await restoreUncancelled(engine, prior);
     return { result, restore: restored ? 'restored' : 'paused_state_changed' };

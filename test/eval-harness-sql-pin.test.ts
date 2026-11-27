@@ -117,7 +117,7 @@ describe('eval harness SQL, byte for byte', () => {
     await sql.scanTextColumns(engine, { pattern: 'Token', activeOnly: true });
     expect(calls.at(-1)).toEqual({
       text: 'SELECT * FROM ('
-        + 'SELECT $1::text AS "table", $2::text AS "column", COALESCE(x."slug"::text) AS slug, NULL::bigint AS page_id, NULL::text AS entity_slug, x."alias_norm"::text AS value FROM "public"."page_aliases" x WHERE strpos(lower(x."alias_norm"::text), lower($3::text)) > 0 AND NOT EXISTS (SELECT 1 FROM "public"."pages" q WHERE q."source_id" = x."source_id" AND q."slug" = x."slug" AND q."deleted_at" IS NOT NULL)'
+        + 'SELECT $1::text AS "table", $2::text AS "column", COALESCE(x."slug"::text) AS slug, NULL::bigint AS page_id, NULL::text AS entity_slug, x."alias_norm"::text AS value FROM "public"."page_aliases" x WHERE strpos(lower(x."alias_norm"::text), lower($3::text)) > 0 AND EXISTS (SELECT 1 FROM "public"."pages" q WHERE q."source_id" = x."source_id" AND q."slug" = x."slug" AND q."deleted_at" IS NULL)'
         + ' UNION ALL SELECT $4::text AS "table", $5::text AS "column", COALESCE(p."slug") AS slug, x."origin_page_id"::bigint AS page_id, NULL::text AS entity_slug, x."target_ref"::text AS value FROM "public"."wanted_links" x LEFT JOIN "public"."pages" p ON p."id" = x."origin_page_id" WHERE strpos(lower(x."target_ref"::text), lower($6::text)) > 0 AND (p."id" IS NULL OR p."deleted_at" IS NULL)'
         + `) hit ${ORDER}`,
       params: ['page_aliases', 'alias_norm', 'Token', 'wanted_links', 'target_ref', 'Token'],
