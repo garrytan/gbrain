@@ -9552,6 +9552,7 @@
         "claimTakeProposal": "none",
         "claimWakeForgets": "none",
         "claimWakeWatch": "none",
+        "cleanupSql": "none",
         "clearChangedTakeResolutions": "none",
         "clearChunkEmbeddingsByIds": "none",
         "clearChunkVectors": "none",

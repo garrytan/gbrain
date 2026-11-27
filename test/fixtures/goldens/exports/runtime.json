@@ -2665,6 +2665,7 @@
         "claimTakeProposal",
         "claimWakeForgets",
         "claimWakeWatch",
+        "cleanupSql",
         "clearChangedTakeResolutions",
         "clearChunkEmbeddingsByIds",
         "clearChunkVectors",
