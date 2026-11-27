@@ -9,7 +9,7 @@
  */
 import { DEFAULT_SHADOW_MIN_DAYS } from './policy.ts';
 import type { SwapRefusalReason } from './refusals.ts';
-import { destinationAllowsManyWriters, type DestinationOptions } from './destination.ts';
+import { destinationAllowsManyWriters, destinationNote, type DestinationOptions } from './destination.ts';
 
 /** The fields S5a reads; S3 owns the document. Counts are epoch-scoped totals unless the name says otherwise. */
 export interface ShadowStatus {
@@ -307,7 +307,8 @@ function drills(r: Reader): Check {
 
 type Eligibility = Check & { reason?: SwapRefusalReason };
 
-function eligibility(r: Reader, manyWritersOk = false): Eligibility {
+/** `note`: what criterion 11 adds about the destination (destination.ts `destinationNote`), or null for nothing. */
+function eligibility(r: Reader, manyWritersOk = false, note: string | null = null): Eligibility {
   const team = r.b('eligibility.team_brain');
   if (team === true) return { state: 'fail', detail: 'a mounted team brain, not a personal brain', reason: 'team_brain' };
   const hosts = r.get<number | null>('eligibility.writer_hosts_7d', v => num(v));
@@ -318,11 +319,11 @@ function eligibility(r: Reader, manyWritersOk = false): Eligibility {
   }
   // Exactly one observed writer host: zero (or a non-count) is no writer evidence, never "one host".
   if (!Number.isInteger(hosts) || hosts < 1) return { state: 'missing', detail: `no writer host observed in the last 7 days (${hosts})`, reason: 'writer_coverage_unknown' };
-  if (hosts > 1 && !manyWritersOk) return { state: 'fail', detail: `${hosts} writer hosts in the last 7 days`, reason: 'multiple_writer_hosts' };
+  if (hosts > 1 && !manyWritersOk) return { state: 'fail', detail: `${hosts} writer hosts in the last 7 days${note ? `; ${note}` : ''}`, reason: 'multiple_writer_hosts' };
   if (unknown > 0) return { state: 'fail', detail: `${unknown} write path(s) with no observation`, reason: 'writer_coverage_unknown' };
   if (team === undefined || preview === undefined) return { state: 'missing', detail: `no evidence: ${[team === undefined ? 'eligibility.team_brain' : '', preview === undefined ? 'eligibility.preview_target' : ''].filter(Boolean).join(', ')}` };
   if (!preview) return { state: 'fail', detail: 'the shadow host is not on a preview target' };
-  if (hosts > 1) return { state: 'pass', detail: `${hosts} writer hosts, accepted: the destination is a served multi-user Rust brain; no unknown write path, a personal brain on a preview target` };
+  if (hosts > 1) return { state: 'pass', detail: `${hosts} writer hosts, ${note ?? 'accepted: the destination is a served multi-user Rust brain'}; no unknown write path, a personal brain on a preview target` };
   return { state: 'pass', detail: 'one writer host, no unknown write path, a personal brain on a preview target' };
 }
 
@@ -355,7 +356,7 @@ export const CRITERIA: ReadonlyArray<{ n: number; name: string }> = [
 export function evaluateReadiness(doc: ShadowStatus | null, now: Date = new Date(), opts?: DestinationOptions): ReadinessVerdict {
   const r = new Reader(doc);
   // Writers on many hosts stop refusing only for a served multi-user Rust destination with the switch on (destination.ts).
-  const elig = eligibility(r, destinationAllowsManyWriters(opts));
+  const elig = eligibility(r, destinationAllowsManyWriters(opts), destinationNote(opts));
   const checks: Check[] = [
     shadowDuration(r, now),
     readCoverage(r),

@@ -8,12 +8,13 @@
  * from the current engine instead of the destination, or when anything differs with the switch off (JSON bytes and
  * plan hash). (3) The public command is driven here; readiness and plan units are covered in
  * engine-swap-readiness.test.ts and engine-swap-cli.test.ts. This proves eligibility only: moving a two-host brain
- * through shadow mode and back is a separate acceptance item that waits for the server (lane L3). (4) Seam: the
- * injected destination probe stands in for the server until it exists; the switch is set with withEnv; the disk reading
- * is fixed, and the byte-identical cases write to the disk between their two plans (diskMoves) so a live reading fails them.
+ * through shadow mode and back is a separate acceptance item that waits for the swap run on the multi-user trunk.
+ * (4) Seam: the injected destination probe drives the evidence rules; the production default, this host's configuration
+ * only (destination.ts configDestination), is driven through an injected environment and `rust_server.url`; the switch is set with withEnv; the disk reading is fixed, and the byte-identical cases write to the
+ * disk between their two plans (diskMoves) so a live reading fails them.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { closeSync, fsyncSync, mkdtempSync, openSync, rmSync, writeSync } from 'node:fs';
+import { closeSync, fsyncSync, mkdirSync, mkdtempSync, openSync, rmSync, writeFileSync, writeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
@@ -26,6 +27,9 @@ import { withEnv } from './helpers/with-env.ts';
 
 const NOW = new Date('2026-12-01T00:00:00Z');
 const SWITCH = 'GBRAIN_RUST_MULTIUSER';
+const LISTEN = 'GBRAIN_RUST_SERVER_LISTEN';
+const CERT = 'GBRAIN_RUST_SERVER_TLS_CERT';
+const KEY = 'GBRAIN_RUST_SERVER_TLS_KEY';
 
 let engine: PGLiteEngine;
 let home: string;
@@ -61,20 +65,22 @@ function status(hosts: number | null): ShadowStatus {
 const served: SwapDestinationProbe = async () => ({ engine: 'rust', brain_id: 'host', served: true, multiuser: true });
 const probeOf = (over: Partial<Awaited<ReturnType<SwapDestinationProbe>> & object>): SwapDestinationProbe => async () => ({ engine: 'rust', brain_id: 'host', served: true, multiuser: true, ...over });
 
-async function run(extra: Partial<EngineSwapCliDeps> & { hosts?: number | null } = {}) {
+async function run(extra: Partial<EngineSwapCliDeps> & { hosts?: number | null; text?: boolean } = {}) {
   let stdout = '';
   let error = '';
-  const { hosts = 2, ...deps } = extra;
-  const code = await runEngineSwap(['--to', 'rust', '--plan', '--json'], {
+  const { hosts = 2, text = false, ...deps } = extra;
+  const code = await runEngineSwap(['--to', 'rust', '--plan', ...(text ? [] : ['--json'])], {
     openEngine: async () => Object.assign(Object.create(engine), { disconnect: async () => undefined }) as BrainEngine,
     readShadowStatus: async () => status(hosts), now: NOW,
     // A fixed disk reading: the real one moves whenever anything writes to the shared disk (diskMoves), which is not under test here.
     home, dataDir: home, freeBytes: () => 64 * 2 ** 30, resolveBrain: () => 'host', cliBrain: null,
+    // This machine's own gbrain config is not under test; the case that reads the config file passes undefined.
+    rustServerUrl: () => null,
     out: t => { stdout += t; },
     writeError: (e, o) => { const r = renderCliError(e, { json: o.json, command: 'engine swap', tty: false }); error = r.stdout ?? r.stderr ?? ''; return r.exitCode; },
     ...deps,
   });
-  return { code, stdout, error, plan: stdout ? JSON.parse(stdout) : null };
+  return { code, stdout, error, plan: stdout && !text ? JSON.parse(stdout) : null };
 }
 /**
  * Another process writing to the same disk between two plan reads, made deterministic: 32 MiB written and synced into the
@@ -130,7 +136,8 @@ describe('engine swap --plan with writers on two hosts', () => {
   ];
   for (const [name, on, probe] of refusing) {
     test(`still refuses multiple_writer_hosts: ${name}`, async () => {
-      await withEnv({ [SWITCH]: on ? '1' : undefined }, async () => {
+      // No probe reads this host's configuration: it names no brain server to listen on here.
+      await withEnv({ [SWITCH]: on ? '1' : undefined, [LISTEN]: undefined, GBRAIN_RUST_SERVER_URL: undefined }, async () => {
         const r = await run({ resolveDestination: probe });
         expect(r.code).toBe(0);
         expect(r.plan.reason).toBe('multiple_writer_hosts');
@@ -212,5 +219,89 @@ describe('with the switch off nothing changes', () => {
       const singleUser = await run({ resolveDestination: probeOf({ multiuser: false }) });
       expect(new Set([a.plan.plan_hash, wrongBrain.plan.plan_hash, singleUser.plan.plan_hash]).size).toBe(3);
     });
+  });
+});
+
+/**
+ * The production default: no probe, so the plan reads this host's configuration only. The swap host is the brain server
+ * (M1 as built): it serves with GBRAIN_RUST_SERVER_LISTEN and names no server of its own to connect to.
+ */
+describe('engine swap --plan reads the destination from this host\'s configuration only', () => {
+  const at = '10.0.0.5:7443';
+  // Names only: the plan never opens the TLS files (the server reads them when it starts).
+  const tls = { cert: '/etc/gbrain/tls/cert.pem', key: '/etc/gbrain/tls/key.pem' };
+  const serving = (over: Record<string, string | undefined> = {}) => ({ HOME: home, [SWITCH]: '1', [LISTEN]: at, [CERT]: tls.cert, [KEY]: tls.key, ...over });
+
+  test('a host set to serve the brain lifts the refusal, and the plan says the check is config-only', async () => {
+    const r = await run({ env: serving() });
+    expect(r.code).toBe(0);
+    expect(r.plan.verdict).toBe('READY');
+    expect(r.plan.reason).toBeNull();
+    expect(elig(r.plan).state).toBe('pass');
+    expect(elig(r.plan).detail).toContain('accepted on config only');
+    expect(elig(r.plan).detail).toContain(`on ${at}; the plan reached no server`);
+    expect(elig(r.plan).detail).toContain('restores the old engine');
+    const text = await run({ env: serving(), text: true });
+    expect(text.stdout).toContain('accepted on config only');
+  });
+
+  const refusing: Array<[string, Record<string, string | undefined>, string | null, string]> = [
+    ['a host that serves with the --rust-listen flag only (no GBRAIN_RUST_SERVER_LISTEN)', { [LISTEN]: undefined }, null,
+      'set GBRAIN_RUST_SERVER_LISTEN to the address you serve on'],
+    ['a listen address that is not host:port', { [LISTEN]: 'not-an-address' }, null, 'set GBRAIN_RUST_SERVER_LISTEN to the address you serve on'],
+    ['a loopback listen address', { [LISTEN]: '127.0.0.1:7443' }, null, 'loopback address, which the other writer hosts cannot reach'],
+    ['a non-loopback listen address with no TLS files named', { [CERT]: undefined }, null, 'needs GBRAIN_RUST_SERVER_TLS_CERT and GBRAIN_RUST_SERVER_TLS_KEY'],
+    ['a non-loopback listen address with no TLS key named', { [KEY]: '' }, null, 'needs GBRAIN_RUST_SERVER_TLS_CERT and GBRAIN_RUST_SERVER_TLS_KEY'],
+    ['a host whose config names rust_server.url (a client, not the server)', {}, 'https://brain.example:7443', 'names rust_server.url'],
+    ['a host with GBRAIN_RUST_SERVER_URL set (a client, not the server)', { GBRAIN_RUST_SERVER_URL: 'https://brain.example:7443' }, null, 'GBRAIN_RUST_SERVER_URL is set'],
+  ];
+  for (const [name, over, url, why] of refusing) {
+    test(`refuses multiple_writer_hosts and says why: ${name}`, async () => {
+      const r = await run({ env: serving(over), rustServerUrl: () => url });
+      expect(r.code).toBe(0);
+      expect(r.plan.reason).toBe('multiple_writer_hosts');
+      expect(r.plan.verdict).toBe('NOT READY');
+      expect(elig(r.plan).state).toBe('fail');
+      expect(elig(r.plan).detail).toContain('not accepted (config only)');
+      expect(elig(r.plan).detail).toContain(why);
+    });
+  }
+
+  test('the switch off reads nothing and keeps the plain refusal', async () => {
+    let asked = 0;
+    const r = await run({ env: serving({ [SWITCH]: undefined }), rustServerUrl: () => { asked++; return null; } });
+    expect(asked).toBe(0);
+    expect(r.plan.reason).toBe('multiple_writer_hosts');
+    expect(elig(r.plan).detail).toBe('2 writer hosts in the last 7 days');
+  });
+
+  test('by default rust_server.url is read from this host\'s gbrain config file', async () => {
+    const gh = mkdtempSync(join(home, 'gbrain-home-'));
+    mkdirSync(join(gh, '.gbrain'), { recursive: true });
+    writeFileSync(join(gh, '.gbrain', 'config.json'), JSON.stringify({ engine: 'pglite', rust_server: { url: 'https://brain.example:7443' } }));
+    await withEnv({ GBRAIN_HOME: gh }, async () => {
+      const r = await run({ env: serving(), rustServerUrl: undefined });
+      expect(r.plan.reason).toBe('multiple_writer_hosts');
+      expect(elig(r.plan).detail).toContain('names rust_server.url');
+    });
+  });
+
+  test('the plan hash binds config-only evidence and the address the run will check', async () => {
+    const a = await run({ env: serving() });
+    const again = await run({ env: serving() });
+    expect(again.plan.plan_hash).toBe(a.plan.plan_hash);
+    const otherAddress = await run({ env: serving({ [LISTEN]: '10.0.0.6:7443' }) });
+    await withEnv({ [SWITCH]: '1' }, async () => {
+      const probed = await run({ resolveDestination: served });
+      // Same verdict and criteria states: only the config-only basis and the address tell the three apart.
+      expect(new Set([a.plan.plan_hash, otherAddress.plan.plan_hash, probed.plan.plan_hash]).size).toBe(3);
+    });
+  });
+
+  test('config evidence that does not count leaves a single-host plan\'s JSON and hash as before', async () => {
+    const off = await run({ hosts: 1, env: { HOME: home } });
+    diskMoves();
+    const refused = await run({ hosts: 1, env: serving({ [LISTEN]: undefined }) });
+    expect(refused.stdout).toBe(off.stdout);
   });
 });

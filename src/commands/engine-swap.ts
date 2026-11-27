@@ -19,7 +19,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import { noBrainError } from '../core/engine-connect.ts';
 import { opError } from '../core/ops/contract.ts';
 import { ENGINE_SELECTING_ENV, planEngineSwap, type ServiceDefinition, type SwapPlan, type SwapPlanInputs } from '../core/engine-swap/plan.ts';
-import { resolveSwapDestination, type SwapDestinationProbe } from '../core/engine-swap/destination.ts';
+import { configDestination, resolveSwapDestination, type SwapDestinationProbe } from '../core/engine-swap/destination.ts';
 import { rustMultiuserFromEnv } from '../core/rust-engine/multiuser-switch.ts';
 import { mountedBrainError, SWAP_RECOVERY } from '../core/engine-swap/refusals.ts';
 import { HOST_BRAIN_ID } from '../core/brain-registry.ts';
@@ -119,8 +119,13 @@ export interface EngineSwapCliDeps extends Pick<SwapPlanInputs, 'readShadowStatu
   openEngine?: () => Promise<BrainEngine>;
   /** Resolves the selected brain id (default: resolveBrainId, which reads --brain, GBRAIN_BRAIN_ID and .gbrain-mount). */
   resolveBrain?: (explicit: string | null) => string;
-  /** Reads the swap destination's facts (default: none, so the plan refuses many writer hosts until the server lands). */
+  /**
+   * Reads the swap destination's facts from a probe instead of this host's configuration (tests). Default: the
+   * configuration only (destination.ts `configDestination`), since no server can serve the shadow store before the cutover.
+   */
   resolveDestination?: SwapDestinationProbe;
+  /** This host's `rust_server.url` (default: read from the gbrain config file). */
+  rustServerUrl?: () => string | null;
   /** The global --brain value (default: getCliOptions().brain). */
   cliBrain?: string | null;
   out?: (text: string) => void;
@@ -142,6 +147,11 @@ async function openConfiguredEngine(): Promise<BrainEngine> {
   const engine = await createEngine(engineConfig);
   await engine.connect(engineConfig);
   return engine;
+}
+
+/** This host's `rust_server.url`, or null when the config has none (a config that fails to load fails the command). */
+function configuredRustServerUrl(): string | null {
+  return loadConfig()?.rust_server?.url ?? null;
 }
 
 /** Runs the command; returns the exit code. */
@@ -167,7 +177,10 @@ export async function runEngineSwap(args: readonly string[], deps: EngineSwapCli
     // The destination is read from the destination, never from `engine`; with the switch off nothing is read at all.
     const multiuser = rustMultiuserFromEnv(deps.env);
     // With the switch off, `{ multiuser: false }` carries only the switch (no evidence counts; managed_storage reads it).
-    const destination = multiuser ? { multiuser, expectedBrainId: brainId, destination: await resolveSwapDestination(brainId, deps.resolveDestination) } : { multiuser: false };
+    const evidence = !multiuser ? null : deps.resolveDestination
+      ? await resolveSwapDestination(brainId, deps.resolveDestination)
+      : configDestination(brainId, { env, rustServerUrl: (deps.rustServerUrl ?? configuredRustServerUrl)() });
+    const destination = evidence ? { multiuser, expectedBrainId: brainId, destination: evidence } : { multiuser: false };
     const plan = await planEngineSwap(engine, {
       readShadowStatus: deps.readShadowStatus, now: deps.now,
       destination,

@@ -120,12 +120,17 @@ export const MANAGED_MULTIUSER_LOSSES: readonly string[] = [
 
 /** The plan hash binds what a run would act on, never volatile readings (time, free space). */
 function planHash(p: Omit<SwapPlan, 'plan_hash'>, dest: DestinationOptions | undefined): string {
-  const d = usableDestination(dest);
+  const usable = usableDestination(dest);
+  // Config evidence that does not count is left out: it is what every switched-on host without a brain server reads,
+  // it cannot lift a refusal, and binding it would move the hash of every such plan.
+  const d = usable && (usable.source !== 'config' || usable.served) ? usable : null;
   const bound = {
     to: p.to, from: p.from, verdict: p.verdict, reason: p.reason,
     criteria: p.criteria.map(c => [c.n, c.state]), routes: p.routes,
     // Bound only when destination evidence exists and the switch is on, so every other plan hashes as before.
-    ...(d ? { destination: { engine: d.engine, brain_id: d.brain_id, served: d.served, multiuser: d.multiuser } } : {}),
+    ...(d ? { destination: { engine: d.engine, brain_id: d.brain_id, served: d.served, multiuser: d.multiuser,
+      // Config evidence also binds that it is config-only and the address the run will check.
+      ...(d.source === 'config' ? { source: d.source, listen: d.listen ?? null } : {}) } } : {}),
   };
   return createHash('sha256').update(JSON.stringify(bound)).digest('hex').slice(0, 16);
 }
