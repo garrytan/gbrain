@@ -73,6 +73,17 @@ for (const kind of testBackends()) {
       expect(await liveRefreshCount(clientId)).toBe(1);
     });
 
+    test('a rotated refresh token revoked inside the window can no longer replay its sealed pair', async () => {
+      clock = Date.now();
+      const { clientId, tokens } = await signIn('grace-revoked-rotated');
+      const rotated = await grants().refresh(clientId, tokens.refresh_token!);
+      await grants().revokeToken(clientId, tokens.refresh_token!);
+      clock += 1_000;
+      await refused(grants().refresh(clientId, tokens.refresh_token!), tokens.refresh_token!);
+      expect(await live(rotated.refresh_token!)).toBe(false);
+      expect(await live(rotated.access_token)).toBe(false);
+    });
+
     test('a replay after the window revokes the whole family', async () => {
       clock = Date.now();
       const { clientId, tokens } = await signIn('grace-expired');

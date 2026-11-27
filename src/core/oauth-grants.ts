@@ -446,6 +446,9 @@ export class OAuthGrants {
     await this.locked(clientId, async (sql, client) => {
       this.assertCredentialPolicy(client, secretHash);
       await sql`DELETE FROM oauth_tokens WHERE token_hash = ${hashToken(token)} AND client_id = ${clientId}`;
+      if (await this.hasRefreshFamilies(sql)) {
+        await sql`UPDATE oauth_refresh_rotations SET sealed_pair = NULL WHERE token_hash = ${hashToken(token)} AND client_id = ${clientId} AND sealed_pair IS NOT NULL`;
+      }
     });
   }
 
