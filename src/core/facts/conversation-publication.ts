@@ -551,6 +551,10 @@ export async function publishConversationFacts(tx: BrainEngine, sourceId: string
     return { deleted: retiredWindows + outcomes.length, ...await insertConversationFacts(tx, sourceId, slug, published.map(({ row }) => row)) };
   });
   const stored = published.filter((_, i) => !purged.has(i));
+  // #10443: a claim this run narrows to private narrows the page's expired copies of it too, so history never shows it wider.
+  const narrowed = stored.flatMap(({ row }) => row.visibility === 'private' && !OUTCOME_SOURCES.has(row.source) ? [row.fact] : []);
+  if (narrowed.length) await tx.executeRaw(`UPDATE facts SET visibility='private' WHERE source_id=$1 AND source_markdown_slug=$2
+    AND source LIKE '${CONVERSATION_FACTS_SOURCE_PREFIX}%' AND expired_at IS NOT NULL AND visibility <> 'private' AND fact = ANY($3::text[])`, [sourceId, slug, narrowed]);
   if (segments) await stampSourceWindows(tx, ids, stored.map(({ index }) => segments.windows[index] ?? null));
   for (const [i, id] of ids.entries()) {
     await recordTaintEdges(tx, { table: 'facts', id, sourceId }, derivation.inputs);

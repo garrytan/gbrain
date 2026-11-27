@@ -731,8 +731,10 @@ same detail and fix; a claim that only database-only pages carry is still
 withdrawn, database-only). On a read-only mirror (`gbrain sources
 mirror-readonly`, or a clone gbrain owns) that `forget` refusal says so, with
 `detail: read_only_mirror`: the mirror's upstream repository is the
-authoritative copy, so remove the claim there and run
-`gbrain sources refresh <id>`, or make the source writable with
+authoritative copy, so remove the claim there, bring that commit into the
+mirror's checkout (a managed brain's sync does not pull, so pull it there with
+git), run `gbrain sync --source <id>` and check that the fact is gone, or make
+the source writable with
 `gbrain sources mirror-writable <id>` and bind it before forgetting again
 (#10067). What works:
 

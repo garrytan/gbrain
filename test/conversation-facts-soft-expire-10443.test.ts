@@ -9,7 +9,8 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
-import { clearConversationFacts, countConversationFacts } from '../src/core/facts/conversation-publication.ts';
+import { clearConversationFacts, countConversationFacts, publishConversationFacts } from '../src/core/facts/conversation-publication.ts';
+import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { TERMINAL_AUDIT_SOURCE } from '../src/core/facts/audit-sources.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
@@ -61,6 +62,21 @@ for (const kind of testBackends()) {
       const active = await engine.executeRaw<{ n: number }>(
         'SELECT count(*)::int AS n FROM facts WHERE source_markdown_slug = $1 AND expired_at IS NULL', [SLUG]);
       expect(Number(active[0]!.n)).toBe(0);
+    });
+
+    test('a re-extraction that narrows a claim to private narrows its expired copies, so remote history never returns it', async () => {
+      const QUIET = 'Alice Example is planning a surprise party';
+      await engine.executeRaw(`INSERT INTO facts (source_id, fact, kind, visibility, source, source_markdown_slug) VALUES ('default', $1, 'fact', 'world', $2, $3)`, [QUIET, LANE, SLUG]);
+      const narrowed = { fact: QUIET, kind: 'fact', entity_slug: null, context: null, valid_from: null, valid_until: null, source: LANE, source_session: null,
+        confidence: 1, notability: 'medium', embedding: null, embedding_model: null, visibility: 'private' };
+      await publishConversationFacts(engine, 'default', SLUG, [narrowed as never], { scope: 'full' });
+      const copies = await engine.executeRaw<{ visibility: string; expired: boolean }>(
+        'SELECT visibility, expired_at IS NOT NULL AS expired FROM facts WHERE fact = $1 ORDER BY id', [QUIET]);
+      expect(copies.map(c => [c.visibility, c.expired])).toEqual([['private', true], ['private', false]]);
+      const auth = { token: 't', clientId: 'history-reader', scopes: ['read'], sourceId: 'default', allowedSources: ['default'] };
+      const res = await dispatchToolCall(engine, 'recall', { include_expired: true, limit: 100 },
+        { remote: true, transport: 'stdio', sourceId: 'default', auth, config: { engine: engine.kind } as never });
+      expect(res.content.map(c => (c as { text?: string }).text ?? '').join('\n')).not.toContain(QUIET);
     });
   });
 }
