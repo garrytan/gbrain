@@ -36,6 +36,7 @@ import { partial, markCompleted, noteTypeWarning, maybeYield } from './sync-run.
 import { fileHistory } from './reasons.ts';
 import type { SyncPlan, SyncProgress, SyncRun } from './sync-run.ts';
 import { noteCommittedProgress } from '../../core/forward-progress.ts';
+import { wrapShadowSibling } from '../../shadow/state.ts';
 
 type ImportPlan = Pick<SyncPlan, 'opts' | 'filtered' | 'lastCommit' | 'pin' | 'company' | 'gitContextRoot' | 'syncImportRoot' | 'syncActivePack' | 'holds' | 'reasons'>;
 
@@ -477,7 +478,7 @@ async function drainImports(
           for (let i = 0; i < workerCount; i++) {
             const eng = new PostgresEngine();
             await connectWithRetry(eng, { database_url: databaseUrl, poolSize: workerPoolSize }, { retryConnectTimeout: true });
-            workerEngines.push(eng);
+            workerEngines.push(wrapShadowSibling(engine, eng)); // shadow mode samples, follows and observes a worker's writes as the primary's
           }
 
           // Atomic queue index — JS is single-threaded; the read-then-increment

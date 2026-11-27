@@ -26,7 +26,10 @@ import { ensureEpoch, readEpoch, withLock } from '../src/shadow/evidence-epoch.t
 import { buildFollowStatus, renderFollowStatus } from '../src/shadow/follow-status.ts';
 import { encodeArgs } from '../src/shadow/codec.ts';
 import { configDir } from '../src/core/config.ts';
-import { shadowRoot } from '../src/shadow/state.ts';
+import { shadowRoot, wrapShadowSibling } from '../src/shadow/state.ts';
+import { wrapShadowEngine } from '../src/shadow/wrapper.ts';
+import { createWriteSampler } from '../src/shadow/write-capture.ts';
+import { newMirrorCounters } from '../src/shadow/mirror.ts';
 import { scratchRootDefault } from '../src/shadow/write-compare-child.ts';
 import { faultsPath, readFaults } from '../src/shadow/ledger.ts';
 import { lostPath, movedOutsideFootprint, pageRefs, readWriteTally, recordLost, sentPath, unfoldedLost, writeTallyPath, WriteTally, type WriteEvent } from '../src/shadow/write-compare.ts';
@@ -944,4 +947,42 @@ describe('every sample the child was sent ends in the tally (sample accounting)'
       expect(t.comparable).toBe(0);
     });
   }, 30_000);
+});
+
+describe('worker engines opened beside a shadowed primary (sync and import workers)', () => {
+  /** A stand-in worker engine: its disconnect hooks are kept, and its one write is recorded. */
+  const fakeWorker = () => {
+    const hooks: Array<() => Promise<void>> = []; const wrote: string[] = [];
+    return { hooks, wrote, kind: 'postgres', registerBeforeDisconnect(stop: () => Promise<void>) { hooks.push(stop); return () => {}; }, async addTag(slug: string, tag: string) { wrote.push(`${slug}:${tag}`); } };
+  };
+  const sink = () => ({ counters: newMirrorCounters(), offer: () => {}, active: () => true });
+
+  test('a worker of an engine that is not shadowed is returned as it is, and nothing is registered on it', () => {
+    const worker = fakeWorker();
+    expect(wrapShadowSibling(primary, worker)).toBe(worker);
+    expect(worker.hooks).toEqual([]);
+  });
+
+  test('a worker of a shadowed primary is wrapped with the same sink and a sampler of its own, which settles when the worker disconnects', async () => {
+    const lines: string[] = [];
+    const sampler = createWriteSampler({ rate: 1, send: (line) => { lines.push(line); return true; }, active: () => true });
+    let noted = 0; // the writer observer (swap eligibility) now sees a worker's committed writes as this process's
+    const wrapped = wrapShadowEngine(primary, sink(), { sampleRate: 0, writes: sampler, onCommittedWrite: () => { noted++; } });
+    const worker = fakeWorker();
+    const shadowed = wrapShadowSibling(wrapped, worker);
+    expect(shadowed).not.toBe(worker);
+    await shadowed.addTag('people/a-example', 'x'); // a sampled write outside the pilot: counted by family, through the worker's own sampler
+    expect(worker.wrote).toEqual(['people/a-example:x']); // the write itself is unchanged
+    expect(lines.map((l) => JSON.parse(l))).toEqual([{ t: 'write', op: 'addTag', outcome: 'capability_missing', family: 'tags' }]);
+    expect(noted).toBe(1);
+    expect(worker.hooks).toHaveLength(1); // the worker's read-backs settle before its pool closes
+    await worker.hooks[0]!();
+  });
+
+  test('without a write sampler (a brain that was never seeded) a worker is wrapped and nothing waits at its disconnect', () => {
+    const wrapped = wrapShadowEngine(primary, sink(), { sampleRate: 0 });
+    const worker = fakeWorker();
+    expect(wrapShadowSibling(wrapped, worker)).not.toBe(worker);
+    expect(worker.hooks).toEqual([]);
+  });
 });

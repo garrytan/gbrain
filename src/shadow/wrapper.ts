@@ -25,6 +25,7 @@ import { followRaw, followScope, followWrite, type FollowContext, type FollowOpt
 import type { CapturedRead, MirrorCounters, UsageField } from './mirror.ts';
 import { isShadowReadMember, SHADOW_TRANSACTION_MEMBERS } from './reads.ts';
 import { sqlWrites } from './sql-writes.ts';
+import { registerShadowSibling } from './state.ts';
 import type { TxScope, WriteSampler } from './write-capture.ts';
 import { IGNORED_WRITE_MEMBERS, memberKind } from './write-map.ts';
 
@@ -82,9 +83,22 @@ function isThenable(value: unknown): value is Promise<unknown> {
   return !!value && typeof (value as { then?: unknown }).then === 'function';
 }
 
-/** Wraps `engine` for shadow mode. The result is registered as a view of `engine` (persistence/switches.ts). */
+/** How long a worker engine's disconnect waits for its sampled writes' read-backs (the primary's own disconnect waits as long; attach.ts). */
+export const SIBLING_SETTLE_MS = 2_000;
+
+/**
+ * Wraps `engine` for shadow mode. The result is registered as a view of `engine` (persistence/switches.ts), and as a primary whose worker
+ * engines (a bulk import's, state.ts `wrapShadowSibling`) are wrapped the same way: the same sink, follower and writer observer, and a fork
+ * of the write sampler whose read-backs settle before that worker disconnects (a read-back on a closed pool would only fail).
+ */
 export function wrapShadowEngine<E extends BrainEngine>(engine: E, sink: ShadowSink, opts: ShadowWrapperOptions): E {
-  return buildProxy(engine, sink, opts, false, null, null);
+  const proxy = buildProxy(engine, sink, opts, false, null, null);
+  registerShadowSibling(proxy, <W extends object>(worker: W): W => {
+    const writes = opts.writes?.fork();
+    if (writes) (worker as unknown as BrainEngine).registerBeforeDisconnect(async () => { try { await writes.settle(SIBLING_SETTLE_MS); } catch { /* the shadow never fails a disconnect */ } });
+    return wrapShadowEngine(worker as unknown as BrainEngine, sink, { ...opts, writes }) as unknown as W;
+  });
+  return proxy;
 }
 
 /** Whether a member call may write: a mapped or unmapped member, schema work, a reserved connection, raw SQL with a write statement, or an ignored member that writes the database (locks, logs, caches). A false yes only notes a process that writes anyway. */

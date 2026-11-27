@@ -58,6 +58,8 @@ export interface WriteSampler {
   scope(engine: BrainEngine): TxScope;
   /** At disconnect: waits up to `ms` for the read-backs still running; any left are counted `readback_abandoned` and send nothing later. */
   settle(ms: number): Promise<void>;
+  /** A sampler with the same options and read-backs of its own, for a worker engine of the same brain (it settles when that worker disconnects). */
+  fork(): WriteSampler;
 }
 
 type Row = Record<string, string | null>;
@@ -269,6 +271,7 @@ export function createWriteSampler(o: WriteSamplerOptions): WriteSampler {
     })();
   };
   return {
+    fork: () => createWriteSampler(o),
     async settle(ms) {
       const idle = Promise.all([...reading].map((r) => r.done));
       let timer: ReturnType<typeof setTimeout> | undefined;

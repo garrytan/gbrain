@@ -52,6 +52,7 @@ import { managedRootMarkerFor } from '../core/persistence/root-registry.ts';
 import { readManagedMode } from '../core/persistence/ownership.ts';
 import { readPageBodyPolicy } from '../core/page-body/limits.ts';
 import { importSourceRefusal } from './import-source-refusal.ts';
+import { wrapShadowSibling } from '../shadow/state.ts';
 
 /** Return a refusal when an import target lies outside every admitted root. */
 export function configuredRootImportError(dir: string, configuredRoots: string[]): string | null {
@@ -888,7 +889,7 @@ export async function runImport(
             if (signal?.aborted) break;
             const eng = new PostgresEngine();
             await connectWithRetry(eng, { database_url: databaseUrl, poolSize: workerPoolSize }, { retryConnectTimeout: true });
-            workerEngines.push(eng);
+            workerEngines.push(wrapShadowSibling(engine, eng)); // shadow mode samples, follows and observes a worker's writes as the primary's
           }
 
           // Thread-safe queue: atomic index counter (JS is single-threaded; the
