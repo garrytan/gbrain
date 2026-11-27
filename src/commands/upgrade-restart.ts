@@ -261,7 +261,7 @@ async function hostSources(withHeartbeats = true): Promise<{ sources: ProcessSou
 function selfInvocation(): string[] {
   const entry = process.argv[1];
   if (!entry) return ['gbrain'];
-  return /^(\/\$bunfs\/|[A-Za-z]:[\\/]~BUN[\\/])/.test(entry) ? [process.execPath] : [process.execPath, entry];
+  return /^(\/\$bunfs\/|[A-Za-z]:[\\/]~BUN[\\/])/.test(entry) ? [process.execPath] : [process.execPath, ...process.execArgv, entry];
 }
 
 /** The real executor for restart steps; `pidFile` is the default supervisor PID file. */

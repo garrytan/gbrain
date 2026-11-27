@@ -1,7 +1,7 @@
 import type { BrainEngine } from '../core/engine.ts';
 import { execFileSync, spawnSync } from '../core/spawn.ts';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync, realpathSync } from 'fs';
-import { basename, join, dirname, resolve, sep } from 'path';
+import { basename, join, dirname, resolve } from 'path';
 import { isNewerVersion, parseSemver, semverGt } from '../core/semver.ts';
 import { cliChildStdio, jsonRequested, setCliExitVerdict, writeJsonDocument } from '../core/cli-force-exit.ts';
 import { opError, type OperationError } from '../core/ops/contract.ts';
@@ -301,9 +301,9 @@ export async function runUpgrade(args: string[], opts: { targetVersion?: string 
     process.env.GBRAIN_POST_UPGRADE_TIMEOUT_MS || 1_800_000,
   );
   let migrationsLine = 'Migrations: complete';
-  const gbrain = installedGbrain(method) ?? 'gbrain';
+  const [gbrain, ...entry] = installedGbrain(method);
   try {
-    execFileSync(gbrain, ['post-upgrade', ...(noAutopilotInstall ? ['--no-autopilot-install'] : [])], { env: upgradeEnv, stdio: 'inherit', timeout: postUpgradeTimeoutMs });
+    execFileSync(gbrain, [...entry, 'post-upgrade', ...(noAutopilotInstall ? ['--no-autopilot-install'] : [])], { env: upgradeEnv, stdio: 'inherit', timeout: postUpgradeTimeoutMs });
   } catch (e) {
     migrationsLine = await describeMigrationFailure(e, newVersion);
     // post-upgrade is best-effort, don't fail the upgrade. BUT leave a
@@ -321,14 +321,14 @@ export async function runUpgrade(args: string[], opts: { targetVersion?: string 
   }
   // Run features scan to show what's new and what to fix
   try {
-    execFileSync(gbrain, ['features'], { stdio: 'inherit', timeout: 30_000 });
+    execFileSync(gbrain, [...entry, 'features'], { stdio: 'inherit', timeout: 30_000 });
   } catch {
     // features scan is best-effort
   }
   // GBRA-175: the new build restarts every process onto itself and verifies one build runs (this process is the old build).
   const restartLine = unchanged ? 'Restart: nothing to restart (no newer version was installed)'
     : noRestart ? 'Restart: skipped (--no-restart). Run `gbrain upgrade --restart-only`; doctor reports runtime_build_skew until then'
-    : restartOntoNewBuild(gbrain, stopMcp, newVersion);
+    : restartOntoNewBuild([gbrain, ...entry], stopMcp, newVersion);
   console.log(unchanged ? `Binary: no newer version installed (still ${newVersion})` : `Binary: installed ${newVersion || 'a new version (could not verify)'}`);
   console.log(migrationsLine);
   console.log(restartLine);
@@ -337,8 +337,8 @@ export async function runUpgrade(args: string[], opts: { targetVersion?: string 
 }
 
 /** GBRA-175: the new build restarts every process onto itself and verifies one build runs; returns the summary line. */
-function restartOntoNewBuild(gbrain: string, stopMcp: boolean, newVersion: string): string {
-  const restart = spawnSync(gbrain, ['upgrade', '--restart-only', ...(stopMcp ? ['--stop-mcp'] : [])], { stdio: cliChildStdio(), env: { ...process.env, GBRAIN_SKIP_STARTUP_HOOKS: '1' }, timeout: 900_000 });
+function restartOntoNewBuild([gbrain, ...entry]: string[], stopMcp: boolean, newVersion: string): string {
+  const restart = spawnSync(gbrain!, [...entry, 'upgrade', '--restart-only', ...(stopMcp ? ['--stop-mcp'] : [])], { stdio: cliChildStdio(), env: { ...process.env, GBRAIN_SKIP_STARTUP_HOOKS: '1' }, timeout: 900_000 });
   if (restart.status === 0) return `Restart: every gbrain process on this host runs ${newVersion || 'the new build'}`;
   setCliExitVerdict(restart.status ?? 1);
   return `Restart: incomplete (exit ${restart.status ?? restart.signal ?? 'unknown'}). Follow the steps above, then run \`gbrain upgrade --restart-only\``;
@@ -467,26 +467,17 @@ function refuseForBunFloor(target: TargetFloor, targetVersion: string | undefine
 interface SmokeRecovery { method: string; oldVersion: string; repoRoot?: string; previousSha?: string }
 
 /**
- * #10536: the gbrain this upgrade installed, by absolute path, so the checks after the swap never depend on the PATH of
- * the shell that ran the upgrade (a non-interactive shell often lacks Bun's bin directory). A release binary is replaced
- * in place; a bun or bun-link install's entry in Bun's global bin directory (BUN_INSTALL_BIN when set) counts only when it resolves into the install
- * this upgrade updated (the global package, or the linked checkout). An entry that runs another install is null: neither
- * it nor a `gbrain` on PATH is the install this upgrade updated. With no entry, a bare `gbrain` on PATH is the fallback.
+ * #10536: how to run the gbrain this upgrade installed, so the checks after the swap never depend on the PATH of the
+ * shell that ran the upgrade (a non-interactive shell often lacks Bun's bin directory). A release binary is replaced in
+ * place. A bun or bun-link install runs the updated package's own entry with the Bun running this upgrade, never a
+ * launcher in Bun's bin directory, which can be a Windows shim, sit under a BUN_INSTALL_BIN of the caller's or run another
+ * install. With no entry on disk, a bare `gbrain` on PATH is the fallback.
  */
-function installedGbrain(method: string): string | null {
-  if (method === 'binary') return process.execPath && existsSync(process.execPath) ? process.execPath : 'gbrain';
+function installedGbrain(method: string): [string, ...string[]] {
+  if (method === 'binary') return [process.execPath && existsSync(process.execPath) ? process.execPath : 'gbrain'];
   const root = method === 'bun' ? join(resolveBunGlobalRoot(), 'node_modules', 'gbrain') : method === 'bun-link' ? detectBunLink()?.repoRoot : undefined;
-  const entry = bunBinEntry();
-  if (!root || !existsSync(entry)) return 'gbrain';
-  try {
-    return realpathSync(entry).startsWith(realpathSync(root) + sep) ? entry : null;
-  } catch {
-    return 'gbrain';
-  }
-}
-
-function bunBinEntry(): string {
-  return join(process.env.BUN_INSTALL_BIN || join(dirname(dirname(resolveBunGlobalRoot())), 'bin'), process.platform === 'win32' ? 'gbrain.exe' : 'gbrain');
+  const entry = root ? join(root, 'src', 'cli.ts') : undefined;
+  return entry && existsSync(entry) ? [process.execPath, entry] : ['gbrain'];
 }
 
 /**
@@ -495,25 +486,18 @@ function bunBinEntry(): string {
  * exits non-zero; nothing is rolled back automatically.
  */
 function postSwapSmoke(newVersion: string, r: SmokeRecovery): boolean {
-  const gbrain = installedGbrain(r.method);
-  if (!gbrain) {
-    console.error(`gbrain ${newVersion || '(new version)'} was installed, but Bun's gbrain entry (${bunBinEntry()}) runs another gbrain install, so this upgrade cannot check the one it updated.`);
-    console.error('Recovery: point that entry at this install (bun link in a linked checkout, or reinstall the global package), then run gbrain --help and gbrain post-upgrade.');
-    recordUpgradeError({ phase: 'post-swap-smoke', fromVersion: r.oldVersion, toVersion: newVersion || 'unknown', error: 'Bun\'s gbrain entry runs another gbrain install, not the one this upgrade updated', recover: 'Point Bun\'s gbrain entry at this install, then run gbrain --help and gbrain post-upgrade' });
-    setCliExitVerdict(1);
-    return false;
-  }
-  const run = spawnSync(gbrain, ['--help'], {
+  const [gbrain, ...entry] = installedGbrain(r.method);
+  const run = spawnSync(gbrain, [...entry, '--help'], {
     encoding: 'utf-8',
     stdio: ['ignore', 'ignore', 'pipe'],
     timeout: 60_000,
     env: { ...process.env, GBRAIN_SKIP_STARTUP_HOOKS: '1' },
   });
   if (run.status === 0) return true;
-  if (gbrain === 'gbrain' && (run.error as NodeJS.ErrnoException | undefined)?.code === 'ENOENT') {
-    console.error(`gbrain ${newVersion || '(new version)'} was installed, but this upgrade found no gbrain executable to check that it starts: none in Bun's bin directory and none on PATH.`);
+  if (gbrain === 'gbrain' && !entry.length && (run.error as NodeJS.ErrnoException | undefined)?.code === 'ENOENT') {
+    console.error(`gbrain ${newVersion || '(new version)'} was installed, but this upgrade found no gbrain executable to check that it starts: the updated package has no src/cli.ts and none is on PATH.`);
     console.error('Recovery: add the directory gbrain is installed in to PATH, then run gbrain --help and gbrain post-upgrade.');
-    recordUpgradeError({ phase: 'post-swap-smoke', fromVersion: r.oldVersion, toVersion: newVersion || 'unknown', error: 'no gbrain executable found after the swap (not in Bun\'s bin directory, not on PATH)', recover: 'Add the directory gbrain is installed in to PATH, then run gbrain --help and gbrain post-upgrade' });
+    recordUpgradeError({ phase: 'post-swap-smoke', fromVersion: r.oldVersion, toVersion: newVersion || 'unknown', error: 'no gbrain executable found after the swap (no package entry, none on PATH)', recover: 'Add the directory gbrain is installed in to PATH, then run gbrain --help and gbrain post-upgrade' });
     setCliExitVerdict(1);
     return false;
   }
@@ -544,9 +528,8 @@ function postSwapSmoke(newVersion: string, r: SmokeRecovery): boolean {
  */
 function installedDespiteFailure(oldVersion: string, method: string): boolean {
   try {
-    const gbrain = installedGbrain(method);
-    if (!gbrain) return false;
-    const observed = execFileSync(gbrain, ['--version'], { encoding: 'utf-8', timeout: 10_000 }).trim().replace(/^gbrain\s*/i, '');
+    const [gbrain, ...entry] = installedGbrain(method);
+    const observed = execFileSync(gbrain, [...entry, '--version'], { encoding: 'utf-8', timeout: 10_000 }).trim().replace(/^gbrain\s*/i, '');
     const o = parseSemver(observed), prior = parseSemver(oldVersion);
     if (!o || !prior || !semverGt(o, prior)) return false;
     console.log(`The install step did not finish cleanly, but gbrain ${observed} is installed. Migrations run in post-upgrade.`);
@@ -747,9 +730,8 @@ function findBunInstallRootFromArgv(): string | null {
 
 function verifyUpgrade(method: string): string {
   try {
-    const gbrain = installedGbrain(method);
-    if (!gbrain) return '';
-    const output = execFileSync(gbrain, ['--version'], { encoding: 'utf-8', timeout: 10_000 }).trim();
+    const [gbrain, ...entry] = installedGbrain(method);
+    const output = execFileSync(gbrain, [...entry, '--version'], { encoding: 'utf-8', timeout: 10_000 }).trim();
     return output.replace(/^gbrain\s*/i, '').trim();
   } catch {
     return '';
