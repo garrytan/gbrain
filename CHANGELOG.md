@@ -10,6 +10,54 @@ credits are retained; no result has been reassigned to another provider. Origina
 identifiers and attribution are available in the pre-removal Git revision
 `6040075c6cb95be5881cc2e1b76ef7d71f4e5d29` (retained on 2026-09-23).
 
+## [0.60.781.0] - 2026-11-27
+
+**A remote agent can no longer make its own text read as an imported transcript, whatever maintenance runs afterwards.**
+
+<!-- behavior-change: importer_trust_live_text_gst4056 -->
+
+### Fixed
+- Speaker markers and transcript fence acceptance trusted a page when its first-ingest stamp named the transcript importer and the newest revision carried no remote attribution. A tag change, compaction or other maintenance cleared that attribution, so a page a remote agent had rewritten read as the importer's again. Each page now records who wrote its current text and the content hash they wrote (migration v342); only the importer's own unchanged text is trusted, a remote write names its operation, and a tag change keeps the author while a body change does not. Existing importer and connector pages with no remote writer on record are stamped by a separate backfill (migration v343); pages the old rule trusted only through their first-ingest stamp keep speaker markers and any fence acceptance the owner already recorded for their exact content, and are offered for new acceptance only once the importer next writes changed text for them. A re-import that changes only tags never makes untrusted text trusted, and `gbrain migrate-engine` copies each page's author exactly.
+- Remote `put_page`, `append_page`, `capture`, streamed uploads and segmented edits now keep a page's first-ingest record (source kind, URI, channel and time), as `edit_page` already did.
+
+**On an OpenClaw host with no native memory provider, a turn gets the owner's rule, pins, brief and owner-only skills only after the plugin verifies the owner sender, and the turn log says so.**
+
+### Fixed
+- With `--owner-sender` or `--require-owner-sender` set and no memory audience from OpenClaw (an unset or legacy `plugins.slots.memory`, such as the bundled `memory-core`), a turn on the main session or a direct session is the owner's only when OpenClaw's trigger is `user`, the sender id is an `--owner-sender` id, the channel context names no other sender, OpenClaw did not say `senderIsOwner: false`, and the chat type is absent or one-to-one (`private`, `direct` or `dm`). Before, a matching sender id was enough, so a turn whose channel context named someone else, or that came from a group chat, got the owner's context. Every other turn there stays another person's DM, and on a direct session it now also gets the block that withdraws owner context an earlier turn left in the session, as the main session already did.
+- Those verified owner turns log `session_class: owner` and `audience: sender` instead of `main` and `unknown`, and `gbrain doctor --only skill_resolver` counts them ("N owner turns verified by sender id"), so a host without a memory audience shows its owner turns instead of logging every turn as unknown.
+- A memory audience OpenClaw does send still decides on its own, and a `conversation` audience is never turned into the owner's.
+- The plugin code is version 8: rerun the `gbrain setup openclaw` command you installed with and restart the gateway (`skill_resolver_plugin_outdated` until then).
+
+**CI packs its test shards with run times for 138 unit test files it had been guessing at, and with fresh timings for every serial and end-to-end test file.**
+
+### Changed
+- 138 unit test files that had no recorded run time now have one, taken as each file's median over five master test runs. Unit run times already on record are unchanged.
+- Every serial and end-to-end test file's run time is refreshed from the 2026-11-27 nightly runs.
+- Nothing changes for people using gbrain. This only affects how CI splits tests across machines.
+
+**Gmail stops writing a new import receipt for unchanged mail on every sweep, Google contacts keep only the addresses on their own card, and contacts with Chinese or other non-Latin names are imported.**
+
+<!-- behavior-change: google_contacts_card_values_10556 -->
+
+### Fixed
+- A Gmail sweep that fetched a thread it had already imported (a label change, a backfill or gap walk over old mail) wrote a new `connector_v2_import` receipt whenever the page was embedded but had no contextual retrieval mode, though nothing on the page changed. Those pages were admitted on every sweep, so `persistence_requests` grew by thousands of receipts a day. The connector's unchanged-page check now skips that case, as working-tree sync already did (#5751); changed content, a moved revision, a different source path, an unsealed projection or a differing canonical file are still imported. Receipts already written are compacted after `persistence.receipt_retention_days` (default 30); `gbrain repair receipt-compaction --json` previews an earlier pass. (#10559, reported by @PropFunderBrett, first fix by @Masashi-Ono0611)
+- In a Google Workspace domain, a contact page carried every address on the account its card is linked to, aliases included, so when Bob's old address became an alias on Alice's account, both pages listed `alice@example.com` and every meeting she attended was blocked from attendance links. A contact now keeps the addresses and phones on its own card, each once; a card with no address of its own keeps the linked account's primary address so it can still be matched. (#10556, reported by @bentulloch, first fix by @Masashi-Ono0611)
+- A Google or Apple contact whose name has no Latin letters or digits (`张三`) was silently skipped even with an email or phone, and the sync still reported success. It now gets a page at its stable contact-id path, titled with its own name. When the path a contact renders to belongs to another contact, the contact is refused with `contact_page_owned` before anything is written or its old page removed, and held after repeated refusals so the rest of the address book keeps syncing; a hand-authored page there is still left alone. Two contacts with the same name in one managed sweep no longer overwrite each other when the first one's write is still being published. The second one waits for it and takes the disambiguated path. (#10450, reported and first fixed by @frxiaobei)
+
+**A shared skill convention file held only by a hidden skill stays hidden when another skill publishes it.**
+
+<!-- behavior-change: shared_convention_hidden_holder -->
+
+### Fixed
+- A file under `skills/conventions/` can be held by a skill whose SKILL.md audience is narrower than the file's own, or by a private skill. Publishing a public skill that newly included that file, or rewriting a shared file so a public skill gained it, used to show it to every reader. Submission and prepare now refuse it with `local_conflict` and write nothing, and a request accepted by an older release is checked again at prepare. A file that another skill already shows to readers, or a copy no wider than the hidden skill gives it, still publishes.
+
+**Two skills can no longer publish shared files whose paths differ only by letter case.**
+
+<!-- behavior-change: shared_skill_case_collision -->
+
+### Fixed
+- Every skill can publish files under `skills/conventions/`. When one skill held `skills/conventions/Guide.md`, another skill could publish `skills/conventions/guide.md`, or a file inside `skills/conventions/GUIDE.md/`, on a case-sensitive brain host. A clone on macOS or Windows then kept only one of the two files. Submission and prepare now refuse a publication that adds such a pair with `local_conflict` and write nothing, and a request accepted by an older release is checked again at prepare. A remote caller's refusal names only the path it proposed. Sharing the exact same path still publishes, and a pack that already holds such a pair keeps publishing its other changes.
+
 ## [0.60.780.0] - 2026-11-27
 
 **`gbrain upgrade` no longer reports a healthy upgrade as broken when Bun's bin directory is not on PATH, and `gbrain sync` no longer fails with a cryptic missing-export error when a `gbrain serve` started before the upgrade is still running.**
