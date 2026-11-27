@@ -1444,6 +1444,77 @@ fn with_open(mut v: Map<String, Value>, open: bool) -> Value {
     Value::Object(v)
 }
 
+/// `CallerReference` (private-provenance.ts `callerReference`): what the caller's own grants add to a fresh reference record\n/// (`record`: the labelled-only grant and a member's lineage read) and to the policy the store reads (`flags`: `ownerRead`, and\n/// `labelledOnly` with the member a fact is read on).
+struct CallerReference {
+    record: Patch,
+    flags: Map<String, Value>,
+}
+
+/// `callerReference()`, in the record `cur`: none when the caller's grants are not modelled (a labelled-only audience of
+/// several identities). The owner's own lineage is the owner record's, never this: an owner has an empty reference.
+fn caller_reference(cur: &Cur, s: &AccessSettings) -> Option<CallerReference> {
+    let a = eff(cur, s);
+    let none = CallerReference {
+        record: Patch::default(),
+        flags: Map::new(),
+    };
+    if a.owner {
+        return Some(none);
+    }
+    if a.labelled_only && !a.audience_identities.is_empty() {
+        return None;
+    }
+    let lone = a
+        .identity
+        .iter()
+        .find_map(|p| p.strip_prefix("member:"))
+        .map(str::to_string);
+    let member = a.actor.as_ref().map(|x| x.member.clone()).or(lone);
+    let mut flags = Map::new();
+    if a.lineage {
+        flags.insert("ownerRead".into(), json!(true));
+    }
+    if a.labelled_only {
+        let terms = labelled(&a);
+        let mut t = Map::new();
+        t.insert("identity".into(), json!(terms.identity));
+        t.insert("satisfiedRuleIds".into(), json!(terms.satisfied));
+        if a.lineage {
+            t.insert("lineage".into(), json!(true));
+        }
+        if let Some(m) = member.filter(|m| !m.is_empty()) {
+            t.insert("member".into(), json!(m));
+        }
+        flags.insert("labelledOnly".into(), Value::Object(t));
+    }
+    Some(CallerReference {
+        record: Patch {
+            labelled_only: a.labelled_only.then_some(true),
+            lineage: a.lineage.then_some(true),
+            ..Patch::default()
+        },
+        flags,
+    })
+}
+
+/// `{ ...patch, ...reference.record }`: the grants the caller's own record adds to a reference record.
+fn with_grants(mut patch: Patch, reference: &Patch) -> Patch {
+    if reference.labelled_only.is_some() {
+        patch.labelled_only = reference.labelled_only;
+    }
+    if reference.lineage.is_some() {
+        patch.lineage = reference.lineage;
+    }
+    patch
+}
+
+/// `{ ...map, ...flags }`.
+fn merge_flags(m: &mut Map<String, Value>, flags: &Map<String, Value>) {
+    for (k, v) in flags {
+        m.insert(k.clone(), v.clone());
+    }
+}
+
 /// `storePageTextPolicy`.
 fn derive_page_text(
     cur: &Cur,
@@ -1490,6 +1561,47 @@ fn derive_page_text(
             m.insert("callerRecord".into(), json!(true));
             return Some(m);
         }
+        // The remote read floor under a caller record that holds pending folder prefixes, and that of a labelled-only caller: the
+        // plain fragment (ANDed, for a labelled-only caller, with its conjunct), rendered in the caller's record. The record's
+        // coverage is sent with the labelled-only terms.
+        if !access.owner
+            && access.audience_identities.is_empty()
+            && (access.labelled_only || !access.folder_coverage.is_empty())
+        {
+            let terms = if access.labelled_only {
+                caller_reference(cur2, s).and_then(|r| r.flags.get("labelledOnly").cloned())
+            } else {
+                None
+            };
+            let mut patch = readers_patch(caller_readers_rec);
+            patch.satisfied_rule_ids = Some(access.satisfied_rule_ids.clone());
+            patch.folder_coverage = Some(access.folder_coverage.clone());
+            if access.labelled_only {
+                patch.labelled_only = Some(true);
+                if access.lineage {
+                    patch.lineage = Some(true);
+                }
+            }
+            patch.hide_private = Some(true);
+            patch.restricted = Some(!open);
+            let caller_floor = page_floor(&reference(cur2, patch, false, s), cx);
+            if (terms.is_some() || !access.labelled_only) && text == caller_floor {
+                let mut m = page_flags(&caller_floor, s);
+                m.insert("identity".into(), json!([]));
+                m.insert("privateReadableSources".into(), json!([]));
+                m.insert("callerRecord".into(), json!(true));
+                if !access.folder_coverage.is_empty() {
+                    m.insert(
+                        "folderCoverage".into(),
+                        serde_json::to_value(&access.folder_coverage).unwrap_or(Value::Null),
+                    );
+                }
+                if let Some(t) = terms {
+                    m.insert("labelledOnly".into(), t);
+                }
+                return Some(m);
+            }
+        }
         if !caller_readers && !no_readers {
             return None;
         }
@@ -1517,7 +1629,20 @@ fn derive_page_text(
         patch.folder_coverage = Some(cov.clone());
         patch.hide_private = Some(true);
         patch.restricted = Some(!open);
-        let canonical = page_caller(&reference(cur2, patch.clone(), false, s), cx);
+        // The caller's labelled-only grant and lineage read ride in the reference record and in the flags the store reads.
+        let caller_ref = caller_reference(cur2, s);
+        let canonical = page_caller(
+            &reference(
+                cur2,
+                with_grants(
+                    patch.clone(),
+                    caller_ref.as_ref().map_or(&Patch::default(), |r| &r.record),
+                ),
+                false,
+                s,
+            ),
+            cx,
+        );
         let stored = |m: &mut Map<String, Value>| {
             if !satisfied.is_empty() {
                 m.insert("satisfiedRuleIds".into(), json!(satisfied));
@@ -1530,10 +1655,13 @@ fn derive_page_text(
             }
             m.insert("callerRecord".into(), json!(true));
         };
-        if text == canonical {
+        if let Some(r) = &caller_ref
+            && text == canonical
+        {
             let mut m = page_flags(&canonical, s);
             with_readers(&mut m, caller_readers_rec);
             stored(&mut m);
+            merge_flags(&mut m, &r.flags);
             return Some(m);
         }
         if caller_readers && access.owner {
@@ -1641,13 +1769,26 @@ fn derive_fact(
             p.satisfied_rule_ids = Some(satisfied.clone());
             p.folder_coverage = Some(cov.clone());
         };
+        // A labelled-only grant rides in the reference record and the flags (`callerReference`). A lineage read refuses: the
+        // fact policy under lineage judges every provenance page by the member's lineage, which the store does not model.
+        let reference_grants = if access.lineage && !access.owner {
+            None
+        } else {
+            caller_reference(cur2, s)
+        };
+        let Some(grants) = reference_grants else {
+            return None;
+        };
         let mut records: Vec<(Patch, FactRecord)> = Vec::new();
         let mut reader = readers_patch(readers);
         reader.hide_private = Some(true);
         reader.restricted = Some(!open);
-        records.push((reader.clone(), FactRecord::default()));
+        records.push((
+            with_grants(reader.clone(), &grants.record),
+            FactRecord::default(),
+        ));
         if !satisfied.is_empty() || !cov.is_empty() {
-            let mut folder = reader.clone();
+            let mut folder = with_grants(reader.clone(), &grants.record);
             with_folders(&mut folder);
             let kind = FactRecord {
                 folders: true,
@@ -1714,6 +1855,7 @@ fn derive_fact(
                 if provenance_privacy_off {
                     m.insert("provenancePrivacyOff".into(), json!(true));
                 }
+                merge_flags(&mut m, &grants.flags);
                 if kind.lineage {
                     m.insert("ownerRead".into(), json!(true));
                 }
@@ -1841,12 +1983,37 @@ fn derive_member_access(cur: &Cur, s: &AccessSettings) -> Derived {
         }
         let mut patch = readers_patch(readers);
         patch.hide_private = Some(true);
-        let canonical = caller_access(&reference(cur2, patch, false, s), s);
-        if (text, lab) == canonical {
+        let canonical = caller_access(&reference(cur2, patch.clone(), false, s), s);
+        if (text.clone(), lab.clone()) == canonical {
             with_readers(&mut off, readers);
             return Some(off);
         }
-        None
+        // The same record with the caller's folder rules (an ordinary member that satisfies a rule too), and with the grants
+        // when it has any.
+        let grants = caller_reference(cur2, s)?;
+        let access = eff(cur2, s);
+        patch.satisfied_rule_ids = Some(access.satisfied_rule_ids.clone());
+        patch.folder_coverage = Some(access.folder_coverage.clone());
+        let with_grants_ref = caller_access(
+            &reference(cur2, with_grants(patch, &grants.record), false, s),
+            s,
+        );
+        if (text, lab) != with_grants_ref {
+            return None;
+        }
+        with_readers(&mut off, readers);
+        off.insert("callerRecord".into(), json!(true));
+        merge_flags(&mut off, &grants.flags);
+        if !access.satisfied_rule_ids.is_empty() {
+            off.insert("satisfiedRuleIds".into(), json!(access.satisfied_rule_ids));
+        }
+        if !access.folder_coverage.is_empty() {
+            off.insert(
+                "folderCoverage".into(),
+                serde_json::to_value(&access.folder_coverage).unwrap_or(Value::Null),
+            );
+        }
+        Some(off)
     });
     match policy {
         Some(m) => Derived::Value(Value::Object(m)),
@@ -1971,6 +2138,9 @@ fn derive_visibility(cur: &Cur, s: &AccessSettings, list: Option<&[String]>) -> 
         let satisfied = access.satisfied_rule_ids.clone();
         let cov = access.folder_coverage.clone();
         let with_folders = !satisfied.is_empty() || !cov.is_empty();
+        // The labelled-only grant and a lineage read change how the member page is judged (`callerReference`), never what
+        // else is shown.
+        let grants = caller_reference(cur2, s)?;
         let records: &[bool] = if with_folders {
             &[false, true]
         } else {
@@ -1984,7 +2154,7 @@ fn derive_visibility(cur: &Cur, s: &AccessSettings, list: Option<&[String]>) -> 
             }
             patch.private_fact_sources = Some(pfs.clone());
             patch.hide_private = Some(true);
-            let fresh_cur = reference(cur2, patch, false, s);
+            let fresh_cur = reference(cur2, with_grants(patch, &grants.record), false, s);
             if text != visibility_key(list, &fresh_cur, cx) {
                 continue;
             }
@@ -2017,6 +2187,7 @@ fn derive_visibility(cur: &Cur, s: &AccessSettings, list: Option<&[String]>) -> 
                         );
                     }
                 }
+                merge_flags(&mut policy, &grants.flags);
                 m.insert("member".into(), json!(member));
                 m.insert("memberPagePolicy".into(), with_open(policy, open_flag));
             }
@@ -2218,16 +2389,64 @@ fn derive_open_page_floor(cur: &Cur, s: &AccessSettings) -> Derived {
     Derived::Value(with_open(access, !a.restricted))
 }
 
-/// A page text that is a member-access part and `TRUE`, with the labelled-only conjunct either inside the access
-/// part (`callerAccessSql`) or around the whole (`renderWriterReadPolicy`).
+/// A page text that is a member-access part and `TRUE` (`callerAccessSql` for a reference record, `renderWriterReadPolicy` for a
+/// writer whose labelled-only conjunct is judged apart: see [`derive_writer_policy`]).
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct AccessAndTrue {
     inner: (AccessKey, Option<LabelledKey>),
-    outer: Option<LabelledKey>,
 }
 
-/// `writerPolicy` (store-members/remote-links.ts).
+/// `sqlAppliedSets(identity, satisfied)`: a whole set is emptied when any entry of it is invalid.
+fn sql_applied_sets(identity: &[String], satisfied: &[String]) -> (Vec<String>, Vec<String>) {
+    (
+        if !identity.is_empty() && valid_identity(identity) {
+            identity.to_vec()
+        } else {
+            vec![]
+        },
+        if !satisfied.is_empty() && satisfied.iter().all(|r| valid_rule_id(r)) {
+            satisfied.to_vec()
+        } else {
+            vec![]
+        },
+    )
+}
+
+/// `writerPolicy` (store-members/access-policies.ts): a labelled-only writer's text is the rest of the policy ANDed with the
+/// labelled-only conjunct, so the rest is served as for any writer and the conjunct goes to the store as data
+/// (`labelledOnlyTerms`: the sets `labelledOnlySql` embeds).
 fn derive_writer_policy(cur: &Cur, s: &AccessSettings, w: &WriterReadPolicyIn) -> Derived {
+    if !w.labelled_only {
+        return derive_unlabelled_writer_policy(cur, s, w);
+    }
+    let rest = derive_unlabelled_writer_policy(
+        cur,
+        s,
+        &WriterReadPolicyIn {
+            labelled_only: false,
+            ..w.clone()
+        },
+    );
+    let Derived::Value(Value::Object(mut m)) = rest else {
+        return rest;
+    };
+    let terms = labelled(&CallerRecord {
+        identity: vec![],
+        audience_identities: w.identities.clone(),
+        satisfied_rule_ids: w.satisfied_rule_ids.clone(),
+        lineage: false,
+        owner: false,
+        ..eff(&None, s)
+    });
+    m.insert(
+        "labelledOnly".into(),
+        json!({ "identity": terms.identity, "satisfiedRuleIds": terms.satisfied }),
+    );
+    Derived::Value(Value::Object(m))
+}
+
+/// `unlabelledWriterPolicyRendered`: the member-access and privacy parts of the writer's read policy.
+fn derive_unlabelled_writer_policy(cur: &Cur, s: &AccessSettings, w: &WriterReadPolicyIn) -> Derived {
     let wcur = with(
         cur,
         &Patch {
@@ -2238,68 +2457,109 @@ fn derive_writer_policy(cur: &Cur, s: &AccessSettings, w: &WriterReadPolicyIn) -
         s,
     );
     let text_access = access_all(&w.identities, &w.satisfied_rule_ids, false, &wcur, s);
-    let outer = w.labelled_only.then(|| {
-        labelled(&CallerRecord {
-            identity: vec![],
-            audience_identities: w.identities.clone(),
-            satisfied_rule_ids: w.satisfied_rule_ids.clone(),
-            lineage: false,
-            owner: false,
-            ..eff(&None, s)
-        })
-    });
     let text = AccessAndTrue {
         inner: (text_access.clone(), None),
-        outer,
     };
     let fragment = |patch: Patch, empty: bool| AccessAndTrue {
         inner: caller_access(&reference(cur, patch, empty, s), s),
-        outer: None,
     };
     let off = access_off(&text_access);
     if text == fragment(Patch::default(), true) {
         return Derived::Value(Value::Object(off));
     }
-    if w.identities.is_empty() {
-        let patch = Patch {
-            identity: Some(vec![]),
-            satisfied_rule_ids: Some(vec![]),
-            folder_coverage: Some(w.folder_coverage.clone()),
+    // A writer with no identity (an unbound or anonymous writer): its policy renders in a record of its own folder coverage,
+    // so the store reads that coverage instead of the live pending prefixes (callerRecord).
+    let no_identity = |off: Map<String, Value>| {
+        let mut m = off;
+        m.insert("identity".into(), json!([]));
+        if !w.folder_coverage.is_empty() {
+            m.insert(
+                "folderCoverage".into(),
+                serde_json::to_value(&w.folder_coverage).unwrap_or(Value::Null),
+            );
+        }
+        m.insert("callerRecord".into(), json!(true));
+        Derived::Value(Value::Object(m))
+    };
+    let no_identity_record = || {
+        fragment(
+            Patch {
+                identity: Some(vec![]),
+                satisfied_rule_ids: Some(vec![]),
+                folder_coverage: Some(w.folder_coverage.clone()),
+                ..Patch::default()
+            },
+            false,
+        )
+    };
+    if w.identities.is_empty() && text == no_identity_record() {
+        return no_identity(off);
+    }
+    let identity = w.identities.first();
+    // The sets the SQL applies, never the raw ones: the store matches entries one by one and would admit what the text denies.
+    let (applied_identity, applied_rules) = sql_applied_sets(
+        identity.map_or(&[], |i| i.as_slice()),
+        &w.satisfied_rule_ids,
+    );
+    if w.identities.len() == 1 && identity.is_some_and(|i| !i.is_empty()) && applied_identity.is_empty() {
+        // One identity holding an invalid entry reads as a writer with no identity. Beside rules the SQL still applies it is a
+        // policy the store cannot hold, and an owner record is not modelled for it.
+        if !applied_rules.is_empty() {
+            return Derived::Refuse("a writer whose identity holds an invalid entry beside satisfied folder rules");
+        }
+        if text == no_identity_record() {
+            return no_identity(off);
+        }
+        return Derived::Refuse(
+            "a writer whose identity holds an invalid entry and whose record is not a plain member record",
+        );
+    }
+    // The owner speaking for itself renders the same text without the owner-only clause, which `off` reads as no test.
+    let one_identity = |owner: bool, folders: bool| {
+        let Some(identity) = identity.filter(|_| w.identities.len() == 1) else {
+            return false;
+        };
+        let mut patch = Patch {
+            identity: Some(identity.clone()),
+            private_readable_sources: Some(vec![]),
+            hide_private: Some(true),
+            owner: owner.then_some(true),
             ..Patch::default()
         };
-        if text == fragment(patch, false) {
-            let mut m = off;
-            m.insert("identity".into(), json!([]));
-            if !w.folder_coverage.is_empty() {
-                m.insert(
-                    "folderCoverage".into(),
-                    serde_json::to_value(&w.folder_coverage).unwrap_or(Value::Null),
-                );
-            }
-            m.insert("callerRecord".into(), json!(true));
-            return Derived::Value(Value::Object(m));
+        if folders {
+            patch.satisfied_rule_ids = Some(w.satisfied_rule_ids.clone());
+            patch.folder_coverage = Some(w.folder_coverage.clone());
         }
+        text == fragment(patch, false)
+    };
+    if one_identity(false, false) || one_identity(true, false) {
+        let mut m = off;
+        m.insert("identity".into(), json!(applied_identity));
+        m.insert("privateReadableSources".into(), json!([]));
+        return Derived::Value(Value::Object(m));
     }
-    if let [identity] = w.identities.as_slice() {
-        for owner in [false, true] {
-            let patch = Patch {
-                identity: Some(identity.clone()),
-                private_readable_sources: Some(vec![]),
-                hide_private: Some(true),
-                owner: owner.then_some(true),
-                ..Patch::default()
-            };
-            if text == fragment(patch, false) {
-                let mut m = off;
-                m.insert("identity".into(), json!(identity));
-                m.insert("privateReadableSources".into(), json!([]));
-                return Derived::Value(Value::Object(m));
-            }
+    // One identity under folder rules it satisfies and the pending prefixes its record names: the record's own folder access
+    // (callerRecord), as the no-identity form above, judged for that identity.
+    if identity.is_some()
+        && (!w.satisfied_rule_ids.is_empty() || !w.folder_coverage.is_empty())
+        && (one_identity(false, true) || one_identity(true, true))
+    {
+        let mut m = off;
+        m.insert("identity".into(), json!(applied_identity));
+        m.insert("privateReadableSources".into(), json!([]));
+        m.insert("callerRecord".into(), json!(true));
+        if !applied_rules.is_empty() {
+            m.insert("satisfiedRuleIds".into(), json!(applied_rules));
         }
+        if !w.folder_coverage.is_empty() {
+            m.insert(
+                "folderCoverage".into(),
+                serde_json::to_value(&w.folder_coverage).unwrap_or(Value::Null),
+            );
+        }
+        return Derived::Value(Value::Object(m));
     }
-    Derived::Refuse(
-        "a writer whose folder rules, owner record, labelled-only grant or identities widen the member-access policy",
-    )
+    Derived::Refuse("a writer whose owner record or identities widen the member-access policy")
 }
 
 /// `callerReadersAllowedSql(alias, 'snapshot')` as a key: the readers part and the labelled-only conjunct.
@@ -2534,6 +2794,50 @@ mod tests {
         let record = json!({ "identity": ["member:a"], "lineage": true });
         let got = derive_json(&ctx(Some(record), json!({ "mode": "fact", "excludePrivate": true, "fragment": "under_policy", "callerReaders": true }))).unwrap();
         assert_eq!(got["$refuse"], json!(true));
+    }
+
+    /// Family `page_text`: main's `storePageTextPolicy` compares the plain text with a canonical record that carries the
+    /// caller's labelled-only grant, so a labelled-only caller whose plain text does not name that grant is refused. The store
+    /// served it (a bad-audience, labelled-only, folder-covered caller read as an ordinary member).
+    #[test]
+    fn page_text_refuses_a_labelled_only_caller_whose_plain_text_does_not_name_the_grant() {
+        // The record `callerAccessRecord()` holds for that caller (a bad audience entry reads as the guest audience).
+        let record = json!({
+            "identity": [], "audience": ["guest"], "audienceIdentities": [],
+            "actor": { "system": "chat", "external_id": "u1", "member": "alice-example" },
+            "satisfiedRuleIds": ["wiki:team"], "folderCoverage": [{ "source_id": "wiki", "prefix": "" }],
+            "privateReadableSources": [], "privateFactSources": [], "hidePrivate": true, "owner": false,
+            "lineage": false, "ownerReadsRestricted": false, "audienceKindMembers": [], "labelledOnly": true,
+            "applyRemoteReadPolicy": false, "restricted": true, "remotePolicy": null, "ownerReads": true
+        });
+        let got = derive_json(&ctx(
+            Some(record),
+            json!({ "mode": "page_text", "fragment": "plain", "callerReaders": true }),
+        ))
+        .unwrap();
+        assert_eq!(got["$refuse"], json!(true), "got {got}");
+    }
+
+    /// Family `fact`: main's `factPolicy` takes `reference = (access.lineage && !access.owner) ? undefined : callerReference()`
+    /// and refuses when there is none. A non-owner lineage read is therefore refused for every fragment, `for_caller` included.
+    #[test]
+    fn fact_refuses_a_non_owner_lineage_read_for_every_fragment() {
+        // The record `callerAccessRecord()` holds for that caller (an invalid identity and rule id are normalised away).
+        let record = json!({
+            "identity": [], "audience": ["member:alice-example"], "audienceIdentities": [],
+            "actor": { "system": "chat", "external_id": "u1", "member": "alice-example" },
+            "satisfiedRuleIds": [], "folderCoverage": [{ "source_id": "BAD", "prefix": "x/" }],
+            "privateReadableSources": ["wiki"], "privateFactSources": ["wiki"], "hidePrivate": true,
+            "owner": false, "lineage": true, "ownerReadsRestricted": false, "audienceKindMembers": [],
+            "labelledOnly": false, "applyRemoteReadPolicy": false, "restricted": true,
+            "remotePolicy": { "privacyRelaxed": false, "restricted": true, "schemaVersion": 300 }, "ownerReads": true
+        });
+        let got = derive_json(&ctx(
+            Some(record),
+            json!({ "mode": "fact", "excludePrivate": true, "fragment": "for_caller", "callerReaders": true }),
+        ))
+        .unwrap();
+        assert_eq!(got["$refuse"], json!(true), "got {got}");
     }
 
     #[test]
