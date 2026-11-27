@@ -642,11 +642,11 @@ function resolvedRelativeDates(content: string, name: string): string[] {
   if (/\btoday\b/.test(lower)) offsets.add(0);
   if (/\btomorrow\b/.test(lower)) offsets.add(1);
   const dow = new Date(base).getUTCDay();
-  WEEKDAYS.forEach((w, i) => {
-    const ahead = ((i - dow + 6) % 7) + 1;
-    // One date per mention: "last/previous <day>" is the earlier occurrence, any other phrasing the coming one.
-    for (const m of lower.matchAll(new RegExp(`(?:\\b(last|previous)\\s+)?\\b${w}s?\\b`, 'g'))) offsets.add(m[1] ? (ahead === 7 ? -7 : ahead - 7) : ahead);
-  });
+  // One date per mention: "last/previous <day>" is the earlier occurrence, any other phrasing the coming one.
+  for (const m of lower.matchAll(/(?:\b(last|previous)\s+)?\b(sunday|monday|tuesday|wednesday|thursday|friday|saturday)s?\b/g)) {
+    const ahead = ((WEEKDAYS.indexOf(m[2]) - dow + 6) % 7) + 1;
+    offsets.add(m[1] ? (ahead === 7 ? -7 : ahead - 7) : ahead);
+  }
   return [...offsets].map(d => isoOfUtc(base + d * 86400000));
 }
 
