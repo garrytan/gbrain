@@ -395,6 +395,7 @@ impl KvWrite for Writer {
     }
 
     fn commit(mut self: Box<Self>) -> Result<u64> {
+        let start = std::time::Instant::now();
         let next = {
             let mut table = self.tx.open_table(TABLE).map_err(map)?;
             let (current, legacy) = read_seq(&mut |key| {
@@ -415,7 +416,9 @@ impl KvWrite for Writer {
         self.tx
             .set_durability(Durability::Immediate)
             .map_err(|e| StoreError::io(format!("record store: {e}")))?;
+        let redb_start = std::time::Instant::now();
         self.tx.commit().map_err(map)?;
+        crate::commit_profile::note_commit(start, redb_start);
         Ok(next)
     }
 }

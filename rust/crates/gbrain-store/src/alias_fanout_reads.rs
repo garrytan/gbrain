@@ -25,7 +25,7 @@ use crate::aliases::DerivedAliasValue;
 use crate::error::{Result, STORE_CORRUPT, StoreError};
 use crate::facts::{PrivacyPolicy, page_hidden};
 use crate::kv::{KvRead, scan_prefix};
-use crate::pages::{all_pages, read_page};
+use crate::pages::read_page;
 use crate::{Store, keys};
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -147,7 +147,8 @@ impl Store {
         let types = key_texts(MEMBER, &q.types)?;
         let read = self.read()?;
         let mut hits = Vec::new();
-        for page in all_pages(&*read)? {
+        // Only pages whose lower-cased title is listed can match (`keyed_index.rs`).
+        for page in crate::keyed_index::pages_titled(&*read, titles.iter().copied())? {
             if page.deleted_at_us.is_some()
                 || !sources.contains(page.source_id.as_str())
                 || !types.contains(page.page_type.as_str())

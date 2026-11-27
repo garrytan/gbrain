@@ -40,9 +40,14 @@ use std::path::Path;
 ///   access member links, whose scans started on it (`access_key_split.rs`). The upgrade moves the
 ///   one record in the one transaction, or refuses a record under `x 0x04` it cannot classify with
 ///   `shadow_reseed_required`. A build that keeps both kinds at `x 0x04` refuses a format-8 brain.
-pub const FORMAT_VERSION: u32 = 8;
+/// - 9: the store keeps keyed lookups (`keyed_index.rs`): entries derived from page, chunk and link
+///   records that every write keeps in step, so the chunk-id, exact-title, unserved-page, supersedes,
+///   duplicate-page and transition-origin reads look rows up instead of reading every record. The upgrade builds every
+///   entry in the one transaction. A build without the lookups refuses a format-9 brain, as its
+///   writes would leave them stale.
+pub const FORMAT_VERSION: u32 = 9;
 /// Every format version this build can open. Addon exports list these as `formatVersions`.
-pub const FORMAT_VERSIONS: &[u32] = &[1, 2, 3, 4, 5, 6, 7, FORMAT_VERSION];
+pub const FORMAT_VERSIONS: &[u32] = &[1, 2, 3, 4, 5, 6, 7, 8, FORMAT_VERSION];
 
 pub const FORMAT_FILE: &str = "FORMAT";
 pub const RECORDS_FILE: &str = "records.redb";

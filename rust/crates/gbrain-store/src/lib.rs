@@ -19,6 +19,7 @@ mod cascade;
 pub mod chronicle_reads;
 pub mod chunks;
 pub mod cli_reads;
+pub mod commit_profile;
 pub mod concept_rebuild;
 pub mod config;
 pub mod env;
@@ -31,6 +32,7 @@ pub mod format;
 pub mod git_gap_census;
 pub mod journal;
 pub(crate) mod jsonb;
+pub(crate) mod keyed_index;
 pub mod keys;
 pub mod keyspaces;
 pub mod kv;
@@ -710,8 +712,12 @@ impl Store {
             let outcome = {
                 let _clock = crate::env::transaction_clock::open(self.env.clone());
                 let _trust = crate::write_trust::stamp_context::open(stamp_trust()?);
+                let body = std::time::Instant::now();
                 match write_chain(&mut *tx, &mut f) {
-                    Ok(value) => tx.commit().map(|_| value),
+                    Ok(value) => {
+                        commit_profile::note_write_body(body);
+                        tx.commit().map(|_| value)
+                    }
                     Err(e) => Err(e),
                 }
             };
@@ -748,17 +754,24 @@ impl Store {
 
 /// Runs `f` on the store's write handle chain over `inner`: every `Store::write` run (one OCC
 /// attempt, or one bound statement) goes through it, and it ends the run's handle work before
-/// the run is kept. Today the chain is `keyword::IndexingWriter(access_flag::FlaggingWriter(inner))`; a
-/// wrapper added later goes inside it (`IndexingWriter(FlaggingWriter(OtherWriter(inner)))`), and each wrapper forwards the special
-/// `KvWrite` primitives (`allocate`, `raise_counter`, `add_i64`, `counter_below`).
+/// the run is kept. Today the chain is
+/// `keyword::IndexingWriter(access_flag::FlaggingWriter(keyed_index::KeyedWriter(inner)))`; a wrapper added later
+/// goes inside the flagging writer, and each wrapper forwards the special `KvWrite` primitives (`allocate`,
+/// `raise_counter`, `add_i64`, `counter_below`). The keyed writer flushes last, after the keyword postings, so it
+/// sees every record the run wrote.
 fn write_chain<T>(
     inner: &mut dyn KvWrite,
     f: &mut impl FnMut(&mut dyn KvWrite) -> Result<T>,
 ) -> Result<T> {
-    let mut flagging = access_flag::FlaggingWriter(inner);
-    let mut indexing = keyword::IndexingWriter::new(&mut flagging);
-    let value = f(&mut indexing)?;
-    indexing.flush()?;
+    let mut keyed = keyed_index::KeyedWriter::new(inner);
+    let value = {
+        let mut flagging = access_flag::FlaggingWriter(&mut keyed);
+        let mut indexing = keyword::IndexingWriter::new(&mut flagging);
+        let value = f(&mut indexing)?;
+        indexing.flush()?;
+        value
+    };
+    keyed.flush()?;
     Ok(value)
 }
 
@@ -788,8 +801,9 @@ pub const DEFAULT_WRITE_GATE_DETECTOR_VERSION: u32 = 2;
 /// (`keyword/index_build.rs`), 4 to 5 rewrites nothing (a take stored before its trust tier
 /// reads `unknown`), so a format-4 brain keeps its postings, and 5 to 6 carries over the records
 /// the v0.60.766.0 addon's shadow seed kept in other shapes (`seed/format_5.rs`), 6 to 7 moves the
-/// loop mutes off the take purge prefix (`facts/key_split.rs`) and 7 to 8 moves the shared-skill
-/// token secret off the member links' prefix (`access_key_split.rs`). The format record is re-read inside the transaction:
+/// loop mutes off the take purge prefix (`facts/key_split.rs`), 7 to 8 moves the shared-skill
+/// token secret off the member links' prefix (`access_key_split.rs`) and 8 to 9 builds the keyed
+/// lookups (`keyed_index.rs`). The format record is re-read inside the transaction:
 /// another handle on the same records may have upgraded the brain first.
 fn upgrade_format(kv: &dyn Kv) -> Result<StoredFormat> {
     let mut tx = kv.begin_write_exclusive()?;
@@ -854,6 +868,11 @@ fn upgrade_format(kv: &dyn Kv) -> Result<StoredFormat> {
                 ),
             )
         })?;
+    }
+    // Format 9: the keyed lookups (`keyed_index.rs`) are built from the records, after every step
+    // above has left them in this build's shapes.
+    if stored.format_version <= 8 {
+        keyed_index::rebuild(&mut *tx)?;
     }
     stored.format_version = FORMAT_VERSION;
     put_json(&mut *tx, &keys::meta("format"), &stored)?;

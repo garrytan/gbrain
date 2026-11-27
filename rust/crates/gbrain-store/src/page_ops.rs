@@ -202,7 +202,7 @@ fn jsonb_text(value: &Value) -> String {
 }
 
 /// `frontmatter ->> key`.
-fn fm_text(frontmatter: &Map<String, Value>, key: &str) -> Option<String> {
+pub(crate) fn fm_text(frontmatter: &Map<String, Value>, key: &str) -> Option<String> {
     frontmatter.get(key).and_then(json_text)
 }
 
@@ -682,6 +682,21 @@ fn pages_by_slugs(read: &dyn KvRead, source: &str, slugs: &[String]) -> Result<V
     Ok(pages)
 }
 
+/// The pages `find_duplicate_in` can pick for `query`: those keyed by its content hash or
+/// frontmatter `id` in the source (`keyed_index.rs`).
+fn duplicate_candidates(
+    read: &dyn KvRead,
+    source_id: &str,
+    query: &DuplicateQuery,
+) -> Result<Vec<PageRecord>> {
+    crate::keyed_index::duplicate_candidates(
+        read,
+        source_id,
+        &query.hash,
+        query.frontmatter_id.as_deref(),
+    )
+}
+
 fn find_duplicate_in(
     pages: &[PageRecord],
     source_id: &str,
@@ -950,7 +965,11 @@ impl Store {
         query: &DuplicateQuery,
     ) -> Result<Option<Value>> {
         let read = self.read()?;
-        Ok(find_duplicate_in(&all_pages(&*read)?, source_id, query))
+        Ok(find_duplicate_in(
+            &duplicate_candidates(&*read, source_id, query)?,
+            source_id,
+            query,
+        ))
     }
 
     /// `findDuplicatePages(sourceId, inputs)`: one `findDuplicatePage` answer per input.
@@ -963,11 +982,16 @@ impl Store {
             return Ok(Vec::new());
         }
         let read = self.read()?;
-        let pages = all_pages(&*read)?;
-        Ok(queries
+        queries
             .iter()
-            .map(|q| find_duplicate_in(&pages, source_id, q))
-            .collect())
+            .map(|q| {
+                Ok(find_duplicate_in(
+                    &duplicate_candidates(&*read, source_id, q)?,
+                    source_id,
+                    q,
+                ))
+            })
+            .collect()
     }
 
     /// `softDeletePages(slugs, { sourceId })`: hides each live page of the source whose slug is

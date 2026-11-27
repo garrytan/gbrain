@@ -606,19 +606,35 @@ fn applying_holds(read: &dyn KvRead) -> Result<Vec<ApplyingHold>> {
 fn page_contexts(read: &dyn KvRead) -> Result<Vec<PageCtx>> {
     let mut pages = all_pages(read)?;
     pages.sort_by_key(|p| p.id);
-    let mut out = Vec::with_capacity(pages.len());
-    for page in pages {
-        let chunks = read_chunks(read, page.id)?;
-        let view = read_segment_view(read, page.id)?;
-        let signature = read_signature(read, page.id)?;
-        out.push(PageCtx {
-            page,
-            signature,
-            chunks,
-            view,
-        });
+    pages
+        .into_iter()
+        .map(|page| page_context(read, page))
+        .collect()
+}
+
+/// [`page_contexts`] for only the pages that hold a chunk record with one of `chunk_ids`, found
+/// by their keyed entries (`keyed_index.rs`): the same contexts, in the same order, that a
+/// chunk-id read keeps from the full list.
+fn page_contexts_holding(read: &dyn KvRead, chunk_ids: &HashSet<u64>) -> Result<Vec<PageCtx>> {
+    let mut out = Vec::new();
+    for id in crate::keyed_index::pages_holding_chunks(read, chunk_ids)? {
+        if let Some(page) = crate::pages::read_page_by_id(read, id)? {
+            out.push(page_context(read, page)?);
+        }
     }
     Ok(out)
+}
+
+fn page_context(read: &dyn KvRead, page: PageRecord) -> Result<PageCtx> {
+    let chunks = read_chunks(read, page.id)?;
+    let view = read_segment_view(read, page.id)?;
+    let signature = read_signature(read, page.id)?;
+    Ok(PageCtx {
+        page,
+        signature,
+        chunks,
+        view,
+    })
 }
 
 pub(crate) fn read_signature(read: &dyn KvRead, page_id: u64) -> Result<Option<String>> {
@@ -1156,7 +1172,7 @@ impl Store {
         let wanted: HashSet<u64> = ids.iter().copied().collect();
         let read = self.read()?;
         let mut out = Vec::new();
-        for ctx in page_contexts(&*read)? {
+        for ctx in page_contexts_holding(&*read, &wanted)? {
             if !ctx.sealed() {
                 continue;
             }
@@ -1186,7 +1202,7 @@ impl Store {
         let wanted: HashSet<u64> = ids.iter().copied().collect();
         let read = self.read()?;
         let mut out = Vec::new();
-        for ctx in page_contexts(&*read)? {
+        for ctx in page_contexts_holding(&*read, &wanted)? {
             if !ctx.sealed() {
                 continue;
             }

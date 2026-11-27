@@ -5959,8 +5959,9 @@ that is not connected refuses `engine_closed`. These members run on the store (`
   a segmented page written inside `transaction` (the store has none), so the `page_body` capability stays unreported.
   A whole-body `putPage` over a segmented page refuses, as on PGLite (`rust/docs/store/page_body.md`), and so does a
   plain (unsealed) `upsertChunks`, `invalid_state` before it writes.
-- Vector search: `searchVector`, `searchTakesVector` and `cosinesByChunkIds` (an exact scan over the stored vectors,
-  scored as pgvector scores them; `rust/docs/store/vectors.md`, `rust/docs/store/embeddings.md`). The `vector_search`
+- Vector search: `searchVector` and `searchTakesVector` (an exact scan over the stored vectors, scored as pgvector
+  scores them) and `cosinesByChunkIds` (the same score, read from only the pages that hold the asked chunk ids, found
+  by key; `rust/docs/store/vectors.md`, `rust/docs/store/keyed-index.md`, `rust/docs/store/embeddings.md`). The `vector_search`
   capability is reported, so hybrid search reads its vector arm. The store has one vector column, PGLite's `embedding`.
 
 A served member never drops what it cannot keep. An option or input the store has no home for, or cannot answer the
