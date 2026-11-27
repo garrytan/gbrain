@@ -48,7 +48,7 @@ export interface FollowContext {
  */
 export interface TxLane {
   /** Calls started and not yet settled; `callback`: the call took a function (a nested transaction, a bounded read), which may be waiting for a call held behind the gate. */
-  running: Set<{ callback: boolean; done: Promise<void> }>;
+  running: Set<LaneEntry>;
   /** Set while a pre-read holds the lane; resolves when it opens. */
   gate: Promise<void> | null;
   /** Calls held while the gate is closed, in call order; opening it starts them one by one until one closes it again. */
@@ -60,8 +60,13 @@ export const PRE_READ_WAIT_MS = 2_000;
 
 export const newTxLane = (): TxLane => ({ running: new Set(), gate: null, waiters: [] });
 
+/** One member call in a lane. `parent`: the lane call it was started from (a call inside a nested transaction's callback has that transaction's entry). */
+export interface LaneEntry { callback: boolean; done: Promise<void>; parent?: LaneEntry }
+/** True when `entry` is `of` or was started, at any depth, from inside it. */
+export const startedWithin = (entry: LaneEntry | undefined, of: LaneEntry): boolean => { for (let e = entry; e; e = e.parent) if (e === of) return true; return false; };
+
 /** The lane entry of the member call running now (wrapper.ts `laned` runs each call inside it), so a pre-read never counts its own call among the calls ahead of it. */
-export const laneCall = new AsyncLocalStorage<object>();
+export const laneCall = new AsyncLocalStorage<LaneEntry>();
 
 /** Closes the gate of `lane`; the returned function opens it (once) and starts the held calls in order until one closes it again. */
 export function holdLane(lane: TxLane): () => void {
@@ -187,7 +192,8 @@ function plan(ctx: FollowContext, spec: WriteSpec, args: unknown[], hold: { open
     const inSavepoint = () => (ctx.engine.transaction((savepoint: unknown) => resolveTargets(savepoint, targets)) as Promise<Invalidation[]>).catch(() => fallback('pre_read_failed'));
     if (!lane) return inSavepoint(); // a transaction the wrapper did not open (none today): as before
     const self = laneCall.getStore();
-    const others = () => [...lane.running].filter((c) => c !== self);
+    // Never the call itself nor a transaction it runs inside: those cannot finish before it does.
+    const others = () => [...lane.running].filter((c) => !(self && startedWithin(self, c)));
     // Takes the lane and reads, once no call that runs a callback is ahead (one could be waiting for a call the lane would hold).
     const take = (): Invalidation[] | Promise<Invalidation[]> => {
       const ahead = others();

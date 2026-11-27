@@ -22,7 +22,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import { registerEngineView } from '../core/persistence/switches.ts';
 import { callerAccessRecord } from '../core/search/private-visibility.ts';
 import { CAPTURE_BUDGET_BYTES, CaptureTooLargeError, encodeArgs, encodeValue } from './codec.ts';
-import { followRaw, followScope, followWrite, laneCall, newTxLane, type FollowContext, type FollowOptions, type Frame, type TxLane } from './follow.ts';
+import { followRaw, followScope, followWrite, laneCall, newTxLane, startedWithin, type FollowContext, type FollowOptions, type Frame, type LaneEntry, type TxLane } from './follow.ts';
 import type { CapturedRead, MirrorCounters, UsageField } from './mirror.ts';
 import { isShadowReadMember, SHADOW_TRANSACTION_MEMBERS } from './reads.ts';
 import { sqlWrites } from './sql-writes.ts';
@@ -204,15 +204,17 @@ function buildProxy<E extends BrainEngine>(engine: E, sink: ShadowSink, opts: Sh
     // A callback that throws at once is drained too: its calls may already be held or waiting, and the ROLLBACK must not go first.
     let out: unknown;
     try { out = callback(); } catch (error) { out = Promise.reject(error); }
-    // Only the outermost transaction waits for unawaited calls: the lane's calls include the enclosing transaction's own, which may be waiting for this nested one.
-    if (!isThenable(out) && !lane.gate && !(outermost && [...lane.running].some((c) => !c.callback))) return out;
+    // The outermost transaction waits for every unawaited call; a nested one only for the calls started inside it (the enclosing transaction's other calls may be waiting for it).
+    const mine = outermost ? undefined : laneCall.getStore();
+    const pendingCalls = (): LaneEntry[] => [...lane.running].filter((c) => !c.callback && (outermost || (mine !== undefined && c !== mine && startedWithin(c, mine))));
+    if (!isThenable(out) && !lane.gate && !pendingCalls().length) return out;
     // Waits until no pre-read holds the lane and the calls the callback started and did not await have settled (at most DRAIN_MS: a followed write sends its
     // statement only after its pre-read, and a held call only once the lane opens), so they reach the connection before the COMMIT or ROLLBACK.
     const drain = async (): Promise<void> => {
       const until = Date.now() + DRAIN_MS;
       for (;;) {
         if (lane.gate) { await lane.gate; continue; }
-        const open = outermost ? [...lane.running].filter((c) => !c.callback) : [];
+        const open = pendingCalls();
         if (!open.length || Date.now() >= until) return;
         await Promise.race([Promise.all(open.map((c) => c.done)), new Promise((r) => { setTimeout(r, Math.max(0, until - Date.now())); })]);
       }
@@ -230,7 +232,7 @@ function buildProxy<E extends BrainEngine>(engine: E, sink: ShadowSink, opts: Sh
       if (lane.gate) return new Promise((resolve, reject) => { lane.waiters.push(AsyncResource.bind(() => { try { resolve(start()); } catch (error) { reject(error); } })); });
       // Running from before the member is entered (a callback member can run its callback at once), until it settles; its own pre-read finds this entry and does not wait for it.
       let settle!: () => void;
-      const call: { callback: boolean; done: Promise<void> } = { callback: hasFunctionArg(args), done: new Promise<void>((r) => { settle = r; }) };
+      const call: LaneEntry = { callback: hasFunctionArg(args), done: new Promise<void>((r) => { settle = r; }), parent: laneCall.getStore() };
       const leave = (): void => { lane.running.delete(call); settle(); };
       lane.running.add(call);
       let sent: unknown;
