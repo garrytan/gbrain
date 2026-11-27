@@ -137,7 +137,8 @@
 # multi-writer C13 [standalone, needs multi_writer]: pglite=n/a postgres=runs rust=n/a rust-mu=runs store-single=runs store-optimistic=runs
 # multi-writer C14 [compare]: pglite=runs postgres=runs rust=runs rust-mu=runs store-single=runs store-optimistic=runs
 # multi-writer C15 [compare]: pglite=runs postgres=runs rust=runs rust-mu=runs store-single=runs store-optimistic=runs
-# multi-writer C16 [standalone, needs commit_log]: pglite=n/a postgres=pending(L6 harness) rust=n/a rust-mu=runs store-single=runs store-optimistic=runs
+# multi-writer C16 [standalone, needs commit_log]: pglite=n/a postgres=n/a rust=n/a rust-mu=runs store-single=runs store-optimistic=runs
+# multi-writer C16.schema [standalone]: pglite=n/a postgres=runs rust=n/a rust-mu=n/a store-single=n/a store-optimistic=n/a
 # multi-writer C17 [standalone]: pglite=n/a postgres=runs rust=n/a rust-mu=runs store-single=runs store-optimistic=runs
 # multi-writer C17.served [standalone]: pglite=n/a postgres=n/a rust=n/a rust-mu=runs store-single=n/a store-optimistic=n/a
 # multi-writer C18 [standalone]: pglite=n/a postgres=runs rust=pending(L3 server) rust-mu=pending(L3 server) store-single=runs store-optimistic=runs
@@ -159,11 +160,11 @@ withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
 listCatalogRelations	lifecycle	yes	1	no	yes	yes	serves
 readCatalogSchemaVersion	lifecycle	yes	1	no	yes	yes	serves
 listCatalogForeignKeys	lifecycle	yes	1	no	yes	yes	serves
-getPage	pages	yes	302	yes	yes	yes	serves
+getPage	pages	yes	303	yes	yes	yes	serves
 readPageSnapshot	pages	yes	114	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	7	no	yes	yes	serves
 lockPageKeys	pages	yes	20	no	yes	yes	serves
-putPage	pages	yes	1385	yes	yes	yes	serves
+putPage	pages	yes	1386	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	45	yes	yes	yes	serves
@@ -798,7 +799,7 @@ replaceDerivedAliases	sync_aliases	yes	18	no	yes	yes	serves
 refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	3	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	2	no	yes	yes	serves
-getConfig	config	yes	65	no	yes	yes	serves
+getConfig	config	yes	66	no	yes	yes	serves
 setConfig	config	yes	98	no	yes	yes	serves
 unsetConfig	config	yes	4	no	yes	yes	serves
 listConfigKeys	config	yes	5	no	yes	yes	serves
@@ -2625,6 +2626,6 @@ listPagesReadByNobody	doctor_join	yes	1	no	yes	yes	serves
 listRulePagesReadByNobody	doctor_join	yes	1	no	yes	yes	serves
 listGoogleSourceMembers	doctor_join	yes	1	no	yes	yes	serves
 listOwnerMemberLinks	doctor_join	yes	1	no	yes	yes	serves
-readCommitLog	commit_log	yes	2	no	n/a:commit_log	pending:L6 harness	serves
+readCommitLog	commit_log	yes	2	no	n/a:commit_log	n/a:commit_log	serves
 lastCommitPosition	commit_log	yes	2	no	n/a:commit_log	n/a:commit_log	serves
 listEntityFactsInCommitOrder	commit_log	yes	1	no	n/a:commit_log	n/a:commit_log	serves

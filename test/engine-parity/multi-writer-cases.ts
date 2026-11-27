@@ -35,7 +35,7 @@ export type MwCaseId = typeof MW_CASE_IDS[number];
  * new id: `<id>.<name>`. A variant is an engine-level scenario with its own members and engine cells (no store cells).
  * Its parityTest name is the row's `<id> <title>` followed by `: <variant title>`, and its `mwCase` is the dotted id.
  */
-export const MW_VARIANT_IDS = ['C06.partition', 'C17.served', 'C21.log-off'] as const;
+export const MW_VARIANT_IDS = ['C06.partition', 'C16.schema', 'C17.served', 'C21.log-off'] as const;
 export type MwVariantId = typeof MW_VARIANT_IDS[number];
 
 /**
@@ -405,7 +405,7 @@ export const MW_CASES: readonly MwCase[] = [
     invariant: 'exactly one upgrade; callers see old or new, never partial',
     reference: 'standalone',
     needs: 'commit_log',
-    scope: 'Rust in multi-user mode with the commit log on (rust-mu, both routes): the upgrade driven is an older brain\'s first open with the log on (format 16). Five engines open it at once; one owns it and upgrades it, four are clients, and the log start and newest commit equal those of a brain a lone opener upgraded. PostgreSQL\'s equivalent (concurrent initSchema on a database behind the code) is not written.',
+    scope: 'Rust in multi-user mode with the commit log on (rust-mu, both routes): the upgrade driven is an older brain\'s first open with the log on (format 16). Five engines open it at once; one owns it and upgrades it, four are clients, and the log start and newest commit equal those of a brain a lone opener upgraded. PostgreSQL\'s equivalent, a schema upgrade under concurrent initSchema openers, is the C16.schema variant.',
     members: ['putPage', 'getPage', 'getConfig', 'readCommitLog'],
     storeTests: {
       runnable: ['c16_format_upgrade_runs_once_under_concurrent_openers'],
@@ -413,11 +413,27 @@ export const MW_CASES: readonly MwCase[] = [
     },
     cells: {
       pglite: na('PGLite has one connection: a brain cannot be opened twice'),
-      postgres: pending('L6 harness', 'no PostgreSQL scenario yet: the case drives the Rust commit-log format upgrade; a database behind the code with concurrent initSchema openers is the harness lane\'s to write'),
+      postgres: na('a SQL engine keeps no commit log, so it has no log-format upgrade; its schema upgrade under concurrent openers is the C16.schema variant'),
       rust: na('the upgrade the case drives (an older brain\'s first open with the commit log on) exists only in multi-user mode with the log on; the plain Rust arm keeps no log'),
       'rust-mu': RUNS,
       'store-single': RUNS, 'store-optimistic': RUNS,
     },
+    variants: [
+      {
+        id: 'C16.schema',
+        of: 'C16',
+        title: 'a database behind the code takes its schema upgrade once under concurrent initSchema openers',
+        invariant: 'five engines run initSchema at once on a database at the newest schema-history fixture\'s version with three pages: none is refused, the migrations reported done are a lone opener\'s list (each version once), every engine reads the code\'s schema version and the three pages, and a page one writes after the upgrade is read by all',
+        reference: 'standalone',
+        members: ['putPage', 'getPage', 'getConfig'],
+        cells: {
+          pglite: na('PGLite has one connection: a database cannot be opened twice'),
+          postgres: RUNS,
+          rust: na('the Rust engine has no SQL schema migrations: its upgrade under concurrent openers is the log-format upgrade of the C16 row'),
+          'rust-mu': na('the Rust engine has no SQL schema migrations: its upgrade under concurrent openers is the log-format upgrade of the C16 row'),
+        },
+      },
+    ],
   },
   {
     id: 'C17',

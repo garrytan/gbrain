@@ -37,6 +37,8 @@ import type { PageInput } from '../../src/core/types.ts';
 import type { LeaseToken, FenceOpts } from '../../src/core/engine-sql/lease-token.ts';
 import { rustLeases, type RustLeases, type WriteOrigin } from '../../src/core/rust-engine/store-members/leases.ts';
 import { withEnv } from '../helpers/with-env.ts';
+import { C16_PG_OPENERS, runC16Postgres } from './c16-postgres.ts';
+import { LATEST_VERSION } from '../../src/core/migrate.ts';
 import { parityArms, type ParityBackend, type ParityContext, rustArmModeProblem, rustArmMultiuser, rustMultiuserSwitch, rustMultiuserView } from './harness.ts';
 import { clearHostRegistration, fenceOpts, hostLeaseName, setHostRegistration } from '../../src/core/persistence/host-fence.ts';
 import { assertRustCommitLogResolved, assertRustMultiuserResolved, installMuConnect, loadRustArmAddon, openRustBrainAt, removeBrainDir, resolvedMultiuser, RUST_MULTIUSER_CONFIG_KEY, rustServedRequested, type MuConnectable } from './rust-arm.ts';
@@ -859,10 +861,9 @@ describe('engine parity: multi-writer conformance', () => {
   // A brain is made in plain mode (log off, older format), closed, and then five engines open it at once with the mode on:
   // the one that wins the owner lock upgrades it, and the others become clients of that owner (never an error, never a
   // second upgrade). The proof of "exactly once" is a control: the upgrade writes records to the commit log, and a brain that
-  // one engine upgrades alone gets the very same records as the brain five engines opened together. PostgreSQL's equivalent
-  // (concurrent `initSchema` on a database behind the code) is not written: its cell stays pending.
+  // one engine upgrades alone gets the very same records as the brain five engines opened together. Postgres: C16.schema below.
   parityTest('C16 format upgrade runs once under concurrent openers', { methods: ['putPage', 'getPage', 'getConfig', 'readCommitLog'], mwCase: 'C16' }, async (engine, backend, ctx) => {
-    if (backend !== 'rust') throw new Error(`C16 drives the Rust commit-log format upgrade; there is no ${backend} scenario yet`);
+    if (backend !== 'rust') throw new Error(`C16 drives the Rust commit-log format upgrade; there is no ${backend} scenario (Postgres runs C16.schema)`);
     const mode = rustArmMultiuser();
     expect(mode, 'C16 upgrades a brain by opening it in multi-user mode: the arm must be multi-user').not.toBe('off');
     const route = rustMultiuserSwitch();
@@ -927,6 +928,24 @@ describe('engine parity: multi-writer conformance', () => {
     } finally {
       for (const e of openers) await e.disconnect().catch(() => undefined);
     }
+  });
+
+  // C16.schema (c16-postgres.ts): the database behind the code is the newest Postgres schema-history fixture with three pages,
+  // and five engines call `initSchema` on it at once. The schema migration lock lets one run the pending migrations. The proof
+  // of "once" is a control: the migrations reported done (`[N] ✓` on stderr) equal those of a lone opener of a second copy,
+  // each version once, and no opener is refused. Every opener then reads the old pages and a page written after the upgrade.
+  parityTest('C16 format upgrade runs once under concurrent openers: a database behind the code takes its schema upgrade once under concurrent initSchema openers', { methods: ['putPage', 'getPage', 'getConfig'], mwCase: 'C16.schema' }, async (_engine, backend, ctx) => {
+    if (backend !== 'postgres') throw new Error(`C16.schema drives a Postgres schema upgrade; there is no ${backend} scenario`);
+    const run = await runC16Postgres(process.env.DATABASE_URL!, () => ctx.unconnectedEngine());
+    expect(run.solo.length, `a lone opener ran no migration from v${run.from}: the control proves nothing`).toBeGreaterThan(0);
+    expect(run.solo.at(-1), 'a lone opener did not reach the code\'s schema').toBe(LATEST_VERSION);
+    expect(run.outcomes, 'an opener of the database being upgraded got an error').toEqual(Array.from({ length: C16_PG_OPENERS }, () => 'ok'));
+    expect(run.together, 'concurrent openers ran the migrations other than once each (not the lone opener\'s list)').toEqual(run.solo);
+    expect(run.versions, 'an opener reports another schema version').toEqual(Array.from({ length: C16_PG_OPENERS }, () => String(LATEST_VERSION)));
+    const expected = [0, 1, 2].map(i => `kept across the upgrade ${i}`);
+    expect(run.pagesBefore, 'an opener saw a partial database').toEqual(Array.from({ length: C16_PG_OPENERS }, () => expected));
+    expect(run.pageAfter, 'a write after the upgrade is not seen by every opener').toEqual(Array.from({ length: C16_PG_OPENERS }, () => 'written after the upgrade'));
+    return { openers: C16_PG_OPENERS, from: run.from, migrations: run.solo.length, ranOnce: true, wholeDatabase: true };
   });
 
   // C17: a second opener becomes a client, never an error; calls in flight retry and succeed.
