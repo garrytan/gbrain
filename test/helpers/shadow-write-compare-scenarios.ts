@@ -11,6 +11,7 @@ import type { BrainEngine } from '../../src/core/engine.ts';
 import { importFile } from '../../src/core/import-file.ts';
 import { operationsByName, type OperationContext } from '../../src/core/operations.ts';
 import { performSync } from '../../src/commands/sync.ts';
+import { runImport } from '../../src/commands/import.ts';
 import { claimWorktree } from '../../src/core/persistence/ownership.ts';
 import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
 import { makeGitFixture } from '../helpers/git-fixture.ts';
@@ -1447,6 +1448,39 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
         expect(r.total).toBe(r.sent);
       }, 120_000);
     }
+  });
+  describe('a bulk import\'s worker engines are shadowed like the primary (sync and import at their default concurrency)', () => {
+    /** A Postgres sync or import of more than 100 files opens its own worker engines (sync/imports.ts, commands/import.ts); a PGLite brain imports on the primary, serially. */
+    const FILES = 104;
+    const putSamples = (inbox: WriteEvent[]) => inbox.filter((e) => e.op === 'putPage').length;
+    async function bulk(run: (wrapped: BrainEngine, root: string, sourceId: string) => Promise<unknown>) {
+      await ctx.reset(); await primary().setConfig('search.contextual_retrieval', 'none');
+      const home = ctx.tempDir(); const sourceId = `bulk${Date.now() % 100000}`; const root = join(home, sourceId); mkdirSync(root);
+      const { inbox, wrapped } = rig();
+      const url = ctx.kind === 'postgres' ? (primary() as unknown as { connectedDatabaseUrl?: string }).connectedDatabaseUrl : undefined;
+      if (ctx.kind === 'postgres' && !url) throw new Error('the Postgres primary does not say which database it opened');
+      await withEnv({ GBRAIN_HOME: home, GBRAIN_SYNC_FAILURES_DIR: home, GBRAIN_SOURCE: undefined, GBRAIN_DATABASE_URL: url }, async () => {
+        const git = await makeGitFixture(root); mkdirSync(join(root, 'notes'));
+        for (let i = 0; i < FILES; i++) writeFileSync(join(root, `notes/w${i}.md`), `---\ntitle: W${i}\ntype: note\n---\nW${i} is note ${i}.\n`);
+        git.commitAll('first');
+        await primary().executeRaw('INSERT INTO sources(id,name,local_path) VALUES($1,$1,$2)', [sourceId, root]);
+        try { await run(wrapped, root, sourceId); } finally { await disposePersistenceConsumer(wrapped); await disposePersistenceConsumer(primary()); }
+      });
+      const [{ n }] = await primary().executeRaw<{ n: string }>('SELECT count(*)::text AS n FROM pages WHERE source_id=$1', [sourceId]);
+      expect(Number(n)).toBe(FILES); // the import itself is unchanged
+      await until(() => putSamples(inbox) >= FILES, 60_000).catch(() => undefined);
+      return putSamples(inbox);
+    }
+
+    test('a full sync at its default concurrency samples every page write, also the ones its worker engines make', async () => {
+      const sampled = await bulk((wrapped, root, sourceId) => performSync(wrapped, { full: true, noPull: true, noEmbed: true, noSchemaPack: true, sourceId, repoPath: root } as never));
+      expect(sampled).toBe(FILES); // master: 0 on Postgres (four unwrapped workers wrote every page), FILES on PGLite (serial)
+    }, 300_000);
+
+    test('gbrain import with --workers samples every page write its worker engines make', async () => {
+      const sampled = await bulk((wrapped, root, sourceId) => runImport(wrapped, [root, '--workers', '4', '--no-embed'], { sourceId } as never));
+      expect(sampled).toBe(FILES); // master: 0 on Postgres, FILES on PGLite (a PGLite import never opens workers)
+    }, 300_000);
   });
 }
 
