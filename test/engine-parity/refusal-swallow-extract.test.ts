@@ -22,7 +22,7 @@ import type { ChatResult } from '../../src/core/ai/gateway.ts';
 import { runExtractExplain } from '../../src/commands/extract-explain.ts';
 import { siblingCanonical } from '../../src/core/mentions/siblings.ts';
 import { LAST_EXTRACT_ATOMS_AT_KEY, sourcesWithStaleExtractAtomsRun } from '../../src/core/cycle/extract-atoms-stamp.ts';
-import { atomsExistingForHashes, discoverExtractablePages, runPhaseExtractAtoms, tombstonedTranscriptsForHashes } from '../../src/core/cycle/extract-atoms.ts';
+import { atomsExistingForHashes, countExtractAtomsBacklog, discoverExtractablePages, runPhaseExtractAtoms, tombstonedTranscriptsForHashes } from '../../src/core/cycle/extract-atoms.ts';
 import { releasePartialDispositions, stampTranscriptTombstone } from '../../src/core/cycle/extract-atoms-input.ts';
 import { createSource, parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
@@ -189,7 +189,7 @@ describe('refusal-swallow extract sites', () => {
   });
 
   parityTest('extract-atoms phase with work runs on every engine, records the page as settled and skips it on the next run', {
-    methods: ['putPage', 'assertAtomStateStore', 'writeAtomPageState', 'listExtractablePages'],
+    methods: ['putPage', 'assertAtomStateStore', 'writeAtomPageState', 'listExtractablePages', 'countAtomExtractionBacklog', 'softDeletePage', 'restorePage'],
   }, async (engine) => {
     await engine.putPage('meetings/example', page('meeting', 'Example', 'We met and decided many durable things. '.repeat(40)));
     let calls = 0;
@@ -199,8 +199,35 @@ describe('refusal-swallow extract sites', () => {
       return { status: result.status, reason: details?.reason ?? null, pages: details?.pages_processed ?? null, atoms: details?.atoms_extracted ?? null };
     };
     const first = await run();
+    const backlogAfterFirst = await countExtractAtomsBacklog(engine, 'default');
     const second = await run();
     const discovered = (await discoverExtractablePages(engine, 'default')).map(p => p.slug);
-    return { first, second, discovered, calls };
+    // A soft delete and a restore drop the page's ledger rows (gbrain_clear_atom_page_state): the page is offered again.
+    await engine.softDeletePage('meetings/example');
+    await engine.restorePage('meetings/example');
+    const afterRestore = (await discoverExtractablePages(engine, 'default')).map(p => p.slug);
+    const backlogAfterRestore = await countExtractAtomsBacklog(engine, 'default');
+    return { first, backlogAfterFirst, second, discovered, afterRestore, backlogAfterRestore, calls };
+  });
+
+  parityTest('extract-atoms phase writes the same atoms from a page and a transcript on every engine, and settles both', {
+    methods: ['putPage', 'listPages', 'writeAtomPageState', 'listLiveTranscriptGenerations', 'listConversationPageFrontmatter'],
+  }, async (engine) => {
+    const atoms = (titles: string[]): ChatResult => ({ text: JSON.stringify(titles.map(title => ({ title, atom_type: 'insight', body: `${title} body.` }))),
+      blocks: [{ type: 'text', text: '' }], stopReason: 'end', usage: { input_tokens: 1, output_tokens: 1, cache_read_tokens: 0, cache_creation_tokens: 0 },
+      model: 'anthropic:claude-haiku-4-5', providerId: 'anthropic' });
+    await engine.putPage('meetings/example', page('meeting', 'Example', 'We met and decided many durable things. '.repeat(40)));
+    const transcript = { filePath: '/fake/session.txt', content: 'A synthetic session about durable decisions. '.repeat(20), contentHash: HASH };
+    let calls = 0;
+    const run = async () => {
+      const result = await runPhaseExtractAtoms(engine, { _transcripts: [transcript], _chat: async () => { calls++; return atoms(['First claim', 'Second claim']); } });
+      const d = result.details as { atoms_extracted?: number; pages_processed?: number; transcripts_processed?: number; duplicates_skipped?: number };
+      return { status: result.status, atoms: d.atoms_extracted, pages: d.pages_processed, transcripts: d.transcripts_processed, duplicates: d.duplicates_skipped };
+    };
+    const first = await run();
+    const second = await run();
+    // Atom slugs carry today's date; compare them without it.
+    const slugs = (await engine.listPages({ type: 'atom' } as never)).map(p => p.slug.replace(/\d{4}-\d{2}-\d{2}/, 'DATE')).sort();
+    return { first, second, slugs, calls };
   });
 });
