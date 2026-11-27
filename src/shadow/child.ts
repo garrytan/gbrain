@@ -293,6 +293,33 @@ function childEpoch(
   };
 }
 
+/** The samples a write line stands for, as the serving process counted them when it sent it (supervisor.ts `sampleWeight` and `sampleQualifyingWeight`): the line plus the earlier refusals it carries, and the qualifying part (a page or link write, plus those refusals). */
+function receivedWeight(event: { op?: unknown; dropped?: number }): { all: number; qualifying: number } {
+  const carried = Number.isInteger(event.dropped) && event.dropped! > 0 ? Math.min(event.dropped!, 10_000) : 0;
+  return { all: 1 + carried, qualifying: carried + (typeof event.op === 'string' && PILOT_WRITES.has(event.op) ? 1 : 0) };
+}
+
+/**
+ * Books what the serving process sent (its receipt, supervisor.ts recordSent) and this child never read as lost samples, and says whether every one is on disk. Only the lost qualifying writes count
+ * against the share (`pipe_unflushed`); the rest would have been capability_missing (`pipe_unflushed_nonqualifying`). A receipt without the qualifying count (an older serving process) books every one
+ * as qualifying, never fewer. A failed append or an unreadable receipt is a fault line and the receipt stays (status then reads no evidence).
+ */
+function settleReceipt(shadowDir: string, session: string, received: number, receivedQualifying: number, now: () => number): boolean {
+  const receipt = readReceipt(shadowDir, session);
+  const epoch = readEpoch(shadowDir)?.epoch_id;
+  const faultLine = (detail: string): void => { try { appendFault(shadowDir, { ts: new Date(now()).toISOString(), kind: 'write_samples_unrecorded', detail, ...(epoch ? { epoch_id: epoch } : {}) }); } catch { /* disk: the receipt stays, which is what status reads */ } };
+  if (receipt === 'unreadable') { faultLine(`sent_count_unreadable file=write-sent.${session.replace(/[^A-Za-z0-9_-]/g, '_')}.json`); return false; }
+  if (receipt === null) return false;
+  const missing = Math.max(0, receipt.sent - received);
+  const qualifying = receipt.sent_qualifying === undefined ? missing : Math.min(missing, Math.max(0, receipt.sent_qualifying - receivedQualifying));
+  let short = 0;
+  for (const [reason, n] of [['pipe_unflushed', qualifying], ['pipe_unflushed_nonqualifying', missing - qualifying]] as const) {
+    const done = n === 0 ? 0 : epoch === undefined ? 0 : recordLostCount(shadowDir, epoch, reason, n); // this worker's own receipt is its own samples whatever stamp it carries: booked under the epoch on disk, never dropped
+    if (done < n) { short += n - done; faultLine(`${reason} n=${n - done}`); }
+  }
+  return short === 0;
+}
+
 /** Runs the child loop until stdin closes. Resolves with the number of events handled. */
 export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): Promise<number> {
   const now = deps.now ?? Date.now;
@@ -546,12 +573,7 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
     try { event = JSON.parse(line); } catch { continue; }
     if (event.t === 'apply' || event.t === 'watermark' || event.t === 'depth' || event.t === 'rpc') { follow.handle(event as FollowEvent); continue; }
     if (event.t === 'answer') { ask.answer(event as never); continue; }
-    if (event.t === 'write') {
-      const carried = Number.isInteger(event.dropped) && event.dropped! > 0 ? Math.min(event.dropped!, 10_000) : 0;
-      received += 1 + carried;
-      receivedQualifying += carried + (typeof (event as { op?: unknown }).op === 'string' && PILOT_WRITES.has((event as { op: string }).op) ? 1 : 0); // as supervisor.ts sampleQualifyingWeight counted it when it sent the line
-      writes.handle(event as never, line.length); continue;
-    } // the weight the serving process counted when it sent the line (supervisor.ts sampleWeight)
+    if (event.t === 'write') { const w = receivedWeight(event); received += w.all; receivedQualifying += w.qualifying; writes.handle(event as never, line.length); continue; }
     if (event.t === 'stats' && event.counters) { summary.primary = { ...newMirrorCounters(), ...event.counters }; summary.primary_pid = event.pid; continue; }
     if (event.t !== 'read' || paused) continue;
     if (pending.length >= SHADOW_CHILD_QUEUE_BOUND) { summary.child_shed++; continue; }
@@ -565,24 +587,7 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
   // The serving process wrote down how many write samples it sent us before it ended our stdin (a receipt); what it sent and we never read was dropped in its pipe at its exit, and is counted once (supervisor.ts recordSent).
   // The difference is written as lost samples (durable appends, split so none is cut; the owner child folds them into the tally exactly once), and the receipt is removed ONLY when every one is down and the final tally save has landed (below): a fault line
   // is a signal, never a settlement, so a failed append keeps the receipt and status reads no evidence. A receipt that is there and cannot be read is a fault line and stays too.
-  let receiptSettled = false; // the deficit (if any) is on disk: the receipt goes only once the final tally save has landed too
-  const receipt = readReceipt(shadowDir, session);
-  const epoch = readEpoch(shadowDir)?.epoch_id;
-  const faultLine = (detail: string): void => { try { appendFault(shadowDir, { ts: new Date(now()).toISOString(), kind: 'write_samples_unrecorded', detail, ...(epoch ? { epoch_id: epoch } : {}) }); } catch { /* disk: the receipt stays, which is what status reads */ } };
-  if (receipt === 'unreadable') faultLine(`sent_count_unreadable file=write-sent.${session.replace(/[^A-Za-z0-9_-]/g, '_')}.json`);
-  else if (receipt !== null) {
-    const missing = Math.max(0, receipt.sent - received);
-    // Only the lost qualifying writes count against the share (pipe_unflushed); the rest would have been capability_missing (pipe_unflushed_nonqualifying). A receipt without the qualifying
-    // count (an older serving process) books every one as qualifying, never fewer.
-    const qualifying = receipt.sent_qualifying === undefined ? missing : Math.min(missing, Math.max(0, receipt.sent_qualifying - receivedQualifying));
-    const parts: Array<[string, number]> = [['pipe_unflushed', qualifying], ['pipe_unflushed_nonqualifying', missing - qualifying]];
-    let short = 0;
-    for (const [reason, n] of parts) {
-      const done = n === 0 ? 0 : epoch === undefined ? 0 : recordLostCount(shadowDir, epoch, reason, n); // this worker's own receipt is its own samples whatever stamp it carries: booked under the epoch on disk, never dropped
-      if (done < n) { short += n - done; faultLine(`${reason} n=${n - done}`); }
-    }
-    if (short === 0) receiptSettled = true;
-  }
+  const receiptSettled = settleReceipt(shadowDir, session, received, receivedQualifying, now); // the deficit (if any) is on disk: the receipt goes only once the final tally save has landed too
   // The serving process ended our stdin: nothing it was asked can still be answered. A queued rerun ends as skipped.
   ask.closeAll(); waiter.close(); // a rerun waiting for a quiet window ends now, as skipped
   for (const task of reruns.drop()) record(task.event, task.c, task.rustMs, task.rows, 'skipped:child_closing');
