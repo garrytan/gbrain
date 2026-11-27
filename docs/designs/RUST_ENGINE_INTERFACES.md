@@ -150,9 +150,13 @@ Rules:
   | 10 | `vector-rank-key` | `4930072d` | planned, lands after the Nov 26 shadow release |
   | 11 | Refresh evidence reads (head 2) | `66e6c7ae` | planned |
   | 12 | Keyed lookups 2 (PR 10328, stacked on PR 10277) | `7896376b` | planned, lands after the Nov 26 shadow release |
-  | 13 | Packed keyword index | `7896376b` | planned |
+  | 13 | Pending keyword records (`rust-engine/lean-keyword-writes`, PR 10468, merges PR 10328) | `7896376b` | shipped on its branch, lands in order |
+  | 14 | Drop the legacy word index (PR 10354, merges PR 10468) | `7896376b` | allotted |
+  | 15 | Core-edit notices (lane 13, W6, `rust-engine/core-edit-notices-rust`) | lane 13 | allotted |
+  | 16 | Multi-user commit log (`rust-engine/mu-commit-log-format16`) | its lane | allotted |
+  | 17 | extract_atoms ledgers (`rust-engine/extract-atoms-state`) | its lane | allotted |
 
-  The next free number is 14. A head that takes a number that is not its own in this table renumbers before it lands.
+  The next free number is 18. A head that takes a number that is not its own in this table renumbers before it lands.
 
 - **`SHADOW_ADAPTER_VERSION` ledger** (`src/shadow/evidence-epoch.ts`). One version per distinct adapter source (the
   digest of `store-members/**`, `store-codec.ts` and `members.ts` that `test/shadow-evidence.test.ts` pins). A lander
