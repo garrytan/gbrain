@@ -34,6 +34,8 @@ export interface ShadowStatus {
     capability_missing?: number;
     /** Sampled writes outside the page and link pilot, by family (shadow/write-compare.ts). */
     capability_missing_by_family?: Record<string, number>;
+    /** Sessions with an owed sample still unsettled, replays with no verdict and lost samples no tally has taken (shadow/follow-status.ts); the swap check waits for it to be absent. */
+    unresolved_replays?: number;
   };
   fingerprints?: {
     checked_rows?: number;
@@ -69,6 +71,8 @@ export interface ShadowStatus {
     /** Writer hosts seen by durable writer observations in the last 7 days; null when no observation table exists. */
     writer_hosts_7d?: number | null;
     unknown_writer_paths?: number;
+    /** Observed writers of an older build (no write_protocol, or one below this build's) in the evidence epoch; counted in `unknown_writer_paths`. */
+    legacy_write_writers?: number;
     team_brain?: boolean;
     preview_target?: boolean;
   };
@@ -134,6 +138,11 @@ export const WRITE_COVERAGE_LOSS = 'Named loss: only putPage, deletePage, addLin
 export const WRITE_PGLITE_LIMIT = 'PGLite brains record no write comparisons';
 /** And by whom: only the shadow child that owns the Rust store records; a client child adds no evidence and can never make criterion 5 pass. */
 export const WRITE_CLIENT_LIMIT = 'client shadow children record no write comparisons';
+
+/** And at what load: the child replays one sample at a time, so a brain that writes faster than it replays never has all its samples settled. */
+export const WRITE_SETTLE_LIMIT = 'the child keeps up only below ~19 samples/s on this VM; a brain that writes faster has no moment with all samples settled, so the swap check refuses';
+/** What criterion 5 says when the swap check waited 60 s (`SWAP_SETTLE_WAIT_MS`, plan.ts) and never read a moment with every sample settled. */
+export const BRAIN_BUSY = 'brain busy: no 60 s lull with all samples settled; retry when idle';
 
 const DAY_MS = 86_400_000;
 
@@ -276,7 +285,11 @@ function writeComparisons(r: Reader): Check {
     const unexplained = r.n('write_comparisons.unexplained_difference');
     if (state === undefined || comparable === undefined || unexplained === undefined) return { state: 'missing', detail: '' };
     // A shadow that cannot compare writes never passes (S3 rule: capability_missing refuses, like a missing field).
-    if (state === 'capability_missing') return { state: 'missing', detail: 'no evidence: write_comparisons.state is capability_missing' };
+    if (state === 'capability_missing') {
+      const unsettled = r.peek<number>('write_comparisons.unresolved_replays');
+      if (num(unsettled) && unsettled > 0) return { state: 'missing', detail: BRAIN_BUSY }; // the swap check already waited for a lull (plan.ts)
+      return { state: 'missing', detail: 'no evidence: write_comparisons.state is capability_missing' };
+    }
     const fails: string[] = [];
     if (comparable < MIN_WRITE_COMPARISONS) fails.push(`${comparable} of ${MIN_WRITE_COMPARISONS} comparable write comparisons`);
     if (unexplained > 0) fails.push(`${unexplained} unexplained differences`);
@@ -285,7 +298,7 @@ function writeComparisons(r: Reader): Check {
   // The coverage limit rides on every outcome. Only page and link writes are compared; every other write family is capability_missing.
   const byFamily = r.peek<Record<string, number>>('write_comparisons.capability_missing_by_family') ?? {};
   const named = Object.entries(byFamily).filter(([, n]) => num(n) && n > 0).map(([f, n]) => `${f} ${n}`);
-  const limit = `${WRITE_COVERAGE_LIMIT}; ${WRITE_PGLITE_LIMIT}; ${WRITE_CLIENT_LIMIT}; every other write family is capability_missing${named.length ? ` (sampled so far: ${named.join(', ')})` : ''}; ${WRITE_COVERAGE_NAMED}`;
+  const limit = `${WRITE_COVERAGE_LIMIT}; ${WRITE_PGLITE_LIMIT}; ${WRITE_CLIENT_LIMIT}; every other write family is capability_missing${named.length ? ` (sampled so far: ${named.join(', ')})` : ''}; ${WRITE_SETTLE_LIMIT}; ${WRITE_COVERAGE_NAMED}`;
   return { ...out, detail: out.detail ? `${out.detail}; ${limit}` : limit, lines: uncoveredWriteLines(typeof byFamily === 'object' && byFamily !== null ? byFamily : {}) };
 }
 
@@ -356,7 +369,10 @@ function eligibility(r: Reader): Eligibility {
   // Exactly one observed writer host: zero (or a non-count) is no writer evidence, never "one host".
   if (!Number.isInteger(hosts) || hosts < 1) return { state: 'missing', detail: `no writer host observed in the last 7 days (${hosts})`, reason: 'writer_coverage_unknown' };
   if (hosts > 1) return { state: 'fail', detail: `${hosts} writer hosts in the last 7 days`, reason: 'multiple_writer_hosts' };
-  if (unknown > 0) return { state: 'fail', detail: `${unknown} write path(s) with no observation`, reason: 'writer_coverage_unknown' };
+  if (unknown > 0) {
+    const legacy = r.peek<number>('eligibility.legacy_write_writers');
+    return { state: 'fail', detail: `${unknown} write path(s) with no observation${num(legacy) && legacy > 0 ? ` (${legacy} observed writer(s) of an older build that keeps no per-session write-sample record: no write_protocol 2)` : ''}`, reason: 'writer_coverage_unknown' };
+  }
   if (team === undefined || preview === undefined) return { state: 'missing', detail: `no evidence: ${[team === undefined ? 'eligibility.team_brain' : '', preview === undefined ? 'eligibility.preview_target' : ''].filter(Boolean).join(', ')}` };
   if (!preview) return { state: 'fail', detail: 'the shadow host is not on a preview target' };
   return { state: 'pass', detail: 'one writer host, no unknown write path, a personal brain on a preview target' };
