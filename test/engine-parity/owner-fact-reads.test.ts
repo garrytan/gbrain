@@ -106,7 +106,7 @@ async function call(engine: BrainEngine, token: string, who: Who, tool: string, 
 }
 
 /** Keys that hold a generated id or a write time; the sequences and clocks differ per arm and per run. */
-const VOLATILE = /(^|_)(id|ids)$|_at$|_revision$|^(revision|created|updated|fetched|content_hash|stale|effective_date|valid_from|valid_until|took_ms|elapsed_ms)$/;
+const VOLATILE = /(^|_)(id|ids)$|_at$|_revision$|^(revision|created|updated|fetched|content_hash|stale|effective_date|valid_from|valid_until|took_ms|elapsed_ms|latency_ms)$/;
 const volatileText = (text: string) => text
   .replace(/\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d+)?Z/g, '<time>')
   .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/g, '<uuid>')

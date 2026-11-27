@@ -101,6 +101,11 @@ export interface StorePrivacyPolicy {
   /** A local owner's fact policy with privacy off: the provenance page is judged with no privacy part. */
   provenancePrivacyOff?: boolean;
   /**
+   * The owner lineage read's fact policy (GST-2490, the opt-in off, no audience): a provenance page that is neither
+   * `memberPage` nor another member page is judged by `identity` under the owner read rule (`lineageAccessSql`).
+   */
+  ownerLineage?: boolean;
+  /**
    * The labelled-only conjunct (`labelledOnlySql`): the page names one of `identity` or has a folder rule in `satisfiedRuleIds`
    * (`LabelledOnly` in privacy.rs). `lineage`: access.members_read_lineage is on, so a derived page also passes when every
    * origin names the caller (gbrain_access_origin_labelled_for). `member`: the caller's member id, the one member page a fact
@@ -225,7 +230,7 @@ export function storePrivacyPolicy(
         // A local owner reading with privacy off renders no privacy part on the provenance page either.
         const provenancePrivacyOff = record.owner === true && !canonical.includes(privateSnapshotFilterFragment('pp'));
         const withFolders = 'satisfiedRuleIds' in record || 'folderCoverage' in record;
-        return { ...factPolicyFlags(canonical), ...readers, ...(withFolders ? stored : {}), ...(judged ? { memberPage } : {}), ...(provenancePrivacyOff ? { provenancePrivacyOff: true } : {}), ...reference.flags, ...(record.lineage ? { ownerRead: true } : {}) };
+        return { ...factPolicyFlags(canonical), ...readers, ...(withFolders ? stored : {}), ...(judged ? { memberPage } : {}), ...(provenancePrivacyOff ? { provenancePrivacyOff: true } : {}), ...reference.flags, ...(record.lineage ? { ownerRead: true, ownerLineage: true } : {}) };
       }
     }
     return undefined;
