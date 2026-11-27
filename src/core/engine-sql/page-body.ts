@@ -303,7 +303,7 @@ function metaParams(meta: SegmentedPageMeta) {
     effectiveDate: meta.effective_date ?? null, effectiveDateSource: meta.effective_date_source ?? null, importFilename: meta.import_filename ?? null,
     chunkerVersion: meta.chunker_version === undefined || meta.chunker_version === null ? null : Math.min(meta.chunker_version, SAFE_FENCE_CHUNKER_VERSION - 1),
     sourcePath: meta.source_path ?? null, sourceKind: meta.source_kind ?? null, sourceUri: meta.source_uri ?? null, ingestedVia: meta.ingested_via ?? null,
-    ingestedAt: ingested ? sqlFragment`now()` : null,
+    ingestedAt: ingested ? sqlFragment`now()` : null, contentAuthor: meta.content_author ?? null,
   };
 }
 
@@ -384,7 +384,9 @@ export async function flipBodyGeneration(exec: SqlExecutor, input: BodyFlipInput
         chunker_version = COALESCE(${m.chunkerVersion}::smallint, chunker_version),
         source_path = COALESCE(${m.sourcePath}::text, source_path), source_kind = COALESCE(${m.sourceKind}::text, source_kind),
         source_uri = COALESCE(${m.sourceUri}::text, source_uri), ingested_via = COALESCE(${m.ingestedVia}::text, ingested_via),
-        ingested_at = COALESCE(${m.ingestedAt}::timestamptz, ingested_at)
+        ingested_at = COALESCE(${m.ingestedAt}::timestamptz, ingested_at),
+        content_author = CASE WHEN content_author IS NULL OR content_author_hash IS DISTINCT FROM ${b.content_hash}::text THEN ${m.contentAuthor}::text ELSE content_author END,
+        content_author_hash = ${b.content_hash}::text
       WHERE id = ${input.pageId}`);
     // GST-1209: the generation this flip made live must tile the body it recorded, as every reader checks it; rows the
     // write staged that went missing would otherwise commit a body nothing can read.

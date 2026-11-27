@@ -6,14 +6,15 @@
  *
  * Frontmatter is something any writer can set, so the marker is honored only at read time and only when:
  *   - its shape is valid (a known basis, a short single-line label, a whole turn count);
- *   - the page's live revision was written by a trusted local importer (a transcripts import or a connector sync
- *     into a Google, iMessage or Meetings source), never by a remote caller: a remote write is journaled with a
- *     server-stamped `mcp:<operation>` provenance and a non-local principal (persistence/page-prepare.ts);
+ *   - the page's live text was written by a trusted local importer (a transcripts import or a connector sync into a
+ *     Google, iMessage or Meetings source), never by a remote caller: the page's content author
+ *     (persistence/content-author-schema.ts) names a remote write's own operation and changes only with the text,
+ *     so neither a later tag change nor maintenance makes a remote writer's text read as the importer's (GST-4056);
  *   - its member is the member the page's source belongs to (the bound members, else the brain's owner member, or
  *     no member on a brain without one), so a marker written for one person never names another.
- * No table holds it: the journal's write attribution (`revision_write_request_id`, the request's principal and
- * intent, `revision_principal_kind`) is the database record beside the page, so a repo-less brain works the same.
+ * The content author is a column of the page row, so a repo-less brain works the same.
  */
+import { CONNECTOR_AUTHOR_KINDS, CONNECTOR_AUTHOR_PREFIX, TRUSTED_IMPORTER_VIAS, contentAuthoredBySql } from '../persistence/content-author-schema.ts';
 import type { BrainEngine } from '../engine.ts';
 import { ownerMemberId } from '../access/owner.ts';
 import { listMembers } from '../access/members.ts';
@@ -31,9 +32,9 @@ export interface SpeakerOwnerMarker {
 }
 
 /** Provenance the trusted importers stamp on the pages they write. */
-export const SPEAKER_OWNER_WRITERS: readonly string[] = ['cli:transcripts-ingest', 'cli:transcripts-archive'];
+export const SPEAKER_OWNER_WRITERS: readonly string[] = TRUSTED_IMPORTER_VIAS;
 /** Connector kinds whose sync knows which messages are the account owner's. */
-export const SPEAKER_OWNER_CONNECTOR_KINDS: readonly string[] = ['google', 'imessage', 'meetings'];
+export const SPEAKER_OWNER_CONNECTOR_KINDS: readonly string[] = CONNECTOR_AUTHOR_KINDS;
 
 const MEMBER_RE = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 
@@ -102,16 +103,11 @@ export async function connectorSpeakerOwnerStamp(engine: BrainEngine, sourceId: 
   return people.every(m => m.id === owner) ? { member: owner } : null;
 }
 
-/** The SQL predicate: page alias `p`'s live revision was written by a trusted local importer. Joins `r` and `s`. */
+/** The SQL predicate: page alias `p`'s live text was written by a trusted local importer. Joins `s` (the page's source). */
 function trustedWriterSql(writers: string): string {
-  const connector = `s.config->>'kind' IN (${SPEAKER_OWNER_CONNECTOR_KINDS.map(k => `'${k}'`).join(',')})`;
-  return `CASE WHEN p.revision_write_request_id IS NULL
-                 THEN p.ingested_via IN (${writers}) OR (p.ingested_via IS NULL AND ${connector})
-            WHEN r.intent IS NOT NULL
-                 THEN r.principal_kind = 'local_cli' AND (r.intent->>'ingested_via' IN (${writers})
-                      OR (r.operation = 'submit_job' AND r.intent->>'kind' = 'connector_v2_import' AND ${connector}))
-            ELSE p.revision_principal_kind IS NOT DISTINCT FROM 'local_cli'
-                 AND (p.ingested_via IN (${writers}) OR (p.ingested_via IS NULL AND ${connector})) END`;
+  const connector = `(starts_with(p.content_author, '${CONNECTOR_AUTHOR_PREFIX}') AND p.content_author_hash = p.content_hash
+    AND s.config->>'kind' IN (${SPEAKER_OWNER_CONNECTOR_KINDS.map(k => `'${k}'`).join(',')}))`;
+  return `(${contentAuthoredBySql('p', writers)} OR ${connector})`;
 }
 
 export type SpeakerOwnerStatus = 'trusted' | 'absent' | 'invalid' | 'untrusted_writer' | 'member_mismatch';
@@ -130,7 +126,6 @@ export async function readSpeakerOwners(engine: BrainEngine, pages: ReadonlyArra
     `SELECT p.slug, p.source_id, p.frontmatter->'${SPEAKER_OWNER_KEY}' AS marker, (${trustedWriterSql(writers)}) AS trusted,
             (SELECT array_agg(b.member_id ORDER BY b.member_id) FROM access_member_sources b WHERE b.source_id = p.source_id) AS members
        FROM pages p JOIN sources s ON s.id = p.source_id
-       LEFT JOIN persistence_requests r ON r.id = p.revision_write_request_id
       WHERE p.deleted_at IS NULL AND (p.source_id, p.slug) IN (${wanted.join(', ')})`, params);
   const owner = await ownerMemberId(engine);
   const byKey = new Map(rows.map(row => [`${row.source_id}\u0000${row.slug}`, row]));

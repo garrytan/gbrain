@@ -33,6 +33,7 @@ import { dispatchToolCall } from '../../src/mcp/dispatch.ts';
 import { registerLocalWriter, withVerifiedLocalRegistration } from '../../src/core/persistence/identity.ts';
 import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
 import { TRANSCRIPT_MAX_PARTS } from '../../src/core/transcripts/render.ts';
+import { CONTENT_AUTHOR_BACKFILL_SQL } from '../../src/core/persistence/content-author-schema.ts';
 import { withEnv } from './with-env.ts';
 import { managedBrain } from './managed-brain.ts';
 
@@ -288,6 +289,33 @@ export function defineTranscriptPartChurnCases(opts: { getEngine: () => BrainEng
     const again = await ingest(engine, path);
     expect(again.pages).toMatchObject({ imported: 0, skipped: parts.length, errored: 0 });
     expect(again.partsDeleted).toBe(0);
+  }), 180_000);
+
+  test('a legacy split session keeps its pinned part size through contextual re-embedding and the v341 backfill (GST-4056)', () => withDir(async (dir) => {
+    const engine = opts.getEngine();
+    const id = `legacy-ceiling-${randomUUID().slice(0, 8)}`;
+    const base = baseSlugOf(id);
+    const text = Array.from({ length: 20_000 }, (_, i) => `tok-${String(i).padStart(5, '0')}`).join(',');
+    const path = writeSession(dir, id, [{ text }]);
+    await engine.setConfig('pages.max_bytes', '60000');
+    let parts: LivePart[];
+    try {
+      expect((await ingest(engine, path)).pages.errored).toBe(0);
+      parts = await liveParts(engine, base);
+    } finally {
+      await engine.unsetConfig('pages.max_bytes');
+    }
+    expect(parts.length).toBeGreaterThanOrEqual(3);
+    // A brain from before v341: no content author; contextual re-embedding moved updated_at past ingested_at.
+    for (const page of parts) {
+      await engine.updatePageContextualRetrievalState(page.slug, 'default', 'title', 'corpus-example');
+      await engine.executeRaw('UPDATE pages SET content_author = NULL, content_author_hash = NULL WHERE source_id = $1 AND slug = $2', ['default', page.slug]);
+    }
+    await engine.executeRaw(CONTENT_AUTHOR_BACKFILL_SQL);
+    const again = await ingest(engine, path);
+    expect(again.pages).toMatchObject({ imported: 0, skipped: parts.length, errored: 0 });
+    expect(again.partsDeleted).toBe(0);
+    for (const page of await liveParts(engine, base)) expect(page.frontmatter.transcript_import.part_bytes).toBe(54_000);
   }), 180_000);
 
   test('an instruction-shaped message in a grown split session is counted on its own part only', () => withDir(async (dir) => {

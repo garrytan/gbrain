@@ -39,7 +39,7 @@
  * must never skip work permanently.
  */
 
-import { IMPORTER_INGESTED_VIA, importerWroteLiveRevisionSql } from './importer-provenance.ts';
+import { IMPORTER_INGESTED_VIA, importerWroteLiveTextSql } from './importer-provenance.ts';
 import type { BrainEngine } from '../engine.ts';
 import { randomUUID } from 'node:crypto';
 import { importFromContent } from '../import-file.ts';
@@ -687,21 +687,14 @@ export async function transcriptPageCeiling(engine: BrainEngine): Promise<number
  * ceiling. A split session is never re-rendered as one page.
  *
  * `transcript_import` is ordinary frontmatter that any writer can set, so its
- * `of` and `part_bytes` are read only from a part whose LIVE revision the
- * importer wrote. `pages.ingested_via` can't say that: a managed write keeps
- * the first write's stamp (persistence/page-prepare.ts), so a remote put_page
- * over an imported page still reads `cli:transcripts-ingest`. The live
- * revision's writer is the write attribution (`revision_write_request_id`):
- *   - a journaled request wrote it: trusted when that request is the local
- *     CLI's and its own intent carries the importer's provenance (a remote
- *     request's intent is always server-stamped `mcp:<operation>`);
- *   - its request has left the journal: trusted when the revision's principal
- *     is the local CLI and the page carries the importer's stamp;
- *   - no request wrote it (the direct importer on an unmanaged brain, a write
- *     from before attribution): trusted when `ingested_via` is the importer's
- *     or NULL; a remote write is always a journaled request, and on this path
- *     it also replaces the stamp with `mcp:<operation>`.
- * So a remote edit can't choose the layout or the part size. A part 2 is
+ * `of` and `part_bytes` are read only from a part whose LIVE text the importer
+ * wrote (importerWroteLiveTextSql, GST-4056). `pages.ingested_via` can't say
+ * that: every later write keeps the first write's stamp, so a remote edit of
+ * an imported page still reads `cli:transcripts-ingest`; and the revision's
+ * attribution moves with tag changes and maintenance. The page's content
+ * author changes only with its text, and a remote write names its own
+ * operation. So a remote edit can't choose the layout or the part size, and a
+ * re-embed or tag change of a genuine part never makes it untrusted. A part 2 is
  * split evidence only under the same rule: its id is derivable from part 1's,
  * so any writer can put a page carrying it anywhere. A split session the
  * importer rewrote still reads as split from part 1 (no `of`), or from a
@@ -716,8 +709,8 @@ async function storedTranscriptLayout(engine: BrainEngine, sourceId: string, met
   const rows = await engine.executeRaw<{ slug: string; title: string; fid: string; ti: unknown; trusted: boolean; marked: boolean }>(
     `SELECT p.slug, p.title, p.frontmatter->>'id' AS fid, p.frontmatter->'transcript_import' AS ti,
             (p.frontmatter->'${SPEAKER_OWNER_KEY}') IS NOT NULL AS marked,
-            ${importerWroteLiveRevisionSql('p', 'r', '$4')} AS trusted
-       FROM pages p LEFT JOIN persistence_requests r ON r.id = p.revision_write_request_id
+            ${importerWroteLiveTextSql('p', '$4')} AS trusted
+       FROM pages p
       WHERE p.source_id = $1 AND p.deleted_at IS NULL AND p.frontmatter->>'id' IN ($2, $3) ORDER BY p.id`,
     [sourceId, first, second, IMPORTER_INGESTED_VIA],
   );

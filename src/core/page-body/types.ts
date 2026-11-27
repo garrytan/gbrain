@@ -109,6 +109,8 @@ export interface SegmentedPageMeta {
   source_uri?: string | null;
   ingested_via?: string | null;
   chunker_version?: number | null;
+  /** GST-4056: this write's own channel, stored with the flipped body's hash (PageInput.content_author). */
+  content_author?: string | null;
 }
 
 /** The body columns of a segmented page after a flip. */

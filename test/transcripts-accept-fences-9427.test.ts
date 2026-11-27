@@ -133,7 +133,7 @@ async function cli(args: string[]): Promise<{ doc: Record<string, unknown>; exit
     expect(await listed()).toEqual([EMAIL, TRANSCRIPTS[0]!, REMOTE].sort());
     expect((await cli([])).doc).toMatchObject({ pages: [expect.objectContaining({ slug: TRANSCRIPTS[0], takes: 1 })] });
 
-    await engine.executeRaw("UPDATE pages SET ingested_via = 'mcp:put_page' WHERE slug = $1", [TRANSCRIPTS[1]]);
+    await conversation(TRANSCRIPTS[1]!, 'mcp:put_page', 'Session rewritten');
     expect(await listed()).toEqual([EMAIL, TRANSCRIPTS[0]!, TRANSCRIPTS[1]!, REMOTE].sort());
     const preview = await cli([]);
     expect((preview.doc.pages as Array<{ slug: string }>).map(p => p.slug)).toEqual([TRANSCRIPTS[0]]);

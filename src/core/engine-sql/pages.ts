@@ -164,6 +164,7 @@ export async function putPage(
     const sourceUri = page.source_uri ?? null;
     const ingestedVia = page.ingested_via ?? null;
     const ingestedAt = (sourceKind || sourceUri || ingestedVia) ? sqlFragment`now()` : null;
+    const contentAuthor = page.content_author ?? null;
     // #5984: the contextual retrieval stamp, when the caller passes it, rides in this statement.
     const cr = opts?.contextualRetrieval && opts.contextualRetrieval.mode !== 'none' ? opts.contextualRetrieval : null;
     const crColumns = cr ? sqlFragment`, contextual_retrieval_mode, corpus_generation` : sqlFragment``;
@@ -175,8 +176,8 @@ export async function putPage(
     // origin-guard-ok: both engines' putPage run assertOriginUnclaimed in this transaction first
     const { rows } = await exec.run(sqlFragment`
       WITH ins AS (
-      INSERT INTO pages (source_id, slug, type, page_kind, title, compiled_truth, timeline, frontmatter, content_hash, updated_at, effective_date, effective_date_source, import_filename, chunker_version, source_path, source_kind, source_uri, ingested_via, ingested_at${crColumns})
-      VALUES (${sourceId}, ${slug}, ${page.type}, ${pageKind}, ${sanitizeText(page.title)}, ${sanitizeText(page.compiled_truth)}, ${sanitizeText(page.timeline || '')}, ${jsonbParam(frontmatter)}, ${hash}, now(), ${effectiveDate}, ${effectiveDateSource}, ${importFilename}, ${chunkerVersion}::smallint, ${sourcePath}, ${sourceKind}, ${sourceUri}, ${ingestedVia}, ${ingestedAt}${crValues})
+      INSERT INTO pages (source_id, slug, type, page_kind, title, compiled_truth, timeline, frontmatter, content_hash, updated_at, effective_date, effective_date_source, import_filename, chunker_version, source_path, source_kind, source_uri, ingested_via, ingested_at, content_author, content_author_hash${crColumns})
+      VALUES (${sourceId}, ${slug}, ${page.type}, ${pageKind}, ${sanitizeText(page.title)}, ${sanitizeText(page.compiled_truth)}, ${sanitizeText(page.timeline || '')}, ${jsonbParam(frontmatter)}, ${hash}, now(), ${effectiveDate}, ${effectiveDateSource}, ${importFilename}, ${chunkerVersion}::smallint, ${sourcePath}, ${sourceKind}, ${sourceUri}, ${ingestedVia}, ${ingestedAt}, ${contentAuthor}, ${hash}${crValues})
       ON CONFLICT (source_id, slug) DO UPDATE SET${crSet}
         type = EXCLUDED.type,
         page_kind = EXCLUDED.page_kind,
@@ -196,7 +197,11 @@ export async function putPage(
         source_kind           = COALESCE(EXCLUDED.source_kind,           pages.source_kind),
         source_uri            = COALESCE(EXCLUDED.source_uri,            pages.source_uri),
         ingested_via          = COALESCE(EXCLUDED.ingested_via,          pages.ingested_via),
-        ingested_at           = COALESCE(EXCLUDED.ingested_at,           pages.ingested_at)
+        ingested_at           = COALESCE(EXCLUDED.ingested_at,           pages.ingested_at),
+        -- GST-4056: identical text keeps the author it has; new text takes this write's (content-author-schema.ts).
+        content_author        = CASE WHEN pages.content_author IS NULL OR pages.content_author_hash IS DISTINCT FROM EXCLUDED.content_author_hash
+                                     THEN EXCLUDED.content_author ELSE pages.content_author END,
+        content_author_hash   = EXCLUDED.content_author_hash
       RETURNING knowledge_revision, text_projection_revision, id, source_id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at, effective_date, effective_date_source, import_filename, source_kind, source_uri, ingested_via, ingested_at
       ), ${HOLD_BIND_CTE}
       SELECT * FROM ins
@@ -442,6 +447,9 @@ export async function refreshPageBody(
           timeline = ${timeline},
           content_hash = ${contentHash},
           chunker_version = ${trustedSql(bodyWriteChunkVersion('$1', '$2'))},
+          -- GST-4056: a restamped hash over the same body keeps the page's author.
+          content_author_hash = CASE WHEN content_author_hash = content_hash AND compiled_truth IS NOT DISTINCT FROM ${compiledTruth}
+            AND timeline IS NOT DISTINCT FROM ${timeline} THEN ${contentHash} ELSE content_author_hash END,
           updated_at = now()
       WHERE source_id = ${sourceId}
         AND slug = ${slug}

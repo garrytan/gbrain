@@ -315,6 +315,12 @@ export interface PageInput {
    * NULL on historical rows that pre-date v0.38.
    */
   ingested_at?: Date | null;
+  /**
+   * GST-4056: the channel of THIS write (its own provenance, never the first-ingest record above), stored as
+   * pages.content_author with the content hash it wrote (persistence/content-author-schema.ts). A write whose content
+   * hash equals the stored author's keeps the stored author. Omitted or NULL: the text has no trusted author.
+   */
+  content_author?: string | null;
 }
 
 export interface PageFilters {

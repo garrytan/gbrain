@@ -5,18 +5,18 @@
  * of times. `gbrain transcripts accept-fences` previews every such page with a plan_hash, and an apply with that hash
  * records the owner's acceptance of each page's exact rows.
  *
- * Only imported transcripts qualify: `type: conversation`, `transcript_import` frontmatter, AND a live revision the
- * importer wrote (importerWroteLiveRevisionSql: a remote put_page is a journaled request that never passes it). Email,
+ * Only imported transcripts qualify: `type: conversation`, `transcript_import` frontmatter, AND live text the importer
+ * wrote (importerWroteLiveTextSql: a remote write names its own operation as the text's author). Email,
  * calendar and GitHub pages, and any page a remote writer or another local writer last wrote, stay for per-page
  * review. An acceptance binds the page id and a fingerprint of the page's indexed fence rows (fact, take and link ids),
  * and the check re-reads the provenance each run, so a new row, a removed row or a later non-importer write puts the
- * page back on the list. A write with no request keeps the importer's first-write stamp, so on that path the stamp
- * counts only while no later write moved the page past it (`ingested_at >= updated_at`, both the write's own server time). The record is the config row `transcripts.fence_acceptance` (no operation writes config),
+ * page back on the list. Tag changes and re-embedding change no text, so they keep a page eligible (GST-4056). The record
+ * is the config row `transcripts.fence_acceptance` (no operation writes config),
  * and nothing in a page or its rows changes, so repo-less and repo-backed brains behave the same.
  */
 import type { BrainEngine } from '../engine.ts';
 import { computePlanHash } from '../consent.ts';
-import { IMPORTER_INGESTED_VIA, importerWroteLiveRevisionSql } from './importer-provenance.ts';
+import { IMPORTER_INGESTED_VIA, importerWroteLiveTextSql } from './importer-provenance.ts';
 
 export const FENCE_ACCEPTANCE_KEY = 'transcripts.fence_acceptance';
 
@@ -36,9 +36,7 @@ export async function listOutsideFencePages(engine: BrainEngine): Promise<Outsid
   const rows = await engine.transaction(async tx => { await tx.executeRaw("SET LOCAL TimeZone = 'UTC'"); return tx.executeRaw<OutsideFencePage & { page_id: number | string }>(
     `SELECT p.id AS page_id, p.source_id, p.slug, p.type, sum(x.facts)::int AS facts, sum(x.world_facts)::int AS world_facts,
             sum(x.takes)::int AS takes, sum(x.links)::int AS links, md5(string_agg(x.k, ',' ORDER BY x.k)) AS fingerprint,
-            bool_and(p.type = 'conversation' AND p.frontmatter ? 'transcript_import' AND ${importerWroteLiveRevisionSql('p', 'r', '$1')}
-                     AND COALESCE(r.intent->>'ingested_via', p.ingested_via) = $1
-                     AND (p.revision_write_request_id IS NOT NULL OR p.ingested_at >= p.updated_at)) AS imported_transcript
+            bool_and(p.type = 'conversation' AND p.frontmatter ? 'transcript_import' AND ${importerWroteLiveTextSql('p', '$1')}) AS imported_transcript
        FROM (SELECT fp.id AS page_id, 1 AS facts, CASE WHEN f.visibility = 'world' THEN 1 ELSE 0 END AS world_facts, 0 AS takes, 0 AS links, 'f' || f.id || ':' || md5((to_jsonb(f) - ${PROJECTION_KEYS} - 'consolidated_at' - 'consolidated_into')::text) AS k
                FROM facts f JOIN pages fp ON fp.source_id = f.source_id AND fp.slug = f.source_markdown_slug
               WHERE f.row_num IS NOT NULL AND f.expired_at IS NULL
@@ -46,7 +44,6 @@ export async function listOutsideFencePages(engine: BrainEngine): Promise<Outsid
              UNION ALL SELECT l.origin_page_id, 0, 0, 0, 1, 'l' || l.id || ':' || md5((to_jsonb(l) - 'created_at')::text) FROM links l WHERE l.origin_field = 'links_fence') x
        JOIN pages p ON p.id = x.page_id
        JOIN sources s ON s.id = p.source_id
-       LEFT JOIN persistence_requests r ON r.id = p.revision_write_request_id
       WHERE p.deleted_at IS NULL AND s.archived IS NOT TRUE
         AND ((s.config->>'kind' = 'google' AND p.type IN ('email', 'meeting')) OR s.config->>'kind' = 'github'
              OR p.frontmatter ? 'transcript_import')
