@@ -14,7 +14,7 @@ import type { PostgresEngine } from '../../src/core/postgres-engine.ts';
 import type { Invalidation } from '../../src/shadow/invalidations.ts';
 import { hasDatabase } from './helpers.ts';
 import { persistencePostgresTemplate } from '../helpers/persistence-postgres.ts';
-import { failedPreReadKeepsTransaction, followHarness, PAGE, restoreFollowProbes } from '../helpers/follow-producer.ts';
+import { busyPreReadIsRelationLevel, failedPreReadKeepsSiblingWrites, failedPreReadKeepsTransaction, followHarness, PAGE, restoreFollowProbes } from '../helpers/follow-producer.ts';
 
 const d = hasDatabase() ? describe : describe.skip;
 
@@ -53,6 +53,8 @@ d('shadow follow producer on Postgres', () => {
   }, 60_000);
 
   test('a failed pre-read does not abort the transaction around it', async () => { await failedPreReadKeepsTransaction(engine); }, 60_000);
+  test('a failed pre-read does not undo sibling writes of the transaction that were in flight around it (pipelined)', async () => { await failedPreReadKeepsSiblingWrites(engine); }, 60_000);
+  test('a pre-read never waits for a running nested transaction: the write is relation-level (pre_read_busy) and every write commits', async () => { await busyPreReadIsRelationLevel(engine); }, 60_000);
 
   test('a rolled-back transaction and a rolled-back savepoint publish nothing for the undone work', async () => {
     const h = followHarness(engine);
