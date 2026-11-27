@@ -712,7 +712,6 @@ src/core/backup/status-file.ts#configBackup	catch_empty	1
 src/core/backup/status-file.ts#loadBackupStatus	catch_empty	1
 src/core/backup/status-file.ts#maybeEmitBackupNag	catch_empty	1
 src/core/backup/status-file.ts#recordBackupSpawn	catch_empty	1
-src/core/behavior-change-notice.ts#brainCreatedBefore	capability_refusal_swallowed	1
 src/core/behavior-change-notice.ts#brainCreatedBefore	catch_empty	1
 src/core/behavior-change-notice.ts#chainDisclosure	catch_empty	1
 src/core/behavior-change-notice.ts#localShownThrough	catch_empty	1
@@ -1183,7 +1182,6 @@ src/core/google/people-calendar-sweep.ts#contactPageRelPathByContactId	capabilit
 src/core/grants/service.ts#readClientCatalogProvenance	catch_empty	1
 src/core/guests/admission.ts#refuseRemoteGuestDelete	capability_refusal_swallowed	1
 src/core/guests/derived.ts#withoutGuestSources	catch_empty	1
-src/core/guests/marker.ts#brainHasGuestSource	capability_refusal_swallowed	1
 src/core/guests/marker.ts#loadGuestMarks	catch_empty	1
 src/core/harness/shared-skills.ts#installSharedSkillsConnection	promise_catch_empty	1
 src/core/health-memo.ts#readGeneration	catch_empty	1
@@ -1206,7 +1204,6 @@ src/core/ingestion/applied-captures.ts#purgeStaleAppliedCaptures	capability_refu
 src/core/ingestion/applied-captures.ts#purgeStaleAppliedCaptures	catch_empty	1
 src/core/ingestion/sources/gstack-learnings.ts#GstackLearningsSource.discoverPaths	catch_empty	1
 src/core/last-retrieved.ts#isTrackingEnabled	catch_empty	1
-src/core/last-retrieved.ts#startBump<anon@1>	capability_refusal_swallowed	1
 src/core/line-grammar-config.ts#describeLineGrammarChange	promise_catch_empty	1
 src/core/line-grammar.ts#effectiveRangesEnabled>read	promise_catch_empty	1
 src/core/line-grammar.ts#lineGrammarOptions>read	promise_catch_empty	1
@@ -1404,7 +1401,6 @@ src/core/owned-folder/writer.ts#holdsFiles	catch_empty	1
 src/core/pace-mode.ts#loadPaceModeConfig>safeGet	catch_empty	1
 src/core/page-body/projection.ts#projectSegmentedPage	capability_refusal_swallowed	1
 src/core/page-body/projection.ts#projectSegmentedPage	promise_catch_empty	1
-src/core/page-body/projection.ts#rebuildPendingSegmentedProjections	capability_refusal_swallowed	1
 src/core/page-body/segment-derive.ts#continueDerivationPurges	capability_refusal_swallowed	2	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/page-body/segment-derive.ts#continueDerivationPurges>finishParked	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/page-body/streamed-import.ts#importScanned	promise_catch_empty	1
@@ -1416,7 +1412,6 @@ src/core/page-lock.ts#tryAcquireOnce>release	catch_empty	1
 src/core/page-spend.ts#resolvePageDerivationCapUsd	promise_catch_empty	1
 src/core/page-state/projections.ts#continueDeferredProjection>release	promise_catch_empty	1
 src/core/page-state/projections.ts#embeddingWriteTarget	catch_empty	1
-src/core/page-state/projections.ts#rebuildPendingPageProjections>runJob	capability_refusal_swallowed	1
 src/core/page-state/rename-alias.ts#recordRenameAlias	capability_refusal_swallowed	2	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/page-state/rename-alias.ts#recordSlugLineAlias	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/page-state/revision-backfill-schema.ts#readState	catch_empty	1
@@ -1439,6 +1434,7 @@ src/core/persistence/connector-sync.ts#prepareConnectorMutation	promise_catch_em
 src/core/persistence/consumer-diagnostics.ts#hostIdentityMismatches<anon@1>	catch_empty	1
 src/core/persistence/consumer-election.ts#WaiterOnlyConsumer.reportServeOverlap	catch_empty	1
 src/core/persistence/consumer-heartbeat.ts#consumerIdentity	catch_empty	2
+src/core/persistence/consumer-heartbeat.ts#startConsumerHeartbeat>stop	catch_empty	2	the stop-time delete and stamp are typed engine members on a Rust brain (master sent them through executeRaw, which this guard does not count here); the handler is unchanged (best effort at stop: the row lapses on its own)
 src/core/persistence/coordinator.ts#interruptionCharge	catch_empty	1
 src/core/persistence/coordinator.ts#publishMutation	capability_refusal_swallowed	1
 src/core/persistence/deactivation.ts#gitManagedMarker	catch_empty	1
@@ -1479,7 +1475,6 @@ src/core/persistence/graduation-custody.ts#graduationHandOffRequested	catch_empt
 src/core/persistence/graduation-custody.ts#readTombstone	catch_empty	1
 src/core/persistence/graduation-inventory.ts#schemaVersion	capability_refusal_swallowed	1
 src/core/persistence/graduation-inventory.ts#schemaVersion	catch_empty	1
-src/core/persistence/graduation-schema.ts#readGraduationConnectRow	capability_refusal_swallowed	1
 src/core/persistence/graduation-serve-guard.ts#readGraduationManifestSummary	catch_empty	1
 src/core/persistence/graduation-target.ts#probeTarget<anon@1>	catch_empty	1
 src/core/persistence/graduation-verify.ts#replayProbe	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
@@ -1508,10 +1503,8 @@ src/core/persistence/loop-fact-retirement.ts#retireLoopFact	capability_refusal_s
 src/core/persistence/managed-sync-orphans.ts#mirrorOnlyManagedFailures	catch_empty	1
 src/core/persistence/memory-proposals.ts#pendingProposalSummary	capability_refusal_swallowed	1
 src/core/persistence/memory-proposals.ts#readProposalLimits<anon@1>	promise_catch_empty	1
-src/core/persistence/memory-proposals.ts#runMemoryProposalUpkeep	capability_refusal_swallowed	1
 src/core/persistence/page-advisories.ts#similarPagesAdvisory	promise_catch_empty	1
 src/core/persistence/page-append.ts#prepareSegmentedSpliceMutation	promise_catch_empty	1
-src/core/persistence/page-mutations.ts#preparePageAdmission<anon@5>	capability_refusal_swallowed	1
 src/core/persistence/page-prepare.ts#prepareInlineOrSegmentedMutation<anon@3>	promise_catch_empty	1
 src/core/persistence/page-prepare.ts#prepareSegmentedTagMutation	promise_catch_empty	1
 src/core/persistence/page-visibility.ts#assertLabelledOnlyCreate	capability_refusal_swallowed	1
@@ -1527,17 +1520,14 @@ src/core/persistence/put-page-screen.ts#unchangedPutPage	capability_refusal_swal
 src/core/persistence/put-page-screen.ts#unchangedPutPage	catch_empty	1
 src/core/persistence/recovery-resolve.ts#scanStuckRecoveries	promise_catch_empty	1
 src/core/persistence/refresh-barrier.ts#deferredWaiting	capability_refusal_swallowed	1
-src/core/persistence/refresh-barrier.ts#expireDeferredWrites	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
 src/core/persistence/refresh-retry-hint.ts#refreshRetryHint	capability_refusal_swallowed	1
 src/core/persistence/refresh-retry-hint.ts#refreshRetryHint	promise_catch_empty	1
 src/core/persistence/repair-busy.ts#loadRepairBusySet	capability_refusal_swallowed	1
 src/core/persistence/resolve-paths.ts#resolveSourcePaths	promise_catch_empty	1
 src/core/persistence/root-registry.ts#isGitDirectory	catch_empty	1
-src/core/persistence/schema-admission.ts#readSchemaBehind	capability_refusal_swallowed	1
 src/core/persistence/schema-admission.ts#readSchemaBehind	catch_empty	1
-src/core/persistence/segmented-mirror-gate.ts#resumeGatedMirrors	capability_refusal_swallowed	1
 src/core/persistence/segmented-mirror-gate.ts#resumeGatedMirrors	catch_empty	1
-src/core/persistence/service.ts#awaitWrite	promise_catch_empty	4
+src/core/persistence/service.ts#awaitWrite	promise_catch_empty	3
 src/core/persistence/soak-counters.ts#recordSoakEvent	capability_refusal_swallowed	1
 src/core/persistence/soak-counters.ts#recordSoakEvent	promise_catch_empty	1
 src/core/persistence/source-lifecycle.ts#runManagedSourceLifecycle	capability_refusal_swallowed	1	seen once the rule counts executeRawDirect, bare executeRawJsonb and awaited callbacks (PR review); fix by rethrowCapabilityRefusal(err)
@@ -1998,8 +1988,6 @@ src/core/source-resolver.ts#requestSourceRows<anon@1>	promise_catch_empty	1
 src/core/source-resolver.ts#resolveSourceIdChain	promise_catch_empty	1
 src/core/source-resolver.ts#resolveSourceWithTierChain	promise_catch_empty	1
 src/core/source-resolver.ts#refusedSourceTarget	promise_catch_empty	1	fail-closed, not an empty answer: a failed listAllSources returns null, which refusedSourceTarget turns into true (refuse the command), so a read failure never falls back to the cross-source view (Rust engine CLI connect, #9946)
-src/core/sources-load.ts#fetchSource	capability_refusal_swallowed	1
-src/core/sources-load.ts#loadAllSources	capability_refusal_swallowed	1
 src/core/sources-not-readable.ts#assertUnscopedReadReachesPages	capability_refusal_swallowed	1
 src/core/sources-not-readable.ts#assertUnscopedReadReachesPages	catch_empty	1
 src/core/sources-ops.ts#addSource	capability_refusal_swallowed	1

@@ -25,7 +25,27 @@ brain, and what master plus import parts A and B still refuse. It is a measureme
   `moveChunkIndexes`. Part E drops them if D lands first.
 - 62 raw SQL caller sites in 38 files run on the PGLite put and get path.
 
-## Current stop points (this branch: master plus A, B and the draft journal port)
+## Result (import part E)
+
+- `gbrain put` (new page, second page, update with `--expected-revision`) and `gbrain get` (`--json` and raw) exit 0
+  on a non-managed Rust brain. `test/rust-cli-put.test.ts` runs the same CLI calls on PGLite, Postgres and Rust and
+  compares stdout, the JSON key order and the stored bytes; it fails on the part E base and passes on this branch.
+- All 60 members above are served. 85 more members that the put and get path reaches are served too, with the
+  `getChunks`, `readPageSnapshot`/`getPage` and `createVersion` options rust-engine/main added. `readPageTrustRows`
+  now carries `precedence` (Rust: `cli_reads/precedence.rs`; no store format change).
+- `hasExtractedEvents` and `pageAwaitsRederive` are served by `put_reads.rs` and answer `false`: master's store has
+  no extracted-event or rederive state, so `false` is the true answer there (no store format bump).
+- Refusals that remain on the path, none of which changes the output:
+  - `slug-params.ts` `storedSpellings` runs raw SQL on a `get` miss; the refusal is caught and the miss is reported
+    as on the other engines.
+  - `MinionQueue.add` with `coalesceOnIdempotencyKey` on a short put; the refusal is caught and no job is queued.
+  - A slug stored with capital letters: the Rust store lowercases slugs, so it refuses `engine_capability_missing`
+    (`putPage (a slug with capitals)`) instead of storing a second spelling.
+- Not on the put and get path, still refused on Rust: `delete_page` (`originOf`), `restore_page`
+  (`clearOwedPurges`), `append_page` (`inlineRegions`), the facts and takes fence projection family, multi-source
+  `getChunks`, and the fuzzy `get` fallback's `SET TRANSACTION ISOLATION LEVEL REPEATABLE READ`.
+
+## Current stop points before part E (master plus A, B and the draft journal port)
 
 - put: `src/core/ops/page-mutations.ts:454` runs `ADMISSION_SOURCE_SQL` through `executeRaw`. rust-engine/main calls
   `ctx.engine.readAdmissionSource(sourceId)` there (and in `preadmit-cache.ts`). Earlier, the walk passes a

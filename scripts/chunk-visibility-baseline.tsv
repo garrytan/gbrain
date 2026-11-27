@@ -31,7 +31,6 @@ src/core/facts/withdrawal-discovery.ts	1
 src/core/import-file.ts	1
 src/core/oversized-backfill.ts	2
 src/core/page-state/contextual-proof.ts	1
-src/core/persistence/embedding-noop-settle.ts	1
 src/core/persistence/page-purge.ts	1
 src/core/pglite-engine.ts	1
 src/core/postgres-engine.ts	1

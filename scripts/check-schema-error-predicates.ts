@@ -40,7 +40,6 @@ const ALLOWLIST: Record<string, string> = {
   'src/core/ops/request-tools.ts': 'surface-column degrade on the request-tools op; per-column audit is a follow-up',
   'src/core/token-mint.ts': 'maps a missing grant column to a schema refusal (never a silent ok)',
   'src/core/trust/min-trust.ts': 'maps a missing min_trust column to migrations_pending (a refusal, never a silent ok)',
-  'src/core/sources-load.ts': 'local code-only 42703 helper behind the sources projection ladder; per-column audit is a follow-up',
   'src/core/migration-orchestration-lock.ts': 'lock probe treats a pre-lock schema as "no lock held" before migrations run',
 };
 
