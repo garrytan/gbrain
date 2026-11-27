@@ -371,9 +371,10 @@ fn c01_same_page_writers_lose_no_update_multi_writer() {
             let body = format!("body {i} {round}");
             loop {
                 let tx = begin_host(&s, i);
-                let expected = json!({"expectedRevision": revision(&tx, "doc")});
+                let expected = json!({"expectedRevision": revision(tx.store(), "doc")});
                 let n = attempts.fetch_add(1, Ordering::SeqCst);
                 let receipt = tx
+                    .store()
                     .submit_page_mutation(&mutation_with(n, "doc", &body, expected), None)
                     .unwrap();
                 if receipt["state"] != "committed" {
@@ -447,10 +448,13 @@ fn c02_stale_revision_gets_a_typed_conflict_multi_writer() {
         ..Default::default()
     };
     first
+        .store()
         .upsert_chunks("doc", &chunks, &with(&read_at))
         .unwrap();
     commit_host(&store, first);
-    let stale = second.upsert_chunks("doc", &chunks, &with(&read_at));
+    let stale = second
+        .store()
+        .upsert_chunks("doc", &chunks, &with(&read_at));
     let refused = match stale {
         Err(e) => Some(e.code.to_string()),
         Ok(_) => store.commit_position(second).err().map(|e| {
@@ -465,7 +469,8 @@ fn c02_stale_revision_gets_a_typed_conflict_multi_writer() {
     );
     let retry = begin_host(&store, 2);
     retry
-        .upsert_chunks("doc", &chunks, &with(&revision(&retry, "doc")))
+        .store()
+        .upsert_chunks("doc", &chunks, &with(&revision(retry.store(), "doc")))
         .unwrap();
     commit_host(&store, retry);
     assert!(
@@ -545,7 +550,7 @@ fn c03_two_claimers_of_one_write_never_both_claim_multi_writer() {
             fence: Some(f[i].clone()),
             ..ClaimableSpec::default()
         };
-        let row = tx.select_claimable_write(&spec).unwrap()?;
+        let row = tx.store().select_claimable_write(&spec).unwrap()?;
         let stamp = ClaimStamp {
             id: row["id"].as_str().unwrap().into(),
             token: format!("c0000000-0000-4000-8000-{i:012}"),
@@ -553,7 +558,7 @@ fn c03_two_claimers_of_one_write_never_both_claim_multi_writer() {
             phase_json: None,
             fence: Some(f[i].clone()),
         };
-        tx.stamp_write_claim(&stamp).unwrap()?;
+        tx.store().stamp_write_claim(&stamp).unwrap()?;
         match s.commit_position(tx) {
             Ok(_) => Some(i),
             Err(e) => {
@@ -845,7 +850,7 @@ fn c06_stale_holder_data_write_refused_by_its_token_multi_writer() {
     // The paused holder asserts its lease, writes and then pauses before its commit.
     let paused = begin_host(&b, 1);
     paused.assert_lease(&first).unwrap();
-    put(&paused, "protected", "from the paused holder");
+    put(paused.store(), "protected", "from the paused holder");
     b.clock.advance(120_000);
     let second = b
         .acquire_lease("cycle", &origin(2), 60_000)
@@ -871,7 +876,7 @@ fn c06_stale_holder_data_write_refused_by_its_token_multi_writer() {
     drop(late);
     let holder = begin_host(&b, 2);
     holder.assert_lease(&second).unwrap();
-    put(&holder, "protected", "from the new holder");
+    put(holder.store(), "protected", "from the new holder");
     commit_host(&b, holder);
     assert_eq!(current_body(&b, "protected"), "from the new holder");
 }
@@ -1066,7 +1071,7 @@ fn c06_partitioned_host_old_epoch_work_refused_multi_writer() {
         .expect("host A takes the lease");
     let tx = begin_host(&b, 1);
     tx.assert_lease(&a).unwrap();
-    put(&tx, "protected", "from the partitioned host");
+    put(tx.store(), "protected", "from the partitioned host");
     b.clock.advance((TTL_MS as i64 + 1) * 1000);
     assert_lost(
         &b.renew_lease(&a, TTL_MS).unwrap_err(),
@@ -1103,7 +1108,7 @@ fn c06_partitioned_host_old_epoch_work_refused_multi_writer() {
     drop(again);
     let holder = begin_host(&b, 2);
     holder.assert_lease(&taken).unwrap();
-    put(&holder, "protected", "from the current holder");
+    put(holder.store(), "protected", "from the current holder");
     commit_host(&b, holder);
     assert_eq!(current_body(&b, "protected"), "from the current holder");
 }
@@ -1340,21 +1345,25 @@ fn c07_effect_claimed_once_by_racing_hosts_multi_writer() {
     let (s, f) = (b.clone(), fences.clone());
     let won = together(8, move |i| {
         let tx = begin_host(&s, i);
-        let candidate = tx.select_claimable_effect(EFFECT_HOST, &[]).unwrap();
+        let candidate = tx
+            .store()
+            .select_claimable_effect(EFFECT_HOST, &[])
+            .unwrap();
         let claimed = candidate
             .get("id")
             .and_then(Value::as_str)
             .and_then(|effect| {
-                tx.stamp_effect_claim(&EffectClaim {
-                    id: effect.into(),
-                    token: format!("f0000000-0000-4000-8000-{i:012}"),
-                    owner_json:
-                        json!({"token": i, "owner": {"pid": 7, "nonce": "n", "start": "s"}})
-                            .to_string(),
-                    fence: Some(f[i].clone()),
-                    dead_owners: Vec::new(),
-                })
-                .unwrap()
+                tx.store()
+                    .stamp_effect_claim(&EffectClaim {
+                        id: effect.into(),
+                        token: format!("f0000000-0000-4000-8000-{i:012}"),
+                        owner_json:
+                            json!({"token": i, "owner": {"pid": 7, "nonce": "n", "start": "s"}})
+                                .to_string(),
+                        fence: Some(f[i].clone()),
+                        dead_owners: Vec::new(),
+                    })
+                    .unwrap()
             });
         match s.commit_position(tx) {
             Ok(_) => claimed.map(|_| i),
@@ -1592,7 +1601,7 @@ fn c11_per_entity_order_equals_commit_order_multi_writer() {
         let mut first_try = true;
         loop {
             let tx = begin_host(&s, i);
-            let id = fact(&tx, &text);
+            let id = fact(tx.store(), &text);
             if first_try {
                 // Every transaction is open before the first one commits.
                 gate.wait();
@@ -1678,14 +1687,14 @@ fn c12_two_transactions_read_only_their_own_writes_multi_writer() {
     together(2, move |i| {
         let (mine, theirs) = (format!("tx/{i}"), format!("tx/{}", 1 - i));
         let tx = begin_host(&s, i);
-        put(&tx, &mine, "uncommitted");
+        put(tx.store(), &mine, "uncommitted");
         gate.wait();
         assert!(
-            exists(&tx, &mine),
+            exists(tx.store(), &mine),
             "a transaction cannot read its own write"
         );
         assert!(
-            !exists(&tx, &theirs),
+            !exists(tx.store(), &theirs),
             "a transaction read the other's uncommitted write"
         );
         assert!(
@@ -1731,12 +1740,12 @@ fn c13_transactions_on_different_keys_do_not_wait_multi_writer() {
     let store = Arc::new(open_optimistic(&dir));
     put(&store, "notes/a", "before");
     let tx = begin_host(&store, 1);
-    put(&tx, "notes/a", "from the transaction");
+    put(tx.store(), "notes/a", "from the transaction");
     let (done, landed) = mpsc::channel();
     let s = store.clone();
     let other = thread::spawn(move || {
         let tx = begin_host(&s, 2);
-        put(&tx, "notes/b", "another key");
+        put(tx.store(), "notes/b", "another key");
         commit_host(&s, tx);
         done.send(()).unwrap();
     });
@@ -1851,7 +1860,7 @@ fn c15_single_flight_holds_only_its_keys_multi_writer() {
         s.single_flight(&tx, &[flight(key)]).unwrap();
         mk.fetch_max(p[key].fetch_add(1, Ordering::SeqCst) + 1, Ordering::SeqCst);
         mt.fetch_max(i2.fetch_add(1, Ordering::SeqCst) + 1, Ordering::SeqCst);
-        put(&tx, &format!("key/{key}"), "held");
+        put(tx.store(), &format!("key/{key}"), "held");
         thread::sleep(Duration::from_millis(20));
         p[key].fetch_sub(1, Ordering::SeqCst);
         i2.fetch_sub(1, Ordering::SeqCst);
@@ -2192,8 +2201,19 @@ fn c19_child_writer() {
                     // writer's. A line the kill cuts in half has no newline and is dropped by the parent.
                     let outcome: std::result::Result<Value, String> = if explicit {
                         std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                            let tx = begin_host(store, w);
-                            let receipt = tx.submit_page_mutation(&m, None).unwrap();
+                            // Optimistic needs multi-user mode on the concurrent store; any other brain runs the
+                            // explicit transaction serialized (optimistic mode is refused there, never faked).
+                            let tx = if logged && optimistic {
+                                begin_host(store, w)
+                            } else {
+                                store
+                                    .begin_with(TxnOptions {
+                                        origin: Some(origin(w)),
+                                        ..TxnOptions::default()
+                                    })
+                                    .unwrap_or_else(|e| panic!("{e}"))
+                            };
+                            let receipt = tx.store().submit_page_mutation(&m, None).unwrap();
                             commit_host(store, tx);
                             receipt
                         }))
@@ -2737,7 +2757,7 @@ fn c20_no_deadlock_across_two_pages_in_both_orders_multi_writer() {
                     let tx = begin_host(&s, i);
                     s.single_flight(&tx, &keys).unwrap();
                     for slug in order {
-                        put(&tx, slug, &format!("writer {i} {round}"));
+                        put(tx.store(), slug, &format!("writer {i} {round}"));
                     }
                     match s.commit_position(tx) {
                         Ok(position) => {
@@ -2804,7 +2824,7 @@ fn c21_read_your_writes_token_on_a_second_connection_multi_writer() {
     )
     .unwrap_or_else(|e| panic!("{e}"));
     let tx = begin_host(&store, 1);
-    put(&tx, "notes/a", "acknowledged on A");
+    put(tx.store(), "notes/a", "acknowledged on A");
     let position = commit_host(&store, tx);
     let token = position.token();
     assert!(token.starts_with("cp1:"), "{token}");
@@ -3092,7 +3112,7 @@ fn c22_follower_replay_keeps_commit_times_rising_and_row_times_above_the_floor_m
         .unwrap_or_else(|e| panic!("{e}"));
     for i in 0..8 {
         let tx = begin_host(&primary, i);
-        put(&tx, &format!("c22f/{i}"), "primary commit");
+        put(tx.store(), &format!("c22f/{i}"), "primary commit");
         commit_host(&primary, tx);
     }
     let log = primary
@@ -3147,7 +3167,7 @@ fn c22_follower_replay_keeps_commit_times_rising_and_row_times_above_the_floor_m
     for i in 0..4 {
         let tx = begin_host(&follower, 20 + i);
         put(
-            &tx,
+            tx.store(),
             &format!("after-promotion/{i}"),
             "committed on the follower",
         );
@@ -3335,17 +3355,8 @@ fn mu_adapter_stubs_are_still_pending() {
     }
     let dir = TempDir::new("mu");
     let store = open(&dir);
-    // Landed with the optimistic-transactions lane (I-1), so no longer stubs: `begin_with`, `single_flight` and the commit
-    // position of a transaction (`MuStore::commit_position` calls the real `Transaction::commit_at`).
-    let txn = store.begin_with(TxnOptions::default()).unwrap();
-    let key = SingleFlightKey {
-        source_id: "default".into(),
-        slug: "a".into(),
-    };
-    store.single_flight(&txn, &[key]).unwrap();
-    // `commit_position` is served by the commit-log lane (`commit_transaction_at`): a real position, not a stub.
-    put(&txn, "stubs/commit-position", "one commit");
-    assert!(store.commit_position(txn).unwrap().sequence > 0);
+    // Landed members (I-1 `begin_with`, `single_flight`, `Transaction::commit`) are asserted in
+    // `mu_adapter_landed_members_behave` below; this test lists only the stubs.
     assert_eq!(
         owner("apply_log", store.apply_log(&[])),
         L2_LOG,
@@ -3375,4 +3386,56 @@ fn mu_adapter_stubs_are_still_pending() {
     let at = |sequence, index| CommitPosition { sequence, index };
     assert!(at(1, 5) < at(2, 0) && at(2, 0) < at(2, 1));
     assert_eq!(at(2, 1).token(), "cp1:2.1");
+}
+
+/// The I-1 members the adapter re-exports since they landed (lane L1), asserted against their contract instead of
+/// listed as stubs: optimistic mode needs a multi-user brain (`invalid_state` otherwise, never a quiet serialized run);
+/// `single_flight` holds its keys until the transaction ends (a second holder waits to its deadline, then `key_wait`);
+/// `Transaction::commit` answers rising commit positions; the bound store cannot end a `Transaction` behind its back.
+#[test]
+fn mu_adapter_landed_members_behave() {
+    let off_dir = TempDir::new("mu-landed-off");
+    let off = open(&off_dir);
+    let refused = off
+        .begin_with(host_options(0))
+        .err()
+        .expect("an optimistic transaction began without multi-user mode");
+    assert_eq!(refused.code, INVALID_STATE, "{refused}");
+
+    let dir = TempDir::new("mu-landed");
+    let store = open_optimistic(&dir);
+    let key = SingleFlightKey {
+        source_id: "default".into(),
+        slug: "landed/a".into(),
+    };
+    let holder = begin_host(&store, 1);
+    assert!(holder.store().transaction_optimistic());
+    store
+        .single_flight(&holder, std::slice::from_ref(&key))
+        .unwrap();
+    put(holder.store(), "landed/a", "held");
+    let waiter = store
+        .begin_with(TxnOptions {
+            deadline: Some(Instant::now() + Duration::from_millis(50)),
+            ..host_options(2)
+        })
+        .unwrap();
+    let wait = store
+        .single_flight(&waiter, std::slice::from_ref(&key))
+        .unwrap_err();
+    assert_eq!(wait.code, TIMEOUT, "{wait}");
+    assert!(wait.message.starts_with("key_wait: "), "{wait}");
+    waiter.rollback().unwrap();
+    assert_eq!(
+        holder.store().commit_transaction().unwrap_err().code,
+        INVALID_STATE
+    );
+    let first = holder.commit().unwrap();
+    let next = begin_host(&store, 3);
+    store
+        .single_flight(&next, std::slice::from_ref(&key))
+        .unwrap();
+    put(next.store(), "landed/a", "after the holder");
+    let second = commit_host(&store, next);
+    assert!(second > first, "{second:?} after {first:?}");
 }

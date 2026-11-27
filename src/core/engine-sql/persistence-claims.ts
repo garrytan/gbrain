@@ -276,6 +276,8 @@ export interface ConsumerRenewal {
   hostId: string; pid: number; nonce: string; pidNs: string | null; kind: string; mode: string; restartRequired: boolean; rootBarrierAgeMs: number | null;
   pool: string | null; hostJsonPath: string; persistenceHome: string; mintedUnder: string | null; version: string; purgeMs: number;
   bootId: string | null; processStart: string | null;
+  /** The host fence (multi-user Rust only; lane L5): a renewal under a moved epoch is refused. The SQL engines ignore it. */
+  fence?: LeaseToken;
 }
 /** The row a stopping consumer deletes. */
 export interface ConsumerRowKey { hostId: string; pid: number; nonce: string }

@@ -1819,8 +1819,13 @@ fn an_optimistic_rollback_drop_or_lost_run_logs_no_data_and_the_rerun_logs_it_on
         serde_json::from_value(json!({"type": "note", "title": "t", "compiled_truth": body}))
             .unwrap()
     };
-    let optimistic = || TxnOptions {
-        mode: TxnMode::Optimistic,
+    // Optimistic on the concurrent store; the single-writer store refuses it, so that half runs serialized.
+    let options_for = |concurrent: bool| TxnOptions {
+        mode: if concurrent {
+            TxnMode::Optimistic
+        } else {
+            TxnMode::Serialized
+        },
         ..TxnOptions::default()
     };
     let only_counters = |records: &[commit_log::CommitRecord], what: &str| {
@@ -1840,7 +1845,7 @@ fn an_optimistic_rollback_drop_or_lost_run_logs_no_data_and_the_rerun_logs_it_on
         let mut follower = Follower::copy_of(&*kv, &dir.path().join("f.redb"));
         let start = store.read_commit_log(None, usize::MAX).unwrap().newest;
         // Rolled back.
-        let tx = store.begin_with(optimistic()).unwrap();
+        let tx = store.begin_with(options_for(concurrent)).unwrap();
         assert_eq!(tx.store().transaction_optimistic(), concurrent);
         tx.store()
             .put_page("opt/rolled", &page("never"), &PutPageOptions::default())
@@ -1848,14 +1853,14 @@ fn an_optimistic_rollback_drop_or_lost_run_logs_no_data_and_the_rerun_logs_it_on
         tx.rollback().unwrap();
         // Dropped.
         {
-            let tx = store.begin_with(optimistic()).unwrap();
+            let tx = store.begin_with(options_for(concurrent)).unwrap();
             tx.store()
                 .put_page("opt/dropped", &page("never"), &PutPageOptions::default())
                 .unwrap();
         }
         // A run that loses its validation (concurrent store only: a single-writer one holds the
         // writer, so nothing can change what it read).
-        let first = store.begin_with(optimistic()).unwrap();
+        let first = store.begin_with(options_for(concurrent)).unwrap();
         first
             .store()
             .put_page(
@@ -1885,7 +1890,7 @@ fn an_optimistic_rollback_drop_or_lost_run_logs_no_data_and_the_rerun_logs_it_on
             &format!("concurrent {concurrent}: an aborted optimistic run"),
         );
         // The run again: one record carries its data.
-        let again = store.begin_with(optimistic()).unwrap();
+        let again = store.begin_with(options_for(concurrent)).unwrap();
         again
             .store()
             .put_page(
@@ -1894,8 +1899,7 @@ fn an_optimistic_rollback_drop_or_lost_run_logs_no_data_and_the_rerun_logs_it_on
                 &PutPageOptions::default(),
             )
             .unwrap();
-        let at = again.store().commit_transaction_at().unwrap();
-        drop(again);
+        let at = again.commit().unwrap();
         let with_data: Vec<_> = store
             .read_commit_log(start, usize::MAX)
             .unwrap()
@@ -1912,5 +1916,65 @@ fn an_optimistic_rollback_drop_or_lost_run_logs_no_data_and_the_rerun_logs_it_on
         assert_eq!(with_data[0].position, at);
         follower.catch_up(&store);
         assert_eq!(follower.data(), data(&*kv));
+    }
+}
+
+/// An abandoned explicit transaction (rolled back, dropped, or a run whose commit was refused) leaves at
+/// most one commit-log record, and only when it took ids: that record holds `raise_counter` ops and
+/// nothing else, so a follower raises the same id sequences and never hands those ids out again after a
+/// failover (rust/docs/store/commit-log.md, "What a record holds"). One that took no id leaves no record.
+/// Both store modes; optimistic on the concurrent one, serialized on the single-writer one.
+#[test]
+fn an_abandoned_transaction_logs_one_counter_record_only_when_it_took_ids() {
+    use gbrain_store::pages::{PageInput, PutPageOptions};
+    use gbrain_store::transactions::{TxnMode, TxnOptions};
+    let page = |body: &str| -> PageInput {
+        serde_json::from_value(json!({"type": "note", "title": "t", "compiled_truth": body}))
+            .unwrap()
+    };
+    for concurrent in MODES {
+        let mode = if concurrent {
+            TxnMode::Optimistic
+        } else {
+            TxnMode::Serialized
+        };
+        let options = || TxnOptions {
+            mode,
+            ..TxnOptions::default()
+        };
+        let dir = TempDir::new("abandoned-counters");
+        let (kv, store) = leader(&dir.path().join("r.redb"), concurrent, mu());
+        let mut follower = Follower::copy_of(&*kv, &dir.path().join("f.redb"));
+        let newest = |store: &Store| store.read_commit_log(None, usize::MAX).unwrap().newest;
+        // No id taken (a read and a config write): no record.
+        let before = newest(&store);
+        let tx = store.begin_with(options()).unwrap();
+        assert!(tx.store().get_config("abandoned.k").unwrap().is_none());
+        tx.store().set_config("abandoned.k", "v").unwrap();
+        tx.rollback().unwrap();
+        assert_eq!(
+            newest(&store),
+            before,
+            "concurrent {concurrent}: an idless rollback logged a record"
+        );
+        // An id taken (a page): exactly one record, counter raises only.
+        let tx = store.begin_with(options()).unwrap();
+        tx.store()
+            .put_page("abandoned/page", &page("never"), &PutPageOptions::default())
+            .unwrap();
+        drop(tx);
+        let records = store.read_commit_log(before, usize::MAX).unwrap().records;
+        assert_eq!(records.len(), 1, "concurrent {concurrent}: {records:?}");
+        assert!(!records[0].ops.is_empty());
+        for (key, op) in &records[0].ops {
+            assert!(
+                matches!(op, LogOp::RaiseCounter(_)),
+                "concurrent {concurrent}: a data op on {}: {op:?}",
+                key.escape_ascii()
+            );
+        }
+        // The follower raises the same sequence, so the next id the leader hands out is one it never gave.
+        follower.catch_up(&store);
+        assert_eq!(follower.data(), data(&*kv), "concurrent {concurrent}");
     }
 }

@@ -50,9 +50,15 @@ fn origin(i: usize) -> WriteOrigin {
     }
 }
 
-fn begin_host(s: &Store, i: usize) -> MuTxn {
+/// An optimistic transaction on the concurrent store; the single-writer store refuses optimistic mode, so
+/// that half of a two-store case runs serialized.
+fn begin_host(s: &Store, i: usize, optimistic: bool) -> MuTxn {
     s.begin_with(TxnOptions {
-        mode: TxnMode::Optimistic,
+        mode: if optimistic {
+            TxnMode::Optimistic
+        } else {
+            TxnMode::Serialized
+        },
         deadline: None,
         origin: Some(origin(i)),
         ..TxnOptions::default()
@@ -393,8 +399,8 @@ fn every_write_path_is_logged_aborted_then_retried_optimistic_commit_multi_write
     let store = &brain.store;
     let (_, start) = log_since(store, None);
     let before = mu::image_of(&*brain.kv);
-    let aborted = begin_host(store, 1);
-    put(&aborted, "retried/page", "first attempt");
+    let aborted = begin_host(store, 1, true);
+    put(aborted.store(), "retried/page", "first attempt");
     drop(aborted);
     let (records, _) = log_since(store, start);
     assert!(
@@ -406,8 +412,8 @@ fn every_write_path_is_logged_aborted_then_retried_optimistic_commit_multi_write
     );
     logged::log_explains_change(&before, &mu::image_of(&*brain.kv), &records)
         .unwrap_or_else(|e| panic!("after the abort: {e}"));
-    let retry = begin_host(store, 1);
-    put(&retry, "retried/page", "second attempt");
+    let retry = begin_host(store, 1, true);
+    put(retry.store(), "retried/page", "second attempt");
     let position = commit_host(store, retry);
     let (records, _) = log_since(store, start);
     let data_records: Vec<&CommitRecord> = records
@@ -446,6 +452,7 @@ fn mutation(n: usize, slug: &str, body: &str) -> PageMutation {
 /// Runs request `n` (a page write) inside the explicit transaction `tx`; the receipt it gives inside is `committed`.
 fn submit_in(tx: &MuTxn, n: usize, slug: &str, body: &str) {
     let receipt = tx
+        .store()
         .submit_page_mutation(&mutation(n, slug, body), None)
         .unwrap();
     assert_eq!(receipt["state"], "committed", "{receipt}");
@@ -501,11 +508,12 @@ fn an_abandoned_optimistic_transaction_leaves_nothing(ending: Ending) {
     put(store, "kept/page", "committed before");
     let (_, start) = log_since(store, None);
     let before = mu::image_of(&*brain.kv);
-    let tx = begin_host(store, 1);
+    let tx = begin_host(store, 1, true);
     submit_in(&tx, 1, "never/committed", "written in the transaction");
-    put(&tx, "also/never", "a second write");
+    put(tx.store(), "also/never", "a second write");
     assert!(
-        tx.read_page_snapshot("never/committed", &ReadScope::default())
+        tx.store()
+            .read_page_snapshot("never/committed", &ReadScope::default())
             .unwrap()
             .is_some(),
         "the transaction cannot read its own write"
@@ -553,7 +561,7 @@ fn an_abandoned_optimistic_transaction_leaves_nothing(ending: Ending) {
     doctored.push(with_data);
     assert!(leaves_no_trace(&before, &after, &doctored, &ids).is_err());
     // The brain is still usable: the same request runs again and is logged.
-    let again = begin_host(store, 1);
+    let again = begin_host(store, 1, true);
     submit_in(&again, 1, "never/committed", "written in the transaction");
     let position = commit_host(store, again);
     let (records, _) = log_since(store, start);
@@ -587,7 +595,7 @@ fn a_lost_run_and_its_rerun_are_logged_exactly_once_multi_writer() {
     let store = &brain.store;
     put(store, "doc", "seed");
     let (_, start) = log_since(store, None);
-    let (first, second) = (begin_host(store, 1), begin_host(store, 2));
+    let (first, second) = (begin_host(store, 1, true), begin_host(store, 2, true));
     submit_in(&first, 1, "doc", "from the first");
     submit_in(&second, 2, "doc", "from the second");
     let p1 = commit_host(store, first);
@@ -610,7 +618,7 @@ fn a_lost_run_and_its_rerun_are_logged_exactly_once_multi_writer() {
         "the lost run left a receipt"
     );
     // The rerun: the same request id, from a fresh read.
-    let rerun = begin_host(store, 2);
+    let rerun = begin_host(store, 2, true);
     submit_in(&rerun, 2, "doc", "from the second");
     let p2 = commit_host(store, rerun);
     assert!(
@@ -666,7 +674,7 @@ fn positions_are_in_commit_order_and_each_is_exactly_one_record_multi_writer() {
     let order = [3usize, 0, 5, 1, 4, 2];
     let mut open: Vec<Option<MuTxn>> = (0..6)
         .map(|i| {
-            let tx = begin_host(store, i);
+            let tx = begin_host(store, i, true);
             submit_in(
                 &tx,
                 100 + i,
@@ -703,7 +711,7 @@ fn positions_are_in_commit_order_and_each_is_exactly_one_record_multi_writer() {
                     for round in 0..3 {
                         loop {
                             let n = attempts.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                            let tx = begin_host(store, w);
+                            let tx = begin_host(store, w, true);
                             submit_in(&tx, n, "hot/page", &format!("writer {w} round {round}"));
                             match store.commit_position(tx) {
                                 Ok(p) => {
@@ -787,8 +795,8 @@ fn second_host_promotion_keeps_clock_floor_and_positions_multi_writer() {
         let a = mu::open_logged(&a_path, optimistic, Clock::at(T0), HOST_A)
             .unwrap_or_else(|e| panic!("{e}"));
         for i in 0..6 {
-            let tx = begin_host(&a.store, i);
-            put(&tx, &format!("hand/{i}"), "committed on host A");
+            let tx = begin_host(&a.store, i, optimistic);
+            put(tx.store(), &format!("hand/{i}"), "committed on host A");
             commit_host(&a.store, tx);
         }
         let (a_records, a_last) = log_since(&a.store, None);
@@ -836,8 +844,8 @@ fn second_host_promotion_keeps_clock_floor_and_positions_multi_writer() {
         // B commits more: positions above A's last, commit times rising across the move, row times at or above the floor.
         let mut positions = Vec::new();
         for i in 0..4 {
-            let tx = begin_host(&b.store, 10 + i);
-            put(&tx, &format!("after/{i}"), "committed on host B");
+            let tx = begin_host(&b.store, 10 + i, optimistic);
+            put(tx.store(), &format!("after/{i}"), "committed on host B");
             positions.push(commit_host(&b.store, tx));
         }
         assert!(
@@ -864,8 +872,8 @@ fn second_host_promotion_keeps_clock_floor_and_positions_multi_writer() {
             "the old primary is fenced after the promotion (its lease epoch moved)",
         )
         .unwrap_or_else(|e| panic!("{e}"));
-        let late = begin_host(&a.store, 1);
-        put(&late, "late/write", "from the old primary");
+        let late = begin_host(&a.store, 1, optimistic);
+        put(late.store(), "late/write", "from the old primary");
         let refused = a.store.commit_position(late).unwrap_err();
         assert_lost(
             &refused,

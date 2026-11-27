@@ -37,6 +37,7 @@ import type { BrainEngine } from '../engine.ts';
 import type { ConsumerRowRead } from '../engine-sql/persistence-claims.ts';
 import { isProcessAlive, processStartTime, readBootId } from '../pglite-lock.ts';
 import { VERSION } from '../../version.ts';
+import { fenceOpts } from './host-fence.ts';
 import { hostIdentityPathsFor } from './identity.ts';
 
 /** Kinds whose process stays resident: they defer to the first live full consumer of their host (`serve` always starts full). */
@@ -249,7 +250,7 @@ export function startConsumerHeartbeat(engine: HeartbeatEngine, hostId: string, 
       await bounded(engine.renewConsumerRow({ hostId, pid: self.pid, nonce: self.nonce, pidNs: self.pid_ns, kind: opts.kind, mode,
         restartRequired: status.restart_required, rootBarrierAgeMs: status.root_barrier_age_ms, pool: status.pool ? JSON.stringify(status.pool) : null,
         hostJsonPath: paths.host_json_path, persistenceHome: paths.persistence_home, mintedUnder: paths.minted_under ? JSON.stringify(paths.minted_under) : null,
-        version: VERSION, purgeMs: CONSUMER_PURGE_MS, bootId: self.boot_id ?? null, processStart: self.start ?? null }, { signal: cancel.signal }), cancel, deadlineMs);
+        version: VERSION, purgeMs: CONSUMER_PURGE_MS, bootId: self.boot_id ?? null, processStart: self.start ?? null, ...fenceOpts(engine) }, { signal: cancel.signal }), cancel, deadlineMs);
       streak = 0;
     } catch (error) {
       if (!stopped) report(error);
