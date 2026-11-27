@@ -155,9 +155,10 @@ function packInventory(pack: PackRow | undefined, keys: HeadKey[], sourceId: str
   if (names.size !== active.size) throw inventoryError('revision_conflict', 'The sealed pack inventory omits current skill heads.', sourceId);
   return inventory;
 }
-async function heads(engine: BrainEngine, sourceId: string, incarnation: string, packId: string, names: string[]): Promise<StoredSkillRevision[]> {
+/** The named heads' revisions; with `metadataOnly`, only name, metadata and deleted, never file content. */
+async function heads(engine: BrainEngine, sourceId: string, incarnation: string, packId: string, names: string[], metadataOnly = false): Promise<StoredSkillRevision[]> {
   if (!names.length) return [];
-  return engine.executeRaw<StoredSkillRevision>(`SELECT r.* FROM shared_skill_heads h JOIN shared_skill_revisions r
+  return engine.executeRaw<StoredSkillRevision>(`SELECT ${metadataOnly ? 'r.name,r.metadata,r.deleted' : 'r.*'} FROM shared_skill_heads h JOIN shared_skill_revisions r
     ON r.source_id=h.source_id AND r.source_incarnation=h.source_incarnation AND r.pack_id=h.pack_id AND r.name=h.name AND r.revision=h.revision
     WHERE h.source_id=$1 AND h.source_incarnation=$2::uuid AND h.pack_id=$3 AND h.name=ANY($4::text[]) ORDER BY h.name`, [sourceId, incarnation, packId, names]);
 }
@@ -708,8 +709,7 @@ async function unchangedHolders(engine: BrainEngine, sourceId: string, incarnati
   if (!candidates.size) return [];
   const holding = inventory.filter(entry => !affected.some(skill => skill.name === entry.name) && entry.files.some(file => candidates.has(file.path)));
   if (!holding.length) return [];
-  const rows = await engine.executeRaw<{ name: string; metadata: SkillMetadata; deleted: boolean }>(`SELECT name,metadata,deleted FROM shared_skill_heads
-    WHERE source_id=$1 AND source_incarnation=$2::uuid AND pack_id=$3 AND name=ANY($4::text[])`, [sourceId, incarnation, packId, holding.map(entry => entry.name)]);
+  const rows = await heads(engine, sourceId, incarnation, packId, holding.map(entry => entry.name), true);
   return rows.filter(row => !row.deleted).map(row => ({ name: row.name, files: holding.find(entry => entry.name === row.name)!.files, metadata: row.metadata }));
 }
 
