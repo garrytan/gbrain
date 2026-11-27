@@ -2,8 +2,8 @@
   "golden": {
     "exitCode": 0,
     "stderr": "",
-    "stdoutBytes": 335829,
-    "stdoutSha256": "eabf77716f81138b559db237b32a7cba89aba62e3ebf3c834b568879283ca643",
+    "stdoutBytes": 336050,
+    "stdoutSha256": "7b262907aa8014dc82469457a6622cb89cf3c321bb711d2b85aeded1989ca822",
     "toolNames": [
       "remember",
       "entity",
@@ -7937,7 +7937,7 @@
               "type": "string"
             },
             "valid_from": {
-              "description": "#4206: ISO 8601 event time for the extracted facts — use when the turn is historical (importing an old transcript) so facts do not get stamped with import time. Fallback only: a date the extractor derives from the turn itself wins. Default: now().",
+              "description": "#4206: ISO 8601 event time for the extracted facts — use when the turn is historical (importing an old transcript) so facts do not get stamped with import time. Fallback only: a date the extractor derives from the turn itself wins. Omitted: the event date stays unknown.",
               "type": "string"
             },
             "visibility": {
@@ -7965,6 +7965,7 @@
           "grep": "string?",
           "include_expired": "boolean?",
           "include_pending": "boolean?",
+          "include_undated": "boolean?",
           "limit": "number?",
           "max_chars": "integer?",
           "min_trust": "string?",
@@ -8009,6 +8010,10 @@
               "description": "Pending count.",
               "type": "boolean"
             },
+            "include_undated": {
+              "description": "With since: also facts with no event date saved inside the window.",
+              "type": "boolean"
+            },
             "limit": {
               "description": "Per-arm max (default 50, cap 100).",
               "type": "number"
@@ -8030,7 +8035,7 @@
               "type": "string"
             },
             "query": {
-              "description": "Also search pages (results[]).",
+              "description": "Search pages and rank facts.",
               "type": "string"
             },
             "question": {

@@ -95,7 +95,7 @@ export interface UnfencedFactRow {
   visibility: 'private' | 'world';
   notability: 'high' | 'medium' | 'low';
   context: string | null;
-  valid_from: Date;
+  valid_from: Date | null;
   valid_until: Date | null;
   source: string;
   confidence: number;
@@ -181,7 +181,8 @@ export type FenceRowInput = Pick<UnfencedFactRow, 'kind' | 'visibility' | 'conte
  * attributed_to) render only when present.
  */
 export function fenceRowOf(row: FenceRowInput, rowNum: number, claim: string): ParsedFact {
-  const validFromStr = formatFenceDate(row.valid_from instanceof Date ? row.valid_from : new Date(row.valid_from));
+  const validFromStr = row.valid_from == null ? undefined
+    : formatFenceDate(row.valid_from instanceof Date ? row.valid_from : new Date(row.valid_from));
   const validUntilStr = row.valid_until
     ? formatFenceDate(row.valid_until instanceof Date ? row.valid_until : new Date(row.valid_until))
     : undefined;

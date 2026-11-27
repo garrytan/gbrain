@@ -405,12 +405,14 @@ describe('a client child\'s verdicts are counted, never dropped (no_epoch)', () 
     expect(owner.counts()).toMatchObject({ comparable: 0, capability_missing: 1, uncomparable: 600, uncomparable_by_reason: { no_epoch: 600 } });
   });
 
+  // pregate-literal: SHADOW_ADAPTER_VERSION=10 an unrelated 10 (a count, limit or size), not the adapter version
   test('a client\'s pending verdicts plus a large count are all kept across the 10,000-line append cap: only what was written is released (255 + 10,000 = 10,255 counted)', () => {
     const dir = tmp();
     const owner = tallyOn(dir);
     const client = new WriteTally(dir, () => null, () => true, 424242);
     client.note('uncomparable', 'send_shed', 255); client.note('uncomparable', 'send_shed', 10_000);
     client.save();
+    // pregate-literal: SHADOW_ADAPTER_VERSION=10 an unrelated 10 (a count, limit or size), not the adapter version
     expect(unfoldedLost(dir, owner.epoch)).toBe(10_255); // before: 10,000, and 255 released unwritten
     owner.tally.save();
     expect(owner.counts().uncomparable_by_reason.no_epoch).toBe(10_255);

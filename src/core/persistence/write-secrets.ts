@@ -9,6 +9,7 @@ import { loadConfigFileOnly } from '../config.ts';
 import { opError, type OperationContext } from '../ops/contract.ts';
 import { applyRedaction, planRedaction, scanText, type RedactionPlan, type SecretFinding } from '../secret-scan.ts';
 import { scanTextStream } from '../secret-scan-stream.ts';
+import { stripNul } from '../batch-rows.ts';
 
 export const ON_WRITE_KEY = 'secrets.on_write';
 export const ON_WRITE_MODES = ['off', 'redact', 'block'] as const;
@@ -49,21 +50,32 @@ function secretInWrite(operation: string, findings: SecretFinding[], mode: OnWri
 /**
  * Admission screen for a remote write's parameters: unchanged when the policy is off, the caller is local or nothing
  * is found; a refusal under block; under redact the parameters with every claimed value (and its echoes in other
- * fields) replaced, with the count and pattern names.
+ * fields) replaced, with the count and pattern names. Text is screened as sent, then (after that redaction) as it will
+ * be stored, without U+0000 (stripPageTextNul): a value split by NUL bytes is found, and so is one a NUL ends before
+ * text it would join; only a string that held a claimed value comes back without them.
  */
 export function screenWriteSecrets(ctx: Pick<OperationContext, 'remote'>, operation: string, params: Record<string, unknown>):
   { params: Record<string, unknown>; redacted: SecretsRedacted | null } {
   if (ctx.remote === false) return { params, redacted: null };
   const mode = onWriteMode();
   if (mode === 'off') return { params, redacted: null };
-  const plans: RedactionPlan[] = [];
   const echoValues = new Map<string, string>();
-  mapStored(params, text => (plans.push(planRedaction(text, { allowlist: allowlist(), echoValues })), text));
-  const findings = plans.flatMap(plan => plan.redactions);
+  const plan = (value: unknown, form: (text: string) => string) => {
+    const plans: RedactionPlan[] = [];
+    mapStored(value, text => (plans.push(planRedaction(form(text), { allowlist: allowlist(), echoValues })), text));
+    return plans;
+  };
+  const rawPlans = plan(params, text => text);
+  let at = 0;
+  const rawRedacted = mapStored(params, () => applyRedaction(rawPlans[at++]!));
+  let nul = false;
+  mapStored(params, text => (nul ||= text.includes('\u0000'), text));
+  const plans = nul ? plan(rawRedacted, stripNul) : [];
+  const findings = [...rawPlans, ...plans].flatMap(p => p.redactions);
   if (!findings.length) return { params, redacted: null };
   if (mode === 'block') throw secretInWrite(operation, findings, mode);
-  let at = 0;
-  return { params: mapStored(params, () => applyRedaction(plans[at++]!)) as Record<string, unknown>,
+  at = 0;
+  return { params: (nul ? mapStored(rawRedacted, text => { const out = applyRedaction(plans[at++]!); return out === stripNul(text) ? text : out; }) : rawRedacted) as Record<string, unknown>,
     redacted: { count: findings.length, patterns: patternsOf(findings) } };
 }
 

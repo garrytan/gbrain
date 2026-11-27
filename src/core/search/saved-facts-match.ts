@@ -23,7 +23,7 @@ export const FACT_MATCH_STOPWORDS = new Set(['the', 'and', 'for', 'who', 'what',
 /** Words that frame a question about a figure ("seat count", "total revenue") and that the fact stating it rarely repeats; they count toward neither side of the threshold. */
 const QUESTION_FRAME_WORDS = new Set(['count', 'number', 'total', 'amount']);
 
-export interface SavedFactMatch { id: number; fact: string; entity_slug: string | null; kind: string; valid_from: string; source: string;
+export interface SavedFactMatch { id: number; fact: string; entity_slug: string | null; kind: string; valid_from: string | null; source: string;
   /** #7043: every entity of the copies this row stands for, and how many rows it stands for. */
   entity_slugs?: string[]; collapsed_count?: number;
   /** With `search.saved_facts_supersede` on: the newer returned fact that corrects this one. */
@@ -152,7 +152,7 @@ export async function matchingSavedFacts(ctx: OperationContext, scope: { sourceI
          FROM w
        )
        SELECT * FROM (SELECT m.*, row_number() OVER (PARTITION BY m.cue AND cardinality(m.matched) < m.need ORDER BY cardinality(m.matched) DESC, m.at DESC, m.id DESC) AS pool_rank FROM (
-         SELECT f.id, f.fact, f.entity_slug, f.kind, f.valid_from::text AS valid_from, f.source, f.valid_from AS at, f.dimension, ${SAVED_FACT_COLLAPSE_COLUMNS},
+         SELECT f.id, f.fact, f.entity_slug, f.kind, f.valid_from::text AS valid_from, f.source, COALESCE(f.valid_from, f.created_at) AS at, f.dimension, ${SAVED_FACT_COLLAPSE_COLUMNS},
            ARRAY(SELECT w.i FROM w, (SELECT ${doc} AS d OFFSET 0) x WHERE CASE WHEN w.pat IS NOT NULL THEN lower(f.fact || ' ' || COALESCE(f.entity_slug, '')) LIKE w.pat
              ELSE x.d @@ w.tq END ORDER BY w.i) AS matched,
            LEAST(4, GREATEST(LEAST(2, k.n), ceil(k.n * 0.75)::int)) AS need,

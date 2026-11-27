@@ -293,10 +293,12 @@ test('managed bulk conversation extraction writes its facts and terminal audit r
     expect((await facts(engine, sourceId, 'conversations/synthetic-chat')).map(f => [f.fact, f.source])).toEqual([
       ['Alice Example joined Acme Corp as a staff engineer.', 'cli:extract-conversation-facts'],
       ['EXTRACTION_COMPLETE', 'cli:extract-conversation-facts:terminal:v2']]);
-    // A forced replay deletes the prior rows first, also inside the capability.
+    // A forced replay retires the prior rows first, also inside the capability: the fact is kept expired (#10443), the audit row goes.
     const replay = await runExtractConversationFactsCore(engine, { sourceId, overrideDisabled: true, extractor, types: ['conversation'], force: true });
     expect(replay.orphan_facts_cleaned).toBe(2);
-    expect(await facts(engine, sourceId, 'conversations/synthetic-chat')).toHaveLength(2);
+    const after = await facts(engine, sourceId, 'conversations/synthetic-chat');
+    expect(after.filter(f => f.expired_at === null)).toHaveLength(2);
+    expect(after.filter(f => f.expired_at !== null).map(f => f.fact)).toEqual(['Alice Example joined Acme Corp as a staff engineer.']);
   });
 }, 120_000);
 
@@ -356,8 +358,12 @@ test('managed conversation extraction keeps the prior batch when the page is edi
     const principal = async () => [{ ...(await extractor())[0]!, fact: 'Alice Example joined Acme Corp as a principal engineer.' }];
     const replay = await runExtractConversationFactsCore(engine, { sourceId, overrideDisabled: true, extractor: principal, types: ['conversation'] });
     expect(replay).toMatchObject({ pages_failed: 0, facts_inserted: 1, orphan_facts_cleaned: 2 });
-    expect((await facts(engine, sourceId, slug)).map(row => [row.fact, row.row_num])).toEqual([
-      ['Alice Example joined Acme Corp as a principal engineer.', 0], ['EXTRACTION_COMPLETE', 1]]);
+    const rows = await facts(engine, sourceId, slug);
+    expect(rows.filter(row => row.expired_at === null).map(row => row.fact)).toEqual([
+      'Alice Example joined Acme Corp as a principal engineer.', 'EXTRACTION_COMPLETE']);
+    // #10443: the replaced claim keeps its row, expired, and the new rows are numbered above it.
+    expect(rows.map(row => [row.fact, row.row_num, row.expired_at !== null])).toEqual([
+      ['Alice Example joined Acme Corp as a staff engineer.', 0, true], ['Alice Example joined Acme Corp as a principal engineer.', 1, false], ['EXTRACTION_COMPLETE', 2, false]]);
   });
 }, 120_000);
 

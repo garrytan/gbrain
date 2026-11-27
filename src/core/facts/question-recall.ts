@@ -25,7 +25,7 @@ import { loadEmbeddingQueryPrefix } from '../search/query-prefix.ts';
 import { embedQueryBounded, makeQueryEmbedDeadline } from '../search/hybrid.ts';
 import { resolveHnswIterativeScan } from '../search/hnsw-iterative-scan.ts';
 import {
-  FACT_ADMISSION_FLOOR_EVIDENCE, QUESTION_ADMISSION_RULES, admitted, collectFactCandidates, countUncomparableFacts, isDatedFact, poolEntityPairs, queryTerms, scoreFactCandidates,
+  FACT_ADMISSION_FLOOR_EVIDENCE, QUESTION_ADMISSION_RULES, admitted, collectFactCandidates, countUncomparableFacts, factRecency, isDatedFact, poolEntityPairs, queryTerms, scoreFactCandidates,
   type FactPoolFilters, type FactPoolScope, type QuestionAdmissionRule,
 } from '../search/fact-relevance.ts';
 import { applySlotEnds } from '../search/slot-ends.ts';
@@ -191,6 +191,10 @@ export interface QuestionRecallInput {
   grep: string | null;
   /** Rank expired, superseded and lapsed facts too (recall's `include_expired`). */
   includeExpired?: boolean;
+  /** #10225: the question is recall's `query` (keywords): a fact holding every query term is admitted however long it is. */
+  fromQuery?: boolean;
+  /** #10288: `since` also admits facts with no event date saved in the window (recall's `include_undated`). */
+  includeUndated?: boolean;
 }
 
 export interface QuestionRecall {
@@ -219,7 +223,7 @@ export async function rankFactsByQuestion(ctx: OperationContext, input: Question
   const { question, scope } = input;
   const filters: FactPoolFilters = {
     ...(input.sessionId ? { sessionId: input.sessionId } : {}),
-    ...(input.since ? { since: input.since } : {}),
+    ...(input.since ? { since: input.since, ...(input.includeUndated ? { includeUndated: true } : {}) } : {}),
     ...(input.grep ? { grep: input.grep } : {}),
     ...(input.includeExpired ? { includeExpired: true } : {}),
   };
@@ -251,7 +255,7 @@ export async function rankFactsByQuestion(ctx: OperationContext, input: Question
     const weighted = switches.weighting;
     const grouped = switches.grouping && !input.entity;
     const scored = scoreFactCandidates(question, pool.candidates, pool.terms, pool.stems);
-    const ranked = scored.filter(s => admitted(s, rule));
+    const ranked = scored.filter(s => admitted(s, rule) || (input.fromQuery === true && s.terms > 0 && s.matched === s.terms));
     const unembedded = uncomparable.reduce((n, r) => n + r.n, 0);
     const why = reason ?? (embedding && !pool.column ? 'facts_embedding_column_missing' : undefined);
     const degraded: FactsDegraded | undefined = why || unembedded ? { ...(why ? { reason: why } : {}), ...(unembedded ? { unembedded } : {}) } : undefined;
@@ -300,7 +304,7 @@ function weighByConfidence(scored: Array<{ id: number; score: number }>, byId: M
     rank.set(id, score * f);
   }
   const order = scored.map(s => s.id).sort((a, b) => rank.get(b)! - rank.get(a)!
-    || (byId.get(b)?.valid_from.getTime() ?? 0) - (byId.get(a)?.valid_from.getTime() ?? 0) || b - a);
+    || factRecency(byId.get(b)) - factRecency(byId.get(a)) || b - a);
   for (const [id, s] of rank) rank.set(id, round4(s));
   return { order, rank, factor };
 }
@@ -353,22 +357,6 @@ export function groupFactsByEntity<R extends { id: number; source_id: string; en
   };
   emitNotice?.(notice);
   return { rows: [...buckets.values()].flat(), fields: { facts_groups: groups, entity_unspecified: { candidates: named, suggestion: ENTITY_UNSPECIFIED_SUGGESTION } } };
-}
-
-/**
- * TC7: a recall that passed `query` but no `question` and no fact filter got
- * its facts newest first; the hint names `question` and carries the same call
- * with it added.
- */
-export function recallHintNotice(p: Record<string, unknown>, queryText: string): Notice {
-  const retry = { ...callArgs(p), question: queryText };
-  return {
-    code: 'recall_hint',
-    kind: 'info',
-    why: 'The facts in this response are the newest saved facts: `query` searches pages and does not rank facts. `question` ranks saved facts by relevance to a question (it does not search pages).',
-    fix: { argv: recallArgv(retry), mcp: { tool: 'recall', arguments: retry }, consent: [], actor: 'agent', requires_exclusive: false,
-      why: 'The same recall with question set to the query, so saved facts come back ranked by relevance and pages are still searched.' },
-  };
 }
 
 const FACT_FLOORS_VERIFY = { argv: ['gbrain', 'doctor', '--only', 'fact_admission_floors', '--json'] };
