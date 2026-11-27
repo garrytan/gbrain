@@ -26,6 +26,11 @@ export interface ProbeRecord {
   differing_code_points: string[]; differing_code_points_total: number;
   /** Corpus sample rows fingerprinting differently from PGLite (first names, never text); stored facts holding a differing code point. */
   corpus_mismatches: number; corpus_mismatch_rows: string[]; facts_with_differing_code_points: number;
+  /**
+   * Purge tombstones on the primary when code points differ (a count; 0 when none differ): a tombstone keeps only the claim's
+   * hash, so the store cannot tell whether a re-saved claim that holds a differing code point would still match it.
+   */
+  fact_purges_unverifiable?: number;
 }
 export interface Watermark { valid: boolean; through: string | null; invalidated_reason: string | null }
 export interface FollowerFile {

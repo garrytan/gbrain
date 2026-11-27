@@ -3,8 +3,9 @@
  * and test/e2e/shadow-follow.test.ts (Postgres). Each runs on a seeded store with the real follower, follow child
  * and reconciler (test/helpers/follow-rig.ts) and the real Rust addon.
  */
-import { describe, expect, test } from 'bun:test';
+import { describe, expect, spyOn, test } from 'bun:test';
 import { mkdirSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { RustAddon } from '../../src/core/rust-engine/addon-loader.ts';
@@ -16,6 +17,7 @@ import { openReadSource } from '../../src/shadow/read-pool.ts';
 import { Reconciler } from '../../src/shadow/reconcile.ts';
 import { openFollowRig, type FollowRig } from './follow-rig.ts';
 import { snapshotPersistence, snapshotTree } from './primary-snapshot.ts';
+import { linkEntityIdentity } from '../../src/core/entity-identity.ts';
 import { fillSeedFixture } from './shadow-seed-fixture.ts';
 
 export interface FollowScenarioContext {
@@ -88,6 +90,66 @@ export function defineFollowScenarios(ctx: FollowScenarioContext): void {
         const pass = await r.reconciler.run('full');
         expect(pass.repaired_rows).toBe(0);
         expect(pass.follower_misses).toBe(0);
+      } finally { await r.close(); }
+    }, 90_000);
+
+    test('link state follows link writes, and entity groups, purge tombstones and tokens follow raw writes after a pass for them', async () => {
+      const r = await rig();
+      try {
+        // The engine refreshes the relationship state of a link pair itself, so the write map names it: no pass is needed.
+        await r.wrapped.removeLink('people/alice-example', 'companies/acme-example', 'works_at');
+        await r.wrapped.addLink('people/alice-example', 'companies/acme-example', 'works at again', 'works_at');
+        await r.wrapped.putPage('people/bob-example', PERSON('Bob Example'));
+        await r.wrapped.addLink('people/bob-example', 'companies/acme-example', 'works at', 'works_at');
+        await r.settle();
+        const state = await ctx.primary().executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM link_relationships`);
+        expect(state[0]!.n).toBe(4);
+        await tick();
+        expect(status(r).follower.coverage_watermark.valid).toBe(true);
+        // A raw write reaches the follower as a relation-level change, which a pass for that relation repairs.
+        await linkEntityIdentity(r.wrapped, { entityId: 'person/bob', slug: 'people/bob-example', sourceId: 'default', canonical: true });
+        await r.wrapped.executeRaw(`INSERT INTO fact_purges (source_id, visibility, subject, fact_hash, actor) VALUES ('default', 'world', '*', gbrain_fact_fingerprint('Bob owes Acme money'), 'owner')`);
+        await r.wrapped.executeRaw(`INSERT INTO access_tokens (name, token_hash) VALUES ('bob-key', $1)`, [createHash('sha256').update('shadow-follow-token').digest('hex')]);
+        await r.settle();
+        expect(status(r).follower.coverage_watermark).toMatchObject({ valid: false, invalidated_reason: 'relation_dirty' });
+        await tick();
+        const probedAt = status(r).fingerprints.probe.checked_at;
+        expect((await r.reconciler.run('dirty', ['entity_identities', 'fact_purges', 'access_tokens'])).error).toBeUndefined();
+        expect(status(r).follower.coverage_watermark.valid).toBe(true);
+        // A pass for the purge tombstones runs the fingerprint probe again: its answer depends on them.
+        expect(status(r).fingerprints.probe.checked_at).not.toBe(probedAt);
+        const pass = await r.reconciler.run('full');
+        expect(pass.repaired_rows).toBe(0);
+        expect(pass.follower_misses).toBe(0);
+        expect(pass.repaired_by_relation).toEqual({});
+      } finally { await r.close(); }
+    }, 90_000);
+
+    test('a probe that fails in a dirty pass for purge tombstones clears the cached verdict and keeps coverage invalid until a probe succeeds', async () => {
+      const r = await rig();
+      try {
+        expect(status(r).fingerprints.probe.state).toBe('pass');
+        await r.wrapped.executeRaw(`INSERT INTO fact_purges (source_id, visibility, subject, fact_hash, actor) VALUES ('default', 'world', '*', gbrain_fact_fingerprint('Bob owes Acme money'), 'owner')`);
+        await r.settle();
+        expect(status(r).follower.coverage_watermark).toMatchObject({ valid: false, invalidated_reason: 'relation_dirty' });
+        await tick();
+        const failing = spyOn(r.reconciler, 'probe').mockRejectedValueOnce(Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' }));
+        try {
+          const failed = await r.reconciler.run('dirty', ['fact_purges']);
+          expect(failed.error).toBe('probe:57014');
+        } finally { failing.mockRestore(); }
+        // The old passing verdict no longer stands, and the rows are not covered.
+        expect(status(r).fingerprints.probe.state).toBe('not_run');
+        expect(status(r).follower.coverage_watermark.valid).toBe(false);
+        // A later pass whose probe succeeds records a fresh verdict and restores coverage: nothing is wedged.
+        await tick();
+        const again = await r.reconciler.run('dirty', ['fact_purges']);
+        expect(again.error).toBeUndefined();
+        // The fresh verdict follows the host: a host whose lower() or whitespace rules differ from PGLite's fails it while a tombstone exists.
+        const probe = status(r).fingerprints.probe;
+        expect(probe.state).toBe(probe.differing_code_points_total > 0 ? 'fail' : 'pass');
+        expect(probe.checked_at).not.toBeNull();
+        expect(status(r).follower.coverage_watermark.valid).toBe(true);
       } finally { await r.close(); }
     }, 90_000);
 

@@ -120,6 +120,7 @@ export class Reconciler {
     const rec: PassRecord = { id: `pass-${startedAt.replace(/[-:.]/g, '')}-${randomUUID().slice(0, 4)}`, kind, started_at: startedAt, finished_at: startedAt, repaired_rows: 0, repaired_by_relation: {}, follower_misses: 0 };
     let verified = true;
     let repairFailed = false;
+    let probeFailed = false;
     let passStart = Date.now();
     const settled: string[] = [];
     try {
@@ -143,6 +144,18 @@ export class Reconciler {
           if (typeof row?.m === 'string' && /^\d+$/.test(row.m)) maxima[rp.relation] = row.m;
         }
       }
+      // The probe's answer depends on the stored facts and purge tombstones: a dirty pass for either runs it again, so a tombstone
+      // added after a passing probe cannot be covered by a cached pass.
+      // A probe that fails here leaves the obligation open: the cached verdict is cleared and coverage is not restored, so the
+      // old pass cannot vouch for the new rows. The invalid watermark makes the next full pass run the probe again.
+      if (kind === 'dirty' && only?.some((relation) => relation === 'facts' || relation === 'fact_purges')) {
+        try { await this.probe(); } catch (error) {
+          probeFailed = true;
+          rec.error ??= `probe:${(error as { code?: string }).code ?? 'failed'}`;
+          for (const relation of only) this.dirty.add(relation);
+          try { await this.o.rpc('probeReset', {}, 30_000); } catch { /* the watermark stays invalid either way */ }
+        }
+      }
       if (kind === 'full') {
         try { await this.o.rpc('allocatorCheck', { primaryMax: maxima }, 60_000); } catch (error) { rec.error = `allocator_check:${(error as { code?: string }).code ?? 'failed'}`; }
         try { await this.probe(); } catch (error) { rec.error ??= `probe:${(error as { code?: string }).code ?? 'failed'}`; }
@@ -154,8 +167,9 @@ export class Reconciler {
       for (const relation of only ?? []) this.dirty.add(relation);
       rec.error = `${(error as { code?: string }).code ?? (error instanceof Error ? error.name : 'failed')}: ${error instanceof Error ? error.message.slice(0, 200) : ''}`;
     }
-    // Allocator and probe failures are reported but do not decide whether the rows are covered.
-    if (!repairFailed) await this.restore(kind, passStart, verified, settled);
+    // Allocator and full-pass probe failures are reported but do not decide whether the rows are covered; a failed probe of a dirty
+    // pass for facts or purge tombstones does, because those rows are what it checks.
+    if (!repairFailed && !probeFailed) await this.restore(kind, passStart, verified, settled);
     rec.finished_at = new Date().toISOString();
     try { appendPass(this.o.dir, rec); } catch { /* a full disk loses the record, never the pass */ }
     return rec;

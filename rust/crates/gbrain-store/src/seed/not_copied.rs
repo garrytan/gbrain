@@ -23,6 +23,10 @@ pub enum LossKind {
     /// The segments of segmented page bodies: the page and its body columns are copied, its text
     /// is not.
     SegmentedBody,
+    /// Rows that exist only to be locked: a write inserts the row, then selects it `FOR UPDATE`, so
+    /// the row holds no data and no read returns it. The store holds the same lock on the page
+    /// key (`transactions.rs` `hold_page_keys`).
+    LockAnchor,
 }
 
 /// The rows of a not-copied table that are brain state, not machine state: the rows whose
@@ -55,7 +59,7 @@ const fn t(table: &'static str, kind: LossKind, read: &'static str) -> NotCopied
     }
 }
 
-use LossKind::{Cache, Jobs, MachineLocal, SegmentedBody, Telemetry};
+use LossKind::{Cache, Jobs, LockAnchor, MachineLocal, SegmentedBody, Telemetry};
 
 /// Sorted by table.
 pub const NOT_COPIED: &[NotCopied] = &[
@@ -275,6 +279,11 @@ pub const NOT_COPIED: &[NotCopied] = &[
         "page_view_digests",
         Cache,
         "view sizes and digests of segmented pages are recomputed by the next read",
+    ),
+    t(
+        "page_write_guards",
+        LockAnchor,
+        "none: the rows only anchor the page write lock (insert, then SELECT ... FOR UPDATE) and no read returns them; the store holds that lock on the page key",
     ),
     t(
         "persistence_brain",
