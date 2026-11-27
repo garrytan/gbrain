@@ -668,8 +668,8 @@ full path when `gbrainio` is not on `PATH`.
 
 Ingest tiers are on by default only for gbrain.io sources. For any Gmail
 source, pass `--ingest-tiers` or `--no-ingest-tiers` to `gbrain sources add`
-to override the default. Choose when you add the source because the setting
-is part of its connector identity.
+to override the default. Choose when you add the source because turning
+tiers on is part of the source's connector identity.
 
 ```bash
 gbrain sources add mail-personal --kind google --account you@example.com \
