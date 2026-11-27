@@ -11,7 +11,8 @@ stop making the mistake. One `correct` call does three things in a fixed order:
 
 Every step is a separate write with its own request id taken from the receipt. If the process stops part way, running
 the same call again (same `request_id`) or `gbrain correct resume <receipt>` repeats only the steps that never
-committed. Nothing is written twice.
+committed. Nothing is written twice. A step whose write ended without committing (failed, cancelled or a conflict) is
+sent again under a new request id, so a resume never replays the old failure.
 
 Everything here works on a keyless brain with no git repository, and nothing in it calls a model.
 
@@ -41,7 +42,9 @@ and returns a preview of the rule and the fact change.
 `correct` returns a receipt. Read it again with `gbrain correct status <receipt>` or `correct {"receipt_id": ...}`.
 Only the connection that made a receipt can read it, apart from the brain host; a shared credential acting for
 different audiences (`on_behalf_of`) keeps each audience's receipts apart. On the brain host,
-`gbrain correct resume <receipt>` asks for a short code before it finishes a fact change another connection started.
+`gbrain correct resume <receipt>` asks for a short code before it finishes a correction another connection started; the
+code covers the whole correction, its fact change included, and confirms the rule, so no second `gbrain rules approve`
+is needed. A call that carries a guest attribution cannot read or resume any receipt.
 
 | `state` | What it means |
 |---|---|
@@ -82,9 +85,12 @@ a remote connection cannot clear the problem itself).
   a fact that is already withdrawn. A member's agent can withdraw a fact on the member's own memory page but not
   replace it. One connection can have at most 20 corrections waiting at a time, counted under a
   lock so calls sent together cannot pass it (`correct_proposals_capped`). A member's `me` rule loads only for that member's
-  agents, never for yours; a connection that acts for no member cannot save a `me` rule (`invalid_params`). A team rule
+  agents, never for yours; a shared credential acting for you saves your `me` rule private to you, and a connection that
+  acts for no member cannot save a `me` rule (`invalid_params`), except on a brain with no owner set and no members,
+  where it is the brain's one user and the rule is proposed private for you to approve. A team rule
   a member proposes is readable by every agent of the brain, never only by the member who wrote it.
-- **Guests**, and calls made on behalf of a guest, cannot correct anything (`correct_guest_refused`).
+- **Guests**, and calls made on behalf of a guest, cannot correct anything (`correct_guest_refused`). A rule page a caller
+  cannot write (a member limited to labelled pages proposing a team rule, for example) fails the call and leaves no receipt.
 - Text a tool returned, or something an agent inferred, is refused (`correct_origin_refused`). So is a rule that reads
   like an instruction to override an agent, send data out or handle credentials (`correct_instruction_refused`).
 

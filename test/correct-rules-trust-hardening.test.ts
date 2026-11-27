@@ -23,6 +23,8 @@ import { __resetPrivateVisibilityCacheForTests } from '../src/core/search/privat
 import type { AuthInfo } from '../src/core/ops/contract.ts';
 import { __correctFaults, approveRule, localRulesCtx, RECEIPT_PREFIX, retireRule, runCorrect } from '../src/core/rules/correct.ts';
 import { renderRulePage } from '../src/core/rules/record.ts';
+import { rulesSectionFor } from '../src/core/rules/section.ts';
+import { setMemberLabelledOnly } from '../src/core/access/labelled-only.ts';
 import { CONFIRM_CODE_LENGTH, type TerminalProbe } from '../src/core/policy/authority.ts';
 import { installTripwire, type Tripwire } from './helpers/ai-tripwire.ts';
 
@@ -90,6 +92,9 @@ beforeAll(async () => {
   tokens.ownerBot = ownerBot.token;
   const loose = await mintLegacyToken(engine, { name: 'g4-loose', scopes: ['read', 'write'], takesHolders: ['world'] });
   tokens.loose = loose.token;
+  const forOwner = await mintLegacyToken(engine, { name: 'g4-for-owner', scopes: ['read', 'write'], takesHolders: ['world'] });
+  await bindCredential(engine, { kind: 'token', id: forOwner.id }, { mayActFor: ['member:' + OWNER] });
+  tokens.forOwner = forOwner.token;
   for (const p of ['alice-example', 'bob-example', 'carol-example']) {
     await local('put_page', { slug: 'people/' + p, content: '---\ntype: person\ntitle: ' + p + '\n---\n\n' + p + ' works on the platform group.' });
   }
@@ -355,6 +360,109 @@ describe('team rules and approvals', () => {
     const gone = await retireRule(engine, 'team/hand-written-example');
     expect(gone.retired).toBe(true);
     expect((await frontmatter('rules/team/hand-written-example'))?.status).toBe('retired');
+  });
+});
+
+describe('follow-ups (GST-4031)', () => {
+  const stopAt = async <T>(step: string, fn: () => Promise<T>): Promise<T> => {
+    __correctFaults.before = s => { if (s === step) throw new Error('stopped before the ' + step); };
+    try { return await fn(); } finally { __correctFaults.before = undefined; }
+  };
+
+  test('a host resume finishes a remote owner\'s replacement of a private fact on its own member page, on that page', async () => {
+    const saved = await remote(OWNER, 'remember', { fact: 'Alice Example parks on level B1.', entity: 'people/alice-example', visibility: 'private', provenance: 'test', content_origin: 'user_said' });
+    const id = /"id":\s*"(\d+)"/.exec(saved.text)![1]!;
+    const right = 'Alice Example parks on level B2.';
+    const r = await stopAt('fact', () => remote(OWNER, 'correct', { rule: right, fact_id: id, corrected_fact: right, scope: 'team' }));
+    expect(r.json.state).toBe('partial');
+    const done = await hostResume(r.json.receipt_id, ownerTty());
+    expect({ state: done.state, error: done.error?.code }).toEqual({ state: 'committed', error: undefined });
+    expect((await factRow(id))!.expired_at).not.toBeNull();
+    const rows = await engine.executeRaw<{ source_markdown_slug: string | null }>('SELECT source_markdown_slug FROM facts WHERE fact=$1 AND expired_at IS NULL', [right]);
+    expect(rows).toEqual([{ source_markdown_slug: 'memory/members/' + OWNER }]);
+  });
+
+  test('a host resume shows and binds the fact change even when the receipt records it as already done, and confirms the rule', async () => {
+    const wrong = await seedFact('Alice Example uses desk ten.');
+    const r = await stopAt('fact', () => remote(OWNER, 'correct', { rule: 'Alice Example has no desk.', fact_id: wrong, scope: 'team' }));
+    const key = RECEIPT_PREFIX + r.json.receipt_id;
+    const s = JSON.parse((await engine.getConfig(key))!);
+    s.steps.fact = { state: 'committed', request_id: r.json.receipt_id + '.fact' };
+    await engine.setConfig(key, JSON.stringify(s));
+    let shown = '';
+    const probe: TerminalProbe = { ...ownerTty(), readAnswer: async p => {
+      const cur = JSON.parse((await engine.getConfig(key))!);
+      delete cur.steps.fact;
+      await engine.setConfig(key, JSON.stringify(cur));
+      return /Type ([0-9a-f]+) /.exec(p)![1]!.slice(0, CONFIRM_CODE_LENGTH);
+    } };
+    const orig = process.stderr.write.bind(process.stderr);
+    (process.stderr as any).write = (chunk: unknown) => { shown += String(chunk); return true; };
+    let done: any;
+    try { done = await (runCorrect(localRulesCtx(engine), { receipt_id: r.json.receipt_id, resume: true }, { probe }) as Promise<any>).catch(e => e); } finally { (process.stderr as any).write = orig; }
+    expect(shown).toContain('Fact ' + wrong + ': withdrawn');
+    expect({ state: done.state, confirmed: done.confirmed }).toEqual({ state: 'committed', confirmed: true });
+    expect((await factRow(wrong))!.expired_at).not.toBeNull();
+    expect((await rulesSectionFor(engine, { remote: false, sourceId: 'default' }))?.text).toContain('Alice Example has no desk.');
+  });
+
+  test('a shared credential acting for the owner proposes a private me rule that loads on the host once approved', async () => {
+    const r = await remote('forOwner', 'correct', { rule: 'Keep morning replies short.', scope: 'me' }, [OWNER]);
+    expect(r.json.state).toBe('proposed');
+    const fm = await frontmatter('rules/' + r.json.rule_id);
+    expect({ visibility: fm?.visibility, readable_by: fm?.readable_by }).toEqual({ visibility: 'private', readable_by: undefined });
+    expect((await approve(r.json.rule_id + '@' + r.json.revision)).approved).toBe(true);
+    expect((await rulesSectionFor(engine, { remote: false, sourceId: 'default' }))?.text).toContain('Keep morning replies short.');
+  });
+
+  test('a step whose write ended failed is retried under a new request id instead of replaying the failure', async () => {
+    let fired = false;
+    __correctFaults.after = s => { if (s === 'rule' && !fired) { fired = true; throw new Error('stopped after the rule write'); } };
+    let r: any;
+    try { r = await remote(OWNER, 'correct', { rule: 'Plants are watered on Tuesdays.', scope: 'team' }); } finally { __correctFaults.after = undefined; }
+    expect(r.json.state).toBe('partial');
+    const slug = 'rules/' + r.json.rule_id;
+    const failed = await engine.executeRaw("UPDATE persistence_requests SET state = 'failed', error_code = 'storage_error', error_message = 'simulated failure' WHERE client_request_id = $1 RETURNING id", [r.json.receipt_id + '.rule']);
+    expect(failed).toHaveLength(1);
+    await engine.executeRaw("DELETE FROM pages WHERE source_id = 'default' AND slug = $1", [slug]);
+    const resumed = await remote(OWNER, 'correct', { receipt_id: r.json.receipt_id, resume: true });
+    expect({ state: resumed.json.state, error: resumed.json.error?.code }).toEqual({ state: 'committed', error: undefined });
+    expect((await frontmatter(slug))?.status).toBe('active');
+  });
+
+  test('an approval refuses a replacement whose subjectless fact was linked to a page after it was proposed', async () => {
+    const loose = await seedFact('The standup room is 4B.', null);
+    const right = 'The standup room is 4C.';
+    const r = await remote(MEMBER, 'correct', { rule: right, fact_id: loose, corrected_fact: right, scope: 'team' });
+    expect(r.json.state).toBe('proposed');
+    await engine.executeRaw("UPDATE facts SET entity_slug = 'people/carol-example' WHERE id = $1", [Number(loose)]);
+    const ok = await approve(r.json.rule_id + '@' + r.json.revision);
+    expect(ok.code).toBe('rule_transition');
+    expect(await liveFacts('people/carol-example')).not.toContain(right);
+    expect((await factRow(loose))!.expired_at).toBeNull();
+  });
+
+  test('a first rule write a member cannot make fails the call and leaves no receipt to wedge the cap', async () => {
+    await setMemberLabelledOnly(engine, THIRD, true, { remote: false });
+    try {
+      const before = (await engine.listConfigKeys(RECEIPT_PREFIX)).length;
+      const r = await remote(THIRD, 'correct', { rule: 'Desk plants get watered on Fridays.', scope: 'team' });
+      expect(r.isError).toBe(true);
+      expect(r.json.code).not.toBe('correct_proposals_capped');
+      expect((await engine.listConfigKeys(RECEIPT_PREFIX)).length).toBe(before);
+    } finally {
+      await setMemberLabelledOnly(engine, THIRD, false, { remote: false });
+    }
+  });
+
+  test('a guest-attributed call cannot read or resume a member audience\'s receipt', async () => {
+    const made = await remote('bot', 'correct', { rule: 'Badges are scanned at the side door.', scope: 'team', request_id: 'gst4031-guest' }, [MEMBER]);
+    expect(made.json.state).toBe('proposed');
+    const status = await remote('bot', 'correct', { receipt_id: made.json.receipt_id }, [MEMBER], 'visitor-example');
+    expect({ isError: status.isError, code: status.json.code }).toEqual({ isError: true, code: 'correct_guest_refused' });
+    expect(status.text).not.toContain('side door');
+    const resumed = await remote('bot', 'correct', { receipt_id: made.json.receipt_id, resume: true }, [MEMBER], 'visitor-example');
+    expect({ isError: resumed.isError, code: resumed.json.code }).toEqual({ isError: true, code: 'correct_guest_refused' });
   });
 });
 });

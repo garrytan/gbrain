@@ -24,6 +24,8 @@ import { refuseGuestSourceWrite } from '../guests/admission.ts';
 import { callerIsOwner, currentCallerAccess, privateProvenanceFilterUnderPolicy, resolveExcludePrivatePages, withoutCallerAccess } from '../search/private-visibility.ts';
 import { callerMember, factVisibilitySql, memberPageSlug, ownerSpeaksForItself } from '../access/member-facts.ts';
 import { hiddenPersonalSources } from '../access/member-sources.ts';
+import { listMembers } from '../access/members.ts';
+import { ownerMemberId } from '../access/owner.ts';
 import { projectionEligibleSql } from '../eligibility/sql.ts';
 import { resolveReadEligibility } from '../eligibility/policy.ts';
 import { ownerReachesFact, readForgetTarget } from '../persistence/forget-prepare.ts';
@@ -53,7 +55,9 @@ const RETRYABLE = new Set(['write_pending', 'commit_lock_busy', 'owner_unavailab
 const REFUSED_AT_START = new Set(['permission_denied', 'scope_denied', 'insufficient_scope', 'writer_registration_required', 'source_changed', 'rule_owner_only', 'rule_exists']);
 
 /** `already`: the fact was withdrawn or superseded by another write before this correction's own withdrawal. */
-interface StepRecord { state: 'started' | 'committed' | 'pending'; request_id: string; revision?: string; fact_id?: string; contested?: boolean; already?: true; principal?: Principal }
+interface StepRecord { state: 'started' | 'committed' | 'pending'; request_id: string; revision?: string; fact_id?: string; contested?: boolean; already?: true; principal?: Principal; attempt?: number }
+/** Write states that ended without committing: a step retried after one submits under a new request id, never replaying it. */
+const ENDED_UNCOMMITTED = new Set(['conflict', 'failed', 'cancelled']);
 
 export interface CorrectReceipt {
   receipt_id: string;
@@ -200,6 +204,18 @@ function refuseInstructions(fields: Array<[string, string | null]>): void {
     'A standing rule says what is true or how the user wants something done; it cannot tell an agent to ignore its instructions, send data out or handle secrets. Rephrase it as the user\'s own preference.');
 }
 
+/** A call made for a guest audience, or carrying a guest attribution, never saves, reads or resumes a correction. */
+function refuseGuestCall(ctx: OperationContext): void {
+  const meta = ctx.guestChannels?.requestMeta;
+  if (currentCallerAccess().audience?.includes('guest') || ctx.guestChannels?.header?.trim() || (!!meta && typeof meta === 'object' && Object.hasOwn(meta, 'guest'))) {
+    throw opError('correct_guest_refused', 'This call acts for a guest (an on_behalf_of audience or a guest attribution), and a guest cannot save standing rules or correct facts. Nothing was written.',
+      'Tell the user what should be corrected; the brain\'s owner saves the rule.');
+  }
+}
+
+/** Who a proposed rule is for, as its labels say: a me rule is private or names its member's readers, never both; a team rule is neither. */
+const audienceHolds = (rule: CorrectReceipt['rule']) => rule.scope === 'me' ? (rule.visibility === 'private') !== !!rule.readable_by?.length : !rule.visibility && !rule.readable_by?.length;
+
 interface CorrectInput {
   rule: string; scope: RuleScope; fact_id: string | null; corrected_fact: string | null; entity: string | null; corrects: string | null;
   checks: RuleCheck[]; provenance: string; request_id: string | null; source_id: string;
@@ -307,11 +323,18 @@ async function advance(ctx: OperationContext, r: CorrectReceipt, owner: boolean,
       if (r.steps[step]?.state === 'pending' || r.steps[step]?.state === 'started') { r.state = r.steps[step]!.state === 'pending' ? 'pending' : 'partial'; r.step = step; return r; }
       r.state = 'proposed'; r.step = step; await persist(); return r;
     }
-    const requestId = `${r.receipt_id}.${step}`;
+    const base = `${r.receipt_id}.${step}`;
+    let requestId = r.steps[step]?.request_id || base;
     const tried = r.steps[step] !== undefined;
     const by = await requestPrincipalForContext(ctx);
     const submittedBy = r.steps[step]?.principal ?? by;
     r.steps[step] = { ...(r.steps[step] ?? {}), state: 'started', request_id: requestId };
+    const retryEnded = (own: { state: string } | null) => {
+      if (!own || !ENDED_UNCOMMITTED.has(own.state)) return;
+      const attempt = (r.steps[step]!.attempt ?? 1) + 1;
+      requestId = `${base}.${attempt}`;
+      r.steps[step] = { ...r.steps[step]!, attempt, request_id: requestId };
+    };
     r.state = 'partial'; r.step = step; delete r.error;
     await persist();
     try {
@@ -324,6 +347,13 @@ async function advance(ctx: OperationContext, r: CorrectReceipt, owner: boolean,
           const exists = () => opError('rule_exists', `${ruleIdOf(r.rule.slug)} was written by another call before this correction's first write, so nothing was written.`,
             `Run gbrain rules show ${ruleIdOf(r.rule.slug)}; approve that rule, or save this one with different words.`);
           if (now && !now.page.deleted_at) throw exists();
+          const own = tried ? await getWriteRequest(engine as never, submittedBy, parseWriteRequestId(requestId)!) : null;
+          if (own && own.state !== 'committed' && !ENDED_UNCOMMITTED.has(own.state)) {
+            throw new OperationError('write_pending', 'The write is accepted and is still pending.', 'Read the receipt again with correct {receipt_id}; it finishes the step once the write commits.');
+          }
+          retryEnded(own);
+          r.steps.rule!.principal = { kind: by.kind, id: by.id };
+          await persist();
           await withRuleWriter(() => submitPageMutation(ctx, { operation: 'put_page', params: { slug: r.rule.slug, source_id: r.source_id, content: pageFor('proposed'), request_id: requestId } }))
             .catch(e => { throw codeOf(e) === 'revision_required' ? exists() : e; });
         }
@@ -335,10 +365,10 @@ async function advance(ctx: OperationContext, r: CorrectReceipt, owner: boolean,
         }
         await __correctFaults.before?.(step, r);
         const target = r.fact.action === 'replace' ? await readForgetTarget(engine, Number(r.fact.id), r.source_id, false, false) : null;
-        if (r.fact.entity && target && target.entity_slug?.toLowerCase() !== r.fact.entity.toLowerCase()) {
+        if (r.fact.action === 'replace' && (target?.entity_slug?.toLowerCase() ?? null) !== (r.fact.entity?.toLowerCase() ?? null)) {
           throw new OperationError('rule_transition', 'The fact is no longer on the page this correction names, so the fact was left unchanged.', `Run gbrain rules show ${ruleIdOf(r.rule.slug)}.`);
         }
-        const entity = r.fact.action === 'replace' ? r.fact.entity ?? target?.entity_slug ?? null : null;
+        const entity = r.fact.action === 'replace' ? r.fact.entity : null;
         const own = tried ? await getWriteRequest(engine as never, submittedBy, parseWriteRequestId(requestId)!) : null;
         if (own?.state === 'committed' && !writesFact(own, r.fact, r.source_id, entity)) {
           throw new OperationError('rule_transition', 'Another write already used this correction\'s fact request, so the fact was left as it is.', `Run gbrain rules show ${ruleIdOf(r.rule.slug)}.`);
@@ -354,6 +384,7 @@ async function advance(ctx: OperationContext, r: CorrectReceipt, owner: boolean,
           if (done.contested) r.steps.fact!.contested = true;
         }
         if (own?.state !== 'committed' && !gone) {
+        retryEnded(own);
         r.steps.fact!.principal = { kind: by.kind, id: by.id };
         await persist();
         const { verbOperations } = await import('../verbs.ts');
@@ -376,6 +407,7 @@ async function advance(ctx: OperationContext, r: CorrectReceipt, owner: boolean,
           throw new OperationError('write_pending', 'The write is accepted and is still pending.', 'Read the receipt again with correct {receipt_id}; it finishes the step once the write commits.');
         }
         if (own?.state !== 'committed') {
+          retryEnded(own);
           r.steps.activate!.principal = { kind: by.kind, id: by.id };
           await persist();
           await withRuleWriter(() => submitPageMutation(ctx, { operation: 'put_page', params: { slug: r.rule.slug, source_id: r.source_id, content: pageFor('active'),
@@ -385,7 +417,9 @@ async function advance(ctx: OperationContext, r: CorrectReceipt, owner: boolean,
       __correctFaults.after?.(step);
     } catch (e) {
       const code = codeOf(e);
-      if (step === 'rule' && !tried && REFUSED_AT_START.has(code)) { await engine.unsetConfig(receiptKey(r.receipt_id)); throw e; }
+      const refusedAtStart = step === 'rule' && !tried && (REFUSED_AT_START.has(code) || (!RETRYABLE.has(code) && e instanceof OperationError
+        && (await engine.readPageSnapshot(r.rule.slug, { sourceId: r.source_id }).then(s => !s || !!s.page.deleted_at || readRule({ ...s.page, source_id: r.source_id })?.receipt !== r.receipt_id))));
+      if (refusedAtStart) { await engine.unsetConfig(receiptKey(r.receipt_id)); throw e; }
       if (code === 'write_pending') { r.steps[step]!.state = 'pending'; r.state = 'pending'; }
       else if ((step === 'activate' && code === 'revision_conflict') || code === 'rule_transition' || code === 'rule_exists') r.state = 'conflicted';
       else r.state = 'partial';
@@ -489,11 +523,16 @@ function approvalHolds(r: CorrectReceipt, a: PendingApproval | null): a is Pendi
 
 /**
  * The receipt an approval runs: the approved payload, at the approved revision, with only the progress the approval
- * itself recorded. A fact write the receipt says was submitted before the approval is checked against the write journal.
+ * itself recorded. A fact or activation write the owner's receipt says was submitted before the approval is checked
+ * against the write journal; a step the receipt only claims is done is run again.
  */
 function approvedRun(r: CorrectReceipt, a: PendingApproval): CorrectReceipt {
   const recorded = (a.steps ?? {}) as CorrectReceipt['steps'];
-  const submitted = !recorded.fact && r.author.owner && r.steps.fact?.principal ? { fact: { state: 'started' as const, request_id: `${r.receipt_id}.fact`, principal: r.steps.fact.principal } } : {};
+  const submitted = Object.fromEntries((['fact', 'activate'] as const).flatMap(step => {
+    const s = r.steps[step];
+    return !recorded[step] && r.author.owner && s?.principal
+      ? [[step, { state: 'started' as const, request_id: s.request_id || `${r.receipt_id}.${step}`, ...(s.attempt ? { attempt: s.attempt } : {}), principal: s.principal }]] : [];
+  }));
   return { ...r, ...(a.payload as ApprovedPayload), confirmed: false,
     steps: { ...submitted, ...recorded, rule: { state: 'committed', request_id: `${r.receipt_id}.rule`, revision: a.revision } } };
 }
@@ -509,22 +548,30 @@ const changedReceipt = (id: string) => opError('rule_transition', `The correctio
  * Runs a stored receipt's remaining steps under its rule's lease, on the receipt as stored once the lease is held. An
  * owner's receipt continues only on the owner's own connection; another member's continues only once the owner has
  * approved it, and then under the owner's authority, so a write left pending by the approval finishes on the next read.
+ * The host resuming a remote owner's receipt asks at the terminal for the whole correction, then keeps that answer as
+ * the receipt's approval (GST-4031), so the steps run as an approval does and the rule is confirmed.
  */
 async function continueReceipt(ctx: OperationContext, r: CorrectReceipt, probe?: TerminalProbe): Promise<CorrectReceipt> {
   const foreign = await foreignOnHost(ctx, r);
+  let proof: OwnerProof | null = null;
   if (foreign && r.author.owner) {
-    const fact = r.steps.fact?.state !== 'committed' ? approvedFact(r.fact) : null;
+    if (ruleSlugOf(ruleIdOf(r.rule.slug)) !== r.rule.slug || !audienceHolds(r.rule) || (r.fact.entity && namesRule(r.fact.entity))) throw changedReceipt(ruleIdOf(r.rule.slug));
+    const fact = approvedFact(r.fact);
     const on = fact ? (await readForgetTarget(ctx.engine, Number(fact.id), r.source_id, false, false))?.entity_slug : null;
     const argv = ['gbrain', 'correct', 'resume', r.receipt_id];
     const bound = approvalDigest(ruleDigest(r.rule), fact);
-    const proof = await confirmOnTerminal({ argv, digest: bound, probe, subject: 'correction',
+    proof = await confirmOnTerminal({ argv, digest: bound, probe, subject: 'correction',
       summary: [`Correction ${r.receipt_id}, saved by ${oneLine(r.author.client)}: rule ${ruleIdOf(r.rule.slug)} (${r.rule.scope}): ${oneLine(r.rule.text)}`,
-        `Resuming it on this host makes the rule active${fact ? ` and changes a fact. ${factLine(fact)} (${on ? `on ${on}` : 'on no entity page'})` : ''}`] });
+        `Resuming it on this host makes the rule active${fact ? ` and finishes its fact change unless the write journal shows it done. ${factLine(fact)} (${on ? `on ${on}` : 'on no entity page'})` : ''}`] });
     if (proof.digest !== bound) throw confirmRequiredError(argv, { reason: 'declined' });
   }
   return withRuleLease(ctx.engine, r.source_id, r.rule.slug, async () => {
     const fresh = (await readReceipt(ctx.engine, r.receipt_id)) ?? r;
     if (fresh.state === 'conflicted') return fresh;
+    if (proof && (fresh.author.owner !== r.author.owner || JSON.stringify(payloadOf(fresh)) !== JSON.stringify(payloadOf(r)))) throw changedReceipt(ruleIdOf(r.rule.slug));
+    if (proof && fresh.steps.rule?.state === 'committed' && fresh.steps.rule.revision) {
+      await saveApproval(ctx.engine, fresh.receipt_id, { revision: fresh.steps.rule.revision, rule_digest: ruleDigest(fresh.rule), proof, payload: payloadOf(fresh) });
+    }
     const approval = await readApproval(ctx.engine, fresh.receipt_id);
     if (fresh.source_id === r.source_id && fresh.rule.slug === r.rule.slug && approvalHolds(fresh, approval)) {
       const approved = approvedRun(fresh, approval);
@@ -538,7 +585,7 @@ async function continueReceipt(ctx: OperationContext, r: CorrectReceipt, probe?:
       const landed = snap && !snap.page.deleted_at ? readRule({ ...snap.page, source_id: fresh.source_id }) : null;
       if (landed?.receipt !== fresh.receipt_id) return fresh;
     }
-    if (fresh.author.owner) return advance(ctx, fresh, authorOf(ctx).owner, null);
+    if (fresh.author.owner) return advance(ctx, fresh, authorOf(ctx).owner, proof);
     return advance(ctx, fresh, false, null);
   });
 }
@@ -558,6 +605,7 @@ const intentOf = (i: CorrectInput) => digestOf([i.rule, i.scope, i.fact_id, i.co
 
 export async function runCorrect(ctx: OperationContext, p: Record<string, unknown>, opts: CorrectOptions = {}): Promise<Record<string, unknown>> {
   const remote = ctx.remote !== false;
+  refuseGuestCall(ctx);
   if (typeof p.receipt_id === 'string' && p.rule === undefined) {
     if (ctx.dryRun) return { dry_run: true, action: 'correct', receipt_id: p.receipt_id };
     return p.resume === true ? resumeCorrect(ctx, p.receipt_id, opts) : correctStatus(ctx, p.receipt_id);
@@ -573,13 +621,10 @@ export async function runCorrect(ctx: OperationContext, p: Record<string, unknow
       'Tell the user what should be corrected; the brain\'s owner saves the rule.', { detail: codeOf(e) });
   }
   const author = authorOf(ctx);
-  const meta = ctx.guestChannels?.requestMeta;
-  if (currentCallerAccess().audience?.includes('guest') || ctx.guestChannels?.header?.trim() || (!!meta && typeof meta === 'object' && Object.hasOwn(meta, 'guest'))) {
-    throw opError('correct_guest_refused', 'This call acts for a guest (an on_behalf_of audience or a guest attribution), and a guest cannot save standing rules or correct facts. Nothing was written.',
-      'Tell the user what should be corrected; the brain\'s owner saves the rule.');
-  }
-  const ownerSubject = !remote || callerIsOwner();
-  if (remote && input.scope === 'me' && !ownerSubject && !author.member) {
+  const ownerId = remote ? await ownerMemberId(ctx.engine) : null;
+  const ownerSubject = !remote || callerIsOwner() || (author.member !== null && author.member === ownerId);
+  const solo = remote && ownerId === null && !author.member && (await listMembers(ctx.engine)).length === 0;
+  if (remote && input.scope === 'me' && !ownerSubject && !author.member && !solo) {
     throw opError('invalid_params', 'A rule with scope me belongs to one member, and this connection acts for no member, so nothing was written.',
       'Pass scope team, or call with a credential bound to one member.');
   }
@@ -645,6 +690,7 @@ async function ownReceipt(ctx: OperationContext, id: string): Promise<CorrectRec
   const r = await readReceipt(ctx.engine, id);
   if (!r) throw receiptNotFound(id);
   if (ctx.remote === false) return r;
+  refuseGuestCall(ctx);
   if (r.principal !== receiptPrincipal(await requestPrincipalForContext(ctx))) throw receiptNotFound(id);
   return r;
 }
@@ -702,13 +748,13 @@ export async function approveRule(engine: BrainEngine, ref: string, opts: { sour
       'Retire it with gbrain rules retire and save the correction again with the fact\'s own page as entity.');
   }
   if (receipt) {
-    const audience = receipt.rule.scope === 'me' ? (receipt.rule.visibility === 'private') !== !!receipt.rule.readable_by?.length : !receipt.rule.visibility && !receipt.rule.readable_by?.length;
+    const audience = audienceHolds(receipt.rule);
     const labels = labelsOf(receipt.rule.scope, receipt.rule.visibility, receipt.rule.readable_by) === labelsOf(rule.scope, snap!.page.frontmatter?.visibility, rule.readable_by);
     if (receipt.source_id !== sourceId || ruleDigest(receipt.rule) !== digest || receipt.rule.attribution !== rule.attribution || !audience || !labels) throw changedReceipt(rule.id);
   }
   const shown = receipt?.rule ?? rule;
   const target = fact ? await readForgetTarget(engine, Number(fact.id), sourceId, false, false) : null;
-  if (fact && receipt?.fact.entity && receipt.fact.entity.toLowerCase() !== target?.entity_slug?.toLowerCase()) throw changedReceipt(rule.id);
+  if (fact?.action === 'replace' && (receipt!.fact.entity?.toLowerCase() ?? null) !== (target?.entity_slug?.toLowerCase() ?? null)) throw changedReceipt(rule.id);
   const argv = ['gbrain', 'rules', 'approve', `${rule.id}@${revision}`];
   const bound = approvalDigest(digest, fact);
   const proof = opts.proof ? opts.proof(bound) : await confirmOnTerminal({ argv, digest: bound, probe: opts.probe, subject: 'standing rule',
