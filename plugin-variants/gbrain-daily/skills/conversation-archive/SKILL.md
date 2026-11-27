@@ -1,6 +1,7 @@
 ---
 name: conversation-archive
 version: 1.0.0
+audience: owner
 description: >
   Import AI-assistant chat exports (ChatGPT, Claude, Perplexity) and agent
   session transcripts into the brain as one dated page per conversation under
