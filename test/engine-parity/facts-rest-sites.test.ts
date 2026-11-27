@@ -577,9 +577,9 @@ describe('engine parity: facts write-path and recall statements that left execut
 
   // An id binds as bigint: PGLite refuses a fraction with the cast error; the Rust member refuses it before the store with
   // its typed refusal. Any other error fails the case.
-  parityTest('readReplacementTarget refuses an id that is not a whole number', {
+  parityTest('readReplacementTarget fails an id that is not a whole number with the bigint cast error on every engine', {
     methods: ['readReplacementTarget'],
-  }, (engine, backend) => rustStopsWith(backend, 'readReplacementTarget (an id that is not a whole number)', async () => {
+  }, async (engine) => {
     try {
       await engine.readReplacementTarget({ targetId: 1.5, sourceId: SRC, ownPage: null });
     } catch (error) {
@@ -588,7 +588,7 @@ describe('engine parity: facts write-path and recall statements that left execut
       throw error;
     }
     throw new Error('readReplacementTarget read a fractional id');
-  }));
+  });
 
   parityTest('readMemberPageWithdrawal finds the withdrawal a save onto a member page meets: its own subject first, another subject only for a row the member reads', {
     methods: ['readMemberPageWithdrawal', 'insertFacts', 'expireFact', 'insertFactWithdrawal', 'putPage'],
@@ -733,20 +733,20 @@ describe('engine parity: facts write-path and recall statements that left execut
     return { oldId: ids.get('old claim')!, newId: ids.get('new claim')! };
   };
 
-  parityTest('expireSupersededFact takes an until that is not an ISO instant only where Postgres reads it', {
+  parityTest('expireSupersededFact reads an until in Postgres timestamp text on every engine', {
     methods: ['expireSupersededFact', 'readPairFactRow', 'insertFact'],
-  }, (engine, backend) => rustStopsWith(backend, 'expireSupersededFact (an until that is not an ISO instant)', async () => {
+  }, async (engine) => {
     const { oldId, newId } = await supersedePair(engine);
     const expired = await engine.expireSupersededFact({ oldId, sourceId: SRC, newId, until: '2026-03-01 00:00:00+00' });
     const row = await engine.readPairFactRow(oldId);
     const out = { expired, valid_until: iso(row!.valid_until) };
     expect(out).toEqual({ expired: 1, valid_until: '2026-03-01T00:00:00.000Z' });
     return out;
-  }));
+  });
 
-  parityTest('restoreSupersededFact takes an expiredAt that is not an ISO instant only where Postgres reads it', {
+  parityTest('restoreSupersededFact reads an expiredAt in Postgres timestamp text on every engine', {
     methods: ['expireSupersededFact', 'restoreSupersededFact', 'readPairFactRow', 'insertFact'],
-  }, (engine, backend) => rustStopsWith(backend, 'restoreSupersededFact (an expiredAt that is not an ISO instant)', async () => {
+  }, async (engine) => {
     const { oldId, newId } = await supersedePair(engine);
     expect(await engine.expireSupersededFact({ oldId, sourceId: SRC, newId, until: null })).toBe(1);
     const restored = await engine.restoreSupersededFact({
@@ -756,7 +756,7 @@ describe('engine parity: facts write-path and recall statements that left execut
     const out = { restored, expired_at: iso(row!.expired_at), superseded_by: row!.superseded_by };
     expect(out).toEqual({ restored: 1, expired_at: '2026-04-01T00:00:00.000Z', superseded_by: null });
     return out;
-  }));
+  });
 
   parityTest('readFactForForget, expireFactSuperseded and expireFactAtDate read and end an active fact for a forget, and only an active one', {
     methods: ['readFactForForget', 'expireFactSuperseded', 'expireFactAtDate', 'insertFact', 'insertFacts', 'listFactsByEntity'],
