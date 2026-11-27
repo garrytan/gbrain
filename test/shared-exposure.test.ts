@@ -248,6 +248,10 @@ describe('doctor unscoped_multi_user_token', () => {
       await engine.setConfig('mcp.stdio_may_act_for', '');
     }
     expect((await doctor({}, home)).status).toBe('warn');
+    for (const cleared of ['none', 'not a member list!']) {
+      await engine.setConfig('mcp.stdio_may_act_for', cleared);
+      expect((await doctor({}, home)).status).toBe('warn');
+    }
     mkdirSync(join(home, '.claude'), { recursive: true });
     writeFileSync(join(home, '.claude', 'settings.json'), JSON.stringify({ enabledPlugins: { 'telegram@claude-plugins-official': true } }));
     await engine.setConfig('mcp.stdio_may_act_for', 'alice-example,bob-example');

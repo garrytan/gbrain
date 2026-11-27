@@ -40,7 +40,7 @@
  * ends `skill_resolver_plugin_not_installed` with the commands still to run.
  */
 import { createHash } from 'node:crypto';
-import { chmodSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmdirSync, rmSync, statSync, unlinkSync } from 'node:fs';
+import { chmodSync, closeSync, copyFileSync, existsSync, fstatSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, realpathSync, rmdirSync, rmSync, statSync, unlinkSync } from 'node:fs';
 import { dirname, join, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { atomicWriteTextFile } from '../bootstrap/atomic-write.ts';
@@ -464,6 +464,39 @@ export function openclawLoaderVersion(): number | null {
 export const OPENCLAW_LOG_WINDOW_MS = 24 * 3600 * 1000;
 export const OPENCLAW_LOG_READ_CAP = 4 * 1024 * 1024;
 
+/** The last OPENCLAW_LOG_READ_CAP bytes of a daily turn log, read from the end, so a log that grew past the cap is never loaded whole. */
+export function readOpenclawLogTail(path: string): string {
+  const fd = openSync(path, 'r');
+  try {
+    const size = fstatSync(fd).size;
+    const len = Math.min(size, OPENCLAW_LOG_READ_CAP);
+    const buf = Buffer.alloc(len);
+    readSync(fd, buf, 0, len, size - len);
+    return buf.toString('utf8');
+  } finally { closeSync(fd); }
+}
+
+/**
+ * GST-4004: the final read, merge and write of the state file run one at a time across setup runs (the gateway's own
+ * refresh included), so a save that lands between another run's read and its rename is never lost. A lock older than
+ * 30 seconds was left by a run that died; a lock held past 10 seconds refuses the run.
+ */
+function withOpenclawStateLock<T>(path: string, fn: () => T): T | null {
+  const lock = `${path}.lock`;
+  const deadline = Date.now() + 10_000;
+  for (;;) {
+    try { closeSync(openSync(lock, 'wx', 0o600)); break; } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== 'EEXIST') throw e;
+    }
+    let age = 0;
+    try { age = Date.now() - statSync(lock).mtimeMs; } catch { continue; } // silent-read-ok: the holder released the lock between the two calls, so try again
+    if (age > 30_000) { rmSync(lock, { force: true }); continue; }
+    if (Date.now() > deadline) return null;
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
+  }
+  try { return fn(); } finally { rmSync(lock, { force: true }); }
+}
+
 /** The plugin code version the gateway ran on the newest turn it logged in the last 24 hours (0: code from before turns recorded it), null with none logged. */
 export function openclawRunningVersion(home: string, now = Date.now()): number | null {
   const dir = logsDir(home);
@@ -473,8 +506,7 @@ export function openclawRunningVersion(home: string, now = Date.now()): number |
   for (const f of files) {
     let text = '';
     try {
-      text = readFileSync(join(dir, f), 'utf8');
-      if (statSync(join(dir, f)).size > OPENCLAW_LOG_READ_CAP) text = text.slice(-OPENCLAW_LOG_READ_CAP);
+      text = readOpenclawLogTail(join(dir, f));
     } catch { continue; } // silent-read-ok: a log file removed mid-read holds no turn to count
     for (const line of text.split('\n')) {
       let j: { at?: unknown; agent?: unknown; plugin?: unknown; outcome?: unknown };
@@ -690,14 +722,20 @@ export async function syncOpenclawSkillPlugin(opts: OpenclawSkillSyncOptions): P
       message: `The skill resolver library could not be built (${(e as Error).message}). The catalogs were built; the state file and the plugin were not written.` });
   }
   out.steps.push({ step: 'library', action: lib.wrote ? 'write' : 'keep', detail: lib.path });
-  const latest = readOpenclawSkillState(home);
-  if (prior && !latest && !opts.mode) { out.notes.push(`${openclawSkillStatePath(home)} was removed while this run worked (gbrain setup openclaw --remove), so it was not written again`); return out; }
-  const written = mergeLatestSettings(agents, prior, latest, built, explicit, talkFor);
+  mkdirSync(home, { recursive: true });
+  const saved = withOpenclawStateLock(openclawSkillStatePath(home), () => {
+    const latest = readOpenclawSkillState(home);
+    if (prior && !latest && !opts.mode) return 'removed' as const;
+    const merged = mergeLatestSettings(agents, prior, latest, built, explicit, talkFor);
+    const stateText = `${JSON.stringify({ v: 1, gbrain_version: VERSION, library_sha256: lib.sha256, gbrain_home: home, agents: merged } satisfies OpenclawSkillState, null, 2)}\n`;
+    const changedNow = (() => { try { return readFileSync(openclawSkillStatePath(home), 'utf8') !== stateText; } catch { return true; } })();
+    if (changedNow) { atomicWriteTextFile(openclawSkillStatePath(home), stateText, { freshMode: 0o600 }); chmodSync(openclawSkillStatePath(home), 0o600); }
+    return { written: merged, stateChanged: changedNow };
+  });
+  if (saved === null) return fail({ code: 'skill_resolver_setup_incomplete', message: `Another gbrain setup openclaw run held ${openclawSkillStatePath(home)}.lock for more than 10 seconds, so this run wrote no state.`, recovery: 'partial: the library and catalogs were written; run setup again once the other run finishes' });
+  if (saved === 'removed') { out.notes.push(`${openclawSkillStatePath(home)} was removed while this run worked (gbrain setup openclaw --remove), so it was not written again`); return out; }
+  const { written, stateChanged } = saved;
   ownerNotes(written);
-  const state: OpenclawSkillState = { v: 1, gbrain_version: VERSION, library_sha256: lib.sha256, gbrain_home: home, agents: written };
-  const stateText = `${JSON.stringify(state, null, 2)}\n`;
-  const stateChanged = (() => { try { return readFileSync(openclawSkillStatePath(home), 'utf8') !== stateText; } catch { return true; } })();
-  if (stateChanged) { mkdirSync(home, { recursive: true }); atomicWriteTextFile(openclawSkillStatePath(home), stateText, { freshMode: 0o600 }); chmodSync(openclawSkillStatePath(home), 0o600); }
   out.steps.push({ step: 'state', action: stateChanged ? 'write' : 'keep', detail: `${openclawSkillStatePath(home)} (${Object.entries(written).map(([id, a]) => `${id} ${a.mode}`).join(', ')})` });
   if (opts.refreshOnly) {
     const loader = openclawLoaderVersion();

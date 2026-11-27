@@ -210,7 +210,7 @@ async function plan(engine: BrainEngine, roster: string[], sourceId: string, lab
       const minted = setupReads(token.permissions);
       if (token.source_id !== sourceId) {
         const moved = [...new Set([sourceId, ...reads])];
-        if (minted && sameSet(minted, held)) keys.push({ member: id, token_name: name, path, action: 'keep', reads: moved, moves: token.source_id ?? 'default', adds });
+        if (minted && sameSet(minted, held) && minted[0] === token.source_id) keys.push({ member: id, token_name: name, path, action: 'keep', reads: moved, moves: token.source_id ?? 'default', adds });
         else keys.push({ member: id, token_name: name, path, action: 'skipped', reads: held,
           detail: `it writes to ${token.source_id} and its source list (${held.join(', ')}) is not the one setup gave it, so setup leaves it as it is; to move it to ${sourceId}, run gbrain auth rescope --token ${name} --sources ${moved.join(',')}` });
       } else if (!active.has(sourceId)) {
@@ -457,7 +457,8 @@ export async function runAccessServes(engine: BrainEngine, mode: string | undefi
   const roster = readRoster(flagValue(args, '--members'), flagValue(args, '--members-file'));
   if (!roster.length) throw rosterEmpty('gbrain access serves several');
   const owner = flagValue(args, '--owner');
-  const source = await resolveSourceId(engine, flagValue(args, '--source') ?? (process.env.GBRAIN_SOURCE?.trim() || null), undefined, { skipLocalSignals: true });
+  const named = flagValue(args, '--source') ?? (process.env.GBRAIN_SOURCE?.trim() || null) ?? ((await engine.getConfig('sources.default'))?.trim() || 'default');
+  const source = await resolveSourceId(engine, named, undefined, { skipLocalSignals: true });
   const r = await labelSeveral(engine, roster, source, args.includes('--yes'), json, { labelledOnly: args.includes('--labelled-only'), ...(owner !== undefined ? { owner: assertAccessId(owner) } : {}) });
   if (r.applied) await rescopeArchiveAfter(engine);
   console.log(json ? JSON.stringify(r, null, 2) : receiptLines(r).join('\n'));

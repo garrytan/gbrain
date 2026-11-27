@@ -29,7 +29,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { runCli } from './helpers/cli-spawn.ts';
 import { withEnv } from './helpers/with-env.ts';
-import { openclawAgentPolicy, openclawCatalogName } from '../src/core/setup/openclaw-skill-plugin.ts';
+import { OPENCLAW_LOG_READ_CAP, openclawAgentPolicy, openclawCatalogName, readOpenclawLogTail } from '../src/core/setup/openclaw-skill-plugin.ts';
 import { runOpenclawCli } from '../src/core/setup/openclaw-turn-plugin.ts';
 import { OPENCLAW_SKILL_PLUGIN_CODE_VERSION } from '../src/core/setup/openclaw-skill-plugin-code.ts';
 
@@ -1099,6 +1099,34 @@ describe.skipIf(!NODE)('session classes and the session-start brief', () => {
     expect(refresh.exitCode, refresh.stdout + refresh.stderr).toBe(0);
     expect(existsSync(race)).toBe(true);
     expect(readState(b).agents.main).toMatchObject({ mode: 'live', require_owner_sender: true, owner_sender_ids: ['owner-1'] });
+  });
+
+  test('GST-4004: the final state write waits for another run holding the state lock, refuses past 10 seconds without writing, and breaks a lock a dead run left', async () => {
+    const b = box();
+    expectExit(await setup(b, ['--skill-loading', 'resolve']), 0);
+    const before = readFileSync(statePath(b), 'utf8');
+    const lock = statePath(b) + '.lock';
+    writeFileSync(lock, '');
+    const held = await runCli(['setup', 'openclaw', '--skills-index-only', '--json', '--agent', 'main', '--operator-rule', 'Ask first.'], { env: b.env, timeoutMs: 110_000 });
+    expect(held.exitCode, held.stdout + held.stderr).not.toBe(0);
+    expect(held.stdout + held.stderr).toContain('.lock for more than 10 seconds');
+    expect(readFileSync(statePath(b), 'utf8')).toBe(before);
+    utimesSync(lock, new Date(Date.now() - 120_000), new Date(Date.now() - 120_000));
+    const stale = await runCli(['setup', 'openclaw', '--skills-index-only', '--json', '--agent', 'main', '--operator-rule', 'Ask first.'], { env: b.env, timeoutMs: 110_000 });
+    expect(stale.exitCode, stale.stdout + stale.stderr).toBe(0);
+    expect(readState(b).agents.main.operator_rule).toBe('Ask first.');
+    expect(existsSync(lock)).toBe(false);
+  });
+
+  test('GST-4004: a daily turn log past the read cap is read from its end, so the newest turn still counts', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-openclaw-tail-'));
+    roots.push(dir);
+    const file = join(dir, 'openclaw-2026-01-01.jsonl');
+    const last = JSON.stringify({ at: new Date().toISOString(), agent: 'main', plugin: '9', outcome: 'no_match' }) + '\n';
+    writeFileSync(file, 'x'.repeat(OPENCLAW_LOG_READ_CAP + 1000) + '\n' + last);
+    const tail = readOpenclawLogTail(file);
+    expect(Buffer.byteLength(tail)).toBe(OPENCLAW_LOG_READ_CAP);
+    expect(tail.endsWith(last)).toBe(true);
   });
 
   test('GST-4004: a multi-agent run that gives settings but skips a live agent for a failed catalog fails closed and names the agent, and the other agent still gets them', async () => {

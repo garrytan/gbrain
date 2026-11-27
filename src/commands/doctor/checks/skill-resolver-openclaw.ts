@@ -22,7 +22,7 @@ import { join } from 'node:path';
 import { catalogStatus } from '../../../core/skills/resolver/build.ts';
 import { logsDir } from '../../../core/skills/resolver/paths.ts';
 import { OPENCLAW_SKILL_PLUGIN_CODE_VERSION } from '../../../core/setup/openclaw-skill-plugin-code.ts';
-import { OPENCLAW_LOG_READ_CAP, OPENCLAW_LOG_WINDOW_MS, openclawAgentPolicy, openclawGuardRuns, openclawHostDrift, openclawLoaderVersion, openclawOwnerUnverified, openclawSkillLibDir, openclawSkillPluginDir, openclawSkillPluginRegistered, readOpenclawSkillState, type OpenclawPathReads } from '../../../core/setup/openclaw-skill-plugin.ts';
+import { OPENCLAW_LOG_WINDOW_MS, readOpenclawLogTail, openclawAgentPolicy, openclawGuardRuns, openclawHostDrift, openclawLoaderVersion, openclawOwnerUnverified, openclawSkillLibDir, openclawSkillPluginDir, openclawSkillPluginRegistered, readOpenclawSkillState, type OpenclawPathReads } from '../../../core/setup/openclaw-skill-plugin.ts';
 import { catalogSkillIds } from '../../../core/setup/skill-pins.ts';
 import { openclawConfigPath } from '../../../core/setup/brain-first.ts';
 
@@ -73,9 +73,7 @@ function recentOpenclaw(home: string, now: number, configSince: number): Opencla
   for (const f of files) {
     let text = '';
     try {
-      const p = join(dir, f);
-      text = readFileSync(p, 'utf8');
-      if (statSync(p).size > OPENCLAW_LOG_READ_CAP) text = text.slice(-OPENCLAW_LOG_READ_CAP);
+      text = readOpenclawLogTail(join(dir, f));
     } catch { continue; }
     for (const line of text.split('\n')) {
       if (!line) continue;

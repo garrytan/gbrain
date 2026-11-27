@@ -87,6 +87,11 @@ describe('gbrain setup --serves several: which brain and which source (GST-4043)
     const env = { ...CLEAN, HOME: b.home, GBRAIN_HOME: b.home };
     const here = await runCli(['access', 'serves', 'several', '--members', ROSTER.join(','), '--json'], { env, cwd: dir, timeoutMs: 120_000 });
     expect(JSON.parse(here.stdout).source_id, here.stdout + here.stderr).toBe('default');
+    const repo = join(b.root, 'repo-b');
+    mkdirSync(repo, { recursive: true });
+    expect((await gbrain(b, ['sources', 'add', 'source-b', '--path', repo, '--no-federated'])).exitCode).toBe(0);
+    const registered = await runCli(['access', 'serves', 'several', '--members', ROSTER.join(','), '--json'], { env, cwd: repo, timeoutMs: 120_000 });
+    expect(JSON.parse(registered.stdout).source_id, registered.stdout + registered.stderr).toBe('default');
     const pinned = await runCli(['access', 'serves', 'several', '--members', ROSTER.join(','), '--json'], { env: { ...env, GBRAIN_SOURCE: 'source-a' }, cwd: dir, timeoutMs: 120_000 });
     expect(JSON.parse(pinned.stdout).source_id, pinned.stdout + pinned.stderr).toBe('source-a');
   }, 240_000);

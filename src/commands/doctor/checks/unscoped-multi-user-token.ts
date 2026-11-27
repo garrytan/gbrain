@@ -29,6 +29,7 @@ import { connectedEngine, type DoctorContext, type DoctorEntry } from '../contex
 import { infoCheck } from '../check-fix.ts';
 import { brainServes } from '../../../core/access/serves.ts';
 import { STDIO_MAY_ACT_FOR_KEY } from '../../../core/access/audience.ts';
+import { parseMayActFor } from '../../../core/access/members.ts';
 
 interface Finding { subject: ExposureSubject; label: string; reasons: string[]; census: ChatCensus }
 
@@ -63,7 +64,9 @@ async function runUnscopedMultiUserToken(ctx: DoctorContext): Promise<Check[]> {
     if (reasons.length) findings.push({ subject, label: subjectLabel(subject), reasons, census: c });
   }
   const local: Finding[] = [];
-  const actsForStdioAudience = !!(await engine.getConfig(STDIO_MAY_ACT_FOR_KEY))?.trim();
+  const mayActFor = await engine.getConfig(STDIO_MAY_ACT_FOR_KEY);
+  let actsForStdioAudience = false;
+  try { actsForStdioAudience = !!mayActFor && !!parseMayActFor(mayActFor)?.length; } catch { /* silent-read-ok: a malformed list grants no audience (the request path refuses it too), so the bot keeps its warning */ }
   if (!ctx.remote) {
     const plugins = claudeCodeChannelPlugins();
     const harnesses = [...new Set([

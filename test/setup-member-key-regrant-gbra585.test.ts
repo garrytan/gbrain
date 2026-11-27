@@ -135,6 +135,10 @@ describe('setup re-run and the member keys it minted', () => {
     expect(await reads(e, 'member-alice-example')).toEqual(['source-a', 'default']);
     expect((await label('source-a')).keys[0]).toMatchObject({ action: 'keep' });
     expect((await label('source-a')).keys[0]!.moves).toBeUndefined();
+    await rescopeLegacyToken(e, { target: { name: 'member-alice-example' }, sources: ['default', 'source-a'], reset: [], refreshOperations: false, allNew: false, dryRun: false, json: true });
+    const back = await label('source-a');
+    expect(back.keys[0]).toMatchObject({ action: 'skipped' });
+    expect((await row()).source_id).toBe('default');
     await e.disconnect();
   }, 120_000);
 
