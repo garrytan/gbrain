@@ -1022,6 +1022,20 @@ describe('supervisor sample accounting (a sample is owed in a durable record bef
       h.done();
     });
 
+    test('a kept record states its page and link writes too (owed_qualifying): published after the disk recovers, its lost non page writes are not counted against the share', async () => {
+      const h = flakyHarness();
+      const other = `{"t":"write","op":"updatePageContextualRetrievalState","outcome":"capability_missing","family":"pages:updatePageContextualRetrievalState"}\n`;
+      h.sup.send(sample(0)); await turn();
+      expect(h.owed(0)).toMatchObject({ owed: 1, owed_qualifying: 1 });
+      h.disk.failing = true;
+      expect(h.sup.send(other)).toBe(true); expect(h.sup.send(other)).toBe(true); await turn(); await wait(30); // the record for 3 samples (1 page write) cannot be written: it is kept
+      await h.respawn(0); await wait(30);
+      expect(h.owed(0)).toMatchObject({ owed: 1, owed_qualifying: 1 }); // still the old record: the disk refuses
+      h.disk.failing = false; await wait(80);
+      expect(h.owed(0)).toMatchObject({ owed: 3, owed_qualifying: 1, child_exited: true }); // was owed: 3 with no owed_qualifying, which counts all 3 as page and link writes
+      h.done();
+    });
+
     test('stop() with the record unwritable keeps the closed record too: the child ends its input on the older one, and the full count is published when the disk recovers', async () => {
       const h = flakyHarness();
       h.sup.send(sample(0)); await turn();
