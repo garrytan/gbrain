@@ -15,14 +15,14 @@
 import { resolve, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import { parseMarkdown } from '../markdown.ts';
-import { declareDerivation, deriveTrust, derivedWriteTrust, frontmatterTaint, type DerivationDeclaration } from '../trust/taint.ts';
+import { declareDerivation, deriveTrust, derivedWriteTrust, frontmatterTaint, type DerivationDeclaration, type TrustReads } from '../trust/taint.ts';
 import type { TaintInput, TrustTier, WriteTrust } from '../trust/tier.ts';
 import { CONVERSATION_PAGE_URI_PREFIX } from './transcript-discovery.ts';
 
 export interface Derivation { trust: WriteTrust; inputs: TaintInput[] }
 
 /** The derivation of every page a synthesis child wrote from one transcript. */
-export async function transcriptDerivation(engine: Pick<BrainEngine, 'executeRaw'>, transcript: { filePath: string; content?: string } | undefined,
+export async function transcriptDerivation(engine: TrustReads, transcript: { filePath: string; content?: string } | undefined,
   meetingTranscriptsDir?: string | null): Promise<Derivation> {
   const channel = 'derive:synthesize';
   if (!transcript) return { trust: derivedWriteTrust({ channel, inputs: [], lowerTo: ['unknown'] }), inputs: [] };
@@ -41,7 +41,7 @@ export async function transcriptDerivation(engine: Pick<BrainEngine, 'executeRaw
 }
 
 /** The derivation of a page written from several transcripts (the unmanaged quote-repair writeback): the least trusted of them. */
-export async function transcriptsDerivation(engine: Pick<BrainEngine, 'executeRaw'>, transcripts: Array<{ filePath: string; content?: string }>,
+export async function transcriptsDerivation(engine: TrustReads, transcripts: Array<{ filePath: string; content?: string }>,
   meetingTranscriptsDir?: string | null): Promise<Derivation> {
   const each = await Promise.all(transcripts.map(t => transcriptDerivation(engine, t, meetingTranscriptsDir)));
   if (each.length === 1) return each[0];

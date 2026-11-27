@@ -105,3 +105,20 @@ test('a policy-only commit on a source whose sync is on still fails', async () =
   await addSource('source-c', mirror('sync-on', ['.gbrain/access.yml'], true), {});
   expect((await gitConvergenceCheck(engine))?.status).toBe('fail');
 });
+
+// Refusal-swallow triage, lane 14 (git-convergence.ts:109): the source rows came from raw SQL whose refusal on an engine
+// without it (Rust) read as no sources, so no root was ever marked a mirror and this case failed instead of info.
+test('the policy-only mirror stays info on an engine that refuses raw SQL: the source rows come from listSourceRecords', async () => {
+  const { capabilityMissing } = await import('../src/core/rust-engine/errors.ts');
+  await addSource('mirror-a', mirror('policy-only-rust', ['.gbrain/access.yml', '.gbrain/access.approved'], true), { syncEnabled: false });
+  const rustLike = new Proxy(engine, {
+    get(target, prop) {
+      if (prop === 'executeRaw') return async () => { throw capabilityMissing('raw_sql', 'executeRaw'); };
+      const value = Reflect.get(target, prop, target);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+  const check = await gitConvergenceCheck(rustLike);
+  expect(check?.status).toBe('ok');
+  expect(check?.severity).toBe('info');
+});

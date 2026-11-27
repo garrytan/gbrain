@@ -25,7 +25,7 @@ import { registerLocalWriter } from '../src/core/persistence/identity.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { removeMember } from '../src/core/access/members.ts';
 import { mintLegacyToken, revokeLegacyTokenById } from '../src/core/token-mint.ts';
-import { sqlQueryForEngine } from '../src/core/sql-query.ts';
+import type { BrainEngine } from '../src/core/engine.ts';
 import { runWakeshift } from '../src/commands/wakeshift.ts';
 import { wakeshiftEntry } from '../src/commands/doctor/checks/wakeshift.ts';
 import type { DoctorContext } from '../src/commands/doctor/context.ts';
@@ -371,7 +371,7 @@ describe('forget on remove', () => {
     expect(body(await call('watch_job', { id: await seedJob() }, ctx))).toMatchObject({ watching: true });
     writeConfig({ enabled: false, url: fake.url });
     fake.calls.length = 0;
-    expect(await revokeLegacyTokenById(sqlQueryForEngine(engine), minted.id)).toBe(true);
+    expect(await revokeLegacyTokenById(engine, minted.id)).toBe(true);
     expect(await engine.executeRaw('SELECT state, last_error FROM wake_subscriptions')).toEqual([{ state: 'ended', last_error: 'principal_revoked' }]);
     expect(await engine.executeRaw("SELECT state FROM wake_forgets")).toEqual([{ state: 'pending' }]);
     expect(await drain()).toMatchObject({ skipped: 'off' });
@@ -387,7 +387,7 @@ describe('forget on remove', () => {
     await call('watch_job', { id: j1 }, client('client-d1'));
     await call('watch_job', { id: j2 }, client('client-d2'));
     await engine.executeRaw("DELETE FROM oauth_clients WHERE client_id = 'client-d1'");
-    expect(await inHome(() => forgetWakePrincipal(sqlQueryForEngine(engine), { kind: 'oauth_client', id: 'client-d1' }))).toEqual({ ended: 1, queued: 1 });
+    expect(await inHome(() => forgetWakePrincipal(engine, { kind: 'oauth_client', id: 'client-d1' }))).toEqual({ ended: 1, queued: 1 });
     await engine.executeRaw("UPDATE oauth_clients SET deleted_at = now() WHERE client_id = 'client-d2'");
     await engine.executeRaw("UPDATE minion_jobs SET status = 'completed', finished_at = now()");
     expect(await drain()).toMatchObject({ delivered: 0, ended: 1, forgotten: 1 });
@@ -400,9 +400,8 @@ describe('forget on remove', () => {
   test('a forget that cannot be queued leaves the watch open instead of ending it unforgotten', async () => {
     await addClient('client-f2');
     await call('watch_job', { id: await seedJob() }, client('client-f2'));
-    const real = sqlQueryForEngine(engine);
-    const failing: typeof real = (strings, ...values) =>
-      strings.join('').includes('INSERT INTO wake_forgets') ? Promise.reject(new Error('transient')) : real(strings, ...values);
+    const failing: BrainEngine = Object.create(engine, { executeRaw: { value: (query: string, params?: unknown[]) =>
+      query.includes('INSERT INTO wake_forgets') ? Promise.reject(new Error('transient')) : engine.executeRaw(query, params) } });
     expect(await inHome(() => forgetWakePrincipal(failing, { kind: 'oauth_client', id: 'client-f2' }))).toEqual({ ended: 0, queued: 0 });
     expect(await engine.executeRaw('SELECT state FROM wake_subscriptions')).toEqual([{ state: 'open' }]);
   });
@@ -427,7 +426,7 @@ describe('forget on remove', () => {
       auth: { token: 't', clientId: minted.id, principal: { kind: 'legacy_token' as const, id: minted.id }, scopes: ['read', 'write', 'admin'] } };
     expect(body(await call('watch_job', { id: await seedJob() }, ctx))).toMatchObject({ watching: true });
     writeConfig({ enabled: false, url: fake.url });
-    expect(await revokeLegacyTokenById(sqlQueryForEngine(engine), minted.id.toUpperCase())).toBe(true);
+    expect(await revokeLegacyTokenById(engine, minted.id.toUpperCase())).toBe(true);
     expect(await engine.executeRaw('SELECT state, last_error FROM wake_subscriptions')).toEqual([{ state: 'ended', last_error: 'principal_revoked' }]);
     expect(await engine.executeRaw('SELECT state FROM wake_forgets')).toEqual([{ state: 'pending' }]);
   });

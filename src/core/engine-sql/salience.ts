@@ -21,7 +21,7 @@ import { buildRecencyComponentSql } from '../search/sql-ranking.ts';
 import { computeAnomaliesFromBuckets } from '../cycle/anomaly.ts';
 import type { SqlExecutor } from './executor.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
-import { sqlFragment, trustedSql } from './fragment.ts';
+import { sqlFragment, trustedSql, type SqlFragment } from './fragment.ts';
 import { rankingLinkSql } from '../link-ranking-policy.ts';
 
 export async function batchLoadEmotionalInputs(exec: LegacyUnscopedRead, slugs?: string[]): Promise<EmotionalWeightInputRow[]> {
@@ -109,7 +109,9 @@ export async function getRecentSalience(exec: LegacyUnscopedRead, opts: Salience
     // Compute the boundary in JS so the SQL is identical across engines (eng review D5).
     const boundaryIso = new Date(Date.now() - days * 86400000).toISOString();
     // Escape LIKE meta for the optional prefix match.
-    const prefixCondition = slugPrefix
+    const prefixCondition = slugPrefix && opts.slugPrefixAlso?.length
+      ? sqlFragment`AND p.slug LIKE ANY(${[slugPrefix, ...opts.slugPrefixAlso].map(prefix => prefix.replace(/[\\%_]/g, (c) => '\\' + c) + '%')}::text[])`
+      : slugPrefix
       ? sqlFragment`AND p.slug LIKE ${slugPrefix.replace(/[\\%_]/g, (c) => '\\' + c) + '%'} ESCAPE '\\'`
       : sqlFragment``;
     // TIM-37: exclude briefing pages from their own Brain Pulse. The cron
@@ -166,7 +168,7 @@ export async function getRecentSalience(exec: LegacyUnscopedRead, opts: Salience
          ${excludeBriefings}
          ${sourceCondition} ${readCondition}
        GROUP BY p.id
-       ORDER BY score DESC, p.source_id ASC, p.slug ASC
+       ORDER BY score DESC, p.source_id COLLATE "C" ASC, p.slug COLLATE "C" ASC
        LIMIT ${limit}
     `)).rows;
     return rows.map((r: Record<string, unknown>) => ({
@@ -215,6 +217,10 @@ export async function listEnrichCandidates(exec: LegacyUnscopedRead, opts: Enric
     // Whitelisted ORDER BY (no injection — enum maps to a literal fragment).
     const orderKey = ENRICH_ORDER_SQL[opts.order] ? opts.order : 'inbound-links';
     const orderBy = trustedSql(ENRICH_ORDER_SQL[orderKey]);
+    if (orderKey === 'owner-contact') {
+      const bodyLen = trustedSql("(char_length(p.compiled_truth) + char_length(COALESCE(p.timeline, '')))");
+      return listOwnerContactCandidates(exec, { limit, threshold, bodyLen, sourceCondition, recencyCondition, dreamCondition, orderBy, types: opts.types, ownerSlug: opts.ownerSlug, ownerSourceId: opts.ownerSourceId });
+    }
 
     const rows = (await exec.run(sqlFragment`
       SELECT
@@ -247,6 +253,104 @@ export async function listEnrichCandidates(exec: LegacyUnscopedRead, opts: Enric
       type: r.type as EnrichCandidate['type'],
       body_len: Number(r.body_len ?? 0),
       inbound_count: Number(r.inbound_count ?? 0),
+    }));
+  }
+
+/** Page types that record the owner talking to someone: meetings, chats, email threads and chronicle events. */
+export const OWNER_CONTACT_EVIDENCE_TYPES = ['meeting', 'conversation', 'email', 'event'] as const;
+/** Evidence older than this many days counts for nothing; newer evidence counts linearly more, up to 1 for today. */
+export const OWNER_CONTACT_WINDOW_DAYS = 90;
+
+/**
+ * The `owner-contact` order, in one statement of aggregated CTEs (no subquery
+ * per candidate). contact_score = sum of recency weights of evidence pages
+ * (OWNER_CONTACT_EVIDENCE_TYPES dated in the window, by
+ * COALESCE(effective_date, updated_at) so pages_coalesce_date_idx serves the
+ * filter) that link to or mention the candidate, plus its open loops, plus 1
+ * when it is linked to or from the owner's page, divided by
+ * 1 + body_len / thin threshold, so a fuller page ranks lower. Ties fall back
+ * to the inbound-link count.
+ */
+async function listOwnerContactCandidates(exec: LegacyUnscopedRead, o: {
+  limit: number; threshold: number; bodyLen: ReturnType<typeof trustedSql>; types: string[]; ownerSlug?: string; ownerSourceId?: string;
+  sourceCondition: SqlFragment; recencyCondition: SqlFragment; dreamCondition: SqlFragment; orderBy: ReturnType<typeof trustedSql>;
+}): Promise<EnrichCandidate[]> {
+    const now = Date.now();
+    const windowSeconds = OWNER_CONTACT_WINDOW_DAYS * 86_400;
+    const nowIso = new Date(now).toISOString();
+    const cutoffIso = new Date(now - windowSeconds * 1000).toISOString();
+    const ownerPage = o.ownerSlug && o.ownerSourceId
+      ? sqlFragment`SELECT op.id FROM pages op WHERE op.slug = ${o.ownerSlug} AND op.source_id = ${o.ownerSourceId} AND op.deleted_at IS NULL`
+      : sqlFragment`SELECT NULL::int AS id WHERE FALSE`;
+    const ranking = trustedSql(rankingLinkSql('l'));
+    const rows = (await exec.run(sqlFragment`
+      WITH cand AS (
+        SELECT p.id, p.slug, p.source_id, p.title, p.type,
+               ${o.bodyLen} AS body_len
+          FROM pages p
+         WHERE p.deleted_at IS NULL
+           AND p.type = ANY(${o.types}::text[])
+           AND ${o.bodyLen} < ${o.threshold}
+           ${o.sourceCondition}
+           ${o.recencyCondition}
+           ${o.dreamCondition}
+      ),
+      inbound AS (
+        SELECT l.to_page_id AS page_id, COUNT(*) AS n
+          FROM links l JOIN cand c ON c.id = l.to_page_id
+         WHERE l.link_source IS DISTINCT FROM 'mentions' AND ${ranking}
+         GROUP BY l.to_page_id
+      ),
+      recent AS (
+        SELECT r.id,
+               LEAST(1, GREATEST(0, 1 - EXTRACT(EPOCH FROM (${nowIso}::timestamptz - COALESCE(r.effective_date, r.updated_at)))::float8 / ${windowSeconds}::float8)) AS w
+          FROM pages r
+         WHERE r.deleted_at IS NULL
+           AND r.type = ANY(${[...OWNER_CONTACT_EVIDENCE_TYPES]}::text[])
+           AND COALESCE(r.effective_date, r.updated_at) >= ${cutoffIso}::timestamptz
+      ),
+      touches AS (
+        SELECT DISTINCT l.from_page_id, l.to_page_id
+          FROM links l JOIN recent r ON r.id = l.from_page_id JOIN cand c ON c.id = l.to_page_id
+         WHERE ${ranking}
+      ),
+      evidence AS (
+        SELECT t.to_page_id AS page_id, SUM(r.w) AS w
+          FROM touches t JOIN recent r ON r.id = t.from_page_id
+         GROUP BY t.to_page_id
+      ),
+      loops AS (
+        SELECT c.id AS page_id, COUNT(*) AS n
+          FROM open_loops ol JOIN cand c ON c.source_id = ol.source_id AND c.slug = ol.counterparty_slug
+         WHERE ol.status = 'open'
+         GROUP BY c.id
+      ),
+      owner_page AS (${ownerPage}),
+      hop AS (
+        SELECT l.to_page_id AS page_id FROM links l JOIN owner_page op ON op.id = l.from_page_id
+        UNION
+        SELECT l.from_page_id AS page_id FROM links l JOIN owner_page op ON op.id = l.to_page_id
+      )
+      SELECT p.slug, p.source_id, p.title, p.type, p.body_len,
+             COALESCE(i.n, 0)::int AS inbound_count,
+             ((COALESCE(e.w, 0) + COALESCE(lp.n, 0) + CASE WHEN h.page_id IS NULL THEN 0 ELSE 1 END)
+               / (1 + p.body_len::float8 / ${Math.max(1, o.threshold)}::float8))::float8 AS contact_score
+        FROM cand p
+        LEFT JOIN inbound i ON i.page_id = p.id
+        LEFT JOIN evidence e ON e.page_id = p.id
+        LEFT JOIN loops lp ON lp.page_id = p.id
+        LEFT JOIN hop h ON h.page_id = p.id
+       ORDER BY ${o.orderBy}
+       LIMIT ${o.limit}
+    `)).rows;
+    return rows.map((r: Record<string, unknown>) => ({
+      slug: String(r.slug),
+      source_id: String(r.source_id),
+      title: String(r.title ?? ''),
+      type: r.type as EnrichCandidate['type'],
+      body_len: Number(r.body_len ?? 0),
+      inbound_count: Number(r.inbound_count ?? 0),
+      contact_score: Number(r.contact_score ?? 0),
     }));
   }
 
@@ -334,7 +438,7 @@ export async function findAnomalies(exec: LegacyUnscopedRead, opts: AnomaliesOpt
     const tagToday = (await exec.run(sqlFragment`
       SELECT t.tag AS cohort_value,
              COUNT(DISTINCT p.id)::int AS count,
-             array_agg(DISTINCT p.slug) AS slugs
+             array_agg(DISTINCT p.slug COLLATE "C" ORDER BY p.slug COLLATE "C") AS slugs
         FROM tags t JOIN pages p ON p.id = t.page_id
        WHERE p.updated_at >= ${sinceIso}::timestamptz
          AND p.updated_at <  ${sinceEnd.toISOString()}::timestamptz
@@ -344,7 +448,7 @@ export async function findAnomalies(exec: LegacyUnscopedRead, opts: AnomaliesOpt
     const typeToday = (await exec.run(sqlFragment`
       SELECT p.type AS cohort_value,
              COUNT(DISTINCT p.id)::int AS count,
-             array_agg(DISTINCT p.slug) AS slugs
+             array_agg(DISTINCT p.slug COLLATE "C" ORDER BY p.slug COLLATE "C") AS slugs
         FROM pages p
        WHERE p.updated_at >= ${sinceIso}::timestamptz
          AND p.updated_at <  ${sinceEnd.toISOString()}::timestamptz

@@ -1,4 +1,5 @@
 import type { BrainEngine, LinkBatchInput } from './engine.ts';
+import type { Page } from './types.ts';
 import { extractPageLinks, unwrapWikilink, resolvedLinkCandidate,
   isCrossSourceLinksEnabled, type LinkCandidate, type LinkExtractionPack, type PageLinksResult, type SlugResolver } from './link-extraction.ts';
 import { isSourceFederated } from './sources-load.ts';
@@ -9,7 +10,7 @@ import { collectWantedLinks, isWantedPagesEnabled, wantedReadAt } from './wanted
 import { readLineGrammarSettings } from './line-grammar.ts';
 import { DerivedLinkSettingsChangedError } from './derived-links.ts';
 import { isSegmentedPage } from './page-body/page-shape.ts';
-import { extractSegmentedPageLinks } from './page-body/segment-links.ts';
+import { extractSegmentedPageLinks, segmentedTemporalBody } from './page-body/segment-links.ts';
 import type { TemporalBody } from './link-temporal-apply.ts';
 
 export interface LinkPageMetadata {
@@ -183,8 +184,16 @@ export async function replaceFileLinks(engine: BrainEngine, slug: string, source
   const result = await engine.replaceDerivedLinks({ slug, sourceId, expectedRevision: snapshot.revision,
     sourceIncarnation: snapshot.sourceIncarnation }, rows, { includeFrontmatter, preserveExisting: true,
     includeLegacyNullProducer: false,
-    expectedEndpoints: capturedLinkEndpoints(rows, metadata) });
+    expectedEndpoints: capturedLinkEndpoints(rows, metadata), ...await storedTemporalBody(engine, snapshot.page, sourceId) });
   return result.created;
+}
+
+/**
+ * The publication's temporal inputs come from the stored body. A segmented body cannot be read as one string, so its
+ * inputs are read block by block (as the database pass does); any other page keeps the publication's own read.
+ */
+async function storedTemporalBody(engine: BrainEngine, page: Page, sourceId: string): Promise<{ temporalBody?: TemporalBody }> {
+  return isSegmentedPage(page) ? { temporalBody: await segmentedTemporalBody(engine, { id: Number(page.id), slug: page.slug, source_id: sourceId }) } : {};
 }
 
 /**
@@ -204,7 +213,7 @@ export async function replacePageFileLinks(engine: BrainEngine, slug: string, so
     from_source_id: sourceId, to_source_id: sourceId, origin_source_id: sourceId }));
   const result = await engine.replaceDerivedLinks({ slug, sourceId, expectedRevision: snapshot.revision,
     sourceIncarnation: snapshot.sourceIncarnation }, rows, { includeFrontmatter, preserveExisting: true,
-    includeLegacyNullProducer: false });
+    includeLegacyNullProducer: false, ...await storedTemporalBody(engine, snapshot.page, sourceId) });
   return result.created;
 }
 
@@ -216,9 +225,8 @@ export async function replacePageFileLinks(engine: BrainEngine, slug: string, so
  * attendance reconciliation (`replaceFileLinks`) needs the unscoped form.
  */
 export async function fileLinkOwnership(engine: BrainEngine, sourceId: string, scope?: { slugs: readonly string[] }) {
-  const pages = scope
-    ? await engine.executeRaw<LinkPageMetadata>(`SELECT slug, source_id, type, title, frontmatter->'aliases' AS aliases, knowledge_revision
-        FROM pages WHERE deleted_at IS NULL AND source_id = $1 AND slug = ANY($2::text[]) ORDER BY slug`, [sourceId, [...scope.slugs]])
+  const pages: LinkPageMetadata[] = scope
+    ? await engine.listLinkPageMetadataForSlugs(sourceId, scope.slugs)
     : await loadLinkPageMetadata(engine);
   const metadata = new Map(pages.map(row => [`${row.source_id}\0${row.slug}`, row]));
   const resolver = makeIndexedLinkResolver(pages, sourceId);
@@ -226,11 +234,8 @@ export async function fileLinkOwnership(engine: BrainEngine, sourceId: string, s
   const policy = await loadLinkSourcePolicy(engine, sourceId);
   const resolve = (slug: string, candidate: LinkCandidate) => resolveCandidateSources(candidate, slug, sourceId,
     allSlugs, slugToSources, policy.allowCrossSource, policy);
-  const origins = await engine.executeRaw<{ slug: string }>(`SELECT DISTINCT o.slug FROM links l
-    JOIN pages o ON o.id=l.origin_page_id WHERE o.source_id=$1 AND l.link_source IN ('markdown','wikilink-resolved','frontmatter')
-      AND l.link_type='attended' AND l.to_page_id=l.origin_page_id${scope ? ' AND o.slug = ANY($2::text[])' : ''}`,
-    scope ? [sourceId, [...scope.slugs]] : [sourceId]);
-  return { metadata, resolver, resolve, origins: new Set(origins.map(row => row.slug)) };
+  const origins = await engine.listAttendedOriginSlugs(sourceId, scope?.slugs);
+  return { metadata, resolver, resolve, origins: new Set(origins) };
 }
 
 export function indexLinkSources(pages: ReadonlyArray<{ slug: string; source_id: string }>) {
@@ -435,22 +440,13 @@ export async function lookupRefsForSlugs(
   const allSlugs = new Set<string>();
   const slugToSources = new Map<string, string[]>();
   const metadata: Array<{ slug: string; source_id: string; type: string; knowledge_revision: string }> = [];
-  const CHUNK = 200;
-  for (let i = 0; i < slugs.length; i += CHUNK) {
-    const chunk = slugs.slice(i, i + CHUNK);
-    const placeholders = chunk.map((_, j) => `$${j + 1}`).join(', ');
-    const rows = await engine.executeRaw<{ slug: string; source_id: string; type: string; knowledge_revision: string }>(
-      `SELECT slug, source_id, type, knowledge_revision FROM pages
-        WHERE deleted_at IS NULL AND slug IN (${placeholders})`,
-      chunk,
-    );
-    metadata.push(...rows);
-    for (const ref of rows) {
-      allSlugs.add(ref.slug);
-      const list = slugToSources.get(ref.slug) ?? [];
-      list.push(ref.source_id);
-      slugToSources.set(ref.slug, list);
-    }
+  const rows = slugs.length === 0 ? [] : await engine.listPageRefsForSlugs(slugs);
+  metadata.push(...rows);
+  for (const ref of rows) {
+    allSlugs.add(ref.slug);
+    const list = slugToSources.get(ref.slug) ?? [];
+    list.push(ref.source_id);
+    slugToSources.set(ref.slug, list);
   }
   return { allSlugs, slugToSources, metadata };
 }

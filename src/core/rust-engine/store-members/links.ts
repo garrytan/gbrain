@@ -28,12 +28,12 @@ export const addLink: StoreMember<[from: string, to: string, context?: string, l
   };
 
 const BATCH_FIELDS = ['from_slug', 'to_slug', 'link_type', 'context', 'link_source', 'origin_slug', 'origin_field',
-  'from_source_id', 'to_source_id', 'origin_source_id'] as const;
+  'from_source_id', 'to_source_id', 'origin_source_id', 'link_kind', 'resolution_type'] as const;
 
 export const addLinksBatch: StoreMember<[links: LinkBatchInput[], opts?: { auditSite?: unknown; signal?: AbortSignal }], number> = async (brain, links, opts) => {
   takeOptions('addLinksBatch', opts, [], ['auditSite', 'signal']);
   throwIfAborted(opts?.signal);
-  // `link_kind` and `resolution_type` are stored beside a link and are not part of what the store keeps today.
+  // The store keeps `link_kind` and `resolution_type` on the link record (gbrain-store links.rs `LinkRecord`).
   for (const link of links) takeOptions('addLinksBatch', link, BATCH_FIELDS);
   const written: number = await storeCall({ member: 'addLinksBatch' }, () => brain.addLinksBatch(links));
   const pairs = links.filter(l => isTemporalLinkType(l.link_type)).map(l => ({ from_slug: l.from_slug,

@@ -66,6 +66,19 @@ async function receipt(engine: BrainEngine, sourceId: string) {
   return raw ? JSON.parse(raw) as { root: string; root_identity: { device: number; inode: number } } : null;
 }
 
+/** Fails the apply's receipt write (`tx.setConfig(key)`, after its backup write) with `error`, so the transaction rolls back. */
+function failReceiptWrite(engine: BrainEngine, key: string, error: () => unknown): () => void {
+  const original = engine.transaction;
+  (engine as unknown as { transaction: BrainEngine['transaction'] }).transaction = ((fn: (tx: BrainEngine) => Promise<unknown>) => original.call(engine, (tx: BrainEngine) => fn(new Proxy(tx, {
+    get(target, prop) {
+      if (prop === 'setConfig') return async (name: string, value: string) => { if (name === key) throw error(); return target.setConfig(name, value); };
+      const value = Reflect.get(target, prop, target);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  })))) as BrainEngine['transaction'];
+  return () => { delete (engine as unknown as { transaction?: unknown }).transaction; };
+}
+
 const identityOf = (path: string) => { const stat = statSync(path); return { device: stat.dev, inode: stat.ino }; };
 const fresh = async (engine: BrainEngine) => (await ownedContentFreshness(engine)).map(row => row.sourceId).sort();
 
@@ -176,9 +189,10 @@ for (const { backend, databaseUrl } of pathologicalArms()) {
       expect(await receipt(engine, 'default')).toMatchObject({ root: OLD_ROOT });
       await expect(repairKind(engine, { apply: true, expect: 'f'.repeat(64) })).rejects.toMatchObject({ code: 'preview_changed' });
       const injected = runScopedErrors()[0]!.error();
-      const restore = failTransactionAt(engine, /UPDATE config SET value/, () => injected);
+      const restore = failReceiptWrite(engine, key, () => injected);
       try { await expect(repairKind(engine, { apply: true, expect: preview.preview_hash })).rejects.toBe(injected); } finally { restore(); }
       expect(await receipt(engine, 'default')).toMatchObject({ root: OLD_ROOT });
+      expect(await engine.getConfig(`${key}.backup`)).toBeNull();
       const applied = await expectUnitNotAborted(() => repairKind(engine, { apply: true, expect: preview.preview_hash }));
       expect({ applied: applied.applied, failed: applied.failed }).toEqual({ applied: 1, failed: [] });
       expect(await receipt(engine, 'default')).toMatchObject({ root: realpathSync(root), root_identity: identityOf(root) });

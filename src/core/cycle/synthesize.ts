@@ -385,6 +385,8 @@ export interface SynthesizePhaseOpts {
    * correct (source_id, slug) row. Unset → legacy 'default'.
    */
   sourceId?: string;
+  /** #8669: a global cycle's turn for another source: synthesize only that source's captured sessions (keepSessionSourceTranscripts). */
+  sessionsOnly?: boolean;
   /** Internal: minion owner job id for private dream-inline queue recovery. */
   privateQueueOwnerJobId?: number | null;
   /**
@@ -527,7 +529,7 @@ async function runPhaseSynthesizeInner(
               ].map(prefix => join(opts.brainDir, prefix)),
           // #5413: corpus files captured from gbrain's own claude-cli calls.
           selfCaptureSessionIds: claudeCliSelfSessionIds(),
-        })), { corpusDir: config.corpusDir, sourceId: opts.sourceId ?? 'default', readOnly: opts.dryRun }, routing);
+        })), { corpusDir: config.corpusDir, sourceId: opts.sourceId ?? 'default', readOnly: opts.dryRun, sessionsOnly: opts.sessionsOnly }, routing);
 
     if (transcripts.length === 0) {
       return noCandidates('no transcripts to process', { transcripts_discovered: 0 });
@@ -776,8 +778,7 @@ async function runPhaseSynthesizeInner(
       if (v2Completion) {
         if (maintenance) {
           const key = `dream:synth-v2:${encodeURIComponent(synthesisIdentity)}:filename:${encodeURIComponent(basename(t.filePath))}:${hash16}`;
-          const jobs = await engine.executeRaw<{ id: number; idempotency_key: string }>(
-            "SELECT id,idempotency_key FROM minion_jobs WHERE status='completed' AND (idempotency_key=$1 OR left(idempotency_key,length($1)+2)=$1||':c') ORDER BY id", [key]);
+          const jobs = await engine.listCompletedSynthJobs(key);
           for (const job of jobs) {
             childIds.push(job.id);
             jobRawSource.set(job.id, t.filePath);
@@ -833,13 +834,7 @@ async function runPhaseSynthesizeInner(
           // Only COALESCIBLE rows count as "already exists": queue.add clears
           // the keys of cancelled/dead rows and inserts fresh PAID jobs, so
           // those must not be credited as zero-cost (structured-review r2 P2).
-          const rows = await engine.executeRaw<{ n: number }>(
-            `SELECT COUNT(*)::int AS n FROM minion_jobs
-              WHERE idempotency_key = ANY($1::text[])
-                AND status NOT IN ('cancelled', 'dead')`,
-            [fileKeys],
-          );
-          existingKeys = rows[0]?.n ?? 0;
+          existingKeys = await engine.countCoalescibleSynthJobs(fileKeys);
         } catch { /* fail-open like the cap count itself: treat as no existing keys */ }
         const newKeysNeeded = chunks.length - existingKeys;
         if (newKeysNeeded > 0 && submittedToday + newKeysNeeded > dailyCap) {
@@ -1081,10 +1076,7 @@ async function runPhaseSynthesizeInner(
     // would strand in this per-run private queue forever (no worker claims
     // it). Cancel them and defer their transcripts to the next cycle.
     if (opts.deadlineAtMs != null) {
-      const stillWaiting = await engine.executeRaw<{ id: number }>(
-        `SELECT id FROM minion_jobs WHERE queue = $1 AND status IN ('waiting', 'delayed')`,
-        [childQueueName],
-      );
+      const stillWaiting = await engine.listWaitingChildJobIds(childQueueName);
       for (const row of stillWaiting) {
         const cancelled = await queue.cancelJob(row.id);
         if (cancelled) {
@@ -1261,10 +1253,7 @@ async function runPhaseSynthesizeInner(
     let childTokensOut = 0;
     let childTokensCacheRead = 0;
     try {
-      const timing = await engine.executeRaw<{ created_at: Date | string; started_at: Date | string | null; finished_at: Date | string | null; tokens_input: number | string | null; tokens_output: number | string | null; tokens_cache_read: number | string | null }>(
-        `SELECT created_at, started_at, finished_at, tokens_input, tokens_output, tokens_cache_read FROM minion_jobs WHERE id = ANY($1::bigint[])`,
-        [childIds],
-      );
+      const timing = await engine.listDreamChildJobTimings(childIds);
       const ts = (v: Date | string | null): number | null => v == null ? null : (v instanceof Date ? v.getTime() : new Date(v).getTime());
       const num = (v: number | string | null): number => v == null ? 0 : Number(v) || 0;
       const waits: number[] = [];
@@ -1801,17 +1790,7 @@ export async function loadSynthConfig(engine: BrainEngine): Promise<SynthConfig>
  * dead rows count through the key the queue recorded when it released them.
  */
 async function countRecentSynthSubmissions(engine: BrainEngine, sourceId: string): Promise<number> {
-  const rows = await engine.executeRaw<{ n: number }>(
-    `SELECT COUNT(*)::int AS n
-       FROM minion_jobs
-      WHERE name = 'subagent'
-        AND (idempotency_key LIKE 'dream:synth-v2:%' OR idempotency_key IS NULL AND data->>'__released_idempotency_key' LIKE 'dream:synth-v2:%')
-        AND COALESCE(NULLIF(data->>'source_id', ''), 'default') = $1
-        AND status <> 'cancelled'
-        AND created_at > NOW() - INTERVAL '24 hours'`,
-    [sourceId],
-  );
-  return rows[0]?.n ?? 0;
+  return engine.countRecentDreamSynthSubmissions(sourceId);
 }
 
 async function getNumberConfig(

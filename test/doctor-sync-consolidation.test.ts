@@ -18,6 +18,7 @@
 import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:test';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { checkSyncConsolidation } from '../src/commands/doctor.ts';
+import { readDoctorSources } from '../src/core/engine-sql/doctor-sources.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 
 let engine: PGLiteEngine;
@@ -94,8 +95,10 @@ describe('checkSyncConsolidation (Issue 5)', () => {
 
   test('SQL failure → status=warn with diagnostic message (own try/catch)', async () => {
     // Construct a broken engine via duck-typing.
+    const brokenRaw = async () => { throw new Error('connection refused'); };
     const brokenEngine = {
-      executeRaw: async () => { throw new Error('connection refused'); },
+      executeRaw: brokenRaw,
+      readDoctorSources: (variant: never, scope: never) => readDoctorSources(brokenRaw as never, variant, scope),
     } as unknown as PGLiteEngine;
     const result = await checkSyncConsolidation(brokenEngine);
     expect(result.status).toBe('warn');
@@ -130,11 +133,13 @@ describe('checkSyncConsolidation (Issue 5)', () => {
   });
 
   test('a schema without persistence_brain reads as unmanaged → classic line', async () => {
+    const prePersistenceRaw = async (sql: string) => {
+      if (/persistence_brain/.test(sql)) throw new Error('relation "persistence_brain" does not exist');
+      return [{ id: 'default' }, { id: 'notes' }];
+    };
     const prePersistence = {
-      executeRaw: async (sql: string) => {
-        if (/persistence_brain/.test(sql)) throw new Error('relation "persistence_brain" does not exist');
-        return [{ id: 'default' }, { id: 'notes' }];
-      },
+      executeRaw: prePersistenceRaw,
+      readDoctorSources: (variant: never, scope: never) => readDoctorSources(prePersistenceRaw as never, variant, scope),
     } as unknown as PGLiteEngine;
     const result = await checkSyncConsolidation(prePersistence);
     expect(result.status).toBe('ok');

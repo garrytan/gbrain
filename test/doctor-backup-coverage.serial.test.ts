@@ -27,6 +27,7 @@ import {
   type BackupStatus,
 } from '../src/core/backup/status-file.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { countBrainLivePages as countBrainLivePagesSql, readBrainMaturity as readBrainMaturitySql } from '../src/core/engine-sql/health.ts';
 
 const ENV_KEYS = ['GBRAIN_HOME', 'GBRAIN_BACKUP_CHECK', 'GBRAIN_BACKUP_CHECK_DAYS'] as const;
 
@@ -106,6 +107,8 @@ function makeEngine(sourcePaths: Array<{ id: string; local_path: string }>, page
     kind: 'pglite',
     // loadAllSources reads the typed member; the page count still runs executeRaw.
     listSourceRecords: async () => sources(),
+    countBrainLivePages() { return countBrainLivePagesSql(this as never); },
+    readBrainMaturity() { return readBrainMaturitySql(this as never); },
     executeRaw: async (sql: string) => {
       if (/FROM sources/i.test(sql)) return sources().map((s) => ({ ...s, config: '{}' }));
       if (/FROM pages/i.test(sql)) return [{ n: pageCount }];
@@ -215,6 +218,8 @@ describe('checkBackupCoverage — localOnly (trusted, probes run)', () => {
   test('degraded compute with no assets leads with the unreadable database', async () => {
     const engine = {
       kind: 'pglite',
+      countBrainLivePages() { return countBrainLivePagesSql(this as never); },
+      readBrainMaturity() { return readBrainMaturitySql(this as never); },
       executeRaw: async (sql: string) => {
         if (/FROM sources/i.test(sql)) return [];
         throw new Error('pages unreadable');
@@ -355,6 +360,8 @@ describe('checkBackupCoverage — localOnly catch branch', () => {
     // to, getBackupStatus rethrows and the checker's try/catch owns it.
     const throwing = {
       kind: 'pglite',
+      countBrainLivePages() { return countBrainLivePagesSql(this as never); },
+      readBrainMaturity() { return readBrainMaturitySql(this as never); },
       executeRaw: async () => {
         throw new Error('engine down');
       },
@@ -386,6 +393,8 @@ describe('checkBackupCoverage — localOnly catch branch', () => {
     saveBackupStatus(cache);
     const throwing = {
       kind: 'pglite',
+      countBrainLivePages() { return countBrainLivePagesSql(this as never); },
+      readBrainMaturity() { return readBrainMaturitySql(this as never); },
       executeRaw: async () => {
         throw new Error('engine down');
       },
@@ -410,6 +419,8 @@ function makeCountingEngine(kind: 'pglite' | 'postgres', sources: Array<{ id: st
   return {
     kind,
     listSourceRecords: listing.listSourceRecords,
+    countBrainLivePages() { return countBrainLivePagesSql(this as never); },
+    readBrainMaturity() { return readBrainMaturitySql(this as never); },
     executeRaw: async (sql: string) => {
       if (/AS pages/i.test(sql)) return [{ pages, facts, since: new Date(Date.now() - 60_000).toISOString() }];
       return listing.executeRaw(sql);
@@ -465,3 +476,40 @@ describe('checkBackupCoverage — GBRA-585 item 7', () => {
   });
 });
 
+
+// ── Failed reads are not a confident answer ─────────────────────────────────
+
+describe('checkBackupCoverage — unreadable receipt and maturity', () => {
+  test('a healthy repo with an unreadable install receipt warns instead of reading ok', async () => {
+    const repo = makeHealthyRepo('src-ok');
+    const dir = join(tmp, '.gbrain', 'bootstrap');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'receipt.json'), '{ not json');
+
+    const check = await checkBackupCoverage(makeEngine([{ id: 'src-ok', local_path: repo }], 3), { localOnly: true });
+
+    expect(check.status).toBe('warn');
+    expect(check.message).toContain('receipt_unreadable');
+  });
+
+  test('a failed maturity read says the database was unreadable instead of reading as a young brain', async () => {
+    const repo = makeNoOriginRepo('src-young');
+    const engine = {
+      kind: 'pglite',
+      executeRaw: async (sql: string) => {
+        if (/FROM facts/i.test(sql)) throw new Error('facts unreadable');
+        if (/FROM sources/i.test(sql)) {
+          return [{ id: 'src-young', name: 'src-young', local_path: repo, last_commit: null, last_sync_at: null, config: '{}', created_at: new Date(), archived: false, newest_content_at: null }];
+        }
+        if (/FROM pages/i.test(sql)) return [{ n: 1 }];
+        throw new Error(`unexpected sql in stub: ${sql}`);
+      },
+    } as unknown as BrainEngine;
+
+    const check = await checkBackupCoverage(engine, { localOnly: true });
+
+    expect(check.status).toBe('warn');
+    expect((check.details as { degraded: boolean }).degraded).toBe(true);
+    expect(check.message).toContain('the database was unreadable during the check');
+  });
+});

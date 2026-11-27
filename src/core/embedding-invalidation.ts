@@ -32,7 +32,6 @@ import {
   quoteIdentifier,
 } from './search/embedding-column.ts';
 import { pageBudgetLimitedFilter } from './page-size-policy.ts';
-import { chunkGenerationFilter } from './search/safe-chunks.ts';
 
 export function splitEmbeddingSignature(signature: string): { model: string; dims: number | null } {
   const separator = signature.lastIndexOf(':');
@@ -117,29 +116,12 @@ export function falseStampPageWhere(colId: string, signatureParam = 1, modelPara
  * page-level, so that is the true re-embed workload.
  */
 export async function countFalseStampedChunks(
-  engine: Pick<BrainEngine, 'executeRaw'>,
+  engine: Pick<BrainEngine, 'executeRaw' | 'readFalseStampedChunkCounts'>,
   toModel: string,
   toDims: number,
 ): Promise<{ pages: number; chunks: number; chars: number }> {
-  const colId = await activeColId(engine);
-  const rows = await engine.executeRaw<{ pages: number; chunks: number; chars: number | string }>(
-    `WITH fs AS (
-       SELECT p.id FROM pages p
-        WHERE ${falseStampPageWhere(colId)}
-     )
-     SELECT count(DISTINCT fs.id)::int AS pages,
-            count(cc.id)::int AS chunks,
-            COALESCE(sum(length(cc.chunk_text)), 0)::bigint AS chars
-       FROM fs
-       JOIN content_chunks cc ON cc.page_id = fs.id
-      WHERE cc.${colId} IS NOT NULL`,
-    [targetSignature(toModel, toDims), toModel],
-  );
-  return {
-    pages: Number(rows[0]?.pages ?? 0),
-    chunks: Number(rows[0]?.chunks ?? 0),
-    chars: Number(rows[0]?.chars ?? 0),
-  };
+  const col = await resolveActiveEmbeddingColumnFromEngine(engine);
+  return engine.readFalseStampedChunkCounts(col.name, targetSignature(toModel, toDims), toModel);
 }
 
 /**
@@ -288,25 +270,12 @@ export async function invalidateStaleSignatureEmbeddingsGuarded(
  * brain answers it without reading content_chunks at all.
  */
 export async function hasSignatureDrift(
-  engine: Pick<BrainEngine, 'executeRaw'>,
+  engine: Pick<BrainEngine, 'executeRaw' | 'hasEmbeddingSignatureDrift'>,
   opts: { signature: string; sourceId?: string; includeNullSignature?: boolean; nullSignatureOnly?: boolean },
 ): Promise<boolean> {
-  const colId = await activeColId(engine);
-  const sigClause = opts.nullSignatureOnly ? 'p.embedding_signature IS NULL'
-    : opts.includeNullSignature ? '(p.embedding_signature IS NULL OR p.embedding_signature <> $2)'
-    : 'p.embedding_signature IS NOT NULL AND p.embedding_signature <> $2';
-  const [row] = await engine.executeRaw<{ drift: boolean }>(
-    `SELECT EXISTS (
-       SELECT 1 FROM pages p
-        WHERE ${sigClause}
-          AND p.deleted_at IS NULL
-          AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')
-          AND NOT ${pageBudgetLimitedFilter('p')}
-          AND ($1::text IS NULL OR p.source_id = $1)
-          AND EXISTS (SELECT 1 FROM sources s WHERE s.id = p.source_id AND NOT s.archived)
-          AND EXISTS (SELECT 1 FROM content_chunks cc WHERE cc.page_id = p.id AND cc.${colId} IS NOT NULL AND ${chunkGenerationFilter('p', 'cc')})
-     ) AS drift`,
-    opts.nullSignatureOnly ? [opts.sourceId ?? null] : [opts.sourceId ?? null, opts.signature],
-  );
-  return row?.drift === true;
+  const column = (await resolveActiveEmbeddingColumnFromEngine(engine)).name;
+  return engine.hasEmbeddingSignatureDrift({
+    column, signature: opts.signature, sourceId: opts.sourceId ?? null,
+    includeNullSignature: opts.includeNullSignature ?? false, nullSignatureOnly: opts.nullSignatureOnly ?? false,
+  });
 }

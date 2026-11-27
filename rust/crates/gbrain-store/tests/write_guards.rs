@@ -330,3 +330,120 @@ fn read_stored_page_tier_reads_the_stamped_tier_a_tombstone_included() {
         None
     );
 }
+
+fn revision(store: &Store, slug: &str) -> String {
+    page(store, slug)["knowledge_revision"]
+        .as_str()
+        .unwrap()
+        .to_owned()
+}
+
+#[test]
+fn detach_records_the_marker_and_put_page_or_bind_drop_it() {
+    let dir = TempDir::new("wg-detach");
+    let store = open(&dir);
+    let id = put(&store, "notes/a", Some("notes/a.md"));
+    let before = revision(&store, "notes/a");
+    store.detach_page_origin(id, "origin_twin").unwrap();
+    assert_eq!(page(&store, "notes/a")["source_path"], Value::Null);
+    assert_eq!(revision(&store, "notes/a"), before);
+    let reason = |s: &Store| {
+        s.read_page_database_only_reason("default", "notes/a")
+            .unwrap()
+    };
+    assert_eq!(reason(&store).as_deref(), Some("origin_twin"));
+    // A put without a file keeps the marker.
+    put(&store, "notes/a", None);
+    assert_eq!(reason(&store).as_deref(), Some("origin_twin"));
+    assert_eq!(
+        store
+            .bind_page_origin(&bind("notes/a", "notes/a.md", false, false))
+            .unwrap(),
+        1
+    );
+    assert_eq!(reason(&store), None);
+    store.detach_page_origin(id, "detached").unwrap();
+    assert_eq!(
+        store
+            .bind_page_origin(&bind("notes/a", "notes/a.md", false, false))
+            .unwrap(),
+        1
+    );
+    assert_eq!(reason(&store).as_deref(), Some("detached"));
+    put(&store, "notes/a", Some("notes/a.md"));
+    assert_eq!(reason(&store), None);
+    assert_eq!(
+        store
+            .read_page_database_only_reason("default", "notes/none")
+            .unwrap(),
+        None
+    );
+}
+
+#[test]
+fn revision_bump_key_removal_and_type_change_follow_the_revision_trigger() {
+    let dir = TempDir::new("wg-repair-writes");
+    let store = open(&dir);
+    let input: PageInput = serde_json::from_value(
+        json!({"type": "note", "title": "k", "compiled_truth": "Body.",
+        "timeline": "", "frontmatter": {"retired_by": "notes/b", "kept": "yes"}}),
+    )
+    .unwrap();
+    let id = store
+        .put_page("notes/k", &input, &PutPageOptions::default())
+        .unwrap()["id"]
+        .as_u64()
+        .unwrap();
+    let r0 = revision(&store, "notes/k");
+    store.bump_page_knowledge_revision(id).unwrap();
+    let r1 = revision(&store, "notes/k");
+    assert_ne!(r0, r1);
+    let keys = vec!["retired_by".to_owned(), "retired_at".to_owned()];
+    store
+        .remove_page_frontmatter_keys("other", id, &keys)
+        .unwrap();
+    assert_eq!(revision(&store, "notes/k"), r1);
+    store
+        .remove_page_frontmatter_keys("default", id, &keys)
+        .unwrap();
+    let r2 = revision(&store, "notes/k");
+    assert_ne!(r1, r2);
+    assert_eq!(
+        page(&store, "notes/k")["frontmatter"],
+        json!({"kept": "yes"})
+    );
+    store
+        .remove_page_frontmatter_keys("default", id, &keys)
+        .unwrap();
+    assert_eq!(revision(&store, "notes/k"), r2);
+    store.set_page_type("default", "notes/k", "note").unwrap();
+    assert_eq!(revision(&store, "notes/k"), r2);
+    store
+        .set_page_type("default", "notes/k", "concept")
+        .unwrap();
+    assert_ne!(revision(&store, "notes/k"), r2);
+    assert_eq!(page(&store, "notes/k")["type"], "concept");
+}
+
+#[test]
+fn unbound_source_pages_count_the_live_database_only_pages_per_source() {
+    let dir = TempDir::new("wg-unbound");
+    let store = open(&dir);
+    assert!(store.list_unbound_source_pages().unwrap().is_empty());
+    let a = put(&store, "notes/a", Some("notes/a.md"));
+    let b = put(&store, "notes/b", None);
+    let c = put(&store, "notes/c", None);
+    put(&store, "notes/d", None);
+    store.detach_page_origin(a, "unbound_source").unwrap();
+    store.detach_page_origin(b, "unbound_source").unwrap();
+    store.detach_page_origin(c, "detached").unwrap();
+    let rows = store.list_unbound_source_pages().unwrap();
+    assert_eq!(rows.len(), 1);
+    assert_eq!(
+        (rows[0].source_id.as_str(), rows[0].pages, rows[0].bound),
+        ("default", 2, false)
+    );
+    // A soft-deleted page no longer counts.
+    store.soft_delete_page("notes/b", Some("default")).unwrap();
+    assert_eq!(store.list_unbound_source_pages().unwrap()[0].pages, 1);
+}

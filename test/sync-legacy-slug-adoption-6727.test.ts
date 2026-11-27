@@ -142,6 +142,21 @@ test('#6727 one legacy page under a slug the importer cannot write (capitals) ho
   expect((await s.pages()).map(page => [page.slug, page.source_path])).toEqual([['notes/Foo Bar', null], ['notes/foo-bar-imported', 'notes/foo-bar-imported.md']]);
 }), 180_000);
 
+test('#6727 one legacy page under a decomposed Unicode slug holds the file with its hold message, and the page is never rewritten as a composed twin', () => each(async engine => {
+  const path = 'notes/Cafe\u0301 Menu.md', stored = 'notes/cafe\u0301 menu';
+  const s = await legacySource(engine, { [path]: note('Cafe Menu') });
+  await s.sync();
+  const held = await s.held();
+  expect(held.map(hold => ({ code: hold.code, slugs: hold.slugs }))).toEqual([{ code: 'legacy_slug_conflict', slugs: [stored] }]);
+  const rows = await engine.executeRaw<{ slug: string }>("SELECT slug FROM pages WHERE source_id=$1 AND slug LIKE 'notes/caf%'", [s.id]);
+  expect(rows.map(row => row.slug)).toEqual([stored]);
+  const [hold] = (await readGitSourceHolds(engine, { sourceIds: [s.id] }))[0]!.holds;
+  expect(hold!.message).toContain('has a slug sync cannot write as it stands');
+  expect(hold!.message).toContain('so sync held the file instead of creating another page');
+  const fix = gitHoldFix(hold!);
+  expect(JSON.stringify(fix)).toContain('an older slug spelling that sync cannot write (capitals, or a decomposed Unicode accent)');
+}), 180_000);
+
 test('#6727 a database-only page (never imported from a file) is not taken over by a file whose slug it folds to', () => each(async engine => {
   const s = await legacySource(engine, { 'notes/Foo Bar.md': note('Foo Bar') });
   await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');

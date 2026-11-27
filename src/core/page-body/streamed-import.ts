@@ -49,6 +49,7 @@ import { FRONTMATTER_HEAD_MAX_BYTES, SEGMENT_MAX_BYTES, type PageBodyPolicy } fr
 import { PAGE_MAX_BYTES } from '../page-size-policy.ts';
 import { classifyImportHold, resolveParsedSubtype, type ParsedMarkdown } from '../markdown.ts';
 import { noncanonicalPrivateHold } from '../persistence/visibility-request.ts';
+import { noncanonicalReadersHold } from '../persistence/readers-request.ts';
 import { loadImportSanityConfig, settleContentDisposition, stripGateOwnedMarkers } from '../import-screen.ts';
 import { JUNK_SAMPLE_CHARS } from '../content-sanity.ts';
 import { QUARANTINE_OVERRIDE_KEY } from '../quarantine-override.ts';
@@ -147,6 +148,13 @@ async function* readVirtual(file: FileHandle, bom: number, prefix: Uint8Array, s
     yield buffer.subarray(0, bytesRead);
     at += bytesRead;
   }
+}
+
+/** The file's leading FRONTMATTER_HEAD_MAX_BYTES as text (a cut multibyte character at its end decodes lossily, which only touches its last line). */
+async function fileHead(file: FileHandle, size: number): Promise<string> {
+  const buffer = Buffer.alloc(Math.min(FRONTMATTER_HEAD_MAX_BYTES, size));
+  const { bytesRead } = await file.read(buffer, 0, buffer.length, 0);
+  return buffer.toString('utf8', 0, bytesRead);
 }
 
 /** sha256 of each READ_BYTES block of the file after its BOM, from pass 1's reads whatever their sizes. */
@@ -347,8 +355,9 @@ async function importScanned(engine: BrainEngine, input: { file: FileHandle; bom
   const parsed = { ...scan.parsed, compiled_truth: '', timeline: '' } as ParsedMarkdown;
   const frontmatterHold = classifyImportHold(parsed);
   if (frontmatterHold) return { slug: expectedSlug, status: 'skipped', chunks: 0, error: frontmatterHold.message, refusal: frontmatterHold, skip_reason: frontmatterHold.code };
-  // #7848: a private request page privacy would not read is held; only an upload session (`content` plus `coordinated`) refuses it at its own guard.
-  const privateHold = opts.content && opts.coordinated ? null : noncanonicalPrivateHold('', parsed.frontmatter);
+  // #7848: a private request page privacy would not read, or a readers key page access would not read, is held; only an upload session (`content` plus `coordinated`) refuses it at its own guard.
+  // The readers hold also reads the file's own head (a spelling the parse drops, such as one after a leading space, is still a line in it).
+  const privateHold = opts.content && opts.coordinated ? null : noncanonicalPrivateHold('', parsed.frontmatter) ?? noncanonicalReadersHold(await fileHead(file, size), parsed.frontmatter);
   if (privateHold) return { slug: expectedSlug, status: 'skipped', chunks: 0, error: privateHold.message, refusal: privateHold, skip_reason: privateHold.code };
   let slug = expectedSlug;
   if (!expectedSlug || parsed.slug !== expectedSlug) {
@@ -394,6 +403,10 @@ async function importScanned(engine: BrainEngine, input: { file: FileHandle; bom
   }
   if (parsed.typeExplicit !== true && existing && !opts.coordinated?.moved) parsed.type = existing.type;
   resolveParsedSubtype(parsed, existing);
+  if (parsed.type === 'household' || (existing && !existing.deleted_at && existing.type === 'household') || parsed.frontmatter.household_role !== undefined || existing?.frontmatter?.household_role !== undefined) {
+    return hold(slug, size, 'household write admission reads the stored page and the whole incoming one');
+  }
+  if (parsed.type === 'rule' || (existing && !existing.deleted_at && existing.type === 'rule')) return hold(slug, size, 'standing rule admission reads the stored page and the whole incoming one');
   const typeClass = parsed.typeExplicit === true && opts.activePack ? classifyStoredType(parsed.type, opts.activePack) : null;
   const typeWarning = typeClass?.kind === 'alias_of' ? { kind: 'alias_of' as const, type: parsed.type, canonical: typeClass.canonical, directory: typeClass.directory }
     : typeClass?.kind === 'undeclared' ? { kind: 'undeclared' as const, type: parsed.type } : undefined;

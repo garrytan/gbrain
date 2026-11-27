@@ -81,4 +81,22 @@ describe('computeAutopilotFanoutConcurrencyCheck (#2194 fix #5)', () => {
     expect(check.status).toBe('ok');
     expect(check.message).toContain('PGLite');
   });
+
+  test('#9924: a config read that throws is a warn naming the error, not ok', async () => {
+    writeStarted(2);
+    const check = await computeAutopilotFanoutConcurrencyCheck({
+      kind: 'postgres', getConfig: async () => { throw new Error('canceling statement due to statement timeout'); },
+    } as any);
+    expect(check.status).toBe('warn');
+    expect(check.message).toContain('statement timeout');
+  });
+
+  test('#9924: a missing config table still skips as ok', async () => {
+    writeStarted(2);
+    const check = await computeAutopilotFanoutConcurrencyCheck({
+      kind: 'postgres', getConfig: async () => { throw Object.assign(new Error('relation "config" does not exist'), { code: '42P01' }); },
+    } as any);
+    expect(check.status).toBe('ok');
+    expect(check.message).toContain('Skipped');
+  });
 });

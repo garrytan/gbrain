@@ -18,6 +18,7 @@ import { OperationError } from '../ops/contract.ts';
 import type { ManagedConnectorSync } from '../persistence/connector-sync.ts';
 import { clearHoldRetryKeys, readHoldRetryKeys, writeHeldRetryPointer } from './item-holds-store.ts';
 import { holdsExhaustedError, ItemHoldsRun, type ClassifiedConnectorError, type ItemHoldMeta, type ItemHoldsFinish, type ItemHoldsState } from './item-holds.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 
 /**
  * Errors a managed connector must not absorb (the run aborts). Refusals raised before submission are counted instead:
@@ -47,9 +48,11 @@ export class ConnectorHoldSession {
 
   static async open(engine: BrainEngine, sourceId: string, managed: ManagedConnectorSync | null, empty: Record<string, unknown>,
     stored: unknown, opts: { full?: boolean; now?: () => number } = {}): Promise<ConnectorHoldSession> {
-    const [row] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', [sourceId]).catch(() => []);
-    const incarnation = row?.incarnation ?? null;
-    const keys = incarnation ? await readHoldRetryKeys(engine, sourceId, incarnation).catch(() => []) : [];
+    // Fail-open for a brain before these tables, but an engine that cannot read them refuses: with no incarnation or
+    // retry keys, a retry-held item would never be re-attempted.
+    const row = await engine.readSourceState(sourceId).catch((e: unknown) => { rethrowCapabilityRefusal(e); return null; });
+    const incarnation = row ? String(row.incarnation) : null;
+    const keys = incarnation ? await readHoldRetryKeys(engine, sourceId, incarnation).catch((e: unknown) => { rethrowCapabilityRefusal(e); return []; }) : [];
     const session = new ConnectorHoldSession(engine, sourceId, incarnation, managed, empty, stored, new Set(keys), opts);
     // A managed held item re-admitted by a due transient reconsideration gets the same durable retry
     // pointer retry-held writes, so its re-attempt is a new request identity instead of a replay.

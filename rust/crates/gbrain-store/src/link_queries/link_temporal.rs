@@ -141,7 +141,7 @@ pub struct RelationshipKey {
 }
 
 impl RelationshipKey {
-    fn new(from: u64, to: u64, link_type: &str) -> Self {
+    pub(crate) fn new(from: u64, to: u64, link_type: &str) -> Self {
         RelationshipKey {
             from_page_id: from,
             to_page_id: to,
@@ -461,7 +461,7 @@ pub struct StaleAssertion {
     pub ended: Option<String>,
 }
 
-/// Contradiction proposal counts. The store keeps no proposals, so they are zero.
+/// Contradiction proposal counts by status, from edge_proposals.rs.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ProposalCounts {
     pub proposed: u64,
@@ -910,6 +910,21 @@ fn scan_tag<T: DeserializeOwned>(read: &dyn KvRead, tag: u8) -> Result<Vec<(Vec<
     decode_all(raw)
 }
 
+/// Every transition whose origin is one of `pages`, or whose from page is one when it has no
+/// origin, in id order (`OWNED_ROWS` of belief/state.ts over `link_transitions`).
+pub(crate) fn transitions_owned_by(
+    read: &dyn KvRead,
+    pages: &BTreeSet<u64>,
+) -> Result<Vec<TransitionRecord>> {
+    let mut out: Vec<TransitionRecord> = scan_tag::<TransitionRecord>(read, TRANSITION)?
+        .into_iter()
+        .map(|(_, t)| t)
+        .filter(|t| pages.contains(&t.origin_page_id.unwrap_or(t.from_page_id)))
+        .collect();
+    out.sort_by_key(|t| t.id);
+    Ok(out)
+}
+
 /// The source the relationship's rows are keyed by: its from page's source.
 fn key_source(read: &dyn KvRead, from_page_id: u64) -> Result<Option<String>> {
     Ok(read_page_by_id(read, from_page_id)?.map(|p| p.source_id))
@@ -950,6 +965,14 @@ fn links_of(read: &dyn KvRead, key: &RelationshipKey) -> Result<Vec<LinkRecord>>
     Ok(out_links(read, key.from_page_id)?
         .into_iter()
         .filter(|l| l.to_page_id == key.to_page_id && l.link_type == key.link_type)
+        .collect())
+}
+
+/// Every `link_transitions` row, in every source.
+pub(crate) fn all_transitions(read: &dyn KvRead) -> Result<Vec<TransitionRecord>> {
+    Ok(scan_tag::<TransitionRecord>(read, TRANSITION)?
+        .into_iter()
+        .map(|(_, t)| t)
         .collect())
 }
 
@@ -1025,12 +1048,12 @@ pub(crate) fn today(now_us: i64) -> String {
 // Multiranges
 // ---------------------------------------------------------------------------------------------
 
-type DateRange = (Option<String>, Option<String>);
+pub(crate) type DateRange = (Option<String>, Option<String>);
 /// One referrer of a group, before ordering: effective date (us), source id, slug, page id, page type.
 type ReferrerGroupEntry = (i64, String, String, u64, String);
 
 /// Parses a `datemultirange` literal of half-open ranges (`[a,b)`, `(,b)`, `[a,)`, `(,)`).
-fn parse_multirange(text: &str) -> Result<Vec<DateRange>> {
+pub(crate) fn parse_multirange(text: &str) -> Result<Vec<DateRange>> {
     let bad = || invalid(format!("malformed multirange literal: \"{text}\""));
     let inner = text
         .trim()
@@ -1042,7 +1065,9 @@ fn parse_multirange(text: &str) -> Result<Vec<DateRange>> {
     while !rest.is_empty() {
         let close = rest.find(')').ok_or_else(bad)?;
         let range = &rest[..close];
-        let (open, body) = range.split_at(1);
+        // An empty range (`{)}`) or one that opens with a multi-byte character has no one-byte bracket.
+        let open = range.get(..1).ok_or_else(bad)?;
+        let body = &range[1..];
         let (lower, upper) = body.split_once(',').ok_or_else(bad)?;
         let lower = match (open, lower) {
             ("(", "") | ("[", "") => None,
@@ -1245,7 +1270,7 @@ fn keys_for_origin(
 
 /// Inserts a transition unless a row with the same identity exists (`ON CONFLICT DO NOTHING`).
 /// Returns whether it was inserted.
-fn insert_transition(tx: &mut dyn KvWrite, record: TransitionRecord) -> Result<bool> {
+pub(crate) fn insert_transition(tx: &mut dyn KvWrite, record: TransitionRecord) -> Result<bool> {
     let key = record.key();
     if transitions_of(&*tx, &key)?
         .iter()
@@ -1258,6 +1283,30 @@ fn insert_transition(tx: &mut dyn KvWrite, record: TransitionRecord) -> Result<b
     row_key.extend_from_slice(&id.to_be_bytes());
     put_json(tx, &row_key, &TransitionRecord { id, ..record })?;
     Ok(true)
+}
+
+/// The stored key of a transition row: its relationship prefix and its id.
+fn transition_row_key(record: &TransitionRecord) -> Vec<u8> {
+    let mut key = pair_prefix(&record.source_id, TRANSITION, &record.key());
+    key.extend_from_slice(&record.id.to_be_bytes());
+    key
+}
+
+/// Deletes a stored transition row (the twin merge's loser delete, and the first half of its move).
+pub(crate) fn delete_transition(tx: &mut dyn KvWrite, record: &TransitionRecord) -> Result<()> {
+    tx.delete(&transition_row_key(record))
+}
+
+/// Stores a transition row under its (moved) relationship, keeping its id. A row with the same identity
+/// refuses, as the table's unique index does.
+pub(crate) fn put_moved_transition(tx: &mut dyn KvWrite, record: &TransitionRecord) -> Result<()> {
+    if transitions_of(&*tx, &record.key())?
+        .iter()
+        .any(|(_, t)| t.id != record.id && t.same_identity(record))
+    {
+        return Err(crate::links::unique_violation());
+    }
+    put_json(tx, &transition_row_key(record), record)
 }
 
 fn check_transition(kind: &str, occurred_on: &str, precision: &str, producer: &str) -> Result<()> {
@@ -1706,6 +1755,9 @@ impl Store {
                 tx.delete(&key)?;
             }
             let mut inserted = Vec::new();
+            // `origin_page_id REFERENCES pages(id)`: an inserted row needs its origin page to exist (in any deletion
+            // state), read once, when the first row reaches the insert.
+            let mut origin_exists = None;
             for t in &input.transitions {
                 let (Some(from), Some(to)) = (
                     live_page(&*tx, &input.source_id, &t.from_slug)?,
@@ -1713,6 +1765,16 @@ impl Store {
                 ) else {
                     continue;
                 };
+                let exists = match origin_exists {
+                    Some(known) => known,
+                    None => *origin_exists.insert(read_page_by_id(&*tx, page_id)?.is_some()),
+                };
+                if !exists {
+                    return Err(crate::takes::fk_failed(
+                        "link_transitions",
+                        "link_transitions_origin_page_id_fkey",
+                    ));
+                }
                 let record = TransitionRecord {
                     id: 0,
                     source_id: input.source_id.clone(),
@@ -1945,8 +2007,8 @@ impl Store {
         Ok(out)
     }
 
-    /// `edgeValidityCounts`: relationship counts by status and the pages that still state an
-    /// ended relationship, newest end first.
+    /// `edgeValidityCounts`: relationship counts by status, the pages that still state an ended
+    /// relationship, newest end first, and the contradiction proposals by status.
     pub fn edge_validity_counts(&self, input: &EdgeValidityInput) -> Result<EdgeValidityCounts> {
         let read = self.read()?;
         let read = &*read;
@@ -2010,6 +2072,7 @@ impl Store {
             ));
         }
         stale.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+        let proposals = crate::edge_proposals::proposal_counts(read, in_scope)?;
         Ok(EdgeValidityCounts {
             by_status: counts
                 .into_iter()
@@ -2020,11 +2083,7 @@ impl Store {
                 .take(input.stale_limit as usize)
                 .map(|(_, _, s)| s)
                 .collect(),
-            proposals: ProposalCounts {
-                proposed: 0,
-                undated: 0,
-                applied: 0,
-            },
+            proposals,
         })
     }
 
@@ -2114,6 +2173,20 @@ impl Store {
             status,
             links: links.into_iter().collect(),
         })
+    }
+
+    /// `readPageReferenceDate(sourceId, slug)`: the live page's `COALESCE(effective_date,
+    /// updated_at)` as `to_char(.. AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')` prints it, or
+    /// `None` for a missing or soft-deleted page.
+    pub fn read_page_reference_date(&self, source_id: &str, slug: &str) -> Result<Option<String>> {
+        crate::links::no_nul(
+            "readPageReferenceDate",
+            &[("sourceId", source_id), ("slug", slug)],
+        )?;
+        let read = self.read()?;
+        Ok(read_page(&*read, source_id, slug)?
+            .filter(|page| page.deleted_at_us.is_none())
+            .map(|page| iso(page.effective_date_us.unwrap_or(page.updated_at_us))))
     }
 
     /// `readReferrerPageDetails`: the title, bounded body, date source, trust fields, flag and
@@ -2522,6 +2595,39 @@ impl Store {
             chunks: crate::chunks::read_stats(read)?.chunks,
         })
     }
+
+    /// `listManualLinkTransitions`: the manual dated statements of the relationships the page
+    /// (in any deletion state) starts, with each target's slug and source, by target source, target
+    /// slug, link type, kind and day (bytewise). The engine copier carries them with the page.
+    pub fn list_manual_link_transitions(&self, source_id: &str, slug: &str) -> Result<Value> {
+        let read = self.read()?;
+        let Some(from) = read_page(&*read, source_id, slug)? else {
+            return Ok(Value::Array(Vec::new()));
+        };
+        let mut prefix = family_prefix(&from.source_id, TRANSITION);
+        prefix.extend_from_slice(&from.id.to_be_bytes());
+        let mut rows = Vec::new();
+        for (_, t) in scan_under::<TransitionRecord>(&*read, &prefix)? {
+            if t.producer != "manual" {
+                continue;
+            }
+            let Some(to) = read_page_by_id(&*read, t.to_page_id)? else {
+                continue;
+            };
+            rows.push((to.source_id, to.slug, t.link_type, t.kind, t.occurred_on));
+        }
+        rows.sort();
+        Ok(Value::Array(
+            rows.into_iter()
+                .map(|(to_source_id, to_slug, link_type, kind, occurred_on)| {
+                    serde_json::json!({
+                        "to_slug": to_slug, "to_source_id": to_source_id, "link_type": link_type,
+                        "kind": kind, "occurred_on": occurred_on,
+                    })
+                })
+                .collect(),
+        ))
+    }
 }
 
 #[cfg(test)]
@@ -2550,6 +2656,20 @@ mod tests {
         assert!(canonical_multirange("{[2021-01-01,2022-01-01]}").is_err());
         assert!(canonical_multirange("[2021-01-01,)").is_err());
         assert!(canonical_multirange("{[2021-13-01,)}").is_err());
+    }
+
+    #[test]
+    fn a_malformed_multirange_is_refused_never_a_panic() {
+        // Postgres refuses each of these with `malformed multirange literal: "<text>"`.
+        for text in ["{)}", "{ )}", "{é)}", "{[)}", "{()}", "{,)}"] {
+            let err = canonical_multirange(text).unwrap_err();
+            assert_eq!(
+                err.message,
+                format!("malformed multirange literal: \"{text}\"")
+            );
+            assert!(!multirange_overlaps(text, "2020-01-01", "2021-01-01"));
+            assert!(!multirange_contains(text, "2020-01-01"));
+        }
     }
 
     #[test]

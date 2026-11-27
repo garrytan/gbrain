@@ -148,7 +148,7 @@ describe('revokeLegacyTokenById [C7]', () => {
     const a = await mintLegacyToken(engine, { name: 'twin', takesHolders: ['world'], scopes: ['read', 'write'] });
     const b = await mintLegacyToken(engine, { name: 'twin', takesHolders: ['world'], scopes: ['read', 'write'] });
 
-    expect(await revokeLegacyTokenById(sql, a.id)).toBe(true);
+    expect(await revokeLegacyTokenById(engine, a.id)).toBe(true);
 
     const rows = await sql`
       SELECT id, revoked_at FROM access_tokens WHERE name = ${'twin'} ORDER BY created_at
@@ -160,10 +160,10 @@ describe('revokeLegacyTokenById [C7]', () => {
     expect((alive[0] as { id: string }).id).toBe(b.id);
 
     // second revoke of the same id → already-done, not an error
-    expect(await revokeLegacyTokenById(sql, a.id)).toBe(false);
+    expect(await revokeLegacyTokenById(engine, a.id)).toBe(false);
   });
 
   test('malformed id refused before touching the database', async () => {
-    await expect(revokeLegacyTokenById(sql, 'not-a-uuid')).rejects.toThrow(/UUID/);
+    await expect(revokeLegacyTokenById(engine, 'not-a-uuid')).rejects.toThrow(/UUID/);
   });
 });

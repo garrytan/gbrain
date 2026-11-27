@@ -43,6 +43,7 @@
  */
 import type { BrainEngine, NewFact } from '../engine.ts';
 import type { Page } from '../types.ts';
+import type { LabelFactCandidateRow } from '../engine-sql/label-repair-reads.ts';
 import type { PreparedMutation } from '../persistence/coordinator.ts';
 import type { WriteRequest } from '../persistence/model.ts';
 import { opError, OperationError } from '../ops/contract.ts';
@@ -74,7 +75,8 @@ const SEGMENT_SOURCE = 'cli:extract-conversation-facts';
 /** The default context the pre-fix extractor wrote for an undated page's segment. */
 export const EPOCH_SEGMENT_MARKER = 'segment 1970-01-01';
 /** A bold metadata label line, as the pre-fix bold-name-no-time pattern read it (POSIX, case-insensitive). */
-const LABEL_LINE_SQL = `(^|\\n)\\*\\*(${METADATA_LABELS.join('|')})[[:space:]]*:\\*\\*`;
+/** The metadata label line the label-fact reads match (`~*`), exported for the engine parity test. */
+export const LABEL_LINE_SQL = `(^|\\n)\\*\\*(${METADATA_LABELS.join('|')})[[:space:]]*:\\*\\*`;
 const HANDOFF_SLUGS_PER_COMMAND = 50;
 const previewFix = (sourceId: string) => readFix('Previews the conversation-labels repair without changing anything; it makes no model calls.',
   { argv: ['gbrain', 'repair', 'conversation-labels', '--source', sourceId, '--json'] });
@@ -109,29 +111,10 @@ export interface LabelPage {
 
 interface BatchItem extends RepairItem { pages: LabelPage[]; request_id: string; hash: string; last: boolean }
 
-interface CandidateRow {
-  id: number | string; source_id: string; slug: string; fact: string; context: string | null; entity_slug: string | null; visibility: string;
-  superseded: boolean; withdrawn: boolean; referenced: boolean; open_loop: boolean; outcome_stamped: boolean;
-}
-
 /** Every candidate of these sources (or of one page), classified, in (source, page, id) order. Read-only. */
 export async function classifyLabelFacts(db: BrainEngine, sourceIds: string[], opts: { slug?: string } = {}): Promise<LabelFactCandidate[]> {
-  const rows = await db.executeRaw<CandidateRow>(`
-    SELECT f.id, f.source_id, f.source_markdown_slug AS slug, f.fact, f.context, f.entity_slug, f.visibility,
-           f.superseded_by IS NOT NULL AS superseded,
-           EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id=f.source_id AND w.visibility=f.visibility
-             AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact), gbrain_fact_fingerprint_v1(f.fact))
-             AND (w.subject='*' OR w.subject=f.entity_slug)) AS withdrawn,
-           EXISTS (SELECT 1 FROM facts g WHERE g.superseded_by=f.id) AS referenced,
-           EXISTS (SELECT 1 FROM open_loops o WHERE o.fact_id=f.id) AS open_loop,
-           EXISTS (SELECT 1 FROM facts o WHERE o.source_id=f.source_id AND o.source_markdown_slug=f.source_markdown_slug
-             AND o.source IN ($3, $4) AND o.expired_at IS NULL AND o.context ~ 'extractor_version=[0-9]+$') AS outcome_stamped
-      FROM facts f JOIN pages p ON p.source_id=f.source_id AND p.slug=f.source_markdown_slug AND p.deleted_at IS NULL
-     WHERE f.source_id=ANY($1::text[]) AND f.source=$5 AND f.expired_at IS NULL
-       AND ($2::text IS NULL OR f.source_markdown_slug=$2::text)
-       AND (p.compiled_truth ~* $6 OR COALESCE(p.timeline,'') ~* $6)
-     ORDER BY f.source_id COLLATE "C", f.source_markdown_slug COLLATE "C", f.id`,
-  [sourceIds, opts.slug ?? null, TERMINAL_AUDIT_SOURCE, NON_EXTRACTABLE_AUDIT_SOURCE, SEGMENT_SOURCE, LABEL_LINE_SQL]);
+  const rows = await db.listLabelFactCandidates(sourceIds, opts.slug ?? null, { segmentSource: SEGMENT_SOURCE, labelLine: LABEL_LINE_SQL,
+    terminalSource: TERMINAL_AUDIT_SOURCE, nonExtractableSource: NON_EXTRACTABLE_AUDIT_SOURCE });
   return rows.map(row => {
     const [klass, reason] = classify(row);
     return { id: Number(row.id), source_id: row.source_id, slug: row.slug, class: klass, reason,
@@ -139,7 +122,7 @@ export async function classifyLabelFacts(db: BrainEngine, sourceIds: string[], o
   });
 }
 
-function classify(row: CandidateRow): [LabelFactClass, string] {
+function classify(row: LabelFactCandidateRow): [LabelFactClass, string] {
   if (row.outcome_stamped) return ['excluded', 'current_extractor'];
   if (row.withdrawn) return ['excluded', 'withdrawn'];
   if (row.superseded) return ['excluded', 'superseded'];
@@ -171,9 +154,7 @@ async function currentOutcome(db: BrainEngine, page: Page): Promise<{ reason: st
 }
 
 async function activeMarker(db: BrainEngine, sourceId: string, slug: string): Promise<boolean> {
-  const rows = await db.executeRaw('SELECT 1 FROM facts WHERE source_id=$1 AND source_markdown_slug=$2 AND source IN ($3,$4) AND expired_at IS NULL LIMIT 1',
-    [sourceId, slug, TERMINAL_AUDIT_SOURCE, LEGACY_TERMINAL_AUDIT_SOURCE]);
-  return rows.length > 0;
+  return db.hasActiveAuditMarker(sourceId, slug, [TERMINAL_AUDIT_SOURCE, LEGACY_TERMINAL_AUDIT_SOURCE]);
 }
 
 function requestIdFor(hash: string, pages: Array<Pick<LabelPage, 'source_id' | 'slug'>>, attempt: number): string {
@@ -182,7 +163,7 @@ function requestIdFor(hash: string, pages: Array<Pick<LabelPage, 'source_id' | '
 }
 
 async function previewCommand(engine: BrainEngine, scope: RepairScope, includeAmbiguous: boolean): Promise<string> {
-  const [{ n }] = await engine.executeRaw<{ n: number | string }>('SELECT count(*)::int AS n FROM sources WHERE archived IS NOT TRUE');
+  const n = (await engine.listAllSources()).length;
   const narrowed = scope.source_ids.length === 1 && Number(n) > 1;
   return `gbrain repair conversation-labels${narrowed ? ` --source ${scope.source_ids[0]}` : ''}${includeAmbiguous ? ' --include-ambiguous' : ''}`;
 }
@@ -220,10 +201,9 @@ function batchItems(pages: LabelPage[], hash: string): BatchItem[] {
 /** Batches of an approved set whose retirement already committed (or whose facts are all expired already). */
 async function finishedBatches(engine: BrainEngine, items: BatchItem[]): Promise<Set<string>> {
   if (!items.length) return new Set();
-  const committed = new Set((await engine.executeRaw<{ request_id: string }>(`SELECT request_id::text AS request_id FROM persistence_requests
-    WHERE state='committed' AND operation='submit_job' AND request_id=ANY($1::uuid[])`, [items.map(item => item.request_id)])).map(row => row.request_id));
-  const active = new Set((await engine.executeRaw<{ id: number | string }>('SELECT id FROM facts WHERE id=ANY($1::bigint[]) AND expired_at IS NULL',
-    [items.flatMap(item => item.pages.flatMap(p => p.facts.map(f => f.id)))])).map(row => Number(row.id)));
+  const committed = new Set((await engine.listWriteRequestsByRequestIds(items.map(item => item.request_id)))
+    .filter(row => row.state === 'committed' && row.operation === 'submit_job').map(row => row.request_id));
+  const active = new Set(await engine.listUnexpiredFactIds(items.flatMap(item => item.pages.flatMap(p => p.facts.map(f => f.id)))));
   return new Set(items.filter(item => committed.has(item.request_id) || item.pages.every(p => p.facts.every(f => !active.has(f.id)))).map(item => item.request_id));
 }
 
@@ -240,7 +220,7 @@ export const conversationLabelsRepair: RepairHandler = {
           'docs/guides/repair.md#conversation-labels');
       }
       const approved = await loadApprovedSet<LabelPage>(engine, { command: 'conversation-labels', hash: opts.expect, previewCommand: command,
-        emptyHash: async () => previewHash({ kind: 'conversation-labels-v1', brain_id: scope.brain_id, sources: (await engine.executeRaw<{ id: string; incarnation: string }>('SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id', [scope.source_ids])),
+        emptyHash: async () => previewHash({ kind: 'conversation-labels-v1', brain_id: scope.brain_id, sources: (await engine.listSourceIncarnations(scope.source_ids)),
           selection: { source_ids: scope.source_ids, include_ambiguous: includeAmbiguous }, facts: [], pages: [] }) });
       const scopeKey = JSON.stringify(scope.source_ids);
       if (approved.items.some(page => page.include_ambiguous !== includeAmbiguous || JSON.stringify(page.scope) !== scopeKey)) {
@@ -254,12 +234,8 @@ export const conversationLabelsRepair: RepairHandler = {
         details: { handoff: handoffCommands(approved.items) } };
     }
     const facts = await classifyLabelFacts(engine, scope.source_ids);
-    const segmented = await engine.executeRaw<{ source_id: string; slug: string; n: number }>(`SELECT p.source_id, p.slug, count(*)::int AS n
-        FROM facts f JOIN pages p ON p.source_id=f.source_id AND p.slug=f.source_markdown_slug AND p.deleted_at IS NULL
-       WHERE f.source_id=ANY($1::text[]) AND f.source=$2 AND f.expired_at IS NULL AND p.body_storage='segmented'
-         AND NOT EXISTS (SELECT 1 FROM facts o WHERE o.source_id=f.source_id AND o.source_markdown_slug=f.source_markdown_slug
-           AND o.source IN ($3, $4) AND o.expired_at IS NULL AND o.context ~ 'extractor_version=[0-9]+$')
-       GROUP BY p.id, p.source_id, p.slug ORDER BY p.id`, [scope.source_ids, SEGMENT_SOURCE, TERMINAL_AUDIT_SOURCE, NON_EXTRACTABLE_AUDIT_SOURCE]);
+    const segmented = await engine.listSegmentedLabelPages(scope.source_ids, { segmentSource: SEGMENT_SOURCE,
+      terminalSource: TERMINAL_AUDIT_SOURCE, nonExtractableSource: NON_EXTRACTABLE_AUDIT_SOURCE });
     const selected = facts.filter(fact => fact.class === 'evidenced' || fact.class === 'ambiguous' && includeAmbiguous);
     const pages = new Map<string, LabelPage>();
     for (const fact of selected) {
@@ -275,8 +251,7 @@ export const conversationLabelsRepair: RepairHandler = {
       }
       page.facts.push({ id: fact.id, class: fact.class, reason: fact.reason, fact_hash: fact.fact_hash });
     }
-    const sources = await engine.executeRaw<{ id: string; incarnation: string }>(
-      'SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id', [scope.source_ids]);
+    const sources = await engine.listSourceIncarnations(scope.source_ids);
     const hash = previewHash({ kind: 'conversation-labels-v1', brain_id: scope.brain_id, sources, selection: { source_ids: scope.source_ids, include_ambiguous: includeAmbiguous },
       facts, pages: [...pages.values()] });
     const approved = [...pages.values()];
@@ -370,7 +345,7 @@ async function retireManaged(engine: BrainEngine, config: Parameters<typeof wait
  */
 async function retirePageFacts(tx: BrainEngine, page: LabelPage, hash: string): Promise<RetireResult> {
   const ids = page.facts.map(f => f.id);
-  await tx.executeRaw('SELECT id FROM facts WHERE source_id=$1 AND id=ANY($2::bigint[]) FOR UPDATE', [page.source_id, ids]);
+  await tx.lockFactRows(page.source_id, ids);
   const live = new Map((await classifyLabelFacts(tx, [page.source_id], { slug: page.slug })).map(f => [f.id, f]));
   const current = await tx.getPage(page.slug, { sourceId: page.source_id });
   const result: RetireResult = { retired: [], changed: [], outcome: page.outcome };
@@ -378,22 +353,19 @@ async function retirePageFacts(tx: BrainEngine, page: LabelPage, hash: string): 
   for (const approved of page.facts) {
     const now = live.get(approved.id);
     const same = !!current && current.id === page.page_id && !!now && now.class === approved.class && now.fact_hash === approved.fact_hash;
-    const updated = same ? await tx.executeRaw(`UPDATE facts SET expired_at=now(), context=concat_ws(' | ', NULLIF(context, ''), $3::text)
-      WHERE source_id=$1 AND id=$2 AND expired_at IS NULL RETURNING id`, [page.source_id, approved.id, marker]) : [];
-    if (updated.length) result.retired.push(approved.id); else result.changed.push(approved.id);
+    const updated = same && await tx.expireFactWithNote(page.source_id, approved.id, marker);
+    if (updated) result.retired.push(approved.id); else result.changed.push(approved.id);
   }
   if (!result.retired.length || !current) return result;
-  await tx.executeRaw(`UPDATE facts SET expired_at=now() WHERE source_id=$1 AND source_markdown_slug=$2 AND source IN ($3,$4) AND expired_at IS NULL`,
-    [page.source_id, page.slug, TERMINAL_AUDIT_SOURCE, LEGACY_TERMINAL_AUDIT_SOURCE]);
+  await tx.expirePageFactsBySource(page.source_id, page.slug, [TERMINAL_AUDIT_SOURCE, LEGACY_TERMINAL_AUDIT_SOURCE]);
   if (page.outcome !== 'non_extractable') return result;
   const decided = await currentOutcome(tx, current);
   if (!decided.reason || decided.versionToken !== page.version_token) return { ...result, outcome: 'awaiting_reextraction' };
-  await tx.executeRaw(`UPDATE facts SET expired_at=now() WHERE source_id=$1 AND source_markdown_slug=$2 AND source=$3 AND expired_at IS NULL`,
-    [page.source_id, page.slug, NON_EXTRACTABLE_AUDIT_SOURCE]);
-  const [top] = await tx.executeRaw<{ n: number | string | null }>('SELECT max(row_num) AS n FROM facts WHERE source_id=$1 AND source_markdown_slug=$2', [page.source_id, page.slug]);
+  await tx.expirePageFactsBySource(page.source_id, page.slug, [NON_EXTRACTABLE_AUDIT_SOURCE]);
+  const top = await tx.readMaxFactRowNum(page.source_id, page.slug);
   const outcome: NewFact & { row_num: number; source_markdown_slug: string } = { fact: 'EXTRACTION_NOT_APPLICABLE', kind: 'fact', entity_slug: null,
     source: NON_EXTRACTABLE_AUDIT_SOURCE, source_session: `${NON_EXTRACTABLE_AUDIT_SOURCE}:${page.slug}:${decided.versionToken}`, confidence: 1.0, notability: 'low',
-    context: stampExtractorVersion(`scanned, not extractable: ${decided.reason}`), row_num: top?.n == null ? 0 : Number(top.n) + 1, source_markdown_slug: page.slug };
+    context: stampExtractorVersion(`scanned, not extractable: ${decided.reason}`), row_num: top === null ? 0 : top + 1, source_markdown_slug: page.slug };
   const { inserted } = await tx.insertFacts([outcome], { source_id: page.source_id }); // gbrain-allow-direct-insert: the durable not-extractable outcome a label repair writes under the page lock (inside its receipted publication on a managed brain)
   if (inserted !== 1) throw opError('storage_error', 'The not-extractable outcome was not written; nothing on the page changed.',
     `The repair of ${page.slug} in source ${page.source_id} could not insert its not-extractable outcome, so the transaction rolled back. Preview the repair again.`,

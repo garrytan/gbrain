@@ -7,11 +7,14 @@
  *    test/engine-parity/harness.ts) gives the same watermark, and each recorded withdrawal moves the count and the
  *    newest withdrawal time of its own source only, while the access-rule digest stays the same.
  *  - Regression: withdrawalWatermark sent its SELECT through executeRaw, so on a Rust brain every MCP tool call that
- *    builds hot memory (entity first) stopped on the raw_sql refusal before anything else.
+ *    builds hot memory (entity first) stopped on the raw_sql refusal before anything else. The build's next read,
+ *    readTrustGeneration (eligibility/generation.ts), is a typed member now, covered by trust-withdrawals.test.ts.
  *  - Why existing coverage misses it: the meta-hook tests run on PGLite only. trust-withdrawals.test.ts compares the
  *    watermark row after withdrawals with out-of-order times; this file pins the fresh-source token and that the
  *    watermark moves on each withdrawal and stays put for another source.
- *  - Seam: none.
+ *  - Seam: none. The watermark is an opaque token: each case compares the fresh-source token, which every arm spells
+ *    alike, and how the token moves, not the spelling of a token after a withdrawal (PGLite and Postgres carry the
+ *    latest withdrawal time, the Rust store a digest of the ledger keys).
  */
 import { describe, expect } from 'bun:test';
 import { parityArms } from './harness.ts';

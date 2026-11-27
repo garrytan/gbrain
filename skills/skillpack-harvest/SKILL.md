@@ -162,7 +162,7 @@ file FIRST, then run harvest.
 1. **Fork-specific names → generic phrasing**
    - `<personal-fork-name>` → `your OpenClaw` (or `OpenClaw deployment`);
      any pet name for the user's private agent gets the same treatment
-   - Personal first names (`garry`, `jane`, etc.) → `the user` /
+   - Personal first names (`alice`, `jane`, etc.) → `the user` /
      `you` / a generic placeholder
 
 2. **Real entities → placeholders**
@@ -182,7 +182,7 @@ file FIRST, then run harvest.
 4. **Triggers array generalizes**
    - Read every entry in frontmatter `triggers:`. None should
      reference the user's name, fork name, or internal tools.
-   - "Have garry sign off on it" → "have the user sign off on it"
+   - "Have alice sign off on it" → "have the user sign off on it"
 
 5. **routing-eval.jsonl examples are scrubbed**
    - Open `skills/<slug>/routing-eval.jsonl`. Every `intent` field

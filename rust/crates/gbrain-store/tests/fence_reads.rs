@@ -8,7 +8,9 @@
 mod memory_env;
 
 use gbrain_store::error::INVALID_ARGUMENT;
-use gbrain_store::facts::{ExpireFactArgs, FenceContext, FenceTarget, InsertFactsArgs};
+use gbrain_store::facts::{
+    ExpireFactArgs, FactRestore, FactSourcePrefix, FenceContext, FenceTarget, InsertFactsArgs,
+};
 use memory_env::{Brain, brain};
 use serde_json::{Value, json};
 
@@ -444,4 +446,133 @@ fn the_write_trust_settings_reach_both_fence_reads_and_clear_with_the_context() 
             .len(),
         5
     );
+}
+
+#[test]
+fn fact_preimages_read_the_source_rows_by_id_once_in_id_order() {
+    let b = brain("fact-preimages");
+    let ids = page(&b);
+    let id = |n: usize| i64::try_from(ids[n]).unwrap();
+    let asked = [id(4), id(0), id(4), -1, i64::MAX];
+    let rows = b.read_fact_preimages("default", &asked).unwrap();
+    let got: Vec<(u64, &str)> = rows
+        .iter()
+        .map(|r| (r["id"].as_u64().unwrap(), r["fact"].as_str().unwrap()))
+        .collect();
+    assert_eq!(got, vec![(ids[0], "Zeta struck"), (ids[4], "Beta")]);
+    // Beta's before-state keeps its strike and its successor, as `FACT_PREIMAGE_SQL` does.
+    assert_eq!(
+        rows[1]["expired_at"],
+        json!("2026-04-05T06:07:08.125+00:00")
+    );
+    assert_eq!(rows[1]["superseded_by"], json!(ids[6]));
+    assert_eq!(rows[1]["attributed_to"], json!("user"));
+    assert!(b.read_fact_preimages("default", &[]).unwrap().is_empty());
+    assert!(b.read_fact_preimages("missing", &asked).unwrap().is_empty());
+}
+
+#[test]
+fn fact_restore_puts_a_before_state_back_on_the_same_claim_only() {
+    let b = brain("fact-restore");
+    let ids = page(&b);
+    let restore = |source: &str, v: Value| b.restore_fact_preimage(source, &args::<FactRestore>(v));
+    let beta = |extra: Value| {
+        let mut v = json!({"id": ids[4], "fact": "Beta", "visibility": "world", "row_num": 2});
+        for (k, x) in extra.as_object().unwrap() {
+            v[k] = x.clone();
+        }
+        v
+    };
+    // Another claim, visibility or source, or a missing id, changes nothing.
+    assert!(!restore("default", beta(json!({"fact": "Beta changed"}))).unwrap());
+    assert!(!restore("default", beta(json!({"visibility": "private"}))).unwrap());
+    assert!(!restore("other", beta(json!({}))).unwrap());
+    assert!(!restore("default", beta(json!({"id": 1u64 << 40}))).unwrap());
+    // A successor that does not exist is the foreign key refusal Postgres gives.
+    let err = restore("default", beta(json!({"superseded_by": 1u64 << 40}))).unwrap_err();
+    assert!(
+        err.to_string().contains("facts_superseded_by_fkey"),
+        "{err}"
+    );
+    // The restore clears the strike and the successor, and keeps its fence number.
+    assert!(restore("default", beta(json!({}))).unwrap());
+    let back = b
+        .read_fact_preimages("default", &[i64::try_from(ids[4]).unwrap()])
+        .unwrap();
+    assert_eq!(back[0]["expired_at"], Value::Null);
+    assert_eq!(back[0]["superseded_by"], Value::Null);
+    assert_eq!(back[0]["row_num"], json!(2));
+    // Alpha moves to a free fence number only: 2 is Beta's, 9 is free.
+    let alpha = |n: i32| {
+        json!({"id": ids[5], "fact": "Alpha", "visibility": "world", "row_num": n,
+        "valid_until": "2026-05-01T10:00:00.5+02:00"})
+    };
+    assert!(restore("default", alpha(2)).unwrap());
+    let a = b
+        .read_fact_preimages("default", &[i64::try_from(ids[5]).unwrap()])
+        .unwrap();
+    assert_eq!(a[0]["row_num"], json!(1));
+    assert_eq!(a[0]["valid_until"], json!("2026-05-01T08:00:00.5+00:00"));
+    assert!(restore("default", alpha(9)).unwrap());
+    let a = b
+        .read_fact_preimages("default", &[i64::try_from(ids[5]).unwrap()])
+        .unwrap();
+    assert_eq!(a[0]["row_num"], json!(9));
+}
+
+fn by_prefix(source: &str, slug: &str, prefix: &str) -> FactSourcePrefix {
+    FactSourcePrefix {
+        source_id: source.into(),
+        slug: slug.into(),
+        source_prefix: prefix.into(),
+    }
+}
+
+#[test]
+fn fact_ids_by_source_prefix_list_the_page_rows_whose_source_starts_so_by_id() {
+    let b = brain("fence-source-prefix");
+    let ids = page(&b);
+    let list = |source: &str, slug: &str, prefix: &str| {
+        b.list_fact_ids_by_source_prefix(&by_prefix(source, slug, prefix))
+            .unwrap()
+    };
+    // Live and struck rows alike; the other page's row is not listed.
+    assert_eq!(
+        list("default", SLUG, "cli:extract-conversation-facts"),
+        vec![ids[1], ids[2]]
+    );
+    assert_eq!(
+        list("default", SLUG, "fence"),
+        vec![ids[0], ids[3], ids[4], ids[5], ids[7]]
+    );
+    // An empty prefix is every row of the page, the empty source included.
+    assert_eq!(list("default", SLUG, ""), ids[..8].to_vec());
+    assert!(list("other", SLUG, "").is_empty());
+    assert!(list("default", "people/missing", "").is_empty());
+    let err = b
+        .list_fact_ids_by_source_prefix(&by_prefix("default", SLUG, "a\0b"))
+        .unwrap_err();
+    assert_eq!(err.code, INVALID_ARGUMENT, "{err}");
+}
+
+#[test]
+fn expire_fact_rows_ends_only_the_live_rows_of_the_source() {
+    let b = brain("fence-expire-rows");
+    let ids = page(&b);
+    let id = |i: usize| i64::try_from(ids[i]).unwrap();
+    let expired =
+        |i: usize| b.read_fact_preimages("default", &[id(i)]).unwrap()[0]["expired_at"].clone();
+    assert_eq!(b.expire_fact_rows("other", &[id(1)]).unwrap(), 0);
+    assert_eq!(expired(1), Value::Null);
+    assert_eq!(b.expire_fact_rows("default", &[]).unwrap(), 0);
+    // A repeated id, a struck row, a negative id and a missing id end nothing more.
+    let before = expired(0);
+    assert_eq!(
+        b.expire_fact_rows("default", &[id(1), id(1), id(0), -1, 1 << 40])
+            .unwrap(),
+        1
+    );
+    assert_ne!(expired(1), Value::Null);
+    assert_eq!(expired(0), before);
+    assert_eq!(expired(2), Value::Null);
 }

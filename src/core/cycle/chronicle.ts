@@ -65,21 +65,8 @@ async function discover(engine: BrainEngine, sourceId: string, ctx: {
   managed: boolean; enabled: boolean; activatedAt: Date; settings: Awaited<ReturnType<typeof chronicleSettings>>; now: Date; dryRun: boolean;
 }): Promise<number> {
   const prefixes = RESCUE_SLUG_PREFIXES.map((p) => `${p}%`);
-  const pages = await engine.executeRaw<{
-    id: number; slug: string; type: string; compiled_truth: string | null; frontmatter: Record<string, unknown> | null;
-    effective_date: Date | string | null; effective_date_source: string | null; content_hash: string; updated_at: Date | string;
-    body_storage: 'inline' | 'segmented'; body_bytes: number | null;
-  }>(
-    `SELECT p.id, p.slug, p.type, coalesce(p.compiled_truth, p.truth_lead) AS compiled_truth, p.body_storage, p.body_bytes, p.frontmatter, p.effective_date, p.effective_date_source, p.content_hash, p.updated_at
-       FROM pages p
-      WHERE p.source_id=$1 AND p.deleted_at IS NULL AND p.content_hash IS NOT NULL AND p.updated_at >= $2::timestamptz
-        AND p.type <> 'event' AND p.slug NOT LIKE 'life/%'
-        AND (p.type = ANY($3::text[]) OR p.slug LIKE ANY($4::text[]) OR EXISTS (SELECT 1 FROM chronicle_page_state e
-          WHERE e.page_id=p.id AND e.state='extracted' AND cardinality(e.event_hashes) > 0))
-        AND NOT EXISTS (SELECT 1 FROM chronicle_page_state c
-          WHERE c.page_id=p.id AND c.content_hash=p.content_hash AND c.extractor_version=$5)
-      ORDER BY p.updated_at, p.id LIMIT $6`,
-    [sourceId, ctx.activatedAt.toISOString(), [...CHRONICLE_TYPES], prefixes, CHRONICLE_EXTRACTOR_VERSION, DISCOVERY_PER_SOURCE]);
+  const pages = await (await engine.chronicleStore()).discoveryPages(sourceId, ctx.activatedAt.toISOString(), [...CHRONICLE_TYPES], prefixes,
+    CHRONICLE_EXTRACTOR_VERSION, DISCOVERY_PER_SOURCE);
   if (ctx.dryRun) return pages.length;
   for (const page of pages) {
     const base = { sourceId, pageId: Number(page.id), contentHash: page.content_hash, slug: page.slug, trigger: 'auto' as const };
@@ -103,18 +90,8 @@ async function discover(engine: BrainEngine, sourceId: string, ctx: {
 
 /** Claimable rows of one source, retire-only rows first, then automatic, then backfill, oldest decision first. */
 async function candidates(engine: BrainEngine, sourceId: string, enabled: boolean, limit: number): Promise<ChronicleLedgerRow[]> {
-  return engine.executeRaw<ChronicleLedgerRow>(
-    `SELECT c.* FROM chronicle_page_state c
-       JOIN pages p ON p.id=c.page_id AND p.source_id=c.source_id AND p.content_hash=c.content_hash AND p.deleted_at IS NULL
-      WHERE c.source_id=$1 AND c.extractor_version=$2
-        AND (c.next_attempt_at IS NULL OR c.next_attempt_at <= now())
-        AND ((c.state='pending' AND ($3 OR c.trigger='backfill') AND (c.max_attempts IS NULL OR c.attempts < c.max_attempts))
-          OR (c.state='failed' AND c.attempts < COALESCE(c.max_attempts, $4) AND ($3 OR c.trigger='backfill')
-            AND (c.next_attempt_at IS NOT NULL OR c.reason IN ('judge_llm_unavailable','no_pricing')))
-          OR (c.state='skipped' AND c.next_attempt_at IS NOT NULL AND c.reason = ANY($5::text[])))
-      ORDER BY (c.state='skipped') DESC, (c.trigger='auto') DESC, c.decided_at, c.page_id
-      LIMIT $6`,
-    [sourceId, CHRONICLE_EXTRACTOR_VERSION, enabled, CHRONICLE_DEFAULTS.maxAttempts, [...RETIRE_REASONS], limit]);
+  return (await engine.chronicleStore()).candidates(sourceId, CHRONICLE_EXTRACTOR_VERSION, enabled, CHRONICLE_DEFAULTS.maxAttempts,
+    [...RETIRE_REASONS], limit);
 }
 
 function result(status: PhaseStatus, summary: string, details: ChronicleRunDetails & Record<string, unknown>): PhaseResult {
@@ -149,10 +126,7 @@ export async function runPhaseChronicle(engine: BrainEngine, opts: ChroniclePhas
   if (!dryRun) {
     await pruneChronicleReservations(engine);
     await failExhaustedCampaignRows(engine);
-    await engine.executeRaw(
-      `UPDATE chronicle_page_state c SET state='skipped', reason='superseded', next_attempt_at=NULL, updated_at=now()
-        WHERE c.state IN ('pending','failed') AND NOT EXISTS (SELECT 1 FROM pages p
-          WHERE p.id=c.page_id AND p.content_hash=c.content_hash AND p.deleted_at IS NULL)`);
+    await (await engine.chronicleStore()).supersedeStaleRows();
   }
   const { withoutGuestSources } = await import('../guests/derived.ts');
   const sources = await withoutGuestSources(engine, 'chronicle',

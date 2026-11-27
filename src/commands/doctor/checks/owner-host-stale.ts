@@ -14,6 +14,7 @@ import { PENDING_WRITE_EXIT_CODE } from '../../../core/exit-codes.ts';
 import { agentFix, checkError } from '../check-fix.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
 import { answersFromCatalog, catalogTableExists } from '../../../core/rust-engine/store-members/catalog.ts';
+import { servesRawSql } from '../../../core/rust-engine/errors.ts';
 
 const DOCS = 'docs/guides/troubleshooting.md#owner-host-stale';
 
@@ -23,9 +24,13 @@ export async function ownerHostStaleCheck(engine: BrainEngine): Promise<Check> {
       ? [{ managed: catalogTableExists(engine, 'persistence_requests') && catalogTableExists(engine, 'persistence_worktrees') }]
       : await engine.executeRaw<{ managed: boolean }>(`SELECT to_regclass('public.persistence_requests') IS NOT NULL AND to_regclass('public.persistence_worktrees') IS NOT NULL AS managed`);
     if (!present?.managed) return { name: 'owner_host_stale', status: 'ok', message: 'This brain keeps no managed write journal.', details: { count: 0, stale_after_ms: OWNER_STALE_MS, stale: [], docs: DOCS } };
+    // The waiting-write and owner-activity reads are SQL; an engine without raw SQL (Rust) skips the check by name, never a pass.
+    if (!servesRawSql(engine)) return { name: 'owner_host_stale', status: 'ok',
+      message: 'Skipped: the owner-host read is not served by this engine yet (it needs the raw_sql capability). `gbrain sources writer status --json` shows each owner.',
+      details: { outcome: 'skipped', reason: 'raw_sql', count: 'unknown', stale_after_ms: OWNER_STALE_MS, docs: DOCS } };
     const open = await engine.executeRaw<{ worktree_id: string; open_writes: number; oldest_open: string | Date; source_ids: string[] | null }>(`
       SELECT r.worktree_id::text AS worktree_id, count(*)::int AS open_writes, min(r.created_at) AS oldest_open,
-        (SELECT array_agg(b.source_id ORDER BY b.source_id) FROM persistence_source_bindings b WHERE b.worktree_id=r.worktree_id) AS source_ids
+        (SELECT array_agg(b.source_id ORDER BY b.source_id COLLATE "C") FROM persistence_source_bindings b WHERE b.worktree_id=r.worktree_id) AS source_ids
       FROM persistence_requests r WHERE r.worktree_id IS NOT NULL AND r.state IN ('queued','deferred','running','recovering')
       GROUP BY r.worktree_id`);
     const owners = await ownerActivity(engine, open.map(row => row.worktree_id));

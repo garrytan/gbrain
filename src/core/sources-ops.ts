@@ -44,6 +44,7 @@ import { isHostAbsolutePath, isPathContained, msysToNativePath } from './path-co
 import { mkdirPrivate } from './atomic-write.ts';
 import { randomBytes } from 'crypto';
 import type { BrainEngine } from './engine.ts';
+import { rethrowCapabilityRefusal } from './engine-capability-refusal.ts';
 import {
   parseRemoteUrl,
   cloneRepo,
@@ -214,10 +215,14 @@ export interface AddSourceOpts {
     loopsExcludeLabels?: string[];
     /** Managed dir where pages are materialized. */
     dir: string;
-    /** Token acquisition: gbrain vault (default), a token-printing command, or an env var. */
-    access?: 'vault' | 'command' | 'env';
+    /** Token acquisition: gbrain vault (default), a token-printing command, an env var, or mail read through gbrain.io. */
+    access?: 'vault' | 'command' | 'env' | 'gbrainio';
     tokenCommand?: string;
     tokenEnv?: string;
+    /** The gbrainio command line for access 'gbrainio' (`g_gbrainio_command`). */
+    gbrainioCommand?: string;
+    /** One address or @domain per line; their threads become owner-only pages (`g_private_senders_file`). */
+    privateSendersFile?: string;
   };
   /**
    * Register a meetings-kind source (meeting notes from a provider API). The
@@ -233,6 +238,8 @@ export interface AddSourceOpts {
   slack?: import('./slack/source-add.ts').AddSourceSlackOpts;
   /** Register an imessage-kind source (the GBrain Helper on this Mac); always database-recorded and owner-only. See src/core/imessage/. */
   imessage?: import('./imessage/source-add.ts').AddSourceIMessageOpts;
+  /** Register an apple-contacts source (GBrain Helper's Contacts route over the network); owner-only. See src/core/apple-contacts/. */
+  appleContacts?: import('./apple-contacts/source-add.ts').AddSourceAppleContactsOpts;
 }
 
 export interface RemoveSourceOpts {
@@ -410,7 +417,7 @@ export async function assertNoOverlappingPath(
  * pages into --dir, inside a Git checkout that no other source covers (a nested
  * root would import every page twice).
  */
-async function insertApiSource(engine: BrainEngine, opts: AddSourceOpts, kind: 'meetings' | 'slack' | 'imessage'): Promise<void> {
+async function insertApiSource(engine: BrainEngine, opts: AddSourceOpts, kind: 'meetings' | 'slack' | 'imessage' | 'apple-contacts'): Promise<void> {
   if (kind === 'imessage') {
     const { imessageSourceConfig } = await import('./imessage/source-add.ts');
     await engine.insertSource({ id: opts.id, name: opts.name ?? opts.id, local_path: null,
@@ -421,18 +428,22 @@ async function insertApiSource(engine: BrainEngine, opts: AddSourceOpts, kind: '
   }
   const { chooseMeetingsRecord, meetingsSourceConfig } = await import('./meetings/source-add.ts');
   const { slackSourceConfig } = await import('./slack/source-add.ts');
-  const request = kind === 'slack' ? opts.slack! : opts.meetings!;
+  const request = kind === 'apple-contacts' ? opts.appleContacts! : kind === 'slack' ? opts.slack! : opts.meetings!;
   const choice = chooseMeetingsRecord(opts.id, request.record, request.dir, kind);
   if (choice.dir) {
-    const overlap = (await engine.executeRaw<{ id: string; local_path: string }>('SELECT id,local_path FROM sources WHERE local_path IS NOT NULL'))
+    const overlap = (await engine.listSourcePathRows())
       .find(row => isPathContained(choice.dir!, row.local_path) || isPathContained(row.local_path, choice.dir!));
     if (overlap) throw new SourceOpError('overlapping_path',
       `${choice.dir} overlaps source "${overlap.id}" at ${overlap.local_path}; its pages would be imported by both sources. Choose a directory no other source covers.`);
     mkdirPrivate(choice.dir);
   }
   await engine.insertSource({ id: opts.id, name: opts.name ?? opts.id, local_path: choice.dir ?? null,
-    config: (kind === 'slack' ? slackSourceConfig(opts.slack!, choice, opts.federated, false)
+    config: (kind === 'apple-contacts'
+      ? (await import('./apple-contacts/source-add.ts')).appleContactsSourceConfig(opts.appleContacts!, choice, opts.federated)
+      : kind === 'slack' ? slackSourceConfig(opts.slack!, choice, opts.federated, false)
       : meetingsSourceConfig(opts.meetings!, choice, opts.federated, false)) });
+  // GST-3032: an apple-contacts source is owner-only, so lineage reads close now, as for imessage.
+  if (kind === 'apple-contacts') await ensureOwnerOnlyMarkTriggersAtRun(engine, true);
 }
 
 export async function addSource(
@@ -496,7 +507,7 @@ export async function addSource(
     !!opts.localPath &&
     !opts.remoteUrl &&
     !opts.github &&
-    !opts.google && !opts.meetings && !opts.slack && !opts.imessage;
+    !opts.google && !opts.meetings && !opts.slack && !opts.imessage && !opts.appleContacts;
   if (existing !== null && !attachPath) {
     const pathNote = existing.local_path
       ? ` with local_path ${existing.local_path}`
@@ -584,10 +595,11 @@ export async function addSource(
       renameSync(tempDir, finalPath!);
     } catch (e) {
       rmSync(tempDir, { recursive: true, force: true });
-      // Best-effort DB rollback.
-      await engine
-        .executeRaw(`DELETE FROM sources WHERE id = $1`, [opts.id])
-        .catch(() => {});
+      // Best-effort DB rollback, through the typed source delete every engine serves. A Rust capability refusal
+      // is not "rolled back": it surfaces rather than leaving the half-added source row behind unnoticed.
+      await deleteSourceRow(engine, opts.id).catch((rollbackError) => {
+        rethrowCapabilityRefusal(rollbackError);
+      });
       throw new SourceOpError(
         'rename_failed',
         `Could not move clone to final path ${finalPath}: ${(e as Error).message}`,
@@ -660,8 +672,8 @@ export async function addSource(
     };
     const displayName = opts.name ?? opts.id;
     await engine.insertSource({ id: opts.id, name: displayName, local_path: finalPath, config });
-  } else if (opts.meetings || opts.slack || opts.imessage) {
-    await insertApiSource(engine, opts, opts.imessage ? 'imessage' : opts.slack ? 'slack' : 'meetings');
+  } else if (opts.meetings || opts.slack || opts.imessage || opts.appleContacts) {
+    await insertApiSource(engine, opts, opts.appleContacts ? 'apple-contacts' : opts.imessage ? 'imessage' : opts.slack ? 'slack' : 'meetings');
   } else {
     // ── Path B: --path or no path (existing behavior, pre-v0.28) ─────────
     // #2707: only validate when the path actually exists — a not-yet-created
@@ -864,6 +876,8 @@ export interface RemoveResult {
   clone_path: string | null;
   /** #7646: why a gbrain-managed clone was left on disk (`relative_path`: its stored path names no fixed directory). */
   clone_skipped_reason?: 'relative_path';
+  /** GST-3022: chat-day files under .gbrain-owned/<id>/ the removal takes out in one commit (or keeps, with keepStorage). */
+  owned_files?: number;
   dryRun: boolean;
 }
 
@@ -906,6 +920,7 @@ export async function removeSource(
   }
 
   const pageCount = await engine.countSourcePages(opts.id, { includeDeleted: true });
+  const ownedFiles = await (await import('./owned-folder/remove.ts')).previewOwnedRemoval(engine, opts.id);
 
   if (opts.dryRun) {
     return {
@@ -913,6 +928,7 @@ export async function removeSource(
       pages_deleted: pageCount,
       clone_removed: false,
       clone_path: src.local_path,
+      ...(ownedFiles ? { owned_files: ownedFiles } : {}),
       dryRun: true,
     };
   }
@@ -976,13 +992,14 @@ export async function removeSource(
     }
   }
 
-  await deleteSourceRow(engine, opts.id);
+  await (await import('./owned-folder/remove.ts')).removeOwnedFolderThen(engine, opts.id, { keep: opts.keepStorage }, () => deleteSourceRow(engine, opts.id));
 
   return {
     id: opts.id,
     pages_deleted: pageCount,
     clone_removed: cloneRemoved,
     clone_path: src.local_path,
+    ...(ownedFiles ? { owned_files: ownedFiles } : {}),
     ...(cloneSkippedReason ? { clone_skipped_reason: cloneSkippedReason } : {}),
     dryRun: false,
   };

@@ -208,10 +208,15 @@ export function cliSocketIdentityMismatch(serve: CliSocketIdentity, cli: CliSock
   if (serve.config_dir !== cli.config_dir) return 'config home';
   if (serve.config_file !== cli.config_file) return 'config file';
   if (serve.config_sha256 !== cli.config_sha256) return 'config contents';
-  const names = [...new Set([...Object.keys(serve.env.values), ...Object.keys(cli.env.values)])].sort();
-  for (const name of names) if (serve.env.values[name] !== cli.env.values[name]) return `env ${name}`;
-  const keys = [...new Set([...serve.env.credentials, ...cli.env.credentials])].sort();
-  for (const name of keys) if (serve.env.credentials.includes(name) !== cli.env.credentials.includes(name)) return `provider key ${name}`;
+  return behaviorEnvMismatch(serve.env, cli.env);
+}
+
+/** Null when two read-behavior environments answer a read alike; otherwise the first variable or provider key that differs, named without its value. */
+export function behaviorEnvMismatch(serve: BehaviorEnv, cli: BehaviorEnv): string | null {
+  const names = [...new Set([...Object.keys(serve.values), ...Object.keys(cli.values)])].sort();
+  for (const name of names) if (serve.values[name] !== cli.values[name]) return `env ${name}`;
+  const keys = [...new Set([...serve.credentials, ...cli.credentials])].sort();
+  for (const name of keys) if (serve.credentials.includes(name) !== cli.credentials.includes(name)) return `provider key ${name}`;
   return null;
 }
 

@@ -520,7 +520,7 @@ export async function listLinkSources(
         JOIN pages t ON t.id = l.to_page_id
         ${sourceCondition}
         GROUP BY l.link_source
-        ORDER BY count DESC, l.link_source ASC NULLS LAST
+        ORDER BY count DESC, l.link_source COLLATE "C" ASC NULLS LAST
       `)).rows;
       return rows as unknown as { link_source: string | null; count: number }[];
   }
@@ -584,7 +584,7 @@ export async function findOrphanPages(exec: LegacyUnscopedRead, opts?: {
             AND src.deleted_at IS NULL ${opts?.scopeInbound ? sourceScope('src', opts) : sqlFragment``} ${opts?.scopeInbound ? liveOriginFilter('l', opts) : sqlFragment``} ${opts?.excludePrivate ? trustedSql(`AND ${privatePagesFilterForCaller('src')} AND ${privateLinkOriginFilterForCaller('l')}`) : sqlFragment``}
         )
         ${outboundFilter}
-      ORDER BY p.slug
+      ORDER BY p.slug COLLATE "C"
     `)).rows;
     return rows as unknown as Array<{ slug: string; title: string; domain: string | null; type?: string | null; quarantined?: boolean; source_id?: string }>;
   }
@@ -626,17 +626,17 @@ function bfsWalkCtes(w: {
   const budget = sqlFragment`greatest(0, ${TRAVERSE_WALK_ROW_CAP + 1}::int - cardinality(bfs.visited))`;
   const limit = w.layerCap !== undefined && w.layerCap > 0 ? sqlFragment`least(${w.layerCap}::int, ${budget})` : budget;
   return sqlFragment`bfs(depth, frontier, visited) AS (
-        SELECT 0, array_agg(p.id ORDER BY p.slug, p.id), array_agg(p.id ORDER BY p.slug, p.id)
+        SELECT 0, array_agg(p.id ORDER BY p.slug COLLATE "C", p.id), array_agg(p.id ORDER BY p.slug COLLATE "C", p.id)
         FROM pages p WHERE ${w.seed}
         HAVING count(*) > 0
         UNION ALL
         SELECT bfs.depth + 1, n.next, bfs.visited || n.next
         FROM bfs CROSS JOIN LATERAL (
-          SELECT array_agg(c.id ORDER BY c.slug, c.id) AS next
+          SELECT array_agg(c.id ORDER BY c.slug COLLATE "C", c.id) AS next
           FROM (
-            SELECT DISTINCT nb.id, nb.slug FROM (${neighbours}) nb
+            SELECT DISTINCT nb.id, nb.slug COLLATE "C" AS slug FROM (${neighbours}) nb
             WHERE NOT EXISTS (SELECT 1 FROM unnest(bfs.visited) v(id) WHERE v.id = nb.id)
-            ORDER BY nb.slug, nb.id
+            ORDER BY nb.slug COLLATE "C", nb.id
             LIMIT ${limit}
           ) c
         ) n
@@ -680,22 +680,24 @@ export async function traverseGraph(
       })}
       SELECT g.slug, g.source_id, g.title, g.type, g.depth,
         coalesce(
-          -- jsonb_agg(DISTINCT ...) collapses duplicate (to_slug, link_type)
+          -- SELECT DISTINCT collapses duplicate (to_slug, link_type)
           -- edges that originate from different provenance (markdown body
           -- vs frontmatter vs auto-extracted). The underlying links table
           -- preserves every row with its origin_page_id / link_source —
           -- the dedup is presentation-only for the legacy traverseGraph
-          -- aggregation. See plan Bug 6/10.
-          (SELECT jsonb_agg(DISTINCT jsonb_build_object('to_slug', p3.slug, 'link_type', l2.link_type))
-           FROM links l2
-           JOIN pages p3 ON p3.id = l2.to_page_id
-           WHERE l2.from_page_id = g.id AND p3.deleted_at IS NULL ${privacy('p3', 'l2')} ${sourceScope('p3', opts)} ${liveOriginFilter('l2', opts)} ${temporalWalkFilter('l2', opts)}),
+          -- aggregation. See plan Bug 6/10. The pairs list in byte order,
+          -- as PGLite and the Rust store give them on every locale.
+          (SELECT jsonb_agg(jsonb_build_object('to_slug', e.to_slug, 'link_type', e.link_type) ORDER BY e.to_slug COLLATE "C", e.link_type COLLATE "C")
+           FROM (SELECT DISTINCT p3.slug AS to_slug, l2.link_type
+                 FROM links l2
+                 JOIN pages p3 ON p3.id = l2.to_page_id
+                 WHERE l2.from_page_id = g.id AND p3.deleted_at IS NULL ${privacy('p3', 'l2')} ${sourceScope('p3', opts)} ${liveOriginFilter('l2', opts)} ${temporalWalkFilter('l2', opts)}) e),
           '[]'::jsonb
         ) as links
       FROM (SELECT p.id, p.slug, p.source_id, p.title, p.type, w.depth
             FROM walk w JOIN pages p ON p.id = w.id
             WHERE w.pos <= ${TRAVERSE_WALK_ROW_CAP}::int) g
-      ORDER BY g.depth, g.slug, g.source_id
+      ORDER BY g.depth, g.slug COLLATE "C", g.source_id COLLATE "C"
     `)).rows;
 
     return rows.map((r: Record<string, unknown>) => ({
@@ -785,8 +787,8 @@ export async function traversePathsDetailed(
           ${sourceScope('pt', opts)} ${liveOriginFilter('l', opts)}`;
     const rows = (await exec.run(sqlFragment`
       WITH RECURSIVE ${walk}, ${visited}
-      SELECT ${walkTruncated}, ${edges}
-      ORDER BY depth, from_slug, to_slug, from_source_id, to_source_id, link_type COLLATE "C", link_id
+      SELECT * FROM (SELECT ${walkTruncated}, ${edges}) e
+      ORDER BY depth, from_slug COLLATE "C", to_slug COLLATE "C", from_source_id COLLATE "C", to_source_id COLLATE "C", link_type COLLATE "C", link_id
       LIMIT ${TRAVERSE_PATH_ROW_CAP + 1}
     `)).rows;
 

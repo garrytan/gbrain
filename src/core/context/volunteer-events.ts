@@ -179,30 +179,8 @@ export async function insertVolunteerEvents(
   engine: BrainEngine,
   rows: VolunteerEventRow[],
 ): Promise<void> {
-  if (!rows.length) return;
-  const params: unknown[] = [];
-  const tuples = rows.map((r) => {
-    const base = params.length;
-    params.push(
-      r.source_id,
-      r.slug,
-      r.confidence,
-      r.match_arm,
-      r.rationale,
-      r.channel,
-      r.session_id ?? null,
-      r.turn ?? null,
-    );
-    const types = ['text', 'text', 'float8', 'text', 'text', 'text', 'text', 'int'];
-    return `(${types.map((t, i) => `$${base + i + 1}::${t}`).join(', ')})`;
-  });
-  await engine.executeRaw(
-    `INSERT INTO context_volunteer_events
-       (source_id, slug, confidence, match_arm, rationale, channel, session_id, turn)
-     SELECT v.* FROM (VALUES ${tuples.join(', ')}) AS v(source_id, slug, confidence, match_arm, rationale, channel, session_id, turn)
-     WHERE EXISTS (SELECT 1 FROM pages pg WHERE pg.source_id = v.source_id AND pg.slug = v.slug FOR KEY SHARE)`,
-    params,
-  );
+  // One statement for the batch (engine-sql/volunteer-events.ts insertVolunteerEvents).
+  await engine.insertVolunteerEvents(rows);
 }
 
 // ── Fire-and-forget sink (eng-review D4) ─────────────────────────────────
@@ -282,16 +260,7 @@ export async function purgeStaleVolunteerEvents(
   ttlDays = VOLUNTEER_EVENTS_TTL_DAYS,
 ): Promise<number> {
   try {
-    const rows = await engine.executeRaw<{ count: string | number }>(
-      `WITH deleted AS (
-         DELETE FROM context_volunteer_events
-         WHERE volunteered_at < now() - ($1 || ' days')::interval
-         RETURNING 1
-       )
-       SELECT count(*)::text AS count FROM deleted`,
-      [String(ttlDays)],
-    );
-    return Number(rows[0]?.count ?? 0);
+    return await engine.deleteVolunteerEventsOlderThan(ttlDays);
   } catch {
     return 0;
   }

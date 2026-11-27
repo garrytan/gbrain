@@ -111,7 +111,7 @@ export function terminalHookNotifier(engine: BrainEngine, hook: TerminalHook): {
   const running = new Set<Promise<unknown>>();
   const onJobSettled = (claimed: MinionJob) => {
     const p = (async () => {
-      const [row] = await engine.executeRaw<Record<string, unknown>>('SELECT * FROM minion_jobs WHERE id = $1', [claimed.id]);
+      const row = await engine.getJob(claimed.id);
       const job = row ? rowToMinionJob(row) : null;
       if (!job || !isTerminalJobStatus(job.status)) return;
       if (running.size - 1 >= MAX_CONCURRENT) { console.warn(`[worker] terminal hook for job ${job.id} skipped_busy: ${MAX_CONCURRENT} hooks already running`); return; }

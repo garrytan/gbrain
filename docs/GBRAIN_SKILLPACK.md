@@ -113,7 +113,7 @@ data sources to populate it:
 
 | Guide | What It Covers |
 |-------|---------------|
-| [Cold Start](../skills/cold-start/SKILL.md) | Day-one bootstrapping: contacts, calendar, email, conversations, social, archives. Uses ClawVisor for safe credential handling — agents never hold raw API keys. |
+| [Cold Start](../skills/cold-start/SKILL.md) | Day-one bootstrapping: contacts, calendar, email, conversations, social, archives. Google data comes through gbrain's own connector (`gbrain google setup`), a Google Takeout export, or a credential gateway the host already has, so agents never hold raw OAuth tokens or API keys. |
 | [Ask User](../skills/ask-user/SKILL.md) | Choice-gate pattern for human input at decision points. Used by cold-start and other skills. |
 
 ---

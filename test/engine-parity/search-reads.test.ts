@@ -33,6 +33,8 @@ import { PACKS, SRC_X, SRC_Y, putTyped, writeEntityTypePacks } from '../helpers/
 import { resolveEntityTypes } from '../../src/core/schema-pack/entity-types.ts';
 import { _resetPackCacheForTests } from '../../src/core/schema-pack/registry.ts';
 import { collectOnboardOpportunities } from '../../src/core/onboard/mcp-onboarding.ts';
+import { structuralExactLookup } from '../../src/core/search/exact-lookup.ts';
+import { hybridSearch, _resetSupersedeProbeForTests } from '../../src/core/search/hybrid.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -85,6 +87,98 @@ describe('engine parity: search reads', () => {
       expect(scoped).toEqual(open);
       expect(elsewhere).toEqual([]);
       return { before, after, open, scoped, elsewhere, none };
+    },
+  );
+
+  // Hybrid search's supersession stage reads supersedingPageSlugs after fusion and tells an empty map ("nothing here is
+  // superseded") from a rejection ("currency was not verified": the degraded stage supersede_check_failed). So every arm must
+  // reject a read it cannot run, never answer an empty map, and must see an edge written right after an empty answer.
+  // A read the database refuses is injected with a page id that is no integer (a fault the engine cannot answer as empty).
+  parityTest(
+    'supersedingPageSlugs: a read that cannot run rejects instead of answering an empty map; an edge written after an empty answer is seen at once',
+    { methods: ['putPage', 'addLink', 'hasSupersedeEdges', 'supersedingPageSlugs'] },
+    async (engine) => {
+      const canon = await put(engine, 'notes/canon');
+      const stale = await put(engine, 'notes/stale');
+      const probeBefore = await engine.hasSupersedeEdges();
+      const emptyBefore = (await engine.supersedingPageSlugs([stale.id])).size;
+      await engine.addLink('notes/canon', 'notes/stale', '', 'supersedes', 'manual');
+      const probeAfter = await engine.hasSupersedeEdges();
+      const seen = [...await engine.supersedingPageSlugs([stale.id])].map(([id, by]) => `${id === stale.id ? 'notes/stale' : 'unknown'}<${by}`);
+      expect(probeBefore).toBe(false);
+      expect(emptyBefore).toBe(0);
+      expect(probeAfter).toBe(true);
+      expect(seen).toEqual(['notes/stale<notes/canon']);
+      const failure = await engine.supersedingPageSlugs([canon.id, 1.5]).then(() => null, (e: unknown) => e);
+      // Every arm rejects the id as the bigint cast does (22P02), never with an empty map and never with a capability
+      // refusal: a non-integer page id is bad input, not a read the engine lacks.
+      expect(failure).toBeInstanceOf(Error);
+      expect((failure as { code?: unknown }).code).not.toBe('engine_capability_missing');
+      expect(String((failure as Error).message)).toContain('invalid input syntax for type bigint');
+      return { probeBefore, emptyBefore, probeAfter, seen, rejected: true };
+    },
+  );
+
+  // The exact-lookup tier reads supersedingPageSlugs under the page-read policy alone (not its own filters), so a store that
+  // refuses unknown options (the Rust arm) answers the healthy read and the replaced page stays out of the identity slot.
+  parityTest(
+    'structuralExactLookup: a replaced page never takes the identity slot, on every arm, and a healthy read reports no degraded stage',
+    { methods: ['putPage', 'addLink', 'supersedingPageSlugs'] },
+    async (engine) => {
+      await put(engine, 'notes/canon');
+      await put(engine, 'notes/stale');
+      await engine.addLink('notes/canon', 'notes/stale', '', 'supersedes', 'manual');
+      const degraded: Array<{ stage: string }> = [];
+      const slugsOfHits = async (query: string, opts: Record<string, unknown>) =>
+        (await structuralExactLookup(engine, query, { titleCandidates: [], excludeSlugs: [], degraded: degraded as never, ...opts })).map(h => h.slug);
+      const stale = await slugsOfHits('notes/stale', { sourceId: 'default' });
+      const canon = await slugsOfHits('notes/canon', { sourceId: 'default' });
+      const unscoped = await slugsOfHits('notes/stale', {});
+      expect(stale).toEqual([]);
+      expect(canon).toEqual(['notes/canon']);
+      expect(degraded).toEqual([]);
+      return { stale, canon, unscoped, degraded };
+    },
+  );
+
+  // Search asks "does this brain have any supersedes link?" before it looks up which results are replaced. Only a YES is
+  // remembered (a NO could hide a link another process just wrote), so a brain with links costs no extra query per search
+  // and a brain without links costs one probe per search. Counted on each arm's own `hasSupersedeEdges` member, one query.
+  parityTest(
+    'hybridSearch: on a brain with a supersedes link the existence probe runs once, then every search reuses the answer; with none it runs on every search',
+    { methods: ['putPage', 'sealChunks', 'addLink', 'searchKeyword', 'hasSupersedeEdges', 'supersedingPageSlugs'] },
+    async (engine) => {
+      for (const slug of ['notes/canon', 'notes/stale']) {
+        await seedPage(engine, { slug, input: { type: 'note', title: slug, compiled_truth: `Page ${slug}.`, timeline: '' } as never, chunks: [chunk(0, `The tapirword fee for ${slug} is stated here.`)] });
+      }
+      let probes = 0;
+      const counted = new Proxy(engine, {
+        get(target, prop, receiver) {
+          if (prop === 'hasSupersedeEdges') return () => { probes++; return target.hasSupersedeEdges(); };
+          const value = Reflect.get(target, prop, receiver);
+          return typeof value === 'function' ? value.bind(target) : value;
+        },
+      });
+      const search = async () => (await hybridSearch(counted, 'tapirword', { limit: 5, useCache: false })).map(r => `${r.slug}${r.superseded ? ' (replaced)' : ''}`);
+      const probesDuring = async (searches: number) => {
+        const before = probes;
+        let last: string[] = [];
+        for (let i = 0; i < searches; i++) last = await search();
+        return { probes: probes - before, last };
+      };
+
+      _resetSupersedeProbeForTests();
+      const noLinks = await probesDuring(3);
+      await engine.addLink('notes/canon', 'notes/stale', '', 'supersedes', 'manual');
+      const first = await probesDuring(1);
+      const cached = await probesDuring(5);
+
+      expect(noLinks.probes).toBe(3); // nothing to remember: each search checks again, so a link another process wrote is seen at once
+      expect(first.probes).toBe(1);
+      expect(cached.probes).toBe(0); // the cached yes: no extra query per search
+      expect(first.last).toContain('notes/stale (replaced)'); // the link written after three no-link searches is seen by the very next search
+      expect(cached.last).toEqual(first.last);
+      return { noLinks, first, cached: cached.probes };
     },
   );
 

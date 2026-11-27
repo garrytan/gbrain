@@ -17,8 +17,7 @@
  *    and page-state/*.ts, which no other parity case calls one by one.
  *  - Seam: none. Typed members only (no executeRaw: D18). Page and chunk ids are compared as "the row the case wrote";
  *    a refusal is compared by the Postgres message text it carries, not by its code. Not covered, as the arms differ by
- *    design (rust/docs/store/import-members.md): a call that ends with a chunk at a negative index and the state an alias
- *    refusal leaves outside a transaction.
+ *    design (rust/docs/store/import-members.md): a call that ends with a chunk at a negative index.
  */
 import { describe, expect } from 'bun:test';
 import { basisEmbedding, parityArms } from './harness.ts';
@@ -89,9 +88,15 @@ describe('engine parity: import members', () => {
     const missing = await outcome(() => engine.refreshPageOrigin('notes/never-written', { sourceId: 'default', sourcePath: 'x.md' }), /$^/);
     await engine.refreshPageOrigin('notes/origin-gone', { sourceId: 'default', sourcePath: 'back.md' });
     const tombstone = await origin('notes/origin-gone');
-    const answers = { first, withUri, keptUri, missing, tombstone };
+    // An origin another live page holds refuses on every arm (the shapes differ: PGLite's unique violation, the store's
+    // origin_claimed) and changes neither page. The import caller checks the claim first, so it never reaches this.
+    await engine.putPage('notes/origin-held', { ...NOTE, source_path: 'held.md' });
+    const claimed = await engine.refreshPageOrigin('notes/origin-a', { sourceId: 'default', sourcePath: 'held.md' }).then(() => 'ok', () => 'refused');
+    const afterClaim = [await origin('notes/origin-a'), await origin('notes/origin-held')];
+    const answers = { first, withUri, keptUri, missing, tombstone, claimed, afterClaim };
     expect(answers).toEqual({
       first: ['a.md', null], withUri: ['b.md', 'file://b'], keptUri: ['c.md', 'file://b'], missing: 'ok', tombstone: ['gone.md', null],
+      claimed: 'refused', afterClaim: [['c.md', 'file://b'], ['held.md', null]],
     });
     return answers;
   });
@@ -116,6 +121,8 @@ describe('engine parity: import members', () => {
     const badOrigin = await outcome(() => engine.replaceDerivedAliases('notes/alias-a', 'default', [
       { alias_norm: 'other', origin: 'weird', case_sensitive: false, alias_text: 'Other' },
     ]), /page_aliases_origin_check/);
+    // A refused replace writes nothing: the derived rows it would have deleted stay, outside a transaction too.
+    const afterBad = await view();
     const emptyNoSource = await outcome(() => engine.replaceDerivedAliases('notes/alias-a', 'parity-missing', []), /$^/);
     await engine.replaceDerivedAliases('notes/alias-a', 'default', [
       { alias_norm: 'subjname', origin: 'subject', case_sensitive: false, alias_text: 'SubjName' },
@@ -123,12 +130,27 @@ describe('engine parity: import members', () => {
     const second = await view();
     await engine.replaceDerivedAliases('notes/alias-a', 'default', []);
     const cleared = await view();
-    const answers = { replaced, badOrigin, emptyNoSource, second, cleared };
+    const answers = { replaced, badOrigin, afterBad, emptyNoSource, second, cleared };
     const a = 'default:notes/alias-a';
     expect(answers).toEqual({
-      replaced: [[a], [a], [a]], badOrigin: 'page_aliases_origin_check', emptyNoSource: 'ok',
+      replaced: [[a], [a], [a]], badOrigin: 'page_aliases_origin_check', afterBad: [[a], [a], [a]], emptyNoSource: 'ok',
       second: [[], [a], [a]], cleared: [[], [a], []],
     });
+    return answers;
+  });
+
+  parityTest('replaceDerivedAliases stores a frontmatter row it is sent as a frontmatter alias: not case-sensitive, no text', {
+    methods: ['putPage', 'replaceDerivedAliases', 'readPageAliasRows', 'resolveCaseSensitiveAliases'],
+  }, async (engine) => {
+    await engine.putPage('notes/alias-f', NOTE);
+    await engine.replaceDerivedAliases('notes/alias-f', 'default', [
+      { alias_norm: 'frontonly', origin: 'frontmatter', case_sensitive: true, alias_text: 'FrontOnly' },
+      { alias_norm: 'declonly', origin: 'declared', case_sensitive: true, alias_text: 'DeclOnly' },
+    ]);
+    const rows = (await engine.readPageAliasRows(['default'], ['notes/alias-f'])).map((r) => `${r.alias_norm}:${r.origin}:${r.alias_text}`);
+    const caseSensitive = (await engine.resolveCaseSensitiveAliases(['frontonly', 'declonly'], ['default'])).map((r) => `${r.alias_norm}:${r.alias_text}`);
+    const answers = { rows, caseSensitive };
+    expect(answers).toEqual({ rows: ['declonly:declared:DeclOnly', 'frontonly:frontmatter:null'], caseSensitive: ['declonly:DeclOnly'] });
     return answers;
   });
 

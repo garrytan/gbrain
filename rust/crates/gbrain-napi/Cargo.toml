@@ -17,6 +17,10 @@ serde = "1"
 serde_json = "1"
 napi-derive = "3"
 
+[dev-dependencies]
+# Property tests of the binding's argument decoding only (never linked into the addon).
+proptest = { version = "1", default-features = false, features = ["std"] }
+
 [build-dependencies]
 napi-build = "2"
 sha2 = "0.10"

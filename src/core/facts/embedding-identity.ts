@@ -1,5 +1,4 @@
 import type { BrainEngine } from '../engine.ts';
-import { AUDIT_ROW_SOURCES } from './audit-sources.ts';
 import { EMBED_MAX_CHARS } from '../ai/embed-batch-plan.ts';
 import { estimateTokens } from '../chunkers/token-estimate.ts';
 
@@ -9,7 +8,7 @@ const WITHDRAWAL_SUBJECTS = "CASE WHEN starts_with(COALESCE(f.source_markdown_sl
 
 // #6960: one anti-join per fingerprint, each an equality on fact_hash, so the
 // planner hashes or index-probes the fingerprint once per fact. A single
-// `fact_hash IN (fp, fp_v1)` left both fingerprints in the join filter,
+// `fact_hash IN (fp, fp_v2, fp_v1)` left every fingerprint in the join filter,
 // recomputed for every (fact, withdrawal) pair.
 export const retainedFactEmbedding = `f.expired_at IS NULL AND f.superseded_by IS NULL
   AND (f.valid_until IS NULL OR f.valid_until>now())
@@ -19,7 +18,10 @@ export const retainedFactEmbedding = `f.expired_at IS NULL AND f.superseded_by I
     AND w.fact_hash = gbrain_fact_fingerprint(f.fact))
   AND NOT EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id=f.source_id
     AND w.visibility=f.visibility AND w.subject = ANY(${WITHDRAWAL_SUBJECTS})
-    AND w.fact_hash = gbrain_fact_fingerprint_v1(f.fact))`;
+    AND w.fact_hash = gbrain_fact_fingerprint_v1(f.fact))
+  AND NOT EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id=f.source_id
+    AND w.visibility=f.visibility AND w.subject = ANY(${WITHDRAWAL_SUBJECTS})
+    AND w.fact_hash = gbrain_fact_fingerprint_v2(f.fact))`;
 
 export const eligibleFactEmbedding = `${retainedFactEmbedding}
   AND EXISTS (SELECT 1 FROM sources s WHERE s.id=f.source_id AND NOT s.archived)
@@ -45,7 +47,7 @@ export async function countStaleFactEmbeddings(engine: Pick<BrainEngine, 'countS
 
 export interface OversizedFact { id: string; source_id: string; slug: string | null; tokens: number }
 
-const OVERSIZED_SCAN_CAP = 10_000;
+export const OVERSIZED_SCAN_CAP = 10_000;
 export const OVERSIZED_FACT_FIX = 'A skipped fact stays stale, with its text unchanged, until it fits: shorten or split it (edit its row in the page\'s ## Facts fence, then sync), or withdraw it with gbrain forget <fact-id>.';
 
 /**
@@ -55,13 +57,9 @@ export const OVERSIZED_FACT_FIX = 'A skipped fact stays stale, with its text unc
  * byte), so only facts longer than `maxTokens` bytes are read and measured,
  * at most OVERSIZED_SCAN_CAP of them.
  */
-export async function readOversizedStaleFacts(engine: Pick<BrainEngine, 'executeRaw'>,
+export async function readOversizedStaleFacts(engine: Pick<BrainEngine, 'listOversizedStaleFacts'>,
   opts: { sourceId?: string; model: string; dims: number; maxTokens: number }): Promise<OversizedFact[]> {
-  const rows = await engine.executeRaw<{ id: string; source_id: string; slug: string | null; fact: string }>(
-    `SELECT f.id::text, f.source_id, f.source_markdown_slug AS slug, f.fact FROM facts f
-      WHERE ($1::text IS NULL OR f.source_id = $1) AND ${eligibleFactEmbedding} AND ${staleFactEmbedding}
-        AND octet_length(f.fact) > $5::int ORDER BY f.id LIMIT ${OVERSIZED_SCAN_CAP}`,
-    [opts.sourceId ?? null, [...AUDIT_ROW_SOURCES], opts.model, opts.dims, opts.maxTokens]);
+  const rows = await engine.listOversizedStaleFacts(opts);
   return rows.map(row => ({ id: row.id, source_id: row.source_id, slug: row.slug, tokens: estimateTokens(row.fact) }))
     .filter(row => row.tokens > opts.maxTokens);
 }

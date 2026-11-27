@@ -22,6 +22,7 @@ import { priorTopologyChange, recordTopologyChange, topologyReceipt, type Topolo
 import { readJournalLimits } from './limits.ts';
 import { cloneTopologyCheckout, flushTopologyDirectory, flushTopologyTree, topologyDirectoryBytes, topologyDirectoryIdentity } from './topology-filesystem.ts';
 import { finishTopologyClone } from './topology-recovery.ts';
+import { requireTopologyRawSql } from './topology-stop.ts';
 import { reservePhysicalRoot, preparePhysicalRootReplacement, readPhysicalRootReservation } from './physical-root.ts';
 
 const writerStatusFix=(sourceId?:string):Action=>readFix(
@@ -38,6 +39,8 @@ export interface CloneLifecycleHooks {
 }
 export async function runManagedSourceClone(engine:BrainEngine,input:SourceLifecycleInput,principal:string,requestId:string,intent:unknown,
   hooks:CloneLifecycleHooks={}):Promise<Record<string,unknown>>{
+  // The named Rust stop (topology-stop.ts): the clone reserves, locks and publishes through raw SQL.
+  requireTopologyRawSql(engine,'managed_source_clone');
   const [source]=await engine.executeRaw<{incarnation:string;config:Record<string,unknown>;last_commit:string|null;local_path:string|null}>(
     'SELECT incarnation,config,last_commit,local_path FROM sources WHERE id=$1',[input.sourceId]);
   if(source)source.config=parseSourceConfig(source.config);

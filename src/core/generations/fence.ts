@@ -13,6 +13,8 @@
  */
 import type { Action } from '../agent-output.ts';
 import type { BrainEngine } from '../engine.ts';
+import type { EngineRawRead } from '../engine-sql/cli-reads-ops.ts';
+import { listFenceHoldRows as listFenceHoldRowsOver } from '../engine-sql/fence-holds.ts';
 import { FACTS_FENCE_BEGIN, FACTS_FENCE_END, renderFactsTable } from '../facts-fence.ts';
 import { locateOutsideCode } from '../fence-scan.ts';
 import type { BodyStorage } from '../page-body/types.ts';
@@ -108,12 +110,6 @@ function storedBlocks(read: FenceRead): FenceBlocks | null {
   return Buffer.byteLength(`${read.blocks.body ?? ''}${read.blocks.timeline ?? ''}`, 'utf8') <= FENCE_BLOCK_MAX_BYTES ? read.blocks : null;
 }
 
-/** Whether `slug` is deleted (or gone) in `sourceId`, read under the caller's page key. */
-async function originGoneNow(tx: BrainEngine, sourceId: string, slug: string): Promise<boolean> {
-  const rows = await tx.executeRaw<{ deleted: boolean }>('SELECT deleted_at IS NOT NULL AS deleted FROM pages WHERE source_id=$1 AND slug=$2', [sourceId, slug]);
-  return !rows.length || rows.every(row => row.deleted);
-}
-
 /**
  * Decides one fence write and records it. `published`: the caller retires every row of `retire` (and overwrites
  * `overwrite`); `unchanged`: the fence owns what the live generation recorded and nothing retires; `held`: retire nothing.
@@ -125,7 +121,7 @@ export async function publishFenceGeneration(tx: BrainEngine, request: FenceGene
     if (request.read.state === 'parsed') await clearFenceHold(tx, key);
     return { state: 'unchanged' };
   }
-  await tx.executeRaw('SELECT pg_advisory_xact_lock(hashtext($1)::bigint)', [generationKeyLock(key)]);
+  await tx.lockGenerationKey(generationKeyLock(key));
   const live = await readLiveGeneration(tx, key);
   const input = fenceInput(request.read);
   const setHash = itemSetHash(request.items);
@@ -138,7 +134,8 @@ export async function publishFenceGeneration(tx: BrainEngine, request: FenceGene
   let proof: string | null = null;
   if (request.retire.length) {
     if (request.originGone) {
-      if (!await originGoneNow(tx, request.sourceId, request.slug) || (!live && request.read.state !== 'parsed')) return hold('no_proof');
+      // Rechecked under the caller's page key: the page is deleted, or gone.
+      if (!await tx.readFenceOriginGone(request.sourceId, request.slug) || (!live && request.read.state !== 'parsed')) return hold('no_proof');
       proof = 'originGone';
     } else if (request.read.state !== 'parsed') {
       return hold('fence_absent');
@@ -166,16 +163,21 @@ export async function publishFenceGeneration(tx: BrainEngine, request: FenceGene
 
 /** A readable fence answers a held `fence_absent` (or `no_proof`) row: it is the proof the hold waited for. */
 export async function clearFenceHold(tx: BrainEngine, key: GenerationKey): Promise<void> {
-  await tx.executeRaw(`DELETE FROM derived_generations WHERE source_id=$1 AND kind=$2 AND owner_key=$3 AND state='held' AND held_reason IN ('fence_absent','no_proof')`,
-    [key.sourceId, key.kind, key.ownerKey]);
+  await tx.clearFenceHoldRows(key);
 }
 
 /** A held fence result, as doctor, `get_page` and `gbrain sync status` list it. */
 export interface FenceHold { source_id: string; kind: FenceGenerationKind; slug: string; reason: HeldReason; read: string; rows: number; since: string; writer: string | null }
 
-/** The held fence results of `sources` (one page with `slug`), oldest first. */
+/**
+ * The held fence results of `sources` (one page with `slug`), oldest first. An engine answers through its typed member
+ * (the Rust brain reads its derived generation family); an `executeRaw`-only handle runs the same engine-sql statement.
+ */
 export async function listFenceHolds(db: BrainEngine, sources: readonly string[], slug?: string): Promise<FenceHold[]> {
-  const rows = await db.listFenceHoldRows(sources, FENCE_GENERATION_KINDS, slug === undefined ? undefined : fenceOwnerKey(slug));
+  const ownerKey = slug === undefined ? undefined : fenceOwnerKey(slug);
+  const rows = typeof db.listFenceHoldRows === 'function'
+    ? await db.listFenceHoldRows(sources, FENCE_GENERATION_KINDS, ownerKey)
+    : await listFenceHoldRowsOver(db.executeRaw.bind(db) as EngineRawRead, sources, FENCE_GENERATION_KINDS, ownerKey);
   return rows.map(row => ({ source_id: row.source_id, kind: row.kind as FenceGenerationKind, slug: fenceSlugOf(row.owner_key) ?? row.owner_key, reason: row.held_reason as HeldReason,
     read: String(row.held_context?.read ?? 'absent'), rows: Number(row.held_context?.rows ?? 0), since: row.created_at,
     writer: typeof row.held_context?.writer === 'string' ? row.held_context.writer : null }));
@@ -188,9 +190,7 @@ export type FenceHoldEntry = FenceHold & { fix: Action };
 export async function fenceHoldEntries(db: BrainEngine, sources: readonly string[], opts: { slug?: string; limit?: number } = {}): Promise<FenceHoldEntry[]> {
   const holds = (await listFenceHolds(db, sources, opts.slug)).slice(0, opts.limit ?? 20);
   if (!holds.length) return [];
-  const files = await db.executeRaw<{ source_id: string; slug: string; database_only: boolean }>(
-    `SELECT source_id, slug, NULLIF(btrim(source_path), '') IS NULL AS database_only FROM pages
-      WHERE source_id = ANY($1::text[]) AND slug = ANY($2::text[]) AND deleted_at IS NULL`, [[...new Set(holds.map(hold => hold.source_id))], holds.map(hold => hold.slug)]);
+  const files = await db.readFenceHoldFiles([...new Set(holds.map(hold => hold.source_id))], holds.map(hold => hold.slug));
   const databaseOnly = new Map(files.map(row => [`${row.source_id}\u0000${row.slug}`, row.database_only === true]));
   return holds.map(hold => ({ ...hold, fix: fenceAbsentFix(hold, { databaseOnly: databaseOnly.get(`${hold.source_id}\u0000${hold.slug}`) ?? false }) }));
 }

@@ -87,6 +87,14 @@ function statsRejectingEngine(err: Error): BrainEngine {
       if (prop === 'getConfig') return async () => null;
       // Single-row reads answer null (no row), not the list default below.
       if (prop === 'getSource') return async () => null;
+      // The managed-sync bookkeeping read answers its five empty lists.
+      if (prop === 'listManagedSyncOrphanRows') return async () => ({ cursors: [], failures: [], passes: [], retiredCursors: [], retiredFailures: [] });
+      // The atom provenance counts are one row too; null is the no-row answer the raw read gave before the typed member.
+      if (prop === 'readAtomProvenanceCounts') return async () => null;
+      // The atom extraction backlog is a count; 0 is the no-row answer the raw COUNT read gave before the typed member.
+      if (prop === 'countAtomExtractionBacklog') return async () => 0;
+      // The managed-sync orphan read answers five lists, so its empty answer is five empty lists.
+      if (prop === 'listManagedSyncOrphanRowsets') return async () => ({ cursors: [], failures: [], passes: [], retiredCursors: [], retiredFailures: [] });
       return async () => [];
     },
   }) as unknown as BrainEngine;

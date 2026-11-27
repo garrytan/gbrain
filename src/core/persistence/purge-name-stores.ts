@@ -8,14 +8,10 @@ import type { BrainEngine } from '../engine.ts';
  * restore_page can bring the page back. Returns rows removed per store, keyed as the purge receipt names them.
  */
 export async function scrubPurgedNameStores(
-  engine: Pick<BrainEngine, 'executeRaw'>,
+  engine: Pick<BrainEngine, 'deletePurgedNameStoreRows'>,
   sourceId: string,
   slugs: readonly string[],
 ): Promise<Record<string, number>> {
   if (!slugs.length) return {};
-  const count = async (sql: string) => (await engine.executeRaw(sql, [sourceId, [...slugs]])).length;
-  return {
-    context_volunteer_events: await count('DELETE FROM context_volunteer_events WHERE source_id = $1 AND slug = ANY($2::text[]) RETURNING 1'),
-    mention_gazetteer_entries: await count('DELETE FROM mention_gazetteer_entries WHERE source_id = $1 AND target_slug = ANY($2::text[]) RETURNING 1'),
-  };
+  return { ...await engine.deletePurgedNameStoreRows(sourceId, slugs) };
 }

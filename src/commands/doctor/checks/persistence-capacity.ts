@@ -11,7 +11,6 @@ import { readConfigValue } from '../../../core/config-values.ts';
 const VERIFY = 'gbrain doctor --only persistence_capacity --json';
 const DOCS = 'docs/guides/concurrent-writes.md#quota-near-exhaustion';
 const OUTSTANDING_WARN = 0.9;
-const OUTSTANDING_STALL_S = 600;
 
 /**
  * #5470/#6696 (A3): a cumulative managed-write cap (permanent request IDs,
@@ -30,9 +29,7 @@ const OUTSTANDING_STALL_S = 600;
  */
 export async function checkPersistenceCapacity(engine: BrainEngine): Promise<Check> {
   try {
-    const counters = await engine.executeRaw<{ key: string; outstanding_count: string; intent_bytes: string; lifetime_ids: string;
-      terminal_bytes: string; recovery_bytes: string }>(`SELECT key,outstanding_count::text,intent_bytes::text,lifetime_ids::text,
-      terminal_bytes::text,recovery_bytes::text FROM persistence_counters WHERE key='brain' OR key LIKE 'principal:%' ORDER BY key`);
+    const counters = await engine.listCapacityCounters();
     const limits = await readJournalLimits(engine);
     const forecast: CapacityForecast | null = await doctorCapacityForecast(engine, { limits }).catch(forecastOrNull);
     const pause = await readBackgroundPauseShare(engine);
@@ -47,11 +44,7 @@ export async function checkPersistenceCapacity(engine: BrainEngine): Promise<Che
     for (const row of capacityDiagnostics(counters, limits)) {
       if (row.resource !== 'outstanding_count' || row.limit <= 0 || row.used < Math.ceil(row.limit * OUTSTANDING_WARN)) continue;
       const principal = /^principal:([^:]+):(.+)$/.exec(row.scope);
-      const stalled = `count(*) FILTER (WHERE created_at <= now()-interval '${OUTSTANDING_STALL_S} seconds')`;
-      const holders = await engine.executeRaw<{ source_id: string; n: number | string; stalled: number | string }>(`SELECT source_id,count(*) AS n,${stalled} AS stalled
-        FROM persistence_requests WHERE state IN ('queued','deferred','running','recovering')${principal ? ' AND principal_kind=$1 AND principal_id=$2' : ''}
-        GROUP BY source_id ORDER BY ${stalled} DESC,count(*) DESC,source_id LIMIT 3`,
-        principal ? [principal[1], principal[2]] : []);
+      const holders = await engine.listOutstandingHolders(principal ? [principal[1], principal[2]] : null);
       if (!holders.length || Number(holders[0].stalled) === 0) continue;
       outstanding.push({ scope: row.scope, resource: row.resource, used: row.used, limit: row.limit, config_key: row.config_key,
         holders: holders.map(holder => ({ source_id: holder.source_id, outstanding: Number(holder.n) })) });

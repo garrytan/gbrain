@@ -17,7 +17,7 @@ import { FILTER_POLICY_FLOOR, loadTrustReadConfig, type TrustReadConfig } from '
 import { PROACTIVE_SURFACES, type ProactiveSurface } from './registry.ts';
 import { trustFields, trustLabelWords } from './labels.ts';
 
-type Exec = Pick<BrainEngine, 'executeRaw' | 'getConfig' | 'listWriteGateReceiptsFor' | 'getWriteGateHoldRow'>;
+type Exec = Pick<BrainEngine, 'executeRaw' | 'getConfig' | 'listWriteGateReceiptsFor' | 'getWriteGateHoldRow' | 'readTakeTrustRef'>;
 
 export type ExplainRef =
   | { kind: 'row'; table: Exclude<EligibilityTable, 'pages'>; id: number }
@@ -74,13 +74,11 @@ async function receiptsFor(engine: Exec, table: string, id: number): Promise<Tru
   return rows.map(r => ({ ...r, created_at: isoSeconds(r.created_at), last_seen_at: isoSeconds(r.last_seen_at) }));
 }
 
-const ROW_SQL: Readonly<Record<Exclude<EligibilityTable, 'pages'>, string>> = {
+const ROW_SQL: Readonly<Record<Exclude<EligibilityTable, 'pages' | 'takes'>, string>> = {
   facts: `SELECT r.id, r.trust_tier, r.write_origin, (r.expired_at IS NULL) AS live,
       EXISTS (SELECT 1 FROM pages q WHERE q.source_id = r.source_id AND q.slug = r.source_markdown_slug AND q.deleted_at IS NULL
         AND COALESCE(q.frontmatter, '{}'::jsonb) ? '${QUARANTINE_KEY}') AS quarantined
     FROM facts r WHERE r.id = $1`,
-  takes: `SELECT r.id, r.trust_tier, r.write_origin, r.active AS live, (COALESCE(q.frontmatter, '{}'::jsonb) ? '${QUARANTINE_KEY}') AS quarantined
-    FROM takes r JOIN pages q ON q.id = r.page_id WHERE r.id = $1`,
   timeline_entries: `SELECT r.id, r.trust_tier, r.write_origin, (q.deleted_at IS NULL) AS live, (COALESCE(q.frontmatter, '{}'::jsonb) ? '${QUARANTINE_KEY}') AS quarantined
     FROM timeline_entries r JOIN pages q ON q.id = r.page_id WHERE r.id = $1`,
 };
@@ -111,6 +109,11 @@ export async function explainTrust(engine: Exec, ref: string): Promise<TrustExpl
     [row] = await engine.executeRaw(
       `SELECT id, trust_tier, write_origin, (deleted_at IS NULL) AS live, (COALESCE(frontmatter, '{}'::jsonb) ? '${QUARANTINE_KEY}') AS quarantined
          FROM pages WHERE source_id = $1 AND slug = $2`, [parsed.sourceId, parsed.slug]);
+  } else if (parsed.table === 'takes') {
+    // A take reads through the typed member, so the Rust store serves it.
+    table = 'takes';
+    const take = await engine.readTakeTrustRef(parsed.id);
+    row = take ? { id: take.id, trust_tier: take.trust_tier, write_origin: take.write_origin, live: take.active, quarantined: take.quarantined } : undefined;
   } else {
     table = parsed.table;
     [row] = await engine.executeRaw(ROW_SQL[parsed.table], [parsed.id]);

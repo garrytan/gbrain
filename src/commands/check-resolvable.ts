@@ -298,7 +298,7 @@ export async function runCheckResolvable(args: string[]): Promise<void> {
       );
       process.exit(1);
     }
-    autoFix = autoFixDryViolations(skillsDir, { dryRun: flags.dryRun });
+    autoFix = autoFixDryViolations(skillsDir, { dryRun: flags.dryRun, insertMissingRules: false });
   }
 
   const report = checkResolvable(skillsDir, { skillsDirSource: source === 'explicit' ? null : source });

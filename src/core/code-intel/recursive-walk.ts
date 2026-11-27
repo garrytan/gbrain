@@ -19,7 +19,6 @@ import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 import type { CodeEdgeResult } from '../types.ts';
 import { readEdgeResolution } from '../chunkers/symbol-resolver.ts';
 import { classifySink, type SinkKind } from './sinks/index.ts';
-import { codeReadFilter } from './read-scope.ts';
 
 export type WalkDirection = 'callers' | 'callees';
 
@@ -120,17 +119,9 @@ async function symbolLanguages(
   sourceId: string,
 ): Promise<string[]> {
   try {
-    const rows = await engine.executeRaw<{ language: string | null }>(
-      `SELECT DISTINCT content_chunks.language
-         FROM content_chunks
-         JOIN pages p ON p.id = content_chunks.page_id
-        WHERE p.source_id = $1 AND ${codeReadFilter([], {})}
-          AND content_chunks.symbol_name_qualified = $2
-          AND content_chunks.language IS NOT NULL`,
-      [sourceId, qualified],
-    );
-    return rows.map((r) => r.language as string);
-  } catch {
+    return await engine.listSymbolLanguages(sourceId, qualified); // engine-sql/chunk-reads.ts
+  } catch (err) {
+    rethrowCapabilityRefusal(err); // no languages reads as "unsupported language": a refused read must say it is refused
     return [];
   }
 }
@@ -141,11 +132,7 @@ const isSupportedLang = (lang: string): boolean =>
 /** Edge origin chunks written in a supported language (one batched read). */
 async function supportedChunkIds(engine: BrainEngine, ids: number[]): Promise<Set<number>> {
   if (ids.length === 0) return new Set();
-  const rows = await engine.executeRaw<{ id: number }>(
-    `SELECT id FROM content_chunks WHERE id = ANY($1::int[]) AND language = ANY($2::text[])`,
-    [ids, [...SUPPORTED_LANGS]],
-  );
-  return new Set(rows.map((r) => Number(r.id)));
+  return new Set(await engine.listSupportedChunkIds(ids, [...SUPPORTED_LANGS])); // engine-sql/chunk-reads.ts
 }
 
 /**
@@ -232,7 +219,8 @@ export async function runRecursiveWalk(
         try {
           const keep = await supportedChunkIds(engine, edges.map((e) => e.from_chunk_id));
           edges = edges.filter((e) => keep.has(e.from_chunk_id));
-        } catch {
+        } catch (err) {
+          rethrowCapabilityRefusal(err); // a refused language read must not walk on as if no caller were supported
           edges = [];
         }
       }

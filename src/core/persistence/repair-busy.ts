@@ -33,7 +33,6 @@
 import type { BrainEngine } from '../engine.ts';
 import { opError, type OperationError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
-import { GIT_HOLD_OP } from './sync-holds.ts';
 
 export interface RepairBusySet {
   paths: Set<string>;
@@ -42,9 +41,9 @@ export interface RepairBusySet {
   unknown: string | null;
 }
 
-interface PendingRow { slug: string | null; path: string | null; source_path: string | null; rename_slug: string | null; rename_source_path: string | null }
-interface CursorRow { run_id: string | null; index: string | number | null }
 interface ManifestEntry { path?: string; sourcePath?: string; slug?: string; renameFrom?: { sourcePath?: string; slug?: string } }
+
+const MANIFEST_OP = 'managed-sync-manifest';
 
 const BUSY_UNINFORMED = (why: string) => `the busy set could not be read (${why}), so every candidate of the source is treated as in flight`;
 
@@ -53,19 +52,13 @@ export async function loadRepairBusySet(engine: BrainEngine, sourceId: string, i
   const paths = new Set<string>(), slugs = new Set<string>();
   const add = (path: string | null | undefined, slug?: string | null) => { if (path) paths.add(path); if (slug) slugs.add(slug); };
   try {
-    const pending = await engine.executeRaw<PendingRow>(`SELECT slug, intent->>'path' AS path, intent->>'sourcePath' AS source_path,
-        intent->'renameFrom'->>'slug' AS rename_slug, intent->'renameFrom'->>'sourcePath' AS rename_source_path
-      FROM persistence_requests WHERE source_id=$1 AND (state IN ('queued','deferred','running','recovering') OR recovery IS NOT NULL)`, [sourceId]);
+    const { pending, cursors, held: heldPaths } = await engine.readRepairBusyRows(sourceId, incarnation);
     for (const row of pending) { add(row.path, row.slug); add(row.source_path); add(row.rename_source_path, row.rename_slug); }
-    const cursors = await engine.executeRaw<CursorRow>(`SELECT completed_keys->0->>'runId' AS run_id, completed_keys->0->>'index' AS index
-      FROM op_checkpoints WHERE op='managed-sync' AND COALESCE(completed_keys->0->>'done','false')<>'true'
-        AND completed_keys->0->>'sourceId'=$1 AND completed_keys->0->>'incarnation'=$2`, [sourceId, incarnation]);
     if (!cursors.length) return { paths, slugs, unknown: null };
-    const held = new Set((await engine.executeRaw<{ path: string }>(`SELECT completed_keys->0->>'path' AS path FROM op_checkpoints
-      WHERE op=$1 AND completed_keys->0->>'source_id'=$2 AND completed_keys->0->>'incarnation'=$3`, [GIT_HOLD_OP, sourceId, incarnation])).map(row => row.path));
+    const held = new Set(heldPaths);
     for (const cursor of cursors) {
-      const [manifest] = cursor.run_id ? await engine.executeRaw<{ entries: ManifestEntry[] | null }>(
-        "SELECT completed_keys AS entries FROM op_checkpoints WHERE op='managed-sync-manifest' AND fingerprint=$1", [cursor.run_id]) : [];
+      const record = cursor.run_id ? await engine.readOpCheckpointRecord(MANIFEST_OP, cursor.run_id) : null;
+      const manifest = record ? { entries: record.completed_keys as ManifestEntry[] | null } : undefined;
       if (!Array.isArray(manifest?.entries)) return { paths, slugs, unknown: BUSY_UNINFORMED(`the manifest of sync run ${cursor.run_id ?? '<unknown>'} is missing`) };
       const from = Math.max(0, Math.trunc(Number(cursor.index ?? 0)) || 0);
       for (const entry of manifest.entries.slice(from)) {

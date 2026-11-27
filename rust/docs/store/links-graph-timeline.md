@@ -4,7 +4,8 @@ Part of the store contract in [rust/README.md](../../README.md) ("The brain stor
 
 Links and timeline entries are typed key-value records with their own index keys. Every write
 changes a record and all of its index keys in one transaction, so a crash keeps all of them or
-none (the simulation below checks this). The new key tags are additive; `FORMAT_VERSION` stays 1.
+none (the simulation below checks this). The new key tags are additive and took no format number; the store is at format 7 now
+([format.md](format.md)).
 
 | Key | Value | Mirrors |
 | --- | --- | --- |
@@ -35,6 +36,7 @@ the origin.
 | `brain.traversePathsDetailed(slug, opts?)` | `{ paths, truncated }`; at most 5,000 edges, `truncated` when more exist | `traversePathsDetailed` |
 | `brain.addTimelineEntry(slug, { date, summary, source?, detail? }, { sourceId?, skipExistenceCheck? }?)` | `true` when a row was written, `false` for a duplicate (same page, date, summary and source) | `addTimelineEntry` |
 | `brain.addTimelineEntriesBatch(entries)` | inserted count; entries of missing pages are skipped | `addTimelineEntriesBatch` |
+| `brain.readNewestTimelineEntryId(sourceId, slug, date, summary)` | the id of the newest entry of the page (soft-deleted or not) on `date` whose summary is `summary`, event rows included; `null` when the page or such an entry is missing. A bad date is refused `invalid_argument` | `readNewestTimelineEntryId` |
 | `brain.getTimeline(slug, { limit?, after?, before?, sourceId?, sourceIds?, excludePrivate?, eligibleOnly? }?)` | `{ id, page_id, date, source, summary, detail, event_page_id, created_at, write_request_id, write_principal_kind, write_principal_id, last_write_request_id, last_write_principal_kind, last_write_principal_id, last_written_at }[]`, `date DESC, id DESC`, default `limit` 100, `0` for all | `getTimeline` |
 
 Where this engine differs from PGLite:
@@ -75,7 +77,7 @@ Where this engine differs from PGLite:
   TypeScript member sends `eligibleOnly: true` for any policy object, and the store applies the
   base clauses of `projectionEligibleSql('timeline_entries', 'te', ..)`: every row hangs on its
   depth page (`te.page_id`), so a soft-deleted page, or a page whose frontmatter has a
-  `quarantine` key (any value), reads no rows. The `needs_rederive` clause has no rows here. The
+  `quarantine` key (any value), reads no rows. The `needs_rederive` clause hides a row a purge marked (`generations/needs_rederive.rs`). The
   filter runs before `limit`. Without a policy a soft-deleted page still reads its rows, as the SQL
   has no `deleted_at` test. A policy `floor` drops a row whose stored tier ranks below it, and
   `suppressFlagged` drops a row at or below `agent_written` with a `flag` write-gate receipt

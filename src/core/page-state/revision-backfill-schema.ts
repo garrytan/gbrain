@@ -52,11 +52,9 @@ export interface RevisionBackfillStatus {
 
 /** Read-only: where the backfill stands, for `gbrain doctor`. */
 export async function readRevisionBackfillStatus(engine: BrainEngine): Promise<RevisionBackfillStatus> {
-  const column = await engine.executeRaw<{ notnull: boolean }>(
-    `SELECT attnotnull AS notnull FROM pg_attribute
-      WHERE attrelid = to_regclass('pages') AND attname = 'knowledge_revision' AND NOT attisdropped`);
-  if (column.length === 0) return { column: 'absent', pending: 0, failed: [] };
-  if (column[0]!.notnull) return { column: 'not_null', pending: 0, failed: [] };
+  const notNull = await engine.readKnowledgeRevisionNotNull();
+  if (notNull === null) return { column: 'absent', pending: 0, failed: [] };
+  if (notNull) return { column: 'not_null', pending: 0, failed: [] };
   const [{ n }] = await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM pages WHERE knowledge_revision IS NULL');
   const state = await readState(engine);
   const pages = state.failed.length === 0 ? [] : await engine.executeRaw<{ id: number; source_id: string; slug: string }>(
@@ -92,10 +90,7 @@ export async function resumePageRevisionBackfill(
   opts: { batchSize?: number; log?: (line: string) => void } = {},
 ): Promise<RevisionBackfillResult> {
   const log = opts.log ?? ((line: string) => process.stderr.write(line + '\n'));
-  const column = await engine.executeRaw<{ notnull: boolean }>(
-    `SELECT attnotnull AS notnull FROM pg_attribute
-      WHERE attrelid = to_regclass('pages') AND attname = 'knowledge_revision' AND NOT attisdropped`);
-  if (column.length === 0 || column[0]!.notnull) return { status: 'not_needed', backfilled: 0, failed: [] };
+  if (await engine.readKnowledgeRevisionNotNull() !== false) return { status: 'not_needed', backfilled: 0, failed: [] };
 
   const batchSize = opts.batchSize ?? 1000;
   const state = await readState(engine);

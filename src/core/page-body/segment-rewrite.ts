@@ -171,11 +171,7 @@ export interface LiveFenceRewrite {
  * stays deleted. Null when no fence changed (nothing is written).
  */
 export async function rewriteLiveSegmentedFences(tx: BrainEngine, pageId: number, transform: FenceTransform): Promise<LiveFenceRewrite | null> {
-  const [page] = await tx.executeRaw<{ id: number; slug: string; source_id: string; title: string; type: string; page_kind: string; frontmatter: JsonObject | null;
-    body_generation: number | string; body_bytes: number | string; body_flags: JsonObject | null; body_storage: string; deleted_at: string | null; tags: string[];
-    contextual_retrieval_mode: string | null; corpus_generation: string | null }>(`SELECT p.id,p.slug,p.source_id,p.title,
-      p.type,p.page_kind,p.frontmatter,p.body_generation,p.body_bytes,p.body_flags,p.body_storage,p.deleted_at,p.contextual_retrieval_mode,p.corpus_generation,
-      COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag COLLATE "C") FROM tags t WHERE t.page_id=p.id),'[]'::jsonb) AS tags FROM pages p WHERE p.id=$1`, [pageId]);
+  const page = await tx.readSegmentedRewritePage(pageId);
   if (page?.body_storage !== 'segmented') return null;
   const sourceId = page.source_id, slug = page.slug, frontmatter = page.frontmatter ?? {};
   const generation = Number(page.body_generation);
@@ -191,14 +187,11 @@ export async function rewriteLiveSegmentedFences(tx: BrainEngine, pageId: number
   const { flipRetireMaxRows } = await readPageBodyPolicy(tx);
   const applied = await withPageTierKept(tx, { sourceId, slug }, () => applySegmentedBody(tx, { slug, sourceId, pageId, prepared, promotion: false,
     retireMaxRows: flipRetireMaxRows, meta: { title: page.title, type: page.type as never, frontmatter, page_kind: page.page_kind as never } }));
-  if (page.deleted_at) await tx.executeRaw('UPDATE pages SET deleted_at=$2 WHERE id=$1', [pageId, page.deleted_at]);
+  if (page.deleted_at) await tx.restorePageDeletedAt(pageId, page.deleted_at);
   if (applied.complete) await sealSegmentedPage(tx, pageId);
   const derivations = await deleteRewrittenDerivations(tx, pageId, rows, units);
   return { replaced: replacedShas(rows, units), sealed: applied.complete, derivations };
 }
-
-const MANIFEST_COLUMNS = `page_id,occurrence_id,seq,region,source_id,sha256,byte_start,byte_len,line_start,line_count,cut_kind,entry_state,
-  protected_regions,facts_slots,static_proj_bytes,static_proj_lines,outline,date_min,date_max,hash_state`;
 
 /**
  * Rebuild retained generation `generation` of a segmented page with its fences
@@ -213,8 +206,7 @@ const MANIFEST_COLUMNS = `page_id,occurrence_id,seq,region,source_id,sha256,byte
  */
 export async function rewriteSegmentedGeneration(tx: BrainEngine, pageId: number, generation: number, transform: FenceTransform,
   version: { title: string; type: string; frontmatter: JsonObject; tags: readonly string[] }): Promise<Uint8Array[] | null> {
-  const [page] = await tx.executeRaw<{ slug: string; source_id: string; body_flags: JsonObject | null; body_storage: string; body_generation: number | string }>(
-    'SELECT slug,source_id,body_flags,body_storage,body_generation FROM pages WHERE id=$1 FOR UPDATE', [pageId]);
+  const page = await tx.lockSegmentedGenerationPage(pageId);
   if (!page) return null;
   const sourceId = page.source_id;
   const rows = await tx.readManifest(pageId, { generation });
@@ -230,19 +222,14 @@ export async function rewriteSegmentedGeneration(tx: BrainEngine, pageId: number
     truth: rewrittenRegion(tx, sourceId, rows, units, 'truth'), timeline: rewrittenRegion(tx, sourceId, rows, units, 'timeline'),
     hasTimeline: rows.some(row => row.region === 'timeline'), flags: page.body_flags ?? {}, declaredBytes: bodyBytesOf(rows, units),
     owner: await rewriteOwner(tx), chunking: { quarantined: true, corpusGeneration: null, tier: 'none' } });
-  const staging = prepared.stagingId, next = generation + 1;
+  const staging = prepared.stagingId;
   // The part of each shared row after this generation moves to a copy (staged, so the live-seq index sees one live row);
-  // the part before it ends here; rows that began here go. Then the rebuilt rows take [generation, next).
-  await tx.executeRaw(`INSERT INTO page_body_manifest (${MANIFEST_COLUMNS},gen_from,gen_to,staging_id) SELECT ${MANIFEST_COLUMNS},$3::bigint,gen_to,$4::uuid
-    FROM page_body_manifest WHERE page_id=$1 AND staging_id IS NULL AND gen_from<=$2 AND (gen_to IS NULL OR gen_to>$3)`, [pageId, generation, next, staging]);
-  await tx.executeRaw('UPDATE page_body_manifest SET gen_to=$2 WHERE page_id=$1 AND staging_id IS NULL AND gen_from<$2 AND (gen_to IS NULL OR gen_to>$2)', [pageId, generation]);
-  await tx.executeRaw('DELETE FROM page_body_manifest WHERE page_id=$1 AND staging_id IS NULL AND gen_from=$2', [pageId, generation]);
+  // the part before it ends here; rows that began here go. Then the rebuilt rows take [generation, generation + 1).
+  await tx.splitManifestGeneration(pageId, generation, staging);
   await tx.stageManifestRows(prepared.createRows!.map(row => ({ ...row, pageId, genFrom: generation })));
-  await tx.executeRaw(`UPDATE page_body_manifest SET staging_id=NULL, gen_to=CASE WHEN gen_from=$2 THEN $3 ELSE gen_to END
-    WHERE page_id=$1 AND staging_id=$4::uuid`, [pageId, generation, next, staging]);
+  await tx.publishRebuiltGeneration(pageId, generation, staging);
   await tx.setBodyStagingState(staging, 'committed');
-  await tx.executeRaw(`UPDATE page_versions SET content_hash=$3,body_bytes=$4 WHERE page_id=$1 AND body_generation=$2 AND body_storage='segmented'`,
-    [pageId, generation, prepared.body.content_hash, prepared.body.body_bytes]);
+  await tx.setSegmentedVersionHash(pageId, generation, prepared.body.content_hash, prepared.body.body_bytes);
   return replacedShas(rows, units);
 }
 

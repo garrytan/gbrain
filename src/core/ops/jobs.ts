@@ -289,8 +289,8 @@ async function emitNoWorkerNotice(ctx: OperationContext, queueName: string): Pro
     const { queueWorkerAlive, noWorkerNotice, runWaitingJobsFix } = await import('../minions/no-worker.ts');
     const alive = queueWorkerAlive(queueName);
     if (alive !== false) return;
-    const [row] = await ctx.engine.executeRaw<{ n: number }>("SELECT count(*)::int AS n FROM minion_jobs WHERE queue = $1 AND status = 'waiting'", [queueName]);
-    const waiting = Number(row?.n ?? 0);
+    const counts = await ctx.engine.countJobsByStatus({ queue: queueName, statuses: ['waiting'] });
+    const waiting = counts.reduce((total, row) => total + Number(row.count), 0);
     if (waiting === 0) return;
     let fix = runWaitingJobsFix(ctx.engine.kind, queueName);
     if (ctx.config) {

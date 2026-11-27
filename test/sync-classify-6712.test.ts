@@ -47,7 +47,10 @@ function referenceAfterHold(s: SyncPathState): SyncClass {
     if (s.level === null) return 'gone';
     if (state === 'tombstone' && s.page!.syncDeleted) return dirtyCommitted ? dirtyClass() : 'import';
     const markerHolds = s.marker?.kind === 'deleted' && s.marker.blobOids.includes(s.level);
-    if ((state === 'tombstone' && fileSame) || markerHolds) return 'deleted_same';
+    const sameBytes = (state === 'tombstone' && fileSame) || markerHolds;
+    // LC-1 (decision E1): the bytes back on disk after the delete removed them are a restore, held for the user's yes.
+    if (sameBytes && s.removedFile && (s.mode === 'working' || CLEAN.has(s.dirty) || s.dirty === 'unknown')) return 'deleted_edited';
+    if (sameBytes) return 'deleted_same';
     const deletedEvidence = state === 'tombstone' || s.marker?.kind === 'deleted';
     if (deletedEvidence && !s.published) return 'deleted_edited';
     if (s.marker?.kind === 'legacy' && s.marker.deletion && !s.fullObligation && s.marker.blobOids.includes(s.level)) return 'legacy_same';
@@ -62,7 +65,11 @@ function referenceAfterHold(s: SyncPathState): SyncClass {
   const region = `${fileSame ? 'F' : 'f'}${dbSame ? 'D' : 'd'}${proof ? 'P' : 'p'}`;
   switch (region) {
     case 'FDP': return obligation ? 'reparse' : 'matched';
-    case 'FdP': case 'Fdp': return adoptable ? 'adopt' : 'db_ahead';
+    case 'FdP': case 'Fdp': {
+      if (adoptable) return 'adopt';
+      const keepDbWrite = !s.attested && s.record?.revision != null && s.keepDb && s.mode === 'committed' && s.dirty === 'clean';
+      return s.hold?.retried && !keepDbWrite && !s.attested && !s.dbOnly ? 'drift' : 'db_ahead';
+    }
     case 'fDP': case 'fdP': return adoptable ? 'adopt' : 'import';
     case 'fdp':
       if (s.record?.revision == null && s.level === s.baseline && !s.hold?.unscreened && !s.hold?.retried) return 'legacy_unverified';
@@ -85,6 +92,10 @@ describe('rows (v3.2 §2.3)', () => {
     ['1 a re-screen-due hold does not settle: the pass re-runs it', { hold: { atLevel: true, rescreenDue: true, retried: false } }, 'held', false],
     ['1 a re-screen-due hold on a page-less file is held, not imported or legacy (b2)', { hold: { atLevel: true, rescreenDue: true, retried: false }, page: null, record: null }, 'held', false],
     ['1 a hold over a database-ahead level stands (never imported over)', { hold: { atLevel: false, rescreenDue: false, retried: false }, page: { live: true, revision: 'R2', originMatches: true } }, 'held', true],
+    ['1 a database-ahead hold someone asked to re-screen re-runs as database-side drift (its guarded import)', { hold: { atLevel: true, rescreenDue: false, retried: true }, page: { live: true, revision: 'R2', originMatches: true } }, 'drift', false],
+    ['1 a retried database-ahead hold over a pending door write stands (the database copy waits for its Git publish)', { hold: { atLevel: true, rescreenDue: false, retried: true }, page: { live: true, revision: 'R2', originMatches: true }, attested: { hash: null, arm1: false } }, 'held', true],
+    ['1 a retried database-ahead hold on a storage.db_only page stands (the database is canonical)', { hold: { atLevel: true, rescreenDue: false, retried: true }, page: { live: true, revision: 'R2', originMatches: true }, dbOnly: true }, 'held', true],
+    ['1 a re-screen-due database-ahead hold nobody asked to re-screen stands', { hold: { atLevel: true, rescreenDue: true, retried: false }, page: { live: true, revision: 'R2', originMatches: true } }, 'held', true],
     ['2 spelling', { spelling: true }, 'spelling', false],
     ['3 untracked: committed, not in T, no live page', { tree: null, level: null, page: null, record: null }, 'untracked', true],
     ['4 kept: live, committed, absent from T, file present', { tree: null, level: null, present: true, dirty: null }, 'kept', true],
@@ -93,6 +104,10 @@ describe('rows (v3.2 §2.3)', () => {
     ['7 gone', { mode: 'working', tree: 'A', level: null, present: false, dirty: null, page: null }, 'gone', true],
     ['8 deleted_same (tombstone)', { page: { live: false, revision: 'R1', originMatches: true } }, 'deleted_same', true],
     ['8 deleted_same (marker)', { page: null, record: null, marker: { kind: 'deleted', blobOids: ['A'] } }, 'deleted_same', true],
+    ['8 deleted_same (the delete removed the file, the removal not committed yet)', { dirty: 'deleted', removedFile: true, page: { live: false, revision: 'R1', originMatches: true } }, 'deleted_same', true],
+    ['9 deleted_edited (LC-1: tombstone, the file the delete removed restored)', { removedFile: true, page: { live: false, revision: 'R1', originMatches: true } }, 'deleted_edited', false],
+    ['9 deleted_edited (LC-1: a restored file whose dirtiness probe failed is held for consent, never settled as deleted_same)', { dirty: 'unknown', removedFile: true, page: { live: false, revision: 'R1', originMatches: true } }, 'deleted_edited', false],
+    ['9 deleted_edited (LC-1: marker, the file the purge removed restored)', { removedFile: true, page: null, record: null, marker: { kind: 'deleted', blobOids: ['A'] } }, 'deleted_edited', false],
     ['9 deleted_edited (tombstone)', { tree: 'B', level: 'B', page: { live: false, revision: 'R1', originMatches: true } }, 'deleted_edited', false],
     ['8 a sync-made tombstone whose file is back unchanged imports (a revert, a branch switch)', { page: { live: false, revision: 'R1', originMatches: true, syncDeleted: true } }, 'import', false],
     ['9 a sync-made tombstone whose file is back edited imports', { tree: 'B', level: 'B', page: { live: false, revision: 'R1', originMatches: true, syncDeleted: true } }, 'import', false],
@@ -128,6 +143,11 @@ describe('rows (v3.2 §2.3)', () => {
     expect(got.cls).toBe(cls);
     expect(got.settled).toBe(settled);
     expect(reference(at(patch))).toBe(cls);
+  });
+
+  test('a retried hold on a strict source keeps a pending door write and a db_only page', () => {
+    for (const v of [{ dbOnly: true as const }, { attested: { hash: null, arm1: false } }])
+      expect(classifySyncPath(at({ ...v, page: { live: true, revision: 'R2', originMatches: true }, hold: { atLevel: true, rescreenDue: false, retried: true } }), { strict: true })).toMatchObject({ cls: 'held', settled: true, action: 'none' });
   });
 
   test('drift side: unknown without a record revision; db_ahead sub-labels', () => {
@@ -179,12 +199,13 @@ const stateArb: fc.Arbitrary<SyncPathState> = fc.record({
   marker: fc.constantFrom<SyncPathState['marker']>(null, { kind: 'deleted', blobOids: ['A'] }, { kind: 'deleted', blobOids: [] }, { kind: 'legacy', blobOids: ['A'] }, { kind: 'legacy', blobOids: ['A'], deletion: 'req-1' }),
   baseline: fc.constantFrom<string | null>(null, 'A', 'B'),
   spelling: fc.boolean(), episodeUnsatisfied: fc.boolean(), fullObligation: fc.boolean(), keepDb: fc.boolean(), openWork: fc.boolean(),
-}).map(({ working, ...raw }) => {
+  removedFile: fc.constantFrom<true | undefined>(undefined, true),
+}).map(({ working, removedFile, ...raw }) => {
   // Consistency the pass guarantees: committed L = T[p] and Dp only for T paths; working L = the bytes, present ⇔ L.
   const level = raw.mode === 'committed' ? raw.tree : working;
   const present = raw.mode === 'committed' ? raw.present : level !== null;
   const dirty = raw.mode === 'committed' && raw.tree !== null ? raw.dirty : null;
-  return { ...raw, level, present, dirty, levelSha256: sha(level) };
+  return { ...raw, level, present, dirty, levelSha256: sha(level), ...(removedFile ? { removedFile } : {}) };
 });
 
 describe('P0 properties', () => {
@@ -209,10 +230,11 @@ describe('P0 properties', () => {
     for (const record of [null, { blobOids: ['A'], revision: null, parserSame: true }, { blobOids: ['A'], revision: 'R1', parserSame: true }, { blobOids: ['A'], revision: 'R1', parserSame: false }])
     for (const attested of [null, { hash: sha('A'), arm1: false }, { hash: null, arm1: true }])
     for (const marker of [null, { kind: 'deleted' as const, blobOids: ['A'] }, { kind: 'legacy' as const, blobOids: ['A'] }, { kind: 'legacy' as const, blobOids: ['A'], deletion: 'req-1' }])
-    for (const published of [false, true]) for (const baseline of [null, 'A']) for (const keepDb of [false, true]) for (const episodeUnsatisfied of [false, true]) for (const fullObligation of [false, true]) {
+    for (const published of [false, true]) for (const baseline of [null, 'A']) for (const keepDb of [false, true]) for (const episodeUnsatisfied of [false, true]) for (const fullObligation of [false, true])
+    for (const removedFile of page?.live === false || marker?.kind === 'deleted' ? [false, true] : [false]) {
       const level = mode === 'committed' ? tree : working;
       const s: SyncPathState = { mode, tree, level, present, dirty, diskOid: 'C', page, record, attested, levelSha256: sha(level), published, hold: null, marker, baseline,
-        spelling: false, episodeUnsatisfied, fullObligation, keepDb, openWork: false };
+        spelling: false, episodeUnsatisfied, fullObligation, keepDb, openWork: false, ...(removedFile ? { removedFile: true as const } : {}) };
       const got = classifySyncPath(s);
       if (got.cls !== reference(s)) throw new Error(`mismatch ${got.cls} vs ${reference(s)} for ${JSON.stringify(s)}`);
       n++;
@@ -259,7 +281,9 @@ describe('P0 properties', () => {
 
   test('GBRA-133 S-27/S-28: a committed path no file backs (deleted, skip-worktree, sparse) classifies at its committed level, as a clean one does, except for the DB-wins write', () => {
     fc.assert(fc.property(stateArb, s => {
-      if (s.mode !== 'committed' || s.tree === null || s.dirty !== 'deleted') return;
+      // LC-1: the deleted page's own removal not committed yet (`removedFile`) is the one exception: it keeps its deletion,
+      // while the same bytes clean on disk are a restore held for the user.
+      if (s.mode !== 'committed' || s.tree === null || s.dirty !== 'deleted' || s.removedFile) return;
       const got = classifySyncPath(s), clean = classifySyncPath({ ...s, dirty: 'clean' });
       expect(got.cls === 'keep_db' ? 'drift' : got.cls).toBe(clean.cls === 'keep_db' ? 'drift' : clean.cls);
       expect(got.action).not.toBe('keep_db');

@@ -11,6 +11,7 @@ import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import type { OperationContext } from '../../src/core/ops/contract.ts';
 import { resolveRepairScope, runRepair } from '../../src/core/repair/core.ts';
 import { PAGE_CHILD_FK_TARGETS, orphanChildrenRepair, orphanPredicate } from '../../src/core/repair/orphan-children.ts';
+import { renderFragment } from '../../src/core/engine-sql/fragment.ts';
 import { childTableOrphansCheck } from '../../src/commands/doctor/checks/core-health.ts';
 import { getEngine, hasDatabase, setupDB, teardownDB } from './helpers.ts';
 
@@ -45,8 +46,10 @@ describePg('orphan-children predicate on Postgres (#6084)', () => {
       await tx.executeRaw("SET LOCAL work_mem = '64kB'");
       const out: Array<{ target: string; plan: string }> = [];
       for (const target of PAGE_CHILD_FK_TARGETS) {
+        // orphanPredicate returns a bound SQL fragment (engine-sql/repair-page-reads.ts), so render it to text first.
+        const { text, params } = renderFragment(orphanPredicate(target));
         const rows = await tx.executeRaw<{ 'QUERY PLAN': string }>(
-          `EXPLAIN SELECT count(*)::int AS n FROM ${target.table} WHERE ${orphanPredicate(target)}`);
+          `EXPLAIN SELECT count(*)::int AS n FROM ${target.table} WHERE ${text}`, params);
         out.push({ target: `${target.table}.${target.col}`, plan: rows.map(r => r['QUERY PLAN']).join('\n') });
       }
       return out;

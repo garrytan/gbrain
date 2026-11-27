@@ -1,0 +1,4 @@
+---
+kind: fix
+---
+Commands that open a Rust-engine brain no longer create an empty store in place of a missing one. When the config names a Rust store directory that is not there, or a folder with neither its FORMAT file nor its record file, `gbrain status`, `get`, `search`, `query`, `stats`, `list`, `sources list` and every other read-scope command stop before they connect, exit 1 and print the brain_missing error with reason missing_brain. A write creates a new store only for a brain that never had one: when the owner lock file an earlier open left next to the store is still there, or the folder above the store is missing, the write refuses the same way. Before, each of these commands created a new empty store at that path and answered from it. Opening a Rust brain from code (the engine factory) and the shadow seed still create a missing store.

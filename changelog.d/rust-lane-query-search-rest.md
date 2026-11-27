@@ -1,0 +1,9 @@
+**On the experimental Rust engine, more of the checks that run around `query`, `search` and `think` now get real answers instead of a refusal.**
+
+### Fixed
+- Backup coverage now counts a Rust brain's live pages. Before, the count ran raw SQL that the Rust engine cannot run, so the backup check reported the count as unknown. PGLite and Postgres run the same SQL as before.
+- Backup coverage now reads a Rust brain's maturity (live pages, active facts and the brain's start date). Before, that read was refused on Rust, so the check could not tell a new brain from an old one. PGLite and Postgres run the same SQL as before.
+- `think` over MCP on a Rust brain now reads the brain's remote read policy. Before, that config read was refused on Rust, so the caller was treated as restricted and `think` gathered no pages and no takes; it now gathers what PGLite gathers. PGLite and Postgres run the same SQL as before.
+- The readiness check now tells whether a Rust brain has a source bound to a local repository. Before, that count was refused on Rust, so the sync capability showed as unprobed. PGLite and Postgres run the same SQL as before.
+- The readiness check now counts a Rust brain's waiting jobs, so the worker capability gets a real answer. Before, that count was refused on Rust. A Rust brain counts its `facts-absorb` jobs, as a Postgres brain does; only PGLite leaves them out, because its own facts drain runs them. PGLite and Postgres run the same SQL as before.
+- `search` and `query` on a Rust brain no longer print "reading source freshness failed" or mark sources as `unknown`. A Rust brain has no commit-notifier tables, so it now reports no freshness notice, as a brain without those tables already did. A server or worker on a Rust brain also no longer starts a commit notifier that could only fail; it logs that the notifier is off. PGLite and Postgres behave as before.

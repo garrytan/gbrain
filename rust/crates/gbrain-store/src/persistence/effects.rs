@@ -15,11 +15,13 @@
 //! Every kind is stored. Which kinds a worker may claim is the claim statement's choice, not the
 //! insert's.
 
+use super::worktree_rows::{read_source_binding, read_worktree_row};
 use super::{request_by_id, violation};
 use crate::config::read_config;
 use crate::env::{Env, is_uuid, iso};
 use crate::error::{Result, STORE_CORRUPT, StoreError};
-use crate::kv::{KvRead, KvWrite, scan_prefix};
+use crate::facts::purge_probe::{EachRow, ProbeCell, ProbeRow};
+use crate::kv::{KvRead, KvWrite, for_each_prefix_paged, scan_prefix};
 use crate::{get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -180,30 +182,60 @@ pub(crate) fn request_effects(read: &dyn KvRead, request_id: &str) -> Result<Vec
     Ok(out)
 }
 
-/// Every stored effect, in id order (the claim-order index).
-pub(crate) fn all_effects(read: &dyn KvRead) -> Result<Vec<EffectRecord>> {
-    let mut entries = Vec::new();
-    scan_prefix(
+/// Index entries read per scan by `for_each_effect`.
+const EFFECT_PAGE: usize = 8;
+
+/// Calls `f` with each stored effect in id order (the claim-order index) until it returns false. The index is read
+/// `EFFECT_PAGE` entries at a time and a record when its turn comes, so a stop leaves the later pages and records unread.
+pub(crate) fn for_each_effect(
+    read: &dyn KvRead,
+    f: &mut dyn FnMut(EffectRecord) -> Result<bool>,
+) -> Result<()> {
+    for_each_prefix_paged(
         read,
         &[keys::PERSISTENCE, EFFECT_ORDER],
-        false,
+        EFFECT_PAGE,
         &mut |_, value| {
-            entries.push(serde_json::from_slice::<OrderEntry>(value));
-            true
+            let entry = serde_json::from_slice::<OrderEntry>(value).map_err(|e| {
+                StoreError::new(STORE_CORRUPT, format!("unreadable effect order entry: {e}"))
+            })?;
+            match get_json::<EffectRecord>(read, &effect_key(&entry.request_id, &entry.kind))? {
+                Some(record) => f(record),
+                None => Ok(true),
+            }
         },
-    )?;
-    let mut out = Vec::with_capacity(entries.len());
-    for entry in entries {
-        let entry = entry.map_err(|e| {
-            StoreError::new(STORE_CORRUPT, format!("unreadable effect order entry: {e}"))
-        })?;
-        if let Some(record) =
-            get_json::<EffectRecord>(read, &effect_key(&entry.request_id, &entry.kind))?
-        {
-            out.push(record);
-        }
-    }
+    )
+}
+
+/// Every stored effect, in id order (the claim-order index).
+pub(crate) fn all_effects(read: &dyn KvRead) -> Result<Vec<EffectRecord>> {
+    let mut out = Vec::new();
+    for_each_effect(read, &mut |record| {
+        out.push(record);
+        Ok(true)
+    })?;
     Ok(out)
+}
+
+/// The keys and values a store holds for `effects` (test seeding of a read-only fake).
+#[cfg(test)]
+pub(crate) fn effect_entries_for_test(effects: &[EffectRecord]) -> Vec<(Vec<u8>, Vec<u8>)> {
+    let mut out = Vec::new();
+    for e in effects {
+        out.push((
+            effect_key(&e.request_id, &e.kind),
+            serde_json::to_vec(e).unwrap(),
+        ));
+        out.push((
+            order_key(e.id),
+            serde_json::to_vec(&OrderEntry {
+                request_id: e.request_id.clone(),
+                kind: e.kind.clone(),
+            })
+            .unwrap(),
+        ));
+    }
+    out
 }
 
 /// Effect `id`, or none.
@@ -321,10 +353,14 @@ pub(crate) fn insert_publication_effects_in(
         if get_json::<EffectRecord>(&*tx, &key)?.is_some() {
             continue;
         }
-        if spec.worktree_id.is_some() {
-            return Err(violation(
-                "insert or update on table \"persistence_effects\" violates foreign key constraint \"persistence_effects_worktree_id_fkey\": no persistence worktree exists on this engine",
-            ));
+        // `worktree_id` references `persistence_worktrees`: a worktree with no row refuses as the
+        // foreign key does, and only on a row the insert stores (a skipped duplicate never checks it).
+        if let Some(worktree) = &spec.worktree_id
+            && read_worktree_row(&*tx, worktree)?.is_none()
+        {
+            return Err(violation(format!(
+                "insert or update on table \"persistence_effects\" violates foreign key constraint \"persistence_effects_worktree_id_fkey\": worktree_id {worktree} names no persistence_worktrees row"
+            )));
         }
         next_id += 1;
         let record = EffectRecord {
@@ -375,15 +411,42 @@ pub struct WithdrawalEffectsSpec {
 }
 
 /// `insertWithdrawalEffects(spec)`: one `withdrawal-mirror`, `git` and `embedding` row for the
-/// request, each stamped with the source's incarnation and a null worktree (no worktree binds a
-/// source on this engine). An unknown source inserts nothing; a kind already queued is kept.
+/// request, each stamped with the source's incarnation and the worktree of the source's binding
+/// when that binding names the same incarnation (`LEFT JOIN persistence_source_bindings`), else a
+/// null worktree. An unknown source inserts nothing; a kind already queued is kept.
 /// Returns the kinds inserted, in insert order.
 pub(crate) fn insert_withdrawal_effects_in(
     tx: &mut dyn KvWrite,
     env: &dyn Env,
     spec: &WithdrawalEffectsSpec,
 ) -> Result<Vec<String>> {
+    insert_source_effects_in(tx, env, spec, &WITHDRAWAL_EFFECT_KINDS)
+}
+
+/// The kinds a segmented-mirror re-mirror queues, in insert order (`REMIRROR_EFFECTS_SQL`).
+const REMIRROR_EFFECT_KINDS: [&str; 2] = ["withdrawal-mirror", "git"];
+
+/// `insertRemirrorEffects(requestId, sourceId, data)`: the withdrawal insert with the
+/// `withdrawal-mirror` and `git` kinds only (engine-sql/segmented-mirror-effects.ts).
+pub(crate) fn insert_remirror_effects_in(
+    tx: &mut dyn KvWrite,
+    env: &dyn Env,
+    spec: &WithdrawalEffectsSpec,
+) -> Result<Vec<String>> {
+    insert_source_effects_in(tx, env, spec, &REMIRROR_EFFECT_KINDS)
+}
+
+/// One row per kind of `kinds` for the request, as `INSERT ... SELECT ... FROM sources s LEFT JOIN
+/// persistence_source_bindings b ... CROSS JOIN (VALUES ...) WHERE s.id=$2 ON CONFLICT DO NOTHING`.
+fn insert_source_effects_in(
+    tx: &mut dyn KvWrite,
+    env: &dyn Env,
+    spec: &WithdrawalEffectsSpec,
+    kinds: &[&str],
+) -> Result<Vec<String>> {
     uuid_cast(&spec.request_id)?;
+    // The id as Postgres stores a uuid (canonical lowercase), so the mirror gate and the order index find it.
+    let request_id = spec.request_id.to_ascii_lowercase();
     if spec.data.is_null() {
         return Err(violation(
             "null value in column \"data\" of relation \"persistence_effects\" violates not-null constraint",
@@ -393,24 +456,30 @@ pub(crate) fn insert_withdrawal_effects_in(
         return Ok(Vec::new());
     };
     let mut missing = Vec::new();
-    for kind in WITHDRAWAL_EFFECT_KINDS {
-        if get_json::<EffectRecord>(&*tx, &effect_key(&spec.request_id, kind))?.is_none() {
+    for &kind in kinds {
+        if get_json::<EffectRecord>(&*tx, &effect_key(&request_id, kind))?.is_none() {
             missing.push(kind);
         }
     }
-    if !missing.is_empty() && request_by_id(&*tx, &spec.request_id)?.is_none() {
+    if !missing.is_empty() && request_by_id(&*tx, &request_id)?.is_none() {
         return Err(violation(format!(
             "insert or update on table \"persistence_effects\" violates foreign key constraint \"persistence_effects_request_id_fkey\": request {} is not present",
             spec.request_id
         )));
     }
+    let worktree_id = read_source_binding(&*tx, &source.id)?
+        .filter(|b| {
+            b.source_incarnation
+                .eq_ignore_ascii_case(&source.incarnation)
+        })
+        .map(|b| b.worktree_id);
     let now = env.now_micros();
     let mut next_id = max_effect_id(&*tx)?;
     for kind in &missing {
         next_id += 1;
         let record = EffectRecord {
             id: next_id,
-            request_id: spec.request_id.clone(),
+            request_id: request_id.clone(),
             kind: (*kind).into(),
             revision: None,
             data: spec.data.clone(),
@@ -419,7 +488,7 @@ pub(crate) fn insert_withdrawal_effects_in(
             updated_at_us: now,
             source_id: Some(source.id.clone()),
             source_incarnation: Some(source.incarnation.clone()),
-            worktree_id: None,
+            worktree_id: worktree_id.clone(),
             claim_expires_at_us: None,
             next_attempt_at_us: now,
             attempts: 0,
@@ -429,12 +498,12 @@ pub(crate) fn insert_withdrawal_effects_in(
             recovery_bytes: 0,
             claim_owner: None,
         };
-        put_json(tx, &effect_key(&spec.request_id, kind), &record)?;
+        put_json(tx, &effect_key(&request_id, kind), &record)?;
         put_json(
             tx,
             &order_key(next_id),
             &OrderEntry {
-                request_id: spec.request_id.clone(),
+                request_id: request_id.clone(),
                 kind: (*kind).into(),
             },
         )?;
@@ -442,7 +511,30 @@ pub(crate) fn insert_withdrawal_effects_in(
     Ok(missing.into_iter().map(String::from).collect())
 }
 
+/// `readOwnerHostBinding(worktreeId)` (effect-journal.ts `queuePublicationEffects`): the `local_path`
+/// of the owner host's binding of worktree `worktree_id` (`persistence_host_bindings h JOIN
+/// persistence_worktrees w ON w.id=h.worktree_id AND w.owner_host_id=h.host_id`), or null for an
+/// unknown worktree, one with no owner, and an owner that holds no binding. A worktree id that is not
+/// a uuid refuses, as the `$1::uuid` cast does.
+pub(crate) fn owner_host_binding_in(read: &dyn KvRead, worktree_id: &str) -> Result<Value> {
+    let id = super::effect_worker::pg_uuid(worktree_id)?;
+    let Some(owner) = super::worktrees::worktree_owner_in(read, &id)? else {
+        return Ok(Value::Null);
+    };
+    let Some(host) = owner.get("owner_host_id").and_then(Value::as_str) else {
+        return Ok(Value::Null);
+    };
+    Ok(super::worktrees::host_binding_in(read, &id, host)?
+        .and_then(|b| b.get("local_path").cloned())
+        .unwrap_or(Value::Null))
+}
+
 impl crate::Store {
+    /// `readOwnerHostBinding(worktreeId)`: the owner host's `local_path`, or null.
+    pub fn read_owner_host_binding(&self, worktree_id: &str) -> Result<Value> {
+        owner_host_binding_in(&*self.read()?, worktree_id)
+    }
+
     /// `insertPublicationEffects(spec)`: the kinds inserted, in queue order.
     pub fn insert_publication_effects(&self, spec: &PublicationEffectsSpec) -> Result<Vec<String>> {
         self.write(|tx| insert_publication_effects_in(tx, &*self.env, spec))
@@ -452,6 +544,34 @@ impl crate::Store {
     /// this write is the withdrawal's own store write.
     pub fn insert_withdrawal_effects(&self, spec: &WithdrawalEffectsSpec) -> Result<Vec<String>> {
         self.write(|tx| insert_withdrawal_effects_in(tx, &*self.env, spec))
+    }
+
+    /// `insertRemirrorEffects(requestId, sourceId, data)`: the kinds inserted, in insert order. Inside
+    /// `transaction` this write is the re-mirror's own store write.
+    pub fn insert_remirror_effects(&self, spec: &WithdrawalEffectsSpec) -> Result<Vec<String>> {
+        self.write(|tx| insert_remirror_effects_in(tx, &*self.env, spec))
+    }
+
+    /// `readRemirrorEffects(requestId)`: `{ kind, state, error_code, recovering, parked, skipped }` for
+    /// each effect of the request in kind order (`data ? 'parked'`, `COALESCE(data->'skipped','[]')`).
+    /// A request id that is not a uuid refuses, as `$1::uuid` does.
+    pub fn read_remirror_effects(&self, request_id: &str) -> Result<Vec<Value>> {
+        uuid_cast(request_id)?;
+        let mut effects = request_effects(&*self.read()?, &request_id.to_ascii_lowercase())?;
+        effects.sort_by(|a, b| a.kind.as_bytes().cmp(b.kind.as_bytes()));
+        Ok(effects
+            .iter()
+            .map(|e| {
+                json!({
+                    "kind": e.kind,
+                    "state": e.state,
+                    "error_code": e.error_code,
+                    "recovering": e.recovery.is_some(),
+                    "parked": e.data.get("parked").is_some(),
+                    "skipped": e.data.get("skipped").cloned().map(crate::jsonb::order).unwrap_or_else(|| json!([])),
+                })
+            })
+            .collect())
     }
 
     /// The effects of one request as `SELECT * FROM persistence_effects WHERE request_id=$1 ORDER BY id`.
@@ -487,6 +607,26 @@ impl crate::Store {
     }
 }
 
+/// The `persistence_effects` rows as the table probe of a fact purge's receipt reads them (`facts/purge_probe.rs`), in id order. The
+/// index is read a page at a time, so a stop leaves the later pages and records unread.
+pub(crate) fn probe_effects(read: &dyn KvRead, f: EachRow) -> Result<()> {
+    for_each_effect(read, &mut |e| {
+        f(ProbeRow {
+            source_id: e.source_id.clone(),
+            cells: vec![
+                ("kind", ProbeCell::text(&e.kind)),
+                ("data", ProbeCell::jsonb(&e.data)),
+                ("state", ProbeCell::text(&e.state)),
+                ("source_id", ProbeCell::opt_text(e.source_id.as_deref())),
+                ("error_code", ProbeCell::opt_text(e.error_code.as_deref())),
+                ("outcome", ProbeCell::opt_jsonb(e.outcome.as_ref())),
+                ("recovery", ProbeCell::opt_jsonb(e.recovery.as_ref())),
+                ("claim_owner", ProbeCell::opt_jsonb(e.claim_owner.as_ref())),
+            ],
+        })
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -505,5 +645,48 @@ mod tests {
     fn the_claim_order_key_sorts_by_id() {
         assert!(order_key(2) < order_key(10));
         assert!(order_key(255) < order_key(256));
+    }
+
+    #[test]
+    fn the_owner_binding_is_the_owner_hosts_local_path_or_null() {
+        use crate::persistence::{HostBindingInsert, WorktreeInsert};
+        const W: &str = "f0000000-0000-4000-8000-0000000000a1";
+        const BARE: &str = "f0000000-0000-4000-8000-0000000000a2";
+        const OWNER: &str = "a0000000-0000-4000-8000-0000000000a1";
+        const OTHER: &str = "a0000000-0000-4000-8000-0000000000a2";
+        let s = crate::test_support::store();
+        assert_eq!(
+            s.read_owner_host_binding(W).unwrap(),
+            Value::Null,
+            "no worktree"
+        );
+        let worktree = |id: &str, owner: Option<&str>| -> WorktreeInsert {
+            serde_json::from_value(json!({ "id": id, "ownerHostId": owner, "state": "active" }))
+                .unwrap()
+        };
+        s.insert_worktree(&worktree(W, Some(OWNER))).unwrap();
+        s.insert_worktree(&worktree(BARE, None)).unwrap();
+        let bind = |w: &str, host: &str, path: &str| -> HostBindingInsert {
+            serde_json::from_value(json!({ "worktreeId": w, "hostId": host, "localPath": path, "coordinationPath": "/c" })).unwrap()
+        };
+        s.insert_host_binding(&bind(W, OTHER, "/other")).unwrap();
+        assert_eq!(
+            s.read_owner_host_binding(W).unwrap(),
+            Value::Null,
+            "only another host's binding"
+        );
+        s.insert_host_binding(&bind(W, OWNER, "/owner")).unwrap();
+        assert_eq!(s.read_owner_host_binding(W).unwrap(), json!("/owner"));
+        assert_eq!(
+            s.read_owner_host_binding(&W.to_uppercase()).unwrap(),
+            json!("/owner")
+        );
+        assert_eq!(
+            s.read_owner_host_binding(BARE).unwrap(),
+            Value::Null,
+            "no owner"
+        );
+        let bad = s.read_owner_host_binding("w").unwrap_err();
+        assert_eq!(bad.message, "invalid input syntax for type uuid: \"w\"");
     }
 }

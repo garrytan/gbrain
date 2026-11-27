@@ -131,31 +131,7 @@ async function probeRule(
     // Caller should handle catch-all separately; refuse here to surface bugs.
     throw new Error(`[runRetypeCore] catch-all sentinel '${UNKNOWN_TYPE_SENTINEL}' must be handled by the caller via runCatchAllRetype`);
   }
-  let where = `WHERE deleted_at IS NULL AND type = $1`;
-  const params: unknown[] = [fromType];
-  if (pathFilter) {
-    where += ` AND source_path LIKE $${params.length + 1}`;
-    params.push(pathFilter);
-  }
-  if (slugFilter) {
-    where += ` AND slug LIKE $${params.length + 1}`;
-    params.push(slugFilter);
-  }
-  if (sourceId) {
-    where += ` AND source_id = $${params.length + 1}`;
-    params.push(sourceId);
-  }
-  const cntRows = await engine.executeRaw<{ cnt: string }>(
-    `SELECT COUNT(*)::text AS cnt FROM pages ${where}`,
-    params,
-  );
-  const count = parseInt(cntRows[0]?.cnt ?? '0', 10) || 0;
-  if (count === 0) return { count: 0, sample: [] };
-  const sampleRows = await engine.executeRaw<{ slug: string }>(
-    `SELECT slug FROM pages ${where} ORDER BY slug COLLATE "C" LIMIT 10`,
-    params,
-  );
-  return { count, sample: sampleRows.map((r) => r.slug) };
+  return engine.probeRetypeRows({ fromType, pathFilter, slugFilter, sourceId });
 }
 
 /**

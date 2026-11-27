@@ -132,9 +132,7 @@ async function repositories(engine: BrainEngine): Promise<{ repos: Repo[]; skipp
   try {
     const hostId = existingHostIdFor(engine);
     if (hostId) {
-      for (const row of await engine.executeRaw<{ local_path: string; source_id: string | null }>(
-        `SELECT h.local_path, s.source_id FROM persistence_host_bindings h LEFT JOIN persistence_source_bindings s ON s.worktree_id=h.worktree_id
-          WHERE h.host_id=$1::uuid AND h.local_path IS NOT NULL ORDER BY h.local_path`, [hostId])) {
+      for (const row of await engine.listHostRepositoryRoots(hostId)) {
         const ids = roots.get(row.local_path) ?? [];
         if (row.source_id && !ids.includes(row.source_id)) ids.push(row.source_id);
         roots.set(row.local_path, ids);
@@ -173,11 +171,7 @@ async function pendingEffectPaths(engine: BrainEngine): Promise<Set<string>> {
   try { hostId = existingHostIdFor(engine); } catch { /* embedded engine without an id */ }
   const out = new Set<string>();
   try {
-    const rows = await engine.executeRaw<{ rel: string; source_path: string | null; worktree_path: string | null }>(
-      `SELECT e.data->>'relative_path' AS rel, s.local_path AS source_path, h.local_path AS worktree_path
-         FROM persistence_effects e LEFT JOIN sources s ON s.id=e.source_id
-         LEFT JOIN persistence_host_bindings h ON h.worktree_id=e.worktree_id AND h.host_id=$1::uuid
-        WHERE e.kind='git' AND e.state IN ('queued','running') AND e.data ? 'relative_path' LIMIT 10000`, [hostId]);
+    const rows = await engine.listPendingGitEffectPaths(hostId);
     for (const row of rows) for (const base of [row.source_path, row.worktree_path]) if (base && row.rel) out.add(canonical(resolve(base, row.rel)));
   } catch { /* no persistence tables */ }
   return out;

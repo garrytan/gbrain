@@ -19,6 +19,7 @@ import { strictArgsRefusal } from '../src/cli/strict-args.ts';
 import { runSkillpack } from '../src/commands/skillpack.ts';
 import * as referenceCore from '../src/core/skillpack/reference.ts';
 import { fileURLToPath } from 'node:url';
+import { envWithoutDatabaseUrl } from './helpers/cli-spawn.ts';
 
 const REPO = fileURLToPath(new URL('..', import.meta.url)).replace(/\/$/, '');
 const SKILL = 'ask-user';
@@ -43,7 +44,7 @@ function driftedWorkspace(): { ws: string; file: string; before: string } {
 function runCli(args: string[]) {
   const r = Bun.spawnSync(['bun', 'src/cli.ts', 'skillpack', 'reference', ...args], {
     cwd: REPO,
-    env: { ...process.env, NODE_ENV: 'test', GBRAIN_SKIP_STARTUP_HOOKS: '1' },
+    env: { ...envWithoutDatabaseUrl(), NODE_ENV: 'test', GBRAIN_SKIP_STARTUP_HOOKS: '1' },
     stdout: 'pipe', stderr: 'pipe', timeout: 60_000,
   });
   return { exit: r.exitCode, stdout: r.stdout.toString(), stderr: r.stderr.toString() };

@@ -20,7 +20,6 @@ import { deriveSlotEnds, SLOT_DIMENSIONS } from '../facts/slots.ts';
 import { factEntitySlugs } from '../mentions/siblings.ts';
 import { BASENAME_DIRS, fallbackSlugify } from '../entities/resolve.ts';
 import { namedEntity } from './entity-anchor.ts';
-import { pageReadFilter } from './read-policy-sql.ts';
 import { poolUnbackedKeys, readSlotRows, type FactCandidate, type FactPoolScope } from './fact-relevance.ts';
 import { hasHistoryCue } from './facts-arm.ts';
 
@@ -83,12 +82,10 @@ export interface EntityKeys { source_id: string; canonical: string; slugs: strin
 export async function entityKeys(engine: BrainEngine, sourceId: string, slug: string, readScope: PageReadScope): Promise<EntityKeys> {
   const excludePrivate = readScope.excludePrivate ?? false;
   if (!slug.includes('/')) {
-    const params: unknown[] = [sourceId, BASENAME_DIRS.map(dir => dir + '/' + slug)];
-    const filter = pageReadFilter('p', { ...readScope, sourceId: undefined, sourceIds: undefined }, params, true);
-    const pages = await engine.executeRaw<{ slug: string }>('SELECT p.slug FROM pages p WHERE p.source_id = $1 AND p.slug = ANY($2::text[]) AND ' + filter + ' LIMIT 2', params);
+    const pages = await engine.listReadablePageSlugs(sourceId, BASENAME_DIRS.map(dir => dir + '/' + slug), readScope, 2);
     if (pages.length === 1) {
-      const slugs = await factEntitySlugs(engine, sourceId, pages[0]!.slug, { excludePrivate });
-      if (slugs.includes(slug)) return { source_id: sourceId, canonical: pages[0]!.slug, slugs };
+      const slugs = await factEntitySlugs(engine, sourceId, pages[0]!, { excludePrivate });
+      if (slugs.includes(slug)) return { source_id: sourceId, canonical: pages[0]!, slugs };
     }
   }
   return { source_id: sourceId, canonical: slug, slugs: await factEntitySlugs(engine, sourceId, slug, { excludePrivate }) };

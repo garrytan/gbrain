@@ -15,7 +15,7 @@ import { spawn, spawnSync } from 'child_process';
 
 import { runScaffold } from '../src/core/skillpack/scaffold.ts';
 import {
-  DIFF_LINE_CAP, recordScaffoldBases, runSkillpackRestore, runSkillpackUpdate, setSkillPinned, skillsRootKey, type UpdateOptions,
+  DIFF_LINE_CAP, defaultValidator, recordScaffoldBases, runSkillpackRestore, runSkillpackUpdate, setSkillPinned, skillsRootKey, type UpdateOptions,
 } from '../src/core/skillpack/safe-update.ts';
 import { journalDir, listJournals, sha256 } from '../src/core/skillpack/update-journal.ts';
 import { loadState, saveState } from '../src/core/skillpack/state.ts';
@@ -24,6 +24,7 @@ import {
   mergeSkillsLockHistory, parseSkillsLockHistory, renderSkillsLockHistory, renderSkillsManifest,
 } from '../src/core/skills-integrity.ts';
 import { runSkillpackUpdateChecks } from '../src/commands/doctor/checks/skillpack-update.ts';
+import { envWithoutDatabaseUrl } from './helpers/cli-spawn.ts';
 
 const REPO = join(import.meta.dir, '..');
 const created: string[] = [];
@@ -81,6 +82,17 @@ function update(env: Env, extra: Partial<UpdateOptions> = {}) {
 const read = (env: Env, rel: string) => readFileSync(join(env.ws, 'skills', rel), 'utf-8');
 const write = (env: Env, rel: string, body: string) => writeFileSync(join(env.ws, 'skills', rel), body);
 const outcome = (result: Awaited<ReturnType<typeof update>>, slug: string) => result.skills.find(s => s.slug === slug)!;
+
+describe('the default validator', () => {
+  test('a deprecated skill that keeps its triggers passes the trigger check: it is out of the trigger index by design and loads by name', () => {
+    const root = tmp('sp-safe-validate-');
+    const files = { 'demo/SKILL.md': skill('demo', 'v1').replace('name: demo\n', 'name: demo\ndeprecated: true\n'), 'other/SKILL.md': skill('other', 'v1') };
+    for (const [rel, body] of Object.entries(files)) { mkdirSync(dirname(join(root, rel)), { recursive: true }); writeFileSync(join(root, rel), body); }
+    const validate = defaultValidator(root);
+    expect(validate(root, 'demo').filter(p => p.startsWith('trigger check'))).toEqual([]);
+    expect(validate(root, 'other').filter(p => p.startsWith('trigger check'))).toEqual([]);
+  });
+});
 
 describe('base recording and whole-skill update', () => {
   test('scaffold: a state file that cannot be read warns after the files are written instead of failing', async () => {
@@ -457,7 +469,7 @@ for (let i = 0; i < 150; i++) await setSkillPinned(${JSON.stringify(b.skillsRoot
 
 describe('CLI contract', () => {
   const cli = (env: Env, args: string[]) => spawnSync('bun', [join(REPO, 'src/cli.ts'), 'skillpack', ...args], {
-    cwd: env.gbrainRoot, env: { ...process.env, GBRAIN_HOME: env.home }, stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf-8', timeout: 60_000,
+    cwd: env.gbrainRoot, env: { ...envWithoutDatabaseUrl(), GBRAIN_HOME: env.home }, stdio: ['ignore', 'pipe', 'pipe'], encoding: 'utf-8', timeout: 60_000,
   });
 
   test('exit 0 with skips, 1 only with --fail-on-skipped, 2 on failure; never prompts with stdin closed', () => {

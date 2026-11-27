@@ -369,7 +369,7 @@ export async function finalizeBeliefEvents(tx: BrainEngine, batch: Batch): Promi
   const writerTier = tierOrUnknown(post.writerTier ?? pre.writerTier);
   const lifetimes = await streamLifetimes(tx, opts.sourceId, batch.incarnation, streams);
   const contestedFactIds = batch.notes.flatMap(n => n.kind === 'contested' && n.table === 'facts' ? [n.rowId] : []);
-  const extraFacts = await readFactsById(tx, contestedFactIds.filter(id => !post.facts.some(f => f.id === id) && !pre.facts.some(f => f.id === id)));
+  const extraFacts = await readFactsById(tx, opts.sourceId, contestedFactIds.filter(id => !post.facts.some(f => f.id === id) && !pre.facts.some(f => f.id === id)));
   const needs = [...pageNeeds(opts.sourceId, batch.incarnation, pre), ...pageNeeds(opts.sourceId, batch.incarnation, post),
     ...extraFacts.flatMap(f => f.entity_page_id != null && f.entity_slug ? [{ sourceId: opts.sourceId, incarnation: batch.incarnation, slug: f.entity_slug, pageId: f.entity_page_id }] : [])]
     .filter(n => !lifetimes.has(n.pageId));

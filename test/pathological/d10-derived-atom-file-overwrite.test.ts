@@ -103,9 +103,10 @@ function editsBeforeWrite(engine: BrainEngine, slug: string, marker: string, bef
        AND frontmatter->>'source_hash' NOT LIKE 'pending:%'`, [slug, marker]))[0]!.n > 0;
   const proxy = new Proxy(engine, {
     get(target, prop) {
-      if (prop === 'executeRaw') return async (sql: string, ...rest: unknown[]) => {
-        if (!fired && sql.includes('SELECT local_path, config FROM sources') && await complete()) { fired = true; before(); }
-        return (target.executeRaw as (...a: unknown[]) => unknown).apply(target, [sql, ...rest]);
+      // readOnlyCheckout's unlocked readSourceState is the url-clone source read; a locked read is a publication's.
+      if (prop === 'readSourceState') return async (sourceId: string, opts?: { lock?: string }) => {
+        if (!fired && opts?.lock === undefined && await complete()) { fired = true; before(); }
+        return target.readSourceState(sourceId, opts as never);
       };
       const value = Reflect.get(target, prop, target);
       return typeof value === 'function' ? value.bind(target) : value;

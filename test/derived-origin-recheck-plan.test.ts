@@ -103,7 +103,7 @@ for (const kind of testBackends()) {
     test('the recheck inside the delete transaction visits a handful of pages rows', async () => {
       const visits: number[] = [];
       await engine.transaction(async tx => {
-        const measured = new Proxy(tx, { get(target, key) {
+        const measured = new Proxy(tx, { get(target, key, receiver) {
           if (key === 'executeRaw') return async (sql: string, params?: unknown[], opts?: unknown) => {
             if (sql.includes('cleared AS MATERIALIZED')) {
               const [plan] = await target.executeRaw<{ 'QUERY PLAN': unknown }>(`EXPLAIN (ANALYZE, FORMAT JSON) ${sql}`, params, opts as never);
@@ -113,7 +113,8 @@ for (const kind of testBackends()) {
             return target.executeRaw(sql, params, opts as never);
           };
           const value = Reflect.get(target, key, target);
-          return typeof value === 'function' ? value.bind(target) : value;
+          // Bound to the proxy, so a typed member that runs its statement through `this.executeRaw` is measured too.
+          return typeof value === 'function' ? value.bind(receiver) : value;
         } });
         const parks = await parkUncarriedInPurge(measured, [ids['o/origin']!], { recheckParked: true });
         expect(parks.map(park => park.slug)).toEqual(['o/origin']);

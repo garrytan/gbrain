@@ -19,7 +19,8 @@ const DOCS = 'docs/ENGINES.md#purge-and-withdrawal-guards';
 async function runGuardLedgerChecks(ctx: DoctorContext): Promise<Check[]> {
   const engine = connectedEngine(ctx);
   const checks: Check[] = [];
-  if (engine.kind === 'pglite') {
+  // PGLite and the Rust store have no row-level security.
+  if (engine.kind === 'pglite' || engine.kind === 'rust') {
     checks.push({ name: 'guard_ledger_checks', status: 'ok', message: 'Skipped (PGLite has no row-level security, so every guard reads its ledgers in full)' });
     return checks;
   }

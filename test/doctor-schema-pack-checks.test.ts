@@ -67,8 +67,11 @@ async function seedPages(sourceId: string, untyped: number, total: number): Prom
   );
 }
 
-/** Minimal engine stub whose executeRaw always throws. */
+/** Minimal engine stub whose reads always throw. */
 const throwingEngine = {
+  countPagesByTypeAndOwner: async () => {
+    throw new Error('boom-executeRaw');
+  },
   executeRaw: async () => {
     throw new Error('boom-executeRaw');
   },

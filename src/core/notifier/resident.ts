@@ -1,7 +1,7 @@
 /**
  * GBRA-133 PR 2a: the commit notifier inside a resident process (serve stdio and http, `gbrain jobs work`, the
  * autopilot daemon). Supplies the production seams of ../commit-notifier.ts:
- *  - the SQL store (store.ts) with the host lease on Postgres and none on PGLite (the lock holder owns);
+ *  - the SQL store (store.ts) with the host lease on Postgres and Rust and none on PGLite (the lock holder owns);
  *  - the sources this host syncs: managed sources whose worktree it owns, classic sources it last synced
  *    (syncer_host_id) or that `GBRAIN_NOTIFIER_CLASSIC_SOURCES` binds here; every other source is skipped with a reason;
  *  - starts through the in-process delegated sync runner (serve-sync-runner.ts) as this host's `cli` writer, one job
@@ -47,8 +47,7 @@ export function sqlNotifierStore(engine: BrainEngine): NotifierStore {
     holdsLease: (hostId, ownerId, fence) => holdsLease(engine, hostId, ownerId, fence),
     releaseLease: (hostId, ownerId) => releaseLease(engine, hostId, ownerId),
     dueMarkers: async (ids) => { await pruneSatisfiedMarkers(engine, ids); return readDueMarkers(engine, ids); },
-    liveJobs: async (ids) => new Set((await engine.executeRaw<{ id: unknown }>(
-      "SELECT id FROM minion_jobs WHERE id = ANY($1::bigint[]) AND status IN ('waiting','active','delayed','waiting-children','paused')", [ids])).map(r => Number(r.id))),
+    liveJobs: async (ids) => new Set(await engine.readLiveJobIds(ids)),
     forward: async (sourceId, head) => { await upsertMarker(engine, { sourceId, intent: 'freshness', wantedHead: head, requestedBy: 'notifier' }); },
     settleMarkers: async (sourceId, read, run) => settleMarkers(engine, sourceId, read,
       { ...run, checkoutHead: await (await import('./nudge.ts')).checkoutHead(engine, sourceId).catch(() => null) }),
@@ -67,14 +66,7 @@ export function classicBinding(env: Record<string, string | undefined> = process
 export async function listHostSources(engine: BrainEngine, hostId: string, env: Record<string, string | undefined> = process.env): Promise<{ sources: NotifierSource[]; skipped: SkippedSource[] }> {
   const { readManagedMode } = await import('../persistence/managed-mode.ts');
   const managed = await readManagedMode(engine).catch(() => false);
-  const rows = await engine.executeRaw<{ id: string; local_path: string | null; last_commit: string | null; bound: boolean; owner: string | null; root: string | null; syncer: string | null; config: unknown }>(
-    `SELECT s.id, s.local_path, s.last_commit, (b.source_id IS NOT NULL) AS bound, w.owner_host_id::text AS owner, h.local_path AS root, n.syncer_host_id AS syncer, s.config
-       FROM sources s
-       LEFT JOIN persistence_source_bindings b ON b.source_id = s.id AND b.source_incarnation = s.incarnation
-       LEFT JOIN persistence_worktrees w ON w.id = b.worktree_id
-       LEFT JOIN persistence_host_bindings h ON h.worktree_id = w.id AND h.host_id = w.owner_host_id
-       LEFT JOIN sync_notifier_sources n ON n.source_id = s.id
-      WHERE NOT s.archived ORDER BY s.id`);
+  const rows = await engine.listNotifierHostSourceRows();
   const bind = classicBinding(env);
   const sources: NotifierSource[] = [];
   const skipped: SkippedSource[] = [];
@@ -82,7 +74,7 @@ export async function listHostSources(engine: BrainEngine, hostId: string, env: 
   for (const row of rows) {
     let root: string | null;
     let kind: 'managed' | 'classic';
-    if (managed && (row.bound === true || (row.bound as unknown) === 't')) {
+    if (managed && row.bound) {
       kind = 'managed';
       if (row.owner !== hostId) { skipped.push({ sourceId: row.id, reason: `its managed worktree is owned by host ${String(row.owner ?? 'none').slice(0, 8)}; that host's resident syncs it` }); continue; }
       root = row.root;
@@ -173,7 +165,7 @@ export function residentNotifierOptions(engine: BrainEngine, opts: ResidentNotif
     readFlag: async () => parseOnCommit(await engine.getConfig(SYNC_ON_COMMIT_KEY)),
     readExcluded: async () => parseExcludedSources(await engine.getConfig(SYNC_ON_COMMIT_SOURCES_KEY)),
     listSources: () => listHostSources(engine, hostId, env),
-    lastCommit: async (sourceId) => (await engine.executeRaw<{ last_commit: string | null }>('SELECT last_commit FROM sources WHERE id=$1', [sourceId]))[0]?.last_commit ?? null,
+    lastCommit: (sourceId) => engine.readSourceLastCommit(sourceId),
     revParse: revParseHead,
     quiet: (s) => gitQuiet(s.gitDir),
     watch: (s, onChange) => s.gitDir ? watchGitDirs(watchTargets(s.gitDir, s.commonDir ?? null), onChange) : null,

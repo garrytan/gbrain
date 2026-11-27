@@ -140,9 +140,9 @@ export async function runDbReadinessProbe(deps: DbProbeDeps): Promise<DbProbeRes
 export async function assertWorkerDbReadiness(engine: BrainEngine): Promise<void> {
   if (engine.kind !== 'postgres') return;
   const result = await runDbReadinessProbe({
-    probeRead: async signal => { await engine.executeRaw('SELECT 1', [], { signal }); },
+    probeRead: async signal => { await engine.pingStore({ signal }); },
     probeDirect: getConnectionRouting(engine)?.isDualPoolActive?.()
-      ? async signal => { await engine.executeRawDirect('SELECT 1', [], { signal }); }
+      ? async signal => { await engine.pingStore({ signal, direct: true }); }
       : undefined,
     timeoutMs: 10_000,
     directTimeoutMs: DIRECT_PROBE_TIMEOUT_MS,

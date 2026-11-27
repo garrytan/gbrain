@@ -72,7 +72,7 @@ export interface ClassifiedItemFailure {
 
 /** Codes that mean the writer, the database, the budget or the run itself is unavailable: never one item's fault. */
 export const RUN_SCOPED_CODES: ReadonlySet<string> = new Set([
-  'aborted', 'lock_stolen', 'budget_exhausted', 'item_failures_systemic', 'schema_behind',
+  'aborted', 'lock_stolen', 'budget_exhausted', 'engine_capability_missing', 'item_failures_systemic', 'schema_behind',
   'writer_coordinator_required', 'owner_unavailable', 'writer_lock_unavailable', 'writer_busy', 'writer_pool_capacity',
   'queue_capacity', 'write_quota_exhausted', 'write_capacity_backpressure', 'maintenance_backpressure', 'database_contention',
   'writer_registration_required', 'writer_identity_invalid', 'writer_not_initialized', 'writer_upgrade_required',

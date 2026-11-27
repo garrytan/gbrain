@@ -132,6 +132,25 @@ describe('engine parity: segmented page bodies', () => {
   );
 
   parityTest(
+    'a published segmented page with no chunks counts as chunkless with content; an empty shell does not',
+    { methods: ['createSegmentedPageShell', 'allocateBodyOccurrenceIds', 'openBodyStaging', 'stageSegmentTexts', 'stageManifestRows',
+      'flipBodyGeneration', 'setBodyStagingState', 'countChunklessPagesWithContent', 'listChunklessPagesWithContent', 'transaction'] },
+    async (engine) => {
+      await engine.createSegmentedPageShell('notes/shell', pageMeta('Shell'), { sourceId: 'default' });
+      const shellCount = await engine.countChunklessPagesWithContent();
+      await publish(engine);
+      const count = await engine.countChunklessPagesWithContent();
+      const rows = (await engine.listChunklessPagesWithContent()).map((r) => ({ slug: r.slug, source_id: r.source_id,
+        compiled_truth: r.compiled_truth, timeline: r.timeline }));
+      const scoped = await engine.countChunklessPagesWithContent({ sourceId: 'default' });
+      // The shell's body_bytes is 0; the published page's is the byte length of its segments.
+      expect([shellCount, count, scoped]).toEqual([0, 1, 1]);
+      expect(rows.map((r) => r.slug)).toEqual(['notes/big']);
+      return { shellCount, count, rows, scoped };
+    },
+  );
+
+  parityTest(
     'a replace flips to generation 2, closes retired rows and refuses a stale generation',
     { methods: ['flipBodyGeneration', 'readManifest', 'stageSegmentChunks', 'getChunks'] },
     async (engine) => {
@@ -614,9 +633,6 @@ describe('engine parity: segmented page bodies, one call at a time', () => {
     },
   );
 
-  // Review finding specialist-batched#2: updateSlug versions the page before it moves it. SQL versions a segmented page as
-  // a reference to its live body generation; the Rust store keeps no such reference, so it must refuse the rename (as
-  // createVersion does) instead of writing a version with no body and moving the page.
   parityTest(
     'pageCollapseFacts reads a segmented page through its stored truth lead',
     { methods: ['createSegmentedPageShell', 'allocateBodyOccurrenceIds', 'flipBodyGeneration', 'pageCollapseFacts', 'putPage'] },
@@ -629,7 +645,9 @@ describe('engine parity: segmented page bodies, one call at a time', () => {
       await engine.flipBodyGeneration(flipInput(pageId, 0, stagingId, [LONG]));
       await engine.setBodyStagingState(stagingId, 'committed');
       const inline = await engine.putPage('notes/short', { type: 'note', title: 'Short', compiled_truth: 'a short inline body', timeline: '' });
-      const rows = await engine.pageCollapseFacts([pageId, inline.id], [pageId, inline.id]);
+      // The SQL has no ORDER BY, so PGLite and Postgres may return the two rows in either order: compare them by page.
+      const rows = (await engine.pageCollapseFacts([pageId, inline.id], [pageId, inline.id]))
+        .sort((a, b) => Number(a.id !== pageId) - Number(b.id !== pageId));
       const view = rows.map((r) => ({ page: r.id === pageId ? 'segmented' : 'inline', body_chars: r.body_chars, hashed: r.body !== null,
         lead: r.lead?.slice(0, 30) ?? null }));
       const segmented = view.find((r) => r.page === 'segmented');
@@ -641,18 +659,20 @@ describe('engine parity: segmented page bodies, one call at a time', () => {
   );
 
   parityTest(
-    'updateSlug of a segmented page versions it by reference on PGLite and is a typed refusal on the Rust store',
+    'updateSlug of a segmented page versions it by reference to its live body generation, then moves it',
     { methods: ['updateSlug', 'getVersions', 'getPage'] },
     async (engine) => {
+      // Review finding specialist-batched#2: updateSlug versions the page before it moves it. A segmented page's version
+      // is a reference (body_storage, body_generation, body_bytes) with NULL body columns, never a version with no body.
       await publishApart(engine, 'notes/renamed-big');
-      // Rust: the typed refusal ends the case, and nothing was renamed or versioned (checked in the store's unit test).
       const moved = await engine.updateSlug('notes/renamed-big', 'notes/renamed-big-2');
       const versions = await engine.getVersions('notes/renamed-big-2');
       const page = await engine.getPage('notes/renamed-big-2');
       return {
         moved,
         page: page ? { slug: page.slug, title: page.title } : null,
-        versions: versions.map((v) => ({ title: v.title, compiled_truth: v.compiled_truth, timeline: v.timeline, content_hash: v.content_hash ?? null })),
+        versions: versions.map((v) => ({ title: v.title, compiled_truth: v.compiled_truth, timeline: v.timeline, content_hash: v.content_hash ?? null,
+          body_storage: v.body_storage ?? null, body_generation: v.body_generation ?? null, body_bytes: v.body_bytes ?? null })),
       };
     },
   );
@@ -678,6 +698,39 @@ describe('engine parity: segmented page bodies, one call at a time', () => {
       expect(byId).toMatchObject({ id: 'the page', slug: 'notes/embed-read', source_id: 'default', body_storage: 'segmented' });
       expect(bySlug).toEqual(byId);
       return { unsealed, byId, bySlug, otherSource, missing, inline, deleted };
+    },
+  );
+
+  parityTest(
+    'a segmented seal indexes the timeline lead after the page\'s purges and withdrawals',
+    { methods: ['sealSegmentedPage', 'searchTitles', 'insertFacts', 'loadPurgeTarget', 'insertFactPurge', 'insertFactWithdrawal'] },
+    async (engine) => {
+      const slug = 'notes/sealed-ledger';
+      const { pageId } = await publishApart(engine, slug);
+      const fingerprint = async (rowNum: number, claim: string) => {
+        const out = await engine.insertFacts([{ fact: claim, entity_slug: slug, source_markdown_slug: slug, row_num: rowNum, kind: 'fact',
+          visibility: 'world', source: 'fence' }] as never, { source_id: 'default' }) as { ids: number[] };
+        return (await engine.loadPurgeTarget(out.ids[0]!, 'default'))!.fact_hash;
+      };
+      const purge = async (subject: string, factHash: string) => engine.insertFactPurge({ sourceId: 'default', visibility: 'world', subject,
+        factHash, requestId: '6f9619ff-8b86-4d01-b42d-00cf4fc964ab', actor: 'owner:local', reason: 'parity' });
+      await purge(slug, await fingerprint(1, 'Keeps quillbees'));
+      await purge('*', await fingerprint(2, 'Paints marblewood'));
+      await purge('*', await fingerprint(3, 'Sings nightjarsong'));
+      await engine.insertFactWithdrawal('default', 'world', 'Rides velocycles', slug, '2026-03-01T10:00:00.000Z');
+      const rows = ['Keeps quillbees', 'Paints marblewood', 'Rides velocycles', 'Flies kestrelkites'];
+      const lead = '<!--- gbrain:facts:begin -->\n'
+        + '| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context |\n'
+        + '|---|-------|------|------------|------------|------------|------------|-------------|--------|---------|\n'
+        + rows.map((claim, i) => `| ${i + 1} | ${claim} | fact | 1.0 | world | medium | 2026-01-01 |  | chat |  |\n`).join('')
+        + '<!--- gbrain:facts:end -->\n';
+      await engine.sealSegmentedPage(pageId, { timelineLead: lead });
+      const found = async (word: string) => (await engine.searchTitles(word, { limit: 5 })).some((r) => r.slug === slug);
+      const out = { slugPurge: await found('quillbees'), globalPurge: await found('marblewood'), withdrawn: await found('velocycles'),
+        struck: await found('forgotten'), kept: await found('kestrelkites') };
+      // A purged row leaves the indexed lead; title search never answers a word of a struck (withdrawn) row.
+      expect(out).toEqual({ slugPurge: false, globalPurge: false, withdrawn: false, struck: false, kept: true });
+      return out;
     },
   );
 });

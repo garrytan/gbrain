@@ -41,9 +41,7 @@ Differences from PGLite:
 
 Gaps:
 
-- `undo-wave` also deletes `takes`, `take_grade_cache` and `take_nudge_log` rows through raw SQL. Only the
-  `calibration_profiles` statement is a member; on a Rust brain the rest refuse (`engine_capability_missing`) until
-  those tables are served.
+- None for `undo-wave`: its `takes`, `take_grade_cache` and `take_nudge_log` writes are members too (takes-reads.md,
+  "A calibration wave's writes").
 - `eval_capture::calibration_profiles::remove_source_rows` (the `ON DELETE CASCADE` of the source foreign key) is wired
-  into `cascade::remove_source_rows` and unit-tested, but the Rust store serves no source delete yet, so nothing calls
-  it outside the tests.
+  into `cascade::remove_source_rows`, which the source delete (`deleteSourceRecord`) calls.

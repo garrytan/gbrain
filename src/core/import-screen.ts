@@ -39,6 +39,7 @@ import { effectiveVisibility } from './search/private-visibility.ts';
 import { CODE_FILE_MAX_BYTES, PAGE_MAX_BYTES } from './page-size-policy.ts';
 import { sliceMemo } from './persistence/slice-memo.ts';
 import { noncanonicalPrivateHold } from './persistence/visibility-request.ts';
+import { noncanonicalReadersHold, READERS_FIX_EFFECT } from './persistence/readers-request.ts';
 
 /** Largest Markdown page import admits: the Wave A ceiling (page-size-policy.ts). */
 export const MAX_FILE_SIZE = PAGE_MAX_BYTES;
@@ -352,7 +353,7 @@ export function assessImportSanity(page: Pick<ParsedMarkdown, 'compiled_truth' |
  * with its location-only `fence`.
  */
 export interface ContentRefusal extends Omit<ContentHold, 'code' | 'reason'> {
-  code: ContentHold['code'] | 'content_rejected' | 'invalid_fence' | 'purged_content' | 'write_gate_rejected' | 'visibility_noncanonical';
+  code: ContentHold['code'] | 'content_rejected' | 'invalid_fence' | 'purged_content' | 'write_gate_rejected' | 'visibility_noncanonical' | 'readers_noncanonical';
   reason?: ContentHold['reason'] | FenceReason;
   fence?: FenceMessageLocation;
   /** #6188 (D18): every issue that blocks the write, location and class only. */
@@ -388,6 +389,7 @@ export interface ImportScreenInput {
   expectedSlug?: string | null;
   slugExempt?: (declared: string) => boolean;
   slugConflictMessage?: (found: string, expected: string) => string;
+  createsPage?: boolean;
   activePack?: ParseOpts['activePack'];
   /**
    * The working tree already holds bytes whose import equals the current
@@ -417,8 +419,9 @@ export interface ImportScreenInput {
   gateAllowed?: (gate: { families: readonly string[]; detectorError: boolean }) => boolean;
   /**
    * #7848 file ingestion (managed sync and import, `validate --importable`): content that asks for `visibility: private` but would
-   * not store exactly that refuses `visibility_noncanonical`. Page writes refuse it earlier (`visibility_not_applied`), and
-   * derived writes of a stored page never refuse, so they leave it unset.
+   * not store exactly that refuses `visibility_noncanonical`, and content whose frontmatter spells the readers key in any way
+   * but exactly `readable_by` refuses `readers_noncanonical`. Page writes refuse both earlier (`visibility_not_applied`,
+   * `readers_noncanonical`), and derived writes of a stored page never refuse, so they leave it unset.
    */
   holdNoncanonicalPrivate?: boolean;
 }
@@ -440,8 +443,8 @@ export function screenImportContent(input: ImportScreenInput): ImportScreenResul
   if (size) return { status: 'refused', refusal: size };
   if (codeFile) return { status: 'importable', parsed: null };
   const parsed = parseMarkdown(input.content, input.path, { validate: true, ...(input.activePack ? { activePack: input.activePack } : {}) });
-  const hold = classifyImportHold(parsed, { expectedSlug: input.expectedSlug, slugExempt: input.slugExempt, slugConflictMessage: input.slugConflictMessage })
-    ?? (input.holdNoncanonicalPrivate ? noncanonicalPrivateHold(input.content, parsed.frontmatter) : null);
+  const hold = classifyImportHold(parsed, { expectedSlug: input.expectedSlug, slugExempt: input.slugExempt, slugConflictMessage: input.slugConflictMessage, createsPage: input.createsPage })
+    ?? (input.holdNoncanonicalPrivate ? noncanonicalPrivateHold(input.content, parsed.frontmatter) ?? noncanonicalReadersHold(input.content, parsed.frontmatter) : null);
   if (hold) return { status: 'refused', refusal: hold };
   const purgedAs = input.purgedPages?.size ? input.purgedPages.get(contentHash(parsed)) : undefined;
   if (purgedAs !== undefined) return { status: 'refused', refusal: { code: 'purged_content',
@@ -506,6 +509,7 @@ export function contentRefusalFromReceipt(code: string | null | undefined, messa
   const line = lineText === undefined ? undefined : Number(lineText);
   const typed = CONTENT_REFUSAL_CODES.has(code!) ? code as ContentRefusal['code']
     : /^Invalid YAML frontmatter/.test(text) ? 'invalid_frontmatter'
+    : SLUG_TOO_LONG_MESSAGE.test(text) ? 'slug_too_long'
     : /slug/.test(text) ? 'frontmatter_slug_conflict'
     : TAG_TOO_LONG_MESSAGE.test(text) ? 'tag_too_long'
     : /PAGE_JUNK_PATTERN/.test(text) ? 'content_rejected' : /which the owner purged/.test(text) ? 'purged_content' : 'file_too_large';
@@ -520,13 +524,16 @@ export function contentRefusalFromReceipt(code: string | null | undefined, messa
     : typed === 'purged_content' ? 'This content was purged by the owner and stays out of the brain. Do not resubmit it; write new content, or ask the user to clear the tombstone on the brain host (gbrain pages unpurge).'
     : typed === 'write_gate_rejected' ? 'The write gate refuses this external instruction-like content under the operator\'s write_gate.external_mode=reject setting, so it refuses on every retry. Tell the user; changing that setting is their decision.'
     : typed === 'tag_too_long' ? TAG_TOO_LONG_SUGGESTION
+    : typed === 'slug_too_long' ? 'The page slug is over 255 characters, so the write refuses on every retry. Shorten the path (or the slug), then submit with a new request_id.'
     : typed === 'visibility_noncanonical' ? 'The content asks for visibility: private in a spelling page privacy does not read, so it refuses on every retry. Write visibility: private on its own frontmatter line (lowercase key and value), then submit with a new request_id.'
+    : typed === 'readers_noncanonical' ? 'The content names its readers with a key page access does not read, so it refuses on every retry. Write the key as readable_by (lowercase, with an underscore) on its own frontmatter line, then submit with a new request_id. ' + READERS_FIX_EFFECT
     : PAGE_OVER_LIMIT_SUGGESTION;
   return { code: typed, ...(reason ? { reason } : {}), ...(key ? { key } : {}), ...(line !== undefined ? { line } : {}), suggestion };
 }
 
-const CONTENT_REFUSAL_CODES = new Set(['invalid_frontmatter', 'frontmatter_slug_conflict', 'file_too_large', 'content_rejected', 'purged_content', 'write_gate_rejected', 'visibility_noncanonical', 'tag_too_long']);
+const CONTENT_REFUSAL_CODES = new Set(['invalid_frontmatter', 'frontmatter_slug_conflict', 'file_too_large', 'content_rejected', 'purged_content', 'write_gate_rejected', 'visibility_noncanonical', 'readers_noncanonical', 'tag_too_long', 'slug_too_long']);
 const TAG_TOO_LONG_MESSAGE = /^Tag \d+ of \d+ is \d+ bytes; a tag can be at most \d+ bytes, so the page was not written\./;
+const SLUG_TOO_LONG_MESSAGE = /^The page slug is \d+ characters; a slug can be at most 255, so the page was not written\./;
 const LEGACY_CONTENT_MESSAGES: Array<[code: string, pattern: RegExp]> = [
   ['invalid_params', /^Invalid YAML frontmatter(?::| at line \d| in )/],
   ['invalid_params', /^The frontmatter slug "[^"\n]*" in [^\n]+ conflicts with its path, which expects slug "[^"\n]*"\./],

@@ -30,6 +30,7 @@ const unregisteredHost = (sourceId: string, requestId: string) => opError('permi
   { fix: ownerStatusFix(sourceId) });
 
 async function mountedEmbeddingSignature(engine: BrainEngine): Promise<string> {
+  // The key order never reaches output: the rows are folded into an object that is read by key name, and the signature uses those values, not the row order.
   const rows = await engine.executeRaw<{ key: string; value: string }>(`SELECT key,value FROM config
     WHERE key IN ('embedding_model','embedding_dimensions','search_embedding_column','embedding_columns') ORDER BY key FOR SHARE`);
   const values = Object.fromEntries(rows.map(row => [row.key, row.value]));
@@ -132,14 +133,10 @@ async function guardRetriedEffect(tx: BrainEngine, effect: PersistenceEffect, ho
 export async function retryParkedEffects(engine: BrainEngine, sourceId: string, requestId: string, dryRun: boolean,
   options: { internalId?: string; ownerHost?: boolean; parkedOnly?: boolean; failedCodes?: readonly string[] } = {}): Promise<Record<string, unknown> | null> {
   const [request, ambiguous] = options.internalId
-    ? await engine.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE source_id=$1 AND id=$2::uuid', [sourceId, options.internalId])
-    : await engine.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE source_id=$1 AND request_id=$2::uuid LIMIT 2', [sourceId, requestId]);
+    ? [await engine.readSourceRequestById<WriteRequest>(sourceId, options.internalId)]
+    : await engine.listSourceRequestsByRequestId<WriteRequest>(sourceId, requestId);
   if (!request || ambiguous) return null;
-  const tracked = await engine.executeRaw<PersistenceEffect>(`SELECT * FROM persistence_effects WHERE request_id=$1::uuid
-    AND ((kind IN ('git','withdrawal-mirror') AND (data ? 'parked' OR data ? 'retried'))
-      OR (NOT $2::boolean AND (state='failed' AND (kind<>'embedding' OR error_code='source_changed') OR kind='embedding' AND data ? 'parked'))
-      OR (kind='git' AND state='failed' AND error_code=ANY($3::text[]))) ORDER BY kind`,
-  [request.id, options.parkedOnly === true, [...options.failedCodes ?? []]]);
+  const tracked = await engine.listRetryTrackedEffects<PersistenceEffect>(request.id, options.parkedOnly === true, options.failedCodes ?? []);
   if (!tracked.length) return null;
   const hostId = existingHostIdFor(engine);
   if (!hostId) throw unregisteredHost(sourceId, requestId);
@@ -150,7 +147,7 @@ export async function retryParkedEffects(engine: BrainEngine, sourceId: string, 
     const effects = [];
     for (const selected of tracked) {
       await guardRetriedEffect(tx, selected, hostId, request);
-      const [effect] = await tx.executeRaw<PersistenceEffect>('SELECT * FROM persistence_effects WHERE id=$1 FOR UPDATE', [selected.id]);
+      const effect = (await tx.lockEffectRow<PersistenceEffect>(selected.id))!;
       const parked = effect.data.parked ?? [];
       const summary = { kind: effect.kind, error_code: effect.error_code, parked_targets: parked.length, targets: parked.slice(0, 20), retried: effect.data.retried ?? 0 };
       const parkedState = effect.error_code === 'targets_parked' ? 'parked' : 'failed';

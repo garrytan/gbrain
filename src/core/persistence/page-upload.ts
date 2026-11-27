@@ -23,7 +23,8 @@ import type { BrainEngine } from '../engine.ts';
 import type { OperationContext } from '../ops/contract.ts';
 import { opError, type OperationError } from '../ops/contract.ts';
 import { encodedFrameBytes } from '../egress-budget.ts';
-import { bodyStagingGoneError, LIVE_STAGING_STATES } from '../engine-sql/page-body.ts';
+import { bodyStagingGoneError } from '../engine-sql/page-body.ts';
+import { UPLOAD_LIVE_SQL as LIVE, UPLOAD_LAPSED_SQL as LAPSED_SQL, UPLOAD_REQUEST_HELD_SQL as REQUEST_HELD_SQL, UPLOAD_SELECT } from '../engine-sql/list-reads.ts';
 import { ENSURE_COUNTERS_SQL, LOCK_COUNTERS_SQL } from './journal.ts';
 import { BRAIN_STAGED_KEY, RELEASE_STAGED_CTE, readUploadLimits, stagedCounterKeys, stagedQuotaExhausted } from './limits.ts';
 import type { Principal, SqlEngine, WriteRequest } from './model.ts';
@@ -107,16 +108,6 @@ export interface UploadRow {
   current_incarnation: string | null; source_archived: boolean | null; current_page_id: number | null;
 }
 
-const LIVE = `'{${LIVE_STAGING_STATES.join(',')}}'::text[]`;
-/** The session `s` is named by an unfinished write (its staged body is a GC root until that write ends). */
-const REQUEST_HELD_SQL = `EXISTS (SELECT 1 FROM persistence_requests r WHERE r.state IN ('queued','deferred','running','recovering')
-      AND r.intent->'body_ref'->>'staging_id' = s.id::text)`;
-/**
- * The session `s` expires: an open session past either deadline, a sealed (committing) one only past its hard deadline,
- * which sealing extends by one idle period; never one an unfinished write names. A commit in progress is never expired.
- */
-const LAPSED_SQL = `(s.state = ANY(${LIVE}) AND (s.hard_expires_at <= now() OR s.state = 'open' AND s.idle_expires_at <= now()) AND NOT ${REQUEST_HELD_SQL})`;
-
 const iso = (value: unknown) => new Date(value as string | Date).toISOString();
 const toRow = (raw: Record<string, unknown>): UploadRow => ({
   ...(raw as unknown as UploadRow),
@@ -127,12 +118,6 @@ const toRow = (raw: Record<string, unknown>): UploadRow => ({
   idle_expires_at: iso(raw.idle_expires_at), hard_expires_at: iso(raw.hard_expires_at), lapsed: raw.lapsed === true,
 });
 
-const UPLOAD_SELECT = `SELECT s.id::text AS id, s.principal_kind, s.principal_id, s.client_request_id::text AS client_request_id, s.source_id,
-    s.source_incarnation::text AS source_incarnation, s.slug, s.page_id, s.mode, s.base_revision::text AS base_revision, s.base_generation,
-    s.declared_bytes, encode(s.declared_sha256, 'hex') AS declared_sha256, s.received_bytes, s.next_part, s.reserved_bytes, s.state,
-    s.commit_request_id::text AS commit_request_id, s.idle_expires_at, s.hard_expires_at, ${LAPSED_SQL} AS lapsed,
-    src.incarnation::text AS current_incarnation, src.archived AS source_archived, p.id AS current_page_id
-  FROM page_body_stagings s LEFT JOIN sources src ON src.id = s.source_id LEFT JOIN pages p ON p.source_id = s.source_id AND p.slug = s.slug`;
 
 /** The upload session `id` with its source's current incarnation and the page now at its slug; FOR UPDATE of the session with `lock`. */
 export async function readUpload(exec: SqlEngine, id: string, opts: { lock?: boolean } = {}): Promise<UploadRow | null> {
@@ -140,9 +125,8 @@ export async function readUpload(exec: SqlEngine, id: string, opts: { lock?: boo
   return raw ? toRow(raw) : null;
 }
 
-export async function readUploadByRequest(exec: SqlEngine, principal: Principal, clientRequestId: string): Promise<UploadRow | null> {
-  const [raw] = await exec.executeRaw<Record<string, unknown>>(`${UPLOAD_SELECT}
-    WHERE s.principal_kind = $1 AND s.principal_id = $2 AND s.client_request_id = $3::uuid AND s.kind = 'upload'`, [principal.kind, principal.id, clientRequestId]);
+export async function readUploadByRequest(exec: Pick<BrainEngine, 'readUploadSessionByRequest'>, principal: Principal, clientRequestId: string): Promise<UploadRow | null> {
+  const raw = await exec.readUploadSessionByRequest(principal.kind, principal.id, clientRequestId);
   return raw ? toRow(raw) : null;
 }
 

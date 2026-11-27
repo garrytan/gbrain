@@ -9,7 +9,6 @@ import { ERROR_CATALOGUE } from '../error-catalogue.ts';
 import { OperationError } from '../ops/contract.ts';
 import { coalesceDecision, legacyJobAuthorityError, type SubmissionAuthority } from './submission-authority.ts';
 import { rowToMinionJob, type MinionJob } from './types.ts';
-import * as jobsSql from '../engine-sql/jobs.ts';
 
 /**
  * `coalesceDecision`, with a legacy refusal's hint naming the active job ids
@@ -27,7 +26,7 @@ export async function decideCoalesce(tx: BrainEngine, row: Record<string, unknow
 
 /** Fast path: the row already holding `key`, coalesced, or null once a releasable key was freed (or none exists). */
 export async function coalesceOnIdempotencyKey(tx: BrainEngine, key: string, authority: SubmissionAuthority): Promise<MinionJob | null> {
-  const row = await jobsSql.coalesceOnIdempotencyKey(tx, key, (t, r) => decideCoalesce(t, r, authority));
+  const row = await tx.coalesceOnIdempotencyKey(key, { authority, decide: (t, r) => decideCoalesce(t, r, authority) });
   if (!row) return null;
   const job = rowToMinionJob(row);
   job.coalesced = true;

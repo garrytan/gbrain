@@ -14,7 +14,7 @@ start here.
 >
 > **Creating a new personal agent, explicitly requested by the user:** follow [BOOTSTRAP_FOR_AGENTS.md](BOOTSTRAP_FOR_AGENTS.md), then return here for the operating protocol.
 
-## Install (5 min)
+## Install (a few minutes)
 
 <!-- npm-trap + #218 recovery: canonical copy lives in README.md ("Install" warning) — sync edits. -->
 1. Install gbrain via Bun (the canonical path):
@@ -23,7 +23,7 @@ start here.
    export PATH="$HOME/.bun/bin:$PATH"
    bun install -g github:garrytan/gbrain#stable
    ```
-   Bun's installer needs `unzip` and stops with `error: unzip is required to install bun` without it. Check with `command -v unzip`; if it prints nothing, install it first: `apt-get update && apt-get install -y unzip` (Debian, Ubuntu), `dnf install -y unzip` (Fedora, RHEL) or `apk add unzip` (Alpine), with `sudo` in front unless you are root. No way to install packages? Use the [no-unzip route](INSTALL_FOR_AGENTS.md#no-unzip), not an improvised one.
+   Bun's installer needs `unzip` and stops with `error: unzip is required to install bun` without it. Check with `command -v unzip`; if it prints nothing, install it first: `apt-get update && apt-get install -y unzip` (Debian, Ubuntu), `dnf install -y unzip` (Fedora, RHEL) or `apk add unzip` (Alpine), with `sudo` in front unless you are root. No way to install packages? Use the [no-unzip route](INSTALL_FOR_AGENTS.md#no-unzip), not an improvised one. A command scanner (Hermes) refuses the Bun installer or `bun install -g`? Use the [release binary route](INSTALL_FOR_AGENTS.md#release-binary).
    If `bun install -g` aborts or `gbrain doctor` reports `schema_version: 0`
    ([#218](https://github.com/garrytan/gbrain/issues/218)), run `gbrain apply-migrations --yes --no-autopilot-install`.
    Exit 1 with `migrations_pending` means the schema is still behind and another `--yes` repeats the failure:
@@ -308,7 +308,8 @@ writing or reviewing an operation, consult `src/core/operations.ts` for the cont
   typed metric claims in its `## Facts` fence (`metric: mrr`, `value: 50000`,
   `unit: USD`, `period: monthly` columns), run
   `gbrain eval trajectory <entity-slug>` for the chronological history
-  with regressions auto-flagged, or `gbrain founder scorecard <entity-slug>`
+  with regressions auto-flagged (a 10% drop, or a 10% rise for a
+  lower-is-better metric such as burn, churn or cost, but not cost_savings), or `gbrain founder scorecard <entity-slug>`
   for a four-signal JSON rollup (claim_accuracy / consistency /
   growth_trajectory / red_flags). MCP op `find_trajectory` exposes the
   same data — read scope, visibility-filtered for remote callers.

@@ -46,10 +46,7 @@ export function fileBodyMatchesStored(fileBytes: string, slug: string, stored: S
 
 /** The live page's stored body, or null when there is no live page. `lock` takes the row lock (inside a transaction). */
 export async function readStoredBody(engine: BrainEngine, sourceId: string, slug: string, lock = false): Promise<StoredBody | null> {
-  const [row] = await engine.executeRaw<StoredBody>(
-    `SELECT compiled_truth, timeline FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL${lock ? ' FOR UPDATE' : ''}`,
-    [sourceId, slug]);
-  return row ?? null;
+  return engine.readLiveStoredBody(sourceId, slug, lock);
 }
 
 async function storedBodyUnchanged(tx: BrainEngine, sourceId: string, slug: string, expected: StoredBody): Promise<boolean> {
@@ -96,9 +93,6 @@ export async function mirrorFileBody(tx: BrainEngine, sourceId: string, slug: st
   return replaceStoredBody(tx, sourceId, slug, mirroredBody(fileBytes, slug), expected, hash);
 }
 
-/** Page states a checkout file is compared with: the live row, then its newest page_versions rows. */
-const HISTORY_ROWS = 20;
-
 interface StoredState extends StoredBody {
   frontmatter: Record<string, unknown> | null;
   title: string | null;
@@ -142,14 +136,7 @@ export async function replaceableFile(engine: BrainEngine, sourceId: string, slu
   alsoHeldAs?: (fileBytes: string, state: StoredBody) => string | null): Promise<{ ok: true; expectedFileBytes: string | null } | { ok: false }> {
   if (!existsSync(filePath)) return { ok: true, expectedFileBytes: null };
   const bytes = readFileSync(filePath, 'utf-8');
-  const states = await engine.executeRaw<StoredState>(
-    `(SELECT p.compiled_truth, p.timeline, p.frontmatter, p.title, p.type,
-             to_jsonb(ARRAY(SELECT t.tag FROM tags t WHERE t.page_id = p.id)) AS tags
-        FROM pages p WHERE p.source_id = $1 AND p.slug = $2)
-     UNION ALL
-     (SELECT v.compiled_truth, v.timeline, v.frontmatter, v.title, v.type, v.tags FROM page_versions v JOIN pages p ON p.id = v.page_id
-       WHERE p.source_id = $1 AND p.slug = $2 AND v.compiled_truth IS NOT NULL ORDER BY v.id DESC LIMIT ${HISTORY_ROWS})`,
-    [sourceId, slug]);
+  const states = await engine.listPageStates(sourceId, slug);
   return states.some(state => {
     if (fileHeldBy(bytes, slug, state)) return true;
     const candidate = alsoHeldAs?.(bytes, state) ?? null;

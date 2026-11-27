@@ -487,7 +487,19 @@ function isSkippedTurnEntry(e: Record<string, unknown>): boolean {
   return e.isSidechain === true || e.isMeta === true || e.isCompactSummary === true;
 }
 
+/** Claude Code's lead-in on a message another Claude session sent (#9768): an agent wrote it, not the owner. */
+const RELAYED_SESSION_MESSAGE_RE = /^\s*Another Claude session sent a message(?: while you were working)?:\s*<cross-session-message[\s>]/;
+
+function isRelayedSessionMessage(e: Record<string, unknown>): boolean {
+  const content = typeof e.message === 'object' && e.message !== null ? (e.message as Record<string, unknown>).content : undefined;
+  const first = Array.isArray(content)
+    ? (content.find(b => typeof b === 'object' && b !== null && (b as Record<string, unknown>).type === 'text') as Record<string, unknown> | undefined)?.text
+    : content;
+  return typeof first === 'string' && RELAYED_SESSION_MESSAGE_RE.test(first);
+}
+
 function hasNonHumanOrigin(e: Record<string, unknown>): boolean {
+  if (isRelayedSessionMessage(e)) return true;
   if (typeof e.origin !== 'object' || e.origin === null) return false;
   const kind = (e.origin as Record<string, unknown>).kind;
   return typeof kind === 'string' && kind.length > 0 && kind !== 'human';
@@ -690,6 +702,12 @@ export interface ParsedClaudeSession {
    * by automation, not a parser that lost the human side.
    */
   excludedUserLines: number;
+  /**
+   * GST-3216: every user turn came from a record whose `entrypoint` is `cli`, the interactive terminal a person types
+   * into. An SDK or `claude -p` run (`sdk-ts`, `sdk-cli`, ...) or a record with no entrypoint is driven by a
+   * program or another agent, so its user turns stay speaker-unknown.
+   */
+  interactive: boolean;
 }
 
 /**
@@ -714,6 +732,7 @@ export function parseClaudeSessionFile(
   let skippedLines = 0;
   let turnShapedLines = 0;
   let excludedUserLines = 0;
+  const userEntrypoints = new Set<unknown>();
   for (const line of raw.split('\n')) {
     const t = line.trim();
     if (!t) continue;
@@ -736,6 +755,7 @@ export function parseClaudeSessionFile(
     }
     if (e.type === 'user' && (isSkippedTurnEntry(e) || hasNonHumanOrigin(e))) excludedUserLines++;
     if (!turn) continue;
+    if (turn.turn.role === 'user') userEntrypoints.add(e.entrypoint);
     const timestamp = typeof e.timestamp === 'string' ? e.timestamp : '';
     turns.push({ role: turn.turn.role, text: turn.turn.text, timestamp });
   }
@@ -748,6 +768,7 @@ export function parseClaudeSessionFile(
     skippedLines,
     turnShapedLines,
     excludedUserLines,
+    interactive: userEntrypoints.size === 1 && userEntrypoints.has('cli'),
   };
 }
 

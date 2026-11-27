@@ -1,0 +1,76 @@
+/** The dream cycle and contradiction members. Part of the member-to-family map composed in ../members.ts. */
+import type { BrainEngine } from '../../engine.ts';
+import type { MemberClass } from '../members.ts';
+
+export const CYCLE_MEMBERS = {
+  // dream cycle (engine-sql/dream-cycle.ts)
+  listDreamQueueCandidates: 'minion_queue',
+  listLiveDreamCycleLocks: 'minion_queue',
+  readDreamJobStatus: 'minion_queue',
+  ensureDreamMapConfigRow: 'config',
+  lockDreamMapConfigRow: 'config',
+  writeDreamMapConfigRow: 'config',
+  recordDreamBreakerReset: 'config',
+  stampDreamPageProvenance: 'pages',
+  listDreamPageIds: 'pages',
+  countDreamProvenancePages: 'pages',
+  readDreamDeferralReceipt: 'persistence_journal',
+  listConsolidationClaimValues: 'facts',
+  setConsolidatedFactValidUntil: 'facts',
+  listReadersSourcedFactIds: 'facts',
+  findConsolidationPageIds: 'pages',
+  readConsolidationTakesMaxRowNum: 'takes',
+  findConsolidatedTakes: 'takes',
+  refreshConsolidatedTakeSource: 'takes',
+  findConsolidatedTakeIds: 'takes',
+  listConsolidationClaimShapes: 'facts',
+  listRetainedDreamOutputSources: 'pages',
+  readDreamSourceIncarnation: 'sources',
+  listDreamAtomPages: 'pages',
+  listSynthesisPageBodies: 'pages',
+  listLaterPersistenceRequests: 'persistence_journal',
+  listCommittedOutputRequests: 'persistence_journal',
+  readDreamVerifyEpoch: 'pages',
+  listDreamJobCreatedAt: 'minion_queue',
+  readDreamPreRunRevision: 'page_versions',
+  listCompletedSynthJobs: 'minion_queue',
+  countCoalescibleSynthJobs: 'minion_queue',
+  listWaitingChildJobIds: 'minion_queue',
+  listDreamChildJobTimings: 'minion_queue',
+  countRecentDreamSynthSubmissions: 'minion_queue',
+  // contradictions
+  writeContradictionsRun: 'contradictions',
+  loadContradictionsTrend: 'contradictions',
+  getContradictionCacheEntry: 'contradictions',
+  putContradictionCacheEntry: 'contradictions',
+  sweepContradictionCache: 'contradictions',
+
+  // contradictions: the edge-contradictions phase, the scoped reader and the eval reads (engine-sql/contradictions-cycle.ts).
+  // The edge-proposal ledger (link_edge_proposals), the phase's candidate scan and its closure check belong to the phase
+  // and are served (store-members/edge-proposals.ts), as is readLastContradictionsPromptVersion
+  // (store-members/contradictions.ts), so 'contradictions' is reported. listLinkContexts is a plain read of the links
+  // table and is served, so 'links' stays reported (test/rust-engine-capability-classes.test.ts).
+  listEdgeContradictionCandidates: 'contradictions',
+  listKnownEdgeProposals: 'contradictions',
+  listLinkContexts: 'links',
+  recordEdgeProposal: 'contradictions',
+  readEdgeProposal: 'contradictions',
+  edgeClosureLanded: 'contradictions',
+  readEdgeProposalEvidence: 'contradictions',
+  readEdgeProposalHash: 'contradictions',
+  markEdgeProposalStale: 'contradictions',
+  setEdgeProposalStatus: 'contradictions',
+  rejectOpenEdgeProposal: 'contradictions',
+  markEdgeProposalUndone: 'contradictions',
+  markRevertedEdgeProposals: 'contradictions',
+  listEdgeProposalCliRows: 'contradictions',
+  deleteHeldEdgeProposalErrors: 'contradictions',
+  listAppliedEdgeProposalIds: 'contradictions',
+  deleteEdgeProposalError: 'contradictions',
+  readEdgeProposalSourceId: 'contradictions',
+  markEdgeProposalDated: 'contradictions',
+  listLiveChunksByIds: 'chunks',
+  listLiveTakesByIds: 'takes',
+  readLastContradictionsPromptVersion: 'contradictions',
+  listEvalCandidateQueries: 'eval_capture',
+} as const satisfies Partial<Record<keyof BrainEngine, MemberClass>>;

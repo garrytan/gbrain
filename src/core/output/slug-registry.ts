@@ -77,6 +77,13 @@ export class SlugRegistryError extends Error {
 // `u` flag required by PAGE_SLUG_SEG's \p{...} classes.
 const SLUG_RE = new RegExp(`^${PAGE_SLUG_SEG}(\\/${PAGE_SLUG_SEG})+$`, 'u');
 
+/** Refuses a slug that is not in dir/name form with `SlugRegistryError('invalid_slug')`. */
+export function assertCreatableSlug(desiredSlug: string): void {
+  if (!SLUG_RE.test(desiredSlug)) {
+    throw new SlugRegistryError('invalid_slug', `Invalid slug: ${desiredSlug} (expect dir/name form)`, desiredSlug);
+  }
+}
+
 export class SlugRegistry {
   /**
    * `sourceId` scopes every existence probe to the SAME source the paired
@@ -99,9 +106,7 @@ export class SlugRegistry {
   async create(input: CreateSlugInput): Promise<CreatedSlug> {
     const { desiredSlug, displayName, onCollision = 'append-numeric', maxDisambiguator = 50 } = input;
 
-    if (!SLUG_RE.test(desiredSlug)) {
-      throw new SlugRegistryError('invalid_slug', `Invalid slug: ${desiredSlug} (expect dir/name form)`, desiredSlug);
-    }
+    assertCreatableSlug(desiredSlug);
 
     // Fast path: desired is free
     const existing = await this.engine.getPage(desiredSlug, this.scope());

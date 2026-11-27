@@ -49,6 +49,7 @@ import {
   type LoopEvidence,
   type SuppressionSet,
 } from '../loops/loops-store.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 import { resolveCounterparty, type ResolvedCounterparty } from './counterparty.ts';
 import { isCalendarSystemMail, isNoiseSender, isPositivelyAutomated, textAboveForward } from './google-render.ts';
 export { isPositivelyAutomated } from './google-render.ts';
@@ -407,8 +408,10 @@ async function upsertThreadLoop(
   let counterparty: ResolvedCounterparty | null = null;
   try {
     counterparty = await resolveCounterparty(engine, sourceId, { email: spec.counterpartyEmail });
-  } catch {
-    /* resolution is best-effort */
+  } catch (err) {
+    // Resolution is best-effort, but an engine that cannot run it refuses: a loop written without its counterparty
+    // would look resolved-to-nobody when the lookup never ran.
+    rethrowCapabilityRefusal(err);
   }
   await upsertOpenLoop(engine, {
     sourceId,

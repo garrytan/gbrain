@@ -29,6 +29,7 @@ import { classifyItemFailure, ItemRun } from './item-failure.ts';
 import { OperationError } from './ops/contract.ts';
 import { READ_WRITE_BEGIN } from './postgres-engine/read-write-transactions.ts';
 import { heldUnchanged, noteSkip, parseSkipLedger, readSkipLedgerRaw, reportSkips, restoreSkipLedger, rowRevision, type BackfillSkip } from './backfill-skips.ts';
+import { rethrowCapabilityRefusal } from './engine-capability-refusal.ts';
 
 function brief(err: unknown): string {
   const code = (err as { code?: unknown } | null)?.code;
@@ -170,14 +171,14 @@ export function checkpointKey(name: string): string {
 async function getCheckpoint(engine: BrainEngine, name: string, fresh: boolean): Promise<number> {
   if (fresh) return 0;
   try {
-    const rows = await engine.executeRaw<{ value: string }>(
-      `SELECT value FROM config WHERE key = $1 LIMIT 1`,
-      [checkpointKey(name)],
-    );
-    if (rows.length === 0) return 0;
-    const n = Number(rows[0].value);
+    // The stored row, never the request snapshot: the cursor setCheckpoint wrote.
+    const value = await engine.readStoredConfigValue(checkpointKey(name));
+    if (value === null) return 0;
+    const n = Number(value);
     return Number.isFinite(n) && n >= 0 ? n : 0;
-  } catch {
+  } catch (e) {
+    // A refused read must not restart the backfill from the first row.
+    rethrowCapabilityRefusal(e);
     return 0;
   }
 }
@@ -491,8 +492,9 @@ export async function runBackfill<TRow = Record<string, unknown>>(
  */
 export async function clearBackfillCheckpoint(engine: BrainEngine, name: string): Promise<void> {
   try {
-    await engine.executeRaw(`DELETE FROM config WHERE key = $1`, [checkpointKey(name)]);
-  } catch {
-    /* best-effort */
+    await engine.unsetConfig(checkpointKey(name));
+  } catch (e) {
+    // Best-effort, except that an engine that cannot clear it says so: a kept cursor would skip rows on the next run.
+    rethrowCapabilityRefusal(e);
   }
 }

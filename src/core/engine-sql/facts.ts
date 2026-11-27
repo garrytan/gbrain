@@ -25,6 +25,7 @@ import { escapeLikePattern } from '../cjk.ts';
 import { getFtsLanguage } from '../fts-language.ts';
 import type { SqlExecutor } from './executor.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
+import type { EngineRawRead } from './cli-reads-ops.ts';
 import { sqlFragment, trustedSql } from './fragment.ts';
 import { compileRowNormalizer } from './normalize.ts';
 import { deletedPageProjectionHiddenSql, projectionEligibleSql } from '../eligibility/sql.ts';
@@ -35,6 +36,7 @@ import { storedTrustTier } from '../trust/tier.ts';
 import { ensureWellFormed } from '../text-safe.ts';
 import { valueHash } from '../chronicle/ontology.ts';
 import { openedFactRowSql } from '../persistence/context.ts';
+import { PROFILE_METRIC_SQL_PATTERN } from '../profile/facets.ts';
 
 export type EmbeddingCast = '::vector' | '::halfvec';
 
@@ -614,19 +616,26 @@ export async function findCandidateDuplicates(
     if (opts?.embedding) {
       if (!opts.embeddingModel) return [];
       const lit = toPgVectorLiteral(opts.embedding);
+      // The inner query orders by distance alone so Postgres can serve it from the HNSW index (a
+      // second sort key makes the planner sort every row instead); the outer query breaks distance
+      // ties by id inside the k rows. Which rows tie at the LIMIT boundary stays approximate, as ANN is.
+      const distance = trustedSql(vectorLiteralSql(lit, '::vector'));
       const rows = (await exec.run<FactRowSqlShape>(sqlFragment`
-        SELECT * FROM facts
-        WHERE source_id = ${source_id}
-          AND entity_slug = ${entitySlug}
-          AND expired_at IS NULL
-          AND (valid_until IS NULL OR valid_until > now())
-          AND embedding IS NOT NULL
-          AND embedding_model=${opts.embeddingModel} AND embedded_text_hash=md5(fact)
-          AND vector_dims(embedding)=${opts.embedding.length}
-          AND source != ALL(${AUDIT_ROW_SOURCES}::text[])
-          ${speaker}${members}
-        ORDER BY embedding <=> ${trustedSql(vectorLiteralSql(lit, '::vector'))}
-        LIMIT ${k}
+        SELECT * FROM (
+          SELECT * FROM facts
+          WHERE source_id = ${source_id}
+            AND entity_slug = ${entitySlug}
+            AND expired_at IS NULL
+            AND (valid_until IS NULL OR valid_until > now())
+            AND embedding IS NOT NULL
+            AND embedding_model=${opts.embeddingModel} AND embedded_text_hash=md5(fact)
+            AND vector_dims(embedding)=${opts.embedding.length}
+            AND source != ALL(${AUDIT_ROW_SOURCES}::text[])
+            ${speaker}${members}
+          ORDER BY embedding <=> ${distance}
+          LIMIT ${k}
+        ) q
+        ORDER BY q.embedding <=> ${distance}, q.id
       `)).rows;
       return rows.map(rowToFact);
     }
@@ -733,6 +742,7 @@ export async function findTrajectory(exec: LegacyUnscopedRead, opts: import('../
         AND expired_at IS NULL
         ${remoteFilter ? visibilityClause(['world']) : sqlFragment``}${privacyClause(opts)}
         AND ${trustedSql(projectionEligibleSql('facts', 'facts', undefined))}
+        AND (claim_metric IS NULL OR claim_metric !~* ${PROFILE_METRIC_SQL_PATTERN})
         ${metric !== null ? sqlFragment`AND claim_metric = ${metric}` : sqlFragment``}
         ${kind === 'metric' ? sqlFragment`AND claim_metric IS NOT NULL` : sqlFragment``}
         ${kind === 'event' ? sqlFragment`AND event_type IS NOT NULL` : sqlFragment``}
@@ -782,7 +792,7 @@ export async function getFactsHealth(exec: LegacyUnscopedRead, source_id: string
         AND (valid_until IS NULL OR valid_until > now())
         AND entity_slug IS NOT NULL
       GROUP BY entity_slug
-      ORDER BY count DESC, entity_slug ASC
+      ORDER BY count DESC, entity_slug COLLATE "C" ASC
       LIMIT 5
     `)).rows;
     const r = totals[0] ?? {
@@ -951,4 +961,65 @@ export async function listFenceRetireCandidates(exec: LegacyUnscopedRead, target
           WHERE n.row_num=f.row_num AND n.fact=f.fact AND n.visibility=f.visibility)
         AND NOT ${opened}
       ORDER BY f.row_num, f.id`)).rows.map(row => row.preimage);
+}
+
+/** Refuses fact ids that are not whole numbers in the safe integer range, before any engine reads them. */
+export function checkFactIds(op: string, ids: readonly number[]): void {
+  const bad = ids.find(id => !Number.isSafeInteger(id));
+  if (bad !== undefined) throw new Error(`${op}: fact ids must be whole numbers: ${JSON.stringify(bad)}`);
+}
+
+/**
+ * The before-state of the facts `ids` of `sourceId` (`FACT_PREIMAGE_SQL`), in id order. An id that is not a fact of
+ * the source is left out. The generation adapters record it before a writer retires, consolidates or restores rows.
+ */
+export async function readFactPreimages(exec: LegacyUnscopedRead, sourceId: string, ids: readonly number[]): Promise<FactPreimage[]> {
+  checkFactIds('readFactPreimages', ids);
+  if (!ids.length) return [];
+  return (await exec.run<{ preimage: FactPreimage }>(sqlFragment`SELECT ${trustedSql(FACT_PREIMAGE_SQL)} AS preimage FROM facts f WHERE f.source_id=${sourceId} AND f.id = ANY(${[...ids]}::bigint[]) ORDER BY f.id`))
+    .rows.map(row => row.preimage);
+}
+
+/**
+ * Puts a fact's recorded before-state back (generations/adapters/fact-rows.ts `restoreFactRow`): lifecycle
+ * (`expired_at`, `valid_until`, `superseded_by`), consolidation marks, and its fence position when no other row of the
+ * page holds that number. Only the row of the source whose claim and visibility still match is changed.
+ */
+const RESTORE_FACT_PREIMAGE_SQL = `UPDATE facts f SET expired_at=$4::timestamptz, valid_until=$5::timestamptz, superseded_by=$6::bigint,
+      consolidated_at=$7::timestamptz, consolidated_into=$8::bigint,
+      row_num=CASE WHEN $9::integer IS NULL OR f.row_num IS NOT DISTINCT FROM $9::integer THEN f.row_num
+        WHEN NOT EXISTS (SELECT 1 FROM facts o WHERE o.source_id=f.source_id AND o.source_markdown_slug=f.source_markdown_slug AND o.row_num=$9::integer AND o.id<>f.id)
+        THEN $9::integer ELSE f.row_num END
+    WHERE f.source_id=$1 AND f.id=$2::bigint AND f.fact=$3 AND f.visibility=$10 RETURNING f.id`;
+
+/** Writes `preimage` back onto its fact (`RESTORE_FACT_PREIMAGE_SQL`) in the caller's transaction; resolves whether it did. */
+export async function restoreFactPreimage(raw: EngineRawRead, sourceId: string, preimage: Record<string, unknown>): Promise<boolean> {
+  const p = preimage as unknown as FactPreimage;
+  const rows = await raw<{ id: number }>(RESTORE_FACT_PREIMAGE_SQL,
+    [sourceId, p.id, p.fact, p.expired_at, p.valid_until, p.superseded_by, p.consolidated_at, p.consolidated_into, p.row_num, p.visibility]);
+  return rows.length === 1;
+}
+
+/** The extracted facts generation's rows of a page (generations/adapters/extracted-facts.ts): every row of the page coordinate whose `source` starts with the writer's prefix, by id. */
+const FACT_IDS_BY_SOURCE_PREFIX_SQL = `SELECT id FROM facts WHERE source_id=$1 AND source_markdown_slug=$2 AND COALESCE(source,'') LIKE $3 ORDER BY id`;
+
+/** The extracted facts generation's retire: ends the still-live rows of `ids` in the source now; nothing else changes. */
+const EXPIRE_FACT_ROWS_SQL = 'UPDATE facts SET expired_at = now() WHERE source_id=$1 AND id = ANY($2::bigint[]) AND expired_at IS NULL';
+
+/** A source prefix is matched literally, so it may not hold a LIKE wildcard or escape. */
+export function checkFactSourcePrefix(op: string, prefix: string): void {
+  if (/[%_\\]/.test(prefix)) throw new Error(`${op}: a source prefix must not hold %, _ or \\: ${JSON.stringify(prefix)}`);
+}
+
+/** The ids of the facts of the page coordinate (`source_id`, `source_markdown_slug`) whose `source` starts with `sourcePrefix`, by id. */
+export async function listFactIdsBySourcePrefix(raw: EngineRawRead, sourceId: string, slug: string, sourcePrefix: string): Promise<number[]> {
+  checkFactSourcePrefix('listFactIdsBySourcePrefix', sourcePrefix);
+  return (await raw<{ id: number }>(FACT_IDS_BY_SOURCE_PREFIX_SQL, [sourceId, slug, `${sourcePrefix}%`])).map(row => Number(row.id));
+}
+
+/** Expires the live facts of `ids` in `sourceId` now (`EXPIRE_FACT_ROWS_SQL`), in the caller's transaction. */
+export async function expireFactRows(raw: EngineRawRead, sourceId: string, ids: readonly number[]): Promise<void> {
+  checkFactIds('expireFactRows', ids);
+  if (!ids.length) return;
+  await raw(EXPIRE_FACT_ROWS_SQL, [sourceId, [...ids]]);
 }

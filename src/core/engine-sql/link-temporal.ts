@@ -161,7 +161,7 @@ export async function staleLinkRelationshipKeys(exec: Exec, limit: number): Prom
      WHERE NOT EXISTS (SELECT 1 FROM link_relationships lr WHERE lr.from_page_id = e.from_page_id
          AND lr.to_page_id = e.to_page_id AND lr.link_type = e.link_type AND lr.scope = 'all' AND lr.refreshed_at >= e.newest)
      GROUP BY from_page_id, to_page_id, link_type
-     ORDER BY min(newest) LIMIT $2`,
+     ORDER BY min(newest), from_page_id, to_page_id, link_type COLLATE "C" LIMIT $2`,
     [temporalLinkTypes(), limit]);
   // Relationships whose evidence-owning page was deleted, restored or edited
   // after the last refresh (soft deletes change no evidence row).
@@ -361,7 +361,7 @@ export async function edgeValidityCounts(exec: Exec, opts: { sourceIds?: readonl
         AND EXISTS (SELECT 1 FROM links l WHERE l.from_page_id = lr.from_page_id AND l.to_page_id = lr.to_page_id
           AND l.link_type = lr.link_type AND COALESCE(l.origin_page_id, l.from_page_id) = lr.from_page_id
           AND COALESCE(l.assertion_tense, 'present') = 'present')
-      ORDER BY lr.last_end DESC LIMIT ${Math.trunc(opts.staleLimit)}`);
+      ORDER BY lr.last_end DESC, lr.from_page_id, lr.to_page_id, lr.link_type COLLATE "C" LIMIT ${Math.trunc(opts.staleLimit)}`);
   const [p] = await rows<{ proposed: number; undated: number; applied: number }>(exec,
     sqlFragment`SELECT COUNT(*) FILTER (WHERE status = 'proposed')::int AS proposed, COUNT(*) FILTER (WHERE status = 'undated_unresolved')::int AS undated,
             COUNT(*) FILTER (WHERE status = 'applied')::int AS applied
@@ -404,13 +404,13 @@ export async function listRecordMetadataRows(exec: Exec, pageIds: readonly numbe
   const [status, links] = await Promise.all([
     exec.executeRaw<{ id: number; status: unknown }>(`SELECT id, frontmatter->'status' AS status FROM pages WHERE id = ANY($1::int[])`, [[...pageIds]]),
     rows<{ from_id: number; slug: string; link_type: string; since: string | null }>(exec,
-      sqlFragment`SELECT DISTINCT l.from_page_id AS from_id, t.slug, l.link_type,
+      sqlFragment`SELECT DISTINCT l.from_page_id AS from_id, t.slug COLLATE "C" AS slug, l.link_type,
               CASE WHEN l.link_type = 'amends' THEN to_char(r.first_start, 'YYYY-MM-DD') END AS since
          FROM links l JOIN pages t ON t.id = l.to_page_id AND t.deleted_at IS NULL AND t.source_id = ANY(${[...scope.referrerSources]}::text[])${targetPriv}${targetQuarantine}
          LEFT JOIN link_relationships r ON r.from_page_id = l.from_page_id AND r.to_page_id = l.to_page_id
               AND r.link_type = l.link_type AND r.scope = ${scope.excludePrivate ? 'world' : 'all'}
         WHERE l.from_page_id = ANY(${[...pageIds]}::int[]) AND l.link_type IN ('amends', 'supersedes')${linkPriv}
-        ORDER BY l.from_page_id, t.slug`).catch(() => []),
+        ORDER BY l.from_page_id, t.slug COLLATE "C"`).catch(() => []),
   ]);
   return { status, links };
 }
@@ -475,6 +475,17 @@ export interface ReferrerPageDetailRow {
 export async function readReferrerPageDetails(exec: Exec, ids: readonly number[]): Promise<ReferrerPageDetailRow[]> {
   const rows = await exec.executeRaw<ReferrerPageDetailRow>(referrerPageDetailsSql(), [[...ids]]);
   return rows.map(r => ({ ...r, id: Number(r.id) }));
+}
+
+/**
+ * The date `referenced_by` reports for a live page, `COALESCE(effective_date, updated_at)`, as UTC text with
+ * microseconds (`YYYY-MM-DDTHH:MM:SS.ffffffZ`), or null for a missing or soft-deleted page (the newer-mentions cutoff).
+ */
+export async function readPageReferenceDate(exec: Exec, sourceId: string, slug: string): Promise<string | null> {
+  const [page] = await exec.executeRaw<{ d: string | null }>(
+      `SELECT to_char(COALESCE(effective_date, updated_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS d
+         FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL`, [sourceId, slug]);
+  return page?.d ?? null;
 }
 
 /** The batched card counts' scope: the group read's, without the cap, plus the canonical record types to total. */

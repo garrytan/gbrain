@@ -12,6 +12,7 @@
  * guest rows read as guest.promoted (guests/marker.ts), and which refuses the broker's delete of the note
  * (guests/admission.ts refuseRemoteGuestDelete). The guest page and its mark are never changed.
  */
+import { normalizeSlug } from '../utils.ts';
 import { OperationError, type OperationContext } from '../ops/contract.ts';
 import { federatedSearchScope } from '../ops/context.ts';
 import { serializeMarkdown } from '../markdown.ts';
@@ -46,9 +47,7 @@ const text = (value: unknown, name: string, required = false): string | undefine
 };
 
 async function guestNote(ctx: OperationContext, slug: string, guestSource: string | undefined): Promise<{ id: number; source_id: string }> {
-  const rows = await ctx.engine.executeRaw<{ id: number; source_id: string }>(
-    'SELECT p.id, p.source_id FROM pages p JOIN guest_sources g ON g.source_id = p.source_id WHERE p.slug = $1 AND p.deleted_at IS NULL'
-      + (guestSource ? ' AND p.source_id = $2' : '') + ' ORDER BY p.source_id', guestSource ? [slug, guestSource] : [slug]);
+  const rows = await ctx.engine.listGuestNotes(slug, guestSource);
   const scope = ctx.remote === false ? null : federatedSearchScope(ctx, guestSource);
   const readable = scope ? scope.sourceIds ?? (scope.sourceId !== undefined ? [scope.sourceId] : null) : null;
   const found = rows.filter(r => !readable || readable.includes(r.source_id));
@@ -87,7 +86,7 @@ export async function promoteGuestNote(ctx: OperationContext, p: Record<string, 
     throw new OperationError('invalid_params', 'Source ' + targetSource + ' is a guest source; a promoted note becomes an owner page in an owner source.',
       'Pass source_id naming one of your own sources, or omit it to use your write source.');
   }
-  const target = (text(p.to, 'to') ?? slug).toLowerCase();
+  const target = normalizeSlug(text(p.to, 'to') ?? slug);
   const result = { guest: { source_id: note.source_id, slug }, page: { source_id: targetSource, slug: target } };
   const [kept] = await ctx.engine.executeRaw(`SELECT 1 FROM guest_promotions g WHERE g.guest_page_id = $1 AND g.target_source_id = $2 AND g.target_slug = $3
     AND EXISTS (SELECT 1 FROM pages t WHERE t.source_id = g.target_source_id AND t.slug = g.target_slug)`, [note.id, targetSource, target]);

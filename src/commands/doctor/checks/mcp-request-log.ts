@@ -40,12 +40,8 @@ export async function mcpRequestLogRetentionResult(
 ): Promise<Omit<Check, 'name'>> {
   const warnRows = opts.warnRows ?? MCP_LOG_WARN_ROWS;
   const warnBytes = opts.warnBytes ?? MCP_LOG_WARN_BYTES;
-  const [size] = await engine.executeRaw<{ bytes: string }>("SELECT pg_total_relation_size('mcp_request_log')::text AS bytes");
-  const [count] = engine.kind === 'postgres'
-    ? await engine.executeRaw<{ rows: string }>("SELECT GREATEST(reltuples, 0)::bigint::text AS rows FROM pg_class WHERE oid = to_regclass('mcp_request_log')")
-    : await engine.executeRaw<{ rows: string }>('SELECT count(*)::text AS rows FROM (SELECT 1 FROM mcp_request_log LIMIT $1) t', [warnRows + 1]);
-  const rows = Number(count?.rows ?? 0);
-  const bytes = Number(size?.bytes ?? 0);
+  const bytes = await engine.readMcpRequestLogBytes();
+  const rows = await engine.countMcpRequestLogRows(warnRows + 1);
   const rowsText = `${engine.kind === 'postgres' ? '~' : ''}${rows}${engine.kind !== 'postgres' && rows > warnRows ? '+' : ''} row(s) (${mb(bytes)} MB)`;
   const days = await readMcpLogRetentionDays(engine);
   const details: Record<string, unknown> = { retention_days: days, rows, rows_exact: engine.kind !== 'postgres' && rows <= warnRows, bytes, docs: DOCS };
@@ -67,11 +63,9 @@ export async function mcpRequestLogRetentionResult(
 
   const last = await readLastMcpLogPrune(engine);
   const coverage = await readMcpUsageCoverage(engine, days);
-  const [pending] = await engine.executeRaw<{ waiting: boolean }>(
-    `SELECT EXISTS (SELECT 1 FROM mcp_request_log WHERE created_at < now() - ($1::int * interval '1 day') AND operation <> ALL($2::text[])) AS waiting`,
-    [days, [...AUDIT_LOG_OPERATIONS]]);
-  Object.assign(details, { last_prune: last, pruned_before: coverage.pruned_before, rows_past_window: pending?.waiting === true });
-  const stale = last ? Date.now() - Date.parse(last.at) > STALE_PRUNE_MS : pending?.waiting === true;
+  const waiting = await engine.hasMcpLogRowsPastWindow(days, [...AUDIT_LOG_OPERATIONS]);
+  Object.assign(details, { last_prune: last, pruned_before: coverage.pruned_before, rows_past_window: waiting });
+  const stale = last ? Date.now() - Date.parse(last.at) > STALE_PRUNE_MS : waiting;
   if (stale) {
     return { status: 'warn', details,
       message: `Request-log retention is ${days} days, but no prune has run in the last 48 hours (last run: ${last?.at ?? 'never'}), so the log keeps growing. ` +

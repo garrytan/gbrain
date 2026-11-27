@@ -15,7 +15,7 @@ import type { BrainEngine } from '../engine.ts';
 import type { SearchResult } from '../types.ts';
 import { isQuarantined } from '../quarantine.ts';
 import { nameWords } from '../entities/name-variants.ts';
-import { rethrowCapabilityMissing } from '../rust-engine/errors.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 
 /** Keyword rows read for one name; a full read reports the total as a floor (`capped`). */
 export const TEXT_MENTION_POOL = 50;
@@ -88,7 +88,7 @@ async function probe(
     });
   } catch (e) {
     // A capability refusal is not a failed read: the engine cannot serve the probe at all.
-    rethrowCapabilityMissing(e);
+    rethrowCapabilityRefusal(e);
     return { pages: [], total: 0, capped: false, unread: 'read_failed' };
   }
   const exclude = new Set(opts.exclude ?? []);
@@ -100,10 +100,11 @@ async function probe(
     hits.set(key, r);
   }
   if (!hits.size) return { pages: [], total: 0, capped: false };
-  const meta = await engine.executeRaw<{ slug: string; source_id: string; title: string | null; type: string | null; frontmatter: Record<string, unknown> | null; date: Date | string | null }>(
-    `SELECT slug, source_id, title, type, frontmatter, COALESCE(effective_date, updated_at) AS date
-       FROM pages WHERE deleted_at IS NULL AND source_id = ANY($1::text[]) AND slug = ANY($2::text[])`,
-    [[...sources], [...new Set([...hits.values()].map(h => h.slug))]]).catch(() => []);
+  const meta = await engine.readTextMentionPages(sources, [...new Set([...hits.values()].map(h => h.slug))]).catch((err: unknown) => {
+    // A capability refusal is not "no pages": the engine cannot serve the read at all.
+    rethrowCapabilityRefusal(err);
+    return [];
+  });
   const pages = meta
     .filter(m => hits.has(`${m.source_id}:${m.slug}`) && !(opts.omitQuarantined && isQuarantined(m.frontmatter)))
     .map(m => ({ slug: m.slug, title: m.title ?? m.slug, type: m.type, source_id: m.source_id,

@@ -23,7 +23,6 @@ mutating: true
 writes_pages: true
 writes_to:
   - conversations/
-upstream: conversation-history+transcript-save@fc834ee
 when_to_use: "Use when the user asks: \"chatgpt export\", \"claude export\", \"perplexity export\", \"conversation history\", \"import my conversations\"."
 ---
 
@@ -255,11 +254,10 @@ backlinks, and deeper enrichment route through the existing
 [ingest](../ingest/SKILL.md) / [enrich](../enrich/SKILL.md) skills — do not
 re-implement them here.
 
-## Three Invariants (root-caused upstream — do not reintroduce)
+## Three Invariants (do not reintroduce)
 
-An upstream deployment of this pipeline silently lost days of transcripts.
-The root cause was three stacked bugs; the fixes are structural. Preserve
-them in any archiver you build with this skill:
+Breaking any of these silently loses transcripts; the fixes are structural.
+Preserve them in any archiver you build with this skill:
 
 1. **Capture cadence must outrun store eviction.** Session stores rotate
    content out of their retained window. Content written early in a long
@@ -419,8 +417,8 @@ Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) 
 ## Dedup (sharp boundaries)
 
 - **[chat-connectors](../chat-connectors/SKILL.md)** — the LIVE, account-connected
-  lane: connect a ChatGPT/Claude account and sync new conversations
-  automatically (cookie/OAuth, incremental watermark, scheduled). This skill owns
+  lane: syncs new conversations from a connected ChatGPT/Claude account (that
+  skill covers how an account connects and what is stored). This skill owns
   the EXPORT-FILE lane (a downloaded `conversations.json`) and ALL retrieval/
   tracing. Route "connect my chatgpt / keep my conversations synced" there;
   route "I downloaded my export" / "when did I first discuss X" here. Perplexity
@@ -477,8 +475,6 @@ This skill guarantees:
 - Tracing answers cite dated slugs and verbatim quotes; negative answers
   ("never discussed") come only after synonym retries and a facts-arm check.
 - Output written under the directories listed in `writes_to:`.
-- Privacy contract preserved: no real names in examples or reports, no
-  fork-specific filesystem path literals, no upstream-fork references.
+- Examples and reports use placeholder names and paths.
 
-The full behavior contract is documented in the body sections above; this
-section exists for the conformance test.
+The full behavior contract is documented in the body sections above.

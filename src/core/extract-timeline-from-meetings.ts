@@ -123,7 +123,7 @@ export async function extractTimelineFromMeetings(
         AND deleted_at IS NULL
         AND ${quarantineFilterFragment('pages')}
         ${sourceFilter}
-      ORDER BY effective_date DESC NULLS LAST, slug`,
+      ORDER BY effective_date DESC NULLS LAST, slug COLLATE "C"`,
     meetingParams,
   );
 

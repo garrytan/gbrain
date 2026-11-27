@@ -13,7 +13,8 @@ import { execFileSync } from 'child_process';
 import { join } from 'path';
 import { runSources } from '../src/commands/sources.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
-import { countSourcePages } from '../src/core/engine-sql/sources.ts';
+import { countSourcePages, deleteSourceRecord, readSourceDeleteImpact } from '../src/core/engine-sql/sources.ts';
+import { renderFragment, type SqlFragment } from '../src/core/engine-sql/fragment.ts';
 import { withTypedSourceReads } from './helpers/typed-source-reads.ts';
 
 // ── Stub engine that records queries ───────────────────────
@@ -40,6 +41,13 @@ function makeStub(rowsByPattern: Record<string, unknown[]> = {}, opts: { appears
     if (sql.includes('FROM persistence_brain')) return [{ enabled: false }] as never; // #6482: the strict mode reader needs one well-formed unmanaged row.
     return [] as never;
   };
+
+  // The executor the typed members run on: a fragment renders to the text and params executeRaw records.
+  const recording = { executeRaw, run: async (fragment: SqlFragment) => {
+    const { text, params } = renderFragment(fragment);
+    const rows = (await executeRaw(text, params)) as unknown[];
+    return { rows, affectedRows: rows.length };
+  } };
 
   const setConfig = async (key: string, value: string) => {
     configSet.push({ key, value });
@@ -73,10 +81,28 @@ function makeStub(rowsByPattern: Record<string, unknown[]> = {}, opts: { appears
     kind: 'pglite' as const,
     executeRaw,
     countSourcePages: (sourceId: string, o?: { includeDeleted?: boolean }) => countSourcePages({ executeRaw } as never, sourceId, o),
+    // The delete preview and the delete run the real engine-sql members over the recording executeRaw too.
+    readSourceDeleteImpact: (sourceId: string) => readSourceDeleteImpact(recording as never, sourceId),
+    deleteSourceRecord: (sourceId: string, o?: { expiredArchiveOnly?: boolean }) => deleteSourceRecord(recording as never, sourceId, o),
+    listOauthClients: async () => [],
     insertSource,
     getSource,
     listSourceRecords,
     listLocalPathSources,
+    // `sources federate` holds the row and replaces the whole config through typed members; the stub records the
+    // replacement as one UPDATE call (config as JSON text), the shape the federate tests read.
+    lockSourceRow: async (id: string) => detailRows().find(r => r.id === id) ?? null,
+    replaceSourceConfig: async (id: string, config: Record<string, unknown>) => {
+      calls.push({ sql: 'UPDATE sources SET config', params: [JSON.stringify(config), id] });
+      return true;
+    },
+    renameSource: async (id: string, name: string) => {
+      calls.push({ sql: 'UPDATE sources SET name', params: [name, id] });
+      return true;
+    },
+    // The federation warning's exposed-pages read: this brain has no remote-written page.
+    readFederationExposedPages: async () => [],
+    listAccessTokens: async () => [],
     // The strict mode reader is a typed method; it answers from the same fake rows as executeRaw.
     readManagedModeRows: () => executeRaw('SELECT enabled FROM persistence_brain WHERE singleton=1'),
     setConfig,
@@ -84,6 +110,10 @@ function makeStub(rowsByPattern: Record<string, unknown[]> = {}, opts: { appears
     listActiveAccessMembers: async () => [],
     // The audience check reads client usage through a typed method; no clients means a personal brain.
     readClientOpUsage: async () => [],
+    // The scope-source check reads source configs through a typed method; no source here is a scope source.
+    readScopeSourceConfigs: async () => [],
+    // `sources unfederate` names the member keys still reading the source through a typed method; this brain has none.
+    listKeysReadingSource: async () => [],
     transaction: async (fn: (tx: BrainEngine) => Promise<unknown>) => fn(engine),
     // Unused methods throw if called accidentally during these tests.
     getConfig: async () => null,

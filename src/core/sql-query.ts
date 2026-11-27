@@ -30,7 +30,7 @@ export type SqlQuery = (strings: TemplateStringsArray, ...values: SqlValue[]) =>
  * auto-stringify path that caused the original silent-data-loss incident.
  */
 export function sqlQueryForEngine(engine: BrainEngine): SqlQuery {
-  return async (strings: TemplateStringsArray, ...values: SqlValue[]) => {
+  const sql: SqlQuery = async (strings: TemplateStringsArray, ...values: SqlValue[]) => {
     for (const value of values) {
       assertSqlValue(value);
     }
@@ -39,6 +39,14 @@ export function sqlQueryForEngine(engine: BrainEngine): SqlQuery {
     }, '');
     return engine.executeRaw(query, values);
   };
+  return Object.defineProperty(sql, ENGINE_OF, { value: engine });
+}
+
+const ENGINE_OF = Symbol('sqlQueryForEngine.engine');
+
+/** The engine a sqlQueryForEngine tag runs on, so a caller handed only the tag can use the engine's typed members. */
+export function engineOfSqlQuery(sql: SqlQuery): BrainEngine | undefined {
+  return (sql as SqlQuery & { [ENGINE_OF]?: BrainEngine })[ENGINE_OF];
 }
 
 function assertSqlValue(value: unknown): asserts value is SqlValue {

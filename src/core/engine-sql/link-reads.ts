@@ -75,14 +75,14 @@ export async function listJunkEntityHubs(exec: LegacyUnscopedRead, opts: { edgeT
               WHERE t.slug = p.slug AND t.source_id <> p.source_id AND t.deleted_at IS NULL
                 AND (t.frontmatter ->> 'google_contact_id') IS NULL
                 AND COALESCE(ts.config ->> 'kind', '') <> ALL(${[...CONNECTOR_SOURCE_KINDS]}::text[])
-              ORDER BY (t.source_id = 'default') DESC, t.source_id LIMIT 1) AS canonical_twin_source
+              ORDER BY (t.source_id = 'default') DESC, t.source_id COLLATE "C" LIMIT 1) AS canonical_twin_source
      FROM edge_counts ec
      JOIN pages p ON p.id = ec.page_id AND p.deleted_at IS NULL
      LEFT JOIN sources s ON s.id = p.source_id
      LEFT JOIN chunk_counts cc ON cc.page_id = ec.page_id
      WHERE COALESCE(cc.chunks, 0) <= ${opts.maxChunks}
        AND COALESCE(p.frontmatter ->> 'junk_hub_exempt', 'false') <> 'true'
-     ORDER BY ec.edges DESC
+     ORDER BY ec.edges DESC, ec.page_id
      LIMIT ${opts.limit}`);
 }
 
@@ -98,6 +98,52 @@ export async function countEntityPages(exec: LegacyUnscopedRead, filter: EntityT
       WHERE ${isEntity} AND pages.deleted_at IS NULL
         ${opts?.sourceId ? sqlFragment`AND pages.source_id = ${opts.sourceId}::text` : sqlFragment``}`);
   return Number((await exec.executeRaw<{ count: number }>(text, params))[0]?.count ?? 0);
+}
+
+/** The page feature `entityFeatureCoverage` looks for: an inbound link, or a timeline entry. */
+export type EntityCoverageFeature = 'links' | 'timeline';
+
+/** The row that marks a sampled entity `s` as having each feature. */
+const COVERAGE_FEATURE_MATCH = {
+  links: 'SELECT 1 FROM links f WHERE f.to_page_id = s.id',
+  timeline: 'SELECT 1 FROM timeline_entries f WHERE f.page_id = s.id',
+} as const;
+
+/**
+ * `{ sampleSize, matched }` over the live unquarantined entity pages under `filter`: how many there are (or how
+ * many a TABLESAMPLE BERNOULLI of `samplePercent` drew) and how many of them have `feature` (doctor
+ * entity_link_coverage and timeline_coverage, onboard impact capture). Both counts come from the same sampled
+ * rows, so the ratio never exceeds 100%.
+ */
+export async function entityFeatureCoverage(exec: LegacyUnscopedRead, filter: EntityTypeFilter, feature: EntityCoverageFeature, opts?: { samplePercent?: number }): Promise<{ sampleSize: number; matched: number }> {
+  if (!Object.hasOwn(COVERAGE_FEATURE_MATCH, feature)) throw new Error(`entityFeatureCoverage: unknown feature ${String(feature)}`);
+  const pct = opts?.samplePercent;
+  if (pct !== undefined && !(Number.isFinite(pct) && pct > 0 && pct <= 100)) {
+    throw new Error(`entityFeatureCoverage: samplePercent must be a number in (0, 100], got ${String(pct)}`);
+  }
+  const sample = pct === undefined ? '' : `TABLESAMPLE BERNOULLI (${pct})`;
+  const { text, params } = renderFragment(sqlFragment`WITH sampled_entities AS (
+         SELECT p.id
+           FROM pages p ${trustedSql(sample)}
+          WHERE ${entityTypePredicateSql('p', filter)} AND p.deleted_at IS NULL AND ${trustedSql(quarantineFilterFragment('p'))}
+       )
+       SELECT
+         COUNT(*)::int AS sample_size,
+         COUNT(*) FILTER (
+           WHERE EXISTS (${trustedSql(COVERAGE_FEATURE_MATCH[feature])})
+         )::int AS matched
+         FROM sampled_entities s`);
+  const row = (await exec.executeRaw<{ sample_size: number; matched: number }>(text, params))[0];
+  return { sampleSize: Number(row?.sample_size ?? 0), matched: Number(row?.matched ?? 0) };
+}
+
+/** Live meeting pages with an effective date: what extract-timeline-from-meetings can read (doctor timeline_coverage). */
+export async function countDatedMeetingPages(exec: LegacyUnscopedRead): Promise<number> {
+  const rows = await exec.executeRaw<{ count: number }>(
+    `SELECT COUNT(*)::int AS count FROM pages
+         WHERE type = 'meeting' AND effective_date IS NOT NULL AND deleted_at IS NULL`,
+  );
+  return Number(rows[0]?.count ?? 0);
 }
 
 /**

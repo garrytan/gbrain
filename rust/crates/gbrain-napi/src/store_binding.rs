@@ -8,7 +8,7 @@
 //!   store codes in the README;
 //! - a call made while the brain is closed rejects with `store_closed`.
 
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -23,6 +23,7 @@ use serde_json::Value;
 use crate::binding::{Pool, spawn};
 use crate::error::TaskError;
 use crate::pool;
+use crate::store_bind::bind_into;
 
 type Slot = Arc<Mutex<Option<Arc<Store>>>>;
 
@@ -67,6 +68,12 @@ pub struct BrainOpenOptions {
     pub embedding_dimensions: Option<u32>,
     /// What a fresh brain records as config `chunk_strategy`.
     pub chunk_strategy: Option<String>,
+    /// A fresh brain records the write gate's scan baseline under this detector version (the
+    /// TypeScript `WRITE_GATE_DETECTOR_VERSION`).
+    pub write_gate_detector_version: Option<u32>,
+    /// False: the directory must already hold a brain; nothing is created and the open rejects `store_missing`.
+    /// Absent or true creates a missing brain, as before.
+    pub create_missing: Option<bool>,
 }
 
 #[napi]
@@ -76,6 +83,8 @@ pub struct Brain {
     /// Bumped by every `close`. An `open` still queued when `close` is called sees a newer value
     /// and refuses, so a close never resolves while a queued open can still take the brain's lock.
     closes: Arc<AtomicU64>,
+    /// True while a `bind` on this handle is running, so a second one is refused at once.
+    binding: Arc<AtomicBool>,
 }
 
 impl Brain {
@@ -108,23 +117,20 @@ impl Brain {
 
     /// Runs `open` on this handle's pool and makes the store it returns this handle's store: how a
     /// handle comes to run on a store bound to a transaction (`families/transactions.rs`). Rejects
-    /// `invalid_state` when this handle is already open. `run` then works unchanged.
+    /// `invalid_state` when this handle is already open or binding, and `store_closed` when `close`
+    /// was called on it after the bind was queued. `run` then works unchanged. The wait inside
+    /// `open` does not hold the handle's slot (`store_bind.rs`).
     pub(crate) fn bind<'env>(
         &self,
         env: &'env Env,
         open: impl FnOnce() -> Result<Store, StoreError> + Send + 'static,
     ) -> napi::Result<Object<'env>> {
         let slot = self.slot.clone();
+        let binding = self.binding.clone();
+        let closes = self.closes.clone();
+        let closes_at_call = closes.load(Ordering::SeqCst);
         spawn(env, &self.pool, move || {
-            let mut guard = slot.lock().unwrap_or_else(|e| e.into_inner());
-            if guard.is_some() {
-                return Err(TaskError::new(
-                    gbrain_store::error::INVALID_STATE,
-                    "this handle already has a brain open; close it first",
-                ));
-            }
-            *guard = Some(Arc::new(open().map_err(task_error)?));
-            Ok(Value::Null)
+            bind_into(&slot, &binding, &closes, closes_at_call, open)
         })
     }
 }
@@ -138,6 +144,7 @@ impl Brain {
             pool: pool.pool.clone(),
             slot: Arc::new(Mutex::new(None)),
             closes: Arc::new(AtomicU64::new(0)),
+            binding: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -194,6 +201,10 @@ impl Brain {
                 if let Some(strategy) = options.chunk_strategy {
                     opts.initial_config
                         .push(("chunk_strategy".into(), strategy));
+                }
+                opts.write_gate_detector_version = options.write_gate_detector_version;
+                if let Some(create) = options.create_missing {
+                    opts.create_missing = create;
                 }
             }
             // Holding the slot while opening makes a second `open` on this handle wait, then see

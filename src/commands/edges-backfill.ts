@@ -12,6 +12,7 @@
  * Each batch of BATCH_SIZE (200) chunks is its own transaction; the
  * caller can Ctrl-C at any time and re-run safely.
  */
+import { sortSourcesById } from '../core/source-rows.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { resolveSymbolEdgesIncremental } from '../core/chunkers/symbol-resolver.ts';
 import { resolveSourceId } from '../core/source-resolver.ts';
@@ -84,16 +85,10 @@ export async function runEdgesBackfill(engine: BrainEngine, args: string[]): Pro
   // Build the sourceId list.
   let sourceIds: string[];
   if (opts.allSources) {
-    try {
-      const rows = await engine.executeRaw<{ id: string }>(
-        `SELECT id FROM sources WHERE archived = false ORDER BY id`,
-        [],
-      );
-      sourceIds = rows.map((r) => r.id);
-      if (sourceIds.length === 0) sourceIds = ['default'];
-    } catch {
-      sourceIds = ['default'];
-    }
+    // The live sources in byte order (listAllSources leaves archived ones out). A refused or failed read throws: falling
+    // back to ['default'] would skip every other source and still report success.
+    sourceIds = sortSourcesById(await engine.listAllSources()).map((r) => r.id);
+    if (sourceIds.length === 0) sourceIds = ['default'];
   } else if (opts.source) {
     sourceIds = [opts.source];
   } else {

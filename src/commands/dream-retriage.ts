@@ -476,14 +476,7 @@ export async function runDreamRetriage(engine: BrainEngine | null, args: string[
   let reconcile: ReconcileStats | null = null;
   if (parsed.reconcileQueue) {
     const queue = new MinionQueue(engine);
-    const rows = await engine.executeRaw<QueueCandidate>(
-      `SELECT id, queue, status, idempotency_key,
-              COALESCE(NULLIF(data->>'source_id', ''), 'default') AS source_id
-         FROM minion_jobs
-        WHERE name = 'subagent'
-          AND status IN ('waiting', 'delayed', 'paused')
-          AND (idempotency_key LIKE 'dream:synth-v2:%' OR queue LIKE 'dream-inline-%')`,
-    );
+    const rows: QueueCandidate[] = await engine.listDreamQueueCandidates();
     // #4250: the queue-LIKE arm pulls in NON-synth children stranded in
     // private per-run queues (patterns mints dream-inline-* queues too).
     // Doctor's orphaned_private_queue check points operators HERE; a repair
@@ -543,13 +536,7 @@ export async function runDreamRetriage(engine: BrainEngine | null, args: string[
     const { resolveStealGraceSeconds } = await import('../core/db-lock.ts');
     const { LOCK_TTL_MINUTES } = await import('../core/cycle.ts');
     const stealGraceSecs = resolveStealGraceSeconds(LOCK_TTL_MINUTES);
-    const liveLocks = await engine.executeRaw<{ id: string; acquired_epoch_ms: string | number | null }>(
-      `SELECT id, EXTRACT(EPOCH FROM acquired_at) * 1000 AS acquired_epoch_ms
-         FROM gbrain_cycle_locks
-        WHERE (ttl_expires_at > NOW()
-               OR last_refreshed_at > NOW() - make_interval(secs => ${Number(stealGraceSecs)}))
-          AND id LIKE 'gbrain-cycle%'`,
-    );
+    const liveLocks = await engine.listLiveDreamCycleLocks(stealGraceSecs);
     // Structured-review round 2 P2: cycle locks are per-source
     // (`gbrain-cycle:<source>`) — a cycle running for source A must not
     // suppress conversions for source B indefinitely. Only the legacy bare
@@ -594,10 +581,7 @@ export async function runDreamRetriage(engine: BrainEngine | null, args: string[
     const cancelRow = async (id: number): Promise<'cancelled' | 'already_terminal'> => {
       // Pre-cancel status re-check (C9): a candidate claimed by a live worker
       // between the snapshot SELECT and now is skipped, not killed.
-      const fresh = await engine.executeRaw<{ status: string }>(
-        `SELECT status FROM minion_jobs WHERE id = $1`, [id],
-      );
-      const status = fresh[0]?.status;
+      const status = (await engine.readDreamJobStatus(id))?.status;
       if (status !== 'waiting' && status !== 'delayed' && status !== 'paused') return 'already_terminal';
       const r = await queue.cancelJob(id);
       return r ? 'cancelled' : 'already_terminal';

@@ -14,6 +14,8 @@ import { invalidateGitListingCache, knownOutsideGitRepo, noteGitFailure } from '
 import { hasUnresolvedDbOnlyDeclaration, loadStorageConfig } from './storage-config.ts';
 import { GIT_READ_ENV, gitChildEnv } from './git-env.ts';
 import { recordCommit, recordIntent } from './git/commit-ledger.ts';
+import { OWNED_FOLDER_ROOT } from './owned-folder/root.ts';
+import { rethrowCapabilityRefusal } from './engine-capability-refusal.ts';
 
 /**
  * v0.32.7 CJK wave (codex post-merge F4): resolve a slug by `pages.source_path`
@@ -129,7 +131,8 @@ export async function resolveSlugsForRemovedPaths(
       try {
         const m = await engine.resolveSlugsByPaths(paths.slice(i, i + DELETE_BATCH_SIZE), { sourceId });
         for (const [p, s] of m) exact.set(p, s);
-      } catch {
+      } catch (error) {
+        rethrowCapabilityRefusal(error);
         // Best-effort — fall through to the verified phase-2 fallback.
       }
     }
@@ -140,14 +143,11 @@ export async function resolveSlugsForRemovedPaths(
         // row's record must not name a slug for the delete side to act on),
         // and the pick is ORDER BY-deterministic when a multi-source brain
         // holds several rows for the same source_path.
-        const rows = await engine.executeRaw<{ slug: string }>(
-          `SELECT slug FROM pages WHERE source_path = $1 AND deleted_at IS NULL
-            ORDER BY source_id, slug LIMIT 1`,
-          [p],
-        );
-        if (rows.length > 0 && rows[0].slug) exact.set(p, rows[0].slug);
-      } catch {
-        // Best-effort.
+        const slug = await engine.readFirstLiveSlugAtPath(p);
+        if (slug) exact.set(p, slug);
+      } catch (error) {
+        // Best-effort, but a refused read is not a miss.
+        rethrowCapabilityRefusal(error);
       }
     }
   }
@@ -156,11 +156,11 @@ export async function resolveSlugsForRemovedPaths(
   const unresolved = paths.filter(p => !exact.has(p));
   for (let i = 0; sourceId !== undefined && i < unresolved.length; i += DELETE_BATCH_SIZE) {
     try {
-      const rows = await engine.executeRaw<{ source_path: string; slugs: string[] }>(`SELECT source_path, array_agg(slug ORDER BY slug) AS slugs FROM pages
-        WHERE source_id = $1 AND deleted_at IS NULL AND source_path = ANY($2::text[]) GROUP BY source_path HAVING count(*) > 1`, [sourceId, unresolved.slice(i, i + DELETE_BATCH_SIZE)]);
+      const rows = await engine.listPathTwinSlugs(sourceId, unresolved.slice(i, i + DELETE_BATCH_SIZE));
       for (const row of rows) twins.set(row.source_path, row.slugs);
-    } catch {
+    } catch (error) {
       // Best-effort, like phase 1.
+      rethrowCapabilityRefusal(error);
     }
   }
   const fallbacks: Array<{ path: string; slug: string }> = [];
@@ -188,24 +188,15 @@ export async function resolveSlugsForRemovedPaths(
   for (let i = 0; i < fallbacks.length; i += DELETE_BATCH_SIZE) {
     const chunk = fallbacks.slice(i, i + DELETE_BATCH_SIZE).map(f => f.slug);
     try {
-      const params: unknown[] = [...chunk];
-      const placeholders = chunk.map((_, j) => `$${j + 1}`).join(', ');
-      let where = `slug IN (${placeholders}) AND deleted_at IS NULL`;
-      if (sourceId !== undefined) {
-        params.push(sourceId);
-        where += ` AND source_id = $${params.length}`;
-      }
-      const rows = await engine.executeRaw<{ slug: string; source_path: string | null }>(
-        `SELECT slug, source_path FROM pages WHERE ${where} ORDER BY source_id, slug`,
-        params,
-      );
+      const rows = await engine.listLiveSlugOrigins(chunk, sourceId);
       for (const r of rows) {
         const list = originsBySlug.get(r.slug);
         if (list) list.push(r.source_path);
         else originsBySlug.set(r.slug, [r.source_path]);
       }
-    } catch {
-      // Fail-open: without origin evidence, keep the legacy fallback.
+    } catch (error) {
+      // Fail-open: without origin evidence, keep the legacy fallback. A refused read is not missing evidence.
+      rethrowCapabilityRefusal(error);
     }
   }
   for (const f of fallbacks) {
@@ -561,7 +552,7 @@ export function createSyncBaselineCommit(repoPath: string): void {
   // `:!dir` shorthand) so a db_only dir name that itself starts with a
   // pathspec magic character like `:` is excluded literally rather than
   // reinterpreted (round 9, P2).
-  const excludePathspecs = dbOnlyDirs.map((dir) => `:(exclude,literal)${dir}`);
+  const excludePathspecs = [...dbOnlyDirs, OWNED_FOLDER_ROOT].map((dir) => `:(exclude,literal)${dir}`);
   // Clear the index before staging (round 6, P1): the unborn-HEAD
   // recovery site can reach this function with a repo whose index
   // already has entries staged from some OTHER prior operation (a manual

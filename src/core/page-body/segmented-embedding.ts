@@ -12,14 +12,11 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import type { ChunkInput } from '../types.ts';
-import { jsonRowBatches } from '../batch-rows.ts';
 import { wrapChunkTextsForStoredMode } from '../embedding-context.ts';
 import { embeddingInputHash, plainEmbeddingTier } from '../embedding-input-hash.ts';
 import { meterPageBatch, spendGrant } from '../page-embedding-budget.ts';
 import { acquirePageEmbeddingLease, vectorlessChunkIndexes } from '../page-embedding-lease.ts';
 import { embeddingInputContext, embeddingWriteTarget } from '../page-state/projections.ts';
-import { quoteIdentifier, vectorCastSuffix } from '../search/embedding-column.ts';
-import { chunkGenerationFilter, currentTextProjectionFilter } from '../search/safe-chunks.ts';
 import { buildSegmentedProjection } from './projection.ts';
 import { isSegmentedPage } from './page-shape.ts';
 import type { BodyStorage, SegmentedEmbedPage, SegmentedEmbedRef } from './types.ts';
@@ -60,19 +57,13 @@ export async function readSealedSegmentedEmbedPage(engine: BrainEngine,
   const ref = { sourceId: page.source_id, slug: page.slug };
   const sealed = await readSegmentedEmbedPage(engine, ref);
   if (sealed || !build || !isSegmentedPage(page)) return sealed;
-  const [unsealed] = await engine.executeRaw(`SELECT 1 FROM pages p JOIN sources s ON s.id = p.source_id
-    WHERE p.source_id = $1 AND p.slug = $2 AND p.body_storage = 'segmented' AND p.deleted_at IS NULL AND NOT s.archived`, [ref.sourceId, ref.slug]);
+  const unsealed = await engine.hasLiveSegmentedPage(ref.sourceId, ref.slug);
   return unsealed && (await buildSegmentedProjection(engine, ref)).sealed ? readSegmentedEmbedPage(engine, ref) : null;
 }
 
 /** A dry run's counts: the page's live rows and those without a vector in the write column. */
-export async function countSegmentedEmbedRows(engine: Pick<BrainEngine, 'executeRaw' | 'getConfigValues'>, pageId: number): Promise<{ total: number; stale: number }> {
-  const col = quoteIdentifier((await embeddingWriteTarget(engine)).column.name);
-  const [row] = await engine.executeRaw<{ total: number; stale: number }>(
-    `SELECT count(*)::int AS total, count(*) FILTER (WHERE cc.${col} IS NULL)::int AS stale
-       FROM content_chunks cc JOIN pages p ON p.id = cc.page_id
-      WHERE cc.page_id = $1 AND ${currentTextProjectionFilter('p')} AND ${chunkGenerationFilter('p', 'cc')}`, [pageId]);
-  return { total: Number(row?.total ?? 0), stale: Number(row?.stale ?? 0) };
+export async function countSegmentedEmbedRows(engine: Pick<BrainEngine, 'countSegmentedEmbedRows' | 'getConfigValues'>, pageId: number): Promise<{ total: number; stale: number }> {
+  return engine.countSegmentedEmbedRows(pageId, (await embeddingWriteTarget(engine)).column.name);
 }
 
 /**
@@ -80,17 +71,10 @@ export async function countSegmentedEmbedRows(engine: Pick<BrainEngine, 'execute
  * per-page cap spends on the newest rows; `occurrenceIds` limits them to the occurrences a write added,
  * `includeEmbedded` takes rows that already hold a vector too (`gbrain embed --all`).
  */
-export async function listSegmentedStaleRows(engine: Pick<BrainEngine, 'executeRaw'>, pageId: number, column: string,
+export async function listSegmentedStaleRows(engine: Pick<BrainEngine, 'listSegmentedStaleRows'>, pageId: number, column: string,
   opts: { beforeChunkIndex: number | null; limit: number; occurrenceIds?: readonly number[]; includeEmbedded?: boolean }): Promise<SegmentedStaleRow[]> {
-  const col = quoteIdentifier(column);
-  return engine.executeRaw<SegmentedStaleRow>(
-    `SELECT cc.chunk_index, cc.chunk_text, cc.chunk_source
-       FROM content_chunks cc JOIN pages p ON p.id = cc.page_id
-      WHERE cc.page_id = $1 AND ($5::boolean OR cc.${col} IS NULL) AND ($2::int IS NULL OR cc.chunk_index < $2::int)
-        AND ($4::bigint[] IS NULL OR cc.occurrence_id = ANY($4::bigint[]))
-        AND ${currentTextProjectionFilter('p')} AND ${chunkGenerationFilter('p', 'cc')}
-      ORDER BY cc.chunk_index DESC LIMIT $3`,
-    [pageId, opts.beforeChunkIndex, opts.limit, opts.occurrenceIds ? [...opts.occurrenceIds] : null, opts.includeEmbedded ?? false]);
+  const rows = await engine.listSegmentedStaleRows(pageId, column, opts);
+  return rows.map(row => ({ ...row, chunk_index: Number(row.chunk_index) }));
 }
 
 /**
@@ -129,10 +113,8 @@ export async function embedSegmentedRows(engine: BrainEngine, page: SegmentedEmb
 }
 
 /** The recorded embedding input of a segmented page's live rows at `chunkIndexes`, as read now (null: none recorded). */
-async function readChunkInputHashes(engine: Pick<BrainEngine, 'executeRaw'>, pageId: number, chunkIndexes: readonly number[]): Promise<Map<number, string | null>> {
-  const rows = await engine.executeRaw<{ chunk_index: number; embedding_input_hash: string | null }>(
-    `SELECT cc.chunk_index, cc.embedding_input_hash FROM content_chunks cc JOIN pages p ON p.id = cc.page_id
-      WHERE cc.page_id = $1 AND cc.chunk_index = ANY($2::int[]) AND ${chunkGenerationFilter('p', 'cc')}`, [pageId, [...chunkIndexes]]);
+async function readChunkInputHashes(engine: Pick<BrainEngine, 'readSegmentChunkInputHashes'>, pageId: number, chunkIndexes: readonly number[]): Promise<Map<number, string | null>> {
+  const rows = await engine.readSegmentChunkInputHashes(pageId, chunkIndexes);
   return new Map(rows.map(row => [Number(row.chunk_index), row.embedding_input_hash]));
 }
 
@@ -151,8 +133,6 @@ export interface SegmentedVectorUpdate { chunk_index: number; chunk_text: string
  */
 export async function installSegmentedVectors(engine: BrainEngine, page: SegmentedEmbedPage, target: Awaited<ReturnType<typeof embeddingWriteTarget>>,
   vectors: readonly SegmentedVectorUpdate[], beforeInstall?: (tx: BrainEngine) => Promise<void | boolean>): Promise<number> {
-  const updates = vectors.map(v => ({ chunk_index: v.chunk_index, chunk_text: v.chunk_text, embedding: `[${Array.from(v.vector).join(',')}]`, hash: v.hash, expected: v.expected }));
-  const col = quoteIdentifier(target.column.name);
   return engine.transaction(async tx => {
     await tx.lockPageKeys([{ sourceId: page.source_id, slug: page.slug }]);
     if (await beforeInstall?.(tx) === false) return 0;
@@ -161,41 +141,24 @@ export async function installSegmentedVectors(engine: BrainEngine, page: Segment
     if (!current || current.slug !== page.slug || current.title !== page.title
       || current.contextual_retrieval_mode !== page.contextual_retrieval_mode
       || now.column.name !== target.column.name || now.provenanceModel !== target.provenanceModel) return 0;
-    let installed = 0;
-    for (const batch of jsonRowBatches(updates, update => update)) {
-      installed += (await tx.executeRaw(`UPDATE content_chunks cc SET ${col} = v.embedding${vectorCastSuffix(target.column)},
-          embedding_input_hash = v.hash, embedded_at = now(), embedded_text_hash = md5(cc.chunk_text), model = COALESCE($3, cc.model),
-          embedding_pending_since = NULL
-        FROM jsonb_to_recordset($2::text::jsonb) AS v(chunk_index int, chunk_text text, embedding text, hash text, expected text), pages p
-        WHERE cc.page_id = $1 AND p.id = cc.page_id AND cc.chunk_index = v.chunk_index AND cc.chunk_text = v.chunk_text
-          AND cc.embedding_input_hash IS NOT DISTINCT FROM v.expected AND ${chunkGenerationFilter('p', 'cc')}
-        RETURNING cc.id`, [page.id, batch, target.model])).length;
-    }
-    return installed;
+    return tx.installSegmentedVectors(page.id, target.column, target.model, vectors);
   });
 }
 
 /** A live segment of a segmented page, newest first: its occurrence, text hash and entry state (manifest metadata only). */
 export interface LiveEmbedSegment { occurrenceId: number; sha256: Uint8Array; entryState: unknown }
 
-export async function listLiveEmbedSegments(engine: Pick<BrainEngine, 'executeRaw'>, pageId: number): Promise<LiveEmbedSegment[]> {
-  const rows = await engine.executeRaw<{ occurrence_id: number | string; sha256: Uint8Array; entry_state: unknown }>(
-    `SELECT m.occurrence_id, m.sha256, m.entry_state FROM page_body_manifest m JOIN pages p ON p.id = m.page_id
-      WHERE m.page_id = $1 AND m.staging_id IS NULL AND m.gen_from <= p.body_generation AND (m.gen_to IS NULL OR m.gen_to > p.body_generation)
-      ORDER BY m.seq DESC`, [pageId]);
+export async function listLiveEmbedSegments(engine: Pick<BrainEngine, 'listLiveEmbedSegments'>, pageId: number): Promise<LiveEmbedSegment[]> {
+  const rows = await engine.listLiveEmbedSegments(pageId);
   return rows.map(row => ({ occurrenceId: Number(row.occurrence_id), sha256: new Uint8Array(row.sha256), entryState: row.entry_state }));
 }
 
 export interface SegmentChunkRow { chunk_index: number; chunk_text: string; chunk_source: NonNullable<ChunkInput['chunk_source']>; embedding_input_hash: string | null }
 
 /** The live chunk rows of one segment of a segmented page in text order, with their recorded embedding inputs. */
-export async function listSegmentChunkRows(engine: Pick<BrainEngine, 'executeRaw'>, pageId: number, occurrenceId: number): Promise<SegmentChunkRow[]> {
-  const rows = await engine.executeRaw<SegmentChunkRow>(
-    `SELECT cc.chunk_index, cc.chunk_text, cc.chunk_source, cc.embedding_input_hash
-       FROM content_chunks cc JOIN pages p ON p.id = cc.page_id
-      WHERE cc.page_id = $1 AND cc.occurrence_id = $2 AND ${currentTextProjectionFilter('p')} AND ${chunkGenerationFilter('p', 'cc')}
-      ORDER BY cc.chunk_index`, [pageId, occurrenceId]);
-  return rows.map(row => ({ ...row, chunk_index: Number(row.chunk_index) }));
+export async function listSegmentChunkRows(engine: Pick<BrainEngine, 'listSegmentChunkRows'>, pageId: number, occurrenceId: number): Promise<SegmentChunkRow[]> {
+  const rows = await engine.listSegmentChunkRows(pageId, occurrenceId);
+  return rows.map(row => ({ ...row, chunk_index: Number(row.chunk_index), chunk_source: row.chunk_source as SegmentChunkRow['chunk_source'] }));
 }
 
 /**

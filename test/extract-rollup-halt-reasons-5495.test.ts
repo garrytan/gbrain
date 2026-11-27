@@ -34,6 +34,7 @@ import { runExtractFacts } from '../src/core/cycle/extract-facts.ts';
 import { runPhaseWithStoredPageFixtures as runPhaseExtractAtoms } from './helpers/extract-atoms-page-fixtures.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
+import { upsertExtractRollupDay as rollupDaySql } from '../src/core/engine-sql/extract-bookkeeping.ts';
 
 const backends = testBackends();
 const engines: BrainEngine[] = [];
@@ -195,12 +196,21 @@ test('extract_atoms records a credentials abort as provider_auth; an extract_fac
       if (sql.includes('FROM persistence_brain')) return [{ enabled: false }];
       return [];
     },
+    // The rollup upsert is a typed member; it runs the engine-sql statement through this stub's executeRaw.
+    async upsertExtractRollupDay(d: never, o?: { preV141?: boolean }) { return rollupDaySql(this as unknown as BrainEngine, d, o); },
     ...stubSourceMembers([]), // the typed source and guest reads answer an empty sources table, as the raw stub did
     // The empty-fence guard reads its per-page count through the typed member: one guard-held page with three
     // unfenced rows (the bigint count arrives as text, as on Postgres), as the raw stub's COUNT(*) AS n answer did.
     async countLegacyFactsPending() { return [{ entity_slug: 'people/held', n: '3' }]; },
     // The fence step lists unfenced rows through the typed member; the raw stub answered that read with no rows.
     async listUnfencedFactRows() { return []; },
+    async countUnfencedFactGroups() { return []; },
+    // The ontology-hold and deleted-page reads moved off executeRaw onto typed members; the raw stub answered both with no rows.
+    async listOntologyObservationSlugs() { return []; },
+    async listDeletedPageSlugsWithActiveFacts() { return []; },
+    // The held-fact move's two reads (held-fact-move.ts) moved off executeRaw onto typed members; the raw stub answered both with no rows.
+    async listHeldMoveRows() { return []; },
+    async listStruckHeldRows() { return []; },
     async getAllSlugs() { return []; }, async getPage() { return null; },
     async deleteFactsForPage() { return { deleted: 0 }; }, async insertFacts() { return { inserted: 0, ids: [], warnings: [], deleted: 0 }; },
     async transaction<T>(fn: (tx: BrainEngine) => Promise<T>): Promise<T> { return fn(stub); },

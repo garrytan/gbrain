@@ -316,6 +316,16 @@ impl Store {
     }
 }
 
+/// The shadow follow (`seed/follow.rs`): removes the watermark of `page_id`. `false` when there is
+/// none.
+pub(crate) fn remove_row(tx: &mut dyn KvWrite, page_id: u64) -> Result<bool> {
+    if tx.get(&key(page_id))?.is_none() {
+        return Ok(false);
+    }
+    tx.delete(&key(page_id))?;
+    Ok(true)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

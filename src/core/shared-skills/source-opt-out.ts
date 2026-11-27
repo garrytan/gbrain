@@ -45,8 +45,10 @@ async function readRecord(engine: BrainEngine, sourceId: string, incarnation: st
 }
 
 export async function readSharedSkillsSourceView(engine: BrainEngine, sourceId: string): Promise<SharedSkillsSourceView> {
-  const [source] = await engine.executeRaw<{ config: unknown; incarnation: string }>('SELECT config,incarnation FROM sources WHERE id=$1 AND NOT archived', [sourceId]);
-  if (!source) throw sharedSkillsNotFound(sourceId);
+  // The typed source read (engine-sql/write-misc.ts readSourceState); an archived source reads as missing.
+  const state = await engine.readSourceState(sourceId);
+  if (!state || state.archived) throw sharedSkillsNotFound(sourceId);
+  const source = { config: state.config, incarnation: String(state.incarnation) };
   const stored = parseSourceConfig(source.config).shared_skills;
   const configured = typeof stored === 'boolean' ? stored : null;
   const policy = await sharedSkillSourcePolicyOrPreserve(engine, sourceId);

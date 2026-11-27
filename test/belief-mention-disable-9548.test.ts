@@ -129,8 +129,8 @@ for (const engineCase of testBackends().map(beliefEngineCase)) {
           await twoSources(b);
           const scanned = Promise.withResolvers<void>(), publish = Promise.withResolvers<void>();
           const deleted = Promise.withResolvers<number>(), release = Promise.withResolvers<void>();
-          const disabling = pausing(b.engine, async (tx, member, args) => {
-            if (member !== 'executeRaw' || !String(args[0]).includes('INSERT INTO mention_index_status')) return;
+          const disabling = pausing(b.engine, async (tx, member) => {
+            if (member !== 'writeMentionIndexStatus') return;
             deleted.resolve(await pid(tx));
             await release.promise;
           });

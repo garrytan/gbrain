@@ -1,0 +1,2 @@
+# Declined options of served members that the stop-pin harness now flags. The member and the case are byte-identical at batch 11 (24ea949f3f), so each stopped there too; none is a merge break (each names its owning lane; due 2026-11-26 UTC).
+# Columns: parity file, case name, member that refused, owner, due date, what Rust declines.

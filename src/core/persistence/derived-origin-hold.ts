@@ -8,7 +8,7 @@
  * it. Each purge run tries the label again and drops the park once it lands; a park whose page was restored or purged is
  * pruned. Rows are exempt from the op_checkpoints TTL sweep. No engine-sql imports, so `engine-sql/pages.ts` may import it.
  */
-import type { SqlEngine } from './model.ts';
+import type { BrainEngine } from '../engine.ts';
 
 export const DERIVED_ORIGIN_PARK_OP = 'derived-origin-park';
 export const DERIVED_ORIGIN_PARKED_CODE = 'derived_origin_parked';
@@ -32,12 +32,8 @@ export function derivedOriginPurgeHold(alias: string): string {
   return `NOT EXISTS (SELECT 1 FROM op_checkpoints dop WHERE dop.op = '${DERIVED_ORIGIN_PARK_OP}' AND dop.fingerprint = ${alias}.id::text)`;
 }
 
-export async function parkDerivedOrigin(engine: SqlEngine, park: Omit<DerivedOriginPark, 'parked_at'>): Promise<void> {
-  const row: DerivedOriginPark = { ...park, parked_at: new Date().toISOString() };
-  await engine.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES($1,$2,$3::text::jsonb)
-    ON CONFLICT (op,fingerprint) DO UPDATE SET updated_at=now(), completed_keys=CASE WHEN (op_checkpoints.completed_keys->0) ? 'held_request_id' AND NOT (EXCLUDED.completed_keys->0) ? 'held_request_id'
-      THEN jsonb_build_array((EXCLUDED.completed_keys->0) || jsonb_strip_nulls(jsonb_build_object('held_request_id', op_checkpoints.completed_keys->0->'held_request_id',
-        'held_deleted_us', op_checkpoints.completed_keys->0->'held_deleted_us'))) ELSE EXCLUDED.completed_keys END`, [DERIVED_ORIGIN_PARK_OP, String(park.page_id), JSON.stringify([row])]);
+export async function parkDerivedOrigin(engine: Pick<BrainEngine, 'upsertDerivedOriginPark'>, park: Omit<DerivedOriginPark, 'parked_at'>): Promise<void> {
+  await engine.upsertDerivedOriginPark(park.page_id, { ...park, parked_at: new Date().toISOString() });
 }
 
 /**
@@ -50,65 +46,52 @@ export async function parkDerivedOrigin(engine: SqlEngine, park: Omit<DerivedOri
 export const OWED_PURGE_OP = 'owed-page-purge';
 export interface OwedPurge { source_id: string; page_id: number; deleted_us: string; request_id: string }
 
-const DELETED_US = (alias: string) => `floor(extract(epoch FROM ${alias}.deleted_at)*1000000)::bigint::text`;
-const OWED_TOMBSTONE = `EXISTS (SELECT 1 FROM pages p WHERE p.id::text = o.fingerprint AND p.deleted_at IS NOT NULL AND ${DELETED_US('p')} = o.completed_keys->0->>'deleted_us')`;
 
 /**
  * Records that the owner's purge `requestId` is owed for page `pageId`'s current tombstone; a page that is not a tombstone
  * records nothing. The page's park, when it holds that purge, is bound to the same tombstone (`held_deleted_us`), so a page
  * restored and deleted again never inherits the old hold (releaseStaleHolds).
  */
-export async function recordOwedPurge(engine: SqlEngine, pageId: number, requestId: string): Promise<void> {
-  await engine.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys)
-    SELECT $1, p.id::text, jsonb_build_array(jsonb_build_object('source_id', p.source_id, 'page_id', p.id, 'deleted_us', ${DELETED_US('p')}, 'request_id', $3::text))
-    FROM pages p WHERE p.id = $2 AND p.deleted_at IS NOT NULL
-    ON CONFLICT (op,fingerprint) DO UPDATE SET updated_at=now(), completed_keys=EXCLUDED.completed_keys
-      WHERE op_checkpoints.completed_keys->0->>'deleted_us' IS DISTINCT FROM EXCLUDED.completed_keys->0->>'deleted_us'`, [OWED_PURGE_OP, pageId, requestId]);
-  await engine.executeRaw(`UPDATE op_checkpoints o SET updated_at=now(), completed_keys=jsonb_set(o.completed_keys, '{0,held_deleted_us}', to_jsonb(${DELETED_US('p')}))
-    FROM pages p WHERE o.op=$1 AND o.fingerprint=p.id::text AND p.id=$2 AND p.deleted_at IS NOT NULL AND o.completed_keys->0->>'held_request_id' = $3::text`,
-    [DERIVED_ORIGIN_PARK_OP, pageId, requestId]);
+export async function recordOwedPurge(engine: Pick<BrainEngine, 'recordOwedPurgeRows'>, pageId: number, requestId: string): Promise<void> {
+  await engine.recordOwedPurgeRows(pageId, requestId);
 }
 
 /** Drops the owner purge a park holds once its page's tombstone is not the one the hold was recorded for (restored, deleted again). */
-export async function releaseStaleHolds(engine: SqlEngine): Promise<void> {
-  await engine.executeRaw(`UPDATE op_checkpoints o SET updated_at=now(), completed_keys=jsonb_build_array((o.completed_keys->0) - 'held_request_id' - 'held_deleted_us')
-    FROM pages p WHERE o.op=$1 AND o.fingerprint=p.id::text AND (o.completed_keys->0) ? 'held_deleted_us'
-      AND (p.deleted_at IS NULL OR ${DELETED_US('p')} <> o.completed_keys->0->>'held_deleted_us')`, [DERIVED_ORIGIN_PARK_OP]);
+export async function releaseStaleHolds(engine: Pick<BrainEngine, 'releaseStaleOriginParkHolds'>): Promise<void> {
+  await engine.releaseStaleOriginParkHolds(DERIVED_ORIGIN_PARK_OP);
 }
 
 /** Read-only: every owed purge whose tombstone still exists as recorded. */
-export async function readOwedPurges(engine: SqlEngine): Promise<OwedPurge[]> {
-  const rows = await engine.executeRaw<{ owed: OwedPurge | string }>(`SELECT o.completed_keys->0 AS owed FROM op_checkpoints o WHERE o.op=$1 AND ${OWED_TOMBSTONE}
-    ORDER BY o.fingerprint`, [OWED_PURGE_OP]);
-  return rows.map(row => typeof row.owed === 'string' ? JSON.parse(row.owed) as OwedPurge : row.owed).map(owed => ({ ...owed, page_id: Number(owed.page_id) }));
+export async function readOwedPurges(engine: Pick<BrainEngine, 'listOwedPurgeRecords'>): Promise<OwedPurge[]> {
+  // The fingerprint order never reaches output: the owed purges become a Set of page ids, which has no order to show.
+  const rows = await engine.listOwedPurgeRecords(OWED_PURGE_OP);
+  return rows.map(row => typeof row.owed === 'string' ? JSON.parse(row.owed) as OwedPurge : row.owed as OwedPurge).map(owed => ({ ...owed, page_id: Number(owed.page_id) }));
 }
 
 /** Drops the records whose tombstone was removed, restored or deleted again. */
-export async function pruneOwedPurges(engine: SqlEngine): Promise<void> {
-  await engine.executeRaw(`DELETE FROM op_checkpoints o WHERE o.op=$1 AND NOT ${OWED_TOMBSTONE}`, [OWED_PURGE_OP]);
+export async function pruneOwedPurges(engine: Pick<BrainEngine, 'pruneOwedPurgeRecords'>): Promise<void> {
+  await engine.pruneOwedPurgeRecords(OWED_PURGE_OP);
 }
 
 /** Removes the records of these pages; the purge that removes a page calls it in its transaction. */
-export async function clearOwedPurges(engine: SqlEngine, pageIds: readonly number[]): Promise<void> {
+export async function clearOwedPurges(engine: Pick<BrainEngine, 'deleteOriginHoldRows'>, pageIds: readonly number[]): Promise<void> {
   if (!pageIds.length) return;
-  await engine.executeRaw('DELETE FROM op_checkpoints WHERE op=$1 AND fingerprint = ANY($2::text[])', [OWED_PURGE_OP, pageIds.map(String)]);
+  await engine.deleteOriginHoldRows(OWED_PURGE_OP, pageIds);
 }
 
-export async function clearDerivedOriginParks(engine: SqlEngine, pageIds: readonly number[]): Promise<void> {
+export async function clearDerivedOriginParks(engine: Pick<BrainEngine, 'deleteOriginHoldRows'>, pageIds: readonly number[]): Promise<void> {
   if (!pageIds.length) return;
-  await engine.executeRaw('DELETE FROM op_checkpoints WHERE op=$1 AND fingerprint = ANY($2::text[])', [DERIVED_ORIGIN_PARK_OP, pageIds.map(String)]);
+  await engine.deleteOriginHoldRows(DERIVED_ORIGIN_PARK_OP, pageIds);
 }
 
-const TOMBSTONE = 'EXISTS (SELECT 1 FROM pages p WHERE p.id::text = o.fingerprint AND p.deleted_at IS NOT NULL)';
+export const TOMBSTONE = 'EXISTS (SELECT 1 FROM pages p WHERE p.id::text = o.fingerprint AND p.deleted_at IS NOT NULL)';
 
 /** Drops the parks of pages that were restored or purged. */
-export async function pruneDerivedOriginParks(engine: SqlEngine): Promise<void> {
-  await engine.executeRaw(`DELETE FROM op_checkpoints o WHERE o.op=$1 AND NOT ${TOMBSTONE}`, [DERIVED_ORIGIN_PARK_OP]);
+export async function pruneDerivedOriginParks(engine: Pick<BrainEngine, 'pruneOriginParkRecords'>): Promise<void> {
+  await engine.pruneOriginParkRecords(DERIVED_ORIGIN_PARK_OP);
 }
 
 /** Read-only: every park whose page is still a tombstone, oldest first. */
-export async function readDerivedOriginParks(engine: SqlEngine): Promise<DerivedOriginPark[]> {
-  const rows = await engine.executeRaw<{ park: DerivedOriginPark | string }>(
-    `SELECT o.completed_keys->0 AS park FROM op_checkpoints o WHERE o.op=$1 AND ${TOMBSTONE} ORDER BY o.updated_at, o.fingerprint`, [DERIVED_ORIGIN_PARK_OP]);
-  return rows.map(row => typeof row.park === 'string' ? JSON.parse(row.park) as DerivedOriginPark : row.park);
+export async function readDerivedOriginParks(engine: Pick<BrainEngine, 'listDerivedOriginParks'>): Promise<DerivedOriginPark[]> {
+  return engine.listDerivedOriginParks(DERIVED_ORIGIN_PARK_OP);
 }

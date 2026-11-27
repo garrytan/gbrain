@@ -105,6 +105,31 @@ If the request expired, was completed, or the server restarted, restart the
 connection from the native client to obtain a new request. Reissuing a login
 link cannot recreate a lost OAuth request or verifier.
 
+### Approve a connector from your own browser
+
+A connector that registers itself (dynamic client registration, as grok.com's
+custom connector does) opens the brain's owner login page in a popup. The
+brain's owner approves it privately, without an agent in the middle:
+
+1. Keep that popup or tab: its address is the brain's `/admin/` page with an
+   `oauth_request` that identifies the waiting connector.
+2. Sign in as the owner in that same browser. A browser that already has an
+   owner session goes straight to the approval page. Otherwise, run the command
+   the page shows in your own terminal on the computer that runs the brain
+   (`gbrain mcp admin login-link --url https://brain.example.com/mcp
+   --oauth-request REQUEST_ID --admin-token-file ~/.gbrain/serve/admin-token`)
+   and open the link it prints in that browser, or use the owner bootstrap
+   credential under the page's fold.
+3. Review the client, redirect URI, permissions and source, then approve. The
+   connector finishes its own token exchange.
+4. If the request expired, was completed, or the server restarted, start again
+   from the connector's Add step.
+
+Whoever opens the login link is signed in as the owner, so it never goes
+through an assistant's chat: run the command yourself rather than asking an
+agent to. When someone else runs the brain host, the page's folded prompt asks
+them for the link, and they deliver it to you privately as described above.
+
 ## Register and connect a client
 
 First choose how the **intended harness** connects:
@@ -227,7 +252,8 @@ revision refuses the edit; inspect and preview again.
 Removed scopes and source/path/operation restrictions apply to subsequent
 requests. Added scopes require a fresh token; refresh cannot widen the original
 token's scope ceiling. Native OAuth clients must reconnect and obtain fresh
-owner approval. TTL changes affect future tokens only.
+owner approval; a self-registered connector that asks for its old scope again
+is granted its whole widened scope. TTL changes affect future tokens only.
 
 For one bot acting for several members of a shared brain, give each member a
 separate client or token restricted to that member's sources. The grant is the
@@ -286,7 +312,9 @@ audience, never as the person; `--attest-read person` makes such reads run as th
 also refuses every call that names no person (`actor_required`) ([QM guide](../guides/qm.md#reads-that-name-sources)).
 A source bound to a member (`gbrain access member source add <member> <source>`, trusted local CLI only) is personal:
 an attested call reads its grant minus personal sources bound to anyone else, a read that names sources as their
-audience reads none, and a hidden source is refused like one outside the grant. Binding never widens a grant
+audience reads none, and a hidden source is refused like one outside the grant. A key bound to a member other than
+the owner that has no source list, and a stdio server bound to such a member, read their floor minus personal sources
+bound to anyone else too; `gbrain <read> --as <member>` previews that view. Binding never widens a grant
 ([QM guide](../guides/qm.md#each-persons-own-sources)).
 `gbrain access check --token <name>` shows the
 result ([Model C](../tutorials/company-brain.md#two-scoping-models-pick-the-one-that-matches-your-shape)).
@@ -315,7 +343,10 @@ declares it and makes the same link `link ID` makes, and an unknown email is
 (text fenced, one request id per decision, `decided_by: admin-api`; an approve whose write did
 not commit reports `outcome: failed` and exits 1). They call `/admin/api/access/attest`,
 `/admin/api/access/members`, `/admin/api/access/member-links` and
-`/admin/api/memory-proposals`. These routes accept only the owner session:
+`/admin/api/memory-proposals`. A leaver's handover runs over
+`/admin/api/access/handover` (preview, apply, undo) and
+`/admin/api/access/handover/<id>` (status); see
+[member handover](../guides/member-handover.md#from-the-admin-page-no-shell-on-the-server). These routes accept only the owner session:
 no OAuth token and no MCP tool reaches them. They refuse exactly what the
 local commands refuse, and each applied change is logged as `access_admin` in
 the request log. Removing a member stays a brain-host command

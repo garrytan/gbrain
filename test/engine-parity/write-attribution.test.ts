@@ -2,21 +2,22 @@
  * BrainEngine parity — the reads of `get_write_attribution` and attributed `get_versions` (engine-sql/write-attribution.ts).
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
- *  - Contract: readWriteAttributionNames names the asked requests and local writers (a revoked writer included) and
- *    no other row; readPageRevisionAttribution, readVersionAttributions and readOldestVersionAttribution read the
- *    receipts the attribution triggers stamp on a page and its versions; readRowAttribution reads one fact, take or
- *    timeline entry, inside its page, source, slug, visibility, privacy and holder filters, or null; under excludePrivate a
- *    caller who is not the owner gets no take or timeline entry while a source is owner-only (closed form). On every engine arm
- *    (PGLite always; Postgres with DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1). The get_write_attribution
- *    handler gives the same answer end to end.
+ *  - Contract: readWriteAttributionNames names the asked requests, OAuth clients, legacy tokens and local writers (a
+ *    revoked token or writer included) and no other row; readPageRevisionAttribution, readVersionAttributions and
+ *    readOldestVersionAttribution read the receipts the attribution triggers stamp on a page and its versions;
+ *    readRowAttribution reads one fact, take or timeline entry, inside its page, source, slug, visibility, privacy and
+ *    holder filters, or null; under excludePrivate a caller who is not the owner gets no take or timeline entry while a
+ *    source is owner-only (closed form). A take and a timeline entry answer the trust_tier and write_origin their write
+ *    stamped, not the column defaults. On every engine arm (PGLite always; Postgres with DATABASE_URL; the Rust arm
+ *    with GBRAIN_TEST_RUST_ARM=1). The get_write_attribution handler gives the same answer end to end.
  *  - Regression: an engine that names a request it was not asked for, drops a revoked writer's name, or serves a row
  *    outside the caller's source, world-only or holder filter tells an admin the wrong writer or leaks a hidden row.
  *  - Why existing coverage misses it: ops/attribution.ts ran these statements through `executeRaw`, which the Rust
  *    engine refuses, and test/write-attribution-read.test.ts runs on PGLite and Postgres only.
  *  - Seam: rows are written through typed members inside transactions whose write settings name the request and
  *    principal, as the persistence scope sets them. Ids and times differ between arms, so rows are compared by label
- *    and times by presence. The Rust store keeps no oauth_clients or access_tokens table: a name read for an OAuth
- *    client or legacy token stops there on the typed refusal (rust/docs/store/write_attribution.md).
+ *    and times by presence. OAuth client and legacy token names are seeded through insertOauthClient and
+ *    insertAccessToken; the token names are compared by label in id order, as the SQL reads them in no order.
  */
 import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
@@ -166,13 +167,37 @@ describe('engine parity: write attribution', () => {
     return { empty, own, other, writers };
   });
 
-  parityTest('readWriteAttributionNames for an OAuth client: no name on SQL engines; the Rust store has no client table', {
-    methods: ['readWriteAttributionNames'],
-  }, async (engine) => engine.readWriteAttributionNames({ requestIds: [], oauthClientIds: ['client-example'], legacyTokenIds: [], localWriterIds: [] }));
+  parityTest('readWriteAttributionNames names an OAuth client by its client name; an unknown client names nothing', {
+    methods: ['readWriteAttributionNames', 'insertOauthClient'],
+  }, async (engine) => {
+    await engine.insertOauthClient({ client_id: 'client-example', client_name: 'Example client' });
+    await engine.insertOauthClient({ client_id: 'client-other', client_name: 'Other client' });
+    const names = await engine.readWriteAttributionNames({
+      requestIds: [], oauthClientIds: ['client-example', 'client-example', 'client-unknown', 'CLIENT-EXAMPLE'], legacyTokenIds: [], localWriterIds: [],
+    });
+    expect(names.clients).toEqual([{ id: 'client-example', name: 'Example client' }]);
+    return names;
+  });
 
-  parityTest('readWriteAttributionNames for a legacy token: no name on SQL engines; the Rust store has no token table', {
-    methods: ['readWriteAttributionNames'],
-  }, async (engine) => engine.readWriteAttributionNames({ requestIds: [], oauthClientIds: [], legacyTokenIds: [REQ_UNKNOWN], localWriterIds: [] }));
+  parityTest('readWriteAttributionNames names a legacy token, a revoked one included; an unknown token names nothing', {
+    methods: ['readWriteAttributionNames', 'insertAccessToken'],
+  }, async (engine) => {
+    const token = (name: string, extra: Record<string, unknown> = {}) => engine.insertAccessToken({
+      name, token_hash: name.repeat(8).slice(0, 64).padEnd(64, '0'), scopes: ['read'], permissions: {},
+      source_grant: 'default', source_id: null, federated_read: null, allowed_operations: null, takes_holders: null, ...extra,
+    });
+    const live = await token('live-token');
+    const revoked = await token('revoked-token', { revoked_at: new Date('2026-01-02T03:04:05Z') });
+    await token('unasked-token');
+    const labels = new Map([[live.id, 'live'], [revoked.id, 'revoked']]);
+    const names = await engine.readWriteAttributionNames({
+      requestIds: [], oauthClientIds: [], legacyTokenIds: [live.id, revoked.id, live.id, REQ_UNKNOWN, 'not-a-uuid'], localWriterIds: [],
+    });
+    // The SQL reads the rows in no order; a caller keys them by id.
+    const tokens = names.tokens.map(t => ({ id: labels.get(t.id) ?? t.id, name: t.name })).sort((a, b) => a.id.localeCompare(b.id));
+    expect(tokens).toEqual([{ id: 'live', name: 'live-token' }, { id: 'revoked', name: 'revoked-token' }]);
+    return { ...names, tokens };
+  });
 
   parityTest('readPageRevisionAttribution, readVersionAttributions and readOldestVersionAttribution read the stamped page and version receipts', {
     methods: ['readPageRevisionAttribution', 'readVersionAttributions', 'readOldestVersionAttribution', 'createVersion', 'applyTransactionSettings'],
@@ -272,6 +297,36 @@ describe('engine parity: write attribution', () => {
     return { before, closed, owner, fn };
   });
 
+  parityTest('readRowAttribution and get_write_attribution answer the trust tier and write origin a take and a timeline entry were written with', {
+    methods: ['readRowAttribution', 'addTakesBatch', 'addTimelineEntry', 'applyTransactionSettings'],
+  }, async (engine) => {
+    const reqA = await admit(engine, REQ_A, WRITER, 'put_page');
+    const page = await as(engine, reqA, 'local_cli', WRITER, (tx) =>
+      tx.putPage(SLUG, { type: 'person', title: 'Alice', compiled_truth: 'Alice v1', timeline: '' }));
+    const origin = { channel: 'mcp', tool: 'parity-take' };
+    // One write whose trust context declares a tier and an origin, as an agent's MCP write does.
+    await engine.transaction(async (tx) => {
+      await tx.applyTransactionSettings([...SETTINGS, 'gbrain.write_trust_tier', 'gbrain.write_origin'],
+        [reqA, 'local_cli', WRITER, 'agent_written', JSON.stringify(origin)]);
+      await tx.addTakesBatch([{ page_id: Number(page.id), row_num: 1, claim: 'a stamped take', kind: 'take', holder: 'garry' }]);
+      await tx.addTimelineEntry(SLUG, { date: '2026-01-02', source: 'cal', summary: 'Joined', detail: 'day one' });
+    });
+    const [entry] = await engine.getTimeline(SLUG);
+    const trust = (row: RowAttributionRow | null) => row && { trust_tier: row.trust_tier, write_origin: row.write_origin };
+    const take = trust(await engine.readRowAttribution({ kind: 'take', pageId: Number(page.id), rowNum: 1 }));
+    const timeline = trust(await engine.readRowAttribution({ kind: 'timeline', id: Number(entry!.id), pageId: Number(page.id) }));
+    const op = operations.find((o) => o.name === 'get_write_attribution')!;
+    const ctx = { engine, config: { engine: engine.kind }, remote: false, dryRun: false, sourceId: 'default',
+      logger: { info() {}, warn() {}, error() {} } } as unknown as OperationContext;
+    const handled = await op.handler(ctx, { slug: SLUG, take: 1 }) as { trust_tier: unknown; write_origin: unknown };
+    const handler = { trust_tier: handled.trust_tier, write_origin: handled.write_origin };
+    // The stored tier and origin, not the column default `unknown` and NULL.
+    expect(take).toEqual({ trust_tier: 'agent_written', write_origin: expect.objectContaining(origin) });
+    expect(take).toEqual(timeline);
+    expect(handler).toEqual({ trust_tier: 'agent_written', write_origin: expect.objectContaining(origin) });
+    return { take, timeline, handler };
+  });
+
   parityTest('get_write_attribution answers the page, a fact, a take, a timeline entry and the versions end to end', {
     methods: ['readWriteAttributionNames', 'readPageRevisionAttribution', 'readOldestVersionAttribution', 'readRowAttribution', 'readVersionAttributions'],
   }, async (engine, backend) => {
@@ -297,5 +352,35 @@ describe('engine parity: write attribution', () => {
       take: await call({ take: 1 }),
       timeline: await call({ timeline: s.id('timeline:alice') }),
     };
+  });
+
+  parityTest('readWriteAttributionNames for an OAuth client: no name on SQL engines; the Rust store has no client table', {
+    methods: ['readWriteAttributionNames'],
+  }, async (engine) => engine.readWriteAttributionNames({ requestIds: [], oauthClientIds: ['client-example'], legacyTokenIds: [], localWriterIds: [] }));
+
+  parityTest('readWriteAttributionNames for a legacy token: no name on SQL engines; the Rust store has no token table', {
+    methods: ['readWriteAttributionNames'],
+  }, async (engine) => engine.readWriteAttributionNames({ requestIds: [], oauthClientIds: [], legacyTokenIds: [REQ_UNKNOWN], localWriterIds: [] }));
+
+  parityTest('readPageRevisionAttribution, readVersionAttributions and readOldestVersionAttribution read the stamped page and version receipts', {
+    methods: ['readPageRevisionAttribution', 'readVersionAttributions', 'readOldestVersionAttribution', 'createVersion', 'applyTransactionSettings'],
+  }, async (engine, backend) => {
+    const s = await seed(engine, backend);
+    const revision = (row: Awaited<ReturnType<BrainEngine['readPageRevisionAttribution']>>) =>
+      row && { ...row, req: s.request(row.req), revision: typeof row.revision };
+    const live = revision(await engine.readPageRevisionAttribution(s.pageId));
+    expect(live).toMatchObject({ req: 'reqB', kind: 'local_cli', pid: OTHER });
+    const plain = revision(await engine.readPageRevisionAttribution(s.plainId));
+    const missing = await engine.readPageRevisionAttribution(s.plainId + 1000);
+    const versions = (await engine.readVersionAttributions([{ id: s.versionId, page_id: s.pageId }, { id: s.versionId + 1000, page_id: s.pageId }]))
+      .map(({ id, w_req, a_req, ...rest }) => ({ version: s.labels.get(`page_versions:${Number(id)}`), w_req: s.request(w_req), a_req: s.request(a_req), ...rest }));
+    // Version 1 snapshots the page reqA wrote; reqB archived it.
+    expect(versions).toEqual([expect.objectContaining({ version: 'version:1', w_req: 'reqA', w_id: WRITER, a_req: 'reqB', a_id: OTHER })]);
+    const noVersions = await engine.readVersionAttributions([]);
+    const oldestRow = await engine.readOldestVersionAttribution(s.pageId);
+    const oldest = oldestRow && { ...oldestRow, req: s.request(oldestRow.req) };
+    expect(oldest).toEqual({ req: 'reqA', kind: 'local_cli', pid: WRITER });
+    const noOldest = await engine.readOldestVersionAttribution(s.plainId);
+    return { live, plain, missing, versions, noVersions, oldest, noOldest };
   });
 });

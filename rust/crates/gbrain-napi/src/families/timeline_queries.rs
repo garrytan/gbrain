@@ -6,7 +6,11 @@
 //! of `src/core/engine-sql/timeline-reads.ts` (sampleEffectiveDates, sampleEffectiveDateSources,
 //! readMaxTimelineEntryId, listStoredTimelineRowsOrdered, deleteTimelineRows,
 //! storedTimelineRowsByPageIds, countSegmentedTimelinePages, countTimelineCommentMarkupRows,
-//! listTimelineOrphanPages).
+//! listTimelineOrphanPages), and the timeline repair reads of
+//! `src/core/engine-sql/timeline-repair-reads.ts` (listTimelineHistoryPages,
+//! listTimelineVersionWitnesses, readTimelineVersionBody, listTimelineMarkupRows,
+//! listMaterializedMarkerPages, rewriteTimelineRow, listDateBulletPages,
+//! listConnectorFencePages).
 //!
 //! One `#[napi] impl Brain` block per family file; `families/mod.rs` lists every family once.
 //! Each method decodes its arguments, runs one `Store` call on the pool through `Brain::run`,
@@ -234,6 +238,117 @@ impl Brain {
             let input: gbrain_store::timeline_queries::TimelineOrphanInput =
                 arg(input, "listTimelineOrphanPages input")?;
             s.list_timeline_orphan_pages(&input)
+        })
+    }
+
+    /// `listTimelineHistoryPages({ sourceIds, afterId, limit } | { sourceIds, ids })`: the pages, by id.
+    #[napi]
+    pub fn list_timeline_history_pages<'env>(
+        &self,
+        env: &'env Env,
+        input: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let input: timeline_queries::TimelineHistoryInput =
+                arg(input, "listTimelineHistoryPages input")?;
+            s.list_timeline_history_pages(&input)
+        })
+    }
+
+    /// `listTimelineVersionWitnesses(sourceId, slug)`: the page's versions, newest first.
+    #[napi]
+    pub fn list_timeline_version_witnesses<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slug: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_timeline_version_witnesses(&source_id, &slug)
+        })
+    }
+
+    /// `readTimelineVersionBody(pageId, versionId)`: the body and its digests, or null.
+    #[napi]
+    pub fn read_timeline_version_body<'env>(
+        &self,
+        env: &'env Env,
+        page_id: f64,
+        version_id: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_timeline_version_body(page_id as i64, version_id as i64)
+        })
+    }
+
+    /// `listTimelineMarkupRows({ sourceIds, afterId } | { pageId })`: the rows, by page then id.
+    #[napi]
+    pub fn list_timeline_markup_rows<'env>(
+        &self,
+        env: &'env Env,
+        input: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let input: timeline_queries::TimelineMarkupInput =
+                arg(input, "listTimelineMarkupRows input")?;
+            s.list_timeline_markup_rows(&input)
+        })
+    }
+
+    /// `listMaterializedMarkerPages({ sourceIds, afterId })`: the pages, by id.
+    #[napi]
+    pub fn list_materialized_marker_pages<'env>(
+        &self,
+        env: &'env Env,
+        input: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let input: timeline_queries::TimelinePageScanInput =
+                arg(input, "listMaterializedMarkerPages input")?;
+            s.list_materialized_marker_pages(&input)
+        })
+    }
+
+    /// `rewriteTimelineRow(pageId, { id, source, summary, detail })`: resolves null.
+    #[napi]
+    pub fn rewrite_timeline_row<'env>(
+        &self,
+        env: &'env Env,
+        page_id: f64,
+        row: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let row: timeline_queries::TimelineRowRewrite =
+                required(row, "rewriteTimelineRow row")?;
+            s.rewrite_timeline_row(page_id as i64, &row)
+        })
+    }
+
+    /// `listDateBulletPages({ sourceIds, afterId, slugs, limit })`: the pages, by id.
+    #[napi]
+    pub fn list_date_bullet_pages<'env>(
+        &self,
+        env: &'env Env,
+        input: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let input: timeline_queries::TimelinePageScanInput =
+                arg(input, "listDateBulletPages input")?;
+            s.list_date_bullet_pages(&input)
+        })
+    }
+
+    /// `listConnectorFencePages({ sourceIds, kinds, segmented })`: the pages, by id.
+    #[napi]
+    pub fn list_connector_fence_pages<'env>(
+        &self,
+        env: &'env Env,
+        input: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let input: timeline_queries::ConnectorFenceInput =
+                arg(input, "listConnectorFencePages input")?;
+            s.list_connector_fence_pages(&input)
         })
     }
 }

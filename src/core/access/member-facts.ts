@@ -12,8 +12,8 @@
  */
 import { createHash } from 'node:crypto';
 import type { OperationContext } from '../ops/contract.ts';
-import { currentCallerAccess, folderRestrictedSql, isDerivationPrivate, privateFactSources, privatePagesFilterForCaller, withFolderRestricted } from '../search/private-visibility.ts';
-import { factPagesOpenSql, unpagedFactSql } from '../facts/private-fact-pages.ts';
+import { currentCallerAccess, factWithinPageReadersSql, folderRestrictedSql, isDerivationPrivate, pageReadsToReadersOfSql, privateFactSources, privatePagesFilterForCaller, withFolderRestricted } from '../search/private-visibility.ts';
+import { factPagesOpenSql, factProvenanceSlugSql, unpagedFactSql } from '../facts/private-fact-pages.ts';
 import { ownedMemorySubjectSql, unbackedEntitySql } from '../facts/withdrawal-schema.ts';
 import type { BrainEngine } from '../engine.ts';
 import { ACCESS_ID_RE, MEMBER_PAGE_PREFIX, normalizeReaders, SCOPE_PAGE_SLUG } from './principals.ts';
@@ -136,14 +136,17 @@ export function scopePageNotShared(sourceId: string): OperationError {
     { reason: 'scope_page_not_shared' });
 }
 
-/** The frontmatter of the scope page its first fact creates: no readers, so the source's read grant is its audience. */
-export function scopePageFrontmatter(): string {
-  return ['---', 'type: note', 'title: Scope memory', '---', ''].join('\n');
+/**
+ * The frontmatter of the scope page its first fact creates: no readers, so the source's read grant is its audience.
+ * #9945: `capturedAt` (the creating request's time, stable across replays) is its temporal provenance.
+ */
+export function scopePageFrontmatter(capturedAt: Date): string {
+  return ['---', 'type: note', 'title: Scope memory', `captured_at: ${capturedAt.toISOString()}`, '---', ''].join('\n');
 }
 
-/** The frontmatter of a member page its first fact creates: the member is its only reader. */
-export function memberPageFrontmatter(member: string): string {
-  return ['---', 'type: note', `title: Memory of ${member}`, 'readable_by:', `  - member:${member}`, '---', ''].join('\n');
+/** The frontmatter of a member page its first fact creates: the member is its only reader. `capturedAt` as above. */
+export function memberPageFrontmatter(member: string, capturedAt: Date): string {
+  return ['---', 'type: note', `title: Memory of ${member}`, `captured_at: ${capturedAt.toISOString()}`, 'readable_by:', `  - member:${member}`, '---', ''].join('\n');
 }
 
 /**
@@ -177,12 +180,26 @@ export async function ownMemberFactIds(engine: Pick<BrainEngine, 'executeRaw'>, 
  * derivation-private (private, privacy alias, readable_by, folder rule), missing or quarantined (factPagesOpenSql, the
  * same pages `gbrain repair open-facts` refuses to open), and that has a page to check: never an unpaged or
  * transcript-lane fact (unpagedFactSql), conversation archive included. FALSE outside such a grant. Source ids passed
- * isValidSourceId, so they embed as literals.
+ * isValidSourceId, so they embed as literals. GST-2979: a held row (a restatement with a visibility proposal) is admitted
+ * only when the grant also reads every copy its proposals name, and a copy that is itself a held row counts only when the
+ * grant reads it by this same rule (the hold chain, followed to its end), so no fact read hands a grant text the page
+ * overlay holds from it (fence-overlay.ts heldRowSql uses this same predicate).
  */
 export function grantedPrivateFactSql(alias: string): string {
   const sources = privateFactSources();
   if (!sources.length) return 'FALSE';
-  return `(${alias}.visibility = 'private' AND ${alias}.source_id IN (${sources.map(s => `'${s}'`).join(', ')}) AND NOT COALESCE(${unpagedFactSql(alias)}, false) AND ${factPagesOpenSql(alias)})`;
+  const opens = (a: string) => `(${a}.visibility = 'private' AND ${a}.source_id IN (${sources.map(s => `'${s}'`).join(', ')}) AND NOT COALESCE(${unpagedFactSql(a)}, false) AND ${factPagesOpenSql(a)})`;
+  const holds = (p: string) => `${p}.related_table = 'facts' AND ${p}.action IN ('supersede_fact', 'confirm') AND ${p}.before_state->'visibility' IS NOT NULL`;
+  return `(${opens(alias)} AND ${alias}.id NOT IN (WITH RECURSIVE held_refused(id) AS (
+      SELECT held_prop.related_id FROM trust_proposals held_prop
+        LEFT JOIN facts held_copy ON held_prop.target_table = 'facts' AND held_copy.id = held_prop.target_id
+        WHERE ${holds('held_prop')} AND (held_copy.id IS NULL OR NOT (${memberFactAdmitSql('held_copy')} OR ${opens('held_copy')}))
+      UNION
+      SELECT held_next.related_id FROM held_refused
+        JOIN trust_proposals held_next ON held_next.target_table = 'facts' AND held_next.target_id = held_refused.id
+        JOIN facts held_via ON held_via.id = held_refused.id
+        WHERE ${holds('held_next')} AND NOT ${memberFactAdmitSql('held_via')})
+    SELECT id FROM held_refused WHERE id IS NOT NULL))`;
 }
 
 /** A remote fact read's visibility list as SQL: the listed values, widened only by memberFactAdmitSql and grantedPrivateFactSql. */
@@ -240,6 +257,18 @@ export function ownedPageWithdrawalSubject(slug: string | null | undefined): str
 export function readersSourcedFactSql(alias: string): string {
   return `EXISTS (SELECT 1 FROM pages readers_page WHERE readers_page.source_id = ${alias}.source_id AND readers_page.slug = ${alias}.source_markdown_slug
     AND (readers_page.page_readers IS NOT NULL OR readers_page.frontmatter ? 'readable_by' OR ${folderRestrictedSql('readers_page')}))`;
+}
+
+/**
+ * GST-3815: fact `f` reads to everyone who reads page row `t`, as SQL, for a derivation that writes the fact's text onto
+ * `t` (enrich filling a page). The fact is world (a private fact never leaves its row), owner-only only when `t` is, and
+ * every page row it is held on or extracted from reads to `t`'s readers (pageReadsToReadersOfSql); a slug with no page
+ * row passes, as a remote fact read passes it. `t` is the fact's entity page, so its own readers decide the rest.
+ */
+export function factReadsToReadersOfSql(f: string, t: string): string {
+  return `(${f}.visibility = 'world' AND ${factWithinPageReadersSql(f, t)} AND NOT EXISTS (SELECT 1 FROM pages fact_page
+    WHERE fact_page.source_id = ${f}.source_id AND fact_page.slug IN (${f}.source_markdown_slug, ${factProvenanceSlugSql(f)})
+      AND NOT ${pageReadsToReadersOfSql('fact_page', t)}))`;
 }
 
 /**

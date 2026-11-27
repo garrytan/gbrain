@@ -1,7 +1,9 @@
 //! Raw source data and files attached to pages: the `raw_data` and `files` tables of the PGLite
 //! engine.
 //!
-//! Members: putRawData, getRawData, upsertFile, getFile, listFilesForPage.
+//! Members: putRawData, getRawData, upsertFile, getFile, listFilesForPage, and a page purge's
+//! `deletePurgedPageFiles` (`raw_files/purge.rs`); the files commands and file operations are in
+//! `ops.rs`.
 //!
 //! Keys (every record starts with `keys::RAW_FILES`, `r`):
 //! - `r 0x01 <page id u64 BE> 0x00 <source name>` -> `RawRecord` (JSON). One per (page, source),
@@ -12,7 +14,9 @@
 //!   `getFile` checks it.
 //! - `r 0x03 <page id u64 BE> 0x00 <file id u64 BE>` -> the file's storage path. One per file
 //!   whose `page_id` is set, so `listFilesForPage` reads one prefix.
-//! - Id counter: `M next_file_id`. A refused insert takes no id; an update keeps the row's id.
+//! - Id counters: `M next_file_id` and `M next_raw_data_id`. A refused insert takes no id; an update
+//!   keeps the row's id. A raw data record written before `next_raw_data_id` has no id until its
+//!   next update gives it one.
 //!
 //! `data` and `metadata` are JSONB in Postgres, which stores object keys ordered by length, then
 //! bytes. The store keeps that order (`crate::jsonb::order`), so rows come back as Postgres returns them.
@@ -27,6 +31,7 @@
 
 use crate::env::iso;
 use crate::error::{CONSTRAINT_VIOLATION, PAGE_NOT_FOUND, Result, StoreError};
+use crate::facts::purge_probe::{EachRow, ProbeCell, ProbeRow, each_json};
 use crate::kv::{KvRead, KvWrite, scan_prefix};
 use crate::links::no_nul;
 use crate::pages::{PageRecord, next_id, read_page, read_page_by_id, scope_sources};
@@ -35,16 +40,34 @@ use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+mod ops;
+pub(crate) mod purge;
+
 const RAW: u8 = 0x01;
 const FILE: u8 = 0x02;
 const FILE_BY_PAGE: u8 = 0x03;
-const NEXT_FILE_ID: &str = "next_file_id";
+pub(crate) const NEXT_FILE_ID: &str = "next_file_id";
+const NEXT_RAW_DATA_ID: &str = "next_raw_data_id";
 
 fn raw_page_prefix(page_id: u64) -> Vec<u8> {
     let mut key = vec![keys::RAW_FILES, RAW];
     key.extend_from_slice(&page_id.to_be_bytes());
     key.push(0);
     key
+}
+
+/// The `raw_data` rows of page `page_id` (a fact purge's dry-run probe reads them; it is read only).
+pub(crate) fn raw_records_of(read: &dyn KvRead, page_id: u64) -> Result<Vec<RawRecord>> {
+    let mut out = Vec::new();
+    let mut failure = None;
+    scan_prefix(read, &raw_page_prefix(page_id), false, &mut |_, v| {
+        match serde_json::from_slice::<RawRecord>(v) {
+            Ok(row) => out.push(row),
+            Err(e) => failure = Some(StoreError::from(e)),
+        }
+        failure.is_none()
+    })?;
+    failure.map_or(Ok(out), Err)
 }
 
 fn raw_key(page_id: u64, source: &str) -> Vec<u8> {
@@ -72,9 +95,12 @@ fn file_page_key(page_id: u64, file_id: u64) -> Vec<u8> {
     key
 }
 
-/// One `raw_data` row. The serial `id` is never read by a member, so it is not kept.
+/// One `raw_data` row. `id` is the serial `raw_data.id` a fact purge's probe names a row by
+/// (`raw_data:<id> <slug> <source>`); a record written before the store kept it has none.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct RawRecord {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub id: Option<u64>,
     pub page_id: u64,
     pub source: String,
     #[serde(deserialize_with = "crate::jsonb::de_value")]
@@ -187,6 +213,11 @@ fn jsonb(op: &str, column: &str, text: &str) -> Result<Value> {
     Ok(crate::jsonb::order(value))
 }
 
+/// A JSON value as Postgres's jsonb keeps it ([`crate::jsonb::order`]).
+pub(crate) fn jsonb_order(value: Value) -> Value {
+    crate::jsonb::order(value)
+}
+
 fn not_null(table: &str, column: &str) -> StoreError {
     StoreError::new(
         CONSTRAINT_VIOLATION,
@@ -246,6 +277,42 @@ fn put_file(tx: &mut dyn KvWrite, record: &FileRecord) -> Result<()> {
     put_json(tx, &file_key(&record.storage_path), record)
 }
 
+/// The shadow seed (`seed.rs`): stores `record`, a file copied from another engine with its own id
+/// and `created_at`, with the page index entry `upsert_file` writes. `false` when the path already
+/// holds that file; the path held by another id is the unique `storage_path` violation. The caller
+/// checked the source and the page.
+pub(crate) fn seed_file(tx: &mut dyn KvWrite, record: &FileRecord) -> Result<bool> {
+    if let Some(stored) = read_file(&*tx, &record.storage_path)? {
+        if stored.id == record.id {
+            return Ok(false);
+        }
+        return Err(StoreError::new(
+            CONSTRAINT_VIOLATION,
+            "duplicate key value violates unique constraint on files (storage_path)",
+        ));
+    }
+    if let Some(page) = record.page_id {
+        tx.put(
+            &file_page_key(page, record.id),
+            &serde_json::to_vec(&record.storage_path)?,
+        )?;
+    }
+    put_file(tx, record)?;
+    Ok(true)
+}
+
+/// The shadow seed: stores `record`, raw data copied from another engine with its own `fetched_at`,
+/// where `put_raw_data` stores it. `false` when the page already holds raw data of that source.
+/// The caller checked the page.
+pub(crate) fn seed_raw_data(tx: &mut dyn KvWrite, record: &RawRecord) -> Result<bool> {
+    let key = raw_key(record.page_id, &record.source);
+    if tx.get(&key)?.is_some() {
+        return Ok(false);
+    }
+    put_json(tx, &key, record)?;
+    Ok(true)
+}
+
 /// The raw_data rows of page `page_id`, in key order (the export reads every row of a page).
 pub(crate) fn page_raw_rows(read: &dyn KvRead, page_id: u64) -> Result<Vec<RawRecord>> {
     Ok(
@@ -254,6 +321,44 @@ pub(crate) fn page_raw_rows(read: &dyn KvRead, page_id: u64) -> Result<Vec<RawRe
             .map(|(_, row)| row)
             .collect(),
     )
+}
+
+/// The `ordinal`th raw_data row of page `page_id` (from 1, in source order) with its key: the store keeps no serial id
+/// on a row, so `gbrain repair secret-spans` names a row by its position among the page's rows
+/// (`readRawDataValue`, `setRawDataValue`).
+fn raw_row_at(
+    read: &dyn KvRead,
+    page_id: u64,
+    ordinal: u64,
+) -> Result<Option<(Vec<u8>, RawRecord)>> {
+    let Some(index) = ordinal.checked_sub(1) else {
+        return Ok(None);
+    };
+    Ok(
+        collect_values::<RawRecord>(read, &raw_page_prefix(page_id))?
+            .into_iter()
+            .nth(usize::try_from(index).unwrap_or(usize::MAX)),
+    )
+}
+
+/// The data of the `ordinal`th raw_data row of page `page_id`, or `None` when the page has fewer rows.
+pub(crate) fn raw_row_data(read: &dyn KvRead, page_id: u64, ordinal: u64) -> Result<Option<Value>> {
+    Ok(raw_row_at(read, page_id, ordinal)?.map(|(_, row)| row.data))
+}
+
+/// `UPDATE raw_data SET data = $data WHERE id = ordinal` for page `page_id`: replaces the row's data and keeps its
+/// source and fetch time. A page with fewer rows changes nothing.
+pub(crate) fn set_raw_row_data(
+    tx: &mut dyn KvWrite,
+    page_id: u64,
+    ordinal: u64,
+    data: Value,
+) -> Result<()> {
+    let Some((key, mut row)) = raw_row_at(&*tx, page_id, ordinal)? else {
+        return Ok(());
+    };
+    row.data = data;
+    put_json(tx, &key, &row)
 }
 
 fn collect_values<T: serde::de::DeserializeOwned>(
@@ -268,6 +373,26 @@ fn collect_values<T: serde::de::DeserializeOwned>(
     raw.into_iter()
         .map(|(k, v)| Ok((k, serde_json::from_slice(&v)?)))
         .collect()
+}
+
+/// The `raw_data` rows of a page, in source order.
+pub(crate) fn raw_rows_of(read: &dyn KvRead, page_id: u64) -> Result<Vec<RawRecord>> {
+    Ok(
+        collect_values::<RawRecord>(read, &raw_page_prefix(page_id))?
+            .into_iter()
+            .map(|(_, row)| row)
+            .collect(),
+    )
+}
+
+/// Every `files` row, in file id order.
+pub(crate) fn all_file_records(read: &dyn KvRead) -> Result<Vec<FileRecord>> {
+    let mut files: Vec<FileRecord> = collect_values(read, &[keys::RAW_FILES, FILE])?
+        .into_iter()
+        .map(|(_, f)| f)
+        .collect();
+    files.sort_by_key(|f| f.id);
+    Ok(files)
 }
 
 /// The pages `putRawData` writes to: the page in `source_id` when one is named, else every page
@@ -307,6 +432,102 @@ pub(crate) fn remove_page_rows(tx: &mut dyn KvWrite, page: &PageRecord) -> Resul
         }
     }
     Ok(())
+}
+
+/// The first table among `raw_data` and `files` that holds a row of page `page_id` (the twin merge's foreign-key
+/// check: a move onto a missing survivor fails at that table), or none.
+pub(crate) fn first_page_child_table(
+    read: &dyn KvRead,
+    page_id: u64,
+) -> Result<Option<&'static str>> {
+    for (table, prefix) in [
+        ("raw_data", raw_page_prefix(page_id)),
+        ("files", file_page_prefix(page_id)),
+    ] {
+        let mut any = false;
+        scan_prefix(read, &prefix, false, &mut |_, _| {
+            any = true;
+            false
+        })?;
+        if any {
+            return Ok(Some(table));
+        }
+    }
+    Ok(None)
+}
+
+/// The twin merge's `UPDATE raw_data SET page_id = to WHERE page_id = from AND NOT EXISTS (a `to` row of the same
+/// source)`: the twin's raw data of a source the survivor lacks moves to the survivor, and the rest stays on the
+/// twin. A missing `to` page refuses as the foreign key does when a row would move.
+pub(crate) fn move_raw_data(tx: &mut dyn KvWrite, from: u64, to: u64) -> Result<()> {
+    for (key, mut row) in collect_values::<RawRecord>(&*tx, &raw_page_prefix(from))? {
+        let target = raw_key(to, &row.source);
+        if tx.get(&target)?.is_some() {
+            continue;
+        }
+        if read_page_by_id(&*tx, to)?.is_none() {
+            return Err(foreign_key("page_id"));
+        }
+        tx.delete(&key)?;
+        row.page_id = to;
+        put_json(tx, &target, &row)?;
+    }
+    Ok(())
+}
+
+/// The twin merge's `UPDATE files SET page_id = to, page_slug = to_slug WHERE page_id = from`: every file attached to
+/// the twin attaches to the survivor, with its page index entry. A missing `to` page refuses as the foreign key does.
+pub(crate) fn move_files(tx: &mut dyn KvWrite, from: u64, to: u64, to_slug: &str) -> Result<()> {
+    let attached: Vec<(Vec<u8>, String)> = collect_values(&*tx, &file_page_prefix(from))?;
+    if attached.is_empty() {
+        return Ok(());
+    }
+    if from != to && read_page_by_id(&*tx, to)?.is_none() {
+        return Err(foreign_key("page_id"));
+    }
+    for (key, path) in attached {
+        let Some(mut file) = read_file(&*tx, &path)? else {
+            continue;
+        };
+        tx.delete(&key)?;
+        file.page_id = Some(to);
+        file.page_slug = Some(to_slug.to_string());
+        tx.put(&file_page_key(to, file.id), &serde_json::to_vec(&path)?)?;
+        put_file(tx, &file)?;
+    }
+    Ok(())
+}
+
+/// `moveSlugBindings`' attachment step of `updateSlug` (`page-state/rename-alias.ts`): after `page` moved from
+/// `old_slug` to `new_slug` in `source_id`, its files bound to it (`page_id`) and named by the old slug take the new
+/// one. A row with no `page_id` stays: nothing the store keeps proves which page it belonged to.
+pub(crate) fn rename_page_files(
+    tx: &mut dyn KvWrite,
+    source_id: &str,
+    old_slug: &str,
+    new_slug: &str,
+    page: &PageRecord,
+) -> Result<()> {
+    let attached: Vec<(Vec<u8>, String)> = collect_values(&*tx, &file_page_prefix(page.id))?;
+    for (_, path) in attached {
+        if let Some(mut file) = read_file(&*tx, &path)?
+            && file.source_id == source_id
+            && file.page_slug.as_deref() == Some(old_slug)
+        {
+            file.page_slug = Some(new_slug.to_string());
+            put_file(tx, &file)?;
+        }
+    }
+    Ok(())
+}
+
+/// The number of files of source `source_id` (the delete preview's `files` count).
+pub(crate) fn source_file_count(read: &dyn KvRead, source_id: &str) -> Result<u64> {
+    let files: Vec<(Vec<u8>, FileRecord)> = collect_values(read, &[keys::RAW_FILES, FILE])?;
+    Ok(files
+        .iter()
+        .filter(|(_, f)| f.source_id == source_id)
+        .count() as u64)
 }
 
 /// Deletes this family's records keyed by a source that is deleted (`cascade::remove_source_rows`):
@@ -365,13 +586,20 @@ impl Store {
             let data = data.clone().ok_or_else(|| not_null("raw_data", "data"))?;
             let now = self.env.now_micros();
             for page in pages {
+                let key = raw_key(page.id, source);
+                let kept = get_json::<RawRecord>(&*tx, &key)?.and_then(|row| row.id);
+                let id = match kept {
+                    Some(id) => id,
+                    None => next_id(tx, NEXT_RAW_DATA_ID)?,
+                };
                 let record = RawRecord {
+                    id: Some(id),
                     page_id: page.id,
                     source: source.to_string(),
                     data: data.clone(),
                     fetched_at_us: now,
                 };
-                put_json(tx, &raw_key(page.id, source), &record)?;
+                put_json(tx, &key, &record)?;
             }
             Ok(())
         })
@@ -380,8 +608,9 @@ impl Store {
     /// `getRawData(slug, source?, { sourceId?, sourceIds?, includeDeleted?, excludePrivate? })`: the
     /// raw data of every page by that slug in scope (`sourceIds` when not empty, else `sourceId`
     /// when not empty, else every source), only `source` when one is given (not empty). Pages that
-    /// are soft deleted are skipped unless `includeDeleted`, and pages the page policy hides always. PGLite gives no order; the store
-    /// returns scope order (`default` first, then by id), then source name.
+    /// are soft deleted are skipped unless `includeDeleted`, and pages the page policy hides always. Rows come in SQL's
+    /// order: page source, then raw-data source, both byte-wise (`COLLATE "C"`). `sourceIds` is a set: a repeated id
+    /// returns its rows once.
     pub fn get_raw_data(
         &self,
         slug: &str,
@@ -397,7 +626,10 @@ impl Store {
         no_nul(OP, &texts)?;
         let read = self.read()?;
         let mut out = Vec::new();
-        for id in scope_sources(&*read, &scope.source_id, &scope.source_ids)? {
+        let mut ids = scope_sources(&*read, &scope.source_id, &scope.source_ids)?;
+        ids.sort_unstable();
+        ids.dedup();
+        for id in ids {
             let Some(page) = read_page(&*read, &id, slug)? else {
                 continue;
             };
@@ -623,6 +855,50 @@ impl Store {
     }
 }
 
+/// The `files` rows as the table probe of a fact purge's receipt reads them (`facts/purge_probe.rs`): every source's, keyed by path.
+pub(crate) fn probe_files(read: &dyn KvRead, f: EachRow) -> Result<()> {
+    each_json::<FileRecord>(read, &[keys::RAW_FILES, FILE], &mut |_, file| {
+        f(ProbeRow {
+            source_id: Some(file.source_id.clone()),
+            cells: vec![
+                ("source_id", ProbeCell::text(&file.source_id)),
+                ("page_slug", ProbeCell::opt_text(file.page_slug.as_deref())),
+                ("filename", ProbeCell::text(&file.filename)),
+                ("storage_path", ProbeCell::text(&file.storage_path)),
+                ("mime_type", ProbeCell::opt_text(file.mime_type.as_deref())),
+                ("content_hash", ProbeCell::text(&file.content_hash)),
+                ("metadata", ProbeCell::jsonb(&file.metadata)),
+            ],
+        })
+    })
+}
+
+/// The shadow follow (`seed/follow.rs`): removes the file `id` stored at `storage_path`, with its
+/// page index entry. `false` when the path holds no file of that id.
+pub(crate) fn remove_file(tx: &mut dyn KvWrite, id: u64, storage_path: &str) -> Result<bool> {
+    let Some(old) = read_file(&*tx, storage_path)? else {
+        return Ok(false);
+    };
+    if old.id != id {
+        return Ok(false);
+    }
+    if let Some(page) = old.page_id {
+        tx.delete(&file_page_key(page, id))?;
+    }
+    tx.delete(&file_key(storage_path))?;
+    Ok(true)
+}
+
+/// The shadow follow: removes the raw data of `source` on a page. `false` when there is none.
+pub(crate) fn remove_raw_data(tx: &mut dyn KvWrite, page_id: u64, source: &str) -> Result<bool> {
+    let key = raw_key(page_id, source);
+    if tx.get(&key)?.is_none() {
+        return Ok(false);
+    }
+    tx.delete(&key)?;
+    Ok(true)
+}
+
 #[cfg(test)]
 mod tests {
     //! The cascade hooks are crate-private; their contract is tested here. The members are
@@ -650,6 +926,83 @@ mod tests {
             metadata: Some("{}".into()),
             ..FileSpec::default()
         }
+    }
+
+    fn record(store: &Store, page_id: u64, source: &str) -> RawRecord {
+        let read = store.read().unwrap();
+        get_json::<RawRecord>(&*read, &raw_key(page_id, source))
+            .unwrap()
+            .unwrap()
+    }
+
+    #[test]
+    fn raw_data_takes_an_id_on_insert_keeps_it_on_update_and_names_the_probe_item() {
+        let store = store();
+        let a = put(&store, "notes/a");
+        let b = put(&store, "notes/b");
+        store
+            .put_raw_data("notes/a", Some("feed"), Some("{\"q\":\"claim\"}"), None)
+            .unwrap();
+        store
+            .put_raw_data("notes/b", Some("feed"), Some("{\"q\":\"claim\"}"), None)
+            .unwrap();
+        let first = record(&store, a, "feed").id.unwrap();
+        let second = record(&store, b, "feed").id.unwrap();
+        assert_ne!(first, second);
+        store
+            .put_raw_data(
+                "notes/a",
+                Some("feed"),
+                Some("{\"q\":\"claim again\"}"),
+                None,
+            )
+            .unwrap();
+        assert_eq!(record(&store, a, "feed").id, Some(first));
+
+        let probe: crate::facts::purge_plan::PurgeProbeArgs = serde_json::from_value(json!({
+            "table": "raw_data",
+            "sourceId": "default",
+            "columns": ["data"],
+            "needles": [{"text": "claim", "lower": "claim", "escaped": "claim"}],
+        }))
+        .unwrap();
+        let mut want = vec![
+            format!("raw_data:{first} notes/a feed"),
+            format!("raw_data:{second} notes/b feed"),
+        ];
+        want.sort();
+        assert_eq!(store.list_purge_probe_items(&probe).unwrap(), json!(want));
+
+        // A record written before the store kept the id cannot be named, so the probe refuses.
+        store
+            .write(|tx| {
+                let mut legacy = get_json::<RawRecord>(&*tx, &raw_key(b, "feed"))?.unwrap();
+                legacy.id = None;
+                put_json(tx, &raw_key(b, "feed"), &legacy)
+            })
+            .unwrap();
+        assert_eq!(store.list_purge_probe_items(&probe).unwrap(), Value::Null);
+        let bounded = crate::facts::purge_plan::PurgeProbeArgs {
+            rows: Some(1000),
+            ..probe.clone()
+        };
+        assert_eq!(store.count_purge_probe(&bounded).unwrap(), 2);
+
+        // Its next update gives it a fresh id, and the probe names it again.
+        store
+            .put_raw_data("notes/b", Some("feed"), Some("{\"q\":\"claim\"}"), None)
+            .unwrap();
+        let renamed = record(&store, b, "feed").id.unwrap();
+        assert!(renamed > first.max(second));
+        assert_eq!(
+            store
+                .list_purge_probe_items(&probe)
+                .unwrap()
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
     }
 
     #[test]
@@ -700,5 +1053,63 @@ mod tests {
         let listed = store.list_files_for_page(&json!(id)).unwrap();
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0]["storage_path"], "f/a.png");
+    }
+
+    #[test]
+    fn a_renamed_page_takes_its_bound_files_and_leaves_slug_only_rows() {
+        let store = store();
+        let moved = put(&store, "notes/move-me");
+        let other = put(&store, "notes/other");
+        for (path, page_id) in [
+            ("bound.png", Some(moved)),
+            ("loose.png", None),
+            ("foreign.png", Some(other)),
+        ] {
+            let mut spec = file(path, page_id);
+            spec.page_slug = Some("notes/move-me".into());
+            store.upsert_file(&spec).unwrap();
+        }
+        assert_eq!(
+            store
+                .update_slug("notes/move-me", "notes/moved", None)
+                .unwrap(),
+            1
+        );
+        let slug = |path: &str| {
+            read_file(&*store.read().unwrap(), path)
+                .unwrap()
+                .unwrap()
+                .page_slug
+        };
+        assert_eq!(slug("bound.png").as_deref(), Some("notes/moved"));
+        assert_eq!(slug("loose.png").as_deref(), Some("notes/move-me"));
+        assert_eq!(slug("foreign.png").as_deref(), Some("notes/move-me"));
+    }
+
+    #[test]
+    fn a_slug_only_row_left_by_an_earlier_rename_stays_when_the_name_is_reused() {
+        let store = store();
+        put(&store, "notes/reused");
+        assert_eq!(
+            store
+                .update_slug("notes/reused", "notes/first-owner", None)
+                .unwrap(),
+            1
+        );
+        let mut spec = file("left.png", None);
+        spec.page_slug = Some("notes/reused".into());
+        store.upsert_file(&spec).unwrap();
+        put(&store, "notes/reused");
+        assert_eq!(
+            store
+                .update_slug("notes/reused", "notes/second-owner", None)
+                .unwrap(),
+            1
+        );
+        let slug = read_file(&*store.read().unwrap(), "left.png")
+            .unwrap()
+            .unwrap()
+            .page_slug;
+        assert_eq!(slug.as_deref(), Some("notes/reused"));
     }
 }

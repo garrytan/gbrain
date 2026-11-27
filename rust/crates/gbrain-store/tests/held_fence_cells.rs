@@ -242,5 +242,22 @@ fn a_private_facts_grant_admits_open_page_facts_unless_a_proposal_names_an_unrea
             c("notes/closed-example", 1, "Ana hides gold"),
             c("notes/quarantined-example", 1, "Ana sails"),
         ]
+    ); // The hold chain: once the copy "Ana knits" names ("Ana naps daily") is itself held by a copy the grant does not
+    // read, "Ana knits" is held too.
+    b.insert_trust_proposal(&args::<NewProposal>(json!({
+        "action": "confirm", "sourceId": "default",
+        "target": { "table": "facts", "id": id(2) },
+        "related": { "table": "facts", "id": id(1) },
+        "before": { "visibility": "private" }, "proposer": "test",
+    })))
+    .unwrap();
+    assert_eq!(
+        granted_cells(&b, keys(), &["default"]),
+        vec![
+            c("notes/open-example", 1, "Ana grows figs"),
+            c("notes/open-example", 3, "Ana knits"),
+            c("notes/closed-example", 1, "Ana hides gold"),
+            c("notes/quarantined-example", 1, "Ana sails"),
+        ]
     );
 }

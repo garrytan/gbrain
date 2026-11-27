@@ -29,6 +29,7 @@ import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { LinkBatchInput } from '../../src/core/engine.ts';
 import type { PageInput } from '../../src/core/types.ts';
+import type { EdgeTemporalOpts } from '../../src/core/link-validity.ts';
 import { DerivedLinkSettingsChangedError } from '../../src/core/derived-links.ts';
 import { relationshipKeysForPages, refreshRelationships, staleRelationshipKeys, type RelationshipKey } from '../../src/core/link-relationships.ts';
 import { applyTemporalEvidence, relationshipKeysForOrigin, removeManualTransitions, temporalBodyOf, writeManualTransitions } from '../../src/core/link-temporal-apply.ts';
@@ -49,6 +50,8 @@ import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
 import { primeRelationSemantics } from '../../src/core/link-semantics-pack.ts';
 import { setPackRelationSemantics } from '../../src/core/link-validity.ts';
 import { EXAMPLE_PACK, useExamplePack } from '../helpers/amends-ranking-scenarios.ts';
+import type { OperationContext } from '../../src/core/ops/contract.ts';
+import { operations } from '../../src/core/operations.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -181,6 +184,31 @@ describe('engine parity: link temporal state', () => {
       expect(first.refreshed).toBeGreaterThan(0);
       expect(second.refreshed).toBe(0);
       return { first, second, body, rows: await noteRows(engine), note: await notes(engine) };
+    },
+  );
+
+  // link_transitions.origin_page_id references pages(id): a transition whose origin page does not exist is refused
+  // by the foreign key and nothing is written; a soft-deleted origin page still exists, so its transition is kept.
+  parityTest(
+    'link-temporal-apply: a transition is refused when its origin page does not exist, and kept when the origin is only soft-deleted',
+    { methods: ['putPage', 'softDeletePage', 'applyLinkTemporalRows', 'linkRelationshipKeysForOrigin'] },
+    async (engine) => {
+      await seedCompanies(engine);
+      const alice = await engine.putPage(ALICE, page('Alice', { type: 'person' }));
+      const note = await engine.putPage('notes/origin-example', page('Origin'));
+      await engine.softDeletePage('notes/origin-example');
+      const missing = Number(alice.id) + Number(note.id) + 100000;
+      const transition = { from_slug: ALICE, to_slug: ACME, link_type: 'works_at', kind: 'start' as const, occurred_on: '2020-01-01',
+        date_precision: 'day', producer: 'explicit', line_hash: 'line-a' };
+      const apply = (pageId: number) => engine.applyLinkTemporalRows({ pageId, sourceId: 'default', tenseRows: [], transitions: [transition], explicitTargets: [] })
+        .then(r => ({ inserted: r.inserted.length }), (e: Error) => /link_transitions_origin_page_id_fkey/.test(e.message) ? 'origin_page_fk' : e.message);
+      const refused = await apply(missing);
+      const kept = await apply(Number(note.id));
+      return {
+        refused, kept,
+        missingKeys: await keyView(engine, await engine.linkRelationshipKeysForOrigin(missing)),
+        keptKeys: await keyView(engine, await engine.linkRelationshipKeysForOrigin(Number(note.id))),
+      };
     },
   );
 
@@ -567,6 +595,129 @@ describe('engine parity: link temporal state', () => {
           resetFtsLanguageCache();
         }
       });
+    },
+  );
+
+  parityTest(
+    'relationalFanout with a temporal option walks only the edges whose relationship matches the status, day or window',
+    { methods: ['putPage', 'readPageSnapshot', 'replaceDerivedLinks', 'relationalFanout'] },
+    async (engine) => {
+      await publishAlice(engine);
+      const walk = async (seed: string, temporal?: EdgeTemporalOpts, excludePrivate = false) =>
+        (await engine.relationalFanout([seed], { direction: 'in', ...(temporal ? { temporal } : {}), ...(excludePrivate ? { excludePrivate } : {}) }))
+          .map(r => `${r.slug}:${r.via_link_types.join(',')}`);
+      const out: Record<string, unknown> = {};
+      const cases: Array<[string, EdgeTemporalOpts | undefined]> = [
+        ['none', undefined],
+        ['live', { status: 'live' }],
+        ['ended', { status: 'ended' }],
+        ['all', { status: 'all' }],
+        ['disabled', { status: 'live', disabled: true }],
+        ['asOf2020', { status: 'live', asOf: '2020-06-01' }],
+        ['endedAsOf2020', { status: 'ended', asOf: '2020-06-01' }],
+        ['endedAsOf2018', { status: 'ended', asOf: '2018-06-01' }],
+        ['during2022', { during: { from: '2022-01-01', until: '2023-01-01' } }],
+        ['during2026', { status: 'all', during: { from: '2026-01-01', until: '2027-01-01' } }],
+      ];
+      for (const seed of [ACME, WIDGET]) {
+        for (const [name, temporal] of cases) {
+          for (const excludePrivate of [false, true]) out[`${seed}:${name}:${excludePrivate}`] = await walk(seed, temporal, excludePrivate);
+        }
+      }
+      expect(out[`${ACME}:none:false`]).toEqual([`${ALICE}:works_at`]);
+      expect(out[`${ACME}:live:false`]).toEqual([]);
+      expect(out[`${ACME}:ended:false`]).toEqual([`${ALICE}:works_at`]);
+      expect(out[`${ACME}:asOf2020:false`]).toEqual([`${ALICE}:works_at`]);
+      expect(out[`${ACME}:endedAsOf2018:false`]).toEqual([]);
+      expect(out[`${ACME}:during2022:false`]).toEqual([`${ALICE}:works_at`]);
+      expect(out[`${ACME}:during2026:false`]).toEqual([]);
+      expect(out[`${WIDGET}:live:false`]).toEqual([`${ALICE}:works_at`]);
+      expect(out[`${WIDGET}:ended:false`]).toEqual([]);
+      expect(out[`${WIDGET}:during2022:false`]).toEqual([]);
+      return out;
+    },
+  );
+
+  parityTest(
+    'relationalChainHop with a temporal option steps along and counts only the edges whose relationship matches the status, day or window',
+    { methods: ['putPage', 'readPageSnapshot', 'replaceDerivedLinks', 'relationalChainHop'] },
+    async (engine) => {
+      await publishAlice(engine);
+      const ids = await slugsById(engine, [ALICE, ACME, WIDGET]);
+      const idOf = (slug: string) => [...ids].find(([, s]) => s === slug)![0];
+      const hop = async (from: string, toward: 'object' | 'subject', temporal?: EdgeTemporalOpts, excludePrivate = false) =>
+        (await engine.relationalChainHop([idOf(from)], {
+          linkTypes: ['works_at'], toward, subjectTypes: ['person'], objectTypes: ['company'], degreeLinkTypes: ['works_at'], neighborCap: 10,
+          ...(temporal ? { temporal } : {}), ...(excludePrivate ? { excludePrivate } : {}),
+        })).map(e => `${ids.get(e.from_page_id)}>${e.to_slug}:${e.orientation}:degree=${e.from_degree}`);
+      const out: Record<string, unknown> = {};
+      const cases: Array<[string, EdgeTemporalOpts | undefined]> = [
+        ['none', undefined],
+        ['live', { status: 'live' }],
+        ['ended', { status: 'ended' }],
+        ['all', { status: 'all' }],
+        ['disabled', { status: 'live', disabled: true }],
+        ['asOf2020', { status: 'live', asOf: '2020-06-01' }],
+        ['endedAsOf2018', { status: 'ended', asOf: '2018-06-01' }],
+        ['during2022', { during: { from: '2022-01-01', until: '2023-01-01' } }],
+        ['during2026', { status: 'all', during: { from: '2026-01-01', until: '2027-01-01' } }],
+      ];
+      for (const [from, toward] of [[ALICE, 'object'], [ACME, 'subject'], [WIDGET, 'subject']] as const) {
+        for (const [name, temporal] of cases) {
+          for (const excludePrivate of [false, true]) out[`${from}:${name}:${excludePrivate}`] = await hop(from, toward, temporal, excludePrivate);
+        }
+      }
+      expect(out[`${ALICE}:none:false`]).toEqual([`${ALICE}>${ACME}:stored:degree=2`, `${ALICE}>${WIDGET}:stored:degree=2`]);
+      expect(out[`${ALICE}:live:false`]).toEqual([`${ALICE}>${WIDGET}:stored:degree=1`]);
+      expect(out[`${ALICE}:ended:false`]).toEqual([`${ALICE}>${ACME}:stored:degree=1`]);
+      expect(out[`${ALICE}:asOf2020:false`]).toEqual([`${ALICE}>${ACME}:stored:degree=1`]);
+      expect(out[`${ALICE}:during2026:true`]).toEqual([`${ALICE}>${WIDGET}:stored:degree=1`]);
+      expect(out[`${ACME}:live:false`]).toEqual([]);
+      expect(out[`${ACME}:ended:false`]).toEqual([`${ACME}>${ALICE}:stored:degree=1`]);
+      expect(out[`${ACME}:endedAsOf2018:false`]).toEqual([]);
+      expect(out[`${WIDGET}:live:true`]).toEqual([`${WIDGET}>${ALICE}:stored:degree=1`]);
+      expect(out[`${WIDGET}:during2022:false`]).toEqual([]);
+      // A date that is not a calendar day is the SQL engines' TypeError on every engine.
+      let bad: unknown = null;
+      try { await hop(ALICE, 'object', { status: 'live', asOf: '2020-13-45' }); } catch (e) { bad = e instanceof TypeError ? 'TypeError' : String(e); }
+      expect(bad).toBe('TypeError');
+      return out;
+    },
+  );
+
+  // The bench attendance stage's read shape (GBrain-Evals N12): get_links and get_backlinks with only a slug, which read
+  // with the default live relationship filter, a keyset page and a count of the hidden rows; then the same operations
+  // with status and as_of over Alice's dated works_at links. The pages are written through engine members: the bench
+  // writes them with put_page, whose automatic link preparation (src/core/persistence/links-preparation.ts) still reads
+  // through executeRaw and stops on raw_sql on Rust before any link is read.
+  parityTest(
+    'get_links and get_backlinks with only a slug, status all and as_of answer the same on every engine',
+    { methods: ['putPage', 'addLink', 'getLinks', 'getBacklinks', 'replaceDerivedLinks', 'readPageSnapshot'] },
+    async (engine) => {
+      const ctx = { engine, config: { engine: engine.kind }, remote: false, dryRun: false, sourceId: 'default',
+        logger: { info() {}, warn() {}, error() {}, debug() {} } } as unknown as OperationContext;
+      const op = async (name: string, p: Record<string, unknown>) => operations.find(o => o.name === name)!.handler(ctx, p);
+      type Row = { from_slug?: string; to_slug?: string; link_type?: string; status?: string };
+      const view = (rows: unknown) => sorted((rows as Row[]).map(l => `${l.from_slug}>${l.to_slug}:${l.link_type}:${l.status ?? '-'}`));
+      await engine.putPage('people/bob-example', page('Bob Example', { type: 'person' }));
+      await engine.putPage('meetings/2026-04-03', page('Weekly sync', { type: 'meeting' }));
+      await engine.addLink('people/bob-example', 'meetings/2026-04-03', 'attended the weekly sync', 'attended', 'manual');
+      await publishAlice(engine);
+      const out = {
+        meetingOut: view(await op('get_links', { slug: 'meetings/2026-04-03' })),
+        meetingIn: view(await op('get_backlinks', { slug: 'meetings/2026-04-03' })),
+        bobIn: view(await op('get_backlinks', { slug: 'people/bob-example' })),
+        aliceLive: view(await op('get_links', { slug: ALICE })),
+        aliceAll: view(await op('get_links', { slug: ALICE, status: 'all' })),
+        alice2020: view(await op('get_links', { slug: ALICE, as_of: '2020-06-01' })),
+        acmeIn: view(await op('get_backlinks', { slug: ACME, status: 'all' })),
+      };
+      // The bench reads the attendee's edge as a backlink of the meeting.
+      expect(out.meetingIn).toEqual(['people/bob-example>meetings/2026-04-03:attended:-']);
+      expect(out.aliceLive).toEqual([`${ALICE}>${WIDGET}:works_at:-`]);
+      expect(out.aliceAll).toEqual([`${ALICE}>${ACME}:works_at:ended`, `${ALICE}>${WIDGET}:works_at:live`]);
+      expect(out.alice2020).toEqual([`${ALICE}>${ACME}:works_at:live`]);
+      return out;
     },
   );
 });

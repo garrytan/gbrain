@@ -23,18 +23,26 @@ import { abortsManagedRun, type ConnectorHoldSession } from '../connectors/conne
 import { classifyConnectorError } from '../connectors/item-holds.ts';
 import { assertConnectorIdentity } from '../connectors/connector-text.ts';
 import { classifyItemFailure } from '../item-failure.ts';
+import { applyContactPage } from '../contact-page-apply.ts';
+import { slugifyPath } from '../sync.ts';
 
 import { CALENDAR_HORIZON_DAYS, CalendarSyncWindow, planCalendarPage, staleCalendarPages } from './calendar-window.ts';
 import { CalendarClient, calendarUnreadableStatus, CONTACT_PERSON_FIELDS, GoogleCursorExpiredError, GoogleSyncTokenRejectedError, PeopleClient } from './google-clients.ts';
 import { calendarRelPath, contactIdSlug, personSlugFromContact, renderCalendarEventPage, renderPersonPage } from './google-render.ts';
 import { contactHoldKey, DEFAULT_CALENDAR_ID, eventHoldKey, type CalendarEventData, type ContactData, type GoogleSourceState } from './types.ts';
-import { deletePageByRelPath, importRendered, type ActivePack, type GoogleSyncDeps, type GoogleSyncSummary } from './sweep-shared.ts';
+import { deletePageByRelPath, importRendered, markPartial, type ActivePack, type GoogleSyncDeps, type GoogleSyncSummary } from './sweep-shared.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
+import { identityLinksOn, linkGoogleContacts, unlinkGoogleContactPage } from './contact-identity.ts';
 
 // ── Contacts sweep ───────────────────────────────────────────────────────────
 
 /** #8906: pages of a full re-list one run applies before the rest of the sync gets its turn; the next run resumes after them. */
 export const CONTACT_RELIST_PAGES_PER_RUN = 10;
 
+/**
+ * The contacts sweep, then, when google_contacts.identity_links is on (google/contact-identity.ts), the identity links
+ * of the contact pages it wrote and of those waiting for the owner.
+ */
 export async function sweepContacts(
   deps: GoogleSyncDeps,
   people: PeopleClient,
@@ -44,6 +52,24 @@ export async function sweepContacts(
   countedSlugs: Set<string>,
   holds?: ConnectorHoldSession,
   checkpoint: () => Promise<void> = async () => {},
+): Promise<void> {
+  const touched = new Set<string>();
+  await sweepContactList(deps, people, state, activePack, summary, countedSlugs, holds, checkpoint, touched);
+  if (deps.opts.signal?.aborted || !await identityLinksOn(deps.engine)) return;
+  const links = await linkGoogleContacts(deps.engine, deps.sourceId, { apply: true, slugs: touched });
+  if (links.contacts) deps.log(`[google] contacts identity links: ${links.linked} linked, ${links.unlinked} unlinked, ${links.waiting} waiting for the owner (gbrain sync status --source ${deps.sourceId})`);
+}
+
+async function sweepContactList(
+  deps: GoogleSyncDeps,
+  people: PeopleClient,
+  state: GoogleSourceState,
+  activePack: ActivePack,
+  summary: GoogleSyncSummary,
+  countedSlugs: Set<string>,
+  holds: ConnectorHoldSession | undefined,
+  checkpoint: () => Promise<void>,
+  touched: Set<string>,
 ): Promise<void> {
   const signal = deps.opts.signal ? { signal: deps.opts.signal } : {};
   // #6324: a syncToken is only valid with the request parameters that minted
@@ -60,7 +86,7 @@ export async function sweepContacts(
   const syncToken = deps.opts.full || maskChanged || resumeToken ? null : state.contacts_sync_token;
   if (maskChanged && state.contacts_sync_token && !deps.opts.full && !resumeToken) deps.log('[google] contacts field mask changed; full re-list');
   let groupNames: Record<string, string> | null = null;
-  const sweep = () => ({ activePack, summary, countedSlugs, groupNames: groupNames ?? state.contact_groups ?? {} });
+  const sweep = () => ({ activePack, summary, countedSlugs, touched, groupNames: groupNames ?? state.contact_groups ?? {} });
   // A re-list that passed a failing contact not yet held stays blocked until it ends, so its sync token is never saved.
   let blocked = relist?.blocked === true;
   // One listed batch through the holds; false when the run was aborted part-way.
@@ -157,54 +183,32 @@ export async function sweepContacts(
  * and lands, retiring the page it owned at an older path.
  */
 async function applyContact(deps: GoogleSyncDeps, c: ContactData,
-  sweep: { activePack: ActivePack; summary: GoogleSyncSummary; countedSlugs: Set<string>; groupNames: Record<string, string> }): Promise<void> {
+  sweep: { activePack: ActivePack; summary: GoogleSyncSummary; countedSlugs: Set<string>; touched: Set<string>; groupNames: Record<string, string> }): Promise<void> {
   assertConnectorIdentity({ google_contact_id: c.resourceName, emails: c.emails });
   const contactsDir = deps.cfg.contactsDir;
-  // DB lookup by contact id FIRST, in any directory: deletion tombstones
-  // typically carry only resourceName + deleted (no names/emails — slug
-  // derivation yields null), a renamed contact's current name derives a
-  // DIFFERENT slug than the page it owns, and a changed `g_contacts_dir`
-  // (#4845) moves every page. All three need the id-keyed path (mirror of
-  // the calendar sweep's event_id keying).
-  const existingPath = await contactPageRelPathByContactId(deps, c.resourceName);
-  if (c.deleted) {
-    if (existingPath && await contactOwner(deps, existingPath) === c.resourceName) {
-      await deletePageByRelPath(deps, existingPath, sweep.summary);
-    } else {
-      // Page not (yet) in the DB — fall back to slug candidates, guarded
-      // by file ownership. Delete only the page THIS contact owns.
-      for (const slug of [personSlugFromContact(c, false, contactsDir), personSlugFromContact(c, true, contactsDir), contactIdSlug(c.resourceName, contactsDir)]) {
-        if (slug && await contactOwner(deps, `${slug}.md`) === c.resourceName) {
-          await deletePageByRelPath(deps, `${slug}.md`, sweep.summary);
-        }
-      }
-    }
-    return;
-  }
-  const baseSlug = personSlugFromContact(c, false, contactsDir);
-  if (!baseSlug) return;
-  const baseOwner = await contactOwner(deps, `${baseSlug}.md`);
-  const collides = baseOwner !== null && baseOwner !== 'hand-authored' && baseOwner !== c.resourceName;
-  const rendered = renderPersonPage(
-    { ...c, groups: c.groups.map((g) => ({ id: g.id, name: sweep.groupNames[g.id] ?? null })) },
-    collides,
-    contactsDir,
-  );
-  if (!rendered) return;
-  const owner = await contactOwner(deps, rendered.relPath);
-  if (owner === 'hand-authored') {
-    deps.log(`[google] skipping hand-authored ${rendered.relPath}`);
-    return;
-  }
-  // Staged rename: this contact previously rendered elsewhere (a rename, or
-  // a changed contacts directory). The new page lands first, then the page
-  // it owned at the old path is retired, so a sweep that dies in between
-  // leaves the contact with a page rather than none.
-  await importRendered(deps, rendered.relPath, rendered.markdown, sweep.activePack, sweep.summary, sweep.countedSlugs);
-  if (existingPath && existingPath !== rendered.relPath && await contactOwner(deps, existingPath) === c.resourceName) {
-    await deletePageByRelPath(deps, existingPath, sweep.summary);
-  }
-  deps.tick(`contact ${c.resourceName}`);
+  // The id-keyed lookup, ownership, collision and staged-rename rules are shared with the apple-contacts source
+  // (contact-page-apply.ts); the id lookup mirrors the calendar sweep's event_id keying.
+  await applyContactPage(c.resourceName, !!c.deleted, {
+    existingPath: () => contactPageRelPathByContactId(deps, c.resourceName),
+    owner: (relPath) => contactOwner(deps, relPath),
+    baseSlug: () => personSlugFromContact(c, false, contactsDir),
+    tombstoneSlugs: () => [personSlugFromContact(c, false, contactsDir), personSlugFromContact(c, true, contactsDir), contactIdSlug(c.resourceName, contactsDir)],
+    render: (collides) => renderPersonPage(
+      { ...c, groups: c.groups.map((g) => ({ id: g.id, name: sweep.groupNames[g.id] ?? null })) },
+      collides,
+      contactsDir,
+    ),
+    write: async (relPath, markdown) => {
+      await importRendered(deps, relPath, markdown, sweep.activePack, sweep.summary, sweep.countedSlugs);
+      sweep.touched.add(slugifyPath(relPath));
+    },
+    remove: async (relPath) => {
+      await unlinkGoogleContactPage(deps.engine, deps.sourceId, slugifyPath(relPath));
+      await deletePageByRelPath(deps, relPath, sweep.summary);
+    },
+    skippedHandAuthored: (relPath) => deps.log(`[google] skipping hand-authored ${relPath}`),
+    applied: () => deps.tick(`contact ${c.resourceName}`),
+  });
 }
 
 /**
@@ -260,7 +264,7 @@ async function throughHolds(deps: GoogleSyncDeps, summary: GoogleSyncSummary, ho
     deps.log(`[google] ${JSON.stringify(item.key)} failed (${classified.code}): ${classified.message}; `
       + (classified.class === 'content' ? `counted toward a hold (see: gbrain sources status ${deps.sourceId})` : 'retried on the next sync'));
     if (wasHeld) return true;
-    summary.status = 'partial';
+    markPartial(summary, `${JSON.stringify(item.key)} failed (${classified.code}): ${classified.message}`, true);
     return false;
   }
 }
@@ -291,9 +295,8 @@ async function resolveContactGroups(
   }
 }
 
-/** Existing calendar page's source_path for an event id, or null. */
-/** Existing person page's source_path for a google contact id, or null. */
-async function contactPageRelPathByContactId(
+/** Existing person page's source_path for a google contact id, or null (exported for tests). */
+export async function contactPageRelPathByContactId(
   deps: GoogleSyncDeps,
   resourceName: string,
 ): Promise<string | null> {
@@ -307,12 +310,15 @@ async function contactPageRelPathByContactId(
     );
     return rows[0]?.source_path ?? null;
   } catch (error) {
+    // An engine that cannot run the lookup refuses: a null here would write the item as a new page beside the old one.
+    rethrowCapabilityRefusal(error);
     if (deps.managed) throw error;
     return null;
   }
 }
 
-async function calendarPageRelPathByEventId(
+/** Existing calendar page's source_path for an event id, or null (exported for tests). */
+export async function calendarPageRelPathByEventId(
   deps: GoogleSyncDeps,
   eventId: string,
 ): Promise<string | null> {
@@ -326,6 +332,8 @@ async function calendarPageRelPathByEventId(
     );
     return rows[0]?.source_path ?? null;
   } catch (error) {
+    // An engine that cannot run the lookup refuses: a null here would write the item as a new page beside the old one.
+    rethrowCapabilityRefusal(error);
     if (deps.managed) throw error;
     return null;
   }
@@ -485,7 +493,7 @@ async function reconcileCalendarWindow(deps: GoogleSyncDeps, listedIds: Readonly
   const { massReconcileAllowed } = await import('../../commands/sync.ts');
   if (gone.length > 200 && !massReconcileAllowed()) {
     deps.log(`[google] mass-delete guard refused ${gone.length} deletes for source ${deps.sourceId}`);
-    summary.status = 'partial';
+    markPartial(summary, `mass-delete guard refused ${gone.length} calendar deletes`);
     return;
   }
   for (const relPath of gone) await deletePageByRelPath(deps, relPath, summary);

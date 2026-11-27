@@ -34,13 +34,13 @@
  */
 import type { BrainEngine, NewFact } from '../engine.ts';
 import { currentWriteTrust } from '../persistence/context.ts';
-import { WRITER_RANK_SQL as WRITER_RANK, type HeldTable } from '../engine-sql/trust-fence.ts';
+import type { HeldTable } from '../engine-sql/trust-fence.ts';
 import type { WriteGateConfig } from '../write-gate.ts';
 import { decideFactWrite, recordFlaggedRow, recordWriteGateHold, type GatedRowDecision } from '../write-gate-store.ts';
 import { gateInput } from './gate-outcomes.ts';
 import { insertTrustProposal } from './proposals.ts';
 import { recordContestedFact } from './supersede-handlers.ts';
-import { compareTrust, storedTrustTier, trustRankSql, type TrustTier, type WriteTrust } from './tier.ts';
+import { compareTrust, storedTrustTier, type TrustTier, type WriteTrust } from './tier.ts';
 
 type FenceFact = NewFact & { row_num: number };
 
@@ -56,7 +56,7 @@ export interface FenceGuard<T extends FenceFact> {
  * not supersede. `expired()` runs the caller's expiry; then guarded renumbers
  * move and new rows are gated.
  */
-export async function guardFenceRows<T extends FenceFact>(tx: BrainEngine, input: { sourceId: string; slug: string; incoming: string; rows: T[]; cfg: (db: BrainEngine) => Promise<WriteGateConfig>;
+export async function guardFenceRows<T extends FenceFact>(tx: BrainEngine, input: { sourceId: string; slug: string; /** The page's permanent id, when the caller read it (a held row is bound to it). */ pageId?: number; incoming: string; rows: T[]; cfg: (db: BrainEngine) => Promise<WriteGateConfig>;
   /** #8819: rows the fence never held, which this write keeps as they are. */ kept?: readonly number[] },
   expire: () => Promise<unknown>): Promise<FenceGuard<T>> {
   const { sourceId, slug, incoming } = input;
@@ -67,13 +67,11 @@ export async function guardFenceRows<T extends FenceFact>(tx: BrainEngine, input
   // row (a sync after an unrelated edit, a re-put) is not the owner's accept, which alone applies the widening.
   // The typed read (engine-sql/trust-fence.ts) returns those rows with the rows above the writer and the opened rows.
   const guarded = (await tx.listFenceFactRows({ sourceId, slug, incoming })).filter(row => !input.kept?.includes(Number(row.id)));
-  if (guarded.length) await tx.executeRaw('UPDATE facts SET row_num = NULL WHERE id = ANY($1::bigint[])', [guarded.map(g => Number(g.id))]);
+  if (guarded.length) await tx.detachFenceFactRows(guarded.map(g => Number(g.id)));
   await expire();
   // A fence with no rows and nothing guarded has nothing to place or gate (#6007: no reads on a fence-free publish).
   if (!input.rows.length && !guarded.length) return { rows: [], async finish() { return []; } };
-  const occupied = new Set((await tx.executeRaw<{ row_num: number }>(
-    'SELECT row_num FROM facts WHERE source_id = $1 AND source_markdown_slug = $2 AND row_num IS NOT NULL AND expired_at IS NULL', [sourceId, slug]))
-    .map(r => Number(r.row_num)));
+  const occupied = new Set(await tx.listOccupiedFenceRowNums(sourceId, slug));
   let rows = input.rows;
   const contested: typeof guarded = [];
   const moves: Array<{ id: number; row_num: number; visibility: string }> = [];
@@ -101,8 +99,7 @@ export async function guardFenceRows<T extends FenceFact>(tx: BrainEngine, input
     rows = rows.filter(r => r !== target);
   }
   // #6574: every guarded row moves in one statement; each starts detached (row_num NULL), so no move collides with another.
-  if (moves.length) await tx.executeRaw(`UPDATE facts f SET row_num = m.row_num, visibility = m.visibility FROM jsonb_to_recordset($1::text::jsonb) AS m(id bigint, row_num integer, visibility text)
-    WHERE f.id = m.id`, [JSON.stringify(moves)]);
+  if (moves.length) await tx.moveGuardedFenceRows(moves);
   const gated: Array<{ row: T; decision: GatedRowDecision }> = [];
   const inserted: T[] = [];
   // Only new rows are gated; owner-tier writers (tool_observed and above) never are, so they read no gate config.
@@ -121,18 +118,7 @@ export async function guardFenceRows<T extends FenceFact>(tx: BrainEngine, input
     if (at && g.visibility !== 'world' && at.visibility === 'world') widened.set(at.row_num, { from: g.visibility });
   }
   const restated = rows.filter(r => fresh.has(r.row_num) && r.visibility === 'world' && !widened.has(r.row_num));
-  const trustedPrivate = restated.length ? await tx.executeRaw<{ row_num: number; id: number; visibility: string; trust_tier: string }>(
-    `SELECT DISTINCT ON (r.row_num) r.row_num, f.id, f.visibility, f.trust_tier
-      FROM jsonb_to_recordset($3::text::jsonb) AS r(row_num integer, fact text, entity text)
-      JOIN facts f ON f.source_id = $1 AND f.expired_at IS NULL AND (f.source_markdown_slug = $2 OR f.entity_slug = r.entity)
-        AND f.fact = r.fact AND f.visibility <> 'world' AND ${trustRankSql('f.trust_tier')} > ${WRITER_RANK}
-      WHERE (f.source_markdown_slug = $2
-          AND NOT EXISTS (SELECT 1 FROM facts w WHERE w.source_id = $1 AND w.source_markdown_slug = $2 AND w.expired_at IS NULL AND w.visibility = 'world' AND w.fact = f.fact))
-        OR (f.entity_slug = r.entity AND f.source_markdown_slug IS DISTINCT FROM $2 AND (f.valid_until IS NULL OR f.valid_until > now())
-          AND NOT EXISTS (SELECT 1 FROM facts w WHERE w.source_id = $1 AND w.entity_slug = r.entity AND w.expired_at IS NULL AND w.visibility = 'world'
-            AND w.fact = f.fact AND (w.valid_until IS NULL OR w.valid_until > now())))
-      ORDER BY r.row_num, COALESCE(f.source_markdown_slug = $2, false) DESC, f.id`,
-    [sourceId, slug, JSON.stringify(restated.map(r => ({ row_num: r.row_num, fact: r.fact, entity: r.entity_slug ?? null })))]) : [];
+  const trustedPrivate = restated.length ? await tx.listTrustedPrivateCopies(sourceId, slug, restated.map(r => ({ row_num: r.row_num, fact: r.fact, entity: r.entity_slug ?? null }))) : [];
   for (const r of restated) {
     const copy = trustedPrivate.find(t => Number(t.row_num) === r.row_num);
     if (copy) widened.set(r.row_num, { from: copy.visibility, copy: { id: Number(copy.id), trust_tier: copy.trust_tier } });
@@ -140,7 +126,7 @@ export async function guardFenceRows<T extends FenceFact>(tx: BrainEngine, input
   if (widened.size) rows = rows.map(r => fresh.has(r.row_num) && widened.has(r.row_num) ? { ...r, visibility: widened.get(r.row_num)!.from } : r);
   for (const row of rows) {
     if (!cfg || occupied.has(row.row_num)) { inserted.push(row); continue; }
-    const decision = decideFactWrite({ fact: row.fact, context: row.context ?? null, source: row.source ?? null }, { sourceId, slug,
+    const decision = decideFactWrite({ fact: row.fact, context: row.context ?? null, source: row.source ?? null }, { sourceId, slug, pageId: input.pageId,
       payload: { fact: row.fact, kind: row.kind, visibility: row.visibility, entity_slug: row.entity_slug, source: row.source, context: row.context ?? null, row_num: row.row_num },
       input: gateInput(await writerTrust(tx), null), cfg });
     if (decision.action === 'hold') { await recordWriteGateHold(tx, decision.hold!); continue; }
@@ -152,8 +138,7 @@ export async function guardFenceRows<T extends FenceFact>(tx: BrainEngine, input
     rows: inserted,
     async finish(db) {
       const refs: string[] = [];
-      const at = async (rowNum: number) => (await db.executeRaw<{ id: number; trust_tier: string }>(
-        `SELECT id, trust_tier FROM facts WHERE source_id = $1 AND source_markdown_slug = $2 AND row_num = $3 AND expired_at IS NULL`, [sourceId, slug, rowNum]))[0];
+      const at = async (rowNum: number) => await db.readLiveFenceFactAt(sourceId, slug, rowNum) ?? undefined;
       for (const g of contested) {
         const replacement = fresh.has(Number(g.row_num)) ? await at(Number(g.row_num)) : undefined;
         if (replacement) {
@@ -183,9 +168,7 @@ export async function guardFenceRows<T extends FenceFact>(tx: BrainEngine, input
 
 /** The page's live fence facts more trusted than the writer: the rows its field rewrite could lower. */
 export async function factsAboveWriter(tx: BrainEngine, sourceId: string, slug: string): Promise<Array<{ id: number; tier: TrustTier }>> {
-  return (await tx.executeRaw<{ id: number; trust_tier: string }>(`SELECT id, trust_tier FROM facts WHERE source_id = $1 AND source_markdown_slug = $2
-      AND row_num IS NOT NULL AND expired_at IS NULL AND ${trustRankSql('trust_tier')} > ${WRITER_RANK}`, [sourceId, slug]))
-    .map(r => ({ id: Number(r.id), tier: storedTrustTier(r.trust_tier) }));
+  return (await tx.listFactsAboveWriter(sourceId, slug)).map(r => ({ id: Number(r.id), tier: storedTrustTier(r.trust_tier) }));
 }
 
 /** What a lower-tier write would have done to a held take or timeline row. */

@@ -79,6 +79,31 @@ impl RedbKv {
         Self::init(db)
     }
 
+    /// Opens the record file at `path` only if it is there: never creates it (`store_missing`
+    /// when it is absent), so a store moved away during an open is not replaced.
+    pub fn open_existing_path(path: &Path) -> Result<Self> {
+        if !path.is_file() {
+            return Err(StoreError::new(
+                crate::error::STORE_MISSING,
+                format!("{} is not there; nothing was created", path.display()),
+            ));
+        }
+        let db = Database::builder().open(path).map_err(|e| {
+            if path.is_file() {
+                map(e)
+            } else {
+                StoreError::new(
+                    crate::error::STORE_MISSING,
+                    format!(
+                        "{} went away during the open; nothing was created",
+                        path.display()
+                    ),
+                )
+            }
+        })?;
+        Self::init(db)
+    }
+
     /// Opens (creating if absent) a database on any byte file.
     pub fn open_backend(backend: Box<dyn FileBackend>) -> Result<Self> {
         let db = Database::builder()
@@ -130,6 +155,10 @@ impl Kv for RedbReadOnlyKv {
         Ok(Box::new(Snapshot { tx }))
     }
 
+    fn versioned_snapshot(&self) -> Result<(Box<dyn KvRead + Send>, u64)> {
+        versioned(self.db.begin_read().map_err(map)?)
+    }
+
     fn begin_write(&self) -> Result<Box<dyn KvWrite>> {
         Err(StoreError::new(
             READ_ONLY_TRANSACTION,
@@ -137,11 +166,87 @@ impl Kv for RedbReadOnlyKv {
         ))
     }
 
+    fn is_read_only(&self) -> bool {
+        true
+    }
+
     fn version(&self) -> Result<u64> {
         let snapshot = Snapshot {
             tx: self.db.begin_read().map_err(map)?,
         };
         Ok(read_seq(&mut |key| snapshot.get(key))?.0)
+    }
+}
+
+/// A new record file that the store snapshot copy fills (`snapshot.rs`). It is the one writer of
+/// a file nothing else has open, so it writes keys the `KvWrite` rules refuse to a store (the
+/// copy carries the source's commit sequence over as it is) and skips the per-commit sequence
+/// bump. Batches commit without a sync; `finish` writes the sequence and syncs once, so a file
+/// that never reached `finish` is not a snapshot.
+pub struct RedbSink {
+    db: Database,
+}
+
+impl RedbSink {
+    /// Creates the record file at `path`; refuses a path that already holds one.
+    pub fn create_path(path: &Path) -> Result<Self> {
+        if path.exists() {
+            return Err(StoreError::invalid(format!(
+                "{} already exists; a snapshot never writes over a file",
+                path.display()
+            )));
+        }
+        Self::init(Database::builder().create(path).map_err(map)?)
+    }
+
+    /// Creates a record file on any byte file: the seam for fault-injection tests.
+    pub fn create_backend(backend: Box<dyn FileBackend>) -> Result<Self> {
+        Self::init(
+            Database::builder()
+                .create_with_backend(Backend(backend))
+                .map_err(map)?,
+        )
+    }
+
+    fn init(db: Database) -> Result<Self> {
+        let tx = db.begin_write().map_err(map)?;
+        tx.open_table(TABLE).map_err(map)?;
+        tx.commit().map_err(map)?;
+        Ok(Self { db })
+    }
+
+    /// Adds `entries`, in one transaction that is not synced. A key the adapter keeps for itself
+    /// is refused.
+    pub fn put_batch(&self, entries: &[(Vec<u8>, Vec<u8>)]) -> Result<()> {
+        let mut tx = self.db.begin_write().map_err(map)?;
+        tx.set_durability(Durability::None)
+            .map_err(|e| StoreError::io(format!("record store: {e}")))?;
+        {
+            let mut table = tx.open_table(TABLE).map_err(map)?;
+            for (key, value) in entries {
+                reject_reserved(key)?;
+                table
+                    .insert(key.as_slice(), value.as_slice())
+                    .map_err(map)?;
+            }
+        }
+        tx.commit().map_err(map)?;
+        Ok(())
+    }
+
+    /// Writes the commit sequence `version`, syncs every earlier batch with it and closes the
+    /// file cleanly.
+    pub fn finish(self, version: u64) -> Result<()> {
+        let mut tx = self.db.begin_write().map_err(map)?;
+        tx.set_durability(Durability::Immediate)
+            .map_err(|e| StoreError::io(format!("record store: {e}")))?;
+        tx.open_table(TABLE)
+            .map_err(map)?
+            .insert(SEQ_KEY, version.to_be_bytes().as_slice())
+            .map_err(map)?;
+        tx.commit().map_err(map)?;
+        drop(self.db);
+        Ok(())
     }
 }
 
@@ -315,22 +420,22 @@ impl KvWrite for Writer {
     }
 }
 
-impl RedbKv {
-    /// A snapshot that can move to another thread, with the commit sequence it sees (read from
-    /// inside the snapshot, so the two always agree).
-    pub(crate) fn snapshot_with_version(&self) -> Result<(Box<dyn KvRead + Send>, u64)> {
-        let snapshot = Snapshot {
-            tx: self.db.begin_read().map_err(map)?,
-        };
-        let (version, _) = read_seq(&mut |key| snapshot.get(key))?;
-        Ok((Box::new(snapshot), version))
-    }
+/// A read transaction as a snapshot that can move to another thread, with the commit sequence it
+/// sees (read from inside the snapshot, so the two always agree).
+fn versioned(tx: ReadTransaction) -> Result<(Box<dyn KvRead + Send>, u64)> {
+    let snapshot = Snapshot { tx };
+    let (version, _) = read_seq(&mut |key| snapshot.get(key))?;
+    Ok((Box::new(snapshot), version))
 }
 
 impl Kv for RedbKv {
     fn snapshot(&self) -> Result<Box<dyn KvRead>> {
         let tx = self.db.begin_read().map_err(map)?;
         Ok(Box::new(Snapshot { tx }))
+    }
+
+    fn versioned_snapshot(&self) -> Result<(Box<dyn KvRead + Send>, u64)> {
+        versioned(self.db.begin_read().map_err(map)?)
     }
 
     fn begin_write(&self) -> Result<Box<dyn KvWrite>> {
@@ -375,7 +480,7 @@ mod tests {
         let kv = RedbKv::open_path(&path).unwrap();
         // Opening reads the legacy key and writes nothing.
         assert_eq!(kv.version().unwrap(), 41);
-        assert_eq!(kv.snapshot_with_version().unwrap().1, 41);
+        assert_eq!(kv.versioned_snapshot().unwrap().1, 41);
         assert_eq!(legacy_at(&kv), (true, false));
         // The next commit counts from it and moves it in the same transaction.
         assert_eq!(kv.begin_write().unwrap().commit().unwrap(), 42);

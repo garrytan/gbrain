@@ -20,9 +20,9 @@
 //!    takes the lower of the old tier and its own; an explicit lowering in the same write also
 //!    counts. The origin is replaced unless the write set it itself.
 //!
-//! Not built: the guest-source rules of the trigger (`source_writer_restricted`,
-//! `guest_attribution_missing`, `guest_page_immutable` and the per-source tier ceiling). The Rust
-//! store has no `guest_sources` table; see rust/docs/store/trust.md.
+//! The guest-source rules of the trigger (`source_writer_restricted`, `guest_attribution_missing`,
+//! `guest_page_immutable` and the per-source tier ceiling) read the `guest_sources` record, so they
+//! run in the writers (`guest_sources.rs`), not in this pure function; see rust/docs/store/trust.md.
 
 use crate::error::{INVALID_ARGUMENT, StoreError};
 use serde_json::{Map, Value};
@@ -231,6 +231,9 @@ pub struct WriteTrust {
     /// The actor (`gbrain.write_request`, `gbrain.write_principal_kind`,
     /// `gbrain.write_principal_id`) the timeline write receipt stamps. Not a trust input.
     pub attribution: crate::write_trust::WriteAttribution,
+    /// `gbrain.guest_note` is set and equals `gbrain.write_request`: the write publishes a guest note (the guest-source
+    /// rules, guest_sources.rs `guard_page`).
+    pub guest_note_is_request: bool,
 }
 
 /// The row the stamp applies to.

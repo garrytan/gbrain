@@ -65,6 +65,7 @@ import { parseCorpusTurns } from '../context/corpus-turns.ts';
 import { DETECTED_PRINCIPAL, readSpeakerSidecar, speakerContextNote, type SpeakerSidecar } from '../context/session-speaker.ts';
 import { stripPastedContent } from '../transcripts/pasted-content.ts';
 import { wholeBodySnapshot } from '../persistence/segmented-apply.ts';
+import { sortSourcesById } from '../source-rows.ts';
 import { shellQuote } from '../shell-quote.ts';
 import { pruneDir } from '../sync.ts';
 import { CAPTURE_LANES, captureSessionId } from './captured-facts.ts';
@@ -296,21 +297,7 @@ export async function classifyAgentSessionFacts(db: BrainEngine, sourceIds: stri
  * the fact's own source.
  */
 export async function agentSessionTakes(db: BrainEngine, sourceIds: string[], reattributed: ReadonlySet<number>, ids?: number[]): Promise<AgentSessionTake[]> {
-  const rows = await db.executeRaw<{ id: number | string; source_id: string; slug: string; row_num: number | string; claim: string;
-    fact_ids: Array<number | string>; user_fact_ids: Array<number | string>; noted: boolean }>(`
-    WITH contributing AS (
-      SELECT f.consolidated_into AS take_id, array_agg(f.id ORDER BY f.id) AS fact_ids,
-             COALESCE(array_agg(f.id ORDER BY f.id) FILTER (WHERE f.attributed_to IS NULL OR f.attributed_to='user'), '{}'::bigint[]) AS user_fact_ids,
-             COALESCE(bool_or(f.attributed_to='other' AND position($3::text in COALESCE(f.context,''))>0), false) AS noted,
-             min(f.consolidated_at) AS first_consolidated_at
-        FROM facts f
-       WHERE f.source_id=ANY($1::text[]) AND f.consolidated_into IS NOT NULL AND ($2::bigint[] IS NULL OR f.consolidated_into=ANY($2::bigint[]))
-       GROUP BY f.consolidated_into)
-    SELECT t.id, p.source_id, p.slug, t.row_num, t.claim, c.fact_ids, c.user_fact_ids, c.noted
-      FROM contributing c JOIN takes t ON t.id=c.take_id JOIN pages p ON p.id=t.page_id
-     WHERE p.source_id=ANY($1::text[]) AND t.kind='fact' AND t.holder='self' AND t.active AND t.resolved_at IS NULL
-       AND t.created_at >= c.first_consolidated_at - interval '1 second'
-     ORDER BY p.source_id COLLATE "C", p.slug COLLATE "C", t.id`, [sourceIds, ids ?? null, NOTE_MARK]);
+  const rows = await db.listAgentSessionTakeCandidates(sourceIds, ids ?? null, NOTE_MARK);
   return rows.filter(row => row.user_fact_ids.every(id => reattributed.has(Number(id))) && (row.noted || row.user_fact_ids.length > 0))
     .map(row => {
       const factIds = row.fact_ids.map(Number);
@@ -331,12 +318,11 @@ function previewCommand(scope: RepairScope, all: string[], opts: AgentSessionOpt
 }
 
 async function activeSources(engine: BrainEngine): Promise<string[]> {
-  return (await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE archived IS NOT TRUE ORDER BY id')).map(row => row.id);
+  return sortSourcesById(await engine.listAllSources()).map(row => row.id);
 }
 
 async function brainId(engine: BrainEngine): Promise<string> {
-  const [brain] = await engine.executeRaw<{ brain_id: string }>('SELECT brain_id FROM persistence_brain WHERE singleton=1').catch(() => []);
-  return brain?.brain_id ?? 'host';
+  return (await engine.readPersistenceBrainId().catch(() => null)) ?? 'host';
 }
 
 /**
@@ -420,9 +406,7 @@ export const agentSessionFactsRepair: RepairHandler = {
     if (page.facts) {
       const live = new Map((await classifyAgentSessionFacts(engine, [page.source_id], { ...options, ids: page.facts.map(f => f.id), indexes })).candidates.map(c => [c.id, c]));
       const gone = page.facts.filter(f => !live.has(f.id));
-      const settled = gone.length ? await engine.executeRaw<{ id: number | string; context: string | null }>(
-        "SELECT id, context FROM facts WHERE source_id=$1 AND id=ANY($2::bigint[]) AND attributed_to='other' AND expired_at IS NULL AND superseded_by IS NULL",
-        [page.source_id, gone.map(f => f.id)]) : [];
+      const settled = gone.length ? await engine.listSettledSessionFacts(page.source_id, gone.map(f => f.id)) : [];
       done.push(...gone.filter(f => settled.some(row => Number(row.id) === f.id && (row.context ?? '').includes(speakerContextNote(f.principal)))).map(f => f.id));
       const unchanged = page.facts.filter(f => {
         const current = live.get(f.id);
@@ -455,19 +439,8 @@ export interface AgentSessionWrite { facts?: Array<{ id: number; note: string }>
  * contributing fact is non-user. The checks run in the UPDATEs, under the row locks. Returns the changed ids.
  */
 export async function applyAgentSessionWrite(tx: BrainEngine, sourceId: string, write: AgentSessionWrite): Promise<{ reattributed: number[]; retired: number[] }> {
-  const reattributed = write.facts?.length ? (await tx.executeRaw<{ id: number | string }>(`UPDATE facts f
-      SET attributed_to='other',
-          context=CASE WHEN position(r.note in COALESCE(f.context,''))>0 THEN f.context ELSE concat_ws($3::text, NULLIF(f.context,''), r.note) END
-     FROM jsonb_to_recordset($2::text::jsonb) AS r(id bigint, note text)
-    WHERE f.source_id=$1 AND f.id=r.id AND (f.attributed_to IS NULL OR f.attributed_to='user') AND f.expired_at IS NULL AND f.superseded_by IS NULL
-      AND f.row_num IS NULL
-    RETURNING f.id`, [sourceId, JSON.stringify(write.facts), NOTE_SEPARATOR])).map(row => Number(row.id)) : [];
-  const retired = write.take_ids?.length ? (await tx.executeRaw<{ id: number | string }>(`UPDATE takes t SET active=false, updated_at=now()
-     FROM pages p
-    WHERE p.id=t.page_id AND p.source_id=$1 AND t.id=ANY($2::bigint[]) AND t.active AND t.resolved_at IS NULL AND t.kind='fact' AND t.holder='self'
-      AND t.created_at >= (SELECT min(f.consolidated_at) FROM facts f WHERE f.consolidated_into=t.id) - interval '1 second'
-      AND NOT EXISTS (SELECT 1 FROM facts f WHERE f.consolidated_into=t.id AND (f.attributed_to IS NULL OR f.attributed_to='user'))
-    RETURNING t.id`, [sourceId, write.take_ids])).map(row => Number(row.id)) : [];
+  const reattributed = write.facts?.length ? (await tx.reattributeSessionFacts(sourceId, write.facts, NOTE_SEPARATOR)).map(row => Number(row.id)) : [];
+  const retired = write.take_ids?.length ? (await tx.retireSessionTakes(sourceId, write.take_ids)).map(row => Number(row.id)) : [];
   return { reattributed, retired };
 }
 
@@ -514,8 +487,7 @@ async function rewriteFencedFacts(ctx: Parameters<RepairHandler['apply']>[0], it
   const engine = ctx.engine;
   const snapshot = await wholeBodySnapshot(engine, await engine.readPageSnapshot(page.slug, { sourceId: page.source_id }), 'repair agent-session-facts');
   if (!snapshot) return [];
-  const rows = await engine.executeRaw<{ id: number | string; fact: string; row_num: number }>(
-    'SELECT id, fact, row_num FROM facts WHERE source_id=$1 AND id=ANY($2::bigint[]) AND expired_at IS NULL', [page.source_id, facts.map(f => f.id)]);
+  const rows = await engine.listFenceRewriteRows(page.source_id, facts.map(f => f.id));
   let body = snapshot.page.compiled_truth ?? '';
   const rewritten: number[] = [];
   for (const row of rows) {
@@ -532,8 +504,7 @@ async function rewriteFencedFacts(ctx: Parameters<RepairHandler['apply']>[0], it
   await submitPageMutation(ctx, { operation: 'put_page', params: { slug: page.slug, source_id: page.source_id,
     content: serializePageToMarkdown({ ...snapshot.page, compiled_truth: body }, snapshot.tags), expected_revision: snapshot.revision,
     request_id: await repairRequestId(ctx, 'agent-session-facts', item, snapshot.revision) } });
-  return (await engine.executeRaw<{ id: number | string }>("SELECT id FROM facts WHERE source_id=$1 AND id=ANY($2::bigint[]) AND attributed_to='other'",
-    [page.source_id, rewritten])).map(row => Number(row.id));
+  return (await engine.listOtherAttributedFactIds(page.source_id, rewritten)).map(row => Number(row.id));
 }
 
 /**
@@ -555,8 +526,7 @@ async function retireTakes(ctx: Parameters<RepairHandler['apply']>[0], item: Rep
     const content = takesPreparation.replaceFence(body, fence.takes.map(row => rows.has(row.rowNum) ? { ...row, active: false } : row));
     await submitPageMutation(ctx, { operation: 'put_page', params: { slug: page.slug, source_id: page.source_id, content,
       expected_revision: snapshot.revision, request_id: await repairRequestId(ctx, 'agent-session-facts', item, snapshot.revision) } });
-    retired.push(...(await engine.executeRaw<{ id: number | string }>('SELECT id FROM takes WHERE id=ANY($1::bigint[]) AND active=false',
-      [fenced.map(t => t.id)])).map(row => Number(row.id)));
+    retired.push(...(await engine.listInactiveTakeIds(fenced.map(t => t.id))).map(row => Number(row.id)));
   }
   return retired;
 }

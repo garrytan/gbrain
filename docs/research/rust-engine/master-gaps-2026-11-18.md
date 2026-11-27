@@ -1,5 +1,7 @@
 # Rust engine fixes that master also needs (2026-11-18)
 
+Renumbered v331 -> v334 on 2026-11-20 (master's D1 frontmatter migration takes v331).
+
 The Rust engine branches fixed six defects while they made CI green, and one fix needed a new index.
 Each entry below says whether
 master has the same code, with file and line. Master was read at `4fb16138a0` with

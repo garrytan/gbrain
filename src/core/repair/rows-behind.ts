@@ -149,7 +149,7 @@ async function applyRow(ctx: OperationContext, row: ApprovedRow, embed: boolean)
   const engine: BrainEngine = ctx.engine;
   const context = await sourceContext(engine, row.source_id);
   if (!context.ok || !sameOwner(context.owner, row.owner)) return changed('owner_changed');
-  const [source] = await engine.executeRaw<{ last_commit: string | null }>('SELECT last_commit FROM sources WHERE id=$1', [row.source_id]);
+  const source = await engine.getSource(row.source_id);
   if (source?.last_commit !== row.checkpoint) return changed('checkpoint_moved', { checkpoint: source?.last_commit ?? null });
   const snapshot = await engine.readPageSnapshot(row.slug, { sourceId: row.source_id, includeDeleted: true });
   if (!snapshot || Number(snapshot.page.id) !== row.page_id || snapshot.revision !== row.revision || snapshot.page.deleted_at != null) return changed('page_moved');
@@ -175,7 +175,7 @@ async function applyRow(ctx: OperationContext, row: ApprovedRow, embed: boolean)
   const requestId = await repairRequestId(local, 'rows-behind', { source_id: row.source_id, slug: row.slug }, `${row.revision}:${row.blob}`);
   try {
     const outcome = await submitManagedFileRepair(local, { sourceId: row.source_id, requestId, slug: row.slug, path: row.path, sourcePath: row.source_path, content,
-      beforeHash: sha256(bytes), resultDigest: row.digest!, expected_revision: row.revision, noEmbed: !embed });
+      beforeHash: sha256(bytes), resultDigest: row.digest!, expected_revision: row.revision, noEmbed: !embed, repairKind: 'rows-behind' });
     return { applied: true, outcome: 'reimported', detail: { request_id: requestId, path: row.path, checkpoint: row.checkpoint, blob: row.blob, status: outcome.status, hold_cleared: outcome.hold_cleared === true } };
   } catch (error) {
     if (acceptedPendingReceipt(error) || !(error instanceof OperationError)) throw error;

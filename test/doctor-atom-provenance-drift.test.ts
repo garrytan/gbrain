@@ -23,7 +23,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { computeAtomProvenanceDriftCheck } from '../src/commands/doctor.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
-import { doctorFileSource } from './helpers/doctor-source.ts';
+import { readFileSync } from 'node:fs';
 import { WAVE_CHECKS, checkHealthUnknown } from '../src/commands/doctor/wave-checks.ts';
 import { bannerFindingLine } from '../src/commands/doctor/upgrade-banner.ts';
 
@@ -194,7 +194,7 @@ describe('computeAtomProvenanceDriftCheck', () => {
 
   it('a throwing executeRaw degrades to a warn that names the check — never throws, never fails doctor', async () => {
     const broken = {
-      executeRaw: async () => { throw new Error('relation "pages" does not exist'); },
+      readAtomProvenanceCounts: async () => { throw new Error('relation "pages" does not exist'); },
     } as unknown as BrainEngine;
     const c = await computeAtomProvenanceDriftCheck(broken);
     expect(c.name).toBe('atom_provenance_drift');
@@ -247,7 +247,9 @@ describe('computeAtomProvenanceDriftCheck', () => {
     // WHERE; in the SELECT list it stays a correlated SubPlan re-run per atom
     // over an unindexed substring(content_hash) expression — O(atoms x pages),
     // which blew a 60s health-monitor budget on a 27k-page / 7k-atom brain.
-    const src = doctorFileSource('doctor/checks/extraction-sync.ts');
+    // The statement moved out of the check into engine-sql/doctor-derived.ts (readAtomProvenanceCounts).
+    // test-reads-source-ok[structural]: pins the semi-join shape of the readAtomProvenanceCounts statement (#4937).
+    const src = readFileSync(new URL('../src/core/engine-sql/doctor-derived.ts', import.meta.url), 'utf8');
     const start = src.indexOf('), drift AS (');
     expect(start).toBeGreaterThan(0);
     const end = src.indexOf('SELECT count(*)', start);

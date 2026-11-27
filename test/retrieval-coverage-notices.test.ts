@@ -236,6 +236,22 @@ describe('pages held from embedding are named in coverage and the held_files lin
     await search.handler(c.ctx, { query: QUERY });
     expect(c.meta.retrieval.coverage).toEqual(counted);
   }));
+
+  test('a brain with embeddings off on purpose: embedding-held pages are no degradation, so no held_files line and no coverage entry', eachEngine(async () => {
+    await embeddingHeldPage('embed-a', 'notes/acme-example-renewal-keyless', 'note', 'Acme-example renewal keyless');
+    await engine.setConfig('embedding_disabled', 'true');
+    try {
+      const c = call('embed-a');
+      expect((await search.handler(c.ctx, { query: QUERY }) as unknown[]).length).toBeGreaterThan(0);
+      expect(c.notices.find(n => n.code === 'held_files')).toBeUndefined();
+      expect(c.meta.retrieval.coverage?.embedding_held).toBeUndefined();
+    } finally {
+      await engine.unsetConfig('embedding_disabled');
+    }
+    const on = call('embed-a');
+    await search.handler(on.ctx, { query: QUERY });
+    expect(on.notices.find(n => n.code === 'held_files')?.why).toContain('held from embedding');
+  }));
 });
 
 describe('repeat suppression and worsening (session ledger)', () => {

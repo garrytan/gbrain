@@ -26,6 +26,7 @@ import { GroupBudgetRefusal, RESERVATION_TTL_MS, readGroupSpend, reserveGroup, s
 import { actualCents, maximumInvocationCents, unboundedInvocationCause } from './delegated-spend.ts';
 import { UnrecoverableError } from './errors.ts';
 import { RateLeaseUnavailableError } from './rate-leases.ts';
+import { isEngineCapabilityRefusal } from '../engine-capability-refusal.ts';
 import type { MinionJob, MinionJobContext } from './types.ts';
 import { spendBasis, type JobSpendContext, type SpendAuthorization } from './spend-record.ts';
 
@@ -254,10 +255,18 @@ async function pressureRenewals(engine: BrainEngine, jobId: number, budgetKey: s
 
 async function recordRefusal(engine: BrainEngine, job: MinionJob, error: SpendGroupRefusedError): Promise<void> {
   if (!job.lock_token) return;
-  await engine.executeRaw(
-    `UPDATE minion_jobs SET result = $3::text::jsonb, updated_at = now() WHERE id = $1 AND lock_token = $2 AND status = 'active'`,
-    [job.id, job.lock_token, JSON.stringify({ spend_refusal: error.envelope })],
-  ).catch(() => { /* the error text still carries the code and message */ });
+  try {
+    await engine.executeRaw(
+      `UPDATE minion_jobs SET result = $3::text::jsonb, updated_at = now() WHERE id = $1 AND lock_token = $2 AND status = 'active'`,
+      [job.id, job.lock_token, JSON.stringify({ spend_refusal: error.envelope })],
+    );
+    // capability-refusal-ok: the spend refusal is thrown right after this returns and must reach the user; failing the job with the capability refusal instead would hide why it stopped. The lost result row is reported below, on every engine that cannot write it.
+  } catch (e) {
+    if (isEngineCapabilityRefusal(e)) {
+      console.error(`[minions] job ${job.id}: this engine cannot record the spend refusal on the job's result (${(e as Error).message}); the job still ends with the refusal itself, but result.spend_refusal is not stored.`);
+    }
+    /* the error text still carries the code and message */
+  }
 }
 
 async function logSpendBasis(engine: BrainEngine, job: MinionJob, record: SpendAuthorization | null): Promise<void> {

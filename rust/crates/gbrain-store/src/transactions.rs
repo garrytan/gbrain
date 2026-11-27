@@ -23,10 +23,11 @@
 //! which a bound statement sends straight to the base, under every layer, so dropping a layer
 //! does not give its ids back (and, with concurrent writes on, the ids are shared with the other
 //! writers). A counter written directly is remembered at its highest value and written back into
-//! the layer below when a layer is dropped. When the whole transaction rolls back, every counter
-//! it advanced is raised in a follow-up write (`KvWrite::raise_counter`, which never conflicts).
-//! An id handed out inside a rolled-back transaction is never handed out again, also after a
-//! reopen.
+//! the layer below when a layer is dropped. When the whole transaction rolls back (or its last
+//! handle goes away without ending it), the base write that held the writer puts back every key the
+//! transaction wrote, raises every counter it advanced (`KvWrite::raise_counter`) and commits, so
+//! the writer is released only after the counters are saved. An id handed out inside a
+//! rolled-back transaction is never handed out again, also after a reopen.
 //!
 //! Keys: `keys::LOCK_QUEUE` (`w`) is reserved for this file. No `w` record is written: a page-key
 //! lock is held in memory by the transaction that took it, because an explicit transaction holds
@@ -79,6 +80,11 @@ impl Env for TransactionClock {
         self.started_us
     }
 
+    /// The moment of the call, never before the transaction's start.
+    fn clock_micros(&self) -> i64 {
+        self.inner.clock_micros().max(self.started_us)
+    }
+
     fn new_uuid(&self) -> String {
         self.inner.new_uuid()
     }
@@ -120,6 +126,10 @@ struct State {
     /// directly and never roll back with a layer; only a whole-transaction rollback writes
     /// these forward.
     allocated: BTreeMap<Vec<u8>, u64>,
+    /// The value each key held before the transaction first wrote it into the base (`None`:
+    /// absent). A rollback that must write sequences forward puts these back in the same base
+    /// write, so it never releases the writer before the sequences are saved.
+    undo: BTreeMap<Vec<u8>, Option<Vec<u8>>>,
 }
 
 /// An open transaction. Shared by the bound [`Store`] and every reader it hands out.
@@ -135,12 +145,36 @@ pub struct Transaction {
     opened_read_only: bool,
 }
 
+/// A transaction whose handles all went away without a commit or a rollback rolls back the same
+/// way, so its ids are written forward before the writer is released.
+impl Drop for Transaction {
+    fn drop(&mut self) {
+        let state = self.state.get_mut().unwrap_or_else(|e| e.into_inner());
+        let _ = state.roll_back();
+    }
+}
+
 fn closed() -> StoreError {
     StoreError::new(STORE_CLOSED, "the transaction has ended")
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
     mutex.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+#[cfg(test)]
+thread_local! {
+    /// Test seam: runs on the rolling-back thread right after the rollback releases the writer.
+    static ROLLBACK_RELEASED_WRITER: std::cell::RefCell<Option<Box<dyn FnOnce()>>> =
+        std::cell::RefCell::new(None);
+}
+
+/// Where a rollback has released the store's writer: the test seam runs here.
+fn rollback_released_writer() {
+    #[cfg(test)]
+    if let Some(hook) = ROLLBACK_RELEASED_WRITER.with(|h| h.borrow_mut().take()) {
+        hook();
+    }
 }
 
 /// True for an allocator record: `M` + `next_...` holding 8 bytes.
@@ -267,13 +301,19 @@ impl State {
                 layer.writes.insert(key.to_vec(), value.map(<[u8]>::to_vec));
                 Ok(())
             }
-            None => {
-                let base = self.base.as_mut().ok_or_else(closed)?;
-                match value {
-                    Some(v) => base.put(key, v),
-                    None => base.delete(key),
-                }
-            }
+            None => self.write_base(key, value),
+        }
+    }
+
+    /// Writes into the base, first keeping what the key held before (`undo`).
+    fn write_base(&mut self, key: &[u8], value: Option<&[u8]>) -> Result<()> {
+        let base = self.base.as_mut().ok_or_else(closed)?;
+        if !self.undo.contains_key(key) {
+            self.undo.insert(key.to_vec(), base.get(key)?);
+        }
+        match value {
+            Some(v) => base.put(key, v),
+            None => base.delete(key),
         }
     }
 
@@ -305,13 +345,44 @@ impl State {
             return Ok(());
         }
         self.root_locks.extend(layer.locks);
-        let base = self.base.as_mut().ok_or_else(closed)?;
+        self.base()?;
         for (key, value) in layer.writes {
-            match value {
+            self.write_base(&key, value.as_deref())?;
+        }
+        Ok(())
+    }
+
+    /// Ends the transaction without keeping its writes. With no sequence to write forward the
+    /// base is dropped. Otherwise, in the same base write and so before the writer is released,
+    /// every key the transaction wrote gets its earlier value back, every sequence is raised to
+    /// the highest value the transaction took, and that write commits: no other writer can take
+    /// an id the transaction handed out. Rolling back an ended transaction does nothing.
+    fn roll_back(&mut self) -> Result<()> {
+        let Some(mut base) = self.base.take() else {
+            return Ok(());
+        };
+        self.savepoints.clear();
+        self.statement = None;
+        self.root_locks.clear();
+        let undo = std::mem::take(&mut self.undo);
+        let mut counters = std::mem::take(&mut self.counters);
+        for (key, value) in std::mem::take(&mut self.allocated) {
+            let seen = counters.entry(key).or_insert(value);
+            *seen = (*seen).max(value);
+        }
+        if counters.is_empty() {
+            return Ok(());
+        }
+        for (key, before) in undo {
+            match before {
                 Some(v) => base.put(&key, &v)?,
                 None => base.delete(&key)?,
             }
         }
+        for (key, value) in counters {
+            base.raise_counter(&key, value)?;
+        }
+        base.commit()?;
         Ok(())
     }
 
@@ -341,8 +412,49 @@ impl State {
     }
 }
 
+/// Entries a scan copies out under the state lock before it hands them to the caller.
+const SCAN_BATCH: usize = 256;
+
+/// A merged scan that holds the state lock only while it copies a batch of entries, never while
+/// `f` runs, so `f` may read through the same transaction (a vector scan reads each take's row).
+/// The next batch starts after the last key handed out.
+fn scan_unlocked(
+    state: &Mutex<State>,
+    start: &[u8],
+    end: &[u8],
+    reverse: bool,
+    f: &mut dyn FnMut(&[u8], &[u8]) -> bool,
+) -> Result<()> {
+    let (mut lo, mut hi) = (start.to_vec(), end.to_vec());
+    loop {
+        let mut batch: Vec<(Vec<u8>, Vec<u8>)> = Vec::new();
+        lock(state).scan(&lo, &hi, reverse, &mut |k, v| {
+            batch.push((k.to_vec(), v.to_vec()));
+            batch.len() < SCAN_BATCH
+        })?;
+        let full = batch.len() == SCAN_BATCH;
+        let Some((last, _)) = batch.last() else {
+            return Ok(());
+        };
+        if reverse {
+            hi = last.clone();
+        } else {
+            lo = last.clone();
+            lo.push(0);
+        }
+        for (k, v) in &batch {
+            if !f(k, v) {
+                return Ok(());
+            }
+        }
+        if !full {
+            return Ok(());
+        }
+    }
+}
+
 /// The view a bound store reads through: the transaction's merged state, read under its lock for
-/// each call.
+/// each call (a scan only while it copies a batch: `scan_unlocked`).
 struct TxReader(Arc<Transaction>);
 
 impl KvRead for TxReader {
@@ -356,7 +468,7 @@ impl KvRead for TxReader {
         reverse: bool,
         f: &mut dyn FnMut(&[u8], &[u8]) -> bool,
     ) -> Result<()> {
-        lock(&self.0.state).scan(start, end, reverse, f)
+        scan_unlocked(&self.0.state, start, end, reverse, f)
     }
 }
 
@@ -375,7 +487,7 @@ impl KvRead for StatementWriter<'_> {
         reverse: bool,
         f: &mut dyn FnMut(&[u8], &[u8]) -> bool,
     ) -> Result<()> {
-        lock(&self.0.state).scan(start, end, reverse, f)
+        scan_unlocked(&self.0.state, start, end, reverse, f)
     }
 }
 
@@ -465,6 +577,7 @@ impl Store {
                 statement: None,
                 counters: BTreeMap::new(),
                 allocated: BTreeMap::new(),
+                undo: BTreeMap::new(),
             }),
             exclusive: Mutex::new(()),
             kv: self.kv.clone(),
@@ -534,6 +647,9 @@ impl Store {
         let mut state = lock(&tx.state);
         Self::top_savepoint(&state, depth)?;
         state.savepoints.pop();
+        // The dropped writes take the vector generation back with them; the cached index was
+        // built from them.
+        self.vectors.clear();
         state.restore_counters()
     }
 
@@ -552,6 +668,7 @@ impl Store {
         state.root_locks.clear();
         state.counters.clear();
         state.allocated.clear();
+        state.undo.clear();
         if tx.opened_read_only {
             drop(base);
             return tx.kv.version();
@@ -559,38 +676,23 @@ impl Store {
         base.commit()
     }
 
-    /// Rolls the transaction back. Counters it advanced are written forward in a follow-up write
-    /// transaction, so no id it handed out is reused. Rolling back an ended transaction is a
-    /// no-op.
+    /// Rolls the transaction back. Counters it advanced are written forward before the writer is
+    /// released (`State::roll_back`), so no id it handed out is reused. Rolling back an ended
+    /// transaction is a no-op.
     pub fn rollback_transaction(&self) -> Result<()> {
         let tx = self.transaction()?;
         let _exclusive = lock(&tx.exclusive);
-        let counters = {
+        let ended = {
             let mut state = lock(&tx.state);
-            let Some(base) = state.base.take() else {
-                return Ok(());
-            };
-            drop(base);
-            state.savepoints.clear();
-            state.statement = None;
-            state.root_locks.clear();
-            let mut counters = std::mem::take(&mut state.counters);
-            for (key, value) in std::mem::take(&mut state.allocated) {
-                let seen = counters.entry(key).or_insert(value);
-                *seen = (*seen).max(value);
+            let open = state.base.is_some();
+            let result = state.roll_back();
+            if open {
+                self.vectors.clear();
             }
-            counters
+            result
         };
-        if counters.is_empty() {
-            return Ok(());
-        }
-        // Blind raises: they never conflict with a concurrent writer, so this needs no retry.
-        let mut write = tx.kv.begin_write()?;
-        for (key, value) in counters {
-            write.raise_counter(&key, value)?;
-        }
-        write.commit()?;
-        Ok(())
+        rollback_released_writer();
+        ended
     }
 
     /// `lockPageKeys` inside a transaction (`pages.rs` keeps the plain key check `lock_page_keys`). `keys` arrive checked, deduplicated and sorted by the
@@ -606,19 +708,22 @@ impl Store {
         state.base()?;
         let mut ordered: Vec<&PageKeyHint> = keys.iter().collect();
         ordered.sort_by(|a, b| (&a.source_id, &a.slug).cmp(&(&b.source_id, &b.slug)));
-        let mut checked: BTreeMap<&str, ()> = BTreeMap::new();
+        // Each source is read once; every key is checked against it, so a later hinted key of a
+        // source is held to the same incarnation check as the first.
+        let mut incarnations: BTreeMap<&str, String> = BTreeMap::new();
         for key in &ordered {
-            if checked.insert(&key.source_id, ()).is_some() {
-                continue;
+            if !incarnations.contains_key(key.source_id.as_str()) {
+                let record = sources::read_source(&StateRead(&state), &key.source_id)?;
+                let Some(record) = record else {
+                    return Err(StoreError::new(
+                        SOURCE_NOT_FOUND,
+                        format!("Page source does not exist: {}", key.source_id),
+                    ));
+                };
+                incarnations.insert(&key.source_id, record.incarnation);
             }
-            let record = sources::read_source(&StateRead(&state), &key.source_id)?;
-            let Some(record) = record else {
-                return Err(StoreError::new(
-                    SOURCE_NOT_FOUND,
-                    format!("Page source does not exist: {}", key.source_id),
-                ));
-            };
-            if hinted && key.incarnation.as_deref() != Some(record.incarnation.as_str()) {
+            let incarnation = &incarnations[key.source_id.as_str()];
+            if hinted && key.incarnation.as_deref() != Some(incarnation.as_str()) {
                 return Err(StoreError::new(
                     SOURCE_CHANGED,
                     format!("Page source was recreated: {}", key.source_id),
@@ -666,6 +771,7 @@ impl KvRead for StateRead<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::STORE_IO;
     use crate::test_support::store;
 
     fn collect(read: &dyn KvRead, start: &[u8], end: &[u8], reverse: bool) -> Vec<Vec<u8>> {
@@ -680,66 +786,67 @@ mod tests {
 
     #[test]
     fn the_merged_scan_interleaves_overlay_and_base_in_both_directions() {
+        // Tag `y` holds no record (keys.rs), so a fresh brain's seeded records stay out of the scan.
         let s = store();
         s.write(|tx| {
-            for k in [b"xa", b"xc", b"xe"] {
+            for k in [b"ya", b"yc", b"ye"] {
                 tx.put(k, b"base")?;
             }
             Ok(())
         })
         .unwrap();
         let t = s.begin_transaction(false).unwrap();
-        t.write(|tx| tx.put(b"xb", b"one")).unwrap();
+        t.write(|tx| tx.put(b"yb", b"one")).unwrap();
         let depth = t.savepoint().unwrap();
         t.write(|tx| {
-            tx.put(b"xd", b"two")?;
-            tx.delete(b"xc")?;
-            tx.put(b"xf", b"three")
+            tx.put(b"yd", b"two")?;
+            tx.delete(b"yc")?;
+            tx.put(b"yf", b"three")
         })
         .unwrap();
         let read = t.read().unwrap();
-        let forward = collect(&*read, b"x", b"y", false);
+        let forward = collect(&*read, b"y", b"z", false);
         assert_eq!(
             forward,
             vec![
-                b"xa".to_vec(),
-                b"xb".to_vec(),
-                b"xd".to_vec(),
-                b"xe".to_vec(),
-                b"xf".to_vec()
+                b"ya".to_vec(),
+                b"yb".to_vec(),
+                b"yd".to_vec(),
+                b"ye".to_vec(),
+                b"yf".to_vec()
             ]
         );
         let mut backward = forward.clone();
         backward.reverse();
-        assert_eq!(collect(&*read, b"x", b"y", true), backward);
+        assert_eq!(collect(&*read, b"y", b"z", true), backward);
         // Early stop is honored inside the overlay and inside the base.
         let mut first_two = Vec::new();
-        read.scan(b"x", b"y", false, &mut |k, _| {
+        read.scan(b"y", b"z", false, &mut |k, _| {
             first_two.push(k.to_vec());
             first_two.len() < 2
         })
         .unwrap();
-        assert_eq!(first_two, vec![b"xa".to_vec(), b"xb".to_vec()]);
+        assert_eq!(first_two, vec![b"ya".to_vec(), b"yb".to_vec()]);
         // A range cut excludes overlay keys outside it.
         assert_eq!(
-            collect(&*read, b"xc", b"xf", false),
-            vec![b"xd".to_vec(), b"xe".to_vec()]
+            collect(&*read, b"yc", b"yf", false),
+            vec![b"yd".to_vec(), b"ye".to_vec()]
         );
         t.rollback_savepoint(depth).unwrap();
         assert_eq!(
-            collect(&*t.read().unwrap(), b"x", b"y", false),
+            collect(&*t.read().unwrap(), b"y", b"z", false),
             vec![
-                b"xa".to_vec(),
-                b"xb".to_vec(),
-                b"xc".to_vec(),
-                b"xe".to_vec()
+                b"ya".to_vec(),
+                b"yb".to_vec(),
+                b"yc".to_vec(),
+                b"ye".to_vec()
             ]
         );
         // Nothing is visible outside before commit; everything after.
-        assert_eq!(s.read().unwrap().get(b"xb").unwrap(), None);
+        assert_eq!(s.read().unwrap().get(b"yb").unwrap(), None);
         t.commit_transaction().unwrap();
-        assert_eq!(s.read().unwrap().get(b"xb").unwrap(), Some(b"one".to_vec()));
-        assert_eq!(s.read().unwrap().get(b"xd").unwrap(), None);
+        assert_eq!(s.read().unwrap().get(b"yb").unwrap(), Some(b"one".to_vec()));
+        assert_eq!(s.read().unwrap().get(b"yd").unwrap(), None);
     }
 
     #[test]
@@ -789,6 +896,118 @@ mod tests {
             .write(|tx| crate::pages::next_id(tx, "next_probe_id"))
             .unwrap();
         assert_eq!(after, 5);
+    }
+
+    /// A rollback writes its id sequences forward before it lets another writer in: a writer that
+    /// starts the moment the rollback releases the writer never gets an id the rolled-back
+    /// transaction handed out.
+    #[test]
+    fn a_rollback_writes_its_ids_forward_before_another_writer_can_take_one() {
+        let s = std::sync::Arc::new(store());
+        let t = s.begin_transaction(false).unwrap();
+        let handed = t
+            .write(|tx| crate::pages::next_id(tx, "next_probe_id"))
+            .unwrap();
+        let taken = std::sync::Arc::new(std::sync::Mutex::new(None));
+        let (other, seen) = (s.clone(), taken.clone());
+        ROLLBACK_RELEASED_WRITER.with(|h| {
+            *h.borrow_mut() = Some(Box::new(move || {
+                let id = other
+                    .write(|tx| crate::pages::next_id(tx, "next_probe_id"))
+                    .unwrap();
+                *seen.lock().unwrap() = Some(id);
+            }))
+        });
+        t.rollback_transaction().unwrap();
+        let taken = taken.lock().unwrap().expect("the next writer ran");
+        assert!(
+            taken > handed,
+            "the next writer took id {taken}, which the rolled-back transaction handed out ({handed})"
+        );
+    }
+
+    /// A transaction whose last handle goes away without a commit or a rollback writes its id
+    /// sequences forward too.
+    #[test]
+    fn a_dropped_transaction_writes_its_ids_forward() {
+        let s = store();
+        let t = s.begin_transaction(false).unwrap();
+        let handed = t
+            .write(|tx| crate::pages::next_id(tx, "next_probe_id"))
+            .unwrap();
+        drop(t);
+        let next = s
+            .write(|tx| crate::pages::next_id(tx, "next_probe_id"))
+            .unwrap();
+        assert!(next > handed, "id {next} was handed out again");
+    }
+
+    fn note(title: &str) -> crate::pages::PageInput {
+        serde_json::from_value(
+            serde_json::json!({"type": "note", "title": title, "compiled_truth": "b"}),
+        )
+        .unwrap()
+    }
+
+    // Why a failed commit cannot hand out a reused id (RA1 fix 8, the failed-commit edge): a
+    // commit that fails releases the writer without raising the id sequences, but no writer can
+    // use that gap. redb poisons the store on a failed commit, so every later write in the
+    // process fails until it is reopened (this test); and the sequence and the rows are written
+    // in one commit, so after a reopen the counter matches the stored rows (the next test). A
+    // future backend that does not poison the store on a failed commit must revisit this: there,
+    // a writer could start in the gap and take an id the failed transaction handed out.
+    #[test]
+    fn a_failed_commit_poisons_every_later_write_in_the_process() {
+        let file = crate::test_support::FlakyFile::default();
+        let s = crate::test_support::store_on_file(&file);
+        let t = s.begin_transaction(false).unwrap();
+        t.put_page("notes/t", &note("t"), &Default::default())
+            .unwrap();
+        file.fail_sync
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        assert_eq!(t.commit_transaction().unwrap_err().code, STORE_IO);
+        for _ in 0..2 {
+            let refused = s
+                .write(|tx| crate::pages::next_id(tx, "next_page_id"))
+                .unwrap_err();
+            assert_eq!(refused.code, STORE_IO);
+            assert!(refused.message.contains("re-open"), "{}", refused.message);
+        }
+    }
+
+    // See the comment above: the id sequence and the rows commit atomically, so after a reopen a
+    // failed commit left both or neither, and the next id follows the stored rows.
+    #[test]
+    fn after_a_failed_commit_and_a_reopen_the_id_counter_matches_the_stored_rows() {
+        let file = crate::test_support::FlakyFile::default();
+        let s = crate::test_support::store_on_file(&file);
+        let t = s.begin_transaction(false).unwrap();
+        let handed = t
+            .put_page("notes/t", &note("t"), &Default::default())
+            .unwrap()["id"]
+            .as_u64()
+            .unwrap();
+        file.fail_sync
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        assert!(t.commit_transaction().is_err());
+        drop(t);
+        drop(s);
+        let s = crate::test_support::store_on_file(&file);
+        let stored = s
+            .read_page_snapshot("notes/t", &Default::default())
+            .unwrap()
+            .map(|p| p["page"]["id"].as_u64().unwrap());
+        let next = s
+            .put_page("notes/o", &note("o"), &Default::default())
+            .unwrap()["id"]
+            .as_u64()
+            .unwrap();
+        match stored {
+            // The bytes reached the file before the sync failed: the row and its id step are kept.
+            Some(id) => assert_eq!((id, next), (handed, handed + 1)),
+            // Neither reached it: the id is free again and nothing stored refers to it.
+            None => assert_eq!(next, handed),
+        }
     }
 
     #[test]

@@ -119,7 +119,7 @@ export async function validateSyncAuthority(engine: BrainEngine, authority: Sync
       { fix: hostSyncFix(authority.writer.sourceId, 'host_admin') });
   }
   await assertCurrentRemoteJobPrincipal(engine, authority.remoteJob);
-  const [source] = await engine.executeRaw<{ created_at: string }>('SELECT created_at FROM sources WHERE id=$1', [authority.writer.sourceId]);
+  const source = await engine.readJobSourceState(authority.writer.sourceId);
   if (!source || new Date(source.created_at).toISOString() !== authority.remoteJob.grant.sourceCreatedAt) {
     throw opError('source_changed', 'The original sync source was replaced.',
       `Source ${authority.writer.sourceId} was removed and registered again after this sync job was approved, so the job no longer applies and it stopped before admitting anything more. Submit a new sync job for the current source.`,

@@ -12,7 +12,17 @@ name: Rust engine
 #              the Rust arm of the engine parity suite), then the CLI parity test
 #              (test/rust-cli-parity.serial.test.ts: each read command on a Rust brain is equal to
 #              PGLite, refused with a typed refusal, or has no Rust engine; only a diverged command
-#              fails), then uploads the .node file.
+#              fails), checks that the built addon, installed as a release asset, loads with no override, then
+#              uploads the .node file (releases build and publish the addon in release.yml, not here). Each target
+#              (Linux and macOS) is two matrix
+#              halves, each under 45 minutes: both build the addon and run the smoke test, each
+#              runs half of the parity files, and the CLI parity steps are divided between them
+#              (see the addon job).
+#   addon-linux-gate, addon-darwin-gate  one check per target named like the old single cell
+#              ("Addon and Bun smoke / <target>"): green only when every half of that target passed.
+#   shadow-follow  builds the addon and runs the shadow seed and follow test files that need it, on PGLite and
+#              against a PostgreSQL service container (Linux only; a missing addon, a skipped test or a lane
+#              that ran no test fails the job).
 #   without-rust  no Rust on PATH: bun install, bun run build, ./bin/gbrain --version.
 #   keyword-goldens  proves the generated and golden keyword-search files are what PostgreSQL 18.6
 #              says: parser/actions.rs and parser/charclass.rs are regenerated and compared, and the
@@ -36,6 +46,12 @@ name: Rust engine
 #   - The keyword-goldens job runs on a pull request only when it changes rust/**, and not on the
 #     schedule. It compares committed files with PostgreSQL 18.6 output, which does not drift.
 #     Covered by every push to master.
+#   - The shadow-follow job runs on every event this workflow runs on except the schedule. The pull_request
+#     path list also names the shadow seed and follow test files and their helpers, so a pull request that
+#     changes only those files runs it. The push list does not: the scope job turns the macOS addon cell on for
+#     every push, so a push path would start macOS runs for a Linux-only job. Master pushes that already match
+#     (src/shadow/**, rust/** and the others) run it. Covered by those pushes and by every pull request that
+#     changes the test files.
 
 on:
   pull_request:
@@ -45,11 +61,17 @@ on:
       - 'src/core/rust-engine/**'
       - 'test/engine-parity/**'
       - 'test/rust-engine-*.test.ts'
+      - 'src/shadow/**'
       - 'test/rust-expected-divergence/**'
       - 'src/core/sql-engine-kind.ts'
       - 'src/core/engine.ts'
       - 'src/core/engine-*.ts'
       - 'src/core/engine-sql/**'
+      - 'src/core/engine-swap/**'
+      - 'src/commands/engine-swap.ts'
+      - 'test/engine-swap-run.serial.test.ts'
+      - 'test/engine-swap-kill.serial.test.ts'
+      - 'test/fixtures/engine-swap-kill/**'
       - 'src/schema.sql'
       - 'src/core/migrate.ts'
       - 'src/core/schema-migrations/**'
@@ -58,7 +80,20 @@ on:
       - '**/test/rust-unit-arms.txt'
       - '**/scripts/rust-unit-arms.ts'
       - 'test/rust-cli-parity.serial.test.ts'
+      - 'test/apply-migrations-rust-owner.serial.test.ts'
+      - 'src/core/migration-orchestration-lock.ts'
+      - 'test/apply-migrations-rust-swap.serial.test.ts'
+      - 'test/apply-migrations-rust-client-conflict.serial.test.ts'
+      - 'src/core/shared-skills/migration.ts'
+      - 'test/token-member-cli-parity.serial.test.ts'
+      - 'test/rust-mcp-receipts.serial.test.ts'
       - 'test/fixtures/rust-cli-parity-brain/**'
+      - 'test/shadow-seed*.test.ts'
+      - 'test/shadow-follow*.test.ts'
+      - 'test/e2e/shadow-seed*.test.ts'
+      - 'test/e2e/shadow-follow*.test.ts'
+      - 'test/helpers/shadow-*.ts'
+      - 'test/helpers/follow-*.ts'
       - '.github/workflows/rust-engine.yml'
   push:
     branches: [master]
@@ -68,11 +103,17 @@ on:
       - 'src/core/rust-engine/**'
       - 'test/engine-parity/**'
       - 'test/rust-engine-*.test.ts'
+      - 'src/shadow/**'
       - 'test/rust-expected-divergence/**'
       - 'src/core/sql-engine-kind.ts'
       - 'src/core/engine.ts'
       - 'src/core/engine-*.ts'
       - 'src/core/engine-sql/**'
+      - 'src/core/engine-swap/**'
+      - 'src/commands/engine-swap.ts'
+      - 'test/engine-swap-run.serial.test.ts'
+      - 'test/engine-swap-kill.serial.test.ts'
+      - 'test/fixtures/engine-swap-kill/**'
       - 'src/schema.sql'
       - 'src/core/migrate.ts'
       - 'src/core/schema-migrations/**'
@@ -81,6 +122,13 @@ on:
       - '**/test/rust-unit-arms.txt'
       - '**/scripts/rust-unit-arms.ts'
       - 'test/rust-cli-parity.serial.test.ts'
+      - 'test/apply-migrations-rust-owner.serial.test.ts'
+      - 'src/core/migration-orchestration-lock.ts'
+      - 'test/apply-migrations-rust-swap.serial.test.ts'
+      - 'test/apply-migrations-rust-client-conflict.serial.test.ts'
+      - 'src/core/shared-skills/migration.ts'
+      - 'test/token-member-cli-parity.serial.test.ts'
+      - 'test/rust-mcp-receipts.serial.test.ts'
       - 'test/fixtures/rust-cli-parity-brain/**'
       - '.github/workflows/rust-engine.yml'
   workflow_dispatch:
@@ -131,11 +179,18 @@ jobs:
               grep -Eq '^(rust/|src/core/rust-engine(\.ts$|/))' <<< "$files" || macos=false
             fi
           fi
-          linux='{"target":"linux-x64-glibc","runner":"ubicloud-standard-4-ubuntu-2404"}'
+          # shard/shards: this cell runs the parity files whose position (sorted, counted from 1) is
+          # congruent to shard modulo shards. label is the job name suffix. The check named with the bare
+          # target is a gate job that needs every half of that target (addon-linux-gate, addon-darwin-gate).
+          # One Linux cell reached 29 min of its 30 (the parity step went from 17 to 24 min), so Linux is split in two as well.
+          linux1='{"target":"linux-x64-glibc","runner":"ubicloud-standard-4-ubuntu-2404","shard":"1","shards":"2","label":"linux-x64-glibc (1 of 2)"}'
+          linux2='{"target":"linux-x64-glibc","runner":"ubicloud-standard-4-ubuntu-2404","shard":"2","shards":"2","label":"linux-x64-glibc (2 of 2)"}'
           # Unverified before the first CI run: the dylib name (libgbrain_napi.dylib) and Bun
           # loading an unsigned .node with process.dlopen.
-          darwin='{"target":"darwin-arm64","runner":"macos-26"}'
-          if [ "$macos" = true ]; then targets="[$linux,$darwin]"; else targets="[$linux]"; fi
+          # One macOS cell took 43 min in run 45126845000 (cap 45); two halves keep each under 30.
+          darwin1='{"target":"darwin-arm64","runner":"macos-26","shard":"1","shards":"2","label":"darwin-arm64 (1 of 2)"}'
+          darwin2='{"target":"darwin-arm64","runner":"macos-26","shard":"2","shards":"2","label":"darwin-arm64 (2 of 2)"}'
+          if [ "$macos" = true ]; then targets="[$linux1,$linux2,$darwin1,$darwin2]"; else targets="[$linux1,$linux2]"; fi
           echo "scope: event=$EVENT rust=$rust macos=$macos"
           echo "rust=$rust" >> "$GITHUB_OUTPUT"
           echo "targets=$targets" >> "$GITHUB_OUTPUT"
@@ -220,11 +275,13 @@ jobs:
   # Event parity (docs/TESTING.md#event-parity): the scope job picks the cells (named exception in
   # the header); the schedule runs only `checks`. macOS minutes cost more than Linux.
   addon:
-    name: Addon and Bun smoke / ${{ matrix.target }}
+    name: Addon and Bun smoke / ${{ matrix.label }}
     needs: scope
     if: github.event_name != 'schedule'
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 30
+    # darwin-arm64 runners run about 1.3x slower; one cell took 43 min in run 45126845000 (the parity loop took 33 min of it).
+    # Each target is therefore two halves (shard 1 and 2 of 2), and every cell has the same 45 minute cap.
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
@@ -290,32 +347,358 @@ jobs:
       # PGLite (test/rust-engine-differential.test.ts), then every parity file with the Rust
       # arm added (GBRAIN_TEST_RUST_ARM=1). The addon is required here, so a missing build fails the step
       # instead of skipping. Each file runs in its own Bun process, as the parity suite does elsewhere.
+      # A cell with shards > 1 runs only its share: the store tests on shard 1, and every parity file whose
+      # position in the sorted list, counted from 1, leaves shard - 1 when divided by shards (no bash 4 features:
+      # the macOS runner shell may be bash 3.2). Every file lands in exactly one shard of its target.
       - name: Rust engine store tests and the parity suite's Rust arm
         shell: bash
         env:
           GBRAIN_TEST_RUST_ADDON_REQUIRED: '1'
           GBRAIN_TEST_RUST_ARM: '1'
+          SHARD: ${{ matrix.shard }}
+          SHARDS: ${{ matrix.shards }}
         run: |
           set -euo pipefail
-          bun test --timeout=60000 test/rust-engine-store.test.ts test/rust-engine-shell.test.ts test/rust-engine-differential.test.ts
-          for file in test/engine-parity/*.test.ts; do
+          if [ "$SHARD" = 1 ]; then
+            bun test --timeout=60000 test/rust-engine-store.test.ts test/rust-engine-shell.test.ts test/rust-engine-differential.test.ts test/rust-engine-store-snapshot.test.ts test/rust-managed-hold.test.ts
+            # The engine swap run on the real addon: every state, kill and resume, full disk, failed digest and probe, failback.
+            bun test --timeout=120000 test/engine-swap-run.serial.test.ts
+            # The swap killed mid-run (a real SIGKILL at each state), then --resume: one engine, the fence as recorded, every page once.
+            bun test --timeout=300000 test/engine-swap-kill.serial.test.ts
+          fi
+          position=0
+          ran=0
+          while IFS= read -r file; do
+            position=$((position + 1))
+            [ $(( (position - 1) % SHARDS )) -eq $(( SHARD - 1 )) ] || continue
+            [ -f "$file" ] || { echo "::error::parity file $file does not exist"; exit 1; }
             bun test --timeout=60000 "$file"
-          done
+            ran=$((ran + 1))
+          done < <(printf '%s\n' test/engine-parity/*.test.ts | LC_ALL=C sort)
+          echo "parity shard $SHARD of $SHARDS: ran $ran of $position files"
+          [ "$ran" -gt 0 ] || { echo "::error::parity shard $SHARD of $SHARDS ran no file"; exit 1; }
+      # Managed mode on Rust with the user-facing hold kept (test/engine-parity/rust-managed.ts): the parity files whose
+      # Rust counts change when GBRAIN_TEST_RUST_MANAGED=1 lifts the managed_persistence hold on the test engine, checked
+      # against their own pins in test/engine-parity/rust-managed-tally.tsv. Shard 1 only; the list is the rows of the two
+      # pin files that differ, so it grows by itself as managed parity cases are added.
+      - name: Parity files with the managed hold lifted on the Rust test engine
+        if: matrix.shard == '1'
+        shell: bash
+        env:
+          GBRAIN_TEST_RUST_ADDON_REQUIRED: '1'
+          GBRAIN_TEST_RUST_ARM: '1'
+          GBRAIN_TEST_RUST_MANAGED: '1'
+        run: |
+          set -euo pipefail
+          ran=0
+          while IFS= read -r file; do
+            [ -f "$file" ] || { echo "::error::managed parity file $file does not exist"; exit 1; }
+            bun test --timeout=60000 "$file"
+            ran=$((ran + 1))
+          done < <(awk -F'\t' 'FNR == 1 { next } NR == FNR { pin[$1] = $2 FS $3; next } pin[$1] != $2 FS $3 { print $1 }' \
+            test/engine-parity/rust-tally.tsv test/engine-parity/rust-managed-tally.tsv | LC_ALL=C sort)
+          echo "managed parity: ran $ran files"
+          [ "$ran" -gt 0 ] || { echo "::error::no parity file differs with the managed hold lifted"; exit 1; }
       # Each read command runs through the real CLI on a PGLite brain and a Rust brain. A command
       # that is equal, refused with engine_capability_missing, or has no Rust engine passes; a
       # diverged command (another answer, an untyped error) fails. The flag makes a missing addon
       # an error instead of a skip.
+      # The steps from here to the artifact upload are divided between the halves of a split cell
+      # (CLI parity and the withdrawn-lead lane on shard 1, the token and MCP steps on the last shard) so the
+      # halves finish together; a cell with a single shard would run all of them.
       - name: CLI parity on a Rust brain against PGLite (no diverged command)
+        if: matrix.shard == '1'
         timeout-minutes: 15
         env:
           GBRAIN_TEST_RUST_ADDON_REQUIRED: '1'
         run: bun test --timeout=60000 test/rust-cli-parity.serial.test.ts
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
+      # --source reaches the Rust brain (master PR 9946).
+      - name: CLI --source reaches the Rust brain
+        if: matrix.shard == '1'
+        timeout-minutes: 5
+        env:
+          GBRAIN_TEST_RUST_ADDON_REQUIRED: '1'
+          GBRAIN_TEST_REQUIRE_RUST_ADDON: '1'
+        run: bun test --timeout=60000 test/rust-cli-source-target.test.ts
+      # `gbrain engine install rust` with the addon just built served as the release asset: the install checks it and
+      # the real loader then opens it from the gbrain home with no GBRAIN_RUST_ENGINE_ADDON. A missing build fails here.
+      - name: The installed release addon loads with no override
+        if: matrix.shard == '1'
+        shell: bash
+        env:
+          GBRAIN_TEST_RUST_ADDON_REQUIRED: '1'
+        run: bun test --timeout=60000 test/rust-engine-addon-install.test.ts
+      # A withdrawn world claim stays out of a large page's lead on a Rust brain. GBRAIN_TEST_REQUIRE_RUST_ADDON
+      # makes a missing addon an error instead of a skip, and the next step fails the lane when no test ran.
+      # This job owns the file, so the stress gate does not stress it where no addon exists.
+      - name: Withdrawn claims stay out of a Rust page lead
+        if: matrix.shard == '1'
+        shell: bash
+        env:
+          GBRAIN_TEST_REQUIRE_RUST_ADDON: '1'
+          GBRAIN_TEST_RECEIPT_DIR: ${{ runner.temp }}/receipts
+        run: bash scripts/run-with-receipt.sh rust-store withdrawn-lead -- bun test --timeout=60000 test/rust-engine-withdrawn-lead.test.ts
+      # apply-migrations on a Rust brain (the v0.11.0 smoke child, the v0.12.2 repair, the named stops). Same ownership
+      # rule as above: a missing addon is an error here, and the receipt check below fails the lane when no test ran.
+      - name: apply-migrations runs the smoke and JSON repair on a Rust brain
+        if: matrix.shard == '1'
+        shell: bash
+        env:
+          GBRAIN_TEST_REQUIRE_RUST_ADDON: '1'
+          GBRAIN_TEST_RECEIPT_DIR: ${{ runner.temp }}/receipts
+        run: bash scripts/run-with-receipt.sh rust-store apply-migrations-rust-owner -- bun test --timeout=900000 test/apply-migrations-rust-owner.serial.test.ts
+      # An upgrade on a brain swapped from PGLite to Rust (apply-migrations, then post-upgrade). Same ownership rule as
+      # above: a missing addon is an error here, and the receipt check below fails the lane when no test ran.
+      - name: An upgrade on a brain swapped from PGLite to Rust exits 0
+        if: matrix.shard == '1'
+        shell: bash
+        env:
+          GBRAIN_TEST_REQUIRE_RUST_ADDON: '1'
+          GBRAIN_TEST_RECEIPT_DIR: ${{ runner.temp }}/receipts
+        run: bash scripts/run-with-receipt.sh rust-store apply-migrations-rust-swap -- bun test --timeout=900000 test/apply-migrations-rust-swap.serial.test.ts
+      # An upgrade run as a client of a Rust brain's serve, on a swapped brain with a content root. Same ownership rule
+      # as above: a missing addon is an error here, and the receipt check below fails the lane when no test ran.
+      - name: An upgrade as a Rust serve's client exits 0 and never wedges v0.53.0
+        if: matrix.shard == '1'
+        shell: bash
+        env:
+          GBRAIN_TEST_REQUIRE_RUST_ADDON: '1'
+          GBRAIN_TEST_RECEIPT_DIR: ${{ runner.temp }}/receipts
+        run: bash scripts/run-with-receipt.sh rust-store apply-migrations-rust-client-conflict -- bun test --timeout=900000 test/apply-migrations-rust-client-conflict.serial.test.ts
+      # The shadow seed leaves the swap's writer-evidence tables behind (rust seed::NOT_COPIED). Same ownership rule as
+      # above: a missing addon is an error here, and the next step fails the lane when no test ran.
+      - name: The shadow seed skips the writer-evidence tables
+        shell: bash
+        env:
+          GBRAIN_TEST_REQUIRE_RUST_ADDON: '1'
+          GBRAIN_TEST_RECEIPT_DIR: ${{ runner.temp }}/receipts
+        run: bash scripts/run-with-receipt.sh rust-store writer-seed -- bun test --timeout=60000 test/shadow-writer-seed.test.ts
+      # The shadow restore drill on a real owner and a real store. Same ownership rule as above: a missing addon is an
+      # error here, and the next step fails the lane when no test ran.
+      - name: The restore drill copies a live shadow store
+        if: matrix.shard == '1'
+        shell: bash
+        env:
+          GBRAIN_TEST_REQUIRE_RUST_ADDON: '1'
+          GBRAIN_TEST_RECEIPT_DIR: ${{ runner.temp }}/receipts
+        run: bash scripts/run-with-receipt.sh rust-store drill-addon -- bun test --timeout=60000 test/shadow-drill-addon.test.ts
+      # The write comparison pilot (src/shadow/write-compare*.ts, write-capture.ts) replays sampled page and link writes on a real scratch Rust
+      # store. Same ownership rule as above: a missing addon is an error here, and the next step fails the lane when no test ran.
+      - name: The write comparison pilot replays page and link writes on a real scratch store
+        if: matrix.shard == '1'
+        shell: bash
+        env:
+          GBRAIN_TEST_REQUIRE_RUST_ADDON: '1'
+          GBRAIN_TEST_RECEIPT_DIR: ${{ runner.temp }}/receipts
+        run: bash scripts/run-with-receipt.sh rust-store write-compare -- bun test --timeout=60000 test/shadow-write-compare.test.ts
+      - name: Fail the withdrawn-lead lane when no test ran
+        if: matrix.shard == '1'
+        shell: bash
+        run: bun scripts/require-executed-tests.ts "$RUNNER_TEMP/receipts" rust-store
+      # The token and member commands print the same bytes on a Rust brain as on PGLite.
+      - name: Token and member command output on a Rust brain against PGLite
+        if: matrix.shard == matrix.shards
+        timeout-minutes: 10
+        env:
+          GBRAIN_TEST_RUST_ADDON_REQUIRED: '1'
+        run: bun test --timeout=60000 test/token-member-cli-parity.serial.test.ts
+      # The write-request receipt tools through a stdio serve on a new Rust brain answer as on PGLite.
+      - name: MCP receipt tools on a Rust brain against PGLite
+        if: matrix.shard == matrix.shards
+        timeout-minutes: 5
+        env:
+          GBRAIN_TEST_RUST_ADDON_REQUIRED: '1'
+        run: bun test --timeout=150000 test/rust-mcp-receipts.serial.test.ts
+      # Both halves of a split cell build the same addon; shard 1 uploads it under the unchanged name.
+      - if: matrix.shard == '1'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4
         with:
           name: gbrain-engine-addon-${{ matrix.target }}
           path: rust/target/addon/gbrain_engine.${{ matrix.target }}.node
           if-no-files-found: error
-          retention-days: 7
+          # The Nov 26 shadow build's addon is the evidence file's addon: keep it for the whole shadow window.
+          retention-days: 90
+
+  # One check per target named like the single cell used to be ("Addon and Bun smoke / <target>"). It passes
+  # only when every half of that target's addon cells succeeded: it reads the conclusion of each job named
+  # "Addon and Bun smoke / <target> (n of m)" in this run, and fails when one is not a success or fewer than the
+  # scope job's cells for that target are there. `needs.addon.result` alone would also fail on the other target's
+  # failure, so the cells are read one by one. Skipped on the schedule, and the macOS gate when the scope job
+  # picked no macOS cell (like the macOS cells).
+  addon-linux-gate:
+    name: Addon and Bun smoke / linux-x64-glibc
+    needs: [scope, addon]
+    if: ${{ !cancelled() && github.event_name != 'schedule' && contains(needs.scope.outputs.targets, '"linux-x64-glibc"') }}
+    runs-on: ubicloud-standard-2-ubuntu-2404
+    timeout-minutes: 8
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Every Linux half of the addon job passed
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          TARGETS: ${{ needs.scope.outputs.targets }}
+          TARGET: linux-x64-glibc
+        run: |
+          set -euo pipefail
+          want=$(jq --arg t "$TARGET" '[.[] | select(.target == $t)] | length' <<< "$TARGETS")
+          # filter=all, newest attempt per half: re-running only this check leaves the halves in an earlier
+          # attempt, which filter=latest drops. Wait (bounded) while a half shows no conclusion: the jobs API
+          # can lag a half that finished seconds before this job started.
+          deadline=$(( $(date +%s) + ${GATE_POLL_SECS:-240} ))
+          while :; do
+            rows=$(gh api --paginate "repos/$REPO/actions/runs/$RUN_ID/jobs?filter=all&per_page=100" \
+              --jq ".jobs[] | select(.name | startswith(\"Addon and Bun smoke / $TARGET (\")) | [.name, (.run_attempt // 1), (.conclusion // \"running\")] | @tsv" \
+              | sort -t $'\t' -k1,1 -k2,2n | awk -F'\t' 'NF { last[$1] = $3 } END { for (n in last) print n "\t" last[n] }' | sort)
+            printf '%s\n' "$rows"
+            printf '%s\n' "$rows" | awk -F'\t' '$2 == "running"' | grep -q . || break
+            [ "$(date +%s)" -lt "$deadline" ] || break
+            sleep "${GATE_POLL_INTERVAL:-10}"
+          done
+          have=$(printf '%s\n' "$rows" | grep -c . || true)
+          ok=$(printf '%s\n' "$rows" | awk -F'\t' '$2 == "success"' | grep -c . || true)
+          echo "$TARGET halves expected $want, found $have, passed $ok"
+          [ "$want" -gt 0 ] && [ "$have" -eq "$want" ] && [ "$ok" -eq "$want" ] || { echo "::error::not every $TARGET half of the addon job passed"; exit 1; }
+
+  addon-darwin-gate:
+    name: Addon and Bun smoke / darwin-arm64
+    needs: [scope, addon]
+    if: ${{ !cancelled() && github.event_name != 'schedule' && contains(needs.scope.outputs.targets, '"darwin-arm64"') }}
+    runs-on: ubicloud-standard-2-ubuntu-2404
+    timeout-minutes: 8
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Every macOS half of the addon job passed
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          TARGETS: ${{ needs.scope.outputs.targets }}
+          TARGET: darwin-arm64
+        run: |
+          set -euo pipefail
+          want=$(jq --arg t "$TARGET" '[.[] | select(.target == $t)] | length' <<< "$TARGETS")
+          # filter=all, newest attempt per half: re-running only this check leaves the halves in an earlier
+          # attempt, which filter=latest drops. Wait (bounded) while a half shows no conclusion: the jobs API
+          # can lag a half that finished seconds before this job started.
+          deadline=$(( $(date +%s) + ${GATE_POLL_SECS:-240} ))
+          while :; do
+            rows=$(gh api --paginate "repos/$REPO/actions/runs/$RUN_ID/jobs?filter=all&per_page=100" \
+              --jq ".jobs[] | select(.name | startswith(\"Addon and Bun smoke / $TARGET (\")) | [.name, (.run_attempt // 1), (.conclusion // \"running\")] | @tsv" \
+              | sort -t $'\t' -k1,1 -k2,2n | awk -F'\t' 'NF { last[$1] = $3 } END { for (n in last) print n "\t" last[n] }' | sort)
+            printf '%s\n' "$rows"
+            printf '%s\n' "$rows" | awk -F'\t' '$2 == "running"' | grep -q . || break
+            [ "$(date +%s)" -lt "$deadline" ] || break
+            sleep "${GATE_POLL_INTERVAL:-10}"
+          done
+          have=$(printf '%s\n' "$rows" | grep -c . || true)
+          ok=$(printf '%s\n' "$rows" | awk -F'\t' '$2 == "success"' | grep -c . || true)
+          echo "$TARGET halves expected $want, found $have, passed $ok"
+          [ "$want" -gt 0 ] && [ "$have" -eq "$want" ] && [ "$ok" -eq "$want" ] || { echo "::error::not every $TARGET half of the addon job passed"; exit 1; }
+
+  # The shadow seed and follow tests that need the built addon and a PostgreSQL server together. The addon job
+  # has no database (and its macOS cell cannot start a service container), and no other job has the addon, so
+  # these files skip everywhere else. The env vars make a missing addon an error instead of a skip (these
+  # files read GBRAIN_TEST_RUST_ADDON_REQUIRED; the other name matches the addon job's lanes), and the last step
+  # fails the job when a lane ran no test or any test in it did not pass. Linux only: it does not depend on the scope job and never adds a macOS cell.
+  shadow-follow:
+    name: Shadow seed and follow with the Rust addon and PostgreSQL
+    if: github.event_name != 'schedule'
+    runs-on: ubicloud-standard-4-ubuntu-2404
+    timeout-minutes: 40
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: gbrain_test
+        ports:
+          - 5432:5432
+        options: >-
+          --shm-size=1g
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - id: checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        timeout-minutes: 3
+        continue-on-error: true
+        with:
+          persist-credentials: false
+      - name: Check out again after a stalled first attempt
+        if: steps.checkout.outcome == 'failure'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        timeout-minutes: 3
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
+        with:
+          bun-version: 1.4.4
+      # rustup reads the pinned version from rust/rust-toolchain.toml. Every runner this workflow
+      # uses ships rustup; a runner without it fails here rather than piping an installer into sh.
+      - name: Install the pinned Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v rustup >/dev/null 2>&1; then
+            echo "::error::rustup is not installed on this runner. Use a runner image that ships rustup."
+            exit 1
+          fi
+          channel="$(sed -n 's/^channel = "\(.*\)"$/\1/p' "$GITHUB_WORKSPACE/rust/rust-toolchain.toml")"
+          test -n "$channel"
+          rustup toolchain install "$channel" --profile minimal
+          rustup default "$channel"
+          rustc --version
+          cargo --version
+      # The cache name is built in a step so the cache key line holds no long literal value.
+      - name: Name the cache from the lock file and toolchain
+        id: cachename
+        run: echo "value=rust-addon-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust/Cargo.lock', 'rust/rust-toolchain.toml') }}" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: ${{ steps.cachename.outputs.value }}
+          restore-keys: |
+            rust-addon-${{ runner.os }}-${{ runner.arch }}-
+      - name: Build the addon
+        run: bun run rust:build
+      - name: Install dependencies (bounded, retried once)
+        timeout-minutes: 8
+        run: bun scripts/ci-bun-install.ts --frozen-lockfile --ignore-scripts
+      # The PGLite files seed and follow a PGLite primary with the real addon; the PostgreSQL files do the same
+      # against the service container. Two receipt lanes, so the PostgreSQL half cannot pass on the PGLite half's receipt.
+      - name: Shadow seed and follow tests (PGLite primary, then PostgreSQL primary)
+        timeout-minutes: 25
+        shell: bash
+        env:
+          GBRAIN_TEST_REQUIRE_RUST_ADDON: '1'
+          GBRAIN_TEST_RUST_ADDON_REQUIRED: '1'
+          GBRAIN_TEST_RECEIPT_DIR: ${{ runner.temp }}/receipts
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/gbrain_test
+          GBRAIN_TEST_ALLOW_DATABASE_URL: '1'
+        run: |
+          set -euo pipefail
+          bash scripts/run-with-receipt.sh shadow-follow pglite -- bun test --timeout=200000 test/shadow-seed.test.ts test/shadow-seed-managed-gate.test.ts test/shadow-follow.test.ts
+          bash scripts/run-with-receipt.sh shadow-follow-pg postgres -- bun test --timeout=200000 test/e2e/shadow-seed.test.ts test/e2e/shadow-seed-managed-gate.test.ts test/e2e/shadow-follow.test.ts
+      - name: Fail the shadow lanes when no test ran
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun scripts/require-executed-tests.ts "$RUNNER_TEMP/receipts" shadow-follow
+          bun scripts/require-executed-tests.ts "$RUNNER_TEMP/receipts" shadow-follow-pg
 
   # Event parity (docs/TESTING.md#event-parity): the schedule runs only `checks`.
   # Check mode only: each command exits 1 if a committed file differs from what PostgreSQL 18.6 produces.

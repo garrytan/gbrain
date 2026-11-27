@@ -53,11 +53,17 @@ export interface WriteGateHoldRowInput {
   payload: Record<string, unknown>;
   write_origin: Record<string, unknown> | null;
   request_id: string | null;
+  /** The permanent id of the page the producer already read (null: the page at the slug is looked up inside the INSERT, else the hold stays unbound). */
+  page_id?: number | null;
 }
 
 /** A hold row. */
 export interface WriteGateHoldRow {
   id: number;
+  /** The page's permanent id; null for a hold no page was tied to (it matches by slug, or by `page_candidates`). */
+  page_id: number | null;
+  /** Pages an upgrade could not choose between; null for every hold a writer recorded. */
+  page_candidates: number[] | null;
   kind: 'fact' | 'take';
   source_id: string;
   slug: string;
@@ -148,27 +154,49 @@ export async function deleteStaleWriteGateReceipts(exec: SqlExecutor, olderThanD
   return rows.length;
 }
 
-export async function upsertWriteGateHold(exec: SqlExecutor, input: WriteGateHoldRowInput): Promise<number> {
-  const rows = await exec.executeRaw<{ id: string }>(
-    `INSERT INTO write_gate_holds (kind, source_id, slug, fingerprint, detector_version, tier, reason_families, reasons, detector_error, payload, write_origin, request_id)
-     VALUES ($1, $2, $3, $4, $5, $6, $7::text[], $8::text[], $9, $10::text::jsonb, $11::text::jsonb, $12)
-     ON CONFLICT (source_id, slug, fingerprint, detector_version) DO UPDATE
+// A reopened hold takes the slug with the payload (the payload names the page by the slug it was gated under). The two dedupe keys are
+// disjoint (write-gate-schema.ts): each statement names the index of the kind of hold it writes. $1..$12 are the hold's own values; the
+// bound statements select them with the page id as the last column, the unbound one with NULL. Each statement is one whole literal
+// (the check-engine-sql-dynamic guard).
+const HOLD_BY_PAGE_ID_SQL = `INSERT INTO write_gate_holds (kind, source_id, slug, fingerprint, detector_version, tier, reason_families, reasons, detector_error, payload, write_origin, request_id, page_id) SELECT $1::text, $2::text, $3::text, $4::text, $5::integer, $6::text, $7::text[], $8::text[], $9::boolean, $10::text::jsonb, $11::text::jsonb, $12::text, p.id FROM pages p WHERE p.id = $13::bigint AND p.source_id = $2 ON CONFLICT (source_id, page_id, fingerprint, detector_version) WHERE page_id IS NOT NULL DO UPDATE
        SET status = 'held', decided_at = NULL, decided_by = NULL, last_seen_at = now(), seen_count = write_gate_holds.seen_count + 1,
-           tier = EXCLUDED.tier, reason_families = EXCLUDED.reason_families, reasons = EXCLUDED.reasons, payload = EXCLUDED.payload,
+           slug = EXCLUDED.slug, tier = EXCLUDED.tier, reason_families = EXCLUDED.reason_families, reasons = EXCLUDED.reasons, payload = EXCLUDED.payload,
            write_origin = EXCLUDED.write_origin, request_id = COALESCE(EXCLUDED.request_id, write_gate_holds.request_id)
-     RETURNING id::text AS id`,
-    [input.kind, input.source_id, input.slug, input.fingerprint, input.detector_version, input.tier, [...input.reason_families], [...input.reasons],
-      input.detector_error, JSON.stringify(input.payload), input.write_origin ? JSON.stringify(input.write_origin) : null, input.request_id]);
+     RETURNING id::text AS id`;
+const HOLD_BY_SLUG_PAGE_SQL = `INSERT INTO write_gate_holds (kind, source_id, slug, fingerprint, detector_version, tier, reason_families, reasons, detector_error, payload, write_origin, request_id, page_id) SELECT $1::text, $2::text, $3::text, $4::text, $5::integer, $6::text, $7::text[], $8::text[], $9::boolean, $10::text::jsonb, $11::text::jsonb, $12::text, p.id FROM pages p WHERE p.source_id = $2 AND p.slug = $3 ON CONFLICT (source_id, page_id, fingerprint, detector_version) WHERE page_id IS NOT NULL DO UPDATE
+       SET status = 'held', decided_at = NULL, decided_by = NULL, last_seen_at = now(), seen_count = write_gate_holds.seen_count + 1,
+           slug = EXCLUDED.slug, tier = EXCLUDED.tier, reason_families = EXCLUDED.reason_families, reasons = EXCLUDED.reasons, payload = EXCLUDED.payload,
+           write_origin = EXCLUDED.write_origin, request_id = COALESCE(EXCLUDED.request_id, write_gate_holds.request_id)
+     RETURNING id::text AS id`;
+const HOLD_UNBOUND_SQL = `INSERT INTO write_gate_holds (kind, source_id, slug, fingerprint, detector_version, tier, reason_families, reasons, detector_error, payload, write_origin, request_id, page_id) VALUES ($1::text, $2::text, $3::text, $4::text, $5::integer, $6::text, $7::text[], $8::text[], $9::boolean, $10::text::jsonb, $11::text::jsonb, $12::text, NULL) ON CONFLICT (source_id, slug, fingerprint, detector_version) WHERE page_id IS NULL AND page_candidates IS NULL DO UPDATE
+       SET status = 'held', decided_at = NULL, decided_by = NULL, last_seen_at = now(), seen_count = write_gate_holds.seen_count + 1,
+           slug = EXCLUDED.slug, tier = EXCLUDED.tier, reason_families = EXCLUDED.reason_families, reasons = EXCLUDED.reasons, payload = EXCLUDED.payload,
+           write_origin = EXCLUDED.write_origin, request_id = COALESCE(EXCLUDED.request_id, write_gate_holds.request_id)
+     RETURNING id::text AS id`;
+
+/**
+ * Records a held write for its page: bound to the page id the producer passed, else to the page at (source, slug) found inside the
+ * INSERT, else left unbound until a page is created at the slug (engine-sql/hold-binding.ts). The same content arriving again for the
+ * same page (bound) or slug (unbound) re-opens the hold.
+ */
+export async function upsertWriteGateHold(exec: SqlExecutor, input: WriteGateHoldRowInput): Promise<number> {
+  const values = [input.kind, input.source_id, input.slug, input.fingerprint, input.detector_version, input.tier, [...input.reason_families], [...input.reasons],
+    input.detector_error, JSON.stringify(input.payload), input.write_origin ? JSON.stringify(input.write_origin) : null, input.request_id];
+  let rows: Array<{ id: string }> = [];
+  if (input.page_id != null) rows = await exec.executeRaw<{ id: string }>(HOLD_BY_PAGE_ID_SQL, [...values, input.page_id]);
+  if (!rows.length && input.slug !== '') rows = await exec.executeRaw<{ id: string }>(HOLD_BY_SLUG_PAGE_SQL, values);
+  if (!rows.length) rows = await exec.executeRaw<{ id: string }>(HOLD_UNBOUND_SQL, values);
   return Number(rows[0]!.id);
 }
 
-const HOLD_SELECT = sqlFragment`SELECT id::text AS id, kind, source_id, slug, tier, detector_version, detector_error, reason_families, reasons, payload, write_origin,
+const HOLD_SELECT = sqlFragment`SELECT id::text AS id, kind, source_id, slug, page_id::text AS page_id, page_candidates::text[] AS page_candidates, tier, detector_version, detector_error, reason_families, reasons, payload, write_origin,
   request_id, status, seen_count, created_at, last_seen_at, decided_at, decided_by
   FROM write_gate_holds`;
 
 function toHoldRow(r: Record<string, unknown>): WriteGateHoldRow {
   return {
     id: Number(r.id), kind: r.kind as WriteGateHoldRow['kind'], source_id: String(r.source_id), slug: String(r.slug), tier: String(r.tier),
+    page_id: r.page_id == null ? null : Number(r.page_id), page_candidates: (r.page_candidates as string[] | null)?.map(Number) ?? null,
     detector_version: Number(r.detector_version), detector_error: Boolean(r.detector_error),
     reason_families: (r.reason_families as string[] | null) ?? [], reasons: (r.reasons as string[] | null) ?? [],
     payload: jsonObject(r.payload) ?? {}, write_origin: jsonObject(r.write_origin), request_id: (r.request_id as string | null) ?? null,
@@ -200,6 +228,49 @@ export async function decideWriteGateHold(exec: SqlExecutor, id: number, status:
     `UPDATE write_gate_holds SET status = $2, decided_at = now(), decided_by = $3 WHERE id = $1 AND status = 'held' RETURNING id::text AS id`,
     [id, status, decidedBy]);
   return rows.length > 0;
+}
+
+/** A rule `addTrustAllowRule` inserts, as trust/allow-rules.ts normalized it; `createdBy` is the principal label. */
+export interface TrustAllowRuleInsert {
+  sourceId: string;
+  uriPrefix: string | null;
+  reasonFamily: string | null;
+  createdBy: string;
+  reason: string | null;
+}
+
+/** What `addTrustAllowRule` did: `source_active: false` wrote nothing; else the rule and whether this call inserted it. */
+export interface TrustAllowRuleAdd { source_active: boolean; row: Record<string, unknown> | null; created: boolean }
+
+/**
+ * `gbrain trust allow add`: refuses a source that is not active (nothing written), then inserts the rule, or reads the
+ * active rule with the same (source, prefix, family) when the partial unique index already holds one.
+ */
+export async function addTrustAllowRule(exec: SqlExecutor, rule: TrustAllowRuleInsert): Promise<TrustAllowRuleAdd> {
+  const [source] = await exec.executeRaw<{ id: string }>('SELECT id FROM sources WHERE id = $1 AND NOT archived', [rule.sourceId]);
+  if (!source) return { source_active: false, row: null, created: false };
+  const [inserted] = await exec.executeRaw<Record<string, unknown>>(
+    `INSERT INTO trust_allow_rules (source_id, uri_prefix, reason_family, created_by, reason) VALUES ($1, $2, $3, $4, $5)
+      ON CONFLICT DO NOTHING RETURNING *`, [rule.sourceId, rule.uriPrefix, rule.reasonFamily, rule.createdBy, rule.reason]);
+  if (inserted) return { source_active: true, row: inserted, created: true };
+  const [existing] = await exec.executeRaw<Record<string, unknown>>(
+    `SELECT * FROM trust_allow_rules WHERE removed_at IS NULL AND source_id = $1
+       AND uri_prefix IS NOT DISTINCT FROM $2 AND reason_family IS NOT DISTINCT FROM $3 ORDER BY id LIMIT 1`,
+    [rule.sourceId, rule.uriPrefix, rule.reasonFamily]);
+  return { source_active: true, row: existing ?? null, created: false };
+}
+
+/** `gbrain trust allow remove`: marks the active rule removed (the row stays as the receipt); null when none is active. */
+export async function removeTrustAllowRule(exec: SqlExecutor, id: number, removedBy: string): Promise<Record<string, unknown> | null> {
+  const [row] = await exec.executeRaw<Record<string, unknown>>(
+    'UPDATE trust_allow_rules SET removed_at = now(), removed_by = $2 WHERE id = $1 AND removed_at IS NULL RETURNING *', [id, removedBy]);
+  return row ?? null;
+}
+
+/** One rule by id, active or removed, or null. */
+export async function readTrustAllowRule(exec: LegacyUnscopedRead, id: number): Promise<Record<string, unknown> | null> {
+  const [row] = await exec.executeRaw<Record<string, unknown>>('SELECT * FROM trust_allow_rules WHERE id = $1', [id]);
+  return row ?? null;
 }
 
 /** The filter of `listTrustAllowRuleRows`: the sources to read (all when absent or empty), and whether removed rules count. */

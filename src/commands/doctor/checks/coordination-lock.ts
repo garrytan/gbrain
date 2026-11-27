@@ -18,9 +18,7 @@ export async function checkCoordinationLockLocation(engine: BrainEngine): Promis
     const { readPhysicalRootReservation } = await import('../../../core/persistence/physical-root-record.ts');
     const { coordinationHomeIgnored } = await import('../../../core/persistence/coordination-lock.ts');
     const { existingLocalHostId } = await import('../../../core/persistence/identity.ts');
-    const roots = await engine.executeRaw<{ root: string; source_id: string | null }>(`
-      SELECT DISTINCT local_path AS root,id AS source_id FROM sources WHERE local_path IS NOT NULL AND NOT COALESCE(archived,false)
-      UNION SELECT DISTINCT h.local_path,NULL FROM persistence_host_bindings h WHERE h.host_id=$1::uuid`, [existingLocalHostId()]);
+    const roots = await engine.listCheckoutRoots(existingLocalHostId());
     const ignored: Array<{ root: string; source_id: string | null; configured_directory: string; recorded_path: string; move_step: string }> = [];
     for (const { root, source_id } of roots) {
       if (!existsSync(root)) continue;

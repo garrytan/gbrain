@@ -54,19 +54,24 @@ import { VERSION } from '../../version.ts';
 import { MARKDOWN_CHUNKER_VERSION } from '../chunkers/recursive.ts';
 import { chunkerStamp } from '../chunkers/code.ts';
 import { gitBlobOid, sha256 } from './digest.ts';
+import { READERS_FIX_EFFECT, readersHoldSteps } from './readers-request.ts';
 import { carriedKeepDeleted, heldDriftPreviewArgv, mirrorDatabaseOnlyHold, mirrorKeepDeletedHold, type KeepDeletedDecision } from './sync-holds-carried.ts';
 export { CARRIED_SAMPLE, carriedHolds, heldDriftPreviewArgv, mirrorDatabaseOnlyHold, mirrorKeepDeletedHold, type CarriedHolds, type KeepDeletedDecision } from './sync-holds-carried.ts';
 import { HOLD_ATTEMPTS_NEEDS_HUMAN, HOLD_ESCALATE_MS } from './sync-fault-class.ts';
 import { retiredSyncSetting, type RetiredSyncKeyName } from '../sync-config-keys.ts';
 
 import { GIT_HOLD_OP, GIT_HOLD_SUMMARY_OP } from '../engine-sql/persistence-journal.ts';
-export { GIT_HOLD_OP, GIT_HOLD_SUMMARY_OP };
-export const GIT_HOLD_RETRY_OP = 'sync-hold-retry';
-export const SYNC_IMPORT_PROVENANCE_OP = 'sync-import-provenance';
+import * as holdStore from '../engine-sql/sync-hold-store.ts';
+import { GIT_HOLD_SUMMARY_COUNTERS as SUMMARY_COUNTERS, SYNC_CONVERSION_KEEP, SYNC_CONVERSION_OP, gitHoldFingerprint, summaryFingerprint, type GitHoldSummaryWeights as SummaryWeights, type SyncConversion } from '../engine-sql/sync-hold-store.ts';
+export { gitHoldFingerprint, summaryFingerprint } from '../engine-sql/sync-hold-store.ts';
+import { requestGitHoldRetry as requestGitHoldRetryOver } from '../engine-sql/git-holds.ts';
+import { GIT_HOLD_RETRY_OP, readGitHoldRecords as readGitHoldRecordsOver, readGitHoldRetryRequest as readGitHoldRetryRequestOver, readGitHoldReportInputs as readGitHoldReportInputsOver, type GitHoldRecordsQuery, type GitHoldReportInputs } from '../engine-sql/sync-hold-reads.ts';
+export { GIT_HOLD_OP, GIT_HOLD_RETRY_OP, GIT_HOLD_SUMMARY_OP };
+import { SYNC_IMPORT_PROVENANCE_OP } from './sync-pass-pages-sql.ts';
+export { SYNC_IMPORT_PROVENANCE_OP };
 /** One row per source incarnation: the blocked requests recent managed syncs converted in place. */
-export const SYNC_CONVERSION_OP = 'sync-conversions';
+export { SYNC_CONVERSION_KEEP, SYNC_CONVERSION_OP, type SyncConversion };
 /** How many conversions the log keeps per source. */
-export const SYNC_CONVERSION_KEEP = 20;
 /** Default for `GBRAIN_SYNC_HOLD_CAP`: how many holds a result lists in detail. Storage is never capped. */
 export const GIT_HOLD_CAP = 500;
 export const GIT_HOLD_ESCALATE_COUNT = 50;
@@ -75,6 +80,19 @@ export const GIT_HOLD_ESCALATE_PCT = 5;
 export const GIT_HOLD_ESCALATE_MIN_SCREENED = 40;
 
 type Exec = Pick<BrainEngine, 'executeRaw'>;
+/** The hold store's typed members (engine-sql/sync-hold-store.ts); an executeRaw-only view runs the same statements. */
+type HoldStoreMember = 'lockGitHoldSummary' | 'adjustGitHoldSummary' | 'readGitHoldRow' | 'writeGitHoldRow' | 'replaceGitHoldRow' | 'deleteGitHoldRow' | 'countGitHolds'
+  | 'readGitHoldListingRows' | 'readGitHoldCodeCountRows' | 'readGitImageHoldCountRows' | 'readSyncConversionRows';
+type HoldStore = Exec & Partial<Pick<BrainEngine, HoldStoreMember>>;
+/** An engine (its typed readGitHoldRecords) or an executeRaw-only view of one. */
+type HoldsReader = Pick<BrainEngine, 'readGitHoldRecords'> | Exec;
+/** An engine (its typed readGitHoldRetryRequest) or an executeRaw-only view of one. */
+type RetryReader = Pick<BrainEngine, 'readGitHoldRetryRequest'> | Exec;
+/** An engine (its typed readGitHoldReportInputs and readGitHoldRecords) or an executeRaw-only view of one; the fence auto-repair read still needs executeRaw. */
+type ReportReader = Pick<BrainEngine, 'readGitHoldReportInputs' | 'readGitHoldRecords' | 'executeRaw'> | Exec;
+
+const readGitHoldReportInputsFor = (engine: ReportReader, sourceId: string, fingerprint: string): Promise<GitHoldReportInputs> =>
+  'readGitHoldReportInputs' in engine ? engine.readGitHoldReportInputs(sourceId, fingerprint) : readGitHoldReportInputsOver(engine, sourceId, fingerprint);
 
 export type GitHoldCode = ContentRefusal['code'] | 'rename_held' | 'parser_regression' | 'managed_image_sync_unsupported' | 'concurrent_write' | 'preparation_stalled' | 'worktree_dirty' | 'file_drift'
   | 'legacy_slug_conflict' | 'write_interrupted' | 'origin_conflict'
@@ -162,6 +180,8 @@ export interface GitHoldMeta {
   sides?: 'database' | 'both' | 'unknown';
   /** GBRA-133 `file_drift`: the drift screen that held it; an unknown-side hold from an older screen is re-screened (#7340). */
   drift_version?: number;
+  /** GST-3328 follow-up `file_drift`: the pass's history budget ran out before it read this file's earlier versions in full, so the next sync screens it again. */
+  history_unread?: true;
   /**
    * #6712 PR 4b `file_drift`: which side a Decision is about (design v3.2 §4): `both` (the file and the page moved), `unknown`
    * (no import record says which), `deleted` (one side is a deletion, named by `state`). Absent on holds an older gbrain
@@ -172,6 +192,8 @@ export interface GitHoldMeta {
   state?: FileDriftDeletedState;
   /** #6517 `file_drift`: the page survived a shared-origin delete that kept its file; the fix leads with importing the file. */
   shared_origin?: true;
+  /** LC-1 `file_drift` `side: 'deleted'`: the file is back with its deleted page's bytes (a restore); only the user's yes brings the page back. */
+  restored?: true;
   /** #6340 `concurrent_write`: the revision the entry was frozen against (the page's live revision is `page_revision`). */
   expected_revision?: string;
   /** #6340 `worktree_dirty`: sha256 of the uncommitted working-tree bytes the hold protected (`blob_oid` is the pinned blob). */
@@ -314,20 +336,9 @@ export interface GitHoldItem {
   docs: string;
 }
 
-export function gitHoldFingerprint(sourceId: string, incarnation: string, path: string): string {
-  return `${sourceId}:${incarnation}:${path}`;
-}
-
-export const summaryFingerprint = (sourceId: string, incarnation: string) => `${sourceId}:${incarnation}`;
-
 /** Locks the source's summary row (creating it), so hold writes of one source serialize. */
-async function lockSummary(tx: Exec, sourceId: string, incarnation: string): Promise<number> {
-  const [row] = await tx.executeRaw<{ count: number | string }>(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys)
-      VALUES($1,$2,jsonb_build_array(jsonb_build_object('source_id',$3::text,'incarnation',$4::text,'count',0,'stale',0)))
-    ON CONFLICT(op,fingerprint) DO UPDATE SET updated_at=now()
-    RETURNING COALESCE((completed_keys->0->>'count')::int,0) AS count`,
-  [GIT_HOLD_SUMMARY_OP, summaryFingerprint(sourceId, incarnation), sourceId, incarnation]);
-  return Number(row?.count ?? 0);
+function lockSummary(tx: HoldStore, sourceId: string, incarnation: string): Promise<number> {
+  return tx.lockGitHoldSummary ? tx.lockGitHoldSummary(sourceId, incarnation) : holdStore.lockGitHoldSummary(tx, sourceId, incarnation);
 }
 
 /**
@@ -336,13 +347,8 @@ async function lockSummary(tx: Exec, sourceId: string, incarnation: string): Pro
  * `concurrent` the #6194 `concurrent_write` holds; `stalled` the #6278 `preparation_stalled` holds; `dirty` the #6340 `worktree_dirty` holds;
  * `drift` the #6712 `file_drift` holds, which never escalate (each is a database edit a person decides on, not a generator fault).
  */
-const SUMMARY_COUNTERS = ['stale', 'images', 'fences', 'concurrent', 'stalled', 'dirty', 'drift'] as const;
-type SummaryWeights = Record<typeof SUMMARY_COUNTERS[number], number>;
-async function adjustSummary(tx: Exec, sourceId: string, incarnation: string, delta: number, weights: SummaryWeights): Promise<void> {
-  const pairs = SUMMARY_COUNTERS.map((name, i) => `'${name}',GREATEST(0,COALESCE((completed_keys->0->>'${name}')::int,0)+$${i + 4}::int)`).join(',');
-  await tx.executeRaw(`UPDATE op_checkpoints SET completed_keys=jsonb_build_array((completed_keys->0)||jsonb_build_object(
-      'count',GREATEST(0,COALESCE((completed_keys->0->>'count')::int,0)+$3::int),${pairs})),updated_at=now() WHERE op=$1 AND fingerprint=$2`,
-  [GIT_HOLD_SUMMARY_OP, summaryFingerprint(sourceId, incarnation), delta, ...SUMMARY_COUNTERS.map(name => weights[name])]);
+function adjustSummary(tx: HoldStore, sourceId: string, incarnation: string, delta: number, weights: SummaryWeights): Promise<void> {
+  return tx.adjustGitHoldSummary ? tx.adjustGitHoldSummary(sourceId, incarnation, delta, weights) : holdStore.adjustGitHoldSummary(tx, sourceId, incarnation, delta, weights);
 }
 
 const staleWeight = (record: Pick<GitHoldRecord, 'page_id'> | null) => record && record.page_id !== null ? 1 : 0;
@@ -355,21 +361,30 @@ const driftWeight = (record: Pick<GitHoldRecord, 'code'> | null) => record?.code
 const weightsOf = (record: Pick<GitHoldRecord, 'code' | 'page_id'>, sign = 1): SummaryWeights => ({ stale: sign * staleWeight(record), images: sign * imageWeight(record),
   fences: sign * fenceWeight(record), concurrent: sign * concurrentWeight(record), stalled: sign * stalledWeight(record), dirty: sign * dirtyWeight(record), drift: sign * driftWeight(record) });
 
-async function readRow(tx: Exec, sourceId: string, incarnation: string, path: string): Promise<GitHoldRecord | null> {
-  const [row] = await tx.executeRaw<{ record: GitHoldRecord }>('SELECT completed_keys->0 AS record FROM op_checkpoints WHERE op=$1 AND fingerprint=$2',
-    [GIT_HOLD_OP, gitHoldFingerprint(sourceId, incarnation, path)]);
-  return row?.record ?? null;
+function readRow(tx: HoldStore, sourceId: string, incarnation: string, path: string): Promise<GitHoldRecord | null> {
+  return tx.readGitHoldRow ? tx.readGitHoldRow<GitHoldRecord>(sourceId, incarnation, path) : holdStore.readGitHoldRow<GitHoldRecord>(tx, sourceId, incarnation, path);
 }
 
-/** GBRA-542: the hold record as readers return it, marked when its source is a read-only mirror (`s`: the sources row). */
-const READ_HOLD_RECORD_SQL = `CASE WHEN COALESCE(s.config->>'mirror_read_only','false')='true' THEN jsonb_set(h.completed_keys->0,'{read_only_checkout}','true'::jsonb) ELSE h.completed_keys->0 END`;
+function writeRow(tx: HoldStore, record: GitHoldRecord): Promise<void> {
+  return tx.writeGitHoldRow ? tx.writeGitHoldRow(record.source_id, record.incarnation, record.path, record)
+    : holdStore.writeGitHoldRow(tx, record.source_id, record.incarnation, record.path, record);
+}
+
+function replaceRow(tx: HoldStore, input: { sourceId: string; incarnation: string; path: string }, expected: GitHoldRecord, next: GitHoldRecord): Promise<boolean> {
+  return tx.replaceGitHoldRow ? tx.replaceGitHoldRow(input.sourceId, input.incarnation, input.path, expected, next)
+    : holdStore.replaceGitHoldRow(tx, input.sourceId, input.incarnation, input.path, expected, next);
+}
+
+function deleteRow(tx: HoldStore, input: { sourceId: string; incarnation: string; path: string }): Promise<void> {
+  return tx.deleteGitHoldRow ? tx.deleteGitHoldRow(input.sourceId, input.incarnation, input.path) : holdStore.deleteGitHoldRow(tx, input.sourceId, input.incarnation, input.path);
+}
 
 /**
  * Records or replaces a hold. Call it inside the transaction that advances the
  * run past the file. Idempotent on (path, upstream_version); returns `skipped`
  * when a newer run already wrote this path's hold.
  */
-export async function writeGitHold(tx: Exec, input: Omit<GitHoldRecord, 'version' | 'held_at' | 'updated_at'>): Promise<'inserted' | 'updated' | 'skipped'> {
+export async function writeGitHold(tx: Exec & Pick<BrainEngine, 'readOpCheckpointRecord'>, input: Omit<GitHoldRecord, 'version' | 'held_at' | 'updated_at'>): Promise<'inserted' | 'updated' | 'skipped'> {
   await lockSummary(tx, input.source_id, input.incarnation);
   const existing = await readRow(tx, input.source_id, input.incarnation, input.path);
   if (existing && existing.observed_at > input.observed_at) return 'skipped';
@@ -383,9 +398,7 @@ export async function writeGitHold(tx: Exec, input: Omit<GitHoldRecord, 'version
     ...(existing.meta.content_repair && !input.meta.content_repair ? { content_repair: existing.meta.content_repair } : {}) } : {};
   const record: GitHoldRecord = { version: 1, ...input, meta: { ...kept, ...(keepDeleted ? { keep_deleted: keepDeleted } : {}), ...input.meta, attempts, ...escalationStamps(existing, input, now) },
     held_at: existing && existing.upstream_version === input.upstream_version && existing.code === input.code ? existing.held_at : now, updated_at: now };
-  await tx.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES($1,$2,$3::text::jsonb)
-    ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=EXCLUDED.completed_keys,updated_at=now()`,
-  [GIT_HOLD_OP, gitHoldFingerprint(input.source_id, input.incarnation, input.path), JSON.stringify([record])]);
+  await writeRow(tx, record);
   if (existing) {
     const next = weightsOf(input), prior = weightsOf(existing);
     if (SUMMARY_COUNTERS.some(name => next[name] !== prior[name])) {
@@ -444,10 +457,7 @@ async function rewriteHoldMeta(tx: Exec, input: { sourceId: string; incarnation:
   if (!meta) return null;
   const now = new Date().toISOString();
   const record: GitHoldRecord = { ...existing, meta: { ...existing.meta, ...escalationStamps(existing, existing, now), ...meta }, updated_at: now };
-  const rows = await tx.executeRaw(`UPDATE op_checkpoints SET completed_keys=$3::text::jsonb, updated_at=now()
-      WHERE op=$1 AND fingerprint=$2 AND completed_keys=$4::text::jsonb RETURNING 1`,
-  [GIT_HOLD_OP, gitHoldFingerprint(input.sourceId, input.incarnation, input.path), JSON.stringify([record]), JSON.stringify([existing])]);
-  return rows.length ? record : null;
+  return await replaceRow(tx, input, existing, record) ? record : null;
 }
 
 /**
@@ -465,12 +475,12 @@ export function recordKeepDeleted(tx: Exec, input: { sourceId: string; incarnati
  * run doing it, so an older run never clears a newer hold.
  */
 export async function clearGitHold(tx: Exec, input: { sourceId: string; incarnation: string; path: string; observedAt: string }): Promise<boolean> {
-  const [any] = await tx.executeRaw('SELECT 1 FROM op_checkpoints WHERE op=$1 AND fingerprint=$2', [GIT_HOLD_OP, gitHoldFingerprint(input.sourceId, input.incarnation, input.path)]);
-  if (!any) return false;
+  // An unlocked look first, so a path with no hold takes no summary lock.
+  if (!await readRow(tx, input.sourceId, input.incarnation, input.path)) return false;
   await lockSummary(tx, input.sourceId, input.incarnation);
   const existing = await readRow(tx, input.sourceId, input.incarnation, input.path);
   if (!existing || existing.observed_at > input.observedAt) return false;
-  await tx.executeRaw('DELETE FROM op_checkpoints WHERE op=$1 AND fingerprint=$2', [GIT_HOLD_OP, gitHoldFingerprint(input.sourceId, input.incarnation, input.path)]);
+  await deleteRow(tx, input);
   await adjustSummary(tx, input.sourceId, input.incarnation, -1, weightsOf(existing, -1));
   return true;
 }
@@ -525,11 +535,8 @@ export async function heldGitPaths(tx: Exec, sourceId: string, incarnation: stri
  * #6188: records on a fence hold why the last repair left it held (the repair kind and the maintenance phase call it),
  * without touching its observation time or counts. False when the hold is gone or is not a fence hold.
  */
-export async function recordFenceHoldRepair(engine: Exec, input: { sourceId: string; incarnation: string; path: string; state: FenceHoldRepairState }): Promise<boolean> {
-  const rows = await engine.executeRaw(`UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,meta,fence_repair}',$3::text::jsonb),updated_at=now()
-    WHERE op=$1 AND fingerprint=$2 AND completed_keys->0->>'code'='invalid_fence' RETURNING 1`,
-  [GIT_HOLD_OP, gitHoldFingerprint(input.sourceId, input.incarnation, input.path), JSON.stringify(input.state)]);
-  return rows.length === 1;
+export async function recordFenceHoldRepair(engine: HoldStore, input: { sourceId: string; incarnation: string; path: string; state: FenceHoldRepairState }): Promise<boolean> {
+  return setHoldMeta(engine, input, record => record.code === 'invalid_fence', 'fence_repair', input.state);
 }
 
 /**
@@ -537,45 +544,55 @@ export async function recordFenceHoldRepair(engine: Exec, input: { sourceId: str
  * bytes it judged (`upstreamVersion`, the hold's `upstream_version`): a hold re-written for changed bytes is left alone.
  * Observation time and counts are untouched. False when the hold is gone, holds other bytes or has another code.
  */
-export async function recordContentHoldRepair(engine: Exec, input: { sourceId: string; incarnation: string; path: string; upstreamVersion: string | null; state: ContentHoldRepairState }): Promise<boolean> {
-  const rows = await engine.executeRaw(`UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,meta,content_repair}',$3::text::jsonb),updated_at=now()
-    WHERE op=$1 AND fingerprint=$2 AND completed_keys->0->>'code'='frontmatter_slug_conflict' AND completed_keys->0->>'upstream_version' IS NOT DISTINCT FROM $4 RETURNING 1`,
-  [GIT_HOLD_OP, gitHoldFingerprint(input.sourceId, input.incarnation, input.path), JSON.stringify(input.state), input.upstreamVersion]);
-  return rows.length === 1;
+export async function recordContentHoldRepair(engine: HoldStore, input: { sourceId: string; incarnation: string; path: string; upstreamVersion: string | null; state: ContentHoldRepairState }): Promise<boolean> {
+  return setHoldMeta(engine, input, record => record.code === 'frontmatter_slug_conflict' && (record.upstream_version ?? null) === input.upstreamVersion,
+    'content_repair', input.state);
 }
 
-export async function readGitHold(engine: Exec, sourceId: string, incarnation: string, path: string): Promise<GitHoldRecord | null> {
-  const [row] = await engine.executeRaw<{ record: GitHoldRecord }>(`SELECT ${READ_HOLD_RECORD_SQL} AS record FROM op_checkpoints h LEFT JOIN sources s ON s.id=$3
-    WHERE h.op=$1 AND h.fingerprint=$2`, [GIT_HOLD_OP, gitHoldFingerprint(sourceId, incarnation, path), sourceId]);
-  return row?.record ?? null;
+/**
+ * Sets one key of a hold's `meta` while `matches` holds, through the typed hold row (read, then a replace only while the
+ * row is still what was read; a row that moved meanwhile is read again). The row's observation time and counts are kept.
+ */
+async function setHoldMeta(engine: HoldStore, input: { sourceId: string; incarnation: string; path: string }, matches: (record: GitHoldRecord) => boolean,
+  key: 'fence_repair' | 'content_repair', value: object): Promise<boolean> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const record = await readRow(engine, input.sourceId, input.incarnation, input.path);
+    if (!record || !matches(record)) return false;
+    const next = { ...record, meta: { ...(record.meta ?? {}), [key]: value } } as GitHoldRecord;
+    if (await replaceRow(engine, input, record, next)) return true;
+  }
+  return false;
+}
+
+export async function readGitHold(engine: HoldStore & Partial<Pick<BrainEngine, 'readGitHoldReportInputs'>>, sourceId: string, incarnation: string, path: string): Promise<GitHoldRecord | null> {
+  const record = await readRow(engine, sourceId, incarnation, path);
+  if (!record) return null;
+  // The record marks a read-only mirror (GBRA-542); the source's mirror flag is the typed report input's, read only for a hold that exists.
+  const { mirror } = await readGitHoldReportInputsFor(engine, sourceId, summaryFingerprint(sourceId, incarnation));
+  return mirror === 'true' ? { ...record, read_only_checkout: true } : record;
 }
 
 /** #5493: unsupported-image holds per source's current incarnation (sources with none are absent); they never escalate. */
-export async function readGitImageHoldCounts(engine: Exec, sourceIds: string[]): Promise<Map<string, number>> {
+export async function readGitImageHoldCounts(engine: HoldStore, sourceIds: string[]): Promise<Map<string, number>> {
   if (!sourceIds.length) return new Map();
-  const rows = await engine.executeRaw<{ source_id: string; images: number | string }>(`SELECT s.id AS source_id, COALESCE((h.completed_keys->0->>'images')::int,0) AS images
-    FROM op_checkpoints h JOIN sources s ON h.fingerprint=s.id||':'||s.incarnation::text
-    WHERE h.op=$1 AND s.id=ANY($2::text[]) AND COALESCE((h.completed_keys->0->>'images')::int,0)>0`, [GIT_HOLD_SUMMARY_OP, sourceIds]);
-  return new Map(rows.map(row => [row.source_id, Number(row.images)]));
+  const rows = engine.readGitImageHoldCountRows ? await engine.readGitImageHoldCountRows(sourceIds) : await holdStore.readGitImageHoldCountRows(engine, sourceIds);
+  return new Map(rows.map(row => [row.source_id, row.images]));
 }
 
 /** Outstanding holds of the source's current incarnation (one indexed read). */
-export async function countGitHolds(engine: Exec, sourceId: string, incarnation: string): Promise<number> {
-  const [row] = await engine.executeRaw<{ count: number | string }>("SELECT COALESCE((completed_keys->0->>'count')::int,0) AS count FROM op_checkpoints WHERE op=$1 AND fingerprint=$2",
-    [GIT_HOLD_SUMMARY_OP, summaryFingerprint(sourceId, incarnation)]);
-  return Number(row?.count ?? 0);
+export function countGitHolds(engine: HoldStore, sourceId: string, incarnation: string): Promise<number> {
+  return engine.countGitHolds ? engine.countGitHolds(sourceId, incarnation) : holdStore.countGitHolds(engine, sourceId, incarnation);
 }
 
 /**
  * Git-source holds of each source's current incarnation (sources with none are
  * omitted). Connector holds are read by `readAllSourceHolds`; only `sources
- * status` and `sources retry-held` merge the two.
+ * status` and `sources retry-held` merge the two. Reads through the typed
+ * readGitHoldRecords member when the engine has it (a Rust brain), else the same
+ * statement over an executeRaw-only view.
  */
-export async function readGitSourceHolds(engine: Exec, opts: { sourceIds?: string[]; runId?: string } = {}): Promise<GitSourceHolds[]> {
-  const rows = await engine.executeRaw<{ record: GitHoldRecord }>(`SELECT ${READ_HOLD_RECORD_SQL} AS record FROM op_checkpoints h
-    JOIN sources s ON s.id=h.completed_keys->0->>'source_id' AND s.incarnation::text=h.completed_keys->0->>'incarnation'
-    WHERE h.op=$1 AND ($2::text[] IS NULL OR s.id=ANY($2::text[])) AND ($3::text IS NULL OR h.completed_keys->0->>'run_id'=$3)
-    ORDER BY s.id,h.fingerprint`, [GIT_HOLD_OP, opts.sourceIds ?? null, opts.runId ?? null]);
+export async function readGitSourceHolds(engine: HoldsReader, opts: GitHoldRecordsQuery = {}): Promise<GitSourceHolds[]> {
+  const rows = 'readGitHoldRecords' in engine ? await engine.readGitHoldRecords<GitHoldRecord>(opts) : await readGitHoldRecordsOver<GitHoldRecord>(engine, opts);
   const out = new Map<string, GitSourceHolds>();
   for (const { record } of rows) {
     const entry = out.get(record.source_id) ?? { sourceId: record.source_id, incarnation: record.incarnation, count: 0, holds: [] };
@@ -590,17 +607,10 @@ export async function readGitSourceHolds(engine: Exec, opts: { sourceIds?: strin
  * (its summary row) and its first `limit` holds in path order, limited in SQL
  * so a source with 20k holds never loads them all.
  */
-export async function readGitHoldListing(engine: Exec, sourceIds: string[], limit: number): Promise<GitSourceHolds[]> {
+export async function readGitHoldListing(engine: HoldStore, sourceIds: string[], limit: number): Promise<GitSourceHolds[]> {
   if (!sourceIds.length) return [];
-  const rows = await engine.executeRaw<{ source_id: string; incarnation: string; count: number | string; record: GitHoldRecord | null }>(`SELECT s.id AS source_id,
-      s.incarnation::text AS incarnation, COALESCE((sm.completed_keys->0->>'count')::int,0) AS count, h.record
-    FROM sources s
-    JOIN op_checkpoints sm ON sm.op=$1 AND sm.fingerprint=s.id||':'||s.incarnation::text
-    LEFT JOIN LATERAL (SELECT x.fingerprint, CASE WHEN COALESCE(s.config->>'mirror_read_only','false')='true' THEN jsonb_set(x.completed_keys->0,'{read_only_checkout}','true'::jsonb) ELSE x.completed_keys->0 END AS record FROM op_checkpoints x
-      WHERE x.op=$2 AND x.completed_keys->0->>'source_id'=s.id AND x.completed_keys->0->>'incarnation'=s.incarnation::text
-      ORDER BY x.fingerprint LIMIT $4) h ON true
-    WHERE s.id=ANY($3::text[]) AND COALESCE((sm.completed_keys->0->>'count')::int,0)>0
-    ORDER BY s.id, h.fingerprint`, [GIT_HOLD_SUMMARY_OP, GIT_HOLD_OP, sourceIds, Math.max(0, Math.floor(limit))]);
+  const rows = engine.readGitHoldListingRows ? await engine.readGitHoldListingRows<GitHoldRecord>(sourceIds, limit)
+    : await holdStore.readGitHoldListingRows<GitHoldRecord>(engine, sourceIds, limit);
   const out = new Map<string, GitSourceHolds>();
   for (const row of rows) {
     const entry = out.get(row.source_id) ?? { sourceId: row.source_id, incarnation: row.incarnation, count: Number(row.count), holds: [] };
@@ -611,13 +621,11 @@ export async function readGitHoldListing(engine: Exec, sourceIds: string[], limi
 }
 
 /** GST-2843: each listed source's holds counted per code, over every hold of its current incarnation (not a listing's first rows). */
-export async function readGitHoldCodeCounts(engine: Exec, sourceIds: string[]): Promise<Map<string, Record<string, number>>> {
+export async function readGitHoldCodeCounts(engine: HoldStore, sourceIds: string[]): Promise<Map<string, Record<string, number>>> {
   const out = new Map<string, Record<string, number>>();
   if (!sourceIds.length) return out;
-  const rows = await engine.executeRaw<{ source_id: string; code: string; n: number | string }>(`SELECT s.id AS source_id, x.completed_keys->0->>'code' AS code, count(*) AS n
-    FROM sources s JOIN op_checkpoints x ON x.op=$1 AND x.completed_keys->0->>'source_id'=s.id AND x.completed_keys->0->>'incarnation'=s.incarnation::text
-    WHERE s.id=ANY($2::text[]) GROUP BY 1,2`, [GIT_HOLD_OP, sourceIds]);
-  for (const row of rows) out.set(row.source_id, { ...out.get(row.source_id), [row.code]: Number(row.n) });
+  const rows = engine.readGitHoldCodeCountRows ? await engine.readGitHoldCodeCountRows(sourceIds) : await holdStore.readGitHoldCodeCountRows(engine, sourceIds);
+  for (const row of rows) out.set(row.source_id, { ...out.get(row.source_id), [String(row.code)]: row.n });
   return out;
 }
 
@@ -691,7 +699,7 @@ export function holdRescreenDue(record: Pick<GitHoldRecord, 'code' | 'meta'>, re
     || (record.code === 'invalid_fence' && (record.meta.quote_version ?? 0) < QUOTE_SCREEN_VERSION)
     // GBRA-133: an unknown-side drift held before #7340's baseline rule (a Git edit to a page with no import record) imports
     // now when the page still holds its file at the baseline commit, so it is screened once more.
-    || (record.code === 'file_drift' && fileDriftSide(record.meta) === 'unknown' && (record.meta.drift_version ?? 0) < FILE_DRIFT_VERSION)
+    || (record.code === 'file_drift' && fileDriftSide(record.meta) === 'unknown' && ((record.meta.drift_version ?? 0) < FILE_DRIFT_VERSION || record.meta.history_unread === true))
     // GST-2568: a live page's drift held before version 3 may differ from its file only by a schema-pack retype's stamp, so it is screened once more.
     || (record.code === 'file_drift' && fileDriftSide(record.meta) !== 'deleted' && (record.meta.drift_version ?? 0) < 3)
     // #8007: a deletion held while gbrain.yml's storage section was invalid is decided again by every sync, so a fixed file settles it.
@@ -707,11 +715,12 @@ export function holdRescreenDue(record: Pick<GitHoldRecord, 'code' | 'meta'>, re
  * to the content-repair lane's preview (#6377), #6194 concurrent-write holds
  * to the reconcile preview and a re-screen, #6278 preparation-stalled holds to
  * writer status and a re-screen (never a file repair), every other hold to the
- * frontmatter repair preview; a source with several kinds names each.
+ * frontmatter repair preview; a source with several kinds names each. `readers` (`readers_noncanonical`, a file edit no repair does) routes to a status read, the edit and a sync.
  */
 export interface HoldRepairRoute { fences: number; others: number; concurrent?: number; stalled?: number; dirty?: number;
   /** #6712 `file_drift` holds: a database edit sync would have overwritten; each routes to `gbrain repair file-drift`. */
   drift?: number;
+  readers?: number;
   /** #6377 `frontmatter_slug_conflict` holds, counted apart from `others` by callers that read codes (summary counts leave them in `others`). */
   slug_conflicts?: number;
   /** GBRA-542: the source is a read-only mirror, so its drift holds are carried and never resolved toward the database. */
@@ -752,9 +761,11 @@ export function holdRepairSteps(sourceId: string, route: HoldRepairRoute, auto?:
   const unblock = ['gbrain', 'sync', 'unblock', '--source', sourceId, '--apply'];
   const dirtyText = `the ${route.dirty ?? 0} worktree-dirty hold(s) are uncommitted edits in the checkout that sync would not overwrite: commit them (gbrain sources status ${sourceId} names each file), `
     + `then run ${unblock.join(' ')}, which re-screens every held file that is now committed, and the same sync`;
-  const driftText = route.mirror ? `the file-drift holds are on a read-only mirror, which gbrain never writes, so their pages stay live and database-only: list them with ${heldDriftPreviewArgv(sourceId, 'deleted', 'file_gone', 'file').join(' ')} (a preview that writes nothing), and turn the mirror flag off only if gbrain should write the checkout`
-    : `for each file-drift hold, preview the resolution with gbrain repair file-drift --source ${sourceId} --slug <slug> --prefer database (or --prefer file) `
-    + `(gbrain sources status ${sourceId} names each slug and the database write sync did not overwrite) and decide with the user. ${FILE_DRIFT_APPLY_STEP} Then run gbrain sync --source ${sourceId} --no-pull`;
+  const fileWins = route.mirror ? `the source is a read-only mirror, whose checkout is never written: gbrain repair file-drift --source ${sourceId} --held --side unknown --prefer file --whole-class previews every page whose file is newer for one approval and imports each into its page database-only`
+    : `a page whose file was committed after it changed is the user's call with --prefer file (gbrain repair file-drift --source ${sourceId} --held --side unknown --prefer file --whole-class previews them all for one approval). ${FILE_DRIFT_APPLY_STEP}`;
+  const driftText = `the ${route.drift ?? 0} file-drift hold(s) are pages that differ from their file where sync could not prove which side moved (a database edit, or no import record), so it kept each page: preview them all with gbrain repair file-drift --source ${sourceId} --held (writes nothing; --cursor pages through the rest) and relay what it lists. `
+    + `A page that equals an earlier committed version of its file needs no repair: gbrain sources retry-held ${sourceId} and the next sync import the file; ${fileWins}. A page that changed after its file, a file with uncommitted bytes (commit or restore it first) and a file that is gone stay held until the user decides. Then run gbrain sync --source ${sourceId} --no-pull`;
+  if (route.readers && !route.others && !content && !route.concurrent && !route.stalled && !route.dirty && !route.drift) return readersHoldSteps(sourceId);
   if (route.stalled && !route.others && !content && !route.concurrent && !route.dirty && !route.drift) {
     return { argv: stalled.status, commands: [stalled.status.join(' '), stalled.retry.join(' '), stalled.sync.join(' ')], text: stalledText };
   }
@@ -822,6 +833,7 @@ function deletedDriftFix(record: Pick<GitHoldRecord, 'source_id' | 'path' | 'met
   const uncommitted = state === 'file_gone' && (record.meta.reason === 'never_committed' || record.meta.reason === 'ignored');
   const what = state === 'file_gone' && record.meta.reason === 'origin_unknown' ? `${record.path} is gone, and Git could not show whether a commit held it (its history read did not finish), so sync kept page ${slug} instead of deleting it (#7130). The --held preview reads the whole history and names the file's provenance. `
     : uncommitted ? `${record.path} is gone, but Git never committed it${record.meta.reason === 'ignored' ? ' (.gitignore excludes it)' : ''}, so its absence is no evidence of a deletion and sync kept page ${slug} instead of deleting it (#7130). Put the file back and commit it (un-ignore it first) to keep the page file-backed. `
+    : record.meta.restored && (state === 'tombstone_edited' || state === 'purged_differs') ? `${state === 'tombstone_edited' ? `Page ${slug} was deleted${revision}` : `The page of ${record.path} was purged`} and ${record.path} is back with the bytes the page had (a restore), so sync held the file instead of bringing the page back without the user. `
     : state === 'tombstone_edited' ? `Page ${slug} was deleted${revision} and ${record.path} then changed, so sync held the file instead of restoring the page or dropping the edit. `
     : state === 'purged_differs' ? `The page of ${record.path} was purged and the file differs from what the brain held, so sync held the file instead of importing it as a new page. `
     : record.meta.no_import_record ? `${record.path} is gone from the last commit, and page ${slug}${revision} has no import record that says whether it changed in the database since the file was imported, so sync held the deletion instead of removing it. `
@@ -1005,11 +1017,19 @@ export function gitHoldFix(record: Pick<GitHoldRecord, 'source_id' | 'path' | 'c
         user_message: `${record.path} has a frontmatter tag longer than the ${TAG_MAX_BYTES} bytes a tag can be, so sync holds it and the rest of source ${source} keeps syncing. Shorten that tag or split it into shorter tags, commit, then run gbrain sync --source ${source} --no-pull.`,
         why: 'Tags are stored in an index whose entries have a fixed size limit; no frontmatter repair shortens a tag, and the hold re-screens when the file changes.',
         verify: { argv: ['gbrain', 'sources', 'status', source, '--json'] } };
+    case 'slug_too_long':
+      return { argv: ['gbrain', 'sources', 'status', source, '--json'], consent: [], actor: 'user', requires_exclusive: false, docs: gitHoldDocs(record.code),
+        user_message: `${record.path} would be stored under a page slug over 255 characters, which no later write, delete or repair could name, so sync holds it and the rest of source ${source} keeps syncing. Move it to a shorter path (or give it a shorter slug: line), commit, then run gbrain sync --source ${source} --no-pull.`,
+        why: 'A page slug is at most 255 characters; no repair shortens a path, and the hold re-screens when the file changes. A page an older sync already stored under such a slug can be removed with gbrain delete.',
+        verify: { argv: ['gbrain', 'sources', 'status', source, '--json'] } };
     case 'visibility_noncanonical':
       return { argv: ['gbrain', 'sources', 'status', source, '--json'], consent: [], actor: 'user', requires_exclusive: false, docs: gitHoldDocs(record.code),
         user_message: `${record.path} asks for visibility: private in a spelling page privacy does not read (another case, a block scalar, a list, a flow mapping or a merge key), so sync holds it instead of storing a world-readable page, and the rest of source ${source} keeps syncing. Write visibility: private on its own frontmatter line (lowercase key and value), commit, then run gbrain sync --source ${source} --no-pull.`,
         why: 'Page privacy reads only the exact lowercase visibility: private; no frontmatter repair rewrites a privacy request, and the hold re-screens when the file changes.',
         verify: { argv: ['gbrain', 'sources', 'status', source, '--json'] } };
+    case 'readers_noncanonical': return { argv: ['gbrain', 'sources', 'status', source, '--json'], consent: [], actor: 'user', requires_exclusive: false, docs: gitHoldDocs(record.code),
+        user_message: `${record.path} names its readers with a key page access does not read (another case, a hyphen or space instead of the underscore, or readableBy), so sync holds it instead of storing a page every member can read, and the rest of source ${source} keeps syncing. Write the key as readable_by (lowercase, with an underscore) on its own frontmatter line, remove any other spelling of it, commit, then run gbrain sync --source ${source} --no-pull. ${READERS_FIX_EFFECT}`,
+        why: 'Page access reads only the exact lowercase readable_by key; no frontmatter repair rewrites who may read a page, and the hold re-screens when the file changes.', verify: { argv: ['gbrain', 'sources', 'status', source, '--json'] } };
     case 'content_null_bytes':
       return { argv: ['gbrain', 'sources', 'status', source, '--json'], consent: [], actor: 'user', requires_exclusive: false, docs: gitHoldDocs(record.code),
         user_message: `${record.path} holds NUL bytes (U+0000${record.meta.line !== undefined ? `, first on line ${record.meta.line}` : ''}), so sync holds it and the rest of source ${source} keeps syncing. A UTF-16 file (a Windows "Unicode" save) looks like this: save it as UTF-8. Otherwise remove the NUL bytes, or remove a binary file (or leave it out with sync.exclude), then commit and run gbrain sync --source ${source} --no-pull.`,
@@ -1061,7 +1081,7 @@ export function gitHoldFix(record: Pick<GitHoldRecord, 'source_id' | 'path' | 'c
           : slugs.length > 1
           ? `${record.path} belongs to one of the pages ${slugs.map(slug => JSON.stringify(slug)).join(', ')}, which an older gbrain imported without recording their file, so sync held it rather than guess or create another page. `
             + `Pick the page that is this file's and remove each other one with gbrain delete --source ${source} -- '<slug>' (recoverable for 72 h), or rename the file if none of them is its page, then run gbrain sync --source ${source} --no-pull.`
-          : `${record.path} matches page ${JSON.stringify(slugs[0] ?? '')}, which an older gbrain imported without recording its file under a slug with capitals that sync cannot write and no gbrain command can address yet, so sync held the file rather than create a second page. `
+          : `${record.path} matches page ${JSON.stringify(slugs[0] ?? '')}, which an older gbrain imported without recording its file under an older slug spelling that sync cannot write (capitals, or a decomposed Unicode accent) and no gbrain command can change yet, so sync held the file rather than create a second page. `
             + `Keep the file held (the rest of the source syncs), or rename it to a name that folds to another slug, which imports it as a new page beside the old one (the old page keeps its links), then run gbrain sync --source ${source} --no-pull.`,
         why: 'Which page a file is cannot be decided from the slugs alone, and sync never writes a slug it would have to change. Once one writable page is left, the next sync imports the file into it (same page id, links and history) and records the file as its origin; until then the rest of the source keeps syncing.',
         then: { argv: ['gbrain', 'sync', '--source', source, '--no-pull'], consent: [], actor: 'agent', requires_exclusive: false, verify,
@@ -1145,45 +1165,35 @@ export async function fenceAutoRepairFor(engine: Exec, records: ReadonlyArray<Pi
 }
 
 /** A blocked sync request a run converted in place: held (the file is refused) or re-frozen (the file now imports). */
-export interface SyncConversion { request_id: string; path: string | null; slug: string | null; run_id: string; outcome: 'held' | 'refrozen'; converted_at: string }
-
 /** Appends a conversion to the source's log (newest first, bounded); call it in the transaction that saves the converted cursor. */
-export async function recordSyncConversion(tx: Exec, sourceId: string, incarnation: string, conversion: Omit<SyncConversion, 'converted_at'>): Promise<void> {
-  const entry = JSON.stringify([{ ...conversion, converted_at: new Date().toISOString() }]);
-  await tx.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys)
-      VALUES($1,$2,jsonb_build_array(jsonb_build_object('source_id',$3::text,'incarnation',$4::text,'conversions',$5::text::jsonb)))
-    ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=jsonb_build_array((op_checkpoints.completed_keys->0)||jsonb_build_object('conversions',
-      (SELECT COALESCE(jsonb_agg(c ORDER BY n),'[]'::jsonb) FROM jsonb_array_elements($5::text::jsonb||COALESCE(op_checkpoints.completed_keys->0->'conversions','[]'::jsonb))
-        WITH ORDINALITY AS e(c,n) WHERE n<=$6))),updated_at=now()`,
-  [SYNC_CONVERSION_OP, summaryFingerprint(sourceId, incarnation), sourceId, incarnation, entry, SYNC_CONVERSION_KEEP]);
+export async function recordSyncConversion(tx: Pick<BrainEngine, 'recordSyncConversion'>, sourceId: string, incarnation: string, conversion: Omit<SyncConversion, 'converted_at'>): Promise<void> {
+  await tx.recordSyncConversion(sourceId, incarnation, { ...conversion, converted_at: new Date().toISOString() });
 }
 
 /** The conversion log of each listed source's current incarnation, newest first (sources with none are absent). */
-export async function readSyncConversions(engine: Exec, sourceIds: string[], limit: number): Promise<Map<string, SyncConversion[]>> {
+export async function readSyncConversions(engine: HoldStore, sourceIds: string[], limit: number): Promise<Map<string, SyncConversion[]>> {
   const out = new Map<string, SyncConversion[]>();
   if (!sourceIds.length || limit <= 0) return out;
-  const rows = await engine.executeRaw<{ source_id: string; conversions: SyncConversion[] | null }>(`SELECT s.id AS source_id, c.completed_keys->0->'conversions' AS conversions
-    FROM sources s JOIN op_checkpoints c ON c.op=$1 AND c.fingerprint=s.id||':'||s.incarnation::text WHERE s.id=ANY($2::text[])`, [SYNC_CONVERSION_OP, sourceIds]);
+  const rows = engine.readSyncConversionRows ? await engine.readSyncConversionRows<SyncConversion>(sourceIds)
+    : await holdStore.readSyncConversionRows<SyncConversion>(engine, sourceIds);
   for (const row of rows) if (Array.isArray(row.conversions) && row.conversions.length) out.set(row.source_id, row.conversions.slice(0, limit));
   return out;
 }
 
-/** `sources retry-held` on a Git source: the next sync re-screens these paths even if Git did not touch them. */
-export async function requestGitHoldRetry(engine: Exec, sourceId: string, incarnation: string, paths: string[]): Promise<void> {
-  await engine.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys)
-      VALUES($1,$2,jsonb_build_array(jsonb_build_object('version',1,'source_id',$3::text,'incarnation',$5::text,'paths',$4::text::jsonb,'requested_at',now())))
-    ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=jsonb_build_array(jsonb_build_object('version',1,'source_id',$3::text,'incarnation',$5::text,
-      'paths',(SELECT COALESCE(jsonb_agg(DISTINCT p),'[]'::jsonb) FROM (
-        SELECT jsonb_array_elements_text(COALESCE(op_checkpoints.completed_keys->0->'paths','[]'::jsonb)) AS p
-        UNION SELECT jsonb_array_elements_text($4::text::jsonb)) paths),
-      'requested_at',now())),updated_at=now()`,
-  [GIT_HOLD_RETRY_OP, summaryFingerprint(sourceId, incarnation), sourceId, JSON.stringify(paths), incarnation]);
+/**
+ * `sources retry-held` on a Git source: the next sync re-screens these paths even if Git did not touch them. The request
+ * keeps each path once, in byte order, stamped now.
+ */
+export async function requestGitHoldRetry(engine: Exec & Partial<Pick<BrainEngine, 'requestGitHoldRetry'>>, sourceId: string, incarnation: string, paths: string[]): Promise<void> {
+  const requestedAt = new Date().toISOString();
+  if (engine.requestGitHoldRetry) await engine.requestGitHoldRetry(sourceId, incarnation, paths, requestedAt);
+  else await requestGitHoldRetryOver(engine, sourceId, incarnation, paths, requestedAt);
 }
 
-export async function readGitHoldRetryPaths(engine: Exec, sourceId: string, incarnation: string): Promise<string[]> {
-  const [row] = await engine.executeRaw<{ completed_keys: Array<{ paths?: unknown }> }>('SELECT completed_keys FROM op_checkpoints WHERE op=$1 AND fingerprint=$2',
-    [GIT_HOLD_RETRY_OP, summaryFingerprint(sourceId, incarnation)]);
-  const paths = row?.completed_keys?.[0]?.paths;
+export async function readGitHoldRetryPaths(engine: RetryReader, sourceId: string, incarnation: string): Promise<string[]> {
+  const fingerprint = summaryFingerprint(sourceId, incarnation);
+  const keys = 'readGitHoldRetryRequest' in engine ? await engine.readGitHoldRetryRequest(fingerprint) : await readGitHoldRetryRequestOver(engine, fingerprint);
+  const paths = keys?.[0]?.paths;
   return Array.isArray(paths) ? paths.filter((p): p is string => typeof p === 'string') : [];
 }
 
@@ -1338,36 +1348,32 @@ export function syncImportParsers(schemaPack: string | null): (path: string) => 
 
 const provenanceFingerprint = (sourceId: string, incarnation: string, pageId: number) => `${sourceId}:${incarnation}:${pageId}`;
 
-export async function recordSyncImportProvenance(tx: Exec, value: Omit<SyncImportProvenance, 'recorded_at' | 'validated'>): Promise<void> {
+/** The engine members the provenance records go through (engine-sql/op-checkpoint.ts), so a Rust brain serves them from its store. */
+type ProvenanceExec = Pick<BrainEngine, 'readOpCheckpointRecords' | 'writeOpCheckpointRecords'>;
+
+export async function recordSyncImportProvenance(tx: ProvenanceExec, value: Omit<SyncImportProvenance, 'recorded_at' | 'validated'>): Promise<void> {
   const record: SyncImportProvenance = { ...value, validated: true, recorded_at: new Date().toISOString() };
-  await tx.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES($1,$2,$3::text::jsonb)
-    ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=EXCLUDED.completed_keys,updated_at=now()`,
-  [SYNC_IMPORT_PROVENANCE_OP, provenanceFingerprint(value.source_id, value.incarnation, value.page_id), JSON.stringify([record])]);
+  await tx.writeOpCheckpointRecords(SYNC_IMPORT_PROVENANCE_OP, [{ fingerprint: provenanceFingerprint(value.source_id, value.incarnation, value.page_id), record }]);
 }
 
 /** Several pages' provenance in one statement (a waiver run); the last value for a page wins. */
-export async function recordSyncImportProvenances(tx: Exec, values: ReadonlyArray<Omit<SyncImportProvenance, 'recorded_at' | 'validated'>>): Promise<void> {
+export async function recordSyncImportProvenances(tx: ProvenanceExec, values: ReadonlyArray<Omit<SyncImportProvenance, 'recorded_at' | 'validated'>>): Promise<void> {
   if (!values.length) return;
   const recorded_at = new Date().toISOString();
   const rows = new Map(values.map(value => [provenanceFingerprint(value.source_id, value.incarnation, value.page_id), { ...value, validated: true, recorded_at }]));
-  await tx.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys)
-    SELECT $1, entry->>'fingerprint', jsonb_build_array(entry->'record') FROM jsonb_array_elements($2::text::jsonb) AS entry
-    ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=EXCLUDED.completed_keys,updated_at=now()`,
-  [SYNC_IMPORT_PROVENANCE_OP, JSON.stringify([...rows].map(([fingerprint, record]) => ({ fingerprint, record })))]);
+  await tx.writeOpCheckpointRecords(SYNC_IMPORT_PROVENANCE_OP, [...rows].map(([fingerprint, record]) => ({ fingerprint, record })));
 }
 
 /** The provenance of several pages in one statement, keyed by page id; pages without a record are absent. */
-export async function readSyncImportProvenances(engine: Exec, sourceId: string, incarnation: string, pageIds: readonly number[]): Promise<Map<number, SyncImportProvenance>> {
+export async function readSyncImportProvenances(engine: ProvenanceExec, sourceId: string, incarnation: string, pageIds: readonly number[]): Promise<Map<number, SyncImportProvenance>> {
   if (!pageIds.length) return new Map();
-  const rows = await engine.executeRaw<{ record: SyncImportProvenance }>('SELECT completed_keys->0 AS record FROM op_checkpoints WHERE op=$1 AND fingerprint = ANY($2::text[])',
-    [SYNC_IMPORT_PROVENANCE_OP, pageIds.map(id => provenanceFingerprint(sourceId, incarnation, id))]);
-  return new Map(rows.map(row => [Number(row.record.page_id), row.record]));
+  const records = await engine.readOpCheckpointRecords(SYNC_IMPORT_PROVENANCE_OP, pageIds.map(id => provenanceFingerprint(sourceId, incarnation, id))) as SyncImportProvenance[];
+  return new Map(records.map(record => [Number(record.page_id), record]));
 }
 
-export async function readSyncImportProvenance(engine: Exec, sourceId: string, incarnation: string, pageId: number): Promise<SyncImportProvenance | null> {
-  const [row] = await engine.executeRaw<{ record: SyncImportProvenance }>('SELECT completed_keys->0 AS record FROM op_checkpoints WHERE op=$1 AND fingerprint=$2',
-    [SYNC_IMPORT_PROVENANCE_OP, provenanceFingerprint(sourceId, incarnation, pageId)]);
-  return row?.record ?? null;
+export async function readSyncImportProvenance(engine: ProvenanceExec, sourceId: string, incarnation: string, pageId: number): Promise<SyncImportProvenance | null> {
+  const [record] = await engine.readOpCheckpointRecords(SYNC_IMPORT_PROVENANCE_OP, [provenanceFingerprint(sourceId, incarnation, pageId)]) as Array<SyncImportProvenance | null>;
+  return record ?? null;
 }
 
 export interface RecoveredFrontmatter {
@@ -1442,17 +1448,12 @@ export function fencesNormalizedReport(sourceId: string, tally: FencesTally | un
  * source's outstanding total, escalation, and the exact inspect and repair
  * commands. Remote callers get the counts and a relay instruction only.
  */
-export async function buildHoldReport(engine: Exec, input: { sourceId: string; incarnation: string; runId: string; remote: boolean;
+export async function buildHoldReport(engine: ReportReader, input: { sourceId: string; incarnation: string; runId: string; remote: boolean;
   policy: SyncHoldPolicy | Promise<SyncHoldPolicy>; screened: number; pendingScreen?: boolean; needsHuman?: (record: GitHoldRecord, auto: FenceAutoRepair | undefined) => boolean }): Promise<Pick<import('../../commands/sync.ts').SyncResult,
   'held' | 'held_count' | 'held_needs_human' | 'holds_outstanding' | 'holds_escalated' | 'holds_truncated' | 'holds_pending_screen' | 'holds_fix'>> {
   // #6712 PR 4b: the summary, this run's holds and the policy (a caller may pass its read in flight) in one round trip.
-  const [[summary], sourceHolds, policy, [source]] = await Promise.all([engine.executeRaw<{ count: number | string; images: number | string; fences: number | string; stalled: number | string; concurrent: number | string; dirty: number | string; drift: number | string }>(`SELECT COALESCE((completed_keys->0->>'count')::int,0) AS count,
-      COALESCE((completed_keys->0->>'drift')::int,0) AS drift,
-      COALESCE((completed_keys->0->>'images')::int,0) AS images, COALESCE((completed_keys->0->>'fences')::int,0) AS fences, COALESCE((completed_keys->0->>'stalled')::int,0) AS stalled,
-      COALESCE((completed_keys->0->>'concurrent')::int,0) AS concurrent, COALESCE((completed_keys->0->>'dirty')::int,0) AS dirty
-    FROM op_checkpoints WHERE op=$1 AND fingerprint=$2`,
-  [GIT_HOLD_SUMMARY_OP, summaryFingerprint(input.sourceId, input.incarnation)]), readGitSourceHolds(engine, { sourceIds: [input.sourceId], runId: input.runId }), input.policy,
-    engine.executeRaw<{ mirror: string | null }>("SELECT config->>'mirror_read_only' AS mirror FROM sources WHERE id=$1", [input.sourceId])]);
+  const [{ summary, mirror }, sourceHolds, policy] = await Promise.all([readGitHoldReportInputsFor(engine, input.sourceId, summaryFingerprint(input.sourceId, input.incarnation)),
+    readGitSourceHolds(engine, { sourceIds: [input.sourceId], runId: input.runId }), input.policy]);
   const outstanding = Number(summary?.count ?? 0);
   const runHolds = sourceHolds[0]?.holds ?? [];
   if (!outstanding && !runHolds.length) return {};
@@ -1469,7 +1470,7 @@ export async function buildHoldReport(engine: Exec, input: { sourceId: string; i
   // #7199: this run's holds whose verdict waits on a person (sync-status.ts holdVerdict).
   const needsHuman = input.needsHuman ? runHolds.filter(hold => input.needsHuman!(hold, auto)).length : 0;
   const steps = holdRepairSteps(input.sourceId, { fences, others: Math.max(0, outstanding - fences - stalled - concurrent - dirty - drift - slugConflicts), ...(stalled ? { stalled } : {}),
-    ...(concurrent ? { concurrent } : {}), ...(dirty ? { dirty } : {}), ...(drift ? { drift } : {}), ...(slugConflicts ? { slug_conflicts: slugConflicts } : {}), ...(source?.mirror === 'true' ? { mirror: true } : {}) }, auto);
+    ...(concurrent ? { concurrent } : {}), ...(dirty ? { dirty } : {}), ...(drift ? { drift } : {}), ...(slugConflicts ? { slug_conflicts: slugConflicts } : {}), ...(mirror === 'true' ? { mirror: true } : {}) }, auto);
   // #6278: the escalation text is routed by code: stalled holds point at the writer, not at a generator.
   const runStalled = runHolds.filter(hold => stalledWeight(hold)).length;
   const escalation = runStalled * 2 > runHolds.length

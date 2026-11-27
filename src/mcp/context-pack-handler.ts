@@ -30,11 +30,13 @@ import { corpusSpoolDir, parseWbFileName } from '../core/context/corpus-segments
 import { freezeSessionSource, resolveCorpusFileSource } from '../core/context/corpus-source.ts';
 import { loadCoreBlock } from '../core/core-memory.ts';
 import { opError } from '../core/ops/contract.ts';
-import { coreTrustIdentity } from '../core/context/openclaw-core.ts';
+import { coreTrustIdentity, learnedLineFromEngine } from '../core/context/openclaw-core.ts';
 import type { TurnContextResult } from '../core/context/turn-context.ts';
 import { attachBrief, briefEnabled, resetBriefLedger, sessionStartBrief, SESSION_BRIEF_CUTOFF_MS, withBriefDeadline } from '../core/context/proactive-brief.ts';
 import { proactiveEligibility } from '../core/eligibility/registry.ts';
 import { readHotMemorySessionOnly } from '../core/facts/meta-hook.ts';
+import { fitSessionStartSections, type SessionStartSection } from '../core/context/session-start-sections.ts';
+import type { FirstSessionLane } from '../core/onboard/first-session.ts';
 
 /** Tighter entity-card fan-out on the PUSH path (eng 4A): the server budget
  * can't absorb the pull path's 8-card ceiling on a cold cache. */
@@ -66,9 +68,28 @@ async function coreForSession(engine: BrainEngine, sourceId: string): Promise<Tu
   }
 }
 
+/**
+ * Onboarding PR 2: the first-session section for a startup session that declared it composes sections, or why it
+ * gets none. Only the owner lane reserves; every other lane is answered without touching the record.
+ */
+async function firstSessionFor(engine: BrainEngine, req: { trigger?: string; harness?: string }, sourceId: string, sessionId: string | null, lane: FirstSessionLane | undefined):
+  Promise<{ section?: SessionStartSection; state: { due: boolean; reason?: string } }> {
+  if (lane !== 'owner') return { state: { due: false, reason: 'not_personal' } };
+  if (req.trigger !== 'session-start:startup') return { state: { due: false, reason: 'not_startup' } };
+  if (!sessionId || sessionId === 'unknown') return { state: { due: false, reason: 'no_session' } };
+  try {
+    const { firstSessionSectionFor } = await import('../core/onboard/first-session.ts');
+    const got = await firstSessionSectionFor(engine, { sourceId, sessionId, harness: req.harness === 'codex' ? 'codex' : 'claude-code', lane });
+    return 'text' in got ? { section: { name: 'first_session', text: got.text, receipt: got.token }, state: { due: true } } : { state: { due: false, reason: got.reason } };
+  } catch {
+    return { state: { due: false, reason: 'failed' } };
+  }
+}
+
 export function makeContextPackIpcHandler(
   engine: BrainEngine,
   defaultSource: string,
+  opts: { firstSessionLane?: FirstSessionLane } = {},
 ): ContextPackHandler {
   return async (req, progress) => {
     const startedAt = Date.now();
@@ -87,7 +108,8 @@ export function makeContextPackIpcHandler(
       const identity = await coreTrustIdentity(engine);
       // The OpenClaw lane reads the pressure gate on the same fetch; it checks remember's availability itself.
       const pressure = await readPressureGate(engine, true).catch(() => null);
-      const base = { text: '', pointers: [], factsCount: 0, mode: 'pack' as const, ...(pressure ? { pressure } : {}) };
+      const learned = await learnedLineFromEngine(engine, sessionSource);
+      const base = { text: '', pointers: [], factsCount: 0, mode: 'pack' as const, ...(pressure ? { pressure } : {}), ...(learned ? { learned } : {}) };
       if (identity !== null && identity === req.coreIdentity) return { ...base, coreTrust: { identity, unchanged: true } };
       const core = await coreForSession(engine, sessionSource);
       return { ...base, ...(core ? { core } : {}), ...(core && identity !== null ? { coreTrust: { identity, unchanged: false } } : {}) };
@@ -99,6 +121,17 @@ export function makeContextPackIpcHandler(
       throw opError('source_mismatch', `source_mismatch: this serve is bound to source "${defaultSource}", not "${sessionSource}"`,
         "Send the session's requests to the serve bound to its own source; nothing was rerouted.",
         { why: "A session's manifest, state and harvest belong to the source it was captured under." });
+    }
+    if (req.bankOnly === true && req.sectionAck) {
+      // Onboarding PR 2: the hook's emission receipt (its final payload held the section and was written).
+      const { section, receipt } = req.sectionAck;
+      if (opts.firstSessionLane !== 'owner' || section !== 'first_session' || typeof receipt !== 'string') {
+        return { text: '', pointers: [], factsCount: 0, mode: 'pack' as const, sectionAck: { recorded: 'refused' as const, reason: 'not_owner_lane' } };
+      }
+      const { acknowledgeFirstSession, markFirstSessionDelivered } = await import('../core/onboard/first-session.ts');
+      const ack = await acknowledgeFirstSession(engine, { token: receipt });
+      if (ack.ok && ack.recorded === 'new') markFirstSessionDelivered();
+      return { text: '', pointers: [], factsCount: 0, mode: 'pack' as const, sectionAck: ack.ok ? { recorded: ack.recorded } : { recorded: 'refused' as const, reason: ack.reason } };
     }
     if (req.manifestOnly === true) {
       const links = sessionId
@@ -226,6 +259,30 @@ export function makeContextPackIpcHandler(
     // pack, inside what is left of a request-start cutoff. A compaction or
     // /clear re-entry is a context reset, so the session's ledger starts over.
     const isSessionStart = typeof req.trigger === 'string' && req.trigger.startsWith('session-start');
+    // Named sections (onboarding PR 2): a hook that declares `sections` composes them itself under one shared byte
+    // budget in priority order and acknowledges the first-session section; an older hook keeps the learned line in the text.
+    const sections: SessionStartSection[] = [];
+    const wantsSections = isSessionStart && Array.isArray(req.sections);
+    // Nightly learning: one count line per session (a compaction re-entry is the same session, so it gets none).
+    if (isSessionStart && req.trigger !== 'session-start:compact') {
+      const learned = await learnedLineFromEngine(engine, sessionSource);
+      if (learned && wantsSections) sections.push({ name: 'nightly_learning', text: learned.text });
+      else if (learned) result.text = result.text ? `${learned.text}\n\n${result.text}` : learned.text;
+    }
+    if (wantsSections) {
+      if (req.sections!.includes('first_session')) {
+        const first = await firstSessionFor(engine, req, sessionSource, sessionId, opts.firstSessionLane);
+        if (first.section) sections.push(first.section);
+        result.firstSession = first.state;
+      }
+      // C2: confirmed standing rules, only while the owner switched them on (rules.session_start, off until the eval passes).
+      if (req.sections!.includes('standing_rules')) {
+        const { rulesSectionFor, rulesSessionStartEnabled } = await import('../core/rules/section.ts');
+        const rules = await rulesSessionStartEnabled(engine).then(on => on ? rulesSectionFor(engine, { remote: false, sourceId: sessionSource }) : null).catch(() => null);
+        if (rules) sections.push({ name: 'standing_rules', text: rules.text });
+      }
+      result.sections = fitSessionStartSections(sections).kept;
+    }
     if (isSessionStart && await briefEnabled(engine)) {
       if (req.trigger === 'session-start:compact' || req.trigger === 'session-start:clear') resetBriefLedger(sessionSource, sessionId ?? undefined);
       const clock = { now: Date.now(), stopAt: startedAt + SESSION_BRIEF_CUTOFF_MS };

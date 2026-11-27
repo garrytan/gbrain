@@ -108,7 +108,15 @@ export function storedMinTrust(value: unknown): TrustTier | undefined {
 
 /** SQL expression mapping a tier-valued expression to its rank (unrecognized and NULL -> 0). */
 export function trustRankSql(expr: string): string {
-  return `(CASE ${expr} ${TRUST_TIERS.map(tier => `WHEN '${tier}' THEN ${TRUST_TIER_RANK[tier]}`).join(' ')} ELSE 0 END)`;
+  return `(CASE ${expr}${trustRankArmsSql()}`;
+}
+
+/**
+ * The constant tail of `trustRankSql` after its subject (` WHEN '<tier>' THEN <rank> ... ELSE 0 END)`), for a rank CASE
+ * whose subject is a bound value: in sqlFragment, `(CASE ${value}::text${trustedSql(trustRankArmsSql())}`.
+ */
+export function trustRankArmsSql(): string {
+  return ` ${TRUST_TIERS.map(tier => `WHEN '${tier}' THEN ${TRUST_TIER_RANK[tier]}`).join(' ')} ELSE 0 END)`;
 }
 
 /** SQL expression mapping a rank expression back to its tier name. */

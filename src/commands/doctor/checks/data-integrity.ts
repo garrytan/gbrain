@@ -188,13 +188,7 @@ async function runCrossModal(ctx: DoctorContext): Promise<Check[]> {
   // surface the gap so operators can run `gbrain backfill modality`.
   progress.heartbeat('cross_modal_modality_backfill');
   try {
-    const mismatchRows = await engine.executeRaw<{ count: string | number }>(
-      `SELECT COUNT(*)::text AS count FROM content_chunks
-       WHERE embedding_image IS NOT NULL
-         AND chunk_source = 'image_asset'
-         AND (modality IS NULL OR modality != 'image')`,
-    );
-    const mismatch = parseInt(String(mismatchRows[0]?.count ?? '0'), 10);
+    const mismatch = await engine.countImageModalityMismatches();
     if (mismatch === 0) {
       checks.push({
         name: 'cross_modal_modality_backfill',
@@ -312,31 +306,11 @@ async function runMarkdownBody(ctx: DoctorContext): Promise<Check[]> {
     // #1871: engine.executeRaw (NOT db.getConnection() — that's the postgres
     // singleton, dead on the default PGLite engine; this check silently
     // reported "Skipped" on every PGLite brain).
-    const rows = await engine.executeRaw<{ slug: string; body_len: number; raw_len: number }>(
-      `SELECT p.slug,
-              length(p.compiled_truth) AS body_len,
-              length(rd.data ->> 'content') AS raw_len
-       FROM pages p
-       JOIN raw_data rd ON rd.page_id = p.id
-       WHERE rd.data ? 'content'
-         AND length(rd.data ->> 'content') > 1000
-         AND length(p.compiled_truth) < length(rd.data ->> 'content') * 0.3
-         AND (rd.data ->> 'content') ~ '(^|\n)##+ '
-       LIMIT ${LISTED_PAGE_LIMIT + 1}`,
-    );
+    const rows = await engine.listTruncatedMarkdownBodies();
     // #7145: a full list means more pages match; the count is then a floor.
     const capped = rows.length > LISTED_PAGE_LIMIT;
     // Decision #10: a segmented page's compiled_truth is NULL, so the length comparison above passes it by.
-    const [segmented] = await engine.executeRaw<{ n: number }>(
-      `SELECT COUNT(DISTINCT p.id)::int AS n
-       FROM pages p
-       JOIN raw_data rd ON rd.page_id = p.id
-       WHERE p.body_storage = 'segmented'
-         AND rd.data ? 'content'
-         AND length(rd.data ->> 'content') > 1000
-         AND (rd.data ->> 'content') ~ '(^|\n)##+ '`,
-    ).catch(() => []);
-    const skipped = Number(segmented?.n ?? 0);
+    const skipped = await engine.countSegmentedMarkdownBodies().catch(() => 0);
     if (rows.length === 0) {
       checks.push(withSkippedSegmented({ name: 'markdown_body_completeness', status: 'ok', message: 'No truncated bodies detected' }, skipped));
     } else {

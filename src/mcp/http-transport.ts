@@ -295,25 +295,23 @@ export async function startHttpTransport(opts: HttpTransportOptions) {
     const token = authHeader.slice(7);
     const hash = hashToken(token);
     try {
-      // SELECT * reads every schema generation (pre-F3 rows lack the grant columns).
-      const [row] = await sql`
-        SELECT * FROM access_tokens
-        WHERE token_hash = ${hash} AND revoked_at IS NULL
-      `;
+      // SELECT * reads every schema generation (pre-F3 rows lack the grant columns). The read and the last-use stamp go
+      // through engine members (engine-sql/access-credentials.ts BEARER_SQL), so a Rust brain authenticates its tokens.
+      const row = await engine.readActiveAccessTokenByHash(hash, 'transport');
       if (!row) return { ok: false };
       const rowId = row.id as string;
       const rowName = row.name as string;
       // Debounced fire-and-forget last_used_at update, shared with the OAuth provider.
-      void touchTokenLastUsed(sql, row);
+      void touchTokenLastUsed(engine, row);
       // One grant shape (grants/model.ts) shared with the OAuth provider
       // behind `serve --http`, so the two transports cannot drift; a row still
       // on the legacy shape is converted on this read. Takes holders fail safe
       // to ['world']; #1336 honors the stored source grant.
-      const grant = await resolveTokenGrant(sql, row);
-      const binding = await tokenMemberBinding(sql, row, row.created_at).catch(() => null); // GBRA-218 verify join
+      const grant = await resolveTokenGrant(sql, row, engine);
+      const binding = await tokenMemberBinding(sql, row, row.created_at, engine).catch(() => null); // GBRA-218 verify join
       if (!binding) return { ok: false, code: 'access_member_disabled' };
       const allowList = await credentialHolders(engine, grant.takesHolders, binding.member?.id);
-      const { sourceId, allowedSources, hasSourceGrant, ...readShared } = await tokenReadSources(sql, grant, async () => binding.member?.id ?? null);
+      const { sourceId, allowedSources, hasSourceGrant, ...readShared } = await tokenReadSources(engine, grant, async () => binding.member?.id ?? null);
       const auth: AuthInfo = {
         token,
         clientId: rowId,

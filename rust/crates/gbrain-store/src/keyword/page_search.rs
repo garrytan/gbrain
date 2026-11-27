@@ -28,7 +28,9 @@ use super::cjk::{CjkMatcher, CjkTerm};
 use super::filters::{KeywordOptions, PageFilter, result_row, row_count, source_factor};
 use super::index::{basename, basename_pages};
 use super::rank::ts_rank;
-use super::tsearch::{TsQuery, phraseto_tsquery, ts_matches, websearch_to_tsquery};
+use super::tsearch::{
+    TsQuery, phraseto_tsquery, ts_matches, websearch_to_tsquery, with_query_stack,
+};
 use super::walk::{Admit, ChunkSource, PageOrder, walk_chunks, walk_text_chunks};
 use crate::Store;
 use crate::chunks::ChunkRecord;
@@ -63,7 +65,7 @@ impl Store {
         query: &str,
         options: &KeywordOptions,
         with_stale: bool,
-        mut visit: impl FnMut(PageRecord, Best) -> bool,
+        mut visit: impl FnMut(PageRecord, Best) -> bool + Send,
     ) -> Result<()> {
         if query.trim().is_empty() {
             return Ok(());
@@ -79,76 +81,84 @@ impl Store {
                 None
             },
         };
-        let read = self.read()?;
-        let mut filter = PageFilter::new(options)?;
-        let text_queries: Vec<&TsQuery> = if options.handles_only {
-            Vec::new()
-        } else {
-            vec![&matcher.query]
-        };
-        let mut extra: Vec<&TsQuery> = vec![&matcher.query];
-        extra.extend(matcher.phrase.as_ref());
-        let source = ChunkSource::plan(&*read, &text_queries, &extra, |read| {
-            if options.handles.is_empty() {
-                Ok(Some(BTreeSet::new()))
+        // One deep-stack thread for the whole walk when the query is deep (see with_query_stack).
+        let items = matcher
+            .query
+            .items
+            .len()
+            .max(matcher.phrase.as_ref().map_or(0, |p| p.items.len()));
+        with_query_stack(items, || {
+            let read = self.read()?;
+            let mut filter = PageFilter::new(options)?;
+            let text_queries: Vec<&TsQuery> = if options.handles_only {
+                Vec::new()
             } else {
-                basename_pages(read, &options.handles)
-            }
-        })?;
-        let mut admit = Admit {
-            filter: Some(&mut filter),
-            text_only: true,
-            basenames: options.handles_only.then_some(&options.handles[..]),
-        };
-        walk_chunks(
-            &*read,
-            &source,
-            PageOrder::Any,
-            &mut admit,
-            &mut |page, chunks| {
-                let handle = options.handles.iter().any(|h| h == basename(&page.slug));
-                let mut factor: Option<f64> = None;
-                let mut best: Option<Best> = None;
-                for (chunk, vector) in chunks {
-                    let text = !options.handles_only && ts_matches(&vector, &matcher.query);
-                    if !text && !handle {
-                        continue;
-                    }
-                    let factor =
-                        *factor.get_or_insert_with(|| source_factor(&page, &options.boosts));
-                    let phrase = match &matcher.phrase {
-                        Some(p) if ts_matches(&vector, p) => KEYWORD_PHRASE_FACTOR,
-                        _ => 1.0,
-                    };
-                    let rank = f64::from(ts_rank(&vector, &matcher.query)) * phrase;
-                    // A chunk in both arms keeps its higher score: the handle arm's.
-                    let score = if handle {
-                        (1.0 + rank) * factor
-                    } else {
-                        rank * factor
-                    };
-                    let better = best.as_ref().is_none_or(|b| {
-                        score > b.score || (score == b.score && chunk.id < b.chunk.id)
-                    });
-                    if better {
-                        best = Some(Best {
-                            score,
-                            chunk,
-                            stale: false,
+                vec![&matcher.query]
+            };
+            let mut extra: Vec<&TsQuery> = vec![&matcher.query];
+            extra.extend(matcher.phrase.as_ref());
+            let source = ChunkSource::plan(&*read, &text_queries, &extra, |read| {
+                if options.handles.is_empty() {
+                    Ok(Some(BTreeSet::new()))
+                } else {
+                    basename_pages(read, &options.handles)
+                }
+            })?;
+            let mut admit = Admit {
+                filter: Some(&mut filter),
+                text_only: true,
+                basenames: options.handles_only.then_some(&options.handles[..]),
+            };
+            walk_chunks(
+                &*read,
+                &source,
+                PageOrder::Any,
+                &mut admit,
+                &mut |page, chunks| {
+                    let handle = options.handles.iter().any(|h| h == basename(&page.slug));
+                    let mut factor: Option<f64> = None;
+                    let mut best: Option<Best> = None;
+                    for (chunk, vector) in chunks {
+                        let text = !options.handles_only && ts_matches(&vector, &matcher.query);
+                        if !text && !handle {
+                            continue;
+                        }
+                        let factor =
+                            *factor.get_or_insert_with(|| source_factor(&page, &options.boosts));
+                        let phrase = match &matcher.phrase {
+                            Some(p) if ts_matches(&vector, p) => KEYWORD_PHRASE_FACTOR,
+                            _ => 1.0,
+                        };
+                        let rank = f64::from(ts_rank(&vector, &matcher.query)) * phrase;
+                        // A chunk in both arms keeps its higher score: the handle arm's.
+                        let score = if handle {
+                            (1.0 + rank) * factor
+                        } else {
+                            rank * factor
+                        };
+                        let better = best.as_ref().is_none_or(|b| {
+                            score > b.score || (score == b.score && chunk.id < b.chunk.id)
                         });
+                        if better {
+                            best = Some(Best {
+                                score,
+                                chunk,
+                                stale: false,
+                            });
+                        }
                     }
-                }
-                let Some(mut best) = best else {
-                    return Ok(true);
-                };
-                if with_stale {
-                    best.stale = latest_entry_micros(&*read, page.id)?
-                        .is_some_and(|latest| page.updated_at_us < latest);
-                }
-                Ok(visit(page, best))
-            },
-        )?;
-        Ok(())
+                    let Some(mut best) = best else {
+                        return Ok(true);
+                    };
+                    if with_stale {
+                        best.stale = latest_entry_micros(&*read, page.id)?
+                            .is_some_and(|latest| page.updated_at_us < latest);
+                    }
+                    Ok(visit(page, best))
+                },
+            )?;
+            Ok(())
+        })
     }
 
     /// `keyword_pages` on a CJK query (`buildKeywordMatch`'s CJK arm): every term matches the text
@@ -324,6 +334,43 @@ mod tests {
         );
         put(&store, "notes/three", "concept", "apple red", json!({}));
         store
+    }
+
+    #[test]
+    fn a_deep_query_walks_every_page_on_one_deep_thread() {
+        // GBRAIN minder row 3: a query past DEEP_QUERY_ITEMS used to start a 256 MiB-reserved
+        // thread for every chunk it matched against. The search now starts one for its walk.
+        let store = crate::test_support::store();
+        for i in 0..12 {
+            put(
+                &store,
+                &format!("notes/deep-{i}"),
+                "note",
+                "red apple",
+                json!({}),
+            );
+        }
+        let query = "red apple ".repeat(400);
+        let all = opts(json!({}));
+        super::super::tsearch::reset_deep_spawns();
+        assert_eq!(store.count_keyword_pages(&query, &all).unwrap(), 12);
+        let spawned = super::super::tsearch::deep_spawns();
+        // One for parsing the query and one for the walk over every page.
+        assert!(
+            spawned <= 2,
+            "the search started {spawned} deep-query threads"
+        );
+        super::super::tsearch::reset_deep_spawns();
+        let rows = store
+            .search_keyword_pages(&query, &opts(json!({ "phrase": true })))
+            .unwrap();
+        assert_eq!(rows.len(), 12);
+        let spawned = super::super::tsearch::deep_spawns();
+        // Two parses (the query and its phrase form) and one walk.
+        assert!(
+            spawned <= 3,
+            "the search started {spawned} deep-query threads"
+        );
     }
 
     #[test]

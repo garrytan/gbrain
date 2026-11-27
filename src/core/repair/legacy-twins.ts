@@ -176,7 +176,6 @@ async function pairVerdict(engine: BrainEngine, root: string, sourceId: string, 
 
 export interface LegacyTwinScan { owner: GhostOwner; root: string; pairs: LegacyTwinPair[]; decisions: LegacyTwinDecision[]; file_backed: number; inspected: number; truncated: boolean }
 
-const PAGE_COLUMNS = 'id, slug, knowledge_revision::text AS revision, content_hash, source_path, source_uri';
 
 /**
  * Every pair of one source, in legacy page id order: pages without a recorded origin (and no database-only stamp)
@@ -189,8 +188,7 @@ export async function scanLegacyTwins(engine: BrainEngine, sourceId: string): Pr
   const byFold = new Map<string, PageRow[]>();
   let inspected = 0, truncated = false, after = 0;
   for (;;) {
-    const rows = await engine.executeRaw<PageRow>(`SELECT ${PAGE_COLUMNS} FROM pages
-      WHERE source_id=$1 AND deleted_at IS NULL AND COALESCE(btrim(source_path), '')='' AND database_only_reason IS NULL AND id > $2 ORDER BY id LIMIT ${BATCH}`, [sourceId, after]);
+    const rows: PageRow[] = await engine.listRepairScanPages(sourceId, { afterId: after, limit: BATCH, legacy: true });
     for (const row of rows) {
       if (inspected >= LEGACY_TWINS_SCAN_LIMIT) { truncated = true; break; }
       inspected++;
@@ -203,8 +201,7 @@ export async function scanLegacyTwins(engine: BrainEngine, sourceId: string): Pr
   const pairs: LegacyTwinPair[] = [], decisions: LegacyTwinDecision[] = [];
   const folds = [...byFold.keys()];
   for (let i = 0; i < folds.length && !(pairs.length + decisions.length >= LEGACY_TWINS_LIMIT); i += BATCH) {
-    const twins = await engine.executeRaw<PageRow>(`SELECT ${PAGE_COLUMNS} FROM pages
-      WHERE source_id=$1 AND deleted_at IS NULL AND slug=ANY($2::text[]) AND COALESCE(btrim(source_path), '')<>'' ORDER BY id `, [sourceId, folds.slice(i, i + BATCH)]);
+    const twins: PageRow[] = await engine.listRepairScanPages(sourceId, { slugs: folds.slice(i, i + BATCH) });
     for (const twin of twins) {
       if (pairs.length + decisions.length >= LEGACY_TWINS_LIMIT) { truncated = true; break; }
       const legacy = byFold.get(twin.slug)!;
@@ -218,8 +215,8 @@ export async function scanLegacyTwins(engine: BrainEngine, sourceId: string): Pr
     }
   }
   pairs.sort((a, b) => a.legacy.page_id - b.legacy.page_id);
-  const [counted] = await engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND COALESCE(btrim(source_path), '')<>''`, [sourceId]);
-  return { owner: context.owner, root: context.root, pairs, decisions, file_backed: Number(counted?.n ?? 0), inspected, truncated };
+  const fileBacked = await engine.countLiveFileBackedPages(sourceId, { nonBlank: true });
+  return { owner: context.owner, root: context.root, pairs, decisions, file_backed: fileBacked, inspected, truncated };
 }
 
 function hashParts(scope: RepairScope, owner: GhostOwner, pairs: LegacyTwinPair[], decisions: LegacyTwinDecision[]) {
@@ -300,8 +297,8 @@ const changed = (reason: string): RepairItemOutcome => ({ applied: false, outcom
 async function pairNow(engine: BrainEngine, pair: LegacyTwinPair, owner: GhostOwner): Promise<string | null> {
   const context = await ownerContext(engine, pair.source_id);
   if (!context.ok || !sameOwner(context.owner, owner)) return 'the source\'s canonical owner changed since the preview';
-  const rows = await engine.executeRaw<PageRow>(`SELECT ${PAGE_COLUMNS} FROM pages
-    WHERE source_id=$1 AND id=ANY($2::bigint[]) AND deleted_at IS NULL AND database_only_reason IS NULL`, [pair.source_id, [pair.legacy.page_id, pair.twin.page_id]]);
+  const rows = (await engine.listRepairScanPages(pair.source_id, { ids: [pair.legacy.page_id, pair.twin.page_id] }))
+    .filter(row => !row.deleted && row.database_only_reason === null);
   const legacy = rows.find(row => Number(row.id) === pair.legacy.page_id), twin = rows.find(row => Number(row.id) === pair.twin.page_id);
   if (!legacy || !twin) return 'one of the two pages was deleted, purged or stamped database-only';
   if (legacy.slug !== pair.legacy.slug || twin.slug !== pair.twin.slug) return 'one of the two pages was renamed';
@@ -330,7 +327,7 @@ export async function mergeLegacyTwin(ctx: OperationContext, pair: LegacyTwinPai
     await tx.lockPageKeys([{ sourceId: pair.source_id, slug: pair.legacy.slug }, { sourceId: pair.source_id, slug: pair.twin.slug }]);
     const reason = await pairLocked(tx, pair);
     if (reason) return reason;
-    const [source] = await tx.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', [pair.source_id]);
+    const source = await tx.readSourceIncarnation(pair.source_id);
     await applyTwinMerge(tx, pair, source!.incarnation);
     return null;
   });
@@ -354,13 +351,15 @@ async function pairLocked(tx: BrainEngine, pair: LegacyTwinPair): Promise<string
  */
 async function applyTwinMerge(tx: BrainEngine, pair: LegacyTwinPair, incarnation: string): Promise<Record<string, unknown>> {
   const { source_id: sourceId, legacy, twin } = pair;
-  const [twinRow] = await tx.executeRaw<{ source_uri: string | null }>('SELECT source_uri FROM pages WHERE id=$1', [twin.page_id]);
+  const [twinRow] = await tx.listRepairScanPages(sourceId, { ids: [twin.page_id] });
   const record = await readSyncImportProvenance(tx, sourceId, incarnation, twin.page_id);
   const merged = await mergeTwinInto(tx, { sourceId, incarnation, survivor: legacy, twin });
   await bindOrigin(tx, { sourceId, pageId: legacy.page_id, sourcePath: pair.path });
-  await tx.executeRaw('UPDATE pages SET source_uri=COALESCE(source_uri, $2) WHERE id=$1', [legacy.page_id, twinRow?.source_uri ?? null]);
+  // The legacy page keeps its own source_uri and takes the twin's only when it records none.
+  const [legacyRow] = await tx.listRepairScanPages(sourceId, { ids: [legacy.page_id] });
+  if (legacyRow?.source_uri == null && twinRow?.source_uri != null) await tx.refreshPageOrigin(legacy.slug, { sourceId, sourcePath: pair.path, sourceUri: twinRow.source_uri });
   if (record) {
-    const [now] = await tx.executeRaw<{ revision: string }>('SELECT knowledge_revision::text AS revision FROM pages WHERE id=$1', [legacy.page_id]);
+    const [now] = await tx.listRepairScanPages(sourceId, { ids: [legacy.page_id] });
     await recordSyncImportProvenance(tx, { ...record, page_id: legacy.page_id, revision: now!.revision });
   }
   return { status: 'merged', legacy_slug: legacy.slug, twin_slug: twin.slug, source_id: sourceId, links_moved: merged.links_moved.length, facts_moved: merged.facts_moved.length,

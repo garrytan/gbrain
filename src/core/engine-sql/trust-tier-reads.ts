@@ -78,6 +78,20 @@ export interface CorePageRow {
   suppressed?: boolean;
 }
 
+/** One pending remote-edit notice of a core page (core-memory.ts pendingCoreNotices). */
+export interface CoreEditNoticeRow { source_id: string; slug: string; revision: string | null; actor: string; created_at: string }
+
+/**
+ * The unacknowledged remote-edit notices of core pages, the newest per page, by source then slug in byte order, at
+ * most 50; only `sourceIds` when given (the core block's and doctor's notice lines).
+ */
+export async function listPendingCoreEditNotices(tx: Raw, sourceIds: readonly string[] | null): Promise<CoreEditNoticeRow[]> {
+  return tx.executeRaw<CoreEditNoticeRow>(
+    `SELECT DISTINCT ON (source_id COLLATE "C", slug COLLATE "C") source_id, slug, revision, actor, created_at::text AS created_at
+       FROM core_edit_notices WHERE acked_at IS NULL ${sourceIds ? 'AND source_id = ANY($1::text[])' : ''}
+      ORDER BY source_id COLLATE "C", slug COLLATE "C", id DESC LIMIT 50`, sourceIds ? [[...sourceIds]] : []);
+}
+
 /** The live `always_load` pages, by source then slug, at most `limit`. */
 export async function listCorePageRows(tx: Raw, spec: CorePageRowSpec): Promise<CorePageRow[]> {
   const policy = spec.eligibility;
@@ -268,6 +282,53 @@ export async function listPageRefsByIds(tx: Raw, ids: readonly number[]): Promis
   const got = await rows<{ id: number | string; source_id: string; slug: string; type: string | null }>(tx,
     sqlFragment`SELECT id, source_id, slug, type FROM pages WHERE id = ANY(${[...new Set(ids.map(Number))]}::bigint[]) ORDER BY id`);
   return got.map(r => ({ id: Number(r.id), source_id: r.source_id, slug: r.slug, type: r.type ?? null }));
+}
+
+/** The pages a quoting read names: by id (deleted or not), or by slug in the caller's sources (live pages only). */
+export type PageQuoteTierSpec = { ids: readonly number[] } | { slug: string; sourceIds: readonly string[] };
+
+/** A page's id, stored type and stored tier: what decides whether a remote reader gets its text quoted (quotesStored). */
+export interface PageQuoteTier { id: number; type: string | null; trust_tier: string | null }
+
+/**
+ * The stored type and tier of each page the spec names, by id: the listed ids, deleted pages included, or the live pages
+ * with the slug in the listed sources. No policy filter: the callers pass pages they already read under the caller's
+ * scope, and only decide how to quote what they return.
+ */
+export async function listPageQuoteTiers(tx: Raw, spec: PageQuoteTierSpec): Promise<PageQuoteTier[]> {
+  const got = 'ids' in spec
+    ? spec.ids.length === 0 ? [] : await rows<{ id: number | string; type: string | null; trust_tier: string | null }>(tx,
+      sqlFragment`SELECT id, type, trust_tier FROM pages WHERE id = ANY(${[...new Set(spec.ids.map(Number))]}::bigint[]) ORDER BY id`)
+    : spec.sourceIds.length === 0 ? [] : await rows<{ id: number | string; type: string | null; trust_tier: string | null }>(tx,
+      sqlFragment`SELECT id, type, trust_tier FROM pages
+        WHERE slug = ${spec.slug} AND source_id = ANY(${[...spec.sourceIds]}::text[]) AND deleted_at IS NULL ORDER BY id`);
+  return got.map(r => ({ id: Number(r.id), type: r.type ?? null, trust_tier: r.trust_tier ?? null }));
+}
+
+/** A page named by source and slug. */
+export interface PageKeyRef { source_id: string; slug: string }
+
+/**
+ * The id and stored trust tier of each named page, deleted or not, in no set order; a key no page has answers nothing
+ * and a key named twice answers twice.
+ * Timeline projection (trust/timeline-projection.ts) stamps each row with its page's tier.
+ */
+export async function listPageTrustTiersByKey(tx: Raw, refs: readonly PageKeyRef[]): Promise<Array<{ id: number; source_id: string; slug: string; trust_tier: string | null }>> {
+  const got = await tx.executeRaw<{ id: number | string; source_id: string; slug: string; trust_tier: string | null }>(
+    `SELECT p.id,p.source_id,p.slug,p.trust_tier FROM pages p
+      JOIN jsonb_to_recordset($1::text::jsonb) AS r(source_id text,slug text) ON p.source_id=r.source_id AND p.slug=r.slug`,
+    [JSON.stringify(refs)]);
+  return got.map(r => ({ id: Number(r.id), source_id: r.source_id, slug: r.slug, trust_tier: r.trust_tier }));
+}
+
+/**
+ * The named pages that are live, in no set order, each held `FOR SHARE` until the transaction ends so a concurrent
+ * delete cannot slip between this check and the write that follows (timeline projection's `requirePages`).
+ */
+export async function lockLivePagesByKey(tx: Raw, refs: readonly PageKeyRef[]): Promise<PageKeyRef[]> {
+  return tx.executeRaw<PageKeyRef>(`SELECT p.source_id,p.slug FROM pages p
+          JOIN jsonb_to_recordset($1::text::jsonb) AS r(source_id text,slug text) ON p.source_id=r.source_id AND p.slug=r.slug
+          WHERE p.deleted_at IS NULL FOR SHARE OF p`, [JSON.stringify(refs)]);
 }
 
 // ---------------------------------------------------------------------------------------------------------------

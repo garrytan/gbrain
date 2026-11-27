@@ -13,8 +13,10 @@
 //! listLinkSources, getBacklinkCounts, rewriteLinks, relationalFanout, relationalChainHop,
 //! getAdjacencyBoosts, findOrphanPages, hasSupersedeEdges, supersedingPageSlugs, pagesLinkingTo;
 //! site_reads: inboundLinkCoverage, listJunkEntityHubs, countEntityPages, entityGraphCoverage,
+//! entityFeatureCoverage, countDatedMeetingPages,
 //! countForeignEdges, listLivePageSummaries, countInboundLinks, listLinkEndpointPages,
-//! listPagesTitledIn, wordLexemes.
+//! listPagesTitledIn, wordLexemes, probePageTypes; listAttendedOriginSlugs (the attendance origins a sync's link
+//! extraction reconciles).
 //!
 //! Reads and writes go through the core links helpers (`put_link`, `delete_link`, `out_links`,
 //! `in_links`) and the page and source readers.
@@ -34,6 +36,7 @@
 
 use crate::Store;
 use crate::chunks::{in_live_body, read_chunks, read_segment_view, segmented};
+use crate::env::iso;
 use crate::error::{INVALID_ARGUMENT, INVALID_STATE, REVISION_CONFLICT, Result, StoreError};
 use crate::facts::{OwnerOnlyCache, PrivacyPolicy, page_hidden};
 use crate::keys;
@@ -50,7 +53,11 @@ use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::rc::Rc;
 
+mod edge_filter;
+use edge_filter::edge_passes;
+pub use edge_filter::{DuringWindow, EdgeTemporalPolicy};
 pub(crate) mod link_temporal;
+mod manual_links;
 pub use link_temporal::{
     ApplyTemporalInput, ApplyTemporalResult, EdgeValidityCounts, EdgeValidityInput, EvidenceInput,
     InboundEdgeRow, KeysForOriginInput, KeysForPagesInput, KeysTouchingInput, ManualRelationship,
@@ -61,15 +68,21 @@ pub use link_temporal::{
     ReferrerTargetCountInput, ReferrerTargetCountRow, ReferrerTargetSourcesInput, ReferrerTypeRow,
     RelationshipEvidence, RelationshipKey, SearchVectorCounts, StaleKeysInput, StateWrite,
 };
-mod retrieval_coverage;
+pub use manual_links::{ManualLinkRead, ManualLinkWrite};
+mod atom_backlog;
+pub use atom_backlog::{AtomBacklogQuery, ConnectorExclusion};
+mod projection_backlog;
+pub use projection_backlog::ProjectionBacklogRow;
+pub(crate) mod retrieval_coverage;
 pub use retrieval_coverage::{
     CoverageRelevance, CoverageScope, PendingCount, PendingCountInput, ReadinessRow,
     RebuildProgress,
 };
 mod site_reads;
 pub use site_reads::{
-    EndpointsInput, EntityPagesInput, ForeignEdgesInput, InboundCountInput, InboundCoverageInput,
-    JunkHubsInput, LinkContextAsk, TitledInput,
+    EndpointsInput, EntityPagesInput, FeatureCoverageInput, ForeignEdgesInput, InboundCountInput,
+    InboundCoverageInput, JunkHubsInput, LinkContextAsk, LongPageSizeInput, TitledInput,
+    TypeProbeInput,
 };
 
 /// The frontmatter key that hides a page (`quarantineFilterFragment`).
@@ -204,6 +217,8 @@ pub struct FanoutOptions {
     pub depth: u32,
     pub include_mentions: bool,
     pub limit: usize,
+    /// `temporal` with the walk's `excludePrivate`: the relationship filter on every step edge.
+    pub temporal: Option<EdgeTemporalPolicy>,
     /// `requiresSafeChunks(opts)`: a node's canonical chunk is read only from a page sealed at the safe fence.
     pub require_safe_chunks: bool,
 }
@@ -225,6 +240,9 @@ pub struct ChainHopOptions {
     pub object_types: Vec<String>,
     pub degree_link_types: Vec<String>,
     pub neighbor_cap: usize,
+    /// `temporal` with the hop's `excludePrivate`: the relationship filter on every step and
+    /// degree edge.
+    pub temporal: Option<EdgeTemporalPolicy>,
     /// `requiresSafeChunks(opts)`: the next page's canonical chunk is read only from a page sealed at the safe fence.
     pub require_safe_chunks: bool,
     /// `textGate` of readChainHop, decided by the TypeScript member (it knows the caller): `body` returns an edge's
@@ -414,7 +432,7 @@ fn protected_body(read: &dyn KvRead, page: &PageRecord, kinds: &[&str]) -> Resul
 }
 
 /// `rankingLinkSql`: the link may feed a ranking signal.
-fn ranks(link: &LinkRecord) -> bool {
+pub(crate) fn ranks(link: &LinkRecord) -> bool {
     !NON_RANKING_LINK_TYPES.contains(&link.link_type.as_str())
 }
 
@@ -436,7 +454,7 @@ fn touching(read: &dyn KvRead, page_id: u64) -> Result<Vec<LinkRecord>> {
 }
 
 /// Every link in the store.
-fn all_links(read: &dyn KvRead) -> Result<Vec<LinkRecord>> {
+pub(crate) fn all_links(read: &dyn KvRead) -> Result<Vec<LinkRecord>> {
     let mut raw = Vec::new();
     scan_prefix(read, &[keys::LINK], false, &mut |_, v| {
         raw.push(v.to_vec());
@@ -448,7 +466,7 @@ fn all_links(read: &dyn KvRead) -> Result<Vec<LinkRecord>> {
 }
 
 /// The links a page authored (`origin_page_id = id`), in id order.
-fn origin_links(read: &dyn KvRead, origin_id: u64) -> Result<Vec<LinkRecord>> {
+pub(crate) fn origin_links(read: &dyn KvRead, origin_id: u64) -> Result<Vec<LinkRecord>> {
     let mut refs = Vec::new();
     scan_prefix(
         read,
@@ -876,6 +894,47 @@ struct FanoutNode {
 }
 
 impl Store {
+    /// `listAttendedOriginSlugs(sourceId, slugs?)`: the slugs of `source_id`'s pages (soft-deleted
+    /// ones too, as the SQL reads them; only those in `slugs` when given) that authored an
+    /// `attended` link to themselves from the `markdown`, `wikilink-resolved` or `frontmatter`
+    /// producer, in slug order. The SQL engines return them in no set order.
+    pub fn list_attended_origin_slugs(
+        &self,
+        source_id: &str,
+        slugs: Option<&[String]>,
+    ) -> Result<Vec<String>> {
+        let read = self.read()?;
+        let pages: Vec<PageRecord> = match slugs {
+            Some(slugs) => {
+                let wanted: BTreeSet<&str> = slugs.iter().map(String::as_str).collect();
+                let mut pages = Vec::new();
+                for slug in wanted {
+                    pages.extend(read_page(&*read, source_id, slug)?);
+                }
+                pages
+            }
+            None => all_pages(&*read)?
+                .into_iter()
+                .filter(|p| p.source_id == source_id)
+                .collect(),
+        };
+        let mut out = BTreeSet::new();
+        for page in pages {
+            let attended = origin_links(&*read, page.id)?.iter().any(|l| {
+                l.link_type == "attended"
+                    && l.to_page_id == page.id
+                    && matches!(
+                        l.link_source.as_deref(),
+                        Some("markdown" | "wikilink-resolved" | "frontmatter")
+                    )
+            });
+            if attended {
+                out.insert(page.slug);
+            }
+        }
+        Ok(out.into_iter().collect())
+    }
+
     /// `replaceDerivedLinks` and `replaceDerivedLinksBatch`: every origin in order, in one write
     /// transaction; any failure rolls every origin back. Returns `[{ created, removed }]`.
     pub fn replace_derived_links(&self, items: &[DerivedItem]) -> Result<Vec<Value>> {
@@ -1309,6 +1368,7 @@ impl Store {
                 edges: Vec::new(),
             });
         }
+        let today = iso(self.env.now_micros())[..10].to_string();
         let mut nodes: HashMap<u64, FanoutNode> = HashMap::new();
         let mut incident: HashMap<u64, Vec<LinkRecord>> = HashMap::new();
         while let Some(row) = stack.pop() {
@@ -1364,6 +1424,11 @@ impl Store {
                     || link_types
                         .as_ref()
                         .is_some_and(|t| !t.contains(link.link_type.as_str()))
+                {
+                    continue;
+                }
+                if let Some(temporal) = &options.temporal
+                    && !edge_passes(&*read, &link, temporal, &today)?
                 {
                     continue;
                 }
@@ -1453,6 +1518,13 @@ impl Store {
             suppress_flagged: options.suppress_flagged,
         };
         let cap = options.neighbor_cap.clamp(1, 1000);
+        let today = iso(self.env.now_micros())[..10].to_string();
+        let live = |link: &LinkRecord| -> Result<bool> {
+            match &options.temporal {
+                Some(temporal) => edge_passes(&*read, link, temporal, &today),
+                None => Ok(true),
+            }
+        };
         let has = |list: &[String], v: &str| list.iter().any(|x| x == v);
         let frontier: BTreeSet<u64> = frontier.iter().copied().collect();
         let toward_object = options.toward == "object";
@@ -1476,7 +1548,8 @@ impl Store {
                 ) else {
                     continue;
                 };
-                if lf.source_id != lt.source_id || !pages.origin_ok(&link, &scope)? {
+                if lf.source_id != lt.source_id || !pages.origin_ok(&link, &scope)? || !live(&link)?
+                {
                     continue;
                 }
                 let forward = has(&options.subject_types, &lf.page_type)
@@ -1568,6 +1641,7 @@ impl Store {
                     || !has(&options.degree_link_types, &link.link_type)
                     || !not_mentions(&link)
                     || !ranks(&link)
+                    || !live(&link)?
                 {
                     continue;
                 }

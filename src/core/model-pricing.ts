@@ -127,6 +127,9 @@ function anthro(input: number, output: number, cacheReadMult = ANTHROPIC_CACHE_R
 export const ANTHROPIC_CACHE_READ_MULT_OVERRIDES: Record<string, number> = {
   // Fable 5.1 bills cache hits at 0.025x base input ($0.25/MTok on $10).
   'anthropic:claude-fable-5-1': 0.025,
+  // Fable 5.2 bills cache hits at 0.025x base input ($0.20/MTok on $8),
+  // checked 2026-11-22 against platform.claude.com's pricing page.
+  'anthropic:claude-fable-5-2': 0.025,
   // Opus 5.5 bills cache hits at 0.05x base input ($0.20/MTok on $4),
   // verified 2026-10-01 against the published Opus 5.5 price list.
   'anthropic:claude-opus-5-5': 0.05,
@@ -151,6 +154,8 @@ export const CANONICAL_PRICING: Record<string, ModelPricing> = {
   // Fable 5.1: same $10/$50 sticker as Fable 5, but cache hits bill 0.025x
   // ($0.25/MTok) instead of 0.1x — the only rate that changed.
   'anthropic:claude-fable-5-1':           anthro(10.00, 50.00, ANTHROPIC_CACHE_READ_MULT_OVERRIDES['anthropic:claude-fable-5-1']),
+  // Fable 5.2: $8 in / $40 out, cache writes 1.25x ($10), checked 2026-11-22.
+  'anthropic:claude-fable-5-2':           anthro( 8.00, 40.00, ANTHROPIC_CACHE_READ_MULT_OVERRIDES['anthropic:claude-fable-5-2']),
   // Opus 4.x/5: $5 in / $25 out. Opus 5 (new generation) shares the same
   // per-token rate as 4.8 (released 2026-05-28) — closes gbrain#1819.
   // Opus 5.5 (released 2026-09-22): $4 in / $20 out, cache writes 1.25x
@@ -209,6 +214,20 @@ export const CANONICAL_PRICING: Record<string, ModelPricing> = {
   // repair default (#6188) meters exactly; it is NOT a tier default yet
   // (openai-latest.ts METERED_ONLY keeps discovery on the gpt-5.6 family).
   'openai:gpt-6.1-sol':                   { input:  2.00, output: 10.00 },
+  // gpt-6.2-sol: list rate from developers.openai.com/api/docs/models/gpt-6.2-sol
+  // (checked 2026-11-22; standard tier). Priced so the
+  // skill resolver's model picker meters exactly; METERED_ONLY keeps it out of
+  // tier discovery.
+  'openai:gpt-6.2-sol':                   { input:  2.00, output: 10.00 },
+  // gpt-6-astra and gpt-6.2-astra: list rates from developers.openai.com/api/docs/models/<id>
+  // (checked 2026-11-22; standard tier). Priced so the skill resolver's model
+  // picker meters exactly; METERED_ONLY keeps them out of tier discovery.
+  'openai:gpt-6-astra':                   { input: 10.00, output: 50.00 },
+  'openai:gpt-6.2-astra':                 { input:  8.00, output: 40.00 },
+  // gpt-6-luna: list rate from developers.openai.com/api/docs/models/gpt-6-luna
+  // (checked 2026-11-22; standard tier). Priced so the skill resolver's model
+  // picker meters exactly; METERED_ONLY keeps it out of tier discovery.
+  'openai:gpt-6-luna':                    { input:  0.10, output:  0.50 },
 
   // ── Google ─────────────────────────────────────────────────────────────
   // `gemini-1.5-pro` was retired by Google (#3510); kept so historical

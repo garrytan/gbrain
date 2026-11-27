@@ -1,8 +1,10 @@
 # Brain markdown format: contract for the Rust port
 
-Source: gbrain at commit 8bbfd0b5e8 (VERSION 0.60.733.0). Paths are relative to
-the gbrain repo root (gbrain (`github.com/garrytan/gbrain`)) unless absolute. Line numbers come
-from the working tree on that commit.
+Source: gbrain at commit 8bbfd0b5e8 (VERSION 0.60.733.0), with facts refreshed to
+master `116d737413` (VERSION 0.60.769.0, 2026-11-24). Paths are relative to
+the gbrain repo root (gbrain (`github.com/garrytan/gbrain`)) unless absolute. Line numbers on
+facts that did not change come from the working tree at `8bbfd0b5e8`. New or changed
+facts cite `116d737413`.
 
 Where this doc says "probe", the claim was checked by running the repo's own
 modules under bun (local probe scripts, not committed, read-only; nothing in
@@ -103,6 +105,15 @@ Evaluated per relative path, segment by segment, by `classifySync`
      `vendor`, `dist`, `build`, `venv`, `.raw`. `ops` was removed on purpose
      (`sync.ts:382-387`); do not re-add it.
    - any segment ending in `.raw`;
+   - the reserved folder `.gbrain-owned` (`OWNED_FOLDER_ROOT`,
+     `src/core/owned-folder/root.ts:6`; `src/core/sync.ts:469` at `116d737413`). A
+     source such as an iMessage source keeps its pages as day files under
+     `.gbrain-owned/<source-id>/` in the default source's checkout, and only that
+     source's own writer reads or writes there. `includeHidden` cannot waive this
+     rule, and `gbrain sync` and `gbrain import` refuse a root inside it
+     (`assertNotOwnedRoot`, `src/core/owned-folder/paths.ts:47`,
+     `src/commands/sync/perform.ts:95-101`, `src/commands/import.ts:519`, all at
+     `116d737413`);
    - any dot-prefixed segment (`.git`, `.obsidian`, `.sources`, `.raw`, and so
      on). `includeHidden` globs can waive only the dot rule
      (`sync.ts:444-465`).
@@ -310,9 +321,20 @@ blank line.
   throws `Frontmatter must be a YAML or JSON object` (`data-frontmatter.ts:145-147`).
 - An empty block parses to `{}` (`data-frontmatter.ts:138`).
 - Closing fence: `scanDataFrontmatter` requires a line that is exactly `---`
-  with optional trailing spaces or tabs (`data-frontmatter.ts:118`). The
+  with optional trailing spaces or tabs (`FRONTMATTER_CLOSE_RE`,
+  `data-frontmatter.ts:97`, used at `:121` at `116d737413`). The
   validator matches a trimmed `---` line (`validatorFrontmatterFence`,
   `markdown.ts:603-611`). This differs for indented `  ---` (see section 9).
+  `frontmatterBodyOffset`, which body-only editors use to find where the body
+  starts, follows the reader. It uses the same opener set (`---`, `---yaml`,
+  `---yml`, `---json`, `FRONTMATTER_OPEN_RE`) and the same closing regex
+  (`src/core/markdown.ts:141-159` at `116d737413`), so an indented `---` inside a
+  YAML block scalar never ends the block.
+- U+0000: after parsing, every string value and every object key in the
+  frontmatter has U+0000 removed, including one written as a YAML or JSON
+  escape (`"\0"`, `"\u0000"`). Two keys that become equal after the removal are
+  an error (`withoutNulJson`, `data-frontmatter.ts:138-153`, applied at `:174`, at
+  `116d737413`).
 - Writer: `dumpFrontmatterYaml` (`data-frontmatter.ts:160-167`) calls js-yaml
   `dump` with default options (line width 80, insertion order, no sorting). It
   throws on `undefined` values, so the writer must omit the key instead.
@@ -337,11 +359,12 @@ stored frontmatter.
 | `tags` | array of scalars, or comma string | `extractTags` (`markdown.ts:1274-1281`). Lifted. `tags` is the only key that changes the body hash path specially (section 5.5). | Each tag is capped at 2688 UTF-8 bytes (`src/core/tag-limit.ts:11`; hold `tag_too_long`). |
 | `slug` | string | Import: must match the path-derived slug, or be a normalization-equivalent spelling (`src/core/import-file.ts:1140-1175`, #3772). Used as the slug only when the path slugifies to empty (emoji-only names). Lifted. | Export stamps `slug:` when the slug cannot be derived from the path (`slugStampedFrontmatter`, `markdown.ts:1368-1373`). A conflicting slug is the hold `frontmatter_slug_conflict`. |
 | `aliases` | string, or list; a comma string splits | `normalizeAliasList` (`src/core/search/alias-normalize.ts:41-55`), written to the page-alias table (`import-file.ts:231`). Kept in frontmatter. | Read by identity and link SQL (`src/core/link-extraction.ts:1839-1840`, `src/core/link-reconciliation.ts:25`, `src/core/engine-sql/exact-identity.ts:94`) and `import-file.ts:385`. Probe: the company fixture gives `["vector","vector-capital"]`. |
+| `email`, `emails`, `phone`, `phones` | string, or list | Exact-identity lookup reads them from the stored frontmatter. `email` and `emails` match by JSON containment (`emailArms`, `src/core/engine-sql/exact-identity.ts:77-84`). `phone` and `phones` match when a value reduced to its digits equals the probe digits (`phoneArms`, `:86-93`, at `116d737413`). | Kept in frontmatter. |
 | `date` | date, datetime or string | Effective date precedence (`src/core/effective-date.ts:1-16`): `event_date`, then `date`, then `published`, then a leading filename date, then `created`, `created_at`, `date_created`, then `created_at` (row), then `updated_at`. For `daily/` and `meetings/` slugs the filename date moves to first. | Stored as an ISO string (see 9). |
 | `event_date` | date | Top of the effective-date chain (`effective-date.ts`). | Meeting and event pages. |
 | `published` | date | Effective-date chain, after `date`. | Writing pages. |
 | `visibility` | string | Page privacy reads only the stored key `visibility` whose value is exactly lowercase `private` (`src/core/persistence/visibility-request.ts`, `keptPrivate`). A spelling like `Private` or a list is held `visibility_noncanonical` on sync and import (`:73-77`; `import-file.ts:351`). | PROTECTED key. |
-| `readable_by` | list of identities | Guest pages: `GUEST_FRONTMATTER_KEYS` and the `readable_by` rule (`src/core/guests/admission.ts:28`, `:179`). | PROTECTED key. |
+| `readable_by` | list of identities | Guest pages: `GUEST_FRONTMATTER_KEYS` and the `readable_by` rule (`src/core/guests/admission.ts:28`, `:179`). Page access reads only this exact lowercase key. A page whose frontmatter spells it another way (`Readable_By`, `readable-by`, `readableBy`, `readable by`) is held `readers_noncanonical` on sync and import, even when the exact key is also present (`noncanonicalReadersHold`, `src/core/persistence/readers-request.ts:135`; `src/core/import-file.ts:1060`; `src/core/import-screen.ts:446`; `src/commands/sync/holds.ts:175`, all at `116d737413`). | PROTECTED key. |
 | `trust_tier` | string | Marker stamped by below-owner writes. Excluded from the content hash (`src/core/utils.ts:94-96`). | PROTECTED key. |
 | `id` | string | Identity key for identity dedup and rename identity (`src/core/sync-rename-identity.ts:1-30`). | IDENTITY key; a duplicate is never resolved. |
 | `source_id`, `source_slug`, `source_path` | string | Provenance and identity. `source_id` is an IDENTITY key. | Observed in 2-3 readers each. |
@@ -476,6 +499,17 @@ essentials follow.
   sentinel (`replaceOrInsertFactsFence`, `facts-fence.ts:908`, #4756). A fence
   below the sentinel is edited there only when the body has none
   (`factsFenceSection`, `:889-896`, #6686).
+- Remote write-back keeps rows the writer could not see. When an untrusted caller
+  writes a page back, `restoreHiddenFactRows` (`facts-fence.ts:606-649` at
+  `116d737413`) restores a stored row whose visibility is not `world` unless the
+  caller's row at its number has the same claim. A caller row at that number with a
+  different claim is renumbered, and one with the same claim is kept as written.
+  When the writer read the page without its held rows (`restoreHeldRows`), world
+  rows held from that writer are restored as stored too. A caller row with the
+  same claim at their number keeps only its own visibility. The
+  merge runs per page column in `mergeHiddenFactRows`
+  (`src/core/import-hidden-rows.ts:61-68`, called from `src/core/import-file.ts:443`,
+  both at `116d737413`).
 
 **Takes fence** (`src/core/takes-fence.ts:124-125`, example in
 `test/fixtures/skill-evals/company-brainify/shared-now/people/charlie-example.md`):
@@ -498,7 +532,10 @@ essentials follow.
   `who` (holder): `world`, `brain`, `people/<slug>`, `companies/<slug>`, or a
   bare lowercase slug (legacy, accepted). Grammar: `HOLDER_REGEX`
   (`takes-fence.ts:153-160`), built on the slug segment pattern.
-- `weight`: 0 to 1, stored on a 0.05 grid. There is no default.
+- `weight`: 0 to 1, stored on a 0.05 grid. There is no default. A cell is a plain
+  number or `N%`, read as N/100 (`parseWeightCell`, `takes-fence.ts:246` at
+  `116d737413`). Any other text, such as `0.7abc`, is `TAKES_TABLE_MALFORMED`
+  (`takes-fence.ts:373-377`).
 - `since`: `YYYY-MM` or `YYYY-MM-DD`, or a range `start → end`
   (`takes-fence.ts` header comment, lines 1-30).
 - Append-only: rows are never renumbered; `superseded by #N` strikes a row.
@@ -636,11 +673,20 @@ detects a slug with hyphen runs, which put_page and capture refuse (#7305).
 
 ### 3.2 Validation grammars (three different ones)
 
-1. `validateSlug` (`src/core/utils.ts:39-56`): storage-level guard. Rejects an
+1. `validateSlug` (`src/core/utils.ts:40-61` at `116d737413`): storage-level guard. Rejects an
    empty slug, a leading `/`, a `..` segment, control and C1 characters, bidi
    overrides (U+202A-U+202E, U+2066-U+2069), a backslash, and
-   `%2e`, `%2f` or `%5c` (case-insensitive). It returns the slug lowercased.
-   Probe: `people/Alice` returns `people/alice`; `x/..` throws.
+   `%2e`, `%2f` or `%5c` (case-insensitive). It returns the slug in the one normal
+   form, `normalizeSlug` (`utils.ts:81-83`). It lowercases first, then applies
+   Unicode NFC.
+   Probe (at `8bbfd0b5e8`, lowercase only): `people/Alice` returns `people/alice`;
+   `x/..` throws. Reads normalize too. `withNormalizedSlugParams` wraps the
+   operations that read a page by slug (`src/core/ops/slug-params.ts:297`, `SLUG_PARAMS`),
+   so `People/Alice` and a decomposed `café` find the stored page. A page write
+   normalizes through `validateSlug`. `withStoredSlug` (`utils.ts:69-71`) is the one
+   exception. It keeps a page's exact stored spelling for a write that addresses an existing page stored before
+   slugs were lowercased and composed, so that write changes the row and never
+   creates a twin.
 2. `validatePageSlug` (`src/core/ops/context.ts:198-212`): the operation boundary
    (put_page and similar). Non-empty, at most 255 characters, and must match
    `OP_PAGE_SLUG_RE` (`src/core/page-slug-grammar.ts:23-25`):
@@ -664,6 +710,23 @@ admits a stored slug that today's grammar refuses (for example `people/jane doe`
 but only to delete or restore that exact row, and only when it still passes
 `validateSlug`.
 
+A page may be stored under an older capitalised or decomposed spelling of its
+name. Two guards keep a write from creating a second page that prints the same
+name. Both are at `116d737413`.
+
+- File import (`legacyImportHold`, `src/core/persistence/legacy-slug-put.ts:47-55`,
+  called at `src/core/import-file.ts:328`). The import is held, with an error
+  result and nothing written, only when two things are true. No page (deleted
+  ones included) exists at the normalized slug, and a page exists in the same
+  source under the supplied spelling or its lowercase form. If the supplied
+  spelling is already the normalized slug, or a page already exists at the
+  normalized slug, there is no hold.
+- `put_page` (`refuseLegacySpelling`, `legacy-slug-put.ts:35-39`). It refuses when
+  the supplied slug is a string and a page (deleted ones included) exists in the
+  source under that exact spelling or its lowercase form, and that spelling is
+  not the normalized slug. Unlike the import hold, it refuses even when a page
+  already exists at the normalized slug.
+
 ### 3.3 Unicode and case: where the two grammars disagree
 
 - `slugifySegment` folds accents and niqqud but not stroke letters (`đ`, `ø`, `ł`,
@@ -680,6 +743,13 @@ but only to delete or restore that exact row, and only when it still passes
 - Case: slugs are lowercase canonical. `toLowerCase()` is the full Unicode
   mapping in JS, and Rust `str::to_lowercase` is also full, but the Unicode
   version of the `\p{}` tables may differ (section 9).
+- Normalization: a stored slug is also NFC. `normalizeSlug` lowercases and then
+  composes, in that order, because lowercasing can leave a sequence that is not
+  composed (`src/core/utils.ts:81-83` at `116d737413`). The same function
+  normalizes the targets of relative and same-directory markdown links
+  (`src/core/link-extraction.ts:635`, `:659`, `:1025` at `116d737413`) and the
+  slug prefixes a bound client may write (`slugUnderBoundPrefixes`,
+  `src/core/ops/context.ts:410`, and `normalizeSlugPrefix`, `:439`, at `116d737413`).
 
 ### 3.4 Source-scoped slugs
 
@@ -746,7 +816,10 @@ several regexes, and a span matched by an earlier pass is masked from later ones
 2. Same-directory markdown link (`SAME_DIR_MD_RE`, `:307`): `[Name](slug.md)`,
    `[Name](./slug.md)`, `[Name](../slug.md)`. The `.md` suffix is required. The
    target is resolved against the linking page's directory
-   (`resolveMarkdownLinkSlug`, `:655`).
+   (`resolveMarkdownLinkSlug`, `:655`). Resolved relative and same-directory
+   targets are lowercased and NFC-composed with `normalizeSlug`
+   (`:635`, `:659`, `:1025` at `116d737413`), so a decomposed (macOS) spelling
+   still resolves to the stored slug.
 3. Directory wikilink (`WIKILINK_RE`, `:236-251`): `[[dir/slug]]`,
    `[[dir/slug|Label]]`, `[[dir/slug#Heading]]`. `dir` must be one of
    `people, companies, meetings, concepts, deal, civic, project, projects,
@@ -872,7 +945,9 @@ that a fence row may not carry. The DB CHECK on `link_source` is the regex
 - Safety (`backlinks.ts:330-395`): per target page, under `withPageLock` (10 s),
   refuses a page whose frontmatter is already invalid, re-validates after the edit,
   and writes atomically with an on-disk verify (`atomicWriteFileSync`). A dry run
-  writes nothing.
+  writes nothing. A file whose frontmatter opens but has no closing `---` at the
+  start of a line is left untouched and reported as skipped
+  (`src/commands/backlinks.ts:359-365` at `116d737413`).
 - A `fix` run is idempotent only through the extractor: the next `check` must
   credit the new row, which it does for `dir/name` links.
 
@@ -999,8 +1074,10 @@ Hold codes, a separate deterministic refusal set (`HOLD_CODES`,
 `file_too_large`, `rename_held`, `parser_regression`, `tag_too_long`. Frontmatter
 hold reasons (`INVALID_FRONTMATTER_REASONS`, `:512`): `yaml_parse`,
 `needs_interpretation`, `ambiguous_identity_key`, `ambiguous_protected_key`. Plus
-`visibility_noncanonical` (`visibility-request.ts:73-77`). A symlink is not a hold:
-it is skipped with the error `Skipping symlink` (section 1.5).
+`visibility_noncanonical` (`visibility-request.ts:73-77`) and
+`readers_noncanonical` (`ContentRefusal` codes, `src/core/import-screen.ts:356`
+at `116d737413`). A symlink is not a hold.
+It is skipped with the error `Skipping symlink` (section 1.5).
 
 A hold refuses that one file (it is not imported), and the sync run continues
 (`markdown.ts:505-509`, the #5988 hold design). Failures are recorded in the
@@ -1142,7 +1219,9 @@ rebuildable index for it. The places that write to brain files are:
    (`src/commands/sync/gitignore.ts:178`).
 7. Sync may create the first commit of an unborn repo, `gbrain: initial commit
    (auto-init by sync)`, with hooks disabled (`src/core/sync-git.ts:464-620`). It
-   refuses to run on a repo with commits.
+   refuses to run on a repo with commits. The staged files exclude the `db_only`
+   directories and the reserved `.gbrain-owned` folder
+   (`src/core/sync-git.ts:565` at `116d737413`).
 8. `files upload` writes a `.raw/<page>/` sidecar and a files row.
 9. Export writes only to a fresh `--dir`, never into the source tree.
 
@@ -1154,6 +1233,12 @@ primitives are in `spec/tla/` (section 7).
 
 Drift: when a file and the database disagree, writes refuse with `source_changed`
 for the drifted page, unless the page is under a `keep_db` prefix (section 1.4).
+A managed sync of a plain directory (no Git history) imports a file over an existing
+page only when the page's current revision was written in step with its file. If
+a database-only write made that revision, the file is refused as `file_drift`
+and the database edit stays (`assertPlainDirectoryFileInStep`,
+`src/core/persistence/plain-directory-drift.ts:26`, passed from
+`src/commands/sync/plain-directory.ts:79`, both at `116d737413`).
 
 ### 5.8 Line grammar (typed relation and fact lines, opt-in)
 
@@ -1197,7 +1282,8 @@ or exports. The parts that matter for the port:
   redacted (`redactFindings`) before chunking.
 - Segmented pages: pages over the inline threshold are stored as segments
   (`src/core/page-body/*`). `SEGMENTED_CHUNKER_VERSION = 5`
-  (`src/core/page-body/segment-chunks.ts:47`). The exported file for a segmented
+  (defined in `src/core/search/safe-chunks.ts:23` and re-exported from
+  `src/core/page-body/segment-chunks.ts`, at `116d737413`). The exported file for a segmented
   page is byte-identical to an inline page of the same content (section 5.6).
 - Code chunker: `chunkCodeText` with tree-sitter grammars.
   `CHUNKER_VERSION = 8` (`src/core/chunkers/code.ts:146`) and
@@ -1278,6 +1364,10 @@ or exports. The parts that matter for the port:
   separate table. Mapping: frontmatter becomes `frontmatter`, the body splits into
   `compiled_truth` and `timeline`, and `title`, `type`, tags and slug become
   columns (section 2.4).
+  A page title has no length limit at storage. The exact-title lookup index is a
+  hash index on `lower(title)` (`idx_pages_title_lower_hash`,
+  `src/core/schema-migrations/v240-pages-name-lookup-indexes.ts:24`; `src/schema.sql:285`,
+  both at `116d737413`).
 
 ## 8. Annotated examples (real fixture files)
 
@@ -1455,6 +1545,7 @@ Each risk says what gbrain does, where, and what a port must do. Items marked
    (with trailing spaces or tabs, `data-frontmatter.ts:118`), while the validator
    trims the line (`markdown.ts:609`). A line `  ---` is a closer for the validator
    and not for the reader. A port must choose one; the reader decides the body.
+   `frontmatterBodyOffset` follows the reader (`markdown.ts:143-159` at `116d737413`).
 6. Language selector: only `yaml`, `yml`, `json` (and the empty selector) are
    allowed. `---json` is parsed as JSON, so a Rust port must accept it.
 7. Root value: a frontmatter block that is a list, a scalar, or a null root is an
@@ -1526,8 +1617,9 @@ Each risk says what gbrain does, where, and what a port must do. Items marked
     mappings, and both are locale-independent here. Test `İ` (U+0130), which
     lowercases to two code points in both.
 22. `validatePageSlug` rejects uppercase (probe), but `validateSlug` lowercases
-    (probe). The port must keep both behaviors, or it will refuse slugs the
-    importer accepts.
+    (probe) and then NFC-composes (`normalizeSlug`, `utils.ts:81-83` at
+    `116d737413`). The port must keep both behaviors, or it will refuse slugs the
+    importer accepts. A decomposed `é` in a slug is stored composed.
 23. Surrogates: JS strings may hold lone surrogates, and `sanitizeText` replaces them
     with U+FFFD before the hash (`batch-rows.ts:88-100`). A Rust `String` cannot hold
     them, so the port must replace them at the same point, or invalid input differs.
@@ -1681,8 +1773,11 @@ Each risk says what gbrain does, where, and what a port must do. Items marked
   write path), `src/core/latin-fold.ts`, `src/core/timeline-write-through.ts`, the
   full `gbrain.yml` parser, and the chunkers (only their version constants and
   input stripping). Items that depend on them are marked open.
-- Line numbers are from commit 8bbfd0b5e8 in the working tree. Re-check them if the
-  tree moves.
+- Line numbers are from commit 8bbfd0b5e8 in the working tree, except the facts
+  marked `116d737413`, which were read at master 2026-11-24. The facts refresh
+  covered the cited source files, `src/schema.sql` (no `pages` column changed) and
+  migrations v319 to v334 (none changes how a file maps to a `pages` column). The
+  probes were not re-run. Re-check line numbers if the tree moves.
 
 
 

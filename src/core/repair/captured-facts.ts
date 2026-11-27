@@ -56,6 +56,7 @@ import { corpusFileSessionId, corpusTextForExtraction } from '../context/corpus-
 import { pruneDir } from '../sync.ts';
 import { afterCursor, repairRequestId, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairListing, type RepairPlan, type RepairScope } from './core.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
+import { sortSourcesById } from '../source-rows.ts';
 
 export const CAPTURE_LANES = ['hook:writeback', 'hook:compact', 'sweep:corpus'] as const;
 const CORPUS_KEY = 'dream.synthesize.session_corpus_dir';
@@ -235,7 +236,7 @@ function previewCommand(scope: RepairScope, all: string[], includeAmbiguous: boo
 }
 
 async function activeSources(engine: BrainEngine): Promise<string[]> {
-  return (await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE archived IS NOT TRUE ORDER BY id')).map(row => row.id);
+  return sortSourcesById(await engine.listAllSources()).map(row => row.id);
 }
 
 function pageItem(page: CapturedFactsPage, hash: string, index: number, last: boolean): PageItem {
@@ -251,8 +252,8 @@ export const capturedFactsRepair: RepairHandler = {
     const command = previewCommand(scope, await activeSources(engine), includeAmbiguous);
     if (!opts?.apply) {
       const { candidates, unclassifiable, not_suspect, unreadable_corpus_files } = await classifyCapturedFacts(engine, scope.source_ids);
-      const [brain] = await engine.executeRaw<{ brain_id: string }>('SELECT brain_id FROM persistence_brain WHERE singleton=1').catch(() => []);
-      const hash = previewHash(['captured-facts-v1', brain?.brain_id ?? 'host', scope.source_ids, includeAmbiguous,
+      const brainId = await engine.readPersistenceBrainId().catch(() => null);
+      const hash = previewHash(['captured-facts-v1', brainId ?? 'host', scope.source_ids, includeAmbiguous,
         candidates.map(c => [c.id, c.class, c.reason, c.fact_hash])]);
       const pages = new Map<string, CapturedFactsPage>();
       for (const fact of candidates) {
@@ -280,8 +281,8 @@ export const capturedFactsRepair: RepairHandler = {
     }
     const approved = await loadApprovedSet<CapturedFactsPage>(engine, { command: 'captured-facts', hash: opts.expect, previewCommand: command,
       emptyHash: async () => {
-        const [brain] = await engine.executeRaw<{ brain_id: string }>('SELECT brain_id FROM persistence_brain WHERE singleton=1').catch(() => []);
-        return previewHash(['captured-facts-v1', brain?.brain_id ?? 'host', scope.source_ids, includeAmbiguous, []]);
+        const brainId = await engine.readPersistenceBrainId().catch(() => null);
+        return previewHash(['captured-facts-v1', brainId ?? 'host', scope.source_ids, includeAmbiguous, []]);
       } });
     const scopeKey = JSON.stringify(scope.source_ids);
     if (approved.items.some(page => page.include_ambiguous !== includeAmbiguous || JSON.stringify(page.scope) !== scopeKey)) {
@@ -315,9 +316,7 @@ export const capturedFactsRepair: RepairHandler = {
 
 export const CAPTURED_FACTS_INTENT = 'managed_maintenance_expire_captured_facts';
 
-const expireRows = (tx: BrainEngine, sourceId: string, ids: number[]) => tx.executeRaw<{ id: number | string }>(`UPDATE facts
-    SET expired_at=now(), context=concat_ws(' | ', $3::text, NULLIF(context,''))
-  WHERE source_id=$1 AND id=ANY($2::bigint[]) AND expired_at IS NULL AND row_num IS NULL RETURNING id`, [sourceId, ids, EXPIRY_CONTEXT]);
+const expireRows = (tx: BrainEngine, sourceId: string, ids: number[]) => tx.expireCapturedFacts(sourceId, ids, EXPIRY_CONTEXT);
 
 /**
  * Database-only rows: on a managed brain one database-only maintenance
@@ -359,8 +358,7 @@ async function strikeFencedRows(ctx: Parameters<RepairHandler['apply']>[0], item
   const engine = ctx.engine;
   const snapshot = await engine.readPageSnapshot(page.slug, { sourceId: page.source_id });
   if (!snapshot) return [];
-  const rows = await engine.executeRaw<{ id: number | string; fact: string; row_num: number }>(
-    'SELECT id, fact, row_num FROM facts WHERE source_id=$1 AND id=ANY($2::bigint[]) AND expired_at IS NULL', [page.source_id, facts.map(f => f.id)]);
+  const rows = await engine.listFenceRewriteRows(page.source_id, facts.map(f => f.id));
   const today = new Date().toISOString().slice(0, 10);
   const strike = (fact: ParsedFact): ParsedFact => ({ ...fact, active: false, forgotten: false, validUntil: fact.validUntil && fact.validUntil < today ? fact.validUntil : today,
     context: [EXPIRY_CONTEXT, fact.context?.trim()].filter(Boolean).join(' | ') });
@@ -378,6 +376,5 @@ async function strikeFencedRows(ctx: Parameters<RepairHandler['apply']>[0], item
   await submitPageMutation(ctx, { operation: 'put_page', params: { slug: page.slug, source_id: page.source_id,
     content: serializePageToMarkdown({ ...snapshot.page, compiled_truth: body }, snapshot.tags), expected_revision: snapshot.revision,
     request_id: await repairRequestId(ctx, 'captured-facts', item, snapshot.revision) } });
-  return (await engine.executeRaw<{ id: number | string }>('SELECT id FROM facts WHERE source_id=$1 AND id=ANY($2::bigint[]) AND expired_at IS NOT NULL',
-    [page.source_id, struck])).map(row => Number(row.id));
+  return (await engine.listExpiredFactIds(page.source_id, struck)).map(row => Number(row.id));
 }

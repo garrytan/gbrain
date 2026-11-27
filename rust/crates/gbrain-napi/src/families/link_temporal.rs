@@ -209,6 +209,17 @@ impl Brain {
         })
     }
 
+    /// `readPageReferenceDate`: the live page's reference date as UTC microsecond text, or null.
+    #[napi]
+    pub fn read_page_reference_date<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slug: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_page_reference_date(&source_id, &slug))
+    }
+
     /// `readReferrerPageDetails`: `{ ids }`: the card details of each page id that exists.
     #[napi]
     pub fn read_referrer_page_details<'env>(
@@ -359,13 +370,20 @@ impl Brain {
         })
     }
 
-    /// `readProjectionReadinessGeneration`: the generation the probe's cached answer depends on.
+    /// `readProjectionReadinessGeneration`: the generation the probe's cached answer depends on, or null
+    /// inside a transaction.
     #[napi]
     pub fn read_projection_readiness_generation<'env>(
         &self,
         env: &'env Env,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.projection_readiness_generation())
+    }
+
+    /// `readHealthMemoClock`: the brain and its commit sequence.
+    #[napi]
+    pub fn read_health_memo_clock<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.health_memo_clock())
     }
 
     /// `readProjectionReadiness`: a coverage scope: `{ pending, by_design }`.

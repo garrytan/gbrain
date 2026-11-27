@@ -27,7 +27,7 @@ export function enclosingGitCheckout(dir: string): string | null {
  * with the fix; it never falls back. Meeting pages are never nested into another source's checkout root, which
  * would import them twice, so Git recording needs its own directory.
  */
-export function chooseMeetingsRecord(sourceId: string, requested: 'auto' | MeetingRecordMode, dir: string | undefined, kind: 'meetings' | 'slack' = 'meetings'): MeetingsRecordChoice {
+export function chooseMeetingsRecord(sourceId: string, requested: 'auto' | MeetingRecordMode, dir: string | undefined, kind: 'meetings' | 'slack' | 'apple-contacts' = 'meetings'): MeetingsRecordChoice {
   if (requested === 'database') return { record: 'database', dir: null };
   const checkout = dir ? enclosingGitCheckout(dir) : null;
   if (checkout && dir) return { record: 'git', dir: resolve(dir) };

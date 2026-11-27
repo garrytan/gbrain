@@ -97,6 +97,10 @@ fn decode_i64(value: Option<Vec<u8>>) -> Result<i64> {
 
 pub trait Kv: Send + Sync {
     fn snapshot(&self) -> Result<Box<dyn KvRead>>;
+    /// A snapshot that can move to another thread, with the commit sequence it sees. The sequence
+    /// is read from inside the snapshot, so the two always agree: a `snapshot` and a `version`
+    /// taken apart can straddle a commit. The store snapshot (`snapshot.rs`) pins one.
+    fn versioned_snapshot(&self) -> Result<(Box<dyn KvRead + Send>, u64)>;
     fn begin_write(&self) -> Result<Box<dyn KvWrite>>;
     /// Begins a write that runs again after it lost a conflict on `keys`. A store with concurrent
     /// writers first queues for those keys (a row lock); a single-writer store ignores them.
@@ -112,6 +116,11 @@ pub trait Kv: Send + Sync {
     /// one. A single-writer store's `begin_write` already is one.
     fn begin_write_exclusive(&self) -> Result<Box<dyn KvWrite>> {
         self.begin_write()
+    }
+    /// True for a handle that refuses every write (`Store::open_dir_read_only`): a restore asks before it
+    /// touches anything, without beginning a write.
+    fn is_read_only(&self) -> bool {
+        false
     }
     /// The commit sequence of the latest commit (0 on a database nothing was committed to).
     fn version(&self) -> Result<u64>;
@@ -158,6 +167,107 @@ pub fn scan_prefix(
     }
 }
 
+/// The callback of a paged walk: each entry's key and value; `Ok(false)` stops the walk.
+pub type PagedVisit<'a> = dyn FnMut(&[u8], &[u8]) -> Result<bool> + 'a;
+
+/// Calls `f` with each entry under `prefix`, in key order, until it returns false or fails. The entries are read `page` at a time,
+/// each page by its own scan, so `f` runs between scans (it may read the store) and a stop leaves every later page unread: at
+/// most `page - 1` entries past the one that stopped are read.
+pub fn for_each_prefix_paged(
+    read: &dyn KvRead,
+    prefix: &[u8],
+    page: usize,
+    f: &mut PagedVisit<'_>,
+) -> Result<()> {
+    for_each_prefix_paged_from(read, prefix, prefix, page, f)
+}
+
+/// [`for_each_prefix_paged`] from the key `from` (at or after `prefix`) on: a walk that resumes where an earlier one stopped reads
+/// nothing before it.
+pub fn for_each_prefix_paged_from(
+    read: &dyn KvRead,
+    prefix: &[u8],
+    from: &[u8],
+    page: usize,
+    f: &mut PagedVisit<'_>,
+) -> Result<()> {
+    let page = page.max(1);
+    let end = prefix_end(prefix).unwrap_or_else(|| vec![0xFF; 64]);
+    let mut start = from.to_vec();
+    loop {
+        let mut entries: Vec<(Vec<u8>, Vec<u8>)> = Vec::with_capacity(page);
+        read.scan(&start, &end, false, &mut |k, v| {
+            entries.push((k.to_vec(), v.to_vec()));
+            entries.len() < page
+        })?;
+        let full = entries.len() == page;
+        for (key, value) in &entries {
+            if !f(key, value)? {
+                return Ok(());
+            }
+        }
+        match entries.pop() {
+            Some((mut last, _)) if full => {
+                // The smallest key after the last one read.
+                last.push(0);
+                start = last;
+            }
+            _ => return Ok(()),
+        }
+    }
+}
+
+/// A read-only store over a map that counts the entries its scans hand out and the keys `get` reads (tests).
+#[cfg(test)]
+pub(crate) mod counting {
+    use super::KvRead;
+    use crate::error::Result;
+    use std::cell::Cell;
+    use std::collections::BTreeMap;
+
+    #[derive(Default)]
+    pub(crate) struct Counting {
+        pub(crate) entries: BTreeMap<Vec<u8>, Vec<u8>>,
+        pub(crate) delivered: Cell<usize>,
+        pub(crate) gets: Cell<usize>,
+    }
+
+    impl KvRead for Counting {
+        fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
+            self.gets.set(self.gets.get() + 1);
+            Ok(self.entries.get(key).cloned())
+        }
+
+        fn scan(
+            &self,
+            start: &[u8],
+            end: &[u8],
+            reverse: bool,
+            f: &mut dyn FnMut(&[u8], &[u8]) -> bool,
+        ) -> Result<()> {
+            let range = self.entries.range(start.to_vec()..end.to_vec());
+            let mut each = |(k, v): (&Vec<u8>, &Vec<u8>)| {
+                self.delivered.set(self.delivered.get() + 1);
+                f(k, v)
+            };
+            if reverse {
+                for entry in range.rev() {
+                    if !each(entry) {
+                        break;
+                    }
+                }
+            } else {
+                for entry in range {
+                    if !each(entry) {
+                        break;
+                    }
+                }
+            }
+            Ok(())
+        }
+    }
+}
+
 /// Collect the entries under `prefix` (up to `limit`) as owned pairs.
 pub fn collect_prefix(
     read: &dyn KvRead,
@@ -174,4 +284,46 @@ pub fn collect_prefix(
         out.len() < limit
     })?;
     Ok(out)
+}
+
+#[cfg(test)]
+mod paged_tests {
+    use super::counting::Counting;
+    use super::*;
+
+    fn store(n: u8) -> Counting {
+        let mut store = Counting::default();
+        for i in 0..n {
+            store.entries.insert(vec![b'p', i], vec![i]);
+        }
+        store.entries.insert(vec![b'q', 0], vec![99]);
+        store
+    }
+
+    #[test]
+    fn a_paged_scan_visits_every_entry_once_in_order_across_page_boundaries() {
+        for n in [0u8, 1, 7, 8, 9, 16, 17] {
+            let store = store(n);
+            let mut seen = Vec::new();
+            for_each_prefix_paged(&store, b"p", 8, &mut |k, _| {
+                seen.push(k[1]);
+                Ok(true)
+            })
+            .unwrap();
+            assert_eq!(seen, (0..n).collect::<Vec<_>>(), "{n} entries");
+        }
+    }
+
+    #[test]
+    fn a_paged_scan_that_stops_reads_no_later_page() {
+        let store = store(40);
+        let mut seen = 0;
+        for_each_prefix_paged(&store, b"p", 8, &mut |_, _| {
+            seen += 1;
+            Ok(seen < 9)
+        })
+        .unwrap();
+        assert_eq!(seen, 9);
+        assert_eq!(store.delivered.get(), 16);
+    }
 }

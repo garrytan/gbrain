@@ -147,10 +147,16 @@ describe('H1b: one embedding-enable command on every surface', () => {
     } finally { await s.close(); }
 
     const expected = surfaces['doctor embeddings']!;
-    expect(expected.slice(0, 4)).toEqual(['gbrain', 'init', '--force', '--embedding-model']);
-    expect(expected).toEqual(expect.arrayContaining(['--path', join(home, '.gbrain', 'brain.pglite')]));
-    expect(hint, 'init prints the deferred-setup hint').toContain(`\`${shellQuote(expected)}\``);
+    expect(expected.slice(0, 4)).toEqual(['gbrain', 'embeddings', 'enable', '--embedding-model']);
+    // `embeddings enable` opens the configured datastore, so the command names no path.
+    expect(expected).not.toContain('--path');
+    // A rendered CLI fix pins the brain the call acted on (src/core/fix-routing.ts: doctor, embed --all); whoami data,
+    // MCP and the plain-text init hint carry the unpinned command. The command itself is the same on every surface.
+    expect(expected.slice(-2)).toEqual(['--brain', 'host']);
+    const command = expected.slice(0, -2);
+    const unpin = (argv: string[] | undefined) => (argv?.slice(-2).join(' ') === '--brain host' ? argv.slice(0, -2) : argv);
+    expect(hint, 'init prints the deferred-setup hint').toContain(`\`${shellQuote(command)}\``);
     delete surfaces['init stderr hint'];
-    for (const [surface, argv] of Object.entries(surfaces)) expect(argv, surface).toEqual(expected);
+    for (const [surface, argv] of Object.entries(surfaces)) expect(unpin(argv), surface).toEqual(command);
   }, 600_000);
 });

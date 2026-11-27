@@ -128,9 +128,12 @@ export const BUILTIN_PATTERNS: readonly PatternEntry[] = [
     // number of long coding turns does not fall below the global 5% density
     // floor and become unparseable. The continuation-aware scorer still
     // requires an anchor on the first line or at least two valid anchors.
+    // GST-3347: only a line that opens like an anchor (`**Name** (`) is a
+    // candidate, so an answer's bold headings and `**Label:**` lines read
+    // as continuation too.
     multi_line: true,
     score_continuations_as_body: true,
-    quick_reject: /^\*\*/,
+    quick_reject: /^\*\*.+?\*\*\s*\(/,
     test_positive: [
       '**Alice Example** (2024-03-15 9:00 AM): hello',
       '**Bob Example** (2024-03-15 12:00 PM): noon',

@@ -1,18 +1,21 @@
 //! The per-row widening of a fact list read's `visibility` list: `factVisibilitySql`
 //! (src/core/access/member-facts.ts). A list without `private` also admits a private fact on the
 //! caller's own member page (`memberFactAdmitSql`) and a private fact in a source of the caller's
-//! private-facts grant whose pages keep it private for no reason (`grantedPrivateFactSql`). The
+//! private-facts grant whose pages keep it private for no reason (`grantedPrivateFactSql`), unless
+//! it is a held row the grant refuses ([`hold_refused`], GST-2979). The
 //! TypeScript member sends this record only when the caller's rendered list equals the one for a
 //! fresh record of the caller's reader identity, private-readable sources and grant
 //! (store-members/fact-visibility.ts); rust/docs/store/facts.md names the rule of each test.
 
-use super::FactRecord;
 use super::privacy::{PrivacyPolicy, access_readers, page_hidden};
 use super::repair::{derivation_private, provenance_slug};
+use super::{FactRecord, read_fact};
 use crate::Result;
 use crate::kv::KvRead;
 use crate::pages::read_page;
+use crate::trust::proposals::visibility_proposal_targets;
 use serde::Deserialize;
+use std::collections::{HashSet, VecDeque};
 
 /// `MEMBER_PAGE_PREFIX` (access/principals.ts).
 const MEMBER_PAGE_PREFIX: &str = "memory/members/";
@@ -58,14 +61,69 @@ impl VisibilityWidening {
             && !page_hidden(read, &page, policy)?)
     }
 
-    /// `grantedPrivateFactSql`: the row's source is granted, it has a page to check
-    /// (`unpagedFactSql`), and none of its pages keeps it private (`factPagesOpenSql`).
+    /// `grantedPrivateFactSql`: the grant opens the row ([`Self::grant_opens`]) and the row is
+    /// not a held row the grant refuses ([`hold_refused`]).
     fn grant_admits(&self, read: &dyn KvRead, row: &FactRecord) -> Result<bool> {
-        if !self.private_fact_sources.contains(&row.source_id) || unpaged(row) {
+        if !self.grant_opens(read, row)? {
+            return Ok(false);
+        }
+        let member = |copy: &FactRecord| -> Result<bool> {
+            Ok(copy.visibility == "private" && self.member_admits(read, copy)?)
+        };
+        let opens = |copy: &FactRecord| self.grant_opens(read, copy);
+        Ok(!hold_refused(read, row, &member, &opens)?)
+    }
+
+    /// `grantedPrivateFactSql`'s `opens(row)`: a private row whose source is granted, that has a
+    /// page to check (`unpagedFactSql`), and none of whose pages keeps it private (`factPagesOpenSql`).
+    fn grant_opens(&self, read: &dyn KvRead, row: &FactRecord) -> Result<bool> {
+        if row.visibility != "private"
+            || !self.private_fact_sources.contains(&row.source_id)
+            || unpaged(row)
+        {
             return Ok(false);
         }
         Ok(!kept_private(read, row)?)
     }
+}
+
+/// `grantedPrivateFactSql`'s `held_refused` (GST-2979): whether `row` is a held row the grant
+/// refuses. A held row is the related row of a visibility proposal (`supersede_fact` or `confirm`
+/// whose `before_state` has a `visibility` key, any status). It is refused when one of those
+/// proposals targets a copy that is missing (or not a fact), or that the caller's reads admit by
+/// neither the member rule (`member`) nor the grant's open test (`opens`); and, along the hold
+/// chain, when a copy that only the grant opens is itself refused. `opens` is the grant test
+/// without the hold, as the SQL's `opens(held_copy)` is. The same rule judges the page overlay's
+/// held cells (`held_cells.rs` `granted`, `heldRowSql`).
+pub(super) fn hold_refused(
+    read: &dyn KvRead,
+    row: &FactRecord,
+    member: &dyn Fn(&FactRecord) -> Result<bool>,
+    opens: &dyn Fn(&FactRecord) -> Result<bool>,
+) -> Result<bool> {
+    let mut seen = HashSet::from([row.id]);
+    let mut held = VecDeque::from([row.id]);
+    while let Some(id) = held.pop_front() {
+        for (table, target) in visibility_proposal_targets(read, id)? {
+            let copy = match u64::try_from(target) {
+                Ok(target) if table == "facts" => read_fact(read, target)?,
+                _ => None,
+            };
+            let Some(copy) = copy else {
+                return Ok(true);
+            };
+            if member(&copy)? {
+                continue;
+            }
+            if !opens(&copy)? {
+                return Ok(true);
+            }
+            if seen.insert(copy.id) {
+                held.push_back(copy.id);
+            }
+        }
+    }
+    Ok(false)
 }
 
 /// `unpagedFactSql`: no holding page, or a transcript lane (conversation extraction, the capture
@@ -102,7 +160,7 @@ fn kept_private(read: &dyn KvRead, row: &FactRecord) -> Result<bool> {
     {
         match read_page(read, &row.source_id, slug)? {
             // The privacy aliases count whether or not they are honoured (`derivationPrivateSql`).
-            Some(page) if derivation_private(&page, false) => return Ok(true),
+            Some(page) if derivation_private(read, &page, false)? => return Ok(true),
             Some(page) if page.deleted_at_us.is_some() => return Ok(true),
             Some(page) if page.frontmatter.contains_key(super::QUARANTINE_KEY) => return Ok(true),
             Some(_) => {}
@@ -110,7 +168,8 @@ fn kept_private(read: &dyn KvRead, row: &FactRecord) -> Result<bool> {
         }
     }
     if let Some(entity) = &row.entity_slug
-        && read_page(read, &row.source_id, entity)?.is_some_and(|p| derivation_private(&p, false))
+        && let Some(page) = read_page(read, &row.source_id, entity)?
+        && derivation_private(read, &page, false)?
     {
         return Ok(true);
     }

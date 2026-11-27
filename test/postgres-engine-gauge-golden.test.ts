@@ -41,7 +41,7 @@ async function captureSequence(): Promise<Array<{ step: string; diagnostics: unk
   const fake = makeFakeSql((stmt: RecordedStatement) => {
     const name = /\/\*hold:([\w-]+)\*\//.exec(stmt.text)?.[1]
       ?? (stmt.text.includes('COUNT(DISTINCT l.from_page_id)') ? 'enrichment' : undefined)
-      ?? (stmt.text.includes('SELECT DISTINCT tag FROM tags') ? 'domain-tagged' : undefined);
+      ?? (stmt.text.includes('SELECT DISTINCT tag COLLATE "C" AS tag FROM tags') ? 'domain-tagged' : undefined);
     if (!name) return undefined;
     return new Promise((resolve) => holds.set(name, resolve as (rows: unknown[] | Error) => void));
   }, { poolMax: 10 });

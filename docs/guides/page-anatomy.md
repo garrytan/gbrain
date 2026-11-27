@@ -89,7 +89,26 @@ Below `<!-- timeline -->` each event is one bullet:
 The date is bold, a `|` separates it from the source, and an em dash
 separates the source from the summary. `gbrain timeline-add <slug> <date>
 <summary> --source <source>` (MCP `add_timeline_entry`) writes this form, and
-sync turns each bullet into a timeline row. Older files that split at
+sync turns each bullet into a timeline row.
+
+Sync and `gbrain extract timeline` make a row from these forms, and only these:
+
+```markdown
+- **2026-10-20** | Meeting notes — Pricing call; quoted the annual plan
+- **2026-10-21** | Sent the revised order form to acme-example
+- The renewal moved to Q1. [Source: Email from alice-example, 2026-10-23]
+### 2026-10-22 — Contract signed
+Signed by alice-example for acme-example.
+```
+
+In a bullet, the date is `YYYY-MM-DD` in bold, then `|`; the source and em
+dash are optional. A `###` heading takes the date, a dash and a title, and the
+lines under it become the entry's detail. An inline `[Source: …, YYYY-MM-DD]`
+citation dates the line it sits on. A plain list such as `- 2026-10-20 Pricing call` or `- Oct 20: Pricing call`
+makes no timeline row: bold the date and add `|`, or write the entry with
+`gbrain timeline-add`.
+
+Older files that split at
 `--- timeline ---`, or at a `---` line directly above `## Timeline`, still
 parse; gbrain writes `<!-- timeline -->`. The
 [compiled truth and timeline pattern](compiled-truth.md) explains how agents

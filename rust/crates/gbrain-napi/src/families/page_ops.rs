@@ -150,6 +150,16 @@ impl Brain {
         })
     }
 
+    /// `listMarkdownPageSlugs(sourceId)`: `string[]`.
+    #[napi]
+    pub fn list_markdown_page_slugs<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_markdown_page_slugs(&source_id))
+    }
+
     /// `listAllPageRefs()`: `[{ slug, source_id, updated_at }]`.
     #[napi]
     pub fn list_all_page_refs<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
@@ -246,6 +256,81 @@ impl Brain {
         })
     }
 
+    /// `readAdmittedPageRefs(refs, { sourceId?, sourceIds?, excludePrivate?, minTrust?, suppressFlagged? })`:
+    /// `[{ source_id, slug }]`.
+    #[napi]
+    pub fn read_admitted_page_refs<'env>(
+        &self,
+        env: &'env Env,
+        refs: Value,
+        scope: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_admitted_page_refs(
+                &required::<Vec<_>>(refs, "readAdmittedPageRefs refs")?,
+                &required(scope, "readAdmittedPageRefs scope")?,
+            )
+        })
+    }
+
+    /// `readAdmittedPageDateFields(refs, { sourceId?, sourceIds?, excludePrivate?, minTrust?, suppressFlagged? })`:
+    /// `[{ source_id, slug, frontmatter, import_filename }]`.
+    #[napi]
+    pub fn read_admitted_page_date_fields<'env>(
+        &self,
+        env: &'env Env,
+        refs: Value,
+        scope: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_admitted_page_date_fields(
+                &required::<Vec<_>>(refs, "readAdmittedPageDateFields refs")?,
+                &required(scope, "readAdmittedPageDateFields scope")?,
+            )
+        })
+    }
+
+    /// `readPageDateFieldsByIds(ids)`: `[{ id, slug, frontmatter, import_filename }]`.
+    #[napi]
+    pub fn read_page_date_fields_by_ids<'env>(
+        &self,
+        env: &'env Env,
+        ids: Vec<f64>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_page_date_fields_by_ids(&ids))
+    }
+
+    /// `readPageSynopses(refs, { sourceId?, sourceIds?, excludePrivate?, minTrust?, suppressFlagged? })`:
+    /// `[{ page_id, slug, source_id, title, type, synopsis }]`.
+    #[napi]
+    pub fn read_page_synopses<'env>(
+        &self,
+        env: &'env Env,
+        refs: Value,
+        scope: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_page_synopses(
+                &required::<Vec<_>>(refs, "readPageSynopses refs")?,
+                &required(scope, "readPageSynopses scope")?,
+            )
+        })
+    }
+
+    /// `readSeedTitleSlugs(sourceId, types, title)`: at most two slugs.
+    #[napi]
+    pub fn read_seed_title_slugs<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        types: Vec<String>,
+        title: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_seed_title_slugs(&source_id, &types, &title)
+        })
+    }
+
     /// `revertToVersion(slug, versionId, { sourceId? }?)`: `null`.
     #[napi]
     pub fn revert_to_version<'env>(
@@ -258,5 +343,39 @@ impl Brain {
         self.run(env, move |s| {
             s.revert_to_version(&slug, version_id, &arg(options, "revertToVersion options")?)
         })
+    }
+
+    /// `listRestorableAtoms(sourceIds, atomId)`: resolves the restorable re-extraction retirements of the sources (or
+    /// the one atom), by id (`gbrain repair atoms-restore`).
+    #[napi]
+    pub fn list_restorable_atoms<'env>(
+        &self,
+        env: &'env Env,
+        source_ids: Vec<String>,
+        atom_id: Option<i64>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_restorable_atoms(&source_ids, atom_id))
+    }
+
+    /// `countKeptAtomRetirements(sourceIds)`: resolves `{ origin_gone, replaced, older_generation }`.
+    #[napi]
+    pub fn count_kept_atom_retirements<'env>(
+        &self,
+        env: &'env Env,
+        source_ids: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.count_kept_atom_retirements(&source_ids))
+    }
+
+    /// `listStaleAtoms(sourceIds, atomId)`: resolves the stale atoms of the sources (or the one atom), origin-gone
+    /// first, then by id (`gbrain repair stale-atoms`).
+    #[napi]
+    pub fn list_stale_atoms<'env>(
+        &self,
+        env: &'env Env,
+        source_ids: Vec<String>,
+        atom_id: Option<i64>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_stale_atoms(&source_ids, atom_id))
     }
 }

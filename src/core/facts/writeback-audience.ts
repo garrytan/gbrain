@@ -32,6 +32,7 @@ import type { GBrainConfig } from '../config.ts';
 import { readClientOpUsage } from '../mcp-usage.ts';
 import { resolveBrainId } from '../brain-resolver.ts';
 import { HOST_BRAIN_ID } from '../brain-registry.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 
 export const BRAIN_AUDIENCE_KEY = 'brain.audience';
 /** Distinct non-automation clients active in 30d that count as shared evidence. */
@@ -79,10 +80,9 @@ export async function classifyBrainAudience(
     const usage = await readClientOpUsage(engine, { days: 30 });
     const humans = usage.filter((u) => !u.likely_automation);
     const names = humans.map((u) => u.token_name);
-    const bindings = names.length === 0 ? [] : await engine.executeRaw<{ name: string; member_id: string | null }>(
-      `SELECT name, member_id FROM access_tokens WHERE name = ANY($1::text[]) AND revoked_at IS NULL
-       UNION ALL SELECT client_id AS name, member_id FROM oauth_clients WHERE client_id = ANY($1::text[]) AND deleted_at IS NULL`, [names],
-    ).catch(() => null);
+    // A failed binding read counts every credential as its own person (no merge); an engine that refuses the read
+    // (engine_capability_missing) refuses the caller instead of reading as "no bindings".
+    const bindings = names.length === 0 ? [] : await engine.listCredentialMemberBindings(names).catch((err: unknown) => { rethrowCapabilityRefusal(err); return null; });
     const membersOf = new Map<string, Set<string | null>>();
     for (const b of bindings ?? []) membersOf.set(b.name, (membersOf.get(b.name) ?? new Set()).add(b.member_id ?? null));
     const members = new Set<string>();
@@ -107,7 +107,9 @@ export async function classifyBrainAudience(
       audience: 'personal',
       reasons: [...reasons, `no shared declaration; ${humans.length} non-automation client(s) active in 30d, ${counted}`],
     };
-  } catch {
+  } catch (err) {
+    // An engine that refuses a read here refuses the caller: "personal" would be a guess, not evidence.
+    rethrowCapabilityRefusal(err);
     // The declaration read above already proved the DB reachable — a failed
     // usage read here means the multi-client infra isn't there (fresh or
     // pre-OAuth brain), which is itself personal-shaped evidence.

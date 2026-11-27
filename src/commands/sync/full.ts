@@ -43,6 +43,7 @@ import { buildPartialResult } from '../../core/sync-lock.ts';
 import { noteCommittedProgress } from '../../core/forward-progress.ts';
 import {
   MASS_RECONCILE_RATIO,
+  inSlugByteOrder,
   planReconcileDeletes,
   listEverCommittedPaths,
   massReconcileAllowed,
@@ -121,9 +122,10 @@ export async function performFullSync(
   await moveHeldRenames(engine, holds, holdRoot);
   // GBRA-217: a re-import of a source that already has pages reads its reasons from the whole history (a first sync creates
   // every page, so it archives no snapshot to annotate and runs no scan).
-  const known = await engine.countSourcePages(opts.sourceId ?? 'default', { includeDeleted: true });
+  // Soft-deleted pages count: the source has imported before.
+  const known = (await engine.countSourcePages(opts.sourceId ?? 'default', { includeDeleted: true })) > 0;
   const reasons = await scanClassicReasons(engine, { sourceId: opts.sourceId, company, anchorPath, gitRoot: gitContextRoot, from: null, to: headCommit,
-    imports: known > 0 ? 1 : 0 });
+    imports: known ? 1 : 0 });
   let result: import('../import.ts').RunImportResult;
   try {
     result = await runImport(engine, importArgs, {
@@ -457,10 +459,7 @@ async function reconcileFullSyncDeletes(
     // #5988 (E13): the old page of a held rename keeps its origin until the
     // renamed file imports; its file being gone does not make it stale.
     const heldOrigins = await heldRenameOrigins(engine, sid);
-    const rows = (await engine.executeRaw<{ slug: string; source_path: string | null }>(
-      `SELECT slug, source_path FROM pages WHERE source_id = $1 AND source_path IS NOT NULL AND deleted_at IS NULL`,
-      [sid],
-    )).filter(row => !heldOrigins.has(row.source_path!));
+    const rows = inSlugByteOrder(await engine.listSourcePathPages(sid)).filter(row => !heldOrigins.has(row.source_path));
     // #774: a scoped full sync is authoritative ONLY for its scope — pages
     // whose source_path lives outside the subpath (e.g. from an earlier
     // root-level sync of this source) are out of this walk's sight and must

@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { runDbProbe, runDbReadinessProbe, assertWorkerDbReadiness } from '../src/core/minions/db-probe.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
+import { withQueueMembers } from './helpers/queue-engine-members.ts';
 import { LocalConfigurationError, isLocalConfigurationError } from '../src/core/minions/configuration-error.ts';
 
 const budgets = { timeoutMs: 20, directTimeoutMs: 20 };
@@ -68,24 +69,24 @@ describe('typed database configuration faults', () => {
   test('engine adapter skips PGLite and probes both actual Postgres lanes', async () => {
     await assertWorkerDbReadiness({ kind: 'pglite' } as BrainEngine);
     const lanes: string[] = [];
-    const engine = {
+    const engine = withQueueMembers({
       kind: 'postgres',
       connectionManager: { isDualPoolActive: () => true },
       executeRaw: async (_sql: string, _params: unknown[], opts: { signal: AbortSignal }) => { expect(opts.signal).toBeInstanceOf(AbortSignal); lanes.push('read'); },
       executeRawDirect: async () => { lanes.push('direct'); throw fault; },
-    } as unknown as BrainEngine;
+    }) as unknown as BrainEngine;
     await expect(assertWorkerDbReadiness(engine)).rejects.toBe(fault);
     expect(lanes).toEqual(['read', 'direct']);
   });
 
   test('engine adapter does not duplicate a collapsed direct lane', async () => {
     let direct = false;
-    await assertWorkerDbReadiness({
+    await assertWorkerDbReadiness(withQueueMembers({
       kind: 'postgres',
       connectionManager: { isDualPoolActive: () => false },
       executeRaw: success,
       executeRawDirect: async () => { direct = true; },
-    } as unknown as BrainEngine);
+    }) as unknown as BrainEngine);
     expect(direct).toBe(false);
   });
 

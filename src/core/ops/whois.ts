@@ -6,8 +6,12 @@
  * or a declared alias equal to the query, ignoring case, accents (NFKD with
  * marks stripped, stroke letters folded), compatibility width forms and
  * surrounding whitespace or quotes. An email query compares whole addresses
- * case-insensitively, with no accent folding. No nickname, typo, prefix or
- * semantic matching, and no search fallback: no match is an empty list.
+ * case-insensitively, with no accent folding. A phone query compares the
+ * canonical form of each stored `phone` / `phones` value (phone-key.ts:
+ * `+`, country code and number, digits only; config
+ * identity.phone_country_code is the country of a number written without
+ * one). No nickname, typo, prefix, last-digits or semantic matching, and no
+ * search fallback: no match is an empty list.
  *
  * Candidates come from index-served equality probes
  * (engine-sql/exact-identity.ts); every candidate is verified here.
@@ -20,14 +24,15 @@ import { normalizeAlias, normalizeAliasList } from '../search/alias-normalize.ts
 import { slugify } from '../entities/resolve.ts';
 import { slugifySegment } from '../sync.ts';
 import { type ExactIdentityProbes, type ExactIdentityRow } from '../engine-sql/exact-identity.ts';
+import { canonicalPhone, DEFAULT_PHONE_COUNTRY_CODE, parsePhoneCountryCode, PHONE_COUNTRY_CODE_CONFIG_KEY, phoneProbeDigits } from '../phone-key.ts';
 
 export const WHOIS_MAX_QUERY_CHARS = 320;
 export const WHOIS_MAX_TYPES = 20;
 /** Candidate rows verified per call; past it the answer says truncated. */
 export const WHOIS_CANDIDATE_CAP = 100;
 
-export type IdentityMatchKind = 'email' | 'title' | 'alias';
-const MATCH_RANK: Record<IdentityMatchKind, number> = { email: 0, title: 1, alias: 2 };
+export type IdentityMatchKind = 'email' | 'phone' | 'title' | 'alias';
+const MATCH_RANK: Record<IdentityMatchKind, number> = { email: 0, phone: 1, title: 2, alias: 3 };
 const TYPE_NAME = /^[A-Za-z0-9][A-Za-z0-9_.:/-]{0,63}$/;
 const EMAIL = /^[^\s@]+@[^\s@]+$/;
 const EDGE_QUOTES = /^[\s"'`\u2018\u2019\u201c\u201d\u00ab\u00bb]+|[\s"'`\u2018\u2019\u201c\u201d\u00ab\u00bb]+$/g;
@@ -48,7 +53,11 @@ export function identityEmailKey(raw: string): string | null {
   return EMAIL.test(key) ? key : null;
 }
 
-interface IdentityQuery { email: string | null; name: string }
+/** `phone` is the query's canonical phone form, `countryCode` the default country of a stored number without one. */
+interface IdentityQuery { email: string | null; name: string; phone?: string | null; countryCode?: string }
+
+/** A query written only with phone characters (digits, spaces, + - . ( ) /): the only queries tried as a phone. */
+const PHONE_SHAPED = /^[\s+\d().\-/]+$/;
 
 /** A jsonb column as read: drivers hand it back parsed or as JSON text. */
 function decoded(value: unknown): unknown {
@@ -62,9 +71,10 @@ function strings(value: unknown): string[] {
 }
 
 /** The strongest exact match of the query on one candidate page, or null. */
-export function identityMatchKind(query: IdentityQuery, row: Pick<ExactIdentityRow, 'title' | 'email' | 'emails' | 'aliases'>): IdentityMatchKind | null {
+export function identityMatchKind(query: IdentityQuery, row: Pick<ExactIdentityRow, 'title' | 'email' | 'emails' | 'aliases'> & Partial<Pick<ExactIdentityRow, 'phone' | 'phones'>>): IdentityMatchKind | null {
   const same = (v: string) => (query.email ? identityEmailKey(v) === query.email : identityNameKey(v) === query.name);
   if (query.email && [...strings(row.email), ...strings(row.emails)].some(same)) return 'email';
+  if (query.phone && [...strings(row.phone), ...strings(row.phones)].some(v => canonicalPhone(v, query.countryCode) === query.phone)) return 'phone';
   if (row.title && same(row.title)) return 'title';
   return normalizeAliasList(decoded(row.aliases)).some(same) ? 'alias' : null;
 }
@@ -77,6 +87,10 @@ function probesFor(raw: string, query: IdentityQuery): ExactIdentityProbes {
     return { titleKeys: [query.email], titleRaw: asGiven, basenames: [], aliasKeys: [query.email], emails: uniq([asGiven, query.email]) };
   }
   const nfkc = raw.normalize('NFKC').replace(EDGE_QUOTES, '').replace(/\s+/g, ' ');
+  if (query.phone) {
+    return { titleKeys: uniq([written, query.name]), titleRaw: nfkc, basenames: [], aliasKeys: uniq([written, query.name]), emails: [],
+      phones: phoneProbeDigits(query.phone, query.countryCode) };
+  }
   return {
     titleKeys: uniq([written, query.name]),
     titleRaw: nfkc,
@@ -108,21 +122,26 @@ const whois: Operation = {
   idempotent: true,
   outputRedaction: 'retrieval',
   scope: 'read',
-  description: 'Exact identity lookup: entity pages whose email, title or declared alias equals an email address or name, ignoring case, accents and quotes. '
+  description: 'Exact identity lookup: entity pages whose email, phone, title or declared alias equals an email address, phone number or name, ignoring case, accents and quotes; phones compare in one canonical form (+, country code, digits). '
     + 'Never fuzzy: empty matches means no exact match; ambiguous means several.',
   params: {
-    query: { type: 'string', required: true, description: "Email address or name, e.g. 'alice@acme-example.com'." },
+    query: { type: 'string', required: true, description: "Email address, phone number or name, e.g. 'alice@acme-example.com' or '+1 555 555 0123'." },
     types: { type: 'array', minItems: 1, items: { type: 'string' }, description: "Page types; default: the schema pack's entity types." },
     source_id: { type: 'string', description: "One source; '__all__' spans your sources." },
   },
   handler: async (ctx, p) => {
     const params = parseParams(ctx, p);
+    if (!params.query.email && PHONE_SHAPED.test(params.raw)) {
+      const countryCode = parsePhoneCountryCode(await ctx.engine.getConfig(PHONE_COUNTRY_CODE_CONFIG_KEY).catch(() => null) ?? DEFAULT_PHONE_COUNTRY_CODE);
+      const phone = canonicalPhone(params.raw, countryCode);
+      if (phone) params.query = { ...params.query, phone, countryCode };
+    }
     const sourceIdParam = parseSourceIdParam(p.source_id, 'whois', { allowAll: true });
     const scope = federatedSearchScope(ctx, sourceIdParam);
     await assertExplicitSourceLive(ctx, sourceIdParam);
     const sourceIds = scope.sourceIds ?? (scope.sourceId !== undefined
       ? [scope.sourceId]
-      : (await ctx.engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE archived IS NOT TRUE ORDER BY id')).map(r => r.id));
+      : (await ctx.engine.listAllSources()).map(r => r.id).sort());
     const { resolveEntityTypes } = await import('../schema-pack/entity-types.ts');
     const resolution = params.types
       ? { status: 'explicit' as const, filter: { types: params.types, per_source: [] } }
@@ -145,7 +164,7 @@ const whois: Operation = {
     if (rows.length > WHOIS_CANDIDATE_CAP) notes.push('More candidates than ' + WHOIS_CANDIDATE_CAP + ' share this key, so matches may be incomplete: narrow with source_id or types.');
     return {
       query: params.raw.trim(),
-      query_kind: params.query.email ? 'email' : 'name',
+      query_kind: params.query.email ? 'email' : params.query.phone ? 'phone' : 'name',
       types: params.types ?? 'schema_pack_entity_types',
       types_status: resolution.status,
       matches,

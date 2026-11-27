@@ -83,7 +83,7 @@ fn pair(alias: &str, refs: &[&str]) -> (String, Vec<String>) {
 
 fn canonical(store: &Store, slug: &str, sources: &[&str]) -> Option<(String, String, usize)> {
     store
-        .resolve_slug_with_alias_detailed(slug, &strings(sources))
+        .resolve_slug_with_alias_detailed(slug, &strings(sources), None)
         .unwrap()
         .map(|m| (m.canonical_slug, m.source_id, m.matches))
 }
@@ -753,4 +753,135 @@ fn resolve_aliases_applies_the_page_policy_to_aliases_and_title_shadows() {
             pair("restricted", &["default/c/restricted"]),
         ]
     );
+}
+
+/// `listAliasTargets` as `(source/slug, page, page_aliases, slug_redirects)`.
+fn targets(store: &Store, sources: Option<&[&str]>) -> Vec<(String, &'static str, u64, u64)> {
+    let ids = sources.map(strings);
+    store
+        .list_alias_targets(ids.as_deref())
+        .unwrap()
+        .into_iter()
+        .map(|t| {
+            (
+                format!("{}/{}", t.source_id, t.slug),
+                t.page,
+                t.page_aliases,
+                t.slug_redirects,
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn alias_targets_name_missing_and_soft_deleted_pages_and_the_delete_takes_only_missing_ones() {
+    let dir = TempDir::new("aliases-orphans");
+    let store = open(&dir);
+    source(&store, "work");
+    // notes/b: renamed away to notes/c, so notes/b is a rename redirect (alias) pointing at notes/c.
+    put(&store, "notes/b");
+    store.update_slug("notes/b", "notes/c", None).unwrap();
+    set(&store, "notes/c", "default", &["see", "cee"]).unwrap();
+    put(&store, "notes/live");
+    set(&store, "notes/live", "default", &["alive"]).unwrap();
+    put(&store, "notes/soft");
+    set(&store, "notes/soft", "default", &["soft"]).unwrap();
+    store.soft_delete_page("notes/soft", None).unwrap();
+    put_in(&store, "notes/w", "w", json!({}), Some("work"));
+    set(&store, "notes/w", "work", &["dub"]).unwrap();
+    store.delete_page("notes/c", None).unwrap();
+    store.delete_page("notes/w", Some("work")).unwrap();
+    assert!(store.list_alias_targets(Some(&[])).unwrap().is_empty());
+    assert_eq!(
+        targets(&store, None),
+        vec![
+            ("default/notes/c".into(), "missing", 2, 1),
+            ("default/notes/soft".into(), "soft_deleted", 1, 0),
+            ("work/notes/w".into(), "missing", 1, 0),
+        ]
+    );
+    assert_eq!(
+        targets(&store, Some(&["work"])),
+        vec![("work/notes/w".into(), "missing", 1, 0)]
+    );
+    // A soft-deleted page keeps its rows; a live page keeps its rows; a missing one loses both tables'.
+    assert_eq!(
+        store
+            .delete_orphaned_aliases("default", "notes/soft")
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        store
+            .delete_orphaned_aliases("default", "notes/live")
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        store.delete_orphaned_aliases("default", "notes/c").unwrap(),
+        3
+    );
+    assert_eq!(
+        store.delete_orphaned_aliases("default", "notes/c").unwrap(),
+        0
+    );
+    assert_eq!(
+        targets(&store, None),
+        vec![
+            ("default/notes/soft".into(), "soft_deleted", 1, 0),
+            ("work/notes/w".into(), "missing", 1, 0)
+        ]
+    );
+    assert_eq!(
+        resolve(&store, &["alive"], json!({})),
+        vec![pair("alive", &["default/notes/live"])]
+    );
+    let err = store
+        .delete_orphaned_aliases("default", "a\0b")
+        .unwrap_err();
+    assert_eq!(err.code, INVALID_ARGUMENT);
+}
+
+#[test]
+fn list_slug_aliases_reads_one_source_in_alias_order_and_survives_a_reopen() {
+    let dir = TempDir::new("aliases-list");
+    {
+        let store = open(&dir);
+        source(&store, "other");
+        put(&store, "notes/m");
+        put(&store, "notes/a");
+        put_in(&store, "notes/a", "notes/a", json!({}), Some("other"));
+        store.update_slug("notes/m", "notes/n", None).unwrap();
+        store.update_slug("notes/a", "notes/b", None).unwrap();
+        store.update_slug("notes/b", "notes/c", None).unwrap();
+        store
+            .update_slug("notes/a", "notes/z", Some("other"))
+            .unwrap();
+    }
+    let store = open(&dir);
+    let rows = |source: &str| -> Vec<(String, String)> {
+        store
+            .list_slug_aliases(source)
+            .unwrap()
+            .into_iter()
+            .map(|r| {
+                (
+                    r["alias_slug"].as_str().unwrap().to_string(),
+                    r["canonical_slug"].as_str().unwrap().to_string(),
+                )
+            })
+            .collect()
+    };
+    let pair = |a: &str, c: &str| (a.to_string(), c.to_string());
+    assert_eq!(
+        rows("default"),
+        vec![
+            pair("notes/a", "notes/c"),
+            pair("notes/b", "notes/c"),
+            pair("notes/m", "notes/n"),
+        ]
+    );
+    assert_eq!(rows("other"), vec![pair("notes/a", "notes/z")]);
+    assert!(rows("missing").is_empty());
+    assert!(rows("bad\0id").is_empty());
 }

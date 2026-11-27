@@ -11,6 +11,8 @@
  *    after the row's normaliser, and the raw answers must still differ (when the case starts to match, the row must go).
  *  - A case that reaches a member or an option the Rust engine refuses must END on the typed `engine_capability_missing`
  *    refusal naming that capability. A refusal the case caught on the way to another outcome does not count.
+ *  - A case with a `rustStop` pin must END on an Error with the pin's code whose message carries the pin, after calling
+ *    every member in `methods`; it counts as stopped. Returning, or ending on a capability refusal, fails (harness.ts).
  */
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -21,6 +23,7 @@ import { detectAddonTarget } from '../../src/core/rust-engine/addon-target.ts';
 import { RUST_ENGINE_MEMBERS } from '../../src/core/rust-engine/members.ts';
 import { STORE_MEMBERS } from '../../src/core/rust-engine/store-members/index.ts';
 import { openRustEngine, RustEngine } from '../../src/core/rust-engine.ts';
+import { liftManagedHoldWhenRequested } from './rust-managed.ts';
 
 export const RUST_ARM_FLAG = 'GBRAIN_TEST_RUST_ARM';
 
@@ -63,7 +66,8 @@ export interface RustBrainDir { engine: RustEngine; dir: string }
 /** A Rust engine on a new brain directory, not connected. `loadRustArmAddon` has run. */
 export function newRustBrain(): RustBrainDir {
   if (!addon) throw new Error('loadRustArmAddon has not run');
-  const engine = openRustEngine({ addon, databasePath: mkdtempSync(join(tmpdir(), 'gbrain-rust-arm-')) });
+  // GBRAIN_TEST_RUST_MANAGED=1 lifts the managed_persistence hold on this engine only (rust-managed.ts).
+  const engine = liftManagedHoldWhenRequested(openRustEngine({ addon, databasePath: mkdtempSync(join(tmpdir(), 'gbrain-rust-arm-')) }));
   return { engine, dir: engine.databasePath };
 }
 
@@ -80,13 +84,34 @@ export function removeBrainDir(dir: string): void {
 }
 
 /** Fixture: register a source on the Rust brain (BrainEngine has no typed "create source"). */
-export async function createRustSource(engine: unknown, id: string, config: Record<string, unknown>, localPath?: string): Promise<void> {
-  await (engine as RustEngine).openStore('createSource').brain.upsertSource({ id, name: id, config, local_path: localPath ?? null });
+export async function createRustSource(engine: unknown, id: string, config: Record<string, unknown>, localPath?: string, lastSyncAt?: string): Promise<void> {
+  await (engine as RustEngine).openStore('createSource').brain.upsertSource({ id, name: id, config, local_path: localPath ?? null, ...(lastSyncAt ? { last_sync_at: lastSyncAt } : {}) });
 }
 
 /** Fixture: archive a source on the Rust brain (BrainEngine has no typed "archive source"). */
 export async function archiveRustSource(engine: unknown, id: string): Promise<void> {
   await (engine as RustEngine).openStore('archiveSource').brain.setSourceArchived(id, true);
+}
+
+/** Fixture: put a whole op checkpoint row on the Rust brain (the identity-downgrade recorder writes it through executeRaw). */
+export async function putRustOpCheckpointRow(engine: unknown, op: string, fingerprint: string, completedKeys: unknown[]): Promise<void> {
+  await (engine as RustEngine).openStore('putOpCheckpointRow').brain.putOpCheckpointRow(op, fingerprint, completedKeys);
+}
+
+/** Fixture: a page's `deleted_at` as the Rust store keeps it (ISO with microseconds; the engine member hands back a Date). */
+export async function rustPageDeletedAt(engine: unknown, sourceId: string, slug: string): Promise<string | null> {
+  const row = await (engine as RustEngine).openStore('readPageOrigin').brain.readPageOrigin({ sourceId, slug }) as { deleted_at: string | null } | null;
+  return row?.deleted_at ?? null;
+}
+
+/** Fixture: the Rust brain's access-rule store (the policy writes have no typed BrainEngine member). */
+export function rustAccessBrain(engine: unknown) {
+  return (engine as RustEngine).openStore('accessRules').brain;
+}
+
+/** Fixture: record a page purge on the Rust brain (the store's `page_purges` ledger has no typed BrainEngine writer). */
+export async function recordRustPagePurge(engine: unknown, sourceId: string, hashes: string[], slug: string, requestId: string | null): Promise<void> {
+  await (engine as RustEngine).openStore('recordPagePurge').brain.recordPagePurge(sourceId, hashes, slug, requestId);
 }
 
 /** A member the fixture seeds: an id, an optional email, a kind and groups, enabled unless `state` says otherwise. */

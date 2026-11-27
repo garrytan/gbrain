@@ -35,6 +35,7 @@ import { resolveStrictEntityReference } from '../entities/resolve.ts';
 import { dropRekeyDuplicates } from '../facts/ontology-rekey.ts';
 import { RELINK_OPERATION } from '../facts/relink-publish.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
+import { withTrustKeep } from '../persistence/context.ts';
 import { coordinatedDatabaseWrite } from '../persistence/database-write.ts';
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
 import { afterCursor, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairScope } from './core.ts';
@@ -54,15 +55,7 @@ export interface PagelessEntity {
 
 /** Every page-less entity slug of these sources, classified, in (source, slug) order. Read-only. */
 export async function classifyPagelessEntities(engine: BrainEngine, sourceIds: string[]): Promise<PagelessEntity[]> {
-  const rows = await engine.executeRaw<{ source_id: string; slug: string; ids: Array<number | string> | null; fenced: number | string }>(`
-    SELECT f.source_id, f.entity_slug AS slug,
-           array_agg(f.id ORDER BY f.id) FILTER (WHERE f.row_num IS NULL) AS ids,
-           count(*) FILTER (WHERE f.row_num IS NOT NULL) AS fenced
-      FROM facts f
-     WHERE f.source_id = ANY($1::text[]) AND f.entity_slug IS NOT NULL
-       AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id = f.source_id AND p.slug = f.entity_slug AND p.deleted_at IS NULL)
-     GROUP BY f.source_id, f.entity_slug
-     ORDER BY f.source_id COLLATE "C", f.entity_slug COLLATE "C"`, [sourceIds]);
+  const rows = await engine.listPagelessEntityFacts(sourceIds);
   const out: PagelessEntity[] = [];
   for (const row of rows) {
     const ids = (row.ids ?? []).map(Number);
@@ -82,8 +75,7 @@ function previewCommand(scope: RepairScope): string {
   return `gbrain repair facts-rehome${scope.source_ids.length === 1 ? ` --source ${scope.source_ids[0]}` : ''}`;
 }
 
-const sourcesOf = (engine: BrainEngine, scope: RepairScope) => engine.executeRaw<{ id: string; incarnation: string }>(
-  'SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id', [scope.source_ids]);
+const sourcesOf = (engine: BrainEngine, scope: RepairScope) => engine.listSourceIncarnations(scope.source_ids);
 
 const hashOf = (scope: RepairScope, sources: unknown, entities: PagelessEntity[]) =>
   previewHash({ kind: 'facts-rehome-v1', brain_id: scope.brain_id, sources, selection: { source_ids: scope.source_ids }, entities });
@@ -131,15 +123,12 @@ export const factsRehomeRepair: RepairHandler = {
     const { entity, hash, last } = entry as RehomeItem;
     const target = entity.target!;
     const move = async (tx: BrainEngine): Promise<boolean> => {
-      const [state] = await tx.executeRaw<{ from_live: boolean; to_live: boolean; ids: Array<number | string> | null }>(`
-        SELECT EXISTS (SELECT 1 FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL) AS from_live,
-               EXISTS (SELECT 1 FROM pages WHERE source_id = $1 AND slug = $3 AND deleted_at IS NULL) AS to_live,
-               (SELECT array_agg(id ORDER BY id) FROM facts WHERE source_id = $1 AND entity_slug = $2 AND row_num IS NULL) AS ids`,
-        [entity.source_id, entity.slug, target]);
+      const state = await tx.readEntityRehomeState(entity.source_id, entity.slug, target);
       if (!state || state.from_live || !state.to_live || JSON.stringify((state.ids ?? []).map(Number)) !== JSON.stringify(entity.ids)) return false;
       await dropRekeyDuplicates(tx, entity.source_id, { where: 'f.entity_slug = $2 AND f.row_num IS NULL', entity: '$3::text', sms: 'f.source_markdown_slug',
         params: [entity.slug, target] });
-      await tx.executeRaw('UPDATE facts SET entity_slug = $3 WHERE source_id = $1 AND entity_slug = $2 AND row_num IS NULL', [entity.source_id, entity.slug, target]);
+      // #10003: the facts move to another key with their text unchanged, so they keep their stored trust tier.
+      await withTrustKeep(tx, ['facts'], () => tx.rehomeEntityFacts(entity.source_id, entity.slug, target));
       return true;
     };
     const managed = await coordinatedDatabaseWrite({ ...ctx, sourceId: entity.source_id }, RELINK_OPERATION, target, [entity.slug, target], tx => move(tx));

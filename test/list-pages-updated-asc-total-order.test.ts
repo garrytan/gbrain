@@ -38,7 +38,7 @@ afterAll(async () => {
 
 describe('updated_asc sort is a total order across sources sharing slug + updated_at', () => {
   test('PAGE_SORT_SQL.updated_asc carries source_id + id tiebreakers', () => {
-    expect(PAGE_SORT_SQL.updated_asc).toBe('p.updated_at ASC, p.slug ASC, p.source_id ASC, p.id ASC');
+    expect(PAGE_SORT_SQL.updated_asc).toBe('p.updated_at ASC, p.slug COLLATE "C" ASC, p.source_id COLLATE "C" ASC, p.id ASC');
   });
 
   test('limit=1 paging over two sources yields each row exactly once, in a stable order', async () => {

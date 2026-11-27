@@ -151,7 +151,7 @@ export function labelledOnlyOwnerError(member: string, via: 'grant' | 'owner'): 
  */
 export async function setOwner(engine: BrainEngine, raw: unknown): Promise<OwnerView> {
   const { member } = await memberIdentity(engine, raw);
-  const [row] = await engine.executeRaw<{ labelled_only: boolean }>('SELECT labelled_only FROM access_members WHERE id = $1', [member]);
+  const [row] = await engine.readAccessMembers({ id: member });
   if (row?.labelled_only === true) throw labelledOnlyOwnerError(member, 'owner');
   await engine.setConfig(OWNER_MEMBER_KEY, member);
   return ownerView(engine);

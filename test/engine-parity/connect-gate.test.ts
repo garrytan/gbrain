@@ -7,7 +7,8 @@
  *    answer the same on every engine arm (PGLite always; Postgres with DATABASE_URL; the Rust arm through
  *    test/engine-parity/harness.ts) for a fresh, unmanaged brain: every persistence table is present, the roots are
  *    the sources with a local path (archived ones too) with no worktree, there is no custody row (with or without
- *    the run setting) and no retired deactivation.
+ *    the run setting) and no retired deactivation. Once an unmanaged claim binds a worktree on this host
+ *    (worktreeClaimStore), the roots add that worktree's root for each source bound under it.
  *  - Regression: an engine that answers one of these differently either refuses every connect and every write's
  *    admission (a custody row that is not there, a missing table read as an error) or records the wrong managed
  *    roots (a source path dropped, an archived checkout no longer guarded); the Rust engine has no SQL, so each
@@ -20,7 +21,10 @@
  *  - Seam: none. Real engines, typed reads only; sources are made and archived through the harness fixtures, and an
  *    incarnation is compared with the one `readSourceIncarnation` reports.
  */
+import { randomUUID } from 'node:crypto';
 import { describe, expect } from 'bun:test';
+import type { BrainEngine } from '../../src/core/engine.ts';
+import { claimWorktreeBinding } from '../../src/core/engine-sql/worktree-claim.ts';
 import { archiveSource, createSource, parityArms, sorted } from './harness.ts';
 import { cleanupRetiredManagedMarkers } from '../../src/core/persistence/deactivation.ts';
 import { assertGraduationConnectAllowed } from '../../src/core/persistence/graduation-custody.ts';
@@ -30,6 +34,7 @@ import { testBackends } from '../helpers/test-backends.ts';
 const { parityTest } = parityArms(testBackends());
 
 const HOST = '00000000-0000-4000-8000-0000000000a1';
+const OTHER_HOST = '00000000-0000-4000-8000-0000000000b2';
 
 describe('engine parity: connect gate persistence reads', () => {
   parityTest('hasPersistenceTable finds every persistence table the connect gate probes', {
@@ -65,6 +70,34 @@ describe('engine parity: connect gate persistence reads', () => {
         { local_path: '/srv/brain/alpha', source_id: 'alpha', source_incarnation: 'matches', worktree_id: null, topology_generation: null },
         { local_path: '/srv/brain/beta', source_id: 'beta', source_incarnation: 'matches', worktree_id: null, topology_generation: null },
       ],
+    });
+    return answers;
+  });
+
+  // An unmanaged claim binds a worktree on this host (worktreeClaimStore, as persistence/ownership.ts claimWorktree
+  // does): the host's bound sources come first in the UNION, at the worktree's root, next to the source's own path row.
+  parityTest('listManagedRootBindings adds this host\'s claimed worktree roots and leaves another host with the path rows', {
+    methods: ['listManagedRootBindings', 'worktreeClaimStore', 'readSourceIncarnation'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'work', {}, '/srv/brain/root/work');
+    const worktreeId = randomUUID();
+    await claimWorktreeBinding(engine, async store => {
+      const source = await store.lockSource('work');
+      await store.insertWorktree({ id: worktreeId, ownerHostId: HOST, ownerEpoch: 1 });
+      await store.insertHostBinding({ worktreeId, hostId: HOST, localPath: '/srv/brain/root', coordinationPath: '/srv/brain/coord' });
+      await store.insertSourceBinding({ sourceId: 'work', incarnation: source!.incarnation, worktreeId, relativePath: 'work' });
+    });
+    const incarnation = (await engine.readSourceIncarnation('work'))?.incarnation;
+    const view = (rows: Awaited<ReturnType<BrainEngine['listManagedRootBindings']>>) => sorted(rows.map(row => ({
+      ...row, source_incarnation: row.source_incarnation === incarnation ? 'matches' : row.source_incarnation,
+      worktree_id: row.worktree_id === worktreeId ? 'claimed' : row.worktree_id,
+      topology_generation: row.topology_generation == null ? null : String(row.topology_generation),
+    })), (r) => r.local_path);
+    const answers = { host: view(await engine.listManagedRootBindings(HOST)), otherHost: view(await engine.listManagedRootBindings(OTHER_HOST)) };
+    const pathRow = { local_path: '/srv/brain/root/work', source_id: 'work', source_incarnation: 'matches', worktree_id: null, topology_generation: null };
+    expect(answers).toEqual({
+      host: [{ local_path: '/srv/brain/root', source_id: 'work', source_incarnation: 'matches', worktree_id: 'claimed', topology_generation: '1' }, pathRow],
+      otherHost: [pathRow],
     });
     return answers;
   });

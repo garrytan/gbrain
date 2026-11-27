@@ -60,10 +60,19 @@ describe('PeopleClient (#6324)', () => {
       nextSyncToken: 'ppl-1',
     }));
     const { contacts } = await people.listConnections({});
-    expect(CONTACT_PERSON_FIELDS).toBe('names,emailAddresses,organizations,phoneNumbers,memberships');
+    expect(CONTACT_PERSON_FIELDS).toBe('names,emailAddresses,organizations,phoneNumbers,memberships,metadata');
     expect(calls[0].searchParams.get('personFields')).toBe(CONTACT_PERSON_FIELDS);
     expect(contacts[0].phones).toEqual(['+15550100', '555 0101']);
     expect(contacts[0].groups).toEqual([{ id: 'contactGroups/abc123', name: null }]);
+  });
+
+  test('#10246: a delta tombstone reads as deleted, as the People API marks it only under a metadata mask', async () => {
+    const { people } = fakePeople((u) => {
+      const metadata = (u.searchParams.get('personFields') ?? '').split(',').includes('metadata');
+      return json({ connections: [person('gone', { etag: 'e1', ...(metadata ? { metadata: { deleted: true } } : {}) })], nextSyncToken: 'ppl-2' });
+    });
+    const { contacts } = await people.listConnections({ syncToken: 'ppl-1' });
+    expect(contacts.map((c) => [c.resourceName, c.deleted])).toEqual([['people/gone', true]]);
   });
 
   test('every page of a list repeats the same parameters, the syncToken included', async () => {
@@ -172,6 +181,9 @@ function harness(state: Partial<GoogleSourceState> = {}, opts: { idLookup?: bool
     async delete(slug: string) { return pages.delete(slug); },
   };
   const engine = {
+    async getConfig() { return null; },
+    // The trunk reads identity links through the typed member; this fake holds none, as its executeRaw answered [] for that read.
+    async listEntityIdentityRows() { return []; },
     async executeRaw(sql: string, params: unknown[]) {
       if (sql.includes("frontmatter->>'google_contact_id'")) {
         if (opts.idLookup === false) return [];

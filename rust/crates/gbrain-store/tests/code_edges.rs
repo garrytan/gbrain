@@ -1,4 +1,4 @@
-//! Code edges: `addCodeEdges`, `deleteCodeEdgesForChunks`, `getCallersOf`, `getCalleesOf` and
+//! Code edges: `addCodeEdges`, `deleteCodeEdgesForChunks`, `clearCodeEdgesLeavingChunks`, `getCallersOf`, `getCalleesOf` and
 //! `getEdgesByChunk`, matched to the PGLite engine.
 
 mod common;
@@ -258,4 +258,45 @@ fn deleting_chunks_drops_their_edges_both_ways() {
     // Sealing the page with no chunks drops the edges of the chunks it removed.
     assert!(seed(&store, "default", "a", &[]).is_empty());
     assert!(by_chunk(&store, a[0], "both").is_empty());
+}
+
+#[test]
+fn clear_leaving_drops_the_edges_that_leave_a_chunk_and_keeps_the_ones_that_point_at_it() {
+    let dir = TempDir::new("code-edges-clear-leaving");
+    let store = open(&dir);
+    let a = seed(&store, "default", "a", &["run", "helper", "other"]);
+    store
+        .add_code_edges(&[
+            edge(a[0], Some(a[1]), "a.run", "a.helper"),
+            edge(a[2], Some(a[1]), "a.other", "a.helper"),
+            edge(a[1], Some(a[2]), "a.helper", "a.other"),
+            edge(a[0], None, "a.run", "ext.log"),
+            edge(a[2], None, "a.other", "ext.log"),
+        ])
+        .unwrap();
+    // Nothing named, an unknown id and a null match nothing.
+    store.clear_code_edges_leaving_chunks(&[]).unwrap();
+    store
+        .clear_code_edges_leaving_chunks(&[json!(999_999), Value::Null])
+        .unwrap();
+    assert_eq!(by_chunk(&store, a[1], "both").len(), 3);
+    // `run` loses what leaves it (one resolved, one symbol edge); the edge from `other` to `helper` stays.
+    store
+        .clear_code_edges_leaving_chunks(&[json!(a[0])])
+        .unwrap();
+    assert!(by_chunk(&store, a[0], "out").is_empty());
+    assert_eq!(ids(&by_chunk(&store, a[1], "in")), vec![(true, 2)]);
+    assert_eq!(by_chunk(&store, a[2], "out").len(), 1 + 1);
+    // `delete_code_edges_for_chunks` would also have dropped the edge that points at `helper`.
+    store
+        .clear_code_edges_leaving_chunks(&[json!(a[1]), json!(a[2])])
+        .unwrap();
+    for chunk in &a {
+        assert!(by_chunk(&store, *chunk, "both").is_empty());
+    }
+    // A non-integer id is refused as the delete member refuses it.
+    let err = store
+        .clear_code_edges_leaving_chunks(&[json!("x")])
+        .unwrap_err();
+    assert_eq!(err.code, INVALID_ARGUMENT);
 }

@@ -14,7 +14,7 @@ pub struct ConfigValueRow {
     pub value: String,
 }
 
-fn config_key(key: &str) -> Result<Vec<u8>> {
+pub(crate) fn config_key(key: &str) -> Result<Vec<u8>> {
     if key.contains('\0') {
         return Err(StoreError::invalid("a config key cannot contain NUL"));
     }
@@ -69,6 +69,35 @@ impl Store {
     pub fn set_config(&self, key: &str, value: &str) -> Result<()> {
         let key = config_key(key)?;
         self.write(|tx| tx.put(&key, value.as_bytes()))
+    }
+
+    /// Sets `key` only when it has no value; returns true when it wrote. Mirrors `insertConfigIfAbsent`
+    /// (`INSERT ... ON CONFLICT (key) DO NOTHING`).
+    pub fn insert_config_if_absent(&self, key: &str, value: &str) -> Result<bool> {
+        let key = config_key(key)?;
+        self.write(|tx| {
+            if tx.get(&key)?.is_some() {
+                return Ok(false);
+            }
+            tx.put(&key, value.as_bytes())?;
+            Ok(true)
+        })
+    }
+
+    /// `lockContentDriftState(key, initial)`: stores `initial` under `key` when the key has no value, then returns the
+    /// stored value (`INSERT ... ON CONFLICT (key) DO NOTHING`, then `SELECT value ... FOR UPDATE`). The store has one
+    /// writer, so the write itself is the lock.
+    pub fn ensure_config(&self, key: &str, initial: &str) -> Result<String> {
+        let key = config_key(key)?;
+        self.write(|tx| match tx.get(&key)? {
+            Some(bytes) => String::from_utf8(bytes).map_err(|_| {
+                StoreError::new(crate::error::STORE_CORRUPT, "a config value is not UTF-8")
+            }),
+            None => {
+                tx.put(&key, initial.as_bytes())?;
+                Ok(initial.to_owned())
+            }
+        })
     }
 
     /// Removes `key`; returns how many rows were removed (0 or 1). Mirrors `unsetConfig`.

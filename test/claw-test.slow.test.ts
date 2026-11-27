@@ -25,6 +25,7 @@ import { execFileSync, spawnSync } from 'child_process';
 import { mkdirSync, existsSync, mkdtempSync, rmSync, readFileSync, readdirSync, writeFileSync, chmodSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, resolve } from 'path';
+import { envWithoutDatabaseUrl } from './helpers/cli-spawn.ts';
 
 const REPO_ROOT = resolve(import.meta.dir, '..');
 const BIN_CACHE = join(REPO_ROOT, 'test', '.cache');
@@ -48,7 +49,7 @@ describe('gbrain claw-test --scenario fresh-install (scripted)', () => {
       const result = spawnSync(BIN_PATH, ['claw-test', '--scenario', 'fresh-install', '--keep-tempdir'], {
         cwd: REPO_ROOT,
         env: {
-          ...process.env,
+          ...envWithoutDatabaseUrl(),
           GBRAIN_HOME: tmp,
           GBRAIN_BIN_OVERRIDE: BIN_PATH,
           GBRAIN_CLAW_SCENARIOS_DIR: join(REPO_ROOT, 'test', 'fixtures', 'claw-test-scenarios'),
@@ -103,7 +104,7 @@ describe('gbrain claw-test --scenario fresh-install (scripted)', () => {
       const result = spawnSync(BIN_PATH, ['claw-test', '--scenario', 'fresh-install', '--keep-tempdir'], {
         cwd: REPO_ROOT,
         env: {
-          ...process.env,
+          ...envWithoutDatabaseUrl(),
           GBRAIN_HOME: tmp,
           GBRAIN_BIN_OVERRIDE: fakeBin,
           GBRAIN_CLAW_SCENARIOS_DIR: join(REPO_ROOT, 'test', 'fixtures', 'claw-test-scenarios'),
@@ -134,7 +135,7 @@ describe('gbrain claw-test --list-agents', () => {
     const result = spawnSync(BIN_PATH, ['claw-test', '--list-agents'], {
       cwd: REPO_ROOT,
       env: {
-        ...process.env,
+        ...envWithoutDatabaseUrl(),
         HERMES_BIN: '/nonexistent/hermes',
         OPENCLAW_BIN: '/nonexistent/openclaw',
         GROK_BIN: '/nonexistent/grok',
@@ -170,7 +171,7 @@ describe('gbrain claw-test --live (shim agents; no real agent binary, no tokens)
     const result = spawnSync(BIN_PATH, ['claw-test', '--live', '--agent', 'openclaw', '--scenario', scenario], {
       cwd: REPO_ROOT,
       env: {
-        ...process.env,
+        ...envWithoutDatabaseUrl(),
         GBRAIN_HOME: tmp,
         OPENCLAW_BIN: shim,
         GBRAIN_BIN_OVERRIDE: BIN_PATH,
@@ -317,7 +318,7 @@ describe('gbrain claw-test — adversarial-gate regression pins', () => {
       const result = spawnSync(BIN_PATH, ['claw-test', '--scenario', 'upgrade-from-v0.18'], {
         cwd: REPO_ROOT,
         env: {
-          ...process.env,
+          ...envWithoutDatabaseUrl(),
           GBRAIN_HOME: tmp,
           GBRAIN_BIN_OVERRIDE: BIN_PATH,
           GBRAIN_CLAW_SCENARIOS_DIR: SCENARIOS_DIR,
@@ -339,7 +340,7 @@ describe('gbrain claw-test — adversarial-gate regression pins', () => {
     ]) {
       const result = spawnSync(BIN_PATH, argv, {
         cwd: REPO_ROOT,
-        env: { ...process.env, GBRAIN_CLAW_SCENARIOS_DIR: SCENARIOS_DIR },
+        env: { ...envWithoutDatabaseUrl(), GBRAIN_CLAW_SCENARIOS_DIR: SCENARIOS_DIR },
         encoding: 'utf-8',
         timeout: 30_000,
       });
@@ -357,7 +358,7 @@ describe('gbrain claw-test — adversarial-gate regression pins', () => {
       const result = spawnSync(BIN_PATH, ['claw-test', '--scenario', 'fresh-install'], {
         cwd: REPO_ROOT,
         env: {
-          ...process.env,
+          ...envWithoutDatabaseUrl(),
           GBRAIN_HOME: tmp,
           GBRAIN_BIN_OVERRIDE: hangBin,
           GBRAIN_CLAW_SCENARIOS_DIR: SCENARIOS_DIR,
@@ -403,7 +404,7 @@ describe('gbrain claw-test — adversarial-gate regression pins', () => {
       const fake = writeHangingGbrain(tmp, kidFile);
       const result = spawnSync(BIN_PATH, ['claw-test', '--scenario', 'fresh-install'], {
         cwd: REPO_ROOT,
-        env: { ...process.env, GBRAIN_HOME: tmp, GBRAIN_BIN_OVERRIDE: fake, GBRAIN_CLAW_SCENARIOS_DIR: SCENARIOS_DIR, GBRAIN_CLAW_PHASE_TIMEOUT_MS: '2000' },
+        env: { ...envWithoutDatabaseUrl(), GBRAIN_HOME: tmp, GBRAIN_BIN_OVERRIDE: fake, GBRAIN_CLAW_SCENARIOS_DIR: SCENARIOS_DIR, GBRAIN_CLAW_PHASE_TIMEOUT_MS: '2000' },
         encoding: 'utf-8',
         timeout: 45_000,
       });
@@ -475,7 +476,7 @@ describe('gbrain claw-test — adversarial-gate regression pins', () => {
       const result = spawnSync(BIN_PATH, ['claw-test', '--live', '--agent', 'openclaw', '--scenario', 'fresh-install'], {
         cwd: REPO_ROOT,
         env: {
-          ...process.env,
+          ...envWithoutDatabaseUrl(),
           GBRAIN_HOME: tmp,
           OPENCLAW_BIN: shim,
           GBRAIN_BIN_OVERRIDE: wrapper,

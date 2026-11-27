@@ -10,7 +10,7 @@
  *    (c) removing a source (unmanaged removeSource -> deleteSourceRow, and the managed lifecycle remove) drops every
  *    such row of the source, and strips its slugs from eval candidates no other covered source still answers;
  *    (d) a capture keeps a facts-arm result (facts/<id>) while its fact exists; (e) a source re-created with the same
- *    id between deleteSourceRow's delete and its second scrub keeps its rows; (f) a fire-and-forget volunteer-log write
+ *    id between deleteSourceRecord's delete and its second scrub keeps its rows; (f) a fire-and-forget volunteer-log write
  *    built before a purge and landing after it (or, on Postgres, while the purge is open) drops the purged page's slug
  *    and rationale and keeps live pages.
  * 2. Fails when: logEvalCandidate inserts slugs without probing the page row under a key-share lock or drops a live
@@ -40,7 +40,9 @@ import { captureEvalCandidate } from '../src/core/eval-capture.ts';
 import { withResponseDeferral } from '../src/core/background-work.ts';
 import { deleteConnectorPage } from '../src/core/connectors/api-source.ts';
 import { removeSource } from '../src/core/sources-ops.ts';
-import { deleteSourceRow } from '../src/core/source-delete.ts';
+import { deleteSourceRecord } from '../src/core/engine-sql/sources.ts';
+import type { SqlExecutor } from '../src/core/engine-sql/executor.ts';
+import { renderFragment, type SqlFragment } from '../src/core/engine-sql/fragment.ts';
 import { runTranscriptsIngest } from '../src/core/transcripts/ingest.ts';
 import { buildTranscriptSlug } from '../src/core/transcripts/types.ts';
 import { registerLocalWriter } from '../src/core/persistence/identity.ts';
@@ -305,14 +307,17 @@ describe('#9068 removing a source scrubs every row that names its pages', () => 
       const id = 'source-reused', slug = 'notes/reused-page', query = `reused ${randomUUID()}`;
       await traced(engine, id, slug);
       let calls = 0;
-      const racing = { executeRaw: async (sql: string, params?: unknown[]) => {
+      // The engine-sql delete over an executor that re-creates the source between its two statements.
+      const racing = { run: async (fragment: SqlFragment) => {
         if (calls++ === 1) {
           await traced(engine, id, slug);
           await engine.logEvalCandidate(candidate(query, [slug, OTHER], [id]));
         }
-        return engine.executeRaw(sql, params);
-      } } as Pick<BrainEngine, 'executeRaw'>;
-      expect(await deleteSourceRow(racing, id)).toBe(true);
+        const { text, params } = renderFragment(fragment);
+        const rows = await engine.executeRaw(text, params);
+        return { rows, affectedRows: rows.length };
+      } } as unknown as SqlExecutor;
+      expect(await deleteSourceRecord(racing, id)).toEqual({ deleted: true, stranded: 0 });
       expect({ engine: engine.kind, residue: await residue(engine, id, slug) }).toEqual({ engine: engine.kind, residue: { retrieval_event_pages: 1,
         retrieval_event_links: 1, retrieval_feedback: 2, retrieval_weights: 2, context_volunteer_events: 1, mention_gazetteer_entries: 1 } });
       expect(await capturedSlugs(engine, query)).toEqual([[slug, OTHER]]);

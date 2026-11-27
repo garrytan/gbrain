@@ -110,7 +110,7 @@ export class SyncAdmissionPaused extends Error {
  * Fencing 1 (design v3.2 §8): a pass's admission transaction re-reads `sync.admission` and admits nothing it no longer
  * allows (a delete needs `normal`; an import or the stamp needs `normal` or `imports_only`). Cursor intents are unaffected.
  */
-export async function assertPassAdmission(tx: Pick<BrainEngine, 'executeRaw'>, intents: ReadonlyArray<PricedIntent>): Promise<void> {
+export async function assertPassAdmission(tx: Pick<BrainEngine, 'executeRaw' | 'readStoredConfigValue'>, intents: ReadonlyArray<PricedIntent>): Promise<void> {
   if (!intents.some(intent => intent.passId)) return;
   const admission = await readSyncAdmission(tx);
   for (const intent of intents) {

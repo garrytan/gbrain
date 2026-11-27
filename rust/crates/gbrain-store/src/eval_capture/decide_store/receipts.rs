@@ -14,7 +14,7 @@
 use super::{int4, prune_spend_before};
 use crate::error::{Result, StoreError};
 use crate::eval_capture::not_null;
-use crate::kv::{KvRead, prefix_end};
+use crate::kv::{KvRead, KvWrite, prefix_end};
 use crate::links::no_nul;
 use crate::pages::next_id;
 use crate::{Store, keys, put_json};
@@ -24,7 +24,7 @@ use std::collections::{BTreeMap, HashSet};
 
 const RECEIPT: u8 = 0x13;
 const RECEIPT_BY_TIME: u8 = 0x14;
-const RECEIPT_ID: &str = "decide_receipt_id";
+pub(crate) const RECEIPT_ID: &str = "decide_receipt_id";
 const HOUR_US: i64 = 3_600_000_000;
 const DAY_US: i64 = 24 * HOUR_US;
 /// `timestamptz` starts at 4713 BC; a window that reaches before it (or past the end) is
@@ -60,39 +60,39 @@ fn time_key(created_at_us: i64, id: u64) -> Vec<u8> {
 
 /// One `decision_receipts` row.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct ReceiptRecord {
-    id: u64,
-    created_at_us: i64,
-    decision_id: String,
-    source_id: Option<String>,
-    slot: String,
-    mode: String,
-    provider: String,
-    model_alias: Option<String>,
-    model_resolved: Option<String>,
-    question_kind: Option<String>,
-    state_hash: Option<String>,
-    question_hash: Option<String>,
+pub(crate) struct ReceiptRecord {
+    pub id: u64,
+    pub created_at_us: i64,
+    pub decision_id: String,
+    pub source_id: Option<String>,
+    pub slot: String,
+    pub mode: String,
+    pub provider: String,
+    pub model_alias: Option<String>,
+    pub model_resolved: Option<String>,
+    pub question_kind: Option<String>,
+    pub state_hash: Option<String>,
+    pub question_hash: Option<String>,
     /// `REAL`, as `f32::to_bits`.
-    answer_value: Option<u32>,
-    answer_choice: Option<String>,
-    confidence: Option<u32>,
-    threshold: Option<u32>,
-    outcome: String,
-    subject_ref: Option<String>,
-    call_site: String,
-    lane: String,
-    policy_fingerprint: Option<String>,
-    calibration_ref: Option<String>,
-    latency_ms: Option<i32>,
-    input_tokens: Option<i32>,
-    error_reason: Option<String>,
-    protected: bool,
-    min_keep: Option<i32>,
-    rank: Option<i32>,
-    k_used: Option<i32>,
-    remote: bool,
-    run_meta: Option<String>,
+    pub answer_value: Option<u32>,
+    pub answer_choice: Option<String>,
+    pub confidence: Option<u32>,
+    pub threshold: Option<u32>,
+    pub outcome: String,
+    pub subject_ref: Option<String>,
+    pub call_site: String,
+    pub lane: String,
+    pub policy_fingerprint: Option<String>,
+    pub calibration_ref: Option<String>,
+    pub latency_ms: Option<i32>,
+    pub input_tokens: Option<i32>,
+    pub error_reason: Option<String>,
+    pub protected: bool,
+    pub min_keep: Option<i32>,
+    pub rank: Option<i32>,
+    pub k_used: Option<i32>,
+    pub remote: bool,
+    pub run_meta: Option<String>,
 }
 
 /// A `REAL` value as Postgres prints it, which is what a caller reads.
@@ -268,6 +268,15 @@ fn whole(value: f64, member: &str, what: &str) -> Result<i64> {
     Ok(value as i64)
 }
 
+/// Whether a whole-hour receipt window holds nothing: zero or fewer hours name no time, so the
+/// read answers empty before it reads the clock or a row (`windowHoldsNothing` in
+/// src/core/engine-sql/decide-store.ts). A receipt stamped in the read's own clock tick would
+/// otherwise be inside `created_at >= now - 0`. Called after the hours and the text arguments are
+/// checked, so a fraction, a window outside `int4` or a NUL byte is still refused.
+fn holds_nothing(hours: i64) -> bool {
+    hours <= 0
+}
+
 /// `now() - (n * interval)`, or the refusal for a time before the first `timestamptz`.
 fn ago(now: i64, n: i64, unit_us: i64, member: &str) -> Result<i64> {
     let at = i128::from(now) - i128::from(n) * i128::from(unit_us);
@@ -325,6 +334,18 @@ fn percentile_cont(sorted: &[f64], p: f64) -> Option<f64> {
     }
     let proportion = row - first as f64;
     Some(sorted[first] + proportion * (sorted[second] - sorted[first]))
+}
+
+/// The shadow seed (`seed.rs`): stores a `decision_receipts` row copied from another engine with
+/// its own id and `created_at`, and its time-index entry as [`Store::insert_decide_receipts`]
+/// writes it. `false` when the id already holds a row.
+pub(crate) fn seed_receipt(tx: &mut dyn KvWrite, record: &ReceiptRecord) -> Result<bool> {
+    if tx.get(&receipt_key(record.id))?.is_some() {
+        return Ok(false);
+    }
+    put_json(tx, &receipt_key(record.id), record)?;
+    tx.put(&time_key(record.created_at_us, record.id), &[])?;
+    Ok(true)
 }
 
 impl Store {
@@ -388,6 +409,9 @@ impl Store {
         if let Some(slot) = slot {
             no_nul(MEMBER, &[("slot", slot)])?;
         }
+        if holds_nothing(hours) {
+            return Ok(Value::Array(Vec::new()));
+        }
         let since = ago(self.env.now_micros(), hours, HOUR_US, MEMBER)?;
         let read = self.read()?;
         type Key = (String, String, String, bool, String);
@@ -444,6 +468,9 @@ impl Store {
     pub fn decide_slot_usage(&self, since_hours: f64) -> Result<Value> {
         const MEMBER: &str = "decideSlotUsage";
         let hours = whole(since_hours, MEMBER, "sinceHours")?;
+        if holds_nothing(hours) {
+            return Ok(Value::Array(Vec::new()));
+        }
         let since = ago(self.env.now_micros(), hours, HOUR_US, MEMBER)?;
         let read = self.read()?;
         #[derive(Default)]
@@ -488,6 +515,9 @@ impl Store {
     pub fn decide_conflict_no_entity_counts(&self, since_hours: f64) -> Result<Value> {
         const MEMBER: &str = "decideConflictNoEntityCounts";
         let hours = whole(since_hours, MEMBER, "sinceHours")?;
+        if holds_nothing(hours) {
+            return Ok(json!({ "receipts": 0, "skipped": 0 }));
+        }
         let since = ago(self.env.now_micros(), hours, HOUR_US, MEMBER)?;
         let read = self.read()?;
         let (mut receipts, mut skipped) = (0_i64, 0_i64);
@@ -510,6 +540,9 @@ impl Store {
         const MEMBER: &str = "listDecideReplayReceipts";
         let hours = whole(since_hours, MEMBER, "sinceHours")?;
         no_nul(MEMBER, &[("slot", slot)])?;
+        if holds_nothing(hours) {
+            return Ok(Value::Array(Vec::new()));
+        }
         let since = ago(self.env.now_micros(), hours, HOUR_US, MEMBER)?;
         let read = self.read()?;
         let mut rows: Vec<ReceiptRecord> = receipts_since(&*read, since)?
@@ -544,6 +577,9 @@ impl Store {
     pub fn list_decide_resolved_models(&self, since_hours: f64) -> Result<Value> {
         const MEMBER: &str = "listDecideResolvedModels";
         let hours = whole(since_hours, MEMBER, "sinceHours")?;
+        if holds_nothing(hours) {
+            return Ok(Value::Array(Vec::new()));
+        }
         let since = ago(self.env.now_micros(), hours, HOUR_US, MEMBER)?;
         let read = self.read()?;
         let mut groups: BTreeMap<(String, String, String), (i64, i64)> = BTreeMap::new();
@@ -580,6 +616,9 @@ impl Store {
     pub fn list_decide_mixed_model_decisions(&self, since_hours: f64) -> Result<Value> {
         const MEMBER: &str = "listDecideMixedModelDecisions";
         let hours = whole(since_hours, MEMBER, "sinceHours")?;
+        if holds_nothing(hours) {
+            return Ok(Value::Array(Vec::new()));
+        }
         let since = ago(self.env.now_micros(), hours, HOUR_US, MEMBER)?;
         let read = self.read()?;
         let mut by_slot: BTreeMap<String, i64> = BTreeMap::new();
@@ -595,4 +634,30 @@ impl Store {
                 .collect(),
         ))
     }
+}
+
+/// The rows a fact purge's inventory probe searches (crate::facts::purge_probe).
+pub(crate) fn purge_probe_rows(
+    read: &dyn KvRead,
+) -> Result<Vec<crate::facts::purge_probe::ProbeRow>> {
+    use crate::facts::purge_probe::{ProbeCell, ProbeRow};
+    Ok(receipts_since(read, 0)?
+        .into_iter()
+        .map(|r| ProbeRow {
+            cells: vec![("run_meta", ProbeCell::opt_text(r.run_meta.as_deref()))],
+            source_id: r.source_id,
+        })
+        .collect())
+}
+
+/// The shadow follow (`seed/follow.rs`): removes the receipt `id` with its time-index entry.
+/// `false` when there is none.
+pub(crate) fn remove_receipt(tx: &mut dyn KvWrite, id: u64) -> Result<bool> {
+    let Some(bytes) = tx.get(&receipt_key(id))? else {
+        return Ok(false);
+    };
+    let record: ReceiptRecord = serde_json::from_slice(&bytes)?;
+    tx.delete(&time_key(record.created_at_us, id))?;
+    tx.delete(&receipt_key(id))?;
+    Ok(true)
 }

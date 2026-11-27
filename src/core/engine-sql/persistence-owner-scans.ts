@@ -79,8 +79,11 @@ export async function lockOverdueHold(exec: LegacyUnscopedRead, hold: OverdueHol
   return rows.length > 0;
 }
 
-/** `listOwnerRecoveryHeads`: $1 host id, $2 the worktree ids to leave out (as text). */
-export const OWNER_RECOVERY_HEADS_SQL = `SELECT r.* FROM persistence_requests r
+/**
+ * `listOwnerRecoveryHeads`: $1 host id, $2 the worktree ids to leave out (as text). The head columns only (#10083): the full row
+ * (intent, before-image) is read once the consumer holds the worktree's lock. The Rust engine answers whole rows, a superset.
+ */
+export const OWNER_RECOVERY_HEADS_SQL = `SELECT r.id,r.source_id,r.worktree_id,r.state,r.blocked_reason FROM persistence_requests r
     JOIN persistence_worktrees w ON w.id=r.worktree_id
     WHERE w.owner_host_id=$1::uuid AND r.recovery IS NOT NULL AND NOT(r.worktree_id::text=ANY($2::text[]))
     AND NOT EXISTS (SELECT 1 FROM persistence_requests earlier WHERE earlier.worktree_id=r.worktree_id
@@ -112,7 +115,7 @@ export function listResumableRefreshes<R = Record<string, unknown>>(exec: Legacy
   return exec.executeRaw<R & { stale: boolean }>(RESUMABLE_REFRESHES_SQL, [hostId, budgetMs], opts);
 }
 
-export const SOURCE_LAST_COMMITS_SQL = 'SELECT last_commit FROM sources WHERE id=ANY($1::text[]) ORDER BY id';
+export const SOURCE_LAST_COMMITS_SQL = 'SELECT last_commit FROM sources WHERE id=ANY($1::text[]) ORDER BY id COLLATE "C"';
 
 /** The last commit of each named source that exists (null before its first sync), in source id order. */
 export function listSourceLastCommits(exec: LegacyUnscopedRead, sourceIds: readonly string[], opts?: QueryOpts): Promise<{ last_commit: string | null }[]> {

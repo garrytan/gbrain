@@ -160,15 +160,7 @@ export async function runPageToAliasCore(
 
   for (let i = 0; i < opts.rules.length; i++) {
     const rule = opts.rules[i];
-    const where = `WHERE deleted_at IS NULL AND type = $1 AND source_id = $2`;
-    const rows = await ctx.engine.executeRaw<{
-      slug: string;
-      compiled_truth: string;
-      frontmatter: Record<string, unknown> | string | null;
-    }>(
-      `SELECT slug, compiled_truth, frontmatter FROM pages ${where} ORDER BY slug COLLATE "C" LIMIT ${limit}`,
-      [rule.from_type, effectiveSourceId],
-    );
+    const rows = await ctx.engine.listAliasCandidatePages(rule.from_type, effectiveSourceId, limit);
     const would_alias = rows.length;
     const sample_slugs = rows.slice(0, 10).map((r) => r.slug);
     const unresolved: PerPageToAliasResult['unresolved'] = [];

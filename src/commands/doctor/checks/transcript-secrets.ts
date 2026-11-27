@@ -10,7 +10,6 @@ import type { Check } from '../../doctor.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
 import { agentFix } from '../check-fix.ts';
 import {
-  TRANSCRIPT_PAGE_PREDICATE,
   TRANSCRIPT_SECRET_AUDIT_VERSION,
   loadTranscriptSecretAudit,
 } from '../../../core/transcripts/secret-audit.ts';
@@ -27,8 +26,7 @@ function ageText(scannedAt: string, now: number): string {
 export async function transcriptSecretExposureCheck(ctx: DoctorContext, now = Date.now()): Promise<Check | null> {
   const engine = connectedEngine(ctx);
   try {
-    const [row] = await engine.executeRaw<{ n: number | string }>(`SELECT count(*) AS n FROM pages WHERE ${TRANSCRIPT_PAGE_PREDICATE}`);
-    const pages = Number(row?.n ?? 0);
+    const pages = await engine.countTranscriptImportPages();
     if (pages === 0) return null;
     const audit = await loadTranscriptSecretAudit(engine);
     if (audit === null || audit.detector_version < TRANSCRIPT_SECRET_AUDIT_VERSION || audit.source_id !== null) {

@@ -88,7 +88,7 @@ const gitText = (root: string, args: string[]): string | null => { try { return 
  * host), else the source's local path. Refuses a source with no Git checkout: a repo-less brain has no copy to republish.
  */
 async function sourceCheckout(engine: BrainEngine, sourceId: string): Promise<{ root: string; incarnation: string; managed: boolean }> {
-  const [source] = await engine.executeRaw<{ local_path: string | null; incarnation: string }>('SELECT local_path, incarnation::text AS incarnation FROM sources WHERE id=$1', [sourceId]);
+  const source = await engine.readSourceState(sourceId);
   if (!source) throw new OperationError('invalid_params', `Source ${sourceId} does not exist.`, 'List the sources with gbrain sources list, then preview again with one of them.', DOCS);
   const managed = await readManagedMode(engine);
   let root = source.local_path;

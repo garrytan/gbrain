@@ -324,4 +324,27 @@ describe('engine parity: sync + aliases', () => {
       return { unfiltered, closed, fn };
     },
   );
+
+  parityTest(
+    'listSlugAliases lists every old slug of a renamed page in one source, repointed through a chain of renames',
+    { methods: ['putPage', 'updateSlug', 'listSlugAliases'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'lsa-other');
+      const body = { type: 'note' as const, title: 'T', compiled_truth: 'B.', timeline: '' };
+      await engine.putPage('notes/lsa-a', body);
+      await engine.putPage('notes/lsa-x', body);
+      await engine.putPage('notes/lsa-a', body, { sourceId: 'lsa-other' });
+      await engine.updateSlug('notes/lsa-a', 'notes/lsa-b');
+      await engine.updateSlug('notes/lsa-b', 'notes/lsa-c');
+      await engine.updateSlug('notes/lsa-a', 'notes/lsa-z', { sourceId: 'lsa-other' });
+      const key = (rows: Array<{ alias_slug: string; canonical_slug: string }>) => sorted(rows.map((r) => `${r.alias_slug}->${r.canonical_slug}`));
+      const inDefault = key(await engine.listSlugAliases('default'));
+      const inOther = key(await engine.listSlugAliases('lsa-other'));
+      const none = await engine.listSlugAliases('lsa-missing');
+      expect(inDefault).toEqual(['notes/lsa-a->notes/lsa-c', 'notes/lsa-b->notes/lsa-c']);
+      expect(inOther).toEqual(['notes/lsa-a->notes/lsa-z']);
+      expect(none).toEqual([]);
+      return { inDefault, inOther, none };
+    },
+  );
 });

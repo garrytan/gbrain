@@ -85,9 +85,8 @@ import { fenceUnfencedFacts, isFenceHold, planUnfencedFacts } from '../facts/unf
 import { heldMoveIncomplete, moveHeldFacts } from '../facts/held-fact-move.ts';
 import { classifyRunStop, upsertExtractRollup } from '../extract/rollup-writer.ts';
 import { factsFenceView } from '../facts-fence.ts';
-import { fenceReadOf, publishFenceGeneration, readFenceBlocks, FACT_FENCE_KIND, type FenceRead } from '../generations/fence.ts';
+import { clearFenceHold, fenceOwnerKey, fenceReadOf, listFenceHolds, publishFenceGeneration, readFenceBlocks, FACT_FENCE_KIND, type FenceRead } from '../generations/fence.ts';
 import { factsFenceHeld, moveKeptRows } from '../generations/fence-evidence.ts';
-import type { BodyStorage } from '../page-body/types.ts';
 import { factFenceItems, factPreimages, factRetireItem } from '../generations/adapters/fact-rows.ts';
 import { incrementalFactsFence, segmentedBodyMatchesFile } from '../page-body/segment-facts.ts';
 import {
@@ -142,6 +141,22 @@ function timeOf(value: Date | string | null | undefined): number | null {
   return value == null ? null : new Date(value).getTime();
 }
 
+/** A stored instant as its fence cell renders it, to the second (#10055: `remember` stores a sub-second valid_from). */
+function wholeSecond(value: Date | string | null | undefined): number | null {
+  const time = timeOf(value);
+  return time == null ? null : Math.floor(time / 1000) * 1000;
+}
+
+/**
+ * #10055: a superseded row's fence cell reads back as the generated `superseded by #N` marker, so while the row stays
+ * retired it keeps the context it was written with; any other note in the cell is the owner's and replaces it.
+ */
+function reconciledContext(stored: ExistingPageFact, desired: FenceExtractedFact): string | null {
+  const marker = stored.expired_at != null && desired.expired_at != null && stored.superseded_by != null
+    && /^superseded by #\d+$/i.test(desired.context ?? '');
+  return marker ? stored.context ?? null : desired.context ?? null;
+}
+
 function numbersDiffer(stored: number | string | null, desired: number | null | undefined): boolean {
   if (stored == null || desired == null) return (stored == null) !== (desired == null);
   const a = Number(stored);
@@ -162,14 +177,14 @@ function factCellsDiffer(stored: ExistingPageFact, desired: FenceExtractedFact):
   return stored.kind !== (desired.kind ?? 'fact')
     || stored.visibility !== (desired.visibility ?? 'private')
     || stored.notability !== (desired.notability ?? 'medium')
-    || (stored.context ?? null) !== (desired.context ?? null)
+    || (stored.context ?? null) !== reconciledContext(stored, desired)
     || stored.source !== desired.source
     || numbersDiffer(stored.confidence, desired.confidence ?? 1.0)
     || (stored.claim_metric ?? null) !== (desired.claim_metric ?? null)
     || numbersDiffer(stored.claim_value, desired.claim_value)
     || (stored.claim_unit ?? null) !== (desired.claim_unit ?? null)
     || (stored.claim_period ?? null) !== (desired.claim_period ?? null)
-    || (desired.valid_from != null && timeOf(stored.valid_from) !== desired.valid_from.getTime())
+    || (desired.valid_from != null && timeOf(stored.valid_from) !== desired.valid_from.getTime() && wholeSecond(stored.valid_from) !== desired.valid_from.getTime())
     || (stored.expired_at == null) !== desiredActive
     || (desiredActive && timeOf(stored.valid_until) !== timeOf(desired.valid_until));
 }
@@ -200,11 +215,7 @@ async function syncSupersession(
   chain: SupersessionChain,
   inserted: ReadonlySet<number>,
 ): Promise<{ warnings: string[]; changed: number[] }> {
-  const current = await tx.executeRaw<{ id: number | string; row_num: number | string; expired_at: Date | string | null; superseded_by: number | string | null }>(
-    `SELECT id, row_num, expired_at, superseded_by FROM facts
-      WHERE source_id = $1 AND source_markdown_slug = $2 AND row_num IS NOT NULL`,
-    [sourceId, slug],
-  );
+  const current = await tx.listFenceRowSupersession(sourceId, slug);
   const rows = new Map(current.map(r => [Number(r.row_num), r]));
   const byRow = new Map([...rows].map(([row, r]) => [row, { id: Number(r.id), struck: r.expired_at != null }]));
   const warnings: string[] = [];
@@ -217,7 +228,7 @@ async function syncSupersession(
     if (warning && (differs || inserted.has(f.row_num))) warnings.push(warning);
     if (!differs) continue;
     changed.push(f.row_num);
-    await tx.executeRaw('UPDATE facts SET superseded_by = $1 WHERE id = $2 AND source_id = $3', [superseded_by, row.id, sourceId]);
+    await tx.setFactSupersededBy(sourceId, row.id, superseded_by);
   }
   return { warnings, changed };
 }
@@ -455,10 +466,7 @@ async function planFenceReconcile(db: BrainEngine, page: PageFenceInput, slug: s
     const fact = matched.get(f.row_num);
     return fact && fact.visibility !== 'world' && (f.visibility ?? 'private') === 'world' ? [Number(fact.id)] : [];
   });
-  const heldWidening = new Set(widening.length ? (await db.executeRaw<{ id: number }>(
-    `SELECT related_id AS id FROM trust_proposals WHERE source_id = $1 AND action IN ('supersede_fact', 'confirm') AND related_table = 'facts'
-      AND related_id = ANY($2::bigint[]) AND status IN ('pending', 'rejected', 'undone') AND before_state->'visibility' IS NOT NULL`,
-    [sourceId, widening])).map(r => Number(r.id)) : []);
+  const heldWidening = new Set(widening.length ? (await db.listHeldWideningFactIds(sourceId, widening)).map(r => Number(r.id)) : []);
   const updates = extracted.map((f): FenceExtractedFact => {
     const fact = matched.get(f.row_num);
     return fact && heldWidening.has(Number(fact.id)) ? { ...f, visibility: fact.visibility as FenceExtractedFact['visibility'] } : f;
@@ -508,6 +516,14 @@ function reconcileWrites(plan: FenceReconcilePlan, embeddingDeferred = false) {
 }
 
 /** One page's reconcile writes, inside a transaction that holds the page key. */
+/**
+ * #10067: an in-sync plan writes nothing and never reaches the generation primitive, so a fence that parses again
+ * answers a held `fence_absent` (or `no_proof`) generation here, as publishFenceGeneration does for a fence with writes.
+ */
+async function answerFenceHold(db: BrainEngine, sourceId: string, slug: string, plan: FenceReconcilePlan): Promise<void> {
+  if (plan.read.state === 'parsed') await clearFenceHold(db, { kind: FACT_FENCE_KIND, sourceId, ownerKey: fenceOwnerKey(slug) });
+}
+
 async function writeFenceReconcile(tx: BrainEngine, sourceId: string, slug: string, plan: FenceReconcilePlan,
   writes: ReturnType<typeof reconcileWrites>, signal?: AbortSignal): Promise<{ inserted: number; updated: number; deleted: number; held?: true; warnings: string[]; write_gate?: GateTally }> {
   // GBRA-161 PR 2: the fact generation decides before any row changes. A fence that is absent or not read whole holds
@@ -524,29 +540,18 @@ async function writeFenceReconcile(tx: BrainEngine, sourceId: string, slug: stri
   const derivation = await deriveTrust(tx, [{ table: 'pages', sourceId, slug }], { channel: 'derive:facts_fence', projection: true });
   return withWriteTrust(tx, derivation.trust, async () => {
   for (const fact of writes.expireInPlace) {
-    await tx.executeRaw('UPDATE facts SET expired_at = COALESCE(expired_at, now()) WHERE id = $1 AND source_id = $2', [fact.id, sourceId]);
+    await tx.expireFactInPlace(sourceId, fact.id);
   }
   for (const fact of writes.detach) {
-    await tx.executeRaw(
-      `UPDATE facts SET expired_at = COALESCE(expired_at, now()), row_num = NULL
-        WHERE id = $1 AND source_id = $2`,
-      [fact.id, sourceId],
-    );
+    await tx.expireAndDetachFact(sourceId, fact.id);
   }
   for (const f of plan.updates) {
-    await tx.executeRaw(
-      `UPDATE facts SET kind = $3, visibility = $4, notability = $5, context = $6,
-          valid_from = COALESCE($7::timestamptz, valid_from),
-          valid_until = CASE WHEN $8::boolean THEN $9::timestamptz ELSE valid_until END,
-          expired_at = CASE WHEN $10::timestamptz IS NULL THEN NULL ELSE COALESCE(expired_at, $10::timestamptz) END,
-          source = $11, confidence = $12,
-          claim_metric = $13, claim_value = $14, claim_unit = $15, claim_period = $16
-        WHERE id = $1 AND source_id = $2`,
-      [plan.matched.get(f.row_num)!.id, sourceId, f.kind ?? 'fact', f.visibility ?? 'private', f.notability ?? 'medium',
-        f.context ?? null, f.valid_from?.toISOString() ?? null, f.expired_at == null,
-        f.valid_until?.toISOString() ?? null, f.expired_at?.toISOString() ?? null, f.source, f.confidence ?? 1.0,
-        f.claim_metric ?? null, f.claim_value ?? null, f.claim_unit ?? null, f.claim_period ?? null],
-    );
+    await tx.updateFenceFactCells(sourceId, plan.matched.get(f.row_num)!.id, {
+      kind: f.kind ?? 'fact', visibility: f.visibility ?? 'private', notability: f.notability ?? 'medium', context: reconciledContext(plan.matched.get(f.row_num)!, f),
+      validFrom: f.valid_from?.toISOString() ?? null, setValidUntil: f.expired_at == null,
+      validUntil: f.valid_until?.toISOString() ?? null, expiredAt: f.expired_at?.toISOString() ?? null, source: f.source, confidence: f.confidence ?? 1.0,
+      claimMetric: f.claim_metric ?? null, claimValue: f.claim_value ?? null, claimUnit: f.claim_unit ?? null, claimPeriod: f.claim_period ?? null,
+    });
   }
   await moveKeptRows(tx, sourceId, slug, plan.kept, writes.inserts.map(f => f.row_num));
   const { inserted, allowed } = await insertReconciledFacts(tx, sourceId, slug, writes.inserts, derivation, tally);
@@ -610,6 +615,7 @@ export async function prepareFenceFactsReconcile(engine: BrainEngine, row: Write
       const current = await tx.getPage(row.slug, { sourceId: row.source_id });
       const warnings: string[] = [];
       const plan = current ? await planFenceReconcile(tx, current, row.slug, row.source_id, warnings, true) : null;
+      if (plan?.inSync) await answerFenceHold(tx, row.source_id, row.slug, plan);
       if (!plan || plan.inSync) return { status: 'completed', inserted: 0, updated: 0, deleted: 0, deferred: false, warnings };
       const signature = await resolveManagedFactsEmbedding(tx, config, true);
       const vectors = new Map((intent?.embeddings ?? [])
@@ -669,18 +675,13 @@ export async function prepareDeletedPageFactsExpiry(engine: BrainEngine, row: Wr
  * nothing. Each expired row's before-state is recorded on the ledger. Returns the expired ids.
  */
 async function expireDeletedPageFacts(tx: BrainEngine, sourceId: string, slug: string, pageId: number | null): Promise<number[]> {
-  const ids = (await tx.executeRaw<{ id: number }>(
-    `SELECT f.id FROM facts f WHERE f.source_id = $1 AND f.source_markdown_slug = $2 AND f.row_num IS NOT NULL AND f.expired_at IS NULL
-        AND EXISTS (SELECT 1 FROM pages p WHERE p.source_id = $1 AND p.slug = $2 AND ($3::integer IS NULL OR p.id = $3::integer) AND p.deleted_at IS NOT NULL)`,
-    [sourceId, slug, pageId])).map(r => Number(r.id));
+  const ids = (await tx.listExpirableFactIdsOfDeletedPage(sourceId, slug, pageId)).map(r => Number(r.id));
   if (!ids.length) return [];
-  const [stored] = await tx.executeRaw<{ compiled_truth: string | null; timeline: string | null; body_storage: BodyStorage | null }>(
-    'SELECT compiled_truth, timeline, body_storage FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NOT NULL ORDER BY id DESC LIMIT 1', [sourceId, slug]);
+  const stored = await tx.readDeletedPageBody(sourceId, slug);
   const generation = await publishFenceGeneration(tx, { kind: FACT_FENCE_KIND, sourceId, slug, read: stored ? readFenceBlocks(stored, 'facts') : { state: 'absent' }, items: [], originGone: true,
     retire: (await factPreimages(tx, sourceId, ids)).map(factRetireItem), writer: 'deleted_page' });
   if (generation.state !== 'published') return [];
-  return (await tx.executeRaw<{ id: number }>('UPDATE facts SET expired_at = now() WHERE source_id = $1 AND id = ANY($2::bigint[]) AND expired_at IS NULL RETURNING id',
-    [sourceId, ids])).map(r => Number(r.id));
+  return (await tx.expireFactsByIds(sourceId, ids)).map(r => Number(r.id));
 }
 
 export interface ExtractFactsOpts {
@@ -896,10 +897,7 @@ export async function runExtractFacts(
   // observation's subject and expire it.
   let phantomResult: PhantomPassResult = emptyPhantomPassResult();
   if (opts.brainDir) {
-    const holdSlugs = new Set([...legacySlugs, ...(await engine.executeRaw<{ slug: string }>(
-      `SELECT DISTINCT source_markdown_slug AS slug FROM facts
-        WHERE source_id = $1 AND dimension IS NOT NULL AND expired_at IS NULL AND source_markdown_slug NOT LIKE '%/%'`,
-      [sourceId])).map(row => row.slug)]);
+    const holdSlugs = new Set([...legacySlugs, ...(await engine.listOntologyObservationSlugs(sourceId)).map(row => row.slug)]);
     try {
       phantomResult = await runPhantomRedirectPass(
         engine,
@@ -999,6 +997,8 @@ export async function runExtractFacts(
   // stamped and 'complete' was stamped inside the write transaction.
   type PageOutcome = FactsReconcileOutcome | 'unchanged' | 'skipped' | 'stop';
   let revision: string | null | undefined;
+  // #10067: an in-sync page answers a fence hold, so the walk reads the source's held fact fences once.
+  const heldFences = new Set(opts.dryRun ? [] : (await listFenceHolds(engine, [sourceId])).filter(hold => hold.kind === FACT_FENCE_KIND).map(hold => hold.slug));
   const reconcilePage = async (slug: string): Promise<PageOutcome> => {
     const page = await engine.getPage(slug, { sourceId });
     if (!page) {
@@ -1013,7 +1013,15 @@ export async function runExtractFacts(
     if (!plan) return 'invalid';
     if (plan.fenceRows > 0) result.pagesWithFacts += 1;
     if (opts.dryRun) return 'skipped';
-    if (plan.inSync) return 'unchanged';
+    if (plan.inSync) {
+      if (plan.read.state !== 'parsed' || !heldFences.has(slug)) return 'unchanged';
+      await engine.transaction(async tx => {
+        await tx.lockPageKeys([{ sourceId, slug }]);
+        const current = await tx.getPage(slug, { sourceId });
+        if (current && sameBody(current, page)) await answerFenceHold(tx, sourceId, slug, plan);
+      });
+      return 'unchanged';
+    }
     const { toInsert } = plan;
 
     // v0.35.4 (D-CDX-3) — batch-embed new rows before insert so
@@ -1176,13 +1184,7 @@ export async function runExtractFacts(
  */
 /** The soft-deleted pages of `sourceId` that still have active fence rows. */
 async function deletedPagesWithActiveFacts(engine: BrainEngine, sourceId: string): Promise<string[]> {
-  return (await engine.executeRaw<{ slug: string }>(
-    `SELECT DISTINCT f.source_markdown_slug AS slug FROM facts f
-      WHERE f.source_id = $1 AND f.row_num IS NOT NULL AND f.expired_at IS NULL
-        AND EXISTS (SELECT 1 FROM pages p WHERE p.source_id = f.source_id AND p.slug = f.source_markdown_slug AND p.deleted_at IS NOT NULL)
-      ORDER BY 1`,
-    [sourceId],
-  )).map(row => row.slug);
+  return (await engine.listDeletedPageSlugsWithActiveFacts(sourceId)).map(row => row.slug);
 }
 
 async function expireDeletedPagesManaged(engine: BrainEngine, sourceId: string,

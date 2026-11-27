@@ -111,11 +111,14 @@ fi
 
 # Filter out files we trust (handle sources.config redaction themselves OR
 # handle the gbrain global config, which is a different object).
+# rust-engine/store-members/engine-migration.ts hands a Rust source's config to
+# `gbrain migrate`, which must copy it whole (secrets included) to the target.
 FILTERED=$(echo "$CANDIDATES" | \
   grep -v 'src/core/source-config-redact.ts' | \
   grep -v 'src/core/sources-load.ts' | \
   grep -v 'src/commands/sources.ts' | \
   grep -v 'src/core/migrate.ts' | \
+  grep -v 'src/core/rust-engine/store-members/engine-migration.ts' | \
   grep -v 'src/core/sources-ops.ts' | \
   grep -v 'src/commands/init.ts' | \
   grep -v 'src/core/config.ts' || true)

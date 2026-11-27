@@ -4,6 +4,8 @@
  * socket (routes.ts). Its entry point calls `forwardWholeOperation` before it touches the engine; on a client engine
  * the whole operation runs inside the owner, transaction included, and its result or error comes back as the
  * in-process call would give it.
+ * `snapshotStore` and `snapshotStatus` are the whole operations that are not imports: one copy of the whole brain at one
+ * committed generation, and what became of it (store-snapshot.ts). Their caller is the shadow drill and `gbrain backup`.
  *
  * Only data crosses: an option that is a function (a coordinator `prepare` seam) refuses with
  * `engine_capability_missing`, and so does a caller that is not the trusted local CLI (a remote MCP caller of a second
@@ -18,18 +20,26 @@
  * `forwardOwnerOperation`: the owner runs the operation's own handler on its engine, so the caller gets the receipt (or
  * the error) the same handler gives in the owner's process, and through the persistence socket of a `gbrain serve`.
  *
+ * When the owner has gone and the engine registered an election rerun (client.ts `rejoin`), the operation waits for
+ * it and goes to the new owner; when this process became the owner it ends `owner_unavailable` (`not_sent`) and the
+ * caller's retry runs it in process. An election that fails ends it with the election's own error (`rust_store_unreadable`
+ * stays permanent), and a cancel or deadline during the election ends it at once. A registry operation sent through
+ * `forwardOwnerOperation` waits the same way, and when this process became the owner its caller runs the handler in
+ * process, since nothing of it was sent.
+ *
  * The owner side table is owner-ops.ts; it is kept apart so the import modules can call this one without a cycle.
  */
 import { resolve } from 'node:path';
-import { currentSubmissionAuthority } from '../../minions/submission-authority.ts';
-import { currentVerifiedLocalWriter } from '../../persistence/identity.ts';
 import type { Notice } from '../../agent-output.ts';
-import type { OperationContext } from '../../ops/contract.ts';
+import { OperationError, type OperationContext } from '../../ops/contract.ts';
 import { capabilityMissing } from '../errors.ts';
-import { ownerConnectionFor, ownerRecoveryFor, rustOwnerServesPersistence, type OwnerConnection } from './client.ts';
-import { ownerIpcRefusal } from './routes.ts';
+import {
+  callEndCheck, callerIsRemote, ownerConnectionFor, ownerRejoinFor, rustOwnerServesPersistence, untilCallEnds, type OwnerConnection,
+} from './client.ts';
+import { ownerGone, ownerIpcRefusal } from './routes.ts';
 
-export type WholeOperationName = 'importFromContent' | 'importFromFile' | 'importImageFile' | 'importManagedFiles';
+export type WholeOperationName =
+  | 'importFromContent' | 'importFromFile' | 'importImageFile' | 'importManagedFiles' | 'snapshotStore' | 'snapshotStatus';
 
 /** The owner's entry for a registry operation sent whole (owner-ops.ts runs it). */
 export const OWNER_RUN_OPERATION = 'runOperation';
@@ -67,10 +77,7 @@ const UNFORWARDED_AUTHORITY_KEYS = ['auth', 'replayAuthority', 'viaSubagent', 's
 
 /** Refuses a caller other than the trusted local CLI; its authority would not reach the owner. */
 function refuseUntrustedCaller(name: string): void {
-  const caller = currentSubmissionAuthority();
-  if (caller && caller.kind !== 'application' || currentVerifiedLocalWriter()?.remote) {
-    throw ownerIpcRefusal(name, 'a remote caller\'s whole operation is not sent to the brain owner');
-  }
+  if (callerIsRemote()) throw ownerIpcRefusal(name, 'a remote caller\'s whole operation is not sent to the brain owner');
 }
 
 /** The owner writes through its persistence journal; without it, a whole operation is refused before it is sent. */
@@ -90,6 +97,8 @@ const PATH_ARGS: Readonly<Record<WholeOperationName, readonly number[]>> = {
   importFromFile: [0],
   importImageFile: [0],
   importManagedFiles: [],
+  snapshotStore: [0],
+  snapshotStatus: [],
 };
 
 /**
@@ -99,26 +108,28 @@ const PATH_ARGS: Readonly<Record<WholeOperationName, readonly number[]>> = {
 export function forwardWholeOperation<T>(engine: object, name: WholeOperationName, args: unknown[]): Promise<T> | undefined {
   const connection = ownerConnectionFor(engine);
   if (!connection) return undefined;
-  const recover = connection.closed ? ownerRecoveryFor(engine) : undefined;
-  // The owner went away before this operation was sent: elect again, then send it to the new owner, or run it here
-  // when this process won (owner-ops.ts holds the entry points; it is loaded late to keep the import cycle open).
-  if (recover) {
-    return recover().then(async () => {
-      const again = ownerConnectionFor(engine) === connection ? undefined : forwardWholeOperation<T>(engine, name, args);
-      if (again) return again;
-      if (ownerConnectionFor(engine) === connection) throw ownerIpcRefusal(name, 'the brain owner went away and no new owner took over');
-      const { ownerWholeOperations } = await import('./owner-ops.ts');
-      return ownerWholeOperations()[name](engine as never, ...args) as Promise<T>;
-    });
-  }
-  try { refuseUntrustedCaller(name); requireOwnerJournal(connection, name); }
+  const rejoin = connection.closed ? ownerRejoinFor(connection) : undefined;
+  // A connection that is still open is checked now; the one the election finds is checked when it is known.
+  try { refuseUntrustedCaller(name); if (!rejoin) requireOwnerJournal(connection, name); }
   catch (error) { return Promise.reject(error); }
   const sent = args.slice();
   for (const at of PATH_ARGS[name]) if (typeof sent[at] === 'string') sent[at] = resolve(sent[at] as string);
   if (name === 'importManagedFiles' && Array.isArray(sent[0])) {
     sent[0] = (sent[0] as Array<{ filePath: string }>).map(file => ({ ...file, filePath: resolve(file.filePath) }));
   }
-  return connection.request('fn', name, sent) as Promise<T>;
+  if (!rejoin) return connection.request('fn', name, sent) as Promise<T>;
+  // The owner has gone: run the election again. A new owner elsewhere takes the operation; when this process became
+  // the owner it cannot run it from here, so it is not sent and the caller's retry runs it in process. An election
+  // that fails for its own reason (a store that will not open, a disconnect that won) ends the operation with that
+  // error, and a caller that cancels or passes its deadline during the election stops waiting at once.
+  const elected = untilCallEnds(name, args, rejoin()).catch((error: unknown) => {
+    if (!(error instanceof OperationError && error.code === 'owner_unavailable')) throw error;
+  });
+  return elected.then(() => {
+    const next: OwnerConnection | undefined = ownerConnectionFor(engine);
+    if (next && !next.closed) { requireOwnerJournal(next, name); return next.request('fn', name, sent) as Promise<T>; }
+    throw ownerGone(name, connection.hello.pid, false);
+  });
 }
 
 /**
@@ -130,10 +141,17 @@ export async function forwardOwnerOperation(ctx: OperationContext, name: string,
   const connection = ownerConnectionFor(ctx.engine);
   if (!connection || !OWNER_FORWARDED_OPERATIONS.has(name)) return undefined;
   if (connection.closed) {
-    const recover = ownerRecoveryFor(ctx.engine);
-    if (!recover) return undefined; // the engine's own members give the owner_unavailable refusal
-    await recover();
-    if (ownerConnectionFor(ctx.engine) === connection) throw ownerIpcRefusal(name, 'the brain owner went away and no new owner took over');
+    const rejoin = ownerRejoinFor(connection);
+    if (!rejoin) return undefined; // the engine's own members give the owner_unavailable refusal
+    // The owner went away before this operation was sent: elect again. A new owner elsewhere takes it; when this process
+    // won, the caller runs the handler in process. A cancel or deadline during the election ends the call at once, and an
+    // election that fails for its own reason ends it with that error.
+    const stillWanted = callEndCheck(name, []);
+    await untilCallEnds(name, [], rejoin()).catch((error: unknown) => {
+      if (!(error instanceof OperationError && error.code === 'owner_unavailable')) throw error;
+    });
+    stillWanted();
+    if (ownerConnectionFor(ctx.engine) === connection) throw ownerGone(name, connection.hello.pid, false);
     return forwardOwnerOperation(ctx, name, params);
   }
   const record = ctx as unknown as Record<string, unknown>;

@@ -13,14 +13,24 @@ serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 getrandom = "0.3"
 sha2 = "0.10"
+# Slugs in one normal form, lowercase then Unicode NFC (`validate_slug`, as `normalizeSlug` in src/core/utils.ts).
+unicode-normalization = "0.1"
 # The storage bake-off only (`fjall_kv`); off by default, so the addon does not link it.
 fjall = { version = "3.1", optional = true }
+
+# Directory-relative removal (`unlinkat`) for a cancelled store snapshot (`snapshot.rs`); already in the
+# lockfile through redb.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
 
 [features]
 fjall = ["dep:fjall"]
 
 [dev-dependencies]
 gbrain-sim = { path = "../gbrain-sim" }
+# Property tests only (never linked into the addon). Default features off: no forking runner, no
+# timeout thread and no failure-persistence files, so a run writes nothing outside the test.
+proptest = { version = "1", default-features = false, features = ["std"] }
 
 # The bench tool's unit tests (the query generator) run with `cargo test`.
 [[example]]

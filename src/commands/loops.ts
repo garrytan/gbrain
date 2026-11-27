@@ -103,7 +103,10 @@ interface WaitingResult {
   text?: string;
 }
 
-export async function runWaiting(engine: BrainEngine, args: string[]): Promise<void> {
+/** Runs the open_loops read: in this process, or through the serve that owns the brain (`gbrain waiting` under a live PGLite serve). */
+export type OpenLoopsCall = (params: Record<string, unknown>, sourceId: string) => Promise<unknown>;
+
+export async function runWaiting(engine: BrainEngine | OpenLoopsCall, args: string[]): Promise<void> {
   if (args.includes('--help') || args.includes('-h')) {
     process.stdout.write(
       [
@@ -125,12 +128,11 @@ export async function runWaiting(engine: BrainEngine, args: string[]): Promise<v
   const top = topIdx !== -1 ? Number(args[topIdx + 1]) || 3 : 3;
   const asOfIdx = args.indexOf('--as-of');
 
-  const result = (await handleToolCall(
-    engine,
-    'open_loops',
-    { group_by: 'counterparty', limit: top, include_context: true, ...(asOfIdx !== -1 ? { as_of: args[asOfIdx + 1] } : {}) },
-    { sourceId: sourceFlag(args) ?? ALL_SOURCES },
-  )) as WaitingResult;
+  const params = { group_by: 'counterparty', limit: top, include_context: true, ...(asOfIdx !== -1 ? { as_of: args[asOfIdx + 1] } : {}) };
+  const sourceId = sourceFlag(args) ?? ALL_SOURCES;
+  const result = (typeof engine === 'function'
+    ? await engine(params, sourceId)
+    : await handleToolCall(engine, 'open_loops', params, { sourceId })) as WaitingResult;
 
   if (result.stale && !staleOk) {
     const staleSrc = result.sources.filter((s) => s.stale);

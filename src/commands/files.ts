@@ -4,7 +4,6 @@ import { join, relative, extname, basename, dirname, resolve } from 'path';
 import { createHash } from 'crypto';
 import type { BrainEngine } from '../core/engine.ts';
 import { hashStorageFile, uploadUnchangedFile, type StorageBackend, type StorageConfig } from '../core/storage.ts';
-import { sqlQueryForEngine, executeRawJsonb, FILES_METADATA_MERGE_SQL } from '../core/sql-query.ts';
 import { humanSize } from '../core/file-resolver.ts';
 import { createProgress } from '../core/progress.ts';
 import { getCliOptions, cliOptsToProgressOptions } from '../core/cli-options.ts';
@@ -184,12 +183,10 @@ async function uploadFile(engine: BrainEngine, args: string[]) {
   const storagePath = pageSlug ? `${pageSlug}/${filename}` : `unsorted/${hash.slice(0, 8)}-${filename}`;
   const mimeType = getMimeType(filePath);
 
-  const sql = sqlQueryForEngine(engine);
-
   // Check for existing file by hash — but only trust the row when the
   // BACKEND really holds the object (#4302); vanished bytes must re-upload.
-  const existing = await sql`SELECT id FROM files WHERE content_hash = ${hash} AND storage_path = ${storagePath}`;
-  if (existing.length > 0 && (await storage.exists(storagePath).catch(() => false))) {
+  const existing = await engine.hasFileWithHash(hash, storagePath);
+  if (existing && (await storage.exists(storagePath).catch(() => false))) {
     console.log(`File already uploaded (hash match): ${storagePath}`);
     return;
   }
@@ -203,17 +200,9 @@ async function uploadFile(engine: BrainEngine, args: string[]) {
   // #4910: stamp the lane so readers (doctor image_assets, files verify)
   // know storage_path is a bucket key; the upsert merges metadata so a
   // legacy `{}` row heals on its next content change.
-  await executeRawJsonb(
-    engine,
-    `INSERT INTO files (page_slug, filename, storage_path, mime_type, size_bytes, content_hash, metadata)
-     VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
-     ON CONFLICT (storage_path) DO UPDATE SET
-       content_hash = EXCLUDED.content_hash,
-       size_bytes = EXCLUDED.size_bytes,
-       mime_type = EXCLUDED.mime_type,
-       ${FILES_METADATA_MERGE_SQL}`,
-    [pageSlug, filename, storagePath, mimeType, stat.size, hash],
-    [{ storage: storageConfig.backend }],
+  await engine.upsertCliFileRow(
+    { page_slug: pageSlug, filename, storage_path: storagePath, mime_type: mimeType, size_bytes: stat.size, content_hash: hash },
+    { storage: storageConfig.backend },
   );
 
   console.log(`Uploaded: ${storagePath} (${humanSize(stat.size)})`);
@@ -301,17 +290,9 @@ async function uploadRaw(engine: BrainEngine, args: string[]) {
     }
     const hash = fileHash(filePath);
     const storagePath = relative(target.writeRoot, dest);
-    await executeRawJsonb(
-      engine,
-      `INSERT INTO files (source_id, page_slug, filename, storage_path, mime_type, size_bytes, content_hash, metadata)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
-       ON CONFLICT (storage_path) DO UPDATE SET
-         content_hash = EXCLUDED.content_hash,
-         size_bytes = EXCLUDED.size_bytes,
-         mime_type = EXCLUDED.mime_type,
-         ${FILES_METADATA_MERGE_SQL}`,
-      [sourceId, pageSlug, filename, storagePath, mimeType, stat.size, 'sha256:' + hash],
-      [{ storage: 'git', ...(fileType ? { type: fileType } : {}) }],
+    await engine.upsertRawFileRow(
+      { source_id: sourceId, page_slug: pageSlug, filename, storage_path: storagePath, mime_type: mimeType, size_bytes: stat.size, content_hash: 'sha256:' + hash },
+      { storage: 'git', ...(fileType ? { type: fileType } : {}) },
     );
     console.log(JSON.stringify({
       success: true,
@@ -376,17 +357,9 @@ async function uploadRaw(engine: BrainEngine, args: string[]) {
   // Record in DB. files.metadata is JSONB — pass the object via
   // executeRawJsonb with an explicit ::jsonb cast so post-v0.31 reads see
   // an actual object, not a JSON-encoded string (D1 wave).
-  await executeRawJsonb(
-    engine,
-    `INSERT INTO files (page_slug, filename, storage_path, mime_type, size_bytes, content_hash, metadata)
-     VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
-     ON CONFLICT (storage_path) DO UPDATE SET
-       content_hash = EXCLUDED.content_hash,
-       size_bytes = EXCLUDED.size_bytes,
-       mime_type = EXCLUDED.mime_type,
-       ${FILES_METADATA_MERGE_SQL}`,
-    [pageSlug, filename, storagePath, mimeType, stat.size, 'sha256:' + hash],
-    [{ storage: backend, ...(fileType ? { type: fileType } : {}), upload_method: method }],
+  await engine.upsertCliFileRow(
+    { page_slug: pageSlug, filename, storage_path: storagePath, mime_type: mimeType, size_bytes: stat.size, content_hash: 'sha256:' + hash },
+    { storage: backend, ...(fileType ? { type: fileType } : {}), upload_method: method },
   );
 
   // Output JSON for scripting
@@ -457,9 +430,8 @@ async function syncFiles(engine: BrainEngine, dir?: string) {
     const storagePath = relativePath.replace(/\\/g, '/');
     const mimeType = getMimeType(filePath);
 
-    const sql = sqlQueryForEngine(engine);
-    const existing = await sql`SELECT id FROM files WHERE content_hash = ${hash} AND storage_path = ${storagePath}`;
-    if (existing.length > 0) {
+    const existing = await engine.hasFileWithHash(hash, storagePath);
+    if (existing) {
       skipped++;
       continue;
     }
@@ -473,17 +445,9 @@ async function syncFiles(engine: BrainEngine, dir?: string) {
 
     // files.metadata is JSONB — bind a real object via executeRawJsonb instead
     // of casting a string into ::jsonb (the #2339 double-encode class).
-    await executeRawJsonb(
-      engine,
-      `INSERT INTO files (page_slug, filename, storage_path, mime_type, size_bytes, content_hash, metadata)
-       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
-       ON CONFLICT (storage_path) DO UPDATE SET
-         content_hash = EXCLUDED.content_hash,
-         size_bytes = EXCLUDED.size_bytes,
-         mime_type = EXCLUDED.mime_type,
-         ${FILES_METADATA_MERGE_SQL}`,
-      [pageSlug, filename, storagePath, mimeType, stat.size, hash],
-      [{ storage: storageConfig.backend }],
+    await engine.upsertSyncFileRow(
+      { page_slug: pageSlug, filename, storage_path: storagePath, mime_type: mimeType, size_bytes: stat.size, content_hash: hash },
+      { storage: storageConfig.backend },
     );
 
     uploaded++;
@@ -495,8 +459,7 @@ async function syncFiles(engine: BrainEngine, dir?: string) {
 }
 
 async function verifyFiles(engine: BrainEngine) {
-  const sql = sqlQueryForEngine(engine);
-  const rows = await sql`SELECT * FROM files ORDER BY storage_path COLLATE "C" LIMIT 1000`;
+  const rows = await engine.listFileRowsForVerify();
 
   if (rows.length === 0) {
     console.log('No files to verify.');
@@ -541,8 +504,7 @@ async function verifyFiles(engine: BrainEngine) {
     if (!sourceLocalPathCache.has(sid)) {
       let localPath: string | null = null;
       try {
-        const srcRows = await sql`SELECT local_path FROM sources WHERE id = ${sid}`;
-        localPath = srcRows[0]?.local_path ? String(srcRows[0].local_path) : null;
+        localPath = await engine.readSourceLocalPathForVerify(sid);
       } catch { /* sources table unavailable — fall back to sync.repo_path */ }
       sourceLocalPathCache.set(sid, localPath);
     }

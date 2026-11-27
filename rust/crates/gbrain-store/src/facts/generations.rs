@@ -1,34 +1,24 @@
-//! The derived generation ledger: the `derived_generations` and `derived_generation_items` tables
-//! (src/core/generations), as far as `listUnwithdrawnFacts` reads them.
+//! `listUnwithdrawnFacts` over the derived generation ledger: the `derived_generations` and
+//! `derived_generation_items` tables (src/core/generations).
 //!
-//! A generation lives at `F 0x0E generation_id` (the table's primary key, 8 bytes big-endian) with
-//! the JSON value `{"source_id", "kind", "owner_key", "generation", "state", "created_at_us",
-//! "items": [{"item_key", "action", "preimage"}]}`: the generation row with its items inline, as the
-//! items' `ON DELETE CASCADE` keeps them.
-//!
-//! The store reads the ledger. No member writes it: a fence write publishes a generation with raw
-//! SQL (`publishFenceGeneration` in generations/fence.ts, through `activateGeneration` and
-//! `recordHeld` in generations/publish.ts, in the page write's transaction), and a managed source
-//! journals the activation (generations/managed.ts, the write journal). On Rust they stop on the
-//! typed `raw_sql` refusal, so the ledger stays empty and `listUnwithdrawnFacts` lists nothing. A
-//! writer that binds here must also delete a source's generations with the source.
+//! The ledger is the one `generations.rs` keeps (`h 0x01 id` for a row, `h 0x03 id item_key` for
+//! its items) and its typed members write (`activateGenerationRows`, `recordHeldGenerationRow`, the
+//! fence publish's `activateGeneration` and `recordHeld` in generations/publish.ts). This module
+//! only reads it, through `generations::source_generation_views`.
 
 use super::purge::withdrawal_covers;
 use super::{FactRecord, fact_fingerprint, read_fact, source_rows};
 use crate::Store;
 use crate::env::iso;
 use crate::error::{Result, StoreError};
-use crate::keys;
-use crate::kv::{KvRead, scan_prefix};
+use crate::generations::{GenerationView, source_generation_views};
+use crate::kv::KvRead;
 use crate::links::no_nul;
 use crate::pages::read_page;
 use crate::timeline_queries::jsonb_field_text;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{Value, json};
-use std::collections::{BTreeMap, BTreeSet, HashSet};
-
-/// The byte after `keys::FACT` that marks a generation.
-const GENERATION: u8 = 0x0E;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// `listUnwithdrawnFacts({ sourceIds, slug, fenceKind })`.
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -39,87 +29,15 @@ pub struct UnwithdrawnArgs {
     pub fence_kind: String,
 }
 
-/// One item of a generation.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct ItemRecord {
-    pub item_key: String,
-    pub action: String,
-    #[serde(default, deserialize_with = "crate::jsonb::de_opt_value")]
-    pub preimage: Option<Value>,
-}
-
-/// What is stored for a generation.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub(crate) struct GenerationRecord {
-    pub source_id: String,
-    pub kind: String,
-    pub owner_key: String,
-    pub generation: i32,
-    pub state: String,
-    pub created_at_us: i64,
-    pub items: Vec<ItemRecord>,
-}
-
-/// The key of one generation (the test writer's only use: no Rust writer
-/// fills this table yet).
-#[cfg(test)]
-fn key(id: u64) -> Vec<u8> {
-    let mut key = vec![keys::FACT, GENERATION];
-    key.extend_from_slice(&id.to_be_bytes());
-    key
-}
-
-/// Every generation, in id order.
-fn all_generations(read: &dyn KvRead, op: &str) -> Result<Vec<(u64, GenerationRecord)>> {
-    let mut out = Vec::new();
-    let mut bad = None;
-    scan_prefix(read, &[keys::FACT, GENERATION], false, &mut |k, v| {
-        let id = k
-            .get(2..10)
-            .and_then(|b| b.try_into().ok())
-            .map(u64::from_be_bytes);
-        match (id, serde_json::from_slice::<GenerationRecord>(v)) {
-            (Some(id), Ok(g)) => {
-                out.push((id, g));
-                true
-            }
-            (_, Err(e)) => {
-                bad = Some(e.to_string());
-                false
-            }
-            (None, Ok(_)) => {
-                bad = Some("short key".into());
-                false
-            }
-        }
-    })?;
-    match bad {
-        Some(e) => Err(StoreError::invalid(format!(
-            "{op}: corrupt derived generation record: {e}"
-        ))),
-        None => Ok(out),
-    }
-}
-
-/// Test fixture: stores a generation as the fence writer would.
-#[cfg(test)]
-pub(crate) fn put_generation(
-    tx: &mut dyn crate::kv::KvWrite,
-    id: u64,
-    record: &GenerationRecord,
-) -> Result<()> {
-    crate::put_json(tx, &key(id), record)
-}
-
 /// `preimage ->> field` of an object preimage.
 fn field(preimage: &Value, name: &str) -> Option<String> {
     preimage.get(name).and_then(jsonb_field_text)
 }
 
-/// A retired item the CTE keeps: the fact id, the generation and the page slug.
+/// A retired item the CTE keeps: the generation's source, the generation and the page slug.
 struct Retired<'a> {
-    generation_id: u64,
-    generation: &'a GenerationRecord,
+    source: &'a str,
+    generation: &'a GenerationView,
     slug: &'a str,
     preimage: &'a Value,
 }
@@ -141,18 +59,19 @@ impl Store {
             no_nul(op, &[("slug", slug)])?;
         }
         let read = self.read()?;
-        let generations = all_generations(&*read, op)?;
-        let sources: HashSet<&str> = a.source_ids.iter().map(String::as_str).collect();
+        let sources: BTreeSet<&str> = a.source_ids.iter().map(String::as_str).collect();
+        let mut generations = Vec::new();
+        for source in sources {
+            for g in source_generation_views(&*read, source, &a.fence_kind)? {
+                generations.push((source, g));
+            }
+        }
         let mut retired: BTreeMap<i64, Retired> = BTreeMap::new();
-        for (id, g) in &generations {
+        for (source, g) in &generations {
             let Some(slug) = g.owner_key.strip_prefix("page:") else {
                 continue;
             };
-            if g.kind != a.fence_kind
-                || !sources.contains(g.source_id.as_str())
-                || g.state == "held"
-                || a.slug.as_deref().is_some_and(|s| s != slug)
-            {
+            if g.state == "held" || a.slug.as_deref().is_some_and(|s| s != slug) {
                 continue;
             }
             for item in &g.items {
@@ -173,11 +92,11 @@ impl Store {
                     ))
                 })?;
                 // DISTINCT ON (fact id) ORDER BY g.id DESC: the newest generation wins.
-                if retired.get(&fact_id).is_none_or(|r| r.generation_id < *id) {
+                if retired.get(&fact_id).is_none_or(|r| r.generation.id < g.id) {
                     retired.insert(
                         fact_id,
                         Retired {
-                            generation_id: *id,
+                            source,
                             generation: g,
                             slug,
                             preimage: pre,
@@ -191,7 +110,7 @@ impl Store {
         let mut active: BTreeMap<&str, Vec<FactRecord>> = BTreeMap::new();
         let mut rows: Vec<(String, String, u64, Value)> = Vec::new();
         for (fact_id, r) in &retired {
-            let source = r.generation.source_id.as_str();
+            let source = r.source;
             let Some(f) = u64::try_from(*fact_id)
                 .ok()
                 .map(|id| read_fact(&*read, id))
@@ -255,7 +174,7 @@ impl Store {
                     "entity_slug": f.entity_slug,
                     "attributed_to": f.attributed_to,
                     "superseded": f.superseded_by.is_some(),
-                    "generation_id": r.generation_id,
+                    "generation_id": r.generation.id,
                     "generation": r.generation.generation,
                     "retired_at": iso(r.generation.created_at_us),
                     "expired_at": f.expired_at_us.map(iso),
@@ -288,7 +207,7 @@ impl Store {
 
 /// `withdrawalCoversFactSql`: on a member page only that page's withdrawal covers the row;
 /// otherwise the withdrawal's reach ([`withdrawal_covers`]).
-fn covers_fact(read: &dyn KvRead, f: &FactRecord, subject: &str) -> Result<bool> {
+pub(super) fn covers_fact(read: &dyn KvRead, f: &FactRecord, subject: &str) -> Result<bool> {
     let slug = f.source_markdown_slug.as_deref().unwrap_or("");
     if slug.starts_with(super::MEMBER_PAGE_PREFIX) {
         return Ok(subject == slug);
@@ -301,20 +220,32 @@ mod tests {
     use super::*;
     use crate::facts::{ExpireFactArgs, InsertFactsArgs};
 
-    fn generation(id_text: Value, owner: &str, state: &str, created: i64) -> GenerationRecord {
-        GenerationRecord {
-            source_id: "default".into(),
-            kind: "fact_fence".into(),
-            owner_key: owner.into(),
-            generation: 1,
-            state: state.into(),
-            created_at_us: created,
-            items: vec![ItemRecord {
-                item_key: "k".into(),
-                action: "retired".into(),
-                preimage: Some(json!({ "id": id_text, "fact": "a retired claim",
-                    "visibility": "world", "row_num": 1, "expired_at": null })),
-            }],
+    use crate::generations::{ActivationInput, GenerationKey, HeldInput, LedgerItemInput};
+
+    fn retired(id_text: Value) -> LedgerItemInput {
+        LedgerItemInput {
+            item_key: "fact:1".into(),
+            identity_hash: "i".into(),
+            action: "retired".into(),
+            preimage: Some(json!({ "id": id_text, "fact": "a retired claim",
+                "visibility": "world", "row_num": 1, "expired_at": null })),
+            preimage_bytes: None,
+            pending: false,
+        }
+    }
+
+    fn activation(operation: &str) -> ActivationInput {
+        ActivationInput {
+            generation: 1.0,
+            run_id: None,
+            operation_id: operation.into(),
+            input_pin: None,
+            input_size: None,
+            completeness: r#"{"complete":true}"#.into(),
+            set_hash: "set".into(),
+            restore_of: None,
+            activation_id: None,
+            locator: None,
         }
     }
 
@@ -332,16 +263,41 @@ mod tests {
             slug: slug.map(str::to_string),
             fence_kind: "fact_fence".into(),
         };
+        let key = |owner: &str| GenerationKey {
+            source_id: "default".into(),
+            kind: "fact_fence".into(),
+            owner_key: owner.into(),
+        };
+        // The live row of notes/a supersedes the first; notes/b holds, which lists nothing.
+        let first = store
+            .activate_generation_rows(
+                &key("page:notes/a"),
+                None,
+                &activation("a1"),
+                &[retired(json!(id))],
+            )
+            .unwrap();
+        let live = store
+            .activate_generation_rows(
+                &key("page:notes/a"),
+                Some(first as f64),
+                &activation("a2"),
+                &[retired(json!(id.to_string()))],
+            )
+            .unwrap();
+        let held = HeldInput {
+            hold_id: "hold".into(),
+            run_id: None,
+            input_pin: None,
+            input_size: None,
+            set_hash: "set".into(),
+            reason: "fence_absent".into(),
+            context: "{}".into(),
+            proposal: None,
+            proposal_bytes: 0.0,
+        };
         store
-            .write(|tx| {
-                put_generation(tx, 1, &generation(json!(id), "page:notes/a", "live", 0))?;
-                put_generation(
-                    tx,
-                    2,
-                    &generation(json!(id.to_string()), "page:notes/a", "superseded", 5),
-                )?;
-                put_generation(tx, 3, &generation(json!(id), "page:notes/a", "held", 9))
-            })
+            .record_held_generation_row(&key("page:notes/b"), &held)
             .unwrap();
         // The fact is still active: nothing lists.
         assert!(
@@ -359,7 +315,8 @@ mod tests {
         assert!(store.expire_fact(&expire).unwrap());
         let rows = store.list_unwithdrawn_facts(&args(None)).unwrap();
         assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0]["generation_id"], json!(2));
+        assert_ne!(first, live);
+        assert_eq!(rows[0]["generation_id"], json!(live));
         assert_eq!(rows[0]["slug"], json!("notes/a"));
         assert_eq!(rows[0]["withdrawn"], json!(false));
         assert_eq!(rows[0]["page_id"], Value::Null);

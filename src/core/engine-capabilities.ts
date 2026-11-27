@@ -65,6 +65,10 @@ export const ENGINE_CAPABILITIES = [
   'dream_verdicts',
   'contradictions',
   'ontology',
+  /** The session cursor and checkpoint manifest of context_pack and delta (`session_context_state`, key tag `y`). */
+  'session_state',
+  /** Guest-source records (`guest_sources`: writers and trust ceiling, the record `guests init` writes). The Rust store keeps none yet (row 32m-3). */
+  'guest_sources',
 ] as const;
 
 export type Capability = (typeof ENGINE_CAPABILITIES)[number];

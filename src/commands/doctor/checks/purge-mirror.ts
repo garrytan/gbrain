@@ -23,11 +23,7 @@ const DOCS = 'docs/guides/memory-boundaries.md#purge-mirror';
 export async function checkPurgeMirror(engine: BrainEngine, home = configDir()): Promise<Check> {
   let requests: string[];
   try {
-    requests = (await engine.executeRaw<{ request: string }>(`SELECT DISTINCT request FROM (
-        SELECT request_id::text AS request FROM page_purges WHERE request_id IS NOT NULL AND purged_at > now() - make_interval(days => $1)
-        UNION SELECT request_id::text FROM fact_purges WHERE request_id IS NOT NULL AND purged_at > now() - make_interval(days => $1)
-        UNION SELECT request_id::text FROM take_purges WHERE request_id IS NOT NULL AND purged_at > now() - make_interval(days => $1)) r LIMIT $2`,
-    [WINDOW_DAYS, REQUEST_CAP])).map(row => row.request);
+    requests = await engine.listRecentPurgeRequests(WINDOW_DAYS, REQUEST_CAP);
   } catch (error) {
     return checkError(NAME, 'read the recent purge tombstones', error);
   }

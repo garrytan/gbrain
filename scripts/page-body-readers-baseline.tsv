@@ -13,24 +13,24 @@
 # docs/ci-guards.md#page-body-readers
 src/cli/main.ts	formatResult	field	STREAM	renders a get_page result body; segmented bodies stream in PR 2
 src/cli/page-render.ts	asOfExitCode	field	NONE	not the page body: tests whether a get_page as_of reply carries compiled_truth (a wire result, not a Page); a segmented edition replies with window, tested first
-src/cli/page-render.ts	formatGetPage	call:serializeMarkdown	SEGW	
 src/cli/page-render.ts	formatGetPage	field	STREAM	
+src/cli/page-render.ts	formatGetPage	call:serializeMarkdown	SEGW	
 src/commands/brainstorm.ts	runBrainstormCli	call:serializeMarkdown	SEGW	
 src/commands/core.ts	runCore	field	INLINE	
 src/commands/core.ts	setMarking	call:serializePageToMarkdown	INLINE	
-src/commands/core.ts	suggestCandidates	field	INLINE	
 src/commands/core.ts	suggestCandidates	sql	INLINE	
+src/commands/core.ts	suggestCandidates	field	INLINE	
 src/commands/doctor/checks/calibration.ts	checkLinkResolutionOpportunity	field	LEAD	
-src/commands/doctor/checks/calibration.ts	checkLinkResolutionOpportunity	sql	LEAD	
-src/commands/doctor/checks/content-quality.ts	runContentSanity	sql	META	
-src/commands/doctor/checks/data-integrity.ts	runMarkdownBody	sql	META	
-src/commands/doctor/checks/derived-visibility.ts	derivedVisibilityCheck	sql	NONE	not the page body: p.* in a CTE, only metadata columns read
-src/commands/enrich.ts	enrichOneLocked	call:serializeMarkdown	SEGW	
 src/commands/enrich.ts	enrichOneLocked	field	SEGW	
+src/commands/enrich.ts	enrichOneLocked	call:serializeMarkdown	SEGW	
+src/commands/enrich.ts	readableEvidence	field	INLINE	segmented holding page: body never read, so its facts stay out of a labelled page's evidence (fail closed)
 src/commands/extract-mentions-explain.ts	explainMention	field	STREAM	
-src/commands/extract-mentions-explain.ts	explainMention	sql	STREAM	
-src/commands/extract-mentions-explain.ts	pageNames	sql	STREAM	
-src/commands/extract-mentions-explain.ts	rejectedDeclaration	sql	STREAM	
+src/core/engine-sql/embed-stale-work.ts	countArchivedEmbeddingWork	sql	META	moved from embedding-readiness.ts: body <> '' predicate on archived pages
+src/core/engine-sql/embed-stale-work.ts	sumEmbedBackfillChars	sql	META	moved from embed-consent.ts estimateEmbedBackfillUsd: character length of chunkless inline bodies for the cost estimate; a segmented page's NULL columns add nothing
+src/core/engine-sql/embedding-catalog.ts	FALSE_STAMPED_SQL	sql	META	moved from embedding-invalidation.ts countFalseStampedChunks: literal copy of the page-embedding-budget.ts applying-hold predicate inside falseStampPageWhere, octet_length metadata for inline pages, body_bytes for segmented
+src/core/engine-sql/mention-reads.ts	readExplainScanPage	sql	STREAM	moved from src/commands/extract-mentions-explain.ts explainMention, same statement
+src/core/engine-sql/mention-reads.ts	readPageNameText	sql	STREAM	moved from src/commands/extract-mentions-explain.ts pageNames, same statement
+src/core/engine-sql/mention-reads.ts	listRejectedDeclarationPages	sql	STREAM	moved from src/commands/extract-mentions-explain.ts rejectedDeclaration, same statement
 src/commands/extract-timeline-db.ts	extractTimelineFromDB	field	STREAM	
 src/commands/extract-timeline-db.ts	plannedTimeline	field	STREAM	
 src/commands/extract.ts	extractFromDB	field	STREAM	
@@ -39,49 +39,48 @@ src/commands/extract.ts	extractMentionsFromDb	field	STREAM
 src/commands/extract.ts	extractStaleFromDB	field	STREAM	
 src/commands/extract.ts	runExtractCore	field	STREAM	
 src/commands/integrity.ts	integrityHitsOf	field	INLINE	segmented pages read their truth region block by block (bodyLines); the string branch runs only for inline pages
-src/commands/integrity.ts	scanIntegrityBatch	field	STREAM	inline rows only: a segmented row's NULL body goes to integrityHitsOf, which reads its segments
 src/commands/integrity.ts	scanIntegrityBatch	sql	STREAM	inline rows only: a segmented row's NULL body goes to integrityHitsOf, which reads its segments
+src/commands/integrity.ts	scanIntegrityBatch	field	STREAM	inline rows only: a segmented row's NULL body goes to integrityHitsOf, which reads its segments
 src/commands/jobs.ts	JOBS_HELP	sql	NONE	not the page body: help text
 src/commands/lint.ts	lintContent	field	STREAM	
-src/commands/migrate-engine.ts	copyPageToTarget	call:putPage	SEGW	
 src/commands/migrate-engine.ts	copyPageToTarget	field	STREAM	
+src/commands/migrate-engine.ts	copyPageToTarget	call:putPage	SEGW	
 src/commands/migrations/v0_32_2.ts	phaseCVerify	call:serializePageToMarkdown	SEGW	
-src/commands/quarantine.ts	runClear	call:serializeMarkdown	SEGW	
 src/commands/quarantine.ts	runClear	field	SEGW	
-src/commands/quarantine.ts	runScan	call:serializePageToMarkdown	SEGW	
 src/commands/quarantine.ts	runScan	field	SEGW	
+src/commands/quarantine.ts	runClear	call:serializeMarkdown	SEGW	
+src/commands/quarantine.ts	runScan	call:serializePageToMarkdown	SEGW	
 src/commands/reconcile-links.ts	pageCodeRefs	field	INLINE	segmented pages read block by block (bodyLines); the string branch runs only for inline pages
 src/commands/reindex-aliases.ts	runReindexAliases	field	STREAM	
 src/commands/reindex-code.ts	estimateReindexCost	field	INLINE	
 src/commands/reindex-code.ts	fetchCodePages	sql	INLINE	
 src/commands/reindex-code.ts	runReindexCode	field	INLINE	
 src/commands/reindex.ts	readBatch	sql	STREAM	
-src/commands/reindex.ts	runReindex	call:serializeMarkdown	SEGW	
 src/commands/reindex.ts	runReindex	field	STREAM	
+src/commands/reindex.ts	runReindex	call:serializeMarkdown	SEGW	
 src/commands/sources.ts	runAudit	field	SEGW	
 src/commands/sync/finalize.ts	backstopAffectedPageFacts	field	STREAM	
-src/core/ai/decide/review-lane.ts	pagePairAnchor	field	LEAD	bounded prefix row
 src/core/ai/decide/review-lane.ts	pagePairAnchor	sql	LEAD	boundedBodyPrefixSql (truth_lead for segmented), sliced to PAGE_TEXT_LIMIT
+src/core/ai/decide/review-lane.ts	pagePairAnchor	field	LEAD	bounded prefix row
 src/core/attendance-repair.ts	prepareOrigin	field	META	
 src/core/attendance-repair.ts	readOrigin	sql	META	
-src/core/belief/backfill.ts	preparePage	field	STREAM	the backfill parses inline version and page bodies; a segmented page or version is skipped (summary reasons large_page_versions_pruned, segmented_version_body)
 src/core/belief/backfill.ts	preparePage	sql	STREAM	the backfill parses inline version and page bodies; a segmented page or version is skipped (summary reasons large_page_versions_pruned, segmented_version_body)
+src/core/belief/backfill.ts	preparePage	field	STREAM	the backfill parses inline version and page bodies; a segmented page or version is skipped (summary reasons large_page_versions_pruned, segmented_version_body)
 src/core/belief/changes.ts	subjectsOf	field	STREAM	weekly change diff: reads fence subjects from a page-at-time interval body; a segmented or unavailable interval answers null (before_known false), never a body string; inline bodies only
-src/core/belief/page-at-time.ts	livePage	field	STREAM	known_as_of read: a segmented version or page returns body segmented with body_ref (window read via get_page version_id), never a body string; inline bodies only
 src/core/belief/page-at-time.ts	livePage	sql	STREAM	known_as_of read: a segmented version or page returns body segmented with body_ref (window read via get_page version_id), never a body string; inline bodies only
-src/core/belief/page-at-time.ts	withBodies	field	STREAM	known_as_of read: a segmented version or page returns body segmented with body_ref (window read via get_page version_id), never a body string; inline bodies only
 src/core/belief/page-at-time.ts	withBodies	sql	STREAM	known_as_of read: a segmented version or page returns body segmented with body_ref (window read via get_page version_id), never a body string; inline bodies only
+src/core/belief/page-at-time.ts	livePage	field	STREAM	known_as_of read: a segmented version or page returns body segmented with body_ref (window read via get_page version_id), never a body string; inline bodies only
+src/core/belief/page-at-time.ts	withBodies	field	STREAM	known_as_of read: a segmented version or page returns body segmented with body_ref (window read via get_page version_id), never a body string; inline bodies only
 src/core/belief/preimages.ts	preimageGaps	sql	META	size only (octet_length) to exempt large pages; segmented pages and versions are excluded by body_storage
+src/core/engine-sql/belief-purge-ledger.ts	listPageVersionFenceBodies	sql	STREAM	segmented version (pagePurgeClaims): NULL body parses no fence claims; the live rows' and the lifetimes' event claims still cover it
+src/core/engine-sql/belief-purge-ledger.ts	listPurgeCarrierVersions	sql	STREAM	segmented version (registerVersionCarriers): NULL body registers no carriers; the backfill skips the same version (segmented_version_body), so nothing it appends can copy one
 src/core/belief/purge.ts	pagePurgeClaims	field	STREAM	segmented version: NULL body parses no fence claims; the live rows' and the lifetimes' event claims still cover it
-src/core/belief/purge.ts	pagePurgeClaims	sql	STREAM	segmented version: NULL body parses no fence claims; the live rows' and the lifetimes' event claims still cover it
 src/core/belief/purge.ts	registerVersionCarriers	field	STREAM	segmented version: NULL body registers no carriers; the backfill skips the same version (segmented_version_body), so nothing it appends can copy one
-src/core/belief/purge.ts	registerVersionCarriers	sql	STREAM	segmented version: NULL body registers no carriers; the backfill skips the same version (segmented_version_body), so nothing it appends can copy one
-src/core/belief/state.ts	readBeliefState	sql	META	size only (the over-1 MiB creation rule); a segmented page counts as large by body_storage
+src/core/engine-sql/belief-state.ts	readBeliefStateRows	sql	META	size only (the over-1 MiB creation rule); a segmented page counts as large by body_storage
 src/core/brainstorm/domain-bank.ts	fetchFar	field	LEAD	
 src/core/brainstorm/orchestrator.ts	_runBrainstormInner	field	LEAD	
-src/core/by-mention.ts	scanStaleMentions	sql	STREAM	
 src/core/chronicle/backfill.ts	runChronicleBackfill	field	STREAM	
-src/core/chronicle/backfill.ts	runChronicleBackfill	sql	STREAM	
+src/core/engine-sql/chronicle-reads.ts	CHRONICLE_BACKFILL_BATCH_SQL	sql	STREAM	moved from chronicle/backfill.ts runChronicleBackfill unchanged: coalesce(compiled_truth, truth_lead) reads an inline body, else the segmented page's stored lead
 src/core/chronicle/execute.ts	executeChronicleRow	field	LEAD	
 src/core/chronicle/extract-events.ts	chronicleJudgeContext	field	LEAD	
 src/core/chronicle/ledger.ts	decideChronicle	field	LEAD	
@@ -91,112 +90,142 @@ src/core/company-brain/inspection.ts	readPage	field	STREAM
 src/core/company-brain/profile.ts	importCompanyBrainFile	field	META	
 src/core/company-brain/verification.ts	verifyCompanyBrain	field	STREAM	
 src/core/connectors/api-source.ts	afterConnectorPublish	field	INLINE	moved from meetings/meetings-source.ts afterPublish: a segmented page is skipped before its body is read; meeting and Slack day pages are at most 2 MiB
-src/core/connectors/fence-carry.ts	carryStoredFences	call:serializePageToMarkdown	INLINE	moved from google/sweep-shared.ts: asserts inline (assertInlineBody); importRendered refuses a segmented page first
 src/core/connectors/fence-carry.ts	carryStoredFences	field	INLINE	moved from google/sweep-shared.ts: asserts inline (assertInlineBody); importRendered refuses a segmented page first
+src/core/connectors/fence-carry.ts	carryStoredFences	call:serializePageToMarkdown	INLINE	moved from google/sweep-shared.ts: asserts inline (assertInlineBody); importRendered refuses a segmented page first
 src/core/content-repair/judgment.ts	judgmentParticipant	field	STREAM	
 src/core/content-sanity.ts	assessContentSanity	field	STREAM	
 src/core/context/proactive-brief.ts	editItem	field	INLINE	reads the body only at or under 64 KiB, below the segmented threshold; a segmented page's NULL body skips the edit arm
-src/core/context/proactive-brief.ts	editItem	sql	INLINE	reads the body only at or under 64 KiB, below the segmented threshold; a segmented page's NULL body skips the edit arm
-src/core/context/retrieval-reflex.ts	resolveEntitiesToPointers	sql	LEAD	boundedBodyPrefixSql AS compiled_truth
 src/core/context/retrieval-reflex.ts	safeSynopsis	field	LEAD	bounded prefix rows
-src/core/context/retrieval-reflex.ts	weakTitleHits	sql	LEAD	boundedBodyPrefixSql AS compiled_truth
 src/core/conversation-parser/body.ts	readSummaryBody	field	STREAM	
 src/core/core-memory.ts	applyCoreSensitivity	field	INLINE	
 src/core/core-memory.ts	listCorePages	field	INLINE	
 src/core/core-memory.ts	renderCorePage	field	INLINE	
-src/core/cycle/chronicle.ts	discover	sql	STREAM	
-src/core/cycle/concept-publication.ts	composeConceptRepublication	call:serializeMarkdown	INLINE	
 src/core/cycle/concept-publication.ts	composeConceptRepublication	field	INLINE	
 src/core/cycle/concept-publication.ts	conceptPreservationHold	field	INLINE	
-src/core/cycle/concept-publication.ts	preserveCanonicalFences	call:serializeMarkdown	INLINE	after assertInlineBody
 src/core/cycle/concept-publication.ts	preserveCanonicalFences	field	INLINE	assertInlineBody: refuses a segmented page (concept pages inline; enrich/connector callers SEGW)
-src/core/cycle/concept-publication.ts	publishClassicConcept	call:serializeMarkdown	INLINE	
 src/core/cycle/concept-publication.ts	publishClassicConcept	field	INLINE	
 src/core/cycle/concept-publication.ts	prepareManagedConcept	call:serializeMarkdown	INLINE	
+src/core/cycle/concept-publication.ts	composeConceptRepublication	call:serializeMarkdown	INLINE	
+src/core/cycle/concept-publication.ts	preserveCanonicalFences	call:serializeMarkdown	INLINE	after assertInlineBody
+src/core/cycle/concept-publication.ts	publishClassicConcept	call:serializeMarkdown	INLINE	
 src/core/cycle/drift.ts	runPhaseDrift	call:serializeMarkdown	INLINE	
-src/core/cycle/edge-contradictions.ts	removeTimelineLine	call:serializeMarkdown	SEGW	
 src/core/cycle/edge-contradictions.ts	removeTimelineLine	field	SEGW	
+src/core/cycle/edge-contradictions.ts	removeTimelineLine	call:serializeMarkdown	SEGW	
 src/core/cycle/extract-atoms-page-state.ts	transferLegacyAtomPageState	field	META	compares two snapshots; segmented page: getter throws page_body_segmented
-src/core/cycle/extract-atoms.ts	discoverExtractablePages	field	STREAM	see sql row; CAS is on content_hash + knowledge_revision
 src/core/cycle/extract-atoms.ts	discoverExtractablePages	sql	STREAM	minCompiledTruthChars is false for NULL: segmented pages are never discovered (skip until per-segment extraction, PR 4)
 src/core/cycle/extract-atoms.ts	minCompiledTruthChars	sql	STREAM	false for a segmented page (NULL body): skip
 src/core/cycle/extract-atoms.ts	runPhaseExtractAtoms	call:serializeMarkdown	SEGW	
+src/core/cycle/extract-atoms.ts	discoverExtractablePages	field	STREAM	see sql row; CAS is on content_hash + knowledge_revision
 src/core/cycle/extract-facts.ts	canonicalCacheState	field	INLINE	inline arm; a segmented page compares its stored regions with the canonical file by length and SHA-256 (segmentedBodyMatchesFile)
-src/core/cycle/extract-facts.ts	expireDeletedPageFacts	sql	INLINE	reads the deleted page's stored fence through readFenceBlocks, which reads a segmented page as segmented: no fence proof, so its rows expire only when a live generation recorded them (GBRA-161 PR 2)
+src/core/engine-sql/facts-cycle.ts	readDeletedPageBody	sql	INLINE	lane 4 facts-cycle sites (item 4.2): moved from expireDeletedPageFacts, same statement. reads the deleted page's stored fence through readFenceBlocks, which reads a segmented page as segmented: no fence proof, so its rows expire only when a live generation recorded them (GBRA-161 PR 2)
 src/core/cycle/extract-facts.ts	planFenceReconcile	field	NONE	view.timeline is the parsed facts fence of the timeline section (FactsFenceView); a segmented page reads it from its marker segments (segmentedFactsFenceView)
 src/core/cycle/extract-facts.ts	sameBody	field	INLINE	inline arm; segmented pages compare content_hash and body_bytes
 src/core/cycle/extract-takes.ts	readPageTakes	field	INLINE	inline arm; a segmented page streams through parseTakesFenceBlocks (page-body/segment-takes.ts)
 src/core/cycle/grade-takes.ts	GradeTakesPhase.process	field	STREAM	
 src/core/cycle/link-manifest.ts	buildLinkManifest	field	STREAM	
 src/core/cycle/pattern-claim-sources.ts	dedupePatternClaimSources	call:serializePageToMarkdown	SEGW	
-src/core/cycle/patterns.ts	gatherReflections	field	LEAD	bounded prefix row
 src/core/cycle/patterns.ts	gatherReflections	sql	LEAD	boundedBodyPrefixSql, truncated to a 600-byte excerpt
-src/core/cycle/patterns.ts	groundPatternPages	call:serializePageToMarkdown	SEGW	
 src/core/cycle/patterns.ts	groundPatternPages	field	LEAD	
-src/core/cycle/patterns.ts	groundTimelineAppends	call:serializePageToMarkdown	SEGW	rewrite of a page read back by materializedSnapshot; the import or maintenance publish stores it by body policy; pages over the single-string ceiling are skipped before this
 src/core/cycle/patterns.ts	groundTimelineAppends	field	STREAM	materializedSnapshot reads a segmented page within the single-string ceiling back as strings; over it the page is skipped (timeline_appends.segmented_skipped, logged)
-src/core/cycle/patterns.ts	loadGroundingSources	field	STREAM	segmented reflection read through materializeSegmentedBody within PAGE_MAX_BYTES; over it not a grounding source (logged), so its quotes go to unverified_claims
 src/core/cycle/patterns.ts	loadGroundingSources	sql	STREAM	inline body columns plus body_storage/body_bytes; a segmented row's NULL columns are replaced by the segment reader
-src/core/cycle/patterns.ts	renderPageToMarkdown	call:serializeMarkdown	SEGW	
 src/core/cycle/patterns.ts	renderPageToMarkdown	field	LEAD	
 src/core/cycle/patterns.ts	stagedSnapshot	field	INLINE	GBRA-60: the body is the staged markdown from the child ledger (one put_page string, size-checked at staging); the current page supplies only its revision and identity
 src/core/cycle/patterns.ts	stampProvenance	call:serializePageToMarkdown	SEGW	G6: the managed stamp batch, as stampMaintenancePage (prepared-maintenance.ts)
-src/core/cycle/phantom-redirect-managed.ts	redirectManagedPhantom	call:serializePageToMarkdown	SEGW	spread of a segmented page throws
+src/core/cycle/patterns.ts	gatherReflections	field	LEAD	bounded prefix row
+src/core/cycle/patterns.ts	groundPatternPages	call:serializePageToMarkdown	SEGW	
+src/core/cycle/patterns.ts	groundTimelineAppends	call:serializePageToMarkdown	SEGW	rewrite of a page read back by materializedSnapshot; the import or maintenance publish stores it by body policy; pages over the single-string ceiling are skipped before this
+src/core/cycle/patterns.ts	loadGroundingSources	field	STREAM	segmented reflection read through materializeSegmentedBody within PAGE_MAX_BYTES; over it not a grounding source (logged), so its quotes go to unverified_claims
+src/core/cycle/patterns.ts	renderPageToMarkdown	call:serializeMarkdown	SEGW	
 src/core/cycle/phantom-redirect-managed.ts	redirectManagedPhantom	field	SEGW	segmented page: getter throws page_body_segmented in preparation (nothing written)
+src/core/cycle/phantom-redirect-managed.ts	redirectManagedPhantom	call:serializePageToMarkdown	SEGW	spread of a segmented page throws
 src/core/cycle/phantom-redirect.ts	fenceDbDrift	field	SEGW	segmented page: getter throws page_body_segmented
-src/core/cycle/phantom-redirect.ts	materializeCanonicalToDisk	call:serializeMarkdown	SEGW	canonical asserted inline by the caller
 src/core/cycle/phantom-redirect.ts	materializeCanonicalToDisk	field	SEGW	canonical asserted inline by the caller
 src/core/cycle/phantom-redirect.ts	mergeIntoCanonicalBody	field	SEGW	canonical asserted inline by tryRedirectPhantom before the merge
-src/core/cycle/phantom-redirect.ts	mergeIntoCanonicalFile	call:contentHash	META	hash of the reparsed inline file
 src/core/cycle/phantom-redirect.ts	mergeIntoCanonicalFile	field	SEGW	canonical asserted inline by tryRedirectPhantom before the merge
 src/core/cycle/phantom-redirect.ts	phantomHasResidue	field	SEGW	phantom stubs are small; segmented page: getter throws page_body_segmented
 src/core/cycle/phantom-redirect.ts	tryRedirectPhantom	field	SEGW	canonical target asserted inline before the disk fence append; per-phantom throw is logged and the walk continues
-src/core/cycle/propose-takes.ts	ProposeTakesPhase.process	call:contentHash	META	
+src/core/cycle/phantom-redirect.ts	materializeCanonicalToDisk	call:serializeMarkdown	SEGW	canonical asserted inline by the caller
+src/core/cycle/phantom-redirect.ts	mergeIntoCanonicalFile	call:contentHash	META	hash of the reparsed inline file
 src/core/cycle/propose-takes.ts	ProposeTakesPhase.process	field	STREAM	
-src/core/cycle/propose-takes.ts	listCandidatePages	sql	STREAM	
+src/core/cycle/propose-takes.ts	ProposeTakesPhase.process	call:contentHash	META	
 src/core/cycle/synthesize-child-verify.ts	readTranscript	field	INLINE	a segmented conversation transcript is skipped: the child writes unverified and postprocessing verifies
-src/core/cycle/synthesize-child-verify.ts	verifyChildPages	call:serializeMarkdown	INLINE	serializes the child's own model output, never a stored body
 src/core/cycle/synthesize-child-verify.ts	verifyChildPages	field	INLINE	a segmented page it would replace skips child verification: postprocessing verifies
+src/core/cycle/synthesize-child-verify.ts	verifyChildPages	call:serializeMarkdown	INLINE	serializes the child's own model output, never a stored body
 src/core/cycle/synthesize-concepts.ts	runPhaseSynthesizeConcepts	field	INLINE	
-src/core/cycle/synthesize-concepts.ts	runPhaseSynthesizeConcepts	sql	INLINE	
-src/core/cycle/synthesize-generations.ts	pages	sql	INLINE	reads the synthesis outputs of one re-synthesized transcript for the predecessor coverage match (generations/synthesis-coverage.ts); segmented pages are excluded in SQL, so a segmented earlier output is never compared and stays live as an unreadable unmatched predecessor
-src/core/cycle/synthesize-postprocess.ts	postprocessManagedSynthesis	call:serializePageToMarkdown	INLINE	
 src/core/cycle/synthesize-postprocess.ts	postprocessManagedSynthesis	field	INLINE	
 src/core/cycle/synthesize-postprocess.ts	sameBody	field	INLINE	
+src/core/cycle/synthesize-postprocess.ts	postprocessManagedSynthesis	call:serializePageToMarkdown	INLINE	
 src/core/cycle/synthesize-verify-epochs.ts	loadPreRunRevision	field	STREAM	
-src/core/cycle/synthesize-verify-epochs.ts	loadPreRunRevision	sql	STREAM	
 src/core/cycle/synthesize-verify.ts	quarantineUnits	field	INLINE	
-src/core/cycle/synthesize-verify.ts	verifyAndRepairDreamPages	call:serializePageToMarkdown	INLINE	
 src/core/cycle/synthesize-verify.ts	verifyAndRepairDreamPages	field	INLINE	
 src/core/cycle/synthesize-verify.ts	verifyDreamPage	field	INLINE	
+src/core/cycle/synthesize-verify.ts	verifyAndRepairDreamPages	call:serializePageToMarkdown	INLINE	
 src/core/cycle/synthesize.ts	renderPageToMarkdown	call:serializePageToMarkdown	INLINE	
 src/core/cycle/synthesize.ts	reverseWriteRefs	call:serializePageToMarkdown	INLINE	
-src/core/cycle/synthesize.ts	writeSummaryPage	call:serializeMarkdown	INLINE	
 src/core/cycle/synthesize.ts	writeSummaryPage	field	INLINE	
-src/core/cycle/transcript-discovery.ts	discoverConversationPages	field	STREAM	
+src/core/cycle/synthesize.ts	writeSummaryPage	call:serializeMarkdown	INLINE	
 src/core/cycle/transcript-discovery.ts	discoverConversationPages	sql	STREAM	
+src/core/cycle/transcript-discovery.ts	discoverConversationPages	field	STREAM	
 src/core/eligibility/fence-overlay.ts	loadFenceChunkOverlay	field	STREAM	
 src/core/eligibility/fence-overlay.ts	worldLinkContexts	field	INLINE	segmented from page: body never read, its link contexts are emptied for world-only callers (fail closed)
 src/core/eligibility/scan.ts	assess	field	STREAM	
-src/core/embed-consent.ts	estimateEmbedBackfillUsd	sql	META	
 src/core/embed-stale-images.ts	embedStaleImages	sql	INLINE	
 src/core/embedding-migration-worst-case.ts	REPROJECTED_PAGE	sql	META	
-src/core/embedding-readiness.ts	countArchivedEmbeddingWork	sql	META	
+src/core/engine-sql/atom-backlog.ts	ATOM_BACKLOG_ALL_CONNECTORS_OUT_SQL	sql	STREAM	moved from extract-atoms.ts countExtractAtomsBacklog (minCompiledTruthChars): octet_length of a NULL body is not true, so a segmented page is never counted (skip until per-segment extraction)
+src/core/engine-sql/atom-backlog.ts	ATOM_BACKLOG_ALL_SQL	sql	STREAM	moved from extract-atoms.ts countExtractAtomsBacklog (minCompiledTruthChars): octet_length of a NULL body is not true, so a segmented page is never counted (skip until per-segment extraction)
+src/core/engine-sql/atom-backlog.ts	ATOM_BACKLOG_SCOPED_CONNECTORS_OUT_SQL	sql	STREAM	moved from extract-atoms.ts countExtractAtomsBacklog (minCompiledTruthChars): octet_length of a NULL body is not true, so a segmented page is never counted (skip until per-segment extraction)
+src/core/engine-sql/atom-backlog.ts	ATOM_BACKLOG_SCOPED_SQL	sql	STREAM	moved from extract-atoms.ts countExtractAtomsBacklog (minCompiledTruthChars): octet_length of a NULL body is not true, so a segmented page is never counted (skip until per-segment extraction)
+src/core/engine-sql/brief-reads.ts	readBriefEditPage	sql	INLINE	moved from context/proactive-brief.ts editItem: reads the body only at or under 64 KiB, below the segmented threshold; a segmented page's NULL body skips the edit arm
+src/core/engine-sql/brief-reads.ts	readBriefPageVersions	sql	INLINE	moved from context/proactive-brief.ts editItem: reads the body only at or under 64 KiB, below the segmented threshold; a segmented page's NULL body skips the edit arm
+src/core/engine-sql/chronicle-executor.ts	CHRONICLE_EXECUTOR_SQL	sql	STREAM	the chronicle discovery read (discoveryPages), moved unchanged from cycle/chronicle.ts discover: coalesce(compiled_truth, truth_lead), so a segmented page ships its lead
 src/core/engine-sql/chunk-reads.ts	countOversizedEmbedSkips	sql	META	doctor content-quality's oversized embed-skip count, moved from runContentSanity: octet_length metadata
 src/core/engine-sql/chunks.ts	chunklessPagesWhere	sql	META	lane 1e file: body <> '' predicate
 src/core/engine-sql/chunks.ts	getChunkWindows	sql	STREAM	lane 1e file: ships whole bodies per hit for inline pages; a segmented page ships none (NULL) and its chunks carry occurrence_id + span, read by search/segmented-evidence.ts
-src/core/engine-sql/chunks.ts	listChunklessPagesWithContent	field	STREAM	lane 1e file
 src/core/engine-sql/chunks.ts	listChunklessPagesWithContent	sql	STREAM	lane 1e file
 src/core/engine-sql/chunks.ts	listEmbeddingStateRows	sql	META	lane 1e file: octet_length metadata
+src/core/engine-sql/chunks.ts	listChunklessPagesWithContent	field	STREAM	lane 1e file
 src/core/engine-sql/entity-reads.ts	ENTITY_CARD_COLUMNS_SQL	sql	LEAD	boundedBodyPrefixSql AS compiled_truth
+src/core/engine-sql/doctor-derived.ts	ATOM_FENCE_SQL	sql	INLINE	moved from repair/atom-fence-rows.ts findAtomFenceRows unchanged: a segmented source page (compiled_truth NULL) is counted origin_unread and never read
+src/core/engine-sql/doctor-derived.ts	BUDGET_AGE_SQL	sql	META	literal copy of the page-embedding-budget.ts applying-hold predicate for doctor embeddings: octet_length metadata for inline pages, body_bytes for segmented
+src/core/engine-sql/doctor-derived.ts	BUDGET_LIMITED_SOURCE_SQL	sql	META	literal copy of the page-embedding-budget.ts applying-hold predicate for doctor embeddings: octet_length metadata for inline pages, body_bytes for segmented
+src/core/engine-sql/doctor-derived.ts	BUDGET_LIMITED_SQL	sql	META	literal copy of the page-embedding-budget.ts applying-hold predicate for doctor embeddings: octet_length metadata for inline pages, body_bytes for segmented
+src/core/engine-sql/doctor-derived.ts	CREDENTIAL_PENDING_SCOPED_SQL	sql	STREAM	literal copy of credential-reseal.ts PENDING for doctor credential_projection: regex over NULL is false; a segmented page counts by its pem manifest regions
+src/core/engine-sql/doctor-derived.ts	CREDENTIAL_PENDING_SQL	sql	STREAM	literal copy of credential-reseal.ts PENDING for doctor credential_projection: regex over NULL is false; a segmented page counts by its pem manifest regions
+src/core/engine-sql/doctor-derived.ts	DERIVED_VISIBILITY_SQL	sql	NONE	moved from doctor/checks/derived-visibility.ts derivedVisibilityCheck unchanged: not the page body, p.* in a CTE, only metadata columns read
+src/core/engine-sql/doctor-derived.ts	PAGE_COMPILED_TRUTHS_SQL	sql	INLINE	moved from repair/atom-fence-rows.ts findAtomFenceRows unchanged: reads only the origin pages the batch marked readable (inline)
+src/core/engine-sql/doctor-derived.ts	TIMELINE_BATCH_SQL	sql	STREAM	moved from repair/timeline.ts scanTimelineHistory unchanged: inline pages only (body_storage = inline)
+src/core/engine-sql/doctor-derived.ts	readBodyRecheckPage	sql	INLINE	moved from commands/doctor/checks/atom-body-recheck.ts unchangedBodyAtoms unchanged: the group query joins only inline pages, and a page read back segmented is skipped (isSegmentedPage), keeping its drift verdict
+src/core/engine-sql/doctor-derived.ts	listBodyRecheckVersions	sql	INLINE	moved from commands/doctor/checks/atom-body-recheck.ts unchangedBodyAtoms unchanged: reads inline page_versions only (body_storage = inline), whose edition the re-check compares with the live inline body
+src/core/engine-sql/fence-census.ts	LIST_FENCE_CENSUS_PAGES_BY_ID_SQL	sql	INLINE	moved from fence-repair/census.ts unchanged: strpos over compiled_truth and timeline of inline pages only; a segmented page's NULL body holds no fence text here, so it is not counted fenced
+src/core/engine-sql/fence-census.ts	LIST_FENCE_CENSUS_PAGES_UPDATED_SQL	sql	INLINE	moved from fence-repair/census.ts unchanged: strpos over compiled_truth and timeline of inline pages only; a segmented page's NULL body holds no fence text here, so it is not counted fenced
+src/core/engine-sql/doctor-pages.ts	FACTS_PAGE_BODIES_SQL	sql	LEAD	moved from doctor/checks/facts-pages.ts unchanged: left(coalesce(compiled_truth, truth_lead), 65536), so a segmented page answers its stored lead
+src/core/engine-sql/doctor-pages.ts	OVERSIZED_PAGES_SQL	sql	META	moved from doctor/checks/content-quality.ts runContentSanity unchanged: octet_length metadata; a segmented page has a NULL body and is not listed (counted separately by the segmented-storage check)
+src/core/engine-sql/doctor-pages.ts	SCRAPER_JUNK_ALL_SQL	sql	LEAD	moved from doctor/checks/content-quality.ts runContentSanity unchanged: LEFT(compiled_truth, 2048) and LEFT(timeline, 1024) heads only; a segmented page has a null body head
+src/core/engine-sql/doctor-pages.ts	SCRAPER_JUNK_LIMITED_SQL	sql	LEAD	moved from doctor/checks/content-quality.ts runContentSanity unchanged: LEFT(compiled_truth, 2048) and LEFT(timeline, 1024) heads only; a segmented page has a null body head
+src/core/engine-sql/doctor-persistence.ts	OVERWRITE_CANDIDATES_SQL	sql	STREAM	moved from persistence/overwritten-edits.ts scanOverwrittenEdits with CONTENT_COLUMNS inlined: selects body_storage beside the inline body columns; a segmented version has NULL bodies and its overwrite is reported unknown (reason segmented)
+src/core/engine-sql/doctor-search.ts	RECENT_PAGE_BODIES_IN_SOURCES_SQL	sql	LEAD	
+src/core/engine-sql/doctor-search.ts	RECENT_PAGE_BODIES_SQL	sql	LEAD	
+src/core/engine-sql/doctor-search.ts	TRUNCATED_MARKDOWN_BODIES_SQL	sql	META	
 src/core/engine-sql/export-reads.ts	listExportPageKeys	sql	STREAM	moved from commands/export.ts runExport unchanged: octet_length of the inline body columns for the batch size; a segmented page reads body_bytes
 src/core/engine-sql/export-reads.ts	normalizeFenceLines	sql	STREAM	moved from export-snapshot.ts readExportPages unchanged: lower-cases inline bodies already read for the fence check; a segmented page's body is blank here
 src/core/engine-sql/export-reads.ts	readExportPageRows	sql	STREAM	moved from export-snapshot.ts readExportPages unchanged: rowToPage blanks a segmented page's body, which streams through segmentedExportMarkdown (readBodyRange, trusted stored)
+src/core/engine-sql/dream-cycle.ts	listDreamAtomPages	sql	INLINE	dream-cycle statements: moved from synthesize-concepts.ts runPhaseSynthesizeConcepts unchanged
+src/core/engine-sql/dream-cycle.ts	listSynthesisPageBodies	sql	INLINE	dream-cycle statements: moved from synthesize-generations.ts unchanged; segmented pages are excluded in SQL, so a segmented earlier output is never compared and stays live as an unreadable unmatched predecessor
+src/core/engine-sql/dream-cycle.ts	readDreamPreRunRevision	sql	STREAM	dream-cycle statements: moved from synthesize-verify-epochs.ts loadPreRunRevision unchanged
+src/core/engine-sql/entity-reads.ts	readEntityAnchoredPages	sql	STREAM	moved from search/entity-anchor.ts entityAnchoredPages (the anchored-page name match over compiled_truth)
 src/core/engine-sql/facts-purge.ts	listFactsReconcileBacklog	sql	STREAM	group 5 facts sites: moved from facts/reconcile-watermark.ts readFactsReconcileBacklog unchanged
 src/core/engine-sql/facts-purge.ts	selectFactsReconcileDrain	sql	STREAM	group 5 facts sites: moved from facts/reconcile-watermark.ts selectFactsReconcileDrain unchanged
+src/core/engine-sql/facts-purge.ts	PROSE_IN	sql	STREAM	segmented pages probed through their segment texts (purge-verify.ts segmentedProse); moved from verifyPagePurge with listPageProseHits
+src/core/engine-sql/facts-purge.ts	listPagesForPurgeRewrite	sql	SEGW	moved from facts/purge.ts rewritePageBodies unchanged: a segmented row goes to the segment rewrite, only an inline body is edited
+src/core/engine-sql/facts-purge.ts	updatePageBodyForPurge	sql	SEGW	moved from facts/purge.ts rewritePageBodies unchanged: the caller writes inline pages only
+src/core/engine-sql/facts-purge.ts	setPurgeVersionBody	sql	SEGW	moved from facts/purge.ts rewriteVersionBodies unchanged: the caller writes inline versions only
 src/core/engine-sql/facts-repair.ts	countLabelFacts	sql	STREAM	group 5 facts sites: moved from repair/conversation-labels.ts countLabelFacts unchanged
-src/core/engine-sql/field-usage.ts	readFieldUsageSamples	field	LEAD	moved from schema-pack/field-usage.ts runFieldUsage unchanged: whole inline bodies of the sampled pages; a segmented page samples a null body, read as empty (TODOS.md)
 src/core/engine-sql/field-usage.ts	readFieldUsageSamples	sql	LEAD	moved from schema-pack/field-usage.ts runFieldUsage unchanged: whole inline bodies of the sampled pages; a segmented page samples a null body, read as empty (TODOS.md)
+src/core/engine-sql/field-usage.ts	readFieldUsageSamples	field	LEAD	moved from schema-pack/field-usage.ts runFieldUsage unchanged: whole inline bodies of the sampled pages; a segmented page samples a null body, read as empty (TODOS.md)
+src/core/engine-sql/generation-fence-evidence.ts	BODYLESS_VERSION_SQL	sql	INLINE	moved from generations/fence-evidence.ts factsFenceHeld unchanged: page_versions rows that hold a body copy (compiled_truth IS NOT NULL); a segmented version has none, is not read, and marks the evidence incomplete
+src/core/engine-sql/generation-fence-evidence.ts	FENCE_VERSIONS_SQL	sql	INLINE	moved from generations/fence-evidence.ts factsFenceHeld unchanged: page_versions rows that hold a body copy (compiled_truth IS NOT NULL); a segmented version has none, is not read, and marks the evidence incomplete
+src/core/engine-sql/generation-atom-reads.ts	GENERATION_ATOM_READS_SQL	sql	INLINE	moved from generations/adapters/atoms.ts readInput and page.ts pageVersionEvidence unchanged: the atom origin input reads size only (body_bytes for a segmented page, octet_length of inline page columns); the legacy-adoption evidence hashes retained page_versions copies of derived atom pages and compares identity hashes only, and segmented versions (compiled_truth NULL) are skipped
+src/core/engine-sql/generation-page-rows.ts	GENERATION_PAGE_ROWS_SQL	sql	INLINE	moved from generations/adapters/page.ts readPageRows unchanged: reads derived page items (single-page, synthesis, atoms, Life Chronicle) with body_storage; a segmented row is marked segmented and held segmented_unsupported, with no preimage
 src/core/engine-sql/jobs-status.ts	readQueuedPageChars	sql	META	the facts drain's cost estimate, moved from facts/drain.ts estimateBacklogUsd: average capped compiled_truth length
 src/core/engine-sql/large-page.ts	PAGE_BODY_SIZES_SQL	sql	META	append_page's size read after the write, moved from persistence/page-append.ts prepareAppendMutation: body_bytes, else octet_length of an inline page's regions
 src/core/engine-sql/large-page.ts	STORED_BODY_BYTES_SQL	sql	META	the large-page guard's stored size read, moved from persistence/large-page-guard.ts assertLargePageAdmission: body_bytes for a segmented page, octet_length of the columns for an inline page
@@ -204,78 +233,96 @@ src/core/engine-sql/link-reads.ts	LINK_CONTEXT_ORIGIN_SQL	sql	INLINE	moved from 
 src/core/engine-sql/page-body.ts	createSegmentedPageShell	sql	NONE	not a reader: the segmented storage writer sets the body columns NULL on the shell row
 src/core/engine-sql/page-body.ts	flipBodyGeneration	sql	NONE	not a reader: the generation flip sets the body columns NULL and the segmented body columns
 src/core/engine-sql/page-body.ts	sealSegmentedPage	field	LEAD	the withdrawal overlay of the stored timeline_lead (a bounded prefix), indexed sanitized
+src/core/engine-sql/page-purge.ts	countPageCascadeRows	sql	STREAM	moved from persistence/page-purge.ts purgePageInTransaction
+src/core/engine-sql/page-purge.ts	listPageVersionBodiesForPurge	sql	STREAM	moved from persistence/page-purge.ts tombstonePage
+src/core/engine-sql/page-purge.ts	countPageCascadeRows	field	STREAM	moved from persistence/page-purge.ts purgePageInTransaction: counts the page cascade rows, reads no body text
 src/core/engine-sql/pages.ts	PAGE_VERSION_COLUMNS	sql	SEGW	lane 1e: versions of segmented pages carry no body
 src/core/engine-sql/pages.ts	listCorpusSample	sql	LEAD	segmented pages excluded from the sample in SQL (skip)
 src/core/engine-sql/pages.ts	listPrefixSampledPages	sql	LEAD	segmented pages excluded from the sample in SQL (skip)
 src/core/engine-sql/pages.ts	listStalePagesForExtraction	sql	STREAM	segmented pages skipped in SQL, still counted by countStalePagesForExtraction (visible as stale)
-src/core/engine-sql/pages.ts	putPage	call:contentHash	META	hash of the incoming inline body
-src/core/engine-sql/pages.ts	putPage	field	SEGW	incoming PageInput body (a string); see putPage sql
 src/core/engine-sql/pages.ts	putPage	sql	SEGW	blank-guard reads body_bytes for a segmented page (an empty put over it refuses); a non-empty put over a segmented row is refused by the body-storage CHECK
 src/core/engine-sql/pages.ts	refreshPageBody	sql	SEGW	UPDATE of the body columns; the body-storage CHECK refuses it over a segmented row; callers assert first
 src/core/engine-sql/pages.ts	revertToVersion	sql	SEGW	lane 1e: refuses a segmented page/version (revert deferred to PR 3)
 src/core/engine-sql/pages.ts	toDomainBankRow	field	LEAD	maps sampled rows; segmented pages are never sampled
+src/core/engine-sql/pages.ts	putPage	call:contentHash	META	hash of the incoming inline body
+src/core/engine-sql/pages.ts	putPage	field	SEGW	incoming PageInput body (a string); see putPage sql
+src/core/engine-sql/reflex-reads.ts	reflexPagesStatement	sql	LEAD	moved from context/retrieval-reflex.ts resolveEntitiesToPointers and weakTitleHits (boundedBodyPrefixSql AS compiled_truth)
+src/core/engine-sql/remediation-records.ts	REMEDIATION_RECORDS_SQL	sql	META	moved from reindex-consent.ts estimateReindexSpend, same statement: character length of inline bodies for the reindex cost estimate; a segmented page's NULL columns add nothing to the sum
 src/core/engine-sql/salience.ts	listEnrichCandidates	sql	META	
 src/core/engine-sql/search-reads.ts	generatedPagesIn	sql	LEAD	moved from search/provenance-demotion.ts readGeneratedPages (same statement, typed engine method)
+src/core/engine-sql/secret-spans-rows.ts	PAGE_SQL	sql	INLINE	inline body columns; a segmented body is read whole through materializeSegmentedBody by repair/secret-spans.ts readFields, refused page_too_large over the single-string ceiling
+src/core/engine-sql/secret-spans-rows.ts	listVersionBodiesForRedaction	sql	INLINE	retained page_versions rows are rewritten only when inline; a segmented version is skipped and counted
+src/core/engine-sql/secret-spans-rows.ts	setRedactedPageFields	sql	INLINE	runs only for an inline page; a segmented body is restaged through prepareSegmentedBody and applySegmentedBody
+src/core/engine-sql/secret-spans-rows.ts	setRetainedVersionBody	sql	INLINE	retained page_versions rows are rewritten only when inline; a segmented version is skipped and counted
+src/core/engine-sql/secret-spans-rows.ts	setRedactedPageFields	field	INLINE	runs only for an inline page; a segmented body is restaged through prepareSegmentedBody and applySegmentedBody
+src/core/engine-sql/secret-store.ts	HOLDING_PAGES_SQL	sql	INLINE	presence check on inline columns in SQL; a segmented body is not read here, and restore reads its segments through readSegmentedBody
+src/core/engine-sql/secret-store.ts	readRestorePageHit	sql	INLINE	presence check on inline columns in SQL; a segmented page counts as a hit and the apply reads it whole
+src/core/engine-sql/sources.ts	PAGE_SIZE_ROWS_FOR_SLUGS_SQL	sql	META	lane 1e file: body_bytes for segmented pages; octet_length of the inline body only (moved from page-embedding-budget.ts readPageSizeStates)
+src/core/engine-sql/sources.ts	PAGE_SIZE_ROWS_SQL	sql	META	lane 1e file: body_bytes for segmented pages; octet_length of the inline body only (moved from page-embedding-budget.ts readPageSizeStates)
+src/core/engine-sql/segmented-purge-writes.ts	PURGE_VERSION_BODY_SQL	sql	SEGW	the purge's read moved from facts/purge.ts rewriteVersionBodies unchanged: it reads inline versions only (body_storage='inline')
+src/core/engine-sql/sweep-reads.ts	FACTS_FENCE_PAGES_SQL	sql	STREAM	moved from sweep.ts runMaintenanceSweep (listFactsFencePages): LIKE over NULL never matches a segmented page (skip)
 src/core/engine-sql/timeline-reads.ts	listTimelineOrphanPages	sql	STREAM	the orphan prune's page list, moved from timeline-extract.ts pruneTimelineOrphans: compiled_truth and timeline of inline pages
 src/core/engine-sql/timeline.ts	getTimeline	sql	NONE	not the page body: SELECT * FROM pages inside a LATERAL used for the page id only
+src/core/engine-sql/unwithdrawn-restore.ts	PAGE_INLINE_BODY_SQL	sql	INLINE	moved from src/core/repair/unwithdrawn-facts.ts classifyUnwithdrawnFacts: reads compiled_truth and timeline of inline pages only (NULL for a segmented page, whose fence pageFenceRowKeys reads from its segments)
 src/core/engine-sql/withdrawal-discovery.ts	INLINE_FENCE_PAGES_SQL	sql	STREAM	moved from discoverWithdrawalTargets: the inline page scan reads inline bodies (NULL never matches); segmented pages are found by SEGMENT_FENCE_ROWS_SQL and SPLIT_FENCE_SLOTS_SQL from their facts slots
 src/core/engine-sql/write-guards.ts	readInlinePageRegions	sql	INLINE	moved from page-body/tail-digest.ts inlineRegions: callers branch on storage: inline pages only, within the segmented threshold
 src/core/engine-sql/write-guards.ts	readLivePageBody	sql	INLINE	moved from valid-time-advisory.ts withValidTimeAdvisory: reads the written page's body columns, NULL for a segmented page (bodyKey then compares content_hash)
-src/core/enrichment-service.ts	planEntity	call:putPage	INLINE	
+src/core/engine-sql/writer-release.ts	AUDIT_PAGES_SQL	sql	META	the drift-audit page read, moved from persistence/reconcile-audit.ts auditCanonicalSource: octet_length metadata, no body shipped
 src/core/enrichment-service.ts	planEntity	call:serializeMarkdown	INLINE	
 src/core/enrichment-service.ts	stubMarkdown	call:serializeMarkdown	INLINE	G6: a new stub's markdown built from its own short template, never read from a stored body
-src/core/export-snapshot.ts	inlineExportMarkdown	call:serializeMarkdown	SEGW	
+src/core/enrichment-service.ts	planEntity	call:putPage	INLINE	
+src/core/entities/evidence/collapse.ts	editPageHead	call:serializePageToMarkdown	NONE	serializes the frontmatter head with an empty body (withoutBody) for an edit_page head edit, as extraction.ts reviewDecision does; the body is never read
 src/core/export-snapshot.ts	inlineExportMarkdown	field	STREAM	
 src/core/export-snapshot.ts	segmentedExportHead	call:serializeMarkdown	NONE	not the page body: the frontmatter head, rendered with an empty body
 src/core/export-snapshot.ts	readExportPages	field	STREAM	inline pages only: a segmented page skips the overlay here and streams through segmentedExportMarkdown (readBodyRange, trusted stored)
+src/core/export-snapshot.ts	inlineExportMarkdown	call:serializeMarkdown	SEGW	
 src/core/extract-ner.ts	extractNerLinks	field	STREAM	
+src/core/extract-takes-from-pages.ts	extractTakesFromPages	sql	STREAM	length(COALESCE(compiled_truth, '')) > 200 skips segmented pages; head-only slice(0, 20000) for inline
 src/core/extract-takes-from-pages.ts	extractTakesFromPages	call:serializePageToMarkdown	SEGW	
 src/core/extract-takes-from-pages.ts	extractTakesFromPages	field	STREAM	inline rows only (SQL filter)
-src/core/extract-takes-from-pages.ts	extractTakesFromPages	sql	STREAM	length(COALESCE(compiled_truth, '')) > 200 skips segmented pages; head-only slice(0, 20000) for inline
-src/core/extract-timeline-from-meetings.ts	extractTimelineFromMeetings	field	STREAM	
 src/core/extract-timeline-from-meetings.ts	extractTimelineFromMeetings	sql	STREAM	
+src/core/extract-timeline-from-meetings.ts	extractTimelineFromMeetings	field	STREAM	
 src/core/extract/receipt-writer.ts	writeReceipt	call:putPage	INLINE	
 src/core/facts-fence.ts	factsFenceSection	field	SEGW	
 src/core/facts-fence.ts	factsFenceSections	field	SEGW	
 src/core/facts-fence.ts	factsFenceView	field	INLINE	inline arm; a segmented page reads its fences from its marker segments (segmentedFactsFenceView)
 src/core/facts/backstop.ts	runFactsBackstop	field	STREAM	
 src/core/facts/backstop.ts	runPipeline	field	STREAM	
+src/core/facts/claim-match-sql.ts	carriesClaimSql	sql	STREAM	strpos over NULL never matches a segmented page; withSegmentedProse probes its segment texts
 src/core/facts/conversation-window-extract.ts	regularPageVersionToken	field	STREAM	
 src/core/facts/eligibility.ts	isFactsBackstopEligible	field	LEAD	
-src/core/facts/fence-fact-append.ts	prepareFenceFactAppend	call:serializePageToMarkdown	SEGW	assertInlineBody first
 src/core/facts/fence-fact-append.ts	prepareFenceFactAppend	field	SEGW	assertInlineBody before the fence write
-src/core/facts/fence-fact-append.ts	prepareFenceRowRetirement	field	SEGW	the body materializedPage read back within PAGE_MAX_BYTES; a segmented page over the ceiling refuses (segmentedOverCeiling) first
 src/core/facts/fence-fact-append.ts	prepareFenceRowRetirement	call:serializePageToMarkdown	SEGW	materializedPage within PAGE_MAX_BYTES; a segmented page over the ceiling refuses (segmentedOverCeiling) before rendering, as prepareFenceFactAppend's remember write does
+src/core/facts/fence-fact-append.ts	prepareFenceFactAppend	call:serializePageToMarkdown	SEGW	assertInlineBody first
+src/core/facts/fence-fact-append.ts	prepareFenceRowRetirement	field	SEGW	the body materializedPage read back within PAGE_MAX_BYTES; a segmented page over the ceiling refuses (segmentedOverCeiling) first
 src/core/facts/fence-write.ts	writeFactsToFence	field	NONE	reads compiled_truth back from the object withHeldFactsFence returns for the file text already in hand; a segmented page returned database-only (page_body_segmented) before the file was compared
 src/core/facts/file-body-guard.ts	fileBodyMatchesStored	field	SEGW	a segmented page reads NULL inline columns, never matches, and the caller holds it (nothing written)
 src/core/facts/file-body-guard.ts	mirroredBody	field	NONE	the parsed checkout file body, not a page row
-src/core/facts/file-body-guard.ts	readStoredBody	sql	SEGW	reads the inline columns only; a segmented page reads NULL and every caller holds it
+src/core/engine-sql/facts-cycle.ts	LIVE_STORED_BODY_SQL	sql	SEGW	lane 4 facts-cycle sites (item 4.2): moved from readStoredBody (the plain and FOR UPDATE texts). reads the inline columns only; a segmented page reads NULL and every caller holds it
+src/core/engine-sql/facts-cycle.ts	LIVE_STORED_BODY_LOCKED_SQL	sql	SEGW	lane 4 facts-cycle sites (item 4.2): moved from readStoredBody (the plain and FOR UPDATE texts). reads the inline columns only; a segmented page reads NULL and every caller holds it
+src/core/facts/file-body-guard.ts	replaceStoredBody	field	SEGW	runs only after fileBodyMatchesStored matched the inline row under the lock, so never on a segmented page
+src/core/engine-sql/facts-cycle.ts	listPageStates	sql	SEGW	lane 4 facts-cycle sites (item 4.2): moved from replaceableFile, same statement. a segmented page reads NULL inline columns, so its file is never replaceable and the caller holds it
+src/core/facts/file-body-guard.ts	storedBodyUnchanged	field	SEGW	compares the inline preimage only after the fence and forget callers have refused a segmented page
 src/core/facts/file-body-guard.ts	replaceStoredBody	call:contentHash	META	hash of the inline file body being mirrored
 src/core/facts/file-body-guard.ts	replaceStoredBody	call:refreshPageBody	SEGW	runs only after fileBodyMatchesStored matched the inline row under the lock, so never on a segmented page
-src/core/facts/file-body-guard.ts	replaceStoredBody	field	SEGW	runs only after fileBodyMatchesStored matched the inline row under the lock, so never on a segmented page
-src/core/facts/file-body-guard.ts	replaceableFile	sql	SEGW	a segmented page reads NULL inline columns, so its file is never replaceable and the caller holds it
-src/core/facts/file-body-guard.ts	storedBodyUnchanged	field	SEGW	compares the inline preimage only after the fence and forget callers have refused a segmented page
+src/core/facts/forget.ts	forgetFactInFence	field	SEGW	assertInlineBody before the DB strike/mirror (best-effort: the withdrawal record stays authoritative)
 src/core/facts/forget.ts	forgetFactInFence	call:contentHash	META	inline pages only
 src/core/facts/forget.ts	forgetFactInFence	call:refreshPageBody	SEGW	assertInlineBody first
-src/core/facts/forget.ts	forgetFactInFence	field	SEGW	assertInlineBody before the DB strike/mirror (best-effort: the withdrawal record stays authoritative)
 src/core/facts/proposal-supersede.ts	acceptUnmanaged	field	SEGW	mirrorBody refuses a segmented page before the file publish
-src/core/facts/proposal-supersede.ts	mirrorBody	call:contentHash	META	inline pages only
-src/core/facts/proposal-supersede.ts	mirrorBody	call:refreshPageBody	SEGW	assertInlineBody first
 src/core/facts/proposal-supersede.ts	mirrorBody	field	SEGW	assertInlineBody before refreshPageBody (inside the transaction, before the file publish)
-src/core/facts/proposal-supersede.ts	prepareProposalMutation	call:serializePageToMarkdown	SEGW	spread of a segmented page throws
 src/core/facts/proposal-supersede.ts	prepareProposalMutation	field	SEGW	segmented page: getter throws page_body_segmented in preparation (nothing written)
 src/core/facts/proposal-supersede.ts	undoUnmanaged	field	SEGW	segmented page: getter throws page_body_segmented
-src/core/facts/purge-verify.ts	carriesClaimSql	sql	STREAM	strpos over NULL never matches a segmented page; withSegmentedProse probes its segment texts
-src/core/facts/purge-verify.ts	verifyPagePurge	sql	STREAM	segmented pages probed through their segment texts (withSegmentedProse)
-src/core/facts/purge.ts	rewritePageBodies	call:contentHash	META	inline pages only (see sql row)
+src/core/facts/proposal-supersede.ts	mirrorBody	call:contentHash	META	inline pages only
+src/core/facts/proposal-supersede.ts	mirrorBody	call:refreshPageBody	SEGW	assertInlineBody first
+src/core/facts/proposal-supersede.ts	prepareProposalMutation	call:serializePageToMarkdown	SEGW	spread of a segmented page throws
 src/core/facts/purge.ts	rewritePageBodies	field	SEGW	segmented page: getter throws page_body_segmented
-src/core/facts/purge.ts	rewritePageBodies	sql	SEGW	refuses a segmented target with page_body_segmented before rewriting (segment purge in PR 2)
-src/core/facts/purge.ts	rewriteVersionBodies	field	SEGW	lane 1e: segmented versions carry no body
 src/core/facts/purge.ts	rewriteVersionBodies	sql	SEGW	lane 1e: segmented versions carry no body
-src/core/facts/relink-publish.ts	prepareRelinkMutation	call:serializePageToMarkdown	SEGW	
+src/core/facts/purge.ts	rewritePageBodies	call:contentHash	META	inline pages only (see sql row)
+src/core/facts/purge.ts	rewriteVersionBodies	field	SEGW	lane 1e: segmented versions carry no body
 src/core/facts/relink-publish.ts	prepareRelinkMutation	field	SEGW	
-src/core/facts/retire.ts	retireFactsFromPage	call:serializePageToMarkdown	INLINE	a segmented page is skipped (its rows counted failed) before its body is read
+src/core/facts/relink-publish.ts	prepareRelinkMutation	call:serializePageToMarkdown	SEGW	
 src/core/facts/retire.ts	retireFactsFromPage	field	INLINE	a segmented page is skipped (its rows counted failed) before its body is read
+src/core/facts/retire.ts	retireFactsFromPage	call:serializePageToMarkdown	INLINE	a segmented page is skipped (its rows counted failed) before its body is read
 src/core/facts/subject-infer-write.ts	targetFenceClean	field	INLINE	the body materializedSnapshot read back within PAGE_MAX_BYTES on the managed path; a segmented page over the ceiling or on the unmanaged path is refused before any read
 src/core/facts/unfenced-facts.ts	auditUnadoptableFacts	call:serializePageToMarkdown	SEGW	
 src/core/facts/unfenced-facts.ts	fenceDatabaseOnlyPage	call:serializePageToMarkdown	SEGW	
@@ -298,31 +345,27 @@ src/core/fence-repair/refusal.ts	scanCanonicalFences	field	STREAM
 src/core/fence-repair/repair-io.ts	pageSha	field	SEGW	
 src/core/fence-repair/repair-io.ts	readFenceTarget	field	SEGW	
 src/core/fence-repair/repair-io.ts	spliceFileSections	field	SEGW	
-src/core/fence-repair/repair-io.ts	writeFenceRepair	call:serializePageToMarkdown	SEGW	
 src/core/fence-repair/repair-io.ts	writeFenceRepair	field	SEGW	
+src/core/fence-repair/repair-io.ts	writeFenceRepair	call:serializePageToMarkdown	SEGW	
 src/core/fence-repair/repair-tiers.ts	holderAt	field	STREAM	
 src/core/fence-repair/tier1.ts	pageHasFenceText	field	STREAM	
 src/core/fts-language.ts	pageSearchVectorTriggerFnSql	sql	LEAD	
-src/core/generations/adapters/atoms.ts	atomGenerationAdapter	sql	META	input size only: body_bytes for a segmented page, octet_length of an inline page columns (pages leave body_bytes NULL inline)
 src/core/generations/adapters/chronicle-events.ts	chronicleEventAdapter	field	NONE	restoreItem reads the body field of a ledger preimage JSON copy; segmented and oversize pages have no preimage
 src/core/generations/adapters/chronicle-events.ts	writeEventPage	call:putPage	INLINE	writes a Life Chronicle event page from the extractor's short proposal or a ledger preimage JSON copy; no stored page body is read
 src/core/generations/adapters/page.ts	markdownItem	field	NONE	reads the compiled_truth parseMarkdown returns for the producer's proposed markdown; no stored page body is read
 src/core/generations/adapters/page.ts	pageIdentityHash	field	INLINE	identity hash of a derived page item: a segmented row hashes its empty inline body and is held segmented_unsupported before any write, so no segmented page is rewritten or retired
 src/core/generations/adapters/page.ts	pagePreimage	field	INLINE	bounded preimage copy for the generation ledger; a segmented or oversize page stores no preimage (json null) and a restore refuses it
-src/core/generations/adapters/page.ts	pageVersionEvidence	sql	INLINE	legacy-adoption evidence: hashes retained page_versions copies of derived atom pages and compares identity hashes only; segmented versions (compiled_truth NULL) are skipped
 src/core/generations/adapters/page.ts	preimageIdentity	field	NONE	hashes a ledger preimage JSON copy, never a stored page body
-src/core/generations/adapters/page.ts	preimageMarkdown	call:serializeMarkdown	NONE	serializes a ledger preimage JSON copy for restore; segmented and oversize pages have no preimage
 src/core/generations/adapters/page.ts	preimageMarkdown	field	NONE	reads the body field of a ledger preimage JSON copy; segmented and oversize pages have no preimage
-src/core/generations/adapters/page.ts	readPageRows	sql	INLINE	reads derived page items (atoms) with body_storage; a segmented row is marked segmented and held segmented_unsupported, with no preimage
+src/core/generations/adapters/page.ts	preimageMarkdown	call:serializeMarkdown	NONE	serializes a ledger preimage JSON copy for restore; segmented and oversize pages have no preimage
 src/core/generations/adapters/single-page.ts	publishSinglePage	field	NONE	hashes the writer's proposed content for the item identity; no stored page body is read
 src/core/generations/adapters/single-page.ts	singlePageAdapter	field	NONE	restoreItem reads the body field of a ledger preimage JSON copy; segmented and oversize pages have no preimage
-src/core/generations/adapters/single-page.ts	writePage	call:putPage	SEGW	writes a single-item derived page (dream summary, think synthesis, drift report) from the writer's proposed content or a ledger preimage; a segmented live page is held segmented_unsupported by the generation before any write
 src/core/generations/adapters/single-page.ts	writePage	field	INLINE	passes the proposed content's compiled_truth to putPage; no stored page body is read (the prior page is versioned by createVersion)
-src/core/generations/fence-evidence.ts	factsFenceHeld	sql	INLINE	page_versions rows that hold a body copy (compiled_truth IS NOT NULL); a segmented version has none, is not read, and marks the evidence incomplete
+src/core/generations/adapters/single-page.ts	writePage	call:putPage	SEGW	writes a single-item derived page (dream summary, think synthesis, drift report) from the writer's proposed content or a ledger preimage; a segmented live page is held segmented_unsupported by the generation before any write
 src/core/generations/fence-evidence.ts	fenceRowKeys	field	INLINE	inline arm only: a segmented body yields no rows here (pageFenceRowKeys reads it from its marker segments)
 src/core/generations/fence-evidence.ts	pageFenceRowKeys	field	INLINE	inline arm; a segmented page reads its fence from its marker segments (segmentedFactsFenceView)
-src/core/generations/fence-restore.ts	planFenceRestore	call:serializePageToMarkdown	INLINE	a segmented page is refused segmented_unsupported before the page is serialized for the guarded restore write
 src/core/generations/fence-restore.ts	planFenceRestore	field	INLINE	a segmented page is refused segmented_unsupported before its fence blocks are read
+src/core/generations/fence-restore.ts	planFenceRestore	call:serializePageToMarkdown	INLINE	a segmented page is refused segmented_unsupported before the page is serialized for the guarded restore write
 src/core/generations/fence.ts	fenceInput	field	NONE	reads the fence block strings of a FenceRead (already parsed), never a stored page body
 src/core/generations/fence.ts	fenceReadOf	field	NONE	reads the fence block strings already read whole (inline, or from the marker segments of a segmented page), never a stored page body
 src/core/generations/fence.ts	readFenceBlocks	field	INLINE	a segmented page reads segmented (held fence_absent) before any body field is read
@@ -332,15 +375,15 @@ src/core/google/loops-extract.ts	runLoopsExtract	field	STREAM	tail slice(-12000)
 src/core/google/sweep-shared.ts	withStoredFactsFence	field	INLINE	asserts inline (assertInlineBody); importRendered refuses a segmented page first
 src/core/import-file.ts	applyImportTransaction	call:putPage	SEGW	lane 1d file (streaming ingest); code/image pages inline
 src/core/import-file.ts	importCodeFile	call:putPage	SEGW	lane 1d file (streaming ingest); code/image pages inline
+src/core/import-file.ts	importFromContent	field	SEGW	lane 1d file (streaming ingest); code/image pages inline
+src/core/import-file.ts	importImageFile	field	SEGW	lane 1d file (streaming ingest); code/image pages inline
 src/core/import-file.ts	importFromContent	call:contentHash	META	lane 1d file
 src/core/import-file.ts	importFromContent	call:putPage	SEGW	lane 1d file (streaming ingest); code/image pages inline
 src/core/import-file.ts	importFromContent	call:refreshPageBody	SEGW	lane 1d file (streaming ingest); code/image pages inline
-src/core/import-file.ts	importFromContent	field	SEGW	lane 1d file (streaming ingest); code/image pages inline
-src/core/import-file.ts	importImageFile	field	SEGW	lane 1d file (streaming ingest); code/image pages inline
 src/core/import-identity.ts	decideImportIdentity	field	META	
 src/core/import-screen.ts	assessImportSanity	field	STREAM	
-src/core/import-screen.ts	screenImportContent	call:contentHash	META	
 src/core/import-screen.ts	screenImportContent	field	STREAM	
+src/core/import-screen.ts	screenImportContent	call:contentHash	META	
 src/core/line-grammar-report.ts	grammarDiagnosticsForPage	field	INLINE	grammar_diagnostics parses inline bodies only; a segmented page gets the skip (segmentedGrammarSkip)
 src/core/link-reconciliation.ts	reconcileSourceLinks	field	INLINE	inline arm; a segmented page streams through extractSegmentedPageLinks (page-body/segment-links.ts)
 src/core/link-temporal-apply.ts	applyTemporalEvidence	field	STREAM	
@@ -349,48 +392,56 @@ src/core/link-temporal-evidence.ts	deriveTemporalEvidence	field	STREAM
 src/core/links-fence.ts	linksFenceSection	field	SEGW	callers pass a page read whole (wholeBodySnapshot) or skip a segmented body they did not read
 src/core/links-fence.ts	readPageLinksFence	field	SEGW	callers pass a page read whole (wholeBodySnapshot) or skip a segmented body they did not read
 src/core/markdown-chunks.ts	overlaidChunks	field	STREAM	
-src/core/markdown-chunks.ts	prepareFenceAwareMarkdownChunks	call:prepareMarkdownChunks	STREAM	
 src/core/markdown-chunks.ts	prepareFenceAwareMarkdownChunks	field	STREAM	
+src/core/markdown-chunks.ts	prepareFenceAwareMarkdownChunks	call:prepareMarkdownChunks	STREAM	
 src/core/markdown.ts	parseMarkdown	field	STREAM	
-src/core/markdown.ts	serializePageToMarkdown	call:serializeMarkdown	SEGW	
 src/core/markdown.ts	serializePageToMarkdown	field	STREAM	
+src/core/markdown.ts	serializePageToMarkdown	call:serializeMarkdown	SEGW	
 src/core/mentions/aliases.ts	deriveEntityAliases	field	STREAM	
 src/core/mentions/pass.ts	pageMentions	field	INLINE	inline arm; a segmented page is scanned block by block
-src/core/mentions/pass.ts	pagesMatchingNames	sql	STREAM	segmented pages are selected by id without a body (each is a candidate; pageMentions streams it)
-src/core/mentions/pass.ts	reconcileSource	sql	INLINE	reads body_storage; a segmented row is scanned block by block (pageMentions)
-src/core/mentions/pass.ts	refreshAliases	sql	STREAM	segmented pages excluded in SQL
+src/core/engine-sql/mention-pass.ts	MENTION_CANDIDATES_MATCHING_SQL	sql	STREAM	moved from src/core/mentions/pass.ts pagesMatchingNames, same statement. segmented pages are selected by id without a body (each is a candidate; pageMentions streams it)
+src/core/engine-sql/mention-pass.ts	MENTION_CANDIDATES_ALL_SQL	sql	STREAM	moved from src/core/mentions/pass.ts pagesMatchingNames, same statement. segmented pages are selected by id without a body (each is a candidate; pageMentions streams it)
+src/core/engine-sql/mention-pass.ts	MENTION_DUE_PAGES_SQL	sql	INLINE	moved from src/core/mentions/pass.ts reconcileSource, same statement. reads body_storage; a segmented row is scanned block by block (pageMentions)
+src/core/engine-sql/mention-pass.ts	listAliasDuePages	sql	STREAM	moved from src/core/mentions/pass.ts refreshAliases, same statement. segmented pages excluded in SQL
+src/core/engine-sql/page-mutation-reads.ts	PAGE_MUTATION_READS_SQL	sql	INLINE	storedPageLabels, moved from src/cli/enforced-member.ts storedPage: the caller refuses a segmented page with assertInlineBody before its body is read
 src/core/minions/handlers/facts-absorb.ts	makeFactsAbsorbHandler	field	STREAM	
 src/core/minions/handlers/subagent-oneshot.ts	planOneshotWrites	call:serializeMarkdown	SEGW	
 src/core/ops/admin.ts	get_versions	field	SEGW	lane 1e: segmented versions return metadata only
 src/core/ops/attribution.ts	get_write_attribution	field	NONE	not the page body: timeline entry id param
 src/core/ops/attribution.ts	rowTarget	field	NONE	not the page body: timeline entry id param
+src/core/ops/claims.ts	check_claims	field	STREAM	skips a segmented page (allowed-claims facts pages are small and inline); a segmented one moves to the segment reader
 src/core/ops/extraction.ts	reviewDecision	call:serializePageToMarkdown	NONE	serializes the frontmatter head with an empty body (withoutBody) for an edit_page head edit; the body is never read
 src/core/ops/get-page-body.ts	bodyBytes	field	META	
 src/core/ops/get-page-body.ts	bodyStripsFor	field	INLINE	GST-3058 room mark: inline pages only (get_page refuses a segmented page whole; a segmented markdown view goes through segmentedBodyStrips)
 src/core/ops/get-page-body.ts	editTarget	field	INLINE	inline branch only (a segmented page maps through the window's segment units); regions read whole within the segmented threshold
 src/core/ops/get-page-body.ts	readPartialBody	call:serializePageToMarkdown	SEGW	
-src/core/ops/get-page-projection.ts	projectGetPage	call:serializePageToMarkdown	STREAM	full content render of an inline page
 src/core/ops/get-page-projection.ts	projectGetPage	field	STREAM	segmented page: getter throws page_body_segmented (windowed read in PR 2)
+src/core/ops/get-page-projection.ts	projectGetPage	call:serializePageToMarkdown	STREAM	full content render of an inline page
+src/core/ops/household.ts	classifySubjectPages	call:serializeMarkdown	SEGW	household record writer (GST-3825 H1): rewrites the whole small record or subject page under its revision; asserts the page is inline (assertInlineBody) and refuses a segmented one
+src/core/ops/household.ts	classifySubjectPages	field	SEGW	household record writer (GST-3825 H1): rewrites the whole small record or subject page under its revision; asserts the page is inline (assertInlineBody) and refuses a segmented one
+src/core/ops/household.ts	household_mark	field	SEGW	household record writer (GST-3825 H1): rewrites the whole small record or subject page under its revision; asserts the page is inline (assertInlineBody) and refuses a segmented one
+src/core/ops/household.ts	replaceHouseholdRecords	field	SEGW	household record writer (GST-3825 H1): rewrites the whole small record or subject page under its revision; asserts the page is inline (assertInlineBody) and refuses a segmented one
+src/core/ops/household.ts	serializeRecord	call:serializeMarkdown	SEGW	household record writer (GST-3825 H1): rewrites the whole small record or subject page under its revision; asserts the page is inline (assertInlineBody) and refuses a segmented one
 src/core/ops/known-as-of.ts	getVersionsKnownAsOf	field	STREAM	known_as_of read: a segmented version or page returns body segmented with body_ref (window read via get_page version_id), never a body string; inline bodies only
 src/core/ops/known-as-of.ts	intervalView	field	STREAM	known_as_of read: a segmented version or page returns body segmented with body_ref (window read via get_page version_id), never a body string; inline bodies only
 src/core/ops/pages.ts	stripPrivacyFencesForRemoteReader	field	STREAM	segmented page: getter throws page_body_segmented
-src/core/ops/valid-time-read.ts	editionView	call:pageDocument	INLINE	inline editions only; a segmented edition is windowed through openSegmentedBody / segmentedReadDocument
 src/core/ops/valid-time-read.ts	editionView	field	INLINE	inline editions only; a segmented edition is windowed through openSegmentedBody / segmentedReadDocument
 src/core/ops/valid-time-read.ts	loadEdition	field	INLINE	the text branch runs only for an inline current page (isSegmentedPage); a segmented edition carries its generation for the segment reader
 src/core/ops/valid-time-read.ts	validFromEdit	call:serializePageToMarkdown	NONE	not the page body: renders only the frontmatter head of an object built from slug, type, title and frontmatter with empty body fields, so a segmented page's getters are never read
+src/core/ops/valid-time-read.ts	editionView	call:pageDocument	INLINE	inline editions only; a segmented edition is windowed through openSegmentedBody / segmentedReadDocument
 src/core/output/post-write.ts	runPostWriteLint	field	INLINE	
 src/core/output/validators/link.ts	linkValidator	field	INLINE	
 src/core/output/validators/triple-hr.ts	tripleHrValidator	field	INLINE	
-src/core/output/writer.ts	WriteTxImpl.createEntity	call:putPage	INLINE	
 src/core/output/writer.ts	WriteTxImpl.createEntity	field	INLINE	
-src/core/output/writer.ts	WriteTxImpl.setCompiledTruth	call:putPage	INLINE	
 src/core/output/writer.ts	WriteTxImpl.setCompiledTruth	field	INLINE	
-src/core/output/writer.ts	WriteTxImpl.setFrontmatterField	call:putPage	INLINE	
 src/core/output/writer.ts	WriteTxImpl.setFrontmatterField	field	INLINE	
 src/core/output/writer.ts	runValidators	field	INLINE	
+src/core/output/writer.ts	WriteTxImpl.createEntity	call:putPage	INLINE	
+src/core/output/writer.ts	WriteTxImpl.setCompiledTruth	call:putPage	INLINE	
+src/core/output/writer.ts	WriteTxImpl.setFrontmatterField	call:putPage	INLINE	
 src/core/oversized-backfill.ts	PAGE_BYTES_SQL	sql	SEGW	
-src/core/oversized-backfill.ts	rewritePage	call:serializeMarkdown	SEGW	
 src/core/oversized-backfill.ts	rewritePage	field	SEGW	
+src/core/oversized-backfill.ts	rewritePage	call:serializeMarkdown	SEGW	
 src/core/page-body/body-digests.ts	fileBodyDigests	field	NONE	scan.timeline is the scanned file's timeline byte ranges and digests.timeline a SHA-256, not a page body; each region is hashed piece by piece
 src/core/page-body/body-scan.ts	scanMarkdownString	field	NONE	not a stored body: scans an incoming markdown string for the segmenter
 src/core/page-body/content-hash-stream.ts	ContentHashStream.fromState	field	NONE	not a stored body: resumes the streaming content hash over incoming text
@@ -409,35 +460,34 @@ src/core/page-body/streamed-import.ts	importScanned	field	LEAD	bounded heads of 
 src/core/page-body/tail-digest.ts	inlineRegions	field	INLINE	callers branch on storage: inline pages only, within the segmented threshold
 src/core/page-body/tail-digest.ts	inlineTailDigest	field	INLINE	get_page body:'none' of an inline page; a segmented page uses page-window/segmented.ts tailDigest
 src/core/page-embedding-budget.ts	planPageEmbedding	field	META	lane 1e file: body_bytes for segmented pages
-src/core/page-embedding-budget.ts	readPageSizeStates	sql	META	lane 1e file: body_bytes for segmented pages
 src/core/page-size-policy.ts	largePageBodyFilter	sql	META	fix lane J2: octet_length of the inline body columns, body_bytes for segmented pages (the size twin of pageBodyBytes)
-src/core/page-snapshot-batch.ts	readPageSnapshotsBatch	field	STREAM	same as readPageSnapshot: overlay skipped for a segmented page
 src/core/page-snapshot-batch.ts	readPageSnapshotsBatch	sql	STREAM	p.* feeds rowToPage; the byte budget counts a segmented row as 0 (no body shipped); fingerprint over a NULL body is empty
+src/core/page-snapshot-batch.ts	readPageSnapshotsBatch	field	STREAM	same as readPageSnapshot: overlay skipped for a segmented page
 src/core/page-state/credential-reseal.ts	PENDING	sql	STREAM	regex over NULL is false: segmented pages postdate the v189 unseal and are chunked by the credential-safe segment chunker; pem regions in PR 2
 src/core/page-state/import-guard.ts	canonicalFields	field	META	
 src/core/page-state/import-guard.ts	sameContentAnyKeyOrder	field	META	
+src/core/page-state/materialize.ts	materializePageSnapshot	sql	SEGW	assertInlineBody before the UPDATE
 src/core/page-state/materialize.ts	materializePageSnapshot	call:contentHash	META	inline pages only
 src/core/page-state/materialize.ts	materializePageSnapshot	field	SEGW	assertInlineBody before the UPDATE
-src/core/page-state/materialize.ts	materializePageSnapshot	sql	SEGW	assertInlineBody before the UPDATE
 src/core/page-state/projection-schema.ts	PAGE_PROJECTION_ACTIVATION_SQL	sql	NONE	not a live reader: v153 runs once at activation, over inline pages only (segmented pages did not exist); the regex scans for fence and private-key markers (#9192)
 src/core/page-state/projection-schema.ts	PAGE_SEARCH_VECTOR_TRIGGER_SQL	sql	STREAM	trigger DDL: the search vector reads timeline for inline rows and timeline_lead for segmented rows (lane 1a)
 src/core/page-state/projections.ts	preparePageProjection	call:prepareMarkdownChunks	STREAM	
 src/core/page-state/projections.ts	readGuardedProjectionSnapshot	field	STREAM	
 src/core/page-state/projections.ts	sealImportedPage	field	STREAM	
 src/core/page-state/schema.ts	PAGE_STATE_SCHEMA_STATEMENTS	sql	STREAM	revision trigger tuple (lane 1a adds body_generation)
-src/core/page-state/snapshot.ts	overlayCanonicalBodies	field	STREAM	overlays a caller-supplied body string (file bytes), not a stored segmented body
+src/core/page-state/snapshot.ts	overlayWith	field	STREAM	overlays a caller-supplied body string (file bytes), not a stored segmented body (the overlay core both overlayCanonicalBodies and overlayCanonicalBodiesTyped run)
 src/core/page-state/snapshot.ts	overlayCanonicalBodies	sql	STREAM	normalizes the caller-supplied body
-src/core/page-state/snapshot.ts	readSnapshotStatement	field	STREAM	withdrawal overlay runs on inline pages only; segmented page skips it (per-window overlay in PR 2)
 src/core/page-state/snapshot.ts	readSnapshotStatement	sql	STREAM	p.* feeds rowToPage (projects body_storage/body_bytes); the fingerprint over a NULL body is empty
+src/core/page-state/snapshot.ts	readSnapshotStatement	field	STREAM	withdrawal overlay runs on inline pages only; segmented page skips it (per-window overlay in PR 2)
 src/core/page-state/text-seal.ts	sealPageTextProjection	field	STREAM	moved from projections.ts unchanged; BrainEngine.sealChunks reuses it after refusing a segmented page
-src/core/page-state/versions.ts	createPageVersion	field	SEGW	lane 1e file: segmented versions reference a generation
 src/core/page-state/versions.ts	createPageVersion	sql	SEGW	lane 1e file: segmented versions reference a generation
+src/core/page-state/versions.ts	createPageVersion	field	SEGW	lane 1e file: segmented versions reference a generation
 src/core/page-window/bounded-lead.ts	overlaidBoundedPrefix	field	LEAD	see overlaidBoundedRows
 src/core/page-window/bounded-lead.ts	overlaidBoundedRows	field	LEAD	rows carry boundedBodyPrefixSql (truth_lead for segmented); a segmented lead that holds a facts fence is overlaid alone with the ledger the snapshot read returns (no body read)
 src/core/page-window/bounded-lead.ts	pageLeadSource	field	LEAD	getPage callers (exact-slug, alias snippets): compiled truth of an inline page; a segmented page reads its stored truth_lead
 src/core/page-window/document.ts	projectPageText	field	STREAM	
-src/core/page-window/document.ts	readPageDocument	call:pageDocument	STREAM	
 src/core/page-window/document.ts	readPageDocument	field	STREAM	
+src/core/page-window/document.ts	readPageDocument	call:pageDocument	STREAM	
 src/core/page-window/segmented.ts	markdownHead	call:serializePageToMarkdown	NONE	serializes the frontmatter head only: compiled_truth and timeline are passed as empty strings
 src/core/persistence/atom-maintenance.ts	prepareManagedAtomMutation	field	META	
 src/core/persistence/atom-maintenance.ts	readAtomOrigin	field	META	
@@ -447,216 +497,193 @@ src/core/persistence/canonical-projections.ts	materializeTimeline	field	STREAM	p
 src/core/persistence/canonical-projections.ts	prepareCanonicalProjections	field	STREAM	per-page projection: segmented page: getter throws page_body_segmented
 src/core/persistence/canonical-projections.ts	priorView	field	INLINE	inline arm; an unread segmented prior streams through segmentedPriorView
 src/core/persistence/canonical-projections.ts	safeBody	field	STREAM	per-page projection: segmented page: getter throws page_body_segmented
-src/core/persistence/connector-google-receipts.ts	prepareGoogleReceiptPatch	call:contentHash	META	
 src/core/persistence/connector-google-receipts.ts	prepareGoogleReceiptPatch	call:serializePageToMarkdown	SEGW	
+src/core/persistence/connector-google-receipts.ts	prepareGoogleReceiptPatch	call:contentHash	META	
 src/core/persistence/connector-sync.ts	ManagedConnectorSync.page	call:serializePageToMarkdown	SEGW	
-src/core/persistence/connector-sync.ts	prepareConnectorMutation	call:serializePageToMarkdown	SEGW	
 src/core/persistence/connector-sync.ts	prepareConnectorMutation	field	SEGW	
+src/core/persistence/connector-sync.ts	prepareConnectorMutation	call:serializePageToMarkdown	SEGW	
 src/core/persistence/core-guard.ts	prepareCoreGuard	field	INLINE	
 src/core/persistence/effect-facts.ts	bodyAlreadyOffered	field	META	
 src/core/persistence/effect-links.ts	mentionTargets	field	INLINE	inline arm; a segmented page streams its compiled truth through extractSegmentedPageLinks
 src/core/persistence/effect-recovery.ts	mirrorContent	call:serializePageToMarkdown	SEGW	the inline withdrawal mirror bytes for a stale-record rebase: rebaseStaleEffectRecovery refuses a segmented page before rendering (a segmented mirror streams through unreadPageFile)
 src/core/persistence/effects.ts	mirrorPage	call:serializePageToMarkdown	SEGW	segmented target skipped (skipped reason page_body_segmented) before the serialize; per-segment mirror in PR 2
 src/core/persistence/effects.ts	publishGitPage	call:serializePageToMarkdown	SEGW	segmented target skipped (skipped reason page_body_segmented) before the serialize
-src/core/persistence/embedding-settlement.ts	listEmbeddingCandidates	sql	META	
 src/core/persistence/facts-maintenance.ts	prepareManagedFactsSession	field	META	
-src/core/persistence/facts-prepare.ts	prepareManagedFactsMutation	call:serializePageToMarkdown	SEGW	assertInlineBody first
 src/core/persistence/facts-prepare.ts	prepareManagedFactsMutation	field	SEGW	assertInlineBody on the entity snapshot before the fence write
+src/core/persistence/facts-prepare.ts	prepareManagedFactsMutation	call:serializePageToMarkdown	SEGW	assertInlineBody first
 src/core/persistence/file-repair.ts	canonicalRepairFields	field	META	
 src/core/persistence/file-wins-content.ts	appendedParts	field	INLINE	compares the parsed canonical file with the reconcile result (ParsedPage strings readReconcileState builds through wholeBodySnapshot: a segmented page up to 24 MiB is read whole, a larger one refuses first); no page row is read
 src/core/persistence/file-wins-content.ts	fileWinsContent	field	INLINE	compares the parsed canonical file with the reconcile result (ParsedPage strings readReconcileState builds through wholeBodySnapshot: a segmented page up to 24 MiB is read whole, a larger one refuses first); no page row is read
-src/core/persistence/forget-prepare.ts	prepareForgetMutation	call:serializePageToMarkdown	INLINE	a segmented page's struck file streams through unreadPageFile (its segments under the ledger plus the withdrawal) and returns before this render
 src/core/persistence/forget-prepare.ts	prepareForgetMutation	field	INLINE	the inline body materializedPage returns; a segmented page streams through unreadPageFile and returns before this read
-src/core/persistence/git-gap.ts	readDirectionEvidence	field	INLINE	direction evidence (d4) compares inline page_versions bodies only: segmented versions are skipped, and a segmented page is compared by its streamed export blob id (no_evidence otherwise)
+src/core/persistence/forget-prepare.ts	prepareForgetMutation	call:serializePageToMarkdown	INLINE	a segmented page's struck file streams through unreadPageFile (its segments under the ledger plus the withdrawal) and returns before this render
 src/core/persistence/git-gap.ts	readDirectionEvidence	sql	INLINE	direction evidence (d4) compares inline page_versions bodies only: segmented versions are skipped, and a segmented page is compared by its streamed export blob id (no_evidence otherwise)
+src/core/persistence/git-gap.ts	readDirectionEvidence	field	INLINE	direction evidence (d4) compares inline page_versions bodies only: segmented versions are skipped, and a segmented page is compared by its streamed export blob id (no_evidence otherwise)
 src/core/persistence/import-prepare.ts	prepareManagedImportMutation	call:serializePageToMarkdown	SEGW	
 src/core/persistence/links-maintenance.ts	extractManagedStaleLinks	field	NONE	not the page body: result.timeline counter
 src/core/persistence/links-maintenance.ts	formatManagedStaleExtraction	field	NONE	not the page body: result.timeline counter
 src/core/persistence/links-preparation.ts	prepareAutomaticLinks	field	STREAM	reads the incoming parsed page, not a stored body
-src/core/persistence/local-edit-adoption.ts	staleEditorSave	field	INLINE	#8755 stale editor save: adoptionIntent refuses a segmented page before and assertInlineBody asserts it; the equality with earlier versions is an md5 match in SQL, and the row check needs the whole current body and the newest inline version (rows can sit anywhere, and inline versions carry no content_hash)
 src/core/persistence/local-edit-adoption.ts	staleEditorSave	sql	INLINE	#8755 stale editor save: adoptionIntent refuses a segmented page before and assertInlineBody asserts it; the equality with earlier versions is an md5 match in SQL, and the row check needs the whole current body and the newest inline version (rows can sit anywhere, and inline versions carry no content_hash)
-src/core/persistence/loop-fact-retirement.ts	prepareLoopFactRetirement	call:serializePageToMarkdown	SEGW	
+src/core/persistence/local-edit-adoption.ts	staleEditorSave	field	INLINE	#8755 stale editor save: adoptionIntent refuses a segmented page before and assertInlineBody asserts it; the equality with earlier versions is an md5 match in SQL, and the row check needs the whole current body and the newest inline version (rows can sit anywhere, and inline versions carry no content_hash)
 src/core/persistence/loop-fact-retirement.ts	prepareLoopFactRetirement	field	SEGW	
+src/core/persistence/loop-fact-retirement.ts	prepareLoopFactRetirement	call:serializePageToMarkdown	SEGW	
 src/core/persistence/manual-links.ts	prepareManualLinkMutation	call:serializePageToMarkdown	SEGW	wholeBodySnapshot first: a segmented page within 24 MiB is read back whole, a larger one refuses
-src/core/persistence/memory-mutations.ts	planRememberTarget	call:serializePageToMarkdown	SEGW	
 src/core/persistence/memory-mutations.ts	planRememberTarget	field	STREAM	
-src/core/persistence/origin-twins.ts	readOriginClaimants	sql	STREAM	#6948 twin verdict: md5 of an inline body; a segmented page (compiled_truth NULL) reads NULL and holds content_differs, so missing evidence never matches
+src/core/persistence/memory-mutations.ts	planRememberTarget	call:serializePageToMarkdown	SEGW	
+src/core/persistence/moved-pages.ts	bodyLines	field	INLINE	holdsEveryLine returns false for a page whose body is unread (segmented, bodyUnread) before bodyLines reads it, so a segmented page never pairs as a contained move
+src/core/engine-sql/repair-page-scans.ts	listOriginClaimants	sql	STREAM	#6948 twin verdict: md5 of an inline body; a segmented page (compiled_truth NULL) reads NULL and holds content_differs, so missing evidence never matches
 src/core/persistence/overwritten-edits.ts	CONTENT_COLUMNS	sql	STREAM	selects body_storage beside the inline body columns; a segmented version or page has NULL bodies and its overwrite is reported unknown (reason segmented), never compared or restored
 src/core/persistence/overwritten-edits.ts	overwriteContent	field	STREAM	returns null for a segmented row (body_storage segmented or NULL compiled_truth); the scan reports that overwrite unknown (reason segmented)
 src/core/persistence/overwritten-edits.ts	overwriteDigest	field	STREAM	inline content only: called on overwriteContent results, which are null for a segmented row
 src/core/persistence/page-advisories.ts	lineGrammarAdvisory	field	STREAM	
 src/core/persistence/page-advisories.ts	preparePageAdvisories	field	STREAM	
-src/core/persistence/page-append.ts	prepareAppendMutation	call:serializePageToMarkdown	SEGW	inline append, or a segmented page the splice declined within PAGE_MAX_BYTES (materializedSnapshot); over it the append refuses page_body_segmented
 src/core/persistence/page-append.ts	prepareAppendMutation	field	SEGW	inline append, or a segmented page the splice declined within PAGE_MAX_BYTES (materializedSnapshot); over it the append refuses page_body_segmented
 src/core/persistence/page-append.ts	regionTail	field	INLINE	inline branch; a segmented page reads its tail segments (segmentedRegionTail)
 src/core/persistence/page-append.ts	splicedPageFile	call:serializePageToMarkdown	NONE	serializes the frontmatter head with an empty body; the body streams from the segments
-src/core/persistence/page-edit.ts	applyPageEdits	call:serializePageToMarkdown	SEGW	within's stored-offset mapping on the materialized snapshot, as pageSegments; a segmented page takes prepareSegmentedEditMutation first
+src/core/persistence/page-append.ts	prepareAppendMutation	call:serializePageToMarkdown	SEGW	inline append, or a segmented page the splice declined within PAGE_MAX_BYTES (materializedSnapshot); over it the append refuses page_body_segmented
 src/core/persistence/page-edit.ts	applyPageEdits	field	SEGW	within's stored-offset mapping on the materialized snapshot, as pageSegments; a segmented page takes prepareSegmentedEditMutation first
 src/core/persistence/page-edit.ts	assertSegmentedFencesCompile	field	NONE	the fields hold only the stored fence text laid out at its lines (scanCanonicalFences input); no page body is read
-src/core/persistence/page-edit.ts	pageSegments	call:serializePageToMarkdown	SEGW	
 src/core/persistence/page-edit.ts	pageSegments	field	SEGW	
 src/core/persistence/page-edit.ts	prepareSegmentedEditMutation	call:serializePageToMarkdown	NONE	serializes the frontmatter head with an empty body; the body streams from the segments
-src/core/persistence/page-input.ts	normalizeSubagentPageInput	call:serializeMarkdown	SEGW	
+src/core/persistence/page-edit.ts	applyPageEdits	call:serializePageToMarkdown	SEGW	within's stored-offset mapping on the materialized snapshot, as pageSegments; a segmented page takes prepareSegmentedEditMutation first
+src/core/persistence/page-edit.ts	pageSegments	call:serializePageToMarkdown	SEGW	
 src/core/persistence/page-input.ts	normalizeSubagentPageInput	field	SEGW	
+src/core/persistence/page-input.ts	normalizeSubagentPageInput	call:serializeMarkdown	SEGW	
 src/core/persistence/page-mutations.ts	unquotedPutContent	field	SEGW	counts the stored inline body's literal tool-call summaries through readStoredBody; a segmented page reads NULL, so a summarized remote round trip is refused and nothing is written
 src/core/persistence/page-prepare.ts	canonical	field	SEGW	lane 1d file; segmented page: getter throws page_body_segmented
 src/core/persistence/page-prepare.ts	fileSnapshotDifference	field	SEGW	lane 1d file; segmented page: getter throws page_body_segmented
 src/core/persistence/page-prepare.ts	frontmatterDriftWrite	field	SEGW	#8109: called only for an inline page (bodyUnread excluded at the call site); compares the file's parsed body with the snapshot body
-src/core/persistence/page-prepare.ts	prepareInlineOrSegmentedMutation	call:serializePageToMarkdown	SEGW	lane 1d file
 src/core/persistence/page-prepare.ts	prepareInlineOrSegmentedMutation	field	SEGW	lane 1d file: preserveProtectedTakes reads the snapshot body; segmented page: getter throws page_body_segmented
 src/core/persistence/page-prepare.ts	remoteCoreMarkingKept	call:serializePageToMarkdown	SEGW	lane 1d file: the remote core-marking carry moved out of prepareInlineOrSegmentedMutation (GST-2518, function size); same read as before
 src/core/persistence/page-prepare.ts	segmentedFileMatches	field	NONE	the body fields hold region digests (body-digests.ts) for the canonical comparison; no page body is read
+src/core/persistence/page-prepare.ts	storedReadings	field	SEGW	the timeline-split reading of the snapshot body, for fileSnapshotDifference and frontmatterDriftWrite only (both read an inline or materialized body); segmented page: getter throws page_body_segmented
 src/core/persistence/page-prepare.ts	unreadPageFile	call:serializePageToMarkdown	NONE	serializes the frontmatter head with an empty body; the body streams from the segments through segmentedExportMarkdown
+src/core/persistence/page-prepare.ts	prepareInlineOrSegmentedMutation	call:serializePageToMarkdown	SEGW	lane 1d file
 src/core/persistence/page-purge.ts	purgePageInTransaction	field	STREAM	
-src/core/persistence/page-purge.ts	purgePageInTransaction	sql	STREAM	
-src/core/persistence/page-purge.ts	tombstonePage	call:contentHash	META	
 src/core/persistence/page-purge.ts	tombstonePage	field	STREAM	
-src/core/persistence/page-purge.ts	tombstonePage	sql	STREAM	
+src/core/persistence/page-purge.ts	tombstonePage	call:contentHash	META	
 src/core/persistence/prepared-maintenance.ts	stampMaintenancePage	call:serializePageToMarkdown	SEGW	
 src/core/persistence/prepared-maintenance.ts	verifyMaintenanceOutputs	call:serializePageToMarkdown	SEGW	
-src/core/persistence/purged-intent.ts	intentCarriesPurgedContent	call:contentHash	META	
 src/core/persistence/purged-intent.ts	intentCarriesPurgedContent	field	STREAM	
-src/core/persistence/reconcile-audit.ts	auditCanonicalSource	sql	META	
+src/core/persistence/purged-intent.ts	intentCarriesPurgedContent	call:contentHash	META	
 src/core/persistence/reconcile-merge.ts	reconcileCanonical	field	INLINE	
 src/core/persistence/reconcile-prepare.ts	prepareReconcileMutation	call:serializePageToMarkdown	INLINE	
-src/core/persistence/reconcile-prepare.ts	prepareReconcileResult	call:serializePageToMarkdown	INLINE	
 src/core/persistence/reconcile-prepare.ts	prepareReconcileResult	field	INLINE	
+src/core/persistence/reconcile-prepare.ts	prepareReconcileResult	call:serializePageToMarkdown	INLINE	
 src/core/persistence/reconcile-state.ts	readReconcileState	sql	INLINE	
 src/core/persistence/reconcile.ts	runReconcilePreview	call:serializePageToMarkdown	SEGW	
 src/core/persistence/segmented-apply.ts	demoteSegmentedPage	sql	INLINE	demotion: the row turns inline with an empty body that the inline write in the same transaction fills
 src/core/persistence/segmented-apply.ts	materializedSnapshot	field	INLINE	the body materializedPage read back within PAGE_MAX_BYTES (a page over the ceiling comes back unchanged and is never read), overlaid with the snapshot withdrawals as readPageSnapshot overlays an inline body
 src/core/persistence/segmented-apply.ts	stageSegmentedImport	field	INLINE	input.page is the parsed incoming write (strings within PAGE_MAX_BYTES), never a stored segmented row
-src/core/persistence/semantic-pages.ts	prepareSemanticPageMutation	call:serializePageToMarkdown	SEGW	assertInlineBody first
 src/core/persistence/semantic-pages.ts	prepareSemanticPageMutation	field	SEGW	assertInlineBody after the identity check (tag and timeline writes refuse)
+src/core/persistence/semantic-pages.ts	prepareSemanticPageMutation	call:serializePageToMarkdown	SEGW	assertInlineBody first
 src/core/persistence/sync-prepare.ts	prepareManagedSyncCode	field	INLINE	code pages are never segmented
-src/core/persistence/sync-prepare.ts	prepareSyncMutation	call:serializePageToMarkdown	SEGW	lane 1d file
 src/core/persistence/sync-prepare.ts	prepareSyncMutation	field	SEGW	lane 1d file: preserveProtectedTakes over fenceBody (an unread body is fence-free)
+src/core/persistence/sync-prepare.ts	prepareSyncMutation	call:serializePageToMarkdown	SEGW	lane 1d file
 src/core/persistence/takes-prepare.ts	prepare	call:serializePageToMarkdown	SEGW	
 src/core/persistence/valid-time-advisory.ts	bodyKey	field	INLINE	text compare for inline pages only; a segmented page compares content_hash, which also covers frontmatter, so its date-only edit reads as a body change
 src/core/persistence/writer-guard-schema.ts	MANAGED_WRITER_GUARD_FUNCTION_SQL	sql	STREAM	managed-writer guard tuple (lane 1a adds body_generation)
 src/core/pglite-engine.ts	PGLiteEngine.putPage	call:putPage	SEGW	delegation to engine-sql putPage
 src/core/pglite-engine.ts	PGLiteEngine.refreshPageBody	call:refreshPageBody	SEGW	delegation to engine-sql refreshPageBody
+src/core/policy/store.ts	readPolicyPage	field	INLINE	the policy page is a small fence written inline by gbrain policy; a segmented one reads as empty, so it is malformed and every verb asks
 src/core/post-upgrade-reembed.ts	computeReembedEstimate	sql	META	
 src/core/postgres-engine.ts	PostgresEngine.putPage	call:putPage	SEGW	delegation to engine-sql putPage
 src/core/postgres-engine.ts	PostgresEngine.refreshPageBody	call:refreshPageBody	SEGW	delegation to engine-sql refreshPageBody
 src/core/quarantine-override.ts	quarantineOverrideBinding	field	META	
 src/core/quarantine-override.ts	quarantineOverrideFor	field	META	
 src/core/questions/freshness.ts	OWNER_BODY_HASH_SQL	sql	META	owner-evidence change signal: content_hash for a segmented page, md5 of the body for inline (stored evidence unchanged)
-src/core/questions/pages.ts	readQuestionPage	field	INLINE	see sql row
 src/core/questions/pages.ts	readQuestionPage	sql	INLINE	question pages are inline by construction; assertInlineBody refuses a segmented one
 src/core/questions/pages.ts	renderPage	call:serializePageToMarkdown	INLINE	
 src/core/questions/pages.ts	syncQuestionPage	field	INLINE	
+src/core/questions/pages.ts	readQuestionPage	field	INLINE	see sql row
 src/core/questions/refresh.ts	refreshPin	field	INLINE	owner claims of the question page (readQuestionPage asserts inline)
-src/core/questions/refresh.ts	retrieveEvidence	field	LEAD	inline candidates only
 src/core/questions/refresh.ts	retrieveEvidence	sql	LEAD	segmented candidate pages excluded in SQL (skip): their excerpt and laundering check need the body
-src/core/reindex-consent.ts	estimateReindexSpend	sql	META	
+src/core/questions/refresh.ts	retrieveEvidence	field	LEAD	inline candidates only
 src/core/repair/accepted-takes.ts	archivedRow	field	SEGW	inline versions only: a segmented archived version counts as version_missing (the v0.60.253.0 accept refused segmented pages, so none exists)
-src/core/repair/accepted-takes.ts	archivedRow	sql	SEGW	selects body_storage; a segmented archived version counts as version_missing
 src/core/repair/accepted-takes.ts	livePage	call:serializePageToMarkdown	SEGW	materializedSnapshot within the single-string ceiling; over it counts as fence_unreadable (no fences there)
 src/core/repair/agent-session-facts.ts	retireTakes	call:serializePageToMarkdown	INLINE	inline pages only: a segmented page returns before the read and its takes are kept (changed_since_preview)
-src/core/repair/agent-session-facts.ts	rewriteFencedFacts	call:serializePageToMarkdown	INLINE	inline pages only: a segmented page returns before the read and its fenced facts are kept (changed_since_preview)
 src/core/repair/agent-session-facts.ts	rewriteFencedFacts	field	INLINE	inline pages only: a segmented page returns before the read and its fenced facts are kept (changed_since_preview)
+src/core/repair/agent-session-facts.ts	rewriteFencedFacts	call:serializePageToMarkdown	INLINE	inline pages only: a segmented page returns before the read and its fenced facts are kept (changed_since_preview)
 src/core/repair/atom-fence-rows.ts	atomFenceRowsRepair	call:serializePageToMarkdown	SEGW	
-src/core/repair/atom-fence-rows.ts	findAtomFenceRows	sql	INLINE	inline source pages only: a segmented source page (compiled_truth NULL) is counted origin_unread and never read
-src/core/repair/captured-facts.ts	strikeFencedRows	call:serializePageToMarkdown	SEGW	
 src/core/repair/captured-facts.ts	strikeFencedRows	field	SEGW	
-src/core/repair/connector-fences.ts	candidates	sql	STREAM	
-src/core/repair/connector-fences.ts	connectorFencesRepair	call:serializePageToMarkdown	SEGW	
+src/core/repair/captured-facts.ts	strikeFencedRows	call:serializePageToMarkdown	SEGW	
 src/core/repair/connector-fences.ts	connectorFencesRepair	field	STREAM	
 src/core/repair/connector-fences.ts	relocateTimelineFences	field	STREAM	
-src/core/repair/contact-rows.ts	plannedChange	call:serializePageToMarkdown	SEGW	SQL exclusion in scan: body_storage='inline' only
+src/core/repair/connector-fences.ts	connectorFencesRepair	call:serializePageToMarkdown	SEGW	
 src/core/repair/contact-rows.ts	plannedChange	field	SEGW	SQL exclusion in scan: body_storage='inline' only; the read-back compares the re-rendered body
-src/core/repair/conversation-labels.ts	classifyLabelFacts	sql	STREAM	
-src/core/repair/duplicate-facts.ts	strikeFencedCopies	call:serializePageToMarkdown	INLINE	inline pages only: a segmented page returns before the read, and its fenced copies stay active (listed as segmented_page)
+src/core/repair/contact-rows.ts	plannedChange	call:serializePageToMarkdown	SEGW	SQL exclusion in scan: body_storage='inline' only
 src/core/repair/duplicate-facts.ts	strikeFencedCopies	field	INLINE	inline pages only: a segmented page returns before the read, and its fenced copies stay active (listed as segmented_page)
+src/core/repair/duplicate-facts.ts	strikeFencedCopies	call:serializePageToMarkdown	INLINE	inline pages only: a segmented page returns before the read, and its fenced copies stay active (listed as segmented_page)
 src/core/repair/extractor-facts.ts	restorePageFacts	field	STREAM	
-src/core/repair/extractor-facts.ts	restorePageFacts	sql	STREAM	
 src/core/repair/fact-claim-dates.ts	movePage	call:serializePageToMarkdown	SEGW	refuses a segmented page: the plan lists it segmented_page and movePage keeps one as changed_since_preview
 src/core/repair/fences.ts	afterBytes	field	STREAM	
 src/core/repair/fences.ts	fencesRepair	field	STREAM	
 src/core/repair/file-drift-compare.ts	driftDifference	field	NONE	compares the compiled_truth and timeline of the reconcile reading (readReconcileState materializes a segmented page), never a stored body string
 src/core/repair/file-drift.ts	prepareDriftPage	call:serializePageToMarkdown	NONE	renders the reconcile reading of both sides and of the result (readReconcileState materializes a segmented page) to count lost lines; no stored page body is read here
 src/core/repair/frontmatter.ts	analyzeFile	field	LEAD	
-src/core/repair/frontmatter.ts	pagesByOrigin	sql	LEAD	
 src/core/repair/lost-fence-rows.ts	lostIn	field	NONE	walks the history scanLostFenceRows built (inline page_versions bodies and a materialized snapshot); no stored page body is read here
-src/core/repair/lost-fence-rows.ts	plannedPage	call:serializePageToMarkdown	SEGW	materializedSnapshot within the single-string ceiling; over it counts as fence_unreadable (segmentedOverCeiling, checked before the read)
 src/core/repair/lost-fence-rows.ts	plannedPage	field	SEGW	materializedSnapshot within the single-string ceiling; over it counts as fence_unreadable (segmentedOverCeiling, checked before the read)
 src/core/repair/lost-fence-rows.ts	scanLostFenceRows	field	SEGW	materializedSnapshot within the single-string ceiling; over it counts as fence_unreadable (segmentedOverCeiling, checked before the read)
-src/core/repair/lost-fence-rows.ts	scanLostFenceRows	sql	INLINE	page_versions rows that hold a body copy (compiled_truth IS NOT NULL); a segmented version has none and is not read
-src/core/repair/open-facts.ts	applyFence	call:serializePageToMarkdown	INLINE	inline pages only: a segmented page returns before the read and its fenced facts stay private for the owner
+src/core/repair/lost-fence-rows.ts	plannedPage	call:serializePageToMarkdown	SEGW	materializedSnapshot within the single-string ceiling; over it counts as fence_unreadable (segmentedOverCeiling, checked before the read)
 src/core/repair/open-facts.ts	applyFence	field	INLINE	inline pages only: a segmented page returns before the read and its fenced facts stay private for the owner
+src/core/repair/open-facts.ts	applyFence	call:serializePageToMarkdown	INLINE	inline pages only: a segmented page returns before the read and its fenced facts stay private for the owner
 src/core/repair/origin-carry.ts	stamp	call:serializePageToMarkdown	SEGW	a segmented page fails before the read (segmented_page) and parks its origin
-src/core/repair/orphan-children.ts	PROBE_SQL	sql	META	
 src/core/repair/overwritten-edits.ts	previewEdit	call:serializePageToMarkdown	SEGW	only high-confidence edits (live page and version both inline at scan time) are previewed; a page whose revision moved since the scan is skipped before it is serialized
-src/core/repair/overwritten-edits.ts	versionMarkdown	call:serializePageToMarkdown	SEGW	inline versions only: a segmented version has no lost_digest and is never previewed; the restore goes through revert_version, which refuses a segmented page or version
 src/core/repair/overwritten-edits.ts	versionMarkdown	field	SEGW	inline versions only: overwriteContent returns null for a segmented version, which answers version_changed
-src/core/repair/overwritten-edits.ts	versionMarkdown	sql	SEGW	selects body_storage; a segmented version answers version_changed
+src/core/repair/overwritten-edits.ts	versionMarkdown	call:serializePageToMarkdown	SEGW	inline versions only: a segmented version has no lost_digest and is never previewed; the restore goes through revert_version, which refuses a segmented page or version
 src/core/repair/private-labels.ts	prepareWrite	call:serializePageToMarkdown	SEGW	a segmented page returns segmented_page before the read and keeps its label
 src/core/repair/readers.ts	readersWrite	call:serializePageToMarkdown	SEGW	a segmented page returns segmented_page before the read and keeps its readers
 src/core/repair/redacted-facts.ts	pageTexts	field	INLINE	inline branch only (a segmented page's body is read through readBodyRange in segmentedText)
-src/core/repair/redacted-facts.ts	pageTexts	sql	INLINE	page_versions rows that hold a body copy (compiled_truth IS NOT NULL); a segmented version has none and is not read
-src/core/repair/redacted-facts.ts	restoreFencedRows	call:serializePageToMarkdown	INLINE	inline pages only: a segmented page returns before the read, and its fenced rows preview as class segmented
 src/core/repair/redacted-facts.ts	restoreFencedRows	field	INLINE	inline pages only: a segmented page returns before the read, and its fenced rows preview as class segmented
-src/core/repair/safe-chunks.ts	safeChunksRepair	sql	META	
-src/core/repair/secret-spans.ts	PAGE_SQL	sql	INLINE	inline body columns; a segmented body is read whole through materializeSegmentedBody, refused page_too_large over the single-string ceiling
+src/core/repair/redacted-facts.ts	restoreFencedRows	call:serializePageToMarkdown	INLINE	inline pages only: a segmented page returns before the read, and its fenced rows preview as class segmented
 src/core/repair/secret-spans.ts	bindToStore	field	INLINE	retained page_versions rows are rewritten only when inline; a segmented version is skipped and counted
-src/core/repair/secret-spans.ts	bindToStore	sql	INLINE	retained page_versions rows are rewritten only when inline; a segmented version is skipped and counted
 src/core/repair/secret-spans.ts	readFields	field	INLINE	inline body columns; a segmented body is read whole through materializeSegmentedBody, refused page_too_large over the single-string ceiling
 src/core/repair/secret-spans.ts	writePage	call:contentHash	INLINE	runs only for an inline page; a segmented body is restaged through prepareSegmentedBody and applySegmentedBody
-src/core/repair/secret-spans.ts	writePage	sql	INLINE	runs only for an inline page; a segmented body is restaged through prepareSegmentedBody and applySegmentedBody
 src/core/repair/segmented-mirror.ts	fileHoldsWithdrawnRows	field	NONE	the overlay result of one file fragment (a facts fence block) for the region digests (body-digests.ts); no page body is read
 src/core/repair/segmented-tiling.ts	republish	field	NONE	destructures the truth and timeline strings stageable built from the blob HEAD holds; no stored page body is read
 src/core/repair/segmented-tiling.ts	stageable	field	NONE	reads the compiled_truth and timeline the import screen (or parseMarkdown) returns for the file blob HEAD holds; no stored page body is read (the damaged one is never read)
 src/core/repair/slug-conflicts.ts	pageContent	call:serializePageToMarkdown	SEGW	
 src/core/repair/split-facts.ts	mergeOne	call:serializePageToMarkdown	SEGW	
-src/core/repair/split-facts.ts	mergeSplitFacts	call:serializePageToMarkdown	SEGW	
 src/core/repair/split-facts.ts	mergeSplitFacts	field	SEGW	
-src/core/repair/split-facts.ts	splitFactsRepair	sql	SEGW	SQL exclusion: a segmented page's NULL body never matches the fence LIKE; the plan lists such pages from their manifest facts regions
-src/core/repair/stale-atoms.ts	staleAtoms	sql	META	
+src/core/repair/split-facts.ts	mergeSplitFacts	call:serializePageToMarkdown	SEGW	
 src/core/repair/take-supersession.ts	readPage	call:serializePageToMarkdown	SEGW	
-src/core/repair/timeline-comments.ts	timelineCommentsRepair	call:serializePageToMarkdown	SEGW	
 src/core/repair/timeline-comments.ts	timelineCommentsRepair	field	STREAM	
-src/core/repair/timeline-comments.ts	timelineCommentsRepair	sql	STREAM	
-src/core/repair/timeline-order.ts	plannedChange	call:serializePageToMarkdown	SEGW	
+src/core/repair/timeline-comments.ts	timelineCommentsRepair	call:serializePageToMarkdown	SEGW	
 src/core/repair/timeline-order.ts	plannedChange	field	SEGW	
-src/core/repair/timeline-order.ts	scan	sql	SEGW	SQL exclusion: body_storage='inline' only; segmented pages carrying timeline rows are counted (segmentedTimelinePages) and named in a warning
+src/core/repair/timeline-order.ts	plannedChange	call:serializePageToMarkdown	SEGW	
 src/core/repair/timeline.ts	classifyTimelinePage	field	STREAM	
-src/core/repair/timeline.ts	recountTimelinePages	sql	STREAM	
 src/core/repair/timeline.ts	removedRowIds	field	STREAM	
-src/core/repair/timeline.ts	scanTimelineHistory	sql	STREAM	
-src/core/repair/timeline.ts	timelineRepair	call:serializePageToMarkdown	SEGW	
 src/core/repair/timeline.ts	timelineRepair	field	STREAM	
-src/core/repair/unwithdrawn-facts.ts	classifyUnwithdrawnFacts	sql	INLINE	reads compiled_truth and timeline of inline pages only (NULL for a segmented page, whose fence pageFenceRowKeys reads from its segments)
-src/core/repair/visibility.ts	applyFactItem	call:serializePageToMarkdown	INLINE	inline pages only: a segmented page returns before the read and its fenced fact is left for the owner
+src/core/repair/timeline.ts	timelineRepair	call:serializePageToMarkdown	SEGW	
 src/core/repair/visibility.ts	applyFactItem	field	INLINE	inline pages only: a segmented page returns before the read and its fenced fact is left for the owner
-src/core/repair/visibility.ts	planAliases	sql	META	
-src/core/repair/visibility.ts	planEvents	sql	META	
-src/core/repair/visibility.ts	planLineage	sql	META	
 src/core/repair/visibility.ts	visibilityWrite	call:serializePageToMarkdown	SEGW	
+src/core/repair/visibility.ts	applyFactItem	call:serializePageToMarkdown	INLINE	inline pages only: a segmented page returns before the read and its fenced fact is left for the owner
+src/core/rules/record.ts	renderRulePage	call:serializeMarkdown	NONE	serializes a new rule page from its own short fields; reads no stored body
+src/core/rust-engine/snapshot-overlay.ts	overlayStoreLead	field	STREAM	the Rust arm of readSnapshotStatement's withdrawal overlay (page-state/snapshot.ts): the Rust store keeps every body inline; the seal lead of a segmented page (a bounded timeline prefix), overlaid as PGLite's seal overlays it
+src/core/rust-engine/snapshot-overlay.ts	overlayStoreSnapshots	field	STREAM	the Rust arm of readSnapshotStatement's withdrawal overlay (page-state/snapshot.ts): the Rust store keeps every body inline; the body strike skips a segmented page as readSnapshotStatement does (per-window overlay in PR 2)
 src/core/rust-engine/store-members/chunks.ts	sealChunks	field	STREAM	mirrors sealPageTextProjection (text-seal.ts): sends sanitizeRemoteBody(timeline) with the seal for the page keyword vector; a segmented page (null timeline from the Rust store) sends none
+src/core/rust-engine/store-members/fence-projection.ts	readPageInlineBody	field	INLINE	the Rust arm of engine-sql/unwithdrawn-restore.ts readPageInlineBody: passes the store's inline compiled_truth and timeline through; a segmented page reads null columns
 src/core/rust-engine/store-members/field-usage.ts	readFieldUsageSamples	field	LEAD	the Rust arm of engine-sql/field-usage.ts readFieldUsageSamples: passes the store's sampled compiled_truth through; a segmented page samples a null body (TODOS.md)
 src/core/rust-engine/store-members/page-body.ts	refreshPageBody	call:refreshPageBody	SEGW	forwards to the Rust store, which refuses a segmented page as the body-storage CHECK does; callers assert first
 src/core/rust-engine/store-members/page-ops.ts	toDomainBankRow	field	INLINE	copies the domain-bank body the Rust store returned; the store keeps every body inline
 src/core/rust-engine/store-members/pages.ts	putPage	call:putPage	INLINE	forwards the caller's page to the Rust store, which keeps every body inline; it reads no stored body
+src/core/rust-engine/store-members/versions.ts	preimageFields	field	INLINE	read only when isSegmentedPage is false; a segmented preimage sends no body (its version references the live generation)
 src/core/schema-migrations/v091-pages-generation-trigger-and-bookmark.ts	v091	sql	NONE	not the page body: historical generation trigger
 src/core/schema-migrations/v123-configurable-fts-language.ts	v123	sql	NONE	not the page body: historical
 src/core/schema-migrations/v124-page-search-vector-drop-compiled-truth.ts	v124	sql	NONE	not the page body: historical search-vector trigger
 src/core/schema-migrations/v189-pages-credential-projection-pending.ts	v189	sql	NONE	not a live reader: historical migration over inline pages (segmented pages did not exist)
 src/core/schema-migrations/v248-segmented-page-storage.ts	COMMON_SQL	sql	NONE	not a live reader: migration DDL for the segmented body columns and their CHECK
+src/core/schema-migrations/v353-fact-fingerprint-v3.ts	FACT_FINGERPRINT_V3_SQL	sql	NONE	not a live reader: one-shot migration that reads inline bodies from pages and segmented bodies from page_segment_texts to find fence cells needing a twin withdrawal row
 src/core/schema-pack/field-usage.ts	runFieldUsage	field	LEAD	
 src/core/schema-pack/page-to-alias.ts	resolveValue	field	LEAD	
 src/core/schema-pack/page-to-alias.ts	runPageToAliasCore	field	LEAD	
-src/core/schema-pack/page-to-alias.ts	runPageToAliasCore	sql	LEAD	
 src/core/schema-pack/page-to-link.ts	resolveSlug	field	LEAD	
 src/core/schema-pack/page-to-link.ts	runPageToLinkCore	field	LEAD	
-src/core/schema-pack/page-to-link.ts	runPageToLinkCore	sql	LEAD	
-src/core/search-vector-backfill.ts	backfillPageVectors	field	LEAD	
 src/core/search-vector-backfill.ts	backfillPageVectors	sql	LEAD	
+src/core/search-vector-backfill.ts	backfillPageVectors	field	LEAD	
 src/core/search/chunk-windows.ts	mapChunkWindowRows	field	STREAM	
-src/core/search/entity-anchor.ts	entityAnchoredPages	sql	STREAM	
 src/core/search/evidence-delivery.ts	deliverEvidence	field	STREAM	inline pages: the fence overlay over the whole body; a segmented page (no body) skips it and is planned from windows (search/segmented-evidence.ts)
-src/core/search/evidence-delivery.ts	selectLongPages	sql	META	sizes a segmented page from its NULL body (0), so it is never selected as a long page; moves to body_bytes
 src/core/search/exact-scan.ts	buildExactBatchStatement	sql	META	#7191: octet_length of the body columns (stored size, never the body) decides an unreadable page
+src/core/search/long-page-sizes.ts	longPageSizeStatement	sql	META	moved from search/evidence-delivery.ts selectLongPages: sizes a segmented page from its NULL body (0), so it is never selected as a long page; moves to body_bytes
 src/core/search/provenance-demotion.ts	applyGeneratedDemotion	field	LEAD	
 src/core/search/read-enrichment.ts	readAliases	sql	NONE	not the page body: SELECT * FROM pages used for identity columns
 src/core/search/read-enrichment.ts	readChainHop	sql	META	SELECT * FROM pages by id; protectedBodyFilter(ev) reads body_flags for a segmented page
@@ -664,39 +691,37 @@ src/core/search/relational-recall.ts	hydrate	field	LEAD	synopsis from boundedBod
 src/core/search/safe-chunks.ts	bodyWriteChunkVersion	sql	SEGW	spliced into inline body writes only; a segmented row refuses those writes (CHECK)
 src/core/search/safe-chunks.ts	protectedBodyFilter	sql	META	segmented page: body_flags.has_protected decides, missing flag counts as protected (fail closed)
 src/core/search/safe-chunks.ts	protectedTakesFilter	sql	META	segmented page: body_flags.has_protected decides, missing flag counts as protected (fail closed)
-src/core/secret-store/marker-sql.ts	pageHoldsSql	sql	INLINE	presence check on inline columns in SQL; a segmented body is not read here, and restore reads its segments through readSegmentedBody
-src/core/secret-store/restore.ts	previewRestore	sql	INLINE	presence check on inline columns in SQL; a segmented page counts as a hit and the apply reads it whole
-src/core/shared-skills/migration-export.ts	exportInventory	call:serializeMarkdown	INLINE	
 src/core/shared-skills/migration-export.ts	exportInventory	field	INLINE	
+src/core/shared-skills/migration-export.ts	exportInventory	call:serializeMarkdown	INLINE	
 src/core/shared-skills/migration-projection.ts	assertExportProjectionRoundtrip	field	INLINE	
 src/core/slack/slack-source.ts	runSlackSyncInner	call:serializePageToMarkdown	INLINE	T23 private re-stamp republishes the stored day page; assertInlineBody refuses a segmented page first (the day is held), and Slack day pages are at most 2 MiB
 src/core/sweep.ts	runLinksTimelinePass	field	INLINE	inline arm; a segmented page streams its links (segment-links.ts) and timeline (bodyBlocks)
-src/core/sweep.ts	runMaintenanceSweep	sql	STREAM	LIKE over NULL never matches a segmented page (skip)
 src/core/think/gather.ts	renderPagesBlockDetailed	field	LEAD	segmented page: getter throws page_body_segmented
 src/core/think/gather.ts	runGather	field	LEAD	visibleLeads reads Page.compiled_truth from listPages/search: segmented page: getter throws page_body_segmented (lead source in PR 2)
 src/core/think/index.ts	composeExtractiveFallback	field	LEAD	
+src/core/think/index.ts	persistSynthesis	call:serializeMarkdown	NONE	GST-3612: renders the synthesis page think just composed (its frontmatter and the answer body) for the managed maintenance request; no stored page body is read here
 src/core/think/persist-take.ts	assertTakeFileCanonical	field	SEGW	compares the inline page body outside the takes section with the file; a segmented page reads NULL, never matches, and the take is refused before any write
-src/core/timeline-dedup-repair.ts	repairLegacyTimelineSourceRows	field	STREAM	
 src/core/timeline-dedup-repair.ts	repairLegacyTimelineSourceRows	sql	STREAM	
+src/core/timeline-dedup-repair.ts	repairLegacyTimelineSourceRows	field	STREAM	
 src/core/timeline-extract.ts	retractCoordinated	sql	STREAM	
-src/core/timeline-extract.ts	retractRemovedTimelineEntries	field	STREAM	
 src/core/timeline-extract.ts	retractRemovedTimelineEntries	sql	STREAM	
 src/core/timeline-extract.ts	retractStoredPage	field	STREAM	
+src/core/timeline-extract.ts	retractRemovedTimelineEntries	field	STREAM	
 src/core/timeline-order.ts	orderTimeline	field	SEGW	pure text core; its only caller (repair/timeline-order.ts) passes inline pages
-src/core/timeline-write-through.ts	writeTimelineEntryThrough	field	SEGW	assertInlineBody before the file or row is touched
 src/core/timeline-write-through.ts	writeTimelineEntryThrough	sql	SEGW	assertInlineBody before the file or row is touched
+src/core/timeline-write-through.ts	writeTimelineEntryThrough	field	SEGW	assertInlineBody before the file or row is touched
 src/core/transcripts/recover.ts	userlessCodexSessions	sql	STREAM	
-src/core/transcripts/secret-audit.ts	auditTranscriptSecrets	field	STREAM	
 src/core/transcripts/secret-audit.ts	auditTranscriptSecrets	sql	STREAM	
+src/core/transcripts/secret-audit.ts	auditTranscriptSecrets	field	STREAM	
 src/core/trust/held-removals.ts	acceptHeldRemoval	field	SEGW	materializeSegmentedBody within the single-string ceiling; over it assertInlineBody refuses (no fences there) and the proposal stays pending
 src/core/trust/held-removals.ts	heldRow	sql	SEGW	inline body only; acceptHeldRemoval reads a segmented page within the single-string ceiling with materializeSegmentedBody
 src/core/trust/label-lowerings.ts	listLabelLowerings	sql	INLINE	read-only listing compares inline bodies in SQL (no body leaves the database); a segmented page or version (compiled_truth NULL) is classed unreadable
-src/core/trust/page-handlers.ts	markdownWithoutMarker	call:serializeMarkdown	SEGW	
 src/core/trust/page-handlers.ts	markdownWithoutMarker	field	SEGW	
-src/core/trust/page-handlers.ts	plannedProvenanceRestore	call:serializeMarkdown	SEGW	refuses a segmented page (assertInlineBody); gbrain repair provenance lists segmented pages needs_review
 src/core/trust/page-handlers.ts	plannedProvenanceRestore	field	SEGW	refuses a segmented page (assertInlineBody); gbrain repair provenance lists segmented pages needs_review
-src/core/trust/page-handlers.ts	versionMarkdown	call:serializePageToMarkdown	SEGW	
 src/core/trust/page-handlers.ts	versionMarkdown	field	SEGW	
+src/core/trust/page-handlers.ts	markdownWithoutMarker	call:serializeMarkdown	SEGW	
+src/core/trust/page-handlers.ts	plannedProvenanceRestore	call:serializeMarkdown	SEGW	refuses a segmented page (assertInlineBody); gbrain repair provenance lists segmented pages needs_review
+src/core/trust/page-handlers.ts	versionMarkdown	call:serializePageToMarkdown	SEGW	
 src/core/trust/release-publish.ts	cellAt	field	INLINE	read-only fence cell lookup on the body materializedPage read back within PAGE_MAX_BYTES (a segmented page over the ceiling returns null first)
 src/core/utils.ts	contentHash	field	META	hashes a whole inline page; a segmented page hashes as a stream (1.4) and keeps content_hash; called on a segmented Page the getter throws
 src/core/utils.ts	contentHashLegacy	field	META	legacy formula over an inline page; segmented: getter throws
@@ -704,32 +729,69 @@ src/core/utils.ts	rowToPage	field	INLINE	installs throwing body getters on a seg
 src/core/utils.ts	rowToStalePage	field	STREAM	listStalePagesForExtraction lists inline pages only (segmented skipped in SQL, still counted stale)
 src/core/verbs/entity-card-identity.ts	excerptSource	field	LEAD	inline pages only; a segmented page reads truthLead (EXCERPT_LEAD_BYTES)
 src/core/verbs/entity-names.ts	lookupOne	field	LEAD	bounded prefix rows
-src/core/verbs/entity-names.ts	lookupOne	sql	LEAD	boundedBodyPrefixSql AS compiled_truth
-src/core/write-gate-scan.ts	SPECS	field	STREAM	
 src/core/write-gate-scan.ts	SPECS	sql	STREAM	
+src/core/write-gate-scan.ts	SPECS	field	STREAM	
 src/core/write-gate.ts	assessPageForGate	field	STREAM	
 src/core/write-through.ts	writePageThrough	call:serializePageToMarkdown	SEGW	
 src/eval/brainbench/metrics/trust-reads.ts	canaryHeld	sql	STREAM	
 src/eval/brainbench/metrics/trust-reads.ts	canaryPersisted	sql	STREAM	
 src/eval/chronicle/harness.ts	seedChronicleEvalCorpus	call:putPage	SEGW	
-src/eval/longmemeval/call-plan.ts	planPages	call:prepareMarkdownChunks	INLINE	
 src/eval/longmemeval/call-plan.ts	planPages	field	INLINE	
+src/eval/longmemeval/call-plan.ts	planPages	call:prepareMarkdownChunks	INLINE	
 src/cli/enforced-member.ts	checkEnforcedWrite	field	INLINE	the stored page comes from storedPage, which refuses a segmented page (assertInlineBody)
 src/cli/enforced-member.ts	markdownLabels	field	NONE	not a stored page body: the parsed markdown a put or a committed file submits
 src/cli/enforced-member.ts	pageLabels	field	INLINE	reads a page from storedPage (segmented refused by assertInlineBody) or parsed submitted markdown
-src/cli/enforced-member.ts	storedPage	sql	INLINE	refuses a segmented page with assertInlineBody before its body is read
 src/commands/doctor/checks/atom-body-recheck.ts	unchangedBodyAtoms	call:contentHash	INLINE	doctor atom_provenance_drift re-check (#6825): the group query joins only inline pages, and a page read back segmented is skipped (isSegmentedPage), keeping its drift verdict; compares a page_versions edition with the live body
 src/commands/doctor/checks/atom-body-recheck.ts	unchangedBodyAtoms	field	INLINE	doctor atom_provenance_drift re-check (#6825): the group query joins only inline pages, and a page read back segmented is skipped (isSegmentedPage), keeping its drift verdict; compares a page_versions edition with the live body
-src/commands/doctor/checks/atom-body-recheck.ts	unchangedBodyAtoms	sql	INLINE	doctor atom_provenance_drift re-check (#6825): the group query joins only inline pages, and a page read back segmented is skipped (isSegmentedPage), keeping its drift verdict; compares a page_versions edition with the live body
 src/core/engine-sql/trust-tier-reads.ts	PV_BODY_KEY	sql	META	moved from valid-time-read.ts bodyKey: md5 over an inline version's body columns, content_hash for a segmented one; no text leaves the database
 src/core/engine-sql/trust-tier-reads.ts	P_BODY_KEY	sql	META	moved from valid-time-read.ts bodyKey: md5 over an inline page's body columns, content_hash for a segmented one; no text leaves the database
-src/core/engine-sql/trust-tier-reads.ts	listCorePageRows	field	INLINE	moved from core-memory.ts listCorePages: passes an inline row's compiled_truth through and flags segmented rows, which core-memory.ts listCorePages materialises
 src/core/engine-sql/trust-tier-reads.ts	listCorePageRows	sql	INLINE	moved from core-memory.ts listCorePages: a segmented row's body column is NULL and its segmented flag sends it to the segment reader
 src/core/engine-sql/trust-tier-reads.ts	pickValidTimeEdition	sql	META	moved from valid-time-read.ts pick: octet_length of an inline version's body columns (segmented versions are counted by body_storage); no text leaves the database
-src/core/engine-sql/trust-tier-reads.ts	readPageVersionEdition	field	INLINE	moved from valid-time-read.ts loadEdition: passes an inline version's body columns through; a segmented version's are NULL and its generation goes to the segment reader in editionView
 src/core/engine-sql/trust-tier-reads.ts	readPageVersionEdition	sql	INLINE	moved from valid-time-read.ts loadEdition: a segmented version's body columns are NULL; it is read by generation through the segment reader in editionView
 src/core/engine-sql/trust-tier-reads.ts	scanFrom	sql	STREAM	moved from eligibility/scan.ts SELECT: the scan assesses inline text; a segmented page's body columns are NULL
-src/core/guests/promote.ts	promoteGuestNote	call:serializeMarkdown	INLINE	assertInlineBody refuses a guest note stored in segments (page_body_segmented) before its body is copied into the owner page
+src/core/engine-sql/trust-tier-reads.ts	listCorePageRows	field	INLINE	moved from core-memory.ts listCorePages: passes an inline row's compiled_truth through and flags segmented rows, which core-memory.ts listCorePages materialises
+src/core/engine-sql/trust-tier-reads.ts	readPageVersionEdition	field	INLINE	moved from valid-time-read.ts loadEdition: passes an inline version's body columns through; a segmented version's are NULL and its generation goes to the segment reader in editionView
 src/core/guests/promote.ts	promoteGuestNote	field	INLINE	assertInlineBody before the body is read
+src/core/guests/promote.ts	promoteGuestNote	call:serializeMarkdown	INLINE	assertInlineBody refuses a guest note stored in segments (page_body_segmented) before its body is copied into the owner page
 src/core/rust-engine/store-codec.ts	guardNullBody	field	META	reads only whether the Rust store sent compiled_truth/timeline as null (a segmented shell, PGLite pages_body_storage_chk), never the body text; a null body becomes the guarded segmented page of rowToPage
-src/core/persistence/concept-rebuild.ts	STATED_SQL	sql	INLINE	reads only an inline page timeline for emptiness; a segmented page counts as unread and stays hidden
+src/core/rust-engine/store-members/write-guards.ts	readLiveStoredBody	field	SEGW	the Rust readLiveStoredBody: the inline columns of readLivePageBody, NULL for a segmented page, and every caller holds it
+src/core/engine-sql/concept-rebuild.ts	STATED_SQL	sql	INLINE	reads only an inline page timeline for emptiness; a segmented page counts as unread and stays hidden (moved from persistence/concept-rebuild.ts statedKinds)
+src/core/engine-sql/purge-verify.ts	carriesClaim	sql	STREAM	moved from facts/purge-verify.ts verifyPagePurge unchanged: strpos over NULL never matches a segmented page; withSegmentedProse probes its segment texts
+src/core/engine-sql/take-proposals.ts	listProposeTakesCandidatePages	sql	STREAM	moved from cycle/propose-takes.ts listCandidatePages unchanged
+src/core/engine-sql/facts-repair.ts	listConceptLineageRows	sql	META	length(compiled_truth) only, the size the visibility preview prints; a segmented concept reads a NULL size
+src/core/engine-sql/label-repair-reads.ts	listLabelFactCandidates	sql	STREAM	moved from repair/conversation-labels.ts classifyLabelFacts
+src/core/engine-sql/lost-fence-reads.ts	listInlineVersionTexts	sql	INLINE	page_versions rows that hold a body copy (compiled_truth IS NOT NULL); a segmented version has none and is not read
+src/core/rust-engine/store-members/lost-fence-reads.ts	listInlineVersionTexts	field	INLINE	page_versions rows that hold a body copy (compiled_truth IS NOT NULL); a segmented version has none and is not read (the Rust store answers the same rows)
+src/core/engine-sql/overwrite-reads.ts	listOverwriteCandidates	sql	STREAM	selects body_storage beside the inline body columns; a segmented version or page has NULL bodies and its overwrite is reported unknown (reason segmented), never compared or restored
+src/core/engine-sql/overwrite-reads.ts	listVersionsAfter	sql	STREAM	selects body_storage beside the inline body columns; a segmented version or page has NULL bodies and its overwrite is reported unknown (reason segmented), never compared or restored
+src/core/engine-sql/overwrite-reads.ts	listOverwriteLivePages	sql	STREAM	selects body_storage beside the inline body columns; a segmented version or page has NULL bodies and its overwrite is reported unknown (reason segmented), never compared or restored
+src/core/engine-sql/overwrite-reads.ts	readVersionContent	sql	SEGW	selects body_storage; a segmented version answers version_changed
+src/core/engine-sql/persistence-effect-scans.ts	listEmbeddingCandidates	sql	META	moved from persistence/embedding-settlement.ts listEmbeddingCandidates
+src/core/engine-sql/repair-fence-scans.ts	listSplitFactsPages	sql	SEGW	SQL exclusion: a segmented page's NULL body never matches the fence LIKE; the plan lists such pages from their manifest facts regions
+src/core/engine-sql/repair-fence-scans.ts	listAtomFenceCandidates	sql	INLINE	inline source pages only: a segmented source page (compiled_truth NULL) is counted origin_unread and never read
+src/core/engine-sql/repair-fence-scans.ts	listPageTruths	sql	INLINE	a segmented page answers a NULL body, which atom-fence-rows counts origin_unread and never reads
+src/core/engine-sql/repair-page-reads.ts	PROBE_SQL	sql	META	moved from repair/orphan-children.ts PROBE_SQL
+src/core/engine-sql/repair-page-scans.ts	listSafeChunksPending	sql	META	moved from repair/safe-chunks.ts safeChunksRepair
+src/core/engine-sql/repair-plan-scans.ts	listPagesByOriginPath	sql	LEAD	moved from repair/frontmatter.ts pagesByOrigin
+src/core/engine-sql/stale-atom-reads.ts	STALE_ATOMS_SQL	sql	META	moved from repair/stale-atoms.ts staleAtoms: length(compiled_truth) only
+src/core/engine-sql/timeline-repair-reads.ts	listTimelineHistoryPages	sql	STREAM	moved from repair/timeline.ts scanTimelineHistory
+src/core/engine-sql/timeline-repair-reads.ts	readTimelineVersionBody	sql	STREAM	moved from repair/timeline.ts scanTimelineHistory
+src/core/engine-sql/timeline-repair-reads.ts	listMaterializedMarkerPages	sql	STREAM	moved from repair/timeline-comments.ts timelineCommentsRepair
+src/core/engine-sql/timeline-repair-reads.ts	listDateBulletPages	sql	STREAM	moved from repair/timeline.ts recountTimelinePages
+src/core/engine-sql/timeline-repair-reads.ts	listConnectorFencePages	sql	STREAM	moved from repair/connector-fences.ts candidates; the segmented branch lists pages whose body columns are NULL
+src/core/rust-engine/store-members/timeline-repair-reads.ts	page	field	STREAM	the Rust store rows of the timeline repair reads, mapped field by field
+src/core/engine-sql/version-reasons.ts	listRetainedVersionBodies	field	INLINE	page_versions rows that hold a body copy (compiled_truth IS NOT NULL); a segmented version has none and is not read
+src/core/rust-engine/store-members/versions.ts	listRetainedVersionBodies	field	INLINE	page_versions rows that hold a body copy (compiled_truth IS NOT NULL); a segmented version has none and is not read (the Rust store answers the same rows)
+src/core/engine-sql/version-reasons.ts	readArchivedVersionBody	sql	SEGW	selects body_storage; a segmented archived version counts as version_missing
+src/core/engine-sql/version-reasons.ts	listRetainedVersionBodies	sql	INLINE	page_versions rows that hold a body copy (compiled_truth IS NOT NULL); a segmented version has none and is not read
+src/core/persistence/twin-merge.ts	twinMergeConflicts	field	NONE	losers.timeline is the list of the twin's conflicting timeline_entries rows, not a page body
+src/core/engine-sql/list-reads.ts	listAliasCandidatePages	sql	LEAD	moved from src/core/schema-pack/page-to-alias.ts runPageToAliasCore, same statement
+src/core/engine-sql/list-reads.ts	listLinkCandidatePages	sql	LEAD	moved from src/core/schema-pack/page-to-link.ts runPageToLinkCore, same statement
+src/core/engine-sql/list-reads.ts	readStaleMentionScan	sql	STREAM	moved from src/core/by-mention.ts scanStaleMentions, same statement
+src/core/engine-sql/repair-applies.ts	readFactRestorePage	field	STREAM	moved from src/core/repair/extractor-facts.ts restorePageFacts: the body passes through to the caller, which parses its fence
+src/core/engine-sql/repair-applies.ts	readFactRestorePage	sql	STREAM	moved from src/core/repair/extractor-facts.ts restorePageFacts, same statement
+src/core/engine-sql/visibility-scans.ts	listAliasOnlyPrivatePages	sql	META	moved from src/core/repair/visibility.ts planAliases, same statement
+src/core/engine-sql/visibility-scans.ts	listAtomLineageRows	sql	META	moved from src/core/repair/visibility.ts planLineage, same statement
+src/core/engine-sql/visibility-scans.ts	listChronicleEventVisibilityRows	sql	META	moved from src/core/repair/visibility.ts planEvents, same statement
+src/core/engine-swap/failback-copy.ts	writePage	call:putPage	SEGW	failback writes the Rust engine's answer for a changed page back into the fenced old primary; a page kept in segments on either engine refuses failback_unavailable at the plan, before any write
+src/core/engine-swap/failback-copy.ts	writePage	field	SEGW	failback writes the Rust engine's answer for a changed page back into the fenced old primary; a page kept in segments on either engine refuses failback_unavailable at the plan, before any write

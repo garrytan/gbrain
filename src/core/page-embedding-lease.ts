@@ -24,8 +24,6 @@ import { hostname } from 'node:os';
 import type { BrainEngine } from './engine.ts';
 import { opError, type OperationError } from './ops/contract.ts';
 import { readFix } from './ops/op-fix.ts';
-import { quoteIdentifier } from './search/embedding-column.ts';
-import { chunkGenerationFilter } from './search/safe-chunks.ts';
 
 export const PAGE_EMBEDDING_LEASE_TTL_MINUTES = 2;
 const LEASE_REFRESH_MS = 30_000;
@@ -125,9 +123,6 @@ export function stillPendingChunks<C extends { chunk_index: number; chunk_text: 
 }
 
 /** Chunk indexes of the page's live rows with no vector in `column`, read while the caller holds the page's lease. */
-export async function vectorlessChunkIndexes(engine: Pick<BrainEngine, 'executeRaw'>, pageId: number, column: string): Promise<Set<number>> {
-  const rows = await engine.executeRaw<{ chunk_index: number }>(
-    `SELECT cc.chunk_index FROM content_chunks cc JOIN pages p ON p.id = cc.page_id
-      WHERE cc.page_id = $1 AND cc.${quoteIdentifier(column)} IS NULL AND ${chunkGenerationFilter('p', 'cc')}`, [pageId]);
-  return new Set(rows.map(row => Number(row.chunk_index)));
+export async function vectorlessChunkIndexes(engine: Pick<BrainEngine, 'listVectorlessChunkIndexes'>, pageId: number, column: string): Promise<Set<number>> {
+  return new Set(await engine.listVectorlessChunkIndexes(pageId, column));
 }

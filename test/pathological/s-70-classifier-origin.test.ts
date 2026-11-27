@@ -62,9 +62,14 @@ function failingImport(engine: BrainEngine, slug: string, error: () => unknown):
 function failingReconcile(engine: BrainEngine, error: () => unknown): BrainEngine {
   return new Proxy(engine, { get(target, prop) {
     const value = Reflect.get(target, prop);
-    if (prop === 'executeRaw' && typeof value === 'function') {
-      return (sql: string, params?: unknown[]) => /SELECT slug, source_path FROM pages/.test(sql) && new Error().stack?.includes('reconcileRenameFallback')
-        ? Promise.reject(error()) : (value as Function).call(target, sql, params);
+    // The old-row lookup (activeSlugsBySourcePath) is the typed readRenameIdentityRows member; the hold's own page read
+    // (sync/holds.ts heldPage) uses the same member and must still succeed.
+    if (prop === 'readRenameIdentityRows' && typeof value === 'function') {
+      return (...args: unknown[]) => {
+        const stack = new Error().stack ?? '';
+        return stack.includes('activeSlugsBySourcePath') && stack.includes('reconcileRenameFallback')
+          ? Promise.reject(error()) : (value as Function).apply(target, args);
+      };
     }
     return typeof value === 'function' ? value.bind(target) : value;
   } }) as BrainEngine;

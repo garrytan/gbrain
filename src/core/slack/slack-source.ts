@@ -188,20 +188,22 @@ async function runSlackSyncInner(engine: BrainEngine, sourceId: string, cfg: Sla
     }
   };
 
-  let listedUsers = false;
+  let listing: Map<string, SlackUser> | null = null;
   const ensureUsers = async (messages: SlackMessage[]) => {
     const ids = new Set<string>();
     for (const m of messages) {
       if (m.user) ids.add(m.user);
       for (const match of (m.text ?? '').matchAll(MENTION_RE)) ids.add(match[1]!);
     }
-    const age = state.users_listed_at ? runStart - Date.parse(state.users_listed_at) : Infinity;
-    const known = (id: string) => state.users[id] && (state.users[id]!.name !== id || !(age > USERS_MISSING_RETRY_MS));
-    if (listedUsers || (!(age > USERS_MAX_AGE_MS) && [...ids].every(known))) return;
-    const list = await api!.usersList(signal);
-    listedUsers = true;
-    state.users_listed_at = new Date(runStart).toISOString();
-    for (const id of new Set([...Object.keys(state.users), ...ids])) state.users[id] = list.get(id) ?? state.users[id] ?? { name: id, deleted: false, bot: false };
+    if (!listing) {
+      const age = state.users_listed_at ? runStart - Date.parse(state.users_listed_at) : Infinity;
+      const known = (id: string) => state.users[id] && (state.users[id]!.name !== id || !(age > USERS_MISSING_RETRY_MS));
+      if (!(age > USERS_MAX_AGE_MS) && [...ids].every(known)) return;
+      listing = await api!.usersList(signal);
+      state.users_listed_at = new Date(runStart).toISOString();
+      for (const id of Object.keys(state.users)) state.users[id] = listing.get(id) ?? state.users[id]!;
+    }
+    for (const id of ids) state.users[id] = listing.get(id) ?? state.users[id] ?? { name: id, deleted: false, bot: false };
   };
 
   const publishDay = async (info: SlackChannelInfo, day: string, messages: SlackMessage[], fp: string) => {
@@ -312,7 +314,7 @@ async function runSlackSyncInner(engine: BrainEngine, sourceId: string, cfg: Sla
     await save(true);
     await holds.complete();
     if (!managed) {
-      await engine.executeRaw('UPDATE sources SET last_sync_at=now(), newest_content_at=COALESCE($1::timestamptz, newest_content_at) WHERE id=$2', [newest(), sourceId]).catch(() => undefined);
+      await engine.markSourceSynced(sourceId, { newestContentAt: newest() }).catch(() => undefined);
     }
   } catch (error) {
     if (error instanceof ConnectorRateLimitedError && error.retryAt) await recordRateLimit(engine, sourceId, error.retryAt);

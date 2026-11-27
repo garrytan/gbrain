@@ -13,7 +13,7 @@ import { checkLinkSourceCheck } from '../../../core/link-source-check-repair.ts'
 import { loadConfig } from '../../../core/config.ts';
 import type { ProgressReporter } from '../../../core/progress.ts';
 import type { Check } from '../../doctor.ts';
-import { PAGE_CHILD_FK_TARGETS, orphanPredicate } from '../../../core/repair/orphan-children.ts';
+import { PAGE_CHILD_FK_TARGETS } from '../../../core/repair/orphan-children.ts';
 import { checkError } from '../check-fix.ts';
 import { capabilityRefusal, capabilityUnknownCheck } from '../budget.ts';
 import { answersFromCatalog, catalogSkipCheck, reportsCapability } from '../../../core/rust-engine/store-members/catalog.ts';
@@ -333,21 +333,7 @@ export async function checkVolunteerChannels(
     // seq-scans the table. Accepted DELIBERATELY for the local info check
     // (table is TTL-pruned at 90 days) — do NOT reuse on a hot path.
     const scoped = Array.isArray(opts.sourceIds) && opts.sourceIds.length > 0;
-    const rows = await engine.executeRaw<{ channel: string; n: string | number; last_fired: string | Date | null }>(
-      scoped
-        ? `SELECT channel, count(*)::int AS n, max(volunteered_at) AS last_fired
-             FROM context_volunteer_events
-            WHERE source_id = ANY($1::text[])
-              AND volunteered_at > now() - interval '7 days'
-            GROUP BY channel
-            ORDER BY channel`
-        : `SELECT channel, count(*)::int AS n, max(volunteered_at) AS last_fired
-             FROM context_volunteer_events
-            WHERE volunteered_at > now() - interval '7 days'
-            GROUP BY channel
-            ORDER BY channel`,
-      scoped ? [opts.sourceIds] : [],
-    );
+    const rows = await engine.listVolunteerChannels(scoped ? opts.sourceIds! : null);
     const channels: Record<string, { count: number; last_fired: string | null }> = {};
     for (const r of rows) {
       channels[r.channel] = {
@@ -486,12 +472,10 @@ export async function childTableOrphansCheck(engine: BrainEngine): Promise<Check
   const errors: string[] = [];
   for (const target of PAGE_CHILD_FK_TARGETS) {
     try {
-      // The chunk target is an engine member, so an engine without raw SQL can still answer it.
+      // Each target is an engine member, so an engine without raw SQL can still answer it.
       const n = target.table === 'content_chunks' && target.col === 'page_id'
         ? await engine.countOrphanChunks()
-        : Number((await engine.executeRaw<{ n: string | number }>(
-          `SELECT COUNT(*)::int AS n FROM ${target.table} WHERE ${orphanPredicate(target)}`,
-        ))[0]?.n ?? 0);
+        : await engine.countPageChildOrphans(target);
       if (n > 0) {
         totalOrphans += n;
         breakdown.push(`${target.table}.${target.col}=${n}`);
@@ -551,25 +535,12 @@ export async function childTableOrphansCheck(engine: BrainEngine): Promise<Check
  * fail-closed enforcement in the synthesis/import write paths is the v2
  * follow-up once real brains run clean.
  *
- * Pure helper (engine.executeRaw only) for parity with
+ * Pure helper (typed engine read only, engine-sql/doctor-pages.ts) for parity with
  * childTableOrphansCheck so tests can target it directly.
  */
 export async function rawProvenanceCheck(engine: BrainEngine): Promise<Check> {
-  const where = `
-        p.deleted_at IS NULL
-    AND (COALESCE(p.frontmatter->>'dream_generated', '') = 'true' OR p.type = 'synthesis')
-    AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ?| ARRAY['raw_trace', 'raw_source', 'source_uri'])
-    AND COALESCE(p.frontmatter->>'raw_trace_exempt', '') <> 'true'
-    AND NOT (p.type = 'atom'
-      AND COALESCE(p.frontmatter->>'extracted_by', '') LIKE 'extract\\_atoms%'
-      AND COALESCE(p.frontmatter, '{}'::jsonb) ?| ARRAY['source_slug', 'source_path'])
-    AND NOT EXISTS (SELECT 1 FROM raw_data rd WHERE rd.page_id = p.id)
-    AND NOT EXISTS (SELECT 1 FROM synthesis_evidence se WHERE se.synthesis_page_id = p.id)`;
   try {
-    const rows = await engine.executeRaw<{ n: string | number }>(
-      `SELECT COUNT(*)::int AS n FROM pages p WHERE ${where}`,
-    );
-    const n = Number(rows[0]?.n ?? 0);
+    const { count: n, slugs: sample } = await engine.readRawProvenanceGaps();
     if (n === 0) {
       return {
         name: 'raw_provenance',
@@ -577,10 +548,7 @@ export async function rawProvenanceCheck(engine: BrainEngine): Promise<Check> {
         message: 'All synthesized pages carry a raw trace or explicit exemption',
       };
     }
-    const sample = await engine.executeRaw<{ slug: string }>(
-      `SELECT p.slug FROM pages p WHERE ${where} ORDER BY p.slug LIMIT 5`,
-    );
-    const slugs = sample.map(r => r.slug).join(', ');
+    const slugs = sample.join(', ');
     return {
       name: 'raw_provenance',
       status: 'warn',
@@ -610,9 +578,7 @@ export async function rawProvenanceCheck(engine: BrainEngine): Promise<Check> {
  */
 export async function checkSourceConfigShape(engine: BrainEngine): Promise<Check> {
   try {
-    const rows = await engine.executeRaw<{ id: string; typ: string | null }>(
-      `SELECT id, jsonb_typeof(config) AS typ FROM sources WHERE jsonb_typeof(config) <> 'object'`,
-    );
+    const rows = await engine.readDoctorSources('config_shape');
     if (rows.length === 0) {
       return {
         name: 'source_config_shape',

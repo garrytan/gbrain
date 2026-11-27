@@ -9,7 +9,8 @@
  *    delete forgets one key only, and a null value or a NUL byte is refused. Spend: a request id keeps its first
  *    row, `dailyDecideSpend` adds typesafe spend from `since` on (and the remote part), costs add in insertion
  *    order, slots list in byte order, and a bad row refuses its whole batch.
- *    Receipts: every read is windowed by whole hours (a fraction or a window before the first timestamp is refused),
+ *    Receipts: every read is windowed by whole hours (a fraction or a window before the first timestamp is refused,
+ *    and a window of zero or fewer hours holds nothing, not even a receipt written in the reading transaction),
  *    stats group by slot, mode, outcome and reason in byte order with the reason null last, a mean adds in insertion
  *    order and a percentile interpolates, REAL columns keep their single-precision value, replay orders by decision
  *    id (byte order), then rank (null last), then insertion, and a prune drops old receipts but keeps spend for at
@@ -37,7 +38,39 @@ import type { BrainEngine } from '../../src/core/engine.ts';
 import { parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
-const { parityTest } = parityArms(testBackends());
+const { parityTest: armsParityTest } = parityArms(testBackends());
+
+/**
+ * The lists below read in the database's own collation and leave ties to the plan, as master does (a Postgres brain
+ * on en_US sorts `a` before `A`; PGLite and the Rust store sort bytes). The engines' answers are compared after one
+ * client-side byte order, so a case compares what each engine lists, not how its collation sorts it.
+ */
+type Row = Record<string, unknown>;
+const bytes = (a: unknown, b: unknown): number => (a === b ? 0 : a === null ? 1 : b === null ? -1 : String(a) < String(b) ? -1 : 1);
+const bySlotThen = (...keys: string[]) => (rows: Row[]): Row[] =>
+  [...rows].sort((x, y) => { for (const k of ['slot', ...keys]) { const c = bytes(x[k], y[k]); if (c) return c; } return 0; });
+const NEWEST_GROUP_FIRST = (rows: Row[]): Row[] =>
+  [...rows].sort((x, y) => (y.last_at as Date).getTime() - (x.last_at as Date).getTime()
+    || bytes(x.slot, y.slot) || bytes(x.provider, y.provider) || bytes(x.model_resolved, y.model_resolved));
+const BYTE_ORDERED: Record<string, (rows: Row[]) => Row[]> = {
+  listDecideSpendBySlot: bySlotThen(),
+  listDecideReceiptStats: bySlotThen('mode', 'outcome', 'error_reason'),
+  decideSlotUsage: bySlotThen(),
+  listDecideCalibrations: bySlotThen(),
+  listDecideMixedModelDecisions: bySlotThen(),
+  listDecideResolvedModels: NEWEST_GROUP_FIRST,
+  listDecideReplayReceipts: (rows) => [...rows].sort((x, y) => bytes(x.decision_id, y.decision_id)),
+};
+const byteOrdered = (engine: BrainEngine): BrainEngine => new Proxy(engine, {
+  get(target, key) {
+    const sort = typeof key === 'string' ? BYTE_ORDERED[key] : undefined;
+    const member = Reflect.get(target, key, target);
+    if (!sort || typeof member !== 'function') return member;
+    return async (...args: unknown[]) => sort(await (member as (...a: unknown[]) => Promise<Row[]>).apply(target, args));
+  },
+});
+const parityTest: typeof armsParityTest = ((name: string, opts: never, run: (engine: BrainEngine, ...rest: never[]) => Promise<unknown>, ...rest: never[]) =>
+  (armsParityTest as unknown as (...a: unknown[]) => unknown)(name, opts, (engine: BrainEngine, ...r: never[]) => run(byteOrdered(engine), ...r), ...rest)) as typeof armsParityTest;
 
 /** Whether a call threw. A typed `engine_capability_missing` refusal propagates so the Rust arm counts it as refused. */
 async function threw(run: () => Promise<unknown>): Promise<boolean> {
@@ -305,7 +338,12 @@ function receipt(decisionId: string, over: Partial<Receipt> = {}): Receipt {
   return { decision_id: decisionId, slot: 'conflict', mode: 'live', provider: 'typesafe:openai', outcome: 'kept', call_site: 'sweep', lane: 'sweep', ...over };
 }
 
-/** Batches written this far apart get different timestamps even on an engine whose clock ticks in milliseconds. */
+/**
+ * Batches written this far apart get different timestamps even on an engine whose clock ticks in milliseconds. A
+ * zero-hour or zero-day window read waits this long after the last insert, so every receipt is strictly older than the
+ * read's now(): a receipt stamped in the same clock tick as the read is inside `created_at >= now() - 0` and outside
+ * `created_at < now() - 0`. The receipt insert takes no created_at, so a past timestamp cannot be written on every arm.
+ */
 const apart = () => new Promise<void>((resolve) => setTimeout(resolve, 20));
 
 const badReceipt = (over: Record<string, unknown>) => ({ ...receipt('bad'), ...over }) as unknown as Receipt;
@@ -432,6 +470,7 @@ describe('engine parity: decide receipts', () => {
         receipt('w1', { slot: 'zeta', outcome: 'error', error_reason: 'egress_x', input_tokens: 0 }),
       ]);
       const usage = await engine.decideSlotUsage(1);
+      await apart();
       const none = await engine.decideSlotUsage(0);
       expect(usage.map((r) => r.slot)).toEqual(['Alpha', 'alpha', 'conflict', 'zeta']);
       expect(usage[2]).toEqual({ slot: 'conflict', decisions: 11, rows: 12, input_tokens: 30, errors: 2, skipped: 8, egress: 4 });
@@ -453,6 +492,7 @@ describe('engine parity: decide receipts', () => {
         receipt('t1', { slot: 'triage', outcome: 'skipped', error_reason: 'no_entity' }),
       ]);
       const counts = await engine.decideConflictNoEntityCounts(1);
+      await apart();
       const none = await engine.decideConflictNoEntityCounts(0);
       expect(counts).toEqual({ receipts: 5, skipped: 2 });
       expect(none).toEqual({ receipts: 0, skipped: 0 });
@@ -481,12 +521,57 @@ describe('engine parity: decide receipts', () => {
       ]);
       const replay = await engine.listDecideReplayReceipts('conflict', 1);
       const triage = await engine.listDecideReplayReceipts('triage', 1);
+      await apart();
       const none = await engine.listDecideReplayReceipts('conflict', 0);
       expect(replay.map((r) => r.decision_id)).toEqual(['', 'B', 'a', 'a', 'a', 'b', 'b', 'b', '\u00e9']);
       expect(replay.filter((r) => r.decision_id === 'b').map((r) => r.rank)).toEqual([1, 2, null]);
       expect(triage).toHaveLength(1);
       expect(none).toEqual([]);
       return { replay, triage };
+    },
+  );
+
+  /**
+   * Rows that tie on decision id and rank, written and read in ONE transaction, where every arm stamps them with the
+   * same now(): the read answers them in insertion order (the row id) on every arm, not in the order the plan sorts them.
+   */
+  parityTest(
+    'listDecideReplayReceipts answers rows that tie on decision id and rank in insertion order, even when written in the reading transaction',
+    { methods: ['insertDecideReceipts', 'listDecideReplayReceipts'] },
+    async (engine) => {
+      const rows = Array.from({ length: 24 }, (_, i) => receipt(i % 2 ? 't' : 'u', { rank: i % 3 ? 1 : null, answer_value: i / 32, outcome: 'pass' }));
+      const replay = await engine.transaction(async (tx) => {
+        await tx.insertDecideReceipts(rows);
+        return tx.listDecideReplayReceipts('conflict', 1);
+      });
+      const inOrder = ['t', 'u'].flatMap(id => [1, null].flatMap(rank => rows.filter(r => r.decision_id === id && (r.rank ?? null) === rank).map(r => r.answer_value ?? null)));
+      expect(replay.map(r => r.answer_value)).toEqual(inOrder);
+      return replay;
+    },
+  );
+
+  /**
+   * Groups whose latest receipt ties on time (written and read in ONE transaction, one now() on every arm) come in byte
+   * order of slot, provider and resolved model on every arm.
+   */
+  parityTest(
+    'listDecideResolvedModels orders groups that tie on their latest time by slot, provider and model in byte order',
+    { methods: ['insertDecideReceipts', 'listDecideResolvedModels'] },
+    async (engine) => {
+      const groups: Array<[string, string, string]> = [
+        ['triage', 'typesafe:openai', 'gpt-a'], ['conflict', 'typesafe:openai', 'gpt-b'], ['Alpha', 'typesafe:openai', 'gpt-a'],
+        ['conflict', 'typesafe:anthropic', 'claude-x'], ['conflict', 'typesafe:openai', 'gpt-a'], ['conflict', 'typesafe:openai', 'Gpt-a'],
+        ['triage', 'typesafe:anthropic', 'claude-x'], ['conflict', 'typesafe:openai', 'gpt-c'],
+      ];
+      const models = await engine.transaction(async (tx) => {
+        await tx.insertDecideReceipts(groups.map(([slot, provider, model], i) => receipt(`r${i}`, { slot, provider, model_resolved: model })));
+        return tx.listDecideResolvedModels(1);
+      });
+      const key = (r: { slot: string; provider: string; model_resolved: string }) => [r.slot, r.provider, r.model_resolved];
+      const sorted = groups.map(g => [...g]).sort((a, b) => bytes(a[0], b[0]) || bytes(a[1], b[1]) || bytes(a[2], b[2]));
+      expect(models.map(key)).toEqual(sorted);
+      expect(new Set(models.map(r => r.last_at.getTime())).size).toBe(1);
+      return models.map(r => ({ ...r, last_at: r.last_at instanceof Date }));
     },
   );
 
@@ -510,6 +595,7 @@ describe('engine parity: decide receipts', () => {
       await engine.insertDecideReceipts([receipt('m7', { slot: 'triage', provider: 'typesafe:anthropic', model_resolved: 'claude-y', error_reason: 'mixed_model' })]);
       const models = await engine.listDecideResolvedModels(1);
       const mixed = await engine.listDecideMixedModelDecisions(1);
+      await apart();
       const noneModels = await engine.listDecideResolvedModels(0);
       const noneMixed = await engine.listDecideMixedModelDecisions(0);
       expect(models.every((r) => r.last_at instanceof Date && Math.abs(r.last_at.getTime() - Date.now()) < 3_600_000)).toBe(true);
@@ -529,6 +615,7 @@ describe('engine parity: decide receipts', () => {
       await engine.insertDecideSpend([spend('keep-me', { cost_usd: 0.5 })]);
       const sevenDays = await engine.pruneDecideReceipts(7);
       const afterSeven = await engine.decideSlotUsage(1);
+      await apart();
       const zeroDays = await engine.pruneDecideReceipts(0);
       const afterZero = await engine.decideSlotUsage(1);
       const again = await engine.pruneDecideReceipts(0);
@@ -639,6 +726,47 @@ describe('engine parity: decide receipts', () => {
       return { refused, far };
     },
   );
+  /**
+   * The rows each read below sees in a one-hour window. They are written and read in ONE transaction: on PGLite and
+   * Postgres now() is the transaction's start there, so every row is stamped with the very now() the read uses, and a
+   * `created_at >= now() - 0` filter counts it on every run (outside a transaction it counts only a row written in the
+   * read's clock tick). A zero or negative window must still hold nothing.
+   */
+  const SAME_TRANSACTION_ROWS = [
+    receipt('z1', { model_resolved: 'gpt-x', outcome: 'skipped', error_reason: 'no_entity' }),
+    receipt('z2', { model_resolved: 'gpt-y', outcome: 'error', error_reason: 'mixed_model' }),
+    receipt('z3', { model_resolved: 'gpt-x' }),
+  ];
+  /** The answer with each `last_at` replaced by whether it is a date (the arms' clocks differ) and a list in one order (rows stamped in one transaction tie on time). */
+  const comparableAnswer = (value: unknown): unknown => (!Array.isArray(value) ? value : value
+    .map((row: Row) => ('last_at' in row ? { ...row, last_at: row.last_at instanceof Date } : row))
+    .sort((a, b) => bytes(JSON.stringify(a), JSON.stringify(b))));
+  /** Write SAME_TRANSACTION_ROWS and read them over one hour, zero hours and minus one hour, in one transaction. */
+  async function sameTransactionWindows(engine: BrainEngine, read: (tx: BrainEngine, hours: number) => Promise<unknown>, empty: unknown) {
+    const answer = await engine.transaction(async (tx) => {
+      await tx.insertDecideReceipts(SAME_TRANSACTION_ROWS);
+      return { hour: comparableAnswer(await read(tx, 1)), zero: await read(tx, 0), negative: await read(tx, -1) };
+    });
+    expect(answer.hour).not.toEqual(empty);
+    expect(answer.zero).toEqual(empty);
+    expect(answer.negative).toEqual(empty);
+    return answer;
+  }
+  const SAME_TRANSACTION = 'holds nothing in a zero or negative window, even a receipt written in the same transaction';
+
+  parityTest(`listDecideReceiptStats ${SAME_TRANSACTION}`, { methods: ['insertDecideReceipts', 'listDecideReceiptStats'] },
+    (engine) => sameTransactionWindows(engine, async (tx, h) =>
+      [...await tx.listDecideReceiptStats({ sinceHours: h }), ...await tx.listDecideReceiptStats({ slot: 'conflict', sinceHours: h })], []));
+  parityTest(`decideSlotUsage ${SAME_TRANSACTION}`, { methods: ['insertDecideReceipts', 'decideSlotUsage'] },
+    (engine) => sameTransactionWindows(engine, (tx, h) => tx.decideSlotUsage(h), []));
+  parityTest(`decideConflictNoEntityCounts ${SAME_TRANSACTION}`, { methods: ['insertDecideReceipts', 'decideConflictNoEntityCounts'] },
+    (engine) => sameTransactionWindows(engine, (tx, h) => tx.decideConflictNoEntityCounts(h), { receipts: 0, skipped: 0 }));
+  parityTest(`listDecideReplayReceipts ${SAME_TRANSACTION}`, { methods: ['insertDecideReceipts', 'listDecideReplayReceipts'] },
+    (engine) => sameTransactionWindows(engine, (tx, h) => tx.listDecideReplayReceipts('conflict', h), []));
+  parityTest(`listDecideResolvedModels ${SAME_TRANSACTION}`, { methods: ['insertDecideReceipts', 'listDecideResolvedModels'] },
+    (engine) => sameTransactionWindows(engine, (tx, h) => tx.listDecideResolvedModels(h), []));
+  parityTest(`listDecideMixedModelDecisions ${SAME_TRANSACTION}`, { methods: ['insertDecideReceipts', 'listDecideMixedModelDecisions'] },
+    (engine) => sameTransactionWindows(engine, (tx, h) => tx.listDecideMixedModelDecisions(h), []));
 });
 
 type CalibrationInsert = Parameters<BrainEngine['insertDecideCalibration']>[0];
@@ -850,6 +978,37 @@ describe('engine parity: decide calibrations', () => {
       expect(Object.values(refused).every(Boolean)).toBe(true);
       expect(row).toMatchObject({ qualification: null, qualified_at: null, retired_at: null });
       return { refused, row: comparable(row!, id) };
+    },
+  );
+});
+
+/**
+ * The one decide case that does not sort client-side (Ember ruling A, Nov 20). Slot and decision-id keys differ only
+ * by case and by a non-ASCII letter, so byte order and an en_US collation list them differently. PGLite and the Rust
+ * store list bytes and must match exactly. A Postgres database on a non-C collation lists them in its own order: that
+ * order is pinned here as the known divergence (docs/designs/RUST_ENGINE.md, loss table), then the Postgres arm hands
+ * back the byte order so the arms still compare the rows themselves. A Postgres database on the C collation lists bytes
+ * and is held to them like the other two.
+ */
+describe('engine parity: decide orderings without a client-side sort', () => {
+  const KEYS = ['b', 'A', 'z', 'a', '\u00e9', 'B', 'e'];
+  const BYTE_ORDER = ['A', 'B', 'a', 'b', 'e', 'z', '\u00e9'];
+  const EN_US_ORDER = ['a', 'A', 'b', 'B', 'e', '\u00e9', 'z'];
+  armsParityTest(
+    'decideSlotUsage and listDecideReplayReceipts list case and non-ASCII keys in byte order on PGLite and Rust; Postgres on a non-C collation is the pinned divergence',
+    { methods: ['insertDecideReceipts', 'decideSlotUsage', 'listDecideReplayReceipts'] },
+    async (engine, backend) => {
+      await engine.insertDecideReceipts(KEYS.map((k) => receipt(k, { slot: k })));
+      await engine.insertDecideReceipts(KEYS.map((k) => receipt(`r-${k}`)));
+      const slots = (await engine.decideSlotUsage(1)).map((r) => r.slot).filter((s) => s !== 'conflict');
+      const refs = (await engine.listDecideReplayReceipts('conflict', 1)).map((r) => r.decision_id);
+      const byteRefs = BYTE_ORDER.map((k) => `r-${k}`);
+      if (backend === 'postgres' && slots.join() !== BYTE_ORDER.join()) {
+        expect({ backend, slots, refs }).toEqual({ backend, slots: EN_US_ORDER, refs: EN_US_ORDER.map((k) => `r-${k}`) });
+        return { slots: BYTE_ORDER, refs: byteRefs };
+      }
+      expect({ backend, slots, refs }).toEqual({ backend, slots: BYTE_ORDER, refs: byteRefs });
+      return { slots, refs };
     },
   );
 });

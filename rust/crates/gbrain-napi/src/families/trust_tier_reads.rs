@@ -14,7 +14,7 @@ use serde_json::Value;
 
 use crate::store_binding::{Brain, required};
 use gbrain_store::trust::tier_reads::{
-    CorePageRowQuery, PageIdsQuery, TrustScanQuery, VersionIdsQuery,
+    CorePageRowQuery, PageIdsQuery, PageKeyRef, PageQuoteTierQuery, TrustScanQuery, VersionIdsQuery,
 };
 use gbrain_store::trust::valid_time::{
     AmendmentsQuery, CursorEditionQuery, ValidTimeIdentityQuery, ValidTimePickQuery,
@@ -98,6 +98,46 @@ impl Brain {
         self.run(env, move |s| {
             let a: PageIdsQuery = required(args, "listPageRefsByIds args")?;
             s.list_page_refs_by_ids(&a)
+        })
+    }
+
+    /// `listPageQuoteTiers(spec)`: resolves the type and tier of the listed pages, or of the live
+    /// pages with a slug in the listed sources.
+    #[napi]
+    pub fn list_page_quote_tiers<'env>(
+        &self,
+        env: &'env Env,
+        args: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: PageQuoteTierQuery = required(args, "listPageQuoteTiers args")?;
+            s.list_page_quote_tiers(&a)
+        })
+    }
+
+    /// `listPageTrustTiersByKey(refs)`: the id and stored tier of each named page, deleted or not.
+    #[napi]
+    pub fn list_page_trust_tiers_by_key<'env>(
+        &self,
+        env: &'env Env,
+        refs: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let refs: Vec<PageKeyRef> = required(refs, "listPageTrustTiersByKey refs")?;
+            s.list_page_trust_tiers_by_key(&refs)
+        })
+    }
+
+    /// `lockLivePagesByKey(refs)`: the named pages that are live.
+    #[napi]
+    pub fn lock_live_pages_by_key<'env>(
+        &self,
+        env: &'env Env,
+        refs: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let refs: Vec<PageKeyRef> = required(refs, "lockLivePagesByKey refs")?;
+            s.lock_live_pages_by_key(&refs)
         })
     }
 

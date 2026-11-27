@@ -196,6 +196,31 @@ describe('engine parity: chunk reads of a segmented page', () => {
     },
   );
 
+  // resolveFrozenHits joins chunks through chunkGenerationFilter too: a frozen hit on the chunk of an occurrence a
+  // deferred retire closed keeps its page row and reads no chunk, so evidence never quotes retired text.
+  parityTest(
+    'a frozen hit on a chunk whose occurrence a deferred retire closed reads no chunk text',
+    { methods: ['getChunks', 'flipBodyGeneration', 'sealSegmentedPage', 'resolveFrozenHits'] },
+    async (engine) => {
+      const { pageId, occ } = await publish(engine);
+      const before = await engine.getChunks('notes/big');
+      const idOf = (word: string) => Number(before.find((c) => words([c.chunk_text])[0] === word)!.id);
+      const staging = await stageReplace(engine, pageId, occ);
+      await engine.flipBodyGeneration(flipInput(pageId, 1, staging.id, [ONE, FOUR, TWO],
+        { closeOccurrences: [occ[1]!, occ[2]!], retireChunkOccurrences: [occ[2]!], retireMaxRows: 0 }));
+      await engine.setBodyStagingState(staging.id, 'committed');
+      await engine.sealSegmentedPage(pageId);
+      const rows = await engine.resolveFrozenHits([
+        { source_id: 'default', slug: 'notes/big', chunk_id: idOf('ibex'), ord: 1 },
+        { source_id: 'default', slug: 'notes/big', chunk_id: idOf('quillwort'), ord: 2 },
+      ], {});
+      const out = rows.map((r) => ({ ord: r.ord, slug: r.slug, chunk: r.chunk_text === null ? null : words([r.chunk_text])[0] }))
+        .sort((a, b) => a.ord - b.ord);
+      expect(out).toEqual([{ ord: 1, slug: 'notes/big', chunk: null }, { ord: 2, slug: 'notes/big', chunk: 'quillwort' }]);
+      return out;
+    },
+  );
+
   parityTest(
     'the canonical chunk a relational walk names for a segmented page is a chunk of its live body',
     { methods: ['relationalFanout', 'getChunks', 'flipBodyGeneration', 'stageManifestRows', 'addLink'] },

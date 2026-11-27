@@ -35,7 +35,7 @@
 import type { BrainEngine, FactRow, FactKind } from '../core/engine.ts';
 import type { Notice } from '../core/agent-output.ts';
 import type { DegradedStamp } from '../core/degraded-stamp.ts';
-import { clampSearchLimit } from '../core/engine.ts';
+import { clampSearchLimit, MAX_SEARCH_LIMIT } from '../core/engine.ts';
 import { effectiveConfidence } from '../core/facts/decay.ts';
 import { resolveEntitySlug } from '../core/entities/resolve.ts';
 import { loadConfig, isThinClient } from '../core/config.ts';
@@ -366,6 +366,7 @@ export async function runRecall(engine: BrainEngine, args: string[]): Promise<vo
   }
 
   if (flags.watchSeconds !== null) {
+    if (!thinClient && process.env.GBRAIN_ENFORCED_MEMBER === undefined) { const t = await import('../core/search/telemetry.ts'); t.recordLookupTelemetry(engine, t.RECALL_TELEMETRY_MODE); }
     await runWatchLoop(engine, flags, sourceId, thinClient, flags.watchSeconds);
     return;
   }
@@ -684,12 +685,7 @@ async function splitMayMatch(engine: BrainEngine, sourceId: string, names: strin
   const tokens = [...new Set(names.map(n => slugify(n)).filter(Boolean))];
   if (!tokens.length) return false;
   try {
-    const rows = await engine.executeRaw(
-      `SELECT 1 FROM facts WHERE source_id = $1 AND entity_slug ~ ANY($2::text[])
-       UNION ALL SELECT 1 FROM page_aliases WHERE source_id = $1 AND alias_norm = ANY($3::text[])
-       LIMIT 1`,
-      [sourceId, tokens.map(t => `(^|/)${t}(-|$)`), [...new Set(names.map(n => normalizeAlias(n)).filter(Boolean))]]);
-    return rows.length > 0;
+    return await engine.factsOrAliasesMayMatch(sourceId, tokens, [...new Set(names.map(n => normalizeAlias(n)).filter(Boolean))]);
   } catch {
     return true;
   }
@@ -770,10 +766,12 @@ async function runRecallOnce(
     }
   } else {
     rows = pageable
-      ? await fetchCursorPage(engine, flags, sourceId, cursor!)
+      // A page marks ended slot values without dropping them, so the keyset cursor still advances past every row read.
+      ? await withSlotEnds(engine, flags, sourceId, await fetchCursorPage(engine, flags, sourceId, cursor!), false)
       : await fetchRowsLocal(engine, flags, sourceId, resolvedSince);
     if (rows.length === 0 && !pageable) rows = await entitySplitLocal(engine, flags, sourceId, resolvedSince);
     if (rows.length === 0 && cursorVariant === 'briefing' && await keylessQuestionFallback(engine, flags, sourceId)) return wallClockCursor(tStart);
+    if (cursorVariant === 'briefing') { const t = await import('../core/search/telemetry.ts'); t.recordLookupTelemetry(engine, t.RECALL_TELEMETRY_MODE); }
     if (flags.pending) {
       pendingCount = await engine.countUnconsolidatedFacts(sourceId);
     }
@@ -803,7 +801,7 @@ async function runRecallOnce(
   } else if (flags.supersessions) {
     process.stdout.write(renderSupersessions(rows));
   } else if (flags.today) {
-    process.stdout.write(renderToday(rows));
+    process.stdout.write(renderToday(rows, flags.since));
   } else {
     if (rollup) process.stdout.write(renderRollup(rollup));
     process.stdout.write(renderHumanList(rows));
@@ -917,7 +915,21 @@ function mergeNewestFirst(lists: FactRow[][], limit: number, keyOf: (r: FactRow)
   return lists.flat().sort((a, b) => time(b) - time(a)).slice(0, limit);
 }
 
-async function fetchRowsLocal(
+/** GST-3170: the recall op's read-time slot ends (search/slot-ends.ts) on a local read, the entity's fact keys grouped as one entity. */
+async function withSlotEnds(engine: BrainEngine, flags: ParsedFlags, sourceId: string, rows: FactRow[], activeOnly: boolean): Promise<FactRow[]> {
+  const { applySlotEnds } = await import('../core/search/slot-ends.ts');
+  const slugs = flags.entity ? await entityFactSlugs(engine, sourceId, (await resolveEntitySlug(engine, sourceId, flags.entity)) ?? flags.entity) : null;
+  return applySlotEnds(engine, { sourceId, worldOnly: false, excludePrivate: false }, rows, { activeOnly, entities: slugs ? [{ source_id: sourceId, slugs }] : undefined });
+}
+
+/** The local read with slot ends; an active-only read takes the op's MAX_SEARCH_LIMIT window so ended rows never shorten --limit. Supersessions keep their stored rows. */
+async function fetchRowsLocal(engine: BrainEngine, flags: ParsedFlags, sourceId: string, resolvedSince: Date | null): Promise<FactRow[]> {
+  if (flags.supersessions) return listRowsLocal(engine, flags, sourceId, resolvedSince);
+  const read = flags.includeExpired ? flags : { ...flags, limit: Math.max(flags.limit, MAX_SEARCH_LIMIT) };
+  return (await withSlotEnds(engine, flags, sourceId, await listRowsLocal(engine, read, sourceId, resolvedSince), !flags.includeExpired)).slice(0, flags.limit);
+}
+
+async function listRowsLocal(
   engine: BrainEngine,
   flags: ParsedFlags,
   sourceId: string,
@@ -1324,11 +1336,12 @@ export async function runForget(engine: BrainEngine | (() => Promise<BrainEngine
   }
 }
 
-function renderToday(rows: FactRow[]): string {
+function renderToday(rows: FactRow[], windowStart: Date | null): string {
   if (rows.length === 0) {
     return '# Hot memory — today\n\nNo facts captured today yet.\n';
   }
-  const date = new Date().toISOString().slice(0, 10);
+  const day = windowStart ?? new Date();
+  const date = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}-${String(day.getDate()).padStart(2, '0')}`;
   const byEntity = new Map<string, FactRow[]>();
   for (const r of rows) {
     const k = r.entity_slug ?? '(no entity)';

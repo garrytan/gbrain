@@ -11,6 +11,7 @@ import type { SqlExecutor } from './executor.ts';
 /** The registered ids among `sourceIds`, by id, read `FOR SHARE` so none disappears before the caller's page-guard lock. */
 export async function lockRegisteredSourceIds(exec: Pick<SqlExecutor, 'executeRaw'>, sourceIds: readonly string[]): Promise<string[]> {
   if (!sourceIds.length) return [];
+  // The order never reaches output: it fixes the FOR SHARE lock order (plain id, as lockAllSourceRows), and wanted-links-store.ts reads the result as a Set.
   const rows = await exec.executeRaw<{ id: string }>(
     'SELECT id FROM sources WHERE id = ANY($1::text[]) ORDER BY id FOR SHARE', [[...sourceIds]]);
   return rows.map(row => row.id);

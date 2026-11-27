@@ -7,6 +7,8 @@
  * (rust/crates/gbrain-store/src/embedding_catalog.rs).
  */
 import type { EngineRawRead } from './cli-reads-ops.ts';
+import { quoteIdentifier } from '../search/embedding-column.ts';
+import { withEmbeddingColumn } from './doctor-derived.ts';
 
 export type { EngineRawRead } from './cli-reads-ops.ts';
 
@@ -95,6 +97,15 @@ const HAS_VECTORS_SQL: Readonly<Record<EmbeddingStore, string>> = {
   takes: 'SELECT EXISTS (SELECT 1 FROM takes WHERE embedding IS NOT NULL) AS present',
 };
 
+// chunk-visibility-ok: image vectors live on image pages, which are never segmented (chooseBodyStorage)
+const HAS_CHUNK_IMAGE_VECTORS_SQL = 'SELECT EXISTS (SELECT 1 FROM content_chunks WHERE embedding_image IS NOT NULL) AS present';
+
+/** Whether any chunk holds an image vector (`embedding_image`), the one column the cross-modal image arm reads. */
+export async function hasChunkImageVectors(raw: EngineRawRead): Promise<boolean> {
+  const [row] = await raw<{ present: boolean | string }>(HAS_CHUNK_IMAGE_VECTORS_SQL);
+  return row?.present === true || row?.present === 't';
+}
+
 /** Whether any row of `store` holds a vector. */
 export async function hasStoredVectors(raw: EngineRawRead, store: EmbeddingStore): Promise<boolean> {
   const sql = HAS_VECTORS_SQL[store];
@@ -141,4 +152,132 @@ export async function countChunkVectorCoverage(raw: EngineRawRead, column: Fixed
   return rows
     .map((r) => ({ source_id: r.source_id || 'default', total: parseInt(String(r.total), 10), covered: parseInt(String(r.covered), 10) }))
     .sort((a, b) => (a.source_id < b.source_id ? -1 : a.source_id > b.source_id ? 1 : 0));
+}
+
+/** A `content_chunks` column and its type as `format_type` prints it (`vector(1024)`, `halfvec(2560)`). */
+export interface ChunkColumnType { attname: string; formatted: string }
+
+/**
+ * The type of each named `content_chunks` column that exists, in no set order (doctor embedding_column_registry's
+ * batch probe). A name with no column has no row.
+ */
+export async function readChunkColumnTypes(raw: EngineRawRead, columns: string[]): Promise<ChunkColumnType[]> {
+  return raw<ChunkColumnType>(
+    `SELECT a.attname, format_type(a.atttypid, a.atttypmod) AS formatted
+           FROM pg_attribute a
+           JOIN pg_class c ON c.oid = a.attrelid
+           JOIN pg_namespace n ON n.oid = c.relnamespace
+          WHERE n.nspname = 'public'
+            AND c.relname = 'content_chunks'
+            AND a.attname = ANY($1::text[])
+            AND NOT a.attisdropped`,
+    [columns],
+  );
+}
+
+/** Every `content_chunks` row and the percent of them that hold a value in a column (null when there is no row). */
+export interface ChunkColumnCoverage { pct: number | null; total: number }
+
+/**
+ * How full a `content_chunks` column is over every row (every generation, soft-deleted pages too): doctor
+ * embedding_column_registry's coverage gate on the active vector column. Throws when the column is missing.
+ */
+export async function countChunkColumnCoverage(raw: EngineRawRead, column: string): Promise<ChunkColumnCoverage> {
+  const rows = await raw<{ pct: number | null; total: number }>(
+    `-- chunk-visibility-ok: doctor coverage ratio moved from doctor/checks/embedding-health.ts; it counts every chunk row, as before.
+     SELECT (
+             COUNT(*) FILTER (WHERE ${quoteIdentifier(column)} IS NOT NULL)::float
+             / NULLIF(COUNT(*), 0) * 100
+           )::float AS pct,
+           COUNT(*)::int AS total
+           FROM content_chunks`,
+  );
+  const pct = rows[0]?.pct;
+  return { pct: pct === null || pct === undefined ? null : Number(pct), total: Number(rows[0]?.total ?? 0) };
+}
+
+// ---- migrate embeddings --status (embedding-migration.ts readMigrationStatus, readDimPinnedWidths) ------------------
+
+/** The declared width (pg_attribute.atttypmod) of `table`.embedding in the public schema: one row, or none when the table or column is absent. */
+export async function readEmbeddingColumnTypmod(raw: EngineRawRead, table: string): Promise<Array<{ dim: number | null }>> {
+  return raw<{ dim: number | null }>(
+        `SELECT a.atttypmod AS dim
+           FROM pg_attribute a
+           JOIN pg_class c ON c.oid = a.attrelid
+           JOIN pg_namespace n ON n.oid = c.relnamespace
+          WHERE n.nspname = 'public' AND c.relkind = 'r'
+            AND c.relname = $1 AND a.attname = 'embedding'
+            AND a.attnum > 0 AND NOT a.attisdropped`,
+        [table],
+      );
+}
+
+/** The live pages per stored embedding signature, the five largest groups. */
+export async function readEmbeddingSignatureCensus(raw: EngineRawRead): Promise<Array<{ signature: string | null; pages: number }>> {
+  return raw<{ signature: string | null; pages: number }>(
+      `SELECT embedding_signature AS signature, count(*)::int AS pages
+         FROM pages WHERE deleted_at IS NULL
+        GROUP BY embedding_signature ORDER BY count(*) DESC LIMIT 5`,
+    );
+}
+
+/** Unexpired facts with no vector, outside the audit row sources `excludedSources`. */
+export async function countUnembeddedLiveFacts(raw: EngineRawRead, excludedSources: readonly string[]): Promise<number> {
+  const rows = await raw<{ n: number }>(
+      `SELECT count(*)::int AS n FROM facts
+        WHERE embedding IS NULL AND expired_at IS NULL
+          AND NOT (source = ANY($1::text[]))`,
+      [[...excludedSources]],
+    );
+  return Number(rows[0]?.n ?? 0);
+}
+
+/** Live pages whose stored contextual retrieval mode is the per-chunk synopsis tier. */
+export async function countSynopsisTierPages(raw: EngineRawRead): Promise<number> {
+  const rows = await raw<{ n: number }>(
+      `SELECT count(*)::int AS n FROM pages
+        WHERE deleted_at IS NULL AND contextual_retrieval_mode = 'per_chunk_synopsis'`,
+    );
+  return Number(rows[0]?.n ?? 0);
+}
+
+/** Chunks with no vector on pages that carry `embed_skip` (intentionally skipped, deleted pages included). */
+export async function countEmbedSkipNullChunks(raw: EngineRawRead): Promise<number> {
+  const rows = await raw<{ n: number }>(
+      // chunk-visibility-ok: the --status census counts every stored chunk row of an embed_skip page, as before
+      `SELECT count(*)::int AS n FROM content_chunks cc
+         JOIN pages p ON p.id = cc.page_id
+        WHERE cc.embedding IS NULL
+          AND (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')`,
+    );
+  return Number(rows[0]?.n ?? 0);
+}
+
+// falseStampPageWhere (embedding-invalidation.ts) is inlined as constant text with the "__COL__" marker (pinned by the
+// caller-raw-sql pins).
+// chunk-visibility-ok: the #4305 count reads every stored chunk row of a falsely stamped page, as before
+const FALSE_STAMPED_SQL = `WITH fs AS (
+       SELECT p.id FROM pages p
+        WHERE 
+        p.embedding_signature = $1
+        AND p.deleted_at IS NULL
+        AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')
+        AND NOT EXISTS (SELECT 1 FROM page_embedding_budget peb WHERE peb.page_id = p.id AND peb.state <> 'open' AND ((CASE WHEN p.body_storage = 'segmented' THEN p.body_bytes ELSE octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) END) > 1048576 OR peb.reason IN ('archive_backfill', 'archive_open_day', 'call_import')))
+        AND EXISTS (
+          SELECT 1 FROM content_chunks c
+           WHERE c.page_id = p.id AND c."__COL__" IS NOT NULL
+             AND c.model IS NOT NULL AND NOT EXISTS (SELECT 1 FROM (SELECT $2::text AS m) target WHERE c.model IS NOT DISTINCT FROM target.m OR (c.model = substr(target.m, strpos(target.m, ':') + 1) AND vector_dims(c."__COL__")::text = regexp_replace($1::text, '^.*:', '')))
+        )
+     )
+     SELECT count(DISTINCT fs.id)::int AS pages,
+            count(cc.id)::int AS chunks,
+            COALESCE(sum(length(cc.chunk_text)), 0)::bigint AS chars
+       FROM fs
+       JOIN content_chunks cc ON cc.page_id = fs.id
+      WHERE cc."__COL__" IS NOT NULL`;
+
+/** #4305: live pages stamped `signature` whose embedded chunks carry another model, with those chunks and their text length. */
+export async function readFalseStampedChunkCounts(raw: EngineRawRead, column: string, signature: string, model: string): Promise<{ pages: number; chunks: number; chars: number }> {
+  const rows = await raw<{ pages: number; chunks: number; chars: number | string }>(withEmbeddingColumn(FALSE_STAMPED_SQL, column), [signature, model]);
+  return { pages: Number(rows[0]?.pages ?? 0), chunks: Number(rows[0]?.chunks ?? 0), chars: Number(rows[0]?.chars ?? 0) };
 }

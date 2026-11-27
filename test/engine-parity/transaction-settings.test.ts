@@ -226,22 +226,84 @@ describe('engine parity: transaction-local settings', () => {
     return { code: refusal?.code ?? null, message: String(refusal?.message ?? '').replace(/^cannot execute .+ in a read-only transaction$/, 'cannot execute <statement> in a read-only transaction'), page: await engine.getPage('snap/ro') };
   });
 
-  // The Rust engine keeps only the settings its writers read (the six trust settings in the store, the attribution
-  // and source scope on the transaction); any other name refuses as a capability it lacks. PGLite answers it.
-  parityTest('a setting name the Rust engine does not keep refuses on Rust', {
-    methods: ['transaction', 'readTransactionSettings'],
-  }, async (engine, backend) => {
-    const read = (tx: BrainEngine) => tx.readTransactionSettings([TIER, 'gbrain.writer_quiesced']);
-    return engine.transaction(async (tx) => {
-      if (backend !== 'rust') return unset(await read(tx));
-      const refusal = await read(tx).then(() => null, (error: unknown) => error);
-      expect(refusal).toMatchObject({
-        code: 'engine_capability_missing',
-        reason: 'transactions',
-        detail: 'member=readTransactionSettings capability=transactions setting=gbrain.writer_quiesced outcome=none written=nothing',
-      });
-      throw refusal;
+  // gbrain.writer_quiesced is the quiescence declaration skill activation sets before it raises the protocol floor;
+  // it reads back inside the transaction and ends with it on every arm. The Rust engine keeps only the settings its
+  // writers or callers read; any other name refuses there before any work (test/rust-engine-store.test.ts).
+  parityTest('gbrain.writer_quiesced is kept for the transaction and ends with it', {
+    methods: ['transaction', 'applyTransactionSettings', 'readTransactionSettings'],
+  }, async (engine) => {
+    const QUIESCED = 'gbrain.writer_quiesced';
+    const before = unset(await engine.transaction((tx) => tx.readTransactionSettings([QUIESCED])));
+    const inside = await engine.transaction(async (tx) => {
+      await tx.applyTransactionSettings([QUIESCED], ['true']);
+      return tx.readTransactionSettings([TIER, QUIESCED]);
     });
+    const after = unset(await engine.transaction((tx) => tx.readTransactionSettings([QUIESCED])));
+    expect(unset(inside)).toEqual(['', 'true']);
+    return { before, inside: unset(inside), after };
+  });
+
+  // Any custom gbrain name Postgres accepts and no schema SQL reads (the import-path settings case uses two): kept for
+  // the transaction, restored by a savepoint rollback, kept by a release, gone after commit.
+  parityTest('a custom gbrain setting no trigger reads is kept for the transaction like the others', {
+    methods: ['transaction', 'applyTransactionSettings', 'readTransactionSettings'],
+  }, async (engine, backend) => {
+    const names = ['gbrain.parity_custom', 'gbrain.parity.nested'];
+    const inside = await engine.transaction(async (tx) => {
+      const before = await tx.readTransactionSettings(names);
+      if (backend === 'rust') expect(before).toEqual([null, null]);
+      await tx.applyTransactionSettings(names, ['one', 'two']);
+      const set = await tx.readTransactionSettings(names);
+      const dropped = await tx.transaction(async (inner) => {
+        await inner.applyTransactionSettings([names[0]!], ['dropped']);
+        throw Object.assign(new Error('drop the savepoint'), { seen: await inner.readTransactionSettings(names) });
+      }).then(() => null, (error: { seen?: unknown }) => error.seen ?? null);
+      const afterRollback = await tx.readTransactionSettings(names);
+      await tx.transaction((inner) => inner.applyTransactionSettings([names[1]!], ['released']));
+      const afterRelease = await tx.readTransactionSettings(names);
+      return { before: unset(before), set, dropped, afterRollback, afterRelease };
+    });
+    expect(inside).toMatchObject({ set: ['one', 'two'], dropped: ['dropped', 'two'], afterRollback: ['one', 'two'], afterRelease: ['one', 'released'] });
+    const later = await engine.transaction((tx) => tx.readTransactionSettings(names));
+    if (backend === 'rust') expect(later).toEqual(['', '']);
+    return { ...inside, later: unset(later) };
+  });
+
+  // The attribution triggers cast `gbrain.write_request` with `::uuid` on every row written to pages, page_versions,
+  // facts, takes and timeline_entries, so a request that is not a UUID refuses each of those writes and leaves no row.
+  parityTest('a write request that is not a UUID refuses the page, version, fact and take writes and writes nothing', {
+    methods: ['transaction', 'applyTransactionSettings', 'putPage', 'getPage', 'createVersion', 'getVersions', 'insertFact',
+      'listFactsByEntity', 'addTakesBatch', 'listTakes'],
+  }, async (engine) => {
+    const note = (title: string) => ({ type: 'note' as const, title, compiled_truth: `${title} body`, timeline: '' });
+    const held = await engine.putPage('attr/held', note('v1'));
+    const versionsBefore = (await engine.getVersions('attr/held')).length;
+    const names = [REQUEST, 'gbrain.write_principal_kind', PRINCIPAL];
+    const under = (request: string, write: (tx: BrainEngine) => Promise<unknown>) => engine.transaction(async (tx) => {
+      await tx.applyTransactionSettings(names, [request, 'application', 'host:test-a']);
+      await write(tx);
+    }).then(() => 'written', () => 'refused');
+    const take = { page_id: held.id, row_num: 1, claim: 'refused take', kind: 'take' as const, holder: 'h', weight: 0.5 };
+    const outcomes = {
+      newPage: await under('req-1', tx => tx.putPage('attr/new', note('new'))),
+      pageUpdate: await under('req-1', tx => tx.putPage('attr/held', note('v2'))),
+      version: await under('req-1', tx => tx.createVersion('attr/held')),
+      fact: await under('req-1', tx => tx.insertFact({ fact: 'refused fact', entity_slug: 'people/attr-example', visibility: 'world', source: 'test', embedding: null }, { source_id: 'default' })),
+      take: await under('req-1', tx => tx.addTakesBatch([take])),
+      uuidPage: await under('7c1e2a9e-5b3f-4d0a-9e61-0000000000a1', tx => tx.putPage('attr/uuid', note('uuid'))),
+    };
+    const after = {
+      newPage: (await engine.getPage('attr/new'))?.title ?? null,
+      held: (await engine.getPage('attr/held'))?.title ?? null,
+      versionsAdded: (await engine.getVersions('attr/held')).length - versionsBefore,
+      facts: (await engine.listFactsByEntity('default', 'people/attr-example')).length,
+      takes: (await engine.listTakes({ page_id: held.id })).length,
+      uuidPage: (await engine.getPage('attr/uuid'))?.title ?? null,
+    };
+    expect({ outcomes, after }).toEqual({
+      outcomes: { newPage: 'refused', pageUpdate: 'refused', version: 'refused', fact: 'refused', take: 'refused', uuidPage: 'written' },
+      after: { newPage: null, held: 'v1', versionsAdded: 0, facts: 0, takes: 0, uuidPage: 'uuid' },
+    });
+    return { outcomes, after };
   });
 });
-

@@ -15,18 +15,19 @@
  * false) is settled and not listed.
  *
  * Bounded: titled candidates come from exact slug-prefix reads
- * (PAIR_SCAN_CAP per brain), one variant read each, one batched link count.
+ * (PAIR_SCAN_CAP per brain), one variant read each, one batched link count,
+ * all through typed engine members, so every engine answers them.
  *
  * entity_duplicates (plan autoplan-20261117192252, PR 1): the duplicate finder's groups (core/entities/duplicates.ts)
  * counted by kind and class, the first few listed by slug; never a key value, never a write.
  */
 import type { Check } from '../../doctor.ts';
 import { NAME_TITLE_TOKENS, hasLeadingTitle, stripLeadingTitles } from '../../../core/entities/name-variants.ts';
-import { resolveNameVariant } from '../../../core/verbs/entity-variants.ts';
-import { retiredPageSql } from '../../../core/entities/resolve.ts';
+import { resolveNameVariant, VARIANT_ROW_COLUMNS } from '../../../core/verbs/entity-variants.ts';
 import { doctorVerify } from '../check-fix.ts';
 import { DUPLICATE_KINDS, findDuplicateGroups } from '../../../core/entities/duplicates.ts';
 import { decidedSets, identityDrift, type IdentityDrift } from '../../../core/entities/identity-decisions.ts';
+import { AUTO_DECIDED_BY, autoLinksSince, collapsesSince } from '../../../core/entities/evidence/auto.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
 import { sortSourcesById } from '../../../core/source-rows.ts';
 import type { IdentityDecisionsRead, PendingIdentityMember } from '../../../core/engine-sql/identity-decisions.ts';
@@ -54,10 +55,7 @@ async function runPersonTitleDuplicates(ctx: DoctorContext): Promise<Check[]> {
     let capped = false;
     for (const sourceId of sources) {
       if (scanned >= PAIR_SCAN_CAP) { capped = true; break; }
-      const stubs = await engine.executeRaw<{ slug: string; title: string | null }>(
-        `SELECT slug, title FROM pages
-          WHERE source_id = $1 AND deleted_at IS NULL AND slug LIKE ANY($2::text[]) AND NOT ${retiredPageSql('pages')}
-          ORDER BY slug LIMIT ${PAIR_SCAN_CAP - scanned + 1}`, [sourceId, PREFIXES]);
+      const stubs = await engine.listUnretiredPagesBySlugPattern(sourceId, PREFIXES, PAIR_SCAN_CAP - scanned + 1);
       if (stubs.length > PAIR_SCAN_CAP - scanned) capped = true;
       for (const stub of stubs.slice(0, PAIR_SCAN_CAP - scanned)) {
         scanned++;
@@ -65,19 +63,14 @@ async function runPersonTitleDuplicates(ctx: DoctorContext): Promise<Check[]> {
         const remainder = named ? stripLeadingTitles(named) : '';
         if (!remainder) continue;
         const res = await resolveNameVariant(engine, sourceId, remainder, {
-          selectColumns: 'slug, title, type, frontmatter', privatePredicate: '', retirementPrivacy: 'none', entityTypes: new Set(['person']), exclude: [stub.slug],
+          selectColumns: VARIANT_ROW_COLUMNS, privatePredicate: '', retirementPrivacy: 'none', entityTypes: new Set(['person']), exclude: [stub.slug],
         });
         if (res.hit && res.hit.row.slug.startsWith('people/')) pairs.push({ source_id: sourceId, stub: stub.slug, canonical: res.hit.row.slug, stub_links: 0, canonical_links: 0 });
       }
     }
     if (pairs.length) {
-      const counts = await engine.executeRaw<{ source_id: string; slug: string; n: number }>(
-        `SELECT p.source_id, p.slug, count(DISTINCT l.from_page_id)::int AS n
-           FROM pages p JOIN links l ON l.to_page_id = p.id
-          WHERE (p.source_id, p.slug) IN (SELECT * FROM unnest($1::text[], $2::text[]))
-          GROUP BY p.source_id, p.slug`,
-        [pairs.flatMap(p => [p.source_id, p.source_id]), pairs.flatMap(p => [p.stub, p.canonical])]);
-      const n = new Map(counts.map(c => [`${c.source_id}:${c.slug}`, Number(c.n)]));
+      const counts = await engine.countDistinctInboundLinkers(pairs.flatMap(p => [p.source_id, p.source_id]), pairs.flatMap(p => [p.stub, p.canonical]));
+      const n = new Map(counts.map(c => [`${c.source_id}:${c.slug}`, c.n]));
       for (const p of pairs) {
         p.stub_links = n.get(`${p.source_id}:${p.stub}`) ?? 0;
         p.canonical_links = n.get(`${p.source_id}:${p.canonical}`) ?? 0;
@@ -198,3 +191,37 @@ function driftLine(d: IdentityDrift): string {
 }
 
 export const entityDuplicatesEntry: DoctorEntry = { name: 'entity_duplicates', emits: ['entity_duplicates'], run: runEntityDuplicates };
+
+const AUTO_NAME = 'dedupe_auto_links';
+
+/**
+ * dedupe_auto_links (GST-3609 PR C): what gbrain dedupe auto --apply did in the last 24 hours, by class: the person links
+ * it recorded (C2) and the same-source pages it collapsed (C7), each class with its reject, undo and off commands.
+ */
+async function runDedupeAutoLinks(ctx: DoctorContext): Promise<Check[]> {
+  const engine = connectedEngine(ctx);
+  const checks: Check[] = [];
+  ctx.progress.heartbeat(AUTO_NAME);
+  try {
+    const since = Date.now() - 86_400_000;
+    const byClass = new Map<string, string[]>();
+    for (const d of autoLinksSince(await engine.listIdentityDecisions(), since)) {
+      const cls = d.decided_by.slice(AUTO_DECIDED_BY.length);
+      byClass.set(cls, [...byClass.get(cls) ?? [], d.decision_id]);
+    }
+    for (const c of await collapsesSince(engine, since)) byClass.set(c.class, [...byClass.get(c.class) ?? [], c.collapse]);
+    const classes = [...byClass].map(([cls, ids]) => ({ class: cls, links: ids.length,
+      reject: cls === 'C7' ? 'gbrain dedupe reject <collapse id>' : 'gbrain dedupe reject <identity id>',
+      undo: `gbrain dedupe undo ${ids.slice(0, SHOWN).join(' ')}`, off: `gbrain dedupe auto --off ${cls}` }));
+    const total = classes.reduce((n, c) => n + c.links, 0);
+    const text = classes.map(c => `${c.class} ${c.links} (a wrong one for good: ${c.reject}; undo: ${c.undo}${c.links > SHOWN ? ` and ${c.links - SHOWN} more` : ''}; all of them: ${c.off})`).join('; ');
+    checks.push({ name: 'dedupe_auto_links', status: 'ok',
+      message: total ? `${total} person page pair(s) linked or collapsed automatically in the last 24 hours: ${text}.` : 'No person pages linked or collapsed automatically in the last 24 hours.',
+      details: { links: total, classes } });
+  } catch (err) {
+    checks.push({ name: 'dedupe_auto_links', status: 'warn', message: `Automatic person links and collapses could not be read: ${err instanceof Error ? err.message : String(err)}. Health is unknown.` });
+  }
+  return checks;
+}
+
+export const dedupeAutoLinksEntry: DoctorEntry = { name: 'dedupe_auto_links', emits: ['dedupe_auto_links'], run: runDedupeAutoLinks };

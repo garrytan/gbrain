@@ -1,0 +1,4 @@
+---
+kind: fix
+---
+A page that hands its identity to another page (frontmatter merged_into, superseded_by, canonical: false, or a status naming it an alias or redirect) no longer collects mention links. Before, its title, aliases and X handle stayed in the mention name list, so text naming that person or company kept linking to the retired page, and when the retired page and the page it points to claimed the same alias or handle, neither linked through it. Now the name list leaves retired pages out, so their names link to the page that claims them (add the retired page's name to that page's aliases to keep it), and the next mention pass (gbrain extract --stale) moves existing mention links off retired pages. Ranking, entity lookup and link resolution already followed these redirects. No page is edited.

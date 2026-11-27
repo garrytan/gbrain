@@ -29,7 +29,7 @@ automatic capture, paid API key, or background service is not a prerequisite.
 - Relay the mandatory search-mode matrix and obtain the operator's choice.
 - Save explicit memories with provenance and verify a randomized write/readback.
 - Report software installation, native instruction activation, and cross-conversation recall separately.
-- Automatic capture, imports, connectors, schedules, and paid enrichment require explicit opt-in.
+- Automatic capture, imports, connectors, schedules, and paid enrichment require explicit opt-in. `setup_history` imports past sessions: run its `import` argv only on a yes (the range on a second yes).
 
 ## Phase 1: Choose the path
 

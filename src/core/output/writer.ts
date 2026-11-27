@@ -20,7 +20,7 @@
 import type { BrainEngine } from '../engine.ts';
 import type { PageType, TimelineInput } from '../types.ts';
 import type { ResolverContext } from '../resolvers/interface.ts';
-import { SlugRegistry } from './slug-registry.ts';
+import { assertCreatableSlug, SlugRegistry } from './slug-registry.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
 
 // ---------------------------------------------------------------------------
@@ -131,19 +131,6 @@ export interface WriteTx {
   readonly context: ResolverContext;
 }
 
-/**
- * Advisory-lock key for the createEntity slug-claim critical section.
- * Source-scoped (PR6 D5): slug uniqueness is (source_id, slug), so two
- * writers claiming the same desiredSlug in DIFFERENT sources are not in
- * conflict — a shared per-slug key serialized them for nothing, while
- * same-(source, slug) claimants still serialize. `?? 'default'` mirrors
- * engine.putPage's implicit default source (WriteTxImpl.scope()), so the
- * lock key names the exact source the paired putPage will land in.
- */
-export function slugRegistryLockKey(sourceId: string | undefined, slug: string): string {
-  return `slug_registry:${sourceId ?? 'default'}:${slug}`;
-}
-
 class WriteTxImpl implements WriteTx {
   readonly touchedSlugs = new Set<string>();
   private slugRegistry: SlugRegistry;
@@ -165,40 +152,24 @@ class WriteTxImpl implements WriteTx {
     if (!input.desiredSlug || !input.displayName || !input.type) {
       throw new WriteError('invalid_input', 'createEntity requires desiredSlug, displayName, and type');
     }
-    // Cross-process TOCTOU guard: take a transaction-scoped advisory lock
-    // keyed on (source, desired slug) so two putPage('people/alice') calls
-    // from separate processes serialize at the DB level. The second caller's
-    // slugRegistry.create() then observes the first's write and disambiguates.
-    // PGLite is single-process so this is a harmless no-op there.
+    // TOCTOU guard: hold the (source, desired slug) page identity through the one wrapping transaction, so two
+    // createEntity('people/alice') calls serialize and the second caller's slugRegistry.create() observes the
+    // first's write and disambiguates. `lockPageKeys` holds an identity whether or not its row exists yet: a
+    // page_write_guards row lock on PGLite and Postgres (across processes, as the advisory lock it replaces), the
+    // store's single writer on Rust.
     //
     // TX SCOPE (PR6 D5 — why there is no `engine.transaction` wrap here):
     // WriteTxImpl is constructed in exactly one place — inside
     // BrainWriter.transaction's `engine.transaction(async (txEngine) => ...)`
-    // — and `this.engine` IS that txEngine (its `sql`/`db` route to the tx
-    // connection on both engines). So this xact lock is ALREADY taken inside
+    // — and `this.engine` IS that txEngine. So the lock is ALREADY taken inside
     // the one wrapping transaction and is held across slugRegistry.create's
     // existence probes AND the putPage below, until the outer commit — the
     // full TOCTOU window. Adding another engine.transaction here would NEST,
-    // which throws on both engines (postgres tx clones have no `.begin`;
-    // PGLite tx proxies have no `.transaction`). Pinned by
-    // test/lock-keys.test.ts (single-transaction routing proof).
+    // which throws on both SQL engines. Pinned by test/lock-keys.test.ts.
     //
-    // hashtext (not hashtextextended): must behave identically on BOTH
-    // engines and any failure is SILENTLY swallowed by the catch below — an
-    // erroring primitive would quietly drop the lock. hashtext is the
-    // primitive every advisory-lock site in this repo already proves on both
-    // engines; keep the family uniform.
-    try {
-      await this.engine.executeRaw(
-        `SELECT pg_advisory_xact_lock(hashtext($1)::bigint)`,
-        [slugRegistryLockKey(this.sourceId, input.desiredSlug)],
-      );
-    } catch {
-      // Some engines/test doubles may not support advisory locks. Fall
-      // through — within-process collisions are still caught by the existing
-      // getPage() check, and this only reduces protection against
-      // cross-process races (which don't exist on embedded engines anyway).
-    }
+    // The slug's shape is checked first, so a malformed slug keeps its SlugRegistryError('invalid_slug').
+    assertCreatableSlug(input.desiredSlug);
+    await this.engine.lockPageKeys([{ sourceId: this.scope().sourceId, slug: input.desiredSlug }]);
     const { slug } = await this.slugRegistry.create({
       desiredSlug: input.desiredSlug,
       displayName: input.displayName,

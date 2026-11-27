@@ -59,6 +59,14 @@ class FakeEngine {
     return fn({ executeRaw: this.executeRaw.bind(this) });
   }
 
+  // The typed config members the checkpoint reads and clears through (the raw config statements above stay for the
+  // skip ledger and older callers).
+  async readStoredConfigValue(key: string): Promise<string | null> {
+    return this.config.get(key) ?? null;
+  }
+  async unsetConfig(key: string): Promise<number> {
+    return this.config.delete(key) ? 1 : 0;
+  }
   async setConfig(key: string, value: string): Promise<void> {
     this.config.set(key, value);
   }

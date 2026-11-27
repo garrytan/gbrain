@@ -17,6 +17,7 @@
 import { describe, expect, test, beforeAll, afterAll, beforeEach } from 'bun:test';
 
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { capabilityMissing } from '../src/core/rust-engine/errors.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { loopsOperations } from '../src/core/ops/loops.ts';
 import { operationsByName } from '../src/core/operations.ts';
@@ -66,6 +67,22 @@ function ctx(over: Partial<OperationContext> = {}): OperationContext {
     sourceId: 'g1',
     ...over,
   } as OperationContext;
+}
+
+/** The test engine, except that `executeRaw` refuses statements matching `hit` the way the Rust engine refuses raw SQL. */
+function refusingRaw(hit: RegExp): PGLiteEngine {
+  return new Proxy(engine, {
+    get(target, prop) {
+      if (prop === 'executeRaw') {
+        return async (sql: string, params?: unknown[]) => {
+          if (hit.test(sql)) throw capabilityMissing('raw_sql', 'executeRaw');
+          return target.executeRaw(sql, params);
+        };
+      }
+      const value = Reflect.get(target, prop, target);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  }) as unknown as PGLiteEngine;
 }
 
 function loop(over: Partial<OpenLoopUpsert> = {}): OpenLoopUpsert {
@@ -301,6 +318,32 @@ describe('open_loops deep links + context (trusted local)', () => {
     expect(view.deep_link!).toContain('authuser=a%40example.com');
     // The injectable text digest carries the link too.
     expect(res.text!).toContain('mail.google.com');
+  });
+
+  test('refusal-swallow site 7: the deep link comes from the typed page read when raw SQL refuses', async () => {
+    await engine.putPage(EMAIL_SLUG, { type: 'email', title: 'Plan review', compiled_truth: 'Synthetic thread body.',
+      frontmatter: { account: 'a@example.com', thread_id: '18c2f4a9b3d21e07' } }, { sourceId: 'g1' });
+    await upsertOpenLoop(engine, loop({ counterpartyEmail: 'bob@example.com', pageSlug: EMAIL_SLUG }));
+    const res = (await openLoopsOp.handler(ctx({ remote: false, engine: refusingRaw(/frontmatter->>'account'/) }), {})) as GroupsResult;
+    const view = res.groups[0].loops[0] as { deep_link?: string };
+    expect(view.deep_link).toContain('authuser=a%40example.com');
+  });
+
+  test('refusal-swallow site 8: counterparty backlinks still rank the groups when raw SQL refuses', async () => {
+    // Two counterparties with equal loops and age: without backlinks the name order puts alice first; zed has three
+    // inbound links, which rank zed first.
+    const openedAt = new Date(Date.now() - 86_400_000).toISOString();
+    for (const name of ['alice', 'zed']) {
+      await engine.putPage(`people/${name}-example`, { type: 'person', title: name, compiled_truth: name }, { sourceId: 'g1' });
+      await upsertOpenLoop(engine, loop({ threadId: `18c2f4a9b3d2${name === 'alice' ? '1a01' : '1a02'}`, counterpartyEmail: `${name}@example.com`,
+        counterpartySlug: `people/${name}-example`, counterpartySourceId: 'g1', openedAt, lastActivityAt: openedAt }));
+    }
+    for (const n of [1, 2, 3]) {
+      await engine.putPage(`notes/zed-mention-${n}`, { type: 'note', title: `n${n}`, compiled_truth: 'zed' }, { sourceId: 'g1' });
+      await engine.addLink(`notes/zed-mention-${n}`, 'people/zed-example', undefined, undefined, undefined, undefined, undefined, { fromSourceId: 'g1', toSourceId: 'g1' });
+    }
+    const res = (await openLoopsOp.handler(ctx({ remote: false, engine: refusingRaw(/SELECT id, slug FROM pages/) }), {})) as GroupsResult;
+    expect(res.groups.map((g) => g.counterparty).slice(0, 2)).toEqual(['people/zed-example', 'people/alice-example']);
   });
 
   test('no deep_link without a page account (link degrades to none, loop still lands)', async () => {

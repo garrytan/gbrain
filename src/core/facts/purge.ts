@@ -45,14 +45,11 @@ import { cancelRequestsHoldingStagings, findRequestsCarrying, findRequestsHoldin
 import { withPageTierKept } from '../trust/fence-append.ts';
 import { rebuildPendingPageProjections } from '../page-state/projections.ts';
 import { buildSegmentedProjection } from '../page-body/projection.ts';
-import { liveStagingSql } from '../page-body/schema.ts';
 import { escapeFenceCell } from '../fence-shared.ts';
-import { holdingSlugSql } from '../facts-fence.ts';
 import { carriesClaimSql, claimNeedles, purgeCompletion, reasonNeedle, verifyFactPurge, type PurgeReceipt, type StoreCount } from './purge-verify.ts';
 import { noteBelief, withBeliefBatch } from '../belief/ledger.ts';
 import { markBeliefCommits } from '../belief/append.ts';
 import { appendPurgeCommitted, appendPurgeIntent } from '../belief/purge-mirror.ts';
-import { createPageVersion } from '../page-state/versions.ts';
 import { clearRebuildableCache } from '../persistence/rebuildable-cache.ts';
 import { recordReasonTombstones, redactGitEffectReasons, scanPurgeTrailers } from './purge-reasons.ts';
 import { clearReasonScanCache } from '../reason-trailers.ts';
@@ -124,11 +121,7 @@ async function stagingsWithClaimAcrossParts(engine: BrainEngine, sourceId: strin
   let carry = Buffer.alloc(0);
   let previous: { id: string; part: number } = { id: '00000000-0000-0000-0000-000000000000', part: -1 };
   for (;;) {
-    const parts = await engine.executeRaw<{ id: string; part_no: number; head: Uint8Array; tail: Uint8Array }>(`SELECT pt.staging_id::text AS id,pt.part_no,
-        substring(pt.body from 1 for $2) AS head,substring(pt.body from greatest(1,octet_length(pt.body)-$2+1)) AS tail
-      FROM page_body_staging_parts pt JOIN page_body_stagings s ON s.id=pt.staging_id
-      WHERE s.source_id=$1 AND s.state IN ('open','sealed','prepared') AND (pt.staging_id,pt.part_no)>($3::uuid,$4::int)
-      ORDER BY pt.staging_id,pt.part_no LIMIT ${STAGING_PART_BATCH}`, [sourceId, keep, previous.id, previous.part]);
+    const parts = await engine.listStagingPartEdges(sourceId, keep, previous);
     for (const part of parts) {
       const head = Buffer.from(part.head), tail = Buffer.from(part.tail);
       purgeStagingWork.parts++;
@@ -150,13 +143,7 @@ async function stagingsWithClaimAcrossParts(engine: BrainEngine, sourceId: strin
  * create refuses cleanly (body_staging_expired) instead of failing on the manifest's text foreign key.
  */
 export async function stagingsHoldingClaim(engine: BrainEngine, sourceId: string, claim: string): Promise<Pick<PurgePlan, 'stagings' | 'held'>> {
-  const stagings = [...new Set([...(await engine.executeRaw<{ id: string }>(`SELECT s.id::text AS id FROM page_body_stagings s
-    WHERE s.source_id=$1 AND ((s.state IN ('open','sealed','prepared') AND (EXISTS (SELECT 1 FROM page_body_manifest m
-        JOIN page_segment_texts t ON t.source_id=m.source_id AND t.sha256=m.sha256 WHERE m.staging_id=s.id AND strpos(lower(convert_from(t.body,'UTF8')),$2)>0)
-      OR EXISTS (SELECT 1 FROM page_body_staging_parts pt WHERE pt.staging_id=s.id AND position(convert_to($3::text,'UTF8') in pt.body)>0)))
-      OR (${liveStagingSql('s')} AND EXISTS (SELECT 1 FROM page_body_staging_texts r JOIN page_segment_texts t ON t.source_id=r.source_id AND t.sha256=r.sha256
-        WHERE r.staging_id=s.id AND (strpos(lower(convert_from(t.body,'UTF8')),$2)>0 OR strpos(lower(convert_from(t.body,'UTF8')),$4)>0))))
-    ORDER BY s.id`, [sourceId, claim.toLowerCase(), claim, escapeFenceCell(claim).toLowerCase()])).map(row => row.id),
+  const stagings = [...new Set([...(await engine.listStagingsHoldingClaim(sourceId, claim)),
   ...await stagingsWithClaimAcrossParts(engine, sourceId, claim)])].sort();
   return { stagings, held: await findRequestsHoldingStagings(engine, sourceId, stagings) };
 }
@@ -164,8 +151,7 @@ export async function stagingsHoldingClaim(engine: BrainEngine, sourceId: string
 /** Read-only: everything a purge of `target` would touch. Inside the purge transaction it runs under the source lock. */
 export async function planFactPurge(engine: BrainEngine, target: PurgeTarget, allSubjects: boolean): Promise<PurgePlan> {
   // GBRA-574 A1: a fact on an unbacked name key (no live page) purges source-wide, and every purge of the claim reaches such rows.
-  const unbacked = !allSubjects && !!target.entity_slug && !target.entity_slug.includes('/') && (await engine.executeRaw(
-    'SELECT 1 FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL LIMIT 1', [target.source_id, target.entity_slug])).length === 0;
+  const unbacked = !allSubjects && !!target.entity_slug && !target.entity_slug.includes('/') && !(await engine.purgeSubjectPageLive(target.source_id, target.entity_slug));
   const subject = allSubjects || unbacked ? '*' : target.entity_slug ?? '*';
   const facts = await engine.planFactPurgeIds(target.source_id, target.visibility, target.fact_hash, subject);
   const factIds = facts.map(f => Number(f.id));
@@ -174,12 +160,10 @@ export async function planFactPurge(engine: BrainEngine, target: PurgeTarget, al
     [{ visibility: target.visibility, fact_hash: target.fact_hash, subject, claim: target.fact }]).catch(withdrawalDiscoveryFailure);
   const known = new Set(discovered.map(p => p.page_id));
   const extra = takes.map(t => t.page_id).filter(id => !known.has(id));
-  const takePages = extra.length ? await engine.executeRaw<{ slug: string; page_id: number; revision: string }>(
-    'SELECT slug,id AS page_id,knowledge_revision::text AS revision FROM pages WHERE source_id=$1 AND id=ANY($2::int[])', [target.source_id, extra]) : [];
+  const takePages = extra.length ? await engine.listPurgePagesById(target.source_id, extra) : [];
   const pages = [...discovered, ...takePages.map(p => ({ ...p, page_id: Number(p.page_id) }))].sort((a, b) => a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0);
-  const [versions] = await engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM page_versions v JOIN pages p ON p.id=v.page_id
-    WHERE p.source_id=$1 AND (${carriesClaimSql('v', 2)} OR strpos(lower(v.change_reason),$2)>0 OR strpos(lower(v.change_reason),$4)>0
-      OR (v.body_storage='segmented' AND ${SEGMENTED_VERSION_CARRIES}))`, [target.source_id, ...claimNeedles(target.fact), reasonNeedle(target.fact)]);
+  const [needle, escaped] = claimNeedles(target.fact);
+  const versions = await engine.countPurgeVersionsCarryingClaim(target.source_id, needle, escaped, reasonNeedle(target.fact));
   const { stagings, held } = await stagingsHoldingClaim(engine, target.source_id, target.fact);
   // #6511 [R5]: a statement timeout of this unindexable substring search is deterministic on a large journal, not contention: the typed code, not a retry.
   const requests = await faultPoint('purge:carrying_lookup', { sourceId: target.source_id, operation: PURGE_OPERATION })
@@ -192,25 +176,19 @@ export async function planFactPurge(engine: BrainEngine, target: PurgeTarget, al
   });
   const inputs: DerivationRef[] = [...factIds.map(id => ({ table: 'facts', id })), ...takes.map(t => ({ table: 'takes', id: t.id }))];
   const derived = await derivedRowsFrom(engine, inputs);
-  const [counts] = await engine.executeRaw<{ q: number; rp: number; dp: number }>(`SELECT
-    (SELECT count(*)::int FROM decide_review_queue WHERE source_id=$1 AND (a_ref=ANY($2::text[]) OR b_ref=ANY($2::text[]))) AS q,
-    (SELECT count(*)::int FROM decide_review_proposals WHERE source_id=$1 AND (a_ref=ANY($2::text[]) OR b_ref=ANY($2::text[]))) AS rp,
-    (SELECT count(*)::int FROM decide_proposals WHERE source_id=$1 AND (new_fact_id=ANY($3::bigint[]) OR old_fact_id=ANY($3::bigint[]))) AS dp`,
-  [target.source_id, factIds.map(String), factIds]);
-  const review = { decide_review_queue: Number(counts?.q ?? 0), decide_review_proposals: Number(counts?.rp ?? 0), decide_proposals: Number(counts?.dp ?? 0) };
+  const review = await engine.countPurgeReviewRows(target.source_id, factIds.map(String), factIds);
   const { createHash } = await import('node:crypto');
   const revision = createHash('sha256').update(JSON.stringify({ subject, factIds, takes: takes.map(t => t.id),
     pages: pages.map(p => [p.page_id, p.revision]), requests: requests.map(r => r.id), stagings })).digest('hex').slice(0, 16);
-  return { subject, factIds, takes, pages, versions: Number(versions?.n ?? 0), requests, stagings, held, derived,
+  return { subject, factIds, takes, pages, versions, requests, stagings, held, derived,
     reviewRows: review.decide_review_queue + review.decide_review_proposals + review.decide_proposals, review, revision };
 }
 
 /** The belief streams a fact purge batches: each purged fact's stream, the rewritten pages, and each derived row's stream. */
 async function factPurgeStreams(tx: BrainEngine, sourceId: string, plan: PurgePlan): Promise<string[]> {
-  const facts = await tx.executeRaw<{ slug: string }>(`SELECT DISTINCT COALESCE(source_markdown_slug, entity_slug) AS slug FROM facts
-    WHERE id = ANY($1::bigint[]) AND COALESCE(source_markdown_slug, entity_slug) IS NOT NULL`, [plan.factIds]);
+  const facts = await tx.listPurgeStreamSlugs(plan.factIds);
   const derived = await derivedStreamSlugs(tx, sourceId, plan.derived.rows);
-  return [...new Set([...facts.map(f => f.slug), ...plan.pages.map(page => page.slug), ...derived.values()])].sort();
+  return [...new Set([...facts, ...plan.pages.map(page => page.slug), ...derived.values()])].sort();
 }
 
 /** The ledger redaction's statement timeout refuses the whole purge with the typed code, as the journal lookup does (#6511). */
@@ -238,22 +216,12 @@ async function derivationSweep(fn: () => Promise<void>, factId: number, sourceId
 /** Pages with a pending recovery record or an unfinished mirror refuse a purge, as effects refuse other writes. */
 async function assertNoPendingPublication(tx: BrainEngine, sourceId: string, pages: PurgePlan['pages'], ownRequest: string): Promise<void> {
   if (!pages.length) return;
-  const [blocked] = await tx.executeRaw<{ request_id: string; slug: string; state: string }>(`SELECT r.request_id::text,r.slug,r.state FROM persistence_requests r
-      WHERE r.source_id=$1 AND r.id<>$3::uuid AND r.slug=ANY($2::text[]) AND (r.recovery IS NOT NULL OR r.state IN ('queued','deferred','running','recovering'))
-    UNION ALL SELECT r.request_id::text,COALESCE(t->>'slug',r.slug),e.state FROM persistence_effects e JOIN persistence_requests r ON r.id=e.request_id
-      CROSS JOIN LATERAL jsonb_array_elements(COALESCE(e.data->'targets','[]'::jsonb)) t
-      WHERE e.source_id=$1 AND e.request_id<>$3::uuid AND e.kind='withdrawal-mirror' AND (e.state<>'committed' OR e.recovery IS NOT NULL) AND t->>'slug'=ANY($2::text[])
-    LIMIT 1`, [sourceId, pages.map(p => p.slug), ownRequest]);
+  const blocked = await tx.findPurgeBlockedPublication(sourceId, pages.map(p => p.slug), ownRequest);
   if (blocked) throw opError('purge_blocked_pending_recovery', 'A page this purge rewrites has a pending write or recovery, so nothing was purged.',
     `Request ${blocked.request_id} on ${blocked.slug} is ${blocked.state} or still recovering; its publication must finish first. Retry the purge with the same request id once it is final.`,
     { fix: { argv: ['gbrain', 'sources', 'writer', 'status', '--source', sourceId, '--json'], consent: [], actor: 'agent', requires_exclusive: false,
       why: 'Shows the source\'s pending and recovering writes, read-only.' } });
 }
-
-/** A segmented version (`v`) whose generation's segment texts hold the lowered claim `$2`. */
-const SEGMENTED_VERSION_CARRIES = `EXISTS (SELECT 1 FROM page_body_manifest m JOIN page_segment_texts t ON t.source_id=m.source_id AND t.sha256=m.sha256
-  WHERE m.page_id=v.page_id AND m.staging_id IS NULL AND m.gen_from<=v.body_generation AND (m.gen_to IS NULL OR m.gen_to>v.body_generation)
-    AND strpos(lower(convert_from(t.body,'UTF8')),$2)>0)`;
 
 /** What the body rewrites changed: slugs rewritten, segmented pages touched, and the segment texts they stopped referencing. */
 interface BodyRewrites { rewritten: string[]; segmented: number[]; unsealed: string[]; replaced: Uint8Array[]; derivations: number }
@@ -266,8 +234,7 @@ interface BodyRewrites { rewritten: string[]; segmented: number[]; unsealed: str
 export async function rewritePageBodies(tx: BrainEngine, sourceId: string, pages: PurgePlan['pages']): Promise<BodyRewrites> {
   const out: BodyRewrites = { rewritten: [], segmented: [], unsealed: [], replaced: [], derivations: 0 };
   if (!pages.length) return out;
-  const rows = await tx.executeRaw<Record<string, unknown>>(`SELECT p.*,COALESCE((SELECT jsonb_agg(t.tag ORDER BY t.tag COLLATE "C") FROM tags t WHERE t.page_id=p.id),'[]'::jsonb) AS purge_tags
-    FROM pages p WHERE p.source_id=$1 AND p.id=ANY($2::int[]) ORDER BY p.slug COLLATE "C"`, [sourceId, pages.map(p => p.page_id)]);
+  const rows = await tx.listPagesForPurgeRewrite(sourceId, pages.map(p => p.page_id));
   for (const row of rows) {
     if (row.body_storage === 'segmented') {
       const slug = String(row.slug);
@@ -277,7 +244,7 @@ export async function rewritePageBodies(tx: BrainEngine, sourceId: string, pages
       if (!done) continue;
       // The version of the revision the flip moved off references the new generation: that is the revision's body as a
       // reader sees it under this purge's tombstone, as the inline preimage is read, so no generation holding the claim stays pinned.
-      if (preimage) await createPageVersion(tx, slug, sourceId, preimage);
+      if (preimage) await tx.createVersion(slug, { sourceId, preimage });
       out.rewritten.push(slug);
       out.replaced.push(...done.replaced);
       out.derivations += done.derivations;
@@ -289,17 +256,21 @@ export async function rewritePageBodies(tx: BrainEngine, sourceId: string, pages
     const timeline = await dropPurgedFenceRows(tx, sourceId, page.timeline ?? '', page.slug);
     if (compiled === page.compiled_truth && timeline === (page.timeline ?? '')) continue;
     const preimage = await tx.readPageSnapshot(page.slug, { sourceId, includeDeleted: true });
-    if (preimage) await createPageVersion(tx, page.slug, sourceId, preimage);
+    if (preimage) await tx.createVersion(page.slug, { sourceId, preimage });
     const hash = contentHash({ ...page, compiled_truth: compiled, timeline, tags: row.purge_tags as string[] });
     // #5575 ENG-1: dropping a fence row is a gbrain-managed fence edit, not authorship: the page keeps its tier and origin.
-    await withPageTierKept(tx, { sourceId, slug: page.slug }, () => tx.executeRaw(`UPDATE pages SET compiled_truth=$3,timeline=$4,content_hash=$5,updated_at=now(),text_projection_revision=NULL,embedding_signature=NULL
-      WHERE source_id=$1 AND id=$2`, [sourceId, page.id, compiled, timeline, hash]));
+    await withPageTierKept(tx, { sourceId, slug: page.slug }, () => tx.updatePageBodyForPurge(sourceId, page.id, compiled, timeline, hash));
     out.rewritten.push(page.slug);
   }
   return out;
 }
 
 const VERSION_REDACTION_BATCH = 5000;
+
+type VersionBodyRow<X> = X & { id: number; slug: string; compiled_truth: string; timeline: string | null };
+/** The versions to edit: a raw-SQL `where` over source $1, or a typed engine read of one batch after a version id (VERSION_REDACTION_BATCH rows). */
+type VersionBodyQuery<X> = { keepNullTimeline?: boolean } & ({ columns?: string; where: string; params: (after: number) => unknown[]; lock?: boolean }
+  | { read: (after: number) => Promise<Array<VersionBodyRow<X>>> });
 
 /**
  * The one reader and rewriter of inline saved-version bodies, for purge's redaction and the held-fact move
@@ -309,11 +280,12 @@ const VERSION_REDACTION_BATCH = 5000;
  * NULL. Segmented versions are each caller's own pass.
  */
 export async function rewriteVersionBodies<X extends object>(tx: BrainEngine,
-  query: { columns?: string; where: string; params: (after: number) => unknown[]; lock?: boolean; keepNullTimeline?: boolean },
+  query: VersionBodyQuery<X>,
   edit: (text: string, slug: string) => Promise<string> | string,
   visit: (v: X & { id: number; slug: string }, edited: [string, string], changed: boolean) => void, write = true): Promise<void> {
   for (let after = 0; ;) {
-    const rows = await tx.executeRaw<X & { id: number; slug: string; compiled_truth: string; timeline: string | null }>(`SELECT v.id,p.slug,v.compiled_truth,v.timeline${query.columns ? `,${query.columns}` : ''}
+    const rows = 'read' in query ? await query.read(after)
+      : await tx.executeRaw<VersionBodyRow<X>>(`SELECT v.id,p.slug,v.compiled_truth,v.timeline${query.columns ? `,${query.columns}` : ''}
       FROM page_versions v JOIN pages p ON p.id=v.page_id
       WHERE p.source_id=$1 AND v.body_storage='inline' AND ${query.where}
       ORDER BY v.id LIMIT ${VERSION_REDACTION_BATCH}${query.lock ? ' FOR UPDATE OF v' : ''}`, query.params(after));
@@ -323,8 +295,8 @@ export async function rewriteVersionBodies<X extends object>(tx: BrainEngine,
       const compiled = await edit(v.compiled_truth, v.slug);
       const timeline = await edit(v.timeline ?? '', v.slug);
       const changed = compiled !== v.compiled_truth || timeline !== (v.timeline ?? '');
-      if (changed && write) await tx.executeRaw('UPDATE page_versions SET compiled_truth=$2,timeline=$3 WHERE id=$1',
-        [v.id, compiled, query.keepNullTimeline && v.timeline === null && timeline === '' ? null : timeline]);
+      if (changed && write) await tx.setPurgeVersionBody(v.id, compiled,
+        query.keepNullTimeline && v.timeline === null && timeline === '' ? null : timeline);
       visit(v, [compiled, timeline], changed);
     }
     if (rows.length < VERSION_REDACTION_BATCH) break;
@@ -336,15 +308,11 @@ export async function redactPageVersions(tx: BrainEngine, sourceId: string, clai
   Promise<{ redacted: number; prose: Array<{ slug: string; version_id: number }>; segmentedPages: number[]; replaced: Uint8Array[] }> {
   const [needle, escaped] = claimNeedles(claim);
   // GBRA-217 (A7): a change reason quoting the claim, on inline and segmented snapshots alike, wherever its page is.
-  const reasons = new Set((await tx.executeRaw<{ id: number }>(`UPDATE page_versions v SET change_reason = '[purged]' FROM pages p
-    WHERE p.id = v.page_id AND p.source_id = $1 AND (strpos(lower(v.change_reason), $2) > 0 OR strpos(lower(v.change_reason), $3) > 0) RETURNING v.id`,
-  [sourceId, needle, reasonNeedle(claim)])).map(row => Number(row.id)));
+  const reasons = new Set(await tx.redactVersionChangeReasons(sourceId, needle, reasonNeedle(claim)));
   let redacted = reasons.size;
   const prose: Array<{ slug: string; version_id: number }> = [];
   await rewriteVersionBodies<{ metadata: boolean }>(tx, {
-    columns: `
-        (strpos(lower(COALESCE(v.title,'')),$4)>0 OR strpos(lower(COALESCE(v.frontmatter::text,'')),$5)>0) AS metadata`,
-    where: `v.id>$3 AND (v.page_id=ANY($2::int[]) OR ${carriesClaimSql('v', 4)})`, params: after => [sourceId, pageIds, after, needle, escaped],
+    read: after => tx.listPurgeVersionBodies({ sourceId, pageIds, after, needle, escaped }),
   }, (text, slug) => dropPurgedFenceRows(tx, sourceId, text, slug), (v, [compiled, timeline], changed) => {
     if (changed && !reasons.has(Number(v.id))) redacted++;
     if (v.metadata || compiled.toLowerCase().includes(needle) || timeline.toLowerCase().includes(needle)) prose.push({ slug: v.slug, version_id: Number(v.id) });
@@ -355,11 +323,7 @@ export async function redactPageVersions(tx: BrainEngine, sourceId: string, clai
   const segmentedPages = new Set<number>();
   const replaced: Uint8Array[] = [];
   for (let after = 0; ;) {
-    const segmented = await tx.executeRaw<{ id: number; page_id: number; generation: number; slug: string; title: string; type: string;
-      frontmatter: Record<string, unknown>; tags: string[] | null }>(`SELECT v.id,v.page_id,v.body_generation AS generation,p.slug,v.title,v.type,v.frontmatter,v.tags
-      FROM page_versions v JOIN pages p ON p.id=v.page_id
-      WHERE p.source_id=$1 AND v.body_storage='segmented' AND v.id>$4 AND (v.page_id=ANY($3::int[]) OR ${SEGMENTED_VERSION_CARRIES})
-      ORDER BY v.id LIMIT ${VERSION_REDACTION_BATCH}`, [sourceId, needle, pageIds, after]);
+    const segmented = await tx.listSegmentedVersionsForPurge(sourceId, needle, pageIds, after);
     if (!segmented.length) break;
     after = Number(segmented[segmented.length - 1].id);
     for (const v of segmented) {
@@ -393,18 +357,13 @@ export async function purgeSegmentStorage(tx: BrainEngine, sourceId: string, cla
   let parts = 0;
   const staged: number[] = [];
   if (plan.stagings.length) {
-    staged.push(...(await tx.executeRaw<{ page_id: number | null }>(`UPDATE page_body_stagings SET state='aborted',updated_at=now()
-      WHERE id=ANY($1::uuid[]) AND state<>'committed' RETURNING page_id`, [plan.stagings])).flatMap(row => row.page_id === null ? [] : [Number(row.page_id)]));
-    parts = (await tx.executeRaw('DELETE FROM page_body_staging_parts WHERE staging_id=ANY($1::uuid[]) RETURNING 1', [plan.stagings])).length;
+    staged.push(...await tx.abortPurgedStagings(plan.stagings));
+    parts = await tx.deletePurgedStagingParts(plan.stagings);
   }
   for (const pageId of new Set([...pageIds, ...staged])) await tx.sweepSegments({ pageId });
   // The cached view digests (sizes and sha256 of a read view) of the rewritten bodies describe pre-purge text.
-  if (pageIds.length) await tx.executeRaw('DELETE FROM page_view_digests WHERE page_id=ANY($1::int[])', [pageIds]);
-  const texts = (await tx.executeRaw(`DELETE FROM page_segment_texts d WHERE (d.source_id,d.sha256) IN (SELECT t.source_id,t.sha256 FROM page_segment_texts t
-      WHERE t.source_id=$1 AND NOT EXISTS (SELECT 1 FROM page_body_manifest m WHERE m.source_id=t.source_id AND m.sha256=t.sha256) OFFSET 0)
-    AND (d.sha256=ANY(SELECT decode(h,'hex') FROM unnest($2::text[]) AS h) OR strpos(lower(convert_from(d.body,'UTF8')),$3)>0
-      OR strpos(lower(convert_from(d.body,'UTF8')),$4)>0) RETURNING 1`,
-  [sourceId, replaced.map(sha => Buffer.from(sha).toString('hex')), claim.toLowerCase(), escapeFenceCell(claim).toLowerCase()])).length;
+  if (pageIds.length) await tx.deletePageViewDigests(pageIds);
+  const texts = await tx.deleteUnreferencedPurgedTexts(sourceId, replaced, claim);
   return { texts, stagings: plan.stagings.length, parts, cancelled };
 }
 
@@ -424,8 +383,7 @@ function parseParams(ctx: OperationContext, params: Record<string, unknown>): Pu
 
 /** `--match`: candidate facts for a text, so the owner picks an id (purge always needs a ref). Owner-only output. */
 async function matchCandidates(engine: BrainEngine, sourceId: string, text: string): Promise<Record<string, unknown>> {
-  const rows = await engine.executeRaw<{ id: number; entity_slug: string | null; visibility: string; expired: boolean; fact: string }>(`SELECT id,entity_slug,visibility,
-    expired_at IS NOT NULL AS expired,left(fact,160) AS fact FROM facts WHERE source_id=$1 AND strpos(lower(fact),lower($2))>0 ORDER BY id LIMIT 25`, [sourceId, text]);
+  const rows = await engine.listPurgeMatchCandidates(sourceId, text);
   return { action: 'purge_fact', match: true, candidates: rows.map(r => ({ ...r, id: Number(r.id) })),
     next: rows.length ? 'Pick one id and run gbrain forget <id> --purge; --match never purges.' : 'No fact in this source contains that text.' };
 }
@@ -503,7 +461,7 @@ export async function submitPurgeFactMutation(ctx: OperationContext, params: Rec
   const beliefReport = { appended: 0 };
   const row = await retryWriteAdmission(p.requestId, remaining => ctx.engine.transaction(async tx => {
     await declareDurablePersistence(tx, `${Math.min(2000, remaining)}ms`, '30s');
-    const [source] = await tx.executeRaw<{ incarnation: string; archived: boolean }>('SELECT incarnation,archived FROM sources WHERE id=$1 FOR UPDATE', [p.sourceId]);
+    const source = await tx.lockPurgeSource(p.sourceId);
     if (!source || source.archived) throw opError('source_changed', 'The purge source is not active.', `Source ${p.sourceId} is archived or missing, so nothing was purged.`);
     const prior = await getWriteRequest(tx, principal, p.requestId);
     if (prior) {
@@ -545,30 +503,21 @@ export async function submitPurgeFactMutation(ctx: OperationContext, params: Rec
       await tx.insertFactPurge({ sourceId: p.sourceId, visibility: current.visibility, subject: plan.subject, factHash: current.fact_hash,
         requestId: admitted.id, actor: `${principal.kind}:${principal.id}`, reason: p.reason });
       // GST-2492: a fact a holding page holds for an entity with no page is purged from that holding page as well.
-      if (plan.subject !== '*') await tx.executeRaw(`INSERT INTO fact_purges(source_id,visibility,subject,fact_hash,request_id,actor,reason)
-        SELECT DISTINCT $1::text,$2::text,f.source_markdown_slug,$3::text,$4::uuid,$5::text,$6::text FROM facts f
-          WHERE f.id=ANY($7::bigint[]) AND f.source_id=$1 AND ${holdingSlugSql('f.source_markdown_slug')} AND f.entity_slug IS NOT NULL ON CONFLICT DO NOTHING`,
-      [p.sourceId, current.visibility, current.fact_hash, admitted.id, `${principal.kind}:${principal.id}`, p.reason, plan.factIds]);
-      await tx.executeRaw(`INSERT INTO take_purges(source_id,subject,claim_hash,request_id) VALUES ($1,$2,$3,$4::uuid) ON CONFLICT DO NOTHING`,
-        [p.sourceId, plan.subject, current.fact_hash, admitted.id]);
-      const takes = plan.takes.length ? (await tx.executeRaw('DELETE FROM takes WHERE id=ANY($1::bigint[]) RETURNING id', [plan.takes.map(t => t.id)])).length : 0;
+      if (plan.subject !== '*') await tx.insertHoldingPagePurges(p.sourceId, current.visibility, current.fact_hash, admitted.id, `${principal.kind}:${principal.id}`, p.reason, plan.factIds);
+      await tx.insertTakePurge({ sourceId: p.sourceId, subject: plan.subject, claimHash: current.fact_hash, requestId: admitted.id });
+      const takes = plan.takes.length ? await tx.deletePurgedTakes(plan.takes.map(t => t.id)) : 0;
       const ids = plan.factIds;
-      const review = (await tx.executeRaw(`DELETE FROM decide_review_queue WHERE source_id=$1 AND (a_ref=ANY($2::text[]) OR b_ref=ANY($2::text[])) RETURNING 1`, [p.sourceId, ids.map(String)])).length
-        + (await tx.executeRaw(`DELETE FROM decide_review_proposals WHERE source_id=$1 AND (a_ref=ANY($2::text[]) OR b_ref=ANY($2::text[])) RETURNING 1`, [p.sourceId, ids.map(String)])).length
-        + (await tx.executeRaw(`DELETE FROM decide_proposals WHERE source_id=$1 AND (new_fact_id=ANY($2::bigint[]) OR old_fact_id=ANY($2::bigint[])) RETURNING 1`, [p.sourceId, ids])).length
-        + (await tx.executeRaw(`DELETE FROM trust_proposals WHERE source_id=$1 AND ((target_table='facts' AND target_id=ANY($2::bigint[])) OR (related_table='facts' AND related_id=ANY($2::bigint[]))
-            OR (target_table='takes' AND target_id=ANY($3::bigint[])) OR (related_table='takes' AND related_id=ANY($3::bigint[]))) RETURNING 1`, [p.sourceId, ids, plan.takes.map(t => t.id)])).length;
-      const loops = (await tx.executeRaw('DELETE FROM open_loops WHERE source_id=$1 AND fact_id=ANY($2::bigint[]) RETURNING 1', [p.sourceId, ids])).length;
+      const review = await tx.deletePurgeReviewQueue(p.sourceId, ids.map(String))
+        + await tx.deletePurgeReviewProposals(p.sourceId, ids.map(String))
+        + await tx.deletePurgeDecideProposals(p.sourceId, ids)
+        + await tx.deletePurgeTrustProposals(p.sourceId, ids, plan.takes.map(t => t.id));
+      const loops = await tx.deletePurgeOpenLoops(p.sourceId, ids);
       // #5575: held writes carrying the claim (fact text or take claim) and the gate receipts naming purged rows or those holds.
-      const holdIds = (await tx.executeRaw<{ id: string }>(`DELETE FROM write_gate_holds WHERE source_id=$1
-          AND gbrain_fact_fingerprint(COALESCE(payload->>'fact', payload->>'claim', ''))=$2 RETURNING id::text AS id`, [p.sourceId, current.fact_hash])).map(r => r.id);
-      const gateReceipts = (await tx.executeRaw(`DELETE FROM write_gate_receipts WHERE (target_table='facts' AND target_id=ANY($1::text[]))
-          OR (target_table='takes' AND target_id=ANY($2::text[])) OR (target_table='write_gate_holds' AND target_id=ANY($3::text[])) RETURNING 1`,
-        [ids.map(String), plan.takes.map(t => String(t.id)), holdIds])).length;
-      const proposals = (await tx.executeRaw('DELETE FROM take_proposals WHERE source_id=$1 AND gbrain_fact_fingerprint(claim_text)=$2 RETURNING 1', [p.sourceId, current.fact_hash])).length;
-      const notices = (await tx.executeRaw(`UPDATE core_edit_notices SET base_text=NULL WHERE source_id=$1 AND strpos(lower(base_text),$2)>0 RETURNING 1`,
-        [p.sourceId, current.fact.toLowerCase()])).length;
-      const facts = (await tx.executeRaw('DELETE FROM facts WHERE id=ANY($1::bigint[]) AND source_id=$2 RETURNING id', [ids, p.sourceId])).length;
+      const holdIds = await tx.deletePurgeWriteGateHolds(p.sourceId, current.fact_hash);
+      const gateReceipts = await tx.deletePurgeWriteGateReceipts(ids.map(String), plan.takes.map(t => String(t.id)), holdIds);
+      const proposals = await tx.deletePurgeTakeProposals(p.sourceId, current.fact_hash);
+      const notices = await tx.blankPurgeCoreEditNotices(p.sourceId, current.fact.toLowerCase());
+      const facts = await tx.deletePurgedFacts(ids, p.sourceId);
       const bodies = await rewritePageBodies(tx, p.sourceId, plan.pages);
       ({ rewritten, unsealed } = bodies);
       const pageIds = plan.pages.map(page => page.page_id);
@@ -578,24 +527,17 @@ export async function submitPurgeFactMutation(ctx: OperationContext, params: Rec
       // A segmented page's flip already retired only the chunks of the occurrences it rewrote.
       const inline = pageIds.filter(id => !bodies.segmented.includes(id));
       // Deleting a page's chunks voids the seal that certified them (#8502), also on a page whose body held no purged row.
-      const chunks = inline.length ? (await tx.executeRaw(`WITH gone AS (DELETE FROM content_chunks WHERE page_id=ANY($1::integer[]) RETURNING page_id),
-        unsealed AS (UPDATE pages SET text_projection_revision=NULL WHERE id IN (SELECT page_id FROM gone) AND text_projection_revision IS NOT NULL)
-        SELECT 1 FROM gone`, [inline])).length : 0;
+      const chunks = inline.length ? await tx.deletePurgedChunks(inline) : 0;
       const versions = await redactPageVersions(tx, p.sourceId, current.fact, pageIds);
       const ledger = await (await import('../generations/ledger-scrub.ts')).scrubGenerationLedger(tx, p.sourceId, { needles: [current.fact] });
       prose = versions.prose;
       const segments = await purgeSegmentStorage(tx, p.sourceId, current.fact, plan, [...new Set([...bodies.segmented, ...versions.segmentedPages])],
         [...bodies.replaced, ...versions.replaced], admitted.id);
       const cache = (await clearRebuildableCache(tx, 'query_cache')) ?? 0;
-      const pages = pageIds.length ? await tx.executeRaw<{ id: number; slug: string; knowledge_revision: string }>(
-        'SELECT id,slug,knowledge_revision::text AS knowledge_revision FROM pages WHERE source_id=$1 AND id=ANY($2::int[]) ORDER BY slug COLLATE "C"', [p.sourceId, pageIds]) : [];
-      await tx.executeRaw(`INSERT INTO persistence_effects(request_id,kind,data,source_id,source_incarnation,worktree_id)
-        SELECT $1::uuid,k.kind,$3::text::jsonb,s.id,s.incarnation,b.worktree_id
-        FROM sources s LEFT JOIN persistence_source_bindings b ON b.source_id=s.id AND b.source_incarnation=s.incarnation
-        CROSS JOIN (VALUES ('withdrawal-mirror'),('git'),('embedding')) AS k(kind)
-        WHERE s.id=$2 ON CONFLICT(request_id,kind) DO NOTHING`, [admitted.id, p.sourceId, JSON.stringify({ version: 2, mode: 'purge',
+      const pages = pageIds.length ? await tx.listPurgedPageRevisions(p.sourceId, pageIds) : [];
+      await tx.insertPurgeEffects(admitted.id, p.sourceId, { version: 2, mode: 'purge',
         commit_subject: `gbrain: purge fact ${token}`, commit_line: `purge fact ${token}`,
-        targets: pages.map(page => ({ slug: page.slug, page_id: Number(page.id), revision: page.knowledge_revision })) })]);
+        targets: pages.map(page => ({ slug: page.slug, page_id: Number(page.id), revision: page.knowledge_revision })) });
       counts = { facts, takes, chunks, page_versions: versions.redacted, pages: rewritten.length, persistence_requests: intents, persistence_effects: effectReasons,
         reason_purge_tombstones: reasonTombstones,
         query_cache: cache, decide_review: review, open_loops: loops, take_proposals: proposals, core_edit_notices: notices, ...ledger,
@@ -605,7 +547,7 @@ export async function submitPurgeFactMutation(ctx: OperationContext, params: Rec
       derivedHidden = derived;
       });
       ledger = ledgerPresent ? await ledgerLookup(async () => ({
-        purged_events: await redactPurgedKeys(tx, { sourceId: p.sourceId, claimFps: [current.fact_hash], lifetimes: [] }),
+        purged_events: await redactPurgedKeys(tx, { sourceId: p.sourceId, claimFps: [current.fact_hash], lifetimes: [], claims: [current.fact] }),
         redacted_fields: await redactCarryingFields(tx, { sourceId: p.sourceId, request: admitted.id, claims: [current.fact] }),
         live_carriers: await registerLiveCarriers(tx, { sourceId: p.sourceId, request: admitted.id, claims: [current.fact] }),
         version_carriers: await registerVersionCarriers(tx, { sourceId: p.sourceId, request: admitted.id, claims: [current.fact], versionIds: prose.map(v => v.version_id) }),

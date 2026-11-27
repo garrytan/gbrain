@@ -13,6 +13,8 @@ import { writerDiagnostics } from '../src/core/persistence/control.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { waitFor } from './helpers/wait-for.ts';
 import { readWriterDiagnostics, WRITER_NEXT_ACTIONS } from '../src/core/persistence/diagnostics.ts';
+import { persistenceUpkeepStore } from '../src/core/engine-sql/persistence-upkeep.ts';
+
 
 const engines: BrainEngine[] = [];
 let closePostgres: (() => Promise<void>) | undefined;
@@ -31,7 +33,9 @@ afterAll(async () => {
 test('optional health enrichment bounds unresolved work and never invents fresh observations', async () => {
   const release = Promise.withResolvers<Record<string, unknown>[]>();
   let queries = 0;
-  const engine = { kind: 'pglite', executeRaw: async () => { queries++; return release.promise; } } as unknown as BrainEngine;
+  const executeRaw = async () => { queries++; return release.promise; };
+  // The health read goes through the typed upkeep store, which sends the statement through this engine's executeRaw.
+  const engine = { kind: 'pglite', executeRaw, persistenceUpkeepStore: () => persistenceUpkeepStore({ executeRaw } as never) } as unknown as BrainEngine;
   const rows = Array.from({ length: 100 }, (_, index) => ({ id: randomUUID(), state: 'queued',
     worktree_id: null, source_incarnation: 'd7599b95-65c2-4d54-aa4e-cb5745af90cf', sequence: index + 1 } as WriteRequest));
   try {
@@ -52,10 +56,11 @@ test('optional health enrichment bounds unresolved work and never invents fresh 
 });
 
 test('failed optional enrichment returns no facts without making database writes', async () => {
-  const engine = { kind: 'postgres', executeRaw: async (sql: string) => {
+  const executeRaw = async (sql: string) => {
     expect(sql).not.toMatch(/UPDATE|INSERT|DELETE/);
     throw new Error('PRIVATE_DRIVER_MARKER');
-  } } as unknown as BrainEngine;
+  };
+  const engine = { kind: 'postgres', executeRaw, persistenceUpkeepStore: () => persistenceUpkeepStore({ executeRaw } as never) } as unknown as BrainEngine;
   expect((await writeHealthFacts(engine, [{ state: 'queued', source_incarnation: randomUUID() } as WriteRequest])).size).toBe(0);
 });
 
@@ -63,7 +68,8 @@ for (const reason of ['writer_busy', 'database_contention']) test.each([0, 18000
   const row = { request_id: randomUUID(), state: 'queued', blocked_reason: reason, error_code: null,
     worktree_id: null, created_at: new Date(Date.now() - age) };
   const engine = { kind: 'pglite', executeRaw: async (sql: string) =>
-    sql.startsWith('SELECT request_id,worktree_id,source_id,state,blocked_reason') ? [row] : [], readJournalLimitRows: async () => [] } as unknown as BrainEngine;
+    sql.startsWith('SELECT request_id,worktree_id,source_id,state,blocked_reason') ? [row] : [], readJournalLimitRows: async () => [],
+    readWriterDiagnosticRows: async () => ({ worktrees: [], counters: [], blockers: [row], queue: [], effects: [], failures: [] }) } as unknown as BrainEngine;
   const [blocker] = (await readWriterDiagnostics(engine)).blockers;
   expect(blocker.diagnostic?.next_action).toBe(age >= 120000 ? 'inspect_owner' : 'poll');
   expect(blocker.next_action).toContain(WRITER_NEXT_ACTIONS[reason]);

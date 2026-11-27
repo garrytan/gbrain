@@ -124,12 +124,16 @@ const JSON_ROWS: Record<string, JsonRow> = {
   trust: { ok: ['trust', 'backfill', '--dry-run', '--json'], fail: ['trust', 'explain', 'f999999', '--json'], failOnBrain: true },
   // W1 belief ledger: status is read-only; an unknown source is an invalid_params envelope.
   beliefs: { ok: ['beliefs', 'status', '--source', 'notes', '--json'], fail: ['beliefs', 'status', '--source', 'no-such-source', '--json'], failOnBrain: true },
+  // Lane 3 P1: the owner's profile on a fresh keyless brain; a budget that is not a positive whole number is an invalid_params envelope.
+  profile: { ok: ['profile', '--json'], fail: ['profile', '--json', '--budget-tokens', '0'], failOnBrain: true },
   // GBRA-151: the bundle is read-only and bounded; a budget that is not a positive number is an invalid_params envelope.
   diag: { ok: ['diag', '--json', '--budget-ms', '20000'], fail: ['diag', '--json', '--budget-ms', '0'], failOnBrain: true },
   // D8: the dry run resolves and prints the target without writing; an unwired harness id is a coded refusal.
   setup: { ok: ['setup', 'claude-code', '--dry-run', '--json', '--gbrain-bin', process.execPath], fail: ['setup', 'codex', '--json'], okOnEmpty: true },
   // Spring-loaded skills: the catalog listing reads the binary only; an unknown skill name is a skill_not_found envelope.
   'bundled-skill': { ok: ['bundled-skill', '--json'], fail: ['bundled-skill', 'definitely-not-a-skill', '--json'], okOnEmpty: true },
+  // Roadmap PR 3: the value card on the fixture brain; with no brain it is a no_brain envelope.
+  value: { ok: ['value', '--json'], fail: ['value', '--json'] },
 };
 
 function parsedShape(mode: 'document' | 'ndjson', stdout: string): unknown[] {

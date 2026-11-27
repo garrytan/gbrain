@@ -55,6 +55,25 @@ fn alias_prefix(sub: u8, parts: &[&str]) -> Vec<u8> {
     key
 }
 
+/// Whether the source holds a page alias row of `alias_norm`, of any page and origin.
+pub(crate) fn alias_row_exists(
+    read: &dyn KvRead,
+    source_id: &str,
+    alias_norm: &str,
+) -> Result<bool> {
+    let mut found = false;
+    scan_prefix(
+        read,
+        &alias_prefix(PAGE_ALIAS, &[source_id, alias_norm]),
+        false,
+        &mut |_, _| {
+            found = true;
+            false
+        },
+    )?;
+    Ok(found)
+}
+
 /// Refuses text holding a NUL byte, as Postgres does for a text parameter.
 pub(crate) fn reject_nul<'a>(member: &str, items: impl IntoIterator<Item = &'a str>) -> Result<()> {
     for item in items {
@@ -154,7 +173,7 @@ impl Store {
     }
 
     /// `resolveCaseSensitiveAliases`: the case-sensitive rows of the listed aliases in the listed
-    /// sources, as `{ slug, alias_norm, alias_text }` by source, slug, alias. The SQL leaves the
+    /// sources, as `{ slug, alias_norm, alias_text }` by slug, alias, alias text. The SQL leaves the
     /// order of two origins of one row open; this read puts them in origin byte order.
     pub fn resolve_case_sensitive_aliases(
         &self,
@@ -165,9 +184,8 @@ impl Store {
         let sources = key_texts(MEMBER, source_ids)?;
         let aliases = key_texts(MEMBER, alias_norms)?;
         let read = self.read()?;
-        let mut out = Vec::new();
+        let mut rows = Vec::new();
         for &source in &sources {
-            let mut rows = Vec::new();
             for &alias in &aliases {
                 for key in alias_keys(&*read, &alias_prefix(PAGE_ALIAS, &[source, alias]))? {
                     if !key.value.is_empty() {
@@ -183,15 +201,17 @@ impl Store {
                     };
                     let value = row_value(MEMBER, &value)?;
                     if value.case_sensitive {
-                        rows.push((slug.clone(), alias, origin.clone(), value.alias_text));
+                        rows.push((slug.clone(), alias, value.alias_text, origin.clone()));
                     }
                 }
             }
-            rows.sort();
-            out.extend(rows.into_iter().map(|(slug, alias, _, text)| {
-                json!({"slug": slug, "alias_norm": alias, "alias_text": text})
-            }));
         }
+        // The rows carry no source, so they sort by slug, alias and text across every listed source.
+        rows.sort();
+        let out = rows
+            .into_iter()
+            .map(|(slug, alias, text, _)| json!({"slug": slug, "alias_norm": alias, "alias_text": text}))
+            .collect();
         Ok(out)
     }
 

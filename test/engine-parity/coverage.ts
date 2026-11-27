@@ -4,8 +4,8 @@
  *   bun test/engine-parity/coverage.ts           # print the list
  *   bun test/engine-parity/coverage.ts --write   # refresh test/engine-parity/coverage.tsv
  *
- * Reads the BrainEngine interface (src/core/engine.ts) with the TypeScript
- * compiler API, reads every `parityTest(name, { methods: [...] }, ...)` call
+ * Reads the BrainEngine interface (src/core/engine.ts, plus the interfaces it extends
+ * in src/core/engine-members/) with the TypeScript compiler API, reads every `parityTest(name, { methods: [...] }, ...)` call
  * in test/engine-parity/*.test.ts, and writes one row per callable interface
  * member: its family, how many parity cases cover it, and whether the legacy
  * Postgres-gated suite (test/e2e/engine-parity*.test.ts) calls it.
@@ -37,6 +37,7 @@ const PARITY_DIR = import.meta.dir;
 const LEGACY_DIR = join(REPO, 'test', 'e2e');
 // test-reads-source-ok[structural]: the coverage denominator is the declared BrainEngine member list.
 const ENGINE_FILE = join(REPO, 'src', 'core', 'engine.ts');
+const MEMBERS_DIR = join(REPO, 'src', 'core', 'engine-members');
 export const COVERAGE_FILE = join(PARITY_DIR, 'coverage.tsv');
 
 /**
@@ -45,100 +46,222 @@ export const COVERAGE_FILE = join(PARITY_DIR, 'coverage.tsv');
  * method forces a visible family assignment here.
  */
 export const FAMILIES: Record<string, readonly string[]> = {
-  lifecycle: ['connect', 'disconnect', 'reconnect', 'initSchema', 'holdSchemaMigrationLock', 'transaction', 'transactionDirect',
+  lifecycle: ['connect', 'disconnect', 'reconnect', 'initSchema', 'listCatalogRelations', 'readCatalogSchemaVersion', 'listCatalogForeignKeys', 'hasTable', 'hasColumn', 'listTextBearingColumns', 'scanTextColumns', 'getFactsByIds', 'findLiveFactsByText',
+    'listPageIdSlugs', 'pauseManagedPersistence', 'restoreManagedPersistence', 'withManagedPersistencePaused', 'holdSchemaMigrationLock', 'transaction', 'transactionDirect',
     'registerBeforeDisconnect', 'withReservedConnection'],
-  pages: ['getPage', 'readPageSnapshot', 'readPageSnapshotsBatch', 'lockPageKeys', 'putPage', 'findDuplicatePage', 'findDuplicatePages',
+  pages: [
+    'getPage', 'readPageSnapshot', 'readPageSnapshotsBatch', 'lockPageKeys', 'putPage', 'findDuplicatePage', 'findDuplicatePages',
     'deletePage', 'deletePages', 'resolveSlugsByPaths', 'softDeletePage', 'softDeletePages', 'restorePage', 'purgeDeletedPages',
-    'listPages', 'findPages', 'countPagesBy', 'resolveSlugs', 'getAllSlugs', 'listAllPageRefs', 'listEntityKeyRows', 'listIdentityDecisions', 'listRestrictedIdentityMembers', 'applyIdentityDecisions', 'listAllSources', 'listSourceLocalPaths', 'listLocalPathSources', 'readPlainSyncSource', 'readOwnerOnlySourcesPresent', 'readOwnerOnlySourceConfig', 'listSourceRoutingRows',
-    'countDefaultSourceSplit', 'listStaleSyncSourceIds', 'listSourceIds', 'readSourceRow', 'lockSourceRow', 'countSourcePages', 'insertSource', 'updateSourceConfig', 'getSource',
+    'listPages', 'findPages', 'countPagesBy', 'resolveSlugs', 'getAllSlugs', 'listAllPageRefs', 'listEntityKeyRows', 'listIdentityDecisions', 'listRestrictedIdentityMembers', 'applyIdentityDecisions', 'listAllSources', 'listSourceLocalPaths', 'listLocalPathSources', 'findCardRows', 'readBeliefCoverageEvents', 'readLatestTakeGrades', 'readTakeHorizonRows', 'readPredictionLedgerEvents', 'readForecastPredictions', 'readOpCheckpointCompletedKeys', 'countLineageClosingRules', 'readPageFolderRulesAllowed', 'readPageAccessAllowed', 'readWhoCanReadRows', 'readChatCensusRows', 'listEnabledLabelledOnlyMemberIds', 'readSourceIncarnationArchived', 'readUploadSessionByRequest', 'listEmailAliasPages', 'readAttendanceWindow', 'listLiveSourceIncarnations', 'readClockMillisText', 'readStaleMentionScan', 'listTypeOrphanRows', 'countLivePagesByType', 'listLinkCandidatePages', 'listAliasCandidatePages', 'probeRetypeRows', 'listLiveSlugOrigins', 'listPathTwinSlugs', 'readFirstLiveSlugAtPath', 'readShelfPageRows', 'listCardRows', 'readCompanyBrainEvidenceRows', 'probeTargetRows', 'resolveChainAnchorRows', 'listLiveSlugSourceIds', 'listSourcePathRows', 'readPlainSyncSource', 'readOwnerOnlySourcesPresent', 'readOwnerOnlySourceConfig', 'listSourceRoutingRows',
+      'countRepoBoundSources', 'listNotifierHostSourceRows',
+    'countDefaultSourceSplit', 'listStaleSyncSourceIds', 'readSourceRow', 'lockSourceRow', 'countSourcePages', 'readSourcesNotReadable', 'insertSource', 'updateSourceConfig', 'renameSource', 'readFederationExposedPages', 'getSource', 'readSourceDeleteImpact', 'deleteSourceRecord', 'markSourceSynced',
     'listPrefixSampledPages', 'listCorpusSample', 'bumpPageRetrievals', 'getPageSealState', 'refreshPageOrigin',
-    'readLivePageIdBySlug', 'readPageTierRef', 'readPageTierRows', 'pageHasFrontmatterKey'],
+      'advanceSourceCommit', 'listSourcePathPages', 'listQuarantinedSlugs', 'readRenameIdentityRows', 'readLiveIdentityHolders', 'readPageSizeRows', 'holdPageEmbedding', 'readReasonPurgeTombstones', 'writeReasonPurgeTombstones',
+    'readLivePageIdBySlug', 'readPageTierRef', 'readPageTierRows', 'pageHasFrontmatterKey',
+    // the atoms-restore and moved-pages repair reads (engine-sql/atom-restore-reads.ts, moved-page-reads.ts)
+    'listRestorableAtoms', 'countKeptAtomRetirements', 'listLivePagesBySourcePaths', 'listLivePagesByFileName',
+    // the batch 7 stale-atoms read (engine-sql/stale-atom-reads.ts)
+    'listStaleAtoms',
+    'listLivePagesSharingFrontmatterId', 'hasSegmentedHistory', 'readLivePagesByIds',
+    'listSourceIds', 'readSoleSourceId', 'readFirstSourceId', 'lockAllSourceRows', 'readPageIdentity', 'writeSourceSyncHeartbeat', 'writeSourceUpstreamObservation', 'advanceSourcePurgeEpoch', 'pageTypeTotals', 'listHandoverReaderPages', 'listHandoverPrefixPages', 'countMemberPage', 'countMemberPageFacts', 'countMemberBoundCredentials', 'readLastUndoneHandoverId', 'readHandoverRow', 'listMemberSourceRows', 'countLivePagesAtPathPrefix', 'probeUntypedPathPrefix', 'invalidateQueryCacheRows', 'insertAccessReadLogRows', 'pruneAccessReadLog', 'readAccessReadLog', 'listAccessReadPageRefs', 'readAccessReadsOfPages', 'tallyAccessReadsOfPages', 'pagePrefixSamples', 'countPagesByTypeForSource',
+    'advanceSyncCheckpoint', 'lockSourceForUpdate',
+    // the meetings connector's page lookup (engine-sql/meeting-pages.ts) and the attendance lookup of frontmatter link extraction (engine-sql/attendance-pages.ts)
+    'readMeetingPage', 'listAttendanceMatches',
+    // the connector sync attempt stamp and cursor write (engine-sql/connector-attempts.ts, connector-db-cursor.ts)
+    'recordConnectorSyncAttempt', 'writeConnectorDbCursor'],
   search: ['searchKeyword', 'countKeywordPages', 'searchKeywordPages', 'searchTitles', 'searchVector', 'getEmbeddingsByChunkIds',
-    'searchKeywordChunks'],
+    'searchKeywordChunks', 'filterPageIdsByFrontmatter'],
   search_reads: ['cosinesByChunkIds', 'hasSupersedeEdges', 'supersedingPageSlugs', 'aliasCanonicalRefs', 'pageCollapseFacts',
     'slugsEndingIn', 'generatedPagesIn', 'livePageIdsAt', 'pagesLinkingTo'],
   link_reads: ['inboundLinkCoverage', 'listJunkEntityHubs', 'countEntityPages', 'entityGraphCoverage', 'countForeignEdges',
     'listLivePageSummaries', 'countInboundLinks', 'readEntityInboundEdges', 'listLinkEndpointPages', 'listPagesTitledIn', 'wordLexemes',
-    'readLinkContextMatches', 'readLinkContextOriginPages'],
-  link_temporal: ['readLinkRelationshipEvidence', 'writeLinkRelationshipState', 'linkRelationshipKeysForPages', 'staleLinkRelationshipKeys',
-    'linkRelationshipKeysForOrigin', 'applyLinkTemporalRows', 'writeManualLinkTransitions', 'removeManualLinkTransitions',
-    'listRelationshipNoteRows', 'edgeValidityCounts', 'listPageStatusByRef', 'listRecordMetadataRows', 'readReferrerGroupRows', 'readReferrerPageDetails', 'readReferrerTargetCounts',
-    'listReferrerTargetSources', 'countReferrerRows', 'readReferrerRows', 'readReferrerRecordCandidates', 'readReferrerRecordPages', 'readReferrerTypes'],
-  search_vector: ['countSearchVectorRows', 'replaceSearchVectorTriggerFunction', 'backfillSearchVectors', 'ensureFactsKeywordIndex'],
+    'readLinkContextMatches', 'readLinkContextOriginPages',
+    'entityFeatureCoverage', 'countDatedMeetingPages'],
+  link_temporal: ['readLinkRelationshipEvidence', 'writeLinkRelationshipState', 'linkRelationshipKeysForPages',
+    'staleLinkRelationshipKeys', 'linkRelationshipKeysForOrigin', 'applyLinkTemporalRows',
+    'writeManualLinkTransitions', 'removeManualLinkTransitions', 'listRelationshipNoteRows', 'edgeValidityCounts',
+    'listPageStatusByRef', 'listRecordMetadataRows', 'readReferrerGroupRows', 'readReferrerPageDetails',
+    'readReferrerTargetCounts', 'listReferrerTargetSources', 'countReferrerRows', 'readReferrerRows',
+    'readReferrerRecordCandidates', 'readReferrerRecordPages', 'readReferrerTypes',
+    'readPageReferenceDate'],
+  search_vector: ['countSearchVectorRows', 'replaceSearchVectorTriggerFunction', 'backfillSearchVectors',
+    'ensureFactsKeywordIndex'],
   retrieval_coverage: ['countPendingProjectionPages', 'countEmbeddingHeldPages', 'projectionRebuildProgress',
     'readProjectionReadinessGeneration', 'readProjectionReadiness'],
-  chunks: ['upsertChunks', 'sealChunks', 'getChunks', 'getChunkPage', 'getChunkWindows', 'countStaleChunks', 'sumStaleChunkChars',
-    'setPageEmbeddingSignature', 'invalidateStaleSignatureEmbeddings', 'invalidateContentDriftEmbeddings', 'listStaleChunks',
+  chunks: ['upsertChunks', 'sealChunks', 'getChunks', 'getChunkPage', 'getChunkWindows', 'readWindowChunk', 'countPageChunks', 'countStaleChunks', 'sumStaleChunkChars',
+    'setPageEmbeddingSignature', 'readPageProvenanceComplete', 'invalidateStaleSignatureEmbeddings', 'invalidateContentDriftEmbeddings', 'listStaleChunks',
     'readPageEmbeddingBudget', 'recordPageEmbeddingHold', 'openPageEmbeddingHold', 'reservePageEmbedding', 'settlePageEmbeddingReservation',
     'readEmbeddingCompletion', 'lockEffectClaimRow', 'lockEmbeddingSwitch', 'installChunkEmbeddings',
     'countChunklessPagesWithContent', 'listChunklessPagesWithContent', 'readEmbeddingStateCounts', 'listEmbeddingStateRows',
     'deleteChunks', 'getChunksWithEmbeddings', 'deleteChunksExcept', 'setChunkerVersion', 'readSourceChunkerVersion', 'setSourceChunkerVersion', 'writeTextProjectionSeal',
     'moveChunkIndexes', 'getChunkReuseRows', 'findCodeDefinitions', 'listSymbolTypesForName', 'findCodeRefChunks',
     'countOversizedEmbedSkips', 'countOrphanChunks', 'countCodeChunkPages', 'codeChunksExist', 'hasUnsealedPages', 'currentCodeChunksExist',
-    'listQualifiedSymbolNames', 'listWithdrawalChunks', 'deleteChunksForPages', 'listContextualModeCandidates', 'resolveFrozenHits'],
+    'listQualifiedSymbolNames', 'listSymbolLanguages', 'listSupportedChunkIds', 'listSymbolChunkIds', 'listWalkChunkRows', 'readReindexSpendInputs', 'listWithdrawalChunks', 'deleteChunksForPages', 'listContextualModeCandidates', 'resolveFrozenHits', 'readSegmentRegions'],
   extraction: ['countStalePagesForExtraction', 'listStalePagesForExtraction', 'markPagesExtractedBatch', 'markPagesAttendanceBlocked',
-    'countStaleFrontmatterKeyPages', 'listStaleFrontmatterKeyPages', 'stripStaleFrontmatterKeys'],
+    'countStaleFrontmatterKeyPages', 'listStaleFrontmatterKeyPages', 'stripStaleFrontmatterKeys',
+    'listFactsFencePages', 'listSweepStalePages', 'listSweepDeferredPages', 'listPageRefsForSlugs', 'readExtractReceiptSlot', 'readExtractReceiptSeal', 'upsertExtractRollupDay',
+    'readPageExtractionWatermark', 'commitPageExtraction', 'readPageExtractionReceipt', 'clearPageExtractionState', 'writePageExtractionReceipt'],
   links: ['addLink', 'addLinksBatch', 'replaceDerivedLinks', 'replaceDerivedLinksBatch', 'removeLink', 'removeLinksByPagesAndSource',
     'getLinks', 'getBacklinks', 'listLinkSources', 'findByTitleFuzzy', 'traverseGraph', 'traversePaths', 'traversePathsDetailed',
     'relationalFanout', 'relationalChainHop', 'getBacklinkCounts', 'getAdjacencyBoosts', 'getContentFlagsByPageIds',
     'getUnverifiedExtractionPageIds', 'getPageTimestamps', 'getEffectiveDates', 'getSalienceScores', 'findOrphanPages'],
   tags: ['addTag', 'removeTag', 'getTags', 'pruneFrontmatterTags', 'addPageTagsById'],
   timeline: ['addTimelineEntry', 'addTimelineEntriesBatch', 'getTimeline', 'getTimelineForDate', 'getSince', 'getOnThisDay',
-    'getLastSeen', 'upsertEventProjection', 'removeTimelineRows', 'updateTimelineDetails', 'insertCanonicalTimelineRows', 'sampleEffectiveDates',
+    'getLastSeen', 'upsertEventProjection', 'listEventProjectionRows', 'readEventProjectionId', 'deleteEventProjections', 'restoreEventProjection', 'removeTimelineRows', 'updateTimelineDetails', 'insertCanonicalTimelineRows', 'sampleEffectiveDates',
     'sampleEffectiveDateSources', 'readMaxTimelineEntryId', 'listStoredTimelineRowsOrdered', 'deleteTimelineRows',
-    'storedTimelineRowsByPageIds', 'countSegmentedTimelinePages', 'countTimelineCommentMarkupRows', 'listTimelineOrphanPages'],
-  ontology: ['mergeOntologyFact', 'getOntology', 'discoverOntologyDimensions', 'findOntologyConflicts'],
-  raw_files: ['putRawData', 'getRawData', 'upsertFile', 'getFile', 'listFilesForPage', 'listFiles'],
+    'storedTimelineRowsByPageIds', 'countSegmentedTimelinePages', 'countTimelineCommentMarkupRows', 'listTimelineOrphanPages',
+    // the timeline repair kinds (engine-sql/timeline-repair-reads.ts)
+    'listTimelineHistoryPages', 'listTimelineVersionWitnesses', 'readTimelineVersionBody', 'listTimelineMarkupRows',
+    'listMaterializedMarkerPages', 'rewriteTimelineRow', 'listDateBulletPages', 'listConnectorFencePages',
+    'readNewestTimelineEntryId'],
+  ontology: ['mergeOntologyFact', 'getOntology', 'discoverOntologyDimensions', 'findOntologyConflicts',
+    'listRekeyLosers', 'repointSupersededToKept', 'clearOntologySlots', 'deleteRekeyLosers',
+    'restoreOntologyFact'],
+  raw_files: [
+    'putRawData', 'getRawData', 'upsertFile', 'getFile', 'listFilesForPage',
+    'hasFileWithHash', 'listFileRowsForVerify',
+    'readSourceLocalPathForVerify', 'upsertCliFileRow', 'upsertRawFileRow', 'upsertSyncFileRow',
+    'sourceIdExists', 'readPageIdInSource', 'readFileOwner', 'claimFilePage',
+    'upsertOpFileRow', 'listReadableFileRows', 'readReadableFileForUrl', 'readReadablePageId',
+    'countUnreadableFilesAt', 'countFilesRegisteredElsewhere', 'registerFileRow', 'readReadableFileForVerify',
+    'listReadableFilePaths', 'listFiles',
+  ],
   takes: ['addTakesBatch', 'updateTakeEmbeddings', 'listTakes', 'searchTakes', 'searchTakesVector', 'getTakeEmbeddings',
     'countStaleTakes', 'listStaleTakes', 'updateTake', 'supersedeTake', 'resolveTake', 'getScorecard', 'getCalibrationCurve',
     'addSynthesisEvidence', 'listActiveTakesForPages', 'matchTakeRows', 'deleteTakeRows',
     // group D (takes reads)
-    'countOffGridTakeWeights', 'countTakes', 'planFactPurgeTakes', 'listTakeRowsForPage', 'countMcpResolvedTakes',
+    'countOffGridTakeWeights', 'countTakes', 'insertImpactLogRow', 'planFactPurgeTakes', 'listTakeRowsForPage', 'readTakePreimages', 'countMcpResolvedTakes',
     'listTakeSupersessionCandidates', 'listHeldFenceTakeRows',
     // the reads and the delete of `gbrain extract takes`
-    'listTakeIdsLeavingFence', 'listTakePreimages', 'deleteTakesByIds', 'findTakeId'],
-  dream: ['getDreamVerdict', 'putDreamVerdict', 'sweepDreamVerdicts'],
+    'listTakeIdsLeavingFence', 'listTakePreimages', 'deleteTakesByIds', 'findTakeId',
+    // the takes publication's prepare step (engine-sql/takes-reads.ts)
+    'stampTakeResolvedAt', 'recordTakeHoldersUsed', 'listTakeHoldersAtRows',
+    // the take-supersession repair (engine-sql/takes-reads.ts)
+    'listTakePointers', 'listTakeSupersedeReceipts', 'setTakeSupersededBy',
+    // the accepted-takes repair (engine-sql/takes-reads.ts)
+    'listAcceptedTakeRemovals', 'readTakeRowTier',
+    // the batch 7 lost-fence-rows take reads (engine-sql/lost-fence-reads.ts)
+    'hasTakeClaim', 'listTakeRowNums', 'readTakeRowTierByClaim',
+    'readTakeRowTrust', 'readTakeTrustRef', 'listTopResolvedTakesForHolder', 'listAbandonedTakes', 'listLatestTakeGrades', 'readTakeGrade', 'insertTakeGrade', 'deleteTakeGrade', 'readLiveTakePage', 'readTakeClaim', 'upsertTakeHorizon', 'deleteTakeHorizon', 'listTakeHorizons', 'listHorizonScanRows', 'listWaveAppliedTakeIds', 'revertWaveTakeResolutions', 'unapplyWaveTakeGrades', 'purgeTakeNudgesByWave', 'insertTakeNudge', 'listTakeNudges', 'listPendingTakeProposals', 'readTakeProposal', 'claimTakeProposal', 'readStrandedTakeProposalClaim', 'releaseTakeProposalClaim', 'setTakeProposalPromotedRow', 'rejectTakeProposal', 'takeProposalCached', 'listRejectedTakeProposalClaims', 'insertTakeProposal', 'listTakeProposalTombstones', 'deleteTakeProposalTombstones', 'listProposeTakesCandidatePages', 'readOpCheckpointDoc', 'writeOpCheckpointDoc', 'listWriteRequestsByRequestId'],
+  dream: ['getDreamVerdict', 'putDreamVerdict', 'sweepDreamVerdicts',
+    // dream cycle (engine-sql/dream-cycle.ts)
+    'listDreamQueueCandidates', 'listLiveDreamCycleLocks', 'readDreamJobStatus', 'ensureDreamMapConfigRow',
+    'lockDreamMapConfigRow', 'writeDreamMapConfigRow', 'recordDreamBreakerReset', 'stampDreamPageProvenance',
+    'listDreamPageIds', 'countDreamProvenancePages', 'readDreamDeferralReceipt', 'listConsolidationClaimValues',
+    'setConsolidatedFactValidUntil', 'listReadersSourcedFactIds', 'findConsolidationPageIds', 'readConsolidationTakesMaxRowNum',
+    'findConsolidatedTakes', 'refreshConsolidatedTakeSource', 'findConsolidatedTakeIds', 'listConsolidationClaimShapes',
+    'listRetainedDreamOutputSources', 'readDreamSourceIncarnation', 'listDreamAtomPages', 'listSynthesisPageBodies',
+    'listLaterPersistenceRequests', 'listCommittedOutputRequests', 'readDreamVerifyEpoch', 'listDreamJobCreatedAt',
+    'readDreamPreRunRevision', 'listCompletedSynthJobs', 'countCoalescibleSynthJobs', 'listWaitingChildJobIds',
+    'listDreamChildJobTimings', 'countRecentDreamSynthSubmissions'],
   contradictions: ['writeContradictionsRun', 'loadContradictionsTrend', 'getContradictionCacheEntry', 'putContradictionCacheEntry',
-    'sweepContradictionCache'],
+    'sweepContradictionCache',
+    'listEdgeContradictionCandidates', 'listKnownEdgeProposals', 'listLinkContexts', 'recordEdgeProposal', 'readEdgeProposal',
+    'edgeClosureLanded', 'readEdgeProposalEvidence', 'readEdgeProposalHash', 'markEdgeProposalStale', 'setEdgeProposalStatus',
+    'rejectOpenEdgeProposal', 'markEdgeProposalUndone', 'markRevertedEdgeProposals', 'listLiveChunksByIds', 'listLiveTakesByIds',
+    'listEdgeProposalCliRows', 'deleteHeldEdgeProposalErrors', 'listAppliedEdgeProposalIds', 'deleteEdgeProposalError',
+    'readEdgeProposalSourceId', 'markEdgeProposalDated',
+    'readLastContradictionsPromptVersion', 'listEvalCandidateQueries'],
   facts: ['insertFact', 'insertFacts', 'deleteFactsForPage', 'expireFact', 'listFactsByEntity', 'listFactsSince', 'listFactsKeyset',
     'listFactsBySession', 'listSupersessions', 'countUnconsolidatedFacts', 'findCandidateDuplicates', 'consolidateFact',
-    'findTrajectory', 'getFactsHealth', 'listFenceRetireCandidates'],
+    'findTrajectory', 'getFactsHealth', 'listFenceRetireCandidates', 'readFactPreimages', 'restoreFactPreimage',
+    'listFactIdsBySourcePrefix', 'expireFactRows',
+    // the batch 7 lost-fence-rows fact reads (engine-sql/lost-fence-reads.ts)
+    'hasActiveFactText', 'readFactTrustTier', 'listFenceFactRowNums', 'readLiveFactRowTier',
+    // a page publication's fence projection and fence guard, tier-only row changes, the unwithdrawn-facts page body read
+    // (engine-sql/fence-projection.ts, trust-fence.ts, row-tier.ts, unwithdrawn-restore.ts; test/engine-parity/page-fence-writes.test.ts)
+    'listQuotedTakeRows', 'listPageFenceFactCells', 'hasPositionedPageFacts', 'hasFenceAbsentHold', 'listPageTakeRowNums', 'expireFenceFacts', 'refreshFenceFactFields',
+    'clearChangedTakeResolutions', 'writeFenceTakeResolutions', 'detachFenceFactRows', 'listOccupiedFenceRowNums', 'moveGuardedFenceRows', 'listTrustedPrivateCopies',
+    'readLiveFenceFactAt', 'listFactsAboveWriter', 'readRowTrustTier', 'setRowTrustTier', 'readTierProjectionPage', 'readPageInlineBody'],
   segmented_body: ['allocateBodyOccurrenceIds', 'stageSegmentTexts', 'readSegmentTexts', 'stageManifestRows', 'readManifest', 'readSegmentedEmbedPage',
     'stageSegmentChunks', 'createSegmentedPageShell', 'flipBodyGeneration', 'sealSegmentedPage', 'openBodyStaging', 'setBodyStagingState', 'sweepSegments',
-    'readSegmentDerivations', 'upsertSegmentDerivations', 'retireSegmentDerivations'],
-  versions: ['createVersion', 'getVersions', 'revertToVersion', 'readLatestVersionId', 'readLatestVersionIdAtTier', 'stampVersionChangeReason', 'pruneHoldingPageVersions'],
-  stats_ingest: ['getStats', 'getHealth', 'countOnboardSignal', 'logIngest', 'getIngestLog'],
+    'readSegmentDerivations', 'upsertSegmentDerivations', 'retireSegmentDerivations',
+    'lockBodyStagingState', 'deleteUnstagedSegmentChunks', 'deleteRewrittenSegmentDerivations', 'readPageViewDigest', 'writePageViewDigest',
+    'listChunkedOccurrences', 'readRetiredChunkVectors', 'hasStaleSegmentChunks', 'retireStaleSegmentChunks', 'readSegmentedProjectionPage', 'listVectorlessChunkIndexes',
+    // the segmented write path (engine-members/segmented-writes.ts)
+    'readSegmentedLivePage', 'listSegmentedRechunkCandidates', 'readSegmentedRechunkPage', 'listOccurrenceChunks', 'readMaterializingRevision', 'setMaterializingRevision', 'restorePageUpdatedAt', 'readSegmentedRewritePage', 'restorePageDeletedAt', 'lockSegmentedGenerationPage', 'splitManifestGeneration', 'publishRebuiltGeneration', 'setSegmentedVersionHash', 'hasLiveSegmentedPage', 'countSegmentedEmbedRows', 'listSegmentedStaleRows', 'readSegmentChunkInputHashes', 'installSegmentedVectors', 'listLiveEmbedSegments', 'listSegmentChunkRows'],
+  versions: ['createVersion', 'getVersions', 'revertToVersion', 'readLatestVersionId', 'readLatestVersionIdAtTier', 'stampVersionChangeReason', 'pruneHoldingPageVersions',
+    // the batch 6a history repair reads (engine-sql/version-reasons.ts, overwrite-reads.ts)
+    'listVersionsByChangeReason', 'replaceVersionChangeReasons', 'listRetainedVersionBodies', 'readArchivedVersionBody',
+    'listOverwriteCandidates', 'listVersionsAfter', 'listOverwriteLivePages', 'readVersionContent', 'readPageVersionRow',
+    // the batch 7 lost-fence-rows version read (engine-sql/lost-fence-reads.ts)
+    'listInlineVersionTexts'],
+  stats_ingest: ['getStats', 'getHealth', 'countOnboardSignal', 'logIngest', 'getIngestLog', 'countBrainLivePages', 'countLivePagesBySource', 'countChunksBySource', 'readBrainMaturity', 'listVisiblePageSlugs', 'readPagesForVersionHistory',
+    'pingStore'],
   sync_aliases: ['updateSlug', 'rewriteLinks', 'resolveSlugWithAlias', 'resolveSlugWithAliasDetailed', 'resolveAliases',
     'setPageAliases', 'replaceDerivedAliases', 'refreshPageBody', 'updatePageContextualRetrievalState', 'migrateFactsToCanonical'],
-  config: ['getConfig', 'setConfig', 'unsetConfig', 'listConfigKeys', 'getAllConfig', 'getConfigValues'],
+  config: ['getConfig', 'setConfig', 'unsetConfig', 'listConfigKeys', 'getAllConfig', 'getConfigValues', 'readStoredConfigValue'],
   import_guards: ['readManagedModeRows', 'getSourceStrictness', 'readPersistenceBrainId', 'readLocalWriterRow', 'insertLocalWriterRow',
     'readTransactionSettings', 'applyTransactionSettings', 'beginSnapshotRead', 'readCurrentWriteTrust', 'setWriteContext', 'readLedgerSource', 'isFolderRestricted', 'listCoveredSources'],
-  persistence_journal: ['readJournalLimitRows', 'readHeldPageRows', 'readHeldCoverageRows', 'listFenceHoldRows', 'readReasonPurgeTombstones', 'readSourcePurgeEpoch', 'readWriteRequest', 'readWriteRequestById', 'listWriteRequestRows',
-    'readWriteRequestProgress', 'countOutstandingBySource', 'ownsSchemaTables', 'readCounterRows', 'readAdmissionRate', 'lockPersistenceCounters', 'insertWriteRequest', 'stampWriteClaim', 'lockWriteRequest', 'completeWriteRow', 'cancelWriteRow', 'insertPublicationEffects', 'insertWithdrawalEffects', 'readSourceMembership',
-    'findTopologyChanges', 'renewWriteClaim', 'releaseUnpublishedClaim', 'expireStaleWriteClaims', 'hasClaimableWrite', 'selectClaimableWrite', 'listHostConsumerRows', 'probeLiveConsumerRows',
+  persistence_journal: ['readJournalLimitRows', 'readHeldPageRows', 'readHeldHitRows', 'readHeldCoverageRows', 'listFenceHoldRows', 'readWriteRequest', 'readWriteRequestById', 'listWriteRequestRows',
+    'readWriteRequestProgress', 'countOutstandingBySource', 'ownsSchemaTables', 'readCounterRows', 'readAdmissionRate', 'lockPersistenceCounters', 'insertWriteRequest', 'stampWriteClaim', 'lockWriteRequest', 'completeWriteRow', 'lockWriteRequestsById', 'compactTerminalIntent', 'cancelWriteRow', 'insertPublicationEffects', 'insertWithdrawalEffects', 'readSourceMembership',
+    'readSourcePurgeEpoch', 'listGenerationSourceIncarnations', 'readChronicleDepthRow', 'readChronicleBackfillBatch', 'listChronicleOwnedHashes', 'listRetiredGenerationItemKeys',
+    'listPageContentHashes', 'listLiveGenerationItems', 'hasChronicleSkipDecision', 'pageSlugExists', 'listOrphanedChronicleOwners',
+    'listChronicleEventSlotRows', 'listChronicleCoverageGapRows', 'readGitHoldRecords', 'readGitHoldRetryRequest', 'readGitHoldReportInputs', 'lockGitHoldSummary', 'adjustGitHoldSummary',
+    'readGitHoldRow', 'writeGitHoldRow', 'replaceGitHoldRow', 'deleteGitHoldRow', 'countGitHolds', 'readGitHoldListingRows', 'readGitHoldCodeCountRows',
+    'readGitImageHoldCountRows', 'readSyncConversionRows', 'recordSyncConversion', 'readSyncPassRow', 'readLiveSyncPassRows', 'writeSyncPassRow', 'readSyncStatusSourceRow',
+    'readSyncStatusCommittedRow', 'readManagedSyncCursorHeader', 'readRetiredManagedSyncCursor', 'readManagedSyncFailureRows',
+    'readOrphanedManagedSyncFailureRows', 'readSyncHeadRequestRow', 'readSyncRecoveryProbeRow', 'readIdentityDowngradeRows', 'readWriteWatermarkRow', 'readSourceMovementRows', 'readLiveSyncJobId', 'listFreshnessTargets', 'readIdentityDowngradeOldPage', 'countIdentityDowngradeCarry', 'readIdentityRemedySide',
+    'readSourceCheckoutRoot', 'readUnembeddedPageSummary', 'readWorktreeAdmission', 'completeSyncedRefresh', 'hasDeferralRoom', 'readRefreshTiming',
+    'countHeldBehindImport', 'readFenceOriginGone', 'lockGenerationKey', 'clearFenceHoldRows', 'readFenceHoldFiles', 'readLiveGenerationRow',
+    'activateGenerationRows', 'recordHeldGenerationRow', 'heldGenerationRowsForInput', 'readHeldGenerationContext', 'liveGenerationForOperation',
+    'countGenerationAttempt', 'clearGenerationAttempts', 'readGenerationRestored', 'clearTieHeldGenerationRows', 'readGenerationValve',
+    'bumpGenerationValve', 'scrubGenerationPageRows', 'scrubGenerationTextRows', 'recordGenerationActivation', 'markGenerationActivated',
+    'readGenerationActivationState', 'settleGenerationMember', 'listPendingGenerationMembers', 'listGenerationOrphanCandidates',
+    'readGenerationItemsByIds', 'listUnmatchedGenerationRows', 'listRestorableGenerationRows', 'listHeldGenerationRows', 'readHeldGenerationProposal',
+    'listRetiredFenceItems', 'listRecordedFenceItemKeys', 'hasBodylessPageVersion', 'listFenceVersionBodies', 'moveKeptFactRows',
+    'readGenerationFenceBlocks', 'listOwnedGenerationItems', 'readLiveGenerationId', 'readGenerationPageRows', 'readAtomOriginInput',
+    'listProducerVersionRows', 'listAtomWriteReceipts', 'readReceiptCompactionWindow', 'listReceiptCompactionCandidates', 'countKeptFailedReceipts',
+    'listWriteRequestsByRequestIds', 'listEmbeddingCandidates', 'claimNotifierLease', 'readNotifierLease', 'holdsNotifierLease', 'releaseNotifierLease',
+    'readNotifierSources', 'writeNotifierState', 'writeNotifierCoverage', 'recordNotifierSyncerHost', 'readNotifierStatusRows', 'hasNotifierCoverage',
+    'upsertWantedMarker', 'attachWantedMarkerJob', 'readWantedMarkers', 'readDueWantedMarkers', 'pruneSatisfiedWantedMarkers', 'clearWantedMarker',
+    'settleFreshnessMarker', 'listSourceWantedMarkers', 'readFirstDue', 'readWriteRequestsByRequestIds', 'insertWriteRequestGroup', 'readOwnerHostBinding',
+    'listTopologyRecoveries', 'readSegmentedGateEvidence',
+    'findTopologyChanges', 'readTopologyChangeDigest', 'renewWriteClaim', 'releaseUnpublishedClaim', 'expireStaleWriteClaims', 'hasClaimableWrite', 'selectClaimableWrite', 'listHostConsumerRows', 'probeLiveConsumerRows',
     'renewConsumerRow', 'deleteConsumerRow', 'stampWorktreeHeartbeats', 'readTopologyChange', 'insertTopologyChange',
     'claimHousekeepingTurn', 'completeHousekeepingTurn', 'readReceiptBudget', 'listCompactableReceipts', 'listReservationsAfter',
     'listTrueUpRequests', 'trueUpReservations', 'readCapacityForecastInputs', 'listPendingSegmentedProjections', 'selectProjectionWindowJobs',
-    'claimSegmentedProjection', 'renewSegmentedProjectionClaim', 'releaseSegmentedProjectionClaim', 'deleteProjectionJob', 'markProjectionRebuildFailed', 'declarePersistence', 'requireSynchronousCommit', 'listGatedMirrorRequests', 'listEffectRecoveries', 'selectClaimableEffect', 'readRequestEffects',
-    'stampEffectClaim', 'renewEffectClaim', 'advanceEffectRow', 'completeEffectRow', 'retryEffectRow', 'retryBusyEffectRow', 'requeueEffectRow', 'parkEffectRow', 'failEffectRow', 'readMirrorGateRows', 'lockEffectGuard', 'hasRearmableTargets', 'probeIdleWork',
+    'claimSegmentedProjection', 'renewSegmentedProjectionClaim', 'releaseSegmentedProjectionClaim', 'deleteProjectionJob', 'markProjectionRebuildFailed', 'declarePersistence', 'requireSynchronousCommit', 'listGatedMirrorRequests', 'listEffectRecoveries', 'selectClaimableEffect', 'readRequestEffects', 'readSourceRequestById', 'listSourceRequestsByRequestId', 'listRetryTrackedEffects', 'lockEffectRow',
+    'stampEffectClaim', 'claimCoalescedGitEffects', 'renewEffectClaim', 'advanceEffectRow', 'completeEffectRow', 'retryEffectRow', 'retryBusyEffectRow', 'requeueEffectRow', 'parkEffectRow', 'failEffectRow', 'readMirrorGateRows', 'lockEffectGuard', 'hasRearmableTargets', 'probeIdleWork',
     'probeNoopEmbeddingSettle', 'lockNoopEmbeddingWindow', 'readNoopEmbeddingCandidates', 'settleNoopEmbeddingRows',
     'readOAuthClientWriteGrant', 'readAccessTokenWriteGrant', 'shareLockWriteCredential', 'listOverdueHeldWrites', 'lockOverdueHold', 'listOwnerRecoveryHeads', 'listResumableRefreshes', 'listSourceLastCommits',
-    'readWriterVersionCutoff', 'listWriterVersions', 'recentWriterVersions'],
-  entity_reads: ['readMentionLastPass', 'readMentionIndexStatus', 'countLivePagesInSource', 'countMentionDueSince', 'countPagesDueForMentions', 'readIdentitySiblingCandidates', 'findExactSlug', 'findFuzzyEntityCandidates', 'findExactBasenameCandidates', 'readRetirementHop', 'readEntityCardRows',
-    'readExtractionLagCounts', 'readIgnoredPrivacyLabelPages'],
+    'readWriterVersionCutoff', 'listWriterVersions', 'recentWriterVersions',
+    'readWriteRequestsByRequestId', 'readSourceSyncShape', 'readNotifierFirstDue', 'readSourceLastCommit', 'readDrainHolderProgress', 'readLiveJobIds', 'readDrainLeaseBeacon', 'writeDrainLeaseHolder', 'refreshDrainLeaseHolder', 'releaseDrainLeaseHolder',
+    'readWriterDiagnosticRows', 'readWriterStatusRows', 'listOnboardingSources', 'listBlockingEffectRows', 'listActiveWorktreeRefreshRows', 'readHeadBlockerRows', 'readRecoveringHeadRow', 'readIncompleteSyncReceipt', 'readOpenPassWork', 'readIncompleteSyncReceiptRows',
+    // the batch 9 segmented-mirror effect members (engine-sql/segmented-mirror-effects.ts)
+    'insertRemirrorEffects', 'readRemirrorEffects',
+    // the batch 9 fence repair bookkeeping (engine-sql/fence-repair-records.ts)
+    'listSourceCheckpointRecords', 'insertOpCheckpointIfAbsent', 'replaceOpCheckpointAtVersion', 'upsertFenceTrendRunRecord', 'addSoakCounterEvent', 'readOldestSyncHoldAt',
+    // the batch 9 daily budget ledger writes (engine-sql/budget-ledger-writes.ts)
+    'reclaimBudgetReservations', 'reserveBudgetReservation', 'dispatchBudgetReservation', 'settleBudgetReservation', 'releaseBudgetReservation',
+    // the batch 6b twin-merge moves (engine-sql/twin-merge-moves.ts) and the rename alias (engine-sql/rename-alias-rows.ts)
+    'moveTwinRelationships', 'moveTwinPageChildren', 'moveTwinFacts', 'movePageVersions', 'recordRenameAlias',
+    // the batch 6c secret store and secret-spans page-store members (engine-sql/secret-store.ts, secret-spans-rows.ts)
+    'findSecretEntryByMac', 'secretEntryExists', 'insertSecretEntry', 'insertSecretOccurrence', 'readSecretEntry', 'listSecretOccurrences', 'listSecretEntrySummaries', 'countSecretsByRule', 'listAllowedSecretMacs', 'listSecretKeysInUse', 'readSecretStoreSnapshot', 'insertBackupSecretEntry', 'readBackupEntryHold', 'insertBackupSecretOccurrence', 'deleteUnreferencedSecretEntry', 'listSecretHoldingPages', 'countUnreferencedSecretEntries', 'readRestorePageHit', 'markSecretEntryAllowed',
+    'readPageRedactionRow', 'readPageRedactionRows', 'listTimelineDedupRows', 'listVersionBodiesForRedaction', 'countPageVersionRows', 'setRetainedVersionBody', 'listChunkTextsForRedaction', 'deleteChunksByIds', 'setRedactedPageFields', 'readRawDataValue', 'setRawDataValue', 'setRedactedRowText'],
+  retention_purge: ['releaseStaleOriginParkHolds', 'listOwedPurgeRecords', 'pruneOwedPurgeRecords', 'pruneOriginParkRecords', 'prunePurgeParkRecords', 'recordPurgeFailureRecord', 'deletePurgeParkRecord', 'markPurgeParksInactive', 'dropRearmedPurgeParks', 'listReleasedPurgeOrigins', 'listManagedPurgeCandidates', 'listExpiringOriginPages'],
+  label_door: ['readPrivacyOrigin', 'listOriginDependents', 'listCheckoutFiles', 'readPageLabelRow', 'readLabelGuardTiers', 'writePageLabelGuard'],
+  page_purge: ['listPurgeClaimFacts', 'listPurgeClaimTakes', 'listPurgeSegmentClaims', 'listQueuedPagePurges', 'listPageLinkStreams', 'insertPageFactPurges', 'listPageVersionBodiesForPurge', 'readPurgePageBody', 'listPageMirrorFacts', 'listPageMirrorTakeHashes', 'countPageCascadeRows', 'listPageVersionSourcePaths', 'listPagePurgeTombstones', 'listPagePurgeRows', 'deletePagePurgeTombstones', 'deleteFactPurgesByRequests', 'deleteTakePurgesByRequests', 'deletePurgedPageTrustProposals', 'deletePurgedPageHolds', 'deletePurgedPageGateReceipts', 'deletePurgedPageFacts', 'deletePurgedPageFiles', 'listPageTimelineReceipts', 'listPageSegmentShas', 'countPageManifestRows', 'deletePageStagings', 'deletePageSegmentTexts', 'sweepPageTextsForClaims', 'listRequestsForSlugs', 'readJournalCeiling', 'sweepJournalChunk', 'readEffectBytes', 'redactWriteRequestRow', 'releaseTerminalBytes', 'deletePurgedFeedbackRows', 'deletePurgedNameStoreRows', 'clearQueryCache', 'relationExists', 'readDerivationPurgeState', 'recordDerivationPurgeRow', 'continueDerivationSweep', 'listDerivationClaimForms', 'listPurgeOrigins', 'upsertDerivedOriginPark', 'recordOwedPurgeRows', 'deleteOriginHoldRows'],
+  mention_pass: ['readSegmentedPageSealed', 'storeSegmentDerivationsIfLive', 'listMentionSourceIds', 'writeMentionIndexStatus', 'lockMentionSources', 'listMentionLinkOrigins', 'deleteSourceMentionLinks', 'clearMentionSourceIndex', 'listStaleDerivedAliasSlugs', 'deleteDerivedAliasesForSlugs', 'listAliasDuePages', 'listDerivedAliasRows', 'readMentionPageRevisions', 'insertDerivedAliasRows', 'upsertPageAliasState', 'listMentionCandidatePages', 'listGazetteerEntryKeys', 'listMentionLinkersOfTargets', 'lockMentionEntries', 'applyGazetteerEntryChanges', 'resetMentionRevisions', 'readMentionGenerations', 'listMentionDuePages', 'listPageOutLinks', 'deleteLinksById', 'upsertPageMentionState', 'readMentionStatusStates', 'readMentionPolicyFingerprints', 'resetSourceMentionIndexRevisions', 'listLivePageSourceIds', 'listGazetteerPages', 'listGazetteerAliases', 'readPageStampTimes', 'readPageRevisionForShare', 'readExplainPage', 'readExplainScanPage', 'countMentionLinksTo', 'readPageNameText', 'listFrontmatterAliasNorms', 'listRejectedDeclarationPages'],
+  entity_reads: ['readMentionLastPass', 'countPagesDueForMentions', 'readIdentitySiblingCandidates', 'readSiblingGroupRows', 'findExactSlug', 'findFuzzyEntityCandidates', 'findExactBasenameCandidates', 'readRetirementHop', 'readEntityCardRows',
+      'readLiveSlugs', 'readLivePageTypes', 'readTrigramCandidates', 'readPrefixCandidates', 'readPrefixDirs', 'readPrefixTitleMatches', 'readNamedEntitySlugs',
+    'readExtractionLagCounts', 'readIgnoredPrivacyLabelPages',
+    'readMentionIndexStatus', 'countLivePagesInSource', 'countMentionDueSince', 'recountMentionIndexStatus', 'listUnretiredPagesBySlugPattern', 'listNameVariantCandidates', 'listVisibleNameVariantCandidates', 'listNameVariantCardCandidates', 'readVisibleVariantPages', 'countDistinctInboundLinkers', 'readLivePageFrontmatter', 'readEntityAnchoredPages', 'readPageTitlesById', 'readTextMentionPages',
+    'readImageSealProbe', 'readPageChunkerVersion', 'readPrefixAnchoredPages'],
   cycle_locks: ['acquireCycleLock', 'refreshCycleLock', 'releaseCycleLock', 'readCycleLocks', 'deleteCycleLock', 'deleteCycleLockIfStale',
     'assertCycleLease', 'takePageEmbeddingLease', 'renewPageEmbeddingLease', 'releasePageEmbeddingLease'],
-  minion_jobs: ['admitJob', 'getJob', 'listJobs', 'claimNextJob', 'renewJobLease', 'completeJob', 'failJob', 'reclaimStalledJobs'],
+  minion_jobs: ['admitJob', 'getJob', 'listJobs', 'claimNextJob', 'renewJobLease', 'completeJob', 'failJob', 'reclaimStalledJobs',
+    'readJobDataByIdempotencyKey', 'coalesceOnIdempotencyKey'],
   minion_queue: ['deleteTerminalJob', 'pauseJob', 'resumeJob', 'resolveParentJob', 'failParentJob', 'resolveStrandedParents',
-    'detachChildJob', 'updateJobProgress', 'addJobTokens', 'delayActiveJob', 'releaseWatchdogClaim', 'markJobWatchdogSuspect',
+    'detachChildJob', 'updateJobProgress', 'addJobTokens', 'delayActiveJob', 'releaseWatchdogClaim', 'releaseClaimForPause', 'deferClaimForQuietHours', 'markJobWatchdogSuspect',
     'promoteDelayedJobs', 'cancelJobs', 'killTimedOutJobs', 'killWallClockJobs', 'pruneJobs', 'retryJob', 'postInboxMessage',
     'listSynthesisCompletionKeys', 'listRecentSynthesisCompletions',
     'readJobInbox', 'readChildCompletions', 'listOpenJobIdsInQueue', 'renewPrivateQueueLease', 'listOwnedPrivateQueues',
-    'readPrivateQueueState', 'listStaleWaitingJobIds', 'countTtlExpiredWaiting', 'readJobStats', 'readQueueFamilyStats',
+    'readPrivateQueueState', 'listStaleWaitingJobIds', 'listUnfinishedJobsByName', 'countTtlExpiredWaiting', 'readJobStats', 'readQueueFamilyStats',
     'hasOverdueWatchdogSuspect', 'listUnreviewedJobs', 'getFailedJobForRetry', 'countOpenJobsByOwner', 'readJobSourceState', 'lockOAuthClient', 'listJobPage', 'listJobAttachmentNames',
     'insertJobAttachment', 'listJobAttachments', 'getJobAttachment', 'deleteJobAttachment',
     'readQueueHealthSignals', 'listWaitingByQueue', 'readQueueDivergence', 'listQueueWedgeCounts', 'listPrivateQueueHealth',
-    'readWedgeSignals', 'readOldestWaitingAge', 'listStuckActiveJobsByName',
+    'readWedgeSignals', 'readOldestWaitingAge', 'countWaitingJobs', 'countWaitingJobsForNames', 'listStuckActiveJobsByName', 'readUntakenWaitingJobs',
     // doctor job checks (jobs-checks.test.ts)
     'listStalledEmbedBackfillSources', 'readGlobalMaintenanceDeaths', 'readLastFailedGlobalMaintenanceJob', 'listFactsAbsorbJobsStillDead', 'readLegacyJobAuthority',
     'readQueuedSpendRows', 'listBuildSkewStacktraceLines', 'countDeadDreamSubmissionRows', 'listFactsAbsorbJobsByKeyPrefix', 'listDeadFactsAbsorbJobsByKeys',
@@ -153,53 +276,124 @@ export const FAMILIES: Record<string, readonly string[]> = {
     // oauth_clients rows (engine-sql/oauth-clients.ts)
     'readOauthClient', 'listOauthClients', 'patchOauthClient',
     // access_tokens rows (engine-sql/access-tokens.ts)
-    'insertAccessToken', 'findActiveAccessTokens', 'setAccessTokenMinTrust'],
+    'insertAccessToken', 'findActiveAccessTokens', 'setAccessTokenMinTrust',
+    'readActiveAccessTokenGrant', 'accessTokenLive', 'oauthClientLive', 'readOauthClientColumns', 'setOauthClientTokenTtl', 'insertOauthClientGrant', 'readTokenLifetimeClampedClients', 'readScopeSourceConfigs', 'readOauthAccessTokenRows', 'lockActiveAccessTokens', 'writeAccessTokenGrant', 'writeAccessTokenPrivateGrant', 'lockLegacyAccessTokens', 'readActiveAccessTokenByHash', 'touchAccessTokenLastUsed', 'deleteExpiredOauthCredentials', 'insertOauthToken', 'convertLegacyAccessTokenGrant', 'expireAllOauthCredentials', 'insertOauthCode', 'readOauthCodeForUpdate', 'deleteOauthCode', 'readOauthCodeChallenge', 'issueOauthTokens', 'readOauthRefreshTokenForUpdate', 'deleteOauthRefreshToken', 'readOauthClientForUpdate', 'lockOauthClientName', 'listAccessTokenRows', 'readLiveOauthClients', 'readLiveAccessTokenRows', 'oauthClientHoldsAuthorization', 'readSourceArchivedForShare', 'readSourceAttestState', 'replaceSourceConfig', 'persistOauthClientGrant', 'readLatestCatalogProvenanceAudit', 'listOauthGrantAudit', 'deleteOauthTokenByHash', 'softDeleteOauthClient', 'deleteOauthClientTokens', 'deleteOauthClientCodes', 'deleteOauthClientRow', 'setOauthClientRevision', 'insertOauthGrantAudit', 'countOauthAccessTokens',
+    'readLiveAccessTokenScope',
+    'setAccessTokenReadSharedRevision', 'setOauthClientReadSharedRevision', 'readSharedSourceRows'],
   // minion_status: lane L5 group B, job counts and last-run reads for the status surfaces (engine-sql/jobs-status.ts)
-  minion_status: ['readLastAutopilotCycles', 'countJobsByStatus', 'readWaitingQueueDepths', 'readLastCompletedJobAt', 'countTtlCancelledByName',
+  minion_status: ['listRecentSourceCycleFailures', 'readLastAutopilotCycles', 'countJobsByStatus', 'readWaitingQueueDepths', 'readLastCompletedJobAt', 'readLastFinishedJobAt', 'countTtlCancelledByName',
     'readWaitingScopeState', 'countRecentCompletedJobs', 'listRecentFailedJobErrors', 'readQueuedPageChars', 'readSourceJobCounts',
-    'readEmbedBackfillBySource'],
+    'readEmbedBackfillBySource',
+    'listBudgetOwners'],
   // minion_subagent: lane L5 group B, the subagent transcript and tool ledger (engine-sql/jobs-subagent.ts)
   minion_subagent: ['listSubagentMessages', 'countSubagentMessages', 'insertSubagentMessage', 'listSubagentToolExecutions', 'hasSubagentToolExecution', 'listSubagentWriteOutcomes', 'listSubagentOneshotLedger', 'summarizeSubagentToolExecutions', 'listSubagentPutPageSlugs', 'listSubagentPutPageWrites', 'listSubagentRetainedPutPages', 'listSubagentStagedPages', 'listSubagentTimelineAppendCalls', 'recordSubagentToolExecutions', 'startSubagentToolExecution', 'completeSubagentToolExecution', 'failSubagentToolExecution'],
   // cli_reads_export: the reads gbrain export ran through executeRaw (engine-sql/export-reads.ts)
-  cli_reads_export: ['setLocalStatementTimeout', 'listExportPageKeys', 'readExportWithdrawalLedgerBytes', 'listExportWithdrawals', 'readExportPageRows', 'normalizeFenceLines', 'readSegmentedPageHead', 'readBodyManifestRows', 'readBodyManifestMeta', 'listAccessPolicySourceIds', 'readBodyManifestOutline', 'listForcedCutSeqs', 'readManifestSeqAt', 'readSegmentedVersionBodyBytes'],
+  cli_reads_export: ['setLocalStatementTimeout', 'listExportPageKeys', 'readExportWithdrawalLedgerBytes', 'listExportWithdrawals', 'listPurgeTombstones', 'readExportPageRows', 'normalizeFenceLines', 'readSegmentedPageHead', 'readBodyManifestRows', 'readBodyManifestMeta', 'listAccessPolicySourceIds', 'readBodyManifestOutline', 'listForcedCutSeqs', 'readManifestSeqAt', 'readSegmentedVersionBodyBytes'],
   cli_reads_ops: ['scanExactBatch', 'nextLivePageAfter', 'listExactIdentityCandidates', 'rankEntities', 'listExtractionPendingPages',
-    'listUnattributedFacts', 'listWantedPages', 'readRankCoverage', 'readExactSnippetChunks', 'listExactRescanChunks', 'listHeldFenceCells', 'readFenceOverlayRows'],
+    'listUnattributedFacts', 'listWantedPages', 'readRankCoverage', 'readExactSnippetChunks', 'listExactRescanChunks', 'listHeldFenceCells', 'readFenceOverlayRows', 'listFenceRowTrust',
+    'probePageTypes', 'readLongPageSizes'],
   // facts_doctor: doctor checks
   facts_doctor: ['listConversationFactRows', 'countRedactedFacts', 'listOutsideContentFenceCounts', 'countAtomFacts', 'listUnpreviewedTrustFacts',
     'countUnlinkedFactsByOrigin', 'countUnlinkedFactStats', 'countFactRelinkOutcomes', 'listUnlinkedConversationSlugs', 'countFactEmbeddingCoverage',
-    'countStaleFactEmbeddings'],
+    'countStaleFactEmbeddings', 'countSegmentedCensusPages', 'listFactsPageBodies', 'readFactTableCatalog'],
   // embedding_catalog: the vector column catalog the embedding commands read (engine-sql/embedding-catalog.ts)
-  embedding_catalog: ['readChunkVectorColumn', 'readEmbeddingIdentity', 'listEmbeddingStores', 'hasStoredVectors', 'countChunkVectorCoverage'],
+  embedding_catalog: ['readChunkVectorColumn', 'readEmbeddingColumnTypmod', 'readEmbeddingSignatureCensus', 'countUnembeddedLiveFacts', 'countSynopsisTierPages', 'countEmbedSkipNullChunks', 'readFalseStampedChunkCounts', 'readEmbeddingIdentity', 'listEmbeddingStores', 'hasStoredVectors', 'countChunkVectorCoverage',
+    'readChunkColumnTypes', 'countChunkColumnCoverage', 'hasChunkImageVectors'],
 
   // fact_relink_attempts: relink-attempt memos
   fact_relink_attempts: ['upsertFactRelinkAttempt', 'listFactRelinkOutcomes', 'deleteFactRelinkMemos'],
-  // fact_relink_writes: the guarded relink UPDATEs of facts rows
   fact_relink_writes: ['placeRelinkedFact', 'linkConversationFact', 'listConversationRelinkPages'],
 
   // facts_cycle: command, cycle and fence reads
-  facts_cycle: ['listActiveFactsForEntity', 'listFreshExtractionOutcomes', 'listFenceRowGroups', 'readFactSubject', 'listFactsForPage', 'countLegacyFactsPending',
+  facts_cycle: ['listActiveFactsForEntity', 'listFreshExtractionOutcomes', 'listFenceRowGroups', 'readFactSubject', 'factsOrAliasesMayMatch', 'listFactsForPage', 'countLegacyFactsPending',
     'countUnconsolidatedFactsBySource', 'findBulkFactDays', 'maxFenceRowNum', 'readFenceRowOccupant', 'listStoredFenceFactRows', 'countWorldFacts'],
+
+  // facts_cycle_sites: phantom redirect, fence, facts-home and file-guard statements (item 4.2)
+  facts_cycle_sites: ['listPhantomFactRows', 'listCanonicalFenceRowNums', 'moveFactToPage', 'repointInboundLinks',
+    'repointOutboundLinks', 'pageHasTimelineEntries', 'maxFenceRowNumOfPage', 'listRootPageSlugsAfter',
+    'listOwnLinkIds', 'listActiveFactIdsOfPage', 'listFactIdsStillOnPage', 'listLinkIdsOnPage',
+    'readPageFileOrigin', 'listFenceRowClaims', 'adoptFactIntoFence', 'listFenceRowSupersession',
+    'setFactSupersededBy', 'listHeldWideningFactIds', 'expireFactInPlace', 'expireAndDetachFact',
+    'updateFenceFactCells', 'listExpirableFactIdsOfDeletedPage', 'readDeletedPageBody', 'expireFactsByIds',
+    'listOntologyObservationSlugs', 'listDeletedPageSlugsWithActiveFacts', 'scanUnfencedFactRows', 'listHeldFactRows',
+    'listFencedFactsOfMissingPages', 'readFenceRowNumHint', 'readSourceCheckoutPath', 'readLiveStoredBody',
+    'listPageStates', 'countSegmentedVersionsOfPage'],
 
   // facts_purge: purge, withdrawal, relink and fence repair
 
   facts_purge: ['countFactFingerprintLeftovers', 'loadPurgeTarget', 'planFactPurgeIds', 'listFactsReconcileBacklog', 'settleFactsReconcile', 'lockReconcileRevision', 'selectFactsReconcileDrain', 'listRelinkCandidateRows',
-    'countRelinkCandidates', 'listSimilarActiveFacts', 'findActiveSingleFact', 'listSingleFactMetadata', 'listUnfencedFactRows',
-    'listHeldFenceFactRows', 'listWithdrawalSlugs', 'expireFactsByWithdrawal', 'insertFactPurge', 'listDerivedRows'],
+    'countRelinkCandidates', 'listSimilarActiveFacts', 'findActiveSingleFact', 'listSingleFactMetadata', 'listUnfencedFactRows', 'countUnfencedFactGroups',
+    'listHeldFenceFactRows', 'listWithdrawalSlugs', 'expireFactsByWithdrawal', 'insertFactPurge', 'upsertPagePurges',
+    'expireFactsOfGonePages', 'readPurgeSourceLocalPath', 'listGitEffectsCarryingReason', 'listPageGitEffectsForStrip',
+    'setPurgeEffectData', 'listPageChangeReasons', 'listRequestsRecordingReasons', 'heldEntityPageDeleted', 'readHeldAccessState',
+    'heldTargetPageLive', 'listHeldMoveRows', 'listStruckHeldRows', 'readHeldRowVisibility', 'heldMoveDue',
+    'readHeldConfigValue', 'readHeldPageLocation', 'readHeldVersionsEdited', 'listSegmentedPageBodies',
+    'listSegmentedVersionBodies', 'setPurgeProbeTimeout', 'probePurgeDerivations', 'listBeliefEventsForPurgeProbe',
+    'listFactContextsForPurgeProbe', 'listPageSourcePathsForPurge', 'listNearestFactsForPurge',
+    'countLegacyDerivedPages', 'vacuumPurgedTables', 'listPageProseHits', 'readPurgeReceiptSourcePath',
+    'countPagePurgeTombstones', 'readDeletePageRequest', 'listPurgeEffects', 'countPurgeFingerprintResidue',
+    'listStagingPartEdges', 'listStagingsHoldingClaim', 'purgeSubjectPageLive', 'listPurgePagesById', 'countPurgeVersionsCarryingClaim',
+    'countPurgeReviewRows', 'listPurgeStreamSlugs', 'findPurgeBlockedPublication', 'listPagesForPurgeRewrite', 'updatePageBodyForPurge',
+    'setPurgeVersionBody', 'listPurgeVersionBodies', 'redactVersionChangeReasons', 'listSegmentedVersionsForPurge', 'abortPurgedStagings', 'deletePurgedStagingParts',
+    'deletePageViewDigests', 'deleteUnreferencedPurgedTexts', 'listPurgeMatchCandidates', 'lockPurgeSource', 'insertHoldingPagePurges',
+    'insertTakePurge', 'deletePurgedTakes', 'deletePurgeReviewQueue', 'deletePurgeReviewProposals', 'deletePurgeDecideProposals',
+    'deletePurgeTrustProposals', 'deletePurgeOpenLoops', 'deletePurgeWriteGateHolds', 'deletePurgeWriteGateReceipts', 'deletePurgeTakeProposals',
+    'blankPurgeCoreEditNotices', 'deletePurgedFacts', 'deletePurgedChunks', 'listPurgedPageRevisions', 'insertPurgeEffects',
+    'insertReasonPurgeTombstones', 'deletePurgedSlugStoreRows', 'listPageSecretOccurrences', 'deletePurgedSlugHolds', 'readHeldConcept', 'isConceptStillHeld', 'lockHeldConcept', 'lockLiveConceptMembers', 'listLiveConceptMemberRevisions', 'listConceptIncomingLinks', 'carryConceptIncomingLinks', 'readTombstoneWindow', 'readConceptStatedKinds', 'readRebuildAccess', 'readHeldConceptRows'],
+
+  // purge_plan: a fact purge's request finders and verification probes
+  purge_plan: ['listRequestsCarryingClaim', 'listRequestsHoldingStagings', 'countPurgeProbe', 'listPurgeProbeItems'],
+
+  // projection_rebuild: a page projection rebuild's queue listing, job reason, keep plan and drained probe, the
+  // deferred chunk replacement's step, the rebuild loop's queue stamps and the re-seal's pending count (its job
+  // delete is persistence_journal's deleteProjectionJob, its failed mark persistence_journal's
+  // markProjectionRebuildFailed)
+  projection_rebuild: ['listQueuedPageProjections', 'readProjectionJobReason', 'readChunkKeepState',
+    'clearUnkeptChunkVectors', 'readChunkInputHashes', 'clearChunkEmbeddingsByIds', 'writeChunkInputHashes', 'setProjectionChunkerVersion', 'hasDrainableProjectionJob',
+    'readChunkRowsFingerprint', 'deleteUnkeptChunks', 'listStaleChunkVectors', 'clearChunkVectors', 'readProjectionHead',
+    'isDeferredReplacementHeld', 'renewDeferredReplacementClaim', 'releaseDeferredReplacementClaim', 'hasSegmentedPage', 'rekeyProjectionJob',
+    'stampDeferredProjectionJob', 'touchUnclaimedProjectionJob', 'deferProjectionJob', 'countPendingTextChunks',
+    'probeProjectionWindowCandidates', 'queuePageProjectionJob', 'readPagesRowEstimate', 'readDrainRunStart', 'isDrainClockPast', 'hasQueuedProjectionWork', 'readProjectionBacklog', 'listProjectionDrainPreview', 'listImageSealWindow', 'readImageSealPages', 'listImageSealChunks', 'clearImageSealVectors', 'sealImagePages'],
 
   // facts_repair: repair classifiers and loop retirement
   facts_repair: ['loopFactDrift', 'closedLoopWithActiveFact', 'listSessionFactsForClassification', 'listSessionFactTwins',
-    'listCapturedFactsForClassification', 'countLabelFacts', 'listExtractorFactsForClassification', 'countPurgedPageFacts', 'listUnwithdrawnFacts',
-    'listWorldFactsFromPrivateSources'],
+    'listCapturedFactsForClassification', 'countLabelFacts', 'tightenDatabaseFactVisibility', 'readFactLiveVisibility', 'tightenFencedFactVisibility', 'listPageAccessKeys', 'listAtomLineageRows', 'listChronicleEventVisibilityRows', 'listAliasOnlyPrivatePages', 'listOpenTwinRows', 'listOpenFactsWindow', 'countOpenFactReasons', 'listLabelledPages', 'listLiveLabelRows', 'listClearDependents', 'listContextualRetrievalModes', 'listUnembeddedChunkPages', 'restoreConsolidationTie', 'listLiveDuplicateRows', 'supersedeDuplicateFacts', 'linkStruckDuplicateFacts', 'listCommittedRestorePages', 'listActivePositionedFactIds', 'readFactRestorePage', 'restoreExtractorFact', 'moveFactClaimDates', 'readSourceCloneRow', 'detachFenceRowFacts', 'hasDatabaseOnlyClaim', 'lockApprovedFacts', 'expireApprovedFacts', 'listLabelFactCandidates', 'listSegmentedLabelPages', 'hasActiveAuditMarker', 'listRedactedFactCandidates', 'restoreRedactedFactTexts', 'listProjectedFenceRows', 'listUnexpiredFactIds', 'lockFactRows', 'expireFactWithNote', 'expirePageFactsBySource', 'readMaxFactRowNum', 'listExtractorFactsForClassification', 'listClosedConsolidationTies', 'listPagelessEntityFacts', 'listOntologyFactCandidates', 'listDuplicateFactRows', 'listFactsOnValidDay', 'readLivePageByPath', 'listPurgedPageFactCandidates', 'listFactsHomeCandidates', 'listHeldHomeRows', 'listOrphanedFenceRows', 'readFactSnapshots', 'listConceptLineageRows', 'listConceptInputRows', 'listNamedVisibilityRows', 'countPurgedPageFacts', 'listUnwithdrawnFacts', 'listWorldFactsFromPrivateSources', 'listActiveSourceIds', 'readRepairBrainId', 'listAgentSessionTakeCandidates', 'listSettledSessionFacts', 'reattributeSessionFacts', 'retireSessionTakes', 'listFenceRewriteRows', 'listOtherAttributedFactIds', 'listInactiveTakeIds', 'expireCapturedFacts', 'listExpiredFactIds', 'readEntityRehomeState', 'rehomeEntityFacts'],
 
   // facts_trust: search relevance and trust reads
   facts_trust: ['listFactsForRelevance', 'countUncomparableFacts', 'matchSavedFacts',
-    'readFactForOwnerAction', 'listStandingPreferences', 'listLexicalContestCandidates', 'listFactsFromQuotedPages', 'listOwnerTierFacts', 'listRestatedPrivateCopies', 'countDerivedFactTaint'],
+    'readFactForOwnerAction', 'listStandingPreferences', 'listLexicalContestCandidates', 'listFactsFromQuotedPages', 'listOwnerTierFacts', 'listRestatedPrivateCopies', 'countDerivedFactTaint', 'readFactEntitySlugById', 'readSupersessionReplacement', 'linkSupersededFact', 'listLivePageTitles', 'listPageAliasNames', 'listCaptureDuplicateCandidates', 'computeFactFingerprints', 'listClaimConflictPairs', 'countClaimConflictPairs', 'listUnarchivedSourceRows',
+    'readPendingWriteReceipt', 'lockSourceShared', 'listOversizedStaleFacts', 'listLivePersonTitles', 'readLiveFactEntityPage', 'lockAgentWritebackSetting', 'listFactsToRetireFromPage', 'listContestedProposalPairs', 'listFactProvenance', 'recordDerivationEdges', 'expireDerivedFacts', 'deactivateDerivedTakes', 'softDeleteDerivedPages', 'markNeedsRederive', 'readMemberPageWithdrawal', 'readClaimWithdrawal', 'readFactVisibility', 'readReplacementTarget', 'readPairFactRow', 'expireSupersededFact', 'retireSupersededFact', 'restoreSupersededFact', 'readFactForForget', 'expireFactSuperseded', 'expireFactAtDate', 'readWithdrawalAnchor', 'readFactActivity', 'readReviewAcceptedMark', 'readFactsFtsIndexState', 'swapFactsFtsIndex', 'listDerivedRows',
+    'listAllUnarchivedSourceIds', 'readEntityNewestFacts', 'matchHeadStems', 'listOntologyStreamSlugs', 'readOntologyRival', 'listBeliefStreamSlugs',
+    ],
+
+  // facts_recall: the recall pool's candidate reads (nearest, slot, call-off, entity pairs, unbacked keys) and its final row read
+  facts_recall: ['readFactsEmbeddingColumn', 'listNearestFacts', 'listFactSourcePages', 'listFactHoldingRefs', 'listTypedClaimFactsAtPages', 'listSlotRows', 'listPoolUnbackedKeys', 'listCallOffCueFacts', 'listPoolEntityPairs', 'listFactRowsByIds',
+    'listReadablePageSlugs'],
+
+  // facts_conversation: conversation fact publication and relink
+  facts_conversation: ['readNewestConversationFactId', 'findSpentConversationRequest', 'listConversationBatchRequests', 'readStoredConversationEntry', 'readPrincipalCounters', 'countConversationPagesToExtract', 'listMergedEntityAliases', 'moveConversationSourceWindows', 'stampConversationSourceWindows', 'countActiveConversationFacts', 'readConversationSlotValueHash', 'deleteConversationOutcomeRows', 'listPurgeTombstoneMatches',
+    'maxConversationRowNum', 'listHeldFactSlots', 'countPageConversationFacts', 'countConversationWindowFacts', 'countConversationFactsOutsideWindows', 'clearConversationPageFacts', 'findSameClaimFenceRow', 'findOntologyTwin', 'readRelinkSource', 'factRelinkAttemptsTableExists', 'readReextractOutcomeRow', 'listUnbackedConversationRows', 'listUnlinkedConversationRows', 'listEntityHintPages', 'lockPageById', 'listClearedRelinkedFacts', 'countEmbeddedFactsAmong'],
 
   // trust_tier_reads: stamped-tier reads of core memory, the trust scan, belief history, page history and valid time
-  trust_tier_reads: ['listCorePageRows', 'listTrustScanRows', 'countUnscannedTrustRows', 'readBeliefHistoryRows', 'listVisibleBeliefLifetimes',
-    'listVersionTrustTiers', 'listVersionReasonWriters', 'listPageRefsByIds', 'listValidTimeIdentities', 'pickValidTimeEdition',
-    'listAmendmentsNotApplied', 'readPageVersionEdition', 'readCursorEdition', 'pageAwaitsRederive'],
+  // belief ledger writes: lifetimes, event appends, commit marks, redactions (engine-sql/belief-ledger.ts); its state reads (engine-sql/belief-state.ts)
+  belief_ledger: ['readBeliefTombstones', 'readBeliefRedactions', 'insertBeliefRedaction', 'releaseBeliefRedactions', 'insertBeliefEvents',
+    'markBeliefCommits', 'readOpenBeliefLifetimes', 'endBeliefLifetime', 'mintBeliefLifetime', 'renameBeliefLifetime', 'readMovedBeliefLifetimes',
+    'readLegacyClaimFingerprints', 'readLegacyBeliefTombstones', 'readLatestBeliefCoverage', 'hasBeliefBaseline', 'listBeliefBaselinePending', 'countBeliefBaselineSlugs', 'readBeliefStateRows',
+    'readBeliefFactsById', 'listBeliefDriftCandidates', 'readNewestBeliefEvent'],
+  // the cycle's changed-page window and the belief ledger's orphan lifetimes (engine-sql/cycle-reads.ts)
+  cycle_reads: ['readCycleListingInstant', 'listSourceChangedPagesAfter', 'listOrphanLifetimes'],
+  // the belief side of a purge: epoch, ledger probe, purge suppressions, restore replay (engine-sql/belief-purge.ts)
+  belief_purge: ['bumpSourcePurgeEpoch', 'hasBeliefEvents', 'registerPurgeRedaction', 'releasePurgeRedactionsForField', 'replayPagePurges',
+    'readPurgeReplaySchema'],
+  // the belief-ledger half of a purge: streams, preimages, redactions, carriers, the page inventory (engine-sql/belief-purge-ledger.ts)
+  belief_purge_ledger: ['listDerivedStreamSlugs', 'listMissingPreimages', 'redactPurgedBeliefKeys', 'listBeliefCarrierEvents', 'readBeliefEventValue', 'rewriteBeliefEventFields', 'rechainBeliefPriorHash', 'listBeliefQuotingRows', 'listPageBeliefLifetimes', 'listPagePurgeLiveClaims', 'listPageVersionFenceBodies', 'listLifetimeClaimEvents', 'listPurgeCarrierVersions', 'listKnownBeliefSubjectKeys'],
+  trust_tier_reads: ['listCorePageRows', 'listPendingCoreEditNotices', 'listTrustScanRows', 'countUnscannedTrustRows', 'readBeliefHistoryRows', 'listVisibleBeliefLifetimes',
+    'listVersionTrustTiers', 'listVersionReasonWriters', 'listPageRefsByIds', 'listPageTrustTiersByKey', 'lockLivePagesByKey', 'listValidTimeIdentities', 'pickValidTimeEdition',
+    'listAmendmentsNotApplied', 'readPageVersionEdition', 'readCursorEdition', 'pageAwaitsRederive',
+    'readTrustScanCursor', 'writeTrustScanCursor', 'listClaimPendingSourceIds', 'readTrustScanCeilings', 'listPageQuoteTiers'],
 
+  // derivation_trust: the derived-row trust writes (engine-sql/derivation-trust.ts)
+  derivation_trust: ['lowerTrustTier', 'countDerivedRowTaint', 'stampPageFrontmatter'],
   // memory_mutation_reads: the reads remember and forget make before admission
   memory_mutation_reads: ['readSourceWriteRow', 'readSourceLocalPath', 'readFactEntitySlug', 'hasLiveFileBackedPage', 'factReadableUnder', 'readRemoteForgetTier', 'readForgetTarget',
     'isFactEntityUnbacked', 'readLinkedFactCopies', 'hasHiddenFactCopy', 'ownerReachesFact', 'readFactWithdrawalClaim'],
@@ -214,99 +408,165 @@ export const FAMILIES: Record<string, readonly string[]> = {
   withdrawal_fence: ['hasWithdrawnFenceClaim'],
 
   raw_sql: ['runMigration', 'executeRaw', 'executeRawDirect', 'keywordBoundedRead'],
-  code_edges: ['addCodeEdges', 'deleteCodeEdgesForChunks', 'getCallersOf', 'getCalleesOf', 'getEdgesByChunk',
-    // group D (code-edge read)
-    'hasCodeEdgesSymbol',
-    // group D (code traversal cache)
-    'getCodeTraversalCache', 'putCodeTraversalCache', 'clearCodeTraversalCache'],
+  code_edges: ['addCodeEdges', 'deleteCodeEdgesForChunks', 'clearCodeEdgesLeavingChunks', 'getCallersOf', 'getCalleesOf', 'getEdgesByChunk',
+    'hasCodeEdgesSymbol', 'getCodeTraversalCache', 'putCodeTraversalCache', 'clearCodeTraversalCache'],
   eval_capture: ['logEvalCandidate', 'listEvalCandidates', 'deleteEvalCandidatesBefore', 'logEvalCaptureFailure',
     'listEvalCaptureFailures'],
-  // decide family, group B (calibration-profiles.test.ts)
-  calibration_profiles: ['getLatestCalibrationProfile', 'isCalibrationProfileUnchanged', 'insertCalibrationProfile', 'readVoiceGateHealth',
-    'purgeCalibrationProfilesByWave'],
-  salience_enrich: ['batchLoadEmotionalInputs', 'setEmotionalWeightBatch', 'getRecentSalience', 'listEnrichCandidates', 'findAnomalies',
-    // group D (salience read)
-    'countZeroWeightWithTakes'],
-  trust: ['hasCoveringFactWithdrawal', 'insertFactWithdrawal', 'isFactWithdrawn', 'isFactPurged', 'listFactWithdrawalDates', 'moveFactWithdrawalSubject',
-    'hasFactWithdrawalForSubject', 'listFactWithdrawalKeys', 'readFactCacheWatermark', 'readTrustGeneration', 'readSourcePurgeFlags',
-    'lockFactForWithdrawal', 'queueWithdrawalReview', 'listSegmentedPagesBySlug', 'bumpWithdrawnPageRevisions', 'readPageRevisions', 'appendFactForgetReason', 'readFactWithdrawnRow', 'readFactWithdrawnBacking',
-    'upsertWriteGateReceipt', 'upsertPageWriteGateReceipt', 'deleteStalePageWriteGateReceipts', 'listWriteGateReceiptsFor',
-    'deleteStaleWriteGateReceipts', 'upsertWriteGateHold', 'listWriteGateHoldRows', 'getWriteGateHoldRow', 'decideWriteGateHold',
-    'listTrustAllowRuleRows'],
-  // open_loops: the loop upsert, list and close statements (engine-sql/open-loops.ts)
-  open_loops: ['upsertOpenLoop', 'listOpenLoops', 'readEntityOpenLoops', 'closeOpenLoop'],
+  salience_enrich: ['batchLoadEmotionalInputs', 'setEmotionalWeightBatch', 'getRecentSalience', 'listEnrichCandidates',
+    'findAnomalies', 'countZeroWeightWithTakes'],
+  trust: ['hasCoveringFactWithdrawal', 'insertFactWithdrawal', 'isFactWithdrawn', 'isFactPurged', 'listGlobalPurgeWithdrawals', 'listPurgedTakeRows',
+    'listFactWithdrawalDates', 'moveFactWithdrawalSubject', 'hasFactWithdrawalForSubject', 'listFactWithdrawalKeys',
+    'readFactCacheWatermark', 'readTrustGeneration', 'upsertWriteGateReceipt', 'upsertPageWriteGateReceipt',
+    'deleteStalePageWriteGateReceipts', 'listWriteGateReceiptsFor', 'deleteStaleWriteGateReceipts',
+    'upsertWriteGateHold', 'listWriteGateHoldRows', 'getWriteGateHoldRow', 'decideWriteGateHold',
+    'listTrustAllowRuleRows', 'addTrustAllowRule', 'removeTrustAllowRule', 'readTrustAllowRule', 'readSourcePurgeFlags', 'lockFactForWithdrawal', 'queueWithdrawalReview',
+    'listSegmentedPagesBySlug', 'bumpWithdrawnPageRevisions', 'readPageRevisions', 'appendFactForgetReason',
+    'readFactWithdrawnRow', 'readFactWithdrawnBacking'],
+  open_loops: ['upsertOpenLoop', 'listOpenLoops', 'readEntityOpenLoops', 'closeOpenLoop', 'countOpenLoopsByCounterpartyEmail'],
+  // loop_mutes: mutes and the open-loop statements a mute, an unmute and the thread verdict run (engine-sql/loop-mutes.ts)
+  loop_mutes: ['addLoopSuppression', 'removeLoopSuppression', 'listLoopSuppressions', 'listMuteRecheckThreads',
+    'closeMutedLoops', 'requeueMutedLoops', 'closeThreadLoops', 'settleMuteRecheck'],
+  // source_archive: the archive, restore, archive list, purge candidates and source clients (engine-sql/source-archive.ts)
+  source_archive: ['archiveSource', 'restoreArchivedSource', 'listArchivedSourceRows', 'listExpiredArchivedSources',
+    'listUnverifiedArchivedSourceIds', 'listSourceOAuthClients'],
   // entity_identities: the identity link, unlink and group reads (engine-sql/entity-identities.ts)
   entity_identities: ['linkEntityIdentityRow', 'unlinkEntityIdentityRow', 'listEntityIdentityRows', 'readEntityIdentityIdsForPages', 'readCanonicalTwin'],
-  cli_reads_import: ['listSourceRecords', 'readSourceIncarnation', 'hasCompanyBrainReceipt', 'readGuestSourceRow', 'listGuestSourceIds',
-    'hasGuestSource', 'readPageTrustRows', 'readRowTrustRows', 'readDatabaseClock', 'listLinkPageMetadata', 'listStoredTimelineRows', 'filterPagesAtRevision'],
+  cli_reads_import: ['listSourceRecords', 'readSourceIncarnation', 'readSyncDispatchRow', 'hasCompanyBrainReceipt', 'readGuestSourceRow', 'listGuestSourceIds', 'hasGuestSourceRow', 'upsertGuestSource', 'listGuestNotes', 'claimGuestNotePublication', 'insertGuestMark', 'readGuestMarks', 'readRetainedSources',
+    'hasGuestSource', 'readPageTrustRows', 'readRowTrustRows', 'readDatabaseClock', 'listLinkPageMetadata', 'listLinkPageMetadataForSlugs', 'listAttendedOriginSlugs', 'listStoredTimelineRows', 'filterPagesAtRevision'],
   wanted_links: ['lockRegisteredSourceIds', 'replaceWantedLinkRows'],
-  // access_members: the member reads (engine-sql/access-control.ts, engine-sql/write-misc.ts), served from the store's member records (store-members/access-members.ts)
-  access_members: ['listActiveAccessMembers', 'readAccessMembers', 'listAudienceAccessMembers', 'readAudiencePrincipals', 'readLiveMember'],
-  write_misc: ['readSourceState', 'readAdmissionSource', 'sharedSkillPackTablePresent', 'listSharedSkillPackRoots', 'getWorktreeBinding', 'isSourceClaimed',
-    'hasExtractedEvents', 'notifierCoverageRecorded', 'listAccessTokens', 'listAppliedPolicyRevisions', 'readMayActFor', 'readAccessCredentials', 'hasLabelledOnlyMember', 'readFolderAccess', 'listPagesNamingReader', 'expireMemoryProposals', 'listAwaitingMemoryProposals', 'purgeMemoryProposals',
+  write_misc: ['readJobPrincipal', 'readSourceState', 'readAdmissionSource', 'sharedSkillPackTablePresent', 'listSharedSkillPackRoots', 'getWorktreeBinding', 'listHostTopologyRows', 'listHostRepositoryRoots', 'listPendingGitEffectPaths', 'listWorktreeMembers', 'isSourceClaimed',
+      'worktreeClaimStore', 'readWriterAdminState', 'writerAdminStore', 'readAccessStoreConfig', 'writeAccessStoreConfig', 'ensureAccessPolicyState', 'lockAccessPolicy', 'listAccessRules', 'readAccessPolicyRevisions', 'listAccessCoverage', 'readAccessStateUnreadable', 'applyAccessRuleChanges', 'restampAccessWindow', 'finishAccessRestamp', 'insertAccessPolicyRevision', 'markAccessRevisionsApplied', 'approveAccessPolicyRevision', 'hasAccessPolicyState', 'listAccessPrefixSlugs', 'readAccessPolicyMarks', 'replaceAccessInvalidCoverage', 'listUnboundTokenNames', 'listUnboundClientIds', 'readLiveAccessToken', 'filterUnarchivedSourceIds', 'recordTokenSetupReads', 'listKeysReadingSource', 'countCompanyPages', 'revokeAccessTokenById', 'readUnfinishedAccessMigration', 'insertAccessMigration', 'recordAccessMigrationPhase', 'switchAccessMigration', 'listAccessPolicySources', 'countPeopleFolderPages', 'purgeStaleCheckpoints', 'purgeStaleAppliedCaptures',
+    'hasExtractedEvents', 'listActiveAccessMembers', 'listAccessTokens', 'listAppliedPolicyRevisions', 'readMayActFor', 'readAudiencePrincipals', 'readAccessMembers', 'readAccessCredentials', 'listAudienceAccessMembers', 'readLiveMember', 'hasLabelledOnlyMember', 'hasLabelledOnlyMemberAmong', 'readFolderAccess', 'expireMemoryProposals', 'listAwaitingMemoryProposals', 'purgeMemoryProposals',
     'attachSourcePath', 'readMemoryProposal', 'readPendingProposalSummary', 'listMemoryProposalRows', 'listOwnerProposalRows',
     'readOpCheckpointKeys', 'writeOpCheckpointKeys', 'appendOpCheckpointPaths', 'deleteOpCheckpoint', 'deleteOpCheckpointPaths',
-    'readHealthMemoClock', 'listSynopsisSourceIds'],
+    'readOpCheckpointRecord', 'writeOpCheckpointRecord',
+    'readOpCheckpointRecords', 'writeOpCheckpointRecords', 'readGitGapSourceRow', 'countGitGapLivePages', 'markTransactionReadOnly', 'listGitGapNewestPages', 'countGitGapUnreadFacts', 'readGitGapPageBatch', 'countGitGapFactsOnPages', 'countGitGapTimelineOnPages', 'readGitGapSourceRows', 'readRetrievalEvent', 'readPageFeedbackWeights', 'insertRetrievalEvents', 'applyRetrievalRatings', 'readVolunteerUsage', 'insertVolunteerEvents', 'deleteVolunteerEventsOlderThan', 'readPinnedQuestion', 'listPinnedQuestions', 'insertPinnedQuestion', 'listOwnerCredentialRows', 'listSharedMemberMigrationRows', 'listMarkdownPageSlugs', 'listAdminClientRows', 'readAtomGeneration', 'recordAtomGenerationBump', 'readSyncImportPageRows', 'declareSyncImportPageCursor', 'fetchSyncImportPageCursor',
+    'readAdmittedWriteRequests', 'readPageRevisionWriter', 'readRevisionWriterRequest', 'writeSyncAdmissionStamp', 'readSyncAdmissionEffects',
+    'readHealthMemoClock', 'listSynopsisSourceIds', 'readSynopsisTierSources', 'setSourceContextualMode',
+    'revokeAccessTokensNamed', 'revokeAccessToken', 'deleteOAuthClient', 'readAccessGroups', 'listPagesNamingReader', 'countOpenPages', 'hasSynopsisFrontmatterOverride',
+    'readWorktreeManifest', 'writerReleaseStore', 'addPersistenceCounters', 'publicationJournalStore', 'gitDurabilityStore', 'gitEffectStore', 'topologyStore', 'manualLinkStore', 'persistenceUpkeepStore',
+    // the write-time chronicle decision (engine-sql/chronicle-ledger.ts) and the chronicle executor (engine-sql/chronicle-executor.ts)
+    'upsertChronicleRow', 'readChronicleRow', 'hasPendingAutoChronicleRow', 'countRecentChronicleReservations', 'reserveChronicleJudgeSlot', 'pruneChronicleReservations', 'chronicleStore', 'insertConfigIfAbsent', 'readPageTruthLead',
+    // the reads a page write makes before admission (engine-sql/page-mutation-reads.ts)
+    'readStoredPageHead', 'readVersionSourcePath',
+    // the enforced member CLI's pre-write and output-guard reads (same file)
+    'readStoredPageLabels', 'readMemberPageReadable', 'readSlugFolderRules', 'readHiddenPageSlugs'],
+  // repair_bookkeeping: source incarnations, writer bindings, loop facts, connector checkpoints (engine-sql/repair-bookkeeping.ts)
+  repair_bookkeeping: ['listSourceIncarnations', 'listOrphanBindings', 'deleteOrphanBinding', 'readLoopFactState', 'expireSourceFactNow',
+    'listConnectorSources', 'listOrphanConnectorCheckpoints', 'countConnectorCheckpointsKeyed', 'deleteOrphanConnectorCheckpoint',
+    'listManagedSyncOrphanRows', 'listArchivedSourceIds', 'listManagedSyncFailureKeys', 'applyManagedSyncRetireLimits',
+    'retireManagedSyncPassSlugMode', 'retireManagedSyncCursor', 'deleteManagedSyncFailureRow', 'deleteManagedSyncManifest',
+    'listSourceManagedSyncFailures', 'deleteManagedSyncFailureObservation',
+    'listOwnedContentRows', 'readContentReceiptBinding', 'readConfigForUpdate',
+    'countPageChildOrphans', 'clearPageChildOrphans', 'probeTornPages', 'listAccessReaderDrift', 'countAccessReaderDrift', 'deriveAccessReaders', 'readOriginIndexState', 'listOriginTwinCounts',
+    'listAliasTargets', 'deleteOrphanedAliases',
+    'listSafeChunksPending', 'listOriginTwinGroups', 'listLegacyOriginPairs', 'listLiveOriginPages', 'listOriginClaimants', 'countLiveFileBackedPages', 'listRepairScanPages', 'listFileTombstones', 'listTwinMergeLosers', 'listUnreviewedSyncTombstones',
+    'listContactRowPages', 'listSplitFactsPages', 'listAtomFenceCandidates', 'listPageTruths',
+    'listPagesByOriginPath', 'countSegmentedOriginPages', 'listSegmentedPageSlugs', 'listProvenAttributionTargets', 'countUnfilledAttribution', 'listFailedWriteRequests', 'readDriftConflictBounds', 'listDriftConflictGroups', 'readDriftConflictDetails', 'listUntiledSegmentedPages', 'listSourceHoldRecords',
+    'requestGitHoldRetry', 'readRepairBusyRows'],
   // write_attribution: get_write_attribution's receipt and name reads (engine-sql/write-attribution.ts)
   write_attribution: ['readWriteAttributionNames', 'readPageRevisionAttribution', 'readVersionAttributions',
     'readOldestVersionAttribution', 'readRowAttribution'],
-  // telemetry: search telemetry, MCP usage and the chat usage ledger (engine-sql/telemetry.ts, engine-sql/chat-usage.ts)
-  telemetry: [
-    'recordSearchTelemetry', 'readSearchStats', 'readClientOpUsage', 'readMcpRollupPrunedBefore', 'logMcpRequest',
-    'readMcpLogPruneCutoff', 'pruneMcpRequestLogBatch', 'readMcpLifetimeUsage', 'logChatUsage', 'readChatUsage',
-  ],
-  // field_usage: schema detect --fields page samples (engine-sql/field-usage.ts)
+  telemetry: ['recordSearchTelemetry', 'readSearchStats', 'readClientOpUsage', 'readMcpRollupPrunedBefore',
+    'logMcpRequest', 'readMcpLogPruneCutoff', 'pruneMcpRequestLogBatch', 'readMcpLifetimeUsage', 'logChatUsage',
+    'readChatUsage', 'countMcpRequestsLastDay', 'countMcpRequestsLastDayByToken', 'readPendingWriteHealth',
+    'readMcpRequestLogPage'],
   field_usage: ['readFieldUsageSamples'],
   // alias_fanout_reads: search's alias fan-out reads (engine-sql/alias-fanout-reads.ts)
-  alias_fanout_reads: ['findPagesByTitles', 'resolveCaseSensitiveAliases', 'readPageTitle', 'readPageAliasRows', 'readEntityAliasRows'],
-  write_guards: ['readPageOrigin', 'listOriginClaims', 'bindPageOrigin', 'stampPageIngest', 'sealImportedPage', 'readLivePageBody',
-    'readPageIndexingState', 'readInlinePageRegions', 'readStoredPageTier', 'hasSegmentStorage'],
+  alias_fanout_reads: ['findPagesByTitles', 'resolveCaseSensitiveAliases', 'readPageTitle', 'readPageAliasRows', 'readEntityAliasRows', 'listSlugAliases', 'readLiveSlugAliases', 'readSourceSlugProbe', 'readRowSecurityTables', 'listSlugSpellingCandidates', 'readServerEncoding', 'readRowSecurityBrainTables', 'readSlugRepairSource', 'listSourceSlugSpellingCandidates', 'readSpellingKeyPages', 'readPageSlugInSource', 'readSlugRepairPage', 'readStoredSlugSpellings'],
+  write_guards: ['readPageOrigin', 'listRevivalPages', 'listOriginClaims', 'bindPageOrigin', 'stampPageIngest', 'sealImportedPage', 'readLivePageBody',
+    'readPageIndexingState', 'readInlinePageRegions', 'readStoredPageTier', 'hasSegmentStorage', 'detachPageOrigin',
+    'readPageDatabaseOnlyReason', 'bumpPageKnowledgeRevision', 'removePageFrontmatterKeys', 'setPageType'],
   // page_visibility: the remote page-write visibility guards (engine-sql/page-visibility.ts)
-  page_visibility: ['readPageHiddenFromCaller', 'readCallerPageAccess', 'readWriteVisibilityProbe', 'readWriterSlugFence'],
+  page_visibility: ['readPageHiddenFromCaller', 'readPageWorldVisible', 'readCallerPageAccess', 'readWriteVisibilityProbe', 'readPagePrivacyHidden', 'readWriterSlugFence', 'readPrivateOnlySlugs'],
+  // remote_links: the remote mention-links effect and a finished batch's links re-arm (engine-sql/remote-links.ts)
+  remote_links: ['setEffectTransactionLimits', 'readOwnedLinks', 'deleteOwnedLinks', 'readLinkTargetPages', 'readPageHiddenFromWriter', 'rearmLinksEffects'],
+  // facts_backstop: the facts backstop effect's pending and completed extraction reads (engine-sql/facts-backstop.ts)
+  facts_backstop: ['hasPendingFactsExtraction', 'hasCompletedFactsExtraction'],
   // large_page: the remote put_page large-page guard's stored body size read (engine-sql/large-page.ts)
   large_page: ['readStoredBodyBytes', 'readPageBodySizes'],
+  // relational_reads: the relational recall arm's page reads (engine-sql/relational-reads.ts)
+  relational_reads: ['readAdmittedPageRefs', 'readAdmittedPageDateFields', 'readPageDateFieldsByIds', 'readPageSynopses', 'readSeedTitleSlugs'],
   trust_fence: ['listFenceFactRows', 'restorePageTrust', 'listHeldRows', 'listGuardedTakeRows'],
   trust_proposals: ['insertTrustProposal', 'getTrustProposal', 'listTrustProposals', 'pendingTrustProposalsFor',
-    'updatePendingTrustProposalAfter', 'transitionTrustProposal', 'listPendingContradictions'],
+    'updatePendingTrustProposalAfter', 'transitionTrustProposal', 'listPendingContradictions', 'listUnreadablePrivacyHoldIds'],
   connect_gate: ['hasPersistenceTable', 'listManagedRootBindings', 'readGraduationGateRow', 'listRetiredDeactivations'],
-  // group C: the decide proposal tables (engine-sql/decide-proposals.ts)
-  decide_proposals: [
-    'insertDecideProposal', 'getDecideProposal', 'listDecideProposalIds', 'listDecideProposals',
+  jobs_wake: ['openWakeWatch', 'listWakeWatches', 'endWakeWatches', 'countWakeWatches', 'readWakeDoctor',
+    'countPendingWakeForgets', 'listWakeCrons', 'addWakeCron', 'removeWakeCron', 'hasWakeCron', 'recordWakeCronRun',
+    'hasWakeTermsAcceptance', 'recordWakeTermsAcceptance', 'listDueWakeWatches', 'claimWakeWatch', 'settleWakeWatch',
+    'queueWakeForget', 'claimWakeForgets', 'settleWakeForget', 'forgetWakeMember', 'forgetWakeCredential'],
+  calibration_profiles: ['getLatestCalibrationProfile', 'isCalibrationProfileUnchanged', 'insertCalibrationProfile',
+    'readVoiceGateHealth', 'purgeCalibrationProfilesByWave'],
+  decide_proposals: ['insertDecideProposal', 'getDecideProposal', 'listDecideProposalIds', 'listDecideProposals',
     'transitionDecideProposal', 'listDecideProposedPairs', 'insertDecideReviewProposal', 'listDecideReviewProposals',
-    'getDecideReviewProposal', 'transitionDecideReviewProposal', 'listDecideReviewProposalIds', 'readProposalReviewRates',
-    'listDueDecideReviewQueue', 'applyDecideReviewQueue', 'listDueDecideSweepDeferred', 'applyDecideSweepDeferred'],
-  // decide_store: the decide state, spend, receipt and calibration tables (engine-sql/decide-store.ts)
-  decide_store: [
-    'readDecideState', 'upsertDecideState', 'deleteDecideState', 'ensureDecideState',
-    'insertDecideSpend', 'dailyDecideSpend', 'listDecideSpendBySlot',
-    'insertDecideReceipts', 'pruneDecideReceipts', 'listDecideReceiptStats', 'decideSlotUsage', 'decideConflictNoEntityCounts',
-    'listDecideReplayReceipts', 'listDecideResolvedModels', 'listDecideMixedModelDecisions',
-    'insertDecideCalibration', 'storeDecideQualification', 'listDecideCalibrations', 'getDecideCalibration', 'setDecideCalibrationRetired',
-  ],
-
-  // jobs_wake: the Wakeshift report-back tables (engine-sql/jobs-wake.ts), group A of the jobs-tables slice
-  jobs_wake: [
-    'openWakeWatch', 'listWakeWatches', 'endWakeWatches', 'countWakeWatches', 'readWakeDoctor', 'countPendingWakeForgets', 'listWakeCrons',
-    'addWakeCron', 'removeWakeCron', 'hasWakeCron', 'recordWakeCronRun', 'hasWakeTermsAcceptance', 'recordWakeTermsAcceptance', 'listDueWakeWatches',
-    'claimWakeWatch', 'settleWakeWatch', 'queueWakeForget', 'claimWakeForgets', 'settleWakeForget',
-  ],
+    'getDecideReviewProposal', 'transitionDecideReviewProposal', 'listDecideReviewProposalIds',
+    'readProposalReviewRates', 'listDueDecideReviewQueue', 'applyDecideReviewQueue', 'listDueDecideSweepDeferred',
+    'applyDecideSweepDeferred'],
+  decide_store: ['readDecideState', 'upsertDecideState', 'deleteDecideState', 'ensureDecideState', 'insertDecideSpend',
+    'dailyDecideSpend', 'listDecideSpendBySlot', 'insertDecideReceipts', 'pruneDecideReceipts', 'decideSlotUsage',
+    'decideConflictNoEntityCounts', 'listDecideReplayReceipts', 'listDecideResolvedModels',
+    'listDecideMixedModelDecisions', 'insertDecideCalibration', 'storeDecideQualification', 'listDecideCalibrations',
+    'getDecideCalibration', 'setDecideCalibrationRetired'],
   owner_only: ['ownerOnlyMarkTriggers'],
+  // embed_stale_work: the embed --stale reads and writes embedding-readiness.ts, embedding-invalidation.ts and content-drift-sweep.ts ran through executeRaw (engine-sql/embed-stale-work.ts)
+  embed_stale_work: ['countArchivedEmbeddingWork', 'countEmbedPendingProjections', 'listEmbedPendingProjections', 'listEmbedProjectionRepairPages',
+    'readPageIsSegmented', 'hasEmbeddingSignatureDrift', 'lockContentDriftState', 'invalidateContentDriftChunks', 'listUnembeddedChunkIndexes', 'sumEmbedBackfillChars'],
+  // doctor_tallies: counts doctor checks ran through executeRaw inside a catch that hid a Rust refusal (engine-sql/doctor-tallies.ts)
+  doctor_tallies: ['countLiveSegmentedPages', 'countValidityLapsedFacts', 'countOrphanEventProjections'],
+  // engine_migration: the source-side reads of `gbrain migrate --to <engine>` (engine-sql/engine-migration.ts)
+  engine_migration: ['readEngineMigrationHistory', 'readMigrationRows', 'readMigrationPageColumns', 'listManualLinkTransitions', 'countLiveTimelineEntries'],
+  access_grants: ['readOAuthClientReceiptGrant', 'readAccessTokenReceiptGrant', 'readOAuthClientMemberGrant', 'readAccessTokenMemberGrant', 'readLocalWriterMemberGrant', 'readSharedSkillServingEpoch', 'revokeLocalWriterRow'],
+  access_members: ['insertAccessMember', 'setAccessMemberDisabled', 'setAccessMemberEmail', 'setAccessMemberKind', 'setAccessMemberLabelledOnly', 'tombstoneAccessMember', 'addAccessGroupMembers', 'removeAccessGroupMembers', 'deleteAccessGroup', 'readCredentialBindingForUpdate', 'writeCredentialBinding', 'writeCredentialReadsUnscoped', 'readCredentialMemberId', 'listCredentialMemberBindings', 'readLinkedMember', 'readAccessMemberLink', 'insertAccessMemberLink', 'deleteAccessMemberLink', 'listAccessMemberLinks', 'readAccessTokenAttest', 'readOauthClientAttest'],
+  shared_skill_members: ['readSharedSkillCatalogIdentity', 'listSharedSkillCatalogHeads', 'readSharedSkillPolicyRow', 'listSharedSkillFollowSources', 'lockSharedSkillBrainId', 'readSharedSkillMember', 'countSharedSkillMembers', 'enrollSharedSkillMember', 'rebindSharedSkillMember', 'leaveSharedSkillMember', 'issueSharedSkillDeliveryBatch', 'readSharedSkillDeliveryBatch', 'acknowledgeSharedSkillDeliveryBatch', 'writeSharedSkillPolicy', 'writeSharedSkillRevision', 'readSharedSkillRevision'],
+  brief_reads: ['readBriefMeetingPages', 'readBriefEmailAliasPages', 'readBriefWorldFacts', 'readBriefEditPage', 'readBriefTimelineEntry', 'readBriefPageVersions'],
+  reflex_reads: ['readReflexLiveKeys', 'readReflexPages', 'readBriefEntityPages'],
+  doctor_derived: ['readIgnoredPrivacyLabelCounts', 'countSafeIndexPending', 'countCredentialProjectionPending', 'countPagesByTypeAndOwner', 'listRecordedTombstones', 'countDerivedVisibility', 'listUntiledSegmentedPageRows', 'listTimelineHistoryBatch', 'readPageCompiledTruths', 'readEmbeddingBacklogAge', 'readEmbedBacklogRows', 'listBudgetLimitedRows', 'readBudgetHoldAge', 'listImageAssetFiles', 'listAmbiguousExtractionInputs', 'listExtractionInputReceipts', 'listUnpricedDerivationModels', 'listRestorableAtomRetirements', 'countLedgerCoveredAtomRetirements', 'listLiveGenerationRetirements', 'listHeldGenerations', 'listOrphanGenerationCandidates', 'readAtomProvenanceCounts', 'listBodyRecheckGroups', 'readBodyRecheckPage', 'listBodyRecheckVersions', 'readExtractRollup7d', 'readExtractKindRollup7d', 'listRecordedHaltReasons7d'],
+  doctor_persistence: ['listCapacityCounters', 'listOutstandingHolders', 'countPersistenceRequestRows', 'listLifetimeCounters', 'readAdmissionSample', 'listRunningRequestStalls', 'readLiveConsumerSummary', 'readCounterDrift', 'readMaxRequestSequence', 'listRefusalBreakerRows', 'listRecentDriftReceiptSlugs', 'listOlderDriftReceiptSlugs', 'readPublicationRefusals', 'countParkedEffects', 'listParkedEffects', 'listGitPushHoldRows', 'listStalledCatchupRows', 'listParkedGroupRows', 'readStaleEmbeddingCounts', 'listStaleEmbeddingEffects', 'readRequestIndexStates', 'listOrphanBindingRows', 'readPersistenceBrainIdText', 'listWorktreeIds', 'listManagedRoots', 'listUnboundSourcePages', 'listRecentWriterVersions', 'listRecentPurgeRequests', 'listStuckWorktreeRefreshes', 'listSourceBindingsForMovement', 'listRunningClaimOwners', 'listOwnerBindings', 'listConsumerOwners', 'listCallerRefusalRows', 'countCompactedCallerRefusals', 'listLocalEditAdoptions', 'listDerivationPurgeSweeps'],
+  doctor_pages: ['listOversizedPages', 'listScraperJunkCandidates', 'countMarkedPages', 'countOversizedCorePages', 'readRawProvenanceGaps', 'countUnverifiedExtractions', 'listContentHashDuplicates', 'countTranscriptImportPages', 'countPageRows', 'countPagesBySlugPrefix', 'countLivePages', 'readOldestPageCreatedAt', 'countPageTrustTiers', 'countPagesWithMentionLinks', 'countImageModalityMismatches', 'readImagePageCoverage', 'listBracketPathPages', 'listSlugPathCandidates'],
+  doctor_search: ['listOrphanedAliasCounts', 'readSoftDeletedAliasCounts', 'listPageTypePairs', 'listTruncatedMarkdownBodies', 'countSegmentedMarkdownBodies', 'listRecentPageBodies', 'countSegmentedRecentPages', 'countPagesHiddenByPrefix', 'listGitImageHoldCounts', 'countAtomExtractionBacklog', 'listAtomBacklogSourceIds'],
+  doctor_reads_acc: ['isAccessStateUnreadable', 'listRawOnlyRules', 'listAudienceMemberIds', 'listLabelledOnlyMemberIds', 'listAccessMemberRows', 'listAttestCredentialRows', 'listMalformedReaderPages', 'listUnknownReaders', 'listRecentReaderNarrowings', 'countAccessFolderDrift', 'listActiveAccessTokenRows', 'listActiveOauthClientRows', 'listOauthClientAuthShapes', 'listDanglingFederatedReads', 'listOrphanWorkspaceSources', 'listPrivilegedDcrClients', 'readMcpRequestLogBytes', 'countMcpRequestLogRows', 'hasMcpLogRowsPastWindow', 'readKnowledgeRevisionNotNull', 'readDriftSchema', 'listDriftLiveRows', 'listDriftVersionRows', 'originIndexPresent', 'listDecideReceiptStats', 'readChronicleLedgerStats', 'readChronicleDuplicateEvents', 'readFeedbackStatus', 'listVolunteerChannels'],
+  doctor_checkpoints: ['listFenceCandidateRecords', 'listDerivedOriginParks', 'listPurgeParks', 'readSoakCounterRows', 'listUnfinishedManagedSyncCursors', 'listManagedSyncPassStops', 'listManagedSyncBacklogHeaders', 'readManagedSyncPassRow', 'listLiveManagedSyncPassRows', 'listCheckpointBlockedSources', 'listOpenIdentityDowngrades', 'listHeldManagedAtomRows', 'readDoctorLastKnown', 'writeDoctorLastKnown', 'readSyncAdmissionSettingRow', 'readLatestConnectorReceipt', 'listFactsAbsorbFailureGroups', 'listCredentialResealHoldRows'],
+  doctor_sync: ['listManagedSyncCursorFailureRows', 'listManagedSyncOrphanRowsets', 'listDurableManagedSyncFailureKeys'],
+  doctor_brain: ['listInterimStoredObjectCounts', 'readOldestSourceCreatedAt', 'listVisibilityCandidatePages', 'countVisibilityNoncanonicalHolds', 'countReadersNoncanonicalHolds', 'listReaderCandidatePages', 'listContentBlockedReceipts', 'listPassAdmittedReceipts'],
+  doctor_terminal: ['readTerminalFailureGroups', 'listTerminalFailureBatch', 'listOpenPassCheckpointBlockers', 'listWorktreeBlockerRequests'],
+  doctor_fence_census: ['listFenceCensusSources', 'readFencePassHorizon', 'listFenceCensusPagesById', 'listFenceCensusPagesUpdated', 'listLiveFencePageIds', 'readFenceScanRecord', 'writeFenceScanRecord', 'upsertFenceCandidatePart', 'clearFenceCandidateParts', 'readFenceTrendRecords', 'countSegmentedFencePages', 'readBudgetLedgerDay'],
+  doctor_facts_trust: ['countConversationPipelinePages', 'listPersistentWriterContention', 'countRowTrustTiers', 'countLegacyUnknownBySource', 'listTrustColumns', 'listTrustClaimTargets', 'countClaimLiftedRows'],
+  doctor_sources: ['readDoctorSources', 'listGuestSourceRows', 'listCheckoutRoots', 'listPendingRoster', 'countDefaultSourceFiles'],
+  session_state: ['upsertSessionState', 'readSessionCursor', 'readDeltaSessionRow', 'readCheckpointManifestRow', 'writeCheckpointManifest', 'ageOutSessionState', 'capSessionStatePerClient'],
+  doctor_join: ['listAccessMemberStatuses', 'listAccessGroupMemberships', 'listPagesReadByNobody', 'listRulePagesReadByNobody', 'listGoogleSourceMembers', 'listOwnerMemberLinks'],
 };
 
-/** Callable members of `interface BrainEngine`, in declaration order (`kind` excluded). */
+/**
+ * Callable members of `interface BrainEngine`, in declaration order (`kind` excluded): its own members, then those of
+ * the interfaces it extends (src/core/engine-members/*.ts, in `extends` order).
+ */
 export function interfaceMethods(): string[] {
-  const text = readFileSync(ENGINE_FILE, 'utf8'); // test-reads-source-ok[structural]: parse the interface member names only.
-  const sf = ts.createSourceFile(ENGINE_FILE, text, ts.ScriptTarget.Latest, true);
   const names: string[] = [];
-  sf.forEachChild((node) => {
-    if (!ts.isInterfaceDeclaration(node) || node.name.text !== 'BrainEngine') return;
+  const declared = new Map<string, ts.InterfaceDeclaration>();
+  const load = (file: string) => {
+    const text = readFileSync(file, 'utf8'); // test-reads-source-ok[structural]: parse the interface member names only.
+    const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, true);
+    sf.forEachChild((node) => { if (ts.isInterfaceDeclaration(node)) declared.set(node.name.text, node); });
+  };
+  load(ENGINE_FILE);
+  for (const entry of readdirSync(MEMBERS_DIR).filter((f) => f.endsWith('.ts')).sort()) load(join(MEMBERS_DIR, entry));
+  const walk = (node: ts.InterfaceDeclaration) => {
     for (const member of node.members) {
       if (!member.name || !ts.isIdentifier(member.name)) continue;
       const callable = ts.isMethodSignature(member)
         || (ts.isPropertySignature(member) && member.type !== undefined && ts.isFunctionTypeNode(member.type));
       if (callable && !names.includes(member.name.text)) names.push(member.name.text);
     }
-  });
+    for (const clause of node.heritageClauses ?? []) {
+      for (const type of clause.types) {
+        const parent = ts.isIdentifier(type.expression) ? declared.get(type.expression.text) : undefined;
+        if (!parent) throw new Error(`engine-parity coverage: ${node.name.text} extends ${type.expression.getText()}, which is not declared in src/core/engine.ts or src/core/engine-members/`);
+        walk(parent);
+      }
+    }
+  };
+  const brainEngine = declared.get('BrainEngine');
+  if (brainEngine) walk(brainEngine);
   if (names.length === 0) throw new Error('engine-parity coverage: BrainEngine interface not found in src/core/engine.ts');
   return names;
 }
@@ -401,7 +661,8 @@ export function buildCoverage(): CoverageReport {
       const refusal = rustRefusal(m);
       return refusal === null ? 'serves' : `refuses:${refusal}`;
     }
-    if (reqs.some((r) => armHas(arm, r))) return 'yes';
+    // The coverage list describes the default arms; the lifted-hold test mode never changes it.
+    if (reqs.some((r) => armHas(arm, r, {}))) return 'yes';
     return missingCapability(reqs.find((r) => r !== undefined)!).label;
   };
   const legacy = legacyMethods(methods);

@@ -247,8 +247,8 @@ const scenarios: Scenario[] = [
 
   // 7. federated chunk reads
   {
-    name: 'getChunks over two sources',
-    expect: 'refused',
+    name: 'getChunks over two sources returns the chunks of both, in PGLite\'s order',
+    expect: 'equal',
     run: async ({ engine }) => {
       await engine.putPage('fed/a', NOTE);
       await engine.putPage('fed/a', { ...NOTE, compiled_truth: 'work text' }, { sourceId: 'work' });
@@ -327,7 +327,7 @@ const scenarios: Scenario[] = [
 
   // 10. listColumnsOnly: the list projection, with content_hash and emotional_weight present and undefined as on PGLite.
   {
-    name: 'listPages with listColumnsOnly',
+    name: 'listPages with listColumnsOnly returns the list columns with a blank body, timeline and frontmatter',
     expect: 'equal',
     run: async ({ engine }) => {
       await engine.putPage('cols/page', NOTE);

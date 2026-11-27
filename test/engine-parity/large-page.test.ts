@@ -52,6 +52,40 @@ describe('engine parity: large-page write guard', () => {
     return { sizes, otherSource };
   });
 
+  parityTest('readPageSizeRows selects embed_skip, over-limit and segmented live pages', {
+    methods: ['putPage', 'softDeletePage', 'createSegmentedPageShell', 'allocateBodyOccurrenceIds', 'openBodyStaging',
+      'stageSegmentTexts', 'stageManifestRows', 'flipBodyGeneration', 'setBodyStagingState', 'transaction', 'readPageSizeRows'],
+  }, async (engine) => {
+    await engine.putPage('notes/sz-small', { ...NOTE, compiled_truth: 'tiny', timeline: '' });
+    await engine.putPage('notes/sz-big', { ...NOTE, compiled_truth: 'café body over the limit', timeline: '- € event' });
+    await engine.putPage('notes/sz-b-skip', { ...NOTE, compiled_truth: 'tiny', timeline: '', frontmatter: { embed_skip: true } });
+    await engine.putPage('notes/sz-gone', { ...NOTE, compiled_truth: 'gone body over the limit', timeline: '' });
+    await engine.softDeletePage('notes/sz-gone');
+    await publishSegmentedPage(engine, 'notes/sz-segmented', [ONE, TWO]);
+    // Rows come back in slug byte order on every arm: the statement sorts COLLATE "C", so a Postgres brain on en_US
+    // (which puts notes/sz-big before notes/sz-b-skip) answers in the order PGLite and the Rust store do.
+    const view = (rows: Awaited<ReturnType<typeof engine.readPageSizeRows>>) =>
+      rows.map(r => ({ slug: r.slug, bytes: r.bytes === null ? null : Number(r.bytes), segmented: r.segmented, skip: r.frontmatter?.embed_skip ?? null, state: r.state, reason: r.reason }));
+    const seen = {
+      all: view(await engine.readPageSizeRows('default', 12, null)),
+      some: view(await engine.readPageSizeRows('default', 12, ['notes/sz-big', 'notes/sz-small', 'notes/sz-gone', 'notes/sz-missing'])),
+      none: await engine.readPageSizeRows('default', 12, []),
+      otherSource: await engine.readPageSizeRows('parity-missing', 12, null),
+    };
+    const big = Buffer.byteLength('café body over the limit') + Buffer.byteLength('- € event');
+    expect(seen).toEqual({
+      all: [
+        { slug: 'notes/sz-b-skip', bytes: 4, segmented: false, skip: true, state: null, reason: null },
+        { slug: 'notes/sz-big', bytes: big, segmented: false, skip: null, state: null, reason: null },
+        { slug: 'notes/sz-segmented', bytes: ONE.body.byteLength + TWO.body.byteLength, segmented: true, skip: null, state: null, reason: null },
+      ],
+      some: [{ slug: 'notes/sz-big', bytes: big, segmented: false, skip: null, state: null, reason: null }],
+      none: [],
+      otherSource: [],
+    });
+    return seen;
+  });
+
   parityTest('readPageBodySizes answers a page\'s body and truth sizes by id, deleted or not, and null for no page', {
     methods: ['putPage', 'softDeletePage', 'createSegmentedPageShell', 'allocateBodyOccurrenceIds', 'openBodyStaging',
       'stageSegmentTexts', 'stageManifestRows', 'flipBodyGeneration', 'setBodyStagingState', 'transaction', 'getPage', 'readPageBodySizes'],

@@ -27,6 +27,7 @@ import {
   RARE_TERM_CHUNK_CAP, RARITY_MAX_TERMS, rankOrFallbackByRarity, type RareTermPages,
 } from '../../search/keyword-or-rarity.ts';
 import type { KeywordPageWindow } from '../../search/keyword-statement.ts';
+import type { FrontmatterWhere } from '../../search/frontmatter-where.ts';
 import { resolveBoostMap, resolveHardExcludes } from '../../search/source-boost.ts';
 import {
   boundWebsearchQuery, buildOrFallbackWebsearchQuery, collapseWebsearchDashRuns, orFallbackTokens,
@@ -85,7 +86,8 @@ type Member = 'searchKeyword' | 'searchKeywordChunks' | 'countKeywordPages' | 's
 /** Checks every option `member` gets, refusing one it cannot answer exactly, and returns the store options. */
 function keywordOptions(member: Member, query: string, opts: (SearchOpts & { timeoutMs?: number }) | undefined): Record<string, unknown> {
   if (typeof query !== 'string') refuseMember(member, 'a query that is not a string');
-  if (getFtsLanguage() !== 'english') refuseMember(member, `the ${getFtsLanguage()} text search configuration`);
+  // Pages are found through the keyword index, whose postings the store builds with the English stemmer.
+  if (getFtsLanguage() !== 'english') refuseMember(member, `the keyword index holds English postings; FTS language ${getFtsLanguage()}`);
   const o = (opts ?? {}) as Record<string, unknown>;
   const pageGrain = member !== 'searchKeywordChunks';
   for (const [key, value] of Object.entries(o)) {
@@ -187,6 +189,16 @@ export const searchKeywordChunks: StoreMember<[query: string, opts?: SearchOpts]
   return rows.map(rowToSearchResult);
 };
 
+/**
+ * The frontmatter check on finished search rows (keepFrontmatterMatches): the store keeps the ids whose page holds
+ * every `where` key, by the rule the keyword and vector `where` filters use (whereFields; `frontmatter_holds`).
+ */
+export const filterPageIdsByFrontmatter: StoreMember<[ids: number[], where: FrontmatterWhere], number[]> = async (brain, ids, where) => {
+  if (!ids.every(id => Number.isSafeInteger(id) && id > 0)) refuseMember('filterPageIdsByFrontmatter', 'a page id that is not a positive integer');
+  return storeCall({ member: 'filterPageIdsByFrontmatter' },
+    () => brain.filterPageIdsByFrontmatter({ ids, where: whereFields('filterPageIdsByFrontmatter', where) })) as Promise<number[]>;
+};
+
 export const countKeywordPages: StoreMember<[query: string, opts?: SearchOpts & { timeoutMs?: number }], number> = async (brain, query, opts) => {
   const options = keywordOptions('countKeywordPages', query, opts);
   if (query.trim() === '') return 0;
@@ -239,7 +251,7 @@ export const searchKeyword: StoreMember<[query: string, opts?: SearchOpts], Sear
     console.warn(`[gbrain] Warning: search limit clamped from ${opts.limit} to ${cap}`);
   }
   options.limit = limit;
-  options.innerLimit = Math.min(limit * 3, cap * 3);
+  options.innerLimit = Math.min((offset + limit) * 3, cap * 3);
   options.offset = offset;
   // PGLite's CJK branch returns before the strict statement and its retries.
   if (hasCJK(query)) return searchCjk(brain, 'searchKeyword', query, opts, options, true);

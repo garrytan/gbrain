@@ -19,6 +19,7 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 import { readReferrerPage } from './referrers.ts';
 import { renderTrustedInline, type TrustFields } from '../eligibility/labels.ts';
 import type { ReadEligibility } from '../eligibility/policy.ts';
@@ -74,10 +75,7 @@ export async function readNewerMentions(engine: BrainEngine, sourceId: string, s
   opts: { excludePrivate: boolean; keepVisibility: ('private' | 'world')[]; charBudget?: number; eligibility?: ReadEligibility; includeQuarantined?: boolean }):
   Promise<NewerMentions | null> {
   try {
-    const [page] = await engine.executeRaw<{ d: string | null }>(
-      `SELECT to_char(COALESCE(effective_date, updated_at) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS d
-         FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL`, [sourceId, slug]);
-    const since = page?.d ?? null;
+    const since = await engine.readPageReferenceDate(sourceId, slug);
     const sinceMs = since ? Date.parse(since) : NaN;
     if (!since || !Number.isFinite(sinceMs)) return null;
     const { rows, truncated } = await readReferrerPage(engine, { slug, sourceId, referrerSources: [sourceId], excludePrivate: opts.excludePrivate,
@@ -96,7 +94,9 @@ export async function readNewerMentions(engine: BrainEngine, sourceId: string, s
     }
     if (!kept.length) return null;
     return { since, rows: kept, more: kept.length < newer.length || (truncated && newer.length === rows.length) };
-  } catch {
+  } catch (err) {
+    // A read the engine does not serve is a refusal to report, not a card with no newer mentions.
+    rethrowCapabilityRefusal(err);
     return null;
   }
 }

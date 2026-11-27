@@ -7,7 +7,6 @@
  * src/commands/doctor/registry.ts and src/core/doctor-categories.ts.
  */
 
-import * as db from '../../../core/db.ts';
 import { startHeartbeat } from '../../../core/progress.ts';
 import { computeQueueHealthCheck } from './queue-jobs.ts';
 import { checkSubagentCapability } from './search-eval.ts';
@@ -114,31 +113,34 @@ async function runIndexAudit(ctx: DoctorContext): Promise<Check[]> {
       });
     } else {
       try {
-        const sql = db.getConnection();
-        const rows = await sql`
-          SELECT schemaname, relname AS table, indexrelname AS index,
-                 idx_scan, pg_size_pretty(pg_relation_size(indexrelid)) AS size
-            FROM pg_stat_user_indexes
-           WHERE schemaname = 'public'
-             AND idx_scan = 0
-           ORDER BY pg_relation_size(indexrelid) DESC
+        // #9966: an index backing a PRIMARY KEY or UNIQUE constraint enforces it on every write, which
+        // pg_stat_user_indexes never counts as a scan, so it is not a zero-read candidate.
+        const rows = await engine.executeRaw<{ index: string; size: string }>(`
+          SELECT s.schemaname, s.relname AS table, s.indexrelname AS index,
+                 s.idx_scan, pg_size_pretty(pg_relation_size(s.indexrelid)) AS size
+            FROM pg_stat_user_indexes s
+            JOIN pg_index i ON i.indexrelid = s.indexrelid
+           WHERE s.schemaname = 'public'
+             AND s.idx_scan = 0
+             AND NOT (i.indisprimary OR i.indisunique)
+           ORDER BY pg_relation_size(s.indexrelid) DESC
            LIMIT 21
-        `;
+        `);
         if (rows.length === 0) {
-          checks.push({ name: 'index_audit', status: 'ok', message: 'All public indexes have recorded scans' });
+          checks.push({ name: 'index_audit', status: 'ok', message: 'All public indexes have recorded scans (indexes backing PRIMARY KEY or UNIQUE constraints are not listed)' });
         } else {
           // #7145: 21 rows means more than the 20 listed.
-          const list = rows.slice(0, 20).map((r: any) => `${r.index}(${r.size})`).join(', ');
+          const list = rows.slice(0, 20).map(r => `${r.index}(${r.size})`).join(', ');
           checks.push({
             name: 'index_audit',
             status: 'warn',
             details: { exact: rows.length <= 20 },
-            message: `${rows.length > 20 ? '20+' : rows.length} zero-scan index(es): ${list}. ` +
+            message: `${rows.length > 20 ? '20+' : rows.length} zero-scan index(es): ${list} (indexes backing PRIMARY KEY or UNIQUE constraints are not listed). ` +
                      `Consider investigating whether they're used on YOUR workload (fresh brains naturally show zero scans until queries accumulate). ` +
                      `Do not drop without confirming.`,
           });
         }
-      } catch (e) {
+      } catch (e) { // capability-refusal-ok: an opt-in audit reports any failed read, a refusal included, as a warn naming it
         const msg = e instanceof Error ? e.message : String(e);
         checks.push({ name: 'index_audit', status: 'warn', message: `Index audit failed: ${msg}` });
       }
@@ -164,11 +166,7 @@ async function runImageAssets(ctx: DoctorContext): Promise<Check[]> {
   if (engine) {
     progress.heartbeat('image_assets');
     try {
-      const rows = await engine.executeRaw<{ storage_path: string; source_local_path: string | null; page_source_path: string | null; metadata: unknown }>(
-        `SELECT f.storage_path, f.metadata, s.local_path AS source_local_path, p.source_path AS page_source_path FROM files f
-           LEFT JOIN sources s ON s.id = COALESCE(f.source_id, 'default') LEFT JOIN pages p ON p.id = f.page_id
-          WHERE f.mime_type LIKE 'image/%' ORDER BY f.id LIMIT 1000`
-      );
+      const rows = await engine.listImageAssetFiles();
       let vanished = 0;
       let foreign = 0;
       let remote = 0;

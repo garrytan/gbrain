@@ -48,9 +48,9 @@ export interface SyncResult {
   chunksCreated: number;
   /** Pages re-embedded during this sync's auto-embed step. 0 if --no-embed or skipped. */
   embedded: number;
-  embedDeferralReason?: 'large_sync';
+  embedDeferralReason?: 'large_sync'; /** GST-3452: a partial connector run stopped at a provider usage or rate limit; beside a `reason` (writer_pending, timeout) its writes were still pending. */ stopped_on?: 'usage_limit';
   pagesAffected: string[]; /** #5867: a Google sweep's loops_extract enqueue (sweep plus managed catch-up). */ loops_enqueue?: { enqueued: number; deferred: number; skipped_reason: string | null };
-  failedFiles?: number; // count of parse failures (Bug 9)
+  /** count of parse failures (Bug 9) */ failedFiles?: number; /** a partial connector run's causes, one line each (Google sweeps) */ partial_causes?: string[];
   /**
    * #3875: code breakdown of the blocking failures (set on
    * `blocked_by_failures` only). Lets printSyncResult (and --json consumers)
@@ -383,7 +383,7 @@ export interface SyncOpts {
    * breadcrumbs already cover that surface).
    */
   onProgress?: (p: { phase: string; bankedFiles?: number; total?: number; waived?: boolean; group?: number;
-    /** #5984 lanes (phase `managed_sync.lanes`). */ lanes?: { effective: number; stepDown: string | null; overlapped: number; fallbacks: number }; /** #7243: a pass round (`managed_sync.round_level`, `managed_sync.round_admit`; #7866 `managed_sync.round_batch`: `batch` of `batches`, starting at candidate `base`). */ round?: { round: number; target: string; paths: number; read_ms?: number; imports?: number; deletes?: number; in_flight?: number; batch?: number; batches?: number; base?: number } }) => void;
+    /** #5984 lanes (phase `managed_sync.lanes`). */ lanes?: { effective: number; stepDown: string | null; overlapped: number; fallbacks: number }; /** #7243: a pass round (`managed_sync.round_level`, `managed_sync.round_admit`; #7866 `managed_sync.round_batch`: `batch` of `batches`, starting at candidate `base`). */ round?: { round: number; target: string; paths: number; read_ms?: number; /** GST-3534: the read patched the previous round's or pass's `I⋈P`. */ patched?: boolean; imports?: number; deletes?: number; in_flight?: number; batch?: number; batches?: number; base?: number } }) => void;
   /**
    * #5984: managed sync only. Re-enter the single-pass managed sync until the
    * cursor is done, the caller's signal/deadline stops it, or it is blocked

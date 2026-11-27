@@ -24,7 +24,6 @@
 import type { BrainEngine } from '../engine.ts';
 import { extractCandidates, isCommonCapitalizedWord } from '../context/entity-salience.ts';
 import { isFactEntityPage, resolveStrictEntityReference, type StrictResolution } from '../entities/resolve.ts';
-import { remoteReadFloorSql } from '../search/private-visibility.ts';
 import { PAGE_EXTRACTION_SOURCE_LIST } from './gone-page-facts.ts';
 
 export type InferredVia = 'page' | 'mention';
@@ -252,10 +251,6 @@ function onlyExampleUses(fact: string, query: string): boolean {
 }
 
 async function liveFactEntityPage(engine: BrainEngine, sourceId: string, slug: string, excludePrivate?: boolean): Promise<string | null> {
-  const privacy = excludePrivate ? `AND ${remoteReadFloorSql('p')}` : '';
-  const [row] = await engine.executeRaw<{ slug: string; type: string | null }>(
-    `SELECT p.slug, p.type FROM pages p WHERE p.source_id = $1 AND p.slug = $2 AND p.deleted_at IS NULL ${privacy} LIMIT 1`,
-    [sourceId, slug],
-  );
+  const row = await engine.readLiveFactEntityPage(sourceId, slug, excludePrivate);
   return row && isFactEntityPage(row.slug, row.type) ? row.slug : null;
 }

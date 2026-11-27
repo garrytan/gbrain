@@ -28,14 +28,14 @@ public struct SendSignature: Equatable {
         return SendSignature(keyName: key, timestamp: ts, nonce: nonce, signature: sig)
     }
 
-    public static func canonical(timestamp: Int, nonce: String, idempotencyKey: String, body: [UInt8]) -> String {
+    public static func canonical(timestamp: Int, nonce: String, idempotencyKey: String, body: [UInt8], route: String = route) -> String {
         let digest = SHA256.hash(data: Data(body)).map { String(format: "%02x", $0) }.joined()
         return [version, "POST", route, String(timestamp), nonce, idempotencyKey, digest].joined(separator: "\n")
     }
 
-    public func verifies(publicKey: [UInt8], idempotencyKey: String, body: [UInt8]) -> Bool {
+    public func verifies(publicKey: [UInt8], idempotencyKey: String, body: [UInt8], route: String = route) -> Bool {
         guard let key = try? Curve25519.Signing.PublicKey(rawRepresentation: publicKey) else { return false }
-        let message = Data(Self.canonical(timestamp: timestamp, nonce: nonce, idempotencyKey: idempotencyKey, body: body).utf8)
+        let message = Data(Self.canonical(timestamp: timestamp, nonce: nonce, idempotencyKey: idempotencyKey, body: body, route: route).utf8)
         return key.isValidSignature(Data(signature), for: message)
     }
 

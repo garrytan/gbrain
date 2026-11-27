@@ -13,40 +13,47 @@
  * there is left to the purge. An explicit purge labels them first; when that fails it soft-deletes instead and parks the
  * origin, and when the origin lookup itself fails it soft-deletes and keeps any park (purge_held derived_origin_unchecked). Every expiry (carryPrivateBeforePurge, from purgeDeletedPagesCoordinated) labels the dependents of each expired
  * private origin and parks the ones it could not (persistence/derived-origin-hold.ts), so no purge removes them.
+ *
+ * The origin, dependent, checkout and label-guard reads go through typed engine members (engine-sql/label-door.ts), so
+ * the Rust engine runs the soft-delete carry the same way. An engine that refuses one of them with
+ * engine_capability_missing surfaces the refusal; it is never read as "no origin". The purge itself still reaches raw SQL
+ * and receipt reads a Rust brain does not serve, so both purges check the list in persistence/purge-path-members.ts first:
+ * an engine missing one of them refuses by name, with its owner lane, before any write and the page stays live.
  */
+import { normalizeSlug } from '../utils.ts';
 import { createHash, randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
+import { assertPurgeAge } from '../engine-errors.ts';
 import type { OperationContext } from '../ops/contract.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
 import type { LabelEdit } from '../persistence/label-edit.ts';
 import { maintenancePreflight, publishMaintenancePages } from '../persistence/prepared-maintenance.ts';
-import { clearDerivedOriginParks, DERIVED_ORIGIN_PARKED_CODE, derivedOriginPurgeHold, finishPurgeNote, parkDerivedOrigin, pruneDerivedOriginParks, readDerivedOriginParks, recordOwedPurge, type DerivedOriginPark } from '../persistence/derived-origin-hold.ts';
-import { privacyPartSql, readHonorAliases, withoutCallerAccess } from '../search/private-visibility.ts';
+import { clearDerivedOriginParks, DERIVED_ORIGIN_PARKED_CODE, finishPurgeNote, parkDerivedOrigin, pruneDerivedOriginParks, readDerivedOriginParks, recordOwedPurge, type DerivedOriginPark } from '../persistence/derived-origin-hold.ts';
+import { readHonorAliases, withoutCallerAccess } from '../search/private-visibility.ts';
 import { faultPoint } from '../persistence/fault-points.ts';
+import { rethrowCapabilityMissing } from '../rust-engine/errors.ts';
+import { requirePurgePathServed } from '../persistence/purge-path-members.ts';
 import { filesInCheckout, importAtRevision, writeLabelFile } from './label-write.ts';
-import { dependentsSql } from './private-labels.ts';
 
-const bounded = { timeoutMs: 120_000, jitOff: true, prepare: false };
 const PREVIEW = 'gbrain repair visibility';
 const EDIT: LabelEdit = { set: { visibility: 'private' }, remove: [] };
 /** A page whose removal can open another: hidden by the privacy rules itself, or an atom a concept's provenance names. */
-const originSql = (alias: string) => `(${alias}.type = 'atom' OR NOT ${privacyPartSql(alias)})`;
 
 export interface Origin { id: number; source_id: string; slug: string }
 interface Dependent { id: number; origin_id: number; source_id: string; slug: string; deleted: boolean }
 interface Failure { code: string | null; reason: string }
 export interface CarryBlock extends Failure { slug: string | null }
 
+/** A failed origin lookup reads as no origin, except an engine's capability refusal, which refuses the delete. */
+const capabilityOrNull = (error: unknown): null => { rethrowCapabilityMissing(error); return null; };
+
 const failureOf = (error: unknown): Failure => ({ code: typeof (error as { code?: unknown } | null)?.code === 'string' ? (error as { code: string }).code : null,
   reason: error instanceof Error ? error.message : String(error) });
 
 async function dependentsOf(engine: BrainEngine, origins: Origin[]): Promise<Dependent[]> {
-  const rows = await engine.executeRaw<{ id: number; cleared_id: number; source_id: string; slug: string; deleted: boolean }>(
-    `SELECT d.id, d.cleared_id, p.source_id, p.slug, p.deleted_at IS NOT NULL AS deleted FROM (${dependentsSql('remove')}) d
-      JOIN LATERAL (SELECT pages.source_id, pages.slug, pages.deleted_at FROM pages WHERE pages.id = d.id OFFSET 0) p ON true ORDER BY d.id`,
-    [origins.map(o => o.id), origins.map(o => o.source_id), origins.map(o => o.slug), origins.map(() => '')], bounded);
-  return rows.map(row => ({ id: Number(row.id), origin_id: Number(row.cleared_id), source_id: row.source_id, slug: row.slug, deleted: row.deleted === true }));
+  const rows = await engine.listOriginDependents(origins.map(o => ({ id: o.id, source_id: o.source_id, slug: o.slug })));
+  return rows.map(row => ({ id: row.id, origin_id: row.cleared_id, source_id: row.source_id, slug: row.slug, deleted: row.deleted }));
 }
 
 /** Labels each page private through the label door; the failures by page id. */
@@ -110,6 +117,7 @@ export async function carryPrivate(engine: BrainEngine, origins: Origin[], batch
       }
       return blocked;
     } catch (error) {
+      rethrowCapabilityMissing(error);
       return new Map<number, CarryBlock>(origins.map(origin => [origin.id, { slug: null, ...failureOf(error) }]));
     }
   });
@@ -118,9 +126,8 @@ export async function carryPrivate(engine: BrainEngine, origins: Origin[], batch
 async function originOf(engine: BrainEngine, sourceId: string, slug: string): Promise<(Origin & { deleted: boolean }) | null> {
   return withoutCallerAccess(async () => {
     await readHonorAliases(engine);
-    const [row] = await engine.executeRaw<{ id: number; deleted: boolean }>(`SELECT p.id, p.deleted_at IS NOT NULL AS deleted FROM pages p
-      WHERE p.source_id = $1 AND p.slug = $2 AND ${originSql('p')}`, [sourceId, slug], bounded);
-    return row ? { id: Number(row.id), source_id: sourceId, slug, deleted: row.deleted === true } : null;
+    const row = await engine.readPrivacyOrigin(sourceId, slug);
+    return row ? { id: row.id, source_id: sourceId, slug, deleted: row.deleted } : null;
   });
 }
 
@@ -143,13 +150,16 @@ export async function deletePageCarryingPrivate(ctx: OperationContext, p: Record
   const { finishPagePurge } = await import('../persistence/page-purge.ts');
   p.request_id ??= randomUUID();
   const batch = `derived-origin-carry:${String(p.request_id)}`;
-  const slug = typeof p.slug === 'string' ? p.slug.toLowerCase() : null;
+  const slug = typeof p.slug === 'string' ? normalizeSlug(p.slug) : null;
   if (p.purge !== true) {
-    const origin = slug ? await originOf(ctx.engine, sourceId, slug).catch(() => null) : null;
+    const origin = slug ? await originOf(ctx.engine, sourceId, slug).catch(capabilityOrNull) : null;
     const result = await submitPageMutation(ctx, { operation: 'delete_page', params: p });
-    if (origin && (await originOf(ctx.engine, sourceId, origin.slug).catch(() => null))?.deleted) await carryPrivate(ctx.engine, [origin], batch).catch(() => undefined);
+    if (origin && (await originOf(ctx.engine, sourceId, origin.slug).catch(capabilityOrNull))?.deleted) await carryPrivate(ctx.engine, [origin], batch);
     return finishPagePurge(ctx, result);
   }
+  // An engine that cannot serve every member and raw-SQL site the purge reaches refuses here, naming the first one and
+  // its owner lane, before the origin lookup and any fallback soft delete write anything.
+  await requirePurgePathServed(ctx.engine, 'delete_page');
   let origin: (Origin & { deleted: boolean }) | null;
   try { origin = slug ? await originOf(ctx.engine, sourceId, slug) : null; }
   catch {
@@ -181,9 +191,7 @@ export const CARRY_LEAD_HOURS = 24;
 async function expiringOrigins(engine: BrainEngine, olderThanHours: number): Promise<Origin[]> {
   return withoutCallerAccess(async () => {
     await readHonorAliases(engine);
-    return (await engine.executeRaw<{ id: number; source_id: string; slug: string }>(`SELECT p.id, p.source_id, p.slug FROM pages p
-      WHERE p.deleted_at IS NOT NULL AND p.deleted_at < now() - ($1 || ' hours')::interval AND ${originSql('p')} ORDER BY p.id`,
-      [String(Math.max(0, Math.floor(olderThanHours) - CARRY_LEAD_HOURS))], bounded)).map(row => ({ id: Number(row.id), source_id: row.source_id, slug: row.slug }));
+    return engine.listExpiringOriginPages(String(Math.max(0, Math.floor(olderThanHours) - CARRY_LEAD_HOURS)));
   });
 }
 
@@ -194,6 +202,8 @@ async function expiringOrigins(engine: BrainEngine, olderThanHours: number): Pro
  * applies: the caller clears those after its purge, so an origin parked when the purge was previewed stays this run.
  */
 export async function carryPrivateBeforePurge(engine: BrainEngine, olderThanHours: number): Promise<{ parks: DerivedOriginPark[]; unparked: Origin[] }> {
+  assertPurgeAge(olderThanHours);
+  await requirePurgePathServed(engine, 'retention');
   await pruneDerivedOriginParks(engine);
   const parks: DerivedOriginPark[] = [];
   const batch = `derived-origin-carry:purge-${randomUUID()}`;
@@ -219,6 +229,7 @@ export interface CarryForecast { release: Origin[]; hold: Origin[] }
  * origin not parked but blocked is held. A failed read holds every origin, as a failed carry parks every origin.
  */
 export async function forecastCarry(engine: BrainEngine, olderThanHours: number): Promise<CarryForecast> {
+  assertPurgeAge(olderThanHours);
   const parks = new Set((await readDerivedOriginParks(engine)).map(park => park.page_id));
   return withoutCallerAccess(async () => {
     let origins: Origin[] = [];
@@ -264,9 +275,7 @@ export async function parkUncarriedInPurge(tx: BrainEngine, ids: readonly number
   if (!ids.length) return [];
   return withoutCallerAccess(async () => {
     await readHonorAliases(tx);
-    const origins = (await tx.executeRaw<{ id: number; source_id: string; slug: string }>(`SELECT p.id, p.source_id, p.slug FROM pages p
-      WHERE p.id = ANY($1::int[]) AND ${originSql('p')}${opts.recheckParked ? '' : ` AND ${derivedOriginPurgeHold('p')}`} ORDER BY p.id`, [[...ids]], bounded))
-      .map(row => ({ id: Number(row.id), source_id: row.source_id, slug: row.slug }));
+    const origins = await tx.listPurgeOrigins(ids, !!opts.recheckParked);
     if (!origins.length) return [];
     const first = new Map<number, Dependent>();
     for (const page of await dependentsOf(tx, origins)) if (!first.has(page.origin_id)) first.set(page.origin_id, page);

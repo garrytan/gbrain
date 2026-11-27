@@ -123,6 +123,8 @@ export interface StepResult {
    *  the content-hash key. Carries that stale row's id; the step re-ran for
    *  real under a `:r:<doctor_run_id>`-rotated key (job_id is the fresh job). */
   deduped_job_id?: number;
+  /** Set when the step's before/after impact row was not written because the engine refuses that write (a Rust brain). */
+  impact_log?: 'not_recorded: engine_capability_missing';
 }
 
 /**

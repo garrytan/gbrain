@@ -16,7 +16,7 @@ export async function runAuthenticatedSyncSlice(engine: BrainEngine, params: Rec
   const wire=validateSyncWireParams(params);
   if(wire.ignored)console.error(retiredWireNotice(wire.ignored));
   const sourceId=await resolveSourceId(engine,wire.options.sourceId??null,wire.cwd,{skipLocalSignals:true});
-  const [source]=await engine.executeRaw<{incarnation:string;archived:boolean}>('SELECT incarnation,archived FROM sources WHERE id=$1',[sourceId]);
+  const source=await engine.readSourceMembership(sourceId);
   if(!source||source.archived)throw opError('source_changed','The selected sync source is unavailable.',
     `Source ${sourceId} is archived or missing, so nothing was synced. Choose an active source with --source, or ask the user to restore ${sourceId}.`,
     {fix:{argv:['gbrain','sources','list','--json'],consent:[],actor:'agent',why:'Lists sources with their archived state, read-only.',requires_exclusive:false}});

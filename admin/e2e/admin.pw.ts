@@ -313,3 +313,16 @@ test('a lost lifecycle response requires inspection before another action', asyn
   expect(after.grant.revision).toBe(before.grant.revision + 1);
   expect(mutations).toBe(1);
 });
+
+test('the owner login page leads with the owner\'s own command, keeps a waiting request, and never shows a login link', async ({ page, brain }) => {
+  const request = 'a'.repeat(64);
+  await page.goto(`${brain.url}/admin/?oauth_request=${request}`);
+  await expect(page.getByRole('heading', { name: 'GBrain owner login', exact: true })).toBeVisible();
+  const command = page.getByLabel('Owner login command', { exact: true });
+  await expect(command).toHaveValue(`gbrain mcp admin login-link --url '${brain.url}/mcp' --oauth-request ${request} --admin-token-file ~/.gbrain/serve/admin-token`);
+  await expect(page.getByRole('status').filter({ hasText: 'waiting for your approval' })).toBeVisible();
+  await expect(page.getByLabel('Prompt for the host administrator', { exact: true })).toBeHidden();
+  await page.getByText('Someone else runs the brain host', { exact: true }).click();
+  await expect(page.getByLabel('Prompt for the host administrator', { exact: true })).toContainText(`--oauth-request ${request}`);
+  await expect(page.locator('body')).not.toContainText('/admin/auth/');
+});

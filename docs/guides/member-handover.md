@@ -64,6 +64,26 @@ Undo puts back each page's and rule's recorded readers and reverses rebinds. A p
 its current readers and is counted as skipped. A handover can be undone once. A removed member's handover cannot be
 undone, because removed ids are never reused.
 
+## From the admin page (no shell on the server)
+
+An owner session on the brain's admin page runs the same preview, apply and undo over HTTP. No OAuth token and no MCP
+tool reaches these routes.
+
+```bash
+POST /admin/api/access/handover   {"member": "bob-example"}                                # preview
+POST /admin/api/access/handover   {"member": "bob-example", "expect": "<plan_hash>"}       # apply
+POST /admin/api/access/handover   {"member": "bob-example", "set": ["kept=alice-example"]} # preview with a choice
+POST /admin/api/access/handover   {"undo": "<handover id>"}                                # preview an undo
+POST /admin/api/access/handover   {"undo": "<handover id>", "expect": "<plan_hash>"}       # apply it
+GET  /admin/api/access/handover/<handover id>                                              # status
+```
+
+The apply carries out a preview only for the member it names, and an undo only for the handover it names. A folder
+rule that moved to a new prefix since the preview is never rewritten. Any of these refuses with `preview_changed`
+and writes nothing. Refusals answer 400 with the code. A 503 means the outcome is unknown: read the status, then send
+the same POST again, which resumes the same handover. Each applied handover or undo is logged as `access_admin` in
+the request log.
+
 ## Finding pages no member reads
 
 `gbrain doctor` runs `access_pages_read_by_nobody`. It lists pages no enabled member reads remotely: a leaver's own

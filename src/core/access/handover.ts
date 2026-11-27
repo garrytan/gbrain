@@ -17,6 +17,8 @@
  * the leaver is enabled again. Works with no repository: labels then write the database, rules use the database store.
  */
 import type { BrainEngine } from '../engine.ts';
+import { capabilityMissing, servesRawSql } from '../rust-engine/errors.ts';
+import { isMissingSchemaObject } from '../utils.ts';
 import type { OperationContext } from '../operations.ts';
 import { opError, OperationError } from '../ops/contract.ts';
 import { getMember, listMembers, type MemberRecord } from './members.ts';
@@ -105,7 +107,7 @@ interface PlanContext { leaver: string; owner: string | null; enabled: MemberRec
 async function planContext(engine: BrainEngine, leaver: MemberRecord): Promise<PlanContext> {
   const members = await listMembers(engine, { includeRemoved: true });
   const enabled = members.filter(m => m.status === 'enabled' && m.id !== leaver.id);
-  const groups = await engine.executeRaw<{ group_id: string; member_id: string }>('SELECT group_id, member_id FROM access_group_members');
+  const groups = await engine.listAccessGroupMemberships();
   const leaverGroups = groups.filter(g => g.member_id === leaver.id).map(g => g.group_id);
   const liveGroups = new Set(groups.filter(g => enabled.some(m => m.id === g.member_id)).map(g => g.group_id));
   return { leaver: leaver.id, owner: await ownerMemberId(engine), enabled, liveGroups,
@@ -119,6 +121,23 @@ const liveReader = (p: string, ctx: PlanContext) => p === 'member:' + ctx.owner
 /** Folder rules whose readers name the leaver and nobody else who still reads. */
 const leaverRule = (rule: FolderRule, ctx: PlanContext) => rule.readable_by.length > 0
   && rule.readable_by.some(p => ctx.leaverPrincipals.has(p)) && !rule.readable_by.some(p => liveReader(p, ctx));
+
+/**
+ * A handover's apply and undo write the handover record, member-source bindings, folder rules and page readers, which an
+ * engine without raw SQL (the Rust store) does not serve yet: refuse before anything is read or written, so nothing is
+ * half done. The preview and --status are typed reads and serve on every engine.
+ */
+export function refuseHandoverWrites(engine: BrainEngine, what: 'apply' | 'undo'): void {
+  if (!servesRawSql(engine)) throw capabilityMissing('raw_sql', `member handover ${what} (the handover record, member-source, folder-rule and page reader writes)`);
+}
+
+/** A count an older schema cannot answer reads 0; any other error, an engine refusal included, fails the preview. */
+function zeroOnMissing(kind: 'table' | 'column', name: string) {
+  return (e: unknown): number => {
+    if (isMissingSchemaObject(e, kind, name)) return 0;
+    throw e;
+  };
+}
 
 /** Plans the handover: every item it would write, grouped, with who gains and loses access. Writes only the approved set. */
 export async function previewHandover(engine: BrainEngine, rawMember: string, choices: HandoverChoices): Promise<HandoverPreview> {
@@ -135,7 +154,7 @@ export async function previewHandover(engine: BrainEngine, rawMember: string, ch
     'gbrain access owner set <member>', 'Without an owner the default would leave the pages readable by no member.');
   const items: HandoverItem[] = [];
   const warnings: string[] = [];
-  const sources = (await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE archived IS NOT TRUE ORDER BY id')).map(r => r.id);
+  const sources = (await engine.listActiveSourceIds()).map(r => r.id);
   const rulesBefore = new Map<string, FolderRule[]>();
   const rulesAfter = new Map<string, FolderRule[]>();
   for (const source of sources) {
@@ -151,9 +170,7 @@ export async function previewHandover(engine: BrainEngine, rawMember: string, ch
     rulesAfter.set(source, sortRules(after));
   }
   const folderRules = new Map<string, FolderRule[]>(sources.map(s => [s, (rulesBefore.get(s) ?? []).filter(r => leaverRule(r, ctx))]));
-  const rows = await engine.executeRaw<{ id: number; source_id: string; slug: string; frontmatter: unknown }>(
-    'SELECT id, source_id, slug, frontmatter FROM pages WHERE deleted_at IS NULL AND frontmatter ? \'readable_by\' AND gbrain_access_readers(frontmatter) && $1::text[] ORDER BY source_id, slug LIMIT ' + (READERS_MAX_PAGES + 1),
-    [[...ctx.leaverPrincipals]]);
+  const rows = await engine.listHandoverReaderPages([...ctx.leaverPrincipals], READERS_MAX_PAGES + 1);
   if (rows.length > READERS_MAX_PAGES) warnings.push('More than ' + READERS_MAX_PAGES + ' pages name ' + leaver.id + '; this handover lists the first ' + READERS_MAX_PAGES + ' and a second run takes the rest.');
   let memory = 0;
   for (const row of rows.slice(0, READERS_MAX_PAGES)) {
@@ -173,8 +190,8 @@ export async function previewHandover(engine: BrainEngine, rawMember: string, ch
     const to = forwardReaders(choices[group], ctx.owner, group === 'folder' ? folderTarget : keptTarget);
     items.push({ ...base, group, to: to === undefined ? from.map(plain) : to });
   }
-  const [memoryPage] = await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM pages WHERE deleted_at IS NULL AND slug = $1', [MEMBER_PAGE_PREFIX + leaver.id]);
-  const [memoryFacts] = await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM facts f JOIN pages p ON p.id = f.page_id WHERE p.deleted_at IS NULL AND p.slug = $1', [MEMBER_PAGE_PREFIX + leaver.id]).catch(() => [{ n: 0 }]);
+  const memoryPage = await engine.countMemberPage(MEMBER_PAGE_PREFIX + leaver.id);
+  const memoryFacts = await engine.countMemberPageFacts(MEMBER_PAGE_PREFIX + leaver.id).catch(zeroOnMissing('table', 'facts'));
   if (leaver.status === 'removed') warnings.push(leaver.id + ' was removed, so its group memberships were dropped: pages it read only through a group cannot be attributed to it. gbrain doctor lists pages no member reads.');
   for (const binding of leaver.status === 'removed' ? [] : await listMemberSources(engine, { member: leaver.id })) {
     if (sourceTarget) items.push({ kind: 'binding', group: 'source', source_id: binding.source_id, from: leaver.id, to: sourceTarget });
@@ -190,14 +207,14 @@ export async function previewHandover(engine: BrainEngine, rawMember: string, ch
       sample: [...rules.map(r => r.source_id + ':' + r.prefix), ...pages.map(pageRef)].slice(0, SAMPLES) };
   };
   const groups: GroupSummary[] = [groupOf('kept'), groupOf('folder'), groupOf('shared'), groupOf('source'),
-    { group: 'memory', choice: 'never', count: memory + Number(memoryPage?.n ?? 0) - memory, sample: Number(memoryPage?.n ?? 0) ? [MEMBER_PAGE_PREFIX + leaver.id] : [],
-      note: Number(memoryFacts?.n ?? 0) + ' private fact(s); never opened. The owner reads them on the brain host.' }];
-  const [creds] = await engine.executeRaw<{ n: number }>("SELECT (SELECT count(*) FROM access_tokens WHERE member_id = $1 AND revoked_at IS NULL) + (SELECT count(*) FROM oauth_clients WHERE member_id = $1) AS n", [leaver.id]).catch(() => [{ n: 0 }]);
-  const [undone] = await engine.executeRaw<{ id: string }>("SELECT id FROM access_handovers WHERE member_id = $1 AND state = 'undone' ORDER BY undone_at DESC LIMIT 1", [leaver.id]);
-  const hash = previewHash({ kind: 'member-handover-v1', member: leaver.id, owner: ctx.owner, choices, items: changed, ...(undone ? { after_undo: String(undone.id) } : {}) });
+    { group: 'memory', choice: 'never', count: memoryPage, sample: memoryPage ? [MEMBER_PAGE_PREFIX + leaver.id] : [],
+      note: memoryFacts + ' private fact(s); never opened. The owner reads them on the brain host.' }];
+  const creds = await engine.countMemberBoundCredentials(leaver.id).catch(zeroOnMissing('column', 'member_id'));
+  const undone = await engine.readLastUndoneHandoverId(leaver.id);
+  const hash = previewHash({ kind: 'member-handover-v1', member: leaver.id, owner: ctx.owner, choices, items: changed, ...(undone ? { after_undo: undone } : {}) });
   if (changed.length) await saveApprovedSet<HandoverItem>(engine, { command: approvalCommand(leaver.id), hash }, changed);
   return { member: leaver.id, member_status: leaver.status, owner: ctx.owner, choices, groups, items: changed, ...impact,
-    bound_credentials: Number(creds?.n ?? 0), leaver_groups: [...ctx.leaverPrincipals].filter(p => p.startsWith('group:')).map(plain), plan_hash: hash, warnings };
+    bound_credentials: creds, leaver_groups: [...ctx.leaverPrincipals].filter(p => p.startsWith('group:')).map(plain), plan_hash: hash, warnings };
 }
 
 /** Who gains and who loses a page across the changed pages and the pages under changed rules (members, the owner, source readers). */
@@ -210,7 +227,7 @@ async function readImpact(engine: BrainEngine, ctx: PlanContext, pages: PageItem
   const touched = new Map<string, { source_id: string; slug: string; fmBefore: unknown; fmAfter: unknown }>();
   for (const p of pages) touched.set(pageRef(p), { source_id: p.source_id, slug: p.slug, fmBefore: { [READERS_KEY]: p.from }, fmAfter: p.to ? { [READERS_KEY]: p.to } : {} });
   for (const r of rules) {
-    const under = await engine.executeRaw<{ source_id: string; slug: string; frontmatter: unknown }>('SELECT source_id, slug, frontmatter FROM pages WHERE deleted_at IS NULL AND source_id = $1 AND (slug = $2 OR ($2 LIKE \'%/\' AND left(slug, length($2)) = $2)) LIMIT 5000', [r.source_id, r.prefix]);
+    const under = await engine.listHandoverPrefixPages(r.source_id, r.prefix);
     for (const row of under) if (!touched.has(pageRef(row))) touched.set(pageRef(row), { ...row, fmBefore: row.frontmatter, fmAfter: row.frontmatter });
   }
   for (const t of touched.values()) {
@@ -229,8 +246,8 @@ async function readImpact(engine: BrainEngine, ctx: PlanContext, pages: PageItem
   return { gains: [...gains].sort(), losses: [...losses].sort(), owner_gains: ownerGains, opens_to_source_readers: opens };
 }
 
-async function readRecord(engine: BrainEngine, where: string, value: string): Promise<HandoverRecord | null> {
-  const [row] = await engine.executeRaw<Record<string, unknown>>('SELECT id, member_id, owner_id, plan_hash, choices, items, commits, state, created_at, undone_at, undo_of FROM access_handovers WHERE ' + where + ' = $1', [value]);
+async function readRecord(engine: BrainEngine, where: 'id' | 'plan_hash', value: string): Promise<HandoverRecord | null> {
+  const row = await engine.readHandoverRow(where, value);
   if (!row) return null;
   const json = (v: unknown) => (typeof v === 'string' ? JSON.parse(v) : v);
   const iso = (v: unknown) => (v ? new Date(v as string).toISOString() : null);
@@ -279,6 +296,7 @@ export interface ApplyOptions { ctx: OperationContext; expect: string; previewCo
  * recording when an item was skipped or failed.
  */
 export async function applyHandover(engine: BrainEngine, member: string, opts: ApplyOptions): Promise<HandoverRecord> {
+  refuseHandoverWrites(engine, opts.undo ? 'undo' : 'apply');
   const leaver = await getMember(engine, member);
   if (!leaver) throw opError('not_found', 'No member "' + member + '".', 'List members with gbrain access member list --all.');
   if (!opts.undo && leaver.status === 'enabled') throw handoverError('handover_member_enabled', 'Member "' + leaver.id + '" is enabled again; nothing was written.', 'gbrain access member disable ' + leaver.id, 'A handover takes pages away from the member.');
@@ -401,6 +419,7 @@ function undoRefusal(leaver: MemberRecord): OperationError {
 
 /** The undo preview: each item the handover wrote, reversed, minus items changed since (counted as skipped). */
 export async function previewUndo(engine: BrainEngine, id: string): Promise<{ handover: HandoverRecord; items: HandoverItem[]; changed_since: number; plan_hash: string }> {
+  refuseHandoverWrites(engine, 'undo');
   const handover = await getHandover(engine, id);
   if (handover.undo_of) throw opError('invalid_params', 'Handover ' + id + ' is itself an undo.', 'Undo the original handover once, or start a new handover.');
   if (handover.state === 'undone') throw opError('invalid_params', 'Handover ' + id + ' was already undone.', 'Start a new handover to move the pages again.');

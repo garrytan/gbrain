@@ -1,0 +1,4 @@
+---
+kind: fix
+---
+gbrain repair frontmatter no longer brings back a deleted or purged page. Restoring such a page now always goes through the file-drift consent step (gbrain repair file-drift --held --side deleted, which previews the restore and asks the user first). A file held because its page was deleted or purged (file_drift, side deleted), two spellings of one path (page_identity_changed), an origin conflict or a write that raced the database is now listed needs_review with that hold's own fix, instead of safe: Import <path> as it is now. A file whose import would restore a soft-deleted page (page_deleted) or re-create a purged one (page_purged) is needs_review too. So are files whose paths differ only by case and name one page, held or not. Before, the repair's apply restored such pages without asking. A preview approved before this release is refused at apply for these files.

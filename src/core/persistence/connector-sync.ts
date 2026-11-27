@@ -15,11 +15,12 @@ import type { RegistryCode } from '../error-registry.ts';
 import { currentSubmissionAuthority } from '../minions/submission-authority.ts';
 import { sealPageTextProjection } from '../page-state/projections.ts';
 import { loadActivePackForEngine } from '../schema-pack/engine-resolution.ts';
-import { authorizeStoredRequest, authorizeWrite } from './authority.ts';
+import { authorizeStoredRequest, authorizeWrite, sharedWriterRow } from './authority.ts';
+import { registerEngineView } from './switches.ts';
 import { materializeTimeline, prepareCanonicalProjections } from './canonical-projections.ts';
 import { digest, sha256 } from './digest.ts';
 import { admitWriteInTransaction, assertReplayIntent, getWriteRequest, getWriteRequestById, intentDigest, receiptFor } from './journal.ts';
-import { acquireWorktree, containsPath, getWorktreeBinding, probeWorktreeWriter, readManagedMode, type WorktreeBinding } from './ownership.ts';
+import { acquireWorktree, containsPath, getWorktreeBinding, probeWorktreeWriter, readManagedMode, sharedWorktreeBinding, WORKTREE_BINDING_SQL, type WorktreeBinding } from './ownership.ts';
 import { hostIdFor } from './identity.ts';
 import { assertPersistenceAccepting, startPersistenceConsumer, waitForWrite, writeResponse } from './service.ts';
 import { maintenancePublishWaitMs } from './maintenance-wait.ts';
@@ -73,6 +74,57 @@ export const connectorWaitBudget = { ms: CONNECTOR_WAIT_BUDGET_MS };
 const WAIT_RESERVE_MS = 1_000;
 const COMMIT_GRACE_MS = 1_000;
 const ITEM_WAIT_MS = 5_000;
+const LEASE_SQL = `SELECT id FROM gbrain_cycle_locks
+      WHERE id=$1 AND acquisition_token=$2::uuid AND extract(epoch from acquired_at)::text=$3
+        AND ttl_expires_at>now() FOR SHARE`;
+const SOURCE_SQL = 'SELECT incarnation,archived,local_path,config FROM sources WHERE id=$1';
+/**
+ * #9990: plain reads of rows that stay put for a whole run (the lease, the source row, the owner binding, the writer
+ * grant, the mirror and slug-root modes), which one connector call (a page read, an import, a delete) used to send up to
+ * nine times each; far from the database that was most of an item's cost. Admission and publication re-check them under
+ * their locks.
+ */
+const CALL_STABLE_READS = new Set([LEASE_SQL, SOURCE_SQL, WORKTREE_BINDING_SQL]
+  .map(sql => sql.replace(/\s+/g, ' ').trim()));
+const FORGET_CALL_READS = Symbol('forgetCallReads');
+/** `engine` for one connector call: each read in CALL_STABLE_READS is sent once for the call; every other statement goes through. */
+function callReads(engine: BrainEngine): BrainEngine {
+  const reads = new Map<string, Promise<Record<string, unknown>[]>>();
+  const typedReads = new Map<string, Promise<unknown>>();
+  const once = <T>(id: string, read: () => Promise<T>): Promise<T> => {
+    let value = typedReads.get(id) as Promise<T> | undefined;
+    if (!value) { value = read(); typedReads.set(id, value); value.catch(() => typedReads.delete(id)); }
+    return value;
+  };
+  return registerEngineView(new Proxy(engine, { get(target, key) {
+    if (key === FORGET_CALL_READS) return () => { reads.clear(); typedReads.clear(); };
+    if (key === 'executeRaw') return (sql: string, params?: unknown[], opts?: { signal?: AbortSignal }) => {
+      const text = sql.replace(/\s+/g, ' ').trim();
+      const stable = CALL_STABLE_READS.has(text) && !opts?.signal;
+      const id = stable ? JSON.stringify([text, params ?? null]) : '';
+      let rows = stable ? reads.get(id) : undefined;
+      if (!rows) {
+        rows = target.executeRaw<Record<string, unknown>>(sql, params, opts);
+        if (!stable) return rows;
+        reads.set(id, rows);
+        rows.catch(() => reads.delete(id));
+      }
+      return rows.then(found => structuredClone(found));
+    };
+    // The typed form of the local writer read master memoized as a statement (authority.ts `sharedWriterRow`): once per call, a missing row read again.
+    if (key === 'readLocalWriterRow') return sharedWriterRow(target, typedReads, once);
+    // The typed forms of the owner binding, mirror-mode and slug-root-mode reads master memoized as statements
+    // (WORKTREE_BINDING_SQL, MIRROR_READ_ONLY_SQL, SLUG_ROOT_MODE_SQL): once per call, each caller gets its own copy.
+    if (key === 'getWorktreeBinding') return sharedWorktreeBinding(typedReads, once, (sourceId, hostId) => target.getWorktreeBinding(sourceId, hostId));
+    if (key === 'readSourceState') return (sourceId: string, opts?: Parameters<BrainEngine['readSourceState']>[1]) => opts?.lock
+      ? target.readSourceState(sourceId, opts)
+      : once(JSON.stringify(['readSourceState', sourceId]), () => target.readSourceState(sourceId)).then(row => structuredClone(row));
+    if (key === 'getSource') return (sourceId: string) =>
+      once(JSON.stringify(['getSource', sourceId]), () => target.getSource(sourceId)).then(row => structuredClone(row));
+    const value = Reflect.get(target, key, target);
+    return typeof value === 'function' ? value.bind(target) : value;
+  } }), engine);
+}
 
 /**
  * #6831: the pages guard refused this connector item because its content matches a page purge tombstone. That is the
@@ -323,6 +375,7 @@ export async function beginConnectorSync(engine: BrainEngine, sourceId: string, 
   const session = new ManagedConnectorSync(engine, sourceId, identity, source, authority, binding, canonicalRoot, opts.noEmbed === true, opts.noSchemaPack === true,
     opts.retryFailed === true, lease, opts.resetCheckpoint === true, opts.githubItem !== undefined, opts.full === true);
   session.extractFacts = opts.noExtract !== true;
+  session.deadlineAtMs = opts.deadlineAtMs;
   await session.load();
   return session;
 }
@@ -345,9 +398,13 @@ export async function withConnectorSync<T>(engine: BrainEngine, sourceId: string
   }
   opts.signal?.throwIfAborted();
   return withRefreshingLock(engine, syncLockId(sourceId), async (signal, handle) => {
-    const combined = opts.signal ? AbortSignal.any([opts.signal, signal]) : signal;
+    const held = opts.signal ? AbortSignal.any([opts.signal, signal]) : signal;
+    // #9968: a caller deadline (a sync job's own, less its reserve) stops the sweep while the lease still writes, so the
+    // run records its state and banks its durable cursor instead of being killed at the job timeout with nothing recorded.
+    const deadline = opts.deadlineAtMs !== undefined ? AbortSignal.timeout(Math.max(0, opts.deadlineAtMs - Date.now())) : null;
+    const combined = deadline ? AbortSignal.any([held, deadline]) : held;
     const options = { ...opts, signal: combined };
-    const session = await beginConnectorSync(engine, sourceId, connector, config, options, { handle, signal: combined });
+    const session = await beginConnectorSync(engine, sourceId, connector, config, options, { handle, signal: held });
     if (!session) throw opError('source_changed', 'The managed connector mode changed before the sweep.',
       `Managed persistence was switched while the sync of ${sourceId} started, so nothing was swept. Check the mode with gbrain sources writer status --source ${sourceId} --json, then run gbrain sync --source ${sourceId}.`,
       { fix: ownerStatusFix(sourceId, 'Shows whether managed persistence is active for this brain and source.') });
@@ -359,9 +416,17 @@ export async function withConnectorSync<T>(engine: BrainEngine, sourceId: string
     try {
       result = await work(session, options);
     } catch (error) {
+      // Only the abort the deadline caused ends the run partial; a real failure thrown after the deadline is still recorded.
+      const name = (error as { name?: unknown } | null)?.name;
+      if (deadline?.aborted && !held.aborted && (error === deadline.reason || name === 'AbortError' || name === 'TimeoutError')) {
+        session.stoppedAtDeadline = true;
+        await session.finish().catch(() => {});
+        if (onPending) return onPending(null, session);
+        throw error;
+      }
       if (!(error instanceof ConnectorWaitBudgetStop)) {
-        // #6831: a run cut short by its caller's deadline or cancel is not a failure of the source.
-        const failure = combined.aborted ? undefined : error;
+        // #6831: a run cut short by its caller's cancel is not a failure of the source.
+        const failure = held.aborted ? undefined : error;
         if (error instanceof OperationError || (failure && !(error instanceof LockStolenError))) await session.finish(failure).catch(() => {});
         throw error;
       }
@@ -371,18 +436,24 @@ export async function withConnectorSync<T>(engine: BrainEngine, sourceId: string
       throw error;
     }
     await session.assertLease(engine);
+    if (deadline?.aborted) session.stoppedAtDeadline = true;
     await session.finish();
-    return session.deferred && onPending ? onPending(result, session) : result;
+    return (session.deferred || session.stoppedAtDeadline) && onPending ? onPending(result, session) : result;
   });
 }
 
 interface PendingWrite { entry: ConnectorPendingEntry; row: WriteRequest; bytes: number; counted?: 'created' | 'updated' | 'deleted' }
 
-/** A connector sweep that ended with accepted writes pending, or stopped on its wait budget, reports `partial` / `writer_pending`. */
+/**
+ * A connector sweep that ended with accepted writes pending, or stopped on its wait budget, reports `partial` / `writer_pending`.
+ * A `stopped_on` it carries stays while its writes are only pending (doctor reads that run as neither landing pages nor
+ * breaking a usage-limit chain, GST-3452) and goes when a write failed terminally, so that run reads as the failure it is.
+ */
 export function pendingConnectorResult(result: SyncResult | null, session: ManagedConnectorSync): SyncResult {
-  const base: SyncResult = result ?? { status: 'partial', fromCommit: null, toCommit: '', added: session.counts.created, modified: session.counts.updated,
-    deleted: session.counts.deleted, renamed: 0, chunksCreated: 0, embedded: 0, pagesAffected: [] };
-  return { ...base, status: 'partial', reason: 'writer_pending' };
+  const { stopped_on, ...base }: SyncResult = result ?? { status: 'partial', fromCommit: null, toCommit: '', added: session.counts.created,
+    modified: session.counts.updated, deleted: session.counts.deleted, renamed: 0, chunksCreated: 0, embedded: 0, pagesAffected: [] };
+  return { ...base, ...(stopped_on && session.failedWriteCount === 0 ? { stopped_on } : {}), status: 'partial',
+    reason: session.stoppedAtDeadline ? 'timeout' : 'writer_pending' };
 }
 
 export class ManagedConnectorSync {
@@ -425,6 +496,12 @@ export class ManagedConnectorSync {
   private lastFailedItem: { slug: string; requestId: string } | null = null;
   /** True when this run ended with accepted writes pending, so its checkpoint did not advance. */
   deferred = false;
+  /** Admitted writes of this run that failed terminally (not purge refusals). */
+  get failedWriteCount(): number { return this.failedPending.length; }
+  /** #9968: the caller's deadline stopped this sweep; the run ended partial with its state recorded. */
+  stoppedAtDeadline = false;
+  /** #9968: the caller's deadline (epoch ms); waiting on a retained publication never runs past it. */
+  deadlineAtMs: number | undefined;
   readonly counts: Omit<ConnectorRunCounts, 'finished_at' | 'pending' | 'stopped_on_wait_budget'> & { created: number; updated: number; deleted: number; purged_skipped: number } = {
     page_admissions: 0, skipped_unchanged: 0, checkpoint_admissions: 0, dropped_upstream: 0, created: 0, updated: 0, deleted: 0, purged_skipped: 0 };
   readonly checkpointKey: string;
@@ -448,21 +525,23 @@ export class ManagedConnectorSync {
     if (!this.lease) return;
     this.lease.signal.throwIfAborted();
     const { handle } = this.lease;
-    const [owned] = await engine.executeRaw(`SELECT id FROM gbrain_cycle_locks
-      WHERE id=$1 AND acquisition_token=$2::uuid AND extract(epoch from acquired_at)::text=$3
-        AND ttl_expires_at>now() FOR SHARE`, [handle.id, handle.acquisitionToken, handle.acquiredAt]);
+    const [owned] = await engine.executeRaw(LEASE_SQL, [handle.id, handle.acquisitionToken, handle.acquiredAt]);
     if (!owned) throw new LockStolenError(handle.id);
     this.lease.signal.throwIfAborted();
   }
   async load(): Promise<void> {
-    await this.recover('__managed_sync_checkpoint__');
+    const recover = () => this.recover('__managed_sync_checkpoint__').catch(async (error: unknown) => {
+      if (error instanceof OperationError && error.writeError === 'recovery_required') await this.recordRefusal(error).catch(() => {});
+      throw error;
+    });
+    await recover();
     if (this.retryFailed) {
       const blocked = await this.retryBlocker(this.engine);
       if (blocked) {
         await this.authorizeRetryReceipt(this.engine, blocked);
         if (!isTerminal(blocked) && !blocked.recovery) {
           writeResponse(await waitForWrite(this.engine, blocked, loadConfig() ?? { engine: this.engine.kind }, maintenancePublishWaitMs()));
-          await this.recover('__managed_sync_checkpoint__');
+          await recover();
         }
         await this.refuseRetryBlocker(this.engine);
       }
@@ -568,7 +647,7 @@ export class ManagedConnectorSync {
   private async validate(engine: BrainEngine, slug: string): Promise<WorktreeBinding | null> {
     await this.assertLease(engine);
     await validateSyncAuthority(engine, this.authority, slug);
-    const [source] = await engine.executeRaw<ConnectorSource>('SELECT incarnation,archived,local_path,config FROM sources WHERE id=$1', [this.sourceId]);
+    const [source] = await engine.executeRaw<ConnectorSource>(SOURCE_SQL, [this.sourceId]);
     if (!source || source.archived || source.incarnation !== this.source.incarnation || source.local_path !== this.source.local_path ||
         source.config.kind !== this.connector || connectorIdentity(this.connector, source.config, source.local_path).digest !== this.identity.digest) {
       throw opError('source_changed', 'The connector source changed during the sweep.',
@@ -614,19 +693,19 @@ export class ManagedConnectorSync {
     error.writeError = row.recovery || isTerminal(row) ? 'recovery_required' : 'write_pending';
     throw error;
   }
-  private async recover(slug: string): Promise<void> {
-    const binding = await this.validate(this.engine, slug);
+  private async recover(slug: string, reads: BrainEngine = this.engine): Promise<void> {
+    const binding = await this.validate(reads, slug);
     if (!binding) return;
     // #9681: a page write of this run that the owner is still publishing is not retained: the run tracks its receipt,
     // and the owner publishes nothing else on this worktree until it settles.
-    const retained = () => this.engine.executeRaw<WriteRequest>(
-      `SELECT * FROM persistence_requests WHERE worktree_id=$1::uuid AND recovery IS NOT NULL
-        AND NOT (id=ANY($2::uuid[]) AND state='running') ORDER BY sequence LIMIT 1`, [binding.worktree_id, [...this.pendingRows.keys()]]);
-    let [row] = await retained();
-    if (!row) return;
+    const retained = () => this.retainedPublication(binding.worktree_id, [...this.pendingRows.keys()]);
+    const first = await retained();
+    if (!first) return;
+    let row: WriteRequest = first;
     startPersistenceConsumer(this.engine, loadConfig() ?? { engine: this.engine.kind });
-    // The retained publication may need a slow commit; honor the operator's configured write wait.
-    const deadline = performance.now() + configuredWriteWaitMs(AGENT_WRITE_WAIT_MS);
+    // The retained publication may need a slow commit; honor the operator's configured write wait, within the caller's deadline.
+    const waitMs = configuredWriteWaitMs(AGENT_WRITE_WAIT_MS);
+    const deadline = performance.now() + (this.deadlineAtMs === undefined ? waitMs : Math.max(0, Math.min(waitMs, this.deadlineAtMs - Date.now())));
     while (performance.now() < deadline) {
       const remaining = deadline - performance.now();
       if (remaining <= 0) break;
@@ -636,21 +715,33 @@ export class ManagedConnectorSync {
           const current = await getWriteRequestById(this.engine, row.id);
           if (!current || current.recovery || !isTerminal(current)) return { row: current ?? row, drained: false };
           writeResponse(current);
-          const [next] = await retained();
+          const next = await retained();
           return { row: next ?? current, drained: !next };
         })(),
         new Promise<null>(resolve => { timer = setTimeout(() => resolve(null), remaining); }),
       ]).finally(() => { if (timer) clearTimeout(timer); });
-      if (progress?.drained) return;
+      if (progress?.drained) {
+        (reads as { [FORGET_CALL_READS]?: () => void })[FORGET_CALL_READS]?.();
+        return;
+      }
       if (progress) row = progress.row;
       await new Promise(resolve => setTimeout(resolve, Math.min(50, Math.max(1, deadline - performance.now()))));
     }
     if (!row.recovery) writeResponse(row);
-    const error = new OperationError('recovery_required', 'A retained connector publication still requires recovery.',
-      'Inspect the retained receipt and its blocked_reason before retrying this connector.');
+    this.lastFailedItem = { slug: row.slug, requestId: row.request_id };
+    const error = opError('recovery_required', 'A retained connector publication still requires recovery.',
+      `Request ${row.request_id} for ${row.slug} in ${row.source_id} is ${row.state}${row.blocked_reason ? ` (blocked_reason: ${row.blocked_reason})` : ''} and its publication has not settled, so nothing more of ${this.sourceId} was synced. `
+        + `Read its receipt, with its state, blocked_reason and fix, with gbrain write-request -- ${row.request_id} (gbrain sources writer status --source ${this.sourceId} --json lists it too); once it is final, run gbrain sync --source ${this.sourceId} again.`,
+      { fix: receiptFix(row.request_id, 'The receipt shows the retained publication, its state and blocked_reason, and the step that settles it.') });
     error.writeRequest = receiptFor(row);
     error.writeError = 'recovery_required';
     throw error;
+  }
+  /** The oldest publication on the worktree that still holds a recovery record, other than this run's own rows in `own` that are still running. */
+  private async retainedPublication(worktreeId: string, own: string[]): Promise<WriteRequest | undefined> {
+    const [row] = await this.engine.executeRaw<WriteRequest>(`SELECT * FROM persistence_requests WHERE worktree_id=$1::uuid AND recovery IS NOT NULL
+      AND NOT (id=ANY($2::uuid[]) AND state='running') ORDER BY sequence LIMIT 1`, [worktreeId, own]);
+    return row;
   }
   state<T>(empty: T): T {
     if (this.resetRequested) throw opError('storage_error', 'A requested checkpoint reset runs after the connector account check, before the checkpoint is read.',
@@ -661,9 +752,10 @@ export class ManagedConnectorSync {
   }
   async page(slug: string) {
     slug = slugifyPath(`${slug}.md`);
-    await this.recover(slug);
+    const reads = callReads(this.engine);
+    await this.recover(slug, reads);
     const snapshot = await materializedSnapshot(this.engine, await this.engine.readPageSnapshot(slug, { sourceId: this.sourceId }));
-    if (snapshot && this.binding) await prepareFileTarget(this.engine,
+    if (snapshot && this.binding) await prepareFileTarget(reads,
       { source_id: this.sourceId, worktree_id: this.binding.worktree_id, slug }, snapshot, serializePageToMarkdown(snapshot.page, snapshot.tags));
     return snapshot?.page ?? null;
   }
@@ -757,9 +849,7 @@ export class ManagedConnectorSync {
     const attribution = await maintenanceAttribution(this.engine);
     await this.engine.transaction(async tx => {
       await this.assertLease(tx);
-      await withCoordinatedWrite(tx, [this.sourceId], () => tx.executeRaw(
-        'UPDATE sources SET last_sync_at=now(),newest_content_at=COALESCE($3::timestamptz,newest_content_at) WHERE id=$1 AND incarnation=$2::uuid',
-        [this.sourceId, this.source.incarnation, newestContentAt ?? null]), attribution);
+      await withCoordinatedWrite(tx, [this.sourceId], () => stampConnectorFresh(tx, this.sourceId, this.source.incarnation, newestContentAt), attribution);
     });
   }
   /** The run's remaining wait allowance; the caller's own deadline arrives through the lease signal. */
@@ -850,7 +940,8 @@ export class ManagedConnectorSync {
   /**
    * Records the run's pending set, counts and upgrade state; written only while the lease is held. `failure` is the
    * error the run ended on (#6831): it is recorded with a count of runs in a row that ended that way. Only a complete
-   * run (its cursor saved, nothing pending or failed) clears it; a partial or wait-budget stop leaves it as it was.
+   * run (its cursor saved, nothing pending or failed) clears it; a partial, wait-budget or deadline stop leaves it as it was,
+   * except a recorded recovery_required with no retained publication left.
    */
   async finish(failure?: unknown): Promise<void> {
     await this.refreshPending().catch(() => {});
@@ -859,7 +950,8 @@ export class ManagedConnectorSync {
     if (this.inflight) this.pendingCheckpoint = this.inflight.entry;
     const now = new Date().toISOString();
     const outstanding = [...this.pendingRows.values()].map(pending => pending.entry);
-    const complete = this.lastSaveCommitted && !outstanding.length && !this.failedPending.length && !this.pendingCheckpoint && !this.stopped;
+    const complete = this.lastSaveCommitted && !outstanding.length && !this.failedPending.length && !this.pendingCheckpoint && !this.stopped
+      && !this.stoppedAtDeadline;
     // Only a complete --full sweep (which also reconciles deletions) proves that a failed item it never reached
     // was deleted upstream. Delta and targeted runs keep every unreached carried entry for its automatic retry.
     const unreached = this.unreachedCarried();
@@ -878,9 +970,14 @@ export class ManagedConnectorSync {
     const receipt = failure instanceof OperationError ? failure.writeRequest : undefined;
     const item = receipt && receipt.request_id === this.lastFailedItem?.requestId ? this.lastFailedItem : null;
     const named = failure as { code?: unknown; message?: unknown } | undefined;
+    // #9968: a recorded recovery_required whose retained publication has since settled is not a stop any more: a run that
+    // ended without an error and finds no retained publication left (this run's own in-flight rows aside) clears it.
+    const recoverySettled = !failure && this.connectorState.last_failure?.code === 'recovery_required'
+      && (!this.binding || !await this.retainedPublication(this.binding.worktree_id,
+        [...this.pendingRows.keys(), ...(this.inflight ? [this.inflight.row.id] : [])]).catch(() => true));
     const lastFailure = failure ? { code: (failure instanceof OperationError ? failure.writeError : undefined) ?? (typeof named?.code === 'string' && named.code ? named.code : 'connector_error'),
       message: typeof named?.message === 'string' ? named.message : String(failure), slug: item?.slug ?? null, request_id: item?.requestId ?? null,
-      at: now, consecutive: (this.connectorState.last_failure?.consecutive ?? 0) + 1 } : complete ? null : this.connectorState.last_failure ?? null;
+      at: now, consecutive: (this.connectorState.last_failure?.consecutive ?? 0) + 1 } : complete || recoverySettled ? null : this.connectorState.last_failure ?? null;
     this.connectorState = { ...this.connectorState, pending, upgrade_recovery: recovery, purged_items: purgedItems, last_failure: lastFailure, last_run: {
       page_admissions: this.counts.page_admissions, skipped_unchanged: this.counts.skipped_unchanged, pending: pending.length,
       checkpoint_admissions: this.counts.checkpoint_admissions, stopped_on_wait_budget: this.stopped, dropped_upstream: this.counts.dropped_upstream,
@@ -980,6 +1077,15 @@ export class ManagedConnectorSync {
       { id: handle.id, token: handle.acquisitionToken, acquiredAt: handle.acquiredAt });
     if (!written) throw new LockStolenError(handle.id);
   }
+  /** #9968: a sync whose recovery refuses on the binding's retained publication records that refusal as its failure; the rest of the stored state is kept. */
+  private async recordRefusal(error: OperationError): Promise<void> {
+    const state = await readManagedConnectorState(this.engine, this.sourceId, this.source.incarnation);
+    const requestId = error.writeRequest?.request_id ?? null;
+    this.connectorState = { ...state, last_failure: { code: 'recovery_required', message: error.message,
+      slug: requestId && requestId === this.lastFailedItem?.requestId ? this.lastFailedItem.slug : null, request_id: requestId,
+      at: new Date().toISOString(), consecutive: (state.last_failure?.consecutive ?? 0) + 1 } };
+    await this.writeState();
+  }
   /** The last run's counts, for the caller's result. */
   runCounts(): ConnectorRunCounts | null { return this.connectorState.last_run; }
   /**
@@ -987,19 +1093,19 @@ export class ManagedConnectorSync {
    * on an unadmitted request; the item skips admission only when the no-op
    * kernel finds nothing to publish and the preparer's validation still holds.
    */
-  private async unchanged(kind: ConnectorIntentKind, slug: string, intent: ConnectorIntent, snapshot: PageSnapshot | null, sourcePath: string | null): Promise<boolean> {
+  private async unchanged(reads: BrainEngine, kind: ConnectorIntentKind, slug: string, intent: ConnectorIntent, snapshot: PageSnapshot | null, sourcePath: string | null): Promise<boolean> {
     try {
       const row = screeningRequest({ source_id: this.sourceId, source_incarnation: this.source.incarnation, slug, page_id: snapshot?.page.id ?? null,
         worktree_id: this.binding?.worktree_id ?? null, authority: this.authority.writer, intent });
-      const prepared = await prepareConnectorMutation(this.engine, row);
+      const prepared = await prepareConnectorMutation(reads, row);
       if (kind === 'connector_v2_delete') {
         if (this.binding || prepared.noop !== true) return false;
       } else {
-        const databaseOnly = !this.binding || !prepared.file && await strictPrivateImport(this.engine, this.sourceId, intent.content ?? '', sourcePath ?? `${slug}.md`, snapshot);
-        const verdict = await inspectUnchanged(this.engine, { prepared, snapshot, sourcePath, databaseOnly });
+        const databaseOnly = !this.binding || !prepared.file && await strictPrivateImport(reads, this.sourceId, intent.content ?? '', sourcePath ?? `${slug}.md`, snapshot);
+        const verdict = await inspectUnchanged(reads, { prepared, snapshot, sourcePath, databaseOnly });
         if (verdict.admitReason) return false;
       }
-      await prepared.validate?.(this.engine);
+      await prepared.validate?.(reads);
       return true;
     } catch (error) {
       if (error instanceof LockStolenError) throw error;
@@ -1011,7 +1117,8 @@ export class ManagedConnectorSync {
     Promise<{ row: WriteRequest | null; pending: boolean; created: boolean; purged?: true }> {
     await this.awaitPagePending(slug);
     await this.awaitPageMirror(slug);
-    await this.recover(slug);
+    const reads = callReads(this.engine);
+    await this.recover(slug, reads);
     const snapshot = await this.engine.readPageSnapshot(slug, { sourceId: this.sourceId, includeDeleted: true });
     if (kind === 'connector_v2_google_receipts') {
       if (!snapshot || snapshot.page.id !== extra.googlePageId) throw opError('page_identity_changed', 'The historical Gmail page was deleted or recreated.',
@@ -1022,9 +1129,9 @@ export class ManagedConnectorSync {
     }
     const target = { source_id: this.sourceId, worktree_id: this.binding?.worktree_id ?? null, slug };
     const strictPrivate = kind === 'connector_v2_import' && sourcePath && typeof extra.content === 'string'
-      ? await strictPrivateFile(this.engine, target, extra.content, sourcePath, snapshot) : null;
+      ? await strictPrivateFile(reads, target, extra.content, sourcePath, snapshot) : null;
     const file = kind === 'connector_v2_checkpoint' ? undefined : strictPrivate ? strictPrivate.file
-      : await connectorFileTarget(this.engine, target, snapshot, extra.content ?? null, sourcePath, this.canonicalRoot);
+      : await connectorFileTarget(reads, target, snapshot, extra.content ?? null, sourcePath, this.canonicalRoot);
     if (file && sourcePath && resolve(file.path) !== resolve(this.canonicalRoot!, sourcePath)) {
       throw opError('source_changed', 'The connector source path no longer names its canonical file.',
         `The recorded path of ${slug} no longer resolves to its canonical file under the root of ${this.sourceId}, so nothing was submitted. Inspect the root and binding before running gbrain sync --source ${this.sourceId} again.`,
@@ -1128,7 +1235,7 @@ export class ManagedConnectorSync {
           'Repeat the same connector sync options; an admitted replacement keeps its existing request identity.');
       } finally { await lock?.release(); }
     } else if (!row) {
-      if (page && !prior.retry && await this.unchanged(kind, slug, intent, snapshot, sourcePath)) {
+      if (page && !prior.retry && await this.unchanged(reads, kind, slug, intent, snapshot, sourcePath)) {
         this.counts.skipped_unchanged++;
         return { row: null, pending: false, created: false };
       }
@@ -1191,6 +1298,18 @@ export class ManagedConnectorSync {
   }
 }
 
+/**
+ * The managed connector sync's freshness stamp: sets the source's last sync time to the database clock and, when the run
+ * saw newer content, its newest content time (null or absent keeps the stored value), only while the source is still the
+ * incarnation the run bound (`markSourceSynced` with `incarnation` and `newestContentAt`, engine-sql/sources.ts, so a Rust
+ * brain stamps too). Runs inside the caller's transaction: `stampFreshness` (a run whose checkpoint save was skipped, in
+ * a coordinated write) and the `connector_v2_checkpoint` publication below (a fresh checkpoint). Returns whether the
+ * source was stamped; callers do not read it, as they did not read the raw statement's rows.
+ */
+export async function stampConnectorFresh(tx: BrainEngine, sourceId: string, incarnation: string, newestContentAt?: string | null): Promise<boolean> {
+  return tx.markSourceSynced(sourceId, { incarnation, newestContentAt: newestContentAt ?? null });
+}
+
 export async function prepareConnectorMutation(engine: BrainEngine, row: WriteRequest): Promise<PreparedMutation> {
   const p = row.intent as ConnectorIntent | null;
   if (!p || !CONNECTOR_V2_KINDS.includes(p.kind) ||
@@ -1241,8 +1360,7 @@ export async function prepareConnectorMutation(engine: BrainEngine, row: WriteRe
       { fix: receiptFix(row.request_id, 'The receipt confirms the checkpoint save did not commit.') });
     await tx.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES('managed-connector',$1,$2::text::jsonb)
       ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=EXCLUDED.completed_keys,updated_at=now()`, [p.checkpointKey, JSON.stringify(p.checkpointAfter)]);
-    if (p.fresh) await tx.executeRaw('UPDATE sources SET last_sync_at=now(),newest_content_at=COALESCE($3::timestamptz,newest_content_at) WHERE id=$1 AND incarnation=$2::uuid',
-      [row.source_id, row.source_incarnation, p.newestContentAt ?? null]);
+    if (p.fresh) await stampConnectorFresh(tx, row.source_id, row.source_incarnation, p.newestContentAt);
     return { status: 'checkpointed', source_id: row.source_id };
   } };
   // #9062: a page stored in segments is read back as strings (up to PAGE_MAX_BYTES), so its re-render carries its timeline and fences like an inline page's.

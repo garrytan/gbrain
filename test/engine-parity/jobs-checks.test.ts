@@ -27,6 +27,8 @@ import type { BrainEngine } from '../../src/core/engine.ts';
 import type { AdmitJobPolicy, AdmitJobSpec, ClaimJobSpec, JobInsertValues } from '../../src/core/engine-sql/jobs.ts';
 import { APPLICATION_AUTHORITY, coalesceDecision, parseSubmissionAuthority, type SubmissionAuthority } from '../../src/core/minions/submission-authority.ts';
 import { LEGACY_SPEND_KEY_PREFIXES } from '../../src/core/minions/spend-authorization.ts';
+import { FENCE_REPAIR_ENABLED_KEY, FENCE_REPAIR_LLM_KEY } from '../../src/core/fence-repair/config.ts';
+import { LAST_GLOBAL_MAINTENANCE_KEY, readFenceAutoRepair } from '../../src/core/fence-repair/hold-fix.ts';
 import { parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
@@ -223,6 +225,28 @@ describe('jobs checks parity', () => {
         sincePast: view(await engine.readLastFailedGlobalMaintenanceJob(PAST)),
         ids: [b, c, d].map(id => id - a),
       };
+    });
+
+  // fence-repair/hold-fix.ts readFenceAutoRepair: a refused read once counted as the defaults (repair on, model tier on).
+  parityTest('readFenceAutoRepair reads the fence switches, the maintenance stamp and the last completed maintenance job',
+    { methods: ['setConfig', 'admitJob', 'claimNextJob', 'completeJob', 'failJob', 'getConfigValues', 'readLastFinishedJobAt'] }, async (engine) => {
+      const gm = 'autopilot-global-maintenance';
+      const none = await readFenceAutoRepair(engine, new Date());
+      await engine.setConfig(FENCE_REPAIR_ENABLED_KEY, 'off');
+      await engine.setConfig(FENCE_REPAIR_LLM_KEY, ' false ');
+      await engine.setConfig(LAST_GLOBAL_MAINTENANCE_KEY, PAST);
+      await ended(engine, gm, 'failed'); // a job that did not complete is no evidence
+      const stamped = await readFenceAutoRepair(engine, new Date());
+      await ended(engine, gm, 'completed');
+      await engine.setConfig(FENCE_REPAIR_ENABLED_KEY, 'true');
+      const ran = await readFenceAutoRepair(engine, new Date(Date.now() + 1_000));
+      expect(none).toEqual({ enabled: true, llm: true, last_maintenance_at: null, active: false });
+      expect(stamped).toEqual({ enabled: false, llm: false, last_maintenance_at: PAST, active: false });
+      expect({ enabled: ran.enabled, llm: ran.llm, active: ran.active }).toEqual({ enabled: true, llm: false, active: true });
+      // The completed job's finish, read to the second in UTC, is newer than the stamp.
+      expect(ran.last_maintenance_at).toMatch(/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.000Z$/);
+      expect(Math.abs(Date.parse(ran.last_maintenance_at!) - Date.now())).toBeLessThan(60_000);
+      return { none, stamped, ran: { enabled: ran.enabled, llm: ran.llm, active: ran.active } };
     });
 
   parityTest('listFactsAbsorbJobsStillDead lists dead or failed facts-absorb jobs no later job for the same page completed, newest first, with the full count',

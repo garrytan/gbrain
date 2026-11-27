@@ -18,6 +18,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { runExtractExplain } from '../src/commands/extract-explain.ts';
+import { readExtractKindRollup7d, type EngineRawRead } from '../src/core/engine-sql/doctor-derived.ts';
 import { _resetPackCacheForTests } from '../src/core/schema-pack/registry.ts';
 import { _resetPackLocatorForTests } from '../src/core/schema-pack/load-active.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -58,23 +59,29 @@ async function runAndCapture(engine: BrainEngine, extraArgs: string[] = []): Pro
   return logs.join('\n');
 }
 
+/** The engine's readExtractKindRollup7d, run over the stub's executeRaw as the SQL engines run it. */
+function withRollupMember(engine: { executeRaw: (sql: string, params?: unknown[]) => Promise<unknown[]> } & Record<string, unknown>): BrainEngine {
+  const raw = ((sql: string, params?: unknown[]) => engine.executeRaw(sql, params)) as EngineRawRead;
+  return { ...engine, readExtractKindRollup7d: (kind: string) => readExtractKindRollup7d(raw, kind) } as unknown as BrainEngine;
+}
+
 function stubEngine(rollupRow: Record<string, unknown>, capturedSql?: string[]): BrainEngine {
-  return {
+  return withRollupMember({
     getConfig: async () => null,
     executeRaw: async (sql: string) => {
       capturedSql?.push(sql);
       return [rollupRow];
     },
-  } as unknown as BrainEngine;
+  });
 }
 
 /** An engine whose rollup query throws — the pre-v106 brain (no
  * extract_rollup_7d table yet) the command's try/catch exists for. */
 function failingRollupEngine(): BrainEngine {
-  return {
+  return withRollupMember({
     getConfig: async () => null,
     executeRaw: async () => { throw new Error('relation "extract_rollup_7d" does not exist'); },
-  } as unknown as BrainEngine;
+  });
 }
 
 describe('runExtractExplain — failing rollup query (pre-v106 brain)', () => {

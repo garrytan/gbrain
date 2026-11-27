@@ -17,6 +17,10 @@ Keys (tag `A`, `keys::TAKE`):
   synthesis page's source).
 - `A 0x04 <take page><row><synthesis page>` is empty: the reverse index a take delete walks.
 
+A take purge tombstone (`F 0x10`, [facts.md](facts.md#the-take-purge-ledger)) refuses a take whose claim it names:
+`addTakesBatch` checks every row and `supersedeTake` the new row with `purged_content`, as the `takes_refuse_purged`
+trigger does.
+
 `<row>` is `(row_num as u32 ^ 0x8000_0000)` big-endian, so negative row numbers sort first. A take keeps
 the `source_id` of its page and a `claim_rev` that moves each time the claim text changes (for the
 embedding staleness check owned by core). `addTakesBatch` that changes a take's claim drops the take's stored vector (`embeddings::remove_take_vector`, which also raises the vector generation), as Postgres nulls the embedding in that upsert; deleting a take deletes its vector too.
@@ -35,7 +39,8 @@ the record as it is.
 | `brain.addTakesBatch(rows)` | number of rows sent. Inserts or, when one of the nine written columns is DISTINCT, updates in place (`updated_at` moves, `created_at` stays). `constraint_violation` for a `NOT NULL` column, `takes_weight_check`, the same key twice in one batch ("ON CONFLICT DO UPDATE command cannot affect row a second time") or a missing page (`takes_page_id_fkey`, raised after every row is read); `invalid_argument` for a NUL byte, an `int4` overflow or an `f32` overflow | `addTakesBatch` |
 | `brain.listTakes(filter)` | `Take[]`: page/slug/holder/kind/active/resolved/allow-list/source filters, `since_on_or_before` (`since_date <= x`, nulls drop), sort by `since_date` (NULLS LAST, `oldest_first` flips), `weight DESC` or `created_at DESC`, then `id DESC`; `limit` (100 when absent) and `offset` (a non-number, negative or non-finite offset is `invalid_argument`) | `listTakes` |
 | `brain.listActiveTakesForPages({ page_ids, allow_list })` | active takes of the pages, by page then row | `listActiveTakesForPages` |
-| `brain.searchTakes({ query, limit, allow_list, source_ids, eligible_only })` | `TakeHit[]`: active takes whose `word_similarity(query, claim) >= 0.6` (`pg_trgm` default), `score DESC, weight DESC`; `limit` 30 when absent | `searchTakes` |
+| `brain.searchTakes({ query, limit, allow_list, source_ids, eligible_only, min_trust, suppress_flagged })` | `TakeHit[]`: active takes whose `word_similarity(query, claim) >= 0.6` (`pg_trgm` default), `score DESC, weight DESC`; `limit` 30 when absent | `searchTakes` |
+| `brain.searchTakesVector(embedding, { limit, allow_list, source_ids, eligible_only, min_trust, suppress_flagged, exclude_private })` | `TakeHit[]`: active takes whose vector was written for their current claim, nearest by pgvector cosine distance first (`vectors.rs`, over the cached vector index), `score` = `(1 - distance)::real`; `limit` 30 when absent. `invalid_argument` for an empty query, more than 16000 elements, a NaN (sent as null) or infinite element, or a width other than a candidate take's vector ("different vector dimensions") | `searchTakesVector` |
 | `brain.updateTake({ page_id, row_num, weight, since_date, source })` | `false` when no take; else COALESCEs the three columns, moves `updated_at`, `true`. `takes_weight_check` applies | `updateTake` |
 | `brain.supersedeTake(input)` | `{ status: 'not_found' \| 'resolved' }`, or `{ status: 'ok', old_row, new_row }` with `new_row = max(row_num) + 1` on the page; the old row turns inactive with `superseded_by = new_row`. Both rows share one timestamp; the new take keeps the old take's source | `supersedeTake` |
 | `brain.resolveTake({ page_id, row_num, resolution })` | `'not_found'`, `'resolved'` or `'ok'`. Writes only on `'ok'` with a resolution: `takes_resolution_consistency` (three-valued, as the CHECK: `correct` needs outcome not false, `incorrect` not true, `partial`/`unresolvable` null) then `takes_resolved_quality_values` | `resolveTake` |
@@ -44,12 +49,34 @@ the record as it is.
 | `brain.addSynthesisEvidence(rows)` | number of new rows (an existing key is skipped). `int4` checks for every row first, then `NOT NULL` per row, then the two foreign keys over the inserted rows | `addSynthesisEvidence` |
 | `brain.matchTakeRows(pageId, rows, limit)` | the row numbers of the page's takes whose claim, kind or holder differs from the fence row of the same number (`IS DISTINCT FROM`: a null fence field differs), ascending, at most `limit` (null is no limit, negative is `invalid_argument`). A take that two fence rows of its number both differ from is listed twice, as the join lists it | `matchTakeRows` |
 | `brain.deleteTakeRows(pageId, rowNums)` | null. Deletes the page's takes at those row numbers with the evidence rows that cite them and their vectors; a null entry or a number with no take deletes nothing, an empty list writes nothing | `deleteTakeRows` |
+| `brain.listHeldTakeRows({ ids, writer?, pending? })` | `{ id, trust_tier }[]` by id: of the listed takes, those a write may not delete or overwrite; see "Held takes" | `listHeldTakeRows` |
+
+## Held takes
+
+`listHeldTakeRows({ ids, writer?, pending? })` (capability `takes`; reference `engine-sql/trust-fence.ts`; code
+`takes/held.rs`, napi `families/trust_fence.rs`, member `store-members/trust-fence.ts`) is the fence guard's read of
+the takes a write may not delete or overwrite (`trust/fence-guard.ts` `heldRows` for `takes`, called by the takes
+reconcile in `cycle/extract-takes.ts`). Of the listed ids, a take is held when its stored tier (stamped by
+`store_take`) ranks above the writer, or, with `pending`, when a pending `forget` proposal targets it
+(`trust/proposals.rs` `pending_forget` on table `takes`; a take that is only the related row, or a proposal on another
+table with the same id, holds nothing). The writer is the named tier, a name that is no tier ranking 0 as the SQL rank
+`CASE` does, else the store's write trust context (`fence_context()`, `unknown` when undeclared). Takes are keyed by
+id, so each listed id is one lookup; `FOR UPDATE` needs nothing in a store with one writer. An id with no take, and an
+empty list, read nothing. On PGLite and Postgres the statement is the one `heldRows` sent through `executeRaw`, byte
+for byte (pinned by `test/engine-sql-held-take-rows-golden.test.ts`). Parity case:
+`test/engine-parity/take-held-rows.test.ts`.
 
 Read eligibility: `projectionEligibleSql('takes', ...)` always hides takes of soft-deleted pages, of pages
-whose frontmatter has a `quarantine` key (any value), and rows in `needs_rederive`. Only a raw-SQL purge
-writes `needs_rederive` and `executeRaw` refuses on Rust, so that clause never hides a row here. The
-members send `eligible_only: true` for any eligibility object and the store applies the first two clauses.
-`eligibility.floor` and `eligibility.suppressFlagged` refuse with `engine_capability_missing`.
+whose frontmatter has a `quarantine` key (any value), and rows in `needs_rederive`. A purge marks rows in
+that queue through `markNeedsRederive` (`generations/needs_rederive.rs`). The members send `eligible_only: true` for
+any eligibility object and the store applies all three clauses.
+`listTakes`, `searchTakes` and `searchTakesVector` also take `min_trust` (`eligibility.floor`: `trustFloorSql`, the take's stamped
+tier at or above the floor) and `suppress_flagged` (`eligibility.suppressFlagged`: `activationSuppressedSql`
+over the take's tier and its write-gate receipts), through `trust::TrustPolicy`.
+
+Each `addTakesBatch` row runs `trust::check_insert` first, as the `BEFORE INSERT` trigger runs before
+`ON CONFLICT` decides: a writer that declares a tier above `operator_curated` without owner confirmation is
+refused even when the row is already current and nothing would be written.
 
 Cascades: deleting a page (`remove_page_rows`) drops its takes, their evidence, and the evidence the page
 cites as a synthesis page. `remove_source_rows` sweeps every take and evidence row of the source; page
@@ -59,6 +86,10 @@ Differences from PGLite:
 
 - `searchTakes`: Postgres sorts by `score DESC, weight DESC` alone, so ties come in no fixed order. The store
   breaks ties by take `id` ascending.
+- `searchTakesVector`: Postgres orders by distance alone, so ties come in no fixed order; the store puts NaN
+  (a zero query vector) last and breaks ties by take `id` ascending. A NaN score crosses as null, where the
+  SQL arms read NaN. Postgres refuses another width only for the rows its plan scans; the store refuses when a
+  take that passes the filters has one.
 - `getCalibrationCurve`: Postgres computes `FLOOR(weight::numeric / bucket_size)` with numeric division,
   which rounds to its working scale before `FLOOR`. The store divides exactly. The two differ only when the
   quotient lies within about 1e-16 of an integer without being one.
@@ -70,3 +101,39 @@ Differences from PGLite:
 The eight single-purpose reads of doctor, onboarding, the fact purge, the fence import, the MCP scorecard and the take repair
 (`countTakes`, `countOffGridTakeWeights`, `planFactPurgeTakes`, `listTakeRowsForPage`, `countMcpResolvedTakes`,
 `listTakeSupersessionCandidates`) are in [takes-reads.md](takes-reads.md).
+
+## The fence projection's statements (`takes/fence_projection.rs`)
+
+The take statements of a page publication's fence projection (`src/core/engine-sql/fence-projection.ts`), each the
+statement the projection sent through `executeRaw`. The writes join the engine's transaction and change no
+`updated_at`, as the statements set none; the trust stamp keeps the tier (no claim, kind or holder changes).
+
+- `listQuotedTakeRows(pageId, rowNums)`: `{ row_num, claim }` of the page's takes at those numbers, by row number.
+- `listPageTakeRowNums(pageId)`: the page's take row numbers.
+- `clearChangedTakeResolutions(pageId, claims)`: a resolved take at a record's row number whose claim differs from the
+  record's loses its seven `resolved_*` columns.
+- `writeFenceTakeResolutions(pageId, resolutions)`: a take at a record's row number takes the record's resolution
+  cells when one differs. `resolved_at` is read as Postgres reads `text::timestamptz` (DateStyle `ISO, MDY`,
+  TimeZone UTC; `takes/resolved_at.rs`): numeric and month-name dates in Postgres's orders, `YYYYMMDD`, times with
+  `am`/`pm`, an ISO `T` and `24:00`, `Z`/`UTC`/`GMT` and numeric offsets, and `epoch`/`now`/`today`/`tomorrow`/
+  `yesterday`. An input Postgres refuses gets its error (`date/time field value out of range`, `invalid input syntax`,
+  `time zone displacement out of range`). Zones: `Z`/`UTC`/`GMT`, numeric offsets, and the 145 fixed-offset
+  abbreviations of Postgres's `Default` abbreviation set (`PST`, `EST`, `CET`, `CEST`, `BST`, `IST`, `JST`, ...;
+  `takes/zone_abbreviations.rs`, generated from `share/timezonesets/Default`), the 50 date-dependent abbreviations
+  that set defines by a zone name (`MSK`, `SGT`, ...), and a zone name after the date (`America/New_York`,
+  `Etc/GMT+3`, `EST5EDT`) or an all-letter zone name anywhere (`Japan`). Both read the zone's transitions as
+  `DetermineTimeZoneOffset` and `DetermineTimeZoneAbbrevOffset` do (`takes/zone_offset.rs`): a local time a change
+  skips takes the offset before it, one it repeats takes the offset after it, and an abbreviation takes its last
+  meaning in the zone at or before the date, else its first after. The zones are generated from the tzdata of the
+  repository's PGLite (`takes/zone_transitions.rs`, `rust/scripts/gen-zone-transitions.ts`; checked by
+  `test/rust-zone-transitions-current.test.ts`); a Postgres server with a different tzdata release can differ for a
+  zone whose rules changed between the two. Any other form (a name the tzdata does not have, a zone followed by an
+  offset such as `PST+1`, an instant past the last listed transition (late 2037) of a zone whose daylight rules go on, BC dates,
+  infinities, Julian or week dates) is `unmodeled_input`, which the engine refuses as `engine_capability_missing`
+  naming the member and the text, before anything is written. `takes_resolution_consistency` and then
+  `takes_resolved_quality_values` refuse a bad pair or quality.
+
+`hasFenceAbsentHold(sourceId, kind, ownerKey)` (`generations.rs`) reads whether the key's held generation is held with
+`held_reason = 'fence_absent'`. The page write's link preparation reads its live aliases through `readLiveSlugAliases`
+(`links_preparation.rs`).
+

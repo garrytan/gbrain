@@ -66,6 +66,7 @@ import { afterCursor, repairRequestId, type RepairHandler, type RepairItem, type
 import { maintenanceTransaction } from '../persistence/attribution.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
 import { readBodyRange } from '../page-body/read-range.ts';
+import { sortSourcesById } from '../source-rows.ts';
 
 export const REDACTED_FACTS_INTENT = 'managed_maintenance_restore_redacted_facts';
 const RESTORE_PATTERNS = [...INJECTION_PATTERNS, LEGACY_EVAL_SHELL];
@@ -152,8 +153,7 @@ async function pageTexts(db: BrainEngine, sourceId: string, slug: string): Promi
     fenceBody = snapshot.page.compiled_truth ?? '';
     texts.push({ label: slug, text: [snapshot.page.compiled_truth ?? '', snapshot.page.timeline ?? ''].join('\n') });
   }
-  const versions = await db.executeRaw<{ id: number | string; compiled_truth: string }>(`SELECT id, compiled_truth FROM page_versions
-    WHERE page_id=$1 AND compiled_truth IS NOT NULL ORDER BY id DESC LIMIT ${VERSIONS_PER_PAGE}`, [snapshot.page.id]);
+  const versions = await db.listRetainedVersionBodies(snapshot.page.id, VERSIONS_PER_PAGE);
   for (const v of versions) texts.push({ label: `${slug}@version:${v.id}`, text: v.compiled_truth });
   const activeRows = (parsed: ReturnType<typeof parseFactsFence> | null) => new Map((parsed?.facts ?? []).filter(row => row.active).map(row => [row.rowNum, row.claim.trim()]));
   const fence = fenceBody === null ? null : parseFactsFenceFor(fenceBody, { slug });
@@ -164,12 +164,7 @@ async function pageTexts(db: BrainEngine, sourceId: string, slug: string): Promi
 
 /** Read-only: every active fact of these sources whose text holds a redaction marker, classified, in (source, page, id) order. */
 export async function classifyRedactedFacts(db: BrainEngine, sourceIds: string[], opts: { ids?: number[] } = {}): Promise<RedactedFactCandidate[]> {
-  const rows = await db.executeRaw<FactRow>(`
-    SELECT f.id, f.source_id, f.fact, f.visibility, f.entity_slug, f.row_num, f.source_markdown_slug, f.context, f.source
-      FROM facts f
-     WHERE f.source_id=ANY($1::text[]) AND f.expired_at IS NULL AND f.superseded_by IS NULL
-       AND f.fact LIKE '%[redacted%' AND ($2::bigint[] IS NULL OR f.id=ANY($2::bigint[]))
-     ORDER BY f.source_id COLLATE "C", f.id`, [sourceIds, opts.ids ?? null]);
+  const rows: FactRow[] = await db.listRedactedFactCandidates(sourceIds, opts.ids ?? null);
   const pages = new Map<string, PageTexts>();
   const sourceTexts = async (sourceId: string, slug: string) => {
     const key = `${sourceId}\u0000${slug}`;
@@ -221,12 +216,11 @@ function previewCommand(scope: RepairScope, all: string[]): string {
 }
 
 async function activeSources(engine: BrainEngine): Promise<string[]> {
-  return (await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE archived IS NOT TRUE ORDER BY id')).map(row => row.id);
+  return sortSourcesById(await engine.listAllSources()).map(row => row.id);
 }
 
 async function hashParts(engine: BrainEngine, scope: RepairScope, facts: RedactedFactCandidate[]) {
-  const [brain] = await engine.executeRaw<{ brain_id: string }>('SELECT brain_id FROM persistence_brain WHERE singleton=1').catch(() => []);
-  return ['redacted-facts-v1', brain?.brain_id ?? 'host', scope.source_ids, facts.map(f => [f.id, f.class, f.reason, f.fact_hash, f.restored, f.route])];
+    return ['redacted-facts-v1', (await engine.readPersistenceBrainId().catch(() => null)) ?? 'host', scope.source_ids, facts.map(f => [f.id, f.class, f.reason, f.fact_hash, f.restored, f.route])];
 }
 
 function pageItem(page: RedactedFactsPage, hash: string, index: number, last: boolean): PageItem {
@@ -301,15 +295,9 @@ export interface Restore { id: number; from: string; to: string; visibility: str
  * write, so a row changed after the apply's own recheck is left alone and not
  * reported restored.
  */
-export const restoreRedactedRows = (tx: BrainEngine, sourceId: string, restores: Restore[]) => tx.executeRaw<{ id: number | string }>(`UPDATE facts f
-    SET fact=r.to_text, context=concat_ws(' | ', NULLIF(f.context,''), $3::text)
-   FROM jsonb_to_recordset($2::text::jsonb) AS r(id bigint, from_text text, to_text text, visibility text, entity_slug text, source_markdown_slug text, row_num int)
-  WHERE f.source_id=$1 AND f.id=r.id AND f.fact=r.from_text AND f.visibility=r.visibility AND f.entity_slug IS NOT DISTINCT FROM r.entity_slug
-    AND f.source_markdown_slug IS NOT DISTINCT FROM r.source_markdown_slug AND f.expired_at IS NULL AND f.superseded_by IS NULL
-    AND f.row_num IS NOT DISTINCT FROM r.row_num AND (r.row_num IS NULL OR f.source LIKE 'cli:extract-conversation-facts%')
-  RETURNING f.id`,
-[sourceId, JSON.stringify(restores.map(r => ({ id: r.id, from_text: r.from, to_text: r.to, visibility: r.visibility, entity_slug: r.entity_slug,
-  source_markdown_slug: r.source_markdown_slug, row_num: r.row_num ?? null }))), RESTORED_CONTEXT]);
+export const restoreRedactedRows = async (tx: BrainEngine, sourceId: string, restores: Restore[]): Promise<Array<{ id: number }>> =>
+  (await tx.restoreRedactedFactTexts(sourceId, restores.map(r => ({ id: r.id, from_text: r.from, to_text: r.to, visibility: r.visibility, entity_slug: r.entity_slug,
+    source_markdown_slug: r.source_markdown_slug, row_num: r.row_num ?? null })), RESTORED_CONTEXT)).map(id => ({ id }));
 
 /**
  * Database-only and conversation-extractor rows: on a managed brain one database-only maintenance
@@ -375,8 +363,6 @@ async function restoreFencedRows(ctx: Parameters<RepairHandler['apply']>[0], ite
   await submitPageMutation(ctx, { operation: 'put_page', params: { slug: page.slug, source_id: page.source_id,
     content: serializePageToMarkdown({ ...snapshot.page, compiled_truth: body }, snapshot.tags), expected_revision: snapshot.revision,
     request_id: await repairRequestId(ctx, 'redacted-facts', item, snapshot.revision) } });
-  const projected = new Set((await engine.executeRaw<{ row_num: number }>(`SELECT row_num FROM facts
-    WHERE source_id=$1 AND source_markdown_slug=$2 AND expired_at IS NULL AND row_num=ANY($3::int[]) AND fact=ANY($4::text[])`,
-  [page.source_id, page.slug, rewritten.map(f => f.row_num), rewritten.map(f => f.restored)])).map(r => Number(r.row_num)));
+  const projected = new Set(await engine.listProjectedFenceRows(page.source_id, page.slug, rewritten.map(f => f.row_num!), rewritten.map(f => f.restored!)));
   return rewritten.filter(f => projected.has(f.row_num!)).map(f => f.id);
 }

@@ -8,7 +8,7 @@
  *
  * Capability `maxBindParamsPerStatement`: PGLite's parameter bridge corrupts
  * the session past 32,767 binds, so bulk inserts split below 30,000 binds
- * there; Postgres (Infinity) keeps master's single statement per shape. The
+ * there; Postgres splits at its driver's 65,533-bind ceiling (#9780). The
  * inserts keep master's direct `unsafe` path (they were raw on master).
  * Reads were unscoped on master (EO4 inventory): `LegacyUnscopedRead`.
  */
@@ -18,7 +18,7 @@ import type { SqlExecutor } from './executor.ts';
 import type { LegacyUnscopedRead } from './brands.ts';
 import { joinFragments, renderFragment, sqlFragment, trustedSql, type SqlFragment } from './fragment.ts';
 
-/** Rows per statement for a shape binding `bindsPerRow` params (Infinity = one statement). */
+/** Rows per statement for a shape binding `bindsPerRow` params. */
 function rowsPerStatement(exec: SqlExecutor, bindsPerRow: number): number {
   return Math.floor(exec.capabilities.maxBindParamsPerStatement / bindsPerRow);
 }
@@ -63,6 +63,19 @@ export async function deleteCodeEdgesForChunks(exec: SqlExecutor, chunkIds: numb
     if (chunkIds.length === 0) return;
     (await exec.run(sqlFragment`DELETE FROM code_edges_chunk WHERE from_chunk_id = ANY(${chunkIds}::int[]) OR to_chunk_id = ANY(${chunkIds}::int[])`)).rows;
     (await exec.run(sqlFragment`DELETE FROM code_edges_symbol WHERE from_chunk_id = ANY(${chunkIds}::int[])`)).rows;
+  }
+
+/**
+ * Drops the edges that LEAVE these chunks (both tables) and clears their `edges_backfilled_at`, so a page's chunks can take
+ * freshly extracted edges (`installCodeChunkEdges`, code-chunks.ts). Unlike `deleteCodeEdgesForChunks` it keeps the
+ * edges other pages' chunks hold that point AT these chunks. The three statements are the ones `installCodeChunkEdges` ran
+ * through `executeRaw`, unchanged (`test/embed-stale-sql-pin.test.ts`).
+ */
+export async function clearCodeEdgesLeavingChunks(exec: SqlExecutor, chunkIds: number[]): Promise<void> {
+    if (chunkIds.length === 0) return;
+    (await exec.run(sqlFragment`DELETE FROM code_edges_chunk WHERE from_chunk_id = ANY(${chunkIds}::int[])`)).rows;
+    (await exec.run(sqlFragment`DELETE FROM code_edges_symbol WHERE from_chunk_id = ANY(${chunkIds}::int[])`)).rows;
+    (await exec.run(sqlFragment`UPDATE content_chunks SET edges_backfilled_at=NULL WHERE id = ANY(${chunkIds}::int[])`)).rows;
   }
 
 /**

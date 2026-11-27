@@ -3,13 +3,15 @@
 //! "Effect worker").
 //!
 //! Every statement here names its effect by id and, once claimed, by the claim's execution token,
-//! as the Postgres statements do (`WHERE id=$1 AND execution_token=$2::uuid`). Every worktree on
-//! this engine is null (no worktree binding exists here), so the claim's worktree terms are
-//! answered as Postgres answers them for a null worktree: an effect on a worktree is never
-//! claimable, and no recovery on a worktree blocks an effect without one.
+//! as the Postgres statements do (`WHERE id=$1 AND execution_token=$2::uuid`). An effect on a
+//! worktree is claimed only by the worktree's owner host, while no refresh fences the worktree and
+//! no effect or request there carries a recovery (`write_claim_terms.rs`); a recovery on a
+//! worktree never blocks an effect without one.
 
 use super::effects::{EffectRecord, all_effects, effect_by_id, write_effect};
-use super::{is_uuid, json_text};
+use super::worktree_admission::all_refreshes;
+use super::write_claim_terms::effect_claimable_on_worktree;
+use super::{all_requests, is_uuid, json_text};
 use crate::Store;
 use crate::env::Env;
 use crate::error::{Result, StoreError};
@@ -29,7 +31,7 @@ pub(super) fn pg_uuid(text: &str) -> Result<String> {
 }
 
 /// The claim lease: `claim_expires_at=now()+interval '2 minutes'`.
-const CLAIM_LEASE_US: i64 = 120_000_000;
+pub(super) const CLAIM_LEASE_US: i64 = 120_000_000;
 
 /// The data keys a completed claim drops (`data-'retry_slugs'-'target_failures'-...`).
 const COMPLETED_DROPS: [&str; 6] = [
@@ -137,7 +139,7 @@ pub(crate) fn select_claimable_effect_in(
     host_id: &str,
     dead_owners: &[String],
 ) -> Result<Option<EffectRecord>> {
-    pg_uuid(host_id)?;
+    let host = pg_uuid(host_id)?;
     let effects = all_effects(read)?;
     let mirror_pending = |e: &EffectRecord| {
         effects.iter().any(|m| {
@@ -146,7 +148,7 @@ pub(crate) fn select_claimable_effect_in(
                 && (m.state == "queued" || m.state == "running")
         })
     };
-    Ok(effects
+    let due: Vec<&EffectRecord> = effects
         .iter()
         .filter(|e| {
             let due_state = e.state == "queued"
@@ -154,17 +156,123 @@ pub(crate) fn select_claimable_effect_in(
                 || dead_owner_claim(e, dead_owners);
             due_state
                 && e.next_attempt_at_us <= now
-                && e.worktree_id.is_none()
                 && e.recovery.is_none()
                 && (e.kind == "withdrawal-mirror" || !mirror_pending(e))
         })
+        .collect();
+    // A due effect on a worktree is claimable only by its owner host, while no refresh fences the
+    // worktree and nothing there is in recovery (`write_claim_terms.rs`).
+    let requests = all_requests(read)?;
+    let refreshes = all_refreshes(read)?;
+    let mut claimable = Vec::new();
+    for e in due {
+        let ok = match &e.worktree_id {
+            None => true,
+            Some(w) => {
+                effect_claimable_on_worktree(read, w, &host, &effects, &requests, &refreshes)?
+            }
+        };
+        if ok {
+            claimable.push(e);
+        }
+    }
+    Ok(claimable
+        .into_iter()
         .min_by_key(|e| (e.next_attempt_at_us, e.id))
         .cloned())
 }
 
+/// `claimCoalescedGitEffects(input)`'s input: the host, its worktree, how many, the owner keys
+/// proved dead, and the `claim_owner` owner as JSON text (`$5::text::jsonb`).
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CoalescedGitClaim {
+    pub host_id: String,
+    pub worktree_id: String,
+    pub limit: i64,
+    #[serde(default)]
+    pub dead_owners: Vec<String>,
+    pub owner_json: String,
+}
+
+/// `CLAIM_COALESCED_GIT_EFFECTS_SQL`: up to `limit` ready single-file Git effects of the worktree
+/// (a `relative_path` key and no `targets`, `source_scan` or `version` key), oldest due first, each
+/// claimed under a fresh token with `claim_owner = { token, owner }`, a 2-minute lease and one more
+/// attempt. The worktree must be owned by the host, unfenced and free of recoveries
+/// (`effect_claimable_on_worktree`, the statement's InitPlan); an effect behind an unsettled
+/// withdrawal mirror of its request is skipped. The claimed rows, in claim order.
+///
+/// Guarantee (no row lock): the statement's `FOR UPDATE ... SKIP LOCKED` keeps two claimers from
+/// taking one effect. Here the read of every candidate and its stamp run in one store write
+/// transaction, so no other commit interleaves (an explicit transaction is Serialized today); under
+/// optimistic transactions the stamped rows are in the read set and a racing claim aborts with
+/// `write_conflict` instead of claiming twice.
+pub(crate) fn claim_coalesced_git_effects_in(
+    tx: &mut dyn KvWrite,
+    env: &dyn Env,
+    input: &CoalescedGitClaim,
+) -> Result<Vec<Value>> {
+    let host = pg_uuid(&input.host_id)?;
+    let worktree = pg_uuid(&input.worktree_id)?;
+    let limit = usize::try_from(input.limit)
+        .map_err(|_| StoreError::invalid("LIMIT must not be negative".to_string()))?;
+    let owner: Value = serde_json::from_str(&input.owner_json)
+        .map_err(|e| StoreError::invalid(format!("invalid input syntax for type json: {e}")))?;
+    let now = env.now_micros();
+    let effects = all_effects(&*tx)?;
+    let requests = all_requests(&*tx)?;
+    let refreshes = all_refreshes(&*tx)?;
+    if limit == 0
+        || !effect_claimable_on_worktree(&*tx, &worktree, &host, &effects, &requests, &refreshes)?
+    {
+        return Ok(Vec::new());
+    }
+    let mirror_pending = |e: &EffectRecord| {
+        effects.iter().any(|m| {
+            m.request_id == e.request_id
+                && m.kind == "withdrawal-mirror"
+                && (m.state == "queued" || m.state == "running")
+        })
+    };
+    let has = |e: &EffectRecord, key: &str| e.data.get(key).is_some();
+    let mut ready: Vec<&EffectRecord> = effects
+        .iter()
+        .filter(|e| {
+            let due_state = e.state == "queued"
+                || (e.state == "running" && e.claim_expires_at_us.is_some_and(|t| t < now))
+                || dead_owner_claim(e, &input.dead_owners);
+            e.worktree_id.as_deref() == Some(worktree.as_str())
+                && e.kind == "git"
+                && has(e, "relative_path")
+                && !has(e, "targets")
+                && !has(e, "source_scan")
+                && !has(e, "version")
+                && due_state
+                && e.next_attempt_at_us <= now
+                && e.recovery.is_none()
+                && !mirror_pending(e)
+        })
+        .collect();
+    ready.sort_by_key(|e| (e.next_attempt_at_us, e.id));
+    let mut claimed = Vec::new();
+    for e in ready.into_iter().take(limit) {
+        let mut e = e.clone();
+        let token = env.new_uuid();
+        e.state = "running".into();
+        e.execution_token = Some(token.clone());
+        e.claim_owner = Some(json!({ "token": token, "owner": owner.clone() }));
+        e.claim_expires_at_us = Some(now + CLAIM_LEASE_US);
+        e.attempts += 1;
+        e.updated_at_us = now;
+        write_effect(tx, &e)?;
+        claimed.push(e.to_row());
+    }
+    Ok(claimed)
+}
+
 /// The effect a settle statement names: `WHERE id=$1 AND execution_token=$2::uuid`, plus
 /// `recovery IS NULL` when `no_recovery` is set.
-fn claimed(
+pub(super) fn claimed(
     read: &dyn KvRead,
     id: &str,
     token: Option<&str>,
@@ -391,7 +499,7 @@ pub(crate) fn read_mirror_gate_rows_in(
 
 /// `jsonb_array_elements(COALESCE(data->'parked','[]'))` holds a target whose `error_code` is
 /// `code`; a `parked` that is not an array refuses as `jsonb_array_elements` does.
-fn parked_with(data: &Value, code: &str) -> Result<bool> {
+pub(super) fn parked_with(data: &Value, code: &str) -> Result<bool> {
     match data.get("parked") {
         None => Ok(false),
         Some(Value::Array(items)) => Ok(items
@@ -471,9 +579,73 @@ impl Store {
         self.write(|tx| stamp_effect_claim_in(tx, &*self.env, claim))
     }
 
+    /// `claimCoalescedGitEffects(input)`: the claimed rows, in claim order.
+    pub fn claim_coalesced_git_effects(&self, input: &CoalescedGitClaim) -> Result<Vec<Value>> {
+        self.write(|tx| claim_coalesced_git_effects_in(tx, &*self.env, input))
+    }
+
     /// One settle statement (`renewEffectClaim`, `advanceEffectRow`, `completeEffectRow`, ...):
     /// `true` when it matched the claim.
     pub fn settle_effect(&self, action: Settle, spec: &EffectSettle) -> Result<bool> {
         self.write(|tx| settle_effect_in(tx, &*self.env, action, spec))
+    }
+}
+
+/// `rearmLinksEffects`'s spec: the source, the requests whose `links` effects re-arm, and optionally their slugs.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LinksRearm {
+    pub source_id: String,
+    pub request_ids: Vec<String>,
+    #[serde(default)]
+    pub slugs: Option<Vec<String>>,
+}
+
+impl Store {
+    /// `rearmLinksEffects(opts)`: queues again, unclaimed and due now, each `links` effect of the
+    /// requests in the source (of the slugs when given) that carries no `batch_reconciled` and no
+    /// recovery, and marks it re-armed. Returns how many re-armed. The store keeps no persistence
+    /// protocol setting, so the protocol predicate always holds.
+    pub fn rearm_links_effects(&self, spec: &LinksRearm) -> Result<u64> {
+        if spec.request_ids.is_empty() {
+            return Ok(0);
+        }
+        let ids: Vec<String> = spec
+            .request_ids
+            .iter()
+            .map(|id| pg_uuid(id))
+            .collect::<Result<_>>()?;
+        let now = self.env.now_micros();
+        self.write(|tx| {
+            let mut rearmed = 0u64;
+            for mut e in all_effects(&*tx)? {
+                let slug_ok = match &spec.slugs {
+                    None => true,
+                    Some(slugs) => e
+                        .data
+                        .get("slug")
+                        .and_then(Value::as_str)
+                        .is_some_and(|s| slugs.iter().any(|w| w == s)),
+                };
+                if e.kind != "links"
+                    || e.source_id.as_deref() != Some(spec.source_id.as_str())
+                    || !ids.iter().any(|id| *id == e.request_id.to_lowercase())
+                    || !slug_ok
+                    || e.data.get("batch_reconciled").is_some()
+                    || e.recovery.is_some()
+                {
+                    continue;
+                }
+                e.state = "queued".into();
+                release(&mut e, now);
+                e.next_attempt_at_us = now;
+                e.error_code = None;
+                e.outcome = None;
+                e.data = with_key(e.data, "batch_reconciled", Value::Bool(true));
+                write_effect(tx, &e)?;
+                rearmed += 1;
+            }
+            Ok(rearmed)
+        })
     }
 }

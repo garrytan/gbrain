@@ -178,9 +178,7 @@ export async function runFactsRelink(engine: BrainEngine, opts: RelinkOptions): 
     report.queued_for_conflict += result.outcome.queued;
   }
   if (linkedIds.length) {
-    const [eligible] = await engine.executeRaw<{ n: number | string }>(
-      'SELECT COUNT(*) AS n FROM facts WHERE source_id = $1 AND id = ANY($2::bigint[]) AND embedding IS NOT NULL', [opts.sourceId, linkedIds]);
-    report.eligible_for_conflict = Number(eligible?.n ?? 0);
+    report.eligible_for_conflict = await engine.countEmbeddedFactsAmong(opts.sourceId, linkedIds);
   }
   if (report.stopped) report.status = 'partial';
   if (!opts.dryRun) await logRun(engine, report);

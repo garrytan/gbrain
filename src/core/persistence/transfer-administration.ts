@@ -7,8 +7,9 @@
 import type { BrainEngine } from '../engine.ts';
 import { opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
-import { acceptWriterTransfer, cancelWriterTransfer, getWorktreeBinding, humanManifestProgress, prepareWriterTransfer, storedManifestScope, worktreeManifest, type StoredWorktreeManifest } from './ownership.ts';
+import { acceptWriterTransfer, cancelWriterTransfer, getWorktreeBinding, humanManifestProgress, prepareWriterTransfer, storedManifestScope, worktreeManifest } from './ownership.ts';
 import { existingHostIdFor } from './identity.ts';
+import { gitDurabilityWarnings } from './activation.ts';
 import { requireWriterAdminIntent } from './admin-intent.ts';
 import { bool, invalid, keys, path, source } from './administration.ts';
 
@@ -78,12 +79,18 @@ export async function runWriterTransferAdministration(engine: BrainEngine, opera
   if (params.dry_run && params.self_transfer === true) await acceptWriterTransfer(engine, sourceId, root, epoch, params.manifest, existingHostIdFor(engine)!, undefined, { ...transfer, dryRun: true });
   if (params.dry_run) {
     const current = await getWorktreeBinding(engine, sourceId, existingHostIdFor(engine));
-    const [prepared] = current ? await engine.executeRaw<{ manifest: StoredWorktreeManifest | null }>('SELECT manifest FROM persistence_worktrees WHERE id=$1::uuid', [current.worktree_id]) : [];
-    const candidate = worktreeManifest(root, { progress: humanManifestProgress(), scope: storedManifestScope(prepared?.manifest) });
+    const prepared = current ? await engine.readWorktreeManifest(current.worktree_id) : null;
+    const candidate = worktreeManifest(root, { progress: humanManifestProgress(), scope: storedManifestScope(prepared) });
     return { dry_run: true, action: operation, source_id: sourceId, current, manifest_matches: candidate.digest === params.manifest, expected_epoch: epoch,
       ...(candidate.scope ? { manifest_scope: candidate.scope } : {}), ...(candidate.untracked_count ? { untracked_files: candidate.untracked_count } : {}) };
   }
   const expectedState = await requireWriterAdminIntent(engine, operation, params);
   const accepted = await acceptWriterTransfer(engine, sourceId, root, epoch, params.manifest, undefined, expectedState, transfer);
-  return { transferred: true, binding: await getWorktreeBinding(engine, sourceId), ...(accepted.content_receipts.length ? { content_receipts: accepted.content_receipts } : {}) };
+  const binding = await getWorktreeBinding(engine, sourceId);
+  // #10123: a successor that will not commit or push says so, with the enable command, as writer activate does.
+  const { warnings } = binding ? await gitDurabilityWarnings([binding]) : {};
+  const refused = accepted.durability_probe_failure;
+  return { transferred: true, binding, ...(accepted.content_receipts.length ? { content_receipts: accepted.content_receipts } : {}),
+    ...(refused && !warnings ? { durability_probe_failure: refused } : {}),
+    ...(warnings ? { warnings: warnings.map(warning => refused ? { ...warning, message: `${warning.message} The previous owner had Git durability enabled, but it was not carried: the read-only push probe on ${binding!.local_path} did not pass (${refused}); the enable preview shows why.` } : warning) } : {}) };
 }

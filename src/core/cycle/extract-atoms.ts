@@ -58,6 +58,7 @@
 // sourceId arg — atoms always wrote to 'default' regardless of source,
 // which made the NOT EXISTS guard ineffective on federated brains.
 
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 import { observationDateLine, observationDateRule } from '../ai/date-grounding.ts';
 import { isConsumerDateGroundingOn } from '../facts/extract.ts';
 import type { BrainEngine, LinkBatchInput } from '../engine.ts';
@@ -74,7 +75,7 @@ import { commitExtractionPlan, readPageWatermark } from '../extraction-watermark
 import { claudeCliSelfSessionIds } from '../ai/providers/claude-cli-scratch.ts';
 import { BudgetExhausted, BudgetTracker, loadPricingOverrides } from '../budget/budget-tracker.ts';
 import type { MaintenanceWriteWait } from '../persistence/maintenance-wait.ts';
-import { connectorAtomExclusionSql } from './connector-atoms.ts';
+import { connectorAtomExclusion, connectorAtomExclusionSql } from './connector-atoms.ts';
 import { resolveExtractAtomsCostGate, resolveEmbedModelForCostGate, settleExtractAtomsCostGate } from './extract-atoms-cost-gate.ts';
 import { writeReceipt } from '../extract/receipt-writer.ts';
 import { classifyRunStop, providerHaltReason, upsertExtractRollup } from '../extract/rollup-writer.ts';
@@ -83,6 +84,7 @@ import { throwIfAborted } from '../abort-check.ts';
 import { createHash } from 'crypto';
 import { slugifySegment } from '../sync.ts';
 import { resolveAlias, resolveTierDefault } from '../model-config.ts';
+import { isTimeoutError } from '../search/hybrid/degraded.ts';
 import { isMissingSchemaObject, warnOncePerProcess } from '../utils.ts';
 import { utcDate } from './cycle-date.ts';
 import { atomSourceDate, transcriptAtomSourceDate } from './atom-source-date.ts';
@@ -96,8 +98,8 @@ import { isOpPageSlug } from '../ops/context.ts';
 import type { WriteReceipt } from '../persistence/types.ts';
 import { acceptedPendingReceipt } from '../persistence/accepted-pending.ts';
 import { AtomPageStateError, MAX_DETERMINISTIC_FAILURES, readAtomPageIdentity, writeAtomPageState, type AtomPageInput } from './extract-atoms-page-state.ts';
-import { atomGenerationOrigin, atomInputPin, heldLine, publishUnmanagedAtoms, resolveTranscriptAtomSlug, resolveTranscriptKeys, transcriptRoot } from './extract-atoms-generation.ts';
-import { heldForInput } from '../generations/publish.ts';
+import { atomGenerationOrigin, atomInputPin, heldAtomInputExclusionSql, heldLine, publishUnmanagedAtoms, resolveTranscriptAtomSlug, resolveTranscriptKeys, transcriptRoot } from './extract-atoms-generation.ts';
+import { currentHoldIds, heldForInput } from '../generations/publish.ts';
 import { ATOM_TYPES, ATOMS_RESPONSE_SCHEMA } from './extract-atoms-schema.ts';
 import { parseAtomsOutcome } from './extract-atoms-parse.ts';
 export { parseAtomsOutcome, parseAtomsResponse, type AtomsParseOutcome } from './extract-atoms-parse.ts';
@@ -431,7 +433,8 @@ export async function discoverExtractablePages(
       ${MANAGED_ATOM_DISCOVERY_SQL}
       ${PAGE_SCAN_STATE_EXCLUSION_SQL}
       ${connectorExclusion}
-      ${hasFilter ? "AND p.slug = ANY($5::text[])" : ''}
+      ${heldAtomInputExclusionSql('$5')}
+      ${hasFilter ? "AND p.slug = ANY($6::text[])" : ''}
       AND NOT EXISTS (
         SELECT 1
         FROM pages atom
@@ -444,15 +447,15 @@ export async function discoverExtractablePages(
     ORDER BY p.updated_at DESC
     LIMIT $4
   `;
-  const params: unknown[] = [
-    sourceId,
-    await resolveExtractableTypes(),
-    MIN_PAGE_CHARS_FOR_EXTRACTION,
-    limit,
-  ];
-  if (hasFilter) params.push(affectedSlugs);
-
   try {
+    const params: unknown[] = [
+      sourceId,
+      await resolveExtractableTypes(),
+      MIN_PAGE_CHARS_FOR_EXTRACTION,
+      limit,
+      await currentHoldIds(engine, 'atom'),
+    ];
+    if (hasFilter) params.push(affectedSlugs);
     const rows = await engine.executeRaw<{
       id: number;
       knowledge_revision: string;
@@ -468,6 +471,7 @@ export async function discoverExtractablePages(
       identity: { pageId: r.id, sourceIncarnation: r.source_incarnation, revision: r.knowledge_revision },
     }));
   } catch (err) {
+    rethrowCapabilityRefusal(err); // no page discovery is not "no pages": the phase must not report no_work
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[extract_atoms] page-discovery query failed: ${msg}`);
     return []; // fail-soft: transcript path still proceeds
@@ -502,55 +506,16 @@ export async function countExtractAtomsBacklog(
   try {
     // Two modes: scoped (the phase's per-source `remaining`) vs brain-wide
     // (doctor — matches the conversation-facts check's cross-source posture).
-    // The atom must live in the SAME source as the page either way, so the
-    // brain-wide form keys the NOT EXISTS on `atom.source_id = p.source_id`.
-    const scoped = sourceId !== undefined;
-    const connectorExclusion = await connectorAtomExclusionSql(engine);
-    const sql = scoped
-      ? `SELECT COUNT(*) AS cnt FROM pages p
-         WHERE p.source_id = $1
-           AND p.type = ANY($2::text[])
-           AND p.deleted_at IS NULL
-           AND p.content_hash IS NOT NULL
-           AND COALESCE(p.frontmatter->>'imported_from',   '') <> 'markdown-greenfield'
-           AND COALESCE(p.frontmatter->>'dream_generated', '') <> 'true'
-           ${RAW_SOURCE_HOLDER_EXCLUSION_SQL}
-           AND ${minCompiledTruthChars('$3')}
-           ${managedAtomDiscoverySql('$4::integer')}
-           ${pageScanStateExclusionSql('$4::integer')}
-           ${connectorExclusion}
-           AND NOT EXISTS (
-             SELECT 1 FROM pages atom
-             WHERE atom.type = 'atom' AND atom.source_id = $1
-               AND atom.frontmatter->>'source_hash' = substring(p.content_hash from 1 for 16)
-               AND COALESCE(atom.frontmatter->>'managed_extraction', '') <> 'true'
-               AND atom.deleted_at IS NULL
-           )`
-      : `SELECT COUNT(*) AS cnt FROM pages p
-         WHERE p.type = ANY($1::text[])
-           AND p.deleted_at IS NULL
-           AND p.content_hash IS NOT NULL
-           AND COALESCE(p.frontmatter->>'imported_from',   '') <> 'markdown-greenfield'
-           AND COALESCE(p.frontmatter->>'dream_generated', '') <> 'true'
-           ${RAW_SOURCE_HOLDER_EXCLUSION_SQL}
-           AND ${minCompiledTruthChars('$2')}
-           ${managedAtomDiscoverySql('$3::integer')}
-           ${pageScanStateExclusionSql('$3::integer')}
-           ${connectorExclusion}
-           AND NOT EXISTS (
-             SELECT 1 FROM pages atom
-             WHERE atom.type = 'atom' AND atom.source_id = p.source_id
-               AND atom.frontmatter->>'source_hash' = substring(p.content_hash from 1 for 16)
-               AND COALESCE(atom.frontmatter->>'managed_extraction', '') <> 'true'
-               AND atom.deleted_at IS NULL
-           )`;
+    // The atom must live in the SAME source as the page either way (engine-sql/atom-backlog.ts).
+    const connectorExclusion = await connectorAtomExclusion(engine);
     const extractableTypes = await resolveExtractableTypes();
     const maxInputChars = await resolveExtractAtomsInputCap(engine);
-    const params = scoped
-      ? [sourceId, extractableTypes, MIN_PAGE_CHARS_FOR_EXTRACTION, maxInputChars]
-      : [extractableTypes, MIN_PAGE_CHARS_FOR_EXTRACTION, maxInputChars];
-    const rows = await engine.executeRaw<{ cnt: string | number }>(sql, params, { signal: opts.signal });
-    return Number(rows[0]?.cnt ?? 0);
+    // A page whose input still matches a current hold is left out, as discovery leaves it out (#10270).
+    const holdIds = await currentHoldIds(engine, 'atom');
+    return await engine.countAtomExtractionBacklog(
+      { sourceId: sourceId ?? null, types: extractableTypes, minChars: MIN_PAGE_CHARS_FOR_EXTRACTION, maxInputChars, connectorExclusion, holdIds },
+      { signal: opts.signal },
+    );
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[extract_atoms] backlog count failed: ${msg}`);
@@ -606,6 +571,7 @@ export async function atomsExistingForHashes(
     );
     return new Set(rows.map(r => r.h));
   } catch (err) {
+    rethrowCapabilityRefusal(err); // "none extracted" would re-spend every page
     const msg = err instanceof Error ? err.message : String(err);
     console.error(`[extract_atoms] batch idempotency check failed (assuming none extracted): ${msg}`);
     return new Set();
@@ -651,6 +617,7 @@ export async function tombstonedTranscriptsForHashes(
     );
     return new Set(rows.map(r => transcriptStateKey(r.file_path, r.content_hash)));
   } catch (err) {
+    rethrowCapabilityRefusal(err); // "none tombstoned" would re-spend every tombstoned transcript
     if (isMissingSchemaObject(err, 'table', 'extract_atoms_transcript_state')) {
       // Un-migrated brain: the table lands with v146. Once per process, not a
       // full error line on every cycle until the operator migrates.
@@ -658,8 +625,7 @@ export async function tombstonedTranscriptsForHashes(
         `[extract_atoms] extract_atoms_transcript_state is missing (run gbrain migrate); transcript failure counts and tombstones are off until then.`);
       return new Set();
     }
-    const msg = err instanceof Error ? err.message : String(err);
-    console.error(`[extract_atoms] transcript tombstone check failed (assuming none tombstoned): ${msg}`);
+    console.error(`[extract_atoms] transcript tombstone check failed (assuming none tombstoned): ${isTimeoutError(err) ? 'timeout' : 'provider_error'}`); // class only: an error message can carry a connection string
     return new Set();
   }
 }
@@ -936,9 +902,9 @@ export async function runPhaseExtractAtoms(
   try {
     extractModel = await resolveExtractAtomsModel(engine);
     const configuredBudget = await engine.getConfig('cycle.extract_atoms.budget_usd');
-    if (configuredBudget) {
+    if (configuredBudget?.trim()) {
       const n = Number(configuredBudget);
-      if (Number.isFinite(n) && n > 0) { budgetCap = n; explicitBudget = true; }
+      if (Number.isFinite(n) && n >= 0) { budgetCap = n; explicitBudget = true; }
     }
     const configuredMaxOutput = await engine.getConfig('cycle.extract_atoms.max_output_tokens');
     if (configuredMaxOutput) {
@@ -1059,6 +1025,7 @@ export async function runPhaseExtractAtoms(
         const cnt = rows[0]?.cnt;
         return cnt == null ? null : Number(cnt);
       } catch (err) {
+        rethrowCapabilityRefusal(err); // a strike that is refused is not a strike that failed: the phase must say it cannot run
         // A strike that never lands means this transcript never tombstones and
         // re-spends budget forever (#4916's class) — say so. A missing table
         // was already warned once by the tombstone check above.

@@ -10,6 +10,7 @@ import type { OperationContext } from '../src/core/ops/contract.ts';
 import { resolveRepairScope, runRepair } from '../src/core/repair/core.ts';
 import { orphanChildrenRepair } from '../src/core/repair/orphan-children.ts';
 import { childTableOrphansCheck } from '../src/commands/doctor/checks/core-health.ts';
+import { probeTornPages } from '../src/core/engine-sql/repair-page-reads.ts';
 
 let engine: PGLiteEngine;
 const ctx = () => ({ engine, config: { engine: 'pglite' }, remote: false, logger: console } as unknown as OperationContext);
@@ -51,13 +52,15 @@ test('preview lists orphan groups, apply removes them and clears dangling refere
 
 test('the preview probes page bodies and reports a torn one by id and slug without changing it', async () => {
   const [{ id }] = await engine.executeRaw<{ id: number }>("SELECT id FROM pages WHERE slug = 'notes/kept-example'");
+  // The probe is the engine member probeTornPages; its statements run here through an executeRaw that fails on the torn row.
+  const executeRaw = (sql: string, params?: unknown[]) => {
+    if (sql.includes('length(compiled_truth)') && JSON.stringify(params).includes(String(id))) {
+      return Promise.reject(Object.assign(new Error('unexpected chunk number 21 (expected 1) for toast value 141869 in pg_toast_16808'), { code: 'XX000' }));
+    }
+    return engine.executeRaw(sql, params as never);
+  };
   const torn = new Proxy(engine, { get(target, prop, receiver) {
-    if (prop === 'executeRaw') return (sql: string, params?: unknown[]) => {
-      if (sql.includes('length(compiled_truth)') && JSON.stringify(params).includes(String(id))) {
-        return Promise.reject(Object.assign(new Error('unexpected chunk number 21 (expected 1) for toast value 141869 in pg_toast_16808'), { code: 'XX000' }));
-      }
-      return target.executeRaw(sql, params as never);
-    };
+    if (prop === 'probeTornPages') return () => probeTornPages({ executeRaw, dialect: 'pglite' } as never);
     return Reflect.get(target, prop, receiver);
   } }) as PGLiteEngine;
   const plan = await orphanChildrenRepair.plan(torn, await resolveRepairScope(engine), null);

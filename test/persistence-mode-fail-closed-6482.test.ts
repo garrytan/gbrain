@@ -91,7 +91,8 @@ describe('readManagedMode', () => {
     }
     expect(await inspectPersistenceBrain(fake([{ brain_id: 'b', enabled: false, mode_epoch: '1', skill_bundles_enabled: null, writer_protocol_floor: null }])))
       .toEqual({ row: { brain_id: 'b', enabled: false, mode_epoch: '1', skill_bundles_enabled: null, writer_protocol_floor: null }, problem: null });
-    const diagnostics = await readWriterDiagnostics({ ...fake([]), kind: 'pglite' } as unknown as BrainEngine);
+    const diagnostics = await readWriterDiagnostics({ ...fake([]), kind: 'pglite',
+      readWriterDiagnosticRows: async () => ({ worktrees: [], counters: [], blockers: [], queue: [], effects: [], failures: [] }) } as unknown as BrainEngine);
     expect(diagnostics).toMatchObject({ enabled: false, brain_id: null });
     expect((diagnostics as { persistence_mode_problem?: string }).persistence_mode_problem).toContain('missing (0 row(s))');
   });
@@ -107,10 +108,12 @@ describe('connector entry paths on an impossible read', () => {
   afterAll(async () => { await engine.disconnect(); });
   beforeEach(async () => { await resetPgliteState(engine); });
 
-  test('a Rust brain answers the singleton a fresh SQL brain stores, through its brain id and no SQL', async () => {
+  test('a Rust brain answers the singleton a fresh SQL brain stores, through its writer admin state and no SQL', async () => {
     const sql = await readPersistenceBrain(engine);
     const statements: string[] = [];
-    const rust = { kind: 'rust', readPersistenceBrainId: async () => 'rust-brain-id',
+    const adminState = (brain: unknown) => async () => JSON.stringify({ brain, sources: null, worktrees: null, embedding_leases: null });
+    const freshBrain = { id: 'rust-brain-id', enabled: false, mode_epoch: 1, skill_bundles_enabled: false, writer_protocol_floor: 1 };
+    const rust = { kind: 'rust', readWriterAdminState: adminState(freshBrain),
       readManagedModeRows: async () => [{ enabled: false }],
       executeRaw: async (text: string) => { statements.push(text); throw new Error('a Rust brain has no SQL'); } } as unknown as SqlEngine;
     const expected = { ...sql, brain_id: 'rust-brain-id' };
@@ -119,8 +122,11 @@ describe('connector entry paths on an impossible read', () => {
     expect(await inspectPersistenceBrain(rust)).toEqual({ row: expected, problem: null });
     expect(await readManagedMode(rust)).toBe(false);
     expect(statements).toEqual([]);
-    // Without a brain id the singleton is missing, and the strict reader refuses as it does on a SQL brain.
-    const blank = { ...rust, readPersistenceBrainId: async () => null } as unknown as SqlEngine;
+    // The stored mode and epoch come through: a managed Rust brain reads as managed.
+    const managed = { ...rust, readWriterAdminState: adminState({ ...freshBrain, enabled: true, mode_epoch: 2 }) } as unknown as SqlEngine;
+    expect(await readPersistenceBrain(managed)).toEqual({ ...expected, enabled: true, mode_epoch: '2' });
+    // Without a brain row the singleton is missing, and the strict reader refuses as it does on a SQL brain.
+    const blank = { ...rust, readWriterAdminState: adminState(null) } as unknown as SqlEngine;
     await expect(readPersistenceBrain(blank)).rejects.toMatchObject({ code: 'storage_error' });
   });
 

@@ -68,7 +68,9 @@ dirty counts only paths sync would otherwise admit.
 
 Every status names last_commit (the commit sync applied through) and live (the
 process holding the drain lease, a serve pass included, with its heartbeat and
-progress; null when nothing holds it).
+progress; null when nothing holds it), and automatic_sync: enabled is false
+when the source is excluded from automatic sync (config.syncEnabled=false), so
+only an explicit sync runs it; its fix previews turning it back on.
 
 Holds are bounded: holds_summary counts every hold by code, by state
 (needs_human | actionable | held) and by fault_code (the failure a
@@ -219,6 +221,7 @@ export async function runSyncStatus(engine: BrainEngine, args: string[]): Promis
   const rendered = { ...shown,
     git_push_holds: status.git_push_holds.map(hold => ({ ...hold, fix: renderAction(hold.fix, ctx) })),
     fence_holds: status.fence_holds.map(hold => ({ ...hold, fix: renderAction(hold.fix, ctx) })), next: status.next ? renderAction(status.next, ctx) : null,
+    automatic_sync: status.automatic_sync.fix ? { ...status.automatic_sync, fix: renderAction(status.automatic_sync.fix, ctx) } : status.automatic_sync,
     checkpoint_blockers_read: read(status.checkpoint_blockers_read), cursors_read: read(status.cursors_read), terminal_failures_read: read(status.terminal_failures_read),
     landing_read: read(status.landing_read), landing: status.landing?.status === 'ok' ? { ...status.landing, pages: status.landing.pages.map(page => ({ ...page, fix: page.fix ? renderAction(page.fix, ctx) : null })) } : status.landing,
     capacity: { status: snapshot.status, pause_pct: snapshot.pause_pct, low: snapshot.low, paused: snapshot.paused }, freshness, notifier, ...(notices.length ? { notices } : {}),
@@ -233,6 +236,7 @@ export async function runSyncStatus(engine: BrainEngine, args: string[]): Promis
   // #7243: the applied-through commit, the job doing the work, and what the newest pass pinned against what a stamp backs.
   console.log(`  last synced commit: ${status.last_commit?.slice(0, 8) ?? 'none yet'}`);
   console.log(`  last converged: ${status.last_sync_at ?? 'never'}; last committed write: ${status.last_committed_at ?? 'none yet'}${status.last_committed_at && (!status.last_sync_at || status.last_committed_at > status.last_sync_at) ? ' (still importing since it last converged)' : ''}`);
+  if (!status.automatic_sync.enabled) console.log(`  automatic sync: OFF. ${status.automatic_sync.why} To turn it on: ${status.automatic_sync.fix?.argv?.join(' ')}`);
   const live = status.live;
   console.log(`  live: ${live ? `${live.kind}${live.job_id !== null ? ` job #${live.job_id}` : live.id ? ` ${live.id}` : ''}${live.pid ? ` (PID ${live.pid})` : ''} holds the drain lease since ${live.started_at ?? '?'}`
     + `${live.progress ? `, ${live.progress.committed} page(s) committed since` : ''}${live.stalled ? ', STALLED (no commit or save for the stall window)' : ''}` : 'nothing holds the drain lease'}`);
@@ -249,6 +253,10 @@ export async function runSyncStatus(engine: BrainEngine, args: string[]): Promis
     const codes = Object.entries(listing.summary.by_code.counts).map(([code, n]) => `${code} ${n}`).join(', ');
     console.log(`    ... ${listing.matched - listing.rows.length} more not listed here (${codes}${listing.summary.by_code.other ? `, other ${listing.summary.by_code.other}` : ''}); `
       + `${listing.paging?.next_command ? listing.paging.next_command.join(' ') : `gbrain sync status --source ${sourceId} --detail --json`} lists them`);
+  }
+  if (status.held_deletes) console.log(`    deletions held (${status.held_deletes.code}) NEEDS HUMAN: ${status.held_deletes.human_reason}`);
+  for (const review of status.identity_reviews ?? []) {
+    console.log(`    ${review.contact_slug}: identity review${review.needs_human ? ` NEEDS HUMAN: ${review.human_reason} Next: ${review.fix.argv!.join(' ')}` : ` (decided: ${review.human_reason})`}`);
   }
   const superseded = status.last_error?.superseded;
   if (status.last_error) console.log(`    ${status.last_error.path ?? ''}: ${status.last_error.code}${superseded ? ` (superseded: ${SUPERSEDED_TEXT[superseded.by ?? 'commit']} at ${superseded.at}, after this error${superseded.age_seconds !== undefined ? `, recorded ${Math.round(superseded.age_seconds / 60)} min ago` : ''})` : ` safe: ${status.last_error.safe_actions.join(',')}${status.last_error.needs_human ? ` NEEDS HUMAN: ${status.last_error.human_reason}` : ''}`}`);

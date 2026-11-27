@@ -37,7 +37,7 @@ export async function quarantineRestoredExecution(tx: BrainEngine, options: {
   managedPaths: readonly string[]; restoreId: string;
 }): Promise<RestoreQuarantine> {
   const inventory: RestoreQuarantine = { sources: [], settings: [], reconnect: [] };
-  const rows = await tx.executeRaw<{ id: string; local_path: string | null; config: unknown }>('SELECT id, local_path, config FROM sources ORDER BY id');
+  const rows = await tx.executeRaw<{ id: string; local_path: string | null; config: unknown }>('SELECT id, local_path, config FROM sources ORDER BY id COLLATE "C"');
   const declared = new Map(options.sources.map(s => [s.id, s]));
   if (declared.size !== options.sources.length || rows.length !== declared.size || rows.some(row => !declared.has(row.id) || declared.get(row.id)!.local_path !== row.local_path)) {
     throw new AgentInstallError('invalid_backup', 'Source inventory does not match the archived database.');

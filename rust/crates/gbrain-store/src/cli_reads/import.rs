@@ -4,7 +4,8 @@
 //! answer the same questions from the store's records.
 //!
 //! What the store does not keep, and what each read answers for it (rust/docs/store/cli-reads-import.md):
-//! - sources have no `last_commit` and no `newest_content_at`: both read null;
+//! - a source reads the `last_commit` and `newest_content_at` its sync anchor last advanced, or
+//!   null before the first advance;
 //! - there are no source ingestion receipts: `hasCompanyBrainReceipt` is false;
 //! - there is no `guest_sources` table and no row-level security: a guest source is one whose
 //!   config says `guest: true`, `readGuestSourceRow` is never hidden and finds no row;
@@ -14,11 +15,13 @@
 //! (`trust::activation_suppressed`). A timeline, fact or take row (`readRowTrustRows`) reads the
 //! tier and origin its last write stamped (`timeline::tier`, `facts::write_fact`,
 //! `trust::stamp_row` through the takes writers) the same way. A fact or take is `contested` by a
-//! pending supersede proposal (`trust::proposals::contested_ref`); a timeline row never is.
+//! pending supersede proposal (`trust::proposals::contested_ref`); a timeline row never is. A
+//! row's `write_origin` reads in jsonb key order (`pg_text::jsonb_value`), as the column returns it.
 //!
 //! Keys: none of its own. It reads the source, page, timeline, fact, take, trust proposal and
 //! write-gate receipt records.
 
+use crate::cli_reads::pg_text::jsonb_value;
 use crate::env::iso;
 use crate::error::{Result, StoreError};
 use crate::facts::read_fact;
@@ -90,6 +93,8 @@ pub struct PageTrustRow {
     pub write_origin: Option<Value>,
     pub flagged: bool,
     pub guest: bool,
+    /// The class of source the page came from (`cli_reads/precedence.rs`).
+    pub precedence: String,
     #[serde(rename = "byId")]
     pub by_id: bool,
 }
@@ -111,6 +116,9 @@ pub struct RowTrustRow {
     pub write_origin: Option<Value>,
     pub flagged: bool,
     pub contested: Option<String>,
+    /// A fact's class of source, or `approved` when it came from an allowed-claims page
+    /// (`cli_reads/precedence.rs`); none on a take or timeline row.
+    pub precedence: Option<String>,
 }
 
 /// A live page with its aliases and knowledge revision (`listLinkPageMetadata`).
@@ -161,7 +169,7 @@ pub(crate) fn config_says_guest(config: &Map<String, Value>) -> bool {
 }
 
 fn source_is_guest(read: &dyn KvRead, id: &str) -> Result<bool> {
-    Ok(read_source(read, id)?.is_some_and(|s| config_says_guest(&s.config)))
+    crate::guest_sources::source_is_guest(read, id)
 }
 
 fn trust_row(read: &dyn KvRead, page: &PageRecord, by_id: bool) -> Result<PageTrustRow> {
@@ -174,8 +182,20 @@ fn trust_row(read: &dyn KvRead, page: &PageRecord, by_id: bool) -> Result<PageTr
         write_origin: page.write_origin.clone(),
         flagged: crate::trust::activation_suppressed(read, "pages", page.id, tier)?,
         guest: source_is_guest(read, &page.source_id)?,
+        precedence: crate::cli_reads::precedence::page_precedence(read, page)?.to_owned(),
         by_id,
     })
+}
+
+fn link_page_metadata_row(p: PageRecord) -> LinkPageMetadataRow {
+    LinkPageMetadataRow {
+        aliases: p.frontmatter.get("aliases").cloned().unwrap_or(Value::Null),
+        slug: p.slug,
+        source_id: p.source_id,
+        page_type: p.page_type,
+        title: p.title,
+        knowledge_revision: p.knowledge_revision,
+    }
 }
 
 fn live(page: &PageRecord) -> bool {
@@ -187,12 +207,12 @@ fn record_row(r: SourceRecord) -> SourceRecordRow {
         id: r.id,
         name: r.name,
         local_path: r.local_path,
-        last_commit: None,
+        last_commit: r.last_commit,
         last_sync_at: r.last_sync_at_us.map(iso),
         config: r.config,
         created_at: iso(r.created_at_us),
         archived: r.archived,
-        newest_content_at: None,
+        newest_content_at: r.newest_content_at_us.map(iso),
     }
 }
 
@@ -223,18 +243,29 @@ impl Store {
         Ok(false)
     }
 
-    /// Never hidden (the store has no row-level security) and never a row (it has no guest_sources).
-    pub fn read_guest_source_row(&self, _source_id: &str) -> Result<GuestSourceLookupRow> {
-        self.read()?;
-        Ok(GuestSourceLookupRow {
-            hidden: false,
-            source_id: None,
-            writers: None,
-            trust_ceiling: None,
-        })
+    /// Never hidden (the store has no row-level security). The row is the source's guest_sources row
+    /// (`guest_sources.rs`), kept only by `upsertGuestSource`: a source whose config says guest has none.
+    pub fn read_guest_source_row(&self, source_id: &str) -> Result<GuestSourceLookupRow> {
+        let read = self.read()?;
+        Ok(
+            match crate::guest_sources::read_guest_row(&*read, source_id)? {
+                Some(row) => GuestSourceLookupRow {
+                    hidden: false,
+                    source_id: Some(source_id.to_string()),
+                    writers: Some(row.writers),
+                    trust_ceiling: Some(row.trust_ceiling),
+                },
+                None => GuestSourceLookupRow {
+                    hidden: false,
+                    source_id: None,
+                    writers: None,
+                    trust_ceiling: None,
+                },
+            },
+        )
     }
 
-    /// The ids among `source_ids` (each once) of sources whose config says guest, in id order.
+    /// The ids among `source_ids` (each once) of guest sources (config says guest, or a guest row), in id order.
     pub fn list_guest_source_ids(&self, source_ids: &[String]) -> Result<Vec<String>> {
         let read = self.read()?;
         let mut out = Vec::new();
@@ -246,12 +277,23 @@ impl Store {
         Ok(out)
     }
 
-    /// Whether any source's config says guest.
+    /// Whether any source is a guest source (its config says guest, or it has a guest row).
     pub fn has_guest_source(&self) -> Result<bool> {
         let read = self.read()?;
-        Ok(all_sources(&*read)?
-            .iter()
-            .any(|s| config_says_guest(&s.config)))
+        for s in all_sources(&*read)? {
+            if config_says_guest(&s.config)
+                || crate::guest_sources::read_guest_row(&*read, &s.id)?.is_some()
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// `hasGuestSourceRow(sourceId)`: whether the source has a guest row (the record `upsertGuestSource` writes); a
+    /// source whose config alone says guest has none.
+    pub fn has_guest_source_row(&self, source_id: &str) -> Result<bool> {
+        Ok(crate::guest_sources::read_guest_row(&*self.read()?, source_id)?.is_some())
     }
 
     /// The trust rows of the pages named by id (deleted ones too) and by key (live ones unless
@@ -293,13 +335,13 @@ impl Store {
         }
         let wanted: BTreeSet<u64> = lookup.ids.iter().copied().collect();
         let read = self.read()?;
-        let mut found: Vec<(u64, RowTrust)> = Vec::new();
+        let mut found: Vec<(u64, RowTrust, Option<String>)> = Vec::new();
         match table {
             "timeline_entries" if !wanted.is_empty() => {
                 let mut failure = None;
                 scan_prefix(&*read, &[keys::TIMELINE], false, &mut |_, v| {
                     match serde_json::from_slice::<TimelineRecord>(v) {
-                        Ok(r) if wanted.contains(&r.id) => found.push((r.id, r.trust)),
+                        Ok(r) if wanted.contains(&r.id) => found.push((r.id, r.trust, None)),
                         Ok(_) => {}
                         Err(e) => failure = Some(StoreError::from(e)),
                     }
@@ -308,7 +350,7 @@ impl Store {
                 if let Some(e) = failure {
                     return Err(e);
                 }
-                found.sort_by_key(|(id, _)| *id);
+                found.sort_by_key(|(id, _, _)| *id);
             }
             "facts" => {
                 for &id in &wanted {
@@ -317,14 +359,19 @@ impl Store {
                             trust_tier: Some(f.trust_tier.clone()),
                             write_origin: f.write_origin.clone(),
                         };
-                        found.push((id, trust));
+                        let precedence = crate::cli_reads::precedence::fact_precedence(
+                            &*read,
+                            &f.source_id,
+                            f.source_markdown_slug.as_deref(),
+                        )?;
+                        found.push((id, trust, Some(precedence.to_owned())));
                     }
                 }
             }
             "takes" => {
                 for &id in &wanted {
                     if let Some(t) = read_take(&*read, id)? {
-                        found.push((id, t.trust));
+                        found.push((id, t.trust, None));
                     }
                 }
             }
@@ -332,7 +379,7 @@ impl Store {
         }
         found
             .into_iter()
-            .map(|(id, trust)| {
+            .map(|(id, trust, precedence)| {
                 let tier = trust.tier();
                 let contested = match (table, i64::try_from(id)) {
                     ("timeline_entries", _) | (_, Err(_)) => None,
@@ -343,9 +390,10 @@ impl Store {
                 Ok(RowTrustRow {
                     id,
                     trust_tier: tier.as_str().to_owned(),
-                    write_origin: trust.write_origin,
+                    write_origin: trust.write_origin.as_ref().map(jsonb_value),
                     flagged: crate::trust::activation_suppressed(&*read, table, id, tier)?,
                     contested,
+                    precedence,
                 })
             })
             .collect()
@@ -367,17 +415,28 @@ impl Store {
             .filter(|p| live(p) && source_id.is_none_or(|s| p.source_id == s))
             .collect();
         pages.sort_by(|a, b| (&a.source_id, &a.slug).cmp(&(&b.source_id, &b.slug)));
-        Ok(pages
-            .into_iter()
-            .map(|p| LinkPageMetadataRow {
-                aliases: p.frontmatter.get("aliases").cloned().unwrap_or(Value::Null),
-                slug: p.slug,
-                source_id: p.source_id,
-                page_type: p.page_type,
-                title: p.title,
-                knowledge_revision: p.knowledge_revision,
-            })
-            .collect())
+        Ok(pages.into_iter().map(link_page_metadata_row).collect())
+    }
+
+    /// The live pages of `source_id` whose slug is in `slugs`, by slug (byte order); a slug given
+    /// twice reads once. A sync's link extraction loads only its changed pages and their link
+    /// endpoints with it.
+    pub fn read_link_page_metadata_for_slugs(
+        &self,
+        source_id: &str,
+        slugs: &[String],
+    ) -> Result<Vec<LinkPageMetadataRow>> {
+        let read = self.read()?;
+        let wanted: BTreeSet<&str> = slugs.iter().map(String::as_str).collect();
+        let mut rows = Vec::new();
+        for slug in wanted {
+            if let Some(page) = read_page(&*read, source_id, slug)?
+                && live(&page)
+            {
+                rows.push(link_page_metadata_row(page));
+            }
+        }
+        Ok(rows)
     }
 
     /// The stored timeline rows of one page (deleted or not) that no event page projects, by id.

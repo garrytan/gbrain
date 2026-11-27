@@ -1,12 +1,14 @@
 /**
  * Telemetry members (BrainEngine recordSearchTelemetry, readSearchStats, logMcpRequest, readMcpLogPruneCutoff,
- * pruneMcpRequestLogBatch, readClientOpUsage, readMcpRollupPrunedBefore, readMcpLifetimeUsage, logChatUsage, readChatUsage). The store
+ * pruneMcpRequestLogBatch, readClientOpUsage, readMcpRollupPrunedBefore, readMcpLifetimeUsage, readMcpRequestLogPage, logChatUsage,
+ * readChatUsage). The store
  * keeps the `search_telemetry` rows, the MCP request log and its tally, and the chat usage ledger (rust/docs/store/telemetry.md). The store answers a timestamp as ISO text;
  * these members turn it into a Date, as PGLite's driver reads a `timestamptz`.
  */
 import type {
-  McpLifetimeUsageRow, McpLogPruneBatch, McpLogPruneCutoff, McpOpUsageRow, McpRequestLogRow, McpRollupPrunedBefore, SearchTelemetryBucket,
-  SearchTelemetryRow,
+  McpLifetimeUsageRow, McpRequestCountKind, McpTokenRequestCount, McpLogPruneBatch, McpLogPruneCutoff, McpOpUsageRow, McpRequestLogPage, McpRequestLogPageSpec, McpRequestLogRow, McpRollupPrunedBefore,
+  SearchTelemetryBucket,
+  SearchTelemetryRow, PendingWriteHealth,
 } from '../../engine-sql/telemetry.ts';
 import type { ChatUsageAggregateRow, ChatUsageLogRow, ChatUsageWindow } from '../../engine-sql/chat-usage.ts';
 import { storeCall, type StoreMember } from './common.ts';
@@ -81,3 +83,35 @@ export const readChatUsage: StoreMember<[days: number], ChatUsageWindow> = async
   }));
   return { rows, logged_since: out.logged_since ?? null };
 };
+
+/** Request log rows of the last 24 hours: all, the traffic (no surface audit rows) or the failed traffic. */
+export const countMcpRequestsLastDay: StoreMember<[kind: McpRequestCountKind], number> = async (brain, kind) =>
+  Number(await storeCall({ member: 'countMcpRequestsLastDay' }, () => brain.countMcpRequestsLastDay(kind)));
+
+/** One page of the request log, newest first, and the filtered total (the admin request list). */
+export const readMcpRequestLogPage: StoreMember<[spec: McpRequestLogPageSpec], McpRequestLogPage> = async (brain, spec) => {
+  const out = await storeCall({ member: 'readMcpRequestLogPage' }, () => brain.readMcpRequestLogPage({
+    tokenName: spec.tokenName ?? null, operation: spec.operation ?? null, status: spec.status ?? null, limit: spec.limit, offset: spec.offset,
+  })) as { rows: StoreRow[]; total: unknown };
+  return {
+    rows: out.rows.map(r => ({
+      id: Number(r.id), token_name: (r.token_name ?? null) as string | null, agent_name: (r.agent_name ?? null) as string | null,
+      operation: String(r.operation), latency_ms: r.latency_ms == null ? null : Number(r.latency_ms), status: String(r.status),
+      params: r.params ?? null, error_message: (r.error_message ?? null) as string | null, created_at: toDate(r.created_at) as Date,
+    })),
+    total: Number(out.total),
+  };
+};
+
+/** In-flight writes, the oldest one's age, and the pending writes of the last day that later failed. */
+export const readPendingWriteHealth: StoreMember<[], PendingWriteHealth> = async (brain) => {
+  const out = await storeCall({ member: 'readPendingWriteHealth' }, () => brain.readPendingWriteHealth()) as Record<string, unknown>;
+  return {
+    pending_writes: Number(out.pending_writes), oldest_pending_write_age_seconds: Number(out.oldest_pending_write_age_seconds),
+    pending_writes_later_failed: Number(out.pending_writes_later_failed),
+  };
+};
+
+/** Requests of the last 24 hours per asked token, in token byte order; a token with none has no row. */
+export const countMcpRequestsLastDayByToken: StoreMember<[tokenNames: readonly string[]], McpTokenRequestCount[]> = async (brain, tokenNames) =>
+  await storeCall({ member: 'countMcpRequestsLastDayByToken' }, () => brain.countMcpRequestsLastDayByToken([...tokenNames])) as McpTokenRequestCount[];

@@ -39,6 +39,7 @@ import {
   type OpenLoopRow,
 } from '../loops/loops-store.ts';
 import { sourceRecordsRawConfig } from '../source-rows.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 
 const STALE_AFTER_MS = 24 * 3_600_000;
 
@@ -164,11 +165,7 @@ async function withheldNoise(ctx: OperationContext, sources: GoogleSourceFreshne
       const record = ((await readConnectorCursorState(ctx.engine, row, managed))?.loop_withheld_senders ?? {}) as Record<string, { reason?: string }>;
       const emails = Object.keys(record);
       if (!emails.length) continue;
-      const counts = await ctx.engine.executeRaw<{ email: string; n: number }>(
-        `SELECT counterparty_email AS email, count(*)::int AS n FROM open_loops
-          WHERE source_id = $1 AND status = 'open' AND loop_type = 'unanswered_inbound'
-            AND counterparty_email = ANY(string_to_array($2, E'\n'))
-          GROUP BY counterparty_email`, [row.id, emails.join('\n')]);
+      const counts = await ctx.engine.countOpenLoopsByCounterpartyEmail(row.id, emails, 'unanswered_inbound');
       for (const c of counts) {
         senders.push({ source_id: row.id, email: c.email, open_loops: Number(c.n), reason: record[c.email]?.reason ?? 'automated_mail',
           preview_command: `gbrain loops drop sender ${c.email} --source ${row.id} --dry-run` });
@@ -177,7 +174,9 @@ async function withheldNoise(ctx: OperationContext, sources: GoogleSourceFreshne
     if (!senders.length) return null;
     senders.sort((a, b) => b.open_loops - a.open_loops || a.email.localeCompare(b.email));
     return { loop_count: senders.reduce((n, x) => n + x.open_loops, 0), sender_count: senders.length, senders };
-  } catch {
+  } catch (e) {
+    // An engine that cannot count them refuses; null would hide the withheld senders as if there were none.
+    rethrowCapabilityRefusal(e);
     return null;
   }
 }
@@ -202,14 +201,17 @@ async function deepLinksFor(
       // source-scoped so the composite (source_id, slug) unique index serves
       // the lookup — a slug-only predicate would sequential-scan pages.
       const sourceIds = [...new Set(loops.map((l) => l.source_id))];
-      const rows = await ctx.engine.executeRaw<{ slug: string; account: string | null; source_id: string }>(
-        `SELECT slug, source_id, frontmatter->>'account' AS account FROM pages
-         WHERE source_id = ANY(string_to_array($2, E'\\n'))
-           AND slug = ANY(string_to_array($1, E'\\n')) AND deleted_at IS NULL`,
-        [slugs.join('\n'), sourceIds.join('\n')],
-      );
-      for (const r of rows) if (r.account) accounts.set(`${r.source_id}:${r.slug}`, r.account);
-    } catch { /* links degrade to none */ }
+      const rows = await ctx.engine.readTextMentionPages(sourceIds, slugs);
+      for (const r of rows) {
+        // `frontmatter->>'account'` read any scalar as text.
+        const raw = r.frontmatter?.account;
+        const account = raw === undefined || raw === null || typeof raw === 'object' ? null : String(raw);
+        if (account) accounts.set(`${r.source_id}:${r.slug}`, account);
+      }
+    } catch (e) {
+      // Links degrade to none on a failed read, but an engine that cannot read the pages refuses.
+      rethrowCapabilityRefusal(e);
+    }
   }
   const out = new Map<string, string>();
   const { emailCitation } = await import('../output/scaffold.ts');
@@ -564,12 +566,13 @@ const open_loops: Operation = {
         // counterparty slugs within the counterparty pages' sources first
         // (same composite-key discipline as deepLinksFor), then fold back to slugs.
         const srcIds = [...new Set([...byKey.values()].map((g) => g.counterparty_source_id))];
-        const rows = await ctx.engine.executeRaw<{ id: number; slug: string }>(
-          `SELECT id, slug FROM pages
-           WHERE source_id = ANY(string_to_array($2, E'\\n'))
-             AND slug = ANY(string_to_array($1, E'\\n')) AND deleted_at IS NULL`,
-          [slugs.join('\n'), srcIds.join('\n')],
-        );
+        // The live counterparty pages, then each one's id ((source_id, slug) is unique, so one id per live page).
+        const live = await ctx.engine.readTextMentionPages(srcIds, slugs);
+        const rows: Array<{ id: number; slug: string }> = [];
+        for (const page of live) {
+          const id = await ctx.engine.readPageIdInSource(page.slug, page.source_id);
+          if (id !== null) rows.push({ id, slug: page.slug });
+        }
         if (rows.length > 0) {
           const counts = await ctx.engine.getBacklinkCounts(rows.map((r) => Number(r.id)));
           for (const r of rows) {
@@ -578,7 +581,10 @@ const open_loops: Operation = {
           }
         }
       }
-    } catch { /* rank without backlinks */ }
+    } catch (e) {
+      // Rank without backlinks on a failed read, but an engine that cannot read them refuses.
+      rethrowCapabilityRefusal(e);
+    }
 
     const limit = Math.min(Math.max((p.limit as number | undefined) ?? 3, 1), 50);
     const groups = rankGroups([...byKey.values()], backlinks, nowMs).slice(0, limit)

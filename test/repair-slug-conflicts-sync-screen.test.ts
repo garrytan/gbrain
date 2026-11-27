@@ -36,6 +36,8 @@ import { CONTENT_REPAIR_ACTOR, CONTENT_REPAIR_HOLD_CODE, parseContentRepairRecei
 import { resolveRepairScope, type RepairResult } from '../src/core/repair/core.ts';
 import { repairRunner } from '../src/core/repair/registry.ts';
 import type { SlugConflictsPreviewDetails } from '../src/core/repair/slug-conflicts.ts';
+import { capabilityMissing } from '../src/core/rust-engine/errors.ts';
+import type { BrainEngine } from '../src/core/engine.ts';
 import { withEnv } from './helpers/with-env.ts';
 
 const home = mkdtempSync(join(tmpdir(), 'gbrain-slug-conflicts-sync-screen-'));
@@ -188,4 +190,49 @@ test('a slug: line resolving to the own page only through an alias, which sync h
   const [kept] = await s.holds();
   expect(kept!.meta.content_repair).toMatchObject({ action: 'remove_slug', reason: 'slug_page_mismatch', named: 'people/carol-example' });
   expect(gitHoldItem(kept!).fix.why).toContain('people/carol-example');
+}), 240_000);
+
+/** A held file whose `slug:` line names an alias of its own page: the repair holds it slug_page_mismatch and records the verdict naming that page. `detach` first forgets the page's file. */
+async function aliasHeld(detach: boolean) {
+  const s = await managed({ 'people/carol-example.md': page('Carol Example', 'person', 'A synthetic person.') });
+  await s.sync();
+  if (detach) await engine.detachPageOrigin(Number((await engine.getPage('people/carol-example', { sourceId: s.id }))!.id), 'detached');
+  await engine.transaction(async tx => {
+    await tx.executeRaw("SELECT set_config('gbrain.write_sources', $1, true)", [JSON.stringify([s.id])]);
+    await tx.executeRaw('INSERT INTO slug_aliases (source_id, alias_slug, canonical_slug) VALUES ($1, $2, $3)', [s.id, 'people/carol', 'people/carol-example']);
+  });
+  s.write('people/carol-example.md', page('Carol Example', 'person', 'A synthetic person.', 'slug: people/carol\n')); commit(s.root, 'alias slug');
+  expect((await s.sync()).held_count).toBe(1);
+  return s;
+}
+
+test('the verdict records that the named page has a file, or that it has none (named_db_only), from the page the engine reads', () => each(async () => {
+  const withFile = await aliasHeld(false);
+  expect(await withFile.run({ apply: true })).toMatchObject({ applied: 0, remaining: { slug_page_mismatch: 1 } });
+  const [kept] = await withFile.holds();
+  expect(kept!.meta.content_repair).toMatchObject({ action: 'remove_slug', reason: 'slug_page_mismatch', named: 'people/carol-example' });
+  expect(kept!.meta.content_repair).not.toHaveProperty('named_db_only');
+  const dbOnly = await aliasHeld(true);
+  expect(await dbOnly.run({ apply: true })).toMatchObject({ applied: 0 });
+  const [keptDbOnly] = await dbOnly.holds();
+  expect(keptDbOnly!.meta.content_repair).toMatchObject({ named: 'people/carol-example', named_db_only: true });
+}), 240_000);
+
+test('a refused read of the named page while the verdict is recorded refuses the repair, it is not recorded as a page with no file', () => each(async () => {
+  const s = await aliasHeld(false);
+  // The engine refuses the page read the way the Rust engine refuses a member it does not serve.
+  const refusing = new Proxy(engine, {
+    get(target, prop, receiver) {
+      const value = Reflect.get(target, prop, receiver);
+      if (typeof value !== 'function') return value;
+      if (prop === 'getPage') return async () => { throw capabilityMissing('pages', 'getPage'); };
+      return value.bind(target);
+    },
+  }) as BrainEngine;
+  const runner = await repairRunner(refusing, { apply: true, noEmbed: true, logger: quiet });
+  await expect(runner.run('slug-conflicts', await resolveRepairScope(refusing, s.id), { explicit: true, sourceFlag: s.id, noLlm: true }))
+    .rejects.toMatchObject({ code: 'engine_capability_missing' });
+  // Nothing was recorded on the hold.
+  const [kept] = await s.holds();
+  expect(kept!.meta.content_repair).toBeUndefined();
 }), 240_000);

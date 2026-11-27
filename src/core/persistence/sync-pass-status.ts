@@ -48,6 +48,11 @@ export interface PassConvergence {
   admission: SyncAdmissionStatus;
   not_converged_streak: number;
   duration_ms: number | null; timings_ms: Record<string, number>; last_full_at: string | null;
+  /**
+   * GST-3534: the commits the newest pass's rounds read and how many rounds read `I⋈P` whole or patched the previous read (null for
+   * a pass written before them).
+   */
+  levels: { heads: number; whole: number; patched: number } | null;
 }
 
 /** The live block of one source's pass row (design §9's field table). `holds` are the incarnation's holds the status read. */
@@ -68,7 +73,7 @@ export async function passConvergence(engine: Pick<BrainEngine, 'executeRaw'>, i
     episode: episode ? { full_id: episode.full_id ?? null, opened_at: episode.opened_at, inherited: episode.inherited, selection_fp: digest(episode.selection),
       reserved_usd: o.cost?.reserved_usd ?? null, approved_usd: o.cost?.approved_usd ?? null } : null,
     admission: input.admission, not_converged_streak: o.not_converged_streak ?? 0,
-    duration_ms: t.duration_ms, timings_ms: t.timings_ms, last_full_at: o.converged?.last_full_at ?? null };
+    duration_ms: t.duration_ms, timings_ms: t.timings_ms, last_full_at: o.converged?.last_full_at ?? null, levels: t.levels ?? null };
 }
 
 /** GST-2869: the rewrite was the attempt that exhausted a transient hold's retries, so the hold now waits on a person. */
@@ -101,6 +106,7 @@ export async function passBanked(engine: Pick<BrainEngine, 'executeRaw'>, source
     [sourceId, telemetry.pass_id, GIT_HOLD_OP, `${sourceId}:${incarnation}:`, telemetry.started_at, incarnation]);
   if (row?.banked === true) return true;
   for (let after = ''; ;) {
+    // The page order never reaches output: the pass only asks whether any held row qualifies, and ORDER BY and the `h.fingerprint > $7` cursor both use the default collation, so they agree and paging stays consistent.
     const rewritten = await engine.executeRaw<{ fingerprint: string; record: GitHoldRecord; revision: string | null }>(`SELECT h.fingerprint, h.completed_keys->0 AS record, p.knowledge_revision::text AS revision
       FROM op_checkpoints h LEFT JOIN pages p ON p.source_id=$1 AND p.id=(h.completed_keys->0->>'page_id')::bigint
       WHERE h.op=$2 AND left(h.fingerprint, length($3))=$3 AND h.completed_keys->0->>'run_id'=$4 AND (h.completed_keys->0->>'updated_at')::timestamptz >= $5::timestamptz

@@ -1,11 +1,13 @@
 /**
  * Typed `sources` members for hermetic stub engines. Production code reads `sources` through these BrainEngine members
  * (listAllSources, getSource, listLocalPathSources, listSourceRoutingRows, listSourceRecords, countDefaultSourceSplit,
- * listStaleSyncSourceIds, readSourceIncarnation, and the guest and company-brain lookups) instead of `executeRaw`, so a stub engine that used to answer SQL text spreads these instead.
+ * listStaleSyncSourceIds, readSourceIncarnation, listOnboardingSources, readSourceState, and the guest and company-brain lookups) instead of `executeRaw`, so a stub engine that used to answer SQL text spreads these instead.
  * Each member answers as the engine-sql statement does: the same filters, the same order, the same row shape.
  */
 import type { GuestSourceLookupRow, SourceDetailRow, SourceIncarnationRow, SourceRecordRow, SourceRow } from '../../src/core/engine.ts';
 import type { DefaultSourceSplit, LocalPathSourceRow, SourceRoutingRow } from '../../src/core/engine-sql/sources.ts';
+import type { OnboardingSourceRow } from '../../src/core/engine-sql/writer-status.ts';
+import type { SourceStateRow } from '../../src/core/engine-sql/write-misc.ts';
 
 export interface StubSourceRow {
   id: string;
@@ -94,6 +96,18 @@ export function stubSourceMembers(sources: readonly StubSourceRow[] | (() => rea
       enter('readSourceIncarnation');
       const r = rows().find(row => row.id === id);
       return r ? { config: r.config, incarnation: r.incarnation } : null;
+    },
+    /** The live sources' id, root, incarnation and kind, in byte order of id (listOnboardingSources). */
+    async listOnboardingSources(sourceId: string | null): Promise<OnboardingSourceRow[]> {
+      enter('listOnboardingSources');
+      return byId(rows()).filter(r => !r.archived && (sourceId === null || r.id === sourceId))
+        .map(({ id, local_path, incarnation, config }) => ({ id, local_path, incarnation, kind: typeof config.kind === 'string' ? config.kind : null }));
+    },
+    /** The source row's incarnation, archived flag, local path and config (readSourceState), or null for an unknown id. */
+    async readSourceState(id: string): Promise<SourceStateRow | null> {
+      enter('readSourceState');
+      const r = rows().find(row => row.id === id);
+      return r ? { incarnation: r.incarnation, archived: r.archived, local_path: r.local_path, config: r.config } : null;
     },
     /** The guest_sources lookup (readGuestSourceRow) for a brain with no guest sources: every source answers "not a guest". */
     async readGuestSourceRow(_id: string): Promise<GuestSourceLookupRow> {

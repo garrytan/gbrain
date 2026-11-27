@@ -51,14 +51,12 @@ function packaged(edit?: (files: Record<string, string>) => void) {
       files: [{ path: `${path}/SKILL.md`, content: initial_files[`${path}/SKILL.md`], file_class: 'prose' as const }] })) };
 }
 
-/** Admits the adoption, then fails its canonical apply with `error`, leaving the accepted request uncommitted (host work pending). */
+/** Admits the adoption, then fails its canonical apply (the revision insert) with `error`, leaving the accepted request uncommitted (host work pending). */
 function interrupted(ctx: OperationContext, error = () => new Error('synthetic storage interruption')): OperationContext {
   const failing = new Proxy(ctx.engine, { get(target, key) {
     if (key === 'transaction') return async (fn: (tx: BrainEngine) => Promise<unknown>) => target.transaction((real) => fn(new Proxy(real, { get(tx, prop) {
-      if (prop === 'executeRaw') return async (sql: string, params?: unknown[]) => {
-        if (sql.includes('INSERT INTO shared_skill_revisions')) throw error();
-        return tx.executeRaw(sql, params);
-      };
+      // The canonical apply inserts the revision through the typed engine member.
+      if (prop === 'writeSharedSkillRevision') return async () => { throw error(); };
       const value = Reflect.get(tx, prop); return typeof value === 'function' ? value.bind(tx) : value;
     } })));
     const value = Reflect.get(target, key); return typeof value === 'function' ? value.bind(target) : value;

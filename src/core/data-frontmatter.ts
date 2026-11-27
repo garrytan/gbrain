@@ -93,6 +93,9 @@ export class FrontmatterLanguageError extends Error {
   }
 }
 
+/** The closing fence: `---` at column 0 with only blanks after it. An indented `---` is block text, not a fence. */
+export const FRONTMATTER_CLOSE_RE = /^---[\t ]*(?:\r?\n|$)/m;
+
 /**
  * Where parseDataFrontmatter finds the block: the input without its BOM and,
  * for a fenced input, the language, the block text and the body after the
@@ -115,7 +118,7 @@ export function scanDataFrontmatter(input: string): {
     throw new FrontmatterLanguageError();
   }
   const rest = lifted.slice(opening[0].length);
-  const closing = /^---[\t ]*(?:\r?\n|$)/m.exec(rest);
+  const closing = FRONTMATTER_CLOSE_RE.exec(rest);
   // Match the established parser's missing-close behavior: parse the remaining
   // block and let the higher-level markdown validator report MISSING_CLOSE.
   return {

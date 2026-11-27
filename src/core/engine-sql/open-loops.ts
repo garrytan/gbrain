@@ -1,8 +1,8 @@
 /**
  * Open loops (`open_loops`, src/schema.sql): the upsert, list and close statements loops-store.ts ran through
  * `executeRaw`, with the same text and parameters, on the engine's own raw path; only their home moved. The members
- * return the raw rows; loops-store.ts still normalizes them. The other loop statements (thread auto-close, the
- * staleness pass, mutes, the loop-fact reads) stay with their callers.
+ * return the raw rows; loops-store.ts still normalizes them. Mutes and the thread auto-close are in loop-mutes.ts; the
+ * staleness pass and the loop-fact reads stay with their callers.
  *
  * `'mute_recheck'` and `'muted'` are `MUTE_RECHECK` and `MUTED` in loops-store.ts, written here as literals so this
  * module needs no runtime import of the store.
@@ -158,4 +158,21 @@ export async function listOpenLoops(exec: LegacyUnscopedRead, opts: ListLoopsOpt
       limit,
     ],
   );
+}
+
+/** One sender's open loop count, as `countOpenLoopsByCounterpartyEmail` returns it. */
+export interface CounterpartyEmailLoopCount { email: string; n: number }
+
+/**
+ * The open loops of `loopType` in `sourceId` per counterparty email among `emails`, one row per email with any, in no
+ * set order (the withheld-noise card of `open_loops`, ops/loops.ts). No limit: every loop counts.
+ */
+export async function countOpenLoopsByCounterpartyEmail(exec: LegacyUnscopedRead, sourceId: string, emails: readonly string[], loopType: string): Promise<CounterpartyEmailLoopCount[]> {
+  if (emails.length === 0) return [];
+  const found = await exec.executeRaw<{ email: string; n: number | string }>(
+    `SELECT counterparty_email AS email, count(*)::int AS n FROM open_loops
+      WHERE source_id = $1 AND status = 'open' AND loop_type = $3
+        AND counterparty_email = ANY(string_to_array($2, E'\n'))
+      GROUP BY counterparty_email`, [sourceId, emails.join('\n'), loopType]);
+  return found.map(r => ({ email: r.email, n: Number(r.n) }));
 }

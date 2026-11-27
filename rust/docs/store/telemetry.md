@@ -24,8 +24,14 @@ Keys: every record starts with the family tag `a` (`keys::TELEMETRY`) and the ta
   (`keys::TELEMETRY_CHAT_USAGE`, a reviewed key reservation). Key order is `created_at` order, ties by id; the id
   comes from the `next_chat_usage_id` counter.
 
-The other sub-tags of `a` (retrieval feedback, budget ledger) have no records yet. No table has a source or
-page column, so page and source deletes never touch them.
+- `a 0x0C <id BE8>` holds one volunteered-page event and `a 0x0D` the id counter
+  ([volunteer-events.md](volunteer-events.md)).
+- `a 0x0E <source> 0x00 <page id BE8> <hash> 0x00 <version BE4>` holds one chronicle ledger row, `a 0x0F <id BE8>` one judge
+  reservation and `a 0x10` the reservation id counter ([chronicle-ledger.md](chronicle-ledger.md)).
+
+The other sub-tags of `a` (retrieval feedback, budget ledger) have no records yet. Only the chronicle ledger rows
+(`0x0E`) carry a source and page: a page or source delete removes them (`chronicle_state.rs`, [chronicle-state.md](chronicle-state.md)).
+No other table has a source or page column, so page and source deletes never touch them.
 
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
@@ -38,6 +44,10 @@ page column, so page and source deletes never touch them.
 | `brain.readMcpRollupPrunedBefore()` | `{ pruned_before, now }`: the newest `pruned_through` of the tally (null when nothing was pruned) and the store clock, as ISO text | `readMcpRollupPrunedBefore` |
 | `brain.logChatUsage(row)` | `null`. Appends one ledger row with the next id; `created_at` is ISO text, or null for now. Checks run in Postgres order: a NUL byte is `invalid_argument`, a token count that is not a whole `int4` is `invalid_argument`, a bad `created_at` is `invalid_argument`, then a null `model` or token count is `constraint_violation` (`null value in column "<column>"`) | `logChatUsage` |
 | `brain.readChatUsage(days)` | `{ rows, logged_since }`: one `{ model, phase, calls, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, cost_usd, unpriced_calls }` row per `(model, phase)` over the rows created on or after `now - days`, ordered by summed cost descending (null last), then model and phase in byte order with a null phase first. `cost_usd` is null when no call in the group is priced. `logged_since` is the first `created_at` of the whole ledger as timestamp text (null when empty) | `readChatUsage` |
+| `brain.countMcpRequestsLastDay(kind)` | the number of request log rows created in the last 24 hours: `all` counts every row, `traffic` leaves out operation `surface_change`, `errors` is the traffic whose status is not `success`, `success_with_warnings` or `accepted_pending`. Any other kind is `invalid_argument` | `countMcpRequestsLastDay` |
+| `brain.countMcpRequestsLastDayByToken(tokenNames)` | one `{ token_name, requests }` row per asked token with a request in the last 24 hours, sorted by name in byte order; a token with none has no row, a null list or an empty list gives no row | `countMcpRequestsLastDayByToken` |
+| `brain.readMcpRequestLogPage({ tokenName, operation, status, limit, offset })` | `{ rows, total }` for the admin request list: `rows` is the page of request log rows whose token, operation and status equal each non-null filter, newest `created_at` first, skipping `offset` rows and taking `limit`, each as `{ id, token_name, agent_name, operation, latency_ms, status, params, error_message, created_at }` with `agent_name` falling back to the token name and `created_at` as ISO text; `total` counts every matching row. A negative `limit` or `offset`, a value that is not a whole `bigint`, or a NUL in a filter is `invalid_argument` | `readMcpRequestLogPage` |
+| `brain.readPendingWriteHealth()` | `{ pending_writes, oldest_pending_write_age_seconds, pending_writes_later_failed }` for the admin health indicators: `pending_writes` counts the write requests in state `queued`, `deferred`, `running` or `recovering`; `oldest_pending_write_age_seconds` is the whole seconds since the oldest of them was created (0 with none); `pending_writes_later_failed` counts the distinct write requests in state `conflict`, `failed` or `cancelled` whose `request_id` a request log row of the last 24 hours with status `accepted_pending` names in `params.write_request_id` | `readPendingWriteHealth` |
 | `brain.readMcpLifetimeUsage(tokenNames)` | one `{ token_name, requests, last_used_at }` row per asked token that has log rows or a tally row, in token byte order: `requests` is the token's request log rows (every status and operation) plus its tally `requests`, `last_used_at` the newest of the newest `created_at` and the tally's `last_used_at`, as ISO text. A null list or a null name matches nothing; a NULL-token log row never matches, and the tally's `''` row matches only an asked `''`. A NUL in a name is `invalid_argument`; a sum past `int8` is `invalid_argument` (`integer out of range`) | `readMcpLifetimeUsage` |
 
 The TypeScript members turn each ISO time (`cutoff`, `newest`, `last_seen`, `pruned_before`, `now`, `last_used_at`) into a
@@ -61,6 +71,7 @@ Differences from PGLite:
   `FOR UPDATE SKIP LOCKED` has no store meaning: the store has one writer, so two prunes never overlap.
 - `logMcpRequest` reads `created_at` as ISO text only (`2026-11-18T07:46:03.336Z`, up to six fraction digits);
   Postgres also reads other `timestamptz` spellings. Every caller passes a `Date` or nothing.
+- `readMcpRequestLogPage` breaks a `created_at` tie by the higher id first; Postgres returns tied rows in no set order.
 - `readMcpLogPruneCutoff` always answers `rollup_present: true`: a store brain has no migration that could be
   missing the tally.
 - `readMcpLifetimeUsage` always adds the tally, for the same reason; the TypeScript statement reads the log alone
@@ -77,3 +88,22 @@ Differences from PGLite:
 The legacy HTTP transport (`src/mcp/http-transport.ts`, `logRequest`) writes its request
 log row through `logMcpRequest`, and `lifetimeUsage` (`src/core/mcp-request-log-retention.ts`) reads through
 `readMcpLifetimeUsage`, which also absorbs the tally-table probe `rollupTablePresent` used to make.
+
+## Access read log
+
+`access_read_log` (GST-2476 gap 1) holds one row per read a non-owner member or audience made. The read-log writer
+(`src/core/access/read-log.ts`) appends rows in batches and prunes them; `gbrain access log` and `gbrain access who-read`
+(`src/commands/access-read-log.ts`) read them. The SQL is in `src/core/engine-sql/access-read-log.ts`; the store keeps the
+rows in `access_read_log.rs`, under `a 0x11 <id BE8>` with ids from `next_access_read_log_id`.
+
+| Member | Result |
+| --- | --- |
+| `insertAccessReadLogRows(rows)` | appends each row with the next id. A `created_at` that is not ISO text, a page id that is not a whole `int4` or a NUL in text refuses the batch (`invalid_argument`) and writes nothing. |
+| `pruneAccessReadLog(days, maxRows)` | deletes the rows logged before `now - days`, then the rows whose id is at most the highest id less `maxRows`. |
+| `readAccessReadLog({ since, member, limit })` | the rows at or after `since`, newest first (a tie by the higher id), at most `limit`; with `member`, its rows and the rows whose audience names `member:<member>`. |
+| `listAccessReadPageRefs(slug, sourceId)` | `{ id, source_id, slug }` of every stored page with the slug (in the source when given), soft-deleted ones too, by source id in byte order. |
+| `readAccessReadsOfPages({ pageIds, since, limit })` | the rows at or after `since` that name one of the page ids, newest first, at most `limit`. |
+| `tallyAccessReadsOfPages({ pageIds, since })` | `{ who, reads, last_at }` per reader of those rows: the member, else the audience joined by `+` (an empty audience is the empty text), else `(unbound)`; the latest last read first, a tie by who in byte order. |
+
+A read row lists each page id as `source:slug` (a soft-deleted page too), or `#<id>` for a page no longer stored. Times
+cross the binding as ISO text. Page deletes and purges leave the rows, as on PGLite and Postgres.

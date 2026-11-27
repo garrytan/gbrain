@@ -60,19 +60,21 @@ describe('#8089 waivedProvenance', () => {
 
 describe('#8089 publishedSyncNoop', () => {
   const run = async (root: string, change?: string) => {
-    const statements: Array<{ sql: string; params: unknown[] }> = [];
+    const records: Array<{ disk_sha256: string | null; raw_sha256: string }> = [];
     const page = { id: 7, slug: 'notes/a', deleted_at: null };
+    // The provenance record goes through the typed op-checkpoint member (engine-sql/op-checkpoint.ts), not executeRaw.
     const tx = {
       readPageSnapshot: async () => ({ revision: 'revision-a', page }),
-      executeRaw: async (sql: string, params: unknown[] = []) => { statements.push({ sql, params }); return []; },
+      writeOpCheckpointRecords: async (_op: string, entries: Array<{ fingerprint: string; record: { disk_sha256: string | null; raw_sha256: string } }>) => {
+        records.push(...entries.map(entry => entry.record));
+      },
     } as unknown as BrainEngine;
     const prepared = publishedSyncNoop({ source_id: 'default', source_incarnation: 'incarnation-a', slug: 'notes/a', request_id: 'request-a' } as never,
       { kind: 'managed_sync_import', path: 'notes/a.md', sourcePath: 'notes/a.md', rawHash: sha256(Buffer.from(EDITED)), target: TARGET } as unknown as SyncIntent,
       root, { revision: 'revision-a', page } as never, null, async () => {}, async () => {});
     if (change !== undefined) writeFileSync(join(root, 'notes/a.md'), change);
     await prepared.apply!(tx);
-    return statements.filter(statement => /INSERT INTO op_checkpoints/.test(statement.sql))
-      .map(statement => (JSON.parse(String(statement.params[2])) as Array<{ disk_sha256: string | null; raw_sha256: string }>)[0]!);
+    return records;
   };
 
   test('a file that changed between preparation and apply is not recorded', async () => {

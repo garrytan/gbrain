@@ -36,6 +36,7 @@ import type { Action } from '../agent-output.ts';
 import { parseFactsFence } from '../facts-fence.ts';
 import { importFile } from '../import-file.ts';
 import { movePageIdReferences } from '../page-state/rename-alias.ts';
+import { withTrustKeep } from '../persistence/context.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { loadApprovedSet, previewChangedError, previewHash, retireAfterLastItem, saveApprovedSet } from '../persistence/preview-approval.ts';
@@ -78,9 +79,9 @@ const refuse = (code: string, message: string, suggestion: string, fix: Action, 
 };
 
 /** The new file as the carry imports it, from the source checkout; a missing file refuses: there is nothing to carry onto. */
-async function readNewFile(engine: Pick<BrainEngine, 'executeRaw'>, record: IdentityDowngrade): Promise<{ path: string; text: string }> {
-  const [source] = await engine.executeRaw<{ local_path: string | null }>('SELECT local_path FROM sources WHERE id = $1', [record.source_id]);
-  const path = source?.local_path ? join(source.local_path, record.to) : null;
+async function readNewFile(engine: Pick<BrainEngine, 'readSourceLocalPath'>, record: IdentityDowngrade): Promise<{ path: string; text: string }> {
+  const localPath = await engine.readSourceLocalPath(record.source_id);
+  const path = localPath ? join(localPath, record.to) : null;
   if (!path || !existsSync(path)) throw changedSincePreview(record, `the new file ${record.to} is not in the source checkout`);
   return { path, text: readFileSync(path, 'utf8') };
 }
@@ -254,7 +255,9 @@ async function carryIdentity(engine: BrainEngine, record: IdentityDowngrade, has
             claim_period = n.claim_period, event_type = n.event_type, attributed_to = n.attributed_to FROM facts n WHERE o.id = $1 AND n.id = $2`, [check.old_id, check.new_id]);
       }
       // origin-guard-ok: retires the provisional page to a tombstone, which claims no origin
-      await tx.executeRaw('UPDATE pages SET slug = $1, deleted_at = now(), updated_at = now() WHERE id = $2 AND source_id = $3', [retired, provisionalId, sourceId]);
+      // #10003: retiring authors no text, so the tombstone keeps its stored trust tier, as a soft delete does.
+      await withTrustKeep(tx, ['pages'], () => tx.executeRaw('UPDATE pages SET slug = $1, deleted_at = now(), updated_at = now() WHERE id = $2 AND source_id = $3',
+        [retired, provisionalId, sourceId]));
       if (await tx.updateSlug(oldSlug, newSlug, { sourceId }) !== 1) throw changedSincePreview(record, `page ${oldSlug} could not move to ${newSlug}`);
       await assertOriginUnclaimed(tx, { sourceId, pageId: oldId, sourcePath: record.to, revive: true });
       // origin-guard-ok: assertOriginUnclaimed above revives and assigns in the same transaction

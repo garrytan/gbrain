@@ -3,7 +3,7 @@
  * (rust/crates/gbrain-store/src/facts/trust.rs and facts/saved_match.rs). A member not exported here refuses with
  * `engine_capability_missing`.
  *
- * Served: `listFactsForRelevance` (the keyword and entity arms), `countUncomparableFacts` and `matchSavedFacts`. The pool's trust floor and
+ * Served: `listFactsForRelevance` (the keyword and entity arms), `countUncomparableFacts`, `matchSavedFacts` and `countDerivedFactTaint`. The pool's trust floor and
  * flagged-fact suppression go to the store, which reads each fact's stamped `trust_tier` and its write-gate receipts. The
  * store answers the rest of the pool's read policy exactly when the world-only rule is the plain `world` one or a
  * widening the store models (fact-visibility.ts), the privacy policy is one the store models (private-provenance.ts),
@@ -14,52 +14,35 @@
  * `worldOnly` visibility, a private-facts grant, refuses).
  * `listLexicalContestCandidates`, the keyless conflict slot's read of a remember, is served from
  * rust/crates/gbrain-store/src/facts/contest.rs. `listFactsFromQuotedPages` and `listOwnerTierFacts`, the quote reads of
- * search/transcript-quote.ts, are served from rust/crates/gbrain-store/src/facts/quote.rs; the store keeps no derivation
- * inputs, so only the holding page and a backstop's named page mark a fact quoted.
+ * search/transcript-quote.ts, are served from rust/crates/gbrain-store/src/facts/quote.rs: the holding page, a backstop's
+ * named page or a recorded input page (`derivation_inputs`) marks a fact quoted.
  *
  * `listRestatedPrivateCopies` is served by facts-trust-reads.ts; `readFactForOwnerAction`, `listStandingPreferences` and
  * `countDerivedFactTaint` by facts-trust-owner.ts. The `entity_ended` arm reads the withdrawal ledger through
  * `gbrain_fact_fingerprint`, which no store read joins yet.
+ *
+ * `readEntityNewestFacts` (search/entity-facts.ts) is served under the same rules: a remote caller reads the private-provenance
+ * policy, and a world-only one whose private-facts grant widens the visibility refuses.
+ *
+ * `matchHeadStems` stems with the store's `english` configuration; another FTS language refuses.
  */
 import type { BrainEngine } from '../../engine.ts';
-import { escapeLikePattern } from '../../cjk.ts';
 import { grantedPrivateFactSql } from '../../access/member-facts.ts';
-import { getFtsLanguage } from '../../fts-language.ts';
-import { privateFactFilterForReader, privateProvenanceFilterUnderPolicy } from '../../search/private-visibility.ts';
-import type { FactPoolFilters, FactPoolScope } from '../../engine-sql/facts-trust.ts';
-import { refuseMember, storeCall, type StoreMember } from './common.ts';
+import { privateFactFilterForReader } from '../../search/private-visibility.ts';
+import { CORRECTION_CUE } from '../../search/saved-facts-match.ts';
+import { refuseMember, storeCall, storeFtsConfig, type StoreMember } from './common.ts';
 import { storePrivacyPolicy } from './private-provenance.ts';
-import { storeVisibility } from './fact-visibility.ts';
+import { poolArgs } from './fact-pool.ts';
 import { withDates } from '../store-codec.ts';
+import { assertOwnerTierFloor } from '../../engine-sql/facts-trust.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
 type Row = Record<string, unknown>;
 
-/** The pool's scope and filters as the store reads them, or a refusal for a policy it cannot answer. */
-function poolArgs(member: string, scope: FactPoolScope, filters: FactPoolFilters | undefined): Row {
-  // A world-only pool is widened per row for the caller's member page and private-facts grant, as the fact lists are.
-  const widen = scope.worldOnly ? storeVisibility(member, ['world']).widen : undefined;
-  const grep = filters?.grep?.trim();
-  return {
-    sourceIds: [...new Set(scope.sourceIds?.length ? scope.sourceIds : [scope.sourceId ?? 'default'])],
-    worldOnly: scope.worldOnly,
-    ...(widen ? { widen } : {}),
-    // A caller with a reader identity and a private-readable grant is served (`callerReaders`).
-    excludePrivate: storePrivacyPolicy(member, scope.excludePrivate, () => privateProvenanceFilterUnderPolicy('facts'), { callerReaders: true }),
-    minTrust: scope.minTrust || null,
-    suppressFlagged: scope.suppressFlagged === true,
-    ...(filters?.entities ? { entities: filters.entities.map(e => ({ sourceId: e.sourceId, slug: e.slug })) } : {}),
-    ...(filters?.sessionId ? { sessionId: filters.sessionId } : {}),
-    ...(filters?.since ? { since: filters.since.toISOString() } : {}),
-    ...(grep ? { grep: `%${escapeLikePattern(grep)}%` } : {}),
-    includeExpired: filters?.includeExpired === true,
-  };
-}
-
 export const listFactsForRelevance: Member<'listFactsForRelevance'> = async (brain, q) => {
   const member = 'listFactsForRelevance';
   if (q.arm === 'entity_ended') refuseMember(member, 'the history arm reads the withdrawal ledger');
-  if (q.arm === 'keyword' && getFtsLanguage() !== 'english') refuseMember(member, `the keyword arm in FTS language ${getFtsLanguage()}`);
+  const ftsConfig = q.arm === 'keyword' ? storeFtsConfig(member, 'the keyword arm in FTS language') : undefined;
   if (q.vector && q.vector.type !== 'halfvec') refuseMember(member, 'a vector-typed facts embedding column');
   const pool = poolArgs(member, q.scope, q.filters);
   const rows: Row[] = await storeCall({ member }, () => brain.listFactsForRelevance({
@@ -69,6 +52,7 @@ export const listFactsForRelevance: Member<'listFactsForRelevance'> = async (bra
     terms: q.terms ?? '',
     ...(q.entity ? { entity: { sourceId: q.entity.sourceId, slug: q.entity.slug } } : {}),
     limit: q.limit,
+    ...(ftsConfig ? { ftsConfig } : {}),
   }));
   return rows.map(row => withDates(row, ['valid_from', 'valid_until', 'created_at']) as unknown as Awaited<ReturnType<BrainEngine['listFactsForRelevance']>>[number]);
 };
@@ -88,7 +72,7 @@ const STORE_CORRECTION_CUE = String.raw`\m(correction|retract(s|ed|ing|ion)?|dis
 
 export const matchSavedFacts: Member<'matchSavedFacts'> = async (brain, q) => {
   const member = 'matchSavedFacts';
-  if (getFtsLanguage() !== 'english') refuseMember(member, `FTS language ${getFtsLanguage()}`);
+  const ftsConfig = storeFtsConfig(member, 'FTS language');
   if (q.cue !== STORE_CORRECTION_CUE) refuseMember(member, 'a correction cue other than CORRECTION_CUE');
   if (q.worldOnly && grantedPrivateFactSql('f') !== 'FALSE') refuseMember(member, 'visibility widened by a private-facts grant');
   const rows: Row[] = await storeCall({ member }, () => brain.matchSavedFacts({
@@ -100,6 +84,7 @@ export const matchSavedFacts: Member<'matchSavedFacts'> = async (brain, q) => {
     excludePrivate: storePrivacyPolicy(member, q.excludePrivate, () => privateFactFilterForReader('facts'), { callerReaders: true }),
     worldOnly: q.worldOnly,
     minTrust: q.minTrust || null,
+    ftsConfig,
   }));
   return rows.map(row => withDates(row, ['at', 'created_at']) as unknown as Awaited<ReturnType<BrainEngine['matchSavedFacts']>>[number]);
 };
@@ -112,5 +97,30 @@ export const listFactsFromQuotedPages: Member<'listFactsFromQuotedPages'> = (bra
   storeCall({ member: 'listFactsFromQuotedPages' }, () => brain.listFactsFromQuotedPages({
     ids: [...new Set(q.ids.map(Number))], pageTypes: [...q.pageTypes], backstop: q.backstop.map(([source, prefix]) => [source, prefix]) }));
 
-export const listOwnerTierFacts: Member<'listOwnerTierFacts'> = (brain, q) =>
-  storeCall({ member: 'listOwnerTierFacts' }, () => brain.listOwnerTierFacts({ ids: [...new Set(q.ids.map(Number))], floor: q.floor }));
+export const listOwnerTierFacts: Member<'listOwnerTierFacts'> = async (brain, q) => {
+  if (!q.ids.length) return [];
+  assertOwnerTierFloor(q.floor);
+  return storeCall({ member: 'listOwnerTierFacts' }, () => brain.listOwnerTierFacts({ ids: [...new Set(q.ids.map(Number))], floor: q.floor }));
+};
+
+export const readEntityNewestFacts: Member<'readEntityNewestFacts'> = async (brain, q) => {
+  const member = 'readEntityNewestFacts';
+  if (q.remote && q.worldOnly && grantedPrivateFactSql('f') !== 'FALSE') refuseMember(member, 'visibility widened by a private-facts grant');
+  const rows: Row[] = await storeCall({ member, sourceId: q.sourceId }, () => brain.readEntityNewestFacts({
+    sourceId: q.sourceId,
+    slugs: q.slugs,
+    // A local caller reads no visibility or private-provenance rule; a remote one reads privateFactFilterForReader('f').
+    excludePrivate: storePrivacyPolicy(member, q.remote, () => privateFactFilterForReader('facts'), { callerReaders: true }),
+    worldOnly: q.remote && q.worldOnly,
+    minTrust: q.minTrust || null,
+  }));
+  return rows.map(row => withDates(row, ['created_at']) as unknown as Awaited<ReturnType<BrainEngine['readEntityNewestFacts']>>[number]);
+};
+
+export const matchHeadStems: Member<'matchHeadStems'> = async (brain, heads, terms) => {
+  const member = 'matchHeadStems';
+  const ftsConfig = storeFtsConfig(member, 'FTS language');
+  if (heads.length === 0) return [];
+  const rows: Array<{ h: string; i: Array<number | string> }> = await storeCall({ member }, () => brain.matchHeadStems([...heads], [...terms], ftsConfig));
+  return rows.map(row => ({ h: row.h, i: row.i.map(Number) }));
+};

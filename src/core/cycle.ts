@@ -46,6 +46,7 @@
 import { withAdmissionOrigin } from './persistence/admission-origin.ts';
 import { existsSync, readFileSync, writeFileSync, unlinkSync, mkdirSync, statSync, realpathSync } from 'fs';
 import { isAbsolute, join } from 'path';
+import { randomUUID } from 'node:crypto';
 import { gbrainPath, loadConfig } from './config.ts';
 import type { BrainEngine } from './engine.ts';
 import { createProgress, type ProgressReporter } from './progress.ts';
@@ -55,7 +56,7 @@ import { timeContainedPhase } from './cycle/phase-containment.ts';
 import { isManagedBrain } from './cycle/phase-table.ts';
 import { packGateSkip, resolvePackPhaseGate } from './cycle/pack-phase-gate.ts';
 import { managedPullWarning, type UpstreamRefresh } from './sync-upstream.ts';
-import { assertValidSourceId } from './source-id.ts';
+import { assertValidSourceId } from './source-id.ts'; import { isSyncDisabledConfig } from './sync-policy.ts';
 import { PHASE_SCOPE, SOURCE_FRESHNESS_PHASES, type PhaseScope } from './cycle/phase-scope.ts';
 import { acquireLeaseSet, maintenanceLockBusySkip, MAINTENANCE_LEASE_ID } from './cycle/lock-set.ts';
 import { assertEmbedNotStalled } from './embed-stall.ts'; import { embedBackfillFix } from './embed-consent.ts';
@@ -83,7 +84,7 @@ export type CyclePhase =
   //    narrative pattern statements + active bias tags. Voice-gated.
   | 'propose_takes' | 'grade_takes' | 'calibration_profile'
   | 'edge_contradictions' // temporal typed edges: LLM flags conflicts, date math closes
-  | 'claim_conflicts' // GBRA-216: keyless typed-claim conflicts filed as decide_proposals (default off)
+  | 'claim_conflicts' // GBRA-216: keyless typed-claim conflicts filed as decide_proposals (default propose)
   // #2653 — drift detection (default OFF; dream.drift.enabled). LLM-judges
   // soft-band takes against recent timeline evidence; report-only in v1
   // (writes reports/drift-<date>; auto_update mutates nothing).
@@ -94,6 +95,8 @@ export type CyclePhase =
   // Lane D — runs queued facts-absorb jobs on PGLite (no job worker there); bounded per run and per day.
   | 'facts_drain'
   | 'embed' | 'orphans' | 'purge'
+  // Nightly learning: records what this cycle learned in the learning_items ledger (src/core/learning/derive.ts).
+  | 'learning_derive'
   // GBRA-438: bookkeeping GC split out of purge (retention-bound rows and files, never a page).
   | 'bookkeeping_gc'
   // v0.39 T12: schema-suggest passive trigger (D3 + D4 plan-eng-review).
@@ -225,6 +228,7 @@ export const ALL_PHASES: CyclePhase[] = [
   // is settled; thin wrapper around runSuggest() library. Cheap (heuristic
   // by default; LLM only when chat provider configured).
   'schema-suggest',
+  'learning_derive', // nightly learning: after every producer, before purge, so each target still exists
   // v0.26.5: hard-deletes soft-deleted pages and expired archived sources past
   // the 72h recovery window. Runs last so the rest of the cycle sees the
   // recoverable set; the purge then drops what's expired.
@@ -383,6 +387,7 @@ const NEEDS_LOCK_PHASES: ReadonlySet<CyclePhase> = new Set([
   // entry covers the cycle-level coordination.
   'skillopt',
   'embed',
+  'learning_derive', // writes learning_items pointer rows
   'purge',
   'bookkeeping_gc',
 ]);
@@ -1202,15 +1207,11 @@ export async function resolveSourceForDir(
     // lands and doctor's cycle_freshness stays red on a healthy install) and
     // order deterministically so a duplicate registration of the same path
     // can't shadow the active source on whichever row the engine scans first.
-    // Ordering matches listAllSources/sources-ops for operator-output parity.
-    const rows = await engine.executeRaw<{ id: string }>(
-      `SELECT id FROM sources
-        WHERE local_path = $1 AND archived = false
-        ORDER BY (id = 'default') DESC, id
-        LIMIT 1`,
-      [brainDir],
-    );
-    if (rows[0]) return rows[0].id;
+    // listAllSources hides archived rows and lists `default` first, then ids in byte order on every engine (a
+    // Postgres with a linguistic locale included), so two live sources on one path resolve the same everywhere.
+    const live = (await engine.listAllSources()).filter((row) => row.local_path !== null);
+    const exact = live.find((row) => row.local_path === brainDir);
+    if (exact) return exact.id;
 
     // #2540: the exact match above compares two path SPELLINGS. `--dir` is
     // resolved via `resolve()` and `sources.local_path` stores the spelling
@@ -1224,8 +1225,7 @@ export async function resolveSourceForDir(
     //
     // Retry canonicalized on BOTH sides, so the match is symmetric regardless
     // of which side holds the link. Kept strictly as a miss-path fallback: the
-    // exact match stays a single indexed lookup, and the scan only pays for
-    // itself when it would otherwise return nothing. Registered paths are
+    // realpath calls only run when the exact match found nothing. Registered paths are
     // canonicalized here rather than at registration because storing a
     // canonical column would be a schema + backfill change; that is the
     // durable fix and is left as a follow-up.
@@ -1239,15 +1239,10 @@ export async function resolveSourceForDir(
     // already refuses to stamp them (writing last_full_cycle_at to an
     // archived source masks staleness when it is later restored), so an
     // archived alias must not win a path match either.
-    const candidates = await engine.executeRaw<{ id: string; local_path: string }>(
-      `SELECT id, local_path FROM sources
-        WHERE local_path IS NOT NULL AND archived = false
-        ORDER BY (id = 'default') DESC, id`,
-    );
     const matched: string[] = [];
-    for (const row of candidates) {
+    for (const row of live) {
       try {
-        if (isAbsolute(row.local_path) && realpathSync(row.local_path) === realDir) matched.push(row.id);
+        if (isAbsolute(row.local_path!) && realpathSync(row.local_path!) === realDir) matched.push(row.id);
       } catch {
         // Stale/unreadable registered path — not a match, keep scanning.
       }
@@ -1309,6 +1304,9 @@ async function runPhaseSync(
     // instead of the global config key. The global key can drift out of
     // git history (force push, GC) causing a full reimport of all files.
     const sourceId = await resolveSourceForDir(engine, brainDir);
+    // GST-3337: config.syncEnabled=false keeps every unattended sync (dream, the autopilot cycle) off the source; only an explicit gbrain sync --source runs it.
+    if (sourceId && isSyncDisabledConfig((await engine.getSource(sourceId))?.config)) return { phase: 'sync', status: 'skipped', duration_ms: 0, details: { reason: 'sync_disabled', source_id: sourceId },
+      summary: `automatic sync is off for source ${sourceId} (config.syncEnabled=false); only an explicit gbrain sync --source ${sourceId} syncs it` };
     // #7630: with no matching source, a relative default local_path would leave this sync on the global anchors; refuse like sync does.
     if (!sourceId) await (await import('./sync-applicability.ts')).assertSyncAnchorAbsolute(engine, { sourceId: 'default' });
     // #5255: managed sync refuses `git pull`; a cycle syncs local HEAD and reports it (explicit sync keeps refusing).
@@ -2328,9 +2326,10 @@ async function runCycleUnscoped(
         phaseResults.push(skipNoBrainDir('synthesize'));
       } else {
         progress.start('cycle.synthesize');
-        const { runPhaseSynthesize } = await import('./cycle/synthesize.ts');
+        const [{ runPhaseSynthesize }, { synthesisRotation }] = await Promise.all([import('./cycle/synthesize.ts'), import('./cycle/synthesize-source-routing.ts')]);
+        const rotation = await synthesisRotation(engine, cycleSourceId ?? 'default', !opts.sourceId && !opts.synthInputFile && !opts.synthDate && !opts.synthFrom && !opts.synthTo);
         const { result, duration_ms } = await racedTimePhase(() => runPhaseSynthesize(engine, {
-          brainDir,
+          brainDir: rotation?.turn?.brainDir ?? brainDir,
           dryRun,
           // W0 (Tier-1 #1): wrap the caller hook so this phase ALSO refreshes
           // the cycle lock (pre-fix these sites passed the raw — in production
@@ -2342,9 +2341,8 @@ async function runCycleUnscoped(
           from: opts.synthFrom,
           to: opts.synthTo,
           bypassDreamGuard: opts.synthBypassDreamGuard,
-          // #1586: scope synthesized writes to the cycle's resolved source
-          // (explicit --source wins, else derived from the checkout dir).
-          sourceId: cycleSourceId,
+          // #1586: synthesized writes go to the cycle's resolved source (--source, else the checkout), or #8669's turn.
+          sourceId: rotation?.turn?.sourceId ?? cycleSourceId, sessionsOnly: !!rotation?.turn,
           once: opts.onceForPhase === 'synthesize',
           // #4077: combined external-abort + lock-steal signal, so a
           // cancelled cycle stops judge calls, inline children, and
@@ -2358,9 +2356,9 @@ async function runCycleUnscoped(
         }), 'synthesize');
         result.duration_ms = duration_ms;
         phaseResults.push(result);
-        // v0.29: capture synthesize-written slugs so the recompute_emotional_weight
-        // phase can union them with sync's pagesAffected for incremental mode.
-        if (result.details && Array.isArray(result.details.written_slugs)) {
+        await rotation?.settle(result, dryRun);
+        // v0.29: synthesize-written slugs join sync's pagesAffected for recompute_emotional_weight's incremental mode.
+        if (!rotation?.turn && result.details && Array.isArray(result.details.written_slugs)) {
           synthesizeWrittenSlugs = result.details.written_slugs as string[];
         }
         progress.finish();
@@ -3048,6 +3046,19 @@ async function runCycleUnscoped(
           });
         }
         progress.finish();
+      }
+      await safeYield(opts.yieldBetweenPhases);
+    }
+
+    // Nightly learning: one run id per cycle, handed to the ledger pass (src/core/learning/derive.ts); it never fails the cycle.
+    if (phases.includes('learning_derive')) {
+      checkAborted(cycleSignal);
+      if (!engine) {
+        phaseResults.push({ phase: 'learning_derive', status: 'skipped', duration_ms: 0, summary: 'no database connected', details: { reason: 'no_database' } });
+      } else {
+        progress.start('cycle.learning_derive');
+        const { result, duration_ms } = await timePhase(async () => (await import('./learning/derive.ts')).runPhaseLearningDerive(engine, { runId: randomUUID(), dryRun }), 'learning_derive');
+        result.duration_ms = duration_ms; phaseResults.push(result); progress.finish();
       }
       await safeYield(opts.yieldBetweenPhases);
     }

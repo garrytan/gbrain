@@ -25,9 +25,9 @@ describe('assertEmbeddingEnabled advice', () => {
     await withEnv({ OPENAI_API_KEY: undefined, VOYAGE_API_KEY: undefined, GBRAIN_HOME: '/tmp/gbrain-example-home' }, async () => {
       const e = thrown();
       expect(e.message).not.toContain('config set embedding_model');
-      expect(e.message).toContain('gbrain init --force --embedding-model');
+      expect(e.message).toContain('gbrain embeddings enable --embedding-model');
       expect(e.fix).toMatchObject({ consent: ['credentials', 'paid'], requires_exclusive: true });
-      expect(e.fix?.argv).toContain('--path');
+      expect(e.fix?.argv).not.toContain('--path');
     });
   });
 
@@ -35,7 +35,7 @@ describe('assertEmbeddingEnabled advice', () => {
     await withEnv({ VOYAGE_API_KEY: 'test-key', GBRAIN_HOME: '/tmp/gbrain-example-home' }, async () => {
       const env = toAgentError(thrown(), { transport: 'cli', command: 'embed', render: cliRenderContext() });
       expect(env).toMatchObject({ error: 'embedding_disabled', code: 'embedding_disabled', reason: 'disabled_by_choice', fix: { next: 'ask_user' } });
-      expect(env.fix?.command).toContain('gbrain init --force --embedding-model');
+      expect(env.fix?.command).toContain('gbrain embeddings enable --embedding-model');
     });
   });
 });

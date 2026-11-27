@@ -41,7 +41,7 @@ import { stdioBindRoute } from './stdio-bind-route.ts';
 import { labelledOnlyFor } from './labelled-only.ts';
 import { isMissingSchemaObject } from '../utils.ts';
 import { transientDatabaseFailure, transientInterruption } from '../persistence/transient-retry.ts';
-import { readAudiencePrincipals as readAudiencePrincipalsOver, readLiveMember as readLiveMemberOver, readMayActFor as readMayActForOver, type LiveMemberRow, type LiveMemberVia, type MayActForVia } from '../engine-sql/access-control.ts';
+import { readAudiencePrincipals as readAudiencePrincipalsOver, readLiveMember as readLiveMemberOver, readMayActFor as readMayActForOver, type LiveMemberRow, type LiveMemberVia, type MemberBindingVia, type MayActForVia } from '../engine-sql/access-control.ts';
 
 /** Config key binding a local stdio MCP server to one member. */
 export const STDIO_MEMBER_KEY = 'mcp.stdio_member';
@@ -84,8 +84,10 @@ export function identityLookupUnavailable(error: unknown): OperationError | null
 
 /** An engine that reads a live member: a typed engine, or a narrow executeRaw caller (the same SQL over it). */
 export type LiveMemberEngine = Pick<BrainEngine, 'readLiveMember'> | Pick<BrainEngine, 'executeRaw'>;
+/** The typed-only form (a Rust brain without raw SQL, every persistence SqlEngine view): this line's name for what LiveMemberEngine accepts first. */
+export type MemberLookupEngine = Pick<BrainEngine, 'readLiveMember'>;
 
-async function liveIdentity(engine: LiveMemberEngine, via: LiveMemberVia, key: string): Promise<string[]> {
+async function liveIdentity(engine: LiveMemberEngine, via: MemberBindingVia, key: string): Promise<string[]> {
   let row: LiveMemberRow | null;
   try {
     row = 'readLiveMember' in engine ? await engine.readLiveMember(via, key) : await readLiveMemberOver(engine, via, key);
@@ -120,12 +122,16 @@ export async function memberIdentityFor(engine: LiveMemberEngine, auth: Pick<Aut
   return liveIdentity(engine, principal.kind === 'legacy_token' ? 'legacy_token' : 'oauth_client', principal.id);
 }
 
-/** The member a local stdio server is bound to (config mcp.stdio_member), or null when unset or ill-formed. */
-export async function stdioMemberId(engine: BrainEngine): Promise<string | null> {
+/**
+ * The member a local stdio server is bound to (config mcp.stdio_member), or null when unset or ill-formed. A failed
+ * read is null too, unless `strict`: then it throws, for a caller that must not read an unreadable binding as unbound.
+ */
+export async function stdioMemberId(engine: BrainEngine, opts: { strict?: boolean } = {}): Promise<string | null> {
   try {
     const raw = (await engine.getConfig(STDIO_MEMBER_KEY))?.trim();
     return raw && ACCESS_ID_RE.test(raw) ? raw : null;
-  } catch {
+  } catch (e) {
+    if (opts.strict) throw e;
     return null;
   }
 }
@@ -340,7 +346,7 @@ export async function audienceCallerAccess(engine: BrainEngine, auth: AuthInfo |
 }
 
 /** The member identity a remote caller's credential (or, unauthenticated over stdio, serve --stdio-member, else config mcp.stdio_member) is bound to. */
-async function boundIdentity(engine: BrainEngine, auth: AuthInfo | undefined, transport?: string, stdioMember?: string): Promise<string[]> {
+export async function boundIdentity(engine: BrainEngine, auth: AuthInfo | undefined, transport?: string, stdioMember?: string): Promise<string[]> {
   return !auth && transport === 'stdio' ? stdioMemberIdentity(engine, stdioMember) : memberIdentityFor(engine, auth);
 }
 

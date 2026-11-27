@@ -49,13 +49,12 @@ import { clearRebuildableCache } from './rebuildable-cache.ts';
 import { carryingNeedles, findRequestsForSlugs, JOURNAL_SWEEP_MATCH_CAP, recheckRequestsCarrying, redactRequestIntents, sweepRequestsCarrying, sweepRequestsForGroups,
   type IntentRedactionTarget, type JournalRecheck, type JournalSweep } from './intent-redaction.ts';
 import { dropPurgedFenceRows } from '../facts/purge-overlay.ts';
-import { isOutcomeMarker, outcomeMarkerSql } from '../facts/audit-sources.ts';
+import { isOutcomeMarker } from '../facts/audit-sources.ts';
 import { derivedRowsFrom, hideDerivedRows } from '../facts/derivation-inputs.ts';
-import { extractedFromPageSql } from '../facts/gone-page-facts.ts';
+import type { PageTimelineReceiptRow } from '../engine-sql/page-purge-sweep.ts';
 import { contentHash } from '../utils.ts';
 import { isSegmentedPage } from '../page-body/page-shape.ts';
 import { rewrittenContentHash } from '../page-body/segment-rewrite.ts';
-import { stagingNeedsTextSql } from '../page-body/schema.ts';
 import { CLAIM_FORMS_BATCH, claimTextForms } from '../fence-shared.ts';
 import type { PagePurgeContext } from '../facts/purge-verify.ts';
 import { pageChangeReasons, requestsRecordingReasons, stripPageGitNotes } from '../facts/purge-reasons.ts';
@@ -66,6 +65,7 @@ import { appendPurgeIntent } from '../belief/purge-mirror.ts';
 import { scrubPurgedSlugs } from '../feedback/store.ts';
 import { scrubPurgedNameStores } from './purge-name-stores.ts';
 import { scrubPurgedSlugStores } from './purge-slug-stores.ts';
+import { dropPurgedCandidates, holdOwnedByDeletedPageSql, noteKeptHoldsCte } from '../write-gate-binding.ts';
 import { appendDerivedHidden, bumpPurgeEpoch, derivedBeliefTargets, derivedStreamSlugs, pageLifetimesOf, pagePurgeClaims, redactCarryingFields, redactPurgedKeys, registerLiveCarriers,
   sourceHasBeliefEvents, type LedgerPurgeReport } from '../belief/purge.ts';
 
@@ -91,22 +91,18 @@ const purgeContext = new Map<string, PagePurgeContext>();
 const PURGE_CONTEXT_LIMIT = 64;
 const purgeReceipts = new Map<string, { receipt: Record<string, unknown>; purge: Record<string, unknown> }>();
 
-/** #8859: the page's facts, $1 its source and $2 its slug: those filed on it and those extracted from it and filed on none. */
-const PAGE_FACTS = `(source_markdown_slug=$2 OR ${extractedFromPageSql('facts', '$2')})`;
-
 /** The page's claims (facts filed on it, its takes) that the journal sweep searches for, bounded, trimmed, deduplicated. */
-export async function readPurgeClaims(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, slug: string, pageId: number) {
-  const factRows = await engine.executeRaw<{ id: number; fact: string; source: string | null }>(`SELECT id,fact,source FROM facts WHERE source_id=$1 AND ${PAGE_FACTS} ORDER BY id LIMIT 1000`, [sourceId, slug]);
-  const takeRows = await engine.executeRaw<{ id: number; claim: string }>('SELECT id,claim FROM takes WHERE page_id=$1 ORDER BY id LIMIT 1000', [pageId]);
+export async function readPurgeClaims(engine: Pick<BrainEngine, 'listPurgeClaimFacts' | 'listPurgeClaimTakes'>, sourceId: string, slug: string, pageId: number) {
+  const factRows = await engine.listPurgeClaimFacts(sourceId, slug);
+  const takeRows = await engine.listPurgeClaimTakes(pageId);
   const needles = [...new Set([...factRows.filter(f => !isOutcomeMarker(f)).map(f => f.fact), ...takeRows.map(t => t.claim)].map(t => t.trim()).filter(t => t.length >= 8))].slice(0, 32);
   return { factRows, takeRows, needles };
 }
 
 /** Every claim of the page (its facts, withdrawn ones included, and its takes), trimmed and deduplicated, unbounded: the segment-text sweep's needles. */
-export async function readSegmentClaims(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, slug: string, pageId: number): Promise<string[]> {
-  const rows = await engine.executeRaw<{ c: string }>(`SELECT fact AS c FROM facts WHERE source_id=$1 AND ${PAGE_FACTS} AND NOT ${outcomeMarkerSql('facts')} UNION SELECT claim FROM takes WHERE page_id=$3`,
-    [sourceId, slug, pageId]);
-  return [...new Set(rows.map(r => r.c.trim()).filter(t => t.length >= 8))];
+export async function readSegmentClaims(engine: Pick<BrainEngine, 'listPurgeSegmentClaims'>, sourceId: string, slug: string, pageId: number): Promise<string[]> {
+  const claims = await engine.listPurgeSegmentClaims(sourceId, slug, pageId);
+  return [...new Set(claims.map(c => c.trim()).filter(t => t.length >= 8))];
 }
 
 /** #6884: how many queued purges of the source one preparation's journal sweep covers at most, this one included. */
@@ -143,14 +139,11 @@ async function sweepForPurge(engine: BrainEngine, row: WriteRequest, claims: str
   }
   const groups = [{ key: row.id, claims }], memberForms = new Map<string, Set<string>>();
   enterClaimStep(clock, 'purge_batch', undefined, 'db');
-  const queued = forms.length ? await engine.executeRaw<{ id: string; slug: string }>(`SELECT id::text AS id,slug FROM persistence_requests
-    WHERE state='queued' AND source_id=$1 AND sequence>$2::bigint AND operation='delete_page' AND intent->>'purge'='true' ORDER BY sequence LIMIT $3`,
-  [row.source_id, String(row.sequence), PURGE_SWEEP_BATCH_MEMBERS - 1]) : [];
+  const queued = forms.length ? await engine.listQueuedPagePurges(row.source_id, String(row.sequence), PURGE_SWEEP_BATCH_MEMBERS - 1) : [];
   let budget = forms.length;
   for (const member of queued) {
-    const [page] = await engine.executeRaw<{ id: number }>('SELECT id FROM pages WHERE source_id=$1 AND slug=$2', [row.source_id, member.slug]);
-    if (!page) continue;
-    const memberClaims = (await readPurgeClaims(engine, row.source_id, member.slug, Number(page.id))).needles;
+    if (member.page_id === null) continue;
+    const memberClaims = (await readPurgeClaims(engine, row.source_id, member.slug, member.page_id)).needles;
     const memberNeedles = carryingNeedles(memberClaims);
     if (!memberNeedles.length) continue;
     if (budget + memberNeedles.length > PURGE_SWEEP_BATCH_NEEDLES) break;
@@ -188,10 +181,8 @@ export interface PreparedPagePurge {
  * The streams of the links a hard delete of the page removes by FK cascade (to or from it, recorded in another
  * page's stream): held with the page so the batch records each as `link.retracted` (review #14).
  */
-export async function linkStreamSlugs(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, pageId: number): Promise<string[]> {
-  const rows = await engine.executeRaw<{ slug: string }>(`SELECT DISTINCT COALESCE(o.slug, f.slug) AS slug FROM links l JOIN pages f ON f.id = l.from_page_id
-    LEFT JOIN pages o ON o.id = l.origin_page_id WHERE (l.to_page_id = $2 OR l.from_page_id = $2) AND COALESCE(o.source_id, f.source_id) = $1`, [sourceId, pageId]);
-  return rows.map(r => r.slug).sort();
+export async function linkStreamSlugs(engine: Pick<BrainEngine, 'listPageLinkStreams'>, sourceId: string, pageId: number): Promise<string[]> {
+  return engine.listPageLinkStreams(sourceId, pageId);
 }
 
 /**
@@ -247,16 +238,12 @@ async function journalLookup<T>(row: WriteRequest, point: PurgeLookupPoint, slug
 async function tombstonePage(tx: BrainEngine, sourceId: string, slug: string, pageId: number, snapshot: PageSnapshot, requestId: string, actor: string,
   stored: { hash: string | null; generation: number }, hashes: Set<string>): Promise<void> {
   const page = snapshot.page;
-  await tx.executeRaw(`INSERT INTO fact_purges(source_id,visibility,subject,fact_hash,request_id,actor,reason)
-    SELECT DISTINCT source_id,visibility,COALESCE(entity_slug,'*'),gbrain_fact_fingerprint(fact),$3::uuid,$4,'page purge'
-    FROM facts WHERE source_id=$1 AND ${PAGE_FACTS} AND NOT ${outcomeMarkerSql('facts')} ON CONFLICT DO NOTHING`, [sourceId, slug, requestId, actor]);
-  await tx.executeRaw(`INSERT INTO take_purges(source_id,subject,claim_hash,request_id)
-    SELECT DISTINCT $1,$2,gbrain_fact_fingerprint(claim),$4::uuid FROM takes WHERE page_id=$3 ON CONFLICT DO NOTHING`, [sourceId, slug, pageId, requestId]);
+  await tx.insertPageFactPurges(sourceId, slug, requestId, actor);
+  await tx.insertTakePurge({ sourceId, subject: slug, pageId, requestId });
   // Tombstone the content hash of the page and of every retained version, each as an import of that body would
   // compute it and as the purge overlay leaves it (the overlay now drops this page's tombstoned fence rows), so
   // neither the stale file nor an older version of it imports again under any slug.
-  const versions = await tx.executeRaw<Record<string, unknown>>(`SELECT title,type,compiled_truth,timeline,frontmatter,tags,body_storage,body_generation,content_hash
-    FROM page_versions WHERE page_id=$1 ORDER BY id DESC LIMIT 1000`, [pageId]);
+  const versions = await tx.listPageVersionBodiesForPurge(pageId);
   const meta = (v: Record<string, unknown>) => ({ title: String(v.title ?? ''), type: v.type as never, frontmatter: (v.frontmatter ?? {}) as Record<string, unknown>,
     tags: Array.isArray(v.tags) ? v.tags.map(String) : [] });
   if (stored.hash) hashes.add(stored.hash);
@@ -278,25 +265,21 @@ async function tombstonePage(tx: BrainEngine, sourceId: string, slug: string, pa
     const hash = await rewrittenContentHash(tx, pageId, sourceId, body.generation, overlaid, body.meta);
     if (hash) hashes.add(hash);
   }
-  await tx.executeRaw(`INSERT INTO page_purges(source_id,content_hash,slug,request_id) SELECT $1,h,$3,$4::uuid FROM unnest($2::text[]) AS h
-    ON CONFLICT (source_id,content_hash) DO UPDATE SET slug=EXCLUDED.slug,request_id=EXCLUDED.request_id,purged_at=now()`, [sourceId, [...hashes], slug, requestId]);
+  await tx.upsertPagePurges({ sourceId, contentHashes: [...hashes], slug, requestId });
 }
 
 /** Inside the coordinated delete transaction, before the page row is deleted. */
 /** The page's add_timeline_entry and edit_page receipts one purge redacts; a page with more leaves `journal_sweep.complete` false. */
 const TIMELINE_RECEIPT_CAP = 10_000;
 
-type TimelineReceipt = IntentRedactionTarget & { sequence: string; summary: string | null; source: string | null; bullet: string | null; diff: string | null };
+type TimelineReceipt = PageTimelineReceiptRow;
 
 /**
  * The add_timeline_entry receipts of `slugs`, compacted ones included, in sequence order after `after`; their outcome keeps the
  * entry text. `withDiffs` adds the edit_page receipts, whose outcome keeps the edit's unified diff of the page text.
  */
-async function timelineReceipts(tx: BrainEngine, sourceId: string, slugs: readonly string[], limit: number, after = '0', withDiffs = false): Promise<TimelineReceipt[]> {
-  return tx.executeRaw<TimelineReceipt>(`SELECT id::text AS id, principal_kind, principal_id, sequence::text AS sequence, outcome->'entry'->>'summary' AS summary,
-    outcome->'entry'->>'source' AS source, outcome->>'bullet' AS bullet, outcome->>'diff' AS diff FROM persistence_requests
-    WHERE source_id=$1 AND slug=ANY($2::text[]) AND ((operation='add_timeline_entry' AND outcome ? 'entry') OR ($5::boolean AND operation='edit_page' AND outcome ? 'diff'))
-    AND sequence > $4::bigint ORDER BY sequence LIMIT $3`, [sourceId, [...slugs], limit, after, withDiffs]);
+export async function timelineReceipts(tx: BrainEngine, sourceId: string, slugs: readonly string[], limit: number, after = '0', withDiffs = false): Promise<TimelineReceipt[]> {
+  return tx.listPageTimelineReceipts(sourceId, slugs, limit, after, withDiffs);
 }
 
 const receiptText = (rows: readonly TimelineReceipt[]) => rows.flatMap(t => [t.summary, t.source, t.bullet, t.diff]).map(text => text?.trim() ?? '').filter(Boolean);
@@ -350,7 +333,7 @@ export interface PurgedPageSweep {
 }
 
 /** The stores the shared sweep touches that an older restored archive may not have yet. */
-export const PURGE_SWEEP_STORES = ['decide_review_queue', 'decide_review_proposals', 'decide_proposals', 'trust_proposals', 'write_gate_holds', 'write_gate_receipts',
+export const PURGE_SWEEP_STORES = ['decide_review_queue', 'decide_review_proposals', 'decide_proposals', 'trust_proposals', 'write_gate_holds', 'write_gate_hold_rechecks', 'write_gate_receipts',
   'persistence_requests', 'persistence_effects', 'files', 'derived_generations', 'derived_generation_items', 'retrieval_event_pages', 'mention_gazetteer_entries', 'op_checkpoints'] as const;
 type SweptStore = typeof PURGE_SWEEP_STORES[number];
 
@@ -367,29 +350,20 @@ export async function sweepPurgedPage(tx: BrainEngine, input: PurgedPageSweep): 
   const lookup = input.lookup ?? (<T>(_point: PurgeLookupPoint, fn: () => Promise<T>) => fn());
   const has = (store: SweptStore) => !input.present || input.present.has(store);
   const timelineCap = input.timelineCap ?? TIMELINE_RECEIPT_CAP;
-  const count = async (sql: string, params: unknown[]) => (await tx.executeRaw(sql, params)).length;
   const refs = factIds.map(String);
   const removed: Record<string, number> = {};
-  if (has('decide_review_queue')) removed.decide_review_queue = await count('DELETE FROM decide_review_queue WHERE source_id=$1 AND (a_ref=ANY($2::text[]) OR b_ref=ANY($2::text[])) RETURNING 1', [sourceId, refs]);
-  if (has('decide_review_proposals')) removed.decide_review_proposals = await count('DELETE FROM decide_review_proposals WHERE source_id=$1 AND (a_ref=ANY($2::text[]) OR b_ref=ANY($2::text[])) RETURNING 1', [sourceId, refs]);
-  if (has('decide_proposals')) removed.decide_proposals = await count('DELETE FROM decide_proposals WHERE source_id=$1 AND (new_fact_id=ANY($2::bigint[]) OR old_fact_id=ANY($2::bigint[])) RETURNING 1', [sourceId, factIds]);
-  if (has('trust_proposals')) {
-    removed.trust_proposals = await count(`DELETE FROM trust_proposals WHERE source_id=$1 AND ((target_table='pages' AND target_id=$2) OR (related_table='pages' AND related_id=$2)
-      OR (target_table='facts' AND target_id=ANY($3::bigint[])) OR (related_table='facts' AND related_id=ANY($3::bigint[]))
-      OR (target_table='takes' AND target_id=ANY($4::bigint[])) OR (related_table='takes' AND related_id=ANY($4::bigint[]))) RETURNING 1`, [sourceId, pageId, factIds, takeIds]);
-  }
-  const holds = has('write_gate_holds') ? (await tx.executeRaw<{ id: string }>('DELETE FROM write_gate_holds WHERE source_id=$1 AND slug=$2 RETURNING id::text AS id', [sourceId, slug])).map(h => h.id) : [];
+  if (has('decide_review_queue')) removed.decide_review_queue = await tx.deletePurgeReviewQueue(sourceId, refs);
+  if (has('decide_review_proposals')) removed.decide_review_proposals = await tx.deletePurgeReviewProposals(sourceId, refs);
+  if (has('decide_proposals')) removed.decide_proposals = await tx.deletePurgeDecideProposals(sourceId, factIds);
+  if (has('trust_proposals')) removed.trust_proposals = await tx.deletePurgedPageTrustProposals(sourceId, pageId, factIds, takeIds);
+  const holds = has('write_gate_holds') ? await tx.deletePurgedPageHolds(sourceId, slug, pageId) : [];
   if (has('write_gate_holds')) removed.write_gate_holds = holds.length;
-  if (has('write_gate_receipts')) {
-    removed.write_gate_receipts = await count(`DELETE FROM write_gate_receipts WHERE (target_table='pages' AND target_id=$1) OR (target_table='facts' AND target_id=ANY($2::text[]))
-      OR (target_table='takes' AND target_id=ANY($3::text[])) OR (target_table='write_gate_holds' AND target_id=ANY($4::text[])) RETURNING 1`,
-    [String(pageId), refs, takeIds.map(String), holds]);
-  }
+  if (has('write_gate_receipts')) removed.write_gate_receipts = await tx.deletePurgedPageGateReceipts(pageId, factIds, takeIds, holds);
   const missingCaches: string[] = [];
   const cleared = await clearRebuildableCache(tx, 'query_cache');
   if (cleared === null) missingCaches.push('query_cache');
   removed.query_cache = cleared ?? 0;
-  removed.facts = await count(`DELETE FROM facts WHERE source_id=$1 AND ${PAGE_FACTS} RETURNING 1`, [sourceId, slug]);
+  removed.facts = await tx.deletePurgedPageFacts(sourceId, slug);
   Object.assign(removed, await scrubPurgedSlugStores(tx, sourceId, [slug], { ifPresent: !!input.present, pageIds: [pageId] }));
   let complete = true;
   if (has('persistence_requests')) {
@@ -409,11 +383,10 @@ export async function sweepPurgedPage(tx: BrainEngine, input: PurgedPageSweep): 
     complete = census.complete && timelineRows.length <= timelineCap;
     if (has('persistence_effects')) removed.persistence_effects = await stripPageGitNotes(tx, sourceId, slug);
   }
-  const files = has('files') ? await tx.executeRaw<{ storage_path: string }>(`DELETE FROM files WHERE (page_id=$1 OR (page_id IS NULL AND page_slug=$2 AND (source_id=$3 OR source_id IS NULL)))
-    RETURNING storage_path`, [pageId, slug, sourceId]) : [];
+  const files = has('files') ? await tx.deletePurgedPageFiles(sourceId, slug, pageId) : [];
   if (has('files')) removed.files = files.length;
   if (has('derived_generations') && has('derived_generation_items')) Object.assign(removed, await (await import('../generations/ledger-scrub.ts')).scrubGenerationLedger(tx, sourceId, { slug }));
-  return { removed, blobs: files.map(f => f.storage_path).filter(Boolean), missingCaches, complete };
+  return { removed, blobs: files.filter(Boolean), missingCaches, complete };
 }
 
 /**
@@ -445,7 +418,7 @@ export async function purgePageInTransaction(tx: BrainEngine, row: WriteRequest,
     return { status: 'soft_deleted', slug, source_id: sourceId, noop: !!page.deleted_at, ...(prepared.retention ? { retention: true } : {}), purge_held: midPurgeHold(owner) };
   }
   const actor = `${row.principal_kind}:${row.principal_id}`;
-  const [stored] = await tx.executeRaw<{ content_hash: string | null; body_generation: number | string }>('SELECT content_hash,body_generation FROM pages WHERE id=$1', [page.id]);
+  const stored = await tx.readPurgePageBody(page.id);
   const storedHash = stored?.content_hash ?? null;
   const lookup = <T>(point: PurgeLookupPoint, fn: () => Promise<T>) => journalLookup(row, point, prepared.slugIndex, fn);
   const retention = prepared.retention;
@@ -453,9 +426,8 @@ export async function purgePageInTransaction(tx: BrainEngine, row: WriteRequest,
   const epoch = retention ? 0 : await bumpPurgeEpoch(tx, sourceId);
   const lifetimes = ledgerPresent ? await pageLifetimesOf(tx, sourceId, slug, page.id) : [];
   const inventory = ledgerPresent ? await lookup('ledger_redaction', () => pagePurgeClaims(tx, { sourceId, slug, pageId: page.id, lifetimes })) : { claims: [], fps: [] };
-  const mirrorFacts = retention ? [] : await tx.executeRaw<{ fact_hash: string; visibility: string; subject: string }>(`SELECT DISTINCT gbrain_fact_fingerprint(fact) AS fact_hash,
-    visibility, COALESCE(entity_slug,'*') AS subject FROM facts WHERE source_id=$1 AND ${PAGE_FACTS} AND NOT ${outcomeMarkerSql('facts')}`, [sourceId, slug]);
-  const mirrorTakes = retention ? [] : (await tx.executeRaw<{ claim_hash: string }>('SELECT DISTINCT gbrain_fact_fingerprint(claim) AS claim_hash FROM takes WHERE page_id=$1', [page.id])).map(t => t.claim_hash);
+  const mirrorFacts = retention ? [] : await tx.listPageMirrorFacts(sourceId, slug);
+  const mirrorTakes = retention ? [] : await tx.listPageMirrorTakeHashes(page.id);
   const hashes = new Set<string>();
   if (!retention) await tombstonePage(tx, sourceId, slug, page.id, snapshot, row.id, actor, { hash: storedHash, generation: Number(stored?.body_generation) }, hashes);
   const { factRows, takeRows, needles } = await readPurgeClaims(tx, sourceId, slug, page.id);
@@ -480,12 +452,10 @@ export async function purgePageInTransaction(tx: BrainEngine, row: WriteRequest,
     } });
   const journalSweep = { scanned: prepared.sweep.scanned, ceiling: prepared.sweep.ceiling, watermark: prepared.sweep.watermark ?? null, batch: prepared.sweep.batch ?? 1,
     tail: recheck.tail, pending_rechecked: recheck.pendingRechecked, complete };
-  const [cascade] = await tx.executeRaw<{ chunks: number; versions: number; takes: number; timeline: number }>(`SELECT
-    (SELECT count(*)::int FROM content_chunks WHERE page_id=$1) AS chunks, (SELECT count(*)::int FROM page_versions WHERE page_id=$1) AS versions,
-    (SELECT count(*)::int FROM takes WHERE page_id=$1) AS takes, (SELECT count(*)::int FROM timeline_entries WHERE page_id=$1) AS timeline`, [page.id]);
-  Object.assign(removed, { content_chunks: cascade?.chunks ?? 0, page_versions: cascade?.versions ?? 0, takes: cascade?.takes ?? 0, timeline_entries: cascade?.timeline ?? 0, pages: 1 });
-  const versions = await tx.executeRaw<{ source_path: string | null }>('SELECT DISTINCT source_path FROM page_versions WHERE page_id=$1 AND source_path IS NOT NULL LIMIT 64', [page.id]);
-  const paths = [...new Set([page.source_path, ...versions.map(v => v.source_path)].filter((p): p is string => !!p))].slice(0, 64);
+  const cascade = await tx.countPageCascadeRows(page.id);
+  Object.assign(removed, { content_chunks: cascade.chunks, page_versions: cascade.versions, takes: cascade.takes, timeline_entries: cascade.timeline, pages: 1 });
+  const versionPaths = await tx.listPageVersionSourcePaths(page.id);
+  const paths = [...new Set([page.source_path, ...versionPaths].filter((p): p is string => !!p))].slice(0, 64);
   const ledger: LedgerPurgeReport | null = ledgerPresent ? await lookup('ledger_redaction', async () => ({
     purged_events: await redactPurgedKeys(tx, { sourceId, claimFps: inventory.fps, lifetimes }),
     redacted_fields: await redactCarryingFields(tx, { sourceId, request: row.id, claims: inventory.claims }),
@@ -547,19 +517,17 @@ export async function finishPagePurge(ctx: Pick<OperationContext, 'engine' | 'co
   return { ...result, ...extra };
 }
 
-export const PAGE_PURGE_TOMBSTONES_SQL = 'SELECT content_hash,slug FROM page_purges WHERE source_id=$1 ORDER BY purged_at DESC LIMIT $2';
+export { PAGE_PURGE_TOMBSTONES_SQL } from '../engine-sql/page-purge.ts';
 /** Prefetch for import screens: every page tombstone of a source, content hash -> slug (bounded). */
 export async function readPagePurgeTombstones(engine: BrainEngine, sourceId: string, limit = 10_000): Promise<Map<string, string>> {
-  const rows = await engine.executeRaw<{ content_hash: string; slug: string }>(PAGE_PURGE_TOMBSTONES_SQL, [sourceId, limit]);
+  const rows = await engine.listPagePurgeTombstones(sourceId, limit);
   return new Map(rows.map(r => [r.content_hash, r.slug]));
 }
 
 export async function listPagePurges(ctx: OperationContext, p: Record<string, unknown>): Promise<Record<string, unknown>> {
   if (ctx.remote !== false) throw hostOnly('gbrain pages purges list');
   const limit = Math.max(1, Math.min(1000, Number(p.limit ?? 100) || 100));
-  const rows = await ctx.engine.executeRaw<{ source_id: string; slug: string; content_hash: string; request_id: string | null; purged_at: string }>(`SELECT source_id,slug,
-      content_hash,request_id::text,purged_at FROM page_purges WHERE ($1::text IS NULL OR source_id=$1) ORDER BY purged_at DESC LIMIT $2`,
-  [typeof p.source_id === 'string' ? p.source_id : null, limit]);
+  const rows = await ctx.engine.listPagePurgeRows(typeof p.source_id === 'string' ? p.source_id : null, limit);
   return { purges: rows.map(r => ({ source_id: r.source_id, slug: r.slug, content_hash8: r.content_hash.slice(0, 8), request_id: r.request_id,
     purged_at: new Date(r.purged_at).toISOString() })), next: rows.length ? 'Clear one with gbrain pages unpurge <slug> [--source <id>].' : 'No page purge tombstones.' };
 }
@@ -570,11 +538,11 @@ export async function unpurgePage(ctx: OperationContext, p: Record<string, unkno
   if (!slug) throw opError('invalid_params', 'unpurge needs a slug.', 'Pass the slug gbrain pages purges list shows.');
   const sourceId = typeof p.source_id === 'string' ? p.source_id : ctx.sourceId ?? 'default';
   return ctx.engine.transaction(async tx => {
-    await tx.executeRaw('SELECT id FROM sources WHERE id=$1 FOR UPDATE', [sourceId]);
-    const cleared = await tx.executeRaw<{ request_id: string | null }>('DELETE FROM page_purges WHERE source_id=$1 AND slug=$2 RETURNING request_id::text', [sourceId, slug]);
-    const requests = cleared.map(r => r.request_id).filter((id): id is string => !!id);
-    const facts = requests.length ? (await tx.executeRaw('DELETE FROM fact_purges WHERE source_id=$1 AND request_id=ANY($2::uuid[]) RETURNING 1', [sourceId, requests])).length : 0;
-    const takes = requests.length ? (await tx.executeRaw('DELETE FROM take_purges WHERE source_id=$1 AND request_id=ANY($2::uuid[]) RETURNING 1', [sourceId, requests])).length : 0;
+    await tx.lockSourceRow(sourceId);
+    const cleared = await tx.deletePagePurgeTombstones(sourceId, slug);
+    const requests = cleared.filter((id): id is string => !!id);
+    const facts = requests.length ? await tx.deleteFactPurgesByRequests(sourceId, requests) : 0;
+    const takes = requests.length ? await tx.deleteTakePurgesByRequests(sourceId, requests) : 0;
     return { slug, source_id: sourceId, cleared: cleared.length, fact_tombstones_cleared: facts, take_tombstones_cleared: takes,
       next: cleared.length ? `The next import of ${slug} with its old content is accepted (gbrain sync --source ${sourceId} --no-pull). Nothing was restored.` : `No purge tombstone is recorded for ${slug} in source ${sourceId}.` };
   });
@@ -598,14 +566,11 @@ export async function unpurgePage(ctx: OperationContext, p: Record<string, unkno
  */
 export async function deletePageWithSegments(tx: BrainEngine, sourceId: string, slug: string, pageId: number, claims: readonly string[] = []):
   Promise<{ shas: string[]; page_body_manifest: number; page_body_stagings: number; page_segment_texts: number }> {
-  const shas = (await tx.executeRaw<{ sha: string }>(`SELECT encode(sha256,'hex') AS sha FROM page_body_manifest WHERE page_id=$1
-    UNION SELECT encode(r.sha256,'hex') FROM page_body_stagings s JOIN page_body_staging_texts r ON r.staging_id=s.id
-      WHERE s.source_id=$2 AND (s.slug=$3 OR s.page_id=$1) AND r.source_id=$2`, [pageId, sourceId, slug])).map(r => r.sha);
-  const manifest = (await tx.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM page_body_manifest WHERE page_id=$1', [pageId]))[0]?.n ?? 0;
-  const stagings = (await tx.executeRaw('DELETE FROM page_body_stagings WHERE source_id=$1 AND (slug=$2 OR page_id=$3) RETURNING 1', [sourceId, slug, pageId])).length;
+  const shas = await tx.listPageSegmentShas(sourceId, slug, pageId);
+  const manifest = await tx.countPageManifestRows(pageId);
+  const stagings = await tx.deletePageStagings(sourceId, slug, pageId);
   await tx.deletePage(slug, { sourceId });
-  const texts = shas.length ? (await tx.executeRaw(`DELETE FROM page_segment_texts t WHERE t.source_id=$1 AND t.sha256=ANY(SELECT decode(h,'hex') FROM unnest($2::text[]) AS h)
-    AND NOT EXISTS (SELECT 1 FROM page_body_manifest m WHERE m.source_id=t.source_id AND m.sha256=t.sha256) AND NOT ${stagingNeedsTextSql('t')} RETURNING 1`, [sourceId, shas])).length : 0;
+  const texts = shas.length ? await tx.deletePageSegmentTexts(sourceId, shas) : 0;
   const forms = claimTextForms(claims), carrying: string[] = [];
   // #9743: sweep the unreferenced texts CLAIM_SWEEP_CHUNK_BYTES at a time in sha order, each text lowered once per
   // statement (MATERIALIZED) instead of once per claim form, so every statement fits the publication's statement_timeout.
@@ -614,21 +579,9 @@ export async function deletePageWithSegments(tx: BrainEngine, sourceId: string, 
   for (let cursor: string | null = forms.length ? '' : null; cursor !== null;) {
     let next: string | null = null;
     for (let at = 0; at < forms.length; at += CLAIM_FORMS_BATCH) {
-      const [swept] = await tx.executeRaw<{ last: string | null; deleted: string[] }>(`WITH chunk AS MATERIALIZED (
-          SELECT u.sha256 FROM (SELECT t.sha256, sum(t.byte_len) OVER (ORDER BY t.sha256) - t.byte_len AS before
-            FROM (SELECT t.sha256, t.byte_len FROM page_segment_texts t WHERE t.source_id=$1 AND t.sha256 > decode($2,'hex')
-              AND NOT EXISTS (SELECT 1 FROM page_body_manifest m WHERE m.source_id=t.source_id AND m.sha256=t.sha256) ORDER BY t.sha256 LIMIT 4096) t) u
-          WHERE u.before < $4),
-        lowered AS MATERIALIZED (SELECT t.sha256, lower(convert_from(t.body,'UTF8')) AS body FROM page_segment_texts t
-          WHERE t.source_id=$1 AND t.sha256 IN (SELECT sha256 FROM chunk)),
-        gone AS (DELETE FROM page_segment_texts d WHERE d.source_id=$1
-            AND d.sha256 IN (SELECT l.sha256 FROM lowered l WHERE EXISTS (SELECT 1 FROM unnest($3::text[]) AS n WHERE strpos(l.body,n)>0))
-            AND NOT EXISTS (SELECT 1 FROM page_body_manifest m WHERE m.source_id=d.source_id AND m.sha256=d.sha256) AND NOT ${stagingNeedsTextSql('d')}
-          RETURNING d.sha256)
-        SELECT (SELECT encode(sha256,'hex') FROM chunk ORDER BY sha256 DESC LIMIT 1) AS last, ARRAY(SELECT encode(sha256,'hex') FROM gone) AS deleted`,
-        [sourceId, cursor, forms.slice(at, at + CLAIM_FORMS_BATCH), CLAIM_SWEEP_CHUNK_BYTES]);
-      carrying.push(...(swept?.deleted ?? []));
-      if (at === 0) next = swept?.last ?? null;
+      const swept = await tx.sweepPageTextsForClaims(sourceId, cursor, forms.slice(at, at + CLAIM_FORMS_BATCH), CLAIM_SWEEP_CHUNK_BYTES);
+      carrying.push(...swept.deleted);
+      if (at === 0) next = swept.last;
     }
     cursor = next;
   }

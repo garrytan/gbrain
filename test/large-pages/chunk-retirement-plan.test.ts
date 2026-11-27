@@ -23,6 +23,7 @@ import { buildSegmentedProjection, hasStaleChunks } from '../../src/core/page-bo
 import { flipInput, publishSegmentedPage, segmentText, stageGeneration } from '../helpers/page-body-fixtures.ts';
 import { isolatedPersistencePostgres } from '../helpers/persistence-postgres.ts';
 import { testBackends } from '../helpers/test-backends.ts';
+import { segmentedWriteThrough } from '../helpers/segmented-writes-proxy.ts';
 
 interface PlanNode { 'Actual Rows'?: number; 'Actual Loops'?: number; 'Rows Removed by Filter'?: number;
   'Rows Removed by Index Recheck'?: number; 'Shared Hit Blocks'?: number; 'Shared Read Blocks'?: number; Plans?: PlanNode[] }
@@ -43,7 +44,7 @@ function measured(engine: BrainEngine, log: StatementWork[], inTx = false): Brai
     log.push({ sql, rows: rowsExamined(plan[0]!.Plan), buffers: (plan[0]!.Plan['Shared Hit Blocks'] ?? 0) + (plan[0]!.Plan['Shared Read Blocks'] ?? 0) });
   };
   return new Proxy(engine, {
-    get(target, prop) {
+    get(target, prop, receiver) {
       if (prop === 'executeRaw') {
         return async (sql: string, params?: unknown[]) => {
           if (/content_chunks/.test(sql)) {
@@ -58,6 +59,8 @@ function measured(engine: BrainEngine, log: StatementWork[], inTx = false): Brai
         };
       }
       if (prop === 'transaction') return (fn: (tx: BrainEngine) => Promise<unknown>) => target.transaction(tx => fn(measured(tx, log, true)));
+      const through = segmentedWriteThrough(prop, receiver);
+      if (through) return through;
       const value = Reflect.get(target, prop, target);
       return typeof value === 'function' ? value.bind(target) : value;
     },

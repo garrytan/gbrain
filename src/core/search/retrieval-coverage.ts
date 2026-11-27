@@ -24,10 +24,17 @@
  * Postgres); the relevance rules are built here.
  */
 import type { BrainEngine } from '../engine.ts';
+import { embeddingsDisabled } from '../embedding-disabled.ts';
 import type { ProjectionReadinessScope } from './projection-readiness.ts';
 
-/** Counts stop here (one bounded scan per call); a capped count reports `capped`. */
+/**
+ * Each count stops here: min(every match in scope, cap), so the answer does not depend on the order an engine reads
+ * pages in. A capped count reports `capped`.
+ */
 export const COVERAGE_COUNT_CAP = 1000;
+
+/** A coverage count that runs longer is unknown (null), never zero: Postgres ends it on the server and the Rust store stops its walk. */
+export const COVERAGE_COUNT_TIMEOUT_MS = 2_000;
 
 export interface CoverageRelevance {
   all: boolean;
@@ -88,13 +95,22 @@ export function coverageRelevance(
   };
 }
 
-/** The pending pages the readiness probe found (unsealed, needing work) in the same scope. Null when the count fails. */
+/**
+ * The pending pages the readiness probe found (unsealed, needing work) in the same scope. Null when the count fails.
+ * The classed count runs JIT off, as the readiness probe does (#8033): the class's per-page subplans and a remote caller's
+ * visibility subplans lift its estimate past `jit_above_cost`, and on a large brain compiling them cost more than a second
+ * on every search while the read itself took a fraction of that. The embedding-held count stays a plain statement.
+ */
 export function countPendingProjections(engine: Pick<BrainEngine, 'countPendingProjectionPages'>, scope: ProjectionReadinessScope, relevance: CoverageRelevance): Promise<ScopedCount | null> {
   return engine.countPendingProjectionPages(scope, relevance);
 }
 
-/** Pages in scope held from embedding: a held or capped budget row that still applies, on a page no `embed_skip` marker keeps out of embedding for good. */
-export function countEmbeddingHeld(engine: Pick<BrainEngine, 'countEmbeddingHeldPages'>, scope: ProjectionReadinessScope, relevance: CoverageRelevance): Promise<ScopedCount | null> {
+/**
+ * Pages in scope held from embedding: a held or capped budget row that still applies, on a page no `embed_skip` marker keeps out of embedding for good.
+ * Null on a brain with embeddings off on purpose, where a held page is no degradation.
+ */
+export async function countEmbeddingHeld(engine: Pick<BrainEngine, 'countEmbeddingHeldPages' | 'getConfig'>, scope: ProjectionReadinessScope, relevance: CoverageRelevance): Promise<ScopedCount | null> {
+  if (await embeddingsDisabled(engine)) return null;
   return engine.countEmbeddingHeldPages(scope, relevance);
 }
 
@@ -102,6 +118,13 @@ export function countEmbeddingHeld(engine: Pick<BrainEngine, 'countEmbeddingHeld
  * #9192: progress of the index rebuild an upgrade's activation queued (rows still queued with reason
  * `protocol_activation`), over the pages in scope: how many are done of the total, and the rate measured from the
  * start of the rebuild. Null when no such rebuild is running or the count fails.
+ *
+ * The rebuild runs while an activation row waits on a `text` page in scope: the resident drain rebuilds only those.
+ * Rows left on images (`sealable`, `reimport`) wait for an operator, whom the pending-images notice already names,
+ * so they never make a rebuild look like it runs for good. That check reads only the queue, and the count of every
+ * page in scope, a read of the whole pages table, sits behind it (a filter on the outer row alone, so Postgres never
+ * starts the scan when no rebuild runs): it runs only while the rebuild runs, never on every search. JIT off for the
+ * same reason as the classed pending count: the never-run count still prices into the estimate.
  */
 export function countProjectionRebuild(engine: Pick<BrainEngine, 'projectionRebuildProgress'>, scope: ProjectionReadinessScope): Promise<ProjectionRebuildProgress | null> {
   return engine.projectionRebuildProgress(scope);

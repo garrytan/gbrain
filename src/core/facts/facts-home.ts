@@ -24,7 +24,7 @@
  *   row on any page's Facts table; the census counts it, so it is listed, never moved.
  */
 import type { BrainEngine } from '../engine.ts';
-import { holdingSlugSql, UNATTRIBUTED_MEMORY_SLUG } from '../facts-fence.ts';
+import { UNATTRIBUTED_MEMORY_SLUG } from '../facts-fence.ts';
 import { resolveEntitySlugWithSource } from '../entities/resolve.ts';
 import { getWorktreeBinding } from '../persistence/ownership.ts';
 import { adoptableClaim, pageHasFile, planPageFence, type UnfencedFactRow } from './unfenced-facts.ts';
@@ -61,9 +61,6 @@ export interface FactsHomeScan {
   homeable: Array<UnfencedFactRow & { home: string }>;
 }
 
-const ROW_COLUMNS = `f.id, f.source_id, f.entity_slug, f.fact, f.kind, f.visibility, f.notability, f.context, f.valid_from, f.valid_until, f.source,
-  f.confidence, f.claim_metric, f.claim_value, f.claim_unit, f.claim_period, f.attributed_to`;
-
 /** Whether the source's pages are canonical in Git (`canonical: git`). */
 export async function isStrictSource(engine: BrainEngine, sourceId: string): Promise<boolean> {
   return (await getWorktreeBinding(engine, sourceId))?.canonical_git === true;
@@ -73,10 +70,7 @@ export async function scanFactsHome(engine: BrainEngine, sourceId: string): Prom
   const counts = Object.fromEntries(FACTS_HOME_GROUPS.map(group => [group, 0])) as Record<FactsHomeGroup, number>;
   const out: FactsHomeScan = { source_id: sourceId, strict: await isStrictSource(engine, sourceId), rows: [], counts, homeable: [] };
   const add = (row: FactsHomeRow) => { out.rows.push(row); counts[row.group]++; };
-  const pageLive = 'EXISTS (SELECT 1 FROM pages p WHERE p.source_id=f.source_id AND p.slug=f.entity_slug AND p.deleted_at IS NULL)';
-  const unfenced = await engine.executeRaw<UnfencedFactRow & { dimension: string | null; page_deleted: boolean }>(`SELECT ${ROW_COLUMNS}, f.dimension, ${pageLive} AS page_exists,
-    EXISTS (SELECT 1 FROM pages p WHERE p.source_id=f.source_id AND p.slug=f.entity_slug AND p.deleted_at IS NOT NULL) AS page_deleted FROM facts f
-    WHERE f.source_id=$1 AND f.row_num IS NULL AND f.expired_at IS NULL ORDER BY f.entity_slug COLLATE "C" NULLS FIRST, f.id`, [sourceId]);
+  const unfenced = await engine.listFactsHomeCandidates(sourceId);
   for (const row of unfenced) {
     const base = { id: Number(row.id), entity_slug: row.entity_slug };
     if (row.dimension != null) { add({ ...base, group: 'ontology_observation', reason: row.dimension }); continue; }
@@ -91,10 +85,7 @@ export async function scanFactsHome(engine: BrainEngine, sourceId: string): Prom
     add({ ...base, group: entity === null ? 'no_entity' : 'entity_page_missing', home: home.slug });
     out.homeable.push({ ...row, home: home.slug });
   }
-  const held = await engine.executeRaw<UnfencedFactRow & { held_since: string; old: boolean; from_slug: string }>(`SELECT ${ROW_COLUMNS}, ${pageLive} AS page_exists, f.source_markdown_slug AS from_slug,
-      to_char(f.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"') AS held_since, f.created_at < now() - ($2 || ' days')::interval AS old
-     FROM facts f WHERE f.source_id=$1 AND f.source_markdown_slug IN (SELECT hp.slug FROM pages hp WHERE hp.source_id = $1 AND ${holdingSlugSql('hp.slug')}) AND f.row_num IS NOT NULL AND f.expired_at IS NULL AND f.dimension IS NULL
-      AND f.entity_slug IS NOT NULL AND NOT ${holdingSlugSql('f.entity_slug')} ORDER BY f.entity_slug COLLATE "C", f.id`, [sourceId, String(HELD_TOO_LONG_DAYS)]);
+  const held = await engine.listHeldHomeRows(sourceId, HELD_TOO_LONG_DAYS);
   const waiting = new Map<string, typeof held>();
   const targets = new Map<string, Awaited<ReturnType<typeof heldFactTarget>>>();
   for (const row of held) {
@@ -109,8 +100,7 @@ export async function scanFactsHome(engine: BrainEngine, sourceId: string): Prom
   for (const [slug, group] of waiting) {
     for (const [id, reason] of await heldUnmovable(engine, sourceId, slug, group)) add({ id, entity_slug: slug, group: reason ? 'held_fact_unmovable' : 'entity_page_exists', ...(reason ? { reason } : {}) });
   }
-  const orphaned = await engine.executeRaw<{ id: number; slug: string }>(`SELECT f.id, f.source_markdown_slug AS slug FROM facts f WHERE f.source_id=$1 AND f.row_num IS NOT NULL
-      AND f.expired_at IS NULL AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id=f.source_id AND p.slug=f.source_markdown_slug AND p.deleted_at IS NULL) ORDER BY f.id`, [sourceId]);
+  const orphaned = await engine.listOrphanedFenceRows(sourceId);
   for (const row of orphaned) add({ id: Number(row.id), entity_slug: null, group: 'fenced_page_missing', reason: row.slug });
   return out;
 }
@@ -133,7 +123,7 @@ async function heldUnmovable(engine: BrainEngine, sourceId: string, slug: string
   const filed = new Set<string>();
   if (!await pageHasFile(engine, sourceId, slug, planned.snapshot.page)) {
     for (const from of new Set(group.map(row => row.from_slug))) {
-      const [page] = await engine.executeRaw<{ source_path: string | null; source_uri: string | null }>('SELECT source_path, source_uri FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL', [sourceId, from]);
+      const page = await engine.readPageFileOrigin(sourceId, from);
       if (page && await pageHasFile(engine, sourceId, from, page)) filed.add(from);
     }
   }

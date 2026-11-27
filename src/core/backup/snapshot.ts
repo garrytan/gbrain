@@ -157,7 +157,7 @@ export async function createPgliteBackup(options: { output: string; root?: strin
     const receipt = readInstallReceipt(root);
     // The engine holds its real PGLite writer lock until publication completes.
     await engine.connect({ engine: 'pglite', database_path: dbPath });
-    const rows = await engine.executeRaw<{ id: string; local_path: string | null }>('SELECT id, local_path FROM sources ORDER BY id');
+    const rows = await engine.executeRaw<{ id: string; local_path: string | null }>('SELECT id, local_path FROM sources ORDER BY id COLLATE "C"');
     const managedPaths = checkedManagedPaths(root, receipt?.managed_paths ?? []);
     const sources: SourceInventory[] = rows.map(row => {
       const rel = row.local_path ? relativeBackupPath(root, row.local_path) : null;

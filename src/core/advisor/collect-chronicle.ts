@@ -13,6 +13,7 @@ import { describeChronicleActivity, readChronicleLedgerStats } from '../chronicl
 import { CHRONICLE_REASONS, chronicleBackfillArgv } from '../chronicle/reasons.ts';
 import { chroniclePageDate } from '../chronicle/eligibility.ts';
 import type { Action } from '../agent-output.ts';
+import { rethrowCapabilityMissing } from '../rust-engine/errors.ts';
 
 const daysAgo = (now: Date, days: number) => new Date(now.getTime() - days * 86_400_000).toISOString().slice(0, 10);
 
@@ -130,16 +131,7 @@ export const collectChronicle: AdvisorCollector = {
     try {
       const { recentDays } = await chronicleSettings(ctx.engine);
       const now = ctx.now ?? new Date();
-      const rows = await ctx.engine.executeRaw<{ type: string; effective_date: Date | string | null; effective_date_source: string | null; fm_date: string | null; fm_start: string | null }>(
-        `SELECT p.type, p.effective_date, p.effective_date_source, p.frontmatter->>'date' AS fm_date, p.frontmatter->>'start' AS fm_start
-           FROM pages p
-          WHERE p.type IN ('meeting','conversation','calendar-event') AND p.deleted_at IS NULL
-            AND p.updated_at > now() - interval '30 days'
-            AND NOT EXISTS (
-              SELECT 1 FROM timeline_entries te
-              WHERE te.page_id = p.id AND te.event_page_id IS NOT NULL
-            )`,
-      );
+      const rows = await ctx.engine.listChronicleCoverageGapRows();
       const byType = new Map<string, number>();
       for (const r of rows) {
         const dated = chroniclePageDate({ effectiveDate: r.effective_date, effectiveDateSource: r.effective_date_source, frontmatter: { date: r.fm_date, start: r.fm_start } });
@@ -158,8 +150,10 @@ export const collectChronicle: AdvisorCollector = {
           ask_user: true,
         });
       }
-    } catch {
-      // timeline_entries.event_page_id may be absent pre-migration; ignore.
+    } catch (error) {
+      // timeline_entries.event_page_id may be absent pre-migration; ignore. A typed capability refusal (an engine that
+      // does not serve the read) is not that, so it surfaces instead of dropping the finding quietly.
+      rethrowCapabilityMissing(error);
     }
 
     // 3. #5876: automatic extraction (on by default). Brain state only; no provider calls.

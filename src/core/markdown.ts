@@ -1,4 +1,4 @@
-import { dataFrontmatter as matter, FrontmatterLanguageError, loadBoundedYaml as yamlLoad, YamlAliasBoundError } from './data-frontmatter.ts';
+import { dataFrontmatter as matter, FRONTMATTER_CLOSE_RE, FrontmatterLanguageError, loadBoundedYaml as yamlLoad, YamlAliasBoundError } from './data-frontmatter.ts';
 import type { Page, PageType } from './types.ts';
 import { resolveSlugForPath, slugifyPath } from './sync.ts';
 import {
@@ -125,15 +125,21 @@ export function coerceFrontmatterString(v: unknown): string {
  * i.e. where the body starts and where a body-only editor may safely operate
  * without ever touching frontmatter bytes.
  *
- * Fence semantics mirror collectValidationErrors exactly (the canonical
- * definition): leading blank lines are allowed before the opener, fences are
- * matched with trim() so CRLF line endings (`---\r`) count. Returns 0 when the
- * file has no frontmatter at all (first non-empty line is not `---`) — there
+ * The opener is the first non-empty line, matched with trim() against
+ * FRONTMATTER_OPEN_RE (`---`, or `---yaml`/`---yml`/`---json`, which
+ * parseDataFrontmatter also reads as frontmatter); leading blank lines are
+ * allowed before it. The closing fence is found exactly as
+ * parseDataFrontmatter finds it (FRONTMATTER_CLOSE_RE): `---` at column 0 with
+ * only blanks after it, so an indented `---` inside a YAML block scalar never
+ * closes the block and CRLF endings (`---\r`) still do. Returns 0 when the
+ * file has no frontmatter at all (first non-empty line is not an opener) — there
  * is no fence to protect, the whole file is body. Returns 0 for an UNCLOSED
  * fence too; callers that must not edit such files should pre-validate with
  * parseMarkdown({validate:true}) and treat MISSING_CLOSE as a blocker (the
  * backlinks fixer does).
  */
+const FRONTMATTER_OPEN_RE = /^---(?:\s*(?:yaml|yml|json))?\s*$/i;
+
 export function frontmatterBodyOffset(content: string): number {
   const lines = content.split('\n');
 
@@ -145,18 +151,11 @@ export function frontmatterBodyOffset(content: string): number {
     offset += lines[i].length + 1;
   }
   if (i >= lines.length) return 0; // empty / whitespace-only file
-  if (lines[i].trim() !== '---') return 0; // no frontmatter
+  if (!FRONTMATTER_OPEN_RE.test(lines[i].trim())) return 0; // no frontmatter
 
   offset += lines[i].length + 1; // consume the opening fence line
-  for (i = i + 1; i < lines.length; i++) {
-    const isLast = i === lines.length - 1;
-    const lineLen = lines[i].length + (isLast ? 0 : 1);
-    offset += lineLen;
-    if (lines[i].trim() === '---') {
-      return Math.min(offset, content.length);
-    }
-  }
-  return 0; // unclosed fence — no safe body offset
+  const closing = FRONTMATTER_CLOSE_RE.exec(content.slice(offset));
+  return closing ? offset + closing.index + closing[0].length : 0; // 0: unclosed fence, no safe body offset
 }
 
 /**
@@ -507,7 +506,7 @@ export function resolveParsedSubtype(
  * file and keeps going instead of failing the whole sync. Defined once here;
  * managed and legacy sync, import and `validate --importable` share it.
  */
-export const HOLD_CODES = ['invalid_frontmatter', 'frontmatter_slug_conflict', 'file_too_large', 'rename_held', 'parser_regression', 'tag_too_long'] as const;
+export const HOLD_CODES = ['invalid_frontmatter', 'frontmatter_slug_conflict', 'file_too_large', 'rename_held', 'parser_regression', 'tag_too_long', 'slug_too_long'] as const;
 export type HoldCode = typeof HOLD_CODES[number];
 export const INVALID_FRONTMATTER_REASONS = ['yaml_parse', 'needs_interpretation', 'ambiguous_identity_key', 'ambiguous_protected_key'] as const;
 export type InvalidFrontmatterReason = typeof INVALID_FRONTMATTER_REASONS[number];
@@ -566,6 +565,8 @@ export function classifyImportHold(parsed: ParsedMarkdown, ctx: {
   /** The sync exemption: a page keeping its recorded origin keeps its declared slug. */
   slugExempt?: (declared: string) => boolean;
   slugConflictMessage?: (found: string, expected: string) => string;
+  /** #10080: the screen admits a new page, so a slug over 255 characters (which no later operation names) is held. */
+  createsPage?: boolean;
 } = {}): ContentHold | null {
   const size = ctx.byteLength !== undefined && ctx.maxBytes !== undefined ? contentSizeHold(ctx.byteLength, ctx.maxBytes, ctx.codeFile) : null;
   if (size) return size;
@@ -591,6 +592,8 @@ export function classifyImportHold(parsed: ParsedMarkdown, ctx: {
     return { code: 'frontmatter_slug_conflict', key: 'slug',
       message: ctx.slugConflictMessage?.(parsed.slug, expected) ?? `Frontmatter slug "${parsed.slug}" does not match path-derived slug "${expected}".` };
   }
+  const slug = ctx.createsPage ? parsed.slug || expected : null;
+  if (slug && slug.length > 255) return { code: 'slug_too_long', key: 'slug', message: `The page slug is ${slug.length} characters; a slug can be at most 255, so the page was not written. Shorten the file's path (or its slug: line), then write the page again.` };
   return tagLengthHold(parsed.tags);
 }
 
@@ -604,7 +607,7 @@ export function validatorFrontmatterFence(lines: readonly string[]): { firstNonE
   let firstNonEmpty = 0;
   while (firstNonEmpty < lines.length && lines[firstNonEmpty]!.trim().length === 0) firstNonEmpty++;
   if (firstNonEmpty === lines.length) return { firstNonEmpty: -1, opens: false, closeLine: -1 };
-  const opens = /^---(?:\s*(?:yaml|yml|json))?\s*$/i.test(lines[firstNonEmpty]!.trim());
+  const opens = FRONTMATTER_OPEN_RE.test(lines[firstNonEmpty]!.trim());
   let closeLine = firstNonEmpty + 1;
   while (opens && closeLine < lines.length && lines[closeLine]!.trim() !== '---') closeLine++;
   return { firstNonEmpty, opens, closeLine: opens && closeLine < lines.length ? closeLine : -1 };

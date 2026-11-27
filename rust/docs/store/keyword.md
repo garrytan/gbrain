@@ -28,7 +28,9 @@ rankers (`keyword/rank.rs`). Their signatures are listed in the `keyword.rs` hea
 
 Every keyword member except `findByTitleFuzzy` refuses:
 
-- a text search configuration other than `english` (`getFtsLanguage()`);
+- a text search configuration other than `english` (`getFtsLanguage()`): the keyword index holds English postings.
+  The query-time readers in other families (the saved-facts match, `wordLexemes`, the facts keyword arms) also
+  serve `german` (`keyword/stem_german.rs`); a configuration without a Snowball port refuses everywhere;
 - a date bound (`afterDate`, `beforeDate`) that is not an ISO date or date-time
   (`YYYY-M-D[( |T|t)H:MM[:SS[.f…]][Z|z|±HH[:MM]]]`) or that is outside the calendar. A fraction of any length rounds
   to the nearest microsecond, a tie to the even one, as Postgres's `rint` does, and may carry into the next second.
@@ -77,9 +79,21 @@ a page named in `owner_only_marks` is hidden too, and under either form a mark k
 owner-only source is gone. `remove_page` writes the marks the SQL delete trigger writes (v322): when the page being
 deleted is itself owner-only lineage (strict form), it marks that page and each concept or question that names it as a
 `concept-provenance` `synthesized_from` input, so a derivative stays hidden after its owner-only input is deleted for
-good, even when the source is later flipped off. The marks live under `M owner_only_mark/pages/<page id>`. Removing
-only the provenance link, or turning the owner-only flag off with nothing deleted, records no mark, as in SQL. The
-store keeps no `derivation_inputs`, so a page that only that table ties to an owner-only row is not hidden by it.
+good, even when the source is later flipped off. The marks live under `M owner_only_mark/<table>/<row id>`; a page delete
+also marks the page's takes and timeline rows and every row derived from them through `derivation_inputs`. Removing
+only the provenance link, or turning the owner-only flag off with nothing deleted, records no mark, as in SQL. A page
+whose recorded inputs reach an owner-only row, transitively, is hidden too ([facts.md, "Derivation inputs"](facts.md#derivation-inputs-generationsderivation_inputsrs)). The
+engine serves no source delete yet, so a page is deleted by `deletePage`, `deletePages` or `purgeDeletedPages` here.
+
+`ownerOnlyMarkTriggers` (doctor's `owner_only_marks_triggers`, `owner_only_marks.rs` `owner_only_mark_state`) reads the
+state the SQL member reads from the triggers, the marks and the catalog. No trigger is ever missing: the store marks in
+code on every delete path, so `ensure` has nothing to create. It never writes the SQL `*` marks (`unguarded`, a delete
+trigger was missing; `row_security`, a delete by a login whose reads row-level security limits), so `closed` and
+`rowSecurity` are false. `held` is true while the brain holds an owner-only source or a mark; SQL's held flag also
+stays set after the last owner-only source is turned off with nothing deleted, which no doctor message prints. The
+store has no database logins and no row-level security, so no login reads lineage closed (`closedLogins`) or cannot
+add marks (`deniedLogins`), and its marks need no held flag a data copy could drop (`unflagged` is false). `role` is
+`postgres`, the role PGLite reports, which only the fix line of a missing trigger prints.
 
 The safe-chunks rule keeps a page only when its recorded `chunker_version` is at least the safe fence chunker (4), as
 SQL's `chunker_version >= 4`: a page with no recorded version is dropped too (the comparison is NULL). The store stamps
@@ -169,7 +183,7 @@ that must not change the store they check. It opens the record file through redb
 (`redb_kv.rs` `RedbReadOnlyKv`), which takes no write lock, runs no recovery and commits nothing on close: a plain
 open commits redb's allocator state when it closes, so it changes bytes of `records.redb` even when nothing was
 written. The builder does not run. Every write is refused with `read_only_transaction`, and so is an open that
-would have to write: no records yet, a format before 4 (the upgrade) or an index state to reset. `store_io` names
+would have to write: no records yet, a format before 5 (the upgrade) or an index state to reset. `store_io` names
 a missing record file or one not closed cleanly (redb repairs only on a writable open); `store_locked` means a
 writable handle has the brain open. Pinned by `tests/read_only.rs` (the record file and `FORMAT` keep every byte
 across a keyword search and `keyword_index_verify`) and the format-1 case in `tests/lifecycle.rs`.
@@ -247,7 +261,9 @@ PostgreSQL walks a tsquery recursively and calls `check_stack_depth()`, so a que
 facts OR builder recurse the same way, once per item, and the stack of the thread that calls them is not ours to size.
 
 - A query with more than 1,024 items runs those walks on a scoped thread with a 256 MiB stack (address space is reserved,
-  not committed). Smaller queries run in place.
+  not committed). Smaller queries run in place. A search starts that thread once for its whole walk over the
+  candidates (the page search, each title attempt, the facts keyword arm), not once per candidate, and a walk that is
+  already on the deep thread runs in place.
 - A query is refused with `invalid_argument` ("stack depth limit exceeded: a tsquery holds at most 131072 items") when
   the parser holds more than 131,072 items, counted before stopword cleanup. Repeated stopwords count, because a
   stopword placeholder carries no lexeme bytes and so never reaches the `MAXSTRPOS` check ("value is too big in
@@ -336,9 +352,19 @@ term rarity with `rankOrFallbackByRarity`) and the store answers each statement:
 
 - `searchKeywordArm(match, rank, options)`: chunks matching `websearch_to_tsquery(match)`, scored with
   `ts_rank(vector, websearch_to_tsquery(rank))` × phrase factor × source factor, the best chunk per page, the
-  `innerLimit` (`min(limit × 3, cap × 3)`) inner window, then `offset` and `limit`.
+  `innerLimit` (`min((offset + limit) × 3, cap × 3)`) inner window, then `offset` and `limit`.
+  `websearch_to_tsquery` separates words on ASCII whitespace and on the non-ASCII characters of PGLite's
+  `[[:space:]]` class (U+0085, U+2000-U+200A except U+2007, U+2028, U+2029, U+205F, U+3000), as the repository's
+  PGLite (0.4.3) does; PostgreSQL 18 reads only ASCII whitespace there, so the goldens taken from PGLite 0.5.16
+  (PostgreSQL 18.6) hold none of these characters.
 - `keywordRareTermPages(terms, cap)`: per term, the pages holding it, up to `RARE_TERM_CHUNK_CAP` chunks.
 - the slug handles go through `searchKeywordPages` with `handlesOnly`.
+
+The search and query ops check the `where` filter once more on their finished rows (`keepFrontmatterMatches`), since
+some arms add pages outside the filtered statements. `filterPageIdsByFrontmatter(ids, where)` (`keyword/frontmatter_ids.rs`)
+answers that check: the ids, ascending, whose page frontmatter holds every key, by the same `frontmatter_holds` rule as
+the keyword and vector filters. Like the SQL (`SELECT p.id FROM pages p WHERE p.id = ANY($1)` plus the containment
+clauses), it reads every page row, a soft-deleted one included.
 
 The core BM25 member (`store-members/search.ts`) is gone; its napi method and `Store::search_keyword` stay, unused.
 
@@ -382,6 +408,10 @@ no strict rows past the offset, the any-word retry (`buildOrFallbackWebsearchQue
 the rest tagged `keyword_relaxed`. Every attempt ORs in the given-name variants (`titleNameVariants`). The store runs a
 list of attempts over one read (`searchTitlesAttempts`); the rows sort by exact title (`lower(btrim(title, ' "''' ||
 chr(160)))` against `normalizeAlias(query)`), then `ts_rank_cd(vector, q) × source factor`, then page id.
+Each row carries one representative chunk: a text chunk of the page's live body, as `title-statement.ts` reads it
+with `chunkGenerationFilter` (a staged chunk, a chunk of a retired occurrence that a deferred retire left, and an
+inline chunk left on a segmented page are never shown), compiled truth first (only compiled truth for `detail` low),
+then the lowest chunk index. A page with no such chunk gives `chunk_id` 0 and an empty `chunk_text`.
 
 The page vector is not stored; `keyword/titles.rs` rebuilds the one PGLite last wrote:
 
@@ -408,7 +438,7 @@ The page vector is not stored; `keyword/titles.rs` rebuilds the one PGLite last 
 - `searchKeywordChunks` lets image chunks match, as both SQL engines do; the paging members keep text chunks only.
 - `where` compares a JSON number with a number through f64, where Postgres compares `numeric` exactly; numbers past
   2^53 can match differently.
-- `message_id` is blank when it is only ASCII `[[:space:]]`, as the SQL trims it; other Unicode spaces count as text.
+- `message_id` is blank when it is only `[[:space:]]` as PGLite reads it (U+0085, U+2003 and U+3000 count; U+00A0 does not), as the SQL trims it.
 - Lexemes of 2047 bytes or more are dropped from the vector, as in PG (`MAXSTRLEN`).
 - `searchTitles` trigger form: PGLite's trigger reads the timeline entries that exist when the page row is written;
   the store approximates that with the entries created no later than `updated_at`. A NULL timeline reads the lead
@@ -428,7 +458,8 @@ The page vector is not stored; `keyword/titles.rs` rebuilds the one PGLite last 
 
 ## Follow-ups
 
-- `keyword-lexeme-index`: every member still scans every live page and its chunks (about 8-10 ms per 4,000 chunks),
-  and the first query after a start, or after the text outgrows the 64 MiB cache, rebuilds every vector. Add a stored
-  positional lexeme index when the scan or a cold cache becomes the bottleneck for the brains the store serves.
+- `keyword-lexeme-index`: done. The store keeps a persisted positional lexeme index (above) and the members read it
+  once it is complete; a member scans only while the index is incomplete, when `GBRAIN_RUST_KEYWORD_SCAN=1` is set,
+  for a query with no candidate bound (a NOT-only query), or for the CJK substring members, which match chunk text and which the lexeme index cannot narrow (`keyword/cjk.rs`). A scan, and a cold vector cache after a start or after the
+  text outgrows the 64 MiB cache, still rebuilds every vector it reads.
 - `fuzzy-title-unscoped-deleted`: the SQL unscoped arm returns soft-deleted pages.

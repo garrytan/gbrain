@@ -1,12 +1,12 @@
 /**
- * Takes members (BrainEngine addTakesBatch, listTakes, searchTakes, updateTake, supersedeTake, resolveTake,
+ * Takes members (BrainEngine addTakesBatch, listTakes, searchTakes, searchTakesVector, updateTake, supersedeTake, resolveTake,
  * getScorecard, getCalibrationCurve, addSynthesisEvidence, listActiveTakesForPages, matchTakeRows, deleteTakeRows).
  * The store keeps the `takes` and `synthesis_evidence` rows (rust/docs/store/takes.md). This shell does what the shared SQL module does before its
  * statement runs (weight normalization, defaults, limit clamps, the GBrainErrors), so both engines say the same thing.
  *
- * A read-eligibility policy is honoured without `floor` and `suppressFlagged`: the store hides the takes of
- * soft-deleted and quarantined pages, as `projectionEligibleSql` always does. A trust floor or flag suppression
- * refuses (the store keeps no trust tiers or write-gate receipts for takes).
+ * A read-eligibility policy is honoured whole: the store hides the takes of soft-deleted and quarantined pages, as
+ * `projectionEligibleSql` always does, and applies the trust floor and flag suppression over the tier each take write
+ * stamped (rust/crates/gbrain-store/src/takes/trust.rs) and the take's write-gate receipts.
  */
 import { clampSearchLimit } from '../../engine.ts';
 import type {
@@ -23,7 +23,7 @@ import { GBrainError } from '../../types.ts';
 import { refuseMember, storeCall, takeOptions, throwIfAborted, type StoreMember } from './common.ts';
 import { storePagePolicy } from './private-provenance.ts';
 
-/** Page-read options these members accept and that change nothing here (no trust tiers or chunk safety on takes). */
+/** Page-read options these members accept and that change nothing here, as the takes SQL never reads them (trust applies through `eligibility`). */
 const IGNORED_READ_OPTIONS = ['minTrust', 'suppressFlagged', 'requireSafeChunks'] as const;
 
 /**
@@ -32,7 +32,7 @@ const IGNORED_READ_OPTIONS = ['minTrust', 'suppressFlagged', 'requireSafeChunks'
  */
 const IGNORED_AGGREGATE_OPTIONS = [...IGNORED_READ_OPTIONS, 'takesHoldersAllowList'] as const;
 
-/** `SearchOpts` keys that do not change which takes `searchTakes` returns (its SQL never reads them). */
+/** `SearchOpts` keys that do not change which takes `searchTakes` and `searchTakesVector` return (their SQL never reads them). */
 const SEARCH_IGNORED = [
   ...IGNORED_READ_OPTIONS,
   'offset', 'onVectorPoolMeta', 'vectorLegacyGuard', 'hnswIterativeScan', 'cjkKeyword', 'onKeywordIncomplete',
@@ -52,12 +52,9 @@ function sourceScope(opts: { sourceId?: unknown; sourceIds?: unknown }): unknown
   return null;
 }
 
-/** Whether a read applies the eligibility base clauses; a floor or flag suppression refuses. */
-function eligibleOnly(member: string, policy: ReadEligibility | undefined): boolean {
-  if (!policy) return false;
-  if (policy.floor) refuseMember(member, 'option eligibility.floor');
-  if (policy.suppressFlagged) refuseMember(member, 'option eligibility.suppressFlagged');
-  return true;
+/** The store's eligibility fields: the base clauses whenever a policy is given, plus its floor and flag suppression. */
+function eligibilityScope(policy: ReadEligibility | undefined) {
+  return { eligible_only: Boolean(policy), min_trust: policy?.floor ?? null, suppress_flagged: policy?.suppressFlagged === true };
 }
 
 /** An allow-list as the SQL reads it: undefined and null filter nothing. */
@@ -110,7 +107,7 @@ export const listTakes: StoreMember<[opts?: TakesListOpts], Take[]> = async (bra
     // Postgres refuses a non-finite OFFSET; the store refuses anything but a number.
     offset: Number.isFinite(offset) ? offset : String(offset),
     source_ids: sourceScope(o),
-    eligible_only: eligibleOnly('listTakes', o.eligibility),
+    ...eligibilityScope(o.eligibility),
     exclude_private: storePagePolicy('listTakes', o.excludePrivate, { callerReaders: true }) ?? null,
   };
   const rows: Take[] = await storeCall({ member: 'listTakes' }, () => brain.listTakes(filter));
@@ -128,7 +125,7 @@ export const searchTakes: StoreMember<
     limit: clampSearchLimit(o.limit, 30, 100),
     allow_list: allowList(o.takesHoldersAllowList),
     source_ids: sourceScope(o),
-    eligible_only: eligibleOnly('searchTakes', o.eligibility),
+    ...eligibilityScope(o.eligibility),
     exclude_private: storePagePolicy('searchTakes', o.excludePrivate, { callerReaders: true }) ?? null,
   };
   return storeCall({ member: 'searchTakes' }, () => brain.searchTakes(options));
@@ -277,3 +274,6 @@ export const deleteTakeRows: StoreMember<[pageId: number, rowNums: number[]], vo
 
 // The count and list reads of takes, salience and code edges (engine-sql/takes-reads.ts).
 export * from './takes-reads.ts';
+
+// The take proposal queue of propose_takes and `gbrain takes propose` (engine-sql/take-proposals.ts).
+export * from './take-proposals.ts';

@@ -4,7 +4,12 @@ Part of the store contract in [rust/README.md](../../README.md) ("The brain stor
 
 Pages are keyed `(source_id, slug)`; `sourceId` defaults to `default`, and a source that does not
 exist rejects `source_not_found`. Slugs go through PGLite's `validateSlug` (`invalid_slug`) and are
-lower-cased. A `Page` is PGLite's `Page` plus `page_kind`; every date (`created_at`, `updated_at`,
+stored in its one normal form (`normalizeSlug`): lower-cased, then composed to Unicode NFC, so a decomposed
+`zoe\u0308` is stored as `zo\u00eb`. The store keeps no other spelling: it cannot hold a page under a capitalised
+or decomposed slug that PGLite or Postgres still store from before slugs were normalized, so a write addressed to
+such an exact stored spelling (`withStoredSlug`, master #9944) finds no page here. That is a named typed stop
+(the parity case "every write by the exact spelling of a capital-stored page ..." refuses with capability `pages`),
+listed as row 50 of docs/designs/RUST_ENGINE.md. A `Page` is PGLite's `Page` plus `page_kind`; every date (`created_at`, `updated_at`,
 `updated_at_iso`, `deleted_at`, `effective_date`, `ingested_at`) is an ISO string with microseconds
 (`2026-08-10T12:00:00.000123Z`) or `null`, and the TypeScript wrapper turns them into `Date`.
 A page's `knowledge_revision` is a UUID that changes when its type, kind, title, body, timeline,
@@ -14,7 +19,7 @@ secondary indexes yet.
 
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
-| `brain.readPageSnapshot(slug, { sourceId?, sourceIds?, includeDeleted?, resolveAlias? }?)` | `{ page, tags, revision, sourceIncarnation, withdrawals: [] }` or `null`. `sourceIds` wins over `sourceId`; with neither, the first match, `default` first. With `resolveAlias`, an exact-slug miss reads the page a slug alias names, in the first source in scope whose source is live (any source with `includeDeleted`) and whose named page passes the soft-delete rule. `requireUnambiguous` and `preserveExactIdentity` stay refused | `readPageSnapshot` |
+| `brain.readPageSnapshot(slug, { sourceId?, sourceIds?, includeDeleted?, resolveAlias? }?)` | `{ page, tags, revision, sourceIncarnation, withdrawals }` or `null`. `sourceIds` wins over `sourceId`; with neither, the first match, `default` first. With `resolveAlias`, an exact-slug miss reads the page a slug alias names, in the first source in scope whose source is live (any source with `includeDeleted`) and whose named page passes the soft-delete rule. `requireUnambiguous` rejects `page_ambiguous` when more than one readable page (exact or alias) matches, `requireLiveSource` requires the page's source to exist and not be archived, and `preserveExactIdentity` leaves an alias unfollowed when its source holds a page at the slug itself in any deletion state; the native binding accepts all three. `withdrawals` lists the source's withdrawals under subject `*` or the slug, then the slug's purge tombstones (`purged: true`), each earliest per `(visibility, fact_hash)` and `world` only under `excludePrivate`; a source with a subject-`*` tombstone adds `globalPurges` (`{ count, latest, world_only }`) and every such tombstone in `globalPurgeRows` (`page_withdrawals.rs`). The current TypeScript member (`src/core/rust-engine/store-members/pages.ts`) accepts only `sourceId`, `sourceIds` and `includeDeleted` (it refuses the other options, `resolveAlias` among them) and only decodes `snapshot.page` with `toGetPage`: it neither filters or drops `globalPurgeRows` nor overlays withdrawals or purges on the text, and `src/core/rust-engine/snapshot-overlay.ts` does not exist in this checkout; `readPageSnapshotsBatch` answers the same fields | `readPageSnapshot` |
 | `brain.putPage(slug, page, { sourceId?, allowEmptyOverwrite?, expectedRevision?, force?, chunks?, index? }?)` | the stored `Page`. By default the store also installs chunks and seals the page (see "Chunks and keyword search"); `index: false` writes the page alone, which is what the TypeScript engine always passes, as PGLite's `putPage` writes no chunks | `putPage` |
 | `brain.listPages(filters?)` | `Page[]` (default `limit` 100). Filters: `type`, `tag`, `updated_after`, `updatedAfterKeyset { updatedAt, slug }`, `slugPrefix` (literal), `excludeSlugPrefixes`, `slugAfter`, `sourceId`, `sourceIds`, `includeDeleted`, `sort` (`updated_desc` default, `updated_asc`, `created_desc`, `slug`) | `listPages` |
 | `brain.countPages({ sourceId? }?)` | number of live pages | `countPages` |
@@ -26,8 +31,9 @@ secondary indexes yet.
 | `brain.getTags(slug, { sourceId?, sourceIds? }?)` | sorted `string[]` | `getTags` |
 | `brain.addTag(slug, tag, { sourceId? }?)` | `null`; `page_not_found` for a missing page | `addTag` |
 | `brain.removeTag(slug, tag, { sourceId? }?)` | `null`; no error when the page or tag is absent | `removeTag` |
+| `brain.createVersion(slug, { sourceId?, reason?, reasonSource?, historyGap? }?)` | the version row, with `reason` as its `change_reason` when given (and only if the prune kept the new version; a non-empty `reason` whose `reasonSource` `{ commit, path }` a purge tombstoned for the source is dropped, as `stampableReason` does), `historyGap` recording the page's `version_history_gap_at` before the snapshot, with the page's stamped `trust_tier` and `write_origin` copied into the snapshot (`snapshot_version_trust`; never the snapshot writer's own); `page_not_found` for a missing page. A segmented page's snapshot references its body generation (page_body.md, "The sweep"). The native `createVersion` also accepts `preimage`: when given, its revision, title, type, frontmatter, tags, source path and deletion state are versioned, with its body for an inline page (a segmented page keeps the stored body reference); without it the stored page is snapshotted. The current TypeScript member (`store-members/versions.ts`) accepts only `sourceId` and does not expose `preimage` | `createVersion` |
+| `brain.getVersions(slug, { sourceId?, sourceIds?, limit?, includeBody?, excludePrivate? }?)` | version rows, newest first, each with its change reason as `replaced_because`; `includeBody: false` leaves out `compiled_truth` and `timeline`; `excludePrivate` (the caller's page policy) drops a hidden page's versions and each version whose own readers or fields the caller may not read, before `limit`; under `excludePrivate` a version's `replaced_because` is null when the next version is one the caller may not read, or was pruned (`replacedBecauseSql`) | `getVersions` |
 | `brain.createVersion(slug, { sourceId?, reason?, historyGap? }?)` | the version row, with `reason` as its `change_reason` when given (and only if the prune kept the new version), `historyGap` recording the page's `version_history_gap_at` before the snapshot, with the page's stamped `trust_tier` and `write_origin` copied into the snapshot (`snapshot_version_trust`; never the snapshot writer's own); `page_not_found` for a missing page. A segmented page's snapshot references its body generation (page_body.md, "The sweep") | `createVersion` |
-| `brain.getVersions(slug, { sourceId?, sourceIds?, limit?, includeBody?, excludePrivate? }?)` | version rows, newest first, each with its change reason as `replaced_because`; `includeBody: false` leaves out `compiled_truth` and `timeline`; `excludePrivate` (the caller's page policy) drops a hidden page's versions and each version whose own readers or fields the caller may not read, before `limit` | `getVersions` |
 | `brain.readLatestVersionId(pageId)` | the page's newest version id, or `null` when it has none or the id is not a page's | `readLatestVersionId` |
 | `brain.readLatestVersionIdAtTier(pageId, tier)` | the page's newest version id whose snapshot `trust_tier` is `tier` (a version with no stored tier reads as `unknown`), or `null`; `invalid_argument` for a NUL byte | `readLatestVersionIdAtTier` |
 | `brain.stampVersionChangeReason({ pageId, afterVersionId, reason })` | how many versions took the reason: it sets `change_reason` on each of the page's versions with an id over `afterVersionId`, in one write; `invalid_argument` for a NUL byte | `stampVersionChangeReason` |
@@ -45,6 +51,12 @@ secondary indexes yet.
   the default. After a prune it sweeps the page's segments (`page_body.md`, "The sweep").
 - Each prune marks `successor_pruned` on the newest kept version before each pruned one and sets the page's
   `version_history_gap_at`. That page write leaves the knowledge revision as it was, so nothing is queued.
+- `createVersion(slug, { preimage })` versions the caller's page read instead of the stored page, as
+  `createPageVersion(..., preimage)` does: the read revision, title, type, frontmatter, tags, source path and deletion,
+  and on an inline page the read body. A segmented page keeps the stored body reference (live generation, bytes and
+  hash): a fact purge versions the page after its generation flip. The preimage's tags keep the order given (a page
+  read sorts them), and its revision is stored lower-case. The writer and request of the stored revision are copied
+  only when the preimage is that revision, matched case-insensitively; a stale preimage keeps them empty.
 - `pruneHoldingPageVersions(pageId)` is the holding-page cap a fence fact append runs after its snapshot: it keeps the
   page's newest `LARGE_PAGE_VERSIONS_KEPT` versions that are not segmented, deletes at most 100 of the older ones,
   oldest first, marks the history as every prune does and answers how many it deleted (0 for an unknown page).
@@ -52,6 +64,7 @@ secondary indexes yet.
   restamped (`src/core/trust/fence-append.ts`). It goes through the same trust stamp as the PGLite `UPDATE`: a lower
   always lands, and a raise lands only under a promotion that covers it, else the stored tier stays. `writeOrigin` is
   JSON text or null; a tier that is not a trust tier is refused.
+
 
 
 `putPage` follows PGLite:
@@ -101,7 +114,8 @@ PGLite lets four `pages` columns hold NULL, and the page record holds NULL in th
   throws the raw Postgres error (code `23514`); the store uses `constraint_violation` with the same message.
 - A version snapshot copies the page's NULLs.
 - Format: records written before these fields were nullable hold strings and read unchanged; a record without
-  `chunker_version` reads it as NULL, and `chunker_version` is written only when set. `FORMAT_VERSION` stays 1.
+  `chunker_version` reads it as NULL, and `chunker_version` is written only when set. This change took no format number; the store is at format 7
+  now ([format.md](format.md)).
 
 ## Search timeline
 
@@ -137,3 +151,12 @@ PGLite SQL that sets `title` or `timeline`, and where the store forgets the reco
 Any other write that changes the title or timeline through `pages::write_page` forgets the record there, since a
 changed value means PGLite's `SET` list named the column. A write that keeps both values (a seal, a tag change, a soft
 delete, a restore, a rename, `revertToVersion`, which sets only `compiled_truth` and `frontmatter`) keeps it.
+
+The page purge's receipt reads: `relationExists(table)` (`src/core/engine-sql/purge-receipt.ts`) is answered in TypeScript without a
+store call (`src/core/rust-engine/store-members/purge-receipt.ts`), because the store keeps keyspaces, not SQL relations.
+`relationExists` answers true for a name the graduation inventory
+lists as a table or view (an optional `public.` prefix is dropped and an unquoted name is lowercased, as `to_regclass` reads it) and
+false for any other name, a quoted or other-schema one included; the query cache is on that list, so the purge receipt names no
+missing cache, as `clearQueryCache` answering 0 already assumes. `page_segment_derivation_purges` is a relation the store keeps
+(see the derivation sweep record in page_body.md), so it answers true for it. `readDerivationPurgeState` goes to the store: `pending` for a
+request whose fact purge recorded a sweep, null for none.

@@ -1,5 +1,5 @@
-//! Trust: the fact withdrawal ledger (`gbrain_store::trust::withdrawals`) and the write gate
-//! (`gbrain_store::trust::write_gate`).
+//! Trust: the fact withdrawal ledger (`gbrain_store::trust::withdrawals`), the write gate
+//! (`gbrain_store::trust::write_gate`) and the owner's allow rules (`gbrain_store::trust::allow_rules`).
 //!
 //! One `#[napi] impl Brain` block per family file; `families/mod.rs` lists every family once.
 //! Each method decodes its arguments, runs one `Store` call on the pool through `Brain::run`,
@@ -66,6 +66,21 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
             s.is_fact_purged(&source_id, &visibility, &claim, entity_slug.as_deref())
+        })
+    }
+
+    /// `listGlobalPurgeWithdrawals(sourceId, hashes, worldOnly)`: the source's subject `*` purges of
+    /// the fingerprints `hashes` as withdrawals, in (visibility, fact_hash) order.
+    #[napi]
+    pub fn list_global_purge_withdrawals<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        hashes: Vec<String>,
+        world_only: bool,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_global_purge_withdrawals(&source_id, &hashes, world_only)
         })
     }
 
@@ -146,6 +161,23 @@ impl Brain {
         self.run(env, move |s| {
             s.read_source_purge_flags(&source_id)
                 .map(|(facts, takes)| serde_json::json!({ "facts": facts, "takes": takes }))
+        })
+    }
+
+    /// `listPurgedTakeRows(sourceId, [{ row_num, claim }], subject | null)`: resolves the matched
+    /// row numbers, ascending.
+    #[napi]
+    pub fn list_purged_take_rows<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        takes: Value,
+        subject: Option<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let takes: Vec<gbrain_store::facts::take_purges::TakeClaimRow> =
+                required(takes, "listPurgedTakeRows takes")?;
+            s.list_purged_take_rows(&source_id, &takes, subject.as_deref())
         })
     }
 
@@ -301,5 +333,80 @@ impl Brain {
         self.run(env, move |s| {
             s.decide_write_gate_hold(id, &status, &decided_by)
         })
+    }
+    /// `addTrustAllowRule({ sourceId, uriPrefix, reasonFamily, createdBy, reason })`: resolves
+    /// `{ source_active, row, created }`.
+    #[napi]
+    pub fn add_trust_allow_rule<'env>(
+        &self,
+        env: &'env Env,
+        rule: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let rule: gbrain_store::trust::allow_rules::NewAllowRule =
+                required(rule, "addTrustAllowRule rule")?;
+            s.add_trust_allow_rule(&rule)
+        })
+    }
+
+    /// `removeTrustAllowRule(id, removedBy)`: resolves the removed rule, or null.
+    #[napi]
+    pub fn remove_trust_allow_rule<'env>(
+        &self,
+        env: &'env Env,
+        id: f64,
+        removed_by: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.remove_trust_allow_rule(rule_id(id, "removeTrustAllowRule")?, &removed_by)
+        })
+    }
+
+    /// `readTrustAllowRule(id)`: resolves the rule, active or removed, or null.
+    #[napi]
+    pub fn read_trust_allow_rule<'env>(
+        &self,
+        env: &'env Env,
+        id: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_trust_allow_rule(rule_id(id, "readTrustAllowRule")?)
+        })
+    }
+
+    /// `listTrustAllowRules({ sourceIds?, includeRemoved? })`: resolves the rules by id.
+    #[napi]
+    pub fn list_trust_allow_rules<'env>(
+        &self,
+        env: &'env Env,
+        opts: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let opts: AllowRuleListOpts = required(opts, "listTrustAllowRules opts")?;
+            s.list_trust_allow_rules(
+                opts.source_ids.as_deref(),
+                opts.include_removed.unwrap_or(false),
+            )
+        })
+    }
+}
+
+/// The filter of `listTrustAllowRules`.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AllowRuleListOpts {
+    source_ids: Option<Vec<String>>,
+    include_removed: Option<bool>,
+}
+
+/// A rule id from JS: a positive whole number within 2^53. The TypeScript member answers every
+/// other id itself (null, or Postgres' bigint error), so anything else here is a caller bug.
+fn rule_id(v: f64, what: &str) -> Result<u64, gbrain_store::error::StoreError> {
+    if v.is_finite() && v.fract() == 0.0 && (1.0..=9_007_199_254_740_991.0).contains(&v) {
+        Ok(v as u64)
+    } else {
+        Err(gbrain_store::error::StoreError::invalid(format!(
+            "{what}: id must be a positive whole number: {v}"
+        )))
     }
 }

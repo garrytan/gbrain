@@ -17,7 +17,7 @@ import { prepareManagedSyncMutation, type SyncIntent } from '../src/core/persist
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { sha256 } from '../src/core/persistence/digest.ts';
 import { currentSourceFilesystemSignal, withSourceFilesystemLock } from '../src/core/minions/source-filesystem.ts';
-import { managedSyncAuthority, withLegacySyncDelegation } from '../src/core/persistence/sync-authority.ts';
+import { managedSyncAuthority, validateSyncAuthority, withLegacySyncDelegation } from '../src/core/persistence/sync-authority.ts';
 import { publishMutation } from '../src/core/persistence/coordinator.ts';
 import { APPLICATION_AUTHORITY, prepareRemoteAgent, prepareRemoteJob, withSubmissionAuthority } from '../src/core/minions/submission-authority.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
@@ -436,6 +436,29 @@ for (const [change, modes] of DISPATCH_FENCES) {
   });
 }
 
+check('a remote sync job reads its source\'s creation time through the typed engine member, and a replaced source stops it', async engine => {
+  const f = await fixture(engine, 1, false);
+  await claimWorktree(engine, f.id, f.root);
+  await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+  const binding = (await getWorktreeBinding(engine, f.id))!;
+  const clientId = `fixture-admin-${randomUUID()}`;
+  await engine.executeRaw(`INSERT INTO oauth_clients(client_id,client_name,client_secret_hash,scope,source_id,allowed_operations)
+    VALUES($1,'Fixture admin','test-only','admin',$2,ARRAY['submit_job'])`, [clientId, f.id]);
+  const ctx = { engine, remote: true, sourceId: f.id, auth: { clientId, principal: { kind: 'oauth_client', id: clientId }, scopes: ['admin'], sourceId: f.id, allowedOperations: ['submit_job'] } } as OperationContext;
+  const remote = await prepareRemoteJob(ctx, 'sync', { noPull: true });
+  const authority = await withSubmissionAuthority(remote.authority, () => managedSyncAuthority(engine, f.id, binding.source_incarnation, f.root));
+  expect(authority.remoteJob).toBeDefined();
+  // The statement the check ran before it moved to readJobSourceState; the Rust engine refuses caller raw SQL the same way.
+  const strict = new Proxy(engine, { get(target, key) {
+    if (key === 'executeRaw') return (sql: string, params?: unknown[]) => sql === 'SELECT created_at FROM sources WHERE id=$1'
+      ? Promise.reject(new Error('caller raw SQL on sources')) : target.executeRaw(sql, params);
+    const value = Reflect.get(target, key, target);
+    return typeof value === 'function' ? value.bind(target) : value;
+  } }) as BrainEngine;
+  await validateSyncAuthority(strict, authority, 'records/example-0');
+  const replaced = { ...authority, remoteJob: { ...authority.remoteJob!, grant: { ...authority.remoteJob!.grant, sourceCreatedAt: '2001-01-01T00:00:00.000Z' } } };
+  await expect(validateSyncAuthority(strict, replaced, 'records/example-0')).rejects.toMatchObject({ code: 'source_changed' });
+});
 for (const change of ['unchanged', 'archived', 'recreated', 'wrong-owner-epoch', 'revoked-local', 'physical-root-replaced', 'remote-job-revoked'] as const) {
   check(`publication revalidates ${change} after successful preparation without changing the original request`, async engine => {
     const f = await fixture(engine, 1, false);

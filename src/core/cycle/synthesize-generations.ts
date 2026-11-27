@@ -63,9 +63,7 @@ export interface SynthesisActivationInput {
 
 async function pages(engine: BrainEngine, sourceId: string, slugs: readonly string[]): Promise<SynthesisPage[]> {
   if (!slugs.length) return [];
-  const rows = await engine.executeRaw<{ slug: string; title: string | null; body: string | null }>(
-    `SELECT slug, title, COALESCE(compiled_truth, '') || E'\\n' || COALESCE(timeline, '') AS body FROM pages
-      WHERE source_id=$1 AND slug=ANY($2::text[]) AND deleted_at IS NULL AND body_storage <> 'segmented' ORDER BY slug`, [sourceId, [...slugs]]);
+  const rows = await engine.listSynthesisPageBodies(sourceId, [...slugs]);
   return rows.map(row => ({ slug: row.slug, title: row.title ?? '', body: row.body ?? '' }));
 }
 

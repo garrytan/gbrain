@@ -21,3 +21,30 @@ Numbers follow the column types: the `INTEGER` fields take only an integer in in
 As in PGLite, the cache's `expires_at` and the trend's cutoff are millisecond times (they come from
 `Date.now()` there); `ran_at` and the cache's `created_at` are microsecond store times. JSON values read
 back in jsonb key order. No key part may hold a NUL byte (`invalid_argument`).
+
+## Edge-contradiction cycle and eval reads (`src/core/engine-sql/contradictions-cycle.ts`)
+
+Seventeen members for the statements the edge-contradiction cycle (`src/core/cycle/edge-contradictions.ts`), the eval
+scoped read (`src/core/eval-contradictions/scoped-read.ts`), the cost prompt (`cost-prompt.ts`) and the suspected-contradictions
+eval (`src/commands/eval-suspected-contradictions.ts`) ran as raw SQL.
+
+`listLinkContexts` is served: `Store::list_link_contexts` (`gbrain-store/src/contradictions.rs`) reads the link records
+that leave the page (`links::out_links`), keeps those to the target page with the link type and a non-empty context, and
+answers the first three distinct contexts in byte order. The SQL has no `ORDER BY`, so with more than three distinct
+contexts the three Postgres keeps are its own choice; the edge phase quotes them as evidence and depends on no order.
+
+The twelve edge members are served: the proposal ledger, the candidate scan and the closure check live in
+`gbrain-store/src/edge_proposals.rs` (see `edge_proposals.md`). Their capability in `members.ts` stays `contradictions`.
+
+`readLastContradictionsPromptVersion` is served: `Store::read_last_contradictions_prompt_version` reads the run index
+by `ran_at` in reverse and answers the newest run's prompt version, null before any run. Runs that tie on `ran_at` go to
+the largest `run_id` in byte order; Postgres names no order for such ties. With it, every `contradictions` member is
+served, so the Rust engine reports `contradictions` (`test/rust-engine-capability-classes.test.ts`).
+
+The other three are served. `listLiveChunksByIds` and `listLiveTakesByIds` are `Store::list_live_chunks_by_ids` and
+`Store::list_live_takes_by_ids` (`gbrain-store/src/tail_reads.rs`, see `tail_reads.md`): the live chunks and active takes
+by id that the caller's page policy, the holder allow-list and the trust floor still admit. `listEvalCandidateQueries` is
+`Store::list_eval_candidate_queries` (`eval_capture.md`): the newest captured queries by id. Their capability in
+`members.ts` stays `chunks`, `takes` and `eval_capture`.
+
+The policy and floor text are Postgres text only; the store reads the typed arguments, never the statement.

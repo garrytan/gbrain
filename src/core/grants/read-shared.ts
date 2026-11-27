@@ -14,21 +14,19 @@
  * repository gets the switch unchanged.
  */
 import { isSourceFederated, parseSourceConfig } from '../sources-load.ts';
-import type { SqlQuery } from '../sql-query.ts';
-import { OWNER_MEMBER_KEY } from '../search/private-visibility.ts';
+import type { BrainEngine } from '../engine.ts';
+import { engineOfSqlQuery, type SqlQuery } from '../sql-query.ts';
 import { NO_SOURCES } from '../source-id.ts';
 import { GrantError, authSourcesFromGrant, readSharedFromColumns, type PrincipalGrant } from './model.ts';
 
 export interface SharedRow { id: string; config: unknown; guest: boolean; owners: string[]; owner_member: string | null }
 
+/** Where the shared set's source rows come from: the engine's typed member (every engine, the Rust store included). */
+export type SharedRowsSource = Pick<BrainEngine, 'readSharedSourceRows'>;
+
 /** Reads every live source with what the shared set needs, in one statement. Throws when the rows cannot be read. */
-async function sharedRows(sql: SqlQuery): Promise<SharedRow[]> {
-  const rows = await sql`
-    SELECT s.id, s.config,
-      (COALESCE(s.config->>'guest' = 'true', false) OR EXISTS (SELECT 1 FROM guest_sources gs WHERE gs.source_id = s.id)) AS guest,
-      ARRAY(SELECT ms.member_id FROM access_member_sources ms WHERE ms.source_id = s.id ORDER BY ms.member_id) AS owners,
-      (SELECT btrim(c.value) FROM config c WHERE c.key = ${OWNER_MEMBER_KEY}) AS owner_member
-    FROM sources s WHERE s.archived IS NOT TRUE ORDER BY s.id`;
+async function sharedRows(engine: SharedRowsSource): Promise<SharedRow[]> {
+  const rows: Array<Record<string, unknown>> = await engine.readSharedSourceRows();
   return rows.map(r => ({
     id: String(r.id), config: r.config, guest: r.guest === true,
     owners: Array.isArray(r.owners) ? (r.owners as unknown[]).map(String) : [],
@@ -53,8 +51,8 @@ export function sharedSetFromRows(rows: readonly SharedRow[], member: string | n
 }
 
 /** The shared set a switched key bound to `member` reads now. Throws when the source rows cannot be read. */
-export async function sharedReadSources(sql: SqlQuery, member: string | null): Promise<string[]> {
-  return sharedSetFromRows(await sharedRows(sql), member);
+export async function sharedReadSources(engine: SharedRowsSource, member: string | null): Promise<string[]> {
+  return sharedSetFromRows(await sharedRows(engine), member);
 }
 
 /**
@@ -62,12 +60,38 @@ export async function sharedReadSources(sql: SqlQuery, member: string | null): P
  * de-duplicated. When the shared set cannot be read the key reads its stored list only and `unresolved` is set, so
  * the response carries the `read_shared_unresolved` notice instead of narrowing silently.
  */
-export async function expandReadShared(sql: SqlQuery, stored: readonly string[], member: string | null): Promise<{ sources: string[]; unresolved: boolean }> {
+export async function expandReadShared(engine: SharedRowsSource, stored: readonly string[], member: string | null): Promise<{ sources: string[]; unresolved: boolean }> {
   try {
-    return { sources: [...new Set([...stored, ...await sharedReadSources(sql, member)])], unresolved: false };
+    return { sources: [...new Set([...stored, ...await sharedReadSources(engine, member)])], unresolved: false };
   } catch {
     return { sources: [...stored], unresolved: true };
   }
+}
+
+/** The engine members that read which sources exist and which are not archived (a Rust brain serves them, not raw SQL). */
+export type ArchivedSourceReads = Pick<BrainEngine, 'listSourceIds' | 'filterUnarchivedSourceIds'>;
+
+/** The engine members a token's read set needs: the shared source rows and which sources exist and are not archived. */
+export type TokenReadSourceReads = SharedRowsSource & ArchivedSourceReads;
+
+/**
+ * The source reads for a caller holding an optional engine and a SqlQuery tag: the engine's typed members, or those of
+ * the engine behind the tag (sqlQueryForEngine). With neither they refuse, so a key that needs them fails closed (a
+ * switched client reads its stored list, flagged).
+ */
+export function sourceReadsFor(engine: BrainEngine | undefined, sql: SqlQuery): TokenReadSourceReads {
+  const reads = engine ?? engineOfSqlQuery(sql);
+  if (reads) return reads;
+  const refuse = async (): Promise<never> => { throw new Error('the bearer check reads sources through an engine; it has none'); };
+  return { readSharedSourceRows: refuse, listSourceIds: refuse, filterUnarchivedSourceIds: refuse };
+}
+
+/** Which of `ids` name an archived source (an id no source has is not archived), through the engine's typed members. */
+async function archivedAmong(ids: readonly string[], engine: ArchivedSourceReads): Promise<Set<string>> {
+  const wanted = [...new Set(ids)];
+  const [existing, live] = await Promise.all([engine.listSourceIds(), engine.filterUnarchivedSourceIds(wanted)]);
+  const exists = new Set(existing), unarchived = new Set(live);
+  return new Set(wanted.filter(id => exists.has(id) && !unarchived.has(id)));
 }
 
 /**
@@ -81,11 +105,11 @@ export async function expandReadShared(sql: SqlQuery, stored: readonly string[],
  * list, which already reads the floor. The write source never changes; `member` is read only for a switched key.
  * Throws when the archived sources cannot be read, so the token fails closed.
  */
-export async function tokenReadSources(sql: SqlQuery, grant: PrincipalGrant, member: () => Promise<string | null>):
+export async function tokenReadSources(engine: TokenReadSourceReads, grant: PrincipalGrant, member: () => Promise<string | null>):
   Promise<{ sourceId: string; allowedSources?: string[]; hasSourceGrant: boolean; readShared?: true; readSharedUnresolved?: true; archivedSources?: string[] }> {
   const base = authSourcesFromGrant(grant);
   if (grant.sources.kind === 'none' || grant.sources.kind === 'default') return base;
-  const archivedIds = new Set((await sql`SELECT id FROM sources WHERE archived IS TRUE`).map(r => String(r.id)));
+  const archivedIds = await archivedAmong([...(base.allowedSources ?? []), base.sourceId], engine);
   const named = base.allowedSources ?? [base.sourceId];
   const stored = named.filter(id => !archivedIds.has(id));
   const archived = named.filter(id => archivedIds.has(id));
@@ -94,7 +118,7 @@ export async function tokenReadSources(sql: SqlQuery, grant: PrincipalGrant, mem
     return { sourceId: NO_SOURCES, allowedSources: [], hasSourceGrant: true, ...(grant.readShared === true ? { readShared: true as const } : {}), ...archivedSources };
   }
   if (grant.readShared === true) {
-    const expanded = await expandReadShared(sql, stored, await member());
+    const expanded = await expandReadShared(engine, stored, await member());
     return { sourceId: base.sourceId, allowedSources: expanded.sources, hasSourceGrant: true, readShared: true, ...(expanded.unresolved ? { readSharedUnresolved: true as const } : {}), ...archivedSources };
   }
   if (!base.allowedSources) return { ...base, ...archivedSources };
@@ -105,10 +129,10 @@ export async function tokenReadSources(sql: SqlQuery, grant: PrincipalGrant, mem
  * An OAuth client's read set with the switch on, after the active-source filter and only while scopes survived it,
  * or null when the switch does not apply. Private pages stay with the stored list; `member` is read only when it applies.
  */
-export async function clientReadShared(sql: SqlQuery, row: { source_grant?: unknown; read_shared_revision?: unknown; grant_revision?: unknown },
+export async function clientReadShared(engine: SharedRowsSource, row: { source_grant?: unknown; read_shared_revision?: unknown; grant_revision?: unknown },
   stored: readonly string[], scopesAlive: boolean, member: () => Promise<string | null>): Promise<{ allowedSources: string[]; flags: { readShared: true; readSharedUnresolved?: true } } | null> {
   if (row.source_grant === 'none' || !scopesAlive || !readSharedFromColumns(row.read_shared_revision, row.grant_revision)) return null;
-  const expanded = await expandReadShared(sql, stored, await member());
+  const expanded = await expandReadShared(engine, stored, await member());
   return { allowedSources: expanded.sources, flags: { readShared: true, ...(expanded.unresolved ? { readSharedUnresolved: true as const } : {}) } };
 }
 

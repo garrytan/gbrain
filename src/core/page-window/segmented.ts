@@ -29,6 +29,7 @@
  */
 import { createHash } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 import type { Page } from '../types.ts';
 import { serializePageToMarkdown } from '../markdown.ts';
 import { withoutBody } from '../page-body/page-shape.ts';
@@ -302,21 +303,19 @@ export async function segmentedMarkdownDocument(engine: BrainEngine, body: Segme
 interface Digest { total_bytes: number; total_lines: number; sha256: string | null }
 
 async function readDigest(doc: SegmentedDocument, revision: string, view: 'read' | 'markdown', audience: ViewAudience): Promise<Digest | null> {
-  const [row] = await doc.engine.executeRaw<{ total_bytes: unknown; total_lines: unknown; sha256: string | null }>(
-    `SELECT total_bytes, total_lines, sha256 FROM page_view_digests WHERE page_id=$1 AND revision=$2 AND view=$3 AND audience=$4`,
-    [doc.body.pageId, revision, view, audience]);
-  if (!row || Number(row.total_bytes) !== doc.total) return null;
-  return { total_bytes: Number(row.total_bytes), total_lines: Number(row.total_lines), sha256: row.sha256 };
+  const row = await doc.engine.readPageViewDigest({ pageId: doc.body.pageId, revision, view, audience });
+  if (!row || row.total_bytes !== doc.total) return null;
+  return { total_bytes: row.total_bytes, total_lines: row.total_lines, sha256: row.sha256 };
 }
 
 /** Best effort: a reader that cannot write the cache recomputes next time. Rows of older revisions go. */
 async function writeDigest(doc: SegmentedDocument, revision: string, view: 'read' | 'markdown', audience: ViewAudience, d: Digest): Promise<void> {
   try {
-    await doc.engine.executeRaw('DELETE FROM page_view_digests WHERE page_id=$1 AND revision<>$2', [doc.body.pageId, revision]);
-    await doc.engine.executeRaw(`INSERT INTO page_view_digests (page_id, revision, view, audience, total_bytes, total_lines, sha256) VALUES ($1, $2, $3, $4, $5, $6, $7)
-      ON CONFLICT (page_id, revision, view, audience) DO UPDATE SET total_bytes=EXCLUDED.total_bytes, total_lines=EXCLUDED.total_lines, sha256=EXCLUDED.sha256, created_at=now()`,
-    [doc.body.pageId, revision, view, audience, d.total_bytes, d.total_lines, d.sha256]);
-  } catch { /* cache only */ }
+    await doc.engine.writePageViewDigest({ pageId: doc.body.pageId, revision, view, audience }, d);
+  } catch (error) {
+    // Cache only, but a Rust brain's typed refusal is not "the cache could not be written": let it surface.
+    rethrowCapabilityRefusal(error);
+  }
 }
 
 /** {total_bytes, total_lines, sha256} of a markdown view: one streamed pass per (page, revision, audience). */

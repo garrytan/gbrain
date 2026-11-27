@@ -106,8 +106,12 @@ fn put(store: &Store, source: &str, slug: &str, frontmatter: Value) {
 }
 
 fn naming(store: &Store, principal: &str, limit: u32) -> Vec<(String, String)> {
+    naming_of(store, principal, limit, false)
+}
+
+fn naming_of(store: &Store, principal: &str, limit: u32, live_only: bool) -> Vec<(String, String)> {
     store
-        .list_pages_naming_reader(principal, limit)
+        .list_pages_naming_reader(principal, limit, live_only)
         .unwrap()
         .into_iter()
         .map(|r| (r.source_id, r.slug))
@@ -180,6 +184,19 @@ fn pages_naming_reader_match_normalized_readers_exactly_in_every_source() {
     );
     assert_eq!(naming(&store, "member:alice-example", 0), vec![]);
     assert_eq!(
+        naming_of(&store, "member:alice-example", 201, true),
+        vec![
+            pair("default", "notes/a"),
+            pair("default", "notes/b"),
+            pair("other", "notes/c"),
+        ],
+        "the live read leaves the soft-deleted page out"
+    );
+    assert_eq!(
+        naming_of(&store, "member:alice-example", 1, true),
+        vec![pair("default", "notes/a")]
+    );
+    assert_eq!(
         naming(&store, "group:team-a", 50),
         vec![pair("default", "notes/b")]
     );
@@ -187,4 +204,52 @@ fn pages_naming_reader_match_normalized_readers_exactly_in_every_source() {
     assert_eq!(naming(&store, "member:Alice-Example", 50), vec![]);
     assert_eq!(naming(&store, "group:alice-example", 50), vec![]);
     assert_eq!(naming(&store, "member:carol-example", 50), vec![]);
+}
+
+#[test]
+fn a_synopsis_frontmatter_override_is_a_live_default_page_naming_the_tier() {
+    let dir = TempDir::new("write-misc-synopsis-override");
+    let store = open(&dir);
+    source(&store, "other", json!({}));
+    assert!(!store.has_synopsis_frontmatter_override().unwrap());
+    // Another tier, another key, a value that only contains the tier, and a source that does not trust its pages.
+    put(
+        &store,
+        "default",
+        "a",
+        json!({ "contextual_retrieval": "off" }),
+    );
+    put(
+        &store,
+        "default",
+        "b",
+        json!({ "retrieval": "per_chunk_synopsis" }),
+    );
+    put(
+        &store,
+        "default",
+        "c",
+        json!({ "contextual_retrieval": ["per_chunk_synopsis"] }),
+    );
+    put(
+        &store,
+        "other",
+        "d",
+        json!({ "contextual_retrieval": "per_chunk_synopsis" }),
+    );
+    assert!(!store.has_synopsis_frontmatter_override().unwrap());
+    put(
+        &store,
+        "default",
+        "e",
+        json!({ "contextual_retrieval": "per_chunk_synopsis" }),
+    );
+    assert!(store.has_synopsis_frontmatter_override().unwrap());
+    // A deleted page and an archived source no longer count.
+    store.soft_delete_page("e", Some("default")).unwrap();
+    assert!(!store.has_synopsis_frontmatter_override().unwrap());
+    store.restore_page("e", Some("default")).unwrap();
+    assert!(store.has_synopsis_frontmatter_override().unwrap());
+    store.set_source_archived("default", true).unwrap();
+    assert!(!store.has_synopsis_frontmatter_override().unwrap());
 }

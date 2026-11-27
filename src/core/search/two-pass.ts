@@ -22,8 +22,8 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 import type { SearchResult } from '../types.ts';
-import { chunkVisibleFilter } from './safe-chunks.ts';
 import { readEdgeResolution } from '../chunkers/symbol-resolver.ts';
 
 const MAX_WALK_DEPTH = 2;
@@ -85,28 +85,16 @@ export async function expandAnchors(
   // filter; undefined → cross-source (matches the documented contract).
   if (opts.nearSymbol) {
     try {
-      const rows = opts.sourceId
-        ? await engine.executeRaw<{ id: number }>(
-            // chunk-visibility-ok: code symbol anchors: code pages are never segmented (chooseBodyStorage)
-            `SELECT cc.id FROM content_chunks cc
-             JOIN pages p ON p.id = cc.page_id
-             WHERE cc.symbol_name_qualified = $1 AND p.source_id = $2
-             LIMIT 50`,
-            [opts.nearSymbol, opts.sourceId],
-          )
-        : await engine.executeRaw<{ id: number }>(
-            // chunk-visibility-ok: code symbol anchors: code pages are never segmented (chooseBodyStorage)
-            `SELECT id FROM content_chunks WHERE symbol_name_qualified = $1 LIMIT 50`,
-            [opts.nearSymbol],
-          );
+      const ids = await engine.listSymbolChunkIds('near_symbol', [opts.nearSymbol], opts.sourceId || undefined); // engine-sql/chunk-reads.ts
       const baseScore = anchors.length > 0 ? anchors[0]!.score : 1.0;
-      for (const r of rows) {
-        if (!seen.has(r.id)) {
-          seen.set(r.id, { chunk_id: r.id, score: baseScore, hop: 0, source: 'anchor' });
+      for (const id of ids) {
+        if (!seen.has(id)) {
+          seen.set(id, { chunk_id: id, score: baseScore, hop: 0, source: 'anchor' });
         }
       }
-    } catch {
-      // Ignore — execution continues without the near-symbol anchors.
+    } catch (e) {
+      // Execution continues without the near-symbol anchors; an engine that cannot run the lookup refuses instead.
+      rethrowCapabilityRefusal(e);
     }
   }
 
@@ -128,7 +116,8 @@ export async function expandAnchors(
           direction: 'both',
           limit: NEIGHBOR_CAP_PER_HOP,
         });
-      } catch {
+      } catch (e) {
+        rethrowCapabilityRefusal(e);
         continue;
       }
 
@@ -161,24 +150,11 @@ export async function expandAnchors(
       // boundaries silently in multi-source brains.
       if (unresolvedTargets.length > 0) {
         try {
-          const resolved = opts.sourceId
-            ? await engine.executeRaw<{ id: number }>(
-                // chunk-visibility-ok: code symbol targets: code pages are never segmented (chooseBodyStorage)
-                `SELECT cc.id FROM content_chunks cc
-                 JOIN pages p ON p.id = cc.page_id
-                 WHERE cc.symbol_name_qualified = ANY($1::text[])
-                   AND p.source_id = $2
-                 LIMIT ${NEIGHBOR_CAP_PER_HOP}`,
-                [unresolvedTargets, opts.sourceId],
-              )
-            : await engine.executeRaw<{ id: number }>(
-                // chunk-visibility-ok: code symbol targets: code pages are never segmented (chooseBodyStorage)
-                `SELECT id FROM content_chunks WHERE symbol_name_qualified = ANY($1::text[]) LIMIT ${NEIGHBOR_CAP_PER_HOP}`,
-                [unresolvedTargets],
-              );
-          for (const r of resolved) directChunkIds.push(r.id);
-        } catch {
-          // best-effort
+          const resolved = await engine.listSymbolChunkIds('edge_targets', unresolvedTargets, opts.sourceId || undefined); // engine-sql/chunk-reads.ts
+          directChunkIds.push(...resolved);
+        } catch (e) {
+          // best-effort, but an engine that cannot run the lookup refuses
+          rethrowCapabilityRefusal(e);
         }
       }
 
@@ -207,17 +183,7 @@ export async function hydrateChunks(
   chunkIds: number[],
 ): Promise<SearchResult[]> {
   if (chunkIds.length === 0) return [];
-  const rows = await engine.executeRaw<{
-    slug: string; page_id: number; title: string; type: string; source_id: string;
-    chunk_id: number; chunk_index: number; chunk_text: string; chunk_source: string;
-  }>(
-    `SELECT p.slug, p.id as page_id, p.title, p.type, p.source_id,
-            cc.id as chunk_id, cc.chunk_index, cc.chunk_text, cc.chunk_source
-       FROM content_chunks cc
-       JOIN pages p ON p.id = cc.page_id
-       WHERE cc.id = ANY($1::int[]) AND ${chunkVisibleFilter('p', 'cc')}`,
-    [chunkIds],
-  );
+  const rows = await engine.listWalkChunkRows(chunkIds); // engine-sql/chunk-reads.ts: visible chunks, in chunkIds order
   return rows.map((r) => ({
     slug: r.slug,
     page_id: r.page_id,

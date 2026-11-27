@@ -6,7 +6,8 @@
  *  - Contract: readFieldUsageSamples returns the same answer on every engine arm (PGLite always; Postgres with
  *    DATABASE_URL; the Rust arm through test/engine-parity/harness.ts): the live page types of the scope (or the
  *    brain) with their page counts, most pages first and ties in byte order, at most `maxTypes` of them; and per type
- *    the frontmatter and compiled_truth of at most `samplePerType` live pages, the oldest pages first.
+ *    the frontmatter and compiled_truth of at most `samplePerType` live pages, the oldest pages first. `type` narrows
+ *    the read to one type and `countsOnly` answers no sampled pages.
  *  - Regression: an engine that counts soft-deleted pages, ignores the source scope, orders a tie by another collation,
  *    samples other pages or drops the type cap gives a different `schema detect --fields` report.
  *  - Pinned as they are on master (TODOS.md): pages of an archived source are counted and sampled, and a segmented
@@ -62,13 +63,17 @@ describe('engine parity: field usage samples', () => {
       const brain = view(await engine.readFieldUsageSamples({ maxTypes: 50, samplePerType: 10 }));
       const scoped = view(await engine.readFieldUsageSamples({ sourceId: 'default', maxTypes: 50, samplePerType: 10 }));
       const capped = view(await engine.readFieldUsageSamples({ sourceId: 'default', maxTypes: 2, samplePerType: 2 }));
+      const counts = view(await engine.readFieldUsageSamples({ sourceId: 'default', maxTypes: 50, samplePerType: 10, countsOnly: true }));
+      const onePerson = view(await engine.readFieldUsageSamples({ sourceId: 'default', maxTypes: 1, samplePerType: 10, type: 'person' }));
       const report = await runFieldUsage(engine, { sourceId: 'default' });
       expect(empty).toEqual([]);
+      expect(counts).toEqual([{ type: 'person', pages: 3, rows: [] }, { type: 'Zeta', pages: 1, rows: [] }, { type: 'alpha', pages: 1, rows: [] }]);
+      expect(onePerson).toEqual([scoped[0]!]);
       expect(brain.map((t) => `${t.type}:${t.pages}`)).toEqual(['person:4', 'Zeta:1', 'alpha:1', 'memo:1']);
       expect(scoped.map((t) => `${t.type}:${t.pages}`)).toEqual(['person:3', 'Zeta:1', 'alpha:1']);
       expect(capped.map((t) => t.type)).toEqual(['person', 'Zeta']);
       expect(capped[0]!.rows.map((r) => r.compiled_truth?.split('\n')[0])).toEqual(['Person 1.', 'Person 2.']);
-      return { empty, brain, scoped, capped, report };
+      return { empty, brain, scoped, capped, counts, onePerson, report };
     },
   );
 

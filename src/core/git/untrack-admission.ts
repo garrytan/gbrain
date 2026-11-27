@@ -18,6 +18,7 @@ import { relativeEscapesRoot } from '../path-confine.ts';
 import type { ManagedFilesystemRoot } from '../persistence/filesystem-guard.ts';
 import { isDeclaredDbOnlySlug, storageConfigFromYaml, unresolvedDbOnlyIn, type StorageConfig } from '../storage-config.ts';
 import { isCodeFilePath, isImageFilePath, isSyncable, resolveSlugForPath, type SyncStrategy } from '../sync.ts';
+import { assertNotOwnedPaths } from '../owned-folder/paths.ts';
 
 /**
  * What the brain says about an untrack: the source's root, the slug root its sync uses (a source rooted in a folder of its
@@ -106,6 +107,7 @@ export function untrackTargets(root: string, rel: string[]): string[] {
     }
     for (const file of held) out.add(file);
   }
+  assertNotOwnedPaths([...out], 'Refusing to untrack');
   const sparse = git(root, ['ls-files', '-v', '-z', '--', ...literalPathspecs([...out])]).stdout.split('\0').filter(entry => /^[sS] /.test(entry)).map(entry => entry.slice(2));
   if (sparse.length) {
     const list = `${sparse.slice(0, 10).join(', ')}${sparse.length > 10 ? ', ...' : ''}`;

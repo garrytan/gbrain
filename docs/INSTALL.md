@@ -110,7 +110,7 @@ export ANTHROPIC_API_KEY=sk-ant-...   # automatic fact extraction + chat models;
 
 For a brain initialized with `--no-embedding`, adding a key alone does not enable
 embeddings. Follow the CLI's explicit activation path, for example
-`gbrain init --force --embedding-model voyage:voyage-4`, after reviewing the
+`gbrain embeddings enable --embedding-model voyage:voyage-4`, after reviewing the
 provider and dimension choice. Keyword retrieval needs none of these keys.
 
 `gbrain config get <key>` redacts secrets and database passwords by default, because its output lands in transcripts and shell history; scripts that need the real value pass `--raw`.
@@ -136,7 +136,7 @@ gbrain setup claude-code   # Claude Code
 gbrain setup codex         # Codex
 ```
 
-The agent spawns `gbrain serve` as a stdio subprocess against your local brain. Setup registers it behind gbrain's launcher (`<gbrain config dir>/hook-launcher/gbrain-hook`), because both harnesses start a stdio server in the session's directory and a script-mode Bun install would otherwise load that directory's `bunfig.toml` and `.env`; `--no-hooks` registers the server without hooks. `--surface starter --advertise verbs` is what every registration gbrain writes: the daily-driver set (40 ops) stays callable, and the tool list shows the seven memory verbs ([MEMORY_VERBS v1](protocol/MEMORY_VERBS_v1.md)) plus `request_tools`, which lists the other tools, returns any tool's full schema and reaches a left-out one. Drop `--advertise verbs` to list the whole starter set, or register `--surface full` (every operation) or `--surface verbs` (only the seven verbs, nothing else callable). Full walkthrough (both this local path and connecting to a remote brain), plus the brain-first protocol to paste into `CLAUDE.md` / `AGENTS.md`: **[Give your coding agent a memory](tutorials/connect-coding-agent.md)**.
+The agent spawns `gbrain serve` as a stdio subprocess against your local brain. Setup registers it behind gbrain's launcher (`<gbrain config dir>/hook-launcher/gbrain-hook`), because both harnesses start a stdio server in the session's directory and a script-mode Bun install would otherwise load that directory's `bunfig.toml` and `.env`; `--no-hooks` registers the server without hooks. `--surface starter --advertise verbs` is what `gbrain setup claude-code` registers (`gbrain setup codex` registers `--surface full`, because Codex does not reload its tool list): the daily-driver set (40 ops) stays callable, and the tool list shows the seven memory verbs ([MEMORY_VERBS v1](protocol/MEMORY_VERBS_v1.md)) plus `request_tools`, which lists the other tools, returns any tool's full schema and reaches a left-out one. Drop `--advertise verbs` to list the whole starter set, or register `--surface full` (every operation) or `--surface verbs` (only the seven verbs, nothing else callable). Full walkthrough (both this local path and connecting to a remote brain), plus the brain-first protocol to paste into `CLAUDE.md` / `AGENTS.md`: **[Give your coding agent a memory](tutorials/connect-coding-agent.md)**.
 
 ## 3. MCP server (any MCP client)
 

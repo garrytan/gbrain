@@ -330,9 +330,9 @@ export async function listTakes(exec: LegacyUnscopedRead, opts: TakesListOpts = 
       ORDER BY
         ${opts.ungradedFirst ? sqlFragment`EXISTS (SELECT 1 FROM take_grade_cache g WHERE g.take_id = t.id
           AND g.prompt_version = ${opts.ungradedFirst.promptVersion} AND g.judge_model_id = ${opts.ungradedFirst.judgeModelId}),` : sqlFragment``}
-        CASE WHEN ${opts.sortBy ?? 'created_at'} = 'since_date' AND ${opts.oldestFirst ?? false}::boolean THEN t.since_date END ASC NULLS LAST,
+        CASE WHEN ${opts.sortBy ?? 'created_at'} = 'since_date' AND ${opts.oldestFirst ?? false}::boolean THEN t.since_date COLLATE "C" END ASC NULLS LAST,
         CASE WHEN ${opts.sortBy ?? 'created_at'} = 'weight'      THEN t.weight     END DESC NULLS LAST,
-        CASE WHEN ${opts.sortBy ?? 'created_at'} = 'since_date' AND NOT ${opts.oldestFirst ?? false}::boolean THEN t.since_date END DESC NULLS LAST,
+        CASE WHEN ${opts.sortBy ?? 'created_at'} = 'since_date' AND NOT ${opts.oldestFirst ?? false}::boolean THEN t.since_date COLLATE "C" END DESC NULLS LAST,
         CASE WHEN ${opts.sortBy ?? 'created_at'} = 'created_at'  THEN t.created_at END DESC NULLS LAST,
         t.id DESC
       LIMIT ${limit} OFFSET ${offset}
@@ -361,7 +361,7 @@ export async function searchTakes(exec: LegacyUnscopedRead, query: string, opts:
           OR t.holder = ANY(${opts.takesHoldersAllowList ?? null}::text[])
         )
         ${sourceFilter}${takeEligibility(opts.eligibility)}
-      ORDER BY score DESC, t.weight DESC
+      ORDER BY score DESC, t.weight DESC, t.id
       LIMIT ${limit}
     `)).rows;
     // #2450-class: int8 columns arrive as native BigInt from the pg driver;
@@ -382,22 +382,29 @@ export async function searchTakesVector(
       : opts.sourceId
         ? sqlFragment`AND p.source_id = ${opts.sourceId}`
         : sqlFragment``;
+    // The inner query orders by distance alone so Postgres can serve it from the HNSW index (a second
+    // sort key makes the planner sort every row instead); the outer query breaks distance ties by take id
+    // inside the limit. Which rows tie at the LIMIT boundary stays approximate, as ANN is.
     const rows = (await exec.run(sqlFragment`
-      SELECT t.id AS take_id, t.page_id, p.slug AS page_slug, t.row_num,
-             t.claim, t.kind, t.holder, t.weight, t.since_date, t.until_date, t.source,
-             (1 - (t.embedding <=> ${vec}::vector))::real AS score
-      FROM takes t
-      JOIN pages p ON p.id = t.page_id
-      WHERE t.active
-        AND t.embedding IS NOT NULL
-        ${opts.excludePrivate ? trustedSql(`AND ${privatePagesFilterForCaller('p')}${ownerOnlyTakeAllowedSql('t')}`) : sqlFragment``}
-        AND (
-          ${opts.takesHoldersAllowList ?? null}::text[] IS NULL
-          OR t.holder = ANY(${opts.takesHoldersAllowList ?? null}::text[])
-        )
-        ${sourceFilter}${takeEligibility(opts.eligibility)}
-      ORDER BY t.embedding <=> ${vec}::vector
-      LIMIT ${limit}
+      SELECT * FROM (
+        SELECT t.id AS take_id, t.page_id, p.slug AS page_slug, t.row_num,
+               t.claim, t.kind, t.holder, t.weight, t.since_date, t.until_date, t.source,
+               (1 - (t.embedding <=> ${vec}::vector))::real AS score,
+               t.embedding <=> ${vec}::vector AS distance
+        FROM takes t
+        JOIN pages p ON p.id = t.page_id
+        WHERE t.active
+          AND t.embedding IS NOT NULL
+          ${opts.excludePrivate ? trustedSql(`AND ${privatePagesFilterForCaller('p')}${ownerOnlyTakeAllowedSql('t')}`) : sqlFragment``}
+          AND (
+            ${opts.takesHoldersAllowList ?? null}::text[] IS NULL
+            OR t.holder = ANY(${opts.takesHoldersAllowList ?? null}::text[])
+          )
+          ${sourceFilter}${takeEligibility(opts.eligibility)}
+        ORDER BY t.embedding <=> ${vec}::vector
+        LIMIT ${limit}
+      ) q
+      ORDER BY q.distance, q.take_id
     `)).rows;
     // #2450-class: int8 columns arrive as native BigInt from the pg driver;
     // coerce per-row (takeRowToTake precedent) so MCP/CLI JSON.stringify
@@ -599,7 +606,9 @@ export async function resolveTake(exec: SqlExecutor, pageId: number, rowNum: num
 export async function getScorecard(exec: LegacyUnscopedRead, opts: TakesScorecardOpts, allowList: string[] | undefined): Promise<TakesScorecard> {
     const allowed = allowList ? sqlFragment`AND holder = ANY(${allowList}::text[])` : sqlFragment``;
     const holderClause = opts.holder ? sqlFragment`AND holder = ${opts.holder}` : sqlFragment``;
-    const domainClause = opts.domainPrefix
+    const domainClause = opts.domainPrefix && opts.domainPrefixAlso?.length
+      ? sqlFragment`AND EXISTS (SELECT 1 FROM pages p WHERE p.id = takes.page_id AND p.slug LIKE ANY(${[opts.domainPrefix, ...opts.domainPrefixAlso].map(prefix => prefix + '%')}::text[]))`
+      : opts.domainPrefix
       ? sqlFragment`AND EXISTS (SELECT 1 FROM pages p WHERE p.id = takes.page_id AND p.slug LIKE ${opts.domainPrefix + '%'})`
       : sqlFragment``;
     const sinceClause = opts.since ? sqlFragment`AND since_date >= ${opts.since}` : sqlFragment``;

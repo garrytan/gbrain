@@ -2,30 +2,38 @@
 
 Part of the store contract in [rust/README.md](../../README.md) ("The brain store"): the rules there apply to every method here.
 
-This family answers `getStats`, `getHealth`, `countOnboardSignal`, `listEnrichCandidates` and
+This family answers `getStats`, `getHealth`, `countOnboardSignal`, `countBrainLivePages`, `countLivePagesBySource`, `countChunksBySource`, `readBrainMaturity`, `listEnrichCandidates` and
+This family answers `pingStore`, `getStats`, `getHealth`, `countOnboardSignal`, `readBrainMaturity`, `listEnrichCandidates` and
 `findAnomalies` from the
 records the other families keep (pages, chunks, links, tags, timeline entries, sources, config),
-and keeps one table of its own: PGLite's `ingest_log`. The key tag is the reserved `n`;
-`FORMAT_VERSION` stays 1.
+and keeps one table of its own: PGLite's `ingest_log`. The key tag is the reserved `n`. It took no format
+number; the store is at format 7 now ([format.md](format.md)).
 
 | Key | Value | Mirrors |
 | --- | --- | --- |
-| `n created_at id` | `{ id, source_id, source_type, source_ref, pages_updated, summary, created_at_us }` (JSON) | one `ingest_log` row |
+| `n created_at id` | `{ id, source_id, source_type, source_ref, pages_updated, summary, created_at_us, writer_version, writer_host_id, writer_segment_reader }` (JSON) | one `ingest_log` row |
 
 `created_at` is the row's microsecond timestamp as 8 bytes big-endian with the sign bit flipped,
 so the byte order is the numeric order. `id` is 8 bytes big-endian from the `M next_ingest_log_id`
 counter. One reverse scan of `n` reads `ORDER BY created_at DESC`; rows with the same microsecond
 come back newer id first (PGLite leaves that tie unordered). The table has no foreign key in
 PGLite, so deleting a page or a source leaves the log alone here too. `pages_updated` is stored as
-PGLite's `jsonb` holds it: object keys sorted by length, then by bytes.
+PGLite's `jsonb` holds it: object keys sorted by length, then by bytes. The writer stamp (`writer_version`,
+`writer_host_id`, `writer_segment_reader`, migration v254) is what the segmented-storage gate reads
+(persistence.md, "Writer versions"); a row stored before the store kept it reads as unstamped and
+without the mark, as an older binary's row reads on Postgres. `getIngestLog` does not return it.
 
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
-| `brain.logIngest({ source_id, source_type, source_ref, pages_updated_json, summary })` | nothing. The member sends `source_id ?? 'default'` and the text node-postgres binds for each value. A `null` column fails with `constraint_violation` and Postgres's not-null message, checked in column order; a NUL byte or a `pages_updated_json` that is not JSON fails with `invalid_argument`. Nothing is kept on a failure | `logIngest` |
+| `brain.logIngest({ source_id, source_type, source_ref, pages_updated_json, summary, writer_version, writer_host_id, writer_segment_reader })` | nothing. The member sends `source_id ?? 'default'`, the text node-postgres binds for each value and the logging binary's stamp (`writerStamp({ mint: false })`); a record written before the stamp reads it as null, and a `writer_host_id` that is not a uuid refuses with the uuid syntax message. A `null` column fails with `constraint_violation` and Postgres's not-null message, checked in column order; a NUL byte or a `pages_updated_json` that is not JSON fails with `invalid_argument`. Nothing is kept on a failure | `logIngest` |
 | `brain.getIngestLog({ limit, sourceIds })` | the rows newest first, at most `limit` (the member sends `opts.limit \|\| 50`; rounded as Postgres casts it; a negative limit fails with `invalid_argument`), only the `sourceIds` when the list is not empty. The member turns `created_at` into a `Date` | `getIngestLog` |
+| `brain.pingStore()` | nothing, once the store opens a read snapshot; a closed store fails with `store_closed`. The member rejects an aborted `signal` with `AbortError` before the call | `pingStore` (`SELECT 1`) |
 | `brain.getStats({ scope })` | the `BrainStats` counters. `page_count` counts live pages; chunks, links, tags and timeline entries count the rows of pages in the scope, soft-deleted pages included, as the PGLite joins do. A scoped link needs both ends in the scope. `pages_by_type` is ordered by count, then type bytes | `getStats` |
 | `brain.getHealth({ scope, entityTypes })` | raw counters: `page_count`, `eligible_chunks`, `embedded_chunks`, `missing_embeddings`, `dead_links`, `link_count`, the entity counters, `linkable` (every live, not quarantined page in the scope with `islanded` and `has_timeline`, before the orphan policy) and `most_connected` (top 5 by degree, then slug bytes) | the counting queries of `engine-sql/health.ts` |
 | `brain.countOnboardSignal({ signal, entityTypes })` | one count, brain-wide (no source scope, no quarantine filter): `stale_chunks` counts chunks with no stored vector on live pages without `embed_skip`; `entities` live pages of an entity type (`entityTypes.per_source` replaces `types` for its source); `linked_entities` and `timeline_entities` those with any inbound link or any timeline entry; `takes` every take; any other signal live pages, as the last arm of the SQL does | `countOnboardSignal` |
+| `brain.countBrainLivePages()` | live pages in every source (no source scope), for backup coverage | `countBrainLivePages` |
+| `brain.liveCountsBySource()` | `{ source_id, pages, chunks, embedded }` per source with a live page, in source id byte order: its live pages, their chunks and the chunks with a stored vector (no source scope), for `gbrain sources status`. `countLivePagesBySource` reads `pages`; `countChunksBySource` reads `chunks` and `embedded` and skips a source with no chunk, as the SQL join does. The store holds one vector column, so `column` must name the text column | `countLivePagesBySource`, `countChunksBySource` |
+| `brain.readBrainMaturity()` | `{ pages, facts, since }`: live pages and unexpired facts in every source, and the earliest `created_at` of any source or page (soft-deleted pages count), null when there is neither; for backup coverage | `readBrainMaturity` |
 | `brain.listEnrichCandidates({ types, thinThreshold, order, limit, enrichedAfter, scope })` | `{ slug, source_id, title, type, body_len, inbound_count }` rows. Live pages of the types in the scope, shorter than `thinThreshold` characters (`compiled_truth` plus `timeline`), not `dream_generated`, not enriched after `enrichedAfter`. Inbound links skip `link_source = 'mentions'` and `link_type = 'amends'` | `listEnrichCandidates` |
 | `brain.findAnomalies({ scope, baselineStartUs, sinceUs, sinceEndUs })` | `{ baseline: { tag, type }, today }`: per cohort, the distinct pages updated on each UTC day of the baseline window, and the cohorts of the pages updated in the `since` day with their slugs. Only live, not quarantined pages of a source that exists and is not archived | the two bucket queries of `findAnomalies` |
 
@@ -55,6 +63,8 @@ two engines share that code instead of copying it:
   `privatePagesFilterForCaller('p')` refuses with `engine_capability_missing`.
 - `listEnrichCandidates` clamps `limit` and `thinThreshold` and turns `reenrichAfterMs` into the
   `enrichedAfter` text. An unknown `order` reads as `inbound-links`, as PGLite's lookup does.
+  `order: 'owner-contact'` refuses with `engine_capability_missing`: the store has no owner-contact
+  ranking yet, and a silent inbound-links answer would mislead.
 
 ## Differences and costs
 
@@ -79,3 +89,19 @@ two engines share that code instead of copying it:
   each page in the scope through the timeline family, one prefix scan per page. This is fine at
   the parity sizes; a brain with many thousand pages will want a per-page count record.
 
+
+## Page visibility and version history reads (`src/core/engine-sql/admin-reads.ts`)
+
+Two members for statements `src/core/ops/admin.ts` ran as raw SQL: `listVisiblePageSlugs` (the slugs `visibleMostConnected`
+may show, under the read or access policy and an optional source scope) and `readPagesForVersionHistory` (the page rows
+by id that `get_versions` resolves). Their capability in `members.ts` is `pages`.
+
+`readPagesForVersionHistory` is served: `Store::read_pages_for_version_history` (`gbrain-store/src/tail_reads.rs`, see
+`tail_reads.md`) reads the page record of each id: `id`, `slug`, `source_id` and `frontmatter`, in id order, each id once,
+soft-deleted pages included (the statement does not filter them). An unknown or negative id names no row.
+
+`listVisiblePageSlugs` is served: `Store::list_visible_page_slugs` (`gbrain-store/src/cli_reads/admin_reads.rs`, see
+`admin-reads.md`) keeps the slugs of the live pages in the given sources that the caller's page policy (read or access
+form, as the typed store policy) does not hide, in byte order.
+
+The policy text is Postgres text only; the store reads the typed arguments, never the statement.

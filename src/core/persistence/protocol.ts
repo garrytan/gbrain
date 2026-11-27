@@ -3,6 +3,7 @@ import { BRAIN_SHARE } from '../engine-sql/persistence-declaration.ts';
 import type { SqlEngine, WriteRequest } from './model.ts';
 import { opError, OperationError } from '../ops/contract.ts';
 import { readPersistenceBrain } from './managed-mode.ts';
+import { isRustBrain, rustPublicationFlag, rustSource } from '../shared-skills/rust-publication.ts';
 
 const declared = new WeakSet<object>();
 /** An engine that can declare the protocol (BrainEngine declarePersistence; engine-sql/persistence-declaration.ts holds the text). */
@@ -68,13 +69,19 @@ export function assertMutationProtocol(row: Pick<WriteRequest, 'target_kind' | '
     `This gbrain process cannot apply ${row.target_kind ?? 'page'} requests at protocol ${row.protocol_version ?? 1}, so it left the request untouched. A newer gbrain wrote it: upgrading gbrain on this host (the user's call) lets it be applied.`);
 }
 
+/** A Rust brain is never managed: its store flag and the source's registered root stand for the owner (rust-publication.ts). */
 export async function assertSharedSkillPersistence(engine: SqlEngine, sourceId?: string): Promise<void> {
-  const brain = await readPersistenceBrain(engine);
+  const rust = isRustBrain(engine);
+  const brain = rust ? { enabled: true, ...await rustPublicationFlag(engine as unknown as BrainEngine) } : await readPersistenceBrain(engine);
   if (!brain.enabled || !brain.skill_bundles_enabled || brain.writer_protocol_floor !== 2) {
     throw new OperationError('writer_not_quiesced', 'Shared skill publication requires an activated protocol-2 canonical owner.',
       'Stop older writers and direct-file skill servers, then activate shared skill persistence on the canonical host.');
   }
-  if (sourceId !== undefined) {
+  if (sourceId !== undefined && rust) {
+    const source = await rustSource(engine as unknown as BrainEngine, sourceId);
+    if (!source || source.archived || !source.local_path) throw new OperationError('writer_not_quiesced', 'The canonical owner capability changed after shared publication was activated.',
+      'Drain or cancel pending requests and revalidate the canonical owner before activating shared publication again.');
+  } else if (sourceId !== undefined) {
     const owners = await engine.executeRaw(`SELECT w.id FROM sources s JOIN persistence_source_bindings b
       ON b.source_id=s.id AND b.source_incarnation=s.incarnation JOIN persistence_worktrees w ON w.id=b.worktree_id
       JOIN persistence_writer_protocols p ON p.worktree_id=w.id AND p.host_id=w.owner_host_id AND p.owner_epoch=w.owner_epoch

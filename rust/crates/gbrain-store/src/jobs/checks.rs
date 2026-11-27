@@ -7,9 +7,16 @@
 use super::reads::{hours_us, is_unreviewed, live_rows};
 use super::status::{Like, like_matches, like_tokens};
 use super::*;
-use crate::env::parse_iso;
+use crate::env::{iso, parse_iso};
+use crate::keys;
+use crate::kv::scan_prefix;
+use crate::stats::IngestRecord;
 use crate::timeline_queries::timestamptz_text;
 use std::cmp::Reverse;
+use std::collections::BTreeMap;
+
+const DAY_US: i64 = 86_400_000_000;
+const HOUR_US: i64 = 3_600_000_000;
 
 /// `readGlobalMaintenanceDeaths` arguments.
 #[derive(Debug, Clone, Deserialize)]
@@ -310,6 +317,68 @@ impl Store {
         // The SQL counts in a window over the rows it returns: no rows, no total.
         let total = if jobs.is_empty() { 0 } else { rows.len() };
         Ok(json!({ "total": total, "jobs": jobs }))
+    }
+
+    /// `listPersistentWriterContention`: per source, the `facts:absorb` ingest rows of the last 24 hours whose summary
+    /// head (up to the first `:`) is `reason` and that no completed `facts-absorb` job of the same page (slug and
+    /// source) finished at or after, when they persist: more than ten, or the oldest over an hour old. By source in
+    /// byte order. Resolves `[{ source_id, n, oldest }]` with `oldest` an ISO time.
+    pub fn list_persistent_writer_contention(&self, reason: &str) -> Result<Vec<Value>> {
+        let now = self.env.now_micros();
+        let read = self.read()?;
+        // The latest finish of a completed facts-absorb job per page: a row is covered when it is not before it.
+        let mut finished: HashMap<(String, String), i64> = HashMap::new();
+        for row in rows_with_status(&*read, "completed")? {
+            let (Some(slug), Some(at)) = (
+                row.data.get("slug").and_then(jsonb_field_text),
+                row.finished_at,
+            ) else {
+                continue;
+            };
+            if row.name == "facts-absorb" {
+                let best = finished
+                    .entry((slug, source_of(&row, "sourceId")))
+                    .or_insert(i64::MIN);
+                *best = (*best).max(at);
+            }
+        }
+        let mut groups: BTreeMap<String, (u64, i64)> = BTreeMap::new();
+        let mut failure = None;
+        scan_prefix(
+            &*read,
+            &[keys::INGEST_LOG],
+            true,
+            &mut |_, v| match serde_json::from_slice::<IngestRecord>(v) {
+                Ok(l) if l.created_at_us < now - DAY_US => false,
+                Ok(l)
+                    if l.source_type == "facts:absorb"
+                        && l.summary.split(':').next() == Some(reason) =>
+                {
+                    let covered = finished
+                        .get(&(l.source_ref.clone(), l.source_id.clone()))
+                        .is_some_and(|at| *at >= l.created_at_us);
+                    if !covered {
+                        let group = groups.entry(l.source_id).or_insert((0, i64::MAX));
+                        group.0 += 1;
+                        group.1 = group.1.min(l.created_at_us);
+                    }
+                    true
+                }
+                Ok(_) => true,
+                Err(e) => {
+                    failure = Some(StoreError::from(e));
+                    false
+                }
+            },
+        )?;
+        if let Some(e) = failure {
+            return Err(e);
+        }
+        Ok(groups
+            .into_iter()
+            .filter(|(_, (n, oldest))| *n > 10 || *oldest < now - HOUR_US)
+            .map(|(source_id, (n, oldest))| json!({ "source_id": source_id, "n": n, "oldest": iso(oldest) }))
+            .collect())
     }
 
     /// `readLegacyJobAuthority`: the live jobs whose authority is not the application authority,

@@ -11,6 +11,7 @@
 import { describe, test, expect } from 'bun:test';
 import { spawnSync } from 'child_process';
 import { join, resolve } from 'path';
+import { envWithoutDatabaseUrl } from './helpers/cli-spawn.ts';
 
 const REPO = resolve(import.meta.dir, '..');
 const CLI = join(REPO, 'src', 'cli.ts');
@@ -23,7 +24,7 @@ describe('cli pipe completeness — deliberate exit never truncates piped stdout
         stdio: ['ignore', 'pipe', 'pipe'],
         encoding: 'utf-8',
         timeout: 60_000,
-        env: { ...process.env, GBRAIN_SKIP_STARTUP_HOOKS: '1' },
+        env: { ...envWithoutDatabaseUrl(), GBRAIN_SKIP_STARTUP_HOOKS: '1' },
         maxBuffer: 64 * 1024 * 1024,
       });
       return { stdout: res.stdout ?? '', stderr: res.stderr ?? '', status: res.status, ms: Date.now() - t0 };

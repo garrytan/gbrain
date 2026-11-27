@@ -23,17 +23,21 @@ import { doctorSource } from './helpers/doctor-source.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { surfaceSource } from './helpers/source-surface.ts';
+import { listVolunteerChannels } from '../src/core/engine-sql/doctor-acc.ts';
 
 function stubEngine(
   rows: Array<{ channel: string; n: number | string; last_fired: string | Date | null }> | Error,
   captured?: Array<{ sql: string; params: unknown[] }>,
 ): BrainEngine {
+  const executeRaw = async (sql: string, params: unknown[]) => {
+    captured?.push({ sql, params });
+    if (rows instanceof Error) throw rows;
+    return rows;
+  };
+  // The check reads through the engine member; it runs the SQL engines' statement through the same stub handler.
   return {
-    executeRaw: async (sql: string, params: unknown[]) => {
-      captured?.push({ sql, params });
-      if (rows instanceof Error) throw rows;
-      return rows;
-    },
+    executeRaw,
+    listVolunteerChannels: (sourceIds: readonly string[] | null) => listVolunteerChannels(executeRaw as never, sourceIds),
   } as unknown as BrainEngine;
 }
 

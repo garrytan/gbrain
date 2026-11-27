@@ -78,9 +78,9 @@ describe('terminal-failure gauges on /metrics', () => {
   test('scrapes inside the TTL share one aggregate query; the next one after it reads again', async () => {
     let queries = 0;
     const counted = new Proxy(engine, { get(target, key) {
-      if (key === 'executeRaw') return (sql: string, params?: unknown[], opts?: unknown) => {
-        if (sql.includes('GROUPING SETS')) queries++;
-        return target.executeRaw(sql, params, opts as never);
+      if (key === 'readTerminalFailureGroups') return (query: Parameters<BrainEngine['readTerminalFailureGroups']>[0], opts?: Parameters<BrainEngine['readTerminalFailureGroups']>[1]) => {
+        queries++;
+        return target.readTerminalFailureGroups(query, opts);
       };
       return Reflect.get(target, key);
     } }) as BrainEngine;

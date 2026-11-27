@@ -10,7 +10,7 @@ import { projectionBacklog } from './projections.ts';
 import { IMAGE_SEAL_PAGES_PER_SECOND, projectionDrainMinutes } from './image-seal.ts';
 
 /** The notice lines, or null when no image page waits. */
-export async function projectionUpgradeNotice(engine: BrainEngine): Promise<string[] | null> {
+export async function projectionUpgradeNotice(engine: Pick<BrainEngine, 'readProjectionBacklog'>): Promise<string[] | null> {
   const backlog = await projectionBacklog(engine);
   if (!backlog.sealable && !backlog.reimport) return null;
   const sealing = backlog.sealable

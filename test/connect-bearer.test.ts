@@ -23,6 +23,7 @@ import { tmpdir } from 'os';
 import { join } from 'path';
 import { probeBrainIdentity } from '../src/core/connect-probe.ts';
 import { discoverOAuth, mintClientCredentialsToken } from '../src/core/remote-mcp-probe.ts';
+import { envWithoutDatabaseUrl } from './helpers/cli-spawn.ts';
 
 const PORT = 19735; // avoid the production 3131 + the oauth E2E's 19131
 const BASE = `http://127.0.0.1:${PORT}`;
@@ -98,7 +99,7 @@ describe('connect bearer probe E2E (PGLite + real serve --http)', () => {
       expect(r.identity).toMatch(/version/);
       expect(r.identity).toMatch(/pglite/);
     }
-  }, 30_000);
+  });
 
   test('initialize handshake serves the canonical agent contract as instructions', async () => {
     // The `serve --http` lane builds its own per-request MCP Server — the
@@ -125,21 +126,21 @@ describe('connect bearer probe E2E (PGLite + real serve --http)', () => {
     } finally {
       try { await client.close(); } catch { /* best-effort */ }
     }
-  }, 30_000);
+  });
 
   test('wrong token classifies as auth', async () => {
     expect(serverReady).toBe(true);
     const r = await probeBrainIdentity(MCP_URL, 'gbrain_deadbeef', { timeoutMs: 15_000 });
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.reason).toBe('auth');
-  }, 30_000);
+  });
 
   test('unreachable host classifies as unreachable or timeout', async () => {
     // 127.0.0.1:1 is reserved/closed — connection refused or fast timeout.
     const r = await probeBrainIdentity('http://127.0.0.1:1/mcp', token, { timeoutMs: 4_000 });
     expect(r.ok).toBe(false);
     if (!r.ok) expect(['unreachable', 'timeout']).toContain(r.reason);
-  }, 15_000);
+  });
 
   // -------------------------------------------------------------------------
   // Real-CLI coverage: drive the actual `claude` / `codex` binaries through
@@ -161,7 +162,7 @@ describe('connect bearer probe E2E (PGLite + real serve --http)', () => {
     const r = spawnSync('bun', ['run', 'src/cli.ts', 'connect', ...args], {
       cwd: process.cwd(),
       encoding: 'utf8',
-      env: { ...process.env, GBRAIN_HOME: home, ...extraEnv },
+      env: { ...envWithoutDatabaseUrl(), GBRAIN_HOME: home, ...extraEnv },
     });
     return { code: r.status ?? 1, out: `${r.stdout ?? ''}\n${r.stderr ?? ''}` };
   };
@@ -213,7 +214,7 @@ describe('connect bearer probe E2E (PGLite + real serve --http)', () => {
     expect(r.out).toContain(`:${PORT}/mcp`);
     expect(r.out).toContain(token); // print mode shows the token to paste into the connector
     expect(r.out).toMatch(/Settings.+Connectors/);
-  }, 30_000);
+  });
 
   // The OAuth path Perplexity actually uses, proven end-to-end against the live
   // server: register a client → connect --oauth formats it → mint a real

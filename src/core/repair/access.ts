@@ -15,20 +15,11 @@ export const accessRepair: RepairHandler = {
   publication: 'projection',
   embeds: false,
   async plan(engine, scope, after) {
-    const rows = await engine.executeRaw<{ id: number; source_id: string; slug: string }>(
-      `SELECT id, source_id, slug FROM pages
-        WHERE source_id = ANY($1::text[]) AND id > $2
-          AND (frontmatter ? 'readable_by' OR page_readers IS NOT NULL)
-          AND page_readers IS DISTINCT FROM gbrain_access_readers(frontmatter)
-        ORDER BY id`,
-      [scope.source_ids, after?.phase === 0 ? after.id : 0]);
-    const items: RepairItem[] = rows.map(row => ({ cursor: { phase: 0, id: Number(row.id) }, source_id: row.source_id, slug: row.slug, chars: 0, action: 'derive_page_readers' }));
+    const rows = await engine.listAccessReaderDrift(scope.source_ids, after?.phase === 0 ? after.id : 0);
+    const items: RepairItem[] = rows.map(row => ({ cursor: { phase: 0, id: row.id }, source_id: row.source_id, slug: row.slug, chars: 0, action: 'derive_page_readers' }));
     return { items, residuals: {} };
   },
   async apply(ctx, item) {
-    const rows = await ctx.engine.executeRaw<{ id: number }>(
-      `UPDATE pages SET page_readers = gbrain_access_readers(frontmatter)
-        WHERE id = $1 AND page_readers IS DISTINCT FROM gbrain_access_readers(frontmatter) RETURNING id`, [item.cursor.id]);
-    return rows.length > 0;
+    return ctx.engine.deriveAccessReaders(item.cursor.id);
   },
 };

@@ -1,8 +1,9 @@
 /**
- * Facts and their supersession chains (BrainEngine insertFact, insertFacts, deleteFactsForPage, expireFact,
+ * Facts and their supersession chains (BrainEngine insertFact, insertFacts, deleteFactsForPage, expireFact, expireFactSuperseded, expireFactAtDate,
  * listFactsByEntity, listFactsSince, listFactsKeyset, listFactsBySession, listSupersessions, countUnconsolidatedFacts,
  * findCandidateDuplicates, consolidateFact, findTrajectory, getFactsHealth, migrateFactsToCanonical, listUnattributedFacts,
- * pageCollapseFacts, listFenceRetireCandidates).
+ * pageCollapseFacts, listFenceRetireCandidates, readFactPreimages, restoreFactPreimage, listFactIdsBySourcePrefix,
+ * expireFactRows).
  *
  * Each member applies the defaults and clamps of src/core/engine-sql/facts.ts, then makes one store call. What the
  * store cannot answer exactly refuses with `engine_capability_missing` (a read eligibility policy goes to the store on
@@ -21,22 +22,20 @@ import { clampSearchLimit, MAX_SEARCH_LIMIT, type BrainEngine, type FactListOpts
 import { escapeLikePattern } from '../../cjk.ts';
 import { valueHash } from '../../chronicle/ontology.ts';
 import { ensureWellFormed } from '../../text-safe.ts';
-import { getFtsLanguage } from '../../fts-language.ts';
-import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
+import { refuseMember, storeCall, storeFtsConfig, takeOptions, type StoreMember } from './common.ts';
 import { storePrivacyPolicy } from './private-provenance.ts';
 import { storeVisibility } from './fact-visibility.ts';
 import { privateProvenanceFilterUnderPolicy } from '../../search/private-visibility.ts';
 import { withDates } from '../store-codec.ts';
+import { FACT_DATES, withVector } from './fact-codec.ts';
+import { checkFactIds, checkFactSourcePrefix, type FactPreimage } from '../../engine-sql/facts.ts';
+import { facetOfMetric } from '../../profile/facets.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
 type FactRow = Awaited<ReturnType<BrainEngine['listFactsByEntity']>>[number];
 type TrajectoryPoint = Awaited<ReturnType<BrainEngine['findTrajectory']>>[number];
 type Row = Record<string, unknown>;
 
-const FACT_DATES = ['valid_from', 'valid_until', 'expired_at', 'consolidated_at', 'embedded_at', 'created_at'] as const;
-/** A returned vector (a number list or null) as the `Float32Array` PGLite hands back. */
-const withVector = (row: Row): Row =>
-  Array.isArray(row.embedding) ? { ...row, embedding: new Float32Array(row.embedding as number[]) } : row;
 const facts = (rows: Row[]): FactRow[] => rows.map((row) => withDates(withVector(row), FACT_DATES) as unknown as FactRow);
 
 /** PGLite's inlined vector literal (engine-sql/facts.ts `toPgVectorLiteral`). */
@@ -173,6 +172,16 @@ export const expireFact: Member<'expireFact'> = (brain, id, opts) => {
   }));
 };
 
+/** forget's supersession or retirement expiry (engine-sql/facts-trust.ts): ends the fact at `validUntil`, else at its own earlier end or now. */
+export const expireFactSuperseded: Member<'expireFactSuperseded'> = async (brain, factId, validUntil) => {
+  await storeCall({ member: 'expireFactSuperseded' }, () => brain.expireFactUntil({ id: factId, until: validUntil }));
+};
+
+/** forget's file-mirror stamp (engine-sql/facts-trust.ts): ends the fact at the day text, which the store reads as UTC midnight. */
+export const expireFactAtDate: Member<'expireFactAtDate'> = async (brain, factId, today) => {
+  await storeCall({ member: 'expireFactAtDate' }, () => brain.expireFactUntil({ id: factId, until: today }));
+};
+
 export const listFactsByEntity: Member<'listFactsByEntity'> = async (brain, sourceId, entitySlug, opts) => {
   const q = listQuery('listFactsByEntity', sourceId, opts, false);
   const rows: Row[] = await storeCall({ member: 'listFactsByEntity' }, () => brain.listFactsByEntity({
@@ -251,14 +260,38 @@ export const countUnconsolidatedFacts: Member<'countUnconsolidatedFacts'> = (bra
   storeCall({ member: 'countUnconsolidatedFacts' }, () => brain.countUnconsolidatedFacts(sourceId));
 
 /** The store reads the page's rows by number; ids come back as numbers, and the times as the `jsonb` text PGLite's statement gives. */
-export const listFenceRetireCandidates: Member<'listFenceRetireCandidates'> = async (brain, target) => {
-  const rows = await storeCall({ member: 'listFenceRetireCandidates', slug: target.slug, sourceId: target.sourceId },
-    () => brain.listFenceRetireCandidates({ sourceId: target.sourceId, slug: target.slug, incoming: target.incoming })) as Row[];
-  return rows.map((row) => ({
-    ...row, id: Number(row.id),
-    superseded_by: row.superseded_by == null ? null : Number(row.superseded_by),
-    consolidated_into: row.consolidated_into == null ? null : Number(row.consolidated_into),
-  })) as unknown as Awaited<ReturnType<BrainEngine['listFenceRetireCandidates']>>;
+/** A before-state row as the store returns it: ids as numbers, the times as the `jsonb` text PGLite's statement gives. */
+const preimageRows = (rows: Row[]): FactPreimage[] => rows.map((row) => ({
+  ...row, id: Number(row.id),
+  superseded_by: row.superseded_by == null ? null : Number(row.superseded_by),
+  consolidated_into: row.consolidated_into == null ? null : Number(row.consolidated_into),
+})) as unknown as FactPreimage[];
+
+export const listFenceRetireCandidates: Member<'listFenceRetireCandidates'> = async (brain, target) =>
+  preimageRows(await storeCall({ member: 'listFenceRetireCandidates', slug: target.slug, sourceId: target.sourceId },
+    () => brain.listFenceRetireCandidates({ sourceId: target.sourceId, slug: target.slug, incoming: target.incoming })) as Row[]);
+
+/** The store reads each fact by id and keeps those of the source; ids that are not whole numbers refuse as on PGLite. */
+export const readFactPreimages: Member<'readFactPreimages'> = async (brain, sourceId, ids) => {
+  checkFactIds('readFactPreimages', ids);
+  if (!ids.length) return [];
+  return preimageRows(await storeCall({ member: 'readFactPreimages', sourceId }, () => brain.readFactPreimages(sourceId, [...ids])) as Row[]);
+};
+
+/** The store checks every argument as Postgres casts it, then rewrites the row when its source, claim and visibility match. */
+export const restoreFactPreimage: Member<'restoreFactPreimage'> = (brain, sourceId, preimage) =>
+  storeCall({ member: 'restoreFactPreimage', sourceId }, () => brain.restoreFactPreimage(sourceId, preimage));
+
+/** The prefix is matched literally (`starts_with`), so a LIKE wildcard refuses here as it does on every engine. */
+export const listFactIdsBySourcePrefix: Member<'listFactIdsBySourcePrefix'> = async (brain, sourceId, slug, sourcePrefix) => {
+  checkFactSourcePrefix('listFactIdsBySourcePrefix', sourcePrefix);
+  return (await storeCall({ member: 'listFactIdsBySourcePrefix', sourceId }, () => brain.listFactIdsBySourcePrefix({ sourceId, slug, sourcePrefix })) as number[]).map(Number);
+};
+
+export const expireFactRows: Member<'expireFactRows'> = async (brain, sourceId, ids) => {
+  checkFactIds('expireFactRows', ids);
+  if (!ids.length) return;
+  await storeCall({ member: 'expireFactRows', sourceId }, () => brain.expireFactRows(sourceId, [...ids]));
 };
 
 export const findCandidateDuplicates: Member<'findCandidateDuplicates'> = async (brain, sourceId, entitySlug, factText, opts) => {
@@ -266,12 +299,12 @@ export const findCandidateDuplicates: Member<'findCandidateDuplicates'> = async 
     ['k', 'embedding', 'embeddingModel', 'arm', 'attributedTo', 'excludeMemberPages', 'onlyPage']) as NonNullable<typeof opts>;
   const keyword = o.arm === 'keyword';
   if (o.embedding && !o.embeddingModel) return [];
-  // The store's full-text search is the `english` configuration only.
-  if (keyword && getFtsLanguage() !== 'english') refuseMember('findCandidateDuplicates', `the keyword arm in FTS language ${getFtsLanguage()}`);
+  // The keyword arm parses both texts at query time, under a configuration the store ports.
+  const ftsConfig = keyword ? storeFtsConfig('findCandidateDuplicates', 'the keyword arm in FTS language') : undefined;
   const rows: Row[] = await storeCall({ member: 'findCandidateDuplicates' }, () => brain.findCandidateDuplicates({
     sourceId, entitySlug, k: Math.min(Math.max(o.k ?? 5, 1), 20), attributedTo: o.attributedTo || undefined,
     onlyPage: o.onlyPage || undefined, excludeMemberPages: o.excludeMemberPages === true,
-    ...(keyword ? { keyword: true, factText: wellFormed(factText) } : {}),
+    ...(keyword ? { keyword: true, factText: wellFormed(factText), ftsConfig } : {}),
     ...(o.embedding ? { embedding: vectorLiteral(o.embedding), embeddingModel: o.embeddingModel } : {}),
   }));
   return facts(rows);
@@ -281,6 +314,8 @@ export const consolidateFact: Member<'consolidateFact'> = async (brain, id, take
   await storeCall({ member: 'consolidateFact' }, () => brain.consolidateFact(id, takeId));
 };
 
+const TRAJECTORY_NATIVE_PAGE = 500;
+
 export const findTrajectory: Member<'findTrajectory'> = async (brain, opts) => {
   const o = takeOptions('findTrajectory', opts,
     ['entitySlug', 'sourceId', 'sourceIds', 'remote', 'metric', 'kind', 'since', 'until', 'limit', 'excludePrivate']) as unknown as typeof opts;
@@ -288,13 +323,29 @@ export const findTrajectory: Member<'findTrajectory'> = async (brain, opts) => {
   // A world-only read is widened per row for the caller's member page and private-facts grant, as the lists are.
   const widen = worldOnly ? storeVisibility('findTrajectory', ['world']).widen : undefined;
   const sourceIds = Array.isArray(o.sourceIds) && o.sourceIds.length > 0 ? [...new Set(o.sourceIds)] : [o.sourceId ?? 'default'];
-  const rows: Row[] = await storeCall({ member: 'findTrajectory' }, () => brain.findTrajectory({
+  const limit = clampSearchLimit(o.limit, 100, 500);
+  const read = (until: string | undefined): Promise<Row[]> => storeCall({ member: 'findTrajectory' }, () => brain.findTrajectory({
     sourceIds, entitySlug: o.entitySlug, worldOnly, ...(widen ? { widen } : {}), metric: o.metric ?? undefined, kind: o.kind ?? 'all',
-    since: o.since ? new Date(o.since).toISOString() : undefined, until: o.until ? new Date(o.until).toISOString() : undefined,
-    limit: clampSearchLimit(o.limit, 100, 500),
+    since: o.since ? new Date(o.since).toISOString() : undefined, until,
+    limit: TRAJECTORY_NATIVE_PAGE,
     excludePrivate: factPolicy('findTrajectory', o.excludePrivate),
   }));
-  return rows.map((row) => withDates(withVector(row), ['valid_from', 'valid_until']) as unknown as TrajectoryPoint);
+  // Lane 3 P1: profile.<facet> claims are never trajectory points (engine-sql/facts.ts filters them in SQL). The native read
+  // has no metric filter and returns the newest rows in date order, so it is paged back in time (until: the oldest row read,
+  // whose ties the next read repeats) until `limit` other rows are found or history ends; the page is the last `limit` of them.
+  const seen = new Set<unknown>();
+  let points: Row[] = [];
+  let until = o.until ? new Date(o.until).toISOString() : undefined;
+  for (let first = true; ; first = false) {
+    const rows = await read(until);
+    const fresh = first ? rows : rows.filter((row) => !seen.has(row.fact_id));
+    for (const row of fresh) seen.add(row.fact_id);
+    points = [...fresh.filter((row) => facetOfMetric(row.metric as string | null) === null), ...points];
+    if (rows.length < TRAJECTORY_NATIVE_PAGE || points.length >= limit || fresh.length === 0) break;
+    until = String(rows[0]!.valid_from);
+  }
+  return points.slice(Math.max(0, points.length - limit))
+    .map((row) => withDates(withVector(row), ['valid_from', 'valid_until']) as unknown as TrajectoryPoint);
 };
 
 export const getFactsHealth: Member<'getFactsHealth'> = (brain, sourceId) =>

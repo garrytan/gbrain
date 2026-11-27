@@ -25,7 +25,7 @@
 import type { BrainEngine } from '../engine.ts';
 import type { OperationContext } from '../operations.ts';
 import { loadActivePackForEngine } from './engine-resolution.ts';
-import { rethrowCapabilityMissing } from '../rust-engine/errors.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 export { readDbSchemaPack } from './engine-resolution.ts';
 import type { ResolvedPack } from './registry.ts';
 
@@ -58,7 +58,7 @@ export async function loadActivePackBestEffort(
     });
   } catch (e) {
     // `rethrowRefusal`: a capability refusal (an engine that cannot read config) throws instead of reading as no pack.
-    if (opts.rethrowRefusal) rethrowCapabilityMissing(e);
+    if (opts.rethrowRefusal) rethrowCapabilityRefusal(e);
     return null;
   }
 }

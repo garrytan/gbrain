@@ -1,28 +1,29 @@
 /**
  * The typed reads of stamped trust tiers (src/core/engine-sql/trust-tier-reads.ts), served from the trust store
  * (rust/crates/gbrain-store/src/trust/tier_reads.rs): `listCorePageRows`, `listTrustScanRows` and
- * `countUnscannedTrustRows` over pages and facts, `listVersionTrustTiers`, `listVersionReasonWriters` and
- * `listPageRefsByIds`; and the
- * valid-time reads (trust/valid_time.rs) `listValidTimeIdentities` and `pickValidTimeEdition`, and
+ * `countUnscannedTrustRows` over pages, facts, takes and timeline entries, `listVersionTrustTiers`, `listVersionReasonWriters` and
+ * `listPageRefsByIds`, `listPageQuoteTiers`, `listPageTrustTiersByKey` and `lockLivePagesByKey`; the belief history reads `readBeliefHistoryRows`
+ * and `listVisibleBeliefLifetimes` (trust/belief_history.rs); and the valid-time reads (trust/valid_time.rs) `listValidTimeIdentities` and `pickValidTimeEdition`, and
  * `listAmendmentsNotApplied` (link_queries/link_temporal.rs), `readPageVersionEdition` and
- * `readCursorEdition` (trust/valid_time.rs). `pageAwaitsRederive` answers false: the store keeps no `needs_rederive`
- * queue (only a raw-SQL purge writes one, and `executeRaw` refuses here). `beginSnapshotRead` sets no isolation level: a store transaction is one
+ * `readCursorEdition` (trust/valid_time.rs). `pageAwaitsRederive` reads the store's `needs_rederive` queue
+ * (generations/needs_rederive.rs, written by `markNeedsRederive`). `beginSnapshotRead` sets no isolation level: a store transaction is one
  * snapshot already. Its `READ ONLY` is enforced: every later write in the transaction refuses as Postgres refuses it.
  *
  * Refused (`engine_capability_missing`); the members this file does not export refuse as every unserved member does:
  *  - `listCorePageRows` under `excludePrivate` for a caller whose page policy is neither the no-caller one nor the
  *    canonical one for its reader identity and private-readable sources (the remote floor: for no readers), such as
  *    a lineage read or a labelled-only, owner or audience caller;
- *  - the trust scan over `takes` and `timeline_entries`, which the store does not stamp yet;
- *  - `readBeliefHistoryRows` and `listVisibleBeliefLifetimes`, always and before any store call: the store keeps no
- *    belief ledger (every `belief_events` and `belief_page_lifetimes` write goes through `executeRaw`), so a read could
- *    only answer an empty list where PGLite has events (TODOS.md `rust-belief-ledger`);
+ *  - `readBeliefHistoryRows` and `listVisibleBeliefLifetimes` for a caller whose remote read floor is not the page
+ *    policy of no readers (a labelled-only caller);
  *  - `listValidTimeIdentities` under `excludePrivate`, and `pickValidTimeEdition` always, for a caller whose page or
  *    snapshot policy is neither the no-caller one nor the canonical one for its reader identity and private-readable
  *    sources (a labelled-only, owner, audience or lineage caller; the pick reports every row's visibility);
- *  - `pickValidTimeEdition` on a date that is not `YYYY-MM-DD`, rather than guess at Postgres's text order. The store
- *    prunes versions as PGLite does (`version_prune.rs`), so the pick reads the same retained history, each version's
- *    change reason and `successor_pruned` mark, and the page's `version_history_gap_at`;
+ *  - `pickValidTimeEdition` on a date that is not `YYYY-MM-DD`, rather than guess at Postgres's text order, and over
+ *    a history PGLite would have pruned (more large inline versions than it keeps, a segmented version, a long
+ *    holding page): the store never prunes, so its answer would count editions PGLite no longer has and miss the gap
+ *    it records (TODOS.md `rust-version-prune`). `reason`, `introduced_because` and `gap_at` read what
+ *    `createVersion` stamped (a sync's Git reason and history gap); the raw-SQL reason writers are still refused
+ *    (TODOS.md `rust-version-change-reason`);
  *  - `listAmendmentsNotApplied` under `excludePrivate` for a caller whose remote read floor is not the page policy of
  *    no readers (a labelled-only caller), and on dates that are not `YYYY-MM-DD`;
  *  - a limit, cursor or id that is not an integer, rather than guess at PGLite's bind error.
@@ -41,7 +42,7 @@ import { judgeWidenedCaller, renderForStoreCaller, storePagePolicy, storePageTex
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
 
-const SCAN_TABLES = new Set(['pages', 'facts']);
+const SCAN_TABLES = new Set(['pages', 'facts', 'takes', 'timeline_entries']);
 
 function requireCount(member: string, name: string, value: number): void {
   if (!Number.isSafeInteger(value) || value < 0) refuseMember(member, `a ${name} that is not a non-negative integer`);
@@ -50,6 +51,12 @@ function requireCount(member: string, name: string, value: number): void {
 function requireInteger(member: string, name: string, value: number): void {
   if (!Number.isSafeInteger(value)) refuseMember(member, `a ${name} that is not an integer`);
 }
+
+/**
+ * `listPendingCoreEditNotices`: the store keeps no core edit notices (their only writer, the core guard in
+ * persistence/core-guard.ts, goes through `executeRaw`, which this engine refuses), so none is pending.
+ */
+export const listPendingCoreEditNotices: Member<'listPendingCoreEditNotices'> = async () => [];
 
 export const listCorePageRows: Member<'listCorePageRows'> = (brain, spec) => {
   const member = 'listCorePageRows';
@@ -73,7 +80,6 @@ export const listCorePageRows: Member<'listCorePageRows'> = (brain, spec) => {
 
 export const listTrustScanRows: Member<'listTrustScanRows'> = (brain, spec) => {
   const member = 'listTrustScanRows';
-  if (!SCAN_TABLES.has(spec.table)) refuseMember(member, `the ${spec.table} table, whose rows the store does not stamp`);
   requireInteger(member, 'cursor', spec.afterId);
   requireCount(member, 'limit', spec.limit);
   return storeCall({ member }, () => brain.listTrustScanRows({ table: spec.table, afterId: spec.afterId, limit: spec.limit, tiers: [...spec.tiers] }));
@@ -81,7 +87,6 @@ export const listTrustScanRows: Member<'listTrustScanRows'> = (brain, spec) => {
 
 export const countUnscannedTrustRows: Member<'countUnscannedTrustRows'> = (brain, spec) => {
   const member = 'countUnscannedTrustRows';
-  if (!SCAN_TABLES.has(spec.table)) refuseMember(member, `the ${spec.table} table, whose rows the store does not stamp`);
   requireInteger(member, 'cursor', spec.afterId);
   if (spec.until !== null) requireInteger(member, 'ceiling', spec.until);
   return storeCall({ member }, () => brain.countUnscannedTrustRows({ table: spec.table, afterId: spec.afterId, until: spec.until, tiers: [...spec.tiers] }));
@@ -108,12 +113,58 @@ export const listPageRefsByIds: Member<'listPageRefsByIds'> = async (brain, ids)
   return rows.map(r => ({ id: Number(r.id), source_id: r.source_id, slug: r.slug, type: r.type ?? null }));
 };
 
-/** Why the belief reads refuse: an answer from the store would be an empty ledger, never the one PGLite keeps. */
-const NO_BELIEF_LEDGER = 'the belief ledger, which the store does not keep yet';
+export const listPageQuoteTiers: Member<'listPageQuoteTiers'> = async (brain, spec) => {
+  const member = 'listPageQuoteTiers';
+  let args: { ids: number[] } | { slug: string; sourceIds: string[] };
+  if ('ids' in spec) {
+    if (spec.ids.length === 0) return [];
+    for (const id of spec.ids) requireInteger(member, 'page id', id);
+    args = { ids: [...spec.ids] };
+  } else {
+    if (spec.sourceIds.length === 0) return [];
+    args = { slug: spec.slug, sourceIds: [...spec.sourceIds] };
+  }
+  const rows: Array<{ id: number; type: string | null; trust_tier: string | null }> =
+    await storeCall({ member }, () => brain.listPageQuoteTiers(args));
+  return rows.map(r => ({ id: Number(r.id), type: r.type ?? null, trust_tier: r.trust_tier ?? null }));
+};
 
-export const readBeliefHistoryRows: Member<'readBeliefHistoryRows'> = async () => refuseMember('readBeliefHistoryRows', NO_BELIEF_LEDGER);
+export const listPageTrustTiersByKey: Member<'listPageTrustTiersByKey'> = async (brain, refs) => {
+  if (refs.length === 0) return [];
+  const rows: Array<{ id: number; source_id: string; slug: string; trust_tier: string | null }> = await storeCall(
+    { member: 'listPageTrustTiersByKey' }, () => brain.listPageTrustTiersByKey(refs.map(r => ({ source_id: r.source_id, slug: r.slug }))));
+  return rows.map(r => ({ id: Number(r.id), source_id: r.source_id, slug: r.slug, trust_tier: r.trust_tier ?? null }));
+};
 
-export const listVisibleBeliefLifetimes: Member<'listVisibleBeliefLifetimes'> = async () => refuseMember('listVisibleBeliefLifetimes', NO_BELIEF_LEDGER);
+/** A store transaction is serialized, so the live check needs no row lock: no other write runs until it commits. */
+export const lockLivePagesByKey: Member<'lockLivePagesByKey'> = async (brain, refs) => {
+  if (refs.length === 0) return [];
+  return storeCall({ member: 'lockLivePagesByKey' }, () => brain.lockLivePagesByKey(refs.map(r => ({ source_id: r.source_id, slug: r.slug }))));
+};
+
+/** The remote read floor over `p` that `stream_visible` and the visible lifetimes are judged by. */
+const beliefFloor = (member: string) => storePageTextPolicy(member, () => remoteReadFloorSql('p'), { noReaders: true });
+
+export const readBeliefHistoryRows: Member<'readBeliefHistoryRows'> = async (brain, q) => {
+  const member = 'readBeliefHistoryRows';
+  requireInteger(member, 'cursor', q.afterId);
+  requireCount(member, 'limit', q.limit);
+  if (q.beforeId !== null) requireInteger(member, 'cursor', q.beforeId);
+  const floor = beliefFloor(member);
+  const rows: Array<Record<string, unknown>> = await storeCall({ member }, () => brain.readBeliefHistoryRows({
+    sourceId: q.sourceId, slug: q.slug, subjectKey: q.subjectKey, afterId: q.afterId, limit: q.limit,
+    recordedAfter: q.recordedAfter, recordedUntil: q.recordedUntil, subjectKeys: q.subjectKeys ? [...q.subjectKeys] : null,
+    beforeId: q.beforeId, descending: q.descending, floor,
+  }));
+  // PGLite answers timestamptz columns as dates.
+  return rows.map(r => ({ ...r, recorded_at: asDate(r.recorded_at), source_time: asDate(r.source_time) }));
+};
+
+export const listVisibleBeliefLifetimes: Member<'listVisibleBeliefLifetimes'> = async (brain, lifetimes) => {
+  const member = 'listVisibleBeliefLifetimes';
+  const floor = beliefFloor(member);
+  return storeCall({ member }, () => brain.listVisibleBeliefLifetimes({ lifetimes: [...lifetimes], floor }));
+};
 
 export const listValidTimeIdentities: Member<'listValidTimeIdentities'> = (brain, spec) => {
   const member = 'listValidTimeIdentities';
@@ -183,10 +234,10 @@ export const readCursorEdition: Member<'readCursorEdition'> = (brain, spec) => {
   return storeCall({ member }, () => brain.readCursorEdition({ pageId: spec.pageId, revision: String(spec.revision) }));
 };
 
-/** No page awaits re-derivation: the store keeps no `needs_rederive` queue (rust/docs/store/takes.md). */
-export const pageAwaitsRederive: Member<'pageAwaitsRederive'> = async (_brain, pageId) => {
+/** Whether a purge marked the page in `needs_rederive` (generations/needs_rederive.rs); false for a missing page. */
+export const pageAwaitsRederive: Member<'pageAwaitsRederive'> = async (brain, pageId) => {
   requireInteger('pageAwaitsRederive', 'page id', pageId);
-  return false;
+  return storeCall({ member: 'pageAwaitsRederive' }, () => brain.pageAwaitsRederive(pageId));
 };
 
 /**

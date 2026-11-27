@@ -37,6 +37,19 @@ impl Brain {
         })
     }
 
+    /// `clearCodeEdgesLeavingChunks(chunkIds)`: resolves null.
+    #[napi]
+    pub fn clear_code_edges_leaving_chunks<'env>(
+        &self,
+        env: &'env Env,
+        chunk_ids: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let ids: Vec<Value> = required(chunk_ids, "clearCodeEdgesLeavingChunks chunkIds")?;
+            s.clear_code_edges_leaving_chunks(&ids)
+        })
+    }
+
     /// `getCallersOf(name, opts)`: the resolved lookup (see `EdgeLookup`).
     #[napi]
     pub fn get_callers_of<'env>(

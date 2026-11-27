@@ -13,18 +13,30 @@
 import { describe, expect, test } from 'bun:test';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { loadRepairBusySet, repairBusy, repairBusyError, repairBusyMessage } from '../src/core/persistence/repair-busy.ts';
+import type { LegacyUnscopedRead } from '../src/core/engine-sql/brands.ts';
+import { readRepairBusyRows } from '../src/core/engine-sql/repair-busy.ts';
 
 type Rows = Record<string, unknown>[];
-/** An engine whose executeRaw answers by the table the SQL names; `fail` throws for SQL containing it. */
+/**
+ * An engine whose busy-row member runs the real statements (engine-sql/repair-busy.ts) over an executeRaw that answers by
+ * the table the SQL names, and whose checkpoint read answers the frozen manifests; `fail` throws for SQL containing it.
+ */
 function stub(answers: { pending?: Rows; cursors?: Rows; holds?: Rows; manifests?: Record<string, unknown> }, fail?: string): BrainEngine {
-  return { async executeRaw(sql: string, params: unknown[] = []) {
+  const raw = { async executeRaw(sql: string, params: unknown[] = []) {
     if (fail && sql.includes(fail)) throw new Error(`boom: ${fail}`);
     if (sql.includes('FROM persistence_requests')) return answers.pending ?? [];
     if (sql.includes("op='managed-sync' ")) return params[1] === INC ? answers.cursors ?? [] : [];
-    if (sql.includes("op='managed-sync-manifest'")) { const entries = answers.manifests?.[String(params[0])]; return entries === undefined ? [] : [{ entries }]; }
     if (sql.includes('FROM op_checkpoints') && params[0] === 'sync-hold') return answers.holds ?? [];
     throw new Error(`unexpected SQL: ${sql}`);
-  } } as unknown as BrainEngine;
+  } } as unknown as LegacyUnscopedRead;
+  return {
+    readRepairBusyRows: (sourceId: string, incarnation: string) => readRepairBusyRows(raw, sourceId, incarnation),
+    async readOpCheckpointRecord(op: string, fingerprint: string) {
+      if (op !== 'managed-sync-manifest') throw new Error(`unexpected checkpoint read: ${op}`);
+      const entries = answers.manifests?.[fingerprint];
+      return entries === undefined ? null : { completed_keys: entries };
+    },
+  } as unknown as BrainEngine;
 }
 const INC = 'inc-1';
 

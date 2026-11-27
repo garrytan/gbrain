@@ -8,13 +8,34 @@
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
-import { DELETION_INVENTORY, DELETION_INVENTORY_BY_TABLE } from '../src/core/deletion-inventory.ts';
+import { DELETION_INVENTORY, DELETION_INVENTORY_BY_TABLE, RUST_STORE_INVENTORY } from '../src/core/deletion-inventory.ts';
 
 let engine: PGLiteEngine;
 const TEXT_BEARING = ['text', 'varchar', 'bpchar', 'jsonb', 'json', 'bytea', '_text', '_varchar', 'tsvector', 'vector', 'halfvec'];
 
 beforeAll(async () => { engine = new PGLiteEngine(); await engine.connect({}); await engine.initSchema(); }, 60_000);
 afterAll(async () => { await engine.disconnect(); });
+
+/** The store's keyspace catalog, read from its source: each tag of KEYSPACES, or each kind for a tag that lists them. */
+function rustCatalog(): string[] {
+  const read = (p: string) => readFileSync(new URL(`../rust/crates/gbrain-store/src/${p}`, import.meta.url), 'utf8');
+  const consts = new Map<string, string>();
+  for (const m of read('keys.rs').matchAll(/pub const (\w+): u8 = (?:b'(.)'|(0x[0-9A-Fa-f]+));/g)) consts.set(m[1]!, m[2] ?? m[3]!);
+  const src = read('keyspaces.rs').replace(/\s+/g, ' ');
+  const kindLists = new Map<string, string[]>();
+  for (const m of src.matchAll(/pub const (\w+_KINDS): &\[KeyKind\] = &\[(.*?)\];/g)) {
+    kindLists.set(m[1]!, [...m[2]!.matchAll(/k\( ?(0x[0-9A-Fa-f]+|keys::\w+), ?"(\w+)",? ?\)/g)]
+      .map(k => `${Number(k[1]!.startsWith('keys::') ? consts.get(k[1]!.slice(6)) : k[1])}/${k[2]}`));
+  }
+  const body = src.slice(src.indexOf('pub const KEYSPACES'));
+  const out: string[] = [];
+  for (const m of body.matchAll(/tag: keys::(\w+), family: "(\w+)".*?kinds: (\w+_KINDS)|ks\( ?keys::(\w+), ?"(\w+)"/g)) {
+    const tag = consts.get((m[1] ?? m[4])!)!;
+    if (m[3]) for (const kind of kindLists.get(m[3])!) out.push(`${tag}/${kind}`);
+    else out.push(`${tag}//${m[5]}`);
+  }
+  return out;
+}
 
 describe('deletion inventory', () => {
   test('every text-bearing column of a fresh schema is classified, and no entry names a missing table', async () => {
@@ -42,6 +63,28 @@ describe('deletion inventory', () => {
     for (const table of ['facts', 'takes', 'pages', 'content_chunks', 'page_versions', 'persistence_requests']) {
       expect(DELETION_INVENTORY_BY_TABLE.get(table)?.class).toBe('swept');
     }
+  });
+
+  test('every Rust store keyspace and record kind has one entry, A 0x06 to 0x0A included', () => {
+    const catalog = rustCatalog();
+    expect(catalog.length).toBeGreaterThan(70);
+    expect(RUST_STORE_INVENTORY.map(e => `${e.tag}/${e.kind ?? ''}/${e.name}`)).toEqual(catalog);
+    expect(RUST_STORE_INVENTORY.filter(e => e.tag === 'A' && e.kind! >= 0x06).map(e => e.tables)).toEqual(
+      [['take_horizons'], ['take_nudge_log'], ['take_proposals'], ['take_proposals'], ['extract_rollup_7d']]);
+  });
+
+  test('each Rust entry names inventory tables, or says why it has none', () => {
+    for (const e of RUST_STORE_INVENTORY) {
+      const label = `${e.tag}/${e.kind ?? ''}`;
+      expect({ label, unknown: e.tables.filter(t => !DELETION_INVENTORY_BY_TABLE.has(t)) }).toEqual({ label, unknown: [] });
+      expect({ label, tablesOrReason: e.tables.length > 0 !== (e.none !== undefined) }).toEqual({ label, tablesOrReason: true });
+      if (e.none) expect(['probed_reported', 'text_free_ledger', 'secret_material', 'no_memory_text']).toContain(e.none.reason);
+    }
+    // The stores purge sweeps on SQL keep a Rust keyspace each.
+    // M also keeps each page's sanitized search timeline text (pages.rs, page_search_timeline), so it shares the pages class.
+    expect(RUST_STORE_INVENTORY.find(e => e.tag === 'M')?.tables).toContain('pages');
+    const kept = new Set(RUST_STORE_INVENTORY.flatMap(e => e.tables));
+    for (const table of ['facts', 'takes', 'pages', 'content_chunks', 'page_versions', 'persistence_requests']) expect(kept.has(table)).toBe(true);
   });
 
   test('AGENTS.md still says never promise physical erasure', () => {

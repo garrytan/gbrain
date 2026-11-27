@@ -9,24 +9,27 @@ import type { Operation, OperationContext } from './contract.ts';
 import { opError } from './contract.ts';
 import { hostFix, readFix } from './op-fix.ts';
 import { validateFilename, validatePageSlug, validateUploadPath } from './context.ts';
-import { privatePagesFilterForCaller, resolveExcludePrivatePages } from '../search/private-visibility.ts';
+import { resolveExcludePrivatePages } from '../search/private-visibility.ts';
+import { FILE_LIST_LIMIT } from '../engine-sql/files-ops.ts';
+import { legacySpellings } from './slug-params.ts';
 import { hookSessionCwd } from '../session-cwd.ts';
 import { embeddedSettingsRecord, isEmbeddedEngine } from '../embedded-engine.ts';
 
 // --- File Operations ---
 
-// Both branches need a LIMIT. Without one, the slug-filtered branch materializes
-// every file for that slug — an MCP caller can force unbounded memory consumption
-// by targeting a page with many attachments.
-const FILE_LIST_LIMIT = 100;
-
 /**
- * GBRA-218: a caller under the read policy (every remote caller, stdio included) sees no file attached to a page it
- * cannot read, by the page's id or by its slug in any source (a file row names its page loosely, so it fails closed).
+ * The rows of a file list for `slug` and every other stored spelling a read of it may name (`legacySpellings`: files can outlive
+ * their page or be keyed by the caller's spelling). The typed list members take one slug, so each spelling is listed and the
+ * results merge in the members' own order (byte order of the key, then id), at most FILE_LIST_LIMIT. A list over every page
+ * (no slug) is one call.
  */
-async function fileReadableSql(ctx: OperationContext): Promise<string> {
-  if (!await resolveExcludePrivatePages(ctx.engine, ctx.remote)) return 'TRUE';
-  return `NOT EXISTS (SELECT 1 FROM pages fp WHERE (fp.id = f.page_id OR fp.slug = f.page_slug) AND NOT ${privatePagesFilterForCaller('fp')})`;
+async function listOverSpellings<T>(slug: string | undefined, list: (spelling: string | undefined) => Promise<T[]>, key: (row: T) => [string, number]): Promise<T[]> {
+  if (slug === undefined) return list(undefined);
+  const spellings = legacySpellings(slug);
+  if (spellings.length === 1) return list(spellings[0]);
+  const merged = (await Promise.all(spellings.map(list))).flat();
+  const bytes = new Map(merged.map(row => [row, Buffer.from(key(row)[0])]));
+  return merged.sort((a, b) => Buffer.compare(bytes.get(a)!, bytes.get(b)!) || key(a)[1] - key(b)[1]).slice(0, FILE_LIST_LIMIT);
 }
 
 const file_list: Operation = {
@@ -42,9 +45,8 @@ const file_list: Operation = {
   localOnly: true,
   handler: async (ctx, p) => {
     const slug = p.slug as string | undefined;
-    const rows = await ctx.engine.executeRaw<Record<string, unknown>>(`SELECT id, page_slug, filename, storage_path, mime_type, size_bytes, content_hash, created_at
-      FROM files f WHERE (${slug === undefined ? 'TRUE' : 'f.page_slug = $2'}) AND ${await fileReadableSql(ctx)}
-      ORDER BY ${slug === undefined ? 'page_slug, filename' : 'filename'} LIMIT $1`, slug === undefined ? [FILE_LIST_LIMIT] : [FILE_LIST_LIMIT, slug]);
+    const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote);
+    const rows = await listOverSpellings(slug, spelling => ctx.engine.listReadableFileRows(spelling, excludePrivate), row => [String(row.filename), Number(row.id)]);
     // Postgres returns size_bytes (BIGINT) as native BigInt — JSON.stringify
     // throws on those, breaking MCP callers. PGLite returns Number already.
     // 9 PB ceiling (2^53 bytes) is far above any plausible file size.
@@ -84,6 +86,7 @@ const file_upload: Operation = {
     // Default is strict when ctx.remote is undefined (defense-in-depth).
     const strict = ctx.remote !== false;
     validateUploadPath(filePath, hookSessionCwd(), strict);
+    (await import('../owned-folder/paths.ts')).assertNotOwnedRoot(filePath, 'file_upload refuses');
     if (pageSlug) validatePageSlug(pageSlug);
     const filename = basename(filePath);
     validateFilename(filename);
@@ -126,15 +129,13 @@ const file_upload: Operation = {
     // #8513: the row names the caller's source and the page's id there, so purging that page finds it in any source.
     // The source is checked before any bytes are written, so a refused upload leaves the object at storagePath as it was.
     const sourceId = ctx.sourceId ?? 'default';
-    if (!(await ctx.engine.executeRaw('SELECT 1 FROM sources WHERE id = $1', [sourceId])).length) throw opError('unknown_source',
+    if (!(await ctx.engine.sourceIdExists(sourceId))) throw opError('unknown_source',
       `No source "${sourceId}", so nothing was uploaded.`, 'Upload under a registered source (gbrain sources list).');
-    const [page] = pageSlug ? await ctx.engine.executeRaw<{ id: number }>('SELECT id FROM pages WHERE slug = $1 AND source_id = $2', [pageSlug, sourceId]) : [];
+    const pageId = pageSlug ? await ctx.engine.readPageIdInSource(pageSlug, sourceId) : null;
 
-    const { executeRawJsonb, FILES_METADATA_MERGE_SQL } = await import('../sql-query.ts');
-    const [owner] = await ctx.engine.executeRaw<{ source_id: string; page_id: number | null; content_hash: string }>(
-      'SELECT source_id, page_id, content_hash FROM files WHERE storage_path = $1', [storagePath]);
+    const owner = await ctx.engine.readFileOwner(storagePath);
     // A row with a live page in another source is that source's attachment: an upload never moves it or replaces its bytes.
-    const foreign = owner !== undefined && owner.page_id !== null && owner.source_id !== sourceId;
+    const foreign = owner !== null && owner.page_id !== null && owner.source_id !== sourceId;
     if (owner?.content_hash === hash) {
       // #4302: only claim already_exists when the BACKEND really holds the
       // object — a DB row whose bytes vanished must re-upload, not lie.
@@ -143,7 +144,7 @@ const file_upload: Operation = {
         inBackend = await storage.exists(storagePath);
       } catch { /* probe failure → treat as absent, re-upload below */ }
       if (inBackend) {
-        if (page && !foreign) await ctx.engine.executeRaw('UPDATE files SET source_id = $2, page_id = $3 WHERE storage_path = $1', [storagePath, sourceId, page.id]);
+        if (pageId !== null && !foreign) await ctx.engine.claimFilePage(storagePath, sourceId, pageId);
         return { status: 'already_exists', storage_path: storagePath };
       }
     }
@@ -159,23 +160,16 @@ const file_upload: Operation = {
 
     try {
       // The bytes at storagePath are now the caller's, so a conflicting row takes the caller's source and page id when that source has the page.
+      // The row names the page's slug as it is now, read by its id (FOR SHARE waits for a rename in flight), not the slug read
+      // before the storage wait: a page renamed while the bytes uploaded is listed under its new slug, also when the row already
+      // existed (the conflict branch takes the resolved slug whenever the upload binds a page).
       // #4910: stamp the storage lane (doctor image_assets / files verify
       // classify on it) and merge metadata on conflict so legacy `{}` rows
       // heal on their next content change. Real object via executeRawJsonb —
       // never a JSON string into ::jsonb (#2339).
-      await executeRawJsonb(
-        ctx.engine,
-        `INSERT INTO files (page_slug, filename, storage_path, mime_type, size_bytes, content_hash, source_id, page_id, metadata)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
-         ON CONFLICT (storage_path) DO UPDATE SET
-           content_hash = EXCLUDED.content_hash,
-           size_bytes = EXCLUDED.size_bytes,
-           mime_type = EXCLUDED.mime_type,
-           source_id = CASE WHEN EXCLUDED.page_id IS NULL THEN files.source_id ELSE EXCLUDED.source_id END,
-           page_id = COALESCE(EXCLUDED.page_id, files.page_id),
-           ${FILES_METADATA_MERGE_SQL}`,
-        [pageSlug, filename, storagePath, mimeType, stat.size, hash, sourceId, page?.id ?? null],
-        [embedded?.metadata ?? { storage: (ctx.config.storage as { backend: string }).backend }],
+      await ctx.engine.upsertOpFileRow(
+        { page_slug: pageSlug, filename, storage_path: storagePath, mime_type: mimeType, size_bytes: stat.size, content_hash: hash, source_id: sourceId, page_id: pageId },
+        embedded?.metadata ?? { storage: (ctx.config.storage as { backend: string }).backend },
       );
     } catch (dbErr) {
       // Rollback: clean up storage if DB write failed
@@ -201,9 +195,8 @@ const file_url: Operation = {
   scope: 'admin',
   localOnly: true,
   handler: async (ctx, p) => {
-    const rows = await ctx.engine.executeRaw<Record<string, unknown>>(`SELECT storage_path, mime_type, size_bytes FROM files f
-      WHERE storage_path = $1 AND ${await fileReadableSql(ctx)}`, [p.storage_path as string]);
-    if (rows.length === 0) {
+    const file = await ctx.engine.readReadableFileForUrl(p.storage_path as string, await resolveExcludePrivatePages(ctx.engine, ctx.remote));
+    if (file === null) {
       throw opError('storage_error', `File not found: ${p.storage_path}`, 'No file row has that storage_path. List stored files (fix) and use a storage_path from that list.',
         { fix: readFix('Lists stored files with their storage_path.', { argv: ['gbrain', 'files', 'list'], mcp: { tool: 'file_list', arguments: {} } }) });
     }
@@ -220,18 +213,18 @@ const file_url: Operation = {
     }
     const { createStorage } = await import('../storage.ts');
     const storage = embedded ? await embeddedStorage(ctx, 'file_url') : await createStorage(ctx.config.storage as any);
-    const present = await storage.exists(rows[0].storage_path as string).catch(error => {
+    const present = await storage.exists(file.storage_path as string).catch(error => {
       if (embedded) throw storeUnavailable('file_url', error);
       return false;
     });
     if (!present) {
       throw opError(
         'storage_error',
-        `File row exists but the storage backend has no object at ${rows[0].storage_path} — re-upload it.`,
+        `File row exists but the storage backend has no object at ${file.storage_path} — re-upload it.`,
         'The bytes are missing from storage. Re-upload the original file with file_upload (same path); `gbrain files verify` lists every row in this state.',
       );
     }
-    return { storage_path: rows[0].storage_path, url: await storage.getUrl(rows[0].storage_path as string) };
+    return { storage_path: file.storage_path, url: await storage.getUrl(file.storage_path as string) };
   },
 };
 
@@ -263,9 +256,7 @@ function uploadLayoutPath(pageSlug: string | null, filename: string, hash: strin
 }
 
 async function readablePageId(ctx: OperationContext, slug: string, sourceId: string): Promise<number | undefined> {
-  const rows = await ctx.engine.executeRaw<{ id: number }>(`SELECT fp.id FROM pages fp WHERE fp.slug = $1 AND fp.source_id = $2
-    AND ${await resolveExcludePrivatePages(ctx.engine, ctx.remote) ? privatePagesFilterForCaller('fp') : 'TRUE'}`, [slug, sourceId]);
-  return rows[0]?.id;
+  return ctx.engine.readReadablePageId(slug, sourceId, await resolveExcludePrivatePages(ctx.engine, ctx.remote));
 }
 
 const file_register: Operation = {
@@ -299,11 +290,8 @@ const file_register: Operation = {
     const sourceId = ctx.sourceId ?? 'default';
     const pageId = pageSlug ? await readablePageId(ctx, pageSlug, sourceId) : null;
     if (pageId === undefined) throw opError('page_not_found', `No page '${pageSlug}' in source '${sourceId}' is visible to this caller.`, 'Attach the file to a page this caller can read. Nothing was recorded.');
-    const existing = await ctx.engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM files f WHERE f.storage_path = $1 AND NOT (${await fileReadableSql(ctx)})`, [storagePath]);
-    if (existing[0]!.n > 0) throw opError('page_not_found', `The file at ${storagePath} belongs to a page this caller cannot read.`, 'Nothing was recorded.');
-    const owned = await ctx.engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM files WHERE storage_path = $1
-      AND (page_slug IS DISTINCT FROM $2 OR filename <> $3 OR source_id IS DISTINCT FROM $4 OR page_id IS DISTINCT FROM $5)`, [storagePath, pageSlug, filename, sourceId, pageId]);
-    if (owned[0]!.n > 0) throw opError('invalid_params', `${storagePath} is already registered to a different page, filename or source.`,
+    if (await ctx.engine.countUnreadableFilesAt(storagePath, await resolveExcludePrivatePages(ctx.engine, ctx.remote)) > 0) throw opError('page_not_found', `The file at ${storagePath} belongs to a page this caller cannot read.`, 'Nothing was recorded.');
+    if (await ctx.engine.countFilesRegisteredElsewhere({ storage_path: storagePath, page_slug: pageSlug, filename, source_id: sourceId, page_id: pageId }) > 0) throw opError('invalid_params', `${storagePath} is already registered to a different page, filename or source.`,
       'A registration never moves an existing row. Register under a path no other row uses. Nothing was recorded.');
     if (ctx.dryRun) return { dry_run: true, action: 'file_register', storage_path: storagePath };
     const { hashStoredObject } = await import('../storage.ts');
@@ -313,21 +301,10 @@ const file_register: Operation = {
     if (!stored) throw opError('storage_error', `The storage backend has no object at ${storagePath}, so no row was recorded.`, 'Store the bytes at that path first, then register it.');
     if (stored.size !== size || stored.sha256 !== hash) throw opError('storage_error', `The object at ${storagePath} does not match size_bytes and content_hash, so no row was recorded.`,
       'Register the size and SHA-256 of the bytes actually stored at that path.');
-    const { executeRawJsonb, FILES_METADATA_MERGE_SQL } = await import('../sql-query.ts');
-    const written = await executeRawJsonb(ctx.engine,
-      `INSERT INTO files (page_slug, filename, storage_path, mime_type, size_bytes, content_hash, source_id, page_id, metadata)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)
-       ON CONFLICT (storage_path) DO UPDATE SET
-         content_hash = EXCLUDED.content_hash,
-         size_bytes = EXCLUDED.size_bytes,
-         mime_type = EXCLUDED.mime_type,
-         ${FILES_METADATA_MERGE_SQL}
-       WHERE files.page_slug IS NOT DISTINCT FROM EXCLUDED.page_slug AND files.filename = EXCLUDED.filename
-         AND files.source_id IS NOT DISTINCT FROM EXCLUDED.source_id AND files.page_id IS NOT DISTINCT FROM EXCLUDED.page_id
-       RETURNING 1`,
-      [pageSlug, filename, storagePath, (p.mime_type as string | undefined) ?? null, size, hash, sourceId, pageId],
-      [metadata]);
-    if (!written.length) throw opError('invalid_params', `${storagePath} was registered to a different page, filename or source meanwhile.`, 'Nothing was recorded.');
+    const written = await ctx.engine.registerFileRow(
+      { page_slug: pageSlug, filename, storage_path: storagePath, mime_type: (p.mime_type as string | undefined) ?? null, size_bytes: size, content_hash: hash, source_id: sourceId, page_id: pageId },
+      metadata);
+    if (!written) throw opError('invalid_params', `${storagePath} was registered to a different page, filename or source meanwhile.`, 'Nothing was recorded.');
     return { status: 'registered', storage_path: storagePath, size_bytes: size };
   },
 };
@@ -347,20 +324,19 @@ const file_verify: Operation = {
   cliOnly: { argv: ['gbrain', 'files', 'verify'] },
   handler: async (ctx, p) => {
     const storage = await embeddedStorage(ctx, 'file_verify');
-    const readable = await fileReadableSql(ctx);
+    const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote);
     if (p.storage_path !== undefined) {
-      const rows = await ctx.engine.executeRaw<{ size_bytes: unknown; content_hash: string }>(`SELECT size_bytes, content_hash FROM files f WHERE f.storage_path = $1 AND ${readable}`, [p.storage_path as string]);
-      if (rows.length === 0) throw opError('storage_error', `File not found: ${p.storage_path}`, 'No file row this caller can read has that storage_path. List them with file_verify and no storage_path.');
+      const row = await ctx.engine.readReadableFileForVerify(p.storage_path as string, excludePrivate);
+      if (row === null) throw opError('storage_error', `File not found: ${p.storage_path}`, 'No file row this caller can read has that storage_path. List them with file_verify and no storage_path.');
       const { hashStoredObject } = await import('../storage.ts');
       let stored: { size: number; sha256: string } | null;
       try { stored = await storage.exists(p.storage_path as string) ? await hashStoredObject(storage, p.storage_path as string) : null; }
       catch (error) { throw storeUnavailable('file_verify', error); }
       return { storage_path: p.storage_path, present: stored !== null,
-        size_matches: stored !== null && stored.size === Number(rows[0]!.size_bytes), hash_matches: stored !== null && stored.sha256 === rows[0]!.content_hash };
+        size_matches: stored !== null && stored.size === Number(row.size_bytes), hash_matches: stored !== null && stored.sha256 === row.content_hash };
     }
     const slug = p.slug as string | undefined;
-    const rows = await ctx.engine.executeRaw<{ storage_path: string; page_slug: string | null }>(`SELECT storage_path, page_slug FROM files f
-      WHERE (${slug === undefined ? 'TRUE' : 'f.page_slug = $2'}) AND ${readable} ORDER BY storage_path LIMIT $1`, slug === undefined ? [FILE_LIST_LIMIT] : [FILE_LIST_LIMIT, slug]);
+    const rows = await listOverSpellings(slug, spelling => ctx.engine.listReadableFilePaths(spelling, excludePrivate), row => [row.storage_path, 0]);
     try { return await Promise.all(rows.map(async row => ({ ...row, present: await storage.exists(row.storage_path) }))); }
     catch (error) { throw storeUnavailable('file_verify', error); }
   },

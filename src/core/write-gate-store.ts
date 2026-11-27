@@ -3,6 +3,11 @@
  * the holding table for quarantined facts and takes (`write_gate_holds`),
  * DDL in `write-gate-schema.ts`.
  *
+ * A hold remembers its page's permanent id (`page_id`), so renaming the page
+ * cannot lift it; a hold recorded before any page took its slug stays unbound
+ * and matches by slug until a page is created there (engine-sql/hold-binding.ts
+ * binds it). The readers and sweeps share `write-gate-binding.ts`.
+ *
  * Writers record inside their publication transaction (pass the `tx`), so a
  * rolled-back write leaves no orphan receipt. Only flag and quarantine
  * verdicts are recorded; `allow` and `reject` write nothing here. Owner
@@ -81,6 +86,13 @@ export interface WriteGateHoldInput {
   sourceId: string;
   /** The page the row would have landed on ('' when not page-bound). */
   slug?: string | null;
+  /**
+   * The permanent id of that page, when the producer already read it before gating. The hold is bound to this page
+   * whatever it is called by the time the hold is written; when the page no longer exists, or the producer holds no
+   * page, the page at (sourceId, slug) is looked up inside the same INSERT, and with no page there the hold stays
+   * unbound and matches by slug until a page is created.
+   */
+  pageId?: number | null;
   /** The row exactly as the writer would have inserted it. */
   payload: Record<string, unknown>;
   /** Gated text fields of the row, for the dedupe fingerprint. */
@@ -92,8 +104,11 @@ export interface WriteGateHoldInput {
 
 /**
  * Hold a quarantined fact or take instead of inserting it, plus its receipt.
- * The same content arriving again (same source, slug, fingerprint and
- * detector version) re-opens the existing hold rather than adding a row.
+ * The same content arriving again for the same page (bound hold) or the same
+ * slug (unbound hold), with the same fingerprint and detector version,
+ * re-opens the existing hold rather than adding a row. The page is the id the
+ * producer passed, else the page at (source, slug) found inside the INSERT, so
+ * no page lock is taken.
  */
 export async function recordWriteGateHold(tx: Exec, input: WriteGateHoldInput): Promise<{ holdId: number; receiptId: number | null }> {
   const a = input.assessment;
@@ -101,7 +116,7 @@ export async function recordWriteGateHold(tx: Exec, input: WriteGateHoldInput): 
   const holdId = await tx.upsertWriteGateHold({
     kind: input.kind, source_id: input.sourceId, slug: input.slug ?? '', fingerprint, detector_version: a.detectorVersion, tier: a.tier,
     reason_families: a.families, reasons: reasonList(a), detector_error: a.detectorError, payload: input.payload,
-    write_origin: input.origin ? { ...input.origin } : null, request_id: input.requestId ?? null,
+    write_origin: input.origin ? { ...input.origin } : null, request_id: input.requestId ?? null, page_id: input.pageId ?? null,
   });
   noteBelief({ kind: 'held', holdKind: input.kind, fingerprint, holdId, slug: input.slug ?? '', tier: a.tier, valueHash: fingerprint });
   const receiptId = await recordWriteGateReceipt(tx, { targetTable: 'write_gate_holds', targetId: holdId, sourceId: input.sourceId, assessment: { ...a, verdict: 'quarantine' }, requestId: input.requestId });
@@ -114,6 +129,10 @@ export interface WriteGateHold {
   kind: WriteGateHoldKind;
   source_id: string;
   slug: string;
+  /** The page's permanent id; null for a hold no page was tied to (it matches by slug, or by `page_candidates`). */
+  page_id: number | null;
+  /** Pages an upgrade could not choose between; the hold is held for each. Null for every hold a writer recorded. */
+  page_candidates: number[] | null;
   tier: string;
   detector_version: number;
   detector_error: boolean;
@@ -212,6 +231,8 @@ export interface GatedRowDecision {
 export interface GatedRowContext {
   sourceId: string;
   slug?: string | null;
+  /** The permanent id of the page, when the caller already read it (see WriteGateHoldInput.pageId). */
+  pageId?: number | null;
   /** The row exactly as the writer would insert it (kept in the hold). */
   payload: Record<string, unknown>;
   input: WriteGateInput;
@@ -224,7 +245,7 @@ function decide(kind: WriteGateHoldKind, assessment: WriteGateAssessment, texts:
   if (assessment.verdict !== 'quarantine') return { assessment, action: 'insert', hold: null, requestId };
   return {
     assessment, action: 'hold', requestId,
-    hold: { kind, sourceId: ctx.sourceId, slug: ctx.slug ?? '', payload: ctx.payload, texts, assessment, origin: ctx.input.origin ?? null, requestId: ctx.input.requestId ?? null },
+    hold: { kind, sourceId: ctx.sourceId, slug: ctx.slug ?? '', pageId: ctx.pageId ?? null, payload: ctx.payload, texts, assessment, origin: ctx.input.origin ?? null, requestId: ctx.input.requestId ?? null },
   };
 }
 

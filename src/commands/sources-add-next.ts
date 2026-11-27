@@ -9,6 +9,7 @@
  * the new source readable. The stored federation default is unchanged.
  */
 import type { BrainEngine } from '../core/engine.ts';
+import { rethrowCapabilityRefusal } from '../core/engine-capability-refusal.ts';
 import type { Notice, RenderedNotice } from '../core/agent-output.ts';
 import { newSourceJoinsDefaultSearch } from '../core/source-default-search.ts';
 import { localFederatedSourceIds } from '../core/source-resolver.ts';
@@ -64,11 +65,16 @@ export async function syncOutOfSearchNotice(engine: BrainEngine, args: string[])
   const id = args.find((_, i) => args[i - 1] === '--source');
   if (!id || id === 'default') return null;
   try {
-    const [row] = await engine.executeRaw<{ f: unknown; remote: unknown; pages: number }>(
-      `SELECT config->'federated' AS f, config->'added_by_remote_caller' AS remote, (SELECT count(*)::int FROM pages WHERE source_id = $1 AND deleted_at IS NULL) AS pages FROM sources WHERE id = $1`, [id]);
-    if (!row || row.f != null || row.remote === true || !Number(row.pages)) return null;
+    // Typed reads: a Rust brain keeps no SQL table to select from, so the source row and its live page count come
+    // from getSource and countSourcePages on every engine.
+    const source = await engine.getSource(id);
+    if (!source) return null;
+    const config = source.config ?? {};
+    if (config.federated != null || config.added_by_remote_caller === true || !Number(await engine.countSourcePages(id))) return null;
     return notInDefaultSearchNotice(id, !(await newSourceJoinsDefaultSearch(engine)), true);
-  } catch {
+  } catch (e) {
+    // A Rust brain's typed refusal is not "no notice due": let it surface.
+    rethrowCapabilityRefusal(e);
     return null;
   }
 }

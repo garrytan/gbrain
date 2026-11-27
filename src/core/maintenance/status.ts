@@ -53,8 +53,8 @@ async function pendingPurgeCount(engine: BrainEngine): Promise<number | null> {
 }
 
 async function brainAgeMs(engine: BrainEngine, now: number): Promise<number | null> {
-  const [row] = await engine.executeRaw<{ oldest: string | Date | null }>('SELECT MIN(created_at) AS oldest FROM pages').catch(() => [{ oldest: null }]);
-  const oldest = row?.oldest ? new Date(row.oldest).getTime() : NaN;
+  const oldestAt = await engine.readOldestPageCreatedAt().catch(() => null);
+  const oldest = oldestAt ? new Date(oldestAt).getTime() : NaN;
   return Number.isFinite(oldest) ? now - oldest : null;
 }
 

@@ -51,7 +51,7 @@ export interface PostgresExecutorDeps {
 }
 
 export const POSTGRES_CAPABILITIES: DialectCapabilities = {
-  maxBindParamsPerStatement: Number.POSITIVE_INFINITY,
+  maxBindParamsPerStatement: 65_533,
   transactionAdvisoryLocks: true,
   probesEmbeddingCast: true,
 };

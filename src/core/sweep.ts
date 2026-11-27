@@ -61,9 +61,6 @@ import { speakerOf } from './context/session-speaker.ts';
 /** Delay before the serve-startup sweep fires (post-connect settle). */
 export const STARTUP_SWEEP_DELAY_MS = 3_000;
 
-/** Fence begin marker — duplicated from facts-fence.ts to keep this module light. */
-const FACTS_FENCE_BEGIN_MARKER = 'gbrain:facts:begin';
-
 /**
  * Cap on the candidate set the pass-1 leading-wildcard LIKE scans: the fence
  * marker can't use an index, so the LIKE runs over a recency-bounded subquery
@@ -210,29 +207,13 @@ export async function runMaintenanceSweep(
       if (overBudget()) {
         skip('budget_exhausted:facts_fence');
       } else {
-        // The leading-wildcard LIKE can't use an index, so it scans only the
-        // newest FENCE_LIKE_SCAN_CAP rows in the recency window (inner
-        // subquery) rather than every row a bulk-sync day may have touched.
-        const rows = await engine.executeRaw<{ slug: string }>(
-          `SELECT slug FROM (
-             SELECT id, slug, compiled_truth, body_storage, updated_at FROM pages
-              WHERE source_id = $1
-                AND deleted_at IS NULL
-                AND updated_at >= $2::timestamptz
-              ORDER BY updated_at DESC
-              LIMIT $4
-           ) AS recent
-            WHERE compiled_truth LIKE $3
-               OR (body_storage = 'segmented' AND EXISTS (SELECT 1 FROM page_body_manifest m
-                     WHERE m.page_id = recent.id AND m.gen_to IS NULL AND m.staging_id IS NULL AND m.facts_slots <> '[]'::jsonb))
-            ORDER BY updated_at DESC
-            LIMIT $5`,
-          [sourceId, cutoffIso, `%${FACTS_FENCE_BEGIN_MARKER}%`, FENCE_LIKE_SCAN_CAP, batchLimit],
-        );
-        if (rows.length > 0) {
+        // The leading-wildcard fence scan covers only the newest
+        // FENCE_LIKE_SCAN_CAP rows in the recency window (engine-sql/sweep-reads.ts).
+        const slugs = await engine.listFactsFencePages({ sourceId, since: cutoffIso, scanCap: FENCE_LIKE_SCAN_CAP, limit: batchLimit });
+        if (slugs.length > 0) {
           const { runExtractFacts } = await import('./cycle/extract-facts.ts');
           const r = await runExtractFacts(engine, {
-            slugs: rows.map(row => row.slug),
+            slugs,
             sourceId,
             signal: budgetController.signal,
           });
@@ -378,20 +359,7 @@ async function runLinksTimelinePass(
   // edit between SELECT and stamp stays stale and re-sweeps. Deferred pages are left out in SQL, before the LIMIT.
   const deferred = await liveDeferredPages(engine, sourceId, cutoffIso);
   skip('segmented_page_deferred', deferred.length);
-  const recent = await engine.executeRaw<{ slug: string; updated_at_iso: string; body_storage: string | null; body_bytes: number | null; read_at: string }>(
-    `SELECT slug, to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS read_at,
-            to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS updated_at_iso,
-            body_storage, body_bytes
-       FROM pages
-      WHERE source_id = $1
-        AND deleted_at IS NULL
-        AND updated_at >= $2::timestamptz
-        AND (links_extracted_at IS NULL OR updated_at > links_extracted_at)
-        AND NOT (slug = ANY($4::text[]))
-      ORDER BY updated_at DESC
-      LIMIT $3`,
-    [sourceId, cutoffIso, batchLimit, deferred],
-  );
+  const recent = await engine.listSweepStalePages({ sourceId, since: cutoffIso, limit: batchLimit, exclude: deferred });
   const readAt = recent[0]?.read_at; if (!readAt) return;
 
   // resolveCandidateSources + stampExtracted are the shared helpers the
@@ -652,16 +620,7 @@ async function liveDeferredPages(engine: BrainEngine, sourceId: string, cutoffIs
   const prefix = `${sourceId}\0`;
   const entries = [...deferredSegmentedPages].filter(([key]) => key.startsWith(prefix));
   if (entries.length === 0) return [];
-  const rows = await engine.executeRaw<{ slug: string; updated_at_iso: string }>(
-    `SELECT slug, to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS updated_at_iso
-       FROM pages
-      WHERE source_id = $1
-        AND deleted_at IS NULL
-        AND updated_at >= $2::timestamptz
-        AND (links_extracted_at IS NULL OR updated_at > links_extracted_at)
-        AND slug = ANY($3::text[])`,
-    [sourceId, cutoffIso, entries.map(([key]) => key.slice(prefix.length))],
-  );
+  const rows = await engine.listSweepDeferredPages({ sourceId, since: cutoffIso, slugs: entries.map(([key]) => key.slice(prefix.length)) });
   const live = new Set(rows.filter(row => deferredSegmentedPages.get(prefix + row.slug) === row.updated_at_iso).map(row => row.slug));
   for (const [key] of entries) if (!live.has(key.slice(prefix.length))) deferredSegmentedPages.delete(key);
   return [...live];

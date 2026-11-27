@@ -50,16 +50,14 @@ version snapshot copies from a page with no tier.
 
 | Member | Answer on this engine | Why |
 | --- | --- | --- |
-| `readWriteAttributionNames(ids)` | requests and writers from the two methods; `clients: []`, `tokens: []` | |
-| `readWriteAttributionNames` with an OAuth client id or a legacy token id | refuses with `engine_capability_missing` | The store keeps no `oauth_clients` or `access_tokens` table. An empty answer would say "no name" for a client that may exist on the brain the token came from. |
+| `readWriteAttributionNames(ids)` | requests and writers from the two methods; clients from `brain.readOauthClientNames` and legacy tokens from `brain.readAccessTokenNames` (a revoked token included) | The names come from the store's `oauth_clients` ([oauth-clients.md](oauth-clients.md)) and `access_tokens` ([access-tokens.md](access-tokens.md)) rows. |
+| `readWriteAttributionNames` with an OAuth client id or a legacy token id | refuses with `engine_capability_missing` | The store keeps OAuth clients and access tokens, but this read does not look their names up yet. An empty answer would say "no name" for a client that exists. |
 | `readPageRevisionAttribution`, `readOldestVersionAttribution` | the method | |
 | `readVersionAttributions(refs)` | the method, each version under its `page_id` | The store keys versions by page. |
 | `readRowAttribution(target)` | the method; the fact's `excludePrivate` becomes the store privacy policy | A policy the store cannot judge refuses (`storePrivacyPolicy`). |
 
 ## Known gaps
 
-- Takes keep no trust tier or write origin: a take reads `unknown` and `null`. PGLite reads `unknown` too for a take
-  that no trusted writer stamped.
 - PGLite's attribution trigger exempts a withdrawal stamp (`gbrain.fact_withdrawal_stamp`) from the content check.
   The store keeps no withdrawal ledger, so it does not model that exemption. It stamps `last_write_*` when the fact's
   content columns change (`WRITE_ATTRIBUTION_CONTENT_COLUMNS.facts`), and no parity case covers a withdrawal.

@@ -18,11 +18,7 @@ import { connectedEngine, type DoctorContext, type DoctorEntry } from '../contex
 export async function imageEmbeddingCoverageCheck(engine: BrainEngine): Promise<Check> {
   const name = 'image_embedding_coverage';
   try {
-    const [row] = await engine.executeRaw<{ image_pages: number | string; without_image_vector: number | string; null_source_path: number | string }>(
-      `SELECT count(*)::int AS image_pages,
-         count(*) FILTER (WHERE NOT EXISTS (SELECT 1 FROM content_chunks c WHERE c.page_id = p.id AND c.embedding_image IS NOT NULL))::int AS without_image_vector,
-         count(*) FILTER (WHERE p.source_path IS NULL)::int AS null_source_path
-       FROM pages p WHERE p.page_kind = 'image' AND p.deleted_at IS NULL`);
+    const row = await engine.readImagePageCoverage();
     const sources = await engine.listAllSources();
     const holds = await readGitImageHoldCounts(engine, sources.map(source => source.id));
     const unsupportedHolds = [...holds.values()].reduce((sum, count) => sum + count, 0);

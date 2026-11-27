@@ -1,8 +1,8 @@
 import Foundation
 
 public enum SourceCatalog {
-    public static let ids = ["imessage"]
-    public static var scopes: Set<String> { Set(ids.map(readScope)) }
+    public static let ids = ["imessage", "contacts"]
+    public static var scopes: Set<String> { Set(ids.map(readScope)).union([ContactsWriteScope.enrich]) }
 
     public static func readScope(_ id: String) -> String {
         "read:\(id)"

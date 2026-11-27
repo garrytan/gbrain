@@ -19,6 +19,10 @@
  * Neither read uses `persistence_requests_compactable`: that partial index excludes recovery-holding and compacted
  * receipts, both of which this reader must see. The window is clamped to `persistence.receipt_retention_days`: past
  * it a receipt's message is gone and the message-routed codes would read as `diagnosis_required`.
+ *
+ * The statements run through the engine's typed members (`src/core/engine-sql/doctor-terminal.ts` on PGLite and
+ * Postgres, the request-journal port in the store on Rust); this file keeps the classifier fragments they splice
+ * (`TERMINAL_SQL_PARTS`, pinned by `test/doctor-terminal-sql.test.ts`), the bounds and the shaping.
  */
 import type { BrainEngine } from '../engine.ts';
 import type { Action } from '../agent-output.ts';
@@ -32,6 +36,7 @@ import { GRANDFATHER_RETIRED } from './publication-failure.ts';
 import { classifyTerminal, dispositionOf, driftSinceAction, faultOperation, TERMINAL_FIXED_IN, supersessionOrderSql, supersessionSql, terminalInspectArgv, terminalKnockOnSql, type TerminalCategory,
   type TerminalDisposition, type TerminalVerdict, CONNECTION_MESSAGE_PATTERN, LEGACY_PUBLICATION_PREFIX } from './terminal-classify.ts';
 import { readConfigRows, type ConfigReader } from '../config-values.ts';
+import type { TerminalReadOpts } from '../engine-sql/doctor-terminal.ts';
 
 export const TERMINAL_WINDOW_KEY = 'persistence.terminal_failures.window_days';
 export const TERMINAL_SPIKE_FACTOR_KEY = 'persistence.terminal_failures.spike_factor';
@@ -89,6 +94,8 @@ const TERMINAL = (r: string) => `${r}.state IN ('failed','conflict','cancelled')
 /** #6904: the grouped `reason`, with an older build's owner exception on a missing relation or column (its errno) read as `schema_missing`, as `classifyTerminal` reads the full detail. */
 const SCHEMA_AWARE_REASON = (r: string) => `COALESCE(${r}.error_detail->>'reason', CASE WHEN ${r}.error_detail->>'origin'='owner_exception' AND ${r}.error_detail->>'errno' IN ('42P01','42703') THEN 'schema_missing' END)`;
 const RECOVERY = (r: string) => `(${r}.recovery IS NOT NULL AND ${r}.state IN ('committed','recovering','failed','conflict','cancelled'))`;
+/** The SQL builders the two terminal statements (engine-sql/doctor-terminal.ts) were composed from; test/doctor-terminal-sql.test.ts composes them again to pin the statements' text. */
+export const TERMINAL_SQL_PARTS = { ROUTED_MESSAGE, BUILD, ENDED, TERMINAL, RECOVERY, SCHEMA_AWARE_REASON, HISTORICAL_BY_BUILD, terminalKnockOnSql, supersessionSql, supersessionOrderSql } as const;
 
 interface KeyColumns { source_id: string; state: string; error_code: string | null; origin: string | null; reason: string | null; cause: string | null; operation: string; intent_kind?: string | null;
   has_recovery: boolean; blocked_reason: string | null; compacted: boolean; knock_on: boolean; routed_message: string | null; build: string | null }
@@ -101,9 +108,9 @@ function verdictOf(row: KeyColumns & { request_id?: string; slug?: string; error
     error_message: row.routed_message, build: row.build, intent_kind: row.intent_kind ?? null, schema_behind: schemaBehind })!;
 }
 
-async function bounded<T>(engine: BrainEngine, sql: string, params: unknown[]): Promise<T[] | 'unknown'> {
+async function bounded<T>(read: (opts: TerminalReadOpts) => Promise<T>): Promise<T | 'unknown'> {
   try {
-    return await engine.executeRaw<T>(sql, params, { timeoutMs: TERMINAL_STATEMENT_MS, signal: AbortSignal.timeout(TERMINAL_STATEMENT_MS + TERMINAL_ACQUIRE_MS) } as never);
+    return await read({ timeoutMs: TERMINAL_STATEMENT_MS, signal: AbortSignal.timeout(TERMINAL_STATEMENT_MS + TERMINAL_ACQUIRE_MS) });
   } catch (error) {
     const name = (error as { name?: string } | null)?.name;
     if (isStatementTimeout(error) || name === 'AbortError' || name === 'TimeoutError' || (error as { code?: string })?.code === 'pool_capacity') return 'unknown';
@@ -135,36 +142,9 @@ export async function readTerminalFailureSummary(engine: BrainEngine, opts: { so
   const t = opts.thresholds ?? await readTerminalThresholds(engine);
   const schemaBehind = await readSchemaBehind(engine);
   const span = Math.max(t.windowDays, 8);
-  const days = Array.from({ length: 7 }, (_, i) => `count(*) FILTER (WHERE state IN ('failed','conflict','cancelled') AND ended_at <= now()-interval '${i + 1} day' AND ended_at > now()-interval '${i + 2} day')::int AS d${i + 2}`).join(',\n      ');
-  const rows = await bounded<KeyColumns & { set: number; resolved: boolean | null; rows: number; in_window: number; n_24h: number; oldest: string | null; oldest_age: number | null;
-    distinct_slugs: number; distinct_intents: number; recovery_ids: string[] | null; recovery_slugs: string[] | null } & Record<string, number>>(engine,
-    `WITH base AS (
-      SELECT r.id, r.request_id::text AS request_id, r.source_id, r.slug, r.digest, r.sequence, r.operation, r.intent->>'kind' AS intent_kind, r.state, r.error_code,
-        r.error_detail->>'origin' AS origin, ${SCHEMA_AWARE_REASON('r')} AS reason, r.error_detail->>'cause' AS cause,
-        r.recovery IS NOT NULL AS has_recovery, r.blocked_reason, r.compacted, ${terminalKnockOnSql('r')} AS knock_on,
-        ${ROUTED_MESSAGE('r')} AS routed_message, ${BUILD('r')} AS build, ${ENDED('r')} AS ended_at
-      FROM persistence_requests r JOIN sources s ON s.id=r.source_id AND s.archived IS NOT TRUE
-      WHERE (${RECOVERY('r')} OR (${TERMINAL('r')} AND ${ENDED('r')} > now()-($1::int*interval '1 day')))
-        AND ($2::text[] IS NULL OR r.source_id=ANY($2::text[]))
-    ), resolved AS (
-      SELECT r.id FROM base r WHERE NOT r.has_recovery AND EXISTS (SELECT 1 FROM persistence_requests c WHERE ${supersessionSql('r', 'c', 'r.intent_kind')})
-    ), tagged AS (
-      SELECT b.*, (x.id IS NOT NULL OR (NOT b.has_recovery AND b.error_code='${SYNC_PASS_SUPERSEDED}')) AS resolved, (b.has_recovery OR b.ended_at > now()-($3::int*interval '1 day')) AS in_window, ${HISTORICAL_BY_BUILD('b')} AS historical_build
-      FROM base b LEFT JOIN resolved x ON x.id=b.id
-    )
-    SELECT GROUPING(state) AS set, source_id, state, error_code, origin, reason, cause, operation, intent_kind, has_recovery, blocked_reason, compacted, knock_on, routed_message, build, resolved,
-      count(*) FILTER (WHERE in_window)::int AS rows, count(*) FILTER (WHERE in_window)::int AS in_window,
-      count(*) FILTER (WHERE state IN ('failed','conflict','cancelled') AND ended_at > now()-interval '1 day')::int AS n_24h,
-      ${days},
-      to_char(min(ended_at) FILTER (WHERE in_window) AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"') AS oldest,
-      floor(EXTRACT(EPOCH FROM now()-min(ended_at) FILTER (WHERE in_window)))::bigint AS oldest_age,
-      count(DISTINCT slug) FILTER (WHERE in_window AND NOT resolved AND NOT has_recovery AND NOT historical_build)::int AS distinct_slugs,
-      count(DISTINCT digest) FILTER (WHERE in_window AND NOT resolved AND NOT has_recovery AND NOT historical_build)::int AS distinct_intents,
-      (array_agg(request_id ORDER BY sequence) FILTER (WHERE has_recovery))[1:20] AS recovery_ids,
-      (array_agg(slug ORDER BY sequence) FILTER (WHERE has_recovery))[1:20] AS recovery_slugs
-    FROM tagged
-    GROUP BY GROUPING SETS ((source_id, state, error_code, origin, reason, cause, operation, intent_kind, has_recovery, blocked_reason, compacted, knock_on, routed_message, build, resolved), (source_id))
-    ORDER BY source_id`, [span, opts.sourceIds ?? null, t.windowDays]);
+  const sourceFilter = opts.sourceIds ?? null;
+  // The order is not output: the sources are sorted in JS below, and rows of one source tie, so the SQL order never reaches the result.
+  const rows = await bounded(opts => engine.readTerminalFailureGroups({ spanDays: span, windowDays: t.windowDays, sourceIds: sourceFilter }, opts));
   if (rows === 'unknown') return { status: 'unknown', window_days: t.windowDays, reason: `the aggregate did not finish within ${TERMINAL_STATEMENT_MS} ms (or no connection within ${TERMINAL_ACQUIRE_MS} ms)` };
   const bySource = new Map<string, TerminalSourceSummary>();
   const summaryOf = (sourceId: string) => {
@@ -179,7 +159,7 @@ export async function readTerminalFailureSummary(engine: BrainEngine, opts: { so
     if (Number(row.set) === 1) {
       s.unresolved.distinct_slugs = Number(row.distinct_slugs); s.unresolved.distinct_intents = Number(row.distinct_intents);
       s.new_last_24h = Number(row.n_24h);
-      s.daily_7d = Array.from({ length: 7 }, (_, i) => Number(row[`d${i + 2}`] ?? 0));
+      s.daily_7d = [row.d2, row.d3, row.d4, row.d5, row.d6, row.d7, row.d8].map(n => Number(n ?? 0));
       continue;
     }
     const verdict = verdictOf(row, schemaBehind);
@@ -238,27 +218,13 @@ export async function readTerminalFailureSummary(engine: BrainEngine, opts: { so
  */
 export async function readCheckpointBlockerMap(engine: BrainEngine, sourceIds?: string[]): Promise<NonNullable<Parameters<typeof readTerminalFailureSummary>[1]>['checkpointBlockers'] & {}> {
   const { readCheckpointBlockers } = await import('./sync-status.ts');
-  const atCheckpoint = await engine.executeRaw<{ source_id: string }>(`SELECT DISTINCT o.completed_keys->0->>'sourceId' AS source_id FROM op_checkpoints o
-    JOIN sources s ON s.id=o.completed_keys->0->>'sourceId' AND s.archived IS NOT TRUE
-    WHERE o.op='managed-sync' AND o.completed_keys->0->'pending'->'intent'->>'kind'='managed_sync_checkpoint' AND COALESCE(o.completed_keys->0->>'done','false')<>'true'
-      AND ($1::text[] IS NULL OR o.completed_keys->0->>'sourceId'=ANY($1::text[]))`, [sourceIds ?? null]);
+  const atCheckpoint = (await engine.listCheckpointBlockedSources(sourceIds)).map(source_id => ({ source_id }));
   const blockers = new Map<string, Awaited<ReturnType<typeof readCheckpointBlockers>>>();
   for (const row of atCheckpoint) blockers.set(row.source_id, await readCheckpointBlockers(engine, row.source_id));
-  const passes = await engine.executeRaw<{ source_id: string; worktree_id: string; checkpoint: string }>(`SELECT s.id AS source_id, b.worktree_id::text AS worktree_id, r.request_id::text AS checkpoint
-    FROM sources s JOIN persistence_source_bindings b ON b.source_id=s.id AND b.source_incarnation=s.incarnation
-    JOIN op_checkpoints p ON p.op=$1 AND p.fingerprint=s.id||':'||s.incarnation::text AND p.completed_keys->0->'telemetry'->>'outcome'='open'
-    JOIN persistence_requests r ON r.worktree_id=b.worktree_id AND r.state IN ('queued','running','recovering')
-      AND r.intent->>'kind'='managed_sync_checkpoint' AND r.intent->>'passId'=p.completed_keys->0->'telemetry'->>'pass_id'
-    WHERE s.archived IS NOT TRUE AND ($2::text[] IS NULL OR s.id=ANY($2::text[]))`, [MANAGED_SYNC_PASS_OP, sourceIds ?? null]);
+  const passes = await engine.listOpenPassCheckpointBlockers(MANAGED_SYNC_PASS_OP, sourceIds ?? null);
   for (const pass of passes) {
     if (blockers.has(pass.source_id)) continue;
-    const rows = await engine.executeRaw<{ request_id: string; slug: string; state: string; code: string | null; recovery: boolean }>(`SELECT DISTINCT ON (request_id) request_id, slug, state, code, recovery FROM (
-        (SELECT r.request_id::text AS request_id, r.slug, r.state, r.error_code AS code, true AS recovery, r.sequence FROM persistence_requests r
-          WHERE r.worktree_id=$1::uuid AND r.recovery IS NOT NULL ORDER BY r.sequence LIMIT 20)
-        UNION ALL (SELECT r.request_id::text, r.slug, r.state, r.error_code, false, r.sequence FROM persistence_requests r
-          WHERE r.worktree_id=$1::uuid AND r.state IN ('queued','running','recovering') AND r.request_id::text<>$2
-            AND r.intent->>'kind' IN ('managed_sync_import','managed_sync_delete','managed_sync_checkpoint') ORDER BY r.sequence LIMIT 20)) blockers
-      ORDER BY request_id, recovery DESC`, [pass.worktree_id, pass.checkpoint]);
+    const rows = await engine.listWorktreeBlockerRequests(pass.worktree_id, pass.checkpoint);
     blockers.set(pass.source_id, rows.slice(0, 20).map(row => ({ request_id: row.request_id, slug: row.slug, state: row.state, code: row.code, index: null, recovery: row.recovery === true, knock_on: false })));
   }
   return blockers;
@@ -332,19 +298,7 @@ export async function readTerminalFailures(engine: BrainEngine, q: TerminalFailu
   let cursor = q.before ?? null, scanned = 0, exhausted = false;
   const want = q.groupBy ? MAX_SCAN : limit + 1;
   while (out.length < want && scanned < MAX_SCAN && !exhausted) {
-    const batch = await bounded<KeyColumns & { request_id: string; sequence: string; slug: string; error_detail: Record<string, unknown> | null; ended_at: string; admitted_at: string; later_state: string | null; same_intent: boolean | null }>(engine,
-      `SELECT r.request_id::text AS request_id, r.sequence::text AS sequence, r.source_id, r.slug, r.operation, r.intent_kind, r.state, r.error_code, r.error_detail,
-          r.error_detail->>'origin' AS origin, r.error_detail->>'reason' AS reason, r.error_detail->>'cause' AS cause,
-          r.recovery IS NOT NULL AS has_recovery, r.blocked_reason, r.compacted, ${terminalKnockOnSql('r')} AS knock_on, ${ROUTED_MESSAGE('r')} AS routed_message, ${BUILD('r')} AS build,
-          to_char(${ENDED('r')} AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"') AS ended_at, to_char(r.created_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS"Z"') AS admitted_at,
-          later.state AS later_state, later.same_intent
-        FROM (SELECT p.*, p.intent->>'kind' AS intent_kind FROM persistence_requests p
-          WHERE p.source_id=$1 AND (${RECOVERY('p')} OR (${TERMINAL('p')} AND ${ENDED('p')} > now()-($2::int*interval '1 day')))
-            AND ($3::bigint IS NULL OR p.sequence < $3::bigint)
-          ORDER BY p.sequence DESC LIMIT $4) r
-        LEFT JOIN LATERAL (SELECT c.state, c.digest=r.digest AS same_intent FROM persistence_requests c WHERE ${supersessionSql('r', 'c', 'r.intent_kind')}
-          ORDER BY ${supersessionOrderSql('r', 'c')} LIMIT 1) later ON r.recovery IS NULL
-        ORDER BY r.sequence DESC`, [q.sourceId, t.windowDays, cursor, BATCH]);
+    const batch = await bounded(opts => engine.listTerminalFailureBatch({ sourceId: q.sourceId, windowDays: t.windowDays, before: cursor, limit: BATCH }, opts));
     if (batch === 'unknown') return { status: 'unknown', source_id: q.sourceId, reason: `the read did not finish within ${TERMINAL_STATEMENT_MS} ms (or no connection within ${TERMINAL_ACQUIRE_MS} ms)` };
     if (batch.length < BATCH) exhausted = true;
     for (const row of batch) {

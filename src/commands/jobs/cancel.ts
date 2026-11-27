@@ -2,7 +2,7 @@
 import { paidJobNames, parseFlag, reportJobsError, selectionSummaryLines, type JobsCommandContext } from './shared.ts';
 import { applyLegacyCancel, previewLegacyCancel } from '../../core/minions/legacy-cancel.ts';
 import { parseLegacyJobSelection } from '../../core/minions/legacy-selection.ts';
-import { OperationError } from '../../core/ops/contract.ts';
+import { OperationError, opError } from '../../core/ops/contract.ts';
 
 /** `--select <filter> [--expect <hash> --yes]`: preview-bound bulk cancel of legacy rows (DX-T2). */
 async function runLegacyCancel({ args, engine }: JobsCommandContext): Promise<void> {
@@ -66,7 +66,12 @@ async function cancelSpendGroup({ args, engine, queue }: JobsCommandContext, gro
     if (['completed', 'failed', 'dead', 'cancelled'].includes(job.status)) continue;
     if (await queue.cancelJob(job.id)) cancelled.push(job.id);
   }
-  if (args.includes('--json')) { console.log(JSON.stringify({ group_id: groupId, cancelled_ids: cancelled, jobs: jobs.length }, null, 2)); return; }
-  if (!jobs.length) { console.error(`No jobs in spend group ${groupId}; check the id with: gbrain jobs list --group ${groupId} --json`); process.exit(1); }
+  const json = args.includes('--json');
+  if (!jobs.length) {
+    if (json) return reportJobsError(opError('not_found', `No jobs in spend group ${groupId}.`, `Check the id with: gbrain jobs list --group ${groupId} --json`), true);
+    console.error(`No jobs in spend group ${groupId}; check the id with: gbrain jobs list --group ${groupId} --json`);
+    process.exit(1);
+  }
+  if (json) { console.log(JSON.stringify({ group_id: groupId, cancelled_ids: cancelled, jobs: jobs.length }, null, 2)); return; }
   console.log(`Cancelled ${cancelled.length} unfinished job(s) of spend group ${groupId}${cancelled.length ? `: ${cancelled.join(', ')}` : ''}.`);
 }

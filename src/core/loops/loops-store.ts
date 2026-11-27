@@ -1,9 +1,11 @@
 /**
  * loops-store — SQL accessors for the open_loops + loop_suppressions tables.
  *
- * One shared module over engine.executeRaw with IDENTICAL SQL text on both
- * engines — parity by construction (the pattern sources-ops.ts uses), no
- * per-engine method twins to keep in lockstep.
+ * The upsert, list, close, mute and thread-verdict statements are engine members
+ * (engine-sql/open-loops.ts and engine-sql/loop-mutes.ts, served on Rust too);
+ * this module lower-cases mute values and shapes the rows. The staleness pass and
+ * the sender list still run through engine.executeRaw with the same SQL on both
+ * SQL engines.
  *
  * JSONB discipline: evidence binds through `$N::text::jsonb` (the sanctioned
  * positional pattern) — never a bare `::jsonb` cast over JSON.stringify.
@@ -13,6 +15,7 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
+import { throwIfRequestAborted } from '../request-signal.ts';
 
 export type LoopType =
   | 'commitment_owed_by_me'
@@ -122,7 +125,9 @@ export async function upsertOpenLoop(
   engine: BrainEngine,
   loop: OpenLoopUpsert,
 ): Promise<{ id: number; created: boolean; applied: boolean }> {
-  // The statement and its manual-close guard live in engine-sql/open-loops.ts.
+  // The statement and its manual-close guard live in engine-sql/open-loops.ts. Master ran it through executeRaw, which
+  // refuses a request that was already cancelled; the member does not, so the check stays here.
+  throwIfRequestAborted();
   return engine.upsertOpenLoop(loop);
 }
 
@@ -134,6 +139,7 @@ export async function closeOpenLoop(
   status: Exclude<LoopStatus, 'open'>,
   closedBy: string,
 ): Promise<OpenLoopRow | null> {
+  throwIfRequestAborted();
   const row = await engine.closeOpenLoop(sourceId, id, status, closedBy);
   return row ? normalizeRow(row) : null;
 }
@@ -150,16 +156,7 @@ export async function closeThreadLoops(
   closedBy: string,
   only?: LoopType[],
 ): Promise<number> {
-  const rows = await engine.executeRaw<{ id: number }>(
-    `UPDATE open_loops
-       SET status = 'done', closed_at = now(), closed_by = $1, updated_at = now()
-     WHERE source_id = $2 AND thread_id = $3 AND (status = 'open' OR closed_by = '${MUTE_RECHECK}')
-       AND detector = 'deterministic_thread'
-       AND ($4::text IS NULL OR loop_type = ANY(string_to_array($4, ',')))
-     RETURNING id`,
-    [closedBy, sourceId, threadId, only && only.length > 0 ? only.join(',') : null],
-  );
-  return rows.length;
+  return engine.closeThreadLoops(sourceId, threadId, closedBy, only && only.length > 0 ? only : null);
 }
 
 export interface ListLoopsOpts {
@@ -185,6 +182,7 @@ export async function listOpenLoops(
   engine: BrainEngine,
   opts: ListLoopsOpts = {},
 ): Promise<OpenLoopRow[]> {
+  throwIfRequestAborted();
   const rows = await engine.listOpenLoops(opts);
   return rows.map(normalizeRow);
 }
@@ -221,10 +219,6 @@ export const MUTE_RECHECK = 'mute_recheck';
 /** #5012: `closed_by` of a muted loop whose re-check found nothing owed, or that has no thread to re-check. */
 export const UNMUTED = 'unmuted';
 
-function suppressionMatch(kind: 'sender' | 'thread', param: string, alias = ''): string {
-  return kind === 'sender' ? `${alias}counterparty_email = ${param}` : `lower(${alias}thread_id) = ${param}`;
-}
-
 /**
  * #5012: the reply-owed loops a sender or thread mute covers: open
  * `unanswered_inbound` loops (and ones still queued from an earlier unmute).
@@ -237,14 +231,7 @@ export async function closeMutedLoops(
   value: string,
   apply: boolean,
 ): Promise<number[]> {
-  const where = `source_id = $1 AND loop_type = 'unanswered_inbound' AND ${suppressionMatch(kind, '$2')}
-       AND (status = 'open' OR closed_by = '${MUTE_RECHECK}')`;
-  const rows = apply
-    ? await engine.executeRaw<{ id: number }>(
-      `UPDATE open_loops SET status = 'dropped', closed_at = now(), closed_by = '${MUTED}', updated_at = now()
-        WHERE ${where} RETURNING id`, [sourceId, value.toLowerCase()])
-    : await engine.executeRaw<{ id: number }>(`SELECT id FROM open_loops WHERE ${where} ORDER BY id`, [sourceId, value.toLowerCase()]);
-  return rows.map((r) => Number(r.id)).sort((a, b) => a - b);
+  return engine.closeMutedLoops(sourceId, kind, value.toLowerCase(), apply);
 }
 
 /**
@@ -262,17 +249,7 @@ export async function requeueMutedLoops(
   value: string,
   apply: boolean,
 ): Promise<{ requeued: number[]; unverifiable: number[] }> {
-  const rows = await engine.executeRaw<{ id: number; thread_id: string | null }>(
-    `${apply ? `UPDATE open_loops l SET closed_by = CASE WHEN l.thread_id IS NULL THEN '${UNMUTED}' ELSE '${MUTE_RECHECK}' END, updated_at = now()`
-      : 'SELECT l.id, l.thread_id FROM open_loops l'}
-      WHERE l.source_id = $1 AND l.closed_by = '${MUTED}' AND ${suppressionMatch(kind, '$3', 'l.')}
-        AND NOT EXISTS (SELECT 1 FROM loop_suppressions s
-                         WHERE s.source_id = l.source_id AND NOT (s.kind = $2 AND s.value = $3)
-                           AND ((s.kind = 'thread' AND s.value = lower(l.thread_id))
-                             OR (s.kind = 'sender' AND s.value = l.counterparty_email)))
-      ${apply ? 'RETURNING l.id, l.thread_id' : ''}`,
-    [sourceId, kind, value.toLowerCase()],
-  );
+  const rows = await engine.requeueMutedLoops(sourceId, kind, value.toLowerCase(), apply);
   const ids = (pick: (r: { thread_id: string | null }) => boolean) =>
     rows.filter(pick).map((r) => Number(r.id)).sort((a, b) => a - b);
   return { requeued: ids((r) => r.thread_id !== null), unverifiable: ids((r) => r.thread_id === null) };
@@ -296,22 +273,12 @@ export async function listSenderInboundLoops(
 
 /** #5012: a re-checked thread whose verdict neither reopened nor answered its queued loops: they stay closed. */
 export async function settleMuteRecheck(engine: BrainEngine, sourceId: string, threadId: string): Promise<number> {
-  const rows = await engine.executeRaw<{ id: number }>(
-    `UPDATE open_loops SET closed_by = '${UNMUTED}', updated_at = now()
-      WHERE source_id = $1 AND thread_id = $2 AND closed_by = '${MUTE_RECHECK}' RETURNING id`,
-    [sourceId, threadId],
-  );
-  return rows.length;
+  return engine.settleMuteRecheck(sourceId, threadId);
 }
 
 /** #5012: threads with loops an unmute queued for re-check (the sweep re-fetches each). */
 export async function muteRecheckThreads(engine: BrainEngine, sourceId: string): Promise<Array<{ thread_id: string; page_slug: string | null }>> {
-  return engine.executeRaw<{ thread_id: string; page_slug: string | null }>(
-    `SELECT thread_id, max(page_slug) AS page_slug FROM open_loops
-      WHERE source_id = $1 AND closed_by = '${MUTE_RECHECK}' AND thread_id IS NOT NULL
-      GROUP BY thread_id ORDER BY thread_id`,
-    [sourceId],
-  );
+  return engine.listMuteRecheckThreads(sourceId);
 }
 
 export async function addSuppression(
@@ -320,12 +287,7 @@ export async function addSuppression(
   kind: 'sender' | 'thread',
   value: string,
 ): Promise<void> {
-  await engine.executeRaw(
-    `INSERT INTO loop_suppressions (source_id, kind, value)
-     VALUES ($1, $2, $3)
-     ON CONFLICT (source_id, kind, value) DO NOTHING`,
-    [sourceId, kind, value.toLowerCase()],
-  );
+  await engine.addLoopSuppression(sourceId, kind, value.toLowerCase());
 }
 
 /**
@@ -347,13 +309,7 @@ export async function removeSuppression(
   kind: 'sender' | 'thread',
   value: string,
 ): Promise<number> {
-  const rows = await engine.executeRaw<{ value: string }>(
-    `DELETE FROM loop_suppressions
-      WHERE source_id = $1 AND kind = $2 AND value = $3
-      RETURNING value`,
-    [sourceId, kind, value.toLowerCase()],
-  );
-  return rows.length;
+  return engine.removeLoopSuppression(sourceId, kind, value.toLowerCase());
 }
 
 export interface SuppressionSet {
@@ -367,10 +323,7 @@ export async function loadSuppressions(
   engine: BrainEngine,
   sourceId: string,
 ): Promise<SuppressionSet> {
-  const rows = await engine.executeRaw<{ kind: string; value: string }>(
-    `SELECT kind, value FROM loop_suppressions WHERE source_id = $1`,
-    [sourceId],
-  );
+  const rows = await engine.listLoopSuppressions(sourceId);
   const senders = new Set<string>();
   const threads = new Set<string>();
   for (const r of rows) {

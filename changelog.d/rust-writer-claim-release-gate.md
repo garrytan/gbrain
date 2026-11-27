@@ -1,0 +1,1 @@
+- On the Rust engine `gbrain sources writer git-durability --pat-file` now refuses before it writes the credential store or the checkout's git config. Before, it wrote both and then stopped with a refusal that said nothing ran. PGLite and Postgres are unchanged.

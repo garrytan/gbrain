@@ -16,7 +16,7 @@
  *  - Regression: an engine that keeps two canonical members, keeps the flag across a group move, unlinks from the
  *    wrong group, lists a soft-deleted or private member, seeds a group from a page outside the caller's grant, or
  *    leaves a membership behind a hard delete, merges or splits a person's pages across sources. A Rust store that
- *    shows an owner-only source's member page to a non-owner caller leaks it; the shell refuses that read typed.
+ *    shows an owner-only source's member page to a non-owner caller leaks it; the store hides it as the SQL forms do.
  *  - Why existing coverage misses it: test/entity-identity.test.ts runs the caller functions on PGLite only.
  *  - Order: byte order (PGLite's collation and the Rust store). A Postgres database with a locale collation orders
  *    punctuation differently (TODOS.md); the order case re-sorts the Postgres answer and asserts its set.
@@ -216,12 +216,12 @@ describe('engine parity: entity identities', () => {
   );
 
   parityTest(
-    'listEntityIdentityRows refuses on Rust for a caller whose folder rules widen the page policy',
+    'listEntityIdentityRows under excludePrivate serves a caller under a pending folder prefix the same on every arm',
     { methods: ['putPage', 'linkEntityIdentityRow', 'listEntityIdentityRows'] },
     async (engine, backend) => {
       await people(engine, backend);
       await link(engine, 'g-alice', 'default', 'people/alice-example', true);
-      // The SQL engines read the folder rules; the Rust store has no copy of them, so the shell refuses typed.
+      // Every arm reads the folder rules and the pending prefixes (the Rust store keeps them: rust/docs/store/access_rules.md).
       const rows = await withCallerAccess({
         identity: ['member:alice-example'], folderCoverage: [{ source_id: 'default', prefix: 'people/' }], hidePrivate: true,
       }, () => list(engine, { entityId: 'g-alice', excludePrivate: true }));
@@ -240,7 +240,7 @@ describe('engine parity: entity identities', () => {
           await engine.putPage('people/alice-example', page('Alice (texts)'), { sourceId: 'texts' });
           await link(engine, 'g-alice', 'default', 'people/alice-example', true);
           await link(engine, 'g-alice', 'texts', 'people/alice-example');
-          // The Rust store does not read owner-only sources yet: the shell refuses typed rather than show the page.
+          // Every arm hides the owner-only page; the Rust store applies the same page test as readIdentitySiblingCandidates.
           const rows = await withCallerAccess({ identity: ['member:bob-example'], hidePrivate: true, owner: false }, () =>
             list(engine, seed ? { slug: 'people/alice-example', slugSourceId: 'texts', excludePrivate: true } : { entityId: 'g-alice', excludePrivate: true }));
           const keys = rows.map((r) => `${r.source_id}:${r.slug}`);
@@ -343,6 +343,23 @@ describe('engine parity: entity identities', () => {
       return out;
     },
   );
+
+  parityTest(
+    'a NaN or infinite confidence is stored and listed back as the SQL engines keep it, and never breaks a listing',
+    { methods: ['putPage', 'linkEntityIdentityRow', 'listEntityIdentityRows'] },
+    async (engine) => {
+      const values: Array<[string, number]> = [['people/a-nan', NaN], ['people/b-inf', Infinity], ['people/c-neg-inf', -Infinity], ['people/d-finite', 0.1 + 0.2]];
+      for (const [slug, confidence] of values) {
+        await engine.putPage(slug, page(slug));
+        await link(engine, 'g-float', 'default', slug, null, confidence);
+      }
+      const rows = await list(engine, { entityId: 'g-float' });
+      const shown = rows.map(r => `${r.slug} ${typeof r.confidence} ${String(r.confidence)}`);
+      expect(shown).toEqual(['people/a-nan number NaN', 'people/b-inf number Infinity', 'people/c-neg-inf number -Infinity', 'people/d-finite number 0.30000000000000004']);
+      // The JSON a CLI or MCP answer prints: JSON has no NaN or Infinity, so all three print as null.
+      return { shown, json: JSON.stringify(rows.map(r => ({ slug: r.slug, confidence: r.confidence }))) };
+    },
+  );
 });
 
 describe('entity identity union: a refused Rust read is not "no identity"', () => {
@@ -358,8 +375,12 @@ describe('entity identity union: a refused Rust read is not "no identity"', () =
     }) as unknown as BrainEngine;
     const viaStore: BrainEngine['listEntityIdentityRows'] = (filter) =>
       (STORE_MEMBERS.listEntityIdentityRows as (b: unknown, f: unknown) => Promise<never>)(brain, filter);
+    // A member's lineage read is served now (row 32e-b-2: test/engine-parity/labelled-only-reads.test.ts, and the translator cases in
+    // test/rust-private-reads-policy.test.ts). A labelled-only member speaking for an audience of several identities still widens
+    // the page policy past what the store reads, so the store member refuses typed.
     const widened = <T>(fn: () => Promise<T>) => withCallerAccess({
-      identity: ['member:alice-example'], folderCoverage: [{ source_id: 'default', prefix: 'people/' }], hidePrivate: true,
+      identity: ['member:alice-example'], hidePrivate: true, labelledOnly: true,
+      audienceIdentities: [['member:alice-example'], ['member:bob-example']],
     }, fn);
     const run = (engine: BrainEngine) => widened(() => unionLinksAcrossIdentity(engine, 'people/alice-example', base, 'in',
       { sourceId: 'default', excludePrivate: true } as never));

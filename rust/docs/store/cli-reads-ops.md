@@ -3,7 +3,7 @@
 Part of the store contract in [rust/README.md](../../README.md) ("The brain store"): the rules there apply to every method here.
 
 These are the read-command statements that the ops layer ran through `executeRaw`
-([docs/research/rust-cli-executeraw-map.md](../../../docs/research/rust-cli-executeraw-map.md)):
+(the `executeRaw` map in the Rust engine branch's research notes; it is not on master):
 `search_exact`, `whois`, `rank_entities` and `extraction_pending`, plus the two remote-caller reads around them:
 `rank_entities`' per-source coverage and the chunks `search_exact` reads again to take out held fence rows. PGLite and
 Postgres run the same SQL as before (`src/core/engine-sql/cli-reads-ops.ts`, `exact-identity.ts`, `graph-rank.ts` and
@@ -15,7 +15,7 @@ The store answers from its page, chunk, link, extraction, wanted-link and source
 | --- | --- | --- |
 | `brain.scanExactBatch({ words, longest, caseSensitive, sourceId, sourceIds, types, slugPrefix, excludeSlugPrefixes, after, batchPages })` | `null` for no words; else the next `batchPages` pages in scope after page id `after`, in id order: `{ page_id, slug, source_id, title, type, matching_chunks, snippets, gap }` | `scanExactBatch` |
 | `brain.nextLivePageAfter(afterPageId)` | the first live page with a larger id, in any source (archived ones too): `{ id, slug, source_id }`, or `null` | `nextLivePageAfter` |
-| `brain.listExactIdentityCandidates({ probes, sourceIds, types, remote, limit })` | live pages in `sourceIds` whose title, slug basename, page alias or frontmatter email equals a probe, by `(source_id, slug)` in byte order: `{ slug, source_id, title, type, email, emails, aliases }` | `listExactIdentityCandidates` |
+| `brain.listExactIdentityCandidates({ probes, sourceIds, types, remote, emailsOnly, limit })` | live pages in `sourceIds` whose title, slug basename, page alias, frontmatter email or phone digits equal a probe, by `(source_id, slug)` in byte order: `{ slug, source_id, title, type, email, emails, phone, phones, aliases }` | `listExactIdentityCandidates` |
 | `brain.rankEntities({ direction, types, sourceIds, linkType, includeMentions, limit, foldedCap, remote })` | pages ranked by distinct in-scope edges, retired pages folded in: `{ slug, title, type, source_id, inbound, outbound, neighbors, folded_total, folded }` | `rankEntities` |
 | `brain.readRankCoverage({ sourceId, versionTs, mentionTypes, excludePrivate })` | over the pages of the source the caller may read: `{ link_behind, mention_due }` | `readRankCoverage` |
 | `brain.readExactSnippetChunks({ keys, excludePrivate })` | per `{ pageId, chunkIndex, snippet }` key, its visible chunk when the chunk holds the snippet, in key order: `{ i, chunk_text }` (`i` from 1) | `readExactSnippetChunks` |
@@ -40,12 +40,16 @@ negative `LIMIT` or `OFFSET` is an `invalid_argument` error, as Postgres rejects
 - **listExactIdentityCandidates.** A page matches when `lower(title)` equals `lower(titleRaw)` or is in `titleKeys`,
   when the part of the slug after the last `/` is in `basenames`, when a `page_aliases` row of its source and slug (any
   origin) has an `alias_norm` in `aliasKeys`, or when the frontmatter `email` or `emails` is a probe string or an array
-  that holds it. A number or other value never matches an email probe. A probe or source id with a NUL byte is refused
+  that holds it. A number or other value never matches an email probe. A page also matches when it has a `phone` or
+  `phones` key and an element of that value (a scalar counts as one element, written as Postgres
+  `jsonb_array_elements_text` writes it) reduced to its digits is in `phones`. The title arm runs only when `titleKeys`
+  or `titleRaw` is not empty. `emailsOnly` drops the title and phone arms; the basename, alias and email arms still
+  run. A probe or source id with a NUL byte is refused
   (`invalid_argument`), as Postgres refuses it in a text parameter. Then: live, the source exists
   and is not archived, the type passes the entity type filter (the first `per_source` entry for the page's source, else
   `types`), and for a remote caller no `quarantine` key. With `remote.excludePrivate`, the member sends the caller's page
   policy (`storePagePolicy` over `privatePagesFilterForCaller('p')`, with the caller's readers) as `remote.policy`, and
-  the store drops each page `page_hidden` hides before the limit. `email`, `emails` and `aliases` are the frontmatter
+  the store drops each page `page_hidden` hides before the limit. `email`, `emails`, `phone`, `phones` and `aliases` are the frontmatter
   values, or `null`.
 - **rankEntities.** A readable page is live and in `sourceIds` (all sources when absent, none when empty). For a remote
   caller it also has no `quarantine` key and its source exists and is not archived. A retired page
@@ -106,8 +110,9 @@ Each answer below is what Postgres gives for a brain that never wrote the missin
   policy the store method rejects the call with `invalid_argument`. `scanExactBatch` with `excludePrivate` reads the
   same policy as `excludePrivate` and leaves hidden pages out of the batch.
   `readRankCoverage`, `readExactSnippetChunks` and `listExactRescanChunks` with `excludePrivate` read the same policy.
-- **Mention-pass state.** The store has no `page_mention_state` rows, so with `mentionTypes` every readable page owes a
-  mention pass and `mention_due` is true whenever a page is readable, as Postgres gives for a brain with no rows.
+- **Mention-pass state.** `readRankCoverage` reads the stored per-page mention state. With `mentionTypes`, `mention_due`
+  is true only when a readable page owes a mention pass under `mentionVersion` (no state, or state behind the page's
+  knowledge revision or the version), or a readable page of one of those types owes an alias refresh under `aliasVersion`.
 - **Held link extraction.** The store keeps no `links_extract_failure`, so no page is held and `readRankCoverage` counts
   every stale page.
 - **Trust tiers.** `scanExactBatch` with `minTrust` refuses.
@@ -116,7 +121,7 @@ Each answer below is what Postgres gives for a brain that never wrote the missin
   with no version is below the fence, as Postgres stores 1 for it.
 - **Body storage.** The store has no `body_storage` or `body_bytes`. A page has a body when `compiled_truth` or
   `timeline` is non-empty, which is the Postgres answer for an inline body.
-- **Page aliases.** The store has no `page_aliases` table, so the alias probe (`aliasKeys`) finds nothing, as Postgres
-  does with an empty table.
+- **Page aliases.** The alias probe (`aliasKeys`) reads the stored page-alias rows (`alias_row_slugs`) and matches a
+  page by the alias row's source and slug.
 - **Equal `created_at`.** PGLite orders `listExtractionPendingPages` by `created_at` only and leaves ties open. The store
   breaks a tie by page id, newest first.

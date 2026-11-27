@@ -43,6 +43,7 @@ import {
   connectionGateEntry,
 } from './checks/db-connection.ts';
 import { ipcSocketPathEntry } from './checks/local-ipc.ts';
+import { rustEngineAddonEntry } from './checks/rust-engine-addon.ts';
 import { functionSearchPathEntry } from './checks/function-search-path.ts';
 import { guardLedgerChecksEntry } from './checks/guard-ledger-checks.ts';
 import { ownerOnlyMarksTriggersEntry } from './checks/owner-only-marks-triggers.ts';
@@ -124,13 +125,17 @@ import { wakeshiftEntry } from './checks/wakeshift.ts';
 import { wakeshiftOpenclawEntry } from './checks/wakeshift-openclaw.ts';
 import { factTakeVectorsEntry } from './checks/vector-coverage.ts';
 import { decideHealthEntry } from './checks/decide.ts';
+import { learningNoteEntry } from './checks/learning-note.ts';
+import { firstSessionSuggestionEntry } from './checks/first-session-suggestion.ts';
 import { memoryProposalsEntry } from './checks/memory-proposals.ts';
+import { policyValidEntry } from './checks/policy-valid.ts';
+import { rulesRegressionEntry } from './checks/rules-regression.ts';
 import { supersessionCalibrationEntry } from './checks/supersession-calibration.ts';
 import { factAdmissionFloorsEntry } from './checks/fact-admission-floors.ts';
 import { unlinkedFactsEntry } from './checks/unlinked-facts.ts';
 import { edgeValidityEntry } from './checks/edge-validity.ts';
 import { coreMemoryEntry } from './checks/core-memory.ts';
-import { entityDuplicatesEntry, personTitleDuplicatesEntry } from './checks/entity-duplicates.ts';
+import { dedupeAutoLinksEntry, entityDuplicatesEntry, personTitleDuplicatesEntry } from './checks/entity-duplicates.ts';
 import { plannerStatsEntry } from './checks/planner-stats.ts';
 import { revisionBackfillEntry } from './checks/revision-backfill.ts';
 import { beliefLedgerEntry } from './checks/belief-ledger.ts';
@@ -139,6 +144,8 @@ import { provenanceStampDriftEntry } from './checks/provenance-stamp-drift.ts';
 import { trustScanEntry } from './checks/trust-scan.ts';
 import { trustSourcesUnclaimedEntry } from './checks/trust-sources-unclaimed.ts';
 import { trustReleaseUnpreviewedEntry } from './checks/trust-release-unpreviewed.ts';
+import { writeGateHoldAmbiguousEntry } from './checks/write-gate-hold-ambiguous.ts';
+import { writeGateHoldsStrandedEntry } from './checks/write-gate-holds-stranded.ts';
 import { harnessWiringDoctorEntry } from './checks/harness-wiring.ts';
 import { agentContractEntry } from './checks/agent-contract.ts';
 import { chatFallbackChainEntry } from './checks/chat-fallback.ts';
@@ -166,11 +173,13 @@ import { ownerReadsRestrictedEntry } from './checks/owner-reads-restricted.ts';
 import { accessLineageEntry } from './checks/access-lineage.ts';
 import { accessLabelledOnlyEntry } from './checks/access-labelled-only.ts';
 import { accessPagesReadByNobodyEntry } from './checks/access-pages-read-by-nobody.ts';
+import { accessReachEntry } from './checks/access-reach.ts';
 import { attestReadAccessEntry } from './checks/attest-read-access.ts';
 import { guestSourceEntry } from './checks/guest-source.ts';
 import { originTwinsEntry } from './checks/origin-twins.ts';
 import { slugPathMismatchEntry } from './checks/slug-path-mismatch.ts';
 import { renameIdentityDowngradesEntry } from './checks/rename-identity-downgrades.ts';
+import { legacySlugSpellingsEntry } from './checks/legacy-slug-spellings.ts';
 import { unindexedFilesEntry } from './checks/unindexed-files.ts';
 import { syncLandingGapsEntry } from './checks/landing-gaps.ts';
 import { derivedOriginParkedEntry, purgeParkedPagesEntry } from './checks/purge-parks.ts';
@@ -186,6 +195,7 @@ import { commitNotifierEntry } from './checks/commit-notifier.ts';
 import { managedSyncConvergenceEntry } from './checks/managed-sync-convergence.ts';
 import { managedSyncBlockedEntry } from './checks/managed-sync-blocked.ts';
 import { syncAdmissionEntry } from './checks/sync-admission.ts';
+import { topologyRecoveryStoppedEntry } from './checks/topology-recovery-stopped.ts';
 import { atomHeldFailedEntry } from './checks/atom-holds.ts';
 import { extractionInputTruncatedEntry } from './checks/extraction-input.ts';
 import { derivationUnpricedModelEntry } from './checks/derivation-pricing.ts'; // PR 4 (Wave B incremental derivation, transcripts)
@@ -230,6 +240,7 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   harnessWiringDoctorEntry,
   agentContractEntry,
   pgliteDataDirEntry,
+  rustEngineAddonEntry,
   ipcSocketPathEntry,
   projectionResidentEntry,
   offlineConnectionEntry,
@@ -242,6 +253,7 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   managedSyncMovementEntry,
   managedSyncBlockedEntry,
   syncAdmissionEntry,
+  topologyRecoveryStoppedEntry,
   persistenceCompactionEntry,
   soakCountersEntry,
   serveBuildDriftEntry,
@@ -271,6 +283,7 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   accessLineageEntry,
   accessLabelledOnlyEntry,
   accessPagesReadByNobodyEntry,
+  accessReachEntry,
   attestReadAccessEntry,
   guestSourceEntry,
   rlsEntry,
@@ -334,7 +347,11 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   gitWriterEntry,
   foreignWritersEntry,
   decideHealthEntry,
+  learningNoteEntry,
+  firstSessionSuggestionEntry,
   memoryProposalsEntry,
+  policyValidEntry,
+  rulesRegressionEntry,
   unlinkedFactsEntry,
   edgeValidityEntry,
   autoChronicleEntry,
@@ -352,6 +369,9 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   trustScanEntry,
   trustSourcesUnclaimedEntry,
   trustReleaseUnpreviewedEntry,
+  writeGateHoldAmbiguousEntry,
+  // Held writes no live page matches: held for a soft-deleted page, or for no page (doctor/checks/write-gate-holds-stranded.ts).
+  writeGateHoldsStrandedEntry,
   coreMemoryEntry,
   persistenceConsumersEntry,
   // GBRA-133: this role's session connections across every process, against the pooler's limit (read-only).
@@ -365,6 +385,7 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   originTwinsEntry,
   slugPathMismatchEntry,
   renameIdentityDowngradesEntry,
+  legacySlugSpellingsEntry,
   purgeParkedPagesEntry,
   derivedOriginParkedEntry,
   purgeMirrorEntry,
@@ -380,6 +401,8 @@ export const DOCTOR_CHECK_REGISTRY: readonly DoctorEntry[] = [
   personTitleDuplicatesEntry,
   // plan autoplan-20261117192252 PR 1: likely duplicate person and company pages by key, name and slug shape (read-only).
   entityDuplicatesEntry,
+  // GST-3609 PR C: the person links gbrain dedupe auto --apply made in the last 24 h, by class, with undo (informational, always ok).
+  dedupeAutoLinksEntry,
   // GST-1601: the one-sided local edits adopted in the last 24 h per source (informational, always ok).
   localEditAdoptionsEntry,
   // GBRA-221: live fence rows on imported pages whose body is outside-authored text (review only).

@@ -13,7 +13,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { execFileSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -50,7 +50,8 @@ interface Fixture { engine: BrainEngine; root: string }
 /**
  * A legacy knowledge page under skills/ (lowest page id, imported before the pack was adopted), a page under the pack skill's
  * directory, three ordinary pages and one kept page, all file-backed; then the shared skillpack is adopted on the source
- * (pack root = source root) and every file but the kept one and the pack's SKILL.md is removed.
+ * (pack root = source root) and every file but the kept one and the pack's SKILL.md is removed in a commit (GST-3637: only a
+ * file a commit deleted lets the repair remove its page).
  */
 async function fixture(run: (f: Fixture) => Promise<void>): Promise<void> {
   const scratch = mkdtempSync(join(tmpdir(), 'gbrain-ghost-skills-'));
@@ -72,6 +73,8 @@ async function fixture(run: (f: Fixture) => Promise<void>): Promise<void> {
           mkdirSync(dirname(join(root, `${slug}.md`)), { recursive: true });
           writeFileSync(join(root, `${slug}.md`), serializePageToMarkdown(snapshot.page, snapshot.tags));
         }
+        const git = (...args: string[]) => execFileSync('git', ['-c', 'user.name=test', '-c', 'user.email=test@example.com', '-c', 'commit.gpgsign=false', ...args], { cwd: root });
+        git('add', '-A'); git('commit', '-q', '-m', 'pages');
         await claimWorktree(engine, SOURCE, root);
         await activateSharedSkillPersistence(engine, { confirmQuiesced: true });
         const ctx: OperationContext = { engine, config: { engine: engine.kind }, remote: false, sourceId: SOURCE, dryRun: false, logger };
@@ -83,7 +86,8 @@ async function fixture(run: (f: Fixture) => Promise<void>): Promise<void> {
           ] },
         ] });
         expect(adopted.receipts[0].state).toBe('committed');
-        for (const slug of [SKILL, MEMBER, ...ORDINARY]) unlinkSync(join(root, `${slug}.md`));
+        git('rm', '-q', '--', ...[SKILL, MEMBER, ...ORDINARY].map(slug => `${slug}.md`));
+        git('commit', '-q', '-m', 'remove pages', `--date=${new Date(Date.now() + 2000).toISOString()}`);
         await run({ engine, root });
       } finally { installFaultHook(undefined); await disposePersistenceConsumer(engine); await isolated.close(); }
     });

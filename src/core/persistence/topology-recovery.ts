@@ -20,7 +20,8 @@ import { flushTopologyDirectory, topologyDirectoryIdentity } from './topology-fi
 import { assertPhysicalRoot } from './physical-root.ts';
 import { assertPhysicalRootStamp, readPhysicalRootReservation } from './physical-root-record.ts';
 import { resumeWorktreeRefreshes } from './worktree-refresh.ts';
-import { managesWorktrees } from '../rust-engine/errors.ts';
+import { managesWorktrees, servesRawSql } from '../rust-engine/errors.ts';
+import { requireTopologyRawSql } from './topology-stop.ts';
 
 const cloneStatusFix=(sourceId:string):Action=>readFix(
   `Shows source ${sourceId}'s owner, worktree state (recovering while a clone is unresolved) and blocking effects, read-only.`,
@@ -86,8 +87,10 @@ async function guard(tx:BrainEngine,row:TopologyChange,record:TopologyCloneRecov
   if(!owner||owner.owner_host_id!==record.ownerHostId||String(owner.owner_epoch)!==record.ownerEpoch||owner.state!=='recovering'||host?.local_path!==record.target)
     throw retainedClone('Ownership changed while the clone needed recovery.',record,
       `Worktree ${record.worktreeId} no longer has owner epoch ${record.ownerEpoch} on this host in the recovering state.`);
+  // The member order never reaches output: the members are re-sorted in JS on the next line and only name the source rows to lock.
   const members=await tx.executeRaw<{source_id:string}>('SELECT source_id FROM persistence_source_bindings WHERE worktree_id=$1::uuid ORDER BY source_id',[record.worktreeId]);
   const sources=[...new Set([record.sourceId,...members.map(value=>value.source_id)])].sort();
+  // Plain ORDER BY id on purpose, not COLLATE "C": this only sets the lock order, the same as lockAllSourceRows (engine-sql/sources.ts), so no deadlock.
   await tx.executeRaw('SELECT id FROM sources WHERE id=ANY($1::text[]) ORDER BY id FOR UPDATE',[sources]);
   return sources;
 }
@@ -220,14 +223,12 @@ const recoveryCursors=new WeakMap<BrainEngine,string>();
  * refreshing process has exited; a live refresh holds its lock and is skipped.
  */
 export async function recoverSourceTopologies(engine:BrainEngine,opts:{hostId?:string;limit?:number;onAttempt?:(id:string,recovered:boolean)=>void}={}):Promise<number>{
-  // Every topology recovery record names a managed worktree; an engine without one has none to converge.
-  if(!managesWorktrees(engine))return 0;
   const host=opts.hostId??hostIdFor(engine),limit=Math.max(1,Math.min(16,opts.limit??2));
+  // The named Rust stop (topology-stop.ts): finishing a change locks through raw SQL, so an engine without it refuses by
+  // name while a change is recovering here, before any lock or refresh step; the change stays exactly as recorded.
+  if(!servesRawSql(engine)&&(await engine.listTopologyRecoveries(host,null,1)).length)requireTopologyRawSql(engine,'source_topology_recovery');
   await resumeWorktreeRefreshes(engine,{hostId:host});
-  const scan=async(after:string|null)=>engine.executeRaw<TopologyChange>(`SELECT c.* FROM persistence_topology_changes c
-    JOIN persistence_worktrees w ON w.id=(c.recovery->>'worktreeId')::uuid
-    WHERE c.recovery IS NOT NULL AND w.owner_host_id=$1::uuid AND ($2::uuid IS NULL OR c.id>$2::uuid)
-    ORDER BY c.id LIMIT $3`,[host,after,limit]);
+  const scan=(after:string|null)=>engine.listTopologyRecoveries(host,after,limit);
   let rows=await scan(recoveryCursors.get(engine)??null);
   if(!rows.length){recoveryCursors.delete(engine);rows=await scan(null);}
   if(rows.length)recoveryCursors.set(engine,rows[rows.length-1].id);

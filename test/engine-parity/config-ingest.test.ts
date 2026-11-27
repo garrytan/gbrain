@@ -230,3 +230,32 @@ describe('engine parity: stats + ingest log', () => {
     },
   );
 });
+
+describe('engine parity: per-source live counts (sources status)', () => {
+  parityTest(
+    'countLivePagesBySource and countChunksBySource count live pages, their chunks and embedded chunks per source',
+    { methods: ['putPage', 'upsertChunks', 'softDeletePage', 'countLivePagesBySource', 'countChunksBySource'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'counts-b');
+      await createSource(engine, backend, 'counts-empty');
+      const empty = { pages: await engine.countLivePagesBySource(), chunks: await engine.countChunksBySource('embedding') };
+      await engine.putPage('notes/cnt-a', { type: 'note', title: 'A', compiled_truth: 'A.', timeline: '' });
+      await engine.putPage('notes/cnt-gone', { type: 'note', title: 'Gone', compiled_truth: 'Gone.', timeline: '' });
+      await engine.putPage('notes/cnt-b', { type: 'note', title: 'B', compiled_truth: 'B.', timeline: '' }, { sourceId: 'counts-b' });
+      await engine.upsertChunks('notes/cnt-a', [
+        { chunk_index: 0, chunk_text: 'A.', chunk_source: 'compiled_truth', embedding: basisEmbedding(5) },
+        { chunk_index: 1, chunk_text: 'A later.', chunk_source: 'timeline' },
+      ]);
+      await engine.upsertChunks('notes/cnt-gone', [
+        { chunk_index: 0, chunk_text: 'Gone.', chunk_source: 'compiled_truth', embedding: basisEmbedding(6) },
+      ]);
+      await engine.softDeletePage('notes/cnt-gone');
+      const byId = <T extends { source_id: string }>(rows: T[]) => [...rows].sort((a, b) => a.source_id.localeCompare(b.source_id));
+      return {
+        empty,
+        pages: byId(await engine.countLivePagesBySource()),
+        chunks: byId(await engine.countChunksBySource('embedding')),
+      };
+    },
+  );
+});

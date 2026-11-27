@@ -22,8 +22,8 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import type { AccessMemberRow } from '../engine-sql/access-control.ts';
-import { sqlQueryForEngine, type SqlQuery } from '../sql-query.ts';
-import { forgetWakePrincipal } from '../wakeshift/forget.ts';
+import type { SqlQuery } from '../sql-query.ts';
+import { forgetWakeMember } from '../wakeshift/forget.ts';
 import { opError, type OperationError } from '../ops/contract.ts';
 import { hostOnlyError } from '../ops/op-fix.ts';
 import type { Action } from '../agent-output.ts';
@@ -182,15 +182,6 @@ export async function memberIdentity(engine: BrainEngine, raw: unknown): Promise
   return { member: member.id, groups: member.groups, identity: identityFor(member.id, member.groups) };
 }
 
-async function ensureGroups(engine: BrainEngine, groups: readonly string[]): Promise<string[]> {
-  const created: string[] = [];
-  for (const g of groups) {
-    const rows = await engine.executeRaw<{ id: string }>('INSERT INTO access_groups (id) VALUES ($1) ON CONFLICT (id) DO NOTHING RETURNING id', [g]);
-    if (rows.length) created.push(g);
-  }
-  return created;
-}
-
 /** The one active legacy token named `name`; refuses none or several. */
 export async function legacyTokenByName(engine: BrainEngine, name: string): Promise<CredentialRef> {
   const rows = await engine.readAccessCredentials({ tokenName: name });
@@ -222,20 +213,15 @@ export async function addMember(engine: BrainEngine, rawId: unknown, opts: { nam
   if (email !== null) await assertEmailFree(engine, email, id);
   const bindTarget = opts.bindToken ? await legacyTokenByName(engine, opts.bindToken) : null;
   await opts.beforeWrite?.();
-  let created: string[] = [];
-  await engine.transaction(async tx => {
-    await tx.executeRaw('INSERT INTO access_members (id, display_name, email, kind) VALUES ($1, $2, $3, $4)', [id, opts.name ?? null, email, kind]);
-    created = await ensureGroups(tx, groups);
-    for (const g of groups) await tx.executeRaw('INSERT INTO access_group_members (group_id, member_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [g, id]);
-    if (bindTarget) await tx.executeRaw('UPDATE access_tokens SET member_id = $2 WHERE id::text = $1', [bindTarget.id, id]);
-  }).catch(error => refuseEmailRace(engine, error, email, id));
-  return { member: (await getMember(engine, id))!, groups_created: created, bound: bindTarget };
+  const { groupsCreated } = await engine.insertAccessMember({ id, displayName: opts.name ?? null, email, kind, groups, bindTokenId: bindTarget?.id ?? null })
+    .catch(error => refuseEmailRace(engine, error, email, id));
+  return { member: (await getMember(engine, id))!, groups_created: groupsCreated, bound: bindTarget };
 }
 
 async function setDisabled(engine: BrainEngine, rawId: unknown, disabled: boolean): Promise<MemberRecord> {
   const member = await existingMember(engine, rawId, disabled ? 'disabled' : 'enabled');
   if (member.status === 'removed') throw retired(member.id, 'Add a new member id instead.', 'A removed member stays removed; enabling it would hand its history back.');
-  await engine.executeRaw(`UPDATE access_members SET disabled_at = ${disabled ? 'COALESCE(disabled_at, now())' : 'NULL'}, updated_at = now() WHERE id = $1`, [member.id]);
+  await engine.setAccessMemberDisabled(member.id, disabled);
   return (await getMember(engine, member.id))!;
 }
 
@@ -249,8 +235,8 @@ export async function setMemberEmail(engine: BrainEngine, rawId: unknown, rawEma
   const email = rawEmail === null ? null : assertMemberEmail(rawEmail);
   if (email === member.email) return { member, changed: false };
   if (email !== null) await assertEmailFree(engine, email, member.id);
-  const updated = await engine.executeRaw<{ id: string }>('UPDATE access_members SET email = $2, updated_at = now() WHERE id = $1 AND tombstoned_at IS NULL RETURNING id', [member.id, email]).catch(error => refuseEmailRace(engine, error, email, member.id));
-  if (!updated.length) throw retired(member.id, 'Add a new member id instead.', 'A removed member stays removed; its email was cleared when it was removed.');
+  const updated = await engine.setAccessMemberEmail(member.id, email).catch(error => refuseEmailRace(engine, error, email, member.id));
+  if (!updated) throw retired(member.id, 'Add a new member id instead.', 'A removed member stays removed; its email was cleared when it was removed.');
   return { member: (await getMember(engine, member.id))!, changed: true };
 }
 
@@ -281,7 +267,7 @@ export async function setMemberKind(engine: BrainEngine, rawId: unknown, rawKind
   const member = await existingMember(engine, id, 'changed');
   if (member.status === 'removed') throw retired(member.id, 'Add a new member id instead.', 'A removed member stays removed.');
   if (member.kind === kind) return { member, changed: false };
-  await engine.executeRaw('UPDATE access_members SET kind = $2, updated_at = now() WHERE id = $1 AND tombstoned_at IS NULL', [member.id, kind]);
+  await engine.setAccessMemberKind(member.id, kind);
   return { member: (await getMember(engine, member.id))!, changed: true };
 }
 
@@ -317,25 +303,19 @@ export async function previewRemoveMember(engine: BrainEngine, rawId: unknown): 
 export async function removeMember(engine: BrainEngine, rawId: unknown): Promise<MemberRemovalPreview> {
   const preview = await previewRemoveMember(engine, rawId);
   if (preview.member.status === 'removed') {
-    await forgetWakePrincipal(sqlQueryForEngine(engine), { member: preview.member.id });
+    await forgetWakeMember(engine, preview.member.id);
     return preview;
   }
-  await engine.transaction(async tx => {
-    await tx.executeRaw('UPDATE access_members SET tombstoned_at = now(), disabled_at = COALESCE(disabled_at, now()), email = NULL, updated_at = now() WHERE id = $1', [preview.member.id]);
-    await tx.executeRaw('DELETE FROM access_group_members WHERE member_id = $1', [preview.member.id]);
-  });
-  await forgetWakePrincipal(sqlQueryForEngine(engine), { member: preview.member.id });
+  await engine.tombstoneAccessMember(preview.member.id);
+  await forgetWakeMember(engine, preview.member.id);
   return { ...preview, member: (await getMember(engine, preview.member.id))! };
 }
 
 export interface GroupRecord { id: string; members: string[] }
 
 export async function listGroups(engine: BrainEngine, id?: string): Promise<GroupRecord[]> {
-  const rows = await engine.executeRaw<{ id: string; members: string[] }>(
-    `SELECT g.id, COALESCE(array_agg(gm.member_id ORDER BY gm.member_id) FILTER (WHERE gm.member_id IS NOT NULL), '{}') AS members
-     FROM access_groups g LEFT JOIN access_group_members gm ON gm.group_id = g.id
-     ${id ? 'WHERE g.id = $1' : ''} GROUP BY g.id ORDER BY g.id`, id ? [id] : []);
-  return rows.map(r => ({ id: r.id, members: r.members ?? [] }));
+  // An empty id lists every group, as before.
+  return engine.readAccessGroups(id ? id : null);
 }
 
 async function existingGroup(engine: BrainEngine, raw: unknown): Promise<GroupRecord> {
@@ -352,18 +332,14 @@ export async function addGroup(engine: BrainEngine, rawId: unknown, members: rea
     const rec = await existingMember(engine, m, 'added to a group');
     if (rec.status === 'removed') throw retired(rec.id, 'Add a new member id instead.', 'A removed member cannot join a group.');
   }
-  let created = false;
-  await engine.transaction(async tx => {
-    created = (await ensureGroups(tx, [id])).length > 0;
-    for (const m of members) await tx.executeRaw('INSERT INTO access_group_members (group_id, member_id) VALUES ($1, $2) ON CONFLICT DO NOTHING', [id, m]);
-  });
+  const created = await engine.addAccessGroupMembers(id, members);
   return { group: (await listGroups(engine, id))[0]!, created };
 }
 
 /** Removes `members` from an existing group. */
 export async function removeGroupMembers(engine: BrainEngine, rawId: unknown, members: readonly string[]): Promise<GroupRecord> {
   const group = await existingGroup(engine, rawId);
-  for (const m of members) await engine.executeRaw('DELETE FROM access_group_members WHERE group_id = $1 AND member_id = $2', [group.id, assertAccessId(m)]);
+  await engine.removeAccessGroupMembers(group.id, members.map(m => assertAccessId(m)));
   return (await listGroups(engine, group.id))[0]!;
 }
 
@@ -377,7 +353,7 @@ export async function previewRemoveGroup(engine: BrainEngine, rawId: unknown): P
 
 export async function removeGroup(engine: BrainEngine, rawId: unknown): Promise<GroupRemovalPreview> {
   const preview = await previewRemoveGroup(engine, rawId);
-  await engine.executeRaw('DELETE FROM access_groups WHERE id = $1', [preview.group.id]);
+  await engine.deleteAccessGroup(preview.group.id);
   return preview;
 }
 
@@ -421,14 +397,11 @@ function attestRefused(message: string, suggestion: string): OperationError {
  */
 export async function bindCredential(engine: BrainEngine, target: { kind: 'token' | 'client'; id: string }, patch: BindingPatch, opts: { dryRun?: boolean } = {}): Promise<BindingResult> {
   if (patch.member != null) await requireEnabledMember(engine, patch.member);
-  const table = target.kind === 'token' ? 'access_tokens' : 'oauth_clients';
-  const key = target.kind === 'token' ? 'id::text' : 'client_id';
   // GST-1113: lock the credential row first and read it under the lock (grant rescopes lock it first too), so a
   // concurrent rescope commits before or after this change, never between its checks and its write.
   return engine.transaction(async tx => {
     const unscopedPatch = patch.readsUnscoped !== undefined;
-    const [before] = await tx.executeRaw<{ member_id: string | null; may_act_for: string[] | null; attest_actor: string | null; attest_ops: string[] | null; attest_sources: string[] | null; attest_read: 'person' | 'scope' | null; grant_types?: string[] | null; confidential?: boolean; reads_unscoped?: unknown }>(
-      `SELECT member_id, may_act_for, attest_actor, attest_ops, attest_sources, attest_read${target.kind === 'client' ? ', grant_types, client_secret_hash IS NOT NULL AS confidential' : ''}${unscopedPatch ? ', reads_unscoped' : ''} FROM ${table} WHERE ${key} = $1 FOR UPDATE`, [target.id]);
+    const before = await tx.readCredentialBindingForUpdate(target, { readsUnscoped: unscopedPatch });
     if (!before) {
       throw opError('invalid_params', `No ${target.kind === 'token' ? 'token' : 'OAuth client'} "${target.id}" exists.`,
         target.kind === 'token' ? 'List tokens with gbrain auth list.' : 'List clients with gbrain auth clients --json.');
@@ -465,15 +438,14 @@ export async function bindCredential(engine: BrainEngine, target: { kind: 'token
       // marked sources' row locks. A restated list also re-marks a listed source that lost its mark.
       if (await applyAttestSources(tx, target, attestSources ?? null, before.attest_sources ?? null, opts)) changed = true;
       if (!opts.dryRun) {
-        await tx.executeRaw(`UPDATE ${table} SET member_id = $2, may_act_for = $3::text[], attest_actor = $4, attest_ops = $5::text[], attest_sources = $6::text[], attest_read = $7 WHERE ${key} = $1`,
-          [target.id, member, mayActFor, attestActor, attestOps, attestSources, attestRead ?? null]);
+        await tx.writeCredentialBinding(target, { member, mayActFor, attestActor, attestOps, attestSources, attestRead: attestRead ?? null });
       }
     }
     // GST-363: the opt-out records when it was granted; restating it keeps that time.
     const readsUnscoped = unscopedPatch ? patch.readsUnscoped! : undefined;
     if (unscopedPatch && readsUnscoped !== (before.reads_unscoped != null)) {
       changed = true;
-      if (!opts.dryRun) await tx.executeRaw(`UPDATE ${table} SET reads_unscoped = CASE WHEN $2::boolean THEN now() ELSE NULL END WHERE ${key} = $1`, [target.id, readsUnscoped]);
+      if (!opts.dryRun) await tx.writeCredentialReadsUnscoped(target, readsUnscoped!);
     }
     return { member, may_act_for: mayActFor ?? null, ...(attestActor ? { attest_actor: attestActor, attest_ops: attestOps ?? null, attest_sources: attestSources ?? null, attest_read: attestRead ?? null } : {}),
       ...(readsUnscoped !== undefined ? { reads_unscoped: readsUnscoped } : {}), changed };
@@ -494,12 +466,14 @@ export class MemberBindingRefused extends Error {
  * with its groups. Null for an unbound credential (no member_id, or a schema
  * that predates the column). A binding to a disabled, removed or missing
  * member throws MemberBindingRefused, and so does an unreadable member table.
+ * With an engine the member is its readAccessMembers({ id }) row (any status,
+ * with its groups), so a store with no raw SQL (the Rust engine) verifies too.
  */
-export async function verifiedMember(sql: SqlQuery, memberId: unknown): Promise<{ id: string; groups: string[] } | null> {
+export async function verifiedMember(sql: SqlQuery, memberId: unknown, engine?: Pick<BrainEngine, 'readAccessMembers'>): Promise<{ id: string; groups: string[] } | null> {
   if (memberId == null) return null;
   if (typeof memberId !== 'string' || !ACCESS_ID_RE.test(memberId)) throw new MemberBindingRefused(String(memberId), 'malformed');
-  const [row] = await sql`SELECT m.id, m.disabled_at, m.tombstoned_at,
-    COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
+  const [row] = engine ? await engine.readAccessMembers({ id: memberId }) : await sql`SELECT m.id, m.disabled_at, m.tombstoned_at,
+    COALESCE(array_agg(g.group_id ORDER BY g.group_id COLLATE "C") FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
     FROM access_members m LEFT JOIN access_group_members g ON g.member_id = m.id
     WHERE m.id = ${memberId} GROUP BY m.id`;
   if (!row) throw new MemberBindingRefused(memberId, 'missing');

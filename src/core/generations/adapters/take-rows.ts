@@ -7,11 +7,10 @@
  * ledger before it changes.
  */
 import type { BrainEngine } from '../../engine.ts';
-import { TAKE_PREIMAGE_SQL } from '../../engine-sql/takes-reads.ts';
 import type { GenerationAdapter } from '../contract.ts';
+import type { TakePreimage } from '../../engine-sql/takes-reads.ts';
 import { fenceRowKey, publishFenceGeneration, takeRowIdentity, TAKE_FENCE_KIND, type FenceGenerationOutcome, type FenceItem, type FenceRead } from '../fence.ts';
 
-type TakePreimage = { id: number; row_num: number; claim: string; kind: string; holder: string };
 type IncomingTake = { rowNum: number; claim: string; kind: string; holder: string };
 
 export function takeFenceItems(takes: readonly IncomingTake[]): FenceItem[] {
@@ -27,7 +26,8 @@ export const takeItem = (preimage: TakePreimage, key = `take:${preimage.id}`): F
 /** Full rows of the takes `ids` of page `pageId` (before-states), and of the takes `replaced` would overwrite at their numbers. */
 export async function takePreimages(db: BrainEngine, pageId: number, ids: readonly number[], replaced: readonly IncomingTake[] = []): Promise<{ gone: TakePreimage[]; replaced: TakePreimage[] }> {
   if (!ids.length && !replaced.length) return { gone: [], replaced: [] };
-  const rows = await db.listTakePreimages(pageId, ids, replaced.map(take => ({ row_num: take.rowNum, claim: take.claim, kind: take.kind, holder: take.holder })));
+  const rows = await db.readTakePreimages({ pageId, by: 'id', gone: ids,
+    incoming: replaced.map(take => ({ row_num: take.rowNum, claim: take.claim, kind: take.kind, holder: take.holder })) });
   return { gone: rows.filter(row => row.gone).map(row => row.preimage), replaced: rows.filter(row => !row.gone).map(row => row.preimage) };
 }
 
@@ -37,12 +37,8 @@ export async function takePreimages(db: BrainEngine, pageId: number, ids: readon
  */
 export async function projectTakeFenceGeneration(tx: BrainEngine, input: { sourceId: string; slug: string; pageId: number; read: FenceRead;
   takes: readonly IncomingTake[]; gone: readonly number[]; writer: string; runId?: string }): Promise<FenceGenerationOutcome> {
-  const incoming = JSON.stringify(input.takes.map(take => ({ row_num: take.rowNum, claim: take.claim, kind: take.kind, holder: take.holder })));
-  const rows = (input.gone.length || input.takes.length) ? await tx.executeRaw<{ preimage: TakePreimage; gone: boolean }>(
-    `SELECT ${TAKE_PREIMAGE_SQL} AS preimage, k.row_num = ANY($2::integer[]) AS gone FROM takes k
-      LEFT JOIN jsonb_to_recordset($3::text::jsonb) AS n(row_num integer, claim text, kind text, holder text) ON n.row_num = k.row_num
-     WHERE k.page_id = $1 AND (k.row_num = ANY($2::integer[]) OR (n.row_num IS NOT NULL AND (k.claim, k.kind, k.holder) IS DISTINCT FROM (n.claim, n.kind, n.holder)))
-     ORDER BY k.row_num`, [input.pageId, [...input.gone], incoming]) : [];
+  const rows = (input.gone.length || input.takes.length) ? await tx.readTakePreimages({ pageId: input.pageId, by: 'row_num', gone: input.gone,
+    incoming: input.takes.map(take => ({ row_num: take.rowNum, claim: take.claim, kind: take.kind, holder: take.holder })) }) : [];
   const items = takeFenceItems(input.takes);
   const byRow = new Map(input.takes.map((take, index) => [take.rowNum, items[index]!.key]));
   return publishFenceGeneration(tx, { kind: TAKE_FENCE_KIND, sourceId: input.sourceId, slug: input.slug, read: input.read, items, writer: input.writer, runId: input.runId,

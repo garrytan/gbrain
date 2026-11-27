@@ -132,11 +132,14 @@ Rules for every method:
 | `brain.info()` | the same record as `open` | `readBrainIdentity` (`persistence/identity.ts`) |
 | `brain.isOpen` | `boolean` (a getter, not a promise) | none |
 
-`options` is `{ schemaVersion?: number, createdBy?: string, embeddingModel?: string,
-embeddingDimensions?: number, chunkStrategy?: string }`. `schemaVersion` is what a fresh brain
-stores as config `version`; pass `LATEST_SCHEMA_VERSION`. The other three are config entries a fresh
-brain records ([docs/store/config.md](docs/store/config.md)). `close` waits for calls already running,
-then gives up the lock.
+`options` is `{ schemaVersion?: number, createdBy?: string, concurrentWrites?: boolean,
+embeddingModel?: string, embeddingDimensions?: number, chunkStrategy?: string,
+writeGateDetectorVersion?: number }`. `schemaVersion` is what a fresh brain stores as config
+`version`; pass `LATEST_SCHEMA_VERSION`. `embeddingModel`, `embeddingDimensions` and `chunkStrategy`
+are config entries a fresh brain records ([docs/store/config.md](docs/store/config.md));
+`writeGateDetectorVersion` is the detector version of the write gate's scan baseline;
+`concurrentWrites` lets many write transactions run at once (off unless true or
+`GBRAIN_RUST_CONCURRENT_WRITES=1`). `close` waits for calls already running, then gives up the lock.
 
 ### Methods by family
 
@@ -165,6 +168,27 @@ GBRAIN_SIM_SEEDS=10000 cargo test --release -p gbrain-store --test sim -- --noca
 GBRAIN_SIM_SEED=1234 cargo test -p gbrain-store --test sim     # repeat one seed
 ```
 
+### Fact fingerprints and property tests
+
+Withdrawals and purge tombstones match claims by fingerprint, so the Rust `fact_fingerprint` and
+`fact_fingerprint_v1` must equal the SQL functions byte for byte. `crates/gbrain-store/tests/fixtures/fact_fingerprints.json`
+holds PGLite's answers: `lower()` and `[[:space:]]` for every code point, and both fingerprints for a
+corpus of hand-written claims (every whitespace class, Turkish I, sharp s, final sigma, ligatures,
+combining marks, NFC/NFD pairs, RTL, CJK, emoji, long text) plus seeded random ones. The Rust tests
+check every per-character port and both fingerprints against it, plus proptest properties.
+`test/fact-fingerprint-corpus.test.ts` fails when the fixture is stale and, on Postgres, prints where
+the host's `lower()` or `[[:space:]]` differs from PGLite (a glibc host counts U+1680 and not U+0085).
+
+```sh
+bun rust/scripts/fact-fingerprint-fixture.ts           # check the fixture against PGLite
+bun rust/scripts/fact-fingerprint-fixture.ts --write   # rewrite it after a deliberate change
+```
+
+Other proptest suites: `crates/gbrain-store/tests/store_props.rs` (put then get, delete leaves no
+row, a withdrawn claim stays withdrawn after reopen) and `crates/gbrain-napi/src/boundary_props.rs`
+(hostile JSON never panics a Brain method); `rust/smoke/cases.ts` fuzzes the built addon from
+JavaScript. proptest is a dev-dependency with default features off, so it writes no files.
+
 ## Error codes
 
 Errors from the addon are real `Error` objects with a `code`:
@@ -175,22 +199,26 @@ Errors from the addon are real `Error` objects with a `code`:
 | `internal_error` | Rust code panicked. Carries a `diagnosticId`; the panic text is not sent to the caller. |
 | `engine_shutdown` | A call arrived after shutdown began. |
 | `store_locked` | Another handle or process has the brain open. |
+| `store_missing` | `open` with `createMissing: false` found no brain in the directory (no `FORMAT`, no record file). Nothing was created. The TypeScript wrapper maps it to `brain_missing`. |
 | `format_unknown` | `FORMAT` or the format record is not a version this build reads. Nothing was written. |
 | `store_closed` | The brain is not open on this handle. |
 | `store_io` | The file system or the storage engine failed; the write did not commit. |
-| `store_corrupt` | The records fail their integrity check, or `FORMAT` names another brain. |
-| `invalid_state` | The call does not fit the handle's state (`open` on an open handle), or `finishWrite` met a request that already ended. |
-| `read_only_transaction` | A write inside a read-only transaction (Postgres SQLSTATE `25006`). Nothing was written. |
-| `invalid_argument` | A malformed argument. |
+| `store_corrupt` | The records fail their integrity check, or `FORMAT` names another brain. A restore rotates the brain id in the format record first and `FORMAT` after; a `FORMAT` that still names the id the record says it rotated from is stale, not another brain, and the next open rebuilds it. Restores run one at a time in a process, and a restore first brings a stale `FORMAT` up to the id the record holds before it commits another rotation, so `FORMAT` is never more than one rotation behind; if that write fails it refuses with `store_io` and changes nothing. |
+| `invalid_state` | The call does not fit the handle's state (`open` on an open handle; `restoreQuarantine` inside a transaction, or with a restore id already applied), or `finishWrite` met a request that already ended. |
+| `snapshot_cancelled` | `snapshotTo` was cancelled with `snapshotCancel`. It removed what it wrote and released its read before it rejected. |
+| `read_only_transaction` | A write inside a read-only transaction (Postgres SQLSTATE `25006`). Nothing was written. `restoreQuarantine` on a handle that was opened read-only raises it first, before it repairs `FORMAT` or touches anything else. |
+| `restore_refused` | `restoreQuarantine` changed nothing: the store holds unfinished write work, a recovery record, a live OAuth client or local writer registration (nothing revokes them yet), activated shared-skill publication, a shared-skill member, delivery batch or policy, or `mcp.publish_skills` on (nothing switches them off yet), or a record of a kind this build has not classified. The message is `<reason>: <count>`, with the kinds named in parentheses for `unclassified_state` (for example `access tokens (jobs 0x2b)`, `OAuth tokens (jobs 0x2c)` or `OAuth codes (jobs 0x2d)`) the ids for `archived_authority` and the names for `shared_skill_state`; the reasons are `pending_requests`, `recovery_required`, `archived_authority`, `shared_skill_state` and `unclassified_state`. (`purge_replay` comes only from `restoreCensus`, for the purge ids the caller passes it; `restoreQuarantine` passes none.) `gbrain backup restore` is to map the census blockers and this error to `restore_step_unsupported`; that command does not call the restore step yet. |
+| `unmodeled_input` | An input written in a form the store does not read the way Postgres does (a resolved date with a zone followed by an offset such as `PST+1`, or a date after 2037 in a zone with daylight saving time). Nothing was written; the engine refuses the call as `engine_capability_missing`, naming the member and the input. |
+| `invalid_argument` | A malformed argument. `restoreQuarantine` also refuses, changing nothing, a plan whose sources or settings do not match the store, whose settings list leaves one out or names one twice. |
 | `invalid_slug` | The slug failed `validateSlug`. |
 | `source_not_found` | A page write named a source that does not exist. |
 | `page_not_found` | `addTag`, `addPageTagsById`, `createVersion`, `addLink` or `addTimelineEntry` named a page that does not exist. |
-| `page_ambiguous` | `readPageSnapshot` under `requireUnambiguous` found more than one readable page for the identifier; the binding maps it to `PageSnapshotAmbiguousError`. |
+| `page_ambiguous` | `readPageSnapshot` under `requireUnambiguous` found more than one readable page for the identifier. The addon rejects with this code. The TypeScript wrapper converts it to `PageSnapshotAmbiguousError` in `src/core/rust-engine/store-errors.ts` where that mapping exists; master's wrapper does not have it yet, so there the code stays on the error. |
 | `constraint_violation` | A write breaks a table constraint PGLite enforces: a `linkSource` outside its CHECK, or a `deletePage` whose origin clear collides with another link. |
 | `revision_conflict` | `expectedRevision` does not match the page. |
 | `revision_required` | The page exists and the caller sent `force: false` without `expectedRevision`. |
 | `empty_overwrite` | A blank body would replace a page that has content. |
-| `origin_claimed` | A page write or `restorePage` would make a second live page of a source recording one `source_path`. The message is JSON (`source_id`, `source_path`, `holders`, `slug`); the binding maps it to `page_identity_changed`. |
+| `origin_claimed` | A page write or `restorePage` would make a second live page of a source recording one `source_path`. The message is JSON (`source_id`, `source_path`, `holders`, `slug`); the binding maps it to `page_identity_changed`. `restoreQuarantine` also raises it, changing nothing, when rebasing a managed source's page origins would put two live pages on one origin; that message is plain text naming the source. |
 | `source_changed` | `sourceIncarnation` is not the source's current incarnation. |
 | `idempotency_conflict` | A request id was used for different content. |
 | `admission_refused` | The principal or the brain has too many unfinished writes. |
@@ -217,8 +245,9 @@ can reach.
 - gbrain's addon loader (`src/core/rust-engine/addon-loader.ts`) uses `GBRAIN_RUST_ENGINE_ADDON`
   first, then an addon cached under `<gbrain home>/engines/rust/` whose SHA-256 matches this
   release's cached manifest. It does not download anything: with no cached addon it refuses with
-  `rust_engine_addon_missing`, reason `not_installed`. Nothing starts the loader yet (ENGINES.md,
-  "The Rust engine shell").
+  `rust_engine_addon_missing`, reason `not_installed`. `gbrain engine install rust` downloads, checks
+  and installs the addon a release publishes (ENGINES.md, "Installing the addon"); releases build it
+  with `rust/scripts/release-addon.ts` in `.github/workflows/release.yml`.
 - To go back to the normal gbrain path, `unset GBRAIN_RUST_ENGINE_ADDON`.
 - `GBRAIN_TEST_BACKEND=rust bun test <file>` arrives with the Rust test arm in a later change. It
   does not exist yet.

@@ -1,3 +1,4 @@
+import { normalizeSlug } from '../utils.ts';
 import { randomUUID } from 'node:crypto';
 import { pageQuarantinedNotice } from '../quarantine.ts';
 import { indexRestoredNotice } from './git-door.ts';
@@ -33,6 +34,7 @@ import { admitWrite, assertPageRequestIdentity, assertReplayIntent, getWriteRequ
 import { submissionAuthority, authorizeStoredRequest, sharedWriterRow } from './authority.ts';
 import { currentVerifiedLocalWriter, hostIdFor, readLocalWriter, registerLocalWriter, withVerifiedLocalRegistration } from './identity.ts';
 import type { BrainEngine } from '../engine.ts';
+import { requirePurgePathServed } from './purge-path-members.ts';
 import type { AdmissionSourceRow, SourceStateOptions } from '../engine-sql/write-misc.ts';
 import { claimWorktree, getWorktreeBinding, sharedWorktreeBinding } from './ownership.ts';
 import { clientRequestIdOf, parseMutationPrecondition } from './preconditions.ts';
@@ -49,6 +51,7 @@ import { isSegmentedPage } from '../page-body/page-shape.ts';
 import { liveSearchable } from './searchable.ts';
 import { cachedPreadmitBrain, dropPreadmitCache, preadmitReads, preadmitRecheckFailed } from './preadmit-cache.ts';
 import { pipelined } from '../page-state/transactions.ts';
+import { EXISTING_PAGE_OPERATIONS, refuseLegacySpelling, storedWriteSlug } from './legacy-slug-put.ts';
 import { holdsSummarizedToolCalls, isQuotedPageType, quotesTier, unquoteTranscriptText } from '../search/transcript-quote.ts';
 import { readStoredBody } from '../facts/file-body-guard.ts';
 import { isMirrorOnlyPage, sourceMirrorReadOnly } from './mirror-read-only.ts';
@@ -57,6 +60,10 @@ import type { GuestSource } from '../guests/sources.ts';
 import { admitGuestOperation, assertGuestFrontmatter, assertGuestReaders, GUEST_NOTE_INTENT_KEY, guestPageImmutable, guestSourcesUnreadable, refuseRemoteGuestDelete, schemaBehindGuests } from '../guests/admission.ts';
 import { currentCallerAccess } from '../search/private-visibility.ts';
 import { assertStorageSourceWriter } from '../storage-manifest/door.ts';
+import { OWNED_FOLDER_KINDS } from '../owned-folder/paths.ts';
+import { assertPolicySlugWrite } from '../policy/admission.ts';
+import { assertRuleSlugWrite } from '../rules/admission.ts';
+import { assertActionSlugWrite } from '../ledger/admission.ts';
 
 export async function requestPrincipalForContext(ctx: OperationContext): Promise<Principal> {
   // #5994: a failed-writes replay is admitted under the original writer.
@@ -101,7 +108,7 @@ const WRITER_ROW_SQL = 'SELECT lane,credential_hash,grant_ceiling,revoked_at FRO
 export const SCREENING_SHARED_READS: ReadonlySet<string> = new Set([
   WRITER_ROW_SQL,
 ]);
-/** The shared reads above, plus their typed twins: the brain identity always, the unlocked writer row when `extra` names it. */
+/** The shared reads above, plus their typed twins: the brain identity and the unlocked writer row. */
 export function batchSharedReads(engine: BrainEngine, extra?: ReadonlySet<string>): BrainEngine {
   const reads = new Map<string, Promise<unknown>>();
   const once = <T>(id: string, read: () => Promise<T>): Promise<T> => {
@@ -114,6 +121,8 @@ export function batchSharedReads(engine: BrainEngine, extra?: ReadonlySet<string
       BATCH_SHARED_READS.has(flatSql(sql)) || extra?.has(flatSql(sql)) ? once(JSON.stringify([flatSql(sql), params ?? null]), () => target.executeRaw(sql, params, opts)) : target.executeRaw(sql, params, opts);
     if (key === 'readPersistenceBrainId') return () => once('typed:brain', () => target.readPersistenceBrainId());
     if (key === 'getConfig') return (name: string) => once(`config:${name}`, () => target.getConfig(name));
+    // The typed form of the shared `SELECT value FROM config WHERE key=$1` read (engine-sql/config.ts), once per key.
+    if (key === 'readStoredConfigValue') return (name: string) => once(JSON.stringify([key, name]), () => target.readStoredConfigValue(name));
     if (key === 'readLocalWriterRow') return sharedWriterRow(target, reads, once);
     // The worktree binding, once per source and host; an absence is read again, since a later page may claim the worktree.
     if (key === 'getWorktreeBinding') return sharedWorktreeBinding(reads, once, (sourceId, hostId) => target.getWorktreeBinding(sourceId, hostId));
@@ -128,6 +137,9 @@ export function batchSharedReads(engine: BrainEngine, extra?: ReadonlySet<string
     if (key === 'listSharedSkillPackRoots' && extra) return (hostId: string) => once(JSON.stringify([key, hostId]), () => target.listSharedSkillPackRoots(hostId));
     if (key === 'getConfigValues') return (keys: readonly string[]) =>
       once(`config-values:${JSON.stringify(keys)}`, () => target.getConfigValues(keys)).then(rows => rows.map(row => ({ ...row })));
+    // The unsourced-put fork guard lists the sources once per batch, not once per page; a caller gets its own copy of each row.
+    if (key === 'listAllSources') return (opts?: { includeArchived?: boolean; localPathOnly?: boolean }) =>
+      once(JSON.stringify(['sources', opts ?? null]), () => target.listAllSources(opts)).then(rows => rows.map(row => ({ ...row })));
     if (key === 'getAllConfig' && extra) return () => once('config:*', () => target.getAllConfig()).then(all => ({ ...all }));
     const value = Reflect.get(target, key, target);
     return typeof value === 'function' ? value.bind(target) : value;
@@ -189,10 +201,10 @@ async function resolveCaptureFile(ctx: OperationContext, sourceId: string, p: Re
   }
   const file = p.local_file;
   delete p.local_file;
-  const [source] = await ctx.engine.executeRaw<{ local_path: string | null }>('SELECT local_path FROM sources WHERE id=$1', [sourceId]);
+  const sourceLocalPath = await ctx.engine.readSourceLocalPath(sourceId);
   const binding = await getWorktreeBinding(ctx.engine, sourceId);
   let root = binding ? binding.owner_host_id === hostIdFor(ctx.engine) && binding.local_path ? join(binding.local_path, binding.relative_path) : null
-    : source?.local_path || (sourceId === 'default' ? await ctx.engine.getConfig('sync.repo_path') : null);
+    : sourceLocalPath || (sourceId === 'default' ? await ctx.engine.getConfig('sync.repo_path') : null);
   if (root && !isHostAbsolutePath(root)) root = null;
   let origin: string | null = null;
   try { if (root) origin = relative(realpathSync(root), realpathSync(file)); } catch { /* unreadable or absent root */ }
@@ -250,7 +262,7 @@ export interface PageBatchMember { id: string; index: number; size: number; requ
 export async function submitPageMutation(ctx: OperationContext,
   input: { operation: string; params: Record<string, unknown>; waitMs?: number; managedFileImport?: true; timelineSection?: TimelineSection; databaseOnly?: 'overwrite_restore' | 'detached';
     /** commit_page_upload: `params.body_ref` names the caller's sealed upload session (persistence/page-upload.ts). */
-    stagedBody?: true }): Promise<Record<string, unknown>> {
+    stagedBody?: true; unsourcedForkGuard?: true }): Promise<Record<string, unknown>> {
   assertPersistenceAccepting(ctx.engine);
   // #6007: wait_ms is a reply deadline from arrival, never part of the write's identity.
   const arrived = performance.now();
@@ -316,8 +328,8 @@ function unquotedFrontmatter(sent: string, content: string, slug: string): strin
   const fenced = new Set(Object.keys(data).filter(k => JSON.stringify(data[k]) !== JSON.stringify(frontmatter[k])));
   if (!fenced.size) return content;
   const lines = content.slice(0, offset).split('\n');
-  const open = lines.findIndex(l => l.trim() === '---');
-  const close = lines.findIndex((l, i) => i > open && l.trim() === '---');
+  const open = lines.findIndex(l => l.trim().length > 0);
+  const close = lines.length - (lines[lines.length - 1] === '' ? 2 : 1);
   const out = lines.slice(0, open + 1);
   for (let i = open + 1; i < close;) {
     let end = i + 1;
@@ -346,8 +358,7 @@ async function unquotedPutContent(engine: BrainEngine, sourceId: string, slug: s
   const summarized = /, arguments omitted\]/.test(unquoted);
   const quotedType = isQuotedPageType(String(parseMarkdownHead(unquoted).frontmatter.type ?? ''));
   if (!summarized && (unquoted === content || quotedType)) return unquoted;
-  const [stored] = await engine.executeRaw<{ type: string | null; trust_tier: string | null; title: string | null; frontmatter: unknown }>(
-    'SELECT type, trust_tier, title, frontmatter FROM pages WHERE source_id = $1 AND slug = $2', [sourceId, slug]);
+  const stored = await engine.readStoredPageHead(sourceId, slug);
   // Compared with the stored body's tool calls; a segmented page reads NULL inline columns, so its summarized round trip is refused.
   const losesCalls = async () => {
     const body = await readStoredBody(engine, sourceId, slug);
@@ -378,7 +389,9 @@ async function unquotedPutContent(engine: BrainEngine, sourceId: string, slug: s
 export async function preparePageAdmission(ctx: OperationContext,
   input: { operation: string; params: Record<string, unknown>; managedFileImport?: true; batch?: PageBatchMember; timelineSection?: TimelineSection;
     /** #6712 `repair overwritten-edits`: publish to the database only, so the restore never rewrites the committed file. */
-    databaseOnly?: 'overwrite_restore' | 'detached'; stagedBody?: true }
+    databaseOnly?: 'overwrite_restore' | 'detached'; stagedBody?: true;
+    /** pages-02: put_page's handler (and put_pages, and commit_page_upload for a new page, when the caller named no source) asks for the unsourced-put fork refusal, applied to a fresh request after the write authority. */
+    unsourcedForkGuard?: true }
 ): Promise<{ prior: WriteRequest; admission?: undefined; typeWarning?: undefined; slugAdvisory?: undefined } | { prior?: undefined; admission: WriteAdmission; typeWarning: PageTypeWarning | null; slugAdvisory: string | null }> {
   if (input.operation === 'put_page' && ['kind', 'preview', 'backup_reference'].some(key => Object.hasOwn(input.params, key))) {
     if (ctx.remote !== false || input.managedFileImport !== true || !OWNER_FILE_INTENTS.has(String(input.params.kind)) ||
@@ -426,6 +439,9 @@ export async function preparePageAdmission(ctx: OperationContext,
   if (input.batch) p.page_batch = { id: input.batch.id, index: input.batch.index, size: input.batch.size, ...(input.batch.repeats?.length ? { repeats: input.batch.repeats } : {}) };
   const requestId = input.batch ? input.batch.requestId : typeof p.request_id === 'string' ? p.request_id : randomUUID();
   const sourceId = pageMutationSource(ctx, p, input.operation);
+  assertPolicySlugWrite(ctx.remote !== false, p);
+  assertRuleSlugWrite(ctx.remote !== false, p);
+  assertActionSlugWrite(ctx.remote !== false, p);
   await initializeLocalPersistence(ctx);
   const captureSlug = input.operation === 'capture' ? await resolveCaptureFile(ctx, sourceId, p) : null;
   const principal = await requestPrincipalForContext(ctx);
@@ -456,22 +472,27 @@ export async function preparePageAdmission(ctx: OperationContext,
     assertReplayIntent(prior, intentDigest({ operation: input.operation, sourceId, slug: prior.slug, callerIntent }));
     return { prior };
   }
+  // E: a write on an existing page addresses the exact stored row (legacy-slug-put.ts storedWriteSlug), so a page stored under another spelling changes in place, never a composed twin.
+  const storedKey = EXISTING_PAGE_OPERATIONS.includes(input.operation) && typeof p.slug === 'string' ? await storedWriteSlug(ctx.engine, sourceId, p.slug, normalizeSlug(p.slug)) : null;
   if (input.operation === 'delete_page') assertPurgeParams(p, ctx.remote);
-  if (guest && input.operation === 'delete_page' && ctx.remote !== false && typeof p.slug === 'string') await refuseRemoteGuestDelete(ctx.engine, sourceId, p.slug.toLowerCase(), principal);
+  // A purge an engine cannot serve end to end refuses by name before anything is journaled (persistence/purge-path-members.ts).
+  if (input.operation === 'delete_page' && p.purge === true) await requirePurgePathServed(ctx.engine, 'delete_page');
+  if (guest && input.operation === 'delete_page' && ctx.remote !== false && typeof p.slug === 'string') await refuseRemoteGuestDelete(ctx.engine, sourceId, storedKey ?? normalizeSlug(p.slug), principal);
   if (!source || source.archived) {
     throw new OperationError('source_changed', 'The write source is not active.',
       `Source ${sourceId} is archived or not registered, so nothing was written. Write to an active source (sources_list shows them).`);
   }
   // GST-1943: the storage manifest takes page writes only from the storage verbs (and the owner's import of its own commits).
   assertStorageSourceWriter(ctx, sourceId, source.role, { managedFileImport: input.managedFileImport });
+  if (source.kind && OWNED_FOLDER_KINDS.includes(source.kind)) await (await import('../owned-folder/remove.ts')).assertOwnedPagesUnchanged(ctx.engine, sourceId, input.operation);
   // A managed file import keeps the file canonical: its content is re-read and compared at preparation.
   const nulRemoved = input.managedFileImport ? 0 : stripPageTextNul(input.operation, p);
   if (nulRemoved) ctx.logger?.warn(`[nul_removed] ${input.operation} ${JSON.stringify(String(p.slug))}: removed ${nulRemoved} U+0000 character(s) from the page text; the page is stored without them.`);
   // After the replay check: the request digest covers what the caller sent, so a retry matches whatever the page's type is by then.
   if (input.operation === 'put_page' && ctx.remote !== false && typeof p.content === 'string' && typeof p.slug === 'string') {
-    p.content = await unquotedPutContent(ctx.engine, sourceId, p.slug.toLowerCase(), p.content);
+    p.content = await unquotedPutContent(ctx.engine, sourceId, normalizeSlug(p.slug), p.content);
   }
-  let slug = typeof p.slug === 'string' ? p.slug.toLowerCase() : '';
+  let slug = storedKey ?? (typeof p.slug === 'string' ? normalizeSlug(p.slug) : '');
   const intent = ['takes_add','takes_update','takes_supersede','takes_resolve','takes_remove'].includes(input.operation)
     ? await (await import('./takes-prepare.ts')).normalizeTakesIntent(ctx,p) : { ...p };
   delete intent.request_id;
@@ -529,6 +550,11 @@ export async function preparePageAdmission(ctx: OperationContext,
     () => ctx.engine.getConfig('sync.write_through'),
     async () => !source.local_path && sourceId === 'default' ? ctx.engine.getConfig('sync.repo_path') : null,
   ]) as [Awaited<ReturnType<typeof submissionAuthority>>, unknown, Awaited<ReturnType<BrainEngine['readPageSnapshot']>>, Awaited<ReturnType<typeof getWorktreeBinding>>, string | null, string | null];
+  // A put by a page's exact decomposed spelling is refused, never written to a composed twin (legacy-slug-put.ts).
+  if (input.operation === 'put_page' && input.managedFileImport !== true) await refuseLegacySpelling(ctx, sourceId, p.slug, slug);
+  // A batch child or an upload commit carries a source_id whether or not the caller named one (put_page's own source_id is the caller's); a batch asks for the guard only when its caller named none.
+  if (input.unsourcedForkGuard === true) await (await import('./unsourced-put-fork.ts')).assertUnsourcedPutKeepsSource(ctx, sourceId, input.batch || input.stagedBody ? { ...p, source_id: undefined } : p,
+    { targetHasRow: !!snapshot, ...(input.stagedBody ? { uploadCommit: true as const } : {}) });
   if (typeof intent.content === 'string' && (typeof p.expected_revision !== 'string' || p.expected_revision === snapshot?.revision)) {
     await assertTimelineNotOmitted(ctx.engine, { intent, remote: ctx.remote !== false, writer: typeof p.expected_revision === 'string' ? 'editing' : 'preserving',
       slug, sourceId, content: intent.content, prior: snapshot });
@@ -582,8 +608,7 @@ export async function preparePageAdmission(ctx: OperationContext,
   if (writeThrough && root && !binding) {
     // #5393: a revert is also judged on the version it writes.
     const fileBacked = Boolean(snapshot?.page.source_path) || Boolean(input.operation === 'revert_version' && snapshot
-      && (await ctx.engine.executeRaw<{ source_path: string | null }>('SELECT source_path FROM page_versions WHERE id=$1 AND page_id=$2',
-        [p.version_id, snapshot.page.id]))[0]?.source_path);
+      && await ctx.engine.readVersionSourcePath(Number(p.version_id), Number(snapshot.page.id)));
     const decision = await decideUnboundWrite(ctx.engine, { sourceId, sourceKind: source.kind, fileBacked, path: ctx.remote === false ? root : null });
     if (decision.kind === 'claim') binding = await claimWorktree(ctx.engine, sourceId, root, undefined, undefined, { automatic: true });
     else authority.databaseOnlyReason = decision.reason;

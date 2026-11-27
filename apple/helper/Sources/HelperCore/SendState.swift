@@ -108,11 +108,21 @@ public enum SendKeychainPolicy {
 
     public static func trusted(_ entries: [ACLEntry], helperPath: String) -> Bool {
         guard !entries.isEmpty else { return false }
+        let own = ownPaths(helperPath: helperPath)
         for entry in entries where !entry.authorizations.isDisjoint(with: sensitive) {
             guard let applications = entry.applications else { return false }
-            for path in applications where path != helperPath { return false }
+            for path in applications where !own.contains(path) { return false }
         }
         return true
+    }
+
+    static func ownPaths(helperPath: String) -> Set<String> {
+        let executable = URL(fileURLWithPath: helperPath).resolvingSymlinksInPath().standardizedFileURL
+        let macOS = executable.deletingLastPathComponent()
+        let contents = macOS.deletingLastPathComponent()
+        let app = contents.deletingLastPathComponent()
+        guard macOS.lastPathComponent == "MacOS", contents.lastPathComponent == "Contents", app.pathExtension == "app" else { return [executable.path] }
+        return [executable.path, app.path]
     }
 }
 

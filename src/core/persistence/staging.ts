@@ -190,13 +190,13 @@ export async function upgradeRecoveryStaging(engine: BrainEngine, table: 'persis
   const { lockCounters } = await import('./journal.ts');
   await engine.transaction(async tx => {
     await declarePersistenceProtocol(tx);
-    await tx.executeRaw("SELECT set_config('synchronous_commit','on',true),set_config('lock_timeout','1s',true),set_config('statement_timeout','5s',true)");
+    const journal = await tx.publicationJournalStore();
+    await journal.stagingDurability();
     const counters = await lockCounters(tx, ['brain', `worktree:${worktreeId}`]);
-    const [row] = await tx.executeRaw<{ recovery_bytes: number | string; recovery: StoredRecovery | null; source_id: string }>(
-      `SELECT recovery,recovery_bytes,source_id FROM ${table} WHERE id=$1 FOR UPDATE`, [id]);
+    const row = await journal.recoveryStaging(table, id);
     if (!row?.recovery) return;
-    assertRecoveryVersion(table, row.recovery, row.source_id);
-    const record = row.recovery;
+    const record = row.recovery as StoredRecovery;
+    assertRecoveryVersion(table, record, row.source_id);
     const prior = 'files' in record ? record.files : [record];
     const files = prior.map(file => upgradeFileStaging(file, mode));
     if (files.every((file, index) => file === prior[index])) return;
@@ -209,8 +209,7 @@ export async function upgradeRecoveryStaging(engine: BrainEngine, table: 'persis
         `Recovery needs ${extra} more bytes of the ${counter.key === 'brain' ? 'persistence.limits.brain_recovery_bytes' : 'persistence.limits.worktree_recovery_bytes'} budget to record its staging. Let other recovery settle; raising that limit is the user's call, and recovery records are never removed.`,
         { fix: { argv: ['gbrain', 'sources', 'writer', 'status', '--json'], consent: [], actor: 'agent', why: 'Shows pending recovery records and the capacity they hold, read-only.', requires_exclusive: false } });
     }
-    await tx.executeRaw(`UPDATE ${table} SET recovery=$2::text::jsonb,recovery_bytes=recovery_bytes+$3 WHERE id=$1`,
-      [id, JSON.stringify(updated), extra]);
-    for (const counter of counters) await tx.executeRaw('UPDATE persistence_counters SET recovery_bytes=recovery_bytes+$2 WHERE key=$1', [counter.key, extra]);
+    await journal.growRecoveryStaging(table, id, updated, extra);
+    for (const counter of counters) await tx.addPersistenceCounters(counter.key, { recovery_bytes: extra });
   });
 }

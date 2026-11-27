@@ -31,6 +31,7 @@ import { createSource, parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
 import { withEngineScope } from '../../src/core/engine-scope.ts';
+import { proposeRevision, restampSource } from '../../src/core/access/policy.ts';
 import { noteSchemaVersion } from '../../src/core/migrate-pending.ts';
 import { LATEST_SCHEMA_VERSION } from '../../src/core/schema-migrations/latest.generated.ts';
 
@@ -186,7 +187,44 @@ describe('engine parity: forget reach reads', () => {
       expect(out['on private page']).toBe(false);
       expect(out['on member page']).toBe(false);
       expect(out['on scope page']).toBe(false);
+      // The pages the member's own rule opens: no page record, an open entity page, a page whose readers name the member,
+      // and a deleted page record, which judges by its own fields as any page does.
+      expect(out['missing pages']).toBe(true);
+      expect(out['about open entity']).toBe(true);
+      expect(out['on readers page']).toBe(true);
+      expect(out['on deleted page']).toBe(true);
       return out;
+    });
+
+  // A folder rule removed before its restamp leaves the pages it covered stamped with the deleted id, which no caller
+  // satisfies: the page stays hidden from the owner's reach until the restamp, as it does from getPage and listPages.
+  parityTest('ownerReachesFact keeps a page hidden whose folder rule was removed before its restamp, for an owner bound to a member',
+    { methods: ['transaction', 'applyTransactionSettings', 'putPage', 'insertFacts', 'ownerReachesFact', 'applyAccessRuleChanges', 'lockAccessPolicy', 'restampAccessWindow', 'finishAccessRestamp'] }, async (engine) => {
+      const diary = { id: 'diary', prefix: 'private/', readable_by: ['member:alice-example'] };
+      await engine.putPage('private/diary', note('Diary'));
+      await engine.putPage('notes/open', note('Open'));
+      await proposeRevision(engine, 'default', [diary], { origin: 'cli', store: 'database' });
+      const diaryFact = await insert(engine, { fact: 'diary fact', entity: null, page: 'private/diary' }, 1);
+      const openFact = await insert(engine, { fact: 'open fact', entity: null, page: 'notes/open' }, 2);
+      const reach = async (satisfied: string[]) => ({
+        diary: await engine.ownerReachesFact({ id: diaryFact, sourceId: 'default', identity: ['member:alice-example'], satisfied }),
+        open: await engine.ownerReachesFact({ id: openFact, sourceId: 'default', identity: ['member:alice-example'], satisfied }),
+      });
+      const ruled = await reach(['default:diary']);
+      const unnamed = await reach([]);
+      await engine.transaction(async tx => {
+        await tx.lockAccessPolicy('default');
+        await tx.applyAccessRuleChanges('default', { remove: ['diary'], insert: [], pending: [], revision: 2, actor: 'parity' });
+      });
+      const retired = await reach([]);
+      const restamped = await restampSource(engine, 'default');
+      const after = await reach([]);
+      expect(ruled).toEqual({ diary: true, open: true });
+      expect(unnamed).toEqual({ diary: false, open: true });
+      expect(retired).toEqual({ diary: false, open: true });
+      expect(restamped).toEqual({ pages_scanned: 2, pages_restamped: 1 });
+      expect(after).toEqual({ diary: true, open: true });
+      return { ruled, unnamed, retired, restamped, after };
     });
 });
 

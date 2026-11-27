@@ -32,6 +32,11 @@ const members: ReadonlyArray<readonly [string, string, (e: BrainEngine) => Promi
   ['listCorePageRows', 'FROM pages p WHERE p.deleted_at IS NULL AND p.frontmatter @>', e => e.listCorePageRows({ limit: 10 })],
   ['lockRegisteredSourceIds', 'FROM sources WHERE id = ANY($1::text[]) ORDER BY id FOR SHARE', e => e.lockRegisteredSourceIds(['default'])],
   ['getConfig', 'SELECT value FROM config WHERE key = $1', e => e.getConfig('a.key')],
+  // The sync.admission read (persistence/sync-admission.ts readSyncAdmission) a managed sync and a keep_db reconcile prepare with.
+  ['readStoredConfigValue', 'SELECT value FROM config WHERE key=$1', e => e.readStoredConfigValue('sync.admission')],
+  ['readCredentialMemberId', 'SELECT member_id FROM access_tokens WHERE id::text = $1', e => e.readCredentialMemberId({ kind: 'token', id: 'token-1' })],
+  ['readCredentialMemberId', 'SELECT member_id FROM oauth_clients WHERE client_id = $1', e => e.readCredentialMemberId({ kind: 'client', id: 'client-1' })],
+  ['readLinkedMember', 'FROM access_member_links l JOIN access_members m', e => e.readLinkedMember('qm', 'person-1')],
   ['getAllConfig', 'SELECT key, value FROM config', e => e.getAllConfig()],
   ['listConfigKeys', 'SELECT key FROM config WHERE key LIKE', e => e.listConfigKeys('a.')],
   ['readPageSnapshot', 'WITH chosen AS (', e => e.readPageSnapshot('a', { sourceId: 'default' })],
@@ -40,9 +45,58 @@ const members: ReadonlyArray<readonly [string, string, (e: BrainEngine) => Promi
   ['findByTitleFuzzy', 'SELECT slug, similarity(title,', e => e.findByTitleFuzzy('A title', undefined, 0.55, 'default')],
   ['readSegmentTexts', 'FROM page_segment_texts t', e => e.readSegmentTexts('default', [new Uint8Array(32)])],
   ['readManifest', 'FROM page_body_manifest m', e => e.readManifest(1)],
-  // The sync change-reason scan (reason-trailers.ts), which a managed sync preparer runs through its bounded view.
-  ['readSourcePurgeEpoch', 'SELECT purge_epoch FROM sources WHERE id = $1', e => e.readSourcePurgeEpoch('default')],
-  ['readReasonPurgeTombstones', 'FROM reason_purge_tombstones WHERE source_id = $1', e => e.readReasonPurgeTombstones('default')],
+  // The fact-fence adoption's facts read (prepared-maintenance.ts `readFacts`), unlocked in preparation.
+  ['readFactSnapshots', 'AS value FROM facts f', e => e.readFactSnapshots('default', [1], false)],
+  // The segmented-storage writer gate a page or sync preparation reads through readPageBodyPolicy (page-body/limits.ts).
+  ['readSegmentedGateEvidence', 'FROM ingest_log l CROSS JOIN win', e => e.readSegmentedGateEvidence(7)],
+  // A remote sync job's checks in validateSyncAuthority (sync-authority.ts): the source's creation time and a legacy token's row.
+  ['readJobSourceState', 'SELECT archived, created_at, local_path, config FROM sources WHERE id = $1', e => e.readJobSourceState('default')],
+  ['readJobPrincipal', 'FROM access_tokens WHERE id = $1', e => e.readJobPrincipal({ kind: 'legacy_token', id: '00000000-0000-4000-8000-000000000001' })],
+  // Page preparation reads an OAuth client's member binding (persistence/page-visibility.ts defaultSourceMemberWriter).
+  ['readOauthClient', 'FROM oauth_clients WHERE client_id', e => e.readOauthClient('a-client')],
+  ['hasLabelledOnlyMember', 'FROM access_members WHERE labelled_only', e => e.hasLabelledOnlyMember()],
+  // A labelled-only test of the writer's members (persistence/page-visibility.ts assertLabelledOnlyCreate via labelledOnlyFor).
+  ['hasLabelledOnlyMemberAmong', 'FROM access_members WHERE labelled_only AND id = ANY', e => e.hasLabelledOnlyMemberAmong(['alice-example'])],
+  ['readSegmentedPageHead', 'segmenter_version, knowledge_revision::text AS revision FROM pages WHERE id=$1', e => e.readSegmentedPageHead(1)],
+  // The segmented write path's reads a page preparation makes (stageSegmentedImport, the seal probe, chunk-vector reuse): raw statements on the bounded view before the Rust store served them.
+  ['readSegmentedLivePage', 'FROM pages WHERE id=$1', e => e.readSegmentedLivePage(1)],
+  ['listChunkedOccurrences', 'FROM unnest($2::bigint[]) AS o', e => e.listChunkedOccurrences(1, [1], 1)],
+  ['readRetiredChunkVectors', 'FROM content_chunks c JOIN pages p ON p.id = c.page_id', e => e.readRetiredChunkVectors(1, [1], 'embedding')],
+  ['hasStaleSegmentChunks', 'WITH RECURSIVE occ(o) AS', e => e.hasStaleSegmentChunks(1, 1, [1])],
+  // The withdrawal overlay a page preparation runs on the incoming file (overlayCanonicalBodiesTyped in page-prepare.ts):
+  // the fence normalization and the '*' purge lookup, raw statements on the bounded view before they were typed.
+  ['normalizeFenceLines', 'string_to_array', e => e.normalizeFenceLines(['a'], [''])],
+  ['listGlobalPurgeWithdrawals', 'fact_purges', e => e.listGlobalPurgeWithdrawals('default', ['h'], false)],
+  ['readSourceIncarnation', 'SELECT config,incarnation FROM sources WHERE id=$1', e => e.readSourceIncarnation('default')],
+  ['readStoredPageTier', 'SELECT trust_tier FROM pages WHERE source_id = $1 AND slug = $2', e => e.readStoredPageTier('default', 'a')],
+  ['readJournalCeiling', 'SELECT max(sequence)::text AS ceiling FROM persistence_requests', e => e.readJournalCeiling('default')],
+  ['sweepJournalChunk', 'WITH chunk AS MATERIALIZED', e => e.sweepJournalChunk({ sourceId: 'default', needles: ['a claim'], after: '0', ceiling: '9', limit: 10, ids: null, exclude: null })],
+  // The page purge's preparation (persistence/page-purge.ts preparePagePurge) and the managed sync's purged-page screen.
+  ['listPurgeClaimFacts', 'SELECT id,fact,source FROM facts WHERE source_id=', e => e.listPurgeClaimFacts('default', 'notes/a')],
+  ['listPurgeClaimTakes', 'SELECT id,claim FROM takes WHERE page_id=$1', e => e.listPurgeClaimTakes(1)],
+  ['listQueuedPagePurges', 'FROM persistence_requests r\n    LEFT JOIN pages p', e => e.listQueuedPagePurges('default', '0', 7)],
+  ['listPageLinkStreams', 'SELECT DISTINCT COALESCE(o.slug, f.slug) AS slug FROM links l', e => e.listPageLinkStreams('default', 1)],
+  ['listPagePurgeTombstones', 'SELECT content_hash,slug FROM page_purges WHERE source_id=$1', e => e.listPagePurgeTombstones('default', 10)],
+  // The segmented-storage writer gate a page or sync preparation reads through readPageBodyPolicy (page-body/limits.ts).
+  ['readSegmentedGateEvidence', 'FROM ingest_log l CROSS JOIN win', e => e.readSegmentedGateEvidence(7)],
+  // The segmented body's chunk reads a page preparation makes (page-body/ingest.ts, import-chunk-reuse.ts, page-body/projection.ts).
+  ['listChunkedOccurrences', 'FROM unnest($2::bigint[]) AS o', e => e.listChunkedOccurrences(1, [1], 1)],
+  ['readRetiredChunkVectors', 'SELECT c.chunk_text, c.chunk_source', e => e.readRetiredChunkVectors(1, [1], 'embedding')],
+  ['hasStaleSegmentChunks', 'WITH RECURSIVE occ(o) AS', e => e.hasStaleSegmentChunks(1, 1, [1])],
+  // The withdrawal overlay a page preparation runs on the incoming file (overlayCanonicalBodiesTyped in page-prepare.ts):
+  // the fence normalization and the '*' purge lookup, raw statements on the bounded view before they were typed.
+  ['normalizeFenceLines', 'string_to_array', e => e.normalizeFenceLines(['a'], [''])],
+  ['listGlobalPurgeWithdrawals', 'fact_purges', e => e.listGlobalPurgeWithdrawals('default', ['h'], false)],
+  // The link preparation's alias and source slug reads (persistence/links-preparation.ts).
+  ['readLiveSlugAliases', 'FROM slug_aliases a', e => e.readLiveSlugAliases('default', ['a'])],
+  ['readSourceSlugProbe', 'hashtextextended(slug, 0)', e => e.readSourceSlugProbe('default', 0)],
+  // The owner write's reads of the stored page (persistence/page-visibility.ts ownerRewriteOf, authorizePageVisibility's hiddenUnder and probe).
+  ['readPagePrivacyHidden', 'AS hidden FROM pages p', e => e.readPagePrivacyHidden('default', 'a')],
+  ['readLinkTargetPages', 'AS visible', e => e.readLinkTargetPages('default', ['a'], null)],
+  ['readWriteVisibilityProbe', 'AS identity_may_open', e => e.readWriteVisibilityProbe('default', 'a')],
+  // The create check's and the deleted-row fallback's reads (page-visibility.ts assertLabelledOnlyCreate, hiddenUnder).
+  ['readPageHiddenFromWriter', 'SELECT 1 FROM pages WHERE source_id', e => e.readPageHiddenFromWriter('default', 'a', { identities: [['member:alice-example']], satisfiedRuleIds: [], folderCoverage: [], owner: false, labelledOnly: false }, true)],
+  ['readSlugFolderRules', 'gbrain_access_folder_rules', e => e.readSlugFolderRules('default', 'a')],
   // The keyword timeout is resolved once per engine; its own read under a deadline has the test below.
   ['searchKeyword', 'count(*) OVER () AS bounded_rows', e => e.searchKeyword('a title', { limit: 3, sourceId: 'default' }), keywordTimeoutResolved],
 ];
@@ -100,6 +154,43 @@ describe('typed preparation reads keep the preparation deadline (Postgres)', () 
         expect(clock.lastSql?.label).toBe(`SELECT ${name}`);
       });
     }
+  }
+});
+
+describe('a store a preparer opens through its bounded view keeps the preparation deadline (Postgres)', () => {
+  // Page preparation asks whether an earlier write waits on an import through the publication journal store
+  // (persistence/page-prepare.ts compareFileTarget); the store's statement replaced a raw one the view bounded.
+  const mark = 'r.deferred_import_from IS NOT NULL';
+  const run = async (e: BrainEngine) => (await e.publicationJournalStore()).heldBehindImport('default', 'a', 2);
+
+  test('without a deadline the store sends its statement as before', async () => {
+    const fake = makeFakeSql();
+    await run(boundedReads(fakeEngine(fake), startClaimPhase())).catch(() => undefined);
+    expect(fake.statements().some(s => s.text.includes(mark))).toBe(true);
+  });
+
+  for (const [view, opts] of views) {
+    test(`${view}: the store's read past the budget is refused before its statement is sent`, async () => {
+      const fake = makeFakeSql();
+      const reads = boundedReads(fakeEngine(fake), startClaimPhase(Date.now() - 2_000, undefined, 1_000), opts);
+      const error = await run(reads).then(() => null, (e: unknown) => e);
+      expect(error).toBeInstanceOf(PreparationDeadlineError);
+      expect((error as PreparationDeadlineError).sqlstate).toBeNull();
+      expect(fake.statements().filter(s => s.text.includes(mark))).toEqual([]);
+    });
+
+    test(`${view}: the store's read stalled on its connection ends at the clock's abort`, async () => {
+      const fake = makeFakeSql(stmt => (stmt.text.includes(mark) ? never() : undefined));
+      const controller = new AbortController();
+      const reason = { code: 'preparation_deadline' };
+      const clock = startClaimPhase(Date.now(), controller.signal, 60_000);
+      const call = run(boundedReads(fakeEngine(fake), clock, opts));
+      setTimeout(() => controller.abort(reason), 20);
+      const outcome = await Promise.race([call.then(() => 'resolved', (error: unknown) => error), Bun.sleep(1_000).then(() => 'still pending')]);
+      // It ends as the raw statement did through the view's `executeRaw`: rejected at the abort, not left pending.
+      expect(outcome === reason || (outcome as Error).name === 'AbortError').toBe(true);
+      expect(clock.lastSql?.label).toContain('persistence_requests');
+    });
   }
 });
 

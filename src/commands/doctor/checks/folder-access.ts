@@ -27,7 +27,7 @@ import { isGitWorkTree, sourcePolicyRoot } from '../../../core/access/policy-git
 const DOCS = 'docs/guides/write-refusals.md#access_policy_pending';
 
 async function policySources(engine: BrainEngine): Promise<string[]> {
-  return (await engine.executeRaw<{ source_id: string }>('SELECT source_id FROM access_policy_state ORDER BY source_id')).map(r => r.source_id);
+  return engine.listAccessPolicySourceIds();
 }
 
 async function pending(engine: BrainEngine, sources: string[]): Promise<Check> {
@@ -35,9 +35,8 @@ async function pending(engine: BrainEngine, sources: string[]): Promise<Check> {
   const found: Array<{ source: string; prefixes: string[]; drifted: number }> = [];
   for (const source of sources) {
     const prefixes = (await coverageRows(engine, source)).filter(c => c.reason === 'pending').map(c => c.prefix || '(whole source)');
-    const [row] = await engine.executeRaw<{ n: number }>(
-      'SELECT count(*)::int AS n FROM pages WHERE source_id = $1 AND folder_rule_ids IS DISTINCT FROM gbrain_access_folder_rules(source_id, slug)', [source]);
-    if (prefixes.length || row?.n) found.push({ source, prefixes, drifted: Number(row?.n ?? 0) });
+    const drifted = await engine.countAccessFolderDrift(source);
+    if (prefixes.length || drifted) found.push({ source, prefixes, drifted });
   }
   if (!found.length) return { name, status: 'ok', details: { sources: [] }, message: 'Every folder rule is fully applied: no prefix is pending and every page is stamped from the applied rules.' };
   const first = found[0]!;
@@ -108,8 +107,7 @@ async function guarded(name: string, run: (engine: BrainEngine, sources: string[
 
 async function runFolderAccess(ctx: DoctorContext): Promise<Check[]> {
   const engine = connectedEngine(ctx);
-  const [state] = await engine.executeRaw<{ unreadable: boolean }>('SELECT gbrain_access_state_unreadable() AS unreadable').catch(() => []);
-  if (state?.unreadable) {
+  if (await engine.isAccessStateUnreadable().catch(() => false)) {
     const skipped = 'Skipped: this database role cannot read the folder access tables (see access_policy_pending).';
     return [
       { name: 'access_policy_pending', status: 'warn', details: { unreadable: true, docs: 'docs/ENGINES.md#folder-access-tables' },

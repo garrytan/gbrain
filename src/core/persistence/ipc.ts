@@ -13,6 +13,7 @@ import { ownerExceptionFailure, ownerExceptionLogText } from './publication-fail
 import { isWriteErrorCode, isWriteReceipt, isWriteRequestId, publicWriteReceipt, type WriteReceipt } from './types.ts';
 import { isPersistenceAdminExtension, isPersistenceAdminOperation, PERSISTENCE_ADMIN_EXTENSIONS, PERSISTENCE_ADMIN_OPERATIONS, type PersistenceAdminExtension, type PersistenceAdminOperation } from './admin-contract.ts';
 import { claimLocalIpcBinding, isWindowsIpcPipe, prepareLocalIpcPath } from '../context/ipc-path.ts';
+import type { BehaviorEnv } from '../cli-socket/identity.ts';
 
 export const PERSISTENCE_IPC_VERSION = 1;
 // Five million content bytes can require six JSON bytes each (e.g. NUL).
@@ -23,6 +24,8 @@ export const PERSISTENCE_IPC_OPERATIONS = [
   'put_page', 'put_pages', 'capture', 'delete_page', 'restore_page', 'revert_version', 'edit_page', 'append_page',
   'remember', 'forget', 'extract_facts', 'get_write_request', 'list_write_requests', 'cancel_write_request',
   'get_page', 'fetch', 'get_recent_transcripts',
+  'find_pages', 'list_pages', 'search', 'query', 'search_exact', 'get_tags', 'get_links', 'get_backlinks', 'get_timeline',
+  'get_versions', 'traverse_graph', 'whois', 'entity', 'recall', 'open_loops',
   'list_skills', 'get_skill', 'get_skill_asset', 'list_brain_skillpack',
   'put_skill', 'delete_skill', 'join_brain', 'sync_brain_skills', 'leave_brain',
   'get_skill_policy', 'set_skill_policy', 'get_skill_retention', 'prune_skill_revisions',
@@ -30,6 +33,14 @@ export const PERSISTENCE_IPC_OPERATIONS = [
   'add_tag', 'remove_tag', 'add_timeline_entry', 'add_link', 'remove_link', 'takes_add', 'takes_update', 'takes_supersede', 'takes_resolve', 'takes_remove', 'takes_rebuild',
   'purge_fact', 'list_page_purges', 'unpurge_page',
 ] as const;
+/**
+ * G8: the reads an owner answers for its trusted local CLI since G8. Capabilities list them in `read_extensions`, never in
+ * `operations`, because an older CLI rejects a capability reply whose `operations` names one it does not know.
+ */
+export const PERSISTENCE_IPC_READ_EXTENSIONS: readonly PersistenceIpcOperation[] = [
+  'find_pages', 'list_pages', 'search', 'query', 'search_exact', 'get_tags', 'get_links', 'get_backlinks', 'get_timeline',
+  'get_versions', 'traverse_graph', 'whois', 'entity', 'recall', 'open_loops',
+];
 /**
  * Owner-only operations the resident owner runs for its verified local CLI
  * registration alone (never for a stdio or HTTP MCP session it also hosts),
@@ -64,6 +75,8 @@ export interface PersistenceIpcRequest {
   write_wait_ms?: number;
   /** GBRA-498: the room the CLI's `--room` named; sent only to owners advertising `room`, which answer `{ [PERSISTENCE_ROOM_MARKED_KEY]: … }`. */
   room?: string;
+  /** G8: a read asks for its degraded stamp and notices; sent only to owners advertising `meta`, which answer `{ [PERSISTENCE_META_KEY]: … }`. */
+  with_meta?: true;
 }
 
 export interface PersistenceIpcCapabilities {
@@ -79,10 +92,18 @@ export interface PersistenceIpcCapabilities {
   write_wait?: true;
   /** GBRA-498: the owner marks its trusted local CLI's answer for a `room` on operation requests. */
   room?: true;
+  /** G8: the owner returns its trusted local CLI's answer with the call's degraded stamp and rendered notices on `with_meta`. */
+  meta?: true;
+  /** G8: the reads beyond `operations` this owner answers (PERSISTENCE_IPC_READ_EXTENSIONS); an entry this build does not know is ignored. */
+  read_extensions?: readonly PersistenceIpcOperation[];
+  /** G8: the owner's read-behavior environment (cli-socket behaviorEnv: value hashes and credential names, never a value). */
+  read_env?: BehaviorEnv;
 }
 
 /** GBRA-498: the one key of an owner's answer to a request that named a room: the marked result, its room meta and notices. */
 export const PERSISTENCE_ROOM_MARKED_KEY = 'room_marked';
+/** G8: the one key of an owner's answer to a `with_meta` request: the result and its `degraded`, `gbrain_notices` and `retrieval` meta. */
+export const PERSISTENCE_META_KEY = 'with_meta';
 /** The longest `--room` a request carries; a longer one stays with the CLI, which marks every item unknown. */
 export const PERSISTENCE_ROOM_MAX_CHARS = 4_096;
 
@@ -151,8 +172,9 @@ export function isPersistenceIpcRegistration(value: unknown): value is Persisten
 
 const OPERATION_REQUEST_KEYS = ['version', 'kind', 'brain_id', 'operation', 'params', 'registration', 'routing'];
 function operationRequest(value: unknown): value is PersistenceIpcRequest {
-  if (!record(value) || !exactKeys(value, [...OPERATION_REQUEST_KEYS, ...['write_wait_ms', 'room'].filter(k => Object.prototype.hasOwnProperty.call(value, k))])) return false;
+  if (!record(value) || !exactKeys(value, [...OPERATION_REQUEST_KEYS, ...['write_wait_ms', 'room', 'with_meta'].filter(k => Object.prototype.hasOwnProperty.call(value, k))])) return false;
   if (value.room !== undefined && !(typeof value.room === 'string' && value.room.length <= PERSISTENCE_ROOM_MAX_CHARS)) return false;
+  if (value.with_meta !== undefined && value.with_meta !== true) return false;
   if (value.write_wait_ms !== undefined && !(typeof value.write_wait_ms === 'number'
     && Number.isSafeInteger(value.write_wait_ms) && value.write_wait_ms >= 0)) return false;
   if (value.version !== 1 || value.kind !== 'operation' || !isWriteRequestId(value.brain_id)
@@ -215,6 +237,7 @@ export async function startPersistenceIpcServer(
   if (!isWriteRequestId(provider.brainId)) throw new Error('Persistence IPC requires a durable brain UUID.');
   const binding = await claimLocalIpcBinding(socketPath);
   if (!binding) return null;
+  const readEnv = (await import('../cli-socket/identity.ts')).behaviorEnv(process.env);
   socketPath = binding.socketPath;
   if (await socketHasLiveListener(socketPath)) { await binding.release(); return null; }
   try {
@@ -261,11 +284,14 @@ export async function startPersistenceIpcServer(
           const request: unknown = JSON.parse(payload);
           if (record(request) && exactKeys(request, ['version', 'kind']) && request.version === 1 && request.kind === 'capabilities') {
             socket.end(responseFrame({ version: 1, ok: true, result: {
-              version: 1, brain_id: provider.brainId, operations: PERSISTENCE_IPC_OPERATIONS,
+              version: 1, brain_id: provider.brainId, operations: PERSISTENCE_IPC_OPERATIONS.filter(op => !PERSISTENCE_IPC_READ_EXTENSIONS.includes(op)),
               max_frame_bytes: PERSISTENCE_IPC_MAX_BYTES,
               ...(provider.administer ? { administration: PERSISTENCE_ADMIN_OPERATIONS, administration_extensions: PERSISTENCE_ADMIN_EXTENSIONS } : {}),
               write_wait: true,
               room: true,
+              meta: true,
+              read_extensions: PERSISTENCE_IPC_READ_EXTENSIONS,
+              read_env: readEnv,
             } satisfies PersistenceIpcCapabilities }));
             return;
           }
@@ -484,8 +510,11 @@ export async function requestPersistenceCapabilities(socketPath: string, timeout
   }
   // #6650: an extension list is advisory: a malformed one is dropped, an entry this build does not know is ignored.
   const extensions = Array.isArray(value.administration_extensions) ? value.administration_extensions.filter(isPersistenceAdminExtension) : undefined;
-  const { administration_extensions: _ignored, ...rest } = value;
-  return { ...rest, ...(extensions ? { administration_extensions: extensions } : {}) } as unknown as PersistenceIpcCapabilities;
+  const reads = Array.isArray(value.read_extensions) ? value.read_extensions.filter(isPersistenceIpcOperation) : undefined;
+  const env = record(value.read_env) && record(value.read_env.values) && Array.isArray(value.read_env.credentials) ? value.read_env : undefined;
+  const { administration_extensions: _ignored, read_extensions: _reads, read_env: _env, ...rest } = value;
+  return { ...rest, ...(extensions ? { administration_extensions: extensions } : {}), ...(reads ? { read_extensions: reads } : {}),
+    ...(env ? { read_env: env } : {}) } as unknown as PersistenceIpcCapabilities;
 }
 
 /** Whether a resident owner's capabilities include an administration operation (a frozen one or an extension). */

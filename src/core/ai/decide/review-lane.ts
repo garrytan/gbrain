@@ -159,7 +159,7 @@ export async function requeueWithdrawnAnchorsNear(engine: BrainEngine, sourceId:
         AND c.embedding IS NOT NULL AND n.embedding IS NOT NULL AND c.embedding_model = n.embedding_model
         AND (1 - (c.embedding <=> n.embedding)) >= $3
         AND EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id = c.source_id AND w.visibility = c.visibility
-          AND w.fact_hash IN (gbrain_fact_fingerprint(c.fact), gbrain_fact_fingerprint_v1(c.fact))
+          AND w.fact_hash IN (gbrain_fact_fingerprint(c.fact), gbrain_fact_fingerprint_v2(c.fact), gbrain_fact_fingerprint_v1(c.fact))
           AND (w.subject = '*' OR w.subject = c.entity_slug))
       ORDER BY c.embedding <=> n.embedding, c.id LIMIT 2`, [factId, sourceId, CONFLICT_MIN_COSINE]);
   for (const r of rows) {
@@ -207,7 +207,7 @@ async function withdrawAnchor(engine: BrainEngine, row: QueueRow, cfg: DecideCon
   const [anchor] = await engine.executeRaw<{ id: number; fact: string; entity_slug: string | null; visibility: 'private' | 'world'; has_embedding: boolean; withdrawn: boolean }>(
     `SELECT f.id, f.fact, f.entity_slug, f.visibility, f.embedding IS NOT NULL AS has_embedding,
             EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id = f.source_id AND w.visibility = f.visibility
-              AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact), gbrain_fact_fingerprint_v1(f.fact))
+              AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact), gbrain_fact_fingerprint_v2(f.fact), gbrain_fact_fingerprint_v1(f.fact))
               AND ${withdrawalCoversFactSql('w', 'f')}) AS withdrawn
        FROM facts f WHERE f.id = $1 AND f.source_id = $2`, [anchorId, row.source_id]);
   if (!anchor || !anchor.withdrawn) return { skip: 'no_candidates' };

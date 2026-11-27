@@ -16,7 +16,6 @@
 import { createHash } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
 import { loadConfig } from '../config.ts';
-import { withdrawalCoversFactSql } from '../access/member-facts.ts';
 import {
   getReviewProposal, reviewAcceptHandler, transitionReviewProposal, type ReviewProposalRow,
 } from '../ai/decide/review-lane.ts';
@@ -37,15 +36,9 @@ export function reviewRequestId(id: number): string {
 
 async function staleReason(engine: BrainEngine, p: ReviewProposalRow): Promise<string | null> {
   if (p.kind !== 'withdraw') return null;
-  const [anchor] = await engine.executeRaw<{ withdrawn: boolean }>(
-    `SELECT EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id = f.source_id AND w.visibility = f.visibility
-        AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact), gbrain_fact_fingerprint_v1(f.fact))
-        AND ${withdrawalCoversFactSql('w', 'f')}) AS withdrawn
-       FROM facts f WHERE f.id = $1 AND f.source_id = $2`, [Number(p.a_ref), p.source_id]);
+  const anchor = await engine.readWithdrawalAnchor(Number(p.a_ref), p.source_id);
   if (!anchor?.withdrawn) return 'the withdrawn claim is no longer withdrawn';
-  const [candidate] = await engine.executeRaw<{ active: boolean; text_hash: string }>(
-    `SELECT (expired_at IS NULL AND (valid_until IS NULL OR valid_until > now())) AS active, md5(fact) AS text_hash
-       FROM facts WHERE id = $1 AND source_id = $2`, [Number(p.b_ref), p.source_id]);
+  const candidate = await engine.readFactActivity(Number(p.b_ref), p.source_id);
   if (!candidate?.active) return 'the affected fact is no longer active';
   let expected: string | null = null;
   try { expected = (JSON.parse(p.receipt ?? '{}') as { candidate_hash?: string | null }).candidate_hash ?? null; } catch { expected = null; }
@@ -75,8 +68,7 @@ export async function acceptReviewProposal(engine: BrainEngine, id: number): Pro
     return finish(out.status, out.detail);
   }
   // A previous accept that withdrew the fact but stopped before the status change: finish it.
-  const [done] = await engine.executeRaw<{ id: number }>(`SELECT id FROM facts WHERE id = $1 AND source_id = $2 AND expired_at IS NOT NULL
-      AND strpos(COALESCE(context, ''), $3) > 0`, [Number(p.b_ref), p.source_id, `(review r${id})`]);
+  const done = await engine.readReviewAcceptedMark(Number(p.b_ref), p.source_id, `(review r${id})`);
   if (done) return finish('accepted');
   const stale = await staleReason(engine, p);
   if (stale) return finish('stale', stale);

@@ -2,7 +2,8 @@
  * BrainEngine parity — queue health reads (engine-sql/jobs-health.ts): the counts `gbrain doctor`'s queue checks, the
  * advisor's stalled-jobs collector and the submit-time queue probe ask of `minion_jobs`: readQueueHealthSignals,
  * listWaitingByQueue, readQueueDivergence, listQueueWedgeCounts, listPrivateQueueHealth, readWedgeSignals,
- * readOldestWaitingAge and listStuckActiveJobsByName.
+ * readOldestWaitingAge, countWaitingJobs, countWaitingJobsForNames, listStuckActiveJobsByName and readUntakenWaitingJobs (the
+ * facts_drain phase's no-worker check, src/core/minions/no-worker.ts).
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: each read returns the same counts, ties, orders and nulls on every engine arm (PGLite always; Postgres
@@ -25,8 +26,11 @@ import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { AdmitJobPolicy, AdmitJobSpec, ClaimJobSpec, JobInsertValues } from '../../src/core/engine-sql/jobs.ts';
 import { APPLICATION_AUTHORITY, coalesceDecision } from '../../src/core/minions/submission-authority.ts';
+import { untakenWaitingJobs, runWaitingJobsFix } from '../../src/core/minions/no-worker.ts';
+import { runPhaseFactsDrain } from '../../src/core/cycle/facts-drain.ts';
 import { parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
+import { withEnv } from '../helpers/with-env.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -294,5 +298,104 @@ describe('engine parity: queue health reads', () => {
       await waiting(engine, 'waiting-one', 2);
       await completed(engine, 'work');
       return await engine.listStuckActiveJobsByName();
+    });
+
+  parityTest('readUntakenWaitingJobs names the queue whose waiting facts-absorb jobs no worker takes, and facts_drain warns no_worker on a server engine',
+    { methods: ['admitJob', 'claimNextJob', 'readUntakenWaitingJobs'] }, async (engine, backend) => {
+      // 0.0003 h is 1.08 s: the jobs below wait 1.5 s before the reads, so they are past it, and the job claimed after the
+      // wait started inside it, so its queue counts as served.
+      const H = 0.0003;
+      await waiting(engine, 'facts-absorb', 2, 'idle-q');
+      await waiting(engine, 'facts-absorb', 1, 'served-q');
+      await waiting(engine, 'work', 1, 'work-q');
+      await Bun.sleep(1500);
+      await active(engine, 'work', 'served', { queue: 'served-q' });
+      const view = (r: Awaited<ReturnType<BrainEngine['readUntakenWaitingJobs']>>) =>
+        r === null ? null : { queue: r.queue, waiting: r.waiting, aged: Number.isInteger(r.oldest_age_seconds) && r.oldest_age_seconds >= 1 && r.oldest_age_seconds < 600 };
+      const member = {
+        stuck: view(await engine.readUntakenWaitingJobs('facts-absorb', H)),
+        // A day-long threshold: nothing has waited that long.
+        fresh: view(await engine.readUntakenWaitingJobs('facts-absorb', 24)),
+        otherName: view(await engine.readUntakenWaitingJobs('work', H)),
+        none: view(await engine.readUntakenWaitingJobs('no-such-job', H)),
+      };
+      return withEnv({ GBRAIN_QUEUE_NO_WORKER_WARN_HOURS: String(H) }, async () => {
+        if (backend !== 'pglite') {
+          // Postgres and the Rust engine have no facts drain in the cycle: the phase warns, naming the supervisor. It runs
+          // first, so an engine whose check fails shows the phase's own no_worker_check_failed warning here.
+          const phase = await runPhaseFactsDrain(engine, { dryRun: false });
+          const details = phase.details as { no_worker?: { oldest_age_seconds: number } };
+          const age = details.no_worker?.oldest_age_seconds ?? -1;
+          expect({ backend, phase }).toEqual({ backend, phase: {
+            phase: 'facts_drain', duration_ms: 0, status: 'warn',
+            details: { reason: 'no_worker', no_worker: { queue: 'idle-q', waiting: 2, oldest_age_seconds: age, threshold_hours: H,
+              fix: runWaitingJobsFix('postgres', 'idle-q') }, dead_retry: { resubmitted: 0, pending: 0, exhausted: 0, not_retryable: 0 } },
+            summary: `2 facts-absorb job(s) have waited up to 1m on queue 'idle-q' and no job worker has run a job there in ${H}h, so no facts are being extracted; start one: gbrain jobs supervisor start --queue idle-q`,
+          } });
+          expect({ backend, aged: age >= 1 && age < 600 }).toEqual({ backend, aged: true });
+        }
+        const untaken = await untakenWaitingJobs(engine, 'facts-absorb');
+        expect(untaken?.fix).toEqual(runWaitingJobsFix(engine.kind, 'idle-q'));
+        return { member, helper: untaken === null ? null : { queue: untaken.queue, waiting: untaken.waiting, threshold_hours: untaken.threshold_hours } };
+      });
+    });
+
+  parityTest('readUntakenWaitingJobs calls a freshly queued facts-absorb job not stuck, and facts_drain on a server engine does not warn',
+    { methods: ['admitJob', 'readUntakenWaitingJobs'] }, async (engine, backend) => {
+      await waiting(engine, 'facts-absorb', 1, 'idle-q');
+      if (backend !== 'pglite') {
+        expect({ backend, phase: await runPhaseFactsDrain(engine, { dryRun: false }) }).toEqual({ backend, phase: {
+          phase: 'facts_drain', duration_ms: 0, status: 'skipped', summary: 'Postgres brains run facts-absorb jobs on the job worker',
+          details: { reason: 'not_applicable', dead_retry: { resubmitted: 0, pending: 0, exhausted: 0, not_retryable: 0 } },
+        } });
+      }
+      const member = await engine.readUntakenWaitingJobs('facts-absorb', 1);
+      const untaken = await untakenWaitingJobs(engine, 'facts-absorb');
+      return { member, untaken };
+    });
+
+  parityTest('countWaitingJobs counts waiting jobs and can leave out facts-absorb jobs', { methods: ['admitJob', 'countWaitingJobs'] }, async (engine) => {
+    const empty = await engine.countWaitingJobs(false);
+    await waiting(engine, 'work', 2);
+    await waiting(engine, 'facts-absorb', 1);
+    await add(engine, 'work', { status: 'delayed', delay_until: FAR });
+    await active(engine, 'busy', 'c1');
+    const all = await engine.countWaitingJobs(false);
+    const noAbsorb = await engine.countWaitingJobs(true);
+    expect({ empty, all, noAbsorb }).toEqual({ empty: 0, all: 3, noAbsorb: 2 });
+    return { empty, all, noAbsorb };
+  });
+
+  parityTest('countWaitingJobsForNames counts only the waiting jobs of one queue under the listed names',
+    { methods: ['admitJob', 'claimNextJob', 'countWaitingJobsForNames'] }, async (engine) => {
+      const empty = await engine.countWaitingJobsForNames('default', ['work']);
+      await waiting(engine, 'work', 2);
+      await waiting(engine, 'other', 1);
+      await add(engine, 'work', { queue: 'side' });
+      await add(engine, 'side-only', { queue: 'side' });
+      await add(engine, 'work', { status: 'delayed', delay_until: FAR });
+      await active(engine, 'busy', 'c1');
+      await waiting(engine, 'busy', 1);
+      const counts = {
+        empty,
+        oneName: await engine.countWaitingJobsForNames('default', ['work']),
+        twoNames: await engine.countWaitingJobsForNames('default', ['work', 'other']),
+        repeatedName: await engine.countWaitingJobsForNames('default', ['work', 'work']),
+        sideQueue: await engine.countWaitingJobsForNames('side', ['work', 'side-only', 'other']),
+        noNames: await engine.countWaitingJobsForNames('default', []),
+        unknownQueue: await engine.countWaitingJobsForNames('no-such-queue', ['work', 'other']),
+        unknownName: await engine.countWaitingJobsForNames('default', ['nothing']),
+        otherCase: await engine.countWaitingJobsForNames('default', ['Work']),
+        claimedAndWaiting: await engine.countWaitingJobsForNames('default', ['busy']),
+      };
+      expect(counts).toEqual({
+        empty: 0, oneName: 2, twoNames: 3, repeatedName: 2, sideQueue: 2, noNames: 0, unknownQueue: 0, unknownName: 0,
+        otherCase: 0, claimedAndWaiting: 1,
+      });
+      // Counted jobs leave the count once a worker claims them: the stall check counts only what is still waiting.
+      await engine.claimNextJob(claimSpec('c2', { names: ['other'] }));
+      const afterClaim = await engine.countWaitingJobsForNames('default', ['work', 'other']);
+      expect(afterClaim).toBe(2);
+      return { ...counts, afterClaim };
     });
 });

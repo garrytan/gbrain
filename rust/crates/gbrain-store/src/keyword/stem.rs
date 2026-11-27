@@ -1915,6 +1915,20 @@ const A_10: &[Among] = &[
 mod tests {
     use super::*;
 
+    #[test]
+    fn lower_matches_pglite_on_every_code_point() {
+        let one = |c: char| {
+            let lowered = pg_lower(&c.to_string());
+            let mut chars = lowered.chars();
+            match (chars.next(), chars.next()) {
+                (Some(l), None) => l,
+                _ => panic!("pg_lower of U+{:04X} is not one character", c as u32),
+            }
+        };
+        let mismatches = crate::fingerprint_fixture::lower_mismatches(one);
+        assert_eq!(mismatches, Vec::<String>::new());
+    }
+
     /// `ts_lexize('english_stem', word)` from PostgreSQL 18 (PGLite) for each word: vocabulary of
     /// Snowball's English stemmer, case variants, apostrophes, non-ASCII, long words and fuzz.
     const GOLDEN: &str = include_str!("../../tests/fixtures/english_stem.tsv");

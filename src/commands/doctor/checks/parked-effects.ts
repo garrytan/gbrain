@@ -1,6 +1,5 @@
 import type { BrainEngine } from '../../../core/engine.ts';
 import type { Check } from '../../doctor.ts';
-import type { ParkedTarget } from '../../../core/persistence/effect-model.ts';
 import type { WriteRequest } from '../../../core/persistence/model.ts';
 import { OperationError } from '../../../core/ops/contract.ts';
 import { authorizeStoredRequest } from '../../../core/persistence/authority.ts';
@@ -36,8 +35,6 @@ async function revokedAuthority(engine: BrainEngine, request: WriteRequest): Pro
   }
 }
 
-const SAMPLE = 20;
-
 /**
  * #5612: Git and withdrawal targets that failed five consecutive times are
  * parked instead of retried forever. Reads the partial `persistence_effects_parked`
@@ -46,13 +43,9 @@ const SAMPLE = 20;
  */
 export async function checkParkedEffects(engine: BrainEngine, sourceIds?: string[]): Promise<Check> {
   try {
-    const scoped = `${sourceIds ? ' AND e.source_id=ANY($1::text[])' : ''} AND NOT (e.data ? 'settled')`;
-    const params = sourceIds ? [sourceIds] : [];
-    const { readParkedGroups, CURRENT_BINDING_SQL } = await import('../../../core/persistence/parked-groups.ts');
-    const [{ count }] = await engine.executeRaw<{ count: number }>(`SELECT COUNT(*)::int AS count FROM persistence_effects e WHERE e.data ? 'parked'${scoped}`, params);
-    const rows = await engine.executeRaw<{ request: WriteRequest; source_id: string; kind: string; state: string; parked: ParkedTarget[]; former_binding: boolean }>(
-      `SELECT to_jsonb(r) AS request,e.source_id,e.kind,e.state,e.data->'parked' AS parked,NOT ${CURRENT_BINDING_SQL} AS former_binding FROM persistence_effects e
-       JOIN persistence_requests r ON r.id=e.request_id WHERE e.data ? 'parked'${scoped} ORDER BY e.id LIMIT ${SAMPLE}`, params);
+    const { readParkedGroups } = await import('../../../core/persistence/parked-groups.ts');
+    const count = await engine.countParkedEffects(sourceIds ?? null);
+    const rows = await engine.listParkedEffects(sourceIds ?? null);
     const effects = [];
     for (const { request, former_binding: former, ...row } of rows) {
       // #7985: an effect of a former binding is never retried (the binding guard refuses it); its exit is the settle preview.

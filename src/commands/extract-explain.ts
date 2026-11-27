@@ -13,6 +13,8 @@
  * Discovery aid for pack authors. No mutations.
  */
 
+import { rethrowCapabilityRefusal } from '../core/engine-capability-refusal.ts';
+import type { ExtractKindRollupRow } from '../core/engine-sql/doctor-derived.ts';
 import { existsSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
@@ -143,31 +145,14 @@ export async function runExtractExplain(
   // as NULL, not zero rows — the `| null` below reflects that.
   // cost_usd is REAL (not INT), so SUM(cost_usd) is already a plain number
   // and doesn't need the cast.
-  type RollupRow = {
-    cost_7d_usd: number | null;
-    eval_pass_count: string | null;
-    eval_fail_count: string | null;
-    halt_count: string | null;
-    round_completed_count: string | null;
-    last_updated_at: Date | string | null;
-  };
-  let rollup: RollupRow | null = null;
+  // The statement is engine-sql/doctor-derived.ts readExtractKindRollup7d (a Rust brain keeps no rollup writer, so it
+  // answers the all-null aggregate the SQL engines give a kind with no row).
+  let rollup: ExtractKindRollupRow | null = null;
   try {
-    const rows = await engine.executeRaw<RollupRow>(
-      `SELECT
-         SUM(cost_usd) AS cost_7d_usd,
-         SUM(eval_pass_count)::text AS eval_pass_count,
-         SUM(eval_fail_count)::text AS eval_fail_count,
-         SUM(halt_count)::text AS halt_count,
-         SUM(round_completed_count)::text AS round_completed_count,
-         MAX(updated_at) AS last_updated_at
-       FROM extract_rollup_7d
-       WHERE day >= CURRENT_DATE - 7 AND kind = $1`,
-      [kindArg],
-    );
-    rollup = rows[0] ?? null;
-  } catch {
-    // Pre-v106 brain — leave rollup null.
+    rollup = await engine.readExtractKindRollup7d(kindArg);
+  } catch (err) {
+    // Pre-v106 brain — leave rollup null. A refused read is not "no runs recorded".
+    rethrowCapabilityRefusal(err);
   }
 
   if (json) {

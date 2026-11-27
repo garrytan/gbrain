@@ -9,48 +9,44 @@
  *    disabled or removed member, else with the label write that gives one page back.
  *
  * Set-based: one query for labelled pages and one per folder rule, under a 5-second budget; past it the check reports
- * what it counted so far as partial. With no members, the check is not applicable.
+ * what it counted so far as partial. With no members, the check is not applicable. Every read is a typed engine member
+ * (engine-sql/doctor-join.ts), so a Rust brain answers it too.
  */
 import type { Check } from '../../doctor.ts';
+import type { PageReadersRow } from '../../../core/engine-sql/doctor-join.ts';
 import { agentFix, checkError, infoCheck } from '../check-fix.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
 import { appliedRules } from '../../../core/access/policy.ts';
-import { ruleCoversSql } from '../../../core/access/folder-rules.ts';
-import { MEMBER_PAGE_PREFIX, NOBODY } from '../../../core/access/principals.ts';
+import { sortSourcesById } from '../../../core/source-rows.ts';
 import { ownerMemberId } from '../../../core/access/owner.ts';
 
 const name = 'access_pages_read_by_nobody';
 const BUDGET_MS = 5_000;
 const SAMPLES = 5;
 
-interface Row { source_id: string; slug: string; readers: string[] | null }
+type Row = PageReadersRow;
 
 async function verdict(ctx: DoctorContext): Promise<Check> {
   const engine = connectedEngine(ctx);
   const started = Date.now();
   try {
-    const members = await engine.executeRaw<{ id: string; status: string }>("SELECT id, CASE WHEN tombstoned_at IS NOT NULL THEN 'removed' WHEN disabled_at IS NOT NULL THEN 'disabled' ELSE 'enabled' END AS status FROM access_members ORDER BY id");
+    const members = await engine.listAccessMemberStatuses();
     if (!members.length) return infoCheck(name, 'Not applicable: this brain has no members (gbrain access member add <id>).', 'not_applicable');
     const enabled = members.filter(m => m.status === 'enabled');
-    const groups = await engine.executeRaw<{ group_id: string; member_id: string }>('SELECT group_id, member_id FROM access_group_members');
+    const groups = await engine.listAccessGroupMemberships();
     const identityOf = (ids: string[]) => [...ids.map(id => 'member:' + id), ...new Set(groups.filter(g => ids.includes(g.member_id)).map(g => 'group:' + g.group_id))];
     const live = identityOf(enabled.map(m => m.id));
     const found = new Map<string, Row>();
     const add = (rows: Row[]) => { for (const r of rows) found.set(r.source_id + ':' + r.slug, r); };
     let partial = false;
     const timeLeft = () => BUDGET_MS - (Date.now() - started);
-    add(await engine.executeRaw<Row>(
-      'SELECT source_id, slug, page_readers AS readers FROM pages WHERE deleted_at IS NULL AND page_readers IS NOT NULL AND NOT (page_readers && $1::text[]) AND NOT ($2 = ANY(page_readers)) AND NOT starts_with(slug, $3)',
-      [live, NOBODY, MEMBER_PAGE_PREFIX], { timeoutMs: Math.max(timeLeft(), 1) }));
-    const sources = (await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE archived IS NOT TRUE ORDER BY id')).map(r => r.id);
+    add(await engine.listPagesReadByNobody(live, { timeoutMs: Math.max(timeLeft(), 1) }));
+    const sources = sortSourcesById(await engine.listAllSources()).map(r => r.id);
     rules: for (const source of sources) {
       for (const rule of await appliedRules(engine, source)) {
         if (timeLeft() <= 0) { partial = true; break rules; }
         const admitted = enabled.filter(m => identityOf([m.id]).some(p => rule.readable_by.includes(p))).map(m => m.id);
-        add(await engine.executeRaw<Row>(
-          'SELECT source_id, slug, page_readers AS readers FROM pages WHERE deleted_at IS NULL AND source_id = $1 AND ' + ruleCoversSql('slug', '$2') +
-          ' AND NOT starts_with(slug, $5) AND (page_readers IS NULL OR NOT ($4 = ANY(page_readers))) AND ($3::int = 0 OR (page_readers IS NOT NULL AND NOT (page_readers && $6::text[])))',
-          [source, rule.prefix, admitted.length, NOBODY, MEMBER_PAGE_PREFIX, identityOf(admitted)], { timeoutMs: Math.max(timeLeft(), 1) }));
+        add(await engine.listRulePagesReadByNobody(source, rule.prefix, admitted.length, identityOf(admitted), { timeoutMs: Math.max(timeLeft(), 1) }));
       }
     }
     const pages = [...found.values()].sort((a, b) => (a.source_id + a.slug).localeCompare(b.source_id + b.slug));

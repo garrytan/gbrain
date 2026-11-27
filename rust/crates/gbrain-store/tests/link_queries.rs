@@ -671,12 +671,199 @@ fn projection_readiness_generation_moves_only_on_a_commit() {
     let brain = Brain::new("readiness-generation");
     brain.source("default");
     let before = brain.store.projection_readiness_generation().unwrap();
+    assert!(before.is_some());
     assert_eq!(
         before,
         brain.store.projection_readiness_generation().unwrap()
     );
     brain.page("notes/a", "default", "note");
-    let after = brain.store.projection_readiness_generation().unwrap();
-    assert_ne!(before, after);
+    let after = brain
+        .store
+        .projection_readiness_generation()
+        .unwrap()
+        .unwrap();
+    assert_ne!(before.as_deref(), Some(after.as_str()));
     assert!(after.starts_with(&format!("{}/", brain.store.brain_id())));
+    assert_eq!(after, brain.store.health_memo_clock().unwrap());
+}
+
+#[test]
+fn projection_readiness_generation_is_null_inside_a_transaction() {
+    let brain = Brain::new("readiness-generation-tx");
+    brain.source("default");
+    let tx = brain.store.begin_transaction(false).unwrap();
+    // The transaction reads its own writes, which the commit sequence does not count yet.
+    assert_eq!(tx.projection_readiness_generation().unwrap(), None);
+    tx.rollback_transaction().unwrap();
+}
+
+#[test]
+fn attended_origins_are_self_attended_body_or_frontmatter_links_of_one_source() {
+    let b = Brain::new("attended-origins");
+    b.source("work");
+    for slug in ["a", "b", "c", "d", "e", "gone"] {
+        b.page(slug, "default", "note");
+    }
+    b.page("a", "work", "note");
+    let row = |from: &str, to: &str, link_type: &str, link_source: &str, source: &str| {
+        let mut v = json!({
+            "from_slug": from, "to_slug": to, "link_type": link_type, "link_source": link_source,
+            "origin_slug": from, "from_source_id": source, "to_source_id": source,
+            "origin_source_id": source,
+        });
+        if link_source == "frontmatter" {
+            v["origin_field"] = json!("attendees");
+        }
+        serde_json::from_value(v).unwrap()
+    };
+    let batch = vec![
+        row("a", "a", "attended", "markdown", "default"),
+        row("b", "b", "attended", "frontmatter", "default"),
+        row("c", "c", "mentions", "markdown", "default"),
+        row("e", "e", "attended", "manual", "default"),
+        row("d", "a", "attended", "markdown", "default"),
+        row("gone", "gone", "attended", "wikilink-resolved", "default"),
+        row("a", "a", "attended", "markdown", "work"),
+    ];
+    b.store.add_links_batch(&batch).unwrap();
+    b.store.soft_delete_page("gone", None).unwrap();
+
+    // The SQL joins the origin page without a live filter, so a soft-deleted origin still counts.
+    let all = b.store.list_attended_origin_slugs("default", None).unwrap();
+    assert_eq!(all, ["a", "b", "gone"]);
+    let scoped: Vec<String> = ["b", "c", "missing", "b"].map(String::from).to_vec();
+    assert_eq!(
+        b.store
+            .list_attended_origin_slugs("default", Some(&scoped))
+            .unwrap(),
+        ["b"]
+    );
+    assert!(
+        b.store
+            .list_attended_origin_slugs("default", Some(&[]))
+            .unwrap()
+            .is_empty()
+    );
+    assert_eq!(
+        b.store.list_attended_origin_slugs("work", None).unwrap(),
+        ["a"]
+    );
+}
+
+#[test]
+fn probe_page_types_reports_each_set_and_lists_types_only_when_one_has_none() {
+    let b = Brain::new("lq-type-probe");
+    b.source("other");
+    b.page("people/a", "default", "person");
+    b.page("notes/a", "default", "note");
+    b.page("deals/a", "other", "deal");
+    b.page("memos/gone", "default", "memo");
+    b.store
+        .soft_delete_page("memos/gone", Some("default"))
+        .unwrap();
+    let probe = |sets: Value, scope: Value| {
+        let input = serde_json::from_value(json!({ "sets": sets, "scope": scope })).unwrap();
+        b.store.probe_page_types(&input).unwrap()
+    };
+    let default_scope = json!({ "sourceId": "default", "scoped": true });
+    // An empty set is never present and never asks for the type list.
+    assert_eq!(
+        probe(
+            json!([["person"], ["company", "org"], []]),
+            default_scope.clone()
+        ),
+        json!({ "present": [true, false, false], "available": ["note", "person"] })
+    );
+    assert_eq!(
+        probe(json!([["person", "x"], []]), default_scope.clone()),
+        json!({ "present": [true, false], "available": null })
+    );
+    assert_eq!(
+        probe(json!([[]]), default_scope.clone()),
+        json!({ "present": [false], "available": null })
+    );
+    // The scope's source clause: the deal page is in another source.
+    assert_eq!(
+        probe(json!([["deal"]]), default_scope),
+        json!({ "present": [false], "available": ["note", "person"] })
+    );
+    // The live clause: a soft-deleted page's type is neither present nor listed.
+    assert_eq!(
+        probe(json!([["memo"]]), json!({ "scoped": true })),
+        json!({ "present": [false], "available": ["deal", "note", "person"] })
+    );
+    assert_eq!(
+        probe(json!([["deal"]]), json!({ "scoped": true })),
+        json!({ "present": [true], "available": null })
+    );
+}
+
+#[test]
+fn long_page_sizes_count_served_bodies_in_characters_and_bytes() {
+    use gbrain_store::chunks::{ChunkInput, UpsertChunksOptions};
+    let b = Brain::new("lq-long-page-sizes");
+    b.source("other");
+    let put = |slug: &str, source: &str, truth: &str, timeline: &str, seal: bool| -> u64 {
+        let input: PageInput = serde_json::from_value(json!({
+            "type": "note", "title": slug, "compiled_truth": truth, "timeline": timeline,
+        }))
+        .unwrap();
+        let options: PutPageOptions =
+            serde_json::from_value(json!({"sourceId": source, "index": false})).unwrap();
+        let id = b.store.put_page(slug, &input, &options).unwrap()["id"]
+            .as_u64()
+            .unwrap();
+        if seal {
+            let chunk: ChunkInput = serde_json::from_value(json!({
+                "chunk_index": 0, "chunk_text": slug, "chunk_source": "compiled_truth",
+            }))
+            .unwrap();
+            let options: UpsertChunksOptions =
+                serde_json::from_value(json!({"seal": true, "sourceId": source})).unwrap();
+            b.store.upsert_chunks(slug, &[chunk], &options).unwrap();
+        }
+        id
+    };
+    // A timeline of [[:space:]] alone counts nothing; U+00A0 is not in the class, so it counts.
+    // The separator (TIMELINE_SEPARATOR) is 21 ASCII characters.
+    let spaces = put("notes/spaces", "default", "h\u{e9}llo", " \n\t", true);
+    let euro = put("notes/euro", "default", "ab", "x\u{20ac}", true);
+    let nbsp = put("notes/nbsp", "default", "", "\u{a0}", true);
+    let unsealed = put("notes/unsealed", "default", "body", "", false);
+    let elsewhere = put("notes/elsewhere", "other", "body", "", true);
+    let gone = put("notes/gone", "default", "body", "", true);
+    b.store
+        .soft_delete_page("notes/gone", Some("default"))
+        .unwrap();
+    let sizes = |timeline: bool, scope: Value| {
+        let ids = [euro, spaces, nbsp, unsealed, elsewhere, gone, euro];
+        let mut ids: Vec<i64> = ids.iter().map(|id| *id as i64).collect();
+        ids.push(-1);
+        let input = serde_json::from_value(json!({
+            "ids": ids, "scope": scope, "safeChunks": true, "includeTimeline": timeline,
+        }))
+        .unwrap();
+        Value::Array(b.store.read_long_page_sizes(&input).unwrap())
+    };
+    let default_scope = json!({ "sourceId": "default", "scoped": true });
+    assert_eq!(
+        sizes(true, default_scope.clone()),
+        json!([
+            { "id": euro, "chars": 2 + 21 + 2, "bytes": 2 + 21 + 4 },
+            { "id": spaces, "chars": 5, "bytes": 6 },
+            { "id": nbsp, "chars": 21 + 1, "bytes": 21 + 2 },
+        ])
+    );
+    assert_eq!(
+        sizes(false, default_scope),
+        json!([
+            { "id": euro, "chars": 2, "bytes": 2 },
+            { "id": spaces, "chars": 5, "bytes": 6 },
+            { "id": nbsp, "chars": 0, "bytes": 0 },
+        ])
+    );
+    // Without a source clause the other source's sealed page is read too.
+    let all = sizes(false, json!({ "scoped": true }));
+    assert_eq!(all.as_array().unwrap().len(), 4);
+    assert_eq!(all[3]["id"], json!(elsewhere));
 }

@@ -25,6 +25,7 @@ import { createSource, parityArms, pick, sorted } from './harness.ts';
 import { withWriteAttribution } from '../../src/core/persistence/context.ts';
 import type { WriteAttribution } from '../../src/core/persistence/attribution.ts';
 import { testBackends } from '../helpers/test-backends.ts';
+import { withEnv } from '../helpers/with-env.ts';
 import { CALLER_ENTITIES, CALLER_PROVENANCE, OPEN_PAGE, putCallerPages, readAsCallers } from './fact-callers.ts';
 import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
 import { withEngineScope } from '../../src/core/engine-scope.ts';
@@ -511,6 +512,31 @@ describe('engine parity: timeline entries', () => {
       return answers;
     },
   );
+
+  parityTest(
+    'insertCanonicalTimelineRows writes nothing when one row of the call has a date that is not a calendar date',
+    { methods: ['insertCanonicalTimelineRows', 'listStoredTimelineRows', 'addTimelineEntry', 'putPage', 'getPage'] },
+    async (engine) => {
+      // The case insertPageTimelineRows carried before the merge of main 8d2e667543 removed that member: one statement
+      // (or one store write) per call, so a bad row after a good one leaves the page's rows as they were.
+      await putPlain(engine, 'people/canonical-bad');
+      const pageId = Number((await engine.getPage('people/canonical-bad'))!.id);
+      await engine.addTimelineEntry('people/canonical-bad', { date: '2026-02-03', source: 'cal', summary: 'already here', detail: 'stored detail' });
+      const rows = async () => (await engine.listStoredTimelineRows('default', 'people/canonical-bad'))
+        .map((r) => `${r.date}|${r.source}|${r.summary}|${r.detail}`).sort();
+      const before = await rows();
+      const refused = (run: () => Promise<unknown>) => run().then(() => false, () => true);
+      const row = (date: string, summary: string) => ({ date, source: '', summary, detail: '' });
+      const answers = {
+        before,
+        badDate: await refused(() => engine.insertCanonicalTimelineRows(pageId, [row('2026-04-01', 'before the bad row'), row('2026-02-30', 'not a calendar date')])),
+        badFirst: await refused(() => engine.insertCanonicalTimelineRows(pageId, [row('not-a-date', 'bad first'), row('2026-04-02', 'after the bad row')])),
+        after: await rows(),
+      };
+      expect(answers).toEqual({ before: ['2026-02-03|cal|already here|stored detail'], badDate: true, badFirst: true, after: before });
+      return answers;
+    },
+  );
 });
 
 /**
@@ -704,6 +730,53 @@ describe('engine parity: chronicle reads and event projection', () => {
   );
 
   parityTest(
+    'a brain opened in a non-UTC zone prints event instants in UTC, orders a plain row at UTC midnight and defaults to the UTC day',
+    { methods: ['connect', 'initSchema', 'putPage', 'addTimelineEntry', 'upsertEventProjection', 'getTimelineForDate', 'getSince',
+      'getOnThisDay', 'getLastSeen', 'disconnect'] },
+    async (_engine, _backend, ctx) => {
+      // PGLite takes the process zone at open; Postgres and the Rust store do not
+      // read it. The zone is the one whose local day differs from the UTC day at
+      // this hour (Pago_Pago is UTC-11, Kiritimati UTC+14), and the event sits
+      // between UTC midnight and local midnight, so the effective_date text, the
+      // intra-day order and the default day each differ from UTC on a zone read.
+      const behind = new Date().getUTCHours() < 11;
+      const zone = behind ? 'Pacific/Pago_Pago' : 'Pacific/Kiritimati';
+      const eventAt = behind ? '2026-06-18T03:00:00Z' : '2026-06-17T20:00:00Z';
+      const { engine, config } = ctx.unconnectedEngine();
+      await withEnv({ TZ: zone }, () => engine.connect(config));
+      try {
+        await engine.initSchema();
+        const today = new Date().toISOString().slice(0, 10);
+        const tomorrow = new Date(Date.parse(`${today}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
+        const earlier = `${Number(today.slice(0, 4)) - 4}${today.slice(4)}`; // 4 years back keeps a Feb 29 valid
+        await putPlain(engine, 'life/diary/2026-06-18');
+        await putEvent(engine, 'life/events/2026-06-18-early', eventAt, { kind: 'call' });
+        await engine.upsertEventProjection({ depthSlug: 'life/diary/2026-06-18', eventSlug: 'life/events/2026-06-18-early', date: '2026-06-18', summary: 'Early call', detail: '' });
+        await engine.addTimelineEntry('life/diary/2026-06-18', { date: '2026-06-18', summary: 'Plain note' });
+        await putPlain(engine, 'people/alice-example');
+        for (const [date, summary] of [[earlier, 'Four years ago'], [today, 'Today'], [tomorrow, 'Tomorrow']] as const) {
+          await engine.addTimelineEntry('people/alice-example', { date, summary });
+        }
+        const day = chronicle(await engine.getTimelineForDate('2026-06-18'));
+        const since = chronicle(await engine.getSince('2026-06-18')).filter((r) => r.date === '2026-06-18');
+        const lastSeen = await engine.getLastSeen('people/alice-example');
+        const onThisDay = (await engine.getOnThisDay()).filter((r) => r.page_slug === 'people/alice-example').map((r) => r.summary);
+        // UTC: the plain row sorts at 00:00Z of its day; the event prints its UTC instant.
+        const plain = ['Plain note', null];
+        expect(day.map((r) => [r.summary, r.effective_date])).toEqual(behind
+          ? [plain, ['Early call', '2026-06-18 03:00:00+00']]
+          : [['Early call', '2026-06-17 20:00:00+00'], plain]);
+        expect(since).toEqual(day);
+        expect(lastSeen).toEqual({ entity_slug: 'people/alice-example', last_date: today, last_event_slug: null, days_ago: 0 });
+        expect(onThisDay).toEqual(['Four years ago']);
+        return { zone, day, since, lastSeen: { ...lastSeen, last_date: 'today' }, onThisDay };
+      } finally {
+        await engine.disconnect();
+      }
+    },
+  );
+
+  parityTest(
     'getOnThisDay returns the same month-day from prior years only',
     { methods: ['getOnThisDay', 'addTimelineEntry', 'putPage'] },
     async (engine) => {
@@ -740,6 +813,33 @@ describe('engine parity: chronicle reads and event projection', () => {
       expect(never.last_date).toBeNull();
       expect(never.days_ago).toBeNull();
       return { viaEvent, viaOwn, beforeLatest, never, otherSource };
+    },
+  );
+});
+
+describe('engine parity: the trust tier of a chronicle row', () => {
+  // The chronicle reads (the chronicle_day and chronicle_since tools) report each row's stored tier, as getTimeline does.
+  parityTest(
+    'getTimelineForDate, getSince and getOnThisDay report the trust tier each insert declared, and unknown for an undeclared one',
+    { methods: ['transaction', 'applyTransactionSettings', 'addTimelineEntry', 'putPage', 'getTimelineForDate', 'getSince', 'getOnThisDay'] },
+    async (engine) => {
+      await putPlain(engine, 'notes/tiered');
+      for (const tier of ['agent_written', 'operator_curated'] as const) {
+        await engine.transaction(async (tx) => {
+          await tx.applyTransactionSettings(['gbrain.write_trust_tier', 'gbrain.write_origin'], [tier, JSON.stringify({ channel: tier })]);
+          await tx.addTimelineEntry('notes/tiered', { date: '2026-06-18', summary: tier });
+        });
+      }
+      await engine.addTimelineEntry('notes/tiered', { date: '2026-06-18', summary: 'undeclared' });
+      const tiers = (rows: ChronicleTimelineRow[]) => rows.map((r) => `${r.summary}=${r.trust_tier}`).sort();
+      const out = {
+        day: tiers(await engine.getTimelineForDate('2026-06-18')),
+        since: tiers(await engine.getSince('2026-06-01')),
+        onThisDay: tiers(await engine.getOnThisDay({ date: '2027-06-18' })),
+      };
+      const expected = ['agent_written=agent_written', 'operator_curated=operator_curated', 'undeclared=unknown'];
+      expect(out).toEqual({ day: expected, since: expected, onThisDay: expected });
+      return out;
     },
   );
 });

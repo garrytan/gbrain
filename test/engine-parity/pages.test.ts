@@ -14,6 +14,12 @@
  *  - Seam: none. Real engines, typed methods only (no executeRaw: D18).
  */
 import { describe, expect } from 'bun:test';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { performSync } from '../../src/commands/sync.ts';
+import { syncIdentityDecisions } from '../../src/core/entities/identity-decisions.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { parseFindPattern, type FindPagesQuery } from '../../src/core/page-find.ts';
 import { QUARANTINE_KEY } from '../../src/core/quarantine.ts';
@@ -332,6 +338,27 @@ describe('engine parity: pages', () => {
       stillThere,
       real: { slugs: real.slugs, count: real.count },
     };
+  });
+
+  // #9823 post-land finding 1: on the Rust engine an age of NaN read as 0 hours and hard-deleted every tombstone, and the
+  // SQL engines clamped a negative age to 0 the same way. Every engine now refuses an age that is NaN, negative or not
+  // finite with the same typed error (PurgeAgeError, code invalid_argument), before it previews or deletes anything.
+  parityTest('purgeDeletedPages refuses an age that is NaN, negative or not finite, and deletes nothing', { methods: ['purgeDeletedPages', 'softDeletePage'] }, async (engine) => {
+    await seed(engine, [['notes/a', NOTE], ['notes/b', NOTE]]);
+    await engine.softDeletePage('notes/a');
+    await engine.softDeletePage('notes/b');
+    const refusals: Array<{ hours: string; dryRun: boolean; name: string; code: unknown }> = [];
+    for (const hours of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, -1, -72, -0.5]) {
+      for (const dryRun of [false, true]) {
+        const error = await engine.purgeDeletedPages(hours, { dryRun }).then(() => null, (e: unknown) => e as Error & { code?: unknown });
+        expect(error).not.toBeNull();
+        refusals.push({ hours: String(hours), dryRun, name: error!.name, code: error!.code });
+      }
+    }
+    expect(refusals.every((r) => r.name === 'PurgeAgeError' && r.code === 'invalid_argument')).toBe(true);
+    const tombstones = await Promise.all(['notes/a', 'notes/b'].map(async (slug) => (await engine.getPage(slug, { includeDeleted: true }))?.slug ?? null));
+    expect(tombstones).toEqual(['notes/a', 'notes/b']);
+    return { refusals, tombstones };
   });
 
   // `purgeDeletedPages(0)` takes tombstones strictly older than the statement clock, and PGLite's clock can stamp the
@@ -690,7 +717,11 @@ describe('engine parity: pages', () => {
         all: await list({ listColumnsOnly: true, sort: 'slug', includeDeleted: true }),
         hidden: await list({ listColumnsOnly: true, sort: 'slug', excludePrivate: true, limit: 3 }),
         typed: await list({ listColumnsOnly: true, type: 'person', sort: 'slug', sourceId: 'alt' }),
+        // omitBodies (master #10302): the list columns with the frontmatter kept.
+        bodiesOmitted: await list({ omitBodies: true, sort: 'slug', includeDeleted: true }),
       };
+      expect(out.bodiesOmitted.every((page) => page.compiled_truth === '' && page.timeline === '')).toBe(true);
+      expect(out.bodiesOmitted.some((page) => Object.keys(page.frontmatter as object).length > 0)).toBe(true);
       expect(out.all.every((page) => page.compiled_truth === '' && page.timeline === '')).toBe(true);
       expect(out.hidden.map((page) => page.at)).not.toContain('default:people/private-example');
       return out;
@@ -908,7 +939,9 @@ describe('engine parity: pages', () => {
       const rest = await engine.listEntityKeyRows({ ...args, after: { source_id: first[0]!.source_id, slug: first[0]!.slug }, limit: 10 });
       expect([...first, ...rest].map((r) => r.slug)).toEqual(['companies/acme-example', 'people/alice-example']);
       expect(rest[0]!.keys).toEqual({ email: 'alice@example.com', emails: ['a@example.com'] });
-      return { first, rest };
+      expect([...first, ...rest].every(r => /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\.\d{6}Z$/.test(r.created_at))).toBe(true);
+      const untimed = (rows: typeof first) => rows.map(({ created_at: _at, page_id: _id, generation: _gen, ...r }) => r);
+      return { first: untimed(first), rest: untimed(rest) };
     },
   );
   parityTest(
@@ -940,6 +973,187 @@ describe('engine parity: pages', () => {
     },
   );
 
+  parityTest(
+    'the sync hook links a pending member once its page exists and fills the fingerprints of a bare different decision',
+    { methods: ['putPage', 'applyIdentityDecisions', 'listIdentityDecisions', 'listEntityKeyRows', 'listEntityIdentityRows'] },
+    async (engine) => {
+      // A LinkedIn profile is a strong key, so each page has a fingerprint (duplicates.ts pageFingerprint).
+      const person = (title: string, handle: string): PageInput => ({ type: 'person', title, compiled_truth: `${title}.`, frontmatter: { linkedin: `linkedin.com/in/${handle}` } });
+      await seed(engine, [['people/alice-example', person('Alice Example', 'alice-example')], ['people/bob-example', person('Bob Example', 'bob-example')]]);
+      const ref = (slug: string) => ({ source_id: 'default', slug });
+      const base = { decided_by: 'owner', decided_at: '2026-11-18T00:00:00Z', origin: 'database' as const, home_source_id: null, git_blob: null };
+      await engine.applyIdentityDecisions({ upsert: [
+        { ...base, decision_id: '0000000000000011', verdict: 'same', members: [ref('people/alice-example'), ref('people/carol-example')],
+          group_id: 'dedupe/0000000000000011', entity_id: 'dedupe/0000000000000011', canonical: ref('people/alice-example') },
+        { ...base, decision_id: '0000000000000012', verdict: 'different', members: [ref('people/alice-example'), ref('people/bob-example')],
+          group_id: 'dedupe/0000000000000012', entity_id: null, canonical: null },
+      ] });
+      const before = (await engine.listIdentityDecisions()).pending.map(p => p.slug);
+      await engine.putPage('people/carol-example', person('Carol Example', 'carol-example'));
+      // A brain with no decision home: the hook applies the pending members and fills the bare decision's fingerprints.
+      await syncIdentityDecisions(engine, 'default');
+      const read = await engine.listIdentityDecisions();
+      const members = (await engine.listEntityIdentityRows({ entityId: 'dedupe/0000000000000011' })).map(r => r.slug).sort();
+      const result = { before, pending: read.pending.map(p => p.slug), members,
+        evidence: read.decisions.find(d => d.decision_id === '0000000000000012')?.evidence?.length ?? 0 };
+      expect(result).toEqual({ before: ['people/carol-example'], pending: [], members: ['people/alice-example', 'people/carol-example'], evidence: 2 });
+      return result;
+    },
+  );
+
+  // Generation differs by design: Postgres and PGLite return pages.generation, a counter that grows; the Rust store keeps
+  // no counter and returns a token from the page's knowledge_revision (rust/docs/store/entity_identities.md), equal while
+  // the page is unchanged and different after a change, but not increasing. Main compares generation for equality only
+  // (company-auto-link.ts plan pins, duplicates.ts), so the cases below assert equality and change, never order or value.
+  parityTest(
+    'listEntityKeyRows narrows to members and to pages with a token value, and names each page\'s identity and generation',
+    { methods: ['putPage', 'linkEntityIdentityRow', 'listEntityKeyRows'] },
+    async (engine) => {
+      const company = (title: string, frontmatter: Record<string, unknown>): PageInput => ({ type: 'company', title, compiled_truth: `${title}.`, timeline: '', frontmatter });
+      await seed(engine, [
+        ['companies/acme-example', company('Acme Example', { website: ' HTTPS://www.Acme-Example.com/about?x=1 ', linkedin: 'https://linkedin.com/company/acme-co/' })],
+        ['companies/widget-co', company('Widget Co', { github: ['https://github.com/widget-login/repo', null], handle: '@widget', employees: 42 })],
+        ['people/alice-example', { ...ALICE, frontmatter: { linkedin: 'linkedin.com/in/alice-example?trk=1' } }],
+      ]);
+      await engine.linkEntityIdentityRow({ entityId: 'group/acme', slug: 'companies/acme-example', sourceId: 'default', confidence: 1, establishedBy: 'manual', canonical: true });
+      const all = { types: ['company', 'person'], keys: ['website'], limit: 10 };
+      const slugs = async (extra: object) => (await engine.listEntityKeyRows({ ...all, ...extra })).map(r => r.slug);
+      const tokens = (values: string[], fields: string[]) => slugs({ tokens: { values, fields } });
+      const out = {
+        members: await slugs({ members: [{ source_id: 'default', slug: 'companies/widget-co' }, { source_id: 'default', slug: 'companies/missing' }] }),
+        noMembers: await slugs({ members: [] }),
+        host: await tokens(['acme-example.com'], ['website']),
+        company: await tokens(['acme-co'], ['linkedin']),
+        profile: await tokens(['alice-example'], ['linkedin']),
+        login: await tokens(['widget-login'], ['github']),
+        handle: await tokens(['widget'], ['handle']),
+        number: await tokens(['42'], ['employees']),
+        wrongField: await tokens(['acme-example.com'], ['linkedin']),
+        none: await tokens([], ['website']),
+        identities: (await engine.listEntityKeyRows(all)).map(r => [r.slug, r.identity, r.keys]),
+      };
+      const before = (await engine.listEntityKeyRows(all)).map(r => [r.slug, r.page_id, r.generation, r.created_at] as const);
+      await seed(engine, [['companies/widget-co', company('Widget Co', { github: 'https://github.com/widget-login', employees: 43 })]]);
+      const after = (await engine.listEntityKeyRows(all)).map(r => [r.slug, r.page_id, r.generation, r.created_at] as const);
+      const generation = before.map(([slug, id, gen, at], i) => [slug, after[i]![1] === id, after[i]![2] === gen, after[i]![3] === at, typeof gen === 'number']);
+      expect(out.members).toEqual(['companies/widget-co']);
+      expect(out.noMembers).toEqual([]);
+      expect([out.host, out.company, out.profile, out.login, out.handle, out.number]).toEqual([
+        ['companies/acme-example'], ['companies/acme-example'], ['people/alice-example'], ['companies/widget-co'], ['companies/widget-co'], ['companies/widget-co']]);
+      expect([out.wrongField, out.none]).toEqual([[], []]);
+      expect(generation).toEqual([
+        ['companies/acme-example', true, true, true, true], ['companies/widget-co', true, false, true, true], ['people/alice-example', true, true, true, true]]);
+      return { ...out, generation };
+    },
+  );
+  parityTest(
+    'applyIdentityDecisions keeps a decision\'s evidence and writes, skips and removes the company sweep\'s automatic groups',
+    { methods: ['putPage', 'softDeletePage', 'listEntityKeyRows', 'applyIdentityDecisions', 'listIdentityDecisions'] },
+    async (engine) => {
+      const names = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k'];
+      await seed(engine, names.map(n => [`companies/${n}-example`, { ...ACME, title: `${n} Example` }] as [string, PageInput]));
+      const read = async () => new Map((await engine.listEntityKeyRows({ types: ['company'], keys: [], limit: 50 })).map(r => [r.slug.slice(10, 11), r]));
+      let rows = await read();
+      const member = (n: string) => ({ source_id: 'default', page_id: rows.get(n)!.page_id, generation: rows.get(n)!.generation });
+      const group = (entity_id: string, members: string[]) => ({ entity_id, canonical_page_id: rows.get(members[0]!)!.page_id, members: members.map(member) });
+      const plan = [group('auto/ab', ['a', 'b']), group('auto/cd', ['c', 'd']), group('auto/ef', ['e', 'f']), group('auto/gh', ['g', 'h']), group('auto/ij', ['i', 'j'])];
+      await seed(engine, [['companies/d-example', { ...ACME, title: 'd Example', compiled_truth: 'Changed after the sweep read it.' }]]);
+      const first = await engine.applyIdentityDecisions({ auto: { link: plan, unlink: [] } });
+      const again = await engine.applyIdentityDecisions({ auto: { link: [group('auto/ab', ['a', 'b'])], unlink: [] } });
+      rows = await read();
+      const linked = names.map(n => [n, rows.get(n)!.identity]);
+      const ref = (n: string) => ({ source_id: 'default', slug: `companies/${n}-example` });
+      const decision = (decision_id: string, verdict: 'same' | 'different', members: string[], evidence?: string[]) => ({
+        decision_id, verdict, members: members.map(ref), group_id: null, entity_id: verdict === 'same' ? `dedupe/${decision_id}` : null,
+        canonical: verdict === 'same' ? ref(members[0]!) : null, decided_by: 'owner', decided_at: '2026-11-18T00:00:00Z', origin: 'database' as const,
+        home_source_id: null, git_blob: null, ...(evidence ? { evidence } : {}),
+      });
+      const decided = await engine.applyIdentityDecisions({ upsert: [
+        decision('0000000000000001', 'different', ['a', 'b'], ['fp-a', 'fp-b']),
+        decision('0000000000000002', 'same', ['i', 'k']),
+        decision('0000000000000003', 'different', ['c', 'k'], []),
+      ] });
+      await engine.softDeletePage('companies/f-example');
+      const swept = await engine.applyIdentityDecisions({ auto: { link: [], unlink: ['auto/gh'] } });
+      rows = await read();
+      const after = names.filter(n => rows.has(n)).map(n => [n, rows.get(n)!.identity]);
+      const decisions = (await engine.listIdentityDecisions()).decisions.map(d => [d.decision_id, d.verdict, d.evidence]);
+      expect(first.auto).toEqual({ linked: 4, unlinked: 0, skipped: 1 });
+      expect(again.auto).toEqual({ linked: 0, unlinked: 0, skipped: 0 });
+      expect(decided.auto).toBeUndefined();
+      expect(swept.auto).toEqual({ linked: 0, unlinked: 2, skipped: 0 });
+      expect(decisions).toEqual([['0000000000000001', 'different', ['fp-a', 'fp-b']], ['0000000000000002', 'same', null], ['0000000000000003', 'different', null]]);
+      expect(after.filter(([, id]) => id !== null)).toEqual([
+        ['i', { entity_id: 'dedupe/0000000000000002', established_by: 'dedupe:confirm' }], ['k', { entity_id: 'dedupe/0000000000000002', established_by: 'dedupe:confirm' }]]);
+      return { first, again, linked, decided, swept, after, decisions };
+    },
+  );
+
+  parityTest(
+    'a sync of a changed company page runs the company sweep: it links the pair that shares an id, keeps it across a body edit and unlinks it when the ids part',
+    { methods: ['putPage', 'listEntityKeyRows', 'listIdentityDecisions', 'applyIdentityDecisions'] },
+    async (engine, backend) => {
+      // A folder source without git: each performSync passes the slugs it changed to the company sweep
+      // (syncIdentityDecisions -> autoLinkCompanies -> listEntityKeyRows + applyIdentityDecisions).
+      const dir = mkdtempSync(join(tmpdir(), 'parity-company-sweep-'));
+      try {
+        mkdirSync(join(dir, 'notes'), { recursive: true });
+        mkdirSync(join(dir, 'companies'), { recursive: true });
+        writeFileSync(join(dir, 'notes', 'start.md'), '---\ntype: note\ntitle: Start\n---\nStart.\n');
+        const git = (...args: string[]) => execFileSync('git', ['-C', dir, ...args], { stdio: ['ignore', 'pipe', 'pipe'] });
+        git('init', '-q', '-b', 'main'); git('config', 'user.email', 'parity@example.com'); git('config', 'user.name', 'Parity');
+        git('add', '-A'); git('commit', '-q', '-m', 'start');
+        await createSource(engine, backend, 'company-sync', {}, dir);
+        await engine.putPage('companies/acme-example', { ...ACME, frontmatter: { linkedin: 'https://www.linkedin.com/company/acme-example/', website: 'https://acme-example.com' } });
+        const file = (ids: string, body: string) => writeFileSync(join(dir, 'companies', 'acme-example.md'), `---\ntype: company\ntitle: Acme Example\n${ids}---\n${body}\n`);
+        const ACME_IDS = 'linkedin: https://www.linkedin.com/company/acme-example/\nwebsite: https://acme-example.com\n';
+        const sync = async () => { git('add', '-A'); try { git('commit', '-q', '-m', 'edit'); } catch { /* nothing new */ }
+          return performSync(engine, { sourceId: 'company-sync', repoPath: dir, noPull: true, noEmbed: true, concurrency: 1 }); };
+        const groups = async () => (await engine.listEntityKeyRows({ types: ['company'], keys: [], limit: 10 }))
+          .map(r => [r.source_id, r.slug, r.identity] as const);
+        const steps: Array<{ status: string; groups: Awaited<ReturnType<typeof groups>> }> = [];
+        const step = async () => { const r = await sync(); steps.push({ status: r.status, groups: await groups() }); };
+        await step();
+        file(ACME_IDS, 'Acme Example.');
+        await step();
+        file(ACME_IDS, 'Acme Example builds widgets.');
+        await step();
+        file('linkedin: https://www.linkedin.com/company/widget-co/\nwebsite: https://widget-co.example\n', 'Acme Example builds widgets.');
+        await step();
+        const linked = steps.map(s => s.groups.map(([, , id]) => id?.established_by ?? null));
+        expect(linked).toEqual([[null], ['dedupe:auto', 'dedupe:auto'], ['dedupe:auto', 'dedupe:auto'], [null, null]]);
+        expect(steps[1]!.groups[0]![2]!.entity_id).toBe(steps[2]!.groups[0]![2]!.entity_id);
+        expect(steps[1]!.groups[0]![2]!.entity_id).toMatch(/^dedupe-auto\//);
+        return steps;
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    },
+  );
+
+  parityTest('bumpPageRetrievals stamps the most-linked page once per 5 minutes and staleBias then prefers a never-retrieved page',
+    { methods: ['bumpPageRetrievals', 'listPrefixSampledPages'] }, async (engine) => {
+      await seed(engine, [['wiki/vc/linked', NOTE], ['wiki/vc/quiet', NOTE], ['notes/a', NOTE]]);
+      await engine.addLink('notes/a', 'wiki/vc/linked', '', 'mentions');
+      const linked = Number((await engine.getPage('wiki/vc/linked'))!.id);
+      const sample = async (staleBias: boolean) => {
+        const [row] = await engine.listPrefixSampledPages({ prefixes: ['wiki/vc'], staleBias });
+        return { slug: row!.slug, retrieved: row!.last_retrieved_at };
+      };
+      const before = await sample(false);
+      expect(before).toEqual({ slug: 'wiki/vc/linked', retrieved: null });
+      await engine.bumpPageRetrievals([linked, 987654]);
+      const first = await sample(false);
+      expect(first.retrieved).toBeInstanceOf(Date);
+      await engine.bumpPageRetrievals([linked]);
+      const again = await sample(false);
+      const unmoved = again.retrieved!.getTime() === first.retrieved!.getTime();
+      expect(unmoved).toBe(true);
+      const biased = await sample(true);
+      expect(biased).toEqual({ slug: 'wiki/vc/quiet', retrieved: null });
+      return { before, stamped: first.slug, unmoved, biased };
+    });
+
   parityTest('bumpPageRetrievals records a retrieval that the samplers read and staleBias ranks behind a never-retrieved page', { methods: ['bumpPageRetrievals', 'listPrefixSampledPages', 'listCorpusSample'] }, async (engine) => {
     await seed(engine, [['wiki/vc/a', NOTE], ['wiki/vc/b', NOTE]]);
     const a = Number((await engine.getPage('wiki/vc/a'))!.id);
@@ -964,4 +1178,32 @@ describe('engine parity: pages', () => {
     });
     return view;
   });
+
+  parityTest(
+    'the sync hook links a pending member once its page exists and fills the fingerprints of a bare different decision',
+    { methods: ['putPage', 'applyIdentityDecisions', 'listIdentityDecisions', 'listEntityKeyRows', 'listEntityIdentityRows'] },
+    async (engine) => {
+      // A LinkedIn profile is a strong key, so each page has a fingerprint (duplicates.ts pageFingerprint).
+      const person = (title: string, handle: string): PageInput => ({ type: 'person', title, compiled_truth: `${title}.`, frontmatter: { linkedin: `linkedin.com/in/${handle}` } });
+      await seed(engine, [['people/alice-example', person('Alice Example', 'alice-example')], ['people/bob-example', person('Bob Example', 'bob-example')]]);
+      const ref = (slug: string) => ({ source_id: 'default', slug });
+      const base = { decided_by: 'owner', decided_at: '2026-11-18T00:00:00Z', origin: 'database' as const, home_source_id: null, git_blob: null };
+      await engine.applyIdentityDecisions({ upsert: [
+        { ...base, decision_id: '0000000000000011', verdict: 'same', members: [ref('people/alice-example'), ref('people/carol-example')],
+          group_id: 'dedupe/0000000000000011', entity_id: 'dedupe/0000000000000011', canonical: ref('people/alice-example') },
+        { ...base, decision_id: '0000000000000012', verdict: 'different', members: [ref('people/alice-example'), ref('people/bob-example')],
+          group_id: 'dedupe/0000000000000012', entity_id: null, canonical: null },
+      ] });
+      const before = (await engine.listIdentityDecisions()).pending.map(p => p.slug);
+      await engine.putPage('people/carol-example', person('Carol Example', 'carol-example'));
+      // A brain with no decision home: the hook applies the pending members and fills the bare decision's fingerprints.
+      await syncIdentityDecisions(engine, 'default');
+      const read = await engine.listIdentityDecisions();
+      const members = (await engine.listEntityIdentityRows({ entityId: 'dedupe/0000000000000011' })).map(r => r.slug).sort();
+      const result = { before, pending: read.pending.map(p => p.slug), members,
+        evidence: read.decisions.find(d => d.decision_id === '0000000000000012')?.evidence?.length ?? 0 };
+      expect(result).toEqual({ before: ['people/carol-example'], pending: [], members: ['people/alice-example', 'people/carol-example'], evidence: 2 });
+      return result;
+    },
+  );
 });

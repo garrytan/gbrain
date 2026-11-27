@@ -21,7 +21,7 @@ import { readFix } from '../ops/op-fix.ts';
 import { hostIdFor } from '../persistence/identity.ts';
 import { inspectPersistenceBrain } from '../persistence/managed-mode.ts';
 import { previewChangedError, previewHash } from '../persistence/preview-approval.ts';
-import { storedManifestScope, worktreeManifest, type StoredWorktreeManifest } from '../persistence/worktree-manifest.ts';
+import { storedManifestScope, worktreeManifest } from '../persistence/worktree-manifest.ts';
 import { staleOwnedContent } from '../shared-skills/content-freshness.ts';
 import { ownedContentReceipt, rootIdentity } from '../shared-skills/receipt-root.ts';
 import { afterCursor, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairScope } from './core.ts';
@@ -52,14 +52,7 @@ function selfTransferFix(sourceId: string, sharedSkills: boolean): Action {
 async function verdicts(engine: Parameters<RepairHandler['plan']>[0], scope: RepairScope): Promise<Verdict[]> {
   const out: Verdict[] = [];
   for (const stale of await staleOwnedContent(engine, scope.source_ids)) {
-    const [row] = await engine.executeRaw<{ incarnation: string; brain_id: string; key: string; value: string; owner_host_id: string; manifest: StoredWorktreeManifest | null; worktree_root: string; relative_path: string }>(
-      `SELECT s.incarnation::text AS incarnation,p.brain_id,c.key,c.value,w.owner_host_id::text AS owner_host_id,w.manifest,h.local_path AS worktree_root,b.relative_path
-         FROM sources s JOIN persistence_brain p ON p.singleton=1
-         JOIN config c ON c.key='shared_skills.content.v1.'||s.id||'.'||s.incarnation::text
-         JOIN persistence_source_bindings b ON b.source_id=s.id AND b.source_incarnation=s.incarnation
-         JOIN persistence_worktrees w ON w.id=b.worktree_id
-         JOIN persistence_host_bindings h ON h.worktree_id=w.id AND h.host_id=w.owner_host_id
-        WHERE s.id=$1`, [stale.sourceId]);
+    const row = await engine.readContentReceiptBinding(stale.sourceId);
     if (!row || !ownedContentReceipt(row.value, row.brain_id, stale.sourceId, row.incarnation)) continue;
     const base = { source_id: stale.sourceId, key: row.key, raw: row.value };
     const was = `the receipt names ${stale.receiptRoot ?? 'no root'}`;
@@ -110,14 +103,13 @@ export const contentReceiptRootRepair: RepairHandler = {
   async apply(ctx, entry): Promise<RepairItemOutcome> {
     const { key, raw, next, source_id } = entry as ReceiptItem;
     return ctx.engine.transaction(async tx => {
-      const [row] = await tx.executeRaw<{ value: string }>('SELECT value FROM config WHERE key=$1 FOR UPDATE', [key]);
-      if (row?.value !== raw) return { applied: false, outcome: 'kept', reason: 'changed_since_preview' };
+      if (await tx.readConfigForUpdate(key) !== raw) return { applied: false, outcome: 'kept', reason: 'changed_since_preview' };
       const now = rootIdentity(next.root);
       if (now?.root_identity.device !== next.root_identity.device || now.root_identity.inode !== next.root_identity.inode) return { applied: false, outcome: 'kept', reason: 'root_changed_since_preview' };
       const backup = `${key}.backup`;
-      await tx.executeRaw('INSERT INTO config(key,value) VALUES($1,$2) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value',
-        [backup, JSON.stringify({ previous: raw, replaced_at: new Date().toISOString(), source_id })]);
-      await tx.executeRaw('UPDATE config SET value=$2 WHERE key=$1', [key, JSON.stringify({ ...JSON.parse(raw), ...next })]);
+      await tx.setConfig(backup, JSON.stringify({ previous: raw, replaced_at: new Date().toISOString(), source_id }));
+      // The row exists and is locked above, so the upsert is the update it replaces.
+      await tx.setConfig(key, JSON.stringify({ ...JSON.parse(raw), ...next }));
       return { applied: true, outcome: 'rebound', detail: { from: (JSON.parse(raw) as { root?: unknown }).root ?? null, to: next.root, backup_key: backup } };
     });
   },

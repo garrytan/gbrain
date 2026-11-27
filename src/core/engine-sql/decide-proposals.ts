@@ -269,7 +269,7 @@ export async function listDueDecideReviewQueue(tx: Raw, kind: string, sourceId: 
   const rows = await tx.executeRaw<ReviewQueueRow>(
     `SELECT kind, source_id, a_ref, b_ref, attempts FROM decide_review_queue
       WHERE kind = $1 AND source_id = $2 AND attempts < $3 AND next_attempt_at <= now()
-      ORDER BY next_attempt_at, created_at, a_ref COLLATE "C", b_ref COLLATE "C" LIMIT $4`, [kind, sourceId, REVIEW_MAX_ATTEMPTS, limit]);
+      ORDER BY next_attempt_at, created_at, a_ref, b_ref LIMIT $4`, [kind, sourceId, REVIEW_MAX_ATTEMPTS, limit]);
   return rows.map(r => ({ ...r, attempts: Number(r.attempts) }));
 }
 

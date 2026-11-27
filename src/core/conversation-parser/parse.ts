@@ -841,12 +841,14 @@ function scoringTrack(): { line(raw: string): void; finish(): string | null } {
         fullBodyScored = true;
       }
       const top = scored[0]!;
-      const i = BUILTIN_PATTERNS.indexOf(top.entry);
-      const score = top.entry.score_full_body && !fullBodyScored ? value(full, i) : top.score;
-      if (score < SCORING_MIN_ACCEPTANCE) return null;
-      const gate = gates[i];
-      if (gate && !gate.repeated && gate.turns >= top.entry.repeat_speaker_min_turns!) return null;
-      return top.entry.id;
+      const accepted = (entry: PatternEntry, score: number) => {
+        const gate = gates[BUILTIN_PATTERNS.indexOf(entry)];
+        return score >= SCORING_MIN_ACCEPTANCE && !(gate && !gate.repeated && gate.turns >= entry.repeat_speaker_min_turns!);
+      };
+      const topScore = top.entry.score_full_body && !fullBodyScored ? value(full, BUILTIN_PATTERNS.indexOf(top.entry)) : top.score;
+      if (accepted(top.entry, topScore)) return top.entry.id;
+      // GST-3251: parseConversation's hand-over to the next pattern by full-body score.
+      return ranked(full).find(next => next.entry !== top.entry && accepted(next.entry, next.score))?.entry.id ?? null;
     },
   };
 }
@@ -946,8 +948,7 @@ export function parseConversation(
   // the page mis-parses as a conversation. When the winner is flagged
   // `score_full_body` and we have NOT already scored full-body, recompute
   // its score over the whole document so the floor judges true density.
-  // We do NOT re-pick the winner: the head pick is already the best
-  // candidate; this only tightens its acceptance (a real transcript
+  // This only tightens the head pick's acceptance (a real transcript
   // stays ~1.0; a 3/200-label notes page drops to ~0.015 → no_match).
   if (top.entry.score_full_body && !fullBodyScored) {
     top.score = scorePatternFull(body, top.entry);
@@ -958,55 +959,68 @@ export function parseConversation(
   // below the 5% floor we stay no_match instead of returning a
   // 1-message false positive. Real transcript pages typically score
   // 0.5+ and sail through.
-  if (top.score < SCORING_MIN_ACCEPTANCE) {
-    return {
-      messages: [],
-      phase: 'no_match',
-      patterns_scored: patternsScored,
-      unmatched_line_count: opts.diagnostic
-        ? body.split(/\r?\n/).filter((l) => l.trim().length > 0).length
-        : undefined,
-    };
-  }
-
-  const diag = { unrecognized_headings: [] as string[], date_fallback_count: 0 };
-  const messages = applyPattern(body, top.entry, dateCtx, diag);
-
   // Structure gate (N12-1): enough turns with every speaker distinct is a
   // list of labels, not a conversation.
-  const minTurns = top.entry.repeat_speaker_min_turns;
-  if (
-    minTurns !== undefined &&
-    messages.length >= minTurns &&
-    new Set(messages.map((m) => m.speaker)).size === messages.length
-  ) {
+  type Attempt = { rejected: 'below_floor' | 'label_list' } | { entry: PatternEntry; messages: MatchedMessage[]; diag: { unrecognized_headings: string[]; date_fallback_count: number } };
+  const attempt = (entry: PatternEntry, score: number): Attempt => {
+    if (score < SCORING_MIN_ACCEPTANCE) return { rejected: 'below_floor' as const };
+    const diag = { unrecognized_headings: [] as string[], date_fallback_count: 0 };
+    const messages = applyPattern(body, entry, dateCtx, diag);
+    const minTurns = entry.repeat_speaker_min_turns;
+    if (minTurns !== undefined && messages.length >= minTurns && new Set(messages.map((m) => m.speaker)).size === messages.length) {
+      return { rejected: 'label_list' as const };
+    }
+    return { entry, messages, diag };
+  };
+  const first = attempt(top.entry, top.score);
+  let chosen = first;
+  // GST-3251: a winner the floor or the structure gate rejects hands over to
+  // the next pattern by full-body score that passes both. A transcript whose
+  // first answer lists `**Label:** text` lines lets bold-name-no-time win
+  // the head pass, and the label-list gate then dropped the whole page.
+  if ('rejected' in first) {
+    const allLines = getNonBlankLines(body);
+    const rest = sortScored(candidates.filter((entry) => entry !== top.entry).map((entry) => ({
+      entry,
+      score: entry.id === 'python-dict-utterance' ? scorePatternFull(body, entry) : scoreFromLines(allLines, entry),
+      priority: priorityOf(entry.id),
+    })));
+    for (const next of rest) {
+      if (next.score < SCORING_MIN_ACCEPTANCE) break;
+      const result = attempt(next.entry, next.score);
+      if (!('rejected' in result)) { chosen = result; break; }
+    }
+  }
+  if ('rejected' in chosen) {
     return {
       messages: [],
       phase: 'no_match',
       patterns_scored: patternsScored,
+      no_match: { reason: 'rejected' in first ? first.rejected : 'below_floor', pattern_id: top.entry.id, score: top.score },
       unmatched_line_count: opts.diagnostic
         ? body.split(/\r?\n/).filter((l) => l.trim().length > 0).length
         : undefined,
     };
   }
+  const { entry: winner, messages, diag } = chosen;
 
   // Timezone warning surface (D19).
   let timezone_warning: string | undefined;
   if (dateCtx.invalid_timezone && messages.length > 0) {
     // #5430: a declared zone the runtime does not know keeps UTC, and says so.
-    timezone_warning = `[conversation-parser] pattern=${top.entry.id} frontmatter timezone '${dateCtx.invalid_timezone}' is not a valid IANA zone; assumed UTC for timestamps. Fix 'timezone:' in the page frontmatter (for example America/Los_Angeles) for accurate facts`;
+    timezone_warning = `[conversation-parser] pattern=${winner.id} frontmatter timezone '${dateCtx.invalid_timezone}' is not a valid IANA zone; assumed UTC for timestamps. Fix 'timezone:' in the page frontmatter (for example America/Los_Angeles) for accurate facts`;
   } else if (
-    top.entry.timezone_policy === 'utc_assumed_with_warn' &&
+    winner.timezone_policy === 'utc_assumed_with_warn' &&
     !dateCtx.timezone &&
     messages.length > 0
   ) {
-    timezone_warning = `[conversation-parser] pattern=${top.entry.id} assumed UTC for time-only timestamps; add 'timezone: <IANA>' to page frontmatter for accurate facts`;
+    timezone_warning = `[conversation-parser] pattern=${winner.id} assumed UTC for time-only timestamps; add 'timezone: <IANA>' to page frontmatter for accurate facts`;
   }
 
   return {
     messages,
     phase: 'regex_match',
-    matched_pattern_id: top.entry.id,
+    matched_pattern_id: winner.id,
     patterns_scored: patternsScored,
     timezone_warning,
     // Anchors rescued onto a fallback timestamp; undefined when zero.

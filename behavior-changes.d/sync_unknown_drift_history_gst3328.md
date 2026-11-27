@@ -1,0 +1,4 @@
+---
+kind: fix
+---
+A managed sync now imports a Git edit to a page with no import record when the page still equals one of its file's three earlier committed versions, not only the file at the last synced commit, so a page that fell more than one commit behind its file (or whose last synced commit no longer resolves) is no longer held file_drift although only Git moved. A page edited in the database still matches none of them and stays held. Holds written before this release stay until re-screened: gbrain repair file-drift --source <id> --held (writes nothing) marks each held page that equals an earlier version of its file, and gbrain sources retry-held <id> followed by gbrain sync --source <id> --no-pull imports those pages and clears their holds. gbrain doctor's git_held_files advice for file-drift holds now names that preview instead of a per-page step.

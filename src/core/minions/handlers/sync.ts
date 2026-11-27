@@ -5,6 +5,7 @@ import type { BrainEngine } from '../../engine.ts';
 import type { MinionHandler } from '../types.ts';
 import { resolveJobPull } from './job-pull.ts';
 import { JobDeferredError, UnrecoverableError } from '../errors.ts';
+import { rethrowCapabilityRefusal } from '../../engine-capability-refusal.ts';
 import type { SyncResult } from '../../../commands/sync.ts';
 
 /**
@@ -14,6 +15,46 @@ import type { SyncResult } from '../../../commands/sync.ts';
  */
 function githubItemBusy(sourceId: string, item: { repo: string; number: number; deleted: boolean }): JobDeferredError {
   return new JobDeferredError('sync_in_progress', `another sync holds source ${sourceId}; the ${item.deleted ? 'deletion' : 'refresh'} of ${item.repo}#${item.number} runs after it.`, 30_000);
+}
+
+/**
+ * The source registered at `repoPath` (archived ones too), or undefined. An engine that cannot read sources says so; a
+ * very old brain without the table answers undefined, so performSync falls back to the global config.sync anchor.
+ */
+export async function sourceIdForRepoPath(engine: Pick<BrainEngine, 'listAllSources'>, repoPath: string): Promise<string | undefined> {
+  try {
+    const rows = await engine.listAllSources({ includeArchived: true, localPathOnly: true });
+    return rows.find(row => row.local_path === repoPath)?.id;
+  } catch (error) { // silent-read-ok: a brain too old to have the sources table falls back to the global sync anchor, as it always did
+    rethrowCapabilityRefusal(error);
+    return undefined;
+  }
+}
+
+/** #4399: whether the source's config turns sync off (false for an unknown source). A refused read surfaces; another failed read reads as enabled. */
+export async function queuedSyncDisabled(engine: Pick<BrainEngine, 'getSource'>, sourceId: string): Promise<boolean> {
+  const { isSyncDisabledConfig } = await import('../../sync-policy.ts');
+  try {
+    const row = await engine.getSource(sourceId);
+    return row !== null && isSyncDisabledConfig(row.config);
+  } catch (error) { // silent-read-ok: #4399 an unreadable source row lets the queued sync run, where performSync reports the real error
+    rethrowCapabilityRefusal(error);
+    return false;
+  }
+}
+
+/**
+ * #6706: another active sync job with a live lock, started before `jobId`, that is draining `sourceId` (or `repoPath`),
+ * ignoring `continuationOf` and the drain-lease holder rows; null when none. A refused read surfaces instead of reading as none.
+ */
+export async function olderLiveSyncDrainer(engine: Pick<BrainEngine, 'executeRaw'>, jobId: number, sourceId: string, continuationOf: number, repoPath: string | null): Promise<{ id: number | string } | null> {
+  const [live] = await engine.executeRaw<{ id: number | string }>(`SELECT id FROM minion_jobs WHERE name='sync' AND status='active' AND lock_until > now() AND id <> $1 AND id <> $3
+        AND queue <> 'gbrain-drain-lease' AND (started_at, id) < (SELECT started_at, id FROM minion_jobs WHERE id = $1)
+        AND (COALESCE(data->>'sourceId', data->>'source_id')=$2 OR (COALESCE(data->>'sourceId', data->>'source_id') IS NULL AND ($4::text IS NULL AND $2='default' OR data->>'repoPath'=$4))) LIMIT 1`,
+    [jobId, sourceId, continuationOf, repoPath])
+    // silent-read-ok: the probe only avoids a second drainer; the drain lease is the guard, so a failed probe finds none
+    .catch((error: unknown) => { rethrowCapabilityRefusal(error); return []; });
+  return live ?? null;
 }
 
 export function makeSyncHandler(engine: BrainEngine): MinionHandler {
@@ -32,16 +73,7 @@ export function makeSyncHandler(engine: BrainEngine): MinionHandler {
     let sourceId: string | undefined =
       typeof job.data.sourceId === 'string' ? job.data.sourceId : undefined;
     if (!sourceId && repoPath) {
-      try {
-        const rows = await engine.executeRaw<{ id: string }>(
-          `SELECT id FROM sources WHERE local_path = $1 LIMIT 1`,
-          [repoPath],
-        );
-        sourceId = rows[0]?.id;
-      } catch {
-        // sources table may not exist on very old brains — fall through to
-        // global config.sync.* anchor in performSync.
-      }
+      sourceId = await sourceIdForRepoPath(engine, repoPath);
     }
     // GBRA-133: a job that does not say whether to pull gets the CLI's managed default (no pull); an explicit pull: true is still refused.
     const pullFlags = { noPull: !resolveJobPull(job.data), dryRun: false };
@@ -54,15 +86,7 @@ export function makeSyncHandler(engine: BrainEngine): MinionHandler {
     // disabled after enqueue is not synced. Explicit jobs still run; a failed lookup falls through.
     if (job.data.embed_reason === 'autopilot_freshness') {
       const id = sourceId ?? 'default';
-      const { isSyncDisabledConfig } = await import('../../sync-policy.ts');
-      let disabled = false;
-      try {
-        const [row] = await engine.executeRaw<{ config: unknown }>('SELECT config FROM sources WHERE id = $1', [id]);
-        disabled = row !== undefined && isSyncDisabledConfig(row.config);
-      } catch {
-        disabled = false;
-      }
-      if (disabled) {
+      if (await queuedSyncDisabled(engine, id)) {
         console.error(`[sync] skipped: source ${id} has syncEnabled:false; queued freshness sync not run.`);
         return { skipped: true, reason: 'sync_disabled', source_id: id };
       }
@@ -107,10 +131,7 @@ export function makeSyncHandler(engine: BrainEngine): MinionHandler {
     // #6712 PR 1: the drain lease is the guard between processes of this build; this one still catches a job an older
     // worker runs during a rolling upgrade (it holds no lease). The lease's holder records are not jobs.
     if (plan.opts.drain && await (await import('../../persistence/managed-mode.ts')).readManagedMode(engine).catch(() => false)) {
-      const [live] = await engine.executeRaw<{ id: number | string }>(`SELECT id FROM minion_jobs WHERE name='sync' AND status='active' AND lock_until > now() AND id <> $1 AND id <> $3
-        AND queue <> 'gbrain-drain-lease' AND (started_at, id) < (SELECT started_at, id FROM minion_jobs WHERE id = $1)
-        AND (COALESCE(data->>'sourceId', data->>'source_id')=$2 OR (COALESCE(data->>'sourceId', data->>'source_id') IS NULL AND ($4::text IS NULL AND $2='default' OR data->>'repoPath'=$4))) LIMIT 1`,
-        [job.id, sourceId ?? 'default', typeof job.data.continuation_of === 'number' ? job.data.continuation_of : -1, repoPath ?? null]).catch(() => []);
+      const live = await olderLiveSyncDrainer(engine, job.id, sourceId ?? 'default', typeof job.data.continuation_of === 'number' ? job.data.continuation_of : -1, repoPath ?? null);
       if (live) {
         if (githubItem) throw githubItemBusy(sourceId ?? 'default', githubItem);
         console.error(`[sync] skipped: sync job #${live.id} is already draining ${sourceId ?? 'default'}.`);

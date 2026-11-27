@@ -25,8 +25,14 @@ import { readSqlTrace } from '../helpers/statement-counter.ts';
 import { seedPage } from '../helpers/keyword-paging-fixture.ts';
 
 const CLI = join(import.meta.dir, '../../src/cli.ts');
-/** Measured on v0.60.333.0 (after #7169) with no provider keys (keyword search): search 59, get 17, recall 35. */
-const BUDGET: Record<string, number> = { search: 65, get: 19, recall: 38 };
+/**
+ * Measured on v0.60.333.0 (after #7169) with no provider keys (keyword search): search 59, get 17, recall 35.
+ * Search is 67 since the exact capped retrieval-coverage counts (capped-count-exact): the held-pages count now runs
+ * under COVERAGE_COUNT_TIMEOUT_MS, so it is BEGIN + SET LOCAL statement_timeout, the statement and COMMIT: two more
+ * wire records than the one unbounded statement it replaced (65). The three are sent in one pipelined batch on their
+ * own connection, so no round trip is added to the search's wall time. Measured 67 on two cold runs.
+ */
+const BUDGET: Record<string, number> = { search: 67, get: 19, recall: 38 };
 
 const run = process.env.DATABASE_URL ? describe : describe.skip;
 let home = '';

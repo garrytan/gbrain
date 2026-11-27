@@ -12,7 +12,7 @@
  *     shared brain, anything created for the company part with --team.
  *     --transcripts (PR 3): a call imported twice, a planted credential stored, a call page readable more widely
  *     than its source, a call page under conversations/, a missing archive line.
- *  3. New flags on an existing command; test/setup.test.ts keeps the rest of setup.
+ *  3. New flags on an existing command; test/setup-claude-install.test.ts covers the Claude Code install.
  */
 import { afterAll, describe, expect, test } from 'bun:test';
 import { execSync } from 'node:child_process';
@@ -20,7 +20,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
-import { runCli, type CliResult } from './helpers/cli-spawn.ts';
+import { runCli, type CliResult, envWithoutDatabaseUrl } from './helpers/cli-spawn.ts';
 import { COMPANY_PAGES, LAYOUT_BEGIN, PERSONAL_PAGES, parseLayoutFlags, renderStarterPage, withBrainShape, brainShapeDecision, renderLayoutBlock, layoutNotices, applyBrainLayout, countNotes, askBrainShape, describeLayout, callEgress } from '../src/commands/setup-brain-layout.ts';
 
 const CLI = resolve(import.meta.dir, '..', 'src', 'cli.ts');
@@ -104,7 +104,7 @@ describe('setup --shape personal', () => {
     expect(facts.stdout).toContain('status: stub');
 
     const edited = '---\ntitle: Facts about me\n---\n# Facts about me\n\n- 2026-11-15: I like tea. Source: I said so.\n';
-    const put = Bun.spawnSync([b.bin, 'put', 'me/facts', '--force'], { stdin: new TextEncoder().encode(edited), stdout: 'pipe', stderr: 'pipe', env: Object.fromEntries(Object.entries({ ...process.env, ...envOf(b) }).filter(([, v]) => v !== undefined)) as Record<string, string> });
+    const put = Bun.spawnSync([b.bin, 'put', 'me/facts', '--force'], { stdin: new TextEncoder().encode(edited), stdout: 'pipe', stderr: 'pipe', env: Object.fromEntries(Object.entries({ ...envWithoutDatabaseUrl(), ...envOf(b) }).filter(([, v]) => v !== undefined)) as Record<string, string> });
     expect(put.exitCode).toBe(0);
     const again = await setup(b, ['claude-code', '--shape', 'personal']);
     expect(again.exitCode).toBe(0);
@@ -129,6 +129,38 @@ describe('setup --shape personal', () => {
     expect(n.fix.argv.slice(0, 4)).toEqual(['gbrain', 'import', notes, '--no-embed']);
     expect(r.doc.brain_layout.pages.every((p: any) => p.action === 'write')).toBe(true);
   }, 180_000);
+
+  test('a requested notes import that fails exits non-zero with the failure on stderr and one JSON document, keeping the wiring', async () => {
+    const b = box();
+    const notes = join(b.root, 'notes-mixed');
+    mkdirSync(notes, { recursive: true });
+    writeFileSync(join(notes, 'good.md'), '---\ntype: note\ntitle: Acme pricing\n---\n# Acme pricing\n\nThe starter plan stays free.\n');
+    writeFileSync(join(notes, 'bad.md'), '---\ntitle: [unclosed\n  bad: : :\n---\nbody\n');
+    const r = await setup(b, ['claude-code', '--shape', 'personal', '--notes', notes]);
+    expect(r.doc).not.toBeNull();
+    expect(r.doc.brain_layout.notes.action).toBe('failed');
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stderr).toContain(`the notes import of ${notes} failed`);
+    expect(r.doc.state).toBeTruthy();
+    expect(readFileSync(claudeMd(b), 'utf8')).toContain(LAYOUT_BEGIN);
+  }, 240_000);
+
+  test('an unreadable notes folder is a failed import, never "0 files imported"', async () => {
+    const b = box();
+    const notes = join(b.root, 'notes-locked');
+    mkdirSync(notes, { recursive: true });
+    writeFileSync(join(notes, 'a.md'), '# Locked\n');
+    chmodSync(notes, 0o000);
+    try {
+      const r = await setup(b, ['claude-code', '--shape', 'personal', '--notes', notes]);
+      expect(r.doc.brain_layout.notes).toMatchObject({ action: 'failed' });
+      expect(r.doc.brain_layout.notes.detail).toContain('cannot read');
+      expect(r.exitCode).not.toBe(0);
+      expect(r.stderr).toContain(`the notes import of ${notes} failed`);
+    } finally {
+      chmodSync(notes, 0o755);
+    }
+  }, 240_000);
 
   test('--no-instructions writes the pages and no layout block', async () => {
     const b = box();
@@ -161,7 +193,7 @@ describe('setup --shape personal', () => {
     const b = box();
     const r = await setup(b, ['claude-code', '--shape', 'team']);
     expect(r.exitCode).not.toBe(0);
-    expect(r.stderr + r.stdout).toContain('pass personal, company, both or none');
+    expect(r.stderr + r.stdout).toContain('pass personal, company, both, household or none');
     expect(existsSync(join(b.home, '.claude.json'))).toBe(false);
   }, 60_000);
 });
@@ -328,6 +360,26 @@ describe('layout units', () => {
       expect(fix.ask_user).toBe(true);
       expect(fix.user_message).toContain(join(root, 'company'));
     }
+  });
+
+  test('requested company imports are failed imports, not skipped, when the company source cannot be set up', () => {
+    const root = mkdtempSync(join(tmpdir(), 'gbrain-layout-blocked-'));
+    roots.push(root);
+    mkdirSync(join(root, 'company'));
+    writeFileSync(join(root, 'company', 'mine.md'), '# Mine\n');
+    const docs = join(root, 'docs');
+    const calls = join(root, 'calls');
+    mkdirSync(docs);
+    mkdirSync(calls);
+    const o = applyBrainLayout({ harness: 'claude-code', launcher: 'gbrain', instructionsPath: null, flags: { brain: 'company', docs, transcripts: calls, dryRun: false },
+      run: (argv) => {
+        if (argv[1] === 'sources') return { code: 0, stdout: JSON.stringify({ sources: [{ id: 'default', local_path: join(root, 'default'), federated: true }] }), stderr: '' };
+        return argv[1] === 'get' ? { code: 1, stdout: '{"code":"page_not_found"}', stderr: '' } : { code: 0, stdout: '', stderr: '' };
+      } })!;
+    expect(o.company!.action).toBe('failed');
+    expect(o.docs).toMatchObject({ dir: docs, action: 'failed' });
+    expect(o.docs!.detail).toContain('company source could not be set up');
+    expect(o.transcripts).toMatchObject({ dir: calls, action: 'failed' });
   });
 
   test('personal pages land before the company source exists, and either sources add reply reads as federated', () => {

@@ -24,10 +24,16 @@ const ROUND_TRIP_MS = 40;
 /** A slice (`FENCED_SLICE_MS`, 5 s) plus the hold that crosses it; the whole round takes about twice that. */
 const SLICE_BOUND_MS = 6_000;
 
+/** The typed hold-store members (engine-sql/sync-hold-store.ts); each one runs one statement, so it pays one round trip. */
+const HOLD_STORE_MEMBERS = new Set<PropertyKey>(['lockGitHoldSummary', 'adjustGitHoldSummary', 'readGitHoldRow', 'writeGitHoldRow', 'replaceGitHoldRow', 'deleteGitHoldRow', 'countGitHolds', 'readGitHoldListingRows', 'readGitHoldCodeCountRows', 'readGitImageHoldCountRows', 'readSyncConversionRows', 'readSyncPassRow', 'readLiveSyncPassRows', 'writeSyncPassRow']);
+
 /** `engine` whose transactions wait `ROUND_TRIP_MS` before each statement (a remote database) and record how long each stayed open. */
 function remote(engine: BrainEngine, spans: number[]): BrainEngine {
   const slow = (tx: BrainEngine) => new Proxy(tx, { get: (target, prop) => {
-    if (prop === 'executeRaw') return async (...args: Parameters<BrainEngine['executeRaw']>) => { await Bun.sleep(ROUND_TRIP_MS); return target.executeRaw(...args); };
+    if (prop === 'executeRaw' || HOLD_STORE_MEMBERS.has(prop)) {
+      const member = Reflect.get(target, prop) as ((...args: unknown[]) => Promise<unknown>) | undefined;
+      if (member) return async (...args: unknown[]) => { await Bun.sleep(ROUND_TRIP_MS); return member.apply(target, args); };
+    }
     const value = Reflect.get(target, prop);
     return typeof value === 'function' ? value.bind(target) : value;
   } });

@@ -1,0 +1,173 @@
+/**
+ * Turns shadow mode on for one opened engine (plan PR S1). The engine factory imports this module only when
+ * state.json says shadow mode is on for the brain, so a brain that never used it loads none of src/shadow beyond
+ * state.ts.
+ *
+ * Wiring: wrapper (captures reads after the primary answered) -> bounded MirrorQueue (sheds, never blocks) ->
+ * ShadowSupervisor (lazy child, restarts, watchdog). The engine's disconnect flushes the counters and ends the
+ * child's stdin without waiting.
+ */
+import type { BrainEngine } from '../core/engine.ts';
+import { resolveServeGbrainCommand } from '../core/serve-service.ts';
+import type { FollowOptions } from './follow.ts';
+import { ShadowFollower } from './follower.ts';
+import { openReadSource, type ReadSource } from './read-pool.ts';
+import { Reconciler } from './reconcile.ts';
+import { createLsnWatch, makeAskHandler, type LsnWatch } from './checks.ts';
+import { epochWatch, readEpoch } from './evidence-epoch.ts';
+import { hasCapability } from '../core/engine-capabilities.ts';
+import { readSeedRecord } from './seed.ts';
+import { MirrorQueue, UsageMeter, zeroUsage } from './mirror.ts';
+import { SampleRegistry } from './samples.ts';
+import { readShadowState, writeSampleRate, type ShadowState } from './state.ts';
+import { ShadowSupervisor, type ShadowSupervisorOptions } from './supervisor.ts';
+import { appendUsage } from './usage.ts';
+import { appendWriteUsage } from './write-bar.ts';
+import { wrapShadowEngine } from './wrapper.ts';
+import { createWriteSampler } from './write-capture.ts';
+import { recordLost } from './write-compare.ts';
+import { WriterObserver, type WriterIdentity } from './writer-observations.ts';
+import { ensureWriterHooks, primaryTakesWriterHooks } from './writer-hooks.ts';
+import { claimOwner } from '../core/persistence/claim-phase.ts';
+import { hostIdFor } from '../core/persistence/identity.ts';
+import { VERSION } from '../version.ts';
+
+/** How often a long-running process appends its per-operation counts (and once more when its engine disconnects). */
+export const USAGE_FLUSH_MS = 60_000;
+
+export interface AttachShadowDeps {
+  /** argv of the gbrain CLI to spawn; default the running gbrain, never a different one on PATH. */
+  gbrainArgv?: string[];
+  supervisor?: Partial<ShadowSupervisorOptions>;
+  random?: () => number;
+  /**
+   * Shadow follow: a producer to publish committed primary writes to. When left out and the brain has been seeded
+   * (seed.json), the follower applies committed writes to the Rust store (follower.ts) and a reconciler repairs what it
+   * missed. A brain with no seed follows nothing.
+   */
+  follow?: FollowOptions;
+  /**
+   * True when the shadow child records write comparisons (the locked write tally; `attachShadow` sets it). Left out, no write is sampled and no pre-read is taken,
+   * so primary writes pay nothing for evidence that would be dropped.
+   */
+  recordsWriteComparisons?: boolean;
+}
+
+export interface AttachedShadow<E extends BrainEngine> {
+  engine: E;
+  queue: MirrorQueue;
+  supervisor: ShadowSupervisor;
+  /** Set when the brain is seeded and `follow` was left out. */
+  follower?: ShadowFollower;
+  reconciler?: Reconciler;
+  /** Notes this process's committed writes for swap eligibility (writer-observations.ts). */
+  observer: WriterObserver;
+  /** The freshness token every sample is captured with (checks.ts `createLsnWatch`). */
+  lsnWatch: LsnWatch;
+}
+
+/** The child's argv for `dir`. */
+export function shadowChildArgv(dir: string, gbrainArgv?: string[]): string[] {
+  const base = gbrainArgv ?? resolveServeGbrainCommand({ which: () => null });
+  return [...base, 'engine', 'shadow', '__child', dir];
+}
+
+export function attachShadowParts<E extends BrainEngine>(engine: E, dir: string, state: ShadowState, deps: AttachShadowDeps = {}): AttachedShadow<E> {
+  const supervisor = new ShadowSupervisor({
+    dir, argv: shadowChildArgv(dir, deps.gbrainArgv), onDirty: (relation) => reconciler?.markDirty(relation),
+    onAsk: (ask) => asks(ask), ...deps.supervisor,
+  });
+  const samples = new SampleRegistry();
+  let generation: () => number | undefined = () => undefined; // the follower's write count, set once it exists
+  let watch: LsnWatch | undefined; // the primary's freshness token, set once the child's read source exists
+  const queue = new MirrorQueue({ bound: state.queue_bound, transport: supervisor, samples, generation: () => generation(), lsn: () => watch?.current() });
+  const sink = {
+    counters: queue.counters,
+    offer: (capture: Parameters<MirrorQueue['offer']>[0], op?: string) => queue.offer(capture, op),
+    token: () => queue.token(),
+    use: (op: string, field: Parameters<MirrorQueue['meter']['note']>[1]) => queue.meter.note(op, field),
+    noteWrite: (op: string, inTransaction?: boolean) => { writeMeter.note(op, 'offered'); if (inTransaction) writeMeter.note(op, 'skipped_in_transaction'); },
+    active: () => supervisor.active(),
+  };
+  // Qualifying write calls (criterion 5's bar, write-bar.ts), kept apart from read usage so read coverage never lists a write.
+  const writeMeter = new UsageMeter();
+  writeMeter.bind({ epoch: epochWatch(dir) });
+  // Each call is noted under the epoch current when it happens, and the first call of a class is appended at once.
+  queue.meter.bind({
+    epoch: epochWatch(dir),
+    register: (epoch_id, op) => appendUsage(dir, { ts: new Date().toISOString(), epoch_id, ops: { [op]: zeroUsage() } }),
+  });
+  const flushMeter = (meter: UsageMeter, append: typeof appendUsage): void => {
+    const taken = meter.take();
+    if (!taken) return;
+    const ts = new Date().toISOString();
+    for (const [i, bucket] of taken.entries()) {
+      try { append(dir, { ts, epoch_id: bucket.epoch_id, ops: bucket.ops }); } catch { meter.restore(taken.slice(i)); return; }
+    }
+  };
+  const flushUsage = (): void => { flushMeter(queue.meter, appendUsage); flushMeter(writeMeter, appendWriteUsage); };
+  const usageTimer = setInterval(flushUsage, USAGE_FLUSH_MS);
+  usageTimer.unref();
+  const seeded = deps.follow === undefined && readSeedRecord(dir)?.digests === true;
+  const rpc = <T>(method: string, args?: Record<string, unknown>, timeoutMs?: number): Promise<T> => supervisor.request<T>(method, args, timeoutMs);
+  const reads = seeded ? openReadSource(engine) : undefined;
+  // The child's questions (checks.ts) read the primary through a source of their own, opened on first use, on a brain that was never seeded.
+  let own: ReadSource | undefined;
+  const askReads: ReadSource = reads ?? { pauseMs: 0, read: (fn) => (own ??= openReadSource(engine)).read(fn), close: async () => { await own?.close(); } };
+  watch = createLsnWatch(askReads);
+  void watch.ready(); // the first freshness token, so a sample captured a moment later has one to be held to
+  const asks = makeAskHandler({ engine, reads: askReads, dir, rpc, samples, watch, get follower() { return follower; } });
+  const follower = reads ? new ShadowFollower({
+    reads, send: (line) => supervisor.send(line), rpc,
+    onDirty: (relation) => reconciler?.markDirty(relation),
+    onFirstBatch: () => { void reconciler?.probe().catch(() => undefined); },
+  }) : undefined;
+  generation = () => follower?.published;
+  const reconciler = reads ? new Reconciler({ dir, reads, rpc, follower }) : undefined;
+  reconciler?.startNightly();
+  const observer = new WriterObserver({
+    primary: engine, dir, identity: () => writerIdentity(engine),
+    // A process opened while shadow mode was on outlives `stop`: it notes and repairs hooks only while state.json still says on.
+    enabled: () => readShadowState(dir)?.enabled === true,
+    ...(primaryTakesWriterHooks(state.primary_engine) ? { beforeFirstNote: () => ensureWriterHooks(engine, dir) } : {}),
+  });
+  engine.registerBeforeDisconnect(async () => {
+    observer.stop();
+    try {
+      queue.stop(); // delivers the reads still queued, so the child sees them and the counters add up
+      if (supervisor.active() && supervisor.childPid !== null) queue.flushStats();
+      // Let the follower finish reading what was just committed; a slow read is shed rather than waited on.
+      if (follower) await Promise.race([follower.settle(), new Promise((resolve) => { setTimeout(resolve, 2_000).unref?.(); })]);
+      await writes?.settle(2_000); // a read-back still running then is recorded as lost (`readback_abandoned`), not dropped
+    } finally {
+      clearInterval(usageTimer);
+      flushUsage();
+      reconciler?.stop();
+      supervisor.stop();
+      await reads?.close().catch(() => undefined);
+      if (askReads !== reads) await askReads.close().catch(() => undefined);
+    }
+  });
+  const follow = follower ? { sink: follower } : deps.follow;
+  const onCommittedWrite = () => observer.note();
+  // Write comparisons need the seeded store's epoch to count under (a brain that was never seeded samples no writes), a recorder for their outcomes (the child's locked tally) and a read the
+  // serving process can bound: Postgres stops it with a server-side statement timeout; PGLite has one connection and a running statement cannot be cancelled, so a PGLite brain samples no writes.
+  // A sample the pipe refuses, or a read-back left running at disconnect, is recorded for the owner child to count `uncomparable`: one line appended without a lock to this process's own file (this process never
+  // writes the tally, whose lock could stall a write; see recordLost). With no epoch yet there is nothing to count under: the count then rides on the next line the child accepts, as it always did.
+  const sampling = reads && deps.recordsWriteComparisons && hasCapability(engine, 'postgres_admin');
+  const writes = sampling ? createWriteSampler({ rate: writeSampleRate(state), random: deps.random, send: (line) => supervisor.send(line), generation: () => follower?.published, active: () => supervisor.active(), lost: (reason) => { const epoch = readEpoch(dir)?.epoch_id; return epoch !== undefined && recordLost(dir, epoch, reason); } }) : undefined;
+  return { engine: wrapShadowEngine(engine, sink, { sampleRate: state.sample_rate, random: deps.random, follow, onCommittedWrite, writes }), queue, supervisor, follower, reconciler, observer, lsnWatch: watch };
+}
+
+/** This process's writer identity: the engine's host id, the name its pools give their connections, its kind, version. */
+export function writerIdentity(engine: BrainEngine): WriterIdentity {
+  const owner = claimOwner();
+  // The same text db.ts gbrainApplicationName() gives the pools (pinned by a test), without loading the driver here.
+  const applicationName = `gbrain ${owner.kind}:${owner.pid}:${(owner.nonce ?? '').slice(0, 8)}`.slice(0, 63);
+  return { hostId: hostIdFor(engine), applicationName, processKind: owner.kind, gbrainVersion: VERSION };
+}
+
+/** The engine factory's entry point: the wrapped engine. */
+export function attachShadow<E extends BrainEngine>(engine: E, dir: string, state: ShadowState): E {
+  return attachShadowParts(engine, dir, state, { recordsWriteComparisons: true }).engine;
+}

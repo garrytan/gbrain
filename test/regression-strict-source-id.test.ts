@@ -43,6 +43,8 @@ const pageEngine = {
   getTags: async () => [],
   getConfig: async () => null,
   ...stubSourceMembers([]),
+  // The write target's recorded file origin moved off executeRaw onto the typed member; the raw stub answered it with no rows.
+  readPageFileOrigin: async () => null,
   executeRaw: async () => [],
 } as unknown as BrainEngine;
 

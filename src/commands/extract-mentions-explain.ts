@@ -77,8 +77,7 @@ export async function explainMention(engine: BrainEngine, query: string, opts: {
   const gazetteer = await buildGazetteer(engine, { policy, dropped });
   const all = [...gazetteer.values()].flat().filter(e => e.source_id === sourceId);
   const view = (e: GazetteerEntry) => ({ name: `${e.atOnly ? '@' : ''}${e.caseTokens ? e.caseTokens.join(' ') : e.tokens.join(' ')}`, slug: e.slug, origin: e.origin ?? 'title', case_sensitive: !!e.caseTokens });
-  const [asPage] = await engine.executeRaw<{ slug: string; type: string | null; title: string | null }>(
-    'SELECT slug, type, title FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL', [sourceId, query]);
+  const [asPage] = await engine.readExplainPage(sourceId, query);
   const key = tokenizeTitle(query).join(' ');
   const entries = asPage ? all.filter(e => e.slug === asPage.slug) : all.filter(e => e.tokens.join(' ') === key);
   if (asPage && !entries.length) {
@@ -99,11 +98,7 @@ export async function explainMention(engine: BrainEngine, query: string, opts: {
     if (cased.length === entries.length && !cased.some(e => e.caseTokens!.join(' ') === query.normalize('NFC'))) return done(base, 'case_mismatch');
     return done(base, null);
   }
-  const [page] = await engine.executeRaw<{ id: number; slug: string; title: string | null; compiled_truth: string; timeline: string; mention_ignore: unknown; due: boolean }>(
-    `SELECT p.id, p.slug, p.title, p.compiled_truth, p.timeline, p.frontmatter->'mention_ignore' AS mention_ignore,
-            (s.page_id IS NULL OR s.mention_revision IS DISTINCT FROM p.knowledge_revision OR s.mention_version IS DISTINCT FROM $3) AS due
-       FROM pages p LEFT JOIN page_mention_state s ON s.page_id = p.id
-      WHERE p.source_id = $1 AND p.slug = $2 AND p.deleted_at IS NULL`, [sourceId, opts.page, MENTION_EXTRACTOR_VERSION]);
+  const [page] = await engine.readExplainScanPage(sourceId, opts.page, MENTION_EXTRACTOR_VERSION);
   if (!page) return done(base, 'not_a_known_name', `No live page ${opts.page} in source ${sourceId}.`);
   const targets = new Set(entries.map(e => e.slug));
   const ignore = parseNameList(page.mention_ignore);
@@ -114,9 +109,7 @@ export async function explainMention(engine: BrainEngine, query: string, opts: {
   for (const e of entries) own.set(e.tokens[0]!, [...(own.get(e.tokens[0]!) ?? []), e]);
   const found = findMentionedEntities(text, own, { fromSlug: page.slug, fromSourceId: sourceId,
     allowCrossSource: await isCrossSourceLinksEnabled(engine), ignoreNames: ignore }).some(m => targets.has(m.slug));
-  const [link] = await engine.executeRaw<{ n: number }>(
-    `SELECT count(*)::int AS n FROM links l JOIN pages t ON t.id = l.to_page_id
-      WHERE l.from_page_id = $1 AND l.link_source = 'mentions' AND t.source_id = $2 AND t.slug = ANY($3::text[])`, [page.id, sourceId, [...targets]]);
+  const [link] = await engine.countMentionLinksTo(page.id, sourceId, [...targets]);
   const linked = Number(link?.n ?? 0) > 0;
   const withPage = (r: ExplainReason | null, message?: string) => ({ ...done(base, r, message), page: { slug: page.slug, linked } });
   if (found && !linked) return { ...withPage('pending'), next: 'gbrain extract --stale' };
@@ -131,12 +124,10 @@ export async function explainMention(engine: BrainEngine, query: string, opts: {
 /** Every name a page derives (with origin and declaring line), the rejected candidates and the sibling decision. */
 async function pageNames(engine: BrainEngine, sourceId: string, slug: string, policy: Awaited<ReturnType<typeof readMentionPolicy>>):
   Promise<Pick<MentionExplanation, 'aliases' | 'rejected' | 'siblings'>> {
-  const [p] = await engine.executeRaw<{ title: string | null; compiled_truth: string | null; timeline: string | null; frontmatter: Record<string, unknown> | null }>(
-    'SELECT title, compiled_truth, timeline, frontmatter FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL', [sourceId, slug]);
+  const [p] = await engine.readPageNameText(sourceId, slug);
   if (!p) return {};
   const derived = deriveEntityAliases(p, aliasOptsOf(policy));
-  const fm = await engine.executeRaw<{ alias_norm: string }>(
-    `SELECT alias_norm FROM page_aliases WHERE source_id = $1 AND slug = $2 AND origin = 'frontmatter' ORDER BY alias_norm`, [sourceId, slug]).catch(() => []);
+  const fm = await engine.listFrontmatterAliasNorms(sourceId, slug).catch(() => []);
   const sib = await readIdentitySiblings(engine, sourceId, { slug, title: p.title }, { excludePrivate: false, policy });
   return {
     aliases: [...fm.map(r => ({ alias: r.alias_norm, origin: 'frontmatter' })),
@@ -149,9 +140,7 @@ async function pageNames(engine: BrainEngine, sourceId: string, slug: string, po
 /** A declaration the alias derivation rejected (e.g. a 3-character code), found on a linkable entity page. */
 async function rejectedDeclaration(engine: BrainEngine, sourceId: string, name: string, policy: Awaited<ReturnType<typeof readMentionPolicy>>): Promise<ExplainReason | null> {
   const types = linkableTypesFor(await loadSourcePack(engine, sourceId), policy);
-  const pages = await engine.executeRaw<{ title: string | null; compiled_truth: string | null; timeline: string | null; frontmatter: Record<string, unknown> | null }>(
-    `SELECT title, compiled_truth, timeline, frontmatter FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND type = ANY($2::text[])
-        AND (compiled_truth ILIKE $3 OR title ILIKE $3) LIMIT 50`, [sourceId, types, `%${name.replace(/[\\%_]/g, m => `\\${m}`)}%`]);
+  const pages = await engine.listRejectedDeclarationPages(sourceId, types, `%${name.replace(/[\\%_]/g, m => `\\${m}`)}%`);
   for (const p of pages) {
     const hit = deriveEntityAliases(p, aliasOptsOf(policy)).rejected.find(r => r.alias.toLowerCase() === name.toLowerCase());
     if (hit) return hit.reason === 'denied' ? 'denied_by_config' : hit.reason;

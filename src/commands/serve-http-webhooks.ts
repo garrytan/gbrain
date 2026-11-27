@@ -192,7 +192,7 @@ async function handleGitHubItemEvent(
          WHERE archived = false
            AND ((config->>'github_repo' = $1)
              OR (config->>'kind' = 'github' AND config->>'webhook_secret' IS NOT NULL))
-         ORDER BY id`,
+         ORDER BY id COLLATE "C"`,
       [ref.repo],
     );
     const { verified, legacyMatched } = selectGitHubItemSources(rows, ref.repo, (cfg) =>
@@ -295,12 +295,13 @@ function ingestTargetSlug(callerSlug: string): string {
  * removes it, which nothing runs on a schedule, so such a row can answer a retry for as long as the brain keeps it. A
  * retry that missed it queued a second job, and that job wrote the old body over any edit made since. The row answers
  * only for the target slug it was queued with: the old key collapsed one body sent to two slugs, which is the dropped
- * write #8769 fixed. A dead or cancelled row frees its key and answers nothing, as under the current key.
+ * write #8769 fixed. A dead or cancelled row frees its key and answers nothing, as under the current key. The coalesce
+ * step is the engine's `coalesceOnIdempotencyKey`, so every engine (the Rust store included) answers it the same way.
  */
 async function legacyIngestJob(engine: BrainEngine, clientId: string, writeSourceId: string, contentHash: string, targetSlug: string): Promise<MinionJob | null> {
   const key = `ingest:webhook:${clientId}:${writeSourceId}:${contentHash}`;
   return engine.transaction(async (tx) => {
-    const [row] = await tx.executeRaw<{ data: unknown }>('SELECT data FROM minion_jobs WHERE idempotency_key = $1', [key]);
+    const row = await tx.readJobDataByIdempotencyKey(key);
     if (!row) return null;
     const data = (typeof row.data === 'string' ? JSON.parse(row.data) : row.data) as { slug?: unknown } | null;
     let rowSlug = '';

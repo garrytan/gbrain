@@ -1,15 +1,16 @@
 /**
  * Trust: the fact withdrawal ledger members (BrainEngine hasCoveringFactWithdrawal, isFactWithdrawn, isFactPurged, insertFactWithdrawal,
  * listFactWithdrawalDates, moveFactWithdrawalSubject, hasFactWithdrawalForSubject, listFactWithdrawalKeys,
- * readFactCacheWatermark, readTrustGeneration), over `rust/crates/gbrain-store/src/trust/withdrawals.rs`. The
+ * readFactCacheWatermark, readTrustGeneration, listGlobalPurgeWithdrawals), over `rust/crates/gbrain-store/src/trust/withdrawals.rs`. The
  * watermark's access digest is that of empty folder access tables: the store keeps none. The trust generation is the
  * store's commit sequence, which moves on every commit. `withdrawnAt` must be the ISO form `Date#toISOString` gives;
  * the store refuses any other spelling with `invalid_argument` (rust/docs/store/trust.md). The purge reads answer from
- * the store's fact purge ledger (`facts/purge_ledger.rs`); it keeps no take purge ledger, so `takes` is false.
+ * the store's fact purge ledger (`facts/purge_ledger.rs`) and its take purge ledger (`facts/take_purges.rs`), which also
+ * answers the import overlay's take match (`listPurgedTakeRows`).
  */
 import type { BrainEngine } from '../../engine.ts';
 import { withDates } from '../store-codec.ts';
-import { storeCall, type StoreMember } from './common.ts';
+import { refuseMember, storeCall, type StoreMember } from './common.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
 
@@ -21,6 +22,10 @@ export const isFactWithdrawn: Member<'isFactWithdrawn'> = (brain, sourceId, visi
 
 export const isFactPurged: Member<'isFactPurged'> = (brain, sourceId, visibility, claim, entitySlug) =>
   storeCall({ member: 'isFactPurged', sourceId }, () => brain.isFactPurged(sourceId, visibility, claim, entitySlug ?? null));
+
+/** The withdrawal overlay's `*` purges of the fingerprints `hashes`, from the fact purge ledger, in (visibility, fingerprint) order. */
+export const listGlobalPurgeWithdrawals: Member<'listGlobalPurgeWithdrawals'> = (brain, sourceId, hashes, worldOnly) =>
+  storeCall({ member: 'listGlobalPurgeWithdrawals', sourceId }, () => brain.listGlobalPurgeWithdrawals(sourceId, [...hashes], worldOnly));
 
 export const insertFactWithdrawal: Member<'insertFactWithdrawal'> = (brain, sourceId, visibility, claim, subject, withdrawnAt) =>
   storeCall({ member: 'insertFactWithdrawal', sourceId }, () => brain.insertFactWithdrawal(sourceId, visibility, claim, subject, withdrawnAt ?? null));
@@ -49,3 +54,11 @@ export const readTrustGeneration: Member<'readTrustGeneration'> = (brain) =>
 
 export const readSourcePurgeFlags: Member<'readSourcePurgeFlags'> = (brain, sourceId) =>
   storeCall({ member: 'readSourcePurgeFlags', sourceId }, () => brain.readSourcePurgeFlags(sourceId));
+
+/** A row number outside 32 bits fails the SQL's `row_num integer` column; the store reads it as one, so it refuses it here. */
+export const listPurgedTakeRows: Member<'listPurgedTakeRows'> = async (brain, sourceId, takes, subject) => {
+  for (const t of takes) if (!Number.isInteger(t.row_num) || Math.abs(t.row_num) > 2 ** 31 - 1) refuseMember('listPurgedTakeRows', 'a take row number that is not a 32-bit integer');
+  if (!takes.length) return [];
+  return storeCall({ member: 'listPurgedTakeRows', sourceId },
+    () => brain.listPurgedTakeRows(sourceId, takes.map(t => ({ row_num: t.row_num, claim: t.claim })), subject ?? null));
+};

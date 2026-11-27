@@ -41,16 +41,12 @@ import { withEnv } from '../helpers/with-env.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 
 const home = mkdtempSync(join(tmpdir(), 'gbrain-gbra117-'));
-const PROJECTION_PAGE_READ = "FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL AND body_storage='segmented'";
 
 /** The engine with the segmented projection's page read failing: the post-commit projection is lost before it retires anything. */
 function projectionLost(engine: BrainEngine): BrainEngine {
   return new Proxy(engine, {
     get(target, prop) {
-      if (prop === 'executeRaw') {
-        return (sql: string, params?: unknown[]) => sql.includes(PROJECTION_PAGE_READ)
-          ? Promise.reject(new Error('projection lost (probe)')) : target.executeRaw(sql, params);
-      }
+      if (prop === 'readSegmentedProjectionPage') return () => Promise.reject(new Error('projection lost (probe)'));
       const value = Reflect.get(target, prop, target);
       return typeof value === 'function' ? value.bind(target) : value;
     },

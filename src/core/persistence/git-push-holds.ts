@@ -12,8 +12,9 @@ import type { Action } from '../agent-output.ts';
 import { readFix } from '../ops/op-fix.ts';
 import { readIntegrateConflict, type IntegrateConflictState } from '../git/commit-push.ts';
 
-/** The error codes of a Git effect whose commit is local but whose push did not land. */
-export const GIT_PUSH_CODES = ['git_push_unavailable', 'push_unconfirmed', 'integrate_conflict', 'publish_secret_found', 'publish_scan_unreadable', 'push_credential_refused'] as const;
+/** The error codes of a Git effect whose commit is local but whose push did not land (defined beside the sync status SQL that embeds them). */
+import { GIT_PUSH_CODES } from './sync-status-sql.ts';
+export { GIT_PUSH_CODES };
 
 export interface GitPushHold {
   source_id: string;
@@ -34,20 +35,7 @@ export interface GitPushHold {
 }
 
 export async function readGitPushHolds(engine: BrainEngine, sourceIds?: string[]): Promise<GitPushHold[]> {
-  const rows = await engine.executeRaw<{ source_id: string; root: string | null; former_worktree: boolean; retrying: number; parked: number; codes: string[]; oldest_at: string | Date }>(
-    `WITH held AS (
-       SELECT e.source_id, e.worktree_id, e.state, r.created_at,
-              CASE WHEN e.error_code='targets_parked' THEN (SELECT p->>'error_code' FROM jsonb_array_elements(COALESCE(e.data->'parked','[]'::jsonb)) p
-                WHERE p->>'error_code'=ANY($1::text[]) LIMIT 1) ELSE e.error_code END AS code
-         FROM persistence_effects e JOIN persistence_requests r ON r.id=e.request_id
-        WHERE e.kind='git' AND e.state IN ('queued','running','failed') AND e.recovery IS NULL AND NOT (e.data ? 'settled')
-          AND ($2::text[] IS NULL OR e.source_id=ANY($2::text[])))
-     SELECT h.source_id, (SELECT b.local_path FROM persistence_host_bindings b WHERE b.worktree_id=h.worktree_id ORDER BY b.local_path LIMIT 1) AS root,
-            NOT EXISTS (SELECT 1 FROM persistence_source_bindings s WHERE s.source_id=h.source_id AND s.worktree_id=h.worktree_id) AS former_worktree,
-            count(*) FILTER (WHERE h.state<>'failed')::int AS retrying, count(*) FILTER (WHERE h.state='failed')::int AS parked,
-            array_agg(DISTINCT h.code ORDER BY h.code) AS codes, min(h.created_at) AS oldest_at
-       FROM held h WHERE h.code=ANY($1::text[])
-      GROUP BY h.source_id, h.worktree_id ORDER BY h.source_id`, [[...GIT_PUSH_CODES], sourceIds ?? null]);
+  const rows = await engine.listGitPushHoldRows([...GIT_PUSH_CODES], sourceIds ?? null);
   return rows.map(row => {
     const conflict = row.root ? readIntegrateConflict(row.root) : null;
     const hold = { source_id: row.source_id, root: row.root, retrying: Number(row.retrying), parked: Number(row.parked), codes: row.codes,

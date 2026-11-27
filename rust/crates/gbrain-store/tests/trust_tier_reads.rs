@@ -6,8 +6,10 @@ mod memory_env;
 use gbrain_store::error::INVALID_ARGUMENT;
 use gbrain_store::facts::InsertFactsArgs;
 use gbrain_store::sources::SourceInput;
+use gbrain_store::takes::TakeInput;
+use gbrain_store::timeline::{AddTimelineOptions, TimelineInput};
 use gbrain_store::trust::tier_reads::{
-    CorePageRowQuery, PageIdsQuery, TrustScanQuery, VersionIdsQuery,
+    CorePageRowQuery, PageIdsQuery, PageKeyRef, PageQuoteTierQuery, TrustScanQuery, VersionIdsQuery,
 };
 use gbrain_store::trust::write_gate::ReceiptFields;
 use memory_env::{Brain, brain};
@@ -443,9 +445,108 @@ fn the_trust_scan_reads_facts_at_a_listed_tier() {
 }
 
 #[test]
+fn the_trust_scan_reads_takes_and_timeline_entries_with_their_pages_source() {
+    let b = brain("tier-reads-scan-takes-timeline");
+    other_source(&b);
+    let mut holders = Vec::new();
+    for (slug, source) in [("scan/holder", "default"), ("scan/other-holder", "other")] {
+        declared(&b, Some("operator_curated"), |tx| {
+            let input: gbrain_store::pages::PageInput =
+                args(json!({ "type": "note", "title": slug,
+                "compiled_truth": "h", "timeline": "" }));
+            let put = tx
+                .put_page(slug, &input, &args(json!({ "sourceId": source })))
+                .unwrap();
+            holders.push((slug, source, put["id"].as_i64().unwrap()));
+        });
+    }
+    for (i, (name, tier)) in [
+        ("one", Some("agent_written")),
+        ("two", Some("operator_curated")),
+        ("three", Some("external_untrusted")),
+        ("four", None),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        for &(slug, source, page_id) in &holders {
+            declared(&b, tier, |tx| {
+                let take: TakeInput = args(json!({ "page_id": page_id, "row_num": i + 1,
+                    "claim": format!("take {name}"), "kind": "take", "holder": "h", "weight": 0.5, "active": true }));
+                tx.add_takes_batch(&[take]).unwrap();
+                let entry: TimelineInput = args(json!({ "date": format!("2026-07-0{}", i + 1),
+                    "summary": format!("entry {name}"), "detail": format!("detail {name}"), "source": "cli" }));
+                tx.add_timeline_entry(
+                    slug,
+                    &entry,
+                    &AddTimelineOptions {
+                        source_id: Some(source.into()),
+                        ..Default::default()
+                    },
+                )
+                .unwrap();
+            });
+        }
+    }
+    let takes = scan(&b, "takes", 0, 50, &SCANNED);
+    let claims: Vec<&str> = takes.iter().map(|r| r["claim"].as_str().unwrap()).collect();
+    assert_eq!(
+        claims,
+        [
+            "take one",
+            "take one",
+            "take three",
+            "take three",
+            "take four",
+            "take four"
+        ]
+    );
+    assert_eq!(takes[0]["source_id"], json!("default"));
+    assert_eq!(takes[1]["source_id"], json!("other"));
+    assert_eq!(takes[0]["trust_tier"], json!("agent_written"));
+    assert_eq!(takes[0]["write_origin"]["channel"], json!("agent_written"));
+    assert_eq!(takes[4]["trust_tier"], json!("unknown"));
+    let entries = scan(&b, "timeline_entries", 0, 50, &SCANNED);
+    let summaries: Vec<&str> = entries
+        .iter()
+        .map(|r| r["summary"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        summaries,
+        [
+            "entry one",
+            "entry one",
+            "entry three",
+            "entry three",
+            "entry four",
+            "entry four"
+        ]
+    );
+    assert_eq!(entries[0]["detail"], json!("detail one"));
+    assert_eq!(entries[0]["source"], json!("cli"));
+    assert_eq!(scan(&b, "takes", 0, 3, &SCANNED).len(), 3);
+    let after = takes[1]["id"].as_i64().unwrap();
+    assert_eq!(scan(&b, "takes", after, 50, &SCANNED).len(), 4);
+    assert_eq!(count(&b, "takes", 0, None, &SCANNED), 6);
+    assert_eq!(count(&b, "takes", 0, Some(after), &SCANNED), 2);
+    assert_eq!(count(&b, "timeline_entries", 0, None, &SCANNED), 6);
+    assert_eq!(
+        count(
+            &b,
+            "timeline_entries",
+            entries[3]["id"].as_i64().unwrap(),
+            None,
+            &SCANNED
+        ),
+        2
+    );
+}
+
+#[test]
 fn the_trust_scan_refuses_a_table_it_does_not_model_and_a_nul_tier() {
     let b = brain("tier-reads-scan-refusals");
-    for table in ["takes", "timeline_entries", "links"] {
+    {
+        let table = "links";
         let err = b
             .list_trust_scan_rows(&args::<TrustScanQuery>(
                 json!({ "table": table, "afterId": 0, "limit": 1, "tiers": [] }),
@@ -603,4 +704,79 @@ fn page_refs_by_id_name_each_listed_page_once_deleted_pages_and_other_sources_in
     );
     let none: PageIdsQuery = args(json!({ "ids": [] }));
     assert!(b.list_page_refs_by_ids(&none).unwrap().is_empty());
+}
+
+#[test]
+fn page_quote_tiers_read_by_id_deleted_included_or_by_slug_live_pages_in_the_listed_sources() {
+    let b = brain("tier-reads-quote-tiers");
+    other_source(&b);
+    let chat = put_ref(&b, "default", "quote/chat", "chat");
+    let shared = put_ref(&b, "default", "quote/shared", "note");
+    let shared_other = put_ref(&b, "other", "quote/shared", "note");
+    let gone = put_ref(&b, "default", "quote/gone", "transcript");
+    b.soft_delete_page("quote/gone", Some("default")).unwrap();
+    let tier =
+        |id: i64, page_type: &str| json!({ "id": id, "type": page_type, "trust_tier": "unknown" });
+
+    let by_id: PageQuoteTierQuery = args(json!({ "ids": [gone, chat, chat, 987_654, -1] }));
+    assert_eq!(
+        b.list_page_quote_tiers(&by_id).unwrap(),
+        [tier(chat, "chat"), tier(gone, "transcript")]
+    );
+    let by_slug: PageQuoteTierQuery = args(
+        json!({ "slug": "quote/shared", "sourceIds": ["other", "default", "other", "absent"] }),
+    );
+    assert_eq!(
+        b.list_page_quote_tiers(&by_slug).unwrap(),
+        [tier(shared, "note"), tier(shared_other, "note")]
+    );
+    let deleted: PageQuoteTierQuery =
+        args(json!({ "slug": "quote/gone", "sourceIds": ["default"] }));
+    assert!(b.list_page_quote_tiers(&deleted).unwrap().is_empty());
+    for bad in [
+        json!({}),
+        json!({ "ids": [chat], "slug": "quote/chat", "sourceIds": ["default"] }),
+        json!({ "slug": "quote/chat" }),
+    ] {
+        let q: PageQuoteTierQuery = args(bad);
+        assert_eq!(
+            b.list_page_quote_tiers(&q).unwrap_err().code,
+            INVALID_ARGUMENT
+        );
+    }
+}
+
+#[test]
+fn pages_by_key_answer_each_named_key_in_order_with_tier_and_live_check() {
+    let b = brain("tier-reads-pages-by-key");
+    other_source(&b);
+    let plain = put_ref(&b, "default", "tier/plain", "note");
+    let gone = put_ref(&b, "default", "tier/gone", "note");
+    let elsewhere = put_ref(&b, "other", "tier/plain", "note");
+    b.soft_delete_page("tier/gone", Some("default")).unwrap();
+    let key = |s: &str, slug: &str| PageKeyRef {
+        source_id: s.into(),
+        slug: slug.into(),
+    };
+    let refs = [
+        key("other", "tier/plain"),
+        key("default", "tier/gone"),
+        key("default", "tier/missing"),
+        key("default", "tier/plain"),
+        key("default", "tier/plain"),
+    ];
+    let tiers = b.list_page_trust_tiers_by_key(&refs).unwrap();
+    let ids: Vec<i64> = tiers.iter().map(|r| r["id"].as_i64().unwrap()).collect();
+    assert_eq!(ids, [elsewhere, gone, plain, plain]);
+    assert!(tiers.iter().all(|r| r["trust_tier"].is_string()));
+    assert_eq!(
+        b.lock_live_pages_by_key(&refs).unwrap(),
+        [
+            json!({ "source_id": "other", "slug": "tier/plain" }),
+            json!({ "source_id": "default", "slug": "tier/plain" }),
+            json!({ "source_id": "default", "slug": "tier/plain" }),
+        ]
+    );
+    assert!(b.list_page_trust_tiers_by_key(&[]).unwrap().is_empty());
+    assert!(b.lock_live_pages_by_key(&[]).unwrap().is_empty());
 }

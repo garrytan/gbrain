@@ -5,7 +5,8 @@ thousands of pages, other agents committing to the brain repo every few
 minutes) finishes unattended. A page that moves under the run is held, not
 fatal; a dropped database connection is retried, not fatal; a relaunch starts
 a new pass that reads the source's level again and admits only what is still
-unsettled, so nothing already settled is written twice (a company-brain source
+unsettled, so nothing already settled is written twice; in the same process it
+re-reads only the database rows that changed since the last pass's read (a company-brain source
 keeps its cursor and resumes its frozen manifest). What is left for an
 operator is one loop over two commands, and this page is the decision table
 behind them.
@@ -33,7 +34,7 @@ moving again; ask me only about the ones gbrain will not decide by itself."*
    say where the source stands. Where the run stands is `convergence` for a
    managed source synced by the live pass (its newest pass: `pass_id`,
    `outcome`, `stop_reason`, `round`, `candidates`, `settled`, `remaining`,
-   `classes`; see [the pass](#the-pass-outcomes-and-status-reasons)); there
+   `classes`, `levels`; see [the pass](#the-pass-outcomes-and-status-reasons)); there
    `run_id`, `cursor`, `rate_pages_per_min` and `eta_seconds` are null because
    no cursor exists. A company-brain source keeps `cursor` (`index/total`, the
    `pinned_target` commit, `last_advance_at`). `committed_last_10m` is the
@@ -50,7 +51,11 @@ moving again; ask me only about the ones gbrain will not decide by itself."*
    `last_commit` is the commit the source's sync applied through, and `live`
    names the process holding its drain lease (a serve pass, a sync job, a CLI
    sync), with its heartbeat, `progress` and `stalled`; null means nothing is
-   syncing it now. Holds are bounded: `holds_summary` counts every hold by
+   syncing it now. `automatic_sync.enabled` is false when the source is
+   excluded from automatic sync (`config.syncEnabled=false`): autopilot, the
+   freshness loop and `gbrain sync --all` skip it, so nothing syncs it until an
+   explicit `gbrain sync --source <id>` runs, and `automatic_sync.fix` previews
+   turning it back on (the owner's call). Holds are bounded: `holds_summary` counts every hold by
    code, by state (`needs_human`, `actionable`, `held`) and by `fault_code`
    (the failure a `page_write_failed` hold recorded, which each such hold
    also names), and `holds` lists the first 20, needs-human first. When it
@@ -156,7 +161,9 @@ Every hold and error has three fields, from one table
 | `page_write_failed` | page | upgrade | yes | always: the writer cannot place the failure |
 | `file_unreadable` | page | none | yes | always: only a change to the checkout makes the file readable |
 | `tag_too_long` | page | none | yes | always: only an edit to the file clears it |
+| `slug_too_long` | page | none | yes | always: only a move or rename of the file clears it |
 | `visibility_noncanonical` | page | none | yes | always: only an edit to the file clears it |
+| `readers_noncanonical` | page | none | yes | always: only an edit to the file clears it |
 | `content_null_bytes` | page | none | yes | always: only an edit to the file or its removal clears it |
 | `content_filter_owned` | page | none | yes | always: sync never runs the filter that would turn the file into text |
 | `git_object_missing` | page | none | yes | always: only restoring the Git object clears it |
@@ -405,6 +412,14 @@ unsettled and nothing in flight stamps `last_commit`. Every plain sync
 compares the whole tree with what the database absorbed, so a reset or a lost
 run converges on the next plain sync with no flag.
 
+Each round reads the level at the current `HEAD`. A round at a commit its
+previous round did not read (another writer committed, or `gbrain sources
+refresh` moved `HEAD`) patches that round's pages-and-import-records read,
+re-reading only the rows any writer changed since; the tree is patched from
+`git diff-tree` and every path is still judged. `convergence.levels`
+counts the commits the newest pass read (`heads`) and how many of its rounds
+read the pages whole or patched the previous read (`whole`, `patched`).
+
 | Status `reason` | `state` | What it means | `next` |
 |---|---|---|---|
 | `pass_unfinished` | resumable | The newest pass is open or stopped at a deadline. | The plain sync (`resume_argv`); safe to loop. |
@@ -458,7 +473,8 @@ it, and a `--full` continues until every path it covers is settled.
   `kept` (the commit no longer has a file that is still on disk, or the page
   is under a declared `storage.db_only` dir, so its page stays), `untracked` (a file on disk the commit does not have, with no
   page), `gone` (no file and no live page), `deleted_same` and `legacy_same` (a page a person deleted whose
-  file is unchanged; a page sync deleted because its file was gone is an `import` once the file is back), and `db_ahead` (the page changed in the database and the file
+  file is unchanged; a page sync deleted because its file was gone is an `import` once the file is back; a file
+  `gbrain delete` removed that comes back is held for [`repair file-drift`](repair.md#file-drift-restored)), and `db_ahead` (the page changed in the database and the file
   did not; the sub-labels `pending`, `db_only` and `unproven` are
   informational, and `gbrain repair file-drift --prefer database` writes one
   back to its file if the owner wants it: its preview names any file change
@@ -473,8 +489,9 @@ it, and a `--full` continues until every path it covers is settled.
   (which waits for the owner's `sync.admission` change, as paused deletes
   do).
 - `repair`, a person decides: `held` (by code, with its triple above),
-  `drift`, `delete_drift` and `deleted_edited` (two-sided changes, held
-  `file_drift` with `side` and `state`), `dirty` (an uncommitted edit in
+  `drift`, `delete_drift` and `deleted_edited` (two-sided changes, and a file
+  `gbrain delete` removed that came back, held `file_drift` with `side` and
+  `state`), `dirty` (an uncommitted edit in
   committed mode), `spelling` (files whose names differ only by case or
   separator spelling), and
   `deletes_withheld`.

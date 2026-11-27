@@ -58,23 +58,12 @@ type Residual = 'version_missing' | 'row_not_in_version' | 'row_number_in_use' |
 interface Candidate { proposal_id: number; source_id: string; slug: string; page_id: number; row_num: number; receipt_id: string; change: string; writer_tier: string }
 
 async function candidates(engine: BrainEngine, sourceIds: readonly string[], proposalId?: number): Promise<Candidate[]> {
-  return engine.executeRaw<Candidate>(`SELECT p.id::int AS proposal_id, r.source_id, r.slug, r.page_id::int AS page_id,
-      (r.intent->>'row_num')::int AS row_num, r.id::text AS receipt_id, p.before_state->>'change' AS change,
-      p.before_state->>'writer_tier' AS writer_tier
-    FROM trust_proposals p
-    JOIN persistence_requests r ON r.operation = 'takes_remove' AND r.state = 'committed' AND r.source_id = p.source_id
-      AND r.intent->>'trust_accept' = p.id::text AND r.page_id IS NOT NULL AND (r.intent->>'row_num') ~ '^[0-9]+$'
-    WHERE p.action = 'forget' AND p.target_table = 'takes' AND p.status = 'accepted' AND p.proposer <> 'takes_remove'
-      AND p.before_state->>'change' IN ('deactivated', 'replaced') AND p.source_id = ANY($1::text[])
-      AND ($2::bigint IS NULL OR p.id = $2::bigint)
-    ORDER BY p.id`, [[...sourceIds], proposalId ?? null]);
+  return engine.listAcceptedTakeRemovals(sourceIds, proposalId ?? null);
 }
 
 /** The archived fence row the accept should have applied, or why it cannot be read. */
 async function archivedRow(engine: BrainEngine, c: Candidate): Promise<{ version_id: number; row: ParsedTake } | Residual> {
-  const [version] = await engine.executeRaw<{ id: number; body_storage: string | null; compiled_truth: string | null; timeline: string | null }>(
-    `SELECT id::int AS id, body_storage, compiled_truth, timeline FROM page_versions
-      WHERE page_id = $1 AND archived_write_request_id::text = $2 ORDER BY id DESC LIMIT 1`, [c.page_id, c.receipt_id]);
+  const version = await engine.readArchivedVersionBody(c.page_id, c.receipt_id);
   if (!version || version.body_storage === 'segmented' || version.compiled_truth === null) return 'version_missing';
   const row = parseTakesFence(`${version.compiled_truth}\n${version.timeline ?? ''}`).takes.find(t => t.rowNum === c.row_num);
   return row ? { version_id: Number(version.id), row } : 'row_not_in_version';
@@ -90,7 +79,7 @@ async function livePage(engine: BrainEngine, take: Pick<RemovedTake, 'source_id'
   if (content.split(TAKES_FENCE_BEGIN).length !== 2) return 'fence_unreadable';
   const fence = parseTakesFence(content);
   if (fence.warnings.length) return 'fence_unreadable';
-  const [stored] = await engine.executeRaw('SELECT 1 FROM takes WHERE page_id = $1 AND row_num = $2', [take.page_id, take.row_num]);
+  const stored = await engine.readTakeRowTier(take.page_id, take.row_num);
   if (stored || fence.takes.some(t => t.rowNum === take.row_num) || !fence.reservedRowNums.includes(take.row_num)) return 'row_number_in_use';
   return { content, revision: snapshot.revision, takes: fence.takes, reserved: fence.reservedRowNums };
 }
@@ -163,8 +152,7 @@ async function restoreTake(engine: BrainEngine, ctx: Parameters<RepairHandler['a
   const content = live.content.slice(0, beginIdx) + renderTakesFence(rows, live.reserved.filter(n => n !== take.row_num)) + live.content.slice(endIdx + TAKES_FENCE_END.length);
   await submitPageMutation(ctx, { operation: 'put_page', params: { slug: take.slug, source_id: take.source_id, content, expected_revision: live.revision,
     request_id: await repairRequestId(ctx, 'accepted-takes', entry, live.revision) } });
-  const [restored] = await engine.executeRaw<{ id: number; trust_tier: string }>('SELECT id::int AS id, trust_tier FROM takes WHERE page_id = $1 AND row_num = $2',
-    [take.page_id, take.row_num]);
+  const restored = await engine.readTakeRowTier(take.page_id, take.row_num);
   if (restored && compareTrust(storedTrustTier(restored.trust_tier), take.writer_tier) > 0) {
     await setRowTier(engine, { table: 'takes', id: Number(restored.id), sourceId: take.source_id, tier: take.writer_tier, note: { repair: 'accepted-takes', proposal: take.proposal_id } });
   }

@@ -4,7 +4,7 @@
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: countFactFingerprintLeftovers, loadPurgeTarget, planFactPurgeIds, listFactsReconcileBacklog,
  *    settleFactsReconcile, lockReconcileRevision, selectFactsReconcileDrain, listRelinkCandidateRows, countRelinkCandidates, listSimilarActiveFacts, findActiveSingleFact,
- *    listSingleFactMetadata, listUnfencedFactRows, listHeldFenceFactRows, listWithdrawalSlugs,
+ *    listSingleFactMetadata, listUnfencedFactRows, countUnfencedFactGroups, listHeldFenceFactRows, listWithdrawalSlugs,
  *    expireFactsByWithdrawal and listDerivedRows (one hop of the derivation walk) return the same observable result
  *    on every engine arm (PGLite always; Postgres with
  *    DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1).
@@ -14,14 +14,15 @@
  *  - Why existing coverage misses it: these statements ran through `executeRaw`, which the parity cases cannot call
  *    (D18), so no case compared them across engines (docs/research/rust-cli-executeraw-map.md).
  *  - Seam: the watermark is written through the typed settleFactsReconcile and selectFactsReconcileDrain, and read back
- *    through listFactsReconcileBacklog. recordFactsReconcile (harness.ts) still writes states settle cannot reach (an
- *    older reconciled revision) with SQL; the Rust arm stops on the typed raw_sql refusal there. The extract_facts
+ *    through listFactsReconcileBacklog. A reconciled revision older than the page comes from an edit after the settle.
+ *    No product path writes an attempt older than the reconciled revision (a complete settles both at the page's
+ *    revision, and every later attempt is at the revision the page then has), so no case seeds one. The extract_facts
  *    commit step (lockReconcileRevision, then the settle, in one transaction) runs through typed members. Every other row is seeded through the typed `insertFact`, `insertFacts`, `putPage`, `softDeletePage`, `expireFact` and
  *    `createSegmentedPageShell`. Generated values (fact ids, timestamps, fingerprints) are compared by relation or
  *    shape, never by value.
  */
 import { describe, expect } from 'bun:test';
-import { createSource, parityArms, recordFactsReconcile, sorted } from './harness.ts';
+import { createSource, parityArms, sorted } from './harness.ts';
 import { pageMeta } from '../helpers/page-body-fixtures.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { CALLER_ENTITIES, callerFactRows, putCallerPages, readAsCallers } from './fact-callers.ts';
@@ -29,9 +30,9 @@ import type { BrainEngine } from '../../src/core/engine.ts';
 import { FACTS_FENCE_BEGIN, FACTS_FENCE_END } from '../../src/core/facts-fence.ts';
 import { lockReconcileRevision } from '../../src/core/facts/reconcile-watermark.ts';
 import { withEngineScope } from '../../src/core/engine-scope.ts';
+import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
 import { noteSchemaVersion } from '../../src/core/migrate-pending.ts';
 import { LATEST_SCHEMA_VERSION } from '../../src/core/schema-migrations/latest.generated.ts';
-import { derivedRowsFrom, recordDerivationInputs } from '../../src/core/facts/derivation-inputs.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -216,20 +217,27 @@ describe('engine parity: purge, withdrawal, relink and fence repair statements',
   });
 
   parityTest('listFactsReconcileBacklog leaves out a page reconciled at its revision and marks an invalid attempt at it', {
-    methods: ['putPage', 'createSegmentedPageShell', 'listFactsReconcileBacklog'],
-  }, async (engine, backend) => {
+    methods: ['putPage', 'createSegmentedPageShell', 'settleFactsReconcile', 'listFactsReconcileBacklog'],
+  }, async (engine) => {
     const fence = `${FACTS_FENCE_BEGIN}\n| # | fact |\n${FACTS_FENCE_END}`;
     for (const slug of ['done', 'stale', 'invalid-now', 'invalid-before', 'deferred', 'cancelled']) await engine.putPage(`notes/${slug}`, note(slug, fence));
     await engine.createSegmentedPageShell('notes/seg-done', pageMeta('Seg done'), { sourceId: SRC });
     await engine.createSegmentedPageShell('notes/seg-stale', pageMeta('Seg stale'), { sourceId: SRC });
-    await recordFactsReconcile(engine, backend, SRC, 'notes/done', 'complete', 'current', 'current');
-    await recordFactsReconcile(engine, backend, SRC, 'notes/stale', 'complete', 'older', 'older');
-    await recordFactsReconcile(engine, backend, SRC, 'notes/invalid-now', 'invalid', null, 'current');
-    await recordFactsReconcile(engine, backend, SRC, 'notes/invalid-before', 'invalid', 'older', 'older');
-    await recordFactsReconcile(engine, backend, SRC, 'notes/deferred', 'deferred', null, 'current');
-    await recordFactsReconcile(engine, backend, SRC, 'notes/cancelled', 'cancelled', 'current', 'older');
-    await recordFactsReconcile(engine, backend, SRC, 'notes/seg-done', 'complete', 'current', 'current');
-    await recordFactsReconcile(engine, backend, SRC, 'notes/seg-stale', 'deferred', 'older', 'current');
+    const settle = (slug: string, outcome: 'complete' | 'deferred' | 'invalid' | 'cancelled') => engine.settleFactsReconcile(SRC, `notes/${slug}`, outcome);
+    // An edit moves the page past the revision its watermark holds.
+    const edit = (slug: string) => engine.putPage(`notes/${slug}`, note(slug, `${fence}\nedited`));
+    await settle('done', 'complete');
+    await settle('stale', 'complete');
+    await edit('stale');
+    await settle('invalid-now', 'invalid');
+    await settle('invalid-before', 'invalid');
+    await edit('invalid-before');
+    await settle('deferred', 'deferred');
+    // A later attempt that does not complete keeps the reconciled revision.
+    await settle('cancelled', 'complete');
+    await settle('cancelled', 'cancelled');
+    await settle('seg-done', 'complete');
+    await settle('seg-stale', 'deferred');
     const backlog = await engine.listFactsReconcileBacklog();
     expect(backlog.rows.map((r) => [r.slug, r.invalid])).toEqual([
       ['notes/deferred', false], ['notes/invalid-before', false], ['notes/invalid-now', true], ['notes/stale', false],
@@ -641,25 +649,114 @@ describe('engine parity: purge, withdrawal, relink and fence repair statements',
     return { before, closed, fn };
   });
 
+  // A remote caller always reads inside a caller record, which renders the floor without the live pending-coverage test
+  // and, for the owner, without the owner-only test; `restricted: false` renders the short member-access form. Each of
+  // these is a floor the store models, so the Rust member must answer them rather than stop.
+  parityTest('findActiveSingleFact under the remote provenance floor answers inside a caller record: a member, the owner, and a brain with no member-access restrictions', { methods: ['findActiveSingleFact'] }, async (engine, backend) => {
+    const seed = new Seed(engine);
+    await putCallerPages(engine);
+    // A page derived from a page that names readers: the full form's origin walk hides it, and the short form a brain
+    // with no member-access restrictions renders does not, even when the store's restriction flag is set (here by
+    // notes/readers), as for a caller whose flag read is stale.
+    await engine.putPage('notes/lineage', note('Lineage', '', { derived_from: ['notes/readers'] }));
+    const pages = ['notes/open', 'notes/private', 'notes/readers', 'notes/lineage', 'memory/members/alice-example'];
+    for (const page of pages) await seed.fence([{ label: page, fact: 'Likes tea', row_num: 1, source_markdown_slug: page, entity_slug: 'people/a' }]);
+    const records = {
+      member: { identity: ['member:alice-example'] },
+      owner: { owner: true, identity: ['member:alice-example'] },
+      open: { restricted: false, identity: ['member:alice-example'] },
+      ownerOpen: { owner: true, restricted: false, identity: ['member:alice-example'] },
+    } as const;
+    const find = async (sourceId: string, pageSlug: string | null) => {
+      const row = await engine.findActiveSingleFact({ sourceId, entitySlug: 'people/a', visibility: 'private', fact: 'likes tea', attributedTo: null, pageSlug, remoteFloor: true });
+      return row === null ? null : seed.name(row.id);
+    };
+    const readPages = async () => {
+      const out: Record<string, string | null> = {};
+      for (const p of [...pages, null]) out[p ?? 'none'] = await find(SRC, p);
+      return out;
+    };
+    const asRecords = async (read: () => Promise<unknown>) => {
+      const out: Record<string, unknown> = { none: await read() };
+      for (const [name, record] of Object.entries(records)) out[name] = await withCallerAccess({ ...record, identity: [...record.identity] }, read);
+      return out;
+    };
+    const byPage = await asRecords(readPages);
+    // The floor judges every provenance page by the empty identity, so the caller's own member page stays hidden too.
+    const floor = { 'notes/open': 'notes/open', 'notes/private': null, 'notes/readers': null, 'notes/lineage': null, 'memory/members/alice-example': null, none: 'notes/open' };
+    const short = { ...floor, 'notes/lineage': 'notes/lineage' };
+    expect(byPage).toEqual({ none: floor, member: floor, owner: floor, open: short, ownerOpen: short });
+    // An owner-only source: with no schema version the closed form hides every fact for any caller but the owner.
+    await createSource(engine, backend, 'fact-chat', { kind: 'imessage' });
+    await seed.one('chat-row', { fact: 'Likes tea', entity_slug: 'people/a' }, 'fact-chat');
+    const ownerOnly = await asRecords(async () => ({ open: await find(SRC, 'notes/open'), chat: await find('fact-chat', null) }));
+    const hidden = { open: null, chat: null };
+    const shown = { open: 'notes/open', chat: 'chat-row' };
+    expect(ownerOnly).toEqual({ none: hidden, member: hidden, owner: shown, open: hidden, ownerOpen: shown });
+    return { byPage, ownerOnly };
+  });
+
   parityTest('listSingleFactMetadata reads the fence position, trust tier and claim slot of the named facts', { methods: ['listSingleFactMetadata'] }, async (engine) => {
     const seed = new Seed(engine);
     await engine.putPage('notes/private', note('Private', 'private', { visibility: 'private' }));
+    await engine.putPage('notes/readers', note('Readers', 'kept to one member', { readable_by: ['alice-example'] }));
     const plain = await seed.one('plain', { fact: 'plain', entity_slug: 'people/a', claim_metric: 'arr', claim_value: 3, claim_unit: 'usd', claim_period: 'q3' });
     const [fenced, hidden] = await seed.fence([
       { label: 'fenced', fact: 'fenced', row_num: 1, source_markdown_slug: 'notes/open', entity_slug: 'people/a' },
       { label: 'hidden', fact: 'hidden', row_num: 2, source_markdown_slug: 'notes/private', entity_slug: 'people/a' },
     ]) as [number, number];
+    const [readers] = await seed.fence([
+      { label: 'readers', fact: 'readers', row_num: 1, source_markdown_slug: 'notes/readers', entity_slug: 'people/a' },
+    ]) as [number];
     const read = async (ids: number[], remoteFloor: boolean) => {
       const rows = await engine.listSingleFactMetadata({ sourceId: SRC, ids, remoteFloor });
       return sorted(rows.map(({ id, ...row }) => ({ ...row, id: seed.name(id) })), (r) => r.id);
     };
     const all = await read([plain, fenced, hidden, plain + 100_000], false);
-    const floored = await read([plain, fenced, hidden], true);
+    const floored = await read([plain, fenced, hidden, readers], true);
     expect(all.map((r) => r.id)).toEqual(['fenced', 'hidden', 'plain']);
     expect(all.find((r) => r.id === 'plain')).toMatchObject({ source_markdown_slug: null, row_num: null, claim_metric: 'arr', claim_unit: 'usd', claim_period: 'q3' });
     expect(all.find((r) => r.id === 'fenced')).toMatchObject({ source_markdown_slug: 'notes/open', row_num: 1 });
-    expect(floored.map((r) => r.id)).not.toContain('hidden');
+    expect(floored.map((r) => r.id)).toEqual(['fenced', 'plain']);
     return { all, floored };
+  });
+
+  parityTest('listSingleFactMetadata under the remote provenance floor answers inside a caller record: a member, the owner, and a brain with no member-access restrictions', { methods: ['listSingleFactMetadata'] }, async (engine, backend) => {
+    const seed = new Seed(engine);
+    await putCallerPages(engine);
+    // A page derived from a page that names readers: the full form's origin walk hides it, and the short form a brain
+    // with no member-access restrictions renders does not.
+    await engine.putPage('notes/lineage', note('Lineage', '', { derived_from: ['notes/readers'] }));
+    const pages = ['notes/open', 'notes/private', 'notes/readers', 'notes/lineage', 'memory/members/alice-example'];
+    const ids: number[] = [];
+    for (const page of pages) ids.push(...await seed.fence([{ label: page, fact: 'Likes tea', row_num: 1, source_markdown_slug: page, entity_slug: 'people/a' }]));
+    ids.push(await seed.one('no page', { fact: 'Likes tea', entity_slug: 'people/a' }));
+    const records = {
+      member: { identity: ['member:alice-example'] },
+      owner: { owner: true, identity: ['member:alice-example'] },
+      open: { restricted: false, identity: ['member:alice-example'] },
+      ownerOpen: { owner: true, restricted: false, identity: ['member:alice-example'] },
+    } as const;
+    const list = async (sourceId: string, named: number[]) =>
+      (await engine.listSingleFactMetadata({ sourceId, ids: named, remoteFloor: true })).map((r) => seed.name(r.id)).sort();
+    const asRecords = async (read: () => Promise<unknown>) => {
+      const out: Record<string, unknown> = { none: await read() };
+      for (const [name, record] of Object.entries(records)) out[name] = await withCallerAccess({ ...record, identity: [...record.identity] }, read);
+      return out;
+    };
+    const byPage = await asRecords(() => list(SRC, ids));
+    // The floor judges every provenance page by the empty identity, so the caller's own member page stays hidden too.
+    const floor = ['no page', 'notes/open'];
+    const short = ['no page', 'notes/lineage', 'notes/open'];
+    expect(byPage).toEqual({ none: floor, member: floor, owner: floor, open: short, ownerOpen: short });
+    // An owner-only source: with no schema version the closed form hides every fact for any caller but the owner.
+    await createSource(engine, backend, 'fact-chat', { kind: 'imessage' });
+    const chat = await seed.one('chat-row', { fact: 'Likes tea', entity_slug: 'people/a' }, 'fact-chat');
+    const ownerOnly = await asRecords(async () => ({ open: await list(SRC, [ids[0]!]), chat: await list('fact-chat', [chat]) }));
+    const hidden = { open: [], chat: [] };
+    const shown = { open: ['notes/open'], chat: ['chat-row'] };
+    expect(ownerOnly).toEqual({ none: hidden, member: hidden, owner: shown, open: hidden, ownerOpen: shown });
+    return { byPage, ownerOnly };
   });
 
   parityTest('listUnfencedFactRows lists the active unfenced rows in source, entity, id order with whether the entity has a live page', { methods: ['listUnfencedFactRows'] }, async (engine) => {
@@ -694,6 +791,45 @@ describe('engine parity: purge, withdrawal, relink and fence repair statements',
     expect(byName('alice').valid_from).toBeInstanceOf(Date);
     const view = (rows: typeof everywhere) => rows.map(({ id, valid_from, ...row }) => ({ ...row, id: seed.name(id), valid_from: valid_from instanceof Date }));
     return { everywhere: view(everywhere), one: seed.label(one), none };
+  });
+
+  parityTest('countUnfencedFactGroups counts the unfenced rows per source, entity and live page, and listUnfencedFactRows narrows to the fenceable ones', { methods: ['countUnfencedFactGroups', 'listUnfencedFactRows'] }, async (engine) => {
+    const seed = new Seed(engine);
+    await engine.putPage('people/alice', note('Alice', 'a'));
+    await engine.putPage('people/gone', note('Gone', 'g'));
+    await engine.softDeletePage('people/gone');
+    await seed.one('loose-1', { fact: 'loose 1' });
+    await seed.one('loose-2', { fact: 'loose 2' });
+    await seed.one('on-gone', { fact: 'gone page fact', entity_slug: 'people/gone' });
+    await seed.one('alice-1', { fact: 'alice 1', entity_slug: 'people/alice' });
+    await seed.one('alice-2', { fact: 'alice 2', entity_slug: 'people/alice' });
+    await seed.one('nobody', { fact: 'no page', entity_slug: 'people/nobody' });
+    const expired = await seed.one('expired', { fact: 'expired', entity_slug: 'people/alice' });
+    await engine.expireFact(expired);
+    await seed.fence([{ label: 'fenced-2', fact: 'fenced 2', row_num: 2, source_markdown_slug: 'people/alice', entity_slug: 'people/alice' }]);
+    const sorted = (groups: Awaited<ReturnType<typeof engine.countUnfencedFactGroups>>) =>
+      groups.map(({ source_id, has_entity, page_exists, n }) => ({ source_id, has_entity, page_exists, n: Number(n) }))
+        .sort((a, b) => `${a.has_entity}${a.page_exists}`.localeCompare(`${b.has_entity}${b.page_exists}`));
+    const everywhere = sorted(await engine.countUnfencedFactGroups({}));
+    const one = sorted(await engine.countUnfencedFactGroups({ sourceId: SRC }));
+    const none = await engine.countUnfencedFactGroups({ sourceId: 'elsewhere' });
+    expect(everywhere).toEqual([
+      { source_id: SRC, has_entity: false, page_exists: false, n: 2 },
+      { source_id: SRC, has_entity: true, page_exists: false, n: 2 },
+      { source_id: SRC, has_entity: true, page_exists: true, n: 2 },
+    ]);
+    expect(one).toEqual(everywhere);
+    expect(none).toEqual([]);
+    const fenceable = await engine.listUnfencedFactRows({ fenceableSourceIds: [SRC] });
+    const narrowedOne = await engine.listUnfencedFactRows({ sourceId: SRC, fenceableSourceIds: [SRC] });
+    const otherSource = await engine.listUnfencedFactRows({ fenceableSourceIds: ['elsewhere'] });
+    const noSource = await engine.listUnfencedFactRows({ fenceableSourceIds: [] });
+    expect(seed.label(fenceable)).toEqual(['alice-1', 'alice-2']);
+    expect(fenceable.every((r) => r.page_exists === true)).toBe(true);
+    expect(seed.label(narrowedOne)).toEqual(seed.label(fenceable));
+    expect(otherSource).toEqual([]);
+    expect(noSource).toEqual([]);
+    return { everywhere, one, none, fenceable: seed.label(fenceable), otherSource, noSource };
   });
 
   parityTest('listHeldFenceFactRows lists a page\'s live fence rows by position, a conversation extractor\'s rows and expired rows apart', { methods: ['listHeldFenceFactRows'] }, async (engine) => {
@@ -785,41 +921,32 @@ describe('engine parity: purge, withdrawal, relink and fence repair statements',
     return { first, again, afterFirst, member, everyone, world, left, expired: history.map((r) => ({ visibility: r.visibility, expired: r.expired_at instanceof Date, closed: r.valid_until instanceof Date })) };
   });
 
-  // The derivation walk's edges are written only through raw SQL (recordDerivationInputs), which the Rust engine
-  // refuses, so only the SQL arms can record one; the Rust store keeps no derivation_inputs and every hop answers no
-  // rows. A page with no recorded derivation, an empty frontier and the walk itself answer the same on every arm.
-  parityTest('listDerivedRows answers one hop of the derivation walk; the Rust store records none and answers no rows', {
-    methods: ['putPage', 'listDerivedRows'],
-  }, async (engine, backend) => {
-    const id = async (slug: string) => String((await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: `${slug} body` })).id);
-    const [input, mid, leaf, alone] = [await id('derive/input'), await id('derive/mid'), await id('derive/leaf'), await id('derive/alone')];
-    const slugOf = new Map([[input, 'input'], [mid, 'mid'], [leaf, 'leaf'], [alone, 'alone']]);
-    const name = (table: string, rowId: string) => (table === 'pages' ? slugOf.get(rowId) ?? rowId : rowId);
-    if (backend !== 'rust') {
-      await recordDerivationInputs(engine, { table: 'pages', id: mid, sourceId: SRC }, [{ table: 'pages', id: input }, { table: 'facts', id: '7' }]);
-      await recordDerivationInputs(engine, { table: 'pages', id: leaf, sourceId: SRC }, [{ table: 'pages', id: mid }]);
-      await recordDerivationInputs(engine, { table: 'takes', id: '3', sourceId: SRC }, [{ table: 'pages', id: input }]);
-    }
-    const hop = async (frontier: Array<{ table: string; id: string }>, limit: number) =>
-      (await engine.listDerivedRows(frontier, limit)).map((r) => `${r.derived_table}:${name(r.derived_table, r.derived_id)}`);
-    const fromInput = await hop([{ table: 'pages', id: input }], 10);
-    const capped = await hop([{ table: 'pages', id: input }, { table: 'facts', id: '7' }], 1);
-    const walk = await derivedRowsFrom(engine, [{ table: 'pages', id: input }]);
-    const walked = walk.rows.map((r) => `${r.table}:${name(r.table, r.id)}@${r.depth}`);
-    if (backend === 'rust') {
-      expect(fromInput).toEqual([]);
-      expect(capped).toEqual([]);
-      expect(walked).toEqual([]);
-    } else {
-      expect(fromInput).toEqual(['pages:mid', 'takes:3']);
-      expect(capped).toEqual(['pages:mid']);
-      expect(walked).toEqual(['pages:mid@1', 'takes:3@1', 'pages:leaf@2']);
-    }
-    expect(walk.truncated).toBe(false);
-    return {
-      unrecorded: await hop([{ table: 'pages', id: alone }], 10),
-      emptyFrontier: await hop([], 10),
-      unrecordedWalk: await derivedRowsFrom(engine, [{ table: 'pages', id: alone }]),
-    };
+  // recordDerivationEdges keeps each edge once (ON CONFLICT DO NOTHING) and listDerivedRows reads one hop back: the
+  // distinct rows derived from any frontier row, by table then id, at most `limit`. Ids share one width, so byte order
+  // and the Postgres collation agree.
+  parityTest('recordDerivationEdges records each input edge once and listDerivedRows reads one hop back', {
+    methods: ['recordDerivationEdges', 'listDerivedRows'],
+  }, async (engine) => {
+    const ref = (table: string, id: string) => ({ table, id });
+    await engine.recordDerivationEdges(ref('pages', '201'), SRC, [ref('pages', '101'), ref('facts', '301')]);
+    await engine.recordDerivationEdges(ref('pages', '201'), SRC, [ref('pages', '101')]);
+    await engine.recordDerivationEdges(ref('facts', '302'), SRC, [ref('pages', '101'), ref('pages', '201')]);
+    await engine.recordDerivationEdges(ref('takes', '401'), null, [ref('facts', '302')]);
+    await engine.recordDerivationEdges(ref('pages', '202'), SRC, []);
+    const hop = async (frontier: Array<{ table: string; id: string }>, limit = 10) =>
+      (await engine.listDerivedRows(frontier, limit)).map((r) => `${r.derived_table}:${r.derived_id}`);
+    const fromInput = await hop([ref('pages', '101')]);
+    expect(fromInput).toEqual(['facts:302', 'pages:201']);
+    const fromTwo = await hop([ref('pages', '101'), ref('pages', '201')]);
+    expect(fromTwo).toEqual(['facts:302', 'pages:201']);
+    const limited = await hop([ref('pages', '101'), ref('facts', '302')], 2);
+    expect(limited).toEqual(['facts:302', 'pages:201']);
+    const sourceless = await hop([ref('facts', '302')]);
+    expect(sourceless).toEqual(['takes:401']);
+    const leaf = await hop([ref('takes', '401')]);
+    expect(leaf).toEqual([]);
+    const empty = await hop([]);
+    expect(empty).toEqual([]);
+    return { fromInput, fromTwo, limited, sourceless, leaf, empty };
   });
 });

@@ -23,7 +23,8 @@ import { embeddingProviderIsFree } from '../../../core/embed-consent.ts';
 import { providerDeclineRecord } from '../../../core/setup/local-receipts.ts';
 import { providerConsentFix } from './provider-consent.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
-import { answersFromCatalog, catalogSkipCheck } from '../../../core/rust-engine/store-members/catalog.ts';
+import { capabilityRefusal, capabilityUnknownCheck } from '../budget.ts';
+import { rethrowCapabilityMissing } from '../../../core/rust-engine/errors.ts';
 
 /** The opt-in live probe: one ~9-token embedding request, so `paid` + `egress` (runs verbatim once approved). */
 export function embeddingProbeFix(model: string, free = false): Action {
@@ -88,12 +89,14 @@ async function runEmbeddingProvider(ctx: DoctorContext): Promise<Check[]> {
           let totalChunks = 0;
           let embeddedCount = 0;
           try {
-            const rows = await engine.executeRaw<{ total: number | string; embedded: number | string }>(
-              `SELECT COUNT(*)::int AS total, COUNT(*) FILTER (WHERE embedding IS NOT NULL)::int AS embedded FROM content_chunks`,
-            );
-            totalChunks = Number(rows?.[0]?.total ?? 0);
-            embeddedCount = Number(rows?.[0]?.embedded ?? 0);
-          } catch { /* table may be missing or fresh; treat as empty */ }
+            // The typed coverage read (engine-sql/embedding-catalog.ts), so a Rust brain answers it; pct is embedded/total*100.
+            const coverage = await engine.countChunkColumnCoverage('embedding');
+            totalChunks = coverage.total;
+            embeddedCount = Math.round(((coverage.pct ?? 0) * coverage.total) / 100);
+          } catch (e) {
+            // The table may be missing or fresh: treat it as empty. An engine that cannot read it refuses.
+            rethrowCapabilityMissing(e);
+          }
 
           if (totalChunks > 0) {
             const fix = `Existing brain (${totalChunks} chunks, ${embeddedCount} embedded). Keep a verified database backup and preview the brain-wide migration:\n        gbrain migrate embeddings --to ${configuredModel} --dim ${configuredDims} --dry-run\n      After reviewing the plan, replace --dry-run with --yes --max-cost-usd <approved-total>. Missing vectors do not mean the brain is empty. See docs/guides/embedding-migration.md#recovery.`;
@@ -109,9 +112,14 @@ async function runEmbeddingProvider(ctx: DoctorContext): Promise<Check[]> {
           }
         }
       }
-    } catch {
+    } catch (e) {
       // loadConfig may throw on a malformed config; let the existing
-      // available/probe branch surface the issue.
+      // available/probe branch surface the issue. A capability refusal reports the check unknown.
+      const refusal = capabilityRefusal(e);
+      if (refusal) {
+        checks.push(capabilityUnknownCheck('embedding_provider', refusal));
+        return checks;
+      }
     }
 
     if (surfacedUnconfiguredDrift) {
@@ -309,7 +317,6 @@ async function runEmbeddingColumnRegistry(ctx: DoctorContext): Promise<Check[]> 
   //     one format_type query, one pg_indexes query, one coverage-per-active
   //     column query.
   progress.heartbeat('embedding_column_registry');
-  if (answersFromCatalog(engine)) return [catalogSkipCheck('embedding_column_registry', 'no_column_types')];
   try {
     const { getEmbeddingColumnRegistry, resolveEmbeddingColumn, quoteIdentifier } =
       await import('../../../core/search/embedding-column.ts');
@@ -330,17 +337,7 @@ async function runEmbeddingColumnRegistry(ctx: DoctorContext): Promise<Check[]> 
       // D13 — batch format_type probe via pg_attribute. udt_name only
       // returns 'vector' vs 'halfvec'; format_type(atttypid, atttypmod)
       // returns 'vector(1024)' / 'halfvec(2560)' so dim drift surfaces.
-      const formatRows = await engine.executeRaw<{ attname: string; formatted: string }>(
-        `SELECT a.attname, format_type(a.atttypid, a.atttypmod) AS formatted
-           FROM pg_attribute a
-           JOIN pg_class c ON c.oid = a.attrelid
-           JOIN pg_namespace n ON n.oid = c.relnamespace
-          WHERE n.nspname = 'public'
-            AND c.relname = 'content_chunks'
-            AND a.attname = ANY($1::text[])
-            AND NOT a.attisdropped`,
-        [declaredColumns],
-      );
+      const formatRows = await engine.readChunkColumnTypes(declaredColumns);
       const actualByName = new Map<string, string>();
       for (const r of formatRows) actualByName.set(r.attname, r.formatted);
 
@@ -414,16 +411,9 @@ async function runEmbeddingColumnRegistry(ctx: DoctorContext): Promise<Check[]> 
         // Codex /ship #5: pull `total` alongside `pct` so a fresh brain
         // (0 chunks → NULLIF makes pct NULL → coalesces to 0) doesn't
         // false-warn "Active column 'embedding' is 0.0% populated".
-        const covRows = await engine.executeRaw<{ pct: number; total: number }>(
-          `SELECT (
-             COUNT(*) FILTER (WHERE ${quoteIdentifier(activeCol)} IS NOT NULL)::float
-             / NULLIF(COUNT(*), 0) * 100
-           )::float AS pct,
-           COUNT(*)::int AS total
-           FROM content_chunks`,
-        );
-        const pct = covRows[0]?.pct ?? 0;
-        const total = covRows[0]?.total ?? 0;
+        const cov = await engine.countChunkColumnCoverage(activeCol);
+        const pct = cov.pct ?? 0;
+        const total = cov.total;
         // Only warn when there's a real coverage gap. Empty brain (0 chunks)
         // is a normal state for new installs — skip the gate entirely.
         if (total > 0 && pct < 90) {

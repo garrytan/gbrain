@@ -84,14 +84,7 @@ function key(row: ChronicleLedgerRow) {
  * yields an extra paid attempt.
  */
 export async function claimChronicleRow(engine: BrainEngine, row: ChronicleLedgerRow): Promise<ChronicleLedgerRow | null> {
-  const [claimed] = await engine.executeRaw<ChronicleLedgerRow>(
-    `UPDATE chronicle_page_state SET next_attempt_at = now() + ($5::int * interval '1 millisecond'),
-       attempts = attempts + CASE WHEN campaign_id IS NOT NULL AND state IN ('pending','failed') THEN 1 ELSE 0 END
-      WHERE source_id=$1 AND page_id=$2 AND content_hash=$3 AND extractor_version=$4 AND state=$6
-        AND (next_attempt_at IS NULL OR next_attempt_at <= now())
-        AND NOT (campaign_id IS NOT NULL AND state IN ('pending','failed') AND attempts >= COALESCE(max_attempts, $7))
-      RETURNING *`, [...key(row), LEASE_MS, row.state, CHRONICLE_DEFAULTS.maxAttempts]);
-  return claimed ?? null;
+  return (await engine.chronicleStore()).claim(key(row), LEASE_MS, row.state, CHRONICLE_DEFAULTS.maxAttempts);
 }
 
 /** A claimed row that belongs to a campaign: its attempt was consumed by the claim. */
@@ -100,10 +93,7 @@ function campaignAttempt(row: ChronicleLedgerRow): boolean {
 }
 
 async function setNextAttempt(engine: BrainEngine, row: ChronicleLedgerRow, at: Date | null): Promise<void> {
-  await engine.executeRaw(
-    `UPDATE chronicle_page_state SET next_attempt_at=$5::timestamptz
-      WHERE source_id=$1 AND page_id=$2 AND content_hash=$3 AND extractor_version=$4`,
-    [...key(row), at ? at.toISOString() : null]);
+  await (await engine.chronicleStore()).setNextAttempt(key(row), at ? at.toISOString() : null);
 }
 
 /**
@@ -121,24 +111,13 @@ async function finish(engine: BrainEngine, row: ChronicleLedgerRow, attempt: num
   /** This attempt was a paid judge call that ended in a SAME_INPUT_FAILURES outcome. */
   countFailure?: boolean;
 }): Promise<void> {
-  if (patch.costUsd != null) {
-    await engine.executeRaw(
-      `UPDATE chronicle_page_state SET cost_usd=COALESCE(cost_usd, 0) + $5::numeric, cost_attempts=array_append(cost_attempts, $6::int)
-        WHERE source_id=$1 AND page_id=$2 AND content_hash=$3 AND extractor_version=$4 AND NOT ($6::int = ANY(cost_attempts))`,
-      [...key(row), patch.costUsd, attempt]);
-  }
-  await engine.executeRaw(
-    `UPDATE chronicle_page_state SET state=$5, reason=$6, next_attempt_at=$7::timestamptz, unpriced=COALESCE($8::boolean, unpriced),
-       event_slugs=COALESCE($9::text[], event_slugs), event_hashes=COALESCE($10::text[], event_hashes),
-       judge_input_hash=CASE WHEN $15::boolean THEN judge_input_hash ELSE $12 END,
-       judge_window_chars=CASE WHEN $15::boolean THEN judge_window_chars ELSE $13::int END,
-       judge_window_hash=CASE WHEN $15::boolean THEN judge_window_hash ELSE $14 END,
-       judge_input_failures=judge_input_failures + $16::int, updated_at=now()
-      WHERE source_id=$1 AND page_id=$2 AND content_hash=$3 AND extractor_version=$4 AND attempts=$11`,
-    [...key(row), patch.state, patch.reason, patch.nextAttemptAt ? patch.nextAttemptAt.toISOString() : null, patch.unpriced ?? null,
-      patch.events ? patch.events.map((e) => e.slug) : null, patch.events ? patch.events.map((e) => e.hash) : null, attempt,
-      patch.judged?.inputHash ?? null, patch.judged?.window.length ?? null, patch.judged?.windowHash ?? null,
-      patch.keepJudged === true, patch.countFailure ? 1 : 0]);
+  const store = await engine.chronicleStore();
+  if (patch.costUsd != null) await store.addAttemptCost(key(row), patch.costUsd, attempt);
+  await store.finish(key(row), { state: patch.state, reason: patch.reason, nextAttemptAt: patch.nextAttemptAt ? patch.nextAttemptAt.toISOString() : null,
+    unpriced: patch.unpriced ?? null, eventSlugs: patch.events ? patch.events.map((e) => e.slug) : null,
+    eventHashes: patch.events ? patch.events.map((e) => e.hash) : null, attempt, judgeInputHash: patch.judged?.inputHash ?? null,
+    judgeWindowChars: patch.judged?.window.length ?? null, judgeWindowHash: patch.judged?.windowHash ?? null,
+    keepJudged: patch.keepJudged === true, failures: patch.countFailure ? 1 : 0 });
 }
 
 function backoff(attempts: number, now: Date, maxAttempts: number): Date | null {
@@ -153,14 +132,8 @@ function backoff(attempts: number, now: Date, maxAttempts: number): Date | null 
  * restored page) mean the page needs judging again.
  */
 async function judgedOnSameInput(engine: BrainEngine, row: ChronicleLedgerRow, inputHashes: string[]): Promise<boolean> {
-  const [latest] = await engine.executeRaw<{ state: string; judge_input_hash: string | null; retired: boolean }>(
-    `SELECT c.state, c.judge_input_hash, EXISTS (SELECT 1 FROM pages e WHERE e.source_id=c.source_id AND e.slug = ANY(c.event_slugs)
-        AND e.deleted_at IS NOT NULL AND e.frontmatter->>'retired_by' = $6) AS retired
-       FROM chronicle_page_state c
-      WHERE c.source_id=$1 AND c.page_id=$2 AND c.extractor_version=$3 AND c.content_hash<>$4
-        AND (c.state='extracted' OR (c.state='skipped' AND c.reason = ANY($5::text[])))
-      ORDER BY c.decided_at DESC, c.updated_at DESC LIMIT 1`,
-    [row.source_id, Number(row.page_id), CHRONICLE_EXTRACTOR_VERSION, row.content_hash, [...RETIRE_REASONS], CHRONICLE_RETIRED_BY]);
+  const latest = await (await engine.chronicleStore()).latestJudged(row.source_id, Number(row.page_id), CHRONICLE_EXTRACTOR_VERSION, row.content_hash,
+    [...RETIRE_REASONS], CHRONICLE_RETIRED_BY);
   return latest?.state === 'extracted' && latest.judge_input_hash != null && inputHashes.includes(latest.judge_input_hash) && !latest.retired;
 }
 
@@ -172,10 +145,7 @@ async function judgedOnSameInput(engine: BrainEngine, row: ChronicleLedgerRow, i
  * newer revision superseded, a provider or pricing that was not configured, or a chat error never exhausts the page.
  */
 async function failedAttemptsOnSameInput(engine: BrainEngine, row: ChronicleLedgerRow, inputHash: string): Promise<{ attempts: number; refused: boolean }> {
-  const [prior] = await engine.executeRaw<{ attempts: number | string | null; refused: boolean | null }>(
-    `SELECT sum(judge_input_failures) AS attempts, bool_or(state='skipped' AND reason='judge_refused') AS refused FROM chronicle_page_state
-      WHERE source_id=$1 AND page_id=$2 AND extractor_version=$3 AND judge_input_hash=$4`,
-    [row.source_id, Number(row.page_id), CHRONICLE_EXTRACTOR_VERSION, inputHash]);
+  const prior = await (await engine.chronicleStore()).inputFailures(row.source_id, Number(row.page_id), CHRONICLE_EXTRACTOR_VERSION, inputHash);
   return { attempts: Number(prior?.attempts ?? 0), refused: prior?.refused === true };
 }
 
@@ -186,15 +156,10 @@ async function failedAttemptsOnSameInput(engine: BrainEngine, row: ChronicleLedg
  * for, or a row recorded before the window was stored (or by an earlier extractor), keeps the generation additive (#7013).
  */
 async function windowCoversLiveEvents(engine: BrainEngine, row: ChronicleLedgerRow, depthSlug: string, window: string): Promise<boolean> {
-  const live = (await engine.executeRaw<{ slug: string }>(
-    `SELECT slug FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND type='event'
-        AND frontmatter->'event'->>'depth' = $2 AND frontmatter->>'captured_via' LIKE 'life-chronicle:%'`,
-    [row.source_id, depthSlug])).map((r) => r.slug);
+  const store = await engine.chronicleStore();
+  const live = (await store.liveEventSlugs(row.source_id, depthSlug)).map((r) => r.slug);
   if (!live.length) return true;
-  const producers = await engine.executeRaw<{ event_slugs: string[]; judge_window_chars: number | null; judge_window_hash: string | null }>(
-    `SELECT event_slugs, judge_window_chars, judge_window_hash FROM chronicle_page_state
-      WHERE source_id=$1 AND page_id=$2 AND event_slugs && $3::text[]`,
-    [row.source_id, Number(row.page_id), live]);
+  const producers = await store.eventProducers(row.source_id, Number(row.page_id), live);
   const attributed = new Set(producers.flatMap((p) => p.event_slugs));
   return live.every((slug) => attributed.has(slug)) && producers.every((p) => p.judge_window_chars != null && p.judge_window_hash != null
     && Number(p.judge_window_chars) <= window.length && sha256(window.slice(0, Number(p.judge_window_chars))) === p.judge_window_hash);
@@ -302,9 +267,7 @@ export async function executeChronicleRow(ctx: ChronicleExecContext, row: Chroni
     await setNextAttempt(engine, row, null);
     return { kind: 'deferred', reason: 'daily_limit' };
   }
-  const attempts = campaignAttempt(row) ? row.attempts : (await engine.executeRaw<{ attempts: number }>(
-    `UPDATE chronicle_page_state SET attempts=attempts+1 WHERE source_id=$1 AND page_id=$2 AND content_hash=$3 AND extractor_version=$4 RETURNING attempts`,
-    [...key(row)]))[0].attempts;
+  const attempts = campaignAttempt(row) ? row.attempts : (await (await engine.chronicleStore()).addAttempt(key(row)))[0].attempts;
   const maxAttempts = rowMaxAttempts(row);
   // #6199: a campaign row runs under its stamped cap, whatever the settings or gate say now.
   const stampedCap = row.pricing_policy === CAMPAIGN_PRICING_POLICY && row.attempt_cap_usd != null ? Number(row.attempt_cap_usd) : undefined;

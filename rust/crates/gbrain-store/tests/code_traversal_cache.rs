@@ -296,3 +296,33 @@ fn a_clear_leaves_no_record_of_the_rows_it_removed() {
     drop(store);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn a_whole_float_generation_beyond_2_pow_53_is_the_exact_int8_and_a_fraction_is_a_bind_error() {
+    let b = brain("traversal-cache-whole-float");
+    // napi hands a JavaScript number above 2^32 over as a float; 2^60 is exact as a double.
+    let generation = 2f64.powi(60);
+    b.put_code_traversal_cache(&de::<CachePutInput>(json!({
+        "symbol_qualified": "pkg.big", "depth": 1, "source_id": "default", "cluster_generation": generation,
+        "response_json": {"ok": 1}, "max_chunk_updated_at": EPOCH, "xmin_max": generation,
+    })))
+    .unwrap();
+    let row =
+        get(&b, "pkg.big", 1, "default", 1i64 << 60).expect("stored under the exact generation");
+    assert_eq!(row["cluster_generation"], json!(1i64 << 60));
+    let float_key: CacheKeyInput = de(json!({
+        "symbol_qualified": "pkg.big", "depth": 1, "source_id": "default", "cluster_generation": generation,
+    }));
+    assert!(b.get_code_traversal_cache(&float_key).unwrap().is_some());
+
+    for (bad, message) in [
+        (json!(1.5), "invalid input syntax for type bigint: \"1.5\""),
+        (json!(1e19), "out of range for type bigint"),
+    ] {
+        let err = serde_json::from_value::<CacheKeyInput>(json!({
+            "symbol_qualified": "pkg.big", "depth": 1, "source_id": "default", "cluster_generation": bad,
+        }))
+        .unwrap_err();
+        assert!(err.to_string().contains(message), "{err}");
+    }
+}

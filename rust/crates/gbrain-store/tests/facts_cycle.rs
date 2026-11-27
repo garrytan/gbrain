@@ -7,8 +7,9 @@ use gbrain_store::env::iso;
 use gbrain_store::facts::InsertFactsArgs;
 use gbrain_store::facts::cycle::{
     BucketQuery, BulkDayQuery, EntityFactsQuery, ExtractionOutcomeQuery, FenceRowOccupantQuery,
-    PageCoordinate, WorldFactCount,
+    PageCoordinate, PageFileOriginQuery, WorldFactCount,
 };
+use gbrain_store::import_members::PageOriginRefresh;
 use gbrain_store::pages::{PageInput, PutPageOptions};
 use gbrain_store::sources::SourceInput;
 use memory_env::{Brain, T0, brain};
@@ -172,6 +173,32 @@ fn fact_subject_is_the_page_else_the_entity() {
     assert_eq!(subject(999), Value::Null);
     assert_eq!(subject(0), Value::Null);
     assert!(b.read_fact_subject(1.5).is_err());
+}
+
+#[test]
+fn fact_for_forget_reads_the_target_columns() {
+    let b = brain("cycle-forget-target");
+    let ids = insert(
+        &b,
+        "default",
+        json!([
+            { "fact": "fenced", "entity_slug": "people/a", "source_markdown_slug": "people/a", "row_num": 2, "visibility": "world" },
+            { "fact": "bare" },
+        ]),
+    );
+    let target = |id: u64| b.read_fact_for_forget(id as f64).unwrap();
+    assert_eq!(
+        target(ids[0]),
+        json!({ "id": ids[0], "source_id": "default", "entity_slug": "people/a", "row_num": 2,
+            "source_markdown_slug": "people/a", "expired_at": null, "visibility": "world" })
+    );
+    assert_eq!(
+        target(ids[1]),
+        json!({ "id": ids[1], "source_id": "default", "entity_slug": null, "row_num": null,
+            "source_markdown_slug": null, "expired_at": null, "visibility": "private" })
+    );
+    assert_eq!(target(999), Value::Null);
+    assert!(b.read_fact_for_forget(1.5).is_err());
 }
 
 #[test]
@@ -485,4 +512,62 @@ fn world_fact_count_hides_deleted_and_quarantined_pages_but_not_lapsed_rows() {
         4
     );
     assert_eq!(b.count_world_facts(&q(json!([]), false)).unwrap(), 0);
+}
+
+#[test]
+fn page_file_origin_reads_a_live_page_and_a_deleted_one_only_when_asked() {
+    let b = brain("cycle-file-origin");
+    for slug in ["has-origin", "no-origin", "gone"] {
+        page(&b, slug, "default", json!({}));
+    }
+    for slug in ["has-origin", "gone"] {
+        let refresh: PageOriginRefresh = args(json!({
+            "sourceId": "default", "sourcePath": format!("notes/{slug}.md"), "sourceUri": format!("file:///notes/{slug}.md"),
+        }));
+        b.refresh_page_origin(slug, &refresh).unwrap();
+    }
+    b.soft_delete_page("gone", Some("default")).unwrap();
+    let read = |slug: &str, include_deleted: bool| {
+        let q: PageFileOriginQuery =
+            args(json!({ "sourceId": "default", "slug": slug, "includeDeleted": include_deleted }));
+        b.read_page_file_origin(&q).unwrap()
+    };
+    let origin = json!({ "source_path": "notes/has-origin.md", "source_uri": "file:///notes/has-origin.md" });
+    assert_eq!(read("has-origin", false), origin);
+    assert_eq!(read("has-origin", true), origin);
+    assert_eq!(
+        read("no-origin", false),
+        json!({ "source_path": null, "source_uri": null })
+    );
+    assert_eq!(read("gone", false), Value::Null);
+    assert_eq!(
+        read("gone", true),
+        json!({ "source_path": "notes/gone.md", "source_uri": "file:///notes/gone.md" })
+    );
+    assert_eq!(read("never", true), Value::Null);
+    let other: PageFileOriginQuery = args(json!({ "sourceId": "other", "slug": "has-origin" }));
+    assert_eq!(b.read_page_file_origin(&other).unwrap(), Value::Null);
+}
+
+#[test]
+fn live_stored_body_reads_a_live_page_and_null_for_a_deleted_or_missing_one() {
+    let b = brain("cycle-live-body");
+    let input: PageInput = args(json!({
+        "type": "note", "title": "Live", "compiled_truth": "the body", "timeline": "the timeline",
+    }));
+    let options: PutPageOptions = args(json!({ "sourceId": "default" }));
+    b.put_page("guard/live", &input, &options).unwrap();
+    page(&b, "guard/gone", "default", json!({}));
+    b.soft_delete_page("guard/gone", Some("default")).unwrap();
+    let read = |source: &str, slug: &str| {
+        let q: PageCoordinate = args(json!({ "sourceId": source, "slug": slug }));
+        b.read_live_stored_body(&q).unwrap()
+    };
+    assert_eq!(
+        read("default", "guard/live"),
+        json!({ "compiled_truth": "the body", "timeline": "the timeline" })
+    );
+    assert_eq!(read("default", "guard/gone"), Value::Null);
+    assert_eq!(read("default", "guard/never"), Value::Null);
+    assert_eq!(read("other", "guard/live"), Value::Null);
 }

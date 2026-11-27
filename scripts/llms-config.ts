@@ -38,7 +38,10 @@ export const SECTIONS: DocSection[] = [
   {
     heading: "Choose your agent setup",
     entries: [
-      { title: "Use your brain from anywhere over MCP", path: "docs/guides/remote-mcp.md", description: "`gbrain mcp expose`: publish serve --http on your Tailscale tailnet (Funnel explicit for cloud agents), user service, admin token file, grant/connect/verify hand-off, --status/--remove, troubleshooting, security posture, ngrok and cloud-host alternatives." },
+      // Linked, not inlined: AGENTS.md (inlined) already routes agents to this guide, and
+      // inlining it left llms-full.txt within a few bytes of FULL_SIZE_BUDGET.
+      { title: "Google token socket", path: "docs/guides/google-socket.md", description: "`gbrain google mint serve`: a private Unix socket that gives local agents short-lived read-only Google tokens and makes owner-approved Google Workspace writes through an allowlisted broker; peers, approvals, gwscli and error codes.", includeInFull: false },
+      { title: "Use your brain from anywhere over MCP", path: "docs/guides/remote-mcp.md", description: "`gbrain mcp expose`: publish serve --http on your Tailscale tailnet (Funnel explicit for cloud agents), user service, admin token file, grant/connect/verify hand-off, --status/--remove, troubleshooting, security posture, ngrok and cloud-host alternatives.", includeInFull: false },
       // Linked, not inlined: these three guides only apply inside Grok Bot, Muse or another
       // hosted agent, and AGENTS.md (inlined) routes those agents to them. Dropping them from the
       // bundle freed about 48 KB of FULL_SIZE_BUDGET.
@@ -47,8 +50,13 @@ export const SECTIONS: DocSection[] = [
       { title: "Inside an existing agent", path: "docs/guides/in-agent-setup.md", description: "Isolated setup, absolute launcher, receipts, keyless maintenance, complete private backup and safe restoration.", includeInFull: false },
       { title: "Owner turns in a shared room", path: "docs/guides/rooms.md", description: "Declare the group chat an answer goes into (X-Gbrain-Room, _meta.room, a room argument): the owner's read is unchanged and every page and fact is marked room_access with whether the room could have read it; reasons, notices, who may ask, and keeping raw results out of the group transcript.", includeInFull: false },
       { title: "Guest notes", path: "docs/guides/guest-notes.md", description: "Keep what outside guests in a group chat say apart from your own pages: a database-only guest source (`gbrain guests init`), the writer list, how the broker saves a note with its sender and group, the warning every read shows, `gbrain guests promote`, `gbrain guests grant-owner-clients` and the guest_source doctor check.", includeInFull: false },
+      { title: "Portable profile", path: "docs/guides/profile.md", description: "Save your sizes, diet, allergies and constraints with remember --facet; any connected agent reads them with context_pack {profile: true} or gbrain profile, scoped to the caller (a member reads only its own).", includeInFull: false },
       { title: "Memory boundaries", path: "docs/guides/memory-boundaries.md", description: "Durable shared preferences versus harness state; remote graph maintenance, provider text disclosure, authorization and full-backup limits; large pages (segmented storage up to 256 MiB on Postgres, append_page / gbrain append, upload sessions, windowed reads, limits per entry point).", includeInFull: false },
       { title: "Page history", path: "docs/guides/page-history.md", description: "Why a page changed: an optional reason on page writes, replaced_because in get_versions, the gbrain-reason commit trailer, remote visibility and repo-less brains.", includeInFull: false },
+      { title: "The value card", path: "docs/guides/value-card.md", description: "gbrain value, a command on the brain host only (not an MCP tool): real counts of what the brain holds and has done, each measured, off or unavailable.", includeInFull: false },
+      { title: "How gbrain compares", path: "docs/proof.md", description: "Six measured results from gbrain-evals at a pinned commit, each with its build, date, size, judge and interval where published, including two where a simpler setup wins; vendor LongMemEval figures and why they aren't comparable.", includeInFull: false },
+      { title: "What you'd build without gbrain", path: "docs/guides/what-youd-build.md", description: "Each part of gbrain (sync with a writer lock, hybrid search, facts with provenance, per-page access, entity resolution, the conversation archive, doctor and repair, the MCP server, evals), what it does and what a simpler setup covers instead.", includeInFull: false },
+      { title: "The morning note", path: "docs/guides/morning-note.md", description: "What the nightly cycle learned and how to answer it: gbrain learned, learned-keep and learned-undo, the session-start count line, expiry and the defaults that turn nightly learning on.", includeInFull: false },
       { title: "Brain versus session memory", path: "docs/guides/brain-vs-memory.md", description: "Route durable facts and preferences to shared memory, configuration to the harness, and temporary work to session state.", includeInFull: false },
       // Linked, not inlined: it applies only once a brain already runs on another machine, and AGENTS.md (inlined) routes those agents to it; dropping it gave the bundle room under FULL_SIZE_BUDGET.
       { title: "Connect a hosted brain", path: "docs/guides/hosted-harness-access.md", description: "Getting the HTTPS endpoint (`gbrain mcp expose`, admin token file), host-side grants, private credential handoff, harness installation, profile repair, delegation limits and honest verification.", includeInFull: false },
@@ -135,6 +143,18 @@ export const SECTIONS: DocSection[] = [
         path: "docs/ENGINES.md",
       },
       {
+        title: "docs/guides/engine-shadow-bench.md",
+        description: "Rust engine shadow mode, criterion 8: `gbrain engine shadow bench --import <receipt.json>`, what the speed receipt must hold, how a row counts as worse, better or not measured, and what the import never does.",
+        path: "docs/guides/engine-shadow-bench.md",
+        includeInFull: false,
+      },
+      {
+        title: "docs/guides/engine-shadow-drill.md",
+        description: "Rust engine shadow mode, criterion 10: `gbrain engine shadow drill`, the restore drill on the shadow store and the eval-gates fetch, what they check and keep, and what status and the swap read.",
+        path: "docs/guides/engine-shadow-drill.md",
+        includeInFull: false,
+      },
+      {
         title: "docs/guides/move-to-postgres.md",
         description:
           "Move a PGLite brain to Postgres with its history: --url-env target setup, plan (exit 3) then --yes --expect, status/resume/rollback, what moves vs stays on this computer, recovery by error code.",
@@ -216,6 +236,10 @@ export const SECTIONS: DocSection[] = [
         title: "docs/guides/live-sync.md",
         description: "Incremental markdown sync setup.",
         path: "docs/guides/live-sync.md",
+        // Linked, not inlined: a one-time setup runbook (56 KB) that AGENTS.md (inlined) links
+        // under Configure; dropping it, with MEMORY_VERBS_v1.md, restored about 140 KB of
+        // FULL_SIZE_BUDGET after the bundle reached 799,998 bytes.
+        includeInFull: false,
       },
       {
         title: "docs/guides/on-commit-sync.md",
@@ -383,6 +407,9 @@ export const SECTIONS: DocSection[] = [
         description:
           "The frozen memory-verb protocol (recall/remember/entity/synthesize/forget plus context_pack and delta): response envelopes, error contract, additive-forever versioning, surface modes, conformance certification, per-harness installs.",
         path: "docs/protocol/MEMORY_VERBS_v1.md",
+        // Linked, not inlined: an 85 KB frozen wire spec for harness and server implementers;
+        // `gbrain protocol --json` emits the same contract and CLAUDE.md (inlined) routes to it.
+        includeInFull: false,
       },
     ],
   },

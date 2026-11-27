@@ -1,0 +1,1 @@
+On a Rust brain, relational questions such as "who works at a company" now answer the same as on PGLite and Postgres. The relational recall arm and entity resolution no longer send raw SQL, so a Rust brain no longer refuses them.

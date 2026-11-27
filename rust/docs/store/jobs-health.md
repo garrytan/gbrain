@@ -2,7 +2,7 @@
 
 Part of the store contract in [rust/README.md](../../README.md) ("The brain store"): the rules there apply to every method here. The rows are the ones in [jobs.md](jobs.md).
 
-The reads `gbrain doctor`'s queue checks (`queue_health`, `wedged_queue`, `orphaned_private_queue`), the advisor's stalled-jobs collector and the submit-time queue probe make of `minion_jobs`. The TypeScript statements are in `src/core/engine-sql/jobs-health.ts`; the store module is `rust/crates/gbrain-store/src/jobs/health.rs`, the binding `rust/crates/gbrain-napi/src/families/jobs/health.rs` and the members `src/core/rust-engine/store-members/jobs-health.ts`. All eight are reported under the capability `minion_queue`.
+The reads `gbrain doctor`'s queue checks (`queue_health`, `wedged_queue`, `orphaned_private_queue`), the advisor's stalled-jobs collector, the submit-time queue probe and the dream facts-drain phase's no-worker check make of `minion_jobs`. The TypeScript statements are in `src/core/engine-sql/jobs-health.ts`; the store module is `rust/crates/gbrain-store/src/jobs/health.rs`, the binding `rust/crates/gbrain-napi/src/families/jobs/health.rs` and the members `src/core/rust-engine/store-members/jobs-health.ts`. All of them are reported under the capability `minion_queue`.
 
 Every window and cut-off is an argument. The clock is the store's, read once per call. Counts cross the binding as numbers.
 
@@ -15,12 +15,16 @@ Every window and cut-off is an argument. The clock is the store's, read once per
 | `brain.listPrivateQueueHealth()` | per `dream-inline-` queue: the smallest `data.source_id`, live-lock active, waiting-class (`waiting` and `delayed`) and paused rows, the minutes since the oldest waiting-class row and the oldest row's `created_at` in epoch milliseconds |
 | `brain.readWedgeSignals(queue, handlerNames)` | one queue's `{ stalled, activeHealthy, waiting, waitingClaimable, lastCompleted, lastCompletedClaimable }`; the two dates are `Date`s (ISO text across the binding) |
 | `brain.readOldestWaitingAge(queue)` | whole seconds since the oldest waiting row of the queue was created, or null |
+| `brain.countWaitingJobs(excludeFactsAbsorb)` | the number of `waiting` rows, without the `facts-absorb` rows when `excludeFactsAbsorb`. The readiness worker probe passes `true` only on PGLite, so a Rust brain counts its `facts-absorb` jobs as a SQL Postgres brain does |
+| `brain.countWaitingJobsForNames(queue, names)` | the number of `waiting` rows of the queue whose name is one of `names` (none for an empty list or an unknown queue). The minion worker's stall check. The store walks the `waiting` status index and reads one row at a time, so it keeps no row of another queue or name |
+| `brain.readUntakenWaitingJobs(name, thresholdHours)` | `{ queue, waiting, oldest_age_seconds }` for the queue whose waiting `name` rows with a submission authority no worker takes, or null: the oldest such row last became waiting (`updated_at`) more than `thresholdHours` ago, and no row of any name on that queue is active with a live lock or started inside that time. The oldest wins |
 | `brain.listStuckActiveJobsByName()` | `{ name, n }` for the active rows whose lock lapsed or whose stalled counter reached 2, the most first |
 
-Differences from the SQL engines, decided so every engine answers alike:
+Ordering and other engine differences:
 
-- Ties the old statements left to the planner now break bytewise: the SQL carries `COLLATE "C"` and `id`, `name` or `queue` tie-breaks, and the store sorts by byte order. The queue-health check's output does not change for a brain with no ties.
-- `min(data->>'source_id')` of a private queue is the bytewise smallest, on every engine.
+- The SQL engines retain the original statements without added COLLATE clauses or SQL tie-breaks. The shared TypeScript helpers apply bytewise ordering to returned rows where implemented; they do not stabilize which tied rows SQL selects before LIMIT 5, and stalled rows retain their SQL order. The Rust store breaks ties deterministically, so tied results can differ between engines.
+- A private queue's source_id is min(data->>'source_id') under the database collation on the SQL engines and the bytewise smallest value on the Rust store; these can differ.
+- `readUntakenWaitingJobs` keeps master's statement, which leaves two queues of the same oldest age to the planner on the SQL engines; the Rust store gives such a tie to the queue by bytes.
 - `readQueueHealthSignals.stalled` no longer returns `started_at`; the check uses the id, name and total only.
 - Seconds are rounded half away from zero, as `EXTRACT(EPOCH FROM interval)::int` does.
 - `opts.signal` of `readWedgeSignals` and `readOldestWaitingAge` cancels the statement on PGLite and PostgreSQL. A store call cannot be cancelled, so the Rust engine ignores it; the probe's own timeout still bounds the wait.

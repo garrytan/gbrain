@@ -11,8 +11,11 @@
  *
  * Transaction-local settings (`set_config(name, value, true)`): the six write trust settings go to the store's write
  * trust context on the transaction's handle (`applyWriteTrust` / `readWriteTrust`), which the trust fence reads and
- * the stamp will read; the attribution and source-scope settings stay on the transaction (`RustTransactionScope
- * .settings`). Both end with the transaction; a savepoint rollback restores both. Any other name refuses.
+ * the stamp will read; the attribution, source-scope and quiescence settings stay on the transaction
+ * (`RustTransactionScope.settings`), and so does the one planner setting the belief batch switches (`plan_cache_mode`;
+ * the store has no planner, so it changes nothing else, and an unset one reads PGLite's default). Both end with the
+ * transaction; a savepoint rollback restores both. Any other custom `gbrain.*` name Postgres accepts stays on the
+ * transaction too, unless schema SQL reads it; any other name refuses.
  *
  * Export only BrainEngine members from this file: index.ts spreads the whole module into STORE_MEMBERS.
  */
@@ -23,6 +26,7 @@ import { transactionAborted } from '../../postgres-engine/transaction-abort.ts';
 import { validateSlug } from '../../utils.ts';
 import type { RustEngine, RustTransactionScope } from '../../rust-engine.ts';
 import { opError } from '../../ops/contract.ts';
+import { capabilityMissing } from '../errors.ts';
 import { mapStoreError, storeErrorCode } from '../store-errors.ts';
 import type { RustStore, StoreBrain } from '../store.ts';
 import { storeCall } from './common.ts';
@@ -31,17 +35,28 @@ import { readPersistenceBrainId } from './persistence-identity.ts';
 type TransactionFn<T> = (engine: BrainEngine) => Promise<T>;
 
 /**
- * The nine settings the store's write context keeps (rust/docs/store/write_trust.md): the trust ones and the write
- * attribution ones its writers read there (the trust stamp, the fence reads, the timeline write receipt).
+ * The ten settings the store's write context keeps (rust/docs/store/write_trust.md): the trust ones, the write
+ * attribution ones its writers read there (the trust stamp, the fence reads, the timeline write receipt) and the guest
+ * note a guest-source page write names (the trust stamp's guest rules).
  */
 const TRUST_SETTINGS: ReadonlySet<string> = new Set([
   'gbrain.write_trust_tier', 'gbrain.write_origin', 'gbrain.write_trust_promotion',
   'gbrain.write_trust_backfill', 'gbrain.write_trust_keep', 'gbrain.write_open_facts',
-  'gbrain.write_request', 'gbrain.write_principal_kind', 'gbrain.write_principal_id',
+  'gbrain.write_request', 'gbrain.write_principal_kind', 'gbrain.write_principal_id', 'gbrain.guest_note',
 ]);
-/** The settings the transaction keeps in TypeScript (`RustTransactionScope.settings`): source scope and protocols. */
+/**
+ * The settings the transaction keeps in TypeScript (`RustTransactionScope.settings`): source scope, protocols and the
+ * writer quiescence declaration skill activation sets (`gbrain.writer_quiesced`).
+ */
 const SCOPE_SETTINGS: ReadonlySet<string> = new Set([
-  'gbrain.write_sources', 'gbrain.git_protocol', 'gbrain.persistence_protocol',
+  'gbrain.write_sources', 'gbrain.git_protocol', 'gbrain.persistence_protocol', 'gbrain.writer_quiesced',
+]);
+/**
+ * Planner settings the transaction keeps in TypeScript, as PGLite reads them when unset and the values it accepts
+ * (case-insensitive, kept in lower case). The belief batch (`readLedgerSource` with `batch`) sets `plan_cache_mode`.
+ */
+const PLANNER_SETTINGS: ReadonlyMap<string, { unset: string; values: ReadonlySet<string> }> = new Map([
+  ['plan_cache_mode', { unset: 'auto', values: new Set(['auto', 'force_generic_plan', 'force_custom_plan']) }],
 ]);
 /** engine-sql/transaction-settings.ts `SETTING_NAME`: the same check and the same error, before any work. */
 const SETTING_NAME = /^[a-z_][a-z0-9_.]*$/;
@@ -54,11 +69,26 @@ function seen(engine: RustEngine): Set<string> {
   return (engine._txScope?.root ?? engine)._seenSettings;
 }
 
+/**
+ * The `gbrain.*` settings schema triggers and functions read (`current_setting('gbrain.<name>'` in src) that no store
+ * writer reads yet. Kept in the transaction's map, one would change what Postgres does and nothing on Rust, so each
+ * refuses until the store reads it (`gbrain.writer_quiesced` is not here: SCOPE_SETTINGS keeps it on the transaction). test/rust-engine-shell.test.ts fails on a schema-read name outside the kept sets
+ * and this one.
+ */
+const SCHEMA_READ_SETTINGS: ReadonlySet<string> = new Set([
+  'gbrain.materializing_revision', 'gbrain.topology_change', 'gbrain.refresh_barrier',
+  'gbrain.trust_generation_bumped', 'gbrain.graduation_run',
+]);
+/** Postgres's custom setting name: two or more simple identifiers separated by dots, here under `gbrain`. */
+const CUSTOM_SETTING_NAME = /^gbrain(\.[a-z_][a-z0-9_]*)+$/;
+/** A custom name no writer or schema SQL reads: the transaction keeps it in its own map, as Postgres keeps it. */
+const keepsCustomSetting = (name: string) => CUSTOM_SETTING_NAME.test(name) && !TRUST_SETTINGS.has(name) && !SCHEMA_READ_SETTINGS.has(name);
+
 /** Checks every name before any work: the alphabet first (PGLite's error), then the names this engine keeps. */
 function checkSettingNames(member: string, names: readonly string[]): void {
   for (const name of names) if (!SETTING_NAME.test(name)) throw new Error(`Invalid transaction setting name: ${name}`);
   for (const name of names) {
-    if (TRUST_SETTINGS.has(name) || SCOPE_SETTINGS.has(name)) continue;
+    if (TRUST_SETTINGS.has(name) || SCOPE_SETTINGS.has(name) || keepsCustomSetting(name) || PLANNER_SETTINGS.has(name)) continue;
     throw opError('engine_capability_missing',
       `This brain's engine does not keep the transaction setting ${name} yet (${member} needs the transactions capability for it), so nothing ran.`,
       'Run it on a pglite or postgres brain, or wait for a gbrain release whose Rust engine keeps that setting.',
@@ -76,7 +106,7 @@ export const readTransactionSettings = async function readTransactionSettings(th
   if (names.length === 0) return [];
   const scope = this._txScope;
   const known = seen(this);
-  const unset = (name: string) => known.has(name) ? '' : null;
+  const unset = (name: string) => PLANNER_SETTINGS.get(name)?.unset ?? (known.has(name) ? '' : null);
   if (!scope) return names.map(unset);
   if (scope.ended) throw mapStoreError({ code: 'store_closed' }, { member: 'readTransactionSettings' });
   const trustNames = names.filter((name) => TRUST_SETTINGS.has(name));
@@ -95,6 +125,10 @@ export const readTransactionSettings = async function readTransactionSettings(th
 export const applyTransactionSettings = async function applyTransactionSettings(this: RustEngine, brain: StoreBrain, names: readonly string[], values: readonly string[]): Promise<void> {
   checkSettingNames('applyTransactionSettings', names);
   if (names.length === 0) return;
+  const planner = names.map((name, index) => [name, (values[index] ?? '').toLowerCase()] as const).filter(([name]) => PLANNER_SETTINGS.has(name));
+  for (const [name, value] of planner) {
+    if (!PLANNER_SETTINGS.get(name)!.values.has(value)) throw new Error(`invalid value for parameter "${name}": "${values[names.indexOf(name)] ?? ''}"`);
+  }
   const scope = this._txScope;
   if (scope) {
     if (scope.ended) throw mapStoreError({ code: 'store_closed' }, { member: 'applyTransactionSettings' });
@@ -102,7 +136,8 @@ export const applyTransactionSettings = async function applyTransactionSettings(
     if (trust.length) {
       await storeCall({ member: 'applyTransactionSettings' }, () => brain.applyWriteTrust(trust.map(([n]) => n), trust.map(([, v]) => v)));
     }
-    names.forEach((name, index) => { if (SCOPE_SETTINGS.has(name)) scope.settings.set(name, values[index] ?? ''); });
+    names.forEach((name, index) => { if (SCOPE_SETTINGS.has(name) || keepsCustomSetting(name)) scope.settings.set(name, values[index] ?? ''); });
+    for (const [name, value] of planner) scope.settings.set(name, value);
   }
   const known = seen(this);
   for (const name of names) known.add(name);
@@ -133,7 +168,18 @@ interface BoundEngine extends RustEngine {
 
 /** A clone of `parent` whose served members run on the transaction's store handle. */
 function boundEngine(parent: RustEngine, scope: RustTransactionScope, held: HeldPageKeys): BoundEngine {
-  const store: RustStore = { brain: scope.brain, close: async () => undefined };
+  // The shadow seed and a store snapshot copy into or out of the engine's own store, never through a transaction's handle.
+  const refuseSeed = (member: string) => async (): Promise<never> => { throw capabilityMissing('transactions', member); };
+  const store: RustStore = {
+    brain: scope.brain, close: async () => undefined,
+    importRelation: refuseSeed('importRelation'), replaceRelationRows: refuseSeed('replaceRelationRows'), replaceInterval: refuseSeed('replaceInterval'),
+    relationDigest: refuseSeed('relationDigest'), relationEntries: refuseSeed('relationEntries'), allocatorCheck: refuseSeed('allocatorCheck'), allocatorAdvance: refuseSeed('allocatorAdvance'),
+    factFingerprints: refuseSeed('factFingerprints'), seedPlan: refuseSeed('seedPlan'),
+    // A snapshot copies the whole store at one committed generation, so it never runs through a transaction's handle either.
+    snapshotTo: refuseSeed('snapshotTo'), snapshotCancel: () => { throw capabilityMissing('transactions', 'snapshotCancel'); },
+    // The restore census and quarantine run on the restored store's own handle (gbrain backup restore), never inside a transaction.
+    restoreCensus: refuseSeed('restoreCensus'), restoreQuarantine: refuseSeed('restoreQuarantine'),
+  };
   return Object.create(parent, {
     _txScope: { value: scope, writable: false, enumerable: false },
     _heldPageKeys: { value: held, writable: false, enumerable: false },

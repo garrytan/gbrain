@@ -4,160 +4,82 @@
 # Generated from the tree at its own commit (`bun scripts/check-engine-raw-sql-ratchet.ts --print`).
 # Counts fall; a raise edits the row in the same PR with a note saying why. --prune lowers stale rows. docs/ci-guards.md#engine-raw-sql-ratchet
 src/cli/enforced-commit-push.ts	execute_raw	1
-src/cli/enforced-member.ts	execute_raw	6
-src/commands/access-read-by-nobody.ts	execute_raw	2
+src/commands/access-read-by-nobody.ts	execute_raw	1
 src/commands/access-rules.ts	execute_raw	4
-src/commands/access-serves.ts	execute_raw	8	came from master #9625 (shared company brains: owner setup, member keys), which landed after this ratchet was cut
-src/commands/access.ts	execute_raw	5
+src/commands/access.ts	execute_raw	1
 src/commands/agent-logs.ts	execute_raw	1
-src/commands/agent-register.ts	execute_raw	2
-src/commands/agent-register.ts	sql_template	7
+src/commands/agent-register.ts	execute_raw	1
+src/commands/agent-register.ts	sql_template	4
 src/commands/agent.ts	execute_raw	1
 src/commands/auth-read-shared.ts	execute_raw	2	reads sources (ids that exist and are not archived) and oauth_clients.member_id for the auth CLI read-set lines (GST-2898 read-shared switch, #9590, open before this ratchet landed); no typed engine method exists yet
-src/commands/auth.ts	execute_raw	1
-src/commands/auth.ts	sql_template	5
+src/commands/auth.ts	sql_template	1
 src/commands/autopilot-daemon.ts	execute_raw	1
 src/commands/autopilot-dispatch.ts	execute_raw	4
-src/commands/autopilot-fanout.ts	execute_raw	2
 src/commands/autopilot-health.ts	execute_raw	1
 src/commands/autopilot-retry-global.ts	execute_raw	1
-src/commands/autopilot.ts	execute_raw	1
 src/commands/autopilot/install-repo.ts	execute_raw	1
-src/commands/code-scope.ts	execute_raw	1
-src/commands/config.ts	execute_raw	1
 src/commands/core.ts	execute_raw	6
 src/commands/db-repair.ts	execute_raw	5
 src/commands/decide/claims-sweep.ts	execute_raw	1
 src/commands/decide/proposals.ts	execute_raw	2
 src/commands/diag.ts	execute_raw	4
-src/commands/doctor/checks/access-lineage.ts	execute_raw	2
-src/commands/doctor/checks/access-pages-read-by-nobody.ts	execute_raw	5	GBRA-582 item 9 (handover PR 2): set-based read-by-nobody scan over pages.page_readers and access_group_members; no typed engine method exists yet
-src/commands/doctor/checks/atom-body-recheck.ts	execute_raw	3
-src/commands/doctor/checks/atom-retirements.ts	execute_raw	2
-src/commands/doctor/checks/attest-read-access.ts	execute_raw	1
-src/commands/doctor/checks/calibration.ts	execute_raw	6
-src/commands/doctor/checks/connectors.ts	execute_raw	1
-src/commands/doctor/checks/consolidation-cycle.ts	execute_raw	2
-src/commands/doctor/checks/content-quality.ts	execute_raw	8
-src/commands/doctor/checks/coordination-lock.ts	execute_raw	1
-src/commands/doctor/checks/core-health.ts	execute_raw	8
-src/commands/doctor/checks/core-memory.ts	execute_raw	1
-src/commands/doctor/checks/data-integrity.ts	execute_raw	3
+src/commands/doctor/checks/access-reach.ts	execute_raw	6	reads sources, access_member_sources, pages, access_members, access_tokens and oauth_clients for the read-only doctor reach checks (access_shared_source_unread, access_disabled_member_credentials; GST-2994, #9586, open before this ratchet landed); no typed engine method exists yet
+src/commands/doctor/checks/calibration.ts	execute_raw	3
+src/commands/doctor/checks/consolidation-cycle.ts	execute_raw	1
+src/commands/doctor/checks/core-health.ts	execute_raw	3
 src/commands/doctor/checks/database-encoding.ts	execute_raw	1
-src/commands/doctor/checks/db-connection.ts	execute_raw	1
-src/commands/doctor/checks/default-source-path.ts	execute_raw	4
-src/commands/doctor/checks/derivation-pricing.ts	execute_raw	1
-src/commands/doctor/checks/derivation-purge-sweeps.ts	execute_raw	1
-src/commands/doctor/checks/derived-visibility.ts	execute_raw	1
+src/commands/doctor/checks/default-source-path.ts	execute_raw	1
 src/commands/doctor/checks/embed-backfill-stalled.ts	execute_raw	1
-src/commands/doctor/checks/embedding-health.ts	execute_raw	4
-src/commands/doctor/checks/entity-duplicates.ts	execute_raw	2
-src/commands/doctor/checks/extraction-input.ts	execute_raw	2
-src/commands/doctor/checks/extraction-sync.ts	execute_raw	11
-src/commands/doctor/checks/facts-pages.ts	execute_raw	1
-src/commands/doctor/checks/fence-integrity.ts	execute_raw	1
-src/commands/doctor/checks/folder-access.ts	execute_raw	3
-src/commands/doctor/checks/foreign-writers.ts	execute_raw	2
-src/commands/doctor/checks/frontmatter-hook.ts	execute_raw	1
+src/commands/doctor/checks/embedding-health.ts	execute_raw	1
+src/commands/doctor/checks/extraction-sync.ts	execute_raw	3
 src/commands/doctor/checks/function-search-path.ts	execute_raw	1
-src/commands/doctor/checks/generations.ts	execute_raw	2
-src/commands/doctor/checks/git-convergence.ts	execute_raw	3
-src/commands/doctor/checks/git-holds.ts	execute_raw	4
-src/commands/doctor/checks/git-index-lag.ts	execute_raw	1
-src/commands/doctor/checks/google-api-access.ts	execute_raw	1
-src/commands/doctor/checks/google-calendar.ts	execute_raw	1
-src/commands/doctor/checks/grant-new-ops.ts	execute_raw	2
+src/commands/doctor/checks/git-convergence.ts	execute_raw	1
 src/commands/doctor/checks/graph-embedding.ts	execute_raw	1
-src/commands/doctor/checks/guest-source.ts	execute_raw	4
-src/commands/doctor/checks/image-embedding-coverage.ts	execute_raw	1
+src/commands/doctor/checks/guest-source.ts	execute_raw	2
 src/commands/doctor/checks/keyword-plan.ts	execute_raw	3
-src/commands/doctor/checks/knowledge-health.ts	execute_raw	3
 src/commands/doctor/checks/landing-gaps.ts	execute_raw	1
-src/commands/doctor/checks/legacy-token-grants.ts	execute_raw	1
-src/commands/doctor/checks/local-audits.ts	execute_raw	1
-src/commands/doctor/checks/local-edit-adoptions.ts	execute_raw	1
-src/commands/doctor/checks/maintenance-drift.ts	execute_raw	3
-src/commands/doctor/checks/managed-guard.ts	execute_raw	2
+src/commands/doctor/checks/learning-note.ts	execute_raw	3	nightly learning PR 4: the learning_items ledger (v334) has no typed engine methods yet; doctor learning_note reads the newest run, its items by kind and the 30-day kept and undone shares
+src/commands/doctor/checks/managed-guard.ts	execute_raw	1
 src/commands/doctor/checks/managed-sync-convergence.ts	execute_raw	1
 src/commands/doctor/checks/managed-sync-movement.ts	execute_raw	1
-src/commands/doctor/checks/mcp-request-log.ts	execute_raw	4
-src/commands/doctor/checks/member-access.ts	execute_raw	4
-src/commands/doctor/checks/memory-writeback.ts	execute_raw	2
-src/commands/doctor/checks/origin-twins.ts	execute_raw	1
-src/commands/doctor/checks/orphan-bindings.ts	execute_raw	3
 src/commands/doctor/checks/orphan-estimate.ts	execute_raw	2
 src/commands/doctor/checks/owner-host-stale.ts	execute_raw	2
-src/commands/doctor/checks/parked-effects.ts	execute_raw	2
-src/commands/doctor/checks/persistence-capacity.ts	execute_raw	2
-src/commands/doctor/checks/persistence-compaction.ts	execute_raw	2
-src/commands/doctor/checks/persistence-requests.ts	execute_raw	6
+src/commands/doctor/checks/persistence-requests.ts	execute_raw	1
 src/commands/doctor/checks/pglite-worker.ts	sql_template	1
 src/commands/doctor/checks/postgres-tls.ts	execute_raw	1
-src/commands/doctor/checks/privacy-label-ignored.ts	execute_raw	1
-src/commands/doctor/checks/projection-readiness.ts	execute_raw	1
-src/commands/doctor/checks/purge-mirror.ts	execute_raw	1
-src/commands/doctor/checks/queue-assets.ts	execute_raw	2
-src/commands/doctor/checks/queue-assets.ts	sql_template	1
-src/commands/doctor/checks/routing-federation.ts	execute_raw	6
-src/commands/doctor/checks/safe-index.ts	execute_raw	1
+src/commands/doctor/checks/queue-assets.ts	execute_raw	2	master #10392 (GST-3977): the index audit's constraint read joins the index list; no typed engine member yet (sync 20)
+src/commands/doctor/checks/routing-federation.ts	execute_raw	1
 src/commands/doctor/checks/schema-function-bodies.ts	execute_raw	1
-src/commands/doctor/checks/schema-health.ts	execute_raw	1
 src/commands/doctor/checks/schema-health.ts	sql_template	3
 src/commands/doctor/checks/search-eval.ts	execute_raw	2
-src/commands/doctor/checks/shared-agent-access.ts	execute_raw	2
-src/commands/doctor/checks/slug-collisions.ts	execute_raw	2
-src/commands/doctor/checks/slug-path-mismatch.ts	execute_raw	2
-src/commands/doctor/checks/stale-embedding-effects.ts	execute_raw	2
-src/commands/doctor/checks/storage-manifest.ts	execute_raw	2
-src/commands/doctor/checks/strict-facts-outside-git.ts	execute_raw	1
-src/commands/doctor/checks/supervisor-health.ts	execute_raw	1
-src/commands/doctor/checks/sync-failures.ts	execute_raw	1
-src/commands/doctor/checks/transcript-archive.ts	execute_raw	1
-src/commands/doctor/checks/transcript-secrets.ts	execute_raw	1
-src/commands/doctor/checks/trust-sources-unclaimed.ts	execute_raw	1
-src/commands/doctor/checks/unbound-source.ts	execute_raw	1
+src/commands/doctor/checks/slug-collisions.ts	execute_raw	1
+src/commands/doctor/checks/slug-path-mismatch.ts	execute_raw	1
 src/commands/doctor/checks/unindexed-files.ts	execute_raw	1
-src/commands/doctor/checks/unlinked-facts.ts	execute_raw	1
-src/commands/doctor/checks/unscoped-multi-user-token.ts	execute_raw	2
 src/commands/doctor/checks/vector-plan.ts	execute_raw	4
-src/commands/doctor/last-known.ts	execute_raw	2
-src/commands/doctor/report-remote.ts	execute_raw	2
-src/commands/doctor/schema-pack-checks.ts	execute_raw	3
-src/commands/doctor/skill-checks.ts	execute_raw	5
-src/commands/dream-retriage.ts	execute_raw	3
-src/commands/edge-proposals.ts	execute_raw	6
-src/commands/edges-backfill.ts	execute_raw	1
-src/commands/embed.ts	execute_raw	1
+src/commands/doctor/checks/write-gate-hold-ambiguous.ts	execute_raw	1	lists held writes the v333 upgrade left unbound with candidate pages; doctor checks read raw SQL (same shape as trust-release-unpreviewed.ts)
+src/commands/doctor/checks/write-gate-holds-stranded.ts	execute_raw	5	read-only doctor check: a row-security visibility preflight, one keyset read of held rows, one per-batch page and rename lookup and, when something is listed, the count of listed holds noted for the maintenance sweep with its privilege and row-security preflight (raised from 3); all stay raw SQL until holds have a typed engine method (a raw-SQL refusal on the Rust engine is reported as a named unknown)
+src/commands/doctor/report-remote.ts	execute_raw	1
+src/commands/doctor/schema-pack-checks.ts	execute_raw	2
 src/commands/engine-status.ts	execute_raw	1
-src/commands/eval-suspected-contradictions.ts	execute_raw	1
-src/commands/eval-whoknows.ts	execute_raw	1
-src/commands/extract-conversation-facts.ts	execute_raw	1
-src/commands/extract-explain.ts	execute_raw	1
-src/commands/extract-mentions-explain.ts	execute_raw	6
+src/commands/enrich.ts	execute_raw	2	GST-3815: the reader-scope check on backlink and search evidence (pageReadsToReadersOfSql) sits beside the raw facts read it shares a predicate with; no typed engine method exists for either, and both convert together
 src/commands/extract-stale-options.ts	execute_raw	1
 src/commands/extract-status.ts	execute_raw	1
 src/commands/extract-timeline-db.ts	execute_raw	2
-src/commands/extract.ts	execute_raw	3
-src/commands/files.ts	execute_raw	4
-src/commands/files.ts	sql_template	4
 src/commands/frontmatter-install-hook.ts	execute_raw	3
 src/commands/git.ts	execute_raw	1	GST-2988 PR 2 gbrain git redact-unpushed: reads sources.local_path for --source; branched before the #9641 ratchet; no typed engine method for a source's local path exists yet
 src/commands/google-attachments.ts	execute_raw	3
 src/commands/google-setup-tail.ts	execute_raw	1
-src/commands/google.ts	execute_raw	1
-src/commands/guests.ts	execute_raw	1
+src/commands/household-template.ts	execute_raw	2	master #10396 (GST-3825): the household setup reads the member list's live token and writes a revoke; no typed engine member yet (sync 20)
 src/commands/import-calls.ts	execute_raw	3	GST-2904 (open before #9641): reads the committed call page's id, frontmatter readers and whether a page_label_guards row exists, locked FOR UPDATE inside the maintenance transaction that raises the guard; no typed engine method exists yet
-src/commands/import.ts	execute_raw	5
+src/commands/import.ts	execute_raw	3
 src/commands/init-prefer-postgres.ts	execute_raw	5
 src/commands/init.ts	sql_template	2
 src/commands/integrity.ts	execute_raw	1
-src/commands/jobs-watch.ts	execute_raw	2
 src/commands/jobs/smoke.ts	execute_raw	2
 src/commands/jobs/work.ts	execute_raw	1
 src/commands/loops.ts	execute_raw	1
-src/commands/mcp-provision.ts	sql_template	4
 src/commands/migrate-embeddings.ts	execute_raw	6
-src/commands/migrate-engine.ts	execute_raw	26
+src/commands/migrate-engine.ts	execute_raw	17
 src/commands/migrations/v0_14_0.ts	execute_raw	2
 src/commands/migrations/v0_16_0.ts	execute_raw	1
 src/commands/migrations/v0_18_0-storage-backfill.ts	execute_raw	6
@@ -168,9 +90,7 @@ src/commands/migrations/v0_31_0.ts	execute_raw	1
 src/commands/migrations/v0_32_2.ts	execute_raw	2
 src/commands/onboard.ts	execute_raw	1
 src/commands/pages-status.ts	execute_raw	2
-src/commands/quarantine.ts	execute_raw	1
-src/commands/recall.ts	execute_raw	1
-src/commands/reconcile-links.ts	execute_raw	1
+src/commands/policy.ts	execute_raw	1	GST-3824 L1: gbrain policy status reads the last policy_check/agent_policy fetch per client from mcp_request_log
 src/commands/reindex-code.ts	execute_raw	2
 src/commands/reindex-multimodal.ts	sql_template	5
 src/commands/reindex-synopsis.ts	execute_raw	2
@@ -179,23 +99,17 @@ src/commands/reindex.ts	execute_raw	4
 src/commands/repair-jsonb.ts	driver_call	4
 src/commands/repair-propose.ts	execute_raw	1
 src/commands/serve-health.ts	execute_raw	1
-src/commands/serve-http-admin-api.ts	execute_raw	4
-src/commands/serve-http-admin-api.ts	sql_template	11
-src/commands/serve-http-api-keys.ts	execute_raw	2
-src/commands/serve-http-clients.ts	execute_raw	1
-src/commands/serve-http-metrics.ts	execute_raw	2
-src/commands/serve-http-registration.ts	execute_raw	2
-src/commands/serve-http-registration.ts	sql_template	3
-src/commands/serve-http-webhooks.ts	execute_raw	4
+src/commands/serve-http-metrics.ts	execute_raw	1
+src/commands/serve-http-webhooks.ts	execute_raw	3
 src/commands/serve-http.ts	sql_template	1
-src/commands/sources-add-next.ts	execute_raw	2
+src/commands/sources-add-next.ts	execute_raw	1
 src/commands/sources-canonical.ts	execute_raw	1
-src/commands/sources-git-gap.ts	execute_raw	15
 src/commands/sources-git-reconcile.ts	execute_raw	1
 src/commands/sources-harden.ts	execute_raw	5
-src/commands/sources-lifecycle.ts	execute_raw	1
 src/commands/sources-mirror.ts	execute_raw	2
+src/commands/sources-precedence.ts	execute_raw	1
 src/commands/sources-pull-strategy.ts	execute_raw	1
+src/commands/sources-rebind.ts	execute_raw	1	GST-3022 owned folders, no typed engine method yet: reads the source row (incarnation, local_path, config, archived) to find its connector cursor
 src/commands/sources-reindex.ts	execute_raw	1
 src/commands/sources-reset-upstream.ts	execute_raw	1
 src/commands/sources-retry-held.ts	execute_raw	2
@@ -205,573 +119,342 @@ src/commands/sources-strategy.ts	execute_raw	3
 src/commands/sources-sync-enabled.ts	execute_raw	1
 src/commands/sources-trust.ts	execute_raw	2
 src/commands/sources-writers.ts	execute_raw	1
-src/commands/sources.ts	execute_raw	13
 src/commands/storage.ts	execute_raw	1
-src/commands/sweep.ts	execute_raw	2
-src/commands/sync/full.ts	execute_raw	1
-src/commands/sync/holds.ts	execute_raw	4
-src/commands/sync/perform.ts	execute_raw	1
-src/commands/sync/plain-directory.ts	execute_raw	1
-src/commands/sync/preflight.ts	execute_raw	3
+src/commands/sweep.ts	execute_raw	1
+src/commands/sync/holds.ts	execute_raw	3
+src/commands/sync/preflight.ts	execute_raw	2
 src/commands/sync/rename-collision.ts	execute_raw	2
-src/commands/sync/rename-reconcile.ts	execute_raw	1
 src/commands/sync/renames.ts	execute_raw	1
 src/commands/sync/run.ts	execute_raw	3
-src/commands/takes.ts	execute_raw	2
 src/commands/trust.ts	execute_raw	1
-src/commands/upgrade.ts	execute_raw	1
-src/core/access/actor.ts	execute_raw	7
-src/core/access/attest-sources.ts	sql_template	8
-src/core/access/federation-exposure.ts	execute_raw	1
-src/core/access/handover.ts	execute_raw	14	GBRA-582 item 9 (handover PR 2): the new access_handovers record (v322) and the planner reads of pages, sources, access_group_members and credentials; writes go through the label and rule doors
-src/core/access/implicit-placement.ts	execute_raw	1	came from master #9625 (shared company brains: owner setup, member keys), which landed after this ratchet was cut
-src/core/access/labelled-only.ts	execute_raw	3
+src/core/access/attest-sources.ts	sql_template	7
+src/core/access/handover.ts	execute_raw	5	GBRA-582 item 9 (handover PR 2): the new access_handovers record (v322) and the planner reads of pages, sources, access_group_members and credentials; writes go through the label and rule doors
 src/core/access/member-facts.ts	execute_raw	2	GST-2897 B (#9670, opened before this ratchet): one access_members lookup to see whether the member a share is about is enabled; no typed engine method exists yet
-src/core/access/member-sources.ts	execute_raw	8
-src/core/access/members.ts	execute_raw	16
+src/core/access/member-sources.ts	execute_raw	6
 src/core/access/members.ts	sql_template	1
-src/core/access/open-pages.ts	execute_raw	8	came from master #9625 (shared company brains: owner setup, member keys), which landed after this ratchet was cut
-src/core/access/open-twins.ts	execute_raw	1
-src/core/access/owner.ts	execute_raw	1
-src/core/access/policy-migrate.ts	execute_raw	4
-src/core/access/policy.ts	execute_raw	31
-src/core/access/requester-scope.ts	execute_raw	3
+src/core/access/open-pages.ts	execute_raw	1	the statement timeout bounded() sets on a Postgres transaction (SET LOCAL statement_timeout); PGLite and the Rust engine never run it
+src/core/access/requester-scope.ts	execute_raw	2
 src/core/access/room.ts	execute_raw	2
-src/core/access/serves.ts	execute_raw	1
-src/core/access/token-member-status.ts	sql_template	1
-src/core/advisor/collect-chronicle.ts	execute_raw	1
-src/core/advisor/collect-mcp-client-fit.ts	execute_raw	1
 src/core/agent-install/setup.ts	execute_raw	2
 src/core/agent-install/shared-skills.ts	execute_raw	1
 src/core/ai/decide/egress.ts	execute_raw	1
 src/core/ai/decide/proposals-store.ts	execute_raw	6
 src/core/ai/decide/review-lane.ts	execute_raw	6
 src/core/analyze-lock.ts	execute_raw	1
-src/core/attendance-repair.ts	execute_raw	17
-src/core/backfill-base.ts	execute_raw	12
+src/core/apple-contacts/apple-contacts-source.ts	execute_raw	4	GST-3256, pre-ratchet like imessage-source.ts (#9634): reads the source row, finds the page a contact id owns and the ids the source owns, rereads a contact page for its review; no typed engine method exists yet
+src/core/apple-contacts/enrich.ts	execute_raw	7	GST-3278 PR 2, like the rest of apple-contacts (pre-ratchet, #9634): reads this source's contact pages, the one person page each is linked to through entity_identities, that page's facts (text, trust tier and origin), the Google Contacts pages and a matched person page's frontmatter, and reads/writes the enrichment op_checkpoints row; no typed engine method exists yet
+src/core/apple-contacts/identity-match.ts	execute_raw	5	GST-3256, pre-ratchet like imessage-source.ts (#9634): lists the candidate sources, runs the exactIdentityStatement candidate read (engine-sql/exact-identity.ts, the whois read), and reads/writes/clears the identity-review op_checkpoints row; no typed engine method exists yet
+src/core/apple-contacts/person-facts.ts	execute_raw	7	GST-3256, pre-ratchet like imessage-source.ts (#9634): fingerprints the wanted claims and reads the active facts on one person page (this source's rows and the claims already there, matched by fact fingerprint as remember does), and reads/writes/clears the person-facts ownership op_checkpoints row; no typed engine method exists yet; +3 follow-up: before a source removal, reads the source kind, counts its active person-page rows (and those no page write can retire) and groups them by page to retire them
+src/core/apple-contacts/review-status.ts	execute_raw	3	GST-3256, pre-ratchet like imessage-source.ts (#9634): reads, writes and clears the pending-deletions op_checkpoints row the incremental delete floor holds; no typed engine method exists yet
+src/core/attendance-repair.ts	execute_raw	14
+src/core/backfill-base.ts	execute_raw	10
 src/core/backfill-effective-date.ts	execute_raw	3
 src/core/backfill-skips.ts	execute_raw	2
-src/core/backup/coverage.ts	execute_raw	2
 src/core/backup/quarantine.ts	execute_raw	9
 src/core/backup/snapshot.ts	execute_raw	5
-src/core/belief/append.ts	execute_raw	7
-src/core/belief/backfill.ts	execute_raw	8
+src/core/belief/backfill.ts	execute_raw	6
 src/core/belief/changes.ts	execute_raw	2
-src/core/belief/coverage-report.ts	execute_raw	12
-src/core/belief/coverage.ts	execute_raw	5
+src/core/belief/coverage-report.ts	execute_raw	8
 src/core/belief/identity.ts	execute_raw	2
 src/core/belief/ledger.ts	execute_raw	1
-src/core/belief/lifetimes.ts	execute_raw	6
 src/core/belief/page-at-time.ts	execute_raw	8
-src/core/belief/preimages.ts	execute_raw	2
-src/core/belief/purge-mirror.ts	execute_raw	24
-src/core/belief/purge.ts	execute_raw	19
+src/core/belief/preimages.ts	execute_raw	1
+src/core/belief/purge-mirror.ts	execute_raw	15
+src/core/belief/purge.ts	execute_raw	1
 src/core/belief/retier.ts	execute_raw	3
-src/core/belief/state.ts	execute_raw	4
-src/core/belief/writers.ts	execute_raw	2
 src/core/bootstrap/harness-cleanup.ts	execute_raw	1
 src/core/bootstrap/harness-skills.ts	execute_raw	1
-src/core/bootstrap/verify.ts	execute_raw	6
-src/core/brain-writer.ts	execute_raw	3
+src/core/bootstrap/verify.ts	execute_raw	3
 src/core/brainstorm/domain-bank.ts	execute_raw	1
-src/core/budget/daily-ledger.ts	execute_raw	6
-src/core/by-mention.ts	execute_raw	6
 src/core/calibration/domain-aggregators.ts	execute_raw	4
 src/core/calibration/think-ab.ts	execute_raw	2
-src/core/calibration/undo-wave.ts	execute_raw	7
-src/core/chronicle/backfill.ts	execute_raw	1
-src/core/chronicle/campaign.ts	execute_raw	3
-src/core/chronicle/event-identity.ts	execute_raw	1
-src/core/chronicle/execute.ts	execute_raw	9
-src/core/chronicle/ledger-stats.ts	execute_raw	5
-src/core/chronicle/ledger.ts	execute_raw	10	#9636: add_link carries a still-pending automatic decision to its revision, read from chronicle_page_state by page; no typed engine method for the ledger exists yet
-src/core/chronicle/publish.ts	execute_raw	4
 src/core/chunkers/symbol-resolver.ts	execute_raw	7
 src/core/claw-test/seed-pglite.ts	driver_call	1
-src/core/code-chunks.ts	execute_raw	3
 src/core/code-graph-readiness.ts	execute_raw	1
-src/core/code-intel/recursive-walk.ts	execute_raw	2
 src/core/company-brain/admission.ts	execute_raw	12
 src/core/company-brain/demo.ts	execute_raw	2
-src/core/company-brain/evidence.ts	execute_raw	3
 src/core/company-brain/profile.ts	execute_raw	2
 src/core/company-brain/receipts.ts	execute_raw	9
 src/core/company-brain/runtime.ts	execute_raw	14
 src/core/company-brain/verification.ts	execute_raw	3
 src/core/config-values.ts	execute_raw	1	the keyed config read for a narrow executeRaw-only handle (a test fake or wrapper without getConfigValues); real engines take the typed getConfigValues read, and 23 config sites moved here from their own executeRaw
 src/core/connection-manager.ts	sql_template	3
-src/core/connectors/api-source.ts	execute_raw	2
-src/core/connectors/connector-hold-session.ts	execute_raw	1
-src/core/connectors/db-cursor.ts	execute_raw	2
+src/core/connectors/api-source.ts	execute_raw	1
 src/core/connectors/item-holds-store.ts	execute_raw	9
-src/core/content-drift-sweep.ts	execute_raw	2
 src/core/context/compile-view.ts	execute_raw	1
-src/core/context/corpus-source.ts	execute_raw	2
-src/core/context/proactive-brief.ts	execute_raw	10
-src/core/context/retrieval-reflex.ts	execute_raw	6
-src/core/context/session-state.ts	execute_raw	7
-src/core/context/volunteer-events.ts	execute_raw	2
-src/core/context/volunteer.ts	execute_raw	1
+src/core/context/corpus-source.ts	execute_raw	1
 src/core/contextual-retrieval-service.ts	execute_raw	3
 src/core/conversation-parser/llm-base.ts	execute_raw	2
-src/core/core-memory.ts	execute_raw	1
-src/core/cycle.ts	execute_raw	2
-src/core/cycle/chronicle.ts	execute_raw	3
 src/core/cycle/concept-publication.ts	execute_raw	3
 src/core/cycle/concept-redirects.ts	execute_raw	2
 src/core/cycle/derived-write-through.ts	execute_raw	5
-src/core/cycle/dream-breaker.ts	execute_raw	4
-src/core/cycle/dream-provenance.ts	execute_raw	3
-src/core/cycle/dream-write-deferral.ts	execute_raw	4
 src/core/cycle/drift.ts	execute_raw	2
-src/core/cycle/edge-contradictions.ts	execute_raw	13
-src/core/cycle/edge-contradictions.ts	sql_template	1
 src/core/cycle/extract-atoms-generation.ts	execute_raw	4
 src/core/cycle/extract-atoms-input.ts	execute_raw	6
 src/core/cycle/extract-atoms-page-state.ts	execute_raw	4
-src/core/cycle/extract-atoms-stamp.ts	execute_raw	1
-src/core/cycle/extract-atoms.ts	execute_raw	6
-src/core/cycle/extract-facts.ts	execute_raw	11
+src/core/cycle/extract-atoms.ts	execute_raw	5
 src/core/cycle/extract-takes.ts	execute_raw	3
-src/core/cycle/filing-rules.ts	execute_raw	1
-src/core/cycle/grade-takes.ts	execute_raw	4
 src/core/cycle/inline-drain.ts	execute_raw	3
 src/core/cycle/pattern-claim-sources.ts	execute_raw	1
 src/core/cycle/patterns-plan.ts	execute_raw	1
 src/core/cycle/patterns.ts	execute_raw	7
-src/core/cycle/phantom-redirect-managed.ts	execute_raw	6
-src/core/cycle/phantom-redirect.ts	execute_raw	8
-src/core/cycle/phases/consolidate.ts	execute_raw	9
-src/core/cycle/propose-takes-failures.ts	execute_raw	5
-src/core/cycle/propose-takes.ts	execute_raw	5
-src/core/cycle/source-window.ts	execute_raw	4
-src/core/cycle/synthesize-completion.ts	execute_raw	2
-src/core/cycle/synthesize-concepts.ts	execute_raw	1
-src/core/cycle/synthesize-generations.ts	execute_raw	1
-src/core/cycle/synthesize-postprocess.ts	execute_raw	2
-src/core/cycle/synthesize-verify-epochs.ts	execute_raw	3
-src/core/cycle/synthesize.ts	execute_raw	5
+src/core/cycle/synthesize-source-routing.ts	execute_raw	1	master #10392 (GST-3977): the dream rotation reads the live non-storage source ids; no typed engine member yet (sync 20)
 src/core/cycle/transcript-discovery.ts	execute_raw	2
 src/core/cycle/unindexed-files.ts	execute_raw	1
 src/core/db-lock.ts	execute_raw	2
 src/core/db.ts	driver_call	2
 src/core/db.ts	sql_template	4
 src/core/derived-links.ts	execute_raw	10
-src/core/destructive-guard.ts	execute_raw	17
 src/core/eligibility/explain.ts	execute_raw	3
-src/core/eligibility/scan.ts	execute_raw	4
-src/core/eligibility/stamp.ts	execute_raw	1
 src/core/embed-backfill-stall.ts	execute_raw	1
 src/core/embed-backfill-submit.ts	execute_raw	2
-src/core/embed-consent.ts	execute_raw	2
 src/core/embed-facts.ts	execute_raw	8
 src/core/embed-stale-images.ts	execute_raw	2
-src/core/embed-stale.ts	execute_raw	3
 src/core/embed-takes.ts	execute_raw	1
 src/core/embedding-ann-build.ts	execute_raw	8
 src/core/embedding-dim-check.ts	execute_raw	2
-src/core/embedding-invalidation.ts	execute_raw	8
+src/core/embedding-invalidation.ts	execute_raw	6
 src/core/embedding-migration-budget.ts	execute_raw	2
 src/core/embedding-migration-retention.ts	execute_raw	6
 src/core/embedding-migration-worst-case.ts	execute_raw	3
-src/core/embedding-migration.ts	execute_raw	34
-src/core/embedding-readiness.ts	execute_raw	5
+src/core/embedding-migration.ts	execute_raw	29
 src/core/embedding-restamp.ts	execute_raw	2
 src/core/embedding-state.ts	execute_raw	1
 src/core/enrichment-service.ts	execute_raw	2
 src/core/entities/near-name.ts	execute_raw	1
 src/core/entities/resolve-on-save.ts	execute_raw	1	GBRA-574 F #9674 (opened before this ratchet): the live-page check before keeping an unbacked name tag
-src/core/entities/resolve.ts	execute_raw	9
-src/core/eval-contradictions/cost-prompt.ts	execute_raw	1
-src/core/eval-contradictions/scoped-read.ts	execute_raw	2
 src/core/export-publish.ts	driver_call	3
+src/core/export-snapshot.ts	execute_raw	1	aliases a withdrawal or purge stored under a fence claim's pre-v353 Postgres fingerprint (ember ruling 3); runs only on an engine with raw_sql, since the Rust store never held such a fingerprint
 src/core/export-stage.ts	driver_call	3
 src/core/extract-ner.ts	execute_raw	1
 src/core/extract-ner.ts	sql_template	1
 src/core/extract-takes-from-pages.ts	execute_raw	1
 src/core/extract-timeline-from-meetings.ts	execute_raw	5
-src/core/extract/receipt-writer.ts	execute_raw	2
-src/core/extract/rollup-writer.ts	execute_raw	3
 src/core/extraction-lag.ts	execute_raw	1
-src/core/extraction-watermark.ts	execute_raw	5
-src/core/facts/absorb-log.ts	execute_raw	1
-src/core/facts/backstop.ts	execute_raw	1
-src/core/facts/capture-dedup.ts	execute_raw	4
-src/core/facts/claim-conflicts.ts	execute_raw	3
-src/core/facts/contested-claims.ts	execute_raw	1
-src/core/facts/conversation-entity-hints.ts	execute_raw	1
-src/core/facts/conversation-incremental.ts	execute_raw	1
-src/core/facts/conversation-memo.ts	execute_raw	2
-src/core/facts/conversation-publication.ts	execute_raw	24
-src/core/facts/conversation-relink-carry.ts	execute_raw	1
-src/core/facts/conversation-relink.ts	execute_raw	2	GBRA-574 F #9674 (opened before this ratchet): +1 the relink --unbacked read of name-tag rows
-src/core/facts/derivation-inputs.ts	execute_raw	6	#9653: releaseHiddenMoment, a delete of an already-hidden page ends the automatic purge hold
-src/core/facts/embedding-identity.ts	execute_raw	1
-src/core/facts/facts-home.ts	execute_raw	4
-src/core/facts/fence-fact-append.ts	execute_raw	1
-src/core/facts/fence-write.ts	execute_raw	2
-src/core/facts/file-body-guard.ts	execute_raw	2
-src/core/facts/forget.ts	execute_raw	4
-src/core/facts/fts-index.ts	execute_raw	3
-src/core/facts/gone-page-facts.ts	execute_raw	4
-src/core/facts/held-fact-move.ts	execute_raw	12
-src/core/facts/ontology-rekey.ts	execute_raw	4
-src/core/facts/proposal-review.ts	execute_raw	3
-src/core/facts/proposal-supersede.ts	execute_raw	4
-src/core/facts/purge-overlay.ts	execute_raw	2
-src/core/facts/purge-reasons.ts	execute_raw	8
-src/core/facts/purge-verify.ts	execute_raw	20
-src/core/facts/purge.ts	execute_raw	36	GBRA-574 F #9674 (opened before this ratchet): +1 the purge plan reads whether a fact sits on an unbacked name tag
-src/core/facts/question-recall.ts	execute_raw	1
-src/core/facts/relink-publish.ts	execute_raw	4
-src/core/facts/relink.ts	execute_raw	1
-src/core/facts/retire.ts	execute_raw	1
-src/core/facts/single-prepare.ts	execute_raw	3
-src/core/facts/slot-tagging.ts	execute_raw	1	GBRA-574 #9668: the live person-page read that picks slot-tagging candidates, written before this ratchet landed; moves behind a typed facts engine method with its area
-src/core/facts/subject-infer.ts	execute_raw	1
-src/core/facts/unfenced-facts.ts	execute_raw	3
-src/core/facts/write-single.ts	execute_raw	3
-src/core/facts/writeback-audience.ts	execute_raw	1	reads access_tokens.member_id and oauth_clients.member_id to count people, not credentials, for the brain audience (GST-3180); no typed engine method exists yet
-src/core/facts/writeback-settings.ts	execute_raw	1
-src/core/feedback/store.ts	execute_raw	19
-src/core/fence-repair/attempts.ts	execute_raw	3
-src/core/fence-repair/census-store.ts	execute_raw	9
-src/core/fence-repair/census.ts	execute_raw	6
-src/core/fence-repair/hold-fix.ts	execute_raw	2
-src/core/fence-repair/repair-io.ts	execute_raw	1
-src/core/fence-repair/uncommitted.ts	execute_raw	3
-src/core/forecast-journal.ts	execute_raw	3
+src/core/facts/derivation-inputs.ts	execute_raw	1	#9653: releaseHiddenMoment, a delete of an already-hidden page ends the automatic purge hold
+src/core/facts/held-fact-move.ts	execute_raw	1
+src/core/facts/purge-overlay.ts	execute_raw	1
+src/core/facts/purge.ts	execute_raw	1	GBRA-574 F #9674 (opened before this ratchet): +1 the purge plan reads whether a fact sits on an unbacked name tag
+src/core/feedback/store.ts	execute_raw	7
 src/core/function-search-path.ts	execute_raw	3
-src/core/generations/adapters/atoms.ts	execute_raw	3
-src/core/generations/adapters/chronicle-events.ts	execute_raw	13
-src/core/generations/adapters/extracted-facts.ts	execute_raw	4
-src/core/generations/adapters/fact-rows.ts	execute_raw	6
-src/core/generations/adapters/page.ts	execute_raw	2
-src/core/generations/adapters/single-page.ts	execute_raw	1
-src/core/generations/adapters/synthesis.ts	execute_raw	1
-src/core/generations/adapters/take-rows.ts	execute_raw	1
-src/core/generations/fence-evidence.ts	execute_raw	4
-src/core/generations/fence-restore.ts	execute_raw	3
-src/core/generations/fence.ts	execute_raw	4
-src/core/generations/ledger-scrub.ts	execute_raw	7
-src/core/generations/managed.ts	execute_raw	7
-src/core/generations/publish.ts	execute_raw	19
-src/core/generations/repair.ts	execute_raw	6
-src/core/ghost-pages.ts	execute_raw	3
-src/core/git/redact-finish.ts	execute_raw	8	GST-2988 PR 2 publish redaction finish: reads sources.local_path and persistence_host_bindings to find the checkout that owns a pushed root, reads and compare-and-sets sources.last_commit to the rebuilt sha, and lists persistence_effects worktree ids to remap parked effects; branched before the #9641 ratchet; no typed engine method for these source and effect reads exists yet
+src/core/ghost-pages.ts	execute_raw	1
+src/core/git/redact-finish.ts	execute_raw	7	GST-2988 PR 2 publish redaction finish: reads sources.local_path and persistence_host_bindings to find the checkout that owns a pushed root, reads and compare-and-sets sources.last_commit to the rebuilt sha, and lists persistence_effects worktree ids to remap parked effects; branched before the #9641 ratchet; no typed engine method for these source and effect reads exists yet
 src/core/git/untrack-admission.ts	execute_raw	3	came from master #9627 (held private facts, database-only untrack), which landed after this ratchet was cut
-src/core/github-source.ts	execute_raw	3
+src/core/github-source.ts	execute_raw	2
 src/core/google/attachment-backfill.ts	execute_raw	2
-src/core/google/counterparty.ts	execute_raw	1
 src/core/google/file-modes.ts	execute_raw	1
-src/core/google/google-source.ts	execute_raw	4
+src/core/google/google-source.ts	execute_raw	4	+1 GST-3452: re-tier pages whose participants joined the private-senders list (one read of connector email pages, until the Google connector moves behind engine methods)
+src/core/google/ingest-tiers.ts	execute_raw	1	GST-3452: which participants have a person page (one alias read per thread, as counterparty.ts does, until the Google connector moves behind engine methods)
 src/core/google/loop-catchup.ts	execute_raw	8
 src/core/google/loops-exclusion.ts	execute_raw	4
 src/core/google/loops-extract.ts	execute_raw	1
 src/core/google/loops-reciprocity.ts	execute_raw	1
 src/core/google/people-calendar-sweep.ts	execute_raw	3
+src/core/google/provenance.ts	execute_raw	1	GST-3849: which pages came from Google (one read of pages keyed by Google source ids, for purge and eval suppression, until the Google connector moves behind engine methods)
 src/core/google/sweep-shared.ts	execute_raw	2
-src/core/grants/legacy-token.ts	execute_raw	10	+1: rescope stamps access_tokens.read_shared_revision at the new grant_revision or clears it (GST-2898 read-shared switch, #9590, open before this ratchet landed); no typed engine method exists yet
+src/core/grants/legacy-token.ts	execute_raw	2
 src/core/grants/legacy-token.ts	sql_template	3
-src/core/grants/lifecycle.ts	sql_template	8	+1: invalidate-tokens re-stamps oauth_clients.read_shared_revision at the new grant_revision so the switch survives (GST-2898 read-shared switch, #9590, open before this ratchet landed); no typed engine method exists yet
 src/core/grants/migration.ts	execute_raw	1
 src/core/grants/migration.ts	sql_template	5
 src/core/grants/model.ts	execute_raw	1
-src/core/grants/read-shared.ts	sql_template	2	reads sources (the federated, non-guest set a switched key reads) (GST-2898 read-shared switch, #9590, open before this ratchet landed); +1: reads the archived source ids a token's grant drops (GST-3163); no typed engine method exists yet
 src/core/grants/rescope.ts	sql_template	7
-src/core/grants/service.ts	sql_template	12	+1: stampReadShared writes oauth_clients.read_shared_revision beside a client grant write (GST-2898 read-shared switch, #9590, open before this ratchet landed); no typed engine method exists yet
-src/core/grants/shared-exposure.ts	execute_raw	3	+2: reads every live access_tokens and oauth_clients row to list the credentials that read a source through the switch (GST-2898 read-shared switch, #9590, open before this ratchet landed); no typed engine method exists yet
+src/core/grants/service.ts	sql_template	11	+1: stampReadShared writes oauth_clients.read_shared_revision beside a client grant write (GST-2898 read-shared switch, #9590, open before this ratchet landed); no typed engine method exists yet
 src/core/guard-ledger-checks.ts	execute_raw	3
-src/core/guests/admission.ts	execute_raw	3
-src/core/guests/marker.ts	execute_raw	1
-src/core/guests/owner-credentials.ts	execute_raw	1
-src/core/guests/promote.ts	execute_raw	4
-src/core/guests/sources.ts	execute_raw	7	came from master #9625 (shared company brains: owner setup, member keys), which landed after this ratchet was cut
+src/core/guests/admission.ts	execute_raw	1
+src/core/guests/promote.ts	execute_raw	3
+src/core/guests/sources.ts	execute_raw	2	came from master #9625 (shared company brains: owner setup, member keys), which landed after this ratchet was cut
 src/core/guests/stamp-readable.ts	execute_raw	1
-src/core/harness/client-setup.ts	sql_template	1
 src/core/heal-audit.ts	execute_raw	3
-src/core/held-embedding.ts	execute_raw	2
-src/core/identity/owner.ts	execute_raw	4	GST-3216 PR 1: the owner identity resolver reads members, member links, member source bindings and Google source accounts across the access tables in one derived pass with no cache; it moves behind a typed access read when the access tables get engine methods
-src/core/imessage/imessage-source.ts	execute_raw	3	#9634, pre-ratchet: reads the source row (incarnation, local_path, config), checks a page slug exists, and stamps sources.last_sync_at/newest_content_at; no typed engine method exists yet
-src/core/import-chunk-reuse.ts	execute_raw	1
-src/core/import-file.ts	execute_raw	1
+src/core/identity/speaker-owner.ts	execute_raw	2	GST-3216 PR 2: the speaker-owner trust read joins a page's live revision to its write request, source kind and member bindings in one statement, and the connector stamp reads a source's bound members; both move behind typed reads when the access and journal tables get engine methods
+src/core/imessage/imessage-source.ts	execute_raw	2	#9634, pre-ratchet: reads the source row (incarnation, local_path, config), checks a page slug exists, and stamps sources.last_sync_at/newest_content_at; no typed engine method exists yet
 src/core/import-identity.ts	execute_raw	1
-src/core/ingestion/applied-captures.ts	execute_raw	5
+src/core/ingestion/applied-captures.ts	execute_raw	4
+src/core/learning/decide.ts	execute_raw	3	nightly learning PR 2: the learning_items ledger (v334) has no typed engine methods yet; keep and undo read item states, mark decided items and list the page versions after an enrich write
+src/core/learning/derive.ts	execute_raw	6	nightly learning PR 1: the learning_items ledger (v334) is a new table with no typed engine methods yet; the derive pass records ledger pointers with INSERT ... SELECT per kind, prunes pointers whose target is gone and reads the watermark window; PR 2 expires unseen pointers after 7 days and closes answered conflict questions
+src/core/learning/duplicates.ts	execute_raw	3	nightly learning PR 3: the learning_items ledger (v334) has no typed engine methods yet; the duplicate step records the top person groups' anchor pages (and counts them on a dry run); PR 2 closes duplicate questions the preview no longer offers
+src/core/learning/kinds.ts	execute_raw	1	nightly learning PR 1: the learning_items ledger (v334) is a new table with no typed engine methods yet; learningTablePresent probes to_regclass so a brain behind the migration skips cleanly
+src/core/learning/push.ts	execute_raw	1	nightly learning PR 2: the learning_items ledger (v334) has no typed engine methods yet; the session-start line counts unseen pending items
+src/core/learning/read.ts	execute_raw	4	nightly learning PR 1: the learning_items ledger (v334) is a new table with no typed engine methods yet; the learned read joins each pointer to its live target under the caller filters and stamps shown_at; PR 3 adds one page read-policy probe over duplicate members
+src/core/learning/stats.ts	execute_raw	1	nightly learning PR 1: the learning_items ledger (v334) is a new table with no typed engine methods yet; learned --stats reads ledger rows by night
+src/core/ledger/store.ts	execute_raw	1	master #10371 (GST-3824): the agent budget ledger's row read; no typed engine member yet (sync 20)
 src/core/line-grammar-config.ts	execute_raw	2
-src/core/link-extraction.ts	execute_raw	1
-src/core/link-reconciliation.ts	execute_raw	4
-src/core/link-single-value.ts	execute_raw	2
+src/core/link-reconciliation.ts	execute_raw	1
+src/core/link-single-value.ts	execute_raw	1
 src/core/link-source-check-repair.ts	execute_raw	3
-src/core/links-fence-projection.ts	execute_raw	8
-src/core/loops/loops-store.ts	execute_raw	11
+src/core/loops/loops-store.ts	execute_raw	2
 src/core/maintenance/run.ts	execute_raw	1
-src/core/maintenance/status.ts	execute_raw	1
-src/core/meetings/meetings-source.ts	execute_raw	3
-src/core/mentions/coverage.ts	execute_raw	1
-src/core/mentions/newer-mentions.ts	execute_raw	1
-src/core/mentions/pass.ts	execute_raw	33
-src/core/mentions/siblings.ts	execute_raw	1
 src/core/migrate.ts	execute_raw	2
 src/core/migration-preludes.ts	execute_raw	12
 src/core/minions/authorize-legacy.ts	execute_raw	7
-src/core/minions/db-probe.ts	execute_raw	2
 src/core/minions/handlers/autopilot-cycle.ts	execute_raw	1
 src/core/minions/handlers/contextual-reindex-per-chunk.ts	execute_raw	1
-src/core/minions/handlers/embed-backfill.ts	execute_raw	2
+src/core/minions/handlers/embed-backfill.ts	execute_raw	1
 src/core/minions/handlers/facts-absorb.ts	execute_raw	1
 src/core/minions/handlers/ingest-capture.ts	execute_raw	3
-src/core/minions/handlers/subagent-oneshot.ts	execute_raw	2
-src/core/minions/handlers/sync-job-drain.ts	execute_raw	1
-src/core/minions/handlers/sync.ts	execute_raw	3
+src/core/minions/handlers/subagent-oneshot.ts	execute_raw	1	the bounded page sample (LIMIT 5); unreachable on a Rust brain, whose rate-lease transaction is refused first (test/minions/refusal-swallow-oneshot.test.ts)
+src/core/minions/handlers/sync.ts	execute_raw	1
 src/core/minions/idempotency-coalesce.ts	execute_raw	1
 src/core/minions/job-context.ts	execute_raw	2
 src/core/minions/legacy-cancel.ts	execute_raw	4
 src/core/minions/legacy-selection.ts	execute_raw	2
 src/core/minions/rate-leases.ts	execute_raw	6
 src/core/minions/spend-authorization.ts	execute_raw	3
-src/core/minions/submission-authority.ts	execute_raw	2
 src/core/minions/sync-queue-wake.ts	execute_raw	2
 src/core/minions/terminal-events.ts	execute_raw	1
-src/core/minions/terminal-hook.ts	execute_raw	1
 src/core/minions/worker-shutdown.ts	execute_raw	1
-src/core/minions/worker.ts	execute_raw	7
+src/core/minions/worker.ts	execute_raw	2
 src/core/multi-source-drift.ts	execute_raw	1
-src/core/notifier/nudge.ts	execute_raw	1
-src/core/notifier/resident.ts	execute_raw	3
-src/core/notifier/status.ts	execute_raw	2
-src/core/notifier/store.ts	execute_raw	15
 src/core/oauth-grants.ts	sql_template	16
 src/core/oauth-provider.ts	sql_template	22
-src/core/onboard/checks.ts	execute_raw	5
-src/core/onboard/checks.ts	sql_template	2
-src/core/onboard/impact-capture.ts	execute_raw	3
+src/core/onboard/first-session.ts	execute_raw	3	first-session suggestion: the onboarding.first_session record compare-and-swap in config (insert and update) and the pointer read of recent world-visible pages under remoteReadFloorSql; converts with setup-history.ts
 src/core/onboard/mcp-onboarding.ts	execute_raw	1
-src/core/op-checkpoint.ts	execute_raw	1
-src/core/ops/admin.ts	execute_raw	2
-src/core/ops/chronicle.ts	execute_raw	1
-src/core/ops/context.ts	execute_raw	1
-src/core/ops/facts.ts	execute_raw	1
-src/core/ops/files.ts	execute_raw	13
-src/core/ops/get-page-body.ts	execute_raw	2
-src/core/ops/jobs.ts	execute_raw	4
+src/core/onboard/propose.ts	execute_raw	7	master #10376 (GST-3955): job proposals read pages, links, open loops and mail from the brain; no typed engine members yet (sync 20)
+src/core/onboard/setup-history.ts	execute_raw	7	setup history import: install-receipt compare-and-swap in config and the card's archive-source counts; converts with src/core/transcripts/archive.ts
+src/core/ops/jobs.ts	execute_raw	3
 src/core/ops/known-as-of.ts	execute_raw	3
-src/core/ops/links.ts	execute_raw	1
-src/core/ops/loops.ts	execute_raw	3
-src/core/ops/page-upload.ts	execute_raw	3
-src/core/ops/persistence.ts	execute_raw	3
-src/core/ops/put-page-revision-source.ts	execute_raw	1
+src/core/ops/page-upload.ts	execute_raw	2
 src/core/ops/qm-memory.ts	execute_raw	2
-src/core/ops/search-type-filter.ts	execute_raw	1
-src/core/ops/search.ts	execute_raw	1
 src/core/ops/storage-manifest.ts	execute_raw	1
-src/core/ops/tags.ts	execute_raw	1
 src/core/ops/trust.ts	execute_raw	1
-src/core/ops/whois.ts	execute_raw	1
-src/core/output/writer.ts	execute_raw	1
 src/core/oversized-backfill.ts	execute_raw	6
-src/core/page-body/body-tiling.ts	execute_raw	1
-src/core/page-body/ingest.ts	execute_raw	1
-src/core/page-body/projection.ts	execute_raw	3
-src/core/page-body/rechunk.ts	execute_raw	7
-src/core/page-body/segment-derive.ts	execute_raw	30
+src/core/owned-folder/destination.ts	execute_raw	1	GST-3022 owned folders, no typed engine method yet: reads the default source's local_path and config
+src/core/owned-folder/status.ts	execute_raw	1	GST-3022 owned folders, no typed engine method yet: reads the owned-folder sources' rows for pages_in
+src/core/page-body/segment-derive.ts	execute_raw	25
 src/core/page-body/segment-facts.ts	execute_raw	1
-src/core/page-body/segment-ledger.ts	execute_raw	1
-src/core/page-body/segment-rewrite.ts	execute_raw	8
-src/core/page-body/segmented-embedding.ts	execute_raw	7
 src/core/page-body/splice.ts	execute_raw	1
-src/core/page-embedding-budget.ts	execute_raw	6
-src/core/page-embedding-lease.ts	execute_raw	1
+src/core/page-embedding-budget.ts	execute_raw	4
 src/core/page-searchability.ts	execute_raw	3
 src/core/page-spend.ts	execute_raw	4
-src/core/page-state/contextual-proof.ts	execute_raw	3
-src/core/page-state/credential-reseal.ts	execute_raw	6
+src/core/page-state/credential-reseal.ts	execute_raw	4
 src/core/page-state/guards.ts	execute_raw	11
-src/core/page-state/image-seal.ts	execute_raw	5
 src/core/page-state/materialize.ts	execute_raw	5
 src/core/page-state/projection-status.ts	execute_raw	1
-src/core/page-state/projections.ts	execute_raw	33
 src/core/page-state/rebuild-estimate.ts	execute_raw	1
-src/core/page-state/rename-alias.ts	execute_raw	10
-src/core/page-state/revision-backfill-schema.ts	execute_raw	12
+src/core/page-state/rename-alias.ts	execute_raw	3
+src/core/page-state/revision-backfill-schema.ts	execute_raw	10
 src/core/page-state/tags.ts	execute_raw	3
-src/core/page-state/versions.ts	execute_raw	6
-src/core/page-window/bounded-lead.ts	execute_raw	2
-src/core/page-window/segmented.ts	execute_raw	5
+src/core/page-state/versions.ts	execute_raw	5
+src/core/page-window/bounded-lead.ts	execute_raw	1
+src/core/page-window/segmented.ts	execute_raw	2
 src/core/pages-upsert-arbiter.ts	execute_raw	6
-src/core/persistence/activation.ts	execute_raw	9
-src/core/persistence/admin-intent.ts	execute_raw	3
-src/core/persistence/admin-lock.ts	execute_raw	7
-src/core/persistence/administration.ts	execute_raw	8
-src/core/persistence/applied-watermark.ts	execute_raw	4
-src/core/persistence/atom-maintenance.ts	execute_raw	21
-src/core/persistence/authority.ts	execute_raw	4
-src/core/persistence/blocking-effects.ts	execute_raw	2
+src/core/persistence/admin-lock.ts	execute_raw	1
+src/core/persistence/administration.ts	execute_raw	5
+src/core/persistence/atom-maintenance.ts	execute_raw	16
+src/core/persistence/authority.ts	execute_raw	3
 src/core/persistence/bounded-reads.ts	execute_raw	10
-src/core/persistence/canonical-projections.ts	execute_raw	10
 src/core/persistence/capacity-view.ts	execute_raw	1
-src/core/persistence/change-reason.ts	execute_raw	2
-src/core/persistence/checkpoint-validation.ts	execute_raw	5
+src/core/persistence/change-reason.ts	execute_raw	1
 src/core/persistence/compaction-pass.ts	execute_raw	1
-src/core/persistence/concept-rebuild.ts	execute_raw	11	#9653: the held-concept rebuild's hold, member and stated-row checks run in its purge transaction, next to the engine purge it calls
 src/core/persistence/config-snapshot.ts	execute_raw	2
-src/core/persistence/connector-account-mismatch.ts	execute_raw	2
-src/core/persistence/connector-checkpoint-migration.ts	execute_raw	13
+src/core/persistence/connector-account-mismatch.ts	execute_raw	1
+src/core/persistence/connector-checkpoint-migration.ts	execute_raw	8
+src/core/persistence/connector-fact-retirement.ts	execute_raw	3	GST-3256, modeled on loop-fact-retirement.ts: reads (FOR UPDATE under publication) the facts rows a connector wrote, expires them, and reads the source row at admission; no typed engine method exists yet
 src/core/persistence/connector-google-receipts.ts	execute_raw	1
 src/core/persistence/connector-path.ts	execute_raw	3
 src/core/persistence/connector-reset.ts	execute_raw	1
-src/core/persistence/connector-state.ts	execute_raw	7
-src/core/persistence/connector-sync.ts	execute_raw	26
-src/core/persistence/consumer-diagnostics.ts	execute_raw	3
+src/core/persistence/connector-state.ts	execute_raw	5
+src/core/persistence/connector-sync.ts	execute_raw	25	#9990: callReads forwards a connector call's reads through one memoized call site; it adds no SQL
 src/core/persistence/consumer-lane.ts	execute_raw	2
 src/core/persistence/consumer.ts	execute_raw	3
 src/core/persistence/context.ts	execute_raw	1
-src/core/persistence/coordination-lock.ts	execute_raw	2
-src/core/persistence/coordinator.ts	execute_raw	9
 src/core/persistence/core-guard.ts	execute_raw	2
 src/core/persistence/database-write.ts	execute_raw	2
-src/core/persistence/deactivation.ts	execute_raw	19
-src/core/persistence/derived-origin-hold.ts	execute_raw	10
-src/core/persistence/derived-retirement-hold.ts	execute_raw	1
-src/core/persistence/detached-pages.ts	execute_raw	4
-src/core/persistence/diagnostics.ts	execute_raw	7
-src/core/persistence/drift-conflicts.ts	execute_raw	9
-src/core/persistence/effect-catchup.ts	execute_raw	1
-src/core/persistence/effect-facts.ts	execute_raw	7
-src/core/persistence/effect-journal.ts	execute_raw	9
-src/core/persistence/effect-links.ts	execute_raw	8
+src/core/persistence/detached-pages.ts	execute_raw	3
+src/core/persistence/diagnostics.ts	execute_raw	1
+src/core/persistence/drift-conflicts.ts	execute_raw	4
+src/core/persistence/effect-journal.ts	execute_raw	2
 src/core/persistence/effect-recovery.ts	execute_raw	16
-src/core/persistence/effect-retry.ts	execute_raw	14
+src/core/persistence/effect-retry.ts	execute_raw	10
 src/core/persistence/effect-settle.ts	execute_raw	7
 src/core/persistence/effect-targets.ts	execute_raw	7
-src/core/persistence/effects.ts	execute_raw	15
-src/core/persistence/embedding-settlement.ts	execute_raw	7
+src/core/persistence/effects.ts	execute_raw	4
+src/core/persistence/embedding-settlement.ts	execute_raw	6
 src/core/persistence/engine-graduation.ts	execute_raw	18
 src/core/persistence/facts-maintenance.ts	execute_raw	4
 src/core/persistence/facts-prepare.ts	execute_raw	5
 src/core/persistence/file-claims.ts	execute_raw	2
-src/core/persistence/file-repair.ts	execute_raw	2
 src/core/persistence/filesystem-guard.ts	execute_raw	1
 src/core/persistence/forget-prepare.ts	execute_raw	1	GBRA-574 F #9674 (opened before this ratchet): +1 forget reads whether the claim sits on an unbacked name tag
 src/core/persistence/git-conversion.ts	execute_raw	16
 src/core/persistence/git-declared.ts	execute_raw	7
 src/core/persistence/git-door.ts	execute_raw	1
-src/core/persistence/git-durability-administration.ts	execute_raw	4
-src/core/persistence/git-durability-policy.ts	execute_raw	2
+src/core/persistence/git-durability-administration.ts	execute_raw	2
 src/core/persistence/git-gap.ts	execute_raw	5
-src/core/persistence/git-push-holds.ts	execute_raw	1
 src/core/persistence/graduation-copy.ts	execute_raw	36
-src/core/persistence/graduation-digest.ts	execute_raw	4
+src/core/persistence/graduation-digest.ts	execute_raw	5	sync 13b: master (R2) splits the digest read into readKeysetRows, which the shadow seed shares; the trunk side counted 4
 src/core/persistence/graduation-drain.ts	execute_raw	11
-src/core/persistence/graduation-inventory.ts	execute_raw	3
 src/core/persistence/graduation-losses.ts	execute_raw	5
 src/core/persistence/graduation-schema.ts	execute_raw	8
 src/core/persistence/graduation-target.ts	driver_call	2
 src/core/persistence/graduation-target.ts	execute_raw	5
 src/core/persistence/graduation-verify.ts	execute_raw	15
 src/core/persistence/group-publish.ts	execute_raw	11
-src/core/persistence/head-blocker.ts	execute_raw	2
-src/core/persistence/held-reads.ts	execute_raw	1
 src/core/persistence/hosted-repo.ts	execute_raw	4
-src/core/persistence/identity.ts	execute_raw	4
+src/core/persistence/identity.ts	execute_raw	3
 src/core/persistence/import-deferral.ts	execute_raw	1
 src/core/persistence/import-mutations.ts	execute_raw	3
 src/core/persistence/import-prepare.ts	execute_raw	1
 src/core/persistence/import-reads.ts	execute_raw	7
-src/core/persistence/intent-redaction.ts	execute_raw	10
-src/core/persistence/journal.ts	execute_raw	41
+src/core/persistence/journal.ts	execute_raw	13
 src/core/persistence/landing-gaps.ts	execute_raw	3
-src/core/persistence/legacy-locks.ts	execute_raw	1
 src/core/persistence/legacy-sync-failures.ts	execute_raw	1
 src/core/persistence/limits.ts	execute_raw	1
 src/core/persistence/links-extraction-holds.ts	execute_raw	2
-src/core/persistence/links-preparation.ts	execute_raw	3
 src/core/persistence/local-edit-adoption.ts	execute_raw	6
-src/core/persistence/loop-fact-retirement.ts	execute_raw	5
-src/core/persistence/maintenance.ts	execute_raw	3
-src/core/persistence/managed-mode.ts	execute_raw	3
+src/core/persistence/managed-mode.ts	execute_raw	4	the shared-skills columns writer status reports moved here from administration.ts (its row fell by 3), so a Rust brain answers them from its brain row; SQL engines keep the one statement (raised 3 -> 4 by unbound-claim-rust 58d310f948; its row was taken from the trunk in the batch 10 merge and is restored here)
 src/core/persistence/managed-sources.ts	execute_raw	1
-src/core/persistence/managed-sync-orphans.ts	execute_raw	14
-src/core/persistence/manual-links.ts	execute_raw	8
-src/core/persistence/memory-prepare.ts	execute_raw	2
+src/core/persistence/memory-prepare.ts	execute_raw	1
 src/core/persistence/memory-proposals.ts	execute_raw	9
-src/core/persistence/mirror-read-only.ts	execute_raw	3
-src/core/persistence/moved-pages.ts	execute_raw	7
+src/core/persistence/mirror-read-only.ts	execute_raw	2
 src/core/persistence/noop-kernel.ts	execute_raw	2
-src/core/persistence/onboarding.ts	execute_raw	1
-src/core/persistence/origin-guard.ts	execute_raw	2
-src/core/persistence/origin-index.ts	execute_raw	5
-src/core/persistence/origin-twins.ts	execute_raw	2
-src/core/persistence/orphan-bindings.ts	execute_raw	2
-src/core/persistence/overwritten-edits.ts	execute_raw	3
+src/core/persistence/origin-index.ts	execute_raw	2
 src/core/persistence/owner-activity.ts	execute_raw	1
-src/core/persistence/ownership.ts	execute_raw	24
 src/core/persistence/page-advisories.ts	execute_raw	1
 src/core/persistence/page-append.ts	execute_raw	2
-src/core/persistence/page-batch.ts	execute_raw	2
-src/core/persistence/page-mutations.ts	execute_raw	5
-src/core/persistence/page-prepare.ts	execute_raw	10
-src/core/persistence/page-purge.ts	execute_raw	30
-src/core/persistence/page-upload.ts	execute_raw	16
-src/core/persistence/page-visibility.ts	execute_raw	10
-src/core/persistence/parked-groups.ts	execute_raw	1
+src/core/persistence/page-mutations.ts	execute_raw	2
+src/core/persistence/page-prepare.ts	execute_raw	8
+src/core/persistence/page-upload.ts	execute_raw	15
+src/core/persistence/page-visibility.ts	execute_raw	1
 src/core/persistence/pending-import.ts	execute_raw	1
-src/core/persistence/physical-root.ts	execute_raw	15
-src/core/persistence/pre-activation-release.ts	execute_raw	7
+src/core/persistence/physical-root.ts	execute_raw	8
+src/core/persistence/plain-directory-drift.ts	execute_raw	2	#8079: reads and records whether a page revision was written with its file in step (journal receipt join plus agreement checkpoint); persistence protocol state, no typed checkpoint methods yet.
 src/core/persistence/preadmit-cache.ts	execute_raw	3
 src/core/persistence/preparation-budget.ts	execute_raw	1
-src/core/persistence/prepared-maintenance.ts	execute_raw	13
-src/core/persistence/preview-approval.ts	execute_raw	3
+src/core/persistence/prepared-maintenance.ts	execute_raw	13	batch 12 sync 14: master's maintenance reads (GST-3637, #10182) add raw sites the trunk typed elsewhere; 14 on master, 12 on trunk, 13 after the merge
 src/core/persistence/protocol.ts	execute_raw	1
 src/core/persistence/publication-deadline.ts	execute_raw	1
-src/core/persistence/purge-deleted.ts	execute_raw	8	#9653: the automatic purge's read of concepts hidden by an input purge, beside the sync-tombstone hold it mirrors
-src/core/persistence/purge-name-stores.ts	execute_raw	1
-src/core/persistence/purge-parks.ts	execute_raw	6
-src/core/persistence/purge-slug-stores.ts	execute_raw	6	GST-2988 PR 3 and GST-3074: on an archive restore older than the secret store, checks that secret_store_occurrence exists before the purge cascade, as it does for the slug stores; reads a page's secret occurrences by page id before the page row is deleted (an occurrence under a slug from before a rename)
+src/core/persistence/purge-deleted.ts	execute_raw	5	#9653: the automatic purge's read of concepts hidden by an input purge, beside the sync-tombstone hold it mirrors
 src/core/persistence/purged-intent.ts	execute_raw	2
 src/core/persistence/put-page-screen.ts	execute_raw	1
-src/core/persistence/rebuildable-cache.ts	execute_raw	2
-src/core/persistence/reconcile-audit.ts	execute_raw	2
+src/core/persistence/rebuildable-cache.ts	execute_raw	1
+src/core/persistence/reconcile-audit.ts	execute_raw	1
 src/core/persistence/reconcile-backup.ts	execute_raw	4
 src/core/persistence/reconcile-prepare.ts	execute_raw	1
 src/core/persistence/reconcile-state.ts	execute_raw	5
 src/core/persistence/reconcile.ts	execute_raw	3
 src/core/persistence/recovery-resolve.ts	execute_raw	10
 src/core/persistence/refresh-barrier.ts	execute_raw	4
-src/core/persistence/refresh-retry-hint.ts	execute_raw	1
-src/core/persistence/refusal-breaker.ts	execute_raw	2
-src/core/persistence/repair-busy.ts	execute_raw	4
+src/core/persistence/refusal-breaker.ts	execute_raw	1
 src/core/persistence/resolve-paths.ts	execute_raw	5
 src/core/persistence/rows-behind.ts	execute_raw	4
-src/core/persistence/searchable.ts	execute_raw	2
-src/core/persistence/segmented-apply.ts	execute_raw	9
-src/core/persistence/semantic-pages.ts	execute_raw	2
-src/core/persistence/skill-activation.ts	execute_raw	12
-src/core/persistence/soak-counters.ts	execute_raw	4
-src/core/persistence/source-lifecycle.ts	execute_raw	33
-src/core/persistence/staging.ts	execute_raw	4
-src/core/persistence/sync-administration.ts	execute_raw	1
-src/core/persistence/sync-admission.ts	execute_raw	4
-src/core/persistence/sync-admitted.ts	execute_raw	1
-src/core/persistence/sync-authority.ts	execute_raw	1
-src/core/persistence/sync-blocked.ts	execute_raw	2
-src/core/persistence/sync-concurrent-write.ts	execute_raw	2
+src/core/persistence/searchable.ts	execute_raw	1
+src/core/persistence/segmented-apply.ts	execute_raw	6
+src/core/persistence/skill-activation.ts	execute_raw	11
+src/core/persistence/soak-counters.ts	execute_raw	2
 src/core/persistence/sync-cursor-key.ts	execute_raw	7
-src/core/persistence/sync-delete-tombstones.ts	execute_raw	2
+src/core/persistence/sync-delete-tombstones.ts	execute_raw	1
 src/core/persistence/sync-discovery.ts	execute_raw	6
-src/core/persistence/sync-drain.ts	execute_raw	4
+src/core/persistence/sync-drain.ts	execute_raw	2
 src/core/persistence/sync-dry-run-writer.ts	execute_raw	1
-src/core/persistence/sync-failures.ts	execute_raw	9
-src/core/persistence/sync-freshness.ts	execute_raw	3
+src/core/persistence/sync-failures.ts	execute_raw	4
+src/core/persistence/sync-freshness.ts	execute_raw	1
 src/core/persistence/sync-ghosts.ts	execute_raw	3
 src/core/persistence/sync-group.ts	execute_raw	1
 src/core/persistence/sync-held-deletions.ts	execute_raw	1
-src/core/persistence/sync-holds-carried.ts	execute_raw	1
-src/core/persistence/sync-holds.ts	execute_raw	31
+src/core/persistence/sync-holds.ts	execute_raw	6
 src/core/persistence/sync-idle-skips.ts	execute_raw	1
 src/core/persistence/sync-lanes.ts	execute_raw	1
-src/core/persistence/sync-lease.ts	execute_raw	5
 src/core/persistence/sync-markers.ts	execute_raw	9
-src/core/persistence/sync-movement.ts	execute_raw	5
 src/core/persistence/sync-origin.ts	execute_raw	1
 src/core/persistence/sync-page-fault.ts	execute_raw	9
 src/core/persistence/sync-pass-apply.ts	execute_raw	3
@@ -781,118 +464,59 @@ src/core/persistence/sync-pass-confirm.ts	execute_raw	8
 src/core/persistence/sync-pass-episode.ts	execute_raw	2
 src/core/persistence/sync-pass-fold.ts	execute_raw	3
 src/core/persistence/sync-pass-readers.ts	execute_raw	1
-src/core/persistence/sync-pass-row.ts	execute_raw	4
-src/core/persistence/sync-pass-run.ts	execute_raw	14
+src/core/persistence/sync-pass-run.ts	execute_raw	12
 src/core/persistence/sync-pass-status.ts	execute_raw	3
-src/core/persistence/sync-pass.ts	execute_raw	14
-src/core/persistence/sync-prepare.ts	execute_raw	17	#9646: the stamp fence-trend pre-read runs outside the 5 s publication (newest sequence, open-import probe); moves with the persistence engine-sql conversion
+src/core/persistence/sync-pass.ts	execute_raw	10	readFileRemovingDeletes (audit LC-1, decision E1): one bounded read of the committed delete_page receipts whose write-through removed the file, so a restored file is held for repair file-drift; the managed-sync pass reads stay raw until the persistence area is typed (sync 13b: the trunk side counted 9, this read is the tenth; a Rust brain refuses managed persistence before the pass runs)
+src/core/persistence/sync-prepare.ts	execute_raw	15	#9646: the stamp fence-trend pre-read runs outside the 5 s publication (newest sequence, open-import probe); moves with the persistence engine-sql conversion
 src/core/persistence/sync-prescreen.ts	execute_raw	2
-src/core/persistence/sync-run.ts	execute_raw	28
+src/core/persistence/sync-run.ts	execute_raw	27
 src/core/persistence/sync-screen.ts	execute_raw	1
 src/core/persistence/sync-slices.ts	execute_raw	2
 src/core/persistence/sync-slug-mode.ts	execute_raw	3
-src/core/persistence/sync-status.ts	execute_raw	11
+src/core/persistence/sync-status.ts	execute_raw	6
 src/core/persistence/sync-stop-class.ts	execute_raw	1
 src/core/persistence/sync-streamed.ts	execute_raw	1
 src/core/persistence/sync-tail-record.ts	execute_raw	3
 src/core/persistence/sync-tail.ts	execute_raw	2
 src/core/persistence/sync-waivers.ts	execute_raw	8
 src/core/persistence/sync-window.ts	execute_raw	2
-src/core/persistence/takes-prepare.ts	execute_raw	7
-src/core/persistence/terminal-failures.ts	execute_raw	4
 src/core/persistence/topology-clone.ts	execute_raw	19
-src/core/persistence/topology-locks.ts	execute_raw	20
-src/core/persistence/topology-receipts.ts	execute_raw	13
-src/core/persistence/topology-recovery.ts	execute_raw	17
-src/core/persistence/topology-transaction.ts	execute_raw	1
-src/core/persistence/transfer-administration.ts	execute_raw	1
+src/core/persistence/topology-recovery.ts	execute_raw	16
 src/core/persistence/transient-retry.ts	execute_raw	1
-src/core/persistence/twin-merge.ts	execute_raw	16
 src/core/persistence/unbound-source.ts	execute_raw	4
 src/core/persistence/unimported-file.ts	execute_raw	1
 src/core/persistence/unindexed-files.ts	execute_raw	8
 src/core/persistence/upload-streamed.ts	execute_raw	1
-src/core/persistence/worktree-refresh.ts	execute_raw	30
+src/core/persistence/worktree-refresh.ts	execute_raw	28
 src/core/persistence/write-applied.ts	execute_raw	1
-src/core/persistence/writer-versions.ts	execute_raw	1
 src/core/pglite-statements.ts	driver_call	1
 src/core/planner-stats.ts	execute_raw	14
 src/core/post-upgrade-reembed.ts	execute_raw	1
 src/core/quarantine-override.ts	execute_raw	1
-src/core/quarantine.ts	execute_raw	1
 src/core/questions/auto-think-migration.ts	execute_raw	1
 src/core/questions/freshness.ts	execute_raw	3
 src/core/questions/pages.ts	execute_raw	1
 src/core/questions/receipt.ts	execute_raw	1
 src/core/questions/refresh.ts	execute_raw	14
 src/core/questions/service.ts	execute_raw	1
-src/core/questions/store.ts	execute_raw	7
-src/core/readiness.ts	execute_raw	2
-src/core/reindex-consent.ts	execute_raw	1
-src/core/remediation/run.ts	execute_raw	1
-src/core/repair/accepted-takes.ts	execute_raw	4
-src/core/repair/access.ts	execute_raw	2
-src/core/repair/agent-session-facts.ts	execute_raw	9
-src/core/repair/aliases.ts	execute_raw	3
-src/core/repair/atom-fence-rows.ts	execute_raw	3
-src/core/repair/atoms-restore.ts	execute_raw	5
-src/core/repair/attribution-backfill.ts	execute_raw	7
-src/core/repair/captured-facts.ts	execute_raw	6
-src/core/repair/connector-fences.ts	execute_raw	2
-src/core/repair/consolidate-ties.ts	execute_raw	3
-src/core/repair/contact-rows.ts	execute_raw	4
-src/core/repair/content-receipt-root.ts	execute_raw	4
-src/core/repair/conversation-labels.ts	execute_raw	13
-src/core/repair/core.ts	execute_raw	5
-src/core/repair/duplicate-facts.ts	execute_raw	6
-src/core/repair/extractor-facts.ts	execute_raw	8
-src/core/repair/fact-claim-dates.ts	execute_raw	3
-src/core/repair/facts-rehome.ts	execute_raw	4
-src/core/repair/failed-writes.ts	execute_raw	19
-src/core/repair/fences.ts	execute_raw	4
-src/core/repair/file-drift-class.ts	execute_raw	12	came from #9614 and #9615 (whole-class held file-drift preview and apply), opened before this ratchet: the preview reads the held file_drift checkpoints and the source incarnation, and the apply adds its lease, progress and manifest reads and writes; these move behind typed engine methods with the next change in the repair area
-src/core/repair/file-drift.ts	execute_raw	6
-src/core/repair/frontmatter.ts	execute_raw	8
-src/core/repair/ghost-pages.ts	execute_raw	1
-src/core/repair/label-write.ts	execute_raw	1
-src/core/repair/legacy-twins.ts	execute_raw	8
-src/core/repair/loop-facts.ts	execute_raw	2
-src/core/repair/lost-fence-rows.ts	execute_raw	10
+src/core/questions/store.ts	execute_raw	5
+src/core/repair/attribution-backfill.ts	execute_raw	5
+src/core/repair/failed-writes.ts	execute_raw	13
+src/core/repair/file-drift-class.ts	execute_raw	10	came from #9614 and #9615 (whole-class held file-drift preview and apply), opened before this ratchet: the preview reads the held file_drift checkpoints and the source incarnation, and the apply adds its lease, progress and manifest reads and writes; these move behind typed engine methods with the next change in the repair area
+src/core/repair/file-drift.ts	execute_raw	3
 src/core/repair/missing-tables.ts	execute_raw	2
-src/core/repair/moved-pages.ts	execute_raw	4
-src/core/repair/ontology-facts.ts	execute_raw	4
-src/core/repair/open-facts.ts	execute_raw	11
-src/core/repair/origin-carry.ts	execute_raw	4
+src/core/repair/open-facts.ts	execute_raw	9
 src/core/repair/origin-twins-heal.ts	execute_raw	4
-src/core/repair/origin-twins.ts	execute_raw	11
-src/core/repair/orphan-children.ts	execute_raw	6
-src/core/repair/overwritten-edits.ts	execute_raw	3
-src/core/repair/private-labels.ts	execute_raw	5
-src/core/repair/provenance.ts	execute_raw	3
-src/core/repair/purged-change-reasons.ts	execute_raw	7
-src/core/repair/purged-page-facts.ts	execute_raw	5
+src/core/repair/provenance.ts	execute_raw	1
 src/core/repair/readers.ts	execute_raw	3
-src/core/repair/receipt-compaction.ts	execute_raw	3
-src/core/repair/redacted-facts.ts	execute_raw	6
-src/core/repair/rename-identity.ts	execute_raw	7
-src/core/repair/rotation.ts	execute_raw	3
-src/core/repair/rows-behind.ts	execute_raw	1
-src/core/repair/safe-chunks.ts	execute_raw	1
-src/core/repair/secret-spans.ts	execute_raw	26	secret-spans --apply also redacts retained page_versions (selects and updates compiled_truth/frontmatter per version); no typed engine method for version redaction exists yet
-src/core/repair/segmented-mirror.ts	execute_raw	5
-src/core/repair/segmented-tiling.ts	execute_raw	7
-src/core/repair/settle.ts	execute_raw	1
+src/core/repair/rename-identity.ts	execute_raw	6
+src/core/repair/segmented-tiling.ts	execute_raw	6
 src/core/repair/slug-autoheal.ts	execute_raw	1
-src/core/repair/slug-conflicts.ts	execute_raw	5
-src/core/repair/split-facts.ts	execute_raw	3
-src/core/repair/stale-atoms.ts	execute_raw	3
-src/core/repair/take-supersession.ts	execute_raw	3
-src/core/repair/timeline-comments.ts	execute_raw	5
-src/core/repair/timeline-order.ts	execute_raw	4
-src/core/repair/timeline.ts	execute_raw	2
-src/core/repair/unwithdrawn-facts.ts	execute_raw	5
-src/core/repair/url-clone-fences.ts	execute_raw	5
-src/core/repair/visibility.ts	execute_raw	10
+src/core/repair/slug-spelling-guards.ts	execute_raw	3	The slug-spelling apply's three writes in the page's own transaction: copying fact and take purge tombstones to the moved page's normal name, and re-keying its attachments. Only a page stored under an older spelling reaches them, which the Rust store never holds (it writes every slug in normal form), so they stay raw SQL and are the typed raw_sql refusal there (docs/designs/RUST_ENGINE.md, the slug-spelling apply row).
+src/core/repair/slug-spelling.ts	execute_raw	1	The preview scan and the per-page re-check read pages, sources and files with SQL like the sibling repairs (legacy-twins, rename-identity), and the collision check looks up every stored spelling of a name through the spelling index (raised from 9: the move counts the attachments updateSlug carries, for its report); a typed method comes with the Rust store serving these members.
+src/core/repair/unwithdrawn-facts.ts	execute_raw	2
+src/core/rules/correct.ts	execute_raw	1	master #10369 (GST-3827): the correction receipt row in config; no typed engine member yet (sync 20)
+src/core/rust-engine/store-members/managed-hold.ts	execute_raw	1	the managed_persistence hold: a held managed store answers with the Rust engine's own executeRaw refusal (it runs no SQL), so a user's Rust brain refuses exactly as before lane LM typed these statements
 src/core/schema-migrations/helpers.ts	execute_raw	12
 src/core/schema-migrations/v039-multimodal-dual-column-v0-27-1.ts	execute_raw	1
 src/core/schema-migrations/v045-facts-hot-memory-v0-31.ts	execute_raw	2
@@ -913,94 +537,47 @@ src/core/schema-migrations/v275-rls-backfill-unguarded-tables.ts	execute_raw	4
 src/core/schema-migrations/v281-derived-state-maintainers-fail-closed.ts	execute_raw	1
 src/core/schema-migrations/v302-link-transitions-source.ts	execute_raw	5
 src/core/schema-missing-tables.ts	execute_raw	1
-src/core/schema-pack/detect.ts	execute_raw	3
 src/core/schema-pack/engine-resolution.ts	execute_raw	1
 src/core/schema-pack/entity-types.ts	execute_raw	1
-src/core/schema-pack/lint-rules.ts	execute_raw	3
-src/core/schema-pack/page-to-alias.ts	execute_raw	3
-src/core/schema-pack/page-to-link.ts	execute_raw	1
-src/core/schema-pack/query-cache-invalidator.ts	execute_raw	1
-src/core/schema-pack/retype.ts	execute_raw	3
-src/core/schema-pack/review.ts	execute_raw	2
+src/core/schema-pack/lint-rules.ts	execute_raw	2
+src/core/schema-pack/page-to-alias.ts	execute_raw	2
+src/core/schema-pack/retype.ts	execute_raw	1
 src/core/schema-pack/stats.ts	execute_raw	2
-src/core/schema-pack/sync.ts	execute_raw	3
+src/core/schema-pack/sync.ts	execute_raw	1
 src/core/schema-pack/unify-types-handler.ts	execute_raw	1
 src/core/schema-verify.ts	execute_raw	2
 src/core/search-vector-backfill.ts	execute_raw	3
 src/core/search/dedup.ts	execute_raw	1
-src/core/search/entity-anchor.ts	execute_raw	4
-src/core/search/entity-facts.ts	execute_raw	1
-src/core/search/evidence-date.ts	execute_raw	3
-src/core/search/evidence-delivery.ts	execute_raw	1
-src/core/search/fact-relevance.ts	execute_raw	9	came from master #9627 (held private facts, database-only untrack), which landed after this ratchet was cut; GBRA-574 F #9674 (opened before this ratchet): +1 poolUnbackedKeys, the name-tag lookup for the slot-history arm
-src/core/search/facts-arm.ts	execute_raw	3
-src/core/search/feedback-boost.ts	execute_raw	1
-src/core/search/frontmatter-where.ts	execute_raw	1
-src/core/search/ignored-privacy-labels.ts	execute_raw	1
-src/core/search/image-vector-presence.ts	execute_raw	1
-src/core/search/private-visibility.ts	execute_raw	1
 src/core/search/projection-statistics.ts	execute_raw	11
 src/core/search/query-cache-gate.ts	execute_raw	2
-src/core/search/query-cache.ts	execute_raw	8
-src/core/search/relational-chain.ts	execute_raw	1
-src/core/search/relational-recall.ts	execute_raw	3
-src/core/search/safe-chunks.ts	execute_raw	2
-src/core/search/saved-facts-match.ts	execute_raw	1
-src/core/search/slot-history.ts	execute_raw	1	GBRA-574 F #9674 (opened before this ratchet): the readable-page lookup that maps a bare name tag to the page later written at <dir>/<tag>
-src/core/search/two-pass.ts	execute_raw	5
-src/core/secret-store/restore.ts	execute_raw	3	secret restore reads the page revision and live knowledge_revision and flips secret_store.status; no typed engine method for the secret store exists yet
-src/core/secret-store/spool.ts	execute_raw	1	GST-2988 PR 2 spool: reads every allowed (restored) key_id and value_mac from secret_store to rebuild allowed.json; branched before the #9641 ratchet; no typed engine method for the secret store exists yet
-src/core/secret-store/store.ts	execute_raw	24	secret_store and secret_store_occurrence inserts and reads (dedupe by value_mac, entry, occurrences, list, key summary); GST-2988 PR 2 adds +5: drain inserts a spooled original by id (exists check, value_mac lookup, insert), the per-rule counts for secrets list, and the allowed value_macs one source restored; branched before the #9641 ratchet; no typed engine method for the secret store exists yet; GST-2988 PR 3 adds +3: backup export reads every entry and occurrence row in one statement (one snapshot) and restore inserts them in one transaction; GST-3074 adds +5: restore reads whether an entry it did not insert is the same one, so it adds that entry's missing occurrences; the purge cascade deletes a purged page's occurrences, locks the entries they pointed at, and deletes those nothing else references; doctor counts unreferenced originals; GST-3178 adds +2: restore reads which backed-up slugs name a page holding the marker, and takes back out an entry it wrote whose every place failed to land because its page was purged while the restore ran; all move behind typed engine methods with the rest after gbrain#9694
-src/core/serve-sync-runner.ts	execute_raw	1
+src/core/search/query-cache.ts	execute_raw	6
+src/core/search/safe-chunks.ts	execute_raw	1
 src/core/session-lane.ts	execute_raw	3
 src/core/shared-skills/adopted-packs.ts	execute_raw	1
-src/core/shared-skills/catalog.ts	execute_raw	3
 src/core/shared-skills/compatibility.ts	execute_raw	2
-src/core/shared-skills/content-freshness.ts	execute_raw	1
 src/core/shared-skills/knowledge-guard.ts	execute_raw	3
-src/core/shared-skills/membership-authority.ts	execute_raw	4
-src/core/shared-skills/membership.ts	execute_raw	17
 src/core/shared-skills/migration-export.ts	execute_raw	7
-src/core/shared-skills/migration-members.ts	execute_raw	1
 src/core/shared-skills/migration-projection.ts	execute_raw	2
-src/core/shared-skills/migration.ts	execute_raw	4
+src/core/shared-skills/migration.ts	execute_raw	2
 src/core/shared-skills/optimizer.ts	execute_raw	1
-src/core/shared-skills/policy.ts	execute_raw	10
-src/core/shared-skills/publication.ts	execute_raw	14
-src/core/shared-skills/receipt-root.ts	execute_raw	2
-src/core/shared-skills/restore.ts	execute_raw	27
+src/core/shared-skills/publication.ts	execute_raw	11
+src/core/shared-skills/restore.ts	execute_raw	25
 src/core/shared-skills/retention.ts	execute_raw	12
-src/core/shared-skills/setup-source-policy.ts	execute_raw	1
 src/core/shared-skills/setup.ts	execute_raw	6
-src/core/shared-skills/source-opt-out.ts	execute_raw	3
+src/core/shared-skills/source-opt-out.ts	execute_raw	2
 src/core/similar-pages.ts	execute_raw	1
 src/core/skillpack/shared-brain-bridge.ts	execute_raw	4
-src/core/slack/slack-source.ts	execute_raw	4
-src/core/source-default-search.ts	execute_raw	1
-src/core/source-delete.ts	execute_raw	2
-src/core/source-health.ts	execute_raw	5
-src/core/sources-not-readable.ts	execute_raw	1
-src/core/sources-ops.ts	execute_raw	3	#9634, pre-ratchet: +1 is the INSERT that registers a database-only api source row (imessage); no typed engine method exists yet
+src/core/slack/slack-source.ts	execute_raw	3
+src/core/sources-ops.ts	execute_raw	1	#9634, pre-ratchet: +1 is the INSERT that registers a database-only api source row (imessage); no typed engine method exists yet
 src/core/sql-query.ts	execute_raw	2
 src/core/storage-manifest/adopt.ts	execute_raw	4
-src/core/storage-manifest/find.ts	execute_raw	4
 src/core/storage-manifest/source.ts	execute_raw	4
-src/core/sweep.ts	execute_raw	3
-src/core/sync-anchor.ts	execute_raw	5
+src/core/sync-anchor.ts	execute_raw	2
 src/core/sync-attempt.ts	execute_raw	1
-src/core/sync-cost-gate.ts	execute_raw	1
-src/core/sync-dispatch-read.ts	execute_raw	1
-src/core/sync-git.ts	execute_raw	3
-src/core/sync-identity-downgrades.ts	execute_raw	8
-src/core/sync-pending.ts	execute_raw	3
+src/core/sync-identity-downgrades.ts	execute_raw	1
 src/core/sync-policy.ts	execute_raw	1
-src/core/sync-rename-identity.ts	execute_raw	4
 src/core/sync-status-report.ts	execute_raw	1
-src/core/sync-upstream.ts	execute_raw	2
-src/core/sync.ts	execute_raw	1
-src/core/synopsis-sweep.ts	execute_raw	4	master #9683: readSynopsisTierConfig reads the source rows and the frontmatter-override probe in one statement; rust-engine/write-attribution-reads' typed listSynopsisSourceIds answers the source rows only, so the sweep keeps this statement until a typed member returns both (TODOS.md rust-synopsis-tier-config)
-src/core/take-proposals.ts	execute_raw	8
-src/core/takes-horizon.ts	execute_raw	5
+src/core/synopsis-sweep.ts	execute_raw	3
 src/core/takes-quality-eval/receipt-write.ts	execute_raw	1
 src/core/takes-quality-eval/replay.ts	execute_raw	1
 src/core/takes-quality-eval/runner.ts	execute_raw	1
@@ -1009,52 +586,39 @@ src/core/takes-write.ts	execute_raw	5
 src/core/think/index.ts	execute_raw	2
 src/core/think/persist-take.ts	execute_raw	1
 src/core/timeline-dedup-repair.ts	execute_raw	11
-src/core/timeline-extract.ts	execute_raw	9
+src/core/timeline-extract.ts	execute_raw	6
 src/core/timeline-write-through.ts	execute_raw	1
-src/core/token-mint.ts	execute_raw	2
-src/core/token-mint.ts	sql_template	1
-src/core/transcripts/archive.ts	execute_raw	12
+src/core/transcripts/archive.ts	execute_raw	10
 src/core/transcripts/discover.ts	execute_raw	2
 src/core/transcripts/hermes.ts	driver_call	1
 src/core/transcripts/ingest.ts	execute_raw	3
 src/core/transcripts/recover.ts	execute_raw	1
 src/core/transcripts/secret-audit.ts	execute_raw	1
-src/core/trust/allow-rules.ts	execute_raw	5
-src/core/trust/backfill.ts	execute_raw	15
+src/core/trust/backfill.ts	execute_raw	6
 src/core/trust/channel.ts	execute_raw	1
-src/core/trust/claim.ts	execute_raw	9
+src/core/trust/claim.ts	execute_raw	7
 src/core/trust/derived-gate.ts	execute_raw	1
-src/core/trust/fence-guard.ts	execute_raw	6
 src/core/trust/held-removals.ts	execute_raw	4
+src/core/trust/hold-page.ts	execute_raw	1	reads the page a bound hold belongs to by id for the owner release; the held-write page binding (v333): the holds follow their page by id; no typed engine member is added (no new BrainEngine member in this change), the Rust engine's own hold store and rename paths take the contract in the PR description
 src/core/trust/label-lowerings.ts	execute_raw	1
 src/core/trust/marker-repair.ts	execute_raw	4
 src/core/trust/owner-actions.ts	execute_raw	6
-src/core/trust/page-handlers.ts	execute_raw	7
-src/core/trust/page-write.ts	execute_raw	5
-src/core/trust/privacy-hold-reply.ts	execute_raw	1	came from master #9627 (held private facts, database-only untrack), which landed after this ratchet was cut
+src/core/trust/page-handlers.ts	execute_raw	5
 src/core/trust/propagation.ts	execute_raw	4
-src/core/trust/provenance-drift.ts	execute_raw	3
-src/core/trust/refs.ts	execute_raw	1
 src/core/trust/release-publish.ts	execute_raw	2
 src/core/trust/review.ts	execute_raw	15
-src/core/trust/supersede-handlers.ts	execute_raw	11	GST-2897 B (#9670, opened before this ratchet): the held-share accept reads the fact's visibility and widens it; no typed engine method exists yet
-src/core/trust/taint.ts	execute_raw	5
-src/core/trust/timeline-projection.ts	execute_raw	2
-src/core/uncommitted-deletions.ts	execute_raw	1
-src/core/url-clone.ts	execute_raw	2
+src/core/trust/supersede-handlers.ts	execute_raw	10	GST-2897 B (#9670, opened before this ratchet): the held-share accept reads the fact's visibility and widens it; no typed engine method exists yet
 src/core/url-source-origin.ts	execute_raw	1
+src/core/value/card.ts	execute_raw	6	master #10374/#10398 (GST-3656): the value card's counts over pages, links, facts and retrievals; no typed engine members yet (sync 20)
 src/core/vector-index.ts	driver_call	2
 src/core/vector-index.ts	execute_raw	9
 src/core/vector-prewarm.ts	execute_raw	4
-src/core/verbs/entity-names.ts	execute_raw	1
 src/core/verbs/entity-references.ts	execute_raw	1
 src/core/verbs/entity-source.ts	execute_raw	1
-src/core/verbs/entity-text-mentions.ts	execute_raw	1
-src/core/verbs/entity-variants.ts	execute_raw	4
-src/core/wakeshift/drain.ts	execute_raw	2
-src/core/wakeshift/forget.ts	sql_template	6
+src/core/write-gate-binding.ts	execute_raw	6	the identity carry of holds (merge identical twins, move, mark differing twins, repoint candidates) and the purge's removal of a purged page from candidate-marked holds (update, then delete the emptied ones), one statement each; the held-write page binding (v333): the holds follow their page by id; no typed engine member is added (no new BrainEngine member in this change), the Rust engine's own hold store and rename paths take the contract in the PR description
+src/core/write-gate-recheck.ts	execute_raw	10	the maintenance sweep of held writes a purge kept for another page: the notes-table and row-security preflights, one bounded read of notes, and per held write the row_security=off setting, a locked read, the reached-slugs read, a page-and-rename lookup and the deletes of the hold, its receipts and its notes; raw SQL like the other hold sweeps (write-gate-binding.ts, purge-slug-stores.ts) until holds have a typed engine method (on the Rust engine it reports skipped, engine_capability_missing)
 src/core/write-gate-scan.ts	execute_raw	2
-src/core/write-through.ts	execute_raw	2
+src/core/write-through.ts	execute_raw	1
 src/eval/brainbench/adapters/codex.ts	execute_raw	1
 src/eval/brainbench/metrics/continuity.ts	execute_raw	1
 src/eval/brainbench/metrics/deletion.ts	execute_raw	2
@@ -1067,5 +631,19 @@ src/eval/brainbench/trust-suites.ts	execute_raw	1
 src/eval/longmemeval/harness.ts	execute_raw	2
 src/eval/longmemeval/retrieval-arms.ts	execute_raw	2
 src/eval/shared/embed-cache.ts	driver_call	4
-src/mcp/http-transport.ts	sql_template	2
-src/mcp/source-preflight.ts	execute_raw	1
+src/mcp/http-transport.ts	sql_template	1
+src/shadow/checks.ts	execute_raw	9	the shadow privacy check reads the access tables' revisions and times and the primary's snapshot bound and the transactions in progress (pg_snapshot_xmax, pg_current_snapshot, pg_stat_activity, pg_prepared_xacts, pg_xact_status: the proof that nothing was written or became visible since a read started), judges the pages and chunks a Rust answer named with the primary's own read-policy fragment and safe-chunk fence under the captured caller (verdicts only), and the exact vector reference sets two planner switches and runs the engine's own exact statement on its read-only transaction: only the primary can say what the caller may read or what an exact scan returns
+src/shadow/fingerprints.ts	execute_raw	6	the fingerprint probe and fact-fingerprint check run the primary's own SQL functions and read its own lower(), [[:space:]], locale and facts text (gbrain_fact_fingerprint, per-code-point tables, datctype, a count of facts holding a differing code point); the comparison is against the primary's SQL by design
+src/shadow/follow.ts	execute_raw	1	selectWhere: the shadow follow producer reads page ids and the keys of rows a delete removes, on the engine or transaction the write runs on
+src/shadow/follower.ts	execute_raw	1	the shadow follower re-reads the changed keys from the primary in one read-only REPEATABLE READ transaction; only the primary's rows can say what the Rust store must hold
+src/shadow/replay-copy.ts	execute_raw	9	shadow replay: writes seed rows into a fresh PGLite replay copy (the Rust copy takes the same rows through importRelation)
+src/core/engine-swap/capability.ts	execute_raw	1	the write-pause estimate reads pg_class.reltuples and the pending persistence_requests count of the PGLite primary being swapped; a planning read, not a storage method
+src/core/engine-swap/checkpoint.ts	execute_raw	1	the checkpoint check counts rows per table in a throwaway in-memory PGLite loaded from the dump; it is not the brain engine
+src/core/engine-swap/failback-copy.ts	execute_raw	18	failback writes the rows the Rust engine's typed read calls returned into the fenced old primary as the swap run (dependent-row deletes, id-keyed upserts of takes, files, facts, open loops and sources, page timestamps); the Rust side is never read with SQL
+src/core/engine-swap/failback-read.ts	execute_raw	1	failback's closed loss list reads the old primary's table and column names from information_schema; names only, read before any write
+src/core/engine-swap/fence.ts	execute_raw	1	the swap fence lists the tables to fence on the primary before installing gbrain_graduation_fence through the graduation helpers (same SQL family as graduation-schema.ts)
+src/core/engine-swap/gates.ts	execute_raw	2	the swap blockers count access_rules, access_tokens and oauth_clients rows on the primary; counts only, read before any write
+src/core/engine-swap/pg-checkpoint.ts	execute_raw	4	the Postgres swap checkpoint reads server_version_num, pg_database_size, the table list and other gbrain sessions in pg_stat_activity on the Postgres primary; counts and names only, read before any write
+src/shadow/write-capture.ts	execute_raw	2	the write-comparison preimage copies the rows a sampled page or link write touches from the primary in one read-only snapshot, exactly as the seed reads them; only the primary's rows can seed the scratch Rust store; +1 the same snapshot counts the withdrawn and purged facts that overlay the copied pages' bodies (an overlay the scratch store does not have makes the sample uncomparable)
+src/shadow/writer-hooks.ts	execute_raw	21	the maintainer-approved writer hooks on a Postgres primary while a Rust shadow runs: catalog reads of the brain's tables and triggers, CREATE/DROP TRIGGER, the hooks advisory lock and lock timeout inside each install, repair and removal transaction, the gap rows (a repair's, and the one a removal records), and the one-transaction replace of every hook with its server-version and effectiveness checks; trigger DDL has no typed engine method and Rust never holds these hooks
+src/shadow/writer-observations.ts	execute_raw	4	swap eligibility's writer observations live in the primary only while a Rust shadow follows it (Rust never holds them): one upsert per writing process after commit under a SET LOCAL lock timeout and statement timeout (two statements), and the eligibility read; the primary's own table by design

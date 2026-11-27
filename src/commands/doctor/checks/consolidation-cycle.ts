@@ -10,6 +10,7 @@ import type { Check } from '../../doctor.ts';
 import type { Action } from '../../../core/agent-output.ts';
 import { agentFix, checkError, infoCheck } from '../check-fix.ts';
 import { isAvailable } from '../../../core/ai/gateway.ts';
+import { isSyncDisabledConfig } from '../../../core/sync-policy.ts';
 
 /** Local alias; the shared warn-once memo lives in core so it can't fork per module. */
 const _resolveSyncFreshnessHours = resolveHoursEnv;
@@ -48,12 +49,7 @@ export async function checkSyncConsolidation(engine: BrainEngine, opts: { source
   try {
     // A remote caller's grant bounds the count: the brain-wide source count
     // would tell a source-bound token how many sources it cannot see.
-    const rows = await engine.executeRaw<{ id: string }>(
-      `SELECT id FROM sources
-        WHERE archived IS NOT TRUE
-          AND local_path IS NOT NULL${opts.sourceIds ? '\n          AND id = ANY($1::text[])' : ''}`,
-      opts.sourceIds ? [opts.sourceIds] : undefined,
-    );
+    const rows = await engine.readDoctorSources('live_path_ids', { sourceIds: opts.sourceIds });
     const sourceCount = rows.length;
     if (sourceCount < 2) {
       return {
@@ -188,12 +184,15 @@ export async function checkCycleFreshness(
     let hasFailures = false;
     const young = await youngOrEmptySources(engine, sources.map((s) => s.id), now);
     const waiting: string[] = [];
+    const syncOff: string[] = [];
     let firstStale: string | null = null;
 
     for (const source of sources) {
       const display = source.name && source.name !== source.id
         ? `'${source.id}' (${source.name})`
         : `'${source.id}'`;
+      // GST-3337: a source with sync off is never stale or failing here, so nothing that acts on freshness (a dream) picks it.
+      if (isSyncDisabledConfig(source.config)) { syncOff.push(display); continue; }
       const raw = source.config?.last_full_cycle_at;
       if (typeof raw !== 'string' && young.has(source.id)) {
         waiting.push(display);
@@ -240,11 +239,12 @@ export async function checkCycleFreshness(
     }
 
     const fix = firstStale ? cycleFix(firstStale, isAvailable('chat') || isAvailable('embedding')) : undefined;
+    const offNote = syncOff.length ? ` Sync off (not checked; only an explicit gbrain sync --source <id> syncs ${syncOff.length > 1 ? 'them' : 'it'}): ${syncOff.join(', ')}.` : '';
     if (hasFailures) {
       return {
         name: 'cycle_freshness',
         status: 'fail',
-        message: `${issues.join('; ')}. Run \`gbrain dream --source <id>\` for each stale source, or start \`gbrain autopilot\`.`,
+        message: `${issues.join('; ')}. Run \`gbrain dream --source <id>\` for each stale source, or start \`gbrain autopilot\`.${offNote}`,
         ...(fix ? { fix } : {}),
       };
     }
@@ -252,11 +252,13 @@ export async function checkCycleFreshness(
       return {
         name: 'cycle_freshness',
         status: 'warn',
-        message: `${issues.join('; ')}. Run \`gbrain dream --source <id>\` to cycle a source, or start \`gbrain autopilot\`.`,
+        message: `${issues.join('; ')}. Run \`gbrain dream --source <id>\` to cycle a source, or start \`gbrain autopilot\`.${offNote}`,
         ...(fix ? { fix } : {}),
       };
     }
-    if (waiting.length === sources.length) {
+    const checked = sources.length - syncOff.length;
+    if (checked === 0) return { name: 'cycle_freshness', status: 'ok', message: offNote.trim() };
+    if (waiting.length === checked) {
       return infoCheck('cycle_freshness',
         `No full cycle yet for ${waiting.join(', ')}: ${waiting.length > 1 ? 'they hold' : 'it holds'} no pages or only pages from the last 24h, so there is nothing to consolidate yet.`,
         'not_applicable');
@@ -264,7 +266,7 @@ export async function checkCycleFreshness(
     return {
       name: 'cycle_freshness',
       status: 'ok',
-      message: `All ${sources.length} federated source(s) cycled recently`,
+      message: `All ${checked} federated source(s) cycled recently${offNote ? `.${offNote}` : ''}`,
     };
   } catch (e) {
     return checkError('cycle_freshness', 'check cycle freshness', e);

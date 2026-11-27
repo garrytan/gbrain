@@ -1,51 +1,31 @@
 import type { BrainEngine } from './engine.ts';
 import { readProjectionSnapshot, queuePageProjection, preparePageProjection, installPageProjection } from './page-state/projections.ts';
-import { quoteIdentifier, resolveActiveEmbeddingColumnFromEngine } from './search/embedding-column.ts';
-import { QUARANTINE_FILTER_FRAGMENT } from './quarantine.ts';
+import { resolveActiveEmbeddingColumnFromEngine } from './search/embedding-column.ts';
 import { isMultimodalEnabled } from './sync.ts';
 import { buildSegmentedProjection } from './page-body/projection.ts';
+import type { PendingProjectionScope } from './engine-sql/embed-stale-work.ts';
+import { rethrowCapabilityMissing } from './rust-engine/errors.ts';
 
-/** A segmented page with a body: its projection (`buildSegmentedProjection`) owes chunk rows even when it has none yet. */
-const SEGMENTED_BODY = `(p.body_storage = 'segmented' AND p.body_bytes > 0)`;
+// Every read here is a typed engine member (SQL in engine-sql/embed-stale-work.ts), so every engine answers it.
 
 export async function countArchivedEmbeddingWork(engine: BrainEngine, opts: { sourceId?: string; signature?: string; includeNullSignature?: boolean; includeUnsealed?: boolean } = {}, activeColumn?: string | null): Promise<number> {
   const column = activeColumn === undefined ? (await resolveActiveEmbeddingColumnFromEngine(engine)).name : activeColumn;
-  const vector = column === null ? 'NULL::vector' : `c.${quoteIdentifier(column)}`;
-  const [row] = await engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM pages p
-    JOIN sources s ON s.id=p.source_id WHERE s.archived AND p.deleted_at IS NULL
-      AND NOT (COALESCE(p.frontmatter,'{}'::jsonb) ? 'embed_skip')
-      AND ($1::text IS NULL OR p.source_id=$1)
-      AND (($4::boolean AND p.text_projection_revision IS DISTINCT FROM p.knowledge_revision)
-        OR EXISTS (SELECT 1 FROM content_chunks c WHERE c.page_id=p.id AND (${vector} IS NULL
-          OR c.embedded_text_hash <> md5(c.chunk_text)
-          OR ($2::text IS NOT NULL AND (p.embedding_signature <> $2 OR ($3::boolean AND p.embedding_signature IS NULL)))))
-        OR ((p.compiled_truth <> '' OR p.timeline <> '' OR ${SEGMENTED_BODY}) AND ${QUARANTINE_FILTER_FRAGMENT}
-          AND NOT EXISTS (SELECT 1 FROM content_chunks c WHERE c.page_id=p.id)))`,
-  [opts.sourceId ?? null, opts.signature ?? null, opts.includeNullSignature ?? false, opts.includeUnsealed ?? false]);
-  if (!Number.isSafeInteger(row?.n) || row.n < 0) throw new Error('Cannot determine archived embedding work.');
-  return row.n;
+  const n = await engine.countArchivedEmbeddingWork({
+    sourceId: opts.sourceId ?? null, signature: opts.signature ?? null, includeNullSignature: opts.includeNullSignature ?? false,
+    includeUnsealed: opts.includeUnsealed ?? false, column,
+  });
+  if (!Number.isSafeInteger(n) || n < 0) throw new Error('Cannot determine archived embedding work.');
+  return n;
 }
 
 type ProjectionScope = { sourceId?: string; existingChunksOnly?: boolean; activeSourcesOnly?: boolean; stale?: { signature?: string; includeNullSignature?: boolean } };
 
-/** The pages still waiting for a text projection under `opts`, as one WHERE clause over `pages p JOIN sources s`. */
-async function pendingProjectionWhere(engine: BrainEngine, opts: ProjectionScope): Promise<{ where: string; params: unknown[] }> {
-  const params: unknown[] = [opts.sourceId ?? null, opts.existingChunksOnly ?? false];
-  let eligible = '';
-  if (opts.stale) {
-    const column = quoteIdentifier((await resolveActiveEmbeddingColumnFromEngine(engine)).name);
-    params.push(opts.stale.signature ?? null, opts.stale.includeNullSignature ?? false);
-    eligible = `AND (${SEGMENTED_BODY} OR EXISTS(SELECT 1 FROM content_chunks c WHERE c.page_id=p.id AND (
-      c.${column} IS NULL OR c.embedded_text_hash <> md5(c.chunk_text)
-      OR ($3::text IS NOT NULL AND (p.embedding_signature <> $3 OR ($4::boolean AND p.embedding_signature IS NULL))))))`;
-  }
-  const where = `p.deleted_at IS NULL
-    AND NOT (COALESCE(p.frontmatter,'{}'::jsonb) ? 'embed_skip')
-    AND p.text_projection_revision IS DISTINCT FROM p.knowledge_revision
-    AND ($1::text IS NULL OR p.source_id=$1)
-    ${opts.activeSourcesOnly ? 'AND NOT s.archived' : ''}
-    AND (NOT $2::boolean OR ${SEGMENTED_BODY} OR EXISTS(SELECT 1 FROM content_chunks c WHERE c.page_id=p.id)) ${eligible}`;
-  return { where, params };
+/** The pages still waiting for a text projection under `opts`, as the typed members' scope (the stale rule reads the active column). */
+async function pendingProjectionScope(engine: BrainEngine, opts: ProjectionScope): Promise<PendingProjectionScope> {
+  return {
+    sourceId: opts.sourceId ?? null, existingChunksOnly: opts.existingChunksOnly ?? false, activeSourcesOnly: opts.activeSourcesOnly ?? false,
+    stale: opts.stale ? { column: (await resolveActiveEmbeddingColumnFromEngine(engine)).name, signature: opts.stale.signature ?? null, includeNullSignature: opts.stale.includeNullSignature ?? false } : null,
+  };
 }
 
 /**
@@ -54,9 +34,7 @@ async function pendingProjectionWhere(engine: BrainEngine, opts: ProjectionScope
  * recovery left some blocked (image/media pages only their importer rebuilds).
  */
 export async function listPendingProjectionPages(engine: BrainEngine, opts: ProjectionScope, limit = 1000) {
-  const { where, params } = await pendingProjectionWhere(engine, opts);
-  return engine.executeRaw<{ source_id: string; slug: string; page_kind: string }>(`SELECT p.source_id,p.slug,p.page_kind FROM pages p
-    JOIN sources s ON s.id=p.source_id WHERE ${where} AND NOT s.archived ORDER BY p.id LIMIT $${params.length + 1}`, [...params, limit]);
+  return engine.listEmbedPendingProjections(await pendingProjectionScope(engine, opts), limit);
 }
 
 /**
@@ -82,12 +60,11 @@ export async function reportBlockedProjections(engine: BrainEngine, opts: Projec
 
 export async function prepareEmbeddingProjections(engine: BrainEngine, opts: { sourceId?: string; limit?: number; repair?: boolean; existingChunksOnly?: boolean; activeSourcesOnly?: boolean; stale?: { signature?: string; includeNullSignature?: boolean }; signal?: AbortSignal; deadline?: number; assertOwned?: (tx?: BrainEngine) => Promise<void> } = {}) {
   const limit = Math.max(1, Math.min(opts.limit ?? 100, 100));
-  const { where, params } = await pendingProjectionWhere(engine, opts);
+  const scope = await pendingProjectionScope(engine, opts);
   const countBlocked = async () => {
-    const [remaining] = await engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM pages p
-      JOIN sources s ON s.id=p.source_id WHERE ${where}`, params);
-    if (!Number.isSafeInteger(remaining?.n) || remaining.n < 0) throw new Error('Cannot determine pending embedding projections.');
-    return remaining.n;
+    const remaining = await engine.countEmbedPendingProjections(scope);
+    if (!Number.isSafeInteger(remaining) || remaining < 0) throw new Error('Cannot determine pending embedding projections.');
+    return remaining;
   };
   let rebuilt = 0;
   let blocked = await countBlocked();
@@ -97,10 +74,7 @@ export async function prepareEmbeddingProjections(engine: BrainEngine, opts: { s
   // importer's or `gbrain projections drain`'s), never queued or re-stamped.
   let afterPageId = 0;
   while (opts.repair && blocked > 0 && !opts.signal?.aborted && Date.now() < (opts.deadline ?? Infinity)) {
-    const rows = await engine.executeRaw<{ id: number; slug: string; source_id: string }>(`SELECT p.slug,p.source_id,p.id FROM pages p
-      JOIN sources s ON s.id=p.source_id WHERE ${where} AND NOT s.archived AND p.id>$${params.length + 1}
-        AND (p.page_kind IN ('markdown','code') OR p.body_storage='segmented')
-      ORDER BY p.id LIMIT $${params.length + 2}`, [...params, afterPageId, limit]);
+    const rows = await engine.listEmbedProjectionRepairPages(scope, afterPageId, limit);
     if (!rows.length) break;
     afterPageId = Number(rows[rows.length - 1]!.id);
     for (const row of rows) {
@@ -108,8 +82,7 @@ export async function prepareEmbeddingProjections(engine: BrainEngine, opts: { s
       await opts.assertOwned?.();
       try {
         if (await readProjectionSnapshot(engine, row.slug, row.source_id)) continue;
-        const [segmented] = await engine.executeRaw(`SELECT 1 FROM pages WHERE id=$1 AND body_storage='segmented'`, [row.id]);
-        if (segmented) {
+        if (await engine.readPageIsSegmented(Number(row.id))) {
           if ((await buildSegmentedProjection(engine, { sourceId: row.source_id, slug: row.slug })).sealed) rebuilt++;
           continue;
         }
@@ -137,8 +110,10 @@ export async function prepareEmbeddingProjections(engine: BrainEngine, opts: { s
           if (Date.now() >= (opts.deadline ?? Infinity)) throw new Error('Projection recovery deadline exceeded.');
         });
         rebuilt++;
-      } catch {
+      } catch (e) {
         if (opts.signal?.aborted) break;
+        // A page that fails stays counted as blocked; an engine that cannot rebuild it refuses instead.
+        rethrowCapabilityMissing(e);
         await opts.assertOwned?.();
       }
     }

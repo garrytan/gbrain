@@ -1,0 +1,4 @@
+**The PostgreSQL test lane runs on 32 shards, so the joined test list fits its time budget again.**
+
+### Changed
+- `scripts/postgres-unit-arms.ts`: `ARM_SHARDS` 32. In `.github/workflows/persistence-validation.yml`, the `unit-postgres-arms` matrix, job name and `run` argument follow it (pinned by `test/scripts/postgres-unit-arms.test.ts`, whose 570 s budget is unchanged). Joining rust-engine/main into cli-members-next put both lines' PostgreSQL arm files on one list (1,112 files), which filled all 28 shards past the budget (largest 596.1 s); on 32 shards the largest is 522.0 s. `scripts/postgres-arm-weights.json` takes rust-engine/main's re-mined weights (db933cac5b) for the files both lines list; the join had kept the older values. Check names become `Unit-lane PostgreSQL arms N/32 / Bun …`, and none of them is a required check.

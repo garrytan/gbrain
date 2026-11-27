@@ -408,11 +408,8 @@ async function pickSoleNonDefaultSource(
       // misroute is diagnosable; same suppression knob as the routing nudge.
       // GST-2732: a federated side source is in default search already, so the routing loses nothing and stays quiet.
       const federated = (parseSourceConfig(rows[0].config) as { federated?: unknown }).federated === true;
-      if (!opts.quiet && !federated && process.env.GBRAIN_NO_SOLE_NON_DEFAULT_NUDGE !== '1') {
-        console.error(
-          `[gbrain] sole non-default source '${rows[0].id}' exists, but 'default' is non-empty — routing to 'default' (#3070 emptiness guard). Pass --source ${rows[0].id} or set sources.default to target it.`,
-        );
-      }
+      const flip = formatSoleNonDefaultFlip(rows[0].id);
+      if (!opts.quiet && !federated && flip !== null) console.error(flip);
       return null;
     }
   } catch {
@@ -462,6 +459,17 @@ export async function resolveImplicitDefaultSourceId(engine: BrainEngine): Promi
     }
   }
   return pickSoleNonDefaultSource(engine, { quiet: true });
+}
+
+/**
+ * The one-line stderr notice for the #3070 flip: the sole non-default source
+ * exists, but 'default' holds pages, so an unsourced command goes to 'default'.
+ * Null under GBRAIN_NO_SOLE_NON_DEFAULT_NUDGE=1. Printed by the resolver, and
+ * by an unsourced put_page when the resolver stayed quiet (a federated source).
+ */
+export function formatSoleNonDefaultFlip(sourceId: string): string | null {
+  if (process.env.GBRAIN_NO_SOLE_NON_DEFAULT_NUDGE === '1') return null;
+  return `[gbrain] sole non-default source '${sourceId}' exists, but 'default' is non-empty — routing to 'default' (#3070 emptiness guard). Pass --source ${sourceId} or set sources.default to target it.`;
 }
 
 /**
@@ -852,6 +860,20 @@ export async function resolveSourceWithTier(
   const resolved = await resolveSourceWithTierChain(engine, explicit, cwd, opts);
   noteResolvedSource(resolved.source_id);
   return resolved;
+}
+
+/**
+ * True when `err` is an engine capability refusal (a Rust store answering no raw SQL) and the lookup it stopped could
+ * have chosen a source other than `default`: the user selected one (GBRAIN_SOURCE, a .gbrain-source dotfile, the
+ * sources.default config) or the brain holds any other source (a registered local_path, the sole-non-default tier).
+ * The caller must then refuse rather than fall back to the cross-source view, which would read the wrong source.
+ */
+export async function refusedSourceTarget(engine: BrainEngine, err: unknown, cwd: string = hookSessionCwd()): Promise<boolean> {
+  if ((err as { code?: unknown } | null)?.code !== 'engine_capability_missing') return false;
+  if (ambientSourceEnv({}) || readDotfileWalk(cwd)) return true;
+  if (await engine.getConfig('sources.default').catch(() => 'unreadable')) return true;
+  const sources = await engine.listAllSources({ includeArchived: true }).catch(() => null);
+  return sources === null || sources.some((s) => s.id !== 'default');
 }
 
 async function resolveSourceWithTierChain(

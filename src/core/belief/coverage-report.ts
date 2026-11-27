@@ -50,9 +50,7 @@ const field = (row: CoverageRow, name: string) => obj(row.value)[name] ?? obj(ro
 
 /** Coverage intervals of the source's current incarnation, oldest first. */
 export async function coverageIntervals(engine: BrainEngine, sourceId: string): Promise<CoverageInterval[]> {
-  const rows = await engine.executeRaw<CoverageRow>(`SELECT e.id, e.event_type, e.recorded_at, e.value, e.cause, e.source_incarnation::text AS incarnation
-    FROM belief_events e JOIN sources s ON s.id = e.source_id AND s.incarnation = e.source_incarnation
-    WHERE e.source_id = $1 AND e.subject_kind = 'coverage' AND e.subject_key = $2 ORDER BY e.id`, [sourceId, COVERAGE_KEY]);
+  const rows: CoverageRow[] = await engine.readBeliefCoverageEvents(sourceId);
   const intervals: CoverageInterval[] = [];
   for (const row of rows) {
     const id = Number(row.id);
@@ -89,7 +87,7 @@ export async function coverageIntervals(engine: BrainEngine, sourceId: string): 
         AND ($4::timestamptz IS NULL OR recorded_at <= $4::timestamptz) ORDER BY id`,
     [sourceId, interval.incarnation, interval.started_id, interval.stopped_at]);
     interval.drift = drift.map(d => ({ slug: d.slug, event_id: Number(d.id), from: d.from ? iso(d.from) : null, to: iso(d.recorded_at) }));
-    const walks = await engine.executeRaw<{ request: string }>(`SELECT DISTINCT cause->>'purge_request' AS request FROM belief_events
+    const walks = await engine.executeRaw<{ request: string }>(`SELECT DISTINCT cause->>'purge_request' COLLATE "C" AS request FROM belief_events
       WHERE source_id = $1 AND event_type = 'derived.hidden' AND cause->>'derived_walk' = 'truncated' AND source_incarnation = $2::uuid AND id > $3
         AND ($4::timestamptz IS NULL OR recorded_at <= $4::timestamptz) ORDER BY 1`, [sourceId, interval.incarnation, interval.started_id, interval.stopped_at]);
     interval.truncated_walks = walks.map(w => w.request);
@@ -193,24 +191,18 @@ export const UNMARKED_WINDOW_DAYS = 7;
 export async function scanBeliefDrift(engine: BrainEngine, sourceId: string, opts: { deep?: boolean; limit?: number } = {}): Promise<DriftScan> {
   const source = await readLedgerSource(engine, sourceId);
   if (!source || !coverageActive(source.coverage) || source.coverage === 'coverage.started') return { checked: 0, candidates: 0, exact: true, drifted: [] };
-  const candidates = await engine.executeRaw<{ slug: string }>(`SELECT slug FROM (
-      SELECT p.slug, p.updated_at AS at FROM pages p WHERE p.source_id = $1
-      UNION ALL SELECT f.entity_slug, max(f.created_at) FROM facts f WHERE f.source_id = $1 AND f.source_markdown_slug IS NULL AND f.entity_slug IS NOT NULL GROUP BY f.entity_slug
-      UNION ALL SELECT l.slug, l.started_at FROM belief_page_lifetimes l WHERE l.source_id = $1 AND l.source_incarnation = $2::uuid AND l.ended_at IS NULL
-    ) c GROUP BY slug ORDER BY max(at) DESC NULLS LAST, slug`, [sourceId, source.incarnation]);
+  const candidates = await engine.listBeliefDriftCandidates(sourceId, source.incarnation);
   const limit = opts.deep ? candidates.length : Math.min(candidates.length, opts.limit ?? DRIFT_SAMPLE_PAGES);
   const drifted: DriftFinding[] = [];
-  for (const { slug } of candidates.slice(0, limit)) {
+  for (const slug of candidates.slice(0, limit)) {
     const finding = await driftOf(engine, sourceId, source.incarnation, slug);
     if (finding) drifted.push(finding);
   }
   return { checked: limit, candidates: candidates.length, exact: limit === candidates.length, drifted };
 }
 
-async function newestEvent(tx: BrainEngine, sourceId: string, incarnation: string, slug: string): Promise<{ id: number; state_hash: string; recorded_at: string } | null> {
-  const [row] = await tx.executeRaw<{ id: number; state_hash: string; recorded_at: string }>(`SELECT id, state_hash, recorded_at FROM belief_events
-    WHERE source_id = $1 AND source_incarnation = $2::uuid AND slug = $3 AND subject_kind <> 'coverage' AND origin <> 'backfill' ORDER BY id DESC LIMIT 1`, [sourceId, incarnation, slug]);
-  return row ? { id: Number(row.id), state_hash: row.state_hash, recorded_at: iso(row.recorded_at) } : null;
+function newestEvent(tx: BrainEngine, sourceId: string, incarnation: string, slug: string): Promise<{ id: number; state_hash: string; recorded_at: string } | null> {
+  return tx.readNewestBeliefEvent(sourceId, incarnation, slug);
 }
 
 async function driftOf(engine: BrainEngine, sourceId: string, incarnation: string, slug: string): Promise<DriftFinding | null> {
@@ -308,13 +300,7 @@ export async function reconcileBeliefDrift(engine: BrainEngine, sourceId: string
 
 /** Open lifetimes with no page at their slug (an untracked hard delete), and (`deep`, a whole-ledger read) events naming a lifetime that does not exist. */
 export async function orphanLifetimes(engine: BrainEngine, sourceId: string, limit = 20, opts: { deep?: boolean } = {}): Promise<{ count: number; samples: Array<{ slug: string; page_lifetime: string; reason: 'no_page' | 'no_lifetime' }> }> {
-  const rows = await engine.executeRaw<{ slug: string; page_lifetime: string; reason: 'no_page' | 'no_lifetime'; total: number }>(`SELECT slug, page_lifetime, reason, count(*) OVER ()::int AS total FROM (
-      SELECT l.slug, l.page_lifetime::text AS page_lifetime, 'no_page' AS reason FROM belief_page_lifetimes l JOIN sources s ON s.id = l.source_id AND s.incarnation = l.source_incarnation
-      WHERE l.source_id = $1 AND l.ended_at IS NULL AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id = l.source_id AND p.slug = l.slug)
-      UNION ALL SELECT DISTINCT e.slug, e.page_lifetime::text, 'no_lifetime' FROM belief_events e
-      WHERE $2::boolean AND e.source_id = $1 AND e.page_lifetime IS NOT NULL AND NOT EXISTS (SELECT 1 FROM belief_page_lifetimes l WHERE l.page_lifetime = e.page_lifetime)
-    ) o ORDER BY slug LIMIT ${Math.max(1, Math.floor(limit))}`, [sourceId, opts.deep === true]);
-  return { count: Number(rows[0]?.total ?? 0), samples: rows.map(r => ({ slug: r.slug, page_lifetime: r.page_lifetime, reason: r.reason })) };
+  return engine.listOrphanLifetimes(sourceId, limit, opts.deep === true);
 }
 
 /**

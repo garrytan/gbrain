@@ -1,16 +1,16 @@
 /**
- * stampPageTrust and loadPageTrust read two things through `executeRaw`: the current trust of the facts-fence rows a
- * chunk carries, and the guest mark of a guest page.
+ * stampPageTrust and loadPageTrust read two things: the current trust of the facts-fence rows a chunk carries (the
+ * typed listFenceRowTrust) and the guest mark of a guest page (`executeRaw`).
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
- *  - Contract: a capability refusal from either read (an engine without raw SQL refuses it) reaches the caller; any
+ *  - Contract: a capability refusal from either read (an engine that does not serve it refuses it) reaches the caller; any
  *    other read failure keeps the fail-open result (the stored labels for fence rows, an unattributed guest mark).
  *  - Regression: a catch-all would answer a fence chunk with its stored label and a guest page with no mark, which a
  *    reader cannot tell apart from a brain whose rows are unflagged and whose guest notes carry no sender.
  *  - Why existing coverage misses it: fence-chunk-trust-read.test.ts and the guest-notes tests run on SQL engines,
  *    which never refuse `executeRaw`.
- *  - Seam: a fake engine with only `executeRaw`, `readPageTrustRows`, `readRowTrustRows` and `listHeldFenceCells`, the
- *    members these call.
+ *  - Seam: a fake engine with only `executeRaw`, `readPageTrustRows`, `readRowTrustRows`, `listHeldFenceCells` and
+ *    `listFenceRowTrust`, the members these call; `raw` answers both the fence-row read and the guest-mark read.
  */
 import { describe, expect, test } from 'bun:test';
 import { loadPageTrust, stampPageTrust } from '../src/core/eligibility/stamp.ts';
@@ -25,11 +25,14 @@ const fake = (raw: Raw, pages: PageTrustRow[] = []) => ({
   readRowTrustRows: async () => [],
   // Only a hideHeld read (dropHeldFenceRows) calls it; these cases never pass hideHeld.
   listHeldFenceCells: async () => [],
+  listFenceRowTrust: (async () => raw('listFenceRowTrust')) as never,
+  // The guest-mark read of a guest page's stamp: it fails as `raw` does.
+  readGuestMarks: (async () => raw('readGuestMarks')) as never,
 });
 
 const page = (over: Partial<PageTrustRow> = {}): PageTrustRow => ({
   id: 1, source_id: 'default', slug: 'people/alice-example', trust_tier: 'operator_curated', write_origin: { channel: 'import' },
-  flagged: false, guest: false, byId: true, ...over,
+  flagged: false, guest: false, precedence: 'curated', byId: true, ...over,
 });
 
 const fenceChunk = () => ({

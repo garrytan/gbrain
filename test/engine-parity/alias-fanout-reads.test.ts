@@ -318,9 +318,10 @@ describe('engine parity: alias fan-out reads of derived alias rows', () => {
       const both = await engine.resolveCaseSensitiveAliases(['alice', 'ae'], ['other', 'default']);
       expect(both).toEqual([
         { slug: 'people/a-founder', alias_norm: 'ae', alias_text: 'aE' },
-        { slug: 'people/alice-example', alias_norm: 'ae', alias_text: 'AE' },
-        { slug: 'people/alice-example', alias_norm: 'ae', alias_text: 'AE' },
+        // By slug, alias, then alias text in byte order (master's R2 contract: the rows carry no source).
         { slug: 'people/alice-example', alias_norm: 'ae', alias_text: 'A.E.' },
+        { slug: 'people/alice-example', alias_norm: 'ae', alias_text: 'AE' },
+        { slug: 'people/alice-example', alias_norm: 'ae', alias_text: 'AE' },
       ]);
       // Not case-sensitive: the derived `alice` row and the frontmatter `ae` row never answer.
       const notCase = await engine.resolveCaseSensitiveAliases(['alice'], ['default']);
@@ -383,8 +384,11 @@ describe('alias fan-out: a refused Rust read reads as no rows', () => {
     const viaStore: BrainEngine['findPagesByTitles'] = (...args) =>
       (STORE_MEMBERS.findPagesByTitles as (b: unknown, ...a: unknown[]) => Promise<never>)(brain, ...args)
         .catch((e: unknown) => { refusals.push(e); throw e; });
+    // A member's lineage read is served now (row 32e-b-2); a labelled-only member speaking for an audience of several identities
+    // still widens the page policy past what the store reads, so the store member refuses typed.
     const widened = <T>(fn: () => Promise<T>) => withCallerAccess({
-      identity: ['member:alice-example'], folderCoverage: [{ source_id: 'default', prefix: 'people/' }], hidePrivate: true,
+      identity: ['member:alice-example'], hidePrivate: true, labelledOnly: true,
+      audienceIdentities: [['member:alice-example'], ['member:bob-example']],
     }, fn);
     const run = (engine: BrainEngine) => widened(() => withRequestConfigSnapshot(engine,
       () => resolveQueryEntities(engine, 'Acme Example renewal', { sourceId: 'default', excludePrivate: true })));

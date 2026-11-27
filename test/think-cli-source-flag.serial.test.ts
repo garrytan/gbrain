@@ -14,7 +14,10 @@
  */
 import { describe, test, expect, beforeEach, mock } from 'bun:test';
 
-const captured: { opts: Array<Record<string, unknown>>; persist: Array<Record<string, unknown>> } = { opts: [], persist: [] };
+const captured: { opts: Array<Record<string, unknown>>; persist: Array<Record<string, unknown>>; take: Array<Record<string, unknown>> } = { opts: [], persist: [], take: [] };
+/** GST-3612: what the mocked writers answer: a save accepted but still publishing, and the take's result. */
+const writers: { savePending: boolean; takeRow: number | null } = { savePending: false, takeRow: 1 };
+const { OperationError } = await import('../src/core/ops/contract.ts');
 
 const stubResult = {
   answer: 'Stub answer.',
@@ -34,9 +37,17 @@ mock.module('../src/core/think/index.ts', () => ({
   },
   persistSynthesis: async (_engine: unknown, _result: unknown, opts: Record<string, unknown> = {}) => {
     captured.persist.push(opts);
+    if (writers.savePending) throw new OperationError('write_pending', 'The synthesis page has not committed: request save-request-example.', 'Poll gbrain write-request save-request-example.');
     return { slug: 'synthesis/stub', evidenceInserted: 0, warnings: [] };
   },
   stripGapsSection: (s: string) => s,
+}));
+
+mock.module('../src/core/think/persist-take.ts', () => ({
+  persistTakeFromSynthesis: async (_engine: unknown, _result: unknown, opts: Record<string, unknown>) => {
+    captured.take.push(opts);
+    return writers.takeRow === null ? { take_row: null, warnings: ['TAKE_WRITE_FAILED: page_not_found'] } : { take_row: writers.takeRow, warnings: [] };
+  },
 }));
 
 const realConfig = await import('../src/core/config.ts');
@@ -91,8 +102,10 @@ async function runCli(args: string[]): Promise<{ code: number; out: string[]; er
   const savedLog = console.log;
   const savedError = console.error;
   const savedExit = process.exit;
+  const savedStderr = process.stderr.write;
   console.log = (...a: unknown[]) => { out.push(a.map(String).join(' ')); };
   console.error = (...a: unknown[]) => { err.push(a.map(String).join(' ')); };
+  process.stderr.write = ((chunk: unknown) => { err.push(String(chunk)); return true; }) as typeof process.stderr.write;
   (process as unknown as { exit: (code?: number) => never }).exit = ((code?: number) => {
     throw new ExitSentinel(code ?? 0);
   }) as never;
@@ -105,11 +118,15 @@ async function runCli(args: string[]): Promise<{ code: number; out: string[]; er
   } finally {
     console.log = savedLog;
     console.error = savedError;
+    process.stderr.write = savedStderr;
     (process as unknown as { exit: typeof savedExit }).exit = savedExit;
   }
 }
 
-beforeEach(() => { captured.opts.length = 0; captured.persist.length = 0; });
+beforeEach(() => {
+  captured.opts.length = 0; captured.persist.length = 0; captured.take.length = 0;
+  writers.savePending = false; writers.takeRow = 1;
+});
 
 describe('#4508 think --source CLI surface', () => {
   test('--source is parsed out of the question and threaded into runThink', async () => {
@@ -222,5 +239,39 @@ describe('think --save writes to the resolved source', () => {
     await operationsByName.think.handler(ctx('workspace'), { question: 'plain question', save: true });
     await operationsByName.think.handler(ctx('__all__'), { question: 'plain question', save: true });
     expect(captured.persist).toEqual([{ sourceId: 'workspace' }, { sourceId: undefined }]);
+  });
+});
+
+describe('think --take writes to the resolved source (GST-3612)', () => {
+  test('an explicit --source appends the take in that source', async () => {
+    const r = await runCli(['plain', 'question', '--source', 'workspace', '--take', '--anchor', 'people/alice-example']);
+    expect(r.code).toBe(0);
+    expect(captured.take).toEqual([{ anchor: 'people/alice-example', sourceId: 'workspace' }]);
+  });
+
+  test('a save still publishing prints the answer, then exits 10 with its receipt', async () => {
+    writers.savePending = true;
+    const r = await runCli(['plain', 'question', '--save']);
+    expect(r.code).toBe(10);
+    expect(r.out.join('\n')).toContain('Stub answer.');
+    expect(r.err.join('\n')).toContain('save-request-example');
+  });
+
+  test('a save still publishing keeps its receipt when the take is then refused', async () => {
+    writers.savePending = true; writers.takeRow = null;
+    const r = await runCli(['plain', 'question', '--save', '--take', '--anchor', 'people/alice-example']);
+    expect(r.code).toBe(1);
+    expect(r.err.join('\n')).toContain('no take row was appended');
+    expect(r.err.join('\n')).toContain('save-request-example');
+  });
+
+  test('the local think operation appends the take in the caller source and never in the __all__ sentinel', async () => {
+    const { operationsByName } = await import('../src/core/operations.ts');
+    const engine = { kind: 'pglite', executeRaw: async () => [], getConfig: async () => null } as never;
+    const ctx = (sourceId: string) => ({ engine, remote: false, sourceId, config: { engine: 'pglite' },
+      logger: { info() {}, warn() {}, error() {} } }) as never;
+    await operationsByName.think.handler(ctx('workspace'), { question: 'plain question', take: true, anchor: 'people/alice-example' });
+    await operationsByName.think.handler(ctx('__all__'), { question: 'plain question', take: true, anchor: 'people/alice-example' });
+    expect(captured.take.map(t => t.sourceId)).toEqual(['workspace', undefined]);
   });
 });

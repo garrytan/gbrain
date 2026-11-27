@@ -215,5 +215,5 @@ fn extractor_facts_carry_their_page_withdrawal_duplicate_fence_and_receipt_evide
     expire(&store, orphan, None);
     let none = list(&store, &["default"], Some("chats/none"));
     assert_eq!(none[0]["page_id"], Value::Null);
-    assert_eq!(none[0]["page_deleted"], Value::Null);
+    assert_eq!(none[0]["page_deleted"], json!(false));
 }

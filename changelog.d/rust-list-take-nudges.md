@@ -1,0 +1,1 @@
+- A new read, `listTakeNudges`, lists a source's take nudge log rows (narrowed by take, proposal, pattern and wave) on PGLite, Postgres and the Rust engine. A second process on a Rust brain whose `insertTakeNudge` call lost its answer now gets this read as the way to tell whether the nudge was logged, instead of a rerun that could log it twice.

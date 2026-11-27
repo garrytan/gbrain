@@ -9,10 +9,11 @@ import { join, relative, sep } from 'node:path';
 import { isSyncMetafile, matchesAnyGlob } from '../sync.ts';
 import { syncExcludePatterns } from './sync-discovery.ts';
 import type { BrainEngine } from '../engine.ts';
+import { requirePurgePathServed } from './purge-path-members.ts';
 import type { GBrainConfig } from '../config.ts';
-import type { Page, PageVersion } from '../types.ts';
+import type { Page } from '../types.ts';
 import { importFromContent, verifyPageReadable, type ParsedPage } from '../import-file.ts';
-import { classifyImportHold, comparableFrontmatter, frontmatterHoldMessageWithoutKeys, parseMarkdown, resolveParsedSubtype, serializePageToMarkdown, resolveSourceLocalFilePath, type ParsedMarkdown, type ParseOpts } from '../markdown.ts';
+import { classifyImportHold, comparableFrontmatter, frontmatterHoldMessageWithoutKeys, needsEmptyTimelineSentinel, parseMarkdown, resolveParsedSubtype, splitBody, serializePageToMarkdown, resolveSourceLocalFilePath, type ParsedMarkdown, type ParseOpts } from '../markdown.ts';
 import { alignWithStored } from './align-stored.ts';
 import { assertLargePageReplacement } from './large-page-guard.ts';
 import { applyInference } from '../frontmatter-inference.ts';
@@ -38,6 +39,9 @@ import { recordedPathFromFileUri, scannerSlugRootMode, scannerSourcePath } from 
 import { engineMutationPrecondition, parseMutationPrecondition } from './preconditions.ts';
 import { assertPurgeParams } from './purge-params.ts';
 import { authorizeWrite, slugDisclosable } from './authority.ts';
+import { admitPolicyFrontmatter } from '../policy/admission.ts';
+import { admitRuleFrontmatter } from '../rules/admission.ts';
+import { admitActionFrontmatter } from '../ledger/admission.ts';
 import { remoteLabelsChecked, defaultSourceMemberWriter, defaultSourceWriterIsOwner, defaultSourceWriterReaders, ownerRewriteOf, storedWriterReadsHeld } from './page-visibility.ts';
 import { loadFenceChunkOverlay } from '../eligibility/fence-overlay.ts';
 import { findLiveFileClaimants, type FileClaimant, type FileClaimTarget } from './file-claims.ts';
@@ -56,7 +60,7 @@ import { sealImportedPage, sealPageTextProjection } from '../page-state/projecti
 import { materializedSnapshot, sealSegmentedPage } from './segmented-apply.ts';
 import { isStagingBodyRef, prepareStagedUpload } from './page-upload.ts';
 import { pipelined } from '../page-state/transactions.ts';
-import { overlayCanonicalBodies } from '../page-state/snapshot.ts';
+import { overlayCanonicalBodiesTyped } from '../page-state/snapshot.ts';
 import { segmentedRevertRefusal } from '../page-state/versions.ts';
 import { bodyUnread, fenceBody, isSegmentedPage, pageBodySegmentedError, withoutBody } from '../page-body/page-shape.ts';
 import { fileBodyDigests, overlaidFileBodyDigests, storedBodyDigests, type ByteSource, type FileReading, type RegionDigests } from '../page-body/body-digests.ts';
@@ -74,6 +78,7 @@ import { materializeTimeline, prepareCanonicalProjections, type TimelineRowsRemo
 import { assertTimelineNotOmitted, timelineWritePolicy } from './timeline-omission.ts';
 import { preserveProtectedTakes } from './protected-takes.ts';
 import { assertPrivateRequestKept, privateRequestGuarded, readPrivateRequest } from './visibility-request.ts';
+import { assertReadersKeyCanonical } from './readers-request.ts';
 import { isAutoLinkEnabled } from '../link-extraction.ts';
 import { prepareAutomaticLinks } from './links-preparation.ts';
 import { loadActivePackForEngine } from '../schema-pack/engine-resolution.ts';
@@ -167,7 +172,7 @@ function canonicalDifference(a: ReturnType<typeof canonical>, b: ReturnType<type
   const fields = (['title', 'type', 'tags', 'compiled_truth', 'timeline'] as const).filter(field => digest(a[field]) !== digest(b[field]));
   return [...keys, ...fields.map(field => field === 'compiled_truth' ? 'body' : field)];
 }
-interface CanonicalProvenance { source_kind: string; ingested_via: string; ingested_at: string; }
+interface CanonicalProvenance { source_kind: string; ingested_via: string; ingested_at: string | null; }
 /**
  * Writes whose caller supplies the page text, and so could supply provenance stamps in its frontmatter. Unlike
  * trust/page-write.ts CONTENT_OPERATIONS, revert_version and restore_page are absent: they replay a stored version.
@@ -192,12 +197,16 @@ function putProvenance(row: WriteRequest, snapshot: PageSnapshot | null, parsed:
   const via = row.authority.remote ? 'mcp:put_page' : 'put_page';
   // Historical frontmatter was caller-controlled. Only trusted provenance
   // columns may supply a prior channel or timestamp for the first-write record.
+  // #10025: a stored ingested_at the column lacks stays in the frontmatter, and the column stays empty (uncertified).
+  const storedAt = first?.ingested_at ? undefined : first?.frontmatter?.ingested_at;
+  const keepStoredAt = typeof storedAt === 'string' && !Number.isNaN(new Date(storedAt).getTime());
   const stamp: CanonicalProvenance = {
     source_kind: string(first?.source_kind) ?? string(row.intent?.source_kind) ?? via,
     ingested_via: string(first?.ingested_via) ?? string(row.intent?.ingested_via) ?? via,
-    ingested_at: new Date(first?.ingested_at ?? row.created_at).toISOString(),
+    ingested_at: keepStoredAt ? null : new Date(first?.ingested_at ?? row.created_at).toISOString(),
   };
-  Object.assign(parsed.frontmatter, stamp);
+  const { ingested_at, ...channel } = stamp;
+  Object.assign(parsed.frontmatter, ingested_at ? stamp : channel);
   return stamp;
 }
 function serverOwnsProvenance(row: WriteRequest): boolean {
@@ -266,15 +275,16 @@ export async function fileMatchesSnapshot(engine: BrainEngine, slug: string, byt
 export async function fileSnapshotDifference(engine: BrainEngine, slug: string, bytes: string, snapshot: PageSnapshot,
   sourcePath: string | (() => Promise<string>), activePack?: ParseOpts['activePack']): Promise<string[]> {
   snapshot = (await materializedSnapshot(engine, snapshot))!;
-  const expected = canonical({ ...snapshot.page, frontmatter: withoutSafetyAssessments(snapshot.page.frontmatter ?? {}) }, snapshot.tags);
+  const stored = { ...snapshot.page, frontmatter: withoutSafetyAssessments(snapshot.page.frontmatter ?? {}) };
+  const expected = storedReadings(stored).map(page => canonical(page, snapshot.tags));
   const difference = async (content: string, inferred: boolean) => {
     const parsed = parseMarkdown(content, slug, { activePack });
     const type = importedFileType(parsed, snapshot.page, inferred);
     // Withdrawal overlays intentionally precede physical mirroring. The ledger
     // is applied by the import preparation and cannot be undone by this check.
-    const actual = canonical({ ...parsed, frontmatter: withoutSafetyAssessments(parsed.frontmatter), type, ...await overlayCanonicalBodies(engine.executeRaw.bind(engine),
+    const actual = canonical({ ...parsed, frontmatter: withoutSafetyAssessments(parsed.frontmatter), type, ...await overlayCanonicalBodiesTyped(engine,
       parsed.compiled_truth, parsed.timeline ?? '', snapshot.withdrawals, { sourceId: snapshot.page.source_id, marker: snapshot.globalPurges }) }, parsed.tags);
-    return canonicalDifference(actual, expected);
+    return expected.map(page => canonicalDifference(actual, page)).reduce((closer, keys) => keys.length < closer.length ? keys : closer);
   };
   const raw = await difference(bytes, false);
   if (!raw.length) return raw;
@@ -282,6 +292,17 @@ export async function fileSnapshotDifference(engine: BrainEngine, slug: string, 
   if (!reading.inferred) return raw;
   const inferred = await difference(reading.content, true);
   return inferred.length < raw.length ? inferred : raw;
+}
+/**
+ * The stored page, then, when its body splits today, the stored page as today's parser reads its body. An import before
+ * v0.46.25.0 (#2225) kept a body's bare dated `## Timeline` section in compiled_truth with an empty timeline, and a file
+ * rendered from such a row before #7738 has no sentinel to keep it there, so today's parse of that unchanged file moves the
+ * section to the timeline. The text is the same, split at another line: a file that matches either reading holds the page.
+ */
+function storedReadings<T extends Pick<Page, 'compiled_truth' | 'timeline'>>(page: T): T[] {
+  if ((page.timeline ?? '').trim() || !needsEmptyTimelineSentinel(page.compiled_truth)) return [page];
+  const split = splitBody(page.compiled_truth);
+  return [page, { ...page, compiled_truth: split.compiled_truth.trim(), timeline: split.timeline.trim() }];
 }
 /**
  * #8109: the file a write publishes over a canonical file that differs from the database only in frontmatter, or null
@@ -296,10 +317,10 @@ async function frontmatterDriftWrite(engine: BrainEngine, slug: string, fileText
   snapshot = (await materializedSnapshot(engine, snapshot))!;
   const file = parseMarkdown(fileText, slug, { activePack });
   const type = importedFileType(file, snapshot.page, false);
-  const bodies = await overlayCanonicalBodies(engine.executeRaw.bind(engine), file.compiled_truth, file.timeline ?? '', snapshot.withdrawals,
+  const bodies = await overlayCanonicalBodiesTyped(engine, file.compiled_truth, file.timeline ?? '', snapshot.withdrawals,
     { sourceId: snapshot.page.source_id, marker: snapshot.globalPurges });
   const bare = (page: Parameters<typeof canonical>[0], tags: string[]) => digest(canonical({ ...page, frontmatter: {} }, tags));
-  if (bare({ ...file, type, ...bodies }, file.tags) !== bare(snapshot.page, snapshot.tags)) return null;
+  if (!storedReadings(snapshot.page).some(page => bare({ ...file, type, ...bodies }, file.tags) === bare(page, snapshot.tags))) return null;
   const fileFrontmatter = comparableFrontmatter(withoutSafetyAssessments(file.frontmatter));
   const stored = comparableFrontmatter(withoutSafetyAssessments(snapshot.page.frontmatter ?? {}));
   const drifted = [...new Set([...Object.keys(fileFrontmatter), ...Object.keys(stored)])].filter(key => digest(fileFrontmatter[key] ?? null) !== digest(stored[key] ?? null));
@@ -408,7 +429,7 @@ async function segmentedFileMatches(engine: BrainEngine, slug: string, bytes: By
     // A facts fence under a ledger that applies is compared overlaid, one complete fence block at a time; a fence longer
     // than FENCE_MAX_BYTES refuses, as the stored side's trusted read does.
     const fileDigests = file.factsFence && ledgerApplies(ledger)
-      ? await overlaidFileBodyDigests(bytes, reading, file.regions, async text => (await overlayCanonicalBodies(engine.executeRaw.bind(engine), text, '',
+      ? await overlaidFileBodyDigests(bytes, reading, file.regions, async text => (await overlayCanonicalBodiesTyped(engine, text, '',
         ledger.withdrawals, { sourceId: snapshot.page.source_id, marker: ledger.globalPurges })).compiled_truth,
       fence => fenceTooLargeError(slug, snapshot.page.source_id, fence), between)
       : file.digests;
@@ -529,10 +550,8 @@ async function compareFileTarget(engine: BrainEngine, row: Parameters<typeof pre
   // same import (holdForImport) and both are released, in admission order, at its checkpoint; it never commits before the held one.
   // GST-1623: only a journaled request (one with a sequence) waits, and only on a write admitted before it; an effect or a
   // maintenance read of the file (Git and withdrawal-mirror effects, lint, drift checks) is never refused by another request's hold.
-  const [heldFirst] = row.sequence == null ? [] : await engine.executeRaw<{ deferred_import_from: string }>(`SELECT r.deferred_import_from FROM persistence_requests r
-    JOIN sources s ON s.id=r.source_id WHERE r.source_id=$1 AND r.slug=$2 AND r.sequence<$3 AND r.state='deferred' AND r.deferred_import_from IS NOT NULL
-      AND COALESCE(s.last_commit,'')=r.deferred_import_from ORDER BY r.sequence LIMIT 1`, [row.source_id, row.slug, String(row.sequence)]);
-  if (heldFirst) throw pendingImportRefusal(row, options.remote === true, heldFirst.deferred_import_from, { root, path });
+  const heldFirst = row.sequence == null ? null : await (await engine.publicationJournalStore()).heldBehindImport(row.source_id, row.slug, row.sequence);
+  if (heldFirst) throw pendingImportRefusal(row, options.remote === true, heldFirst, { root, path });
   const beforeHash = () => before instanceof FileBytes ? before.hash() : sha256(before!);
   if (options.deleting === true && options.sharedOrigin && snapshot && before) {
     const target: FileClaimTarget = { sourceId: row.source_id, slug: row.slug, pageId: snapshot.page.id, root, path, canonicalPath: realpathSync(path),
@@ -668,7 +687,7 @@ export async function preparePrivateTransition(engine: BrainEngine, row: Pick<Wr
   if (!row.worktree_id || !await sourceCanonicalGit(engine, row.source_id)) return undefined;
   return prepareFileTarget(engine, row, snapshot, null, undefined, { ...options, deleting: true });
 }
-export async function pageDatabaseOnlyPublication(engine: SqlEngine, row: WriteRequest, file: PreparedMutation['file']): Promise<Pick<PreparedMutation, 'databaseOnlyReason'>> {
+export async function pageDatabaseOnlyPublication(engine: SqlEngine & Pick<BrainEngine, 'readPageDatabaseOnlyReason'>, row: WriteRequest, file: PreparedMutation['file']): Promise<Pick<PreparedMutation, 'databaseOnlyReason'>> {
   const reason = databaseOnlyPublication(row, file);
   if (reason.databaseOnlyReason && (await sourceMirrorReadOnly(engine, row.source_id) || await isMirrorOnlyPage(engine, row.source_id, row.slug))) {
     return { databaseOnlyReason: 'mirror_read_only' };
@@ -751,6 +770,8 @@ async function prepareDeletePageMutation(engine: BrainEngine, row: WriteRequest,
   options: { activePack?: ParseOpts['activePack']; clock?: ClaimPhaseClock; allowMissingFile?: boolean }): Promise<PreparedMutation> {
   const p = row.intent!, source = { sourceId: row.source_id }, clock = options.clock;
   assertPurgeParams(p, row.authority.remote);
+  // Backstop for a journaled purge that is prepared later (a recovered request): the same check as at submission, before the first read.
+  if (p.purge === true) await requirePurgePathServed(engine, p.retention === true ? 'retention' : 'delete_page');
   if (!snapshot) throw pageRefusal('page_not_found', 'Page not found.', row,
     `Page ${row.slug} does not exist in source ${row.source_id}, so nothing was deleted. Check the slug and the source.`, pageFix(row.source_id, row.slug));
   const observedRevision = snapshot.revision;
@@ -1021,6 +1042,18 @@ const frontmatterRefusalError = (refusal: ContentRefusal) => contentRefusalError
   `Correct ${refusal.line !== undefined ? `frontmatter line ${refusal.line}${refusal.key ? ` (key "${refusal.key}")` : ''}` : 'the frontmatter'}: one line per key with its whole value quoted, then submit the corrected content with a new request_id.`,
   { legacy_error: 'invalid_params' });
 
+/**
+ * The private request an authored put, edit or capture carries (null for a derived write). A readers key spelled any way but
+ * `readable_by` is ignored by page access, so it refuses here rather than publish the page to every member.
+ */
+function authoredRequests(row: WriteRequest, kind: unknown, content: unknown, activePack: ParseOpts['activePack']): ReturnType<typeof readPrivateRequest> {
+  if (!privateRequestGuarded(row.operation, kind) || typeof content !== 'string') return null;
+  const parse = () => parseMarkdown(content, row.slug, { activePack }).frontmatter;
+  const request = readPrivateRequest(content, parse);
+  assertReadersKeyCanonical(row, content, request ? request.frontmatter : parse(), !row.authority.remote);
+  return request;
+}
+
 /** A private request the importer would hold keeps the importer's typed refusal; any other must be kept as written. */
 function assertPrivateRequestAllowed(row: WriteRequest, content: string, frontmatter: Record<string, unknown> | null | undefined): void {
   const hold = classifyImportHold(parseMarkdown(content, row.slug, { validate: true }));
@@ -1096,7 +1129,7 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
   // #5616: edits apply to the caller's view of the locked snapshot (revision checked above).
   const edited = row.operation === 'edit_page' ? await editLockedPage(engine, row, snapshot) : undefined;
   let content = edited?.content ?? preparedIntent?.content ?? p.content as string;
-  const privateRequest = privateRequestGuarded(row.operation, p.kind) && typeof content === 'string' ? readPrivateRequest(content, () => parseMarkdown(content as string, row.slug, { activePack }).frontmatter) : null;
+  const privateRequest = authoredRequests(row, p.kind, content, activePack);
   if (privateRequest) assertPrivateRequestAllowed(row, content as string, privateRequest.frontmatter);
   let versionTags: string[] | undefined = replacesTombstone && typeof content === 'string' ? parseMarkdown(content, row.slug, { activePack }).tags : preparedIntent?.tags;
   // A replacement/restore publishes a live page. Only a recorded version may
@@ -1110,8 +1143,7 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
     let page = snapshot.page;
     let tags = snapshot.tags;
     if (row.operation === 'revert_version') {
-      const [version] = await engine.executeRaw<PageVersion>(
-        'SELECT * FROM page_versions WHERE id=$1 AND page_id=$2', [p.version_id, page.id]);
+      const version = await engine.readPageVersionRow(p.version_id as number, page.id);
       if (!version) throw pageRefusal('not_found', 'Version not found for this page.', row,
         `Version ${String(p.version_id)} is not in the history of page ${row.slug}, so nothing was reverted. List the page's versions (get_versions; CLI: gbrain history) and revert to one of them.`);
       if (version.body_storage === 'segmented' || isSegmentedPage(page)) throw segmentedRevertRefusal(row.slug, p.version_id);
@@ -1179,7 +1211,7 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
   const lean = options.coordinated === true && !targetDeleted && row.operation !== 'restore_page' && !versionTags;
   enterClaimStep(clock, 'import_content', undefined, 'db');
   const result = await importFromContent(engine, row.slug, content, {
-    ...source, noEmbed: true, remote: row.authority.remote || p.keep_hidden_rows === true, restoreHeldRows: p.keep_hidden_rows === true || !await storedWriterReadsHeld(engine, row.authority), activePack, fences: projected ? 'coordinated' : 'lenient', coordinated: lean, boundedChunkWrites: options.boundedChunkWrites,
+    ...source, noEmbed: true, remote: row.authority.remote || p.keep_hidden_rows === true, restoreHeldRows: p.keep_hidden_rows === true || !await storedWriterReadsHeld(engine, row.authority), householdOwner: () => storedWriterReadsHeld(engine, row.authority), activePack, fences: projected ? 'coordinated' : 'lenient', coordinated: lean, boundedChunkWrites: options.boundedChunkWrites,
     segmentedOwner: { kind: row.operation === 'edit_page' ? 'edit' : 'put', principalKind: row.principal_kind, principalId: row.principal_id, baseRevision: observedRevision },
     ...(lean ? { existingSnapshot: snapshot } : {}),
     // #6259: only owner-tier intents keep gate-owned markers; an ordinary put_page, local or remote, has them stripped.
@@ -1197,6 +1229,8 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
       if (labelGuard) heldLabels = holdPrivacyLabels(page.frontmatter, snapshot?.page.frontmatter, labelGuard);
       stampPageTrustMarker(row, page.frontmatter, trust, storedTier, snapshot?.page.frontmatter);
       defaultSourceWriterReaders(defaultSourceWriter, page.frontmatter, snapshot?.page, defaultSourceOwner, ownerRewrite);
+      admitPolicyFrontmatter(row.authority.remote, row.slug, page, snapshot?.page.type); admitRuleFrontmatter(row.authority.remote, row.slug, page, snapshot?.page.type);
+      admitActionFrontmatter(row.authority.remote, row.slug, page, snapshot?.page.type);
       if (privateRequest) assertPrivateRequestKept(row, page.frontmatter);
     },
     prepare: async value => { prepared = value; return value.result; },

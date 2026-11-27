@@ -108,8 +108,12 @@ describe('entity', () => {
     expect(isCapabilityMissing(e)).toBe(true);
   });
 
+  // This case refused executeRaw, which on rust-engine/main still reached a raw read on the card's path. On the
+  // cli-members line every read on that path is a typed member, so a refused executeRaw refused nothing and the card was
+  // answered (main join da99c637a7). The case now refuses the exact-match member itself, readEntityCardRows
+  // (capability 'pages'), which entity-card.ts rethrows through rethrowCapabilityMissing.
   test('a refused exact-match read refuses the card', async () => {
-    const e = await refusalOf(card(failing('executeRaw', 'raw_sql', 'refusal')));
+    const e = await refusalOf(card(failing('readEntityCardRows', 'pages', 'refusal')));
     expect(isCapabilityMissing(e)).toBe(true);
   });
 

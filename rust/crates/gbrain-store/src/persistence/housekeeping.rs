@@ -51,7 +51,7 @@ fn compactable(r: &RequestRecord) -> bool {
 }
 
 /// `jsonb ? key`: an object's key, an array's string element, or the string itself.
-fn jsonb_has(v: &Value, key: &str) -> bool {
+pub(super) fn jsonb_has(v: &Value, key: &str) -> bool {
     match v {
         Value::Object(o) => o.contains_key(key),
         Value::Array(a) => a.iter().any(|e| e.as_str() == Some(key)),
@@ -88,13 +88,13 @@ fn days_before(env: &dyn Env, days: f64) -> i64 {
 /// One housekeeping `op_checkpoints` row: `completed_keys` and `updated_at`.
 /// The resumable-op checkpoints of `op_checkpoint.rs` share the row shape and the key.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub(super) struct HousekeepingRow {
+pub(crate) struct HousekeepingRow {
     #[serde(deserialize_with = "crate::jsonb::de_value")]
-    pub(super) completed_keys: Value,
-    pub(super) updated_at_us: i64,
+    pub(crate) completed_keys: Value,
+    pub(crate) updated_at_us: i64,
 }
 
-fn turn_key(op: &str, fingerprint: &str) -> Result<Vec<u8>> {
+pub(crate) fn turn_key(op: &str, fingerprint: &str) -> Result<Vec<u8>> {
     if op.contains('\0') || fingerprint.contains('\0') {
         return Err(StoreError::invalid(
             "a housekeeping checkpoint key cannot contain NUL",

@@ -11,7 +11,6 @@ import { safeHexEqual } from '../core/timing-safe.ts';
 import { normalizeTokenScopes } from '../core/legacy-token-scope.ts';
 import { rescopeClientGrant } from '../core/grants/service.ts';
 import { resolveOwnerHolder } from '../core/owner-holder.ts';
-import { sqlQueryForEngine } from '../core/sql-query.ts';
 import { lifetimeUsage, readMcpLogRetentionDays } from '../core/mcp-request-log-retention.ts';
 import { readMcpUsageCoverage } from '../core/mcp-usage.ts';
 import { VERSION } from '../version.ts';
@@ -19,7 +18,7 @@ import { mountAdminApiKeys } from './serve-http-api-keys.ts';
 import { mountAdminClients } from './serve-http-clients.ts';
 import { mountAdminRegistration } from './serve-http-registration.ts';
 import { parseAdminGrantRequest, grantHttpStatus, GRANT_TOKEN_IMPLICATIONS, mountAdminGrantDiscovery, mountAdminGrantEdits } from './serve-http-grants.ts';
-import { mountAdminAccess, mountAdminMemoryProposals } from './serve-http-access.ts';
+import { mountAdminAccess, mountAdminMemoryProposals, mountAdminPolicy } from './serve-http-access.ts';
 import { probeHealth } from './serve-http-metrics.ts';
 import type { ServeHttpContext } from './serve-http.ts';
 
@@ -71,9 +70,8 @@ export async function queryHealthIndicators(engine: BrainEngine): Promise<{
   expiring_soon: number; error_rate: string; pending_writes: number;
   oldest_pending_write_age_seconds: number; pending_writes_later_failed: number;
 }> {
-  const sql = sqlQueryForEngine(engine);
   const now = Math.floor(Date.now() / 1000);
-  const [expiring] = await sql`SELECT count(*)::int as count FROM oauth_tokens WHERE token_type = 'access' AND expires_at BETWEEN ${now} AND ${now + 86400}`;
+  const expiring = await engine.countOauthAccessTokens(now, now + 86400);
   // Excluded from the error numerator: success, success_with_warnings
   // (a warn-mode success) and accepted_pending (#5249: an admitted write
   // still in flight; its eventual failure is counted separately below);
@@ -81,25 +79,17 @@ export async function queryHealthIndicators(engine: BrainEngine): Promise<{
   // surface_change is an OPERATION value (audit rows carry
   // status='success'), so audit rows are excluded from BOTH counts —
   // they are records of operator/self actions, not traffic.
-  const [errors] = await sql`SELECT count(*)::int as count FROM mcp_request_log WHERE status NOT IN ('success', 'success_with_warnings', 'accepted_pending') AND operation != 'surface_change' AND created_at > now() - interval '24 hours'`;
-  const [total] = await sql`SELECT count(*)::int as count FROM mcp_request_log WHERE operation != 'surface_change' AND created_at > now() - interval '24 hours'`;
-  const errorRate = (total as any).count > 0 ? ((errors as any).count / (total as any).count * 100).toFixed(1) : '0';
+  const errors = await engine.countMcpRequestsLastDay('errors');
+  const total = await engine.countMcpRequestsLastDay('traffic');
+  const errorRate = total > 0 ? (errors / total * 100).toFixed(1) : '0';
   // #5249/O-CEO-14: pending writes are tracked apart from the error rate —
   // how many are still in flight, how old the oldest is, and how many
   // reported as pending in the last 24 hours later ended without committing.
-  const [pending] = await sql`SELECT count(*)::int AS count,
-    COALESCE(floor(extract(epoch FROM now() - min(created_at))), 0)::int AS oldest_age_seconds
-    FROM persistence_requests WHERE state IN ('queued', 'deferred', 'running', 'recovering')`;
-  const [laterFailed] = await sql`SELECT count(DISTINCT r.id)::int AS count FROM mcp_request_log l
-    JOIN persistence_requests r ON r.request_id::text = l.params->>'write_request_id'
-    WHERE l.status = 'accepted_pending' AND l.created_at > now() - interval '24 hours'
-      AND r.state IN ('conflict', 'failed', 'cancelled')`;
+  const writes = await engine.readPendingWriteHealth();
   return {
-    expiring_soon: (expiring as any).count,
+    expiring_soon: expiring,
     error_rate: `${errorRate}%`,
-    pending_writes: (pending as any).count,
-    oldest_pending_write_age_seconds: (pending as any).oldest_age_seconds,
-    pending_writes_later_failed: (laterFailed as any).count,
+    ...writes,
   };
 }
 
@@ -206,24 +196,19 @@ function mountAdminOverviewApi(app: Express, ctx: ServeHttpContext): void {
   app.get('/admin/api/agents', requireAdmin, async (_req: Request, res: Response) => {
     try {
       // Unified view: OAuth clients + legacy API keys
-      const oauthClients = await sql`
-        SELECT c.client_id as id, c.client_name as name, 'oauth' as auth_type,
-          c.grant_types, c.scope, c.source_id, c.federated_read,
-          c.created_at, c.token_ttl,
-          CASE WHEN c.deleted_at IS NOT NULL THEN 'revoked' ELSE 'active' END as status,
-          (SELECT count(*)::int FROM mcp_request_log WHERE token_name = c.client_id AND created_at > now() - interval '24 hours') as requests_today
-        FROM oauth_clients c ORDER BY c.created_at DESC
-      `;
-      const legacyKeys = await sql`
-        SELECT a.id, a.name, 'api_key' as auth_type,
-          '{"bearer"}' as grant_types,
-          a.scopes,
-          a.created_at, null as token_ttl,
-          CASE WHEN a.revoked_at IS NOT NULL THEN 'revoked' ELSE 'active' END as status,
-          a.last_used_at,
-          (SELECT count(*)::int FROM mcp_request_log WHERE token_name = a.name AND created_at > now() - interval '24 hours') as requests_today
-        FROM access_tokens a ORDER BY a.created_at DESC
-      `;
+      // Engine members, so a Rust brain answers too; the request counts of the last day are one read over both lists.
+      const clients = (await engine.listOauthClients()).sort((a, b) => b.created_at.getTime() - a.created_at.getTime());
+      const apiKeys = await engine.listAccessTokens();
+      const today = new Map((await engine.countMcpRequestsLastDayByToken([...clients.map(c => c.client_id), ...apiKeys.map(k => k.name)])).map(r => [r.token_name, r.requests]));
+      const oauthClients = clients.map(c => ({
+        id: c.client_id, name: c.client_name, auth_type: 'oauth', grant_types: c.grant_types, scope: c.scope, source_id: c.source_id,
+        federated_read: c.federated_read, created_at: c.created_at, token_ttl: c.token_ttl,
+        status: c.deleted_at != null ? 'revoked' : 'active', requests_today: today.get(c.client_id) ?? 0,
+      }));
+      const legacyKeys = apiKeys.map(k => ({
+        id: k.id, name: k.name, auth_type: 'api_key', grant_types: '{"bearer"}', scopes: k.scopes, created_at: k.created_at, token_ttl: null,
+        status: k.revoked_at != null ? 'revoked' : 'active', last_used_at: k.last_used_at, requests_today: today.get(k.name) ?? 0,
+      }));
       // #6770: lifetime totals = rows still in the log + the pruned tally (mcp-request-log-retention.ts).
       const lifetime = await lifetimeUsage(engine, [...oauthClients.map(c => String(c.id)), ...legacyKeys.map(k => String(k.name))]);
       res.json([
@@ -272,15 +257,15 @@ function mountAdminOverviewApi(app: Express, ctx: ServeHttpContext): void {
 
   app.get('/admin/api/stats', requireAdmin, async (_req: Request, res: Response) => {
     try {
-      const [clients] = await sql`SELECT count(*)::int as count FROM oauth_clients`;
-      const [tokens] = await sql`SELECT count(*)::int as count FROM oauth_tokens WHERE token_type = 'access' AND expires_at > ${Math.floor(Date.now() / 1000)}`;
-      const [requests] = await sql`SELECT count(*)::int as count FROM mcp_request_log WHERE created_at > now() - interval '24 hours'`;
-      const [apiKeys] = await sql`SELECT count(*)::int as count FROM access_tokens WHERE revoked_at IS NULL`;
+      const clients = await engine.listOauthClients();
+      const tokens = await engine.countOauthAccessTokens(Math.floor(Date.now() / 1000), null);
+      const requests = await engine.countMcpRequestsLastDay('all');
+      const apiKeys = (await engine.listAccessTokens()).filter(k => k.revoked_at == null);
       res.json({
-        connected_agents: (clients as any).count,
-        active_tokens: (tokens as any).count,
-        active_api_keys: (apiKeys as any).count,
-        requests_today: (requests as any).count,
+        connected_agents: clients.length,
+        active_tokens: tokens,
+        active_api_keys: apiKeys.length,
+        requests_today: requests,
       });
     } catch {
       res.status(503).json({ error: 'service_unavailable' });
@@ -357,25 +342,8 @@ function mountAdminCalibrationApi(app: Express, ctx: ServeHttpContext): void {
       const statement = profile.pattern_statements[idx];
       // v0.36.1.0 ship state: surface the top resolved takes for the
       // holder as drill-down evidence. Per-pattern provenance is v0.37.
-      const takes = await engine.executeRaw<{
-        id: string;
-        page_slug: string;
-        row_num: number;
-        claim: string;
-        weight: number;
-        resolved_quality: string | null;
-        since_date: string | null;
-      }>(
-        // `takes` has no page_slug column — it comes from the joined page.
-        // id::text — it's a BIGSERIAL (bigint); res.json() below can't serialize a
-        // raw bigint ("cannot serialize BigInt"), so project it as a string.
-        `SELECT t.id::text AS id, p.slug AS page_slug, t.row_num, t.claim, t.weight, t.resolved_quality, t.since_date
-           FROM takes t JOIN pages p ON p.id = t.page_id
-           WHERE t.holder = $1 AND t.active = true AND t.resolved_at IS NOT NULL
-           ORDER BY t.weight DESC, t.since_date DESC
-           LIMIT 25`,
-        [holder],
-      );
+      // The holder's top 25 resolved takes (engine-sql/takes-reads.ts); `id` is the bigint id as text for res.json().
+      const takes = await engine.listTopResolvedTakesForHolder(holder);
       res.json({
         pattern_statement: statement,
         pattern_index: idx + 1,
@@ -442,26 +410,8 @@ function mountAdminCalibrationApi(app: Express, ctx: ServeHttpContext): void {
       if (type === 'abandoned-threads') {
         // v0.36.1.0 ship state: pull abandoned threads inline via a small
         // SQL query (the doctor check counts them; this surfaces details).
-        const rows = await engine.executeRaw<{
-          id: number;
-          page_slug: string;
-          claim: string;
-          weight: number;
-          since_date: string;
-        }>(
-          // `takes` has no page_slug column — it comes from the joined page.
-          // since_date is TEXT and may be month-precision ('YYYY-MM'); '2026-06'::date
-          // throws "invalid input syntax for type date", so normalize to the 1st
-          // before casting.
-          `SELECT t.id, p.slug AS page_slug, t.claim, t.weight, t.since_date
-             FROM takes t JOIN pages p ON p.id = t.page_id
-             WHERE t.active = true AND t.resolved_at IS NULL AND t.superseded_by IS NULL
-               AND t.weight >= 0.7
-               AND (t.since_date || CASE WHEN length(t.since_date) = 7 THEN '-01' ELSE '' END)::date
-                   < (now() - INTERVAL '12 months')
-             ORDER BY t.since_date ASC
-             LIMIT 5`,
-        );
+        // The five oldest abandoned high-conviction takes (engine-sql/takes-reads.ts; month-precision dates read as the 1st).
+        const rows = await engine.listAbandonedTakes();
         const now = new Date();
         const threads = rows.map(r => {
           const since = new Date((r.since_date.length === 7 ? r.since_date + '-15' : r.since_date));
@@ -486,7 +436,7 @@ function mountAdminCalibrationApi(app: Express, ctx: ServeHttpContext): void {
 }
 
 function mountAdminKeyApi(app: Express, ctx: ServeHttpContext): void {
-  const { engine, sql, requireAdmin } = ctx;
+  const { engine, requireAdmin } = ctx;
   app.get('/admin/api/requests', requireAdmin, async (req: Request, res: Response) => {
     try {
       const page = parseInt(req.query.page as string) || 1;
@@ -496,45 +446,13 @@ function mountAdminKeyApi(app: Express, ctx: ServeHttpContext): void {
       const operation = req.query.operation as string;
       const status = req.query.status as string;
 
-      // Dynamic filtering: SqlQuery is deliberately scalar-only and does not
-      // support fragment composition (the prior `sql\`AND ... = ${v}\`` shape).
-      // Build the WHERE clause with positional placeholders + a params array.
-      // `WHERE 1=1` lets us always have a WHERE clause and conditionally
-      // append `AND col = $N` fragments — still parameterized, still escaped
-      // by the driver, no sql.unsafe.
-      const filters: string[] = [];
-      const params: (string | number)[] = [];
-      if (agent && agent !== 'all') {
-        filters.push(`AND token_name = $${params.length + 1}`);
-        params.push(agent);
-      }
-      if (operation && operation !== 'all') {
-        filters.push(`AND operation = $${params.length + 1}`);
-        params.push(operation);
-      }
-      if (status && status !== 'all') {
-        filters.push(`AND status = $${params.length + 1}`);
-        params.push(status);
-      }
-      const filterSql = filters.join(' ');
-      const limitParam = `$${params.length + 1}`;
-      const offsetParam = `$${params.length + 2}`;
-
-      const rows = await engine.executeRaw(
-        `SELECT id, token_name, COALESCE(agent_name, token_name) as agent_name,
-                operation, latency_ms, status, params, error_message, created_at
-         FROM mcp_request_log
-         WHERE 1=1 ${filterSql}
-         ORDER BY created_at DESC LIMIT ${limitParam} OFFSET ${offsetParam}`,
-        [...params, limit, offset],
-      );
-      const [countResult] = await engine.executeRaw<{ total: number }>(
-        `SELECT count(*)::int as total FROM mcp_request_log
-         WHERE 1=1 ${filterSql}`,
-        params,
-      );
+      // The page and the filtered total (engine-sql/telemetry.ts); 'all' or no value reads every row.
+      const filter = (value: string | undefined) => (value && value !== 'all' ? value : null);
+      const { rows, total } = await engine.readMcpRequestLogPage({
+        tokenName: filter(agent), operation: filter(operation), status: filter(status), limit, offset,
+      });
       const [retention_days, pruned_before] = await Promise.all([readMcpLogRetentionDays(engine), readMcpUsageCoverage(engine, 1).then(c => c.pruned_before)]);
-      res.json({ rows, total: countResult.total, page, pages: Math.ceil(countResult.total / limit), retention_days, pruned_before });
+      res.json({ rows, total, page, pages: Math.ceil(total / limit), retention_days, pruned_before });
     } catch {
       res.status(503).json({ error: 'service_unavailable' });
     }
@@ -567,6 +485,7 @@ function mountAdminClientApi(app: Express, ctx: ServeHttpContext): void {
   mountAdminGrantEdits(app, requireAdmin, engine, oauthProvider);
   mountAdminAccess(app, requireAdmin, engine);
   mountAdminMemoryProposals(app, requireAdmin, engine);
+  mountAdminPolicy(app, requireAdmin, engine);
 
   // Revoke OAuth client
   app.post('/admin/api/revoke-client', requireAdmin, express.json(), async (req: Request, res: Response) => {

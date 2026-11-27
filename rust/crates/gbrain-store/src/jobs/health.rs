@@ -353,6 +353,78 @@ impl Store {
             .map(|oldest| seconds_between(now, oldest)))
     }
 
+    /// `readUntakenWaitingJobs(name, thresholdHours)`: the queue whose waiting `name` jobs no
+    /// worker takes, as `{ queue, waiting, oldest_age_seconds }`, or null. Only jobs with a
+    /// submission authority count. A queue qualifies when its oldest such job last became waiting
+    /// (`updated_at`) more than `threshold_hours` ago and no job of any name on it is active with a
+    /// live lock or started within that time. The oldest wins; equal ages go to the queue by bytes
+    /// (the SQL leaves that tie to the planner).
+    pub fn read_untaken_waiting_jobs(&self, name: &str, threshold_hours: f64) -> Result<Value> {
+        let read = self.read()?;
+        let now = self.env.now_micros();
+        let cutoff = now - hours_us(threshold_hours);
+        let mut stuck: BTreeMap<String, (u64, i64)> = BTreeMap::new();
+        for r in rows_with_status(&*read, "waiting")? {
+            if r.name != name || r.submission_authority.is_none() {
+                continue;
+            }
+            let entry = stuck.entry(r.queue).or_insert((0, i64::MAX));
+            entry.0 += 1;
+            entry.1 = entry.1.min(r.updated_at);
+        }
+        stuck.retain(|_, (_, oldest)| *oldest < cutoff);
+        if stuck.is_empty() {
+            return Ok(Value::Null);
+        }
+        let mut served: BTreeSet<String> = BTreeSet::new();
+        for status in STATUSES {
+            for r in rows_with_status(&*read, status)? {
+                let live = r.status == "active" && r.lock_until.is_some_and(|l| l > now);
+                if live || r.started_at.is_some_and(|s| s > cutoff) {
+                    served.insert(r.queue);
+                }
+            }
+        }
+        let best = stuck
+            .into_iter()
+            .filter(|(queue, _)| !served.contains(queue))
+            .map(|(queue, (waiting, oldest))| (seconds_between(now, oldest), queue, waiting))
+            .fold(None::<(i64, String, u64)>, |best, row| match best {
+                Some(b) if b.0 >= row.0 => Some(b),
+                _ => Some(row),
+            });
+        Ok(match best {
+            Some((age, queue, waiting)) => {
+                json!({ "queue": queue, "waiting": waiting, "oldest_age_seconds": age })
+            }
+            None => Value::Null,
+        })
+    }
+
+    /// `countWaitingJobs(excludeFactsAbsorb)`: the `waiting` jobs, without the `facts-absorb`
+    /// jobs when `exclude_facts_absorb`.
+    pub fn count_waiting_jobs(&self, exclude_facts_absorb: bool) -> Result<u64> {
+        let read = self.read()?;
+        Ok(rows_with_status(&*read, "waiting")?
+            .iter()
+            .filter(|r| !(exclude_facts_absorb && r.name == "facts-absorb"))
+            .count() as u64)
+    }
+
+    /// `countWaitingJobsForNames(queue, names)`: the `waiting` jobs of `queue` whose name is in `names` (the minion
+    /// worker's stall count). The `waiting` status index lists the ids; each row is read, counted if it matches and
+    /// dropped, so no row of another queue or name is kept and no full-queue load happens.
+    pub fn count_waiting_jobs_for_names(&self, queue: &str, names: &[String]) -> Result<u64> {
+        let read = self.read()?;
+        let mut count = 0u64;
+        for_each_row_with_status(&*read, "waiting", &mut |r| {
+            if r.queue == queue && names.contains(&r.name) {
+                count += 1;
+            }
+        })?;
+        Ok(count)
+    }
+
     /// `listStuckActiveJobsByName()`: `{ name, n }` of the active jobs whose lock lapsed or whose
     /// stalled counter reached two, the most first and bytewise by name on a tie.
     pub fn list_stuck_active_jobs_by_name(&self) -> Result<Value> {

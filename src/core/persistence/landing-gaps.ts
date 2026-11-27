@@ -46,12 +46,12 @@ export async function readLandingGaps(engine: BrainEngine, sourceId: string, opt
   if (!binding) return { status: 'not_applicable', reason: 'no_managed_binding' };
   let receipts: Array<{ slug: string; kind: string; completed_at: Date | string; age: number | string }>;
   try {
-    receipts = await engine.executeRaw(`SELECT DISTINCT ON (w.slug) w.slug, w.kind, w.completed_at, extract(epoch FROM now() - w.completed_at)::float8 AS age FROM (
+    receipts = await engine.executeRaw(`SELECT DISTINCT ON (w.slug COLLATE "C") w.slug, w.kind, w.completed_at, extract(epoch FROM now() - w.completed_at)::float8 AS age FROM (
         SELECT r.slug, r.sequence, r.completed_at, r.intent->>'kind' AS kind FROM persistence_requests r
          WHERE r.worktree_id=$1::uuid AND r.source_incarnation=$2::uuid AND r.state='committed' AND COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%'
            AND r.completed_at > now() - ($3::int * interval '1 hour') AND r.slug IS NOT NULL
-         ORDER BY r.completed_at DESC LIMIT ${LANDING_RECEIPT_LIMIT}) w
-      ORDER BY w.slug, w.sequence DESC`, [binding.worktree_id, binding.incarnation, LANDING_WINDOW_HOURS], { timeoutMs: LANDING_PROBE_MS, signal: AbortSignal.timeout(LANDING_PROBE_MS + 500) });
+         ORDER BY r.completed_at DESC, r.sequence DESC LIMIT ${LANDING_RECEIPT_LIMIT}) w
+      ORDER BY w.slug COLLATE "C", w.sequence DESC`, [binding.worktree_id, binding.incarnation, LANDING_WINDOW_HOURS], { timeoutMs: LANDING_PROBE_MS, signal: AbortSignal.timeout(LANDING_PROBE_MS + 500) });
   } catch (error) {
     return { status: 'unknown', reason: `receipt read did not answer within ${LANDING_PROBE_MS / 1000} s: ${error instanceof Error ? error.message.slice(0, 120) : String(error)}` };
   }

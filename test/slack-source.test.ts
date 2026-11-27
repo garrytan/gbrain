@@ -117,6 +117,10 @@ for (const kind of backends) describe(`repo-less brain (record: database, ${kind
     expect(rows.find(r => r.slug === daySlug('CPRIVATE01', 1))!.visibility).toBe('private');
     const [cursor] = await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM op_checkpoints WHERE op=$1', [CONNECTOR_DB_CURSOR_OP]);
     expect(cursor!.n).toBeGreaterThan(0);
+    // A clean run on an unmanaged brain stamps the last sync time and the newest content time (markSourceSynced).
+    const stamped = (await engine.listSourceRecords()).find(r => r.id === id)!;
+    expect(stamped.last_sync_at).not.toBeNull();
+    expect(stamped.newest_content_at ?? null).not.toBeNull();
 
     fake.calls.length = 0;
     const again = await run(id, cfg, fake, { now: NOW + 60_000 });

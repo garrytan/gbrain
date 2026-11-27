@@ -9,14 +9,13 @@ import type { Action } from '../agent-output.ts';
 import { catalogFix, policyFix, skillHeadFix } from './fixes.ts';
 import { enforceClientSlugFence, enforceSubagentSlugFence } from '../ops/context.ts';
 import { authorizeStoredRequest, authorizeWrite, submissionAuthority } from '../persistence/authority.ts';
-import { admitWrite, assertReplayIntent, getWriteRequest, intentDigest } from '../persistence/journal.ts';
+import { admitWrite, admitWriteInTransaction, assertReplayIntent, completeWrite, getWriteRequest, intentDigest, type WriteAdmission } from '../persistence/journal.ts';
 import { initializeLocalPersistence, pageMutationSource, requestPrincipalForContext } from '../persistence/page-mutations.ts';
 import { getWorktreeBinding } from '../persistence/ownership.ts';
 import { assertSharedSkillPersistence } from '../persistence/protocol.ts';
-import { requireManagedPersistence } from '../rust-engine/errors.ts';
 import { assertPersistenceAccepting, waitForWrite, writeResponse } from '../persistence/service.ts';
 import { digest, requireUuid, sha256, stableJson } from '../persistence/digest.ts';
-import type { PreparedMutation } from '../persistence/coordinator.ts';
+import { decoratePublicationOutcome, type PreparedMutation } from '../persistence/coordinator.ts';
 import type { WriteAuthority, WriteRequest } from '../persistence/model.ts';
 import { hostIdFor } from '../persistence/identity.ts';
 import { withCoordinatedWrite } from '../persistence/context.ts';
@@ -26,6 +25,9 @@ import { forgetSharedPacks } from './knowledge-guard.ts';
 import { assertSkillCapability, assertStoredSkillCapability, publicationEnabled, readSharedSkillPolicy, setSharedSkillPolicy } from './policy.ts';
 import { SHARED_SKILL_LIMITS, type SharedSkillFile, type SharedSkillPolicy, type SharedSkillPutInput, type SkillMetadata, type StoredSkillFile, type StoredSkillRevision } from './model.ts';
 import { assertSharedSkillRetentionCapacity, pruneSharedSkillRevisionsInTransaction, sharedSkillRetentionCapacity, sharedSkillRetentionStatus } from './retention.ts';
+import { isRustBrain, rustCheck, rustHeadKeys, rustHeads, rustPack, rustRetention, rustSource, rustWritePack } from './rust-publication.ts';
+import { discardRustStaging, publishRustCanonicalFiles, stageRustCanonicalFiles } from './rust-canonical-files.ts';
+import { capabilityMissing } from '../rust-engine/errors.ts';
 
 interface PackRow { pack_id: string; revision: string; manifest: Record<string, unknown>; manifest_hash: string; }
 type HeadKey = Pick<StoredSkillRevision, 'name' | 'revision' | 'deleted'>;
@@ -82,34 +84,43 @@ function canonicalRead(root: string, relative: string): Buffer | null {
   }
   return readFileSync(cursor);
 }
+/** A Rust brain has no worktree owner: its canonical root is the live source's registered local_path (rust-publication.ts). */
 async function sourceRoot(engine: BrainEngine, sourceId: string, incarnation: string, ctx?: OperationContext) {
-  const binding = await getWorktreeBinding(engine, sourceId);
-  if (!binding || binding.source_incarnation !== incarnation || binding.state !== 'active' || !binding.owner_host_id) {
+  const rust = isRustBrain(engine) ? await rustSource(engine, sourceId) : null;
+  const binding = rust ? null : await getWorktreeBinding(engine, sourceId);
+  if (rust ? rust.archived || rust.incarnation !== incarnation
+    : !binding || binding.source_incarnation !== incarnation || binding.state !== 'active' || !binding.owner_host_id) {
     throw opError('owner_unavailable', 'Shared skills require an active designated canonical source owner.',
       `Source ${sourceId} has no active designated canonical owner at this incarnation, so nothing was published. The brain host's operator inspects it with gbrain sources writer status --source ${sourceId} --json; claiming ownership is their decision.`,
       { fix: ownerStatusFix(sourceId, ctx) });
   }
-  if (binding.owner_host_id !== hostIdFor(engine) || !binding.local_path) {
+  if (rust ? !rust.local_path : binding!.owner_host_id !== hostIdFor(engine) || !binding!.local_path) {
     throw opError('owner_unavailable', 'The designated owner must prepare this publication.',
       `Source ${sourceId}'s canonical owner is another host (or has no local checkout here), so publish through that host or a connection to its gbrain server. gbrain sources writer status --source ${sourceId} --json names the owner.`,
       { fix: ownerStatusFix(sourceId, ctx) });
   }
-  const aliases = await engine.executeRaw<{ source_id: string }>(`SELECT b.source_id FROM persistence_source_bindings b JOIN sources s ON s.id=b.source_id AND s.incarnation=b.source_incarnation
-    WHERE b.worktree_id=$1::uuid AND b.relative_path=$2 AND b.source_id<>$3 AND NOT s.archived`, [binding.worktree_id, binding.relative_path, sourceId]);
+  const aliases = rust ? rust.aliases : (await engine.executeRaw<{ source_id: string }>(`SELECT b.source_id FROM persistence_source_bindings b JOIN sources s ON s.id=b.source_id AND s.incarnation=b.source_incarnation
+    WHERE b.worktree_id=$1::uuid AND b.relative_path=$2 AND b.source_id<>$3 AND NOT s.archived`, [binding!.worktree_id, binding!.relative_path, sourceId])).map(row => row.source_id);
   if (aliases.length) {
     throw opError('source_root_conflict', 'Multiple active sources alias this canonical skill root; resolve ownership before publishing.',
-      `Sources ${aliases.map(row => row.source_id).join(', ')} share source ${sourceId}'s canonical skill root. The brain host's operator archives or rebinds the extra sources before anything publishes; gbrain sources writer status --source ${sourceId} --json shows the bindings.`,
+      `Sources ${aliases.join(', ')} share source ${sourceId}'s canonical skill root. The brain host's operator archives or rebinds the extra sources before anything publishes; gbrain sources writer status --source ${sourceId} --json shows the bindings.`,
       { fix: ownerStatusFix(sourceId, ctx) });
   }
-  const root = resolve(binding.local_path, binding.relative_path);
+  const root = rust ? resolve(rust.local_path!) : resolve(binding!.local_path!, binding!.relative_path);
   if (realpathSync(root) !== root) {
     throw opError('local_conflict', 'Canonical source root contains a symlink.',
       `Source ${sourceId}'s registered checkout resolves through a symlink. The brain host's operator re-registers the source at its real path before anything publishes; gbrain sources writer status --source ${sourceId} --json shows the binding.`,
       { fix: ownerStatusFix(sourceId, ctx) });
   }
-  return { binding, root };
+  return { binding: { worktree_id: binding?.worktree_id ?? null, topology_generation: binding?.topology_generation ?? null }, root };
+}
+async function packRow(engine: BrainEngine, sourceId: string, incarnation: string): Promise<PackRow | undefined> {
+  if (isRustBrain(engine)) return rustPack(engine, sourceId, incarnation);
+  const [pack] = await engine.executeRaw<PackRow>('SELECT * FROM shared_skill_packs WHERE source_id=$1 AND source_incarnation=$2::uuid', [sourceId, incarnation]);
+  return pack;
 }
 async function headKeys(engine: BrainEngine, sourceId: string, incarnation: string, packId: string): Promise<HeadKey[]> {
+  if (isRustBrain(engine)) return rustHeadKeys(engine, sourceId, incarnation, packId, SHARED_SKILL_LIMITS.catalogSkills + 1);
   return engine.executeRaw<HeadKey>(`SELECT name,revision,deleted FROM shared_skill_heads
     WHERE source_id=$1 AND source_incarnation=$2::uuid AND pack_id=$3 ORDER BY name LIMIT $4`,
   [sourceId, incarnation, packId, SHARED_SKILL_LIMITS.catalogSkills + 1]);
@@ -154,6 +165,7 @@ function packInventory(pack: PackRow | undefined, keys: HeadKey[], sourceId: str
 }
 async function heads(engine: BrainEngine, sourceId: string, incarnation: string, packId: string, names: string[]): Promise<StoredSkillRevision[]> {
   if (!names.length) return [];
+  if (isRustBrain(engine)) return rustHeads(engine, sourceId, incarnation, packId, names);
   return engine.executeRaw<StoredSkillRevision>(`SELECT r.* FROM shared_skill_heads h JOIN shared_skill_revisions r
     ON r.source_id=h.source_id AND r.source_incarnation=h.source_incarnation AND r.pack_id=h.pack_id AND r.name=h.name AND r.revision=h.revision
     WHERE h.source_id=$1 AND h.source_incarnation=$2::uuid AND h.pack_id=$3 AND h.name=ANY($4::text[]) ORDER BY h.name`, [sourceId, incarnation, packId, names]);
@@ -207,7 +219,6 @@ function rebuildDependentClosure(name: string, previous: StoredSkillFile[], repl
 }
 export async function submitSharedSkillMutation(ctx: OperationContext, operation: 'put_skill' | 'delete_skill', params: Record<string, unknown>, adoption?: HostAdoption): Promise<Record<string, unknown>> {
   assertPersistenceAccepting(ctx.engine);
-  requireManagedPersistence(ctx.engine, operation, 'a skill bundle write publishes to the protocol-2 canonical owner of a managed checkout');
   assertSkillCapability(ctx, 'skill_editor', operation);
   if (adoption && ctx.remote !== false) {
     throw opError('permission_denied', 'Pack adoption requires trusted host authority.',
@@ -242,7 +253,8 @@ export async function submitSharedSkillMutation(ctx: OperationContext, operation
     return writeResponse(await waitForWrite(ctx.engine, prior, ctx.config, ctx.writeWaitMs));
   }
   await assertSharedSkillPersistence(ctx.engine);
-  const [source] = await ctx.engine.executeRaw<{ incarnation: string; archived: boolean }>('SELECT incarnation,archived FROM sources WHERE id=$1', [sourceId]);
+  const [source] = isRustBrain(ctx.engine) ? [await rustSource(ctx.engine, sourceId)].filter(row => row !== null)
+    : await ctx.engine.executeRaw<{ incarnation: string; archived: boolean }>('SELECT incarnation,archived FROM sources WHERE id=$1', [sourceId]);
   if (!source || source.archived || params.source_incarnation !== undefined && params.source_incarnation !== source.incarnation) {
     throw opError('source_changed', 'The publication source is no longer active at this incarnation.',
       `Source ${sourceId} was archived or recreated since this skill was read, so nothing was published. List the catalog again for its current source_incarnation and revisions, then resubmit with a new request_id.`,
@@ -251,7 +263,7 @@ export async function submitSharedSkillMutation(ctx: OperationContext, operation
   const { binding, root } = await sourceRoot(ctx.engine, sourceId, source.incarnation, ctx);
   const authority: SkillAuthority = await submissionAuthority(ctx, operation, sourceId, source.incarnation, slug);
   await assertStoredSkillCapability(ctx.engine, authority, 'skill_editor');
-  const [pack] = await ctx.engine.executeRaw<PackRow>('SELECT * FROM shared_skill_packs WHERE source_id=$1 AND source_incarnation=$2::uuid', [sourceId, source.incarnation]);
+  const pack = await packRow(ctx.engine, sourceId, source.incarnation);
   if (pack && pack.pack_id !== packId) {
     throw opError('invalid_params', 'The source has a different canonical pack identity.',
       `Source ${sourceId}'s canonical pack is ${pack.pack_id}; pass pack_id ${pack.pack_id}, or publish pack ${packId} to a different source.`,
@@ -413,10 +425,36 @@ export async function submitSharedSkillMutation(ctx: OperationContext, operation
   const intent: PublicationIntent = { pack_id: packId, name, expected_revision: expected, policy_epoch: policy.epoch,
     affected: affected.map(r => ({ name: r.name, revision: r.revision ?? null })), expected_pack_revision: pack?.revision ?? null,
     manifest_before_hash: manifestBytes ? sha256(manifestBytes) : null, original_manifest: manifestMetadata, before_hashes: beforeHashes, proposals, extra_files: extraFiles };
-  const row = await admitWrite(ctx.engine, { origin: ctx.admissionOrigin, principal, operation, sourceId, sourceIncarnation: source.incarnation, slug, requestId,
+  const admission = { origin: ctx.admissionOrigin, principal, operation, sourceId, sourceIncarnation: source.incarnation, slug, requestId,
     targetKind: 'skill_bundle', protocolVersion: 2, callerIntent, intent: intent as unknown as Record<string, unknown>, authority,
-    worktreeId: binding.worktree_id, topologyGeneration: binding.topology_generation });
+    worktreeId: binding.worktree_id, topologyGeneration: binding.topology_generation } as const;
+  if (isRustBrain(ctx.engine)) return writeResponse(await publishOnRust(ctx, admission));
+  const row = await admitWrite(ctx.engine, admission);
   return writeResponse(await waitForWrite(ctx.engine, row, ctx.config, ctx.writeWaitMs));
+}
+
+/**
+ * A Rust brain publishes in the submitting process, with no resident owner: the admission, the pack and head CAS with
+ * the retention prune, the revisions, heads and pack row, and the committed receipt run in one store transaction, each
+ * store write through the store's FlaggingWriter. The canonical files are checked against their prepared hashes and
+ * staged (temp + fsync) inside it, and renamed over their paths after it commits; a refusal rolls the whole transaction
+ * back, admission included, and removes the staging (rust/docs/store/shared-skill-members.md, "Publication").
+ */
+async function publishOnRust(ctx: OperationContext, admission: WriteAdmission): Promise<WriteRequest> {
+  let staged: ReturnType<typeof stageRustCanonicalFiles> = [];
+  try {
+    const receipt = await ctx.engine.transaction(async tx => {
+      const row = await admitWriteInTransaction(tx, admission);
+      const prepared = await prepareSharedSkillMutation(tx, row, ctx.config);
+      await prepared.validate?.(tx);
+      staged = stageRustCanonicalFiles(prepared.files ?? [], row);
+      const outcome = await withCoordinatedWrite(tx, [row.source_id], () => prepared.apply(tx, null), requestAttribution(row));
+      decoratePublicationOutcome(row, prepared, outcome, null, staged.length, true);
+      return completeWrite(tx, row, 'committed', outcome);
+    });
+    publishRustCanonicalFiles(staged);
+    return receipt;
+  } finally { discardRustStaging(staged); }
 }
 
 export async function prepareSharedSkillMutation(engine: BrainEngine, row: WriteRequest, config: GBrainConfig): Promise<PreparedMutation> {
@@ -430,7 +468,7 @@ export async function prepareSharedSkillMutation(engine: BrainEngine, row: Write
   await authorizeStoredRequest(engine, row);
   await assertStoredSkillCapability(engine, row.authority, 'skill_editor');
   const { root } = await sourceRoot(engine, row.source_id, row.source_incarnation);
-  const [currentPack] = await engine.executeRaw<PackRow>('SELECT * FROM shared_skill_packs WHERE source_id=$1 AND source_incarnation=$2::uuid', [row.source_id, row.source_incarnation]);
+  const currentPack = await packRow(engine, row.source_id, row.source_incarnation);
   const keys = await headKeys(engine, row.source_id, row.source_incarnation, intent.pack_id);
   const inventory = packInventory(currentPack, keys, row.source_id);
   const changedAfterAdmission = (message: string) => opError('revision_conflict', message,
@@ -489,6 +527,14 @@ export async function prepareSharedSkillMutation(engine: BrainEngine, row: Write
           { fix: policyFix(row.source_id) });
       }
       for (const revision of revisions) validateDisclosure(revision.files, revision.metadata, policy.policy, policy.epoch === 'legacy-prose' || policy.epoch === 'consent-required', row.source_id);
+      if (isRustBrain(tx)) {
+        const checked = await rustCheck(tx, { sourceId: row.source_id, incarnation: row.source_incarnation, packId: intent.pack_id,
+          expectedPackRevision: intent.expected_pack_revision, heads: intent.affected, revisions: revisions.map(({ metadata, files }) => ({ metadata, files })) });
+        if ('conflict' in checked) throw changedAfterAdmission(checked.conflict === 'pack' ? 'The pack changed after this request was accepted.' : 'A skill in the dependency closure changed.');
+        prunedRevisions = checked.pruned;
+        assertSharedSkillRetentionCapacity(checked.capacity, revisions.length, checked.incoming_bytes, !row.authority.remote);
+        return;
+      }
       const [pack] = await tx.executeRaw<Pick<PackRow, 'revision'>>('SELECT revision FROM shared_skill_packs WHERE source_id=$1 AND source_incarnation=$2::uuid FOR UPDATE', [row.source_id, row.source_incarnation]);
       if ((pack?.revision ?? null) !== intent.expected_pack_revision) throw changedAfterAdmission('The pack changed after this request was accepted.');
       for (const target of [...intent.affected].sort((a, b) => a.name.localeCompare(b.name))) {
@@ -504,21 +550,22 @@ export async function prepareSharedSkillMutation(engine: BrainEngine, row: Write
     },
     async apply(tx) {
       for (const revision of revisions) {
-        await tx.executeRaw(`INSERT INTO shared_skill_revisions(source_id,source_incarnation,pack_id,name,revision,metadata,files,deleted,policy_epoch,request_id)
-          VALUES($1,$2::uuid,$3,$4,$5::uuid,$6::text::jsonb,$7::text::jsonb,$8,$9,$10::uuid)`,
-        [row.source_id, row.source_incarnation, intent.pack_id, revision.name, revision.revision, JSON.stringify(revision.metadata), JSON.stringify(revision.files), revision.deleted, intent.policy_epoch, row.id]);
-        await tx.executeRaw(`INSERT INTO shared_skill_heads(source_id,source_incarnation,pack_id,name,revision,metadata,deleted,policy_epoch)
-          VALUES($1,$2::uuid,$3,$4,$5::uuid,$6::text::jsonb,$7,$8) ON CONFLICT(source_id,source_incarnation,pack_id,name)
-          DO UPDATE SET revision=excluded.revision,metadata=excluded.metadata,deleted=excluded.deleted,policy_epoch=excluded.policy_epoch,updated_at=now()`,
-        [row.source_id, row.source_incarnation, intent.pack_id, revision.name, revision.revision, JSON.stringify(revision.metadata), revision.deleted, intent.policy_epoch]);
+        await tx.writeSharedSkillRevision({ sourceId: row.source_id, incarnation: row.source_incarnation, packId: intent.pack_id, name: revision.name,
+          revision: revision.revision, metadata: revision.metadata, files: revision.files, deleted: revision.deleted, policyEpoch: intent.policy_epoch, requestId: row.id });
       }
-      await tx.executeRaw(`INSERT INTO shared_skill_packs(source_id,source_incarnation,pack_id,revision,manifest,manifest_hash)
-        VALUES($1,$2::uuid,$3,$4::uuid,$5::text::jsonb,$6) ON CONFLICT(source_id,source_incarnation)
-        DO UPDATE SET revision=excluded.revision,manifest=excluded.manifest,manifest_hash=excluded.manifest_hash`,
-      [row.source_id, row.source_incarnation, intent.pack_id, packRevision, JSON.stringify(manifest), sha256(manifestContent)]);
+      if (isRustBrain(tx)) {
+        await rustWritePack(tx, { sourceId: row.source_id, incarnation: row.source_incarnation, packId: intent.pack_id, revision: packRevision,
+          manifest, manifestHash: sha256(manifestContent) });
+      } else {
+        await tx.executeRaw(`INSERT INTO shared_skill_packs(source_id,source_incarnation,pack_id,revision,manifest,manifest_hash)
+          VALUES($1,$2::uuid,$3,$4::uuid,$5::text::jsonb,$6) ON CONFLICT(source_id,source_incarnation)
+          DO UPDATE SET revision=excluded.revision,manifest=excluded.manifest,manifest_hash=excluded.manifest_hash`,
+        [row.source_id, row.source_incarnation, intent.pack_id, packRevision, JSON.stringify(manifest), sha256(manifestContent)]);
+      }
       forgetSharedPacks(tx);
       const primary = revisions.find(r => r.name === intent.name)!;
-      const retained = !row.authority.remote ? await sharedSkillRetentionStatus(tx, row.source_id, row.source_incarnation) : undefined;
+      const retained = !row.authority.remote
+        ? await (isRustBrain(tx) ? rustRetention : sharedSkillRetentionStatus)(tx, row.source_id, row.source_incarnation) : undefined;
       return { status: primary.deleted ? 'deleted' : 'published', source_id: row.source_id, source_incarnation: row.source_incarnation,
         pack_id: intent.pack_id, name: intent.name, revision: primary.revision,
         affected_skills: revisions.map(r => ({ name: r.name, revision: r.revision })), delivery: 'canonical_committed',
@@ -556,6 +603,7 @@ export async function adoptSharedSkillpack(ctx: OperationContext, sourceId: stri
     throw opError('permission_denied', 'Canonical pack adoption is a trusted host operation.',
       'Only the gbrain CLI on the brain host adopts canonical packs (gbrain init and the shared-content migration do it); a remote connection publishes individual skills with put_skill instead.');
   }
+  if (isRustBrain(ctx.engine)) throw capabilityMissing('persistence_journal', 'adoptSharedSkillpack');
   const [source] = await ctx.engine.executeRaw<{ incarnation: string }>('SELECT incarnation FROM sources WHERE id=$1 AND NOT archived', [sourceId]);
   if (!source) {
     throw opError('source_changed', 'The adoption source is not active.',

@@ -9,7 +9,7 @@
  *  - Regression: an engine that answers one of these differently changes which facts recall and `search` surface, which
  *    facts a lower-tier write contests or is held against, what an owner action binds to, and how much derived memory
  *    the taint share counts. The Rust engine has no SQL, so each read has to exist as a typed method it can implement
- *    or refuse; the four trust reads that need `trust_tier`, `write_origin` or write-gate receipts are refused there.
+ *    or refuse; the trust reads that need write-gate receipts are refused there (countDerivedFactTaint is served: test/engine-parity/doctor-facts-trust.test.ts).
  *  - Why existing coverage misses it: these statements ran through `executeRaw`, which the parity cases cannot call
  *    (D18), so no case compared them across engines (docs/research/rust-cli-contract-map.md).
  *  - Seam: none. Rows are seeded through the typed `insertFact`, `insertFacts`, `putPage` and `softDeletePage`; a typed

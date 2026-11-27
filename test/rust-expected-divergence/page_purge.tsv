@@ -1,0 +1,2 @@
+# Parity cases of the page purge family where the Rust engine is expected to answer differently from PGLite. Edited by hand.
+# Columns (tab separated): parity file, case name, normaliser, why the answer differs (test/rust-expected-divergence/search.tsv).

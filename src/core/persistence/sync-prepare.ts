@@ -22,7 +22,6 @@ import { parseMarkdown, resolveParsedSubtype, serializePageToMarkdown, type Pars
 import { keepStoredStamps } from './align-stored.ts';
 import { resolveSlugForPath, slugifyPath, isCodeFilePath, isImageFilePath } from '../sync.ts';
 import { prepareManagedSyncImage } from './sync-image.ts';
-import { SOURCE_CONFIG_OBJECT_SQL } from '../source-config-sql.ts';
 import { sameCanonicalImport } from '../page-state/import-guard.ts';
 import { assertPageRevision } from '../page-state/types.ts';
 import { sealImportedPage, sealPageTextProjection } from '../page-state/projections.ts';
@@ -36,6 +35,7 @@ import { withoutSafetyAssessments } from './reconcile-safety.ts';
 import { digest, sha256 } from './digest.ts';
 import { preserveProtectedTakes } from './protected-takes.ts';
 import { getWorktreeBinding } from './ownership.ts';
+import { storedWriterReadsHeld } from './page-visibility.ts';
 import { sourceMirrorReadOnly } from './mirror-read-only.ts';
 import { writeThroughConfigured } from './switches.ts';
 import { isSourceDbOnlySlug } from './source-storage.ts';
@@ -66,7 +66,7 @@ import { frontmatterSlugConflictMessage } from './verb-errors.ts';
 import { chunkerStamp } from '../chunkers/code.ts';
 import { addFencesNormalized, clearGitHold, clearGitHoldRetryPaths, countGitHolds, recordSyncImportProvenance, settledDeletionHolds, type DeletionCandidate, type FencesTally, syncDiskProvenance, syncImportParser, syncImportParserFor, type SyncImportProvenanceBase } from './sync-holds.ts';
 import { clearSyncSlice, writeSyncSlice, type SyncSliceState } from './sync-slices.ts';
-import { CHECKPOINT_MOVED_MESSAGE, emptySyncScope, pinnedSlugModeMismatch, slugModeMismatchCause } from './sync-slug-mode.ts';
+import { CHECKPOINT_MOVED_MESSAGE, emptySyncScope, slugModeMismatchCause } from './sync-slug-mode.ts';
 import { readPagePurgeTombstones } from './page-purge.ts';
 import { recordSyncDeleteTombstone } from './sync-delete-tombstones.ts';
 import { fenceWhere } from '../fence-repair/refusal.ts';
@@ -79,6 +79,7 @@ import { VERSION } from '../../version.ts';
 import { bindOrigin } from './origin-guard.ts';
 import { segmentedOutcome } from './searchable.ts';
 import { isQuarantined } from '../quarantine.ts';
+import { HELD_DELETION_HEAD_MOVED } from './sync-page-fault.ts';
 
 /** The options that select a managed sync cursor (its key), recorded so a refusal can print the exact retry. */
 export interface SyncCursorOptions { full: boolean; workingTree: boolean; srcSubpath: string | null; exclude: string[]; includeHidden: string[]; strategy: string | null }
@@ -145,6 +146,8 @@ export interface PassStamp {
   retryTaken: string[]; releasedHolds: string[];
   /** GBRA-133: deleted-side holds whose file is gone; the stamp releases those whose page is no longer live. */
   deletionCandidates?: DeletionCandidate[];
+  /** LC-1: the level's removal-pending paths (sync-removal-pending.ts), recorded on the converged stamp. */
+  removalPending?: Array<{ path: string; stat: string }> | null;
   selectionFp: string; parserFp: string; pack: string | null;
   /** The pass ran a full round (resets `passes_since_full`). */
   full: boolean;
@@ -330,7 +333,7 @@ export function screenSyncImport(input: SyncImportScreenInput): { screen: Import
   const newerWorkingTree = !input.companyApproval && !!base && !input.lineEndingOnly && input.rawHash !== sha256(content) && !sameCanonicalImport(base, parsedInput);
   const gateSource = input.writeGateSource;
   const gateTrust = gateSource ? ownerPageTrust({ frontmatter: parsedInput.frontmatter, sourceConfig: gateSource.config, channel: 'managed_sync_import', sourceUri: sourcePath }) : null;
-  const screen = screenImportContent({ content, path: `${slug}.md`, activePack, expectedSlug: resolveSlugForPath(sourcePath), fences: 'coordinated', holdNoncanonicalPrivate: true,
+  const screen = screenImportContent({ content, path: `${slug}.md`, activePack, expectedSlug: resolveSlugForPath(sourcePath), createsPage: !snapshot, fences: 'coordinated', holdNoncanonicalPrivate: true,
     ...(input.normalize === false ? { normalize: false } : {}),
     slugExempt: declared => snapshot?.page.source_path != null && syncOriginPath(snapshot.page.source_path) === syncOriginPath(sourcePath) && declared === snapshot.page.slug,
     slugConflictMessage: (found, expected) => frontmatterSlugConflictMessage(sourcePath, found, expected),
@@ -560,15 +563,10 @@ export async function publishPassStamp(tx: BrainEngine, row: WriteRequest, p: Sy
   const stamp = p.stamp!;
   if (stamp.configured) {
     const emptyScope = read.emptyScope ?? emptySyncScope(root, syncGitTopLevel(root, p.passId!));
-    const changed = await tx.executeRaw(`UPDATE sources SET last_commit=$3,last_sync_at=now(),
-      config=jsonb_set(${SOURCE_CONFIG_OBJECT_SQL},'{slug_root_mode}',to_jsonb(CASE WHEN $6::boolean THEN COALESCE(config->>'slug_root_mode',$5::text) ELSE $5::text END)),
-      newest_content_at=(SELECT MAX(updated_at) FROM pages WHERE source_id=$1 AND deleted_at IS NULL)
-      WHERE id=$1 AND incarnation=$2::uuid AND (last_commit IS NOT DISTINCT FROM $4 OR last_commit=$3)
-      AND ($6::boolean OR config->>'slug_root_mode' IS NULL OR config->>'slug_root_mode'=$5) RETURNING id`,
-    [row.source_id, row.source_incarnation, p.target, p.from, p.slugMode, emptyScope]);
-    const pinned = !changed.length && !emptyScope ? await pinnedSlugModeMismatch(tx, row.source_id, row.source_incarnation, p.slugMode) : null;
+    const { advanced, pinnedSlugMode: pinned } = await advanceManagedCheckpoint(tx, { sourceId: row.source_id, incarnation: row.source_incarnation,
+      commit: p.target, from: p.from, acceptAtCommit: true, slugMode: p.slugMode, keepPinnedSlugMode: emptyScope });
     if (pinned) throw syncPublicationRefusal('slug_root_mode_mismatch', `The source pins slug_root_mode=${pinned}, but this sync ran under ${p.slugMode}.`, row, p, slugModeMismatchCause(row.source_id, pinned, p.slugMode));
-    if (!changed.length) throw syncPublicationRefusal('revision_conflict', CHECKPOINT_MOVED_MESSAGE, row, p,
+    if (!advanced) throw syncPublicationRefusal('revision_conflict', CHECKPOINT_MOVED_MESSAGE, row, p,
       `Another sync moved the commit checkpoint of ${row.source_id} while this pass published.`);
     // The closed episode re-imported every page except those already at the current chunker (sync-classify.ts `inPlace`).
     if (stamp.stampChunker) await tx.executeRaw('UPDATE sources SET chunker_version=$2 WHERE id=$1', [row.source_id, chunkerStamp()]);
@@ -581,7 +579,7 @@ export async function publishPassStamp(tx: BrainEngine, row: WriteRequest, p: Sy
     { prior: pass.value.obligations.converged?.writeback });
   const value: ManagedSyncPassValue = structuredClone(pass.value);
   const at = new Date().toISOString(), prior = value.obligations.converged;
-  value.obligations.converged = { target: p.target, at, ...watermark, ...(stamp.rescreen ? { open_at_stamp: null } : {}),
+  value.obligations.converged = { target: p.target, at, ...watermark, ...(stamp.rescreen ? { open_at_stamp: null } : {}), ...(stamp.removalPending !== undefined ? { removal_pending: stamp.removalPending } : {}),
     parser_fp: stamp.parserFp, pack: stamp.pack, selection_fp: stamp.selectionFp, last_full_at: stamp.full || !prior ? at : prior.last_full_at,
     passes_since_full: stamp.full || !prior ? 0 : prior.passes_since_full + 1 };
   if (stamp.closesEpisode) delete value.obligations.episode;
@@ -599,7 +597,7 @@ export async function publishPassStamp(tx: BrainEngine, row: WriteRequest, p: Sy
  * the sync imports committed since the previous stamp's watermark. A pass that stopped before its stamp is counted by the
  * next stamp, once, so a completed pass always has its trend row and a normalization is never counted twice.
  */
-export async function recordPassFenceTrend(tx: Pick<BrainEngine, 'executeRaw'>, scope: { worktreeId: string; sourceId: string; passId: string; since: string | null; prefix?: FenceTrendPrefix }): Promise<void> {
+export async function recordPassFenceTrend(tx: Pick<BrainEngine, 'executeRaw' | 'upsertFenceTrendRunRecord'>, scope: { worktreeId: string; sourceId: string; passId: string; since: string | null; prefix?: FenceTrendPrefix }): Promise<void> {
   // #9646: the requests up to the prefix were tallied before the publication; a prefix read from another watermark is not used.
   const prefix = scope.prefix && scope.prefix.since === scope.since ? scope.prefix : undefined;
   const rows = await fenceTrendRows(tx, scope, prefix?.through ?? scope.since ?? '0', null, prefix?.open);
@@ -656,6 +654,18 @@ export async function readFenceTrendPrefix(engine: Pick<BrainEngine, 'executeRaw
   return { since, through: String(through > floor ? through : floor), ...(open.length ? { open } : {}), ...(tally ? { tally } : {}) };
 }
 
+/**
+ * The managed sync checkpoint of both publications (`publishPassStamp` and `applyManagedSyncCheckpoint`): when the source
+ * is still the run's incarnation and its `last_commit` is still `from` (or already `commit` with `acceptAtCommit`), and its
+ * pinned slug mode allows the run, sets `last_commit`, `last_sync_at`, `newest_content_at` and `config.slug_root_mode`.
+ * A refused checkpoint changes nothing; `pinnedSlugMode` names a pinned mode that differs from the run's (not read when
+ * the run keeps the pinned mode), else null. Runs in the caller's transaction.
+ */
+export async function advanceManagedCheckpoint(tx: BrainEngine, input: { sourceId: string; incarnation: string; commit: string | null;
+  from: string | null; acceptAtCommit: boolean; slugMode: 'git-root' | 'source-root'; keepPinnedSlugMode: boolean }): Promise<{ advanced: boolean; pinnedSlugMode: string | null }> {
+  return tx.advanceSyncCheckpoint(input);
+}
+
 /** The checkpoint request's publication: the whole run committed, so `last_commit` (and the slug-root pin) advance under the guard. */
 async function applyManagedSyncCheckpoint(tx: BrainEngine, row: WriteRequest, p: SyncIntent, root: string, releaseHold: (tx: BrainEngine, path: string | null) => Promise<void>): Promise<Record<string, unknown>> {
   const [cursor] = await tx.executeRaw<{ completed_keys: [{ runId: string; index: number; total: number }] }>(
@@ -679,15 +689,10 @@ async function applyManagedSyncCheckpoint(tx: BrainEngine, row: WriteRequest, p:
   // #5522: an overtaken run accepts a source another cursor already checkpointed at this exact target.
   // #6694: at the repository root both slug modes give the same slugs, so the checkpoint keeps whichever mode the source pins.
   const emptyScope = emptySyncScope(root, syncGitTopLevel(root, p.runId));
-  const changed = await tx.executeRaw(`UPDATE sources SET last_commit=$3,last_sync_at=now(),
-    config=jsonb_set(${SOURCE_CONFIG_OBJECT_SQL},'{slug_root_mode}',to_jsonb(CASE WHEN $7::boolean THEN COALESCE(config->>'slug_root_mode',$5::text) ELSE $5::text END)),
-    newest_content_at=(SELECT MAX(updated_at) FROM pages WHERE source_id=$1 AND deleted_at IS NULL)
-    WHERE id=$1 AND incarnation=$2::uuid AND (last_commit IS NOT DISTINCT FROM $4 OR ($6::boolean AND last_commit=$3))
-    AND ($7::boolean OR config->>'slug_root_mode' IS NULL OR config->>'slug_root_mode'=$5) RETURNING id`,
-  [row.source_id, row.source_incarnation, settled ? p.target : p.from, p.from, p.slugMode, p.overtaken === true, emptyScope]);
-  const pinned = !changed.length && !emptyScope ? await pinnedSlugModeMismatch(tx, row.source_id, row.source_incarnation, p.slugMode) : null;
+  const { advanced, pinnedSlugMode: pinned } = await advanceManagedCheckpoint(tx, { sourceId: row.source_id, incarnation: row.source_incarnation,
+    commit: settled ? p.target : p.from, from: p.from, acceptAtCommit: p.overtaken === true, slugMode: p.slugMode, keepPinnedSlugMode: emptyScope });
   if (pinned) throw syncPublicationRefusal('slug_root_mode_mismatch', `The source pins slug_root_mode=${pinned}, but this sync ran under ${p.slugMode}.`, row, p, slugModeMismatchCause(row.source_id, pinned, p.slugMode));
-  if (!changed.length) throw syncPublicationRefusal('revision_conflict', CHECKPOINT_MOVED_MESSAGE, row, p,
+  if (!advanced) throw syncPublicationRefusal('revision_conflict', CHECKPOINT_MOVED_MESSAGE, row, p,
     `Another sync moved the commit checkpoint of ${row.source_id} while this run published.`);
   await recordSliceCursor(tx, row, p, settled);
   // #5566: a full walk re-chunked every stale page, so acknowledge the chunker version as the legacy gate does. (A pass's
@@ -748,6 +753,24 @@ async function syncWriteState(tx: BrainEngine, row: WriteRequest, page: Paramete
 function keepDbOnlyLabels(root: string, slug: string, base: Snapshot | undefined, text: string, incoming?: Record<string, unknown>): string {
   if (!base || base.page.deleted_at || !isSourceDbOnlySlug(root, slug, 'not_db_only')) return text;
   return withStoredLabels(text, base.page.frontmatter as Record<string, unknown>, incoming ?? parseMarkdown(text, `${slug}.md`).frontmatter) ?? text;
+}
+
+/** GST-3648: a held deletion was checked for a move at the pass's target; a commit since then can move its file, so it publishes only while HEAD is still that target. */
+function assertHeldDeletionHeadUnmoved(root: string, row: WriteRequest, p: SyncIntent): void {
+  if (p.kind !== 'managed_sync_delete' || !p.heldDeletion) return;
+  let head: string | null = null;
+  try { head = syncGit(root, ['rev-parse', 'HEAD']).trim(); } catch { /* unreadable: refused below */ }
+  if (head !== p.target) throw syncPublicationRefusal('source_changed', HELD_DELETION_HEAD_MOVED, row, p,
+    `HEAD of ${row.source_id} is no longer ${p.target.slice(0, 12)}, the commit the deletion of ${row.slug} was checked against for a move, so it published nothing; the page stays live and the next pass checks it again.`);
+}
+
+/**
+ * The owner check of the household subject rule for a sync row, decided once at prepare so a rename re-import inside
+ * the apply transaction reads nothing outside it. Only a page with a household_role asks.
+ */
+async function householdOwnerOf(engine: BrainEngine, authority: WriteRequest['authority'], frontmatters: Array<Record<string, unknown> | null | undefined>): Promise<() => Promise<boolean>> {
+  const owner = frontmatters.some(fm => fm?.household_role !== undefined) && await storedWriterReadsHeld(engine, authority);
+  return async () => owner;
 }
 
 /** #8729: a screen (`screening`) publishes nothing, so the segmented staging its import opened is aborted (unbounded: past the screen's deadline too) as soon as the import hands it over, never left live beside the admitted write's. */
@@ -821,6 +844,7 @@ async function prepareSyncMutation(unbounded: BrainEngine, row: WriteRequest, _c
           'sync.admission paused destructive sync writes before this deletion published.', row, p,
           `sync.admission is not normal, so the deletion of ${row.slug} in ${row.source_id} published nothing; the page stays live and the next pass re-reads the level.`);
       },
+      async () => assertHeldDeletionHeadUnmoved(root, row, p),
       async () => {
         // GBRA-133 S-22: a deletion whose name became a directory has no file to compare.
         if (p.path !== null && !p.body_ref && !p.committedOnly && (p.kind === 'managed_sync_delete' && directoryAt(root, p.path) ? null : syncRawHash(root, p.path)) !== p.rawHash) throw syncPublicationRefusal('source_changed', 'The imported file changed after sync admission.', row, p,
@@ -944,7 +968,7 @@ async function prepareSyncMutation(unbounded: BrainEngine, row: WriteRequest, _c
   let prepared: PreparedContentImport | undefined;
   enterClaimStep(clock, 'import_content', undefined, 'db');
   // #6188: the import reuses this screen's fence verdict for the same bytes (one fence scan per file at prepare).
-  const importOptions = { ...source, noEmbed: true, remote: row.authority.remote, preserveGateMarkers: true, activePack, coordinated: true, fences: 'coordinated' as const, boundedChunkWrites: true as const, writeGate: await ownerGateInput(engine, row, parsedInput.frontmatter, p.sourcePath),
+  const importOptions = { ...source, noEmbed: true, remote: row.authority.remote, householdOwner: await householdOwnerOf(engine, row.authority, [parsedInput.frontmatter, base?.page.frontmatter]), preserveGateMarkers: true, activePack, coordinated: true, fences: 'coordinated' as const, boundedChunkWrites: true as const, writeGate: await ownerGateInput(engine, row, parsedInput.frontmatter, p.sourcePath),
     ...(importContent === p.content && screen.status === 'importable' ? { fenceScreen: screen.fences ?? null } : {}),
     filename: basename(p.sourcePath).replace(/\.mdx?$/i, ''), sourcePath: p.sourcePath, allowEmptyOverwrite: true, history,
     segmentedOwner: { kind: 'sync' as const, principalKind: row.principal_kind, principalId: row.principal_id, baseRevision: base?.revision ?? null } };

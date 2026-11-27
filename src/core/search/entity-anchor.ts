@@ -19,43 +19,27 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import type { PageReadScope, SearchResult } from '../types.ts';
-import { PINNED_QUESTION_MARKER } from '../questions/identity.ts';
 import { isFactEntityPage } from '../entities/resolve.ts';
-import { rankingLinkSql } from '../link-ranking-policy.ts';
+import { ENTITY_ANCHORED_LIMIT } from '../engine-sql/entity-reads.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 import { containsTokenRun, isTitleMentionedInQuery, tokenizeTitle } from './title-match.ts';
 import { enforceTokenBudget } from './token-budget.ts';
 
 export const ENTITY_ANCHORING_KEY = 'search.entity_anchoring';
 /** Anchored pages read per entity (the entity page is extra). */
-export const MAX_ANCHORED = 10;
+export const MAX_ANCHORED = ENTITY_ANCHORED_LIMIT;
 
 export interface AnchoredPage { id: number; slug: string }
 
-const escapeRegex = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-/** The entity page (when live) and up to `limit` pages that link to it or name it, newest first. */
-export async function entityAnchoredPages(engine: BrainEngine, sourceId: string, entitySlug: string, limit = MAX_ANCHORED): Promise<{ entity: AnchoredPage | null; pages: AnchoredPage[] }> {
-  const [entity] = await engine.executeRaw<{ id: number; title: string | null }>(
-    'SELECT id, title FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL', [sourceId, entitySlug]);
-  const names = [...new Set([entitySlug.split('/').pop()!, ...(entity?.title ? [entity.title] : [])].filter(n => n.length >= 3))];
-  const pattern = `\\m(${names.map(escapeRegex).join('|')})\\M`;
-  const rows = await engine.executeRaw<{ id: number; slug: string }>(
-    `SELECT p.id, p.slug FROM pages p WHERE p.source_id = $1 AND p.deleted_at IS NULL AND p.slug <> $2
-       AND p.type NOT IN ('question', 'synthesis') AND NOT (p.frontmatter ? '${PINNED_QUESTION_MARKER}')
-       AND (p.compiled_truth ~* $3 OR ($4::integer IS NOT NULL AND EXISTS (SELECT 1 FROM links l WHERE l.from_page_id = p.id AND l.to_page_id = $4::integer AND ${rankingLinkSql('l')})))
-     ORDER BY COALESCE(p.effective_date, p.updated_at) DESC, p.id DESC LIMIT ${limit}`,
-    [sourceId, entitySlug, pattern, entity?.id ?? null]);
-  return { entity: entity ? { id: Number(entity.id), slug: entitySlug } : null, pages: rows.map(r => ({ id: Number(r.id), slug: r.slug })) };
+/** The entity page (when live) and up to MAX_ANCHORED pages that link to it or name it, newest first. */
+export async function entityAnchoredPages(engine: BrainEngine, sourceId: string, entitySlug: string): Promise<{ entity: AnchoredPage | null; pages: AnchoredPage[] }> {
+  const { entity, pages } = await engine.readEntityAnchoredPages(sourceId, entitySlug);
+  return { entity: entity ? { id: entity.id, slug: entitySlug } : null, pages };
 }
 
-/** The newest pages under a slug prefix (question and synthesis pages excluded). */
-export async function prefixAnchoredPages(engine: BrainEngine, sourceId: string, prefix: string, limit = MAX_ANCHORED): Promise<AnchoredPage[]> {
-  const rows = await engine.executeRaw<{ id: number; slug: string }>(
-    `SELECT id, slug FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND slug LIKE $2
-       AND type NOT IN ('question', 'synthesis') AND NOT (frontmatter ? '${PINNED_QUESTION_MARKER}')
-     ORDER BY COALESCE(effective_date, updated_at) DESC, id DESC LIMIT ${limit}`,
-    [sourceId, `${prefix.replace(/[\\%_]/g, '\\$&')}%`]);
-  return rows.map(r => ({ id: Number(r.id), slug: r.slug }));
+/** The newest pages under a slug prefix (question and synthesis pages excluded), at most MAX_ANCHORED. */
+export async function prefixAnchoredPages(engine: BrainEngine, sourceId: string, prefix: string): Promise<AnchoredPage[]> {
+  return engine.readPrefixAnchoredPages(sourceId, prefix);
 }
 
 /** Asks for the present state of something: "now", "currently", "latest", "these days" and similar. */
@@ -96,8 +80,8 @@ export interface EntityAnchorResult { results: SearchResult[]; entity: string | 
  * up, other chunks of it dropped); a missing page is read through
  * `getChunkWindows` under the caller's scope. Anchored rows take at most half
  * of the row count, the row count never grows, and the token budget is
- * re-applied. Not entity-scoped, nothing readable, or any error: the organic
- * results unchanged.
+ * re-applied. Not entity-scoped, nothing readable, or a read error: the organic
+ * results unchanged. An engine capability refusal is rethrown, never read as no anchor.
  */
 export async function applyEntityAnchoring(engine: BrainEngine, query: string, results: SearchResult[], opts: EntityAnchorOpts): Promise<EntityAnchorResult> {
   const unchanged = { results, entity: null, anchored: 0 };
@@ -113,8 +97,7 @@ export async function applyEntityAnchoring(engine: BrainEngine, query: string, r
       ordered.map((p, i) => ({ page_id: p.id, from_index: 0, to_index: 0, priority: i })),
       { sourceId: entity.source_id, excludePrivate: opts.excludePrivate, requireSafeChunks: opts.requireSafeChunks, chunkSources: ['compiled_truth'], maxRows: ordered.length });
     const byId = new Map(windows.map(w => [w.page_id, w]));
-    const titles = new Map((await engine.executeRaw<{ id: number; title: string }>(
-      'SELECT id, title FROM pages WHERE id = ANY($1::int[])', [ordered.map(p => p.id)])).map(r => [Number(r.id), r.title]));
+    const titles = new Map((await engine.readPageTitlesById(ordered.map(p => p.id))).map(r => [r.id, r.title]));
     const anchored: SearchResult[] = [];
     for (const p of ordered) {
       if (anchored.length >= slots) break;
@@ -137,7 +120,8 @@ export async function applyEntityAnchoring(engine: BrainEngine, query: string, r
     const merged = [...anchored, ...results.filter(r => !anchoredIds.has(r.page_id))].slice(0, rowCount);
     const budgeted = opts.tokenBudget ? enforceTokenBudget(merged, opts.tokenBudget).results : merged;
     return { results: budgeted, entity: `${entity.source_id}:${entity.slug}`, anchored: budgeted.filter(r => r.entity_anchored).length };
-  } catch {
+  } catch (err) {
+    rethrowCapabilityRefusal(err);
     return unchanged;
   }
 }

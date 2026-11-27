@@ -13,9 +13,9 @@
  *   the change, so content read after the generation is never older than it.
  * - Revalidate the generation on every hit, before delivery.
  * - Fail closed: when the generation cannot be read (no
- *   `readTrustGeneration` member, a brain before the migration, any error)
- *   `readTrustGeneration` throws, and the caller delivers nothing rather than
- *   cached content.
+ *   `readTrustGeneration` member, a brain before the migration, no
+ *   `trust_policy_state` row, any error) `readTrustGeneration` throws, and the
+ *   caller delivers nothing rather than cached content.
  *
  * The read is the BrainEngine member `readTrustGeneration`
  * (engine-sql/trust-withdrawals.ts). The Rust store keeps no

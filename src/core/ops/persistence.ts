@@ -59,10 +59,9 @@ async function receiptAccess(ctx: OperationContext, operation: ReceiptOperation,
     sourceIds: ctx.auth?.sourceId ? [ctx.auth.sourceId]
       : ctx.remote !== false && ctx.sourceId ? [ctx.sourceId] : undefined,
   };
-  const suffix = lock ? ' FOR SHARE' : '';
+  // The grant rows through typed members (engine-sql/access-grants.ts); `lock` is the cancel path's FOR SHARE.
   if (principal.kind === 'oauth_client') {
-    const [row] = await ctx.engine.executeRaw<{ scope: string; deleted_at: unknown; allowed_operations: string[] | null; source_id: string | null; bound_slug_prefixes: string[] | null }>(
-      `SELECT scope,deleted_at,allowed_operations,source_id,bound_slug_prefixes FROM oauth_clients WHERE client_id=$1${suffix}`, [principal.id]);
+    const row = await ctx.engine.readOAuthClientReceiptGrant(principal.id, { lock });
     if (!row || row.deleted_at != null || typeof row.scope !== 'string' || !hasScope(row.scope.split(/\s+/), 'write')
       || !operationAllowed(row.allowed_operations, operation)
       || row.bound_slug_prefixes != null && !stringArray(row.bound_slug_prefixes)) throw denied();
@@ -70,10 +69,11 @@ async function receiptAccess(ctx: OperationContext, operation: ReceiptOperation,
     access.slugPrefixes = intersectPrefixes(access.slugPrefixes, row.bound_slug_prefixes);
     access.sourceIds = intersection(access.sourceIds, row.source_id ? [row.source_id] : []);
   } else if (principal.kind === 'legacy_token') {
-    const [row] = await ctx.engine.executeRaw<{ scopes: unknown; revoked_at: unknown }>(
-      `SELECT scopes,revoked_at FROM access_tokens WHERE id=$1${suffix}`, [principal.id]);
+    const row = await ctx.engine.readAccessTokenReceiptGrant(principal.id, { lock });
     if (!row || row.revoked_at != null || !hasScope(normalizeTokenScopes(row.scopes) ?? ['read', 'write', 'admin'], 'write')) throw denied();
   } else if (principal.kind === 'local_cli' || principal.kind === 'local_stdio') {
+    // The registration row through the typed member every engine serves (engine-sql/persistence-state.ts); `lock` is
+    // the cancel path's FOR SHARE, so a revocation waits for the cancel.
     const row = await ctx.engine.readLocalWriterRow(principal.id, { lock });
     const lane = principal.kind === 'local_cli' ? 'cli' : 'stdio';
     if (!row || row.revoked_at != null || row.lane !== lane || (ctx.remote !== false) !== (lane === 'stdio')
@@ -100,7 +100,7 @@ async function hostOperatorReceipt(ctx: OperationContext, access: ReceiptAccess,
   if (ctx.remote !== false || ctx.auth || ctx.viaSubagent === true || access.principal.kind !== 'local_cli') return null;
   const { currentVerifiedLocalWriter } = await import('../persistence/identity.ts');
   if (currentVerifiedLocalWriter()?.remote) return null;
-  const rows = await ctx.engine.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE request_id=$1::uuid LIMIT 2', [requestId]);
+  const rows = await ctx.engine.readWriteRequestsByRequestId(requestId);
   const row = rows.length === 1 ? rows[0]! : null;
   if (!row || row.principal_kind === 'local_cli' || row.principal_kind === 'local_stdio') return null;
   if (access.sourceIds && !access.sourceIds.includes(row.source_id)) return null;

@@ -24,9 +24,10 @@ describe('the embeddings fix a Rust brain prints', () => {
     expect(argv).toEqual(['gbrain', 'embeddings', 'enable', '--embedding-model', 'voyage:voyage-4', '--embedding-dimensions', '1024']);
   });
 
-  test('a PGLite brain keeps its re-init fix, aimed at its own data directory', () => {
+  test('PGLite and Postgres brains print the same in-place command', () => {
     const pglite = { engine: 'pglite', database_path: '/brains/pglite-example' } as unknown as GBrainConfig;
-    expect(enableArgv(pglite, 'voyage:voyage-4', 1024)).toEqual(['gbrain', 'init', '--force', '--embedding-model',
-      'voyage:voyage-4', '--embedding-dimensions', '1024', '--path', '/brains/pglite-example']);
+    const postgres = { engine: 'postgres', database_url: 'postgres://x/y' } as unknown as GBrainConfig;
+    expect(enableArgv(pglite, 'voyage:voyage-4', 1024)).toEqual(enableArgv(rust, 'voyage:voyage-4', 1024));
+    expect(enableArgv(postgres, 'voyage:voyage-4', 1024)).toEqual(enableArgv(rust, 'voyage:voyage-4', 1024));
   });
 });

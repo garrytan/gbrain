@@ -4,6 +4,8 @@
  * doctor judges the phase by its own `last_extract_atoms_at` stamp, written
  * here by both runners (the dream cycle and the extract-atoms drain).
  */
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
+import { sourceConfigText, sourceRecordsRawConfig } from '../source-rows.ts';
 import type { BrainEngine } from '../engine.ts';
 import type { PhaseResult } from '../cycle.ts';
 import { runPhaseExtractAtoms, type ExtractAtomsOpts } from './extract-atoms.ts';
@@ -43,18 +45,18 @@ export async function sourcesWithStaleExtractAtomsRun(
   nowMs = Date.now(),
 ): Promise<Array<{ source_id: string; backlog: number; last_extract_atoms_at: string | null }> | null> {
   try {
-    const rows = await engine.executeRaw<{ id: string; stamp: string | null }>(
-      `SELECT id, config->>$2 AS stamp FROM sources WHERE id = ANY($1::text[])`,
-      [bySource.map((row) => row.source_id), LAST_EXTRACT_ATOMS_AT_KEY],
-    );
-    const stamps = new Map(rows.map((r) => [r.id, r.stamp]));
+    // `config->>key` of the named sources, archived ones included (sourceRecordsRawConfig keeps config as stored).
+    const wanted = new Set(bySource.map((row) => row.source_id));
+    const rows = (await sourceRecordsRawConfig(engine, { includeArchived: true })).filter((r) => wanted.has(r.id));
+    const stamps = new Map(rows.map((r) => [r.id, sourceConfigText(r.config, LAST_EXTRACT_ATOMS_AT_KEY)]));
     return bySource
       .map((row) => ({ ...row, last_extract_atoms_at: stamps.get(row.source_id) ?? null }))
       .filter((row) => {
         const t = row.last_extract_atoms_at ? new Date(row.last_extract_atoms_at).getTime() : NaN;
         return !Number.isFinite(t) || nowMs - t > EXTRACT_ATOMS_PHASE_WARN_HOURS * 3_600_000;
       });
-  } catch {
+  } catch (err) {
+    rethrowCapabilityRefusal(err); // null means "unreadable, do not warn": a refused read must not silence the backlog warning
     return null;
   }
 }

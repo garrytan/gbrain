@@ -33,10 +33,10 @@ async function purgedFenceRows(engine: BrainEngine, sourceId: string, facts: rea
     return drop;
   }
   const rows = await engine.executeRaw<{ row_num: number }>(`WITH incoming AS MATERIALIZED (
-      SELECT i.row_num, i.visibility, gbrain_fact_fingerprint(i.claim) AS fp
+      SELECT i.row_num, i.visibility, gbrain_fact_fingerprint(i.claim) AS fp, gbrain_fact_fingerprint_v2(i.claim) AS fp_v2
       FROM jsonb_to_recordset($2::text::jsonb) AS i(row_num integer, claim text, visibility text))
     SELECT DISTINCT incoming.row_num FROM incoming JOIN fact_purges p ON p.source_id=$1
-      AND p.visibility=incoming.visibility AND p.fact_hash=incoming.fp
+      AND p.visibility=incoming.visibility AND p.fact_hash IN (incoming.fp, incoming.fp_v2)
       AND ($3::text IS NULL OR p.subject='*' OR p.subject=$3::text)`,
   [sourceId, JSON.stringify(facts.map(f => ({ row_num: f.rowNum, claim: f.claim, visibility: f.visibility }))), subject ?? null]);
   return new Set(rows.map(r => Number(r.row_num)));
@@ -58,13 +58,9 @@ export async function dropPurgedFenceRows(engine: BrainEngine, sourceId: string,
   if (hasTakes && purges.takes) {
     const parsed = parseTakesFence(body);
     if (parsed.warnings.length || !parsed.takes.length) return body;
-    const rows = await engine.executeRaw<{ row_num: number }>(`SELECT DISTINCT i.row_num
-      FROM jsonb_to_recordset($2::text::jsonb) AS i(row_num integer, claim text)
-      JOIN take_purges p ON p.source_id=$1 AND p.claim_hash=gbrain_fact_fingerprint(i.claim)
-        AND ($3::text IS NULL OR p.subject='*' OR p.subject=$3::text)`,
-    [sourceId, JSON.stringify(parsed.takes.map(t => ({ row_num: t.rowNum, claim: t.claim }))), subject ?? null]);
+    const rows = await engine.listPurgedTakeRows(sourceId, parsed.takes.map(t => ({ row_num: t.rowNum, claim: t.claim })), subject ?? null);
     if (!rows.length) return body;
-    const drop = new Set(rows.map(r => Number(r.row_num)));
+    const drop = new Set(rows);
     const { beginIdx, endIdx } = locateOutsideCode(body, TAKES_FENCE_BEGIN, TAKES_FENCE_END);
     if (beginIdx === -1 || endIdx === -1) return body;
     body = body.slice(0, beginIdx) + renderTakesFence(parsed.takes.filter(t => !drop.has(t.rowNum)), [...parsed.reservedRowNums, ...drop]) + body.slice(endIdx + TAKES_FENCE_END.length);

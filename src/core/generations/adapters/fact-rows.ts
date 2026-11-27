@@ -20,7 +20,7 @@ import type { GenerationAdapter, GenerationKey, ItemRow } from '../contract.ts';
 import { factRowIdentity, fenceRowKey, FACT_FENCE_KIND, publishFenceGeneration, type FenceGenerationOutcome, type FenceItem, type FenceRead } from '../fence.ts';
 import { activateGeneration, generationKeyLock, itemSetHash, readLiveGeneration, recordHeld } from '../publish.ts';
 import { factsFenceHeld } from '../fence-evidence.ts';
-import { FACT_PREIMAGE_SQL, type FactPreimage } from '../../engine-sql/facts.ts';
+import type { FactPreimage } from '../../engine-sql/facts.ts';
 
 export type { FactPreimage };
 
@@ -46,9 +46,7 @@ export function factRetireItem(preimage: FactPreimage): FenceItem {
 
 /** Before-states of the facts `ids` of `sourceId`. */
 export async function factPreimages(db: BrainEngine, sourceId: string, ids: readonly number[]): Promise<FactPreimage[]> {
-  if (!ids.length) return [];
-  return (await db.executeRaw<{ preimage: FactPreimage }>(`SELECT ${FACT_PREIMAGE_SQL} AS preimage FROM facts f WHERE f.source_id=$1 AND f.id = ANY($2::bigint[]) ORDER BY f.id`,
-    [sourceId, [...ids]])).map(row => row.preimage);
+  return db.readFactPreimages(sourceId, ids);
 }
 
 /**
@@ -80,15 +78,7 @@ export async function projectFactFenceGeneration(tx: BrainEngine, input: { sourc
  * returns whether it was.
  */
 export async function restoreFactRow(tx: BrainEngine, sourceId: string, preimage: Record<string, unknown>): Promise<boolean> {
-  const p = preimage as unknown as FactPreimage;
-  const rows = await tx.executeRaw<{ id: number }>(`UPDATE facts f SET expired_at=$4::timestamptz, valid_until=$5::timestamptz, superseded_by=$6::bigint,
-      consolidated_at=$7::timestamptz, consolidated_into=$8::bigint,
-      row_num=CASE WHEN $9::integer IS NULL OR f.row_num IS NOT DISTINCT FROM $9::integer THEN f.row_num
-        WHEN NOT EXISTS (SELECT 1 FROM facts o WHERE o.source_id=f.source_id AND o.source_markdown_slug=f.source_markdown_slug AND o.row_num=$9::integer AND o.id<>f.id)
-        THEN $9::integer ELSE f.row_num END
-    WHERE f.source_id=$1 AND f.id=$2::bigint AND f.fact=$3 AND f.visibility=$10 RETURNING f.id`,
-  [sourceId, p.id, p.fact, p.expired_at, p.valid_until, p.superseded_by, p.consolidated_at, p.consolidated_into, p.row_num, p.visibility]);
-  return rows.length === 1;
+  return tx.restoreFactPreimage(sourceId, preimage);
 }
 
 /** One consolidation chain's identity: a member's id, its claim and the close it carries. */
@@ -111,7 +101,7 @@ export async function recordConsolidationGeneration(tx: BrainEngine, sourceId: s
   if (!before.length) return;
   const ids = before.map(row => Number(row.id));
   const key: GenerationKey = { kind: CONSOLIDATION_KIND, sourceId, ownerKey: consolidationOwnerKey(entitySlug, ids) };
-  await tx.executeRaw('SELECT pg_advisory_xact_lock(hashtext($1)::bigint)', [generationKeyLock(key)]);
+  await tx.lockGenerationKey(generationKeyLock(key));
   const after = await factPreimages(tx, sourceId, ids);
   if (after.every((row, i) => memberIdentity(row) === memberIdentity(before[i]!))) return;
   const input = { pin: digest(['consolidation-input-v1', before.map(row => [row.id, row.fact])]), size: before.length };
@@ -134,23 +124,19 @@ export async function recordConsolidationGeneration(tx: BrainEngine, sourceId: s
 /** A cluster the consolidate phase will not close because its members tie (#6023): held `tie`, nothing written. */
 export async function holdConsolidationTie(tx: BrainEngine, sourceId: string, entitySlug: string, ids: readonly number[], context: Record<string, unknown>): Promise<void> {
   const key: GenerationKey = { kind: CONSOLIDATION_KIND, sourceId, ownerKey: consolidationOwnerKey(entitySlug, ids) };
-  await tx.executeRaw('SELECT pg_advisory_xact_lock(hashtext($1)::bigint)', [generationKeyLock(key)]);
+  await tx.lockGenerationKey(generationKeyLock(key));
   const items = [...ids].map(id => ({ key: memberKey(id), content: '', identityHash: memberKey(id) }));
   await recordHeld(tx, key, await readGenerationsConfig(tx), { key, items, input: null }, itemSetHash(items), 'tie', { members: ids.length, ...context });
 }
 
 /** Whether the operator restored this cluster's chain (`repair generations --kind consolidation --mode restore`): the consolidate phase leaves it open. */
 export async function consolidationRestored(db: BrainEngine, sourceId: string, entitySlug: string, ids: readonly number[]): Promise<boolean> {
-  const [row] = await db.executeRaw<{ restored: boolean }>(`SELECT restore_of IS NOT NULL AS restored FROM derived_generations
-    WHERE source_id=$1 AND kind=$2 AND owner_key=$3 AND state='live'`, [sourceId, CONSOLIDATION_KIND, consolidationOwnerKey(entitySlug, ids)]);
-  return row?.restored === true;
+  return db.readGenerationRestored({ sourceId, kind: CONSOLIDATION_KIND, ownerKey: consolidationOwnerKey(entitySlug, ids) });
 }
 
 /** Clears the entity's `tie` holds before a consolidate pass re-records the ties it still finds. */
 export async function clearConsolidationTies(db: BrainEngine, sourceId: string, entitySlug: string): Promise<void> {
-  const prefix = `entity:${entitySlug}:cluster:`;
-  await db.executeRaw(`DELETE FROM derived_generations WHERE source_id=$1 AND kind=$2 AND state='held' AND held_reason='tie' AND left(owner_key, $3)=$4`,
-    [sourceId, CONSOLIDATION_KIND, prefix.length, prefix]);
+  await db.clearTieHeldGenerationRows(sourceId, CONSOLIDATION_KIND, `entity:${entitySlug}:cluster:`);
 }
 
 /** The consolidation adapter: items are the cluster's member facts; a restore writes each member's before-state back. */

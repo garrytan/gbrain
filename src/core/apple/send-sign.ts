@@ -42,12 +42,12 @@ export function isValidIdempotencyKey(key: string): boolean {
   return IDEMPOTENCY_KEY.test(key);
 }
 
-export function canonicalSendString(input: { timestamp: number; nonce: string; idempotencyKey: string; body: string | Uint8Array }): string {
+export function canonicalSendString(input: { timestamp: number; nonce: string; idempotencyKey: string; body: string | Uint8Array; route?: string }): string {
   const digest = createHash('sha256').update(input.body).digest('hex');
-  return [SEND_SIGN_VERSION, 'POST', SEND_ROUTE, String(input.timestamp), input.nonce, input.idempotencyKey, digest].join('\n');
+  return [SEND_SIGN_VERSION, 'POST', input.route ?? SEND_ROUTE, String(input.timestamp), input.nonce, input.idempotencyKey, digest].join('\n');
 }
 
-/** Returns the Authorization header value for one send. Sign the exact bytes you put on the wire. */
+/** Returns the Authorization header value for one send (or, with `route`, one Contacts batch). Sign the exact bytes you put on the wire. */
 export function signSendRequest(input: {
   privateKey: KeyObject;
   keyName: string;
@@ -55,12 +55,13 @@ export function signSendRequest(input: {
   body: string | Uint8Array;
   timestamp?: number;
   nonce?: string;
+  route?: string;
 }): string {
   if (!isValidIdempotencyKey(input.idempotencyKey)) throw new Error('Idempotency-Key must be 8 to 128 characters of A-Z, a-z, 0-9, dot, underscore and hyphen');
   const timestamp = input.timestamp ?? Math.floor(Date.now() / 1000);
   const nonce = input.nonce ?? randomBytes(16).toString('hex');
   if (!/^[0-9a-f]{32}$/.test(nonce)) throw new Error('nonce must be 32 lowercase hex characters');
-  const canonical = canonicalSendString({ timestamp, nonce, idempotencyKey: input.idempotencyKey, body: input.body });
+  const canonical = canonicalSendString({ timestamp, nonce, idempotencyKey: input.idempotencyKey, body: input.body, route: input.route });
   const sig = sign(null, Buffer.from(canonical, 'utf8'), input.privateKey).toString('base64url');
   return SEND_SCHEME + ' key=' + input.keyName + ', ts=' + timestamp + ', nonce=' + nonce + ', sig=' + sig;
 }

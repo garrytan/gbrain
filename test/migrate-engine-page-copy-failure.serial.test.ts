@@ -56,11 +56,12 @@ describe('copyPageToTarget — undefined-column normalization (#3194)', () => {
       // #4527: copyPageToTarget restores the source row's timestamps via a
       // raw UPDATE right after putPage.
       executeRaw: async () => [],
+      queuePageProjectionJob: async () => {}, // the copy queues the page's projection through the typed member
       setPageAliases: async () => {}, // #6286: frontmatter aliases travel with the page
     } as unknown as BrainEngine;
     const source = {
       getChunksWithEmbeddings: async () => [],
-      executeRaw: async () => [], // #6286: the copier reads the source row's origin and provenance columns
+      readMigrationPageColumns: async () => null, // #6286: the copier reads the source row's origin and provenance columns
       getTags: async () => [],
       getTimeline: async () => [],
       getRawData: async () => [],
@@ -103,11 +104,12 @@ describe('copyPageToTarget — undefined-column normalization (#3194)', () => {
       // #4527: copyPageToTarget restores the source row's timestamps via a
       // raw UPDATE right after putPage.
       executeRaw: async () => [],
+      queuePageProjectionJob: async () => {}, // the copy queues the page's projection through the typed member
       setPageAliases: async () => {}, // #6286: frontmatter aliases travel with the page
     } as unknown as BrainEngine;
     const source = {
       getChunksWithEmbeddings: async () => [],
-      executeRaw: async () => [], // #6286: the copier reads the source row's origin and provenance columns
+      readMigrationPageColumns: async () => null, // #6286: the copier reads the source row's origin and provenance columns
       getTags: async () => [],
       getTimeline: async () => [],
       getRawData: async () => [],

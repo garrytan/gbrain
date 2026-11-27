@@ -6,6 +6,7 @@ test('legacy self-member issuance stores the explicit operation snapshot without
   let inserted: { scopes?: string[] | null; permissions?: unknown } = {};
   const engine = { insertAccessToken: async (row: typeof inserted) => { inserted = row; return { id: '11111111-1111-4111-8111-111111111111' }; },
     executeRaw: async () => [{ id: '11111111-1111-4111-8111-111111111111' }],
+    readScopeSourceConfigs: async () => [],
     transaction: (fn: (tx: BrainEngine) => Promise<unknown>) => fn(engine) } as unknown as BrainEngine;
   const minted = await mintLegacyToken(engine, { name: 'fixture-member', takesHolders: ['world'], scopes: ['read', 'skills_member_self'],
     sourceGrant: ['workspace'], allowedOperations: ['join_brain', 'sync_brain_skills', 'leave_brain', 'get_skill', 'get_skill'] });

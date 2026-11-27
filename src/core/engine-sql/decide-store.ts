@@ -124,11 +124,11 @@ export async function dailyDecideSpend(tx: Raw, since: Date): Promise<{ total: n
 
 export interface DecideSpendSlotTotals { slot: string; input_tokens: number; cost_usd: number; requests: number }
 
-/** Spend totals per slot over the whole ledger, in slot order (byte order, so every engine lists them alike). */
+/** Spend totals per slot over the whole ledger, one row per slot, in the database's own order, as master read them. */
 export async function listDecideSpendBySlot(tx: Raw): Promise<DecideSpendSlotTotals[]> {
   const rows = await tx.executeRaw<{ slot: string; tokens: number | string; cost: number | string; n: number | string }>(
     `SELECT slot, COALESCE(SUM(input_tokens), 0) AS tokens, COALESCE(SUM(cost_usd), 0) AS cost, COUNT(*) AS n
-       FROM decide_spend GROUP BY slot ORDER BY slot COLLATE "C"`,
+       FROM decide_spend GROUP BY slot`,
   );
   return rows.map((r) => ({ slot: String(r.slot), input_tokens: Number(r.tokens), cost_usd: Number(r.cost), requests: Number(r.n) }));
 }
@@ -236,10 +236,23 @@ export interface DecideReceiptStat {
 const numOrNull = (v: unknown): number | null => (v === null || v === undefined ? null : Number(v));
 
 /**
- * Receipt counts over the last `sinceHours` hours, per slot, mode, outcome and error reason (aggregates only, never text),
- * in that order (byte order, a null error reason last).
+ * Whether a receipt window holds nothing without asking the database: a whole number of hours, zero or fewer, in the
+ * `int4` range, with no NUL byte in any text argument. "The last 0 hours" names no time at all, so it answers nothing
+ * on every engine, decided before any query: `created_at >= now() - 0` counts a receipt stamped with the read's own
+ * now() (written in the same transaction, or in the same clock tick on PGLite), and a strict `>` would still count a
+ * receipt stamped after the read's now() (a transaction that started later and committed first). Any other value runs
+ * the query, so a fraction, a window outside `int4` or a NUL byte is still refused as before.
+ */
+function windowHoldsNothing(sinceHours: number, ...text: Array<string | null | undefined>): boolean {
+  return Number.isInteger(sinceHours) && sinceHours <= 0 && sinceHours >= -2147483648 && !text.some((t) => t?.includes('\u0000'));
+}
+
+/**
+ * Receipt counts over the last `sinceHours` hours (none for zero or fewer: windowHoldsNothing), per slot, mode, outcome and error reason (aggregates only, never text),
+ * in that order, by byte (`COLLATE "C"`, as PGLite sorts).
  */
 export async function listDecideReceiptStats(tx: Raw, opts: { slot?: string; sinceHours: number }): Promise<DecideReceiptStat[]> {
+  if (windowHoldsNothing(opts.sinceHours, opts.slot)) return [];
   const rows = await tx.executeRaw<Record<string, unknown>>(
     `SELECT slot, mode, outcome, error_reason, COUNT(*)::int AS n, AVG(answer_value)::float8 AS avg_value,
             percentile_cont(0.5) WITHIN GROUP (ORDER BY latency_ms)::float8 AS p50_latency,
@@ -261,6 +274,7 @@ export interface DecideSlotUsageRow { slot: string; decisions: number; rows: num
 
 /** Per-slot decision counts, tokens, errors and egress refusals over the last `sinceHours` hours. */
 export async function decideSlotUsage(tx: Raw, sinceHours: number): Promise<DecideSlotUsageRow[]> {
+  if (windowHoldsNothing(sinceHours)) return [];
   const rows = await tx.executeRaw<Record<string, unknown>>(
     `SELECT slot, COUNT(DISTINCT decision_id)::int AS decisions, COUNT(*)::int AS rows,
             COALESCE(SUM(input_tokens), 0)::int AS input_tokens,
@@ -276,6 +290,7 @@ export async function decideSlotUsage(tx: Raw, sinceHours: number): Promise<Deci
 
 /** The conflict receipts of the last `sinceHours` hours, and how many were fact-level `no_entity` skips. */
 export async function decideConflictNoEntityCounts(tx: Raw, sinceHours: number): Promise<{ receipts: number; skipped: number }> {
+  if (windowHoldsNothing(sinceHours)) return { receipts: 0, skipped: 0 };
   const [row] = await tx.executeRaw<{ receipts: number | string; skipped: number | string }>(
     `SELECT COUNT(*)::int AS receipts,
             COUNT(*) FILTER (WHERE outcome = 'skipped' AND error_reason = 'no_entity')::int AS skipped
@@ -294,8 +309,9 @@ export interface DecideReplayReceipt {
   outcome: string;
 }
 
-/** The decision rows of `slot` over the last `sinceHours` hours that a replay reads, by decision id, then rank (null last), then insertion order. */
+/** The decision rows of `slot` over the last `sinceHours` hours that a replay reads, by decision id (byte order), then rank (null last), then insertion order. */
 export async function listDecideReplayReceipts(tx: Raw, slot: string, sinceHours: number): Promise<DecideReplayReceipt[]> {
+  if (windowHoldsNothing(sinceHours, slot)) return [];
   const rows = await tx.executeRaw<Record<string, unknown>>(
     `SELECT decision_id, answer_value, protected, rank, min_keep, outcome FROM decision_receipts
       WHERE slot = $1 AND created_at >= now() - ($2::int * interval '1 hour') AND outcome IN ('kept','pruned','margin_hold','pass','reject','quarantine','insufficient_context')
@@ -310,8 +326,9 @@ export async function listDecideReplayReceipts(tx: Raw, slot: string, sinceHours
 
 export interface DecideResolvedModel { slot: string; provider: string; model_resolved: string; n: number; last_at: Date }
 
-/** Each (slot, provider, resolved model) seen over the last `sinceHours` hours, with its count and latest time, latest first. */
+/** Each (slot, provider, resolved model) seen over the last `sinceHours` hours, with its count and latest time, latest first; groups with one latest time in byte order of slot, provider and model. */
 export async function listDecideResolvedModels(tx: Raw, sinceHours: number): Promise<DecideResolvedModel[]> {
+  if (windowHoldsNothing(sinceHours)) return [];
   const rows = await tx.executeRaw<Record<string, unknown>>(
     `SELECT slot, provider, model_resolved, COUNT(*)::int AS n, MAX(created_at) AS last_at FROM decision_receipts
       WHERE model_resolved IS NOT NULL AND created_at >= now() - ($1::int * interval '1 hour')
@@ -327,10 +344,11 @@ export async function listDecideResolvedModels(tx: Raw, sinceHours: number): Pro
 
 /** Per slot, the receipts of the last `sinceHours` hours marked `mixed_model` (a decision whose rows carried more than one resolved model). */
 export async function listDecideMixedModelDecisions(tx: Raw, sinceHours: number): Promise<Array<{ slot: string; n: number }>> {
+  if (windowHoldsNothing(sinceHours)) return [];
   const rows = await tx.executeRaw<Record<string, unknown>>(
     `SELECT slot, COUNT(*)::int AS n FROM decision_receipts
       WHERE created_at >= now() - ($1::int * interval '1 hour') AND error_reason = 'mixed_model'
-      GROUP BY slot ORDER BY slot COLLATE "C"`,
+      GROUP BY slot`,
     [sinceHours],
   );
   return rows.map((r) => ({ slot: String(r.slot), n: Number(r.n) }));
@@ -437,7 +455,7 @@ export async function storeDecideQualification(tx: Raw, id: number, q: DecideQua
   );
 }
 
-/** The calibrations (retired ones only when asked for), by slot in byte order, then newest first, then highest id first. */
+/** The calibrations (retired ones only when asked for), by slot, then newest first, then highest id first. */
 export async function listDecideCalibrations(tx: Raw, opts: { slot?: string; includeRetired?: boolean } = {}): Promise<DecideCalibration[]> {
   const rows = await tx.executeRaw<Record<string, unknown>>(
     `SELECT * FROM decide_calibrations

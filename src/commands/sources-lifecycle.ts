@@ -1,5 +1,6 @@
 /** Source mutations use authenticated resident ingress before any PGLite open. */
 import type { BrainEngine } from '../core/engine.ts';
+import { nullUnlessCapabilityRefusal } from '../core/engine-capability-refusal.ts';
 import { OperationError } from '../core/ops/contract.ts';
 import { getCliOptions } from '../core/cli-options.ts';
 import { loadConfig } from '../core/config.ts';
@@ -50,13 +51,15 @@ export async function executeSourceLifecycle(engine: BrainEngine, parsed: Parsed
 }
 
 /** GST-2732: what a committed add means for default search and a plain folder, on stderr and as `notices`. */
-async function addOutcome(result: Record<string, unknown>, parsed?: ParsedSourceLifecycle, engine?: BrainEngine): Promise<Record<string, unknown>> {
+/** @internal Exported for test/engine-parity/refusal-blocker-sites.test.ts. */
+export async function addOutcome(result: Record<string, unknown>, parsed?: ParsedSourceLifecycle, engine?: BrainEngine): Promise<Record<string, unknown>> {
   const options = parsed?.operation === 'source_add' ? parsed.params.options as AddSourceOpts | undefined : undefined;
   if (!options || result.dry_run === true || result.state !== 'committed') return result;
   let federated = (result.config as Record<string, unknown> | undefined)?.federated;
   if (federated === undefined && engine) {
-    const rows = await engine.executeRaw<{ f: unknown }>(`SELECT config->'federated' AS f FROM sources WHERE id = $1`, [options.id]).catch(() => []);
-    federated = rows[0]?.f ?? (rows.length ? false : undefined);
+    // The typed source read: a Rust brain refuses raw SQL, and a refusal must not read as "no source row".
+    const source = await engine.getSource(options.id).catch(nullUnlessCapabilityRefusal);
+    federated = source ? source.config?.federated ?? false : undefined;
   }
   if (federated === undefined) return result;
   const connector = !!(options.github || options.google || options.meetings || options.slack);

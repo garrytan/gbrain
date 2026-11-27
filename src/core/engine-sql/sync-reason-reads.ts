@@ -1,25 +1,12 @@
 /**
- * The purge reads the sync change-reason scan (reason-trailers.ts scanSyncReasons and cachedSyncReasonScan) ran through
- * `executeRaw` (Rust engine lane 11). The statement text is the caller's, byte for byte
- * (test/engine-sql-caller-raw-sql-pins.test.ts), so PGLite and Postgres answer exactly as before. A Rust brain keeps no
- * change reasons and purges none, so it has no tombstones and its purge epoch is 0.
+ * The purge epoch read the sync change-reason scan (reason-trailers.ts cachedSyncReasonScan) ran through `executeRaw`
+ * (Rust engine lane 11). The statement text is the caller's, byte for byte (test/engine-sql-caller-raw-sql-pins.test.ts),
+ * so PGLite and Postgres answer exactly as before. The tombstone reads and writes live in engine-sql/sources.ts.
  */
-/** The engine's own executeRaw, so a statement fault a test injects on the engine reaches the read. */
-export interface HoldRead {
-  executeRaw<R = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<R[]>;
-}
+import type { HoldRead } from './sync-hold-reads.ts';
 
-/** A purged change reason's (commit, path): a later sync import never stamps that reason again. */
-export interface ReasonPurgeTombstone { commit_sha: string; path: string }
-
-export const REASON_PURGE_TOMBSTONES_SQL = 'SELECT commit_sha, path FROM reason_purge_tombstones WHERE source_id = $1';
 /** Also a screen-stable read of persistence/sync-convergence.ts, which imports it through reason-trailers.ts. */
 export const SOURCE_PURGE_EPOCH_SQL = 'SELECT purge_epoch FROM sources WHERE id = $1';
-
-/** Every purged change reason of one source, in no order; an unknown source has none. */
-export function readReasonPurgeTombstones(exec: HoldRead, sourceId: string): Promise<ReasonPurgeTombstone[]> {
-  return exec.executeRaw<ReasonPurgeTombstone>(REASON_PURGE_TOMBSTONES_SQL, [sourceId]);
-}
 
 /** The source's purge epoch as stored (every fact purge bumps it), or null for an unknown source. */
 export async function readSourcePurgeEpoch(exec: HoldRead, sourceId: string): Promise<string | number | null> {

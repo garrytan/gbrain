@@ -34,13 +34,17 @@ import type { EngineConfig } from '../../src/core/types.ts';
 import { PGLiteEngine } from '../../src/core/pglite-engine.ts';
 import { isolatedPersistencePostgres } from '../helpers/persistence-postgres.ts';
 import { resetPgliteState, truncateCascade } from '../helpers/reset-pglite.ts';
+import { WRITE_GATE_SCAN_BASELINE_KEY } from '../../src/core/write-gate-schema.ts';
 import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
 import type { TestBackend } from '../helpers/test-backends.ts';
 import { armHas, isCapabilityRefusal, missingCapability, type EngineCapability } from './arm-capabilities.ts';
 import { checkRustTally } from './rust-tally.ts';
+import { itemSetHash } from '../../src/core/generations/publish.ts';
+import { IDENTITY_DOWNGRADE_OP } from '../../src/core/persistence/sync-status-sql.ts';
 import {
-  archiveRustSource, createRustMember, createRustSource, newRustBrain, openRustBrain, DIVERGENCE_NORMALIZERS, readDivergences, removeBrainDir, rustArmRequested, rustMemberCapability, rustRefusal, type DivergenceRow, type MemberSeed,
+  archiveRustSource, createRustSource, newRustBrain, putRustOpCheckpointRow, rustPageDeletedAt, rustAccessBrain, openRustBrain, DIVERGENCE_NORMALIZERS, readDivergences, removeBrainDir, rustArmRequested, rustMemberCapability, rustRefusal, type DivergenceRow, createRustMember, type MemberSeed,
 } from './rust-arm.ts';
+import { isEngineMember, readStopPins, refusalFacts, rustServes, rustServesCapability, setupRefusalStep, setupStep, today, type StopPin } from './rust-refusals.ts';
 
 /** The backends a parity arm can run on: the SQL ones every suite selects, and the opt-in Rust engine. */
 export type ParityBackend = TestBackend | 'rust';
@@ -79,6 +83,24 @@ export interface ParityCaseOpts {
    * `engine_capability_missing` refusal, and an `n/a` capability skips the arm.
    */
   requires?: EngineCapability;
+  /**
+   * A named stop on the Rust arm: the scenario there ends on an error with this `code` that is not a capability
+   * refusal (a refusal the store answers by design until a member lands elsewhere). The error must be an Error whose
+   * message carries `pin`, which says why, who owns the gap and how to unpin it, and every member in `methods` must
+   * have been called first. Counted as stopped. With a pin, the named stop is the only Rust outcome accepted: a case
+   * that returns, or ends on a capability refusal, fails until the pin is removed. The SQL arms still compare.
+   * One rule for a known Rust stop: a capability refusal uses the in-test pin (assert the refusal, rethrow it; the
+   * sweep-reads case is the example); any other refusal code uses `rustStop`. There is no third form.
+   */
+  rustStop?: { code: string; pin: string };
+  /**
+   * Rust only: the case ends write_pending because the coordinator refused one typed capability inside the write and
+   * released it to queued (the scenario sees no refusal to throw). It counts as stopped only while the case recorded
+   * exactly this refusal: `capability`, and `member` as the refusal names it (`member=<member> capability=...`), and
+   * `frame` in its stack when given. Any other outcome fails and says to update or remove the pin; `site`, `owner` and
+   * `due` name the code and the lane whose fix removes it. PGLite and Postgres ignore it.
+   */
+  rustPendingStop?: { capability: string; member: string; site: string; frame?: string; owner: string; due: string };
   timeout?: number;
 }
 
@@ -128,7 +150,7 @@ async function openArm(backend: ParityBackend): Promise<ParityArm> {
         unconnected: () => ({ engine: new PGLiteEngine(), config: { engine: 'pglite' } }) };
     }
     case 'postgres': {
-      const { engine, databaseUrl, close } = await isolatedPersistencePostgres(process.env.DATABASE_URL!);
+      const { engine, databaseUrl, close } = await isolatedPersistencePostgres(process.env.DATABASE_URL!, 'instance', 4, { collation: 'en_US' });
       return { backend, engine, close,
         unconnected: () => ({ engine: new PostgresEngine(), // An instance pool, never the module-level singleton other code shares.
         config: { engine: 'postgres', database_url: databaseUrl, poolSize: 2 } as EngineConfig }) };
@@ -142,12 +164,35 @@ async function openArm(backend: ParityBackend): Promise<ParityArm> {
 const PRESERVED_TABLES = ['schema_version', 'page_generation_clock', 'persistence_brain'];
 
 /**
+ * The arm's database is its own (isolatedPersistencePostgres), so every other client transaction on it is work this process
+ * started and did not finish: a write the previous case's apply mode left draining, say. Deleting rows under it can
+ * deadlock (a reset `DELETE FROM sources` against such work failed a case on CI), so wait for those transactions to end.
+ * A transaction still open after the bound is a leak: the reset fails and names it, rather than racing it.
+ */
+async function waitForOpenTransactions(engine: BrainEngine, timeoutMs = 30_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const open = await engine.executeRaw<{ pid: number; state: string; query: string }>(
+      `SELECT pid, state, left(query, 160) AS query FROM pg_stat_activity
+        WHERE datname = current_database() AND pid <> pg_backend_pid() AND backend_type = 'client backend' AND xact_start IS NOT NULL`,
+    );
+    if (open.length === 0) return;
+    if (Date.now() > deadline) {
+      throw new Error(`parity reset: ${open.length} transaction(s) the previous case left open did not end within ${timeoutMs} ms: `
+        + open.map(t => `pid ${t.pid} (${t.state}): ${t.query}`).join('; '));
+    }
+    await new Promise(resolve => setTimeout(resolve, 25));
+  }
+}
+
+/**
  * Postgres: the schema's enabled event trigger sends resetPgliteState down its
  * TRUNCATE path (~2.8 s a test). Delete every row under replica role instead
  * (truncateCascade, ~ms); sequences keep counting, so cases never compare ids.
  */
-async function resetPostgres(engine: BrainEngine): Promise<void> {
+export async function resetPostgres(engine: BrainEngine): Promise<void> {
   await disposePersistenceConsumer(engine);
+  await waitForOpenTransactions(engine);
   const tables = await engine.executeRaw<{ relname: string }>(
     `SELECT c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
       WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p') AND NOT (c.relname = ANY($1::text[]))`,
@@ -171,10 +216,11 @@ async function seedTrustPolicyState(engine: BrainEngine): Promise<void> {
 }
 
 /**
- * Config rows a fresh brain is created with (src/schema.sql seeds them; the Rust store writes them on create).
+ * Config rows a fresh brain is created with (src/schema.sql seeds them, migration v227 records the write gate's scan
+ * baseline; the Rust store writes them on create).
  * The SQL arms' reset empties config, so it puts back what the arm's own fresh brain recorded.
  */
-const SEED_CONFIG_KEYS = ['version', 'embedding_model', 'embedding_dimensions', 'chunk_strategy'] as const;
+const SEED_CONFIG_KEYS = ['version', 'embedding_model', 'embedding_dimensions', 'chunk_strategy', WRITE_GATE_SCAN_BASELINE_KEY] as const;
 const seededConfig = new WeakMap<ParityArm, Array<[string, string]>>();
 
 async function withSeededConfig(arm: ParityArm, reset: () => Promise<void>): Promise<void> {
@@ -227,7 +273,7 @@ export async function resetArm(arm: ParityArm): Promise<void> {
  * method). Harness-only SQL behind the backend switch; a Rust arm supplies its
  * own path here. Cases call this instead of executeRaw.
  */
-export async function createSource(engine: BrainEngine, backend: ParityBackend, id: string, config: Record<string, unknown> = {}, localPath?: string): Promise<void> {
+async function createSourceImpl(engine: BrainEngine, backend: ParityBackend, id: string, config: Record<string, unknown> = {}, localPath?: string): Promise<void> {
   switch (backend) {
     case 'rust':
       await createRustSource(engine, id, config, localPath);
@@ -291,8 +337,50 @@ export async function stampUpdatedAt(engine: BrainEngine, backend: ParityBackend
   }
 }
 
+/**
+ * Fixture: write an op checkpoint row stamped `iso`. BrainEngine's checkpoint writes stamp the database clock, so the
+ * SQL arms insert the stamp with harness-only SQL. The Rust store stamps each write with its own clock, as in
+ * `stampUpdatedAt`: a case writes its rows in the order their stamps put them, and reads a stamp it asserts back through
+ * readOpCheckpointRecord rather than comparing it with `iso`.
+ */
+export async function writeCheckpointAt(engine: BrainEngine, backend: ParityBackend, op: string, fingerprint: string, keys: unknown[], iso: string): Promise<void> {
+  switch (backend) {
+    case 'rust':
+      await engine.writeOpCheckpointRecord(op, fingerprint, keys);
+      return;
+    case 'pglite':
+    case 'postgres':
+      await engine.executeRaw('INSERT INTO op_checkpoints (op, fingerprint, completed_keys, updated_at) VALUES ($1, $2, $3::text::jsonb, $4::timestamptz)',
+        [op, fingerprint, JSON.stringify(keys), iso]);
+      return;
+    default:
+      return assertNever(backend);
+  }
+}
+
+/**
+ * Fixture: create a source whose last sync finished at `syncedAt` (ISO, ending in Z). BrainEngine has no typed write
+ * of a sync time, so the SQL arms insert it with harness-only SQL and the Rust arm passes it to the store's upsert.
+ */
+export async function createSyncedSource(engine: BrainEngine, backend: ParityBackend, id: string, config: Record<string, unknown>, syncedAt: string): Promise<void> {
+  switch (backend) {
+    case 'rust':
+      await createRustSource(engine, id, config, undefined, syncedAt);
+      return;
+    case 'pglite':
+    case 'postgres':
+      await engine.executeRaw(
+        `INSERT INTO sources (id, name, config, last_sync_at) VALUES ($1, $1, $2::text::jsonb, $3::text::timestamptz) ON CONFLICT (id) DO NOTHING`,
+        [id, JSON.stringify(config), syncedAt],
+      );
+      return;
+    default:
+      return assertNever(backend);
+  }
+}
+
 /** Fixture: archive a source (BrainEngine has no typed "archive source"). Harness-only SQL, as in `createSource`. */
-export async function archiveSource(engine: BrainEngine, backend: ParityBackend, id: string): Promise<void> {
+async function archiveSourceImpl(engine: BrainEngine, backend: ParityBackend, id: string): Promise<void> {
   switch (backend) {
     case 'rust':
       await archiveRustSource(engine, id);
@@ -310,9 +398,9 @@ export async function archiveSource(engine: BrainEngine, backend: ParityBackend,
  * Fixture: start belief-ledger coverage on a source, so its ledger probe reports a coverage event. The ledger has no
  * typed enable method; this runs the production enable path behind the backend switch, as `createSource` does.
  */
-export async function enableBeliefCoverage(engine: BrainEngine, backend: ParityBackend, sourceId: string): Promise<void> {
+async function enableBeliefCoverageImpl(engine: BrainEngine, backend: ParityBackend, sourceId: string): Promise<void> {
   switch (backend) {
-    // The Rust arm runs the same production path; it stops on the engine's typed refusal until the ledger is served.
+    // The Rust arm runs the same production path, a page's baseline included.
     case 'rust':
     case 'pglite':
     case 'postgres':
@@ -325,17 +413,29 @@ export async function enableBeliefCoverage(engine: BrainEngine, backend: ParityB
 
 /**
  * Fixture: put a folder access rule (`kind: 'rule'`) or a pending coverage prefix (`kind: 'pending'`) on `prefix` of a
- * source, so the folder-restriction read has something to find. Harness-only SQL behind the backend switch.
+ * source, so the folder-access reads have something to find. The policy writes have no typed member (they stay raw SQL
+ * in policy.ts), so this is harness-only SQL behind the backend switch, and the Rust arm writes its store directly.
  */
-export async function restrictFolder(engine: BrainEngine, backend: ParityBackend, sourceId: string, prefix: string, kind: 'rule' | 'pending'): Promise<void> {
+async function restrictFolderImpl(
+  engine: BrainEngine, backend: ParityBackend, sourceId: string, prefix: string, kind: 'rule' | 'pending',
+  opts: { ruleId?: string; readers?: string[] } = {},
+): Promise<void> {
+  const ruleId = opts.ruleId ?? 'parity-rule';
+  const readers = opts.readers ?? ['member:parity'];
   switch (backend) {
-    // The Rust arm has no access-rule store yet; the same SQL stops on the engine's typed raw_sql refusal.
     case 'rust':
+      await seedAccessPolicy(engine, backend, sourceId);
+      if (kind === 'rule') {
+        await rustAccessBrain(engine).putAccessRule({ source_id: sourceId, rule_id: ruleId, prefix, readable_by: readers, revision: 1 });
+      } else {
+        await rustAccessBrain(engine).putAccessPendingCoverage({ source_id: sourceId, prefix, reason: 'pending' });
+      }
+      return;
     case 'pglite':
     case 'postgres':
-      await engine.executeRaw('INSERT INTO access_policy_state (source_id) VALUES ($1) ON CONFLICT (source_id) DO NOTHING', [sourceId]);
+      await seedAccessPolicy(engine, backend, sourceId);
       if (kind === 'rule') {
-        await engine.executeRaw(`INSERT INTO access_rules (source_id, rule_id, prefix, readable_by, revision) VALUES ($1, 'parity-rule', $2, ARRAY['member:parity'], 1)`, [sourceId, prefix]);
+        await engine.executeRaw(`INSERT INTO access_rules (source_id, rule_id, prefix, readable_by, revision) VALUES ($1, $2, $3, $4::text[], 1)`, [sourceId, ruleId, prefix, readers]);
       } else {
         await engine.executeRaw(`INSERT INTO access_pending_coverage (source_id, prefix, reason) VALUES ($1, $2, 'pending')`, [sourceId, prefix]);
       }
@@ -346,18 +446,74 @@ export async function restrictFolder(engine: BrainEngine, backend: ParityBackend
 }
 
 /**
- * Fixture: a `page_purges` tombstone, as the page purge sweep (`persistence/page-purge.ts`) and the restore replay
- * (`belief/purge-mirror.ts`) write it inside the write journal's transaction. Neither has a typed writer, so this is
- * harness-only SQL behind the backend switch; `purgedAt` (ISO) replaces the default `now()`.
+ * Fixture: give a source access state, and record each `revisions` entry as a policy revision (applied or not), so the
+ * applied-revision read has something to find. Harness-only SQL behind the backend switch, as in `restrictFolder`.
  */
-export async function recordPagePurge(engine: BrainEngine, backend: ParityBackend, sourceId: string, slug: string, contentHash: string, purgedAt?: string): Promise<void> {
+export async function seedAccessPolicy(
+  engine: BrainEngine, backend: ParityBackend, sourceId: string, revisions: ReadonlyArray<{ revision: number; applied: boolean }> = [],
+): Promise<void> {
   switch (backend) {
-    // The Rust store reads the ledger but has no writer for it: the same SQL stops on the engine's typed raw_sql refusal.
-    case 'rust':
+    case 'rust': {
+      const brain = rustAccessBrain(engine);
+      await brain.putAccessPolicyState(sourceId);
+      for (const r of revisions) await brain.putAccessPolicyRevision({ source_id: sourceId, revision: r.revision, applied: r.applied });
+      return;
+    }
     case 'pglite':
     case 'postgres':
-      await engine.executeRaw('INSERT INTO page_purges (source_id, content_hash, slug, purged_at) VALUES ($1, $2, $3, COALESCE($4::timestamptz, now()))',
-        [sourceId, contentHash, slug, purgedAt ?? null]);
+      await engine.executeRaw('INSERT INTO access_policy_state (source_id) VALUES ($1) ON CONFLICT (source_id) DO NOTHING', [sourceId]);
+      for (const r of revisions) {
+        await engine.executeRaw(
+          `INSERT INTO access_policy_revisions (source_id, revision, rules, digest, change_kind, origin, applied_at)
+           VALUES ($1, $2, '[]'::jsonb, 'd', 'narrowing', 'parity', ${r.applied ? 'now()' : 'NULL'})`, [sourceId, r.revision]);
+      }
+      return;
+    default:
+      return assertNever(backend);
+  }
+}
+
+/**
+ * Fixture: store one calibration profile for a holder of the default source, so the calibration admin routes have a
+ * profile to read. It writes through the typed `insertCalibrationProfile` (rust-engine/main c1c524c7be), which every
+ * engine serves, the Rust store included; the backend argument is kept for the callers.
+ */
+export async function seedCalibrationProfile(engine: BrainEngine, _backend: ParityBackend, holder: string, patterns: readonly [string, string]): Promise<void> {
+  await engine.insertCalibrationProfile({
+    sourceId: 'default', holder, generatedAt: new Date('2026-10-01T12:00:00Z'), totalResolved: 6, brier: 0.125, accuracy: 0.75,
+    partialRate: 0.25, gradeCompletion: 1, domainScorecards: {}, patternStatements: [patterns[0], patterns[1]], voiceGatePassed: true,
+    voiceGateAttempts: 1, activeBiasTags: ['overconfidence'], modelId: 'parity-model',
+  });
+}
+
+/**
+ * Fixture: a `page_purges` tombstone, as the page purge sweep (`persistence/page-purge.ts`) and the restore replay
+ * (`belief/purge-mirror.ts`) write it inside the write journal's transaction. Neither has a typed writer, so this is
+ * harness-only SQL behind the backend switch; `purgedAt` (ISO) replaces the default `now()`, and `requestId` stamps the
+ * purge request the row belongs to. `contentHash` may name several hashes (one row each).
+ *
+ * Without a `purgedAt` the row goes through the typed `upsertPagePurges`, which every arm serves and stamps `now()`: with a
+ * `purgedAt` the Rust arm runs the same SQL and stops on the engine's typed raw_sql refusal.
+ */
+async function recordPagePurgeImpl(
+  engine: BrainEngine, backend: ParityBackend, sourceId: string, slug: string, contentHash: string | string[], purgedAt?: string, requestId: string | null = null,
+): Promise<void> {
+  const hashes = Array.isArray(contentHash) ? contentHash : [contentHash];
+  // Without a stamped time every arm stores the tombstone through the typed `upsertPagePurges` the page purge sweep uses.
+  if (purgedAt === undefined) {
+    await engine.upsertPagePurges({ sourceId, contentHashes: hashes, slug, requestId });
+    return;
+  }
+  switch (backend) {
+    case 'rust':
+    // falls through: a stamped time has no Rust writer; the SQL below ends in the typed refusal.
+    case 'pglite':
+    case 'postgres':
+      for (const hash of hashes) {
+        await engine.executeRaw(
+          'INSERT INTO page_purges (source_id, content_hash, slug, request_id, purged_at) VALUES ($1, $2, $3, $4::uuid, COALESCE($5::timestamptz, now())) ON CONFLICT (source_id, content_hash) DO UPDATE SET slug = EXCLUDED.slug, request_id = EXCLUDED.request_id, purged_at = EXCLUDED.purged_at',
+          [sourceId, hash, slug, requestId, purgedAt ?? null]);
+      }
       return;
     default:
       return assertNever(backend);
@@ -370,7 +526,7 @@ export async function recordPagePurge(engine: BrainEngine, backend: ParityBacken
  * backend switch. `reconciled` and `attempted` name the revision each column holds: the page's `current`
  * `knowledge_revision`, an `older` one, or null.
  */
-export async function recordFactsReconcile(
+async function recordFactsReconcileImpl(
   engine: BrainEngine, backend: ParityBackend, sourceId: string, slug: string,
   outcome: 'complete' | 'deferred' | 'invalid' | 'cancelled', reconciled: 'current' | 'older' | null, attempted: 'current' | 'older' | null,
 ): Promise<void> {
@@ -391,32 +547,80 @@ export async function recordFactsReconcile(
 }
 
 /**
- * Fixture: a facts-fence generation of page `slug` that retired the fact `factId`, as `publishFenceGeneration`
- * (generations/fence.ts) writes it. The fence writer has no typed member, so this is harness-only SQL behind the
- * backend switch; the Rust store reads the ledger but no member writes it, and the same SQL stops on the engine's typed
- * raw_sql refusal. `preimage` overrides the item's preimage fields (the retired row as it stood); the preimage binds as
- * text and the cast parses it. The state defaults to `superseded`, since a page holds one live and one held generation
- * at most. Returns the generation id.
+ * Fixture: a facts-fence generation of page `slug` that retired the fact `factId`, written through the typed ledger
+ * writer the fence publish uses (`activateGenerationRows`, generations/publish.ts `activateGeneration`): it
+ * supersedes the page's live generation and records one `retired` item whose preimage is the row as it stood, with the
+ * completeness and item set hash `publishFenceGeneration` (generations/fence.ts) writes for a fence that parsed empty.
+ * `preimage` overrides the preimage fields. `state: 'held'` records the page's held row instead
+ * (`recordHeldGenerationRow`, publish.ts `recordHeld`), which, as in production, records no item.
  */
-export async function recordFenceRetirement(
-  engine: BrainEngine, backend: ParityBackend, sourceId: string, slug: string, factId: number,
-  opts: { fact: string; visibility: string; state?: 'live' | 'held' | 'superseded'; generation?: number; preimage?: Record<string, unknown> },
+async function recordFenceRetirementImpl(
+  engine: BrainEngine, sourceId: string, slug: string, factId: number,
+  opts: { fact: string; visibility: string; state?: 'live' | 'held'; generation?: number; preimage?: Record<string, unknown> },
+): Promise<void> {
+  const key = { sourceId, kind: 'fact_fence', ownerKey: `page:${slug}` };
+  const setHash = itemSetHash([]);
+  if (opts.state === 'held') {
+    const context = { slug, fence: 'facts', writer: 'parity', read: 'absent', rows: 1, partial: false };
+    await engine.transaction(tx => tx.recordHeldGenerationRow(key, { holdId: `parity-hold-${factId}`, runId: null, inputPin: null, inputSize: null,
+      setHash, reason: 'fence_absent', context: JSON.stringify(context), proposal: '[]', proposalBytes: 2 }));
+    return;
+  }
+  const preimage = { id: factId, fact: opts.fact, visibility: opts.visibility, row_num: 1, expired_at: null, ...opts.preimage };
+  const completeness = { complete: true, writer: 'parity', proof: 'fenceParsedEmpty', fence: null, fence_bytes: null };
+  await engine.transaction(async tx => {
+    const live = await tx.readLiveGenerationRow(key);
+    await tx.activateGenerationRows(key, live?.id ?? null, { generation: opts.generation ?? 1, runId: null, operationId: `parity-fence-${factId}`,
+      inputPin: null, inputSize: null, completeness: JSON.stringify(completeness), setHash, restoreOf: null, activationId: null, locator: null },
+    [{ item_key: `fact:${factId}`, identity_hash: `fact-identity-${factId}`, action: 'retired', preimage,
+      preimage_bytes: Buffer.byteLength(JSON.stringify(preimage), 'utf8'), pending: false }]);
+  });
+}
+
+/**
+ * Fixture: an identity-downgrade record (sync-identity-downgrades.ts) for the soft-deleted page `slug` of `sourceId`, keyed
+ * by that page's id, as `recordIdentityDowngrades` writes it through executeRaw. `old_deleted_at` is the page's
+ * `deleted_at` as the engine keeps it (Postgres text, or the Rust store's ISO form with microseconds) unless `record` replaces it.
+ * Harness-only SQL behind the backend switch; the Rust store takes the row through its checkpoint-row primitive.
+ * Returns the old page's id.
+ */
+export async function recordIdentityDowngrade(
+  engine: BrainEngine, backend: ParityBackend, sourceId: string, slug: string, record: Record<string, unknown>,
 ): Promise<number> {
+  const origin = await engine.readPageOrigin({ sourceId, slug });
+  if (!origin) throw new Error(`recordIdentityDowngrade: no page ${sourceId}/${slug}`);
+  const id = Number(origin.id);
   switch (backend) {
-    case 'rust':
+    case 'rust': {
+      const full = { source_id: sourceId, old_slug: slug, old_page_id: id, old_deleted_at: await rustPageDeletedAt(engine, sourceId, slug), ...record };
+      await putRustOpCheckpointRow(engine, IDENTITY_DOWNGRADE_OP, String(id), [full]);
+      return id;
+    }
     case 'pglite':
     case 'postgres': {
-      const preimage = { id: factId, fact: opts.fact, visibility: opts.visibility, row_num: 1, expired_at: null, ...opts.preimage };
-      const [g] = await engine.executeRaw<{ id: number | string }>(`INSERT INTO derived_generations (source_id, kind, owner_key, generation, state, operation_id, item_set_hash)
-        VALUES ($1, 'fact_fence', 'page:' || $2, $3, $4, 'parity', 'h') RETURNING id`, [sourceId, slug, opts.generation ?? 1, opts.state ?? 'superseded']);
-      await engine.executeRaw(`INSERT INTO derived_generation_items (generation_id, item_key, identity_hash, action, preimage)
-        VALUES ($1, $2, 'i', 'retired', $3::text::jsonb)`, [g!.id, `fact:${factId}`, JSON.stringify(preimage)]);
-      return Number(g!.id);
+      const [row] = await engine.executeRaw<{ deleted_at: string | null }>('SELECT deleted_at::text AS deleted_at FROM pages WHERE id = $1', [id]);
+      const full = { source_id: sourceId, old_slug: slug, old_page_id: id, old_deleted_at: row?.deleted_at ?? null, ...record };
+      await engine.executeRaw(`INSERT INTO op_checkpoints (op, fingerprint, completed_keys, updated_at) VALUES ($1, $2, $3::text::jsonb, now())
+        ON CONFLICT (op, fingerprint) DO UPDATE SET completed_keys = EXCLUDED.completed_keys, updated_at = now()`,
+        [IDENTITY_DOWNGRADE_OP, String(id), JSON.stringify([full])]);
+      return id;
     }
     default:
       return assertNever(backend);
   }
 }
+
+/**
+ * The fixtures above run as setup steps: a typed refusal one raises is tagged (rust-refusals.ts `setupStep`), so the Rust
+ * arm fails a case whose setup the engine refused instead of counting it as stopped (checkRustArm).
+ */
+export const createSource: typeof createSourceImpl = (...args) => setupStep('createSource', () => createSourceImpl(...args));
+export const archiveSource: typeof archiveSourceImpl = (...args) => setupStep('archiveSource', () => archiveSourceImpl(...args));
+export const enableBeliefCoverage: typeof enableBeliefCoverageImpl = (...args) => setupStep('enableBeliefCoverage', () => enableBeliefCoverageImpl(...args));
+export const restrictFolder: typeof restrictFolderImpl = (...args) => setupStep('restrictFolder', () => restrictFolderImpl(...args));
+export const recordPagePurge: typeof recordPagePurgeImpl = (...args) => setupStep('recordPagePurge', () => recordPagePurgeImpl(...args));
+export const recordFactsReconcile: typeof recordFactsReconcileImpl = (...args) => setupStep('recordFactsReconcile', () => recordFactsReconcileImpl(...args));
+export const recordFenceRetirement: typeof recordFenceRetirementImpl = (...args) => setupStep('recordFenceRetirement', () => recordFenceRetirementImpl(...args));
 
 /** Wrap an engine so every direct method call on the handle is recorded. */
 function recordingEngine(engine: BrainEngine, calls: Set<string>, refusals: unknown[] = []): BrainEngine {
@@ -443,6 +647,22 @@ function recordingEngine(engine: BrainEngine, calls: Set<string>, refusals: unkn
   });
 }
 
+/**
+ * Stop the persistence write queue a case started, before the next reset or the arm's close. A write operation starts a
+ * consumer keyed on the engine object the case receives (the recording wrapper `given`, which no arm lifecycle or reset
+ * knows), and the reset does not stop it: its projection and effect work ran into the next case's reset, a Postgres
+ * deadlock on `DELETE FROM sources` in 1 of 10 stress runs of the slug parity file before it stopped the queue by hand.
+ * So every case, on every arm, stops the consumer of the wrapper and of the arm's own engine here, in a finally block.
+ * Disposing an engine with no consumer does nothing.
+ */
+async function stopWriteQueue(...engines: BrainEngine[]): Promise<void> {
+  let failure: unknown;
+  for (const engine of engines) {
+    try { await disposePersistenceConsumer(engine); } catch (error) { failure ??= error; }
+  }
+  if (failure !== undefined) throw failure;
+}
+
 export interface ParitySuite {
   /** Run `scenario` on every arm from a reset brain; compare the returned observables. */
   parityTest<T>(name: string, opts: ParityCaseOpts, scenario: ParityScenario<T>): void;
@@ -463,7 +683,7 @@ export function parityArms(backends: readonly TestBackend[]): ParitySuite {
   let arms: ParityArm[] = [];
   const selected: ParityBackend[] = [...backends, ...(rustArmRequested() ? ['rust' as const] : [])];
   const testFile = callerTestFile(new Error().stack);
-  const tally: RustTally = { compared: 0, refused: 0, diverged: 0 };
+  const tally: RustTally = { compared: 0, refused: 0, diverged: 0, stops: [] };
   // Cases this file declared, and the ones the Rust arm skipped on an `n/a` capability (rust-tally.ts).
   let registered = 0;
   let skipped = 0;
@@ -483,6 +703,8 @@ export function parityArms(backends: readonly TestBackend[]): ParitySuite {
     for (const arm of closing) await arm.close();
     if (closing.some((arm) => arm.backend === 'rust')) {
       console.log(`[rust arm] ${testFile}: ${tally.compared} equal to PGLite, ${tally.refused} stopped on a typed refusal, ${tally.diverged} expected divergences`);
+      // The ledger: each case that stopped, with the member that refused it (the tally above only counts them).
+      for (const stop of tally.stops ?? []) console.log(`[rust arm] ${testFile} ${stop.caught ? 'caught (answer equal)' : 'stopped'}: "${stop.name}" on ${stop.member} (${stop.capability})${stop.pinned ? ` pinned until ${stop.pinned.due} (${stop.pinned.owner})` : ''}`);
       const better = checkRustTally(testFile, { ...tally, skipped }, registered);
       if (better !== null) console.log(better);
     }
@@ -510,36 +732,51 @@ export function parityArms(backends: readonly TestBackend[]): ParitySuite {
           if (arm.backend === 'rust') skipped++;
           continue;
         }
-        if (arm.backend === 'rust') {
-          const divergence = readDivergences().find((row) => row.file === testFile && row.name === name);
-          try {
-            await checkRustArm({ name, opts, run: () => scenario(recordingEngine(arm.engine, calls, refusals), arm.backend, ctx), calls, refusals,
-              reference: results[0], divergence }, tally);
-          } finally {
-            for (const engine of extra) await engine.disconnect().catch(() => undefined);
-          }
-          continue;
-        }
-        let value: T;
+        // The engine object the scenario receives. Write operations key their persistence consumer on it, so it is the
+        // one the harness stops when the case ends (stopWriteQueue).
+        const given = recordingEngine(arm.engine, calls, refusals);
+        let scenarioFailed = false;
         try {
-          if (!runs) {
-            // The arm lacks a `refuses` capability: the scenario must stop on the typed refusal.
-            const refusal = await scenario(recordingEngine(arm.engine, calls), arm.backend, ctx).then(() => null, (e: unknown) => e);
-            expect({ backend: arm.backend, refused: isCapabilityRefusal(refusal, opts.requires!) })
-              .toEqual({ backend: arm.backend, refused: true });
+          if (arm.backend === 'rust') {
+            const divergence = readDivergences().find((row) => row.file === testFile && row.name === name);
+            const rows = readStopPins().filter((row) => row.file === testFile && row.name === name);
+            const pin = rows.find((row) => !row.member.includes('@'));
+            const caughtPins = rows.filter((row) => row.member.includes('@'));
+            try {
+              await checkRustArm({ name, opts, run: () => scenario(given, arm.backend, ctx), calls, refusals,
+                reference: results[0], divergence, pin, caughtPins }, tally);
+            } finally {
+              for (const engine of extra) await engine.disconnect().catch(() => undefined);
+            }
             continue;
           }
-          value = await scenario(recordingEngine(arm.engine, calls), arm.backend, ctx);
+          let value: T;
+          try {
+            if (!runs) {
+              // The arm lacks a `refuses` capability: the scenario must stop on the typed refusal.
+              const refusal = await scenario(given, arm.backend, ctx).then(() => null, (e: unknown) => e);
+              expect({ backend: arm.backend, refused: isCapabilityRefusal(refusal, opts.requires!) })
+                .toEqual({ backend: arm.backend, refused: true });
+              continue;
+            }
+            value = await scenario(given, arm.backend, ctx);
+          } catch (error) {
+            if (error instanceof Error) error.message = `[${arm.backend}] ${error.message}`;
+            throw error;
+          } finally {
+            // A case may already have disconnected it; a second disconnect is harmless or refused.
+            for (const engine of extra) await engine.disconnect().catch(() => undefined);
+          }
+          const missing = opts.methods.filter((m) => !calls.has(m));
+          expect({ backend: arm.backend, declaredButNotCalled: missing }).toEqual({ backend: arm.backend, declaredButNotCalled: [] });
+          results.push({ backend: arm.backend, value });
         } catch (error) {
-          if (error instanceof Error) error.message = `[${arm.backend}] ${error.message}`;
+          scenarioFailed = true;
           throw error;
         } finally {
-          // A case may already have disconnected it; a second disconnect is harmless or refused.
-          for (const engine of extra) await engine.disconnect().catch(() => undefined);
+          // A failed stop must not hide the case's own failure; on its own it fails the case.
+          await stopWriteQueue(given, arm.engine).catch((error: unknown) => { if (!scenarioFailed) throw error; });
         }
-        const missing = opts.methods.filter((m) => !calls.has(m));
-        expect({ backend: arm.backend, declaredButNotCalled: missing }).toEqual({ backend: arm.backend, declaredButNotCalled: [] });
-        results.push({ backend: arm.backend, value });
       }
       const [first, ...rest] = results;
       for (const other of rest) {
@@ -558,7 +795,11 @@ function callerTestFile(stack: string | undefined): string {
 }
 
 /** What the Rust arm did with each case of one file, printed when the file finishes. */
-export interface RustTally { compared: number; refused: number; diverged: number }
+export interface RustTally {
+  compared: number; refused: number; diverged: number;
+  /** The per-case ledger of stopped cases (optional: a caller that only wants the counts leaves it out). */
+  stops?: Array<{ name: string; member: string; capability: string; pinned?: StopPin; caught?: true }>;
+}
 
 export interface RustCase<T> {
   name: string;
@@ -570,16 +811,87 @@ export interface RustCase<T> {
   /** What the first arm returned: the answer the Rust arm is compared with. */
   reference: { backend: ParityBackend; value: T } | undefined;
   divergence: DivergenceRow | undefined;
+  /** The row of test/rust-stop-pins/ for this case, when it has one. */
+  pin?: StopPin | undefined;
+  /** Rows of test/rust-stop-pins/ for refusals the case catches on its way (member `name@src/...` file). */
+  caughtPins?: StopPin[];
+}
+
+/** `member@site` of a caught refusal: the member it names and the first src/ file outside the engine that called it. */
+export function caughtSite(error: unknown): string {
+  const member = refusalFacts(error).member ?? 'unknown';
+  const frames = String((error as { stack?: unknown } | null)?.stack ?? '').split('\n');
+  for (const frame of frames) {
+    const at = /\/(src\/[^\s:()]+\.ts):\d+/.exec(frame);
+    if (!at) continue;
+    const file = at[1]!;
+    if (file.startsWith('src/core/rust-engine') || file === 'src/core/ops/contract.ts' || file === 'src/core/engine-capability-refusal.ts') continue;
+    return `${member}@${file}`;
+  }
+  return `${member}@unknown`;
+}
+
+interface RefusalVerdict {
+  /** The member the refusal names (or the setup step, or the capability when it names none). */
+  member: string;
+  capability: string;
+  /** Why the refusal fails the case, or null when it is an honest stop on a member the engine does not serve. */
+  failure: string | null;
+}
+
+/**
+ * Decide what a case's terminal typed refusal means (rust-refusals.ts has the rule). A fixture step the case ran in its
+ * setup that the engine refused fails the case when every member the case declares is served (the case's own members
+ * never ran: a served member went untested); a case that declares a member the engine refuses is a stop anyway. A
+ * refusal by a served member (its own option or input) fails the case; so does a step refusal that names a capability the
+ * engine reports as served.
+ */
+function classifyRefusal<T>(c: RustCase<T>, error: unknown): RefusalVerdict {
+  const facts = refusalFacts(error);
+  const member = facts.member ?? facts.capability ?? 'an unnamed member';
+  const capability = facts.capability ?? 'unknown';
+  const pinHint = `fix the member, or pin the case in test/rust-stop-pins/<family>.tsv with an owner and a due date (${c.name})`;
+  const step = setupRefusalStep(error);
+  if (step !== undefined) {
+    const declaredServed = c.opts.methods.filter((m) => rustRefusal(m) === null);
+    if (declaredServed.length === c.opts.methods.length) {
+      return { member, capability, failure: `[rust] "${c.name}": the setup step ${step} was refused (${facts.text ?? member}, capability ${capability}), so the case never reached its own members ` +
+        `(${declaredServed.join(', ')}), which the Rust engine serves; ${pinHint}` };
+    }
+    return { member, capability, failure: null };
+  }
+  if (facts.member !== null && rustServes(facts.member)) {
+    return { member, capability, failure: `[rust] "${c.name}": the Rust engine serves ${facts.member} but it refused (${facts.text}, capability ${capability}); ${pinHint}` };
+  }
+  if (facts.member !== null && !isEngineMember(facts.member) && facts.capability !== null && rustServesCapability(facts.capability)) {
+    return { member, capability, failure: `[rust] "${c.name}": ${facts.text} was refused for capability ${capability}, which the Rust engine reports as served; ${pinHint}` };
+  }
+  return { member, capability, failure: null };
+}
+
+/** A pin must name the member that refused, and must not be past its due date. */
+function checkPin<T>(c: RustCase<T>, member: string): void {
+  const pin = c.pin!;
+  if (pin.member !== member) {
+    throw new Error(`[rust] "${c.name}" has a row in test/rust-stop-pins/ for ${pin.member}, but the refusal names ${member}; update the row`);
+  }
+  if (pin.due < today()) {
+    throw new Error(`[rust] "${c.name}": the stop pin for ${pin.member} (${pin.owner}) was due ${pin.due} and has passed (${pin.reason}); fix the member or move the date`);
+  }
 }
 
 /**
  * The Rust arm's check for one case (rust-arm.ts). A case has exactly three acceptable outcomes on Rust:
  *  - it ends on the typed refusal of a capability it reaches (a member Rust does not serve, or an option a served
- *    member declines): counted as refused;
+ *    member declines), or on the error its `rustStop` pin names: counted as refused. A refusal by a member the engine
+ *    serves, or by a fixture step of the case's setup whose own members are all served, fails the case with that member
+ *    named, unless the case has a row in test/rust-stop-pins/ (owner and due date): such a row stops the case without
+ *    hiding the gap;
  *  - it returns the value the reference arm returned: counted as equal;
  *  - it returns a value that differs from the reference in exactly the way its row in test/rust-expected-divergence/
  *    names (a named normaliser maps both sides to one value, and the raw values must still differ so a stale row
  *    fails): counted as diverged.
+ * A case with a `rustPendingStop` pin has one outcome instead: write_pending behind exactly the pinned refusal.
  * Anything else fails: a refusal the case caught on its way to some other failure, or to a value, does not make it pass,
  * and a divergence row never excuses a thrown error.
  */
@@ -598,25 +910,81 @@ export async function checkRustArm<T>(c: RustCase<T>, tally: RustTally): Promise
   if (c.opts.requires !== undefined && !armHas('rust', c.opts.requires)) capabilities.add(c.opts.requires);
   const refusedBy = (e: unknown) => [...capabilities].some((capability) => isCapabilityRefusal(e, capability as EngineCapability));
   const caught = c.refusals.filter(refusedBy).length;
+  const pin = c.opts.rustStop;
+  if (pin !== undefined && pin.pin.trim() === '') throw new Error(`[rust] "${c.name}": its rustStop needs a pin`);
+  if (pin?.code === 'engine_capability_missing') {
+    throw new Error(`[rust] "${c.name}": a capability refusal takes the in-test pin (assert the refusal, rethrow it), not rustStop`);
+  }
+  const namedStop = (e: unknown) => pin !== undefined && e instanceof Error
+    && (e as { code?: unknown }).code === pin.code && e.message.includes(pin.pin);
 
+  if (pin !== undefined && !('error' in outcome)) {
+    throw new Error(`[rust] ${c.name} has a rustStop pin (${pin.code}) but now returns; remove the pin and expect equal`);
+  }
+  if (pin !== undefined && 'error' in outcome && !namedStop(outcome.error)) {
+    const why = refusedBy(outcome.error) ? 'a typed capability refusal' : 'another error';
+    if (outcome.error instanceof Error) {
+      outcome.error.message = `[rust] ${c.name} has a rustStop pin (${pin.code}) but ended on ${why}: ${outcome.error.message}`;
+      throw outcome.error;
+    }
+    throw new Error(`[rust] ${c.name} has a rustStop pin (${pin.code}) but ended on ${why}`);
+  }
+
+  const pendingPin = c.opts.rustPendingStop;
+  const pinText = pendingPin && `${pendingPin.capability} at ${pendingPin.member} (${pendingPin.site}); owner ${pendingPin.owner}, due ${pendingPin.due}`;
   if ('error' in outcome) {
+    if (pendingPin && !refusedBy(outcome.error)) {
+      checkPendingStop(c.name, pendingPin, pinText!, outcome.error, c.refusals);
+      tally.refused++;
+      return;
+    }
+    if (pendingPin) throw new Error(`[rust] "${c.name}" now throws a typed refusal, not write_pending; update or remove its rustPendingStop pin (${pinText})`);
     // Only the terminal outcome counts: a refusal caught earlier does not excuse a different failure.
-    if (!refusedBy(outcome.error)) {
+    if (!refusedBy(outcome.error) && !namedStop(outcome.error)) {
       if (outcome.error instanceof Error) {
         outcome.error.message = `[rust] ${outcome.error.message}${caught > 0 ? ` (the case had caught ${caught} typed refusal(s) before this)` : ''}`;
       }
       throw outcome.error;
     }
+    if (pin !== undefined) {
+      // A named stop comes after the members the case covers: each must have been called before it.
+      const notReached = c.opts.methods.filter((m) => !c.calls.has(m));
+      expect({ backend: 'rust', case: c.name, rustStop: pin.code, declaredButNotCalled: notReached })
+        .toEqual({ backend: 'rust', case: c.name, rustStop: pin.code, declaredButNotCalled: [] });
+    }
     if (c.divergence) {
       throw new Error(`[rust] "${c.name}" has a row in test/rust-expected-divergence/ (${c.divergence.reason}) but now stops on a typed refusal; remove the row`);
     }
+    const stop = classifyRefusal(c, outcome.error);
+    if (stop.failure !== null) {
+      if (c.pin === undefined) throw new Error(stop.failure);
+      checkPin(c, stop.member);
+    } else if (c.pin !== undefined) {
+      throw new Error(`[rust] "${c.name}" has a row in test/rust-stop-pins/ (${c.pin.owner}, due ${c.pin.due}) but its refusal (${stop.member}) is no longer one the pin covers; remove the row`);
+    }
     tally.refused++;
+    tally.stops?.push({ name: c.name, member: stop.member, capability: stop.capability, ...(stop.failure !== null ? { pinned: c.pin! } : {}) });
     return;
   }
+  if (c.pin !== undefined) {
+    throw new Error(`[rust] "${c.name}" has a row in test/rust-stop-pins/ (${c.pin.owner}, due ${c.pin.due}) but the case no longer stops on a refusal; remove the row`);
+  }
 
-  // It returned. A case that reaches a refusing member, or caught a refusal, must not finish as if nothing happened.
-  expect({ backend: 'rust', case: c.name, reachesRefusingMember: refusing.length > 0 && capabilities.size > 0, caughtRefusals: caught })
-    .toEqual({ backend: 'rust', case: c.name, reachesRefusingMember: false, caughtRefusals: 0 });
+  if (pendingPin) throw new Error(`[rust] "${c.name}" no longer stops; remove its rustPendingStop pin (${pinText})`);
+  // It returned. A case that reaches a refusing member, or caught a refusal, must not finish as if nothing happened,
+  // unless every refusal it caught is pinned by member and calling file (test/rust-stop-pins/, owner and due date).
+  const caughtPins = c.caughtPins ?? [];
+  const sites = c.refusals.filter(refusedBy).map(caughtSite);
+  const unpinned = sites.filter((site) => !caughtPins.some((p) => p.member === site));
+  for (const p of caughtPins) {
+    if (p.due < today()) throw new Error(`[rust] "${c.name}": the stop pin for ${p.member} (${p.owner}) was due ${p.due} and has passed (${p.reason}); fix the member or move the date`);
+    if (!sites.includes(p.member)) throw new Error(`[rust] "${c.name}" has a row in test/rust-stop-pins/ for ${p.member} (${p.owner}, due ${p.due}) but no longer catches ${p.member}; remove the row`);
+  }
+  const pinnedMembers = new Set(caughtPins.map((p) => p.member.split('@')[0]!));
+  const stillRefusing = refusing.filter((m) => !pinnedMembers.has(m));
+  expect({ backend: 'rust', case: c.name, reachesRefusingMember: stillRefusing.length > 0 && capabilities.size > 0, caughtRefusals: unpinned.length, unpinned: [...new Set(unpinned)] })
+    .toEqual({ backend: 'rust', case: c.name, reachesRefusingMember: false, caughtRefusals: 0, unpinned: [] });
+  for (const p of caughtPins) tally.stops?.push({ name: c.name, member: p.member, capability: refusalFacts(c.refusals.find((e) => caughtSite(e) === p.member)).capability ?? 'unknown', pinned: p, caught: true });
   const missing = c.opts.methods.filter((m) => !c.calls.has(m));
   expect({ backend: 'rust', declaredButNotCalled: missing }).toEqual({ backend: 'rust', declaredButNotCalled: [] });
   const reference = c.reference!;
@@ -640,6 +1008,18 @@ export async function checkRustArm<T>(c: RustCase<T>, tally: RustTally): Promise
   expect({ backend: 'rust', case: c.name, normalizedBy: c.divergence.normalizer, value: normalize(outcome.value) })
     .toEqual({ backend: 'rust', case: c.name, normalizedBy: c.divergence.normalizer, value: normalize(reference.value) });
   tally.diverged++;
+}
+
+/** A pinned Rust case passes only when it ended write_pending and recorded exactly the pinned typed refusal. */
+function checkPendingStop(name: string, pin: NonNullable<ParityCaseOpts['rustPendingStop']>, pinText: string, error: unknown,
+  refusals: unknown[]): void {
+  const message = String((error as Error | null)?.message ?? error);
+  const detail = (e: unknown) => String((e as { detail?: unknown } | null)?.detail ?? '');
+  const named = refusals.some((e) => isCapabilityRefusal(e, pin.capability as EngineCapability) && detail(e).includes(`member=${pin.member} capability=${pin.capability}`)
+    && (pin.frame === undefined || String((e as Error).stack ?? '').includes(pin.frame)));
+  if (message.includes('write_pending') && named) return;
+  throw new Error(`[rust] "${name}" does not stop as its rustPendingStop pin says (${pinText}); update or remove the pin. `
+    + `write_pending: ${message.includes('write_pending')}; typed refusals: ${JSON.stringify([...new Set(refusals.map(detail))])}; error: ${message}`);
 }
 
 /** Sorted copy, for order-free comparisons. */

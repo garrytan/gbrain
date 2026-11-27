@@ -37,6 +37,7 @@ import { writeFileSync, unlinkSync, existsSync } from 'fs';
 import { join } from 'path';
 import { createHash } from 'crypto';
 import type { BrainEngine } from '../core/engine.ts';
+import { sqlQueryForEngine } from '../core/sql-query.ts';
 import {
   assessDestructiveImpact,
   checkDestructiveConfirmation,
@@ -59,7 +60,8 @@ import {
 } from '../core/sources-ops.ts';
 import { isValidRepoName } from '../core/github-source.ts';
 import { ALL_GOOGLE_SERVICES, DEFAULT_CALENDAR_ID } from '../core/google/types.ts';
-import { defaultGoogleAddTuning, parseGoogleAddFlag } from './sources-google-flags.ts';
+import { rethrowCapabilityRefusal } from '../core/engine-capability-refusal.ts';
+import { defaultGoogleAddTuning, parseGoogleAddFlag, preflightGoogleAccess } from './sources-google-flags.ts';
 import { noGrantFloorNext, reportAddOutcome } from './sources-add-next.ts';
 import {
   resolveSourceWithTier,
@@ -73,8 +75,8 @@ import {
   sourceFederationState,
   type SourceRow as LoadedSourceRow,
 } from '../core/sources-load.ts';
-import { sqlQueryForEngine } from '../core/sql-query.ts';
 import { preflightOauthClientColumns } from './auth.ts';
+import { hasCapability } from '../core/engine-capabilities.ts';
 import { deleteSourceRow } from '../core/source-delete.ts';
 import { USAGE_EXIT_CODE } from '../core/exit-codes.ts';
 import { isSyncStrategy } from '../core/sync.ts';
@@ -138,20 +140,52 @@ async function fetchSource(engine: BrainEngine, id: string): Promise<SourceRow |
 
 // ── Subcommand: add ─────────────────────────────────────────
 
+/**
+ * The active source that already syncs `account` for an overlapping slice of `services` (and `overlap`, the shared
+ * services in order), or null. Two calendar sources pointing at DIFFERENT calendars never collide — one calendar per
+ * source is how secondary calendars are ingested. Read through the typed listAllSources, which every engine serves.
+ * @internal Exported for test/engine-parity/refusal-blocker-sites.test.ts.
+ */
+export async function findDuplicateGoogleSource(
+  engine: BrainEngine,
+  account: string,
+  services: readonly string[],
+  calendarId: string,
+): Promise<{ id: string; overlap: string } | null> {
+  for (const row of await engine.listAllSources()) {
+    const c = (row.config ?? {}) as Record<string, unknown>;
+    if (c.kind !== 'google' || c.g_account !== account) continue;
+    const existingServices =
+      typeof c.g_services === 'string'
+        ? c.g_services.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean)
+        : ['gmail', 'calendar', 'contacts'];
+    let overlap = services.filter((s) => existingServices.includes(s));
+    const existingCal =
+      typeof c.g_calendar_id === 'string' && c.g_calendar_id.trim() ? c.g_calendar_id.trim() : DEFAULT_CALENDAR_ID;
+    if (existingCal !== calendarId) overlap = overlap.filter((s) => s !== 'calendar');
+    if (overlap.length === 0) continue;
+    return { id: row.id, overlap: overlap.join(', ') };
+  }
+  return null;
+}
+
 async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
   const apiKind = args.includes('--kind') ? args[args.indexOf('--kind') + 1] : undefined;
-  if (args[0] && (apiKind === 'meetings' || apiKind === 'slack' || apiKind === 'imessage')) return (await import('./sources-add-api.ts')).runApiSourceAdd(engine, args);
+  if (args[0] && (apiKind === 'meetings' || apiKind === 'slack' || apiKind === 'imessage' || apiKind === 'apple-contacts')) return (await import('./sources-add-api.ts')).runApiSourceAdd(engine, args);
   const id = args[0];
   if (!id) {
     console.error(
-      'Usage: gbrain sources add <id> [--path <path> | --url <https-url> | --kind github|google|meetings|slack|imessage] ' +
+      'Usage: gbrain sources add <id> [--path <path> | --url <https-url> | --kind github|google|meetings|slack|imessage|apple-contacts] ' +
         '[--name <display>] [--federated|--no-federated] [--clone-dir <path>] [--force] [--json]\n' +
         '       github kind: [--token-env <env>] [--scope auto|repos] ' +
         '[--repos owner/name,...] [--dir <path>] ' +
         '[--app-id <n> --app-pem <path>] [--app-install <n>]\n' +
         '       google kind: --account <email> [--services gmail,calendar,contacts] ' +
         '[--history-days <n>] [--future-days <n>] [--loops-exclude-labels <a,b>] [--contacts-dir <dir>] [--calendar-id <id>] [--dir <path>]   (connect first: gbrain google connect)\n' +
-        '                    [--access vault|command|env] [--token-command "<cmd>"] [--token-env <VAR>]   (non-vault Google access: gog/gcloud/gateway)',
+        '                    [--access vault|command|env] [--token-command "<cmd>"] [--token-env <VAR>]   (non-vault Google access: gog/gcloud/gateway)\n' +
+        '                    [--access gbrainio] [--gbrainio-command <path>]   (Gmail read through a gbrain.io terminal)\n' +
+        '                    [--private-senders-file <path>]   (threads with these addresses or @domains become owner-only pages)\n' +
+        '       apple-contacts kind: --helper-host <host> --token-file <0600 json> [--helper-port <port>] [--proxy socks5h://host:port] [--contacts-dir <dir>] [--record git|database] [--dir <path>]',
     );
     process.exit(2);
   }
@@ -301,79 +335,18 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
     // via --calendar-id, or calendar-only next to gmail-only) is the
     // supported topology, not duplication.
     try {
-      const dupRows = await engine.executeRaw<{ id: string; config: unknown }>(
-        `SELECT id, config FROM sources WHERE archived IS NOT TRUE`,
-        [],
-      );
-      let overlapNote = '';
-      const dup = dupRows.find((r) => {
-        const c = typeof r.config === 'string' ? (JSON.parse(r.config) as Record<string, unknown>) : ((r.config ?? {}) as Record<string, unknown>);
-        if (c.kind !== 'google' || c.g_account !== gAccount) return false;
-        const existingServices =
-          typeof c.g_services === 'string'
-            ? c.g_services.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean)
-            : ['gmail', 'calendar', 'contacts'];
-        let overlap = gServices.filter((s) => existingServices.includes(s));
-        // Two calendar sources pointing at DIFFERENT calendars never collide —
-        // one calendar per source is how secondary calendars are ingested.
-        const existingCal =
-          typeof c.g_calendar_id === 'string' && c.g_calendar_id.trim() ? c.g_calendar_id.trim() : DEFAULT_CALENDAR_ID;
-        if (existingCal !== gTuning.calendarId) overlap = overlap.filter((s) => s !== 'calendar');
-        if (overlap.length === 0) return false;
-        overlapNote = overlap.join(', ');
-        return true;
-      });
+      const dup = await findDuplicateGoogleSource(engine, gAccount!, gServices, gTuning.calendarId);
       if (dup) {
         console.error(
-          `Warning: source "${dup.id}" already syncs ${gAccount} (${overlapNote}) — a second source for the same account and services duplicates its pages and loops in federated reads.`,
+          `Warning: source "${dup.id}" already syncs ${gAccount} (${dup.overlap}) — a second source for the same account and services duplicates its pages and loops in federated reads.`,
         );
       }
-    } catch { /* preflight is best-effort */ }
-    // Access-mode validation (default vault). command/env let a stack that
-    // already holds Google access (gog, gcloud, a credential gateway) drive
-    // this source without gbrain's OAuth flow; --account stays required as
-    // the IDENTITY (From/To matching, deep-link authuser).
-    if (gAccess !== undefined && !['vault', 'command', 'env'].includes(gAccess)) {
-      console.error(`Error: unknown --access "${gAccess}". Valid: vault, command, env.`);
-      process.exit(2);
+    } catch (e) {
+      // A Rust brain's typed refusal is not "no duplicate": let it surface. Any other failure: the preflight is best-effort.
+      rethrowCapabilityRefusal(e);
     }
-    if (gAccess === 'command' && !gTokenCommand?.trim()) {
-      console.error('Error: --access command requires --token-command "<cmd that prints an access token>".');
-      process.exit(2);
-    }
-    if (gAccess === 'env' && !gTokenEnv?.trim()) {
-      console.error('Error: --access env requires --token-env <ENV_VAR_NAME>.');
-      process.exit(2);
-    }
-    if ((gTokenCommand || gTokenEnv) && (gAccess === undefined || gAccess === 'vault')) {
-      console.error('Error: --token-command/--token-env require --access command or --access env.');
-      process.exit(2);
-    }
-    if (gAccess === undefined || gAccess === 'vault') {
-      // Fail fast at registration when the account has no vault entry — the
-      // alternative is a source that errors on every sync.
-      const { openVault, credentialId } = await import('../core/creds/vault.ts');
-      const entry = await openVault().get(credentialId('google', gAccount!));
-      if (!entry) {
-        console.error(
-          `Error: no connected Google account "${gAccount}" in the credential vault.\n` +
-            `Connect it first: gbrain google connect --account ${gAccount}\n` +
-            `(or use another access mode: --access command --token-command "<cmd>" | --access env --token-env <VAR>)`,
-        );
-        process.exit(2);
-      }
-    } else if (gAccess === 'command') {
-      // Probe the command once at registration so a typo fails HERE, not on
-      // every future sync. Best-effort: a transient failure only warns.
-      try {
-        const { CommandAccessProvider } = await import('../core/google/access.ts');
-        await new CommandAccessProvider(gTokenCommand!).getAccessToken();
-      } catch (e) {
-        console.error(`Warning: token command probe failed (${e instanceof Error ? e.message.split('\n')[0] : String(e)}) — the source is registered, but sync will fail until the command works.`);
-      }
-    } else if (gAccess === 'env' && !(process.env[gTokenEnv!] ?? '').trim()) {
-      console.error(`Warning: $${gTokenEnv} is not set in this shell — sync will fail until it carries a live access token.`);
-    }
+    await preflightGoogleAccess({ access: gAccess, tokenCommand: gTokenCommand, tokenEnv: gTokenEnv, account: gAccount!,
+      services: args.includes('--services') ? gServices : null, tuning: gTuning });
   }
   if (ghKind && ghScope === 'repos' && ghRepos.length === 0) {
     console.error('Error: --scope repos requires --repos owner/name,owner/name.');
@@ -422,10 +395,10 @@ async function runAdd(engine: BrainEngine, args: string[]): Promise<void> {
       ? {
           google: {
             account: gAccount!,
-            services: gServices,
+            services: gAccess === 'gbrainio' ? ['gmail'] : gServices,
             ...gTuning,
             dir: ghDir ?? defaultCloneDir(`${id}-google`),
-            access: (gAccess ?? 'vault') as 'vault' | 'command' | 'env',
+            access: (gAccess ?? 'vault') as 'vault' | 'command' | 'env' | 'gbrainio',
             tokenCommand: gTokenCommand,
             tokenEnv: gTokenEnv,
           },
@@ -779,8 +752,7 @@ async function runRemove(engine: BrainEngine, args: string[]): Promise<void> {
   const yes = args.includes('--yes');
   const dryRun = args.includes('--dry-run');
   const confirmDestructive = args.includes('--confirm-destructive');
-  const _keepStorage = args.includes('--keep-storage');
-  void _keepStorage;
+  const keepStorage = args.includes('--keep-storage');
 
   if (id === 'default') {
     console.error('Error: cannot remove the "default" source (it backs the pre-v0.17 brain).');
@@ -795,8 +767,12 @@ async function runRemove(engine: BrainEngine, args: string[]): Promise<void> {
 
   // v0.26.5: Impact preview + destructive guard
   const impact = await assessDestructiveImpact(engine, id);
+  const appleContacts = parseConfig(src.config).kind === 'apple-contacts';
   if (impact) {
     console.log(formatImpact(impact));
+    if (appleContacts) console.log(`  ${await (await import('../core/apple-contacts/person-facts.ts')).countPersonFacts(engine, id)} company, job title and group row(s) on person pages are retired first.`);
+    const ownedFiles = await (await import('../core/owned-folder/remove.ts')).previewOwnedRemoval(engine, id);
+    if (ownedFiles) console.log(`  ${ownedFiles} chat-day file(s) in .gbrain-owned/${id}/ ${keepStorage ? 'stay (--keep-storage)' : 'are removed in one commit; the remote history still holds what was pushed'}.`);
 
     if (dryRun) {
       console.log('(dry-run; no side effects)');
@@ -833,20 +809,18 @@ async function runRemove(engine: BrainEngine, args: string[]): Promise<void> {
   // catch-and-retry degrade inside a tx; missing table ⇒ empty column set ⇒
   // no FK ⇒ skip); the FK constraint itself is the backstop for a
   // registration committing between the re-check and the DELETE.
+  // GST-3022: an owned-folder source's files leave its folder in one commit first (Git is the parent); a failure keeps the row.
   class SourceReferencedError extends Error {}
   try {
-    await engine.transaction(async (tx) => {
-      const cols = await preflightOauthClientColumns(sqlQueryForEngine(tx));
-      if (cols.has('source_id')) {
+    await (await import('../core/owned-folder/remove.ts')).removeOwnedFolderThen(engine, id, { keep: keepStorage }, () => engine.transaction(async (tx) => {
+      // The oauth_clients.source_id column is read through the typed readOauthClientColumns member (a Rust store always has it).
+      const hasSourceColumn = (await preflightOauthClientColumns(tx)).has('source_id');
+      if (hasSourceColumn) {
         // PHYSICAL count (no deleted_at filter): the FK ignores soft-deletion.
-        const rows = await tx.executeRaw<{ n: string }>(
-          `SELECT COUNT(*)::text AS n FROM oauth_clients WHERE source_id = $1`,
-          [id],
-        );
-        if (Number(rows[0]?.n ?? 0) > 0) throw new SourceReferencedError();
+        if ((await tx.listOauthClients()).some(c => c.source_id === id)) throw new SourceReferencedError();
       }
       await deleteSourceRow(tx, id);
-    });
+    }));
   } catch (e) {
     const code = typeof e === 'object' && e !== null && 'code' in e ? String((e as { code?: unknown }).code) : '';
     if (e instanceof SourceReferencedError || code === '23503') {
@@ -918,22 +892,14 @@ async function runSetCrMode(engine: BrainEngine, args: string[]): Promise<void> 
   // Loud-rejection on missing source. Closes the idempotent-pebble Failure
   // Modes "critical gap": pre-v0.40.3.0 there was no surface that wrote to
   // sources.contextual_retrieval_mode, so the silent-no-op via SQL UPDATE
-  // matching 0 rows was the failure mode the gap warning called out.
-  const exists = await engine.executeRaw<{ id: string }>(
-    `SELECT id FROM sources WHERE id = $1 LIMIT 1`,
-    [id],
-  );
-  if (exists.length === 0) {
+  // matching 0 rows was the failure mode the gap warning called out. The
+  // typed member checks and writes in one statement, on every engine.
+  if (!(await engine.setSourceContextualMode(id, clearing ? null : mode))) {
     console.error(`Error: source "${id}" not found.`);
     console.error(`  Run 'gbrain sources list' to see registered sources.`);
     process.exit(4);
   }
 
-  const newValue = clearing ? null : mode;
-  await engine.executeRaw(
-    `UPDATE sources SET contextual_retrieval_mode = $1 WHERE id = $2`,
-    [newValue, id],
-  );
   if (clearing) {
     console.log(`Cleared contextual_retrieval_mode for source "${id}" (NULL falls through to global mode).`);
   } else {
@@ -967,11 +933,7 @@ async function runArchive(engine: BrainEngine, args: string[]): Promise<void> {
     // the impact check above) and for "already archived" (UPDATE matched no
     // `archived = false` row). Distinguish them: already-archived is a
     // friendly idempotent no-op, not a reasonless failure.
-    const rows = await engine.executeRaw<{ archived: boolean }>(
-      `SELECT archived FROM sources WHERE id = $1`,
-      [id],
-    );
-    if (rows[0]?.archived) {
+    if ((await engine.listArchivedSourceRows()).some((r) => r.id === id)) {
       console.log(`Source "${id}" is already archived — nothing to do.`);
       console.log(`  'gbrain sources archived' shows its purge expiry; 'gbrain sources restore ${id}' un-archives it.`);
       return;
@@ -1061,7 +1023,7 @@ async function runPurge(engine: BrainEngine, args: string[]): Promise<void> {
       process.exit(5);
     }
 
-    await deleteSourceRow(engine, id);
+    await (await import('../core/owned-folder/remove.ts')).removeOwnedFolderThen(engine, id, {}, () => deleteSourceRow(engine, id));
     console.log(`Permanently deleted source "${id}" (${impact.pageCount} pages cascaded).`);
     return;
   }
@@ -1118,7 +1080,7 @@ async function runRename(engine: BrainEngine, args: string[]): Promise<void> {
     console.error(`Source "${id}" not found.`);
     process.exit(4);
   }
-  await engine.executeRaw(`UPDATE sources SET name = $1 WHERE id = $2`, [newName, id]);
+  await engine.renameSource(id, newName);
   console.log(`Renamed source "${id}" display: ${src.name} → ${newName} (id is immutable).`);
 }
 
@@ -1182,14 +1144,11 @@ async function runFederate(engine: BrainEngine, args: string[], value: boolean):
   // GST-1113: the mark check and the config write hold the source row, so a concurrent --attest-sources mark commits
   // before (and federate refuses) or after (and sees federated, so it refuses), never between them.
   const wasFederated = await engine.transaction(async tx => {
-    const [row] = await tx.executeRaw<{ config: unknown }>('SELECT config FROM sources WHERE id = $1 FOR UPDATE', [id]);
+    const row = await tx.lockSourceRow(id);
     if (value) await (await import('../core/access/attest-sources.ts')).assertNotScopeSource(tx, id);
     const config = parseConfig(row?.config ?? src.config), before = isFederated(config);
     config.federated = value;
-    await tx.executeRaw(
-      `UPDATE sources SET config = $1::text::jsonb WHERE id = $2`,
-      [JSON.stringify(normalizeSourceConfig(config)), id],
-    );
+    await tx.replaceSourceConfig(id, normalizeSourceConfig(config));
     return before;
   });
   say(`Source "${id}" is now ${value ? 'federated (appears in cross-source default search)' : 'isolated (only searched when explicitly named)'}.`);
@@ -1293,6 +1252,7 @@ async function runStatus(engine: BrainEngine, rawArgs: string[]): Promise<void> 
   const movement = new Map((await movementView.readSourceMovement(engine, { sourceIds: sources.map(source => source.id) }).catch(() => [])).map(m => [m.source_id, m]));
   const upstreamView = await import('../core/sync-upstream-rewrite.ts'), upstream = new Map((await upstreamView.readUpstreamDivergences(engine, sources.map(source => source.id))).map(u => [u.source_id, upstreamView.renderUpstreamDivergence(u)])); const watermarkView = await import('../core/persistence/applied-watermark.ts'), watermarks = new Map(await Promise.all(sources.map(async source => [source.id, await watermarkView.readAppliedWatermark(engine, source.id).catch(() => null)] as const)));
   const publishOff = new Set(await (await import('../core/persistence/worktree-refresh.ts')).publishOptedOut(engine, sources.map(source => source.id)));
+  const pagesView = await import('../core/owned-folder/status.ts'), pagesIn = await pagesView.readPagesIn(engine, sources.map(source => source.id)).catch(() => new Map<string, never>());
   if (json) {
     const enriched = metrics.map((m) => ({
       ...m,
@@ -1300,7 +1260,7 @@ async function runStatus(engine: BrainEngine, rawArgs: string[]): Promise<void> 
       sync_running: syncRunning.has(m.source_id),
       sync_holder: syncRunning.get(m.source_id) ?? null,
       ...(ingestion.get(m.source_id) ? { ingestion: ingestion.get(m.source_id) } : {}),
-      ...(connectors.get(m.source_id) ? { connector: connectors.get(m.source_id) } : {}),
+      ...(connectors.get(m.source_id) ? { connector: connectors.get(m.source_id) } : {}), ...(pagesIn.get(m.source_id) ? { pages_in: pagesIn.get(m.source_id) } : {}),
       ...(backlog.get(m.source_id) ? { managed_backlog: backlog.get(m.source_id) } : {}),
       ...(movement.get(m.source_id) ? { data_moving: movement.get(m.source_id)!.data_moving, not_moving_since: movement.get(m.source_id)!.not_moving_since,
         movement_state: movement.get(m.source_id)!.movement_state, movement: movement.get(m.source_id) } : {}),
@@ -1345,6 +1305,7 @@ async function runStatus(engine: BrainEngine, rawArgs: string[]): Promise<void> 
   }
   console.log('');
   for (const [sourceId, status] of connectors) for (const line of statusView.connectorStatusLines(sourceId, status)) console.log(line);
+  for (const [sourceId, p] of pagesIn) console.log(pagesView.pagesInLine(sourceId, p));
   for (const [sourceId, status] of gitHolds) for (const line of statusView.gitHoldStatusLines(sourceId, status)) console.log(line);
   for (const b of backlog.values()) console.log(`  ${drainMod.formatManagedSyncBacklog(b)}`);
   for (const m of movement.values()) { const line = movementView.formatSourceMovement(m); if (line) console.log(`  ${line}`); } for (const w of watermarks.values()) if (w) console.log(`  ${watermarkView.formatAppliedWatermark(w)}`);
@@ -1441,10 +1402,7 @@ async function runWebhookSet(engine: BrainEngine, args: string[]): Promise<void>
   const cfg = parseConfig(src.config);
   cfg.webhook_secret = secret;
   if (githubRepo) cfg.github_repo = githubRepo;
-  await engine.executeRaw(
-    `UPDATE sources SET config = $1::text::jsonb WHERE id = $2`,
-    [JSON.stringify(normalizeSourceConfig(cfg)), id],
-  );
+  await engine.replaceSourceConfig(id, normalizeSourceConfig(cfg));
 
   console.log(`Webhook configured for source "${id}":`);
   if (githubRepo) console.log(`  github_repo:    ${githubRepo}`);
@@ -1503,10 +1461,7 @@ async function runWebhookRotate(engine: BrainEngine, args: string[]): Promise<vo
   const secret = randomBytes(32).toString('hex');
   const cfg = parseConfig(src.config);
   cfg.webhook_secret = secret;
-  await engine.executeRaw(
-    `UPDATE sources SET config = $1::text::jsonb WHERE id = $2`,
-    [JSON.stringify(normalizeSourceConfig(cfg)), id],
-  );
+  await engine.replaceSourceConfig(id, normalizeSourceConfig(cfg));
   console.log(`New webhook secret for source "${id}":`);
   console.log(`  ${secret}`);
   console.log('');
@@ -1527,10 +1482,7 @@ async function runWebhookClear(engine: BrainEngine, args: string[]): Promise<voi
   const cfg = parseConfig(src.config);
   delete cfg.webhook_secret;
   delete cfg.github_repo;
-  await engine.executeRaw(
-    `UPDATE sources SET config = $1::text::jsonb WHERE id = $2`,
-    [JSON.stringify(normalizeSourceConfig(cfg)), id],
-  );
+  await engine.replaceSourceConfig(id, normalizeSourceConfig(cfg));
   console.log(`Webhook configuration cleared for source "${id}".`);
 }
 
@@ -1552,10 +1504,7 @@ async function runTrackedBranch(engine: BrainEngine, args: string[]): Promise<vo
 
   if (setArg) {
     cfg.tracked_branch = setArg;
-    await engine.executeRaw(
-      `UPDATE sources SET config = $1::text::jsonb WHERE id = $2`,
-      [JSON.stringify(normalizeSourceConfig(cfg)), id],
-    );
+    await engine.replaceSourceConfig(id, normalizeSourceConfig(cfg));
     console.log(`Tracked branch for source "${id}" set to "${setArg}".`);
     return;
   }
@@ -1568,10 +1517,7 @@ async function runTrackedBranch(engine: BrainEngine, args: string[]): Promise<vo
       const { execFileSync } = await import('../core/spawn.ts');
       const branch = execFileSync('git', ['-C', src.local_path, 'rev-parse', '--abbrev-ref', 'HEAD'], { encoding: 'utf8' }).trim();
       cfg.tracked_branch = branch;
-      await engine.executeRaw(
-        `UPDATE sources SET config = $1::text::jsonb WHERE id = $2`,
-        [JSON.stringify(normalizeSourceConfig(cfg)), id],
-      );
+      await engine.replaceSourceConfig(id, normalizeSourceConfig(cfg));
       console.log(`Detected branch "${branch}" for source "${id}"; persisted to config.tracked_branch.`);
     } catch (e) {
       console.error(`git rev-parse failed: ${e instanceof Error ? e.message : String(e)}`);
@@ -1943,6 +1889,7 @@ export async function runSources(engine: BrainEngine, args: string[]): Promise<v
     case 'set-strategy': return (await import('./sources-strategy.ts')).runSetStrategy(engine, rest);
     case 'set-pull-strategy': return (await import('./sources-pull-strategy.ts')).runSetPullStrategy(engine, rest);
     case 'set-sync':   return (await import('./sources-sync-enabled.ts')).runSetSync(engine, rest);
+    case 'rebind':     return (await import('./sources-rebind.ts')).runRebind(engine, rest);
     case 'refresh':    return (await import('./sources-refresh.ts')).runSourcesRefresh(engine, rest);
     case 'git-reconcile': return (await import('./sources-git-reconcile.ts')).runSourcesReconcile(engine, rest);
     case 'git-gap':    return (await import('./sources-git-gap.ts')).runSourcesGitGap(engine, rest);
@@ -1967,7 +1914,9 @@ export async function runSources(engine: BrainEngine, args: string[]): Promise<v
     // v0.40.3.0 contextual retrieval (from master)
     case 'set-cr-mode': return runSetCrMode(engine, rest);
     case 'set-calendar': return (await import('./sources-set-calendar.ts')).runSetCalendar(engine, rest);
+    case 'set-access': return (await import('./sources-set-access.ts')).runSetAccess(engine, rest);
     case 'set-trust':  { const { runSetTrust } = await import('./sources-trust.ts'); return runSetTrust(engine, rest); }
+    case 'set-precedence': { const { runSetPrecedence } = await import('./sources-precedence.ts'); return runSetPrecedence(engine, rest); }
     case 'writers':    { const { runSourcesWriters } = await import('./sources-writers.ts'); return runSourcesWriters(engine, rest); }
     // #4739 non-destructive local_path pointer repair
     case 'set-path':   { const { runSetPath } = await import('./sources-set-path.ts'); return runSetPath(engine, rest); }
@@ -2053,6 +2002,7 @@ Subcommands:
   set-strategy <id> <markdown|code|auto>  Persist the sync strategy every sync of the source uses (PR #5955).
   set-pull-strategy <id> <rebase|merge>   How pulls reconcile local commits with origin (#5429); default rebase.
   set-sync <id> <on|off> [--dry-run] [--expect <on|off>]   Include or exclude the source from automatic sync (config.syncEnabled).
+  rebind <id> [--yes]                                     Record a changed push destination for an iMessage source's folder (preview first).
   host-repo <id> --dir <path> [--push-remote <url>] [--dry-run | --expect <plan_hash>]
                                     Managed brains: host an empty source in a new bare repository with a gbrain-owned worktree; it becomes git-canonical.
   guard <id> [--install [--mode enforce] | --uninstall | --status] [--json]
@@ -2077,7 +2027,9 @@ Subcommands:
                                     "default" to clear (NULL falls through
                                     to the global search.mode bundle).
   set-calendar <id> <calendar-id> [--yes]  Point a Google source at another calendar (ids: gbrain google calendars).
+  set-access <id> vault [--yes] [--json]  Move a Google source off the shared gbrain.io relay onto its own OAuth client.
   set-trust <id> <tier>|--clear     Trust default for this source's sync and import (operator_curated or lower).
+  set-precedence <id> <class>|--clear  Label rows from this source record, approved, curated, doc, chat or external.
   writers <id> [--add|--remove <w>] [--clear] [--json]  Who may write a guest source (set one up: gbrain guests init).
   set-path <id> <path> [--force]    Repair a source's local_path pointer
                                     (DB column only, never touches disk).

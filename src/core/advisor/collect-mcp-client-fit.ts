@@ -59,6 +59,7 @@ import {
   type NagState,
 } from '../skillpack/nag-state.ts';
 import type { AdvisorCollector, AdvisorContext, AdvisorFinding } from './types.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 
 /** Minimum 30d call volume before a per-client fit finding fires. */
 export const MIN_CALLS_FOR_FIT = 10;
@@ -103,13 +104,14 @@ function clientResolvedSurface(
   return defaultSurface ?? 'full';
 }
 
-async function readClientSurfaces(ctx: AdvisorContext): Promise<Map<string, unknown> | null> {
+/** Each OAuth client's stored surface by client id; null on a brain whose table cannot answer (exported for tests). */
+export async function readClientSurfaces(ctx: Pick<AdvisorContext, 'engine'>): Promise<Map<string, unknown> | null> {
   try {
-    const rows = await ctx.engine.executeRaw<{ client_id: string; surface: unknown }>(
-      `SELECT client_id, surface FROM oauth_clients`,
-    );
+    // Every client row, deleted ones included, as the old raw read returned them; the order does not matter here.
+    const rows = await ctx.engine.listOauthClients();
     return new Map(rows.map((r) => [r.client_id, r.surface]));
-  } catch {
+  } catch (e) {
+    rethrowCapabilityRefusal(e);
     // Pre-v127 brain (no surface column) or no oauth_clients table: the fit
     // finding's fix command could not work anyway — skip check (a).
     return null;

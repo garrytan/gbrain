@@ -36,7 +36,6 @@ line of work moves the site; "by design" means the case tests a raw SQL path and
 |---|---|---|
 | runReconcileLinks walks a source's markdown pages by byte slug | `src/commands/reconcile-links.ts:120` `runReconcileLinks` | C06 (`listMarkdownPageSlugs`) |
 | proposeVisibility lists its unmatched pages by source id, then slug | `src/core/access/open-pages.ts:159`, the open-scope read `withOpenScope` runs for `proposeVisibility` (the query in `src/commands/repair-propose.ts:123` comes next) | lane 12 (access-reads-rust 432ac446f4) types the open-pages read at `open-pages.ts:159` as `engine.readAccessStateUnreadable()` with the rest of `withOpenScope`, pinned by `test/engine-parity/open-pages.test.ts`; then lane 10 (repair-rust cb7c502c0b) owns the named refusal at `repair-propose.ts:123` |
-| the git-gap census counts links, holds and parked effects in byte key order | test seed `executeRaw`, test:109 (then `src/commands/sources-git-gap.ts` runs raw SQL) | lane 14 (doctor-checks-2 9a3de15840, named refusal; flips through main) |
 | files verify reports its rows by byte storage path | test seed `executeRaw`, test:139 | C05 (the case is rewritten to seed through `upsertFile`) |
 
 ## collate-slug-sources.test.ts (1 equal, 5 stopped)
@@ -62,7 +61,7 @@ line of work moves the site; "by design" means the case tests a raw SQL path and
 | collate-schema-pack-samples | runRetypeCore samples slugs by byte | `src/core/schema-pack/retype.ts:148` `probeRule` | C09 (`listRetypeSampleSlugs`) |
 | collate-schema-pack-samples | findTypeOrphans lists sources, then slugs, by byte | test seed `executeRaw`, test:60 | C07 (`listTypeOrphanPages`) |
 | collate-schema-pack-samples | runPageToAliasCore samples slugs by byte | `src/core/schema-pack/page-to-alias.ts:164` | C09 (`listSourceTypePageBodies`) |
-| collate-schema-pack-samples | runPageToLinkCore samples slugs by byte | `src/core/schema-pack/page-to-link.ts:141` | C09 (`listTypePageBodies`) |
+| collate-schema-pack-samples | runPageToLinkCore samples slugs by byte | `src/core/schema-pack/page-to-link.ts:141` | C09 (`listLinkCandidatePages`) |
 | collate-facts-home | scanFactsHome lists unfenced facts by entity slug byte order | `src/core/facts/facts-home.ts:77` `scanFactsHome` | C20 (`scanUnfencedFactRows`) |
 
 ## How this was traced

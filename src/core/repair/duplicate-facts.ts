@@ -70,18 +70,7 @@ export interface DuplicateGroup {
 
 /** Every same-fingerprint group of active facts in these sources, in (source, visibility, fingerprint) order. Read-only. */
 export async function findDuplicateFacts(engine: BrainEngine, sourceIds: string[]): Promise<DuplicateGroup[]> {
-  const rows = await engine.executeRaw<{ id: number | string; source_id: string; visibility: string; fp: string; fact: string; entity_slug: string | null;
-    fenced: boolean; row_num: number | string | null; source_markdown_slug: string | null; speaker: string }>(`
-    SELECT * FROM (
-      SELECT f.id, f.source_id, f.visibility, gbrain_fact_fingerprint(f.fact) AS fp, f.fact, f.entity_slug, f.row_num, f.source_markdown_slug, f.created_at,
-             COALESCE(f.attributed_to, '') AS speaker,
-             (f.row_num IS NOT NULL AND f.source_markdown_slug IS NOT NULL AND COALESCE(f.source, '') NOT LIKE 'cli:%') AS fenced,
-             count(*) OVER (PARTITION BY f.source_id, f.visibility, COALESCE(f.attributed_to, ''), gbrain_fact_fingerprint(f.fact)) AS n
-        FROM facts f
-       WHERE f.source_id = ANY($1::text[]) AND f.expired_at IS NULL AND (f.valid_until IS NULL OR f.valid_until > now())
-         AND f.superseded_by IS NULL AND COALESCE(f.source, '') <> ALL($2::text[])
-    ) d WHERE d.n > 1
-    ORDER BY d.source_id COLLATE "C", d.visibility COLLATE "C", d.fp COLLATE "C", d.speaker COLLATE "C", d.fenced DESC, d.created_at, d.id`, [sourceIds, [...AUDIT_ROW_SOURCES]]);
+  const rows = await engine.listDuplicateFactRows(sourceIds, [...AUDIT_ROW_SOURCES]);
   const groups: DuplicateGroup[] = [];
   let key = '';
   for (const row of rows) {
@@ -100,9 +89,12 @@ export async function findDuplicateFacts(engine: BrainEngine, sourceIds: string[
   }
   const fenced = groups.flatMap(g => g.retire.flatMap(r => r.fence_page ? [[g.source_id, r.fence_page]] : []));
   if (!fenced.length) return groups;
-  const segmented = new Set((await engine.executeRaw<{ source_id: string; slug: string }>(`SELECT p.source_id, p.slug FROM pages p
-    JOIN unnest($1::text[], $2::text[]) AS t(source_id, slug) ON p.source_id = t.source_id AND p.slug = t.slug
-    WHERE p.body_storage = 'segmented' AND p.deleted_at IS NULL`, [fenced.map(f => f[0]), fenced.map(f => f[1])])).map(r => JSON.stringify([r.source_id, r.slug])));
+  // A page counts only when it is live and segmented: `listSegmentedPageSlugs` is exactly that, one source at a time.
+  const segmented = new Set<string>();
+  for (const sourceId of new Set(fenced.map(f => f[0]!))) {
+    const slugs = new Set(await engine.listSegmentedPageSlugs(sourceId));
+    for (const [source, slug] of fenced) if (source === sourceId && slugs.has(slug!)) segmented.add(JSON.stringify([source, slug]));
+  }
   for (const g of groups) {
     g.segmented = g.retire.filter(r => r.fence_page && segmented.has(JSON.stringify([g.source_id, r.fence_page])));
     g.retire = g.retire.filter(r => !g.segmented.includes(r));
@@ -117,8 +109,7 @@ function previewCommand(scope: RepairScope, includeCrossEntity: boolean): string
   return `gbrain repair duplicate-facts${scope.source_ids.length === 1 ? ` --source ${scope.source_ids[0]}` : ''}${includeCrossEntity ? ' --include-cross-entity' : ''}`;
 }
 
-const sourcesOf = (engine: BrainEngine, scope: RepairScope) => engine.executeRaw<{ id: string; incarnation: string }>(
-  'SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id', [scope.source_ids]);
+const sourcesOf = (engine: BrainEngine, scope: RepairScope) => engine.listSourceIncarnations(scope.source_ids);
 
 const hashOf = (scope: RepairScope, includeCrossEntity: boolean, sources: unknown, groups: DuplicateGroup[]) =>
   previewHash({ kind: 'duplicate-facts-v1', brain_id: scope.brain_id, sources, selection: { source_ids: scope.source_ids, include_cross_entity: includeCrossEntity },
@@ -190,15 +181,11 @@ export const duplicateFactsRepair: RepairHandler = {
 
 /** The rows still active, unsuperseded and stating the group's claim on the entity and fence row the preview saw. */
 async function unchanged(db: BrainEngine, group: DuplicateGroup, rows: DuplicateRow[]): Promise<DuplicateRow[]> {
-  const live = await db.executeRaw<{ id: number | string; entity_slug: string | null; row_num: number | string | null; source_markdown_slug: string | null }>(
-    `SELECT id, entity_slug, row_num, source_markdown_slug FROM facts
-      WHERE source_id=$1 AND id=ANY($2::bigint[]) AND visibility=$3 AND gbrain_fact_fingerprint(fact)=$4
-        AND expired_at IS NULL AND (valid_until IS NULL OR valid_until > now()) AND superseded_by IS NULL`,
-    [group.source_id, rows.map(r => r.id), group.visibility, group.fingerprint]);
-  const byId = new Map(live.map(r => [Number(r.id), r]));
+  const live = await db.listLiveDuplicateRows(group.source_id, rows.map(r => r.id), group.visibility, group.fingerprint);
+  const byId = new Map(live.map(r => [r.id, r]));
   return rows.filter(r => {
     const now = byId.get(r.id);
-    return !!now && now.entity_slug === r.entity_slug && (now.row_num === null ? null : Number(now.row_num)) === r.row_num
+    return !!now && now.entity_slug === r.entity_slug && now.row_num === r.row_num
       && (r.fence_page === null || now.source_markdown_slug === r.fence_page);
   });
 }
@@ -218,12 +205,8 @@ async function retireGroup(ctx: RepairContext, entry: RepairItem, group: Duplica
   const retired: number[] = [];
   const dbOnly = live.filter(r => r.fence_page === null);
   if (dbOnly.length) {
-    retired.push(...await databaseWrite(ctx, group, [...new Set([entry.slug, ...dbOnly.map(r => r.entity_slug ?? entry.slug)])], async tx => (await tx.executeRaw<{ id: number | string }>(
-      `UPDATE facts SET expired_at = now(), superseded_by = $3
-        WHERE source_id = $1 AND id = ANY($2::bigint[]) AND expired_at IS NULL AND superseded_by IS NULL
-          AND visibility = $4 AND gbrain_fact_fingerprint(fact) = $5
-          AND EXISTS (SELECT 1 FROM facts k WHERE k.source_id = $1 AND k.id = $3 AND k.expired_at IS NULL)
-        RETURNING id`, [group.source_id, dbOnly.map(r => r.id), group.kept.id, group.visibility, group.fingerprint])).map(r => Number(r.id))));
+    retired.push(...await databaseWrite(ctx, group, [...new Set([entry.slug, ...dbOnly.map(r => r.entity_slug ?? entry.slug)])], tx =>
+      tx.supersedeDuplicateFacts(group.source_id, dbOnly.map(r => r.id), group.kept.id, group.visibility, group.fingerprint)));
   }
   const fenced = live.filter(r => r.fence_page !== null);
   if (!fenced.length) return { retired, segmented: [] };
@@ -250,7 +233,5 @@ async function strikeFencedCopies(ctx: RepairContext, entry: RepairItem, group: 
   await submitPageMutation(ctx, { operation: 'put_page', params: { slug, source_id: group.source_id,
     content: serializePageToMarkdown(page, snapshot.tags), expected_revision: snapshot.revision,
     request_id: await repairRequestId(ctx, 'duplicate-facts', entry, snapshot.revision) } });
-  return databaseWrite(ctx, group, [slug], async tx => (await tx.executeRaw<{ id: number | string }>(
-    `UPDATE facts SET superseded_by = $3 WHERE source_id = $1 AND id = ANY($2::bigint[]) AND expired_at IS NOT NULL AND superseded_by IS NULL
-      RETURNING id`, [group.source_id, struck.map(r => r.id), group.kept.id])).map(r => Number(r.id)));
+  return databaseWrite(ctx, group, [slug], tx => tx.linkStruckDuplicateFacts(group.source_id, struck.map(r => r.id), group.kept.id));
 }

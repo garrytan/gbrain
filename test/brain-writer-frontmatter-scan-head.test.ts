@@ -142,7 +142,7 @@ describe('scanBrainSources frontmatterOnly', () => {
       mkdirSync(dirname(join(root, 'cases', rel)), { recursive: true });
       writeFileSync(join(root, 'cases', rel), content);
     }
-    const engine = { executeRaw: async () => [{ id: 'fixture', local_path: root }] } as unknown as BrainEngine;
+    const engine = { readDoctorSources: async () => [{ id: 'fixture', local_path: root }] } as unknown as BrainEngine;
     const strip = ({ scanned_at: _at, ...report }: Awaited<ReturnType<typeof scanBrainSources>>) => report;
     for (const strictMissingOpen of [false, true]) {
       const full = strip(await scanBrainSources(engine, { strictMissingOpen }));

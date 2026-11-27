@@ -26,9 +26,8 @@ import { redactConnectionInfo } from '../audit/redact-connection-info.ts';
 import { applyRedaction, planRedaction } from '../secret-scan.ts';
 import { LINK_EXTRACTION_GENERATION_KEY } from '../line-grammar.ts';
 import { linkExtractorWatermarkFor } from '../link-extraction-watermark.ts';
-import { NON_EMPLOYER_PREFIXES, NON_EMPLOYER_TYPES } from '../link-target-roles.ts';
-import { entityTypePredicateSql, resolvePersonTypes } from '../schema-pack/entity-types.ts';
-import { renderFragment, sqlFragment } from '../engine-sql/fragment.ts';
+import { resolvePersonTypes } from '../schema-pack/entity-types.ts';
+import type { EdgeCandidateRow as CandidateRow, EdgeProposalRow as ProposalRow } from '../engine-sql/contradictions-cycle.ts';
 import { createHash } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
 import type { PhaseResult } from '../cycle.ts';
@@ -179,12 +178,6 @@ export async function defaultEdgeJudge(input: Parameters<EdgeJudgeFn>[0]): Promi
   return parseEdgeJudgeOutput(result.text, input.relationships.length);
 }
 
-interface CandidateRow {
-  source_id: string; from_page_id: number; to_page_id: number; link_type: string;
-  valid_ranges: string; last_start: unknown; recorded_at: unknown; evidence_hash: string;
-  subject_slug: string; subject_title: string | null; target_slug: string; target_title: string | null;
-}
-
 interface SubjectGroup { sourceId: string; fromId: number; slug: string; title: string; linkType: string; rels: CandidateRow[] }
 
 async function findCandidateGroups(engine: BrainEngine, maxSubjects: number): Promise<SubjectGroup[]> {
@@ -197,30 +190,7 @@ async function findCandidateGroups(engine: BrainEngine, maxSubjects: number): Pr
   // ones: the subject must be person-like by its source's pack (resolvePersonTypes; a pack that does not load admits
   // no works_at subject), and the target neither person-like nor a non-employer type (untyped: by slug directory).
   const personTypes = await resolvePersonTypes(engine, null);
-  const isPerson = (alias: 'f' | 't') => entityTypePredicateSql(alias, personTypes.filter);
-  const sql = renderFragment(sqlFragment`WITH live AS (
-       SELECT lr.* FROM link_relationships lr
-         JOIN pages f ON f.id = lr.from_page_id AND f.deleted_at IS NULL
-         JOIN pages t ON t.id = lr.to_page_id AND t.deleted_at IS NULL
-        WHERE lr.scope = 'all' AND lr.semantics = 'state' AND lr.valid_ranges @> ${today}::date
-          AND (lr.link_type <> 'works_at' OR (${isPerson('f')} AND NOT ${isPerson('t')} AND
-            CASE WHEN NULLIF(t.type, '') IS NOT NULL THEN NOT (t.type = ANY(${[...NON_EMPLOYER_TYPES]}::text[]))
-              ELSE NOT EXISTS (SELECT 1 FROM unnest(${[...NON_EMPLOYER_PREFIXES]}::text[]) AS prefix(value)
-                WHERE starts_with(t.slug, prefix.value)) END))
-     ), multi AS (
-       SELECT source_id, from_page_id, link_type FROM live
-        GROUP BY 1, 2, 3 HAVING count(DISTINCT to_page_id) >= 2
-        ORDER BY max(refreshed_at) DESC LIMIT ${maxSubjects}
-     )
-     SELECT l.source_id, l.from_page_id, l.to_page_id, l.link_type, l.valid_ranges::text AS valid_ranges,
-            l.last_start, l.recorded_at, l.evidence_hash,
-            f.slug AS subject_slug, f.title AS subject_title, t.slug AS target_slug, t.title AS target_title
-       FROM live l JOIN multi m USING (source_id, from_page_id, link_type)
-       JOIN pages f ON f.id = l.from_page_id AND f.deleted_at IS NULL
-         AND (${pendingCutoff}::timestamptz IS NULL OR f.links_extracted_at >= ${pendingCutoff}::timestamptz)
-       JOIN pages t ON t.id = l.to_page_id AND t.deleted_at IS NULL
-      ORDER BY l.from_page_id, l.link_type, l.last_start NULLS FIRST, t.slug`);
-  const rows = await engine.executeRaw<CandidateRow>(sql.text, sql.params);
+  const rows = await engine.listEdgeContradictionCandidates({ today, maxSubjects, pendingCutoff, personFilter: personTypes.filter });
   const groups = new Map<string, SubjectGroup>();
   for (const r of rows) {
     const key = `${r.from_page_id}\0${r.link_type}`;
@@ -285,10 +255,7 @@ export async function runPhaseEdgeContradictions(engine: BrainEngine, opts: Edge
     // #6311: an error row is known while it is in its 24 h backoff or held after JUDGE_MAX_ATTEMPTS.
     const known = new Set<string>();
     const priorAttempts = new Map<string, number>();
-    for (const r of await engine.executeRaw<{ a: number; b: number; status: string; detail: string | null; recent: boolean }>(
-      `SELECT a_to_page_id AS a, b_to_page_id AS b, status, detail, updated_at > now() - interval '24 hours' AS recent FROM link_edge_proposals
-        WHERE from_page_id = $1 AND link_type = $2 AND evidence_hash = ANY($3::text[])`,
-      [g.fromId, g.linkType, pairs.map(([a, b]) => pairHash(a, b))])) {
+    for (const r of await engine.listKnownEdgeProposals(g.fromId, g.linkType, pairs.map(([a, b]) => pairHash(a, b)))) {
       const key = `${r.a}:${r.b}`;
       const attempts = r.status === 'error' ? judgeAttempts(r.detail) : 0;
       if (r.status !== 'error' || r.recent || attempts >= JUDGE_MAX_ATTEMPTS) known.add(key);
@@ -300,9 +267,7 @@ export async function runPhaseEdgeContradictions(engine: BrainEngine, opts: Edge
     const relationships: JudgeRelationship[] = await Promise.all(g.rels.map(async (r, i) => ({
       index: i + 1, link_type: r.link_type, target: r.target_slug, target_title: r.target_title ?? r.target_slug,
       since: dateKey(r.last_start),
-      contexts: (await engine.executeRaw<{ context: string }>(
-        `SELECT DISTINCT context FROM links WHERE from_page_id = $1 AND to_page_id = $2 AND link_type = $3 AND context <> '' LIMIT 3`,
-        [r.from_page_id, r.to_page_id, r.link_type])).map(c => c.context),
+      contexts: await engine.listLinkContexts(r.from_page_id, r.to_page_id, r.link_type),
     })));
     const prompt = buildEdgeJudgePrompt(g, relationships);
     const check = meter.check({ modelId: model, estimatedInputTokens: Math.ceil(prompt.length / 4), maxOutputTokens: JUDGE_MAX_OUTPUT_TOKENS, label: `edge_contradictions:${g.slug}` });
@@ -445,19 +410,11 @@ async function recordProposal(
   engine: BrainEngine, g: SubjectGroup, a: CandidateRow, b: CandidateRow, hash: string,
   p: { status: string; model: string; confidence?: number | null; endingTo?: number; closeDate?: string; bornClosed?: boolean; line?: string; detail?: string },
 ): Promise<number | null> {
-  const rows = await engine.executeRaw<{ id: number }>(
-    `INSERT INTO link_edge_proposals (source_id, from_page_id, a_to_page_id, b_to_page_id, link_type, evidence_hash, status,
-       ending_to_page_id, close_date, born_closed, model, confidence, generated_line, detail)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::date, $10, $11, $12, $13, $14)
-     ON CONFLICT (from_page_id, a_to_page_id, b_to_page_id, link_type, evidence_hash) DO UPDATE SET
-       status = EXCLUDED.status, ending_to_page_id = EXCLUDED.ending_to_page_id, close_date = EXCLUDED.close_date,
-       born_closed = EXCLUDED.born_closed, model = EXCLUDED.model, confidence = EXCLUDED.confidence,
-       generated_line = EXCLUDED.generated_line, detail = EXCLUDED.detail, updated_at = now()
-     WHERE link_edge_proposals.status = 'error'
-     RETURNING id`,
-    [g.sourceId, g.fromId, Number(a.to_page_id), Number(b.to_page_id), g.linkType, hash, p.status,
-      p.endingTo ?? null, p.closeDate ?? null, p.bornClosed ?? false, p.model, p.confidence ?? null, p.line ?? null, p.detail ?? null]);
-  return rows[0] ? Number(rows[0].id) : null;
+  return engine.recordEdgeProposal({
+    sourceId: g.sourceId, fromPageId: g.fromId, aToPageId: Number(a.to_page_id), bToPageId: Number(b.to_page_id), linkType: g.linkType,
+    evidenceHash: hash, status: p.status, endingToPageId: p.endingTo ?? null, closeDate: p.closeDate ?? null, bornClosed: p.bornClosed ?? false,
+    model: p.model, confidence: p.confidence ?? null, generatedLine: p.line ?? null, detail: p.detail ?? null,
+  });
 }
 
 // ─── Apply / undo / revert detection ─────────────────────────────────────
@@ -472,27 +429,13 @@ export async function edgeContradictionsCyclePhase(engine: BrainEngine | null, d
 
 export type ApplyOutcome = { status: 'applied' | 'stale' | 'not_found' | 'refused' | 'undone' | 'rejected'; reason?: string };
 
-interface ProposalRow {
-  id: number; source_id: string; status: string; from_page_id: number; ending_to_page_id: number | null;
-  link_type: string; close_date: unknown; generated_line: string | null; subject_slug: string; ending_slug: string | null;
-}
-
-async function loadProposal(engine: BrainEngine, id: number): Promise<ProposalRow | null> {
-  const [row] = await engine.executeRaw<ProposalRow>(
-    `SELECT p.id, p.source_id, p.status, p.from_page_id, p.ending_to_page_id, p.link_type, p.close_date::text AS close_date,
-            p.generated_line, f.slug AS subject_slug, t.slug AS ending_slug
-       FROM link_edge_proposals p JOIN pages f ON f.id = p.from_page_id LEFT JOIN pages t ON t.id = p.ending_to_page_id
-      WHERE p.id = $1`, [id]);
-  return row ?? null;
+function loadProposal(engine: BrainEngine, id: number): Promise<ProposalRow | null> {
+  return engine.readEdgeProposal(id);
 }
 
 /** Does the subject page carry this proposal's closure (a dream transition on the ending relationship at the close date)? */
-async function closureLanded(engine: BrainEngine, p: ProposalRow): Promise<boolean> {
-  const rows = await engine.executeRaw(
-    `SELECT 1 FROM link_transitions WHERE origin_page_id = $1 AND from_page_id = $1 AND to_page_id = $2 AND link_type = $3
-        AND kind = 'end' AND producer = 'dream' AND occurred_on = $4::date LIMIT 1`,
-    [p.from_page_id, p.ending_to_page_id, p.link_type, dateKey(p.close_date)]);
-  return rows.length > 0;
+function closureLanded(engine: BrainEngine, p: ProposalRow): Promise<boolean> {
+  return engine.edgeClosureLanded(p.from_page_id, p.ending_to_page_id, p.link_type, dateKey(p.close_date));
 }
 
 /**
@@ -508,28 +451,23 @@ export async function applyEdgeProposal(engine: BrainEngine, id: number): Promis
   if (p.status === 'applied') return { status: 'applied', reason: 'already applied' };
   if (p.status !== 'proposed') return { status: 'refused', reason: `proposal is ${p.status}` };
   if (!p.ending_slug || !p.generated_line) return { status: 'refused', reason: 'proposal has no closure to apply' };
-  const [current] = await engine.executeRaw<{ a: string; b: string }>(
-    `SELECT la.evidence_hash AS a, lb.evidence_hash AS b FROM link_edge_proposals pr
-       JOIN link_relationships la ON la.from_page_id = pr.from_page_id AND la.to_page_id = pr.a_to_page_id AND la.link_type = pr.link_type AND la.scope = 'all'
-       JOIN link_relationships lb ON lb.from_page_id = pr.from_page_id AND lb.to_page_id = pr.b_to_page_id AND lb.link_type = pr.link_type AND lb.scope = 'all'
-      WHERE pr.id = $1`, [id]);
-  const [stored] = await engine.executeRaw<{ evidence_hash: string }>(`SELECT evidence_hash FROM link_edge_proposals WHERE id = $1`, [id]);
+  const current = await engine.readEdgeProposalEvidence(id);
+  const stored = await engine.readEdgeProposalHash(id);
   const hashNow = current ? createHash('sha256').update([current.a, current.b].sort().join(':')).digest('hex').slice(0, 32) : null;
   if (hashNow !== stored?.evidence_hash) {
-    await engine.executeRaw(`UPDATE link_edge_proposals SET status = 'stale', updated_at = now() WHERE id = $1`, [id]);
+    await engine.markEdgeProposalStale(id);
     return { status: 'stale', reason: 'the relationships changed since the judgment; the next dream cycle re-judges them' };
   }
   await appendTimelineLine(engine, p.source_id, p.subject_slug, String(dateKey(p.close_date)), p.generated_line);
   await rederivePage(engine, p.source_id, p.subject_slug);
   const landed = await closureLanded(engine, p);
-  await engine.executeRaw(`UPDATE link_edge_proposals SET status = $2, updated_at = now() WHERE id = $1`, [id, landed ? 'applied' : 'proposed']);
+  await engine.setEdgeProposalStatus(id, landed ? 'applied' : 'proposed');
   return landed ? { status: 'applied' } : { status: 'refused', reason: 'the closure line was written but did not re-derive; run gbrain extract --stale and re-check' };
 }
 
 /** Reject a proposal (it will not be applied; a later evidence change re-judges the pair). */
 export async function rejectEdgeProposal(engine: BrainEngine, id: number): Promise<ApplyOutcome> {
-  const rows = await engine.executeRaw(`UPDATE link_edge_proposals SET status = 'rejected', updated_at = now() WHERE id = $1 AND status IN ('proposed','undated_unresolved','ambiguous_same_date') RETURNING 1`, [id]);
-  return rows.length ? { status: 'rejected' } : { status: 'refused', reason: 'only open proposals can be rejected' };
+  return await engine.rejectOpenEdgeProposal(id) ? { status: 'rejected' } : { status: 'refused', reason: 'only open proposals can be rejected' };
 }
 
 /** Undo an applied proposal: remove its exact closure line, re-derive, mark undone. */
@@ -539,20 +477,13 @@ export async function undoEdgeProposal(engine: BrainEngine, id: number): Promise
   if (p.status !== 'applied' || !p.generated_line) return { status: 'refused', reason: `proposal is ${p.status}` };
   const removed = await removeTimelineLine(engine, p.source_id, p.subject_slug, String(dateKey(p.close_date)), p.generated_line);
   await rederivePage(engine, p.source_id, p.subject_slug);
-  await engine.executeRaw(`UPDATE link_edge_proposals SET status = 'undone', updated_at = now() WHERE id = $1`, [id]);
+  await engine.markEdgeProposalUndone(id);
   return { status: 'undone', ...(removed ? {} : { reason: 'the closure line was already gone' }) };
 }
 
 /** Applied proposals whose closure line the user deleted become reverted_by_user (never re-proposed for that evidence). */
 async function markRevertedProposals(engine: BrainEngine): Promise<number> {
-  const rows = await engine.executeRaw<{ id: number }>(
-    `UPDATE link_edge_proposals p SET status = 'reverted_by_user', updated_at = now()
-      WHERE p.status = 'applied' AND p.updated_at < now() AND NOT EXISTS (
-        SELECT 1 FROM link_transitions t WHERE t.origin_page_id = p.from_page_id AND t.from_page_id = p.from_page_id
-          AND t.to_page_id = p.ending_to_page_id AND t.link_type = p.link_type AND t.kind = 'end' AND t.producer = 'dream'
-          AND t.occurred_on = p.close_date)
-      RETURNING p.id`);
-  return rows.length;
+  return engine.markRevertedEdgeProposals();
 }
 
 async function trustedCtx(engine: BrainEngine, sourceId: string) {

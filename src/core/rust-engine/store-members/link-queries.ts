@@ -5,8 +5,8 @@
  * (relationalFanout, relationalChainHop), orphan detection (findOrphanPages), rewriteLinks (a no-op on every engine)
  * and the link reads of hybrid search's ranking stage (hasSupersedeEdges, supersedingPageSlugs, pagesLinkingTo; the
  * SQL is src/core/engine-sql/search-reads.ts), and the link reads of src/core/engine-sql/link-reads.ts (inboundLinkCoverage,
- * listJunkEntityHubs, countEntityPages, entityGraphCoverage, countForeignEdges, listLivePageSummaries, countInboundLinks, readEntityInboundEdges,
- * listLinkEndpointPages, listPagesTitledIn, wordLexemes, readLinkContextMatches, readLinkContextOriginPages).
+ * listJunkEntityHubs, countEntityPages, entityGraphCoverage, entityFeatureCoverage, countDatedMeetingPages, countForeignEdges, listLivePageSummaries, countInboundLinks, readEntityInboundEdges,
+ * listLinkEndpointPages, listPagesTitledIn, probePageTypes, readLongPageSizes, wordLexemes, readLinkContextMatches, readLinkContextOriginPages).
  *
  * Export only BrainEngine members from this file, each a `StoreMember` named after the member it serves (see tags.ts):
  * index.ts spreads the whole module into STORE_MEMBERS, so every export is served. Row decoders and other helpers stay
@@ -14,9 +14,10 @@
  *
  * The store models the source filter, the page privacy policy (storePagePolicy), the trust floor and flag suppression
  * (`minTrust`, `suppressFlagged`: the page's stamped tier and its write-gate receipts) and the live test of the read
- * policy (src/core/search/read-policy-sql.ts). relationalFanout and relationalChainHop also model `requireSafeChunks`
+ * policy (src/core/search/read-policy-sql.ts). relationalFanout and relationalChainHop serve the temporal edge policy
+ * (relationshipFilterSql, src/core/link-validity.ts) over the store's relationship rows, and also model `requireSafeChunks`
  * (the canonical chunk's safe fence and the chain's evidence text gate, `takesHoldersAllowList` included). A privacy
- * policy the store does not model or a temporal policy refuses with `engine_capability_missing`. A derived-link
+ * policy the store does not model or a temporal policy on another member refuses with `engine_capability_missing`. A derived-link
  * replacement serves every option PGLite takes: the origin snapshot and the line-grammar generation are checked before
  * the store call, and the wanted pages and the origin's temporal evidence (link-temporal-apply.ts) are written after it,
  * as separate store calls. See rust/docs/store/link_queries.md and rust/docs/store/link_temporal.md.
@@ -28,6 +29,7 @@ import {
 import { sanitizeForJsonb } from '../../batch-rows.ts';
 import { effectiveRangesEnabled, LINK_EXTRACTION_GENERATION_KEY } from '../../line-grammar.ts';
 import type { RelationshipKey } from '../../link-relationships.ts';
+import { relationshipFilterSql, type EdgeTemporalOpts } from '../../link-validity.ts';
 import { applyTemporalEvidence } from '../../link-temporal-apply.ts';
 import { possibleWantedRows } from '../../wanted-links-store.ts';
 import type { LinkBatchInput } from '../../engine.ts';
@@ -39,12 +41,13 @@ import type {
   EntityInboundEdgeRow, JunkEntityHubRow, LinkContextAsk, LinkContextMatch, LinkContextOriginPage, LinkEndpointPage, LivePageSummary,
   TitledPage,
 } from '../../engine-sql/link-reads.ts';
-import { getFtsLanguage } from '../../fts-language.ts';
+import type { PageTypeProbe } from '../../engine-sql/cli-reads-ops.ts';
+import type { LongPageSizeRow } from '../../search/long-page-sizes.ts';
 import { CONNECTOR_SOURCE_KINDS } from '../../persistence/connector-kinds.ts';
 import type { EntityTypeFilter } from '../../schema-pack/entity-types.ts';
 import { mapStoreError, storeErrorCode } from '../store-errors.ts';
 import type { StoreBrain } from '../store.ts';
-import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
+import { refuseMember, storeCall, storeFtsConfig, takeOptions, type StoreMember } from './common.ts';
 import { getConfig } from './config.ts';
 import { linkRelationshipKeysTouching, refreshOnStore, temporalStore } from './link-refresh.ts';
 import { readPageSnapshot } from './pages.ts';
@@ -120,8 +123,12 @@ function rankingScope(member: string, opts: PageReadPolicy | undefined): Record<
  * Ids the SQL engines cast to `bigint[]`: a non-integer is refused (the cast fails there). An id below 1 or past
  * `Number.MAX_SAFE_INTEGER` names no page the store can hold, so it matches nothing, as in the SQL, and is dropped.
  */
-function bigintIds(member: string, ids: readonly number[]): number[] {
-  for (const id of ids) if (!Number.isInteger(id)) refuseMember(member, 'a page id that is not an integer');
+function bigintIds(_member: string, ids: readonly number[]): number[] {
+  // A page id that is no integer is bad input: reject it as the `$1::bigint[]` cast does (22P02), not as a missing
+  // capability, so a caller that tells a failed read from an empty one sees the same error on every engine.
+  for (const id of ids) {
+    if (!Number.isInteger(id)) throw Object.assign(new Error(`invalid input syntax for type bigint: "${id}"`), { code: '22P02' });
+  }
   return ids.filter(id => id >= 1 && Number.isSafeInteger(id));
 }
 
@@ -333,11 +340,24 @@ export const getAdjacencyBoosts: StoreMember<[pageIds: number[], opts?: PageRead
     return new Map(rows.map(row => [Number(row.to_page_id), { hits: Number(row.hits), cross_source_hits: Number(row.cross_source_hits) }]));
   };
 
+/**
+ * `temporal` as `temporalWalkFilter` and readChainHop read it: the walk's own `excludePrivate`
+ * picks the relationship scope. Rendering the SQL fragment first throws the same TypeError on a
+ * date that is not a calendar day.
+ */
+function walkTemporal(opts: Pick<RelationalFanoutOpts, 'temporal' | 'excludePrivate'> | undefined) {
+  const t = opts?.temporal;
+  if (!t) return undefined;
+  const temporal: EdgeTemporalOpts = { status: t.status, asOf: t.asOf, during: t.during, disabled: t.disabled, excludePrivate: !!opts.excludePrivate };
+  relationshipFilterSql('l', temporal);
+  return temporal;
+}
+
 export const relationalFanout: StoreMember<[seeds: string[], opts?: RelationalFanoutOpts], RelationalFanoutRow[]> =
   async (brain, seeds, opts) => {
     if (!seeds?.length) return [];
     const options = takeOptions('relationalFanout', opts,
-      [...POLICY_KEYS, 'seedRefs', 'linkTypes', 'direction', 'depth', 'includeMentions', 'limit']);
+      [...POLICY_KEYS, 'seedRefs', 'linkTypes', 'direction', 'depth', 'includeMentions', 'limit', 'temporal']);
     const depth = Math.min(Math.max(1, opts?.depth ?? 2), 3);
     const limit = Math.min(Math.max(1, opts?.limit ?? 50), 200);
     // The SQL engines bind both into integer comparisons; a fraction or NaN is not guessed at.
@@ -351,6 +371,7 @@ export const relationalFanout: StoreMember<[seeds: string[], opts?: RelationalFa
       depth,
       includeMentions: !!opts?.includeMentions,
       limit,
+      temporal: walkTemporal(opts),
       requireSafeChunks: requiresSafeChunks(opts),
     };
     return storeCall({ member: 'relationalFanout' }, () => brain.relationalFanout(seeds, wire));
@@ -361,13 +382,13 @@ export const relationalChainHop: StoreMember<[frontierPageIds: number[], opts: C
     if (!frontierPageIds.length || !opts.linkTypes.length) return [];
     const ids = int32Ids('relationalChainHop', [...new Set(frontierPageIds)], 'readChainHop');
     const options = takeOptions('relationalChainHop', opts,
-      [...READ_SCOPE_KEYS, 'linkTypes', 'toward', 'subjectTypes', 'objectTypes', 'degreeLinkTypes', 'neighborCap'], UNREAD_BY_FILTER);
+      [...READ_SCOPE_KEYS, 'linkTypes', 'toward', 'subjectTypes', 'objectTypes', 'degreeLinkTypes', 'neighborCap', 'temporal'], UNREAD_BY_FILTER);
     const cap = Math.max(1, Math.min(opts.neighborCap, 1000));
     if (!Number.isInteger(cap)) refuseMember('relationalChainHop', 'a neighborCap that is not an integer');
     const wire = {
       ...scopeOf('relationalChainHop', options),
       linkTypes: opts.linkTypes, toward: opts.toward, subjectTypes: opts.subjectTypes, objectTypes: opts.objectTypes,
-      degreeLinkTypes: opts.degreeLinkTypes, neighborCap: cap,
+      degreeLinkTypes: opts.degreeLinkTypes, neighborCap: cap, temporal: walkTemporal(opts),
       requireSafeChunks: requiresSafeChunks(opts), textGate: chainTextGate(opts),
     };
     return storeCall({ member: 'relationalChainHop' }, () => brain.relationalChainHop(ids, wire));
@@ -454,6 +475,29 @@ export const entityGraphCoverage: StoreMember<[filter: EntityTypeFilter], { enti
     return { entities: Number(r.entities), connected: Number(r.connected), withTimeline: Number(r.withTimeline) };
   };
 
+/**
+ * How many live unquarantined entity pages there are and how many have an inbound link or a timeline entry. The store
+ * reads every page. A 100 percent sample draws every row (TABLESAMPLE BERNOULLI (100)), so it is served as the whole
+ * population; a lower percent is a random draw no other engine can match, so it refuses by name. Doctor and onboard
+ * ask for a sample only on Postgres. A malformed percent fails with the SQL engines' message (engine-sql/link-reads.ts).
+ */
+export const entityFeatureCoverage: StoreMember<[filter: EntityTypeFilter, feature: 'links' | 'timeline', opts?: { samplePercent?: number }], { sampleSize: number; matched: number }> =
+  async (brain, filter, feature, opts) => {
+    if (feature !== 'links' && feature !== 'timeline') refuseMember('entityFeatureCoverage', `the feature ${String(feature)}`);
+    const pct = opts?.samplePercent;
+    if (pct !== undefined && !(Number.isFinite(pct) && pct > 0 && pct <= 100)) {
+      throw new Error(`entityFeatureCoverage: samplePercent must be a number in (0, 100], got ${String(pct)}`);
+    }
+    if (pct !== undefined && pct !== 100) refuseMember('entityFeatureCoverage', `a TABLESAMPLE of ${pct} percent (a random draw; the store reads every page)`);
+    const r: { sampleSize: number; matched: number } = await storeCall({ member: 'entityFeatureCoverage' },
+      () => brain.entityFeatureCoverage({ filter, feature }));
+    return { sampleSize: Number(r.sampleSize), matched: Number(r.matched) };
+  };
+
+/** Live meeting pages with an effective date. */
+export const countDatedMeetingPages: StoreMember<[], number> =
+  async (brain) => Number(await storeCall({ member: 'countDatedMeetingPages' }, () => brain.countDatedMeetingPages()));
+
 /** Links of the page whose other end is in another source. */
 export const countForeignEdges: StoreMember<[slug: string, sourceId: string, direction: 'in' | 'out' | 'both'], number> =
   async (brain, slug, sourceId, direction) => Number(await storeCall({ member: 'countForeignEdges' },
@@ -501,11 +545,35 @@ export const listPagesTitledIn: StoreMember<[queryLower: string, scope: PageRead
     return rows.map(r => ({ ...r, id: Number(r.id) }));
   };
 
-/** Each word to its English lexemes; another full-text configuration refuses (the store has only English). */
+/** search's type-filter probe: each set's presence among the live pages `scope` reads, and their types when one has none. */
+export const probePageTypes: StoreMember<[sets: readonly (readonly string[])[], scope: PageReadScope], PageTypeProbe> =
+  async (brain, sets, scope) => {
+    const options = takeOptions('probePageTypes', scope, READ_SCOPE_KEYS, UNREAD_BY_FILTER);
+    const out: { present: boolean[]; available: string[] | null } = await storeCall({ member: 'probePageTypes' },
+      () => brain.probePageTypes({ sets: sets.map(set => [...set]), scope: { ...scopeOf('probePageTypes', options), scoped: true } }));
+    return { present: out.present.map(Boolean), available: out.available ?? null };
+  };
+
+/**
+ * The long-page size preflight: each page in `ids` that the scope serves (live, served projection, safe chunks when the
+ * scope requires them), with its stored body length. An id the SQL's int[] cast rejects is an error there, not a refusal.
+ */
+export const readLongPageSizes: StoreMember<[ids: readonly number[], scope: PageReadScope, opts: { includeTimeline: boolean }], LongPageSizeRow[]> =
+  async (brain, ids, scope, opts) => {
+    const options = takeOptions('readLongPageSizes', scope, [...READ_SCOPE_KEYS, 'requireSafeChunks'], ['takesHoldersAllowList']);
+    for (const id of ids) if (!Number.isInteger(id) || Math.abs(id) > INT32_MAX) throw new TypeError(`readLongPageSizes: page id ${String(id)} is not a 32-bit integer`);
+    const rows: LongPageSizeRow[] = await storeCall({ member: 'readLongPageSizes' }, () => brain.readLongPageSizes({
+      ids: [...ids], includeTimeline: opts.includeTimeline === true, safeChunks: requiresSafeChunks(options),
+      scope: { ...scopeOf('readLongPageSizes', options), scoped: true },
+    }));
+    return rows.map(r => ({ id: Number(r.id), chars: Number(r.chars), bytes: Number(r.bytes) }));
+  };
+
+/** Each word to its lexemes under the configured full-text search configuration (`english` or `german`; others refuse). */
 export const wordLexemes: StoreMember<[words: string[]], Map<string, string[]>> =
   async (brain, words) => {
-    if (getFtsLanguage() !== 'english') refuseMember('wordLexemes', `the ${getFtsLanguage()} text search configuration`);
-    const rows: Array<{ w: string; lexemes: string[] }> = await storeCall({ member: 'wordLexemes' }, () => brain.wordLexemes(words));
+    const config = storeFtsConfig('wordLexemes');
+    const rows: Array<{ w: string; lexemes: string[] }> = await storeCall({ member: 'wordLexemes' }, () => brain.wordLexemes(words, config));
     return new Map(rows.map(r => [r.w, r.lexemes]));
   };
 

@@ -38,17 +38,21 @@ impl Store {
     /// The pages in every source whose normalized readers (`gbrain_access_readers`, the
     /// `page_readers` column) name exactly `principal`, by (source, slug), at most `limit`. A
     /// soft-deleted page counts, as in the SQL (`FROM pages` with no deleted filter); a page with
-    /// no `readable_by` key or an invalid one (`!nobody`) names no member or group.
+    /// no `readable_by` key or an invalid one (`!nobody`) names no member or group. `live_only` leaves
+    /// the soft-deleted pages out (`deleted_at IS NULL`, the `member disable` check).
     pub fn list_pages_naming_reader(
         &self,
         principal: &str,
         limit: u32,
+        live_only: bool,
     ) -> Result<Vec<PageNamingReaderRow>> {
         let read = self.read()?;
         let mut rows: Vec<PageNamingReaderRow> = all_pages(&*read)?
             .into_iter()
             .filter(|p| {
-                access_readers(&p.frontmatter).is_some_and(|r| r.iter().any(|x| x == principal))
+                (!live_only || p.deleted_at_us.is_none())
+                    && access_readers(&p.frontmatter)
+                        .is_some_and(|r| r.iter().any(|x| x == principal))
             })
             .map(|p| PageNamingReaderRow {
                 slug: p.slug,
@@ -58,6 +62,27 @@ impl Store {
         rows.sort_by(|a, b| (&a.source_id, &a.slug).cmp(&(&b.source_id, &b.slug)));
         rows.truncate(limit as usize);
         Ok(rows)
+    }
+
+    /// `hasSynopsisFrontmatterOverride()`: whether a live markdown page of the `default` source, which is not archived,
+    /// carries `contextual_retrieval: per_chunk_synopsis` in its frontmatter. The store keeps no
+    /// `trust_frontmatter_overrides` (it reads as false, as `sources.rs` says), so the SQL's other arm, a source that
+    /// trusts its pages' overrides, never holds here. `frontmatter @> '{"contextual_retrieval":"per_chunk_synopsis"}'`
+    /// is string equality on that key.
+    pub fn has_synopsis_frontmatter_override(&self) -> Result<bool> {
+        let read = self.read()?;
+        if read_source(&*read, "default")?.is_some_and(|source| source.archived) {
+            return Ok(false);
+        }
+        Ok(all_pages(&*read)?.iter().any(|p| {
+            p.source_id == "default"
+                && p.deleted_at_us.is_none()
+                && p.page_kind == "markdown"
+                && p.frontmatter
+                    .get("contextual_retrieval")
+                    .and_then(Value::as_str)
+                    == Some("per_chunk_synopsis")
+        }))
     }
 
     /// The source's incarnation, archived flag, local path and config, or `None` for an unknown id.
@@ -88,6 +113,7 @@ impl Store {
             let Some(mut record) = read_source(&*tx, source_id)? else {
                 return Ok(false);
             };
+            crate::guest_sources::refuse_local_path_on_guest(&*tx, source_id)?;
             record.local_path = Some(local_path.to_owned());
             if let Some(name) = name {
                 record.name = Some(name.to_owned());

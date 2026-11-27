@@ -10,7 +10,7 @@ import { checkManagedSyncBacklog } from '../src/commands/doctor/checks/managed-s
 
 const minutesAgo = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString();
 const progress = (minutes: number) => { const at = Date.now() - minutes * 60_000; return { startedAt: at - 60_000, startIndex: 0, lastAt: at, lastIndex: 1 }; };
-const fake = (headers: Record<string, unknown>[]) => ({ executeRaw: async () => headers.map(header => ({ header })) }) as unknown as BrainEngine;
+const fake = (headers: Record<string, unknown>[]) => ({ executeRaw: async () => headers.map(header => ({ header })), listManagedSyncBacklogHeaders: async () => headers, listLiveManagedSyncPassRows: async () => [] }) as unknown as BrainEngine;
 const status = async (header: Record<string, unknown>) => (await checkManagedSyncBacklog(fake([{ sourceId: 'example-source', index: 0, total: 3, done: false, ...header }])))?.status;
 
 test('#6763 a cursor that has not advanced yet is aged from its discovery', async () => {

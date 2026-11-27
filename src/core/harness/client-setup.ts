@@ -42,9 +42,9 @@ function assertSecretNotExpired(method: unknown, expiration: unknown): void {
 }
 export async function recoverClientSetup(engine: BrainEngine, clientId: string, endpoint: string, harness = 'generic', flow?: unknown): Promise<ClientSetupExport> {
   return engine.transaction(async tx => {
-    const sql = sqlQueryForEngine(tx);
-    const [row] = await sql`SELECT * FROM oauth_clients WHERE client_id = ${clientId} FOR UPDATE`;
-    if (!row) throw new GrantError('client_not_found', 'Client no longer exists');
+    const locked = await tx.readOauthClientForUpdate(clientId);
+    if (!locked) throw new GrantError('client_not_found', 'Client no longer exists');
+    const row: Record<string, unknown> = { ...locked };
     const grant = grantFromRow(row);
     if (grant.revoked) throw new GrantError('client_not_found', 'Client is revoked; credentials cannot be exported');
     assertSecretNotExpired(row.token_endpoint_auth_method, row.client_secret_expires_at);
@@ -54,7 +54,7 @@ export async function recoverClientSetup(engine: BrainEngine, clientId: string, 
     const retained = recoverCredentialDelivery(clientId, setup.mcp_url);
     try {
       if (!retained.client_secret) throw new InvalidClientError('missing secret');
-      await new GBrainOAuthProvider({ sql }).verifyConfidentialClientSecret(clientId, retained.client_secret);
+      await new GBrainOAuthProvider({ sql: sqlQueryForEngine(tx), engine: tx }).verifyConfidentialClientSecret(clientId, retained.client_secret);
     } catch (error) {
       if (!(error instanceof InvalidClientError)) throw error;
       throw new Error('credential_delivery_stale: retained credentials no longer match this client. Use the private output from explicit rotation; never rotate merely to download again.');

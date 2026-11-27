@@ -8,12 +8,50 @@ on:
       convergence:
         type: string
         default: run
+    secrets:
+      # Trunk Dynamic CI (docs/ci-event-parity.md#trunk-dynamic-ci). Optional: with no
+      # token the filter fails open and every lane runs.
+      TRUNK_API_TOKEN:
+        required: false
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
+  # Trunk Dynamic CI filter (docs/ci-event-parity.md#trunk-dynamic-ci): it asks Trunk
+  # whether this pull-request push needs crash-robot and convergence and writes one output per job;
+  # each runs unless its output is exactly 'false'. It fails open: a missing token (a
+  # fork's pull request gets no secrets), a Trunk outage or a job with no verdict runs
+  # the job. In Learning mode it records verdicts and skips nothing.
+  # Event parity (docs/ci-event-parity.md#trunk-dynamic-ci): pull_request only; github.event_name is the
+  # caller's here, so on a push, the nightly run or a dispatch (full-ci, or this workflow
+  # by hand) it is skipped, its outputs are empty, and every lane runs as before.
+  # Unlike test.yml's filter, a failed job here (a lost runner, the job timeout, the action
+  # failing to download) would fail the whole call and turn cheap-tier red, so the job
+  # carries continue-on-error too; crash-robot and convergence still run past it.
+  # scripts/check-dynamic-ci.ts guards the wiring.
+  dynamic-ci:
+    if: github.event_name == 'pull_request'
+    runs-on: ubicloud-standard-2-ubuntu-2404
+    timeout-minutes: 5
+    continue-on-error: true
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      crash-robot: ${{ steps.dynamic-ci.outputs.crash-robot }}
+      convergence: ${{ steps.dynamic-ci.outputs.convergence }}
+    steps:
+      - id: dynamic-ci
+        uses: trunk-io/dynamic-ci@09739668b8d766d05e3dbf6f3eb0159da6597aaf  # v1 (v0.1.12)
+        continue-on-error: true
+        timeout-minutes: 3
+        with:
+          token: ${{ secrets.TRUNK_API_TOKEN }}
+          job-keys: crash-robot,convergence
+          enable-annotation: 'true'
+
   # Event parity (docs/ci-event-parity.md#full-ci-on-pull-requests): full profile only; a
   # pull request (cheap tier) runs only the crash robot and convergence here. The
   # full-ci dispatch on its head, every push and the nightly run this lane.
@@ -201,7 +239,7 @@ jobs:
   # file; the PGLite arm also runs in the unit lane). The list is test/postgres-unit-arms.txt;
   # scripts/check-postgres-lane-coverage.ts fails a new DATABASE_URL-gated arm
   # until it is listed there or wrapped in a test/e2e registerPostgresTests
-  # file. The twenty-eight shards (ARM_SHARDS in scripts/postgres-unit-arms.ts) are
+  # file. The thirty-two shards (ARM_SHARDS in scripts/postgres-unit-arms.ts) are
   # balanced by measured runtime (scripts/postgres-arm-weights.json, mined
   # from this job's ARM_FILE lines). Each job runs two files at a time, each
   # worker against its own PostgreSQL service; a shard's two-worker makespan,
@@ -215,7 +253,11 @@ jobs:
   # shards bring that list's largest to 545.0 s. On 2026-11-19 a re-mine from the
   # arms jobs of five complete full runs, with gbrain#9730's arm files, put
   # 26,609 s of file time on the list, which fills 24 shards to 557.4 s (97.8%);
-  # 28 shards bring the largest to 478.4 s (83.9%). The job runs both arms of
+  # 28 shards bring the largest to 478.4 s (83.9%). On 2026-11-21 the main join
+  # (rust-engine/main into cli-members-next, da99c637a7) put both lines' arm files
+  # on one list: 1,112 files, 29,022 s measured plus 128 unmeasured files at the
+  # 32.8 s p75, which fills 28 shards to 596.1 s (104.6%, every shard over);
+  # 32 shards bring the largest to 522.0 s (91.6%). The job runs both arms of
   # every listed file: the unit shards skip *.slow.test.ts, so this lane is the
   # only GitHub lane that runs the PGLite side of the listed slow
   # testBackends() suites.
@@ -223,14 +265,14 @@ jobs:
   # pull request (cheap tier) runs only the crash robot and convergence here. The
   # full-ci dispatch on its head, every push and the nightly run this lane.
   unit-postgres-arms:
-    name: Unit-lane PostgreSQL arms ${{ matrix.shard }}/28 / Bun ${{ matrix.bun }}
+    name: Unit-lane PostgreSQL arms ${{ matrix.shard }}/32 / Bun ${{ matrix.bun }}
     if: ${{ github.event_name != 'pull_request' }}
     runs-on: ubicloud-standard-4-ubuntu-2404
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32]
         bun: ['1.4.4']
         # Event parity: every event, pull requests and merge-queue runs
         # included, runs every supported Bun version (docs/TESTING.md#event-parity).
@@ -285,7 +327,7 @@ jobs:
           GBRAIN_TEST_ALLOW_DATABASE_URL: '1'
           GBRAIN_TEST_RECEIPT_DIR: ${{ runner.temp }}/receipts
           GBRAIN_TEST_RECEIPT_LANE: pg-arms-bun-${{ matrix.bun }}
-        run: bun scripts/postgres-unit-arms.ts run ${{ matrix.shard }} 28
+        run: bun scripts/postgres-unit-arms.ts run ${{ matrix.shard }} 32
       - name: Upload receipts
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -365,8 +407,11 @@ jobs:
   # Pull requests run a 150 s budget (Postgres skips the seams and the pooler
   # disconnect fault that can wait out a dead owner's claim lease, listed in the
   # manifest); pushes, schedules and manual runs crash every seam.
+  # Gated by dynamic-ci (docs/ci-event-parity.md#trunk-dynamic-ci): runs unless Trunk's verdict is 'false'.
   crash-robot:
     name: Crash robot / ${{ matrix.engine }} / Bun ${{ matrix.bun }}
+    needs: [dynamic-ci]
+    if: ${{ !cancelled() && needs.dynamic-ci.outputs.crash-robot != 'false' }}
     runs-on: ubicloud-standard-4-ubuntu-2404
     timeout-minutes: 60
     strategy:
@@ -544,9 +589,11 @@ jobs:
   # when scripts/ci-convergence-scope.sh selects its diff (test.yml `changes`);
   # every merge-queue run, every push to master and the nightly Test schedule
   # run it.
+  # Gated by dynamic-ci (docs/ci-event-parity.md#trunk-dynamic-ci): runs unless Trunk's verdict is 'false'.
   convergence:
     name: Managed-sync convergence / Bun ${{ matrix.bun }}
-    if: ${{ inputs.convergence != 'skip' }}
+    needs: [dynamic-ci]
+    if: ${{ !cancelled() && needs.dynamic-ci.outputs.convergence != 'false' && (inputs.convergence != 'skip') }}
     runs-on: ubicloud-standard-4-ubuntu-2404
     timeout-minutes: 45
     strategy:

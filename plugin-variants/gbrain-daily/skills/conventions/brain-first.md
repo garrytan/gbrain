@@ -141,12 +141,11 @@ Standard directory structure:
 
 | Directory | Type | Example |
 |-----------|------|---------|
-| `people/` | person | `people/paul-graham.md` |
-| `companies/` | company | `companies/stripe.md` |
-| `deals/` | deal | `deals/stripe-series-c.md` |
+| `people/` | person | `people/alice-example.md` |
+| `companies/` | company | `companies/acme-example.md` |
+| `deals/` | deal | `deals/acme-example-series-a.md` |
 | `meetings/` | meeting | `meetings/2026-04-23-weekly-sync.md` |
 | `projects/` | project | `projects/gbrain.md` |
-| `yc/` | yc | `yc/batch-w26.md` |
 
 When creating new pages, include proper frontmatter with `type`, `title`,
 and `tags` fields.
@@ -195,8 +194,8 @@ until the canonical form lands. Silent typos would be the worst outcome
   `brain-ops`, `signal-detector`, `idea-ingest`, `enrich`,
   `perplexity-research`, and `academic-verify` all pass via this path.
 - The skill has no external-lookup references at all (`web_search`,
-  `exa`, `perplexity`, `happenstance`, `crustdata`, `captain-api`,
-  `firecrawl`). Trivially exempt.
+  `web_fetch`, `exa`, `perplexity`, `firecrawl` or a people-data
+  provider). Trivially exempt.
 
 When in doubt: declare `brain_first: exempt` explicitly OR add the
 canonical Convention callout near the top of the skill body. Both are

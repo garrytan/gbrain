@@ -81,9 +81,9 @@ function inGit(root: string): boolean {
  * keeps local paths out of the owner refusal's text.
  */
 export async function loadFenceSource(engine: BrainEngine, sourceId: string, opts: { remote?: boolean; work?: string } = {}): Promise<FenceSource | null> {
-  const [row] = await engine.executeRaw<{ id: string; incarnation: string; local_path: string | null }>(
-    'SELECT id, incarnation::text AS incarnation, local_path FROM sources WHERE id=$1 AND archived IS NOT TRUE', [sourceId]);
-  if (!row) return null;
+  const state = await engine.readSourceState(sourceId);
+  if (!state || state.archived) return null;
+  const row = { id: sourceId, incarnation: state.incarnation, local_path: state.local_path };
   const managed = await managedPersistenceEnabled(engine);
   const mirror = await sourceMirrorReadOnly(engine, sourceId);
   let root: string | null = null;

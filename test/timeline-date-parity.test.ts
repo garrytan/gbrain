@@ -6,11 +6,12 @@
  * to UTC and to four other zones.
  *
  * Rust engine contract: the Rust engine must set TimeZone=UTC on every
- * session. Three outputs follow the session zone: an event's effective_date
- * text, the order of a plain row against an event on one day, and the default
- * "today" of getOnThisDay and getLastSeen. For the Rust comparison, those
- * cases run with the TypeScript engines pinned to UTC in test setup (the UTC
- * entries below). The TypeScript engines' own runtime zone is not changed here.
+ * session. Three outputs used to follow the session zone and are now pinned
+ * to UTC in the shared SQL: an event's effective_date text (its UTC instant),
+ * the order of a plain row against an event on one day (plain rows sort at
+ * UTC midnight), and the default "today" of getOnThisDay and getLastSeen (the
+ * UTC day). Every zone below must give the UTC answer for those three. The
+ * engines' session zone itself is not pinned (last test in this file).
  *
  * 1. Protects: getTimelineForDate (day + ISO week), getSince, getOnThisDay,
  *    getLastSeen, getEffectiveDates, getPageTimestamps and
@@ -18,8 +19,9 @@
  *    the same session zone. It also pins which outputs follow the session
  *    zone (an event's `effective_date` text, intra-day order of a plain row
  *    against an event, and the `current_date` default of getOnThisDay and
- *    getLastSeen) and which do not (day and week filters, leap-day matching,
- *    stored batch dates, returned Date instants). A third engine (the Rust
+ *    getLastSeen) give the UTC answer in every zone, as do the zone-free
+ *    outputs (day and week filters, leap-day matching, stored batch dates,
+ *    returned Date instants). A third engine (the Rust
  *    engine) must match these pins.
  * 2. Fails when: an engine's statement drifts from the shared SQL in
  *    src/core/engine-sql/timeline.ts, a driver parses timestamptz or date
@@ -159,13 +161,15 @@ async function seed(engine: BrainEngine): Promise<void> {
   for (const d of ['2020-02-29', '2023-03-01', '2024-02-29', '2025-02-28', '2025-03-01', '2028-02-29']) {
     await insertEntry(engine, alice, d, `Alice on ${d}`);
   }
-  // `today` and its latest earlier anniversary in the zone furthest ahead of UTC.
-  // Pacific/Pago_Pago is 25 hours behind it, so its `current_date` is always
-  // at least one day earlier.
+  // The UTC day, the next UTC day and the UTC day's latest earlier
+  // anniversary. Pacific/Kiritimati (+14) and Pacific/Pago_Pago (-11) bracket
+  // UTC, so at any hour at least one of them has a local day other than the
+  // UTC day: a read that followed the session zone would differ there.
   await engine.executeRaw(
     `INSERT INTO timeline_entries (page_id, date, source, summary, detail) VALUES
-       ($1, (now() AT TIME ZONE 'Pacific/Kiritimati')::date, 'parity', 'Bob today in Kiritimati', ''),
-       ($1, ${anniversarySql("(now() AT TIME ZONE 'Pacific/Kiritimati')::date")}, 'parity', 'Bob a year ago in Kiritimati', '')`,
+       ($1, (now() AT TIME ZONE 'UTC')::date, 'parity', 'Bob today in UTC', ''),
+       ($1, (now() AT TIME ZONE 'UTC')::date + 1, 'parity', 'Bob tomorrow in UTC', ''),
+       ($1, ${anniversarySql("(now() AT TIME ZONE 'UTC')::date")}, 'parity', 'Bob a year ago in UTC', '')`,
     [bob],
   );
   // getEffectiveDates / getPageTimestamps fixtures.
@@ -254,37 +258,18 @@ for (const kind of backends) {
       record(kind, 'weekBounds', weeks);
     });
 
-    test('an event effective_date renders in the session zone, and intra-day order of a plain row against an event follows the zone', async () => {
+    test('an event effective_date renders as its UTC instant, and a plain row orders at UTC midnight, in every session zone', async () => {
       const out: Record<string, string[]> = {};
       for (const zone of ZONES) out[zone] = await inZone(engine, zone, async () => shape(await engine.getTimelineForDate('2026-03-08') as never));
-      expect(out).toEqual({
-        // Plain rows sort at local midnight of their day; events at their instant.
-        UTC: [
-          `2026-03-08 | ${MEETING} | - | - | - | Plain DST-day note`,
-          `2026-03-08 | ${MEETING} | ${E_EARLY} | 2026-03-08 05:00:00+00 | meeting | Early DST-day event`,
-          `2026-03-08 | ${MEETING} | ${E_LATE} | 2026-03-08 10:30:00+00 | call | Late DST-day event`,
-        ],
-        'America/Los_Angeles': [
-          `2026-03-08 | ${MEETING} | ${E_EARLY} | 2026-03-07 21:00:00-08 | meeting | Early DST-day event`,
-          `2026-03-08 | ${MEETING} | - | - | - | Plain DST-day note`,
-          `2026-03-08 | ${MEETING} | ${E_LATE} | 2026-03-08 03:30:00-07 | call | Late DST-day event`,
-        ],
-        'America/Santiago': [
-          `2026-03-08 | ${MEETING} | - | - | - | Plain DST-day note`,
-          `2026-03-08 | ${MEETING} | ${E_EARLY} | 2026-03-08 02:00:00-03 | meeting | Early DST-day event`,
-          `2026-03-08 | ${MEETING} | ${E_LATE} | 2026-03-08 07:30:00-03 | call | Late DST-day event`,
-        ],
-        'Pacific/Kiritimati': [
-          `2026-03-08 | ${MEETING} | - | - | - | Plain DST-day note`,
-          `2026-03-08 | ${MEETING} | ${E_EARLY} | 2026-03-08 19:00:00+14 | meeting | Early DST-day event`,
-          `2026-03-08 | ${MEETING} | ${E_LATE} | 2026-03-09 00:30:00+14 | call | Late DST-day event`,
-        ],
-        'Pacific/Pago_Pago': [
-          `2026-03-08 | ${MEETING} | ${E_EARLY} | 2026-03-07 18:00:00-11 | meeting | Early DST-day event`,
-          `2026-03-08 | ${MEETING} | ${E_LATE} | 2026-03-07 23:30:00-11 | call | Late DST-day event`,
-          `2026-03-08 | ${MEETING} | - | - | - | Plain DST-day note`,
-        ],
-      });
+      // Before the UTC pin, America/Los_Angeles printed '2026-03-07 21:00:00-08'
+      // and sorted the early event before the plain row; Pacific/Pago_Pago sorted
+      // the plain row last.
+      for (const zone of ZONES) expect({ zone, rows: out[zone] }).toEqual({ zone, rows: out.UTC });
+      expect(out.UTC).toEqual([
+        `2026-03-08 | ${MEETING} | - | - | - | Plain DST-day note`,
+        `2026-03-08 | ${MEETING} | ${E_EARLY} | 2026-03-08 05:00:00+00 | meeting | Early DST-day event`,
+        `2026-03-08 | ${MEETING} | ${E_LATE} | 2026-03-08 10:30:00+00 | call | Late DST-day event`,
+      ]);
       record(kind, 'zoneDependentOrderAndText', out);
     });
 
@@ -326,7 +311,7 @@ for (const kind of backends) {
       record(kind, 'onThisDayLeap', out);
     });
 
-    test('getLastSeen: day math across DST and leap day, wikilink and LIKE-escape matching, and a zone-dependent tie on one day', async () => {
+    test('getLastSeen: day math across DST and leap day, wikilink and LIKE-escape matching, and a same-instant tie on one day', async () => {
       const out: Record<string, Record<string, unknown>> = {};
       for (const zone of ZONES) {
         out[zone] = await inZone(engine, zone, async () => ({
@@ -348,35 +333,30 @@ for (const kind of backends) {
         july: undefined,
         underscore: { entity_slug: ALICE_UNDERSCORE, last_date: null, last_event_slug: null, days_ago: null },
       });
-      // 2026-07-01: Alice's own plain row (local midnight) against the event at
-      // 00:00Z. Equal instants in UTC, so the newer row id (the event) wins.
-      expect(Object.fromEntries(ZONES.map((z) => [z, (out[z].july as { last_event_slug: string | null }).last_event_slug]))).toEqual({
-        UTC: E_JULY,
-        'America/Los_Angeles': null,
-        'America/Santiago': null,
-        'Pacific/Kiritimati': E_JULY,
-        'Pacific/Pago_Pago': null,
-      });
+      // 2026-07-01: Alice's own plain row (UTC midnight) against the event at
+      // 00:00Z. Equal instants, so the newer row id (the event) wins in every zone.
+      expect(Object.fromEntries(ZONES.map((z) => [z, (out[z].july as { last_event_slug: string | null }).last_event_slug]))).toEqual(
+        Object.fromEntries(ZONES.map((z) => [z, E_JULY])));
       record(kind, 'lastSeen', out);
     });
 
-    test('with no date, getOnThisDay and getLastSeen use the session zone\'s current_date', async () => {
-      const ahead = await inZone(engine, 'Pacific/Kiritimati', async () => ({
-        lastSeen: await engine.getLastSeen(BOB),
-        onThisDay: (await engine.getOnThisDay()).filter((r) => r.page_slug === BOB).map((r) => r.summary),
-      }));
-      const behind = await inZone(engine, 'Pacific/Pago_Pago', async () => ({
-        lastSeen: await engine.getLastSeen(BOB),
-        onThisDay: (await engine.getOnThisDay()).filter((r) => r.page_slug === BOB).map((r) => r.summary),
-      }));
-      const [{ today }] = await engine.executeRaw<{ today: string }>(`SELECT ((now() AT TIME ZONE 'Pacific/Kiritimati')::date)::text AS today`);
-      expect(ahead).toEqual({
-        lastSeen: { entity_slug: BOB, last_date: today, last_event_slug: null, days_ago: 0 },
-        onThisDay: ['Bob a year ago in Kiritimati'],
-      });
-      expect(behind.lastSeen.last_date === null || behind.lastSeen.last_date < today).toBe(true);
-      expect(behind.onThisDay).toEqual([]);
-      record(kind, 'currentDateDefault', { ahead: { ...ahead, lastSeen: { ...ahead.lastSeen, last_date: 'today' } }, behind: { ...behind, lastSeen: { ...behind.lastSeen, last_date: behind.lastSeen.last_date ? 'earlier' : null } } });
+    test('with no date, getOnThisDay and getLastSeen use the UTC day in every session zone', async () => {
+      const out: Record<string, { lastSeen: unknown; onThisDay: string[] }> = {};
+      for (const zone of ZONES) {
+        out[zone] = await inZone(engine, zone, async () => ({
+          lastSeen: await engine.getLastSeen(BOB),
+          onThisDay: (await engine.getOnThisDay()).filter((r) => r.page_slug === BOB).map((r) => r.summary),
+        }));
+      }
+      const [{ today }] = await engine.executeRaw<{ today: string }>(`SELECT ((now() AT TIME ZONE 'UTC')::date)::text AS today`);
+      for (const zone of ZONES) {
+        expect({ zone, ...out[zone] }).toEqual({
+          zone,
+          lastSeen: { entity_slug: BOB, last_date: today, last_event_slug: null, days_ago: 0 },
+          onThisDay: ['Bob a year ago in UTC'],
+        });
+      }
+      record(kind, 'currentDateDefault', Object.fromEntries(ZONES.map((z) => [z, { ...out[z], lastSeen: { ...(out[z].lastSeen as object), last_date: 'today' } }])));
     });
 
     test('the anniversary fixture keeps the same month and day on a leap day and on an ordinary day', async () => {

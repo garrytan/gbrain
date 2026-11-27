@@ -43,6 +43,7 @@ import { countStaleFactEmbeddings } from '../core/facts/embedding-identity.ts';
 import { authorizeMigrationBudget, assertMigrationLeases, ceilCents, MigrationBudgetRefusal, withMigrationLeaseTransaction, type MigrationBudgetRefusalDetails, type MigrationLeaseAssert, type MigrationWorstCase } from '../core/embedding-migration-budget.ts';
 import { planMigrationWorstCase, MIGRATION_PROBE_TEXT, RERANKER_PROBE } from '../core/embedding-migration-worst-case.ts';
 import { withAIInvocationGuard } from '../core/ai/invocation-guard.ts';
+import { requireRawSql } from '../core/rust-engine/errors.ts';
 
 /**
  * Brain-wide migration lock (round-2 #4): serializes whole migrations so two
@@ -630,7 +631,7 @@ export async function executeMigrationFlow(
     }
     if (expectedSources !== undefined) {
       if (tx) await tx.executeRaw('LOCK TABLE sources IN SHARE MODE');
-      const sources = await (tx ?? engine).executeRaw('SELECT id,incarnation::text,archived FROM sources ORDER BY id');
+      const sources = await (tx ?? engine).executeRaw('SELECT id,incarnation::text,archived FROM sources ORDER BY id COLLATE "C"');
       if (JSON.stringify(sources) !== expectedSources) throw new Error('Source census changed (including archive state); migration paused before further work. Inspect --status; use gbrain sources restore <id> deliberately only if restoring an archived source is intended.');
     }
   };
@@ -673,7 +674,7 @@ export async function executeMigrationFlow(
       heldLocks.push(lock);
     }
 
-    const lockedCensus = await engine.executeRaw<{ id: string; incarnation: string; archived: boolean }>('SELECT id,incarnation::text,archived FROM sources ORDER BY id');
+    const lockedCensus = await engine.executeRaw<{ id: string; incarnation: string; archived: boolean }>('SELECT id,incarnation::text,archived FROM sources ORDER BY id COLLATE "C"');
     if (JSON.stringify(lockedCensus.map(s => s.id).sort()) !== JSON.stringify(sourceIds)) {
       return { status: 'apply_failed', reason: 'Source census changed while acquiring locks; no embedding work performed. Retry the scoped preview.' };
     }
@@ -947,6 +948,20 @@ async function migrateConsent(engine: BrainEngine, args: string[], flags: Return
   return auth !== null;
 }
 
+/**
+ * The plan and the apply read and rewrite vector columns with raw SQL. The Rust store fixes its vector width when the
+ * brain is created (docs/designs/RUST_ENGINE.md loss row 48), so they refuse there before they read anything (after the
+ * flag checks, which touch no engine). The `--status` census reads only typed engine members, so it answers on Rust too.
+ */
+const RUST_MIGRATION_STOP = 'migrate embeddings (the Rust store fixes its vector width at creation; plan and apply rewrite vector columns with raw SQL)';
+
+/** The usage error for a run that names no `--to` target; `exit` is the run's own exit. */
+function missingTarget(exit: (code: number) => never): never {
+  serr('Missing --to <provider:model>. Example: gbrain migrate embeddings --to openai:text-embedding-3-small');
+  serr('Run with --help for all flags.');
+  return exit(1);
+}
+
 export async function runMigrateEmbeddings(
   engine: BrainEngine,
   args: string[],
@@ -963,9 +978,11 @@ export async function runMigrateEmbeddings(
     exit(0);
   }
   const flags = parseMigrateEmbeddingsFlags(args);
-
+  // A run that is no status read and names no target is a usage error on every engine, before any engine check.
+  if (!args.includes('--status') && !flags.to) missingTarget(exit);
   // ── Read-only status surface (D6). No env refusal (it REPORTS env), no
-  // mutation, no spend — the mid-incident "where am I?" command.
+  // mutation, no spend — the mid-incident "where am I?" command. Every read it makes is a typed engine member, so a
+  // Rust brain answers it too; only the migration below refuses there.
   if (args.includes('--status')) {
     const report = await readMigrationStatus(engine);
     const envPresence = detectEnvPresence();
@@ -984,6 +1001,7 @@ export async function runMigrateEmbeddings(
         : null;
       const cfg = loadConfig();
       if (cfg?.database_url) identity = { engine: 'postgres', target: redactPgUrl(cfg.database_url) };
+      else if (cfg?.engine === 'rust' && cfg.database_path) identity = { engine: 'rust', target: cfg.database_path };
       else if (cfg?.database_path) identity = { engine: 'pglite', target: cfg.database_path };
       else identity = { engine: cfg?.engine ?? 'pglite', target: 'default path' };
     } catch { /* informational */ }
@@ -1050,12 +1068,9 @@ export async function runMigrateEmbeddings(
     }
     exit(0);
   }
+  requireRawSql(engine, RUST_MIGRATION_STOP);
 
-  if (!flags.to) {
-    serr('Missing --to <provider:model>. Example: gbrain migrate embeddings --to openai:text-embedding-3-small');
-    serr('Run with --help for all flags.');
-    exit(1);
-  }
+  if (!flags.to) missingTarget(exit);
 
   let ctx: MigrationPlanContext;
   try {

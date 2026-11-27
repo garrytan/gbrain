@@ -26,6 +26,7 @@ export const PGLITE_SCALE_PAGE_THRESHOLD = 1000;
 export const PGLITE_SCALE_PLAN_ARGV = ['gbrain', 'migrate', '--to', 'postgres', '--plan', '--json'];
 
 export async function pgliteScaleCheck(engine: BrainEngine): Promise<Check | null> {
+  if (engine.kind === 'rust') return rustScaleCheck(engine);
   if (engine.kind !== 'pglite') return null;
   try {
     const stats = await engine.getStats();
@@ -46,6 +47,30 @@ export async function pgliteScaleCheck(engine: BrainEngine): Promise<Check | nul
       };
     }
     return { name: 'pglite_scale', status: 'ok', message: `PGLite at ${stats.page_count} pages — comfortable below the ${PGLITE_SCALE_PAGE_THRESHOLD}-page threshold` };
+  } catch {
+    return null; // stats unavailable — other checks own that failure
+  }
+}
+
+/**
+ * The same engine-fit signal for a Rust brain: one local file, one process, the same page threshold.
+ * The graduation plan reads a PGLite brain only, so the Rust warning names no `migrate --to postgres`
+ * fix; it names the stay-local alternative, `gbrain mcp expose`.
+ */
+async function rustScaleCheck(engine: BrainEngine): Promise<Check | null> {
+  try {
+    const stats = await engine.getStats();
+    if (stats.page_count >= PGLITE_SCALE_PAGE_THRESHOLD) {
+      return {
+        name: 'pglite_scale',
+        status: 'warn',
+        message:
+          `Rust brain has ${stats.page_count} pages (threshold ${PGLITE_SCALE_PAGE_THRESHOLD}). ` +
+          `Postgres gives faster search and concurrent access at this size; the move plan reads PGLite brains only. ` +
+          `To share this brain with other machines without moving it: gbrain mcp expose.`,
+      };
+    }
+    return { name: 'pglite_scale', status: 'ok', message: `Rust at ${stats.page_count} pages — comfortable below the ${PGLITE_SCALE_PAGE_THRESHOLD}-page threshold` };
   } catch {
     return null; // stats unavailable — other checks own that failure
   }

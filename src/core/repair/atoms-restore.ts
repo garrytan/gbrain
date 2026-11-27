@@ -29,7 +29,7 @@ import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
 import { preparePageMutation } from '../persistence/page-prepare.ts';
 import { maintenancePreflight, submitMaintenanceIntent } from '../persistence/prepared-maintenance.ts';
-import { atomOriginScopeSql, atomRetirementsSql, ATOM_REEXTRACT_RETIRED_BY } from '../persistence/atom-retirement-hold.ts';
+import { ATOM_REEXTRACT_RETIRED_BY } from '../persistence/atom-retirement-hold.ts';
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
 import { declareDerivation, deriveTrust, lowerToDerivedTier, recordTaintEdges } from '../trust/taint.ts';
 import { afterCursor, repairRequestId, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairScope } from './core.ts';
@@ -63,28 +63,12 @@ interface ApprovedAtom extends RestorableAtom { selection: string[] }
 
 /** Restorable atoms of these sources in id order; `atomId` narrows to one atom (and its origin) for the apply recheck. */
 async function restorableAtoms(db: BrainEngine, sourceIds: string[], atomId?: number): Promise<RestorableAtom[]> {
-  const scope = atomId === undefined ? 'p.source_id=ANY($1::text[])' : `p.source_id=ANY($1::text[]) AND ${atomOriginScopeSql('$2::bigint')}`;
-  const rows = await db.executeRaw<RestorableAtom>(`
-    SELECT c.id, c.source_id, (SELECT s.incarnation::text FROM sources s WHERE s.id=c.source_id) AS incarnation,
-           a.slug, a.knowledge_revision::text AS revision, c.origin_kind, c.origin, c.origin_page_id, c.hash, c.retired_at,
-           (SELECT v.id FROM page_versions v WHERE v.page_id=a.id AND v.is_deleted=false AND v.frontmatter->>'retired_by' IS NULL
-               AND regexp_replace(COALESCE(v.frontmatter->>'source_hash',''),'^pending:','')=c.hash
-             ORDER BY v.id DESC LIMIT 1) AS version_id
-      FROM (${atomRetirementsSql(scope)}) c JOIN pages a ON a.id=c.id
-     WHERE c.restorable${atomId === undefined ? '' : ' AND c.id=$2::bigint'}
-     ORDER BY c.id`, atomId === undefined ? [sourceIds] : [sourceIds, atomId]);
-  return rows.map(row => ({ ...row, id: Number(row.id), origin_page_id: row.origin_page_id === null ? null : Number(row.origin_page_id),
-    version_id: row.version_id === null ? null : Number(row.version_id) }));
+  return db.listRestorableAtoms(sourceIds, atomId ?? null);
 }
 
 /** The re-extraction retirements of these sources the rule keeps, by reason. */
 async function keptCounts(db: BrainEngine, sourceIds: string[]): Promise<{ origin_gone: number; replaced: number; older_generation: number }> {
-  const [row] = await db.executeRaw<{ origin_gone: number; replaced: number; older_generation: number }>(`
-    SELECT count(*) FILTER (WHERE NOT origin_live)::int AS origin_gone,
-           count(*) FILTER (WHERE origin_live AND replaced)::int AS replaced,
-           count(*) FILTER (WHERE origin_live AND NOT replaced AND NOT latest)::int AS older_generation
-      FROM (${atomRetirementsSql('p.source_id=ANY($1::text[])')}) kept`, [sourceIds]);
-  return { origin_gone: Number(row?.origin_gone ?? 0), replaced: Number(row?.replaced ?? 0), older_generation: Number(row?.older_generation ?? 0) };
+  return db.countKeptAtomRetirements(sourceIds);
 }
 
 function sameAtom(live: RestorableAtom | undefined, approved: RestorableAtom): boolean {
@@ -101,8 +85,7 @@ function item(atom: RestorableAtom, hash: string, last: boolean): RestoreItem {
 }
 
 async function hashParts(engine: BrainEngine, scope: RepairScope, atoms: RestorableAtom[]) {
-  const sources = await engine.executeRaw<{ id: string; incarnation: string }>(
-    'SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id', [scope.source_ids]);
+  const sources = await engine.listSourceIncarnations(scope.source_ids);
   return { kind: 'atoms-restore-v1', brain_id: scope.brain_id, sources, selection: { source_ids: scope.source_ids }, atoms };
 }
 
@@ -164,8 +147,7 @@ async function restoreAtom(ctx: OperationContext, atom: RestorableAtom): Promise
     if (!sameAtom((await restorableAtoms(tx, [atom.source_id], atom.id))[0], atom)) return false;
     await tx.createVersion(atom.slug, { sourceId: atom.source_id });
     await tx.restorePage(atom.slug, { sourceId: atom.source_id });
-    await tx.executeRaw(`UPDATE pages SET frontmatter=frontmatter-'retired_by'-'retired_at' WHERE id=$1 AND source_id=$2 AND deleted_at IS NULL`,
-      [atom.id, atom.source_id]);
+    await tx.removePageFrontmatterKeys(atom.source_id, atom.id, ['retired_by', 'retired_at']);
     return true;
   });
   return restored ? { applied: true, outcome: 'restored' } : changed('the atom, its origin or a later generation changed');
@@ -200,10 +182,10 @@ export async function prepareAtomRestore(engine: BrainEngine, row: WriteRequest,
     validate: async tx => { await page.validate?.(tx); await authorizeWrite(tx, row.authority, 'revert_version', row.slug); await unchanged(tx); },
     apply: async tx => {
       const outcome = await page.apply(tx);
-      const [live] = await tx.executeRaw<{ id: number }>('SELECT id FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL', [row.source_id, row.slug]);
-      if (live) {
-        await lowerToDerivedTier(tx, 'pages', [Number(live.id)], derivation.trust);
-        await recordTaintEdges(tx, { table: 'pages', id: Number(live.id), sourceId: row.source_id }, derivation.inputs);
+      const live = await tx.readLivePageIdBySlug(row.slug, row.source_id);
+      if (live !== null) {
+        await lowerToDerivedTier(tx, 'pages', [live], derivation.trust);
+        await recordTaintEdges(tx, { table: 'pages', id: live, sourceId: row.source_id }, derivation.inputs);
       }
       return { ...outcome, restored_from: ATOM_REEXTRACT_RETIRED_BY };
     } };

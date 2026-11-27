@@ -60,7 +60,7 @@ async function readSources(engine: BrainEngine, deadline: number) {
   const { readGitBehind } = await import('../core/persistence/sync-freshness.ts');
   const { readLivePassRows } = await import('../core/persistence/sync-pass-row.ts');
   const rows = await engine.executeRaw<{ id: string; local_path: string | null; last_commit: string | null; last_sync_at: Date | string | null }>(
-    'SELECT id, local_path, last_commit, last_sync_at FROM sources WHERE archived IS NOT TRUE ORDER BY id');
+    'SELECT id, local_path, last_commit, last_sync_at FROM sources WHERE archived IS NOT TRUE ORDER BY id COLLATE "C"');
   const passes = await readLivePassRows(engine).catch(() => null);
   const items = [];
   for (const row of rows) {
@@ -83,7 +83,7 @@ async function readHolds(engine: BrainEngine) {
   const rows = await engine.executeRaw<{ source_id: string; code: string; n: number | string }>(
     `SELECT s.id AS source_id, h.completed_keys->0->>'code' AS code, count(*) AS n FROM op_checkpoints h
        JOIN sources s ON s.id=h.completed_keys->0->>'source_id' AND s.incarnation::text=h.completed_keys->0->>'incarnation'
-      WHERE h.op=$1 GROUP BY 1, 2 ORDER BY 1, 2`, [GIT_HOLD_OP]);
+      WHERE h.op=$1 GROUP BY 1, 2 ORDER BY s.id COLLATE "C", 2`, [GIT_HOLD_OP]);
   const bySource: Record<string, { total: number; by_code: Record<string, number> }> = {};
   for (const row of rows) {
     const entry = bySource[row.source_id] ??= { total: 0, by_code: {} };

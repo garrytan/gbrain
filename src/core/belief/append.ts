@@ -8,8 +8,10 @@
  * active suppression is written as the redaction marker until an owner release.
  */
 import type { BrainEngine } from '../engine.ts';
+import type { BeliefEventInsertRow, BeliefSuppression } from '../engine-sql/belief-ledger.ts';
 import { OWNER_TIER_FLOOR, TRUST_TIER_RANK, isTrustTier } from '../trust/tier.ts';
 import { CARRYING_FIELDS, REDACTION_MARKER, canonicalJson, eventKeyHex, fieldHash, valueHash } from './keys.ts';
+import { mayHaveLegacyFingerprint } from './legacy-fingerprint.ts';
 
 export type BeliefOrigin = 'live' | 'unmanaged' | 'baseline' | 'backfill' | 'reconcile';
 export interface BeliefEventDraft {
@@ -78,13 +80,19 @@ async function tombstoned(tx: BrainEngine, sourceId: string, drafts: BeliefEvent
   const facts = drafts.filter(d => d.subjectKind === 'fact' && d.claimFp && ASSERTING.test(d.eventType));
   const takes = drafts.filter(d => d.subjectKind === 'take' && d.claimFp && ASSERTING.test(d.eventType));
   if (!facts.length && !takes.length) return new Set();
-  const rows = await tx.executeRaw<{ fp: string }>(`SELECT fact_hash AS fp FROM fact_purges WHERE source_id = $1 AND fact_hash = ANY($2::text[])
-    UNION SELECT claim_hash AS fp FROM take_purges WHERE source_id = $1 AND claim_hash = ANY($3::text[])`,
-  [sourceId, facts.map(d => d.claimFp!), takes.map(d => d.claimFp!)]);
-  return new Set(rows.map(r => r.fp));
+  const rows = await tx.readBeliefTombstones(sourceId, facts.map(d => d.claimFp!), takes.map(d => d.claimFp!));
+  const out = new Set(rows);
+  // A claim whose fingerprint form differs from its tombstone's (a purge recorded before v353, or a draft keyed by the claim's
+  // pre-v353 fingerprint after it) matches by its text: its current fingerprint or a pre-v353 one no current fingerprint can equal.
+  const text = (d: BeliefEventDraft) => { const v = d.value as Record<string, unknown> | null | undefined; const c = v?.[d.subjectKind === 'fact' ? 'fact' : 'claim'];
+    return typeof c === 'string' && mayHaveLegacyFingerprint(c) ? c : null; };
+  const probes = [...facts, ...takes].flatMap(d => { const c = text(d); return c && !out.has(d.claimFp!) ? [{ kind: d.subjectKind as 'fact' | 'take', claimFp: d.claimFp!, claim: c }] : []; });
+  if (!probes.length) return out;
+  for (const fp of await tx.readLegacyBeliefTombstones(sourceId, probes)) out.add(fp);
+  return out;
 }
 
-interface Suppression { id: number; subject_key: string; field: string; purge_request: string; field_hash: string; released_hash: string | null }
+type Suppression = BeliefSuppression;
 
 /**
  * Applies the redaction register to the drafts' carrying fields and records
@@ -97,9 +105,7 @@ async function applyRedactions(tx: BrainEngine, sourceId: string, drafts: Belief
   if (!carrying.length) return { redacted, released };
   const predecessors = carrying.map(d => (d.cause.replaces ?? d.cause.from_key) as string | undefined).filter((k): k is string => !!k);
   const hashes = carrying.flatMap(d => CARRYING_FIELDS[d.subjectKind]!.map(f => d.value![f]).filter((v): v is string => typeof v === 'string' && v !== '').map(fieldHash));
-  const rows = await tx.executeRaw<Suppression>(`SELECT id, subject_key, field, purge_request::text AS purge_request, field_hash, released_hash
-    FROM belief_redactions WHERE source_id = $1 AND (subject_key = ANY($2::text[]) OR field_hash = ANY($3::text[]))`,
-  [sourceId, [...carrying.map(d => d.subjectKey), ...predecessors], hashes]);
+  const rows: Suppression[] = await tx.readBeliefRedactions(sourceId, [...carrying.map(d => d.subjectKey), ...predecessors], hashes);
   if (!rows.length) return { redacted, released };
   const owner = isOwnerWrite(ctx);
   for (const draft of carrying) {
@@ -114,15 +120,13 @@ async function applyRedactions(tx: BrainEngine, sourceId: string, drafts: Belief
       const copied = rows.filter(r => r.field === field && r.field_hash === hash && r.released_hash == null && r.subject_key !== draft.subjectKey);
       for (const s of [...inherited, ...copied]) {
         if (own.some(o => o.purge_request === s.purge_request)) continue;
-        const [row] = await tx.executeRaw<{ id: number }>(`INSERT INTO belief_redactions (source_id, subject_key, field, purge_request, field_hash)
-          VALUES ($1, $2, $3, $4::uuid, $5) RETURNING id`, [sourceId, draft.subjectKey, field, s.purge_request, s.field_hash]);
-        own.push({ ...s, id: Number(row!.id), subject_key: draft.subjectKey, released_hash: null });
+        const id = await tx.insertBeliefRedaction({ sourceId, subjectKey: draft.subjectKey, field, purgeRequest: s.purge_request, fieldHash: s.field_hash });
+        own.push({ ...s, id, subject_key: draft.subjectKey, released_hash: null });
       }
       if (!own.length) continue;
       if (own.every(s => s.released_hash === hash)) continue;
       if (owner && own.every(s => s.field_hash !== hash)) {
-        await tx.executeRaw('UPDATE belief_redactions SET released_by = $2::uuid, released_hash = $3 WHERE id = ANY($1::bigint[])',
-          [own.map(s => Number(s.id)), ctx.publicationId, hash]);
+        await tx.releaseBeliefRedactions(own.map(s => Number(s.id)), ctx.publicationId, hash);
         releases.push(...own.map(s => ({ field, purge_request: s.purge_request, released_hash: hash })));
         continue;
       }
@@ -150,16 +154,18 @@ export async function appendBeliefEvents(tx: BrainEngine, input: BeliefEventDraf
   const ordered = orderDrafts(drafts);
   const sourceId = ordered[0]!.sourceId;
   if (ctx.preparedEpoch !== undefined) {
-    const [source] = await tx.executeRaw<{ purge_epoch: string | number }>('SELECT purge_epoch FROM sources WHERE id = $1', [sourceId]);
-    if (Number(source?.purge_epoch ?? 0) !== ctx.preparedEpoch) {
-      throw Object.assign(new Error(`belief_stale_preparation: a purge committed in source ${sourceId} since this payload was prepared (epoch ${ctx.preparedEpoch}, now ${source?.purge_epoch}); prepare it again from current state`),
+    // The shared purge epoch read (engine-sql/sync-reason-reads.ts), the same member the sync reason scan calls; the
+    // Rust store answers it from the source record. An unknown source reads as epoch 0.
+    const epoch = await tx.readSourcePurgeEpoch(sourceId);
+    if (Number(epoch ?? 0) !== ctx.preparedEpoch) {
+      throw Object.assign(new Error(`belief_stale_preparation: a purge committed in source ${sourceId} since this payload was prepared (epoch ${ctx.preparedEpoch}, now ${epoch}); prepare it again from current state`),
         { code: 'belief_stale_preparation' });
     }
   }
   const purgedFps = ctx.purgesPossible === false ? new Set<string>() : await tombstoned(tx, sourceId, ordered);
   const { redacted: redactions, released } = ctx.purgesPossible === false ? { redacted: new Map<BeliefEventDraft, string[]>(), released: [] }
     : await applyRedactions(tx, sourceId, ordered, ctx);
-  const rows = [...ordered, ...(dropReleaseEvents ? [] : released)].map((d, ord) => {
+  const rows = [...ordered, ...(dropReleaseEvents ? [] : released)].map((d, ord): BeliefEventInsertRow => {
     const purged = d.purged === true || (!!d.claimFp && purgedFps.has(d.claimFp) && ASSERTING.test(d.eventType));
     const value = purged ? null : d.value;
     return {
@@ -172,20 +178,7 @@ export async function appendBeliefEvents(tx: BrainEngine, input: BeliefEventDraf
       redacted_fields: redactions.get(d) ?? null,
     };
   });
-  const inserted = await tx.executeRaw<{ id: number }>(`INSERT INTO belief_events (event_key, source_id, source_incarnation, page_lifetime, slug, subject_kind,
-      subject_key, event_type, origin, trust_tier, writer_tier, tier_basis, visibility, publication_id, ord, source_time, valid_from, valid_until,
-      value, value_hash, prior_hash, state_hash, cause, claim_fp, purged, redacted_fields)
-    SELECT decode(r.event_key, 'hex'), r.source_id, r.source_incarnation::uuid, r.page_lifetime::uuid, r.slug, r.subject_kind, r.subject_key, r.event_type,
-      r.origin, r.trust_tier, r.writer_tier, r.tier_basis, r.visibility, r.publication_id::uuid, r.ord, r.source_time::timestamptz,
-      r.valid_from::timestamptz, r.valid_until::timestamptz, r.value::jsonb, r.value_hash, r.prior_hash, r.state_hash, r.cause::jsonb, r.claim_fp,
-      r.purged, r.redacted_fields
-    FROM jsonb_to_recordset($1::text::jsonb) AS r(event_key text, source_id text, source_incarnation text, page_lifetime text, slug text,
-      subject_kind text, subject_key text, event_type text, origin text, trust_tier text, writer_tier text, tier_basis text, visibility text,
-      publication_id text, ord integer, source_time text, valid_from text, valid_until text, value text, value_hash text, prior_hash text,
-      state_hash text, cause text, claim_fp text, purged boolean, redacted_fields text[])
-    ORDER BY r.ord
-    ON CONFLICT (event_key) DO NOTHING RETURNING id`, [JSON.stringify(rows)]);
-  return inserted.length;
+  return tx.insertBeliefEvents(rows);
 }
 
 /**
@@ -194,12 +187,7 @@ export async function appendBeliefEvents(tx: BrainEngine, input: BeliefEventDraf
  * Called after commit by each appender; readers that find an unmarked committed
  * publication call it too. A group's members share one statement and one time.
  */
-export async function markBeliefCommits(engine: Pick<BrainEngine, 'executeRaw'>, publicationIds: readonly string[]): Promise<void> {
+export async function markBeliefCommits(engine: Pick<BrainEngine, 'markBeliefCommits'>, publicationIds: readonly string[]): Promise<void> {
   if (!publicationIds.length) return;
-  await engine.executeRaw(`WITH t AS MATERIALIZED (SELECT clock_timestamp() AS at)
-    INSERT INTO belief_commit_marks (publication_id, observed_at)
-    SELECT e.publication_id, t.at FROM t, belief_events e
-    WHERE e.publication_id = ANY($1::uuid[])
-    GROUP BY e.publication_id, t.at HAVING max(e.recorded_at) <= t.at
-    ON CONFLICT (publication_id) DO NOTHING`, [[...publicationIds]]);
+  await engine.markBeliefCommits(publicationIds);
 }

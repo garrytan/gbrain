@@ -1,11 +1,12 @@
 /**
- * BrainEngine parity — the source-resolution reads (`listLocalPathSources`, `listSourceRoutingRows`,
+ * BrainEngine parity — the source-resolution reads (`listLocalPathSources`, `countRepoBoundSources`, `listSourceRoutingRows`,
  * `countDefaultSourceSplit`, `listAllSources`, `getSource`, `listSourceRecords`, `listStaleSyncSourceIds`, `readSourceRow`,
- * `lockSourceRow`, `readSourceChunkerVersion`, `countSourcePages`, `insertSource`) that `src/core/source-resolver.ts`
+ * `lockSourceRow`, `readSourceChunkerVersion`, `countSourcePages`, `insertSource`, `listSourceIds`, `readSoleSourceId`, `readFirstSourceId`, `lockAllSourceRows`) that `src/core/source-resolver.ts`
  * and the other `sources` readers make to pick a source or list the registered ones.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
- *  - Contract: every engine arm answers the same rows: sources with a checkout path keep their archived flag; every
+ *  - Contract: every engine arm answers the same rows: sources with a checkout path keep their archived flag; the
+ *    readiness sync probe counts only live sources with a non-empty path; every
  *    source row carries its config, archived flag and whether `default` holds a live page; the default-write guard's
  *    split counts live pages only and counts distinct non-default sources; `listAllSources` hides archived sources
  *    unless asked, orders `default` first then by id, and its local-path filter also drops the storage manifest;
@@ -17,6 +18,9 @@
  *    to that source and counts soft-deleted pages only when asked; `sources add` inserts a row with its name, path and
  *    config (a key set to undefined is dropped), and a taken id or name throws and leaves the first row as it was; the
  *    scope-source check of a remote recall (`withoutScopeSources`) drops exactly the sources whose config marks them.
+ *    Every source id lists in byte order, archived ones too, on any Postgres locale; the sole-source read answers the
+ *    only id or null; the first-source read answers `default`, else the lowest id in byte order; the all-rows lock
+ *    leaves the rows as they were.
  *  - Regression: an engine that drops archived sources from tier 4 (a cwd inside an archived checkout then falls
  *    through silently instead of refusing), counts soft-deleted pages (the guard then nags or routes a write to the
  *    wrong source), or counts pages instead of sources in `nonDefaultSources`; an engine that lists archived sources
@@ -27,12 +31,18 @@
  *    check then misjudge the source); a chunker-version read of the wrong column (every sync then reimports in full); a
  *    page count that leaks across sources with a shared id prefix or ignores the soft-delete filter (`sources list` and
  *    `sources remove` then report the wrong count); an insert that overwrites a taken id or name, or double-encodes
- *    the config into a JSON string (every config key then reads as absent).
+ *    the config into a JSON string (every config key then reads as absent); a source-id list or first-source read in
+ *    the server locale, or a default-first source list with a locale id tie-break (an en_US.utf8 Postgres then orders
+ *    `a-c` after `ab` and `B` after `a_b`, unlike PGLite).
  *  - Why existing coverage misses it: test/source-resolver*.test.ts drive the resolver through fake engines keyed on
  *    SQL text, so they never compare real engines, and the Rust engine has no raw SQL to answer.
  *  - Seam: none. Real engines, typed reads only; sources are made and archived through the harness fixtures.
  */
 import { describe, expect } from 'bun:test';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { markedScopeSources, withoutScopeSources } from '../../src/core/access/attest-sources.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { RustEngine } from '../../src/core/rust-engine.ts';
@@ -42,6 +52,7 @@ import { testBackends } from '../helpers/test-backends.ts';
 import { loadConnectorSourceIds } from '../../src/commands/orphans.ts';
 import { sourceConfigText, sourceRecordsRawConfig } from '../../src/core/source-rows.ts';
 import { ownerOnlySourcesPresent, sourceIsOwnerOnly } from '../../src/core/access/owner-only.ts';
+import { confirmRenameIdentities } from '../../src/core/sync-rename-identity.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -50,6 +61,10 @@ const NOTE: PageInput = { type: 'note', title: 'Note', compiled_truth: 'A short 
 async function seed(engine: BrainEngine, sourceId: string, slugs: string[]): Promise<void> {
   for (const slug of slugs) await engine.putPage(slug, NOTE, { sourceId });
 }
+
+
+// The SQL engines return these rows in no set order and the Rust store in slug order; the cases compare in slug byte order.
+const bySlug = <T extends { slug: string }>(rows: T[]): T[] => [...rows].sort((x, y) => Buffer.compare(Buffer.from(x.slug), Buffer.from(y.slug)));
 
 describe('engine parity: source-resolution reads', () => {
   parityTest('listLocalPathSources keeps archived sources and drops sources without a path', { methods: ['listLocalPathSources'] }, async (engine, backend) => {
@@ -113,6 +128,18 @@ describe('engine parity: source-resolution reads', () => {
     expect(configs.missing).toBeNull();
     expect(verdicts).toEqual({ plain: false, flagstr: false, phone: true, flag: true, missing: false, present: true });
     return { none, stillNone, archivedKind, configs, verdicts };
+  });
+
+  parityTest('countRepoBoundSources counts live sources with a non-empty local path', { methods: ['countRepoBoundSources'] }, async (engine, backend) => {
+    const empty = await engine.countRepoBoundSources();
+    await createSource(engine, backend, 'alpha', {}, '/srv/brain/alpha');
+    await createSource(engine, backend, 'beta', {}, '/srv/brain/beta');
+    await createSource(engine, backend, 'blank', {}, '');
+    await createSource(engine, backend, 'nopath');
+    await archiveSource(engine, backend, 'beta');
+    const bound = await engine.countRepoBoundSources();
+    expect({ empty, bound }).toEqual({ empty: 0, bound: 1 });
+    return { empty, bound };
   });
 
   parityTest('listSourceRoutingRows carries config, archived and whether default has a live page', { methods: ['listSourceRoutingRows'] }, async (engine, backend) => {
@@ -259,6 +286,209 @@ describe('engine parity: source-resolution reads', () => {
     return { before, first, after };
   });
 
+  parityTest('advanceSourceCommit advances one source\'s last commit, and its newest content time only when given', {
+    methods: ['advanceSourceCommit', 'attachSourcePath', 'getSource', 'readPlainSyncSource', 'listSourceRecords'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'wiki');
+    await createSource(engine, backend, 'other');
+    const view = async (id: string) => {
+      const detail = await engine.getSource(id);
+      const record = (await engine.listSourceRecords()).find(r => r.id === id);
+      const newest = record?.newest_content_at == null ? null : new Date(record.newest_content_at).toISOString();
+      return detail === null ? null : {
+        last_commit: detail.last_commit, synced: detail.last_sync_at != null, local_path: detail.local_path,
+        plain: (await engine.readPlainSyncSource(id))?.last_commit ?? null, newest,
+      };
+    };
+    const before = await view('wiki');
+    await engine.advanceSourceCommit('wiki', 'c1', '2026-01-02T03:04:05.000Z');
+    const stamped = await view('wiki');
+    await engine.advanceSourceCommit('wiki', 'c2');
+    const kept = await view('wiki');
+    await engine.advanceSourceCommit('wiki', 'c3', null);
+    const cleared = await view('wiki');
+    await engine.attachSourcePath('wiki', '/srv/wiki');
+    await engine.advanceSourceCommit('missing', 'c9');
+    await engine.attachSourcePath('missing', '/srv/missing');
+    const seen = { before, stamped, kept, cleared, repointed: await view('wiki'), other: await view('other'), missing: await view('missing') };
+    expect(seen).toEqual({
+      before: { last_commit: null, synced: false, local_path: null, plain: null, newest: null },
+      stamped: { last_commit: 'c1', synced: true, local_path: null, plain: 'c1', newest: '2026-01-02T03:04:05.000Z' },
+      kept: { last_commit: 'c2', synced: true, local_path: null, plain: 'c2', newest: '2026-01-02T03:04:05.000Z' },
+      cleared: { last_commit: 'c3', synced: true, local_path: null, plain: 'c3', newest: null },
+      repointed: { last_commit: 'c3', synced: true, local_path: '/srv/wiki', plain: 'c3', newest: null },
+      other: { last_commit: null, synced: false, local_path: null, plain: null, newest: null },
+      missing: null,
+    });
+    return seen;
+  });
+
+  parityTest('writeSourceSyncHeartbeat stamps one source\'s last sync and leaves its commit anchor alone', {
+    methods: ['writeSourceSyncHeartbeat', 'advanceSourceCommit', 'getSource'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'wiki');
+    await createSource(engine, backend, 'other');
+    const view = async (id: string) => {
+      const detail = await engine.getSource(id);
+      return detail === null ? null : { last_commit: detail.last_commit, synced: detail.last_sync_at != null };
+    };
+    const before = await view('wiki');
+    await engine.writeSourceSyncHeartbeat('wiki');
+    const beat = await view('wiki');
+    await engine.advanceSourceCommit('wiki', 'c1');
+    await engine.writeSourceSyncHeartbeat('wiki');
+    await engine.writeSourceSyncHeartbeat('missing');
+    const seen = { before, beat, anchored: await view('wiki'), other: await view('other'), missing: await view('missing') };
+    expect(seen).toEqual({
+      before: { last_commit: null, synced: false },
+      beat: { last_commit: null, synced: true },
+      anchored: { last_commit: 'c1', synced: true },
+      other: { last_commit: null, synced: false },
+      missing: null,
+    });
+    return seen;
+  });
+
+  parityTest('writeSourceUpstreamObservation records one source\'s upstream and leaves its sync anchor alone', {
+    methods: ['writeSourceUpstreamObservation', 'advanceSourceCommit', 'getSource'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'wiki');
+    await createSource(engine, backend, 'other');
+    await engine.advanceSourceCommit('wiki', 'c1');
+    await engine.writeSourceUpstreamObservation('wiki', { checkedAt: '2026-01-02T03:04:05.000Z', commit: 'u1', behind: 2 });
+    await engine.writeSourceUpstreamObservation('wiki', { checkedAt: '2026-01-03T03:04:05.000Z', commit: 'u2', behind: null });
+    await engine.writeSourceUpstreamObservation('missing', { checkedAt: '2026-01-02T03:04:05.000Z', commit: 'u9', behind: 0 });
+    const badTime = await engine.writeSourceUpstreamObservation('wiki', { checkedAt: 'not a time', commit: 'u3', behind: 1 }).then(() => 'resolved', () => 'rejected');
+    if (backend !== 'rust') {
+      // The store has no SQL; its record is checked in rust/crates/gbrain-store/src/sources.rs.
+      const rows = await engine.executeRaw<{ id: string; upstream_checked_at: Date | string | null; upstream_commit: string | null; upstream_behind: number | null }>(
+        'SELECT id, upstream_checked_at, upstream_commit, upstream_behind FROM sources WHERE id = ANY($1::text[]) ORDER BY id', [['other', 'wiki']]);
+      expect(rows.map(r => ({ ...r, upstream_checked_at: r.upstream_checked_at == null ? null : new Date(r.upstream_checked_at).toISOString() }))).toEqual([
+        { id: 'other', upstream_checked_at: null, upstream_commit: null, upstream_behind: null },
+        { id: 'wiki', upstream_checked_at: '2026-01-03T03:04:05.000Z', upstream_commit: 'u2', upstream_behind: null },
+      ]);
+    }
+    const wiki = await engine.getSource('wiki');
+    const seen = { anchor: wiki?.last_commit ?? null, badTime, missing: await engine.getSource('missing') };
+    expect(seen).toEqual({ anchor: 'c1', badTime: 'rejected', missing: null });
+    return seen;
+  });
+
+  parityTest('listSourcePathPages lists one source\'s live file-backed pages', { methods: ['listSourcePathPages', 'refreshPageOrigin'] }, async (engine, backend) => {
+    await createSource(engine, backend, 'a');
+    await createSource(engine, backend, 'ab');
+    await seed(engine, 'a', ['notes/b', 'notes/ab', 'notes/a-c', 'notes/no-file', 'notes/gone']);
+    await seed(engine, 'ab', ['notes/z']);
+    for (const [sourceId, slug, sourcePath] of [['a', 'notes/b', 'notes/b.md'], ['a', 'notes/ab', 'notes/ab.md'], ['a', 'notes/a-c', 'notes/a-c.md'], ['a', 'notes/gone', 'notes/gone.md'], ['ab', 'notes/z', 'notes/z.md']] as const) {
+      await engine.refreshPageOrigin(slug, { sourceId, sourcePath });
+    }
+    await engine.softDeletePage('notes/gone', { sourceId: 'a' });
+    const seen = { a: bySlug(await engine.listSourcePathPages('a')), ab: bySlug(await engine.listSourcePathPages('ab')), missing: await engine.listSourcePathPages('missing') };
+    expect(seen).toEqual({
+      a: [{ slug: 'notes/a-c', source_path: 'notes/a-c.md' }, { slug: 'notes/ab', source_path: 'notes/ab.md' }, { slug: 'notes/b', source_path: 'notes/b.md' }],
+      ab: [{ slug: 'notes/z', source_path: 'notes/z.md' }],
+      missing: [],
+    });
+    return seen;
+  });
+
+  parityTest('the rename confirmation reads match live pages by path, slug, frontmatter id and title', {
+    methods: ['putPage', 'refreshPageOrigin', 'softDeletePage', 'readRenameIdentityRows', 'readLiveIdentityHolders', 'readPageIdentity'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'a');
+    await createSource(engine, backend, 'b');
+    const put = (sourceId: string, slug: string, title: string, frontmatter: Record<string, unknown>) =>
+      engine.putPage(slug, { ...NOTE, title, frontmatter }, { sourceId });
+    const spec = await put('a', 'notes/spec', 'Spec', { id: 'doc-1' });
+    await put('a', 'notes/num', 'Numbered', { id: 7 });
+    await put('a', 'notes/plain', 'Spec', {});
+    await put('a', 'notes/é-accent', 'Accent', { id: 'doc-é' });
+    const gone = await put('a', 'notes/gone', 'Gone', { id: 'doc-1' });
+    await put('b', 'notes/spec', 'Spec', { id: 'doc-1' });
+    await engine.refreshPageOrigin('notes/spec', { sourceId: 'a', sourcePath: 'notes/spec.md' });
+    await engine.softDeletePage('notes/gone', { sourceId: 'a' });
+    const seen = {
+      titles: bySlug(await engine.readRenameIdentityRows('a', ['notes/spec.md'], ['notes/plain', 'notes/gone', 'notes/missing'])),
+      holders: bySlug(await engine.readLiveIdentityHolders('a', ['doc-1', '7', 'doc-é'], ['Spec'])),
+      none: await engine.readLiveIdentityHolders('a', [], []),
+      otherSource: await engine.readLiveIdentityHolders('missing', ['doc-1'], ['Spec']),
+      spec: await engine.readPageIdentity(spec.id),
+      gone: await engine.readPageIdentity(gone.id),
+      missing: await engine.readPageIdentity(999_999),
+    };
+    expect(seen).toEqual({
+      titles: [{ slug: 'notes/plain', source_path: null, title: 'Spec' }, { slug: 'notes/spec', source_path: 'notes/spec.md', title: 'Spec' }],
+      holders: [
+        { slug: 'notes/num', source_path: null, fm_id: '7', title: 'Numbered' },
+        { slug: 'notes/plain', source_path: null, fm_id: null, title: 'Spec' },
+        { slug: 'notes/spec', source_path: 'notes/spec.md', fm_id: 'doc-1', title: 'Spec' },
+        { slug: 'notes/é-accent', source_path: null, fm_id: 'doc-é', title: 'Accent' },
+      ],
+      none: [], otherSource: [],
+      spec: { fm_id: 'doc-1', title: 'Spec' }, gone: null, missing: null,
+    });
+    return seen;
+  });
+
+  parityTest('a non-string frontmatter id reads as jsonb text: object, array and nested values', {
+    methods: ['putPage', 'readLiveIdentityHolders', 'readPageIdentity'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'a');
+    const put = (slug: string, title: string, id: unknown) => engine.putPage(slug, { ...NOTE, title, frontmatter: { id } }, { sourceId: 'a' });
+    // jsonb's text form, as Postgres `frontmatter->>'id'` prints it: ", " and ": " separators, keys by (length, bytes).
+    const object = await put('notes/id-object', 'Object', { bb: 1, a: [1, 2] });
+    await put('notes/id-array', 'Array', [1, 'x', null, 2.5]);
+    await put('notes/id-nested', 'Nested', { outer: { k: [true, { z: 'é' }] }, n: null });
+    const seen = {
+      byId: bySlug(await engine.readLiveIdentityHolders('a', ['{"a": [1, 2], "bb": 1}', '[1, "x", null, 2.5]', '{"n": null, "outer": {"k": [true, {"z": "é"}]}}'], [])),
+      compact: await engine.readLiveIdentityHolders('a', ['{"bb":1,"a":[1,2]}', '[1,"x",null,2.5]'], []),
+      object: await engine.readPageIdentity(object.id),
+    };
+    expect(seen).toEqual({
+      byId: [
+        { slug: 'notes/id-array', source_path: null, fm_id: '[1, "x", null, 2.5]', title: 'Array' },
+        { slug: 'notes/id-nested', source_path: null, fm_id: '{"n": null, "outer": {"k": [true, {"z": "é"}]}}', title: 'Nested' },
+        { slug: 'notes/id-object', source_path: null, fm_id: '{"a": [1, 2], "bb": 1}', title: 'Object' },
+      ],
+      compact: [],
+      object: { fm_id: '{"a": [1, 2], "bb": 1}', title: 'Object' },
+    });
+    return seen;
+  });
+
+  parityTest('a rename compares the stored title of the first page in slug byte order when two live pages match its path', {
+    methods: ['putPage', 'refreshPageOrigin', 'readRenameIdentityRows', 'readLiveIdentityHolders'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'a');
+    // The source lives in sub/ of its Git repository, so a page can record the old file as sub/notes/old.md (the Git
+    // path) or notes/old.md (the source path); the live-origin index allows both. notes/z-first is written first, so
+    // Postgres and PGLite return it first (heap order) while the Rust store returns notes/a-second first (slug order).
+    // The caller sorts by slug bytes, so every engine compares notes/a-second's stored title, which differs.
+    for (const [slug, title, sourcePath] of [['notes/z-first', 'Plan', 'sub/notes/old.md'], ['notes/a-second', 'Other', 'notes/old.md']] as const) {
+      await engine.putPage(slug, { ...NOTE, title }, { sourceId: 'a' });
+      await engine.refreshPageOrigin(slug, { sourceId: 'a', sourcePath });
+    }
+    const root = mkdtempSync(join(tmpdir(), 'gbrain-rename-order-'));
+    try {
+      const git = (...args: string[]) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+      const commit = () => { git('add', '-A'); git('-c', 'user.name=Example', '-c', 'user.email=example@example.invalid', 'commit', '-qm', 'step'); return git('rev-parse', 'HEAD'); };
+      git('init', '-q', '-b', 'main');
+      mkdirSync(join(root, 'sub/notes'), { recursive: true });
+      writeFileSync(join(root, 'sub/notes/old.md'), '---\ntitle: Plan\n---\nThe plan, first draft.\n');
+      const base = commit();
+      rmSync(join(root, 'sub/notes/old.md'));
+      writeFileSync(join(root, 'sub/notes/new.md'), '---\ntitle: Plan\n---\nThe plan, second draft with more text.\n');
+      const target = commit();
+      const manifest = { added: [], modified: [], deleted: [], renamed: [{ from: 'sub/notes/old.md', to: 'sub/notes/new.md', similarity: 80 }] };
+      const decided = await confirmRenameIdentities(engine, root, base, target, manifest, { sourceId: 'a', sourcePathOf: path => path.replace(/^sub\//, '') });
+      const seen = { renamed: decided.renamed, downgraded: (decided.downgradedRenames ?? []).map(pair => ({ from: pair.from, to: pair.to, reason: pair.reason })) };
+      expect(seen).toEqual({ renamed: [], downgraded: [{ from: 'sub/notes/old.md', to: 'sub/notes/new.md', reason: 'no_identity_signal' }] });
+      return seen;
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   parityTest('countSourcePages counts one source\'s pages, soft-deleted pages only when asked', { methods: ['countSourcePages'] }, async (engine, backend) => {
     await createSource(engine, backend, 'a');
     await createSource(engine, backend, 'ab');
@@ -300,10 +530,67 @@ describe('engine parity: source-resolution reads', () => {
     expect(names).toEqual([['default', 'default'], ['bare', 'bare'], ['wiki', 'Wiki']]);
     return { refused, rows, names };
   });
+  parityTest('listSourceIds lists every source id, archived ones too, in byte order whatever the server locale', { methods: ['listSourceIds'] }, async (engine, backend) => {
+    // Byte order and en_US.utf8 disagree here: en_US skips the hyphen (a0 < ab < a-c) and folds case (a_b < B);
+    // byte order is '-' < '0' < 'B' < '_' < 'a'. The Rust store keeps `default` first, so its member must sort too.
+    for (const id of ['zz', 'ab', 'a-c', 'a0']) await createSource(engine, backend, id);
+    await archiveSource(engine, backend, 'zz');
+    const common = ['a-c', 'a0', 'ab', 'default', 'zz'];
+    if (backend !== 'rust') {
+      // Ids the Rust store refuses (upper case, underscore) can exist only on a SQL brain.
+      for (const id of ['B', 'a_b']) await createSource(engine, backend, id);
+      expect(await engine.listSourceIds()).toEqual(['B', 'a-c', 'a0', 'a_b', 'ab', 'default', 'zz']);
+    }
+    const ids = (await engine.listSourceIds()).filter(id => common.includes(id));
+    expect(ids).toEqual(common);
+    return ids;
+  });
+  parityTest('readSoleSourceId answers the only source, and null once a second one exists', { methods: ['readSoleSourceId'] }, async (engine, backend) => {
+    const alone = await engine.readSoleSourceId();
+    await createSource(engine, backend, 'a-c');
+    await archiveSource(engine, backend, 'a-c');
+    const two = await engine.readSoleSourceId();
+    expect([alone, two]).toEqual(['default', null]);
+    return [alone, two];
+  });
+
+  parityTest('readFirstSourceId answers default first, else the lowest id in byte order whatever the server locale', { methods: ['readFirstSourceId'] }, async (engine, backend) => {
+    for (const id of ['ab', 'a0', 'a-c']) await createSource(engine, backend, id);
+    const first = await engine.readFirstSourceId();
+    expect(first).toBe('default');
+    if (backend !== 'rust') {
+      // Only a SQL brain can drop `default`. en_US.utf8 skips the hyphen and answers a0; byte order answers a-c.
+      await engine.executeRaw(`DELETE FROM sources WHERE id = 'default'`);
+      expect(await engine.readFirstSourceId()).toBe('a-c');
+      await engine.executeRaw('DELETE FROM sources');
+      expect(await engine.readFirstSourceId()).toBeNull();
+    }
+    return first;
+  });
+
+  parityTest('lockAllSourceRows locks every source row inside a transaction and leaves the rows unchanged', { methods: ['lockAllSourceRows', 'listSourceIds'] }, async (engine, backend) => {
+    await createSource(engine, backend, 'a-c');
+    const seen = await engine.transaction(async tx => {
+      await tx.lockAllSourceRows('update');
+      await tx.lockAllSourceRows('share');
+      return tx.listSourceIds();
+    });
+    expect(seen).toEqual(['a-c', 'default']);
+    return seen;
+  });
+  parityTest('listAllSources and listSourceRecords put default first, then ids in byte order whatever the server locale', { methods: ['listAllSources', 'listSourceRecords'] }, async (engine, backend) => {
+    // en_US.utf8 skips the hyphen (a0 < ab < a-c); byte order puts '-' before '0' before 'b'.
+    for (const id of ['ab', 'a0', 'a-c']) await createSource(engine, backend, id);
+    const all = (await engine.listAllSources()).map(r => r.id);
+    const records = (await engine.listSourceRecords()).map(r => r.id);
+    expect(all).toEqual(['default', 'a-c', 'a0', 'ab']);
+    expect(records).toEqual(['default', 'a-c', 'a0', 'ab']);
+    return { all, records };
+  });
 
   // A remote memory_recall drops the QM scope sources it did not name (withoutScopeSources); the census found the Rust
-  // engine refused it, because the scope check read the sources through sqlQueryForEngine. It reads getSource now.
-  parityTest('the scope-source check of a remote recall drops marked sources and keeps the rest', { methods: ['getSource'] }, async (engine, backend) => {
+  // engine refused it, because the scope check read the sources through sqlQueryForEngine. It reads readScopeSourceConfigs now.
+  parityTest('the scope-source check of a remote recall drops marked sources and keeps the rest', { methods: ['readScopeSourceConfigs'] }, async (engine, backend) => {
     await createSource(engine, backend, 'scope', { qm_scope: true, federated: false });
     await createSource(engine, backend, 'plain', { federated: true });
     const marked = [...await markedScopeSources(engine, ['plain', 'scope', 'scope', 'default', 'no-such-source'])];

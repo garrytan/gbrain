@@ -46,6 +46,16 @@ public struct Problem: Error, Equatable {
                 fix: "macOS changed the Messages database; rebuild the helper from a newer gbrain.")
     }
 
+    public static var contactsNotAllowed: Problem {
+        Problem(code: "contacts_not_allowed", status: 403, title: "No access to Contacts",
+                detail: "macOS hasn't given \(HelperIdentity.appName) access to Contacts, so it reads none.",
+                fix: "At the Mac, run: \"$HOME/Applications/\(HelperIdentity.appName).app/Contents/MacOS/\(HelperIdentity.executable)\" contacts-setup and click OK on the macOS Contacts dialog. If Don't Allow was clicked before, turn on \(HelperIdentity.appName) in System Settings > Privacy & Security > Contacts.")
+    }
+
+    public static let cursorExpired = Problem(code: "cursor_expired", status: 410, title: "Cursor expired",
+                                              detail: "The helper no longer holds the snapshot this cursor belongs to.",
+                                              fix: "Leave the cursor out to read a full snapshot.")
+
     public static func badParam(_ detail: String) -> Problem {
         Problem(code: "bad_param", status: 400, title: "Bad parameter", detail: detail)
     }
@@ -53,7 +63,7 @@ public struct Problem: Error, Equatable {
     public static func sourceDisabled(_ id: String) -> Problem {
         Problem(code: "source_disabled", status: 403, title: "Source turned off",
                 detail: "The \(id) source is turned off in the helper's config.",
-                fix: "Set sources.\(id).enabled to true in the helper's config.json, then run: launchctl kickstart -k gui/\(getuid())/\(HelperIdentity.bundleId)")
+                fix: "Set sources.\(id).enabled to true in the helper's config.json; the running helper sees it on its next request.")
     }
 
     public static func insufficientScope(_ scope: String) -> Problem {

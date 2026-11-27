@@ -7,8 +7,9 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import type { OperationContext } from '../src/core/ops/contract.ts';
 import { setupSharedBrainContent, contentSetupKey } from '../src/core/shared-skills/setup.ts';
 import { packagedSharedSkills } from '../src/core/shared-skills/setup-bundle.ts';
-import { inventorySkillpack, setupHash } from '../src/core/shared-skills/setup-files.ts';
+import { existingAncestor, inventorySkillpack, setupHash } from '../src/core/shared-skills/setup-files.ts';
 import { legacyPublication, migrationCheckpointKey, runSharedSkillsMigration } from '../src/core/shared-skills/migration.ts';
+import { owedConflicts } from '../src/core/shared-skills/migration-host-work.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { stubSourceMembers } from './helpers/source-members-stub.ts';
 
@@ -24,6 +25,8 @@ function fixture(root: string | null = null) {
   const engine = {
     // The typed source reads answer the fixture's one source, as the raw `FROM sources` branch below does.
     ...stubSourceMembers(() => [source], { defaultHasPages: () => hasPages }),
+    // The source policy reads the source through the typed readSourceState member (engine-sql/write-misc.ts).
+    readSourceState: async (id: string) => (id === source.id ? { incarnation: source.incarnation, archived: false, local_path: source.local_path, config: {} } : null),
     getConfig: async (key: string) => config.get(key) ?? null,
     setConfig: async (key: string, value: string) => { config.set(key, value); },
     executeRaw: async (sql: string) => {
@@ -45,6 +48,24 @@ function writePack(root: string) {
     mkdirSync(join(target, '..'), { recursive: true });
     writeFileSync(target, body);
   }
+}
+
+/**
+ * Makes the fixture a Rust brain: raw SQL on shared-skill tables refuses by name, the brain singleton comes from the
+ * writer admin state (managed-mode.ts) and the sealed pack from the store (rust-publication.ts) through `readPack`.
+ */
+function asRustBrain(f: ReturnType<typeof fixture>, readPack: (key: { sourceId: string; incarnation: string }) => Promise<unknown>) {
+  Object.assign(f.ctx.engine, {
+    kind: 'rust',
+    readWriterAdminState: async () => JSON.stringify({ brain: { id: f.brainId, enabled: false, mode_epoch: 0, skill_bundles_enabled: false, writer_protocol_floor: 1 } }),
+    _admit: async () => {},
+    storeFor: async () => ({ brain: { readSharedSkillPack: readPack } }),
+  });
+  const sqlRead = f.ctx.engine.executeRaw.bind(f.ctx.engine);
+  f.ctx.engine.executeRaw = (async (sql: string, params?: unknown[]) => {
+    if (sql.includes('shared_skill_')) throw Object.assign(new Error('raw SQL is refused on the Rust engine'), { code: 'engine_capability_missing' });
+    return sqlRead(sql, params);
+  }) as BrainEngine['executeRaw'];
 }
 
 describe('combined content root setup', () => {
@@ -99,6 +120,57 @@ describe('combined content root setup', () => {
     symlinkSync(root, join(root, 'alias'));
     await expect(setupSharedBrainContent(f.ctx, { root: join(root, 'alias'), fresh: true })).rejects.toMatchObject({ code: 'local_conflict' });
   });
+  test('resolves a symlinked ancestor above the brain home and a chosen root (#9925)', async () => {
+    const real = temp(), link = join(temp(), 'link'), f = fixture();
+    symlinkSync(real, link);
+    mkdirSync(join(link, 'home'));
+    await withEnv({ GBRAIN_HOME: join(link, 'home'), DATABASE_URL: undefined }, async () => {
+      const result = await setupSharedBrainContent(f.ctx, { fresh: true, dryRun: true });
+      expect(result.root).toBe(join(realpathSync(real), 'home', '.gbrain', 'content', f.brainId, 'default'));
+      const chosen = await setupSharedBrainContent(f.ctx, { fresh: true, dryRun: true, root: join(link, 'chosen') });
+      expect(chosen.root).toBe(join(realpathSync(real), 'chosen'));
+    });
+  });
+  test('still refuses a symlink inside the brain-owned content tree', async () => {
+    const home = temp(), elsewhere = temp(), f = fixture();
+    mkdirSync(join(home, '.gbrain'));
+    symlinkSync(elsewhere, join(home, '.gbrain', 'content'));
+    await withEnv({ GBRAIN_HOME: home, DATABASE_URL: undefined }, async () => {
+      await expect(setupSharedBrainContent(f.ctx, { fresh: true, dryRun: true })).rejects.toMatchObject({ code: 'local_conflict' });
+    });
+    const nested = temp(), g = fixture();
+    mkdirSync(join(nested, '.gbrain', 'content'), { recursive: true });
+    symlinkSync(elsewhere, join(nested, '.gbrain', 'content', g.brainId));
+    await withEnv({ GBRAIN_HOME: nested, DATABASE_URL: undefined }, async () => {
+      await expect(setupSharedBrainContent(g.ctx, { fresh: true, dryRun: true })).rejects.toMatchObject({ code: 'local_conflict' });
+    });
+  });
+  test('a root inside another Git worktree is refused before any checkpoint names it, so --content-root still works (#10287)', async () => {
+    const parent = temp(), f = fixture();
+    expect(Bun.spawnSync(['git', 'init', '-q', parent]).exitCode).toBe(0);
+    await withEnv({ GBRAIN_HOME: join(parent, 'home'), DATABASE_URL: undefined }, async () => {
+      await expect(setupSharedBrainContent(f.ctx, { fresh: true })).rejects.toMatchObject({ code: 'local_conflict', message: expect.stringContaining('inside another Git worktree') });
+      expect(existsSync(join(parent, 'home', '.gbrain', 'content'))).toBe(false);
+      expect(JSON.parse(f.config.get(contentSetupKey('default', f.incarnation))!).root).toBeNull();
+      const root = join(realpathSync(temp()), 'content');
+      const retry = await setupSharedBrainContent(f.ctx, { fresh: false, dryRun: true, root });
+      expect(retry).toMatchObject({ status: 'planned', root, owned_root: true, fresh_root_activation: true });
+    });
+  });
+  test('--git whose git init fails inside another worktree is still refused, never claimed as the parent repository', async () => {
+    const parent = temp(), shims = temp(), f = fixture();
+    expect(Bun.spawnSync(['git', 'init', '-q', parent]).exitCode).toBe(0);
+    writeFileSync(join(shims, 'git'), `#!/bin/sh\n[ "$1" = init ] && exit 1\nexec ${Bun.which('git')} "$@"\n`, { mode: 0o755 });
+    await withEnv({ GBRAIN_HOME: join(parent, 'home'), DATABASE_URL: undefined, PATH: `${shims}:${process.env.PATH}` }, async () => {
+      await expect(setupSharedBrainContent(f.ctx, { fresh: true, git: 'init' })).rejects.toMatchObject({ code: 'local_conflict', message: expect.stringContaining('inside another Git worktree') });
+      expect(f.calls.some(sql => /UPDATE sources/.test(sql))).toBe(false);
+    });
+  });
+  test('the existing-ancestor walk stops at a missing filesystem root instead of looping', () => {
+    let probes = 0;
+    const ancestor = existingAncestor('/unmapped/drive/content', () => { if (++probes > 64) throw new Error('walked past the root'); return false; });
+    expect(ancestor).toBe('/');
+  });
   test('preserves the isolated installation memory path', async () => {
     const installation = temp(), f = fixture(join(installation, 'memory'));
     mkdirSync(f.source.local_path!);
@@ -146,6 +218,92 @@ describe('staged skill migration', () => {
     expect(edited.status).toBe('conflict');
     expect(readFileSync(join(root, 'skills/memory-care/SKILL.md'), 'utf8')).toBe('private: true\nLocal instructions');
     expect((await runSharedSkillsMigration(f.ctx)).status).toBe('conflict');
+  });
+  test('a sealed read that fails keeps the inventory taken before the edit, so a retry still sees the edit', async () => {
+    // A Rust brain owned by another process: this process's store is closed, so the sealed pack read refuses.
+    const root = temp(), f = fixture(root); writePack(root);
+    let closed = false;
+    asRustBrain(f, async () => {
+      if (closed) throw Object.assign(new Error("The Rust engine's store is closed"), { code: 'engine_closed' });
+      return null;
+    });
+    expect((await runSharedSkillsMigration(f.ctx)).status).toBe('action_required');
+    writeFileSync(join(root, 'skills/memory-care/SKILL.md'), 'private: true\nLocal instructions');
+    closed = true;
+    expect((await runSharedSkillsMigration(f.ctx)).status).not.toBe('complete');
+    closed = false;
+    const reopened = await runSharedSkillsMigration(f.ctx);
+    expect(reopened.status).toBe('conflict');
+    expect(reopened.sources[0].stages.at(-1)?.reason).toContain('skills/memory-care/SKILL.md');
+    expect(readFileSync(join(root, 'skills/memory-care/SKILL.md'), 'utf8')).toBe('private: true\nLocal instructions');
+  });
+  test('a client of a Rust brain\'s owner defers only the skillpack.json check, as host action, never a conflict', async () => {
+    // A process owns the brain, so this one is its client: the skill store is the owner's alone.
+    const root = temp(), f = fixture(root); writePack(root);
+    const packReads: unknown[] = [];
+    asRustBrain(f, async key => { packReads.push(key); return null; });
+    expect((await runSharedSkillsMigration(f.ctx)).status).toBe('action_required');
+    const manifest = readFileSync(join(root, 'skillpack.json'), 'utf8');
+    writeFileSync(join(root, 'skillpack.json'), JSON.stringify(JSON.parse(manifest), null, 4) + '\n');
+    Object.assign(f.ctx.engine, { ownerRole: 'client' });
+    for (let run = 0; run < 2; run++) {
+      const client = await runSharedSkillsMigration(f.ctx);
+      expect(client.status).toBe('action_required');
+      expect(client.sources[0].stages.map(stage => [stage.stage, stage.status, stage.code])).toEqual([['inventory', 'complete', undefined], ['inventory', 'action_required', 'owner_unavailable']]);
+    }
+    expect(packReads).toEqual([]);
+    // Whether a person must settle anything is unknown from a client, never "nothing" (doctor and the wedge notice read this).
+    expect(owedConflicts(await runSharedSkillsMigration(f.ctx, { dryRun: true }))).toBeNull();
+    // A change on disk is a conflict without the sealed hash, so the client reports it.
+    writeFileSync(join(root, 'skills/memory-care/SKILL.md'), 'private: true\nLocal instructions');
+    expect((await runSharedSkillsMigration(f.ctx)).status).toBe('conflict');
+    expect(packReads).toEqual([]);
+    // Back on the owner, the edits are still compared against the inventory taken before them.
+    Object.assign(f.ctx.engine, { ownerRole: 'owner' });
+    expect((await runSharedSkillsMigration(f.ctx)).status).toBe('conflict');
+    expect(readFileSync(join(root, 'skills/memory-care/SKILL.md'), 'utf8')).toBe('private: true\nLocal instructions');
+  });
+  test('a deferred client check keeps the evidence that refuses a moved root', async () => {
+    const root = temp(), moved = temp(), f = fixture(root); writePack(root); writePack(moved);
+    asRustBrain(f, async () => null);
+    expect((await runSharedSkillsMigration(f.ctx)).status).toBe('action_required');
+    const manifest = readFileSync(join(root, 'skillpack.json'), 'utf8');
+    writeFileSync(join(root, 'skillpack.json'), JSON.stringify(JSON.parse(manifest), null, 4) + '\n');
+    Object.assign(f.ctx.engine, { ownerRole: 'client' });
+    expect((await runSharedSkillsMigration(f.ctx)).status).toBe('action_required');
+    Object.assign(f.ctx.engine, { ownerRole: 'owner' });
+    f.source.local_path = moved;
+    const report = await runSharedSkillsMigration(f.ctx);
+    expect(report.status).toBe('conflict');
+    expect(report.sources[0].stages.at(-1)?.reason).toContain('The source root changed since migration inventory');
+  });
+  test('the source list never parses a source config, so a malformed one stays a per-source matter', async () => {
+    const root = temp(), f = fixture(root); writePack(root);
+    // Listings that return config refuse, as a malformed legacy config makes them throw.
+    Object.assign(f.ctx.engine, stubSourceMembers(() => [f.source, { id: 'zz-archived', archived: true }], {
+      fail: member => ['listAllSources', 'listSourceRecords', 'listSourceRoutingRows'].includes(member) ? new SyntaxError('malformed source config') : undefined,
+    }));
+    const report = await runSharedSkillsMigration(f.ctx, { dryRun: true });
+    expect(report.sources.map(row => [row.source_id, row.root])).toEqual([['default', root]]);
+  });
+  test('on a Rust brain the sealed manifest is read from the store, never raw SQL', async () => {
+    const root = temp(), f = fixture(root); writePack(root);
+    let sealedHash: string | undefined;
+    const packReads: Array<{ sourceId: string; incarnation: string }> = [];
+    asRustBrain(f, async key => { packReads.push(key); return sealedHash ? { pack_id: 'pack', revision: '1', manifest: {}, manifest_hash: sealedHash } : null; });
+    expect((await runSharedSkillsMigration(f.ctx)).status).toBe('action_required');
+    // Only skillpack.json's bytes change. The store has no sealed pack, so the edit is a conflict.
+    const manifest = readFileSync(join(root, 'skillpack.json'), 'utf8');
+    writeFileSync(join(root, 'skillpack.json'), JSON.stringify(JSON.parse(manifest), null, 4) + '\n');
+    expect((await runSharedSkillsMigration(f.ctx)).status).toBe('conflict');
+    expect(packReads).toEqual([{ sourceId: 'default', incarnation: f.incarnation }]);
+    // The store's sealed pack carries the new manifest, so the edit is the sealed publication's own and is accepted.
+    sealedHash = inventorySkillpack(root)!.hashes['skillpack.json'];
+    const accepted = await runSharedSkillsMigration(f.ctx);
+    expect(accepted.status).toBe('action_required');
+    expect(accepted.sources[0].stages.at(-1)?.reason).toContain('writer_not_quiesced');
+    expect(packReads.length).toBe(2);
+    expect(f.calls.some(sql => sql.includes('shared_skill_'))).toBe(false);
   });
   test('preserves exclusions and private content without adopting new publication authority', async () => {
     const root = temp(), f = fixture(root); writePack(root);

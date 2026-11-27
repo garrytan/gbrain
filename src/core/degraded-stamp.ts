@@ -31,6 +31,40 @@ const RESULT_NOTICE_REASONS: ReadonlySet<string> = new Set([
 /** One condition, one code: recall's keyword-only markers name the stage search and query already use. */
 const KEYWORD_ONLY_MARKERS: ReadonlySet<string> = new Set(['keyword_only_no_embedding_provider', 'keyword_only_embedding_disabled']);
 const stageCode = (stage: string): string => (KEYWORD_ONLY_MARKERS.has(stage) ? 'embed_unavailable' : stage);
+/**
+ * Keyword-only on purpose (embeddings turned off, `embedding_disabled`) is how the brain was set up, not a degraded
+ * result: search, query, find_experts and recall stamp nothing for it, nor for the keyword arm finding nothing (`keyword_zero`, the
+ * only arm that runs), so an empty answer is a true negative. The run stays recorded in `_meta.retrieval` and recall's
+ * `search_degraded`. A missing provider (`no_provider`), timeouts and failed arms still stamp.
+ */
+const KEYWORD_ONLY_BY_CHOICE = 'keyword_only_embedding_disabled';
+const byChoice = (d: Stage): boolean => d?.stage === 'embed_unavailable' && d.reason === 'embedding_disabled';
+
+/** Whether a `_meta.retrieval.degraded` list records a keyword-only run on a brain that turned embeddings off on purpose. */
+function keywordOnlyByChoice(degraded: unknown): boolean {
+  return Array.isArray(degraded) && degraded.some(byChoice);
+}
+
+/** A stage such a run expects rather than a degradation: the keyword-only run itself, and its only arm finding nothing. */
+function expectedWhenKeywordOnlyByChoice(d: Stage): boolean {
+  return byChoice(d) || d?.stage === 'keyword_zero';
+}
+
+/** The one-line verdict on an empty result of such a run (MCP's `empty_retrieval` info notice and the CLI line). */
+export const KEYWORD_ONLY_BY_CHOICE_EMPTY = 'Search was keyword-only because embeddings are off on this brain on purpose, and no page this caller can read holds these words within this search\'s filters (source, type, where): a true negative for these words in that scope only, not a degraded search (a synonym or the display name may still match).';
+
+/**
+ * The recall-impairing stages an empty result names (ranking-only stages never cause a miss), minus those a keyword-only-by-choice run expects.
+ * `byChoice` (the true-negative line) holds only when the keyword arm itself found nothing: a page past the end or hits a later step dropped is no negative.
+ */
+export function emptyRetrievalStages(degraded: unknown): { stages: string[]; byChoice: boolean } {
+  const choice = keywordOnlyByChoice(degraded);
+  const stages = (Array.isArray(degraded) ? degraded as Array<{ stage?: string; reason?: string }> : [])
+    .filter(d => affectsRecall(d) && !(choice && expectedWhenKeywordOnlyByChoice(d)))
+    .map(d => d.stage)
+    .filter((s): s is string => typeof s === 'string' && s.length > 0);
+  return { stages: [...new Set(stages)], byChoice: choice && (degraded as Array<{ stage?: string }>).some(d => d?.stage === 'keyword_zero') };
+}
 
 /** think and synthesize warnings that mean the gathered evidence is partial. */
 const QUESTION_EMBED_WARNINGS: ReadonlySet<string> = new Set(['QUESTION_EMBED_FAILED', 'QUESTION_EMBED_SKIPPED_EMBEDDING_DISABLED']);
@@ -53,15 +87,17 @@ export function degradedStampFor(
   const reasons = new Set<string>();
   const retrieval = (meta?.retrieval ?? null) as { degraded?: Stage[]; coverage?: RetrievalCoverage } | null;
   const pendingCould = retrieval?.coverage?.could_affect?.pending_projection;
-  for (const d of Array.isArray(retrieval?.degraded) ? retrieval!.degraded : []) {
-    if (typeof d?.stage !== 'string' || !affectsRecall(d as { stage: string })) continue;
+  const r = (result && typeof result === 'object' && !Array.isArray(result) ? result : {}) as Record<string, unknown>;
+  const stages = Array.isArray(retrieval?.degraded) ? retrieval!.degraded : [];
+  const expected = keywordOnlyByChoice(stages) || r.search_degraded === KEYWORD_ONLY_BY_CHOICE;
+  for (const d of stages) {
+    if (typeof d?.stage !== 'string' || !affectsRecall(d as { stage: string }) || (expected && expectedWhenKeywordOnlyByChoice(d))) continue;
     if (d.stage === 'projection_pending' && pendingCould === 0) continue;
     reasons.add(stageCode(d.stage));
   }
-  const r = (result && typeof result === 'object' && !Array.isArray(result) ? result : {}) as Record<string, unknown>;
-  if (typeof r.search_degraded === 'string') reasons.add('embed_unavailable');
+  if (typeof r.search_degraded === 'string' && r.search_degraded !== KEYWORD_ONLY_BY_CHOICE) reasons.add('embed_unavailable');
   const facts = r.facts_degraded as { reason?: unknown; unembedded?: unknown } | undefined;
-  if (typeof facts?.reason === 'string') reasons.add(stageCode(facts.reason));
+  if (typeof facts?.reason === 'string' && facts.reason !== KEYWORD_ONLY_BY_CHOICE) reasons.add(stageCode(facts.reason));
   if (typeof facts?.unembedded === 'number' && facts.unembedded > 0) reasons.add('facts_unembedded');
   if (typeof r.degraded_reason === 'string') {
     if (op === 'delta') reasons.add('delta_incomplete');

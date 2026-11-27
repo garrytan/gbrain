@@ -4,6 +4,7 @@
 //! Each method decodes its arguments, runs one `Store` call on the pool through `Brain::run`,
 //! and resolves plain JSON (rust/README.md, "The brain store").
 
+use gbrain_store::facts::PrivacyPolicy;
 use napi::Env;
 use napi::bindgen_prelude::Object;
 use napi_derive::napi;
@@ -27,6 +28,21 @@ impl Brain {
         })
     }
 
+    /// `recordRenameAlias(sourceId, oldSlug, newSlug)`: records `old -> new` in the rename history and the slug
+    /// aliases; resolves nothing.
+    #[napi]
+    pub fn record_rename_alias<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        old_slug: String,
+        new_slug: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.record_rename_alias(&source_id, &old_slug, &new_slug)
+        })
+    }
+
     /// `resolveSlugWithAliasDetailed(slug, sources)`: resolves `{ canonical_slug, source_id,
     /// matches }` for the first source in order that has the alias, or `null`.
     #[napi]
@@ -35,11 +51,29 @@ impl Brain {
         env: &'env Env,
         slug: String,
         sources: Value,
+        exclude_private: Option<Value>,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
             let sources: Vec<String> = required(sources, "resolveSlugWithAliasDetailed sources")?;
-            s.resolve_slug_with_alias_detailed(&slug, &sources)
+            let policy: Option<PrivacyPolicy> = match exclude_private {
+                Some(v) if !v.is_null() => {
+                    Some(required(v, "resolveSlugWithAliasDetailed excludePrivate")?)
+                }
+                _ => None,
+            };
+            s.resolve_slug_with_alias_detailed(&slug, &sources, policy.as_ref())
         })
+    }
+
+    /// `listSlugAliases(sourceId)`: resolves every `{ alias_slug, canonical_slug }` row of the
+    /// source, in alias byte order.
+    #[napi]
+    pub fn list_slug_aliases<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_slug_aliases(&source_id))
     }
 
     /// `resolveAliases(aliasNorms, { sourceId?, sourceIds?, excludePrivate?, minTrust?,
@@ -124,5 +158,32 @@ impl Brain {
                 required(aliases, "replaceDerivedAliases aliases")?;
             s.replace_derived_aliases(&slug, &source_id, &aliases)
         })
+    }
+
+    /// `listAliasTargets(sourceIds?)`: resolves `{ source_id, slug, page, page_aliases,
+    /// slug_redirects }` for every alias target whose page is missing or soft-deleted, by source
+    /// then slug in byte order; every source when `sourceIds` is null.
+    #[napi]
+    pub fn list_alias_targets<'env>(
+        &self,
+        env: &'env Env,
+        source_ids: Option<Value>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let source_ids: Option<Vec<String>> = arg(source_ids, "listAliasTargets sourceIds")?;
+            s.list_alias_targets(source_ids.as_deref())
+        })
+    }
+
+    /// `deleteOrphanedAliases(sourceId, slug)`: resolves how many alias rows of both tables went;
+    /// 0 when the slug has a page row, live or soft-deleted.
+    #[napi]
+    pub fn delete_orphaned_aliases<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+        slug: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.delete_orphaned_aliases(&source_id, &slug))
     }
 }

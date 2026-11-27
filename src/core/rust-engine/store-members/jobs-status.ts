@@ -4,11 +4,11 @@
  * holds (rust/docs/store/jobs-status.md); timestamps cross the binding as ISO strings and come back as `Date`s.
  */
 import type {
-  EmbedBackfillState, FailedJobError, JobStatusCount, JobStatusFilter, LastAutopilotCycles, QueueDepth, SourceJobCounts,
-  TtlCancelledCount, WaitingScopeState,
+  BudgetOwnerRow, EmbedBackfillState, FailedJobError, JobStatusCount, JobStatusFilter, LastAutopilotCycles, QueueDepth, SourceJobCounts,
+  SourceCycleFailureRow, TtlCancelledCount, WaitingScopeState,
 } from '../../engine-sql/jobs-status.ts';
 import { withDates } from '../store-codec.ts';
-import { storeCall, type StoreMember } from './common.ts';
+import { refuseMember, storeCall, type StoreMember } from './common.ts';
 
 const call = <T>(member: string, run: () => Promise<T>): Promise<T> => storeCall({ member }, run);
 
@@ -31,6 +31,11 @@ export const readLastCompletedJobAt: StoreMember<[], Date | null> = async (brain
   return at === null ? null : new Date(at);
 };
 
+export const listRecentSourceCycleFailures: StoreMember<[spec: { cutoff: string; sourceId?: string | null }], SourceCycleFailureRow[]> = async (brain, spec) => {
+  const rows: SourceCycleFailureRow[] = await call('listRecentSourceCycleFailures', () => brain.listRecentSourceCycleFailures(spec.cutoff, spec.sourceId || null));
+  return rows.map((row) => withDates(row, ['last_failed_at']));
+};
+
 export const countTtlCancelledByName: StoreMember<[reasonLike: string, withinSeconds: number], TtlCancelledCount[]> = (brain, reasonLike, withinSeconds) =>
   call('countTtlCancelledByName', () => brain.countTtlCancelledByName(reasonLike, withinSeconds));
 
@@ -42,6 +47,13 @@ export const countRecentCompletedJobs: StoreMember<[name: string, withinSeconds:
 
 export const listRecentFailedJobErrors: StoreMember<[withinSeconds: number], FailedJobError[]> = (brain, withinSeconds) =>
   call('listRecentFailedJobErrors', () => brain.listRecentFailedJobErrors(withinSeconds));
+
+/** [] when no unfinished job owns a budget; otherwise refused: the spend total reads a budget log this store does not keep. */
+export const listBudgetOwners: StoreMember<[], BudgetOwnerRow[]> = async (brain) => {
+  const owners = await call('listBudgetOwners', () => brain.listBudgetOwnerJobs()) as unknown[];
+  if (owners.length === 0) return [];
+  return refuseMember('listBudgetOwners', 'the spend log of a budget owner');
+};
 
 export const readQueuedPageChars: StoreMember<[spec: { name: string; queue: string; maxChars: number }], number | null> = (brain, spec) =>
   call('readQueuedPageChars', () => brain.readQueuedPageChars({ name: spec.name, queue: spec.queue, maxChars: spec.maxChars }));

@@ -25,7 +25,7 @@ async function runLandingGaps(ctx: DoctorContext): Promise<Check[]> {
   }
   const sources = (await engine.executeRaw<{ id: string }>(`SELECT s.id FROM sources s WHERE s.archived IS NOT TRUE
       AND EXISTS (SELECT 1 FROM persistence_source_bindings b WHERE b.source_id=s.id AND b.source_incarnation=s.incarnation)
-      AND ($1::text[] IS NULL OR s.id=ANY($1::text[])) ORDER BY s.id`, [doctorSourceIds(ctx) ?? null])).map(row => row.id);
+      AND ($1::text[] IS NULL OR s.id=ANY($1::text[])) ORDER BY s.id COLLATE "C"`, [doctorSourceIds(ctx) ?? null])).map(row => row.id);
   const read: Array<{ source_id: string; gaps: LandingGaps }> = [];
   for (const id of sources) read.push({ source_id: id, gaps: await readLandingGaps(engine, id) });
   const details = { docs: DOCS, sources: read.map(({ source_id, gaps }) => ({ source_id, ...gaps })) };

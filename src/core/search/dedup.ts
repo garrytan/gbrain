@@ -26,6 +26,7 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 import type { SearchResult } from '../types.ts';
 import { chunkManifestJoin, chunkManifestReads, chunkVisibleFilter } from './safe-chunks.ts';
 
@@ -55,14 +56,20 @@ function pageKey(r: SearchResult): string {
  * than MAX_PER_PAGE (otherwise the region rule changes nothing), with its
  * chunk-manifest probe in one read under the keyword statement bound
  * (engine.keywordBoundedRead); a failed read, a cancelled one included,
- * leaves every page under the inline rule.
+ * leaves every page under the inline rule. An engine with no SQL dialect (Rust)
+ * answers the same rows from its typed member, readSegmentRegions.
  */
-export async function segmentRegions(engine: Pick<BrainEngine, 'kind' | 'executeRaw' | 'keywordBoundedRead'>, results: readonly SearchResult[]): Promise<Map<number, number>> {
+export async function segmentRegions(engine: Pick<BrainEngine, 'kind' | 'executeRaw' | 'keywordBoundedRead' | 'readSegmentRegions'>, results: readonly SearchResult[]): Promise<Map<number, number>> {
   const counts = new Map<string, number>();
   for (const r of results) counts.set(pageKey(r), (counts.get(pageKey(r)) ?? 0) + 1);
-  const ids = results.filter(r => counts.get(pageKey(r))! > MAX_PER_PAGE && r.chunk_id > 0).map(r => r.chunk_id);
-  if (ids.length === 0) return new Map();
+  const hits = results.filter(r => counts.get(pageKey(r))! > MAX_PER_PAGE && r.chunk_id > 0);
+  if (hits.length === 0) return new Map();
+  const ids = hits.map(r => r.chunk_id);
   try {
+    if (engine.readSegmentRegions) {
+      const rows = await engine.readSegmentRegions(hits.map(r => ({ pageId: Number(r.page_id), chunkId: r.chunk_id })));
+      return new Map(rows.map(r => [r.chunk_id, r.byte_start]));
+    }
     return await engine.keywordBoundedRead(async db => {
       if (!await chunkManifestReads(engine, db)) return new Map<number, number>();
       const rows = await db.executeRaw<{ id: number; byte_start: number | string }>(`SELECT cc.id, m.byte_start FROM content_chunks cc
@@ -71,7 +78,9 @@ export async function segmentRegions(engine: Pick<BrainEngine, 'kind' | 'execute
         WHERE cc.id = ANY($1::int[]) AND m.byte_start IS NOT NULL AND ${chunkVisibleFilter('p', 'cc')}`, [ids]);
       return new Map(rows.map(r => [Number(r.id), Number(r.byte_start)]));
     });
-  } catch {
+  } catch (e) {
+    // A failed read leaves every page under the inline rule; an engine that cannot serve it refuses instead.
+    rethrowCapabilityRefusal(e);
     return new Map();
   }
 }

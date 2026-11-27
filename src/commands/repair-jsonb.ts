@@ -104,8 +104,9 @@ export interface RepairOpts {
  * Run the repair against the currently-configured engine.
  *
  * On PGLite this finds 0 rows (the bug never affected the parameterized
- * encode path PGLite uses) and exits cleanly. On Postgres it issues one
- * idempotent UPDATE per target column.
+ * encode path PGLite uses) and exits cleanly; a Rust brain stores typed JSON
+ * values and has no SQL, so it reports the same 0 rows. On Postgres it issues
+ * one idempotent UPDATE per target column.
  */
 export async function repairJsonb(opts: RepairOpts = { dryRun: false }): Promise<RepairResult> {
   let engineCfg = opts.engineConfig;
@@ -124,7 +125,7 @@ export async function repairJsonb(opts: RepairOpts = { dryRun: false }): Promise
     total_repaired: 0,
   };
 
-  if (engineKind === 'pglite') {
+  if (engineKind === 'pglite' || engineKind === 'rust') {
     for (const t of TARGETS) {
       result.per_target.push({ table: t.table, column: t.column, rows_repaired: 0 });
     }
@@ -212,8 +213,8 @@ export async function runRepairJsonbCli(args: string[]): Promise<void> {
     return;
   }
 
-  if (result.engine === 'pglite') {
-    console.log('Engine: pglite — JSONB double-encode bug never affected this path. No-op.');
+  if (result.engine === 'pglite' || result.engine === 'rust') {
+    console.log(`Engine: ${result.engine} — JSONB double-encode bug never affected this path. No-op.`);
     return;
   }
 

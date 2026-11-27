@@ -25,7 +25,9 @@
  * exact bytes plus the page fields an import would store, bound to the page
  * revision) is hashed; a file whose import would need a canonical overlay,
  * or that no rule fixes, is `needs_review` with the exact manual fix and is
- * never written.
+ * never written. LC-2: so is a file held for something other than its
+ * frontmatter (its hold's own fix decides it) and a file whose import would
+ * restore a deleted page or re-create a purged one.
  *
  * Explicit-only and preview-bound: `--apply --expect <hash>` (destructive
  * consent: `--yes`) re-derives each approved change from the file as it is
@@ -41,11 +43,12 @@ import { execFileSync } from '../spawn.ts';
 import { existsSync, lstatSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
 import { join } from 'node:path';
+import { scannerSlugRootMode, scannerSourcePath } from '../write-through.ts';
 import type { BrainEngine } from '../engine.ts';
 import { opError, OperationError, type OperationContext } from '../ops/contract.ts';
 import { shellQuote, type Action } from '../agent-output.ts';
 import { autoFixFrontmatter, createFrontmatterBackup, makeFrontmatterBackupRunId, repairRecoverableFrontmatter } from '../brain-writer.ts';
-import { classifyImportHold, parseMarkdown, type ContentHold, type ParsedMarkdown } from '../markdown.ts';
+import { classifyImportHold, HOLD_CODES, parseMarkdown, type ContentHold, type ParsedMarkdown } from '../markdown.ts';
 import { dataFrontmatter as matter } from '../data-frontmatter.ts';
 import { MAX_FILE_SIZE, type ContentRefusal } from '../import-screen.ts';
 import { importFromFile } from '../import-file.ts';
@@ -53,7 +56,8 @@ import { resolveSlugForPath, slugifyPath } from '../sync.ts';
 import { isReservedSkillBundlePath } from '../skill-reserved-paths.ts';
 import { digest, sha256 } from '../persistence/digest.ts';
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
-import { clearGitHold, readGitSourceHolds, type GitHoldRecord } from '../persistence/sync-holds.ts';
+import { clearGitHold, fileDriftSide, gitHoldFix, readGitSourceHolds, type GitHoldRecord } from '../persistence/sync-holds.ts';
+import { readOriginDeletedMarker } from '../persistence/sync-markers.ts';
 import { loadRepairBusySet, repairBusy, repairBusyMessage, type RepairBusySet } from '../persistence/repair-busy.ts';
 import { fenceWhere } from '../fence-repair/refusal.ts';
 import type { SyncRename } from '../persistence/sync-discovery.ts';
@@ -66,6 +70,8 @@ import { afterCursor, repairRequestId, type RepairHandler, type RepairItem, type
 import { gitChildEnv } from '../git-env.ts';
 import { commitPushCommand } from '../git/commit-push.ts';
 import { bindOrigin, originConflictMessage, pickCanonicalOrigin } from '../persistence/origin-guard.ts';
+import { readSourceStates } from '../source-rows.ts';
+import type { OriginPathPageRow } from '../engine-sql/repair-plan-scans.ts';
 
 type Mode = 'managed' | 'legacy';
 type RepairClass = 'safe' | 'interpretive';
@@ -97,6 +103,25 @@ export interface FrontmatterPreviewDetails {
 }
 
 const REPAIRABLE = new Set(['YAML_PARSE', 'NULL_BYTES', 'NESTED_QUOTES', 'MISSING_CLOSE']);
+
+/**
+ * LC-2 (decision E1): the hold codes a frontmatter repair settles, the content refusals a file causes by itself, which a
+ * clean read of the file answers. Every other hold (a `file_drift` of a deleted or purged page, a page identity or origin
+ * conflict, a write that raced the database, ...) is a decision its own fix puts to the user: importing the file "as it is
+ * now" would make that decision for them, so such a file is `needs_review` with the hold's own fix, never a proposal.
+ */
+const FRONTMATTER_HOLD_CODES: ReadonlySet<string> = new Set<string>([...HOLD_CODES, 'invalid_fence', 'content_rejected', 'purged_content', 'write_gate_rejected',
+  'visibility_noncanonical', 'frontmatter_alias_limit', 'content_null_bytes']);
+
+/** The `needs_review` text of a hold another decision owns: its own fix (`gitHoldFix`), which the repair never applies. */
+function heldElsewhere(hold: GitHoldRecord): string {
+  const fix = gitHoldFix(hold);
+  const side = hold.code === 'file_drift' ? fileDriftSide(hold.meta) : undefined;
+  const what = `${hold.code}${side ? ` (side ${side}${hold.meta.state ? `, state ${hold.meta.state}` : ''})` : ''}`;
+  return `${hold.path} is held ${what}, which is not a frontmatter problem, so frontmatter repair does not import it (that would decide the hold without the user). `
+    + `${fix.user_message ? `${fix.user_message} ` : ''}${fix.argv ? `Next: ${shellQuote(fix.argv)}. ` : ''}${fix.why}`;
+}
+
 const RESCUE_KEYS = new Set(['title', 'name', 'description', 'summary']);
 
 function previewArgv(scope: RepairScope, selection: Pick<Selection, 'only' | 'skip'>, includeAmbiguous: boolean): string[] {
@@ -185,7 +210,9 @@ function resolution(hold: Pick<ContentRefusal, 'code' | 'reason' | 'key' | 'line
     case 'write_gate_rejected': return `The write gate refused ${path} as external instruction-like content; ask the user whether to edit it, to allow it (gbrain trust allow --source ${sourceId} --uri-prefix ${path}), or whether write_gate.external_mode should stay reject.`;
     case 'rename_held': return `Re-run the preview with --include-ambiguous to re-bind the rename of ${path} to the current page, or restore the old file name.`;
     case 'tag_too_long': return `${path} has a frontmatter tag over the tag size limit, which no repair shortens; shorten it or split it into shorter tags and commit.`;
+    case 'slug_too_long': return `${path} gives its page a slug over 255 characters, which no repair shortens; move it to a shorter path (or give it a shorter slug: line) and commit.`;
     case 'visibility_noncanonical': return `${path} asks for visibility: private in a spelling page privacy does not read, which no repair rewrites; write visibility: private on its own frontmatter line (lowercase) and commit.`;
+    case 'readers_noncanonical': return `${path} names its readers with a key page access does not read, which no repair rewrites; write the key as readable_by (lowercase, with an underscore) on its own frontmatter line and commit.`;
     case 'parser_regression': return `This is a gbrain bug: report the gbrain version, ${path} and the code; upgrade, or keep GBRAIN_SYNC_PARSER_REGRESSION=hold set for the process that syncs; never pin a release older than 0.60.305.0.`;
     default: return hold.reason === 'ambiguous_protected_key' ? `Write ${where} on one line with one quoted value; gbrain never guesses who may read a page or where it came from.`
       : hold.reason === 'ambiguous_identity_key' ? `Keep exactly one line for ${where}; gbrain never guesses which page a file is.`
@@ -196,8 +223,7 @@ function resolution(hold: Pick<ContentRefusal, 'code' | 'reason' | 'key' | 'line
 /** The managed owner root, or the legacy checkout, of each source in scope; others are residuals. */
 async function sourceRoots(engine: BrainEngine, scope: RepairScope, residuals: Record<string, number>, warnings: string[]): Promise<SourceRoot[]> {
   const managed = await managedPersistenceEnabled(engine);
-  const rows = await engine.executeRaw<{ id: string; incarnation: string; local_path: string | null }>(
-    'SELECT id, incarnation::text AS incarnation, local_path FROM sources WHERE id = ANY($1::text[]) ORDER BY id', [scope.source_ids]);
+  const rows = await readSourceStates(engine, scope.source_ids);
   const roots: SourceRoot[] = [];
   for (const row of rows) {
     if (managed) {
@@ -227,15 +253,23 @@ function markdownFiles(root: string): string[] {
   return [...new Set(paths)].filter(path => /\.mdx?$/i.test(path) && !path.split('/').some(part => part.startsWith('.')) && !isReservedSkillBundlePath(path)).sort();
 }
 
-interface PageRow { id: number; slug: string; source_path: string; revision: string; title: string; head: string }
+type PageRow = OriginPathPageRow;
 
-/** Each recorded origin's canonical live page (#6948: twins resolve to the page whose slug the file derives, else stay ambiguous). */
-async function pagesByOrigin(engine: BrainEngine, sourceId: string): Promise<Map<string, PageRow | { ambiguous: string[] }>> {
-  const rows = await engine.executeRaw<PageRow>(`SELECT id, slug, source_path, knowledge_revision::text AS revision, title, left(compiled_truth, 400) AS head
-    FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND source_path IS NOT NULL ORDER BY slug`, [sourceId]);
+/**
+ * Each recorded origin's canonical live page (#6948: twins resolve to the page whose slug the file derives, else stay ambiguous),
+ * and each recorded origin's soft-deleted page slugs (typed reads: live pages, then the file tombstones).
+ */
+async function pagesByOrigin(engine: BrainEngine, sourceId: string): Promise<{ live: Map<string, PageRow | { ambiguous: string[] }>; deleted: Map<string, string[]> }> {
   const grouped = new Map<string, PageRow[]>();
-  for (const row of rows) grouped.set(row.source_path, [...grouped.get(row.source_path) ?? [], { ...row, id: Number(row.id) }]);
-  return new Map([...grouped].map(([path, pages]) => [path, pickCanonicalOrigin(pages, path)!]));
+  for (const row of await engine.listPagesByOriginPath(sourceId)) grouped.set(row.source_path, [...grouped.get(row.source_path) ?? [], row]);
+  const deleted = new Map<string, string[]>();
+  for (let before: number | null = null; ;) {
+    const page = await engine.listFileTombstones(sourceId, { before, limit: 1000 });
+    for (const row of page) deleted.set(row.source_path, [...deleted.get(row.source_path) ?? [], row.slug]);
+    if (page.length < 1000) break;
+    before = page[page.length - 1]!.id;
+  }
+  return { live: new Map([...grouped].map(([path, pages]) => [path, pickCanonicalOrigin(pages, path)!])), deleted };
 }
 
 /**
@@ -244,9 +278,7 @@ async function pagesByOrigin(engine: BrainEngine, sourceId: string): Promise<Map
  * it. The preview and the apply report how many (`skipped_segmented`).
  */
 async function reportSkippedSegmented(engine: BrainEngine, sourceIds: string[], residuals: Record<string, number>, warnings: string[]): Promise<void> {
-  const [row] = await engine.executeRaw<{ n: number }>(`SELECT COUNT(*)::int AS n FROM pages
-    WHERE source_id=ANY($1::text[]) AND deleted_at IS NULL AND source_path IS NOT NULL AND body_storage='segmented'`, [sourceIds]);
-  const n = Number(row?.n ?? 0);
+  const n = await engine.countSegmentedOriginPages(sourceIds);
   if (!n) return;
   residuals.skipped_segmented = n;
   warnings.push(`skipped (segmented): ${n} page(s) store their body in segments, so the database-side check for a stored body that begins with its own frontmatter block `
@@ -265,7 +297,7 @@ function slugTitle(slug: string): string {
 /** Database-side damage worth a re-import from the canonical file. */
 function pageDamage(page: PageRow | undefined, content: string): string | null {
   if (!page) return null;
-  if (EMBEDDED_BLOCK.test(page.head)) return 'its stored body begins with an embedded frontmatter block';
+  if (EMBEDDED_BLOCK.test(page.head ?? '')) return 'its stored body begins with an embedded frontmatter block';
   const titleLine = /^---[^\n]*\n[\s\S]*?^title:[ \t]*\S/m.test(content.replace(/^\uFEFF/, ''));
   if (titleLine && page.title === slugTitle(page.slug)) return 'its stored title was derived from the slug although the file names a title';
   return null;
@@ -297,13 +329,41 @@ interface Analysis {
   review?: NeedsReview;
 }
 
-interface FileContext { engine: BrainEngine; src: SourceRoot; includeAmbiguous: boolean; pages: Map<string, PageRow | { ambiguous: string[] }> }
+interface FileContext {
+  engine: BrainEngine; src: SourceRoot; includeAmbiguous: boolean; pages: Map<string, PageRow | { ambiguous: string[] }>;
+  /** Each recorded origin's soft-deleted page slugs. */
+  deleted: Map<string, string[]>;
+  /** Each file's other spellings that differ only by case and name the same page (sync holds them page_identity_changed). */
+  twins: Map<string, string[]>;
+}
+
+async function fileContext(engine: BrainEngine, src: SourceRoot, includeAmbiguous: boolean): Promise<FileContext> {
+  const { live: pages, deleted } = await pagesByOrigin(engine, src.sourceId);
+  return { engine, src, includeAmbiguous, pages, deleted, twins: spellingTwins(markdownFiles(src.root), pages) };
+}
+
+/** Files whose paths fold to one spelling and name one page: a live origin's page slug, else the slug the path names. */
+function spellingTwins(files: string[], pages: FileContext['pages']): Map<string, string[]> {
+  const byFold = new Map<string, string[]>();
+  for (const path of files) byFold.set(path.toLowerCase(), [...byFold.get(path.toLowerCase()) ?? [], path]);
+  const twins = new Map<string, string[]>();
+  for (const group of byFold.values()) {
+    if (group.length < 2) continue;
+    const slugOf = (path: string) => { const page = pages.get(path); return page && !('ambiguous' in page) ? page.slug : resolveSlugForPath(path); };
+    for (const path of group) {
+      const others = group.filter(other => other !== path && slugOf(other) === slugOf(path));
+      if (others.length) twins.set(path, others);
+    }
+  }
+  return twins;
+}
 
 /** One file's proposal, pending interpretation, or manual fix; null when it needs nothing. */
 async function analyzeFile(ctx: FileContext, path: string, hold: GitHoldRecord | undefined): Promise<Analysis | null> {
   const { src, includeAmbiguous } = ctx;
   const abs = join(src.root, path);
   const review = (code: string, text: string, extra: Partial<NeedsReview> = {}): Analysis => ({ review: { source_id: src.sourceId, path, code, resolution: text, ...extra } });
+  if (hold && !FRONTMATTER_HOLD_CODES.has(hold.code)) return review(hold.code, heldElsewhere(hold), hold.meta.reason ? { reason: hold.meta.reason } : {});
   if (!existsSync(abs)) return hold ? review(hold.code, `${path} is gone; the next gbrain sync --source ${src.sourceId} --no-pull clears its hold.`) : null;
   try { confinedRepairTarget(src.root, path, src.sourceId); } catch (error) {
     if (!(error instanceof OperationError)) throw error;
@@ -367,9 +427,16 @@ async function bindProposal(ctx: FileContext, path: string, hold: GitHoldRecord 
   const { engine, src } = ctx;
   const sourcePath = hold?.source_path ?? path;
   const page = ctx.pages.get(sourcePath);
+  const twins = ctx.twins.get(path);
+  if (twins) {
+    return { source_id: src.sourceId, path, code: 'page_identity_changed', reason: 'spelling', resolution: `${path} and ${twins.join(', ')} differ only by case and name one page, so importing one would pick a spelling, `
+      + `which frontmatter repair never does. Keep one spelling, rename or remove the others and commit, then run gbrain sync --source ${src.sourceId} --no-pull.` };
+  }
   if (page && 'ambiguous' in page) return { source_id: src.sourceId, path, code: 'origin_conflict', resolution: originConflictMessage(src.sourceId, sourcePath, page.ambiguous) };
   const slug = page?.slug ?? (proposal.rename_from ? resolveSlugForPath(sourcePath) : hold?.slug ?? resolveSlugForPath(sourcePath));
   const snapshot = await engine.readPageSnapshot(slug, { sourceId: src.sourceId, includeDeleted: true });
+  const revives = await revivesDeletedPage(ctx, { path, sourcePath, slug, snapshot, content: proposal.content, bound: !!page });
+  if (revives) return revives;
   // Wave B decision #1: the re-import compares the stored body whole, which a page stored in segments allows up to 24 MiB.
   if (proposal.reimport && snapshot && segmentedOverCeiling(snapshot.page)) {
     const refusal = pageBodyOverCeilingError(snapshot.page, `gbrain repair frontmatter (re-import of ${path})`);
@@ -392,6 +459,48 @@ async function bindProposal(ctx: FileContext, path: string, hold: GitHoldRecord 
     result_digest: publication.digest, ...(proposal.rename_from ? { rename_from: proposal.rename_from } : {}) } };
 }
 
+/**
+ * LC-2 (decision E1): an import that would bring a deleted page back. A soft-deleted page at the slug would be restored,
+ * and on a managed source a deletion marker at the origin (its page was purged) would come back as a new page. Either is
+ * the user's decision, made through the file-drift consent step (or `gbrain restore`), never by a frontmatter repair.
+ */
+async function revivesDeletedPage(ctx: FileContext,
+  target: { path: string; sourcePath: string; slug: string; snapshot: PageSnapshot | null; content: string; bound: boolean }): Promise<NeedsReview | null> {
+  const { engine, src } = ctx;
+  const { path, sourcePath, slug, snapshot } = target;
+  const managed = src.mode === 'managed';
+  // With no hold naming it, the origin sync records is the Git-root spelling when the source pins slug_root_mode git-root.
+  const origins = [...new Set([sourcePath, managed && sourcePath === path
+    ? scannerSourcePath(src.root, join(src.root, path), await scannerSlugRootMode(engine, src.sourceId, src.root)) : sourcePath])];
+  // With no live page at the origin, the import may write another slug: the origin's, or a deleted page that records the origin.
+  // Legacy apply runs importFromFile, which writes the file's own `slug:` when it is a spelling of the path's, bound page or not.
+  const slugs = [...new Set([slug, ...(target.bound ? [] : origins.flatMap(origin => [resolveSlugForPath(origin), ...ctx.deleted.get(origin) ?? []])),
+    ...(target.bound && managed ? [] : declaredImportSlug(target.content, path))])];
+  const drift = (state: 'tombstone_edited' | 'purged_differs') => `gbrain sync --source ${src.sourceId} --no-pull holds the file file_drift when it differs from the deleted page, and `
+    + `${shellQuote(['gbrain', 'repair', 'file-drift', '--source', src.sourceId, '--held', '--side', 'deleted', '--state', state, '--only', path, '--prefer', 'file'])} previews `
+    + `${state === 'tombstone_edited' ? 'restoring the page' : 'importing it as a new page'} (--prefer database keeps the deletion and removes the file); decide with the user.`;
+  for (const candidate of slugs) {
+    const found = candidate === slug ? snapshot : await engine.readPageSnapshot(candidate, { sourceId: src.sourceId, includeDeleted: true });
+    if (!found?.page.deleted_at) continue;
+    return { source_id: src.sourceId, path, code: 'page_deleted', resolution: `Page ${candidate} is deleted, so importing ${path} would restore it, and that is the user's decision, which frontmatter repair never makes. `
+      + `${managed ? `${drift('tombstone_edited')} ` : ''}If the user wants the page back, restore it with gbrain restore ${candidate} --source-id ${src.sourceId} --force, then preview again; to keep the deletion, remove ${path}.` };
+  }
+  if (snapshot || !managed) return null;
+  for (const origin of origins) {
+    if (!await readOriginDeletedMarker(engine, src.sourceId, src.incarnation, origin)) continue;
+    return { source_id: src.sourceId, path, code: 'page_purged', resolution: `The page of ${path} was purged, so importing it would bring purged content back as a new page, and only the user decides that. ${drift('purged_differs')}` };
+  }
+  return null;
+}
+
+/** The frontmatter `slug:` importFromFile writes instead of the path's slug: a normalization-equivalent spelling, or any slug when the path has none. */
+function declaredImportSlug(content: string, path: string): string[] {
+  const expected = slugifyPath(path);
+  let declared: string;
+  try { declared = parseMarkdown(content, path).slug; } catch { return []; }
+  return declared && declared !== expected && (expected === '' || slugifyPath(declared) === expected) ? [declared] : [];
+}
+
 interface ScanResult { prepared: Prepared[]; pending: FileDiff[]; review: NeedsReview[]; unknownOnly: string[] }
 
 /** Analyzes every selected file of every source and binds each proposal. */
@@ -400,7 +509,7 @@ async function scan(engine: BrainEngine, scope: RepairScope, selection: Selectio
   const seen = new Set<string>();
   for (const src of await sourceRoots(engine, scope, residuals, warnings)) {
     const holds = new Map(((await readGitSourceHolds(engine, { sourceIds: [src.sourceId] }))[0]?.holds ?? []).map(hold => [hold.path, hold]));
-    const ctx: FileContext = { engine, src, includeAmbiguous: selection.include_ambiguous, pages: await pagesByOrigin(engine, src.sourceId) };
+    const ctx = await fileContext(engine, src, selection.include_ambiguous);
     const screenConfig = await repairScreenConfig(engine, src.sourceId);
     const paths = [...new Set([...markdownFiles(src.root), ...holds.keys()])].sort()
       .filter(path => (!selection.only.length || selection.only.includes(path)) && !selection.skip.includes(path));
@@ -429,7 +538,7 @@ async function scan(engine: BrainEngine, scope: RepairScope, selection: Selectio
  * design v3.2 §3.7: one interlock for every repair; an unreadable set names the first file).
  */
 async function busySyncPath(engine: BrainEngine, sourceId: string, items: Array<{ path: string; source_path?: string | null; slug?: string | null }>): Promise<{ path: string; busy: RepairBusySet } | null> {
-  const [source] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', [sourceId]);
+  const source = await engine.readSourceIncarnation(sourceId);
   const busy = await loadRepairBusySet(engine, sourceId, source?.incarnation ?? '');
   const named = items.find(entry => repairBusy(busy, { path: entry.path, sourcePath: entry.source_path, slug: entry.slug }));
   return named ? { path: named.path, busy } : null;
@@ -455,7 +564,7 @@ export const frontmatterRepair: RepairHandler = {
           `Preview first: ${shellQuote(preview)} — show the user the per-file diffs, then run the apply command it prints (with --yes --expect <preview-hash>).`);
       }
       const approved = await loadApprovedSet<ApprovedSetItem>(engine, { command: 'frontmatter', hash: opts.expect, previewCommand: shellQuote(preview),
-        emptyHash: async () => previewHash({ kind: 'frontmatter-v1', brain_id: scope.brain_id, sources: (await engine.executeRaw<{ id: string; incarnation: string }>('SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id', [scope.source_ids])), selection, items: [] }) });
+        emptyHash: async () => previewHash({ kind: 'frontmatter-v1', brain_id: scope.brain_id, sources: (await engine.listSourceIncarnations(scope.source_ids)), selection, items: [] }) });
       if (approved.items.some(entry => !sameSelection(entry.selection, selection))) throw previewChangedError(opts.expect, shellQuote(preview));
       for (const sourceId of new Set(approved.items.map(entry => entry.source_id))) {
         const named = await busySyncPath(engine, sourceId, approved.items.filter(entry => entry.source_id === sourceId));
@@ -476,7 +585,7 @@ export const frontmatterRepair: RepairHandler = {
     const found = await scan(engine, scope, selection, residuals, warnings);
     await reportSkippedSegmented(engine, scope.source_ids, residuals, warnings);
     for (const path of found.unknownOnly) warnings.push(`--only ${path}: no such Markdown file or hold in scope; check the source-relative path.`);
-    const sources = await engine.executeRaw<{ id: string; incarnation: string }>('SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id', [scope.source_ids]);
+    const sources = await engine.listSourceIncarnations(scope.source_ids);
     const approvedItems = found.prepared.map(entry => entry.approved);
     const hash = previewHash({ kind: 'frontmatter-v1', brain_id: scope.brain_id, sources, selection, items: approvedItems });
     if (approvedItems.length) await saveApprovedSet<ApprovedSetItem>(engine, { command: 'frontmatter', hash }, approvedItems.map(entry => ({ ...entry, selection })));
@@ -524,24 +633,23 @@ export const frontmatterRepair: RepairHandler = {
   },
 };
 
-async function rootFor(engine: BrainEngine, repair: ApprovedRepair): Promise<string> {
-  if (repair.mode === 'managed') return (await managedRepairRoot(engine, repair.source_id)).root;
-  const [row] = await engine.executeRaw<{ local_path: string | null }>('SELECT local_path FROM sources WHERE id=$1', [repair.source_id]);
-  const root = row?.local_path ?? (repair.source_id === 'default' ? await engine.getConfig('sync.repo_path') : null);
+async function rootFor(engine: BrainEngine, repair: ApprovedRepair): Promise<{ root: string; incarnation: string }> {
+  if (repair.mode === 'managed') return managedRepairRoot(engine, repair.source_id);
+  const root = (await engine.readSourceLocalPath(repair.source_id)) ?? (repair.source_id === 'default' ? await engine.getConfig('sync.repo_path') : null);
   if (!root) throw opError('source_changed', `Source ${repair.source_id} has no local checkout any more, so nothing was written.`, 'Preview the repair again on the host that holds the checkout.');
-  return root;
+  return { root, incarnation: '' };
 }
 
 /** Re-derives one approved change from the file as it is and applies it only when everything still matches. */
 async function applyRepair(ctx: OperationContext, repair: ApprovedRepair, selection: Selection, embed: boolean): Promise<RepairItemOutcome> {
   const changed = (reason: string): RepairItemOutcome => ({ applied: false, outcome: 'changed_since_preview', reason, detail: { path: repair.path } });
-  const root = await rootFor(ctx.engine, repair);
+  const { root, incarnation } = await rootFor(ctx.engine, repair);
   const target = join(root, repair.path);
   if (!existsSync(target) || sha256(readFileSync(target)) !== repair.before) return changed(`${repair.path} changed on disk since the preview`);
-  const src: SourceRoot = { sourceId: repair.source_id, incarnation: '', mode: repair.mode, root };
+  const src: SourceRoot = { sourceId: repair.source_id, incarnation, mode: repair.mode, root };
   const holds = (await readGitSourceHolds(ctx.engine, { sourceIds: [repair.source_id] }))[0]?.holds ?? [];
   const hold = holds.find(entry => entry.path === repair.path);
-  const fileCtx: FileContext = { engine: ctx.engine, src, includeAmbiguous: selection.include_ambiguous, pages: await pagesByOrigin(ctx.engine, repair.source_id) };
+  const fileCtx = await fileContext(ctx.engine, src, selection.include_ambiguous);
   const analysis = await analyzeFile(fileCtx, repair.path, hold);
   if (!analysis?.proposal) return changed('the file no longer needs this change');
   const bound = await bindProposal(fileCtx, repair.path, hold, analysis.proposal, await repairScreenConfig(ctx.engine, repair.source_id));
@@ -581,8 +689,7 @@ async function applyRepair(ctx: OperationContext, repair: ApprovedRepair, select
   }
   const imported = await importFromFile(ctx.engine, target, repair.source_path, { sourceId: repair.source_id, noEmbed: !embed });
   const ok = imported.status !== 'error' && !imported.refusal;
-  const holdCleared = ok && await clearGitHold(ctx.engine, { sourceId: repair.source_id, incarnation: (await ctx.engine.executeRaw<{ incarnation: string }>(
-    'SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', [repair.source_id]))[0]!.incarnation, path: repair.path, observedAt: new Date().toISOString() });
+  const holdCleared = ok && await clearGitHold(ctx.engine, { sourceId: repair.source_id, incarnation: (await ctx.engine.readSourceIncarnation(repair.source_id))!.incarnation, path: repair.path, observedAt: new Date().toISOString() });
   return { applied: ok, outcome: ok ? 'repaired' : 'import_refused', ...(ok ? {} : { reason: imported.error ?? 'the import refused the repaired file' }),
     detail: { path: repair.path, written: repair.before !== repair.after, ...(backup ? { backup } : {}), imported: imported.status, hold_cleared: holdCleared,
       committed: 'commit_step', commit_step: commitPushCommand(root, [repair.path], [`fix(frontmatter): repair ${repair.path}`]) } };

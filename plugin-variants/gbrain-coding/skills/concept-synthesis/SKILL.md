@@ -396,10 +396,12 @@ gbrain search "concept title + first paragraph" --limit 10
 #    tree is the undo button.
 gbrain get concepts/absorbed-stub
 gbrain put concepts/_merged/cluster-name/absorbed-stub
+#    (a put that names no source is refused when the slug lives in another source;
+#    pass --source-id <the source the get read the page from>)
 
 # 3. Grow the canonical head: merge_count, independent_sources,
 #    backlinks, and the ## Facets section
-gbrain put concepts/canonical-slug
+gbrain put concepts/canonical-slug     # --source-id <the source you read it from>
 
 # 4. Soft-delete the absorbed original (restorable until purge)
 gbrain delete concepts/absorbed-stub
@@ -513,10 +515,10 @@ This skill guarantees:
 - Routing matches the canonical triggers in the frontmatter.
 - Output written under the directories listed in `writes_to:` (when applicable).
 - Conventions referenced (`quality.md`, `brain-first.md`, `_brain-filing-rules.md`) are followed.
-- Privacy contract preserved: no real names, no fork-specific filesystem path literals, no upstream-fork references.
+- Examples use placeholder names and paths.
 
-The full behavior contract is documented in the body sections above; this section exists for the conformance test.
+The full behavior contract is documented in the body sections above.
 
 ## Output Format
 
-The skill's output shape is documented inline in the body sections above (see "Output", "Brain page format", or equivalent). The literal section header here exists for the conformance test (`test/skills-conformance.test.ts`).
+The skill's output shape is documented inline in the body sections above (see "Output", "Brain page format", or equivalent).

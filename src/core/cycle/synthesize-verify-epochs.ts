@@ -11,8 +11,7 @@ import type { VerifiablePage } from './synthesize-verify.ts';
 /** Database clock reading taken before a run's writes; pages created at or
  * after it are the run's own, earlier pages are verified by diff. */
 export async function readVerifyEpoch(engine: BrainEngine): Promise<Date> {
-  const rows = await engine.executeRaw<{ now: unknown }>('SELECT now() AS now');
-  return new Date(rows[0]?.now as string);
+  return new Date(await engine.readDreamVerifyEpoch() as string);
 }
 
 /**
@@ -30,8 +29,7 @@ export async function loadChildWriteEpochs(
   const out = new Map<string, Date>();
   for (const path of jobRawSource.values()) out.set(path, fallback);
   if (!childIds.length) return out;
-  const rows = await engine.executeRaw<{ id: number | string; created_at: unknown }>(
-    'SELECT id, created_at FROM minion_jobs WHERE id = ANY($1::int[])', [childIds]);
+  const rows = await engine.listDreamJobCreatedAt(childIds);
   for (const row of rows) {
     const path = jobRawSource.get(Number(row.id));
     const at = new Date(row.created_at as string);
@@ -47,14 +45,7 @@ export async function loadChildWriteEpochs(
  * overwriting). Null when nothing overwrote the page since then.
  */
 export async function loadPreRunRevision(engine: BrainEngine, slug: string, sourceId: string, since: Date): Promise<VerifiablePage | null> {
-  const rows = await engine.executeRaw<{ compiled_truth: string; timeline: string | null; frontmatter: unknown }>(
-    `SELECT pv.compiled_truth, pv.timeline, pv.frontmatter
-       FROM page_versions pv JOIN pages p ON p.id = pv.page_id
-      WHERE p.slug = $1 AND p.source_id = $2 AND pv.snapshot_at >= $3::timestamptz
-      ORDER BY pv.snapshot_at ASC, pv.id ASC LIMIT 1`,
-    [slug, sourceId, since.toISOString()],
-  );
-  const row = rows[0];
+  const row = await engine.readDreamPreRunRevision(slug, sourceId, since.toISOString());
   if (!row) return null;
   const fm = typeof row.frontmatter === 'string' ? JSON.parse(row.frontmatter) : row.frontmatter;
   return { compiled_truth: row.compiled_truth ?? '', timeline: row.timeline ?? '', frontmatter: (fm ?? {}) as Record<string, unknown> };

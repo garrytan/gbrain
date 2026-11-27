@@ -11,7 +11,8 @@
  * Fails when: the commit note is dropped anywhere between the preparer and
  * `git commit` (file target, Git effect data, effect worker, commitGitTargets),
  * a malformed or mismatched receipt is written, an MCP caller can set
- * `fence_repair`, a fence repair's refusal names the frontmatter repair, or a
+ * `fence_repair`, a fence repair's (or a rows-behind or file-drift repair's)
+ * refusal names the frontmatter repair, or a
  * commit without metadata changes its message.
  * Why new: no test covered Git commit messages or a repair receipt;
  * test/repair-frontmatter.test.ts covers `managed_file_repair` without one.
@@ -217,6 +218,28 @@ test('without a receipt the repair keeps the generic subject and names the front
   expect(await gitEffectData(engine, requestId)).not.toHaveProperty('commit_subject');
   await gitEffectsSettled(engine, s.id);
   expect(lastMessage(s.root)).toBe('gbrain: persist canonical memory update');
+}), 180_000);
+
+test('a rows-behind or file-drift repair names its own command in its refusals, never the frontmatter repair', () => each(async engine => {
+  const s = await managed(engine, { 'notes/delta.md': page('Delta', 'First version.\n') });
+  const after = page('Delta', 'Second version.\n');
+  const { slug, resultDigest, revision } = await s.digestOf('notes/delta.md', after);
+  const input = { sourceId: s.id, slug, path: 'notes/delta.md', sourcePath: 'notes/delta.md', content: after, resultDigest, expected_revision: revision, noEmbed: true };
+  const unbound = `fr-${randomUUID().replace(/-/g, '').slice(0, 20)}`;
+  await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+  await engine.executeRaw("INSERT INTO sources(id,name,local_path,config) VALUES($1,$1,$2,'{}')", [unbound, join(home, unbound)]);
+  await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+  for (const kind of ['rows-behind', 'file-drift'] as const) {
+    const changed = await refusal(() => submitManagedFileRepair(localCtx(engine, s.id), { ...input, requestId: randomUUID(), beforeHash: 'b'.repeat(64), repairKind: kind }));
+    expect(changed.code).toBe('changed_since_preview');
+    expect(changed.suggestion).toContain(`gbrain repair ${kind} --source ${s.id}`);
+    expect(changed.fix?.argv).toEqual(['gbrain', 'repair', kind, '--source', s.id]);
+    // A source this host does not own refuses before admission, naming the repair that asked.
+    const owner = await refusal(() => submitManagedFileRepair(localCtx(engine, unbound), { ...input, sourceId: unbound, requestId: randomUUID(), beforeHash: 'b'.repeat(64), repairKind: kind }));
+    expect(owner.code).toBe('owner_unavailable');
+    expect(owner.message).toContain(`the ${kind} repair did not run`);
+    expect(JSON.stringify({ message: owner.message, suggestion: owner.suggestion, changed: changed.suggestion })).not.toContain('frontmatter');
+  }
 }), 180_000);
 
 test('a malformed or mismatched fence receipt is refused before admission and by the preparer; nothing is written', () => each(async engine => {

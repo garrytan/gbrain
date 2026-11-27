@@ -164,6 +164,7 @@ export async function embeddingColumns(query: Query): Promise<EmbeddingColumn[]>
  */
 export async function sourceEmbeddingLayout(source: BrainEngine): Promise<{ columns: EmbeddingColumn[]; config: Record<string, string> }> {
   const query: Query = (sql, params) => source.executeRaw(sql, params);
+  // The key order never reaches output: the config object is only read by key name (embedding_model, embedding_dimensions), never serialized.
   const rows = await source.executeRaw<{ key: string; value: string }>(
     `SELECT key, value FROM config WHERE key IN ('embedding_model', 'embedding_dimensions', 'embedding_columns', 'search_embedding_column') ORDER BY key`);
   return { columns: await embeddingColumns(query), config: Object.fromEntries(rows.map(r => [r.key, r.value])) };

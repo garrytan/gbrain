@@ -21,6 +21,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { capabilityMissing } from '../src/core/rust-engine/errors.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { applyThreadLoopVerdict, __clearSuppressionCacheForTests } from '../src/core/google/loop-detect.ts';
 import * as loopsStore from '../src/core/loops/loops-store.ts';
@@ -311,6 +312,29 @@ describe('gbrain waiting reports the loops the rule would not have opened', () =
     expect(r.out).toContain('2 open reply-owed loop(s) come from 1 sender(s) whose mail is automated');
     expect(r.out).toContain('gbrain loops drop sender alerts@bank-example.test --source g1 --dry-run');
     const j = await captured(() => runWaiting(engine, ['--json']));
+    expect(JSON.parse(j.out).withheld_noise).toMatchObject({ loop_count: 2, sender_count: 1,
+      senders: [{ email: 'alerts@bank-example.test', source_id: 'g1', open_loops: 2 }] });
+  });
+
+  test('refusal-swallow site 6: the withheld senders are counted through the typed member when raw SQL refuses', async () => {
+    await upsertOpenLoop(engine, loop());
+    await upsertOpenLoop(engine, loop({ threadId: '18c2f4a9b3d21e12' }));
+    writeFileSync(join(stateDir, '.google-source.json'), JSON.stringify({
+      loop_withheld_senders: { 'alerts@bank-example.test': { reason: 'automated_mail', count: 1, last_ms: 1 } } }));
+    // As the Rust engine does: the grouped raw count refuses.
+    const refusing = new Proxy(engine, {
+      get(target, prop) {
+        if (prop === 'executeRaw') {
+          return async (sql: string, params?: unknown[]) => {
+            if (sql.includes('GROUP BY counterparty_email')) throw capabilityMissing('raw_sql', 'executeRaw');
+            return target.executeRaw(sql, params);
+          };
+        }
+        const value = Reflect.get(target, prop, target);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    }) as unknown as PGLiteEngine;
+    const j = await captured(() => runWaiting(refusing, ['--json']));
     expect(JSON.parse(j.out).withheld_noise).toMatchObject({ loop_count: 2, sender_count: 1,
       senders: [{ email: 'alerts@bank-example.test', source_id: 'g1', open_loops: 2 }] });
   });

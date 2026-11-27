@@ -699,6 +699,8 @@ export interface SelfUpgradeState {
   last_applied_version?: string;
   /** #8776: `external` declares that a launcher outside gbrain's service starts autopilot again when it exits, so upgrades hand it over instead of refusing. */
   autopilot_launcher?: 'external';
+  /** #9483: `external` declares that a launcher outside gbrain's serve service starts serve again when it exits, so upgrades restart serve through it instead of refusing. */
+  serve_launcher?: 'external';
 }
 
 export type BreadcrumbTransition = 'applied' | 'failed' | null;
@@ -820,6 +822,7 @@ export const SELF_UPGRADE_CONFIG_LEAVES = [
   'last_check_ts',
   'last_applied_version',
   'autopilot_launcher',
+  'serve_launcher',
 ] as const satisfies readonly (keyof SelfUpgradeState)[];
 
 export type SelfUpgradeConfigLeaf = (typeof SELF_UPGRADE_CONFIG_LEAVES)[number];
@@ -926,6 +929,8 @@ export function parseSelfUpgradeConfigValue(leaf: SelfUpgradeConfigLeaf, raw: st
     }
     case 'autopilot_launcher':
       return raw.trim() === 'external' ? { ok: true, value: 'external' } : { ok: false, error: `must be external (got '${raw}'); unset it to refuse upgrades while autopilot runs outside gbrain's service` };
+    case 'serve_launcher':
+      return raw.trim() === 'external' ? { ok: true, value: 'external' } : { ok: false, error: `must be external (got '${raw}'); unset it to refuse upgrades while serve runs outside gbrain's serve service` };
     case 'quiet_hours':
       return parseQuietHours(raw);
     case 'failed_versions':

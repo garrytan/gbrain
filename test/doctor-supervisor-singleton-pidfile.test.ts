@@ -135,3 +135,29 @@ describe('doctor supervisor_singleton — pid_file fallback (source-grep)', () =
     expect(source).toContain('readSupervisorPid(pidFilePath)');
   });
 });
+
+// Refusal-swallow triage, lane 14 (supervisor-health.ts:213): the lock holder came from raw SQL, and on an engine that
+// refuses it (Rust) the catch skipped the check silently. It now reads the typed readCycleLocks lease.
+describe('doctor supervisor_singleton on an engine that refuses raw SQL', () => {
+  test('the live lock holder still comes back, from readCycleLocks', async () => {
+    const { capabilityMissing } = await import('../src/core/rust-engine/errors.ts');
+    const { supervisorEntry } = await import('../src/commands/doctor/checks/supervisor-health.ts');
+    await withEnv({ GBRAIN_AUDIT_DIR: auditDir }, async () => {
+      const customPidFile = path.join(pidFileDir, 'custom-supervisor.pid');
+      fs.writeFileSync(customPidFile, String(process.pid), 'utf8');
+      writeStartedEvent({ pid_file: customPidFile, queue: 'default', max_rss_mb: 512 });
+      await holdLiveLock('default', process.pid, os.hostname());
+      const rustLike = new Proxy(engine, {
+        get(target, prop) {
+          if (prop === 'executeRaw') return async () => { throw capabilityMissing('raw_sql', 'executeRaw'); };
+          const value = Reflect.get(target, prop, target);
+          return typeof value === 'function' ? value.bind(target) : value;
+        },
+      });
+      const checks = await supervisorEntry.run({ engine: rustLike, args: [], fastMode: false } as never) as Array<{ name: string; status: string; message: string }>;
+      const check = checks.find((c) => c.name === 'supervisor_singleton');
+      expect(check?.status).toBe('ok');
+      expect(check?.message).toContain('Single supervisor');
+    });
+  });
+});

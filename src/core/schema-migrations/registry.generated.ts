@@ -330,7 +330,18 @@ import { v326 } from './v326-pages-title-lower-hash-index.ts';
 import { v327 } from './v327-access-handovers.ts';
 import { v328 } from './v328-owner-only-reads-complete.ts';
 import { v329 } from './v329-serves-since-subsecond.ts';
-import { v331 } from './v331-projection-jobs-byte-order-index.ts';
+import { v330 } from './v330-entity-identity-reviews-evidence.ts';
+import { v331 } from './v331-access-read-log.ts';
+import { v332 } from './v332-engine-writer-observations.ts';
+import { v333 } from './v333-hold-page-id.ts';
+import { v334 } from './v334-learning-items.ts';
+import { v335 } from './v335-pages-spelling-key-index.ts';
+import { v336 } from './v336-files-follow-page-slug.ts';
+import { v337 } from './v337-write-gate-hold-rechecks.ts';
+import { v350 } from './v350-byte-order-slug-indexes.ts';
+import { v351 } from './v351-projection-jobs-byte-order-index.ts';
+import { v352 } from './v352-pages-projection-waiting-haystack-trgm.ts';
+import { v353 } from './v353-fact-fingerprint-v3.ts';
 
 // Array order is historical (see HISTORICAL_ARRAY_ORDER in the generator); the
 // runner sorts by version before applying.
@@ -659,5 +670,16 @@ export const MIGRATIONS: Migration[] = [
   v327,
   v328,
   v329,
+  v330,
   v331,
+  v332,
+  v333,
+  v334,
+  v335,
+  v336,
+  v337,
+  v350,
+  v351,
+  v352,
+  v353,
 ];

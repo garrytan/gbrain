@@ -292,6 +292,59 @@ export async function readOldestWaitingAge(tx: Raw, queue: string, opts?: Signal
   return numOrNull(rows[0]?.age);
 }
 
+/** The queue a facts-drain no-worker warning names: its count of untaken waiting `name` jobs and the age of the oldest. */
+export interface UntakenWaitingJobs { queue: string; waiting: number; oldest_age_seconds: number }
+
+/**
+ * The queue whose waiting `name` jobs nothing is running (moved from minions/no-worker.ts untakenWaitingJobs unchanged):
+ * one such claimable job has waited past `thresholdHours` since it last became waiting, and no job on that queue holds a
+ * live lock or started within that time; the queue with the oldest such job, or null.
+ */
+export async function readUntakenWaitingJobs(tx: Raw, name: string, thresholdHours: number): Promise<UntakenWaitingJobs | null> {
+  const [row] = await tx.executeRaw<{ queue: string; waiting: number; oldest_age_seconds: number }>(
+    `WITH stuck AS (
+       SELECT queue, count(*)::int AS waiting, EXTRACT(EPOCH FROM (now() - min(updated_at)))::int AS oldest_age_seconds
+         FROM minion_jobs
+        WHERE name = $1 AND status = 'waiting' AND submission_authority IS NOT NULL
+        GROUP BY queue
+       HAVING min(updated_at) < now() - $2::text::interval
+     )
+     SELECT queue, waiting, oldest_age_seconds FROM stuck s
+      WHERE NOT EXISTS (SELECT 1 FROM minion_jobs j WHERE j.queue = s.queue
+        AND ((j.status = 'active' AND j.lock_until > now()) OR j.started_at > now() - $2::text::interval))
+      ORDER BY oldest_age_seconds DESC
+      LIMIT 1`,
+    [name, `${thresholdHours} hours`],
+  );
+  return row ? { queue: row.queue, waiting: Number(row.waiting), oldest_age_seconds: Number(row.oldest_age_seconds) } : null;
+}
+
+/**
+ * How many jobs wait, for the readiness worker probe. `excludeFactsAbsorb` leaves out `facts-absorb` jobs, which PGLite's
+ * automatic facts drain owns (its own readiness entry), not a worker.
+ */
+export async function countWaitingJobs(tx: Raw, excludeFactsAbsorb: boolean): Promise<number> {
+  const [row] = await tx.executeRaw<{ n: number }>(excludeFactsAbsorb
+    ? `SELECT count(*)::int AS n FROM minion_jobs WHERE status = 'waiting' AND name <> 'facts-absorb'`
+    : `SELECT count(*)::int AS n FROM minion_jobs WHERE status = 'waiting'`);
+  return num(row?.n);
+}
+
+/**
+ * How many jobs of `queue` wait under one of `names`: the minion worker's stall check, which counts only the work its
+ * own handlers would claim. An empty `names` counts none (the worker skips the call then).
+ */
+export async function countWaitingJobsForNames(tx: Raw, queue: string, names: readonly string[]): Promise<number> {
+  const rows = await tx.executeRaw<{ cnt: string }>(
+    `SELECT count(*)::text AS cnt FROM minion_jobs
+                     WHERE status = 'waiting'
+                       AND queue = $1
+                       AND name = ANY($2::text[])`,
+    [queue, names],
+  );
+  return parseInt(rows[0]?.cnt ?? '0', 10);
+}
+
 /** Active jobs whose lock lapsed or whose stalled counter reached two, per name, most first and by name on a tie. */
 export async function listStuckActiveJobsByName(tx: Raw): Promise<Array<{ name: string; n: number }>> {
   const rows = await tx.executeRaw<{ name: string; n: number | string }>(

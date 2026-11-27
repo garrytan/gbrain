@@ -126,15 +126,15 @@ for (const { name, make } of engines) {
         const [before] = await a.engine.executeRaw<{ n: number | string }>('SELECT count(*) AS n FROM secret_store_occurrence');
         let raced = false;
         const racing = new Proxy(a.engine, { get(target, prop) {
-          if (prop !== 'executeRaw') { const v = Reflect.get(target, prop); return typeof v === 'function' ? v.bind(target) : v; }
-          return async (sql: string, params?: unknown[]) => {
-            const rows = await target.executeRaw(sql, params as never);
-            if (!raced && /FROM secret_store/.test(sql)) {
+          if (prop !== 'readSecretStoreSnapshot') { const v = Reflect.get(target, prop); return typeof v === 'function' ? v.bind(target) : v; }
+          return async () => {
+            const snapshot = await target.readSecretStoreSnapshot();
+            if (!raced) {
               raced = true;
               const late = await seal(target, { sourceId: 'default', rule: 'aws_access_key', value: OTHER + 'RACE' });
               await recordOccurrence(target, { entryId: late.id, sourceId: 'default', slug: 'notes/late', field: 'compiled_truth', origin: 'repair' });
             }
-            return rows;
+            return snapshot;
           };
         } }) as BrainEngine;
         const out = await backupStore(racing, storage, here);

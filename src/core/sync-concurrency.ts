@@ -64,6 +64,15 @@ export const DEFAULT_PARALLEL_SOURCES = 4;
  * when the worker count is > 1. It only applies to the auto path; explicit
  * --workers bypasses the floor entirely (per Q1 in PR #490).
  */
+/**
+ * Whether a parallel import fans out to Postgres worker engines connected to `databaseUrl` (import.ts runImport,
+ * sync/imports.ts). Only a Postgres brain does: a PGLite or Rust brain imports on its own engine, because workers built
+ * from a DATABASE_URL in the environment would write its pages into another database.
+ */
+export function usesPostgresImportWorkers(engineKind: BrainEngine['kind'], databaseUrl: string | undefined | null): boolean {
+  return engineKind === 'postgres' && !!databaseUrl;
+}
+
 export function autoConcurrency(
   engine: BrainEngine,
   fileCount: number,

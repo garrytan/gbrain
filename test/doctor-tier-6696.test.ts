@@ -49,12 +49,22 @@ async function insertNotes(count: number, prefix = 'notes/acme-example'): Promis
   `;
 }
 
-/** The engine with the named methods throwing, and executeRaw optionally delayed for statements matching `slow`. */
-function guarded(throwing: string[], slow?: { match: RegExp; ms: number }, calls?: Record<string, number>): BrainEngine {
+/**
+ * The engine with the named methods throwing, and executeRaw optionally delayed for statements matching `slow` (and the
+ * typed members in `slow.members`, which send that statement on the cli-members line: they run on the engine itself, so
+ * the executeRaw delay alone never reaches them).
+ */
+function guarded(throwing: string[], slow?: { match: RegExp; ms: number; members?: string[] }, calls?: Record<string, number>): BrainEngine {
   return new Proxy(engine, {
     get(target, key) {
       if (typeof key === 'string' && throwing.includes(key)) return () => { throw new Error(`${key} must not run in this tier`); };
       if (key === 'getHealth' && calls) return (...a: unknown[]) => { calls.getHealth = (calls.getHealth ?? 0) + 1; return target.getHealth(...(a as [])); };
+      if (typeof key === 'string' && slow?.members?.includes(key)) {
+        return async (...a: unknown[]) => {
+          await new Promise((r) => setTimeout(r, slow.ms));
+          return (Reflect.get(target, key, target) as (...args: unknown[]) => unknown).apply(target, a);
+        };
+      }
       if (key === 'executeRaw' && slow) {
         return async (sql: string, params?: unknown[], opts?: unknown) => {
           if (slow.match.test(sql)) await new Promise((r) => setTimeout(r, slow.ms));
@@ -124,7 +134,7 @@ describe('#6696 B1 doctor tiers', () => {
     const args = ['--json', '--tier', 'ops', '--budget-ms', '150'];
     const deadline = startDoctorDeadline(args);
     const started = Date.now();
-    const checks = await buildChecks(guarded([], { match: /FROM persistence_counters/, ms: 600 }), args, undefined, undefined, deadline);
+    const checks = await buildChecks(guarded([], { match: /FROM persistence_counters/, ms: 600, members: ['listCapacityCounters'] }), args, undefined, undefined, deadline);
     expect(Date.now() - started).toBeLessThan(600);
     const capacity = checks.find((c) => c.name === 'persistence_capacity')!;
     expect(capacity.status).toBe('warn');
@@ -138,7 +148,7 @@ describe('#6696 B1 doctor tiers', () => {
 
   test('the per-entry budget (doctor.entry_budget_ms) bounds a standard-tier entry', async () => {
     await engine.setConfig('doctor.entry_budget_ms', '100');
-    const checks = await buildChecks(guarded([], { match: /FROM persistence_counters/, ms: 500 }), ['--json', '--scope=brain', '--only', 'persistence_capacity']);
+    const checks = await buildChecks(guarded([], { match: /FROM persistence_counters/, ms: 500, members: ['listCapacityCounters'] }), ['--json', '--scope=brain', '--only', 'persistence_capacity']);
     const capacity = checks.find((c) => c.name === 'persistence_capacity')!;
     expect(capacity.details).toMatchObject({ health: 'unknown', reason: 'budget', budget_ms: 100 });
   });

@@ -408,3 +408,84 @@ fn stuck_active_jobs_are_a_lapsed_lock_or_two_stalls_and_order_by_count_then_nam
         json!([{"name": "Alpha", "n": 2}, {"name": "work", "n": 2}, {"name": "twice", "n": 1}])
     );
 }
+
+#[test]
+fn waiting_count_keeps_to_waiting_rows_and_can_leave_out_facts_absorb() {
+    let b = brain("jobs_health");
+    assert_eq!(b.count_waiting_jobs(false).unwrap(), 0);
+    add(&b, "work", json!({}));
+    add(&b, "work", json!({}));
+    add(&b, "facts-absorb", json!({}));
+    add(
+        &b,
+        "work",
+        json!({"status": "delayed", "delay_until": "2099-01-01T00:00:00.000Z"}),
+    );
+    add(&b, "busy", json!({}));
+    claim(&b, "c1", "default", "busy", 60_000);
+    assert_eq!(b.count_waiting_jobs(false).unwrap(), 3);
+    assert_eq!(b.count_waiting_jobs(true).unwrap(), 2);
+}
+
+#[test]
+fn the_stall_count_keeps_to_waiting_rows_of_the_queue_with_a_listed_name() {
+    let b = brain("jobs_health");
+    let none: Vec<String> = Vec::new();
+    let work = vec!["work".to_string()];
+    assert_eq!(b.count_waiting_jobs_for_names("default", &work).unwrap(), 0);
+
+    add(&b, "work", json!({}));
+    add(&b, "work", json!({}));
+    add(&b, "other", json!({}));
+    add(&b, "elsewhere", json!({"queue": "side"}));
+    add(&b, "work", json!({"queue": "side"}));
+    add(
+        &b,
+        "work",
+        json!({"status": "delayed", "delay_until": "2099-01-01T00:00:00.000Z"}),
+    );
+    add(&b, "busy", json!({}));
+    claim(&b, "c1", "default", "busy", 60_000);
+
+    let both = vec!["work".to_string(), "other".to_string(), "busy".to_string()];
+    assert_eq!(b.count_waiting_jobs_for_names("default", &work).unwrap(), 2);
+    assert_eq!(b.count_waiting_jobs_for_names("default", &both).unwrap(), 3);
+    assert_eq!(b.count_waiting_jobs_for_names("side", &work).unwrap(), 1);
+    assert_eq!(b.count_waiting_jobs_for_names("default", &none).unwrap(), 0);
+    assert_eq!(
+        b.count_waiting_jobs_for_names("no-such-queue", &both)
+            .unwrap(),
+        0
+    );
+    assert_eq!(
+        b.count_waiting_jobs_for_names("default", &["Work".to_string()])
+            .unwrap(),
+        0,
+        "names match exactly"
+    );
+}
+
+#[test]
+fn the_stall_count_is_exact_across_the_pages_of_the_waiting_index() {
+    let b = brain("jobs_health");
+    let work = vec!["work".to_string()];
+    // More waiting rows than one page of the status walk (256), interleaved so every page holds all three kinds.
+    for i in 0..600 {
+        match i % 3 {
+            0 => add(&b, "work", json!({})),
+            1 => add(&b, "other", json!({})),
+            _ => add(&b, "work", json!({"queue": "side"})),
+        };
+    }
+    assert_eq!(
+        b.count_waiting_jobs_for_names("default", &work).unwrap(),
+        200
+    );
+    assert_eq!(b.count_waiting_jobs_for_names("side", &work).unwrap(), 200);
+    assert_eq!(
+        b.count_waiting_jobs_for_names("default", &["other".to_string()])
+            .unwrap(),
+        200
+    );
+    assert_eq!(b.count_waiting_jobs_for_names("none", &work).unwrap(), 0);
+}

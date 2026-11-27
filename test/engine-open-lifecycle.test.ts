@@ -89,7 +89,7 @@ describe('consumer identity sentinel', () => {
       [{ worktree_id: randomUUID(), owner_host_id: owner, local_path: '/srv/brain-example', created_at: '2026-01-01T00:00:00Z', source_ids: ['source-a'] }],
       [{ host_id: owner, host_json_path: `embedded:${owner}`, persistence_home: 'embedded', minted_under: null, renewed_at: '2026-11-01T00:00:00Z' }],
     ];
-    const engine = { kind: 'postgres', executeRaw: async () => rows.shift() ?? [] } as unknown as BrainEngine;
+    const engine = { kind: 'postgres', listOwnerBindings: async () => rows.shift() ?? [], listConsumerOwners: async () => rows.shift() ?? [] } as unknown as BrainEngine;
     const [mismatch] = await hostIdentityMismatches(engine, me, { exists: () => true, marked: () => true, hostJsonMintedAt: Date.now() });
     expect(mismatch?.owner_host).toMatchObject({ host_id: owner, host_json_path: `embedded:${owner}`, persistence_home: 'embedded' });
     expect(mismatch?.fix_env).toBeNull();

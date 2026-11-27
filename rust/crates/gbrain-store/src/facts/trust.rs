@@ -12,9 +12,8 @@
 //! - `worldOnly`: `visibility = 'world'`, or a private row `widen` admits (`facts/widen.rs`);
 //! - `excludePrivate`: the private-provenance policy (`facts/privacy.rs`);
 //! - `projectionEligibleSql('facts')`: a soft-deleted page hides the row. The quarantine clause
-//!   of that predicate is the live-page case of the check above. Its `needs_rederive` clause is
-//!   not modelled: the store has no re-derive queue, so no row is ever hidden by it (the takes
-//!   family does the same, rust/docs/store/takes.md). Its trust floor (`minTrust`) and flagged-fact
+//!   of that predicate is the live-page case of the check above. Its `needs_rederive` clause hides a
+//!   row a purge marked (`generations/needs_rederive.rs`). Its trust floor (`minTrust`) and flagged-fact
 //!   filter (`suppressFlagged`) read the row's stamped `trust_tier` and its write-gate receipts
 //!   (`trust::TrustPolicy`).
 //!
@@ -36,7 +35,9 @@ use super::{PrivacyPolicy, QUARANTINE_KEY, VisibilityWidening};
 use crate::Store;
 use crate::env::iso;
 use crate::error::Result;
-use crate::keyword::{or_of_lexemes, plainto_tsquery, to_tsvector, ts_matches, ts_rank_cd};
+use crate::keyword::{
+    FtsConfig, or_of_lexemes, plainto_tsquery_in, to_tsvector_in, ts_matches, ts_rank_cd,
+};
 use crate::kv::KvRead;
 use crate::links::no_nul;
 use crate::pages::read_page;
@@ -99,6 +100,9 @@ pub struct RelevanceQuery {
     /// The entity arm's named entity.
     pub entity: Option<EntityRef>,
     pub limit: f64,
+    /// The text search configuration (`GBRAIN_FTS_LANGUAGE`): absent is `english`; `german` is
+    /// the other one ported, and any other name refuses.
+    pub fts_config: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -112,16 +116,16 @@ pub struct UncomparableQuery {
 }
 
 /// `poolWhere` over one row, with the clock read once.
-struct Pool<'a> {
+pub(super) struct Pool<'a> {
     args: &'a PoolArgs,
     trust: TrustPolicy,
-    sources: BTreeSet<&'a str>,
+    pub(super) sources: BTreeSet<&'a str>,
     since: Option<i64>,
     now: i64,
 }
 
 impl<'a> Pool<'a> {
-    fn new(op: &str, args: &'a PoolArgs, now: i64) -> Result<Self> {
+    pub(super) fn new(op: &str, args: &'a PoolArgs, now: i64) -> Result<Self> {
         let mut texts: Vec<(&str, &str)> = args
             .source_ids
             .iter()
@@ -147,7 +151,7 @@ impl<'a> Pool<'a> {
     }
 
     /// The `WHERE` clauses of `poolWhere`, in the order the SQL states them.
-    fn admits(&self, read: &dyn KvRead, row: &FactRecord) -> Result<bool> {
+    pub(super) fn admits(&self, read: &dyn KvRead, row: &FactRecord) -> Result<bool> {
         let a = self.args;
         if !self.sources.contains(row.source_id.as_str()) {
             return Ok(false);
@@ -168,7 +172,10 @@ impl<'a> Pool<'a> {
         if a.world_only && !world_admits(read, &a.widen, row)? {
             return Ok(false);
         }
-        if hidden_by_policy(read, row, &a.exclude_private)? || hidden_by_deleted_page(read, row)? {
+        if hidden_by_policy(read, row, &a.exclude_private)?
+            || hidden_by_deleted_page(read, row)?
+            || super::hidden_by_rederive(read, row)?
+        {
             return Ok(false);
         }
         if !self.trust.admits(read, "facts", row.id, row.tier())? {
@@ -209,7 +216,7 @@ fn quarantined_provenance(read: &dyn KvRead, row: &FactRecord) -> Result<bool> {
 }
 
 /// `1 - (embedding <=> query)` of a comparable row, else NULL.
-fn similarity(row: &FactRecord, vector: &Option<(Vec<f32>, &VectorArg)>) -> Value {
+pub(super) fn similarity(row: &FactRecord, vector: &Option<(Vec<f32>, &VectorArg)>) -> Value {
     match vector {
         Some((target, arg)) if row.comparable(&arg.model, arg.dims) => {
             let distance = cosine_distance(row.embedding.as_deref().unwrap_or(&[]), target);
@@ -220,7 +227,7 @@ fn similarity(row: &FactRecord, vector: &Option<(Vec<f32>, &VectorArg)>) -> Valu
 }
 
 /// One pool row as the SQL returns it: the sixteen `FACT_POOL_COLUMNS`, then `similarity`.
-fn pool_row(row: &FactRecord, similarity: Value) -> Value {
+pub(super) fn pool_row(row: &FactRecord, similarity: Value) -> Value {
     json!({
         "id": row.id,
         "fact": row.fact,
@@ -293,8 +300,9 @@ impl Store {
             Some(arg) => Some((to_halfvec(&parse_vector(&arg.literal)?, None)?, arg)),
             None => None,
         };
+        let config = FtsConfig::parse(q.fts_config.as_deref())?;
         let query = if keyword {
-            match or_of_lexemes(&plainto_tsquery(&q.terms)?) {
+            match or_of_lexemes(&plainto_tsquery_in(config, &q.terms)?) {
                 Some(query) => Some(query),
                 None => return Ok(Vec::new()),
             }
@@ -328,7 +336,7 @@ impl Store {
                         row.fact,
                         row.entity_slug.as_deref().unwrap_or("").replace('-', " ")
                     );
-                    let vector = to_tsvector(&document)?;
+                    let vector = to_tsvector_in(config, &document)?;
                     if !ts_matches(&vector, query) {
                         continue;
                     }

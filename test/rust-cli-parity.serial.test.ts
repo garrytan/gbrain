@@ -21,7 +21,11 @@
  *
  * Each command ends in one of three states:
  *  - `equal`: the Rust brain printed the same JSON as the reference brain, value for value.
- *  - `refused`: the command failed with the typed `engine_capability_missing` refusal; the table names the member.
+ *  - `refused`: the command failed with the typed `engine_capability_missing` refusal; the table names the member. The
+ *    refusal passes only as a recorded stop (STOPPED_COMMANDS: the command and the member the Rust engine does not serve).
+ *    A refusal by a member the Rust engine serves, or by a command that is not in the list, fails the test and names the
+ *    member; so does a refused setup write. A served member that must stop for now takes a row in test/rust-stop-pins/
+ *    (owner and due date). The list is the per-command ledger: a command can no longer start refusing unseen.
  *  - `diverged`: anything else (other JSON, an untyped error, output that is not JSON). The test fails on it: a
  *    wrong answer is never acceptable.
  *
@@ -49,6 +53,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { detectAddonTarget } from '../src/core/rust-engine/addon-target.ts';
+import { readStopPins, rustServes, today } from './engine-parity/rust-refusals.ts';
 
 const ROOT = resolve(import.meta.dir, '..');
 const CLI = join(ROOT, 'src', 'cli.ts');
@@ -57,7 +62,8 @@ const FIXTURE = join(ROOT, 'test', 'fixtures', 'rust-cli-parity-brain');
 const TARGET = detectAddonTarget();
 const ADDON = TARGET ? join(ROOT, 'rust', 'target', 'addon', `gbrain_engine.${TARGET}.node`) : '';
 const HAVE_ADDON = !!TARGET && existsSync(ADDON);
-if (!HAVE_ADDON && process.env.GBRAIN_TEST_RUST_ADDON_REQUIRED === '1') {
+// Master's workflow names the switch GBRAIN_TEST_REQUIRE_RUST_ADDON for this file; the trunk's names it GBRAIN_TEST_RUST_ADDON_REQUIRED.
+if (!HAVE_ADDON && (process.env.GBRAIN_TEST_RUST_ADDON_REQUIRED === '1' || process.env.GBRAIN_TEST_REQUIRE_RUST_ADDON === '1')) {
   throw new Error(`GBRAIN_TEST_RUST_ADDON_REQUIRED=1 but ${ADDON || 'no addon target'} does not exist; run bun run rust:build`);
 }
 
@@ -297,6 +303,31 @@ const table: Row[] = [];
 const setupRows: Row[] = [];
 let rustArm: 'on' | 'no-engine' = 'on';
 
+/**
+ * The read commands that stop on a typed refusal today, each with the member the Rust engine does not serve that refuses
+ * it. A command that refuses and is not here fails; one listed here that now answers passes and prints that its row can go.
+ */
+const STOPPED_COMMANDS: Record<string, string> = {
+};
+
+const CLI_FILE = 'test/rust-cli-parity.serial.test.ts';
+/** Why a refusal of `member` by `command` fails the test, or null when it is a stop on a member the engine does not serve. */
+function refusalFailure(command: string, member: string): string | null {
+  const pin = readStopPins().find((row) => row.file === CLI_FILE && row.name === command);
+  if (pin !== undefined) {
+    if (pin.member !== member) return `${command} has a row in test/rust-stop-pins/ for ${pin.member}, but it now refuses at ${member}; update the row`;
+    if (pin.due < today()) return `the stop pin for ${command} (${pin.owner}) was due ${pin.due} and has passed (${pin.reason}); fix ${member} or move the date`;
+    return null;
+  }
+  if (rustServes(member)) {
+    return `${command} was refused by ${member}, which the Rust engine serves; fix the member, or pin the command in test/rust-stop-pins/<family>.tsv with an owner and a due date`;
+  }
+  if (STOPPED_COMMANDS[command] !== member) {
+    return `${command} was refused by ${member}, and ${STOPPED_COMMANDS[command] === undefined ? 'it is not in STOPPED_COMMANDS' : `STOPPED_COMMANDS records ${STOPPED_COMMANDS[command]}`}; a command that newly refuses on Rust fails (record it only when the member is not served)`;
+  }
+  return null;
+}
+
 const label = (args: string[]) => args.map((a) => (a === FIXTURE ? '<fixture>' : /\s/.test(a) ? JSON.stringify(a) : a)).join(' ');
 
 function printTable(): void {
@@ -334,8 +365,11 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
     if (root) rmSync(root, { recursive: true, force: true });
   });
 
-  test('setup never ends in an untyped Rust failure', () => {
+  test('setup never ends in an untyped Rust failure or a refusal', () => {
     expect(setupRows.filter((r) => r.state === 'diverged')).toEqual([]);
+    // A refused setup write leaves the Rust brain without the fixture, so every read after it would compare less than it
+    // says: the refusal fails here, with the command and the member named.
+    expect(setupRows.filter((r) => r.state === 'refused').map((r) => ({ setup: r.command, refusedBy: r.note }))).toEqual([]);
     // The mirror is the reference only while a Rust setup write is refused; once every write runs, the full brain is.
     expect(useMirror).toBe(setupRows.some((r) => r.state === 'refused'));
   });
@@ -353,8 +387,13 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
       const member = refusedMember(rust);
       if (member) {
         table.push({ command: label(args), state: 'refused', note: member });
+        // The ledger: a refusal passes only as a recorded stop on a member the engine does not serve.
+        const failure = refusalFailure(label(args), member);
+        const verdict: { command: string; refusedBy: string; failure: string | null } = { command: label(args), refusedBy: member, failure };
+        expect(verdict).toEqual({ ...verdict, failure: null });
         return;
       }
+      if (STOPPED_COMMANDS[label(args)] !== undefined) console.log(`[rust cli parity] ${label(args)} no longer refuses; remove it from STOPPED_COMMANDS`);
       const ref = useMirror ? await cli(brains.mirror, args) : pg;
       const refBrain = useMirror ? brains.mirror : brains.pglite;
       const asJson = (run: Run, brain: Brain, json = parseJson(run.stdout)) =>
@@ -460,30 +499,102 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
       warnLikePglite: sorted(checks.filter((c) => c.status !== 'ok' && !TYPED.test(c.message) && likePglite(c)).map((c) => c.name)),
       // Checks that report ok although a refused read stopped them: none. A refused check warns, health unknown.
       okWhileRefused: sorted(checks.filter((c) => c.status === 'ok' && TYPED.test(c.message)).map((c) => c.name)),
+      // Checks a refused read stopped (they warn with the typed refusal, health unknown).
+      typedRefusals: sorted(checks.filter((c) => TYPED.test(c.message)).map((c) => c.name)),
     }).toEqual({
       fail: [],
-      onlyPglite: ['default_source_local_path', 'frontmatter_repairable', 'image_assets', 'pglite_scale'],
+      // default_source_local_path, frontmatter_repairable and image_assets are gone from this list: the sources reads
+      // are typed members Rust serves, so those checks run on a Rust brain too.
+      // pglite_scale is gone from this list: a Rust brain is one local file too, so it reports the same page threshold.
+      onlyPglite: [],
       // multi_source_drift is gone from this list: it reads listSourceRecords, which Rust serves, so on this
       // one-source brain it skips exactly as PGLite does instead of warning with the executeRaw refusal.
-      onlyRust: ['canonical_content_writes', 'checkout_lagging', 'commits_outside_source_root', 'dirty_age', 'git_convergence',
-        'quarantined_changes', 'shared_skills_sources', 'sync_failures', 'tracked_ownership_marker',
-        'transcript_secret_exposure'],
+      // The git and managed-sync checks (canonical_content_writes, checkout_lagging, commits_outside_source_root,
+      // dirty_age, git_convergence, quarantined_changes, shared_skills_sources, tracked_ownership_marker,
+      // transcript_secret_exposure) are gone from this list: the typed sources reads now show the brain has no git
+      // source root, so those checks emit nothing, as on PGLite.
+      // sync_failures is gone from this list: its reads are typed members Rust serves, so on this brain it emits nothing,
+      // as on PGLite.
+      onlyRust: [],
       // entity_link_coverage, graph_coverage, orphan_ratio and timeline_coverage are gone from this list: the entity
       // types resolve on a Rust brain (overrideSourcesFromKeys), so those checks pass as they do on PGLite.
-      // trust_scan counts the pages and facts on Rust, then warns with the refusal of the takes count, which names
-      // the table in the member's parenthesis ("the takes table, whose rows the store does not stamp").
+      // child_table_orphans is gone from this list: countPageChildOrphans counts the orphan rows in the store.
+      // canonical_content_writes and raw_provenance are gone too: the first no longer runs (no git source root) and
+      // readRawProvenanceGaps counts the gaps in the store.
+      // extract_atoms_backlog, retrieval_reflex_health and text_projection_readiness are gone from this list: the backlog,
+      // projection-queue and reflex reads are served, so those checks report what PGLite reports (doctor-search, slices
+      // 17, 20 and 21). sync_failures is gone as well: the managed-sync failure and orphan reads are served (doctor-sync,
+      // slice 22). trust_scan, trust_tiers and trust_sources_unclaimed are gone too: the takes count is served, and a
+      // fresh Rust brain marks the trust backfill done, as PGLite's migration does.
       // fact_take_vectors is gone from this list: a new Rust brain records its embedding model and width as PGLite
       // does, so the check reads the same model and passes with PGLite's message.
-      untypedWarnings: ['backup_coverage', 'canonical_content_writes', 'child_table_orphans',
-        'extract_atoms_backlog', 'raw_provenance', 'retrieval_reflex_health', 'sync_failures',
-        'text_projection_readiness', 'trust_scan'],
+      // child_table_orphans is gone from this list: the page child counts are typed members on Rust
+      // (engine-sql/repair-page-reads.ts), so the check passes with PGLite's message.
+      // backup_coverage is gone from this list: a Rust brain counts its live pages and reads its maturity
+      // (countLivePages, readBrainMaturity), so the check answers as it does on PGLite.
+      // provenance_stamp_drift is gone from this list: listDriftLiveRows reads the live pages and their versions from the store.
+      // trust_scan scans pages, facts, takes and timeline entries, and a new Rust brain records the write gate's
+      // scan baseline as v227 does, so it counts what PGLite counts.
+      // write_gate_holds_stranded (master, commands/doctor/checks/write-gate-holds-stranded.ts) reads the held rows through raw SQL
+      // behind its own catch, so on a Rust brain it warns in its own words instead of naming the refusal. New from master at sync 14;
+      // it needs typed members for its three reads (owner: doctor family, lane 18).
+      untypedWarnings: ['write_gate_holds_stranded'],
       // The imported fixture has no embeddings, so both engines score it below 100 and count its chunks stale; the pack
       // reads are served, so the successor notice is the same. embeddings is not here: Rust cannot read the backlog
-      // age, so it warns with that typed refusal where PGLite reads the age and passes.
-      warnLikePglite: ['brain_score', 'embed_staleness', 'embedding_provider', 'pack_upgrade_available'],
+      // age, so it warns with that typed refusal where PGLite reads the age and passes. default_source_local_path
+      // warns on both engines: the fixture's pages are file-backed and the default source has no local path.
+      // timeline_coverage warns on both engines: the fixture's entity pages are 73% covered, which the store now counts.
+      // embedding_column_registry warns on both engines: the active column holds no vector, which the store now counts.
+      warnLikePglite: ['brain_score', 'default_source_local_path', 'embed_staleness', 'embedding_column_registry', 'embedding_provider',
+        'pack_upgrade_available', 'timeline_coverage'],
       okWhileRefused: [],
+      // credential_projection_pending is gone from this list: listCredentialResealHoldRows answers a Rust brain's holds
+      // (none: only the credential re-seal migration writes them, through executeRaw).
+      // person_title_duplicates is gone from this list: the stub, candidate, retirement and link-count reads are typed
+      // members the store answers, so it reports what PGLite reports.
+      // unwithdrawn_facts is gone from this list: listUnwithdrawnFacts reads the facts-fence generation ledger the store
+      // writes (facts/generations.rs), so the check runs on a Rust brain.
+      // synopsis_tier_coverage is not here: readSynopsisTierConfig reads the typed listSynopsisSourceIds and
+      // hasSynopsisFrontmatterOverride, which the store serves.
+      // access_pages_read_by_nobody, owner_identity and owner_only_marks_triggers are gone from this list: the doctor join
+      // checks read through typed members the store serves (engine-sql/doctor-join.ts, doctor-acc.ts), so they answer as they
+      // do on PGLite. entity_duplicates is gone too: the store serves listIdentityDecisions and the entity key rows.
+      // git_held_files is gone from this list: its readers-key hold count and candidate pages are typed members Rust
+      // serves (countReadersNoncanonicalHolds, listReaderCandidatePages), so the check answers as it does on PGLite.
+      // access_disabled_member_credentials (master #9586, GBRA-585) reads disabled members' credentials through raw SQL; it stops on the
+      // typed raw_sql refusal on a Rust brain (owner: access family, lane 15).
+      // write_gate_hold_ambiguous (master #10200) lists the holds the v333 upgrade could not tie to one page; the Rust hold carries no
+      // page id (the hold-by-page-id swap row, due Fri Nov 27), so the check stops on the typed refusal rather than answer a quiet zero.
+      // legacy_slug_spellings is gone from this list: its row-security and candidate page reads are typed members the store
+      // serves (readRowSecurityTables, listSlugSpellingCandidates), so it answers ok as it does on PGLite.
+      typedRefusals: ['access_disabled_member_credentials', 'write_gate_hold_ambiguous'],
     });
     const count = (s: string) => checks.filter((c) => c.status === s).length;
     table.push({ command: 'doctor --json', state: 'runs', note: ` ${checks.length} checks, ${count('ok')} ok, ${count('warn')} warn, 0 fail; PGLite ${pgReport!.checks!.length}` });
   }, 600_000);
+
+  // `gbrain auth list` names where a key with the read-shared switch on writes and what it reads; the list read on a
+  // Rust brain returns the grant columns the line needs (source_grant, source_id, federated_read and the revisions).
+  test('auth list shows the write/reads line of a read-shared key on a Rust brain as on PGLite; --json is equal', async () => {
+    if (rustArm !== 'on') return;
+    const mark = (t: string) => t.replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, '<uuid>')
+      .replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z?/g, '<timestamp>');
+    const out: Record<string, { text: string; json: unknown }> = {};
+    for (const backend of ['pglite', 'rust'] as const) {
+      const brain = brains[backend];
+      // `auth create --sources` still refuses on Rust (raw SQL), so the key is switched with a rescope, which runs.
+      for (const args of [['auth', 'create', 'k-plain'], ['auth', 'create', 'k-shared'], ['auth', 'rescope', '--token', 'k-shared', '--sources', 'default', '--read-shared', 'on']]) {
+        const run = await cli(brain, args);
+        expect({ backend, args, exitCode: run.exitCode, stderr: run.exitCode ? run.stderr : '' }).toEqual({ backend, args, exitCode: 0, stderr: '' });
+      }
+      const [text, json] = [await cli(brain, ['auth', 'list']), await cli(brain, ['auth', 'list', '--json'])];
+      expect({ backend, text: text.exitCode, json: json.exitCode }).toEqual({ backend, text: 0, json: 0 });
+      out[backend] = { text: mark(text.stdout), json: normalize(parseJson(json.stdout), pathsOf(brain)) };
+    }
+    expect(out.pglite!.text).toContain('    write: default  reads: default (+ shared)');
+    // Only the switched key gets the line: the plain key's row is followed by another row or the end, never a write line.
+    expect(out.pglite!.text.split('\n').filter(l => l.startsWith('    write: ')).length).toBe(1);
+    expect(out.rust).toEqual(out.pglite);
+    table.push({ command: 'auth list (read-shared key)', state: 'equal', note: '' });
+  }, 300_000);
 });

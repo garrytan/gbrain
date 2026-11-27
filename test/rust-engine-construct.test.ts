@@ -28,6 +28,7 @@ import { OperationError } from '../src/core/ops/contract.ts';
 import { servePersistenceIpcProvider } from '../src/core/persistence/provider.ts';
 import { readLocalWriter } from '../src/core/persistence/identity.ts';
 import { openRustEngine } from '../src/core/rust-engine.ts';
+import { HELD_FOR_CALLERS } from '../src/core/rust-engine/store-capabilities.ts';
 import { withEnv } from './helpers/with-env.ts';
 
 let dirs: string[] = [];
@@ -134,7 +135,9 @@ describe('servePersistenceIpcProvider (the serve-path persistence socket)', () =
   }
 
   test('an engine without the persistence journal gets no provider, and its local writers are registered through the typed members only', async () => {
+    // The explicit no-journal fixture: the store reports the journal now, so this instance takes it off.
     const rust = openRustEngine({ addon: { target: 'linux-x64-glibc', engine_abi: 1 }, databasePath: '/var/brains/test.rust' });
+    for (const capability of ['persistence_journal', 'managed_persistence'] as const) (rust.capabilities as Set<string>).delete(capability);
     expect(rust.capabilities.has('persistence_journal')).toBe(false);
     const home = tempDir('gbrain-rust-serve-writers-');
     await withEnv({ GBRAIN_HOME: home }, async () => {
@@ -151,6 +154,20 @@ describe('servePersistenceIpcProvider (the serve-path persistence socket)', () =
       const local = await readLocalWriter(engine, 'stdio');
       expect(rows.has(local.id)).toBe(true);
     });
+  });
+
+  // The flip released persistence_journal; managed_persistence stays held (store-capabilities.ts HELD_FOR_CALLERS) until the
+  // managed-persistence program is done: a Rust brain refuses managed mode with the typed refusal.
+  test('the Rust engine reports persistence_journal', () => {
+    const rust = openRustEngine({ addon: { target: 'linux-x64-glibc', engine_abi: 1 }, databasePath: '/var/brains/test.rust' });
+    expect(rust.capabilities.has('persistence_journal')).toBe(true);
+  });
+
+  test('the Rust engine holds managed_persistence back, naming the managed sites slice 2 still owes', () => {
+    const rust = openRustEngine({ addon: { target: 'linux-x64-glibc', engine_abi: 1 }, databasePath: '/var/brains/test.rust' });
+    expect(rust.capabilities.has('managed_persistence')).toBe(false);
+    expect((HELD_FOR_CALLERS.managed_persistence ?? []).map(site => site.split(' (')[0])).toEqual(['managed sync', 'refresh barrier', 'import holds',
+      'managed clone and its recovery', 'owner recovery scans', 'git durability --pat-file']);
   });
 
   test('an engine with the persistence journal goes on to the provider', async () => {

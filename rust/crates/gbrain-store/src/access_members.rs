@@ -1,15 +1,19 @@
 //! Access members and groups: the `access_members`, `access_groups` and `access_group_members`
 //! tables of the PGLite engine (schema migrations v282, v301, v305 and v308).
 //!
-//! Members: insertAccessMember, setAccessMemberDisabled, setAccessMemberEmail,
-//! setAccessMemberKind, tombstoneAccessMember, addAccessGroupMembers, removeAccessGroupMembers,
-//! deleteAccessGroup, readAccessMembers, readAccessMemberIdByEmail, listActiveAccessMembers.
+//! Members: insertAccessMember (with the token it binds, written to the token record of
+//! `jobs/access_tokens.rs` in the same write), setAccessMemberDisabled, setAccessMemberEmail,
+//! setAccessMemberKind, setAccessMemberLabelledOnly, tombstoneAccessMember, addAccessGroupMembers, removeAccessGroupMembers,
+//! deleteAccessGroup, readAccessMembers, readAccessGroupIds, readAccessGroups, listActiveAccessMembers.
 //!
 //! Keys (every record starts with `keys::ACCESS_MEMBERS`, `x`):
 //! - `x 0x01 <member id>` -> `MemberRecord` (JSON).
 //! - `x 0x02 <group id>` -> `GroupRecord` (JSON).
 //! - `x 0x03 <group id> 0x00 <member id>` -> empty. Ids never hold NUL (the id check), so a
 //!   group's members are the prefix `x 0x03 <group id> 0x00`.
+//! - `x 0x04 <system> 0x00 <external id>` -> a member link (`access_member_links`, v286); the
+//!   module `access_member_links` reads and writes these. Store formats 7 and older also kept the
+//!   shared-skill token secret at exactly `x 0x04`; `access_key_split.rs` moved it to `x 0x0d`.
 //!
 //! A brain holds few members, so the email uniqueness check, the group list of a member and the
 //! enabled-member count scan these prefixes.
@@ -46,7 +50,7 @@ const SERVES_KEY: &str = "access.serves";
 const SERVES_DERIVED_KEY: &str = "access.serves_derived";
 const SERVES_SINCE_KEY: &str = "access.serves_since";
 
-fn member_key(id: &str) -> Vec<u8> {
+pub(crate) fn member_key(id: &str) -> Vec<u8> {
     let mut key = vec![keys::ACCESS_MEMBERS, MEMBER];
     key.extend_from_slice(id.as_bytes());
     key
@@ -101,7 +105,8 @@ pub(crate) struct GroupRecord {
     pub created_at_us: i64,
 }
 
-/// `insertAccessMember(spec)`: the member row and the groups it joins.
+/// `insertAccessMember(spec)`: the member row, the groups it joins and the token it binds (`bindTokenId`, the token
+/// whose id text is exactly that).
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct AccessMemberInsert {
@@ -110,6 +115,7 @@ pub struct AccessMemberInsert {
     pub email: Option<String>,
     pub kind: Option<String>,
     pub groups: Vec<String>,
+    pub bind_token_id: Option<String>,
 }
 
 /// `readAccessMembers(lookup)`: one member by exact id (any status); every member that declares
@@ -133,7 +139,7 @@ fn valid_id(id: &str) -> bool {
         })
 }
 
-fn refused(constraint: &str, message: String) -> StoreError {
+pub(crate) fn refused(constraint: &str, message: String) -> StoreError {
     StoreError::new(
         CONSTRAINT_VIOLATION,
         format!("{message} (constraint {constraint})"),
@@ -161,7 +167,7 @@ fn check_kind(kind: &str) -> Result<()> {
 }
 
 /// `now()` of the write transaction.
-fn now(store: &Store) -> i64 {
+pub(crate) fn now(store: &Store) -> i64 {
     transaction_clock::transaction_now().unwrap_or_else(|| store.env.now_micros())
 }
 
@@ -182,7 +188,7 @@ fn all_members(read: &dyn KvRead) -> Result<Vec<MemberRecord>> {
 }
 
 /// Every group member as `(group id, member id)`, in key order.
-fn all_group_members(read: &dyn KvRead) -> Result<Vec<(String, String)>> {
+pub(crate) fn all_group_members(read: &dyn KvRead) -> Result<Vec<(String, String)>> {
     let mut out = Vec::new();
     scan_prefix(
         read,
@@ -202,8 +208,21 @@ fn all_group_members(read: &dyn KvRead) -> Result<Vec<(String, String)>> {
     Ok(out)
 }
 
-fn read_member(read: &dyn KvRead, id: &str) -> Result<Option<MemberRecord>> {
+pub(crate) fn read_member(read: &dyn KvRead, id: &str) -> Result<Option<MemberRecord>> {
     get_json(read, &member_key(id))
+}
+
+/// `EXISTS (SELECT 1 FROM access_members WHERE labelled_only)`: whether any member row carries the
+/// labelled-only grant. Like the statement it reads every row, so a disabled or removed member still
+/// counts (a removed member keeps its flag; the grant cannot be changed once it is removed).
+pub(crate) fn any_labelled_only(read: &dyn KvRead) -> Result<bool> {
+    Ok(all_members(read)?.iter().any(|m| m.labelled_only))
+}
+
+/// `EXISTS (SELECT 1 FROM access_members WHERE id = $1 AND tombstoned_at IS NULL)`: a member
+/// with exactly this id that is not removed (a disabled member counts).
+pub(crate) fn member_not_removed(read: &dyn KvRead, id: &str) -> Result<bool> {
+    Ok(read_member(read, id)?.is_some_and(|m| m.tombstoned_at_us.is_none()))
 }
 
 /// The member that declares `email`, other than `except`.
@@ -238,7 +257,7 @@ fn mark_restricted(tx: &mut dyn KvWrite) -> Result<()> {
 
 /// `gbrain_access_refresh_serves()` (v309) at read committed: `access.serves_derived` is
 /// `several` while two or more members are enabled and `one` otherwise (written as `one` only when
-/// the key exists); `access.serves_since` is set once, when the explicit `access.serves` (`one` or
+/// the key exists); `access.serves_since` is set once (to the microsecond, v329), when the explicit `access.serves` (`one` or
 /// `several`, trimmed and lower-cased) or else the derived value is `several`.
 fn refresh_serves(tx: &mut dyn KvWrite, now_us: i64) -> Result<()> {
     let enabled = all_members(&*tx)?
@@ -258,9 +277,8 @@ fn refresh_serves(tx: &mut dyn KvWrite, now_us: i64) -> Result<()> {
     };
     let since_key = config_key(SERVES_SINCE_KEY);
     if serves == "several" && tx.get(&since_key)?.is_none() {
-        // to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'): whole seconds.
-        let text = iso(now_us);
-        tx.put(&since_key, format!("{}Z", &text[..19]).as_bytes())?;
+        // to_char(now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') (v329): microseconds.
+        tx.put(&since_key, iso(now_us).as_bytes())?;
     }
     Ok(())
 }
@@ -310,8 +328,9 @@ fn row_json(m: &MemberRecord, groups: Vec<String>) -> Value {
 
 impl Store {
     /// `insertAccessMember(spec)`: inserts the member (kind `person` when unset), creates the groups
-    /// it names that are missing and adds it to each, in one write. Resolves `{ groupsCreated }`,
-    /// the groups this call created, in the order named.
+    /// it names that are missing, adds it to each and binds the token `bindTokenId` names to it (no
+    /// token has the id: nothing is bound), in one write. Resolves `{ groupsCreated }`, the groups
+    /// this call created, in the order named.
     pub fn insert_access_member(&self, spec: &AccessMemberInsert) -> Result<Value> {
         let kind = spec.kind.as_deref().unwrap_or("person");
         check_id(&spec.id, "access_members")?;
@@ -351,6 +370,9 @@ impl Store {
             }
             for group in &spec.groups {
                 add_group_member(tx, group, &spec.id)?;
+            }
+            if let Some(token_id) = &spec.bind_token_id {
+                crate::jobs::bind_token_member(tx, token_id, &spec.id)?;
             }
             Ok(json!({ "groupsCreated": created }))
         })
@@ -399,6 +421,21 @@ impl Store {
                 return Ok(());
             };
             m.kind = kind.to_string();
+            m.updated_at_us = now(self);
+            put_json(tx, &member_key(id), &m)
+        })
+    }
+
+    /// `setAccessMemberLabelledOnly(id, labelled_only)`: sets or clears the labelled-only grant of
+    /// a member that is not removed. No serves key moves: the Postgres serves trigger fires only on
+    /// `disabled_at` and `tombstoned_at`.
+    pub fn set_access_member_labelled_only(&self, id: &str, labelled_only: bool) -> Result<()> {
+        self.write(|tx| {
+            let Some(mut m) = read_member(&*tx, id)?.filter(|m| m.tombstoned_at_us.is_none())
+            else {
+                return Ok(());
+            };
+            m.labelled_only = labelled_only;
             m.updated_at_us = now(self);
             put_json(tx, &member_key(id), &m)
         })
@@ -493,6 +530,43 @@ impl Store {
         Ok(Value::Array(rows))
     }
 
+    /// `readAccessGroups(id)`: every group with its member ids, or the one group `id` names
+    /// (exactly that id), each `{ id, members }`; groups and members in byte order.
+    pub fn read_access_groups(&self, id: Option<&str>) -> Result<Value> {
+        let read = self.read()?;
+        let mut groups: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        match id {
+            Some(id) => {
+                if !id.contains('\0') && read.get(&group_key(id))?.is_some() {
+                    groups.insert(id.to_owned(), Vec::new());
+                }
+            }
+            None => scan_prefix(
+                &*read,
+                &[keys::ACCESS_MEMBERS, GROUP],
+                false,
+                &mut |k, _| {
+                    groups.insert(String::from_utf8_lossy(&k[2..]).into_owned(), Vec::new());
+                    true
+                },
+            )?,
+        }
+        for (group, member) in all_group_members(&*read)? {
+            if let Some(members) = groups.get_mut(&group) {
+                members.push(member);
+            }
+        }
+        Ok(Value::Array(
+            groups
+                .into_iter()
+                .map(|(id, mut members)| {
+                    members.sort();
+                    json!({ "id": id, "members": members })
+                })
+                .collect(),
+        ))
+    }
+
     /// `readAccessGroupIds(ids)`: which of `ids` name an existing group, each once, in byte order.
     pub fn read_access_group_ids(&self, ids: &[String]) -> Result<Vec<String>> {
         let read = self.read()?;
@@ -505,11 +579,6 @@ impl Store {
         Ok(found.into_iter().collect())
     }
 
-    /// `readAccessMemberIdByEmail(email)`: the id of the member that declares `email`, or null.
-    pub fn read_access_member_id_by_email(&self, email: &str) -> Result<Option<String>> {
-        email_owner(&*self.read()?, email, "")
-    }
-
     /// `listActiveAccessMembers()`: the ids of the members neither disabled nor removed, by id.
     pub fn list_active_access_members(&self) -> Result<Vec<String>> {
         Ok(all_members(&*self.read()?)?
@@ -519,6 +588,7 @@ impl Store {
             .collect())
     }
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -571,5 +641,29 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(store.read_access_members(&none).unwrap(), json!([]));
+    }
+
+    #[test]
+    fn any_labelled_only_reads_every_member_row_like_the_statement() {
+        let store = store();
+        let any = |s: &Store| any_labelled_only(&*s.read().unwrap()).unwrap();
+        for id in ["alice", "bob"] {
+            store
+                .insert_access_member(&AccessMemberInsert {
+                    id: id.into(),
+                    ..Default::default()
+                })
+                .unwrap();
+        }
+        assert!(!any(&store));
+        store.set_access_member_labelled_only("bob", true).unwrap();
+        assert!(any(&store));
+        store.set_access_member_disabled("bob", true).unwrap();
+        assert!(any(&store), "a disabled member still counts, as in SQL");
+        store.set_access_member_labelled_only("bob", false).unwrap();
+        assert!(!any(&store));
+        store.set_access_member_labelled_only("bob", true).unwrap();
+        store.tombstone_access_member("bob").unwrap();
+        assert!(any(&store), "a removed member keeps its flag, as in SQL");
     }
 }

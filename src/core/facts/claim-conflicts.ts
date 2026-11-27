@@ -25,8 +25,6 @@ import type { BrainEngine } from '../engine.ts';
 import type { PhaseResult } from '../cycle.ts';
 import { AUDIT_ROW_SOURCES } from './audit-sources.ts';
 import { insertProposal } from '../ai/decide/proposals-store.ts';
-import { claimBucketSql } from './typed-claim.ts';
-import { onOwnedMemoryPageSql } from '../access/member-facts.ts';
 import { CLAIM_CONFLICTS_MAX_PAIRS_KEY, readPhaseConfigNumber } from '../cycle/phase-config-values.ts';
 
 export const CLAIM_CONFLICTS_MODE_KEY = 'dream.claim_conflicts.mode';
@@ -65,10 +63,15 @@ export interface ClaimConflictRun {
   warnings: string[];
 }
 
-/** dream.claim_conflicts.mode: propose files proposals each cycle; off (the default, and any other stored value) skips the phase. */
+/**
+ * dream.claim_conflicts.mode: propose (the default when unset: keyless, it writes only proposal rows) files proposals each
+ * cycle; off, any other stored value, and a config read that fails skip the phase.
+ */
 export async function claimConflictsMode(engine: Pick<BrainEngine, 'getConfig'>): Promise<'propose' | 'off'> {
-  const raw = (await engine.getConfig(CLAIM_CONFLICTS_MODE_KEY).catch(() => null))?.trim().toLowerCase();
-  return raw === 'propose' ? 'propose' : 'off';
+  let raw: string | null;
+  try { raw = await engine.getConfig(CLAIM_CONFLICTS_MODE_KEY); } catch { return 'off'; }
+  if (raw == null) return 'propose';
+  return raw.trim().toLowerCase() === 'propose' ? 'propose' : 'off';
 }
 
 /** Why value is not a valid dream.claim_conflicts.mode, or null when it is. */
@@ -77,39 +80,16 @@ export function claimConflictsModeRefusal(value: string): string | null {
     : CLAIM_CONFLICTS_MODE_KEY + ' must be propose or off; got ' + JSON.stringify(value) + '. Nothing was written.';
 }
 
-const ACTIVE_CLAIMS = 'WITH f AS (\n'
-  + '  SELECT id, entity_slug, visibility, claim_metric, claim_value, claim_unit, claim_period, valid_from, source_markdown_slug, ' + claimBucketSql('facts') + ' AS bucket\n'
-  + '    FROM facts\n'
-  + '   WHERE source_id = $1 AND expired_at IS NULL AND (valid_until IS NULL OR valid_until > now())\n'
-  + '     AND entity_slug IS NOT NULL AND claim_metric IS NOT NULL AND claim_value IS NOT NULL AND source <> ALL($2::text[]))';
-const PAIR_JOIN = 'FROM f n JOIN f o\n'
-  + '    ON o.entity_slug = n.entity_slug AND o.visibility = n.visibility AND o.claim_metric = n.claim_metric\n'
-  + '   AND o.claim_unit IS NOT DISTINCT FROM n.claim_unit AND o.claim_period IS NOT DISTINCT FROM n.claim_period\n'
-  + '   AND o.bucket = n.bucket AND o.claim_value <> n.claim_value\n'
-  + '   AND (NOT (' + onOwnedMemoryPageSql('n') + ' OR ' + onOwnedMemoryPageSql('o') + ') OR o.source_markdown_slug = n.source_markdown_slug)\n'
-  + '   AND (o.valid_from < n.valid_from OR (o.valid_from = n.valid_from AND o.id < n.id))\n'
-  + ' WHERE NOT EXISTS (SELECT 1 FROM decide_proposals p WHERE p.source_id = $1\n'
-  + '         AND LEAST(p.new_fact_id, p.old_fact_id) = LEAST(n.id, o.id) AND GREATEST(p.new_fact_id, p.old_fact_id) = GREATEST(n.id, o.id))\n'
-  + '   AND NOT EXISTS (SELECT 1 FROM trust_proposals tp WHERE tp.status = \'pending\' AND tp.action = \'supersede_fact\'\n'
-  + '         AND tp.target_table = \'facts\' AND tp.related_table = \'facts\'\n'
-  + '         AND ((tp.target_id = o.id AND tp.related_id = n.id) OR (tp.target_id = n.id AND tp.related_id = o.id)))';
-
-function pairsSql(select: string, tail = ''): string {
-  return ACTIVE_CLAIMS + '\nSELECT ' + select + '\n' + PAIR_JOIN + tail;
-}
-
 /** Unproposed same-bucket claim conflicts in one source, at most limit, oldest new fact first; deferred counts the rest. */
 export async function findClaimConflicts(engine: BrainEngine, sourceId: string, limit: number): Promise<{ pairs: ClaimConflictPair[]; deferred: number }> {
-  const rows = await engine.executeRaw<Record<string, unknown>>(pairsSql(
-    'n.id AS new_fact_id, o.id AS old_fact_id, n.entity_slug, n.visibility, n.claim_metric, n.claim_unit, n.claim_period, n.bucket, n.claim_value AS new_value, o.claim_value AS old_value',
-    '\n ORDER BY n.id, o.id\n LIMIT $3'), [sourceId, [...AUDIT_ROW_SOURCES], limit + 1]);
+  const rows = await engine.listClaimConflictPairs(sourceId, [...AUDIT_ROW_SOURCES], limit + 1);
   const pairs = rows.slice(0, limit).map(r => ({
     new_fact_id: Number(r.new_fact_id), old_fact_id: Number(r.old_fact_id), entity_slug: String(r.entity_slug), visibility: String(r.visibility),
     claim_metric: String(r.claim_metric), claim_unit: (r.claim_unit as string | null) ?? null, claim_period: (r.claim_period as string | null) ?? null,
     bucket: String(r.bucket), new_value: Number(r.new_value), old_value: Number(r.old_value),
   }));
   if (rows.length <= limit) return { pairs, deferred: 0 };
-  const [count] = await engine.executeRaw<{ n: number | string }>(pairsSql('COUNT(*) AS n'), [sourceId, [...AUDIT_ROW_SOURCES]]);
+  const count = await engine.countClaimConflictPairs(sourceId, [...AUDIT_ROW_SOURCES]);
   return { pairs, deferred: Math.max(0, Number(count?.n ?? 0) - limit) };
 }
 
@@ -122,7 +102,7 @@ export async function runClaimConflicts(engine: BrainEngine, opts: { sourceIds?:
   const knob = await readPhaseConfigNumber(engine, CLAIM_CONFLICTS_MAX_PAIRS_KEY);
   const maxPairs = knob.value ?? CLAIM_CONFLICTS_DEFAULT_MAX_PAIRS;
   const dryRun = opts.dryRun === true;
-  const sourceIds = opts.sourceIds ?? (await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE NOT archived ORDER BY id')).map(r => r.id);
+  const sourceIds = opts.sourceIds ?? (await engine.listUnarchivedSourceRows()).map(r => r.id);
   const sources: ClaimConflictSourceResult[] = [];
   let pairIndex = 0;
   for (const sourceId of sourceIds) {
@@ -155,11 +135,11 @@ export async function runClaimConflicts(engine: BrainEngine, opts: { sourceIds?:
     warnings: knob.warning ? [knob.warning] : [] };
 }
 
-/** Cycle adapter: off by default (dream.claim_conflicts.mode); maps the run onto the cycle's PhaseResult (duration filled by the caller). */
+/** Cycle adapter: on by default, off with dream.claim_conflicts.mode off; maps the run onto the cycle's PhaseResult (duration filled by the caller). */
 export async function claimConflictsCyclePhase(engine: BrainEngine | null, dryRun: boolean): Promise<PhaseResult> {
   if (!engine) return { phase: 'claim_conflicts', status: 'skipped', duration_ms: 0, summary: 'no database connected', details: { reason: 'no_database' } };
   if (await claimConflictsMode(engine) === 'off') {
-    return { phase: 'claim_conflicts', status: 'skipped', duration_ms: 0, summary: 'mode off (' + CLAIM_CONFLICTS_MODE_KEY + ', default off)', details: { reason: 'mode_off' } };
+    return { phase: 'claim_conflicts', status: 'skipped', duration_ms: 0, summary: 'mode off (' + CLAIM_CONFLICTS_MODE_KEY + ' off; unset means propose)', details: { reason: 'mode_off' } };
   }
   const r = await runClaimConflicts(engine, { dryRun });
   const status: PhaseResult['status'] = r.status === 'complete' ? 'ok' : r.status === 'partial' ? 'warn' : r.status === 'failed' ? 'fail' : 'skipped';

@@ -239,13 +239,12 @@ pub(crate) struct RequestRecord {
 
 /// The staging ids that outstanding (not terminal) requests name in `intent.body_ref.staging_id`:
 /// the journal arm of PGLite's `liveStagingIds` (`engine-sql/page-body.ts`), a root of the
-/// segment sweep. Reads no request when the brain counter says none is outstanding.
+/// segment sweep. It scans every request, never trusting the journal's own outstanding counter:
+/// `insert_write_request` (`persistence.rs`) writes a queued request into this same family and
+/// charges only the persistence counters, so that counter can read zero while a request still
+/// names a staging.
 pub(crate) fn request_held_staging_ids(read: &dyn KvRead) -> Result<HashSet<String>> {
-    let counters = read_counters(read)?;
     let mut out = HashSet::new();
-    if counters.brain == 0 {
-        return Ok(out);
-    }
     let mut failure = None;
     scan_prefix(read, &[keys::REQUEST], false, &mut |_, v| {
         match serde_json::from_slice::<RequestRecord>(v) {
@@ -566,6 +565,7 @@ fn finish_in(
             ),
         ));
     }
+    crate::persistence::guard_deferred_transition(&record.state, &finish.state)?;
     let now = env.now_micros();
     record.state = finish.state.clone();
     record.outcome = finish.outcome.clone();
@@ -806,6 +806,20 @@ struct WriterRecord {
     created_at_us: i64,
     #[serde(default)]
     revoked_at_us: Option<i64>,
+}
+
+/// The ids of the local writers that are not revoked.
+pub(crate) fn active_writer_ids(read: &dyn KvRead) -> Result<Vec<String>> {
+    let mut ids = Vec::new();
+    scan_prefix(read, &[keys::WRITER], false, &mut |_, v| {
+        if let Ok(w) = serde_json::from_slice::<WriterRecord>(v)
+            && w.revoked_at_us.is_none()
+        {
+            ids.push(w.id);
+        }
+        true
+    })?;
+    Ok(ids)
 }
 
 /// The stored id and lane of the local writer `id` (case-folded key), revoked or not.

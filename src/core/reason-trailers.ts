@@ -16,7 +16,7 @@ import { canonicalChangeReason, CHANGE_REASON_MAX } from './persistence/change-r
 import { scanTextSpans } from './secret-scan.ts';
 import type { BrainEngine } from './engine.ts';
 import { engineKey } from './engine-key.ts';
-import { readReasonPurgeTombstones as readReasonPurgeTombstonesOver, readSourcePurgeEpoch as readSourcePurgeEpochOver, SOURCE_PURGE_EPOCH_SQL } from './engine-sql/sync-reason-reads.ts';
+import { readSourcePurgeEpoch as readSourcePurgeEpochOver, SOURCE_PURGE_EPOCH_SQL } from './engine-sql/sync-reason-reads.ts';
 import type { Notice } from './agent-output.ts';
 import type { VersionHistory } from './page-state/versions.ts';
 
@@ -149,8 +149,7 @@ export async function scanSyncReasons(engine: BrainEngine, input: { sourceId: st
   const byPath = new Map<string, ReasonDecision>();
   const secrets: SyncReasonScan['secrets'] = [];
   let malformed = 0;
-  const purged = 'readReasonPurgeTombstones' in engine ? await engine.readReasonPurgeTombstones(input.sourceId) : await readReasonPurgeTombstonesOver(engine, input.sourceId);
-  const tombstones = new Set(purged.map(row => `${row.commit_sha}\0${row.path}`));
+  const tombstones = new Set((await engine.readReasonPurgeTombstones(input.sourceId)).map(row => `${row.commit_sha}\0${row.path}`));
   const forms = pathForms(repo.scopePrefix);
   const read = await readReasonTrailers(repo.gitRoot, range, caps.sync, commit => {
     const texts = trailerTexts(commit, forms);

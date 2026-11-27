@@ -24,7 +24,13 @@ export interface InternalConfigState {
 }
 
 export const INTERNAL_CONFIG_STATE: readonly InternalConfigState[] = [
+  { key: 'dedupe.exa_spent_usd', reason: 'the running total gbrain dedupe --exa has paid Exa (entities/evidence/exa.ts); the total cap dedupe.exa_total_cap_usd is checked against it' },
+  { key: 'dedupe.exa_cache.', prefix: true, reason: 'one cached Exa answer per query hash (entities/evidence/exa.ts), so a query is never paid for twice' },
+  { key: 'dedupe.auto.', prefix: true, reason: 'the per-class switch gbrain dedupe auto --off/--on writes (entities/evidence/auto.ts, dedupe.auto.c2 and dedupe.auto.c7); planAutoLinks reads it' },
   { key: 'version', reason: 'schema version stamp written by migrate.ts' },
+  { key: 'persistence.writer_admin_lock', reason: 'the writer administration lock gbrain writer lock/unlock writes (persistence/admin-contract.ts); writer claim, activate and transfer refuse while it is set, so it is not a config set knob' },
+  { key: 'correct.receipt.', prefix: true, reason: 'one receipt per correction (rules/correct.ts): which step a correct call reached and what is next; written only by correct, gbrain rules approve and retire' },
+  { key: 'policy.approved.', prefix: true, reason: 'the owner-approved agent policy record per scope (policy/store.ts); written only by an owner-confirmed gbrain policy command, refused to config set' },
   { key: 'transcripts.archive.pinned_timezone.', prefix: true, reason: 'the timezone the conversation archive pinned for a source on its first run (transcripts/archive.ts); a hand edit would re-slice every archived day' },
   { key: 'transcripts.archive.audience.', prefix: true, reason: 'the audience (personal or shared) the conversation archive last ran under per source (transcripts/archive.ts); it decides when earlier pages are kept to the owner' },
   { key: 'transcripts.archive.rescope_capped.', prefix: true, reason: 'the number of archive folders when the owner-only re-scope passed the per-source rule limit and kept the whole conversations/ folder to the owner instead (transcripts/archive.ts); status and doctor report it' },
@@ -32,7 +38,12 @@ export const INTERNAL_CONFIG_STATE: readonly InternalConfigState[] = [
   { key: 'transcripts.archive.backfill_state', reason: 'whether the maintenance pass has finished backfilling older conversation days (transcripts/archive-maintenance.ts); a hand edit would stop or restart the backfill' },
   { key: 'transcripts.archive.last_read.', prefix: true, reason: 'what the last conversation archive run read from each reader per source (transcripts/archive.ts): status and doctor report it as of that run instead of reading every session again' },
   { key: 'transcripts.archive.index_pending.', prefix: true, reason: 'days whose conversation archive day index still has to be written (transcripts/archive.ts); the next run retries them' },
+  { key: 'onboarding.first_session', reason: 'the first-session suggestion record (onboard/first-session.ts): reservations, delivered sessions and the stop; written only through its compare-and-set, and a hand edit would re-arm or miscount the suggestion' },
+  { key: 'onboarding.install_receipt', reason: 'the install receipt gbrain setup writes when it creates a brain (onboard/setup-history.ts): whether the history import may be offered and what it decided; a hand edit would offer the import on a brain setup did not create' },
+  { key: 'learning.keyless_thin_contacts', reason: 'on a keyless brain, the number of thin pages the owner has recent contact with and what filling them would cost, as the last learning_derive pass counted them (learning/derive.ts); learned reads it, so a hand edit would misreport the note' },
+  { key: 'learning.derive.watermark', reason: 'the newest row time the nightly learning_derive pass has already recorded into the learning ledger (learning/derive.ts); a hand edit would skip items or record them twice' },
   { key: 'maintenance.last_run', reason: 'the free-upkeep run record (steps, cursor, parked items, next due time) that maintenance/run.ts writes after each gbrain maintain --unattended run; maintain --status and doctor read it, so a hand edit would misreport upkeep' },
+  { key: 'enrich_thin.daily_spend', reason: 'the enrich_thin phase\'s running total for the owner\'s day ({day, spent_usd, pages}, cycle/enrich-thin.ts); the daily caps read it, so a hand edit would let the phase spend past cycle.enrich_thin.max_daily_cost_usd or max_daily_pages' },
   { key: 'maintenance.embed_spend', reason: 'the per-day dollar total the capped upkeep embed step has spent (maintenance/run.ts); the daily cap reads it, so a hand edit would let upkeep spend past maintenance.embed_daily_usd' },
   { key: 'heal.audit', reason: 'the bounded self-heal audit log (last 200 rows, 30 days) that heal-audit.ts writes for each heal; doctor reads it to count a heal\'s consecutive failures, so a hand edit would hide an escalation' },
   { key: 'access.serves_derived', reason: 'whether two or more members are enabled, kept by the v309 trigger on access_members (search/private-visibility.ts servesPolicyFrom); a hand edit would lie about whom the brain serves' },
@@ -54,6 +65,7 @@ export const INTERNAL_CONFIG_STATE: readonly InternalConfigState[] = [
   { key: 'ocr_skipped_budget', reason: 'image-OCR run counter (import-file.ts), read by doctor queue_assets' },
   { key: 'page_state.revision_backfill', reason: 'page-state revision backfill progress marker' },
   { key: 'schema_migration_timeout', reason: 'the last schema migration that ran out of its statement budget, written and cleared by migrate.ts (migration-timeout.ts, #7108)' },
+  { key: 'persistence.writer_admin_lock', reason: 'the brain-level writer admin lock that only gbrain sources writer lock/unlock set (persistence/admin-lock.ts); gbrain config set refuses it as reserved, and the typed lock reads (writer-admin, worktree claim, administration) read it' },
   { key: 'persistence.database_only_sources', reason: 'list maintained by gbrain sources writer activate/deactivate; config unset (which takes any key) is the documented escape hatch' },
   { key: 'persistence.maintenance.last_compaction', reason: 'receipt compaction pass cursor (compaction-pass.ts)' },
   { key: 'persistence.true_up.compacted_through', reason: 'receipt true-up cursor (receipt-true-up.ts)' },
@@ -91,6 +103,7 @@ const P = 'parameter' as const;
 export const UNRESOLVED_CONFIG_READS: readonly UnresolvedConfigRead[] = [
   { file: 'src/commands/autopilot/install-consent.ts', expr: 'k', why: P },
   { file: 'src/commands/config.ts', expr: 'key', why: 'gbrain config get <key>: the operator names the key' },
+  { file: 'src/core/rust-engine/store-members/managed-sync-orphans.ts', expr: 'key', why: P },
   { file: 'src/core/heal-audit.ts', expr: 'key', why: P },
   { file: 'src/commands/decide/probe-query.ts', expr: 'key', why: P },
   { file: 'src/commands/doctor/checks/keyword-plan.ts', expr: 'key', why: P },
@@ -110,6 +123,7 @@ export const UNRESOLVED_CONFIG_READS: readonly UnresolvedConfigRead[] = [
   { file: 'src/core/consent-cli.ts', expr: 'key', why: P },
   { file: 'src/core/content-repair/llm.ts', expr: 'key', why: P },
   { file: 'src/core/cycle/auto-think.ts', expr: 'key', why: P },
+  { file: 'src/core/cycle/base-phase.ts', expr: 'this.budgetUsdKey', why: 'the subclass budget key: cycle.propose_takes.budget_usd, cycle.grade_takes.budget_usd, cycle.calibration_profile.budget_usd (registered in config-runtime-keys.ts)' },
   { file: 'src/core/cycle/extract-atoms-cost-gate.ts', expr: 'key', why: 'listConfigKeys walk over ATOMS_NO_PRICING_KEY_PREFIX (cycle. prefix)' },
   { file: 'src/core/cycle/nightly-probe-routes.ts', expr: 'key', why: 'Object.entries walk over NIGHTLY_PROBE_SLOT_KEYS' },
   { file: 'src/core/cycle/nightly-probe-search-config.ts', expr: 'key', why: 'walk over NIGHTLY_PROBE_SEARCH_CONFIG_KEYS (search. prefix)' },
@@ -156,8 +170,13 @@ export const UNRESOLVED_CONFIG_READS: readonly UnresolvedConfigRead[] = [
   { file: 'src/core/questions/auto-think-migration.ts', expr: 'key', why: P },
   { file: 'src/core/questions/phase.ts', expr: 'key', why: P },
   { file: 'src/core/reindex-consent.ts', expr: 'key', why: P },
+  // readLiveMember reads a stdio server's member binding under the config key its caller names.
+  { file: 'src/core/rust-engine/store-members/access-members.ts', expr: 'key', why: P },
   { file: 'src/core/rust-engine/store-members/config.ts', expr: 'key', why: P },
-  { file: 'src/core/rust-engine/store-members/init-schema.ts', expr: 'key', why: 'walk over the two embedding identity rows a Rust brain seeds at setup (embedding_model, embedding_dimensions), as PGLite does' },
+  // readStoredConfigValue reads the stored value through the same store call, so config.ts has a second parameter read.
+  { file: 'src/core/rust-engine/store-members/config.ts', expr: 'key', why: P },
+  // readSyncAdmissionSettingRow reads the sync admission setting under the config key its doctor check names.
+  { file: 'src/core/rust-engine/store-members/doctor-checkpoints.ts', expr: 'key', why: P },
   // link-queries.ts reads the link extraction generation (a registered const key) and hands a `(key) => getConfig(brain,
   // key)` adapter to effectiveRangesEnabled; the scan reads `brain`, the store member's first argument.
   { file: 'src/core/rust-engine/store-members/link-queries.ts', expr: 'brain', why: P },
@@ -167,7 +186,7 @@ export const UNRESOLVED_CONFIG_READS: readonly UnresolvedConfigRead[] = [
   // loaders, whose getConfig reads (direct or in the helpers they call) carry the keys and are scanned there.
   { file: 'src/core/rust-engine/store-members/stats.ts', expr: 'brain', why: P },
   { file: 'src/core/rust-engine/store-members/stats.ts', expr: 'brain', why: P },
-  // readMayActFor's key is the stdio may_act_for config key its caller (access/caller.ts) names.
+  // readMayActFor reads a stdio server's may_act_for under the config key its caller names.
   { file: 'src/core/rust-engine/store-members/write-misc.ts', expr: 'key', why: P },
   { file: 'src/core/search/evidence-delivery.ts', expr: 'key', why: P },
   { file: 'src/core/search/evidence-delivery.ts', expr: 'input.configKey ?? RETURN_UNIT_CONFIG_KEY', why: 'per-op return-unit key option (search. prefix), else the registered default' },

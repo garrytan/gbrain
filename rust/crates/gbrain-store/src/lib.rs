@@ -9,20 +9,32 @@
 //! addon method and each `StoreError::code` into a JavaScript `Error.code`.
 
 mod access_flag;
+mod access_key_split;
+pub mod access_member_links;
 pub mod access_members;
+pub mod access_migrations;
+pub mod access_policy;
+pub mod access_rules;
 mod cascade;
+pub mod chronicle_reads;
 pub mod chunks;
 pub mod cli_reads;
+pub mod concept_rebuild;
 pub mod config;
 pub mod env;
 pub mod error;
+#[cfg(test)]
+mod fingerprint_fixture;
 #[cfg(feature = "fjall")]
 pub mod fjall_kv;
 pub mod format;
+pub mod git_gap_census;
 pub mod journal;
 pub(crate) mod jsonb;
 pub mod keys;
+pub mod keyspaces;
 pub mod kv;
+pub mod link_slug_reads;
 pub mod links;
 pub mod occ_kv;
 mod owner_only;
@@ -30,9 +42,19 @@ mod owner_only_marks;
 mod page_columns;
 mod page_index;
 mod page_projection;
+mod page_withdrawals;
 pub mod pages;
+pub mod read_shared;
 pub mod redb_kv;
+pub mod retrieval_feedback;
 pub mod search;
+pub mod seed;
+pub mod shared_skill_catalog;
+pub mod shared_skill_members;
+pub mod shared_skill_publication;
+pub mod slug_spelling_repair;
+pub mod slug_spellings;
+pub mod snapshot;
 pub mod sources;
 #[cfg(test)]
 mod test_support;
@@ -40,44 +62,93 @@ pub mod timeline;
 
 // One module per planned family (docs/designs/RUST_ENGINE_INTERFACES.md). Each is listed once, here,
 // so building a family never edits this list.
+pub mod access_read_log;
 pub mod alias_fanout_reads;
 pub mod aliases;
+pub mod budget_ledger;
 pub mod chat_usage;
+pub mod chronicle_ledger;
+pub mod chronicle_state;
 pub mod chunk_queries;
 pub mod code_edges;
 pub mod contradictions;
+pub mod cycle_window;
+#[cfg(test)]
+mod derivation_walks;
 pub mod dream;
+pub mod dream_config;
+pub mod dream_reads;
+pub mod drift_conflicts;
+pub mod edge_proposals;
 pub mod embedding_catalog;
 pub mod embedding_install;
 pub mod embeddings;
+pub mod engine_migration;
 pub mod entity_identities;
 pub mod eval_capture;
+pub mod eval_harness_catalog;
+pub mod eval_harness_reads;
+pub mod extract_bookkeeping;
 pub mod extraction;
 pub mod facts;
+pub mod federation_exposure;
 pub mod field_usage;
+pub mod generations;
+pub mod guest_marks;
+pub mod guest_sources;
+pub mod handover_reads;
+pub mod identity_auto;
+pub mod identity_reviews;
 pub mod import_members;
 pub mod jobs;
 pub mod keyword;
+pub mod label_door;
 pub mod large_page;
 pub mod link_queries;
+pub mod list_reads;
+pub mod meeting_pages;
 pub mod memory_mutation_reads;
+pub mod mention_state;
+pub mod moved_page_reads;
 pub mod ontology;
 pub mod page_body;
 pub mod page_embedding_budget;
+pub mod page_extraction_state;
+pub mod page_mutation_reads;
 pub mod page_ops;
 pub mod page_visibility;
 pub mod persistence;
+pub mod purge_version_bodies;
 pub mod raw_files;
+pub mod reason_tombstones;
 pub mod relations;
+pub mod remote_links;
+pub mod repair_attribution;
+pub mod repair_failed_writes;
+pub mod repair_fence_scans;
+pub mod repair_plan_scans;
+pub mod repair_scans;
+pub mod repair_secret_spans;
+pub mod repair_twin_merge;
+pub mod repair_versions;
+pub mod restore;
 pub mod salience;
+pub mod schema_detect;
+pub mod secret_store;
+pub mod session_state;
+pub mod source_cr_mode;
 pub mod stats;
+pub mod synopsis_tier;
+pub mod tail_reads;
 pub mod takes;
 pub mod telemetry;
 pub mod timeline_queries;
 pub mod transactions;
 pub mod trust;
 pub mod vectors;
+pub mod verify;
 mod version_prune;
+pub mod volunteer_events;
 pub mod wanted_links;
 pub mod write_attribution;
 pub mod write_guards;
@@ -88,7 +159,7 @@ pub mod write_trust;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 pub use crate::env::{Env, SystemEnv};
@@ -122,6 +193,13 @@ pub struct OpenOptions {
     /// `chunk_strategy`, the rows the SQL engines' schema seeds. The store has no default of
     /// its own; an existing brain keeps the rows it has.
     pub initial_config: Vec<(String, String)>,
+    /// The caller's write-gate detector version (the TypeScript `WRITE_GATE_DETECTOR_VERSION`). A fresh
+    /// brain records the write gate's scan baseline under it, as migration v227 does on the SQL engines;
+    /// `None` records it under `DEFAULT_WRITE_GATE_DETECTOR_VERSION`.
+    pub write_gate_detector_version: Option<u32>,
+    /// False: the directory must already hold a brain (its record file); `open_dir` creates no file or folder
+    /// and refuses with `store_missing` otherwise, also when the store moves away during the open. True (the default) creates a missing brain, as before.
+    pub create_missing: bool,
 }
 
 impl Default for OpenOptions {
@@ -134,6 +212,8 @@ impl Default for OpenOptions {
             concurrent_writes: false,
             keyword_index_builder: true,
             initial_config: Vec::new(),
+            write_gate_detector_version: None,
+            create_missing: true,
         }
     }
 }
@@ -162,7 +242,9 @@ pub struct Store {
     pub(crate) vectors: vectors::VectorCache,
     /// The write trust context: the transaction-local trust settings (`write_trust.rs`).
     pub(crate) write_context: write_trust::WriteContextSlot,
-    info: StoreInfo,
+    /// What `open` told the caller. Shared with the store's views; a restore that rotates the brain id
+    /// updates it, so the open handle never reports the id the restore replaced.
+    info: Arc<Mutex<StoreInfo>>,
     /// The open transaction this store runs on (`transactions.rs`); `None` for the brain's own
     /// store, whose writes each commit on their own.
     pub(crate) bound: Option<Arc<transactions::Transaction>>,
@@ -174,12 +256,16 @@ pub struct Store {
     /// True when the open-time scan could not store the member-access flag and this process reads
     /// it as `'1'` (`access_flag::scan_at_open`).
     pub(crate) flag_assumed: bool,
+    /// The brain directory, when the store was opened on one (`open_dir`, `open_dir_read_only`):
+    /// the snapshot copies its `FORMAT` (`snapshot.rs`). `None` over `open_kv`.
+    pub(crate) dir: Option<PathBuf>,
 }
 
 /// The record file of a brain directory, with one writer or many. Only for the storage bake-off:
 /// a build with the `fjall` feature (never the addon's) keeps the records in a fjall database
 /// instead when `GBRAIN_RUST_BAKEOFF_STORE=fjall`.
-fn open_records(dir: &Path, concurrent: bool) -> Result<Arc<dyn Kv>> {
+/// The record file of `dir`; with `create` false only one that is already there (never created).
+fn open_records_as(dir: &Path, concurrent: bool, create: bool) -> Result<Arc<dyn Kv>> {
     #[cfg(feature = "fjall")]
     if std::env::var("GBRAIN_RUST_BAKEOFF_STORE").is_ok_and(|v| v == "fjall") {
         let kv = fjall_kv::FjallKv::open_dir(&dir.join("records.fjall"))?;
@@ -189,7 +275,12 @@ fn open_records(dir: &Path, concurrent: bool) -> Result<Arc<dyn Kv>> {
             Arc::new(kv)
         });
     }
-    let kv = redb_kv::RedbKv::open_path(&dir.join(format::RECORDS_FILE))?;
+    let path = dir.join(format::RECORDS_FILE);
+    let kv = if create {
+        redb_kv::RedbKv::open_path(&path)?
+    } else {
+        redb_kv::RedbKv::open_existing_path(&path)?
+    };
     Ok(if concurrent {
         Arc::new(occ_kv::OccKv::new(kv)?)
     } else {
@@ -208,7 +299,47 @@ pub(crate) fn get_json<T: DeserializeOwned>(read: &dyn KvRead, key: &[u8]) -> Re
 }
 
 pub(crate) fn put_json<T: Serialize>(tx: &mut dyn KvWrite, key: &[u8], value: &T) -> Result<()> {
-    tx.put(key, &serde_json::to_vec(value)?)
+    let bytes = serde_json::to_vec(value)?;
+    // `get_json` and every other reader decode with serde_json's nesting limit, so a record nested
+    // deeper than that would be stored and then read back only as `store_corrupt`. Refuse it here,
+    // before anything is written, as the caller's own input.
+    if json_depth(&bytes) > READABLE_JSON_DEPTH {
+        return Err(StoreError::invalid(format!(
+            "a value nested more than {READABLE_JSON_DEPTH} levels deep (with the record around it) cannot be stored"
+        )));
+    }
+    tx.put(key, &bytes)
+}
+
+/// The deepest nesting serde_json reads back with its default recursion limit (128 frames: a record
+/// 128 levels deep fails with "recursion limit exceeded").
+const READABLE_JSON_DEPTH: usize = 127;
+
+/// The deepest array or object nesting of serialized JSON, ignoring brackets inside strings.
+fn json_depth(bytes: &[u8]) -> usize {
+    let (mut depth, mut max, mut in_string, mut escaped) = (0usize, 0usize, false, false);
+    for &b in bytes {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if b == b'\\' {
+                escaped = true;
+            } else if b == b'"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match b {
+            b'"' => in_string = true,
+            b'[' | b'{' => {
+                depth += 1;
+                max = max.max(depth);
+            }
+            b']' | b'}' => depth = depth.saturating_sub(1),
+            _ => {}
+        }
+    }
+    max
 }
 
 impl Store {
@@ -223,8 +354,22 @@ impl Store {
     /// `open_dir` for a build that opens only the formats in `known`: the seam the older-build
     /// tests use (`format::check_version_in`).
     pub(crate) fn open_dir_in(dir: &Path, options: OpenOptions, known: &[u32]) -> Result<Store> {
-        fs::create_dir_all(dir)
-            .map_err(|e| StoreError::io(format!("creating {}: {e}", dir.display())))?;
+        // With `create_missing` false nothing below creates a file or folder: the directory and its
+        // record file must be there, and a store moved away mid-open is refused, not recreated.
+        if !options.create_missing && !dir.join(format::RECORDS_FILE).is_file() {
+            return Err(StoreError::new(
+                error::STORE_MISSING,
+                format!(
+                    "{} holds no brain (no {}); nothing was created",
+                    dir.display(),
+                    format::RECORDS_FILE
+                ),
+            ));
+        }
+        if options.create_missing {
+            fs::create_dir_all(dir)
+                .map_err(|e| StoreError::io(format!("creating {}: {e}", dir.display())))?;
+        }
         // FORMAT is judged before the record file is opened: a newer brain is never touched.
         let existing = format::read_in(dir, known)?;
         if existing.is_none() {
@@ -237,13 +382,19 @@ impl Store {
                 format::check_version_in(stored.format_version, known)?;
             }
         }
-        let kv = open_records(dir, options.concurrent_writes)?;
-        let store = Store::open_kv_in(kv, Arc::new(SystemEnv), options.clone(), known)?;
+        let kv = open_records_as(dir, options.concurrent_writes, options.create_missing)?;
+        let mut store = Store::open_kv_in(kv, Arc::new(SystemEnv), options.clone(), known)?;
+        store.dir = Some(dir.to_path_buf());
         // FORMAT follows the records: written when missing (a crash before it, or a deleted
         // file) and repaired when it is behind the records.
         let record = store.format_record(&options)?;
         match existing {
-            Some(on_disk) if on_disk.brain_id != record.brain_id => {
+            // A restore that rotated the brain id committed the record first: FORMAT still names
+            // the id the record says it rotated from, and is rebuilt from the record below.
+            Some(on_disk)
+                if on_disk.brain_id != record.brain_id
+                    && !store.rotated_from(&on_disk.brain_id)? =>
+            {
                 return Err(StoreError::new(
                     error::STORE_CORRUPT,
                     "FORMAT names a different brain than the record file",
@@ -273,8 +424,12 @@ impl Store {
             keyword_index_builder: false,
             ..OpenOptions::default()
         };
-        let store = Store::open_kv_in(kv, Arc::new(SystemEnv), options, FORMAT_VERSIONS)?;
-        if existing.is_some_and(|on_disk| on_disk.brain_id != store.info.brain_id) {
+        let mut store = Store::open_kv_in(kv, Arc::new(SystemEnv), options, FORMAT_VERSIONS)?;
+        store.dir = Some(dir.to_path_buf());
+        if let Some(on_disk) = existing
+            && on_disk.brain_id != store.brain_id()
+            && !store.rotated_from(&on_disk.brain_id)?
+        {
             return Err(StoreError::new(
                 error::STORE_CORRUPT,
                 "FORMAT names a different brain than the record file",
@@ -313,6 +468,7 @@ impl Store {
                     format_version: FORMAT_VERSION,
                     brain_id: env.new_uuid(),
                     created_at_us: env.now_micros(),
+                    rotated_from: None,
                 };
                 let mut tx = kv.begin_write()?;
                 // Another handle may have created the brain between the read and this write.
@@ -328,6 +484,8 @@ impl Store {
                 }
             }
         };
+        // Sweep records kept before their source index existed get it.
+        page_body::purge_record::backfill_source_index(&*kv)?;
         let index = keyword::open_index(&*kv)?;
         let flag_assumed = !created && access_flag::scan_at_open(&*kv)?;
         // The schema version is the config the TypeScript migrations keep; a brain that has none
@@ -340,16 +498,17 @@ impl Store {
             env,
             vectors: vectors::VectorCache::default(),
             write_context: write_trust::WriteContextSlot::default(),
-            info: StoreInfo {
+            info: Arc::new(Mutex::new(StoreInfo {
                 brain_id: stored.brain_id,
                 format_version: stored.format_version,
                 schema_version,
                 created,
-            },
+            })),
             bound: None,
             builder: Mutex::new(None),
             runs_builder: options.keyword_index_builder,
             flag_assumed,
+            dir: None,
         })
         .inspect(|store| {
             if index.needs_build && store.runs_builder {
@@ -365,12 +524,20 @@ impl Store {
             env: self.env.clone(),
             vectors: vectors::VectorCache::default(),
             write_context: write_trust::WriteContextSlot::default(),
-            info: self.info.clone(),
+            info: Arc::clone(&self.info),
             bound: None,
             builder: Mutex::new(None),
             runs_builder: false,
             flag_assumed: self.flag_assumed,
+            dir: self.dir.clone(),
         }
+    }
+
+    /// Whether the format record says this brain's id was rotated away from `id` (a restore gave
+    /// it a fresh one and `FORMAT` has not caught up yet).
+    fn rotated_from(&self, id: &str) -> Result<bool> {
+        let stored: Option<StoredFormat> = get_json(&*self.kv.snapshot()?, &keys::meta("format"))?;
+        Ok(stored.is_some_and(|s| s.rotated_from.as_deref() == Some(id)))
     }
 
     /// Starts the background build unless one is running on this store.
@@ -426,25 +593,32 @@ impl Store {
                 self.env.clone(),
             )),
             // The cache holds committed snapshots only; a transaction reads its own uncommitted
-            // writes, so its store starts with an empty cache of its own.
+            // writes, so its store starts with an empty cache of its own, which a savepoint or
+            // transaction rollback clears (`transactions.rs`).
             vectors: vectors::VectorCache::default(),
             // The write trust context belongs to the transaction's handle, not the shared store: it
             // starts empty and ends with the handle (`write_trust.rs`, "Lifetime").
             write_context: write_trust::WriteContextSlot::default(),
-            info: self.info.clone(),
+            info: Arc::clone(&self.info),
             bound: Some(tx),
             builder: Mutex::new(None),
             runs_builder: false,
             flag_assumed: self.flag_assumed,
+            dir: self.dir.clone(),
         }
     }
 
-    pub fn info(&self) -> &StoreInfo {
-        &self.info
+    pub fn info(&self) -> StoreInfo {
+        self.info.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
-    pub fn brain_id(&self) -> &str {
-        &self.info.brain_id
+    pub fn brain_id(&self) -> String {
+        self.info().brain_id
+    }
+
+    /// A restore gave the committed store a fresh brain id (`restore_quarantine`).
+    pub(crate) fn set_brain_id(&self, id: &str) {
+        self.info.lock().unwrap_or_else(|e| e.into_inner()).brain_id = id.to_string();
     }
 
     /// The commit sequence of the latest commit.
@@ -465,10 +639,17 @@ impl Store {
     /// A consistent state to read: a snapshot, or the bound transaction's own view (its writes
     /// included).
     pub(crate) fn read(&self) -> Result<Box<dyn KvRead>> {
-        if let Some(tx) = &self.bound {
-            return Ok(tx.reader());
-        }
-        self.kv.snapshot()
+        let read = match &self.bound {
+            Some(tx) => tx.reader(),
+            None => self.kv.snapshot()?,
+        };
+        // A process whose open-time scan could not store the member-access flag reads it as '1'
+        // everywhere, the privacy policies' own reads of it included (`access_flag.rs`).
+        Ok(if self.flag_assumed {
+            access_flag::AssumedFlagRead::wrap(read)
+        } else {
+            read
+        })
     }
 
     /// Runs `f` in a write transaction and commits when it returns `Ok`. An `Err` rolls back.
@@ -485,11 +666,37 @@ impl Store {
     /// Either way `f` writes through the store's write handle chain ([`write_chain`]), made fresh
     /// for each run: a put of a page record that names readers sets the member-access flag in the
     /// same write (`access_flag::FlaggingWriter`).
-    pub(crate) fn write<T>(&self, mut f: impl FnMut(&mut dyn KvWrite) -> Result<T>) -> Result<T> {
+    pub(crate) fn write<T>(&self, f: impl FnMut(&mut dyn KvWrite) -> Result<T>) -> Result<T> {
+        self.write_under(None, f)
+    }
+
+    /// [`Store::write`] under the trust context `trust` instead of the handle's write settings. The
+    /// shadow seed (`seed.rs`) copies rows with the tiers another engine stored for them.
+    pub(crate) fn write_as<T>(
+        &self,
+        trust: crate::trust::WriteTrust,
+        f: impl FnMut(&mut dyn KvWrite) -> Result<T>,
+    ) -> Result<T> {
+        self.write_under(Some(trust), f)
+    }
+
+    /// The body of [`Store::write`] and [`Store::write_as`]: `trust` is the context to stamp under,
+    /// or `None` for the handle's write settings.
+    fn write_under<T>(
+        &self,
+        trust: Option<crate::trust::WriteTrust>,
+        mut f: impl FnMut(&mut dyn KvWrite) -> Result<T>,
+    ) -> Result<T> {
+        let stamp_trust = || -> Result<crate::trust::WriteTrust> {
+            match &trust {
+                Some(trust) => Ok(trust.clone()),
+                None => self.write_trust(),
+            }
+        };
         if let Some(tx) = &self.bound {
             // A bound store's env is the transaction's clock (`transactions.rs`, "Time").
             let _clock = crate::env::transaction_clock::open(self.env.clone());
-            let _trust = crate::write_trust::stamp_context::open(self.write_trust()?);
+            let _trust = crate::write_trust::stamp_context::open(stamp_trust()?);
             return tx.statement(|w| write_chain(w, &mut f));
         }
         let mut locked: std::collections::BTreeSet<Vec<u8>> = std::collections::BTreeSet::new();
@@ -502,7 +709,7 @@ impl Store {
             };
             let outcome = {
                 let _clock = crate::env::transaction_clock::open(self.env.clone());
-                let _trust = crate::write_trust::stamp_context::open(self.write_trust()?);
+                let _trust = crate::write_trust::stamp_context::open(stamp_trust()?);
                 match write_chain(&mut *tx, &mut f) {
                     Ok(value) => tx.commit().map(|_| value),
                     Err(e) => Err(e),
@@ -527,12 +734,13 @@ impl Store {
     }
 
     fn format_record(&self, options: &OpenOptions) -> Result<FormatRecord> {
+        let info = self.info();
         Ok(FormatRecord {
-            format_version: self.info.format_version,
+            format_version: info.format_version,
             engine_abi: options.engine_abi,
             catalog_version: options.catalog_version,
-            schema_version: self.info.schema_version,
-            brain_id: self.info.brain_id.clone(),
+            schema_version: info.schema_version,
+            brain_id: info.brain_id,
             created_by: options.created_by.clone(),
         })
     }
@@ -560,14 +768,28 @@ pub(crate) struct StoredFormat {
     pub format_version: u32,
     pub brain_id: String,
     pub created_at_us: i64,
+    /// Set by a restore that gave the brain a fresh id: the id it had before. `FORMAT` is rebuilt
+    /// from this record, so one that still names this id is stale, not another brain's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rotated_from: Option<String>,
 }
+
+/// The config key of the write gate's scan baseline (TypeScript `WRITE_GATE_SCAN_BASELINE_KEY`).
+pub const WRITE_GATE_SCAN_BASELINE_KEY: &str = "write_gate.scan_baseline";
+
+/// The detector version a fresh brain's scan baseline carries when the caller names none (the TypeScript
+/// `WRITE_GATE_DETECTOR_VERSION` when this store was written).
+pub const DEFAULT_WRITE_GATE_DETECTOR_VERSION: u32 = 2;
 
 /// Upgrades a brain in an older format to `FORMAT_VERSION` in one write transaction, so a crash
 /// leaves either the old brain or the new one. Format 1 to 2 folds the JSON counter records into
 /// the per-counter records; 2 to 3 rewrites the projection jobs in their compact form
 /// (`format.rs`); an upgrade from format 3 or older starts an empty, incomplete keyword index
-/// (`keyword/index_build.rs`), and 4 to 5 rewrites nothing (a take stored before its trust tier
-/// reads `unknown`), so a format-4 brain keeps its postings. The format record is re-read inside the transaction:
+/// (`keyword/index_build.rs`), 4 to 5 rewrites nothing (a take stored before its trust tier
+/// reads `unknown`), so a format-4 brain keeps its postings, and 5 to 6 carries over the records
+/// the v0.60.766.0 addon's shadow seed kept in other shapes (`seed/format_5.rs`), 6 to 7 moves the
+/// loop mutes off the take purge prefix (`facts/key_split.rs`) and 7 to 8 moves the shared-skill
+/// token secret off the member links' prefix (`access_key_split.rs`). The format record is re-read inside the transaction:
 /// another handle on the same records may have upgraded the brain first.
 fn upgrade_format(kv: &dyn Kv) -> Result<StoredFormat> {
     let mut tx = kv.begin_write_exclusive()?;
@@ -591,19 +813,103 @@ fn upgrade_format(kv: &dyn Kv) -> Result<StoredFormat> {
     // Format 5 stores a take's trust tier in its record. A take stored before reads `unknown`, the
     // column default, so the step rewrites nothing; the number keeps an older build from rewriting
     // a take without its tier.
+    // Format 6: the records the v0.60.766.0 addon's shadow seed wrote at format 5 in other shapes
+    // are carried over to this build's, or the brain is refused with the re-seed steps.
+    if stored.format_version <= 5 {
+        let from = stored.format_version;
+        seed::carry_over_format_5(&mut *tx).map_err(|e| {
+            carry_over_failure(
+                e,
+                format!("store format {from} was not upgraded: carrying over its records failed"),
+                format!(
+                    "this brain was written by an older gbrain Rust addon (store format {from}) and holds a record this build cannot carry over"
+                ),
+            )
+        })?;
+    }
+    // Format 7: the loop mutes leave the take purge ledger's `F 0x10` prefix for `F 0x11`, or the
+    // brain is refused naming the record that is neither.
+    if stored.format_version <= 6 {
+        let from = stored.format_version;
+        facts::key_split::split_take_purges_from_loop_mutes(&mut *tx).map_err(|e| {
+            carry_over_failure(
+                e,
+                format!("store format {from} was not upgraded: sorting its take purges from its loop mutes failed"),
+                format!(
+                    "this brain (store format {from}) holds a record this build cannot sort into the take purge ledger or the loop mutes"
+                ),
+            )
+        })?;
+    }
+    // Format 8: the shared-skill token secret leaves the member links' `x 0x04` prefix for `x 0x0d`,
+    // or the brain is refused naming the record that is neither.
+    if stored.format_version <= 7 {
+        let from = stored.format_version;
+        access_key_split::split_token_secret_from_member_links(&mut *tx).map_err(|e| {
+            carry_over_failure(
+                e,
+                format!("store format {from} was not upgraded: sorting its token secret from its member links failed"),
+                format!(
+                    "this brain (store format {from}) holds a record this build cannot sort into the access member links or the shared-skill token secret"
+                ),
+            )
+        })?;
+    }
     stored.format_version = FORMAT_VERSION;
     put_json(&mut *tx, &keys::meta("format"), &stored)?;
     tx.commit()?;
     Ok(stored)
 }
 
+/// What the open reports when a format carry-over step fails. A record the step cannot convert is
+/// `shadow_reseed_required`, naming the record and the re-seed steps. A file system or storage
+/// engine failure (`StoreError::is_storage_failure`) keeps its own code and says nothing about
+/// re-seeding, because it is not about the records and a re-seed would not fix it. Either way the
+/// transaction is dropped and nothing changed.
+fn carry_over_failure(e: StoreError, failed: String, refused: String) -> StoreError {
+    if e.is_storage_failure() {
+        return StoreError::new(
+            e.code,
+            format!("{failed}: {}; nothing was changed", e.message),
+        );
+    }
+    StoreError::new(
+        error::SHADOW_RESEED_REQUIRED,
+        format!(
+            "{refused}: {}; nothing was changed. Re-seed the shadow store: {}",
+            e.message,
+            seed::RESEED_STEPS
+        ),
+    )
+}
+
 /// Records a fresh brain starts with, written in the same transaction as its format record: the
-/// schema version config (`getConfig('version')`), the caller's `initial_config` rows, the
-/// `default` source and a complete, empty keyword index.
+/// schema version config (`getConfig('version')`), the caller's `initial_config` rows, the trust backfill
+/// completion and the write-gate scan baseline (what migrations v226 and v227 write on an empty brain), the
+/// `default` source, the shared-skill catalog token secret and a complete, empty keyword index.
 fn seed(tx: &mut dyn KvWrite, env: &dyn Env, options: &OpenOptions) -> Result<()> {
     tx.put(
         &keys::text(keys::CONFIG, &["version"]),
         options.schema_version.to_string().as_bytes(),
+    )?;
+    // Migration v226 marks the trust backfill complete on an empty brain (`trust.backfill_completed_at`, millisecond ISO
+    // text), so doctor `trust_tiers` does not ask a fresh brain to run it. A caller's `initial_config` row of the same
+    // key wins.
+    let now = env::iso(env.now_micros());
+    tx.put(
+        &keys::text(keys::CONFIG, &["trust.backfill_completed_at"]),
+        format!("{}Z", &now[..now.len() - 4]).as_bytes(),
+    )?;
+    // Migration v227: no row is older than the write gate, so the legacy trust scan and `trust claim-sources` have
+    // nothing to cover (`write_gate.scan_baseline`), recorded under the caller's detector version.
+    tx.put(
+        &keys::text(keys::CONFIG, &[WRITE_GATE_SCAN_BASELINE_KEY]),
+        scan_baseline(
+            options
+                .write_gate_detector_version
+                .unwrap_or(DEFAULT_WRITE_GATE_DETECTOR_VERSION),
+        )
+        .as_bytes(),
     )?;
     for (key, value) in &options.initial_config {
         if key.is_empty() || key == "version" {
@@ -615,8 +921,17 @@ fn seed(tx: &mut dyn KvWrite, env: &dyn Env, options: &OpenOptions) -> Result<()
     }
     access_flag::record_scan_done(tx)?;
     sources::seed_default_source(tx, env)?;
+    shared_skill_members::seed_state(tx, env)?;
     // No documents yet, so the keyword index is complete.
     keyword::seed_complete_index(tx)
+}
+
+/// The scan baseline of an empty brain, as Postgres prints the `jsonb` that migration v227 stores
+/// (shorter keys first): the gate is live from the first row, so the legacy scan has nothing to read.
+fn scan_baseline(detector: u32) -> String {
+    format!(
+        r#"{{"until": {{"facts": 0, "pages": 0, "takes": 0, "timeline_entries": 0}}, "detector_version": {detector}}}"#
+    )
 }
 
 #[cfg(test)]
@@ -917,6 +1232,56 @@ mod older_build_tests {
         let _ = fs::remove_dir_all(dir.parent().unwrap());
     }
 
+    /// An open that must find its brain refuses an empty or missing directory and creates nothing; the default still
+    /// creates one.
+    #[test]
+    fn an_open_without_create_missing_refuses_a_directory_without_a_brain_and_creates_nothing() {
+        let root = fresh_dir("create-missing");
+        let missing = root.join("gone");
+        let options = || OpenOptions {
+            create_missing: false,
+            keyword_index_builder: false,
+            ..OpenOptions::default()
+        };
+        let err = Store::open_dir(&missing, options()).err().unwrap();
+        assert_eq!(err.code, error::STORE_MISSING);
+        assert!(!missing.exists(), "the refused open created the directory");
+        fs::create_dir_all(&missing).unwrap();
+        assert_eq!(
+            Store::open_dir(&missing, options()).err().unwrap().code,
+            error::STORE_MISSING
+        );
+        assert_eq!(
+            fs::read_dir(&missing).unwrap().count(),
+            0,
+            "the refused open wrote into the folder"
+        );
+        // A FORMAT file without the record file is no brain either; the open writes nothing.
+        fs::write(missing.join(format::FORMAT_FILE), b"{}").unwrap();
+        assert_eq!(
+            Store::open_dir(&missing, options()).err().unwrap().code,
+            error::STORE_MISSING
+        );
+        assert!(
+            !missing.join(format::RECORDS_FILE).exists(),
+            "the refused open created the record file"
+        );
+        fs::remove_file(missing.join(format::FORMAT_FILE)).unwrap();
+        // The default creates it, and then an open that must find it does.
+        drop(
+            Store::open_dir(
+                &missing,
+                OpenOptions {
+                    keyword_index_builder: false,
+                    ..OpenOptions::default()
+                },
+            )
+            .unwrap(),
+        );
+        drop(Store::open_dir(&missing, options()).unwrap());
+        let _ = fs::remove_dir_all(&root);
+    }
+
     #[test]
     fn every_build_refuses_the_next_format_and_changes_no_byte() {
         for n in 1..=FORMAT_VERSION {
@@ -932,5 +1297,18 @@ mod older_build_tests {
             FORMAT_VERSIONS,
             (1..=FORMAT_VERSION).collect::<Vec<_>>().as_slice()
         );
+    }
+}
+
+#[cfg(test)]
+mod json_depth_tests {
+    use super::json_depth;
+
+    #[test]
+    fn brackets_inside_strings_and_escaped_quotes_do_not_count() {
+        assert_eq!(json_depth(br#"1"#), 0);
+        assert_eq!(json_depth(br#"{"a":[1,{"b":[]}]}"#), 4);
+        assert_eq!(json_depth(br#"{"a":"[[[{{{","b":"\"[["}"#), 1);
+        assert_eq!(json_depth(br#"["\\",[[]]]"#), 3);
     }
 }

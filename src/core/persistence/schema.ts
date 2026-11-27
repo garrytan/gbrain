@@ -60,9 +60,19 @@ export const PERSISTENCE_REQUEST_REPLAY_ID_INDEX = { name: 'persistence_requests
 export const PERSISTENCE_REQUEST_SLUG_SEQUENCE_INDEX_SQL = `CREATE INDEX IF NOT EXISTS persistence_requests_slug_sequence
   ON persistence_requests(source_id,slug,sequence)`;
 export const PERSISTENCE_REQUEST_SLUG_SEQUENCE_INDEX = { name: 'persistence_requests_slug_sequence', table: 'persistence_requests', sql: PERSISTENCE_REQUEST_SLUG_SEQUENCE_INDEX_SQL } as const;
+/**
+ * The drift-conflict audit (drift-conflicts.ts) pages a source's refused slugs in byte order (`slug COLLATE "C"`). The
+ * (source, slug, sequence) index above uses the default collation, which cannot serve a "C" range or grouping on an
+ * en_US Postgres, so each page read and sorted the source's receipts. Postgres builds it CONCURRENTLY in migration
+ * v350; PGLite inline.
+ */
+export const PERSISTENCE_REQUEST_SLUG_BYTE_ORDER_INDEX_SQL = `CREATE INDEX IF NOT EXISTS persistence_requests_source_slug_c
+  ON persistence_requests(source_id,slug COLLATE "C")`;
+export const PERSISTENCE_REQUEST_SLUG_BYTE_ORDER_INDEX = { name: 'persistence_requests_source_slug_c', table: 'persistence_requests', sql: PERSISTENCE_REQUEST_SLUG_BYTE_ORDER_INDEX_SQL } as const;
 /** Every request-table index built online (a migration, then `gbrain repair request-indexes` and doctor `persistence_request_indexes`). */
 export const PERSISTENCE_REQUEST_ONLINE_INDEXES = [...PERSISTENCE_SYNC_RUN_INDEXES, PERSISTENCE_REQUEST_SLUG_INTENT_INDEX, PERSISTENCE_REQUEST_ID_INDEX,
-  PERSISTENCE_FOREGROUND_COMMITTED_INDEX, PERSISTENCE_REQUEST_REPLAY_ID_INDEX, PERSISTENCE_REQUEST_SLUG_SEQUENCE_INDEX] as const;
+  PERSISTENCE_FOREGROUND_COMMITTED_INDEX, PERSISTENCE_REQUEST_REPLAY_ID_INDEX, PERSISTENCE_REQUEST_SLUG_SEQUENCE_INDEX,
+  PERSISTENCE_REQUEST_SLUG_BYTE_ORDER_INDEX] as const;
 /**
  * #6317: the movement watermark (the newest committed receipt of a worktree)
  * that `writer movement`, `data_moving` and doctor `managed_sync_not_moving`
@@ -134,7 +144,7 @@ export const PERSISTENCE_CONSUMERS_TABLE_SQL = `CREATE TABLE IF NOT EXISTS persi
 export const POSTGRES_CONCURRENT_PERSISTENCE_INDEXES: ReadonlySet<string> = new Set([
   PERSISTENCE_DATABASE_PENDING_INDEX_SQL, PERSISTENCE_SYNC_RUN_OPEN_INDEX_SQL, PERSISTENCE_SYNC_RUN_COMMITTED_INDEX_SQL, PERSISTENCE_SYNC_WATERMARK_INDEX_SQL, PERSISTENCE_COMPACTABLE_INDEX_SQL,
   PERSISTENCE_REQUEST_SLUG_INTENT_INDEX_SQL, PERSISTENCE_REQUEST_ID_INDEX_SQL, PERSISTENCE_FOREGROUND_COMMITTED_INDEX_SQL,
-  PERSISTENCE_REQUEST_REPLAY_ID_INDEX_SQL, PERSISTENCE_REQUEST_SLUG_SEQUENCE_INDEX_SQL,
+  PERSISTENCE_REQUEST_REPLAY_ID_INDEX_SQL, PERSISTENCE_REQUEST_SLUG_SEQUENCE_INDEX_SQL, PERSISTENCE_REQUEST_SLUG_BYTE_ORDER_INDEX_SQL,
 ]);
 /** Durable infrastructure: never reconstruct or discard these rows during page reindexing. */
 export const PERSISTENCE_SCHEMA_STATEMENTS = [
@@ -233,6 +243,7 @@ export const PERSISTENCE_SCHEMA_STATEMENTS = [
   PERSISTENCE_FOREGROUND_COMMITTED_INDEX_SQL,
   PERSISTENCE_REQUEST_REPLAY_ID_INDEX_SQL,
   PERSISTENCE_REQUEST_SLUG_SEQUENCE_INDEX_SQL,
+  PERSISTENCE_REQUEST_SLUG_BYTE_ORDER_INDEX_SQL,
   `CREATE INDEX IF NOT EXISTS persistence_requests_principal ON persistence_requests(principal_kind,principal_id,sequence DESC)`,
   `CREATE TABLE IF NOT EXISTS persistence_effects (
     id bigserial PRIMARY KEY,

@@ -88,12 +88,7 @@ function lostIn(history: History, fence: 'facts' | 'takes', holds: (body: string
 /** Every lost row of the selected sources, grouped by page with the numbers they take, and the count of each reason a row is not listed. */
 export async function scanLostFenceRows(engine: BrainEngine, sourceIds: readonly string[], only?: { source_id: string; slug: string }): Promise<{ pages: LostRowsPage[]; residuals: Record<Residual, number> }> {
   const residuals: Record<Residual, number> = { no_history: 0, page_missing: 0, fence_unreadable: 0 };
-  const retired = await engine.executeRaw<Retired>(`SELECT g.kind, g.source_id, substr(g.owner_key, 6) AS slug, g.created_at::text AS retired_at, i.preimage
-      FROM derived_generation_items i JOIN derived_generations g ON g.id = i.generation_id
-     WHERE g.source_id = ANY($1::text[]) AND g.kind IN ('fact_fence','take_fence') AND g.state <> 'held' AND left(g.owner_key, 5) = 'page:'
-       AND i.action = 'retired' AND i.preimage IS NOT NULL AND COALESCE(g.completeness->>'proof', '') = ''
-       AND ($2::text IS NULL OR (g.source_id = $2 AND g.owner_key = 'page:' || $3))
-     ORDER BY g.source_id COLLATE "C", g.owner_key COLLATE "C", g.id, i.item_key COLLATE "C"`, [[...sourceIds], only?.source_id ?? null, only?.slug ?? null]);
+  const retired = await engine.listRetiredFenceItems(sourceIds, only ?? null) as Retired[];
   const byPage = new Map<string, { source_id: string; slug: string; rows: LostRow[] }>();
   const histories = new Map<string, History | Residual>();
   const historyOf = async (sourceId: string, slug: string): Promise<History | Residual> => {
@@ -104,8 +99,7 @@ export async function scanLostFenceRows(engine: BrainEngine, sourceIds: readonly
       else if (segmentedOverCeiling(raw.page as never)) histories.set(key, 'fence_unreadable');
       else {
         const now = (await materializedSnapshot(engine, raw))!.page;
-        const versions = await engine.executeRaw<{ id: number; compiled_truth: string; timeline: string | null }>(`SELECT id::int AS id, compiled_truth, timeline
-          FROM page_versions WHERE page_id=$1 AND compiled_truth IS NOT NULL ORDER BY id`, [Number(now.id)]);
+        const versions = await engine.listInlineVersionTexts(Number(now.id));
         histories.set(key, [...versions.map(v => ({ ...v, id: Number(v.id) })), { id: null, compiled_truth: now.compiled_truth, timeline: now.timeline ?? null }]);
       }
     }
@@ -115,12 +109,13 @@ export async function scanLostFenceRows(engine: BrainEngine, sourceIds: readonly
     const p = r.preimage;
     const fact = r.kind === 'fact_fence';
     if (fact && p.expired_at != null) continue;
-    const [page] = await engine.executeRaw<{ id: number }>('SELECT id::int AS id FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL', [r.source_id, r.slug]);
+    const pageId = await engine.readLivePageIdBySlug(r.slug, r.source_id);
+    const page = pageId === null ? null : { id: pageId };
     if (!page) { residuals.page_missing++; continue; }
     const back = fact
-      ? await engine.executeRaw(`SELECT 1 FROM facts WHERE source_id=$1 AND source_markdown_slug=$2 AND expired_at IS NULL AND fact=$3 AND visibility=$4`, [r.source_id, r.slug, p.fact, p.visibility])
-      : await engine.executeRaw('SELECT 1 FROM takes WHERE page_id=$1 AND claim=$2', [page.id, p.claim]);
-    if (back.length) continue;
+      ? await engine.hasActiveFactText(r.source_id, r.slug, String(p.fact), String(p.visibility))
+      : await engine.hasTakeClaim(page.id, String(p.claim));
+    if (back) continue;
     if (fact && await isFactWithdrawn(engine, r.source_id, String(p.visibility), String(p.fact), (p.entity_slug as string | null) ?? r.slug, r.slug)) continue;
     const history = await historyOf(r.source_id, r.slug);
     if (typeof history === 'string') { residuals[history]++; continue; }
@@ -133,7 +128,7 @@ export async function scanLostFenceRows(engine: BrainEngine, sourceIds: readonly
     const key = `${r.source_id}\u0000${r.slug}`;
     const entry = byPage.get(key) ?? { source_id: r.source_id, slug: r.slug, rows: [] };
     if (entry.rows.some(row => row.kind === (fact ? 'fact' : 'take') && row.claim === String(fact ? p.fact : p.claim))) continue;
-    const tier = fact ? (await engine.executeRaw<{ trust_tier: string | null }>('SELECT trust_tier FROM facts WHERE id=$1', [p.id]))[0]?.trust_tier ?? null : null;
+    const tier = fact ? await engine.readFactTrustTier(Number(p.id)) : null;
     entry.rows.push({ kind: fact ? 'fact' : 'take', id: Number(p.id), row_num: rowNum, claim: String(fact ? p.fact : p.claim), version_id: found.version_id,
       retired_at: r.retired_at, ...(fact ? { fact: found.cell as ParsedFact, trust_tier: tier } : { take: found.cell as ParsedTake }) });
     byPage.set(key, entry);
@@ -162,7 +157,7 @@ async function plannedPage(engine: BrainEngine, entry: { source_id: string; slug
     const parsed = parseFactsFence(halves[section]);
     if (parsed.warnings.length) return 'fence_unreadable';
     const current = hasFence(halves, 'facts') ? parsed.facts : await heldFenceFactRows(engine, entry.source_id, entry.slug);
-    const stored = (await engine.executeRaw<{ n: number }>('SELECT row_num AS n FROM facts WHERE source_id=$1 AND source_markdown_slug=$2 AND row_num IS NOT NULL', [entry.source_id, entry.slug])).map(r => Number(r.n));
+    const stored = await engine.listFenceFactRowNums(entry.source_id, entry.slug);
     const taken = new Set([...current.map(f => f.rowNum), ...stored]);
     let next = Math.max(0, ...taken) + 1;
     const placed = facts.map(row => { const n = taken.has(row.row_num) ? next++ : row.row_num; taken.add(n); return { ...row, row_num: n, fact: { ...row.fact!, rowNum: n } }; });
@@ -175,7 +170,7 @@ async function plannedPage(engine: BrainEngine, entry: { source_id: string; slug
     const parsed = parseTakesFence(content);
     if (parsed.warnings.length) return 'fence_unreadable';
     const current = hasFence(halves, 'takes') ? parsed.takes : await heldTakeRows(engine, entry.source_id, entry.slug, pageId);
-    const stored = (await engine.executeRaw<{ n: number }>('SELECT row_num AS n FROM takes WHERE page_id=$1', [pageId])).map(r => Number(r.n));
+    const stored = await engine.listTakeRowNums(pageId);
     const taken = new Set([...current.map(t => t.rowNum), ...parsed.reservedRowNums, ...stored]);
     let next = Math.max(0, ...taken) + 1;
     const placed = takes.map(row => { const n = taken.has(row.row_num) ? next++ : row.row_num; taken.add(n); return { ...row, row_num: n, take: { ...row.take!, rowNum: n } }; });
@@ -203,11 +198,9 @@ const restoreTier = (row: LostRow): TrustTier => row.kind === 'fact' && isTrustT
  * nothing and returns false unless every row is already live: the rerun of an apply whose page write was left pending.
  */
 async function lowerRestoredTiers(engine: BrainEngine, page: LostRowsPage, onlyIfAll: boolean): Promise<boolean> {
-  const live = await Promise.all(page.rows.map(async row => (row.kind === 'fact'
-    ? await engine.executeRaw<{ id: number; trust_tier: string | null }>(`SELECT id::int AS id, trust_tier FROM facts
-        WHERE source_id=$1 AND source_markdown_slug=$2 AND row_num=$3 AND fact=$4 AND expired_at IS NULL`, [page.source_id, page.slug, row.row_num, row.claim])
-    : await engine.executeRaw<{ id: number; trust_tier: string | null }>('SELECT id::int AS id, trust_tier FROM takes WHERE page_id=$1 AND row_num=$2 AND claim=$3',
-      [page.page_id, row.row_num, row.claim]))[0]));
+  const live = await Promise.all(page.rows.map(row => row.kind === 'fact'
+    ? engine.readLiveFactRowTier(page.source_id, page.slug, row.row_num, row.claim)
+    : engine.readTakeRowTierByClaim(page.page_id, row.row_num, row.claim)));
   if (onlyIfAll && live.some(row => !row)) return false;
   for (const [index, row] of page.rows.entries()) {
     const restored = live[index];

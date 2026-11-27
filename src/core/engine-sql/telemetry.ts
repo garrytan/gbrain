@@ -13,6 +13,7 @@
 import type { LegacyUnscopedRead } from './brands.ts';
 import type { SqlExecutor } from './executor.ts';
 import { executeRawJsonb } from '../sql-query.ts';
+import { joinFragments, renderFragment, sqlFragment, type SqlFragment } from './fragment.ts';
 
 /** One `(date, mode, intent)` search telemetry bucket the flush adds to its row (`date` is `YYYY-MM-DD`). */
 export interface SearchTelemetryBucket {
@@ -236,4 +237,133 @@ export async function readMcpLifetimeUsage(exec: LegacyUnscopedRead, tokenNames:
     [[...tokenNames]],
   );
   return rows.map((r) => ({ token_name: r.token_name, requests: Number(r.requests), last_used_at: r.last_used_at ?? null }));
+}
+
+/** Which request log rows `countMcpRequestsLastDay` counts: every row, the traffic (no surface audit rows), or the failed traffic. */
+export type McpRequestCountKind = 'all' | 'traffic' | 'errors';
+
+const REQUEST_COUNT_SQL: Record<McpRequestCountKind, string> = {
+  all: "SELECT count(*)::int as count FROM mcp_request_log WHERE created_at > now() - interval '24 hours'",
+  traffic: "SELECT count(*)::int as count FROM mcp_request_log WHERE operation != 'surface_change' AND created_at > now() - interval '24 hours'",
+  errors: "SELECT count(*)::int as count FROM mcp_request_log WHERE status NOT IN ('success', 'success_with_warnings', 'accepted_pending') AND operation != 'surface_change' AND created_at > now() - interval '24 hours'",
+};
+
+/**
+ * The admin dashboard's request counts over the last 24 hours (`/admin/api/stats`, `/admin/api/health-indicators`): `all`
+ * counts every row, `traffic` leaves out the surface audit rows (operator actions, not traffic), `errors` is the traffic
+ * whose status is not a success or an admitted pending write.
+ */
+export async function countMcpRequestsLastDay(exec: LegacyUnscopedRead, kind: McpRequestCountKind): Promise<number> {
+  const rows = await exec.executeRaw<{ count: number | string }>(REQUEST_COUNT_SQL[kind]);
+  return Number(rows[0]?.count ?? 0);
+}
+
+/**
+ * The pending-write health of `/admin/api/health-indicators` (#5249), byte for byte as the SqlQuery tag in
+ * serve-http-admin-api.ts sent it at 982540fd6e: the writes still in flight with the age of the oldest, and the writes
+ * reported as pending in the last 24 hours that later ended without committing.
+ */
+export const PENDING_WRITE_HEALTH_SQL = {
+  pending: `SELECT count(*)::int AS count,
+    COALESCE(floor(extract(epoch FROM now() - min(created_at))), 0)::int AS oldest_age_seconds
+    FROM persistence_requests WHERE state IN ('queued', 'deferred', 'running', 'recovering')`,
+  later_failed: `SELECT count(DISTINCT r.id)::int AS count FROM mcp_request_log l
+    JOIN persistence_requests r ON r.request_id::text = l.params->>'write_request_id'
+    WHERE l.status = 'accepted_pending' AND l.created_at > now() - interval '24 hours'
+      AND r.state IN ('conflict', 'failed', 'cancelled')`,
+} as const;
+
+/** How many writes are in flight, how old the oldest is in whole seconds (0 with none), and how many pending writes of the last day later failed. */
+export interface PendingWriteHealth {
+  pending_writes: number;
+  oldest_pending_write_age_seconds: number;
+  pending_writes_later_failed: number;
+}
+
+/** The admin dashboard's pending-write health; reads `persistence_requests` and the request log of the last 24 hours. */
+export async function readPendingWriteHealth(exec: LegacyUnscopedRead): Promise<PendingWriteHealth> {
+  const [pending] = await exec.executeRaw<{ count: number | string; oldest_age_seconds: number | string }>(PENDING_WRITE_HEALTH_SQL.pending);
+  const [laterFailed] = await exec.executeRaw<{ count: number | string }>(PENDING_WRITE_HEALTH_SQL.later_failed);
+  return {
+    pending_writes: Number(pending?.count ?? 0),
+    oldest_pending_write_age_seconds: Number(pending?.oldest_age_seconds ?? 0),
+    pending_writes_later_failed: Number(laterFailed?.count ?? 0),
+  };
+}
+
+/** The filters and the page of `/admin/api/requests`; a null or absent filter reads every row. */
+export interface McpRequestLogPageSpec {
+  tokenName?: string | null;
+  operation?: string | null;
+  status?: string | null;
+  limit: number;
+  offset: number;
+}
+
+/** One request log row as the admin request list shows it; `agent_name` falls back to the token name. */
+export interface McpRequestLogPageRow {
+  id: number;
+  token_name: string | null;
+  agent_name: string | null;
+  operation: string;
+  latency_ms: number | null;
+  status: string;
+  params: unknown;
+  error_message: string | null;
+  created_at: Date;
+}
+
+/** One page of the request log, newest first, and how many rows the filters match. */
+export interface McpRequestLogPage { rows: McpRequestLogPageRow[]; total: number }
+
+/**
+ * The request list of `/admin/api/requests`, byte for byte as serve-http-admin-api.ts built it at 0b8fde313c (newest first, the highest id first on a tie): each
+ * filter present adds `AND <column> = $N` in the order token, operation, status, then the page's LIMIT and OFFSET.
+ */
+export function mcpRequestLogPageSql(spec: McpRequestLogPageSpec): { list: string; count: string; params: string[] } {
+  const filters: SqlFragment[] = [];
+  if (spec.tokenName != null) filters.push(sqlFragment`AND token_name = ${spec.tokenName}`);
+  if (spec.operation != null) filters.push(sqlFragment`AND operation = ${spec.operation}`);
+  if (spec.status != null) filters.push(sqlFragment`AND status = ${spec.status}`);
+  const filterSql = joinFragments(filters, ' ');
+  // The page's LIMIT and OFFSET values are bound by the caller after the filter values; sentinels keep their slots.
+  const list = renderFragment(sqlFragment`SELECT id, token_name, COALESCE(agent_name, token_name) as agent_name,
+                operation, latency_ms, status, params, error_message, created_at
+         FROM mcp_request_log
+         WHERE 1=1 ${filterSql}
+         ORDER BY created_at DESC, id DESC LIMIT ${0} OFFSET ${0}`);
+  const count = renderFragment(sqlFragment`SELECT count(*)::int as total FROM mcp_request_log
+         WHERE 1=1 ${filterSql}`);
+  return { list: list.text, count: count.text, params: count.params as string[] };
+}
+
+/** One page of the request log for the admin request list (newest first) and the filtered total. */
+export async function readMcpRequestLogPage(exec: LegacyUnscopedRead, spec: McpRequestLogPageSpec): Promise<McpRequestLogPage> {
+  const { list, count, params } = mcpRequestLogPageSql(spec);
+  const rows = await exec.executeRaw<Omit<McpRequestLogPageRow, 'id' | 'created_at'> & { id: number | string; created_at: Date | string }>(
+    list, [...params, spec.limit, spec.offset]);
+  const [total] = await exec.executeRaw<{ total: number | string }>(count, params);
+  return {
+    rows: rows.map(r => ({
+      id: Number(r.id), token_name: r.token_name, agent_name: r.agent_name, operation: r.operation,
+      latency_ms: r.latency_ms == null ? null : Number(r.latency_ms), status: r.status, params: r.params ?? null,
+      error_message: r.error_message ?? null, created_at: r.created_at instanceof Date ? r.created_at : new Date(r.created_at),
+    })),
+    total: Number(total?.total ?? 0),
+  };
+}
+
+/** One asked token's request count of the last 24 hours. */
+export interface McpTokenRequestCount {
+  token_name: string;
+  requests: number;
+}
+
+const REQUESTS_BY_TOKEN_SQL = `SELECT token_name, count(*)::int AS requests FROM mcp_request_log
+    WHERE token_name = ANY($1::text[]) AND created_at > now() - interval '24 hours' GROUP BY token_name ORDER BY token_name COLLATE "C"`;
+
+/** Requests of the last 24 hours per asked token (the agents list's "requests today"); a token with none has no row. */
+export async function countMcpRequestsLastDayByToken(exec: LegacyUnscopedRead, tokenNames: readonly string[]): Promise<McpTokenRequestCount[]> {
+  const rows = await exec.executeRaw<{ token_name: string; requests: number | string }>(REQUESTS_BY_TOKEN_SQL, [[...tokenNames]]);
+  return rows.map(r => ({ token_name: r.token_name, requests: Number(r.requests) }));
 }

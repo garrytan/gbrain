@@ -2,8 +2,9 @@
  * BrainEngine parity — the typed reads the CLI import and extract paths ran through `executeRaw`.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
- *  - Contract: listSourceRecords, readSourceIncarnation, hasCompanyBrainReceipt, readGuestSourceRow, listGuestSourceIds,
- *    hasGuestSource, readPageTrustRows, readRowTrustRows, readDatabaseClock, listLinkPageMetadata, listStoredTimelineRows and
+ *  - Contract: listSourceRecords, readSourceIncarnation, readSyncDispatchRow, readRetainedSources, hasCompanyBrainReceipt, readGuestSourceRow, listGuestSourceIds,
+ *    hasGuestSource, readPageTrustRows, readRowTrustRows, readDatabaseClock, listLinkPageMetadata, listLinkPageMetadataForSlugs,
+ *    listAttendedOriginSlugs, listStoredTimelineRows and
  *    filterPagesAtRevision return the same observable result on every engine arm (PGLite always; Postgres with
  *    DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1), and so do the page labels pageActivationVerdicts builds
  *    from readPageTrustRows for `gbrain delta`, the turn context and the retrieval reflex.
@@ -17,7 +18,7 @@
  *    a relation, never by value; reads with no ORDER BY are sorted before they are compared.
  */
 import { describe, expect } from 'bun:test';
-import { createSource, parityArms, sorted } from './harness.ts';
+import { archiveSource, createSource, parityArms, sorted } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { pageActivationVerdicts } from '../../src/core/eligibility/activation.ts';
@@ -64,6 +65,34 @@ describe('engine parity: CLI import reads', () => {
     expect(unknown).toBeNull();
     const config = typeof work?.config === 'string' ? JSON.parse(work.config) : work?.config;
     return { config, incarnationIsUuid: UUID.test(String(work?.incarnation)), unknown };
+  });
+
+  parityTest('readSyncDispatchRow returns one routing row: the source columns, no claim or company receipt, and the persistence mode; an unknown id has null columns',
+    { methods: ['readSyncDispatchRow'] }, async (engine, backend) => {
+      await createSource(engine, backend, 'work', { kind: 'storage', keep: 2 }, '/var/tmp/l11-work');
+      await createSource(engine, backend, 'gone');
+      await archiveSource(engine, backend, 'gone');
+      const view = async (id: string) => {
+        const row = await engine.readSyncDispatchRow(id);
+        if (!row) return row;
+        const config = typeof row.config === 'string' ? JSON.parse(row.config) : row.config;
+        return { ...row, incarnation: row.incarnation === null ? null : UUID.test(row.incarnation), config };
+      };
+      const out = { work: await view('work'), gone: await view('gone'), unknown: await view('no-such-source') };
+      expect(out.work).toEqual({ id: 'work', archived: false, config: { kind: 'storage', keep: 2 }, incarnation: true, local_path: '/var/tmp/l11-work', claimed: false, company_receipt: false, modes: [false] });
+      expect(out.gone).toEqual({ id: 'gone', archived: true, config: {}, incarnation: true, local_path: null, claimed: false, company_receipt: false, modes: [false] });
+      expect(out.unknown).toEqual({ id: null, archived: null, config: null, incarnation: null, local_path: null, claimed: false, company_receipt: false, modes: [false] });
+      return out;
+    });
+
+  parityTest('readRetainedSources keeps no source whose worktree holds no recovery record, and an empty list reads nothing', { methods: ['readRetainedSources'] }, async (engine, backend) => {
+    await createSource(engine, backend, 'work', { keep: 2 });
+    await createSource(engine, backend, 'notes', {});
+    const none = await engine.readRetainedSources([]);
+    const named = await engine.readRetainedSources(['work', 'notes', 'no-such-source']);
+    expect(none).toEqual([]);
+    expect(named).toEqual([]);
+    return { none, named };
   });
 
   parityTest('hasCompanyBrainReceipt is false for a source with no ingestion receipt', { methods: ['hasCompanyBrainReceipt'] }, async (engine, backend) => {
@@ -268,6 +297,51 @@ describe('engine parity: CLI import reads', () => {
   });
 
   /** One flag receipt on a fact or take row, for the activation flag. */
+  parityTest('readPageTrustRows and the fact rows of readRowTrustRows carry the source precedence class (master #10320): guest external, an approved page, the source setting, chat sources, curated', { methods: ['putPage', 'insertFacts', 'readPageTrustRows', 'readRowTrustRows'] }, async (engine, backend) => {
+    await createSource(engine, backend, 'visitors', { guest: true });
+    await createSource(engine, backend, 'ledger', { precedence: 'record' });
+    await createSource(engine, backend, 'meet', { kind: 'meetings' });
+    await createSource(engine, backend, 'conversations', {});
+    await createSource(engine, backend, 'bogus', { precedence: 'nonsense' });
+    const typed = (slug: string, sourceId: string, type: string, frontmatter: Record<string, unknown> = {}) =>
+      engine.putPage(slug, { type, title: slug, compiled_truth: `body of ${slug}`, frontmatter }, { sourceId });
+    const rows: Array<[string, string]> = [];
+    const put = async (slug: string, sourceId: string, type: string, frontmatter: Record<string, unknown> = {}) => { await typed(slug, sourceId, type, frontmatter); rows.push([sourceId, slug]); };
+    await put('notes/plain', 'default', 'note');
+    await put('notes/draft', 'default', 'facts', { claims: 'draft' });
+    await put('company/facts', 'default', 'facts', { claims: 'allowed' });
+    await put('rules/weekend', 'default', 'rule');
+    await put('rules/in-ledger', 'ledger', 'rule');
+    await put('ledgers/q1', 'ledger', 'note');
+    await put('meetings/standup', 'meet', 'note');
+    await put('chats/day', 'conversations', 'note');
+    await put('guest/facts', 'visitors', 'facts', { claims: 'allowed' });
+    await put('notes/bogus', 'bogus', 'note');
+    const pages = await engine.readPageTrustRows({ keys: rows.map(([source_id, slug]) => ({ source_id, slug })) });
+    const byPage = Object.fromEntries(sorted(pages.map(r => [`${r.source_id}/${r.slug}`, r.precedence] as const), ([k]) => k));
+    expect(byPage['default/company/facts']).toBe('approved');
+    expect(byPage['ledger/rules/in-ledger']).toBe('record');
+    expect(byPage['visitors/guest/facts']).toBe('external');
+    expect(byPage['meet/meetings/standup']).toBe('chat');
+    expect(byPage['default/notes/plain']).toBe('curated');
+    // A fact takes its precedence from the page at its source_markdown_slug.
+    const ids: Array<[number, string]> = [];
+    let n = 0;
+    for (const [sourceId, slug] of rows) {
+      const out = await engine.insertFacts([{ fact: `fact on ${slug}`, entity_slug: null, visibility: 'world', source: 'test', embedding: null, row_num: ++n, source_markdown_slug: slug }], { source_id: sourceId });
+      ids.push([out.ids[0]!, `${sourceId}/${slug}`]);
+    }
+    const nameOf = new Map(ids);
+    const facts = await engine.readRowTrustRows({ table: 'facts', ids: ids.map(([id]) => id) });
+    const byFact = Object.fromEntries(sorted(facts.map(r => [nameOf.get(Number(r.id))!, r.precedence] as const), ([k]) => k));
+    expect(byFact['default/company/facts']).toBe('approved');
+    expect(byFact['ledger/ledgers/q1']).toBe('record');
+    const bare = await engine.insertFacts([{ fact: 'no page', entity_slug: null, visibility: 'world', source: 'test', embedding: null, row_num: 99, source_markdown_slug: 'notes/missing' }], { source_id: 'meet' });
+    const bareRow = await engine.readRowTrustRows({ table: 'facts', ids: bare.ids });
+    expect(bareRow[0]!.precedence).toBe('chat');
+    return { byPage, byFact, bare: bareRow[0]!.precedence };
+  });
+
   const flag = (engine: BrainEngine, table: 'facts' | 'takes', id: number, families: string[]) => engine.upsertWriteGateReceipt({
     target_table: table, target_id: String(id), source_id: 'default', content_hash: 'h1', tier: 'agent_written',
     detector_version: 1, verdict: 'flag', reason_families: families, reasons: families.map(x => `${x} found`), detector_error: false, request_id: null,
@@ -361,6 +435,51 @@ describe('engine parity: CLI import reads', () => {
     const work = view(await engine.listLinkPageMetadata('work'));
     expect(work.map(r => r.slug)).toEqual(['a']);
     return { all, work };
+  });
+
+  parityTest('listLinkPageMetadataForSlugs reads only the named live pages of one source, by slug', { methods: ['putPage', 'softDeletePage', 'listLinkPageMetadataForSlugs'] }, async (engine, backend) => {
+    await createSource(engine, backend, 'work');
+    await note(engine, 'b', 'default', { aliases: ['Bee'] });
+    await note(engine, 'a');
+    await note(engine, 'c');
+    await note(engine, 'b', 'work');
+    await note(engine, 'gone');
+    await engine.softDeletePage('gone', { sourceId: 'default' });
+    const rows = await engine.listLinkPageMetadataForSlugs('default', ['b', 'a', 'gone', 'missing', 'a']);
+    for (const r of rows) expect(String(r.knowledge_revision)).toMatch(UUID);
+    const view = rows.map(r => ({ slug: r.slug, source_id: r.source_id, type: r.type, title: r.title, aliases: r.aliases ?? null }));
+    expect(view.map(r => `${r.source_id}/${r.slug}`)).toEqual(['default/a', 'default/b']);
+    expect(view[1]!.aliases).toEqual(['Bee']);
+    expect(await engine.listLinkPageMetadataForSlugs('default', [])).toEqual([]);
+    return view;
+  });
+
+  parityTest('listAttendedOriginSlugs names the pages of one source with a body or frontmatter self attended link', { methods: ['putPage', 'addLinksBatch', 'softDeletePage', 'listAttendedOriginSlugs'] }, async (engine, backend) => {
+    await createSource(engine, backend, 'work');
+    for (const slug of ['a', 'b', 'c', 'd', 'e', 'gone']) await note(engine, slug);
+    await note(engine, 'a', 'work');
+    const self = (slug: string, link_type: string, link_source: string, sourceId = 'default') => ({ from_slug: slug, to_slug: slug,
+      link_type, link_source, origin_slug: slug, from_source_id: sourceId, to_source_id: sourceId, origin_source_id: sourceId,
+      ...(link_source === 'frontmatter' ? { origin_field: 'attendees' } : {}) });
+    await engine.addLinksBatch([
+      self('a', 'attended', 'markdown'),
+      self('b', 'attended', 'frontmatter'),
+      self('c', 'mentions', 'markdown'),
+      self('e', 'attended', 'manual'),
+      { from_slug: 'd', to_slug: 'a', link_type: 'attended', link_source: 'markdown', origin_slug: 'd' },
+      self('gone', 'attended', 'wikilink-resolved'),
+      self('a', 'attended', 'markdown', 'work'),
+    ]);
+    // The origin join has no live filter: a soft-deleted page that authored the link still counts.
+    await engine.softDeletePage('gone', { sourceId: 'default' });
+    const all = [...await engine.listAttendedOriginSlugs('default')].sort();
+    expect(all).toEqual(['a', 'b', 'gone']);
+    const scoped = [...await engine.listAttendedOriginSlugs('default', ['b', 'c', 'missing'])].sort();
+    expect(scoped).toEqual(['b']);
+    expect(await engine.listAttendedOriginSlugs('default', [])).toEqual([]);
+    const work = await engine.listAttendedOriginSlugs('work');
+    expect(work).toEqual(['a']);
+    return { all, scoped, work };
   });
 
   parityTest('listStoredTimelineRows returns the stored timeline rows of one page with dates as YYYY-MM-DD', { methods: ['putPage', 'addTimelineEntry', 'listStoredTimelineRows'] }, async (engine) => {

@@ -11,6 +11,7 @@
 import type { BrainEngine } from '../engine.ts';
 import { opError, OperationError } from '../ops/contract.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
+import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { digest, jsonBytes } from '../persistence/digest.ts';
 import { faultPoint } from '../persistence/fault-points.ts';
 import { LATEST_VERSION } from '../migrate.ts';
@@ -68,19 +69,15 @@ export const generationKeyLock = (key: GenerationKey) => `gbrain:generation:${ke
 export async function lockGeneration(tx: BrainEngine, adapter: GenerationAdapter<unknown>, key: GenerationKey, itemKeys: readonly string[]): Promise<void> {
   const pages = adapter.lockKeys(key, itemKeys).sort((a, b) => a.slug.localeCompare(b.slug));
   if (pages.length) await tx.lockPageKeys(pages);
-  await tx.executeRaw('SELECT pg_advisory_xact_lock(hashtext($1)::bigint)', [generationKeyLock(key)]);
+  await tx.lockGenerationKey(generationKeyLock(key));
 }
 
 /** The live generation of `key` with its owned items, or null. */
 export async function readLiveGeneration(db: BrainEngine, key: GenerationKey): Promise<LiveGeneration | null> {
-  const [row] = await db.executeRaw<{ id: number; generation: number; input_pin: string | null; input_size: number | null; locator: string | null }>(
-    `SELECT id, generation, input_pin, input_size, locator FROM derived_generations WHERE source_id=$1 AND kind=$2 AND owner_key=$3 AND state='live'`,
-    [key.sourceId, key.kind, key.ownerKey]);
+  const row = await db.readLiveGenerationRow(key);
   if (!row) return null;
-  const items = await db.executeRaw<{ item_key: string; identity_hash: string }>(
-    `SELECT item_key, identity_hash FROM derived_generation_items WHERE generation_id=$1 AND action IN ('published','kept','adopted','revived')`, [row.id]);
-  return { id: Number(row.id), generation: Number(row.generation), inputPin: row.input_pin, inputSize: row.input_size === null ? null : Number(row.input_size),
-    items: new Map(items.map(item => [item.item_key, item.identity_hash])), locator: row.locator };
+  return { id: row.id, generation: row.generation, inputPin: row.input_pin, inputSize: row.input_size,
+    items: new Map(row.items.map(item => [item.item_key, item.identity_hash])), locator: row.locator };
 }
 
 export function generationFenced(reason: 'stale_generation' | 'pin_moved', key: GenerationKey, detail: string) {
@@ -97,24 +94,11 @@ export async function activateGeneration(tx: BrainEngine, key: GenerationKey, li
   activationId?: string; locator?: string | null;
 }, items: readonly LedgerItem[]): Promise<{ id: number; generation: number }> {
   const generation = (live?.generation ?? 0) + 1;
-  if (live) await tx.executeRaw(`UPDATE derived_generations SET state='superseded', updated_at=now() WHERE id=$1 AND state='live'`, [live.id]);
-  const [created] = await tx.executeRaw<{ id: number }>(
-    `INSERT INTO derived_generations (source_id, kind, owner_key, generation, state, run_id, operation_id, input_pin, input_size, completeness, item_set_hash, restore_of,
-       activation_id, locator)
-     VALUES ($1,$2,$3,$4,'live',$5,$6,$7,$8,$9::text::jsonb,$10,$11,$12,$13) RETURNING id`,
-    [key.sourceId, key.kind, key.ownerKey, generation, row.runId ?? null, row.operationId, row.input?.pin ?? null, row.input?.size ?? null,
-      JSON.stringify(row.completeness), row.setHash, row.restoreOf ?? null, row.activationId ?? null, row.locator ?? live?.locator ?? null]);
-  const id = Number(created!.id);
-  if (live) await tx.executeRaw('UPDATE derived_generations SET superseded_by=$1 WHERE id=$2', [id, live.id]);
-  if (items.length) {
-    await tx.executeRaw(`INSERT INTO derived_generation_items (generation_id, item_key, identity_hash, action, preimage, preimage_bytes, pending)
-      SELECT $1, i.item_key, i.identity_hash, i.action, i.preimage, i.preimage_bytes, i.pending
-      FROM jsonb_to_recordset($2::text::jsonb) AS i(item_key text, identity_hash text, action text, preimage jsonb, preimage_bytes integer, pending boolean)`,
-      [id, JSON.stringify(items.map(item => ({ item_key: item.key, identity_hash: item.identityHash, action: item.action, preimage: item.preimage?.json ?? null,
-        preimage_bytes: item.preimage?.bytes ?? null, pending: item.pending === true })))]);
-  }
-  await tx.executeRaw(`WITH held AS (DELETE FROM derived_generations WHERE source_id=$1 AND kind=$2 AND owner_key=$3 AND state='held' RETURNING 1)
-    DELETE FROM derived_generation_attempts WHERE source_id=$1 AND kind=$2 AND owner_key=$3`, [key.sourceId, key.kind, key.ownerKey]);
+  const id = await tx.activateGenerationRows(key, live?.id ?? null, { generation, runId: row.runId ?? null, operationId: row.operationId,
+    inputPin: row.input?.pin ?? null, inputSize: row.input?.size ?? null, completeness: JSON.stringify(row.completeness), setHash: row.setHash,
+    restoreOf: row.restoreOf ?? null, activationId: row.activationId ?? null, locator: row.locator ?? live?.locator ?? null },
+  items.map(item => ({ item_key: item.key, identity_hash: item.identityHash, action: item.action, preimage: item.preimage?.json ?? null,
+    preimage_bytes: item.preimage?.bytes ?? null, pending: item.pending === true })));
   return { id, generation };
 }
 
@@ -143,31 +127,34 @@ export const MAX_GENERATION_ATTEMPTS = 3;
 export async function recordHeld(tx: BrainEngine, key: GenerationKey, config: GenerationsConfig, request: PublishRequest<unknown>, setHash: string,
   reason: HeldReason, context: Record<string, unknown>): Promise<PublishOutcome> {
   const holdId = holdIdFor(key, request.input?.pin ?? null, config, setHash, reason);
-  const [existing] = await tx.executeRaw<{ id: number; hold_id: string }>(
-    `SELECT id, hold_id FROM derived_generations WHERE source_id=$1 AND kind=$2 AND owner_key=$3 AND state='held'`, [key.sourceId, key.kind, key.ownerKey]);
-  if (existing?.hold_id === holdId) {
-    await tx.executeRaw('UPDATE derived_generations SET attempts=attempts+1, updated_at=now() WHERE id=$1', [existing.id]);
-    return { state: 'held', reason, holdId, context };
-  }
-  if (existing) await tx.executeRaw('DELETE FROM derived_generations WHERE id=$1', [existing.id]);
   const proposal = request.items.map(item => ({ key: item.key, content: item.content, identityHash: item.identityHash }));
   const bytes = jsonBytes(proposal);
-  await tx.executeRaw(
-    `INSERT INTO derived_generations (source_id, kind, owner_key, generation, state, run_id, operation_id, hold_id, input_pin, input_size, item_set_hash,
-       held_reason, held_context, proposal, proposal_bytes, attempts)
-     VALUES ($1,$2,$3,0,'held',$4,$5,$6,$7,$8,$9,$10,$11::text::jsonb,$12::text::jsonb,$13,1)`,
-    [key.sourceId, key.kind, key.ownerKey, request.runId ?? null, `held:${holdId}`, holdId, request.input?.pin ?? null, request.input?.size ?? null, setHash,
-      reason, JSON.stringify({ ...context, partial: request.partial === true }), bytes <= HELD_PROPOSAL_MAX_BYTES ? JSON.stringify(proposal) : null, bytes]);
+  await tx.recordHeldGenerationRow(key, { holdId, runId: request.runId ?? null, inputPin: request.input?.pin ?? null, inputSize: request.input?.size ?? null,
+    setHash, reason, context: JSON.stringify({ ...context, partial: request.partial === true }),
+    proposal: bytes <= HELD_PROPOSAL_MAX_BYTES ? JSON.stringify(proposal) : null, proposalBytes: bytes });
   return { state: 'held', reason, holdId, context };
 }
 
 /** Whether `key` holds a result for this same input and policy, so the producer can skip recomputing it (CEO-outside r3 F5). */
 export async function heldForInput(engine: BrainEngine, key: GenerationKey, pin: string): Promise<boolean> {
   const config = await readGenerationsConfig(engine);
-  const rows = await engine.executeRaw<{ hold_id: string; item_set_hash: string; held_reason: string }>(
-    `SELECT hold_id, item_set_hash, held_reason FROM derived_generations WHERE source_id=$1 AND kind=$2 AND owner_key=$3 AND state='held' AND input_pin=$4`,
-    [key.sourceId, key.kind, key.ownerKey, pin]);
+  const rows = await engine.heldGenerationRowsForInput(key, pin);
   return rows.some(row => row.hold_id === holdIdFor(key, pin, config, row.item_set_hash, row.held_reason as HeldReason));
+}
+
+/** The hold ids of `kind` that `heldForInput` still matches (same input pin and current policy), for backlogs that leave those items out (#10270). */
+export async function currentHoldIds(engine: BrainEngine, kind: string): Promise<string[]> {
+  const config = await readGenerationsConfig(engine);
+  // Typed reads (the held rows of every source, then each input's held rows), so a Rust brain answers too.
+  const rows = await engine.listHeldGenerationRows(await engine.listSourceIds(), kind, {});
+  const ids: string[] = [];
+  for (const row of rows) {
+    if (row.input_pin === null) continue;
+    const key = { kind, sourceId: row.source_id, ownerKey: row.owner_key };
+    const forInput = await engine.heldGenerationRowsForInput(key, row.input_pin);
+    if (forInput.some(held => held.hold_id === row.hold_id && held.hold_id === holdIdFor(key, row.input_pin!, config, held.item_set_hash, held.held_reason as HeldReason))) ids.push(row.hold_id);
+  }
+  return ids;
 }
 
 /**
@@ -177,22 +164,20 @@ export async function heldForInput(engine: BrainEngine, key: GenerationKey, pin:
 async function recordAttempt(engine: BrainEngine, key: GenerationKey, config: GenerationsConfig, request: PublishRequest<unknown>, setHash: string, code: string): Promise<void> {
   const holdId = holdIdFor(key, request.input?.pin ?? null, config, setHash, 'attempts_exhausted');
   await maintenanceTransaction(engine, async tx => {
-    const [row] = await tx.executeRaw<{ attempts: number; codes: string[] }>(
-      `INSERT INTO derived_generation_attempts (hold_id, source_id, kind, owner_key, attempts, codes) VALUES ($1,$2,$3,$4,1,jsonb_build_array($5::text))
-       ON CONFLICT (hold_id) DO UPDATE SET attempts=derived_generation_attempts.attempts+1, codes=derived_generation_attempts.codes || jsonb_build_array($5::text), updated_at=now()
-       RETURNING attempts, codes`, [holdId, key.sourceId, key.kind, key.ownerKey, code]);
-    if (Number(row!.attempts) < MAX_GENERATION_ATTEMPTS) return;
-    await tx.executeRaw('DELETE FROM derived_generation_attempts WHERE hold_id=$1', [holdId]);
-    await recordHeld(tx, key, config, request, setHash, 'attempts_exhausted', { attempts: Number(row!.attempts), codes: row!.codes.slice(-MAX_GENERATION_ATTEMPTS) });
+    const row = await tx.countGenerationAttempt(key, holdId, code);
+    if (row.attempts < MAX_GENERATION_ATTEMPTS) return;
+    await tx.clearGenerationAttempts(holdId);
+    await recordHeld(tx, key, config, request, setHash, 'attempts_exhausted', { attempts: row.attempts, codes: row.codes.slice(-MAX_GENERATION_ATTEMPTS) });
   });
 }
 
 const failureCode = (error: unknown): string => error instanceof OperationError ? error.code
   : typeof (error as { code?: unknown })?.code === 'string' ? String((error as { code: string }).code) : 'error';
 
-function logFailure(key: GenerationKey, operationId: string, mode: string, error: unknown): void {
+/** `mode`: the brain's persistence mode when the step failed (GST-3612: it was always printed as unmanaged). */
+function logFailure(key: GenerationKey, operationId: string, step: string, mode: string, error: unknown): void {
   const message = error instanceof Error ? error.message : String(error);
-  console.error(`[generations] ${mode} failed: kind=${key.kind} source=${key.sourceId} schema=v${LATEST_VERSION} mode=unmanaged operation=${operationId}: ${message.slice(0, 300)}`);
+  console.error(`[generations] ${step} failed: kind=${key.kind} source=${key.sourceId} schema=v${LATEST_VERSION} mode=${mode} operation=${operationId}: ${message.slice(0, 300)}`);
 }
 
 /** The set hash an operation binds: the proposal, or for an approved retirement the keys it retires. */
@@ -211,8 +196,7 @@ export async function exhaustedHold(db: BrainEngine, request: PublishRequest<unk
   if (request.release) return null;
   const { key } = request;
   const exhausted = holdIdFor(key, request.input?.pin ?? null, config, setHash, 'attempts_exhausted');
-  const [stopped] = await db.executeRaw<{ held_context: Record<string, unknown> | null }>(
-    `SELECT held_context FROM derived_generations WHERE source_id=$1 AND kind=$2 AND owner_key=$3 AND state='held' AND hold_id=$4`, [key.sourceId, key.kind, key.ownerKey, exhausted]);
+  const stopped = await db.readHeldGenerationContext(key, exhausted);
   return stopped ? { state: 'held', reason: 'attempts_exhausted', holdId: exhausted, context: stopped.held_context ?? {} } : null;
 }
 
@@ -261,8 +245,8 @@ export async function publishGeneration<C>(engine: BrainEngine, adapter: Generat
   try {
     const outcome = await maintenanceTransaction(engine, async tx => {
       await lockGeneration(tx, adapter as GenerationAdapter<unknown>, key, itemKeys);
-      const [replay] = await tx.executeRaw<{ generation: number }>(`SELECT generation FROM derived_generations WHERE operation_id=$1 AND state = 'live'`, [operationId]);
-      if (replay) return { state: 'unchanged', generation: Number(replay.generation), retired: [], protected: [] } satisfies PublishOutcome;
+      const replay = await tx.liveGenerationForOperation(operationId);
+      if (replay !== null) return { state: 'unchanged', generation: replay, retired: [], protected: [] } satisfies PublishOutcome;
       const live = await readLiveGeneration(tx, key);
       if (request.expectedGeneration !== undefined && (live?.generation ?? 0) !== request.expectedGeneration) {
         throw generationFenced('stale_generation', key, `the live generation is ${live?.generation ?? 0}, the producer planned against ${request.expectedGeneration}`);
@@ -292,11 +276,12 @@ export async function publishGeneration<C>(engine: BrainEngine, adapter: Generat
     if (outcome.state === 'published') await faultPoint('generation:activated', { sourceId: key.sourceId, operation: key.kind });
     return outcome;
   } catch (error) {
-    logFailure(key, operationId, 'publish', error);
+    const mode = await managedPersistenceEnabled(engine).then(managed => managed ? 'managed' : 'unmanaged', () => 'unknown');
+    logFailure(key, operationId, 'publish', mode, error);
     const code = failureCode(error);
     if (code !== 'generation_fenced') {
       await recordAttempt(engine, key, config, request as PublishRequest<unknown>, setHash, code)
-        .catch(counted => logFailure(key, operationId, 'attempt count', counted));
+        .catch(counted => logFailure(key, operationId, 'attempt count', mode, counted));
     }
     throw error;
   }
@@ -305,17 +290,11 @@ export async function publishGeneration<C>(engine: BrainEngine, adapter: Generat
 const windowKey = (runId: string | undefined) => runId ? `run:${runId}` : `day:${new Date().toISOString().slice(0, 10)}`;
 
 export async function readValve(tx: BrainEngine, key: GenerationKey, runId: string | undefined): Promise<{ windowRetired: number; ownedTotal: number }> {
-  const [row] = await tx.executeRaw<{ retired: number | null; owned: number }>(
-    `SELECT (SELECT retired FROM derived_generation_valve WHERE source_id=$1 AND kind=$2 AND window_key=$3) AS retired,
-            (SELECT count(*)::int FROM derived_generation_items i JOIN derived_generations g ON g.id=i.generation_id
-              WHERE g.source_id=$1 AND g.kind=$2 AND g.state='live' AND i.action IN ('published','kept','adopted','revived')) AS owned`,
-    [key.sourceId, key.kind, windowKey(runId)]);
-  return { windowRetired: Number(row?.retired ?? 0), ownedTotal: Number(row?.owned ?? 0) };
+  const row = await tx.readGenerationValve(key, windowKey(runId));
+  return { windowRetired: Number(row.retired ?? 0), ownedTotal: row.owned };
 }
 
 export async function bumpValve(tx: BrainEngine, key: GenerationKey, runId: string | undefined, retired: number): Promise<void> {
-  await tx.executeRaw(`INSERT INTO derived_generation_valve (source_id, kind, window_key, retired) VALUES ($1,$2,$3,$4)
-    ON CONFLICT (source_id, kind, window_key) DO UPDATE SET retired=derived_generation_valve.retired+EXCLUDED.retired, updated_at=now()`,
-    [key.sourceId, key.kind, windowKey(runId), retired]);
+  await tx.bumpGenerationValve(key, windowKey(runId), retired);
 }
 

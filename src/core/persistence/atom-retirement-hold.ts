@@ -39,6 +39,7 @@ const notImported = (alias: string) => `NULLIF(${alias}.frontmatter->>'imported_
  * restorable and ledger_generation.
  */
 export function atomRetirementsSql(scope = 'true'): string {
+  // The source_id and okey order never reaches output: it only groups the rows, joined back by equality; retired_at picks the winner per origin, so it sorts by byte.
   return `WITH retired AS (
       SELECT p.id, p.source_id, p.slug, ${originKey('p')} AS okey, NULLIF(p.frontmatter->>'source_slug','') AS origin_slug,
              COALESCE(NULLIF(p.frontmatter->>'source_slug',''), p.frontmatter->>'source_path') AS origin,
@@ -48,7 +49,7 @@ export function atomRetirementsSql(scope = 'true'): string {
          AND (${scope})
     ), latest AS (
       SELECT DISTINCT ON (source_id, okey) source_id, okey, hash FROM retired WHERE okey IS NOT NULL
-       ORDER BY source_id, okey, retired_at DESC NULLS LAST, id DESC
+       ORDER BY source_id, okey, retired_at COLLATE "C" DESC NULLS LAST, id DESC
     ), live AS (
       SELECT p.source_id, ${originKey('p')} AS okey, array_agg(DISTINCT ${strippedHash('p')}) AS hashes
         FROM pages p WHERE p.type='atom' AND p.deleted_at IS NULL AND ${notImported('p')} AND (${scope})

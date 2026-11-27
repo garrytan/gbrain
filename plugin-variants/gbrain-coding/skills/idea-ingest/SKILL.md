@@ -1,7 +1,6 @@
 ---
 name: idea-ingest
 version: 1.2.0
-upstream: idea-ingest@fc834ee
 description: |
   Ingest links, articles, tweets, and ideas into the brain. Fetch content, save
   to brain with analysis, credit the author (people page only when they pass the

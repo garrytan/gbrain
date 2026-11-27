@@ -9,6 +9,7 @@ import type { BrainEngine } from '../engine.ts';
 import { outstandingAdmissionWindow } from '../persistence/limits.ts';
 import { isTerminalWriteState } from '../persistence/types.ts';
 import type { RepairItem } from './core.ts';
+import { requireRawSql } from '../rust-engine/errors.ts';
 
 export interface PendingRepair { index: number; item: RepairItem; request_id: string }
 export interface SettledRepair extends PendingRepair { state: string; error_code: string | null; error_message: string | null }
@@ -20,7 +21,9 @@ export async function repairAdmissionWindow(engine: BrainEngine): Promise<number
 
 /**
  * Waits until at most `target` receipts remain unresolved, or none turned terminal for `budgetMs`. Returns the receipts that
- * turned terminal (committed or not); the rest stay pending and keep their request ids.
+ * turned terminal (committed or not); the rest stay pending and keep their request ids. On an engine without raw SQL (the
+ * Rust engine), a write its consumer released back to queued with `engine_capability_missing` waits for an engine that can
+ * publish it, so the wait ends at once on the typed `raw_sql` refusal instead of running out its budget.
  */
 export async function settleRepairReceipts(engine: BrainEngine, unresolved: readonly PendingRepair[], target: number, budgetMs: number,
   now: () => number = Date.now): Promise<SettledRepair[]> {
@@ -28,10 +31,16 @@ export async function settleRepairReceipts(engine: BrainEngine, unresolved: read
   const settled: SettledRepair[] = [];
   let progressAt = now(), delay = 50;
   for (;;) {
-    const rows = await engine.executeRaw<{ request_id: string; state: string; error_code: string | null; error_message: string | null }>(
-      `SELECT DISTINCT ON (request_id) request_id::text AS request_id, state, error_code, error_message FROM persistence_requests
-       WHERE request_id=ANY($1::uuid[]) ORDER BY request_id, sequence DESC`, [[...open.keys()]]);
-    for (const row of rows) {
+    // The newest request admitted under each id (by sequence) speaks for it, in id order as before.
+    const latest = new Map<string, { request_id: string; state: string; blocked_reason: string | null; error_code: string | null; error_message: string | null }>();
+    for (const row of await engine.listWriteRequestsByRequestIds([...open.keys()])) {
+      const id = String(row.request_id).toLowerCase();
+      latest.set(id, { request_id: id, state: row.state, blocked_reason: row.blocked_reason ?? null, error_code: row.error_code ?? null,
+        error_message: row.error_message ?? null });
+    }
+    const refused = [...latest.values()].find(row => row.state === 'queued' && row.blocked_reason === 'engine_capability_missing');
+    if (refused) requireRawSql(engine, `repair write publication (request ${refused.request_id} stays queued)`, { outcome: settled.length ? 'partial' : 'none' });
+    for (const row of [...latest.values()].sort((a, b) => (a.request_id < b.request_id ? -1 : a.request_id > b.request_id ? 1 : 0))) {
       const pending = open.get(row.request_id);
       if (!pending || !isTerminalWriteState(row.state as never)) continue;
       open.delete(row.request_id);

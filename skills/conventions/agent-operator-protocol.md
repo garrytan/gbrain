@@ -490,14 +490,16 @@ gbrain returns these content blocks:
 {
   "status": "unavailable",
   "reason": "lock_held",
-  "why": "This brain (/home/alice-example/.gbrain/brain.pglite) is open in another `gbrain serve` (PID 48213), usually started by another agent session, so this server cannot open it.",
+  "why": "This brain (/home/alice-example/.gbrain/brain.pglite) is open in another `gbrain serve` (PID 48213, started 2026-10-03T16:20:00.000Z), usually started by another agent session, so this server cannot open it. That is expected when two agent sessions (for example Claude Code and Codex) are open at once: nothing is broken and nothing needs fixing.",
   "brain_path": "/home/alice-example/.gbrain/brain.pglite",
   "config_path": "/home/alice-example/.gbrain/config.json",
   "lock_owner": {
     "pid": "48213",
     "transport": "stdio",
-    "serve": true
+    "serve": true,
+    "started_at": "2026-10-03T16:20:00.000Z"
   },
+  "expected": true,
   "fix": {
     "mcp": {
       "tool": "gbrain_status",
@@ -506,11 +508,11 @@ gbrain returns these content blocks:
     "consent": [],
     "actor": "user",
     "next": "tell_user_to_run",
-    "why": "Close the session that owns the brain (another `gbrain serve` (PID 48213), usually started by another agent session); then call gbrain_status again and this server opens the brain in place (re-checked at most every 5 s). If your client does not refresh its tool list after recovery, restart this MCP server.",
-    "user_message": "Your gbrain brain is already open in another gbrain serve (PID 48213), usually started by another agent session, so this session can't use memory right now. Close that session and I'll reconnect, or I can set up one shared gbrain server so both sessions work at once. Which do you prefer?",
+    "why": "Nothing needs fixing: once the session that owns the brain (another `gbrain serve` (PID 48213, started 2026-10-03T16:20:00.000Z), usually started by another agent session) ends, call gbrain_status again and this server opens the brain in place (re-checked at most every 5 s). If your client does not refresh its tool list after recovery, restart this MCP server.",
+    "user_message": "Your gbrain brain is open in another gbrain serve (PID 48213, started 2026-10-03T16:20:00.000Z), usually started by another agent session. That's expected with two agent sessions open, and nothing needs fixing: session-start context still reaches this session through that server, and this session's memory tools come back once that session ends. If you want both sessions to use memory tools at the same time, I can set up one shared gbrain server. Want that?",
     "requires_exclusive": false
   },
-  "user_message": "Your gbrain brain is already open in another gbrain serve (PID 48213), usually started by another agent session, so this session can't use memory right now. Close that session and I'll reconnect, or I can set up one shared gbrain server so both sessions work at once. Which do you prefer?",
+  "user_message": "Your gbrain brain is open in another gbrain serve (PID 48213, started 2026-10-03T16:20:00.000Z), usually started by another agent session. That's expected with two agent sessions open, and nothing needs fixing: session-start context still reaches this session through that server, and this session's memory tools come back once that session ends. If you want both sessions to use memory tools at the same time, I can set up one shared gbrain server. Want that?",
   "decisions": [
     {
       "id": "lock_recovery",
@@ -518,7 +520,7 @@ gbrain returns these content blocks:
       "options": [
         {
           "id": "close_owner",
-          "label": "Close another gbrain serve (PID 48213), usually started by another agent session; this server recovers on the next gbrain_status call."
+          "label": "Close another gbrain serve (PID 48213, started 2026-10-03T16:20:00.000Z), usually started by another agent session; this server recovers on the next gbrain_status call."
         },
         {
           "id": "share_http",
@@ -541,7 +543,7 @@ gbrain returns these content blocks:
     "command": "kill 48213",
     "consent": [],
     "actor": "user",
-    "why": "Stop another `gbrain serve` (PID 48213), usually started by another agent session first (or quit that session); the shared server needs the brain's single-writer lock.",
+    "why": "Stop another `gbrain serve` (PID 48213, started 2026-10-03T16:20:00.000Z), usually started by another agent session first (or quit that session); the shared server needs the brain's single-writer lock.",
     "requires_exclusive": false,
     "then": {
       "argv": [
@@ -594,7 +596,7 @@ gbrain returns these content blocks:
 }
 ```
 
-`reason: lock_held` names the owner (`lock_owner.pid`). `fix.next` is `tell_user_to_run` because only the user can close the other session: the agent relays `user_message` and offers `close_owner` or `share_http`. Calling `gbrain_status` again after the owner exits opens the brain in place and the full tool list arrives through `tools/list_changed`.
+`reason: lock_held` names the owner (`lock_owner.pid`, and `lock_owner.started_at` when known). `fix.next` is `tell_user_to_run` because only the user can close the other session: the agent relays `user_message` and offers `close_owner` or `share_http`. Calling `gbrain_status` again after the owner exits opens the brain in place and the full tool list arrives through `tools/list_changed`. The owner here is another agent session's stdio serve (Claude Code and Codex open at once), so the payload carries `expected: true`: tell the user nothing needs fixing, and offer `share_http` only if they want memory tools in both sessions at once.
 <!-- END GENERATED agent-protocol:transcripts -->
 
 ## The error envelope
@@ -791,7 +793,7 @@ final document.
 | Kind | Meaning | What you do |
 |---|---|---|
 | `safety` | something puts the user's data at risk | tell the user; follow `fix.next` |
-| `degraded` | the result is incomplete (keyword-only recall, a stage skipped) | answer with the caveat; never say "you have no notes on X" from a degraded empty result |
+| `degraded` | the result is incomplete (keyword-only recall with no embedding provider configured, a stage skipped) | answer with the caveat; never say "you have no notes on X" from a degraded empty result |
 | `ask` | a decision belongs to the user | relay `user_message` and the `decisions`, wait for the answer |
 | `coaching` | the setup limits what the user is trying to do | mention it once, at a natural point; follow `fix.next` if the user wants it |
 | `info` | context for this result | use it; no action needed |
@@ -805,7 +807,7 @@ Notices that describe one call's result (`degraded_recall`, `empty_retrieval`,
 notices `room_above_level`, `room_hints_unavailable` and `room_conflict`)
 are never deduped on any transport, with one exception: a `degraded_recall`
 whose only stages come from the brain's configuration (`embed_unavailable` on
-a keyless brain, which degrades every search the same way) shows once per
+a brain with no embedding provider, which degrades every search the same way) shows once per
 stdio or CLI session. A transient degradation (`rerank_failed`,
 `embed_timeout`, a failed keyword or title arm, or any other stage) shows on
 every affected call, so a failure, a recovery and the same failure again show
@@ -858,7 +860,7 @@ instead.
 | `behavior_changes` (safety) | the first tool result per brain | the first tool result per authenticated client (names no chain entries or providers) | once, on stderr, on the first command; `gbrain doctor --only behavior_changes` reads it again |
 | `chat_fallback_hop` (safety) | the first fallback hop of the server process | never | the first hop of the command |
 | `backup_coverage` | once per process | never | the CLI startup rail |
-| `degraded_recall`, `empty_retrieval`, `source_binding_narrowed` and the other per-call notices | every affected call (a keyless brain's configuration-only `degraded_recall`: once per session) | every affected call (redacted) | the command's own notices |
+| `degraded_recall`, `empty_retrieval`, `source_binding_narrowed` and the other per-call notices | every affected call (a no-provider brain's configuration-only `degraded_recall`: once per session) | every affected call (redacted) | the command's own notices |
 
 HTTP gets no onboarding coaching because the counts are brain-wide (they cross
 source-scoped grants) and every remedy runs on the brain host, which a remote
@@ -892,8 +894,9 @@ emit nothing.
 stays on; they ask for nothing and their delivery is never consent.
 `behavior_changes` lists what an upgrade turned on for an existing brain: a
 live `chat_fallback_chain` (its entries, the providers that receive traffic,
-and that it falls back on refusals unless `chat_fallback_on_refusal` is
-false), managed-brain lint writing repairs (`gbrain config set cycle.lint_fix
+and whether it also falls back on refusals, which only an explicit
+`chat_fallback_on_refusal` true turns on; this is gbrain's own chat fallback, while the agent's choice of model
+for its own work follows `skills/conventions/model-routing.md`), managed-brain lint writing repairs (`gbrain config set cycle.lint_fix
 false` opts out), smaller transcript parts re-embedded once, and a one-time
 mention-linker rescan. It arrives once per brain on each local channel and
 once per authenticated HTTP client, and a fresh install never sees it; it is
@@ -932,8 +935,16 @@ and none of them ever refuses the work:
 
 Every successful read whose result is partial or degraded carries one stamp,
 whatever op answered and whatever transport carried it. A clean result carries
-none. Notices can be deduped (a keyless brain's `degraded_recall` shows once
-per session); the stamp never is, so it is on every affected call.
+none. Notices can be deduped (a `degraded_recall` on a brain with no embedding
+provider shows once per session); the stamp never is, so it is on every
+affected call.
+
+**Keyword-only on purpose is not degraded.** With embeddings turned off on
+purpose (`gbrain init --no-embedding`), search, query, find_experts and recall carry no stamp
+and no `degraded_recall`, nor for `keyword_zero`. `_meta.retrieval` still
+records the run, and an empty result's `empty_retrieval` info notice says the
+search was keyword-only: no page this caller can read holds those words.
+`no_provider`, timeouts and failed arms still stamp.
 
 | Output | Where the stamp is |
 |---|---|
@@ -1257,14 +1268,22 @@ Nested legacy errors keep their nesting and gain sibling `code` and `fix`.
 
 gbrain sends `notifications/tools/list_changed` when its tool catalog changes
 mid-session: a serve that started degraded or in status-only mode recovers and
-swaps in the full catalog. Harness support varies by version:
+swaps in the full catalog, and `request_tools` adds tools (stdio: a `{surface}`
+widen or a `{tools}` reveal; OAuth HTTP: a persisted `{surface}` change, sent on
+that call's own response stream). Harness support varies by version:
 
 | Harness | Behaviour |
 |---|---|
 | Claude Code | recent versions refresh the tool list on the notification; some versions and modes have been reported to keep the old list |
-| Codex | versions that include openai/codex#12449 refresh the tool list; its deferred tool search can stay stale |
+| Codex | 0.170 logs the notification and keeps its tool list for the session; the refresh is behind the experimental, off-by-default `mcp_tool_list_changed` feature and applies from the next turn |
+| OpenClaw | 2026.11 drops its cached catalog on the notification, but a run's tools are built when the run starts, so a new tool is callable from the next user message, never in the run that asked |
 | other MCP clients | not measured |
 
+On a local `gbrain serve` stdio pipe (not the thin-client bridge), `request_tools`
+tells Codex and OpenClaw (by their initialize client name) that tools it newly
+lists cannot be called in this turn and names the lasting route (`--surface full`
+on the registration). On OAuth HTTP a widened surface is persisted for the
+client, so the next `tools/list` and every later session list it.
 If a tool the fix names is not in your tool list after a recovery, restart the
 gbrain MCP server in the harness (or start a new session).
 

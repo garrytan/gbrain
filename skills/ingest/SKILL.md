@@ -87,9 +87,9 @@ brain compound over time. Without the opt-in, write only what the user asks to s
 2. **For each entity detected:**
    - `gbrain search "name"` -- does a page already exist?
    - **If yes:** load context with `gbrain get <slug>`. Use the compiled truth to
-     inform your response. Update the page if the message contains new information.
+     inform your response. Update the page if the message contains new information (put it back to the source the get read it from: `gbrain put <slug> --source-id <that source>`).
    - **If no:** assess notability (see `skills/_brain-filing-rules.md`). If the entity
-     is worth tracking, create a new page with `gbrain put <type/slug>` and populate
+     is worth tracking, create a new page with `gbrain put <type/slug>` (a put that names no source is refused if the slug already lives in another source; retry with the `--source-id` the error names) and populate
      with what you know.
 3. **After creating or updating pages:** sync to gbrain:
    ```bash

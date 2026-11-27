@@ -16,14 +16,13 @@ import { managedPersistenceEnabled } from './persistence/ownership.ts';
  */
 
 import type { BrainEngine } from './engine.ts';
-import { SOURCE_CONFIG_OBJECT_SQL } from './source-config-sql.ts';
 import { rmSync, lstatSync, realpathSync } from 'node:fs';
 import { resolve as resolvePath } from 'node:path';
 import { isPathContained } from './path-confine.ts';
 import { defaultCloneDir } from './sources-ops.ts';
 import { gbrainPath } from './config.ts';
-import { isMissingSchemaObject } from './utils.ts';
-import { deleteSourceRow, EXPIRED_ARCHIVE_SQL, UNVERIFIED_ARCHIVE_SQL, unverifiedArchiveReason } from './source-delete.ts';
+import { deleteSourceRow, unverifiedArchiveReason } from './source-delete.ts';
+import { rethrowCapabilityRefusal } from './engine-capability-refusal.ts';
 import { ItemRun } from './item-failure.ts';
 import { OperationError } from './ops/contract.ts';
 import { cliRenderContext, renderAction, type RenderedAction } from './agent-output.ts';
@@ -90,45 +89,18 @@ export const CONFIRM_THRESHOLD_PAGES = 1;
  * (ON DELETE RESTRICT — these rows BLOCK a hard delete of the source).
  * PHYSICAL semantics: soft-deleted rows (admin revoke does UPDATE SET
  * deleted_at) still hold the FK, so they are returned too, tagged
- * `deleted: true`, and the guidance splits per row. Pre-migration brains
- * without the deleted_at column fall back to all referents (same
- * 42703-retry idiom as oauth-provider.ts) tagged live; brains without
- * the oauth_clients table — or without the source_id column (no column
- * ⇒ no FK ⇒ no referents) — have no referents by construction.
+ * `deleted: true`, and the guidance splits per row, by client_id in byte
+ * order. Pre-migration brains without the deleted_at column tag every
+ * referent live; brains without the oauth_clients table — or without the
+ * source_id column (no column ⇒ no FK ⇒ no referents) — have no referents
+ * by construction.
  */
 export async function clientsReferencingSource(
   engine: BrainEngine,
   sourceId: string,
 ): Promise<SourceClientReferent[]> {
-  try {
-    const rows = await engine.executeRaw<{ client_id: string; client_name: string; deleted: boolean }>(
-      `SELECT client_id, client_name, (deleted_at IS NOT NULL) AS deleted
-       FROM oauth_clients
-       WHERE source_id = $1
-       ORDER BY client_id COLLATE "C"`,
-      [sourceId],
-    );
-    return rows.map((r) => ({ clientId: r.client_id, clientName: r.client_name, deleted: r.deleted === true }));
-  } catch (e) {
-    if (isMissingSchemaObject(e, 'table', 'oauth_clients')) return [];
-    // The primary query references BOTH optional columns; the strict
-    // predicate tells them apart by the column the error names.
-    if (isMissingSchemaObject(e, 'column', 'source_id')) return [];
-    if (!isMissingSchemaObject(e, 'column', 'deleted_at')) throw e;
-    try {
-      const rows = await engine.executeRaw<{ client_id: string; client_name: string }>(
-        `SELECT client_id, client_name FROM oauth_clients
-         WHERE source_id = $1
-         ORDER BY client_id COLLATE "C"`,
-        [sourceId],
-      );
-      return rows.map((r) => ({ clientId: r.client_id, clientName: r.client_name, deleted: false }));
-    } catch (e2) {
-      // The fallback's only optional column is source_id — no column ⇒ no FK.
-      if (isMissingSchemaObject(e2, 'column', 'source_id')) return [];
-      throw e2;
-    }
-  }
+  const rows = await engine.listSourceOAuthClients(sourceId);
+  return rows.map((r) => ({ clientId: r.client_id, clientName: r.client_name, deleted: r.deleted }));
 }
 
 /**
@@ -179,72 +151,13 @@ export async function assessDestructiveImpact(
   engine: BrainEngine,
   sourceId: string,
 ): Promise<DestructiveImpact | null> {
-  // Fetch source metadata
-  const sources = await engine.executeRaw<{ id: string; name: string }>(
-    `SELECT id, name FROM sources WHERE id = $1`,
-    [sourceId],
-  );
-  if (sources.length === 0) return null;
-
-  const src = sources[0];
-
-  // Count pages
-  const pageRows = await engine.executeRaw<{ n: number }>(
-    `SELECT COUNT(*)::int AS n FROM pages WHERE source_id = $1`,
-    [sourceId],
-  );
-  const pageCount = pageRows[0]?.n ?? 0;
-
-  // Count chunks
-  const chunkRows = await engine.executeRaw<{ n: number }>(
-    `SELECT COUNT(*)::int AS n FROM content_chunks cc
-     JOIN pages p ON cc.page_id = p.id
-     WHERE p.source_id = $1`,
-    [sourceId],
-  );
-  const chunkCount = chunkRows[0]?.n ?? 0;
-
-  // Count embeddings (chunks with non-null embedding vectors)
-  const embedRows = await engine.executeRaw<{ n: number }>(
-    `SELECT COUNT(*)::int AS n FROM content_chunks cc
-     JOIN pages p ON cc.page_id = p.id
-     WHERE p.source_id = $1 AND cc.embedding IS NOT NULL`,
-    [sourceId],
-  );
-  const embeddingCount = embedRows[0]?.n ?? 0;
-
-  // Count files in storage (if any). PGLite has no `files` table — that
-  // surface is Postgres-only (CLAUDE.md: "No files table" for PGLite). Probe
-  // the table existence via information_schema so this works on both engines.
-  let fileCount = 0;
-  const filesTableRows = await engine.executeRaw<{ exists: boolean }>(
-    `SELECT EXISTS (
-       SELECT 1 FROM information_schema.tables
-       WHERE table_schema = 'public' AND table_name = 'files'
-     ) AS exists`,
-  );
-  if (filesTableRows[0]?.exists) {
-    const fileRows = await engine.executeRaw<{ n: number }>(
-      `SELECT COUNT(*)::int AS n FROM files WHERE source_id = $1`,
-      [sourceId],
-    );
-    fileCount = fileRows[0]?.n ?? 0;
-  }
-
-  // cathedral-6: count hot-memory facts. A revoked agent's workspace can
-  // hold facts with zero pages — those are data at risk, not "no data".
-  // Tolerant of a pre-v0.31 brain without the facts table (same degrade
-  // posture as clientsReferencingSource).
-  let factCount = 0;
-  try {
-    const factRows = await engine.executeRaw<{ n: number }>(
-      `SELECT COUNT(*)::int AS n FROM facts WHERE source_id = $1`,
-      [sourceId],
-    );
-    factCount = factRows[0]?.n ?? 0;
-  } catch (e) {
-    if (!isMissingSchemaObject(e, 'table', 'facts')) throw e;
-  }
+  // Source name and the counts: pages (soft-deleted included), chunks, chunks with a vector, storage files (0 where
+  // the brain has no `files` table, as on PGLite) and hot-memory facts (cathedral-6: a revoked agent's workspace can
+  // hold facts with zero pages; 0 on a brain from before the facts table).
+  const counts = await engine.readSourceDeleteImpact(sourceId);
+  if (!counts) return null;
+  const src = { name: counts.name };
+  const { pages: pageCount, chunks: chunkCount, embeddings: embeddingCount, files: fileCount, facts: factCount } = counts;
 
   // PR6 D5b: fold the FK-RESTRICT referent count into the preview so the
   // operator sees the block BEFORE pulling the trigger.
@@ -336,33 +249,14 @@ export async function softDeleteSource(
     const {runManagedSourceLifecycle}=await import('./persistence/source-lifecycle.ts');
     const result=await runManagedSourceLifecycle(engine,{operation:'archive',sourceId});
     if(result.noop)return null;
-    const [row]=await engine.executeRaw<{name:string;archived_at:string;archive_expires_at:string;n:number}>(`SELECT name,archived_at,archive_expires_at,
-      (SELECT count(*)::integer FROM pages WHERE source_id=$1) AS n FROM sources WHERE id=$1`,[sourceId]);
-    return row?{id:sourceId,name:row.name,deletedAt:new Date(row.archived_at),expiresAt:new Date(row.archive_expires_at),pageCount:row.n}:null;
+    const row=(await engine.listArchivedSourceRows()).find(r=>r.id===sourceId);
+    return row?{id:sourceId,name:row.name,deletedAt:new Date(row.archived_at!),expiresAt:new Date(row.archive_expires_at!),pageCount:row.page_count}:null;
   }
   await assertUnmanagedCanonicalWriter(engine, 'sources archive');
-  // Atomic: only flip rows that are currently active. Returns the metadata
-  // we need without a follow-up SELECT. RETURNING projects the columns the
-  // caller cares about; pageCount is a separate count.
-  const expiresClause = `now() + (${SOFT_DELETE_TTL_HOURS} || ' hours')::interval`;
-  const rows = await engine.executeRaw<{ id: string; name: string; archived_at: string; archive_expires_at: string }>(
-    `UPDATE sources
-     SET archived = true,
-         archived_at = now(),
-         archive_expires_at = ${expiresClause},
-         config = ${SOURCE_CONFIG_OBJECT_SQL} || '{"federated": false}'::jsonb
-     WHERE id = $1 AND archived = false
-     RETURNING id, name, archived_at, archive_expires_at`,
-    [sourceId],
-  );
-  if (rows.length === 0) return null;
-  const row = rows[0];
-
-  const pageRows = await engine.executeRaw<{ n: number }>(
-    `SELECT COUNT(*)::int AS n FROM pages WHERE source_id = $1`,
-    [sourceId],
-  );
-  const pageCount = pageRows[0]?.n ?? 0;
+  // Atomic: only flips a source that is currently active. pageCount is a separate count.
+  const row = await engine.archiveSource(sourceId, SOFT_DELETE_TTL_HOURS);
+  if (!row) return null;
+  const pageCount = await engine.countSourcePages(sourceId, { includeDeleted: true });
 
   return {
     id: sourceId,
@@ -393,18 +287,7 @@ export async function restoreSource(
   await assertUnmanagedCanonicalWriter(engine, 'sources restore');
   // GST-1113: a scope source is never federated, so restore leaves it unfederated.
   const federate = refederate && !(await (await import('./access/attest-sources.ts')).markedScopeSources(engine, [sourceId])).size;
-  const federatedPatch = federate ? '{"federated": true}' : '{"federated": false}';
-  const rows = await engine.executeRaw<{ id: string }>(
-    `UPDATE sources
-     SET archived = false,
-         archived_at = NULL,
-         archive_expires_at = NULL,
-         config = ${SOURCE_CONFIG_OBJECT_SQL} || $1::text::jsonb
-     WHERE id = $2 AND archived = true
-     RETURNING id`,
-    [federatedPatch, sourceId],
-  );
-  return rows.length > 0;
+  return engine.restoreArchivedSource(sourceId, federate);
 }
 
 /**
@@ -417,26 +300,13 @@ export async function restoreSource(
 export async function listArchivedSources(
   engine: BrainEngine,
 ): Promise<SoftDeletedSource[]> {
-  const rows = await engine.executeRaw<{
-    id: string;
-    name: string;
-    archived_at: string;
-    archive_expires_at: string;
-    page_count: number;
-  }>(
-    `SELECT
-        s.id, s.name, s.archived_at, s.archive_expires_at,
-        COALESCE((SELECT COUNT(*)::int FROM pages p WHERE p.source_id = s.id), 0) AS page_count
-     FROM sources s
-     WHERE s.archived = true
-     ORDER BY s.archived_at DESC`,
-  );
+  const rows = await engine.listArchivedSourceRows();
 
   return rows.map((row) => ({
     id: row.id,
     name: row.name,
-    deletedAt: new Date(row.archived_at),
-    expiresAt: new Date(row.archive_expires_at),
+    deletedAt: new Date(row.archived_at!),
+    expiresAt: new Date(row.archive_expires_at!),
     pageCount: row.page_count,
   }));
 }
@@ -483,8 +353,8 @@ export interface PurgeExpiredResult {
  * return is what every caller + test in this tree consumes.)
  */
 async function unverifiedArchives(engine: BrainEngine): Promise<PurgeExpiredResult['blocked']> {
-  const rows = await engine.executeRaw<{ id: string }>(`SELECT id FROM sources WHERE ${UNVERIFIED_ARCHIVE_SQL} ORDER BY id`);
-  return rows.map(({ id }) => ({ id, reason: unverifiedArchiveReason(id) }));
+  const ids = await engine.listUnverifiedArchivedSourceIds();
+  return ids.map((id) => ({ id, reason: unverifiedArchiveReason(id) }));
 }
 
 export async function purgeExpiredSources(
@@ -492,7 +362,7 @@ export async function purgeExpiredSources(
 ): Promise<PurgeExpiredResult> {
   if(await managedPersistenceEnabled(engine)){
     const {runManagedSourceLifecycle}=await import('./persistence/source-lifecycle.ts');
-    const candidates=await engine.executeRaw<{id:string;incarnation:string}>(`SELECT id,incarnation FROM sources WHERE ${EXPIRED_ARCHIVE_SQL} ORDER BY id`);
+    const candidates=await engine.listExpiredArchivedSources();
     const result:PurgeExpiredResult={purged:[],blocked:await unverifiedArchives(engine)};
     for(const source of candidates){
       try{const receipt=await runManagedSourceLifecycle(engine,{operation:'purge',sourceId:source.id,expectedIncarnation:source.incarnation,confirmDestructive:true,expiredOnly:true});if(!receipt.noop)result.purged.push(source.id);}
@@ -504,9 +374,7 @@ export async function purgeExpiredSources(
     return result;
   }
   await assertUnmanagedCanonicalWriter(engine, 'sources purge');
-  const candidates = await engine.executeRaw<{ id: string; config: unknown; local_path: string | null }>(
-    `SELECT id, config, local_path FROM sources WHERE ${EXPIRED_ARCHIVE_SQL} ORDER BY id`,
-  );
+  const candidates = await engine.listExpiredArchivedSources();
   const purged: string[] = [];
   const blocked: PurgeExpiredResult['blocked'] = await unverifiedArchives(engine);
   const cloneRoot = gbrainPath('clones');
@@ -514,7 +382,7 @@ export async function purgeExpiredSources(
   for (const candidate of candidates) {
     const { id } = candidate;
     try {
-      if (await deleteSourceRow(engine, id, { expiredArchiveOnly: true })) {
+      if (await (await import('./owned-folder/remove.ts')).removeOwnedFolderThen(engine, id, {}, () => deleteSourceRow(engine, id, { expiredArchiveOnly: true }))) {
         purged.push(id);
         // github-kind mirrors are gbrain-owned only when created at the
         // default clone location. Never recursively delete an altered or
@@ -549,6 +417,8 @@ export async function purgeExpiredSources(
       // purged nor blocked.
       items.succeed();
     } catch (err) {
+      // An engine that cannot delete a source refuses; that is not one source's failure to report and retry.
+      rethrowCapabilityRefusal(err);
       // SQLSTATE 23503 foreign_key_violation — same detection idiom as
       // oauth-provider.ts's delete path for this exact FK.
       if (err instanceof OperationError && err.code === 'source_pages_remain') {

@@ -9,8 +9,7 @@ import { receiptReservation, retainedReceiptBytes } from './receipt-bytes.ts';
 
 export type { TopologyChange } from '../engine-sql/persistence-claims.ts';
 export async function priorTopologyChange(engine:BrainEngine,principal:string,requestId:string,intent:unknown):Promise<TopologyChange|null> {
-  const page=await engine.executeRaw("SELECT id FROM persistence_requests WHERE principal_kind='local_cli' AND principal_id=$1 AND request_id=$2::uuid",[principal,requestId]);
-  if(page.length) throw opError('idempotency_conflict','This request_id belongs to a page mutation.',
+  if(await engine.readWriteRequest('local_cli',principal,requestId)) throw opError('idempotency_conflict','This request_id belongs to a page mutation.',
     `Request ${requestId} already names a page write, so this lifecycle change was not accepted. Submit it with a new request id, or omit the id so gbrain generates one.`);
   const prior=await engine.readTopologyChange(principal,requestId);
   if(prior && prior.digest!==digest(intent)) throw opError('idempotency_conflict','This lifecycle request_id was accepted with different arguments.',
@@ -50,9 +49,11 @@ export async function recordTopologyChange(tx:BrainEngine, input:{principal:stri
     sourceId:input.sourceId,sourceIncarnation:input.incarnation,worktreeIds:input.worktrees,state:recovery?'recovering':'committed',
     recovery,recoveryBytes,terminalBytes,outcome,intentBytes});
   for(const counter of counters){
-    if(!counter.key.startsWith('worktree:')) await tx.executeRaw('UPDATE persistence_counters SET lifetime_ids=lifetime_ids+1,terminal_bytes=terminal_bytes+$2 WHERE key=$1',[counter.key,terminalBytes]);
-    if(recovery && !counter.key.startsWith('worktree:')) await tx.executeRaw('UPDATE persistence_counters SET outstanding_count=outstanding_count+1,intent_bytes=intent_bytes+$2 WHERE key=$1',[counter.key,intentBytes]);
-    if(recoveryBytes && counter.key!==key) await tx.executeRaw('UPDATE persistence_counters SET recovery_bytes=recovery_bytes+$2 WHERE key=$1',[counter.key,recoveryBytes]);
+    const principalOrBrain=!counter.key.startsWith('worktree:');
+    const delta={...(principalOrBrain?{lifetime_ids:1,terminal_bytes:terminalBytes}:{}),
+      ...(recovery&&principalOrBrain?{outstanding_count:1,intent_bytes:intentBytes}:{}),
+      ...(recoveryBytes&&counter.key!==key?{recovery_bytes:recoveryBytes}:{})};
+    if(Object.keys(delta).length) await tx.addPersistenceCounters(counter.key,delta);
   }
   return row;
 }
@@ -88,41 +89,42 @@ export async function admitTopologyRetire(tx:BrainEngine,input:{principal:string
   await tx.insertTopologyChange({principalId:input.principal,requestId:input.requestId,digest:digest(input.intent),operation:input.operation,
     sourceId:input.sourceId,sourceIncarnation:input.incarnation,worktreeIds:input.worktrees,state:'recovering',terminalBytes:reservation,
     outcome:{operation:input.operation,source_id:input.sourceId,source_incarnation:input.incarnation,...(input.expiredOnly?{expired_only:true}:{})}});
-  for(const counter of counters) await tx.executeRaw('UPDATE persistence_counters SET lifetime_ids=lifetime_ids+1,terminal_bytes=terminal_bytes+$2 WHERE key=$1',[counter.key,reservation]);
+  const store=await tx.topologyStore();
+  for(const counter of counters) await store.chargeReceipt(counter.key,reservation);
 }
 /** Settles a retire admission and trues its reserved receipt bytes up to the outcome it keeps; null when already settled. */
 export async function settleTopologyRetire(tx:BrainEngine,row:TopologyChange,state:'committed'|'failed',outcome:Record<string,unknown>):Promise<TopologyChange|null>{
   const counters=await lockCounters(tx,['brain',principalKey({kind:'local_cli',id:row.principal_id})]);
   const terminalBytes=Math.min(receiptReservation({}),retainedReceiptBytes({outcome},{stage:'terminal'}));
-  const [settled]=await tx.executeRaw<TopologyChange>(`UPDATE persistence_topology_changes SET state=$2,outcome=$3::text::jsonb,terminal_bytes=$4,updated_at=now()
-    WHERE id=$1::uuid AND state='recovering' AND recovery IS NULL RETURNING *`,[row.id,state,JSON.stringify(outcome),terminalBytes]);
+  const store=await tx.topologyStore();
+  const settled=await store.settleRetire(row.id,state,outcome,terminalBytes);
   if(!settled)return null;
-  for(const counter of counters) await tx.executeRaw('UPDATE persistence_counters SET terminal_bytes=terminal_bytes+$2 WHERE key=$1',[counter.key,terminalBytes-Number(row.terminal_bytes)]);
+  for(const counter of counters) await store.addTerminalBytes(counter.key,terminalBytes-Number(row.terminal_bytes));
   return settled;
 }
 /** A lifecycle change that deleted or changed incarnation X fails every other request still admitted against X: none can resume. Requests are keyed by (principal, request_id), so the same request_id under another CLI registration is another request. */
 export async function supersedeTopologyRetires(tx:BrainEngine,sourceId:string,incarnation:string,principal:string,requestId:string):Promise<void>{
-  const rows=await tx.executeRaw<TopologyChange>(`SELECT * FROM persistence_topology_changes WHERE source_id=$1 AND source_incarnation=$2::uuid
-    AND state='recovering' AND recovery IS NULL AND operation IN ('remove','purge') AND NOT (principal_id=$3::uuid AND request_id=$4::uuid) ORDER BY id`,[sourceId,incarnation,principal,requestId]);
+  const rows=await (await tx.topologyStore()).supersedableRetires(sourceId,incarnation,principal,requestId);
   for(const row of rows) await settleTopologyRetire(tx,row,'failed',{...row.outcome,error:RETIRE_SUPERSEDED});
 }
 /** Caller retains owner/source guards and completes final state in this same transaction. */
 export async function releaseTopologyReservation(tx:BrainEngine,row:TopologyChange):Promise<boolean>{
   // Revocation or removal prevents publication, never cleanup of its prior
   // durable reservation. Lock an extant principal without checking its grant.
-  await tx.executeRaw('SELECT id FROM persistence_local_writers WHERE id=$1::uuid FOR SHARE',[row.principal_id]);
+  const store=await tx.topologyStore();
+  await store.shareLocalWriter(row.principal_id);
   const principal=principalKey({kind:'local_cli',id:row.principal_id});
   const counters=await lockCounters(tx,['brain',principal,...row.worktree_ids.map(id=>`worktree:${id}`)]);
-  const [current]=await tx.executeRaw<TopologyChange>('SELECT * FROM persistence_topology_changes WHERE id=$1::uuid FOR UPDATE',[row.id]);
+  const current=await store.lockChange(row.id);
   if(!current?.recovery)return false;
   const intentBytes=Number(current.intent_bytes);
   for(const counter of counters){
     // Pre-accounting recovery rows have zero intent_bytes and did not reserve
     // an outstanding slot. New normalized JSON always occupies at least one byte.
-    if(intentBytes>0 && !counter.key.startsWith('worktree:')) await tx.executeRaw('UPDATE persistence_counters SET outstanding_count=outstanding_count-1,intent_bytes=intent_bytes-$2 WHERE key=$1',[counter.key,intentBytes]);
-    if(counter.key!==principal) await tx.executeRaw('UPDATE persistence_counters SET recovery_bytes=recovery_bytes-$2 WHERE key=$1',[counter.key,Number(current.recovery_bytes)]);
+    if(intentBytes>0 && !counter.key.startsWith('worktree:')) await store.releaseIntent(counter.key,intentBytes);
+    if(counter.key!==principal) await store.releaseRecoveryBytes(counter.key,Number(current.recovery_bytes));
   }
-  await tx.executeRaw('UPDATE persistence_topology_changes SET recovery=NULL,recovery_bytes=0,intent_bytes=0,updated_at=now() WHERE id=$1::uuid',[row.id]);
+  await store.clearChangeRecovery(row.id);
   return true;
 }
 export function topologyReceipt(row:TopologyChange):Record<string,unknown>{

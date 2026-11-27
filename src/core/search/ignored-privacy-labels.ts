@@ -16,6 +16,7 @@ import type { OperationContext } from '../ops/contract.ts';
 import { parseMarkdown } from '../markdown.ts';
 import { edgeTrimSql } from '../edge-whitespace.ts';
 import { isPrivacyDerivationPrivate, PRIVACY_ALIASES, privacyAliasSql } from './private-visibility.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 
 export const PRIVACY_LABEL_IGNORED = 'privacy_label_ignored';
 export const PRIVACY_LABEL_KEYS: readonly string[] = Object.keys(PRIVACY_ALIASES);
@@ -176,12 +177,13 @@ export async function withIgnoredPrivacyLabelNotice<R>(ctx: Pick<OperationContex
     const written = (result ?? {}) as Record<string, unknown>;
     const stored = typeof written.slug === 'string' ? written.slug : String(params.slug);
     const committed = written.status === 'created_or_updated' || written.status === 'skipped';
-    const [page] = committed ? await ctx.engine.executeRaw<{ type: string | null; frontmatter: Record<string, unknown> | null }>(
-      'SELECT type, frontmatter FROM pages WHERE source_id = $1 AND slug = $2 AND deleted_at IS NULL', [sourceId, stored],
-      { timeoutMs: NOTICE_READ_TIMEOUT_MS }) : [];
+    const page = committed ? await ctx.engine.readLivePageFrontmatter(sourceId, stored, { timeoutMs: NOTICE_READ_TIMEOUT_MS }) : null;
     const labels = ignoredPrivacyLabels(page ?? parseMarkdown(content, `${stored}.md`));
     if (labels.length) ctx.emitNotice(ignoredPrivacyLabelNotice({ labels: labels.map(l => ({ ...l, pages: 1 })), pages: 1,
       repo: await sourceHasRepo(ctx.engine, sourceId), sourceId, slug: stored }));
-  } catch { /* the notice never fails a write */ }
+  } catch (err) {
+    // An engine that cannot read the page back says so; any other failure never fails a write.
+    rethrowCapabilityRefusal(err);
+  }
   return result;
 }

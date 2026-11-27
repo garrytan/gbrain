@@ -12,6 +12,7 @@ use gbrain_store::embeddings::{
 };
 use gbrain_store::pages::{PageInput, PutPageOptions};
 use gbrain_store::takes::TakeInput;
+use gbrain_store::vectors::TakesVectorOptions;
 use memory_env::{T0, brain};
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
@@ -399,6 +400,98 @@ fn a_take_vector_counts_only_for_the_claim_it_was_computed_from() {
     );
 }
 
+#[test]
+fn take_vector_search_ranks_current_vectors_by_cosine_distance_and_refuses_a_bad_query() {
+    let b = brain("emb-take-search");
+    let (open, _) = page(&b, "notes/open", json!({}));
+    let (held, _) = page(&b, "notes/held", json!({"quarantine": true}));
+    let take = |page_id: u64, row: i64, claim: &str, holder: &str| -> TakeInput {
+        de(json!({
+            "page_id": page_id, "row_num": row, "claim": claim, "kind": "bet", "holder": holder,
+            "weight": 0.5, "active": true,
+        }))
+    };
+    b.add_takes_batch(&[
+        take(open, 1, "near", "garry"),
+        take(open, 2, "far", "alice"),
+        take(open, 3, "reworded", "garry"),
+        take(open, 4, "never embedded", "garry"),
+        take(held, 1, "held", "garry"),
+    ])
+    .unwrap();
+    let ids: std::collections::HashMap<String, u64> = b
+        .list_stale_takes(&StaleTakeOptions::default())
+        .unwrap()
+        .iter()
+        .map(|r| {
+            (
+                r["claim"].as_str().unwrap().to_string(),
+                r["take_id"].as_u64().unwrap(),
+            )
+        })
+        .collect();
+    let lean = |axis: usize, by: f64| {
+        let mut v = basis(0, 1536);
+        v[axis] = by;
+        v
+    };
+    let rows: Vec<TakeEmbeddingInput> = [
+        ("near", 0.1),
+        ("far", 0.5),
+        ("reworded", 0.01),
+        ("held", 0.05),
+    ]
+    .iter()
+    .enumerate()
+    .map(|(i, (claim, by))| TakeEmbeddingInput {
+        take_id: ids[*claim],
+        embedding: lean(i + 1, *by),
+        claim: claim.to_string(),
+        model: "m1".to_string(),
+    })
+    .collect();
+    assert_eq!(b.update_take_embeddings(&rows).unwrap(), 4);
+    // A reworded claim leaves its vector stale, so it is not searched.
+    b.add_takes_batch(&[take(open, 3, "reworded again", "garry")])
+        .unwrap();
+    let search = |embedding: &[f64], options: Value| -> Vec<Value> {
+        b.search_takes_vector(embedding, &de::<TakesVectorOptions>(options))
+            .unwrap()
+    };
+    let query: Vec<f64> = basis(0, 1536);
+    let claims = |hits: &[Value]| -> Vec<String> {
+        hits.iter()
+            .map(|h| h["claim"].as_str().unwrap().to_string())
+            .collect()
+    };
+    let all = search(&query, json!({}));
+    assert_eq!(claims(&all), ["held", "near", "far"]);
+    assert_eq!(all[1]["take_id"], json!(ids["near"]));
+    assert_eq!(all[1]["page_slug"], json!("notes/open"));
+    assert_eq!(all[1]["weight"], json!(0.5));
+    // (1 - distance)::real of [1, .., 0.1 on axis 2] against axis 0: 1/sqrt(1.01) as f32.
+    assert_eq!(all[1]["score"], json!(0.9950372));
+    assert_eq!(claims(&search(&query, json!({ "limit": 1 }))), ["held"]);
+    assert_eq!(
+        claims(&search(&query, json!({ "allow_list": ["alice"] }))),
+        ["far"]
+    );
+    assert_eq!(
+        claims(&search(&query, json!({ "eligible_only": true }))),
+        ["near", "far"]
+    );
+    let refused = |embedding: &[f64]| {
+        b.search_takes_vector(embedding, &TakesVectorOptions::default())
+            .unwrap_err()
+            .to_string()
+    };
+    assert!(refused(&basis(0, 3)).contains("different vector dimensions 3 and 1536"));
+    assert!(refused(&[1.0, f64::NAN]).contains("NaN not allowed in vector"));
+    assert!(refused(&[]).contains("at least 1 dimension"));
+    // No candidate take means no distance is computed, so another width finds nothing.
+    assert!(search(&basis(0, 3), json!({ "allow_list": [] })).is_empty());
+}
+
 /// `cosinesByChunkIds`: ids of a page's chunks, in chunk index order.
 fn chunk_ids(store: &Store, slug: &str) -> Vec<u64> {
     chunks_of(store, slug)
@@ -496,4 +589,112 @@ fn cosines_refuse_a_query_pgvector_cannot_parse_before_reading_any_row() {
         let err = b.cosines_by_chunk_ids(&[1], &query).unwrap_err();
         assert_eq!(err.message, message);
     }
+}
+
+#[test]
+fn require_safe_chunks_reads_a_page_chunked_below_the_safe_fence_as_no_chunks() {
+    let b = brain("emb-safe-fence");
+    let (_, rev) = page(&b, "notes/a", json!({}));
+    seal(
+        &b,
+        "notes/a",
+        &rev,
+        json!([{"chunk_index": 0, "chunk_text": "alpha", "model": "m1", "embedding": basis(0, 1536)}]),
+    );
+    let safe = |b: &Store| {
+        b.get_chunks_with(
+            "notes/a",
+            &GetChunksOptions {
+                include_embedding: true,
+                require_safe_chunks: true,
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .len()
+    };
+    assert_eq!(safe(&b), 1);
+    b.set_chunker_version("notes/a", "3", None).unwrap();
+    assert_eq!(safe(&b), 0);
+    // Without the option the short page still reads its chunks.
+    assert_eq!(chunks_of(&b, "notes/a").len(), 1);
+}
+
+#[test]
+fn provenance_is_complete_only_when_every_visible_chunk_holds_a_current_vector() {
+    let b = brain("emb-provenance");
+    let (_, rev) = page(&b, "notes/a", json!({}));
+    let provenance = |slug: &str, source: &str, model: &str, dims: Option<u32>| {
+        b.read_page_provenance_complete(slug, source, model, dims)
+            .unwrap()
+    };
+    // No chunk yet: not complete. A missing page and a missing source are not complete either.
+    assert!(!provenance("notes/a", "default", "openai:m1", Some(1536)));
+    seal(
+        &b,
+        "notes/a",
+        &rev,
+        json!([
+            {"chunk_index": 0, "chunk_text": "one", "model": "openai:m1", "embedding": basis(0, 1536)},
+            {"chunk_index": 1, "chunk_text": "two", "model": "m1", "embedding": basis(1, 1536)},
+        ]),
+    );
+    // The label may be the target's bare tail; the width must be the target's.
+    assert!(provenance("notes/a", "default", "openai:m1", Some(1536)));
+    assert!(!provenance("notes/a", "default", "openai:m1", Some(768)));
+    assert!(!provenance("notes/a", "default", "openai:m1", None));
+    assert!(!provenance("notes/a", "default", "openai:m2", Some(1536)));
+    assert!(!provenance("notes/a", "nowhere", "openai:m1", Some(1536)));
+    assert!(!provenance(
+        "notes/none",
+        "default",
+        "openai:m1",
+        Some(1536)
+    ));
+    // One chunk without a vector, and one unsealed projection, each make it incomplete.
+    seal(
+        &b,
+        "notes/a",
+        &rev,
+        json!([
+            {"chunk_index": 0, "chunk_text": "one", "model": "openai:m1", "embedding": basis(0, 1536)},
+            {"chunk_index": 1, "chunk_text": "two", "model": "openai:m1"},
+        ]),
+    );
+    assert!(!provenance("notes/a", "default", "openai:m1", Some(1536)));
+    let sealed_without = json!([{"chunk_index": 0, "chunk_text": "one", "model": "openai:m1", "embedding": basis(0, 1536)}]);
+    seal(&b, "notes/a", &rev, sealed_without);
+    assert!(provenance("notes/a", "default", "openai:m1", Some(1536)));
+    // A page write moves the knowledge revision, so the projection is unsealed until it is sealed again.
+    page(&b, "notes/a", json!({"edited": true}));
+    assert!(!provenance("notes/a", "default", "openai:m1", Some(1536)));
+}
+
+#[test]
+fn vectorless_chunk_indexes_name_the_live_rows_with_no_vector() {
+    let b = brain("emb-vectorless");
+    let (id, rev) = page(&b, "notes/a", json!({}));
+    assert!(
+        b.list_vectorless_chunk_indexes(id as i64)
+            .unwrap()
+            .is_empty()
+    );
+    seal(
+        &b,
+        "notes/a",
+        &rev,
+        json!([
+            {"chunk_index": 0, "chunk_text": "zero", "model": "m1"},
+            {"chunk_index": 1, "chunk_text": "one", "model": "m1", "embedding": basis(1, 1536)},
+            {"chunk_index": 2, "chunk_text": "two", "model": "m1"},
+        ]),
+    );
+    assert_eq!(
+        b.list_vectorless_chunk_indexes(id as i64).unwrap(),
+        vec![0, 2]
+    );
+    // An id that names no page, or no id at all, answers none.
+    assert!(b.list_vectorless_chunk_indexes(9_999).unwrap().is_empty());
+    assert!(b.list_vectorless_chunk_indexes(0).unwrap().is_empty());
+    assert!(b.list_vectorless_chunk_indexes(-3).unwrap().is_empty());
 }

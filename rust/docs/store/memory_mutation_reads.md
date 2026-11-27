@@ -22,7 +22,7 @@ from the source, fact and page records the other families write
 | `brain.isFactEntityUnbacked(id, sourceId)` | whether the fact belongs to the source and names an entity with no `/` and no live page of that slug | `isFactEntityUnbacked` |
 | `brain.readLinkedFactCopies({ id, sourceId, worldOnly, remoteFloor })` | `[{ id, entity_slug }]`, the copies of the fact's claim on other entities, by id, at most five; `remoteFloor` is null or `{ honorAliases, restricted, ownerOnly }` | `readLinkedFactCopies` |
 | `brain.hasHiddenFactCopy({ id, sourceId, remoteFloor })` | whether a copy of the claim the withdrawal reaches fails the floor; `remoteFloor` is `{ honorAliases, restricted, ownerOnly }` | `hasHiddenFactCopy` |
-| `brain.ownerReachesFact({ id, sourceId })` | whether an owner with no member identity reaches the fact | `ownerReachesFact` |
+| `brain.ownerReachesFact({ id, sourceId, policy })` | whether the owner reaches the fact; `policy` is absent for an owner with no member identity, else the owner's `PrivacyPolicy` (`identity`, `satisfiedRuleIds`, `honorAliases`, `ownerOnly`, `open`, `callerRecord`, `folderCoverage`) | `ownerReachesFact` |
 | `brain.readFactWithdrawalClaim({ id, sourceId, worldOnly, memberPage, remoteFloor })` | `{ visibility, fact, fact_hash, subject, expired }` for the claim a withdrawal changes, or null; `remoteFloor` is null or `{ honorAliases, restricted, ownerOnly }` | `readFactWithdrawalClaim` |
 
 ## Rules
@@ -30,16 +30,19 @@ from the source, fact and page records the other families write
 - `factReadableUnder` checks, in this order: the fact belongs to the source; its visibility is `world` unless
   `anyVisibility` (the brain owner); its provenance page is not deleted or quarantined; the trust floor and flag
   suppression admit it (`TrustPolicy`); and, with `excludePrivate`, the private-provenance policy
-  (`facts/privacy.rs`) does not hide it. The store keeps no `needs_rederive` queue, so that part of
-  `projectionEligibleSql` hides nothing.
+  (`facts/privacy.rs`) does not hide it. A fact a purge marked in `needs_rederive` (`generations/needs_rederive.rs`) is hidden, as that part of
+  `projectionEligibleSql` hides it.
 - `readRemoteForgetTier` with `remoteFloor` also drops a fact whose provenance page exists and fails the page policy
   for the empty identity (`hidden_by_provenance_page` in `facts/privacy.rs`): `privateProvenanceFilterFragment`, the
   provenance half of the fact policy, with no entity gate. With `restricted: false` (a brain that holds no
-  member-access restrictions) the member-access part is only "names no readers", with no origin test. The floor also
+  member-access restrictions) the member-access part is `page_readers IS NULL AND folder_rule_ids IS NULL`: the page
+  names no readers and no folder rule stamps it (whether or not the rule covers derived pages), with no origin test;
+  a stale flag over a brain that holds a rule still hides the stamped page. The floor also
   drops an owner-only fact and judges the provenance page by the page owner-only test (`owner_only.rs`), both in the
   form `ownerOnly` names: `closed` (no schema version: any owner-only source hides every fact), `fn` (schema 320: only
-  a fact or page of an owner-only source) or `off` (the owner, which has no owner-only test). The store keeps no folder
-  rule or pending coverage, so those conjuncts hide nothing.
+  a fact or page of an owner-only source) or `off` (the owner, which has no owner-only test). For `restricted: true` the
+  folder rules and pending prefixes come from `access_rules.rs` (a stamped rule that covers derived pages, or a
+  pending prefix, hides the provenance page).
 - `readForgetTarget` reads the fact when it belongs to the source and, with `ownPage`, is `private`, cites the
   member's page as its provenance, and that page is live and names `reader` in its readers; otherwise when it is
   `world` or `worldOnly` is false, and, with `remoteFloor`, passes the same provenance-page check as
@@ -50,9 +53,24 @@ from the source, fact and page records the other families write
   that name a non-null entity other than `u`'s, only `world` ones with `worldOnly`, and with `remoteFloor` only ones the
   floor of `readRemoteForgetTier` does not hide; ordered by id, at most five. `hasHiddenFactCopy` looks at every copy
   when `u` names no entity or an unbacked one, else at copies on `u`'s entity, and answers whether the floor hides one.
-- `ownerReachesFact` answers for an owner with no member identity, whose read rule (`ownerReadPolicyFragment`) is
-  `FALSE`: the fact belongs to the source, is not on a member page or the scope page, and no page record, a deleted one
-  included, exists at its `source_markdown_slug` or `entity_slug`.
+- `ownerReachesFact` answers whether fact `id` belongs to the source, is not on a member page or the scope page, and
+  every page record, a deleted one included, at its `source_markdown_slug` and its `entity_slug` passes the owner's read
+  rule. With no `policy` the owner is bound to no member, whose read rule (`ownerReadPolicyFragment`) is `FALSE`, so
+  any page record at either slug fails it. With a `policy` (the owner is bound to the member its first `member:`
+  principal names, `lineageReadPage`) a page passes when it passes both texts the SQL ANDs, `owner_reads_page`
+  (`crates/gbrain-store/src/facts/privacy.rs`):
+  - `ownerReadPolicyFragment('pp', identity, satisfied)`: the page's readers name one of the identity's principals (or
+    none are named), its folder rules are all in the satisfied set and no pending prefix covers it (the record's
+    `folderCoverage` inside a caller record, the live prefixes outside one), a derived page passes the owner's lineage
+    test (`gbrain_access_origin_hidden_for`, `origin_hidden_for`: each origin is closed only to an identity its readers
+    do not name, a rule that covers derived pages it does not satisfy, or a pending prefix), and the privacy part
+    (`privacy_allows`, with `honorAliases`). It has no owner-only test, as the owner's.
+  - `readPolicyFragment('pp', identity, true, satisfied)`: the member-access part in the policy's form (`open` is the
+    short `page_readers IS NULL AND folder_rule_ids IS NULL` form; `ownerOnly` is the form of the owner-only test) with
+    the every-caller lineage test, then the privacy part. It closes any origin that names readers, which is stricter
+    than the owner's lineage test, so the owner's test decides only under `open`.
+  A fact reaches the owner only when every page record it names passes both, so the answer is never wider than the
+  SQL's. A stamped rule whose record is gone counts as no rule here, as in `readers_allowed`.
 - `readFactWithdrawalClaim` reads the fact when it belongs to the source, is not an extraction outcome marker (an audit
   row source with the fixed marker text, `outcomeMarkerSql`), is `world`, or `private` on `memberPage`, or `worldOnly`
   is false, and, with `remoteFloor`, passes the floor of `readRemoteForgetTier`. `fact_hash` is
@@ -72,13 +90,16 @@ from the source, fact and page records the other families write
     labelled-only caller, folder coverage or a relaxed privacy setting);
   - `readForgetTarget` under `remoteFloor` (without `ownPage`), `readLinkedFactCopies` and `readFactWithdrawalClaim`
     under `remoteFloor`, and `hasHiddenFactCopy`, on the same terms;
-  - `ownerReachesFact` for an owner bound to a member, whose pages GST-2490's owner read rule judges.
+  - `ownerReachesFact` for an owner bound to a member when `storeOwnerReachPolicy`
+    (`src/core/rust-engine/store-members/private-provenance.ts`) finds neither text equal to a reference rendering: the
+    two fragments rendered outside any caller record, inside a caller record with its folder coverage, or inside one for
+    an owner (and, when the caller renders the short member-access form, the same with `open`), or when the identity or
+    a satisfied rule is one the fragments drop as invalid (`validIdentity`, `validQualifiedRuleId`), which the store
+    would apply as written.
 
 - Pinned by `test/engine-parity/memory-mutation-reads.test.ts` and `test/engine-parity/forget-reach-reads.test.ts` on every arm and by
   `crates/gbrain-store/tests/memory_mutation_reads.rs`.
 
 ## Not modelled yet
 
-| Rule | What it judges | Where it renders | What Rust does |
-| --- | --- | --- | --- |
-| GST-2490's owner read rule (lineage) | the pages an owner bound to a member reaches: its own member page by readers, satisfied folder rules, lineage origins and the owner-only test, then the privacy part | `ownerReadPolicyFragment` (`src/core/search/private-visibility.ts`) | `ownerReachesFact` refuses (`engine_capability_missing`); TODOS.md `rust-owner-read-rule` |
+Nothing in this family: every member is served. The TypeScript member refuses only the renderings listed above.

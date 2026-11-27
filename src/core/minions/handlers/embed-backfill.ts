@@ -51,6 +51,19 @@ import { currentEmbeddingSignature } from '../../embedding.ts';
 import { readEmbedBackfillBlockers } from '../../embed-backfill-stall.ts';
 import { budgetLimitedField, readBudgetLimited, type BudgetLimitedReport } from '../../held-embedding.ts';
 import { UnrecoverableError } from '../errors.ts';
+import { rethrowCapabilityMissing } from '../../rust-engine/errors.ts';
+
+/** `progress->'stall'->>'fingerprint'` of a job row's progress (an object, or JSON text from a driver that returns it). */
+function stallFingerprint(progress: unknown): string | null {
+  let value = progress;
+  if (typeof value === 'string') {
+    try { value = JSON.parse(value); } catch { return null; }
+  }
+  const stall = value && typeof value === 'object' ? (value as { stall?: unknown }).stall : undefined;
+  const fingerprint = stall && typeof stall === 'object' ? (stall as { fingerprint?: unknown }).fingerprint : undefined;
+  if (fingerprint === undefined || fingerprint === null) return null;
+  return typeof fingerprint === 'string' ? fingerprint : JSON.stringify(fingerprint);
+}
 import { type DbPacer, createDbPacer, createNoopPacer } from '../../db-pacer.ts';
 import { resolvePaceMode, loadPaceModeConfig, readPaceEnv } from '../../pace-mode.ts';
 import type { BrainEngine } from '../../engine.ts';
@@ -384,13 +397,15 @@ export function makeEmbedBackfillHandler(
           try {
             await Promise.all(progressWrites);
             const { fingerprint, remaining, blocked, signature } = await readEmbedBackfillBlockers(engine, sourceId, currentEmbeddingSignature());
-            const [prior] = job.attempts_made > 0
-              ? await engine.executeRaw<{ fingerprint: string | null }>("SELECT progress->'stall'->>'fingerprint' AS fingerprint FROM minion_jobs WHERE id=$1", [job.id])
-              : [];
+            // The typed job read, so a Rust brain finds the prior attempt's stall record too.
+            const prior = job.attempts_made > 0 ? stallFingerprint((await engine.getJob(job.id))?.progress) : null;
             await job.updateProgress({ embedded: 0, chunksProcessed: result.chunksProcessed, cursor: result.lastCursor, spentUsd: tracker.totalSpent,
               stall: { fingerprint, remaining, blocked, signature } });
-            repeated = prior?.fingerprint === fingerprint;
-          } catch { /* the stall record is bookkeeping; the incomplete failure below stands either way */ }
+            repeated = prior !== null && prior === fingerprint;
+          } catch (e) {
+            // The stall record is bookkeeping; the incomplete failure below stands either way. An engine that cannot keep it refuses.
+            rethrowCapabilityMissing(e);
+          }
         }
         if (repeated) {
           throw new UnrecoverableError(`${message} No progress since the previous attempt and the same blockers remain; see gbrain doctor --only embed_backfill_stalled.`);

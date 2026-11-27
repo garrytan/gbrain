@@ -12,6 +12,8 @@ import {
 } from '../src/core/oauth-provider.ts';
 import { hashToken, generateToken } from '../src/core/utils.ts';
 import { PGLITE_SCHEMA_SQL } from '../src/core/pglite-schema.ts';
+import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { sqlQueryForEngine } from '../src/core/sql-query.ts';
 import { InvalidTokenError, InvalidClientMetadataError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
 import type { AuthInfo as CoreAuthInfo } from '../src/core/operations.ts';
 
@@ -483,31 +485,26 @@ describe('verifyAccessToken', () => {
     expect(authInfo.scopes).toEqual(['read', 'write', 'admin']); // grandfathered full access
   });
 
-  test('legacy access_tokens fallback honors permissions.source_id array grants', async () => {
-    // oauth.test.ts initializes the static PGLite schema blob, not the full
-    // migration stack. Add the v38 permissions column here so the row matches
-    // a modern brain carrying a legacy-token source grant.
-    await sql`
-      ALTER TABLE access_tokens
-        ADD COLUMN IF NOT EXISTS permissions JSONB NOT NULL DEFAULT '{"takes_holders":["world"]}'::jsonb
-    `;
+  describe('on a PGLite engine', () => {
+    // The bearer check reads a source grant's sources through the typed members of the engine behind `sql`, so this
+    // case runs on a PGLite engine (the raw PGlite above has none) with the row a legacy-token source grant leaves.
+    let engine: PGLiteEngine;
+    beforeAll(async () => {
+      engine = new PGLiteEngine();
+      await engine.connect({ engine: 'pglite' } as never);
+      await engine.initSchema();
+    }, 30_000);
+    afterAll(async () => { await engine.disconnect(); });
 
-    const legacyToken = generateToken('gbrain_');
-    const hash = hashToken(legacyToken);
-    await sql`
-      INSERT INTO access_tokens (id, name, token_hash, permissions)
-      VALUES (
-        ${crypto.randomUUID()},
-        ${'legacy-federated-agent'},
-        ${hash},
-        ${JSON.stringify({ source_id: ['default', 'src-a', 'src-b'] })}::jsonb
-      )
-    `;
-
-    const authInfo = await provider.verifyAccessToken(legacyToken) as CoreAuthInfo;
-    expect(authInfo.clientId).toBe('legacy-federated-agent');
-    expect(authInfo.sourceId).toBe('default');
-    expect(authInfo.allowedSources).toEqual(['default', 'src-a', 'src-b']);
+    test('legacy access_tokens fallback honors permissions.source_id array grants', async () => {
+      const legacyToken = generateToken('gbrain_');
+      await engine.executeRaw('INSERT INTO access_tokens (id, name, token_hash, permissions) VALUES ($1::uuid, $2, $3, $4::text::jsonb)',
+        [crypto.randomUUID(), 'legacy-federated-agent', hashToken(legacyToken), JSON.stringify({ source_id: ['default', 'src-a', 'src-b'] })]);
+      const authInfo = await new GBrainOAuthProvider({ sql: sqlQueryForEngine(engine) }).verifyAccessToken(legacyToken) as CoreAuthInfo;
+      expect(authInfo.clientId).toBe('legacy-federated-agent');
+      expect(authInfo.sourceId).toBe('default');
+      expect(authInfo.allowedSources).toEqual(['default', 'src-a', 'src-b']);
+    });
   });
 
   // -------------------------------------------------------------------------

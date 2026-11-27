@@ -3,8 +3,11 @@
 //! stages ran through `engine.executeRaw`.
 //!
 //! Members: inboundLinkCoverage, listJunkEntityHubs, countEntityPages, entityGraphCoverage,
+//! entityFeatureCoverage, countDatedMeetingPages,
 //! countForeignEdges, listLivePageSummaries, countInboundLinks, listLinkEndpointPages,
-//! listPagesTitledIn, wordLexemes, readLinkContextMatches, readLinkContextOriginPages.
+//! listPagesTitledIn, wordLexemes, readLinkContextMatches, readLinkContextOriginPages, and the
+//! search type-filter probe probePageTypes and the long-page size preflight readLongPageSizes
+//! (src/core/engine-sql/cli-reads-ops.ts).
 //! readEntityInboundEdges reads the links countInboundLinks counts (`kept_inbound_links`), with
 //! their temporal columns, in link_temporal.rs.
 //!
@@ -14,8 +17,10 @@
 
 use super::{GraphScope, Pages, QUARANTINE_KEY, all_links, not_mentions, touching};
 use crate::Store;
+use crate::chunk_queries::safe_chunks;
 use crate::chunks::read_chunks;
-use crate::error::Result;
+use crate::cli_reads::pg_text::is_pg_space;
+use crate::error::{Result, StoreError};
 use crate::facts::{PrivacyPolicy, page_hidden};
 use crate::keys;
 use crate::kv::{KvRead, scan_prefix};
@@ -59,6 +64,15 @@ pub struct EntityPagesInput {
     pub exclude_quarantined: bool,
 }
 
+/// `entityFeatureCoverage(filter, feature)`: `feature` is `links` (an inbound link) or `timeline`
+/// (a timeline entry). The store has no TABLESAMPLE; the TypeScript member refuses a sample.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct FeatureCoverageInput {
+    pub filter: EntityTypeFilter,
+    pub feature: String,
+}
+
 /// `countForeignEdges(slug, sourceId, direction)`.
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
@@ -94,6 +108,41 @@ pub struct TitledInput {
     pub query_lower: String,
     pub scope: GraphScope,
 }
+
+/// `probePageTypes(sets, scope)`: one type set per requested type.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct TypeProbeInput {
+    pub sets: Vec<Vec<String>>,
+    pub scope: GraphScope,
+}
+
+/// The input of `readLongPageSizes(ids, scope, { includeTimeline })`.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct LongPageSizeInput {
+    pub ids: Vec<i64>,
+    pub scope: GraphScope,
+    /// `requiresSafeChunks(scope)`: the page must pass `safeChunksFilter`.
+    pub safe_chunks: bool,
+    /// The timeline counts (every detail but `low`).
+    pub include_timeline: bool,
+}
+
+/// `TIMELINE_SEPARATOR.length` of `src/core/page-window/document.ts` (ASCII, so also its bytes).
+const TIMELINE_SEPARATOR_LEN: usize = "\n\n<!-- timeline -->\n\n".len();
+/// `ACTIVATION_SERVED_REVISION` of `src/core/search/safe-chunks.ts`.
+const ACTIVATION_SERVED_REVISION: &str = "00000000-0000-0000-0000-000000000153";
+
+/// `servedTextProjectionFilter`: the current projection, or the pre-activation marker.
+fn served(page: &PageRecord) -> bool {
+    page.text_projection_revision
+        .as_deref()
+        .is_some_and(|rev| rev == page.knowledge_revision || rev == ACTIVATION_SERVED_REVISION)
+}
+
+/// The most distinct types the probe lists (`LIMIT 500`).
+const PROBE_TYPE_LIMIT: usize = 500;
 
 /// One ask of `readLinkContextMatches(asks)`: a returned link context, its row index and the
 /// stored edge it came from.
@@ -350,6 +399,50 @@ impl Store {
         Ok(json!({"entities": entities, "connected": connected, "withTimeline": timeline}))
     }
 
+    /// `entityFeatureCoverage`: `{ sampleSize, matched }` over the live unquarantined entity
+    /// pages: how many there are and how many are the target of a link (`links`) or have a
+    /// timeline entry (`timeline`). Any other feature is invalid.
+    pub fn entity_feature_coverage(&self, input: &FeatureCoverageInput) -> Result<Value> {
+        let links = match input.feature.as_str() {
+            "links" => true,
+            "timeline" => false,
+            other => {
+                return Err(StoreError::invalid(format!(
+                    "entityFeatureCoverage: unknown feature {other:?}"
+                )));
+            }
+        };
+        let read = self.read()?;
+        let (mut sample_size, mut matched) = (0u64, 0u64);
+        for page in all_pages(&*read)? {
+            if !live(&page)
+                || !is_entity(&input.filter, &page)
+                || page.frontmatter.contains_key(QUARANTINE_KEY)
+            {
+                continue;
+            }
+            sample_size += 1;
+            let has = if links {
+                !in_links(&*read, page.id)?.is_empty()
+            } else {
+                has_timeline(&*read, page.id)?
+            };
+            if has {
+                matched += 1;
+            }
+        }
+        Ok(json!({"sampleSize": sample_size, "matched": matched}))
+    }
+
+    /// `countDatedMeetingPages`: live pages of type `meeting` with an effective date.
+    pub fn count_dated_meeting_pages(&self) -> Result<u64> {
+        let read = self.read()?;
+        Ok(all_pages(&*read)?
+            .iter()
+            .filter(|p| live(p) && p.page_type == "meeting" && p.effective_date_us.is_some())
+            .count() as u64)
+    }
+
     /// `countForeignEdges`: the links of the page (`sourceId`, `slug`), soft-deleted or not,
     /// whose other end is in another source; `in`, `out` or `both` (each link once).
     pub fn count_foreign_edges(&self, input: &ForeignEdgesInput) -> Result<u64> {
@@ -505,6 +598,77 @@ impl Store {
             .collect())
     }
 
+    /// `probePageTypes(sets, scope)`: `{ present, available }`. `present[i]` is whether a page that
+    /// passes `pageReadFilter(.., scope, live)` has a type in `sets[i]` (false for an empty set).
+    /// `available` is null when no set is empty-handed, else the distinct types of such pages, at
+    /// most 500; the SQL leaves which 500 and their order to the plan, here they are the first 500
+    /// in byte order.
+    pub fn probe_page_types(&self, input: &TypeProbeInput) -> Result<Value> {
+        let read = self.read()?;
+        let mut pages = Pages::new(&*read);
+        let mut types: BTreeSet<String> = BTreeSet::new();
+        for page in all_pages(&*read)? {
+            if pages.passes(&page, &input.scope, true)? {
+                types.insert(page.page_type.clone());
+            }
+        }
+        let present: Vec<bool> = input
+            .sets
+            .iter()
+            .map(|set| set.iter().any(|t| types.contains(t)))
+            .collect();
+        let probed = input.sets.iter().any(|set| !set.is_empty());
+        let all_found = input
+            .sets
+            .iter()
+            .zip(&present)
+            .all(|(set, found)| set.is_empty() || *found);
+        let available = if !probed || all_found {
+            Value::Null
+        } else {
+            json!(types.into_iter().take(PROBE_TYPE_LIMIT).collect::<Vec<_>>())
+        };
+        Ok(json!({ "present": present, "available": available }))
+    }
+
+    /// `readLongPageSizes(ids, scope, { includeTimeline })`: `[{ id, chars, bytes }]`, one row per page in
+    /// `ids` that passes `pageReadFilter(.., scope, live)` and `servedTextProjectionFilter` (and
+    /// `safeChunksFilter` with `safe_chunks`). `chars` is `char_length` (code points) and `bytes`
+    /// `octet_length` of the compiled truth (NULL counts 0); with `timeline`, a timeline holding a
+    /// character outside `[[:space:]]` adds the separator and its own length. The SQL leaves the
+    /// row order to the plan; here it is the order of `ids`, each page once.
+    pub fn read_long_page_sizes(&self, input: &LongPageSizeInput) -> Result<Vec<Value>> {
+        let read = self.read()?;
+        let mut pages = Pages::new(&*read);
+        let mut seen = HashSet::new();
+        let mut rows = Vec::new();
+        for &id in &input.ids {
+            let Ok(id) = u64::try_from(id) else {
+                continue;
+            };
+            if !seen.insert(id) {
+                continue;
+            }
+            let Some(page) = pages.readable(id, &input.scope, true)? else {
+                continue;
+            };
+            if !served(&page) || (input.safe_chunks && !safe_chunks(&page)) {
+                continue;
+            }
+            let body = page.compiled_truth.as_deref().unwrap_or("");
+            let (mut chars, mut bytes) = (body.chars().count(), body.len());
+            if input.include_timeline
+                && let Some(timeline) = page.timeline.as_deref()
+                && timeline.chars().any(|c| !is_pg_space(c))
+            {
+                chars += TIMELINE_SEPARATOR_LEN + timeline.chars().count();
+                bytes += TIMELINE_SEPARATOR_LEN + timeline.len();
+            }
+            rows.push(json!({ "id": id, "chars": chars, "bytes": bytes }));
+        }
+        Ok(rows)
+    }
+
     /// `readLinkContextMatches(asks)`: `[{ i, link_source, context, page_id }]`, for each ask the
     /// links of its edge (from page, to page and link type; the pages deleted or not) whose context
     /// passes [`context_matches`], with `page_id` the link's origin page (its from page when it has
@@ -565,13 +729,15 @@ impl Store {
         Ok(out)
     }
 
-    /// `wordLexemes(words)` under the English configuration: `[{ w, lexemes }]`, each word's
-    /// `tsvector_to_array(to_tsvector(w))` (sorted as the tsvector holds them).
-    pub fn word_lexemes(&self, words: &[String]) -> Result<Vec<Value>> {
+    /// `wordLexemes(words)` under the text search configuration `config` (absent: `english`):
+    /// `[{ w, lexemes }]`, each word's `tsvector_to_array(to_tsvector(config, w))` (sorted as the
+    /// tsvector holds them).
+    pub fn word_lexemes(&self, words: &[String], config: Option<&str>) -> Result<Vec<Value>> {
+        let config = crate::keyword::FtsConfig::parse(config)?;
         words
             .iter()
             .map(|w| {
-                let vector = crate::keyword::to_tsvector(w)?;
+                let vector = crate::keyword::to_tsvector_in(config, w)?;
                 let lexemes: Vec<&str> = vector.entries.iter().map(|e| e.lexeme.as_str()).collect();
                 Ok(json!({"w": w, "lexemes": lexemes}))
             })

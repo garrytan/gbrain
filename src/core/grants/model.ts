@@ -457,8 +457,12 @@ export const TOKEN_GRANT_ROW_COLUMNS = ['id', 'scopes', 'permissions', 'private_
  * column a pending migration adds reads as absent, as it did under SELECT *.
  */
 export async function tokenGrantRowSelect(engine: { executeRaw<T>(sql: string, params?: unknown[]): Promise<T[]> }): Promise<string> {
-  const present = new Set((await engine.executeRaw<{ attname: string }>(
-    "SELECT attname FROM pg_attribute WHERE attrelid=to_regclass('access_tokens') AND attnum>0 AND NOT attisdropped")).map(c => c.attname));
+  return tokenGrantColumnList(new Set((await engine.executeRaw<{ attname: string }>(TOKEN_GRANT_COLUMNS_SQL)).map(c => c.attname)));
+}
+/** The access_tokens columns this brain has (`tokenGrantRowSelect` reads it; so does engine-sql/access-grants.ts). */
+export const TOKEN_GRANT_COLUMNS_SQL = "SELECT attname FROM pg_attribute WHERE attrelid=to_regclass('access_tokens') AND attnum>0 AND NOT attisdropped";
+/** `TOKEN_GRANT_ROW_COLUMNS` that are in `present`, comma-joined: constant column names only, whatever `present` holds. */
+export function tokenGrantColumnList(present: ReadonlySet<string>): string {
   return TOKEN_GRANT_ROW_COLUMNS.filter(c => present.has(c)).join(',');
 }
 export type TokenGrantRow = Partial<Record<(typeof TOKEN_GRANT_ROW_COLUMNS)[number], unknown>>;

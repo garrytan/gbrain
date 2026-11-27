@@ -14,6 +14,27 @@ Keys (tag `x`, `keys::ACCESS_MEMBERS`):
 | `x 0x01 <member id>` | member record: `id`, `display_name`, `email`, `kind`, `labelled_only`, `disabled_at`, `tombstoned_at`, `created_at`, `updated_at` | `access_members` |
 | `x 0x02 <group id>` | group record: `id`, `created_at` | `access_groups` |
 | `x 0x03 <group id> 0x00 <member id>` | empty | `access_group_members`, primary key `(group_id, member_id)` |
+| `x 0x04 <system> 0x00 <external id>` | link record: `member_id`, `created_at` | `access_member_links` (v286), primary key `(system, external_id)`; `access_member_links.rs` |
+
+Every sub-tag under `x`, `keys::ACCESS_MEMBERS`, and the file that owns it. `crates/gbrain-store/tests/key_registry.rs` fails when
+two record kinds declare one, so a new kind takes the next free byte (`0x0e`); never reuse a byte a format moved a kind off
+(`x 0x04` now holds links only, and a store of format 7 or older held the token secret there as well).
+
+| Sub-tag | Record kind | File |
+| --- | --- | --- |
+| `0x01` | access member | `access_members.rs` |
+| `0x02` | access group | `access_members.rs` |
+| `0x03` | access group member | `access_members.rs` |
+| `0x04` | access member link | `access_member_links.rs` |
+| `0x05` | shared-skill member | `shared_skill_members.rs` |
+| `0x06` | shared-skill delivery batch | `shared_skill_members.rs` |
+| `0x07` | shared-skill policy | `shared_skill_catalog.rs` |
+| `0x08` | shared-skill policy audit | `shared_skill_catalog.rs` |
+| `0x09` | shared-skill head | `shared_skill_catalog.rs` |
+| `0x0a` | shared-skill revision | `shared_skill_catalog.rs` |
+| `0x0b` | shared-skill revision lease | `shared_skill_catalog.rs` |
+| `0x0c` | shared-skill pack | `shared_skill_publication.rs` |
+| `0x0d` | shared-skill token secret (the record is exactly `x 0x0d`) | `shared_skill_members.rs` |
 
 Ids never hold NUL (the id check), so the members of one group are one prefix. A brain holds few members, so the email
 uniqueness check, the groups of one member and the enabled-member count scan the member and group-member prefixes;
@@ -21,21 +42,25 @@ there is no reverse index.
 
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
-| `insertAccessMember({ id, displayName, email, kind, groups })` | `{ groupsCreated }`: the groups this call created, in the order named | the `addMember` transaction: the member `INSERT`, `INSERT INTO access_groups ... ON CONFLICT DO NOTHING RETURNING id` per group, `INSERT INTO access_group_members ... ON CONFLICT DO NOTHING` per group |
+| `insertAccessMember({ id, displayName, email, kind, groups, bindTokenId })` | `{ groupsCreated }`: the groups this call created, in the order named | the `addMember` transaction: the member `INSERT`, `INSERT INTO access_groups ... ON CONFLICT DO NOTHING RETURNING id` per group, `INSERT INTO access_group_members ... ON CONFLICT DO NOTHING` per group |
 | `setAccessMemberDisabled(id, disabled)` | null | `UPDATE access_members SET disabled_at = COALESCE(disabled_at, now())` (or `NULL`), `updated_at = now()` |
 | `setAccessMemberEmail(id, email)` | true when a member that is not removed changed | `UPDATE ... SET email = $2 ... WHERE id = $1 AND tombstoned_at IS NULL RETURNING id` |
 | `setAccessMemberKind(id, kind)` | null | `UPDATE ... SET kind = $2 ... WHERE id = $1 AND tombstoned_at IS NULL` |
+| `setAccessMemberLabelledOnly(id, labelledOnly)` | null | `UPDATE ... SET labelled_only = $2 ... WHERE id = $1 AND tombstoned_at IS NULL`; no serves key moves |
 | `tombstoneAccessMember(id)` | null | the `removeMember` transaction: the tombstone `UPDATE` (email cleared, an earlier disable time kept) and `DELETE FROM access_group_members WHERE member_id = $1` |
 | `addAccessGroupMembers(groupId, memberIds)` | true when the group was created | the `addGroup` transaction |
 | `removeAccessGroupMembers(groupId, memberIds)` | null | `DELETE FROM access_group_members WHERE group_id = $1 AND member_id = $2` per member |
 | `deleteAccessGroup(id)` | null | `DELETE FROM access_groups WHERE id = $1`; its group members go with it (`ON DELETE CASCADE`) |
-| `readAccessMemberIdByEmail(email)` | the member id, or null | `SELECT id FROM access_members WHERE email = $1` |
+| `readAccessGroups(id \| null)` | `AccessGroupRow[]`: every group, or the one with exactly that id, each with its member ids, in byte order | `engine-sql/access-control.ts` `ACCESS_GROUP_SQL` |
 | `readAccessMembers({ id } \| { email } \| { includeRemoved })` | `AccessMemberRow[]` by id, each with its group ids sorted; by email, every member that declares exactly it, removed or not, by id (the caller refuses an email several members declare) | `engine-sql/access-control.ts` `ACCESS_MEMBER_SQL` |
 | `readAccessGroupIds(ids)` | the ids that name an existing group, each once, in byte order | `engine-sql/access-control.ts` `AUDIENCE_GROUPS_SQL` (`SELECT id FROM access_groups WHERE id = ANY($1)`) |
 | `listActiveAccessMembers()` | the member ids neither disabled nor removed, by id | `engine-sql/write-misc.ts` |
-| `listAudienceAccessMembers()` | the ids of the enabled, untombstoned members of kind `audience`, by id (read through `readAccessMembers`) | `engine-sql/access-control.ts` `AUDIENCE_KIND_MEMBERS_SQL` |
-| `readAudiencePrincipals(memberIds, groupIds)` | the enabled, untombstoned members among `memberIds`, each with its groups, and the existing groups among `groupIds` (`readAccessMembers` and `readAccessGroupIds`); an empty list reads nothing | `engine-sql/access-control.ts` `AUDIENCE_MEMBERS_SQL`, `AUDIENCE_GROUPS_SQL` |
-| `readLiveMember(via, key)` | the enabled, untombstoned member the id (`member`) or the edge-trimmed config value (`stdio_config`) names, with its groups, or null; a token or a client names no member here (the store keeps no binding of either), so `legacy_token` and `oauth_client` answer null | `engine-sql/access-control.ts` `LIVE_MEMBER_SQL` |
+| `readAccessMemberLink(system, externalId)` | `{ system, external_id, member_id, created_at }`, matched exactly, or null | `SELECT ... FROM access_member_links WHERE system = $1 AND external_id = $2` (`gbrain access member link\|unlink`) |
+| `readLinkedMember(system, externalId)` | `{ id, groups }` of the member the link names when it is neither disabled nor removed, groups in byte order; null otherwise | `SELECT m.id, array_agg(g.group_id ORDER BY g.group_id) ... FROM access_member_links l JOIN access_members m ... LEFT JOIN access_group_members g ... WHERE l.system = $1 AND l.external_id = $2 AND m.disabled_at IS NULL AND m.tombstoned_at IS NULL GROUP BY m.id` |
+| `insertAccessMemberLink(system, externalId, memberId)` | null | `INSERT INTO access_member_links (system, external_id, member_id) VALUES ($1, $2, $3)` |
+| `deleteAccessMemberLink(system, externalId)` | null; nothing for no such link | `DELETE FROM access_member_links WHERE system = $1 AND external_id = $2` |
+| `listAccessMemberLinks(memberId \| null)` | every link, or the links of exactly that member, by member id, system and external id, each in byte order | `SELECT ... ORDER BY member_id COLLATE "C", system COLLATE "C", external_id COLLATE "C"` (`gbrain access member links`) |
+| `readSharedSourceRows()` | every source not archived, in byte order of its id, as `{ id, config, guest, owners, owner_member }`: `guest` is `config->>'guest' = 'true'` (the store has no `guest_sources` table), `owners` is empty (it keeps no `access_member_sources` bindings), `owner_member` is the `access.owner_member` config value trimmed of spaces, or null (`read_shared.rs`) | `engine-sql/read-shared-sources.ts` `READ_SHARED_SOURCE_ROWS_SQL`, the shared set of the read-shared switch (`grants/read-shared.ts`) |
 
 Each write is one `Store::write`, so a refused statement leaves nothing of the call behind, as the Postgres transaction
 does.
@@ -45,7 +70,7 @@ does.
 | Postgres trigger | Store |
 | --- | --- |
 | `access_members_mark_restricted` (v282, after insert) | a member insert sets config `access.restrictions_present` to `'1'` unless it already is ([access-flag.md](access-flag.md)) |
-| `access_members_refresh_serves` (v309, per statement, after insert, delete or an update of `disabled_at` / `tombstoned_at`) | a member insert, a disable or enable and a tombstone run `gbrain_access_refresh_serves()` at read committed: `access.serves_derived` is `several` while two or more members are enabled, else `one` (written as `one` only when the key exists and differs); `access.serves_since` is set once, to the write's `now()` in whole UTC seconds (`YYYY-MM-DDTHH:MM:SSZ`), when the explicit `access.serves` (`one` or `several`, trimmed and lower-cased) or else the derived value is `several` |
+| `access_members_refresh_serves` (v309, per statement, after insert, delete or an update of `disabled_at` / `tombstoned_at`) | a member insert, a disable or enable and a tombstone run `gbrain_access_refresh_serves()` at read committed: `access.serves_derived` is `several` while two or more members are enabled, else `one` (written as `one` only when the key exists and differs); `access.serves_since` is set once, to the write's `now()` in UTC to the microsecond (`YYYY-MM-DDTHH:MM:SS.UUUUUUZ`, v329), when the explicit `access.serves` (`one` or `several`, trimmed and lower-cased) or else the derived value is `several` |
 | `ON DELETE CASCADE` on `access_group_members.group_id` | `deleteAccessGroup` deletes the group's member keys |
 
 The statement trigger also fires on an update that changes no row (an absent id), so the store refreshes on every
@@ -65,19 +90,30 @@ into the error Postgres throws: `code` `23505` (unique), `23514` (check) or `235
 | `access_members_pkey` | a member id that exists, removed or not |
 | `access_members_email_key` | an email another member declares |
 | `access_group_members_member_id_fkey` | a group member for a member id that does not exist |
+| `access_member_links_pkey` | a link for a `(system, external_id)` that is linked |
+| `access_member_links_system_check` | a system that does not match `^[a-z][a-z0-9_-]{0,31}$` |
+| `access_member_links_external_id_check` | an external id that is not 1-256 visible ASCII characters (`^[!-~]+$`) |
+| `access_member_links_member_id_fkey` | a link to a member id that does not exist |
 
 ## What the store does not do
 
-- Credentials: the store keeps no access tokens and no OAuth clients. `insertAccessMember` with a `bindTokenId`
-  (`gbrain access member add --bind-token`) and the binding members (`readCredentialBindingForUpdate`,
-  `writeCredentialBinding`, `writeCredentialReadsUnscoped`, so `bindCredential` and `gbrain auth rescope --member`)
-  refuse with `engine_capability_missing` before anything is written.
-- Order: ids sort in byte order. Postgres sorts `ORDER BY m.id` and `array_agg(... ORDER BY g.group_id)` in the
-  database collation, so ids with `.`, `_` or `-` can order differently from an `en_US` database.
+- Credential binding lives on the token and client records, not here: `insertAccessMember` with a `bindTokenId`
+  (`gbrain access member add --bind-token`) writes the token's `member_id` in the member's write, and the binding
+  members (`readCredentialBindingForUpdate`, `writeCredentialBinding`, `writeCredentialReadsUnscoped`, so
+  `bindCredential` and `gbrain auth rescope --member`) and `readLiveMember` through a token or client are served there
+  ([access-tokens.md](access-tokens.md) "Member binding", [oauth-clients.md](oauth-clients.md)).
+- Link cascade: members are never deleted (a removal is a tombstone), so the `ON DELETE CASCADE` of
+  `access_member_links.member_id` has nothing to do; a removed member keeps its links, as on Postgres. The attested
+  read of a link (`linkedMember` in `src/core/access/actor.ts`) is `readLinkedMember`, which reads the link, the member
+  and its groups in one read.
+- Order: ids sort in byte order. The SQL sorts member ids, group ids and each member's groups with `COLLATE "C"`,
+  so an `en_US` Postgres gives the same order (`test/engine-parity/access-sort-order.test.ts`).
 
 ## Tests
 
 - `crates/gbrain-store/tests/access_members.rs`: the flag and groups of an insert, every refusal with nothing left
   behind, the serves keys over two members and a disable, email and kind writes on a removed member, the tombstone,
   and group add, remove and cascade.
+- `crates/gbrain-store/tests/access_member_links.rs`: a link read exactly, listed by member and removed once; every link
+  refusal with nothing written; a removed member keeps its links.
 - `test/engine-parity/access-members.test.ts`: the same writes on every arm, read through the engine.

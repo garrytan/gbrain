@@ -1,6 +1,6 @@
 import type { BrainEngine } from '../engine.ts';
 import { opError, OperationError } from '../ops/contract.ts';
-import { activatePersistence, type ActivationReport } from './activation.ts';
+import { activatePersistence, quiescence as managedQuiescence, type ActivationReport } from './activation.ts';
 import { hostIdFor, existingHostIdFor } from './identity.ts';
 import { acquireWorktree, getWorktreeBinding, type WorktreeBinding } from './ownership.ts';
 import type { NativeLockHandle } from './native-lock.ts';
@@ -8,8 +8,33 @@ import { declarePersistenceProtocol } from './protocol.ts';
 import { managedFilesystemDatastorePath, refreshManagedFilesystemRoots } from './filesystem-guard.ts';
 import { assertWriterAdminState, WRITER_INSPECTION_HINT } from './admin-intent.ts';
 import { assertWriterAdminUnlocked } from './admin-lock.ts';
-import { notQuiescedError } from './blocking-effects.ts';
+import { blockingEffectFrom, blockingEffectHint, blockingRequestHint, notQuiescedError } from './blocking-effects.ts';
+import { isRustBrain, rustActivate } from '../shared-skills/rust-publication.ts';
+import { capabilityMissing } from '../rust-engine/errors.ts';
 import { NOT_PAGE_EMBEDDING_LEASE } from '../page-embedding-lease.ts';
+
+const registrationRequired = () => opError('writer_registration_required', 'Shared publication requires a registered canonical source root.',
+  'No active source has a registered canonical owner, so shared skill publication was not enabled. Check writer status; claiming a source root is a deliberate topology change the operator reviews.',
+  { fix: { argv: ['gbrain', 'sources', 'writer', 'status', '--json'], consent: [], actor: 'agent', why: 'Shows each source\'s canonical owner and claim, read-only.', requires_exclusive: false } });
+
+/**
+ * A Rust brain is never managed and has no worktree owners: the store runs the same quiescence checks (a live source
+ * with a registered root, no cycle lock but page-embedding leases, no queued or recovering request, no queued or
+ * recovering effect) and sets the flag in one store write. A refusal carries the message the SQL path's step gives.
+ */
+async function activateOnRust(engine: BrainEngine, options: { dryRun?: boolean; expectedState?: string }, quiescence: () => OperationError) {
+  if (options.expectedState !== undefined) throw capabilityMissing('persistence_journal', 'activateSharedSkillPersistence');
+  const result = await rustActivate(engine, options.dryRun === true);
+  if ('registration_required' in result) throw registrationRequired();
+  if ('legacy_lock' in result) throw managedQuiescence();
+  if ('blocked' in result) {
+    const blocker = result.blocked;
+    const message = blocker.phase === 'managed' ? managedQuiescence().message : quiescence().message;
+    throw new OperationError('writer_not_quiesced', message, blocker.kind === 'request'
+      ? blockingRequestHint({ ...blocker, operation: blocker.operation ?? '' }) : blockingEffectHint(blockingEffectFrom(blocker)));
+  }
+  return result;
+}
 
 export async function activateSharedSkillPersistence(engine: BrainEngine,
   options: { confirmQuiesced?: boolean; dryRun?: boolean; expectedState?: string } = {}): Promise<{ activated: boolean; protocol_version: 2; filesystem_sources: number; drift_audit?: ActivationReport['drift_audit'] }> {
@@ -17,8 +42,10 @@ export async function activateSharedSkillPersistence(engine: BrainEngine,
     'Stop and exclude older canonical writers and direct-file skill servers before enabling shared skill publication.',
     'Run this activation on every canonical owner only after verifying process shutdown and canonical-root write access.');
   if (options.confirmQuiesced !== true) throw quiescence();
+  if (isRustBrain(engine)) return activateOnRust(engine, options, quiescence);
   const hostId = options.dryRun || options.expectedState !== undefined ? existingHostIdFor(engine) : hostIdFor(engine);
   const loadBindings = async (tx: BrainEngine): Promise<WorktreeBinding[]> => {
+    // The binding order never reaches output: it only picks the first row per worktree to lock, and the identity check compares two reads in this same order.
     const roots = await tx.executeRaw<{ source_id: string }>(`SELECT b.source_id FROM persistence_source_bindings b
       JOIN sources s ON s.id=b.source_id AND s.incarnation=b.source_incarnation WHERE NOT s.archived ORDER BY b.worktree_id,b.source_id`);
     const bindings: WorktreeBinding[] = [];
@@ -27,11 +54,7 @@ export async function activateSharedSkillPersistence(engine: BrainEngine,
       if (!binding || binding.owner_host_id !== hostId || binding.state !== 'active' || !binding.local_path) throw quiescence();
       bindings.push(binding);
     }
-    if (!bindings.length) {
-      throw opError('writer_registration_required', 'Shared publication requires a registered canonical source root.',
-        'No active source has a registered canonical owner, so shared skill publication was not enabled. Check writer status; claiming a source root is a deliberate topology change the operator reviews.',
-        { fix: { argv: ['gbrain', 'sources', 'writer', 'status', '--json'], consent: [], actor: 'agent', why: 'Shows each source\'s canonical owner and claim, read-only.', requires_exclusive: false } });
-    }
+    if (!bindings.length) throw registrationRequired();
     return bindings;
   };
   const initial = await loadBindings(engine);
@@ -53,7 +76,7 @@ export async function activateSharedSkillPersistence(engine: BrainEngine,
       await declarePersistenceProtocol(tx);
       await assertWriterAdminUnlocked(tx);
       await tx.executeRaw('SELECT id FROM persistence_worktrees ORDER BY id FOR UPDATE');
-      await tx.executeRaw('SELECT id FROM sources ORDER BY id FOR SHARE');
+      await tx.lockAllSourceRows('share');
       await tx.executeRaw('LOCK TABLE gbrain_cycle_locks IN SHARE MODE');
       const current = await loadBindings(tx);
       const identity = (rows: WorktreeBinding[]) => JSON.stringify(rows.map(row => [row.source_id, row.source_incarnation, row.worktree_id,

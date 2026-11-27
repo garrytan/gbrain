@@ -132,20 +132,8 @@ export async function runPageToLinkCore(
 
   for (let i = 0; i < opts.rules.length; i++) {
     const rule = opts.rules[i];
-    const where = sourceId
-      ? `WHERE deleted_at IS NULL AND type = $1 AND source_id = $2`
-      : `WHERE deleted_at IS NULL AND type = $1`;
-    const params: unknown[] = [rule.from_type];
-    if (sourceId) params.push(sourceId);
     // Load pages with body+frontmatter for the resolver.
-    const rows = await ctx.engine.executeRaw<{
-      slug: string;
-      compiled_truth: string;
-      frontmatter: Record<string, unknown> | string | null;
-    }>(
-      `SELECT slug, compiled_truth, frontmatter FROM pages ${where} ORDER BY slug COLLATE "C" LIMIT ${limit}`,
-      params,
-    );
+    const rows = await ctx.engine.listLinkCandidatePages(rule.from_type, sourceId, limit);
     const would_convert = rows.length;
     const sample_slugs = rows.slice(0, 10).map((r) => r.slug);
     const unresolved: PerPageToLinkResult['unresolved'] = [];

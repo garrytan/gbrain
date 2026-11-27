@@ -9,12 +9,11 @@ import { assertLegacyEngineMigration, assertUnmanagedCanonicalWriter } from '../
  */
 
 import { opError } from '../core/ops/contract.ts';
-import { sqlEngineKind } from '../core/sql-engine-kind.ts';
 import { ItemRun } from '../core/item-failure.ts';
 import { createEngine } from '../core/engine-factory.ts';
 import { loadConfig, saveConfig, toEngineConfig, gbrainPath, effectiveEnvDatabaseUrl, type GBrainConfig } from '../core/config.ts';
 import type { BrainEngine } from '../core/engine.ts';
-import type { EffectiveDateSource, EngineConfig, Page, PageKind } from '../core/types.ts';
+import type { EngineConfig, Page } from '../core/types.ts';
 import { writeFileSync, readFileSync, existsSync, unlinkSync, statSync, mkdirSync, renameSync } from 'fs';
 import { createHash } from 'crypto';
 import { resolve, dirname } from 'path';
@@ -31,6 +30,7 @@ import { listLiveLocks } from '../core/db-lock.ts';
 import { drainProjections, queuePageProjection } from '../core/page-state/projections.ts';
 import { carryChunkMetadata } from '../core/embed-stale.ts';
 import { normalizeAliasList } from '../core/search/alias-normalize.ts';
+import { withReservedConfigWrite } from '../core/config-snapshot.ts';
 
 interface MigrateOpts {
   targetEngine: 'postgres' | 'pglite';
@@ -133,12 +133,7 @@ interface MigratedSourceRow {
 }
 
 export async function copyMigrationSources(source: BrainEngine, target: BrainEngine): Promise<number> {
-  const sources = await source.executeRaw<MigratedSourceRow>(`
-    SELECT id, name, local_path, last_commit, last_sync_at, config::text AS config_json, archived,
-           archived_at, archive_expires_at, contextual_retrieval_mode,
-           trust_frontmatter_overrides, newest_content_at, created_at
-      FROM sources
-     ORDER BY (id = 'default') DESC, id`);
+  const sources = ((await source.readMigrationRows('sources'))?.rows ?? []) as unknown as MigratedSourceRow[];
 
   for (const row of sources) {
     await target.executeRaw(`
@@ -198,6 +193,7 @@ async function targetHasFactRows(target: BrainEngine): Promise<boolean> {
   }
 }
 
+/** The target's facts columns (the source's come with its rows through `readMigrationRows`). */
 async function factsColumns(engine: BrainEngine): Promise<string[]> {
   const rows = await engine.executeRaw<{ column_name: string }>(`
     SELECT column_name FROM information_schema.columns
@@ -272,15 +268,13 @@ export async function copyMigrationSimpleTable(
       return [];
     }
   };
-  const sourceCols = await colsOf(source);
-  if (sourceCols.length === 0) return { copied: 0, failed: [], table_missing: true };
+  // The source's rows come typed (evidence as JSON text), so a Rust brain can be the source.
+  const sourceRows = await source.readMigrationRows(table);
+  if (!sourceRows || sourceRows.columns.length === 0) return { copied: 0, failed: [], table_missing: true };
   const targetColSet = new Set(await colsOf(target));
   if (targetColSet.size === 0) return { copied: 0, failed: [], table_missing: true };
-  const cols = sourceCols.filter((c) => targetColSet.has(c));
-
-  const rows = await source.executeRaw<Record<string, unknown>>(
-    `SELECT ${cols.map((c) => (c === 'evidence' ? 'evidence::text AS evidence' : `"${c}"`)).join(', ')} FROM ${table} ORDER BY id`,
-  );
+  const cols = sourceRows.columns.filter((c) => targetColSet.has(c));
+  const rows = sourceRows.rows;
   await target.executeRaw(`DELETE FROM ${table}`);
   const insertSql = `INSERT INTO ${table} (${cols.map((c) => `"${c}"`).join(', ')})
     VALUES (${cols.map((c, i) => (c === 'evidence' ? `$${i + 1}::text::jsonb` : `$${i + 1}`)).join(', ')})`;
@@ -317,18 +311,14 @@ export async function copyMigrationFacts(
   target: BrainEngine,
   onRow?: () => void,
 ): Promise<MigrateFactsResult> {
-  const sourceCols = await factsColumns(source);
-  if (sourceCols.length === 0) {
+  // The source's rows come typed (embedding as vector text), so a Rust brain can be the source.
+  const sourceFacts = await source.readMigrationRows('facts');
+  if (!sourceFacts || sourceFacts.columns.length === 0) {
     return { copied: 0, failed: [], embeddings_dropped: 0, table_missing: true };
   }
   const targetColSet = new Set(await factsColumns(target));
-  const cols = sourceCols.filter(c => targetColSet.has(c));
-
-  const selectList = cols
-    .map(c => (c === 'embedding' ? 'embedding::text AS embedding' : `"${c}"`))
-    .join(', ');
-  const rows = await source.executeRaw<Record<string, unknown>>(
-    `SELECT ${selectList} FROM facts ORDER BY id`);
+  const cols = sourceFacts.columns.filter(c => targetColSet.has(c));
+  const rows = sourceFacts.rows;
 
   // The write-side cast must name the target column's physical type
   // (halfvec on pgvector >= 0.7, vector otherwise); text parses into either.
@@ -398,24 +388,27 @@ export const MIGRATE_CONFIG_ENGINE_LOCAL_KEYS: ReadonlySet<string> = new Set([
  * Copy every DB-plane config row except the engine-local denylist above.
  * Subsumes the old 3-key allowlist (embedding_model / embedding_dimensions /
  * chunk_strategy — schema metadata recording what the schema was sized
- * with); those still copy, now alongside everything else.
+ * with); those still copy, now alongside everything else. The reserved agent-policy
+ * rows (an owner approval checks its own digest) copy unchanged too.
  */
 export async function copyMigrationConfig(
   source: BrainEngine,
   target: BrainEngine,
 ): Promise<{ copied: number; skipped: string[] }> {
-  const rows = await source.executeRaw<{ key: string; value: string }>(
-    'SELECT key, value FROM config ORDER BY key');
+  const all = await source.getAllConfig();
+  const rows = Object.keys(all).sort().map(key => ({ key, value: all[key]! }));
   const skipped: string[] = [];
   let copied = 0;
-  for (const row of rows) {
-    if (MIGRATE_CONFIG_ENGINE_LOCAL_KEYS.has(row.key)) {
-      skipped.push(row.key);
-      continue;
+  await withReservedConfigWrite(async () => {
+    for (const row of rows) {
+      if (MIGRATE_CONFIG_ENGINE_LOCAL_KEYS.has(row.key)) {
+        skipped.push(row.key);
+        continue;
+      }
+      await target.setConfig(row.key, row.value);
+      copied++;
     }
-    await target.setConfig(row.key, row.value);
-    copied++;
-  }
+  });
   return { copied, skipped };
 }
 
@@ -442,10 +435,7 @@ export async function copyPageLinksToTarget(
   // valid_until) exist only in the database, so they travel with the page.
   // Statements derived from page content re-derive on the target's next
   // extract pass.
-  const manual = await source.executeRaw<{ to_slug: string; to_source_id: string; link_type: string; kind: string; occurred_on: string }>(
-    `SELECT t.slug AS to_slug, t.source_id AS to_source_id, lt.link_type, lt.kind, lt.occurred_on::text AS occurred_on
-       FROM link_transitions lt JOIN pages f ON f.id = lt.from_page_id JOIN pages t ON t.id = lt.to_page_id
-      WHERE f.slug = $1 AND f.source_id = $2 AND lt.producer = 'manual'`, [page.slug, page.source_id]).catch(() => []);
+  const manual = await source.listManualLinkTransitions(page.slug, page.source_id).catch(() => []);
   if (manual.length) {
     const { writeManualTransitions } = await import('../core/link-temporal-apply.ts');
     for (const m of manual) {
@@ -510,11 +500,7 @@ export async function copyPageToTarget(
   // legitimately blank body (image page, deliberate clear) must land even
   // when a re-run's target row already holds an older non-empty body.
   // #6286: the full row travels: origin, kind and provenance columns `Page` does not carry are read from the source row.
-  const [row] = await source.executeRaw<{ page_kind: PageKind | null; source_path: string | null; effective_date: Date | string | null; effective_date_source: EffectiveDateSource | null;
-    import_filename: string | null; source_kind: string | null; source_uri: string | null; ingested_via: string | null; ingested_at: Date | string | null; sealed: boolean }>(
-    `SELECT page_kind,source_path,effective_date,effective_date_source,import_filename,source_kind,source_uri,ingested_via,ingested_at,
-            text_projection_revision IS NOT DISTINCT FROM knowledge_revision AS sealed
-       FROM pages WHERE slug=$1 AND source_id=$2`, [page.slug, page.source_id ?? 'default']);
+  const row = await source.readMigrationPageColumns(page.slug, page.source_id ?? 'default');
   const asDate = (value: Date | string | null | undefined) => value == null ? null : value instanceof Date ? value : new Date(value);
   await target.putPage(page.slug, nullifyUndefinedColumns({
     type: page.type,
@@ -842,10 +828,9 @@ export async function quiesceAutopilot(engine?: BrainEngine): Promise<(() => voi
       // active jobs as writers too. Fail-open — a missing queue table (older
       // schema) must not block the migration.
       try {
-        const rows = await engine.executeRaw(
-          `SELECT count(*)::text AS count FROM minion_jobs WHERE status = 'active' AND lock_until > now()`,
-        ) as Array<{ count?: string }>;
-        const activeJobs = Number(rows?.[0]?.count ?? 0);
+        // Every queue's live-lock active rows: the public queues, then the private dream-inline queues.
+        const activeJobs = (await engine.listQueueWedgeCounts()).reduce((n, q) => n + Number(q.active_healthy), 0)
+          + (await engine.listPrivateQueueHealth()).reduce((n, q) => n + Number(q.active_healthy), 0);
         if (Number.isFinite(activeJobs) && activeJobs > 0) {
           live = [...live, { id: `minion-jobs-active:${activeJobs}` } as (typeof live)[number]];
         }
@@ -911,9 +896,9 @@ function reportLoopRowFailures(tables: Record<string, MigrateSimpleTableResult>,
 
 export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]): Promise<void> {
   const opts = parseArgs(args);
-  const sourceKind = sqlEngineKind(sourceEngine.kind, 'gbrain migrate'); // SQL on both sides: a Rust source refuses before any read.
+  // The source may be any engine: every source-side read below is a typed member. The target is SQL.
   await assertWindowsGraduationPlatform(sourceEngine, opts);
-  const migration = { from: sourceKind, to: opts.targetEngine };
+  const migration = { from: sourceEngine.kind, to: opts.targetEngine };
   await assertUnmanagedCanonicalWriter(sourceEngine, 'engine migration', { migration: { side: 'source', ...migration } });
   await assertLegacyEngineMigration(sourceEngine, { side: 'source', ...migration });
   const config = loadConfig();
@@ -1303,8 +1288,7 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
     // counts. Both sides use the identical predicate.
     let sourceTimelineCount: number | undefined;
     try {
-      const rows = await sourceEngine.executeRaw<{ count: string }>(COPIED_TIMELINE_COUNT_SQL);
-      sourceTimelineCount = Number(rows[0]?.count ?? NaN);
+      sourceTimelineCount = await sourceEngine.countLiveTimelineEntries();
       if (!Number.isFinite(sourceTimelineCount)) sourceTimelineCount = undefined;
     } catch { /* older schema: skip the timeline parity check */ }
     await verifyTarget(targetEngine, sourceStats.page_count, sourceTimelineCount);
@@ -1315,21 +1299,8 @@ export async function runMigrateEngine(sourceEngine: BrainEngine, args: string[]
   await targetEngine.disconnect();
 }
 
-/**
- * wave-g (#4485 follow-up): timeline parity counts rows over the COPIED page
- * set — timeline entries whose page is live (`deleted_at IS NULL`). The
- * migration copies listPages() output, which excludes soft-deleted pages, so
- * whole-table counts false-WARNed whenever a soft-deleted page still owned
- * timeline rows on the source. Shared by the source read and verifyTarget so
- * the two sides can never drift; throws on pre-deleted_at schemas, which the
- * callers' try/catch already fail-opens to "skip the parity check".
- * Exported for the test surface only.
- */
-export const COPIED_TIMELINE_COUNT_SQL =
-  `SELECT count(*)::text AS count
-     FROM timeline_entries te
-     JOIN pages p ON p.id = te.page_id
-    WHERE p.deleted_at IS NULL`;
+/** The live-page timeline count both verify sides run (engine-sql/engine-migration.ts); exported for the test surface. */
+export { COPIED_TIMELINE_COUNT_SQL } from '../core/engine-sql/engine-migration.ts';
 
 /**
  * Lightweight doctor-style verify run against the migrated target.
@@ -1350,8 +1321,7 @@ async function verifyTarget(engine: BrainEngine, expectedPages: number, expected
   // the copied (live) page set on BOTH sides — see COPIED_TIMELINE_COUNT_SQL.
   if (expectedTimelineEntries !== undefined) {
     try {
-      const rows = await engine.executeRaw<{ count: string }>(COPIED_TIMELINE_COUNT_SQL);
-      const targetTimeline = Number(rows[0]?.count ?? NaN);
+      const targetTimeline = await engine.countLiveTimelineEntries();
       if (targetTimeline === expectedTimelineEntries) {
         console.log(`  ok  timeline entries: ${targetTimeline} (matches source)`);
       } else {

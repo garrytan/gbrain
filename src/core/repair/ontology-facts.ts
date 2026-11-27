@@ -37,7 +37,7 @@
  * restores exactly that set.
  */
 import type { BrainEngine } from '../engine.ts';
-import { NOT_CONVERSATION_SLOT_SQL } from '../chronicle/ontology.ts';
+import type { OntologyFactCandidateRow as CandidateRow } from '../engine-sql/ontology-repair.ts';
 import { OperationError } from '../ops/contract.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
 import { coordinatedDatabaseWrite } from '../persistence/database-write.ts';
@@ -45,10 +45,10 @@ import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, sa
 import { afterCursor, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairPlan, type RepairScope } from './core.ts';
 
 /** The expiry instant as UTC text with microseconds; a bound timestamp parameter can lose them. */
-const EXPIRY_TEXT = (column: string) => `to_char(${column} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
+export const EXPIRY_TEXT = (column: string) => `to_char(${column} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`;
 
 /** An observation with the same dedup key as `f` once its provenance is restored (the ontology unique index). */
-const DUPLICATE_SQL = (f: string) => `EXISTS (SELECT 1 FROM facts d WHERE d.source_id=${f}.source_id AND d.entity_slug=${f}.entity_slug
+export const DUPLICATE_SQL = (f: string) => `EXISTS (SELECT 1 FROM facts d WHERE d.source_id=${f}.source_id AND d.entity_slug=${f}.entity_slug
   AND d.dimension=${f}.dimension AND d.value_hash=${f}.value_hash AND d.source_markdown_slug=${f}.source
   AND d.valid_from=${f}.valid_from AND d.id<>${f}.id)`;
 
@@ -68,25 +68,9 @@ export interface OntologyFactCandidate {
   reason: string;
 }
 
-interface CandidateRow {
-  id: number | string; source_id: string; entity_slug: string; dimension: string; source: string; page: string | null;
-  row_num: number | string | null; expired_at: string | null; withdrawn: boolean; consolidated: boolean; duplicate: boolean;
-}
-
 /** Every candidate of these sources, classified, in id order. Read-only; also the doctor check's count. */
 export async function classifyOntologyFacts(db: BrainEngine, sourceIds: string[]): Promise<OntologyFactCandidate[]> {
-  const rows = await db.executeRaw<CandidateRow>(`
-    SELECT f.id, f.source_id, f.entity_slug, f.dimension, f.source, f.source_markdown_slug AS page, f.row_num,
-           ${EXPIRY_TEXT('f.expired_at')} AS expired_at,
-           EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id=f.source_id AND w.visibility=f.visibility
-             AND (w.subject='*' OR w.subject=f.entity_slug)
-             AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact), gbrain_fact_fingerprint_v1(f.fact))) AS withdrawn,
-           f.consolidated_into IS NOT NULL AS consolidated,
-           ${DUPLICATE_SQL('f')} AS duplicate
-      FROM facts f
-     WHERE f.source_id=ANY($1::text[]) AND f.dimension IS NOT NULL AND f.entity_slug IS NOT NULL AND f.source IS NOT NULL
-       AND (f.row_num IS NOT NULL OR f.source_markdown_slug IS DISTINCT FROM f.source) AND ${NOT_CONVERSATION_SLOT_SQL}
-     ORDER BY f.id`, [sourceIds]);
+  const rows: CandidateRow[] = await db.listOntologyFactCandidates(sourceIds);
   return rows.map(row => {
     const [klass, reason] = row.withdrawn ? ['excluded', 'withdrawn'] as const
       : row.consolidated ? ['excluded', 'consolidated'] as const
@@ -130,8 +114,7 @@ export const ontologyFactsRepair: RepairHandler = {
     if (!opts?.apply) {
       const facts = await classifyOntologyFacts(engine, scope.source_ids);
       const restorable = facts.filter(f => f.class === 'restorable');
-      const sources = await engine.executeRaw<{ id: string; incarnation: string }>(
-        'SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id', [scope.source_ids]);
+      const sources = await engine.listSourceIncarnations(scope.source_ids);
       const hash = previewHash({ kind: 'ontology-facts-v1', brain_id: scope.brain_id, sources, selection: { source_ids: scope.source_ids }, facts });
       if (restorable.length) await saveApprovedSet<ApprovedFact>(engine, { command: 'ontology-facts', hash }, restorable.map(f => ({ ...f, selection: scope.source_ids })));
       const residuals: Record<string, number> = {};
@@ -145,20 +128,14 @@ export const ontologyFactsRepair: RepairHandler = {
         'docs/guides/repair.md#explicit-only-repair-kinds');
     }
     const approved = await loadApprovedSet<ApprovedFact>(engine, { command: 'ontology-facts', hash: opts.expect, previewCommand: command,
-      emptyHash: async () => previewHash({ kind: 'ontology-facts-v1', brain_id: scope.brain_id, sources: (await engine.executeRaw<{ id: string; incarnation: string }>('SELECT id, incarnation::text AS incarnation FROM sources WHERE id=ANY($1::text[]) ORDER BY id', [scope.source_ids])), selection: { source_ids: scope.source_ids }, facts: [] }) });
+      emptyHash: async () => previewHash({ kind: 'ontology-facts-v1', brain_id: scope.brain_id, sources: (await engine.listSourceIncarnations(scope.source_ids)), selection: { source_ids: scope.source_ids }, facts: [] }) });
     if (approved.items.some(f => JSON.stringify(f.selection) !== JSON.stringify(scope.source_ids))) throw previewChangedError(opts.expect, command);
     const items = approved.items.map(({ selection: _selection, ...f }, index) => item(f, opts.expect!, index === approved.items.length - 1));
     return { items: items.filter(entry => afterCursor(entry.cursor, after)), preview_hash: opts.expect, residuals: {} };
   },
   async apply(ctx, entry): Promise<RepairItemOutcome> {
     const { fact, hash, last } = entry as FactItem;
-    const restore = (tx: BrainEngine) => tx.executeRaw<{ id: number | string; expired: boolean }>(
-      `UPDATE facts f SET row_num=NULL, source_markdown_slug=f.source, expired_at=NULL
-        WHERE f.id=$1 AND f.source_id=$2 AND f.dimension IS NOT NULL AND ${NOT_CONVERSATION_SLOT_SQL}
-          AND f.row_num IS NOT DISTINCT FROM $3::integer AND f.source_markdown_slug IS NOT DISTINCT FROM $4::text
-          AND ${EXPIRY_TEXT('f.expired_at')} IS NOT DISTINCT FROM $5::text AND NOT ${DUPLICATE_SQL('f')}
-        RETURNING f.id, f.expired_at IS NOT NULL AS expired`,
-      [fact.id, fact.source_id, fact.row_num, fact.page, fact.expired_at]);
+    const restore = (tx: BrainEngine) => tx.restoreOntologyFact({ id: fact.id, source_id: fact.source_id, row_num: fact.row_num, page: fact.page, expired_at: fact.expired_at });
     const keys = [...new Set([fact.entity_slug, ...(fact.page ? [fact.page] : [])])];
     const managed = await coordinatedDatabaseWrite(ctx, 'ontology_propose', fact.entity_slug, keys, restore);
     const [row] = managed ? managed.value : await maintenanceTransaction(ctx.engine, restore);

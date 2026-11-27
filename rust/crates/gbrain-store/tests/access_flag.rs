@@ -5,6 +5,7 @@
 mod common;
 
 use common::{TempDir, open};
+use gbrain_store::facts::PrivacyPolicy;
 use gbrain_store::pages::{PageInput, PutPageOptions};
 use gbrain_store::redb_kv::RedbKv;
 use gbrain_store::{Kv, OpenOptions, Store, SystemEnv, keys};
@@ -177,6 +178,11 @@ impl Kv for NoWrites {
     fn snapshot(&self) -> gbrain_store::Result<Box<dyn gbrain_store::KvRead>> {
         self.0.snapshot()
     }
+    fn versioned_snapshot(
+        &self,
+    ) -> gbrain_store::Result<(Box<dyn gbrain_store::KvRead + Send>, u64)> {
+        self.0.versioned_snapshot()
+    }
     fn begin_write(&self) -> gbrain_store::Result<Box<dyn gbrain_store::KvWrite>> {
         Err(gbrain_store::StoreError::io(
             "record store: the file takes no writes",
@@ -247,4 +253,43 @@ fn an_open_whose_scan_cannot_write_leaves_a_brain_with_no_reader_page_unflagged(
     forget_flag(&kv);
     let store = open_without_writes(&kv).expect("the open failed when its scan could not write");
     assert_eq!(store.get_config(FLAG).unwrap(), None);
+}
+
+#[test]
+fn an_open_whose_scan_cannot_write_judges_the_short_policy_as_flagged() {
+    let dir = TempDir::new("access-flag-nowrite-short");
+    let (kv, store) = raw_store(&dir);
+    put(
+        &store,
+        "notes/closed",
+        json!({"readable_by": ["member:alice-example"]}),
+    );
+    let atom: PageInput = serde_json::from_value(json!({
+        "type": "atom", "title": "atom", "compiled_truth": "body",
+        "frontmatter": {"source_slug": "notes/closed"}
+    }))
+    .unwrap();
+    let opts: PutPageOptions = serde_json::from_value(json!({"sourceId": "default"})).unwrap();
+    store.put_page("atoms/from-closed", &atom, &opts).unwrap();
+    drop(store);
+    forget_flag(&kv);
+    let store = open_without_writes(&kv).expect("the open failed when its scan could not write");
+    // The short member-access form (a caller that read the flag unset): it trusts the store's flag
+    // for the origin walk. This process reads the flag as '1', so the walk runs and the atom derived
+    // from a page that names readers stays hidden, as a full-form read hides it.
+    let short = PrivacyPolicy {
+        open: true,
+        ..Default::default()
+    };
+    let hidden = |slug: &str, policy: &PrivacyPolicy| {
+        store
+            .read_page_hidden_from_caller("default", slug, policy)
+            .unwrap()
+    };
+    assert!(hidden("notes/closed", &short));
+    assert!(
+        hidden("atoms/from-closed", &short),
+        "the short form skipped the origin walk on a brain whose flag this process assumes"
+    );
+    assert!(hidden("atoms/from-closed", &PrivacyPolicy::default()));
 }

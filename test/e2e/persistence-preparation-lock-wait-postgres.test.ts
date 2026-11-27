@@ -67,6 +67,7 @@ async function fixture(e: BrainEngine, count: number) {
   return { id, root };
 }
 type ImportRow = { slug: string; state: string; blocked_reason: string | null; error_code: string | null; preparation_attempts: number; error_message: string | null; error_detail?: unknown };
+type ImportSnapshot = ImportRow & { updated_at: Date };
 const imports = (e: BrainEngine, source: string) => e.executeRaw<ImportRow>(
   `SELECT slug,state,blocked_reason,error_code,preparation_attempts,error_message,error_detail FROM persistence_requests WHERE source_id=$1 AND intent->>'kind'='managed_sync_import' ORDER BY sequence`, [source]);
 const ORIGIN_CHECK_SQL = 'SELECT id,slug,source_path,deleted_at FROM pages WHERE source_id=$1 AND ';
@@ -76,32 +77,35 @@ async function holdPagesLock(url: string) {
   // Two connections: one holds the lock's transaction, the other reads the server state while it is held.
   const holder = postgres(url, { max: 2, prepare: false, onnotice: () => {} });
   const dropped = Promise.withResolvers<void>();
-  const acquired = Promise.withResolvers<void>();
+  const acquired = Promise.withResolvers<Date>();
   const transaction = holder.begin(async sql => {
     // NOWAIT, retried: a queued ACCESS EXCLUSIVE request would make every later reader wait behind it while a publication
     // transaction still holds the table, so the holder takes the lock only at a moment nothing holds `pages`.
     for (;;) {
       await sql.unsafe('SAVEPOINT lock_attempt');
-      try { await sql.unsafe('LOCK TABLE pages IN ACCESS EXCLUSIVE MODE NOWAIT'); break; }
-      catch (error) {
+      try {
+        const [, [{ locked_at }]] = await sql.unsafe<[[], [{ locked_at: Date }]]>(
+          'LOCK TABLE pages IN ACCESS EXCLUSIVE MODE NOWAIT; SELECT clock_timestamp() AS locked_at').simple();
+        acquired.resolve(locked_at);
+        break;
+      } catch (error) {
         if ((error as { code?: string }).code !== '55P03') throw error;
         await sql.unsafe('ROLLBACK TO SAVEPOINT lock_attempt');
         await Bun.sleep(20);
       }
     }
-    acquired.resolve();
     await dropped.promise;
   }).catch(error => { acquired.reject(error); throw error; });
-  await acquired.promise;
+  const lockedAt = await acquired.promise;
   // The holder's own connection reads the server state: while the lock is held the engine's pool may be saturated by reads waiting on it.
   /** The sync's origin-check statements still running on the server (every one of them waits on this lock). */
   const activeOriginChecks = async () => Array.from(await holder.unsafe(
     `SELECT pid,state,wait_event_type,left(query,80) AS query FROM pg_stat_activity WHERE datname=current_database() AND pid<>pg_backend_pid() AND state<>'idle' AND query LIKE $1`,
     [`${ORIGIN_CHECK_SQL}%`])) as Array<Record<string, unknown>>;
-  const request = async (sourceId: string, slug: string) => (Array.from(await holder.unsafe(
-    `SELECT slug,state,blocked_reason,error_code,preparation_attempts,error_message FROM persistence_requests WHERE source_id=$1 AND slug=$2 AND intent->>'kind'='managed_sync_import'`,
-    [sourceId, slug])) as ImportRow[])[0];
-  return { activeOriginChecks, request, drop: async () => { dropped.resolve(); await transaction.catch(() => undefined); await holder.end(); } };
+  const request = async (sourceId: string, slug: string) => (await holder.unsafe<ImportSnapshot[]>(
+    `SELECT slug,state,blocked_reason,error_code,preparation_attempts,error_message,updated_at FROM persistence_requests WHERE source_id=$1 AND slug=$2 AND intent->>'kind'='managed_sync_import'`,
+    [sourceId, slug]))[0];
+  return { activeOriginChecks, request, lockedAt, drop: async () => { dropped.resolve(); await transaction.catch(() => undefined); await holder.end(); } };
 }
 
 /**
@@ -149,23 +153,21 @@ describe.skipIf(!hasDatabase())('a lock-blocked preparation read ends at the bud
     const f = await fixture(engine, 200);
     const stuckSlug = 'notes/n052', stuckPath = 'notes/n052.md';
     let lock: Awaited<ReturnType<typeof holdPagesLock>> | undefined;
-    let lockedAt = 0;
-    const observed: { releasedAt?: number; released?: ImportRow; leftover?: Array<Record<string, unknown>>; clearedAfterMs?: number } = {};
+    const observed: { released?: ImportSnapshot; leftover?: Array<Record<string, unknown>>; clearedAfterMs?: number } = {};
     let watcher: Promise<void> = Promise.resolve();
     const intercept = interceptOriginChecks(engine, f.id, stuckPath, stuckSlug, async () => {
       lock = await holdPagesLock(databaseUrl);
-      lockedAt = performance.now();
       // The watcher: once the member is released, nothing new reaches the server, the leftover statements are counted, then the lock drops.
       watcher = (async () => {
         const open = intercept.close();
         try {
           await waitFor(async () => { const row = await lock!.request(f.id, stuckSlug); if (row?.state === 'queued' && row.blocked_reason === 'preparation_deadline') { observed.released = row; return true; } return false; },
             { timeoutMs: BUDGET_MS + SLACK_MS + 5_000, intervalMs: 50, label: 'the member is released at the budget' });
-          observed.releasedAt = performance.now();
+          const observedAt = performance.now();
           // The wave's other members share its deadline; nothing of this wave may stay active on the server past the slack.
           await waitFor(async () => (await lock!.activeOriginChecks()).length === 0, { timeoutMs: SLACK_MS, intervalMs: 50, label: 'no origin check stays active on the server' })
             .catch(async () => { observed.leftover = await lock!.activeOriginChecks(); });
-          observed.clearedAfterMs = performance.now() - observed.releasedAt;
+          observed.clearedAfterMs = performance.now() - observedAt;
         } finally { await lock!.drop(); open(); }
       })();
     });
@@ -177,8 +179,9 @@ describe.skipIf(!hasDatabase())('a lock-blocked preparation read ends at the bud
     expect(intercept.holds()).toBeGreaterThanOrEqual(1);
     // Released at the budget, charged once (the step reaches the stamp only on a renewal; the stalled receipt in the second variant names it).
     expect(observed.released).toMatchObject({ state: 'queued', blocked_reason: 'preparation_deadline', preparation_attempts: 1 });
-    expect(observed.releasedAt! - lockedAt).toBeLessThan(BUDGET_MS + SLACK_MS);
-    expect(observed.releasedAt! - lockedAt).toBeGreaterThanOrEqual(BUDGET_MS * 0.9);
+    const releaseMs = observed.released!.updated_at.getTime() - lock!.lockedAt.getTime();
+    expect(releaseMs).toBeLessThan(BUDGET_MS + SLACK_MS);
+    expect(releaseMs).toBeGreaterThanOrEqual(BUDGET_MS * 0.9);
     // The server ended the statements: no origin check of the sync is active while the lock is still held and nothing new is issued,
     // so the released member pins no connection (before the bound, the statement stayed active, waiting on the lock, until it dropped).
     expect(observed.leftover ?? []).toEqual([]);

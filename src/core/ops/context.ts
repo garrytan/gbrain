@@ -19,7 +19,7 @@ import type { Action } from '../agent-output.ts';
 import { hostFix, invalidParam, paramUse, readFix } from './op-fix.ts';
 import { CJK_SLUG_CHARS } from '../cjk.ts';
 import { isOpPageSlug, OP_PAGE_SLUG_RE } from '../page-slug-grammar.ts';
-import { validateSlug } from '../utils.ts';
+import { normalizeSlug, validateSlug } from '../utils.ts';
 import { ALL_SOURCES, NO_SOURCES, isValidSourceId } from '../source-id.ts';
 import { encodeDeepResearchId } from '../deep-research-id.ts';
 import { isSearchMode } from '../search/mode.ts';
@@ -242,10 +242,11 @@ export { isOpPageSlug };
  * existing row, and only if it still passes the storage guard (validateSlug:
  * no traversal, leading `/`, backslash, control or bidi characters, or encoded
  * separators). Such a row is published database-only (page-prepare.ts): its
- * recorded file path may belong to another page.
+ * recorded file path may belong to another page. #10080: a slug over 255
+ * characters an older sync stored is one too; sync no longer stores new ones.
  */
 export function isLegacyStoredPageSlug(slug: string): boolean {
-  if (isOpPageSlug(slug) || typeof slug !== 'string' || slug.length > 255) return false;
+  if (isOpPageSlug(slug) || typeof slug !== 'string') return false;
   try { validateSlug(slug); return true; } catch { return false; } // refused by the storage guard too: not a legacy slug
 }
 
@@ -414,8 +415,8 @@ export function slugUnderBoundPrefixes(prefixes: readonly string[], slug: string
   // trip the resolved-slug re-check — an error returned after the write had
   // already landed. Registration rejects non-lowercase prefixes going
   // forward; lowercasing both sides keeps pre-existing rows meaning what
-  // their operator intended.
-  const canonical = slug.toLowerCase();
+  // their operator intended. NFC too (normalizeSlug), the form validateSlug stores.
+  const canonical = normalizeSlug(slug);
   return prefixes.some((bp) => {
     const base = normalizeSlugPrefix(bp);
     if (base === '') return false;
@@ -437,7 +438,7 @@ export function slugUnderBoundPrefixes(prefixes: readonly string[], slug: string
  * what an existing client may write.
  */
 export function normalizeSlugPrefix(prefix: string): string {
-  return (prefix.endsWith('/*') ? prefix.slice(0, -1) : prefix).toLowerCase();
+  return normalizeSlug(prefix.endsWith('/*') ? prefix.slice(0, -1) : prefix);
 }
 
 /**
@@ -1040,15 +1041,11 @@ export async function assertExplicitSourceLive(
   sourceIdParam: string | undefined,
 ): Promise<void> {
   if (sourceIdParam === undefined || sourceIdParam === ALL_SOURCES) return;
-  // Point lookup, not listAllSources (wave review): this runs on every
-  // search/query/get_page/list_pages call that names a source, and the full
-  // enumeration hauled every row's config JSONB across the wire each time.
-  // Same liveness predicate as listAllSources' default filter.
-  const live = await ctx.engine.executeRaw<{ ok: number }>(
-    `SELECT 1 AS ok FROM sources WHERE id = $1 AND archived IS NOT TRUE LIMIT 1`,
-    [sourceIdParam],
-  );
-  if (live.length > 0) return;
+  // One source's row, not listAllSources (wave review): this runs on every
+  // search/query/get_page/list_pages call that names a source. Same liveness
+  // predicate as listAllSources' default filter (`archived IS NOT TRUE`).
+  const row = await ctx.engine.readSourceRow(sourceIdParam);
+  if (row && row.archived !== true) return;
   throw archivedSourceError(ctx, sourceIdParam);
 }
 

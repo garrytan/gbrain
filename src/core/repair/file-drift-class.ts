@@ -184,7 +184,7 @@ export async function previewFileDriftClass(engine: BrainEngine, scope: RepairSc
   if (opts.remote !== false) throw trustedCliRequired('gbrain repair file-drift --whole-class runs only for the trusted local CLI on the brain host.');
   assertWholeClassSelection({ held: true, side: sel.side, prefer: 'file', sourceId: sel.sourceId });
   const resumed = opts.cursor ? resumeManifest(scope, sel, opts.cursor) : null;
-  const [source] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', [sel.sourceId]);
+  const source = await engine.readSourceIncarnation(sel.sourceId);
   const [held] = source ? await engine.executeRaw<{ n: number | string }>(`SELECT count(*) AS n FROM op_checkpoints h
     WHERE h.op=$1 AND h.completed_keys->0->>'source_id'=$2 AND h.completed_keys->0->>'incarnation'=$3 AND h.completed_keys->0->>'code'='file_drift'`, [GIT_HOLD_OP, sel.sourceId, source.incarnation]) : [];
   if (!resumed && Number(held?.n ?? 0) === 0) return { none: true, other: {} };
@@ -390,7 +390,7 @@ export async function applyFileDriftClass(ctx: OperationContext, scope: RepairSc
     const changed = [...new Set([...saved.keys(), ...now.keys()])].filter(slug => saved.get(slug) !== now.get(slug)).length;
     throw staleManifest(sel, expect, changed ? `${changed} page(s) or their pins differ from the approved set` : 'its versions, mirror flag or kept pages differ from the approved preview');
   }
-  const [source] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', [sel.sourceId]);
+  const source = await engine.readSourceIncarnation(sel.sourceId);
   const token = randomUUID();
   const progress = await acquireLock(engine, sel, expect, token);
   const renew = () => writeProgress(engine, expect, token, { lock: { token, pid: process.pid, host: hostname(), expires_at: Date.now() + classLock.ttlMs } });

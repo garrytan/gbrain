@@ -22,7 +22,6 @@ use crate::error::{INVALID_ARGUMENT, Result, StoreError};
 use crate::kv::{KvRead, KvWrite};
 use crate::page_columns::PageColumns;
 use crate::pages::{PageRecord, all_pages, read_page, write_page};
-use crate::sources::read_source;
 use crate::{Store, get_json, keys, put_json};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
@@ -49,8 +48,22 @@ fn record_key(page_id: u64) -> Vec<u8> {
     keys::id_key(keys::EXTRACTION, &[page_id])
 }
 
+/// The shadow seed (`seed.rs`): stores a page's extraction columns as another engine holds them.
+pub(crate) fn seed_record(
+    tx: &mut dyn KvWrite,
+    page_id: u64,
+    record: &ExtractionRecord,
+) -> Result<()> {
+    write_record(tx, page_id, record)
+}
+
 fn read_record(read: &dyn KvRead, page_id: u64) -> Result<ExtractionRecord> {
     Ok(get_json(read, &record_key(page_id))?.unwrap_or_default())
+}
+
+/// The page's `links_extracted_at` in microseconds; `None` is NULL.
+pub(crate) fn links_extracted_at_us(read: &dyn KvRead, page_id: u64) -> Result<Option<i64>> {
+    Ok(read_record(read, page_id)?.links_extracted_at_us)
 }
 
 fn write_record(tx: &mut dyn KvWrite, page_id: u64, record: &ExtractionRecord) -> Result<()> {
@@ -184,18 +197,13 @@ fn has_reserved_key(frontmatter: &Map<String, Value>) -> bool {
     RESERVED_KEYS.iter().any(|k| frontmatter.contains_key(*k))
 }
 
-/// The guest sources among the pages' sources: config `guest` is `true` or `"true"`
-/// (`config->>'guest' = 'true'`).
+/// The guest sources among the pages' sources (`guestSourceSql`: config `guest` is `true` or `"true"`, or the
+/// source has a guest row).
 pub(crate) fn guest_sources(read: &dyn KvRead, pages: &[PageRecord]) -> Result<BTreeSet<String>> {
     let ids: BTreeSet<&str> = pages.iter().map(|p| p.source_id.as_str()).collect();
     let mut guests = BTreeSet::new();
     for id in ids {
-        let guest = read_source(read, id)?.is_some_and(|s| match s.config.get("guest") {
-            Some(Value::Bool(b)) => *b,
-            Some(Value::String(s)) => s == "true",
-            _ => false,
-        });
-        if guest {
+        if crate::guest_sources::source_is_guest(read, id)? {
             guests.insert(id.to_string());
         }
     }

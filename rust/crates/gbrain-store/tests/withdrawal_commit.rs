@@ -166,3 +166,22 @@ fn the_withdrawn_row_names_the_most_specific_subject_first() {
     // The backing read needs the floor.
     assert!(b.read_fact_withdrawn_backing(&spec(None)).is_err());
 }
+
+#[test]
+fn page_revisions_answer_each_known_page_once_with_its_current_revision() {
+    let b = brain("withdrawal-page-revisions");
+    assert!(b.read_page_revisions(&[1, -1, 99]).unwrap().is_empty());
+    let a = page(&b, "notes/a");
+    let c = page(&b, "notes/c");
+    let (a_id, c_id) = (a["id"].as_i64().unwrap(), c["id"].as_i64().unwrap());
+    let rows = b
+        .read_page_revisions(&[c_id, a_id, a_id, -1, c_id + 1000])
+        .unwrap();
+    assert_eq!(
+        rows,
+        vec![
+            json!({ "id": a_id, "slug": "notes/a", "knowledge_revision": a["knowledge_revision"] }),
+            json!({ "id": c_id, "slug": "notes/c", "knowledge_revision": c["knowledge_revision"] }),
+        ]
+    );
+}

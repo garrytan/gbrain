@@ -33,6 +33,34 @@
           }
         ]
       },
+      "clearCodeEdgesLeavingChunks": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "array<number>"
+            ],
+            "sql": "DELETE FROM code_edges_chunk WHERE from_chunk_id = ANY($1::int[])",
+            "textSha256": "f940264ca62e4bce3801cc79dcf31a3547792fe91872e0e4896b66f6095edbbb"
+          },
+          {
+            "lane": "pool",
+            "params": [
+              "array<number>"
+            ],
+            "sql": "DELETE FROM code_edges_symbol WHERE from_chunk_id = ANY($1::int[])",
+            "textSha256": "97b87cc042a1889ded395660854e4f7c59741204ca17ca2d12a72e3d09d7a84d"
+          },
+          {
+            "lane": "pool",
+            "params": [
+              "array<number>"
+            ],
+            "sql": "UPDATE content_chunks SET edges_backfilled_at=NULL WHERE id = ANY($1::int[])",
+            "textSha256": "f787c228455c0d1c950bdd374c1502892078c5314759cbb121446bf89897aa96"
+          }
+        ]
+      },
       "clearCodeTraversalCache": {
         "allSources": [
           {

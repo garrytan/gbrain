@@ -9,8 +9,6 @@ import { canReuseMarkdownVector, planEmbeddingReuse } from './embed-reuse.ts';
 import { modeRequiresSynopsis } from './embedding-context.ts';
 import type { Chunk, ChunkInput, CRMode } from './types.ts';
 import type { SegmentChunkInput } from './page-body/types.ts';
-import { quoteIdentifier } from './search/embedding-column.ts';
-import { chunkGenerationFilter } from './search/safe-chunks.ts';
 import { parseEmbedding } from './utils.ts';
 import { segmentSynopsisInputHashes, segmentSynopsisLead } from './page-body/segment-synopsis.ts';
 
@@ -106,14 +104,7 @@ export async function reuseSegmentChunkVectors(exec: BrainEngine, { pageId, reti
   if (retiredOccurrences.length === 0 || chunks.length === 0) return 0;
   const target = await embeddingWriteTarget(exec);
   const provenance = embeddingInputContext(target, title, corpusGeneration, []);
-  const col = quoteIdentifier(target.column.name);
-  const rows = await exec.executeRaw<{ chunk_text: string; chunk_source: string; embedding: unknown; token_count: number | null; model: string | null;
-    embedding_input_hash: string | null; contextual_retrieval_mode: string | null; slug: string; source_id: string; corpus_generation: string | null }>(
-    `SELECT c.chunk_text, c.chunk_source, c.${col} AS embedding, c.token_count, c.model, c.embedding_input_hash, p.contextual_retrieval_mode,
-            p.slug, p.source_id, p.corpus_generation
-       FROM content_chunks c JOIN pages p ON p.id = c.page_id
-      WHERE c.page_id = $1 AND c.occurrence_id = ANY($2::bigint[]) AND c.${col} IS NOT NULL AND ${chunkGenerationFilter('p', 'c')}
-      ORDER BY c.chunk_index`, [pageId, [...retiredOccurrences]]);
+  const rows = await exec.readRetiredChunkVectors(pageId, retiredOccurrences, target.column.name);
   const mode = rows[0]?.contextual_retrieval_mode ?? null;
   if (rows.length === 0) return 0;
   // Wave B spec 8.6: on a page stored under per-chunk synopsis, a vector carries over only onto a new chunk whose

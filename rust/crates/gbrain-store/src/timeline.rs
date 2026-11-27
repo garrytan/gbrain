@@ -28,12 +28,14 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
+mod held;
 mod receipt;
 mod tier;
 pub(crate) use crate::write_receipt::WriteReceipt as TimelineReceipt;
+pub use held::HeldTimelineSpec;
 pub(crate) use tier::TimelineTrust;
 
-const NEXT_TIMELINE_ID: &str = "next_timeline_id";
+pub(crate) const NEXT_TIMELINE_ID: &str = "next_timeline_id";
 
 /// What is stored for a timeline entry.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -192,6 +194,14 @@ pub(crate) fn parse_date(text: &str) -> Result<String> {
 pub(crate) fn insert_entry(tx: &mut dyn KvWrite, mut record: TimelineRecord) -> Result<bool> {
     let dedup = record.dedup_key();
     record.id = next_id(tx, NEXT_TIMELINE_ID)?;
+    // The trigger runs before `ON CONFLICT DO NOTHING` finds the conflict, so a deduped add to a guest source refuses too.
+    let source = crate::guest_sources::page_source(&*tx, record.page_id)?;
+    crate::guest_sources::guard_row(
+        &*tx,
+        crate::guest_sources::GuardTable::TimelineEntries,
+        source.as_deref(),
+        crate::guest_sources::GuardOp::Insert,
+    )?;
     if tx.get(&dedup)?.is_some() {
         return Ok(false);
     }
@@ -217,6 +227,25 @@ fn raise_latest(tx: &mut dyn KvWrite, page_id: u64, created_at_us: i64) -> Resul
         tx.put(&latest, &created_at_us.to_be_bytes())?;
     }
     Ok(())
+}
+
+/// The shadow follow (`seed/follow.rs`): removes the entry `id` of `page_id` on `date`, with its
+/// dedup key, and sets the page's newest `created_at` to what the remaining entries hold. `false`
+/// when there is no such entry.
+pub(crate) fn remove_entry_by_id(
+    tx: &mut dyn KvWrite,
+    page_id: u64,
+    date: &str,
+    id: u64,
+) -> Result<bool> {
+    let Some(old) = crate::get_json::<TimelineRecord>(&*tx, &keys::timeline(page_id, date, id))?
+    else {
+        return Ok(false);
+    };
+    // The shadow follow copies the primary's marks, so this delete writes none.
+    remove_entry_unmarked(tx, &old)?;
+    recompute_latest(tx, page_id)?;
+    Ok(true)
 }
 
 /// The next timeline entry id, from the same counter `addTimelineEntry` uses (the `serial`).
@@ -261,6 +290,19 @@ pub(crate) fn put_entry(
             tx.delete(&dedup)?;
         }
     }
+    let source = crate::guest_sources::page_source(&*tx, new.page_id)?;
+    crate::guest_sources::guard_row(
+        &*tx,
+        crate::guest_sources::GuardTable::TimelineEntries,
+        source.as_deref(),
+        match old {
+            None => crate::guest_sources::GuardOp::Insert,
+            Some(old) => crate::guest_sources::GuardOp::Update {
+                content_changed: (&old.summary, &old.detail, &old.date)
+                    != (&new.summary, &new.detail, &new.date),
+            },
+        },
+    )?;
     let dedup = new.dedup_key();
     if tx
         .get(&dedup)?
@@ -290,8 +332,27 @@ pub(crate) fn latest_entry_micros(read: &dyn KvRead, page_id: u64) -> Result<Opt
 
 /// Deletes one entry: its `E` key, and its `D` key when that still points at the entry (a later
 /// entry that took the dedup slot keeps it). The page's `G` is not touched; call
-/// `recompute_latest` once after the deletes of one statement.
+/// `recompute_latest` once after the deletes of one statement. Before it goes, an owner-only entry
+/// (by its own lineage or its page's) marks what was derived from it (v322's trigger on
+/// `timeline_entries`).
 pub(crate) fn remove_entry(tx: &mut dyn KvWrite, entry: &TimelineRecord) -> Result<()> {
+    mark_entry_before_delete(tx, entry)?;
+    remove_entry_unmarked(tx, entry)
+}
+
+/// `owner_only_marks::mark_row_before_delete` for one timeline entry.
+pub(crate) fn mark_entry_before_delete(tx: &mut dyn KvWrite, entry: &TimelineRecord) -> Result<()> {
+    crate::owner_only_marks::mark_row_before_delete(
+        tx,
+        "timeline_entries",
+        entry.id,
+        None,
+        Some(entry.page_id),
+    )
+}
+
+/// [`remove_entry`] without the owner-only mark (the shadow follow copies the primary's marks).
+fn remove_entry_unmarked(tx: &mut dyn KvWrite, entry: &TimelineRecord) -> Result<()> {
     tx.delete(&keys::timeline(entry.page_id, &entry.date, entry.id))?;
     let dedup = entry.dedup_key();
     if tx.get(&dedup)?.and_then(|b| keys::be8(&b)) == Some(entry.id) {
@@ -323,8 +384,12 @@ pub(crate) fn recompute_latest(tx: &mut dyn KvWrite, page_id: u64) -> Result<()>
     }
 }
 
-/// `ON DELETE CASCADE` of `timeline_entries.page_id`.
+/// `ON DELETE CASCADE` of `timeline_entries.page_id`. Each entry is marked first when it is
+/// owner-only, as the cascade fires v322's row trigger on every entry it deletes.
 pub(crate) fn remove_page_timeline(tx: &mut dyn KvWrite, page_id: u64) -> Result<()> {
+    for entry in crate::owner_only_marks::timeline_rows(&*tx, Some(page_id))? {
+        mark_entry_before_delete(tx, &entry)?;
+    }
     let mut doomed = Vec::new();
     for prefix in [
         keys::timeline_prefix(page_id),
@@ -344,7 +409,7 @@ pub(crate) fn remove_page_timeline(tx: &mut dyn KvWrite, page_id: u64) -> Result
 /// `privateTimelineEventFilterForCaller(te)`: an entry with no event page passes. Otherwise its
 /// event page, read by id whatever its source or deleted state (the SQL is an `EXISTS` on the id
 /// alone), must exist and pass the page policy.
-fn event_visible(
+pub(crate) fn event_visible(
     read: &dyn KvRead,
     entry: &TimelineRecord,
     policy: &PrivacyPolicy,
@@ -453,6 +518,35 @@ impl Store {
         })
     }
 
+    /// `readNewestTimelineEntryId(sourceId, slug, date, summary)`: the id of the newest entry of the
+    /// page (deleted or not) on `date` whose summary is `summary`, event rows included; null when
+    /// the page or such an entry is missing. A bad date fails, as the `$3::date` cast does.
+    pub fn read_newest_timeline_entry_id(
+        &self,
+        source_id: &str,
+        slug: &str,
+        date: &str,
+        summary: &str,
+    ) -> Result<Option<u64>> {
+        no_nul(
+            "readNewestTimelineEntryId",
+            &[
+                ("sourceId", source_id),
+                ("slug", slug),
+                ("summary", summary),
+            ],
+        )?;
+        let date = parse_date(date)?;
+        let read = self.read()?;
+        let Some(page) = read_page(&*read, source_id, slug)? else {
+            return Ok(None);
+        };
+        let rows = page_entries(&*read, page.id, Some(&date), Some(&date), 1, &|row| {
+            Ok(row.summary == summary)
+        })?;
+        Ok(rows.first().map(|row| row.id))
+    }
+
     /// `addTimelineEntriesBatch`: rows whose page is missing or soft-deleted are skipped. Returns
     /// the number of entries inserted. One bad row fails the whole batch.
     pub fn add_timeline_entries_batch(&self, entries: &[TimelineBatchInput]) -> Result<u64> {
@@ -549,7 +643,14 @@ impl Store {
                 && (!options.eligible_only || eligible_page(&page))
             {
                 let keep = |row: &TimelineRecord| -> Result<bool> {
-                    if !trust.admits(&*read, "timeline_entries", row.id, row.trust.tier())? {
+                    if !trust.admits(&*read, "timeline_entries", row.id, row.trust.tier())?
+                        || (options.eligible_only
+                            && crate::generations::needs_rederive::is_marked(
+                                &*read,
+                                "timeline_entries",
+                                row.id,
+                            )?)
+                    {
                         return Ok(false);
                     }
                     match &options.exclude_private {
@@ -576,9 +677,9 @@ impl Store {
 /// The page part of `projectionEligibleSql('timeline_entries', 'te', ..)` (the row part, `floor`
 /// and `suppressFlagged`, is the `TrustPolicy` of `get_timeline`). Every row of `getTimeline` hangs on `page` (`te.page_id = p.id`), so a
 /// soft-deleted page, or a page whose frontmatter has a `quarantine` key (any value), hides all of its
-/// rows. The third clause hides rows listed in `needs_rederive`, which only a raw-SQL purge writes;
-/// this engine has no such rows.
-fn eligible_page(page: &PageRecord) -> bool {
+/// rows. The third clause, a row a purge marked in `needs_rederive` (`generations/needs_rederive.rs`),
+/// is checked per row by `get_timeline`.
+pub(crate) fn eligible_page(page: &PageRecord) -> bool {
     page.deleted_at_us.is_none() && !page.frontmatter.contains_key("quarantine")
 }
 

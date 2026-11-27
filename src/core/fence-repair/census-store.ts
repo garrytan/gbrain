@@ -24,8 +24,6 @@
 import type { BrainEngine } from '../engine.ts';
 import type { FenceSection, FenceKind, FenceTier } from './types.ts';
 
-type Exec = Pick<BrainEngine, 'executeRaw'>;
-
 export const FENCE_CANDIDATE_OP = 'fence-candidate';
 export const FENCE_SCAN_OP = 'fence-scan';
 export const FENCE_TREND_OP = 'fence-trend';
@@ -88,44 +86,29 @@ export interface ScanRecord {
 const candidateFingerprint = (sourceId: string, incarnation: string, key: string) => `${sourceId}:${incarnation}:${key}`;
 const scanFingerprint = (sourceId: string, incarnation: string) => `${sourceId}:${incarnation}`;
 
-export async function readScanRecord(engine: Exec, sourceId: string, incarnation: string): Promise<ScanRecord | null> {
-  const [row] = await engine.executeRaw<{ record: ScanRecord }>('SELECT completed_keys->0 AS record FROM op_checkpoints WHERE op=$1 AND fingerprint=$2',
-    [FENCE_SCAN_OP, scanFingerprint(sourceId, incarnation)]);
-  return row?.record ?? null;
+export async function readScanRecord(engine: Pick<BrainEngine, 'readFenceScanRecord'>, sourceId: string, incarnation: string): Promise<ScanRecord | null> {
+  return engine.readFenceScanRecord(FENCE_SCAN_OP, scanFingerprint(sourceId, incarnation));
 }
 
-export async function writeScanRecord(engine: Exec, record: ScanRecord): Promise<void> {
-  await engine.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys,updated_at) VALUES($1,$2,$3::text::jsonb,now())
-    ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=EXCLUDED.completed_keys,updated_at=now()`,
-  [FENCE_SCAN_OP, scanFingerprint(record.source_id, record.incarnation), JSON.stringify([record])]);
+export async function writeScanRecord(engine: Pick<BrainEngine, 'writeFenceScanRecord'>, record: ScanRecord): Promise<void> {
+  await engine.writeFenceScanRecord(FENCE_SCAN_OP, scanFingerprint(record.source_id, record.incarnation), record);
 }
 
 /** Stores one judged part (`page` or `file`) of a candidate, keeping the other part. */
-export async function upsertCandidatePart(engine: Exec, ids: { sourceId: string; incarnation: string; key: string },
+export async function upsertCandidatePart(engine: Pick<BrainEngine, 'upsertFenceCandidatePart'>, ids: { sourceId: string; incarnation: string; key: string },
   part: 'page' | 'file', finding: PageFinding | FileFinding): Promise<void> {
-  await engine.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys,updated_at)
-      VALUES($1,$2,jsonb_build_array(jsonb_build_object('version',1,'source_id',$3::text,'incarnation',$4::text,'key',$5::text,$6::text,$7::text::jsonb)),now())
-    ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=jsonb_build_array((op_checkpoints.completed_keys->0)||jsonb_build_object($6::text,$7::text::jsonb)),updated_at=now()`,
-  [FENCE_CANDIDATE_OP, candidateFingerprint(ids.sourceId, ids.incarnation, ids.key), ids.sourceId, ids.incarnation, ids.key, part, JSON.stringify(finding)]);
+  await engine.upsertFenceCandidatePart(FENCE_CANDIDATE_OP, candidateFingerprint(ids.sourceId, ids.incarnation, ids.key), ids, part, finding);
 }
 
 /** Drops the `part` of these candidates (they judged clean); a candidate with no part left is deleted. */
-export async function clearCandidateParts(engine: Exec, ids: { sourceId: string; incarnation: string }, part: 'page' | 'file', keys: readonly string[]): Promise<void> {
+export async function clearCandidateParts(engine: Pick<BrainEngine, 'clearFenceCandidateParts'>, ids: { sourceId: string; incarnation: string }, part: 'page' | 'file', keys: readonly string[]): Promise<void> {
   if (!keys.length) return;
-  const fingerprints = keys.map(key => candidateFingerprint(ids.sourceId, ids.incarnation, key));
-  const other = part === 'page' ? 'file' : 'page';
-  await engine.executeRaw(`DELETE FROM op_checkpoints WHERE op=$1 AND fingerprint=ANY($2::text[]) AND (completed_keys->0->$3::text) IS NULL`,
-    [FENCE_CANDIDATE_OP, fingerprints, other]);
-  await engine.executeRaw(`UPDATE op_checkpoints SET completed_keys=jsonb_build_array((completed_keys->0)-$3::text),updated_at=now()
-    WHERE op=$1 AND fingerprint=ANY($2::text[]) AND (completed_keys->0->$3::text) IS NOT NULL`, [FENCE_CANDIDATE_OP, fingerprints, part]);
+  await engine.clearFenceCandidateParts(FENCE_CANDIDATE_OP, keys.map(key => candidateFingerprint(ids.sourceId, ids.incarnation, key)), part);
 }
 
 /** Candidate records of live source incarnations (optionally one source). */
-export async function readCandidateRecords(engine: Exec, sourceIds?: readonly string[]): Promise<CandidateRecord[]> {
-  const rows = await engine.executeRaw<{ record: CandidateRecord }>(`SELECT c.completed_keys->0 AS record FROM op_checkpoints c
-    JOIN sources s ON s.id=c.completed_keys->0->>'source_id' AND s.incarnation::text=c.completed_keys->0->>'incarnation'
-    WHERE c.op=$1 AND ($2::text[] IS NULL OR s.id=ANY($2::text[])) ORDER BY c.fingerprint COLLATE "C"`, [FENCE_CANDIDATE_OP, sourceIds ? [...sourceIds] : null]);
-  return rows.map(row => row.record);
+export async function readCandidateRecords(engine: Pick<BrainEngine, 'listFenceCandidateRecords'>, sourceIds?: readonly string[]): Promise<CandidateRecord[]> {
+  return engine.listFenceCandidateRecords(FENCE_CANDIDATE_OP, sourceIds);
 }
 
 /** One trend row: files or pages Tier 1 normalized, by fix class and by writer. */
@@ -135,20 +118,17 @@ export interface TrendEntry { day: string; count: number; by_class: Record<strin
  * One sync run's total, keyed by run id (a rewrite replaces it, so a run is
  * counted once); the row keeps the UTC day of its first write.
  */
-export async function recordSyncRunTrend(engine: Exec, input: { sourceId: string; runId: string; day: string; count: number;
+export async function recordSyncRunTrend(engine: Pick<BrainEngine, 'upsertFenceTrendRunRecord'>, input: { sourceId: string; runId: string; day: string; count: number;
   byClass: Record<string, number>; writers: Record<string, number> }): Promise<void> {
   if (!input.count) return;
   const record = { version: 1, source_id: input.sourceId, day: input.day, count: input.count, by_class: input.byClass, writers: input.writers };
-  await engine.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys,updated_at) VALUES($1,$2,$3::text::jsonb,now())
-    ON CONFLICT(op,fingerprint) DO UPDATE SET completed_keys=jsonb_build_array((EXCLUDED.completed_keys->0)||jsonb_build_object('day',op_checkpoints.completed_keys->0->'day')),updated_at=now()`,
-  [FENCE_TREND_OP, `${input.sourceId}:run:${input.runId}`, JSON.stringify([record])]);
+  await engine.upsertFenceTrendRunRecord(FENCE_TREND_OP, `${input.sourceId}:run:${input.runId}`, record);
 }
 
 /** One normalized page write (put_page, put_pages, remember, takes and fact writers), written once per request. */
-export async function recordWriteTrend(engine: Exec, input: { sourceId: string; requestKey: string; day: string; byClass: Record<string, number>; writer: string }): Promise<void> {
+export async function recordWriteTrend(engine: Pick<BrainEngine, 'insertOpCheckpointIfAbsent'>, input: { sourceId: string; requestKey: string; day: string; byClass: Record<string, number>; writer: string }): Promise<void> {
   const record = { version: 1, source_id: input.sourceId, day: input.day, count: 1, by_class: input.byClass, writers: { [input.writer]: 1 } };
-  await engine.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys,updated_at) VALUES($1,$2,$3::text::jsonb,now()) ON CONFLICT(op,fingerprint) DO NOTHING`,
-    [FENCE_TREND_OP, `${input.sourceId}:write:${input.requestKey}`, JSON.stringify([record])]);
+  await engine.insertOpCheckpointIfAbsent(FENCE_TREND_OP, `${input.sourceId}:write:${input.requestKey}`, [record]);
 }
 
 /**
@@ -157,7 +137,7 @@ export async function recordWriteTrend(engine: Exec, input: { sourceId: string; 
  * outcomes (a per-file fix list) are skipped: the sync run flushes its own
  * total once per run.
  */
-export async function recordPublicationFenceTrend(tx: Exec, row: { id: string; source_id: string; principal_kind: string }, outcome: Record<string, unknown>,
+export async function recordPublicationFenceTrend(tx: Pick<BrainEngine, 'insertOpCheckpointIfAbsent'>, row: { id: string; source_id: string; principal_kind: string }, outcome: Record<string, unknown>,
   now: Date = new Date()): Promise<void> {
   const report = outcome.fences_normalized as { count?: unknown; by_class?: Record<string, number> } | undefined;
   if (!report || Array.isArray(report) || typeof report !== 'object' || !Number(report.count)) return;
@@ -165,12 +145,10 @@ export async function recordPublicationFenceTrend(tx: Exec, row: { id: string; s
 }
 
 /** Trend rows of these sources since `fromDay` (inclusive), summed per source and day. */
-export async function readTrend(engine: Exec, sourceIds: readonly string[], fromDay: string): Promise<Map<string, TrendEntry[]>> {
+export async function readTrend(engine: Pick<BrainEngine, 'readFenceTrendRecords'>, sourceIds: readonly string[], fromDay: string): Promise<Map<string, TrendEntry[]>> {
   const out = new Map<string, TrendEntry[]>();
   if (!sourceIds.length) return out;
-  const rows = await engine.executeRaw<{ record: TrendEntry & { source_id: string } }>(`SELECT completed_keys->0 AS record FROM op_checkpoints
-    WHERE op=$1 AND completed_keys->0->>'source_id'=ANY($2::text[]) AND completed_keys->0->>'day'>=$3`, [FENCE_TREND_OP, [...sourceIds], fromDay]);
-  for (const { record } of rows) {
+  for (const record of await engine.readFenceTrendRecords(FENCE_TREND_OP, sourceIds, fromDay)) {
     const days = out.get(record.source_id) ?? [];
     let day = days.find(entry => entry.day === record.day);
     if (!day) days.push(day = { day: record.day, count: 0, by_class: {}, writers: {} });

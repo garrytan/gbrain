@@ -8,16 +8,16 @@
 //! listAllPageRefs, listPrefixSampledPages, listCorpusSample, getContentFlagsByPageIds,
 //! getUnverifiedExtractionPageIds, getPageTimestamps, getEffectiveDates, revertToVersion.
 //!
-//! Keys: none. Every read scans the page records (`pages::all_pages`), as `list_pages` does; the
-//! family tag `keys::PAGE_OPS` (`p`) stays unused until an index is needed, and such an index needs
-//! the core `write_page` hook to stay in step.
+//! Keys: this file keeps none. The only records under `keys::PAGE_OPS` (`p`) are the retrieval
+//! records of `page_ops/retrievals.rs`. Every read scans the page records (`pages::all_pages`), as
+//! `list_pages` does; an index of page fields under `p` needs the core `write_page` hook to stay in
+//! step.
 //!
 //! Text compares and sorts in byte order (Postgres `COLLATE "C"`). Dates cross the binding as ISO
 //! strings with microseconds.
 //!
 //! `last_retrieved_at` is the page's retrieval record (`page_ops/retrievals.rs`, bumpPageRetrievals).
-//! What the store does not hold answers as empty: no chunk has an embedding (so
-//! `representative_chunk_id` is always null).
+//! A sampled page's `representative_chunk_id` is its lowest-index embedded chunk.
 //!
 //! Segmented pages (a NULL body, `pages::PageText`): `readPageSnapshotsBatch` sends the NULL body
 //! on and counts it as 0 bytes, as PGLite's `sum(octet_length(...))` skips it; the samplers leave
@@ -25,8 +25,8 @@
 //! page or the version is segmented, before it writes anything.
 //!
 //! `purgeDeletedPages` keeps the tombstones PGLite's derived and atom retirement holds keep
-//! (`PurgeHolds`); rust/docs/store/page_ops.md cites each rule and names the two holds that never
-//! match a store row.
+//! (`PurgeHolds`); rust/docs/store/page_ops.md cites each rule and names the two `op_checkpoints`
+//! holds it does not apply.
 
 use crate::env::{Env, iso, parse_iso};
 use crate::error::{Result, StoreError};
@@ -41,7 +41,10 @@ use serde_json::{Map, Value, json};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
-mod retrievals;
+mod atom_restore;
+mod relational;
+pub(crate) mod retrievals;
+mod stale_atoms;
 pub(crate) use retrievals::remove_page_rows;
 
 /// The code `revertToVersion` refuses with when the page or the version is segmented. The
@@ -213,6 +216,25 @@ fn sources_by_id(read: &dyn KvRead) -> Result<HashMap<String, SourceRecord>> {
         .into_iter()
         .map(|s| (s.id.clone(), s))
         .collect())
+}
+
+/// The pages of `pages` that `pageReadFilter(alias, scope, params, live)` admits, in their order
+/// (the reads of `list_reads.rs` that take a caller's read policy).
+pub(crate) fn pages_in_read_scope(
+    read: &dyn KvRead,
+    pages: Vec<PageRecord>,
+    scope: &PageReadScope,
+) -> Result<Vec<PageRecord>> {
+    let sources = sources_by_id(read)?;
+    let trust = TrustPolicy::parse(scope.min_trust.as_deref(), scope.suppress_flagged)?;
+    let mut owner_only = OwnerOnlyCache::default();
+    let mut kept = Vec::with_capacity(pages.len());
+    for page in pages {
+        if passes_read_scope(read, &page, scope, &trust, &sources, &mut owner_only)? {
+            kept.push(page);
+        }
+    }
+    Ok(kept)
 }
 
 /// `pageReadFilter(alias, scope, params, live)`: the source clause, the page policy, the trust
@@ -405,25 +427,38 @@ fn shuffle_seed(seed: Option<f64>, env: &dyn Env) -> u64 {
     }
 }
 
-/// `{ page, tags, revision, sourceIncarnation, withdrawals }`, as `Store::read_page_snapshot`.
+/// `{ page, tags, revision, sourceIncarnation, withdrawals }` (and the global purge fields), as
+/// `Store::read_page_snapshot`.
 fn snapshot_json(read: &dyn KvRead, page: &PageRecord) -> Result<Value> {
     let incarnation = read_source(read, &page.source_id)?
         .map(|s| s.incarnation)
         .unwrap_or_default();
     let mut tags = page.tags.clone();
     tags.sort();
-    Ok(json!({
+    let mut snapshot = json!({
         "page": page.to_page_with_columns(read)?,
         "tags": tags,
         "revision": page.knowledge_revision,
         "sourceIncarnation": incarnation,
-        "withdrawals": [],
-    }))
+    });
+    if let Value::Object(fields) = &mut snapshot {
+        fields.extend(crate::page_withdrawals::snapshot_withdrawals(
+            read,
+            &page.source_id,
+            &page.slug,
+            false,
+        )?);
+    }
+    Ok(snapshot)
 }
 
 /// A canonical field changed: a new knowledge revision, and the chunks no longer match the text
 /// (as `pages::tag_change`).
-fn write_changed(tx: &mut dyn KvWrite, env: &dyn Env, page: &mut PageRecord) -> Result<()> {
+pub(crate) fn write_changed(
+    tx: &mut dyn KvWrite,
+    env: &dyn Env,
+    page: &mut PageRecord,
+) -> Result<()> {
     page.knowledge_revision = env.new_uuid();
     page.text_projection_revision = None;
     write_page(tx, page)
@@ -431,15 +466,29 @@ fn write_changed(tx: &mut dyn KvWrite, env: &dyn Env, page: &mut PageRecord) -> 
 
 /// The rows PGLite scrubs after a hard delete that name a page outside any foreign key
 /// (`scrubPurgedSlugs` and friends), run in the delete's transaction after the pages are gone.
-/// The store keeps the eval candidates' `retrieved_slugs` (`scrubPurgedSlugs`) and, of
-/// `scrubPurgedSlugStores`, the page aliases, slug aliases and rename history
-/// (`aliases::scrub_purged_slug_stores`), scrubbed in PGLite's order
-/// (src/core/engine-sql/pages.ts:235-237). Retrieval logs, ratings, the volunteer log, the
-/// gazetteer, take proposals, open loops, core-edit notices and write-gate holds do not exist here
-/// yet.
-fn scrub_purged_slugs(tx: &mut dyn KvWrite, source_id: &str, slugs: &[String]) -> Result<()> {
+/// The store keeps the eval candidates' `retrieved_slugs` (`scrubPurgedSlugs`), of `scrubPurgedNameStores` the mention
+/// gazetteer (`mention_state::scrub_purged_entries`), the volunteer log (`volunteer_events::scrub_purged_slugs`) and the
+/// retrieval logs, ratings and weights (`retrieval_feedback::scrub_purged_slugs`) and, of `scrubPurgedSlugStores`, the
+/// take proposals (with their idempotency entries and nudges), the open loops (with their dedupe keys), the page aliases,
+/// slug aliases and rename history, scrubbed in PGLite's order (src/core/engine-sql/pages.ts deletePages). Core-edit
+/// notices and write-gate holds are not scrubbed here.
+fn scrub_purged_slugs(
+    tx: &mut dyn KvWrite,
+    source_id: &str,
+    slugs: &[String],
+    secret_occurrences: &BTreeSet<u64>,
+) -> Result<()> {
     crate::eval_capture::remove_retrieved_slugs(tx, source_id, slugs)?;
+    crate::mention_state::scrub_purged_entries(tx, source_id, slugs)?;
+    crate::volunteer_events::scrub_purged_slugs(tx, source_id, slugs)?;
+    crate::retrieval_feedback::scrub_purged_slugs(tx, source_id, slugs)?;
+    // `deletePurgedSlugStoreRows` (engine-sql/purge-slug-stores.ts SLUG_STORE_DELETES), in its order: the take proposals
+    // and open loops filed under the slug, then the aliases and rename history.
+    let wanted: BTreeSet<&str> = slugs.iter().map(String::as_str).collect();
+    crate::takes::proposals::remove_for_slugs(tx, source_id, &wanted)?;
+    crate::facts::loops::remove_for_slugs(tx, source_id, &wanted)?;
     crate::aliases::scrub_purged_slug_stores(tx, source_id, slugs)?;
+    crate::secret_store::purge_for_deleted_pages(tx, source_id, slugs, secret_occurrences)?;
     Ok(())
 }
 
@@ -516,7 +565,7 @@ fn atom_not_imported(page: &PageRecord) -> bool {
 /// is a live page of the same source, that no live non-imported atom of the same source and origin
 /// replaced with a different hash, and whose hash is the hash of the origin's latest retirement
 /// (`retired_at` text descending, NULL last, then id descending).
-fn restorable_atoms(pages: &[PageRecord]) -> HashSet<u64> {
+pub(crate) fn restorable_atoms(pages: &[PageRecord]) -> HashSet<u64> {
     let live_slugs: HashSet<(&str, &str)> = pages
         .iter()
         .filter(|p| p.deleted_at_us.is_none())
@@ -581,19 +630,20 @@ fn restorable_atoms(pages: &[PageRecord]) -> HashSet<u64> {
         .collect()
 }
 
-/// The purge holds a Rust store row can meet, at `now` (PGLite's statement clock): the derived
-/// retirement hold (`derivedRetirementPurgeHold`, `derived-retirement-hold.ts:38-41`) and the atom
-/// retirement hold (`atomRetirementPurgeHold`, `atom-retirement-hold.ts:80-84`). Each window is open
-/// while `deleted_at > now - days`. The two `op_checkpoints` holds never match here: see
+/// The purge holds that read only the page rows and `config`, at `now` (PGLite's statement clock): the
+/// derived retirement hold (`derivedRetirementPurgeHold`, `derived-retirement-hold.ts:38-41`) and the
+/// atom retirement hold (`atomRetirementPurgeHold`, `atom-retirement-hold.ts:80-84`). Each window is
+/// open while `deleted_at > now - days`. The two `op_checkpoints` holds are applied by the retention
+/// purge's candidate reads (`persistence/retention_purge.rs`), not by `purge_deleted_pages`: see
 /// `rust/docs/store/page_ops.md`.
-struct PurgeHolds {
+pub(crate) struct PurgeHolds {
     now: i64,
     restore_days: i64,
     restorable_atoms: HashSet<u64>,
 }
 
 impl PurgeHolds {
-    fn read(read: &dyn KvRead, pages: &[PageRecord], now: i64) -> Result<Self> {
+    pub(crate) fn read(read: &dyn KvRead, pages: &[PageRecord], now: i64) -> Result<Self> {
         Ok(Self {
             now,
             restore_days: restore_days(read)?,
@@ -601,7 +651,7 @@ impl PurgeHolds {
         })
     }
 
-    fn holds(&self, page: &PageRecord) -> bool {
+    pub(crate) fn holds(&self, page: &PageRecord) -> bool {
         let Some(deleted) = page.deleted_at_us else {
             return false;
         };
@@ -666,8 +716,18 @@ fn domain_bank_row(read: &dyn KvRead, page: &PageRecord) -> Result<Value> {
         "compiled_truth": page.compiled_truth,
         "connection_count": connections,
         "last_retrieved_at": retrieved,
-        "representative_chunk_id": Value::Null,
+        "representative_chunk_id": representative_chunk(read, page.id)?,
     }))
+}
+
+/// The samplers' `representative_chunk_id`: the id of the page's lowest-index chunk that has an
+/// embedding (`cc.embedding IS NOT NULL ORDER BY cc.chunk_index LIMIT 1`), or null.
+fn representative_chunk(read: &dyn KvRead, page_id: u64) -> Result<Value> {
+    Ok(crate::chunks::read_chunks(read, page_id)?
+        .into_iter()
+        .filter(|c| c.embed.dims > 0)
+        .min_by_key(|c| c.chunk_index)
+        .map_or(Value::Null, |c| json!(c.id)))
 }
 
 /// The page index hook (`page_index::reindex_page`): keeps this family's index of page fields in
@@ -692,6 +752,19 @@ impl Store {
             .map(|p| p.slug)
             .collect();
         Ok(slugs.into_iter().collect())
+    }
+
+    /// `listMarkdownPageSlugs(sourceId)`: the slugs of the source's markdown pages, soft-deleted pages included, by
+    /// byte order (`ORDER BY slug COLLATE "C"`).
+    pub fn list_markdown_page_slugs(&self, source_id: &str) -> Result<Vec<String>> {
+        let read = self.read()?;
+        let mut slugs: Vec<String> = all_pages(&*read)?
+            .into_iter()
+            .filter(|p| p.source_id == source_id && p.page_kind == "markdown")
+            .map(|p| p.slug)
+            .collect();
+        slugs.sort();
+        Ok(slugs)
     }
 
     /// `listAllPageRefs()`: `{ slug, source_id, updated_at }` for every live page, ordered by
@@ -917,6 +990,12 @@ impl Store {
                 if page.deleted_at_us.is_none() {
                     page.deleted_at_us = Some(now);
                     write_changed(tx, &*self.env, &mut page)?;
+                    // The page enters a fact purge's derivation sweep's scope: the sweep checks it again before it ends.
+                    crate::page_body::derivation_sweep::note_scope_entry(
+                        tx,
+                        &page.source_id,
+                        page.id,
+                    )?;
                     hidden.push(page.slug);
                 }
             }
@@ -936,17 +1015,20 @@ impl Store {
         }
         self.write(|tx| {
             let mut deleted = Vec::new();
+            let mut secrets = BTreeSet::new();
             for page in pages_by_slugs(&*tx, &source, slugs)? {
+                secrets.extend(crate::secret_store::page_occurrence_ids(&*tx, page.id)?);
                 remove_page(tx, &page)?;
                 deleted.push(page.slug);
             }
-            scrub_purged_slugs(tx, &source, &deleted)?;
+            scrub_purged_slugs(tx, &source, &deleted, &secrets)?;
             Ok(deleted)
         })
     }
 
     /// `purgeDeletedPages(olderThanHours, { dryRun?, excludeIds? })`: the pages soft-deleted more
-    /// than `floor(max(0, hours))` hours ago, minus `excludeIds` and the pages a retirement hold
+    /// than `floor(hours)` hours ago (an age that is NaN, negative or not finite is refused with
+    /// `invalid_argument` before anything is read or written), minus `excludeIds` and the pages a retirement hold
     /// keeps (`PurgeHolds`), ordered by `deleted_at`, then slug. Each purged page goes through
     /// `remove_page` and `scrub_purged_slugs`, as `deletePages` does. A dry run returns
     /// `{ slugs, count, pages: [{ slug, source_id, deleted_at }] }`; a real run removes them in one
@@ -956,11 +1038,15 @@ impl Store {
         older_than_hours: f64,
         options: &PurgeOptions,
     ) -> Result<Value> {
-        let hours = if older_than_hours.is_nan() {
-            0
-        } else {
-            older_than_hours.floor().max(0.0) as i64
-        };
+        // Refuse an age that is not a finite number of hours, 0 or more (NaN, a negative number,
+        // ±Infinity) before anything is read or written: NaN used to read as 0 hours and purge every
+        // tombstone. The SQL engines refuse the same inputs (src/core/engine-errors.ts PurgeAgeError).
+        if !older_than_hours.is_finite() || older_than_hours < 0.0 {
+            return Err(StoreError::invalid(format!(
+                "purgeDeletedPages: the age must be a finite number of hours, 0 or more; got {older_than_hours}. Nothing was purged."
+            )));
+        }
+        let hours = older_than_hours.floor() as i64;
         let excluded: HashSet<i64> = options.exclude_ids.iter().flatten().copied().collect();
         let select = |read: &dyn KvRead, now: i64| -> Result<Vec<PageRecord>> {
             let cutoff = now.saturating_sub(hours.saturating_mul(3_600_000_000));
@@ -992,10 +1078,18 @@ impl Store {
             let read = self.read()?;
             return Ok(answer(&select(&*read, self.env.now_micros())?));
         }
+        let trust = &self.write_trust()?;
         self.write(|tx| {
             let pages = select(&*tx, self.env.now_micros())?;
             let mut by_source: BTreeMap<String, Vec<String>> = BTreeMap::new();
+            let mut texts = BTreeSet::new();
+            let mut secrets: BTreeMap<String, BTreeSet<u64>> = BTreeMap::new();
             for page in &pages {
+                texts.extend(crate::page_body::page_text_refs(&*tx, page.id)?);
+                secrets
+                    .entry(page.source_id.clone())
+                    .or_default()
+                    .extend(crate::secret_store::page_occurrence_ids(&*tx, page.id)?);
                 remove_page(tx, page)?;
                 by_source
                     .entry(page.source_id.clone())
@@ -1003,7 +1097,18 @@ impl Store {
                     .push(page.slug.clone());
             }
             for (source, slugs) in &by_source {
-                scrub_purged_slugs(tx, source, slugs)?;
+                crate::page_body::delete_slug_stagings(tx, source, slugs)?;
+            }
+            crate::page_body::delete_purged_texts(tx, &texts)?;
+            let now = self.env.now_micros();
+            for (source, slugs) in &by_source {
+                scrub_purged_slugs(
+                    tx,
+                    source,
+                    slugs,
+                    &secrets.remove(source).unwrap_or_default(),
+                )?;
+                crate::facts::expire_gone_page_facts(tx, trust, source, slugs, now)?;
             }
             Ok(answer(&pages))
         })
@@ -1493,6 +1598,86 @@ mod tests {
         assert!(after.compiled_truth.is_null());
         assert_eq!(after.updated_at_us, before.updated_at_us);
         assert_eq!(after.knowledge_revision, before.knowledge_revision);
+    }
+
+    #[test]
+    fn the_samplers_name_the_first_embedded_chunk() {
+        let store = store();
+        store.set_config("embedding_dimensions", "3").unwrap();
+        put(&store, "notes/a/1", None);
+        put(&store, "notes/b/1", None);
+        let chunk = |index: u32, vector: Option<[f32; 3]>| {
+            let mut rest = serde_json::Map::new();
+            if let Some(v) = vector {
+                rest.insert("embedding".into(), json!(v));
+                rest.insert("model".into(), json!("embed-m1"));
+            }
+            crate::chunks::ChunkInput {
+                chunk_index: index,
+                chunk_text: format!("text {index}"),
+                rest,
+                ..crate::chunks::ChunkInput::default()
+            }
+        };
+        store
+            .upsert_chunks(
+                "notes/a/1",
+                &[
+                    chunk(0, None),
+                    chunk(1, Some([1.0, 0.0, 0.0])),
+                    chunk(2, Some([0.0, 1.0, 0.0])),
+                ],
+                &crate::chunks::UpsertChunksOptions::default(),
+            )
+            .unwrap();
+        store
+            .upsert_chunks(
+                "notes/b/1",
+                &[chunk(0, None)],
+                &crate::chunks::UpsertChunksOptions::default(),
+            )
+            .unwrap();
+        let a = page(&store, DEFAULT_SOURCE, "notes/a/1");
+        let read = store.read().unwrap();
+        let first_embedded = crate::chunks::read_chunks(&*read, a.id)
+            .unwrap()
+            .into_iter()
+            .find(|c| c.chunk_index == 1)
+            .unwrap()
+            .id;
+        drop(read);
+        let representatives = |rows: Vec<Value>| -> Vec<(String, Value)> {
+            let mut out: Vec<(String, Value)> = rows
+                .iter()
+                .map(|r| {
+                    (
+                        r["slug"].as_str().unwrap().to_string(),
+                        r["representative_chunk_id"].clone(),
+                    )
+                })
+                .collect();
+            out.sort_by(|x, y| x.0.cmp(&y.0));
+            out
+        };
+        let want = vec![
+            ("notes/a/1".to_string(), json!(first_embedded)),
+            ("notes/b/1".to_string(), Value::Null),
+        ];
+        let picked = store
+            .list_prefix_sampled_pages(&PrefixSampleOptions {
+                prefixes: vec!["notes/a".into(), "notes/b".into()],
+                ..PrefixSampleOptions::default()
+            })
+            .unwrap();
+        assert_eq!(representatives(picked), want);
+        let sample = store
+            .list_corpus_sample(&CorpusSampleOptions {
+                n: 10.0,
+                seed: Some(0.5),
+                ..CorpusSampleOptions::default()
+            })
+            .unwrap();
+        assert_eq!(representatives(sample), want);
     }
 
     #[test]

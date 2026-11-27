@@ -16,7 +16,7 @@ import { chunkerStamp } from '../../../core/chunkers/code.ts';
 import { smallBrainBacklogNote } from '../../../core/link-extraction-watermark.ts';
 import { extractionLagVerdict, extractionRoutes, heldExtractionReport, readExtractionLag } from '../../../core/extraction-lag.ts';
 import { isMissingSchemaObject } from '../../../core/utils.ts';
-import { ATOM_PROVENANCE_CTE, unchangedBodyAtoms } from './atom-body-recheck.ts';
+import { unchangedBodyAtoms } from './atom-body-recheck.ts';
 import {
   loadStorageConfig,
   effectiveDbOnlyDirs,
@@ -26,7 +26,6 @@ import {
 import { slugifyPath, slugifyCodePath, isCodeFilePath } from '../../../core/sync.ts';
 import { resolveSourceLocalFilePath, sourceGitScope } from '../../../core/markdown.ts';
 import { scannerSlugRootMode } from '../../../core/write-through.ts';
-import { unverifiedExtractionFragment } from '../../../core/extraction-review.ts';
 import { quarantineFilterFragment } from '../../../core/quarantine.ts';
 import { persistenceEnabledForHealth } from '../../../core/persistence/ownership.ts';
 import { upstreamFreshness } from '../../../core/sync-upstream.ts';
@@ -39,6 +38,7 @@ import { parseSourceConfig } from '../../../core/sources-load.ts';
 import { checkError } from '../check-fix.ts';
 import { checkpointMovedFix, firstSyncRunning, noSuccessfulSync, receiptContentDirectory, stoppedConnectorIssues, type SyncOutcomeEntry } from '../sync-outcome.ts';
 import { haltReasonsWithUnknown, readRecordedHaltReasons7d, topHaltReason } from '../../../core/extract/rollup-writer.ts';
+import { rethrowCapabilityMissing } from '../../../core/rust-engine/errors.ts';
 
 /** Local alias; the shared warn-once memo lives in core so it can't fork per module. */
 const _resolveSyncFreshnessHours = resolveHoursEnv;
@@ -169,21 +169,7 @@ export async function checkUnverifiedExtractions(
   const days = opts?.days ?? 7;
   const sourceId = opts?.sourceId;
   try {
-    const params: unknown[] = [String(days)];
-    let srcClause = '';
-    if (sourceId) {
-      params.push(sourceId);
-      srcClause = 'AND p.source_id = $2';
-    }
-    const rows = await engine.executeRaw<{ n: string | number }>(
-      `SELECT COUNT(*)::int AS n FROM pages p
-       WHERE p.deleted_at IS NULL
-         AND ${unverifiedExtractionFragment('p')}
-         AND p.created_at < now() - ($1 || ' days')::interval
-         ${srcClause}`,
-      params,
-    );
-    const n = Number(rows[0]?.n ?? 0);
+    const n = await engine.countUnverifiedExtractions(days, sourceId || null);
     return {
       name,
       status: n > 0 ? 'warn' : 'ok',
@@ -217,15 +203,7 @@ export async function checkContentHashDuplicates(engine: BrainEngine): Promise<C
     // safe); a group WITHOUT that shape (all-nested, or distinct bare slugs)
     // is listed with NO delete hint (#3942 — either copy may be the canonical
     // one that links point at, so deleting one automatically is a guess).
-    const rows = await engine.executeRaw<{ source_id: string; content_hash: string; slugs: string }>(
-      `SELECT source_id, content_hash,
-              string_agg(slug, '|' ORDER BY length(slug), slug) AS slugs
-         FROM pages
-        WHERE deleted_at IS NULL AND content_hash IS NOT NULL AND content_hash <> ''
-        GROUP BY source_id, content_hash
-       HAVING count(*) > 1
-        LIMIT 51`,
-    );
+    const rows = await engine.listContentHashDuplicates();
     const capped = rows.length > 50, atLeast = capped ? 'At least ' : ''; // #7145: a 51st group makes the counts floors
     if (rows.length === 0) {
       return { name, status: 'ok', message: 'No same-source content-hash duplicate groups' };
@@ -368,16 +346,7 @@ export async function checkUndeclaredDbOnlyPages(engine: BrainEngine): Promise<C
   try {
     // #3880: archived sources are out of scope for filesystem audits (v34
     // legacy fallback, house style per pickSoleNonDefaultSource).
-    let sources: Array<{ id: string; local_path: string | null; config: unknown }>;
-    try {
-      sources = await engine.executeRaw<{ id: string; local_path: string | null; config: unknown }>(
-        `SELECT id, local_path, config FROM sources WHERE local_path IS NOT NULL AND archived IS NOT TRUE`,
-      );
-    } catch {
-      sources = await engine.executeRaw<{ id: string; local_path: string | null; config: unknown }>(
-        `SELECT id, local_path, config FROM sources WHERE local_path IS NOT NULL`,
-      );
-    }
+    const sources = await engine.readDoctorSources('roots_live_fallback');
     const authorities = await connectorAuthorities(engine, sources.map(s => ({ id: s.id, kind: parseSourceConfig(s.config).kind })));
     const connectorDb = new Set([...authorities].filter(([, a]) => a === 'connector_database').map(([id]) => id));
     const connectorNote = connectorDb.size > 0 ? ` ${connectorDb.size} API connector source(s) skipped: connector_database pages are DB-only by design (recover them with gbrain sync --source <id> --full).` : '';
@@ -518,9 +487,7 @@ async function countExtractAtomsBacklogBySource(
     // unscoped local/host path.
     const sources = sourceIds
       ? [...sourceIds].sort().map((source_id) => ({ source_id }))
-      : await engine.executeRaw<{ source_id: string }>(
-        `SELECT DISTINCT source_id FROM pages WHERE deleted_at IS NULL ORDER BY source_id`,
-      );
+      : await engine.listAtomBacklogSourceIds();
     const rows: Array<{ source_id: string; backlog: number }> = [];
     for (const src of sources) {
       const backlog = await countBacklog(engine, src.source_id);
@@ -528,7 +495,8 @@ async function countExtractAtomsBacklogBySource(
       if (backlog > 0) rows.push({ source_id: src.source_id, backlog });
     }
     return rows;
-  } catch {
+  } catch (e) {
+    rethrowCapabilityMissing(e);
     return null;
   }
 }
@@ -816,56 +784,7 @@ export async function computeAtomProvenanceDriftCheck(
   const MIN_DRIFTED = 25;
   const WARN_RATIO = 0.1;
   try {
-    const rows = await engine.executeRaw<{
-      total: string | number; slug_unbound: string | number; drifted: string | number;
-      source_changed: string | number; source_gone: string | number;
-      oldest_ext: string | null;
-    }>(
-      // extracted_at stays TEXT end to end (review fix): an unguarded
-      // ::timestamptz cast let ONE malformed frontmatter value (hand edit,
-      // truncation) abort the whole aggregate and permanently degrade this
-      // check to a spurious "check failed" warn. The ISO-shape regex drops
-      // garbage from the min(); the age math happens in TS where Date
-      // parsing can never throw (semantically-invalid dates become NaN →
-      // metric omitted, verdict untouched).
-      `WITH ${ATOM_PROVENANCE_CTE},
-       -- Lookup sets are built ONCE and joined (#4937). A correlated EXISTS in
-       -- the SELECT list is not rewritten to a semi-join — Postgres re-runs it
-       -- per atom over substring(content_hash), which no index serves, so the
-       -- check went O(atoms x same-source pages) and blew health-check budgets.
-       -- DISTINCT is load-bearing: duplicate live content_hash values are a
-       -- real state and would otherwise fan one atom out into several rows.
-       live_hashes AS MATERIALIZED (
-         SELECT DISTINCT source_id, substring(content_hash from 1 for 16) AS sh
-           FROM pages WHERE deleted_at IS NULL AND content_hash IS NOT NULL
-       ), live_slugs AS MATERIALIZED (
-         SELECT DISTINCT source_id, slug FROM pages WHERE deleted_at IS NULL
-       ), drift AS (
-         SELECT atom.*,
-                -- a slug-unbound atom is never drift: its hash is over a file,
-                -- not a page, so the page probe is meaningless (#4806)
-                (atom.ss IS NOT NULL AND h.sh IS NULL) AS drifted,
-                (s.slug IS NOT NULL OR rs.slug IS NOT NULL) AS src_alive
-           FROM atom
-           LEFT JOIN live_hashes h ON h.source_id = atom.source_id AND h.sh = atom.sh
-           LEFT JOIN live_slugs  s ON s.source_id = atom.source_id AND s.slug = atom.ss
-           LEFT JOIN slug_aliases r ON s.slug IS NULL AND r.source_id = atom.source_id AND r.alias_slug = atom.ss AND r.notes = 'rename'
-           LEFT JOIN live_slugs rs ON rs.source_id = r.source_id AND rs.slug = r.canonical_slug
-       )
-       SELECT count(*) FILTER (WHERE ss IS NOT NULL) AS total,
-              count(*) FILTER (WHERE ss IS NULL) AS slug_unbound,
-              count(*) FILTER (WHERE drifted) AS drifted,
-              count(*) FILTER (WHERE drifted AND src_alive) AS source_changed,
-              -- drifted implies a slug binding, so "gone" is always a binding
-              -- that failed to resolve — never a slug-unbound atom (#4799)
-              count(*) FILTER (WHERE drifted AND NOT src_alive) AS source_gone,
-              -- lexicographic min of ISO-shaped strings ≈ chronological min
-              -- (oldest); informational only, never verdict-bearing
-              min(ext) FILTER (WHERE drifted) AS oldest_ext
-         FROM drift`,
-      [],
-    );
-    const r = rows?.[0];
+    const r = await engine.readAtomProvenanceCounts();
     if (!r) return { name, status: 'warn', message: 'atom provenance query returned no rows', details: { health: 'unknown' } };
 
     const num = (v: string | number | null | undefined) => (v == null ? 0 : Number(v));
@@ -975,28 +894,12 @@ export async function computeExtractHealthCheck(
     // at an EXPECTED budget/deadline cap — successful partial progress, not
     // failures. Pre-v141 brains lack the column; retry without it (caps read
     // as 0, i.e. "unknown" — old conflated halt rows keep today's semantics).
-    const rollupQuery = (withExpected: boolean) =>
-      `SELECT
-         kind,
-         SUM(cost_usd) AS cost_7d_usd,
-         SUM(eval_pass_count) AS eval_pass_count,
-         SUM(eval_fail_count) AS eval_fail_count,
-         SUM(halt_count) AS halt_count,
-         SUM(round_completed_count) AS round_completed_count,
-         ${withExpected ? 'SUM(expected_limit_count)' : '0'} AS expected_limit_count,
-         SUM(rollup_write_failures) AS rollup_write_failures,
-         MAX(updated_at) AS last_updated_at,
-         CURRENT_DATE - MAX(day) FILTER (WHERE halt_count > 0) AS last_halt_age_days
-       FROM extract_rollup_7d
-       WHERE day >= CURRENT_DATE - 7
-       GROUP BY kind
-       ORDER BY kind`;
     let rows: RollupRow[];
     try {
-      rows = await engine.executeRaw<RollupRow>(rollupQuery(true), []);
+      rows = await engine.readExtractRollup7d(true);
     } catch (err) {
       if (!isMissingSchemaObject(err, 'column', 'expected_limit_count')) throw err;
-      rows = await engine.executeRaw<RollupRow>(rollupQuery(false), []);
+      rows = await engine.readExtractRollup7d(false);
     }
     // #5495: recorded halt reasons per kind over the same 7 days (migration v239).
     const recordedReasons = await readRecordedHaltReasons7d(engine);
@@ -1321,9 +1224,9 @@ export async function checkSyncFreshness(
       const stopped = stoppedConnectors.get(source.id);
       if (stopped) { issues.push(stopped.issue); stale_count++; hasFailures ||= stopped.fail; hasWarnings ||= !stopped.fail; continue; }
       if (!source.last_sync_at) {
-        const never = contentDirectory ? receiptContentDirectory(contentDirectory, display) : await noSuccessfulSync(engine, source.id, display, managed);
+        const never = contentDirectory ? receiptContentDirectory(contentDirectory, display) : await noSuccessfulSync(engine, source.id, display, managed, now - failMs, stalenessCeilingSeconds * 1000);
         issues.push(never.issue); outcomes.push(never.entry);
-        hasFailures = true;
+        if (never.entry.code === 'sync_first_run_in_progress' || never.entry.code === 'sync_usage_limited') hasWarnings = true; else hasFailures = true;
         stale_count++;
         continue;
       }

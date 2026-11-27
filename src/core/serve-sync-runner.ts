@@ -66,6 +66,7 @@ import { trustedCliRequired } from './ops/op-fix.ts';
 import { withHumanLineSink } from './console-prefix.ts';
 import type { BrainEngine } from './engine.ts';
 import { registerBackgroundWorkDrainer } from './background-work.ts';
+import { isEngineCapabilityRefusal } from './engine-capability-refusal.ts';
 import {
   isSyncStartRegistration,
   toWireSyncResult,
@@ -135,9 +136,10 @@ const deferredEmbeds = new Map<BrainEngine, DeferredEmbeds>();
  * GBRA-133 2b.3: what the deferred-embed drain decided, oldest first (bounded), for tests and the serve log.
  * `retry` re-arms the drain after a pass left work (progress, a provider failure); `busy` defers while a delegated sync
  * runs, at most DEFERRED_EMBED_BUSY_MAX times in a row before `busy_override` drains beside it; `keyless` keeps the
- * backlog without a provider call or a timer.
+ * backlog without a provider call or a timer; `refused` keeps it, without a timer, when the engine refuses a read the
+ * drain needs (engine_capability_missing): retrying cannot help, and the refusal is logged instead of a failure.
  */
-export type DeferredEmbedDecision = { decision: 'drained' | 'retry' | 'busy' | 'busy_override' | 'keyless' | 'no_sources'; delayMs?: number; failures?: number; ms?: number };
+export type DeferredEmbedDecision = { decision: 'drained' | 'retry' | 'busy' | 'busy_override' | 'keyless' | 'no_sources' | 'refused'; delayMs?: number; failures?: number; ms?: number };
 export const deferredEmbedDecisions: DeferredEmbedDecision[] = [];
 const DEFERRED_EMBED_RETRY_TIERS = [1, 3, 12, 60];
 const DEFERRED_EMBED_BUSY_MAX = 3;
@@ -583,7 +585,7 @@ export async function maybeDrainDeferredEmbeds(engine: BrainEngine): Promise<voi
     const { companyBrainProfile, getCompanyBrainProfile } = await import('./company-brain/profile.ts');
     if (state.pending.has(undefined)) {
       state.pending.delete(undefined);
-      const sources = await engine.executeRaw<{ id: string; config: unknown }>('SELECT id,config FROM sources WHERE NOT archived');
+      const sources = await engine.listAllSources();
       for (const source of sources) if (!companyBrainProfile(source.config)) state.pending.add(source.id);
     }
     for (const source of [...state.pending]) if (source && await getCompanyBrainProfile(engine, source)) state.pending.delete(source);
@@ -611,6 +613,7 @@ export async function maybeDrainDeferredEmbeds(engine: BrainEngine): Promise<voi
         if (r.failures !== 0) failed = true;
       } catch (error) {
         state.pending.add(sourceId);
+        if (isEngineCapabilityRefusal(error)) throw error;
         failed = true;
         log(`embed-drain failed: ${error instanceof Error ? error.message : String(error)} source=${sourceId ?? 'all'} ms=${Math.round(performance.now() - sourceStart)}`);
       }
@@ -621,7 +624,14 @@ export async function maybeDrainDeferredEmbeds(engine: BrainEngine): Promise<voi
     const delayMs = deferredEmbedRetryMs() * DEFERRED_EMBED_RETRY_TIERS[Math.max(0, Math.min(state.failures, DEFERRED_EMBED_RETRY_TIERS.length) - 1)]!;
     decideDeferredEmbed({ decision: 'retry', delayMs, failures: state.failures, ms });
     armDeferredEmbeds(engine, state, delayMs);
-  })().catch(error => { log(`embed-drain failed: ${error instanceof Error ? error.message : String(error)}`); });
+  })().catch(error => {
+    if (isEngineCapabilityRefusal(error)) {
+      log(`embed-drain refused: ${error instanceof Error ? error.message : String(error)}`);
+      decideDeferredEmbed({ decision: 'refused' });
+      return;
+    }
+    log(`embed-drain failed: ${error instanceof Error ? error.message : String(error)}`);
+  });
   state.running = work;
   try { await work; }
   finally { if (state.running === work) state.running = undefined; }

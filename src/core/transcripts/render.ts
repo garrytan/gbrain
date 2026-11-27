@@ -45,6 +45,9 @@
 
 import { gbrainPath } from '../config.ts';
 import { dumpFrontmatterYaml } from '../data-frontmatter.ts';
+import { SPEAKER_OWNER_KEY, speakerOwnerFromTurns, type SpeakerOwnerMarker, type SpeakerOwnerStamp } from '../identity/speaker-owner.ts';
+
+export type { SpeakerOwnerStamp };
 import { join } from 'node:path';
 import { DEFAULT_BYTES_WARN } from '../content-sanity.ts';
 import { TRANSCRIPT_LANE_SCAN_OPTS, applyRedaction, planRedaction, trailingDanglingLabel, type EchoDictionary, type RedactionPlan } from '../secret-scan.ts';
@@ -53,7 +56,7 @@ import { loadPatterns } from '../skillpack/harvest-lint.ts';
 import { sanitizeForJsonb } from '../batch-rows.ts';
 import { ensureWellFormed } from '../text-safe.ts';
 import { neutralizeOutsideText } from '../outside-content.ts';
-import type { ParsedSession, TranscriptMessage } from './types.ts';
+import type { ParsedSession, TranscriptMessage, TranscriptSessionMeta } from './types.ts';
 import { buildTranscriptSlug, transcriptFullId, utcTimestamp } from './types.ts';
 
 // ── Shared line format (imessage-slack builtin; escaping lives in outside-content.ts) ──
@@ -305,6 +308,11 @@ function speakerLabel(m: TranscriptMessage): string {
   return cleaned || (m.role === 'user' ? 'User' : 'Assistant');
 }
 
+/** GST-3216: the speaker_owner marker for one page's messages, when the adapter showed the user-role turns are the owner's. */
+function speakerOwnerOf(messages: readonly TranscriptMessage[], basis: NonNullable<TranscriptSessionMeta['ownerBasis']>, member: string | null): SpeakerOwnerMarker | null {
+  return speakerOwnerFromTurns(messages.map((m) => ({ label: speakerLabel(m), owner: m.role === 'user' })), basis, member);
+}
+
 const utf8Bytes = (cp: number): number => (cp < 0x80 ? 1 : cp < 0x800 ? 2 : cp < 0x10000 ? 3 : 4);
 
 /**
@@ -374,7 +382,7 @@ export function transcriptPartId(meta: Pick<ParsedSession['meta'], 'harness' | '
  */
 export function renderSessionParts(
   redacted: RedactedSession,
-  opts: { sourcePath: string; partTargetBytes?: number; layout?: TranscriptLayout; existing?: boolean } = { sourcePath: '' },
+  opts: { sourcePath: string; partTargetBytes?: number; layout?: TranscriptLayout; existing?: boolean; owner?: SpeakerOwnerStamp } = { sourcePath: '' },
 ): RenderSessionResult {
   const partTargetBytes = opts.partTargetBytes ?? PART_TARGET_BYTES;
   if (!Number.isSafeInteger(partTargetBytes) || partTargetBytes <= 0) {
@@ -457,6 +465,8 @@ export function renderSessionParts(
         ...(imperatives > 0 ? { imperatives_flagged: imperatives } : {}),
       },
     };
+    const owner = opts.owner && meta.ownerBasis ? speakerOwnerOf([...new Set(group.map((b) => b.message))].map((i) => messages[i]!), meta.ownerBasis, opts.owner.member) : null;
+    if (owner) fm[SPEAKER_OWNER_KEY] = owner;
     const body = group.map((b) => b.text).join('\n\n');
     return { slug, content: renderPartContent(fm, body), frontmatterId, part, frontmatter: fm, body };
   });

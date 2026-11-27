@@ -16,6 +16,7 @@ import { invalidatePackCache, type ResolvedPack } from '../schema-pack/registry.
 import { SchemaPackManifestSchema } from '../schema-pack/manifest-v1.ts';
 import { runFilePlaneLintRules } from '../schema-pack/lint-rules.ts';
 import { inspectUncommitted, inspectionLimits, inventoryCommittedRevision, readCommittedBlob, resolveCommittedRevision, safeRepositoryPath } from './revision.ts';
+import { isOwnedRelPath } from '../owned-folder/paths.ts';
 import {
   COMPANY_BRAIN_MAX_METADATA_BYTES, COMPANY_BRAIN_PLAN_VERSION, COMPANY_BRAIN_PROFILE,
   type CompanyBrainPlan, type InspectCompanyBrainOptions, type InspectionEntry, type InspectionFinding,
@@ -91,6 +92,7 @@ function selectionPolicy(include: string[], exclude: string[]): (path: string) =
   const includes = include.map(pattern => new Bun.Glob(pattern));
   const excludes = exclude.map(pattern => new Bun.Glob(pattern));
   return path => {
+    if (isOwnedRelPath(path)) return 'owned_folder';
     if (excludes.some(glob => glob.match(path))) return 'explicit_exclude';
     if (includes.length) return includes.some(glob => glob.match(path)) ? null : 'outside_include';
     const parts = path.split('/');

@@ -24,7 +24,8 @@
  *   are re-read by every round.
  * - `sources` and `config`: the pass's context is fixed for the pass, and the level's settings are re-read by every round.
  * - Git: HEAD must equal the previous round's and the mode be committed (both are in the reuse key); `T` is cached by commit
- *   and the index (`X`) is re-read by every round. Working mode always takes the full read.
+ *   and the index (`X`) is re-read by every round. Working mode always takes the full read. GST-3534: a round whose HEAD
+ *   moved since the previous round proves that round's table as the next pass would (`across`, below).
  *
  * Visibility: a row is unchanged when S1 saw its writer commit. Its `xmin` is older than S1's `xmin` (`age(xmin) >
  * age(S1.xmin)`, both counted back from S2's transaction counter in the 32-bit xid space; `age` of a frozen id is the
@@ -43,7 +44,7 @@
  * empty. More than 2^31 xids between S1's `xmin` and S2's `xmax` takes the full read (`age` would wrap).
  *
  * Across passes (GBRA-133 wave 4, `across`; GBRA-108 widened Q4 under the same standing approval): the next pass's first round
- * reuses the `I⋈P` of the last round of a pass that ended synced in the same process (sync-tree-reuse.ts), with S1 that round's
+ * reuses the `I⋈P` of the last round of a pass that ended synced or resumable (GST-3534) in the same process (sync-tree-reuse.ts), with S1 that round's
  * mark. Nothing is attributed: every `pages` row S1 does not prove unchanged, from any writer, and the page of every import
  * record S1 does not prove unchanged are re-read, and the count of pages with an origin and the count of import records
  * must equal what the patched table accounts for (a deletion leaves no `xmin`). Only `I⋈P` is reused: holds, markers, open

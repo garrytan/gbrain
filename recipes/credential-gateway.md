@@ -134,13 +134,15 @@ Tell the user:
    - **Gmail** (for email-to-brain)
    - **Google Calendar** (for calendar-to-brain)
    - **Google Contacts** (for enrichment)
-4. Create a standing task with a broad purpose. CRITICAL: be EXPANSIVE.
+4. Create a standing task with the narrowest purpose that does the job,
+   stated plainly: what the agent reads, from which accounts, and why.
 
-   Good purpose: 'Full executive assistant access to Gmail, Calendar, and
-   Contacts including inbox triage, event listing, contact lookup, and
-   historical data access for all connected Google accounts.'
+   Example purpose: 'Read-only access to Gmail, Calendar, and Contacts in
+   the accounts I named, to file emails, meetings, and contacts into my
+   brain.'
 
-   Bad purpose: 'email triage' — too narrow, blocks legitimate requests.
+   If a request I actually need gets blocked, I'll tell you what was
+   blocked and we can widen the task then.
 
 5. Copy the **Gateway URL** and **Agent Token** and paste them to me"
 
@@ -189,10 +191,10 @@ to `~/.gbrain/integrations/google/heartbeat.jsonl` — no manual heartbeat neede
    work@example.com` per account; each gets its own vault entry and its own
    source. ClawVisor handles multiple accounts on its side.
 
-5. **ClawVisor task purpose must be EXPANSIVE.** "Email triage" is too narrow and
-   blocks legitimate requests. Use a broad purpose that covers everything you
-   might want to do with email. The intent verification model checks each
-   request against the purpose. Narrow = blocked.
+5. **Keep the ClawVisor task purpose narrow and plain.** The intent
+   verification model checks each request against the purpose. Ask for what
+   the job needs, not more; when a needed request is blocked, tell the user
+   what was blocked and widen the task then, with their agreement.
 
 ## How to Verify
 

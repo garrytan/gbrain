@@ -45,6 +45,25 @@ impl Brain {
         })
     }
 
+    /// `listBudgetLimitedRows(sourceId, signature)`: the held and capped large pages' waiting chunks by source, state and reason.
+    #[napi]
+    pub fn list_budget_limited_rows<'env>(
+        &self,
+        env: &'env Env,
+        source_id: Option<String>,
+        signature: Option<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.list_budget_limited_rows(source_id.as_deref(), signature.as_deref())
+        })
+    }
+
+    /// `readBudgetHoldAge()`: `{ stale, oldest }` of the applying budget holds.
+    #[napi]
+    pub fn read_budget_hold_age<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_budget_hold_age())
+    }
+
     /// `countStaleChunks({ sourceId?, signature?, includeNullSignature? }?)`.
     #[napi]
     pub fn count_stale_chunks<'env>(
@@ -55,6 +74,16 @@ impl Brain {
         self.run(env, move |s| {
             s.count_stale_chunks(&arg(options, "countStaleChunks options")?)
         })
+    }
+
+    /// `readUnembeddedPageSummary(sourceId)`: `{ pages, oldest, held }`.
+    #[napi]
+    pub fn read_unembedded_page_summary<'env>(
+        &self,
+        env: &'env Env,
+        source_id: String,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_unembedded_page_summary(&source_id))
     }
 
     /// `sumStaleChunkChars({ sourceId?, signature?, includeNullSignature? }?)`.
@@ -93,6 +122,22 @@ impl Brain {
         self.run(env, move |s| {
             let options = required(options, "setPageEmbeddingSignature options")?;
             s.set_page_embedding_signature(&slug, &options)
+        })
+    }
+
+    /// `readPageProvenanceComplete(slug, sourceId, model, dims)`: whether every visible chunk of
+    /// the page holds a vector current for `model` at `dims` wide.
+    #[napi]
+    pub fn read_page_provenance_complete<'env>(
+        &self,
+        env: &'env Env,
+        slug: String,
+        source_id: String,
+        model: String,
+        dims: Option<u32>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_page_provenance_complete(&slug, &source_id, &model, dims)
         })
     }
 

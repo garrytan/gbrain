@@ -57,6 +57,7 @@ async function lastSyncAt(sourceId: string): Promise<Date | string | null> {
  * every `executeRaw` SQL string so a test can assert the stamp's
  * characteristic SELECT was never issued at all.
  */
+/** Records each raw SQL statement, and each call of the typed members the freshness block uses as `member:<name>`. */
 function spyOnExecuteRaw(real: PGLiteEngine): { engine: PGLiteEngine; calls: string[] } {
   const calls: string[] = [];
   const proxy = new Proxy(real, {
@@ -66,6 +67,12 @@ function spyOnExecuteRaw(real: PGLiteEngine): { engine: PGLiteEngine; calls: str
         return (sql: string, ...rest: unknown[]) => {
           calls.push(sql);
           return (value as (...args: unknown[]) => unknown).call(target, sql, ...rest);
+        };
+      }
+      if ((prop === 'readSourceRow' || prop === 'markSourceSynced') && typeof value === 'function') {
+        return (...args: unknown[]) => {
+          calls.push(`member:${String(prop)}`);
+          return (value as (...a: unknown[]) => unknown).apply(target, args);
         };
       }
       return typeof value === 'function' ? value.bind(target) : value;
@@ -332,6 +339,8 @@ describe('import stamps sources.last_sync_at for a local_path-registered source 
       const result = await runImport(spied, [repo, '--no-embed', '--json']);
       expect(result.failures.length).toBe(0);
       expect(calls.some((sql) => sql.includes('SELECT local_path, config FROM sources'))).toBe(false);
+      expect(calls).not.toContain('member:readSourceRow');
+      expect(calls).not.toContain('member:markSourceSynced');
       expect(await lastSyncAt('default')).toBeNull();
     });
   });

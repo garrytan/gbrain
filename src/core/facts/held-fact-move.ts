@@ -12,9 +12,8 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import { opError, OperationError, type OperationContext } from '../ops/contract.ts';
-import { folderHoldingSlug, holdingSlugSql, isHoldingSlug, UNATTRIBUTED_MEMORY_SLUG } from '../facts-fence.ts';
+import { folderHoldingSlug, isHoldingSlug, UNATTRIBUTED_MEMORY_SLUG } from '../facts-fence.ts';
 import { maintenancePreflight, planHeldRowDrop, submitMaintenanceIntent, submitPlannedFactFenceAdoption, type HeldDrop } from '../persistence/prepared-maintenance.ts';
-import { privatePagesFilterFragment } from '../search/private-visibility.ts';
 import { getWorktreeBinding } from '../persistence/ownership.ts';
 import { assertStrictGitHome } from '../persistence/git-declared.ts';
 import { isConnectionEnd, isStatementTimeout, PreparationDeadlineError } from '../persistence/bounded-reads.ts';
@@ -23,6 +22,8 @@ import { transientDatabaseFailure, transientInterruption } from '../persistence/
 import { registerEngineView } from '../persistence/switches.ts';
 import { syncPreparationBudgetMs } from '../persistence/sync-waivers.ts';
 import { requestConfigValue } from '../config-snapshot.ts';
+import { rethrowCapabilityMissing } from '../rust-engine/errors.ts';
+import { lacksRawSql } from '../engine-capabilities.ts';
 import { isFenceHold, pageHasFile, planManagedPage, type UnfencedFactRow } from './unfenced-facts.ts';
 
 export interface HeldFactMoveOutcome {
@@ -53,8 +54,10 @@ export async function holdingHome(engine: BrainEngine, sourceId: string, entity:
   Promise<{ slug: string } | { refused: 'page_rule' | 'access_unreadable' } | null> {
   if ((await getWorktreeBinding(engine, sourceId))?.canonical_git !== true) return null;
   if (/^(false|0|off|no)$/i.test(await engine.getConfig('sync.write_through') ?? 'true')) return null;
-  if (entity !== null && entity !== UNATTRIBUTED_MEMORY_SLUG
-    && (await engine.executeRaw('SELECT 1 FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NOT NULL', [sourceId, entity])).length) return null;
+  // The SQL engines read it deadline-bound (planningView); the Rust engine, which runs no raw SQL, reads the snapshot.
+  if (entity !== null && entity !== UNATTRIBUTED_MEMORY_SLUG && (lacksRawSql(engine)
+    ? !!(await engine.readPageSnapshot(entity, { sourceId, includeDeleted: true }))?.page.deleted_at
+    : await engine.heldEntityPageDeleted(sourceId, entity))) return null;
   return holdingPageFor(engine, sourceId, entity);
 }
 
@@ -62,13 +65,11 @@ export async function holdingHome(engine: BrainEngine, sourceId: string, entity:
 export async function holdingPageFor(engine: BrainEngine, sourceId: string, entity: string | null):
   Promise<{ slug: string } | { refused: 'page_rule' | 'access_unreadable' }> {
   if (entity === null || entity === UNATTRIBUTED_MEMORY_SLUG) return { slug: UNATTRIBUTED_MEMORY_SLUG };
-  const access = await engine.executeRaw<{ unreadable: boolean; page_rule: boolean; restricted: boolean }>(
-    `SELECT gbrain_access_state_unreadable() AS unreadable,
-       (EXISTS (SELECT 1 FROM access_rules r WHERE r.source_id=$1 AND r.prefix=$2)
-         OR EXISTS (SELECT 1 FROM access_pending_coverage c WHERE c.source_id=$1 AND c.prefix=$2)) AS page_rule,
-       (gbrain_access_folder_rules($1, $2) IS NOT NULL OR gbrain_access_pending_covers($1, $2)) AS restricted`, [sourceId, entity]).catch((error: unknown) => {
+  const access = await engine.readHeldAccessState(sourceId, entity).catch((error: unknown) => {
     // GST-2667: an error the persistence consumer prepares again (a cancel, a stale plan, contention, a lost connection) is rethrown, never a refusal.
     if (error instanceof PreparationDeadlineError || transientDatabaseFailure(error) || transientInterruption(error)) throw error;
+    // An engine without raw SQL refuses the access read by name; that is never a folder-access refusal, so it stops the caller.
+    rethrowCapabilityMissing(error);
     return null;
   });
   const row = access?.[0];
@@ -83,7 +84,7 @@ export async function holdingPageFor(engine: BrainEngine, sourceId: string, enti
  * the candidates are named. Null: no page yet.
  */
 export async function heldFactTarget(engine: BrainEngine, sourceId: string, key: string): Promise<{ slug: string } | { ambiguous: string[] } | null> {
-  if ((await engine.executeRaw('SELECT 1 FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL', [sourceId, key])).length) return { slug: key };
+  if (await engine.heldTargetPageLive(sourceId, key)) return { slug: key };
   if (key.includes('/')) return null;
   const { entityReferenceCandidates, resolveStrictEntityReference } = await import('../entities/resolve.ts');
   const strict = await resolveStrictEntityReference(engine, sourceId, key, { sameName: true });
@@ -164,18 +165,9 @@ export interface HeldMoveGroup {
  */
 export async function planHeldMoves(engine: BrainEngine, sourceId: string, opts: { home?: (key: string) => Promise<HoldingHome>; hidden?: (slug: string) => boolean } = {}):
   Promise<{ groups: HeldMoveGroup[]; unmovable: HeldFactMoveOutcome['unmovable'] }> {
-  const onHolding = `f.source_id = $1 AND f.source_markdown_slug IN (SELECT hp.slug FROM pages hp WHERE hp.source_id = $1 AND ${holdingSlugSql('hp.slug')})
-    AND f.row_num IS NOT NULL AND f.dimension IS NULL AND f.entity_slug IS NOT NULL AND NOT ${holdingSlugSql('f.entity_slug')}`;
-  const rows = await engine.executeRaw<HeldRow>(
-    `SELECT id, source_id, entity_slug, fact, kind, visibility, notability, context, valid_from, valid_until, source, confidence,
-            claim_metric, claim_value, claim_unit, claim_period, attributed_to, true AS page_exists, source_markdown_slug AS from_slug
-       FROM facts f WHERE ${onHolding} AND f.expired_at IS NULL ORDER BY f.source_markdown_slug COLLATE "C", f.entity_slug COLLATE "C", f.id`, [sourceId]);
+  const rows = await engine.listHeldMoveRows(sourceId);
   // A struck row keeps its facts row (expired) at its row number; one an active fact reuses is not struck.
-  const struck = await engine.executeRaw<{ from_slug: string; entity_slug: string; row_num: number; fact: string }>(
-    `SELECT DISTINCT ON (f.source_markdown_slug COLLATE "C", f.row_num) f.source_markdown_slug AS from_slug, f.entity_slug, f.row_num, f.fact FROM facts f
-      WHERE ${onHolding} AND f.expired_at IS NOT NULL AND NOT EXISTS (SELECT 1 FROM facts a WHERE a.source_id = f.source_id
-        AND a.source_markdown_slug = f.source_markdown_slug AND a.row_num = f.row_num AND a.expired_at IS NULL)
-      ORDER BY f.source_markdown_slug COLLATE "C", f.row_num, f.id DESC`, [sourceId]);
+  const struck = await engine.listStruckHeldRows(sourceId);
   const keys = new Map<string, { from: string; key: string; group: HeldRow[]; struck: HeldDrop[] }>();
   const at = (from: string, key: string) => keys.get(`${from}\0${key}`) ?? keys.set(`${from}\0${key}`, { from, key, group: [], struck: [] }).get(`${from}\0${key}`)!;
   for (const row of rows) at(row.from_slug, row.entity_slug!).group.push(row);
@@ -190,8 +182,7 @@ export async function planHeldMoves(engine: BrainEngine, sourceId: string, opts:
     }
     // A fact moved into a page not every reader of the source can read, or off a folder's holding page, leaves the
     // holding page with no trace of where it went.
-    const [page] = dest.kind === 'page' && from === UNATTRIBUTED_MEMORY_SLUG && !opts.hidden?.(dest.slug) ? await engine.executeRaw<{ visible: boolean }>(
-      `SELECT ${privatePagesFilterFragment('p')} AS visible FROM pages p WHERE p.source_id=$1 AND p.slug=$2 AND p.deleted_at IS NULL`, [sourceId, dest.slug]) : [];
+    const page = dest.kind === 'page' && from === UNATTRIBUTED_MEMORY_SLUG && !opts.hidden?.(dest.slug) ? await engine.readHeldRowVisibility(sourceId, dest.slug) : null;
     const note = page?.visible === true ? `moved to ${dest.slug}` : 'moved';
     if (group.length) plan.groups.push({ slug: dest.slug, kind: dest.kind, from, key, group, note, struck: note === 'moved' ? withdrawn : [] });
     else if (note === 'moved') plan.groups.push({ slug: from, kind: 'drop', from, key, group, note, struck: withdrawn });
@@ -219,12 +210,7 @@ export function heldMoveIncomplete(held: Pick<HeldFactMoveOutcome, 'segmented_pa
 export async function moveRuledSharedHeld(engine: BrainEngine, sourceId: string): Promise<HeldFactMoveOutcome | null> {
   const budget = await syncPreparationBudgetMs(engine);
   const planning = planningView(engine, Date.now() + budget);
-  const [due] = await planning.executeRaw<{ due: boolean }>(`SELECT EXISTS (SELECT 1 FROM facts f WHERE f.source_id = $1
-      AND f.source_markdown_slug IN (SELECT hp.slug FROM pages hp WHERE hp.source_id = $1 AND ${holdingSlugSql('hp.slug')})
-      AND f.row_num IS NOT NULL AND f.dimension IS NULL AND f.entity_slug IS NOT NULL AND NOT ${holdingSlugSql('f.entity_slug')}
-      AND (NOT COALESCE(gbrain_access_folder_rules(f.source_id, f.entity_slug), '{}') <@ COALESCE(gbrain_access_folder_rules(f.source_id, f.source_markdown_slug), '{}')
-        OR (gbrain_access_pending_covers(f.source_id, f.entity_slug) AND NOT gbrain_access_pending_covers(f.source_id, f.source_markdown_slug)))) AS due`, [sourceId]);
-  return due?.due ? moveHeldFacts(engine, sourceId, { planning, timeoutMs: budget }) : null;
+  return await planning.heldMoveDue(sourceId) ? moveHeldFacts(engine, sourceId, { planning, timeoutMs: budget }) : null;
 }
 
 /**
@@ -232,6 +218,12 @@ export async function moveRuledSharedHeld(engine: BrainEngine, sourceId: string)
  * holdingHome's config read included, ends on the server at `deadlineAt` (its wait for a pool connection too), and one ended there rejects as a
  * PreparationDeadlineError. PGLite plans on the engine.
  */
+/** The entity resolver's typed reads (entities/resolve.ts) a plan reaches through heldFactTarget: once raw statements, each takes the plan's deadline. */
+const PLAN_TYPED_READS = new Set(['readLivePageTypes', 'readTrigramCandidates', 'readNamedEntitySlugs', 'readPrefixCandidates', 'readRetirementHop', 'readLiveSlugs', 'readPrefixDirs', 'readPrefixTitleMatches',
+  'findExactBasenameCandidates', 'findFuzzyEntityCandidates']);
+const DEADLINE_BOUND: ReadonlySet<PropertyKey> = new Set(['resolveAliases', 'heldEntityPageDeleted', 'readHeldAccessState', 'heldTargetPageLive', 'listHeldMoveRows',
+  'listStruckHeldRows', 'readHeldRowVisibility', 'heldMoveDue', 'readHeldConfigValue']);
+
 function planningView(engine: BrainEngine, deadlineAt: number): BrainEngine {
   if (engine.kind !== 'postgres') return engine;
   // #6040: the deadline also ends the wait for a free connection, which reads queued on the same lock can hold (#8155).
@@ -247,11 +239,12 @@ function planningView(engine: BrainEngine, deadlineAt: number): BrainEngine {
       }
     };
     const value = Reflect.get(target, key, target);
-    // The alias read runs on the engine's own executeRaw: bound to the view, it takes the deadline too.
-    if (key === 'resolveAliases') return value.bind(view);
-    // holdingHome's writer-binding read is a typed member: the engine ends it at the same deadline.
-    if (key === 'getWorktreeBinding') return (sourceId: string, hostId: string | null) =>
-      withReadDeadline(deadlineAt, () => target.getWorktreeBinding(sourceId, hostId)).catch((error: unknown) => {
+    // The alias read and each held-move read run on the engine's own executeRaw: bound to the view, they take the deadline too.
+    if (DEADLINE_BOUND.has(key)) return value.bind(view);
+    // holdingHome's writer-binding read and the strict resolver's typed reads (heldFactTarget) are typed members: the
+    // engine ends each at the same deadline.
+    if (key === 'getWorktreeBinding' || (typeof key === 'string' && PLAN_TYPED_READS.has(key))) return (...args: unknown[]) =>
+      withReadDeadline(deadlineAt, () => (value as (...a: unknown[]) => Promise<unknown>).apply(target, args)).catch((error: unknown) => {
         if (error instanceof ReadDeadlineError) throw new PreparationDeadlineError('held_move_plan', null, error);
         if (isStatementTimeout(error)) throw new PreparationDeadlineError('held_move_plan', error.code, error);
         throw error;
@@ -259,8 +252,7 @@ function planningView(engine: BrainEngine, deadlineAt: number): BrainEngine {
     if (key === 'getConfig') return async (name: string) => {
       const held = await requestConfigValue(target, name);
       if (held !== undefined) return held;
-      const [row] = await view.executeRaw<{ value: string }>('SELECT value FROM config WHERE key = $1', [name]);
-      return row?.value ?? null;
+      return view.readHeldConfigValue(name);
     };
     return typeof value === 'function' ? value.bind(target) : value;
   } }), engine);
@@ -298,13 +290,11 @@ export async function moveHeldFacts(engine: BrainEngine, sourceId: string, bound
           }
         }
         if (kind === 'rehome') await ensurePageForHeldRows(engine, sourceId, slug);
-        const [page] = await engine.executeRaw<{ source_path: string | null; source_uri: string | null }>(
-          'SELECT source_path, source_uri FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL', [sourceId, slug], reads);
+        const page = await engine.readHeldPageLocation(sourceId, slug, reads);
         if (!page) { unmovable(slug, group.map(r => r.id), kind === 'rehome' ? 'holding_page_deleted' : 'entity_page_deleted'); continue; }
         // A held row in Git moved into a page kept out of Git would be struck there with no file holding the fact; a row
         // re-homed because a folder rule now covers it moves whatever the folder's storage class (the rule applies at once).
-        const [held] = await engine.executeRaw<{ source_path: string | null; source_uri: string | null }>(
-          'SELECT source_path, source_uri FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL', [sourceId, from], reads);
+        const held = await engine.readHeldPageLocation(sourceId, from, reads);
         if (kind !== 'rehome' && held && await pageHasFile(engine, sourceId, from, held) && !await pageHasFile(engine, sourceId, slug, page)) {
           unmovable(slug, group.map(r => r.id), 'entity_page_database_only'); continue;
         }
@@ -320,9 +310,7 @@ export async function moveHeldFacts(engine: BrainEngine, sourceId: string, bound
         if (kind === 'rehome') outcome.rehomed += plan.fence.assignments.length;
         else { outcome.moved += plan.fence.assignments.length; outcome.moved_slugs.push(slug); }
       }
-      const [edited] = await engine.executeRaw<{ n: number | null }>(`SELECT (outcome->'held_versions_edited'->>'segmented_versions_not_edited')::int AS n
-        FROM persistence_requests WHERE request_id = $1::uuid`, [requestId]);
-      const n = Number(edited?.n ?? 0), seen = outcome.segmented_pages.find(p => p.slug === from);
+      const n = await engine.readHeldVersionsEdited(requestId!), seen = outcome.segmented_pages.find(p => p.slug === from);
       if (n && seen) seen.versions = Math.max(seen.versions, n);
       else if (n) outcome.segmented_pages.push({ slug: from, versions: n });
       outcome.segmented_versions_not_edited = Math.max(outcome.segmented_versions_not_edited, n);

@@ -7,7 +7,7 @@
 import type { RustEngine } from '../../rust-engine.ts';
 import type { StoreBrain } from '../store.ts';
 import { mapStoreError } from '../store-errors.ts';
-import type { ExportPageKey, ExportPageKeyQuery, ExportPageRow, ExportWithdrawalRow, NormalizedFenceLines, SegmentedPageHead, BodyManifestRow, BodyManifestMeta, BodyManifestOutline } from '../../engine-sql/export-reads.ts';
+import type { ExportPageKey, ExportPageKeyQuery, ExportPageRow, ExportWithdrawalRow, FactPurgeTombstone, TakePurgeTombstone, NormalizedFenceLines, SegmentedPageHead, BodyManifestRow, BodyManifestMeta, BodyManifestOutline } from '../../engine-sql/export-reads.ts';
 import { toGetPage, withDates } from '../store-codec.ts';
 import { storeCall, type StoreMember } from './common.ts';
 
@@ -29,13 +29,17 @@ export const readExportWithdrawalLedgerBytes: StoreMember<[sourceId: string], nu
   storeCall({ member: 'readExportWithdrawalLedgerBytes', sourceId }, () => brain.readExportWithdrawalLedgerBytes(sourceId));
 
 /**
- * The source's withdrawals by visibility, fact hash and subject (`cli_reads::export::list_export_withdrawals`). The store
- * keeps no purge tombstones, so every row has `purged` false. `withdrawn_at` comes back a Date, as on PGLite.
+ * The source's withdrawals and fact purge tombstones (`purged` true) by visibility, fact hash and subject
+ * (`cli_reads::export::list_export_withdrawals`). `withdrawn_at` comes back a Date, as on PGLite.
  */
 export const listExportWithdrawals: StoreMember<[sourceId: string], ExportWithdrawalRow[]> = async (brain, sourceId) => {
   const rows: ExportWithdrawalRow[] = await storeCall({ member: 'listExportWithdrawals', sourceId }, () => brain.listExportWithdrawals(sourceId));
   return rows.map(row => withDates(row, ['withdrawn_at']));
 };
+
+/** The source's fact and take purge tombstones with request id, actor and reason, in byte order (`cli_reads::export::list_purge_tombstones`). */
+export const listPurgeTombstones: StoreMember<[sourceId: string], { facts: FactPurgeTombstone[]; takes: TakePurgeTombstone[] }> = async (brain, sourceId) =>
+  await storeCall({ member: 'listPurgeTombstones', sourceId }, () => brain.listPurgeTombstones(sourceId)) as { facts: FactPurgeTombstone[]; takes: TakePurgeTombstone[] };
 
 /** The live pages among `ids` with their tags, each page as `getPage` returns it (`cli_reads::export::read_export_page_rows`). */
 export const readExportPageRows: StoreMember<[ids: readonly string[]], ExportPageRow[]> = async (brain, ids) => {
@@ -65,7 +69,7 @@ export const readBodyManifestRows: StoreMember<[pageId: number, generation: numb
 export const readBodyManifestMeta: StoreMember<[pageId: number, occurrenceIds: readonly number[], generation: number], BodyManifestMeta[]> = (brain, pageId, occurrenceIds, generation) =>
   storeCall({ member: 'readBodyManifestMeta' }, () => brain.readBodyManifestMeta(pageId, [...occurrenceIds], generation));
 
-/** The sources with an access policy (`cli_reads::export::list_access_policy_source_ids`): none, as the store keeps no folder rules. */
+/** The sources with access state, by id (`cli_reads::export::list_access_policy_source_ids`, `access_policy_state`). */
 export const listAccessPolicySourceIds: StoreMember<[], string[]> = (brain) =>
   storeCall({ member: 'listAccessPolicySourceIds' }, () => brain.listAccessPolicySourceIds());
 
@@ -84,3 +88,4 @@ export const readManifestSeqAt: StoreMember<[pageId: number, generation: number,
 /** A segmented body read: the size the newest segmented version of a generation records (`cli_reads::export::read_segmented_version_body_bytes`). */
 export const readSegmentedVersionBodyBytes: StoreMember<[pageId: number, generation: number], number | null> = async (brain, pageId, generation) =>
   (await storeCall({ member: 'readSegmentedVersionBodyBytes' }, () => brain.readSegmentedVersionBodyBytes(pageId, generation))) ?? null;
+

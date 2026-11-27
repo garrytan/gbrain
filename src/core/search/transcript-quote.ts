@@ -121,7 +121,7 @@ export function isQuotedFactSource(source: string | null | undefined): boolean {
  * The page the facts backstop names in `source_session` for each provenance it writes: `sync:<slug>` for a synced
  * page (commands/sync/finalize.ts) and `put_page:<slug>` for a written one (persistence/effect-facts.ts).
  */
-const BACKSTOP_SESSION_PREFIXES: ReadonlyArray<readonly [source: string, prefix: string]> = [['sync:import', 'sync:'], ['mcp:put_page', 'put_page:']];
+const BACKSTOP_SESSION_PREFIXES: readonly [readonly [source: string, prefix: string], readonly [source: string, prefix: string]] = [['sync:import', 'sync:'], ['mcp:put_page', 'put_page:']];
 
 /**
  * Of `ids`, the facts taken from a page whose type holds third-party text, in the fact's own source: the page that

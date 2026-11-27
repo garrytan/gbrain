@@ -22,14 +22,14 @@
 import type { BrainEngine } from '../engine.ts';
 import type { Page } from '../types.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
-import type { JsonObject, SegmentedPageMeta } from '../page-body/types.ts';
+import type { SegmentedPageMeta } from '../page-body/types.ts';
 import type { PreparedSegmentedBody, SegmentChunkingContext, SegmentedLivePage, SegmentedStagingOwner } from '../page-body/ingest.ts';
 import { materializeSegmentedBody, prepareSegmentedBody, segmentWriteScope, stringBodyFlags, stringRegion } from '../page-body/ingest.ts';
 import { buildSegmentedProjection } from '../page-body/projection.ts';
 import { maintenanceAttribution } from './attribution.ts';
 import { readPageBodyPolicy, chooseBodyStorage, SEGMENTED_DEMOTE_AT_OR_BELOW_BYTES, type PageBodyPolicy } from '../page-body/limits.ts';
 import { PAGE_MAX_BYTES } from '../page-size-policy.ts';
-import { overlayCanonicalBodies } from '../page-state/snapshot.ts';
+import { overlayCanonicalBodiesTyped } from '../page-state/snapshot.ts';
 import { faultPoint } from './fault-points.ts';
 import { bodyStagingGoneError, LIVE_STAGING_STATES } from '../engine-sql/page-body.ts';
 import { segmentedPageSearchable } from './searchable.ts';
@@ -54,9 +54,8 @@ export function bodyStorageOf(page: object | null | undefined): 'inline' | 'segm
 }
 
 /** The live page a segmented write diffs against, read by id (metadata only). */
-export async function segmentedLivePage(engine: Pick<BrainEngine, 'executeRaw'>, pageId: number): Promise<SegmentedLivePage> {
-  const [row] = await engine.executeRaw<{ id: number; body_generation: number | string; body_storage: string; title: string; type: string; body_flags: JsonObject | null }>(
-    'SELECT id, body_generation, body_storage, title, type, body_flags FROM pages WHERE id=$1', [pageId]);
+export async function segmentedLivePage(engine: Pick<BrainEngine, 'readSegmentedLivePage'>, pageId: number): Promise<SegmentedLivePage> {
+  const row = await engine.readSegmentedLivePage(pageId);
   if (!row) throw new Error(`Page ${pageId} not found.`);
   return { id: Number(row.id), generation: Number(row.body_generation), storage: row.body_storage === 'segmented' ? 'segmented' : 'inline', title: row.title, type: row.type,
     flags: row.body_flags };
@@ -106,7 +105,7 @@ export async function materializedSnapshot(engine: BrainEngine, snapshot: PageSn
     throw new OperationError('revision_conflict', PAGE_CHANGED_DURING_PREPARATION_MESSAGE, 'Read its current revision and submit the updated intent with a new request_id.');
   });
   if (page === snapshot.page) return snapshot;
-  Object.assign(page, await overlayCanonicalBodies(engine.executeRaw.bind(engine), page.compiled_truth, page.timeline ?? '', snapshot.withdrawals,
+  Object.assign(page, await overlayCanonicalBodiesTyped(engine, page.compiled_truth, page.timeline ?? '', snapshot.withdrawals,
     { sourceId: page.source_id, marker: snapshot.globalPurges }));
   return { ...snapshot, page };
 }
@@ -167,8 +166,8 @@ export async function applySegmentedBody(tx: BrainEngine, input: SegmentedApplyI
   if (prepared.createRows) {
     // A create inserts its manifest rows before the flip checks its staging: a staging a fact purge aborted (and whose
     // claim-bearing texts it deleted) refuses here, not on the manifest's text foreign key.
-    const [staging] = await tx.executeRaw<{ state: string }>('SELECT state FROM page_body_stagings WHERE id=$1::uuid FOR UPDATE', [prepared.stagingId]);
-    if (!LIVE_STAGING_STATES.includes(staging?.state ?? '')) throw bodyStagingGoneError(input.slug, prepared.stagingId, staging?.state ?? null);
+    const state = await tx.lockBodyStagingState(prepared.stagingId);
+    if (!LIVE_STAGING_STATES.includes(state ?? '')) throw bodyStagingGoneError(input.slug, prepared.stagingId, state);
     pageId = (await tx.createSegmentedPageShell(input.slug, input.meta, { sourceId: input.sourceId })).id;
     await tx.stageManifestRows(prepared.createRows.map(row => ({ ...row, pageId: pageId! })));
   }
@@ -176,8 +175,7 @@ export async function applySegmentedBody(tx: BrainEngine, input: SegmentedApplyI
   const flip = await tx.flipBodyGeneration({ pageId, expectedGeneration: prepared.expectedGeneration, newGeneration: prepared.newGeneration,
     stagingId: prepared.stagingId, closeOccurrences: prepared.closeOccurrences, retireChunkOccurrences: prepared.retireChunkOccurrences,
     retireInlineChunks: input.promotion, retireMaxRows: input.retireMaxRows, body: prepared.body, meta: input.meta });
-  if (!prepared.createRows) await tx.executeRaw('DELETE FROM content_chunks WHERE page_id=$1 AND body_generation=$2 AND NOT (chunk_index = ANY($3::int[]))',
-    [pageId, prepared.newGeneration, prepared.stagedChunkIndexes]);
+  if (!prepared.createRows) await tx.deleteUnstagedSegmentChunks(pageId, prepared.newGeneration, prepared.stagedChunkIndexes);
   const createChunks = prepared.createChunks?.slug === input.slug ? prepared.createChunks.chunks : null;
   if (createChunks?.length) await tx.stageSegmentChunks(pageId, prepared.newGeneration, createChunks);
   await faultPoint('segmented:flipped', { sourceId: input.sourceId });

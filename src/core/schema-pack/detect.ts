@@ -104,56 +104,15 @@ export async function runDetect(
   const minPagesPerPrefix = opts.minPagesPerPrefix ?? 5;
   const maxTypes = opts.maxTypes ?? 50;
 
-  // Total + null-type counts (the schema-mismatch signal Persona A needs).
-  const totals = await engine.executeRaw<{ total: string | number; untyped: string | number; typed: string | number }>(
-    `SELECT
-       COUNT(*)::text AS total,
-       COUNT(*) FILTER (WHERE type IS NULL OR type = '')::text AS untyped,
-       COUNT(*) FILTER (WHERE type IS NOT NULL AND type != '')::text AS typed
-     FROM pages
-     WHERE source_id = $1 AND deleted_at IS NULL`,
-    [sourceId],
-  );
-  const total_pages = Number(totals[0]?.total ?? 0);
-  const untyped_pages = Number(totals[0]?.untyped ?? 0);
-  const typed_pages = Number(totals[0]?.typed ?? 0);
+  // Total + untyped counts (the schema-mismatch signal Persona A needs).
+  const { total: total_pages, untyped: untyped_pages, typed: typed_pages } = await engine.pageTypeTotals(sourceId);
 
-  // Per-prefix distribution via the existing substring extraction primitive
-  // (already used by whoknows/find_experts; sub-second on 50K-row brains
-  // per the engine audit in /plan-eng-review section 4).
-  const prefixRows = await engine.executeRaw<{ prefix: string; cnt: string | number; sample_types: string | string[] | null }>(
-    `SELECT
-       substring(slug from '^[^/]+/') AS prefix,
-       COUNT(*)::text AS cnt,
-       array_agg(DISTINCT type) FILTER (WHERE type IS NOT NULL AND type != '') AS sample_types
-     FROM pages
-     WHERE source_id = $1
-       AND deleted_at IS NULL
-       AND slug LIKE '%/%'
-     GROUP BY substring(slug from '^[^/]+/')
-     HAVING COUNT(*) >= $2
-     ORDER BY COUNT(*) DESC
-     LIMIT $3`,
-    [sourceId, minPagesPerPrefix, maxTypes],
-  );
-
-  const prefixes: PrefixRow[] = prefixRows.map((r) => ({
-    prefix: r.prefix,
-    cnt: Number(r.cnt),
-    sample_types: Array.isArray(r.sample_types) ? r.sample_types : [],
-  }));
+  // Per-prefix distribution (the slug up to its first '/'), largest first, with the page types under each prefix in
+  // byte order (engine-sql/schema-detect.ts).
+  const prefixes: PrefixRow[] = await engine.pagePrefixSamples(sourceId, minPagesPerPrefix, maxTypes);
 
   // Per-type distribution (informational; mostly used by suggest in T3).
-  const typeRows = await engine.executeRaw<{ type: string; cnt: string | number }>(
-    `SELECT type, COUNT(*)::text AS cnt
-     FROM pages
-     WHERE source_id = $1 AND deleted_at IS NULL AND type IS NOT NULL AND type != ''
-     GROUP BY type
-     ORDER BY COUNT(*) DESC
-     LIMIT 100`,
-    [sourceId],
-  );
-  const types: TypeRow[] = typeRows.map((r) => ({ type: r.type, cnt: Number(r.cnt) }));
+  const types: TypeRow[] = await engine.countPagesByTypeForSource(sourceId, 100);
 
   const candidate = buildCandidate({ prefixes, types, minPagesPerPrefix, maxTypes });
 

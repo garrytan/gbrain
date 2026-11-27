@@ -31,6 +31,7 @@ import type { BrainEngine } from '../core/engine.ts';
 import { configDir } from '../core/config.ts';
 import { hashToken } from '../core/utils.ts';
 import { opError } from '../core/ops/contract.ts';
+import { sqlEngineKind } from '../core/sql-engine-kind.ts';
 import { usageError } from '../cli/cli-error.ts';
 import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { normalizeRule, ruleIdForPrefix, type FolderRule } from '../core/access/folder-rules.ts';
@@ -132,12 +133,12 @@ async function planOwner(engine: BrainEngine, requested: string): Promise<NonNul
 }
 
 /** Live tokens and OAuth clients bound to no member, with the rescope command that binds each to `owner`. */
-async function unboundCredentials(engine: BrainEngine, owner: string): Promise<NonNullable<ServesReceipt['unbound']>> {
-  const tokens = await engine.executeRaw<{ name: string }>('SELECT DISTINCT name FROM access_tokens WHERE revoked_at IS NULL AND member_id IS NULL ORDER BY name');
-  const clients = await engine.executeRaw<{ client_id: string }>('SELECT client_id FROM oauth_clients WHERE deleted_at IS NULL AND member_id IS NULL ORDER BY client_id');
+export async function unboundCredentials(engine: BrainEngine, owner: string): Promise<NonNullable<ServesReceipt['unbound']>> {
+  const tokens = await engine.listUnboundTokenNames();
+  const clients = await engine.listUnboundClientIds();
   return [
-    ...tokens.map(t => ({ kind: 'token' as const, name: t.name, command: `gbrain auth rescope --token ${t.name} --member ${owner}` })),
-    ...clients.map(c => ({ kind: 'client' as const, name: c.client_id, command: `gbrain auth rescope --client ${c.client_id} --member ${owner}` })),
+    ...tokens.map(name => ({ kind: 'token' as const, name, command: `gbrain auth rescope --token ${name} --member ${owner}` })),
+    ...clients.map(id => ({ kind: 'client' as const, name: id, command: `gbrain auth rescope --client ${id} --member ${owner}` })),
   ];
 }
 
@@ -184,7 +185,7 @@ async function plan(engine: BrainEngine, roster: string[], sourceId: string, lab
   for (const id of roster) {
     const name = memberKeyName(id);
     const path = join(keyDir, `${id}.key`);
-    const [token] = await engine.executeRaw<{ member_id: string | null; token_hash: string; source_grant: string | null; source_id: string | null; federated_read: unknown; permissions: unknown }>('SELECT member_id, token_hash, source_grant, source_id, federated_read, permissions FROM access_tokens WHERE name = $1 AND revoked_at IS NULL', [name]);
+    const token = await engine.readLiveAccessToken(name);
     if (members.find(m => m.id === id)?.action === 'blocked') keys.push({ member: id, token_name: name, path, action: 'blocked', detail: 'the member is not enabled' });
     else if (!token && existsSync(path)) keys.push({ member: id, token_name: name, path, action: 'blocked', detail: `a key file is already at ${path} but no live key is named ${name} (another brain's key, or one revoked by hand); move or delete the file, then run this again` });
     else if (!token) keys.push({ member: id, token_name: name, path, action: 'mint', reads: desired });
@@ -195,7 +196,7 @@ async function plan(engine: BrainEngine, roster: string[], sourceId: string, lab
     else {
       const held = textList(token.federated_read);
       const adds = desired.filter(s => !held.includes(s));
-      const active = new Set((await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE id = ANY($1::text[]) AND archived IS NOT TRUE', [held])).map(r => r.id));
+      const active = new Set(await engine.filterUnarchivedSourceIds(held));
       const reads = [...held.filter(s => active.has(s)), ...adds];
       const minted = setupReads(token.permissions);
       if (!active.has(sourceId)) {
@@ -239,9 +240,7 @@ const setupReads = (permissions: unknown): string[] | undefined => {
 };
 
 async function recordSetupReads(engine: BrainEngine, name: string, reads: string[]): Promise<void> {
-  await engine.executeRaw(
-    "UPDATE access_tokens SET permissions = COALESCE(permissions, '{}'::jsonb) || jsonb_build_object('setup_reads', $2::text[]) WHERE name = $1 AND revoked_at IS NULL AND (permissions IS NULL OR jsonb_typeof(permissions) = 'object')",
-    [name, reads]);
+  await engine.recordTokenSetupReads(name, reads);
 }
 
 /**
@@ -249,8 +248,7 @@ async function recordSetupReads(engine: BrainEngine, name: string, reads: string
  * each with the rescope command that drops it. Unfederating never narrows such a list, so `sources unfederate` names them.
  */
 export async function keysStillReading(engine: BrainEngine, sourceId: string): Promise<Array<{ token: string; member: string; command: string }>> {
-  const rows = await engine.executeRaw<{ name: string; member_id: string; federated_read: unknown }>(
-    "SELECT name, member_id, federated_read FROM access_tokens WHERE revoked_at IS NULL AND member_id IS NOT NULL AND source_grant = 'federated' AND source_id <> $1 AND $1 = ANY(federated_read) ORDER BY name", [sourceId]);
+  const rows = await engine.listKeysReadingSource(sourceId);
   return rows.map(r => ({ token: r.name, member: r.member_id, command: `gbrain auth rescope --token ${r.name} --sources ${textList(r.federated_read).filter(s => s !== sourceId).join(',')}` }));
 }
 
@@ -263,9 +261,7 @@ export async function keysStillReadingNotice(engine: BrainEngine, sourceId: stri
 
 /** The live pages in the company source, and how many are imported calls (company/calls/<date>-<title>). */
 async function companyCounts(engine: BrainEngine): Promise<{ pages: number; calls: number }> {
-  const [row] = await engine.executeRaw<{ pages: number | string; calls: number | string }>(
-    "SELECT count(*)::int AS pages, count(*) FILTER (WHERE slug LIKE 'company/calls/%')::int AS calls FROM pages WHERE source_id = $1 AND deleted_at IS NULL", [COMPANY_SOURCE_ID]);
-  return { pages: Number(row?.pages ?? 0), calls: Number(row?.calls ?? 0) };
+  return engine.countCompanyPages(COMPANY_SOURCE_ID);
 }
 
 /** The open pages once this run's members, keys and rules are in place (the preview counts what it is about to add). */
@@ -285,7 +281,7 @@ async function unlabeledOutside(engine: BrainEngine, sourceId: string, rules: Se
 
 const blocked = (r: ServesReceipt): boolean => [...r.members, ...(r.owner ? [r.owner] : []), ...r.rules, ...(r.company_rule ? [r.company_rule] : []), ...r.keys].some(x => x.action === 'blocked');
 
-function writeKeyFile(path: string, token: string): void {
+export function writeKeyFile(path: string, token: string): void {
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   chmodSync(dirname(path), 0o700);
   const tmp = `${path}.${process.pid}.tmp`;
@@ -298,11 +294,16 @@ function abortAfter(step: string): void {
   if (process.env.GBRAIN_SETUP_ABORT_AFTER === step) throw new Error(`GBRAIN_SETUP_ABORT_AFTER=${step}: stopped on purpose after ${step}.`);
 }
 
-/** Plans, and with `apply` writes, the several-people labelling; a failure is reported in the receipt, never thrown. */
+/** Plans, and with `apply` writes, the several-people labelling; a failure is reported in the receipt, never thrown (except the refusal before any write below). */
 export async function labelSeveral(engine: BrainEngine, roster: string[], sourceId: string, apply: boolean, json: boolean, opts: { labelledOnly?: boolean; owner?: string } = {}): Promise<ServesReceipt> {
   const labelledOnly = opts.labelledOnly === true;
   const receipt = await plan(engine, roster, sourceId, labelledOnly, opts.owner);
   if (!apply || blocked(receipt)) return receipt;
+  // Adding a folder rule (its preview count, access-rules.ts previewRules) still runs raw SQL, which a Rust brain
+  // refuses: refuse before the first write, not after the members.
+  if (receipt.rules.some(r => r.action === 'add') || receipt.company_rule?.action === 'add') {
+    sqlEngineKind(engine.kind, 'gbrain access serves several --yes that adds a folder rule');
+  }
   receipt.applied = true;
   try {
     for (const m of receipt.members.filter(x => x.action === 'add')) await addMember(engine, m.id, { beforeWrite: () => rescopeArchiveBefore(engine, m.id, 'add') });
@@ -337,7 +338,7 @@ export async function labelSeveral(engine: BrainEngine, roster: string[], source
       try {
         writeKeyFile(k.path, minted.token);
       } catch (e) {
-        await engine.executeRaw('UPDATE access_tokens SET revoked_at = now() WHERE id = $1 AND revoked_at IS NULL', [minted.id]);
+        await engine.revokeAccessTokenById(minted.id);
         throw e;
       }
       abortAfter('serves-key');

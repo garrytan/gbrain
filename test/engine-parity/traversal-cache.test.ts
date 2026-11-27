@@ -8,13 +8,13 @@
  *    on an existing key replaces the response, the generation and `computed_at`; the response comes back in the
  *    order Postgres `jsonb` prints it; a bind Postgres rejects (a fractional depth, a NUL, no response) is logged
  *    and skipped, never thrown and never stored; `clearTraversalCache` removes one source's rows or every row and
- *    counts them.
+ *    counts them. A generation or `xmin_max` beyond 2^53 (a whole double up to 2^63) is stored and read back exactly.
  *  - Regression: a store that answers a row at another generation, depth or source, that keeps the old response
  *    after a conflicting put, that hands the response back in write order, that stores a row Postgres refuses,
  *    or that clears more or fewer rows than it counts: a Rust brain would serve stale code traversals (code_blast,
  *    code_flow) or wipe another source's cache.
- *  - Why existing coverage misses it: test/code-intel/traversal-cache.test.ts runs on PGLite only. Until this slice
- *    the Rust arm refused loudly (`raw_sql`) and this file only proved the refusal.
+ *  - Why existing coverage misses it: test/code-intel/traversal-cache.test.ts runs on PGLite only, and the Rust arm
+ *    used to refuse a generation beyond 2^53 and a `max_chunk_updated_at` with no date in it instead of answering.
  *  - Seam: none. Real engines and the production cache helpers. `computed_at` is wall-clock time and differs by arm,
  *    so a case compares it to its neighbours and never to a literal.
  */
@@ -245,12 +245,14 @@ describe('engine parity: code_traversal_cache', () => {
   );
 
   parityTest(
-    'a generation or xmin beyond 2^53 is stored on the SQL arms; the Rust store refuses it rather than round it',
+    'a generation or xmin beyond 2^53 is stored and read back exactly on every arm',
     { methods: ['getCodeTraversalCache', 'putCodeTraversalCache'] },
     async (engine) => {
-      await putCachedTraversal(engine, key('huge.generation', 1, 'default', 2 ** 60), { ok: 1 }, EPOCH, 0);
+      const put = await logged(() => putCachedTraversal(engine, key('huge.generation', 1, 'default', 2 ** 60), { ok: 1 }, EPOCH, 2 ** 60));
+      expect(put).toEqual([]);
       const hit = await getCachedTraversal<{ ok: number }>(engine, key('huge.generation', 1, 'default', 2 ** 60));
       const miss = await getCachedTraversal(engine, key('huge.generation', 1, 'default', 0));
+      expect({ response: hit?.response ?? null, generation: hit?.cluster_generation ?? null }).toEqual({ response: { ok: 1 }, generation: 2 ** 60 });
       return { response: hit?.response ?? null, generation: hit?.cluster_generation ?? null, miss };
     },
   );

@@ -83,6 +83,11 @@ pub struct DreamVerdictInput {
     pub triage_version: Option<f64>,
 }
 
+/// A JSON value in the key order a Postgres `jsonb` value prints ([`crate::jsonb::ordered`]).
+pub(crate) fn jsonb(value: &Value) -> Value {
+    ordered(value)
+}
+
 /// Refuses a JSON value Postgres `jsonb` refuses: a string or key holding U+0000
 /// (`unsupported Unicode escape sequence`).
 pub(crate) fn jsonb_check(op: &str, column: &str, value: &Value) -> Result<()> {
@@ -241,4 +246,22 @@ impl Store {
             Ok(doomed.len() as u64)
         })
     }
+}
+
+/// The rows a fact purge's inventory probe searches (crate::facts::purge_probe): every verdict, expired or not, as the table holds it.
+pub(crate) fn purge_probe_rows(
+    read: &dyn crate::kv::KvRead,
+) -> Result<Vec<crate::facts::purge_probe::ProbeRow>> {
+    use crate::facts::purge_probe::{ProbeCell, ProbeRow, json_rows};
+    Ok(json_rows::<DreamRecord>(read, &[keys::DREAM_VERDICT])?
+        .into_iter()
+        .map(|r| ProbeRow {
+            source_id: None,
+            cells: vec![
+                ("segments", ProbeCell::opt_jsonb(r.segments.as_ref())),
+                ("entities", ProbeCell::opt_jsonb(r.entities.as_ref())),
+                ("reasons", ProbeCell::opt_jsonb(r.reasons.as_ref())),
+            ],
+        })
+        .collect())
 }

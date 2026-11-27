@@ -101,6 +101,7 @@ fn single_fact_metadata_answers_each_listed_fact_of_the_source_once_in_id_order(
         b.list_single_fact_metadata(&SingleFactMetadataQuery {
             source_id: source.into(),
             ids,
+            remote_floor: None,
         })
         .unwrap()
     };

@@ -1,4 +1,5 @@
 import type { BrainEngine, FactAttribution, FactRow } from '../engine.ts';
+import type { WithdrawalRow } from '../engine-sql/facts-trust.ts';
 import { verbError, type OperationError } from '../ops/contract.ts';
 import { isAvailable, embedOne, getEmbeddingModel } from '../ai/gateway.ts';
 import { cosineSimilarity } from './classify.ts';
@@ -7,14 +8,12 @@ import { assertFactNotPurged } from './withdrawal.ts';
 import { cosineVerdict } from './capture-dedup.ts';
 import { interleaveFusion } from '../search/fusion-lists.ts';
 import { readSupersessionThreshold } from './supersession-threshold.ts';
-import { ownerReadPolicyFragment, readPolicyFragment, remoteProvenanceFloorSql } from '../search/private-visibility.ts';
 import { folderAccessForAll } from '../access/caller.ts';
 import { memberIdentity } from '../access/members.ts';
 import { ownerMemberId } from '../access/owner.ts';
 import { MEMBER_PAGE_PREFIX } from '../access/principals.ts';
-import { pageNotVisibleError } from '../persistence/page-visibility.ts';
 import { slugUnderBoundPrefixes } from '../ops/context.ts';
-import { ownedPageWithdrawalSubject, onOwnedMemoryPageSql, withdrawalCoversFactSql, withdrawalReachedFactSql } from '../access/member-facts.ts';
+import { ownedPageWithdrawalSubject } from '../access/member-facts.ts';
 import { isHoldingSlug } from '../facts-fence.ts';
 import { sameClaimSlot } from './typed-claim.ts';
 
@@ -55,8 +54,9 @@ export async function prepareFactEmbedding(fact: string, signal?: AbortSignal, d
   return { embedding: null, embedding_model: null, degraded: true };
 }
 /**
- * `excludePrivate`: the caller cannot read private pages. A withdrawal whose withdrawn rows all sit on pages it
- * cannot read is refused exactly as a page it may not see is, so the refusal never confirms a claim it cannot see.
+ * `excludePrivate`: the caller cannot read private pages. It gets the plain fact_withdrawn refusal with no `withdrawn`
+ * detail, whether the withdrawn rows sit on pages it can read, on pages it cannot read, or on no page at all, so the
+ * refusal never tells those cases apart and never carries anything read from a page the caller may not see.
  * `remote`: GST-2346, a remote save onto a member page meets only memberPageWithdrawal's withdrawals.
  */
 export async function assertFactNotWithdrawn(engine: BrainEngine, sourceId: string, input: SingleFactIntent, opts: { excludePrivate?: boolean; remote?: boolean } = {}): Promise<void> {
@@ -69,7 +69,6 @@ export async function assertFactNotWithdrawn(engine: BrainEngine, sourceId: stri
   if (await isFactWithdrawn(engine, sourceId, input.visibility, input.fact, input.entity_slug, ownedPageWithdrawalSubject(input.page_slug))) throw await factWithdrawnRefusal(engine, sourceId, input, opts);
 }
 
-type WithdrawalRow = { subject: string; withdrawn_at: string; visibility: 'world' | 'private' };
 
 function withdrawnRefusal(row: WithdrawalRow | undefined): OperationError {
   const error = verbError('invalid_params', FACT_WITHDRAWN_MESSAGE, FACT_WITHDRAWN_SUGGESTION);
@@ -90,32 +89,23 @@ async function memberPageWithdrawal(engine: BrainEngine, sourceId: string, input
   const identity = (await memberIdentity(engine, memberId).catch(() => null))?.identity ?? [];
   const satisfied = identity.length ? (await folderAccessForAll(engine, [identity])).satisfiedRuleIds : [];
   const owner = identity.length > 0 && await ownerMemberId(engine) === memberId;
-  const reads = (alias: string) => owner ? ownerReadPolicyFragment(alias, identity, satisfied) : readPolicyFragment(alias, identity, true, satisfied);
-  const readable = `(f.source_markdown_slug = $5::text OR (${owner ? 'TRUE' : `f.visibility = 'world'`}
-    AND NOT EXISTS (SELECT 1 FROM pages pp WHERE pp.source_id = f.source_id AND pp.slug = f.source_markdown_slug AND NOT ${reads('pp')})
-    AND NOT EXISTS (SELECT 1 FROM pages ep WHERE ep.source_id = f.source_id AND ep.slug = f.entity_slug AND NOT ${reads('ep')})))`;
-  const [row] = await engine.executeRaw<WithdrawalRow>(`SELECT w.subject,w.visibility,w.withdrawn_at::text AS withdrawn_at FROM fact_withdrawals w
-    WHERE w.source_id=$1 AND w.visibility=$2 AND w.fact_hash IN (gbrain_fact_fingerprint($3),gbrain_fact_fingerprint_v1($3))
-      AND (w.subject=$5::text OR ((w.subject='*' OR w.subject=$4::text) AND EXISTS (SELECT 1 FROM facts f
-        WHERE f.source_id=w.source_id AND f.visibility=w.visibility AND f.expired_at IS NOT NULL
-          AND gbrain_fact_fingerprint(f.fact)=gbrain_fact_fingerprint($3) AND ${withdrawalReachedFactSql('w', 'f')} AND ${readable})))
-    ORDER BY (w.subject<>'*') DESC, w.withdrawn_at DESC LIMIT 1`, [sourceId, input.visibility, input.fact, input.entity_slug, page]);
+  const row = await engine.readMemberPageWithdrawal({ sourceId, visibility: input.visibility, fact: input.fact, entitySlug: input.entity_slug, page, owner, identity, satisfied });
   return row ?? null;
 }
 
 /**
- * The refusal for a claim `isFactWithdrawn` matched. `withdrawn` comes from the withdrawal ledger alone (never a purge):
- * the most specific subject first, then the newest withdrawal, among withdrawals the caller can see the withdrawn rows of
- * (or that no row backs). It covers the exact normalized claim only.
+ * The refusal for a claim `isFactWithdrawn` matched. A caller that reads private pages (`excludePrivate` off) gets the
+ * `withdrawn` detail from the withdrawal ledger alone (never a purge): the most specific subject first, then the newest
+ * withdrawal. It covers the exact normalized claim only. Any other caller gets the plain refusal with no detail.
  */
 export async function factWithdrawnRefusal(engine: BrainEngine, sourceId: string, input: SingleFactIntent, opts: { excludePrivate?: boolean } = {}): Promise<OperationError> {
-  const spec = { sourceId, visibility: input.visibility, fact: input.fact, entitySlug: input.entity_slug, ownedPage: ownedPageWithdrawalSubject(input.page_slug), excludePrivate: opts.excludePrivate === true };
-  if (opts.excludePrivate) {
-    const backing = await engine.readFactWithdrawnBacking(spec);
-    if (backing.hidden && !backing.visible) return pageNotVisibleError();
-  }
-  const row = await engine.readFactWithdrawnRow(spec);
-  return withdrawnRefusal(row ?? undefined);
+  // A caller that cannot read private pages gets the same plain refusal for every withdrawal (see assertFactNotWithdrawn).
+  if (opts.excludePrivate === true) return withdrawnRefusal(undefined);
+  const met = await engine.readClaimWithdrawal({
+    sourceId, visibility: input.visibility, fact: input.fact, entitySlug: input.entity_slug,
+    ownPage: ownedPageWithdrawalSubject(input.page_slug), excludePrivate: false,
+  });
+  return withdrawnRefusal(met.row ?? undefined);
 }
 export const CANDIDATE_FUSION_KEY = 'facts.candidate_fusion';
 export type CandidateFusion = 'rrf_free' | 'interleave';
@@ -195,7 +185,7 @@ function replacesDerivedSuggestion(sourceId: string, slug: string): string {
 export async function replacementVisibility(engine: BrainEngine, sourceId: string, targetId: number,
   defaulted: 'world' | 'private', opts: { remote: boolean }): Promise<'world' | 'private'> {
   if (defaulted === 'private' || opts.remote || !Number.isSafeInteger(targetId)) return defaulted;
-  const [target] = await engine.executeRaw<{ visibility: string }>('SELECT visibility FROM facts WHERE id=$1 AND source_id=$2', [targetId, sourceId]);
+  const target = await engine.readFactVisibility(targetId, sourceId);
   return target?.visibility === 'private' ? 'private' : defaulted;
 }
 
@@ -211,12 +201,7 @@ export async function decideReplacement(engine: BrainEngine, sourceId: string, i
   const ownPage = input.page_slug && input.page_slug === opts.pageSlug ? input.page_slug : null;
   const notFound = () => verbError('not_found', `No fact with id "${targetId}" to replace.`,
     'Pass the fact_id of an active fact from recall (facts[].fact_id) about the same entity, or omit replaces to save a new fact.');
-  const [target] = await engine.executeRaw<FactCandidate & { withdrawn: boolean }>(`SELECT f.*,
-      EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id=f.source_id AND w.visibility=f.visibility
-        AND w.fact_hash IN (gbrain_fact_fingerprint(f.fact),gbrain_fact_fingerprint_v1(f.fact))
-        AND ${withdrawalCoversFactSql('w', 'f')}) AS withdrawn
-    FROM facts f WHERE f.id=$1 AND f.source_id=$2${!opts.excludePrivate ? '' : ownPage ? ` AND (f.source_markdown_slug = $3 OR ${remoteProvenanceFloorSql('f')})` : ` AND ${remoteProvenanceFloorSql('f')}`}${opts.lock ? ' FOR UPDATE OF f' : ''}`,
-    opts.excludePrivate && ownPage ? [targetId, sourceId, ownPage] : [targetId, sourceId]);
+  const target = await engine.readReplacementTarget({ targetId, sourceId, excludePrivate: opts.excludePrivate, ownPage, lock: opts.lock });
   if (!target || (opts.remote && target.visibility !== 'world' && !(ownPage && target.source_markdown_slug === ownPage))) throw notFound();
   // #5913 [R2]: a slug-bound writer learns nothing about a fact outside its prefixes; the answer is the missing-id one.
   if (opts.slugPrefixes && [target.entity_slug, target.source_markdown_slug].some(slug => slug && !slugUnderBoundPrefixes(opts.slugPrefixes!, slug))) throw notFound();

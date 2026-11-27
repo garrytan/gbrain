@@ -52,8 +52,7 @@ export async function recountTimelinePages(engine: BrainEngine, sourceIds: strin
   const counted: Array<{ id: number; materializable: number; unrenderable: number }> = [];
   const unreached: number[] = [];
   if (ids.length === 0) return { counted, unreached };
-  const pages = await engine.executeRaw<TimelinePage>(`SELECT p.id,p.source_id,p.slug,p.compiled_truth,p.timeline FROM pages p
-    WHERE p.id = ANY($1::bigint[]) AND p.source_id=ANY($2::text[]) AND p.deleted_at IS NULL AND p.body_storage='inline'`, [ids, sourceIds]);
+  const pages = await engine.listTimelineHistoryPages(sourceIds, { ids });
   const stored = await storedRowsByPage(engine, pages);
   const byId = new Map(pages.map(page => [Number(page.id), page]));
   for (const id of ids) {
@@ -74,10 +73,7 @@ export async function scanTimelineHistory(engine: BrainEngine, sourceIds: string
   const pages: Array<TimelinePage & { materializable: number; unrenderable: number }> = [];
   let cursor = afterId, inspected = 0, truncated = false;
   for (;;) {
-    const batch = await engine.executeRaw<TimelinePage>(`SELECT p.id,p.source_id,p.slug,p.compiled_truth,p.timeline FROM pages p
-      WHERE p.source_id=ANY($1::text[]) AND p.deleted_at IS NULL AND p.id>$2 AND p.body_storage='inline'
-        AND EXISTS (SELECT 1 FROM timeline_entries t WHERE t.page_id=p.id AND t.event_page_id IS NULL)
-      ORDER BY p.id LIMIT ${BATCH}`, [sourceIds, cursor]);
+    const batch = await engine.listTimelineHistoryPages(sourceIds, { afterId: cursor, limit: BATCH });
     const stored = await storedRowsByPage(engine, batch);
     for (const page of batch) {
       if ((budget.pages !== undefined && inspected >= budget.pages) || (budget.deadline !== undefined && Date.now() > budget.deadline)) {

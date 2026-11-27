@@ -3,12 +3,14 @@
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: readChunkVectorColumn, readEmbeddingIdentity, listEmbeddingStores, hasStoredVectors,
- *    countChunkVectorCoverage and countStaleFactEmbeddings return the same observable result on every engine arm (PGLite always; Postgres with
+ *    countChunkVectorCoverage, readChunkColumnTypes, countChunkColumnCoverage and countStaleFactEmbeddings return the same observable result on every engine arm (PGLite always; Postgres with
  *    DATABASE_URL; the Rust arm with GBRAIN_TEST_RUST_ARM=1).
  *  - Regression: `gbrain embeddings enable` on a keyless Rust brain read the Postgres catalog through `executeRaw`, which
  *    the Rust engine refuses, so the command failed and the readiness fix it named re-initialized the store as PGLite.
  *    An engine that answers one of these reads differently changes what `embeddings enable`, `migrate embeddings` and
  *    the vector-plan and fact-embedding doctor checks decide.
+ *    Doctor embedding_column_registry read the column types and the active column's coverage through `executeRaw`, so
+ *    a Rust brain skipped the check and reported ok where PGLite warned that the column was 0% populated.
  *  - Why existing coverage misses it: the statements ran through `executeRaw`, which the parity cases cannot call (D18).
  *  - Seam: none. The width and model are seeded through setConfig (the Rust store has no column type; it reads the
  *    config when no vector is stored), the vectors through upsertChunks, insertFact and updateTakeEmbeddings.
@@ -88,6 +90,33 @@ describe('engine parity: embedding catalog', () => {
     expect(multimodal).toEqual([{ source_id: 'default', total: 3, covered: 0 }, { source_id: 'other', total: 1, covered: 0 }]);
     expect(image).toEqual(multimodal);
     return { empty, multimodal, image };
+  });
+
+  parityTest('readChunkColumnTypes reads the vector columns that exist, and countChunkColumnCoverage how full each is over every chunk', { methods: ['readChunkColumnTypes', 'countChunkColumnCoverage', 'upsertChunks', 'softDeletePage'] }, async (engine) => {
+    await configure(engine);
+    const byName = (rows: Array<{ attname: string; formatted: string }>) => [...rows].sort((a, b) => (a.attname < b.attname ? -1 : 1));
+    const types = byName(await engine.readChunkColumnTypes(['embedding', 'embedding_image', 'embedding_multimodal', 'no_such_column', 'embedding']));
+    const none = await engine.readChunkColumnTypes(['no_such_column']);
+    const empty = await engine.countChunkColumnCoverage('embedding');
+    await engine.putPage('notes/a', { type: 'note', title: 'A', compiled_truth: 'alpha body' });
+    await engine.upsertChunks('notes/a', [chunk(0, 'alpha body', { embedding: basisEmbedding(1), model: MODEL }), chunk(1, 'alpha two'), chunk(2, 'alpha three')]);
+    await engine.putPage('notes/gone', { type: 'note', title: 'Gone', compiled_truth: 'gone body' });
+    await engine.upsertChunks('notes/gone', [chunk(0, 'gone body')]);
+    await engine.softDeletePage('notes/gone');
+    const embedding = await engine.countChunkColumnCoverage('embedding');
+    const image = await engine.countChunkColumnCoverage('embedding_image');
+    const missing = await engine.countChunkColumnCoverage('no_such_column').then(() => 'answered', () => 'threw');
+    expect(types).toEqual([
+      { attname: 'embedding', formatted: 'vector(1536)' },
+      { attname: 'embedding_image', formatted: 'vector(1024)' },
+      { attname: 'embedding_multimodal', formatted: 'vector(1024)' },
+    ]);
+    expect(none).toEqual([]);
+    expect(empty).toEqual({ pct: null, total: 0 });
+    expect(embedding).toEqual({ pct: 25, total: 4 });
+    expect(image).toEqual({ pct: 0, total: 4 });
+    expect(missing).toBe('threw');
+    return { types, none, empty, embedding, image, missing };
   });
 
   parityTest('readEmbeddingIdentity reads the configured model and the column width, before and after a vector is stored', { methods: ['readEmbeddingIdentity', 'upsertChunks'] }, async (engine) => {

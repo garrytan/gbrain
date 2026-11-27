@@ -24,8 +24,8 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import type { FactVisibility } from './visibility.ts';
-import { followRetirement, isFactEntityPage, retiredPageSql } from '../entities/resolve.ts';
-import { folderRestrictedSql, isPrivatePage } from '../search/private-visibility.ts';
+import { followRetirement, isFactEntityPage } from '../entities/resolve.ts';
+import { isPrivatePage } from '../search/private-visibility.ts';
 
 /** Hints a conversation page forwards: a meeting's attendees plus what it links run to a few dozen (extract_facts keeps ENTITY_HINTS_CAP). */
 export const CONVERSATION_ENTITY_HINTS_CAP = 40;
@@ -48,11 +48,7 @@ export async function conversationEntityHints(engine: BrainEngine, sourceId: str
   }
   ordered.delete(pageSlug);
   if (ordered.size === 0) return [];
-  const read = (slugs: string[]) => engine.executeRaw<{ slug: string; type: string | null; frontmatter: unknown; retired: boolean; folder_restricted: boolean }>(
-    `SELECT p.slug, p.type, p.frontmatter, ${retiredPageSql('p')} AS retired, ${folderRestrictedSql('p')} AS folder_restricted FROM pages p
-      WHERE p.source_id = $1 AND p.slug = ANY($2::text[]) AND p.deleted_at IS NULL`,
-    [sourceId, slugs],
-  );
+  const read = (slugs: string[]) => engine.listEntityHintPages(sourceId, slugs);
   const pages = new Map((await read([...ordered])).map(row => [row.slug, row]));
   const canonical = new Map<string, string | null>();
   for (const page of pages.values()) {

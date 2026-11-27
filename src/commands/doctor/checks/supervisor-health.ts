@@ -10,6 +10,7 @@
 import { computeWorkerOomLoopCheck, computePoolReapHealthCheck } from './pglite-worker.ts';
 import type { Check } from '../../doctor.ts';
 import type { DoctorContext, DoctorEntry } from '../context.ts';
+import { capabilityRefusal, capabilityUnknownCheck } from '../budget.ts';
 
 async function runSupervisor(ctx: DoctorContext): Promise<Check[]> {
   const { engine, fastMode } = ctx;
@@ -159,12 +160,11 @@ async function runSupervisor(ctx: DoctorContext): Promise<Check[]> {
       const localHost = hostname();
 
       // Read the DB singleton lock holder for this queue.
-      const lockRows = await engine.executeRaw<{ holder_pid: number; holder_host: string; live: boolean }>(
-        `SELECT holder_pid, holder_host, ttl_expires_at > now() AS live
-           FROM gbrain_cycle_locks WHERE id = $1`,
-        [supervisorLockId(queue)],
-      );
-      const lock = lockRows[0] ?? null;
+      // The typed lease read, so a Rust brain answers it; live compares the lease's end with the database clock.
+      const [lease] = await engine.readCycleLocks({ by: 'id', lockId: supervisorLockId(queue) });
+      const lock = lease
+        ? { holder_pid: lease.holder_pid, holder_host: lease.holder_host, live: new Date(lease.ttl_expires_at).getTime() > new Date(lease.db_now).getTime() }
+        : null;
       const rssStr = effectiveMaxRss !== null ? `${effectiveMaxRss}MB` : 'unknown';
 
       const verdict = classifySupervisorSingleton({
@@ -210,8 +210,10 @@ async function runSupervisor(ctx: DoctorContext): Promise<Check[]> {
         });
       }
     }
-  } catch {
-    // Best-effort (lock table may not exist on a very old brain); skip silently.
+  } catch (e) {
+    // Best-effort (lock table may not exist on a very old brain); skip silently. An engine that cannot read it says so.
+    const refusal = capabilityRefusal(e);
+    if (refusal) checks.push(capabilityUnknownCheck('supervisor_singleton', refusal));
   }
 
   // 3b-sexies. Supervisor/worker scheduling priority (niceness, issue #1815).

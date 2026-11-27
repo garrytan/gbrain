@@ -274,7 +274,7 @@ async function revokeAccess(world: World, actor: string): Promise<void> {
   const sql = sqlQueryForEngine(world.engine);
   if (remote.kind === 'oauth_client') {
     await new GBrainOAuthProvider({ sql, transaction: fn => world.engine.transaction(tx => fn(sqlQueryForEngine(tx))) }).revokeClient(auth!.clientId);
-  } else await revokeLegacyTokenById(sql, auth!.principal!.id);
+  } else await revokeLegacyTokenById(world.engine, auth!.principal!.id);
 }
 
 export function contextFor(world: World, actor: string, sourceId: string): OperationContext {

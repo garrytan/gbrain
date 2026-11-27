@@ -8,7 +8,7 @@
  * gets the user's choice (turn graduation back on and preview the move with
  * its read-only plan, or stay on PGLite and share it with `gbrain mcp
  * expose`), a Postgres
- * brain moving down keeps its datastore, and a target that already holds
+ * brain moving down and a Rust brain keep their datastore, and a target that already holds
  * history needs an empty database. Every branch verifies read-only with
  * `gbrain doctor --no-migrate --json`. The unknown-engine error is an
  * `invalid_params` opError, and the usage text names every accepted engine.
@@ -70,6 +70,15 @@ describe('history refusal names the refusing side', () => {
     expect(env.fix?.next).toBe('report');
     expect(env.fix?.argv).toBeUndefined();
     expect(env.fix?.user_message).toContain('stays on Postgres');
+    expect(env.fix?.verify?.argv).toEqual(expect.arrayContaining(VERIFY));
+  });
+
+  test('a Rust brain moving to another engine keeps its datastore', async () => {
+    const e = await refusal(() => assertLegacyEngineMigration(engine, { side: 'source', from: 'rust', to: 'pglite' }));
+    const env = envelope(e, cli);
+    expect(env.fix?.next).toBe('report');
+    expect(env.fix?.argv).toBeUndefined();
+    expect(env.fix?.user_message).toContain('stays on the Rust engine');
     expect(env.fix?.verify?.argv).toEqual(expect.arrayContaining(VERIFY));
   });
 

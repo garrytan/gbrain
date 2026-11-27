@@ -394,14 +394,11 @@ async function hintScopedLinkMiss(
   if (readSources === undefined) return;
   const slug = p.slug as string;
   try {
-    const rows = await ctx.engine.executeRaw<{ source_id: string }>(
-      `SELECT DISTINCT p.source_id COLLATE "C" AS source_id FROM pages p JOIN sources s ON s.id = p.source_id
-       WHERE p.slug = $1 AND p.deleted_at IS NULL AND s.archived IS NOT TRUE
-       ORDER BY p.source_id COLLATE "C"`,
-      [slug],
-    );
+    // Every unarchived source outside the read, through typed members (served on every engine): a source with no live
+    // page at this slug reads no links, so it never counts.
+    const sourceIds = (await ctx.engine.listAllSources()).map((s) => s.id).sort();
     const counts: Array<{ sourceId: string; count: number }> = [];
-    for (const { source_id: sourceId } of rows) {
+    for (const sourceId of sourceIds) {
       if (readSources.includes(sourceId)) continue;
       const opts = { sourceId, excludePrivate: policy.excludePrivate };
       const links = direction === 'out' ? await ctx.engine.getLinks(slug, opts) : await ctx.engine.getBacklinks(slug, opts);

@@ -24,10 +24,7 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import { embeddingsDisabled } from '../embedding-disabled.ts';
-import { chunkGenerationFilter } from '../search/safe-chunks.ts';
-import { quoteIdentifier } from '../search/embedding-column.ts';
 import { embeddingWriteTarget } from '../page-state/projections.ts';
-import { budgetRowAppliesFilter } from '../page-size-policy.ts';
 import { execFileBounded } from '../bounded-child-exec.ts';
 import { gitChildEnv } from '../git-env.ts';
 import { readGitBehind, type BehindReader } from './sync-freshness.ts';
@@ -84,28 +81,33 @@ export const readGitFilesBehind: FilesBehindReader = async (root, from) => {
 };
 
 /** The cheap watermark `get_write_request` carries: the source row, and two reads on the request journal's indexes. */
-export async function readWriteWatermark(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string, now = Date.now()): Promise<WriteWatermark> {
-  const [row] = await engine.executeRaw<{ last_commit: string | null; last_sync_at: unknown; pending_min: number | string | null;
-    pending_count: number | string; pending_since: unknown }>(`SELECT s.last_commit, s.last_sync_at, p.pending_min, p.pending_count, p.pending_since
-    FROM sources s LEFT JOIN LATERAL (SELECT min(r.sequence) AS pending_min, count(*) AS pending_count, min(r.created_at) AS pending_since FROM persistence_requests r
-      WHERE r.source_id=s.id AND r.source_incarnation=s.incarnation AND r.state IN ('queued','deferred','running','recovering')) p ON true WHERE s.id=$1`, [sourceId]);
-  const [newest] = row?.pending_min == null ? await engine.executeRaw<{ sequence: number | string | null }>('SELECT max(sequence) AS sequence FROM persistence_requests') : [];
-  const through = row?.pending_min != null ? Number(row.pending_min) - 1 : newest?.sequence == null ? null : Number(newest.sequence);
+export async function readWriteWatermark(engine: Pick<BrainEngine, 'readWriteWatermarkRow'>, sourceId: string, now = Date.now()): Promise<WriteWatermark> {
+  const row = await engine.readWriteWatermarkRow(sourceId);
+  const through = row.pending_min != null ? Number(row.pending_min) - 1 : row.newest_sequence == null ? null : Number(row.newest_sequence);
   return {
     source_id: sourceId,
-    indexed_through: { commit: row?.last_commit ?? null, synced_at: iso(row?.last_sync_at) },
+    indexed_through: { commit: row.last_commit ?? null, synced_at: iso(row.last_sync_at) },
     committed_through_request: through,
-    requests_pending: { count: Number(row?.pending_count ?? 0), oldest_age_seconds: ageSeconds(row?.pending_since, now) },
+    requests_pending: { count: Number(row.pending_count ?? 0), oldest_age_seconds: ageSeconds(row.pending_since, now) },
   };
 }
 
 /** The source's incarnation and its checkout on this host (the host binding's path, else the source's), or nulls. */
-export async function readCheckoutRoot(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string): Promise<{ incarnation: string | null; root: string | null } | undefined> {
-  const [source] = await engine.executeRaw<{ incarnation: string | null; root: string | null }>(`SELECT s.incarnation::text AS incarnation,
-      COALESCE((SELECT h.local_path FROM persistence_host_bindings h JOIN persistence_source_bindings b ON b.worktree_id=h.worktree_id
-        WHERE b.source_id=s.id AND h.host_id::text=$2 LIMIT 1), s.local_path) AS root FROM sources s WHERE s.id=$1`,
-    [sourceId, (await import('./identity.ts')).existingHostIdFor(engine as BrainEngine)]);
-  return source;
+export async function readCheckoutRoot(engine: Pick<BrainEngine, 'readSourceCheckoutRoot'>, sourceId: string): Promise<{ incarnation: string | null; root: string | null } | undefined> {
+  return (await engine.readSourceCheckoutRoot(sourceId, (await import('./identity.ts')).existingHostIdFor(engine as BrainEngine))) ?? undefined;
+}
+
+/**
+ * The watermark's held files. A failed count reads as 0 on PGLite and Postgres; a Rust brain rethrows, so a
+ * missing or failing hold store member there never reports "nothing held".
+ */
+export async function heldFileCount(engine: Pick<BrainEngine, 'kind' | 'executeRaw' | 'countGitHolds'>, sourceId: string, incarnation: string): Promise<number> {
+  try {
+    return await countGitHolds(engine, sourceId, incarnation);
+  } catch (error) {
+    if (engine.kind === 'rust') throw error;
+    return 0;
+  }
 }
 
 /** The full watermark of one source for `gbrain sources status --json` and MCP `sources_status`. */
@@ -118,7 +120,7 @@ export async function readAppliedWatermark(engine: BrainEngine, sourceId: string
   const root = !opts.remote && source?.root && commit ? source.root : null;
   const lag = root ? await (opts.behind ?? readGitBehind)(root, commit!).catch(() => null) : null;
   const filesBehind = root && lag?.commits ? await (opts.filesBehind ?? readGitFilesBehind)(root, commit!).catch(() => null) : lag ? 0 : null;
-  const heldFiles = source?.incarnation ? await countGitHolds(engine, sourceId, source.incarnation).catch(() => 0) : 0;
+  const heldFiles = source?.incarnation ? await heldFileCount(engine, sourceId, source.incarnation) : 0;
   const { readPassReadings } = await import('./sync-pass-readers.ts');
   const [pass] = await readPassReadings(engine, { sourceIds: [sourceId], head: false }).catch(() => []);
   const deletesWithheld = pass?.row.value.obligations.deletes_withheld ? Number(pass.row.value.telemetry.classes?.deletes_withheld?.count ?? 0) : 0;
@@ -128,12 +130,7 @@ export async function readAppliedWatermark(engine: BrainEngine, sourceId: string
   let embedded: AppliedWatermark['embedded_through'];
   if (await embeddingsDisabled(engine)) embedded = { state: 'embeddings_off', commit: null, before: null, unembedded_pages: 0, held_pages: 0 };
   else {
-    const column = `cc.${quoteIdentifier((await embeddingWriteTarget(engine)).column.name)}`;
-    const [waiting] = await engine.executeRaw<{ pages: number | string; oldest: unknown; held: number | string }>(`WITH w AS (SELECT DISTINCT p.id, p.updated_at FROM content_chunks cc
-        JOIN pages p ON p.id=cc.page_id WHERE ${column} IS NULL AND p.source_id=$1 AND p.deleted_at IS NULL AND ${chunkGenerationFilter('p', 'cc')}
-          AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip'))
-      SELECT count(*) AS pages, min(w.updated_at) AS oldest,
-        (SELECT count(*) FROM w JOIN page_embedding_budget b ON b.page_id=w.id JOIN pages p ON p.id=w.id WHERE ${budgetRowAppliesFilter('b', 'p')}) AS held FROM w`, [sourceId]);
+    const waiting = await engine.readUnembeddedPageSummary(sourceId, (await embeddingWriteTarget(engine)).column.name);
     const pages = Number(waiting?.pages ?? 0);
     embedded = pages ? { state: 'partial', commit: null, before: iso(waiting?.oldest), unembedded_pages: pages, held_pages: Number(waiting?.held ?? 0) }
       : { state: 'complete', commit, before: null, unembedded_pages: 0, held_pages: 0 };

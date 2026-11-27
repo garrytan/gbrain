@@ -92,7 +92,7 @@ export async function originOwnerContext(engine: BrainEngine, sourceId: string):
   try { gitRoot = syncGit(root, ['rev-parse', '--show-toplevel']).trim(); } catch { return { ok: false, reason: 'not_owner_host' }; }
   const slugMode = await scannerSlugRootMode(engine, sourceId, root);
   const scope = relative(realpathSync.native(gitRoot), realpathSync.native(root)).split('\\').join('/');
-  const [source] = await engine.executeRaw<{ last_commit: string | null }>('SELECT last_commit FROM sources WHERE id=$1', [sourceId]);
+  const source = await engine.getSource(sourceId);
   return { ok: true, root, gitRoot, scope: { sourceId, root, scope, slugMode }, commit: source?.last_commit ?? null,
     owner: { host_id: hostId, worktree_id: binding.worktree_id, owner_epoch: String(binding.owner_epoch), source_incarnation: binding.source_incarnation } };
 }
@@ -136,21 +136,17 @@ export async function scanOriginTwins(engine: BrainEngine, sourceId: string): Pr
   const context = await originOwnerContext(engine, sourceId);
   if (!context.ok) throw ownerRefusal(sourceId, context.reason);
   const byOrigin = new Map<string, Array<{ id: number; source_path: string }>>();
-  const exact = await engine.executeRaw<{ source_path: string; ids: number[]; paths: string[] }>(`SELECT source_path, array_agg(id ORDER BY id) AS ids, array_agg(source_path ORDER BY id) AS paths
-    FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND source_path IS NOT NULL GROUP BY source_path HAVING count(*) > 1 ORDER BY source_path COLLATE "C" LIMIT ${ORIGIN_TWINS_LIMIT + 1}`, [sourceId]);
-  for (const row of exact) byOrigin.set(row.source_path, row.ids.map((id, i) => ({ id: Number(id), source_path: row.paths[i]! })));
+  const exact = await engine.listOriginTwinGroups(sourceId, ORIGIN_TWINS_LIMIT + 1);
+  for (const row of exact) byOrigin.set(row.source_path, row.ids.map((id, i) => ({ id, source_path: row.paths[i]! })));
   const legacyPrefix = legacySyncOrigin(context.scope, 'x') ? `${context.scope.scope}/` : null;
   if (legacyPrefix) {
-    const pairs = await engine.executeRaw<{ legacy_id: number; legacy_path: string; legacy_slug: string; origin: string }>(`SELECT l.id AS legacy_id, l.source_path AS legacy_path, l.slug AS legacy_slug, o.source_path AS origin
-      FROM pages l JOIN pages o ON o.source_id=l.source_id AND l.source_path = $2 || o.source_path
-      WHERE l.source_id=$1 AND l.deleted_at IS NULL AND o.deleted_at IS NULL AND l.id <> o.id LIMIT ${ORIGIN_TWINS_LIMIT + 1}`, [sourceId, legacyPrefix]);
+    const pairs = await engine.listLegacyOriginPairs(sourceId, legacyPrefix, ORIGIN_TWINS_LIMIT + 1);
     for (const pair of pairs) {
       let same = false;
       try { same = sameSyncOrigin(pair.legacy_path, pair.origin, context.scope, pair.legacy_slug); } catch { same = true; }
       if (!same) continue;
-      const group = byOrigin.get(pair.origin) ?? (await engine.executeRaw<{ id: number; source_path: string }>(
-        'SELECT id, source_path FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND source_path=$2 ORDER BY id', [sourceId, pair.origin])).map(row => ({ id: Number(row.id), source_path: row.source_path }));
-      if (!group.some(page => page.id === Number(pair.legacy_id))) group.push({ id: Number(pair.legacy_id), source_path: pair.legacy_path });
+      const group = byOrigin.get(pair.origin) ?? await engine.listLiveOriginPages(sourceId, [pair.origin]);
+      if (!group.some(page => page.id === pair.legacy_id)) group.push({ id: pair.legacy_id, source_path: pair.legacy_path });
       byOrigin.set(pair.origin, group);
     }
   }
@@ -169,8 +165,7 @@ export async function scanOriginTwins(engine: BrainEngine, sourceId: string): Pr
     const verdict = await originGroupVerdict(engine, context, confined, claimants);
     groups.push({ source_id: sourceId, source_path: origin, canonical: verdict.canonical, reason: verdict.verdict === 'resolve' ? null : verdict.reason, claimants: listed });
   }
-  const [counted] = await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND source_path IS NOT NULL', [sourceId]);
-  return { owner: context.owner, groups, file_backed: Number(counted?.n ?? 0), truncated, context };
+  return { owner: context.owner, groups, file_backed: await engine.countLiveFileBackedPages(sourceId), truncated, context };
 }
 
 /** The writes a group needs: every non-survivor gives the origin to `keep` (the canonical page for a verified group). */
@@ -216,8 +211,7 @@ export const originTwinsRepair: RepairHandler = {
     const context = await originOwnerContext(engine, sourceId);
     if (!context.ok) {
       // Off the owner host (or with no checkout bound) a source that holds no twin has nothing to resolve; the index needs no checkout.
-      const stored = await engine.executeRaw('SELECT 1 FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND source_path IS NOT NULL GROUP BY source_path HAVING count(*) > 1 LIMIT 1', [sourceId]);
-      if (stored.length) throw ownerRefusal(sourceId, context.reason);
+      if ((await engine.listOriginTwinGroups(sourceId, 1)).length) throw ownerRefusal(sourceId, context.reason);
       const hash = previewHash({ kind: 'origin-twins-v1', brain_id: scope.brain_id, selection: { source_ids: scope.source_ids }, empty: true });
       if (!opts?.apply) return { items: [], preview_hash: hash, residuals: { groups: 0 }, warnings: [`Source ${sourceId} has no duplicate-origin group; --apply builds the pages_live_origin_key index once no source has one.`] };
       const built = await buildOriginIndexIfClean(engine, ORIGIN_INDEX_MIGRATION);
@@ -292,17 +286,15 @@ const changed = (reason: string): RepairItemOutcome => ({ applied: false, outcom
 export async function originPairNow(engine: BrainEngine, pair: OriginTwinPair, owner: GhostOwner | null): Promise<string | null> {
   const context = await originOwnerContext(engine, pair.source_id);
   if (!context.ok || (owner && !sameOwner(context.owner, owner))) return 'the source\'s canonical owner changed since the preview';
-  const rows = await engine.executeRaw<{ id: number; slug: string; revision: string; source_path: string | null }>(`SELECT id, slug, knowledge_revision::text AS revision, source_path FROM pages
-    WHERE source_id=$1 AND id=ANY($2::bigint[]) AND deleted_at IS NULL`, [pair.source_id, [pair.survivor.page_id, pair.twin.page_id]]);
+  const rows = (await engine.listRepairScanPages(pair.source_id, { ids: [pair.survivor.page_id, pair.twin.page_id] })).filter(row => !row.deleted);
   const survivor = rows.find(row => Number(row.id) === pair.survivor.page_id), twin = rows.find(row => Number(row.id) === pair.twin.page_id);
   if (!survivor || !twin) return 'one of the two pages was deleted or purged';
   if (survivor.slug !== pair.survivor.slug || twin.slug !== pair.twin.slug) return 'one of the two pages was renamed';
   if (String(survivor.revision) !== pair.survivor.revision || String(twin.revision) !== pair.twin.revision) return 'one of the two pages has a new revision';
   if (survivor.source_path == null || twin.source_path !== pair.twin_path) return 'a recorded origin changed';
   if (pair.mode === 'detach') return null;
-  const live = await engine.executeRaw<{ id: number }>('SELECT id FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND source_path=ANY($2::text[])',
-    [pair.source_id, [...new Set([pair.source_path, pair.twin_path, survivor.source_path])]]);
-  const verdict = await originGroupVerdict(engine, context, syncOriginPath(pair.source_path), await readOriginClaimants(engine, pair.source_id, live.map(row => Number(row.id))));
+  const live = await engine.listLiveOriginPages(pair.source_id, [...new Set([pair.source_path, pair.twin_path, survivor.source_path])]);
+  const verdict = await originGroupVerdict(engine, context, syncOriginPath(pair.source_path), await readOriginClaimants(engine, pair.source_id, live.map(row => row.id)));
   if (verdict.verdict !== 'resolve') return `the group needs a decision now (${verdict.reason})`;
   return verdict.survivor.id === pair.survivor.page_id ? null : 'another page is now canonical';
 }
@@ -326,7 +318,7 @@ export async function resolveOriginTwin(ctx: OperationContext, pair: OriginTwinP
     await tx.lockPageKeys([{ sourceId: pair.source_id, slug: pair.survivor.slug }, { sourceId: pair.source_id, slug: pair.twin.slug }].sort((a, b) => a.slug.localeCompare(b.slug)));
     const reason = await pairLocked(tx, pair);
     if (reason) return { reason };
-    const [source] = await tx.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id=$1', [pair.source_id]);
+    const source = await tx.readSourceIncarnation(pair.source_id);
     return { receipt: await applyOriginTwin(tx, pair, source!.incarnation) };
   });
   return 'reason' in result ? changed(result.reason!) : { applied: true, outcome: pair.mode === 'merge' ? 'merged' : 'detached', detail: result.receipt };
@@ -344,9 +336,8 @@ async function pairLocked(tx: BrainEngine, pair: OriginTwinPair): Promise<string
 const DROPPED_VALUE_MAX = 1000;
 /** Keys of the twin's frontmatter the survivor lacks or holds differently, with the twin's values (listed in the receipt). */
 async function droppedFrontmatter(tx: BrainEngine, pair: OriginTwinPair): Promise<Record<string, unknown>> {
-  const rows = await tx.executeRaw<{ id: number; frontmatter: Record<string, unknown> | string | null }>('SELECT id, frontmatter FROM pages WHERE id=ANY($1::bigint[])', [[pair.survivor.page_id, pair.twin.page_id]]);
-  const of = (id: number) => { const raw = rows.find(row => Number(row.id) === id)?.frontmatter; return (typeof raw === 'string' ? JSON.parse(raw) : raw ?? {}) as Record<string, unknown>; };
-  const survivor = of(pair.survivor.page_id), twin = of(pair.twin.page_id);
+  const frontmatter = async (slug: string) => ((await tx.getPage(slug, { sourceId: pair.source_id }))?.frontmatter ?? {}) as Record<string, unknown>;
+  const survivor = await frontmatter(pair.survivor.slug), twin = await frontmatter(pair.twin.slug);
   return Object.fromEntries(Object.entries(twin).filter(([key, value]) => JSON.stringify(survivor[key]) !== JSON.stringify(value))
     .map(([key, value]) => { const text = JSON.stringify(value) ?? 'null'; return [key, text.length > DROPPED_VALUE_MAX ? `${text.slice(0, DROPPED_VALUE_MAX)}… (truncated; the twin's page version holds it)` : value]; }));
 }
@@ -356,7 +347,7 @@ async function applyOriginTwin(tx: BrainEngine, pair: OriginTwinPair, incarnatio
   const restore = ['gbrain', 'restore', pair.twin.slug, '--source-id', pair.source_id];
   const base = { source_id: pair.source_id, source_path: pair.source_path, survivor_slug: pair.survivor.slug, twin_slug: pair.twin.slug };
   if (pair.mode === 'detach') {
-    await tx.executeRaw('UPDATE pages SET source_path=NULL, source_uri=NULL, database_only_reason=$2 WHERE id=$1', [pair.twin.page_id, ORIGIN_TWIN_REASON]);
+    await tx.detachPageOrigin(pair.twin.page_id, ORIGIN_TWIN_REASON);
     return { status: 'origin_twin_detached', ...base };
   }
   const dropped = await droppedFrontmatter(tx, pair);

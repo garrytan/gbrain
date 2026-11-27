@@ -21,18 +21,16 @@ import { acquireWorktree, getWorktreeBinding, readPersistenceBrain } from './own
 import { currentVerifiedLocalWriter, registerLocalWriter, existingHostIdFor } from './identity.ts';
 import type { NativeLockHandle } from './native-lock.ts';
 import { assertWriterAdminState } from './admin-intent.ts';
-import { assertWriterAdminUnlocked } from './admin-lock.ts';
+import { assertStoreAdminUnlocked } from './admin-lock.ts';
 import { managedFilesystemDatastorePath, refreshManagedFilesystemRoots } from './filesystem-guard.ts';
 import { recordTopologyChange } from './topology-receipts.ts';
 import { lockTopologyPrincipal, topologyPrincipal } from './topology-locks.ts';
-import type { SqlEngine } from './model.ts';
 
 export interface PreActivationClaim { source_id: string; worktree_id: string; roots: string[] }
 
 /** Every source binding of the brain with its worktree's roots. Read-only. */
-export async function preActivationClaims(engine: SqlEngine): Promise<PreActivationClaim[]> {
-  const rows = await engine.executeRaw<{ source_id: string; worktree_id: string; root: string | null }>(`SELECT b.source_id, b.worktree_id::text AS worktree_id, h.local_path AS root
-    FROM persistence_source_bindings b LEFT JOIN persistence_host_bindings h ON h.worktree_id=b.worktree_id ORDER BY b.source_id, h.local_path`);
+export async function preActivationClaims(engine: Pick<BrainEngine, 'writerReleaseStore'>): Promise<PreActivationClaim[]> {
+  const rows = await (await engine.writerReleaseStore()).claimRoots();
   const claims = new Map<string, PreActivationClaim>();
   for (const row of rows) {
     const claim = claims.get(row.source_id) ?? { source_id: row.source_id, worktree_id: row.worktree_id, roots: [] };
@@ -69,23 +67,21 @@ export async function releasePreActivationClaims(engine: BrainEngine, opts: { ex
       locks.push(lock);
     }
     return await engine.transaction(async tx => {
-      await tx.executeRaw("SELECT set_config('lock_timeout','5000ms',true),set_config('synchronous_commit','on',true)");
+      const store = await tx.writerReleaseStore();
+      await store.begin(5000);
       const brain = await readPersistenceBrain(tx, { lock: 'update' });
       await assertWriterAdminState(tx, opts.expectedState);
-      await assertWriterAdminUnlocked(tx);
+      await assertStoreAdminUnlocked(store);
       if (brain.enabled) throw opError('writer_admin_state_changed', 'Managed persistence was activated concurrently; no claim was released.',
         'Another process activated managed persistence while this release ran, so the claims now belong to the managed writer. Review the brain-wide deactivation preview before deciding anything else.',
         { fix: readFix('Previews the brain-wide deactivation and its blockers; changes nothing.', { argv: ['gbrain', 'sources', 'writer', 'deactivate', '--dry-run', '--json'] }) });
-      await tx.executeRaw('SELECT id FROM persistence_worktrees ORDER BY id FOR UPDATE');
-      await tx.executeRaw('SELECT id FROM sources ORDER BY id FOR UPDATE');
+      await store.lockWorktreesAndSources();
       const refused = await opts.blocked(tx);
       if (refused) throw refused;
       const claims = await preActivationClaims(tx);
       if (!claims.length) return [];
       const worktrees = [...new Set(claims.map(claim => claim.worktree_id))];
-      await tx.executeRaw("UPDATE persistence_worktrees SET state='retired' WHERE id=ANY($1::uuid[]) AND state<>'retired'", [worktrees]);
-      await tx.executeRaw('DELETE FROM persistence_source_bindings');
-      await tx.executeRaw('DELETE FROM persistence_host_bindings WHERE worktree_id=ANY($1::uuid[])', [worktrees]);
+      await store.releaseBindings(worktrees);
       const retired = worktrees.map(id => ({ id, roots: [...new Set(claims.filter(claim => claim.worktree_id === id).flatMap(claim => claim.roots))] }));
       await lockTopologyPrincipal(tx, principal);
       await recordTopologyChange(tx, { principal, requestId, intent: { operation: 'writer_deactivate' }, operation: 'writer_deactivate', sourceId: '*',

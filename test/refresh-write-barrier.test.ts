@@ -31,6 +31,7 @@ import { refreshWorktree, resumeWorktreeRefreshes } from '../src/core/persistenc
 import { ledgerFiles, ledgerLocation, recordCommit } from '../src/core/git/commit-ledger.ts';
 import { getWriteRequestById } from '../src/core/persistence/journal.ts';
 import { readWriteWatermark } from '../src/core/persistence/applied-watermark.ts';
+import { readWriteWatermarkRow as readWriteWatermarkRowWith } from '../src/core/engine-sql/applied-watermark-reads.ts';
 import { resetWriteSwitches } from '../src/core/persistence/switches.ts';
 import { _setRefreshFenceWaitForTests } from '../src/core/persistence/admission-retry.ts';
 import { _resetRefreshBarrierCacheForTests, deferredBacklog, expireDeferredWrites } from '../src/core/persistence/refresh-barrier.ts';
@@ -607,7 +608,8 @@ test('a receipt poll reads the open-request index, never the permanent receipt h
       for (const node of nodes(explained!.Plan)) if (node['Node Type'] === 'Seq Scan' && node['Relation Name'] === 'persistence_requests') scans.push(sql);
       return f.engine.executeRaw(sql, params);
     } } as Pick<BrainEngine, 'executeRaw'>;
-    expect((await readWriteWatermark(explaining, f.alpha)).requests_pending.count).toBe(0);
+    const watermarkReads = { readWriteWatermarkRow: (sourceId: string) => readWriteWatermarkRowWith(explaining, sourceId) };
+    expect((await readWriteWatermark(watermarkReads, f.alpha)).requests_pending.count).toBe(0);
     expect(scans).toEqual([]);
   } finally {
     await f.engine.executeRaw("DELETE FROM persistence_requests WHERE principal_id='history'");

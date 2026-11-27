@@ -50,6 +50,7 @@ import { claimStateOf, type ClaimState } from './claim-phase.ts';
 import { readPreparationPolicy } from './switches.ts';
 import { listHostConsumers } from './consumer-heartbeat.ts';
 import type { DrainHolder } from './sync-lease.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 
 export type MovementState = 'moving' | 'held' | 'parked' | 'not_moving' | 'nothing_pending' | 'unknown';
 /** #6781: why a source's movement is `unknown`; `error` is the failed read's message, bounded. */
@@ -106,17 +107,9 @@ const newest = (...values: Array<string | null | undefined>): string | null => v
 
 export function writerStatusCommand(sourceId: string): string { return `gbrain sources writer status --source ${sourceId} --json`; }
 
-/** $1 worktree, $2 source incarnation. The kind test matches the `persistence_requests_sync_watermark` predicate text, so the planner can prove the partial index applies. */
-export const MOVEMENT_WATERMARK_SQL = `SELECT
-        (SELECT r.completed_at FROM persistence_requests r WHERE r.worktree_id=$1::uuid AND r.state='committed' AND r.source_incarnation=$2::uuid
-           AND COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%' ORDER BY r.completed_at DESC LIMIT 1) AS last_commit_at,
-        (SELECT count(*) FROM persistence_requests r WHERE r.worktree_id=$1::uuid AND r.state IN ('queued','running') AND COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%') AS admitted,
-        (SELECT min(r.created_at) FROM persistence_requests r WHERE r.worktree_id=$1::uuid AND r.state IN ('queued','running') AND COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%') AS admitted_since`;
+export { MOVEMENT_WATERMARK_SQL } from '../engine-sql/applied-watermark-reads.ts';
 
 interface BindingRow { source_id: string; worktree_id: string; source_incarnation: string; owner_host_id: string | null }
-interface WatermarkRow { last_commit_at: unknown; admitted: number | string; admitted_since?: unknown }
-interface HeadRow { request_id: string; state: string; claim_phase: unknown; execution_token: string | null; claim_lapsed: boolean | null; publication_started: boolean | null }
-interface HoldRow { count: number | string | null; stalled: number | string | null; fences: number | string | null; concurrent: number | string | null; updated_at: unknown }
 
 /**
  * #6706: the id of the active `sync` Minions job with a live lock that is draining `sourceId`, or null. Never rejects.
@@ -129,18 +122,13 @@ export async function liveSyncJob(engine: BrainEngine, sourceId: string, liveHol
     : await (await import('./sync-lease.ts')).readDrainLease(engine, sourceId).then(lease => lease?.live ? lease.holder : null, () => null);
   if (holder?.kind === 'job' && holder.id && /^\d+$/.test(holder.id)) return Number(holder.id);
   // The lease's beacon row (sync-lease.ts) is for older binaries; this build reads the lease holder above.
-  const [row] = await engine.executeRaw<{ id: number | string }>(`SELECT id FROM minion_jobs WHERE name='sync' AND status='active' AND lock_until > now() AND queue <> 'gbrain-drain-lease'
-    AND (COALESCE(data->>'sourceId', data->>'source_id')=$1 OR (COALESCE(data->>'sourceId', data->>'source_id') IS NULL
-      AND (data->>'repoPath' IS NULL AND $1='default' OR data->>'repoPath'=(SELECT local_path FROM sources WHERE id=$1)))) ORDER BY started_at LIMIT 1`, [sourceId]).catch(() => []);
-  return row ? Number(row.id) : null;
+  return engine.readLiveSyncJobId(sourceId).catch((error: unknown) => { rethrowCapabilityRefusal(error); return null; });
 }
 
 /** The movement of every active managed source (or of `sourceIds`), one bounded read each; sources without a binding are omitted. */
 export async function readSourceMovement(engine: BrainEngine, opts: { sourceIds?: string[]; now?: number } = {}): Promise<SourceMovement[]> {
   const now = opts.now ?? Date.now();
-  const bindings = await engine.executeRaw<BindingRow>(`SELECT b.source_id, b.worktree_id::text AS worktree_id, b.source_incarnation::text AS source_incarnation, w.owner_host_id::text AS owner_host_id
-    FROM persistence_source_bindings b JOIN sources s ON s.id=b.source_id AND s.incarnation=b.source_incarnation
-    JOIN persistence_worktrees w ON w.id=b.worktree_id WHERE ($1::text[] IS NULL OR b.source_id=ANY($1::text[])) ORDER BY b.source_id`, [opts.sourceIds ?? null]);
+  const bindings = await engine.listSourceBindingsForMovement(opts.sourceIds ?? null);
   if (!bindings.length) return [];
   let unknown: MovementUnknown | null = null;
   let backlogRows: ManagedSyncBacklog[] = [];
@@ -158,13 +146,7 @@ export async function readSourceMovement(engine: BrainEngine, opts: { sourceIds?
   const liveHeartbeat = () => heartbeat ??= listHostConsumers(engine, host).then(rows => rows.some(row => (row.mode === 'full' || row.mode === 'promoted') && row.liveness === 'live'), () => false);
   const out: SourceMovement[] = [];
   for (const binding of bindings) {
-    const [mark] = await engine.executeRaw<WatermarkRow>(MOVEMENT_WATERMARK_SQL, [binding.worktree_id, binding.source_incarnation]);
-    const [headRow] = await engine.executeRaw<HeadRow>(`SELECT request_id::text AS request_id, state, claim_phase, execution_token::text AS execution_token,
-        (claim_expires_at IS NOT NULL AND claim_expires_at < now()) AS claim_lapsed, publication_started
-      FROM persistence_requests WHERE worktree_id=$1::uuid AND state IN ('queued','running','recovering') ORDER BY (state <> 'running'), sequence LIMIT 1`, [binding.worktree_id]);
-    const [holdRow] = await engine.executeRaw<HoldRow>(`SELECT (completed_keys->0->>'count')::int AS count, (completed_keys->0->>'stalled')::int AS stalled,
-        (completed_keys->0->>'fences')::int AS fences, (completed_keys->0->>'concurrent')::int AS concurrent, updated_at
-      FROM op_checkpoints WHERE op='sync-hold-summary' AND completed_keys->0->>'source_id'=$1 AND completed_keys->0->>'incarnation'=$2 LIMIT 1`, [binding.source_id, binding.source_incarnation]);
+    const { watermark: mark, head: headRow, hold: holdRow } = await engine.readSourceMovementRows(binding);
     const claim = headRow ? claimStateOf({ state: headRow.state, claim_phase: headRow.claim_phase, execution_token: headRow.execution_token, claim_lapsed: headRow.claim_lapsed, publication_started: headRow.publication_started }, now) : null;
     const stampSince = (() => {
       const raw = typeof headRow?.claim_phase === 'string' ? safeJson(headRow.claim_phase) : headRow?.claim_phase;

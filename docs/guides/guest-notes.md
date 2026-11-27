@@ -213,6 +213,10 @@ itself; the model never writes that line. Text inside the note cannot change
 the mark: it comes from `guest_marks`, not from the page. Servers that do this
 list the `guest_marker_v1` capability.
 
+`gbrain get` prints the same warning line above a guest page's frontmatter. If
+you save that output and run `gbrain publish` on it, publish drops the warning
+line and strips the frontmatter, so neither reaches the shared file.
+
 ## What is stored
 
 Three database tables back a guest source. `guest_sources` names each guest

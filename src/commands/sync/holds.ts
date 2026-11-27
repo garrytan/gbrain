@@ -22,6 +22,7 @@ import { importSizeLimit, contentRefusalFromReceipt, isContentRefusal, type Cont
 import { slugConflictHoldMessage, type ImportResult } from '../../core/import-file.ts';
 import { classifyImportHold, parseMarkdown } from '../../core/markdown.ts';
 import { noncanonicalPrivateHold } from '../../core/persistence/visibility-request.ts';
+import { noncanonicalReadersHold } from '../../core/persistence/readers-request.ts';
 import { readSourceFileSync } from '../../core/minions/source-filesystem.ts';
 import { maintenanceBeliefTransaction } from '../../core/belief/writers.ts';
 import type { SyncRename } from '../../core/persistence/sync-discovery.ts';
@@ -170,8 +171,8 @@ export function screenLegacyFile(filePath: string, relPath: string, activePack?:
   if (!read) return { refusal: { code: 'file_too_large', message: `File too large (${lstatSync(filePath).size} bytes, max ${importSizeLimit(filePath)}).` }, upstreamVersion: null };
   if (hasMalformedPathSegment(relPath) || isCodeFilePath(relPath)) return { refusal: null, upstreamVersion: read.upstreamVersion };
   const parsed = parseMarkdown(read.content, relPath, { validate: true, ...(activePack ? { activePack } : {}) });
-  const refusal = classifyImportHold(parsed, { expectedSlug: slugifyPath(relPath) || null, slugConflictMessage: (_found, expected) => slugConflictHoldMessage(relPath, expected) })
-    ?? noncanonicalPrivateHold(read.content, parsed.frontmatter);
+  const refusal = classifyImportHold(parsed, { expectedSlug: slugifyPath(relPath) || null, createsPage: true, slugConflictMessage: (_found, expected) => slugConflictHoldMessage(relPath, expected) })
+    ?? noncanonicalPrivateHold(read.content, parsed.frontmatter) ?? noncanonicalReadersHold(read.content, parsed.frontmatter);
   return { refusal, upstreamVersion: read.upstreamVersion };
 }
 
@@ -192,6 +193,18 @@ export function legacyRefusal(result: Pick<ImportResult, 'status' | 'error' | 'r
   return { ...refusal, message: error };
 }
 
+/**
+ * The live page a hold at `path` names: the page whose source_path is `path`, else the page at the slug the path derives
+ * to (`derived`), else null. Its id is read by slug from the page found.
+ */
+async function heldPage(engine: BrainEngine, sourceId: string, path: string, derived: string | null): Promise<{ id: number; slug: string } | null> {
+  const rows = await engine.readRenameIdentityRows(sourceId, [path], derived ? [derived] : []);
+  const found = rows.find(row => row.source_path === path) ?? rows.find(row => row.slug === derived);
+  if (!found) return null;
+  const page = await engine.getPage(found.slug, { sourceId });
+  return page ? { id: Number(page.id), slug: page.slug } : null;
+}
+
 /** Records a hold for `path` (keeping a pending rename's identity) and reports it on stderr. */
 export async function recordLegacyHold(engine: BrainEngine, holds: LegacyHolds, input: {
   path: string; refusal: Pick<ContentRefusal, 'message' | 'key' | 'line'> & { code: GitHoldCode; reason?: GitHoldReason };
@@ -200,9 +213,7 @@ export async function recordLegacyHold(engine: BrainEngine, holds: LegacyHolds, 
   const { path, refusal } = input;
   const renameFrom = input.renameFrom ?? holds.existing.get(path)?.meta.rename_from;
   const derived = resolveSlugForPath(path) || null;
-  const [page] = renameFrom ? [] : await engine.executeRaw<{ id: number | string; slug: string }>(
-    `SELECT id, slug FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND (source_path=$2 OR slug=$3)
-      ORDER BY (source_path=$2) DESC LIMIT 1`, [holds.sourceId, path, derived ?? '']);
+  const page = renameFrom ? null : await heldPage(engine, holds.sourceId, path, derived);
   await engine.transaction(tx => writeGitHold(tx, {
     source_id: holds.sourceId, incarnation: holds.incarnation, path, source_path: path,
     slug: renameFrom?.slug ?? page?.slug ?? derived, page_id: renameFrom ? renameFrom.pageId : page ? Number(page.id) : null,

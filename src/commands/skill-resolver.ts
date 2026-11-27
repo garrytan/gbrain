@@ -24,13 +24,22 @@ import {
   ResolverError, HARNESSES, errorTurnOutput, GBRAIN_VERSION, type BuildInput, type TurnInput,
 } from '../core/skills/resolver/index.ts';
 import { validCatalogName } from '../core/skills/resolver/paths.ts';
+import type { Explain } from '../core/skills/resolver/resolve.ts';
 import { readResolverConfig, resolverHarnesses, resolverSection } from '../core/setup/skill-resolver-config.ts';
 import { configuredTopGate } from '../core/skills/resolver/config.ts';
-import { catalogSkillIds, pinProblem, PINS_MAX, readPins, renderPinnedBlock, writePins } from '../core/setup/skill-pins.ts';
+import { catalogSkillIds, PIN_CLASSES, pinProblem, PINS_MAX, readPins, renderPinnedBlock, sessionStartPinnedBlock, writePins, type PinClass } from '../core/setup/skill-pins.ts';
 import { refreshOpenclawPins } from '../core/setup/openclaw-skill-plugin.ts';
 import { PI_SKILL_CATALOG, refreshPiPins } from '../core/setup/pi-skill-extension.ts';
 import { HERMES_PINS_CATALOG, syncHermesPins } from '../core/setup/hermes-skill-pins.ts';
 import { CURSOR_PINS_CATALOG_PREFIX, cursorPinnedBlock, refreshCursorPins } from '../core/setup/cursor-skill-pins.ts';
+
+/** The resolver subcommands of `gbrain skills`, each one's own subcommands and the flags it accepts (valued, then boolean); scripts/build-public-surface.ts lists them in the stable promise. */
+export const SKILLS_RESOLVER_CLI = {
+  index: { subcommands: ['build', 'status', 'remove'], valued: ['--catalog', '--dir', '--from-json', '--claude-plugins', '--routing', '--harness', '--scope', '--session'], booleans: ['--bundled', '--json', '--shadow'] },
+  resolve: { subcommands: [], valued: ['--catalog', '--text', '--previous', '--input-json', '--session', '--harness', '--exclude', '--top-k', '--min-match', '--top-gate', '--shadow-log', '--explain-target', '--expect-catalog', '--load-hint'], booleans: ['--shadow', '--json', '--fail-open', '--reset-session', '--names-only'] },
+  library: { subcommands: [], valued: ['--out'], booleans: ['--json'] },
+  pin: { subcommands: ['add', 'remove', 'list'], valued: ['--catalog', '--line', '--class'], booleans: ['--json'] },
+} as const;
 
 const HELP_INDEX = `Usage: gbrain skills index <build|status|remove> [options]
 
@@ -64,13 +73,15 @@ const HELP_RESOLVE = `Usage: gbrain skills resolve [--catalog <name>]... (--text
         [--explain-target <id>] [--fail-open] [--json]
 
 Pick the few skills that fit one user turn (or none) and print the <relevant_skills>
-block for the harness to show the model. Word matching only: nothing leaves this machine,
+block for the harness to show the model. Word matching, plus skill vectors when the catalog
+has them: then the message goes to the brain's embedding provider (config.json embedding_model),
+as it does with the model picker on (skills.resolver.router). Otherwise nothing leaves this machine,
 and no brain connection is needed.
 
   --catalog <name>     the catalog to rank (repeatable to merge; default: the only one)
   --text <t>           the user message (or send turn JSON with --input-json -)
   --session <id>       the harness session: suggestions are not repeated within it, and its
-                       block tokens are capped by skills.resolver.session_token_budget (2000)
+                       block tokens are capped by skills.resolver.session_token_budget (8000)
   --harness <h>        picks the load line: openclaw, claude-code, codex, hermes, qm, pi or cursor
   --top-k <n>          at most n suggestions (1-8, default 5)
   --exclude <ids>      comma-separated skill ids to leave out
@@ -99,14 +110,17 @@ shows on every turn, and never suggested twice. gbrain ships no pins; a catalog 
 none gets no pinned block. Pins live in config.json (skills.resolver.pins.<catalog>),
 so turning the resolver off keeps them.
 
-  gbrain skills pin add <skill-id> --catalog <name> [--line "<when to use it, 100 chars>"] [--json]
+  gbrain skills pin add <skill-id> --catalog <name> [--line "<when to use it, 100 chars>"] [--class owner|conversation|owner,conversation] [--json]
   gbrain skills pin remove <skill-id> --catalog <name> [--json]
   gbrain skills pin list --catalog <name> [--json]
 
   --catalog <name>  the catalog the skill must be in (openclaw-<agent>, claude-code-user, ...)
   --line <text>     one trigger-first line shown beside the id (no < or >)
+  --class <list>    OpenClaw: the session classes the pin shows in, owner (the agent owner's own
+                    sessions, the default) and conversation (groups, channels, other people's DMs)
 
-An OpenClaw agent picks up a pin change on its next turn, with no reload.
+An OpenClaw agent picks up a pin change on its next turn, with no reload; Claude Code
+and Codex get claude-code-user's and codex-user's pins at their next session start.
 Guide: docs/guides/skill-resolver.md#pinned-skills
 `;
 
@@ -179,11 +193,11 @@ function runtimeFailure(e: ResolverError, json: boolean): never {
 
 async function runIndex(args: string[]): Promise<void> {
   const sub = args[0];
-  if (sub !== 'build' && sub !== 'status' && sub !== 'remove') {
+  if (!(SKILLS_RESOLVER_CLI.index.subcommands as readonly (string | undefined)[]).includes(sub)) {
     if (sub === undefined || sub === 'help' || sub === '--help' || sub === '-h') { process.stdout.write(HELP_INDEX); return; }
     usage(`Unknown subcommand "skills index ${sub}".`, 'Use gbrain skills index build, status or remove.');
   }
-  const p = parseFlags(args.slice(1), ['--catalog', '--dir', '--from-json', '--claude-plugins', '--routing', '--harness', '--scope', '--session'], ['--bundled', '--json', '--shadow'], HELP_INDEX);
+  const p = parseFlags(args.slice(1), SKILLS_RESOLVER_CLI.index.valued, SKILLS_RESOLVER_CLI.index.booleans, HELP_INDEX);
   const json = p.bools.has('--json');
   if (p.positionals.length) usage(`Unexpected argument "${p.positionals[0]}".`, 'Pass options as flags; see gbrain skills index --help.');
   try {
@@ -234,8 +248,7 @@ async function runIndex(args: string[]): Promise<void> {
 }
 
 async function runResolve(args: string[]): Promise<void> {
-  const p = parseFlags(args, ['--catalog', '--text', '--previous', '--input-json', '--session', '--harness', '--exclude', '--top-k', '--min-match', '--top-gate', '--shadow-log', '--explain-target', '--expect-catalog', '--load-hint'],
-    ['--shadow', '--json', '--fail-open', '--reset-session', '--names-only'], HELP_RESOLVE);
+  const p = parseFlags(args, SKILLS_RESOLVER_CLI.resolve.valued, SKILLS_RESOLVER_CLI.resolve.booleans, HELP_RESOLVE);
   if (p.positionals.length) usage(`Unexpected argument "${p.positionals[0]}".`, 'Pass the message with --text "<message>" or turn JSON with --input-json -.');
   const json = p.bools.has('--json');
   const failOpen = p.bools.has('--fail-open');
@@ -287,6 +300,7 @@ async function runResolve(args: string[]): Promise<void> {
       ...(p.flags.get('--catalog') ? { catalogs: p.flags.get('--catalog') } : {}), failOpen,
       ...(one(p, '--load-hint') ? { loadHint: one(p, '--load-hint') } : {}), namesOnly: p.bools.has('--names-only'),
       ...(one(p, '--explain-target') !== undefined ? { explainTarget: one(p, '--explain-target') } : {}),
+      router: true,
     });
   } catch (e) {
     if (!(e instanceof ResolverError)) throw e;
@@ -303,22 +317,26 @@ async function runResolve(args: string[]): Promise<void> {
   }
   let delivered: boolean;
   if (json) delivered = await write(`${JSON.stringify(result.explain ? { ...out, explain: result.explain } : out)}\n`);
-  else if (result.explain) {
-    const x = result.explain;
-    delivered = await write([
-      `${x.target}: ${x.indexed ? `indexed in ${x.catalog}` : x.skip_reason ? `not indexed (${x.skip_reason})` : 'not in the catalog'}`,
-      x.indexed ? `rank: ${x.rank ?? 'no match'}${x.score !== null ? `, score ${x.score}` : ''}` : '',
-      Object.keys(x.fields).length ? `matched: ${Object.entries(x.fields).map(([f, t]) => `${f} (${t.join(', ')})`).join('; ')}` : '',
-      x.excluded ? 'excluded by --exclude' : '', x.deduped ? 'already suggested in this session (deduped)' : '', `in block: ${x.in_block ? 'yes' : 'no'}`,
-      x.session ? `session: turn ${x.session.turn}, ${x.session.spent}/${x.session.budget} block tokens spent, ${x.session.remaining} left` : '',
-    ].filter(Boolean).join('\n') + '\n');
-  } else delivered = await write(out.block ? `${out.block}\n` : '');
+  else if (result.explain) delivered = await write(explainText(result.explain));
+  else delivered = await write(out.block ? `${out.block}\n` : '');
   if (delivered) await result.commit();
   if (out.error && !failOpen) process.exit(1);
 }
 
+/** The plain-text `--explain-target` answer (`--json` prints the same fields). */
+export function explainText(x: Explain): string {
+  return [
+    `${x.target}: ${x.indexed ? `indexed in ${x.catalog}` : x.skip_reason ? `not indexed (${x.skip_reason})` : 'not in the catalog'}`,
+    x.indexed ? `rank: ${x.rank ?? 'no match'}${x.score !== null ? `, score ${x.score}` : ''}` : '',
+    Object.keys(x.fields).length ? `matched: ${Object.entries(x.fields).map(([f, t]) => `${f} (${t.join(', ')})`).join('; ')}` : '',
+    x.vector ? `meaning: cosine ${x.vector.cosine.toFixed(3)}, floor ${x.vector.floor}` : '',
+    x.excluded ? 'excluded by --exclude' : '', x.deduped ? 'already suggested in this session (deduped)' : '', `in block: ${x.in_block ? 'yes' : 'no'}`,
+    x.session ? `session: turn ${x.session.turn}, ${x.session.spent}/${x.session.budget} block tokens spent, ${x.session.remaining} left` : '',
+  ].filter(Boolean).join('\n') + '\n';
+}
+
 async function runLibrary(args: string[]): Promise<void> {
-  const p = parseFlags(args, ['--out'], ['--json'], HELP_LIBRARY);
+  const p = parseFlags(args, SKILLS_RESOLVER_CLI.library.valued, SKILLS_RESOLVER_CLI.library.booleans, HELP_LIBRARY);
   if (p.positionals.length) usage(`Unexpected argument "${p.positionals[0]}".`, 'Pass the file with --out <file.mjs>.');
   const json = p.bools.has('--json');
   const out = one(p, '--out');
@@ -336,11 +354,11 @@ async function runLibrary(args: string[]): Promise<void> {
 
 async function runPin(args: string[]): Promise<void> {
   const sub = args[0];
-  if (sub !== 'add' && sub !== 'remove' && sub !== 'list') {
+  if (!(SKILLS_RESOLVER_CLI.pin.subcommands as readonly (string | undefined)[]).includes(sub)) {
     if (sub === undefined || sub === 'help' || sub === '--help' || sub === '-h') { process.stdout.write(HELP_PIN); return; }
     usage(`Unknown subcommand "skills pin ${sub}".`, 'Use gbrain skills pin add, remove or list.');
   }
-  const p = parseFlags(args.slice(1), ['--catalog', '--line'], ['--json'], HELP_PIN);
+  const p = parseFlags(args.slice(1), SKILLS_RESOLVER_CLI.pin.valued, SKILLS_RESOLVER_CLI.pin.booleans, HELP_PIN);
   const json = p.bools.has('--json');
   const catalog = one(p, '--catalog');
   if (!catalog || !validCatalogName(catalog)) usage('--catalog <name> is required (a-z, 0-9, _ and -).', 'Pass the catalog the pin belongs to, e.g. --catalog openclaw-main.');
@@ -352,6 +370,10 @@ async function runPin(args: string[]): Promise<void> {
     const name = p.positionals[0];
     if (!name || p.positionals.length > 1) usage(`gbrain skills pin ${sub} takes one skill id.`, `Example: gbrain skills pin ${sub} <skill-id> --catalog ${catalog}`);
     const line = one(p, '--line');
+    const classArg = one(p, '--class');
+    const classes = classArg === undefined ? undefined : [...new Set(classArg.split(',').map((c) => c.trim()))] as PinClass[];
+    if (classes && (!classes.length || classes.some((c) => !PIN_CLASSES.includes(c)))) usage('--class takes owner, conversation or owner,conversation.', 'Example: --class owner,conversation');
+    if (classes && !catalog.startsWith('openclaw-')) usage('--class is for OpenClaw catalogs (openclaw-<agent>).', 'Drop --class.');
     if (sub === 'add') {
       const problem = pinProblem({ name, ...(line !== undefined ? { line } : {}) });
       if (problem) usage(problem, 'Fix the value and retry.');
@@ -360,27 +382,33 @@ async function runPin(args: string[]): Promise<void> {
       if (!known.has(name)) exitCliError(opError('skill_resolver_pin_unknown', `"${name}" is not a skill in ${catalog}; nothing was written.`, `Check the id with gbrain skills index status --catalog ${catalog}, then retry.`, { docs: 'docs/guides/skill-resolver.md#skill_resolver_pin_unknown' }), CMD, { json });
       const others = pins.filter((x) => x.name !== name);
       if (others.length >= PINS_MAX) usage(`${catalog} already has ${PINS_MAX} pins.`, 'Remove one first.');
-      pins = [...others, { name, ...(line !== undefined ? { line } : {}) }];
+      const kept = classes ? (classes.length !== 1 || classes[0] !== 'owner' ? PIN_CLASSES.filter((c) => classes.includes(c)) : undefined) : pins.find((x) => x.name === name)?.classes;
+      pins = [...others, { name, ...(line !== undefined ? { line } : {}), ...(kept ? { classes: kept } : {}) }];
     } else {
       if (line !== undefined) usage('--line is for pin add.', 'Drop --line.');
+      if (classes) usage('--class is for pin add.', 'Drop --class.');
       pins = pins.filter((x) => x.name !== name);
     }
     writePins(read, catalog, pins);
   }
   const cursor = catalog.startsWith(CURSOR_PINS_CATALOG_PREFIX);
-  const rendered = cursor ? cursorPinnedBlock(home, catalog) : renderPinnedBlock(pins, { harness: catalog.startsWith('openclaw-') ? 'openclaw' : catalog === HERMES_PINS_CATALOG ? 'hermes' : catalog === PI_SKILL_CATALOG ? 'pi' : undefined, known: catalogSkillIds(home, catalog) });
+  const laneHarness = catalog === 'claude-code-user' ? 'claude-code' : catalog === 'codex-user' ? 'codex' : null;
+  const laneOn = !!laneHarness && resolverHarnesses(read.state === 'ok' ? read.doc : null).includes(laneHarness);
+  const laneHook = laneOn ? (await import('../core/setup/skill-resolver-hook.ts')).inspectSkillResolverHook(laneHarness).state : null;
+  const rendered = cursor ? cursorPinnedBlock(home, catalog) : laneHarness ? sessionStartPinnedBlock(home, laneHarness, pins) : renderPinnedBlock(pins, { harness: catalog.startsWith('openclaw-') ? 'openclaw' : catalog === HERMES_PINS_CATALOG ? 'hermes' : catalog === PI_SKILL_CATALOG ? 'pi' : undefined, known: catalogSkillIds(home, catalog) });
   const agents = sub === 'list' ? [] : refreshOpenclawPins(home);
   const piUpdated = sub !== 'list' && catalog === PI_SKILL_CATALOG && refreshPiPins(home);
   const hermesOn = catalog === HERMES_PINS_CATALOG && sub !== 'list' && resolverHarnesses(read.state === 'ok' ? read.doc : null).includes('hermes');
   const soul = hermesOn ? syncHermesPins({ home, hermesHome: (await import('../core/setup/skill-resolver-hook.ts')).hermesHomeDir(), dryRun: false }) : null;
   const cursorRule = cursor && sub !== 'list' ? refreshCursorPins(home, catalog) : null;
-  const doc = { catalog, pins, rendered: rendered.ids, unknown: rendered.unknown, cut: rendered.cut, block_tokens: rendered.tokens, ...(agents.length ? { openclaw_agents_updated: agents } : {}), ...(soul ? { hermes_soul: soul } : {}), ...(piUpdated ? { pi_state_updated: true } : {}), ...(cursorRule ? { cursor_rule: { project: cursorRule.project, steps: cursorRule.steps, ...(cursorRule.error ? { error: cursorRule.error } : {}) } } : {}) };
+  const doc = { catalog, pins, rendered: rendered.ids, unknown: rendered.unknown, cut: rendered.cut, block_tokens: rendered.tokens, ...(agents.length ? { openclaw_agents_updated: agents } : {}), ...(soul ? { hermes_soul: soul } : {}), ...(piUpdated ? { pi_state_updated: true } : {}), ...(laneHook === 'wired' ? { session_start_harness: laneHarness } : {}), ...(cursorRule ? { cursor_rule: { project: cursorRule.project, steps: cursorRule.steps, ...(cursorRule.error ? { error: cursorRule.error } : {}) } } : {}) };
   if (json) { await write(`${JSON.stringify(doc)}\n`); return; }
   await write([
     pins.length ? `${catalog}: ${pins.length} pin(s)` : `${catalog}: no pins`,
-    ...pins.map((x) => `  ${x.name}${x.line ? ` — ${x.line}` : ''}${rendered.unknown.includes(x.name) ? ' (not in the catalog: left out, skill_resolver_pin_unknown)' : rendered.cut.includes(x.name) ? ' (over the token cap: left out)' : ''}`),
+    ...pins.map((x) => `  ${x.name}${x.line ? ` — ${x.line}` : ''}${catalog.startsWith('openclaw-') ? ` [${(x.classes ?? ['owner']).join(', ')}]` : ''}${rendered.unknown.includes(x.name) ? ' (not in the catalog: left out, skill_resolver_pin_unknown)' : rendered.cut.includes(x.name) ? ' (over the token cap: left out)' : ''}`),
     agents.length ? `OpenClaw agent(s) ${agents.join(', ')} use the new pins from their next turn.` : '',
     piUpdated ? 'Pi uses the new pins from its next run.' : '',
+    laneHarness ? `${laneHarness === 'codex' ? 'Codex' : 'Claude Code'} ${laneHook === 'wired' ? 'gets these pins at its next session start (startup, resume, clear or compaction)' : laneOn ? `gets these pins at its next session start once its SessionStart hook is ${laneHook === 'untrusted' ? 'trusted' : 'refreshed'}: gbrain setup ${laneHarness} --skill-loading resolve` : `gets these pins at its next session start once skill loading is on: gbrain setup ${laneHarness} --skill-loading resolve`}.` : '',
     soul ? `Hermes: ${soul.action} ${soul.detail}${soul.action === 'skip' ? '' : '; Hermes reads SOUL.md at session start'}.` : '',
     cursorRule ? (cursorRule.error ? `Cursor: ${cursorRule.error.message}` : `Cursor (${cursorRule.project}): ${cursorRule.steps.filter((x) => x.step === 'rule').map((x) => `${x.action} ${x.detail}`).join('; ')}; Cursor applies the rule from its next request.`) : '',
   ].filter(Boolean).join('\n') + '\n');

@@ -98,7 +98,7 @@ for (const backend of testBackends()) {
   const databaseUrl = backend === 'postgres' ? requirePostgresTestDatabase() : undefined;
 
   test(`${backend}: updated_desc orders a tie cluster by slug and the slug keyset lists each page once while tied rows are touched`, async () => {
-    expect(PAGE_SORT_SQL.updated_desc).toBe('p.updated_at DESC, p.slug DESC, p.source_id DESC, p.id DESC');
+    expect(PAGE_SORT_SQL.updated_desc).toBe('p.updated_at DESC, p.slug COLLATE "C" DESC, p.source_id COLLATE "C" DESC, p.id DESC');
     const { engine, close } = await isolatedSharedSkillsEngine(databaseUrl);
     try {
       const slugs = Array.from({ length: 200 }, (_, i) => `meetings/m${String(i).padStart(3, '0')}`);

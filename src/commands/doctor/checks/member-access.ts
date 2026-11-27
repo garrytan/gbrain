@@ -33,10 +33,7 @@ const showPage = (p: PageRef, name: string, why: string) => agentFix(['gbrain', 
 
 async function malformed(engine: BrainEngine): Promise<Check> {
   const name = 'access_readers_malformed';
-  const rows = await engine.executeRaw<PageRef & { total: number }>(
-    `SELECT source_id, slug, count(*) OVER ()::int AS total FROM pages
-      WHERE deleted_at IS NULL AND frontmatter->'readable_by' IS NOT NULL AND gbrain_access_readers(frontmatter) = ARRAY['!nobody']::text[]
-      ORDER BY source_id, slug LIMIT ${SAMPLE}`);
+  const rows = await engine.listMalformedReaderPages(SAMPLE);
   const total = rows[0]?.total ?? 0;
   if (!total) return { name, status: 'ok', message: 'Every page that names readers names them validly.', details: { count: 0 } };
   return { name, status: 'warn', details: { count: total, samples: rows.map(ref), truncated: total > rows.length },
@@ -47,19 +44,7 @@ async function malformed(engine: BrainEngine): Promise<Check> {
 
 async function unknownReaders(engine: BrainEngine): Promise<Check> {
   const name = 'access_unknown_readers';
-  const rows = await engine.executeRaw<{ reader: string; kind: 'unknown' | 'retired' | 'empty_group'; pages: number; sample: PageRef }>(
-    `WITH named AS (
-       SELECT p.source_id, p.slug, r AS reader FROM pages p, unnest(gbrain_access_readers(p.frontmatter)) AS r
-        WHERE p.deleted_at IS NULL AND p.frontmatter->'readable_by' IS NOT NULL AND r <> '!nobody'),
-     classified AS (
-       SELECT n.*, CASE
-         WHEN n.reader LIKE 'member:%' THEN (SELECT CASE WHEN m.id IS NULL THEN 'unknown' WHEN m.tombstoned_at IS NOT NULL THEN 'retired' END
-           FROM (SELECT 1) one LEFT JOIN access_members m ON m.id = substr(n.reader, 8))
-         ELSE (SELECT CASE WHEN g.id IS NULL THEN 'unknown' WHEN NOT EXISTS (SELECT 1 FROM access_group_members gm WHERE gm.group_id = g.id) THEN 'empty_group' END
-           FROM (SELECT 1) one LEFT JOIN access_groups g ON g.id = substr(n.reader, 7)) END AS kind
-       FROM named n)
-     SELECT reader, kind, count(*)::int AS pages, jsonb_build_object('source_id', min(source_id), 'slug', min(slug)) AS sample
-       FROM classified WHERE kind IS NOT NULL GROUP BY reader, kind ORDER BY kind, reader LIMIT ${SAMPLE}`);
+  const rows = await engine.listUnknownReaders(SAMPLE);
   const unknown = rows.filter(r => r.kind !== 'empty_group');
   const empty = rows.filter(r => r.kind === 'empty_group');
   const details = { unknown: unknown.map(r => ({ reader: r.reader, kind: r.kind, pages: r.pages, sample: ref(r.sample) })),
@@ -79,15 +64,7 @@ async function unknownReaders(engine: BrainEngine): Promise<Check> {
 
 async function recentNarrowings(engine: BrainEngine): Promise<Check> {
   const name = 'access_recent_narrowings';
-  const rows = await engine.executeRaw<PageRef & { readers: string[]; writer: string | null; updated_at: string; total: number }>(
-    `SELECT p.source_id, p.slug, gbrain_access_readers(p.frontmatter) AS readers, p.updated_at::text AS updated_at,
-            CASE WHEN p.revision_principal_kind IS NULL THEN NULL ELSE p.revision_principal_kind || ':' || p.revision_principal_id END AS writer,
-            count(*) OVER ()::int AS total
-       FROM pages p
-       JOIN LATERAL (SELECT v.frontmatter FROM page_versions v WHERE v.page_id = p.id ORDER BY v.snapshot_at DESC, v.id DESC LIMIT 1) prev ON true
-      WHERE p.deleted_at IS NULL AND p.frontmatter->'readable_by' IS NOT NULL AND prev.frontmatter->'readable_by' IS NULL
-        AND p.updated_at > now() - make_interval(days => ${NARROWING_DAYS})
-      ORDER BY p.updated_at DESC LIMIT ${SAMPLE}`);
+  const rows = await engine.listRecentReaderNarrowings(NARROWING_DAYS, SAMPLE);
   const total = rows[0]?.total ?? 0;
   const details = { count: total, window_days: NARROWING_DAYS, narrowings: rows.map(r => ({ page: ref(r), readers: r.readers, writer: r.writer ?? 'unrecorded', at: r.updated_at })), truncated: total > rows.length };
   if (!total) return { name, status: 'ok', details, message: `No page gained readers in the last ${NARROWING_DAYS} days.` };
@@ -98,13 +75,10 @@ async function recentNarrowings(engine: BrainEngine): Promise<Check> {
     fix: { ...showPage(rows[0]!, name, 'Shows the most recently narrowed page and its readers, read-only; ask the user whether the narrowing was intended before reverting anything.'), actor: 'user', ask_user: true } };
 }
 
-async function backfill(engine: BrainEngine): Promise<Check> {
+/** `access_page_readers_backfill`: pages whose stored readers lag the readers their frontmatter names. */
+export async function backfill(engine: BrainEngine): Promise<Check> {
   const name = 'access_page_readers_backfill';
-  const [row] = await engine.executeRaw<{ total: number }>(
-    `SELECT count(*)::int AS total FROM pages
-      WHERE (frontmatter->'readable_by' IS NOT NULL OR page_readers IS NOT NULL)
-        AND page_readers IS DISTINCT FROM gbrain_access_readers(frontmatter)`);
-  const total = row?.total ?? 0;
+  const total = await engine.countAccessReaderDrift();
   if (!total) return { name, status: 'ok', details: { count: 0 }, message: 'Every page that names readers has its derived readers.' };
   return { name, status: 'warn', details: { count: total, repair: 'access' },
     message: `${total} page(s) name readers in frontmatter but have no derived readers yet (written before member access), so they read as nobody for every remote caller, listed members included. `

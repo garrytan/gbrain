@@ -29,7 +29,8 @@ pages whose text is in the files.
 A fresh `gbrain init` creates one source at
 `~/.gbrain/content/<brain-id>/default` (under `GBRAIN_HOME` when it is set).
 It is a plain folder until you make it a repository: `gbrain init --git`
-initializes Git in a new empty folder, `--content-root <path>` picks the
+initializes Git in a new empty folder (until its first commit, `gbrain sync`
+reports it up to date and remote reads work as usual), `--content-root <path>` picks the
 folder, and `gbrain sources add <id> --path <repo>` adds a Git repository
 you already have. `gbrain sources harden <id>` adds the commit-and-push hook that
 keeps a remote copy current. `gbrain sources list` shows every source and its

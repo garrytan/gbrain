@@ -9,6 +9,7 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { readFenceTrendPrefix, recordPassFenceTrend } from '../src/core/persistence/sync-prepare.ts';
 import { FENCE_TREND_OP } from '../src/core/fence-repair/census-store.ts';
+import { upsertFenceTrendRunRecord } from '../src/core/engine-sql/fence-repair-records.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
 
@@ -44,7 +45,9 @@ async function history(engine: BrainEngine) {
 function recording(engine: BrainEngine) {
   const statements: Array<{ sql: string; params: unknown[] }> = [];
   const executeRaw = (sql: string, params: unknown[] = []) => { statements.push({ sql, params }); return engine.executeRaw(sql, params); };
-  return { engine: { executeRaw } as unknown as BrainEngine, statements };
+  const readManagedSyncPassRow = (...args: Parameters<BrainEngine['readManagedSyncPassRow']>) => engine.readManagedSyncPassRow(...args);
+  const listLiveManagedSyncPassRows = (...args: Parameters<BrainEngine['listLiveManagedSyncPassRows']>) => engine.listLiveManagedSyncPassRows(...args);
+  return { engine: { executeRaw, upsertFenceTrendRunRecord: (op: string, fingerprint: string, record: unknown) => upsertFenceTrendRunRecord({ executeRaw } as never, op, fingerprint, record), readManagedSyncPassRow, listLiveManagedSyncPassRows } as unknown as BrainEngine, statements };
 }
 
 test('#9646: an import open at the pre-read that commits before the stamp is counted once, and a stuck old import keeps the publication past the newest request', async () => {

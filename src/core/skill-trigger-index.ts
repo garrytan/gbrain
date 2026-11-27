@@ -26,7 +26,7 @@
  */
 
 import { existsSync, readFileSync, readdirSync, statSync, type Dirent } from 'fs';
-import { join } from 'path';
+import { basename, join } from 'path';
 import { parseResolverEntries, type ResolverEntry } from './check-resolvable.ts';
 import { findAllResolverFiles } from './resolver-filenames.ts';
 import { parseSkillFrontmatter } from './skill-frontmatter.ts';
@@ -70,9 +70,11 @@ export function _resetWarnedSkillsForTests(): void {
  *   - `conventions/`, `migrations/` (no SKILL.md by design).
  *   - Directories without a `SKILL.md` (deprecated `install/`).
  *   - SKILL.md files with no frontmatter or empty `triggers:` array.
+ *   - SKILL.md files marked `deprecated: true`, whose path goes into
+ *     `deprecated` so their RESOLVER.md rows are dropped too.
  *   - SKILL.md files that fail to read — warn-once + skip.
  */
-function loadFrontmatterEntries(skillsDir: string): SkillTriggerEntry[] {
+function loadFrontmatterEntries(skillsDir: string, deprecated: Set<string>): SkillTriggerEntry[] {
   const out: SkillTriggerEntry[] = [];
   if (!existsSync(skillsDir)) return out;
 
@@ -131,9 +133,10 @@ function loadFrontmatterEntries(skillsDir: string): SkillTriggerEntry[] {
       continue;
     }
 
+    const skillPath = `skills/${name}/SKILL.md`;
+    if (parsed?.deprecated) { deprecated.add(skillPath); continue; }
     if (!parsed || !parsed.triggers || parsed.triggers.length === 0) continue;
 
-    const skillPath = `skills/${name}/SKILL.md`;
     for (const trigger of parsed.triggers) {
       const t = trigger.trim();
       if (t.length === 0) continue;
@@ -154,6 +157,11 @@ function loadFrontmatterEntries(skillsDir: string): SkillTriggerEntry[] {
  * Walk every RESOLVER.md / AGENTS.md across `skillsDir` AND its parent
  * directory (the OpenClaw workspace-root layout from v0.31.7). For each
  * file: parse via `parseResolverEntries` and stamp `source: 'resolver_md'`.
+ *
+ * An AGENTS.md is the agent's general instructions, so a compact list row
+ * there (`- **word**: text`) is a resolver row only when `skills/<word>/SKILL.md`
+ * exists; otherwise it is a prose bullet (GST-3155). RESOLVER.md is a
+ * resolver file, so its list rows always count.
  */
 function loadResolverMdEntries(skillsDir: string): SkillTriggerEntry[] {
   const paths = [
@@ -168,7 +176,10 @@ function loadResolverMdEntries(skillsDir: string): SkillTriggerEntry[] {
     } catch {
       continue;
     }
+    const instructionsFile = basename(p) === 'AGENTS.md';
     for (const e of parseResolverEntries(content)) {
+      // nosemgrep: javascript.lang.security.audit.path-traversal.path-join-resolve-traversal.path-join-resolve-traversal -- skillsDir is the caller-resolved local skills/ dir and the row name is kebab-lowercase by the parser's regex; existence probe only
+      if (instructionsFile && e.listRow && !existsSync(join(skillsDir, e.skillPath.replace(/^skills\//, '')))) continue;
       out.push({ ...e, source: 'resolver_md' });
     }
   }
@@ -206,11 +217,13 @@ function mergeEntries(
 
 /**
  * The shared primitive. Returns the unified entry list for a given
- * skills directory. Idempotent. Pure modulo filesystem state.
+ * skills directory. Idempotent. Pure modulo filesystem state. A skill
+ * marked `deprecated: true` has no entries, from either surface; its
+ * `skills/<name>/SKILL.md` path is added to `deprecated` when one is passed.
  */
-export function loadSkillTriggerIndex(skillsDir: string): SkillTriggerEntry[] {
-  const fmEntries = loadFrontmatterEntries(skillsDir);
-  const resolverEntries = loadResolverMdEntries(skillsDir);
+export function loadSkillTriggerIndex(skillsDir: string, deprecated = new Set<string>()): SkillTriggerEntry[] {
+  const fmEntries = loadFrontmatterEntries(skillsDir, deprecated);
+  const resolverEntries = loadResolverMdEntries(skillsDir).filter(e => !deprecated.has(e.skillPath));
   return mergeEntries(fmEntries, resolverEntries);
 }
 

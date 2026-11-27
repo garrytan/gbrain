@@ -47,6 +47,7 @@ type Failure = 'refusal' | 'missing-table';
 const TYPED_READERS: Record<string, Record<string, Capability>> = {
   search_telemetry: { readSearchStats: 'telemetry' },
   chat_usage_log: { readChatUsage: 'telemetry' },
+  budget_ledger: { readBudgetLedgerDay: 'persistence_journal' },
 };
 
 /**

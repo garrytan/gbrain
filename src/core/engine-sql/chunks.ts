@@ -63,7 +63,7 @@ export interface ChunkPageGuards {
  * UPDATE through the transaction clone's own `executeRaw`, exactly as master
  * did (raw gauge, and the clone's `executeRaw` is the seam callers observe).
  */
-export type ChunkTransactionRunner = <T>(fn: (tx: Pick<BrainEngine, 'executeRaw'>) => Promise<T>) => Promise<T>;
+export type ChunkTransactionRunner = <T>(fn: (tx: Pick<BrainEngine, 'executeRaw' | 'invalidateContentDriftChunks'>) => Promise<T>) => Promise<T>;
 
 type StaleChunkOpts = { sourceId?: string; signature?: string; includeNullSignature?: boolean };
 
@@ -440,7 +440,9 @@ export async function getChunks(
         JOIN pages p ON p.id = cc.page_id
         ${trustedSql(chunkManifestJoin('p', 'cc', 'm', opts?.chunkManifest ?? true))}
         WHERE ${chunkReadWhere(slug, scope, opts)}`;
-      const order = trustedSql(chunkDocumentOrder('cc', 'm'));
+      // A read over several sources finds one page per source, and their chunks tie on document order (chunk 0 of each
+      // page), so the source id, in byte order, breaks the tie and every engine returns the same order.
+      const order = trustedSql(`${chunkDocumentOrder('cc', 'm')}, p.source_id COLLATE "C"`);
       const range = opts?.indexRange;
       if (range?.ordinal) {
         const { rows } = await exec.run(sqlFragment`
@@ -643,33 +645,9 @@ export async function invalidateContentDriftBatch(
   column: string,
   opts: { afterChunkId: number; limit: number; sourceId?: string },
 ): Promise<ContentDriftBatch> {
-    const after = Math.trunc(opts.afterChunkId);
-    const limit = Math.trunc(opts.limit);
-    if (!Number.isFinite(after) || !Number.isFinite(limit) || after < 0 || limit < 1) {
-      throw new Error(`invalid content-drift batch window: after ${opts.afterChunkId}, limit ${opts.limit}`);
-    }
-    const colId = trustedSql(quoteIdentifier(column));
-    const window = trustedSql(`id > ${after} ORDER BY id LIMIT ${limit}`);
-    const srcClause = opts.sourceId !== undefined ? sqlFragment` AND p.source_id = ${opts.sourceId}` : sqlFragment``;
+    // The batch statement is the typed member invalidateContentDriftChunks (engine-sql/embed-stale-work.ts), so every engine runs it.
     return inTransaction(async tx => {
-      const sources = await lockEmbeddingSources(tx, opts.sourceId);
-      // chunk-visibility-ok: the drift sweep visits every chunk row by id; the UPDATE's predicates decide eligibility
-      const { text, params } = renderFragment(sqlFragment`WITH b AS (SELECT id FROM content_chunks WHERE ${window}),
-             w AS (UPDATE content_chunks cc
-            SET ${colId} = NULL, embedded_at = NULL, embedded_text_hash = NULL, embedding_pending_since = now()
-           FROM b, pages p
-          WHERE cc.id = b.id
-            AND cc.page_id = p.id
-            AND p.source_id=ANY(${sources}::text[])
-            AND EXISTS (SELECT 1 FROM sources s WHERE s.id=p.source_id AND NOT s.archived)
-            AND p.deleted_at IS NULL
-            AND cc.${colId} IS NOT NULL
-            AND cc.embedded_text_hash IS NOT NULL
-            AND cc.embedded_text_hash <> md5(cc.chunk_text)
-            AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip') AND NOT ${budgetLimited}${srcClause}
-          RETURNING 1)
-        SELECT (SELECT max(id) FROM b) AS last_id, (SELECT count(*) FROM b)::int AS checked, (SELECT count(*) FROM w)::int AS drifted`);
-      const [row] = await tx.executeRaw<{ last_id: number | string | null; checked: number | string; drifted: number | string }>(text, params);
+      const row = await tx.invalidateContentDriftChunks({ column, afterChunkId: opts.afterChunkId, limit: opts.limit, ...(opts.sourceId !== undefined && { sourceId: opts.sourceId }) });
       return {
         checked: Number(row?.checked ?? 0),
         drifted: Number(row?.drifted ?? 0),
@@ -1043,7 +1021,7 @@ export async function listEmbeddingStateRows(exec: ScopedRead, column: string,
          WHERE p.deleted_at IS NULL AND ${NO_CHUNK_ROWS}${scope}
       ) r
      WHERE r.state = ANY(${[...opts.states]}::text[])
-     ORDER BY r.state, r.source_id, r.slug
+     ORDER BY r.state COLLATE "C", r.source_id COLLATE "C", r.slug COLLATE "C"
      LIMIT ${opts.limit}`);
   return rows.map(row => normalizeStateRow(row));
 }

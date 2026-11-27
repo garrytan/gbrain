@@ -4,16 +4,17 @@
 //!
 //! What the store does not keep, and what each read answers for it (rust/docs/store/cli-reads-export.md):
 //! - no statement timeout: `setLocalStatementTimeout` runs only in TypeScript and does nothing;
-//! - no `fact_purges` rows: the withdrawal list holds withdrawals only, each with `purged` false;
 //! - no folder rules: the list of sources with an access policy is empty.
 //!
-//! Keys: none of its own. It reads the page, page-id, page-body, raw-data and withdrawal records.
+//! Keys: none of its own. It reads the page, page-id, page-body, raw-data, withdrawal and fact
+//! purge records.
 
 use super::pg_text::{is_pg_space, jsonb_text, pg_lower, timestamptz_text};
 use super::reads::pages_after;
 use crate::Store;
 use crate::env::iso;
 use crate::error::{Result, StoreError};
+use crate::facts::purge_ledger::source_purges;
 use crate::links::no_nul;
 use crate::page_body::{
     ManifestRow, in_generation, manifest_rows, page_u64, read_body_state, segmented_reference,
@@ -188,7 +189,7 @@ fn octets(text: &str) -> i64 {
 
 /// `to_jsonb(timestamptz)` with TimeZone UTC: `2026-01-03T00:00:00.215+00:00`, trailing fraction
 /// zeros dropped.
-fn jsonb_timestamptz(micros: i64) -> String {
+pub(crate) fn jsonb_timestamptz(micros: i64) -> String {
     format!("{}:00", timestamptz_text(micros).replacen(' ', "T", 1))
 }
 
@@ -289,22 +290,43 @@ impl Store {
             + 2)
     }
 
-    /// `listExportWithdrawals`: the source's withdrawals ordered by visibility, fact_hash and
-    /// subject (byte order), `withdrawn_at` as ISO text. The store keeps no purge tombstones, so
-    /// every row has `purged` false.
+    /// `listPurgeTombstones(sourceId)`: the source's fact purge tombstones and take purge tombstones,
+    /// each with every column the purge stored (request id, actor, reason), in byte order of their keys.
+    pub fn list_purge_tombstones(&self, source_id: &str) -> Result<serde_json::Value> {
+        no_nul("listPurgeTombstones", &[("sourceId", source_id)])?;
+        let read = self.read()?;
+        Ok(serde_json::json!({
+            "facts": crate::facts::purge_ledger::fact_purge_tombstones(&*read, source_id)?,
+            "takes": crate::facts::take_purges::take_purge_tombstones(&*read, source_id)?,
+        }))
+    }
+
+    /// `listExportWithdrawals`: the source's withdrawals (`purged` false) and its fact purge
+    /// tombstones (`purged` true, `withdrawn_at` the purge time), ordered by visibility, fact_hash
+    /// and subject (byte order), the time as ISO text.
     pub fn list_export_withdrawals(&self, source_id: &str) -> Result<Vec<ExportWithdrawal>> {
         no_nul("listExportWithdrawals", &[("sourceId", source_id)])?;
         let read = self.read()?;
-        let mut rows: Vec<ExportWithdrawal> = source_withdrawals(&*read, source_id)?
+        let withdrawals =
+            source_withdrawals(&*read, source_id)?
+                .into_iter()
+                .map(|w| ExportWithdrawal {
+                    visibility: w.visibility,
+                    fact_hash: w.fact_hash,
+                    withdrawn_at: iso(w.withdrawn_at_us),
+                    subject: w.subject,
+                    purged: false,
+                });
+        let purges = source_purges(&*read, source_id)?
             .into_iter()
-            .map(|w| ExportWithdrawal {
-                visibility: w.visibility,
-                fact_hash: w.fact_hash,
-                withdrawn_at: iso(w.withdrawn_at_us),
-                subject: w.subject,
-                purged: false,
-            })
-            .collect();
+            .map(|p| ExportWithdrawal {
+                visibility: p.visibility,
+                fact_hash: p.fact_hash,
+                withdrawn_at: iso(p.purged_at_us),
+                subject: p.subject,
+                purged: true,
+            });
+        let mut rows: Vec<ExportWithdrawal> = withdrawals.chain(purges).collect();
         rows.sort_by(|a, b| {
             (
                 a.visibility.as_bytes(),
@@ -568,10 +590,18 @@ impl Store {
         crate::pages::segmented_version_body_bytes(&*read, page, generation)
     }
 
-    /// `listAccessPolicySourceIds()`: the sources with an access policy. The store keeps no folder
-    /// rules, so there are none.
+    /// `listAccessPolicySourceIds()`: the sources, archived ones too, that hold access state
+    /// (`access_rules.rs`), by id in byte order (`ORDER BY source_id`).
     pub fn list_access_policy_source_ids(&self) -> Result<Vec<String>> {
-        Ok(Vec::new())
+        let read = self.read()?;
+        let mut out = Vec::new();
+        for source in crate::sources::all_sources(&*read)? {
+            if crate::access_rules::has_state(&*read, &source.id)? {
+                out.push(source.id);
+            }
+        }
+        out.sort();
+        Ok(out)
     }
 }
 
@@ -632,6 +662,40 @@ mod tests {
             jsonb_timestamptz(1_795_000_000_000_000),
             "2026-11-18T11:06:40+00:00"
         );
+    }
+
+    #[test]
+    fn the_withdrawal_list_holds_purge_tombstones_too() {
+        let s = store();
+        assert!(
+            s.insert_fact_withdrawal("default", "world", "a claim", "*", None)
+                .unwrap()
+        );
+        let purge: crate::facts::purge_ledger::FactPurgeInsert = serde_json::from_value(json!({
+            "sourceId": "default", "visibility": "private", "subject": "people/a",
+            "factHash": "0abc", "requestId": null, "actor": null, "reason": null }))
+        .unwrap();
+        assert!(s.insert_fact_purge(&purge).unwrap());
+        let rows = s.list_export_withdrawals("default").unwrap();
+        // `ORDER BY visibility, fact_hash, subject`: the private tombstone first, then the world withdrawal.
+        let shape: Vec<(&str, &str, &str, bool)> = rows
+            .iter()
+            .map(|r| {
+                (
+                    r.visibility.as_str(),
+                    r.fact_hash.as_str(),
+                    r.subject.as_str(),
+                    r.purged,
+                )
+            })
+            .collect();
+        assert_eq!(shape.len(), 2);
+        assert_eq!(shape[0], ("private", "0abc", "people/a", true));
+        assert_eq!((shape[1].0, shape[1].2, shape[1].3), ("world", "*", false));
+        assert!(rows[0].withdrawn_at.ends_with('Z'));
+        // The ledger size counts withdrawals only, as the SQL member's `fact_withdrawals` sum does.
+        let one = s.read_export_withdrawal_ledger_bytes("default").unwrap();
+        assert!(one > 2);
     }
 
     #[test]
@@ -740,6 +804,11 @@ mod tests {
         assert_eq!(s.read_segmented_version_body_bytes(id, 1).unwrap(), None);
         assert_eq!(s.read_segmented_version_body_bytes(-1, 1).unwrap(), None);
         assert!(s.list_access_policy_source_ids().unwrap().is_empty());
+        s.put_access_policy_state("default").unwrap();
+        assert_eq!(
+            s.list_access_policy_source_ids().unwrap(),
+            vec!["default".to_string()]
+        );
         assert_eq!(array_len(&json!([1, 2])), 2);
         assert_eq!(array_len(&Value::Null), 0);
     }

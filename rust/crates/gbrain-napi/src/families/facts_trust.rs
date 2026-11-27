@@ -12,7 +12,7 @@ use serde_json::Value;
 use crate::store_binding::{Brain, required};
 use gbrain_store::facts::contest::LexicalContestQuery;
 use gbrain_store::facts::quote::{OwnerTierQuery, QuotedPagesQuery};
-use gbrain_store::facts::saved_match::SavedFactsMatchQuery;
+use gbrain_store::facts::saved_match::{EntityNewestFactsQuery, SavedFactsMatchQuery};
 use gbrain_store::facts::trust::{RelevanceQuery, UncomparableQuery};
 
 #[napi]
@@ -92,6 +92,34 @@ impl Brain {
         self.run(env, move |s| {
             let a: OwnerTierQuery = required(query, "listOwnerTierFacts query")?;
             s.list_owner_tier_facts(&a)
+        })
+    }
+
+    /// `readEntityNewestFacts`: resolves the entity's newest facts, at most 50, newest first.
+    #[napi]
+    pub fn read_entity_newest_facts<'env>(
+        &self,
+        env: &'env Env,
+        query: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            let a: EntityNewestFactsQuery = required(query, "readEntityNewestFacts query")?;
+            s.read_entity_newest_facts(&a)
+        })
+    }
+
+    /// `matchHeadStems(heads, terms, config?)`: resolves `{ h, i }` per head, in `heads` order;
+    /// `config` is the text search configuration (absent: `english`).
+    #[napi]
+    pub fn match_head_stems<'env>(
+        &self,
+        env: &'env Env,
+        heads: Vec<String>,
+        terms: Vec<String>,
+        config: Option<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.match_head_stems(&heads, &terms, config.as_deref())
         })
     }
 }

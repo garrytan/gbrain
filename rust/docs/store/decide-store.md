@@ -6,9 +6,9 @@ The decide store holds four tables of `gbrain decide` that used to run as raw SQ
 `decide_state`, `decide_spend`, `decision_receipts` and `decide_calibrations`. It lives inside the eval_capture
 family (tag `Z`, sub-tags `0x10..=0x1F`, see [eval_capture.md](eval_capture.md)). Rust: `gbrain-store/src/eval_capture/decide_store.rs`
 plus `decide_store/receipts.rs` and `decide_store/calibrations.rs`; binding: `gbrain-napi/src/families/decide_store.rs`;
-This landing carries the native store and binding only. The TypeScript member, the shared SQL module
-(`src/core/engine-sql/decide-store.ts`) and the parity test arrive in a later landing; until then `src/core/ai/decide/store.ts`
-still holds its own SQL and nothing in TypeScript calls these members.
+TypeScript members: `src/core/rust-engine/store-members/decide-store.ts`. The shared SQL module for PGLite and
+Postgres is `src/core/engine-sql/decide-store.ts`, and `src/core/ai/decide/store.ts` calls these engine members.
+Parity test: `test/engine-parity/decide-store.test.ts`.
 
 Timestamps cross the binding as ISO strings; the TypeScript members turn them into `Date`s. All 20 members are capability `eval_capture`.
 
@@ -17,10 +17,10 @@ Timestamps cross the binding as ISO strings; the TypeScript members turn them in
 | Member | Table | Answers |
 | --- | --- | --- |
 | `readDecideState(key)`, `upsertDecideState(key, value)`, `deleteDecideState(key)`, `ensureDecideState(key, value)` | `decide_state` | the value or `null`; `ensure` inserts only when absent and answers the stored value |
-| `insertDecideSpend(rows)`, `dailyDecideSpend(since)`, `listDecideSpendBySlot()` | `decide_spend` | a request id keeps its first row; the daily total adds typesafe spend from `since` on (and the remote part); per-slot totals in byte order of the slot |
+| `insertDecideSpend(rows)`, `dailyDecideSpend(since)`, `listDecideSpendBySlot()` | `decide_spend` | a request id keeps its first row; the daily total adds typesafe spend from `since` on (and the remote part); per-slot totals: Rust lists slots in byte order; the SQL has no `ORDER BY`, so PGLite and Postgres answer in the plan's own order |
 | `insertDecideReceipts(rows)`, `pruneDecideReceipts(days)` | `decision_receipts` | the batch is all or nothing; a prune answers the number of receipts removed and keeps spend at least 31 days |
 | `listDecideReceiptStats`, `decideSlotUsage`, `decideConflictNoEntityCounts`, `listDecideReplayReceipts`, `listDecideResolvedModels`, `listDecideMixedModelDecisions` | `decision_receipts` | aggregates over a window of whole hours |
-| `insertDecideCalibration(row)`, `storeDecideQualification(id, q)`, `listDecideCalibrations({ slot?, includeRetired? })`, `getDecideCalibration(id)`, `setDecideCalibrationRetired(id, retired)` | `decide_calibrations` | the new id; nothing; rows ordered by slot (byte order), newest first, then id; the row or `null`; whether the row exists |
+| `insertDecideCalibration(row)`, `storeDecideQualification(id, q)`, `listDecideCalibrations({ slot?, includeRetired? })`, `getDecideCalibration(id)`, `setDecideCalibrationRetired(id, retired)` | `decide_calibrations` | the new id; nothing; rows ordered by slot, newest first, then id (Rust sorts slots by bytes; see Tightenings for the SQL engines); the row or `null`; whether the row exists |
 
 ## Keys and counters
 
@@ -44,10 +44,16 @@ number Postgres prints for it.
   in a `NOT NULL` column. A refused write records nothing (`invalid_argument` or `constraint_violation`).
 - `NaN` and `Infinity` reach Rust as `null` through JSON and are refused; Postgres would store them.
 - A window is a whole number of hours; a null or `NaN` window is refused and a non-whole one is `invalid_argument`. A window
-  that reaches before 4713 BC or past 294276 AD is refused as Postgres's "timestamp out of range".
+  that reaches before 4713 BC or past 294276 AD is refused as Postgres's "timestamp out of range". A window of zero or
+  fewer whole hours holds nothing: every engine answers empty (zeros for `decideConflictNoEntityCounts`) before it reads
+  the clock or a row, after the window and any slot are checked, so a receipt stamped in the read's own clock tick or
+  transaction is never counted.
 - Days are 24 hours (no daylight-saving nuance).
-- Orderings that Postgres leaves to the database collation use byte order (`COLLATE "C"`) on every engine. The
-  calibration list used to order by `slot` in the database collation.
+- The SQL does not pin text orderings to `COLLATE "C"` (the calibration list, the receipt stats and slot usage, and the
+  replay read order by `slot`, `decision_id` and similar text columns as written). PGLite and the Rust store sort text
+  by bytes, so they agree; Postgres sorts in the database's collation, so on an `en_US` database `a` comes before `A`
+  and its lists can differ from the other two for mixed-case or accented text. The parity test compares the engines
+  after one client-side byte order, so it does not catch this.
 - Replay ties break by insertion id.
 - A mean adds in insertion order, as a heap scan does.
 - A refused calibration insert uses no id on Rust; Postgres `BIGSERIAL` consumes one. Parity cases never assert an id after
@@ -67,5 +73,5 @@ call loudly. `review-lane.ts` and `proposals-store.ts` read `decision_receipts` 
 ## Tests
 
 `gbrain-store/tests/decide_store.rs` (28 cases) covers the native store. The cross-engine parity file
-(`test/engine-parity/decide-store.test.ts`) arrives with the TypeScript member, so the clock-window edges and the
-insertion-order sum have cargo coverage only in this landing.
+`test/engine-parity/decide-store.test.ts` runs the members on PGLite, Postgres and the Rust store; the clock-window
+edges and the insertion-order sum have cargo coverage only (see above).

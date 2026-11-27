@@ -981,11 +981,14 @@ describe('#3583 review: orphan-sentinel self-heal probe/clear race', () => {
     // Preserve the dynamic receiver: import transaction clones inherit this
     // interceptor and must query their own transaction, including after restore.
     const origExecuteRaw = engine.executeRaw;
+    const origProbe = engine.readRenameIdentityRows;
     let probeCalls = 0;
-    (engine as unknown as { executeRaw: typeof engine.executeRaw }).executeRaw =
-      (async function (this: PGLiteEngine, sql: string, params?: unknown[]) {
-        const res = await origExecuteRaw.call(this, sql, params);
-        if (sql.includes('source_path = ANY')) {
+    // The orphan probe is activeSlugsBySourcePath, which reads through the
+    // typed readRenameIdentityRows member with no slugs.
+    (engine as unknown as { readRenameIdentityRows: typeof origProbe }).readRenameIdentityRows =
+      (async function (this: PGLiteEngine, sourceId: string, paths: readonly string[], slugs: readonly string[]) {
+        const res = await origProbe.call(this, sourceId, paths, slugs);
+        if (slugs.length === 0) {
           probeCalls++;
           if (probeCalls === 1) {
             await engine.putPage('people/dana-old-revenant', {
@@ -999,12 +1002,12 @@ describe('#3583 review: orphan-sentinel self-heal probe/clear race', () => {
           }
         }
         return res;
-      }) as typeof engine.executeRaw;
+      }) as typeof origProbe;
     try {
       const result = await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
       expect(result.status).toBe('up_to_date');
     } finally {
-      (engine as unknown as { executeRaw: typeof engine.executeRaw }).executeRaw = origExecuteRaw;
+      (engine as unknown as { readRenameIdentityRows: typeof origProbe }).readRenameIdentityRows = origProbe;
     }
 
     // The duplicate is real, so its sentinel survives...
@@ -1311,11 +1314,14 @@ describe('#3583 review: a writer landing AFTER the second probe gets its sentine
     // final and the clear is committed. The post-clear verify probe must
     // detect the row and RESTORE the sentinel.
     const origExecuteRaw = engine.executeRaw;
+    const origProbe = engine.readRenameIdentityRows;
     let probeCalls = 0;
-    (engine as unknown as { executeRaw: typeof engine.executeRaw }).executeRaw =
-      (async function (this: PGLiteEngine, sql: string, params?: unknown[]) {
-        const res = await origExecuteRaw.call(this, sql, params);
-        if (sql.includes('source_path = ANY')) {
+    // The orphan probe is activeSlugsBySourcePath, which reads through the
+    // typed readRenameIdentityRows member with no slugs.
+    (engine as unknown as { readRenameIdentityRows: typeof origProbe }).readRenameIdentityRows =
+      (async function (this: PGLiteEngine, sourceId: string, paths: readonly string[], slugs: readonly string[]) {
+        const res = await origProbe.call(this, sourceId, paths, slugs);
+        if (slugs.length === 0) {
           probeCalls++;
           if (probeCalls === 2) {
             await engine.putPage('people/dana-old-late-writer', {
@@ -1329,12 +1335,12 @@ describe('#3583 review: a writer landing AFTER the second probe gets its sentine
           }
         }
         return res;
-      }) as typeof engine.executeRaw;
+      }) as typeof origProbe;
     try {
       const result = await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
       expect(result.status).toBe('up_to_date');
     } finally {
-      (engine as unknown as { executeRaw: typeof engine.executeRaw }).executeRaw = origExecuteRaw;
+      (engine as unknown as { readRenameIdentityRows: typeof origProbe }).readRenameIdentityRows = origProbe;
     }
 
     // Probe #1 and #2 (orphan verdict) + probe #3 (post-clear verify).
@@ -1383,11 +1389,14 @@ describe('#3583 review: the failure-gate clear paths also verify-and-restore', (
     execSync('git add -A && git commit -m "unrelated addition"', { cwd: repo, stdio: 'pipe' });
 
     const origExecuteRaw = engine.executeRaw;
+    const origProbe = engine.readRenameIdentityRows;
     let probeCalls = 0;
-    (engine as unknown as { executeRaw: typeof engine.executeRaw }).executeRaw =
-      (async function (this: PGLiteEngine, sql: string, params?: unknown[]) {
-        const res = await origExecuteRaw.call(this, sql, params);
-        if (sql.includes('source_path = ANY')) {
+    // The orphan probe is activeSlugsBySourcePath, which reads through the
+    // typed readRenameIdentityRows member with no slugs.
+    (engine as unknown as { readRenameIdentityRows: typeof origProbe }).readRenameIdentityRows =
+      (async function (this: PGLiteEngine, sourceId: string, paths: readonly string[], slugs: readonly string[]) {
+        const res = await origProbe.call(this, sourceId, paths, slugs);
+        if (slugs.length === 0) {
           probeCalls++;
           if (probeCalls === 2) {
             // After the double-probe verdict is final, before the gate clears.
@@ -1402,12 +1411,12 @@ describe('#3583 review: the failure-gate clear paths also verify-and-restore', (
           }
         }
         return res;
-      }) as typeof engine.executeRaw;
+      }) as typeof origProbe;
     try {
       const result = await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
       expect(result.status).toBe('synced');
     } finally {
-      (engine as unknown as { executeRaw: typeof engine.executeRaw }).executeRaw = origExecuteRaw;
+      (engine as unknown as { readRenameIdentityRows: typeof origProbe }).readRenameIdentityRows = origProbe;
     }
 
     expect(await engine.getPage('people/dana-old-gate-writer')).not.toBeNull();
@@ -1437,21 +1446,23 @@ describe('#3583 review: the failure-gate clear paths also verify-and-restore', (
     // Both orphan probes succeed (empty) → clear commits; the post-clear
     // VERIFY probe (third matching SELECT) throws. Fail-closed means every
     // cleared sentinel comes back.
-    const origExecuteRaw = engine.executeRaw;
+    const origProbe = engine.readRenameIdentityRows;
     let probeCalls = 0;
-    (engine as unknown as { executeRaw: typeof engine.executeRaw }).executeRaw =
-      (async function (this: PGLiteEngine, sql: string, params?: unknown[]) {
-        if (sql.includes('source_path = ANY')) {
+    // The orphan probe is activeSlugsBySourcePath, which reads through the
+    // typed readRenameIdentityRows member with no slugs.
+    (engine as unknown as { readRenameIdentityRows: typeof origProbe }).readRenameIdentityRows =
+      (async function (this: PGLiteEngine, sourceId: string, paths: readonly string[], slugs: readonly string[]) {
+        if (slugs.length === 0) {
           probeCalls++;
           if (probeCalls === 3) throw new Error('injected verify-probe outage');
         }
-        return origExecuteRaw.call(this, sql, params);
-      }) as typeof engine.executeRaw;
+        return origProbe.call(this, sourceId, paths, slugs);
+      }) as typeof origProbe;
     try {
       const result = await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
       expect(result.status).toBe('up_to_date');
     } finally {
-      (engine as unknown as { executeRaw: typeof engine.executeRaw }).executeRaw = origExecuteRaw;
+      (engine as unknown as { readRenameIdentityRows: typeof origProbe }).readRenameIdentityRows = origProbe;
     }
 
     expect(probeCalls).toBe(3);
@@ -1527,21 +1538,18 @@ describe('#3583 review: a throwing bookmark advance can no longer lose a sentine
     writeFileSync(join(repo, 'people/newfile.md'), personMd('New', 'New person.'));
     execSync('git add -A && git commit -m "unrelated addition"', { cwd: repo, stdio: 'pipe' });
 
-    const origExecuteRaw = engine.executeRaw;
-    (engine as unknown as { executeRaw: typeof engine.executeRaw }).executeRaw =
-      (async function (this: PGLiteEngine, sql: string, params?: unknown[]) {
-        if (sql.includes('UPDATE sources SET last_commit')) {
-          throw new Error('injected advance outage');
-        }
-        return origExecuteRaw.call(this, sql, params);
-      }) as typeof engine.executeRaw;
+    const origAdvance = engine.advanceSourceCommit;
+    (engine as unknown as { advanceSourceCommit: typeof engine.advanceSourceCommit }).advanceSourceCommit =
+      (async () => {
+        throw new Error('injected advance outage');
+      }) as typeof engine.advanceSourceCommit;
     let threw = false;
     try {
       await performSync(engine, { repoPath: repo, ...SYNC_OPTS });
     } catch {
       threw = true;
     } finally {
-      (engine as unknown as { executeRaw: typeof engine.executeRaw }).executeRaw = origExecuteRaw;
+      (engine as unknown as { advanceSourceCommit: typeof engine.advanceSourceCommit }).advanceSourceCommit = origAdvance;
     }
     expect(threw).toBe(true);
 

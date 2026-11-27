@@ -22,6 +22,8 @@
 import { loadConfig, toEngineConfig } from '../core/config.ts';
 import { createEngine } from '../core/engine-factory.ts';
 import type { BrainEngine } from '../core/engine.ts';
+import { OAUTH_CLIENT_PROBE_COLUMNS } from '../core/engine-sql/access-credentials.ts';
+import type { ManualClientPlan } from '../core/oauth-provider.ts';
 import { assertAllowedScopes } from '../core/scope.ts';
 import { isTrustTier, TRUST_TIERS, type TrustTier } from '../core/trust/tier.ts';
 import { setMinTrust } from '../core/trust/min-trust.ts';
@@ -31,6 +33,7 @@ import { normalizeTokenScopes } from '../core/legacy-token-scope.ts';
 import { sqlQueryForEngine, type SqlQuery } from '../core/sql-query.ts';
 import type { OAuthTransaction } from '../core/oauth-grants.ts';
 import { readClientGrant, rescopeClientGrant, resolveGrantProfile, type GrantPatch } from '../core/grants/service.ts';
+import { rescopeOAuthClient } from '../core/grants/rescope.ts';
 import { parseClientRescopeArgs, parseRescopeGrantArgs, splitRescopeTarget, type RescopeGrantArgs } from '../core/grants/cli.ts';
 import { GRANT_PROFILES, GrantError, TOKEN_TTL_MAX_SECONDS, TOKEN_TTL_MIN_SECONDS, grantFromClient, privatePagesFromColumn, readSharedFromColumns, type ClientGrant, type PrincipalGrant, type PrivatePagesGrant } from '../core/grants/model.ts';
 import { PRIVATE_FACTS_HELP, privateFactsRescopeLines, privateFactsWarning, renderPrivateFacts } from './auth-private-facts.ts';
@@ -178,10 +181,10 @@ export function renderTokenScopes(scopes: unknown): string {
 }
 
 async function list(json: boolean) {
-  await withConfiguredSql(async (sql, engine) => {
-    // The engine read is SELECT *, so every schema generation reads (private_pages and private_facts arrive with their migrations; absent reads as none).
+  await withConfiguredSql(async (_sql, engine) => {
+    // Every schema generation lists (private_pages and private_facts arrive with their migrations; absent reads as none).
     const rows = await engine.listAccessTokens();
-    const memberStatus = await (await import('../core/access/token-member-status.ts')).tokenMemberStatuses(sql, rows);
+    const memberStatus = await (await import('../core/access/token-member-status.ts')).tokenMemberStatuses(engine, rows);
     if (json) {
       console.log(JSON.stringify(rows.map(r => ({
         id: String(r.id), name: r.name, scopes: renderTokenScopes(r.scopes), created_at: r.created_at, last_used_at: r.last_used_at ?? null,
@@ -197,10 +200,10 @@ async function list(json: boolean) {
     console.log('─'.repeat(158));
     for (const r of rows) {
       const id = String(r.id).padEnd(36);
-      const name = (r.name as string).padEnd(20);
+      const name = r.name.padEnd(20);
       const scopes = renderTokenScopes(r.scopes).padEnd(21);
-      const created = new Date(r.created_at as string).toISOString().slice(0, 19);
-      const lastUsed = r.last_used_at ? new Date(r.last_used_at as string).toISOString().slice(0, 19) : 'never'.padEnd(19);
+      const created = r.created_at.toISOString().slice(0, 19);
+      const lastUsed = r.last_used_at ? r.last_used_at.toISOString().slice(0, 19) : 'never'.padEnd(19);
       const status = (r.revoked_at ? 'REVOKED' : (memberStatus(r) ?? 'enabled') !== 'enabled' ? 'refused' : 'active').padEnd(7);
       const facts = privatePagesFromColumn(r.private_facts) === 'granted_sources' ? 'granted-sources' : 'none';
       console.log(`${id}  ${name}  ${scopes}  ${created}  ${lastUsed}  ${status}  ${facts.padEnd(15)}  ${renderPrivatePages(privatePagesFromColumn(r.private_pages))}`);
@@ -215,13 +218,9 @@ async function list(json: boolean) {
 
 async function revoke(name: string) {
   if (!name) { console.error('Usage: auth revoke <name> | auth revoke --id <uuid>'); process.exit(1); }
-  await withConfiguredSql(async (sql) => {
-    const rows = await sql`
-      UPDATE access_tokens SET revoked_at = now()
-      WHERE name = ${name} AND revoked_at IS NULL
-      RETURNING id
-    `;
-    for (const row of rows) await (await import('../core/wakeshift/forget.ts')).forgetWakePrincipal(sql, { kind: 'legacy_token', id: String(row.id) });
+  await withConfiguredSql(async (_sql, engine) => {
+    const rows = await engine.revokeAccessTokensNamed(name);
+    for (const id of rows) await (await import('../core/wakeshift/forget.ts')).forgetWakePrincipal(engine, { kind: 'legacy_token', id });
     if (rows.length === 0) {
       console.error(`No active token found with name "${name}".`);
       process.exit(1);
@@ -233,27 +232,23 @@ async function revoke(name: string) {
   });
 }
 
-/** #4043: names are not unique — revoke-by-id is the precise path. The
- * revocation semantics are canonical in src/core/token-mint.ts
- * (revokeLegacyTokenById); this CLI wrapper keeps its own UPDATE only to
- * RETURN the name for the confirmation line — keep the two in lockstep. */
+/** #4043: names are not unique — revoke-by-id is the precise path. This CLI
+ * wrapper and src/core/token-mint.ts (revokeLegacyTokenById) send the same
+ * typed revoke (engine.revokeAccessToken), which returns the name for the
+ * confirmation line. */
 async function revokeById(id: string) {
   if (!id || !TOKEN_ID_RE.test(id)) {
     console.error('Usage: auth revoke --id <uuid>   (ids are shown by `gbrain auth list`)');
     process.exit(1);
   }
-  await withConfiguredSql(async (sql) => {
-    const rows = await sql`
-      UPDATE access_tokens SET revoked_at = now()
-      WHERE id = ${id}::uuid AND revoked_at IS NULL
-      RETURNING name
-    `;
-    if (rows.length === 0) {
+  await withConfiguredSql(async (_sql, engine) => {
+    const revoked = await engine.revokeAccessToken(id);
+    if (revoked === null) {
       console.error(`No active token found with id "${id}".`);
       process.exit(1);
     }
-    await (await import('../core/wakeshift/forget.ts')).forgetWakePrincipal(sql, { kind: 'legacy_token', id });
-    console.log(`Token "${rows[0].name}" (${id}) revoked.`);
+    await (await import('../core/wakeshift/forget.ts')).forgetWakePrincipal(engine, { kind: 'legacy_token', id });
+    console.log(`Token "${revoked}" (${id}) revoked.`);
   });
 }
 
@@ -383,20 +378,17 @@ async function revokeClient(clientId: string) {
     process.exit(1);
   }
   try {
-    await withConfiguredSql(async (sql) => {
+    await withConfiguredSql(async (_sql, engine) => {
       // Atomic single-statement delete: no race window between count + delete.
       // Postgres cascades to oauth_tokens and oauth_codes (FK ON DELETE CASCADE
       // declared in src/schema.sql:370,382) before the transaction commits.
-      const rows = await sql`
-        DELETE FROM oauth_clients WHERE client_id = ${clientId}
-        RETURNING client_id, client_name
-      `;
-      if (rows.length === 0) {
+      const deleted = await engine.deleteOAuthClient(clientId);
+      if (deleted === null) {
         console.error(`No client found with id "${clientId}"`);
         process.exit(1);
       }
-      await (await import('../core/wakeshift/forget.ts')).forgetWakePrincipal(sql, { kind: 'oauth_client', id: clientId });
-      console.log(`OAuth client revoked: "${rows[0].client_name}" (${clientId})`);
+      await (await import('../core/wakeshift/forget.ts')).forgetWakePrincipal(engine, { kind: 'oauth_client', id: clientId });
+      console.log(`OAuth client revoked: "${deleted.client_name}" (${clientId})`);
       console.log('Tokens and authorization codes purged via cascade.');
     });
   } catch (e: any) {
@@ -601,14 +593,8 @@ export function parseRegisterClientArgs(args: string[]): RegisterClientArgs {
  * is impossible inside a tx — optional-column degrades must be decided here,
  * outside, once.
  */
-export async function preflightOauthClientColumns(sql: SqlQuery): Promise<Set<string>> {
-  const rows = await sql`
-    SELECT column_name FROM information_schema.columns
-    WHERE table_name = 'oauth_clients'
-      AND table_schema = current_schema()
-      AND column_name IN ('token_ttl', 'surface', 'federated_read', 'source_id', 'deleted_at')
-  `;
-  return new Set(rows.map(r => String(r.column_name)));
+export async function preflightOauthClientColumns(engine: Pick<BrainEngine, 'readOauthClientColumns'>): Promise<Set<string>> {
+  return new Set(await engine.readOauthClientColumns('preflight'));
 }
 
 export interface RegisterScopedClientOpts {
@@ -627,6 +613,10 @@ export interface RegisterScopedClientOpts {
   /** Result of preflightOauthClientColumns — decides which optional-column
    * writes are attempted. Absent → attempt everything (caller owns errors). */
   columns?: Set<string>;
+  /** The engine `sql` runs on. When set, the client insert and its token_ttl write go through the typed engine
+   * members (one statement text on Postgres and PGLite, the store on a Rust brain); the surface write still goes
+   * through the provider. `transaction` then runs the insert in `engine.transaction`. */
+  engine?: BrainEngine;
 }
 
 /**
@@ -651,6 +641,24 @@ export interface RegisteredClient {
   surfaceOld?: string | null;
   /** Optional-column writes skipped by the pre-flight (pre-migration brain). */
   skipped?: { tokenTtl?: boolean; surface?: boolean };
+}
+
+/**
+ * The up-to-date-schema branch of registerClientManual over typed engine members: the grant validated against the
+ * active sources, the scope-source check, then the client and its register audit row in one insert (in one engine
+ * transaction when `inTransaction`).
+ */
+async function insertScopedClientGrant(engine: BrainEngine, plan: ManualClientPlan, inTransaction: boolean): Promise<{ clientId: string; clientSecret?: string }> {
+  const { grantValidationContext, clientGrantInsert } = await import('../core/grants/service.ts');
+  const { assertScopeSourceGrant, clientGrantReads } = await import('../core/access/attest-sources.ts');
+  const grant = plan.grant(await grantValidationContext(engine));
+  const row = clientGrantInsert(grant, plan.metadata);
+  const write = async (db: BrainEngine) => {
+    await assertScopeSourceGrant(db, null, clientGrantReads(grant));
+    await db.insertOauthClientGrant(row);
+  };
+  await (inTransaction ? engine.transaction(write) : write(engine));
+  return { clientId: plan.clientId, ...(plan.clientSecret ? { clientSecret: plan.clientSecret } : {}) };
 }
 
 /**
@@ -683,11 +691,17 @@ export async function registerScopedClient(
       budgetUsdPerDay: parsed.budgetUsdPerDay,
     }
     : undefined;
-  const { GBrainOAuthProvider } = await import('../core/oauth-provider.ts');
-  const provider = new GBrainOAuthProvider({ sql, transaction: opts.transaction });
-  const { clientId, clientSecret } = await provider.registerClientManual(
-    name, grantTypes, scopes, redirectUris, sourceId, federatedRead, tokenEndpointAuthMethod, agentBindings, opts.grant,
-  );
+  const { GBrainOAuthProvider, planManualClient } = await import('../core/oauth-provider.ts');
+  const provider = () => new GBrainOAuthProvider({ sql, transaction: opts.transaction });
+  const engine = opts.engine;
+  const grantColumns = engine ? await engine.readOauthClientColumns('grant') : [];
+  const { clientId, clientSecret } = engine && grantColumns.length === OAUTH_CLIENT_PROBE_COLUMNS.grant.length
+    ? await insertScopedClientGrant(engine, planManualClient(
+      name, grantTypes, scopes, redirectUris, sourceId, federatedRead, tokenEndpointAuthMethod, agentBindings, opts.grant,
+    ), opts.transaction !== undefined)
+    : await provider().registerClientManual(
+      name, grantTypes, scopes, redirectUris, sourceId, federatedRead, tokenEndpointAuthMethod, agentBindings, opts.grant,
+    );
 
   const ttl = parsed.tokenTtlSeconds ?? opts.tokenTtlSeconds;
   let tokenTtl: number | undefined;
@@ -698,12 +712,14 @@ export async function registerScopedClient(
       // OUTSIDE any transaction — nothing here throws-and-continues.
       ttlSkipped = true;
     } else {
-      const updated = await sql`
+      const updated = engine
+        ? await engine.setOauthClientTokenTtl(clientId, ttl)
+        : (await sql`
         UPDATE oauth_clients SET token_ttl = ${ttl}
         WHERE client_id = ${clientId}
         RETURNING client_id
-      `;
-      if (updated.length === 0) {
+      `).length > 0;
+      if (!updated) {
         throw new Error(`token_ttl update matched no row for client ${clientId}`);
       }
       tokenTtl = ttl;
@@ -717,7 +733,8 @@ export async function registerScopedClient(
     if (opts.columns && !opts.columns.has('surface')) {
       surfaceSkipped = true;
     } else {
-      const rescoped = await provider.rescopeClient(clientId, { surface: opts.surface, surfaceSetBy: opts.surfaceSetBy });
+      // An engine rescopes through typed members (the surface write is a grant write); a bare SqlQuery keeps the raw path.
+      const rescoped = await rescopeOAuthClient(engine ?? sql, clientId, { surface: opts.surface, surfaceSetBy: opts.surfaceSetBy });
       surfaceApplied = opts.surface;
       surfaceOld = rescoped.surfaceOld ?? null;
     }
@@ -807,9 +824,9 @@ async function registerClient(name: string, args: string[]) {
       await checkBindingTarget(engine, binding.patch);
       await assertCredentialScoped(engine, binding.patch, 'client', name);
       const columns = parsed.tokenTtlSeconds !== undefined
-        ? await preflightOauthClientColumns(sql)
+        ? await preflightOauthClientColumns(engine)
         : undefined;
-      const registered = await registerScopedClient(sql, name, parsed, { columns, transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx))) });
+      const registered = await registerScopedClient(sql, name, parsed, { columns, engine, transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx))) });
       const bound = binding.patch ? await bindCredential(engine, { kind: 'client', id: registered.clientId }, binding.patch) : null;
       if (bound) auditReadsUnscoped(bound, `OAuth client ${registered.clientId}`, false);
       // GST-2898: the switch is a grant write after registration, so it is stamped at the client's revision like any rescope.
@@ -1140,10 +1157,7 @@ export function clientOperationsLines(row: ClientRow): string[] {
 /** Clients whose stored or outstanding access-token lifetime an upgrade brought inside the 90-day maximum. */
 export async function tokenLifetimeClampedClients(engine: BrainEngine): Promise<Set<string>> {
   try {
-    const rows = await engine.executeRaw<{ client_id: string }>(
-      `SELECT DISTINCT client_id FROM oauth_grant_audit WHERE actor = 'migration' AND action IN ('clamp_token_ttl', 'shorten_access_tokens')`,
-    );
-    return new Set(rows.map(r => r.client_id));
+    return new Set(await engine.readTokenLifetimeClampedClients());
   } catch (e) {
     if (isMissingSchemaObject(e, 'table', 'oauth_grant_audit')) return new Set();
     throw e;

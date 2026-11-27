@@ -165,6 +165,7 @@ async function validateManagedFactsCompletion(engine: BrainEngine, session: Mana
 
 export async function resolveManagedFactsEmbedding(engine: BrainEngine, config: GBrainConfig,
   lock = false): Promise<FactEmbeddingSignature | null> {
+  // The key order never reaches output: the rows are folded into an object that the decision below reads by key name.
   const rows = await engine.executeRaw<{ key: string; value: string }>(`SELECT key,value FROM config
     WHERE key IN ('embedding_model','embedding_dimensions','embedding_disabled') ORDER BY key${lock ? ' FOR SHARE' : ''}`);
   const values = Object.fromEntries(rows.map(row => [row.key, row.value]));
@@ -395,19 +396,36 @@ export async function resumeManagedFacts(engine: BrainEngine, session: ManagedFa
   return collectManagedFacts(engine, session, session.entityMoveRetry ? await followEntityMoves(engine, session, rows) : rows);
 }
 
-/** Every request journaled under the session's batch key, once its completion receipt validates; null when nothing was accepted. */
+/**
+ * Every request journaled under the session's batch key, once its completion receipt validates; null when nothing was accepted.
+ *
+ * #9302: one admission transaction writes a batch's entity requests and then its completion, which names them
+ * (`children`), so each read here goes through an index: the completion by its request id (the principal's unique
+ * key), its entities by id. A completion whose intent was compacted away keeps only its entity count, and its
+ * entities, journaled just before it, are read walking the principal's journal down from it until that many are found.
+ * With no completion, the batch key is checked on completion rows alone, whose intents are small: the old single
+ * `request_id OR batch key` read could use no index for the JSON arm and detoasted every extract_facts intent the
+ * principal ever journaled (embeddings included), about 14 s a batch on a small instance.
+ */
 async function storedBatch(engine: BrainEngine, session: ManagedFactsSession): Promise<WriteRequest[] | null> {
-  const rows = await engine.executeRaw<WriteRequest>(`SELECT * FROM persistence_requests WHERE operation='extract_facts'
-    AND source_id=$1 AND source_incarnation=$2::uuid AND principal_kind=$3 AND principal_id=$4
-    AND (request_id=$6::uuid OR COALESCE(intent->>'batchKey',outcome->>'batch_key')=$5) ORDER BY sequence`, [session.authority.sourceId, session.authority.sourceIncarnation,
-    session.authority.principal.kind, session.authority.principal.id, session.batchKey, session.completionRequestId]);
-  if (!rows.length) return null;
-  const completion = rows.find(row => row.request_id === session.completionRequestId);
-  if (!completion) throw opError('storage_error', 'The accepted facts batch has no completion receipt.',
-    `Facts batch requests were accepted in source ${session.authority.sourceId} but their completion request ${session.completionRequestId} was never journaled, so the outcome is unconfirmed. Inspect accepted request ${rows[0].request_id} before resubmitting anything.`,
-    { fix: receiptFix(rows[0].request_id) });
+  const journal = (where: string, params: unknown[]) => engine.executeRaw<WriteRequest>(`SELECT * FROM persistence_requests
+    WHERE operation='extract_facts' AND source_id=$1 AND source_incarnation=$2::uuid AND principal_kind=$3 AND principal_id=$4 AND ${where}`,
+    [session.authority.sourceId, session.authority.sourceIncarnation, session.authority.principal.kind, session.authority.principal.id, ...params]);
+  const [completion] = await journal('request_id=$5::uuid', [session.completionRequestId]);
+  if (!completion) {
+    const [orphan] = await journal(`slug='__managed_facts_complete__' AND COALESCE(intent->>'batchKey',outcome->>'batch_key')=$5 ORDER BY sequence LIMIT 1`, [session.batchKey]);
+    if (!orphan) return null;
+    throw opError('storage_error', 'The accepted facts batch has no completion receipt.',
+      `Facts batch requests were accepted in source ${session.authority.sourceId} but their completion request ${session.completionRequestId} was never journaled, so the outcome is unconfirmed. Inspect accepted request ${orphan.request_id} before resubmitting anything.`,
+      { fix: receiptFix(orphan.request_id) });
+  }
   await validateManagedFactsCompletion(engine, session, completion);
-  return rows;
+  const children = (completion.intent as ManagedFactIntent | null)?.children;
+  const count = Number(completion.outcome?.entity_requests);
+  const entities = children ? await journal('id=ANY($5::uuid[])', [children])
+    : await journal(`sequence<$5 AND slug<>'__managed_facts_complete__' AND COALESCE(intent->>'batchKey',outcome->>'batch_key')=$6
+      ORDER BY sequence DESC LIMIT $7`, [completion.sequence, session.batchKey, Number.isInteger(count) ? count : null]);
+  return [...entities, completion].sort((a, b) => Number(a.sequence) - Number(b.sequence));
 }
 
 const isEntityRequest = (row: WriteRequest) => (row.intent?.kind ?? row.outcome?.kind) === 'managed_facts_entity';

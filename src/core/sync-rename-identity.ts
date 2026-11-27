@@ -39,6 +39,7 @@ import { HARDENED_GIT_ARGS, NO_LAZY_FETCH_ENV } from './hardened-git.ts';
 import { explicitMarkdownTitle } from './markdown.ts';
 import { isMarkdownFilePath, resolveSlugForPath, type DowngradedRename, type RenameDowngradeReason, type RenameSideSource, type SyncManifest } from './sync.ts';
 import { computeSyncDelta, type SyncDeltaResult } from './sync-delta.ts';
+import { inSlugByteOrder } from './sync-reconcile.ts';
 
 const HEAD_BYTES = 64 * 1024;
 
@@ -284,7 +285,7 @@ export interface ConfirmRenameOpts {
  * `decideRenameIdentities`. `target` null reads the target side from the working tree (the dirty-tree manifest,
  * whose base is HEAD).
  */
-export async function confirmRenameIdentities(engine: Pick<BrainEngine, 'executeRaw'>, repo: string, base: string, target: string | null,
+export async function confirmRenameIdentities(engine: Pick<BrainEngine, 'readRenameIdentityRows' | 'readLiveIdentityHolders'>, repo: string, base: string, target: string | null,
   manifest: SyncManifest, opts: ConfirmRenameOpts): Promise<ConfirmedManifest> {
   if (!needsRenameConfirmation(manifest)) return manifest;
   const readable = (path: string) => isMarkdownFilePath(path) && !path.includes('\n');
@@ -315,9 +316,9 @@ export async function confirmRenameIdentities(engine: Pick<BrainEngine, 'execute
       return rows;
     }
   };
-  const stored = await perPath(titled, paths => engine.executeRaw<{ slug: string; source_path: string | null; title: string | null }>(
-    `SELECT slug, source_path, title FROM pages WHERE source_id = $1 AND deleted_at IS NULL AND (source_path = ANY($2::text[]) OR slug = ANY($3::text[]))`,
-    [opts.sourceId, [...new Set(paths.flatMap(path => [path, sourcePathOf(path)]))], paths.map(path => resolveSlugForPath(sourcePathOf(path)))]));
+  // Slug byte order: two live pages can share a source_path, and the first match below must be the same page on every engine.
+  const stored = inSlugByteOrder(await perPath(titled, paths => engine.readRenameIdentityRows(opts.sourceId,
+    [...new Set(paths.flatMap(path => [path, sourcePathOf(path)]))], paths.map(path => resolveSlugForPath(sourcePathOf(path))))));
   for (const path of titled) {
     const row = stored.find(page => page.source_path === path || page.source_path === sourcePathOf(path))
       ?? stored.find(page => page.source_path === null && page.slug === resolveSlugForPath(sourcePathOf(path)));
@@ -327,10 +328,8 @@ export async function confirmRenameIdentities(engine: Pick<BrainEngine, 'execute
   const valued = [...new Set([...basePaths, ...targetPaths])].filter(path => identityOf(path).some(identity => identity.id || identity.title));
   const live = await perPath(valued, paths => {
     const identities = paths.flatMap(identityOf);
-    return engine.executeRaw<LiveIdentityHolder>(
-      `SELECT slug, source_path, frontmatter->>'id' AS fm_id, title FROM pages
-        WHERE source_id = $1 AND deleted_at IS NULL AND (frontmatter->>'id' = ANY($2::text[]) OR title = ANY($3::text[]))`,
-      [opts.sourceId, [...new Set(identities.flatMap(identity => identity.id ? [identity.id] : []))], [...new Set(identities.flatMap(identity => identity.title ? [identity.title] : []))]]);
+    return engine.readLiveIdentityHolders(opts.sourceId,
+      [...new Set(identities.flatMap(identity => identity.id ? [identity.id] : []))], [...new Set(identities.flatMap(identity => identity.title ? [identity.title] : []))]);
   });
   // A path whose identity the database refused: an inexact pair carrying it is held (the old page stays whole); on an
   // unpaired add or delete its identity is absent, which today's rules already treat as a plain add or delete.
@@ -362,10 +361,9 @@ export async function confirmRenameIdentities(engine: Pick<BrainEngine, 'execute
  * GBRA-133 S-51: decides a held pair again (its file changed, or a retry asked): the base side is the page the hold
  * kept (its stored id and title), the target the file at `target`. `held` when the database still refuses a value.
  */
-export async function redecideHeldRename(engine: Pick<BrainEngine, 'executeRaw'>, repo: string, target: string,
+export async function redecideHeldRename(engine: Pick<BrainEngine, 'readPageIdentity' | 'readLiveIdentityHolders'>, repo: string, target: string,
   pair: { from: string; to: string; gitTo: string; pageId: number }, opts: ConfirmRenameOpts): Promise<'confirmed' | 'downgraded' | 'held'> {
-  const [page] = await engine.executeRaw<{ fm_id: string | null; title: string | null }>(
-    `SELECT frontmatter->>'id' AS fm_id, title FROM pages WHERE id = $1 AND deleted_at IS NULL`, [pair.pageId]);
+  const page = await engine.readPageIdentity(pair.pageId);
   if (!page) return 'downgraded';
   const before: FrontmatterIdentity = { ...NO_IDENTITY, id: queryable(page.fm_id?.trim() || null), title: queryable(page.title?.trim() || null) };
   const [head] = pair.gitTo.includes('\n') ? [null] : await catFileHeads(repo, [`${target}:${pair.gitTo}`]);
@@ -374,9 +372,7 @@ export async function redecideHeldRename(engine: Pick<BrainEngine, 'executeRaw'>
   const titles = [...new Set([before.title, after.title].filter((value): value is string => !!value))];
   let live: LiveIdentityHolder[];
   try {
-    live = ids.length || titles.length ? await engine.executeRaw<LiveIdentityHolder>(
-      `SELECT slug, source_path, frontmatter->>'id' AS fm_id, title FROM pages
-        WHERE source_id = $1 AND deleted_at IS NULL AND (frontmatter->>'id' = ANY($2::text[]) OR title = ANY($3::text[]))`, [opts.sourceId, ids, titles]) : [];
+    live = ids.length || titles.length ? await engine.readLiveIdentityHolders(opts.sourceId, ids, titles) : [];
   } catch (error) {
     if (unreadableIdentity(error)) return 'held';
     throw error;
@@ -388,7 +384,7 @@ export async function redecideHeldRename(engine: Pick<BrainEngine, 'executeRaw'>
 }
 
 /** `computeSyncDelta` of a commit range with its renames confirmed (the commit-range half of every incremental sync). */
-export async function confirmedSyncDelta(engine: Pick<BrainEngine, 'executeRaw'>, repo: string, from: string, to: string, opts: ConfirmRenameOpts): Promise<Exclude<SyncDeltaResult, { status: 'ok' }> | { status: 'ok'; manifest: ConfirmedManifest }> {
+export async function confirmedSyncDelta(engine: Pick<BrainEngine, 'readRenameIdentityRows' | 'readLiveIdentityHolders'>, repo: string, from: string, to: string, opts: ConfirmRenameOpts): Promise<Exclude<SyncDeltaResult, { status: 'ok' }> | { status: 'ok'; manifest: ConfirmedManifest }> {
   const delta = computeSyncDelta(repo, from, to);
   return delta.status === 'ok' ? { status: 'ok', manifest: await confirmRenameIdentities(engine, repo, from, to, delta.manifest, opts) } : delta;
 }

@@ -32,7 +32,7 @@ import { ruleCoversSql, validPrefix, validQualifiedRuleId } from '../access/fold
 import { holdingSlugSql } from '../facts-fence.ts';
 import { NAME_KEY_PAGE_DIRS } from '../entities/basename-dirs.ts';
 import { atomMovedOriginPrivateSql, atomOriginSlugsSql } from '../persistence/atom-origin.ts';
-import { ownerOnlyFactSql, ownerOnlyForm, ownerOnlyPageSql, ownerOnlySourcesPresent, ownerOnlyTakeSql, ownerOnlyTimelineSql } from '../access/owner-only.ts';
+import { ownerOnlyFactSql, ownerOnlyForm, ownerOnlyPageSql, ownerOnlySourcesPresent, ownerOnlyTakeSql, ownerOnlyTimelineSql, type OwnerOnlyForm } from '../access/owner-only.ts';
 import { readConfigRows, type ConfigReader } from '../config-values.ts';
 
 export const REMOTE_PRIVATE_PAGES_KEY = 'search.remote_private_pages';
@@ -151,13 +151,18 @@ export function folderRulesAllowedSql(alias: string, satisfied: readonly string[
   return `(${alias}.folder_rule_ids IS NULL${listed}${lineage})${coverageSql(alias)}`;
 }
 
+/** A page under a pending prefix, or any page while the folder-rule state is unreadable, read live from the database. */
+export function liveCoverageSql(alias: string): string {
+  return ` AND NOT EXISTS (SELECT 1 FROM access_pending_coverage pc WHERE pc.source_id = ${alias}.source_id AND ${ruleCoversSql(`${alias}.slug`, 'pc.prefix')}) AND NOT (SELECT gbrain_access_state_unreadable())`;
+}
+
 /**
  * The pending or invalid prefixes of the current record as a conjunct (empty when none); an ill-formed entry hides
  * everything. Outside any caller record the prefixes are read live, so a page under a pending prefix stays hidden;
  * a database role that row-level security keeps from reading them reads every page as covered.
  */
 function coverageSql(alias: string): string {
-  if (!callerAccessStore.getStore()) return ` AND NOT EXISTS (SELECT 1 FROM access_pending_coverage pc WHERE pc.source_id = ${alias}.source_id AND ${ruleCoversSql(`${alias}.slug`, 'pc.prefix')}) AND NOT (SELECT gbrain_access_state_unreadable())`;
+  if (!callerAccessStore.getStore()) return liveCoverageSql(alias);
   const coverage = currentCallerAccess().folderCoverage;
   if (!coverage.length) return '';
   return coverage.map(c => !isValidSourceId(c.source_id) || (c.prefix !== '' && !validPrefix(c.prefix)) ? ' AND FALSE'
@@ -456,6 +461,11 @@ function lineageReads(owner: boolean, single: boolean, lineage: boolean, readsRe
     audienceKindMembers: Object.freeze(ownerRead && audienceKind.every(id => ACCESS_ID_RE.test(id)) ? [...new Set(audienceKind)].sort() : []) };
 }
 
+/** The current read's own caller-access record, or null outside one (currentCallerAccess fills in a default instead). */
+export function callerAccessRecord(): CallerAccess | null {
+  return callerAccessStore.getStore() ?? null;
+}
+
 /** Runs `fn` outside any caller's record, for work a request spawns that must not inherit its view. */
 export function withoutCallerAccess<T>(fn: () => T): T {
   return callerAccessStore.exit(fn);
@@ -564,10 +574,31 @@ export function callerReadersAllowedSql(alias: string, row: 'page' | 'snapshot' 
 
 type LabelledRecord = Pick<CallerAccess, 'identity' | 'audienceIdentities' | 'satisfiedRuleIds' | 'lineage' | 'owner'>;
 
+/**
+ * The two sets the SQL renderer applies for a caller's identity and satisfied folder rules: a whole set is emptied when any entry
+ * of it is invalid (readersAllowedSql and labelledOnlySql: validIdentity; folderRulesAllowedSql and labelledOnlySql:
+ * validQualifiedRuleId), so a caller holding one invalid entry reads nothing through that set. An engine that matches entries one
+ * by one (the Rust store) must be sent these sets, never the raw ones.
+ */
+export function sqlAppliedSets(identity: readonly string[], satisfiedRuleIds: readonly string[]): { identity: string[]; satisfiedRuleIds: string[] } {
+  return {
+    identity: identity.length && validIdentity(identity) ? [...identity] : [],
+    satisfiedRuleIds: satisfiedRuleIds.length && satisfiedRuleIds.every(validQualifiedRuleId) ? [...satisfiedRuleIds] : [],
+  };
+}
+
 /** GBRA-108 design 1: every principal a labelled-only read may be named by (the identity, or each audience entry's). */
-function labelledIdentity(access: LabelledRecord): string[] {
-  const identity = [...new Set([...access.identity, ...access.audienceIdentities.flat()])].sort();
-  return identity.length && validIdentity(identity) ? identity : [];
+function labelledIdentity(access: Pick<LabelledRecord, 'identity' | 'audienceIdentities'>): string[] {
+  return sqlAppliedSets([...new Set([...access.identity, ...access.audienceIdentities.flat()])].sort(), []).identity;
+}
+
+/**
+ * GBRA-108 design 1: the two sets a labelled-only conjunct tests a page against, as labelledOnlySql embeds them: the principals
+ * the page's readers may name (empty when any is not a valid identity) and the folder rules a page may hold (empty when any
+ * is not a valid qualified id). The Rust store takes them as data (`LabelledOnly`), so both engines judge the same sets.
+ */
+export function labelledOnlyTerms(access: Pick<LabelledRecord, 'identity' | 'audienceIdentities' | 'satisfiedRuleIds'>): { identity: string[]; satisfiedRuleIds: string[] } {
+  return { identity: labelledIdentity(access), satisfiedRuleIds: sqlAppliedSets([], access.satisfiedRuleIds).satisfiedRuleIds };
 }
 
 /**
@@ -579,8 +610,9 @@ function labelledIdentity(access: LabelledRecord): string[] {
  * `readers` false tests only the rules (a version snapshot carries its own readers). Ids embed as validated literals.
  */
 function labelledOnlySql(alias: string, access: LabelledRecord, readers = true): string {
-  const identity = textArraySql(labelledIdentity(access));
-  const satisfied = textArraySql(access.satisfiedRuleIds.every(validQualifiedRuleId) ? access.satisfiedRuleIds : []);
+  const terms = labelledOnlyTerms(access);
+  const identity = textArraySql(terms.identity);
+  const satisfied = textArraySql(terms.satisfiedRuleIds);
   const named = `(${readers ? `COALESCE(${alias}.page_readers && ${identity}, false) OR ` : ''}COALESCE(${alias}.folder_rule_ids && ${satisfied}, false))`;
   if (!access.lineage || access.owner) return named;
   return `(${named} OR ((${alias}.type IN ('atom', 'question', 'concept', 'event') OR ${alias}.frontmatter ? 'derived_from')
@@ -917,6 +949,50 @@ export function folderRestrictedSql(alias: string): string {
 }
 
 /**
+ * GST-3815: page row `p` reads to everyone who reads page row `t`, as SQL, for a derivation that copies text from `p`
+ * onto `t` (enrich filling a page from other pages' facts, links and chunks). `p` is `t` itself, or: no privacy rule
+ * hides it (privacyPartSql: visibility, aliases, pinned questions, lineage), no origin of it names readers, every reader
+ * `t` names is one of its readers, every folder rule over it also covers `t`, no pending folder prefix covers it, and
+ * it is owner-only only when `t` is. A `t` that names readers or sits under a folder rule admits labelled-only members,
+ * who read only pages labelled for them (labelledOnlySql), so `p` must then name readers too, or sit under a rule of
+ * `t`'s. Anything it cannot tell (readers not yet derived, unreadable access tables, owner-only lineage on a read with
+ * no schema version) fails closed.
+ */
+export function pageReadsToReadersOfSql(p: string, t: string): string {
+  const unlabelled = (a: string) => `(${a}.page_readers IS NULL AND NOT ${namesReadersSql(a)} AND ${a}.folder_rule_ids IS NULL)`;
+  const readersWithin = `(${p}.page_readers IS NOT NULL AND ${t}.page_readers IS NOT NULL AND ${t}.page_readers <@ ${p}.page_readers)`;
+  const rulesWithin = `(${p}.folder_rule_ids IS NOT NULL AND ${t}.folder_rule_ids IS NOT NULL AND ${p}.folder_rule_ids <@ ${t}.folder_rule_ids)`;
+  return `(${p}.id = ${t}.id OR (${privacyPartSql(p)} AND ${originAllowedSql(p)}
+    AND ((${p}.page_readers IS NULL AND NOT ${namesReadersSql(p)}) OR ${readersWithin})
+    AND (${p}.folder_rule_ids IS NULL OR ${rulesWithin})
+    AND (${unlabelled(t)} OR (${t}.page_readers IS NOT NULL AND ${readersWithin}) OR (${t}.page_readers IS NULL AND NOT ${namesReadersSql(t)} AND ${rulesWithin}))
+    AND NOT gbrain_access_pending_covers(${p}.source_id, ${p}.slug) AND NOT (SELECT gbrain_access_state_unreadable())
+    AND ${ownerOnlyWithinSql(ownerOnlyPageSql, p, t)}))`;
+}
+
+/** GST-3815: row `alias` is owner-only only when page row `t` is; with no schema version the lineage is unknown, so any owner-only data refuses it. */
+function ownerOnlyWithinSql(rowSql: (alias: string, form: OwnerOnlyForm) => string, alias: string, t: string): string {
+  const form = ownerOnlyForm(readSchemaVersion());
+  return form === 'closed' ? `NOT ${rowSql(alias, form)}` : `(NOT ${rowSql(alias, form)} OR ${ownerOnlyPageSql(t, form)})`;
+}
+
+/** GST-3815: page row `t` names readers or sits under a folder rule, so labelled-only members may read it, as SQL. */
+export function pageAdmitsLabelledOnlySql(t: string): string {
+  return `(${t}.page_readers IS NOT NULL OR ${namesReadersSql(t)} OR ${t}.folder_rule_ids IS NOT NULL)`;
+}
+
+/**
+ * GST-3815: fact row `f` is owner-only only when page row `t` is, and when `t` admits labelled-only members (it names
+ * readers or sits under a folder rule) the fact is held on a page they can be judged on, as SQL. A labelled-only member
+ * reads a fact only through a page labelled for it (labelledOnlyFactSql), so a fact with no holding page never fills such a
+ * `t`. The holding page itself is judged by pageReadsToReadersOfSql.
+ */
+export function factWithinPageReadersSql(f: string, t: string): string {
+  return `(${ownerOnlyWithinSql(ownerOnlyFactSql, f, t)} AND (NOT ${pageAdmitsLabelledOnlySql(t)} OR EXISTS (SELECT 1 FROM pages held_page
+    WHERE held_page.source_id = ${f}.source_id AND held_page.slug = ${f}.source_markdown_slug AND held_page.deleted_at IS NULL)))`;
+}
+
+/**
  * folderRestrictedSql for a page known by its slug (a parsed page, a row read without the column, a page about to be
  * written): judged against the applied folder rules, not the stamp. A failed read counts as restricted.
  */
@@ -1140,25 +1216,7 @@ export async function findPrivateOnlySlugs(
   opts: { includeDeleted?: boolean } = {},
 ): Promise<Set<string>> {
   if (slugs.length === 0) return new Set();
-  const params: unknown[] = [slugs];
-  let scopeClause = '';
-  if (scope.sourceIds && scope.sourceIds.length > 0) {
-    params.push(scope.sourceIds);
-    scopeClause = `AND p.source_id = ANY($${params.length}::text[])`;
-  } else if (scope.sourceId) {
-    params.push(scope.sourceId);
-    scopeClause = `AND p.source_id = $${params.length}`;
-  }
-  const rows = await engine.executeRaw<{ slug: string }>(
-    `SELECT p.slug FROM pages p
-      WHERE p.slug = ANY($1::text[])
-        ${opts.includeDeleted ? '' : 'AND p.deleted_at IS NULL'}
-        ${scopeClause}
-      GROUP BY p.slug
-      HAVING bool_and(NOT (${privatePagesFilterForCaller('p')}))`,
-    params,
-  );
-  return new Set(rows.map(r => r.slug));
+  return new Set(await engine.readPrivateOnlySlugs(slugs, scope, opts));
 }
 
 const CACHE_TTL_MS = 30_000;

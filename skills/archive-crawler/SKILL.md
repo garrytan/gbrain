@@ -144,8 +144,8 @@ When an item is worth keeping, file it by **primary subject** per
   back-link plus the letter at `personal/<slug>.md` or `originals/<slug>.md`
 
 **The skill is schema-generic.** It does NOT bake in any specific
-era-folder structure (e.g., `originals/archive/` for pre-2003,
-`originals/yc-era/` for post-2019, etc.). The user's filing rules from
+era-folder structure (e.g., one `originals/<era>/` folder per decade,
+school or job). The user's filing rules from
 `_brain-filing-rules.json` are read at runtime; the agent decides per-page
 where content lands within those sanctioned directories.
 
@@ -294,8 +294,8 @@ Follow the [agent operator protocol](../conventions/agent-operator-protocol.md) 
 
 - ❌ Running without `archive-crawler.scan_paths:` set. Hard refusal.
   This is the safety contract — never bypass.
-- ❌ Hardcoding era-specific filing paths (e.g., `originals/archive/`,
-  `originals/yc-era/`). Read filing rules at runtime instead.
+- ❌ Hardcoding era-specific filing paths (e.g., an `originals/<era>/`
+  folder per period of the user's life). Read filing rules at runtime instead.
 - ❌ Re-showing items already marked in the manifest. The user's time
   is the scarcest resource.
 - ❌ Paraphrasing reactions. Exact words only.
@@ -319,10 +319,10 @@ This skill guarantees:
 - Routing matches the canonical triggers in the frontmatter.
 - Output written under the directories listed in `writes_to:` (when applicable).
 - Conventions referenced (`quality.md`, `brain-first.md`, `_brain-filing-rules.md`) are followed.
-- Privacy contract preserved: no real names, no fork-specific filesystem path literals, no upstream-fork references.
+- Examples use placeholder names and paths.
 
-The full behavior contract is documented in the body sections above; this section exists for the conformance test.
+The full behavior contract is documented in the body sections above.
 
 ## Output Format
 
-The skill's output shape is documented inline in the body sections above (see "Output", "Brain page format", or equivalent). The literal section header here exists for the conformance test (`test/skills-conformance.test.ts`).
+The skill's output shape is documented inline in the body sections above (see "Output", "Brain page format", or equivalent).

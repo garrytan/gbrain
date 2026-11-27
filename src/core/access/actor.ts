@@ -42,21 +42,20 @@ export interface ActorCaller {
 }
 
 /** The caller's live attest right: the verifier's on a live call, else a row lookup from the stored principal. */
-export async function attestRightOf(engine: Pick<BrainEngine, 'executeRaw'>, caller: ActorCaller): Promise<AttestRight | null> {
+export async function attestRightOf(engine: Pick<BrainEngine, 'readAccessTokenAttest' | 'readOauthClientAttest'>, caller: ActorCaller): Promise<AttestRight | null> {
   if (caller.auth?.attest !== undefined) return caller.auth.attest ?? null;
   const principal = caller.auth?.principal ?? caller.principal;
   try {
     if (principal?.kind === 'legacy_token') {
-      const [row] = await engine.executeRaw<Record<string, unknown>>(
-        `SELECT attest_actor, attest_ops, to_jsonb(access_tokens)->'attest_sources' AS attest_sources, to_jsonb(access_tokens)->>'attest_read' AS attest_read, member_id FROM access_tokens WHERE id::text = $1 AND revoked_at IS NULL`, [principal.id]);
-      return attestRightFrom(row, 'legacy', row?.member_id);
+      const stored = await engine.readAccessTokenAttest(principal.id);
+      const row = stored && stored.revoked_at == null ? stored : undefined;
+      return attestRightFrom(row as Record<string, unknown> | undefined, 'legacy', row?.member_id);
     }
     if (principal?.kind === 'oauth_client') {
-      const [row] = await engine.executeRaw<Record<string, unknown>>(
-        `SELECT attest_actor, attest_ops, to_jsonb(oauth_clients)->'attest_sources' AS attest_sources, to_jsonb(oauth_clients)->>'attest_read' AS attest_read, member_id, grant_types, client_secret_hash IS NOT NULL AS confidential FROM oauth_clients
-         WHERE client_id = $1 AND (to_jsonb(oauth_clients)->>'deleted_at') IS NULL`, [principal.id]);
-      const cc = Array.isArray(row?.grant_types) && (row!.grant_types as unknown[]).includes('client_credentials') && row!.confidential === true;
-      return attestRightFrom(row, cc ? 'client_credentials' : null, row?.member_id);
+      const stored = await engine.readOauthClientAttest(principal.id);
+      const row = stored && stored.deleted_at == null ? stored : undefined;
+      const cc = Array.isArray(row?.grant_types) && row!.grant_types.includes('client_credentials') && row!.confidential === true;
+      return attestRightFrom(row as Record<string, unknown> | undefined, cc ? 'client_credentials' : null, row?.member_id);
     }
   } catch (e) {
     // A schema before the attest columns has no right. Any other failure (a lock timeout, an aborted transaction) is
@@ -165,12 +164,9 @@ export function actorUnlinked(externalId: string, transport?: string): Operation
 }
 
 /** The enabled member linked to (system, external_id), with its identity; null when unlinked, disabled or the link tables are missing. */
-export async function linkedMember(engine: Pick<BrainEngine, 'executeRaw'>, system: string, externalId: string): Promise<{ member: string; groups: string[]; identity: string[] } | null> {
+export async function linkedMember(engine: Pick<BrainEngine, 'readLinkedMember'>, system: string, externalId: string): Promise<{ member: string; groups: string[]; identity: string[] } | null> {
   try {
-    const [row] = await engine.executeRaw<{ id: string; groups: string[] | null }>(
-      `SELECT m.id, COALESCE(array_agg(g.group_id ORDER BY g.group_id) FILTER (WHERE g.group_id IS NOT NULL), '{}') AS groups
-       FROM access_member_links l JOIN access_members m ON m.id = l.member_id LEFT JOIN access_group_members g ON g.member_id = m.id
-       WHERE l.system = $1 AND l.external_id = $2 AND m.disabled_at IS NULL AND m.tombstoned_at IS NULL GROUP BY m.id`, [system, externalId]);
+    const row = await engine.readLinkedMember(system, externalId);
     if (!row) return null;
     const groups = row.groups ?? [];
     return { member: row.id, groups, identity: identityFor(row.id, groups) };
@@ -187,7 +183,7 @@ export async function linkedMember(engine: Pick<BrainEngine, 'executeRaw'>, syst
  * live attest right for the system, and a live link from the id to an enabled member. Returns that member's identity;
  * throws actor_not_attested (no_attest_right) or actor_unlinked.
  */
-export async function actorCoverage(engine: Pick<BrainEngine, 'executeRaw'>, caller: ActorCaller, actor: { system: string; external_id: string }, transport?: string, op?: string, source?: string):
+export async function actorCoverage(engine: Pick<BrainEngine, 'executeRaw' | 'readLinkedMember' | 'readAccessTokenAttest' | 'readOauthClientAttest'>, caller: ActorCaller, actor: { system: string; external_id: string }, transport?: string, op?: string, source?: string):
   Promise<{ member: string; groups: string[]; identity: string[] }> {
   const right = await attestRightOf(engine, caller);
   if (!right || right.system !== actor.system) throw actorNotAttested('no_attest_right', caller, { op: op ?? 'stored', transport });
@@ -203,7 +199,7 @@ export async function actorCoverage(engine: Pick<BrainEngine, 'executeRaw'>, cal
  * A stored attested authority (a queued write, an agent job) re-resolved through actorCoverage: the same member must
  * still be covered and, when `op` is given (publication, a job tool call), the operation must still be attested.
  */
-export async function storedActorIdentity(engine: Pick<BrainEngine, 'executeRaw'>, principal: Principal, actor: AttestedActor, op?: string, source?: string): Promise<string[]> {
+export async function storedActorIdentity(engine: Pick<BrainEngine, 'executeRaw' | 'readLinkedMember' | 'readAccessTokenAttest' | 'readOauthClientAttest'>, principal: Principal, actor: AttestedActor, op?: string, source?: string): Promise<string[]> {
   const covered = await actorCoverage(engine, { principal }, actor, undefined, op, source);
   if (covered.member !== actor.member) throw actorUnlinked(actor.external_id);
   return covered.identity;
@@ -214,7 +210,7 @@ export async function storedActorIdentity(engine: Pick<BrainEngine, 'executeRaw'
  * (no granted_sources, no operator hatch), whatever the attest credential's own grants say. An explicit mode, not B's
  * may_act_for path, which relaxes privacy for a one-member audience.
  */
-export async function attestedCallerAccess(engine: Pick<BrainEngine, 'executeRaw' | 'readFolderAccess'>, actor: AttestedActor, identity: string[]): Promise<Partial<CallerAccess>> {
+export async function attestedCallerAccess(engine: Pick<BrainEngine, 'executeRaw' | 'readFolderAccess' | 'hasLabelledOnlyMemberAmong'>, actor: AttestedActor, identity: string[]): Promise<Partial<CallerAccess>> {
   return {
     identity,
     audience: [`member:${actor.member}`],
@@ -241,7 +237,7 @@ export interface ActorChannels { header?: string | null; audience?: string | nul
  * `acting_user` stripped, or a refusal: actor_not_attested with its reason, actor_unlinked, or B's
  * on_behalf_of_invalid_audience when an on_behalf_of audience is asserted too.
  */
-export async function resolveAttestedActor(engine: Pick<BrainEngine, 'executeRaw' | 'readLiveMember' | 'readFolderAccess'>, input: {
+export async function resolveAttestedActor(engine: Pick<BrainEngine, 'executeRaw' | 'readLiveMember' | 'readFolderAccess' | 'readLinkedMember' | 'hasLabelledOnlyMemberAmong' | 'readAccessTokenAttest' | 'readOauthClientAttest'>, input: {
   channels?: ActorChannels; params: Record<string, unknown> | undefined; op: string; opShape: AttestableOpShape | undefined;
   auth?: ActorCaller['auth']; transport?: string; audienceAsserted: boolean;
 }): Promise<{ actor?: AttestedActor; access?: Partial<CallerAccess>; params: Record<string, unknown>; read?: AttestRight['read'] } | null> {
@@ -283,7 +279,7 @@ export async function resolveAttestedActor(engine: Pick<BrainEngine, 'executeRaw
  * is argument_mismatch, so the argument never widens or switches whose notes are read, and never tells an existing id
  * from an unknown one. Every other caller is refused argument_without_attestation as before.
  */
-async function ownMemberArgument(engine: Pick<BrainEngine, 'executeRaw' | 'readLiveMember'>, input: { params?: Record<string, unknown>; auth?: ActorCaller['auth']; transport?: string; audienceAsserted: boolean },
+async function ownMemberArgument(engine: Pick<BrainEngine, 'executeRaw' | 'readLiveMember' | 'readLinkedMember' | 'readAccessTokenAttest' | 'readOauthClientAttest'>, input: { params?: Record<string, unknown>; auth?: ActorCaller['auth']; transport?: string; audienceAsserted: boolean },
   argument: string, caller: ActorCaller, ctx: { op: string; transport?: string }): Promise<{ params: Record<string, unknown> }> {
   const own = input.transport === 'stdio' || input.audienceAsserted || !input.auth ? null
     : (await memberIdentityFor(engine, input.auth)).find(p => p.startsWith('member:'))?.slice('member:'.length) ?? null;
@@ -311,9 +307,9 @@ function assertExternalId(raw: unknown): string {
 const iso = (v: unknown) => v == null ? null : v instanceof Date ? v.toISOString() : String(v);
 const toLink = (r: Record<string, unknown>): MemberLink => ({ system: String(r.system), external_id: String(r.external_id), member_id: String(r.member_id), created_at: iso(r.created_at) });
 
-async function linkRow(engine: Pick<BrainEngine, 'executeRaw'>, system: string, externalId: string): Promise<MemberLink | null> {
-  const [row] = await engine.executeRaw<Record<string, unknown>>('SELECT system, external_id, member_id, created_at FROM access_member_links WHERE system = $1 AND external_id = $2', [system, externalId]);
-  return row ? toLink(row) : null;
+async function linkRow(engine: Pick<BrainEngine, 'readAccessMemberLink'>, system: string, externalId: string): Promise<MemberLink | null> {
+  const row = await engine.readAccessMemberLink(system, externalId);
+  return row ? toLink({ ...row }) : null;
 }
 
 /** Links a canonical id to an enabled member; refuses an invalid id, a member that is not enabled and an id already linked. */
@@ -326,7 +322,7 @@ export async function linkMember(engine: BrainEngine, rawMember: unknown, system
       existing.member_id === member ? 'Nothing to do: the link exists.' : `Unlink it first (gbrain access member unlink --${system} <id>), then link it to ${member}.`);
   }
   if (opts.dryRun) return { link: { system, external_id: externalId, member_id: member, created_at: null }, applied: false };
-  await engine.executeRaw('INSERT INTO access_member_links (system, external_id, member_id) VALUES ($1, $2, $3)', [system, externalId, member]);
+  await engine.insertAccessMemberLink(system, externalId, member);
   return { link: (await linkRow(engine, system, externalId))!, applied: true };
 }
 
@@ -340,13 +336,10 @@ export async function unlinkMember(engine: BrainEngine, system: string, rawId: u
   const externalId = assertExternalId(rawId);
   const existing = await linkRow(engine, system, externalId);
   if (!existing) throw linkInvalid(`That ${system} id is not linked to any member.`, 'unknown_link', 'List the links with gbrain access member links.');
-  if (!opts.dryRun) await engine.executeRaw('DELETE FROM access_member_links WHERE system = $1 AND external_id = $2', [system, externalId]);
+  if (!opts.dryRun) await engine.deleteAccessMemberLink(system, externalId);
   return { link: existing, applied: !opts.dryRun };
 }
 
 export async function listMemberLinks(engine: BrainEngine, opts: { member?: string } = {}): Promise<MemberLink[]> {
-  const rows = await engine.executeRaw<Record<string, unknown>>(
-    `SELECT system, external_id, member_id, created_at FROM access_member_links${opts.member ? ' WHERE member_id = $1' : ''} ORDER BY member_id, system, external_id`,
-    opts.member ? [opts.member] : []);
-  return rows.map(toLink);
+  return (await engine.listAccessMemberLinks(opts.member || null)).map(row => toLink({ ...row }));
 }

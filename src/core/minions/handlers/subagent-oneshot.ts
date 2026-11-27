@@ -50,6 +50,7 @@ import { isRetryableConnError } from '../../retry-matcher.ts';
 import { logSubagentHeartbeat } from './subagent-audit.ts';
 import { UnrecoverableError } from '../types.ts';
 import { extractPromptTooLongDetail } from './subagent.ts';
+import { rethrowCapabilityRefusal } from '../../engine-capability-refusal.ts';
 import {
   persistMessage,
   persistToolExecComplete,
@@ -561,19 +562,18 @@ export async function runSubagentOneshot(args: OneshotArgs): Promise<OneshotOutc
   // Remote-owned jobs do not resolve or count hidden targets. Their links
   // remain literal text, matching remote put_page's disabled auto-link hook.
   if (!submitted) try {
-    const rows = allTargets.length > 0
-      ? await engine.executeRaw<{ slug: string }>(
-          `SELECT slug FROM pages WHERE slug = ANY($1) AND source_id = $2 AND deleted_at IS NULL`,
-          [allTargets, writeSourceId],
-        )
-      : [];
+    const rows = allTargets.length > 0 ? await engine.listLinkPageMetadataForSlugs(writeSourceId, allTargets) : [];
     existingSlugs = new Set(rows.map(r => r.slug));
+    // Only "fewer than 5 live pages" matters below, so the probe stops after 5 (a count would read the whole source).
     const sample = await engine.executeRaw<{ n: number }>(
       `SELECT count(*)::int AS n FROM (SELECT 1 FROM pages WHERE source_id = $1 AND deleted_at IS NULL LIMIT 5) t`,
       [writeSourceId],
     );
     pageSample = sample[0]?.n ?? 0;
-  } catch {
+  } catch (e) {
+    // A capability refusal is not a read failure: strict validation would reject a valid page on an engine that cannot
+    // answer, and the job would dead-letter with nothing naming the engine. Let it out.
+    rethrowCapabilityRefusal(e);
     existingSlugs = new Set();
     pageSample = 5; // fail toward strict validation, not toward cold-brain leniency
   }

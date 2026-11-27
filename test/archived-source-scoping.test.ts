@@ -82,20 +82,24 @@ describe('#3880 tier-4 cwd resolution vs archived sources', () => {
 });
 
 describe('#3880 structural pins — all-source local_path selections filter archived', () => {
-  const sites: Array<{ file: string; patched: number }> = [
+  // `calls`: the site reads its sources through a typed doctor-sources read; the filtered statement is in
+  // src/core/engine-sql/doctor-sources.ts (ROOTS_LIVE, KIND_LIVE and the four FRESH_* live rosters).
+  const sites: Array<{ file: string; patched: number; calls?: string[] }> = [
     { file: 'src/commands/sync/run.ts', patched: 1 },
-    { file: 'src/core/brain-writer.ts', patched: 1 },
-    { file: 'src/commands/doctor/checks/extraction-sync.ts', patched: 2 },
+    { file: 'src/core/brain-writer.ts', patched: 0, calls: ["readDoctorSources('brain_writer_live')"] },
+    { file: 'src/commands/doctor/checks/extraction-sync.ts', patched: 1, calls: ["readDoctorSources('roots_live_fallback')"] },
     // sync_freshness's loader (loadSyncFreshnessSources) moved here from extraction-sync.ts.
-    { file: 'src/core/source-health.ts', patched: 2 },
+    { file: 'src/core/source-health.ts', patched: 0, calls: ["readDoctorSources('freshness'"] },
+    { file: 'src/core/engine-sql/doctor-sources.ts', patched: 6 },
     { file: 'src/commands/frontmatter-install-hook.ts', patched: 1 },
     { file: 'src/commands/sources-harden.ts', patched: 1 },
   ];
-  for (const { file, patched } of sites) {
-    test(`${file} carries ${patched} archived-filtered all-source selection(s)`, () => {
+  for (const { file, patched, calls = [] } of sites) {
+    test(`${file} carries ${patched} archived-filtered all-source selection(s)${calls.length ? ' and its typed live read' : ''}`, () => {
       const src = readFileSync(file, 'utf-8');
       const filtered = src.match(/local_path IS NOT NULL AND archived IS NOT TRUE/g) ?? [];
       expect(filtered.length).toBeGreaterThanOrEqual(patched);
+      for (const call of calls) expect(src).toContain(call);
     });
   }
 

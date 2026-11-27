@@ -100,6 +100,40 @@ describe('engine parity: versions', () => {
   );
 
   parityTest(
+    'createVersion stamps a sync\'s Git reason; getVersions shows it, withheld from a remote reader when the successor is private',
+    { methods: ['putPage', 'createVersion', 'getVersions'] },
+    async (engine) => {
+      const put = (body: string, frontmatter: Record<string, unknown>) =>
+        engine.putPage('notes/why', { type: 'note', title: 'Why', compiled_truth: body, timeline: '', frontmatter });
+      await put('Body v1.', {});
+      const created = await engine.createVersion('notes/why', { reason: 'Fix the typo', reasonSource: { commit: 'c1', path: 'notes/why.md' } });
+      await put('Body v2.', { visibility: 'private' });
+      await engine.createVersion('notes/why', { reason: 'Hide the draft', historyGap: true });
+      await put('Body v3.', {});
+      await engine.createVersion('notes/why', { reason: 'Open it again', historyGap: false });
+      await put('Body v4.', {});
+      await engine.createVersion('notes/why', { reason: 'Last word' });
+      await put('Body v5.', {});
+      await engine.createVersion('notes/why', { reason: null });
+      const view = (rows: Awaited<ReturnType<typeof engine.getVersions>>) => rows.map((v) => ['compiled_truth' in v ? v.compiled_truth : '-', v.replaced_because ?? null]);
+      const seen = {
+        // createVersion returns the inserted row, so its stored change_reason too.
+        created: (created as { change_reason?: string | null }).change_reason ?? null,
+        trusted: view(await engine.getVersions('notes/why')),
+        remote: view(await engine.getVersions('notes/why', { excludePrivate: true })),
+        remoteMeta: (await engine.getVersions('notes/why', { excludePrivate: true, includeBody: false })).map((v) => v.replaced_because ?? null),
+      };
+      expect(seen).toEqual({
+        created: 'Fix the typo',
+        trusted: [['Body v5.', null], ['Body v4.', 'Last word'], ['Body v3.', 'Open it again'], ['Body v2.', 'Hide the draft'], ['Body v1.', 'Fix the typo']],
+        remote: [['Body v5.', null], ['Body v4.', 'Last word'], ['Body v3.', 'Open it again'], ['Body v1.', null]],
+        remoteMeta: [null, 'Last word', 'Open it again', null],
+      });
+      return seen;
+    },
+  );
+
+  parityTest(
     'readLatestVersionIdAtTier answers the page\'s newest version stamped with the tier, or null',
     { methods: ['transaction', 'applyTransactionSettings', 'putPage', 'getPage', 'createVersion', 'readLatestVersionIdAtTier'] },
     async (engine) => {
@@ -231,6 +265,30 @@ describe('engine parity: versions', () => {
     },
   );
 
+  // #8635 on the Rust engine: a sync import passes the (commit, path) its reason came from; a purge that tombstoned that
+  // pair drops the reason on every arm (page-state/versions.ts stampableReason; the store reads the tombstone in its write).
+  parityTest(
+    'createVersion stores the import reason and drops one whose commit and path a purge tombstoned',
+    { methods: ['putPage', 'createVersion', 'getVersions', 'writeReasonPurgeTombstones'] },
+    async (engine) => {
+      await engine.writeReasonPurgeTombstones('default', [{ commit_sha: 'b'.repeat(40), path: 'notes/why.md' }]);
+      const write = (title: string) => engine.putPage('notes/why', { type: 'note', title, compiled_truth: `${title}.`, timeline: '' });
+      const source = (commit: string) => ({ commit: commit.repeat(40), path: 'notes/why.md' });
+      await write('First');
+      const first = await engine.createVersion('notes/why', { sourceId: 'default', reason: 'Add the first note', reasonSource: source('a') });
+      await write('Second');
+      const purged = await engine.createVersion('notes/why', { sourceId: 'default', reason: 'Name a private deal', reasonSource: source('b') });
+      await write('Third');
+      const empty = await engine.createVersion('notes/why', { sourceId: 'default', reason: '', reasonSource: source('b') });
+      await write('Live');
+      const created = [first, purged, empty].map((v) => (v as { change_reason?: string | null }).change_reason ?? null);
+      expect(created).toEqual(['Add the first note', null, '']);
+      const history = (await engine.getVersions('notes/why')).map((v) => [v.title, v.replaced_because ?? null]);
+      expect(history).toEqual([['Third', ''], ['Second', null], ['First', 'Add the first note']]);
+      return { created, history };
+    },
+  );
+
   /** A page whose snapshots differ in privacy: private, named readers, world, pinned question, then a world live page. */
   async function privateHistory(engine: Parameters<Parameters<typeof parityTest>[2]>[0]): Promise<void> {
     const edits: Array<[string, Record<string, unknown>]> = [
@@ -282,6 +340,36 @@ describe('engine parity: versions', () => {
   );
 
   parityTest(
+    'getVersions under excludePrivate withholds a snapshot\'s reason when the next snapshot is private or names readers',
+    { methods: ['putPage', 'createVersion', 'getVersions'] },
+    async (engine) => {
+      const edits: Array<[string, Record<string, unknown>, string]> = [
+        ['World one', {}, 'before a private edit'],
+        ['Private two', { visibility: 'private' }, 'private edit'],
+        ['World three', {}, 'before a reader-named edit'],
+        ['Team four', { readable_by: ['alice-example'] }, 'reader-named edit'],
+        ['World five', {}, 'before a world edit'],
+        ['World six', {}, 'before the live page'],
+      ];
+      for (const [title, frontmatter, reason] of edits) {
+        await engine.putPage('notes/succ', { type: 'note', title, compiled_truth: `${title}.`, timeline: '', frontmatter });
+        await engine.createVersion('notes/succ', { reason });
+      }
+      await engine.putPage('notes/succ', { type: 'note', title: 'Live', compiled_truth: 'Live.', timeline: '' });
+      const read = async (excludePrivate: boolean) =>
+        (await engine.getVersions('notes/succ', { excludePrivate })).map((v) => [v.title, v.replaced_because ?? null]);
+      const trusted = await read(false);
+      const world = await read(true);
+      expect(trusted).toContainEqual(['World one', 'before a private edit']);
+      expect(world).toContainEqual(['World one', null]);
+      expect(world).toContainEqual(['World three', null]);
+      expect(world).toContainEqual(['World five', 'before a world edit']);
+      expect(world).toContainEqual(['World six', 'before the live page']);
+      return { trusted, world };
+    },
+  );
+
+  parityTest(
     'pruneHoldingPageVersions keeps the newest five versions, deletes the older ones and records the history gap',
     { methods: ['putPage', 'getPage', 'createVersion', 'getVersions', 'pruneHoldingPageVersions', 'pickValidTimeEdition'] },
     async (engine) => {
@@ -329,6 +417,52 @@ describe('engine parity: versions', () => {
       expect(memberTeam).toContain('Team v1');
       expect(strangerTeam).toEqual([]);
       return { member, granted, stranger, memberTeam, strangerTeam };
+    },
+  );
+
+  parityTest(
+    'getVersions under excludePrivate withholds a reason whose successor is hidden from the caller or was pruned',
+    { methods: ['putPage', 'createVersion', 'getVersions'] },
+    async (engine) => {
+      const slug = 'notes/why';
+      const write = (body: string, frontmatter: Record<string, unknown>) =>
+        engine.putPage(slug, { type: 'note', title: 'Why', compiled_truth: body, timeline: '', frontmatter });
+      const steps: Array<[string, Record<string, unknown>, string]> = [
+        ['One.', { visibility: 'world' }, 'r1'],
+        ['Two.', { visibility: 'world' }, 'r2'],
+        ['Three.', { visibility: 'private' }, 'r3'],
+        ['Four.', { readable_by: ['bob-example'] }, 'r4'],
+      ];
+      for (const [body, frontmatter, reason] of steps) {
+        await write(body, frontmatter);
+        await engine.createVersion(slug, { sourceId: 'default', reason });
+      }
+      await write('Live.', { visibility: 'world' });
+      const reasons = (access?: Parameters<typeof withCallerAccess>[0], target = slug) => {
+        const run = async () => (await engine.getVersions(target, access ? { excludePrivate: true } : {}))
+          .map((v) => `${v.compiled_truth?.length ? v.compiled_truth : 'large'}:${v.replaced_because ?? null}`);
+        return access ? withCallerAccess(access, run) : run();
+      };
+      const trusted = await reasons();
+      const alice = await reasons({ identity: ['member:alice-example'], hidePrivate: true });
+      const bob = await reasons({ identity: ['member:bob-example'], hidePrivate: true });
+      const aliceGranted = await reasons({ identity: ['member:alice-example'], privateReadableSources: ['default'], hidePrivate: true });
+      expect(trusted).toEqual(['Four.:r4', 'Three.:r3', 'Two.:r2', 'One.:r1']);
+      expect(alice).toEqual(['Two.:null', 'One.:r1']);
+      expect(bob).toEqual(['Four.:r4', 'Two.:null', 'One.:r1']);
+      expect(aliceGranted).toEqual(['Three.:null', 'Two.:null', 'One.:r1']);
+
+      // A prune deletes the small version's successor: its reason stays from every excludePrivate reader.
+      await engine.putPage('notes/grown', { type: 'note', title: 'Grown', compiled_truth: 'Small.', timeline: '' });
+      await engine.createVersion('notes/grown', { sourceId: 'default', reason: 'grew' });
+      await engine.putPage('notes/grown', { type: 'note', title: 'Grown', compiled_truth: 'x'.repeat(1024 * 1024 + 1), timeline: '' });
+      for (let i = 0; i < 6; i++) await engine.createVersion('notes/grown', { sourceId: 'default' });
+      const short = (rows: string[]) => rows.map((r) => r.startsWith('x') ? `large:${r.split(':').pop()}` : r);
+      const prunedTrusted = short(await reasons(undefined, 'notes/grown'));
+      const prunedRemote = short(await reasons({ identity: [], hidePrivate: true }, 'notes/grown'));
+      expect(prunedTrusted).toEqual([...Array(5).fill('large:null'), 'Small.:grew']);
+      expect(prunedRemote).toEqual([...Array(5).fill('large:null'), 'Small.:null']);
+      return { trusted, alice, bob, aliceGranted, prunedTrusted, prunedRemote };
     },
   );
 });
@@ -465,6 +599,62 @@ describe('engine parity: raw data + files', () => {
         nobody: await engine.listFiles({ pageSlug: 'people/nobody', limit: 100 }),
         none: await engine.listFiles({ limit: 0 }),
       };
+    },
+  );
+});
+
+describe('engine parity: attachments follow a renamed page', () => {
+  parityTest(
+    'updateSlug moves the page\'s attachments by page id; a slug-only one and another page\'s stay',
+    { methods: ['putPage', 'upsertFile', 'updateSlug', 'getFile', 'getPage'] },
+    async (engine) => {
+      await engine.putPage('notes/move-me', { type: 'note', title: 'Move me', compiled_truth: 'x', timeline: '' });
+      await engine.putPage('notes/other', { type: 'note', title: 'Other', compiled_truth: 'y', timeline: '' });
+      const moved = (await engine.getPage('notes/move-me'))!.id;
+      const other = (await engine.getPage('notes/other'))!.id;
+      const file = (storage_path: string, page_id: number | null) => engine.upsertFile({
+        source_id: 'default', page_slug: 'notes/move-me', page_id, filename: storage_path.split('/').pop()!, storage_path,
+        mime_type: 'image/png', size_bytes: 1, content_hash: 'h', metadata: {},
+      });
+      await file('a/bound.png', moved);
+      await file('a/loose.png', null);
+      await file('a/foreign.png', other);
+      expect(await engine.updateSlug('notes/move-me', 'notes/moved', { sourceId: 'default' })).toBe(1);
+      const slugOf = async (path: string) => (await engine.getFile('default', path))?.page_slug ?? null;
+      const out = { bound: await slugOf('a/bound.png'), loose: await slugOf('a/loose.png'), foreign: await slugOf('a/foreign.png') };
+      expect(out).toEqual({ bound: 'notes/moved', loose: 'notes/move-me', foreign: 'notes/move-me' });
+      return out;
+    },
+  );
+
+  parityTest(
+    'updateSlug leaves a slug-only attachment an earlier rename left behind when an unrelated page reused the name',
+    { methods: ['putPage', 'upsertFile', 'updateSlug', 'getFile'] },
+    async (engine) => {
+      await engine.putPage('notes/reused', { type: 'note', title: 'A', compiled_truth: 'x', timeline: '' });
+      expect(await engine.updateSlug('notes/reused', 'notes/first-owner', { sourceId: 'default' })).toBe(1);
+      await engine.upsertFile({ source_id: 'default', page_slug: 'notes/reused', page_id: null, filename: 'left.png', storage_path: 'b/left.png', mime_type: 'image/png', size_bytes: 1, content_hash: 'h', metadata: {} });
+      await engine.putPage('notes/reused', { type: 'note', title: 'C', compiled_truth: 'y', timeline: '' });
+      expect(await engine.updateSlug('notes/reused', 'notes/second-owner', { sourceId: 'default' })).toBe(1);
+      const left = (await engine.getFile('default', 'b/left.png'))?.page_slug ?? null;
+      expect(left).toBe('notes/reused');
+      return { left };
+    },
+  );
+
+  parityTest(
+    'updateSlug leaves a slug-only attachment when a later page reuses the name after the earlier page was deleted',
+    { methods: ['putPage', 'upsertFile', 'updateSlug', 'deletePages', 'getFile'] },
+    async (engine) => {
+      await engine.putPage('notes/scrubbed', { type: 'note', title: 'A', compiled_truth: 'x', timeline: '' });
+      expect(await engine.updateSlug('notes/scrubbed', 'notes/gone-owner', { sourceId: 'default' })).toBe(1);
+      await engine.upsertFile({ source_id: 'default', page_slug: 'notes/scrubbed', page_id: null, filename: 'kept.png', storage_path: 'c/kept.png', mime_type: 'image/png', size_bytes: 1, content_hash: 'h', metadata: {} });
+      await engine.deletePages(['notes/gone-owner'], { sourceId: 'default' });
+      await engine.putPage('notes/scrubbed', { type: 'note', title: 'C', compiled_truth: 'y', timeline: '' });
+      expect(await engine.updateSlug('notes/scrubbed', 'notes/new-owner', { sourceId: 'default' })).toBe(1);
+      const kept = (await engine.getFile('default', 'c/kept.png'))?.page_slug ?? null;
+      expect(kept).toBe('notes/scrubbed');
+      return { kept };
     },
   );
 });

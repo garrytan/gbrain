@@ -1,6 +1,7 @@
 /**
- * Contradiction-probe members (BrainEngine writeContradictionsRun, loadContradictionsTrend, getContradictionCacheEntry,
- * putContradictionCacheEntry, sweepContradictionCache).
+ * Contradiction-probe members (BrainEngine writeContradictionsRun, loadContradictionsTrend,
+ * readLastContradictionsPromptVersion, getContradictionCacheEntry, putContradictionCacheEntry, sweepContradictionCache), and listLinkContexts, the link contexts the edge-contradictions
+ * phase quotes to its judge (src/core/engine-sql/contradictions-cycle.ts).
  */
 import type { BrainEngine } from '../../engine.ts';
 import { storeCall, type StoreMember } from './common.ts';
@@ -17,6 +18,9 @@ export const loadContradictionsTrend: Member<'loadContradictionsTrend'> = async 
   return rows.map((row) => ({ ...row, ran_at: new Date(row.ran_at).toISOString() }));
 };
 
+export const readLastContradictionsPromptVersion: Member<'readLastContradictionsPromptVersion'> = (brain) =>
+  storeCall({ member: 'readLastContradictionsPromptVersion' }, () => brain.readLastContradictionsPromptVersion());
+
 export const getContradictionCacheEntry: Member<'getContradictionCacheEntry'> = (brain, key) =>
   storeCall({ member: 'getContradictionCacheEntry' }, () => brain.getContradictionCacheEntry(key));
 
@@ -26,3 +30,7 @@ export const putContradictionCacheEntry: Member<'putContradictionCacheEntry'> = 
 
 export const sweepContradictionCache: Member<'sweepContradictionCache'> = (brain) =>
   storeCall({ member: 'sweepContradictionCache' }, () => brain.sweepContradictionCache());
+
+/** Up to three distinct non-empty contexts of one link. The SQL names no order; the store answers them in byte order. */
+export const listLinkContexts: Member<'listLinkContexts'> = (brain, fromPageId, toPageId, linkType) =>
+  storeCall({ member: 'listLinkContexts' }, () => brain.listLinkContexts(fromPageId, toPageId, linkType));

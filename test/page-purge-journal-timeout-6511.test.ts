@@ -225,7 +225,7 @@ for (const backend of backends) describe(`[${backend}] #6511 page purge journal 
     await seed('clock');
     let statements = 0;
     const counting = new Proxy(engine, { get(target, key) {
-      if (key === 'executeRaw') return (sql: string, params?: unknown[]) => { if (sql.includes('WITH chunk AS MATERIALIZED')) statements++; return target.executeRaw(sql, params); };
+      if (key === 'sweepJournalChunk') return (query: Parameters<typeof target.sweepJournalChunk>[0]) => { statements++; return target.sweepJournalChunk(query); };
       const value = Reflect.get(target, key, target);
       return typeof value === 'function' ? value.bind(target) : value;
     } });
@@ -244,6 +244,9 @@ for (const backend of backends) describe(`[${backend}] #6511 page purge journal 
     await seed('bounded');
     // Another session holds the journal, so the chunk read is sent inside its budget and waits until the server ends
     // it at the bound. (A budget that has already run out is refused before the read is sent: the next test.)
+    // The typed chunk read runs under `withReadDeadline`, whose deadline also covers the wait for a free connection (#8651): open the
+    // pool's connections first, so the 300 ms budget is spent on the lock wait and the server ends the read, not on a connection opening.
+    await Promise.all([1, 2, 3, 4].map(() => engine.executeRaw('SELECT pg_sleep(0.05)')));
     const error = await engine.transaction(async tx => {
       await tx.executeRaw('LOCK TABLE persistence_requests IN ACCESS EXCLUSIVE MODE');
       const bounded = boundedReads(engine, startClaimPhase(Date.now(), undefined, 300));

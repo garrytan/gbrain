@@ -7,13 +7,14 @@
  * src/commands/doctor/registry.ts and src/core/doctor-categories.ts.
  */
 
-import { EMBED_SKIP_FILTER_FRAGMENT } from '../../../core/embed-skip.ts';
 import { startHeartbeat } from '../../../core/progress.ts';
 import { checkUnverifiedExtractions } from './extraction-sync.ts';
 import type { Check } from '../../doctor.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
 import { agentFix, checkError, doctorVerify, withSkippedSegmented } from '../check-fix.ts';
 import { capabilityRefusal, capabilityUnknownCheck, scanDeadline } from '../budget.ts';
+import { isMissingSchemaObject } from '../../../core/utils.ts';
+import { rethrowCapabilityMissing } from '../../../core/rust-engine/errors.ts';
 import { boundUnknownDetails } from '../bounded-unknown.ts';
 
 /** Oversized pages `oversized_pages` lists before it reports a floor. */
@@ -58,18 +59,8 @@ async function runContentSanity(ctx: DoctorContext): Promise<Check[]> {
     // #6526: the write gate's bytes_block (the DB config plane over file and env),
     // so a `gbrain config set content_sanity.bytes_block N` reaches this check too.
     const bytesBlock = await (await import('../../../core/import-screen.ts')).effectiveBytesBlock(engine);
-    // #1871: engine.executeRaw, not the dead-on-PGLite postgres singleton.
-    const rows = await engine.executeRaw<{ slug: string; source_id: string; bytes: number }>(
-      `SELECT p.slug, p.source_id,
-              octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) AS bytes
-       FROM pages p
-       WHERE p.deleted_at IS NULL
-         AND ${EMBED_SKIP_FILTER_FRAGMENT}
-         AND (octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, ''))) > $1
-       ORDER BY bytes DESC
-       LIMIT ${OVERSIZED_LIST_LIMIT + 1}`,
-      [bytesBlock],
-    );
+    // The engine's typed read (engine-sql/doctor-pages.ts), so a Rust brain answers it too.
+    const rows = await engine.listOversizedPages(bytesBlock);
     // #7145: a full list means more pages exceed the block; the count is then a floor.
     const capped = rows.length > OVERSIZED_LIST_LIMIT;
     // Pages an older gbrain stored chunkless for size that now fit under the block: the free backfill re-indexes them.
@@ -77,8 +68,9 @@ async function runContentSanity(ctx: DoctorContext): Promise<Check[]> {
     const backfillable = skipped.marked;
     const chunklessMarked = skipped.chunkless;
     // Decision #10: a segmented page's body columns are NULL, so both size scans above pass it by.
-    const [segmented] = await engine.executeRaw<{ n: number }>(`SELECT COUNT(*)::int AS n FROM pages p WHERE p.deleted_at IS NULL AND p.body_storage = 'segmented'`).catch(() => []);
-    const oversizedCheck = (check: Check) => checks.push(withSkippedSegmented(check, Number(segmented?.n ?? 0)));
+    // A typed count (engine-sql/doctor-tallies.ts), so a Rust brain answers it; a failure fails the check below.
+    const segmented = await engine.countLiveSegmentedPages();
+    const oversizedCheck = (check: Check) => checks.push(withSkippedSegmented(check, segmented));
     if (backfillable > 0) {
       oversizedCheck({
         name: 'oversized_pages',
@@ -121,33 +113,11 @@ async function runContentSanity(ctx: DoctorContext): Promise<Check[]> {
     const { loadOperatorLiterals } = await import('../../../core/content-sanity-literals.ts');
     const literals = loadOperatorLiterals();
     const scanLimit = fullContentAudit ? null : 1000;
-    // #1871: engine.executeRaw, not the dead-on-PGLite postgres singleton.
-    const rows = scanLimit
-      ? await engine.executeRaw(
-          `SELECT p.slug, p.source_id, p.title,
-                  LEFT(p.compiled_truth, 2048) AS body_head,
-                  LEFT(COALESCE(p.timeline, ''), 1024) AS tl_head,
-                  p.frontmatter
-             FROM pages p
-            WHERE p.deleted_at IS NULL
-            ORDER BY p.updated_at DESC
-            LIMIT $1`,
-          [scanLimit],
-        )
-      : await engine.executeRaw(
-          `SELECT p.slug, p.source_id, p.title,
-                  LEFT(p.compiled_truth, 2048) AS body_head,
-                  LEFT(COALESCE(p.timeline, ''), 1024) AS tl_head,
-                  p.frontmatter
-             FROM pages p
-            WHERE p.deleted_at IS NULL`,
-        );
+    const rows = await engine.listScraperJunkCandidates(scanLimit);
     const hits: Array<{ slug: string; matched: string[] }> = [];
-    const scanRows = rows as unknown as Array<{ slug: string; source_id: string; title: string; body_head: string; tl_head: string; frontmatter: Record<string, unknown> | null }>;
-    // Decision #10: a segmented row's body heads are NULL, so only its title was assessed (LIMIT NULL is the full audit).
-    const [segmentedRow] = await engine.executeRaw<{ n: number }>(`SELECT COUNT(*)::int AS n FROM (SELECT p.body_storage FROM pages p
-       WHERE p.deleted_at IS NULL ORDER BY p.updated_at DESC LIMIT $1) s WHERE s.body_storage = 'segmented'`, [scanLimit]).catch(() => []);
-    const segmentedScanned = Number(segmentedRow?.n ?? 0);
+    const scanRows = rows;
+    // Decision #10: a segmented row's body heads are NULL, so only its title was assessed; the scan rows say which.
+    const segmentedScanned = scanRows.filter(r => r.segmented === true).length;
     for (const r of scanRows) {
       const sanity = assessContentSanity({
         compiled_truth: r.body_head ?? '',
@@ -293,10 +263,7 @@ async function runQuarantine(ctx: DoctorContext): Promise<Check[]> {
     // engine.executeRaw (NOT db.getConnection() — that's the postgres singleton,
     // dead on the default PGLite engine). The JSONB `?` existence operator is
     // literal SQL through executeRaw on both engines.
-    const rows = await engine.executeRaw<{ n: string | number }>(
-      `SELECT COUNT(*)::int AS n FROM pages p WHERE p.deleted_at IS NULL AND p.frontmatter ? 'quarantine'`,
-    );
-    const n = Number(rows[0]?.n ?? 0);
+    const n = await engine.countMarkedPages('quarantine');
     checks.push({
       name: 'quarantined_pages',
       status: n > 0 ? 'warn' : 'ok',
@@ -305,17 +272,18 @@ async function runQuarantine(ctx: DoctorContext): Promise<Check[]> {
         : 'No quarantined pages',
     });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
+    // A Rust engine that does not serve the read reports unknown health; only a missing pages table is a clean skip;
+    // any other failure (#9924) is not a clean result.
     const refusal = capabilityRefusal(err);
-    checks.push(refusal ? capabilityUnknownCheck('quarantined_pages', refusal) : { name: 'quarantined_pages', status: 'ok', message: `Skipped (${msg})` });
+    checks.push(refusal ? capabilityUnknownCheck('quarantined_pages', refusal)
+      : isMissingSchemaObject(err, 'table', 'pages')
+        ? { name: 'quarantined_pages', status: 'ok', message: 'Skipped (pages table unavailable)' }
+        : checkError('quarantined_pages', 'count quarantined pages', err));
   }
 
   progress.heartbeat('flagged_pages');
   try {
-    const rows = await engine.executeRaw<{ n: string | number }>(
-      `SELECT COUNT(*)::int AS n FROM pages p WHERE p.deleted_at IS NULL AND p.frontmatter ? 'content_flag'`,
-    );
-    const n = Number(rows[0]?.n ?? 0);
+    const n = await engine.countMarkedPages('content_flag');
     // Flagged pages are "examine me", not "broken" — warn so they're visible
     // but the message is non-alarming.
     checks.push({
@@ -326,9 +294,11 @@ async function runQuarantine(ctx: DoctorContext): Promise<Check[]> {
         : 'No flagged pages',
     });
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
     const refusal = capabilityRefusal(err);
-    checks.push(refusal ? capabilityUnknownCheck('flagged_pages', refusal) : { name: 'flagged_pages', status: 'ok', message: `Skipped (${msg})` });
+    checks.push(refusal ? capabilityUnknownCheck('flagged_pages', refusal)
+      : isMissingSchemaObject(err, 'table', 'pages')
+        ? { name: 'flagged_pages', status: 'ok', message: 'Skipped (pages table unavailable)' }
+        : checkError('flagged_pages', 'count flagged pages', err));
   }
 
   // issue #160: extraction quarantine lane review nudge.
@@ -388,14 +358,11 @@ async function runFrontmatter(ctx: DoctorContext): Promise<Check[]> {
     const dbPageCountForSource = async (sourceId: string): Promise<number | null> => {
       if (Date.now() >= fmDeadline) return null;
       try {
-        const rows = await engine.executeRaw<{ n: string }>(
-          `SELECT COUNT(*)::text AS n FROM pages WHERE source_id = $1 AND deleted_at IS NULL`,
-          [sourceId],
-        );
-        if (rows.length === 0) return null;
-        const parsed = parseInt(rows[0].n, 10);
-        return Number.isFinite(parsed) ? parsed : null;
-      } catch {
+        // The typed count (same predicate), so a Rust brain answers it.
+        const n = await engine.countLivePagesInSource(sourceId);
+        return Number.isFinite(n) ? n : null;
+      } catch (e) {
+        rethrowCapabilityMissing(e);
         return null;
       }
     };
@@ -482,7 +449,8 @@ async function runFrontmatter(ctx: DoctorContext): Promise<Check[]> {
     // OOM, disk full, etc.). Pre-v0.38.2.0 (PR #1287) had an unreachable
     // abort-classifier branch here; removed because timer-based aborts
     // in a sync walker can't surface as a thrown error anyway.
-    checks.push(checkError('frontmatter_integrity', 'scan frontmatter', e));
+    const refusal = capabilityRefusal(e);
+    checks.push(refusal ? capabilityUnknownCheck('frontmatter_integrity', refusal) : checkError('frontmatter_integrity', 'scan frontmatter', e));
   } finally {
     fmHb();
   }

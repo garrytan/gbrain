@@ -5,8 +5,9 @@
  *
  * Served: allocateBodyOccurrenceIds, stageSegmentTexts, readSegmentTexts, stageManifestRows, readManifest, readSegmentedEmbedPage,
  * stageSegmentChunks, createSegmentedPageShell, flipBodyGeneration, sealSegmentedPage, openBodyStaging, setBodyStagingState,
- * sweepSegments, readSegmentDerivations, upsertSegmentDerivations, retireSegmentDerivations, refreshPageBody.
- * stageSegmentChunks refuses a chunk that carries a vector (vectors are not stored), as upsertChunks does.
+ * sweepSegments, readSegmentDerivations, upsertSegmentDerivations, retireSegmentDerivations, refreshPageBody, and the fact purge's
+ * lockBodyStagingState, deleteUnstagedSegmentChunks and deleteRewrittenSegmentDerivations.
+ * stageSegmentChunks keeps a text vector a chunk carries (a vector a replace reuses) and refuses an image vector.
  *
  * The flip and the staging members refuse as PGLite does: the store reports the refusal as an `invalid_state` error
  * whose message is `page_body:<json>`, and `bodyError` rebuilds the error PGLite's engine throws from that JSON.
@@ -17,13 +18,17 @@
  */
 import type { BodyFlipInput, BodyFlipResult, BodyRegion, BodyStagingInput, BodyStagingState, ManifestRow, ManifestRowInput,
   SegmentChunkInput, SegmentedEmbedPage, SegmentedEmbedRef, SegmentedPageMeta, SegmentSweepOptions, SegmentSweepResult, SegmentTextInput } from '../../page-body/types.ts';
-import type { SegmentDerivationInput, SegmentDerivationKind, SegmentDerivationRow } from '../../page-body/derivations.ts';
+import { DerivationWriteRefused, type SegmentDerivationInput, type SegmentDerivationKind, type SegmentDerivationRow } from '../../page-body/derivations.ts';
+import type { RewrittenDerivationsDelete } from '../../engine-sql/segmented-purge-writes.ts';
 import { bodyGenerationIncompleteError, bodyStagingGoneError } from '../../engine-sql/page-body.ts';
 import { opError } from '../../ops/contract.ts';
 import { readFix } from '../../ops/op-fix.ts';
 import { prepareChunks, textColumnModel } from '../chunk-input.ts';
 import { sanitizeRemoteBody } from '../../remote-body.ts';
 import { storeErrorCode } from '../store-errors.ts';
+import type { RustEngine } from '../../rust-engine.ts';
+import type { StoreBrain } from '../store.ts';
+import { overlayStoreLead, storeNormalizer, type StoreSnapshot } from '../snapshot-overlay.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
 
 const hex = (bytes: Uint8Array): string => Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString('hex');
@@ -151,14 +156,15 @@ export const readSegmentedEmbedPage: StoreMember<[ref: SegmentedEmbedRef], Segme
  * The chunks get PGLite's normalisation (`prepareChunks`: model default, empty values to null, scrubbed text) plus
  * their place in the occurrence; `chunk_index` is the store's to pick. `opts.embeddingColumn` only picks the default
  * model label (PGLite's `column.embeddingModel || ...`); it is served for the store's one vector column and refused
- * for any other (`textColumnModel`).
+ * for any other (`textColumnModel`). A chunk that carries a vector (one reused from a retired row) keeps it, with its
+ * model and recorded input; an image vector is refused.
  */
 export const stageSegmentChunks: StoreMember<[pageId: number, generation: number, chunks: readonly SegmentChunkInput[], opts?: { embeddingColumn?: unknown }], number[]> =
   async (brain, pageId, generation, chunks, opts) => {
     const { embeddingColumn } = takeOptions('stageSegmentChunks', opts, ['embeddingColumn']);
     if (chunks.length === 0) return [];
     for (const chunk of chunks) {
-      if (chunk.embedding !== undefined || chunk.embedding_image !== undefined) refuseMember('stageSegmentChunks', 'chunk vectors are not stored');
+      if (chunk.embedding_image !== undefined) refuseMember('stageSegmentChunks', 'image vectors are not stored');
     }
     const columnModel = textColumnModel('stageSegmentChunks', embeddingColumn);
     const prepared = await prepareChunks(brain, chunks.map(chunk => ({ ...chunk, chunk_index: 0 })), columnModel);
@@ -177,28 +183,38 @@ export const createSegmentedPageShell: StoreMember<[slug: string, meta: Segmente
       () => brain.createSegmentedPageShell(slug, metaInput(meta), o));
   };
 
-export const flipBodyGeneration: StoreMember<[input: BodyFlipInput], BodyFlipResult> = async (brain, input) => {
+/**
+ * A flip inside a transaction that set gbrain.materializing_revision (a re-chunk, segmented-writes.ts) sends it as
+ * `keepRevision`: the store keeps the page's revision and seal when it names the page's revision and the flip changed no
+ * tracked column, as Postgres's revision trigger does.
+ */
+export const flipBodyGeneration = async function flipBodyGeneration(this: RustEngine, brain: StoreBrain, input: BodyFlipInput): Promise<BodyFlipResult> {
   if (input.newGeneration !== input.expectedGeneration + 1) throw new TypeError('newGeneration must be expectedGeneration + 1');
-  const sent = { ...input, closeOccurrences: [...input.closeOccurrences], retireChunkOccurrences: [...input.retireChunkOccurrences], meta: metaInput(input.meta) };
+  const keepRevision = this._txScope?.settings.get('gbrain.materializing_revision') || undefined;
+  const sent = { ...input, closeOccurrences: [...input.closeOccurrences], retireChunkOccurrences: [...input.retireChunkOccurrences], meta: metaInput(input.meta),
+    ...(keepRevision ? { keepRevision } : {}) };
   return bodyCall('flipBodyGeneration', () => brain.flipBodyGeneration(sent));
 };
 
 /**
- * The store reads the page's stored timeline lead and revision (`readSegmentedSealLead`, not a member), this side
- * sanitizes the lead (`timelineLead` when given) with `sanitizeRemoteBody` as engine-sql/page-body.ts does, and the
- * store seals the page at that revision and records the text (`pages::record_search_timeline`). A page that moved in
- * between refuses `revision_conflict`; a missing page is a no-op. PGLite overlays the page's withdrawals and global
- * purges on the lead first; here that overlay is the identity, because the store keeps no withdrawal ledger or purge
- * markers (its readPageSnapshot reports no withdrawals), so the stored lead is the overlaid lead.
+ * The store reads the page's stored timeline lead, revision and identity (`readSegmentedSealLead`, not a member), this
+ * side takes `timelineLead` in its place when given, overlays it with the page's ledger rows as engine-sql/page-body.ts
+ * does (`overlayStoreLead` over the store snapshot read with `includeDeleted`: purged fence rows drop, withdrawn ones
+ * are struck), sanitizes it with `sanitizeRemoteBody`, and the store seals the page at that revision and records the
+ * text (`pages::record_search_timeline`). A page that moved in between refuses `revision_conflict`; a missing page is a
+ * no-op.
  */
 export const sealSegmentedPage: StoreMember<[pageId: number, opts?: { timelineLead?: string }], void> = async (brain, pageId, opts) => {
   const o = takeOptions('sealSegmentedPage', opts, ['timelineLead']);
-  const stored: { lead: string; revision: string } | null =
+  const stored: { lead: string; revision: string; slug: string; sourceId: string } | null =
     await storeCall({ member: 'sealSegmentedPage' }, () => brain.readSegmentedSealLead(pageId));
   if (!stored) return;
   const lead = typeof o.timelineLead === 'string' ? o.timelineLead : stored.lead;
+  const ledger: StoreSnapshot | null = await storeCall({ member: 'sealSegmentedPage', slug: stored.slug },
+    () => brain.readPageSnapshot(stored.slug, { sourceId: stored.sourceId, includeDeleted: true }));
+  const overlaid = ledger ? await overlayStoreLead(storeNormalizer(brain), lead, ledger) : lead;
   await storeCall({ member: 'sealSegmentedPage', expectedRevision: stored.revision },
-    () => brain.sealSegmentedPage(pageId, sanitizeRemoteBody(lead), stored.revision));
+    () => brain.sealSegmentedPage(pageId, sanitizeRemoteBody(overlaid), stored.revision));
 };
 
 export const openBodyStaging: StoreMember<[input: BodyStagingInput], void> = async (brain, input) => {
@@ -234,7 +250,9 @@ export const upsertSegmentDerivations: StoreMember<[rows: readonly SegmentDeriva
   if (rows.length === 0) return;
   const sent = rows.map(row => ({ ...row, segmentSha256: hex(row.segmentSha256), contextHash: hex(row.contextHash),
     output: row.output ?? null, receipt: row.receipt ?? null }));
-  await storeCall({ member: 'upsertSegmentDerivations' }, () => brain.upsertSegmentDerivations(sent));
+  // The store drops a row a recorded fact purge sweep refuses (the trigger on page_segment_derivations) and stores the others.
+  const refused = await storeCall({ member: 'upsertSegmentDerivations' }, () => brain.upsertSegmentDerivations(sent)) as number;
+  if (refused > 0) throw new DerivationWriteRefused(refused);
 };
 
 export const retireSegmentDerivations: StoreMember<[pageId: number, live: readonly number[], opts?: { kind?: SegmentDerivationKind }], number> =
@@ -242,6 +260,23 @@ export const retireSegmentDerivations: StoreMember<[pageId: number, live: readon
     const o = takeOptions('retireSegmentDerivations', opts, ['kind']);
     return storeCall({ member: 'retireSegmentDerivations' }, () => brain.retireSegmentDerivations(pageId, [...live], o));
   };
+
+/** The fact purge's flip of a create checks its staging under the row lock (engine-sql/segmented-purge-writes.ts). */
+export const lockBodyStagingState: StoreMember<[stagingId: string], string | null> = async (brain, stagingId) =>
+  storeCall({ member: 'lockBodyStagingState' }, () => brain.lockBodyStagingState(stagingId));
+
+/** The flip drops the chunk rows a dead preparation staged under its generation (engine-sql/segmented-purge-writes.ts). */
+export const deleteUnstagedSegmentChunks: StoreMember<[pageId: number, generation: number, keepChunkIndexes: readonly number[]], void> =
+  async (brain, pageId, generation, keepChunkIndexes) => {
+    await storeCall({ member: 'deleteUnstagedSegmentChunks' }, () => brain.deleteUnstagedSegmentChunks(pageId, generation, [...keepChunkIndexes]));
+  };
+
+/** The derivation rows a rewritten segment may hold (segment-derive.ts deleteRewrittenDerivations); answers how many it deleted. */
+export const deleteRewrittenSegmentDerivations: StoreMember<[spec: RewrittenDerivationsDelete], number> = async (brain, spec) =>
+  storeCall({ member: 'deleteRewrittenSegmentDerivations' }, () => brain.deleteRewrittenSegmentDerivations({
+    pageId: spec.pageId, touchedOccurrenceIds: [...spec.touchedOccurrenceIds], linkReachOccurrenceIds: [...spec.linkReachOccurrenceIds],
+    pipelines: [...spec.pipelines], liveOccurrenceIds: [...spec.liveOccurrenceIds],
+  }));
 
 export const refreshPageBody: StoreMember<[slug: string, sourceId: string, compiledTruth: string, timeline: string, contentHash: string], void> =
   async (brain, slug, sourceId, compiledTruth, timeline, contentHash) => {

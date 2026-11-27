@@ -23,8 +23,7 @@ export function parseQualifiedSkillId(value: string): SharedSkillKey {
   } catch { throw opError('invalid_params', 'Invalid qualified skill key.', QUALIFIED_ID_HINT, { fix: catalogFix() }); }
 }
 async function identity(ctx: OperationContext) {
-  const [row] = await ctx.engine.executeRaw<{ brain_id: string; token_secret: string; serving_epoch: string }>(
-    'SELECT b.brain_id,s.token_secret,s.serving_epoch FROM persistence_brain b CROSS JOIN shared_skill_state s WHERE b.singleton=1 AND s.singleton=1');
+  const row = await ctx.engine.readSharedSkillCatalogIdentity();
   if (!row) throw new OperationError('catalog_unavailable', 'Shared skill storage is not initialized.', 'Apply host migrations before retrying.');
   return row;
 }
@@ -51,15 +50,9 @@ function decodeCursor(secret: string, value: string): { auth: string; view: stri
 async function readSnapshot(ctx: OperationContext, selector: SharedSkillSelector = {}) {
   const ids = sourceScopeOpts(ctx);
   const sourceIds = ids.sourceIds ?? (ids.sourceId ? [ids.sourceId] : null);
-  const rows = await ctx.engine.executeRaw<Omit<StoredSkillRevision, 'files'> & { current_policy: SharedSkillPolicy | null; current_epoch: string | null }>(`SELECT h.*,p.policy AS current_policy,p.epoch AS current_epoch FROM shared_skill_heads h
-    JOIN sources s ON s.id=h.source_id AND s.incarnation=h.source_incarnation
-    LEFT JOIN shared_skill_policies p ON p.source_id=h.source_id AND p.source_incarnation=h.source_incarnation
-    WHERE NOT h.deleted AND NOT s.archived AND ($1::text[] IS NULL OR h.source_id=ANY($1::text[]))
-    AND ($3::text IS NULL OR h.source_id=$3) AND ($4::text IS NULL OR h.source_incarnation::text=$4)
-    AND ($5::text IS NULL OR h.pack_id=$5) AND ($6::text IS NULL OR h.name=$6)
-    AND ($7::boolean=false OR COALESCE((h.metadata->>'private')::boolean,false)=false)
-    ORDER BY h.source_id COLLATE "C",h.source_incarnation,h.pack_id COLLATE "C",h.name COLLATE "C" LIMIT $2`,
-  [sourceIds, SHARED_SKILL_LIMITS.catalogSkills + 1, selector.source_id ?? null, selector.source_incarnation ?? null, selector.pack_id ?? null, selector.name ?? null, ctx.remote !== false]);
+  const rows = await ctx.engine.listSharedSkillCatalogHeads({ sourceIds, limit: SHARED_SKILL_LIMITS.catalogSkills + 1, sourceId: selector.source_id ?? null,
+    sourceIncarnation: selector.source_incarnation ?? null, packId: selector.pack_id ?? null, name: selector.name ?? null, hidePrivate: ctx.remote !== false }) as unknown as
+    Array<Omit<StoredSkillRevision, 'files'> & { current_policy: SharedSkillPolicy | null; current_epoch: string | null }>;
   if (rows.length > SHARED_SKILL_LIMITS.catalogSkills) {
     throw opError('catalog_unavailable', 'The authorized catalog exceeds its bounded snapshot limit.',
       `More than ${SHARED_SKILL_LIMITS.catalogSkills} skills match; narrow the request to one source with source_id (and pack_id or name where known).`);
@@ -157,9 +150,8 @@ async function detail(active: OperationContext, params: SharedSkillSelector) {
     throw opError('invalid_params', 'Invalid skill revision.', 'Pass revision as the UUID list_skills or get_skill returned, or omit it for the current head.',
       { fix: skillHeadFix(selected.source_id, selected.pack_id, selected.name) });
   }
-  const [row] = await active.engine.executeRaw<StoredSkillRevision>(`SELECT * FROM shared_skill_revisions
-    WHERE source_id=$1 AND source_incarnation=$2::uuid AND pack_id=$3 AND name=$4 AND revision=$5::uuid AND NOT deleted`,
-  [selected.source_id, selected.source_incarnation, selected.pack_id, selected.name, revision]);
+  const row = await active.engine.readSharedSkillRevision({ sourceId: selected.source_id, incarnation: selected.source_incarnation,
+    packId: selected.pack_id, name: selected.name, revision });
   if (!row || active.remote !== false && row.metadata.private) {
     throw opError('revision_unavailable', 'The exact authorized revision is unavailable.',
       `That revision of ${selected.pack_id}/${selected.name} was deleted, pruned or is private. Read the current head instead (omit revision).`,

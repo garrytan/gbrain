@@ -94,30 +94,22 @@ export async function readGitPendingEvidence(root: string, synced: string): Prom
   return { head: checkout.head, behind: true, departedAt: null, reason };
 }
 
-interface DueRow { source_id: string; first_due_at: unknown; observed_head: string | null }
 export interface PersistedDue { firstDueAt: number | null; observedHead: string | null }
 
 /** The notifier's persisted first_due_at per source (state not idle, or a due freshness marker), current incarnation only. */
-export async function readFirstDue(engine: Pick<BrainEngine, 'executeRaw'>, sourceIds: string[]): Promise<Map<string, PersistedDue>> {
+export async function readFirstDue(engine: Pick<BrainEngine, 'readFirstDue'>, sourceIds: string[]): Promise<Map<string, PersistedDue>> {
   const out = new Map<string, PersistedDue>();
   if (!sourceIds.length) return out;
-  let rows: DueRow[];
+  let rows: Awaited<ReturnType<BrainEngine['readFirstDue']>>;
   try {
-    rows = await engine.executeRaw<DueRow>(
-      `SELECT s.id AS source_id, n.observed_head,
-              LEAST(CASE WHEN n.state <> 'idle' THEN n.first_due_at END,
-                    (SELECT min(m.first_due_at) FROM sync_wanted_markers m WHERE m.source_id = s.id AND m.intent = 'freshness'
-                       AND m.source_incarnation IS NOT DISTINCT FROM s.incarnation::text
-                       AND (m.wanted_head IS NULL OR m.wanted_head IS DISTINCT FROM s.last_commit))) AS first_due_at
-         FROM sources s LEFT JOIN sync_notifier_sources n ON n.source_id = s.id AND n.source_incarnation IS NOT DISTINCT FROM s.incarnation::text
-        WHERE s.id = ANY($1::text[])`, [sourceIds]);
+    rows = await engine.readFirstDue(sourceIds);
   } catch (error) {
     if (missingTable(error)) return out;
     throw error;
   }
   for (const row of rows) {
-    const raw = row.first_due_at;
-    const at = raw === null || raw === undefined ? NaN : (raw instanceof Date ? raw : new Date(String(raw))).getTime();
+    const due = row.first_due_at;
+    const at = due === null || due === undefined ? NaN : Date.parse(due instanceof Date ? due.toISOString() : String(due));
     out.set(row.source_id, { firstDueAt: Number.isFinite(at) ? at : null, observedHead: row.observed_head });
   }
   return out;
@@ -128,7 +120,7 @@ export async function readFirstDue(engine: Pick<BrainEngine, 'executeRaw'>, sour
  * source costs one `rev-parse HEAD`, a file read of its reflog and, only when no reflog entry reaches
  * `last_commit`, one `merge-base --is-ancestor`.
  */
-export async function readPendingCommits(engine: Pick<BrainEngine, 'executeRaw'>, sources: PendingSource[], opts: { git: boolean; nowMs?: number }): Promise<PendingCommit[]> {
+export async function readPendingCommits(engine: Pick<BrainEngine, 'readFirstDue'>, sources: PendingSource[], opts: { git: boolean; nowMs?: number }): Promise<PendingCommit[]> {
   const nowMs = opts.nowMs ?? Date.now();
   const due = await readFirstDue(engine, sources.map(s => s.id));
   const iso = (ms: number) => new Date(ms).toISOString();
@@ -170,16 +162,9 @@ export async function readEmbedBacklog(engine: BrainEngine, sourceIds: string[],
     for (const id of sourceIds) out.set(id, { source_id: id, state: 'disabled', pending_chunks: 0, oldest_pending_since: null, age_seconds: null });
     return out;
   }
-  const { quoteIdentifier, resolveActiveEmbeddingColumnFromEngine } = await import('./search/embedding-column.ts');
-  const { chunkGenerationFilter } = await import('./search/safe-chunks.ts');
-  const column = quoteIdentifier((await resolveActiveEmbeddingColumnFromEngine(engine, { fallbackToLegacy: true })).name);
-  const rows = await engine.executeRaw<{ source_id: string; pending: unknown; unaged: unknown; oldest: unknown }>(
-    `SELECT p.source_id, count(*)::int AS pending, count(*) FILTER (WHERE cc.embedding_pending_since IS NULL)::int AS unaged,
-            min(cc.embedding_pending_since) AS oldest
-       FROM content_chunks cc JOIN pages p ON p.id = cc.page_id
-      WHERE cc.${column} IS NULL AND p.deleted_at IS NULL AND p.source_id = ANY($1::text[]) AND ${chunkGenerationFilter('p', 'cc')}
-        AND NOT jsonb_exists(COALESCE(p.frontmatter, '{}'::jsonb), 'embed_skip')
-      GROUP BY p.source_id`, [sourceIds]);
+  const { resolveActiveEmbeddingColumnFromEngine } = await import('./search/embedding-column.ts');
+  const column = (await resolveActiveEmbeddingColumnFromEngine(engine, { fallbackToLegacy: true })).name;
+  const rows = await engine.readEmbedBacklogRows(column, sourceIds);
   const byId = new Map(rows.map(row => [row.source_id, row]));
   for (const id of sourceIds) {
     const row = byId.get(id);
@@ -199,17 +184,10 @@ export interface RosterSource extends PendingSource { managed: boolean }
  * Every source whose commits sync: managed sources (bound worktree; the root is this host's binding, else the source
  * path) and classic sources with a local path, not archived and not sync-disabled. `sourceIds` confines it in SQL.
  */
-export async function loadPendingRoster(engine: Pick<BrainEngine, 'executeRaw'>, sourceIds?: string[]): Promise<RosterSource[]> {
+export async function loadPendingRoster(engine: Pick<BrainEngine, 'executeRaw' | 'listPendingRoster'>, sourceIds?: string[]): Promise<RosterSource[]> {
   const { existingHostIdFor } = await import('./persistence/identity.ts');
   const { isSyncDisabledConfig } = await import('./sync-policy.ts');
-  const rows = await engine.executeRaw<{ id: string; last_commit: string | null; root: string | null; managed: unknown; config: unknown }>(
-    `SELECT s.id, s.last_commit, s.config, (b.source_id IS NOT NULL) AS managed, COALESCE(h.local_path, s.local_path) AS root
-       FROM sources s
-       LEFT JOIN persistence_source_bindings b ON b.source_id = s.id AND b.source_incarnation = s.incarnation
-       LEFT JOIN persistence_host_bindings h ON h.worktree_id = b.worktree_id AND h.host_id::text = $2
-      WHERE s.archived IS NOT TRUE AND (b.source_id IS NOT NULL OR s.local_path IS NOT NULL)
-        AND ($1::text[] IS NULL OR s.id = ANY($1::text[]))
-      ORDER BY s.id`, [sourceIds ?? null, existingHostIdFor(engine)]);
+  const rows = await engine.listPendingRoster(sourceIds ?? null, existingHostIdFor(engine));
   return rows.filter(row => !isSyncDisabledConfig(row.config))
     .map(row => ({ id: row.id, last_commit: row.last_commit, root: row.root, managed: row.managed === true || row.managed === 't' }));
 }

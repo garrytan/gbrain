@@ -518,11 +518,12 @@ export interface AIGatewayConfig {
   reranker_model?: string;
   /**
    * Optional chat fallback chain ("provider:modelId" entries), walked by
-   * `chatWithFallback()` (chat-fallback.ts) when a chat call fails or refuses.
+   * `chatWithFallback()` (chat-fallback.ts) when a chat call fails (or refuses,
+   * with `chat_fallback_on_refusal: true`).
    * Judge, critic and eval call sites opt out with `allowFallback: false`.
    */
   chat_fallback_chain?: string[];
-  /** `false` keeps outage fallback but never sends a refused request to the next chain entry. Default true. */
+  /** `true` also sends a refused request to the next chain entry; otherwise only errors fall back. Default false. */
   chat_fallback_on_refusal?: boolean;
   /** Optional per-provider base URL override (openai-compatible variants). */
   base_urls?: Record<string, string>;

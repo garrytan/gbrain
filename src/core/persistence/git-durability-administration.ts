@@ -35,6 +35,7 @@ import { refusalEnvelope, retryParkedEffects } from './effect-retry.ts';
 import { GIT_PUSH_CODES } from './git-push-holds.ts';
 import { patchManagedDurabilityBlock } from '../brain-repo-durability.ts';
 import { findResolverFile } from '../resolver-filenames.ts';
+import { requireRawSql, servesRawSql } from '../rust-engine/errors.ts';
 
 export const GIT_DURABILITY_PARAMS = ['source_id', 'enable', 'disable', 'pat_file', 'dry_run', 'admin_intent', 'expected_state'] as const;
 
@@ -111,9 +112,10 @@ export type PushProbe = { ok: true; skipped?: 'no_tracking_remote'; remote_moved
  * the push connection, and the Git effect publishes that case itself (it merges the remote commits in memory and pushes,
  * #7010, `pushGitRoot`), so the probe passes it with `remote_moved`. Auth, protected-branch and unreachable refusals still fail.
  */
-export async function probeDurabilityPush(root: string, checkout: { remote: string | null; merge: string | null }, redact: (s: string) => string): Promise<PushProbe> {
+export async function probeDurabilityPush(root: string, checkout: { remote: string | null; merge: string | null }, redact: (s: string) => string,
+  opts: { noHooks?: boolean } = {}): Promise<PushProbe> {
   if (!checkout.remote || !checkout.merge) return { ok: true, skipped: 'no_tracking_remote' };
-  const push = await git(root, ['push', ...GIT_SSRF_SUBCOMMAND_FLAGS, '--dry-run', '--', checkout.remote, `HEAD:${checkout.merge}`], true);
+  const push = await git(root, [...(opts.noHooks ? ['-c', 'core.hooksPath=/dev/null'] : []), 'push', ...GIT_SSRF_SUBCOMMAND_FLAGS, '--dry-run', '--', checkout.remote, `HEAD:${checkout.merge}`], true);
   if (push.code === 0) return { ok: true };
   const detail = redact(`${push.stderr}\n${push.stdout}`).replace(/\s+/g, ' ').trim().slice(0, 200);
   if (NON_FAST_FORWARD.test(push.stderr)) return { ok: true, remote_moved: true,
@@ -224,10 +226,10 @@ function hiddenTargetRefusal(row: { request_id: string; slug: string }): Omit<Pa
  */
 export async function retryParkedPushes(engine: BrainEngine, worktreeId: string, dryRun: boolean, codes: readonly string[] = GIT_PUSH_CODES): Promise<ParkedPushRetry> {
   const rows = await engine.executeRaw<{ source_id: string; id: string; request_id: string; slug: string }>(`
-    SELECT DISTINCT e.source_id,r.id::text AS id,r.request_id::text AS request_id,r.slug FROM persistence_effects e
+    SELECT * FROM (SELECT DISTINCT e.source_id,r.id::text AS id,r.request_id::text AS request_id,r.slug FROM persistence_effects e
       JOIN persistence_requests r ON r.id=e.request_id
-     WHERE e.worktree_id=$1::uuid AND e.kind='git' AND e.state='failed' AND e.recovery IS NULL AND NOT (e.data ? 'settled') AND (${HELD_ON_CODES})
-     ORDER BY e.source_id,request_id,id`, [worktreeId, [...codes]]);
+     WHERE e.worktree_id=$1::uuid AND e.kind='git' AND e.state='failed' AND e.recovery IS NULL AND NOT (e.data ? 'settled') AND (${HELD_ON_CODES})) d
+     ORDER BY source_id COLLATE "C",request_id COLLATE "C",id COLLATE "C"`, [worktreeId, [...codes]]);
   let queued = 0, unchanged = 0;
   const refused: ParkedPushRefusal[] = [];
   for (const row of rows) {
@@ -309,6 +311,9 @@ export async function runGitDurabilityAdministration(engine: BrainEngine, params
     report.tracking_remote = checkout.remote;
   }
   if (token && checkout) {
+    // The parked-push retry below reads raw SQL. On an engine without it (the Rust engine) refuse before the credential
+    // store and the repo's git config change, so the refusal's "nothing ran" holds.
+    requireRawSql(engine, 'writer git-durability --pat-file (its parked-push retry)');
     report.credential = await wireDurabilityCredential(root, checkout.remote, token, input.dryRun);
     // Only after the credential write succeeded: one more attempt per parked push of this worktree.
     const parked = await retryParkedPushes(engine, binding.worktree_id, input.dryRun);
@@ -349,10 +354,10 @@ export async function runGitDurabilityAdministration(engine: BrainEngine, params
         verify: { argv: ['gbrain', 'sources', 'writer', 'status', input.sourceId, '--json'] } } };
   }
   const queued = await engine.transaction(async tx => {
-    await tx.executeRaw("SELECT set_config('lock_timeout','2000ms',true),set_config('synchronous_commit','on',true)");
+    const store = await tx.gitDurabilityStore();
+    await store.bound();
     await assertWriterAdminState(tx, expectedState);
-    const [updated] = await tx.executeRaw<{ git_durability: GitDurabilitySetting }>(`UPDATE persistence_host_bindings SET git_durability=$3
-      WHERE worktree_id=$1::uuid AND host_id=$2::uuid RETURNING git_durability`, [binding.worktree_id, binding.owner_host_id, target]);
+    const updated = await store.setHostBindingDurability(binding.worktree_id, binding.owner_host_id!, target);
     if (!updated) throw opError('source_changed', 'The host binding disappeared while the setting was being recorded.',
       `Source ${input.sourceId}'s host binding was removed by another topology change, so nothing was recorded. Inspect writer status before trying again.`, { fix: statusFix(input.sourceId) });
     return target === 'enabled' ? await requeueGitDurabilityCatchUp(tx, binding, plan.map(effect => effect.id)) : [];

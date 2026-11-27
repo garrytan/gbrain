@@ -11,6 +11,7 @@ import type { BrainEngine } from '../../engine.ts';
 import type { MinionJobContext } from '../types.ts';
 import type { SyncOpts, SyncResult } from '../../../commands/sync.ts';
 import { reportJobProgress } from './job-progress.ts';
+import { nullUnlessCapabilityRefusal } from '../../engine-capability-refusal.ts';
 
 /** The smallest worker lease the wall-clock sweep can use for a row without `lock_duration_ms` (the worker default). */
 const WORKER_LOCK_DEFAULT_MS = 30_000;
@@ -27,6 +28,21 @@ const CONTINUATION_PRIORITY = 5;
 
 interface JobRow { started_ms: number | null; wall_ms: number | null; timeout_ms: number | null; queue: string | null; priority: number | null }
 
+const num = (value: unknown): number | null => (value === null || value === undefined || !Number.isFinite(Number(value)) ? null : Number(value));
+
+/**
+ * The drain's view of one `minion_jobs` row (BrainEngine.getJob): its start in epoch milliseconds and the wall-clock
+ * budget the queue's sweep gives it (`WALL_CLOCK_THRESHOLD_MS_SQL`: twice `timeout_ms`, else twice the lease times
+ * `max_stalled`, at least once), with its queue, priority and timeout.
+ */
+export function jobDrainRow(job: Record<string, unknown>): JobRow {
+  const started = job.started_at === null || job.started_at === undefined ? null : new Date(job.started_at as string | Date).getTime();
+  const timeout = num(job.timeout_ms);
+  const wall = timeout !== null ? timeout * 2 : (num(job.lock_duration_ms) ?? WORKER_LOCK_DEFAULT_MS) * 2 * Math.max(num(job.max_stalled) ?? 1, 1);
+  return { started_ms: started !== null && Number.isFinite(started) ? started : null, wall_ms: wall, timeout_ms: timeout,
+    queue: typeof job.queue === 'string' ? job.queue : null, priority: num(job.priority) };
+}
+
 export interface JobDrainPlan {
   opts: Pick<SyncOpts, 'drain' | 'deadlineAtMs' | 'lanes' | 'noBulk'>;
   row: JobRow | null;
@@ -39,11 +55,9 @@ export async function planJobDrain(engine: BrainEngine, job: MinionJobContext, n
   const params = trusted ? job.data : {};
   const configured = await engine.getConfig('sync.job_drain').catch(() => null);
   if (params.drain === false || configured === 'false') return { opts: {}, row: null, trusted };
-  const { WALL_CLOCK_THRESHOLD_MS_SQL } = await import('../handler-timeouts.ts');
-  const [row] = await engine.executeRaw<JobRow>(
-    `SELECT (EXTRACT(EPOCH FROM started_at) * 1000)::float8 AS started_ms, (${WALL_CLOCK_THRESHOLD_MS_SQL})::float8 AS wall_ms,
-            timeout_ms, queue, priority
-       FROM minion_jobs WHERE id = $2`, [WORKER_LOCK_DEFAULT_MS, job.id]).catch(() => []);
+  // A vanished row drains on the unknown budget; an engine that refuses the read says so instead of draining blind.
+  const found = await engine.getJob(job.id).catch(nullUnlessCapabilityRefusal);
+  const row = found ? jobDrainRow(found) : undefined;
   const started = row?.started_ms ?? now;
   const hard = job.deadlineAtMs ?? (row?.started_ms != null && row.wall_ms != null ? row.started_ms + row.wall_ms : now + UNKNOWN_BUDGET_MS);
   const at = Math.min(hard, started + JOB_DRAIN_MAX_MS);

@@ -1,3 +1,4 @@
+import { normalizeSlug } from '../utils.ts';
 import { submitPageMutation } from '../persistence/page-mutations.ts';
 import { MERGE_PRECONDITION_PARAMS, WRITE_REQUEST_PARAM } from '../persistence/params.ts';
 /**
@@ -67,7 +68,7 @@ const add_timeline_entry: Operation = {
     if (ctx.dryRun) return { dry_run: true, action: 'add_timeline_entry', slug: p.slug };
     assertTimelineDate(ctx, p.date);
     // #8377: an entry an agent copied out of a quoted read (get_timeline, chronicle) is stored without the fence, so its replay key matches; #8384: its source too.
-    const unquote = (v: unknown) => typeof v === 'string' && ctx.remote !== false ? unquoteTranscriptText(v, String(p.slug).toLowerCase()) : v;
+    const unquote = (v: unknown) => typeof v === 'string' && ctx.remote !== false ? unquoteTranscriptText(v, normalizeSlug(String(p.slug))) : v;
     return submitPageMutation(ctx, { operation: 'add_timeline_entry', params: { ...p, summary: unquote(p.summary), ...(p.detail !== undefined ? { detail: unquote(p.detail) } : {}), ...(p.source !== undefined ? { source: unquote(p.source) } : {}) } });
   },
   cliHints: { name: 'timeline-add', positional: ['slug', 'date', 'summary'] },
@@ -91,6 +92,18 @@ const get_timeline: Operation = {
     source_ids: SOURCE_IDS_PARAM,
   },
   handler: async (ctx, p) => {
+    // #9920: a malformed window date or limit is the caller's input, never a database internal_error.
+    for (const field of ['after', 'before', 'since', 'until'] as const) {
+      const value = p[field];
+      if (typeof value !== 'string' || value === '') continue;
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(value) || Number.isNaN(Date.parse(value)) || new Date(value).toISOString().slice(0, 10) !== value) {
+        throw opError('invalid_params', `get_timeline: ${field} "${value}" is not a YYYY-MM-DD calendar date.`,
+          `Pass ${opTransport(ctx) === 'cli' ? `--${field}` : `\`${field}\``} as a date such as 2026-04-03.`);
+      }
+    }
+    if (typeof p.limit === 'number' && (!Number.isInteger(p.limit) || p.limit < 0)) {
+      throw opError('invalid_params', `get_timeline: limit ${p.limit} is not a positive whole number.`, 'Pass limit as a whole number of 1 or more, or omit it for the default of 100.');
+    }
     // #2200: route through sourceScopeOpts so a federated grant reaches the
     // engine via TimelineOpts.sourceIds; scalar/unset unchanged.
     // GST-1158 E1: source_id / source_ids narrow inside the grant, as search does.

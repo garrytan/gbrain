@@ -12,6 +12,7 @@ import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, re
 import { join } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import { resolveGbrainHome } from '../gbrain-home.ts';
+import { anthropic } from '../ai/recipes/anthropic.ts';
 
 export const PRESSURE_CONFIG_KEYS = {
   enabled: 'memory.pressure.enabled',
@@ -127,14 +128,33 @@ export function readTranscriptPressure(path: string): TranscriptPressure | null 
 
 /**
  * Context window for the session: explicit config wins; then a 1M marker on
- * the model id or the configured model; then an observed fill above the
- * default window (only a large window could hold it); else the default.
+ * the model id or the configured model; then, for a Claude 5-generation model
+ * (the session's own, or the configured one when the transcript names none),
+ * the window the Anthropic recipe declares (Claude Code records the bare API
+ * id, with no marker); then an observed fill above the default window (only a
+ * large window could hold it); else the default.
  */
 export function resolveContextWindow(opts: { configured: number | null; model: string | null; configuredModel?: string | null; maxSeen: number }): number {
   if (opts.configured) return opts.configured;
   const marker = /\[1m\]|-1m\b|1m-context/i;
   if ((opts.model && marker.test(opts.model)) || (opts.configuredModel && marker.test(opts.configuredModel))) return PRESSURE_LARGE_WINDOW;
+  const declared = declaredContextWindow(opts.model ?? opts.configuredModel);
+  if (declared) return declared;
   return opts.maxSeen > PRESSURE_DEFAULT_WINDOW ? PRESSURE_LARGE_WINDOW : PRESSURE_DEFAULT_WINDOW;
+}
+
+/**
+ * Claude Code runs these generations at their full window by default. The
+ * recipe also lists 4.x models at 1M, but Claude Code gave those 200k unless
+ * the session opted in with a [1m] alias, which the bare id never shows.
+ */
+const CLAUDE_CODE_FULL_WINDOW_MODEL = /^claude-[a-z]+-[5-9]/;
+
+function declaredContextWindow(model: string | null | undefined): number | undefined {
+  if (!model) return undefined;
+  const id = model.replace(/^anthropic[:/]/, '');
+  const key = anthropic.aliases?.[id] ?? id;
+  return CLAUDE_CODE_FULL_WINDOW_MODEL.test(key) ? anthropic.touchpoints.chat?.model_context_tokens?.[key] : undefined;
 }
 
 export function pressureNotice(percent: number): string {

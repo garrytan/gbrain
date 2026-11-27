@@ -269,8 +269,7 @@ export function fenceableRowCount(plan: UnfencedFactsPlan): number {
  */
 async function databaseOnlyPlacement(engine: BrainEngine, sourceId: string, slug: string):
   Promise<{ kind: 'fence'; reason: NonNullable<WriteAuthority['databaseOnlyReason']> } | { kind: 'refused' } | { kind: 'missing' }> {
-  const [page] = await engine.executeRaw<{ source_path: string | null; source_uri: string | null }>(
-    'SELECT source_path, source_uri FROM pages WHERE source_id=$1 AND slug=$2 AND deleted_at IS NULL', [sourceId, slug]);
+  const page = await engine.readPageFileOrigin(sourceId, slug);
   if (!page || page.source_path?.trim() || page.source_uri?.trim()) return { kind: 'missing' };
   const row = await engine.readSourceRow(sourceId);
   const source = row ? { local_path: row.local_path, kind: sourceConfigText(row.config, 'kind') } : undefined;
@@ -299,21 +298,30 @@ export async function planUnfencedFacts(engine: BrainEngine, opts: { sourceId?: 
   const mirrors = new Set(managed ? [] : sources.filter(s => parseSourceConfig(s.config).mirror_read_only === true).map(s => s.id));
   const localPathById = new Map(sources.map(s => [s.id, s.local_path] as const));
   const archived = new Set(sources.filter(s => s.archived).map(s => s.id));
-  const rows = await engine.listUnfencedFactRows({ sourceId: opts.sourceId });
   const outcome: UnfencedFactsOutcome = {
-    scanned: rows.length, fenced: 0, skipped_no_entity: 0, skipped_no_local_path: 0, skipped_no_page: 0,
+    scanned: 0, fenced: 0, skipped_no_entity: 0, skipped_no_local_path: 0, skipped_no_page: 0,
     skipped_archived: 0, skipped_url_clone: 0, skipped_mirror_read_only: 0, pages_touched: 0, failed_pages: [], write_errors: 0, fenced_slugs: [], missing_files: [], unbound_refused: [], unadoptable_rows: [],
   };
-  const groups = new Map<string, UnfencedFactRow[]>();
-  for (const row of rows) {
-    if (row.entity_slug === null) { outcome.skipped_no_entity += 1; continue; }
+  // #10005: every serve's maintenance sweep runs this, so the rows that can never be fenced here (no entity, no live
+  // page, a skipped source) are counted on the server and only the fenceable ones are transferred.
+  const counts = await engine.countUnfencedFactGroups({ sourceId: opts.sourceId });
+  const fenceableSources = new Set<string>();
+  for (const count of counts) {
+    const n = Number(count.n);
+    outcome.scanned += n;
+    if (!count.has_entity) { outcome.skipped_no_entity += n; continue; }
     // A managed brain publishes through the source's maintenance authority,
     // which an archived source does not grant; it never blocks the others.
-    if (managed && archived.has(row.source_id)) { outcome.skipped_archived += 1; continue; }
-    if (mirrors.has(row.source_id)) { outcome.skipped_mirror_read_only += 1; continue; }
-    if (urlClones.has(row.source_id)) { outcome.skipped_url_clone += 1; continue; }
-    if (!localPathById.get(row.source_id) && !managed) { outcome.skipped_no_local_path += 1; continue; }
-    if (!row.page_exists) { outcome.skipped_no_page += 1; continue; }
+    if (managed && archived.has(count.source_id)) { outcome.skipped_archived += n; continue; }
+    if (mirrors.has(count.source_id)) { outcome.skipped_mirror_read_only += n; continue; }
+    if (urlClones.has(count.source_id)) { outcome.skipped_url_clone += n; continue; }
+    if (!localPathById.get(count.source_id) && !managed) { outcome.skipped_no_local_path += n; continue; }
+    if (!count.page_exists) { outcome.skipped_no_page += n; continue; }
+    fenceableSources.add(count.source_id);
+  }
+  const rows = fenceableSources.size === 0 ? [] : await engine.listUnfencedFactRows({ sourceId: opts.sourceId, fenceableSourceIds: [...fenceableSources] });
+  const groups = new Map<string, UnfencedFactRow[]>();
+  for (const row of rows) {
     const key = `${row.source_id}\0${row.entity_slug}`;
     groups.set(key, [...groups.get(key) ?? [], row]);
   }
@@ -389,11 +397,7 @@ export async function planFence(engine: BrainEngine, sourceId: string, entitySlu
   body = (await withHeldFactsFence(engine, sourceId, entitySlug, { compiled_truth: body })).compiled_truth;
   const existingFence = parseFactsFenceFor(body, { slug: entitySlug });
   if (existingFence.warnings.length > 0) return { warnings: existingFence.warnings };
-  const occupiedRows = await engine.executeRaw<{ row_num: number; fact: string; source: string | null }>(
-    `SELECT row_num, fact, source FROM facts
-      WHERE source_id = $1 AND source_markdown_slug = $2 AND row_num IS NOT NULL`,
-    [sourceId, entitySlug],
-  );
+  const occupiedRows = await engine.listFenceRowClaims(sourceId, entitySlug);
   const occupied = new Map(occupiedRows.map(row => [Number(row.row_num), row]));
   let nextRowNum = Math.max(0, ...occupied.keys(), ...existingFence.facts.map(f => f.rowNum)) + 1;
   const claimed = new Set<number>();
@@ -675,11 +679,7 @@ async function fenceFilePage(engine: BrainEngine, sourceId: string, entitySlug: 
       // vectors and provenance (the reconcile would retire a row whose text
       // differs from its fence row).
       for (const a of fence.assignments) {
-        await tx.executeRaw(
-          `UPDATE facts SET row_num = $1, source_markdown_slug = $2, fact = $5
-            WHERE id = $3 AND source_id = $4 AND row_num IS NULL`,
-          [a.row_num, entitySlug, a.id, sourceId, a.fact],
-        );
+        await tx.adoptFactIntoFence(sourceId, a.id, a.row_num, entitySlug, a.fact);
       }
       assertSourceFilesystemActive();
       if (readFileSync(filePath, 'utf-8') !== bytes) throw new FileChangedDuringFence();

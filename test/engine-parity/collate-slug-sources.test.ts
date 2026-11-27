@@ -16,7 +16,8 @@
  *    same in every locale, and CI's Postgres runs in C.UTF-8. Every case here uses ids that differ by byte and by
  *    en_US; run it against an en_US Postgres to see it fail.
  *  - Seam: the CLI cases stub process.exit and capture console.error; the link-hint case captures the logger. Source
- *    rows come from the createSource fixture and guest-source rows from harness-only SQL.
+ *    rows come from the createSource fixture and guest-source rows from the typed upsertGuestSource, written after
+ *    the pages.
  */
 import { describe, expect, spyOn } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
@@ -27,6 +28,7 @@ import { runQuarantine } from '../../src/commands/quarantine.ts';
 import { runExtractConversationFacts } from '../../src/commands/extract-conversation-facts.ts';
 import { resolvePageRef } from '../../src/core/trust/refs.ts';
 import { promoteGuestNote } from '../../src/core/guests/promote.ts';
+import { GUEST_TRUST_CEILING } from '../../src/core/guests/sources.ts';
 import { OperationError } from '../../src/core/ops/contract.ts';
 import { probeTarget } from '../../src/core/search/explain-target.ts';
 import { resolveChainAnchors } from '../../src/core/search/relational-chain.ts';
@@ -78,7 +80,14 @@ async function cli(run: () => Promise<void>): Promise<string> {
 const named = (text: string) => MIXED_SOURCES.filter(id => text.includes(id)).sort((a, b) => text.indexOf(`${a}`) - text.indexOf(`${b}`));
 
 describe('a slug held in several sources lists those sources by byte', () => {
-  parityTest('resolvePageRef names the sources by byte, and suggests the first', { methods: ['putPage', 'executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
+  parityTest('whoCanRead lists the sources by byte', { methods: ['putPage', 'readWhoCanReadRows'] }, async (engine, backend) => {
+    await seed(engine, backend);
+    const sources = (await whoCanRead(engine, SLUG)).map(e => e.source_id);
+    expect(sources).toEqual(BYTE_SOURCES);
+    return sources;
+  });
+
+  parityTest('resolvePageRef names the sources by byte, and suggests the first', { methods: ['putPage', 'listLiveSlugSourceIds'] }, async (engine, backend) => {
     await seed(engine, backend);
     const e = await errorOf(() => resolvePageRef(engine, { kind: 'page', sourceId: null, slug: SLUG } as never)) as OperationError;
     expect(e.message).toContain(`exists in 3 sources: ${BYTE_SOURCES.join(', ')}.`);
@@ -86,28 +95,35 @@ describe('a slug held in several sources lists those sources by byte', () => {
     return { message: e.message, suggestion: e.suggestion };
   });
 
-  parityTest('quarantine clear names the sources by byte', { methods: ['putPage', 'executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
+  parityTest('quarantine clear names the sources by byte', { methods: ['putPage', 'listLiveSlugSourceIds'] }, async (engine, backend) => {
     await seed(engine, backend);
     const err = await cli(() => runQuarantine(engine, ['clear', SLUG]));
     expect(err).toContain(`exists in 3 sources: ${BYTE_SOURCES.join(', ')}.`);
     return err;
   });
 
-  parityTest('extract-conversation-facts --grammar names the sources by byte', { methods: ['putPage', 'executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
+  parityTest('extract-conversation-facts --grammar names the sources by byte', { methods: ['putPage', 'listLiveSlugSourceIds'] }, async (engine, backend) => {
     await seed(engine, backend);
     const err = await cli(() => runExtractConversationFacts(engine, ['--slug', SLUG, '--grammar', 'none', '--dry-run']));
     expect(err).toContain(`is in 3 sources (${BYTE_SOURCES.join(', ')})`);
     return named(err);
   });
 
-  parityTest('the scoped get_links miss hint names the other sources by byte', { methods: ['putPage', 'addLink', 'getLinks', 'executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
+  parityTest('promoteGuestNote names the guest sources by byte', { methods: ['putPage', 'upsertGuestSource', 'listGuestNotes'] }, async (engine, backend) => {
+    await seed(engine, backend);
+    // The pages come first: a guest source takes no write from an owner path, and the row is all the note read needs.
+    for (const id of MIXED_SOURCES) await engine.upsertGuestSource(id, [], GUEST_TRUST_CEILING);
+    const e = await errorOf(() => promoteGuestNote(ctxFor(engine), { slug: SLUG }));
+    expect(e.message).toContain(`exists in several guest sources (${BYTE_SOURCES.join(', ')})`);
+    return e.message;
+  });
+
+  parityTest('the scoped get_links miss hint names the other sources by byte', { methods: ['putPage', 'addLink', 'getLinks', 'listAllSources'] }, async (engine, backend) => {
     await seed(engine, backend);
     for (const id of MIXED_SOURCES) {
       await engine.putPage('notes/target', { type: 'note', title: 't', compiled_truth: 't', timeline: '' }, { sourceId: id });
       await engine.addLink(SLUG, 'notes/target', 'ctx', 'mentions', undefined, undefined, undefined, { fromSourceId: id, toSourceId: id });
     }
-    // The hint swallows a failed lookup, so read raw SQL once first: the Rust arm stops here on its refusal.
-    await engine.executeRaw('SELECT 1');
     const warned: string[] = [];
     const ctx = ctxFor(engine, { logger: { info() {}, warn: (m: string) => { warned.push(m); }, error() {} } as never });
     const op = operations.find(o => o.name === 'get_links')!;
@@ -117,9 +133,9 @@ describe('a slug held in several sources lists those sources by byte', () => {
     return hint;
   });
 
-  parityTest('probeTarget and resolveChainAnchors list the sources by byte', { methods: ['putPage', 'executeRaw'], requires: 'raw_sql' }, async (engine, backend) => {
+  parityTest('probeTarget and resolveChainAnchors list the sources by byte', { methods: ['putPage', 'probeTargetRows', 'resolveChainAnchorRows'] }, async (engine, backend) => {
     await seed(engine, backend);
-    const probe = (await probeTarget((sql, params) => engine.executeRaw(sql, params), SLUG, {})).map(r => r.source_id);
+    const probe = (await probeTarget(engine, SLUG, {})).map(r => r.source_id);
     const anchors = (await resolveChainAnchors(engine, SLUG, {})).map(a => a.source_id);
     expect({ probe, anchors }).toEqual({ probe: BYTE_SOURCES, anchors: BYTE_SOURCES });
     return { probe, anchors };

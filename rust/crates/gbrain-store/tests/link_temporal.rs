@@ -975,3 +975,34 @@ fn referrer_record_candidates_keep_the_newest_per_index_and_name_titles() {
         ]
     );
 }
+
+#[test]
+fn page_reference_date_is_the_effective_date_else_the_update_time_of_a_live_page() {
+    let b = Brain::new("link-temporal-reference-date");
+    b.page_with("dated", json!({}));
+    let input: PageInput = de(json!({
+        "type": "note", "title": "Dated", "compiled_truth": "dated body", "frontmatter": {},
+        "effective_date": "2026-01-02T03:04:05.123Z", "effective_date_source": "date",
+    }));
+    let options: PutPageOptions = de(json!({"sourceId": "default", "index": false}));
+    b.store.put_page("dated", &input, &options).unwrap();
+    b.page("undated");
+    b.page("gone");
+    b.store.soft_delete_page("gone", Some("default")).unwrap();
+    let read = |slug: &str| b.store.read_page_reference_date("default", slug).unwrap();
+    assert_eq!(
+        read("dated").as_deref(),
+        Some("2026-01-02T03:04:05.123000Z")
+    );
+    let undated = read("undated").unwrap();
+    assert_eq!(undated.len(), "2026-01-02T03:04:05.123000Z".len());
+    assert!(undated.ends_with('Z'));
+    assert_eq!(read("gone"), None);
+    assert_eq!(read("never"), None);
+    assert_eq!(
+        b.store
+            .read_page_reference_date("elsewhere", "dated")
+            .unwrap(),
+        None
+    );
+}

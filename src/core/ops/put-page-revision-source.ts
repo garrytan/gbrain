@@ -1,3 +1,4 @@
+import { normalizeSlug } from '../utils.ts';
 import { OperationError, type OperationContext } from './contract.ts';
 import { federatedSearchScope } from './context.ts';
 import { readFix } from './op-fix.ts';
@@ -13,12 +14,14 @@ import { isPrivatePage, resolveExcludePrivatePages } from '../search/private-vis
  */
 export async function rethrowNamingRevisionSource(ctx: OperationContext, writeSource: string, p: Record<string, unknown>, error: unknown): Promise<never> {
   if (!(error instanceof OperationError) || error.code !== 'revision_conflict' || typeof p.slug !== 'string' || typeof p.expected_revision !== 'string') throw error;
-  const slug = p.slug.toLowerCase();
+  const slug = normalizeSlug(p.slug);
   const expected = p.expected_revision.toLowerCase();
   try {
-    const candidates = await ctx.engine.executeRaw<{ source_id: string }>(
-      `SELECT p.source_id FROM pages p JOIN sources s ON s.id = p.source_id
-        WHERE p.slug = $1 AND p.source_id <> $2 AND p.deleted_at IS NULL AND s.archived IS NOT TRUE ORDER BY p.source_id COLLATE "C"`, [slug, writeSource]);
+    // The live page at this slug in every other unarchived source, in byte order of source id.
+    const others = (await ctx.engine.listAllSources()).map(s => s.id).filter(id => id !== writeSource);
+    const candidates = others.length === 0 ? [] : (await ctx.engine.readTextMentionPages(others, [slug]))
+      .map(r => ({ source_id: r.source_id }))
+      .sort((a, b) => Buffer.compare(Buffer.from(a.source_id), Buffer.from(b.source_id)));
     const excludePrivate = await resolveExcludePrivatePages(ctx.engine, ctx.remote);
     for (const { source_id: other } of candidates) {
       try { federatedSearchScope(ctx, other); } catch { continue; }

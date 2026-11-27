@@ -26,6 +26,7 @@ import { readDaemonStaleAfter } from '../core/autopilot-heartbeat.ts';
 import { detectExecutionEnvironment } from '../core/execution-env.ts';
 import { join, dirname, isAbsolute, resolve as resolvePath } from 'path';
 import { execSync } from '../core/spawn.ts';
+import { defaultRelaunchDeps, relaunchAfterSwap, type RelaunchDeps } from './autopilot/relaunch.ts';
 import type { BrainEngine } from '../core/engine.ts';
 import { loadConfig, saveConfig, gbrainPath as gbrainHomePath } from '../core/config.ts';
 import {
@@ -50,11 +51,13 @@ import {
   SWAPPED_REASON,
 } from '../core/self-upgrade.ts';
 import { prepareSwapReceipt, settleAutopilotSwap } from '../core/self-upgrade-swap.ts';
+import { installAddonWithInstalledBinary } from './rust-addon-upgrade.ts';
 import { logSelfUpgrade } from '../core/audit/self-upgrade-audit.ts';
 import { readHostBun } from '../core/bun-floor.ts';
 import { detectInstallMethod, readInstallTargetFloor } from './upgrade.ts';
 import { evaluateQuietHours } from '../core/minions/quiet-hours.ts';
 import { inspectLock } from '../core/db-lock.ts';
+import { isEngineCapabilityRefusal, rethrowCapabilityRefusal } from '../core/engine-capability-refusal.ts';
 import { relativeSourceLocalPathSkipWarning } from '../core/sources-load.ts';
 import { installRepoFallback } from './autopilot/install-repo.ts';
 // Path helpers live in a LEAF core module so other commands (gbrain migrate)
@@ -384,14 +387,12 @@ export async function computeAutopilotIdle(engine: BrainEngine, engineType: stri
     const cycle = await inspectLock(engine, 'gbrain-cycle');
     if (cycle) return false; // a cycle (sync/extract/embed/...) is running
     if (engineType === 'postgres') {
-      const rows = await (engine as any).executeRaw?.(
-        `SELECT count(*)::int AS n FROM minion_jobs WHERE status IN ('active','waiting')`,
-      );
-      const busy = Number((rows as Array<{ n: number }>)?.[0]?.n ?? 0);
-      return busy === 0;
+      const counts = await engine.countJobsByStatus({ statuses: ['active', 'waiting'] });
+      return counts.reduce((total, row) => total + Number(row.count), 0) === 0;
     }
     return true; // pglite: no separate worker queue; cycle-lock-free is the signal
-  } catch {
+  } catch (e) {
+    rethrowCapabilityRefusal(e); // an engine that cannot say what is running is not "not idle", it refuses
     return false;
   }
 }
@@ -438,6 +439,7 @@ export async function attemptAutopilotSelfUpgrade(
   engineType: string,
   lockPath: string,
   mayContinue: () => boolean = () => true,
+  relaunchDeps: RelaunchDeps = defaultRelaunchDeps(resolveGbrainCliPath),
 ): Promise<void> {
   try {
     const cfg = loadConfig();
@@ -516,10 +518,18 @@ export async function attemptAutopilotSelfUpgrade(
     }
     const swap = settleAutopilotSwap(VERSION, latestVersion, swapError, receiptPath);
     if (!swap.relaunch) return;
+    installAddonWithInstalledBinary({ ...process.env, GBRAIN_SKIP_STARTUP_HOOKS: '1' }); // relaunch runs no post-upgrade; outside the swap's deadline
 
     if (!mayContinue()) return;
     // Swap done + smoke-verified by `upgrade --swap-only`. Exit cleanly so the
-    // supervisor relaunches the NEW binary, which reconciles the breadcrumb.
+    // supervisor (or the relauncher, #8840) starts the NEW binary, which reconciles the breadcrumb.
+    const relaunch = await relaunchAfterSwap(relaunchDeps);
+    if (relaunch.by === 'stay') {
+      const held = loadConfig();
+      if (held) { held.self_upgrade = { ...(held.self_upgrade ?? {}), last_check_ts: Date.now() }; saveConfig(held); }
+      console.error(`[autopilot] self-upgrade swapped to ${swap.installed}, but nothing would start this daemon again (${relaunch.reason}), so it keeps running v${VERSION}; restart it to load the new build.`);
+      return;
+    }
     logSelfUpgrade({
       channel: 'autopilot',
       action: 'apply',
@@ -528,15 +538,18 @@ export async function attemptAutopilotSelfUpgrade(
       outcome: 'applied',
       reason: SWAPPED_REASON,
     });
-    console.log('[autopilot] self-upgrade swapped; exiting for relaunch.');
+    console.log(relaunch.by === 'self'
+      ? `[autopilot] self-upgrade swapped; no supervisor relaunches this daemon, so it starts itself again once it exits: ${relaunch.argv!.join(' ')}`
+      : '[autopilot] self-upgrade swapped; exiting for relaunch.');
     try {
       unlinkSync(lockPath);
     } catch {
       /* already gone */
     }
     process.exit(0);
-  } catch {
-    /* the self-upgrade channel must never break the tick */
+  } catch (e) {
+    // The channel must never break the tick, but a brain whose engine cannot say whether it is idle is not "nothing to upgrade".
+    if (isEngineCapabilityRefusal(e)) console.error(`[autopilot] self-upgrade skipped this tick: ${(e as Error).message}`);
   }
 }
 

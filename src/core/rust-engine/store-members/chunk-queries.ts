@@ -4,8 +4,9 @@
  * (countChunklessPagesWithContent, listChunklessPagesWithContent), the import's deleteChunksExcept, and the chunk reads
  * and deletes of src/core/engine-sql/chunk-reads.ts (findCodeDefinitions, listSymbolTypesForName, findCodeRefChunks,
  * countOversizedEmbedSkips, countOrphanChunks, countCodeChunkPages, codeChunksExist, hasUnsealedPages, currentCodeChunksExist,
- * listQualifiedSymbolNames, listWithdrawalChunks, deleteChunksForPages, listContextualModeCandidates,
- * resolveFrozenHits).
+ * listQualifiedSymbolNames, listSymbolLanguages, listSupportedChunkIds, listSymbolChunkIds, listWalkChunkRows, listWithdrawalChunks, deleteChunksForPages, listContextualModeCandidates,
+ * resolveFrozenHits), search dedup's segmented-region read (readSegmentRegions), and get_page's chunk reads
+ * (readWindowChunk, countPageChunks; engine-sql/page-window-chunks.ts).
  *
  * Export only BrainEngine members from this file, each a `StoreMember` named after the member it serves (see tags.ts):
  * index.ts spreads the whole module into STORE_MEMBERS, so every export is served. Row decoders and other helpers stay
@@ -17,12 +18,14 @@
  * The chunk-reads members model the source filter, the page privacy policy (storePagePolicy, a caller's reader identity
  * and private-readable grant included) and the live test of the
  * read policy (src/core/search/read-policy-sql.ts); resolveFrozenHits also models the trust floor and flag suppression
- * (`minTrust`, `suppressFlagged`). A safe-chunk policy on a chunk-reads member refuses with `engine_capability_missing`.
- * The other chunk-reads members refuse a trust or flag option: no production caller passes one, so no store read was
+ * (`minTrust`, `suppressFlagged`). A safe-chunk read applies the chunker-version fence of `codeReadFilter` on the code
+ * reads and `currentCodeChunksExist`, and of the frozen-hit read on resolveFrozenHits. The other chunk-reads members refuse a trust or flag option: no production caller passes one, so no store read was
  * built. getChunkPage and getChunkWindows ignore both, as their SQL does. See rust/docs/store/chunk_queries.md.
  */
+import { SYMBOL_CHUNK_LOOKUP_LIMIT, type WalkChunkRow } from '../../engine-sql/chunk-reads.ts';
 import { mapChunkWindowRows, type ChunkWindowOpts, type ChunkWindowPage, type ChunkWindowRequest } from '../../search/chunk-windows.ts';
 import type { Chunk, ChunklessPageRow, PageReadScope } from '../../types.ts';
+import type { PageChunkCounts, WindowChunkRow } from '../../engine-sql/page-window-chunks.ts';
 import { DEF_TYPES } from '../../chunkers/def-types.ts';
 import type {
   CodeChunkScope, CodeDefinitionRow, CodeRefChunkRow, CodeSymbolQuery, ContextualModeCandidate, FrozenHitKey, FrozenHitRow,
@@ -31,6 +34,7 @@ import type {
 import { requiresSafeChunks } from '../../search/safe-chunks.ts';
 import { storePagePolicy } from './private-provenance.ts';
 import { toChunk } from '../store-codec.ts';
+import { TrustFloorError } from '../../engine-errors.ts';
 import { namedSourceIds, refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
 
 // The SQL engines never read these read-policy keys in these statements, so the store ignores them too. An MCP
@@ -46,13 +50,12 @@ export const getChunkPage: StoreMember<[slug: string, opts: PageReadScope & { fr
       ['sourceId', 'sourceIds', 'fromIndex', 'limit', 'excludePrivate', 'requireSafeChunks'], UNREAD_SCOPE) as
       { sourceId?: unknown; sourceIds?: unknown[]; fromIndex?: number; limit?: number; excludePrivate?: unknown };
     // The scope resolves as getChunks resolves it: `sourceIds` when not empty, else `sourceId` (default `default`). A
-    // scope that names no source matches nothing, and a read over several sources is refused (the chunk order ties).
+    // scope that names no source matches nothing, and a read over several sources reads the page in each.
     const requested = sourceIds?.length ? sourceIds : [sourceId ?? 'default'];
     const named = namedSourceIds(requested);
     if (named.length === 0) return { chunks: [], total_chunks: 0, max_chunk_index: null };
-    if (named.length > 1) refuseMember('getChunkPage', 'a read over several sources');
     const options = {
-      sourceId: named[0]!, fromIndex, limit,
+      sourceId: named[0]!, ...(named.length > 1 ? { sourceIds: named } : {}), fromIndex, limit,
       excludePrivate: storePagePolicy('getChunkPage', excludePrivate, { callerReaders: true }) ?? null,
       requireSafeChunks: requiresSafeChunks(opts),
     };
@@ -118,10 +121,13 @@ function int32Ids(member: string, ids: readonly number[]): number[] {
 
 /**
  * The wire scope of `pageReadFilter`: the source filter (`codeReadFilter` drops `sourceId` under `allSources` when no
- * `sourceIds` is given) and, under `excludePrivate`, the store page policy. A safe-chunk scope refuses.
+ * `sourceIds` is given), under `excludePrivate` the store page policy, and under a safe-chunk read
+ * (`requiresSafeChunks`) the chunker-version fence.
  */
 function wireScope(member: string, o: Record<string, unknown>, code: boolean) {
-  if (requiresSafeChunks(o as PageReadScope)) refuseMember(member, 'a safe-chunk read (the store records no chunker-version fence)');
+  // A floor that is not text names no trust tier (the store's own refusal covers a text one): refuse it here the same way,
+  // before the napi call turns a number into a decoding error (#10276).
+  if (o.minTrust && typeof o.minTrust !== 'string') throw new TrustFloorError(o.minTrust);
   const dropSource = code && !!o.allSources && o.sourceIds === undefined;
   return {
     sourceId: dropSource ? undefined : o.sourceId,
@@ -129,6 +135,7 @@ function wireScope(member: string, o: Record<string, unknown>, code: boolean) {
     excludePrivate: storePagePolicy(member, o.excludePrivate, { callerReaders: true }) ?? null,
     minTrust: (o.minTrust as string | undefined) || null,
     suppressFlagged: o.suppressFlagged === true,
+    requireSafeChunks: requiresSafeChunks(o as PageReadScope),
   };
 }
 
@@ -235,6 +242,35 @@ export const listQualifiedSymbolNames: StoreMember<[sourceId: string, symbol: st
       () => brain.listQualifiedSymbolNames({ sourceId, symbol, match: opts.match === 'contains' ? 'contains' : 'exact', limit }));
   };
 
+export const listSymbolLanguages: StoreMember<[sourceId: string, qualified: string], string[]> = (brain, sourceId, qualified) =>
+  storeCall({ member: 'listSymbolLanguages' }, () => brain.listSymbolLanguages({ sourceId, qualified }));
+
+export const listSupportedChunkIds: StoreMember<[chunkIds: readonly number[], languages: readonly string[]], number[]> =
+  async (brain, chunkIds, languages) => {
+    const ids = [...chunkIds].map(Number);
+    if (!ids.every(Number.isSafeInteger)) refuseMember('listSupportedChunkIds', 'a chunk id that is not an integer');
+    if (ids.length === 0 || languages.length === 0) return [];
+    return storeCall({ member: 'listSupportedChunkIds' }, () => brain.listSupportedChunkIds({ chunkIds: ids, languages: [...languages] }));
+  };
+
+/** Ordered by source, slug, chunk index and id, as engine-sql/chunk-reads.ts orders its statements. */
+export const listSymbolChunkIds: StoreMember<[lookup: 'near_symbol' | 'edge_targets', symbols: readonly string[], sourceId?: string], number[]> =
+  async (brain, lookup, symbols, sourceId) => {
+    if (symbols.length === 0) return [];
+    return storeCall({ member: 'listSymbolChunkIds' }, () => brain.listSymbolChunkIds({
+      symbols: lookup === 'near_symbol' ? [symbols[0]!] : [...symbols], sourceId: sourceId || null, limit: SYMBOL_CHUNK_LOOKUP_LIMIT }));
+  };
+
+/** The visible chunks among the ids with their pages; the order is put back to the ids' order here, as in engine-sql. */
+export const listWalkChunkRows: StoreMember<[chunkIds: readonly number[]], WalkChunkRow[]> = async (brain, chunkIds) => {
+  const ids = [...chunkIds].map(Number);
+  if (!ids.every(Number.isSafeInteger)) refuseMember('listWalkChunkRows', 'a chunk id that is not an integer');
+  if (ids.length === 0) return [];
+  const found: WalkChunkRow[] = await storeCall({ member: 'listWalkChunkRows' }, () => brain.listWalkChunkRows({ chunkIds: ids }));
+  const at = new Map(ids.map((id, i) => [id, i] as const));
+  return found.sort((a, b) => (at.get(a.chunk_id) ?? 0) - (at.get(b.chunk_id) ?? 0));
+};
+
 export const listWithdrawalChunks: StoreMember<[sourceId: string, keys: WithdrawalChunkKey[], opts: { after: number; limit: number; subjects: string[] | null }], WithdrawalChunkRow[]> =
   async (brain, sourceId, keys, opts) => {
     if (!Number.isSafeInteger(opts.after) || !Number.isSafeInteger(opts.limit)) refuseMember('listWithdrawalChunks', 'an after or limit that is not an integer');
@@ -281,3 +317,31 @@ export const resolveFrozenHits: StoreMember<[hits: FrozenHitKey[], scope: PageRe
       effective_date: r.effective_date === null || r.effective_date === undefined ? null : new Date(r.effective_date),
     }));
   };
+
+/**
+ * Where each search hit on a served segmented page starts in its body (`segmentRegions`, search/dedup.ts), from the
+ * page's segment view instead of the SQL engines' manifest join. Rows are in chunk id order.
+ */
+export const readSegmentRegions: StoreMember<[hits: ReadonlyArray<{ pageId: number; chunkId: number }>], Array<{ chunk_id: number; byte_start: number }>> =
+  async (brain, hits) => {
+    if (hits.length === 0) return [];
+    // The SQL engines bind the chunk ids into int[]; a value outside int4 is refused there.
+    int32Ids('readSegmentRegions', hits.map(h => h.chunkId));
+    const rows: Array<{ chunk_id: number | string; byte_start: number | string }> = await storeCall({ member: 'readSegmentRegions' },
+      () => brain.readSegmentRegions(hits.map(h => ({ pageId: h.pageId, chunkId: h.chunkId }))));
+    return rows.map(r => ({ chunk_id: Number(r.chunk_id), byte_start: Number(r.byte_start) }));
+  };
+
+/** The text chunk a get_page window centers on, at the page's live generation, or null (engine-sql/page-window-chunks.ts). */
+export const readWindowChunk: StoreMember<[chunkId: number, pageId: number], WindowChunkRow | null> = async (brain, chunkId, pageId) => {
+  if (!Number.isSafeInteger(chunkId) || !Number.isSafeInteger(pageId)) refuseMember('readWindowChunk', 'a chunk or page id that is not an integer');
+  const row: WindowChunkRow | null = await storeCall({ member: 'readWindowChunk' }, () => brain.readWindowChunk(chunkId, pageId));
+  return row ?? null;
+};
+
+/** The page's live-generation chunk count and how many have a vector (get_page body none). */
+export const countPageChunks: StoreMember<[pageId: number], PageChunkCounts> = async (brain, pageId) => {
+  if (!Number.isSafeInteger(pageId)) refuseMember('countPageChunks', 'a page id that is not an integer');
+  const counts: { total: number | string; embedded: number | string } = await storeCall({ member: 'countPageChunks' }, () => brain.countPageChunks(pageId));
+  return { total: Number(counts.total), embedded: Number(counts.embedded) };
+};

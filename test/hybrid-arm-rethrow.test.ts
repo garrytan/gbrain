@@ -27,6 +27,8 @@ import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import { sqlEngineKind } from '../src/core/sql-engine-kind.ts';
 import { isEngineCapabilityRefusal } from '../src/core/engine-capability-refusal.ts';
+import { capabilitiesForEngineKind } from '../src/core/engine-capabilities.ts';
+import { remoteAccessRefusal } from '../src/mcp/engine-access-refusal.ts';
 
 function accessError(msg = 'connect ECONNREFUSED 127.0.0.1:5432'): Error & { code: string } {
   const e = new Error(msg) as Error & { code: string };
@@ -177,7 +179,10 @@ describe('a refused lexical option reaches the caller', () => {
 // The rethrow above is a no-op for PGLite and Postgres because neither engine
 // raises engine_capability_missing: outside the Rust engine, the one raiser
 // (`capabilityMissing`) is called only by `sqlEngineKind`, which returns for
-// both SQL kinds and refuses any other kind.
+// both SQL kinds and refuses any other kind, and by two shared-skill steps that
+// call it only behind a Rust-brain check (main join da99c637a7: the cli-members
+// line's Rust refusals for canonical pack adoption and for activation with an
+// expected state; main's guard named sqlEngineKind alone).
 describe('no PGLite or Postgres path raises engine_capability_missing', () => {
   test('sqlEngineKind returns for pglite and postgres and refuses anything else', () => {
     expect(sqlEngineKind('pglite', 'm')).toBe('pglite');
@@ -201,6 +206,33 @@ describe('no PGLite or Postgres path raises engine_capability_missing', () => {
       }
     };
     walk(root);
-    expect(callers).toEqual(['core/sql-engine-kind.ts']);
+    // topology-stop.ts raises it only behind `!servesRawSql(engine)`, which is false on PGLite and Postgres: the Rust engine's named
+    // refusal of a topology change (unbound-claim-rust). The parked-push retry's refusal goes through a named helper in rust-engine/errors.ts.
+    // mcp/engine-access-refusal.ts refuses a remote caller only on an engine without `access_control`; PGLite and Postgres report it,
+    // so they never reach that call (pinned by the next test). core/access/handover.ts raises it the same way: a handover's apply and undo
+    // refuse on a brain without raw SQL before they write (refuseHandoverWrites).
+    expect(callers.sort()).toEqual(['core/access/handover.ts', 'core/persistence/skill-activation.ts', 'core/persistence/topology-stop.ts',
+      'core/shared-skills/publication.ts', 'core/sql-engine-kind.ts', 'mcp/engine-access-refusal.ts']);
+    // Each shared-skill call sits behind isRustBrain, so a PGLite or Postgres brain never reaches it.
+    // test-reads-source-ok[structural]: the guard proves where the only raiser is called from, which no runtime probe can show.
+    const read = (rel: string) => readFileSync(join(root, rel), 'utf8');
+    const publication = read('core/shared-skills/publication.ts');
+    expect(publication.match(/\bcapabilityMissing\s*\(/g)).toHaveLength(1);
+    expect(publication).toContain("if (isRustBrain(ctx.engine)) throw capabilityMissing('persistence_journal', 'adoptSharedSkillpack');");
+    const activation = read('core/persistence/skill-activation.ts');
+    expect(activation.match(/\bcapabilityMissing\s*\(/g)).toHaveLength(1);
+    const onRust = activation.slice(activation.indexOf('async function activateOnRust('));
+    expect(onRust.slice(0, onRust.indexOf('\n}\n'))).toContain("throw capabilityMissing('persistence_journal', 'activateSharedSkillPersistence')");
+    expect(activation.match(/\bactivateOnRust\(/g)).toHaveLength(2);
+    expect(activation).toContain('if (isRustBrain(engine)) return activateOnRust(engine, options, quiescence);');
+  });
+
+  test('the MCP remote-caller refusal never fires on PGLite or Postgres', () => {
+    for (const kind of ['pglite', 'postgres'] as const) {
+      for (const remote of [true, undefined]) {
+        expect(remoteAccessRefusal({ kind, capabilities: capabilitiesForEngineKind(kind) }, 'get_page', remote)).toBeNull();
+      }
+    }
+    expect(isEngineCapabilityRefusal(remoteAccessRefusal({ kind: 'rust' }, 'get_page', true))).toBe(true);
   });
 });

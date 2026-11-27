@@ -69,7 +69,7 @@ export const SOURCE_CHECKOUT_MISSING = 'source_checkout_missing';
  * (`storedCheckoutRefusal` in verb-errors.ts): the checkout is missing, was recreated at its recorded path
  * (`physicalRootDirectoryChangedError`), or holds an ownership record other users can read (`ownershipRecordNotPrivateError`).
  */
-export const CHECKOUT_REFUSAL_ORIGINS = [SOURCE_CHECKOUT_MISSING, 'physical_root_directory_changed', 'ownership_record_not_private'] as const;
+export const CHECKOUT_REFUSAL_ORIGINS = [SOURCE_CHECKOUT_MISSING, 'physical_root_directory_changed', 'ownership_record_not_private', 'ownership_reservation_missing'] as const;
 export type CheckoutRefusalOrigin = typeof CHECKOUT_REFUSAL_ORIGINS[number];
 export interface CheckoutRefusalDetail { origin: CheckoutRefusalOrigin; stage?: PublicationStage; attempt?: { consumer_version: string; consumer_host_id: string | null } }
 /** #6693: a page write refused because its file holds a committed change sync has not imported (`pending_import`) or sync holds the file (`sync_held`). */
@@ -96,6 +96,8 @@ export interface StagingRefusalDetail {
  */
 export interface CapabilityRefusalDetail {
   origin: 'engine_capability'; member: string; capability: string;
+  /** A refusal at publication: the claims it was refused on, and the limit (capability-retry.ts) that ended it. */
+  attempts?: number; limit?: number;
   stage?: PublicationStage; attempt?: { consumer_version: string; consumer_host_id: string | null };
 }
 export interface PublicationFailure { code: string; message: string; detail?: PublicationFailureDetail | FenceRefusalDetail | WithdrawalRefusalDetail | OwnerExceptionDetail | CanonicalFileDetail | CheckoutRefusalDetail | PendingImportDetail | SourceChangedDetail | StagingRefusalDetail | CapabilityRefusalDetail }

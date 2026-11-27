@@ -18,11 +18,14 @@
  */
 import { randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../engine.ts';
+import type { AccessMigrationRow } from '../engine-sql/access-setup.ts';
 import { opError } from '../ops/contract.ts';
 import type { FolderRule } from './folder-rules.ts';
 import { appliedRules, ensurePolicyState, getRevision, listRevisions, lockSource, readAccessStore, writeAccessStore, type AccessStore } from './policy.ts';
 import { APPROVED_FILE, commitPolicyFile, isGitWorkTree, POLICY_FILE, sourcePolicyRoot, syncGitPolicy } from './policy-git.ts';
 import { serializePolicyYaml } from './folder-rules.ts';
+import { ownerConnectionFor } from '../rust-engine/owner-ipc/client.ts';
+import { ownerIpcRefusal } from '../rust-engine/owner-ipc/routes.ts';
 
 export interface MigratePreview {
   source_id: string;
@@ -37,11 +40,8 @@ export interface MigratePreview {
 /** Test seam: runs after a phase is journaled ('committed', then 'switched'), before the next step. */
 export const migrateSeams: { afterPhase?: (phase: string) => Promise<void> | void } = {};
 
-async function unfinished(engine: BrainEngine, sourceId: string): Promise<{ id: string; phase: string; direction: string; receipts: Record<string, unknown> } | null> {
-  const [row] = await engine.executeRaw<{ id: string; phase: string; direction: string; receipts: unknown }>(
-    `SELECT id, phase, direction, receipts FROM access_policy_migrations WHERE source_id = $1 AND phase <> 'switched' ORDER BY created_at DESC LIMIT 1`, [sourceId]);
-  if (!row) return null;
-  return { ...row, receipts: (typeof row.receipts === 'string' ? JSON.parse(row.receipts) : row.receipts) as Record<string, unknown> ?? {} };
+function unfinished(engine: BrainEngine, sourceId: string): Promise<AccessMigrationRow | null> {
+  return engine.readUnfinishedAccessMigration(sourceId);
 }
 
 /**
@@ -73,16 +73,18 @@ export async function previewMigrate(engine: BrainEngine, sourceId: string, requ
 
 export async function migrateAccessStore(engine: BrainEngine, sourceId: string, requested?: AccessStore): Promise<{ id: string; from: AccessStore | null; to: AccessStore; phase: string; receipts: Record<string, unknown> }> {
   const p = await previewMigrate(engine, sourceId, requested);
+  // The store switch below runs in a transaction, which does not cross the owner socket: refuse before any write.
+  if (ownerConnectionFor(engine)) throw ownerIpcRefusal('transaction', 'gbrain access rule migrate switches the store inside one');
   await ensurePolicyState(engine, sourceId);
   let job = await unfinished(engine, sourceId);
   if (!job) {
     const id = `mig_${randomUUID()}`;
-    await engine.executeRaw(`INSERT INTO access_policy_migrations (id, source_id, direction, phase) VALUES ($1, $2, $3, 'started')`, [id, sourceId, p.to === 'git' ? 'to_git' : 'to_database']);
+    await engine.insertAccessMigration(id, sourceId, p.to === 'git' ? 'to_git' : 'to_database');
     job = { id, phase: 'started', direction: p.to === 'git' ? 'to_git' : 'to_database', receipts: {} };
   }
   const receipts = { ...job.receipts };
   const record = async (phase: string) => {
-    await engine.executeRaw('UPDATE access_policy_migrations SET phase = $2, receipts = $3::text::jsonb, updated_at = now() WHERE id = $1', [job!.id, phase, JSON.stringify(receipts)]);
+    await engine.recordAccessMigrationPhase(job!.id, phase, receipts);
     job!.phase = phase;
   };
   if (p.to === 'git') {
@@ -101,7 +103,7 @@ export async function migrateAccessStore(engine: BrainEngine, sourceId: string, 
   await engine.transaction(async tx => {
     await lockSource(tx, sourceId);
     await writeAccessStore(tx, sourceId, p.to);
-    await tx.executeRaw(`UPDATE access_policy_migrations SET phase = 'switched', receipts = $2::text::jsonb, updated_at = now() WHERE id = $1`, [job!.id, JSON.stringify(receipts)]);
+    await tx.switchAccessMigration(job!.id, receipts);
   });
   job.phase = 'switched';
   await migrateSeams.afterPhase?.('switched');

@@ -9,6 +9,7 @@ import { loadActivePackForEngine, approvedSchemaIdentity } from './schema-pack/e
 import { invalidatePackCache } from './schema-pack/registry.ts';
 import { ownsAttendanceInference } from './schema-pack/link-inference.ts';
 import { executeRawJsonb } from './sql-query.ts';
+import { PAGE_PIN_SQL } from './engine-sql/list-reads.ts';
 import { applyAttendanceDelta } from './derived-links.ts';
 import { unmanagedBeliefPoint } from './belief/projection-point.ts';
 
@@ -97,8 +98,7 @@ export function validateAttendanceRepairScope(sourceId: string, limit = ATTENDAN
 }
 
 async function identity(engine: BrainEngine, sourceId: string) {
-  const sources = await engine.executeRaw<{ id: string; incarnation: string }>(
-    'SELECT id, incarnation FROM sources WHERE id=ANY($1::text[]) AND archived IS NOT TRUE AND archived_at IS NULL', [[sourceId, 'default']]);
+  const sources = await engine.listLiveSourceIncarnations([sourceId, 'default']);
   const source = sources.find(row => row.id === sourceId);
   const brain = sources.find(row => row.id === 'default');
   if (!source || !brain) throw new Error(`Attendance repair requires an existing live source and brain identity: ${!source
@@ -122,7 +122,6 @@ async function ontology(engine: BrainEngine, sourceId: string) {
   }
 }
 
-const PAGE_PIN_SQL = 'id::text, slug, source_id, type, knowledge_revision::text AS revision';
 
 async function readOrigin(engine: BrainEngine, sourceId: string, id: string): Promise<OriginPage> {
   const rows = await engine.executeRaw<OriginPage>(`SELECT ${PAGE_PIN_SQL},
@@ -178,12 +177,12 @@ async function prepareOrigin(engine: BrainEngine, page: OriginPage, pack: LinkEx
   if (needed.size > MAX_REFS) return stop('reference_limit');
   const edgeIds = [...new Set(result.before.flatMap(edge => [edge.from_page_id, edge.to_page_id]))].filter(id => id !== page.id);
   const edgeEndpoints = edgeIds.length ? await engine.executeRaw<PagePin>(`SELECT ${PAGE_PIN_SQL} FROM pages
-    WHERE source_id=$1 AND id=ANY($2::bigint[]) AND deleted_at IS NULL ORDER BY slug`, [page.source_id, edgeIds]) : [];
+    WHERE source_id=$1 AND id=ANY($2::bigint[]) AND deleted_at IS NULL ORDER BY slug COLLATE "C"`, [page.source_id, edgeIds]) : [];
   for (const endpoint of edgeEndpoints) needed.add(endpoint.slug);
   if (needed.size > MAX_REFS) return stop('reference_limit');
   result.lookupSlugs = [...needed].sort();
   const endpoints = needed.size ? await engine.executeRaw<PagePin>(`SELECT ${PAGE_PIN_SQL} FROM pages
-    WHERE source_id=$1 AND slug=ANY($2::text[]) AND deleted_at IS NULL ORDER BY slug`, [page.source_id, result.lookupSlugs]) : [];
+    WHERE source_id=$1 AND slug=ANY($2::text[]) AND deleted_at IS NULL ORDER BY slug COLLATE "C"`, [page.source_id, result.lookupSlugs]) : [];
   result.endpoints = endpoints;
   const index = new Map(endpoints.map(endpoint => [endpoint.slug, endpoint]));
   const ranges = attendanceEvidenceRanges(content);
@@ -241,13 +240,11 @@ export async function previewAttendanceRepair(engine: BrainEngine, options: Atte
   const limit = options.limit ?? ATTENDANCE_REPAIR_LIMIT;
   const afterSlug = options.afterSlug ?? '';
   validateAttendanceRepairScope(options.sourceId, limit, afterSlug);
-  const [{ issued_at }] = await engine.executeRaw<{ issued_at: string }>(
-    'SELECT floor(extract(epoch FROM clock_timestamp())*1000)::text AS issued_at');
+  const issued_at = await engine.readClockMillisText();
   const selected = await identity(engine, options.sourceId);
   selected.brain = attendanceRepairHash([selected.brain, options.brainIdentity ?? null]);
   const schema = await ontology(engine, options.sourceId);
-  const window = await engine.executeRaw<ScanPage>(`SELECT ${PAGE_PIN_SQL}, deleted_at IS NOT NULL AS deleted
-    FROM pages WHERE source_id=$1 AND slug>$2 ORDER BY slug LIMIT $3`, [options.sourceId, afterSlug, limit]);
+  const window: ScanPage[] = await engine.readAttendanceWindow(options.sourceId, afterSlug, limit);
   const origins: AttendanceOriginPreview[] = [];
   let retainedBytes = 0;
   for (const page of window.filter(page => page.type === 'meeting' && !page.deleted)) {
@@ -335,7 +332,7 @@ export async function applyAttendanceRepair(engine: BrainEngine, preview: Attend
       if (attendanceRepairHash([actualIdentity.brain, options.brainIdentity ?? null]) !== preview.brain || actualIdentity.sourceIncarnation !== preview.sourceIncarnation
         || actualSchema.hash !== preview.ontology) throw new Error('Attendance source, brain or ontology changed; preview again');
       const actualSegment = segment.length ? await tx.executeRaw<ScanPage>(`SELECT ${PAGE_PIN_SQL}, deleted_at IS NOT NULL AS deleted
-        FROM pages WHERE source_id=$1 AND slug=ANY($2::text[]) ORDER BY slug`, [preview.sourceId, segment.map(page => page.slug)]) : [];
+        FROM pages WHERE source_id=$1 AND slug=ANY($2::text[]) ORDER BY slug COLLATE "C"`, [preview.sourceId, segment.map(page => page.slug)]) : [];
       if (attendanceRepairHash(actualSegment) !== attendanceRepairHash(segment)) throw new Error('Attendance scan window changed; preview again');
       const [{ checked_at }] = await tx.executeRaw<{ checked_at: string }>(
         'SELECT floor(extract(epoch FROM clock_timestamp())*1000)::text AS checked_at');

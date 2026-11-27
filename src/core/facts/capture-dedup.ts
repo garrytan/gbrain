@@ -35,7 +35,6 @@ import { corpusFileSessionId } from '../context/corpus-segments.ts';
 import { writeHeartbeat } from '../context/hook-heartbeat.ts';
 import { normalizeAlias } from '../search/alias-normalize.ts';
 import { cosineSimilarity } from './classify.ts';
-import { onOwnedMemoryPageSql } from '../access/member-facts.ts';
 
 export const CAPTURE_LANES = ['hook:writeback', 'sweep:corpus', 'hook:compact'] as const;
 export const CAPTURE_DEDUP_WINDOW_MS = 15 * 60 * 1000;
@@ -135,12 +134,10 @@ export async function entityNames(engine: BrainEngine, sourceId: string, slugs: 
   const add = (slug: string, name: string | null) => {
     if (name) names.set(slug, [...(names.get(slug) ?? []), name]);
   };
-  const pages = await engine.executeRaw<{ slug: string; title: string | null }>(
-    'SELECT slug,title FROM pages WHERE source_id=$1 AND slug=ANY($2::text[]) AND deleted_at IS NULL', [sourceId, wanted]);
+  const pages = await engine.listLivePageTitles(sourceId, wanted);
   for (const page of pages) add(page.slug, page.title);
   try {
-    const aliases = await engine.executeRaw<{ slug: string; alias_norm: string }>(
-      'SELECT slug,alias_norm FROM page_aliases WHERE source_id=$1 AND slug=ANY($2::text[])', [sourceId, pages.map(p => p.slug)]);
+    const aliases = await engine.listPageAliasNames(sourceId, pages.map(p => p.slug));
     for (const alias of aliases) add(alias.slug, alias.alias_norm);
   } catch { /* pre-v110 brain: titles only */ }
   return names;
@@ -171,14 +168,8 @@ export interface CaptureMatch { id: number; rule: 'same_entity' | 'named_entity'
 /** The exact-fingerprint drop rule (one bounded indexed read). */
 export async function findCaptureDuplicate(scope: CaptureScope, candidate: CaptureCandidate): Promise<CaptureMatch | null> {
   const visibilities = candidate.visibility === 'world' ? ['world'] : ['world', 'private'];
-  const rows = await scope.engine.executeRaw<{ id: number; entity_slug: string | null; source: string; source_session: string | null; created_at: Date | string }>(
-    `SELECT id,entity_slug,source,source_session,created_at FROM facts WHERE source_id=$1 AND visibility=ANY($2::text[])
-      AND gbrain_fact_fingerprint(fact)=gbrain_fact_fingerprint($3) AND expired_at IS NULL AND (valid_until IS NULL OR valid_until>now())
-      AND ($4::text IS NULL OR attributed_to IS NULL OR attributed_to=$4)
-      AND ($5::text IS NULL OR source_markdown_slug IS DISTINCT FROM $5 OR source NOT LIKE 'cli:extract-conversation-facts%')
-      AND NOT ${onOwnedMemoryPageSql('facts')}
-      ORDER BY created_at DESC, id DESC LIMIT ${CAPTURE_DEDUP_SCAN_LIMIT}`,
-    [scope.sourceId, visibilities, candidate.fact, candidate.attributedTo ?? null, scope.replacingPage ?? null]);
+  const rows = await scope.engine.listCaptureDuplicateCandidates({ sourceId: scope.sourceId, visibilities, fact: candidate.fact,
+    attributedTo: candidate.attributedTo ?? null, replacingPage: scope.replacingPage ?? null, scanLimit: CAPTURE_DEDUP_SCAN_LIMIT });
   const conversation = canonicalConversationKey(scope.sessionId);
   const anchor = scope.anchor;
   const recent = anchor === null ? rows : rows.filter(row => Math.abs(new Date(row.created_at).getTime() - anchor.getTime()) <= CAPTURE_DEDUP_WINDOW_MS
@@ -343,8 +334,7 @@ export async function collapseFactReads<R extends FactReadRow>(engine: BrainEngi
   const missing = active.filter(r => !r.fact_fingerprint);
   let computed: string[] = [];
   try {
-    if (missing.length) computed = (await engine.executeRaw<{ fp: string }>(
-      'SELECT gbrain_fact_fingerprint(c) AS fp FROM unnest($1::text[]) WITH ORDINALITY AS t(c, n) ORDER BY n', [missing.map(r => r.fact)])).map(r => r.fp);
+    if (missing.length) computed = await engine.computeFactFingerprints(missing.map(r => r.fact));
   } catch {
     return rows;
   }

@@ -11,13 +11,16 @@ import { observationDateFrom, resolveObservationDate, type ObservationDate } fro
 import { BudgetExhausted } from '../budget/budget-tracker.ts';
 import { deriveDateContext } from '../conversation-parser/parse.ts';
 import { resolveStrictEntityReference } from '../entities/resolve.ts';
-import { resolveExtractedEntitiesForSave, unbackedEntityKeysEnabled, type SaveTimeResolutionCounts } from '../entities/resolve-on-save.ts';
+import { emptySaveTimeResolutionCounts, mergeSaveTimeResolutionCounts, resolveExtractedEntitiesForSave, unbackedEntityKeysEnabled, type SaveTimeResolutionCounts } from '../entities/resolve-on-save.ts';
 import { NON_EXTRACTABLE_AUDIT_SOURCE, TERMINAL_AUDIT_SOURCE, stampExtractorVersion } from './audit-sources.ts';
 import { CONVERSATION_ENTITY_HINTS_CAP } from './conversation-entity-hints.ts';
 import { CONVERSATION_FACTS_SOURCE_PREFIX, type ConversationFactRow } from './conversation-publication.ts';
 import { inferConversationSubjects } from './conversation-subject-infer.ts';
 import type { ConversationSegment } from './conversation-types.ts';
+import { renderSegmentForExtraction, segmentOf } from './conversation-windows.ts';
 import { extractFactsFromTurnWithOutcome, type ExtractInput, type ExtractedFact } from './extract.ts';
+import { keepQuietClaims, keptQuiet } from './keep-quiet.ts';
+import { isFactWithdrawn } from './withdrawal.ts';
 import { tagSlots } from './slot-tagging.ts';
 import { tightenToStoredPage, type FactVisibility } from './visibility.ts';
 
@@ -64,7 +67,7 @@ export function segmentObservationDate(page: Pick<Page, 'slug' | 'frontmatter' |
  * Rows are numbered from `rowNum`; publication renumbers them under the page lock.
  */
 export async function extractConversationWindow(run: ConversationWindowRun, page: Page, seg: ConversationSegment, text: string, rowNum: number,
-  entityHints: ExtractInput['entityHints']): Promise<{ extracted: number; rows: ConversationFactRow[]; resolution: SaveTimeResolutionCounts }> {
+  entityHints: ExtractInput['entityHints'], quietFrom: ConversationSegment['messages'] = seg.messages): Promise<{ extracted: number; rows: ConversationFactRow[]; resolution: SaveTimeResolutionCounts }> {
   const sessionId = `${CONVERSATION_FACTS_SOURCE_PREFIX}:${page.slug}`;
   let extracted: ExtractedFact[];
   const input: ExtractInput = { turnText: text, sessionId, source: CONVERSATION_FACTS_SOURCE_PREFIX, engine: run.engine, abortSignal: run.signal,
@@ -92,7 +95,7 @@ export async function extractConversationWindow(run: ConversationWindowRun, page
   }, unbacked);
   if (extracted.length === 0) return { extracted: 0, rows: [], resolution };
   const visibility = await tightenToStoredPage(run.engine, run.sourceId, run.factVisibility, page);
-  const rows = await inferConversationSubjects(run.engine, run.sourceId, visibility, extracted.map((fact, i) => ({ // #6764
+  const inferred = await inferConversationSubjects(run.engine, run.sourceId, visibility, extracted.map((fact, i) => ({ // #6764
     ...fact, visibility,
     row_num: rowNum + i,
     source_markdown_slug: page.slug,
@@ -101,6 +104,11 @@ export async function extractConversationWindow(run: ConversationWindowRun, page
     ...segmentValidFrom(fact.valid_from, seg.startIso),
     context: fact.context ?? `from ${page.slug} segment ${seg.startIso}..${seg.endIso}`,
   })));
+  // GST-3170: a fact restating a claim its speaker asked to keep quiet is stored private, unless the claim was withdrawn
+  // or purged at any visibility: the guards match the row's own visibility, so narrowing must never bring one back.
+  const quiet = visibility === 'world' ? keepQuietClaims(quietFrom) : [];
+  const rows = await Promise.all(inferred.map(async row => keptQuiet(row.fact, quiet)
+    && !await isFactWithdrawn(run.engine, run.sourceId, null, row.fact, row.entity_slug ?? null) ? { ...row, visibility: 'private' as const } : row));
   // GBRA-574: slots come from a second call over facts whose person was named exactly: by identity evidence alone (an
   // exact slug, a unique basename or alias; never a prefix guess or a near name), by subject inference, which needs
   // one live page named in full, or by a name key this window kept (the full name, by construction). Never on
@@ -116,6 +124,45 @@ export async function extractConversationWindow(run: ConversationWindowRun, page
       + 'the facts are kept without slots, and --force tags them again\n');
   }
   return { extracted: extracted.length, rows: tagged.rows, resolution };
+}
+
+/** A window the extraction model declined to read: its span and the extract.ts reason. */
+export interface DeclinedWindow { start: string; end: string; reason: 'refusal' | 'content_filter' }
+
+/** The extract.ts reason of a window the model declined (a refusal or a content filter stop), or null for any other failure. */
+function declinedReason(error: unknown): DeclinedWindow['reason'] | null {
+  const reason = (error as { extractionReason?: unknown } | null)?.extractionReason;
+  return reason === 'refusal' || reason === 'content_filter' ? reason : null;
+}
+
+/**
+ * GST-3251: one whole-page window, where a window the model declines does not fail the page. A declined window of two or
+ * more messages is retried once as its two halves (at most two more calls, over the same text once more); what still
+ * declines is returned in `declined` with the facts of everything that read, and `read` says whether any of the window
+ * read (GST-3347). A half keeps the whole window's keep-quiet cues, so a cue in a declined half still narrows the claim
+ * its sibling half restates. Every other failure, BudgetExhausted included, is thrown as before.
+ */
+export async function extractConversationWindowOrHalves(run: ConversationWindowRun, page: Page, seg: ConversationSegment, rowNum: number,
+  entityHints: ExtractInput['entityHints']): Promise<{ extracted: number; rows: ConversationFactRow[]; resolution: SaveTimeResolutionCounts; declined: DeclinedWindow[]; read: boolean }> {
+  const title = page.title || page.slug;
+  const attempt = async (part: ConversationSegment, at: number) => {
+    try {
+      return { ...(await extractConversationWindow(run, page, part, renderSegmentForExtraction(title, part), at, entityHints, seg.messages)), declined: [] as DeclinedWindow[], read: true };
+    } catch (error) {
+      const reason = run.signal?.aborted ? null : declinedReason(error);
+      if (!reason) throw error;
+      return { extracted: 0, rows: [] as ConversationFactRow[], resolution: emptySaveTimeResolutionCounts(), declined: [{ start: part.startIso, end: part.endIso, reason }], read: false };
+    }
+  };
+  const whole = await attempt(seg, rowNum);
+  if (whole.declined.length === 0 || seg.messages.length < 2) return whole;
+  const mid = Math.ceil(seg.messages.length / 2);
+  const first = await attempt(segmentOf(seg.messages.slice(0, mid)), rowNum);
+  const second = await attempt(segmentOf(seg.messages.slice(mid)), rowNum + first.extracted);
+  const resolution = emptySaveTimeResolutionCounts();
+  mergeSaveTimeResolutionCounts(resolution, first.resolution);
+  mergeSaveTimeResolutionCounts(resolution, second.resolution);
+  return { extracted: first.extracted + second.extracted, rows: [...first.rows, ...second.rows], resolution, declined: [...first.declined, ...second.declined], read: first.read || second.read };
 }
 
 /**

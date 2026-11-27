@@ -13,6 +13,7 @@ import { readHolders } from './context.ts';
  */
 
 import { hybridSearchCached, stampContentFlags, stampUnverifiedExtractions } from '../search/hybrid.ts';
+import { KEYWORD_SEARCH_TELEMETRY_MODE, recordLookupTelemetry } from '../search/telemetry.ts';
 import { anchorOpResults } from '../search/entity-anchor.ts';
 import { applyQueryArms } from '../search/query-arms.ts';
 import { factRowOutput } from '../search/facts-arm.ts';
@@ -60,7 +61,7 @@ import { entitySavedFacts, stripCollapseColumns } from '../search/entity-facts.t
 import { FACT_MATCH_STOPWORDS, matchingSavedFacts } from '../search/saved-facts-match.ts';
 import { collapseFactReads } from '../facts/capture-dedup.ts';
 import { mentionCoverageNotice, readMentionCoverage } from '../mentions/coverage.ts';
-import { keepEnumeratedRows, keywordCountMeta, parseSearchPaging, readKeywordPage, startKeywordCount, withCountMeta } from '../search/keyword-paging.ts';
+import { keepEnumeratedRows, keywordCountMeta, keywordOnlyBounds, parseSearchPaging, queryKeywordCountFilters, queryUnlistedCountFilters, readKeywordPage, startKeywordCount, withCountMeta } from '../search/keyword-paging.ts';
 import { searchLimitCap } from '../search/eval-pool-depth.ts';
 import { heldFilesNotice, stampHeldHits } from '../persistence/held-reads.ts';
 import { opError } from './contract.ts';
@@ -235,6 +236,7 @@ async function stampKeywordRows(ctx: OperationContext, results: SearchResult[], 
   await timings.stage('post_fusion', () => stampUnverifiedExtractions(ctx.engine, results, scope));
   bumpLastRetrievedAt(ctx.engine, results.map((r) => r.page_id));
   maybeCaptureSearch(ctx, queryText, results, Date.now() - startedAt, false);
+  recordLookupTelemetry(ctx.engine, KEYWORD_SEARCH_TELEMETRY_MODE);
 }
 
 /**
@@ -581,9 +583,9 @@ function parseExplainTarget(raw: string): { slug: string; sourceId?: string } {
  * explain_target, before the search: resolve the target among the pages this
  * caller can read (one probe under the same scope and visibility the search
  * uses). Returns the trace to thread into the search, or an early diagnosis
- * (not visible / ambiguous) that needs no trace.
+ * (not visible / ambiguous) that needs no trace. Exported for tests.
  */
-async function prepareExplainTarget(
+export async function prepareExplainTarget(
   ctx: OperationContext, p: Record<string, unknown>, scope: SourceScope, excludePrivate: boolean, tool: 'search' | 'query',
 ): Promise<{ trace?: TargetTrace; early?: ExplainTargetDiagnosis } | null> {
   if (typeof p.explain_target !== 'string' || p.explain_target.trim() === '') return null;
@@ -591,9 +593,11 @@ async function prepareExplainTarget(
   const retry = { tool, arguments: explainRetryArgs(p) };
   let probe;
   try {
-    probe = await probeTarget((sql, params) => ctx.engine.executeRaw(sql, params), slug,
+    probe = await probeTarget(ctx.engine, slug,
       { ...scope, excludePrivate, requireSafeChunks: ctx.remote !== false }, await chunkManifestReads(ctx.engine));
-  } catch {
+  } catch (e) {
+    // explain_target was asked for: an engine that cannot run the probe refuses instead of explaining nothing.
+    rethrowCapabilityRefusal(e);
     return { trace: new TargetTrace({ slug, sourceId }) };
   }
   const early = diagnoseProbe({ slug, sourceId }, probe, { requireSafeChunks: ctx.remote !== false, retry });
@@ -712,7 +716,7 @@ const search: Operation = {
     const timings = new SearchTimings();
     const setup = <T>(work: () => Promise<T>) => timings.stage('setup', work);
     const queryText = p.query as string;
-    const limit = (p.limit as number) || 20;
+    const limit = (p.limit as number) > 0 ? p.limit as number : 20;
     // F2: match / cursor / offset cap / remote mode, refused before any search runs.
     const paging = parseSearchPaging(ctx, p);
     const offset = paging.offset;
@@ -776,13 +780,13 @@ const search: Operation = {
       const keywordCount = page ? null : timings.overlap('keyword_count', startKeywordCount(ctx.engine, queryText, undefined, keywordOpts, lexicalDone.promise));
       // GBRA-200: the keyword rank bound (Postgres) is reported here as it is on the hybrid path.
       let keywordBound: DegradedStageEntry | undefined;
-      const results = await keepFrontmatterMatches(ctx.engine, (page ? page.rows : dedupResults(await timings.stage('lexical', () => ctx.engine.searchKeyword(queryText, { limit, offset, ...keywordOpts,
-        onKeywordIncomplete: reason => { keywordBound = { stage: 'keyword_candidates_incomplete', reason }; } })).finally(lexicalDone.resolve))).map(r => ({ ...r })), where);
+      const bounds = page ? {} : await keywordOnlyBounds(ctx.engine, queryText, bound => { keywordBound = bound; }, setup);
+      const results = await keepFrontmatterMatches(ctx.engine, (page ? page.rows : dedupResults(await timings.stage('lexical', () => ctx.engine.searchKeyword(queryText, { limit, offset, ...keywordOpts, ...bounds })).finally(lexicalDone.resolve))).map(r => ({ ...r })), where);
       await stampKeywordRows(ctx, results, { ...scope, excludePrivate }, queryText, startedAt, timings, paging.match === 'keyword' && !names);
       // #3800: cap AFTER capture/meta so eval + cache see the real payload.
       return evidenceOutput(ctx, p, results, plan, { ...scope, excludePrivate }, null, snippetCap, timings,
         async rows => withCountMeta(withCountMeta(await buildRetrievalResponseMeta(ctx, scope, queryText, rows, null, { conceptHint: true, types, typeFilterNotice: typeFilter.notice, filterHintFor: { op: 'search', p }, timings }),
-          page ?? keywordCountMeta(await timings.part('response', 'keyword_count', () => keywordCount!), offset + limit)), { meta: {}, degraded: keywordBound }), page !== null);
+          page ?? keywordCountMeta(await timings.part('response', 'keyword_count', () => keywordCount!), offset + limit)), { meta: {}, degraded: keywordBound ?? page?.bound }), page !== null);
     }
 
     // Cheap-hybrid (D4/D15): full vector+keyword+RRF+pool+title+alias, but
@@ -838,7 +842,7 @@ const search: Operation = {
     // #3800: cap AFTER capture/meta so eval + cache see the real payload.
     return evidenceOutput(ctx, p, results, plan, { ...scope, excludePrivate }, capturedMeta, snippetCap, timings,
       async rows => withCountMeta(withExplainTarget({ ...(await buildRetrievalResponseMeta(ctx, scope, queryText, rows, capturedMeta, { conceptHint: true, types, typeFilterNotice: typeFilter.notice, declarations, feedbackOp: 'search', entity: fanned.entity, filterHintFor: { op: 'search', p }, timings })), ...(fanned.fanout ? { fanout: fanned.fanout } : {}), ...(capped.meta ? { page_cap: capped.meta } : {}) }, finishExplainTarget(ctx, p, explainPrep, results, 'search', capturedMeta?.degraded)),
-        keywordCountMeta(await timings.part('response', 'keyword_count', () => keywordCount), offset + limit)), false, page.delivered);
+        keywordCountMeta(await timings.part('response', 'keyword_count', () => keywordCount), offset + limit, !!(fanned.entity || fanned.fanout))), false, page.delivered);
   },
   scope: 'read', mutating: false,
   cliHints: { name: 'search', positional: ['query'] },
@@ -921,7 +925,7 @@ const query: Operation = {
     cross_modal: { type: 'string', enum: ['text', 'image', 'both', 'auto'], description: 'Default auto.' },
     embedding_column: { type: 'string', description: 'Registered embedding column.', fullSurfaceOnly: true },
     adaptive_return: { type: 'boolean', description: 'true for one answer (fewer rows, never empty); omit for breadth.', fullSurfaceOnly: true },
-    autocut: { type: 'boolean', description: 'Default on (never empty); false: full top-K for breadth.', fullSurfaceOnly: true },
+    autocut: { type: 'boolean', description: 'Off by default in every mode. true (or config search.autocut true) trims at the steepest score drop; can drop relevant hits on multi-part questions.', fullSurfaceOnly: true },
     relational: { type: 'boolean', description: 'Relationship-graph arm (default on).', fullSurfaceOnly: true },
     min_trust: MIN_TRUST_PARAM,
     ...EXPLAIN_PARAMS,
@@ -1034,7 +1038,7 @@ const query: Operation = {
     // cross-source mode (matches SearchOpts.sourceId contract).
     const typeFilter = await setup(() => reconcileTypeFilter(ctx, querySourceScope, excludePrivate, types));
     types = typeFilter.types;
-    let capturedMeta: HybridSearchMeta | null = null; let queryEmbedding: Float32Array | null = null; const resolving = startEntityResolution(ctx, queryText, { ...querySourceScope, excludePrivate });
+    let capturedMeta: HybridSearchMeta | null = null; let queryEmbedding: Float32Array | null = null; const resolving = startEntityResolution(ctx, queryText, { ...querySourceScope, excludePrivate }), searchDone = Promise.withResolvers<void>(), keywordCount = timings.overlap('keyword_count', startKeywordCount(ctx.engine, queryText, types, { excludePrivate, requireSafeChunks: ctx.remote !== false, ...querySourceScope, ...queryKeywordCountFilters(p, where) }, searchDone.promise)); // #9412: search's strict count, under the query's filters
     const [explainPrep, pageCap] = await setup(() => Promise.all([prepareExplainTarget(ctx, p, querySourceScope, excludePrivate, 'query'), remotePageCap(ctx, p)]));
     // v0.32.x search-lite: route the query op through hybridSearchCached so
     // token budget and intent weighting apply at the operation boundary.
@@ -1089,13 +1093,13 @@ const query: Operation = {
       // (config default applies). The wrapper still applies adaptive sizing
       // while semantic cache reuse is suspended.
       adaptiveReturn: typeof p.adaptive_return === 'boolean' ? (p.adaptive_return as boolean) : undefined,
-      // v0.42.3.0 — autocut ceiling override. Omitted = smart default (ON in
-      // reranked modes). `false` forces the full top-K.
+      // v0.42.3.0 — autocut override. Omitted = OFF in every mode bundle (`search.autocut true` turns
+      // it on); `true` trims at the steepest score drop (can drop relevant hits), `false` = full top-K.
       autocut: typeof p.autocut === 'boolean' ? (p.autocut as boolean) : pagePlanHits(plan).autocut,
       // v0.43 — relational recall override. Omitted = smart default (mode bundle).
       relationalRetrieval: typeof p.relational === 'boolean' ? (p.relational as boolean) : undefined,
       explain: p.explain === true, explainTarget: explainPrep?.trace, _timings: timings,
-    });
+    }).finally(searchDone.resolve);
     const opStages = queryOpStages(ctx, p, queryText, { pageCap, timings, querySourceScope, excludePrivate, types, where, plan, queryEmbedding, resolving });
     const reference = await opStages(withoutFill(found), true);
     let { results, pageCapMeta } = reference;
@@ -1262,7 +1266,7 @@ const query: Operation = {
     // #3800: cap AFTER capture/meta/CRAG so every internal consumer graded
     // and recorded the real payload; only the returned envelope is snipped.
     return evidenceOutput(ctx, p, results, plan, queryScope, capturedMeta, snippetCap, timings,
-      async rows => withExplainTarget({ ...(await buildRetrievalResponseMeta(ctx, querySourceScope, queryText, rows, capturedMeta, { types, typeFilterNotice: typeFilter.notice, declarations, feedbackOp: 'query', entity: fanned.entity, filterHintFor: { op: 'query', p }, timings })), crag, ...(fanned.fanout ? { fanout: fanned.fanout } : {}), ...(pageCapMeta ? { page_cap: pageCapMeta } : {}) }, finishExplainTarget(ctx, p, explainPrep, results, 'query', capturedMeta?.degraded)), false, 'delivered' in page ? page.delivered : undefined);
+      async rows => withCountMeta(withExplainTarget({ ...(await buildRetrievalResponseMeta(ctx, querySourceScope, queryText, rows, capturedMeta, { types, typeFilterNotice: typeFilter.notice, declarations, feedbackOp: 'query', entity: fanned.entity, filterHintFor: { op: 'query', p }, timings })), crag, ...(fanned.fanout ? { fanout: fanned.fanout } : {}), ...(pageCapMeta ? { page_cap: pageCapMeta } : {}) }, finishExplainTarget(ctx, p, explainPrep, results, 'query', capturedMeta?.degraded)), keywordCountMeta(await timings.part('response', 'keyword_count', () => keywordCount), ((p.offset as number) || 0) + results.length, !!(fanned.entity || fanned.fanout), queryUnlistedCountFilters(p))), false, 'delivered' in page ? page.delivered : undefined);
   },
   scope: 'read', mutating: false,
   cliHints: { name: 'query', positional: ['query'] },

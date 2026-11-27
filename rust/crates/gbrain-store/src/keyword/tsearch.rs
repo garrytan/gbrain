@@ -25,6 +25,7 @@
 
 use super::parser::{TokenType, parse};
 use super::stem::{english_stem, pg_lower};
+use super::stem_german::german_stem;
 use crate::error::{Result, StoreError};
 use std::cmp::Ordering;
 
@@ -49,22 +50,59 @@ const DEEP_QUERY_ITEMS: usize = 1024;
 /// Stack of the thread that walks a deep query. The address space is reserved, not committed.
 const DEEP_STACK_BYTES: usize = 256 << 20;
 
+thread_local! {
+    /// True on a thread `with_query_stack` started: its stack already fits the deepest query.
+    static ON_DEEP_STACK: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 /// Run `f`, which recurses once per item of a query of `items` items, on a thread with a stack
-/// deep enough for `MAX_QUERY_ITEMS` frames when the query is large. Small queries run in place.
-pub(super) fn with_query_stack<R: Send>(items: usize, f: impl FnOnce() -> R + Send) -> R {
-    if items <= DEEP_QUERY_ITEMS {
+/// deep enough for `MAX_QUERY_ITEMS` frames when the query is large. Small queries, and calls
+/// already on such a thread, run in place, so a search that wraps its whole walk starts one
+/// thread, not one per page or chunk it matches.
+pub(crate) fn with_query_stack<R: Send>(items: usize, f: impl FnOnce() -> R + Send) -> R {
+    if items <= DEEP_QUERY_ITEMS || ON_DEEP_STACK.with(std::cell::Cell::get) {
         return f();
     }
+    #[cfg(test)]
+    let spawns = DEEP_SPAWNS.with(|c| c.borrow().clone());
+    #[cfg(test)]
+    spawns.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     std::thread::scope(|scope| {
         let handle = std::thread::Builder::new()
             .stack_size(DEEP_STACK_BYTES)
-            .spawn_scoped(scope, f)
+            .spawn_scoped(scope, move || {
+                ON_DEEP_STACK.with(|on| on.set(true));
+                // A spawn inside counts toward the caller's tally.
+                #[cfg(test)]
+                DEEP_SPAWNS.with(|c| *c.borrow_mut() = spawns);
+                f()
+            })
             .expect("spawn the deep-query thread");
         match handle.join() {
             Ok(value) => value,
             Err(panic) => std::panic::resume_unwind(panic),
         }
     })
+}
+
+#[cfg(test)]
+thread_local! {
+    /// How many deep-query threads this thread and the deep threads it started have started.
+    static DEEP_SPAWNS: std::cell::RefCell<std::sync::Arc<std::sync::atomic::AtomicUsize>> =
+        std::cell::RefCell::new(std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)));
+}
+
+/// Resets this thread's deep-thread tally (tests).
+#[cfg(test)]
+pub(crate) fn reset_deep_spawns() {
+    DEEP_SPAWNS
+        .with(|c| *c.borrow_mut() = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0)));
+}
+
+/// The deep-query threads started since `reset_deep_spawns`, nested ones included (tests).
+#[cfg(test)]
+pub(crate) fn deep_spawns() -> usize {
+    DEEP_SPAWNS.with(|c| c.borrow().load(std::sync::atomic::Ordering::Relaxed))
 }
 
 fn too_deep() -> StoreError {
@@ -200,10 +238,37 @@ struct ParsedWord {
     pos: u16,
 }
 
-/// The dictionary the `english` configuration maps a token type to.
+/// The dictionary a configuration maps a token type to.
 enum Dict {
     EnglishStem,
+    GermanStem,
     Simple,
+}
+
+/// A text search configuration the store implements. `english` and `german` map the same token
+/// types to their Snowball dictionary (PostgreSQL's `snowball_create.sql` gives every Latin-script
+/// Snowball configuration the mapping of `english`); `simple` lowercases every one of those types.
+/// Any other configuration name has no port and is refused by [`FtsConfig::parse`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) enum FtsConfig {
+    #[default]
+    English,
+    German,
+    Simple,
+}
+
+impl FtsConfig {
+    /// The configuration `GBRAIN_FTS_LANGUAGE` names; `None` (absent) is `english`, the default.
+    pub(crate) fn parse(name: Option<&str>) -> Result<FtsConfig> {
+        match name.unwrap_or("english") {
+            "english" => Ok(FtsConfig::English),
+            "german" => Ok(FtsConfig::German),
+            "simple" => Ok(FtsConfig::Simple),
+            other => Err(StoreError::invalid(format!(
+                "no Snowball port for the {other} text search configuration"
+            ))),
+        }
+    }
 }
 
 fn english_dict(ty: TokenType) -> Option<Dict> {
@@ -222,6 +287,13 @@ fn english_dict(ty: TokenType) -> Option<Dict> {
 /// without taking a position; a stopword takes a position and emits no word; a lexeme longer than
 /// `MAXSTRLEN` bytes (lowercasing can lengthen a token) takes its position and is dropped.
 fn parsetext(text: &str) -> Vec<ParsedWord> {
+    parsetext_in(text, FtsConfig::English)
+}
+
+/// [`parsetext`] under `config`: `english` or `german` stem with their Snowball dictionary; `simple`
+/// sends every token type `english` maps to the `simple` dictionary (lowercased, no stemming, no
+/// stopwords).
+fn parsetext_in(text: &str, config: FtsConfig) -> Vec<ParsedWord> {
     let mut out = Vec::new();
     let mut pos: u32 = 0;
     for (ty, token) in parse(text) {
@@ -230,9 +302,15 @@ fn parsetext(text: &str) -> Vec<ParsedWord> {
         if token.len() >= MAXSTRLEN {
             continue;
         }
-        let lexeme = match english_dict(ty) {
+        let dict = english_dict(ty).map(|d| match (config, d) {
+            (FtsConfig::Simple, _) => Dict::Simple,
+            (FtsConfig::German, Dict::EnglishStem) => Dict::GermanStem,
+            (_, d) => d,
+        });
+        let lexeme = match dict {
             None => continue,
             Some(Dict::EnglishStem) => english_stem(token),
+            Some(Dict::GermanStem) => german_stem(token),
             Some(Dict::Simple) => {
                 let lowered = pg_lower(token);
                 if lowered.is_empty() {
@@ -290,6 +368,16 @@ fn make_tsvector(mut words: Vec<ParsedWord>) -> Result<TsVector> {
 /// `to_tsvector('english', text)`.
 pub(crate) fn to_tsvector(text: &str) -> Result<TsVector> {
     make_tsvector(parsetext(text))
+}
+
+/// `to_tsvector('simple', text)`.
+pub(crate) fn to_tsvector_simple(text: &str) -> Result<TsVector> {
+    make_tsvector(parsetext_in(text, FtsConfig::Simple))
+}
+
+/// `to_tsvector(config, text)`.
+pub(crate) fn to_tsvector_in(config: FtsConfig, text: &str) -> Result<TsVector> {
+    make_tsvector(parsetext_in(text, config))
 }
 
 /// `setweight(vector, weight)`: every position gets the weight; lexemes without positions stay
@@ -452,6 +540,8 @@ pub(crate) struct TsQuery {
 /// final array is the reverse).
 struct QueryBuilder {
     pushed: Vec<QItem>,
+    /// The configuration the operands parse under (`english` unless set).
+    config: FtsConfig,
     /// `curop - op`: the bytes of operand text pushed so far (each operand plus its NUL).
     sumlen: usize,
 }
@@ -460,6 +550,7 @@ impl QueryBuilder {
     fn new() -> Self {
         QueryBuilder {
             pushed: Vec::new(),
+            config: FtsConfig::English,
             sumlen: 0,
         }
     }
@@ -500,7 +591,7 @@ impl QueryBuilder {
     /// `pushval_morph`: parse one operand's text and push its lexemes, joined by `qoperator`,
     /// with stopword placeholders for the stopwords between them.
     fn pushval_morph(&mut self, text: &str, qoperator: Op) -> Result<()> {
-        let words = parsetext(text);
+        let words = parsetext_in(text, self.config);
         if words.is_empty() {
             self.push_stop();
             return Ok(());
@@ -767,6 +858,21 @@ pub(crate) fn plainto_tsquery(text: &str) -> Result<TsQuery> {
     b.finish()
 }
 
+/// `plainto_tsquery('simple', text)`.
+pub(crate) fn plainto_tsquery_simple(text: &str) -> Result<TsQuery> {
+    plainto_tsquery_in(FtsConfig::Simple, text)
+}
+
+/// `plainto_tsquery(config, text)`.
+pub(crate) fn plainto_tsquery_in(config: FtsConfig, text: &str) -> Result<TsQuery> {
+    let mut b = QueryBuilder::new();
+    b.config = config;
+    if !text.is_empty() {
+        b.pushval_morph(text, Op::And)?;
+    }
+    b.finish()
+}
+
 /// `phraseto_tsquery('english', text)`.
 pub(crate) fn phraseto_tsquery(text: &str) -> Result<TsQuery> {
     let mut b = QueryBuilder::new();
@@ -779,6 +885,22 @@ pub(crate) fn phraseto_tsquery(text: &str) -> Result<TsQuery> {
 /// C `isspace` in the C locale.
 fn c_isspace(b: u8) -> bool {
     matches!(b, b' ' | b'\t' | b'\n' | 0x0b | 0x0c | b'\r')
+}
+
+/// `t_isspace` at a character boundary, as PGLite (PostgreSQL 17, UTF-8, ctype `C.UTF-8`) reads it:
+/// a one-byte character by C `isspace`, a longer one by `iswspace`, which is the `[[:space:]]`
+/// class. So U+0085, U+2000-U+200A (not U+2007), U+2028, U+2029, U+205F and U+3000 separate
+/// websearch words, as they do on PGLite. (PostgreSQL 18 reads only ASCII here; PGLite is the
+/// engine a Rust brain must answer like.)
+fn space_at(s: &[u8], at: usize) -> bool {
+    let len = mblen(s, at);
+    if len == 1 {
+        return c_isspace(s[at]);
+    }
+    std::str::from_utf8(&s[at..(at + len).min(s.len())])
+        .ok()
+        .and_then(|t| t.chars().next())
+        .is_some_and(crate::cli_reads::pg_text::is_pg_space)
 }
 
 /// `ISOPERATOR`.
@@ -834,7 +956,7 @@ fn parse_or_operator(s: &[u8], at: usize) -> bool {
         if p >= s.len() {
             return false;
         }
-        if !c_isspace(s[p]) {
+        if !space_at(s, p) {
             break;
         }
     }
@@ -848,7 +970,7 @@ fn web_word(s: &[u8], at: usize) -> usize {
     let mut p = at + mblen(s, at);
     while p < s.len() {
         let b = s[p];
-        if c_isspace(b) || is_operator(b) || b == b'"' || b == b':' {
+        if space_at(s, p) || is_operator(b) || b == b'"' || b == b':' {
             break;
         }
         p += mblen(s, p);
@@ -895,7 +1017,7 @@ fn web_token<'a>(
                     *at += 1;
                     *state = WebState::WaitOperand;
                     continue;
-                } else if !c_isspace(c) {
+                } else if !space_at(s, *at) {
                     let start = *at;
                     let end = web_word(s, start);
                     *at = end;
@@ -915,7 +1037,7 @@ fn web_token<'a>(
                 } else if is_operator(c) {
                     *at += 1;
                     continue;
-                } else if !c_isspace(c) {
+                } else if !space_at(s, *at) {
                     *state = WebState::WaitOperand;
                     return WebToken::Opr(Op::And);
                 }
@@ -1511,6 +1633,56 @@ mod tests {
                     "fts_input({text:?}) rust {got:?} pg {:?}",
                     s(v, "fts_input")
                 ));
+            }
+        }
+        assert!(
+            bad.is_empty(),
+            "{} mismatches:\n{}",
+            bad.len(),
+            bad.join("\n")
+        );
+    }
+
+    #[test]
+    fn websearch_splits_on_pglite_non_ascii_spaces() {
+        // PGLite 0.4.3 (PostgreSQL 17.5, the repository's PGLite) answers, captured from
+        // `websearch_to_tsquery('english', q)::text`. The goldens above come from PostgreSQL 18.6,
+        // which reads only ASCII whitespace here; they hold none of these characters.
+        let separators = [
+            0x85, 0x2000, 0x2001, 0x2002, 0x2003, 0x2004, 0x2005, 0x2006, 0x2008, 0x2009, 0x200a,
+            0x2028, 0x2029, 0x205f, 0x3000,
+        ];
+        let shapes = [
+            ("cat{w}dog", "'cat' & 'dog'"),
+            ("cats{w}or{w}dogs", "'cat' | 'dog'"),
+            ("cats{w}-dogs", "'cat' & !'dog'"),
+            ("-{w}cats", "!'cat'"),
+            ("{w}-dogs", "!'dog'"),
+            ("cats{w}or", "'cat'"),
+            (
+                "running{w}\"quick{w}fox\"{w}or{w}jumps",
+                "'run' & 'quick' <-> 'fox' | 'jump'",
+            ),
+        ];
+        let mut bad = Vec::new();
+        for cp in separators {
+            let w = char::from_u32(cp).expect("scalar").to_string();
+            for (shape, want) in shapes {
+                let q = shape.replace("{w}", &w);
+                let got = websearch_to_tsquery(&q).expect("web").to_text();
+                if got != want {
+                    bad.push(format!("U+{cp:04X} {shape}: rust {got} pglite {want}"));
+                }
+            }
+        }
+        // Not in PGLite's class: the word stays whole and the parser splits it into a phrase.
+        for cp in [0x1680, 0x2007, 0xa0, 0x202f] {
+            let w = char::from_u32(cp).expect("scalar").to_string();
+            let got = websearch_to_tsquery(&format!("cats{w}-dogs"))
+                .expect("web")
+                .to_text();
+            if got != "'cat' <-> 'dog'" {
+                bad.push(format!("U+{cp:04X} cats-dogs: rust {got}"));
             }
         }
         assert!(

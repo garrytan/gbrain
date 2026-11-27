@@ -217,9 +217,10 @@ for (const kind of testBackends()) {
 
     test('GST-1158: a member removed while its email is being set is refused as retired and keeps no email', async () => {
       await addMember(engine, 'mia-example');
-      const racing = Object.create(engine, { executeRaw: { value: async (sql: string, params?: unknown[]) => {
-        if (sql.startsWith('UPDATE access_members SET email')) await removeMember(engine, 'mia-example');
-        return engine.executeRaw(sql, params);
+      // The removal lands just before the email write (the engine's setAccessMemberEmail member).
+      const racing = Object.create(engine, { setAccessMemberEmail: { value: async (id: string, email: string | null) => {
+        await removeMember(engine, 'mia-example');
+        return engine.setAccessMemberEmail(id, email);
       } } }) as BrainEngine;
       expect(await refusal(setMemberEmail(racing, 'mia-example', 'mia@example.com'))).toEqual({ code: 'access_member_id_retired' });
       expect(await getMember(engine, 'mia-example')).toMatchObject({ status: 'removed', email: null });

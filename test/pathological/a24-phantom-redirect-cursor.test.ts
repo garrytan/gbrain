@@ -75,9 +75,9 @@ async function live(engine: BrainEngine, slug: string): Promise<boolean> {
 function failingResidue(engine: BrainEngine, error: () => unknown, pageIds?: Set<number>): BrainEngine {
   return new Proxy(engine, { get(target, prop) {
     const value = Reflect.get(target, prop);
-    if (prop === 'executeRaw' && typeof value === 'function') {
-      return (sql: string, params?: unknown[]) => /FROM timeline_entries WHERE page_id/.test(sql) && (!pageIds || pageIds.has(Number(params?.[0])))
-        ? Promise.reject(error()) : (value as Function).call(target, sql, params);
+    if (prop === 'pageHasTimelineEntries' && typeof value === 'function') {
+      return (pageId: number | string | null) => (!pageIds || pageIds.has(Number(pageId)))
+        ? Promise.reject(error()) : (value as Function).call(target, pageId);
     }
     return typeof value === 'function' ? value.bind(target) : value;
   } }) as BrainEngine;

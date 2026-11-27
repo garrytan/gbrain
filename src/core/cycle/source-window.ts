@@ -31,40 +31,25 @@ export interface SourceCycleWindow {
 }
 
 /**
- * The listing instant, moved back to just before the oldest transaction still
- * open on another connection the cycle's role can see (at most 10 minutes
- * back): `pages.updated_at` is its writer's transaction start, so a page that
- * commits after the listing still lands after the cursor. An autovacuum
- * worker never writes a page, so its transaction does not move the instant;
- * one open across the listing made the next cycle walk the pages written
- * since it started again.
- */
-const LISTING_INSTANT_SQL = `SELECT to_char(GREATEST(LEAST(clock_timestamp(),
-  (SELECT min(xact_start) FROM pg_stat_activity WHERE datname = current_database() AND pid <> pg_backend_pid() AND backend_type <> 'autovacuum worker') - interval '1 millisecond'),
-  clock_timestamp() - interval '10 minutes') AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS at`;
-
-/**
  * One window of the source's live pages after `since` (every page when null), and the cursor the next one starts after.
  * Cursors bind as text: a driver that reads a timestamp parameter as a JS date keeps only milliseconds.
  * They are written as UTC ISO with microseconds whatever the session DateStyle and TimeZone (#8771): the queued
  * handler drops a cursor Date.parse cannot read, and a day-first style is not one.
  */
 export async function listSourceChangedPages(engine: BrainEngine, sourceId: string, since: string | null): Promise<SourceCycleWindow> {
-  const [{ at } = { at: undefined }] = await engine.executeRaw<{ at: string }>(LISTING_INSTANT_SQL);
-  const [state] = await engine.executeRaw<{ stamped: string | null; slug: string | null }>(
-    `SELECT config->>'last_source_cycle_window_at' AS stamped, config->>'last_source_cycle_window_slug' AS slug FROM sources WHERE id=$1`, [sourceId]);
-  const slug = since !== null && state?.stamped === since ? state.slug ?? '' : '';
+  const at = await engine.readCycleListingInstant();
+  const config = (await engine.readSourceState(sourceId))?.config;
+  const stamped = config?.last_source_cycle_window_at;
+  const stampedSlug = config?.last_source_cycle_window_slug;
+  const slug = since !== null && stamped === since && typeof stampedSlug === 'string' ? stampedSlug : '';
   const limit = sourceWindow.pageLimit;
-  const rows = await engine.executeRaw<{ slug: string; updated_at: string }>(
-    `SELECT slug, to_char(updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS updated_at FROM pages
-      WHERE source_id=$1 AND deleted_at IS NULL AND ($2::text IS NULL OR (updated_at, slug) > ($2::text::timestamptz, $3::text))
-      ORDER BY updated_at, slug LIMIT $4`,
-    [sourceId, since, slug, limit + 1]);
+  const rows = await engine.listSourceChangedPagesAfter(sourceId, since, slug, limit + 1);
   const window = { since: { at: since, slug }, slugs: rows.slice(0, limit).map(row => row.slug) };
   if (!at) return { ...window, next: undefined };
   if (rows.length <= limit) return { ...window, next: { at, slug: '' } };
   const last = rows[limit - 1]!;
-  const [{ before }] = await engine.executeRaw<{ before: boolean }>('SELECT $1::text::timestamptz < $2::text::timestamptz AS before', [at, last.updated_at]);
+  // Both are UTC ISO text with microseconds (`YYYY-MM-DDTHH:MM:SS.UUUUUUZ`), so text order is time order.
+  const before = at < last.updated_at;
   return { ...window, next: before ? { at, slug: '' } : { at: last.updated_at, slug: last.slug } };
 }
 

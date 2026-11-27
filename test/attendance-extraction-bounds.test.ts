@@ -30,7 +30,7 @@ test('commented attendance cannot borrow visible evidence and masking preserves 
 
 test('strict attendance names with a non-source colon remain eligible for exact title resolution', async () => {
   const calls: unknown[][] = [];
-  const engine = { async executeRaw(_sql: string, args: unknown[]) { calls.push(args); return [{ slug: person }]; } };
+  const engine = { async listAttendanceMatches(...args: unknown[]) { calls.push(args); return [person]; } };
   const live = makeResolver(engine as never, { mode: 'batch', sourceId: 'example' });
   expect(await live.resolveAttendance!('Example Person: host', 'people')).toBe(person);
   expect(calls[0]?.[2]).toBe('Example Person: host');
@@ -142,9 +142,9 @@ test('strict attendance resolution caches repeated lookups separately within a b
   const calls: unknown[][] = [];
   const engine = {
     async getPage() { return { slug: person }; },
-    async executeRaw(_sql: string, args: unknown[]) {
+    async listAttendanceMatches(...args: unknown[]) {
       calls.push(args);
-      return args[2] === person ? [{ slug: person }] : [];
+      return args[2] === person ? [person] : [];
     },
   };
   const live = makeResolver(engine as never, { mode: 'live', sourceId: 'example' });

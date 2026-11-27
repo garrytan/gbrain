@@ -75,15 +75,7 @@ export async function partitionCompletedSynthesis(
  * stampDreamProvenance).
  */
 async function loadRetainedOutputSources(engine: BrainEngine, sourceId: string): Promise<Set<string>> {
-  const rows = await engine.executeRaw<{ raw_source: string }>(
-    `SELECT DISTINCT frontmatter->>'raw_source' AS raw_source
-       FROM pages
-      WHERE source_id = $1
-        AND deleted_at IS NULL
-        AND frontmatter->>'dream_generated' = 'true'
-        AND COALESCE(frontmatter->>'raw_source', '') <> ''`,
-    [sourceId],
-  );
+  const rows = await engine.listRetainedDreamOutputSources(sourceId);
   return new Set(rows.map(row => basename(row.raw_source)));
 }
 
@@ -95,7 +87,7 @@ async function loadRetainedOutputSources(engine: BrainEngine, sourceId: string):
 async function readManagedSourceIncarnation(engine: BrainEngine, sourceId: string): Promise<string | null> {
   try {
     if (!await managedPersistenceEnabled(engine)) return null;
-    const [row] = await engine.executeRaw<{ incarnation: string | null }>('SELECT incarnation FROM sources WHERE id = $1', [sourceId]);
+    const row = await engine.readDreamSourceIncarnation(sourceId);
     return row?.incarnation ?? null;
   } catch {
     return null;

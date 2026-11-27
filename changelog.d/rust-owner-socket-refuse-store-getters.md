@@ -1,0 +1,1 @@
+- A second process on a Rust brain now refuses `worktreeClaimStore` and `writerAdminStore` at once with `engine_capability_missing`, as it refuses `transaction`: their stores run inside the owner's transaction, so they never cross the owner socket.

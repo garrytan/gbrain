@@ -89,19 +89,17 @@ export function frontmatterWhereFragment(where: FrontmatterWhere | undefined): S
  * The authoritative check on finished rows: arms that do not run through the
  * filtered SQL legs (exact lookup, relational, alias fan-out, facts) can add
  * pages, so a filtered search keeps only rows whose page matches. One
- * indexed read over the result's page ids; a row with no page id is dropped.
+ * indexed read over the result's page ids (BrainEngine.filterPageIdsByFrontmatter);
+ * a row with no page id is dropped.
  */
 export async function keepFrontmatterMatches<T extends { page_id?: number | null }>(
-  engine: { executeRaw<R>(sql: string, params?: unknown[]): Promise<R[]> },
+  engine: { filterPageIdsByFrontmatter(ids: number[], where: FrontmatterWhere): Promise<number[]> },
   rows: T[],
   where: FrontmatterWhere | undefined,
 ): Promise<T[]> {
   if (!where || rows.length === 0) return rows;
   const ids = [...new Set(rows.flatMap(r => typeof r.page_id === 'number' && r.page_id > 0 ? [r.page_id] : []))];
   if (ids.length === 0) return [];
-  const params: unknown[] = [ids];
-  const clause = frontmatterWhereSql('p', where, json => `$${params.push(json)}`);
-  const matched = await engine.executeRaw<{ id: number | string }>(`SELECT p.id FROM pages p WHERE p.id = ANY($1::bigint[])${clause}`, params);
-  const keep = new Set(matched.map(r => Number(r.id)));
+  const keep = new Set(await engine.filterPageIdsByFrontmatter(ids, where));
   return rows.filter(r => typeof r.page_id === 'number' && keep.has(r.page_id));
 }

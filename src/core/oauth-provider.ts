@@ -1,7 +1,8 @@
 /**
  * GBrain OAuth 2.1 Provider — implements MCP SDK's OAuthServerProvider.
  *
- * Backed by raw SQL (PGLite or Postgres), not the BrainEngine interface.
+ * Backed by raw SQL (PGLite or Postgres), not the BrainEngine interface, except the bearer check: given an engine,
+ * verifyAccessToken reads the token through engine members (engine-sql/access-credentials.ts BEARER_SQL).
  * OAuth is infrastructure, not brain operations.
  *
  * Supports:
@@ -37,12 +38,14 @@ import {
   dcrScopeViolation,
 } from './scope.ts';
 import type { AuthInfo as CoreAuthInfo } from './operations.ts';
-import { TOKEN_TTL_MAX_SECONDS, authSourcesFromGrant, grantFromClient, grantFromRow, normalizeGrantBrain, intersectGrantedScopes, privatePagesAuth, type GrantPatch } from './grants/model.ts';
+import { TOKEN_TTL_MAX_SECONDS, authSourcesFromGrant, grantFromClient, grantFromRow, intersectGrantedScopes, privatePagesAuth, type GrantPatch } from './grants/model.ts';
 import { assertValidSlugPrefixes, pgArray } from './grants/encoding.ts';
 import { rescopeOAuthClient, type RescopeClientOptions, type RescopeClientResult } from './grants/rescope.ts';
-import { grantValidationContext, validateClientGrant, insertClientGrant, assertGrantPatch } from './grants/service.ts';
+import { grantValidationContext, insertClientGrant, type GrantClientMetadata } from './grants/service.ts';
+import { manualClientGrant } from './grants/register-grant.ts';
+import type { ClientGrant, GrantValidationContext } from './grants/model.ts';
 import { resolveTokenGrant, touchTokenLastUsed } from './grants/legacy-token.ts';
-import { clientReadShared, tokenReadSources } from './grants/read-shared.ts';
+import { clientReadShared, sourceReadsFor, tokenReadSources } from './grants/read-shared.ts';
 import { NO_SOURCES } from './source-id.ts';
 
 /**
@@ -55,6 +58,8 @@ import { NO_SOURCES } from './source-id.ts';
 export { assertValidSlugPrefixes } from './grants/encoding.ts';
 
 import type { SqlQuery, SqlValue } from './sql-query.ts';
+import type { BrainEngine } from './engine.ts';
+import { utcCurrentGrant, type OauthTokenRung } from './engine-sql/access-credentials.ts';
 import { storedMinTrust } from './trust/tier.ts';
 import { tokenMemberBinding } from './access/token-binding.ts';
 import { withAttestRight } from './access/actor-model.ts';
@@ -228,6 +233,11 @@ export function coerceTimestamp(value: unknown): number | undefined {
 
 interface GBrainOAuthProviderOptions {
   sql: SqlQuery;
+  /**
+   * The brain's engine. When set, the bearer check (verifyAccessToken) reads the token and stamps its last use through
+   * engine members, so a store with no raw SQL (the Rust engine) authenticates its tokens; `sql` serves the rest.
+   */
+  engine?: BrainEngine;
   /** Required for grant issuance/rotation/revocation; registration and verification need only sql. */
   transaction?: OAuthTransaction;
   /** Default token TTL in seconds (default: 3600 = 1 hour) */
@@ -324,10 +334,14 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
     private allowClientCredentialsDcr: boolean,
     private dcrTtlMin: number,
     private dcrTtlMax: number,
+    private engine?: BrainEngine,
   ) {}
 
   async getClient(clientId: string): Promise<OAuthClientInformationFull | undefined> {
-    const rows = await this.sql`
+    // An engine reads the whole row through its member; a soft-deleted client is no client, as the SQL filter has it.
+    const rows: Record<string, unknown>[] = this.engine
+      ? await this.engine.readOauthClient(clientId).then(row => row && row.deleted_at == null ? [{ ...row }] : [])
+      : await this.sql`
       SELECT client_id, client_secret_hash, client_name, redirect_uris,
              grant_types, scope, token_endpoint_auth_method,
              client_id_issued_at, client_secret_expires_at
@@ -507,6 +521,23 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
         }
       }
     };
+    // #2179: the optional `token_ttl_seconds` hint (dcrRegistrationContext): absent or malformed → server default; out of
+    // range → clamped into [dcrTtlMin, dcrTtlMax]; never rejected. Persisted into token_ttl and echoed as stored.
+    let effectiveTtl: number | undefined;
+    const requestedTtl = dcrRegistrationContext.getStore()?.tokenTtlSeconds;
+    const clampedTtl = typeof requestedTtl === 'number' && Number.isFinite(requestedTtl)
+      ? clampDcrTokenTtl(requestedTtl, this.dcrTtlMin, this.dcrTtlMax) : undefined;
+    // An engine stores the row, ttl included, through its typed member (a Rust brain too); an older schema uses the ladder.
+    if (this.engine) {
+      try {
+        await this.engine.insertOauthClient({ client_id: clientId, client_secret_hash: secretHash, client_name: client.client_name || 'unnamed',
+          redirect_uris: (client.redirect_uris || []).map(String), grant_types: grantTypes, scope: registeredScope, token_endpoint_auth_method: authMethod,
+          client_id_issued_at: now, source_id: 'default', federated_read: ['default'], registered_via: 'dcr', ...(clampedTtl !== undefined ? { token_ttl: clampedTtl } : {}) });
+        return this.registrationResponse(client, clientId, clientSecret, registeredScope, now, clampedTtl);
+      } catch (err) {
+        if (!isUndefinedColumnError(err, 'registered_via')) throw err;
+      }
+    }
     try {
       await this.sql`
         INSERT INTO oauth_clients (client_id, client_secret_hash, client_name, redirect_uris,
@@ -523,17 +554,8 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
       await insertUnmarked();
     }
 
-    // #2179: optional `token_ttl_seconds` hint from the DCR request body,
-    // carried via dcrRegistrationContext (the SDK strips unknown body
-    // members). Fail-safe posture: absent or malformed → server default TTL;
-    // out-of-range → clamped into [dcrTtlMin, dcrTtlMax]; never rejected.
-    // Persist into oauth_clients.token_ttl (the same per-client override the
-    // admin API writes) and echo the EFFECTIVE value in the registration
-    // response so the caller can show the user what it actually got.
-    let effectiveTtl: number | undefined;
-    const requestedTtl = dcrRegistrationContext.getStore()?.tokenTtlSeconds;
-    if (typeof requestedTtl === 'number' && Number.isFinite(requestedTtl)) {
-      const clamped = clampDcrTokenTtl(requestedTtl, this.dcrTtlMin, this.dcrTtlMax);
+    if (clampedTtl !== undefined) {
+      const clamped = clampedTtl;
       try {
         await this.sql`UPDATE oauth_clients SET token_ttl = ${clamped} WHERE client_id = ${clientId}`;
         effectiveTtl = clamped;
@@ -544,23 +566,15 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
       }
     }
 
-    // Public clients: omit `client_secret` entirely from the response so
-    // the wire payload matches RFC 7591 §3.2.1 ("if the client is a
-    // public client, the authorization server MUST NOT issue a client
-    // secret"). Confidential clients return the freshly-generated secret
-    // exactly once — same shape as before.
-    // Override scope with the filtered grant so the client sees what was
-    // actually registered (RFC 7591 §3.2.1 returned metadata).
-    const response: OAuthClientInformationFull = {
-      ...client,
-      scope: registeredScope,
-      client_id: clientId,
-      client_id_issued_at: now,
-    };
+    return this.registrationResponse(client, clientId, clientSecret, registeredScope, now, effectiveTtl);
+  }
+
+  /** RFC 7591 §3.2.1: no `client_secret` for a public client, the secret once for a confidential one, the filtered scope, and the TTL only as stored. */
+  private registrationResponse(client: Omit<OAuthClientInformationFull, 'client_id' | 'client_id_issued_at'>, clientId: string,
+    clientSecret: string | undefined, registeredScope: string, now: number, effectiveTtl: number | undefined): OAuthClientInformationFull {
+    const response: OAuthClientInformationFull = { ...client, scope: registeredScope, client_id: clientId, client_id_issued_at: now };
     if (clientSecret) response.client_secret = clientSecret;
-    if (effectiveTtl !== undefined) {
-      (response as Record<string, unknown>).token_ttl_seconds = effectiveTtl;
-    }
+    if (effectiveTtl !== undefined) (response as Record<string, unknown>).token_ttl_seconds = effectiveTtl;
     return response;
   }
 }
@@ -569,12 +583,93 @@ class GBrainClientsStore implements OAuthRegisteredClientsStore {
 // OAuth Provider
 // ---------------------------------------------------------------------------
 
+/**
+ * The registration-time checks, the minted id and secret, and the grant of a manual client registration: everything
+ * registerClientManual decides before its SQL. `grant(context)` builds and validates the scoped grant (the up-to-date
+ * schema branch). auth.ts registerScopedClient shares it on the engine path.
+ */
+export function planManualClient(
+  name: string,
+  grantTypes: string[],
+  scopes: string,
+  redirectUris: string[] = [],
+  sourceId: string = 'default',
+  federatedRead?: string[],
+  tokenEndpointAuthMethod?: string,
+  agentBindings?: AgentClientBindings,
+  grantPatch?: GrantPatch,
+): ManualClientPlan {
+  // v0.28: ALLOWED_SCOPES allowlist. Reject `--scopes "read flying-unicorn"`
+  // at registration so meaningless scope strings can't pile up in the DB.
+  // Pre-allowlist clients keep working (allowlist is registration-time;
+  // existing rows aren't re-validated).
+  assertAllowedScopes(parseScopeString(scopes));
+
+  // A bound_slug_prefixes entry that is empty or whitespace-only makes
+  // `startsWith` true for every slug — a binding that looks set in
+  // `auth list` and the admin UI while fencing nothing. Reject at
+  // registration, the same way source ids are validated.
+  if (agentBindings?.boundTools && (agentBindings.boundTools.length === 0 || agentBindings.boundTools.some(tool => typeof tool !== 'string' || !tool.trim()))) {
+    throw new Error('--bound-tools requires at least one non-empty tool name');
+  }
+  if (agentBindings?.boundSlugPrefixes) {
+    // Same rule as rescopeClient: an empty list is ambiguous. It registers
+    // as deny-all for every direct write while printing an empty binding
+    // line, so an operator cannot tell it from an unbound client.
+    if (agentBindings.boundSlugPrefixes.length === 0) {
+      throw new Error('--bound-slug-prefixes cannot be an empty list (pass prefixes, or omit the flag for full-source write authority)');
+    }
+    assertValidSlugPrefixes(agentBindings.boundSlugPrefixes);
+  }
+
+  // v0.41.3 (T1+T2): validate token_endpoint_auth_method at the registration
+  // boundary. Throws InvalidTokenEndpointAuthMethodError on bad input.
+  // Default is `client_secret_post` (RFC 7591 §2).
+  const authMethod = validateTokenEndpointAuthMethod(tokenEndpointAuthMethod);
+
+  const clientId = generateToken('gbrain_cl_');
+  // v0.41.3 (T2): atomic public-client INSERT. When the caller declares
+  // `tokenEndpointAuthMethod: 'none'` we mint NO secret and INSERT with
+  // client_secret_hash = NULL in a single statement. Pre-fix, the admin
+  // endpoint did INSERT-then-UPDATE which left a confidential row stranded
+  // if the UPDATE failed mid-flight (codex F4). Confidential clients
+  // (`client_secret_post` / `client_secret_basic`) get the secret minted
+  // and hashed as before.
+  const isPublicClient = authMethod === 'none';
+  const clientSecret = isPublicClient ? undefined : generateToken('gbrain_cs_');
+  const secretHash = clientSecret ? hashToken(clientSecret) : null;
+  const now = Math.floor(Date.now() / 1000);
+
+  // v0.34.1 (#861 + #876): persist source_id AND federated_read so
+  // verifyAccessToken can populate both AuthInfo fields. Defaults:
+  //   source_id = 'default' (matches v60 backfill)
+  //   federated_read = [source_id] when omitted (a non-federated client
+  //                    has read scope == write scope, the v0.33 default)
+  const federated = federatedRead && federatedRead.length > 0 ? federatedRead : [sourceId];
+  const metadata: GrantClientMetadata = { secretHash, redirectUris, grantTypes, authMethod, issuedAt: now };
+  const grant = (context: GrantValidationContext): ClientGrant => manualClientGrant({ clientId, name, scopes, sourceId, federated, agentBindings, grantPatch }, context);
+  return { clientId, clientSecret, secretHash, authMethod, now, federated, metadata, grant };
+}
+
+/** What planManualClient decided. */
+export interface ManualClientPlan {
+  clientId: string;
+  clientSecret?: string;
+  secretHash: string | null;
+  authMethod: TokenEndpointAuthMethod;
+  now: number;
+  federated: string[];
+  metadata: GrantClientMetadata;
+  grant(context: GrantValidationContext): ClientGrant;
+}
+
 export class GBrainOAuthProvider implements OAuthServerProvider {
   // The SDK otherwise consumes the verifier and calls our exchange with
   // undefined. This provider validates S256 itself before consuming the code,
   // for both the SDK's public-client route and our confidential-client route.
   readonly skipLocalPkceValidation = true;
   private sql: SqlQuery;
+  private engine?: BrainEngine;
   private transaction?: OAuthTransaction;
   private _clientsStore: GBrainClientsStore;
   private readonly dcrDisabled: boolean;
@@ -584,11 +679,12 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
 
   constructor(options: GBrainOAuthProviderOptions) {
     this.sql = options.sql;
+    this.engine = options.engine;
     this.transaction = options.transaction;
     this.dcrDisabled = options.dcrDisabled === true;
     this.tokenTtl = options.tokenTtl || 3600;
     this.refreshTtl = options.refreshTtl || 30 * 24 * 3600;
-    this.grants = new OAuthGrants({ sql: this.sql, transaction: options.transaction, tokenTtl: this.tokenTtl, refreshTtl: this.refreshTtl, resourceUrl: options.resourceUrl });
+    this.grants = new OAuthGrants({ sql: this.sql, engine: options.engine, transaction: options.transaction, tokenTtl: this.tokenTtl, refreshTtl: this.refreshTtl, resourceUrl: options.resourceUrl });
     // #2179 fail-closed: an unset DCR max is bounded by the operator's own
     // token TTL — never a fixed permissive ceiling — so a self-registering
     // client cannot elect a longer-lived token than the server default
@@ -600,6 +696,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
       options.allowClientCredentialsDcr === true,
       dcrTtlMin,
       dcrTtlMax,
+      options.engine,
     );
   }
 
@@ -638,6 +735,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     // F1 hardening: bind client_id atomically so a wrong client cannot read
     // another client's PKCE challenge. Pre-fix the SELECT didn't filter on
     // client_id at all.
+    if (this.engine) return this.challengeOrRefuse(await this.engine.readOauthCodeChallenge(codeHash, client.client_id, Math.floor(Date.now() / 1000)));
     const rows = await this.sql`
       SELECT code_challenge FROM oauth_codes
       JOIN oauth_clients ON oauth_clients.client_id = oauth_codes.client_id
@@ -646,8 +744,12 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         AND oauth_codes.client_id = ${client.client_id}
         AND oauth_codes.expires_at > ${Math.floor(Date.now() / 1000)}
     `;
-    if (rows.length === 0) throw new InvalidGrantError('Authorization code not found or expired');
-    return rows[0].code_challenge as string;
+    return this.challengeOrRefuse(rows.length === 0 ? null : rows[0].code_challenge as string);
+  }
+
+  private challengeOrRefuse(challenge: string | null): string {
+    if (challenge === null) throw new InvalidGrantError('Authorization code not found or expired');
+    return challenge;
   }
 
   async exchangeAuthorizationCode(
@@ -677,7 +779,27 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
   // Token Verification
   // -------------------------------------------------------------------------
 
-  async verifyAccessToken(token: string): Promise<SdkAuthInfo> {
+  /**
+   * One rung of the bearer check's OAuth token read: through the engine member when the provider has an engine (a store
+   * that keeps no OAuth tokens finds none), else the statement `viaSql` sends (BEARER_SQL.oauth_rungs keeps both equal).
+   */
+  private oauthTokenRows(rung: OauthTokenRung, tokenHash: string, viaSql: () => Promise<Record<string, unknown>[]>): Promise<Record<string, unknown>[]> {
+    return this.engine ? this.engine.readOauthAccessTokenRows(tokenHash, rung) : viaSql().then((rows) => rows.map(utcCurrentGrant));
+  }
+
+  /** The bearer check's legacy access_tokens read: the engine member when set, else the same statement (BEARER_SQL). */
+  private async legacyTokenRows(tokenHash: string): Promise<Record<string, unknown>[]> {
+    if (this.engine) {
+      const row = await this.engine.readActiveAccessTokenByHash(tokenHash, 'provider');
+      return row ? [row] : [];
+    }
+    return this.sql`
+      SELECT * FROM access_tokens
+      WHERE token_hash = ${tokenHash} AND revoked_at IS NULL
+    `;
+  }
+
+  async verifyAccessToken(token: string, opts?: { touch?: boolean }): Promise<SdkAuthInfo> {
     const tokenHash = hashToken(token);
     const now = Math.floor(Date.now() / 1000);
 
@@ -694,7 +816,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     // every token verification.
     let oauthRows: Record<string, unknown>[];
     try {
-      oauthRows = await this.sql`
+      oauthRows = await this.oauthTokenRows(0, tokenHash, () => this.sql`
         SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name, c.scope AS current_scopes, to_jsonb(t)->>'grant_type' AS token_grant,
                (to_jsonb(c) - 'client_secret_hash') AS current_grant,
                EXISTS(SELECT 1 FROM sources s WHERE s.id = to_jsonb(c)->>'source_id'
@@ -707,7 +829,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         LEFT JOIN oauth_clients c ON c.client_id = t.client_id
         WHERE t.token_hash = ${tokenHash} AND t.token_type = 'access'
           AND c.client_id IS NOT NULL AND (to_jsonb(c)->>'deleted_at') IS NULL
-      `;
+      `);
     } catch (err) {
       // Degrade ladder for brains that haven't run apply-migrations yet:
       // surface/surface_set_by (v127) → bound_slug_prefixes (v85) →
@@ -740,7 +862,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         // fail-OPEN by design: the serve-http ceiling still bounds every
         // request, so a missing per-client surface only means "server
         // surface applies", never a widened catalog.
-        oauthRows = await this.sql`
+        oauthRows = await this.oauthTokenRows(1, tokenHash, () => this.sql`
           SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name, c.scope AS current_scopes,
                (to_jsonb(c) - 'client_secret_hash') AS current_grant,
                EXISTS(SELECT 1 FROM sources s WHERE s.id = to_jsonb(c)->>'source_id'
@@ -752,12 +874,12 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
           LEFT JOIN oauth_clients c ON c.client_id = t.client_id
           WHERE t.token_hash = ${tokenHash} AND t.token_type = 'access'
           AND c.client_id IS NOT NULL AND (to_jsonb(c)->>'deleted_at') IS NULL
-        `;
+        `);
       } catch (errS) {
         if (!missingOAuthColumn(errS)) throw errS;
         try {
           // v85 missing: keep source_id + federated_read, drop the fence column.
-          oauthRows = await this.sql`
+          oauthRows = await this.oauthTokenRows(2, tokenHash, () => this.sql`
             SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name, c.scope AS current_scopes,
                (to_jsonb(c) - 'client_secret_hash') AS current_grant,
                EXISTS(SELECT 1 FROM sources s WHERE s.id = to_jsonb(c)->>'source_id'
@@ -769,12 +891,12 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
             LEFT JOIN oauth_clients c ON c.client_id = t.client_id
             WHERE t.token_hash = ${tokenHash} AND t.token_type = 'access'
           AND c.client_id IS NOT NULL AND (to_jsonb(c)->>'deleted_at') IS NULL
-          `;
+          `);
         } catch (err2) {
           if (!missingOAuthColumn(err2)) throw err2;
           try {
             // v61 missing: source_id only.
-            oauthRows = await this.sql`
+            oauthRows = await this.oauthTokenRows(3, tokenHash, () => this.sql`
               SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name, c.scope AS current_scopes,
                (to_jsonb(c) - 'client_secret_hash') AS current_grant,
                EXISTS(SELECT 1 FROM sources s WHERE s.id = to_jsonb(c)->>'source_id'
@@ -785,11 +907,11 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
               LEFT JOIN oauth_clients c ON c.client_id = t.client_id
               WHERE t.token_hash = ${tokenHash} AND t.token_type = 'access'
           AND c.client_id IS NOT NULL AND (to_jsonb(c)->>'deleted_at') IS NULL
-            `;
+            `);
           } catch (err3) {
             if (!missingOAuthColumn(err3)) throw err3;
             // Truly pre-v60: pre-v0.34 projection.
-            oauthRows = await this.sql`
+            oauthRows = await this.oauthTokenRows(4, tokenHash, () => this.sql`
               SELECT t.client_id, t.scopes, t.expires_at, t.resource, c.client_name, c.scope AS current_scopes,
                (to_jsonb(c) - 'client_secret_hash') AS current_grant,
                EXISTS(SELECT 1 FROM sources s WHERE s.id = to_jsonb(c)->>'source_id'
@@ -800,7 +922,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
               LEFT JOIN oauth_clients c ON c.client_id = t.client_id
               WHERE t.token_hash = ${tokenHash} AND t.token_type = 'access'
           AND c.client_id IS NOT NULL AND (to_jsonb(c)->>'deleted_at') IS NULL
-            `;
+            `);
           }
         }
       }
@@ -854,7 +976,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         allowedSources = allowedSources.filter(id => (row.active_read_sources as string[]).includes(id));
         if (allowedSources.length === 0) effectiveScopes.length = 0;
       }
-      const shared = await clientReadShared(this.sql, currentGrant, allowedSources ?? [rowSourceId ?? 'default'], effectiveScopes.length > 0, async () => (await tokenMemberBinding(this.sql, currentGrant, currentGrant.client_id_issued_at)).member?.id ?? null);
+      const shared = await clientReadShared(sourceReadsFor(this.engine, this.sql), currentGrant, allowedSources ?? [rowSourceId ?? 'default'], effectiveScopes.length > 0, async () => (await tokenMemberBinding(this.sql, currentGrant, currentGrant.client_id_issued_at, this.engine)).member?.id ?? null);
       // v0.42.72.0: slug-prefix write binding. Array (even empty — the
       // fence treats [] as deny-all, matching submit_agent's fail-closed
       // posture) when the client carries a binding; undefined when the
@@ -889,7 +1011,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
         token,
         clientId: row.client_id as string,
         principal: { kind: 'oauth_client', id: row.client_id as string },
-        ...withAttestRight(await tokenMemberBinding(this.sql, currentGrant, currentGrant.client_id_issued_at), currentGrant, row.token_grant), ...shared?.flags,
+        ...withAttestRight(await tokenMemberBinding(this.sql, currentGrant, currentGrant.client_id_issued_at, this.engine), currentGrant, row.token_grant), ...shared?.flags,
         clientName: (row.client_name as string | null) ?? undefined,
         scopes: effectiveScopes,
         issuedScopes,
@@ -938,16 +1060,13 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     // pre-F3 rows no grant columns, and `scopes` (original schema) must never
     // drop out of the projection, or normalizeTokenScopes(undefined) would
     // grandfather a scoped token to full admin (ship-review P1).
-    const legacyRows: Record<string, unknown>[] = await this.sql`
-      SELECT * FROM access_tokens
-      WHERE token_hash = ${tokenHash} AND revoked_at IS NULL
-    `;
+    const legacyRows = await this.legacyTokenRows(tokenHash);
 
     if (legacyRows.length > 0) {
       // For legacy tokens, name = clientId = clientName (single identifier).
       // #2833: debounced fire-and-forget last_used_at update that never blocks
       // or fails verification; shared with src/mcp/http-transport.ts.
-      void touchTokenLastUsed(this.sql, legacyRows[0]);
+      if (opts?.touch !== false) void touchTokenLastUsed(this.engine ?? this.sql, legacyRows[0]);
       const name = legacyRows[0].name as string;
       // One grant shape (grants/model.ts), shared with the legacy HTTP
       // transport so the two cannot drift. Unified rows read the columns,
@@ -956,19 +1075,19 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
       // #4043) is grandfathered full access; an array is honored as-is,
       // including [] as deny. Takes holders null → the /mcp dispatch site
       // defaults to the fail-closed ['world'].
-      const grant = await resolveTokenGrant(this.sql, legacyRows[0]);
+      const grant = await resolveTokenGrant(this.sql, legacyRows[0], this.engine);
       return {
         token,
         clientId: name,
         principal: { kind: 'legacy_token', id: String(legacyRows[0].id) },
-        ...withAttestRight(await tokenMemberBinding(this.sql, legacyRows[0], legacyRows[0].created_at), legacyRows[0], 'legacy'),
+        ...withAttestRight(await tokenMemberBinding(this.sql, legacyRows[0], legacyRows[0].created_at, this.engine), legacyRows[0], 'legacy'),
         clientName: name,
         scopes: grant.scopes,
         ...(grant.allowedOperations === null ? {} : { allowedOperations: grant.allowedOperations }),
         expiresAt: Math.floor(Date.now() / 1000) + 365 * 24 * 3600, // Legacy tokens never expire — set 1yr future
         // #3242 parity: hasSourceGrant=false only on the historical no-grant
         // floor, the one case that may widen unqualified reads.
-        ...await tokenReadSources(this.sql, grant, async () => (await tokenMemberBinding(this.sql, legacyRows[0], legacyRows[0].created_at)).member?.id ?? null),
+        ...await tokenReadSources(sourceReadsFor(this.engine, this.sql), grant, async () => (await tokenMemberBinding(this.sql, legacyRows[0], legacyRows[0].created_at, this.engine)).member?.id ?? null),
         takesHoldersAllowList: grant.takesHolders ?? undefined,
         ...(storedMinTrust(legacyRows[0].min_trust) ? { minTrust: storedMinTrust(legacyRows[0].min_trust) } : {}),
         ...privatePagesAuth(grant),
@@ -1036,6 +1155,9 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
 
   async sweepExpiredTokens(): Promise<number> {
     const now = Math.floor(Date.now() / 1000);
+    // With an engine, the sweep runs through the engine member (engine-sql/access-credentials.ts OAUTH_SWEEP_SQL, the same
+    // two statements), so a store with no raw SQL (the Rust engine) sweeps too.
+    if (this.engine) return this.engine.deleteExpiredOauthCredentials(now);
     // F6 hardening: postgres.js and PGLite expose deleted-row count on
     // different shapes; `(result as any).count` returned 0 on at least one
     // engine even when rows were deleted, and codes were never counted at
@@ -1064,76 +1186,15 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
     agentBindings?: AgentClientBindings,
     grantPatch?: GrantPatch,
   ): Promise<{ clientId: string; clientSecret?: string }> {
-    // v0.28: ALLOWED_SCOPES allowlist. Reject `--scopes "read flying-unicorn"`
-    // at registration so meaningless scope strings can't pile up in the DB.
-    // Pre-allowlist clients keep working (allowlist is registration-time;
-    // existing rows aren't re-validated).
-    assertAllowedScopes(parseScopeString(scopes));
-
-    // A bound_slug_prefixes entry that is empty or whitespace-only makes
-    // `startsWith` true for every slug — a binding that looks set in
-    // `auth list` and the admin UI while fencing nothing. Reject at
-    // registration, the same way source ids are validated.
-    if (agentBindings?.boundTools && (agentBindings.boundTools.length === 0 || agentBindings.boundTools.some(tool => typeof tool !== 'string' || !tool.trim()))) {
-      throw new Error('--bound-tools requires at least one non-empty tool name');
-    }
-    if (agentBindings?.boundSlugPrefixes) {
-      // Same rule as rescopeClient: an empty list is ambiguous. It registers
-      // as deny-all for every direct write while printing an empty binding
-      // line, so an operator cannot tell it from an unbound client.
-      if (agentBindings.boundSlugPrefixes.length === 0) {
-        throw new Error('--bound-slug-prefixes cannot be an empty list (pass prefixes, or omit the flag for full-source write authority)');
-      }
-      assertValidSlugPrefixes(agentBindings.boundSlugPrefixes);
-    }
-
-    // v0.41.3 (T1+T2): validate token_endpoint_auth_method at the registration
-    // boundary. Throws InvalidTokenEndpointAuthMethodError on bad input.
-    // Default is `client_secret_post` (RFC 7591 §2).
-    const authMethod = validateTokenEndpointAuthMethod(tokenEndpointAuthMethod);
-
-    const clientId = generateToken('gbrain_cl_');
-    // v0.41.3 (T2): atomic public-client INSERT. When the caller declares
-    // `tokenEndpointAuthMethod: 'none'` we mint NO secret and INSERT with
-    // client_secret_hash = NULL in a single statement. Pre-fix, the admin
-    // endpoint did INSERT-then-UPDATE which left a confidential row stranded
-    // if the UPDATE failed mid-flight (codex F4). Confidential clients
-    // (`client_secret_post` / `client_secret_basic`) get the secret minted
-    // and hashed as before.
-    const isPublicClient = authMethod === 'none';
-    const clientSecret = isPublicClient ? undefined : generateToken('gbrain_cs_');
-    const secretHash = clientSecret ? hashToken(clientSecret) : null;
-    const now = Math.floor(Date.now() / 1000);
-
-    // v0.34.1 (#861 + #876): persist source_id AND federated_read so
-    // verifyAccessToken can populate both AuthInfo fields. Defaults:
-    //   source_id = 'default' (matches v60 backfill)
-    //   federated_read = [source_id] when omitted (a non-federated client
-    //                    has read scope == write scope, the v0.33 default)
-    const federated = federatedRead && federatedRead.length > 0 ? federatedRead : [sourceId];
+    const { clientId, clientSecret, secretHash, authMethod, now, federated, metadata, grant } = planManualClient(
+      name, grantTypes, scopes, redirectUris, sourceId, federatedRead, tokenEndpointAuthMethod, agentBindings, grantPatch);
     const schema = await this.sql`SELECT column_name FROM information_schema.columns
       WHERE table_schema = current_schema() AND table_name = 'oauth_clients'
         AND column_name IN ('grant_revision', 'allowed_operations', 'delegated_slug_prefixes', 'delegated_namespace', 'grant_profile', 'grant_repair_reasons', 'surface', 'surface_set_by', 'token_ttl', 'source_id', 'federated_read', 'bound_slug_prefixes', 'bound_tools', 'bound_source_id', 'bound_brain_id', 'bound_max_concurrent', 'budget_usd_per_day')`;
     if (schema.length === 17) {
-      const initial = grantFromRow({
-        client_id: clientId, client_name: name, scope: scopes, source_id: sourceId,
-        federated_read: federated, bound_slug_prefixes: agentBindings?.boundSlugPrefixes ?? null,
-        allowed_operations: agentBindings?.allowedOperations ?? null,
-        bound_tools: agentBindings?.boundTools ?? null,
-        bound_source_id: agentBindings?.boundSourceId ?? null, bound_brain_id: agentBindings?.boundBrainId ?? null,
-        delegated_slug_prefixes: agentBindings?.delegatedSlugPrefixes ?? agentBindings?.boundSlugPrefixes ?? null,
-        delegated_namespace: agentBindings?.delegatedNamespace ?? (agentBindings?.boundSlugPrefixes || agentBindings?.delegatedSlugPrefixes ? 'prefixes' : 'job'),
-        bound_max_concurrent: agentBindings?.boundMaxConcurrent ?? 1,
-        budget_usd_per_day: agentBindings?.budgetUsdPerDay ?? null,
-      });
-      if (grantPatch) assertGrantPatch(grantPatch);
-      const changes = Object.fromEntries(Object.entries(grantPatch ?? {}).filter(([, value]) => value !== undefined)) as GrantPatch;
-      const grant = { ...initial, ...changes, revision: 1 };
-      grant.boundBrainId = normalizeGrantBrain(grant.boundBrainId);
-      validateClientGrant(grant, await grantValidationContext(this.sql));
+      const built = grant(await grantValidationContext(this.sql));
       // GST-1113: with a transaction, the scope-source check and the insert commit together under the source row locks.
-      const metadata = { secretHash, redirectUris, grantTypes, authMethod, issuedAt: now };
-      await (this.transaction ? this.transaction(sql => insertClientGrant(sql, grant, metadata)) : insertClientGrant(this.sql, grant, metadata));
+      await (this.transaction ? this.transaction(sql => insertClientGrant(sql, built, metadata)) : insertClientGrant(this.sql, built, metadata));
       return { clientId, clientSecret };
     }
     if (grantPatch || hasScope(parseScopeString(scopes), 'agent')) {
@@ -1233,7 +1294,7 @@ export class GBrainOAuthProvider implements OAuthServerProvider {
    * verifyAccessToken re-reads oauth_clients on every verification.
    */
   async rescopeClient(clientId: string, opts: RescopeClientOptions): Promise<RescopeClientResult> {
-    return rescopeOAuthClient(this.sql, clientId, opts);
+    return rescopeOAuthClient(this.engine ?? this.sql, clientId, opts);
   }
 
 }

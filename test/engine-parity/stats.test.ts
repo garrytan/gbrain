@@ -75,6 +75,24 @@ describe('engine parity: stats without vectors', () => {
     },
   );
 
+  // `gbrain stats --json` prints pages_by_type in key order, so a count tie must read in one order on every engine:
+  // largest count first, then type in byte order (toEqual ignores key order, so the case compares the key list).
+  parityTest(
+    'getStats lists pages_by_type largest count first, a tie in type byte order',
+    { methods: ['putPage', 'getStats'] },
+    async (engine) => {
+      const types = ['project', 'note', 'meeting', 'company', 'concept', 'person', 'source', 'event', 'atom', 'question', 'decision', 'idea'];
+      for (const [i, type] of types.entries()) {
+        await engine.putPage(`tie/${type}`, { type: type as never, title: `Tie ${i}`, compiled_truth: `Tie ${i}.`, timeline: '' });
+      }
+      await engine.putPage('tie/person-two', { type: 'person', title: 'Tie two', compiled_truth: 'Tie two.', timeline: '' });
+      const order = Object.keys((await engine.getStats()).pages_by_type);
+      const byte = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+      expect(order).toEqual(['person', ...types.filter(t => t !== 'person').sort(byte)]);
+      return order;
+    },
+  );
+
   parityTest(
     'getHealth counts dead links, entity coverage over the threshold, orphans and the most connected pages',
     { methods: ['putPage', 'addLink', 'addTimelineEntry', 'deletePage', 'getHealth'] },
@@ -206,6 +224,50 @@ describe('engine parity: stats without vectors', () => {
         tomorrow: view(await engine.findAnomalies({ since: new Date(Date.parse(today) + 86_400_000).toISOString().slice(0, 10), lookback_days: 2 })),
         badDate: await outcome(() => engine.findAnomalies({ since: 'not-a-date' })),
       };
+    },
+  );
+
+  parityTest(
+    'countLivePages counts the live pages of every source and skips soft-deleted ones (backup coverage\'s count)',
+    { methods: ['putPage', 'softDeletePage', 'countLivePages'] },
+    async (engine, backend) => {
+      await createSource(engine, backend, 'live-b');
+      const empty = await engine.countLivePages();
+      await engine.putPage('notes/l-a', { type: 'note', title: 'A', compiled_truth: 'A.', timeline: '' });
+      await engine.putPage('notes/l-b', { type: 'note', title: 'B', compiled_truth: 'B.', timeline: '' });
+      await engine.putPage('notes/l-c', { type: 'note', title: 'C', compiled_truth: 'C.', timeline: '' }, { sourceId: 'live-b' });
+      const three = await engine.countLivePages();
+      await engine.softDeletePage('notes/l-b');
+      return { empty, three, afterDelete: await engine.countLivePages() };
+    },
+  );
+
+  parityTest(
+    'readBrainMaturity counts live pages and active facts, and dates the brain from its first source or page',
+    { methods: ['putPage', 'softDeletePage', 'insertFact', 'expireFact', 'listSourceRecords', 'getPage', 'readBrainMaturity'] },
+    async (engine) => {
+      const view = async () => {
+        const row = await engine.readBrainMaturity();
+        if (!row) return row;
+        const since = row.since === null ? null : new Date(row.since).getTime();
+        const created = [
+          ...(await engine.listSourceRecords()).map((s) => new Date(s.created_at as Date | string).getTime()),
+          ...(await Promise.all(['notes/m-a', 'notes/m-b'].map((slug) => engine.getPage(slug, { includeDeleted: true } as never))))
+            .filter((p) => p !== null).map((p) => new Date(p!.created_at).getTime()),
+        ];
+        // Postgres and PGLite return milliseconds; the earliest timestamp, to the millisecond.
+        return { pages: row.pages, facts: row.facts, sinceIsEarliest: since === Math.floor(Math.min(...created)) };
+      };
+      const empty = await view();
+      await engine.putPage('notes/m-a', { type: 'note', title: 'A', compiled_truth: 'A.', timeline: '' });
+      await engine.putPage('notes/m-b', { type: 'note', title: 'B', compiled_truth: 'B.', timeline: '' });
+      const valid_from = new Date('2026-01-01T00:00:00Z');
+      const kept = await engine.insertFact({ fact: 'Kept.', kind: 'fact', source: 'mcp:remember', entity_slug: null, valid_from } as never, { source_id: 'default' });
+      const gone = await engine.insertFact({ fact: 'Gone.', kind: 'fact', source: 'mcp:remember', entity_slug: null, valid_from } as never, { source_id: 'default' });
+      expect(kept.id).not.toBe(gone.id);
+      await engine.expireFact(gone.id);
+      await engine.softDeletePage('notes/m-b');
+      return { empty, filled: await view() };
     },
   );
 });

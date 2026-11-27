@@ -16,7 +16,7 @@
  */
 import { shellQuote } from '../agent-output.ts';
 import type { BrainEngine } from '../engine.ts';
-import { privacyPartSql, remotePrivacyRelaxed } from '../search/private-visibility.ts';
+import { remotePrivacyRelaxed } from '../search/private-visibility.ts';
 import { hintReaders } from './owner.ts';
 
 export interface PagesExposed {
@@ -28,20 +28,7 @@ export interface PagesExposed {
 
 /** The pages of `sourceId` a remote credential wrote that name no readers (the first five by slug), or null when there are none. */
 export async function remotePagesFederationExposes(engine: BrainEngine, sourceId: string): Promise<PagesExposed | null> {
-  const hidden = await remotePrivacyRelaxed(engine) ? '' : ` AND ${privacyPartSql('p')}`;
-  const rows = await engine.executeRaw<{ slug: string; member: string | null; total: number }>(
-    `WITH open AS (SELECT p.id, p.slug, p.revision_principal_kind, p.revision_principal_id FROM pages p
-       WHERE p.source_id = $1 AND p.deleted_at IS NULL AND p.page_readers IS NULL AND p.folder_rule_ids IS NULL${hidden}),
-     authored AS (
-       SELECT slug, revision_principal_kind AS kind, revision_principal_id AS pid FROM open
-       UNION ALL
-       SELECT o.slug, v.write_principal_kind, v.write_principal_id FROM open o JOIN page_versions v ON v.page_id = o.id)
-     SELECT a.slug, min(coalesce(t.member_id, c.member_id)) AS member, (count(*) OVER ())::int AS total
-       FROM authored a
-       LEFT JOIN access_tokens t ON a.kind = 'legacy_token' AND t.id::text = a.pid
-       LEFT JOIN oauth_clients c ON a.kind = 'oauth_client' AND c.client_id = a.pid
-      WHERE a.kind IN ('legacy_token', 'oauth_client')
-      GROUP BY a.slug ORDER BY a.slug LIMIT 5`, [sourceId]);
+  const rows = await engine.readFederationExposedPages(sourceId, !(await remotePrivacyRelaxed(engine)));
   const first = rows[0];
   if (!first) return null;
   const bound = rows.find(r => r.member !== null && r.slug.includes('/'));

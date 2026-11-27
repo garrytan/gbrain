@@ -12,20 +12,39 @@ import { STORE_MEMBERS } from './store-members/index.ts';
 
 /**
  * Capabilities held back even when every member is served, each with the callers that still run raw SQL outside the
- * member table. Reporting `persistence_journal` would start a persistence listener and route CLI writes to an owner that
- * refuses them partway with owner_unavailable (rust-engine/owner-ipc/client.ts `rustOwnerServesPersistence`). A
- * capability leaves this table when its last blocking caller is typed.
+ * member table. A held `persistence_journal` would start no persistence listener (rust-engine/owner-ipc/client.ts
+ * `rustOwnerServesPersistence`). A capability leaves this table when its last blocking caller is typed.
+ *
+ * `managed_persistence` is held: until the managed-persistence program on the Rust engine is done, a Rust brain refuses managed
+ * mode with the typed refusal (capability managed_persistence). A worktree-bound write (a source with a claimed checkout) is
+ * refused by name at its admission (persistence/journal.ts `admitWrite`) and writes no request row, and the first page write to a
+ * rooted source refuses `claimWorktree` the same way (persistence/unbound-source.ts). A write with no worktree and a grouped
+ * admission of such writes are served.
+ *
+ * Slice 1 (lane LM) typed what a bound write and a source lifecycle change run: worktree admission, ownership,
+ * compareFileTarget, publication and its recovery, the managed Git effects and Git durability (engine-sql/git-effects.ts,
+ * git-durability.ts), the topology locks with the lifecycle's add, archive, restore, set-path, remove and purge
+ * (engine-sql/topology-store.ts), the moved-checkout check, and add_link and remove_link on a managed page
+ * (engine-sql/manual-links.ts). test/engine-parity/managed-on-rust.test.ts runs them equal on all three arms with the hold lifted
+ * on the test engine only. The hold stays until the slice 2 sites below are typed and proven equal on Rust too; each entry
+ * is a site that still runs raw SQL or has no three-arm case yet.
  */
 export const HELD_FOR_CALLERS: Partial<Record<Capability, readonly string[]>> = {
-  persistence_journal: [
-    'segmentedGateEvidence (persistence/writer-versions.ts): the segmented-storage gate evidence answers no writer here',
-    'queuePublicationEffects (persistence/effect-journal.ts): the publication effects insert, where a forwarded put stops',
+  managed_persistence: [
+    'managed sync (persistence/sync-run.ts performManagedSync; sync-discovery.ts readManagedSyncRows, sync-holds.ts sourceHoldFingerprints): a managed import still reads through executeRaw',
+    'refresh barrier (persistence/worktree-refresh.ts, journal.ts readRefreshBarrier; the claim stamp reports passed_sync false): gbrain sources refresh and the writes that wait behind it',
+    'import holds (journal.ts heldBehindImport): the writes held behind a managed import or refresh',
+    'managed clone and its recovery (persistence/topology-clone.ts, topology-recovery.ts): sources add --url, sources reclone and the owner topology recovery',
+    'owner recovery scans (consumer recovery of worktree claims, dead-owner detection of worktree requests, deferred-write expiry)',
+    'git durability --pat-file (git-durability-administration.ts retryParkedPushes): the parked-push retry',
   ],
 };
 
 /** Capabilities withheld until every capability they need is reported. */
 export const CAPABILITY_REQUIRES: Partial<Record<Capability, readonly Capability[]>> = {
   persistence_journal: ['transactions'],
+  // A managed worktree's writes go through the write journal; without it a worktree could be claimed but never written.
+  managed_persistence: ['persistence_journal', 'transactions'],
 };
 
 export function servedCapabilities(): EngineCapabilities {

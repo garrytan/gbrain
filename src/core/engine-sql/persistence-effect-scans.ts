@@ -5,11 +5,13 @@
  * effects: the requests whose parked mirror targets only wait on the segmented writer gate
  * (persistence/segmented-mirror-gate.ts `resumeGatedMirrors`), and the effects with a recovery due
  * (persistence/effect-recovery-scan.ts `selectEffectRecoveries`), and the claim's candidate read
- * (persistence/effect-journal.ts `claimPersistenceEffect`), and a write receipt's read of its effects (`readRequestEffects`). Each text is the one its caller has always sent, byte
+ * (persistence/effect-journal.ts `claimPersistenceEffect`), a write receipt's read of its effects (`readRequestEffects`), and the
+ * stale and failed embedding effects `gbrain repair embedding-effects` settles (`listEmbeddingCandidates`). Each text is the one its caller has always sent, byte
  * for byte, written out in full so this module imports no persistence code; the codes it matches arrive as arguments.
  * Decisions stay with the callers.
  */
 import type { LegacyUnscopedRead } from './brands.ts';
+import { renderFragment, sqlFragment, trustedSql, type SqlFragment } from './fragment.ts';
 
 /** `listGatedMirrorRequests`: $1 host id, $2 the gate's parked-target filter (JSON text), $3 the parked codes that may stay. */
 export const GATED_MIRROR_REQUESTS_SQL = `SELECT DISTINCT r.id::text AS id,r.source_id,r.request_id::text AS request_id FROM persistence_effects e
@@ -76,7 +78,10 @@ export async function selectClaimableEffect<R = Record<string, unknown>>(exec: L
   return row ?? null;
 }
 
-/** `readRequestEffects`, every kind: $1 request id. The text `publicEffectsForRequest` (persistence/effect-journal.ts) has always sent. */
+/**
+ * `readRequestEffects`, every kind: $1 request id. The text `publicEffectsForRequest` (persistence/effect-journal.ts) has always
+ * sent, with the kind order pinned to `COLLATE "C"` so it never follows the database's locale.
+ */
 export const REQUEST_EFFECTS_SQL = 'SELECT kind,state,error_code,outcome,recovery IS NOT NULL AS recovering FROM persistence_effects WHERE request_id=$1::uuid ORDER BY kind COLLATE "C"';
 
 /** `readRequestEffects`, the Git effect: $1 request id. The text `gitReceiptState` (persistence/effect-journal.ts) has always sent. */
@@ -95,4 +100,90 @@ export async function readRequestEffects(exec: LegacyUnscopedRead, requestId: st
     return rows.map(row => ({ kind: 'git', ...row }));
   }
   return exec.executeRaw<RequestEffectState>(REQUEST_EFFECTS_SQL, [requestId]);
+}
+
+/** The predicate up to the failed effect's error code, which `embeddingCandidateWhere` and `embeddingCandidateFragment` close with the never-retried list. */
+const EMBEDDING_CANDIDATE_HEAD = `e.kind='embedding' AND r.state='committed' AND e.recovery IS NULL AND e.execution_token IS NULL
+  AND (e.state='failed' OR e.state='queued' AND (e.updated_at < now() - interval '1 hour' OR e.data ? 'repair_requeued_at'))
+  AND NOT (e.state='failed' AND e.error_code`;
+
+/**
+ * Stale queued (over an hour, or re-queued by a repair and not yet settled) and failed embedding effects of committed
+ * writes, leaving out a failed effect whose code is one of `neverRetried` (parked targets, a zero-norm refusal). The
+ * predicate `gbrain repair embedding-effects` and doctor's `stale_embedding_effects` share; codes are plain identifiers.
+ */
+export function embeddingCandidateWhere(neverRetried: readonly string[]): string {
+  assertCandidateCodes(neverRetried);
+  return `${EMBEDDING_CANDIDATE_HEAD} = ANY('{${neverRetried.join(',')}}'::text[]))`;
+}
+
+/** The same predicate with the codes bound as one text[] parameter (`listEmbeddingCandidates`). */
+export function embeddingCandidateFragment(neverRetried: readonly string[]): SqlFragment {
+  assertCandidateCodes(neverRetried);
+  return sqlFragment`${trustedSql(EMBEDDING_CANDIDATE_HEAD)} = ANY(${[...neverRetried]}::text[]))`;
+}
+
+function assertCandidateCodes(neverRetried: readonly string[]): void {
+  for (const code of neverRetried) if (!/^[a-z0-9_]+$/.test(code)) throw new Error(`embedding candidate code must be an identifier: ${code}`);
+}
+
+/** One embedding effect `gbrain repair embedding-effects` may settle, with the characters its retry would embed. */
+export interface EmbeddingCandidate {
+  effect_id: string; source_id: string; slug: string; request_id: string; state: 'queued' | 'failed'; attempts: number; chars: number;
+}
+
+/**
+ * The embedding candidates of `sourceIds`, plus those of a removed or replaced source incarnation, in effect id order.
+ * `chars` is the page's `compiled_truth` plus `timeline` length (a page effect), the sum over its targets (a targeted
+ * effect) or over the source's live pages (a source scan); 0 when no page matches.
+ */
+export async function listEmbeddingCandidates(exec: LegacyUnscopedRead, sourceIds: readonly string[], neverRetried: readonly string[]): Promise<EmbeddingCandidate[]> {
+  const { text, params } = renderFragment(sqlFragment`SELECT e.id::text AS effect_id, r.source_id, r.slug, r.request_id::text AS request_id,
+      e.state, e.attempts, COALESCE(CASE
+        WHEN e.data ? 'page_id' THEN (SELECT length(p.compiled_truth) + length(COALESCE(p.timeline,'')) FROM pages p WHERE p.id = (e.data->>'page_id')::int)
+        WHEN e.data ? 'targets' THEN (SELECT SUM(length(p.compiled_truth) + length(COALESCE(p.timeline,''))) FROM pages p
+          JOIN jsonb_array_elements(e.data->'targets') t ON p.id = (t->>'page_id')::int)
+        ELSE (SELECT SUM(length(p.compiled_truth) + length(COALESCE(p.timeline,''))) FROM pages p WHERE p.source_id = e.source_id AND p.deleted_at IS NULL)
+      END, 0)::bigint AS chars
+    FROM persistence_effects e JOIN persistence_requests r ON r.id = e.request_id
+    WHERE ${embeddingCandidateFragment(neverRetried)} AND (r.source_id = ANY(${[...sourceIds]}::text[])
+      OR NOT EXISTS (SELECT 1 FROM sources s WHERE s.id = r.source_id AND s.incarnation = r.source_incarnation)) ORDER BY e.id`);
+  const rows = await exec.executeRaw<EmbeddingCandidate>(text, params);
+  return rows.map(row => ({ ...row, attempts: Number(row.attempts), chars: Number(row.chars) }));
+}
+
+// Effect retry reads: the statements retryParkedEffects (persistence/effect-retry.ts) sent through executeRaw, unchanged.
+
+/** `readSourceRequestById`: $1 the source, $2 the journal id. */
+export const SOURCE_REQUEST_BY_ID_SQL = 'SELECT * FROM persistence_requests WHERE source_id=$1 AND id=$2::uuid';
+/** `listSourceRequestsByRequestId`: $1 the source, $2 the client request id; two rows mean the id is ambiguous. */
+export const SOURCE_REQUESTS_BY_REQUEST_ID_SQL = 'SELECT * FROM persistence_requests WHERE source_id=$1 AND request_id=$2::uuid LIMIT 2';
+/** `listRetryTrackedEffects`: $1 the request's journal id, $2 parked-only, $3 the failed Git codes a retry also takes. */
+export const RETRY_TRACKED_EFFECTS_SQL = `SELECT * FROM persistence_effects WHERE request_id=$1::uuid
+    AND ((kind IN ('git','withdrawal-mirror') AND (data ? 'parked' OR data ? 'retried'))
+      OR (NOT $2::boolean AND (state='failed' AND (kind<>'embedding' OR error_code='source_changed') OR kind='embedding' AND data ? 'parked'))
+      OR (kind='git' AND state='failed' AND error_code=ANY($3::text[]))) ORDER BY kind COLLATE "C"`;
+/** `lockEffectRow`: $1 the effect id. */
+export const LOCK_EFFECT_ROW_SQL = 'SELECT * FROM persistence_effects WHERE id=$1 FOR UPDATE';
+
+/** Request row `id` of `sourceId` (`SELECT *`), or null. */
+export async function readSourceRequestById<R>(exec: LegacyUnscopedRead, sourceId: string, id: string): Promise<R | null> {
+  const [row] = await exec.executeRaw<R>(SOURCE_REQUEST_BY_ID_SQL, [sourceId, id]);
+  return row ?? null;
+}
+
+/** At most two request rows of `sourceId` admitted under client request id `requestId` (`SELECT *`). */
+export function listSourceRequestsByRequestId<R>(exec: LegacyUnscopedRead, sourceId: string, requestId: string): Promise<R[]> {
+  return exec.executeRaw<R>(SOURCE_REQUESTS_BY_REQUEST_ID_SQL, [sourceId, requestId]);
+}
+
+/** The effects of request row `requestRowId` that a parked-effect retry tracks, by kind in byte order (`SELECT *`). */
+export function listRetryTrackedEffects<R>(exec: LegacyUnscopedRead, requestRowId: string, parkedOnly: boolean, failedCodes: readonly string[]): Promise<R[]> {
+  return exec.executeRaw<R>(RETRY_TRACKED_EFFECTS_SQL, [requestRowId, parkedOnly, [...failedCodes]]);
+}
+
+/** Effect `id` (`SELECT *`), locked FOR UPDATE until the transaction ends, or null. */
+export async function lockEffectRow<R>(exec: LegacyUnscopedRead, id: string | number): Promise<R | null> {
+  const [row] = await exec.executeRaw<R>(LOCK_EFFECT_ROW_SQL, [id]);
+  return row ?? null;
 }

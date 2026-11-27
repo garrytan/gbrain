@@ -17,6 +17,7 @@ import type { BrainEngine } from './engine.ts';
 import type { Action } from './agent-output.ts';
 import { requireConsent, type Authorization } from './consent.ts';
 import { opError } from './ops/contract.ts';
+import { rethrowCapabilityMissing } from './rust-engine/errors.ts';
 
 /** Job names whose handler is an embedding backfill (an explicit `jobs submit` of one is paid work). */
 export const EMBED_BACKFILL_JOB_NAMES: ReadonlySet<string> = new Set(['embed', 'embed-backfill', 'embed-catch-up']);
@@ -94,17 +95,12 @@ export async function estimateEmbedBackfillUsd(engine: BrainEngine, scope: Embed
     const { estimateCostFromChars, lookupEmbeddingPrice } = await import('./embedding-pricing.ts');
     const price = lookupEmbeddingPrice(getEmbeddingModel());
     if (price.kind !== 'known') return null;
-    const params = scope.sourceId ? [scope.sourceId] : [];
-    const bySource = scope.sourceId ? ' AND p.source_id = $1' : '';
-    const chunks = await engine.executeRaw<{ chars: number | string }>(
-      `SELECT COALESCE(SUM(length(c.chunk_text)), 0)::bigint AS chars FROM content_chunks c JOIN pages p ON p.id = c.page_id
-        WHERE p.deleted_at IS NULL${scope.all ? '' : ' AND c.embedding IS NULL'}${bySource}`, params);
-    const chunkless = scope.all ? [] : await engine.executeRaw<{ chars: number | string }>(
-      `SELECT COALESCE(SUM(length(p.compiled_truth) + length(p.timeline)), 0)::bigint AS chars FROM pages p
-        WHERE p.deleted_at IS NULL AND NOT EXISTS (SELECT 1 FROM content_chunks c WHERE c.page_id = p.id)${bySource}`, params);
-    const chars = Number(chunks[0]?.chars ?? 0) + Number(chunkless[0]?.chars ?? 0);
-    return estimateCostFromChars(chars, price.pricePerMTok);
-  } catch {
+    // The typed sums (engine-sql/embed-stale-work.ts), so a Rust brain estimates too.
+    const sums = await engine.sumEmbedBackfillChars(scope.sourceId || null, scope.all === true);
+    return estimateCostFromChars(sums.chunk_chars + sums.chunkless_chars, price.pricePerMTok);
+  } catch (e) {
+    // An unknown estimate asks for consent without a cost; an engine that cannot estimate refuses.
+    rethrowCapabilityMissing(e);
     return null;
   }
 }

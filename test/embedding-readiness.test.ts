@@ -2,6 +2,11 @@ import { expect, test } from 'bun:test';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { prepareEmbeddingProjections } from '../src/core/embedding-readiness.ts';
 import { mockEmbedProjectionEngine } from './helpers/embed-projection-mock.ts';
+import { countEmbedPendingProjections, type EngineRawRead } from '../src/core/engine-sql/embed-stale-work.ts';
+
+/** An engine with only `executeRaw`, whose pending-projection count member runs its statement through that executeRaw. */
+const rawEngine = (executeRaw: (sql: string) => Promise<unknown[]>) =>
+  ({ executeRaw, countEmbedPendingProjections: (scope: never) => countEmbedPendingProjections(executeRaw as EngineRawRead, scope) }) as unknown as BrainEngine;
 
 test('projection fixture count models its sealed snapshots', async () => {
   const engine = mockEmbedProjectionEngine();
@@ -11,20 +16,20 @@ test('projection fixture count models its sealed snapshots', async () => {
 });
 
 test.each([undefined, null, NaN, -1, 'unknown'])('projection readiness rejects an unknown or invalid count: %s', async n => {
-  const engine = { executeRaw: async (sql: string) => sql.startsWith('SELECT count(') ? [{ n }] : [] } as unknown as BrainEngine;
+  const engine = rawEngine(async (sql: string) => sql.startsWith('SELECT count(') ? [{ n }] : []);
   await expect(prepareEmbeddingProjections(engine)).rejects.toThrow('Cannot determine pending embedding projections');
 });
 
 test('projection readiness rejects missing count rows', async () => {
-  const engine = { executeRaw: async () => [] } as unknown as BrainEngine;
+  const engine = rawEngine(async () => []);
   await expect(prepareEmbeddingProjections(engine)).rejects.toThrow('Cannot determine pending embedding projections');
 });
 
 test('projection readiness propagates count failures', async () => {
-  const engine = { executeRaw: async (sql: string) => {
+  const engine = rawEngine(async (sql: string) => {
     if (sql.startsWith('SELECT count(')) throw new Error('synthetic count failure');
     return [];
-  } } as unknown as BrainEngine;
+  });
   await expect(prepareEmbeddingProjections(engine)).rejects.toThrow('synthetic count failure');
 });
 

@@ -185,12 +185,7 @@ export async function checkFederationHealth(engine: BrainEngine, opts: { sourceI
  */
 export async function checkOauthConfidentialHealth(engine: BrainEngine): Promise<Check> {
   try {
-    const rows = await engine.executeRaw<{ client_id: string; method: string | null; hash: string | null }>(
-      `SELECT client_id,
-              token_endpoint_auth_method AS method,
-              client_secret_hash AS hash
-         FROM oauth_clients`,
-    );
+    const rows = await engine.listOauthClientAuthShapes();
     if (rows.length === 0) {
       return { name: 'oauth_confidential_client_health', status: 'ok', message: 'No OAuth clients registered' };
     }
@@ -253,41 +248,11 @@ export async function checkOauthClientScopeHealth(engine: BrainEngine): Promise<
     // (same pattern as the other checks) so agent-register.ts stays out of
     // doctor's static import graph.
     const { WORKSPACE_SUFFIX } = await import('../../agent-register.ts');
-    const dangling = await engine.executeRaw<{ client_id: string; client_name: string | null; grant_id: string }>(
-      `SELECT c.client_id, c.client_name, g.grant_id
-         FROM oauth_clients c
-         CROSS JOIN LATERAL unnest(c.federated_read) AS g(grant_id)
-         LEFT JOIN sources s ON s.id = g.grant_id
-        WHERE s.id IS NULL AND c.deleted_at IS NULL
-        ORDER BY c.client_id, g.grant_id`,
-    );
-    // A revoked agent's workspace can hold FACTS with zero pages (facts are
-    // the primary agent write lane) — such a source is NOT empty and the
-    // `gbrain sources remove` recommendation would cascade the facts away.
-    const orphanSql = (withFactsExclusion: boolean) =>
-      `SELECT s.id
-         FROM sources s
-        WHERE s.id LIKE '%' || $1
-          AND s.local_path IS NULL
-          AND COALESCE(s.archived, false) = false
-          AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id = s.id)
-          ${withFactsExclusion ? `AND NOT EXISTS (SELECT 1 FROM facts f WHERE f.source_id = s.id)` : ''}
-          AND NOT EXISTS (
-            SELECT 1 FROM oauth_clients c
-             WHERE c.deleted_at IS NULL
-               AND (c.source_id = s.id OR s.id = ANY(c.federated_read))
-          )
-        ORDER BY s.id`;
-    let orphaned: Array<{ id: string }>;
-    try {
-      orphaned = await engine.executeRaw<{ id: string }>(orphanSql(true), [WORKSPACE_SUFFIX]);
-    } catch (e) {
-      // Pre-v0.31 brain without the facts table: a source can't hold facts it
-      // has no table for — retry without the exclusion. Scoped here so the
-      // dangling-grant arm's findings above aren't lost to the outer catch.
-      if (!isMissingSchemaObject(e, 'table', 'facts')) throw e;
-      orphaned = await engine.executeRaw<{ id: string }>(orphanSql(false), [WORKSPACE_SUFFIX]);
-    }
+    const dangling = await engine.listDanglingFederatedReads();
+    // A revoked agent's workspace can hold FACTS with zero pages (facts are the primary agent write lane) - such a source
+    // is NOT empty and the `gbrain sources remove` recommendation would cascade the facts away. The engine member
+    // excludes them (and, on a pre-v0.31 brain without the facts table, answers without that exclusion).
+    const orphaned = await engine.listOrphanWorkspaceSources(WORKSPACE_SUFFIX);
     // (c) PRIVILEGED SELF-REGISTERED CLIENTS — an active row whose scope
     // exceeds the DCR ceiling (read/write) AND carries the anonymous-DCR
     // signature: grant_revision = 0 with no oauth_grant_audit 'register' row
@@ -304,23 +269,12 @@ export async function checkOauthClientScopeHealth(engine: BrainEngine): Promise<
     // interpolated into the SQL text.
     const privilegedScopeRegex = `(^|[[:space:]])(${DCR_PRIVILEGED_SCOPES.join('|')})([[:space:]]|$)`;
     const dcrCeiling = [...DCR_REGISTRABLE_SCOPES];
-    try {
-      privilegedDcr = await engine.executeRaw<{ client_id: string; client_name: string | null; scope: string }>(
-        `SELECT c.client_id, c.client_name, c.scope
-           FROM oauth_clients c
-          WHERE c.deleted_at IS NULL
-            AND COALESCE(c.grant_revision, 0) = 0
-            AND COALESCE(c.scope, '') ~ $1
-            AND NOT EXISTS (
-              SELECT 1 FROM oauth_grant_audit a
-               WHERE a.client_id = c.client_id AND a.action = 'register'
-            )
-          ORDER BY c.client_id`,
-        [privilegedScopeRegex],
-      );
-    } catch (e) {
-      if (!(isMissingSchemaObject(e, 'table', 'oauth_grant_audit') || isMissingSchemaObject(e, 'column', 'grant_revision'))) throw e;
+    // The member answers null when the audit table or revision column is absent.
+    const privilegedRows = await engine.listPrivilegedDcrClients(privilegedScopeRegex);
+    if (privilegedRows === null) {
       privilegedDcrNote = 'self-registered-client scope audit skipped: grant audit schema not present (run `gbrain apply-migrations --yes`), so privileged self-registered clients are unknown';
+    } else {
+      privilegedDcr = privilegedRows;
     }
     const problems: string[] = [];
     if (privilegedDcr.length > 0) {

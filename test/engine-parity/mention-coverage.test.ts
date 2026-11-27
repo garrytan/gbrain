@@ -15,7 +15,9 @@
  *  - Why existing coverage misses it: the mentions tests run PGLite only and seed status rows through executeRaw;
  *    no parity case reads coverage.
  *  - Seam: none. Real engines, typed methods only (no executeRaw: D18). No mention pass runs (the Rust store keeps
- *    no pass state), so only the no-row branch is compared here.
+ *    no pass state), so only the no-row branch is compared here; the status-row branches (the saved count, the
+ *    written-since count and the recount's compare-and-set) are pinned per engine by
+ *    test/mention-coverage-members.test.ts.
  */
 import { describe, expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
@@ -124,6 +126,19 @@ describe('engine parity: mention-index coverage', () => {
         future: await due('default', '2999-01-01T00:00:00.000Z'),
       };
       expect(out).toEqual({ other: 2, ghost: 0, past: 4, future: 0 });
+      return out;
+    },
+  );
+
+  parityTest(
+    'recountMentionIndexStatus on a source with no status row writes nothing, and coverage is unchanged',
+    { methods: ['putPage', 'softDeletePage', 'setPageAliases', 'recountMentionIndexStatus', 'readMentionIndexStatus'] },
+    async (engine: BrainEngine, backend) => {
+      await seed(engine, backend);
+      await engine.recountMentionIndexStatus('default', { pending: 9, fingerprint: 'h;v', expectedFingerprint: null });
+      await engine.recountMentionIndexStatus('ghost', { pending: 9, fingerprint: 'h;v', expectedFingerprint: 'h;old' });
+      const out = { rows: await engine.readMentionIndexStatus(['default', 'ghost']), coverage: await readMentionCoverage(engine, ['default']) };
+      expect(out).toEqual({ rows: [], coverage: PENDING_DEFAULT });
       return out;
     },
   );

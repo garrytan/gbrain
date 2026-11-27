@@ -21,8 +21,10 @@
 import { inspectGraduationPath } from '../core/persistence/graduation-custody.ts';
 import { readGraduationManifestSummary } from '../core/persistence/graduation-serve-guard.ts';
 import type { GraduationPathState } from '../core/persistence/engine-graduation.types.ts';
-import { existsSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
+import { join } from 'node:path';
 import { OperationError } from '../core/ops/contract.ts';
+import type { RustAddonStatus } from '../core/rust-engine/addon-install.ts';
 
 import {
   envShadowDetected,
@@ -38,6 +40,9 @@ import { HOST_BRAIN_ID, loadMounts, type MountEntry } from '../core/brain-regist
 import { resolveBrainId } from '../core/brain-resolver.ts';
 import { connectWithRetry, resolvePoolSize, resolvePrepare } from '../core/db.ts';
 import { createEngine } from '../core/engine-factory.ts';
+import type { BrainEngine } from '../core/engine.ts';
+import { readBrainRef } from '../core/brain-ref.ts';
+import { readServeBrainRef, type ServeBrainRef } from './serve-brain-ref.ts';
 import {
   deriveDirectUrl,
   deriveSessionPoolerUrl,
@@ -86,7 +91,8 @@ Usage:
 
 Flags:
   --json         machine output (schema_version 1)
-  --probe        attempt ONE bounded connect + SELECT 1 (classified on failure)
+  --probe        attempt ONE bounded connect + SELECT 1 (classified on failure);
+                 also prints brain_ref, a one-way reference to the brain (never its id)
   --brain <id>   resolve a specific brain (default: --brain/GBRAIN_BRAIN_ID/.gbrain-mount chain)
 
 Works with the database down — that is the point. Pair with:
@@ -103,6 +109,28 @@ interface ProbeResult {
   diagnosis?: PgAccessDiagnosis;
   /** A Rust brain's typed refusal (addon missing or mismatched, capability missing), reported as it is, not as a database error. */
   refusal?: { code: string; reason?: string; message: string };
+  /** The brain's one-way reference (src/core/brain-ref.ts); never its persistence identity. Null with a note when unread. */
+  brain_ref?: string | null;
+  brain_ref_note?: BrainRefNote;
+}
+
+type BrainRefNote = 'no_persistence_identity' | 'brain_ref_unreadable' | 'locked_by_other_process' | ServeBrainRefNote;
+type ServeBrainRefNote = Extract<ServeBrainRef, { brain_ref: null }>['note'];
+
+/** A probe result's brain_ref fields: the value, or null and why (the read's error text is never kept). */
+async function brainRefFields(engine: BrainEngine): Promise<Pick<ProbeResult, 'brain_ref' | 'brain_ref_note'>> {
+  try {
+    const brainRef = await readBrainRef(engine);
+    return brainRef ? { brain_ref: brainRef } : { brain_ref: null, brain_ref_note: 'no_persistence_identity' };
+  } catch {
+    return { brain_ref: null, brain_ref_note: 'brain_ref_unreadable' };
+  }
+}
+
+function lockedBrainRef(dataDir: string | null, serve: boolean | undefined): Pick<ProbeResult, 'brain_ref' | 'brain_ref_note'> {
+  if (!serve || !dataDir) return { brain_ref: null, brain_ref_note: 'locked_by_other_process' };
+  const read = readServeBrainRef(dataDir);
+  return read.brain_ref === null ? { brain_ref: null, brain_ref_note: read.note } : { brain_ref: read.brain_ref };
 }
 
 interface EngineStatusReport {
@@ -133,6 +161,8 @@ interface EngineStatusReport {
   /** Engine graduation (file reads only): path state, manifest state, marker, tombstone, redacted target. */
   graduation?: GraduationStatusBlock;
   config_diagnosis?: PgAccessDiagnosis;
+  /** The Rust engine addon on disk (no load, no network), for a brain on the Rust engine or with shadow mode on. */
+  rust_addon?: RustAddonStatus;
   probe?: ProbeResult;
 }
 
@@ -209,18 +239,37 @@ async function runProbe(
       return {
         ok: true,
         note: lock.serve ? 'locked_by_serve' : `locked_by_${lock.subcommand ?? 'live_process'}`,
+        ...lockedBrainRef(dataDir, lock.serve),
       };
     }
   }
   const started = Date.now();
-  const engine = await createEngine(engineConfig);
+  // A Rust probe judges its store itself, below, after the addon loads (so a missing addon is still reported first),
+  // and never creates one: the engine's own store guard, which would refuse a missing store before that check, is
+  // left out, and the open that follows creates nothing.
+  const engine = await createEngine(engineKind === 'rust' ? { ...engineConfig, guard_store: false, create_store: false } : engineConfig);
+  // Opening a Rust store creates it, like PGLite: a path holding no store (no records.redb) is reported after the
+  // addon check, never made. A store with no FORMAT file is incomplete: a first open writes FORMAT last, after the
+  // record file and the brain's records, so a first open that stopped early leaves a record file (empty, or holding
+  // an empty table that passes any size check) and no FORMAT. Opening it would set it up as a new brain, so the probe
+  // reports it and opens nothing. A real brain whose FORMAT was lost reports the same; any ordinary command that
+  // opens the brain writes FORMAT again.
+  if (engineKind === 'rust' && dataDir) {
+    const records = join(dataDir, 'records.redb');
+    if (!existsSync(records)) return { ok: false, note: 'data_dir_missing' };
+    const stat = statSync(records);
+    if (!stat.isFile() || stat.size === 0) return { ok: false, note: 'store_incomplete' };
+    if (!existsSync(join(dataDir, 'FORMAT'))) return { ok: false, note: 'store_incomplete' };
+  }
   try {
     // SINGLE attempt, ONE connection — the driver's connect_timeout bounds
     // it (never a custom race), and a status probe must never run the
     // 3-attempt backoff ladder or hold pooler slots while diagnosing.
     await connectWithRetry(engine, { ...engineConfig, poolSize: 1 }, { noRetry: true, log: () => {} });
-    await engine.executeRaw('SELECT 1');
-    const result: ProbeResult = { ok: true, latency_ms: Date.now() - started };
+    // The Rust engine serves no raw SQL; a typed config read proves its store answers.
+    if (engineKind === 'rust') await engine.getConfig('version');
+    else await engine.executeRaw('SELECT 1');
+    const result: ProbeResult = { ok: true, latency_ms: Date.now() - started, ...(await brainRefFields(engine)) };
     if (engineKind === 'postgres') {
       // First real callers of the ConnectionManager introspection surface
       // (TODOS 1231): report routing mode + per-pool health latencies when
@@ -338,6 +387,10 @@ export async function runEngineStatus(args: string[]): Promise<number> {
     }
     const graduation = graduationBlock(cfg?.engine === 'pglite' ? dataDir : null);
     if (graduation) report.graduation = graduation;
+    const { configuredBrainUsesRust } = await import('./rust-addon-upgrade.ts');
+    if (configuredBrainUsesRust(cfg as import('../core/types.ts').EngineConfig | null)) {
+      report.rust_addon = (await import('../core/rust-engine/addon-install.ts')).rustAddonStatus(process.env);
+    }
 
     if (!cfg && !thin) {
       report.config_diagnosis = diagnoseDbConfig({ source, envShadowed: shadowed, brainId }) ?? undefined;
@@ -403,12 +456,17 @@ function printHuman(r: EngineStatusReport): void {
   if (r.graduation) {
     lines.push(`Graduation: ${r.graduation.state}${r.graduation.manifest_state ? ` (run ${r.graduation.run_id}, ${r.graduation.manifest_state})` : ''}${r.graduation.target ? ` -> ${r.graduation.target}` : ''}`);
   }
+  if (r.rust_addon) {
+    const a = r.rust_addon;
+    lines.push(`Addon:   ${a.override ? 'GBRAIN_RUST_ENGINE_ADDON override' : a.installed ? `installed ${a.path} (${a.target})` : `not installed for ${a.target ?? 'this platform'}${a.preview_target ? ' (run gbrain engine install rust)' : ' (no release addon for this platform)'}`}`);
+  }
   if (r.config_diagnosis) {
     lines.push(`Status:  ${r.config_diagnosis.reason} — ${r.config_diagnosis.remediation}`);
   }
   if (r.probe) {
     if (r.probe.ok) {
       lines.push(`Probe:   ok${r.probe.note ? ` (${r.probe.note})` : ''}${r.probe.latency_ms !== undefined ? ` ${r.probe.latency_ms}ms` : ''}`);
+      if (r.probe.brain_ref !== undefined) lines.push(`Ref:     ${r.probe.brain_ref ?? `(none: ${r.probe.brain_ref_note})`}`);
     } else if (r.probe.refusal) {
       lines.push(`Probe:   FAIL ${r.probe.refusal.code}${r.probe.refusal.reason ? ` (${r.probe.refusal.reason})` : ''} — ${r.probe.refusal.message}`);
     } else if (r.probe.diagnosis) {

@@ -233,6 +233,23 @@ fn page_keys_need_their_source_and_a_matching_incarnation() {
         (stale.code, stale.message.as_str()),
         (SOURCE_CHANGED, "Page source was recreated: wiki")
     );
+    // Every hinted key is checked, not only the first of its source: a later key of the same source
+    // with a stale incarnation refuses too, and holds nothing.
+    let before = tx.held_page_keys().unwrap();
+    let later = tx
+        .hold_page_keys(
+            &[
+                key("wiki", "e", Some(&incarnation)),
+                key("wiki", "f", Some("another")),
+            ],
+            true,
+        )
+        .unwrap_err();
+    assert_eq!(
+        (later.code, later.message.as_str()),
+        (SOURCE_CHANGED, "Page source was recreated: wiki")
+    );
+    assert_eq!(tx.held_page_keys().unwrap(), before);
     let missing = tx
         .hold_page_keys(&[key("absent", "a", None)], false)
         .unwrap_err();

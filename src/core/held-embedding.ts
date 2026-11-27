@@ -30,10 +30,7 @@ import type { BrainEngine } from './engine.ts';
 import { cliRenderContext, renderAction, type Action, type RenderContext, type RenderedAction } from './agent-output.ts';
 import { parseConsentFlags } from './consent.ts';
 import { opError } from './ops/contract.ts';
-import { chunkGenerationFilter } from './search/safe-chunks.ts';
-import { quoteIdentifier } from './search/embedding-column.ts';
 import { embeddingWriteTarget } from './page-state/projections.ts';
-import { budgetRowAppliesFilter } from './page-size-policy.ts';
 import { readOversizedStaleFacts, oversizedFactLine, OVERSIZED_FACT_FIX, type OversizedFact } from './facts/embedding-identity.ts';
 import { resolveMaxChunkTokens } from './embedding-input-limit.ts';
 import { reservationCostUsd } from './budget/reservation-cost.ts';
@@ -49,19 +46,8 @@ export interface BudgetLimited extends BudgetLimitedCounts { pending_chunks: num
 
 /** Held and capped large pages that still have chunks waiting, by source (`sourceId` narrows it). */
 export async function readBudgetLimited(engine: BrainEngine, opts: { sourceId?: string; signature?: string | null } = {}): Promise<BudgetLimited> {
-  const column = `cc.${quoteIdentifier((await embeddingWriteTarget(engine)).column.name)}`;
-  const params: unknown[] = [opts.signature ?? null];
-  const bySource = opts.sourceId ? ` AND p.source_id = $${params.push(opts.sourceId)}` : '';
-  const pending = `(${column} IS NULL OR (p.body_storage IS DISTINCT FROM 'segmented' AND cc.embedded_at IS NULL)
-      OR ($1::text IS NOT NULL AND p.embedding_signature IS NOT NULL AND p.embedding_signature <> $1::text))`;
-  const rows = await engine.executeRaw<{ source_id: string; state: 'held' | 'capped'; reason: string; pages: number; chunks: number; chars: number }>(
-    `SELECT p.source_id, b.state, COALESCE(b.reason, 'awaiting_approval') AS reason, count(*)::int AS pages,
-            sum(w.chunks)::bigint AS chunks, sum(w.chars)::bigint AS chars
-       FROM page_embedding_budget b JOIN pages p ON p.id = b.page_id
-       CROSS JOIN LATERAL (SELECT count(*)::int AS chunks, COALESCE(sum(length(cc.chunk_text)), 0)::bigint AS chars
-         FROM content_chunks cc WHERE cc.page_id = p.id AND ${chunkGenerationFilter('p', 'cc')} AND ${pending}) w
-      WHERE ${budgetRowAppliesFilter('b', 'p')} AND p.deleted_at IS NULL AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip') AND w.chunks > 0${bySource}
-      GROUP BY 1, 2, 3 ORDER BY p.source_id COLLATE "C", b.state COLLATE "C", COALESCE(b.reason, 'awaiting_approval') COLLATE "C"`, params);
+  const column = (await embeddingWriteTarget(engine)).column.name;
+  const rows = await engine.listBudgetLimitedRows({ column, ...(opts.sourceId ? { sourceId: opts.sourceId } : {}), signature: opts.signature ?? null });
   const out: BudgetLimited = { held: 0, capped: 0, held_reasons: {}, pending_chunks: 0, by_source: [] };
   const sources = new Map<string, BudgetLimitedSource>();
   for (const row of rows) {
@@ -143,10 +129,7 @@ export async function budgetLimitedFinding(engine: BrainEngine, signature: strin
   const found = await budgetLimitedReport(engine, { signature });
   if (!found) return null;
   // #7174: a hold nobody decided on stays put by design, so its age is what tells the operator it is waiting on them.
-  const [age] = await engine.executeRaw<{ stale: number; oldest: Date | string | null }>(
-    `SELECT count(*) FILTER (WHERE b.updated_at < now() - interval '1 day')::int AS stale, min(b.updated_at) AS oldest
-       FROM page_embedding_budget b JOIN pages p ON p.id = b.page_id
-      WHERE ${budgetRowAppliesFilter('b', 'p')} AND p.deleted_at IS NULL AND NOT (COALESCE(p.frontmatter, '{}'::jsonb) ? 'embed_skip')`);
+  const age = await engine.readBudgetHoldAge();
   const stale = Number(age?.stale ?? 0);
   const oldest = age?.oldest ? new Date(age.oldest).toISOString() : null;
   const waited = stale ? ` ${stale} of them have waited more than a day (oldest unchanged since ${oldest}); nothing embeds them until the user approves or declines.` : '';

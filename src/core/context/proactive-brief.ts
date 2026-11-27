@@ -19,8 +19,7 @@ import { isConfigTruthy } from '../config.ts';
 import { HALFLIFE_DAYS } from '../facts/decay.ts';
 import { listOpenLoops, type OpenLoopRow } from '../loops/loops-store.ts';
 import { normalizeAlias } from '../search/alias-normalize.ts';
-import { privateFactFilterForCaller, privatePagesFilterForCaller, privateTimelineEventFilterForCaller, privateTimelineEventFilterFragment, remoteReadFloorSql } from '../search/private-visibility.ts';
-import { pageEligibleSql, projectionEligibleSql } from '../eligibility/sql.ts';
+import { nullUnlessCapabilityRefusal, rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 import type { ReadEligibility } from '../eligibility/policy.ts';
 import { renderTrustedInline, trustFields } from '../eligibility/labels.ts';
 import { redactFindings } from '../secret-scan.ts';
@@ -200,13 +199,10 @@ async function entityPages(
   opts: { excludePrivate: boolean; forCaller?: boolean; eligibility?: ReadEligibility },
 ): Promise<Map<string, string>> {
   if (!slugs.length) return new Map();
-  const rows = await engine.executeRaw<{ slug: string; title: string | null; type: string | null }>(
-    `SELECT p.slug, p.title, p.type FROM pages p
-      WHERE p.source_id = $1 AND p.slug = ANY($2::text[]) AND p.deleted_at IS NULL
-        ${opts.excludePrivate ? `AND ${opts.forCaller ? privatePagesFilterForCaller('p') : remoteReadFloorSql('p')}` : ''}
-        AND ${pageEligibleSql('p', opts.eligibility)}`,
-    [sourceId, slugs],
-  );
+  const rows = await engine.readBriefEntityPages(sourceId, slugs, {
+    privacy: opts.excludePrivate ? (opts.forCaller ? 'caller' : 'floor') : 'none',
+    eligibility: opts.eligibility,
+  });
   return new Map(rows
     .filter((r) => ENTITY_TYPES.has(r.type ?? '') || ENTITY_PREFIXES.some((x) => r.slug.startsWith(x)))
     .map((r) => [r.slug, r.title || r.slug]));
@@ -244,10 +240,7 @@ interface GoogleSource { id: string; fresh: boolean }
  */
 async function googleSources(engine: BrainEngine, now: number): Promise<GoogleSource[]> {
   try {
-    const rows = await engine.executeRaw<{ id: string; last_sync_at: string | Date | null; config: unknown }>(
-      `SELECT id, last_sync_at, config FROM sources WHERE archived IS NOT TRUE`,
-      [],
-    );
+    const rows: Array<{ id: string; last_sync_at: string | Date | null; config: unknown }> = await engine.listAllSources();
     return rows
       .filter((r) => {
         const c = typeof r.config === 'string' ? safeJson(r.config) : r.config;
@@ -257,7 +250,8 @@ async function googleSources(engine: BrainEngine, now: number): Promise<GoogleSo
         const at = r.last_sync_at instanceof Date ? r.last_sync_at.getTime() : r.last_sync_at ? Date.parse(r.last_sync_at) : NaN;
         return { id: r.id, fresh: Number.isFinite(at) && now - at <= BRIEF_SOURCE_STALE_MS };
       });
-  } catch {
+  } catch (err) {
+    rethrowCapabilityRefusal(err);
     return [];
   }
 }
@@ -276,14 +270,7 @@ export async function upcomingMeetings(engine: BrainEngine, clock: BriefClock, e
   // ISO start strings carry offsets, so the SQL bound is a day-wide prefilter; the exact window is applied below.
   const lo = new Date(clock.now - DAY_MS).toISOString().slice(0, 10);
   const hi = new Date(end + DAY_MS).toISOString().slice(0, 10);
-  const rows = await engine.executeRaw<{ slug: string; source_id: string; start: string | null; attendees: unknown; account: string | null }>(
-    `SELECT p.slug, p.source_id, p.frontmatter->>'start' AS start, p.frontmatter->'attendees' AS attendees, p.frontmatter->>'account' AS account
-       FROM pages p
-      WHERE p.deleted_at IS NULL AND p.type = 'meeting' AND p.source_id = ANY($1::text[])
-        AND p.frontmatter->>'start' >= $2 AND p.frontmatter->>'start' <= $3
-        AND ${remoteReadFloorSql('p')} AND ${pageEligibleSql('p', eligibility)}`,
-    [fresh, lo, `${hi}~`],
-  );
+  const rows = await engine.readBriefMeetingPages(fresh, lo, `${hi}~`, eligibility);
   const out: UpcomingMeeting[] = [];
   for (const r of rows) {
     const start = r.start ? Date.parse(r.start) : NaN;
@@ -303,17 +290,19 @@ function safeJson(s: string): unknown {
   try { return JSON.parse(s); } catch { return null; }
 }
 
-/** Normalized emails of a counterparty page: its page_aliases rows holding an `@`, plus `email`/`emails` frontmatter. */
+/**
+ * Normalized emails of a counterparty page: its page_aliases rows holding an `@` (any page state, as the alias rows
+ * outlive their page), plus `email`/`emails` frontmatter of the live page. The frontmatter read is bounded at 1 s on
+ * Postgres (readLivePageFrontmatter's default). Fails toward no emails, except that a capability refusal throws.
+ */
 async function counterpartyEmails(engine: BrainEngine, cp: BriefCounterparty): Promise<Set<string>> {
-  const rows = await engine.executeRaw<{ v: unknown }>(
-    `SELECT to_jsonb(a.alias_norm) AS v FROM page_aliases a
-      WHERE a.source_id = $1 AND a.slug = $2 AND a.alias_norm LIKE '%@%'
-     UNION ALL
-     SELECT p.frontmatter->'email' FROM pages p WHERE p.source_id = $1 AND p.slug = $2 AND p.deleted_at IS NULL
-     UNION ALL
-     SELECT p.frontmatter->'emails' FROM pages p WHERE p.source_id = $1 AND p.slug = $2 AND p.deleted_at IS NULL`,
-    [cp.source_id, cp.slug],
-  ).catch(() => []);
+  const rows: Array<{ v: unknown }> = await Promise.all([
+    engine.readEntityAliasRows(cp.source_id, [cp.slug]),
+    engine.readLivePageFrontmatter(cp.source_id, cp.slug),
+  ]).then(([aliases, page]) => [
+    ...aliases.filter((a) => a.alias_norm.includes('@')).map((a) => ({ v: a.alias_norm })),
+    ...(page ? [{ v: page.frontmatter?.email ?? null }, { v: page.frontmatter?.emails ?? null }] : []),
+  ]).catch((err: unknown) => { rethrowCapabilityRefusal(err); return []; });
   const out = new Set<string>();
   for (const r of rows) {
     const v = typeof r.v === 'string' && /^[[{"]/.test(r.v) ? safeJson(r.v) ?? r.v : r.v;
@@ -338,13 +327,7 @@ export async function meetingCounterparties(
 ): Promise<BriefCounterparty[]> {
   const emails = [...new Set(meetings.flatMap((m) => m.attendees))];
   if (!emails.length) return [];
-  const rows = await engine.executeRaw<{ alias_norm: string; slug: string; title: string | null; type: string | null }>(
-    `SELECT a.alias_norm, p.slug, p.title, p.type FROM page_aliases a
-       JOIN pages p ON p.source_id = a.source_id AND p.slug = a.slug AND p.deleted_at IS NULL
-      WHERE a.source_id = $1 AND a.alias_norm = ANY($2::text[])
-        AND ${remoteReadFloorSql('p')} AND ${pageEligibleSql('p', eligibility)}`,
-    [sourceId, emails],
-  );
+  const rows = await engine.readBriefEmailAliasPages(sourceId, emails, eligibility);
   const byEmail = new Map<string, Array<{ slug: string; title: string | null; type: string | null }>>();
   for (const r of rows) {
     const list = byEmail.get(r.alias_norm) ?? [];
@@ -387,6 +370,21 @@ const ymd = (v: string | Date | null | undefined): string | null => {
  * Skipped: no activity for HALFLIFE_DAYS.commitment, or the loop's own
  * google source more than 24 h stale.
  */
+/**
+ * The brief's loop rank: overdue first, then soonest due, newest activity, highest confidence, then the newer loop (id
+ * descending, the direction of the activity order and of listOpenLoops' `last_activity_at DESC, id DESC`), so loops
+ * recorded in the same millisecond keep the order they would have a millisecond apart. Exported for the rank test.
+ */
+export function compareBriefLoops(a: Pick<OpenLoopRow, 'id' | 'due_at' | 'last_activity_at' | 'confidence'>,
+  b: Pick<OpenLoopRow, 'id' | 'due_at' | 'last_activity_at' | 'confidence'>, now: number): number {
+  const dueAt = (l: Pick<OpenLoopRow, 'due_at'>) => (l.due_at ? Date.parse(l.due_at) : Number.POSITIVE_INFINITY);
+  return Number(dueAt(b) < now) - Number(dueAt(a) < now)
+    || dueAt(a) - dueAt(b)
+    || Date.parse(b.last_activity_at) - Date.parse(a.last_activity_at)
+    || b.confidence - a.confidence
+    || b.id - a.id;
+}
+
 async function loopItems(engine: BrainEngine, cp: BriefCounterparty, clock: BriefClock, opts: ArmOpts): Promise<Array<BriefItem & { factId: number | null }>> {
   const stale = new Set((await googleSources(engine, clock.now)).filter((s) => !s.fresh).map((s) => s.id));
   if (!live(clock)) return [];
@@ -397,15 +395,9 @@ async function loopItems(engine: BrainEngine, cp: BriefCounterparty, clock: Brie
   const texts = opts.includePrivate
     ? await evidenceAdmitted(engine, loops, opts)
     : await worldProjections(engine, loops.map((l) => l.fact_id).filter((n): n is number => n !== null), opts);
-  const dueAt = (l: OpenLoopRow) => (l.due_at ? Date.parse(l.due_at) : Number.POSITIVE_INFINITY);
   return loops
     .filter((l) => texts.has(l.id))
-    .sort((a, b) =>
-      Number(dueAt(b) < clock.now) - Number(dueAt(a) < clock.now)
-      || dueAt(a) - dueAt(b)
-      || Date.parse(b.last_activity_at) - Date.parse(a.last_activity_at)
-      || b.confidence - a.confidence
-      || a.id - b.id)
+    .sort((a, b) => compareBriefLoops(a, b, clock.now))
     .map((l) => ({
       id: `L${l.id}`,
       kind: 'loop' as const,
@@ -421,25 +413,19 @@ async function loopItems(engine: BrainEngine, cp: BriefCounterparty, clock: Brie
 
   async function worldProjections(e: BrainEngine, factIds: number[], o: ArmOpts): Promise<Map<number, string>> {
     if (!factIds.length) return new Map();
-    const rows = await e.executeRaw<{ id: number | string; fact: string; trust_tier: unknown; write_origin: unknown }>(
-      `SELECT facts.id, facts.fact, facts.trust_tier, facts.write_origin FROM facts
-        WHERE facts.id = ANY($1::bigint[]) AND facts.expired_at IS NULL AND facts.visibility = 'world'
-          AND ${privateFactFilterForCaller('facts')}
-          AND ${projectionEligibleSql('facts', 'facts', o.eligibility)}`,
-      [factIds],
-    );
-    const byFact = new Map(rows.map((r) => [Number(r.id), renderStored(r.fact, r.trust_tier, r.write_origin)]));
+    const rows = await e.readBriefWorldFacts(factIds, o.eligibility);
+    const byFact = new Map(rows.map((r) => [r.id, renderStored(r.fact, r.trust_tier, r.write_origin)]));
     return new Map(loops.filter((l) => l.fact_id !== null && byFact.has(l.fact_id)).map((l) => [l.id, byFact.get(l.fact_id!)!]));
   }
 
   async function evidenceAdmitted(e: BrainEngine, ls: OpenLoopRow[], o: ArmOpts): Promise<Map<number, string>> {
-    const rows = await e.executeRaw<{ source_id: string; slug: string }>(
-      `SELECT p.source_id, p.slug FROM pages p
-        WHERE p.deleted_at IS NULL AND (p.source_id, p.slug) IN (SELECT * FROM unnest($1::text[], $2::text[]))
-          AND ${pageEligibleSql('p', o.eligibility)}`,
-      [ls.map((l) => l.source_id), ls.map((l) => l.page_slug!)],
-    );
-    const ok = new Set(rows.map((r) => `${r.source_id}\0${r.slug}`));
+    const bySource = new Map<string, string[]>();
+    for (const l of ls) bySource.set(l.source_id, [...(bySource.get(l.source_id) ?? []), l.page_slug!]);
+    const ok = new Set<string>();
+    for (const [sourceId, slugs] of bySource) {
+      const rows = await e.readBriefEntityPages(sourceId, [...new Set(slugs)], { privacy: 'none', eligibility: o.eligibility });
+      for (const r of rows) ok.add(`${sourceId}\0${r.slug}`);
+    }
     return new Map(ls.filter((l) => ok.has(`${l.source_id}\0${l.page_slug}`)).map((l) => [l.id, renderStored(l.summary)]));
   }
 }
@@ -479,33 +465,13 @@ async function changeItem(engine: BrainEngine, cp: BriefCounterparty, skipFactId
  * recorded or dated more than BRIEF_EDIT_MAX_AGE_MS ago.
  */
 async function editItem(engine: BrainEngine, cp: BriefCounterparty, clock: BriefClock, opts: ArmOpts): Promise<BriefItem | null> {
-  const [pg] = await engine.executeRaw<{ id: number; compiled_truth: string | null; timeline: string | null; trust_tier: unknown; write_origin: unknown }>(
-    `SELECT p.id, CASE WHEN octet_length(p.compiled_truth) + octet_length(COALESCE(p.timeline, '')) <= $3 THEN p.compiled_truth END AS compiled_truth,
-            p.timeline, p.trust_tier, p.write_origin
-       FROM pages p
-      WHERE p.source_id = $1 AND p.slug = $2 AND p.deleted_at IS NULL
-        AND ${opts.includePrivate ? 'TRUE' : opts.forCaller ? privatePagesFilterForCaller('p') : remoteReadFloorSql('p')}
-        AND ${pageEligibleSql('p', opts.eligibility)}`,
-    [cp.source_id, cp.slug, EDIT_MAX_PAGE_BYTES],
-  );
+  const read = { privacy: opts.includePrivate ? 'none' as const : opts.forCaller ? 'caller' as const : 'floor' as const, eligibility: opts.eligibility };
+  const pg = await engine.readBriefEditPage(cp.source_id, cp.slug, EDIT_MAX_PAGE_BYTES, read);
   if (!pg || !live(clock)) return null;
   const since = new Date(clock.now - BRIEF_EDIT_MAX_AGE_MS).toISOString();
-  const [entries, versions] = await Promise.all([
-    engine.executeRaw<{ id: number; date: string; summary: string; detail: string; created_at: string | Date }>(
-      `SELECT te.id, te.date::text AS date, te.summary, te.detail, te.created_at FROM timeline_entries te
-        WHERE te.page_id = $1 AND te.created_at >= $2::timestamptz AND te.date >= $2::timestamptz::date
-          AND ${opts.includePrivate ? 'TRUE' : opts.forCaller ? privateTimelineEventFilterForCaller('te') : privateTimelineEventFilterFragment('te')}
-          AND ${projectionEligibleSql('timeline_entries', 'te', opts.eligibility)}
-        ORDER BY te.created_at DESC, te.date DESC, te.id DESC LIMIT 1`,
-      [pg.id, since],
-    ),
-    pg.compiled_truth === null ? Promise.resolve([]) : engine.executeRaw<{ id: number; compiled_truth: string | null; timeline: string | null; snapshot_at: string | Date; is_deleted: boolean }>(
-      `SELECT v.id, CASE WHEN octet_length(v.compiled_truth) + octet_length(COALESCE(v.timeline, '')) <= $3 THEN v.compiled_truth END AS compiled_truth,
-              v.timeline, v.snapshot_at, v.is_deleted
-         FROM page_versions v WHERE v.page_id = $1 AND v.snapshot_at >= $2::timestamptz
-        ORDER BY v.id DESC LIMIT ${EDIT_MAX_VERSIONS}`,
-      [pg.id, since, EDIT_MAX_PAGE_BYTES],
-    ),
+  const [entry, versions] = await Promise.all([
+    engine.readBriefTimelineEntry(pg.id, since, read),
+    pg.compiled_truth === null ? Promise.resolve([]) : engine.readBriefPageVersions(pg.id, since, EDIT_MAX_PAGE_BYTES, EDIT_MAX_VERSIONS),
   ]);
   const current = pg.compiled_truth === null ? [] : narrativeLines(pg.compiled_truth, pg.timeline);
   const still = new Set(current);
@@ -524,7 +490,6 @@ async function editItem(engine: BrainEngine, cp: BriefCounterparty, clock: Brief
     if (added.length) { revision = { id: `Ev${Number(v.id)}`, at: new Date(v.snapshot_at).getTime(), added }; break; }
     newer = older;
   }
-  const entry = entries[0];
   const entryAt = entry ? new Date(entry.created_at).getTime() : Number.NEGATIVE_INFINITY;
   const base = { kind: 'edit' as const, slug: cp.slug, source_id: cp.source_id, counterparty: cp.slug, confidence: cp.confidence };
   if (entry && (!revision || entryAt >= revision.at)) {
@@ -611,10 +576,10 @@ export async function assembleBrief(engine: BrainEngine, opts: AssembleBriefOpts
   const items: BriefItem[] = [];
   for (const cp of opts.counterparties) {
     if (items.length >= BRIEF_MAX_ITEMS || !live(opts.clock)) break;
-    const loops = opts.local ? await loopItems(engine, cp, opts.clock, arm).catch(() => []) : [];
+    const loops = opts.local ? await loopItems(engine, cp, opts.clock, arm).catch((err: unknown) => { rethrowCapabilityRefusal(err); return []; }) : [];
     const loopFacts = new Set(loops.map((l) => l.factId).filter((n): n is number => n !== null));
-    const change = live(opts.clock) ? await changeItem(engine, cp, loopFacts, arm).catch(() => null) : null;
-    const found = await (live(opts.clock) ? editItem(engine, cp, opts.clock, arm).catch(() => null) : null);
+    const change = live(opts.clock) ? await changeItem(engine, cp, loopFacts, arm).catch(nullUnlessCapabilityRefusal) : null;
+    const found = await (live(opts.clock) ? editItem(engine, cp, opts.clock, arm).catch(nullUnlessCapabilityRefusal) : null);
     const edit = found && ![change, ...loops].some((x) => x && sameContent(found, x)) ? found : null;
     const fresh = loops.filter((l) => !seen(l.id)).map(({ factId, ...item }) => { void factId; return item; });
     for (const i of [fresh[0], change, edit, ...fresh.slice(1)]) {
@@ -730,7 +695,7 @@ export async function turnBrief(
 ): Promise<Brief | null> {
   const named = await resolveBriefCounterparties(engine, opts.sourceId, opts.prompt, { excludePrivate: true, eligibility: opts.eligibility });
   if (!named.length || !live(opts.clock)) return null;
-  const meetings = await upcomingMeetings(engine, opts.clock, opts.eligibility).catch(() => []);
+  const meetings = await upcomingMeetings(engine, opts.clock, opts.eligibility).catch((err: unknown) => { rethrowCapabilityRefusal(err); return []; });
   const attending: BriefCounterparty[] = [];
   for (const cp of meetings.length ? named : []) {
     const emails = await counterpartyEmails(engine, cp);

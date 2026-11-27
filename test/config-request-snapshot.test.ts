@@ -117,6 +117,8 @@ describe('the snapshot is scoped to its request', () => {
       // A write by another path inside the request is not seen until the request ends.
       await engine.executeRaw(`UPDATE config SET value = 'two' WHERE key = 'test.request_snapshot'`);
       expect(await engine.getConfig('test.request_snapshot')).toBe('one');
+      // readStoredConfigValue (the sync.admission read) never answers from the request snapshot: it reads the stored row.
+      expect(await engine.readStoredConfigValue('test.request_snapshot')).toBe('two');
       await engine.unsetConfig('test.request_snapshot');
       expect(await engine.getConfig('test.request_snapshot')).toBeNull();
     });

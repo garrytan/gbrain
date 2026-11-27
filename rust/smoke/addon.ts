@@ -140,6 +140,22 @@ export interface Brain {
     finish: { state: string; outcome?: Record<string, any>; errorCode?: string; errorMessage?: string; blockedReason?: string },
   ): Promise<Record<string, any>>;
   journalOutstanding(): Promise<{ brain: number; principals: Record<string, number> }>;
+  // Called with hostile arguments by the boundary fuzz in cases.ts, so the arguments are loose on purpose.
+  getConfigValues(keys: unknown): Promise<Array<{ key: string; value: string }>>;
+  insertFact(args: unknown): Promise<Record<string, any>>;
+  listFactsByEntity(query: unknown): Promise<Array<Record<string, any>>>;
+  expireFact(args: unknown): Promise<boolean>;
+  expireFactsByWithdrawal(args: unknown): Promise<Array<Record<string, any>>>;
+  planFactPurgeIds(args: unknown): Promise<Array<Record<string, any>>>;
+  insertFactPurge(row: unknown): Promise<boolean>;
+  searchKeywordChunks(query: string, options?: unknown): Promise<Array<Record<string, any>>>;
+  countKeywordPages(query: string, options?: unknown): Promise<number>;
+  admitJob(spec: unknown): Promise<Record<string, any>>;
+  getJob(id: number): Promise<Record<string, any> | null>;
+  listJobs(filter?: unknown): Promise<Array<Record<string, any>>>;
+  claimNextJob(spec: unknown): Promise<Record<string, any> | null>;
+  completeJob(id: number, lockToken: string, result?: unknown): Promise<Record<string, any> | null>;
+  renewJobLease(id: number, lockToken: string, lockDurationMs: number): Promise<boolean>;
   submitPageMutation(
     mutation: {
       principal: { kind: string; id: string };

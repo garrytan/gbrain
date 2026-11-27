@@ -16,6 +16,7 @@ import { describe, test, expect } from 'bun:test';
 import { runExtractFacts } from '../src/core/cycle/extract-facts.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { stubSourceMembers } from './helpers/source-members-stub.ts';
+import { upsertExtractRollupDay as rollupDaySql } from '../src/core/engine-sql/extract-bookkeeping.ts';
 
 interface CapturedCall {
   sql: string;
@@ -31,10 +32,21 @@ function mkEngine(legacyCount: number): { calls: CapturedCall[]; engine: BrainEn
       if (sql.includes('FROM persistence_brain')) return [{ enabled: false }]; // #6482: the strict mode reader needs one well-formed unmanaged row.
       return [];
     },
+    // The rollup upsert is a typed member; it runs the engine-sql statement through this stub's executeRaw.
+    async upsertExtractRollupDay(d: never, o?: { preV141?: boolean }) { return rollupDaySql(this as unknown as BrainEngine, d, o); },
     ...stubSourceMembers([]), // the typed source and guest reads answer an empty sources table, as the raw stub did
     // The legacy-pending count and the unfenced-row read moved off executeRaw onto typed members; they answer what the executeRaw stub answered.
     async countLegacyFactsPending() { return [{ n: String(legacyCount) }]; },
     async listUnfencedFactRows() { return []; },
+    async countUnfencedFactGroups() { return []; },
+    // The ontology-hold and deleted-page reads moved off executeRaw onto typed members; the raw stub answered both with no rows.
+    async listOntologyObservationSlugs() { return []; },
+    async listDeletedPageSlugsWithActiveFacts() { return []; },
+    // The held-fact move's two reads (held-fact-move.ts) moved off executeRaw onto typed members; the raw stub answered both with no rows.
+    async listHeldMoveRows() { return []; },
+    async listStruckHeldRows() { return []; },
+    // The fence-hold list (generations/fence.ts listFenceHolds, master #10067 on the trunk's typed member) reads no held fence result.
+    async listFenceHoldRows() { return []; },
     async getAllSlugs() { return []; },
     async getPage() { return null; },
     async deleteFactsForPage() { return { deleted: 0 }; },

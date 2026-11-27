@@ -98,7 +98,7 @@ export async function checkGrantNewOps(engine: BrainEngine, opts: { cfg?: GBrain
     const dcrDefault = await resolveDefaultClientSurface(engine, cfg);
     const findings: GrantFinding[] = [];
 
-    const clients = await engine.executeRaw<Record<string, unknown>>('SELECT * FROM oauth_clients WHERE deleted_at IS NULL ORDER BY client_id');
+    const clients = await engine.listActiveOauthClientRows();
     for (const row of clients) {
       const grant = grantFromRow(row);
       const client = isMcpSurface(grant.surface) ? grant.surface : null;
@@ -115,7 +115,7 @@ export async function checkGrantNewOps(engine: BrainEngine, opts: { cfg?: GBrain
         { client, clientSetBy: grant.surfaceSetBy, server }));
     }
 
-    const tokens = await engine.executeRaw<Record<string, unknown>>('SELECT * FROM access_tokens WHERE revoked_at IS NULL ORDER BY created_at, id');
+    const tokens = await engine.listActiveAccessTokenRows();
     const nameCounts = new Map<string, number>();
     for (const row of tokens) nameCounts.set(String(row.name), (nameCounts.get(String(row.name)) ?? 0) + 1);
     for (const row of tokens) {

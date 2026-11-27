@@ -44,14 +44,7 @@ async function emailAliasElsewhere(engine: BrainEngine, sourceId: string, email:
   const norm = normalizeAlias(email);
   if (!norm || !norm.includes('@')) return null;
   try {
-    const rows = await engine.executeRaw<{ slug: string; source_id: string }>(
-      `SELECT DISTINCT pa.slug, pa.source_id
-         FROM page_aliases pa
-         JOIN pages p ON p.slug = pa.slug AND p.source_id = pa.source_id AND p.deleted_at IS NULL
-        WHERE pa.alias_norm = $1 AND pa.source_id <> $2
-        LIMIT 2`,
-      [norm, sourceId],
-    );
+    const rows = await engine.listEmailAliasPages(norm, sourceId);
     return rows.length === 1 ? { slug: rows[0]!.slug, sourceId: rows[0]!.source_id } : null;
   } catch (err) {
     if (isMissingSchemaObject(err, 'table', 'page_aliases')) return null;

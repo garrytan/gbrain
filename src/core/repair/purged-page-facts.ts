@@ -37,7 +37,6 @@ import { waitForWrite, writeResponse } from '../persistence/service.ts';
 import { maintenanceTransaction } from '../persistence/attribution.ts';
 import { maintenancePreflight, submitDatabaseMaintenanceIntent } from '../persistence/prepared-maintenance.ts';
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
-import { PURGED_EXCLUDED_SQL, PURGED_HEAD_SQL, PURGED_PAGE_SQL, PURGED_SOURCES_SQL } from '../engine-sql/facts-repair.ts';
 import { afterCursor, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairListing, type RepairPlan } from './core.ts';
 
 export const PURGED_PAGE_FACTS_INTENT = 'managed_maintenance_expire_purged_page_facts';
@@ -65,28 +64,9 @@ export interface PurgedPageFact {
 interface Approved { source_id: string; include_ambiguous: boolean; scope: string[]; facts: PurgedPageFact[] }
 interface BatchItem extends RepairItem { batch: Approved; request_id: string; hash: string; last: boolean }
 
-const HEAD = PURGED_HEAD_SQL;
-const SOURCES = PURGED_SOURCES_SQL;
-const PURGED_SQL = PURGED_PAGE_SQL;
-const EXCLUDED_SQL = PURGED_EXCLUDED_SQL;
-const CANDIDATE_WHERE = `f.source_id = ANY($1::text[]) AND f.expired_at IS NULL AND f.source_markdown_slug IS NULL AND f.source IN (${SOURCES})
-     AND ${HEAD} <> '' AND ${HEAD} !~ '[[:space:]]' AND (strpos(${HEAD}, '/') > 0 OR ${PURGED_SQL})
-     AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.source_id = f.source_id AND p.slug = ${HEAD})`;
-
-interface CandidateRow {
-  id: number | string; source_id: string; slug: string; fact: string; context: string; entity_slug: string | null; visibility: string; source: string;
-  withdrawn: boolean; superseded: boolean; referenced: boolean; open_loop: boolean; purged: boolean;
-}
-
 /** Every candidate of these sources (or only these ids), classified, in (source, slug, id) order. Read-only. */
 export async function classifyPurgedPageFacts(db: BrainEngine, sourceIds: string[], opts: { ids?: number[] } = {}): Promise<PurgedPageFact[]> {
-  const rows = await db.executeRaw<CandidateRow>(`
-    SELECT f.id, f.source_id, ${HEAD} AS slug, f.fact, f.context, f.entity_slug, f.visibility, f.source,
-           ${EXCLUDED_SQL.withdrawn} AS withdrawn, ${EXCLUDED_SQL.superseded} AS superseded, ${EXCLUDED_SQL.referenced} AS referenced,
-           ${EXCLUDED_SQL.open_loop} AS open_loop, ${PURGED_SQL} AS purged
-      FROM facts f
-     WHERE ${CANDIDATE_WHERE} AND ($2::bigint[] IS NULL OR f.id = ANY($2::bigint[]))
-     ORDER BY f.source_id COLLATE "C", ${HEAD} COLLATE "C", f.id`, [sourceIds, opts.ids ?? null]);
+  const rows = await db.listPurgedPageFactCandidates(sourceIds, opts.ids ?? null);
   return rows.map(row => {
     const [klass, reason]: [PurgedPageFactClass, string] = row.withdrawn ? ['excluded', 'withdrawn'] : row.superseded ? ['excluded', 'superseded']
       : row.referenced ? ['excluded', 'superseded_by_reference'] : row.open_loop ? ['excluded', 'open_loop_reference']
@@ -115,7 +95,7 @@ const DETAILS: Record<string, string> = {
 };
 
 async function previewCommand(engine: BrainEngine, sourceIds: string[], includeAmbiguous: boolean): Promise<string> {
-  const [{ n }] = await engine.executeRaw<{ n: number | string }>('SELECT count(*)::int AS n FROM sources WHERE archived IS NOT TRUE');
+  const n = (await engine.listAllSources()).length;
   return `gbrain repair ${COMMAND}${sourceIds.length === 1 && Number(n) > 1 ? ` --source ${sourceIds[0]}` : ''}${includeAmbiguous ? ' --include-ambiguous' : ''}`;
 }
 
@@ -129,8 +109,7 @@ function batchItems(batches: Approved[], hash: string): BatchItem[] {
     action: `retire ${batch.facts.length} fact(s) left by purged page(s)`, batch, request_id: requestIdFor(hash, batch, 0), hash, last: index === batches.length - 1 }));
 }
 
-const sourcesOf = (engine: BrainEngine, ids: string[]) => engine.executeRaw<{ id: string; incarnation: string }>(
-  'SELECT id, incarnation::text AS incarnation FROM sources WHERE id = ANY($1::text[]) ORDER BY id', [ids]);
+const sourcesOf = (engine: BrainEngine, ids: string[]) => engine.listSourceIncarnations(ids);
 
 export const purgedPageFactsRepair: RepairHandler = {
   kind: COMMAND,
@@ -190,12 +169,10 @@ interface BatchResult { expired: number[]; changed: number[] }
  */
 async function expireBatch(tx: BrainEngine, batch: Approved): Promise<BatchResult> {
   const ids = batch.facts.map(f => f.id);
-  await tx.executeRaw('SELECT id FROM facts WHERE source_id = $1 AND id = ANY($2::bigint[]) FOR UPDATE', [batch.source_id, ids]);
+  await tx.lockApprovedFacts(batch.source_id, ids);
   const live = new Map((await classifyPurgedPageFacts(tx, [batch.source_id], { ids })).map(f => [f.id, f]));
   const same = batch.facts.filter(f => { const now = live.get(f.id); return !!now && now.class === f.class && now.fact_hash === f.fact_hash && now.slug === f.slug; });
-  const expired = same.length ? (await tx.executeRaw<{ id: number | string }>(
-    'UPDATE facts SET expired_at = now(), row_num = NULL WHERE source_id = $1 AND id = ANY($2::bigint[]) AND expired_at IS NULL RETURNING id',
-    [batch.source_id, same.map(f => f.id)])).map(r => Number(r.id)) : [];
+  const expired = same.length ? await tx.expireApprovedFacts(batch.source_id, same.map(f => f.id)) : [];
   const done = new Set(expired);
   return { expired: expired.sort((a, b) => a - b), changed: ids.filter(id => !done.has(id)) };
 }

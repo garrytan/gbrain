@@ -673,7 +673,8 @@ export async function buildServeHttpApp(app: express.Express, engine: BrainEngin
   const resourceMetadataUrl = getOAuthProtectedResourceMetadataUrl(mcpResourceUrl);
   const oauthProvider = new GBrainOAuthProvider({
     sql,
-    transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx))),
+    engine,
+    transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx), tx)),
     tokenTtl,
     dcrDisabled: !enableDcr,
     allowClientCredentialsDcr: enableDcrInsecure === true,

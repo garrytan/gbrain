@@ -45,6 +45,21 @@ fn key(page_id: u64) -> Vec<u8> {
     keys::id_key(keys::SALIENCE, &[page_id])
 }
 
+/// The shadow seed (`seed.rs`): stores a page's `emotional_weight` and `salience_touched_at` as
+/// another engine holds them.
+pub(crate) fn seed_record(
+    tx: &mut dyn KvWrite,
+    page_id: u64,
+    emotional_weight: f32,
+    touched_at_us: i64,
+) -> Result<()> {
+    let record = SalienceRecord {
+        emotional_weight,
+        touched_at_us,
+    };
+    put_json(tx, &key(page_id), &record)
+}
+
 fn record(read: &dyn KvRead, page_id: u64) -> Result<Option<SalienceRecord>> {
     get_json(read, &key(page_id))
 }

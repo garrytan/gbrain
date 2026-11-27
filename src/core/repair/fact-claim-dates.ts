@@ -27,6 +27,7 @@
  * remediation plan.
  */
 import type { BrainEngine } from '../engine.ts';
+import type { FactClaimDayRow } from '../engine-sql/facts-repair.ts';
 import type { Page } from '../types.ts';
 import { opError, OperationError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
@@ -39,6 +40,7 @@ import { managedPersistenceEnabled } from '../persistence/ownership.ts';
 import { submitPageMutation } from '../persistence/page-mutations.ts';
 import { clearApprovedSet, loadApprovedSet, previewChangedError, previewHash, saveApprovedSet } from '../persistence/preview-approval.ts';
 import { afterCursor, repairRequestId, type RepairHandler, type RepairItem, type RepairItemOutcome, type RepairListing, type RepairPlan, type RepairScope } from './core.ts';
+import { requireRawSql } from '../rust-engine/errors.ts';
 
 const DOCS = 'docs/guides/repair.md#fact-claim-dates';
 /** Rows a listing line names before it counts the rest. */
@@ -52,8 +54,7 @@ interface Selection { source_ids: string[]; day: string | null }
 interface Approved { selection: Selection; page?: PagePlan; facts?: FactsPlan }
 interface ClaimItem extends RepairItem { approved: Approved; hash: string; last: boolean }
 
-interface FactRow { id: number | string; entity_slug: string | null; fact: string; row_num: number | string | null; source_markdown_slug: string | null;
-  valid_from: string; valid_until_day: string | null }
+type FactRow = FactClaimDayRow;
 
 interface Plan { hash: string; days: BulkFactDay[]; pages: PagePlan[]; facts: FactsPlan[]; residuals: Record<string, number>; listing: RepairListing[] }
 
@@ -124,9 +125,7 @@ async function buildPlan(engine: BrainEngine, scope: RepairScope, selection: Sel
   const byPage = new Map<string, Array<{ row: FactRow; day: string; date: string }>>();
   const byEntity = new Map<string, FactsPlan>();
   for (const day of dayList) {
-    const rows = await engine.executeRaw<FactRow>(`SELECT f.id, f.entity_slug, f.fact, f.row_num, f.source_markdown_slug, f.valid_from::text AS valid_from,
-        to_char(f.valid_until AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS valid_until_day
-      FROM facts f WHERE f.source_id = $1 AND f.expired_at IS NULL AND (f.valid_from AT TIME ZONE 'UTC')::date = $2::date ORDER BY f.id`, [sourceId, day]);
+    const rows = await engine.listFactsOnValidDay(sourceId, day);
     for (const row of rows) {
       const found = claimDate(row.fact, day);
       if ('skip' in found) { count(found.skip); continue; }
@@ -164,7 +163,7 @@ async function buildPlan(engine: BrainEngine, scope: RepairScope, selection: Sel
     listing.push({ item: `${sourceId}:${group.entity_slug ?? '(no entity)'}`, class: 'update',
       detail: `${group.rows.length} database-only fact(s) take the date their claim states: ${group.rows.slice(0, LISTED_ROWS).map(row => `fact ${row.id} -> ${row.date}`).join(', ')}` });
   }
-  const [brain] = await engine.executeRaw<{ incarnation: string }>('SELECT incarnation::text AS incarnation FROM sources WHERE id = $1', [sourceId]);
+  const brain = await engine.readSourceIncarnation(sourceId);
   const hash = previewHash({ kind: 'fact-claim-dates-v1', brain_id: scope.brain_id, source: { id: sourceId, incarnation: brain?.incarnation ?? null }, selection,
     days: dayList, pages: pages.map(({ slug, revision, section, rows }) => ({ slug, revision, section, rows })), facts });
   return { hash, days, pages, facts, residuals, listing };
@@ -218,6 +217,9 @@ export const factClaimDatesRepair: RepairHandler = {
   },
   async apply(ctx, entry): Promise<RepairItemOutcome> {
     const { approved, hash, last } = entry as ClaimItem;
+    // The page move rewrites a facts fence through put_page, whose fence projection the Rust engine does not serve yet, so a
+    // Rust brain stops a page move here by name, before its first write; a database-only move is typed.
+    if (approved.page) requireRawSql(ctx.engine, 'repair fact-claim-dates page write');
     const outcome = approved.page ? await movePage(ctx, entry, approved.page) : await moveFacts(ctx.engine, approved.facts!);
     if (last) await clearApprovedSet(ctx.engine, { command: 'fact-claim-dates', hash });
     return outcome;
@@ -240,11 +242,7 @@ async function movePage(ctx: Parameters<RepairHandler['apply']>[0], entry: Repai
 /** Database-only facts on an unmanaged brain: one maintenance transaction; a fact edited since the preview is left alone. */
 async function moveFacts(engine: BrainEngine, plan: FactsPlan): Promise<RepairItemOutcome> {
   if (await managedPersistenceEnabled(engine)) return { applied: false, outcome: 'changed_since_preview', reason: 'the brain is managed now; database-only facts are kept' };
-  const moved = await maintenanceTransaction(engine, tx => tx.executeRaw<{ id: number | string }>(`UPDATE facts f
-      SET valid_from = (r.date || 'T00:00:00Z')::timestamptz
-     FROM jsonb_to_recordset($2::text::jsonb) AS r(id bigint, valid_from text, date text)
-    WHERE f.source_id = $1 AND f.id = r.id AND f.valid_from = r.valid_from::timestamptz AND f.expired_at IS NULL AND f.row_num IS NULL
-    RETURNING f.id`, [plan.source_id, JSON.stringify(plan.rows.map(({ id, valid_from, date }) => ({ id, valid_from, date })))]));
+  const moved = await maintenanceTransaction(engine, tx => tx.moveFactClaimDates(plan.source_id, plan.rows));
   if (!moved.length) return { applied: false, outcome: 'changed_since_preview', reason: 'every fact was edited or expired since the preview' };
   return { applied: true, outcome: 'updated', detail: { facts: moved.length }, ...(moved.length < plan.rows.length
     ? { reason: `${plan.rows.length - moved.length} fact(s) were edited or expired since the preview and kept` } : {}) };

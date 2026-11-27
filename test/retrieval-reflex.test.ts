@@ -734,6 +734,8 @@ describe('v0.46.15 ship-review hardening (adversarial F1/F2 + stale-alias veto)'
           ? Promise.reject(new Error('transient blip'))
           : engine.resolveAliases(norms, opts),
       executeRaw: (sql: string, params: unknown[]) => engine.executeRaw(sql, params),
+      readReflexLiveKeys: (...args: Parameters<typeof engine.readReflexLiveKeys>) => engine.readReflexLiveKeys(...args),
+      readReflexPages: (...args: Parameters<typeof engine.readReflexPages>) => engine.readReflexPages(...args),
     } as unknown as typeof engine;
     const block = await resolveEntitiesToPointers(
       shim,

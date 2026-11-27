@@ -18,8 +18,7 @@ import type { BrainEngine } from '../engine.ts';
 import { resealSafeChunks } from './projections.ts';
 import { buildSegmentedProjection } from '../page-body/projection.ts';
 import { PageRevisionConflictError } from './types.ts';
-import { MARKDOWN_CHUNKER_VERSION } from '../chunkers/recursive.ts';
-import { SAFE_FENCE_CHUNKER_VERSION } from '../search/safe-chunks.ts';
+import { CREDENTIAL_RESEAL_HELD, CREDENTIAL_RESEAL_HOLD_OP as HOLD_OP, CREDENTIAL_RESEAL_PRODUCER as PRODUCER } from './credential-reseal-hold.ts';
 import type { Action } from '../agent-output.ts';
 import { ItemRun } from '../item-failure.ts';
 import { redactConnectionInfo } from '../audit/redact-connection-info.ts';
@@ -36,13 +35,8 @@ const PENDING = `p.deleted_at IS NULL AND p.page_kind IN ('markdown','code')
 export interface CredentialPending { rebuildable: number; kept: number }
 
 /** Pending pages in active sources; `kept` cannot be rebuilt here (code without a recorded source path). */
-export async function credentialProjectionPending(engine: Pick<BrainEngine, 'executeRaw'>, sourceIds?: string[]): Promise<CredentialPending> {
-  const [row] = await engine.executeRaw<{ rebuildable: number; kept: number }>(`SELECT
-      COUNT(*) FILTER (WHERE ${REBUILDABLE})::int AS rebuildable,
-      COUNT(*) FILTER (WHERE NOT ${REBUILDABLE})::int AS kept
-    FROM pages p JOIN sources s ON s.id=p.source_id AND s.archived IS NOT TRUE
-    WHERE ${PENDING} ${sourceIds ? 'AND p.source_id=ANY($1::text[])' : ''}`, sourceIds ? [sourceIds] : []);
-  return { rebuildable: Number(row?.rebuildable ?? 0), kept: Number(row?.kept ?? 0) };
+export function credentialProjectionPending(engine: Pick<BrainEngine, 'countCredentialProjectionPending'>, sourceIds?: string[]): Promise<CredentialPending> {
+  return engine.countCredentialProjectionPending(sourceIds);
 }
 
 /** GBRA-130 A-27: one page whose re-chunk failed item-scoped, recorded under op_checkpoints `credential-reseal-hold` keyed by page id. */
@@ -58,17 +52,14 @@ export interface CredentialResealHold {
   at: string;
 }
 
-const HOLD_OP = 'credential-reseal-hold';
-const PRODUCER = `chunker-v${MARKDOWN_CHUNKER_VERSION}.fence-v${SAFE_FENCE_CHUNKER_VERSION}`;
 /** A hold applies while its page is live, still at the held revision and producer, and still unsealed. */
 const LIVE_HOLD = `p.deleted_at IS NULL AND p.knowledge_revision::text = h.completed_keys->0->>'revision'
   AND h.completed_keys->0->>'producer' = '${PRODUCER}' AND p.text_projection_revision IS DISTINCT FROM p.knowledge_revision`;
 const HOLD_PAGES = `op_checkpoints h JOIN pages p ON p.id = (h.completed_keys->0->>'page_id')::int`;
+/** The pieces the hold statements splice in; test/doctor-checkpoints-sql.test.ts pins the typed read against them. */
+export { HOLD_OP as CREDENTIAL_RESEAL_HOLD_OP, PRODUCER as CREDENTIAL_RESEAL_PRODUCER, LIVE_HOLD as CREDENTIAL_RESEAL_LIVE_HOLD, HOLD_PAGES as CREDENTIAL_RESEAL_HOLD_PAGES };
 
-/** SQL predicate over `pages p`: the page has a live credential re-chunk hold (`gbrain repair safe-chunks` retries it). */
-export const CREDENTIAL_RESEAL_HELD = `(p.text_projection_revision IS DISTINCT FROM p.knowledge_revision AND EXISTS (SELECT 1 FROM op_checkpoints h
-  WHERE h.op='${HOLD_OP}' AND h.fingerprint = p.id::text AND p.knowledge_revision::text = h.completed_keys->0->>'revision'
-  AND h.completed_keys->0->>'producer' = '${PRODUCER}'))`;
+export { CREDENTIAL_RESEAL_HELD };
 
 /** The command that retries a held page: `gbrain repair safe-chunks` for its source (a segmented page is rebuilt by the projection drain). */
 function holdFix(hold: Pick<CredentialResealHold, 'source_id'>, segmented: boolean): Action {
@@ -80,10 +71,9 @@ function holdFix(hold: Pick<CredentialResealHold, 'source_id'>, segmented: boole
 }
 
 /** Live holds (optionally for some sources), oldest page first, each with the command that retries it. */
-export async function readCredentialResealHolds(engine: Pick<BrainEngine, 'executeRaw'>, sourceIds?: string[]): Promise<Array<CredentialResealHold & { fix: Action }>> {
-  const rows = await engine.executeRaw<{ hold: CredentialResealHold; segmented: boolean }>(`SELECT h.completed_keys->0 AS hold, p.body_storage IS NOT DISTINCT FROM 'segmented' AS segmented
-    FROM ${HOLD_PAGES} WHERE h.op='${HOLD_OP}' AND ${LIVE_HOLD} ${sourceIds ? 'AND p.source_id=ANY($1::text[])' : ''} ORDER BY p.id`, sourceIds ? [sourceIds] : []);
-  return rows.map(row => ({ ...row.hold, fix: holdFix(row.hold, row.segmented === true) }));
+export async function readCredentialResealHolds(engine: Pick<BrainEngine, 'listCredentialResealHoldRows'>, sourceIds?: string[]): Promise<Array<CredentialResealHold & { fix: Action }>> {
+  const rows = await engine.listCredentialResealHoldRows(PRODUCER, sourceIds);
+  return rows.map(row => ({ ...row.hold, fix: holdFix(row.hold, row.segmented) }));
 }
 
 /**

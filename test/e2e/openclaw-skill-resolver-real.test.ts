@@ -20,18 +20,31 @@
  *    Bot API): a DM and a group, the owner and another member, a mention,
  *    and --owner-sender giving another member the pins only;
  *  - a cron turn gets no suggestions (skipped_provenance);
+ *  - session classes with no memory provider (classes from the session key):
+ *    the main session gets the owner pins and an `audience: owner` skill, a
+ *    group gets neither; the session-start brief (--pins-route first_turn)
+ *    reaches the first owner turn, every attempt of a retried first turn
+ *    carries it once, neither a later turn nor a gateway restart repeats it,
+ *    and a new session on the same key (the `sessions.reset` that /new runs) gets its own;
  *  - a skills_read of a suggested skill logs a read marked suggested;
  *  - fail-open: a corrupted library or a stuck worker never fails or stalls a
  *    turn, injects nothing and logs the miss;
  *  - doctor reads healthy; off removes the plugin and keeps the pins;
  *  - a 750-skill directory: what OpenClaw loads, what setup excludes, what
- *    doctor says, and which settings lift OpenClaw's cut.
+ *    doctor says, and which settings lift OpenClaw's cut;
+ *  - listing off (maxSkillsPromptChars 0, skills_read only through
+ *    dispatch_action) with a skill in a configured extra dir outside the
+ *    workspace: setup indexes it through the gateway's skills.status, the
+ *    block leads with its path, a read of that path and a dispatched
+ *    skills_read each log one read with its source, doctor reads
+ *    "listing off, resolver live", and tools.fs.workspaceOnly makes the
+ *    block lead with skills_read for it.
  *
  * Skips only when no OpenClaw CLI is found; with GBRAIN_TEST_REQUIRE_OPENCLAW=1
  * (CI) a missing CLI fails instead.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { chmodSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { RealOpenclaw, blockIds, openclawBin, promptText, systemText, type ModelRequest, type TelegramMessage, type TelegramUser } from '../helpers/openclaw-real-gateway.ts';
@@ -70,15 +83,15 @@ describe.skipIf(!BIN)('gbrain-skill-resolver in a real OpenClaw gateway', () => 
     expect((await oc.gbrain(['init', '--pglite', '--no-embedding'])).code).toBe(0);
   }, 300_000);
 
-  afterAll(async () => { await oc?.close(); });
+  afterAll(async () => { await oc?.close(); }, 60_000);
 
   test('setup installs the plugin for real and OpenClaw loads it with before_prompt_build', async () => {
     const r = await oc.gbrain(['setup', 'openclaw', '--skill-loading', 'resolve', '--agent', 'main', '--gbrain-bin', oc.gbrainBin, '--json']);
-    expect({ code: r.code, stderr: r.code === 0 ? '' : r.stderr.slice(-3000) }).toEqual({ code: 0, stderr: '' });
+    expect({ code: r.code, stderr: r.code === 0 ? '' : r.stderr.slice(-3000), stdout: r.code === 0 ? '' : r.stdout.slice(-3000) }).toEqual({ code: 0, stderr: '', stdout: '' });
     const resolver = JSON.parse(r.stdout).skill_resolver;
     expect(resolver.error).toBeUndefined();
     expect(resolver.steps.map((s: { step: string }) => s.step)).toEqual(['catalog', 'library', 'state', 'plugin', 'install', 'verify', 'self-test']);
-    expect(resolver.agents).toEqual([expect.objectContaining({ id: 'main', mode: 'live', skills: 3 })]);
+    expect(resolver.agents).toEqual([expect.objectContaining({ id: 'main', mode: 'live', sources: expect.objectContaining({ 'openclaw-workspace': 3 }) })]);
     expect(resolver.notes.join('\n')).not.toContain('failed, so skills OpenClaw hides');
     const inspect = await oc.openclaw(['plugins', 'inspect', PLUGIN, '--runtime', '--json']);
     expect(inspect.code).toBe(0);
@@ -102,7 +115,7 @@ describe.skipIf(!BIN)('gbrain-skill-resolver in a real OpenClaw gateway', () => 
 
   test('a pin reaches the system prompt on the next turn and is never also suggested', async () => {
     const calls = oc.callLines().length;
-    expect((await oc.gbrain(['skills', 'pin', 'add', 'translate-example', '--catalog', 'openclaw-main'])).code).toBe(0);
+    expect((await oc.gbrain(['skills', 'pin', 'add', 'translate-example', '--catalog', 'openclaw-main', '--class', 'owner,conversation'])).code).toBe(0);
     const req = await expectTurn(oc, 'pin-1', 'Translate this document into Spanish and keep the formatting');
     expect(pinned(req)).toEqual(['translate-example']);
     expect(suggested(req) ?? []).not.toContain('translate-example');
@@ -269,7 +282,7 @@ describe.skipIf(!BIN)('a 750-skill directory in a real OpenClaw', () => {
     expect((await oc.gbrain(['init', '--pglite', '--no-embedding'])).code).toBe(0);
   }, 300_000);
 
-  afterAll(async () => { await oc?.close(); });
+  afterAll(async () => { await oc?.close(); }, 60_000);
 
   test('OpenClaw loads the first 200 by name and says so only on stderr; setup excludes the rest and names the cut; doctor does not', async () => {
     const list = await oc.openclaw(['skills', 'list', '--json', '--agent', 'main']);
@@ -285,10 +298,10 @@ describe.skipIf(!BIN)('a 750-skill directory in a real OpenClaw', () => {
     const r = await oc.gbrain(['setup', 'openclaw', '--skill-loading', 'resolve', '--agent', 'main', '--gbrain-bin', oc.gbrainBin, '--json']);
     expect(r.code).toBe(0);
     const resolver = JSON.parse(r.stdout).skill_resolver;
-    expect(resolver.agents).toEqual([expect.objectContaining({ id: 'main', skills: 200 })]);
+    expect(resolver.agents).toEqual([expect.objectContaining({ id: 'main', sources: expect.objectContaining({ 'openclaw-workspace': 200 }) })]);
     expect(resolver.notes.join('\n')).toMatch(/does not list 550 of openclaw-main's skills.*skill_resolver_host_load_cut/);
     const state = JSON.parse(readFileSync(oc.statePath, 'utf8'));
-    expect(state.agents.main.exclude_ids).toHaveLength(550);
+    expect(state.agents.main.exclude_ids.filter((id: string) => /^skill-\d{4}-/.test(id))).toHaveLength(550);
     expect(state.agents.main.exclude_ids).toEqual(expect.arrayContaining([targets[250], targets[350]]));
 
     const doctor = await oc.gbrain(['doctor', '--only', 'skill_resolver', '--json']);
@@ -313,10 +326,136 @@ describe.skipIf(!BIN)('a 750-skill directory in a real OpenClaw', () => {
     const r = await oc.gbrain(['setup', 'openclaw', '--skill-loading', 'resolve', '--agent', 'main', '--gbrain-bin', oc.gbrainBin, '--json']);
     expect(r.code).toBe(0);
     expect(JSON.parse(r.stdout).skill_resolver.notes.join('\n')).not.toContain('skill_resolver_host_load_cut');
-    expect(JSON.parse(readFileSync(oc.statePath, 'utf8')).agents.main.exclude_ids).toEqual([]);
+    expect(JSON.parse(readFileSync(oc.statePath, 'utf8')).agents.main.exclude_ids.filter((id: string) => /^skill-\d{4}-/.test(id))).toEqual([]);
     await oc.restartGateway();
     expect(suggested(await expectTurn(oc, 'big-3', 'Create and send a customer invoice as a PDF with line items and tax'))).toEqual([targets[250]]);
   }, 600_000);
+});
+
+describe.skipIf(!BIN)('listing off with a skill outside the workspace in a real OpenClaw gateway', () => {
+  let oc: RealOpenclaw;
+  let invoicePath = '';
+  const invoice = 'Create and send a customer invoice as a PDF with line items and tax';
+  const reads = () => oc.logLines().filter((l) => l.outcome === 'read');
+  const config = (edit: (cfg: Record<string, any>) => void) => {
+    const cfg = JSON.parse(readFileSync(oc.env.OPENCLAW_CONFIG_PATH!, 'utf8'));
+    edit(cfg);
+    writeFileSync(oc.env.OPENCLAW_CONFIG_PATH!, JSON.stringify(cfg, null, 2));
+  };
+  const setup = async (extra: string[] = []) => {
+    const r = await oc.gbrain(['setup', 'openclaw', '--skill-loading', 'resolve', '--agent', 'main', '--gbrain-bin', oc.gbrainBin, '--json', ...extra]);
+    expect({ code: r.code, stderr: r.code === 0 ? '' : r.stderr.slice(-3000), stdout: r.code === 0 ? '' : r.stdout.slice(-3000) }).toEqual({ code: 0, stderr: '', stdout: '' });
+    return JSON.parse(r.stdout).skill_resolver;
+  };
+
+  beforeAll(async () => {
+    oc = new RealOpenclaw(BIN!, 'listing-off');
+    oc.skill('deploy-example', 'Deploy the web service to production with a rolling restart and health checks');
+    oc.skill('clash-example', 'Rotate the TLS certificates of the load balancer before they expire');
+    await oc.start();
+    const extra = join(oc.dir, 'extra-skills');
+    for (const [name, description] of [['invoice-example', invoice], ['clash-example', 'An older copy of the certificate rotation skill']]) {
+      mkdirSync(join(extra, name!), { recursive: true });
+      writeFileSync(join(extra, name!, 'SKILL.md'), '---\nname: ' + name + '\ndescription: ' + JSON.stringify(description) + '\n---\n# ' + name + '\n' + description + '.\n');
+    }
+    invoicePath = realpathSync(join(extra, 'invoice-example', 'SKILL.md'));
+    config((cfg) => {
+      cfg.skills.load = { extraDirs: [extra] };
+      cfg.agents.entries = { main: { skillsLimits: { maxSkillsPromptChars: 0 } } };
+      cfg.tools = { toolSearch: { enabled: true, mode: 'tools' } };
+    });
+    expect((await oc.gbrain(['init', '--pglite', '--no-embedding'])).code).toBe(0);
+  }, 300_000);
+
+  afterAll(async () => { await oc?.close(); }, 60_000);
+
+  test("setup reads the running gateway's skills.status: the extra dir is indexed, the workspace copy of a clash wins, and the state names the roots, the paths and the gbrain home", async () => {
+    await oc.startGateway();
+    const resolver = await setup();
+    expect(resolver.agents).toEqual([expect.objectContaining({ id: 'main', mode: 'live', sources: expect.objectContaining({ 'openclaw-workspace': 2, 'openclaw-extra': 1 }) })]);
+    const calls = oc.callLines();
+    expect(calls).toContain('gateway call skills.status --params {"agentId":"main"} --json');
+    expect(calls.some((l) => l.startsWith('skills info'))).toBe(false);
+    const state = JSON.parse(readFileSync(oc.statePath, 'utf8'));
+    expect(state.gbrain_home).toBe(oc.gbrainHome);
+    const a = state.agents.main;
+    expect(a.skill_roots.map((r: { source: string }) => r.source)).toEqual(expect.arrayContaining(['openclaw-workspace', 'openclaw-extra']));
+    expect(a.skill_files['invoice-example']).toBe(invoicePath);
+    expect(a.skill_files['clash-example']).toBe(realpathSync(join(oc.workspace, 'skills', 'clash-example', 'SKILL.md')));
+    expect(a.exclude_ids).not.toContain('clash-example');
+    expect(a.path_reads).toBe('any');
+    const bundled = a.skill_roots.find((r: { source: string }) => r.source === 'openclaw-bundled')?.dir as string;
+    const hidden = Object.entries(a.skill_files as Record<string, string>).filter(([, p]) => p.startsWith(bundled + '/')).map(([id]) => id);
+    expect(hidden.length).toBeGreaterThan(0);
+    expect(a.exclude_ids).toEqual(expect.arrayContaining(hidden));
+    await oc.restartGateway();
+  }, 300_000);
+
+  test('a turn with listing off: no skills_read tool, no skill listed in the system prompt, and the block leads with the SKILL.md path; a read of that path logs one read with its source', async () => {
+    oc.replies.push({ tool: 'read', args: { path: invoicePath } }, { text: 'done' });
+    const before = reads().length;
+    const t = await oc.turn('off-1', invoice);
+    expect(t.ran.code).toBe(0);
+    const tools = (t.requests[0]!.body.tools ?? []).map((x) => x.function?.name);
+    expect(tools).not.toContain('skills_read');
+    expect(tools).toEqual(expect.arrayContaining(['dispatch_action', 'read']));
+    const system = systemText(t.requests[0]!);
+    const section = system.slice(system.indexOf('## Skills')).split('\n## ')[0]!.split('\n').filter(Boolean);
+    console.log('[openclaw-skill-resolver-real] listing-off skills section: ' + section.length + ' lines: ' + JSON.stringify(section));
+    expect(system).not.toContain('invoice-example');
+    expect(suggested({ request: t.requests[0]!, message: invoice })).toEqual(['invoice-example']);
+    const prompt = promptText(t.requests[0]!, invoice);
+    expect(prompt).toContain(JSON.stringify(invoicePath));
+    expect(prompt).toContain('To use one, read the SKILL.md at its path with read before acting');
+    expect(JSON.stringify(t.requests.at(-1)!.body.messages)).toContain('# invoice-example');
+    const deadline = Date.now() + 10_000;
+    while (reads().length <= before && Date.now() < deadline) await Bun.sleep(100);
+    expect(reads().slice(before)).toEqual([expect.objectContaining({ agent: 'main', skill: 'invoice-example', tool: 'read', via: 'direct', source: 'openclaw-extra', suggested: true, arm: 'live' })]);
+    expect(turnLines(oc).at(-1)).toMatchObject({ outcome: 'suggested', suggested: ['invoice-example'], sources: ['openclaw-extra'] });
+  }, 180_000);
+
+  test('a skills_read through dispatch_action logs one read, not two', async () => {
+    oc.replies.push({ tool: 'dispatch_action', args: { id: 'skills_read', args: { name: 'invoice-example' } } }, { text: 'done' });
+    const before = reads().length;
+    const t = await oc.turn('off-2', invoice);
+    expect(t.ran.code).toBe(0);
+    expect(JSON.stringify(t.requests.at(-1)!.body.messages)).toContain('Skill location:');
+    const deadline = Date.now() + 10_000;
+    while (reads().length <= before && Date.now() < deadline) await Bun.sleep(100);
+    await Bun.sleep(1000);
+    expect(reads().slice(before)).toEqual([expect.objectContaining({ skill: 'invoice-example', tool: 'skills_read', via: 'dispatch', source: 'openclaw-extra', suggested: true })]);
+  }, 180_000);
+
+  test('doctor reads "listing off, resolver live", names the gbrain home and splits recent counts by source and session class', async () => {
+    const r = await oc.gbrain(['doctor', '--only', 'skill_resolver', '--json']);
+    const check = JSON.parse(r.stdout.slice(r.stdout.indexOf('{'))).checks.find((c: { name: string }) => c.name === 'skill_resolver');
+    expect({ status: check.status, message: check.message }).toEqual({ status: 'ok', message: expect.stringContaining('listing off, resolver live') });
+    const d = check.details.openclaw;
+    expect(d.gbrain_home).toBe(oc.gbrainHome);
+    expect(d.agents[0]).toMatchObject({ id: 'main', listing: 'off', path_reads: 'any', verdict: 'listing off, resolver live' });
+    expect(d.recent.by_source['openclaw-extra']).toMatchObject({ suggested: 2, reads: 2, reads_of_suggested: 2 });
+    console.log('[openclaw-skill-resolver-real] session classes on openclaw agent turns: ' + JSON.stringify(d.recent.by_session_class));
+  }, 180_000);
+
+  test('tools.fs.workspaceOnly: the block leads with skills_read for the skill outside the workspace and with the path for one inside', async () => {
+    await oc.stopGateway();
+    config((cfg) => { cfg.tools.fs = { workspaceOnly: true }; });
+    await oc.startGateway();
+    await setup(['--skills-index-only']);
+    expect(JSON.parse(readFileSync(oc.statePath, 'utf8')).agents.main).toMatchObject({ path_reads: 'workspace', workspace_dir: oc.workspace });
+    oc.replies.push({ tool: 'read', args: { path: invoicePath } }, { text: 'done' });
+    const t = await oc.turn('ws-1', invoice);
+    expect(t.ran.code).toBe(0);
+    const prompt = promptText(t.requests[0]!, invoice);
+    expect(suggested({ request: t.requests[0]!, message: invoice })).toEqual(['invoice-example']);
+    expect(prompt).toContain('To use one, load it with skills_read({name}) using its name (through dispatch_action when skills_read is not listed) before acting');
+    const result = JSON.stringify(t.requests.at(-1)!.body.messages.at(-1));
+    console.log('[openclaw-skill-resolver-real] workspaceOnly read of a skill outside the workspace: ' + result.slice(0, 300));
+    const deploy = 'Please deploy the web service to production with a rolling restart';
+    const inside = await expectTurn(oc, 'ws-2', deploy);
+    expect(suggested(inside)).toEqual(['deploy-example']);
+    expect(promptText(inside.request, deploy)).toContain('To use one, read the SKILL.md at its path with read before acting');
+  }, 300_000);
 });
 
 describe.skipIf(!BIN)('channel turns, internal turns and retries in a real OpenClaw gateway', () => {
@@ -353,11 +492,11 @@ describe.skipIf(!BIN)('channel turns, internal turns and retries in a real OpenC
     expect((await oc.gbrain(['init', '--pglite', '--no-embedding'])).code).toBe(0);
     const r = await oc.gbrain(['setup', 'openclaw', '--skill-loading', 'resolve', '--agent', 'main', '--gbrain-bin', oc.gbrainBin, '--json']);
     expect({ code: r.code, stderr: r.code === 0 ? '' : r.stderr.slice(-3000) }).toEqual({ code: 0, stderr: '' });
-    expect((await oc.gbrain(['skills', 'pin', 'add', 'translate-example', '--catalog', 'openclaw-main'])).code).toBe(0);
+    expect((await oc.gbrain(['skills', 'pin', 'add', 'translate-example', '--catalog', 'openclaw-main', '--class', 'owner,conversation'])).code).toBe(0);
     await oc.startGateway();
   }, 300_000);
 
-  afterAll(async () => { await oc?.close(); });
+  afterAll(async () => { await oc?.close(); }, 60_000);
 
   test('a Telegram DM: the suggestions block follows the bare user text', async () => {
     const t = await channelTurn({ chat: { id: OWNER.id, type: 'private', first_name: OWNER.first_name }, from: OWNER, text: DEPLOY });
@@ -409,4 +548,74 @@ describe.skipIf(!BIN)('channel turns, internal turns and retries in a real OpenC
     expect(promptText(request, DEPLOY)).toContain('[cron:' + id);
     expect(suggested({ request, message: DEPLOY })).toBeNull();
   }, 180_000);
+});
+
+describe.skipIf(!BIN)('session classes and the session-start brief in a real OpenClaw gateway', () => {
+  let oc: RealOpenclaw;
+  const TRANSLATE = 'Translate this document into Spanish and keep the formatting';
+  const LEDGER = 'Review the private household ledger and its monthly balances';
+
+  beforeAll(async () => {
+    oc = new RealOpenclaw(BIN!, 'brief');
+    oc.skill('deploy-example', 'Deploy the web service to production with a rolling restart and health checks');
+    oc.skill('translate-example', 'Translate a document between English and Spanish keeping its formatting');
+    mkdirSync(join(oc.workspace, 'skills', 'ledger-example'), { recursive: true });
+    writeFileSync(join(oc.workspace, 'skills', 'ledger-example', 'SKILL.md'), '---\nname: ledger-example\ndescription: "Review the private household ledger and its monthly balances"\naudience: owner\n---\n# ledger-example\n');
+    await oc.start();
+    expect((await oc.gbrain(['init', '--pglite', '--no-embedding'])).code).toBe(0);
+    const r = await oc.gbrain(['setup', 'openclaw', '--skill-loading', 'resolve', '--pins-route', 'first_turn', '--agent', 'main', '--gbrain-bin', oc.gbrainBin, '--json']);
+    expect({ code: r.code, stderr: r.code === 0 ? '' : r.stderr.slice(-3000) }).toEqual({ code: 0, stderr: '' });
+    expect((await oc.gbrain(['skills', 'pin', 'add', 'translate-example', '--catalog', 'openclaw-main'])).code).toBe(0);
+    await oc.startGateway();
+  }, 300_000);
+
+  afterAll(async () => { await oc?.close(); }, 60_000);
+
+  const briefIds = (t: { request: ModelRequest; message: string }) => blockIds(promptText(t.request, t.message), 'pinned_skills');
+
+  test('the main session is the owner\'s: the brief and the owner-only skill reach it; a group gets neither', async () => {
+    const owner = await expectTurn(oc, 'main', LEDGER);
+    expect(briefIds(owner)).toEqual(['translate-example']);
+    expect(suggested(owner)).toEqual(['ledger-example']);
+    await oc.waitForLog(1);
+    const line = turnLines(oc).at(-1)!;
+    console.log('[openclaw-skill-resolver-real] owner turn class: ' + JSON.stringify({ session_class: line.session_class, audience: line.audience }));
+    expect(line).toMatchObject({ session_class: 'main', brief: true });
+    const group = await expectTurn(oc, 'telegram:group:-1009', LEDGER);
+    expect(briefIds(group)).toBeNull();
+    expect(pinned(group)).toBeNull();
+    expect(suggested(group) ?? []).not.toContain('ledger-example');
+    await oc.waitForLog(2);
+    expect(turnLines(oc).at(-1)).toMatchObject({ session_class: 'group' });
+  }, 240_000);
+
+  test('a later turn and a gateway restart never repeat the brief', async () => {
+    const later = await expectTurn(oc, 'main', TRANSLATE);
+    expect(briefIds(later)).toBeNull();
+    await oc.restartGateway();
+    const after = await expectTurn(oc, 'main', 'Please deploy the web service to production with a rolling restart');
+    expect(briefIds(after)).toBeNull();
+    expect(suggested({ request: after.request, message: 'Please deploy the web service to production with a rolling restart' })).toEqual(['deploy-example']);
+    await oc.waitForLog(4);
+    expect(oc.logLines().filter((l) => l.brief === true).length).toBe(1);
+    const ledger = readFileSync(join(oc.gbrainHome, 'openclaw-session-briefs.jsonl'), 'utf8').trim().split('\n');
+    expect(ledger.length).toBe(1);
+  }, 300_000);
+
+  test('a new session on the same key gets its own brief, and every attempt of a first turn OpenClaw retries carries it once', async () => {
+    const reset = await oc.openclaw(['gateway', 'call', 'sessions.reset', '--params', JSON.stringify({ key: 'agent:main:main', agentId: 'main', reason: 'new' }), '--json', '--timeout', '60000'], 150_000);
+    expect({ code: reset.code, out: reset.code === 0 ? '' : (reset.stdout + reset.stderr).slice(-2000) }).toEqual({ code: 0, out: '' });
+    console.log('[openclaw-skill-resolver-real] DEBUG reset: ' + reset.stdout.slice(0, 1500));
+    oc.replies.push({ status: 529 }, { status: 529 });
+    const t = await oc.turn('main', TRANSLATE);
+    expect(t.ran.code).toBe(0);
+    const briefs = t.requests.map((r) => JSON.stringify(r.body.messages).split('<pinned_skills>').length - 1);
+    console.log('[openclaw-skill-resolver-real] brief copies per attempt in the new session: ' + JSON.stringify(briefs));
+    expect(briefs.length).toBeGreaterThanOrEqual(1);
+    expect(briefs.every((n) => n === 1)).toBe(true);
+    expect(oc.logLines().filter((l) => l.brief === true).length).toBe(2);
+    const ledger = readFileSync(join(oc.gbrainHome, 'openclaw-session-briefs.jsonl'), 'utf8').trim().split('\n').map((l) => JSON.parse(l) as { k: string; drop?: boolean });
+    expect(ledger.map((l) => !!l.drop)).toEqual([false, true, false]);
+    expect(new Set(ledger.map((l) => l.k)).size).toBe(1);
+  }, 300_000);
 });

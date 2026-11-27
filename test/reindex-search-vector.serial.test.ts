@@ -5,6 +5,7 @@ import { resetFtsLanguageCache } from '../src/core/fts-language.ts';
 import { KNOWN_CONFIG_KEYS } from '../src/core/config.ts';
 import { currentExitCode, setCliExitVerdict } from '../src/core/cli-force-exit.ts';
 import * as searchVector from '../src/core/engine-sql/search-vector.ts';
+import * as factsTrust from '../src/core/engine-sql/facts-trust.ts';
 import { ensureFactsFtsIndex } from '../src/core/facts/fts-index.ts';
 import { backfillChunkVectors, backfillPageVectors } from '../src/core/search-vector-backfill.ts';
 
@@ -49,6 +50,9 @@ function makeMockEngine(state: MockState): BrainEngine {
     backfillSearchVectors: (target: 'pages' | 'chunks', opts: Parameters<typeof backfillPageVectors>[1]) =>
       target === 'pages' ? backfillPageVectors(engine, opts) : backfillChunkVectors(engine, opts),
     ensureFactsKeywordIndex: (lang: string, notice?: (line: string) => void) => ensureFactsFtsIndex(engine, { lang, version: 0, notice }),
+    // The facts keyword index swap's two typed members, as both engines build them over this mock's executeRaw (engine-sql/facts-trust.ts).
+    readFactsFtsIndexState: (name: string) => factsTrust.readFactsFtsIndexState(engine.executeRaw.bind(engine), name),
+    swapFactsFtsIndex: () => factsTrust.swapFactsFtsIndex(engine.executeRaw.bind(engine)),
     getConfig: async (key: string) => config.get(key) ?? null,
     setConfig: async (key: string, value: string) => {
       order.push(`set:${key}`);

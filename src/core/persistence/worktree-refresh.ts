@@ -54,6 +54,7 @@ import { refreshProgress, refreshRetryHint, seconds } from './refresh-retry-hint
 import { ledgerLocation, readLedger } from '../git/commit-ledger.ts';
 import { upstreamBeforeFetch, upstreamRewriteReason } from '../git/upstream-history.ts';
 import { gitDurabilityPolicy } from './git-durability-policy.ts';
+import { requireRawSql } from '../rust-engine/errors.ts';
 
 export interface WorktreeRefreshRow {
   id: string; worktree_id: string; source_ids: string[]; principal_id: string; owner_epoch: string | number;
@@ -122,7 +123,7 @@ async function membersPastStart(engine: BrainEngine, row: Pick<WorktreeRefreshRo
   const members = await engine.executeRaw<{ id: string; last_commit: string | null; imported: boolean }>(`SELECT s.id,s.last_commit,
     EXISTS (SELECT 1 FROM persistence_requests r WHERE r.source_id=s.id AND $2::bigint IS NOT NULL AND r.sequence > $2::bigint
       AND r.intent->>'kind' IN ('managed_sync_import','managed_sync_delete') AND r.state NOT IN ('failed','conflict','cancelled')) AS imported
-    FROM sources s WHERE s.id = ANY($1::text[]) ORDER BY s.id`, [row.source_ids, row.barrier_sequence == null ? null : String(row.barrier_sequence)]);
+    FROM sources s WHERE s.id = ANY($1::text[]) ORDER BY s.id COLLATE "C"`, [row.source_ids, row.barrier_sequence == null ? null : String(row.barrier_sequence)]);
   const moved = members.filter(member => member.imported || (member.last_commit !== null && member.last_commit !== row.old_head));
   return withGit(async git => {
     const past: string[] = [];
@@ -139,7 +140,7 @@ async function membersPastStart(engine: BrainEngine, row: Pick<WorktreeRefreshRo
  */
 type WayOut = { kind: 'forward'; head: string } | { kind: 'diverged'; tips: string[] } | { kind: 'unplaced'; members: Array<{ source_id: string; commit: string }> };
 async function keepPagesWayOut(engine: BrainEngine, row: Pick<WorktreeRefreshRow, 'source_ids' | 'old_head' | 'target_head'>, root: string): Promise<WayOut> {
-  const members = (await engine.executeRaw<{ id: string; last_commit: string | null }>('SELECT id,last_commit FROM sources WHERE id = ANY($1::text[]) ORDER BY id', [row.source_ids]))
+  const members = (await engine.executeRaw<{ id: string; last_commit: string | null }>('SELECT id,last_commit FROM sources WHERE id = ANY($1::text[]) ORDER BY id COLLATE "C"', [row.source_ids]))
     .filter((member): member is { id: string; last_commit: string } => !!member.last_commit);
   const unplaced = (commits: string[]): WayOut => ({ kind: 'unplaced', members: members.filter(member => commits.includes(member.last_commit)).map(member => ({ source_id: member.id, commit: member.last_commit })) });
   return withGit(async git => {
@@ -512,7 +513,7 @@ async function precheck(engine: BrainEngine, git: Git, sourceId: string, fetchTi
     `gbrain sources writer status ${sourceId}, let the owner finish recovery, then gbrain sources refresh ${sourceId}`);
   if (active) throw inProgress(`Refresh ${active.id} of this worktree is ${active.state}, held by ${describeHolder(holderOf(active))}; only one refresh per worktree runs at a time.`,
     sourceId, active.id);
-  const members = (await engine.executeRaw<{ source_id: string }>('SELECT source_id FROM persistence_source_bindings WHERE worktree_id=$1::uuid ORDER BY source_id',
+  const members = (await engine.executeRaw<{ source_id: string }>('SELECT source_id FROM persistence_source_bindings WHERE worktree_id=$1::uuid ORDER BY source_id COLLATE "C"',
     [binding.worktree_id])).map(row => row.source_id);
   await assertNoUnfinishedSync(engine, members);
   if (classifyGitCheckout(root) === 'not_git') throw refusal('refresh_no_upstream',
@@ -537,7 +538,7 @@ async function precheck(engine: BrainEngine, git: Git, sourceId: string, fetchTi
   const remote = (await read(['config', '--get', `branch.${branch}.remote`], 1)).stdout.trim();
   const merge = (await read(['config', '--get', `branch.${branch}.merge`], 1)).stdout.trim();
   const before = publishDiverged ? await upstreamBeforeFetch(read, (await engine.executeRaw<{ target_head: string }>(
-    `SELECT target_head FROM persistence_worktree_refreshes WHERE worktree_id=$1::uuid AND upstream_ref=$2 AND state='completed' ORDER BY created_at DESC LIMIT 100`,
+    `SELECT target_head FROM persistence_worktree_refreshes WHERE worktree_id=$1::uuid AND upstream_ref=$2 AND state='completed' ORDER BY created_at DESC, id LIMIT 100`,
     [binding.worktree_id, upstreamRef])).map(r => r.target_head)) : null;
   if (remote && remote !== '.') {
     const fetched = await timedPhase(run, 'fetch', () => git(['-C', root, '-c', 'core.logAllRefUpdates=true', 'fetch', '--no-tags', '--quiet', remote, merge || branch], fetchTimeoutMs));
@@ -564,7 +565,7 @@ async function precheck(engine: BrainEngine, git: Git, sourceId: string, fetchTi
       'Git durability is not on for this worktree, so nothing leaves it through Git on its own.',
       ` To let every refresh publish it on its own, the user can turn Git durability on (gbrain sources writer git-durability ${sourceId} --enable) or run gbrain config set ${REFRESH_PUBLISH_DIVERGED_KEY} true.`);
     const localCommits = Number((await read(['rev-list', '--count', `${targetHead}..${oldHead}`])).stdout.trim()) || 0;
-    const pushed = await publishInChild(root, sourceId, targetHead);
+    const pushed = await publishInChild(root, sourceId, targetHead).catch(error => { throw error instanceof OperationError && error.reason === 'publish_lock_busy' ? unpublishedRefusal(sourceId, upstreamRef, localCommits, error) : error; });
     const published = { sha: pushed.sha ?? targetHead, local_commits: localCommits, integrated: pushed.integrated,
       ...(pushed.quarantined ? { quarantined: pushed.quarantined } : {}), ...(pushed.superseded_remote_paths ? { superseded_remote_paths: pushed.superseded_remote_paths } : {}) };
     const plan = await precheck(engine, git, sourceId, fetchTimeoutMs, false, run).catch(async error => { notePublished(error, published); throw error instanceof OperationError && error.code === 'refresh_diverged' && await revParse(git, root, 'HEAD') !== oldHead ? retryInTick(error) : error; });
@@ -597,7 +598,7 @@ async function publishInChild(root: string, sourceId: string, checkedUpstream: s
   if (!child.error && doc?.outcome === 'pushed') return doc as { sha: string | null; integrated: number; quarantined?: QuarantineEntry; superseded_remote_paths?: string[] };
   if (doc && typeof doc.code === 'string' && typeof doc.message === 'string') {
     throw opError(doc.code as Parameters<typeof opError>[0], doc.message, typeof doc.suggestion === 'string' ? doc.suggestion : '',
-      { ...(typeof doc.detail === 'string' ? { detail: doc.detail } : {}), ...(doc.fix ? { fix: doc.fix as Action } : {}), retryable: doc.retryable === true });
+      { ...(typeof doc.detail === 'string' ? { detail: doc.detail } : {}), ...(doc.fix ? { fix: doc.fix as Action } : {}), ...(typeof doc.reason === 'string' ? { reason: doc.reason } : {}), retryable: doc.retryable === true });
   }
   throw opError('push_unconfirmed', `The publish of the diverged checkout ${root} did not report a push (${child.error ? `exit ${String(child.error.code ?? child.error.signal ?? 'unknown')}` : `outcome ${String(doc?.outcome ?? 'unreadable')}`}: ${child.stderr.trim().slice(0, 300) || 'no detail'}); the refresh stopped before fencing anything, and the remote may already hold the merge.`,
     `Check gbrain sources writer status --source ${sourceId} --json, then retry gbrain sources refresh ${sourceId}.`, { retryable: true });
@@ -618,6 +619,22 @@ async function divergedRefusal(git: Git, root: string, sourceId: string, upstrea
     why: `HEAD has ${local} that ${upstreamRef} lacks while ${upstreamRef} moved on; pushing HEAD merged with it makes HEAD an ancestor of the upstream, so the refresh can fast-forward.`,
     user_message: rewrite ? `The checkout of source ${sourceId} cannot be published on its own: ${rewrite} Push this checkout's history merged with the remote anyway, or replace the checkout with gbrain sources reclone ${sourceId}?`
       : `The checkout of source ${sourceId} has ${local} that were never pushed while its remote moved on. Push them, merged with the remote, so gbrain can bring the checkout up to date? Conflicting files stop the push and change nothing.`,
+    docs: 'docs/guides/write-refusals.md#refresh_diverged' };
+  return error;
+}
+/**
+ * GST-3497: the refresh's own publish of a diverged checkout found another publish holding the push lock, so it pushed
+ * nothing and the checkout is still diverged: refuse refresh_diverged, as doctor git_convergence says, naming the holder.
+ * It is retryable: the next refresh publishes again on its own.
+ */
+function unpublishedRefusal(sourceId: string, upstreamRef: string, localCommits: number, cause: OperationError): OperationError {
+  const error = refusal('refresh_diverged',
+    `The checkout has ${localCommits} local commit(s) that ${upstreamRef} lacks and cannot fast-forward, and this refresh's publish of them merged with the upstream did not run: ${cause.message} Nothing changed.`,
+    `Retry gbrain sources refresh ${sourceId} once that publish ends; the next scheduled refresh does it on its own. The retry checks the upstream for a rewrite and the publishing setting again before it publishes.`);
+  error.retryable = true;
+  error.reason = 'publish_lock_busy';
+  error.fix = { argv: ['gbrain', 'sources', 'refresh', sourceId], consent: [], actor: 'agent', requires_exclusive: false,
+    why: 'Another publish held the push lock; a fresh refresh rechecks the upstream and the publishing setting, then publishes or fast-forwards.',
     docs: 'docs/guides/write-refusals.md#refresh_diverged' };
   return error;
 }
@@ -666,7 +683,7 @@ async function assertNoUnfinishedSync(engine: BrainEngine, members: string[]): P
   const [cursor] = await engine.executeRaw<{ source_id: string; header: Record<string, unknown> }>(`SELECT c.completed_keys->0->>'sourceId' AS source_id,
     c.completed_keys->0 AS header
     FROM op_checkpoints c WHERE c.op='managed-sync' AND COALESCE(c.completed_keys->0->>'done','false')<>'true'
-    AND c.completed_keys->0->>'sourceId'=ANY($1::text[]) ORDER BY c.updated_at LIMIT 1`, [members]);
+    AND c.completed_keys->0->>'sourceId'=ANY($1::text[]) ORDER BY c.updated_at, c.fingerprint COLLATE "C" LIMIT 1`, [members]);
   if (!cursor) return;
   const header = cursor.header as { processingOptions?: Record<string, boolean>; syncOptions?: Parameters<typeof checkpointRetryCommand>[0]['syncOptions'] };
   const resume = checkpointRetryCommand({ sourceId: cursor.source_id, processingOptions: header.processingOptions, syncOptions: header.syncOptions ?? null });
@@ -809,6 +826,8 @@ function finished(row: WorktreeRefreshRow, sync: { synced: RefreshMemberSync[]; 
  * host only; refusals throw catalogue errors (`code`, cause, literal fix, docs). Callers omit `run`, the record of one run (GST-3107).
  */
 export async function refreshWorktree(engine: BrainEngine, sourceId: string, opts: RefreshOptions = {}, run?: RefreshRun): Promise<WorktreeRefreshResult> {
+  // The refresh writer runs its rows through executeRaw; an engine without raw SQL (Rust) refuses it by name, before any step.
+  requireRawSql(engine, 'the refresh writer (persistence/worktree-refresh.ts): gbrain sources refresh writes no refresh row here');
   if (!run) return withRefreshRun(engine, { beforeDrain: opts.hooks?.backlog, redact }, next => refreshWorktree(engine, sourceId, opts, next));
   let result: WorktreeRefreshResult;
   try { result = await runRefresh(engine, sourceId, opts, run); }
@@ -847,7 +866,7 @@ async function syncAfterUnfinishedRefresh(engine: BrainEngine, sourceId: string,
   if (!binding || binding.owner_host_id !== hostId || !binding.local_path) return NO_OWED_SYNC;
   const root = binding.local_path;
   const [newest] = await engine.executeRaw<Pick<WorktreeRefreshRow, 'state' | 'source_ids'>>(
-    'SELECT state,source_ids FROM persistence_worktree_refreshes WHERE worktree_id=$1::uuid ORDER BY created_at DESC LIMIT 1', [binding.worktree_id]);
+    'SELECT state,source_ids FROM persistence_worktree_refreshes WHERE worktree_id=$1::uuid ORDER BY created_at DESC, id LIMIT 1', [binding.worktree_id]);
   if (newest?.state !== 'aborted') return NO_OWED_SYNC;
   const head = await withGit(git => headOf(git, root));
   if (!head) return NO_OWED_SYNC;
@@ -1059,7 +1078,7 @@ async function lockTimeoutRefusal(engine: BrainEngine, sourceId: string, refresh
         AND EXISTS (SELECT 1 FROM pg_locks l WHERE l.pid = a.pid AND l.granted AND l.mode <> 'AccessShareLock'
           AND l.database = (SELECT oid FROM pg_database WHERE datname = current_database())
           AND l.relation IN ('persistence_brain'::regclass, 'persistence_worktrees'::regclass, 'sources'::regclass, 'persistence_worktree_refreshes'::regclass))
-      ORDER BY a.xact_start LIMIT 5`));
+      ORDER BY a.xact_start, a.pid LIMIT 5`));
   const error = refusal('refresh_lock_timeout', `The refresh fence of source ${sourceId} waited past its 5 s lock timeout for a brain, worktree, source or refresh row another database transaction holds; nothing moved.`,
     `Retry gbrain sources refresh ${sourceId}. If it repeats, a transaction holding one of those rows is stuck: why lists the oldest candidates, which may not include it, so confirm the blocker on the brain host before ending any transaction.`, refreshId);
   error.why = holders === null ? 'The lookup of open transactions holding those rows failed or took longer than 3 s.'
@@ -1526,12 +1545,7 @@ export async function refreshHolderReport(engine: BrainEngine, row: Pick<Worktre
 
 /** `gbrain sources writer status`: active refreshes (optionally of one source's worktree) with their holder and the command that moves each on. */
 export async function activeWorktreeRefreshes(engine: BrainEngine, sourceId?: string): Promise<Array<Record<string, unknown>>> {
-  const rows = await engine.executeRaw<WorktreeRefreshRow & { owner_host_id: string | null; deferred_count: number; deferred_oldest_ms: number | null }>(`SELECT f.*,w.owner_host_id::text AS owner_host_id,
-    (SELECT count(*)::int FROM persistence_requests d WHERE d.deferred_refresh_id=f.id AND d.state='deferred') AS deferred_count,
-    (SELECT (EXTRACT(EPOCH FROM now()-min(d.created_at))*1000)::bigint FROM persistence_requests d WHERE d.deferred_refresh_id=f.id AND d.state='deferred') AS deferred_oldest_ms
-    FROM persistence_worktree_refreshes f
-    LEFT JOIN persistence_worktrees w ON w.id=f.worktree_id WHERE f.state IN ${ACTIVE_REFRESH_STATES_SQL}
-    AND ($1::text IS NULL OR $1=ANY(f.source_ids)) ORDER BY f.created_at`, [sourceId ?? null]);
+  const rows = await engine.listActiveWorktreeRefreshRows(sourceId ?? null);
   return Promise.all(rows.map(async row => {
     const report = await refreshHolderReport(engine, row);
     return { refresh_id: row.id, worktree_id: row.worktree_id, state: row.state, source_ids: row.source_ids,
@@ -1547,6 +1561,5 @@ export async function activeWorktreeRefreshes(engine: BrainEngine, sourceId?: st
 
 /** Doctor `worktree_refresh_stuck`: active refreshes older than `minutes`. */
 export async function stuckWorktreeRefreshes(engine: BrainEngine, minutes = 15): Promise<Array<Pick<WorktreeRefreshRow, 'id' | 'state' | 'source_ids' | 'updated_at'>>> {
-  return engine.executeRaw(`SELECT id,state,source_ids,updated_at FROM persistence_worktree_refreshes
-    WHERE state IN ${ACTIVE_REFRESH_STATES_SQL} AND created_at < now()-($1::double precision*interval '1 minute') ORDER BY created_at`, [minutes]);
+  return engine.listStuckWorktreeRefreshes(minutes) as Promise<Array<Pick<WorktreeRefreshRow, 'id' | 'state' | 'source_ids' | 'updated_at'>>>;
 }

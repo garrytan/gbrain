@@ -5,6 +5,7 @@ import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolveReadOnlyDispatchTimeoutMs } from '../src/cli/main.ts';
 import { parseGlobalFlags } from '../src/core/cli-options.ts';
+import { envWithoutDatabaseUrl } from './helpers/cli-spawn.ts';
 
 // #3013 — `gbrain sync --timeout <s>` was unreachable: the global option
 // parser claimed --timeout before dispatch, and the read-only timeout path
@@ -49,7 +50,7 @@ describe('CLI integration: sync --timeout reaches the sync handler (#3013)', () 
     spawnSync('bun', [CLI, ...args], {
       encoding: 'utf-8',
       env: {
-        ...process.env,
+        ...envWithoutDatabaseUrl(),
         NO_COLOR: '1',
         GBRAIN_HOME: mkdtempSync(join(tmpdir(), 'gbrain-3013-')),
       },

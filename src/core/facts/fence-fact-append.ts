@@ -45,6 +45,7 @@ import { assertFenceRewritable } from '../fence-shared.ts';
 import { pageFencesNormalized } from '../fence-repair/report.ts';
 import { withPendingFenceRows } from '../eligibility/fence-overlay.ts';
 import { withPageTierKept } from '../trust/fence-append.ts';
+import { newHoldingPageFrontmatter } from '../trust/page-write.ts';
 import type { TrustTier } from '../trust/tier.ts';
 import { extractFactsFromFenceText } from './extract-from-fence.ts';
 import { isHoldingSlug } from '../facts-fence.ts';
@@ -140,7 +141,7 @@ export async function prepareFenceFactAppend(engine: BrainEngine, row: WriteRequ
   // Wave B: a segmented page is read back whole up to the single-string ceiling.
   if (snapshot && segmentedOverCeiling(snapshot.page)) throw pageBodyOverCeilingError(snapshot.page, `${row.operation} facts fence write`);
   const base = snapshot ? await materializedPage(engine, snapshot.page)
-    : { slug: row.slug, source_id: row.source_id, type: 'note', title: 'Unattributed memory', compiled_truth: '', timeline: '', frontmatter: {} } as unknown as Page;
+    : { slug: row.slug, source_id: row.source_id, type: 'note', title: 'Unattributed memory', compiled_truth: '', timeline: '', frontmatter: newHoldingPageFrontmatter(row) } as unknown as Page;
   const insert = (tx: BrainEngine, rowNum: number, indexed: NewFact) => insertFenceFactRow(tx, row, rowNum, indexed);
 
   if (input.mode === 'index-existing') {
@@ -259,9 +260,7 @@ export async function heldRowsInVersions(db: BrainEngine, sourceId: string, slug
   };
   await rewriteVersionBodies(db, { columns: '', where: `v.id>$2 AND p.slug=$3 AND (${entities.map((_, i) => carriesClaimSql('v', 4 + 2 * i)).join(' OR ')})`,
     params: after => [sourceId, after, slug, ...entities.flatMap(claimNeedles)], lock: write, keepNullTimeline: true }, strip, (_v, _edited, changed) => { if (changed) out.versions++; }, write);
-  const [segmented] = await db.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM page_versions v JOIN pages p ON p.id = v.page_id
-    WHERE p.source_id = $1 AND p.slug = $2 AND v.body_storage = 'segmented'`, [sourceId, slug]);
-  out.segmented = Number(segmented?.n ?? 0);
+  out.segmented = await db.countSegmentedVersionsOfPage(sourceId, slug);
   return out;
 }
 

@@ -1,0 +1,112 @@
+[
+ {
+  "input": "+1 (555) 010-0100",
+  "country": "1",
+  "canonical": "+15550100100"
+ },
+ {
+  "input": "555-010-0100",
+  "country": "1",
+  "canonical": "+15550100100"
+ },
+ {
+  "input": "1 555 010 0100",
+  "country": "1",
+  "canonical": "+15550100100"
+ },
+ {
+  "input": "011 44 20 7946 0000",
+  "country": "1",
+  "canonical": "+442079460000"
+ },
+ {
+  "input": "0044 20 7946 0000",
+  "country": "1",
+  "canonical": "+442079460000"
+ },
+ {
+  "input": "+44 20 7946 0000",
+  "country": "44",
+  "canonical": "+442079460000"
+ },
+ {
+  "input": "020 7946 0000",
+  "country": "44",
+  "canonical": "+442079460000"
+ },
+ {
+  "input": "+1 555 010 0100 ext. 12",
+  "country": "1",
+  "canonical": "+15550100100"
+ },
+ {
+  "input": "555.010.0100 x12",
+  "country": "1",
+  "canonical": "+15550100100"
+ },
+ {
+  "input": "555 010 0100;ext=9",
+  "country": "1",
+  "canonical": "+15550100100"
+ },
+ {
+  "input": "555-CALL-NOW",
+  "country": "1",
+  "canonical": null
+ },
+ {
+  "input": "12345",
+  "country": "1",
+  "canonical": null
+ },
+ {
+  "input": "+1 555 010 0100 +2",
+  "country": "1",
+  "canonical": null
+ },
+ {
+  "input": "",
+  "country": "1",
+  "canonical": null
+ },
+ {
+  "input": " 555‑010‑0100",
+  "country": "1",
+  "canonical": "+15550100100"
+ },
+ {
+  "input": "５５５０１００１００",
+  "country": "1",
+  "canonical": "+15550100100"
+ },
+ {
+  "input": "+0 555",
+  "country": "1",
+  "canonical": null
+ },
+ {
+  "input": "(555) 010-0100#4",
+  "country": "1",
+  "canonical": "+15550100100"
+ },
+ {
+  "input": "+33 1 23 45 67 89",
+  "country": "33",
+  "canonical": "+33123456789"
+ },
+ {
+  "input": "01 23 45 67 89",
+  "country": "33",
+  "canonical": "+33123456789"
+ },
+ {
+  "input": "+1234567890123456",
+  "country": "1",
+  "canonical": null
+ },
+ {
+  "input": "55501001",
+  "country": "49",
+  "canonical": "+4955501001"
+ }
+]

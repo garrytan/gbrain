@@ -119,10 +119,13 @@ for (const backend of testBackends()) {
       const preview = await (await repairRunner(engine, { apply: false, logger })).run('timeline-order', scope, { explicit: true, sourceFlag: 'source-a' });
       expect(preview.affected).toBe(1);
       let fail = true;
+      let requestReads = 0;
       const flaky = new Proxy(engine, { get(target, key) {
-        if (key === 'executeRaw') return (sql: string, params?: unknown[], o?: unknown) => {
-          if (fail && sql.startsWith('SELECT state FROM persistence_requests WHERE request_id=$1::uuid')) { fail = false; throw new Error('synthetic connection reset'); }
-          return target.executeRaw(sql, params, o as never);
+        // The first read is the apply's approved-set check (every planned id; here the one page); the second is the
+        // last item's own committed check, which is the read that throws.
+        if (key === 'listWriteRequestsByRequestIds') return (ids: string[]) => {
+          if (fail && ++requestReads === 2) { fail = false; throw new Error('synthetic connection reset'); }
+          return target.listWriteRequestsByRequestIds(ids);
         };
         const value = Reflect.get(target, key, target);
         return typeof value === 'function' ? value.bind(target) : value;

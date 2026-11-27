@@ -44,11 +44,9 @@ export async function checkForeignOwnershipMarkers(engine: BrainEngine): Promise
     const { existingLocalHostId } = await import('../../../core/persistence/identity.ts');
     const { existsSync } = await import('node:fs');
     const { join } = await import('node:path');
-    const [brain] = await engine.executeRaw<{ brain_id: string }>('SELECT brain_id::text AS brain_id FROM persistence_brain WHERE singleton=1');
-    const worktrees = new Set((await engine.executeRaw<{ id: string }>('SELECT id::text AS id FROM persistence_worktrees')).map(row => row.id));
-    const roots = await engine.executeRaw<{ root: string; source_id: string | null }>(`
-      SELECT DISTINCT local_path AS root,id AS source_id FROM sources WHERE local_path IS NOT NULL AND NOT COALESCE(archived,false)
-      UNION SELECT DISTINCT h.local_path,NULL FROM persistence_host_bindings h WHERE h.host_id=$1::uuid`, [existingLocalHostId()]);
+    const brainId = await engine.readPersistenceBrainIdText();
+    const worktrees = new Set(await engine.listWorktreeIds());
+    const roots = await engine.listManagedRoots(existingLocalHostId());
     const markers: Array<{ path: string; source_id: string | null; kind: 'stamp' | 'reservation'; recorded_brain: string | null; worktree_known: boolean | null; problem: string; fix_command?: string }> = [];
     const seen = new Set<string>();
     for (const { root, source_id } of roots) {
@@ -60,7 +58,7 @@ export async function checkForeignOwnershipMarkers(engine: BrainEngine): Promise
       ];
       for (const candidate of candidates) {
         const open = openOwnershipRecord(candidate.path);
-        if (open && brain && open.brainId === brain.brain_id && worktrees.has(open.worktreeId)) {
+        if (open && brainId && open.brainId === brainId && worktrees.has(open.worktreeId)) {
           const fix_command = `chmod 600 '${candidate.path.replaceAll("'", "'\\''")}'`;
           markers.push({ path: candidate.path, source_id, kind: candidate.kind, recorded_brain: open.brainId, worktree_known: true, fix_command,
             problem: `mode ${open.mode.toString(8).padStart(4, '0')}: other users can read it, so it no longer proves the owner; make it private again with ${fix_command}` });
@@ -70,11 +68,11 @@ export async function checkForeignOwnershipMarkers(engine: BrainEngine): Promise
         try { value = candidate.read(); }
         catch { markers.push({ path: candidate.path, source_id, kind: candidate.kind, recorded_brain: null, worktree_known: null, problem: 'unreadable: not a private, well-formed ownership marker' }); continue; }
         if (!value) continue;
-        const foreignBrain = brain ? value.brainId !== brain.brain_id : false;
+        const foreignBrain = brainId ? value.brainId !== brainId : false;
         const unknownWorktree = !worktrees.has(value.worktreeId);
         if (!foreignBrain && !unknownWorktree) continue;
         markers.push({ path: candidate.path, source_id, kind: candidate.kind, recorded_brain: value.brainId, worktree_known: !unknownWorktree,
-          problem: foreignBrain ? `records brain ${value.brainId}, not this brain (${brain?.brain_id ?? 'unknown'})` : `records worktree ${value.worktreeId}, which this brain does not know` });
+          problem: foreignBrain ? `records brain ${value.brainId}, not this brain (${brainId ?? 'unknown'})` : `records worktree ${value.worktreeId}, which this brain does not know` });
       }
     }
     const details = { count: markers.length, markers, docs: 'docs/guides/write-refusals.md#foreign-ownership-marker' };

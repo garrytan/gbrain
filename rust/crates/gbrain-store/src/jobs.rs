@@ -23,7 +23,8 @@
 //! See docs/designs/RUST_ENGINE_INTERFACES.md ("jobs (core)") and rust/docs/store/jobs.md.
 //!
 //! Keys: every record of this family starts with `keys::JOBS` (`m`). The bytes after the tag:
-//! - `m 0x00 name -> i64`: the `minion_jobs` and `minion_inbox` id sequences (`job`, `inbox`).
+//! - `m 0x00 name -> i64`: the last id of each id sequence (`job`, `inbox`, ...) a kept write took.
+//!   The ids come from the allocator `M next_jobs_seq_<name>`, which never rolls back (`next_seq`).
 //! - `m 0x01 id -> JobRecord`: one job row.
 //! - `m 0x02 queue \0 priority created id`: the claim index, `waiting` rows only, in claim order
 //!   (priority ascending, then age, then id).
@@ -39,8 +40,10 @@
 //!   reservation_uuid` indexes it by job, `0x22 expires_at reservation_uuid` by expiry (pending only).
 //!   `0x24 id -> record` is one lease-pressure row (sequence `lease_pressure`), `0x25 bounced_at id` its time
 //!   order and `0x26 job id` its job. The layout is in `spend.rs`; `0x27` indexes the open holds by owner, and
-//!   `0x28`/`0x29` (the spend ledger, `spend_log.rs`), `0x2A` (the whole client row, `oauth_clients.rs`) and `0x2B` (the
-//!   token row, `access_tokens.rs`) follow.
+//!   `0x28`/`0x29` (the spend ledger, `spend_log.rs`), `0x2A` (the whole client row, `oauth_clients.rs`), `0x2B` (the
+//!   token row, `access_tokens.rs`) and `0x2C` (an OAuth token by hash, `oauth_tokens.rs`) and `0x2D` (an OAuth code by hash,
+//!   `oauth_codes.rs`) follow. The credential binding reads and writes (`credential_binding.rs`) use the 0x2A and 0x2B
+//!   records and keep none of their own.
 //! - `m 0x18..=0x1C`: the subagent messages, tool rows and their three indexes (see `subagent.rs`).
 //!
 //! Integers are big-endian; a signed one has its sign bit flipped so byte order is numeric order.
@@ -65,37 +68,68 @@
 mod access_tokens;
 mod attachments;
 mod checks;
+mod client_grants;
+mod credential_binding;
+mod doctor_credentials;
+mod drain_lease;
+mod dream_reads;
+mod facts_extraction;
 mod health;
 mod inbox;
 mod insight;
 mod mutations;
 mod oauth_clients;
+mod oauth_codes;
+mod oauth_revocation;
+mod oauth_tokens;
+mod pinned_questions;
 mod private_queues;
 mod reads;
+mod restore;
 mod spend;
 mod spend_log;
 mod status;
 mod subagent;
 mod sweeps;
-mod synthesis_completions;
-mod wake;
+pub(crate) mod synthesis_completions;
+pub(crate) mod wake;
 
-pub use access_tokens::TokenInsert;
+pub(crate) use access_tokens::bind_token_member;
+pub use access_tokens::{TokenGrantColumns, TokenInsert};
 pub use attachments::AttachmentInput;
+pub(crate) use attachments::purge_probe_attachment_rows;
 pub use checks::{
     BuildSkewSpec, DeadDreamSpec, DeathsSpec, KeyPrefixSpec, QueuedSpendSpec, StillDeadSpec,
 };
+pub use client_grants::{
+    GrantAudit, GrantAuditInsert, GrantPersist, JobGrantSource, RegisterAudit,
+};
+pub use credential_binding::{CredentialBinding, CredentialKind, CredentialLookup};
 pub use health::{DivergenceSpec, HealthSpec};
+pub(crate) use inbox::purge_probe_inbox_rows;
 pub use insight::InsightSpec;
 use mutations::add_token;
 pub use mutations::{DelayOpts, TokenDelta};
+pub(crate) use oauth_clients::remove_source_rows as remove_oauth_source_rows;
+pub(crate) use oauth_clients::source_client_in as source_oauth_client_in;
 pub use oauth_clients::{ClientInsert, ClientPatch, ClientPatchGuard};
+pub(crate) use oauth_clients::{
+    carry_over_format_5_clients, live_client_ids, remove_client, seed_client,
+};
+pub use oauth_codes::OauthCodeInsert;
+pub use oauth_tokens::OauthTokenInsert;
+pub(crate) use pinned_questions::purge_probe_rows as purge_probe_pin_rows;
+pub use pinned_questions::{PinFilter, PinInsert};
 pub use private_queues::PrivateQueueState;
 pub use reads::{JobPageCursor, JobPageSpec, OverdueSpec};
+pub(crate) use restore::{live_job_count, quarantine_jobs};
 pub use spend::{ExpireScope, LeaseFilter, LeaseInsert, SpendInsert, SpendTreeSpec};
+pub(crate) use spend::{SeedReservation, remove_reservation, seed_reservation};
 pub use spend_log::{ClientReserve, GroupReserve, LogInsert};
+pub(crate) use spend_log::{SeedLog, remove_log, seed_log};
 pub use status::StatusFilter;
 pub use subagent::{FailureFallback, MessageInsert, ToolInsert, ToolStart, ToolTarget};
+pub(crate) use subagent::{purge_probe_message_rows, purge_probe_tool_rows};
 pub use sweeps::{CancelOpts, PruneOutcome, PruneSpec};
 pub use wake::{
     CronRunInput, EndSpec, ForgetClaimSpec, ForgetSettle, WatchFilter, WatchInsert, WatchSettle,
@@ -105,7 +139,7 @@ use crate::env::iso;
 use crate::error::{CONSTRAINT_VIOLATION, INVALID_ARGUMENT, Result, StoreError};
 use crate::jsonb::ordered;
 use crate::keys;
-use crate::kv::{KvRead, KvWrite, scan_prefix};
+use crate::kv::{KvRead, KvWrite, for_each_prefix_paged, scan_prefix};
 use crate::timeline_queries::jsonb_field_text;
 use crate::{Store, get_json, put_json};
 use serde::{Deserialize, Serialize};
@@ -251,17 +285,57 @@ fn lock_key(id: &str) -> Vec<u8> {
     k
 }
 
+/// The acquisition token of cycle lock `id` while its lease is live (`ttl_expires_at > now`), as
+/// `gbrain_cycle_locks.acquisition_token::text`: what `sync status`'s pinned-pass probe joins
+/// (persistence/sync-admission-sql.ts `effectProbes`).
+pub(crate) fn live_lock_token(read: &dyn KvRead, id: &str, now: i64) -> Result<Option<String>> {
+    Ok(get_json::<LockRecord>(read, &lock_key(id))?
+        .filter(|l| l.ttl_expires_at > now)
+        .map(|l| l.acquisition_token))
+}
+
 fn last_id(key: &[u8]) -> Option<i64> {
     let tail: [u8; 8] = key.get(key.len().checked_sub(8)?..)?.try_into().ok()?;
     Some((u64::from_be_bytes(tail) ^ (1 << 63)) as i64)
 }
 
+/// The next id of sequence `name`. The id comes from the store's allocator (`M next_jobs_seq_<name>`,
+/// `KvWrite::allocate`), which never rolls back: an id handed out inside a transaction or savepoint
+/// that rolls back is not handed out again, as with Postgres `nextval`. The allocator starts at the
+/// last id the JSON record (`m 0x00 name`) holds, so a brain written before it continues from there;
+/// the JSON record keeps the last id handed out in a kept write.
 fn next_seq(tx: &mut dyn KvWrite, name: &str) -> Result<i64> {
     let mut k = prefix(SEQ);
     k.extend_from_slice(name.as_bytes());
-    let next = get_json::<i64>(tx, &k)?.unwrap_or(0) + 1;
+    let floor = u64::try_from(get_json::<i64>(tx, &k)?.unwrap_or(0) + 1)
+        .map_err(|_| StoreError::new(crate::error::STORE_CORRUPT, "bad job id sequence"))?;
+    let counter = keys::meta(&format!("next_jobs_seq_{name}"));
+    let first = tx.allocate(&counter, 0)?;
+    if first < floor {
+        tx.allocate(&counter, floor - first)?;
+    }
+    let next = i64::try_from(tx.allocate(&counter, 1)?)
+        .map_err(|_| StoreError::new(crate::error::STORE_CORRUPT, "bad job id sequence"))?;
     put_json(tx, &k, &next)?;
     Ok(next)
+}
+
+/// Raises the sequence `name` so the next [`next_seq`] returns a value above `id` (the shadow
+/// seed, which copies rows with their ids).
+pub(crate) fn raise_seq(tx: &mut dyn KvWrite, name: &str, id: i64) -> Result<()> {
+    let mut k = prefix(SEQ);
+    k.extend_from_slice(name.as_bytes());
+    if get_json::<i64>(tx, &k)?.unwrap_or(0) < id {
+        put_json(tx, &k, &id)?;
+    }
+    Ok(())
+}
+
+/// The last value of the sequence `name` (0 when it has not been used), read only.
+pub(crate) fn read_seq(read: &dyn KvRead, name: &str) -> Result<i64> {
+    let mut k = prefix(SEQ);
+    k.extend_from_slice(name.as_bytes());
+    Ok(get_json::<i64>(read, &k)?.unwrap_or(0))
 }
 
 /// One `minion_jobs` row. Timestamps are µs; JSON columns are kept as given.
@@ -537,6 +611,11 @@ pub struct AdmitSpec {
     #[serde(default)]
     pub backpressure: Option<Backpressure>,
     pub max_spawn_depth: i64,
+    /// Stop after the idempotency and parameter coalesce and answer `capacity` with nothing written,
+    /// so a caller can run a delegated client's capacity check at the place the SQL engines run it
+    /// (after the coalesce, before the quota), then admit again in the same transaction.
+    #[serde(default)]
+    pub capacity_check: bool,
 }
 
 /// What `admit_job` did. `conflict` means an existing row is held under another submission
@@ -668,6 +747,30 @@ fn ids_under(read: &dyn KvRead, prefix: &[u8]) -> Result<Vec<i64>> {
     Ok(ids)
 }
 
+/// Index entries one scan of a status walk reads (the rows load between scans, so the ids never all sit in memory).
+const ROW_PAGE: usize = 256;
+
+/// Calls `f` on each row with `status` as it loads, in id order. The status index is read `ROW_PAGE` entries at a time and each
+/// row loads between scans, so neither the whole index nor a whole status of rows is held: one page of ids and one row's
+/// payload at a time. The row is dropped when `f` returns, so a caller that filters keeps only what it projects.
+fn for_each_row_with_status(
+    read: &dyn KvRead,
+    status: &str,
+    f: &mut dyn FnMut(&JobRecord),
+) -> Result<()> {
+    for_each_prefix_paged(read, &status_prefix(status), ROW_PAGE, &mut |key, _| {
+        if let Some(row) = last_id(key).map(|id| load(read, id)).transpose()?.flatten() {
+            f(&row);
+        }
+        Ok(true)
+    })
+}
+
+/// The `minion_jobs` rows with `status='active'`.
+pub(crate) fn active_job_rows(read: &dyn KvRead) -> Result<Vec<JobRecord>> {
+    rows_with_status(read, "active")
+}
+
 fn rows_with_status(read: &dyn KvRead, status: &str) -> Result<Vec<JobRecord>> {
     let mut rows = Vec::new();
     for id in ids_under(read, &status_prefix(status))? {
@@ -676,6 +779,24 @@ fn rows_with_status(read: &dyn KvRead, status: &str) -> Result<Vec<JobRecord>> {
         }
     }
     Ok(rows)
+}
+
+/// The `minion_jobs` rows a fact purge's inventory probe searches (crate::facts::purge_probe).
+pub(crate) fn purge_probe_job_rows(
+    read: &dyn KvRead,
+) -> Result<Vec<crate::facts::purge_probe::ProbeRow>> {
+    use crate::facts::purge_probe::{ProbeCell, ProbeRow};
+    Ok(all_rows(read)?
+        .into_iter()
+        .map(|r| ProbeRow {
+            source_id: None,
+            cells: vec![
+                ("data", ProbeCell::jsonb(&r.data)),
+                ("result", ProbeCell::opt_jsonb(r.result.as_ref())),
+                ("error_text", ProbeCell::opt_text(r.error_text.as_deref())),
+            ],
+        })
+        .collect())
 }
 
 fn all_rows(read: &dyn KvRead) -> Result<Vec<JobRecord>> {
@@ -902,6 +1023,24 @@ fn parse_time(what: &str, text: &Option<String>) -> Result<Option<i64>> {
     }
 }
 
+/// `data || '{"__released_idempotency_key": key}'::jsonb` (engine-sql/jobs.ts `releaseIdempotencyKey`): an
+/// object gains the key; an array gains the object as its last element; any other value becomes a
+/// two-element array of the value and the object, as jsonb concatenation does.
+fn with_released_key(data: Value, key: &str) -> Value {
+    let marker = json!({ "__released_idempotency_key": key });
+    match data {
+        Value::Object(mut map) => {
+            map.insert("__released_idempotency_key".into(), json!(key));
+            Value::Object(map)
+        }
+        Value::Array(mut items) => {
+            items.push(marker);
+            Value::Array(items)
+        }
+        other => Value::Array(vec![other, marker]),
+    }
+}
+
 /// The coalesce rule (`coalesceDecision`) for a row stored here: a row under another submission
 /// authority is a conflict the caller refuses; a dead or cancelled row's key is released; any
 /// other row is returned. A row with a NULL authority (written before the authority cutover) is
@@ -940,6 +1079,8 @@ fn decide(row: &JobRecord, caller: Option<&Value>) -> Decision {
 enum Step {
     Done(AdmitOutcome),
     Conflict(Value),
+    /// `capacity_check`: no coalesce answered, and the caller's capacity check runs next.
+    Capacity,
 }
 
 impl Store {
@@ -969,31 +1110,97 @@ impl Store {
             "admitJob private_queue_lease_until",
             &v.private_queue_lease_until,
         )?;
-        let mut tx = self.kv.begin_write()?;
-        let now = self.env.now_micros();
-        match admit_in(
-            &mut *tx,
-            spec,
-            authority.as_ref(),
-            spend,
-            (delay_until, lease_until),
-            now,
-        )? {
-            Step::Done(outcome) => {
-                tx.commit()?;
-                Ok(outcome)
-            }
-            // Nothing written is kept: a key released before the conflict stays held.
-            Step::Conflict(row) => Ok(AdmitOutcome {
-                outcome: "conflict",
-                row,
-                audit: None,
-            }),
+        // A conflict or a capacity stop keeps nothing: the statement is dropped (rolled back on its
+        // own, or a statement of the open transaction on a bound store), and the outcome is answered.
+        let mut undone: Option<AdmitOutcome> = None;
+        let result = self.write(|tx| {
+            let now = self.env.now_micros();
+            let stop = match admit_in(
+                tx,
+                spec,
+                authority.as_ref(),
+                spend.clone(),
+                (delay_until, lease_until),
+                now,
+            )? {
+                Step::Done(outcome) => return Ok(outcome),
+                // A key released before the conflict stays held.
+                Step::Conflict(row) => AdmitOutcome {
+                    outcome: "conflict",
+                    row,
+                    audit: None,
+                },
+                // The caller admits again after its check.
+                Step::Capacity => AdmitOutcome {
+                    outcome: "capacity",
+                    row: Value::Null,
+                    audit: None,
+                },
+            };
+            undone = Some(stop);
+            Err(StoreError::invalid(
+                "admitJob: the admission stopped and keeps nothing",
+            ))
+        });
+        match (result, undone) {
+            (Ok(outcome), _) | (Err(_), Some(outcome)) => Ok(outcome),
+            (Err(error), None) => Err(error),
         }
     }
 
     pub fn get_job(&self, id: i64) -> Result<Option<Value>> {
         Ok(load(&*self.read()?, id)?.map(|r| r.to_json()))
+    }
+
+    /// `readJobDataByIdempotencyKey(key)`: `{ data }` of the row holding `key` (any status), or None. Mirrors
+    /// `SELECT data FROM minion_jobs WHERE idempotency_key = $1`; the key index names at most one row.
+    pub fn job_data_by_idempotency_key(&self, key: &str) -> Result<Option<Value>> {
+        let read = self.read()?;
+        let Some(id) = get_json::<i64>(&*read, &idem_key(key))? else {
+            return Ok(None);
+        };
+        Ok(load(&*read, id)?
+            .filter(|r| r.idempotency_key.as_deref() == Some(key))
+            .map(|r| json!({ "data": r.data })))
+    }
+
+    /// `coalesceOnIdempotencyKey(key, authority)`: the idempotency fast path of `admitJob` on its own, in one
+    /// write. `{ outcome: 'none' }` when no row holds `key`; `{ outcome: 'coalesced', row }` when the row is
+    /// returned; `{ outcome: 'released' }` after a dead or cancelled row's key was freed (kept in its data as
+    /// `__released_idempotency_key`); `{ outcome: 'conflict', row }` for a row the caller must refuse, with
+    /// nothing written. Mirrors engine-sql/jobs.ts `coalesceOnIdempotencyKey` under the rule of `decide`.
+    pub fn coalesce_on_idempotency_key(
+        &self,
+        key: &str,
+        authority: Option<&Value>,
+    ) -> Result<Value> {
+        let authority = authority.filter(|a| !a.is_null());
+        // `self.write`, not a write of its own: inside an engine transaction (POST /ingest runs this in one) the step
+        // is a statement of that transaction.
+        self.write(|tx| {
+            let existing = match get_json::<i64>(&*tx, &idem_key(key))? {
+                Some(id) => load(&*tx, id)?.filter(|r| r.idempotency_key.as_deref() == Some(key)),
+                None => None,
+            };
+            let Some(existing) = existing else {
+                return Ok(json!({ "outcome": "none" }));
+            };
+            match decide(&existing, authority) {
+                Decision::Coalesce => {
+                    Ok(json!({ "outcome": "coalesced", "row": existing.to_json() }))
+                }
+                Decision::Conflict => {
+                    Ok(json!({ "outcome": "conflict", "row": existing.to_json() }))
+                }
+                Decision::Release => {
+                    let mut new = existing.clone();
+                    new.idempotency_key = None;
+                    new.data = with_released_key(std::mem::take(&mut new.data), key);
+                    save(tx, Some(&existing), &new)?;
+                    Ok(json!({ "outcome": "released" }))
+                }
+            }
+        })
     }
 
     /// `listJobs`: every given (non-empty) filter, newest first (ties by id, newest first), 50 from 0
@@ -1663,6 +1870,29 @@ fn held_by(read: &dyn KvRead, key: &[u8], opts: &LockHolder) -> Result<Option<Lo
     }))
 }
 
+/// `CLAIM_HEAD_LEASE_HELD`'s lock test: lock `id` is live (`ttl_expires_at>now()`) and held by a
+/// process other than `pid` on `host` (`holder_host IS NOT DISTINCT FROM host`).
+pub(crate) fn lock_held_by_other(
+    read: &dyn KvRead,
+    id: &str,
+    pid: i64,
+    host: &str,
+    now: i64,
+) -> Result<bool> {
+    Ok(
+        get_json::<LockRecord>(read, &lock_key(id))?.is_some_and(|l| {
+            l.ttl_expires_at > now
+                && !(l.holder_pid == pid && l.holder_host.as_deref() == Some(host))
+        }),
+    )
+}
+
+/// The ids of every `gbrain_cycle_locks` row, in key order (shared-skill activation's legacy
+/// writer check).
+pub(crate) fn cycle_lock_ids(read: &dyn KvRead) -> Result<Vec<String>> {
+    Ok(all_locks(read)?.into_iter().map(|(id, _)| id).collect())
+}
+
 fn all_locks(read: &dyn KvRead) -> Result<Vec<(String, LockRecord)>> {
     let mut out = Vec::new();
     let mut bad = None;
@@ -1684,6 +1914,46 @@ fn all_locks(read: &dyn KvRead) -> Result<Vec<(String, LockRecord)>> {
         return Err(e.into());
     }
     Ok(out)
+}
+
+/// The `legacy_locks` part of the writer admin state (`engine-sql/writer-admin.ts`): each cycle
+/// lock that is not a page embedding lease as `[id, holder_pid, holder_host, acquisition_token,
+/// acquired_at]`, by id in byte order. `acquired_at` has the jsonb `timestamptz` text.
+pub(crate) fn legacy_lock_rows(read: &dyn KvRead) -> Result<Vec<Value>> {
+    let mut rows: Vec<(String, LockRecord)> = all_locks(read)?
+        .into_iter()
+        .filter(|(id, _)| !id.starts_with(PAGE_EMBEDDING_LEASE_PREFIX))
+        .collect();
+    rows.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok(rows
+        .into_iter()
+        .map(|(id, l)| {
+            json!([
+                id,
+                l.holder_pid,
+                l.holder_host,
+                l.acquisition_token,
+                crate::facts::jsonb_time(l.acquired_at)
+            ])
+        })
+        .collect())
+}
+
+/// The live cycle locks writer activation and deactivation name (`engine-sql/writer-release.ts`
+/// `liveLeases`): each unexpired lock that is not a page embedding lease, by id in byte order, as
+/// `{ id, holder_host, holder_pid }`.
+pub(crate) fn release_lock_rows(read: &dyn KvRead, now_us: i64) -> Result<Vec<Value>> {
+    let mut rows: Vec<(String, LockRecord)> = all_locks(read)?
+        .into_iter()
+        .filter(|(id, l)| !id.starts_with(PAGE_EMBEDDING_LEASE_PREFIX) && l.ttl_expires_at > now_us)
+        .collect();
+    rows.sort_by(|a, b| a.0.cmp(&b.0));
+    Ok(rows
+        .into_iter()
+        .map(
+            |(id, l)| json!({ "id": id, "holder_host": l.holder_host, "holder_pid": l.holder_pid }),
+        )
+        .collect())
 }
 
 /// `LEGACY_SPEND_PREDICATE_SQL`: the NULL-record rows of the consent-gated producers
@@ -1752,9 +2022,7 @@ fn admit_in(
             Decision::Release => {
                 let mut new = existing.clone();
                 new.idempotency_key = None;
-                if let Value::Object(data) = &mut new.data {
-                    data.insert("__released_idempotency_key".into(), json!(key));
-                }
+                new.data = with_released_key(std::mem::take(&mut new.data), key);
                 save(tx, Some(&existing), &new)?;
             }
         }
@@ -1796,6 +2064,9 @@ fn admit_in(
                 _ => Ok(Step::Conflict(m.to_json())),
             };
         }
+    }
+    if spec.capacity_check {
+        return Ok(Step::Capacity);
     }
     // Name quota (every queue).
     if let Some(max) = spec.quota_max_waiting {
@@ -1975,4 +2246,75 @@ fn admit_in(
         row: row.to_json(),
         audit: None,
     }))
+}
+
+#[cfg(test)]
+mod row_walk_tests {
+    use super::*;
+    use crate::kv::counting::Counting;
+    use std::cell::Cell;
+
+    /// A store that notes the most entries one scan handed out and whether a `get` ran while a scan was still open.
+    struct Probing {
+        inner: Counting,
+        most_in_one_scan: Cell<usize>,
+        scanning: Cell<bool>,
+        gets_inside_a_scan: Cell<usize>,
+    }
+
+    impl KvRead for Probing {
+        fn get(&self, key: &[u8]) -> Result<Option<Vec<u8>>> {
+            if self.scanning.get() {
+                self.gets_inside_a_scan
+                    .set(self.gets_inside_a_scan.get() + 1);
+            }
+            self.inner.get(key)
+        }
+
+        fn scan(
+            &self,
+            start: &[u8],
+            end: &[u8],
+            reverse: bool,
+            f: &mut dyn FnMut(&[u8], &[u8]) -> bool,
+        ) -> Result<()> {
+            let mut delivered = 0;
+            self.scanning.set(true);
+            let out = self.inner.scan(start, end, reverse, &mut |k, v| {
+                delivered += 1;
+                f(k, v)
+            });
+            self.scanning.set(false);
+            self.most_in_one_scan
+                .set(self.most_in_one_scan.get().max(delivered));
+            out
+        }
+    }
+
+    #[test]
+    fn a_status_walk_reads_the_index_a_page_at_a_time_and_loads_rows_outside_the_scan() {
+        let n = ROW_PAGE * 5 + 7;
+        let mut inner = Counting::default();
+        for id in 1..=n as i64 {
+            inner.entries.insert(status_key("waiting", id), Vec::new());
+        }
+        inner.entries.insert(status_key("active", 1), Vec::new());
+        let store = Probing {
+            inner,
+            most_in_one_scan: Cell::new(0),
+            scanning: Cell::new(false),
+            gets_inside_a_scan: Cell::new(0),
+        };
+        // Every index entry points at a row that does not exist, so the walk loads each one and passes none on.
+        let mut visited = 0;
+        for_each_row_with_status(&store, "waiting", &mut |_| visited += 1).unwrap();
+        assert_eq!(visited, 0);
+        assert_eq!(store.inner.gets.get(), n, "every waiting id is loaded once");
+        assert!(
+            store.most_in_one_scan.get() <= ROW_PAGE,
+            "one scan handed out {} index entries; the walk must read at most {ROW_PAGE} at a time",
+            store.most_in_one_scan.get()
+        );
+        assert_eq!(store.gets_inside_a_scan.get(), 0, "rows load between scans");
+    }
 }

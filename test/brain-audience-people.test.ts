@@ -105,10 +105,8 @@ describe('brain audience counts people, not credentials', () => {
     await client('alice-agent', 'alice-example', 'client');
     const failing = new Proxy(engine, {
       get(target, prop) {
-        if (prop === 'executeRaw') {
-          return (sql: string, params?: unknown[]) => sql.includes('FROM oauth_clients WHERE client_id = ANY')
-            ? Promise.reject(new Error('bindings unreadable')) : target.executeRaw(sql, params as never);
-        }
+        // The binding read is a typed member (listCredentialMemberBindings): a non-refusal failure of it.
+        if (prop === 'listCredentialMemberBindings') return () => Promise.reject(new Error('bindings unreadable'));
         const value = Reflect.get(target, prop);
         return typeof value === 'function' ? value.bind(target) : value;
       },
@@ -116,5 +114,19 @@ describe('brain audience counts people, not credentials', () => {
     const r = await classifyBrainAudience(failing);
     expect(r.audience).toBe('shared');
     expect(r.reasons.join(' ')).toContain('0 member(s), 3 unbound client(s), member bindings unreadable');
+  });
+  test('an engine that refuses the member binding read refuses the caller, instead of counting every client by itself', async () => {
+    await client('alice-laptop', 'alice-example');
+    await client('alice-phone', 'alice-example');
+    const refusing = new Proxy(engine, {
+      get(target, prop) {
+        if (prop === 'listCredentialMemberBindings') {
+          return () => Promise.reject(Object.assign(new Error('listCredentialMemberBindings is not served'), { code: 'engine_capability_missing' }));
+        }
+        const value = Reflect.get(target, prop);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
+    await expect(classifyBrainAudience(refusing)).rejects.toMatchObject({ code: 'engine_capability_missing' });
   });
 });

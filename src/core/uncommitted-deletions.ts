@@ -22,7 +22,6 @@ import { isOpPageSlug } from './ops/context.ts';
 import { canonicalPath, sourceContext, type GhostOwner } from './ghost-pages.ts';
 import { managedPersistenceEnabled } from './persistence/ownership.ts';
 import { readOriginEvidence } from './persistence/sync-origin-evidence.ts';
-import { syncDeleteOrigin } from './persistence/sync-delete-tombstones.ts';
 
 /** `deleted_by: 'sync'` when a managed sync made the current tombstone (`syncDeleteOrigin`); `other` otherwise (a hand delete, a repair, an unknown writer). */
 export interface UncommittedDeletion {
@@ -61,8 +60,6 @@ export interface UncommittedDeletionScan {
 export const DOCTOR_PATH_LIMIT = 2_000;
 export const PURGED_NOTE = 'Pages already purged cannot be restored by this command; only a backup (pg_dump, or gbrain backup create taken before the purge) can bring them back.';
 
-interface TombstoneRow { id: number; slug: string; source_path: string; source_uri: string | null; deleted_at: Date | string; revision: string; by_sync: boolean }
-
 /** One window of one source's soft-deleted pages whose recorded file Git never held, below page id `after` (descending). */
 export async function scanUncommittedDeletions(engine: BrainEngine, sourceId: string, opts: { pathLimit: number; after?: number }): Promise<UncommittedDeletionScan> {
   const scan: UncommittedDeletionScan = { source_id: sourceId, status: 'known', pages: [], tombstones: 0, checked: 0, committed: 0, file_present: 0, unknown: 0, truncated: false };
@@ -70,9 +67,7 @@ export async function scanUncommittedDeletions(engine: BrainEngine, sourceId: st
   const context = await sourceContext(engine, sourceId);
   if (!context.ok && context.status === 'not_applicable') return { ...scan, status: 'not_applicable', reason: context.reason };
   const window = Math.max(0, opts.pathLimit);
-  const rows = await engine.executeRaw<TombstoneRow>(`SELECT p.id, p.slug, p.source_path, p.source_uri, p.deleted_at, p.knowledge_revision::text AS revision, ${syncDeleteOrigin('p')} AS by_sync
-    FROM pages p WHERE p.source_id=$1 AND p.deleted_at IS NOT NULL AND NULLIF(btrim(p.source_path), '') IS NOT NULL AND ($2::bigint IS NULL OR p.id < $2::bigint)
-    ORDER BY p.id DESC LIMIT ${window + 1}`, [sourceId, opts.after ?? null]);
+  const rows = await engine.listFileTombstones(sourceId, { before: opts.after ?? null, limit: window + 1 });
   scan.truncated = rows.length > window;
   const read = rows.slice(0, window);
   if (scan.truncated && read.length) scan.next_after = Number(read[read.length - 1]!.id);
@@ -97,7 +92,7 @@ export async function scanUncommittedDeletions(engine: BrainEngine, sourceId: st
     if (found === 'committed') { scan.committed++; continue; }
     if (found === 'never_committed' && existsSync(file)) { scan.file_present++; continue; }
     scan.pages.push({ source_id: sourceId, slug: row.slug, page_id: Number(row.id), revision: row.revision, source_path: row.source_path, git_path: gitPath,
-      deleted_at: new Date(row.deleted_at).toISOString(), evidence: found, deleted_by: row.by_sync === true ? 'sync' : 'other' });
+      deleted_at: row.deleted_at, evidence: found, deleted_by: row.by_sync === true ? 'sync' : 'other' });
   }
   return scan;
 }

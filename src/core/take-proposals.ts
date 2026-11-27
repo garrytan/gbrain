@@ -32,32 +32,10 @@ import type { GBrainConfig } from './config.ts';
 import type { OperationContext } from './ops/contract.ts';
 import { submitPageMutation } from './persistence/page-mutations.ts';
 import { waitForWrite } from './persistence/service.ts';
-import type { WriteRequest } from './persistence/model.ts';
+import type { TakeProposalRow } from './engine-sql/take-proposals.ts';
+import { rethrowCapabilityRefusal } from './engine-capability-refusal.ts';
 
-export interface TakeProposalRow {
-  id: number;
-  source_id: string;
-  page_slug: string;
-  claim_text: string;
-  kind: string;
-  holder: string;
-  weight: number;
-  domain: string | null;
-  status: string;
-  proposed_at: string | Date;
-  model_id: string;
-  promoted_row_num: number | null;
-}
-
-/** Normalize Postgres driver values to the public numeric row contract. */
-function normalizeTakeProposalRow(row: TakeProposalRow): TakeProposalRow {
-  return {
-    ...row,
-    id: Number(row.id),
-    weight: Number(row.weight),
-    promoted_row_num: row.promoted_row_num == null ? null : Number(row.promoted_row_num),
-  };
-}
+export type { TakeProposalRow };
 
 export type TakeProposalErrorCode = 'not_found' | 'not_pending';
 
@@ -83,9 +61,6 @@ export function coerceProposalKind(raw: string): TakeKind {
   return 'take';
 }
 
-const PROPOSAL_COLUMNS =
-  'id, source_id, page_slug, claim_text, kind, holder, weight, domain, status, proposed_at, model_id, promoted_row_num';
-
 export interface ListPendingOpts {
   /** Scope to one source (the CLI always provides one). Omit = all sources (trusted local only). */
   sourceId?: string;
@@ -97,23 +72,7 @@ export async function listPendingProposals(
   engine: BrainEngine,
   opts: ListPendingOpts = {},
 ): Promise<TakeProposalRow[]> {
-  const limit = Math.max(1, Math.min(500, opts.limit ?? 20));
-  const where = [`status = 'pending'`];
-  const params: unknown[] = [];
-  if (opts.sourceId) {
-    params.push(opts.sourceId);
-    where.push(`source_id = $${params.length}`);
-  }
-  params.push(limit);
-  const rows = await engine.executeRaw<TakeProposalRow>(
-    `SELECT ${PROPOSAL_COLUMNS}
-       FROM take_proposals
-      WHERE ${where.join(' AND ')}
-      ORDER BY proposed_at DESC, id DESC
-      LIMIT $${params.length}`,
-    params,
-  );
-  return rows.map(normalizeTakeProposalRow);
+  return engine.listPendingTakeProposals({ sourceId: opts.sourceId, limit: opts.limit ?? 20 });
 }
 
 async function loadProposal(
@@ -122,20 +81,10 @@ async function loadProposal(
   sourceId?: string,
   opts: { allowStranded?: boolean } = {},
 ): Promise<TakeProposalRow> {
-  const params: unknown[] = [id];
-  let scope = '';
-  if (sourceId) {
-    params.push(sourceId);
-    scope = ` AND source_id = $${params.length}`;
-  }
-  const rows = await engine.executeRaw<TakeProposalRow>(
-    `SELECT ${PROPOSAL_COLUMNS} FROM take_proposals WHERE id = $1${scope}`,
-    params,
-  );
-  if (rows.length === 0) {
+  const row = await engine.readTakeProposal(id, sourceId);
+  if (!row) {
     throw new TakeProposalError('not_found', `No take proposal #${id}${sourceId ? ` in source '${sourceId}'` : ''}.`);
   }
-  const row = normalizeTakeProposalRow(rows[0]);
   if (row.status !== 'pending') {
     // wave-g (#4480 follow-up): a crash between the accept CAS and the fence
     // write (or a failed rollback) strands the row as status='accepted' with
@@ -182,8 +131,8 @@ export interface ProposalEdits { claim?: string; weight?: number; holder?: strin
  */
 const SETTLED_WITHOUT_COMMIT = new Set(['failed', 'cancelled', 'conflict']);
 
-async function claimRequestStates(engine: BrainEngine, requestId: string): Promise<WriteRequest[]> {
-  return engine.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE request_id = $1::uuid', [requestId]);
+function claimRequestStates(engine: BrainEngine, requestId: string) {
+  return engine.listWriteRequestsByRequestId(requestId);
 }
 
 /** A claim younger than this may belong to an accept that is still submitting its write. */
@@ -259,22 +208,15 @@ export async function acceptProposal(
   // Claim-first CAS: exactly one caller wins the pending row. A claim that is
   // already held without a recorded take resumes under its own request id.
   const claimed = proposal.status === 'accepted'
-    ? await engine.executeRaw<{ id: number; acted_at: unknown }>(
-      `SELECT id, acted_at FROM take_proposals WHERE id = $1 AND status = 'accepted' AND promoted_row_num IS NULL`, [id])
-    : await engine.executeRaw<{ id: number; acted_at: unknown }>(
-      `UPDATE take_proposals
-          SET status = 'accepted', acted_at = now(), acted_by = $2
-        WHERE id = $1 AND status = 'pending'
-        RETURNING id, acted_at`,
-      [id, target.actedBy ?? 'cli'],
-    );
-  if (claimed.length === 0) {
+    ? await engine.readStrandedTakeProposalClaim(id)
+    : await engine.claimTakeProposal(id, target.actedBy ?? 'cli');
+  if (!claimed) {
     throw new TakeProposalError(
       'not_pending',
       `Proposal #${id} was acted on concurrently — only one accept/reject can win a pending row.`,
     );
   }
-  const claimedAt = claimed[0]!.acted_at == null ? null : new Date(claimed[0]!.acted_at as string | Date).toISOString();
+  const claimedAt = claimed.acted_at == null ? null : new Date(claimed.acted_at).toISOString();
   const actedAt = claimedAt ?? 'unclaimed';
   const requestId = claimRequestId(id, actedAt);
   // The claim's durable request may already exist, under this or another
@@ -314,22 +256,16 @@ export async function acceptProposal(
       const after = await claimRequestStates(engine, requestId);
       if (after.every(r => SETTLED_WITHOUT_COMMIT.has(r.state))) {
         try {
-          await engine.executeRaw(
-            `UPDATE take_proposals
-                SET status = 'pending', acted_at = NULL, acted_by = NULL, promoted_row_num = NULL
-              WHERE id = $1 AND status = 'accepted' AND promoted_row_num IS NULL
-                AND date_trunc('milliseconds', acted_at) IS NOT DISTINCT FROM $2::timestamptz`,
-            [id, claimedAt],
-          );
-        } catch { /* compensation is best-effort */ }
+          await engine.releaseTakeProposalClaim(id, claimedAt);
+        } catch (c) {
+          // Compensation is best-effort, but an engine that cannot run it refuses: the claim stays stuck and must not look settled.
+          rethrowCapabilityRefusal(c);
+        }
       }
       throw e;
     }
   }
-  await engine.executeRaw(
-    `UPDATE take_proposals SET promoted_row_num = $2 WHERE id = $1`,
-    [id, rowNum],
-  );
+  await engine.setTakeProposalPromotedRow(id, rowNum);
   return { proposal, rowNum };
 }
 
@@ -342,14 +278,7 @@ export async function rejectProposal(
 ): Promise<TakeProposalRow> {
   const { engine } = target;
   const proposal = await loadProposal(engine, id, target.sourceId);
-  const rejected = await engine.executeRaw<{ id: number }>(
-    `UPDATE take_proposals
-        SET status = 'rejected', acted_at = now(), acted_by = $2
-      WHERE id = $1 AND status = 'pending'
-      RETURNING id`,
-    [id, target.actedBy ?? 'cli'],
-  );
-  if (rejected.length === 0) {
+  if (!await engine.rejectTakeProposal(id, target.actedBy ?? 'cli')) {
     throw new TakeProposalError(
       'not_pending',
       `Proposal #${id} was acted on concurrently — only one accept/reject can win a pending row.`,

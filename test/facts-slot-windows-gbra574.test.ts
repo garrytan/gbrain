@@ -12,6 +12,10 @@
  * page's slot rows and clears their slots; an ontology proposal never corroborates into or closes a conversation slot,
  * the ontology-facts repair never lists one, getOntology and the dimension census never read one, and a rename that
  * collides two keeps both facts.
+ * GST-3170: entity saved facts, recall (entity list, history and question), the entity card and hot memory apply the
+ * block's read-time ends over the slot rows the caller reads: an old employer reads as ended (or is dropped where only
+ * current facts show) for the local owner and the owner's credential alike, a member never sees an end derived from a
+ * private row it cannot read, and facts without slots and the block read as before.
  * PGLite (no git), and Postgres through test/e2e/facts-slot-windows-gbra574-postgres.test.ts.
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, test } from 'bun:test';
@@ -39,6 +43,19 @@ import { persistencePostgresTemplate } from './helpers/persistence-postgres.ts';
 import { requirePostgresTestDatabase, testBackends } from './helpers/test-backends.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { managedBrain, type ManagedBrain } from './helpers/managed-brain.ts';
+import { getBrainHotMemoryMeta, __resetHotMemoryCacheForTests } from '../src/core/facts/meta-hook.ts';
+import { entitySavedFacts } from '../src/core/search/entity-facts.ts';
+import { resolveQueryEntities } from '../src/core/search/alias-fanout.ts';
+import { __resetPrivateVisibilityCacheForTests } from '../src/core/search/private-visibility.ts';
+import { GBrainOAuthProvider } from '../src/core/oauth-provider.ts';
+import { sqlQueryForEngine } from '../src/core/sql-query.ts';
+import { mintLegacyToken } from '../src/core/token-mint.ts';
+import { setOwner } from '../src/core/access/owner.ts';
+import { bindCredential } from '../src/core/access/members.ts';
+import type { AuthInfo } from '../src/core/ops/contract.ts';
+import { runRecall } from '../src/commands/recall.ts';
+import { rmSync } from 'node:fs';
+import { emptyHome, withEnv } from './helpers/with-env.ts';
 
 const ALICE = 'people/alice-example';
 const logger = { info() {}, warn() {}, error() {} };
@@ -323,6 +340,170 @@ for (const backend of testBackends()) {
         expect(line('Alice Example lives with two cats.', rows)).toBe(quoted(header(P1, P1), 'Alice Example lives with two cats.'));
         expect(line('Alice Example moved her desk to the window where she lives.', rows)).toBe(quoted(header(P2, P2), 'Alice Example moved her desk to the window where she lives.'));
         expect(line('Alice Example lives in Lisbon.', rows)).toBe(quoted(header(P1, P1), 'Alice Example lives in Lisbon.'));
+      });
+    });
+
+    describe('read-time slot ends (GST-3170)', () => {
+      const ACME: Said = { fact: 'Alice Example works at Acme Example.', valid: P1, slot: ['employer', 'Acme Example'] };
+      const BETA: Said = { fact: 'Alice Example joined Beta Example.', valid: P2, slot: ['employer', 'Beta Example'] };
+      const TEA: Said = { fact: 'Alice Example likes green tea.', valid: P1 };
+      const GARDEN: Said = { fact: 'Alice Example keeps a rooftop garden.', valid: P2 };
+      const change = (extra = ''): Page[] => [{ slug: 'meetings/chat-a', title: 'Chat A', date: P1, said: [ACME, TEA] },
+        { slug: 'meetings/chat-b', title: 'Chat B', date: P2, extra, said: [BETA, GARDEN] }];
+      type As = Parameters<typeof dispatchToolCall>[3];
+      const LOCAL: As = { remote: false, sourceId: 'default' };
+      type Shown = Record<string, string | null>;
+      /** Each fact about Alice a reader shows (a quoted excerpt unwrapped), with its valid_until day (null: open). */
+      const shown = (facts: Array<{ fact: string; valid_until?: string | null }> | undefined): Shown =>
+        Object.fromEntries((facts ?? []).map(f => [/```text\n([^\n]*)\n```/.exec(f.fact)?.[1] ?? f.fact, f.valid_until ? String(f.valid_until).slice(0, 10) : null] as const)
+          .filter(([fact]) => fact.startsWith('Alice Example')));
+      async function op(as: As, name: string, params: Record<string, unknown>) {
+        __resetPrivateVisibilityCacheForTests();
+        const r = await dispatchToolCall(engine, name, params, { ...as, metaHook: (n, ctx) => getBrainHotMemoryMeta(n, ctx) });
+        if (r.isError) throw new Error(name + ': ' + r.content.map(c => c.text).join(' '));
+        return { json: JSON.parse(r.content[0]!.text!) as Record<string, any>, meta: r._meta as Record<string, any> | undefined };
+      }
+      /** What each reader shows the caller: recall's entity list and history, recall by question, the entity card, hot memory. */
+      async function readers(as: As) {
+        __resetHotMemoryCacheForTests();
+        return {
+          recall: shown((await op(as, 'recall', { entity: ALICE })).json.facts),
+          history: shown((await op(as, 'recall', { entity: ALICE, include_expired: true })).json.facts),
+          question: shown((await op(as, 'recall', { question: 'Where does Alice Example work?' })).json.facts),
+          card: shown((await op(as, 'entity', { name: 'Alice Example' })).json.card?.recent_facts),
+          hot: shown((await op(as, 'list_pages', { limit: 1 })).meta?.brain_hot_memory?.facts),
+        };
+      }
+      /** search's saved_facts (the named entity's facts, then the word matches) as the caller gets them. */
+      const searchSaved = async (as: As) => shown((await op(as, 'search', { query: 'Alice Example' })).meta?.retrieval?.saved_facts);
+      /** Local `gbrain recall --json`. */
+      async function cliRecall(args: string[]): Promise<Shown> {
+        let out = '';
+        const write = process.stdout.write.bind(process.stdout);
+        process.stdout.write = ((chunk: string | Uint8Array) => { out += String(chunk); return true; }) as typeof process.stdout.write;
+        try { await runRecall(engine, [...args, '--json', '--source', 'default']); } finally { process.stdout.write = write; }
+        return shown(JSON.parse(out).facts);
+      }
+      const savedFacts = async () => shown(await entitySavedFacts(engine, (await resolveQueryEntities(engine, 'Alice Example', { sourceId: 'default', excludePrivate: false }))[0]!,
+        { remote: false, excludePrivate: false }));
+      beforeEach(async () => {
+        await engine.executeRaw('INSERT INTO trust_policy_state (id, generation) VALUES (1, 0) ON CONFLICT (id) DO NOTHING');
+      });
+      /** Credentials as serve --http verifies them: the owner's, and another member's (world-only facts). */
+      async function credentials(): Promise<Record<'owner' | 'member', As>> {
+        const provider = new GBrainOAuthProvider({ sql: sqlQueryForEngine(engine), transaction: fn => engine.transaction(tx => fn(sqlQueryForEngine(tx))) });
+        const out = {} as Record<'owner' | 'member', As>;
+        for (const [who, member] of [['owner', 'owner-example'], ['member', 'bob-example']] as const) {
+          await engine.executeRaw('INSERT INTO access_members (id) VALUES ($1) ON CONFLICT DO NOTHING', [member]);
+          const minted = await mintLegacyToken(engine, { name: who + '-' + randomUUID().slice(0, 8), scopes: ['read'], takesHolders: ['world'], sourceGrant: ['default'] });
+          await bindCredential(engine, { kind: 'token', id: minted.id }, { member });
+          const auth = await provider.verifyAccessToken(minted.token) as unknown as AuthInfo;
+          out[who] = { remote: true, transport: 'http', auth, sourceId: 'default', takesHoldersAllowList: ['world'] };
+        }
+        await setOwner(engine, 'owner-example');
+        return out;
+      }
+
+      test('an employer change across pages: the old employer reads as ended, or is dropped where only current facts show', async () => {
+        await putPages(change());
+        await extract(change());
+        const open = { [BETA.fact]: null, [TEA.fact]: null, [GARDEN.fact]: null };
+        const { question, ...r } = await readers(LOCAL);
+        expect({ ...r, question: { acme: ACME.fact in question, beta: question[BETA.fact] }, saved: await savedFacts(), search: await searchSaved(LOCAL),
+          cli: await cliRecall([ALICE]), cliHistory: await cliRecall([ALICE, '--include-expired']) })
+          .toEqual({ recall: open, history: { ...open, [ACME.fact]: P2 }, card: open, hot: open, question: { acme: false, beta: null }, saved: open, search: open,
+            cli: r.recall, cliHistory: r.history });
+      });
+
+      test('R94: the owner\'s credential sees the local owner\'s ends; a member never sees an end from a private row it cannot read', async () => {
+        await engine.setConfig('facts.default_visibility', 'world');
+        await putPages(change('visibility: private'));
+        await extract(change('visibility: private'));
+        const as = await credentials();
+        const local = await readers(LOCAL);
+        expect(local.history).toEqual({ [ACME.fact]: P2, [BETA.fact]: null, [TEA.fact]: null, [GARDEN.fact]: null });
+        expect(await readers(as.owner)).toEqual(local);
+        const member = await readers(as.member);
+        expect(member.recall).toEqual({ [ACME.fact]: null, [TEA.fact]: null });
+        expect(member.history).toEqual({ [ACME.fact]: null, [TEA.fact]: null });
+        expect(member.card).toEqual({ [ACME.fact]: null, [TEA.fact]: null });
+        expect(member.hot).toEqual({ [ACME.fact]: null, [TEA.fact]: null });
+        expect(await searchSaved(as.member)).toEqual({ [ACME.fact]: null, [TEA.fact]: null });
+        expect(await searchSaved(as.owner)).toEqual(await searchSaved(LOCAL));
+      });
+
+      test('a flagged later employer row that hot memory withholds never ends the earlier one there', async () => {
+        await engine.setConfig('trust.agent_activation', 'suppress');
+        await putPages(change());
+        await extract(change());
+        const [beta] = await engine.executeRaw<{ id: number }>('SELECT id FROM facts WHERE source_id = $1 AND fact = $2', ['default', BETA.fact]);
+        await engine.executeRaw(`INSERT INTO write_gate_receipts (target_table, target_id, source_id, content_hash, tier, detector_version, verdict, reason_families)
+          VALUES ('facts', $1, 'default', md5($1), 'agent_written', 1, 'flag', ARRAY['standing_instruction']::text[])`, [String(beta!.id)]);
+        expect((await readers(LOCAL)).hot).toEqual({ [ACME.fact]: null, [TEA.fact]: null, [GARDEN.fact]: null });
+      });
+
+      test('R94: a private-marked fact without a slot reads for the owner exactly as before', async () => {
+        await engine.setConfig('facts.default_visibility', 'world');
+        await putPages(change('visibility: private'));
+        await extract(change('visibility: private'));
+        const as = await credentials();
+        for (const who of [LOCAL, as.owner]) {
+          const r = await readers(who);
+          for (const reader of ['recall', 'history', 'hot'] as const) expect({ reader, garden: r[reader][GARDEN.fact] }).toEqual({ reader, garden: null });
+        }
+        expect((await readers(as.member)).recall[GARDEN.fact]).toBeUndefined();
+      });
+
+      test('an ended employer never shortens a limited read, and the card counts only current facts', async () => {
+        const OLD: Said = { fact: 'Alice Example grew up near the coast.', valid: '2024-11-01' };
+        const pages: Page[] = [{ slug: 'meetings/chat-0', title: 'Chat 0', date: OLD.valid, said: [OLD] }, ...change()];
+        await putPages(pages);
+        await extract(pages);
+        const current = { [BETA.fact]: null, [GARDEN.fact]: null, [TEA.fact]: null, [OLD.fact]: null };
+        expect({ cli: await cliRecall([ALICE, '--limit', '4']), op: shown((await op(LOCAL, 'recall', { entity: ALICE, limit: 4 })).json.facts),
+          question: await Promise.all([1, 2, 3, 9].map(async limit => {
+            const facts = Object.keys(shown((await op(LOCAL, 'recall', { question: 'Where does Alice Example work?', limit })).json.facts));
+            return { n: facts.length, acme: facts.includes(ACME.fact) };
+          })),
+          count: (await op(LOCAL, 'entity', { name: 'Alice Example' })).json.card?.active_fact_count })
+          .toEqual({ cli: current, op: current, question: [1, 2, 3, 4].map(n => ({ n, acme: false })), count: 4 });
+      });
+
+      test('local recall groups the entity\'s fact keys the way the recall op does', async () => {
+        await putPages(change());
+        await extract(change());
+        await engine.executeRaw('UPDATE facts SET entity_slug = $1 WHERE source_id = $2 AND fact = $3', ['alice-example', 'default', BETA.fact]);
+        const viaOp = shown((await op(LOCAL, 'recall', { entity: ALICE })).json.facts);
+        expect(viaOp[ACME.fact]).toBeUndefined();
+        expect(await cliRecall([ALICE])).toEqual(viaOp);
+      });
+
+      test('the paged --since-last-run read marks an ended employer without dropping it', async () => {
+        await putPages(change());
+        await extract(change());
+        const home = emptyHome();
+        try {
+          expect(await withEnv({ GBRAIN_HOME: home }, () => cliRecall([ALICE, '--since-last-run'])))
+            .toEqual({ [ACME.fact]: P2, [BETA.fact]: null, [TEA.fact]: null, [GARDEN.fact]: null });
+        } finally {
+          rmSync(home, { recursive: true, force: true });
+        }
+      });
+
+      test('facts without slots and the facts block read exactly as before', async () => {
+        const CHESS: Said = { fact: 'Alice Example plays chess on Sundays.', valid: P1 }, GYM: Said = { fact: 'Alice Example left her old gym.', valid: P2 };
+        const plain: Page[] = [{ slug: 'meetings/chat-c', title: 'Chat C', date: P1, said: [CHESS] }, { slug: 'meetings/chat-d', title: 'Chat D', date: P2, said: [GYM] }];
+        await putPages(plain);
+        await extract(plain);
+        const r = await readers(LOCAL);
+        const both = { [CHESS.fact]: null, [GYM.fact]: null };
+        for (const reader of ['recall', 'history', 'card', 'hot'] as const) expect({ reader, shown: r[reader] }).toEqual({ reader, shown: both });
+        expect(await savedFacts()).toEqual(both);
+        await putPages(change());
+        await extract(change());
+        const rows = await block('Where does Alice Example work?');
+        expect(line(ACME.fact, rows)).toBe(quoted(header(P1, P1, P2), ACME.fact));
+        expect(line(BETA.fact, rows)).toBe(quoted(header(P2, P2), BETA.fact));
       });
     });
 

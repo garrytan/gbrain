@@ -2,8 +2,9 @@
  * Belief ledger source probe: one SQL implementation for both engines.
  *
  * `readLedgerSource` is the read every transaction that commits canonical state starts with
- * (`beginBeliefBatch`), whether or not the source has belief coverage. The other belief SQL
- * (state reads, event appends, commit marks) stays in `src/core/belief/`.
+ * (`beginBeliefBatch`), whether or not the source has belief coverage. The event appends, commit
+ * marks and page lifetimes are in `belief-ledger.ts`; the other belief SQL (state reads, purge,
+ * coverage) stays in `src/core/belief/`.
  */
 import { COVERAGE_KEY } from '../belief/keys.ts';
 import type { BrainEngine } from '../engine.ts';
@@ -50,6 +51,6 @@ export async function readLedgerSource(exec: LegacyUnscopedRead, sourceId: strin
  */
 export async function listCoveredSources(tx: Pick<BrainEngine, 'executeRaw'>, subjectKey: string): Promise<string[]> {
   const rows = await tx.executeRaw<{ id: string }>(`SELECT s.id FROM sources s WHERE EXISTS (SELECT 1 FROM belief_events e
-    WHERE e.source_id = s.id AND e.subject_kind = 'coverage' AND e.subject_key = $1 AND e.source_incarnation = s.incarnation) ORDER BY 1`, [subjectKey]);
+    WHERE e.source_id = s.id AND e.subject_kind = 'coverage' AND e.subject_key = $1 AND e.source_incarnation = s.incarnation) ORDER BY s.id COLLATE "C"`, [subjectKey]);
   return rows.map(r => r.id);
 }

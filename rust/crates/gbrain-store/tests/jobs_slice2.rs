@@ -302,6 +302,42 @@ fn progress_tokens_delay_release_mark_and_retry() {
 // ------------------------------------------------------------------ sweeps
 
 #[test]
+fn a_held_claim_goes_back_to_delayed_with_its_start_error_and_attempts_kept() {
+    let b = brain("s2-held-claim");
+    let id = add(&b, "work", json!({"timeout_ms": 5000}));
+    claim(&b, "w:1").unwrap();
+    let held = job(&b, id);
+
+    // A stale token changes nothing.
+    assert!(!b.delay_held_claim(id, "w:2", 60_000.0).unwrap());
+    assert_eq!(job(&b, id), held);
+
+    b.clock.advance(SEC);
+    assert!(b.delay_held_claim(id, "w:1", 60_000.0).unwrap());
+    let row = job(&b, id);
+    assert_eq!(row["status"], "delayed");
+    assert_eq!(row["lock_token"], Value::Null);
+    assert_eq!(row["lock_until"], Value::Null);
+    assert_eq!(row["delay_until"], "2027-01-15T08:01:01.000000Z");
+    assert_ne!(row["updated_at"], held["updated_at"]);
+    for kept in [
+        "started_at",
+        "timeout_at",
+        "error_text",
+        "stacktrace",
+        "attempts_made",
+        "attempts_started",
+        "stalled_counter",
+    ] {
+        assert_eq!(row[kept], held[kept], "{kept} stays as the claim set it");
+    }
+
+    // The token is gone, so a second release matches no row.
+    assert!(!b.delay_held_claim(id, "w:1", 900_000.0).unwrap());
+    assert_eq!(job(&b, id), row);
+}
+
+#[test]
 fn cancel_cascades_posts_child_done_and_resolves_parents() {
     let b = brain("s2-cancel");
     let grand = add(&b, "grand", json!({}));
@@ -1401,13 +1437,62 @@ fn job_source_state_reads_archived_and_the_creation_stamp() {
     let created = b.get_source("default").unwrap().unwrap().created_at;
     assert_eq!(
         b.read_job_source_state("default").unwrap(),
-        Some(json!({ "archived": false, "created_at": created.clone() }))
+        Some(
+            json!({ "archived": false, "created_at": created.clone(), "local_path": null, "config": { "federated": true } })
+        )
     );
     assert_eq!(b.read_job_source_state("nope").unwrap(), None);
     assert_eq!(b.read_job_source_state("de\0fault").unwrap(), None);
+    // A generic remote job reads the registered root and config from the same row.
+    b.attach_source_path("default", "/srv/brain", None, None)
+        .unwrap();
+    let mut patch = serde_json::Map::new();
+    patch.insert("kind".into(), json!("example-connector"));
+    assert!(b.update_source_config("default", &patch).unwrap());
     assert!(b.set_source_archived("default", true).unwrap());
     assert_eq!(
         b.read_job_source_state("default").unwrap(),
-        Some(json!({ "archived": true, "created_at": created }))
+        Some(json!({
+            "archived": true,
+            "created_at": created,
+            "local_path": "/srv/brain",
+            "config": { "federated": true, "kind": "example-connector" },
+        }))
     );
+}
+
+#[test]
+fn unfinished_jobs_by_name_lists_every_live_row_of_the_names_by_id() {
+    let b = brain("s2-unfinished");
+    let a = add(&b, "manual", json!({}));
+    let other = add(&b, "other", json!({}));
+    let c = add(&b, "manual", json!({}));
+    let d = add(&b, "manual", json!({}));
+    add(&b, "elsewhere", json!({}));
+    b.pause_job(c).unwrap().unwrap();
+    b.cancel_jobs(&[d], &cancel_opts(json!({"rootStatuses": null})))
+        .unwrap();
+    let names = vec!["manual".to_string(), "other".to_string()];
+    let got: Vec<(i64, String, String)> = b
+        .list_unfinished_jobs_by_name(&names)
+        .unwrap()
+        .iter()
+        .map(|r| {
+            (
+                r["id"].as_i64().unwrap(),
+                r["name"].as_str().unwrap().to_string(),
+                r["status"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        got,
+        vec![
+            (a, "manual".to_string(), "waiting".to_string()),
+            (other, "other".to_string(), "waiting".to_string()),
+            (c, "manual".to_string(), "paused".to_string()),
+        ],
+        "paused is unfinished, cancelled is not, other names are left out, by id"
+    );
+    assert!(b.list_unfinished_jobs_by_name(&[]).unwrap().is_empty());
 }

@@ -130,8 +130,10 @@ export interface DigestRow { key: readonly string[]; text: string }
 
 const collate = (c: ColumnMeta, expr: string) => c.collatable ? `${expr} COLLATE "C"` : expr;
 
-/** Up to `limit` rows strictly after `afterKey` (raw key texts), in COLLATE "C" primary-key order. Run inside a digest transaction. */
-export async function readDigestRows(tx: BrainEngine, plan: DigestPlan, afterKey: readonly string[] | null, limit: number): Promise<DigestRow[]> {
+export interface KeysetRow { key: readonly string[]; values: Record<string, string | null> }
+
+/** Up to `limit` rows strictly after `afterKey` (raw key texts), in COLLATE "C" primary-key order, each value as its `::text`. Run inside a digest transaction. */
+export async function readKeysetRows(tx: BrainEngine, plan: DigestPlan, afterKey: readonly string[] | null, limit: number): Promise<KeysetRow[]> {
   const order = plan.key.map(k => collate(k, `t.${quoteIdent(k.name)}`)).join(', ');
   const where = [
     plan.filter ? `(${plan.filter})` : '',
@@ -140,10 +142,21 @@ export async function readDigestRows(tx: BrainEngine, plan: DigestPlan, afterKey
   const rows = await tx.executeRaw<Record<string, string | null>>(
     `${plan.select}${where.length ? ` WHERE ${where.join(' AND ')}` : ''} ORDER BY ${order} LIMIT ${Math.max(1, Math.floor(limit))}`, afterKey ? [...afterKey] : []);
   return rows.map(r => {
-    const values: Record<string, unknown> = {};
-    plan.columns.forEach((c, i) => { values[c.name] = r[`c${i}`]; });
-    return { key: plan.key.map((_, i) => r[`k${i}`] as string), text: canonicalRowText(values, plan.columns) };
+    const values: Record<string, string | null> = {};
+    plan.columns.forEach((c, i) => { values[c.name] = r[`c${i}`] ?? null; });
+    return { key: plan.key.map((_, i) => r[`k${i}`] as string), values };
   });
+}
+
+/** Up to `limit` rows strictly after `afterKey` as canonical row text, in key order. Run inside a digest transaction. */
+export async function readDigestRows(tx: BrainEngine, plan: DigestPlan, afterKey: readonly string[] | null, limit: number): Promise<DigestRow[]> {
+  const rows = await readKeysetRows(tx, plan, afterKey, limit);
+  return rows.map(r => ({ key: r.key, text: canonicalRowText(r.values, plan.columns) }));
+}
+
+/** One read through `tx`, for callers that take a query function (the shadow seed's snapshot reads). */
+export function digestQuery(tx: BrainEngine): (sql: string, params?: unknown[]) => Promise<Record<string, unknown>[]> {
+  return (sql, params) => tx.executeRaw<Record<string, unknown>>(sql, params ?? []);
 }
 
 /** Runs fn inside one transaction with the fixed digest session settings. */

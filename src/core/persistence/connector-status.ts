@@ -10,7 +10,7 @@
  * `connector_held_items` stay connector-only.
  */
 import type { BrainEngine } from '../engine.ts';
-import { opError } from '../ops/contract.ts';
+import { OperationError, opError } from '../ops/contract.ts';
 import { readFix } from '../ops/op-fix.ts';
 import { CONNECTOR_STOPPED_RUNS, readManagedConnectorState, type ConnectorPurgedItem, type ConnectorRunCounts, type ConnectorRunFailure, type UpgradeRecovery } from './connector-state.ts';
 import { classifySyncFault, type SyncFaultVerdict } from './sync-fault-class.ts';
@@ -41,12 +41,37 @@ export interface ConnectorSourceStatus {
   last_failure: ConnectorRunFailure | null;
   /** #6831: `last_failure.consecutive` reached CONNECTOR_STOPPED_RUNS: nothing from this source is being imported. */
   stopped: boolean;
+  /** #9968: `last_failure` is a recovery_required whose retained publication has since settled; the next sync clears it, and it is not a stop. */
+  recovery_settled?: true;
 }
 
 /** #6831: `sync status`'s view of a connector source's recorded run failure (`connector_last_error`). */
 export interface ConnectorLastError extends ConnectorRunFailure, SyncFaultVerdict {
   stopped: boolean;
+  recovery_settled?: true;
   fix: Action;
+}
+
+/**
+ * #9968: a recorded recovery_required failure with no retained publication behind it (no request on the source's worktree
+ * still holds a recovery record) is history, not a stop: the next sync that ends without an error clears it.
+ */
+const recoverySettled = (failure: ConnectorRunFailure | null | undefined, retained: boolean) => failure?.code === 'recovery_required' && !retained;
+
+/**
+ * #9968 composed with the trunk's typed source rows: the ids among `sourceIds` whose bound worktree still holds a
+ * recovery record (RETAINED_SQL's scope), through the typed readRetainedSources member (engine-sql/cli-reads-import.ts).
+ * The Rust engine does not serve it yet and refuses with engine_capability_missing: every source then counts as
+ * retained, so a recorded recovery_required failure stays a stop there, as it was before #9968.
+ */
+async function readRetainedSources(engine: Pick<BrainEngine, 'readRetainedSources'>, sourceIds: readonly string[]): Promise<Set<string>> {
+  if (sourceIds.length === 0) return new Set();
+  try {
+    return new Set(await engine.readRetainedSources(sourceIds));
+  } catch (err) {
+    if (err instanceof OperationError && err.code === 'engine_capability_missing') return new Set(sourceIds);
+    throw err;
+  }
 }
 
 /** #6831: the read-only next step for a recorded connector run failure: its receipt when it names one, else the source's status. */
@@ -59,16 +84,20 @@ function connectorFailureFix(sourceId: string, failure: ConnectorRunFailure): Ac
 }
 
 /** #6831: the connector run failure recorded for a source (null for a non-connector source or a last run that finished). */
-export async function readConnectorLastError(engine: Pick<BrainEngine, 'executeRaw' | 'listSourceRecords' | 'readSourceIncarnation'>, sourceId: string): Promise<ConnectorLastError | null> {
-  const [source] = await connectorSourceRows(engine, [sourceId]);
+export async function readConnectorLastError(engine: Pick<BrainEngine, 'executeRaw' | 'listSourceRecords' | 'readSourceIncarnation' | 'readRetainedSources'>, sourceId: string): Promise<ConnectorLastError | null> {
+  const [row] = await connectorSourceRows(engine, [sourceId]);
+  const source = row ? { ...row, retained: (await readRetainedSources(engine, [row.id])).has(row.id) } : undefined;
   const failure = source ? (await readManagedConnectorState(engine, sourceId, source.incarnation)).last_failure : null;
   if (!failure) return null;
-  return { ...failure, stopped: failure.consecutive >= CONNECTOR_STOPPED_RUNS, ...classifySyncFault({ code: failure.code, message: failure.message }),
-    fix: connectorFailureFix(sourceId, failure) };
+  const settled = recoverySettled(failure, source!.retained);
+  return { ...failure, stopped: !settled && failure.consecutive >= CONNECTOR_STOPPED_RUNS, ...(settled ? { recovery_settled: true as const } : {}),
+    ...classifySyncFault({ code: failure.code, message: failure.message }), fix: connectorFailureFix(sourceId, failure) };
 }
 
-export async function readConnectorSourceStatuses(engine: Pick<BrainEngine, 'executeRaw' | 'listSourceRecords' | 'readSourceIncarnation'>, sourceIds?: string[]): Promise<Map<string, ConnectorSourceStatus>> {
-  const sources = await connectorSourceRows(engine, sourceIds);
+export async function readConnectorSourceStatuses(engine: Pick<BrainEngine, 'executeRaw' | 'listSourceRecords' | 'readSourceIncarnation' | 'readRetainedSources'>, sourceIds?: string[]): Promise<Map<string, ConnectorSourceStatus>> {
+  const rows = await connectorSourceRows(engine, sourceIds);
+  const retained = await readRetainedSources(engine, rows.map(r => r.id));
+  const sources = rows.map(r => ({ ...r, retained: retained.has(r.id) }));
   const statuses = new Map<string, ConnectorSourceStatus>();
   for (const source of sources) {
     const state = await readManagedConnectorState(engine, source.id, source.incarnation);
@@ -79,10 +108,11 @@ export async function readConnectorSourceStatuses(engine: Pick<BrainEngine, 'exe
     } catch (error) {
       heldError = (error instanceof Error ? error.message : String(error)).split('\n')[0].slice(0, 160) || 'unknown error';
     }
+    const settled = recoverySettled(state.last_failure, source.retained);
     statuses.set(source.id, { upgrade_recovery: state.upgrade_recovery, resumed_from: state.resumed_from, account_pinned: state.account !== null,
       continuity_unverified: state.continuity_unverified, pending: state.pending.length, last_run: state.last_run, held,
       ...(heldError ? { held_error: heldError } : {}), purged_items: state.purged_items ?? [], last_failure: state.last_failure ?? null,
-      stopped: (state.last_failure?.consecutive ?? 0) >= CONNECTOR_STOPPED_RUNS });
+      stopped: !settled && (state.last_failure?.consecutive ?? 0) >= CONNECTOR_STOPPED_RUNS, ...(settled ? { recovery_settled: true as const } : {}) });
   }
   return statuses;
 }
@@ -99,7 +129,8 @@ export function connectorStatusLines(sourceId: string, status: ConnectorSourceSt
     const where = failure.slug ? ` on ${failure.slug}${failure.request_id ? ` (request ${failure.request_id})` : ''}` : '';
     lines.push(`    ${status.stopped ? `STOPPED: the last ${failure.consecutive} connector syncs` : `the last ${failure.consecutive === 1 ? 'connector sync' : `${failure.consecutive} connector syncs`}`} ended on ${failure.code}${where} `
       + `at ${failure.at.slice(0, 19).replace('T', ' ')}: ${failure.message}`);
-    lines.push(`    nothing after that point of the run was imported; next: ${connectorFailureFix(sourceId, failure).argv!.join(' ')}`);
+    if (status.recovery_settled) lines.push('    no retained publication remains for this source, so this is not a stop: the next sync that ends without an error clears it');
+    else lines.push(`    nothing after that point of the run was imported; next: ${connectorFailureFix(sourceId, failure).argv!.join(' ')}`);
   }
   if (status.purged_items.length) {
     lines.push(`    ${status.purged_items.length} item(s) recently skipped as purged content (the purge tombstone working; they do not stop the sync): `

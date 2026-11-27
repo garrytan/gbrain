@@ -137,6 +137,26 @@ describe('engine parity: minion jobs', () => {
       };
     });
 
+  parityTest('coalesceOnIdempotencyKey alone: no row reads null, a live row is returned, another authority is refused, a dead row frees its key',
+    { methods: ['admitJob', 'coalesceOnIdempotencyKey', 'claimNextJob', 'failJob', 'getJob'] }, async (engine) => {
+      const step = (authority: SubmissionAuthority = APPLICATION_AUTHORITY) =>
+        engine.coalesceOnIdempotencyKey('k1', { authority, decide: policy(authority).decide });
+      const none = await step();
+      const first = await admit(engine, { insert: values('work', { idempotency_key: 'k1', data: { n: 1 } }) });
+      const base = Number(first.row.id);
+      const view = rowView(base);
+      const live = await step();
+      const crossed = await thrown(() => step(OTHER_AUTHORITY));
+      const stillHeld = (await engine.getJob(base))?.idempotency_key;
+      await engine.claimNextJob(claimSpec('w1:k'));
+      await engine.failJob(base, 'w1:k', 'boom', 'dead');
+      const released = await step();
+      const freed = await engine.getJob(base);
+      expect(live?.id != null && Number(live.id)).toBe(base);
+      expect(crossed?.code).toBe('permission_denied');
+      return { none, live: view(live), crossed, stillHeld, released, freed: view(freed), afterRelease: await step() };
+    });
+
   parityTest('admitJob coalesces an identical waiting payload and enforces the name quota and backpressure caps',
     { methods: ['admitJob'] }, async (engine) => {
       const first = await admit(engine, { insert: values('work', { data: { __param_hash: 'h1', sourceId: 's1' } }) });
@@ -295,7 +315,7 @@ describe('engine parity: minion jobs', () => {
       };
     });
 
-  // Options the Rust store does not run yet: PGLite serves them and the Rust arm stops on the typed refusal.
+  // A delegated client's lock and capacity check run in the admission's transaction on every arm, before the insert.
   parityTest('admitJob runs a delegated client\'s lock and capacity check inside the admission',
     { methods: ['admitJob'] }, async (engine) => {
       const seen: Array<number | null> = [];

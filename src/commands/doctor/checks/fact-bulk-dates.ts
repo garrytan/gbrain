@@ -5,8 +5,8 @@ import { agentFix, checkError } from '../check-fix.ts';
 
 /**
  * `fact_bulk_dates` (#7247): a calendar day holding a large share of a source's active facts as their valid_from,
- * which a bulk load writes when it stamps the day it ran onto every row. Those dates record when the facts were
- * loaded, not when they happened. One read-only aggregate (`findBulkFactDays`, the rule the repair uses) over the
+ * which a bulk load writes when it stamps the day it ran onto every row. The distribution alone does not prove that: verified
+ * same-day events look the same, so only a claim that states an earlier date contradicts the stored day. One read-only aggregate (`findBulkFactDays`, the rule the repair uses) over the
  * scoped sources' active facts reports each day with its fact and entity counts, the most frequent source tags and
  * how many claims state exactly one earlier date, and names the explicit-only `gbrain repair fact-claim-dates`
  * preview. Remote callers see only their permitted sources.
@@ -24,7 +24,8 @@ export async function factBulkDatesCheck(engine: BrainEngine, sourceIds?: string
       + `${d.top_sources.length ? ` (source tags: ${d.top_sources.map(top => `${top.source} ${top.facts}`).join(', ')})` : ''}, ${d.dated_claims} state one earlier date in the claim`);
     return { name, status: 'warn', details,
       message: `${days.length} calendar day(s) hold a bulk-loaded share of a source's facts as their valid_from: ${lines.join('; ')}. `
-        + 'These dates record when the facts were loaded, not when they happened, so timelines and as-of reads put every such fact on that day. '
+        + 'A day like this is often a bulk load that stamped the day it ran onto every row, though it can also be events that really happened that day; '
+        + 'a claim stating an earlier date is the evidence that a stored date is wrong, and timelines and as-of reads put every such fact on that day. '
         + `Preview moving the facts whose claim states its own date on the brain host: gbrain repair fact-claim-dates --source ${first.source_id}`
         + `${source_ids.length > 1 ? ` (one source at a time: ${source_ids.map(id => `--source ${id}`).join(', ')})` : ''} — it changes nothing until the user agrees `
         + 'to the apply command it prints; facts without a date in the claim keep the load day.',

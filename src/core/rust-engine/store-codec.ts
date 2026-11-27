@@ -13,6 +13,18 @@ function reviveDate(value: unknown): unknown {
   return typeof value === 'string' ? new Date(value) : value;
 }
 
+/**
+ * The lowercase hyphenated text of a uuid, read as Postgres reads `$1::uuid`: optional braces, a hyphen optional after
+ * any group of four hex digits, any case. Anything else throws Postgres's own message, so a Rust member keyed by a
+ * token id refuses the ids a SQL engine refuses and finds the ones it finds.
+ */
+export function uuidText(value: string): string {
+  const bare = value.startsWith('{') && value.endsWith('}') ? value.slice(1, -1) : value;
+  if (!/^[0-9a-f]{4}(?:-?[0-9a-f]{4}){7}$/i.test(bare)) throw new Error(`invalid input syntax for type uuid: "${value}"`);
+  const hex = bare.replace(/-/g, '').toLowerCase();
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
 /** A copy of `row` with the named date fields turned into `Date`. A field the row lacks stays absent. */
 export function withDates<T extends object>(row: T, fields: readonly string[]): T {
   const out: Row = { ...(row as Row) };
@@ -28,15 +40,39 @@ export function requestRow<R extends object>(row: unknown): R | null {
   return row === null || row === undefined ? null : withDates(row as R, REQUEST_DATES);
 }
 
+/**
+ * A store ISO time (`2026-08-10T12:00:00.000120Z`) as `row_to_json` prints a timestamptz in a UTC session:
+ * `2026-08-10T12:00:00.00012+00:00`, trailing zero digits of the fraction dropped, no fraction when it is zero.
+ */
+function jsonTimestamp(value: unknown): unknown {
+  if (typeof value !== 'string') return value;
+  const m = /^(.*T\d\d:\d\d:\d\d)(?:\.(\d+))?Z$/.exec(value);
+  if (!m) return value;
+  const frac = (m[2] ?? '').replace(/0+$/, '');
+  return `${m[1]}${frac ? `.${frac}` : ''}+00:00`;
+}
+
+/** A stored write-journal request row as `row_to_json(p)` returns it: the timestamps as UTC text, every other column as stored. */
+export function requestJsonRow<R extends object>(row: unknown): R {
+  const out: Row = { ...(row as Row) };
+  for (const field of REQUEST_DATES) if (field in out) out[field] = jsonTimestamp(out[field]);
+  return out as R;
+}
+
 /** A stored topology change row as PGLite returns it: created_at and updated_at as Dates. */
 export function topologyRow<R extends object>(row: unknown): R | null {
   return row === null || row === undefined ? null : withDates(row as R, ['created_at', 'updated_at']);
 }
 
-/** A `PageInput` or any write body with its `Date` values as ISO strings, which is what the store reads. */
+/**
+ * A `PageInput` or any write body with its `Date` values as ISO strings, which is what the store reads. `frontmatter`
+ * goes as the JSON text Postgres and PGLite store for it (`jsonbParam`), so a YAML date nested in it is its ISO string
+ * there too; the addon would send it as an empty object.
+ */
 export function withIsoDates<T extends object>(row: T): T {
   const out: Row = { ...(row as Row) };
   for (const [key, value] of Object.entries(out)) if (value instanceof Date) out[key] = value.toISOString();
+  if (out.frontmatter !== null && typeof out.frontmatter === 'object') out.frontmatter = JSON.parse(JSON.stringify(out.frontmatter));
   return out as T;
 }
 
@@ -133,7 +169,7 @@ function versionHash(version: object): Row {
 export function toVersion<T extends object>(version: T): T {
   const rest = versionHash(version);
   const frontmatter = (rest.frontmatter ?? {}) as Row;
-  return { ...rest, replaced_because: rest.replaced_because ?? null, valid_from: validDate(frontmatter.valid_from), valid_until: validDate(frontmatter.valid_until) } as T;
+  return { ...rest, replaced_because: (rest as Row).replaced_because ?? null, valid_from: validDate(frontmatter.valid_from), valid_until: validDate(frontmatter.valid_until) } as T;
 }
 
 /**

@@ -15,6 +15,7 @@ import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { OperationError, type OperationContext } from '../src/core/ops/contract.ts';
 import { claimWorktree } from '../src/core/persistence/ownership.ts';
+import { importFromFile } from '../src/core/import-file.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { sha256 } from '../src/core/persistence/digest.ts';
@@ -436,3 +437,176 @@ test('database side: a slug-derived title under a file that names one is re-impo
   await s.run({ apply: true, expect: hash, includeAmbiguous: true });
   expect((await engine.getPage('notes/launch-plan', { sourceId: s.id }))?.title).toBe('The real launch plan');
 }), 180_000);
+
+/** LC-2 (decision E1): deletes a page the way `gbrain delete [--purge]` does, then lets its Git effect (the file's removal) settle. */
+async function deletePage(engine: BrainEngine, sourceId: string, slug: string, purge = false) {
+  const snapshot = (await engine.readPageSnapshot(slug, { sourceId, includeDeleted: true }))!;
+  const receipt = await submitPageMutation(localCtx(engine, sourceId), { operation: 'delete_page',
+    params: { slug, source_id: sourceId, request_id: randomUUID(), expected_revision: snapshot.revision, ...(purge ? { purge: true } : {}) }, waitMs: 30_000 });
+  expect(receipt.state).toBe('committed');
+  await gitEffectsSettled(engine, sourceId);
+}
+
+const reviewCodes = (result: RepairResult) => details(result).needs_review.map(entry => [entry.path, entry.code]).sort();
+
+test('LC-2: held files of a purged and a soft-deleted page are needs_review routed to repair file-drift, never imported as safe', () => each(async engine => {
+  const s = await managed(engine, { 'notes/ivy.md': note('Ivy', 'Ivy private note. Okapi keyword.'), 'notes/jon.md': note('Jon', 'Jon note.') });
+  await s.sync();
+  await deletePage(engine, s.id, 'notes/ivy', true);
+  await deletePage(engine, s.id, 'notes/jon');
+  // Someone puts both files back with one more line and commits: sync holds each one for the user's decision.
+  s.write('notes/ivy.md', note('Ivy', 'Ivy private note. Okapi keyword.\none more line'));
+  s.write('notes/jon.md', note('Jon', 'Jon note.\none more line'));
+  commit(s.root, 'restore with an edit');
+  await s.sync();
+  expect((await s.holds()).map(hold => [hold.path, hold.code, hold.meta.state]).sort()).toEqual([
+    ['notes/ivy.md', 'file_drift', 'purged_differs'], ['notes/jon.md', 'file_drift', 'tombstone_edited']]);
+  for (const includeAmbiguous of [false, true]) {
+    const preview = await s.run({ includeAmbiguous });
+    expect(details(preview).counts).toMatchObject({ safe: 0, interpretive: 0, needs_review: 2 });
+    expect(reviewCodes(preview)).toEqual([['notes/ivy.md', 'file_drift'], ['notes/jon.md', 'file_drift']]);
+    const byPath = new Map(details(preview).needs_review.map(entry => [entry.path, entry.resolution]));
+    expect(byPath.get('notes/ivy.md')).toContain(`gbrain repair file-drift --source ${s.id} --held --side deleted --state purged_differs --only notes/ivy.md --prefer database`);
+    expect(byPath.get('notes/jon.md')).toContain(`gbrain repair file-drift --source ${s.id} --held --side deleted --state tombstone_edited --only notes/jon.md --prefer database`);
+  }
+  // Nothing came back: the purged page stays gone and the soft-deleted one stays deleted, both still held.
+  expect(await engine.readPageSnapshot('notes/ivy', { sourceId: s.id, includeDeleted: true })).toBeNull();
+  expect((await engine.readPageSnapshot('notes/jon', { sourceId: s.id, includeDeleted: true }))?.page.deleted_at).toBeTruthy();
+  expect((await s.holds()).length).toBe(2);
+}), 240_000);
+
+test('LC-2: a case-collision hold is needs_review with its own fix, never imported as safe', () => each(async engine => {
+  const s = await managed(engine, { 'notes/Foo.md': note('Foo upper'), 'notes/foo.md': note('Foo lower') });
+  await s.sync();
+  const holds = await s.holds();
+  expect(holds.length).toBeGreaterThan(0);
+  expect(holds.every(hold => hold.code === 'page_identity_changed')).toBe(true);
+  const preview = await s.run({ includeAmbiguous: true });
+  expect(details(preview).counts).toMatchObject({ safe: 0, interpretive: 0 });
+  expect(reviewCodes(preview)).toEqual(holds.map(hold => [hold.path, 'page_identity_changed']).sort());
+  // The review carries the hold's own remedy, not only the command that shows the source's status.
+  expect(details(preview).needs_review.every(entry => entry.resolution.includes('Keep one spelling'))).toBe(true);
+}), 240_000);
+
+test('LC-2: an unheld file whose page was soft-deleted or purged is needs_review, never a safe repair that brings the page back', () => each(async engine => {
+  const s = await managed(engine, { 'notes/kim.md': note('Kim'), 'notes/lee.md': note('Lee') });
+  await s.sync();
+  await deletePage(engine, s.id, 'notes/kim');
+  await deletePage(engine, s.id, 'notes/lee', true);
+  // Both files come back with a value that only quoting fixes, before any sync has looked at them.
+  s.write('notes/kim.md', QUOTABLE);
+  s.write('notes/lee.md', QUOTABLE.replace('Payments roundup', 'Lee roundup'));
+  commit(s.root, 'files back, unsynced');
+  expect(await s.holds()).toEqual([]);
+  const preview = await s.run({ includeAmbiguous: true });
+  expect(details(preview).counts).toMatchObject({ safe: 0, interpretive: 0, needs_review: 2 });
+  expect(reviewCodes(preview)).toEqual([['notes/kim.md', 'page_deleted'], ['notes/lee.md', 'page_purged']]);
+  expect(details(preview).needs_review.find(entry => entry.code === 'page_deleted')!.resolution).toContain(`gbrain restore notes/kim --source-id ${s.id} --force`);
+  expect(await engine.readPageSnapshot('notes/lee', { sourceId: s.id, includeDeleted: true })).toBeNull();
+  expect((await engine.readPageSnapshot('notes/kim', { sourceId: s.id, includeDeleted: true }))?.page.deleted_at).toBeTruthy();
+}), 240_000);
+
+test('LC-2: a nested source that records Git-root origins keeps a purged page out of a safe repair', () => each(async engine => {
+  const id = `fm-${randomUUID().replace(/-/g, '').slice(0, 20)}`, repo = join(home, id), root = join(repo, 'wiki');
+  mkdirSync(join(root, 'notes'), { recursive: true }); git(repo, 'init', '-q');
+  git(repo, 'config', 'user.name', 'Example'); git(repo, 'config', 'user.email', 'example@example.invalid');
+  writeFileSync(join(repo, '.git', 'hooks', 'post-commit'), '#!/bin/sh\n# gbrain brain-durability post-commit hook (v0.42.44+)\n'); chmodSync(join(repo, '.git', 'hooks', 'post-commit'), 0o755);
+  writeFileSync(join(repo, 'README.md'), 'Outside the source.\n');
+  writeFileSync(join(root, 'notes', 'max.md'), note('Max'));
+  commit(repo, 'fixture');
+  await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+  // The source pins slug_root_mode git-root, so sync records origins from the repository root (wiki/notes/max.md).
+  await engine.executeRaw(`INSERT INTO sources(id,name,local_path,config) VALUES($1,$1,$2,'{"slug_root_mode":"git-root"}')`, [id, root]);
+  await claimWorktree(engine, id, root);
+  await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+  const s = fixture(engine, id, root, (path, content) => writeFileSync(join(root, path), content));
+  await s.sync();
+  const [page] = await engine.executeRaw<{ slug: string; source_path: string }>('SELECT slug, source_path FROM pages WHERE source_id=$1 AND deleted_at IS NULL', [id]);
+  expect(page!.source_path).toBe('wiki/notes/max.md');
+  await deletePage(engine, id, page!.slug, true);
+  // The file comes back with a value that only quoting fixes, before any sync has looked at it.
+  s.write('notes/max.md', QUOTABLE.replace('Payments roundup', 'Max roundup'));
+  commit(repo, 'file back, unsynced');
+  const preview = await s.run({ includeAmbiguous: true });
+  expect(details(preview).counts).toMatchObject({ safe: 0, interpretive: 0, needs_review: 1 });
+  expect(reviewCodes(preview)).toEqual([['notes/max.md', 'page_purged']]);
+  expect(await engine.readPageSnapshot(page!.slug, { sourceId: id, includeDeleted: true })).toBeNull();
+}), 240_000);
+
+test('LC-2: legacy brain: a file whose own slug names a soft-deleted page is needs_review, never a safe repair that restores it', async () => {
+  const engine = legacyEngine;
+  await withEnv(env, async () => {
+    // The file names its page by a stored spelling (`notes/a--b`) whose path slug is `notes/a-b`: the import keeps the stored spelling.
+    const id = 'legacy-fm-lc2', root = await legacyDeletedSpelling(engine, id);
+    writeFileSync(join(root, 'notes', 'a--b.md'), QUOTABLE.replace('title: Payments roundup', 'title: Stamped\nslug: notes/a--b'));
+    const s = fixture(engine, id, root, (path, content) => writeFileSync(join(root, path), content));
+    const preview = await s.run({ includeAmbiguous: true });
+    expect(details(preview).counts).toMatchObject({ safe: 0, interpretive: 0, needs_review: 1 });
+    expect(reviewCodes(preview)).toEqual([['notes/a--b.md', 'page_deleted']]);
+    expect((await engine.readPageSnapshot('notes/a--b', { sourceId: id, includeDeleted: true }))?.page.deleted_at).toBeTruthy();
+  });
+}, 120_000);
+
+test('LC-2: unheld spellings that differ only by case are needs_review, never a safe repair that picks one', () => each(async engine => {
+  // Before any sync has held them, two spellings of one page each carry a value that only quoting fixes.
+  const s = await managed(engine, { 'notes/Max.md': QUOTABLE.replace('Payments roundup', 'Max upper'), 'notes/max.md': QUOTABLE.replace('Payments roundup', 'Max lower') });
+  const preview = await s.run({ includeAmbiguous: true, only: ['notes/max.md'] });
+  expect(details(preview).counts).toMatchObject({ safe: 0, interpretive: 0, needs_review: 1 });
+  expect(reviewCodes(preview)).toEqual([['notes/max.md', 'page_identity_changed']]);
+  expect(details(preview).needs_review[0]!.resolution).toContain('Keep one spelling');
+  expect(await engine.readPageSnapshot('notes/max', { sourceId: s.id, includeDeleted: true })).toBeNull();
+}), 240_000);
+
+test('LC-2: a held file that gains a spelling twin before the next sync is needs_review, never a safe repair that picks one', () => each(async engine => {
+  // Unquoted continuation lines: sync holds the file, and --include-ambiguous would fold it.
+  const s = await managed(engine, { 'notes/max.md': folded(1) });
+  await s.sync();
+  expect((await s.holds()).map(h => [h.path, h.code])).toEqual([['notes/max.md', 'invalid_frontmatter']]);
+  // A second spelling arrives before any sync has held it.
+  s.write('notes/Max.md', folded(2));
+  const preview = await s.run({ includeAmbiguous: true, only: ['notes/max.md'] });
+  expect(details(preview).counts).toMatchObject({ safe: 0, interpretive: 0, needs_review: 1 });
+  expect(reviewCodes(preview)).toEqual([['notes/max.md', 'page_identity_changed']]);
+  expect(details(preview).needs_review[0]!.resolution).toContain('Keep one spelling');
+  expect(await engine.readPageSnapshot('notes/max', { sourceId: s.id, includeDeleted: true })).toBeNull();
+}), 240_000);
+
+/** A legacy source with one soft-deleted page `notes/a--b` that records `notes/a--b.md` (the spelling an older import kept). */
+async function legacyDeletedSpelling(engine: BrainEngine, id: string): Promise<string> {
+  await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+  const root = join(home, id);
+  mkdirSync(join(root, 'notes'), { recursive: true });
+  await engine.executeRaw("INSERT INTO sources(id,name,local_path,config) VALUES($1,$1,$2,'{}')", [id, root]);
+  writeFileSync(join(root, 'notes', 'a--b.md'), '---\ntitle: Stamped\nslug: notes/a--b\n---\nA synthetic note.\n');
+  expect((await importFromFile(engine, join(root, 'notes', 'a--b.md'), 'notes/a--b.md', { sourceId: id, noEmbed: true })).slug).toBe('notes/a--b');
+  expect(await engine.softDeletePage('notes/a--b', { sourceId: id })).toBeTruthy();
+  return root;
+}
+
+test('LC-2: legacy brain: an unstamped file whose deleted page kept another spelling is needs_review, never imported as a new page', async () => {
+  const engine = legacyEngine;
+  await withEnv(env, async () => {
+    const id = 'legacy-fm-lc2-origin', root = await legacyDeletedSpelling(engine, id);
+    // The file comes back without its slug stamp, so its path names notes/a-b; only the recorded origin finds the deleted page.
+    writeFileSync(join(root, 'notes', 'a--b.md'), QUOTABLE);
+    const preview = await fixture(engine, id, root, (path, content) => writeFileSync(join(root, path), content)).run({ includeAmbiguous: true });
+    expect(details(preview).counts).toMatchObject({ safe: 0, interpretive: 0, needs_review: 1 });
+    expect(reviewCodes(preview)).toEqual([['notes/a--b.md', 'page_deleted']]);
+    expect(await engine.readPageSnapshot('notes/a-b', { sourceId: id, includeDeleted: true })).toBeNull();
+  });
+}, 120_000);
+
+test('LC-2: legacy brain: a file bound to a live page but naming a deleted page by its own slug is needs_review', async () => {
+  const engine = legacyEngine;
+  await withEnv(env, async () => {
+    const id = 'legacy-fm-lc2-bound', root = await legacyDeletedSpelling(engine, id);
+    // A later unstamped import made live page notes/a-b at the same file.
+    writeFileSync(join(root, 'notes', 'a--b.md'), '---\ntitle: Plain\n---\nA later synthetic note.\n');
+    expect((await importFromFile(engine, join(root, 'notes', 'a--b.md'), 'notes/a--b.md', { sourceId: id, noEmbed: true })).slug).toBe('notes/a-b');
+    // The file stamps the deleted spelling again: importFromFile would write notes/a--b, not the live page.
+    writeFileSync(join(root, 'notes', 'a--b.md'), QUOTABLE.replace('title: Payments roundup', 'title: Stamped\nslug: notes/a--b'));
+    const preview = await fixture(engine, id, root, (path, content) => writeFileSync(join(root, path), content)).run({ includeAmbiguous: true });
+    expect(details(preview).counts).toMatchObject({ safe: 0, interpretive: 0, needs_review: 1 });
+    expect(reviewCodes(preview)).toEqual([['notes/a--b.md', 'page_deleted']]);
+  });
+}, 120_000);

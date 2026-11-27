@@ -11,9 +11,15 @@
  *    (m1, m4, m5, e1, e2), never in punctuation, and its reads sort the same under every collation.
  * 4. Seams: none. Sources, members and pages come from the production helpers (addMember, setOwner, importFromContent) and the
  *    production `proposeVisibility` reads them back; the slugs files are read from disk.
+ *
+ * The engine-parity case below (PGLite, Postgres with DATABASE_URL, Rust with GBRAIN_TEST_RUST_ARM=1): the SQL arms propose
+ * the same reader set, and the Rust engine, which has no raw SQL for the page read, refuses by name
+ * (`engine_capability_missing`, raw_sql, "repair propose visibility") before any read and writes no file. Before the named
+ * refusal a Rust brain answered "Nothing to propose" from its member read, so the proposal looked complete. The Rust arm
+ * runs unseeded: addMember itself still refuses on Rust (the access members are not served there yet).
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
@@ -24,6 +30,8 @@ import { setOwner } from '../src/core/access/owner.ts';
 import { proposeVisibility } from '../src/commands/repair-propose.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
+import { withEnv } from './helpers/with-env.ts';
+import { parityArms } from './engine-parity/harness.ts';
 
 const fm = (type: string, slug: string, extra: string) => `---\ntype: ${type}\ntitle: ${slug}\n${extra}---\n# ${slug}\n\nHarbor ledger body for ${slug}.\n`;
 const SOURCES = ['ab', 'a-z'];
@@ -67,3 +75,42 @@ for (const kind of testBackends()) {
     }, 60_000);
   });
 }
+
+const { parityTest } = parityArms(testBackends());
+
+describe('engine parity: repair visibility --propose', () => {
+  parityTest('the SQL engines propose the same readers, and the Rust engine refuses the proposal by name', {
+    methods: [],
+    requires: 'raw_sql',
+    timeout: 60_000,
+  }, async (engine, backend) => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-propose-parity-'));
+    const out = join(dir, 'out');
+    try {
+      return await withEnv({ GBRAIN_HOME: join(dir, 'home') }, async () => {
+        if (backend !== 'rust') { // addMember refuses on Rust; the refusal under test comes first on any brain.
+          await addMember(engine, 'owner-example', { email: 'owner@example.com' });
+          await addMember(engine, 'alice-example', { email: 'alice@example.com' });
+          await setOwner(engine, 'owner-example');
+          await importFromContent(engine, 'meetings/m1', fm('meeting', 'meetings/m1', 'attendees: [alice@example.com]\n'), { sourceId: 'default', noEmbed: true });
+          await importFromContent(engine, 'emails/e1', fm('email', 'emails/e1', 'attendees: [stranger@example.com]\n'), { sourceId: 'default', noEmbed: true });
+        }
+        try {
+          const proposal = await proposeVisibility(engine, { out });
+          return { applicable: proposal.applicable, owner: proposal.owner,
+            sets: proposal.sets.map(set => ({ source: set.source, readers: set.readers, slugs: readFileSync(set.file, 'utf8') })),
+            unmatched: proposal.unmatched.map(page => `${page.source}:${page.slug}`) };
+        } catch (err) {
+          if (backend === 'rust') {
+            const text = JSON.stringify({ message: (err as Error).message, detail: (err as { detail?: unknown }).detail });
+            expect(text).toContain('repair propose visibility');
+            expect(() => readdirSync(out)).toThrow();
+          }
+          throw err;
+        }
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

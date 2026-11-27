@@ -7,7 +7,8 @@
  */
 import { describe, expect, test } from 'bun:test';
 import type { BrainEngine } from '../src/core/engine.ts';
-import { moveSlugBindings, recordRenameAlias } from '../src/core/page-state/rename-alias.ts';
+import { moveSlugBindings } from '../src/core/page-state/rename-alias.ts';
+import { recordRenameAliasRows } from '../src/core/engine-sql/rename-alias-rows.ts';
 import { resolveSlugWithAliasDetailed } from '../src/core/engine-sql/pages.ts';
 
 const unrelatedColumn = (relation: string) =>
@@ -15,20 +16,24 @@ const unrelatedColumn = (relation: string) =>
 const missingTable = (table: string) => Object.assign(new Error(`relation "${table}" does not exist`), { code: '42P01' });
 
 /** A transaction handle whose statements throw `error` (the withdrawal-subject move, which runs outside a savepoint, succeeds). */
-function tx(error: Error): Pick<BrainEngine, 'transaction' | 'executeRaw' | 'moveFactWithdrawalSubject'> {
-  const savepoint = { executeRaw: async () => { throw error; } } as unknown as BrainEngine;
+function tx(error: Error): Pick<BrainEngine, 'transaction' | 'executeRaw' | 'moveFactWithdrawalSubject' | 'readTransactionSettings' | 'applyTransactionSettings'> {
+  // Every statement in the savepoint throws: raw SQL and the typed members (the ontology re-key's listRekeyLosers and its siblings).
+  const savepoint = new Proxy({}, { get: () => async () => { throw error; } }) as unknown as BrainEngine;
   return {
     transaction: (async <T>(fn: (t: BrainEngine) => Promise<T>) => fn(savepoint)) as BrainEngine['transaction'],
     executeRaw: (async () => []) as BrainEngine['executeRaw'],
     moveFactWithdrawalSubject: async () => {},
+    // moveSlugBindings keeps the trust tier of the facts it re-keys (#10003) through these transaction settings.
+    readTransactionSettings: (async (names: readonly string[]) => names.map(() => null)) as BrainEngine['readTransactionSettings'],
+    applyTransactionSettings: (async () => undefined) as BrainEngine['applyTransactionSettings'],
   };
 }
 
 describe('rename write paths rethrow an unrelated schema error (1.1)', () => {
-  test('recordRenameAlias: a missing column on slug_aliases throws; a missing slug_aliases table is skipped', async () => {
-    await expect(recordRenameAlias(tx(unrelatedColumn('slug_aliases')), 'default', 'old', 'new')).rejects.toThrow('zz_unrelated');
-    await expect(recordRenameAlias(tx(missingTable('zz_other')), 'default', 'old', 'new')).rejects.toThrow('zz_other');
-    await expect(recordRenameAlias(tx(missingTable('slug_aliases')), 'default', 'old', 'new')).resolves.toBeUndefined();
+  test('recordRenameAlias (engine-sql/rename-alias-rows.ts): a missing column on slug_aliases throws; a missing slug_aliases table is skipped', async () => {
+    await expect(recordRenameAliasRows(tx(unrelatedColumn('slug_aliases')), 'default', 'old', 'new')).rejects.toThrow('zz_unrelated');
+    await expect(recordRenameAliasRows(tx(missingTable('zz_other')), 'default', 'old', 'new')).rejects.toThrow('zz_other');
+    await expect(recordRenameAliasRows(tx(missingTable('slug_aliases')), 'default', 'old', 'new')).resolves.toBeUndefined();
   });
 
   test('moveSlugBindings: a missing column on facts throws; missing facts / page_aliases tables are skipped', async () => {

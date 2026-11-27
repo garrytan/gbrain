@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto';
 import { realpathSync, statSync } from 'node:fs';
 import { isAbsolute } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
+import { readJobPrincipal as readJobPrincipalOver } from '../engine-sql/access-control.ts';
 import type { AuthInfo, OperationContext } from '../ops/contract.ts';
 import { OperationError, opError } from '../ops/contract.ts';
 import { catalogueError } from '../error-catalogue.ts';
@@ -115,8 +116,7 @@ export function assertSameAuthority(actual: unknown, expected: SubmissionAuthori
 }
 
 async function sourceBoundary(engine: BrainEngine, sourceId: string, jobName: RemoteJobName) {
-  const [source] = await engine.executeRaw<Record<string, unknown>>(
-    'SELECT id, local_path, config, archived, created_at FROM sources WHERE id = $1', [sourceId]);
+  const source = await engine.readJobSourceState(sourceId);
   if (!source || source.archived !== false || typeof source.local_path !== 'string' || !source.local_path) {
     deny('an active source with a registered filesystem root is required',
       `Source ${sourceId} must be active and registered with a directory on the brain host. The brain host operator checks it with gbrain sources list --json.`);
@@ -138,11 +138,18 @@ async function sourceBoundary(engine: BrainEngine, sourceId: string, jobName: Re
   try { worktreeRoot = realpathSync(discoverGitRoot(canonicalRoot)); }
   catch { if (jobName === 'sync') deny('remote sync requires an existing Git working tree; initialize or restore it locally',
     `Source ${sourceId}'s root is not inside a Git working tree, so sync has nothing to diff. Submit import for it instead, or have the brain host operator restore the checkout.`); }
-  return { canonicalRoot, worktreeRoot, sourceCreatedAt: new Date(source.created_at as string).toISOString() };
+  return { canonicalRoot, worktreeRoot, sourceCreatedAt: source.created_at.toISOString() };
 }
 
-export async function assertCurrentRemoteJobPrincipal(engine: BrainEngine, authority: RemoteJobAuthority): Promise<void> {
+/**
+ * An engine the principal check reads through: an OAuth client through readOauthClient, a legacy token through its
+ * typed readJobPrincipal, or (a test double) only executeRaw.
+ */
+export type JobPrincipalEngine = Pick<BrainEngine, 'readOauthClient'> & (Pick<BrainEngine, 'readJobPrincipal'> | Pick<BrainEngine, 'executeRaw'>);
+
+export async function assertCurrentRemoteJobPrincipal(engine: JobPrincipalEngine, authority: RemoteJobAuthority): Promise<void> {
   const { principal, grant } = authority;
+  const read = (p: RemoteJobAuthority['principal']) => 'readJobPrincipal' in engine ? engine.readJobPrincipal(p) : readJobPrincipalOver(engine, p);
   let scopes: string[], sourceId: string | undefined;
   if (principal.kind === 'oauth_client') {
     // No fallback projections: an incomplete auth schema cannot authorize background work.
@@ -162,8 +169,7 @@ export async function assertCurrentRemoteJobPrincipal(engine: BrainEngine, autho
       }
     }
   } else {
-    const [row] = await engine.executeRaw<Record<string, unknown>>(
-      'SELECT * FROM access_tokens WHERE id = $1', [principal.id]);
+    const row = await read(principal);
     if (!row || row.revoked_at != null) deny('legacy token is missing or revoked', `Legacy token ${principal.id} was revoked, so this job does not run. Reconnect with a current credential and submit a new job.`);
     const tokenGrant = grantFromTokenRow(row);
     if (tokenGrant.permissionsMalformed) deny('malformed token permissions', `Legacy token ${principal.id}'s stored permissions cannot be read. Ask the brain host operator to reissue the credential, then submit a new job.`);

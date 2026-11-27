@@ -23,12 +23,8 @@ const DOCS = 'docs/guides/storage-manifest.md#doctor';
 
 export async function storageManifestCheck(engine: BrainEngine): Promise<Check> {
   try {
-    const [source] = await engine.executeRaw<{ local_path: string | null; config: unknown }>('SELECT local_path, config FROM sources WHERE id = $1 AND archived IS NOT TRUE', [STORAGE_SOURCE_ID]);
-    const interim = await engine.executeRaw<{ source_id: string; n: number }>(`
-      SELECT p.source_id, count(*)::int AS n FROM pages p
-      WHERE p.type = $1 AND p.source_id <> $2 AND left(p.slug, length($3)) = $3 AND p.slug <> $3 || 'index' AND p.deleted_at IS NULL
-        AND NOT EXISTS (SELECT 1 FROM tags t WHERE t.page_id = p.id AND t.tag = $4)
-      GROUP BY p.source_id ORDER BY p.source_id`, [STORED_OBJECT_TYPE, STORAGE_SOURCE_ID, ADOPT_DEFAULT_PREFIX, ADOPTED_TAG]);
+    const [source] = await engine.readDoctorSources('storage_shelf', { sourceId: STORAGE_SOURCE_ID });
+    const interim = await engine.listInterimStoredObjectCounts(STORED_OBJECT_TYPE, STORAGE_SOURCE_ID, ADOPT_DEFAULT_PREFIX, ADOPTED_TAG);
     const shelf = !!source && isStorageRole(source.config);
     if (!shelf && !interim.length) return infoCheck(NAME, 'No storage shelf and no interim storage records on this brain.', 'not_applicable', undefined, { docs: DOCS });
     const invalid = shelf ? (await readShelfCards(engine)).filter((row) => !row.card || !cardContent(row.card) || typeof row.card.registered_by !== 'string'

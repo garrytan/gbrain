@@ -51,6 +51,7 @@
  */
 
 import type { BrainEngine } from '../engine.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 
 /**
  * Snapshot of (pageId, generation) pairs plus the corpus-state MAX
@@ -136,7 +137,8 @@ export async function buildPageGenerationsSnapshot(
       }
     }
     return snapshot;
-  } catch {
+  } catch (e) {
+    rethrowCapabilityRefusal(e);
     // Pre-sequence brain mid-upgrade (no `page_generation_clock_seq` yet).
     // Return the empty snapshot with zero bookmark — every cache row will
     // fall through to Layer 2 (which is stricter post-v0.41.19.0 and will

@@ -24,9 +24,9 @@ Before it writes anything, setup resolves and prints:
 |---|---|
 | Brain | This install's config (`GBRAIN_HOME`). With none, a new keyless PGLite brain from `gbrain init --pglite --no-embedding`. |
 | Source | `--source`, else `GBRAIN_SOURCE`, else unpinned (the server uses the brain's default source). |
-| Transport | Local stdio: the harness starts `<launcher> serve --surface <surface>`, plus `--advertise verbs` on a new registration that chose no surface. |
+| Transport | Local stdio: the harness starts `<launcher> serve --surface <surface>`, plus `--advertise verbs` on a new Claude Code registration that chose no surface. |
 | Launcher | `--gbrain-bin`, else the absolute `gbrain` on `PATH` (GUI-launched hosts inherit no `PATH`, so a bare name is never written). |
-| Surface | `--surface`, else `GBRAIN_SURFACE`, else the surface already registered, else `starter`, listing only the seven memory verbs and `request_tools` (`--advertise verbs`). A chosen surface is listed in full; `--surface full` is the opt-in for every tool; an existing registration keeps its surface and listing. |
+| Surface | `--surface` (with `--advertise` to narrow its listing), else `GBRAIN_SURFACE`, else the surface already registered, else the harness default: Claude Code `starter`, listing only the seven memory verbs and `request_tools` (`--advertise verbs`); Codex `full`, listed whole, because Codex does not reload its tool list and never calls a tool `request_tools` unlocks. A chosen surface is listed in full and recorded as pinned (`surface_origin: explicit` in the Codex receipt); an existing Claude Code registration keeps its surface and listing. A Codex entry that follows the default (`surface_origin: default`) moves with it on a re-run, and setup prints the move and the line that keeps the old entry; `gbrain setup codex --surface starter --advertise verbs` pins the old registration. `gbrain config set mcp.default_surface_<claude_code\|codex\|hermes> full\|starter` turns one harness's default (the activation and rollback knob; `config unset` restores the shipped default). |
 | Owner | Who owns the MCP name now: nobody, this setup (its receipt), or the gbrain Claude Code or Codex plugin (setup then adds hooks only). |
 
 It refuses with a coded error, before any write, when the target is not safe:
@@ -75,6 +75,13 @@ in effect and how to change them, and applies a choice whenever the user makes
 one. Automatic saving is separate from the capture decision above; while
 unanswered it comes back in a later session until the user answers or mutes
 it.
+
+A new personal brain that `gbrain setup claude-code` or `gbrain setup codex`
+created also gets the [first-session suggestion](first-session-suggestion.md):
+for the first 3 sessions within 14 days, the session-start context tells the
+agent to offer one thing it found in the brain, then one more import.
+`--no-suggestion` turns it off at install time (`gbrain onboarding off` later),
+and `--json` reports it as the `suggestion` marker next to `history`.
 
 ## States
 
@@ -127,7 +134,11 @@ table with its `trusted_hash`, otherwise Codex lists it and silently skips it.
   SECURITY.md)
   (15 s), plus the detached `hook session-end --harness codex` capture command
   (3 s) only after `--capture`;
-- one trust table per group.
+- one trust table per group;
+- the top-level `mcp_optional_startup_grace_ms = 0`, only when the key is
+  unset, so Codex 0.151 and newer wait for gbrain to start instead of leaving
+  its tools out of the session after one second ([Codex guide](../mcp/CODEX.md)).
+  A value you set is kept, and `--remove` deletes the key only while it is still setup's `0`.
 
 Each of these entries is owned by its sha256 fingerprint (canonical JSON of the
 exact parsed entry), stored per entry in
@@ -326,7 +337,7 @@ may read (see below).
 | claude-code | `~/.claude/CLAUDE.md` (`--scope project`: `./CLAUDE.local.md`) |
 | codex | `$CODEX_HOME/AGENTS.md`, or a non-empty `AGENTS.override.md` (the file Codex loads) |
 | opencode | `~/.config/opencode/AGENTS.md` |
-| openclaw | `<workspace>/AGENTS.md` (`agents.defaults.workspace`, else `~/.openclaw/workspace`; several agents need `--workspace`) |
+| openclaw | `<workspace>/AGENTS.md` (`agents.defaults.workspace`, else `~/.openclaw/workspace`, under `$OPENCLAW_HOME` when set; several agents need `--workspace`) |
 | hermes | `$HERMES_HOME/SOUL.md`, after the identity text; never created, since a SOUL.md replaces Hermes's default identity |
 | cursor | `./.cursor/rules/gbrain-brain-first.mdc` (an always-applied project rule) |
 
@@ -373,6 +384,11 @@ client and from a compiled binary. The index names the absolute launcher the
 install recorded, so the index and the skills it loads come from the same
 gbrain. MCP `get_skill` is unchanged.
 
+A tool that reads gbrain's skill files from disk (for example `skills/conventions/`)
+can ask `gbrain bundled-skill --json` for `skills_root`, the skills folder of
+the gbrain that is running, instead of walking up from the binary. It is
+`null` for a single-file binary, whose skills are read with `--asset`.
+
 | | |
 |---|---|
 | Select | `--skill-loading off\|spring` on `gbrain setup <harness>` (`resolve` on `setup claude-code\|codex` turns on the per-turn skill resolver instead: [skill-resolver guide](skill-resolver.md#hook-lane-claude-code-and-codex); on `setup openclaw`, `resolve\|shadow` installs the [skill-resolver plugin](skill-resolver.md#openclaw-plugin)), `gbrain connect --install`, `gbrain connect --harness … --install` and `gbrain bootstrap harness`; or `GBRAIN_SKILL_LOADING`. Flag, then env, then the recorded choice, then `off`. |
@@ -395,7 +411,7 @@ claimed from documentation alone.
 | codex | local stdio | supported | native-verified: on codex-cli 0.162.1, after a fresh `gbrain setup codex`, the `UserPromptSubmit` hook put a randomized brain item into a fresh native `codex exec` session, which answered it with no tool call (3 of 3 installs); a `--no-hooks` control answered NONE |
 | openclaw | local context engine | instruction block; MCP per [its guide](../mcp/OPENCLAW.md) | native-pending |
 | openclaw | thin client | instruction block; MCP per [its guide](../mcp/OPENCLAW.md) | unsupported |
-| hermes | local stdio | instruction block; MCP per [its guide](../mcp/HERMES.md) | unsupported |
+| hermes | local stdio | instruction block and turn hook; MCP through `hermes mcp add` ([its guide](../mcp/HERMES.md)) | unsupported |
 
 ## How setup relates to the other entry points
 

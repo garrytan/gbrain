@@ -242,18 +242,24 @@ describe('engine parity: entity and mention reads', () => {
       return result;
     });
 
-  // The read floor drops the folder pending-coverage clause for a remote caller, so its text is neither the no-caller
-  // page policy nor the caller's canonical one; the store refuses the hop typed rather than guess (retirementHopPolicy).
-  parityTest('readRetirementHop under the read floor for a remote caller hides a private page on the SQL engines and refuses typed on Rust',
+  // The read floor never reads the caller's readers and drops the folder pending-coverage clause for a remote caller, so the
+  // store serves it as the page policy of a record with no readers, grants or coverage (retirementHopPolicy, storePageTextPolicy):
+  // every arm hides the private page and a page that names the caller, and keeps the live one; the caller's own policy
+  // still reads the named page. A labelled-only caller's floor still refuses typed.
+  parityTest('readRetirementHop under the read floor for a remote caller hides a private page and a page that names the caller, and keeps a live one on every engine',
     { methods: ['readRetirementHop'] }, async (engine, backend) => {
       await seed(engine, backend);
       await engine.putPage('people/hop-private', ({ type: 'person', title: 'Hop', compiled_truth: 'Hop body.',
         frontmatter: { visibility: 'private' } }) as Parameters<BrainEngine['putPage']>[1], { sourceId: 'default' });
+      await engine.putPage('people/hop-named', ({ type: 'person', title: 'Named', compiled_truth: 'Named body.',
+        frontmatter: { readable_by: ['member:bob-example'] } }) as Parameters<BrainEngine['putPage']>[1], { sourceId: 'default' });
       const floor = await withCallerAccess({ identity: ['member:bob-example'], hidePrivate: true }, async () => ({
         hidden: (await engine.readRetirementHop('default', 'people/hop-private', 'floor'))?.slug ?? null,
+        named: (await engine.readRetirementHop('default', 'people/hop-named', 'floor'))?.slug ?? null,
+        namedForCaller: (await engine.readRetirementHop('default', 'people/hop-named', 'caller'))?.slug ?? null,
         live: (await engine.readRetirementHop('default', 'people/alice-example', 'floor'))?.slug ?? null,
       }));
-      expect(floor).toEqual({ hidden: null, live: 'people/alice-example' });
+      expect(floor).toEqual({ hidden: null, named: null, namedForCaller: 'people/hop-named', live: 'people/alice-example' });
       return floor;
     });
 
@@ -295,6 +301,26 @@ describe('engine parity: entity and mention reads', () => {
       expect(result.other).toEqual(['people/alice-example']);
       expect(result.long[0].body?.chars).toBe(65_536);
       return result;
+    });
+
+  parityTest('readEntityCardRows reports when a card page was last retrieved, and null for a page never retrieved',
+    { methods: ['putPage', 'getPage', 'bumpPageRetrievals', 'readEntityCardRows'] }, async (engine) => {
+      const page = (title: string) => ({ type: 'person', title, compiled_truth: `${title} body.`, frontmatter: {} }) as Parameters<BrainEngine['putPage']>[1];
+      await engine.putPage('people/retrieved', page('Retrieved'), { sourceId: 'default' });
+      await engine.putPage('people/never', page('Never'), { sourceId: 'default' });
+      const id = (await engine.getPage('people/retrieved', { sourceId: 'default' } as never))!.id;
+      const before = Date.now();
+      await engine.bumpPageRetrievals([Number(id)]);
+      const rows = await engine.readEntityCardRows('default', { slugs: ['people/retrieved', 'people/never'] });
+      // The retrieval time is the engine's clock at the bump: compared as "set, and not before the bump or in the future".
+      const when = (at: Date | string | null) => {
+        if (at === null) return 'null';
+        const ms = new Date(at).getTime();
+        return ms >= before - 1000 && ms <= Date.now() + 1000 ? 'at the bump' : `out of range: ${String(at)}`;
+      };
+      const out = sorted(rows.map(r => ({ slug: r.slug, retrieved: when(r.last_retrieved_at) })), r => r.slug);
+      expect(out).toEqual([{ slug: 'people/never', retrieved: 'null' }, { slug: 'people/retrieved', retrieved: 'at the bump' }]);
+      return out;
     });
 
   parityTest('readIgnoredPrivacyLabelPages returns labelled pages with no readers or visibility, by slug or since a time',
