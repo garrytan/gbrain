@@ -131,10 +131,14 @@ async function runTransaction<T>(engine: object, connection: ServedConnection, f
   }
 }
 
-/** The server ended a transaction because its commit lost to another writer (served/session-calls.ts). */
+/**
+ * The transaction lost to another writer: the server ended it because its commit lost (served/session-calls.ts), or a
+ * call inside it came back `write_conflict` (the optimistic store doomed it), which the in-process engine also runs
+ * again (optimistic-transaction.ts). Either way nothing of the run was kept.
+ */
 function lostCommit(error: unknown): boolean {
   const e = error as { code?: unknown; reason?: unknown } | null;
-  return e?.code === 'revision_conflict' && e.reason === SERVED_TXN_CONFLICT_REASON;
+  return (e?.code === 'revision_conflict' && e.reason === SERVED_TXN_CONFLICT_REASON) || e?.code === 'write_conflict';
 }
 
 async function runTransactionOnce<T>(engine: object, connection: ServedConnection, fn: (tx: BrainEngine) => Promise<T>,

@@ -446,6 +446,9 @@ pub struct WatchSettle {
     attempts: Option<i32>,
     delay_s: Option<i64>,
     error: Option<String>,
+    /// The host fence (I-5, lane L5): a settle under an epoch that moved is refused `lease_lost`. None: unchanged.
+    #[serde(default)]
+    fence: Option<LeaseToken>,
 }
 
 /// `WakeForgetSettle`.
@@ -458,6 +461,9 @@ pub struct ForgetSettle {
     attempts: i32,
     error: Option<String>,
     delay_s: Option<i64>,
+    /// The host fence (I-5, lane L5): a settle under an epoch that moved is refused `lease_lost`. None: unchanged.
+    #[serde(default)]
+    fence: Option<LeaseToken>,
 }
 
 /// `{ leaseSeconds, limit }` of `claimWakeForgets`.
@@ -466,6 +472,9 @@ pub struct ForgetSettle {
 pub struct ForgetClaimSpec {
     lease_seconds: i64,
     limit: i64,
+    /// The host fence (I-5, lane L5): a claim under an epoch that moved is refused `lease_lost`. None: unchanged.
+    #[serde(default)]
+    fence: Option<LeaseToken>,
 }
 
 /// `{ name, status, finishedAt }` of `recordWakeCronRun`.
@@ -1031,7 +1040,19 @@ impl Store {
     /// `claimWakeWatch`: lease an open, due, unleased watch for `lease_seconds`. The lease's instant
     /// in epoch microseconds as text is the token `settleWakeWatch` must give back.
     pub fn claim_wake_watch(&self, id: i64, lease_seconds: i64) -> Result<Option<Value>> {
+        self.claim_wake_watch_fenced(id, lease_seconds, None)
+    }
+
+    /// [`Self::claim_wake_watch`] under the host fence (I-5, lane L5): a claim under an epoch that moved is refused
+    /// `lease_lost` and changes nothing. With no fence it is the unfenced member.
+    pub fn claim_wake_watch_fenced(
+        &self,
+        id: i64,
+        lease_seconds: i64,
+        fence: Option<&LeaseToken>,
+    ) -> Result<Option<Value>> {
         self.write(|tx| {
+            fence::begin(self, tx, fence, "claim_wake_watch")?;
             let now = self.env.now_micros();
             let Some(old) = load_watch(tx, id)? else {
                 return Ok(None);
@@ -1061,6 +1082,7 @@ impl Store {
             return Err(violation("wake_subscriptions", "state"));
         }
         self.write(|tx| {
+            fence::begin(self, tx, s.fence.as_ref(), "settle_wake_watch")?;
             let now = self.env.now_micros();
             let Some(old) = load_watch(tx, s.id)? else {
                 return Ok(false);
@@ -1227,6 +1249,7 @@ impl Store {
     /// `leaseSeconds`; the rows come back in id order, each with its lease token.
     pub fn claim_wake_forgets(&self, spec: &ForgetClaimSpec) -> Result<Vec<Value>> {
         self.write(|tx| {
+            fence::begin(self, tx, spec.fence.as_ref(), "claim_wake_forgets")?;
             let now = self.env.now_micros();
             let mut pending = Vec::new();
             let mut ids = Vec::new();
@@ -1269,6 +1292,7 @@ impl Store {
             return Err(violation("wake_forgets", "state"));
         }
         self.write(|tx| {
+            fence::begin(self, tx, s.fence.as_ref(), "settle_wake_forget")?;
             let now = self.env.now_micros();
             let Some(old) = load_forget(tx, s.id)? else {
                 return Ok(false);

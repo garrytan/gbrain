@@ -13,7 +13,6 @@ import { buildDetachedWorkingTreeManifest, computeSyncDelta } from '../sync-delt
 import { confirmedSyncDelta, confirmRenameIdentities, explicitIdVeto, frontmatterIdentity, identityHeadDigest } from '../sync-rename-identity.ts';
 import { isSyncable, isSyncMetafile, isCodeFilePath, isImageFilePath, matchesAnyGlob, readMetafilePagesMode, resolveSlugForPath, slugifyPath, type DowngradedRename, type SyncManifest } from '../sync.ts';
 import { diskMetafileHeads, firstMetafileHead, gitMetafileHeads, listMetafileNamedBlobs, metafilePagePredicate, type GitMetafileHeads } from '../sync-metafile-pages.ts';
-import { databaseOnlyPageSql } from './unbound-pages.ts';
 import { validateSlug } from '../utils.ts';
 import { resolveSlugRootMode } from '../sync-anchor.ts';
 import { isWriteTargetContained } from '../path-confine.ts';
@@ -41,6 +40,7 @@ import { sourceDbOnlyVerdict } from './source-storage.ts';
 import { dbOnlyVerdict, storageConfigFromYaml, unresolvedDbOnlyIn } from '../storage-config.ts';
 import { movedDriftHolds, prescreenSyncEntries, type SyncDriftSide } from './sync-prescreen.ts';
 import { sliceEntries, type SyncSliceCursor, type SyncSliceState } from './sync-slices.ts';
+import { syncRows } from '../engine-sql/managed-sync-store.ts';
 
 /** The page an import takes over from its previous origin: a Git rename, or a file that replaced a vanished origin at the same slug. */
 export interface SyncRename { sourcePath: string; slug: string; pageId: number; revision: string; }
@@ -273,7 +273,7 @@ function managedSyncRefusal(sourceId: string, message: string, suggestion: strin
 type ManagedSourceRow = { incarnation: string; archived: boolean; local_path: string | null; last_commit: string | null; config: Record<string, unknown> };
 /** The source row and worktree binding `resolveManagedSyncContext` validates, read together. */
 export function readManagedSyncRows(engine: BrainEngine, sourceId: string): Promise<[ManagedSourceRow | undefined, WorktreeBinding | null]> {
-  return Promise.all([engine.executeRaw<ManagedSourceRow>('SELECT incarnation,archived,local_path,last_commit,config FROM sources WHERE id=$1', [sourceId]).then(rows => rows[0]),
+  return Promise.all([syncRows<ManagedSourceRow>(engine, 'source_row', [sourceId]).then(rows => rows[0]),
     getWorktreeBinding(engine, sourceId)]);
 }
 /** #7973: the checkout's Git top level; a registered root with no Git checkout at or above it is a plain directory, which `gbrain sync` imports without Git. */
@@ -539,7 +539,7 @@ export async function discoverManagedSync(engine: BrainEngine, opts: SyncOpts, c
     const present = new Set(paths.map(path => syncOriginPath(sourcePath(path))));
     if (paths.some(isSyncMetafile)) metafileHeads.prime(listMetafileNamedBlobs(gitRoot, target, scope));
     for (const path of paths) put(path, 'import');
-    const livePages = await engine.executeRaw<{ id: number; slug: string; source_path: string }>('SELECT slug,source_path,id FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND source_path IS NOT NULL', [sourceId]);
+    const livePages = await syncRows<{ id: number; slug: string; source_path: string }>(engine, 'live_origin_pages', [sourceId]);
     const gitPathOf = (origin: string) => slugMode === 'source-root' && scope ? `${scope}/${origin}` : origin;
     const listedSet = new Set(listed);
     for (const page of livePages) if (!storable(page) && !listedSet.has(gitPathOf(page.source_path))) refuse(gitPathOf(page.source_path), 'delete');
@@ -610,7 +610,7 @@ export async function discoverManagedSync(engine: BrainEngine, opts: SyncOpts, c
     const included = company.plan.manifest.filter(entry => entry.disposition === 'included');
     const present = new Set(included.map(entry => syncOriginPath(entry.path)));
     for (const entry of included) entries.set(entry.path, { path: entry.path, sourcePath: entry.path, action: 'import', working: false, slug: entry.page!.slug });
-    const pages = await engine.executeRaw<{ source_path: string; slug: string }>('SELECT source_path, slug FROM pages WHERE source_id=$1 AND deleted_at IS NULL AND source_path IS NOT NULL', [sourceId]);
+    const pages = await syncRows<{ source_path: string; slug: string }>(engine, 'live_origin_slugs', [sourceId]);
     assertDistinctSyncOrigins([...present, ...pages.map(page => page.source_path)]);
     for (const page of pages) {
       const origin = syncOriginPath(page.source_path);
@@ -649,8 +649,7 @@ export async function discoverManagedSync(engine: BrainEngine, opts: SyncOpts, c
     ...(workingTreeKept ? { workingTreeKept } : {}), ...(uncommittedKept?.length ? { uncommittedKept } : {}), ...(company ? {} : identityDowngradesOf([delta?.status === 'ok' ? delta.manifest : null, working ? dirty : null], eligible, sourcePath)) };
   // Freeze all logical identities in one database statement, before yielding
   // between pages. A later interactive edit must conflict with this scan.
-  const identities = await engine.executeRaw<{ id: number; slug: string; source_path: string | null; knowledge_revision: string; deleted_at: Date | string | null; fm_id: string | null }>(
-    "SELECT q.*,f.frontmatter->>'id' AS fm_id FROM (SELECT id,slug,source_path,knowledge_revision,deleted_at FROM pages WHERE source_id=$1) q JOIN pages f ON f.id=q.id", [sourceId]);
+  const identities = await syncRows<{ id: number; slug: string; source_path: string | null; knowledge_revision: string; deleted_at: Date | string | null; fm_id: string | null }>(engine, 'source_identities', [sourceId]);
   const bySlug = new Map(identities.map(p => [p.slug, p]));
   const byPath = new Map<string, typeof identities>();
   const storableIdentities = identities.filter(storable);
@@ -698,7 +697,7 @@ export async function discoverManagedSync(engine: BrainEngine, opts: SyncOpts, c
   }
   const deletions = new Map(selected.filter(entry => entry.action === 'delete').map(entry => [syncOriginPath(entry.sourcePath), entry]));
   // A soft-delete advances knowledge_revision, so the frozen revisions still guard this read.
-  const deleted = new Set(claims.size ? (await engine.executeRaw<{ id: number }>('SELECT id FROM pages WHERE source_id=$1 AND deleted_at IS NOT NULL', [sourceId])).map(row => row.id) : []);
+  const deleted = new Set(claims.size ? (await syncRows<{ id: number }>(engine, 'deleted_page_ids', [sourceId])).map(row => row.id) : []);
   // Origins that differ only by case or separator spelling may be one file on another platform; refuse rather than
   // guess. The one exception is a case-only respelling whose old file this very sync removes.
   const spelling = (origin: string) => origin.replaceAll('\\', '/').toLowerCase();
@@ -775,8 +774,7 @@ export type LegacyIdentity = { id: number; slug: string; source_path: string | n
 const legacyByFold = new WeakMap<LegacyIdentity[], Promise<Map<string, string[]>>>();
 async function foldLegacyPages(engine: BrainEngine, identities: LegacyIdentity[]): Promise<Map<string, string[]>> {
   const candidates = identities.filter(page => page.deleted_at == null && page.source_path == null && slugifyPath(page.slug) !== page.slug);
-  const databaseOnly = new Set(candidates.length ? (await engine.executeRaw<{ id: number }>(
-    `SELECT p.id FROM pages p WHERE p.id=ANY($1::bigint[]) AND (${databaseOnlyPageSql('p')} OR p.database_only_reason IS NOT DISTINCT FROM 'origin_twin')`, [candidates.map(page => Number(page.id))])).map(row => Number(row.id)) : []);
+  const databaseOnly = new Set(candidates.length ? (await syncRows<{ id: number }>(engine, 'database_only_pages', [candidates.map(page => Number(page.id))])).map(row => Number(row.id)) : []);
   return candidates.filter(page => !databaseOnly.has(Number(page.id)))
     .reduce((map, page) => map.set(slugifyPath(page.slug), [...map.get(slugifyPath(page.slug)) ?? [], page.slug]), new Map<string, string[]>());
 }

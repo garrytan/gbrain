@@ -90,12 +90,14 @@ export const readProjectionHead: Member<'readProjectionHead'> = (brain, sourceId
 export const isDeferredReplacementHeld: Member<'isDeferredReplacementHeld'> = (brain, sourceId, slug, revision, claim) =>
   storeCall({ member: 'isDeferredReplacementHeld', slug, sourceId }, () => brain.isDeferredReplacementHeld(sourceId, slug, revision, claim));
 
-export const renewDeferredReplacementClaim: Member<'renewDeferredReplacementClaim'> = async (brain, job, claim) => {
-  await storeCall({ member: 'renewDeferredReplacementClaim', slug: job.slug }, () => brain.renewDeferredReplacementClaim(jobKey(job), claim));
+export const renewDeferredReplacementClaim: Member<'renewDeferredReplacementClaim'> = async (brain, job, claim, opts) => {
+  await storeCall({ member: 'renewDeferredReplacementClaim', slug: job.slug }, () => opts?.fence
+    ? brain.renewDeferredReplacementClaim(jobKey(job), claim, opts.fence) : brain.renewDeferredReplacementClaim(jobKey(job), claim));
 };
 
-export const releaseDeferredReplacementClaim: Member<'releaseDeferredReplacementClaim'> = async (brain, slug, claim) => {
-  await storeCall({ member: 'releaseDeferredReplacementClaim', slug }, () => brain.releaseDeferredReplacementClaim(slug, claim));
+export const releaseDeferredReplacementClaim: Member<'releaseDeferredReplacementClaim'> = async (brain, slug, claim, opts) => {
+  await storeCall({ member: 'releaseDeferredReplacementClaim', slug }, () => opts?.fence
+    ? brain.releaseDeferredReplacementClaim(slug, claim, opts.fence) : brain.releaseDeferredReplacementClaim(slug, claim));
 };
 
 export const listProjectionDrainPreview: Member<'listProjectionDrainPreview'> = async (brain, limit) => {

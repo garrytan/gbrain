@@ -171,14 +171,6 @@ pub(crate) fn list_owner_recovery_heads(
     Ok(heads.iter().take(16).map(|r| r.to_row()).collect())
 }
 
-/// `listResumableRefreshes(hostId, budgetMs)`: no refresh row exists here (refreshes live only
-/// on managed worktrees), so none is interrupted; a non-uuid host id refuses. The sync budget
-/// only marks rows stale.
-pub(crate) fn list_resumable_refreshes(host_id: &str) -> Result<Vec<Value>> {
-    host_uuid(host_id)?;
-    Ok(Vec::new())
-}
-
 /// The two holds the SQL engines have a statement for; another kind is a caller bug.
 fn hold_kind(hold: &str) -> Result<()> {
     match hold {
@@ -222,16 +214,21 @@ impl Store {
         list_owner_recovery_heads(&*self.read()?, host_id, excluded)
     }
 
-    /// `listResumableRefreshes(hostId, budgetMs)`.
-    pub fn list_resumable_refreshes(&self, host_id: &str) -> Result<Vec<Value>> {
-        list_resumable_refreshes(host_id)
+    /// `listResumableRefreshes(hostId, budgetMs)`: the interrupted refreshes of worktrees `host_id` owns
+    /// (`refresh_store.rs`, kind `resumable`); a non-uuid host id refuses. The budget marks rows stale.
+    pub fn list_resumable_refreshes(&self, host_id: &str, budget_ms: f64) -> Result<Vec<Value>> {
+        match self.refresh_rows(&super::RefreshRead::Resumable {
+            host_id: host_id.to_owned(),
+            budget_ms,
+        })? {
+            Value::Array(rows) => Ok(rows),
+            _ => Ok(Vec::new()),
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     const HOST: &str = "0f000000-0000-4000-8000-0000000000f1";
 
     #[test]
@@ -282,9 +279,14 @@ mod tests {
     }
 
     #[test]
-    fn resumable_refreshes_are_empty_and_refuse_a_non_uuid_host() {
-        assert!(list_resumable_refreshes(HOST).unwrap().is_empty());
-        let bad = list_resumable_refreshes("nope").unwrap_err();
+    fn resumable_refreshes_are_empty_without_a_refresh_and_refuse_a_non_uuid_host() {
+        let s = crate::test_support::store();
+        assert!(
+            s.list_resumable_refreshes(HOST, 60_000.0)
+                .unwrap()
+                .is_empty()
+        );
+        let bad = s.list_resumable_refreshes("nope", 60_000.0).unwrap_err();
         assert_eq!(bad.message, "invalid input syntax for type uuid: \"nope\"");
     }
 }

@@ -11,7 +11,8 @@ use serde_json::Value;
 
 use gbrain_store::persistence::{Settle, TrueUpReservation, WriteRequestInsert};
 
-use crate::store_binding::{Brain, required};
+use crate::store_binding::{Brain, arg, required};
+use gbrain_store::leases::LeaseToken;
 
 #[napi]
 impl Brain {
@@ -443,6 +444,58 @@ impl Brain {
         })
     }
 
+    /// `selectClaimableLaneHead({ hostId, worktreeId, run, seenSequence, nonce, priority })`: the lane head
+    /// `claimNextLaneHead` claims next, or `null`.
+    #[napi]
+    pub fn select_claimable_lane_head<'env>(
+        &self,
+        env: &'env Env,
+        spec: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.select_claimable_lane_head(&required(spec, "selectClaimableLaneHead spec")?)
+        })
+    }
+
+    /// `stampLaneHeadClaim({ id, token, leaseMs, phaseJson })`: the claimed row with `seen_sequence`, or `null`.
+    #[napi]
+    pub fn stamp_lane_head_claim<'env>(
+        &self,
+        env: &'env Env,
+        stamp: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.stamp_lane_head_claim(&required(stamp, "stampLaneHeadClaim stamp")?)
+        })
+    }
+
+    /// `chargeTransientInterruption({ id, token, baseMs, maxMs })`: `{ transient_interruptions }`, or `null`.
+    #[napi]
+    pub fn charge_transient_interruption<'env>(
+        &self,
+        env: &'env Env,
+        charge: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.charge_transient_interruption(&required(
+                charge,
+                "chargeTransientInterruption charge",
+            )?)
+        })
+    }
+
+    /// `reclaimReleasedWrite({ id, token, leaseMs, phaseJson })`: the claimed row, or `null`.
+    #[napi]
+    pub fn reclaim_released_write<'env>(
+        &self,
+        env: &'env Env,
+        stamp: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.reclaim_released_write(&required(stamp, "reclaimReleasedWrite stamp")?)
+        })
+    }
+
     /// `readCounterRows(keys)`: the counter rows that exist, in key order, unlocked.
     #[napi]
     pub fn read_counter_rows<'env>(
@@ -781,6 +834,18 @@ impl Brain {
         })
     }
 
+    /// `claimEffectRecovery({ id, token, ownerJson })`: the claimed row, or `null` when the effect holds no recovery.
+    #[napi]
+    pub fn claim_effect_recovery<'env>(
+        &self,
+        env: &'env Env,
+        claim: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.claim_effect_recovery(&required(claim, "claimEffectRecovery claim")?)
+        })
+    }
+
     /// `claimCoalescedGitEffects({ hostId, worktreeId, limit, deadOwners, ownerJson })`: the claimed rows.
     #[napi]
     pub fn claim_coalesced_git_effects<'env>(
@@ -1060,15 +1125,18 @@ impl Brain {
         })
     }
 
-    /// `listResumableRefreshes(hostId, budgetMs)`: the interrupted refreshes; `[]` (no refresh row
-    /// here). The sync budget only marks rows stale, so it is not sent.
+    /// `listResumableRefreshes(hostId, budgetMs)`: the interrupted refreshes of the host's worktrees;
+    /// the sync budget marks a row stale once it has not moved for that long.
     #[napi]
     pub fn list_resumable_refreshes<'env>(
         &self,
         env: &'env Env,
         host_id: String,
+        budget_ms: f64,
     ) -> napi::Result<Object<'env>> {
-        self.run(env, move |s| s.list_resumable_refreshes(&host_id))
+        self.run(env, move |s| {
+            s.list_resumable_refreshes(&host_id, budget_ms)
+        })
     }
 
     #[napi]
@@ -1198,9 +1266,11 @@ impl Brain {
         source_id: String,
         slug: String,
         claim: String,
+        fence: Option<Value>,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
-            s.claim_segmented_projection(&source_id, &slug, &claim)
+            let fence: Option<LeaseToken> = arg(fence, "claimSegmentedProjection fence")?;
+            s.claim_segmented_projection_fenced(&source_id, &slug, &claim, fence.as_ref())
         })
     }
 
@@ -1213,9 +1283,11 @@ impl Brain {
         source_id: String,
         slug: String,
         claim: String,
+        fence: Option<Value>,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
-            s.renew_segmented_projection_claim(&source_id, &slug, &claim)
+            let fence: Option<LeaseToken> = arg(fence, "renewSegmentedProjectionClaim fence")?;
+            s.renew_segmented_projection_claim_fenced(&source_id, &slug, &claim, fence.as_ref())
         })
     }
 
@@ -1227,9 +1299,11 @@ impl Brain {
         source_id: String,
         slug: String,
         claim: String,
+        fence: Option<Value>,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
-            s.release_segmented_projection_claim(&source_id, &slug, &claim)
+            let fence: Option<LeaseToken> = arg(fence, "releaseSegmentedProjectionClaim fence")?;
+            s.release_segmented_projection_claim_fenced(&source_id, &slug, &claim, fence.as_ref())
         })
     }
 
@@ -1433,11 +1507,14 @@ impl Brain {
         env: &'env Env,
         job: Value,
         claim: String,
+        fence: Option<Value>,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
-            s.renew_deferred_replacement_claim(
+            let fence: Option<LeaseToken> = arg(fence, "renewDeferredReplacementClaim fence")?;
+            s.renew_deferred_replacement_claim_fenced(
                 &required(job, "renewDeferredReplacementClaim job")?,
                 &claim,
+                fence.as_ref(),
             )
         })
     }
@@ -1571,9 +1648,11 @@ impl Brain {
         env: &'env Env,
         slug: String,
         claim: String,
+        fence: Option<Value>,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
-            s.release_deferred_replacement_claim(&slug, &claim)
+            let fence: Option<LeaseToken> = arg(fence, "releaseDeferredReplacementClaim fence")?;
+            s.release_deferred_replacement_claim_fenced(&slug, &claim, fence.as_ref())
         })
     }
 

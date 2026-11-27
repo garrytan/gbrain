@@ -6,7 +6,7 @@ import { targetedWithdrawalEffect, upgradeWithdrawalEffect } from './effect-targ
 import { existsSync, statSync } from 'node:fs';
 import { join, relative, sep } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
-import { isPersistenceDeclaration, PERSISTENCE_PROTOCOL_PREDICATE } from './protocol.ts';
+import { isPersistenceDeclaration } from './protocol.ts';
 import type { GBrainConfig } from '../config.ts';
 import type { PageSnapshot } from '../page-state/types.ts';
 import { OperationError, opError } from '../ops/contract.ts';
@@ -28,7 +28,7 @@ import { isEmbedRetriableError, MAX_RATE_LIMIT_RETRIES, rateLimitDelayMs, restam
 import { AIConfigError, normalizeAIError } from '../ai/errors.ts';
 import { EMBEDDING_ZERO_NORM, isEmbeddingZeroNormError, type EmbeddingZeroNormError } from '../ai/embedding-guard.ts';
 import { isAIInvocationPolicyError, withAIInvocationPreflight } from '../ai/invocation-guard.ts';
-import { effectInstallClaim, fenceOpts } from './host-fence.ts';
+import { bindClaimFence, claimFenceGroups, effectInstallClaim, fenceOpts } from './host-fence.ts';
 import { quoteIdentifier } from '../search/embedding-column.ts';
 import type { ResolvedColumn } from '../types.ts';
 import { acquireWorktree, acquireWorktreeWaiting, getWorktreeBinding, type WorktreeBinding } from './ownership.ts';
@@ -801,8 +801,9 @@ export async function claimAndRecoverEffect(engine: BrainEngine, id: string | nu
   let claimed: PersistenceEffect | undefined;
   try {
     const token = randomUUID();
-    [claimed] = await engine.executeRaw<PersistenceEffect>(`UPDATE persistence_effects SET state='running',execution_token=$2::uuid,claim_owner=$3::text::jsonb,
-      claim_expires_at=now()+interval '2 minutes',attempts=attempts+1,updated_at=now() WHERE id=$1 AND recovery IS NOT NULL AND ${PERSISTENCE_PROTOCOL_PREDICATE} RETURNING *`, [id, token, effectClaimStamp(token)]);
+    const fence = fenceOpts(engine);
+    claimed = await engine.claimEffectRecovery<PersistenceEffect>({ id, token, ownerJson: effectClaimStamp(token), ...fence }) ?? undefined;
+    if (claimed) bindClaimFence(token, fence.fence ?? null);
     if (claimed) await recoverEffectPublication(engine, claimed, hostId, { ...hooks, between: hooks.between ?? effectClaimKeeper(engine, claimed, effectRenewalIntervalMs) });
   } catch (error) { if (claimed) await recordFailure(engine, claimed, error); }
   return claimed;
@@ -941,7 +942,10 @@ async function runEffectPass(engine: BrainEngine, config: GBrainConfig, opts: Ef
     if (effects.every(effect => effect.attempts <= GIT_YIELD_ATTEMPTS)) {
       const store = await engine.gitEffectStore();
       if (await store.publicationsPending(effects[0]!.worktree_id!)) {
-        await store.yieldToPublications(effects.map(effect => ({ id: String(effect.id), token: effect.execution_token })), GIT_YIELD_MS);
+        // Each effect settles under the fence its claim was stamped under (one write per fence; one in practice).
+        for (const group of claimFenceGroups(engine, effects, effect => effect.execution_token)) {
+          await store.yieldToPublications(group.items.map(effect => ({ id: String(effect.id), token: effect.execution_token })), GIT_YIELD_MS, group.opts);
+        }
         return;
       }
     }
@@ -1047,7 +1051,10 @@ async function runEffectPass(engine: BrainEngine, config: GBrainConfig, opts: Ef
     if (!recorded.length) return;
     try {
       for (const { effect } of recorded) await faultPoint(EFFECT_FAULT_POINTS.git, { effectId: effect.id, requestId: effect.request_id, sourceId: effect.source_id });
-      await (await engine.gitEffectStore()).recordPlainOutcome(recorded.map(({ effect }) => ({ id: String(effect.id), token: effect.execution_token })), JSON.stringify(DURABILITY_NOT_ENABLED));
+      const store = await engine.gitEffectStore();
+      for (const group of claimFenceGroups(engine, recorded, ({ effect }) => effect.execution_token)) {
+        await store.recordPlainOutcome(group.items.map(({ effect }) => ({ id: String(effect.id), token: effect.execution_token })), JSON.stringify(DURABILITY_NOT_ENABLED), group.opts);
+      }
     } catch (error) { for (const { effect, target } of recorded) await recordFailure(engine, effect, error, opts.signal, target); }
   };
   // A deferred effect that requeues itself (a page walk advancing its cursor,

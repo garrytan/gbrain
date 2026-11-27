@@ -21,7 +21,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import ts from 'typescript';
 import {
-  acknowledgedWriteViolations, crashBody, crashKey, crashSlug, stressBody, stressKey, stressSlug, stressViolations,
+  acknowledgedWriteViolations, claimAccountViolations, crashBody, crashKey, crashSlug, stressBody, stressKey, stressSlug, stressViolations,
   type CrashObservation, type StressObservation,
 } from './engine-parity/multi-writer-support.ts';
 import { MW_ARMS, MW_CASES, MW_CASE_IDS, MW_ENGINE_ARMS, MW_STORE_ARMS, MW_VARIANT_IDS, mwCase, mwCell, mwVariant, mwVariantCell } from './engine-parity/multi-writer-cases.ts';
@@ -144,7 +144,7 @@ describe('multi-writer support matrix', () => {
     }
   });
 
-  test('the design rules hold: C11 and the C21 token are pending everywhere, C13, C17 and C21 are n/a on PGLite, C22 needs the commit log, which only rust-mu keeps', () => {
+  test('the design rules hold: C11 is pending everywhere, C13, C17 and C21 are n/a on PGLite, C21 and C22 need the commit log, which only rust-mu keeps', () => {
     for (const arm of MW_ENGINE_ARMS) expect(mwCell('C11', arm).status, `C11 ${arm}`).toBe('pending');
     // C22: a SQL engine and a Rust engine with the log off keep no commit log (they refuse commit_log), so n/a; rust-mu keeps one and runs it.
     // (Plain checks, not asymmetric matchers: bun's toMatchObject replaces the checked field of the shared matrix with the matcher.)
@@ -156,7 +156,6 @@ describe('multi-writer support matrix', () => {
     expect(mwCell('C22', 'rust-mu').status).toBe('runs');
     expect(mwCase('C22').needs).toBe('commit_log');
     expect(mwCase('C22').members).toEqual(['putPage', 'transaction', 'readCommitLog', 'lastCommitPosition']);
-    for (const arm of MW_ENGINE_ARMS.filter(a => a !== 'pglite')) expect(mwCell('C21', arm).status, `C21 ${arm}`).toBe('pending');
     for (const id of ['C13', 'C17', 'C21'] as const) expect(mwCell(id, 'pglite').status, `${id} pglite`).toBe('n/a');
     // C16 drives the Rust commit-log format upgrade: n/a on plain Rust, runs on rust-mu; PostgreSQL has no scenario yet (pending).
     expect(mwCell('C16', 'postgres').status).toBe('pending');
@@ -165,12 +164,15 @@ describe('multi-writer support matrix', () => {
     expect(mwCase('C16').needs).toBe('commit_log');
     // The cases that need an optimistic second writer need the capability the engine itself reports. C17 does not: a second
     // opener that becomes a client of the owner is the owner socket, which Rust has without optimistic transactions.
-    for (const id of ['C13', 'C21'] as const) expect(mwCase(id).needs, id).toBe('multi_writer');
+    expect(mwCase('C13').needs).toBe('multi_writer');
+    // C21's token is a commit position: it needs the commit log (without it the server refuses a token), not the optimistic second writer.
+    expect(mwCase('C21').needs).toBe('commit_log');
+    expect(mwVariant('C21.log-off').needs).toBe('commit_log');
     expect(mwCase('C17').needs).toBeUndefined();
   });
 
   // Rows whose scenario exists only in multi-user mode: plain Rust is n/a, rust-mu runs (the log, its upgrade, the owner handover).
-  const MULTIUSER_ONLY = ['C16', 'C17', 'C22'];
+  const MULTIUSER_ONLY = ['C13', 'C16', 'C17', 'C21', 'C22'];
 
   test('rust-mu runs what rust runs and waits on the same owner where rust waits; the multi-user-only rows are n/a on plain Rust and run on rust-mu', () => {
     for (const id of MULTIUSER_ONLY) {
@@ -190,7 +192,7 @@ describe('multi-writer support matrix', () => {
 
   test('the single-writer Rust arm runs every case whose invariant holds there; the rest wait for a second connection, a new rule, or the multi-writer work', () => {
     expect(MW_CASES.filter(c => c.cells.rust.status !== 'runs').map(c => [c.id, c.cells.rust.status])).toEqual([
-      ['C11', 'pending'], ['C13', 'pending'], ['C16', 'n/a'], ['C17', 'n/a'], ['C18', 'pending'], ['C21', 'pending'], ['C22', 'n/a'],
+      ['C11', 'pending'], ['C13', 'n/a'], ['C16', 'n/a'], ['C17', 'n/a'], ['C18', 'pending'], ['C21', 'n/a'], ['C22', 'n/a'],
     ]);
   });
 
@@ -237,7 +239,7 @@ describe('multi-writer support matrix', () => {
   });
 
   test('the C18 check rejects a run that did not overlap, a wrong page body, a missing page, stray claim ids and a doubled key, and accepts a whole run', () => {
-    type Mutable = { reports: StressObservation['reports'][number][]; pageBodies: Map<string, string>; jobIdsByKey: Map<string, number[]> };
+    type Mutable = { reports: StressObservation['reports'][number][]; pageBodies: Map<string, string>; jobIdsByKey: Map<string, number[]>; drained: number[] };
     const whole = (): Mutable => {
       const reports = Array.from({ length: 8 }, (_, p) => ({
         startedAt: 1_000 + p, finishedAt: 2_000 + p,
@@ -246,7 +248,7 @@ describe('multi-writer support matrix', () => {
       const pageBodies = new Map<string, string>();
       for (let id = 0; id < 64; id++) for (let r = 0; r < 2; r++) pageBodies.set(stressSlug(id, r), stressBody(id, r));
       const jobIdsByKey = new Map<string, number[]>(Array.from({ length: 64 }, (_, id) => [stressKey(id), [500 + id]] as const));
-      return { reports, pageBodies, jobIdsByKey };
+      return { reports, pageBodies, jobIdsByKey, drained: [] };
     };
     expect(stressViolations(whole())).toEqual([]);
     // The old check accepted each of these: pages only had to exist, claimed ids only had to be 64 distinct numbers.
@@ -256,14 +258,36 @@ describe('multi-writer support matrix', () => {
     expect(stressViolations(wrongBody)).toEqual([`${stressSlug(7, 1)}: its body is wrong`]);
     const noPage = whole(); noPage.pageBodies.delete(stressSlug(63, 0));
     expect(stressViolations(noPage)).toEqual([`${stressSlug(63, 0)}: the page is missing`]);
-    const strayClaims = whole(); strayClaims.reports[1]!.results[0]!.job = 9_999; // distinct, but not a stored job
-    expect(stressViolations(strayClaims)).toEqual(['the claimed ids are not the stored jobs\' ids']);
-    const twice = whole(); twice.reports[2]!.results[0]!.job = 500; // a job claimed by two writers
-    expect(stressViolations(twice)).toContain('a job was claimed twice');
+    const strayClaims = whole(); strayClaims.reports[1]!.results[0]!.job = 9_999; // distinct, but not a stored job (and job 508 is left unclaimed)
+    expect(stressViolations(strayClaims).slice(0, 2)).toEqual(['claimed id 9999 is not a stored job', 'stored job 508 was never claimed, not even by the drain']);
+    const twice = whole(); twice.reports[2]!.results[0]!.job = 500; // a job claimed by two writers (and job 516 is left unclaimed)
+    expect(stressViolations(twice).slice(0, 2)).toEqual(['job 500 was claimed 2 times', 'stored job 516 was never claimed, not even by the drain']);
     const doubled = whole(); doubled.jobIdsByKey.set(stressKey(3), [503, 777]);
-    expect(stressViolations(doubled)).toEqual([`request key ${stressKey(3)} has 2 rows`, 'the claimed ids are not the stored jobs\' ids']);
+    expect(stressViolations(doubled).slice(0, 2)).toEqual([`request key ${stressKey(3)} has 2 rows`, 'stored job 777 was never claimed, not even by the drain']);
     const busy = whole(); busy.reports[3]!.results[1]!.refused = ['owner_busy'];
     expect(stressViolations(busy)).toEqual([`writer ${3 * 8 + 1} was refused (owner_busy): a busy error`]);
+  });
+
+  test('claim accounting: a null claim whose job the drain took passes; a job claimed twice, a stray id and a job left unclaimed after the drain each fail with the ids in the message', () => {
+    const stored = [10, 11, 12, 13];
+    // A writer's null claim is allowed when the drain claims the job it could not see.
+    expect(claimAccountViolations({ writerClaims: [10, 11, null, 13], drained: [12], stored })).toEqual([]);
+    expect(claimAccountViolations({ writerClaims: [null, null, null, null], drained: [10, 11, 12, 13], stored })).toEqual([]);
+    // Left unclaimed after the drain.
+    const left = claimAccountViolations({ writerClaims: [10, 11, null, 13], drained: [], stored });
+    expect(left[0]).toBe('stored job 12 was never claimed, not even by the drain');
+    expect(left[1]).toBe('claim accounting: 4 stored jobs [10, 11, 12, 13]; 3 writer claims and 1 null writer claims; drained 0 []; claimed but not stored []; stored but never claimed [12]; claimed more than once []');
+    // Claimed twice, across a writer and the drain.
+    const twice = claimAccountViolations({ writerClaims: [10, 11, 12, 13], drained: [12], stored });
+    expect(twice[0]).toBe('job 12 was claimed 2 times');
+    expect(twice[1]).toContain('drained 1 [12]; claimed but not stored []; stored but never claimed []; claimed more than once [12]');
+    // A claimed id that is not a stored job.
+    const stray = claimAccountViolations({ writerClaims: [10, 11, 99, 13], drained: [12], stored });
+    expect(stray[0]).toBe('claimed id 99 is not a stored job');
+    expect(stray[1]).toContain('claimed but not stored [99]');
+    // Two problems at once name both ids.
+    expect(claimAccountViolations({ writerClaims: [10, 10, 99, null], drained: [], stored }).slice(0, 4)).toEqual([
+      'job 10 was claimed 2 times', 'claimed id 99 is not a stored job', 'stored job 11 was never claimed, not even by the drain', 'stored job 12 was never claimed, not even by the drain']);
   });
 
   test('C19 and C18 say what they do not prove, so a client-crash case is never read as a database-server crash test', () => {
@@ -275,13 +299,28 @@ describe('multi-writer support matrix', () => {
     expect(header).toMatch(/NOT a database-server crash test/);
   });
 
-  test('C21 stays pending on every engine that could run it, naming the missing typed member', () => {
-    for (const arm of ['postgres', 'rust', 'rust-mu'] as const) {
+  test('C21 runs on rust-mu only (the commit log and a served listener), is n/a on every other engine with its reason, and C21.log-off pins the refusal while the log is off', () => {
+    expect(mwCell('C21', 'rust-mu').status).toBe('runs');
+    for (const [arm, why] of [['pglite', /one connection/], ['postgres', /no commit log.*reason commit_log/], ['rust', /serves no v3 listener.*reason served/]] as const) {
       const cell = mwCell('C21', arm);
-      expect(cell.status, `C21 ${arm}`).toBe('pending');
-      expect(cell.status === 'pending' ? cell.owner : '', `C21 ${arm} owner`).toBe('L3 server');
-      expect(cell.status === 'pending' ? cell.why : '', `C21 ${arm} reason`).toMatch(/no typed read-with-position member.*min_position/);
+      expect(cell.status, `C21 ${arm}`).toBe('n/a');
+      expect(cell.status === 'n/a' ? cell.why : '', `C21 ${arm} reason`).toMatch(why);
     }
+    expect(mwCase('C21').members).toEqual(['putPage', 'getPage']);
+    expect(mwCase('C21').scope).toMatch(/owner socket sends no token/);
+    // The variant is for engine arms only and runs once, on rust-mu; its own brain is multi-user with the log off.
+    const v = mwVariant('C21.log-off');
+    expect(v.of).toBe('C21');
+    expect(v.reference).toBe('standalone');
+    expect(v.invariant).toMatch(/owner_ipc_protocol.*frame_malformed.*min_position=unsupported/);
+    expect(mwVariantCell('C21.log-off', 'rust-mu').status).toBe('runs');
+    for (const arm of ['pglite', 'postgres', 'rust'] as const) expect(mwVariantCell('C21.log-off', arm).status, `C21.log-off ${arm}`).toBe('n/a');
+    // The scenarios assert what the matrix says: the exact refusal code, reason and detail, the log off on the case's own brain, and the arm's mode and log on.
+    const conformance = read('test', 'engine-parity', 'multi-writer-conformance.test.ts');
+    expect(conformance).toMatch(/owner_ipc_protocol.*frame_malformed.*member=getPage via=served min_position=unsupported/s);
+    expect(conformance).toMatch(/GBRAIN_RUST_COMMIT_LOG: undefined/);
+    expect(conformance).toMatch(/assertRustMultiuserResolved\(engine, route/);
+    expect(conformance).toMatch(/assertRustCommitLogResolved\(engine\)/);
   });
 
   test('a compared case has an SQL arm that runs it (or none runs it yet), and the standalone ones are the cases the arms cannot all run alike', () => {

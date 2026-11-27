@@ -706,6 +706,24 @@ gbrain sources writer git-durability <source> --enable \
 The preview lists the skipped Git effects; enabling re-queues them, one per
 file, so the pages written while durability was off get committed and pushed.
 
+<a id="managed-git-identity"></a>
+Managed mode does not set a Git identity in the checkout. On a fresh host with
+no `user.name`/`user.email` (in the checkout, the user's global config or the
+system config), every page write still commits to the database, but its Git
+effect fails `git_unavailable`: the file stays untracked, the effect is retried
+every 30 seconds, and after 5 failures (about 2.5 minutes) it parks. Its message
+says "a missing Git identity (user.name, user.email) in that checkout is one
+cause to check". Set the identity in the checkout, then retry the parked effects:
+
+```bash
+git -C <checkout> config user.name "<name>"
+git -C <checkout> config user.email "<email>"
+gbrain sources writer retry-effects <source> --parked-code git_unavailable --dry-run
+```
+
+Run the printed command without `--dry-run` to retry them. This is the same on
+PGLite, Postgres and Rust brains ([troubleshooting](troubleshooting.md#symptom-table)).
+
 CLI and stdio registrations are durable, separate principals. The CLI lane is
 trusted local administration; stdio remains an untrusted memory caller.
 Revocation survives restart. Losing a credential file or receiving a denied

@@ -59,7 +59,7 @@ import {
   OWNER_IPC_ROUTES, ownerBusy, ownerCallTimeout, ownerEarlierCallRunning, ownerIpcProtocol, ownerIpcRefusal, ownerMemberOnlyReads,
   ownerPeerRefused, ownerResponseTooLarge, ownerHandoff,
 } from './routes.ts';
-import { ownerRemoteRefusal } from './remote-check.ts';
+import { ownerHelloCapabilities, ownerRemoteRefusal } from './remote-check.ts';
 import { heldRowHook } from './held-row.ts';
 import { membersWaitingFor } from './confirming-reads.ts';
 import { setDeadlineTimer, type DeadlineTimer } from './timer.ts';
@@ -603,7 +603,7 @@ export async function serveOwnerEngine(
           }
           conn.helloed = true;
           v2Sockets.add(socket);
-          send(hello);
+          send({ ...hello, capabilities: ownerHelloCapabilities(engine, hello.capabilities) }); // B3: lists remote_check in multi-user mode
           return;
         case 'cancel': cancelCall(calls, Number(frame.id)); return;
         case 'call': case 'fn': admit(frame, bytes, calls, send, conn.helloed); return;

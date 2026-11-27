@@ -22,6 +22,7 @@ use common::mu::{
 use common::{TempDir, clock, logged};
 use gbrain_store::Store;
 use gbrain_store::StoreError;
+use gbrain_store::journal::{PageMutation, Principal};
 use gbrain_store::pages::{PageInput, PutPageOptions, ReadScope};
 use memory_env::{Clock, T0};
 use serde_json::json;
@@ -382,7 +383,8 @@ fn every_write_path_is_logged_rolled_back_transaction_multi_writer() {
     }
 }
 
-/// An optimistic commit that was aborted (its transaction dropped) and then retried: the abort leaves no record, the retry exactly one.
+/// An optimistic commit that was aborted (its explicit optimistic transaction dropped) and then retried: the abort leaves no data
+/// record, the retry exactly one.
 #[test]
 fn every_write_path_is_logged_aborted_then_retried_optimistic_commit_multi_writer() {
     let dir = TempDir::new("log-retry");
@@ -391,7 +393,7 @@ fn every_write_path_is_logged_aborted_then_retried_optimistic_commit_multi_write
     let store = &brain.store;
     let (_, start) = log_since(store, None);
     let before = mu::image_of(&*brain.kv);
-    let aborted = store.begin_transaction(false).unwrap();
+    let aborted = begin_host(store, 1);
     put(&aborted, "retried/page", "first attempt");
     drop(aborted);
     let (records, _) = log_since(store, start);
@@ -404,9 +406,9 @@ fn every_write_path_is_logged_aborted_then_retried_optimistic_commit_multi_write
     );
     logged::log_explains_change(&before, &mu::image_of(&*brain.kv), &records)
         .unwrap_or_else(|e| panic!("after the abort: {e}"));
-    let retry = store.begin_transaction(false).unwrap();
+    let retry = begin_host(store, 1);
     put(&retry, "retried/page", "second attempt");
-    let position = retry.commit_transaction_at().unwrap();
+    let position = commit_host(store, retry);
     let (records, _) = log_since(store, start);
     let data_records: Vec<&CommitRecord> = records
         .iter()
@@ -421,6 +423,341 @@ fn every_write_path_is_logged_aborted_then_retried_optimistic_commit_multi_write
     clock::commit_times_rise(&records).unwrap_or_else(|e| panic!("{e}"));
     logged::log_explains_change(&before, &mu::image_of(&*brain.kv), &records)
         .unwrap_or_else(|e| panic!("after the retry: {e}"));
+}
+
+// ---- explicit optimistic transactions, with the log on ---------------------------------------------------------------------
+
+fn request_id(n: usize) -> String {
+    format!("00000000-0000-4000-8000-{n:012}")
+}
+
+fn principal_of(n: usize) -> Principal {
+    serde_json::from_value(json!({"kind": "local_cli", "id": format!("w{}", n % 8)})).unwrap()
+}
+
+fn mutation(n: usize, slug: &str, body: &str) -> PageMutation {
+    serde_json::from_value(json!({
+        "principal": {"kind": "local_cli", "id": format!("w{}", n % 8)}, "requestId": request_id(n),
+        "slug": slug, "page": {"type": "note", "title": slug, "compiled_truth": body}, "options": {},
+    }))
+    .unwrap()
+}
+
+/// Runs request `n` (a page write) inside the explicit transaction `tx`; the receipt it gives inside is `committed`.
+fn submit_in(tx: &MuTxn, n: usize, slug: &str, body: &str) {
+    let receipt = tx
+        .submit_page_mutation(&mutation(n, slug, body), None)
+        .unwrap();
+    assert_eq!(receipt["state"], "committed", "{receipt}");
+}
+
+/// A record that carries data (a put or a delete), as opposed to one that only moves a counter.
+fn has_data(record: &CommitRecord) -> bool {
+    record
+        .ops
+        .iter()
+        .any(|(_, o)| matches!(o, LogOp::Put(_) | LogOp::Delete))
+}
+
+/// Nothing of a transaction that never committed is in the log: no record with data, no record naming one of its request ids, and
+/// the log replays onto the before-image to the after-image exactly (any change that has no record fails; counters it advanced are
+/// logged as counter operations only).
+fn leaves_no_trace(
+    before: &Image,
+    after: &Image,
+    records: &[CommitRecord],
+    request_ids: &[String],
+) -> Result<(), String> {
+    if let Some(r) = records.iter().find(|r| has_data(r)) {
+        return Err(format!("a record with data at {:?}", r.position));
+    }
+    for id in request_ids {
+        if records.iter().any(|r| r.write_ids.contains(id)) {
+            return Err(format!("a record names request {id}"));
+        }
+    }
+    logged::log_explains_change(before, after, records)
+}
+
+fn data_records_of(records: &[CommitRecord]) -> Vec<CommitRecord> {
+    records.iter().filter(|r| has_data(r)).cloned().collect()
+}
+
+/// What one writer saw: the commits it was acknowledged (position and request id) and the request ids of its refused runs.
+type WriterOutcome = (Vec<(CommitPosition, String)>, Vec<String>);
+
+/// How an explicit optimistic transaction ends without committing.
+#[derive(Clone, Copy, Debug)]
+enum Ending {
+    Rollback,
+    Drop,
+}
+
+fn an_abandoned_optimistic_transaction_leaves_nothing(ending: Ending) {
+    let dir = TempDir::new("log-abandoned");
+    let path = dir.path().join("records.redb");
+    let brain = mu::open_logged(&path, true, clock_env(), HOST_A).unwrap_or_else(|e| panic!("{e}"));
+    let store = &brain.store;
+    put(store, "kept/page", "committed before");
+    let (_, start) = log_since(store, None);
+    let before = mu::image_of(&*brain.kv);
+    let tx = begin_host(store, 1);
+    submit_in(&tx, 1, "never/committed", "written in the transaction");
+    put(&tx, "also/never", "a second write");
+    assert!(
+        tx.read_page_snapshot("never/committed", &ReadScope::default())
+            .unwrap()
+            .is_some(),
+        "the transaction cannot read its own write"
+    );
+    match ending {
+        Ending::Rollback => tx.rollback().unwrap_or_else(|e| panic!("{e}")),
+        Ending::Drop => drop(tx),
+    }
+    let (records, _) = log_since(store, start);
+    let after = mu::image_of(&*brain.kv);
+    let ids = [request_id(1)];
+    leaves_no_trace(&before, &after, &records, &ids).unwrap_or_else(|e| panic!("{ending:?}: {e}"));
+    // What an abandoned transaction does leave is the counters it advanced, raised in one separate write so an id it handed out is
+    // never handed out again (`transactions.rs`): at most one record, and only counter operations.
+    assert!(
+        records.len() <= 1,
+        "{ending:?}: more than one record: {records:?}"
+    );
+    for slug in ["never/committed", "also/never"] {
+        assert!(
+            store
+                .read_page_snapshot(slug, &ReadScope::default())
+                .unwrap()
+                .is_none(),
+            "{ending:?}: {slug} is visible"
+        );
+    }
+    assert!(
+        store
+            .get_write_receipt(&principal_of(1), &ids[0])
+            .unwrap()
+            .is_none(),
+        "{ending:?}: the abandoned request left a receipt"
+    );
+    // The control: each way a trace could be left makes the check fail.
+    let mut leaked = after.clone();
+    leaked.insert(b"p/leaked".to_vec(), b"page".to_vec());
+    assert!(leaves_no_trace(&before, &leaked, &records, &ids).is_err());
+    let with_data = CommitRecord {
+        ops: vec![(b"p/never".to_vec(), LogOp::Put(b"page".to_vec()))],
+        write_ids: vec![ids[0].clone()],
+        ..clock::record(99, 0, 1)
+    };
+    let mut doctored = records.clone();
+    doctored.push(with_data);
+    assert!(leaves_no_trace(&before, &after, &doctored, &ids).is_err());
+    // The brain is still usable: the same request runs again and is logged.
+    let again = begin_host(store, 1);
+    submit_in(&again, 1, "never/committed", "written in the transaction");
+    let position = commit_host(store, again);
+    let (records, _) = log_since(store, start);
+    clock::positions_match_records(&[position], &data_records_of(&records), 0)
+        .unwrap_or_else(|e| panic!("{e}"));
+    clock::request_ids_match_records(&ids, &records).unwrap_or_else(|e| panic!("{e}"));
+}
+
+/// Log on, optimistic store, explicit `begin_with(Optimistic)` transaction: a rolled-back transaction leaves no record and no
+/// change (only the counters it advanced are logged, as counter operations), and its request leaves no receipt.
+#[test]
+fn an_optimistic_transaction_rolled_back_leaves_no_record_and_no_change_multi_writer() {
+    an_abandoned_optimistic_transaction_leaves_nothing(Ending::Rollback);
+}
+
+/// The same for a transaction dropped without a commit.
+#[test]
+fn an_optimistic_transaction_dropped_without_a_commit_leaves_no_record_and_no_change_multi_writer()
+{
+    an_abandoned_optimistic_transaction_leaves_nothing(Ending::Drop);
+}
+
+/// A lost run, then the same request rerun: two explicit optimistic transactions read the same page; the second to commit is refused
+/// with a typed `write_conflict` and leaves nothing (no record, no receipt); the same request id run again commits and is in the
+/// write ids of exactly one record. The positions the two commits returned are exactly the two data records.
+#[test]
+fn a_lost_run_and_its_rerun_are_logged_exactly_once_multi_writer() {
+    let dir = TempDir::new("log-lost-run");
+    let path = dir.path().join("records.redb");
+    let brain = mu::open_logged(&path, true, clock_env(), HOST_A).unwrap_or_else(|e| panic!("{e}"));
+    let store = &brain.store;
+    put(store, "doc", "seed");
+    let (_, start) = log_since(store, None);
+    let (first, second) = (begin_host(store, 1), begin_host(store, 2));
+    submit_in(&first, 1, "doc", "from the first");
+    submit_in(&second, 2, "doc", "from the second");
+    let p1 = commit_host(store, first);
+    let lost = store
+        .commit_position(second)
+        .expect_err("the second writer's stale commit was acknowledged");
+    assert_eq!(lost.code, gbrain_store::error::WRITE_CONFLICT, "{lost}");
+    let (records, _) = log_since(store, start);
+    assert!(
+        records
+            .iter()
+            .all(|r| !r.write_ids.contains(&request_id(2))),
+        "the lost run is in the log: {records:?}"
+    );
+    assert!(
+        store
+            .get_write_receipt(&principal_of(2), &request_id(2))
+            .unwrap()
+            .is_none(),
+        "the lost run left a receipt"
+    );
+    // The rerun: the same request id, from a fresh read.
+    let rerun = begin_host(store, 2);
+    submit_in(&rerun, 2, "doc", "from the second");
+    let p2 = commit_host(store, rerun);
+    assert!(
+        p2 > p1,
+        "the rerun's position is not after the first commit"
+    );
+    let (records, _) = log_since(store, start);
+    let ids = [request_id(1), request_id(2)];
+    clock::request_ids_match_records(&ids, &records).unwrap_or_else(|e| panic!("{e}"));
+    clock::positions_match_records(&[p1, p2], &data_records_of(&records), 0)
+        .unwrap_or_else(|e| panic!("{e}"));
+    clock::commit_times_rise(&records).unwrap_or_else(|e| panic!("{e}"));
+    // The controls: a rerun logged twice, and a lost run that reached the log, each fail the check.
+    let named = |id: &str, n: u64| CommitRecord {
+        write_ids: vec![id.to_string()],
+        ..clock::record(n, 0, n as i64)
+    };
+    assert!(
+        clock::request_ids_match_records(
+            &ids,
+            &[named(&ids[0], 1), named(&ids[1], 2), named(&ids[1], 3)]
+        )
+        .is_err(),
+        "a rerun logged twice passed"
+    );
+    assert!(
+        clock::request_ids_match_records(&ids, &[named(&ids[0], 1)]).is_err(),
+        "an acknowledged rerun missing from the log passed"
+    );
+    // The page holds the rerun's write, and the first writer's write is in its history (nothing was lost).
+    assert_eq!(
+        store
+            .read_page_snapshot("doc", &ReadScope::default())
+            .unwrap()
+            .unwrap()["page"]["compiled_truth"],
+        "from the second"
+    );
+}
+
+/// Positions are in commit order and each returned position is exactly one record. Six transactions are open at once and commit in
+/// a fixed, shuffled order: the positions rise in that order and the log's records follow it. Then eight writers on one page, each
+/// retrying a refused commit under a new request id: every acknowledged position is one data record that carries its request id,
+/// no refused attempt is in the log, and the records rise in position and commit time.
+#[test]
+fn positions_are_in_commit_order_and_each_is_exactly_one_record_multi_writer() {
+    let dir = TempDir::new("log-positions");
+    let path = dir.path().join("records.redb");
+    let brain = mu::open_logged(&path, true, clock_env(), HOST_A).unwrap_or_else(|e| panic!("{e}"));
+    let store = &brain.store;
+    let (_, start) = log_since(store, None);
+
+    // Six at once, committed in an order that is not the order they began in.
+    let order = [3usize, 0, 5, 1, 4, 2];
+    let mut open: Vec<Option<MuTxn>> = (0..6)
+        .map(|i| {
+            let tx = begin_host(store, i);
+            submit_in(
+                &tx,
+                100 + i,
+                &format!("open/{i}"),
+                "written while others are open",
+            );
+            Some(tx)
+        })
+        .collect();
+    let committed: Vec<(CommitPosition, usize)> = order
+        .iter()
+        .map(|&i| (commit_host(store, open[i].take().unwrap()), i))
+        .collect();
+    assert!(
+        committed.windows(2).all(|w| w[0].0 < w[1].0),
+        "positions did not rise in commit order: {committed:?}"
+    );
+    let (records, _) = log_since(store, start);
+    let data = data_records_of(&records);
+    let returned: Vec<CommitPosition> = committed.iter().map(|(p, _)| *p).collect();
+    clock::positions_match_records(&returned, &data, 0).unwrap_or_else(|e| panic!("{e}"));
+    let logged_order: Vec<String> = data.iter().flat_map(|r| r.write_ids.clone()).collect();
+    let commit_order: Vec<String> = order.iter().map(|&i| request_id(100 + i)).collect();
+    assert_eq!(logged_order, commit_order, "the log is not in commit order");
+
+    // Eight writers on one page: conflicts, reruns, one record per acknowledged commit.
+    let attempts = std::sync::atomic::AtomicUsize::new(1_000);
+    let outcomes: Vec<WriterOutcome> = thread::scope(|scope| {
+        let handles: Vec<_> = (0..8usize)
+            .map(|w| {
+                let attempts = &attempts;
+                scope.spawn(move || {
+                    let (mut acked, mut refused) = (Vec::new(), Vec::new());
+                    for round in 0..3 {
+                        loop {
+                            let n = attempts.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                            let tx = begin_host(store, w);
+                            submit_in(&tx, n, "hot/page", &format!("writer {w} round {round}"));
+                            match store.commit_position(tx) {
+                                Ok(p) => {
+                                    acked.push((p, request_id(n)));
+                                    break;
+                                }
+                                Err(e) => {
+                                    assert_eq!(e.code, gbrain_store::error::WRITE_CONFLICT, "{e}");
+                                    refused.push(request_id(n));
+                                }
+                            }
+                        }
+                    }
+                    (acked, refused)
+                })
+            })
+            .collect();
+        handles.into_iter().map(|h| h.join().unwrap()).collect()
+    });
+    let acked: Vec<(CommitPosition, String)> =
+        outcomes.iter().flat_map(|(a, _)| a.clone()).collect();
+    let refused: Vec<String> = outcomes.iter().flat_map(|(_, r)| r.clone()).collect();
+    assert_eq!(acked.len(), 24, "a writer gave up");
+    let (records, _) = log_since(store, None);
+    let writers: Vec<CommitRecord> = records
+        .iter()
+        .filter(|r| {
+            r.write_ids
+                .iter()
+                .any(|id| acked.iter().any(|(_, a)| a == id))
+        })
+        .cloned()
+        .collect();
+    let returned: Vec<CommitPosition> = acked.iter().map(|(p, _)| *p).collect();
+    clock::positions_match_records(&returned, &writers, 0).unwrap_or_else(|e| panic!("{e}"));
+    for (position, id) in &acked {
+        let record = writers.iter().find(|r| r.position == *position).unwrap();
+        assert_eq!(
+            record.write_ids.iter().filter(|w| *w == id).count(),
+            1,
+            "the record at {position:?} does not carry request {id} exactly once"
+        );
+    }
+    for id in &refused {
+        assert!(
+            records.iter().all(|r| !r.write_ids.contains(id)),
+            "a refused attempt, {id}, is in the log"
+        );
+    }
+    assert!(
+        records.windows(2).all(|w| w[0].position < w[1].position),
+        "the log is not in position order"
+    );
+    clock::commit_times_rise(&records).unwrap_or_else(|e| panic!("{e}"));
 }
 
 fn assert_lost(e: &StoreError, reason: LostReason, what: &str) {

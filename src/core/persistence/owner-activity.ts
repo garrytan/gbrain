@@ -42,21 +42,8 @@ export async function ownerActivity(engine: BrainEngine, worktreeIds: readonly s
   const result = new Map<string, OwnerActivity>();
   const ids = [...new Set(worktreeIds)].filter(Boolean);
   if (!ids.length) return result;
-  const rows = await engine.executeRaw<{ worktree_id: string; owner_host_id: string; live: boolean; last_active: string | Date | null; oldest_open: string | Date | null; db_now: string | Date }>(`
-    SELECT now() AS db_now, w.id::text AS worktree_id, w.owner_host_id::text AS owner_host_id,
-      EXISTS (SELECT 1 FROM persistence_consumers c WHERE c.host_id=w.owner_host_id
-        AND c.renewed_at > now() - ($2::double precision * interval '1 millisecond')) AS live,
-      GREATEST(w.heartbeat_at,
-        (SELECT max(c.renewed_at) FROM persistence_consumers c WHERE c.host_id=w.owner_host_id),
-        (SELECT COALESCE(r.published_at, r.completed_at) FROM persistence_requests r WHERE r.worktree_id>=w.id AND r.worktree_id<=w.id
-          AND r.state='committed' AND NOT COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%' ORDER BY r.worktree_id DESC, r.sequence DESC LIMIT 1),
-        (SELECT max(x.completed_at) FROM sources s CROSS JOIN LATERAL (SELECT r.completed_at FROM persistence_requests r
-          WHERE r.worktree_id=w.id AND r.source_incarnation=s.incarnation AND r.state='committed' AND COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%'
-          ORDER BY r.completed_at DESC LIMIT 1) x)) AS last_active,
-      (SELECT min(r.created_at) FROM persistence_requests r WHERE r.worktree_id=w.id AND r.state IN ('queued','deferred','running','recovering')) AS oldest_open
-    FROM persistence_worktrees w
-    WHERE w.id::text = ANY($1::text[]) AND w.owner_host_id IS NOT NULL`, [ids, CONSUMER_LAPSED_MS],
-    { signal: engine.kind === 'postgres' ? opts.signal : undefined });
+  // The facts come from the topology store (engine-sql/topology-store.ts), so a Rust brain answers them from its records.
+  const rows = await (await engine.topologyStore()).ownerActivity(ids, CONSUMER_LAPSED_MS, { signal: engine.kind === 'postgres' ? opts.signal : undefined });
   const local = existingHostIdFor(engine);
   for (const row of rows) {
     const lastActive = row.last_active === null ? null : new Date(row.last_active).toISOString();

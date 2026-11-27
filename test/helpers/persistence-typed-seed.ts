@@ -6,6 +6,8 @@
  *
  * The request charges no counters (`counterKeys: []`), so a case that lists counter rows sees only the rows it seeds.
  */
+import { fenceOpts } from '../../src/core/persistence/host-fence.ts';
+import { ensureProcessRegistration } from '../../src/core/persistence/managed-registration.ts';
 import { randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { declarePersistenceProtocol } from '../../src/core/persistence/protocol.ts';
@@ -38,12 +40,14 @@ export async function seedTypedRequest(engine: BrainEngine, r: TypedRequest): Pr
     state: 'queued', deferredRefreshId: null,
   });
   const state = r.state ?? 'failed';
+  // A multi-user Rust brain's protected write carries the process's own host fence; elsewhere both lines change nothing.
+  if (state !== 'queued') await ensureProcessRegistration(engine, 'seed');
   if (state !== 'queued') await engine.transaction(async tx => {
     await declarePersistenceProtocol(tx);
     await tx.completeWriteRow({
       id: row.id, state, outcome: r.outcome ?? null, errorCode: r.errorCode ?? null, errorMessage: r.errorMessage ?? null,
       consumerVersion: 'v-collate', consumerHostId: null, errorDetail: null, resultBytes: 0, counterKeys: [], intentBytes: 0,
-      retainedBytes: 0, terminalReservation: 0, probePurges: false,
+      retainedBytes: 0, terminalReservation: 0, probePurges: false, ...fenceOpts(tx),
     });
   });
   return { id: row.id, requestId, incarnation: source.incarnation };

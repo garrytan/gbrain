@@ -80,6 +80,8 @@ import { bindOrigin } from './origin-guard.ts';
 import { segmentedOutcome } from './searchable.ts';
 import { isQuarantined } from '../quarantine.ts';
 import { HELD_DELETION_HEAD_MOVED } from './sync-page-fault.ts';
+import { syncRows } from '../engine-sql/managed-sync-store.ts';
+import { fenceOpts } from './host-fence.ts';
 
 /** The options that select a managed sync cursor (its key), recorded so a refusal can print the exact retry. */
 export interface SyncCursorOptions { full: boolean; workingTree: boolean; srcSubpath: string | null; exclude: string[]; includeHidden: string[]; strategy: string | null }
@@ -172,11 +174,7 @@ export interface PassStamp {
  */
 export interface SyncCursorFence { run_id: string; request_id: string | null; group: string[] | null; index: string | number | null }
 async function readSyncCursorFence(tx: BrainEngine, cursorKey: string): Promise<SyncCursorFence | undefined> {
-  const [held] = await tx.executeRaw<SyncCursorFence>(
-    `SELECT completed_keys->0->>'runId' AS run_id,completed_keys->0->'pending'->>'requestId' AS request_id,completed_keys->0->>'index' AS index,
-      (SELECT jsonb_agg(m->>'requestId') FROM (SELECT m FROM jsonb_array_elements(COALESCE(completed_keys->0->'group','[]'::jsonb)) m
-        UNION ALL SELECT m FROM jsonb_array_elements(COALESCE(completed_keys->0->'window','[]'::jsonb)) g, jsonb_array_elements(g) m) members) AS group
-     FROM op_checkpoints WHERE op='managed-sync' AND fingerprint=$1 FOR KEY SHARE`, [cursorKey]);
+  const [held] = await syncRows<SyncCursorFence>(tx, 'sync_cursor_fence', [cursorKey]);
   return held;
 }
 const sharedValidations = new WeakMap<object, Map<string, Promise<SyncCursorFence | null>>>();
@@ -197,7 +195,7 @@ async function sourceSyncChecks(tx: BrainEngine, row: WriteRequest, p: SyncInten
   const [, , held] = await pipelined(tx, [
     () => assertManagedSyncActive(tx, true),
     async () => {
-      const [configuredSource] = await tx.executeRaw<{ local_path: string | null }>('SELECT local_path FROM sources WHERE id=$1 FOR SHARE', [row.source_id]);
+      const [configuredSource] = await syncRows<{ local_path: string | null }>(tx, 'source_local_path_shared', [row.source_id]);
       assertConfiguredSyncRoot(root, configuredSource?.local_path ?? null);
     },
     () => p.passId || !p.cursorKey ? Promise.resolve(undefined) : readSyncCursorFence(tx, p.cursorKey),
@@ -396,8 +394,7 @@ async function resolveSyncOrigin(engine: BrainEngine, row: WriteRequest, p: Sync
   let working = p.working;
   if (p.kind === 'managed_sync_delete' && working === undefined && !p.passId) {
     enterClaimStep(clock, 'manifest_entry', undefined, 'db');
-    const [manifest] = await engine.executeRaw<{ entry: { path: string; sourcePath: string; action: string; working: boolean; pageId?: number | null } }>(
-      "SELECT completed_keys->$2::integer AS entry FROM op_checkpoints WHERE op='managed-sync-manifest' AND fingerprint=$1", [p.runId, p.index]);
+    const [manifest] = await syncRows<{ entry: { path: string; sourcePath: string; action: string; working: boolean; pageId?: number | null } }>(engine, 'manifest_entry', [p.runId, p.index]);
     const entry = manifest?.entry;
     if (!entry || entry.path !== p.path || entry.sourcePath !== p.sourcePath || entry.action !== 'delete' ||
         typeof entry.working !== 'boolean' || (entry.pageId ?? null) !== row.page_id) {
@@ -569,7 +566,7 @@ export async function publishPassStamp(tx: BrainEngine, row: WriteRequest, p: Sy
     if (!advanced) throw syncPublicationRefusal('revision_conflict', CHECKPOINT_MOVED_MESSAGE, row, p,
       `Another sync moved the commit checkpoint of ${row.source_id} while this pass published.`);
     // The closed episode re-imported every page except those already at the current chunker (sync-classify.ts `inPlace`).
-    if (stamp.stampChunker) await tx.executeRaw('UPDATE sources SET chunker_version=$2 WHERE id=$1', [row.source_id, chunkerStamp()]);
+    if (stamp.stampChunker) await syncRows(tx, 'source_chunker_stamp', [row.source_id, chunkerStamp()]);
   }
   await recordPassTail(tx, row.source_id, p.passId!, { changed: read.changed, extract: stamp.extract, ...(stamp.since ? { since: stamp.since } : {}) });
   await recordPassFenceTrend(tx, { worktreeId: row.worktree_id!, sourceId: row.source_id, passId: p.passId!, since: pass.value.obligations.converged?.request_hwm ?? null, prefix: read.trend });
@@ -618,12 +615,10 @@ export interface FenceTrendPrefix { since: string | null; through: string; open?
  */
 // Both reads select `sequence::text AS sequence`; ORDER BY names the column, since the bare name sorts the text alias ('10' < '9').
 function fenceTrendRows(engine: Pick<BrainEngine, 'executeRaw'>, scope: { worktreeId: string; sourceId: string }, after: string, upTo: string | null, open: string[] = []) {
-  const range = upTo !== null ? 'sequence > $3::bigint AND sequence <= $4::bigint'
-    : open.length ? '(sequence > $3::bigint OR sequence = ANY($4::text::bigint[]))' : 'sequence > $3::bigint';
-  return engine.executeRaw<{ path: string | null; fences: Array<{ class: string }>; sequence?: string }>(`SELECT intent->>'path' AS path, outcome->'fences_normalized' AS fences${upTo === null ? '' : ', sequence::text AS sequence'}
-    FROM persistence_requests WHERE worktree_id=$1::uuid AND source_id=$2 AND ${range} AND state='committed'
-      AND intent->>'kind'='managed_sync_import' AND intent->>'passId' IS NOT NULL AND jsonb_typeof(outcome->'fences_normalized')='array' ORDER BY persistence_requests.sequence`,
-  upTo !== null ? [scope.worktreeId, scope.sourceId, after, upTo] : open.length ? [scope.worktreeId, scope.sourceId, after, `{${open.join(',')}}`] : [scope.worktreeId, scope.sourceId, after]);
+  const rows = (name: 'fence_trend_range' | 'fence_trend_open' | 'fence_trend_after', params: unknown[]) =>
+    syncRows<{ path: string | null; fences: Array<{ class: string }>; sequence?: string }>(engine, name, params);
+  return upTo !== null ? rows('fence_trend_range', [scope.worktreeId, scope.sourceId, after, upTo])
+    : open.length ? rows('fence_trend_open', [scope.worktreeId, scope.sourceId, after, `{${open.join(',')}}`]) : rows('fence_trend_after', [scope.worktreeId, scope.sourceId, after]);
 }
 
 /**
@@ -636,13 +631,12 @@ function fenceTrendRows(engine: Pick<BrainEngine, 'executeRaw'>, scope: { worktr
  */
 export async function readFenceTrendPrefix(engine: Pick<BrainEngine, 'executeRaw'>, scope: { worktreeId: string; sourceId: string; incarnation: string }): Promise<FenceTrendPrefix> {
   const since = (await readPassRow(engine, scope.sourceId, scope.incarnation))?.value.obligations.converged?.request_hwm ?? null;
-  const [newest] = await engine.executeRaw<{ through: string | null }>('SELECT max(sequence)::text AS through FROM persistence_requests');
+  const [newest] = await syncRows<{ through: string | null }>(engine, 'max_request_sequence');
   const floor = BigInt(since ?? '0'), through = BigInt(newest?.through ?? '0');
   // Read before the tally: an import open now that commits during it is skipped here and read by the publication, once.
   // The worktree's open requests are few, and persistence_requests_open indexes exactly them by sequence.
-  const open = through > floor ? (await engine.executeRaw<{ sequence: string }>(`SELECT sequence::text AS sequence FROM persistence_requests
-    WHERE worktree_id=$1::uuid AND sequence > $2::bigint AND sequence <= $3::bigint AND state IN ('queued','deferred','running','recovering')
-      AND source_id=$4 AND intent->>'kind'='managed_sync_import' ORDER BY persistence_requests.sequence`, [scope.worktreeId, String(floor), String(through), scope.sourceId])).map(row => row.sequence) : [];
+  const open = through > floor ? (await syncRows<{ sequence: string }>(engine, 'open_import_sequences',
+    [scope.worktreeId, String(floor), String(through), scope.sourceId])).map(row => row.sequence) : [];
   const skip = new Set(open);
   let tally: FencesTally | undefined;
   for (let low = floor; low < through; low += BigInt(FENCE_TREND_PAGE)) {
@@ -668,8 +662,7 @@ export async function advanceManagedCheckpoint(tx: BrainEngine, input: { sourceI
 
 /** The checkpoint request's publication: the whole run committed, so `last_commit` (and the slug-root pin) advance under the guard. */
 async function applyManagedSyncCheckpoint(tx: BrainEngine, row: WriteRequest, p: SyncIntent, root: string, releaseHold: (tx: BrainEngine, path: string | null) => Promise<void>): Promise<Record<string, unknown>> {
-  const [cursor] = await tx.executeRaw<{ completed_keys: [{ runId: string; index: number; total: number }] }>(
-    "SELECT completed_keys FROM op_checkpoints WHERE op='managed-sync' AND fingerprint=$1 FOR UPDATE", [p.cursorKey]);
+  const [cursor] = await syncRows<{ completed_keys: [{ runId: string; index: number; total: number }] }>(tx, 'cursor_keys_locked', [p.cursorKey]);
   // #6513: validation passed under this run; a replacement that landed since is the same supersession, not an index lag.
   const replaced = checkpointCursorReplaced({ kind: p.kind, runId: p.runId ?? '' }, cursor?.completed_keys[0]?.runId, row.source_id);
   if (replaced) throw syncPublicationRefusal(replaced.code, replaced.message, row, p, replaced.cause);
@@ -677,7 +670,7 @@ async function applyManagedSyncCheckpoint(tx: BrainEngine, row: WriteRequest, p:
     throw syncPublicationRefusal('revision_conflict', 'The sync cursor is not fully committed.', row, p,
       `Not every page write of this sync run has committed, so the checkpoint of ${row.source_id} did not advance.`);
   }
-  const [manifest] = await tx.executeRaw<{ count: number }>("SELECT jsonb_array_length(completed_keys) AS count FROM op_checkpoints WHERE op='managed-sync-manifest' AND fingerprint=$1", [p.runId]);
+  const [manifest] = await syncRows<{ count: number }>(tx, 'manifest_length', [p.runId]);
   if (!manifest || Number(manifest.count) !== p.total) throw syncPublicationRefusal('storage_error', 'The immutable sync manifest is incomplete.', row, p,
     `The immutable manifest of this sync run is incomplete, so the checkpoint of ${row.source_id} did not advance.`);
   const incomplete = await findIncompleteSyncReceipt(tx, row.worktree_id!, p.runId, p.supersededRequests ?? [], p.settled ?? null);
@@ -697,8 +690,8 @@ async function applyManagedSyncCheckpoint(tx: BrainEngine, row: WriteRequest, p:
   await recordSliceCursor(tx, row, p, settled);
   // #5566: a full walk re-chunked every stale page, so acknowledge the chunker version as the legacy gate does. (A pass's
   // full episode stamps through its own checkpoint, above; the pages it admits without a reparse are already current.)
-  if (settled && (p.from === null || p.syncOptions?.full === true)) await tx.executeRaw('UPDATE sources SET chunker_version=$2 WHERE id=$1', [row.source_id, chunkerStamp()]);
-  await tx.executeRaw("UPDATE op_checkpoints SET completed_keys=jsonb_set(completed_keys,'{0,done}','true'::jsonb),updated_at=now() WHERE op='managed-sync' AND fingerprint=$1", [p.cursorKey]);
+  if (settled && (p.from === null || p.syncOptions?.full === true)) await syncRows(tx, 'source_chunker_stamp', [row.source_id, chunkerStamp()]);
+  await syncRows(tx, 'cursor_mark_done', [p.cursorKey], fenceOpts(tx));
   // #6712 PR 2 (L5): the tail (statistics, links) runs after the lease is released; it is owed from this commit on.
   await recordSyncTail(tx, row.source_id, p.cursorKey!, p.runId!);
   for (const path of p.releasedHolds ?? []) await releaseHold(tx, path);
@@ -805,7 +798,7 @@ async function prepareSyncMutation(unbounded: BrainEngine, row: WriteRequest, _c
   const root = at.root = join(binding.local_path, binding.relative_path);
   enterClaimStep(clock, 'configured_root', undefined, 'db');
   await sliceMemo(unbounded, `configured-root\0${row.source_id}\0${root}`, async () => {
-    const [configuredSource] = await engine.executeRaw<{ local_path: string | null }>('SELECT local_path FROM sources WHERE id=$1', [row.source_id]);
+    const [configuredSource] = await syncRows<{ local_path: string | null }>(engine, 'source_local_path', [row.source_id]);
     assertConfiguredSyncRoot(root, configuredSource?.local_path ?? null);
   });
   if (p.kind !== 'managed_sync_checkpoint') {
@@ -859,7 +852,7 @@ async function prepareSyncMutation(unbounded: BrainEngine, row: WriteRequest, _c
       async () => { if (origin && originContext) await assertRenameSource(tx); },
     ]);
     if (p.companyApproval) {
-      const [source] = await tx.executeRaw<{ config: unknown }>('SELECT config FROM sources WHERE id=$1', [row.source_id]);
+      const [source] = await syncRows<{ config: unknown }>(tx, 'source_config', [row.source_id]);
       const policy = companyBrainProfile(source?.config);
       if (!policy || policy.planDigest !== p.companyApproval.planDigest || policy.extractorVersion !== p.companyApproval.extractorVersion || policy.approvedRevision !== p.target ||
         companyBrainPolicyFingerprint(policy, row.source_id) !== p.companyApproval.policyFingerprint) {
@@ -1029,7 +1022,7 @@ async function prepareSyncMutation(unbounded: BrainEngine, row: WriteRequest, _c
         // `old -> new` in slug_aliases; the file content is then prepared against it.
         if (await tx.updateSlug(renamed.slug, row.slug, source) !== 1) throw syncPublicationRefusal('page_identity_changed', 'The renamed page could not move to its new slug.', row, p,
           `Page ${renamed.slug} could not move to ${row.slug}.`);
-        if (renamedType) await tx.executeRaw('UPDATE pages SET type=$3 WHERE source_id=$1 AND slug=$2', [row.source_id, row.slug, renamedType]);
+        if (renamedType) await syncRows(tx, 'page_set_type', [row.source_id, row.slug, renamedType]);
         let movedImport: PreparedContentImport | undefined;
         await importFromContent(tx, row.slug, importContent, { ...importOptions, reuseSegments: ready.segmented,
           prepare: async value => { movedImport = value; return value.result; } });
@@ -1045,7 +1038,7 @@ async function prepareSyncMutation(unbounded: BrainEngine, row: WriteRequest, _c
       // Hash no-ops still repair a missing physical origin under the same guard (a page write records it itself).
       if (applied.noop && p.sourcePath) await bindOrigin(tx, { sourceId: row.source_id, slug: row.slug, sourcePath: p.sourcePath, scope: originScope });
       // #6536: the page now records this file as its origin, so it is no longer a #5254 database-only page.
-      await tx.executeRaw("UPDATE pages SET database_only_reason=NULL WHERE source_id=$1 AND slug=$2 AND database_only_reason='unbound_source'", [row.source_id, row.slug]);
+      await syncRows(tx, 'page_clear_unbound', [row.source_id, row.slug]);
       // #5984: the one read of the page after its last page write (the projections
       // below and the seal leave its revision unchanged): read-back check, projection
       // target, seal input, receipt revision and effects.

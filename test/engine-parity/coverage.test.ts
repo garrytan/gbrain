@@ -55,11 +55,12 @@ describe('engine parity coverage list', () => {
     }
   });
 
-  test('arm capabilities: only the SQL arms run managed persistence and raw SQL, only Postgres holds the schema lock and multi_writer', () => {
+  test('arm capabilities: every arm runs managed persistence (Rust on a single-host store), only the SQL arms raw SQL, only Postgres holds the schema lock and multi_writer', () => {
     expect(PARITY_ARMS.map((arm) => [arm, [...armCapabilities(arm, {})].sort()])).toEqual([
-      ['pglite', ['managed_persistence', 'raw_sql']], ['postgres', ['managed_persistence', 'multi_writer', 'raw_sql', 'schema_migration_lock']], ['rust', []],
+      ['pglite', ['managed_persistence', 'raw_sql']], ['postgres', ['managed_persistence', 'multi_writer', 'raw_sql', 'schema_migration_lock']], ['rust', ['managed_persistence']],
     ]);
-    // The lifted-hold test mode (rust-managed.ts) adds managed persistence to the Rust arm only.
+    // A multi-user Rust store serves managed persistence too since slice 3 (store-capabilities.ts MULTIUSER_WITHHELD is empty).
+    expect([...armCapabilities('rust', { GBRAIN_RUST_MULTIUSER: '1' })]).toEqual(['managed_persistence']);
     expect([...armCapabilities('rust', { GBRAIN_TEST_RUST_MANAGED: '1' })]).toEqual(['managed_persistence']);
     expect([...armCapabilities('pglite', { GBRAIN_TEST_RUST_MANAGED: '1' })].sort()).toEqual(['managed_persistence', 'raw_sql']);
     expect([missingCapability('raw_sql'), missingCapability('schema_migration_lock'), missingCapability('managed_persistence'), missingCapability('multi_writer')]).toEqual([

@@ -20,12 +20,13 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { assertMultiuserCapabilityName, recordingEngine, rustArmModeProblem, rustArmMultiuser, checkMwArm, checkRustArm, mwArmPlan, runMwCase, rustMultiuserView, MultiuserStopError, OWNER_ONLY_MESSAGE, OWNER_ONLY_STOP, stopOnOwnerOnlyRefusal, type MwArmHandle, type MwArmStarted, type RustTally } from './engine-parity/harness.ts';
+import { assertMultiuserCapabilityName, recordingEngine, rustArmModeProblem, rustArmMultiuser, checkMwArm, checkRustArm, mwArmPlan, runMwCase, rustMultiuserView, MultiuserStopError, multiuserStopArmed, OWNER_ONLY_MESSAGE, OWNER_ONLY_STOP, pinnedMultiuserStop, REMOTE_WRITE_REFUSALS, REMOTE_WRITE_STOP, stopOnOwnerOnlyRefusal, stopOnRemoteWriteRefusal, type MwArmHandle, type MwArmStarted, type RustTally } from './engine-parity/harness.ts';
 import { checkRustTally } from './engine-parity/rust-tally.ts';
 import { MW_ARMS, type MwArm, type MwCase, type MwCell } from './engine-parity/multi-writer-cases.ts';
 import { type LedgerLine } from './engine-parity/multi-writer-ledger.ts';
 import { assertRustCommitLogResolved, assertRustMultiuserResolved, installMuConnect, rustArmAddonPath, rustMuRoute, RUST_MULTIUSER_CONFIG_KEY } from './engine-parity/rust-arm.ts';
 import { mwEntries, mwEntry } from './engine-parity/multi-writer-entries.ts';
+import { withEnv } from './helpers/with-env.ts';
 import { parityDeclarations } from './engine-parity/coverage.ts';
 
 const RUNS: MwCell = { status: 'runs' };
@@ -668,6 +669,82 @@ describe('rustMultiuserStop: a case pinned to the multi-user owner-only refusal 
     expect(() => stopOnOwnerOnlyRefusal('plain text', [], 'env')).not.toThrow();
     expect(() => stopOnOwnerOnlyRefusal(JSON.stringify({ code: 'permission_denied' }), [], 'env')).not.toThrow(); // the code alone is not the owner-only gate
     expect(() => stopOnOwnerOnlyRefusal(`${refusalText} a page body`, ['a page body'], 'env')).toThrow(/yet its reply carries what the call would have returned/);
+  });
+
+  describe('a served-only pin (REMOTE_WRITE_STOP): the served client\'s refusal of a remote write', () => {
+    const refusalText = (site: 'member' | 'operation') => JSON.stringify({ error: 'engine_capability_missing', code: 'engine_capability_missing', message: REMOTE_WRITE_REFUSALS[site].message, detail: `member=x ${REMOTE_WRITE_REFUSALS[site].capability} outcome=none` }, null, 2);
+    const served = (over: { run: () => Promise<unknown>; mode?: 'off' | 'env' | 'config' | 'ambient'; served: boolean; site?: 'member' | 'operation' }) => ({
+      ...kase({ run: over.run, mode: over.mode ?? 'env', pin: REMOTE_WRITE_STOP(over.site ?? 'member', async () => { effectChecks++; }) }), served: over.served });
+    let effectChecks = 0;
+
+    test('armed only while the store is multi-user and the arm is served; the owner-only pin needs no served arm', () => {
+      const pin = REMOTE_WRITE_STOP('member');
+      expect([multiuserStopArmed(pin, 'env', true), multiuserStopArmed(pin, 'config', true), multiuserStopArmed(pin, 'ambient', true)]).toEqual([true, true, true]);
+      expect([multiuserStopArmed(pin, 'env', false), multiuserStopArmed(pin, 'off', true), multiuserStopArmed(pin, 'off', false)]).toEqual([false, false, false]);
+      expect([multiuserStopArmed(OWNER_ONLY_STOP(), 'env', false), multiuserStopArmed(OWNER_ONLY_STOP(), 'off', true)]).toEqual([true, false]);
+      expect(pin).toMatchObject({ code: 'engine_capability_missing', owner: 'L4 per-user remote writes', due: '2026-12-02', served: true });
+      expect(pin.message).toContain(REMOTE_WRITE_REFUSALS.member.message);
+      expect(pin.message).toContain('capability=pages');
+      expect(REMOTE_WRITE_STOP('operation').message).toContain('capability=raw_sql');
+    });
+
+    test('served and multi-user, the case ends on the pinned refusal: accepted after its no-effect check, counted as a known gap', async () => {
+      for (const site of ['member', 'operation'] as const) {
+        effectChecks = 0;
+        const t = tally();
+        await checkRustArm(served({ served: true, site, run: async () => { stopOnRemoteWriteRefusal(refusalText(site), site, [], 'env'); return 'x'; } }), t);
+        expect([t.compared, t.refused, t.multiuserStops, effectChecks], site).toEqual([0, 0, ['a case'], 1]);
+      }
+    });
+
+    test('served and multi-user, the case returns or ends elsewhere: the pin fails (the case returned; another site\'s refusal; another error; an effect; past due)', async () => {
+      await expect(checkRustArm(served({ served: true, run: async () => 'same' }), tally())).rejects.toThrow(/returned in multi-user mode/);
+      // The refusal of the other site is not the pinned one: the helper does not stop on it, so the case ends on its own result.
+      expect(() => stopOnRemoteWriteRefusal(refusalText('operation'), 'member', [], 'env')).not.toThrow();
+      expect(() => stopOnRemoteWriteRefusal(refusalText('member'), 'operation', [], 'env')).not.toThrow();
+      await expect(checkRustArm(served({ served: true, site: 'member', run: async () => { throw new MultiuserStopError('engine_capability_missing', `engine_capability_missing: ${REMOTE_WRITE_REFUSALS.operation.message} (${REMOTE_WRITE_REFUSALS.operation.capability})`); } }), tally())).rejects.toThrow(/ended on something else/);
+      await expect(checkRustArm(served({ served: true, run: async () => { throw new Error('boom'); } }), tally())).rejects.toThrow(/ended on something else.*boom/);
+      const stops = served({ served: true, run: async () => { stopOnRemoteWriteRefusal(refusalText('member'), 'member', [], 'env'); } });
+      await expect(checkRustArm({ ...stops, opts: { ...(stops.opts as object), rustMultiuserStop: { ...REMOTE_WRITE_STOP('member'), noEffect: async () => { throw new Error('a page was written'); } } } as never }, tally())).rejects.toThrow(/a page was written/);
+      await expect(checkRustArm({ ...stops, opts: { ...(stops.opts as object), rustMultiuserStop: { ...REMOTE_WRITE_STOP('member'), due: '2020-01-01' } } as never }, tally())).rejects.toThrow(/has passed its due date/);
+    });
+
+    test('not served, or the switch off: the pin does nothing and the case compares as before (a case that returns is not a failure)', async () => {
+      const t = tally();
+      await checkRustArm(served({ served: false, run: async () => 'same' }), t);
+      await checkRustArm(served({ served: true, mode: 'off', run: async () => 'same' }), t);
+      expect([t.compared, t.multiuserStops]).toEqual([2, undefined]);
+      expect(() => stopOnRemoteWriteRefusal(refusalText('member'), 'member', [], 'off')).not.toThrow();
+    });
+
+    test('the helper stops only on its own site\'s refusal, and fails loudly when the refusal carries what the call would have returned', () => {
+      expect(() => stopOnRemoteWriteRefusal(refusalText('member'), 'member', [], 'env')).toThrow(MultiuserStopError);
+      expect(() => stopOnRemoteWriteRefusal(JSON.stringify({ code: 'engine_capability_missing' }), 'member', [], 'env')).not.toThrow(); // the code alone is not the refusal
+      expect(() => stopOnRemoteWriteRefusal('written', 'member', [], 'env')).not.toThrow();
+      expect(() => stopOnRemoteWriteRefusal(`${refusalText('member')} a page body`, 'member', ['a page body'], 'env')).toThrow(/yet its reply carries what the call would have returned/);
+    });
+
+    test('pinnedMultiuserStop (a case that is not a parityTest): armed on the served multi-user Rust arm, it demands the pinned stop; elsewhere it runs the body as it was', async () => {
+      const rust = { backend: 'rust', engine: { marker: 'engine' } } as never;
+      const stopBody = async () => { stopOnRemoteWriteRefusal(refusalText('operation'), 'operation', [], 'env'); };
+      await withEnv({ GBRAIN_TEST_RUST_MU_ARM: 'env', GBRAIN_TEST_RUST_SERVED: '1' }, async () => {
+        expect(await pinnedMultiuserStop(rust, 'a plain case', REMOTE_WRITE_STOP('operation'), stopBody)).toBe(true);
+        await expect(pinnedMultiuserStop(rust, 'a plain case', REMOTE_WRITE_STOP('operation'), async () => 'returned')).rejects.toThrow(/returned in multi-user mode/);
+        // A SQL arm runs its body untouched, even with the pin armed for Rust.
+        let ran = 0;
+        expect(await pinnedMultiuserStop({ backend: 'pglite', engine: {} } as never, 'a plain case', REMOTE_WRITE_STOP('operation'), async () => { ran++; })).toBe(false);
+        expect(ran).toBe(1);
+      });
+      for (const env of [{ GBRAIN_TEST_RUST_MU_ARM: undefined, GBRAIN_TEST_RUST_SERVED: '1' }, { GBRAIN_TEST_RUST_MU_ARM: 'env', GBRAIN_TEST_RUST_SERVED: undefined }]) {
+        await withEnv(env, async () => {
+          let ran = 0;
+          expect(await pinnedMultiuserStop(rust, 'a plain case', REMOTE_WRITE_STOP('operation'), async () => { ran++; })).toBe(false);
+          expect(ran).toBe(1);
+          // The refusal is the case's own failure there: the body's error is not turned into a stop.
+          await expect(pinnedMultiuserStop(rust, 'a plain case', REMOTE_WRITE_STOP('operation'), async () => { throw new Error('its own failure'); })).rejects.toThrow('its own failure');
+        });
+      }
+    });
   });
 
   test('the tally: pinned stops allow the multi-user run against the off pin by name, and never count as equal', () => {

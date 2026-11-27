@@ -9,7 +9,7 @@ import { join } from 'node:path';
 import type { BrainEngine } from '../engine.ts';
 import { persistenceHome } from './identity.ts';
 import { tryAcquireNativeLock } from './native-lock.ts';
-import type { NativeLockHandle } from './native-lock.ts';
+import type { ManagedLockHandle } from './managed-lock.ts';
 import type { TailBacklogShare } from './sync-tail.ts';
 
 export interface RefreshRun { phases: Record<string, number>; lockHeldMs?: number; backlog: Array<{ sourceId: string; share: TailBacklogShare }> }
@@ -33,10 +33,11 @@ export async function timedPhase<T>(run: RefreshRun | undefined, key: string, fn
   try { return await fn(); } finally { notePhase(run, key, performance.now() - started); }
 }
 /** Adds the time `lock` stays held, from now until its release, to the run's `lock_held_ms`. */
-export function timedLock(run: RefreshRun | undefined, lock: NativeLockHandle | null): NativeLockHandle | null {
+export function timedLock(run: RefreshRun | undefined, lock: ManagedLockHandle | null): ManagedLockHandle | null {
   if (!run || !lock) return lock;
   const started = performance.now();
-  return { get released() { return lock.released; }, release: async () => {
+  // The lost state, the managed tokens and the host fence of a multi-user store's double guard pass through the wrapper.
+  return { get released() { return lock.released; }, get lost() { return lock.lost; }, get tokens() { return lock.tokens; }, get hostFence() { return lock.hostFence; }, release: async () => {
     if (!lock.released) run.lockHeldMs = (run.lockHeldMs ?? 0) + performance.now() - started;
     await lock.release();
   } };

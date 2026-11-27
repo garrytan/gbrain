@@ -595,16 +595,81 @@ impl Store {
   a stale holder fails at commit even if it started before the takeover.
 - Job claims, effect claims and write claims keep their current token fields and add `epoch`.
 
-- **I-5, managed mode limit (2026-11-25).** Managed mode's topology locks (`withTopologyLocks`) stay native file locks
-  on the checkout (`GBRAIN_HOME/locks`) on every engine for the single-host phase, and are replaced with I-5 leases once
-  the lease work is on the multi-user branch; no stub lease is used before then. File locks do not fence writers on
-  two hosts, so managed mode on Rust is single-host until that swap.
+- **I-5, managed mode (lane LM slice 3, 2026-11-25; closes the 2026-11-25 managed mode limit).** On a multi-user Rust store,
+  managed mode's locks (`withTopologyLocks`, the worktree lock of every publication, effect, recovery, transfer and
+  lifecycle step, and the refresh lock) are I-5 leases plus the owner host's native file lock, in one double guard:
+  `managed:topology:<brain_id>`, `managed:worktree:<worktree_id>` and `managed:refresh:<worktree_id>` (60 s, renewed every
+  10 s while held), the lease first and the native lock second, released in reverse
+  (`src/core/persistence/managed-lock.ts`). The lease fences store writes across hosts and processes; the native lock stays
+  because a lease cannot stop a paused process from touching files it already holds a path to, so a paused writer still
+  blocks a same-host successor's file work until it exits. A checkout lives on its owner host and is never replicated. The
+  holder of a lease is the operation's own process registration (`process:<host>:<pid>:<nonce>`, taken before the first
+  managed lock, never another process's token); an operation holds an immutable record of its host fence and its managed
+  tokens, and every protected write transaction asserts those exact tokens inside the writing transaction
+  (`managed-operations.ts`), so old work never borrows a replacement epoch. Claims carry epochs in `~L 0x05` side records
+  (group followers, coalesced Git effects, refresh rows and managed sync checkpoints join the job, write, effect, drain-lease
+  and cycle-lock families). PGLite, Postgres and a single-host Rust store keep the native locks and are unchanged.
+  The expiry window (what this does and does not guarantee): the store checks a lease's expiry when `assert` runs inside
+  the writing transaction, not at commit. A writer that asserted a live lease can still commit after the lease's expiry
+  time while nobody has taken the lease over. A takeover that commits between the assert and the commit puts the lease row
+  in the transaction's read set and refuses the commit (`write_conflict`; the retry refuses `lease_lost`): a multi-user
+  store runs explicit transactions optimistically, so the takeover lands and the late transaction keeps nothing.
+  That late commit is safe: no other holder exists, and the owner host's native lock still excludes a same-host successor
+  from the checkout files. Takeover fencing and expiry at commit are different properties; only the first is provided.
+  Waiting for a managed lease polls `acquire` within the caller's own deadline and ends with the caller's existing busy
+  answer (`write_pending`, `writer_lock_unavailable`); the store has no waiter order. Fairness for a background writer
+  (the effect worker) comes from the native layer, which stays: its waiter marker orders writers of one host. Across hosts
+  there is no such priority yet.
 
 - **I-5, cycle lock fence (2026-11-25).** On a multi-user store the cycle lock carries the host fence (the I-5 epoch
   and token), so a host that lost its lease cannot run a cycle. Under optimistic transactions an old-epoch commit is
   refused at commit; under the single writer the takeover waits for the open transaction, then the old token is
   refused with `epoch_moved`. Multi-user mode uses optimistic transactions, so the commit-time refusal must hold
   there. With the multi-user switch off, the cycle lock is unchanged.
+
+- **I-5, host fence table (2026-11-26).** Every store member that takes, renews, reclaims or releases a claim or a
+  lease on a multi-user store, the fence it carries, the test that proves a stale-epoch holder is refused at commit,
+  and its owner. "I-5 fence" means the host registration's `LeaseToken` (name, epoch, token) checked inside the
+  writing transaction (`fence.rs`: `begin`, then `claim_taken` / `claim_held` / `claim_ended` on the `~L 0x05` claim
+  epoch). With no fence, a multi-user store takes an implicit lease for the claim. With the switch off, no member
+  writes a lease record. Tests are in `rust/crates/gbrain-store/` unless a path says otherwise.
+
+  | Member (Rust) | Fence | Stale-epoch test (refused at commit, nothing changes) | Owner |
+  |---|---|---|---|
+  | `acquire_lease`, `renew_lease`, `release_lease`, `take_over_lease`, `assert_lease` | the lease itself (epoch + token; takeover CAS on the epoch) | `src/leases_tests.rs`: `a_takeover_raises_the_epoch_and_the_old_token_loses_renew_assert_and_release`, `a_paused_holder_cannot_commit_protected_data_after_a_takeover`, `the_lease_read_is_in_the_transaction_s_read_set_and_the_commit_checks_it_again`, `a_proven_dead_holder_s_live_lease_is_taken_over_only_at_the_epoch_proved` | L5 |
+  | write claims: `stamp_write_claim`, `renew_write_claim`, `release_unpublished_claim`, `expire_stale_write_claims`, `select_claimable_write`, completion and publication steps | I-5 fence | `tests/fences.rs`: `c06_a_paused_claimant_cannot_publish_after_its_host_lease_was_taken_over`, `g8_a_stale_owner_or_a_moved_recovery_cannot_use_the_recovery_transition`; `tests/implicit_leases.rs`: `a_fenced_caller_with_a_stale_epoch_or_a_foreign_token_still_refuses` | L5 |
+  | job claims: `claim_next_job`, `renew_job_lease_fenced`, the job finishes, `delay_held_claim_fenced`, `release_watchdog_claim_fenced`, job progress | I-5 fence | `tests/fences.rs`: `a_job_finish_under_a_lease_that_was_taken_over_refuses_and_leaves_the_job_alone`, `c05_an_expired_job_claim_is_reclaimed_once_and_the_old_holder_cannot_renew`, `the_job_hand_backs_end_the_claim_under_its_fence_and_refuse_a_stale_one`; `tests/fences_jobs.rs`: `g1_job_progress_tokens_and_inbox_reads_carry_the_host_fence` | L5 |
+  | job reclaim and sweeps: `reclaim_stalled_jobs_fenced`, `kill_timed_out_jobs_fenced`, `kill_wall_clock_jobs_fenced` | I-5 fence (the sweeper's) | `tests/fences_jobs.rs`: `g7_timeout_sweeps_carry_the_fence_and_clear_the_claim_epoch`, `g7_wall_clock_sweep_carries_the_fence_and_clears_the_claim_epoch` | L5 |
+  | effect claims: `stamp_effect_claim`, `settle_effect`, renew/advance/complete/retry/park/fail, `lock_effect_claim_row_claimed` | I-5 fence | `tests/fences.rs`: `c07_an_effect_is_claimed_once_and_a_rerun_by_the_new_owner_leaves_one_row`, `an_effect_install_reads_its_claim_under_the_host_fence_and_the_claim_epoch` | L5 |
+  | `claim_coalesced_git_effects` | fenced on `rust-engine/managed-on-rust-3` (960b289807, `persistence/claim_fence_tests.rs`), not yet on multiuser | LM's | LM |
+  | cycle lock: `acquire_cycle_lock`, `refresh_cycle_lock`, `release_cycle_lock`, `delete_cycle_lock`, `delete_cycle_lock_if_stale`, `assert_cycle_lease_fenced` | I-5 fence (release needs the claim epoch; the operator delete does not) | `tests/fences.rs`: `a_cycle_lock_holder_whose_host_lease_was_taken_over_cannot_refresh_or_release_it`; `tests/fences_jobs.rs`: `g3_a_cycle_lock_release_needs_the_claim_epoch_but_the_operator_delete_does_not`; `test/rust-multiuser-cycle-lock-fence.test.ts` | L5 |
+  | drain lease: `write_drain_lease_holder_fenced`, `refresh_drain_lease_holder_fenced`, `release_drain_lease_holder_fenced` | I-5 fence | `tests/fences.rs`: `the_drain_lease_holder_writes_refreshes_and_releases_under_its_fence`; `tests/fences_jobs.rs`: `g5_a_delayed_drain_beacon_write_cannot_replace_the_successors_beacon` | L5 |
+  | consumer rows: `renew_consumer_row` | I-5 fence (the heartbeat passes the registration) | `tests/fences.rs`: `census_a_consumer_row_renewal_under_a_taken_over_host_lease_is_refused`; `test/rust-multiuser-cycle-lock-fence.test.ts` (the heartbeat) | L5 |
+  | consumer rows: `delete_consumer_row` | none: it deletes only the caller's own row | n/a | L5 |
+  | worktree heartbeats and bindings: `stamp_worktree_heartbeats`, `release_worktree_bindings` | none on multiuser | LM's (worktree-bound persistence) | LM |
+  | lock-skip capability asserts: `claimCoalescedGitEffects`, `lockHeldConcept`, `lockLiveConceptMembers`, `topologyStore` | not a lease | L0's | L0 |
+
+  Lease families that kept their own token and TTL now carry the I-5 fence too (2026-11-26 follow-up, owner L5). Each
+  TypeScript caller passes the registration (`fenceOpts`), so a stale host is refused on every path, also the paths
+  that run outside a fenced claim. Each fix is fail-first in its own commit. Rust tests are in
+  `tests/lease_fences.rs` unless named otherwise; the caller tests are in `test/rust-multiuser-lease-fences.test.ts`.
+
+  | # | Member (Rust) | Fence | Stale-host test (refused at commit, nothing changes) | Caller that carries it |
+  |---|---|---|---|---|
+  | 1 | `write_notifier_state`, `write_notifier_coverage` | the notifier's own lease (host, owner, fence), read only on a multi-user store; its claim already refused a stale owner (`test/engine-parity/notifier.test.ts`, the `stale` case) | `lf1_a_notifier_that_lost_its_lease_cannot_write_its_state_or_coverage`, `lf1_with_the_mode_off_a_notifier_write_does_not_read_the_lease` | `commit-notifier.ts` sends the lease it holds |
+  | 2 | `claim_housekeeping_turn`, `complete_housekeeping_turn` | I-5 fence | `lf2_a_stale_host_cannot_claim_or_complete_a_housekeeping_turn` | `persistence/housekeeping-turn.ts` |
+  | 3 | `renew_private_queue_lease_fenced` | I-5 fence | `lf3_a_stale_host_cannot_renew_a_private_queue_lease` | `MinionQueue.renewPrivateQueueLease` |
+  | 4 | `claim_/renew_/release_segmented_projection_claim_fenced` | I-5 fence | `src/persistence/projection_queue.rs`: `lf4_a_stale_host_cannot_claim_renew_or_release_a_segmented_projection` | `page-body/projection.ts` (claim, the renewal in the sealing transaction, release) |
+  | 5 | `renew_/release_deferred_replacement_claim_fenced` | I-5 fence | `src/persistence/projection_queue.rs`: `lf5_a_stale_host_cannot_renew_or_release_a_deferred_replacement_claim` | `page-state/projections.ts` (`continueDeferredProjectionStep`, `continueDeferredProjection`) |
+  | 6 | `claim_wake_watch_fenced`, `settle_wake_watch`, `claim_wake_forgets`, `settle_wake_forget` | I-5 fence | `lf6_a_stale_host_cannot_claim_or_settle_a_wake_watch_or_forget` | `wakeshift/drain.ts` |
+  | 7 | `take_/renew_/release_page_embedding_lease` | I-5 fence, taken once per lease | `tests/fences_jobs.rs`: `lf7_a_stale_host_cannot_take_renew_or_release_a_page_embedding_lease` | `page-embedding-lease.ts` `acquirePageEmbeddingLease` |
+
+  With no host registered (a one-shot command) these members are unchanged: the fence is the registration's, and
+  an unregistered process has none. With the switch off no caller sends one.
+
+  These have no lease, so they are not in the table: `claim_take_proposal` (a state change with `acted_by`),
+  `claim_file_page` (file ownership), `write_source_sync_heartbeat` (a timestamp), and the budget and spend
+  reservations (accounting).
 
 ### I-6. Scope (per-user access)
 

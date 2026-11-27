@@ -218,7 +218,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'listWriteRequestsByRequestIds', 'listEmbeddingCandidates', 'claimNotifierLease', 'readNotifierLease', 'holdsNotifierLease', 'releaseNotifierLease',
     'readNotifierSources', 'writeNotifierState', 'writeNotifierCoverage', 'recordNotifierSyncerHost', 'readNotifierStatusRows', 'hasNotifierCoverage',
     'upsertWantedMarker', 'attachWantedMarkerJob', 'readWantedMarkers', 'readDueWantedMarkers', 'pruneSatisfiedWantedMarkers', 'clearWantedMarker',
-    'settleFreshnessMarker', 'listSourceWantedMarkers', 'readFirstDue', 'readWriteRequestsByRequestIds', 'insertWriteRequestGroup', 'readOwnerHostBinding',
+    'settleFreshnessMarker', 'listSourceWantedMarkers', 'readFirstDue', 'readWriteRequestsByRequestIds', 'insertWriteRequestGroup', 'readOwnerHostBinding', 'selectClaimableLaneHead', 'stampLaneHeadClaim', 'reclaimReleasedWrite', 'chargeTransientInterruption', 'claimEffectRecovery',
     'listTopologyRecoveries', 'readSegmentedGateEvidence',
     'findTopologyChanges', 'readTopologyChangeDigest', 'renewWriteClaim', 'releaseUnpublishedClaim', 'expireStaleWriteClaims', 'hasClaimableWrite', 'selectClaimableWrite', 'listHostConsumerRows', 'probeLiveConsumerRows',
     'renewConsumerRow', 'deleteConsumerRow', 'stampWorktreeHeartbeats', 'readTopologyChange', 'insertTopologyChange',
@@ -444,7 +444,7 @@ export const FAMILIES: Record<string, readonly string[]> = {
     'readAdmittedWriteRequests', 'readPageRevisionWriter', 'readRevisionWriterRequest', 'writeSyncAdmissionStamp', 'readSyncAdmissionEffects',
     'readHealthMemoClock', 'listSynopsisSourceIds', 'readSynopsisTierSources', 'setSourceContextualMode',
     'revokeAccessTokensNamed', 'revokeAccessToken', 'deleteOAuthClient', 'readAccessGroups', 'listPagesNamingReader', 'countOpenPages', 'hasSynopsisFrontmatterOverride',
-    'readWorktreeManifest', 'writerReleaseStore', 'addPersistenceCounters', 'publicationJournalStore', 'gitDurabilityStore', 'gitEffectStore', 'topologyStore', 'manualLinkStore',
+    'readWorktreeManifest', 'writerReleaseStore', 'addPersistenceCounters', 'publicationJournalStore', 'gitDurabilityStore', 'gitEffectStore', 'topologyStore', 'manualLinkStore', 'refreshStore', 'groupPublishStore', 'runSyncStatement',
     // the write-time chronicle decision (engine-sql/chronicle-ledger.ts) and the chronicle executor (engine-sql/chronicle-executor.ts)
     'upsertChronicleRow', 'readChronicleRow', 'hasPendingAutoChronicleRow', 'countRecentChronicleReservations', 'reserveChronicleJudgeSlot', 'pruneChronicleReservations', 'chronicleStore', 'insertConfigIfAbsent', 'readPageTruthLead',
     // the reads a page write makes before admission (engine-sql/page-mutation-reads.ts)
@@ -684,8 +684,7 @@ export function buildCoverage(): CoverageReport {
       const refusal = rustRefusal(m);
       return refusal === null ? 'serves' : `refuses:${refusal}`;
     }
-    // A multi-writer case runs on the arm where its matrix cell says `runs`; every other case by `requires`. The coverage
-    // list describes the default arms; the lifted-hold test mode never changes it.
+    // A multi-writer case runs on the arm where its matrix cell says `runs`; every other case by `requires`.
     const runsOn = (r: { requires?: EngineCapability; mwCase?: string }) => (r.mwCase === undefined ? armHas(arm, r.requires, {}) : mwEntry(r.mwCase).cells[arm].status === 'runs');
     if (reqs.some(runsOn)) return 'yes';
     const plain = reqs.find((r) => r.mwCase === undefined && r.requires !== undefined);

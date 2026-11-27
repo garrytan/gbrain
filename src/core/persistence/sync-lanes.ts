@@ -18,6 +18,7 @@
 import type { BrainEngine } from '../engine.ts';
 import type { WriteRequest } from './model.ts';
 import { leaseDraining, leaseWounded } from './worktree-lease.ts';
+import { syncRows } from '../engine-sql/managed-sync-store.ts';
 
 export interface LanePolicy { run: string; asked: number; effective: number; stepDown: string | null;
   /** Groups whose transaction began while the group before them was still publishing in this process. */
@@ -184,8 +185,7 @@ export async function awaitLaneTurn(tx: BrainEngine, state: LaneState, rows: Wri
   const head = rows[0]!;
   const started = Date.now();
   for (let poll = 0; ; poll++) {
-    const [prior] = await tx.executeRaw<{ state: string }>('SELECT state FROM persistence_requests WHERE principal_kind=$1 AND principal_id=$2 AND request_id=$3::uuid',
-      [head.principal_kind, head.principal_id, after]);
+    const [prior] = await syncRows<{ state: string }>(tx, 'request_state_by_principal', [head.principal_kind, head.principal_id, after]);
     if (prior && ['committed', 'failed', 'conflict', 'cancelled'].includes(prior.state)) return;
     // A released (or not yet admitted) predecessor goes first: this lane gives its slot and claims back, rather than wait on it.
     if (!prior || prior.state === 'queued') throw new LaneAbort('predecessor_requeued');

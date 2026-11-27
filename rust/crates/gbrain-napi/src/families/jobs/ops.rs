@@ -374,7 +374,8 @@ impl Brain {
         self.run(env, move |s| s.list_open_job_ids_in_queue(&queue))
     }
 
-    /// `renewPrivateQueueLease(queue, ownerToken, leaseMs)`: how many rows were renewed.
+    /// `renewPrivateQueueLease(queue, ownerToken, leaseMs, fence?)`: how many rows were renewed. A fence whose epoch
+    /// moved is refused `lease_lost` (I-5, lane L5).
     #[napi]
     pub fn renew_private_queue_lease<'env>(
         &self,
@@ -382,9 +383,11 @@ impl Brain {
         queue: String,
         owner_token: String,
         lease_ms: f64,
+        fence: Option<Value>,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
-            s.renew_private_queue_lease(&queue, &owner_token, lease_ms)
+            let fence: Option<LeaseToken> = arg(fence, "renewPrivateQueueLease fence")?;
+            s.renew_private_queue_lease_fenced(&queue, &owner_token, lease_ms, fence.as_ref())
         })
     }
 
