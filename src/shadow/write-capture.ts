@@ -5,6 +5,7 @@
  * and fail-open like the follower's own pre-read), runs untouched, and then, off the request path, reads the changed rows back
  * and sends the sample. Nothing here changes a write's outcome or fails it.
  */
+import { AsyncLocalStorage } from 'node:async_hooks';
 import type { BrainEngine } from '../core/engine.ts';
 import { hasCapability } from '../core/engine-capabilities.ts';
 import { DIGEST_SESSION_SETTINGS, digestQuery } from '../core/persistence/graduation-digest.ts';
@@ -42,6 +43,9 @@ export interface WriteSamplerOptions {
   preimageTimeoutMs?: number;
 }
 /** What the sampler keeps of one outermost transaction (wrapper.ts hands it to every engine proxy of it): the writes it makes, in order, and the putPage samples it took. */
+/** The `TxScope.running` entry of the member call the wrapper is running (wrapper.ts `gated`), kept across a call the follower's lane holds and starts later. */
+export const sampledCall = new AsyncLocalStorage<TxScope['running'] extends Set<infer C> ? C : never>();
+
 export interface TxScope {
   /** Set while a sampled write waits for the calls ahead of it and reads its preimage on the transaction's connection: the wrapper holds other members until it is open again, and resolves when it opens. */
   gate: Promise<void> | null;
@@ -49,7 +53,7 @@ export interface TxScope {
   waiters: Array<() => void>;
   /** Member calls on the transaction that have started and not yet settled, queued ones included (the wrapper counts them). */
   inflight: number;
-  /** Member calls the wrapper let run (not held by the gate) that have not settled yet, in the order they ran: the ones a sampled write waits for. `callback`: the call took a function (a nested transaction, a bounded read), which may be waiting for a call held behind the gate. */
+  /** Member calls the wrapper let run (not held by the gate) that have not settled yet, in the order they ran: the ones a sampled write waits for. A call the follower's lane holds is in it from its call on, so a sampled write skips its own entry (`sampledCall`). `callback`: the call took a function (a nested transaction, a bounded read), which may be waiting for a call held behind the gate. */
   running: Set<{ name: string; callback: boolean; done: Promise<void> }>;
   /** A member that may write is about to run, inside the nested transactions `path` names (none: the outermost). */
   note(name: string, args: unknown[], path?: number[]): void;
@@ -314,7 +318,8 @@ export function createWriteSampler(o: WriteSamplerOptions): WriteSampler {
   const inTransaction = (scope: Scope, tx: BrainEngine, name: string, args: unknown[], run: () => unknown): Promise<unknown> => {
     const s: TxSample = { at: scope.log.length, key: pageKey(name, args), op: name };
     scope.samples.push(s);
-    const ahead = [...scope.running];
+    const own = sampledCall.getStore();
+    const ahead = [...scope.running].filter((c) => c !== own); // its own entry is there when the follower's lane held it: waiting for it would wait for itself
     if (ahead.some((c) => c.callback)) { s.bad = 'in_transaction_busy'; return Promise.resolve(run()); }
     const before = o.generation?.();
     const open = holdGate(scope);

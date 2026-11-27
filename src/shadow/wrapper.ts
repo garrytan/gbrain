@@ -26,7 +26,7 @@ import { followRaw, followScope, followWrite, laneCall, newTxLane, startedWithin
 import type { CapturedRead, MirrorCounters, UsageField } from './mirror.ts';
 import { isShadowReadMember, SHADOW_TRANSACTION_MEMBERS } from './reads.ts';
 import { sqlWrites } from './sql-writes.ts';
-import type { TxScope, WriteSampler } from './write-capture.ts';
+import { sampledCall, type TxScope, type WriteSampler } from './write-capture.ts';
 import { IGNORED_WRITE_MEMBERS, memberKind } from './write-map.ts';
 
 export interface ShadowSink {
@@ -279,9 +279,10 @@ function buildProxy<E extends BrainEngine>(engine: E, sink: ShadowSink, opts: Sh
     const start = (): unknown => {
       // A held call starts later from whichever call opens the gate: bound to its own caller's async context, so request-scoped state (a stored slug spelling, a caller record) stays its own.
       if (scope.gate) return new Promise((resolve, reject) => { scope.waiters.push(AsyncResource.bind(() => { try { resolve(start()); } catch (error) { reject(error); } })); });
-      const sent = fn.apply(this, args);
+      const call = { name: String(name), callback: hasFunctionArg(args), done: Promise.resolve() };
+      // Run as this entry, so a sampled write held further in (by the follower's lane) and started later does not count its own entry among the calls ahead of it (write-capture.ts `inTransaction`).
+      const sent = sampledCall.run(call, () => fn.apply(this, args));
       if (isThenable(sent)) {
-        const call = { name: String(name), callback: hasFunctionArg(args), done: Promise.resolve() };
         const leave = (): void => { scope.running.delete(call); };
         call.done = sent.then(leave, leave); // registered before the caller's own await, so a call that settled is gone when the caller goes on
         scope.running.add(call);
