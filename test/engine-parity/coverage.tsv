@@ -279,7 +279,7 @@ lockSourceRow	pages	no	0	no	-	-	-
 listPrefixSampledPages	pages	yes	1	no	yes	yes	serves
 listCorpusSample	pages	yes	1	no	yes	yes	serves
 getPageSealState	pages	yes	1	no	yes	yes	serves
-refreshPageOrigin	pages	yes	1	no	yes	yes	refuses:pages
+refreshPageOrigin	pages	yes	1	no	yes	yes	serves
 readLivePageIdBySlug	pages	no	0	no	-	-	-
 searchKeyword	search	yes	29	yes	yes	yes	serves
 countKeywordPages	search	yes	5	no	yes	yes	serves
@@ -314,10 +314,10 @@ readEmbeddingStateCounts	chunks	yes	2	no	yes	yes	serves
 listEmbeddingStateRows	chunks	yes	2	no	yes	yes	serves
 deleteChunks	chunks	yes	3	no	yes	yes	serves
 deleteChunksExcept	chunks	yes	1	no	yes	yes	refuses:chunks
-setChunkerVersion	chunks	yes	1	no	yes	yes	refuses:chunks
-writeTextProjectionSeal	chunks	yes	1	no	yes	yes	refuses:chunks
-moveChunkIndexes	chunks	yes	1	no	yes	yes	refuses:chunks
-getChunkReuseRows	chunks	yes	1	no	yes	yes	refuses:chunks
+setChunkerVersion	chunks	yes	1	no	yes	yes	serves
+writeTextProjectionSeal	chunks	yes	1	no	yes	yes	serves
+moveChunkIndexes	chunks	yes	1	no	yes	yes	serves
+getChunkReuseRows	chunks	yes	1	no	yes	yes	serves
 readPageEmbeddingBudget	chunks	no	0	no	-	-	-
 recordPageEmbeddingHold	chunks	no	0	no	-	-	-
 openPageEmbeddingHold	chunks	no	0	no	-	-	-
@@ -466,7 +466,7 @@ resolveSlugWithAlias	sync_aliases	yes	1	yes	yes	yes	serves
 resolveSlugWithAliasDetailed	sync_aliases	yes	1	yes	yes	yes	serves
 resolveAliases	sync_aliases	yes	12	no	yes	yes	serves
 setPageAliases	sync_aliases	yes	11	no	yes	yes	serves
-replaceDerivedAliases	sync_aliases	yes	6	no	yes	yes	refuses:pages
+replaceDerivedAliases	sync_aliases	yes	6	no	yes	yes	serves
 refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	2	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	1	no	yes	yes	serves
@@ -488,7 +488,7 @@ readLocalWriterRow	import_guards	yes	1	no	yes	yes	serves
 insertLocalWriterRow	import_guards	yes	1	no	yes	yes	serves
 readTransactionSettings	import_guards	yes	1	no	yes	yes	serves
 applyTransactionSettings	import_guards	yes	2	no	yes	yes	serves
-readLedgerSource	import_guards	yes	1	no	yes	yes	refuses:persistence_journal
+readLedgerSource	import_guards	yes	1	no	yes	yes	serves
 isFolderRestricted	import_guards	yes	1	no	yes	yes	refuses:access_control
 beginSnapshotRead	import_guards	no	0	no	-	-	-
 setWriteContext	import_guards	no	0	no	-	-	-

@@ -132,9 +132,11 @@ async function fenced(engine: BrainEngine, op: string, args: unknown[], targets:
   } catch { return 'failed'; }
 }
 
-/** The options the Rust putPage takes (store-members/pages.ts `takeOptions`; `inline` it ignores). The whole options object is sent with the write, and any other key (`contextualRetrieval`, which the store refuses) is one the replay does not carry: the sample is uncomparable. */
-export const PUT_PAGE_OPTIONS: ReadonlySet<string> = new Set(['sourceId', 'allowEmptyOverwrite', 'expectedRevision', 'force', 'inline', 'contextualRetrieval']);
-const knownOptions = (name: string, args: unknown[]): boolean => name !== 'putPage' || Object.keys((args[2] as object | undefined) ?? {}).every((k) => PUT_PAGE_OPTIONS.has(k));
+/** The options the Rust putPage takes (store-members/pages.ts `takeOptions`; `inline` it ignores). The whole options object is sent with the write, and any other key is one the replay does not carry: the sample is uncomparable. A `contextualRetrieval` stamp is compared: the replay carries the option, and the stamp's own later write (STAMP below) runs on the replay too. */
+export const PUT_PAGE_OPTIONS: ReadonlySet<string> = new Set(['sourceId', 'allowEmptyOverwrite', 'expectedRevision', 'force', 'contextualRetrieval', 'inline']);
+/** Whether a put_page's options are ones the replay can compare: every key is one the store takes. */
+export const putPageOptionsComparable = (opts: object | undefined): boolean => Object.keys(opts ?? {}).every((k) => PUT_PAGE_OPTIONS.has(k));
+const knownOptions = (name: string, args: unknown[]): boolean => name !== 'putPage' || putPageOptionsComparable(args[2] as object | undefined);
 const STAMP = 'updatePageContextualRetrievalState'; // changes a compared page column (contextual_retrieval_mode) after the page write: the replay runs the same call (WriteEvent.then)
 /** Writes after a sampled putPage in its transaction that leave the compared page row and links as the write made them (chunks are not compared). */
 const LATER_WRITES: ReadonlySet<string> = new Set(['upsertChunks', 'deleteChunks', 'deleteChunksExcept', 'moveChunkIndexes', 'setPageAliases', 'replaceDerivedAliases', 'pruneFrontmatterTags', 'addPageTagsById', 'writeTextProjectionSeal', STAMP]);

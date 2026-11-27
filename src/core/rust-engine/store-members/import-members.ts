@@ -2,9 +2,42 @@
  * The page seal read of the import path (BrainEngine getPageSealState), served by gbrain-store `import_members`.
  */
 import { storeCall, type StoreMember } from './common.ts';
+import type { ChunkMove } from '../../page-state/chunk-moves.ts';
+import type { ChunkReuseRow } from '../../types.ts';
 
 /** `{ chunker_version }` of a live, unsegmented page (0 when it has none), or null. */
 export const getPageSealState: StoreMember<[pageId: number], { chunker_version: number | null } | null> = async (brain, pageId) => {
   const version = await storeCall({ member: 'getPageSealState' }, () => brain.getPageSealState(pageId)) as number | null;
   return version === null ? null : { chunker_version: version };
 };
+
+export const refreshPageOrigin: StoreMember<[slug: string, opts: { sourceId: string; sourcePath: string; sourceUri?: string | null }], void> =
+  async (brain, slug, opts) => {
+    await storeCall({ member: 'refreshPageOrigin', slug, sourceId: opts.sourceId }, () => brain.refreshPageOrigin(slug, {
+      sourceId: opts.sourceId, sourcePath: opts.sourcePath, sourceUri: opts.sourceUri ?? null,
+    }));
+  };
+
+/** `version` goes to the store as the text the SQL engines bind (`String(version)`); the store casts it as `smallint`. */
+export const setChunkerVersion: StoreMember<[slug: string, version: number, opts?: { sourceId?: string }], void> =
+  async (brain, slug, version, opts) => {
+    await storeCall({ member: 'setChunkerVersion', slug, sourceId: opts?.sourceId }, () =>
+      brain.setChunkerVersion(slug, String(version), opts?.sourceId ?? null));
+  };
+
+export const writeTextProjectionSeal: StoreMember<[slug: string, opts: { sourceId: string; revision: string; timelineText: string }], void> =
+  async (brain, slug, opts) => {
+    await storeCall({ member: 'writeTextProjectionSeal', slug, sourceId: opts.sourceId }, () => brain.writeTextProjectionSeal(slug, {
+      sourceId: opts.sourceId, revision: opts.revision, timelineText: opts.timelineText,
+    }));
+  };
+
+/** Each wave goes to the store with only the columns the UPDATE reads: the id, the target and the span. */
+export const moveChunkIndexes: StoreMember<[pageId: number, waves: readonly (readonly ChunkMove[])[]], void> = async (brain, pageId, waves) => {
+  await storeCall({ member: 'moveChunkIndexes' }, () => brain.moveChunkIndexes(pageId, waves.map(wave => wave.map(move => ({
+    id: move.id, to: move.to, projected_byte_start: move.projected_byte_start ?? null, projected_byte_end: move.projected_byte_end ?? null,
+  })))));
+};
+
+export const getChunkReuseRows: StoreMember<[slug: string, opts?: { sourceId?: string }], ChunkReuseRow[]> = (brain, slug, opts) =>
+  storeCall({ member: 'getChunkReuseRows', slug, sourceId: opts?.sourceId }, () => brain.getChunkReuseRows(slug, opts?.sourceId ?? null));

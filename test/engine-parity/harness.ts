@@ -26,6 +26,7 @@
  * `test/engine-parity/coverage.tsv`, so it must be an array literal of
  * string literals.
  */
+import { capabilityMissing } from '../../src/core/rust-engine/errors.ts';
 import { afterAll, beforeAll, expect, test } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { PostgresEngine } from '../../src/core/postgres-engine.ts';
@@ -222,7 +223,8 @@ export async function archiveSource(engine: BrainEngine, backend: ParityBackend,
 export async function enableBeliefCoverage(engine: BrainEngine, backend: ParityBackend, sourceId: string): Promise<void> {
   switch (backend) {
     case 'rust':
-      throw new Error('enableBeliefCoverage: the Rust store has no belief ledger; a case reaching this fixture on the Rust arm must stop on a typed refusal first');
+      // The store has no belief ledger to start: the case stops here, on the typed refusal of the ledger member it was about to read.
+      throw capabilityMissing('persistence_journal', 'enableBeliefCoverage');
     case 'pglite':
     case 'postgres':
       await enableBeliefLedger(engine, sourceId);

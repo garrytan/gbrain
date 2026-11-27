@@ -84,10 +84,13 @@ export async function runSalience(engine: BrainEngine, args: string[]): Promise<
     }, { timeoutMs: 30_000 });
     rows = unpackToolResult<Awaited<ReturnType<BrainEngine['getRecentSalience']>>>(raw);
   } else {
+    // GBRAIN_TEST_NOW_MS (epoch ms, set only by tests) computes the window and the recency term at that instant on every engine.
+    const pinned = /^[1-9][0-9]{0,15}$/.test(process.env.GBRAIN_TEST_NOW_MS ?? '') ? Number(process.env.GBRAIN_TEST_NOW_MS) : undefined;
     rows = await engine.getRecentSalience({
       days: parsed.days,
       limit: parsed.limit,
       slugPrefix: parsed.slugPrefix,
+      ...(pinned === undefined ? {} : { nowMs: pinned }),
     });
   }
   if (parsed.json) {

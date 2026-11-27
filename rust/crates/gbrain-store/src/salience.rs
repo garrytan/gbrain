@@ -143,6 +143,9 @@ pub struct RecentSalienceOptions {
     /// Pages touched before this time (epoch ms) are left out. It is a float because
     /// N-API hands every JS number above 2^31 to serde as a double.
     pub boundary_ms: f64,
+    /// Test-only clock: the epoch ms the recency term is computed at. Absent, the store's clock.
+    #[serde(default)]
+    pub now_ms: Option<f64>,
     pub limit: usize,
     /// A literal slug prefix (the SQL's escaped `LIKE 'prefix%'`).
     #[serde(default)]
@@ -346,7 +349,9 @@ impl Store {
         // The boundary is whole milliseconds, so the product is exact.
         let boundary_us = (opts.boundary_ms * 1000.0) as i64;
         let read = self.read()?;
-        let now = self.env.now_micros();
+        let now = opts
+            .now_ms
+            .map_or_else(|| self.env.now_micros(), |ms| (ms * 1000.0) as i64);
         let mut live = Live {
             read: &*read,
             archived: HashMap::new(),
