@@ -44,7 +44,8 @@ export type WholeOperationName =
   | 'importFromContent' | 'importFromFile' | 'importImageFile' | 'importManagedFiles' | 'snapshotStore' | 'snapshotStatus';
 
 /** The owner's entry for a registry operation sent whole (owner-ops.ts runs it). */
-export const OWNER_RUN_OPERATION = 'runOperation';
+export { OWNER_RUN_OPERATION } from './forwarded-names.ts';
+import { OWNER_RUN_OPERATION } from './forwarded-names.ts';
 
 export { MULTIUSER_FORWARDED_OPERATIONS, OWNER_FORWARDED_OPERATIONS, forwardsWhole } from './forwarded-names.ts';
 import { forwardsWhole } from './forwarded-names.ts';
@@ -203,6 +204,32 @@ export async function forwardOwnerOperation(ctx: OperationContext, name: string,
       return { rerun: true };
     });
   if ('rerun' in answer) return forwardOwnerOperation(ctx, name, params, resends + 1);
+  for (const notice of answer.notices) ctx.emitNotice?.(notice);
+  for (const [level, message] of answer.logs) ctx.logger?.[level]?.(message);
+  return { result: answer.result };
+}
+
+/**
+ * A remote caller's whole operation from a served client of a multi-user brain server (served/remote-whole-ops.ts): sent
+ * as `runOperation` with the remote mark, the plain context keys and the caller's grant without its token (a narrowing
+ * claim); the server runs the operation's own handler with ctx.remote true. A handoff is sent again, as a local one is.
+ */
+export async function forwardRemoteWholeOperation(ctx: OperationContext, name: string, params: Record<string, unknown>, resends = 0): Promise<{ result: unknown }> {
+  const { REMOTE_CONTEXT_KEYS, claimedAuth } = await import('../served/remote-whole-ops.ts');
+  const { servedConnectionOf } = await import('../served/store-returning.ts');
+  const connection = (ownerConnectionFor(ctx.engine) ?? servedConnectionOf(ctx.engine)) as OwnerConnection | undefined;
+  if (!connection) throw ownerIpcRefusal(name, 'this process has no connection to the brain server');
+  const context: Record<string, unknown> = {};
+  const record = ctx as unknown as Record<string, unknown>;
+  for (const key of REMOTE_CONTEXT_KEYS) if (record[key] !== undefined) context[key] = record[key];
+  const { withRemoteCaller } = await import('../../remote-caller.ts');
+  const answer = await withRemoteCaller(true, () => connection.request('fn', OWNER_RUN_OPERATION, [name, params, context, { auth: claimedAuth(ctx) }]) as Promise<ForwardedOperationResult>)
+    .catch(async (error: unknown): Promise<ForwardedOperationResult | { rerun: true }> => {
+      if (!isOwnerHandoff(error) || resends >= HANDOFF_RESENDS) throw error;
+      await untilOwnerClosed(connection);
+      return { rerun: true };
+    });
+  if ('rerun' in answer) return forwardRemoteWholeOperation(ctx, name, params, resends + 1);
   for (const notice of answer.notices) ctx.emitNotice?.(notice);
   for (const [level, message] of answer.logs) ctx.logger?.[level]?.(message);
   return { result: answer.result };

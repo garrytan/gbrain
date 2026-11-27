@@ -9,6 +9,7 @@ test/engine-parity/access-migrate.test.ts	served
 test/engine-parity/access-policy.test.ts	served	
 test/engine-parity/access-sort-order.test.ts	served	
 test/engine-parity/access-tokens.test.ts	served	
+test/engine-parity/admin-counts.test.ts	served	
 test/engine-parity/admin-http.test.ts	served	
 test/engine-parity/admin-unowned-http.test.ts	served	
 test/engine-parity/alias-trust.test.ts	served	
@@ -34,6 +35,7 @@ test/engine-parity/collate-store-listings.test.ts	served
 test/engine-parity/collate-ties.test.ts	served	
 test/engine-parity/connect-gate.test.ts	served	
 test/engine-parity/connector-sync-stamp.test.ts	served	
+test/engine-parity/credential-grant-writes.test.ts	served	
 test/engine-parity/cycle-locks.test.ts	served	
 test/engine-parity/decide-store.test.ts	served	
 test/engine-parity/delegated-grant.test.ts	served	
@@ -72,6 +74,7 @@ test/engine-parity/facts-trust-owner.test.ts	served
 test/engine-parity/facts.test.ts	served	
 test/engine-parity/family-tail-sites.test.ts	served	
 test/engine-parity/fence-overlay.test.ts	served	
+test/engine-parity/fence-row-trust.test.ts	served	
 test/engine-parity/fenced-import-purge.test.ts	served	
 test/engine-parity/field-usage.test.ts	served	
 test/engine-parity/floor-folder-rule.test.ts	served	
@@ -111,8 +114,10 @@ test/engine-parity/oauth-revocation.test.ts	served
 test/engine-parity/ontology-propose.test.ts	served	
 test/engine-parity/open-pages.test.ts	served	
 test/engine-parity/owner-recovery-scans.test.ts	served	
+test/engine-parity/owner-write-privacy.test.ts	served	
 test/engine-parity/page-fence-writes.test.ts	served	
 test/engine-parity/page-lock-anchors.test.ts	served	
+test/engine-parity/page-mutation-reads.test.ts	served	
 test/engine-parity/page-purge-holds.test.ts	served	
 test/engine-parity/page-purge-journal.test.ts	served	
 test/engine-parity/page-purge-probes.test.ts	served	
@@ -127,6 +132,7 @@ test/engine-parity/pages.test.ts	served
 test/engine-parity/persistence-binding-reads.test.ts	served	
 test/engine-parity/persistence-declaration.test.ts	served	
 test/engine-parity/persistence.test.ts	served	
+test/engine-parity/plain-member-writes.test.ts	served	
 test/engine-parity/projection-drain-reads.test.ts	served	
 test/engine-parity/projection-rebuild-steps.test.ts	served	
 test/engine-parity/projection-reseal.test.ts	served	
@@ -137,6 +143,7 @@ test/engine-parity/purge-plan.test.ts	served
 test/engine-parity/purge-verify.test.ts	served	
 test/engine-parity/purge-writes.test.ts	served	
 test/engine-parity/put-page-missing-link.test.ts	served	
+test/engine-parity/query-filters.test.ts	served	
 test/engine-parity/read-shared-revision.test.ts	served	
 test/engine-parity/read-shared-sources.test.ts	served	
 test/engine-parity/refusal-swallow-health.test.ts	served	
@@ -147,6 +154,8 @@ test/engine-parity/remember-members.test.ts	served
 test/engine-parity/remember-meta.test.ts	served	
 test/engine-parity/remember-supersede.test.ts	served	
 test/engine-parity/remember-whole.test.ts	served	
+test/engine-parity/remote-access-matrix.test.ts	served	
+test/engine-parity/remote-links.test.ts	served	
 test/engine-parity/repair-aliases.test.ts	served	
 test/engine-parity/repair-bookkeeping.test.ts	served	
 test/engine-parity/repair-busy.test.ts	served	
@@ -176,12 +185,14 @@ test/engine-parity/segmented-ledger-reads.test.ts	served
 test/engine-parity/segmented-mirror-effects.test.ts	served	
 test/engine-parity/segmented-purge-writes.test.ts	served	
 test/engine-parity/segmented-rewrite.test.ts	served	
+test/engine-parity/served-remote-writes.test.ts	served	
 test/engine-parity/session-state-cap.test.ts	served	
 test/engine-parity/shared-skill-members.test.ts	served	
 test/engine-parity/slug-normalize.test.ts	served	
 test/engine-parity/source-delete.test.ts	served	
 test/engine-parity/source-federate-writes.test.ts	served	
 test/engine-parity/source-resolver-reads.test.ts	served	
+test/engine-parity/source-scope-reads.test.ts	served	
 test/engine-parity/spend-log.test.ts	served	
 test/engine-parity/sweep-reads.test.ts	served	
 test/engine-parity/sync-admission-effects.test.ts	served	
@@ -200,8 +211,10 @@ test/engine-parity/take-proposals.test.ts	served
 test/engine-parity/take-trust-fields.test.ts	served	
 test/engine-parity/take-trust-reads.test.ts	served	
 test/engine-parity/take-vector-search.test.ts	served	
+test/engine-parity/takes-prepare.test.ts	served	
 test/engine-parity/takes.test.ts	served	
 test/engine-parity/tie-purge-files-links-facts.test.ts	served	
+test/engine-parity/timeline-add.test.ts	served	
 test/engine-parity/timeline-held-rows.test.ts	served	
 test/engine-parity/timeline.test.ts	served	
 test/engine-parity/topology-named-stop.test.ts	served	
@@ -209,6 +222,7 @@ test/engine-parity/transaction-settings.test.ts	served
 test/engine-parity/trust-fence.test.ts	served	
 test/engine-parity/trust-reads.test.ts	served	
 test/engine-parity/twin-merge-rows.test.ts	served	
+test/engine-parity/unbound-claim.test.ts	served	
 test/engine-parity/unowned-refusal-sites.test.ts	served	
 test/engine-parity/vector-options.test.ts	served	
 test/engine-parity/versions-raw.test.ts	served	
@@ -216,9 +230,11 @@ test/engine-parity/wedged-reservation.test.ts	served
 test/engine-parity/withdrawal-discovery-reads.test.ts	served	
 test/engine-parity/withdrawal-forget.test.ts	served	
 test/engine-parity/worktree-terms.test.ts	served	
+test/engine-parity/world-only-spelling-read.test.ts	served	
 test/engine-parity/write-attribution.test.ts	served	
 test/engine-parity/write-guards.test.ts	served	
 test/engine-parity/write-misc.test.ts	served	
+test/engine-parity/write-request-cancel.test.ts	served	
 test/engine-parity/write-request-reads.test.ts	served	
 test/engine-parity/writer-admin.test.ts	served	
 test/engine-parity/writer-release.test.ts	served	
