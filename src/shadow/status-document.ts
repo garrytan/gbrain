@@ -10,7 +10,7 @@ import { buildDrillStatus } from './drill-status.ts';
 import { buildBenchStatus } from './bench.ts';
 import { buildEligibilityStatus } from './eligibility.ts';
 import { buildEvidenceStatus, type EvidenceStatus } from './evidence.ts';
-import { readEpoch } from './evidence-epoch.ts';
+import { readEpoch, readEpochState } from './evidence-epoch.ts';
 import { buildFollowStatus } from './follow-status.ts';
 import { readFaults, readShadowSummary } from './ledger.ts';
 import { storageReport, type StorageReport } from './managed-gate.ts';
@@ -36,7 +36,7 @@ export async function shadowStatusDocument(brain: { key: string; dir: string }, 
   // rotation between them (a new Rust candidate) retries, and an epoch that keeps moving leaves both out (NOT READY),
   // so criteria 1 and 7 can never pass on the previous candidate's checks. The drill record is checked against that
   // same epoch manifest (criterion 10), so a drill of the previous candidate never passes either.
-  const eligibility = await buildEligibilityStatus({ dir: brain.dir, state, engine, now, stateRequired: true });
+  const eligibility = await buildEligibilityStatus({ dir: brain.dir, state, engine, now, stateRequired: true, epoch: readEpochState(brain.dir) }); // one manifest read, shared: eligibility never re-reads it
   const epochBound = (): {
     follow: ReturnType<typeof buildFollowStatus>; evidence: ReturnType<typeof buildEvidenceStatus>; drills: ReturnType<typeof buildDrillStatus>;
   } | null => {
