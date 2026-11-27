@@ -1475,6 +1475,22 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       expect(inbox.filter((e) => e.op === 'addLink').map((e) => [e.outcome, e.reason])).toEqual([['uncomparable', 'drain_timeout']]);
     }, 60_000);
 
+    test('with the follower wired as production wires it, a nested transaction beside a followed write does not stall: its end never waits for the enclosing transaction\'s calls', async () => {
+      const kit = fenceKit(ctx);
+      await ctx.reset(); await fillSeedFixture(primary());
+      await primary().putPage('people/nested-gone', page('Nested Gone'));
+      const { wrapped } = kit.prod();
+      const t0 = Date.now();
+      await wrapped.transaction(async (tx) => {
+        await Promise.all([
+          tx.transaction(async (nested) => { await nested.getPage('people/alice-example'); }),
+          tx.deletePage('people/nested-gone'), // its follow pre-read queues behind the nested transaction
+        ]);
+      });
+      expect(Date.now() - t0).toBeLessThan(1_500); // a nested drain that waited for the enclosing transaction's calls stalled the full 2 s bound
+      expect(await primary().getPage('people/nested-gone')).toBeNull();
+    }, 60_000);
+
     test('with the follower wired as production wires it, a sampled write the callback did not await is sent before COMMIT and commits', async () => {
       const kit = fenceKit(ctx);
       for (const viaLane of ctx.kind === 'postgres' ? [false, true] : [false]) {
@@ -1688,7 +1704,7 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       }
     }, 120_000);
 
-    test('a pin that cannot be taken because another call is in flight leaves the sample uncomparable (in_transaction_busy), never a pass; a pinned page with tags written after it is not moved', async () => {
+    test('a call still running when the callback returns is waited for before the pin, so the pin is taken; a pinned page with tags written after it is not moved', async () => {
       await fresh();
       const { inbox, wrapped } = prod();
       await wrapped.transaction(async (tx) => { await tx.putPage('companies/acme-example', page('Acme No Later Write')); });
@@ -1700,11 +1716,11 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       await wrapped.transaction(async (tx) => {
         const written = await tx.putPage('people/alice-example', page('Alice Busy'));
         await tx.addPageTagsById(written.id, ['alpha']);
-        void tx.deleteChunks('people/alice-example'); // still running when the callback returns
+        void tx.deleteChunks('people/alice-example'); // still running when the callback returns: the transaction's end waits for it, so the pin is taken after it
       });
       await until(() => putEvents(inbox).length >= 3);
-      if (pg) { expect(putEvents(inbox)[2]).toMatchObject({ outcome: 'uncomparable', reason: 'in_transaction_busy' }); expect(putEvents(inbox)[2]!.moved).toBeUndefined(); }
-      else expect(putEvents(inbox)[2]!.reason).not.toBe('in_transaction_busy'); // no fence, no pin, nothing to be busy about
+      expect(putEvents(inbox)[2]!.outcome).toBeUndefined(); // a full sample (before the drain: in_transaction_busy on Postgres)
+      expect(Boolean(putEvents(inbox)[2]!.moved)).toBe(false);
     }, 120_000);
   });
 
@@ -1762,6 +1778,7 @@ export function defineFenceNegatives(ctx: WriteCompareContext): void {
       // The page's links effect adds its mention link after the commit, and that link write is sampled and read back too: wait for its sample, so its
       // read-back (a getPage on the primary) is over before a test arms `between` for the next write's read-back, and cannot take that hook.
       await until(() => inbox.some((e) => e.op === 'addLinksBatch'));
+      await disposePersistenceConsumer(wrapped); // its remaining effects (the embedding lease rows) must not run during the next scenario's read-back window
     }
     /** Alice and Bob exist and are linked. A link write between them copies both pages and the links between the two; a put of Alice copies only Alice. */
     const linked = async () => { await fresh(); await primary().putPage('people/bob-example', page('Bob Example')); await primary().addLink('people/alice-example', 'people/bob-example', 'knows', 'knows'); };
