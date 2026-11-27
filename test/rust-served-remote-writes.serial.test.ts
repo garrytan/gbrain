@@ -16,9 +16,13 @@
  *    - the retrieval stamp: the server stamps only pages the caller may read; one id outside the caller's read scope
  *      refuses the whole call and stamps nothing;
  *    - the stamp is best-effort: a remote get_page answers the same with tracking on and off.
+ *    - a remote caller sets only its own transaction: beginSnapshotRead (owner-ipc/routes.ts OWNER_IPC_REMOTE_TXN_SETTINGS)
+ *      runs on a transaction the caller holds and is refused outside one, and a write in that transaction stays refused by
+ *      the server; a remote fuzzy get_page, which reads in such a snapshot, answers and hides a private candidate.
  *    Every case also holds on the config route (the served arm runs the parity files on both).
  * 2. Fails on: a server that runs any remote whole operation, trusts a client's dispatch for the scope check, keeps a
- *    client-supplied authority key, or stamps a page the caller cannot read.
+ *    client-supplied authority key, stamps a page the caller cannot read, or lets a remote caller's transaction setting
+ *    cross outside its own transaction.
  * 3. Seam: none below the engine: a real owner, a real v3 listener, a real served client, raw frames through the client.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
@@ -49,7 +53,10 @@ let owner: RustEngine;
 let listener: ServedListener;
 let client: RustEngine;
 
-type Conn = { request(kind: 'call' | 'fn', member: string, args: unknown[]): Promise<unknown> };
+type Conn = {
+  request(kind: 'call' | 'fn', member: string, args: unknown[], opts?: { txn?: string }): Promise<unknown>;
+  txn(op: 'begin' | 'commit' | 'rollback', opts: { txn?: string }): Promise<unknown>;
+};
 const codeOf = (p: Promise<unknown>) => p.then(() => 'ok', (e: unknown) => String((e as { code?: string }).code ?? (e as Error).message));
 const worldOnly = <T>(fn: () => Promise<T>) => withRemoteCaller(true, () => withCallerAccess({ identity: [], audience: null, audienceIdentities: [] }, fn));
 const stampOf = async (slug: string) => {
@@ -150,5 +157,33 @@ describeAddon('remote writes over the served wire', () => {
     expect(off).toEqual(on);
     expect({ isError: on.isError, slug: on.slug }).toEqual({ isError: false, slug: 'notes/open' });
     expect(String(on.compiled_truth)).toContain('Anyone may read this.'); // a remote read quotes the body
+  });
+
+  test('a remote caller sets only its own transaction: beginSnapshotRead runs on one it holds and is refused outside one; a write there stays refused', async () => {
+    const conn = servedConnectionOf(client) as unknown as Conn;
+    const outside = await codeOf(withRemoteCaller(true, () => conn.request('call', 'beginSnapshotRead', [{ readOnly: true }])));
+    const ref = String(await conn.txn('begin', {}));
+    let inside = '';
+    let write = '';
+    try {
+      inside = await codeOf(withRemoteCaller(true, () => conn.request('call', 'beginSnapshotRead', [{ readOnly: true }], { txn: ref })));
+      write = await codeOf(withRemoteCaller(true, () => conn.request('call', 'setConfig', ['x.t', '1'], { txn: ref })));
+    } finally {
+      await conn.txn('rollback', { txn: ref }).catch(() => undefined);
+    }
+    expect({ outside, inside, write }).toEqual({ outside: 'engine_capability_missing', inside: 'ok', write: 'engine_capability_missing' });
+    expect(await owner.getConfig('x.t')).toBeNull();
+  });
+
+  test('a remote fuzzy get_page reads its candidates in a snapshot: a readable page resolves, a private one stays hidden', async () => {
+    const read = async (slug: string) => {
+      const out = await dispatchToolCall(client, 'get_page', { slug, fuzzy: true }, STDIO as never);
+      const body = JSON.parse(out.content[0]!.text) as Record<string, unknown>;
+      return { isError: out.isError === true, slug: body.slug ?? null, error: body.error ?? null };
+    };
+    expect({ open: await read('notes/ope'), secret: await read('notes/secre') }).toEqual({
+      open: { isError: false, slug: 'notes/open', error: null },
+      secret: { isError: true, slug: null, error: 'page_not_found' },
+    });
   });
 });

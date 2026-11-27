@@ -32,7 +32,7 @@ import { encodeError, encodeValue, type Wire } from '../owner-ipc/codec.ts';
 import {
   OWNER_IPC_VERSION_V3, SERVED_SERVER_CAPS, parsePositionToken, positionToken, type OwnerHello,
 } from '../owner-ipc/protocol.ts';
-import { OWNER_IPC_REMOTE_READS, OWNER_IPC_REMOTE_SIDE_WRITES, ownerIpcRefusal, ownerMemberOnlyReads } from '../owner-ipc/routes.ts';
+import { OWNER_IPC_REMOTE_READS, OWNER_IPC_REMOTE_SIDE_WRITES, OWNER_IPC_REMOTE_TXN_SETTINGS, ownerIpcRefusal, ownerMemberOnlyReads } from '../owner-ipc/routes.ts';
 import { OWNER_RUN_OPERATION } from '../owner-ipc/whole-op.ts';
 import { frameAccessWire } from '../owner-ipc/frame-access.ts';
 import { remoteWholeOperationCall } from './remote-whole-ops.ts';
@@ -306,7 +306,7 @@ export function servedSession(side: ServedServerSide, opts: ServedServerOptions,
     if (stale) { replyDirect(id, member, stale); return; }
     let remote: boolean;
     try { remote = effectiveRemote(principal!, frame.remote, member); } catch (error) { replyDirect(id, member, error); return; }
-    const remoteRefused = remote ? remoteCallRefusal(kind, member, frame.args, principal!) : null;
+    const remoteRefused = remote ? remoteCallRefusal(kind, member, frame.args, principal!, frame.txn !== undefined) : null;
     if (remoteRefused) { replyDirect(id, member, remoteRefused); return; }
     if (kind === 'fn' && network && SERVER_PATH_OPERATIONS.has(member)) { replyDirect(id, member, servedAdminPath(member)); return; }
     let args = frame.args as Wire;
@@ -471,12 +471,14 @@ function ownerFloor(principal: AuthenticatedPrincipal): boolean {
 /**
  * The refusal for a remote caller's frame, or null when it may cross: a typed read of the remote list, the one side write,
  * or a whole operation of the closed list (served/remote-whole-ops.ts) from the owner's floor (until A1 lifts, any other
- * principal's remote whole operation is refused before anything runs).
+ * principal's remote whole operation is refused before anything runs). A setting of the caller's own transaction
+ * (OWNER_IPC_REMOTE_TXN_SETTINGS) crosses only inside a transaction the caller holds (`inTxn`).
  */
-function remoteCallRefusal(kind: 'call' | 'fn', member: string, args: unknown, principal: AuthenticatedPrincipal): Error | null {
+function remoteCallRefusal(kind: 'call' | 'fn', member: string, args: unknown, principal: AuthenticatedPrincipal, inTxn: boolean): Error | null {
   if (remoteWholeOperationCall(kind, member, args)) {
     return ownerFloor(principal) ? null : ownerIpcRefusal(member, 'a remote whole operation of a principal other than the brain owner waits for per-user access');
   }
   if (kind === 'call' && (OWNER_IPC_REMOTE_SIDE_WRITES.has(member) || OWNER_IPC_REMOTE_READS.has(member))) return null;
+  if (kind === 'call' && inTxn && OWNER_IPC_REMOTE_TXN_SETTINGS.has(member)) return null;
   return ownerIpcRefusal(member, kind === 'fn' ? 'a remote caller\'s whole operation is not sent to the brain owner' : 'a remote caller\'s write is not sent to the brain owner');
 }
