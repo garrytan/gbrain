@@ -252,12 +252,17 @@ export function stripKoreanParticle(term: string): string {
  * chunk search all read this, so a count never disagrees with the rows.
  */
 export function cjkMatchGroups(query: string): string[][] {
-  return cjkMatchAlternatives(query).map(alt => alt.terms);
+  const seen = new Set<string>();
+  return cjkMatchAlternatives(query).map(alt => alt.terms).filter(terms => {
+    const key = JSON.stringify([...terms].sort());
+    return !seen.has(key) && !!seen.add(key);
+  });
 }
 
 /**
  * cjkMatchGroups with the quoted phrases of each alternative (GST-4037): the any-term fallback relaxes only an
  * alternative's unquoted words, so a chunk it returns always holds every quoted phrase of the alternative it matched.
+ * Alternatives with the same words but different quotes relax differently, so both are kept.
  */
 export function cjkMatchAlternatives(query: string): Array<{ terms: string[]; phrases: string[] }> {
   const items: Array<{ term: string; quoted: boolean } | 'OR'> = [];
@@ -275,8 +280,8 @@ export function cjkMatchAlternatives(query: string): Array<{ terms: string[]; ph
   return alternatives.filter(group => group.length).map(group => ({
     terms: Array.from(new Set(group.map(item => item.term))),
     phrases: Array.from(new Set(group.filter(item => item.quoted).map(item => item.term))),
-  })).filter(({ terms }) => {
-    const key = JSON.stringify([...terms].sort());
+  })).filter(({ terms, phrases }) => {
+    const key = JSON.stringify([[...terms].sort(), [...phrases].sort()]);
     return !seen.has(key) && !!seen.add(key);
   });
 }

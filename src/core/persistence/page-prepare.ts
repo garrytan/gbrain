@@ -209,6 +209,15 @@ function putProvenance(row: WriteRequest, snapshot: PageSnapshot | null, parsed:
   Object.assign(parsed.frontmatter, ingested_at ? stamp : channel);
   return stamp;
 }
+/**
+ * #10330, GST-4037: an edit, an append or a put whose stamps are server-owned (a remote caller's, or a managed put's) is
+ * not a new ingestion, with or without a repository, so the import keeps the stored first-ingest columns and the
+ * provenance update keeps a stored ingested_at as the column holds it (microseconds; a JS Date keeps milliseconds).
+ * Only an unmanaged local put_page may re-ingest, explicitly.
+ */
+function keepsIngestColumns(row: WriteRequest): boolean {
+  return row.operation === 'edit_page' || row.operation === 'append_page' || (row.operation === 'put_page' && (row.authority.remote === true || !!row.worktree_id));
+}
 function serverOwnsProvenance(row: WriteRequest): boolean {
   return (row.operation === 'put_page' && !!row.worktree_id) || (row.authority.remote === true && CALLER_CONTENT_OPERATIONS.includes(row.operation));
 }
@@ -1222,9 +1231,7 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
     source_kind: typeof p.source_kind === 'string' ? p.source_kind : null,
     source_uri: typeof p.source_uri === 'string' ? p.source_uri : null,
     ingested_via: typeof p.ingested_via === 'string' ? p.ingested_via : null,
-    // #10330, GST-4037: an edit, an append or a remote rewrite of a stored page is not a new ingestion, with or without a
-    // repository (a remote caller's stamps are server-owned, so its put_page never re-ingests; a local one may, explicitly).
-    keepIngestColumns: row.operation === 'edit_page' || row.operation === 'append_page' || (row.operation === 'put_page' && row.authority.remote === true),
+    keepIngestColumns: keepsIngestColumns(row),
     ...(gateTrust ? { writeGate: gateInput(gateTrust, row.id) } : {}),
     // Provenance compares the caller's page with the stored one, so it runs before the server's trust marker is stamped.
     prepareFrontmatter: page => {
@@ -1333,7 +1340,6 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
         async () => pinMode ? (await tx.executeRaw<{ mode: string | null }>(`UPDATE sources SET config=CASE WHEN config->>'slug_root_mode' IS NULL
           THEN jsonb_set(${SOURCE_CONFIG_OBJECT_SQL},'{slug_root_mode}',to_jsonb($2::text)) ELSE config END WHERE id=$1 RETURNING config->>'slug_root_mode' AS mode`,
         [row.source_id, pinMode]))[0] : undefined,
-        // A stored first-ingest time stays as the column holds it (microseconds; a JS Date keeps milliseconds).
         async () => { if (provenance) await tx.executeRaw(`UPDATE pages SET source_kind=$3,ingested_via=$4,ingested_at=CASE WHEN $6::boolean THEN ingested_at ELSE $5::timestamptz END
           WHERE source_id=$1 AND slug=$2`, [row.source_id, row.slug, provenance.source_kind, provenance.ingested_via, provenance.ingested_at, snapshot?.page.ingested_at != null]); },
         async () => { if (lean) ({ removedTimeline, contested } = projectedRows(await project?.(tx, applied?.pageId))); },

@@ -446,20 +446,26 @@ async function walkGmailWindow(g: GmailSweep, floorKey: 'gmail_backfill_floor_ms
     const threadIds = [...versions.keys()];
     let batchFailed = false;
     // The listing's `before:` bound is whole seconds, so a bank proves and saves the start of the oldest thread's second:
-    // every thread in that second is settled, and the next listing does not name the banked thread again.
+    // every thread in that second is settled, and the next listing does not name the banked thread again. The proof lists
+    // from one second early, as every listing does, so mail below that floor can fail it; it then proves the next second,
+    // which asks only that mail from that floor up be settled (the next listing names the oldest thread's second again).
     // A proof only spares the next sweep a re-walk, so a listing that fails or is cut short proves nothing and the walk
     // goes on; a usage limit ends the sweep instead. After a usage limit it gets ABORT_PROOF_MS, and none on gbrain.io, whose allowance is spent for the account.
     const bank = async (oldestMs: number): Promise<boolean> => {
-      const atMs = Math.floor(oldestMs / 1000) * 1000;
-      if (atMs >= floorMs || (limited && !gmail.supportsHistory)) return false;
+      if (limited && !gmail.supportsHistory) return false;
       const bounded = signal?.aborted || limited;
       const proofSignal = bounded ? AbortSignal.any([AbortSignal.timeout(ABORT_PROOF_MS), ...(signal && !signal.aborted ? [signal] : [])]) : signal;
-      // A usage limit is not a failed proof: it stops the sweep here, as one raised by a thread read does (GST-4026).
-      const below = await list(atMs, floorMs, WINDOW_LIST_PAGES, proofSignal).catch((e: unknown) => { if (isUsageLimit(e)) throw e; return null; });
-      if (!below?.complete || !below.ids.every(m => settled.has(m.threadId))) return false;
-      state[floorKey] = floorMs = atMs;
-      await saveGoogleState(deps, state);
-      return true;
+      for (const atMs of [Math.floor(oldestMs / 1000) * 1000, Math.floor(oldestMs / 1000) * 1000 + 1000]) {
+        if (atMs >= floorMs) return false;
+        // A usage limit is not a failed proof: it stops the sweep here, as one raised by a thread read does (GST-4026).
+        const below = await list(atMs, floorMs, WINDOW_LIST_PAGES, proofSignal).catch((e: unknown) => { if (isUsageLimit(e)) throw e; return null; });
+        if (!below?.complete) return false;
+        if (!below.ids.every(m => settled.has(m.threadId))) continue;
+        state[floorKey] = floorMs = atMs;
+        await saveGoogleState(deps, state);
+        return true;
+      }
+      return false;
     };
     for (let i = 0; i < threadIds.length; i += BACKFILL_BATCH_THREADS) {
       if (signal?.aborted) break;

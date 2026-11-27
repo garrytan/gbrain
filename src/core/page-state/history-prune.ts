@@ -119,13 +119,18 @@ export async function planHistoryPrune(engine: BrainEngine, sel: HistoryPruneSel
   };
 }
 
-/** Deletes exactly the plan's versions, one page at a time under its page lock. The caller has checked the plan hash. */
+/**
+ * Deletes the plan's versions, one page at a time under its page lock. The caller has checked the plan hash. With
+ * --keep, segmented retention may have removed some of the newest versions since the preview, so only an approved
+ * version still outside the newest `keep` under the lock goes.
+ */
 export async function applyHistoryPrune(engine: BrainEngine, plan: HistoryPrunePlan): Promise<{ pages: number; versions: number; unchanged_pages: number }> {
   let versions = 0, pages = 0, unchanged = 0;
   for (const page of plan.pages) {
     const n = await engine.transaction(async tx => {
       await tx.lockPageKeys([{ sourceId: page.source_id, slug: page.slug }]);
-      return pruneInlineVersionsById(tx, { pageId: page.page_id, sourceId: page.source_id, slug: page.slug, type: (plan.parameters.type as string | null) ?? null }, page.version_ids);
+      return pruneInlineVersionsById(tx, { pageId: page.page_id, sourceId: page.source_id, slug: page.slug, type: (plan.parameters.type as string | null) ?? null,
+        keep: (plan.parameters.keep as number | null) ?? null }, page.version_ids);
     });
     versions += n;
     if (n) pages++;

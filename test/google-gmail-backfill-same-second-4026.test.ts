@@ -9,10 +9,10 @@ import { afterAll, beforeAll, expect, test } from 'bun:test';
 import { parseGoogleSourceConfig, runGoogleSync } from '../src/core/google/google-source.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { withEnv } from './helpers/with-env.ts';
-import { createConnectorFixture, options, json, googleConfig, sourceCheckpoint, withGoogleAccount } from './helpers/connector-fixture.ts';
+import { createConnectorFixture, options, json, googleConfig, sourceCheckpoint, withGoogleAccount, settleConnectorWrites } from './helpers/connector-fixture.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 
-const { engines, env, source, setup, teardown } = createConnectorFixture();
+const { engines, env, source, boundSource, setup, teardown } = createConnectorFixture();
 beforeAll(setup, 120_000);
 afterAll(teardown);
 
@@ -28,7 +28,8 @@ const SAME_SECOND = THREADS[25]!;
 const config = { ...googleConfig, g_services: 'gmail', g_history_days: 400 };
 type GmailState = { gmail_backfill_done?: boolean; gmail_backfill_floor_ms?: number | null };
 
-function gmail(account: string, rateLimit?: string) {
+function gmail(account: string, rateLimit?: string, opts: { threads?: typeof THREADS; inclusive?: boolean; onThread?: (n: number) => void } = {}) {
+  const threads = opts.threads ?? THREADS;
   const fetched = new Set<string>();
   const fetcher = async (url: string) => {
     const u = new URL(url);
@@ -39,14 +40,15 @@ function gmail(account: string, rateLimit?: string) {
       const q = u.searchParams.get('q') ?? '';
       const after = Number(/after:(\d+)/.exec(q)?.[1] ?? -1);
       const before = Number(/before:(\d+)/.exec(q)?.[1] ?? Infinity);
-      const hits = THREADS.filter(m => Math.floor(m.ms / 1000) > after && Math.floor(m.ms / 1000) < before).sort((a, b) => b.ms - a.ms);
+      const hits = threads.filter(m => (opts.inclusive ? Math.floor(m.ms / 1000) >= after : Math.floor(m.ms / 1000) > after) && Math.floor(m.ms / 1000) < before).sort((a, b) => b.ms - a.ms);
       return json({ messages: hits.map(m => ({ id: `18f2f4a9b3d2${m.tid.slice(-4)}`, threadId: m.tid })) });
     }
     const m = u.pathname.match(/\/users\/me\/threads\/([^/]+)$/);
     if (m) {
       if (m[1] === rateLimit) return json({ error: { message: 'rate limit' } }, 429, { 'retry-after': '0' });
       fetched.add(m[1]);
-      const t = THREADS.find(x => x.tid === m[1])!;
+      opts.onThread?.(fetched.size);
+      const t = threads.find(x => x.tid === m[1])!;
       return json({ id: t.tid, messages: [{ id: `18f2f4a9b3d3${t.tid.slice(-4)}`, threadId: t.tid, labelIds: [], internalDate: String(t.ms),
         payload: { mimeType: 'text/plain', headers: [{ name: 'From', value: 'Peer Example <peer@example.invalid>' },
           { name: 'To', value: account }, { name: 'Subject', value: `Topic ${t.tid}` }], body: { data: b64url(`Body ${t.tid}.`) } } }] });
@@ -76,5 +78,20 @@ test('GST-4026: a floor saved inside a second still lists that second, so a same
     expect(second.fetched.has(SAME_SECOND.tid)).toBe(true);
     expect(new Set([...first.fetched, ...second.fetched])).toEqual(new Set(THREADS.map(t => t.tid)));
     expect((await gmailState(engine, f.id))?.gmail_backfill_done).toBe(true);
+  }
+}), 240_000);
+
+/** One thread a second: under an inclusive `after:`, a proof listing from one second early always names an unsettled thread. */
+const DENSE = Array.from({ length: 30 }, (_, i) => ({ tid: `17ee00000000b${String(i).padStart(3, '0')}`, ms: NOW_MS - 50 * DAY - i * 1000 }));
+
+test('GST-4026: a managed sweep cut off on dense mail still banks the second above its oldest landed thread', async () => withEnv(env, async () => {
+  for (const engine of engines) {
+    const f = await boundSource(engine, config);
+    const cfg = parseGoogleSourceConfig(config, f.dir);
+    const controller = new AbortController();
+    const sweep = gmail(cfg.account, undefined, { threads: DENSE, inclusive: true, onThread: n => { if (n >= 3) controller.abort(); } });
+    await runGoogleSync(engine, f.id, cfg, { ...options, signal: controller.signal }, sweep.fetcher).catch(() => undefined);
+    await settleConnectorWrites(engine, f.id);
+    expect((await gmailState(engine, f.id))?.gmail_backfill_floor_ms).toBe(DENSE[0]!.ms + 1000);
   }
 }), 240_000);

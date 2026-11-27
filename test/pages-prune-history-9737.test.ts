@@ -233,5 +233,23 @@ for (const kind of testBackends()) {
       const left = (await engine.executeRaw<{ id: number | string }>('SELECT id FROM page_versions WHERE page_id = $1 ORDER BY id', [pageId])).map(r => Number(r.id));
       expect(left).toEqual([older, inline[2]!, newest]);
     });
+
+    test('GST-4026: an apply after segmented retention removed newer versions keeps what is now among the newest --keep', async () => {
+      const slug = `notes/segmented-race-${kind}`;
+      const segmented = async (pageId: number) => Number((await engine.executeRaw<{ id: number | string }>(
+        "INSERT INTO page_versions (page_id, compiled_truth, body_storage, body_generation) VALUES ($1, NULL, 'segmented', 1) RETURNING id", [pageId]))[0]!.id);
+      const pageId = (await put(slug, 'r1')).id;
+      await createPageVersion(engine, slug, 'default');
+      await put(slug, 'r2');
+      const [inline] = (await engine.executeRaw<{ id: number | string }>("SELECT id FROM page_versions WHERE page_id = $1 AND body_storage = 'inline'", [pageId])).map(r => Number(r.id));
+      const newer = [await segmented(pageId), await segmented(pageId)];
+      const plan = await planHistoryPrune(engine, { slug, sourceId: 'default', keep: 2 });
+      expect(plan.pages.map(p => p.version_ids)).toEqual([[inline!]]);
+      // Segmented retention keeps only its newest version between the preview and the apply.
+      await engine.executeRaw('DELETE FROM page_versions WHERE id = $1', [newer[0]]);
+      expect(await applyHistoryPrune(engine, plan)).toEqual({ pages: 0, versions: 0, unchanged_pages: 1 });
+      const left = (await engine.executeRaw<{ id: number | string }>('SELECT id FROM page_versions WHERE page_id = $1 ORDER BY id', [pageId])).map(r => Number(r.id));
+      expect(left).toEqual([inline!, newer[1]!]);
+    });
   });
 }

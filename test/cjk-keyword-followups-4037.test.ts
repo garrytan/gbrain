@@ -12,6 +12,7 @@ import { installFixtureChunks } from './helpers/page-projection.ts';
 import { prepareMarkdownChunks } from '../src/core/markdown-chunks.ts';
 import { buildKeywordCountStatement, buildKeywordPagesStatement } from '../src/core/search/keyword-statement.ts';
 import { buildCJKCandidateSql, type CjkKeywordCtx } from '../src/core/search/cjk-keyword-sql.ts';
+import { cjkMatchAlternatives } from '../src/core/cjk.ts';
 
 let engine: PGLiteEngine;
 async function page(slug: string, body: string): Promise<void> {
@@ -64,5 +65,13 @@ describe('GST-4037 CJK keyword follow-ups', () => {
     expect(countStmt.params.filter(p => typeof p === 'string' && p.startsWith('%'))).toHaveLength(51);
     expect(Number((await engine.executeRaw<{ n: number }>(countStmt.sql, countStmt.params))[0]!.n)).toBe(3);
     expect((await engine.executeRaw<{ slug: string }>(pagesStmt.sql, pagesStmt.params)).map(r => r.slug).sort()).toEqual(['notes/tokyo-0', 'notes/tokyo-1', 'notes/tokyo-2']);
+  });
+
+  test('alternatives with the same words but different quotes both relax, in either order', async () => {
+    for (const q of ['"東京" 京都 OR 東京 京都', '東京 京都 OR "東京" 京都']) {
+      expect(cjkMatchAlternatives(q)).toHaveLength(2);
+      expect(await slugs(q, { limit: 10 })).toEqual([]);
+      expect(await slugs(q, { limit: 10, orFallback: true })).toEqual(expect.arrayContaining(['notes/kyoto', 'notes/kansai', 'notes/tokyo-0']));
+    }
   });
 });
