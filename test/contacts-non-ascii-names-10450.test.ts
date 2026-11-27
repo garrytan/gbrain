@@ -16,6 +16,9 @@ import { parseGoogleSourceConfig, runGoogleSync } from '../src/core/google/googl
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { createConnectorFixture, options, json, googleConfig, withGoogleAccount, settleConnectorWrites } from './helpers/connector-fixture.ts';
+import { sha8 } from '../src/core/google/google-render.ts';
+import { installFaultHook } from '../src/core/persistence/fault-points.ts';
+import type { BrainEngine } from '../src/core/engine.ts';
 
 const DIR = 'contacts';
 const contact = (over: Partial<ContactData> = {}): ContactData => ({ resourceName: 'people/c10450', displayName: '张三', emails: ['zhang@example.com'],
@@ -140,12 +143,45 @@ describe('the managed contacts sweep imports non-ASCII names (#10450)', () => {
     { resourceName: 'people/c3', names: [{ displayName: 'Alice Example' }], emailAddresses: [{ value: 'alice@example.com' }] },
     { resourceName: 'people/c4', names: [{ displayName: '王五' }] },
   ];
-  const fetcher = withGoogleAccount(async (url: string) => {
+  const listing = (connections: unknown[]) => withGoogleAccount(async (url: string) => {
     const u = new URL(url);
-    if (u.pathname.endsWith('/people/me/connections')) return json({ connections: people, nextSyncToken: 'ppl-1' });
+    if (u.pathname.endsWith('/people/me/connections')) return json({ connections, nextSyncToken: 'ppl-1' });
     if (u.pathname.endsWith('/contactGroups')) return json({ contactGroups: [] });
     return json({ error: { message: 'unexpected fixture route' } }, 400);
   });
+  const fetcher = listing(people);
+  const owners = async (engine: BrainEngine, sourceId: string) => Object.fromEntries((await engine.executeRaw<{ slug: string; id: string }>(
+    "SELECT slug, frontmatter->>'google_contact_id' AS id FROM pages WHERE source_id=$1 AND deleted_at IS NULL", [sourceId])).map(r => [r.slug, r.id]));
+
+  test('a contact refused on a path another contact owns is held, and the rest of the sweep lands', async () => withEnv(env, async () => {
+    for (const engine of engines) {
+      const f = await boundSource(engine, config);
+      const cfg = parseGoogleSourceConfig(config, f.dir);
+      // An ASCII name that slugs to exactly the id path of the non-Latin contact listed after it.
+      const squatter = { resourceName: 'people/c9', names: [{ displayName: `Contact ${sha8('people/c1')}` }], emailAddresses: [{ value: 'carol@example.com' }] };
+      const result = await runGoogleSync(engine, f.id, cfg, options, listing([squatter, people[0], people[2]]));
+      await settleConnectorWrites(engine, f.id);
+      await disposePersistenceConsumer(engine);
+      expect(result.status).toBe('partial');
+      expect(await owners(engine, f.id)).toEqual({ [contactIdSlug('people/c1', DIR)]: 'people/c9', [`${DIR}/alice-example`]: 'people/c3' });
+    }
+  }), 120_000);
+
+  test('a second contact on the same name waits for the first one\'s outstanding write instead of overwriting it', async () => withEnv(env, async () => {
+    for (const engine of engines) {
+      const f = await boundSource(engine, config);
+      const cfg = parseGoogleSourceConfig(config, f.dir);
+      const twins = ['people/c21', 'people/c22'].map(resourceName => ({ resourceName, names: [{ displayName: 'Alice Example' }],
+        emailAddresses: [{ value: `${resourceName.slice(7)}@example.com` }] }));
+      // The first publication outlives the 5 s a single item waits, so the sweep moves on with it still outstanding.
+      let stalled = false;
+      installFaultHook(async (point) => { if (point === 'consumer:preparing' && !stalled) { stalled = true; await new Promise(r => setTimeout(r, 6_500)); } });
+      try { await runGoogleSync(engine, f.id, cfg, options, listing(twins)); } finally { installFaultHook(undefined); }
+      await settleConnectorWrites(engine, f.id);
+      await disposePersistenceConsumer(engine);
+      expect(await owners(engine, f.id)).toEqual({ [`${DIR}/alice-example`]: 'people/c21', [`${DIR}/alice-example-${sha8('people/c22')}`]: 'people/c22' });
+    }
+  }), 120_000);
 
   test('every contact with an email or phone gets a page under its own name', async () => withEnv(env, async () => {
     for (const engine of engines) {
