@@ -393,17 +393,17 @@ export async function discoverExtractablePages(
   limit: number = PAGE_DISCOVERY_BUDGET,
 ): Promise<AtomPageInput[]> {
   const hasFilter = Array.isArray(affectedSlugs) && affectedSlugs.length > 0;
-  const query = {
-    sourceId,
-    types: await resolveExtractableTypes(),
-    minChars: MIN_PAGE_CHARS_FOR_EXTRACTION,
-    limit,
-    affectedSlugs: hasFilter ? affectedSlugs : null,
-    connectorExclusion: await connectorAtomExclusion(engine),
-    holdIds: await currentHoldIds(engine, 'atom'),
-  };
-
-  try {
+  const connectorExclusion = await connectorAtomExclusion(engine);
+  try { // the type and hold lookups stay in the try as when the query was raw SQL: a failed lookup is a failed discovery (fail-soft)
+    const query = {
+      sourceId,
+      types: await resolveExtractableTypes(),
+      minChars: MIN_PAGE_CHARS_FOR_EXTRACTION,
+      limit,
+      affectedSlugs: hasFilter ? affectedSlugs : null,
+      connectorExclusion,
+      holdIds: await currentHoldIds(engine, 'atom'),
+    };
     const rows = await engine.listExtractablePages(query); // engine-sql/extract-atoms-reads.ts
     return rows.map((r) => ({
       slug: r.slug,
