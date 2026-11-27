@@ -41,7 +41,8 @@ becomes visible to the brain in one commit, or not at all.
 7. **Ids are never reused.** An allocator (`next_*` counter) only moves forward. A rolled-back
    statement, savepoint or transaction keeps the highest value it reached, and a rollback writes
    that value back in its own commit, so an id taken in a rolled-back transaction is not handed out
-   again, also after the brain is reopened.
+   again, also after the brain is reopened. After a crash this holds in multi-user mode only, which
+   reserves id ranges on disk (see the optimistic section below).
 8. **Journaled writes roll back with the transaction.** A write request and its receipt are
    ordinary records in the same transaction: after a rollback the request was never admitted.
 9. **Disconnect.** `disconnect()` waits up to 5 seconds for an open transaction to end. After that
@@ -159,6 +160,12 @@ drop, and its bound store's `commit_transaction` / `rollback_transaction` refuse
 - The first `write_conflict` a transaction sees dooms it: `transactionConflicted()` is true and its commit refuses.
 - A transaction that ends without committing writes nothing back and raises the id sequences it advanced in a write of
   its own, so no id is handed out twice, also after a reopen.
+- Each id sequence also reserves its ids on disk before it hands them out (the record file's `id_reservations`
+  table, outside the commit sequence, 1024 ids ahead at a time), and the first allocation after an open starts at or
+  above the reservation. So an id is not handed out twice after a crash, a kill or a forward write that never reached
+  the disk either. A clean close gives back the unused part of each range, so a reopen numbers on with no gap; a crash
+  skips at most 1024 ids per sequence. Not covered: a promoted follower, whose copy carries no reservation (see
+  `occ_kv.rs`, "Id sequences").
 - `holdPageKeys` also takes the keys in the brain's single-flight table until the transaction ends: sorted; a
   transaction that holds no key, or is older than the holder, waits (bounded by the deadline, then `timeout` reason
   `key_wait`); a younger one that already holds a key is refused and runs again keeping its age (`transactionAge()`).

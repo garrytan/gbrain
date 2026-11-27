@@ -19,7 +19,7 @@
 //! Three kinds of write do not read the key they change, so they never conflict:
 //! - `allocate`: an id sequence (Postgres `nextval`). Ids are handed out from memory and are
 //!   never handed out twice; an id taken by a transaction that does not commit is lost, as in
-//!   Postgres.
+//!   Postgres. See "Id sequences" below for a reopen.
 //! - `add_i64`: an atomic add on a counter.
 //! - `counter_below`: an admission check (`value < cap`). It conflicts only when a later commit
 //!   makes the check come out differently.
@@ -39,6 +39,21 @@
 //!
 //! A failed record-file commit stops the pipeline: every later commit fails with `store_io` until
 //! the brain is opened again (the Postgres answer to a failed WAL flush is the same: stop).
+//!
+//! Id sequences: the first allocation of a sequence after an open starts at its committed value. In
+//! multi-user mode (`Kv::set_id_reservation`) a sequence also reserves its ids on disk before it
+//! hands any out: when an allocation would pass the reservation, it first raises it to the
+//! allocation's end plus `RESERVE_AHEAD` in a durable commit of its own (the record file's
+//! `id_reservations` table: outside the commit sequence, never logged and never checked for
+//! conflicts), and the first allocation after an open starts at or above it. So an id is not handed
+//! out again after a crash, a kill or a lost forward write, even when the transaction that took it
+//! never committed. A clean close gives back the unused part of each reserved range, so a reopen
+//! numbers on with no gap; after a crash the next ids skip at most `RESERVE_AHEAD` per sequence.
+//! The reservation is local to the record file: a follower's copy or a store snapshot does not carry
+//! it, so ids an old primary handed out to transactions that never committed can be handed out
+//! again by a promoted follower. With the mode off nothing is reserved or changed on disk (a
+//! reservation left by an earlier multi-user open is still honoured), and a crash hands out again
+//! the ids of transactions that never committed, as before.
 
 use crate::commit_log::{
     AcceptHook, CommitClock, CommitMeta, CommitPosition, LogOpRef, LogSettings, LogState,
@@ -144,9 +159,49 @@ fn apply(op: &Op, base: Option<&[u8]>) -> Result<Option<Vec<u8>>> {
 /// The base the optimistic layer runs on: a `Kv` whose snapshots can be sent to another thread
 /// and report the commit sequence they see (`Kv::versioned_snapshot`). Only the pipeline thread
 /// writes to it.
-pub(crate) trait OccBase: Kv + 'static {}
+pub(crate) trait OccBase: Kv + 'static {
+    /// True when the base keeps durable id reservations (see "Id sequences" in the module docs).
+    fn keeps_id_reservations(&self) -> bool {
+        false
+    }
+    /// The durable id reservation of sequence `key`, `None` when there is none.
+    fn id_reservation(&self, key: &[u8]) -> Result<Option<u64>> {
+        let _ = key;
+        Ok(None)
+    }
+    /// Sets (`Some`) or removes (`None`) id reservations in one durable commit outside the commit
+    /// sequence. Called only on a base that keeps them, never from the pipeline thread.
+    fn set_id_reservations(&self, set: &[(Vec<u8>, Option<u64>)]) -> Result<()> {
+        let _ = set;
+        Ok(())
+    }
+}
 
-impl OccBase for RedbKv {}
+impl OccBase for RedbKv {
+    fn keeps_id_reservations(&self) -> bool {
+        true
+    }
+    fn id_reservation(&self, key: &[u8]) -> Result<Option<u64>> {
+        RedbKv::id_reservation(self, key)
+    }
+    fn set_id_reservations(&self, set: &[(Vec<u8>, Option<u64>)]) -> Result<()> {
+        RedbKv::set_id_reservations(self, set)
+    }
+}
+
+/// How many ids past the ones it hands out an id sequence reserves on disk at a time (multi-user
+/// mode): one durable reservation write per this many ids of one sequence.
+const RESERVE_AHEAD: u64 = 1024;
+
+/// One id sequence in memory.
+#[derive(Clone, Copy, Debug)]
+struct Sequence {
+    /// The next id to hand out.
+    next: u64,
+    /// The durable reservation (multi-user mode): no id at or above it was handed out. `None` when
+    /// none is on disk for this key.
+    reserved: Option<u64>,
+}
 
 /// Counts of what the layer did since open (for benchmarks and tests).
 #[derive(Debug, Default)]
@@ -387,7 +442,9 @@ struct Shared {
     sender: Mutex<Option<Sender<Msg>>>,
     locks: Arc<KeyLocks>,
     /// Next id to hand out per sequence key, once loaded from the record file.
-    sequences: Mutex<HashMap<Vec<u8>, u64>>,
+    sequences: Mutex<HashMap<Vec<u8>, Sequence>>,
+    /// Durable id reservation is on (multi-user mode, `Kv::set_id_reservation`).
+    reserve_ids: AtomicBool,
     /// Snapshot sequences of open write transactions (sequence -> count).
     open: Mutex<BTreeMap<u64, usize>>,
     published: AtomicU64,
@@ -422,6 +479,46 @@ impl Shared {
     fn oldest_open(&self) -> u64 {
         let open = self.open.lock().unwrap_or_else(|p| p.into_inner());
         open.keys().next().copied().unwrap_or(u64::MAX)
+    }
+}
+
+impl Drop for Shared {
+    /// A clean close (the last handle of the store and of every transaction is gone, the pipeline
+    /// has stopped and never failed, multi-user mode on) gives back the unused part of each reserved id range: a key
+    /// whose committed sequence reached the next id loses its reservation, any other keeps it down
+    /// to the next id (a transaction that ended without committing or writing its counters forward
+    /// still holds the ids below). A reopen then numbers on with no gap. After a failed commit the
+    /// reservations stay as they are: the next open starts above them. Errors are ignored: a
+    /// reservation that stays is only a gap.
+    fn drop(&mut self) {
+        if self.poisoned.load(Ordering::Acquire) || !self.reserve_ids.load(Ordering::Acquire) {
+            return;
+        }
+        let sequences = self.sequences.get_mut().unwrap_or_else(|p| p.into_inner());
+        if sequences.values().all(|s| s.reserved.is_none()) {
+            return;
+        }
+        let Ok((latest, _)) = self.base.versioned_snapshot() else {
+            return;
+        };
+        let mut set = Vec::new();
+        for (key, sequence) in sequences.iter() {
+            let Some(reserved) = sequence.reserved else {
+                continue;
+            };
+            let Ok(stored) = latest.get(key).and_then(|v| decode_u64_be(v.as_deref())) else {
+                return;
+            };
+            if stored.unwrap_or(1) >= sequence.next {
+                set.push((key.clone(), None));
+            } else if reserved != sequence.next {
+                set.push((key.clone(), Some(sequence.next)));
+            }
+        }
+        drop(latest);
+        if !set.is_empty() {
+            let _ = self.base.set_id_reservations(&set);
+        }
     }
 }
 
@@ -593,7 +690,7 @@ impl Pipeline {
                         if let (Some(n), Some(v)) = (sequences.get_mut(key), value.as_deref())
                             && let Ok(Some(v)) = decode_u64_be(Some(v))
                         {
-                            *n = (*n).max(v);
+                            n.next = n.next.max(v);
                         }
                     }
                 }
@@ -778,6 +875,7 @@ impl OccKv {
             sender: Mutex::new(Some(tx)),
             locks: Arc::new(KeyLocks::default()),
             sequences: Mutex::new(HashMap::new()),
+            reserve_ids: AtomicBool::new(false),
             open: Mutex::new(BTreeMap::new()),
             published: AtomicU64::new(version),
             poisoned: AtomicBool::new(false),
@@ -1029,6 +1127,11 @@ impl Kv for OccKv {
         *self.shared.clock.lock().unwrap_or_else(|p| p.into_inner()) = None;
     }
 
+    fn set_id_reservation(&self, on: bool) {
+        let on = on && self.shared.base.keeps_id_reservations();
+        self.shared.reserve_ids.store(on, Ordering::Release);
+    }
+
     fn set_commit_clock(
         &self,
         clock: Arc<dyn crate::env::Env>,
@@ -1233,16 +1336,43 @@ impl KvWrite for OccTxn {
                 .sequences
                 .lock()
                 .unwrap_or_else(|p| p.into_inner());
-            let next = match sequences.get(key) {
+            let mut sequence = match sequences.get(key) {
                 Some(n) => *n,
                 None => {
                     // Every allocation goes through this map once the brain is open, so the
-                    // latest committed value is a safe start.
+                    // latest committed value is a safe start, raised to a durable reservation an
+                    // earlier open left (it handed out ids below it that may not have committed).
                     let latest = self.shared.base.versioned_snapshot()?.0;
-                    decode_u64_be(latest.get(key)?.as_deref())?.unwrap_or(1)
+                    let stored = decode_u64_be(latest.get(key)?.as_deref())?.unwrap_or(1);
+                    let reserved = if self.shared.base.keeps_id_reservations() {
+                        self.shared.base.id_reservation(key)?
+                    } else {
+                        None
+                    };
+                    Sequence {
+                        next: stored.max(reserved.unwrap_or(0)),
+                        reserved,
+                    }
                 }
             };
-            sequences.insert(key.to_vec(), next + count);
+            let next = sequence.next;
+            let end = next.checked_add(count).ok_or_else(|| {
+                StoreError::new(STORE_CORRUPT, "an id sequence ran past the largest id")
+            })?;
+            // Multi-user mode: reserve the range on disk before any id in it is handed out, so a
+            // reopen after a crash starts above it. The pipeline never waits on this lock while it
+            // holds the record file's writer, so the reservation's own commit cannot deadlock.
+            if self.shared.reserve_ids.load(Ordering::Acquire)
+                && sequence.reserved.is_none_or(|r| end > r)
+            {
+                let target = end.saturating_add(RESERVE_AHEAD);
+                self.shared
+                    .base
+                    .set_id_reservations(&[(key.to_vec(), Some(target))])?;
+                sequence.reserved = Some(target);
+            }
+            sequence.next = end;
+            sequences.insert(key.to_vec(), sequence);
             next
         };
         let end = first + count;

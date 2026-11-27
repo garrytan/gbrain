@@ -45,7 +45,10 @@
 //! without committing (a rollback, a drop, a refused or timed-out commit) writes nothing back: its
 //! data is dropped, and a separate write that holds only `raise_counter` operations (they never
 //! conflict and never overwrite another writer) raises every counter it advanced. Either way an id
-//! handed out inside a transaction that did not commit is never handed out again, also after a reopen.
+//! handed out inside a transaction that did not commit is never handed out again, also after a clean
+//! reopen. After a crash (or a kill, or a forward write that never reached the disk) the guarantee
+//! holds in multi-user mode only: there each id range is reserved on disk before an id in it is
+//! handed out (`occ_kv.rs`, "Id sequences").
 //!
 //! Keys: `keys::LOCK_QUEUE` (`w`) is reserved for this file. No `w` record is written. A serialized
 //! transaction holds a page key (`lockPageKeys`) in memory only: no other writer can reach a held key
