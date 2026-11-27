@@ -579,7 +579,7 @@ impl Store {
                 // The delivery-lease trigger: every named revision is retained, and leased.
                 crate::shared_skill_catalog::lease_delivery_revisions(
                     tx,
-                    self.brain_id(),
+                    &self.brain_id(),
                     &spec.revisions,
                     now_us,
                     now_us,

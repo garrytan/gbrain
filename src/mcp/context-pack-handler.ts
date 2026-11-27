@@ -275,6 +275,12 @@ export function makeContextPackIpcHandler(
         if (first.section) sections.push(first.section);
         result.firstSession = first.state;
       }
+      // C2: confirmed standing rules, only while the owner switched them on (rules.session_start, off until the eval passes).
+      if (req.sections!.includes('standing_rules')) {
+        const { rulesSectionFor, rulesSessionStartEnabled } = await import('../core/rules/section.ts');
+        const rules = await rulesSessionStartEnabled(engine).then(on => on ? rulesSectionFor(engine, { remote: false, sourceId: sessionSource }) : null).catch(() => null);
+        if (rules) sections.push({ name: 'standing_rules', text: rules.text });
+      }
       result.sections = fitSessionStartSections(sections).kept;
     }
     if (isSessionStart && await briefEnabled(engine)) {

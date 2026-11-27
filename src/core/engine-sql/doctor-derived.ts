@@ -733,9 +733,9 @@ const EXTRACT_ROLLUP_SQL = `SELECT
          SUM(expected_limit_count) AS expected_limit_count,
          SUM(rollup_write_failures) AS rollup_write_failures,
          MAX(updated_at) AS last_updated_at,
-         CURRENT_DATE - MAX(day) FILTER (WHERE halt_count > 0) AS last_halt_age_days
+         (now() AT TIME ZONE 'UTC')::date - MAX(day) FILTER (WHERE halt_count > 0) AS last_halt_age_days
        FROM extract_rollup_7d
-       WHERE day >= CURRENT_DATE - 7
+       WHERE day >= (now() AT TIME ZONE 'UTC')::date - 7
        GROUP BY kind
        ORDER BY kind COLLATE "C"`;
 const EXTRACT_ROLLUP_NO_EXPECTED_SQL = `SELECT
@@ -748,13 +748,17 @@ const EXTRACT_ROLLUP_NO_EXPECTED_SQL = `SELECT
          0 AS expected_limit_count,
          SUM(rollup_write_failures) AS rollup_write_failures,
          MAX(updated_at) AS last_updated_at,
-         CURRENT_DATE - MAX(day) FILTER (WHERE halt_count > 0) AS last_halt_age_days
+         (now() AT TIME ZONE 'UTC')::date - MAX(day) FILTER (WHERE halt_count > 0) AS last_halt_age_days
        FROM extract_rollup_7d
-       WHERE day >= CURRENT_DATE - 7
+       WHERE day >= (now() AT TIME ZONE 'UTC')::date - 7
        GROUP BY kind
        ORDER BY kind COLLATE "C"`;
 
-/** The 7-day extract rollup per kind; `withExpected: false` is the pre-v141 text for a brain without `expected_limit_count`. */
+/**
+ * The 7-day extract rollup per kind; `withExpected: false` is the pre-v141 text for a brain without `expected_limit_count`.
+ * Days are UTC days (the rollup writer's), so the window and the last halt's age do not move with the session time zone
+ * (#10356).
+ */
 export function readExtractRollup7d(raw: EngineRawRead, withExpected: boolean): Promise<ExtractRollupRow[]> {
   return raw<ExtractRollupRow>(withExpected ? EXTRACT_ROLLUP_SQL : EXTRACT_ROLLUP_NO_EXPECTED_SQL, []);
 }

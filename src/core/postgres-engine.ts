@@ -81,7 +81,7 @@ import { ConnectionManager, DEFAULT_DIRECT_POOL_SIZE } from './connection-manage
 import { logConnectionEvent } from './connection-audit.ts';
 import { drainBackgroundWorkBeforeDisconnect } from './background-work.ts';
 import { abortGuarded, requestSignal, throwIfRequestAborted } from './request-signal.ts';
-import { refuseAborted } from './engine-sql/abort-aware.ts';
+import { refuseAborted, refuseRawWrites, refuseWrites } from './engine-sql/abort-aware.ts';
 import {
   validateSlug, contentHash, isBlankBody, rowToPage, rowToStalePage, rowToChunk, rowToSearchResult, parseEmbedding, tryParseEmbedding,
   isUndefinedTableError, warnOncePerProcess,
@@ -724,18 +724,18 @@ export class PostgresEngine implements BrainEngine {
   private preparationRead<T>(fn: (exec: SqlExecutor) => Promise<T>, unbounded?: boolean): Promise<T> {
     try { throwIfRequestAborted(); } catch (error) { return Promise.reject(error); } // a cancelled request reserves no connection and sends no BEGIN, as executeRaw refused it (R2)
     const deadlineAt = this._pageTransaction || unbounded ? undefined : readDeadline();
-    if (deadlineAt === undefined) return fn(this.autocommitSql);
-    return runDeadlineRead(this.sql, deadlineAt, tx => fn(refuseAborted(this.engineSqlOn(tx))), this.checkoutGauge, cancelSettleMs(), readDeadlineSignal());
+    if (deadlineAt === undefined) return fn(refuseWrites(this.autocommitSql)); // a read route refuses a write on every call (engine-sql/read-route-guard.ts), so a write routed here fails without a deadline too
+    return runDeadlineRead(this.sql, deadlineAt, tx => fn(refuseWrites(refuseAborted(this.engineSqlOn(tx)))), this.checkoutGauge, cancelSettleMs(), readDeadlineSignal());
   }
 
   /** A typed read master ran on `engineSql`: still so, or `preparationRead` under a read deadline. */
   private engineSqlRead<T>(fn: (exec: SqlExecutor) => Promise<T>): Promise<T> {
-    return this._pageTransaction || readDeadline() === undefined ? fn(this.engineSql) : this.preparationRead(fn);
+    return this._pageTransaction || readDeadline() === undefined ? fn(refuseWrites(this.engineSql)) : this.preparationRead(fn);
   }
 
   /** A typed read master ran through this engine's executeRaw (a statement fault a test injects reaches it): still so, or `preparationRead` under a read deadline. */
   private ownRawRead<T>(fn: (exec: Pick<BrainEngine, 'executeRaw'>) => Promise<T>): Promise<T> {
-    return this._pageTransaction || readDeadline() === undefined ? fn(this) : this.preparationRead(fn);
+    return this._pageTransaction || readDeadline() === undefined ? fn(refuseRawWrites(this)) : this.preparationRead(fn);
   }
 
   /**
@@ -2440,7 +2440,7 @@ export class PostgresEngine implements BrainEngine {
   setDecideCalibrationRetired(id: number, retired: boolean) { return decideStoreImpl.setDecideCalibrationRetired(this, id, retired); }
   readLedgerSource(sourceId: string, opts?: { batch?: boolean }) { return this.preparationRead(exec => beliefImpl.readLedgerSource(unscopedExecutor(exec, 'belief: ledger source probe ran unscoped through executeRaw'), sourceId, opts), opts?.batch); }
   readBeliefTombstones(sourceId: string, factFps: readonly string[], takeFps: readonly string[]) { return beliefLedgerImpl.readBeliefTombstones(unscopedExecutor(this.engineSql, 'belief: the ledger write path ran this read through executeRaw unscoped'), sourceId, factFps, takeFps); }
-  readLegacyClaimFingerprints(sourceId: string, claims: readonly string[]) { return beliefLedgerImpl.readLegacyClaimFingerprints(unscopedExecutor(this.engineSql, 'belief: the pre-v341 fingerprint probe ran this read through executeRaw unscoped'), sourceId, claims); }
+  readLegacyClaimFingerprints(sourceId: string, claims: readonly string[]) { return beliefLedgerImpl.readLegacyClaimFingerprints(unscopedExecutor(this.engineSql, 'belief: the pre-v353 fingerprint probe ran this read through executeRaw unscoped'), sourceId, claims); }
   readLegacyBeliefTombstones(sourceId: string, probes: Parameters<typeof beliefLedgerImpl.readLegacyBeliefTombstones>[2]) { return beliefLedgerImpl.readLegacyBeliefTombstones(unscopedExecutor(this.engineSql, 'belief: the ledger write path ran this read through executeRaw unscoped'), sourceId, probes); }
   readLatestBeliefCoverage(sourceId: string) { return beliefLedgerImpl.readLatestBeliefCoverage(unscopedExecutor(this.engineSql, 'belief: the ledger activation ran this read through executeRaw unscoped'), sourceId); }
   hasBeliefBaseline(sourceId: string, slug: string, runId: string) { return beliefLedgerImpl.hasBeliefBaseline(unscopedExecutor(this.engineSql, 'belief: the ledger activation ran this read through executeRaw unscoped'), sourceId, slug, runId); }
@@ -2840,7 +2840,7 @@ export class PostgresEngine implements BrainEngine {
   }
 
   // The CLI import and extract reads that ran unscoped through executeRaw (engine-sql/cli-reads-import.ts), on the current connection.
-  private get cliReads() { return unscopedExecutor(this.engineSql, 'cli reads: the import and extract paths ran these unscoped through executeRaw'); }
+  private get cliReads() { return unscopedExecutor(refuseWrites(this.engineSql), 'cli reads: the import and extract paths ran these unscoped through executeRaw'); }
   listSourceRecords() { return cliReadsImpl.listSourceRecords(this.cliReads); }
   readSourceIncarnation(sourceId: string) { return this.engineSqlRead(exec => cliReadsImpl.readSourceIncarnation(unscopedExecutor(exec, 'cli reads: the import and extract paths ran these unscoped through executeRaw'), sourceId)); }
   readSyncDispatchRow(sourceId: string) { return syncDispatchImpl.readSyncDispatchRow(this, sourceId); }
@@ -2887,7 +2887,7 @@ export class PostgresEngine implements BrainEngine {
   readRowTrustRows(lookup: RowTrustLookup) { return cliReadsImpl.readRowTrustRows(this.cliReads, lookup); }
   readDatabaseClock() { return this.preparationRead(exec => cliReadsImpl.readDatabaseClock(unscopedExecutor(exec, 'cli reads: the import and extract paths ran these unscoped through executeRaw'))); }
   /** Page-write reads (engine-sql/write-misc.ts); a preparation read ends at its deadline, a locked read runs in the caller's transaction. */
-  private get writeMiscReads() { return unscopedExecutor(this.engineSql, 'write misc: page writes ran these unscoped through executeRaw'); }
+  private get writeMiscReads() { return refuseWrites(unscopedExecutor(this.engineSql, 'write misc: page writes ran these unscoped through executeRaw')); }
   private writeMiscRead<T>(fn: (exec: ReturnType<typeof unscopedExecutor>) => Promise<T>) {
     return this.preparationRead(exec => fn(unscopedExecutor(exec, 'write misc: page writes ran these unscoped through executeRaw')));
   }
@@ -3152,8 +3152,8 @@ export class PostgresEngine implements BrainEngine {
     const detailLow = opts?.detail === 'low';
     // Fetch headroom for dedup: if we only fetch `limit` chunks, a cluster of
     // co-occurring terms in one page can eat the entire result set and we'd
-    // ship < limit pages. 3x gives dedup enough to pick top N distinct pages.
-    const innerLimit = Math.min(limit * 3, searchLimitCap() * 3);
+    // ship < limit pages. 3x the rows through this page (cut before OFFSET, #9922) lets dedup pick top N.
+    const innerLimit = Math.min((offset + limit) * 3, searchLimitCap() * 3);
 
     // Source-aware ranking (v0.22): boost curated content (originals/,
     // concepts/, writing/) and dampen bulk content (chat/, daily/, media/x/)

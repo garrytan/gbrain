@@ -24,6 +24,9 @@ import postgres from '#postgres';
 import { PostgresEngine } from '../../src/core/postgres-engine.ts';
 import { declarePersistenceProtocol, isPersistenceDeclaration } from '../../src/core/persistence/protocol.ts';
 import { isPipelinableSearchRead } from '../../src/core/postgres-engine/search-settings.ts';
+import { newMirrorCounters } from '../../src/shadow/mirror.ts';
+import { wrapShadowEngine } from '../../src/shadow/wrapper.ts';
+import { createWriteSampler } from '../../src/shadow/write-capture.ts';
 import { assertSafeE2eDatabaseUrl } from '../helpers/db-guard.ts';
 import { readSqlTrace, type StatementRecord } from '../helpers/statement-counter.ts';
 import { withEnv } from '../helpers/with-env.ts';
@@ -427,4 +430,71 @@ describe.skipIf(!(pooled && pooledAdmin))('GBRA-156: a search read transaction s
     const read = records.find(r => /AS early_switched_off$/.test(r.sql))!;
     expect(read.t >= end(begin)).toBe(true);
   }, 60_000);
+});
+
+/**
+ * The shadow wrapper over the warm single-write lane (src/shadow/wrapper.ts `laneConnection`): a sampled page write in the reserved
+ * connection's transaction reads its preimage in a savepoint, and the caller's options, `pipelineFirst` included, reach the driver.
+ * It runs in a database of its own, created and dropped here, in both modes: through the CI PgBouncer fixture (administered on
+ * `pooledAdmin`, tested on the pooled URL with `?prepare=false`, which the driver treats as a transaction-mode pooler) and, without one,
+ * directly on DATABASE_URL with the same `?prepare=false`. It never shares the earlier cases' database, whose `persistence_brain`
+ * table has no column defaults and would make `initSchema` fail.
+ */
+const direct = process.env.DATABASE_URL;
+describe.skipIf(!(pooled && pooledAdmin) && !direct)('the shadow-wrapped warm lane keeps a first statement ahead of BEGIN\'s answer', () => {
+  const own = `gbrain_test_warm_lane_${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`;
+  const administered = (): string => (pooled && pooledAdmin ? pooledAdmin : direct!);
+  const urlFor = (): string => {
+    const url = new URL(pooled && pooledAdmin ? pooled : direct!); url.pathname = `/${own}`; url.search = '?prepare=false'; return url.toString();
+  };
+  beforeAll(async () => {
+    assertSafeE2eDatabaseUrl(administered());
+    const admin = postgres(administered(), { max: 1, prepare: false, onnotice: () => {} });
+    try { await admin.unsafe(`CREATE DATABASE ${own}`); } finally { await admin.end(); }
+  }, 60_000);
+  afterAll(async () => {
+    const admin = postgres(administered(), { max: 1, prepare: false, onnotice: () => {} });
+    try { await admin.unsafe(`DROP DATABASE IF EXISTS ${own} WITH (FORCE)`); } finally { await admin.end(); }
+  });
+
+  test('the declaration reaches the socket before BEGIN is answered, every preimage statement follows that answer, and the page is committed and sampled', async () => {
+    const declaration = "SELECT set_config('gbrain.persistence_protocol','2',true)";
+    expect(isPersistenceDeclaration(declaration)).toBe(true);
+    const sent: Array<Record<string, unknown>> = [];
+    const label = 'warm-lane-first';
+    let title: string | undefined;
+    const url = urlFor();
+    assertSafeE2eDatabaseUrl(url);
+    await withEnv({ PGMAX_PIPELINE: undefined, GBRAIN_PREPARE: undefined, GBRAIN_DISABLE_DIRECT_POOL: '1', GBRAIN_PG_TXN_PIPELINE: undefined,
+      GBRAIN_SQL_TRACE: trace, GBRAIN_SQL_TRACE_LABEL: label }, async () => {
+      const engine = new PostgresEngine();
+      await engine.connect({ engine: 'postgres', database_url: url, poolSize: 2 });
+      try {
+        await engine.initSchema();
+        const sampler = createWriteSampler({ rate: 1, send: (line) => { sent.push(JSON.parse(line)); return true; }, active: () => true });
+        const wrapped = wrapShadowEngine(engine, { counters: newMirrorCounters(), offer: () => {}, active: () => true }, { sampleRate: 0, writes: sampler });
+        await wrapped.withReservedConnection((conn) => (conn as unknown as { transaction<R>(run: (tx: PostgresEngine) => Promise<R>, opts?: { pipelineFirst?: (statement: string) => boolean }): Promise<R> })
+          .transaction(async (tx) => {
+            await tx.executeRaw(declaration);
+            await tx.putPage('notes/warm-lane-first', { type: 'note', title: 'Warm Lane First', compiled_truth: 'Body.', timeline: '' } as never, { sourceId: 'default', inline: true });
+          }, { pipelineFirst: isPersistenceDeclaration }));
+        title = (await engine.getPage('notes/warm-lane-first'))?.title;
+        await Bun.sleep(500);
+      } finally { await engine.disconnect(); }
+    });
+    await Bun.sleep(1200);
+    const records = readSqlTrace(trace).filter((r) => (r as { label?: string }).label === label && r.kind !== 'connect').sort((a, b) => a.t - b.t);
+    const declared = records.find((r) => r.sql === declaration)!;
+    const begin = records.filter((r) => r.conn === declared.conn && r.t <= declared.t && /^begin read write$/i.test(r.sql)).at(-1)!; // the BEGIN just before the declaration (initSchema ran its own)
+    const afterDeclaration = records.filter((r) => r.conn === begin.conn && r.t > declared.t && r !== begin && r.sql !== declaration && !/^(commit|rollback)/i.test(r.sql));
+    const preimage = records.filter((r) => /shadow write preimage/.test(r.sql));
+    expect(declared.conn).toBe(begin.conn);
+    expect(declared.t < end(begin)).toBe(true); // the caller's pipelineFirst reached the driver through the shadow wrapper
+    expect(preimage.length).toBeGreaterThan(0);
+    expect(afterDeclaration.length).toBeGreaterThan(0);
+    expect(afterDeclaration.every((r) => r.t >= end(begin))).toBe(true); // nothing else, the preimage included, goes out ahead of BEGIN's answer
+    expect(preimage.every((r) => r.t >= end(begin))).toBe(true);
+    expect(title).toBe('Warm Lane First');
+    expect(sent.filter((e) => e.op === 'putPage' && e.outcome === undefined)).toHaveLength(1); // a full sample was taken after the commit
+  }, 180_000);
 });

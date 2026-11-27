@@ -96,7 +96,7 @@ async function registerRedaction(tx: Pick<BrainEngine, 'registerPurgeRedaction'>
 
 /** Pass 1: purged keys lose their values. Returns the events marked. */
 export async function redactPurgedKeys(tx: Pick<BrainEngine, 'redactPurgedBeliefKeys'>, input: { sourceId: string; claimFps: readonly string[]; lifetimes: readonly string[];
-  /** The purged claim texts: their history recorded under a pre-v341 fingerprint (legacy-fingerprint.ts) is redacted too. */
+  /** The purged claim texts: their history recorded under a pre-v353 fingerprint (legacy-fingerprint.ts) is redacted too. */
   claims?: readonly string[] }): Promise<number> {
   if ((!input.claimFps.length && !input.lifetimes.length) || redactionFault === 'skip_purged_keys') return 0;
   const legacyClaims = (input.claims ?? []).filter(mayHaveLegacyFingerprint);
