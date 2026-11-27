@@ -134,6 +134,8 @@ publication that would give that file a wider audience, or another file class,
 in a skill that already holds it refuses `local_conflict` and writes nothing.
 This includes `import_skill_proposal` on the brain host. Keep the file's current
 audience and class, or fork it under the publishing skill's own directory.
+A remote editor's refusal names only the shared file, never the other skills
+that hold it.
 
 Beyond the fresh-setup default, the owner approves a versioned policy through
 `set_skill_policy`, not through an editor's content update. For example, the
