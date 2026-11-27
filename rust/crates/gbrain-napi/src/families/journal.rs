@@ -1440,11 +1440,14 @@ impl Brain {
         env: &'env Env,
         job: Value,
         claim: String,
+        fence: Option<Value>,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
-            s.renew_deferred_replacement_claim(
+            let fence: Option<LeaseToken> = arg(fence, "renewDeferredReplacementClaim fence")?;
+            s.renew_deferred_replacement_claim_fenced(
                 &required(job, "renewDeferredReplacementClaim job")?,
                 &claim,
+                fence.as_ref(),
             )
         })
     }
@@ -1578,9 +1581,11 @@ impl Brain {
         env: &'env Env,
         slug: String,
         claim: String,
+        fence: Option<Value>,
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
-            s.release_deferred_replacement_claim(&slug, &claim)
+            let fence: Option<LeaseToken> = arg(fence, "releaseDeferredReplacementClaim fence")?;
+            s.release_deferred_replacement_claim_fenced(&slug, &claim, fence.as_ref())
         })
     }
 

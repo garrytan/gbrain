@@ -19,6 +19,9 @@ import { acquirePageEmbeddingLease } from '../src/core/page-embedding-lease.ts';
 import { DREAM_INLINE_PRIVATE_QUEUE_PREFIX, MinionQueue } from '../src/core/minions/queue.ts';
 import { drainWakes } from '../src/core/wakeshift/drain.ts';
 import { buildSegmentedProjection } from '../src/core/page-body/projection.ts';
+import { continueDeferredProjectionStep, DEFERRED_CHUNK_CLAIM } from '../src/core/page-state/projections.ts';
+import { basisEmbedding } from './engine-parity/harness.ts';
+import { chunk } from './engine-parity/chunk-fixtures.ts';
 import { claimHousekeepingTurn, completeHousekeepingTurn } from '../src/core/persistence/housekeeping-turn.ts';
 import { registerHostLease } from './helpers/rust-host-fence.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -156,3 +159,24 @@ describe('family 4, the segmented projection claim', () => {
   });
 });
 
+describe('family 5, the deferred replacement claim', () => {
+  const PAGE = (title: string, body: string) => ({ type: 'note' as const, title, compiled_truth: body, timeline: '' });
+
+  withAddon('after a takeover the old holder cannot renew its continuation claim, and the claim stays as it was', async () => {
+    await onStaleableHost(async (engine, takeOver) => {
+      const e = engine as unknown as BrainEngine;
+      await e.putPage('notes/moving', PAGE('Moving', 'a moving passage about ibex.'));
+      await e.upsertChunks('notes/moving', [chunk(0, 'an old passage.'), chunk(1, 'a moving passage about ibex.', { embedding: basisEmbedding(4) })]);
+      const state: { token?: string } = {};
+      expect(await continueDeferredProjectionStep(e, 'default', 'notes/moving', state, 0)).toBe('more');
+      const [job] = (await e.listQueuedPageProjections({ limit: 10 })).filter(j => j.slug === 'notes/moving');
+      const key = { sourceIncarnation: job!.source_incarnation, slug: 'notes/moving', revision: job!.revision };
+      const claimed = await e.readProjectionJobReason(key);
+      expect(claimed).toBe(`${DEFERRED_CHUNK_CLAIM}:${state.token}`);
+      await takeOver();
+      expect(await refusal(() => continueDeferredProjectionStep(e, 'default', 'notes/moving', state, 0)))
+        .toEqual({ code: 'lease_lost', reason: 'epoch_moved' });
+      expect(await e.readProjectionJobReason(key)).toBe(claimed);
+    });
+  });
+});

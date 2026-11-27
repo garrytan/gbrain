@@ -1057,12 +1057,39 @@ impl Store {
         job: &ProjectionJobRef,
         claim: &str,
     ) -> Result<()> {
-        self.write(|tx| renew_deferred_replacement_claim_in(tx, job, claim))
+        self.renew_deferred_replacement_claim_fenced(job, claim, None)
+    }
+
+    /// [`Self::renew_deferred_replacement_claim`] under the host fence (I-5, lane L5): a renewal under an epoch that
+    /// moved is refused `lease_lost` and changes nothing. With no fence it is the unfenced member.
+    pub fn renew_deferred_replacement_claim_fenced(
+        &self,
+        job: &ProjectionJobRef,
+        claim: &str,
+        fence: Option<&LeaseToken>,
+    ) -> Result<()> {
+        self.write(|tx| {
+            fence::begin(self, tx, fence, "renew_deferred_replacement_claim")?;
+            renew_deferred_replacement_claim_in(tx, job, claim)
+        })
     }
 
     /// `releaseDeferredReplacementClaim(slug, claim)`.
     pub fn release_deferred_replacement_claim(&self, slug: &str, claim: &str) -> Result<()> {
-        self.write(|tx| release_deferred_replacement_claim_in(tx, slug, claim))
+        self.release_deferred_replacement_claim_fenced(slug, claim, None)
+    }
+
+    /// [`Self::release_deferred_replacement_claim`] under the host fence (I-5, lane L5).
+    pub fn release_deferred_replacement_claim_fenced(
+        &self,
+        slug: &str,
+        claim: &str,
+        fence: Option<&LeaseToken>,
+    ) -> Result<()> {
+        self.write(|tx| {
+            fence::begin(self, tx, fence, "release_deferred_replacement_claim")?;
+            release_deferred_replacement_claim_in(tx, slug, claim)
+        })
     }
 
     /// `queuePageProjectionJob(sourceId, slug, reason)`.
@@ -1692,5 +1719,47 @@ mod tests {
                 .renew_segmented_projection_claim_fenced("default", "notes/a", mine, Some(&new))
                 .unwrap()
         );
+    }
+
+    #[test]
+    fn lf5_a_stale_host_cannot_renew_or_release_a_deferred_replacement_claim() {
+        let store = crate::test_support::mu_store();
+        assert!(store.multiuser(), "multi-user mode is on");
+        put(&store, "notes/a");
+        let read = store.read().unwrap();
+        let incarnation = incarnation_of(&*read, "default").unwrap();
+        let key = job_key(&incarnation, "notes/a");
+        let revision = read_job(&*read, &key).unwrap().unwrap().revision;
+        drop(read);
+        let at = ProjectionJobRef {
+            source_incarnation: incarnation,
+            slug: "notes/a".into(),
+            revision,
+        };
+        let mine = "chunk_replacement_continuing:mine";
+        let a = host_lease(&store, "a");
+        store
+            .renew_deferred_replacement_claim_fenced(&at, mine, Some(&a))
+            .unwrap();
+        let new = take_over(&store, &a);
+        let before = dump(&store);
+        epoch_moved(
+            store
+                .renew_deferred_replacement_claim_fenced(&at, mine, Some(&a))
+                .unwrap_err(),
+        );
+        epoch_moved(
+            store
+                .release_deferred_replacement_claim_fenced("notes/a", mine, Some(&a))
+                .unwrap_err(),
+        );
+        assert_eq!(
+            dump(&store),
+            before,
+            "a refused claim write changed the brain"
+        );
+        store
+            .release_deferred_replacement_claim_fenced("notes/a", mine, Some(&new))
+            .unwrap();
     }
 }
