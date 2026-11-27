@@ -6,47 +6,47 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 330/579
+# covered: 330/656
 # mention_pass: 0/1
 # belief_purge: 0/2
-# connect_gate: 0/2
-# projection_rebuild: 0/14
+# connect_gate: 0/4
+# projection_rebuild: 0/22
 # facts_cycle_sites: 0/1
 # cli_reads_ops: 0/2
-# link_reads: 0/2
+# link_reads: 0/3
 # calibration_profiles: 0/3
-# trust: 0/10
+# trust: 0/11
 # minion_queue: 0/2
 # belief_ledger: 0/6
-# persistence_journal: 0/35
+# persistence_journal: 0/77
 # facts_recall: 0/1
 # facts_trust: 0/6
 # purge_plan: 0/3
 # facts_purge: 0/42
 # reflex_reads: 0/2
-# trust_proposals: 0/3
+# trust_proposals: 0/4
 # remote_links: 0/5
 # page_visibility: 0/2
-# write_guards: 0/3
+# write_guards: 0/6
 # access_members: 0/1
-# cli_reads_import: 0/7
+# cli_reads_import: 0/9
 # lifecycle: 9/9
-# pages: 33/42
+# pages: 33/44
 # search: 7/7
 # search_reads: 9/9
 # chunks: 22/32
 # extraction: 7/7
 # links: 23/23
 # tags: 5/5
-# timeline: 19/19
+# timeline: 19/20
 # ontology: 4/4
 # raw_files: 5/6
 # takes: 17/18
 # dream: 3/3
 # contradictions: 5/7
-# facts: 14/14
+# facts: 14/15
 # segmented_body: 15/17
-# versions: 3/3
+# versions: 3/4
 # stats_ingest: 5/5
 # sync_aliases: 10/10
 # config: 6/7
@@ -74,12 +74,17 @@
 # owner_only: 1/1
 # wanted_links: 2/2
 # salience_enrich: 5/5
+# trust_fence: 0/2
+# link_temporal: 0/8
+# facts_backstop: 0/2
 method	family	covered	parity_cases	legacy_e2e	pglite	postgres	rust
 storeSegmentDerivationsIfLive	mention_pass	no	0	no	-	-	-
 bumpSourcePurgeEpoch	belief_purge	no	0	no	-	-	-
 hasBeliefEvents	belief_purge	no	0	no	-	-	-
 hasPersistenceTable	connect_gate	no	0	no	-	-	-
 listManagedRootBindings	connect_gate	no	0	no	-	-	-
+listRetiredDeactivations	connect_gate	no	0	no	-	-	-
+readGraduationGateRow	connect_gate	no	0	no	-	-	-
 readChunkKeepState	projection_rebuild	no	0	no	-	-	-
 clearUnkeptChunkVectors	projection_rebuild	no	0	no	-	-	-
 setProjectionChunkerVersion	projection_rebuild	no	0	no	-	-	-
@@ -94,11 +99,20 @@ isDeferredReplacementHeld	projection_rebuild	no	0	no	-	-	-
 renewDeferredReplacementClaim	projection_rebuild	no	0	no	-	-	-
 releaseDeferredReplacementClaim	projection_rebuild	no	0	no	-	-	-
 queuePageProjectionJob	projection_rebuild	no	0	no	-	-	-
+probeProjectionWindowCandidates	projection_rebuild	no	0	no	-	-	-
+readPagesRowEstimate	projection_rebuild	no	0	no	-	-	-
+readProjectionJobReason	projection_rebuild	no	0	no	-	-	-
+hasSegmentedPage	projection_rebuild	no	0	no	-	-	-
+rekeyProjectionJob	projection_rebuild	no	0	no	-	-	-
+stampDeferredProjectionJob	projection_rebuild	no	0	no	-	-	-
+touchUnclaimedProjectionJob	projection_rebuild	no	0	no	-	-	-
+deferProjectionJob	projection_rebuild	no	0	no	-	-	-
 readLiveStoredBody	facts_cycle_sites	no	0	no	-	-	-
 listHeldFenceCells	cli_reads_ops	no	0	no	-	-	-
 readFenceOverlayRows	cli_reads_ops	no	0	no	-	-	-
 readLinkContextMatches	link_reads	no	0	no	-	-	-
 readLinkContextOriginPages	link_reads	no	0	no	-	-	-
+listLinkEndpointPages	link_reads	no	0	no	-	-	-
 getLatestCalibrationProfile	calibration_profiles	no	0	no	-	-	-
 insertCalibrationProfile	calibration_profiles	no	0	no	-	-	-
 purgeCalibrationProfilesByWave	calibration_profiles	no	0	no	-	-	-
@@ -112,6 +126,7 @@ listWriteGateReceiptsFor	trust	no	0	no	-	-	-
 upsertWriteGateHold	trust	no	0	no	-	-	-
 listWriteGateHoldRows	trust	no	0	no	-	-	-
 getWriteGateHoldRow	trust	no	0	no	-	-	-
+deleteStalePageWriteGateReceipts	trust	no	0	no	-	-	-
 readScopeSourceConfigs	minion_queue	no	0	no	-	-	-
 readOauthClient	minion_queue	no	0	no	-	-	-
 insertBeliefEvents	belief_ledger	no	0	no	-	-	-
@@ -145,6 +160,7 @@ compactTerminalIntent	persistence_journal	no	0	no	-	-	-
 insertPublicationEffects	persistence_journal	no	0	no	-	-	-
 readSourceMembership	persistence_journal	no	0	no	-	-	-
 findTopologyChanges	persistence_journal	no	0	no	-	-	-
+readTopologyChange	persistence_journal	no	0	no	-	-	-
 renewWriteClaim	persistence_journal	no	0	no	-	-	-
 releaseUnpublishedClaim	persistence_journal	no	0	no	-	-	-
 readCapacityForecastInputs	persistence_journal	no	0	no	-	-	-
@@ -155,6 +171,47 @@ completeEffectRow	persistence_journal	no	0	no	-	-	-
 failEffectRow	persistence_journal	no	0	no	-	-	-
 lockEffectGuard	persistence_journal	no	0	no	-	-	-
 readSegmentedGateEvidence	persistence_journal	no	0	no	-	-	-
+claimHousekeepingTurn	persistence_journal	no	0	no	-	-	-
+completeHousekeepingTurn	persistence_journal	no	0	no	-	-	-
+deleteConsumerRow	persistence_journal	no	0	no	-	-	-
+expireStaleWriteClaims	persistence_journal	no	0	no	-	-	-
+hasClaimableWrite	persistence_journal	no	0	no	-	-	-
+listCompactableReceipts	persistence_journal	no	0	no	-	-	-
+listEffectRecoveries	persistence_journal	no	0	no	-	-	-
+listFenceHoldRows	persistence_journal	no	0	no	-	-	-
+listGatedMirrorRequests	persistence_journal	no	0	no	-	-	-
+listOverdueHeldWrites	persistence_journal	no	0	no	-	-	-
+listOwnerRecoveryHeads	persistence_journal	no	0	no	-	-	-
+listPendingSegmentedProjections	persistence_journal	no	0	no	-	-	-
+listReservationsAfter	persistence_journal	no	0	no	-	-	-
+listResumableRefreshes	persistence_journal	no	0	no	-	-	-
+listTopologyRecoveries	persistence_journal	no	0	no	-	-	-
+readHeldPageRows	persistence_journal	no	0	no	-	-	-
+readReceiptBudget	persistence_journal	no	0	no	-	-	-
+renewConsumerRow	persistence_journal	no	0	no	-	-	-
+selectClaimableEffect	persistence_journal	no	0	no	-	-	-
+selectClaimableWrite	persistence_journal	no	0	no	-	-	-
+selectProjectionWindowJobs	persistence_journal	no	0	no	-	-	-
+stampWorktreeHeartbeats	persistence_journal	no	0	no	-	-	-
+readWriteRequestProgress	persistence_journal	no	0	no	-	-	-
+probeIdleWork	persistence_journal	no	0	no	-	-	-
+stampEffectClaim	persistence_journal	no	0	no	-	-	-
+markProjectionRebuildFailed	persistence_journal	no	0	no	-	-	-
+lockOverdueHold	persistence_journal	no	0	no	-	-	-
+retryEffectRow	persistence_journal	no	0	no	-	-	-
+hasRearmableTargets	persistence_journal	no	0	no	-	-	-
+listTrueUpRequests	persistence_journal	no	0	no	-	-	-
+trueUpReservations	persistence_journal	no	0	no	-	-	-
+readMirrorGateRows	persistence_journal	no	0	no	-	-	-
+advanceEffectRow	persistence_journal	no	0	no	-	-	-
+retryBusyEffectRow	persistence_journal	no	0	no	-	-	-
+requeueEffectRow	persistence_journal	no	0	no	-	-	-
+parkEffectRow	persistence_journal	no	0	no	-	-	-
+readFenceHoldFiles	persistence_journal	no	0	no	-	-	-
+probeNoopEmbeddingSettle	persistence_journal	no	0	no	-	-	-
+lockNoopEmbeddingWindow	persistence_journal	no	0	no	-	-	-
+readNoopEmbeddingCandidates	persistence_journal	no	0	no	-	-	-
+settleNoopEmbeddingRows	persistence_journal	no	0	no	-	-	-
 listSlotRows	facts_recall	no	0	no	-	-	-
 listDerivedRows	facts_trust	no	0	no	-	-	-
 listFactProvenance	facts_trust	no	0	no	-	-	-
@@ -212,6 +269,7 @@ readReflexPages	reflex_reads	no	0	no	-	-	-
 insertTrustProposal	trust_proposals	no	0	no	-	-	-
 getTrustProposal	trust_proposals	no	0	no	-	-	-
 listTrustProposals	trust_proposals	no	0	no	-	-	-
+pendingTrustProposalsFor	trust_proposals	no	0	no	-	-	-
 setEffectTransactionLimits	remote_links	no	0	no	-	-	-
 readOwnedLinks	remote_links	no	0	no	-	-	-
 deleteOwnedLinks	remote_links	no	0	no	-	-	-
@@ -222,6 +280,9 @@ readWriterSlugFence	page_visibility	no	0	no	-	-	-
 readPageOrigin	write_guards	no	0	no	-	-	-
 sealImportedPage	write_guards	no	0	no	-	-	-
 readPageIndexingState	write_guards	no	0	no	-	-	-
+hasSegmentStorage	write_guards	no	0	no	-	-	-
+readLivePageBody	write_guards	no	0	no	-	-	-
+readStoredPageTier	write_guards	no	0	no	-	-	-
 readLinkedMember	access_members	no	0	no	-	-	-
 listSourceRecords	cli_reads_import	no	0	no	-	-	-
 readGuestSourceRow	cli_reads_import	no	0	no	-	-	-
@@ -230,6 +291,8 @@ hasCompanyBrainReceipt	cli_reads_import	no	0	no	-	-	-
 listGuestSourceIds	cli_reads_import	no	0	no	-	-	-
 readPageTrustRows	cli_reads_import	no	0	no	-	-	-
 readRowTrustRows	cli_reads_import	no	0	no	-	-	-
+hasGuestSource	cli_reads_import	no	0	no	-	-	-
+readDatabaseClock	cli_reads_import	no	0	no	-	-	-
 connect	lifecycle	yes	1	yes	yes	yes	serves
 disconnect	lifecycle	yes	1	yes	yes	yes	serves
 reconnect	lifecycle	yes	1	no	yes	yes	serves
@@ -280,6 +343,8 @@ listPrefixSampledPages	pages	yes	1	no	yes	yes	serves
 listCorpusSample	pages	yes	1	no	yes	yes	serves
 getPageSealState	pages	yes	1	no	yes	yes	serves
 refreshPageOrigin	pages	yes	1	no	yes	yes	refuses:pages
+bumpPageRetrievals	pages	no	0	no	-	-	-
+lockSourceForUpdate	pages	no	0	no	-	-	-
 readLivePageIdBySlug	pages	no	0	no	-	-	-
 searchKeyword	search	yes	29	yes	yes	yes	serves
 countKeywordPages	search	yes	5	no	yes	yes	serves
@@ -313,11 +378,11 @@ listChunklessPagesWithContent	chunks	yes	3	yes	yes	yes	serves
 readEmbeddingStateCounts	chunks	yes	2	no	yes	yes	serves
 listEmbeddingStateRows	chunks	yes	2	no	yes	yes	serves
 deleteChunks	chunks	yes	3	no	yes	yes	serves
-deleteChunksExcept	chunks	yes	1	no	yes	yes	refuses:chunks
+deleteChunksExcept	chunks	yes	1	no	yes	yes	serves
 setChunkerVersion	chunks	yes	1	no	yes	yes	refuses:chunks
-writeTextProjectionSeal	chunks	yes	1	no	yes	yes	refuses:chunks
-moveChunkIndexes	chunks	yes	1	no	yes	yes	refuses:chunks
-getChunkReuseRows	chunks	yes	1	no	yes	yes	refuses:chunks
+writeTextProjectionSeal	chunks	yes	1	no	yes	yes	serves
+moveChunkIndexes	chunks	yes	1	no	yes	yes	serves
+getChunkReuseRows	chunks	yes	1	no	yes	yes	serves
 readPageEmbeddingBudget	chunks	no	0	no	-	-	-
 recordPageEmbeddingHold	chunks	no	0	no	-	-	-
 openPageEmbeddingHold	chunks	no	0	no	-	-	-
@@ -367,7 +432,7 @@ getTags	tags	yes	3	yes	yes	yes	serves
 sampleEffectiveDates	timeline	yes	1	no	yes	yes	refuses:raw_sql
 sampleEffectiveDateSources	timeline	yes	1	no	yes	yes	refuses:raw_sql
 readMaxTimelineEntryId	timeline	yes	1	no	yes	yes	refuses:raw_sql
-listStoredTimelineRowsOrdered	timeline	yes	2	no	yes	yes	refuses:timeline
+listStoredTimelineRowsOrdered	timeline	yes	2	no	yes	yes	serves
 deleteTimelineRows	timeline	yes	2	no	yes	yes	refuses:timeline
 storedTimelineRowsByPageIds	timeline	yes	1	no	yes	yes	refuses:raw_sql
 countSegmentedTimelinePages	timeline	yes	1	no	yes	yes	refuses:raw_sql
@@ -381,8 +446,9 @@ getSince	timeline	yes	1	no	yes	yes	serves
 getOnThisDay	timeline	yes	1	no	yes	yes	serves
 getLastSeen	timeline	yes	1	no	yes	yes	serves
 upsertEventProjection	timeline	yes	8	no	yes	yes	serves
-removeTimelineRows	timeline	yes	2	no	yes	yes	refuses:timeline
-updateTimelineDetails	timeline	yes	1	no	yes	yes	refuses:timeline
+removeTimelineRows	timeline	yes	2	no	yes	yes	serves
+updateTimelineDetails	timeline	yes	1	no	yes	yes	serves
+insertCanonicalTimelineRows	timeline	no	0	no	-	-	-
 mergeOntologyFact	ontology	yes	5	no	yes	yes	serves
 getOntology	ontology	yes	3	no	yes	yes	serves
 discoverOntologyDimensions	ontology	yes	1	no	yes	yes	serves
@@ -408,8 +474,8 @@ getScorecard	takes	yes	1	no	yes	yes	serves
 getCalibrationCurve	takes	yes	1	no	yes	yes	serves
 addSynthesisEvidence	takes	yes	2	no	yes	yes	serves
 listActiveTakesForPages	takes	yes	2	no	yes	yes	serves
-matchTakeRows	takes	yes	1	no	yes	yes	refuses:takes
-deleteTakeRows	takes	yes	1	no	yes	yes	refuses:takes
+matchTakeRows	takes	yes	1	no	yes	yes	serves
+deleteTakeRows	takes	yes	1	no	yes	yes	serves
 findTakeId	takes	no	0	no	-	-	-
 getDreamVerdict	dream	yes	1	yes	yes	yes	serves
 putDreamVerdict	dream	yes	1	yes	yes	yes	serves
@@ -435,6 +501,7 @@ findCandidateDuplicates	facts	yes	6	yes	yes	yes	serves
 consolidateFact	facts	yes	3	no	yes	yes	serves
 findTrajectory	facts	yes	4	yes	yes	yes	serves
 getFactsHealth	facts	yes	2	yes	yes	yes	serves
+listFenceRetireCandidates	facts	no	0	no	-	-	-
 allocateBodyOccurrenceIds	segmented_body	yes	11	no	yes	yes	serves
 stageSegmentTexts	segmented_body	yes	10	no	yes	yes	serves
 readSegmentTexts	segmented_body	yes	3	no	yes	yes	serves
@@ -455,6 +522,7 @@ deleteRewrittenSegmentDerivations	segmented_body	no	0	no	-	-	-
 createVersion	versions	yes	6	no	yes	yes	serves
 getVersions	versions	yes	5	no	yes	yes	serves
 revertToVersion	versions	yes	2	no	yes	yes	serves
+readLatestVersionIdAtTier	versions	no	0	no	-	-	-
 countOnboardSignal	stats_ingest	yes	1	no	yes	yes	refuses:health
 getStats	stats_ingest	yes	4	yes	yes	yes	serves
 getHealth	stats_ingest	yes	5	yes	yes	yes	serves
@@ -466,7 +534,7 @@ resolveSlugWithAlias	sync_aliases	yes	1	yes	yes	yes	serves
 resolveSlugWithAliasDetailed	sync_aliases	yes	1	yes	yes	yes	serves
 resolveAliases	sync_aliases	yes	12	no	yes	yes	serves
 setPageAliases	sync_aliases	yes	11	no	yes	yes	serves
-replaceDerivedAliases	sync_aliases	yes	6	no	yes	yes	refuses:pages
+replaceDerivedAliases	sync_aliases	yes	6	no	yes	yes	serves
 refreshPageBody	sync_aliases	yes	2	no	yes	yes	serves
 updatePageContextualRetrievalState	sync_aliases	yes	2	no	yes	yes	serves
 migrateFactsToCanonical	sync_aliases	yes	1	no	yes	yes	serves
@@ -488,7 +556,7 @@ readLocalWriterRow	import_guards	yes	1	no	yes	yes	serves
 insertLocalWriterRow	import_guards	yes	1	no	yes	yes	serves
 readTransactionSettings	import_guards	yes	1	no	yes	yes	serves
 applyTransactionSettings	import_guards	yes	2	no	yes	yes	serves
-readLedgerSource	import_guards	yes	1	no	yes	yes	refuses:persistence_journal
+readLedgerSource	import_guards	yes	1	no	yes	yes	serves
 isFolderRestricted	import_guards	yes	1	no	yes	yes	refuses:access_control
 beginSnapshotRead	import_guards	no	0	no	-	-	-
 setWriteContext	import_guards	no	0	no	-	-	-
@@ -647,10 +715,22 @@ readAccessMembers	write_misc	no	0	no	-	-	-
 readIgnoredPrivacyLabelPages	entity_reads	yes	2	no	yes	yes	serves
 readLivePageFrontmatter	entity_reads	yes	1	no	yes	yes	serves
 ownerOnlyMarkTriggers	owner_only	yes	2	no	yes	yes	refuses:raw_sql
-lockRegisteredSourceIds	wanted_links	yes	1	no	yes	yes	refuses:links
-replaceWantedLinkRows	wanted_links	yes	4	no	yes	yes	refuses:links
+lockRegisteredSourceIds	wanted_links	yes	1	no	yes	yes	serves
+replaceWantedLinkRows	wanted_links	yes	4	no	yes	yes	serves
 batchLoadEmotionalInputs	salience_enrich	yes	1	no	yes	yes	serves
 setEmotionalWeightBatch	salience_enrich	yes	6	yes	yes	yes	serves
 getRecentSalience	salience_enrich	yes	2	yes	yes	yes	serves
 listEnrichCandidates	salience_enrich	yes	3	yes	yes	yes	serves
 findAnomalies	salience_enrich	yes	3	yes	yes	yes	serves
+listFenceFactRows	trust_fence	no	0	no	-	-	-
+listGuardedTakeRows	trust_fence	no	0	no	-	-	-
+applyLinkTemporalRows	link_temporal	no	0	no	-	-	-
+writeManualLinkTransitions	link_temporal	no	0	no	-	-	-
+removeManualLinkTransitions	link_temporal	no	0	no	-	-	-
+readLinkRelationshipEvidence	link_temporal	no	0	no	-	-	-
+writeLinkRelationshipState	link_temporal	no	0	no	-	-	-
+linkRelationshipKeysForOrigin	link_temporal	no	0	no	-	-	-
+linkRelationshipKeysForPages	link_temporal	no	0	no	-	-	-
+staleLinkRelationshipKeys	link_temporal	no	0	no	-	-	-
+hasPendingFactsExtraction	facts_backstop	no	0	no	-	-	-
+hasCompletedFactsExtraction	facts_backstop	no	0	no	-	-	-

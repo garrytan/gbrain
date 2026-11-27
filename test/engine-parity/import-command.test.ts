@@ -37,9 +37,9 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
  * The members this import still stops on when the engine is the Rust one: each landing part removes the stops it serves
  * and leaves the list at what is left, ending empty. A stop outside the list, or a listed stop no scenario reaches any
  * more, fails the file, so the list can only shrink. Part A (source, resolver, guest, privacy-label, writer-state reads,
- * cycle locks, seal read): transaction is next.
+ * cycle locks, seal read): transaction is next. Part E serves readLedgerSource.
  */
-const KNOWN_STOPS: readonly string[] = ['readLedgerSource', 'setChunkerVersion'];
+const KNOWN_STOPS: readonly string[] = ['setChunkerVersion'];
 const stopOf = (text: string): string | null => /does not support (\w+) yet/.exec(text)?.[1] ?? null;
 /** A typed refusal of a listed stop stays typed (the Rust arm counts it as the case's stop); any other refusal is a failure. */
 function refusalOrFailure(error: unknown, what: string): unknown {

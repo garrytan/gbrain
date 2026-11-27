@@ -85,11 +85,17 @@ function comparable(stdout: string, token: string): unknown {
     (key, value) => (key === 'id' || key === 'page_id') && typeof value === 'number' ? '<id>' : value);
 }
 
-type Outcome = { puts: unknown[]; gets: unknown[]; stored: string[] };
+/** Every key of `value`, nested ones as `parent.key`, in the order the JSON printed them. */
+function keyOrder(value: unknown, at = ''): string[] {
+  if (value === null || typeof value !== 'object') return [];
+  return Object.entries(value).flatMap(([key, inner]) => [`${at}${key}`, ...keyOrder(inner, `${at}${key}.`)]);
+}
+
+type Outcome = { puts: unknown[]; gets: unknown[]; order: string[][]; stored: string[] };
 
 /**
- * Puts two pages, then rewrites the first, all through the CLI with --json; then reads both back, as JSON and as the
- * stored markdown `gbrain get` prints.
+ * Puts two pages, then rewrites both (the second, a long page, changes only its last paragraph, so its unchanged chunks
+ * are kept), all through the CLI with --json; then reads both back, as JSON and as the stored markdown `gbrain get` prints.
  */
 function putThenGet(arm: Arm, token: string): Outcome {
   const at = brain(arm);
@@ -104,16 +110,26 @@ function putThenGet(arm: Arm, token: string): Outcome {
   const put = (slug: string, content: string, extra: string[] = []) => step(['put', slug, '--content', content, ...extra, '--json']);
   const created = put(first, page('Put parity', 'One page written by gbrain put on a brain with no managed persistence.'));
   const revision = String((JSON.parse(created) as { revision: string }).revision);
+  // A body long enough for several chunks: a rewrite that changes only its last paragraph keeps the other chunk rows.
+  const long = (last: string) => [...Array.from({ length: 24 }, (_, i) => `## Part ${i + 1}\n\nParagraph ${i + 1} of the long page, `
+    + `with enough plain words in it that the page splits into more than one chunk when it is indexed. `.repeat(4)), last].join('\n\n');
+  const secondCreated = put(second, page('Second page', long('A second page, so the write path runs on a brain that already holds a page.')));
   const outputs = [
     created,
-    put(second, page('Second page', 'A second page, so the write path runs on a brain that already holds a page.')),
+    secondCreated,
     // The first page again, so an update of a stored page (with the revision the create returned) runs too.
     put(first, page('Put parity', 'The first page again, rewritten.'), ['--expected-revision', revision]),
+    // The second page again with only its last paragraph changed, so the rewrite keeps the unchanged chunks.
+    put(second, page('Second page', long('The second page again, with only this paragraph changed.')),
+      ['--expected-revision', String((JSON.parse(secondCreated) as { revision: string }).revision)]),
   ];
   const puts = outputs.map(stdout => comparable(stdout, token));
-  const gets = [first, second].map(slug => comparable(step(['get', slug, '--json']), token));
+  // The first page also by a spelling with a capital: a read finds the page under its lowercase slug, as the put stored it.
+  const gets = [first, second, `N${first.slice(1)}`].map(slug => comparable(step(['get', slug, '--json']), token));
+  // The CLI prints the same JSON, so the keys come in the same order too (toEqual alone ignores key order).
+  const order = [...puts, ...gets].map(answer => keyOrder(answer));
   const stored = [first, second].map(slug => step(['get', slug]).split(token).join('TOKEN'));
-  return { puts, gets, stored };
+  return { puts, gets, order, stored };
 }
 
 describe('gbrain put on a brain with no managed persistence', () => {
@@ -125,7 +141,9 @@ describe('gbrain put on a brain with no managed persistence', () => {
     for (const put of pglite.puts) expect(put).toMatchObject({ state: 'committed', status: 'created_or_updated', persistence: { mode: 'database' } });
     expect(pglite.gets[0]).toMatchObject({ slug: 'notes/put-parity-TOKEN', title: 'Put parity' });
     expect(pglite.gets[1]).toMatchObject({ slug: 'notes/put-parity-TOKEN-two', title: 'Second page' });
+    expect(pglite.gets[2]).toEqual(pglite.gets[0]);
     expect(pglite.stored[0]).toContain('The first page again, rewritten.');
+    expect(pglite.stored[1]).toContain('The second page again, with only this paragraph changed.');
   }, 240_000);
 
   test.skipIf(!DATABASE_URL)('Postgres: the same answers and the same stored pages as PGLite', () => {

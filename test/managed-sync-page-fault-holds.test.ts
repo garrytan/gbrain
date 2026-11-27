@@ -438,14 +438,15 @@ test('a file committed between admission and publication (raw_file_changed) is p
     const pin = commit(f.root, 'version two');
     // Right after the pass admits b.md's import (its request row is inserted), another agent commits a newer version:
     // publication then finds the file's bytes changed after admission.
-    const executeRaw = engine.executeRaw;
+    // The pass admits each import through the typed insertWriteRequest member; the hook moves b.md right after it.
+    const insertWriteRequest = engine.insertWriteRequest;
     let commits = 0, versions = 0;
-    const armed = (sql: string, params?: unknown[]) => { const text = JSON.stringify(params ?? []).replaceAll('\\"', '"'); return sql.includes('INSERT INTO persistence_requests') && text.includes('"path":"b.md"') && text.includes('managed_sync_import'); };
-    engine.executeRaw = async function (this: BrainEngine, sql: string, params?: unknown[]) {
-      const rows = await executeRaw.call(this, sql, params);
-      if (armed(sql, params) && commits < versions) { writeFileSync(join(f.root, 'b.md'), note(`b round ${versions} change ${commits}, committed after admission.`)); commit(f.root, `b moves after admission ${commits}`); commits++; }
-      return rows;
-    } as BrainEngine['executeRaw'];
+    const armed = (row: Parameters<BrainEngine['insertWriteRequest']>[0]) => { const text = JSON.stringify(row.intent ?? null); return text.includes('"kind":"managed_sync_import"') && text.includes('"path":"b.md"'); };
+    engine.insertWriteRequest = async function (this: BrainEngine, row: Parameters<BrainEngine['insertWriteRequest']>[0]) {
+      const inserted = await insertWriteRequest.call(this, row);
+      if (armed(row) && commits < versions) { writeFileSync(join(f.root, 'b.md'), note(`b round ${versions} change ${commits}, committed after admission.`)); commit(f.root, `b moves after admission ${commits}`); commits++; }
+      return inserted;
+    } as BrainEngine['insertWriteRequest'];
     let seen = 0;
     /** b.md's import requests since the last call, as [state, error_message]. */
     const newRequests = async () => {
@@ -500,6 +501,6 @@ test('a file committed between admission and publication (raw_file_changed) is p
       const [row] = await engine.executeRaw<{ streak: number }>("SELECT (completed_keys->0->'obligations'->>'not_converged_streak')::int AS streak FROM op_checkpoints WHERE op='managed-sync-pass' AND completed_keys->0->>'source_id'=$1", [f.id]);
       expect(row?.streak).toBe(0);
       expect((await performManagedSync(engine, { ...f.opts, noBulk: true })).status).toBe('up_to_date');
-    } finally { engine.executeRaw = executeRaw; await disposePersistenceConsumer(engine); }
+    } finally { engine.insertWriteRequest = insertWriteRequest; await disposePersistenceConsumer(engine); }
   }
 }), 120_000);

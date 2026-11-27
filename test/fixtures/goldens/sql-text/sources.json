@@ -77,6 +77,18 @@
           }
         ]
       },
+      "lockSourceForUpdate": {
+        "default": [
+          {
+            "lane": "pool",
+            "params": [
+              "string"
+            ],
+            "sql": "SELECT id FROM sources WHERE id=$1 FOR UPDATE",
+            "textSha256": "91493e544465e91a2b5d1836ca3e2134fcff8a19c04745459fead7d6ed36e908"
+          }
+        ]
+      },
       "lockSourceRow": {
         "default": [
           {

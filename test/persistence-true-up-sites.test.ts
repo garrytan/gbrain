@@ -19,11 +19,11 @@ const SRC = join(ROOT, 'src');
 /** Settling file -> the file whose code calls trueUpRequests for it (itself when it calls it directly). */
 const SITES: Record<string, string> = {
   'src/core/engine-sql/persistence-effect-worker.ts': 'src/core/persistence/effects.ts',
-  // completeEffect / parkEffect / failEffect run only under the effect runner, which trues up every request it claimed.
-  'src/core/persistence/effect-journal.ts': 'src/core/persistence/effects.ts',
+  // The completeEffect / parkEffect / failEffect statements are the typed effect members in persistence-effect-worker.ts above;
+  // the effect-journal.ts helpers run only under the effect runner, which trues up every request it claimed.
   'src/core/persistence/effects.ts': 'src/core/persistence/effects.ts',
   'src/core/persistence/embedding-settlement.ts': 'src/core/persistence/embedding-settlement.ts',
-  'src/core/persistence/embedding-noop-settle.ts': 'src/core/persistence/embedding-noop-settle.ts',
+  'src/core/engine-sql/persistence-embedding-noop-settle.ts': 'src/core/persistence/embedding-noop-settle.ts',
   'src/core/persistence/effect-retry.ts': 'src/core/persistence/effect-retry.ts',
   'src/core/shared-skills/restore.ts': 'src/core/backup/snapshot.ts',
 };

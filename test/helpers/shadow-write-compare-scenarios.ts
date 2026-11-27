@@ -23,6 +23,9 @@ import { newMirrorCounters } from '../../src/shadow/mirror.ts';
 import { writeSeedRecord } from '../../src/shadow/seed.ts';
 import { wrapShadowEngine } from '../../src/shadow/wrapper.ts';
 import { completeWriteRow, insertPublicationEffects, lockPersistenceCounters } from '../../src/core/engine-sql/persistence-journal.ts';
+import { insertCanonicalTimelineRows, removeTimelineRows, updateTimelineDetails } from '../../src/core/engine-sql/timeline.ts';
+import { deleteTakeRows } from '../../src/core/engine-sql/takes.ts';
+import { deleteStalePageWriteGateReceipts } from '../../src/core/engine-sql/trust-write-gate.ts';
 import { sqlWrites } from '../../src/shadow/sql-writes.ts';
 import { sealImportedPage } from '../../src/core/engine-sql/write-guards.ts';
 import { renderFragment } from '../../src/core/engine-sql/fragment.ts';
@@ -1100,7 +1103,17 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       for (const dialect of ['postgres', 'pglite'] as const) {
         expect(await record(dialect, (exec) => insertPublicationEffects(exec, { requestId: '00000000-0000-4000-8000-000000000000', revision: null, sourceId: 'default', sourceIncarnation: '00000000-0000-4000-8000-000000000001', worktreeId: null, effects: [{ kind: 'links', data: {} }] } as never))).toEqual([effects[0]!]);
       }
-      expect([...JOURNAL_MEMBER_STATEMENTS.keys()].sort()).toEqual(['completeWriteRow', 'insertPublicationEffects', 'lockPersistenceCounters']); // upsertWriteGateReceipt is not bookkeeping: it stays an ordinary write
+      // A page write's own timeline rows, fence takes and stale page receipts: each member sends exactly its one mapped statement.
+      const one = (member: string) => [...JOURNAL_MEMBER_STATEMENTS.get(member)!];
+      for (const dialect of ['postgres', 'pglite'] as const) {
+        expect(await record(dialect, (exec) => removeTimelineRows(exec, 1, [{ id: 1, date: '2026-01-01', source: 's', summary: 'x', detail: '', removed: true }]))).toEqual(one('removeTimelineRows'));
+        expect(await record(dialect, (exec) => insertCanonicalTimelineRows(exec, 1, [{ date: '2026-01-01', source: 's', summary: 'x', detail: '' }]))).toEqual(one('insertCanonicalTimelineRows'));
+        expect(await record(dialect, (exec) => updateTimelineDetails(exec, 1, [{ id: 1, detail: 'a', next: 'b' }]))).toEqual(one('updateTimelineDetails'));
+        expect(await record(dialect, (exec) => deleteTakeRows(exec, 1, [1]))).toEqual(one('deleteTakeRows'));
+        expect(await record(dialect, (exec) => deleteStalePageWriteGateReceipts(exec, 'default', 'notes/x', null))).toEqual(one('deleteStalePageWriteGateReceipts'));
+      }
+      expect([...JOURNAL_MEMBER_STATEMENTS.keys()].sort()).toEqual(['completeWriteRow', 'deleteStalePageWriteGateReceipts', 'deleteTakeRows', 'insertCanonicalTimelineRows',
+        'insertPublicationEffects', 'lockPersistenceCounters', 'removeTimelineRows', 'updateTimelineDetails']); // upsertWriteGateReceipt is not bookkeeping: it stays an ordinary write
     }, 30_000);
 
     test('insertPublicationEffects is bookkeeping only while its statement writes persistence_effects and nothing else: a statement that writes another table is an ordinary write', () => {

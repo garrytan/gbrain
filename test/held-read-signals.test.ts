@@ -22,6 +22,7 @@ import { NOTICE_CODES } from '../src/core/error-registry.ts';
 import { PER_CALL_NOTICE_CODES } from '../src/core/notice-ledger.ts';
 import { readGitSourceHolds } from '../src/core/persistence/sync-holds.ts';
 import { readHeldCoverage, readHeldPages } from '../src/core/persistence/held-reads.ts';
+import { GIT_HOLD_OP, HELD_PAGES_SQL } from '../src/core/engine-sql/persistence-journal.ts';
 import { makeGitFixture } from './helpers/git-fixture.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { testBackends } from './helpers/test-backends.ts';
@@ -97,32 +98,35 @@ function call(sourceId: string, remote: boolean): Call {
   return { ctx, notices, meta };
 }
 
-/** Counts the hold-store reads a call makes (an own-property shadow, so transaction handles keep their connection). */
+/**
+ * Counts the hold-store reads a call makes: the typed held-page read, and the coverage and hit-hold reads that still
+ * go through executeRaw (own-property shadows, so transaction handles keep their connection).
+ */
 async function countHoldReads<T>(run: () => Promise<T>): Promise<{ value: T; reads: number }> {
-  const target = engine as unknown as { executeRaw: (this: unknown, sql: string, params?: unknown[]) => Promise<unknown> };
-  const inherited = Object.getPrototypeOf(engine).executeRaw as typeof target.executeRaw;
+  const target = engine as unknown as Record<'executeRaw' | 'readHeldPageRows', (this: unknown, ...args: unknown[]) => Promise<unknown>>;
+  const proto = Object.getPrototypeOf(engine) as typeof target;
   let reads = 0;
   target.executeRaw = function (sql, params) {
     if (Array.isArray(params) && (params[0] === 'sync-hold' || params[0] === 'sync-hold-summary')) reads++;
-    return inherited.call(this, sql, params);
+    return proto.executeRaw.call(this, sql, params);
   };
+  for (const name of ['readHeldPageRows'] as const) {
+    target[name] = function (...args) { reads++; return proto[name].apply(this, args); };
+  }
   try { return { value: await run(), reads }; }
-  finally { delete (target as Partial<typeof target>).executeRaw; }
+  finally { for (const name of ['executeRaw', 'readHeldPageRows'] as const) delete (target as Partial<typeof target>)[name]; }
 }
 
 test('the held-page read joins each hold to its page by key, not by a text cast of every page id', () => eachEngine(async () => {
   const s = await heldSource();
   const [page] = await engine.executeRaw<{ id: number; revision: string }>(`SELECT id, knowledge_revision::text AS revision FROM pages WHERE source_id=$1 AND slug='notes/a'`, [s.id]);
-  const target = engine as unknown as { executeRaw: (this: unknown, sql: string, params?: unknown[]) => Promise<unknown> };
-  const inherited = Object.getPrototypeOf(engine).executeRaw as typeof target.executeRaw;
+  const target = engine as unknown as { readHeldPageRows: (this: unknown, pageIds: string[]) => Promise<unknown> };
+  const inherited = Object.getPrototypeOf(engine).readHeldPageRows as typeof target.readHeldPageRows;
   let read: { sql: string; params: unknown[] } | undefined;
-  target.executeRaw = function (sql, params) {
-    if (Array.isArray(params) && params[0] === 'sync-hold' && sql.includes('LEFT JOIN pages p')) read = { sql, params };
-    return inherited.call(this, sql, params);
-  };
+  target.readHeldPageRows = function (pageIds) { read = { sql: HELD_PAGES_SQL, params: [GIT_HOLD_OP, pageIds] }; return inherited.call(this, pageIds); };
   let held: Awaited<ReturnType<typeof readHeldPages>>;
   try { held = await readHeldPages(engine, [page.id, page.id + 100_000]); }
-  finally { delete (target as Partial<typeof target>).executeRaw; }
+  finally { delete (target as Partial<typeof target>).readHeldPageRows; }
   expect([...held.keys()]).toEqual([page.id]);
   expect(held.get(page.id)).toMatchObject({ revision: page.revision, record: { path: 'notes/a.md', page_id: page.id } });
   const plan = await engine.transaction(async tx => {

@@ -29,7 +29,7 @@ describe('response deferral', () => {
   test('the page_retrievals bump issued mid-request reaches the database only after release', async () => {
     _resetTrackRetrievalCacheForTests();
     const statements: string[] = [];
-    const engine = { getConfig: async () => null, executeRaw: async (sql: string) => { statements.push(sql); return []; } } as unknown as BrainEngine;
+    const engine = { getConfig: async () => null, bumpPageRetrievals: async () => { statements.push(BUMP_LAST_RETRIEVED_SQL); } } as unknown as BrainEngine;
     const { release } = await withResponseDeferral(async () => { bumpLastRetrievedAt(engine, [1, 2]); await new Promise(r => setTimeout(r, 20)); });
     expect(statements).toEqual([]);
     release();

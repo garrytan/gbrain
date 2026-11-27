@@ -23,20 +23,22 @@
  *    rows by renaming them, which needs raw SQL; and the Rust store lowercases every slug it stores or reads, so it can hold
  *    neither capitalised spelling. Rust must keep a stored slug's capitals and read a slug exactly as sent for the refusal
  *    (built in TS from `executeRaw` over pages) to be reachable.
- *  - delete_page, add_tag, remove_tag, add_timeline_entry, edit_page and append_page by the stored spelling: member `executeRaw`, capability `raw_sql` (Rust
- *    persistence area): each next reads through raw SQL (executeRaw), which the Rust store does not serve, so the op
- *    stops before it writes. When it does, Rust must delete the row it stored, by the spelling it stored.
- *  - get_page: member `readPageSnapshot`, option `resolveAlias` (Rust pages area, store-members/pages.ts):
- *    the Rust store does not serve resolveAlias on master yet, so the op refuses before any slug is read.
+ *  - delete_page by the stored spelling: the soft delete lands and answers as on PGLite, then the origin-carry read
+ *    (originOf, src/core/repair/origin-carry.ts) is raw SQL the store does not serve (member `executeRaw`, capability
+ *    `raw_sql`); delete_page catches it, so the case ends on that typed refusal.
+ *  - restore_page and append_page by the stored spelling: preparation meets raw SQL the store does not serve
+ *    (clearOwedPurges, src/core/persistence/derived-origin-hold.ts; inlineRegions, src/core/page-body/tail-digest.ts), so
+ *    the write ends failed with engine_capability_missing and nothing publishes. add_tag, remove_tag, add_timeline_entry
+ *    and edit_page land first.
+ *  - writes by a capital-stored spelling: member `putPage` (Rust pages area): the store keeps the lowercased slug, so a
+ *    capital-stored page cannot be set up; an exact read of the capital spelling answers nothing, as on PGLite.
  *  - NFC storage: member `putPage` (Rust pages area, gbrain-store pages.rs `validate_slug`): the Rust store
  *    lowercases a slug but does not compose it to NFC, so an NFD slug is stored as NFD and the NFC read
  *    misses it. Rust must compose to NFC in `validate_slug` and in its lowercased read lookups.
- *  - put refusal beside a composed twin, and the final-review reads (a Unicode-expansion spelling, out-of-scope rows crowding the
- *    candidates): the puts stop at the admission read as above, and the reads store their rows by renaming them, which stops at `executeRaw` / `raw_sql`.
- *  - legacy-spelling put refusal: member `executeRaw`, capability `raw_sql` (Rust persistence area): put_page reads
- *    its source row for admission through raw SQL, which the Rust store does not serve, so the op stops before
- *    admission. When it does, Rust must answer the same refusal text (it is built in TS admission from
- *    readPageSnapshot of the lowercased spelling).
+ *  - the ontology/takes case and the final-review reads (a Unicode-expansion spelling, out-of-scope rows crowding the
+ *    candidates) store their rows by renaming them, which stops at `executeRaw` / `raw_sql`.
+ * The put_page refusals of a stored decomposed spelling (with and without a composed twin) answer on Rust as on PGLite:
+ * the Rust store keeps the NFD bytes a caller sends, so the case stores the old spelling directly.
  */
 import { describe, expect } from 'bun:test';
 import { parityArms } from './harness.ts';
@@ -63,15 +65,14 @@ const NFD_ZOE = 'people/zoë-example';
 const LEGACY_REFUSAL = (stored: string, composed: string) => `Page ${stored} is stored under an older decomposed Unicode spelling of its name, so a put by that spelling is refused and nothing was changed. `
   + `To move the page to the normal spelling ${composed}, preview gbrain repair slug-spelling --source default, then run the apply command it prints after the owner agrees; until then the page cannot be replaced by put.`;
 const AMBIGUOUS_REFUSAL = (asked: string, decomposed: string, composed: string) => `The slug "${asked}" is ambiguous: this brain stores two pages whose slugs read the same, "${decomposed}" (decomposed, with capitals) and "${composed}" (composed, with capitals), and "${asked}" is neither of them exactly.`;
-// A Rust write ends on the first store member the engine does not serve. readPersistenceBrainId (import part A) and the
-// local writer row (import part B) are served now, so a write next meets a raw SQL read (for put_page, the admission read
-// of the source row, ADMISSION_SOURCE_SQL in persistence/page-mutations.ts), which import part E serves.
+// A Rust write ends on the first store member the engine does not serve. readPersistenceBrainId (import part A), the
+// local writer row (import part B) and the put_page admission read (ADMISSION_SOURCE_SQL in persistence/page-mutations.ts,
+// import part E) are served, so put_page runs. restore_page and append_page still meet a raw SQL read in preparation
+// (clearOwedPurges in persistence/derived-origin-hold.ts; inlineRegions in page-body/tail-digest.ts) and end failed with this text.
 const RUST_JOURNAL_STOP =
   "This brain's engine does not support executeRaw yet (it needs the raw_sql capability), so nothing ran.";
 const RUST_RAW_SQL_STOP =
   "This brain's engine does not support executeRaw yet (it needs the raw_sql capability), so nothing ran.";
-const RUST_RESOLVE_ALIAS_STOP =
-  "This brain's engine does not support readPageSnapshot (option resolveAlias) yet (it needs the pages capability), so nothing ran.";
 
 function ctx(engine: BrainEngine): OperationContext {
   return { engine, config: { engine: engine.kind, embedding_disabled: true } as never, remote: false, sourceId: 'default',
@@ -79,36 +80,25 @@ function ctx(engine: BrainEngine): OperationContext {
 }
 
 describe('engine parity: slug normal form', () => {
-  parityTest('get_page reads a capitalised or decomposed spelling of the stored slug', { methods: ['putPage', 'readPageSnapshot'] }, async (engine, backend) => {
+  parityTest('get_page reads a capitalised or decomposed spelling of the stored slug', { methods: ['putPage', 'readPageSnapshot'] }, async (engine) => {
     await engine.putPage('people/alice-example', { type: 'person', title: 'Alice Example', compiled_truth: 'Alice.', timeline: '' });
     await engine.putPage(NFC_CAFE, { type: 'note', title: 'Cafe', compiled_truth: 'Coffee.', timeline: '' });
     const reads = [];
     for (const asked of ['People/Alice-Example', 'notes/café', 'NOTES/CAFÉ']) {
-      try {
-        const page = await operationsByName.get_page!.handler(ctx(engine), { slug: asked }) as { slug: string; title: string };
-        reads.push({ asked, slug: page.slug, title: page.title });
-      } catch (e) {
-        if (backend === 'rust') expect((e as Error).message).toBe(RUST_RESOLVE_ALIAS_STOP);
-        throw e;
-      }
+      const page = await operationsByName.get_page!.handler(ctx(engine), { slug: asked }) as { slug: string; title: string };
+      reads.push({ asked, slug: page.slug, title: page.title });
     }
     expect(reads.map(r => r.slug)).toEqual(['people/alice-example', NFC_CAFE, NFC_CAFE]);
     return reads;
   });
 
-  parityTest('pages-01: a page written once opens by a mixed-case and by a decomposed-accent spelling of its slug, with the same page on every arm', { methods: ['putPage', 'readPageSnapshot'] }, async (engine, backend) => {
+  parityTest('pages-01: a page written once opens by a mixed-case and by a decomposed-accent spelling of its slug, with the same page on every arm', { methods: ['putPage', 'readPageSnapshot'] }, async (engine) => {
     await engine.putPage('people/charlie-example', { type: 'person', title: 'Charlie Example', compiled_truth: 'Charlie.', timeline: '' });
     await engine.putPage('places/caf\u00e9-example', { type: 'note', title: 'Cafe Example', compiled_truth: 'Coffee.', timeline: '' });
     const reads: Array<{ asked: string; slug: string; title: string }> = [];
     for (const asked of ['People/Charlie-Example', 'places/cafe\u0301-example']) {
-      try {
-        const page = await operationsByName.get_page!.handler(ctx(engine), { slug: asked }) as { slug: string; title: string };
-        reads.push({ asked, slug: page.slug, title: page.title });
-      } catch (e) {
-        // master's Rust adapter has no readPageSnapshot resolveAlias, so the arm stops on this typed refusal; it never refuses the read itself.
-        if (backend === 'rust') expect((e as Error).message).toBe(RUST_RESOLVE_ALIAS_STOP);
-        throw e;
-      }
+      const page = await operationsByName.get_page!.handler(ctx(engine), { slug: asked }) as { slug: string; title: string };
+      reads.push({ asked, slug: page.slug, title: page.title });
     }
     expect(reads).toEqual([
       { asked: 'People/Charlie-Example', slug: 'people/charlie-example', title: 'Charlie Example' },
@@ -147,7 +137,6 @@ describe('engine parity: slug normal form', () => {
         await operationsByName.put_page!.handler(ctx(engine), { slug: stored, content: '---\ntype: note\ntitle: Legacy\n---\nNew.\n', request_id: randomUUID(), ...extra });
         answers.push({ code: null, detail: null, message: 'written' });
       } catch (e) {
-        if (backend === 'rust') { expect((e as Error).message).toBe(RUST_JOURNAL_STOP); throw e; }
         answers.push({ code: (e as { code?: unknown }).code, detail: (e as { detail?: unknown }).detail, message: (e as Error).message });
       }
     }
@@ -190,17 +179,14 @@ describe('engine parity: slug normal form', () => {
       await engine.executeRaw('UPDATE pages SET slug = $1 WHERE slug = $2', [stored, composed]);
     }
     const before = await engine.readPageSnapshot(stored, { sourceId: 'default', includeDeleted: true });
-    let out: { slug: string; status: string; noop: boolean };
-    try {
-      out = await operationsByName.delete_page!.handler(ctx(engine), { slug: stored, expected_revision: before!.revision, request_id: randomUUID() }) as typeof out;
-    } catch (e) {
-      if (backend === 'rust') { expect((e as Error).message).toBe(RUST_JOURNAL_STOP); throw e; }
-      throw e;
-    }
+    const out = await operationsByName.delete_page!.handler(ctx(engine), { slug: stored, expected_revision: before!.revision, request_id: randomUUID() }) as { slug: string; status: string; noop: boolean };
     const after = await engine.readPageSnapshot(stored, { sourceId: 'default', includeDeleted: true });
     const twin = await engine.readPageSnapshot(composed, { sourceId: 'default', includeDeleted: true });
     const result = { slug: out.slug, status: out.status, noop: out.noop, deletedInPlace: after?.page.deleted_at != null, twin: twin?.page.slug ?? null };
     expect(result).toEqual({ slug: stored, status: 'soft_deleted', noop: false, deletedInPlace: true, twin: null });
+    // On Rust the soft delete lands, but the origin-carry read after it (originOf, src/core/repair/origin-carry.ts) is
+    // raw SQL the store does not serve; delete_page catches that refusal, so the case ends on it here.
+    if (backend === 'rust') throw capabilityMissing('raw_sql', 'executeRaw', 'partial');
     return result;
   });
   parityTest('restore_page by the stored decomposed spelling restores the row delete_page soft-deleted by it, with no composed twin', { methods: ['putPage', 'readPageSnapshot'] }, async (engine, backend) => {
@@ -217,7 +203,12 @@ describe('engine parity: slug normal form', () => {
       await operationsByName.delete_page!.handler(ctx(engine), { slug: stored, expected_revision: await revision(), request_id: randomUUID() });
       out = await operationsByName.restore_page!.handler(ctx(engine), { slug: stored, expected_revision: await revision(), request_id: randomUUID() }) as typeof out;
     } catch (e) {
-      if (backend === 'rust') { expect((e as Error).message).toBe(RUST_JOURNAL_STOP); throw e; }
+      // On Rust the restore stops in preparation at clearOwedPurges (src/core/persistence/derived-origin-hold.ts), raw SQL
+      // the store does not serve; the write ends failed with engine_capability_missing and nothing publishes.
+      if (backend === 'rust') {
+        expect({ code: (e as { code?: unknown }).code, message: (e as Error).message }).toEqual({ code: 'engine_capability_missing', message: RUST_JOURNAL_STOP });
+        throw capabilityMissing('raw_sql', 'executeRaw');
+      }
       throw e;
     }
     const after = await engine.readPageSnapshot(stored, { sourceId: 'default', includeDeleted: true });
@@ -270,7 +261,12 @@ describe('engine parity: slug normal form', () => {
         const out = await operationsByName[op]!.handler(ctx(engine), { slug: stored, ...params }) as { slug?: unknown; status?: unknown; noop?: unknown };
         outputs.push({ op, slug: out.slug, status: out.status, noop: out.noop });
       } catch (e) {
-        if (backend === 'rust') expect((e as Error).message).toBe(RUST_JOURNAL_STOP);
+        // On Rust every write before append_page lands; append_page stops in preparation at the inline-region read
+        // (inlineRegions, src/core/page-body/tail-digest.ts), raw SQL the store does not serve, and nothing publishes.
+        if (backend === 'rust') {
+          expect({ op, code: (e as { code?: unknown }).code, message: (e as Error).message }).toEqual({ op: 'append_page', code: 'engine_capability_missing', message: RUST_JOURNAL_STOP });
+          throw capabilityMissing('raw_sql', 'executeRaw');
+        }
         throw e;
       }
     };
@@ -298,8 +294,14 @@ describe('engine parity: slug normal form', () => {
   parityTest('every write by the exact spelling of a capital-stored page changes that row in place, with no lowercase twin (the merge base answered page_not_found)', { methods: ['putPage', 'readPageSnapshot'] }, async (engine, backend) => {
     const stored = 'Notes/Write-Cap';
     const lower = 'notes/write-cap';
-    if (backend === 'rust') await engine.putPage(stored, { type: 'note', title: 'Cap', compiled_truth: 'Body.', timeline: '' });
-    else {
+    if (backend === 'rust') {
+      // The store keeps no capital spelling: a put lowercases the slug, and an exact read of the capital spelling answers
+      // nothing, as PGLite answers a spelling it does not store. A capital-stored page cannot be set up, so the case stops.
+      await engine.putPage(stored, { type: 'note', title: 'Cap', compiled_truth: 'Body.', timeline: '' });
+      expect(await engine.readPageSnapshot(stored, { sourceId: 'default' })).toBeNull();
+      expect((await engine.readPageSnapshot(lower, { sourceId: 'default' }))?.page.slug).toBe(lower);
+      throw capabilityMissing('pages', 'putPage (a slug with capitals)', 'partial');
+    } else {
       await engine.putPage(lower, { type: 'note', title: 'Cap', compiled_truth: 'Body.', timeline: '' });
       await engine.executeRaw('UPDATE pages SET slug = $1 WHERE slug = $2', [stored, lower]);
       await engine.executeRaw('UPDATE pages SET text_projection_revision = knowledge_revision WHERE slug = $1', [stored]);
@@ -307,13 +309,8 @@ describe('engine parity: slug normal form', () => {
     const revision = async () => (await engine.readPageSnapshot(stored, { sourceId: 'default', includeDeleted: true }))!.revision;
     const outputs: Array<{ op: string; slug: unknown }> = [];
     const run = async (op: string, params: Record<string, unknown>) => {
-      try {
-        const out = await operationsByName[op]!.handler(ctx(engine), { slug: stored, ...params }) as { slug?: unknown };
-        outputs.push({ op, slug: out.slug });
-      } catch (e) {
-        if (backend === 'rust') expect((e as Error).message).toBe(RUST_JOURNAL_STOP);
-        throw e;
-      }
+      const out = await operationsByName[op]!.handler(ctx(engine), { slug: stored, ...params }) as { slug?: unknown };
+      outputs.push({ op, slug: out.slug });
     };
     await run('add_tag', { tag: 'cap' });
     await run('add_timeline_entry', { date: '2026-03-04', summary: 'cap entry' });
@@ -347,7 +344,6 @@ describe('engine parity: slug normal form', () => {
       await operationsByName.put_page!.handler(ctx(engine), { slug: stored, content: '---\ntype: note\ntitle: Legacy\n---\nNew.\n', request_id: randomUUID() });
       answer = { code: null, detail: null, message: 'written' };
     } catch (e) {
-      if (backend === 'rust') { expect((e as Error).message).toBe(RUST_JOURNAL_STOP); throw e; }
       answer = { code: (e as { code?: unknown }).code, detail: (e as { detail?: unknown }).detail, message: (e as Error).message };
     }
     const result = { answer, unchanged: (await read(stored)).revision === before.stored && (await read(composed)).revision === before.composed };

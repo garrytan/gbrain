@@ -222,7 +222,7 @@ export async function archiveSource(engine: BrainEngine, backend: ParityBackend,
 export async function enableBeliefCoverage(engine: BrainEngine, backend: ParityBackend, sourceId: string): Promise<void> {
   switch (backend) {
     case 'rust':
-      throw new Error('enableBeliefCoverage: the Rust store has no belief ledger; a case reaching this fixture on the Rust arm must stop on a typed refusal first');
+      // The Rust store has no belief ledger: the same production path ends on its typed refusal, the case's stop.
     case 'pglite':
     case 'postgres':
       await enableBeliefLedger(engine, sourceId);
