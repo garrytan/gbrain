@@ -250,7 +250,7 @@ export const searchKeyword: StoreMember<[query: string, opts?: SearchOpts], Sear
     console.warn(`[gbrain] Warning: search limit clamped from ${opts.limit} to ${cap}`);
   }
   options.limit = limit;
-  options.innerLimit = Math.min(limit * 3, cap * 3);
+  options.innerLimit = Math.min((offset + limit) * 3, cap * 3);
   options.offset = offset;
   // PGLite's CJK branch returns before the strict statement and its retries.
   if (hasCJK(query)) return searchCjk(brain, 'searchKeyword', query, opts, options, true);

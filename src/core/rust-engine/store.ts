@@ -8,6 +8,7 @@ import { embeddedSchemaEmbedding } from '../embedded-engine.ts';
 import { DEFAULT_EMBEDDING_DIMENSIONS, DEFAULT_EMBEDDING_MODEL } from '../ai/defaults.ts';
 import { WRITE_GATE_DETECTOR_VERSION } from '../write-gate-schema.ts';
 import { mapStoreError } from './store-errors.ts';
+import type { RestoreCensus, RestoreQuarantinePlan, RestoreQuarantineReport } from './restore-types.ts';
 
 /** Worker threads the store's pool runs its calls on. One write runs at a time; reads overlap. */
 const STORE_POOL_THREADS = 4;
@@ -115,6 +116,19 @@ export interface RustStore {
   snapshotTo(target: string, options: StoreSnapshotOptions): Promise<StoreSnapshotManifest>;
   /** Asks the snapshot `opId` to stop; true when one was running. It returns at once and does not wait for the copy. */
   snapshotCancel(opId: string): boolean;
+  /**
+   * `gbrain backup restore` only (not a BrainEngine member): one read of what could still run in a restored store, the
+   * authority it holds and the settings a restore changes, with the named `blockers` that refuse a publish. An addon built
+   * before the restore step lacks it (`restoreAddonSupportsSafety`).
+   */
+  restoreCensus(purgeRequestIds: string[]): Promise<RestoreCensus>;
+  /**
+   * `gbrain backup restore` only: detaches sources, rebases managed paths and origins, turns off automation settings,
+   * cancels unfinished jobs, in one write transaction. It revokes nothing: a live OAuth client or local writer is the
+   * blocker `archived_authority`. Rejects `restore_refused` while a blocker stands, `invalid_argument` when the plan
+   * does not match the store and `invalid_state` for a restore id already applied; each leaves the store as it was.
+   */
+  restoreQuarantine(plan: RestoreQuarantinePlan): Promise<RestoreQuarantineReport>;
   close(): Promise<void>;
 }
 
@@ -311,6 +325,8 @@ export async function openRustStore(addon: object, databasePath: string, embeddi
       if (typeof brain.snapshotCancel !== 'function') throw mapStoreError(new Error('this addon has no snapshotCancel'), { member: 'snapshotCancel' });
       return brain.snapshotCancel(opId) as boolean;
     },
+    restoreCensus: (purgeRequestIds) => call('restoreCensus', () => brain.restoreCensus(purgeRequestIds)),
+    restoreQuarantine: (plan) => call('restoreQuarantine', () => brain.restoreQuarantine(plan)),
     async close() {
       try { await brain.close(); } finally { await pool.shutdown(STORE_SHUTDOWN_WAIT_MS).catch(() => undefined); }
     },

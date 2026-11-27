@@ -141,6 +141,10 @@ impl Kv for RedbReadOnlyKv {
         ))
     }
 
+    fn is_read_only(&self) -> bool {
+        true
+    }
+
     fn version(&self) -> Result<u64> {
         let snapshot = Snapshot {
             tx: self.db.begin_read().map_err(map)?,

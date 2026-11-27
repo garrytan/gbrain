@@ -292,7 +292,7 @@ describe('doctor search reads', () => {
   );
   parityTest(
     'countAtomExtractionBacklog counts live extractable pages with no atom of their content, by source and connector opt-out',
-    { methods: ['putPage', 'getPage', 'softDeletePage', 'countAtomExtractionBacklog'] },
+    { methods: ['putPage', 'getPage', 'softDeletePage', 'countAtomExtractionBacklog', 'recordHeldGenerationRow'] },
     async (engine, backend) => {
       await createSource(engine, backend, 'mail', { kind: 'google' });
       await createSource(engine, backend, 'repo', { kind: 'checkout' });
@@ -326,8 +326,17 @@ describe('doctor search reads', () => {
       const managedHash = (await engine.getPage('notes/managed'))!.content_hash!;
       await put(engine, 'atoms/managed', { type: 'atom', compiled_truth: 'a', frontmatter: { source_hash: managedHash.slice(0, 16), managed_extraction: true } });
       const managed = await query({ sourceId: 'default' });
-      const result = { empty, all, inDefault, inMail, optedOut, mailOptedOut, managed };
-      expect(result).toEqual({ empty: 0, all: 5, inDefault: 2, inMail: 2, optedOut: 4, mailOptedOut: 1, managed: 3 });
+      // #10270: a page held for its current input (a held atom generation whose hold id the caller names, not a partial hold) leaves the count.
+      const openHash = (await engine.getPage('notes/open'))!.content_hash!;
+      const hold = (holdId: string, inputPin: string, context: string) => ({ holdId, runId: null, inputPin, inputSize: null, setHash: 'set', reason: 'shrunk', context, proposal: null, proposalBytes: 0 });
+      await engine.transaction(tx => tx.recordHeldGenerationRow({ sourceId: 'default', kind: 'atom', ownerKey: 'source_slug:notes/open' }, hold('hold-open', openHash, '{}')));
+      await engine.transaction(tx => tx.recordHeldGenerationRow({ sourceId: 'default', kind: 'atom', ownerKey: 'source_slug:notes/managed' }, hold('hold-partial', managedHash, '{"partial":true}')));
+      const holdIds = ['hold-open', 'hold-partial'];
+      const held = await query({ sourceId: 'default', holdIds });
+      const heldAll = await query({ holdIds });
+      const heldElsewhere = await query({ sourceId: 'default', holdIds: ['hold-other'] });
+      const result = { empty, all, inDefault, inMail, optedOut, mailOptedOut, managed, held, heldAll, heldElsewhere };
+      expect(result).toEqual({ empty: 0, all: 5, inDefault: 2, inMail: 2, optedOut: 4, mailOptedOut: 1, managed: 3, held: 2, heldAll: 5, heldElsewhere: 3 });
       return result;
     },
   );

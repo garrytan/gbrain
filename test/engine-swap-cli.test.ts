@@ -19,6 +19,9 @@ import { existsSync } from 'node:fs';
 import { withEnv } from './helpers/with-env.ts';
 import { CODES } from '../src/core/error-registry.ts';
 import { SWAP_RECOVERY, SWAP_REFUSAL_REASONS } from '../src/core/engine-swap/refusals.ts';
+import { WRITE_COVERAGE_LIMIT, WRITE_COVERAGE_LOSS, WRITE_COVERAGE_NAMED, type ShadowStatus } from '../src/core/engine-swap/readiness.ts';
+import { PILOT_WRITES, writeFamily } from '../src/shadow/write-compare.ts';
+import { WRITE_MAP } from '../src/shadow/write-map.ts';
 
 let engine: PGLiteEngine;
 let home: string;
@@ -197,5 +200,114 @@ describe('engine_swap_refused recovery table', () => {
     for (const k of ['blocker', 'authority', 'side_effects', 'retry'] as const) expect(row[k].length).toBeGreaterThan(10);
     expect(row.anchor).toBe(`docs/guides/engine-swap.md#${reason}`);
     expect(guide).toContain(`<a id="${reason}"></a>`);
+  });
+});
+
+describe('the swap report names each write type criterion 5 does not compare', () => {
+  const NAMED_LOSS = 'Named loss: only putPage, deletePage, addLink, addLinksBatch and removeLink are compared, so these other page and link writes are counted capability_missing and are not compared: pages:deletePages, pages:softDeletePage, pages:softDeletePages, pages:restorePage, pages:purgeDeletedPages, pages:updateSlug, pages:refreshPageBody, pages:refreshPageOrigin, pages:updatePageContextualRetrievalState, pages:stripStaleFrontmatterKeys, pages:markPagesExtractedBatch, pages:markPagesAttendanceBlocked, pages:setPageEmbeddingSignature, pages:setChunkerVersion, pages:writeTextProjectionSeal, pages:revertToVersion, pages:setEmotionalWeightBatch, pages:invalidateWithdrawnPages, pages:createSegmentedPageShell, pages:sealSegmentedPage, pages:flipBodyGeneration, links:removeLinksByPagesAndSource, links:replaceDerivedLinks, links:replaceDerivedLinksBatch. A write that touches several tables is counted under its first table only, so the side effects of deletePages, purgeDeletedPages and updateSlug (aliases, open loops, owner-only marks, fact withdrawals) land under pages:* keys, and a type\'s line above reads only the writes whose first table it is.';
+  const sampled = (byFamily: Record<string, unknown>) => ({
+    write_comparisons: { state: 'measured', sample_rate: 1, comparable: 5, unexplained_difference: 0, uncomparable: 0, capability_missing: 0, capability_missing_by_family: byFamily },
+  }) as unknown as ShadowStatus;
+  const plan = async (doc: ShadowStatus, json: boolean) => {
+    const r = await run(['--to', 'rust', '--plan', ...(json ? ['--json'] : [])], { readShadowStatus: async () => doc });
+    return json ? JSON.parse(r.stdout) as { criteria: Array<Record<string, unknown>> } : r.stdout;
+  };
+  const MIXED = { content_chunks: 3, tags: 1, decide_state: 2, decide_spend: 1, 'pages:updateSlug': 4, 'pages:softDeletePage': 1, raw_sql: 2, takes: 0, facts: 'x', other: 5 };
+  const MIXED_LINES = [
+    'chunks: sampled 3 (content_chunks 3)',
+    'tags: sampled 1 (tags 1)',
+    'aliases: not sampled',
+    'timeline entries: not sampled',
+    'takes: not sampled',
+    'facts: not sampled',
+    'fact withdrawals: not sampled separately (counted under pages:updateSlug 4)',
+    'open loops: not sampled',
+    'sources: not sampled',
+    'owner-only marks: not sampled',
+    'decide store: sampled 3 (decide_state 2, decide_spend 1)',
+    'other write families sampled: pages:updateSlug 4, pages:softDeletePage 1, raw_sql 2, other 5',
+    NAMED_LOSS,
+  ];
+
+  test('some families sampled and some not give exactly these lines, in the JSON row and in the text report', async () => {
+    const row = ((await plan(sampled(MIXED), true)) as { criteria: Array<Record<string, unknown>> }).criteria.find(c => c.n === 5)!;
+    expect(row.lines).toEqual(MIXED_LINES);
+    const text = (await plan(sampled(MIXED), false)) as string;
+    expect(text).toContain(`\n${MIXED_LINES.map(l => `       ${l}`).join('\n')}\n`);
+  });
+
+  test('with nothing sampled every named type reads not sampled and the other line reads none', async () => {
+    const row = ((await plan(sampled({}), true)) as { criteria: Array<Record<string, unknown>> }).criteria.find(c => c.n === 5)!;
+    expect(row.lines).toEqual([
+      'chunks: not sampled', 'tags: not sampled', 'aliases: not sampled', 'timeline entries: not sampled', 'takes: not sampled', 'facts: not sampled',
+      'fact withdrawals: not sampled separately (counted under pages:updateSlug 0)',
+      'open loops: not sampled', 'sources: not sampled', 'owner-only marks: not sampled', 'decide store: not sampled',
+      'other write families sampled: none', NAMED_LOSS,
+    ]);
+  });
+
+  test('the JSON row only gains lines: the old keys and the old sentence are unchanged, and no other criterion has lines', async () => {
+    const doc = (await plan(sampled(MIXED), true)) as { criteria: Array<Record<string, unknown>> };
+    const row = doc.criteria.find(c => c.n === 5)!;
+    expect(Object.keys(row).sort()).toEqual(['detail', 'gating', 'lines', 'n', 'name', 'state']);
+    expect(row.state).toBe('fail');
+    expect(String(row.detail).endsWith(WRITE_COVERAGE_NAMED)).toBe(true);
+    expect(String(row.detail)).toContain('sampled so far: content_chunks 3, tags 1, decide_state 2, decide_spend 1, pages:updateSlug 4, pages:softDeletePage 1, raw_sql 2, other 5');
+    expect(String(row.detail)).not.toContain('Named loss');
+    expect(doc.criteria.filter(c => c.n !== 5 && 'lines' in c)).toEqual([]);
+  });
+
+  test('the sentence, the guide and the named loss are pinned', () => {
+    expect(WRITE_COVERAGE_NAMED).toBe('Criterion 5 covers the pilot page and link writes (putPage, deletePage, addLink, addLinksBatch, removeLink) only (#10350, #10360, #10382, #10390). These write types are not compared and get named lines in the swap report: chunks, tags, aliases, timeline entries, takes, facts, fact withdrawals, open loops, sources, owner-only marks and the decide store.');
+    const guide = readFileSync(join(import.meta.dir, '..', 'docs', 'guides', 'engine-swap.md'), 'utf8');
+    expect(guide).toContain(WRITE_COVERAGE_NAMED);
+    expect(guide).toContain(NAMED_LOSS);
+  });
+
+  test('the named loss names every page and link write that is not a pilot write, and no other', () => {
+    // The set the code counts as capability_missing under pages:<op> or links:<op>: the family writeFamily gives each non-pilot WRITE_MAP member.
+    const fromCode = Object.keys(WRITE_MAP).filter(op => !PILOT_WRITES.has(op)).map(op => writeFamily(op)).filter(f => /^(pages|links):/.test(f));
+    expect(fromCode.length).toBe(24);
+    const guide = readFileSync(join(import.meta.dir, '..', 'docs', 'guides', 'engine-swap.md'), 'utf8');
+    // WRITE_COVERAGE_LOSS is the evaluated string, so the guide holds the same text with no source escape.
+    // The guide mentions pages:updateSlug elsewhere (the fact withdrawals line), so read only its named-loss paragraph.
+    const guideLoss = guide.slice(guide.indexOf('Named loss:')).split('\n')[0]!;
+    expect(guideLoss).toBe(WRITE_COVERAGE_LOSS);
+    for (const text of [WRITE_COVERAGE_LOSS, guideLoss]) {
+      const named = text.match(/\b(?:pages|links):[A-Za-z]\w*/g) ?? [];
+      expect(named.length).toBe(fromCode.length);
+      expect(new Set(named)).toEqual(new Set(fromCode));
+    }
+    // The sentence names exactly the five pilot writes.
+    const pilot = /the pilot page and link writes \(([^)]*)\) only/.exec(WRITE_COVERAGE_NAMED)![1]!.split(', ');
+    expect(new Set(pilot)).toEqual(new Set(PILOT_WRITES));
+    expect(WRITE_COVERAGE_NAMED).not.toContain('covers page and link writes only');
+  });
+
+  test('the short coverage sentence says the pilot writes, in the report, the status line, the guide and ENGINES.md', () => {
+    expect(WRITE_COVERAGE_LIMIT).toBe('a criterion 5 pass covers the pilot page and link writes only');
+    const docs = ['docs/guides/engine-swap.md', 'docs/ENGINES.md', 'llms-full.txt'].map(f => readFileSync(join(import.meta.dir, '..', f), 'utf8'));
+    expect(docs[0]).toContain(`**A criterion 5 pass covers the pilot page and link writes only.**`);
+    expect(docs[0]).toContain('so a criterion 5 pass still covers the pilot page and link writes only');
+    for (const doc of docs.slice(1)) {
+      expect(doc).toContain('`write_comparisons` (the pilot page and link writes only;');
+      expect(doc).toContain('write comparisons cover the pilot page and link writes only');
+    }
+    for (const doc of docs) expect(doc).not.toMatch(/(?:covers?|\() ?page and link writes only/);
+  });
+
+  test('every write family a non-pilot write is counted under is named, a pages or links key, or on the other line', () => {
+    const named = new Set(['content_chunks', 'tags', 'page_aliases', 'timeline_entries', 'takes', 'facts', 'open_loops', 'sources', 'owner_only_marks',
+      'decide_state', 'decide_spend', 'decision_receipts', 'decide_calibrations', 'decide_proposals', 'decide_review_proposals', 'decide_review_queue', 'decide_sweep_deferred']);
+    // The other line carries these, so the lines name them as sampled and no count is dropped.
+    const other = new Set(['raw_sql', 'unmapped', 'other', 'config', 'wanted_links', 'entity_identities', 'raw_data', 'files', 'page_versions', 'synthesis_evidence', 'code_edges_chunk',
+      // The trunk's chronicle ledger row (upsertChronicleRow, src/shadow/write-map.ts) is a non-pilot write counted on the other line.
+      'chronicle_page_state']);
+    const stray = Object.keys(WRITE_MAP).filter(op => !PILOT_WRITES.has(op)).map(writeFamily)
+      .filter(f => !named.has(f) && !other.has(f) && !/^(pages|links):[A-Za-z]+$/.test(f));
+    expect(stray).toEqual([]);
+    // No named type is also on the other line, and fact withdrawals never has a family of its own.
+    expect([...other].filter(f => named.has(f))).toEqual([]);
+    expect(Object.keys(WRITE_MAP).map(writeFamily)).not.toContain('fact_withdrawals');
   });
 });
