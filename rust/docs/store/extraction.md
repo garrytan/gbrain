@@ -5,7 +5,7 @@ Part of the store contract in [rust/README.md](../../README.md) ("The brain stor
 Extraction state is what the link extractor and the frontmatter sweep keep about a page: when its
 links were last extracted, and the revision at which attendance extraction was blocked. In PGLite
 these are three columns of `pages`; here they are one record under the page id, written only by the
-methods below. The key tag is the reserved `e`. It took no format number; the store is at format 7 now ([format.md](format.md)).
+methods below. The key tag is the reserved `e`. It took no format number; the store is at format 17 now ([format.md](format.md)).
 
 | Key | Value | Mirrors |
 | --- | --- | --- |
@@ -17,7 +17,8 @@ key) pages are never stale, nor are pages of a guest source. A page deleted for 
 record (`cascade::remove_page_rows`), so a page created again at the same slug starts unstamped. A
 deleted source (`cascade::remove_source_rows`) loses the record of any page still in it; core
 removes those pages first, so this normally finds nothing. `extract_atoms_page_state`, the table
-Postgres cascades there, has no records in this engine.
+Postgres cascades there, is kept by the `~a` family (`atom_state::remove_source_rows`; [extract-atoms.md](extract-atoms.md)),
+which drops any row of the source's incarnation still left.
 `getPage` returns none of these columns, as in PGLite, so the family's `page_columns` hook adds
 nothing.
 

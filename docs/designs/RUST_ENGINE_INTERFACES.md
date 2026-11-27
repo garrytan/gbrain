@@ -131,7 +131,7 @@ Rules:
   the family's `page_columns` hook ("Core hooks"). The family keeps the value under its own tag; until it adds the
   column, the page read returns the fixed default in `PAGE_ROW_DEFAULTS` (`store-codec.ts`). No family edits
   `PAGE_ROW_DEFAULTS`, `store-codec.ts` or `pages.rs`.
-- **Format.** `FORMAT_VERSION` 8 (`format.rs` lists each version; a build opens formats 1 to 8), `engineAbi` 1, a `FORMAT` file plus `records.redb`. New tags and new records under
+- **Format.** `FORMAT_VERSION` 17 (`format.rs` lists each version; a build opens formats 1 to 8 and 17, and formats 9 to 16 are allotted to other lanes, see `rust/docs/store/format.md`), `engineAbi` 1, a `FORMAT` file plus `records.redb`. New tags and new records under
   them do not change the format version: an older build never reads a tag it does not know, and a newer build reads
   an absent tag as "no rows". A family that changes the encoding of records that already exist on disk asks core.
   Format 2 keeps each chunk-stats and unfinished-request counter in its own record; a format-1 brain is upgraded in
@@ -149,8 +149,9 @@ Rules:
   | 11 | Refresh evidence reads (head 2) | `66e6c7ae` | planned |
   | 12 | Keyed lookups 2 (PR 10328, stacked on PR 10277) | `7896376b` | planned, lands after the Nov 26 shadow release |
   | 13 | Packed keyword index | `7896376b` | planned |
+  | 17 | The extract_atoms page and transcript ledgers (family `~a`, `rust/docs/store/extract-atoms.md`) | `rust-engine/extract-atoms-state` | shipped on that branch; 14 to 16 are allotted to other lanes in `rust/docs/store/format.md`, so a build opens formats 1 to 8 and 17 |
 
-  The next free number is 14. A head that takes a number that is not its own in this table renumbers before it lands.
+  Formats 14 to 16 are allotted in `rust/docs/store/format.md`; the next number nobody holds is 18. A head that takes a number that is not its own in this table renumbers before it lands.
 
 - **`SHADOW_ADAPTER_VERSION` ledger** (`src/shadow/evidence-epoch.ts`). One version per distinct adapter source (the
   digest of `store-members/**`, `store-codec.ts` and `members.ts` that `test/shadow-evidence.test.ts` pins). A lander
@@ -165,6 +166,9 @@ Rules:
   | 9 | Batch 15 (soak counter, request index states, page window chunk reads, concept rebuild, slug-spelling repair, loud search refusals and the members tail) |
   | 10 | Sync 19, dac09d5610 (batch 15 merged with master c341d40de3) |
   | 11 | Batch 15b (labelled-only policy on Rust, the purge-receipt and purge-ledger members of the fact purge path) |
+  | 12 | `381a0042d3` (one past master's 9 and the trunk's 11) |
+  | 13 | `18a143f55b` (the extract_atoms state gate classified, on `rust-engine/extract-atoms-rust`) |
+  | 14 | `0d4395e63b` (the eleven extract_atoms state members, on `rust-engine/extract-atoms-state`) |
 
 Reserved tags:
 
@@ -479,7 +483,7 @@ family's records keyed by source, not by page; records under a page go through t
 - **Owners** (the Postgres tables that cascade on `sources.id`): facts (`facts`, `fact_withdrawals`), aliases
   (`slug_aliases`, `page_aliases`), code_edges (`code_edges_chunk`, `code_edges_symbol`), link_queries
   (its own `q` records and the wanted_links family's `wanted_links` records, `q <source> 0x00 W ...`), raw_files (`files`), page_body (`page_segment_texts`, `page_body_stagings` and the other segment
-  tables), takes (`take_proposals`, `take_nudge_log`), extraction (`extract_atoms_page_state`).
+  tables), takes (`take_proposals`, `take_nudge_log`), atom_state (`extract_atoms_page_state`, the `~a` family: `atom_state::remove_source_rows` drops any row of the source's incarnation left after its pages are removed).
 - **Not on the list:** eval_capture (`eval_candidates.source_ids` is a text array with no foreign key) and stats
   (`ingest_log` has no foreign key). A family that is not listed and keys records by source asks core for one line.
 - **Shared `q` prefix.** `link_queries::remove_source_rows` deletes everything under `q <source> 0x00`, so it owns the
