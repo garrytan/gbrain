@@ -626,6 +626,7 @@ function matchesSyncBarrier(boundary: SyncBarrier, sql: string, params: unknown[
   if (boundary === 'foreground') return sql.includes("NOT(COALESCE(intent->>'kind','') LIKE 'managed_sync_%') LIMIT 1");
   if (boundary === 'freeze') return sql.startsWith('SELECT id,slug,source_path,deleted_at FROM pages WHERE source_id=') && !transactional;
   if (boundary === 'request-lookup') return sql.startsWith('SELECT') && sql.includes('FROM persistence_requests') && sql.includes('request_id=') && !transactional;
+  // A raw counter charge; the admission's own charge is the typed insertWriteRequest member, which the test wraps.
   if (boundary === 'admission-commit') return sql.includes('UPDATE persistence_counters SET outstanding_count=outstanding_count+1');
   return transactional && isLeaseCheck(sql);
 }
@@ -656,7 +657,7 @@ for (const boundary of ['pass-pin-commit', 'pass-classify', 'foreground', 'freez
       const gate = new Promise<void>(resolve => { resume = resolve; });
       let exited!: () => void;
       const contextExited = new Promise<void>(resolve => { exited = resolve; });
-      const execute = engine.executeRaw, transaction = engine.transaction, interval = globalThis.setInterval;
+      const execute = engine.executeRaw, transaction = engine.transaction, insertRequest = engine.insertWriteRequest, readRequest = engine.readWriteRequest, interval = globalThis.setInterval;
       const timer = interrupted === 'lease-loss' ? spyOn(globalThis, 'setInterval').mockImplementation(((fn: (...args: any[]) => void, ms?: number, ...args: any[]) =>
         interval(fn, ms === 300_000 ? 10 : ms, ...args)) as unknown as typeof interval) : undefined;
       let pending!: Promise<Awaited<ReturnType<typeof performSync>>>;
@@ -673,17 +674,31 @@ for (const boundary of ['pass-pin-commit', 'pass-classify', 'foreground', 'freez
           if (!observed) transactionBefore = await syncState(this, f.id);
           return transaction.call(this, fn);
         } as BrainEngine['transaction'];
+        const pause = async (self: BrainEngine) => {
+          observed = true;
+          before = self === engine ? await syncState(engine, f.id) : transactionBefore;
+          expect(before).toBeDefined();
+          expect(before!.requests).toEqual([]);
+          entered(); await gate;
+        };
         engine.executeRaw = async function (this: BrainEngine, sql: string, params?: unknown[]) {
           const rows = await execute.call(this, sql, params);
-          if (atBarrier(sql, params, this !== engine) && !observed) {
-            observed = true;
-            before = this === engine ? await syncState(engine, f.id) : transactionBefore;
-            expect(before).toBeDefined();
-            expect(before!.requests).toEqual([]);
-            entered(); await gate;
-          }
+          if (atBarrier(sql, params, this !== engine) && !observed) await pause(this);
           return rows;
         } as BrainEngine['executeRaw'];
+        // The admission's counter charge and request insert are one typed member (engine-sql/persistence-journal.ts
+        // insertWriteRequest), not an executeRaw statement, so admission-commit also pauses after that member returns.
+        engine.insertWriteRequest = async function (this: BrainEngine, row: Parameters<BrainEngine['insertWriteRequest']>[0]) {
+          const stored = await insertRequest.call(this, row);
+          if (boundary === 'admission-commit' && !observed) await pause(this);
+          return stored;
+        } as BrainEngine['insertWriteRequest'];
+        // The request lookup is the typed readWriteRequest member; Postgres runs it on its own pool, not through executeRaw.
+        engine.readWriteRequest = async function (this: BrainEngine, ...args: Parameters<BrainEngine['readWriteRequest']>) {
+          const found = await readRequest.apply(this, args);
+          if (boundary === 'request-lookup' && this === engine && !observed) await pause(this);
+          return found;
+        } as BrainEngine['readWriteRequest'];
         pending = interrupted === 'job-abort'
           ? withSubmissionAuthority(APPLICATION_AUTHORITY, () => performSync(engine, f.opts), abort.signal)
           : performSync(engine, { ...f.opts, ...(interrupted === 'caller-abort' ? {} : { signal: abort.signal }) });
@@ -728,7 +743,7 @@ for (const boundary of ['pass-pin-commit', 'pass-classify', 'foreground', 'freez
         resume(); timer?.mockRestore();
         await outer.catch(() => {}); await pending?.catch(() => {});
         await disposePersistenceConsumer(engine);
-        engine.executeRaw = execute; engine.transaction = transaction;
+        engine.executeRaw = execute; engine.transaction = transaction; engine.insertWriteRequest = insertRequest; engine.readWriteRequest = readRequest;
         if (leasedKey) await engine.executeRaw('DELETE FROM gbrain_cycle_locks WHERE id=$1', [leasedKey]);
         rmSync(parent, { recursive: true, force: true });
       }
@@ -840,6 +855,7 @@ check('cancellation while a pass waits on an accepted request leaves its receipt
 
 for (const boundary of ['accepted-commit', 'receipt-banking'] as const) check(`cancellation at ${boundary} still banks accepted work without admitting the next page`, async engine => {
   const f = await fixture(engine, 2), execute = engine.executeRaw, transaction = engine.transaction, abort = new AbortController();
+  const insertRequest = engine.insertWriteRequest, stampClaim = engine.stampWriteClaim;
   let accepted = false, claimed = false, observed = false;
   engine.executeRaw = async function (this: BrainEngine, sql: string, params?: unknown[]) {
     const rows = await execute.call(this, sql, params);
@@ -855,6 +871,17 @@ for (const boundary of ['accepted-commit', 'receipt-banking'] as const) check(`c
     if (boundary === 'accepted-commit' && accepted && !observed) { observed = true; abort.abort(); }
     return result;
   } as BrainEngine['transaction'];
+  // Admission and the claim stamp run through the typed insertWriteRequest and stampWriteClaim members, not executeRaw.
+  engine.insertWriteRequest = async function (this: BrainEngine, row: Parameters<BrainEngine['insertWriteRequest']>[0]) {
+    const inserted = await insertRequest.call(this, row);
+    accepted = true;
+    return inserted;
+  } as BrainEngine['insertWriteRequest'];
+  engine.stampWriteClaim = async function (this: BrainEngine, ...args: Parameters<BrainEngine['stampWriteClaim']>) {
+    const stamped = await stampClaim.apply(this, args);
+    if (accepted) claimed = true;
+    return stamped;
+  } as BrainEngine['stampWriteClaim'];
   try {
     const first = await performSync(engine, { ...f.opts, signal: abort.signal });
     expect(first).toMatchObject({ status: 'partial', reason: 'timeout', added: 1, filesImported: 1, bankedFiles: 1 });
@@ -869,12 +896,12 @@ for (const boundary of ['accepted-commit', 'receipt-banking'] as const) check(`c
     expect(before.pages).toHaveLength(1);
     expect(before.effects).toEqual([]);
     expect(before.source).toEqual([{ last_commit: null, last_sync_at: null }]);
-    engine.executeRaw = execute; engine.transaction = transaction;
+    engine.executeRaw = execute; engine.transaction = transaction; engine.insertWriteRequest = insertRequest; engine.stampWriteClaim = stampClaim;
     // The next pass imports only the page the stopped pass never admitted.
     expect(await performSync(engine, f.opts)).toMatchObject({ status: 'first_sync', added: 1, filesImported: 1 });
     expect(await engine.executeRaw('SELECT * FROM persistence_requests WHERE id=$1', [before.requests[0].id])).toEqual(before.requests);
     expect(await engine.executeRaw("SELECT id FROM persistence_requests WHERE source_id=$1 AND intent->>'kind'='managed_sync_import'", [f.id])).toHaveLength(2);
-  } finally { engine.executeRaw = execute; engine.transaction = transaction; }
+  } finally { engine.executeRaw = execute; engine.transaction = transaction; engine.insertWriteRequest = insertRequest; engine.stampWriteClaim = stampClaim; }
 });
 
 /** How soon an aborted sync returns: a stop check and one receipt read, far under the 5 s write wait it used to sit out. */

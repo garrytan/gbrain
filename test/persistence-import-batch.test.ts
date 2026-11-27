@@ -295,6 +295,12 @@ test('an unchanged re-import screens its files with one read of each batch-share
       counted.set('FROM persistence_local_writers', (counted.get('FROM persistence_local_writers') ?? 0) + 1);
       return writer.apply(this, args);
     };
+    // The knowledge guard's shared skillpack roots read is the typed listSharedSkillPackRoots member, counted under its old statement text.
+    const packRoots = brain.engine.listSharedSkillPackRoots;
+    brain.engine.listSharedSkillPackRoots = function(this: BrainEngine, hostId: string) {
+      counted.set('FROM shared_skill_packs', (counted.get('FROM shared_skill_packs') ?? 0) + 1);
+      return packRoots.call(this, hostId);
+    };
     // The company profile's two reads moved off executeRaw onto the typed readSourceIncarnation and hasCompanyBrainReceipt.
     // They are counted at the typed member only: Postgres runs each typed read through its own executeRaw, so a raw key would count it twice.
     const receipt = brain.engine.hasCompanyBrainReceipt, incarnation = brain.engine.readSourceIncarnation;
@@ -307,7 +313,7 @@ test('an unchanged re-import screens its files with one read of each batch-share
       return incarnation.apply(this, args);
     };
     let again: PromiseSettledResult<unknown>[];
-    try { again = await importManagedFiles(brain.engine, files, { sourceId, noEmbed: true }); } finally { brain.engine.executeRaw = original; brain.engine.readLocalWriterRow = writer; brain.engine.hasCompanyBrainReceipt = receipt; brain.engine.readSourceIncarnation = incarnation; }
+    try { again = await importManagedFiles(brain.engine, files, { sourceId, noEmbed: true }); } finally { brain.engine.executeRaw = original; brain.engine.readLocalWriterRow = writer; brain.engine.hasCompanyBrainReceipt = receipt; brain.engine.readSourceIncarnation = incarnation; brain.engine.listSharedSkillPackRoots = packRoots; }
     expect(again.map(r => r.status === 'fulfilled' && (r.value as { status: string }).status)).toEqual(files.map(() => 'skipped'));
     // A per-file screen would read each of these at least once per file (12 here).
     for (const key of counted.keys()) expect({ key, perBatch: counted.get(key)! <= 4 }).toEqual({ key, perBatch: true });
