@@ -236,7 +236,7 @@ const PARAM_FACTORY: Record<string, Record<string, unknown>> = {
   set_memory_writeback: { mode: 'off' },
   memory_conversation_mode: { mode: 'all' },
   household_add: { kind: 'supply', title: 'Sweep supply', cadence: '7d' },
-  correct: { rule: 'Sweep rule: call the sweep page by its title.' },
+  correct: { rule: 'Sweep rule: call the sweep page by its title.', scope: 'team' },
   household_mark: { slug: 'household/supplies/sweep-missing', event: 'bought' },
 };
 

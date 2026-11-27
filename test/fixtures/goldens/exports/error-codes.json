@@ -762,6 +762,8 @@
     "tail_exposure_approval",
     "take_row_collision",
     "target_escape",
+    "telemetry_forget_failed",
+    "telemetry_pulse_unavailable",
     "timeline_comment_markup",
     "timeline_rows_would_be_removed",
     "timeout",

@@ -2,10 +2,11 @@
  * Dedupe v2 (GST-3609): opt-in Exa web search for pairs that would otherwise wait. Off unless the user sets EXA_API_KEY
  * and turns `dedupe.exa` on; without both, nothing leaves the machine and the X classes never fire.
  *
- * What leaves the machine: one query per page, exactly "<name> <company or job title>", sent to Exa's Lite search in its
- * people category (top result only, no page contents). Never an email address, a phone number, page text or anything
- * about the owner. A page not every reader may read (people.ts markRestricted), labelled family, about a minor, named
- * with digits or an address, named with one word, or with no company or title gets no query.
+ * What leaves the machine: one "<name> <clue>" query per page, sent to Exa's Lite people search (one result, no contents).
+ * The clue is the existing company or job title, otherwise an alternate work field, the registrable label of an
+ * allowed bare company site, or the title of a single unrestricted company linked by works_at, in that order. No email,
+ * phone, URL path or query, page body, notes or link context. Pages not every reader may read (people.ts markRestricted),
+ * family or minor pages, and pages without a safe name and clue send no query.
  *
  * Every answer is cached in the brain's config under `dedupe.exa_cache.<query hash>`, so a query is never paid for
  * twice. A run stops cleanly at the per-run cap (`dedupe.exa_run_cap`, 2,000 queries) or when the next query, at the
@@ -22,6 +23,7 @@ import { createHash } from 'node:crypto';
 import type { BrainEngine } from '../../engine.ts';
 import type { PersonPage } from './people.ts';
 import { tryAcquireDbLock } from '../../db-lock.ts';
+import { FREE_MAIL_DOMAINS } from '../duplicates.ts';
 
 export const EXA_SEARCH_URL = 'https://api.exa.ai/search';
 /** Exa's Lite search: $4 per 1,000 requests with up to 10 results (exa.ai/pricing, read 2026-11-23). */
@@ -38,6 +40,8 @@ const TIMEOUT_MS = 20_000;
 const LIVE_LOCK_ID = 'dedupe-exa';
 const LIVE_LOCK_TTL_MINUTES = 30;
 const MAX_CLUE_CHARS = 80;
+export const EXA_WORK_FIELDS = ['current_company', 'org', 'affiliation', 'works_at', 'headline'] as const;
+export const EXA_SITE_FIELDS = ['domain', 'website'] as const;
 
 export type ExaBlock = 'private' | 'family' | 'minor' | 'no_name' | 'no_clue';
 export interface ExaQuery { query: string; name: string; clue: string }
@@ -81,15 +85,38 @@ export async function exaSettings(engine: Pick<BrainEngine, 'getConfig'>, env: R
 }
 
 const nameWords = (s: string) => s.toLowerCase().normalize('NFKD').replace(/\p{M}/gu, '').split(/[^\p{L}]+/u).filter(w => w.length > 1);
+const hasAddressSyntax = (s: string) => /[@?=]|[\\/]{2}|\.[\p{L}]{2,}[:#/\\]|(?:^|\s)[\\/]\S/iu.test(s);
+
+function safeClue(raw: string, fallback = false): string | null {
+  const clue = raw.replace(/\s+/g, ' ').trim();
+  if (!clue || clue.length > MAX_CLUE_CHARS || !nameWords(clue).length) return null;
+  const checked = clue.normalize('NFKC');
+  if (hasAddressSyntax(checked) || /\p{Nd}{5,}/u.test(checked.replace(/[\s().+/\\-]/g, ''))) return null;
+  if (fallback && (/[\r\n\u2028\u2029]/u.test(raw)
+    || !/^[\p{L}\p{M}\p{N} .'’&(),+-]+$/u.test(checked) || /\.[\p{L}]{2,}\b/u.test(checked))) return null;
+  return clue;
+}
+
+function siteClue(raw: string): string | null {
+  const host = /^(?:https?:\/\/)?(?:www\.)?([a-z\d.-]+)\/?$/i.exec(raw.trim())?.[1]?.toLowerCase();
+  if (!host || FREE_MAIL_DOMAINS.has(host) || host === 'pm.me') return null;
+  const label = /^([a-z\d](?:[a-z\d-]{0,61}[a-z\d])?)\.(?:com|org|net|edu|gov|biz|info|app|dev|tech|ai|io|co|me|de|fr|ca|eu|co\.uk|org\.uk|com\.au|net\.au|co\.nz|co\.jp|co\.in|com\.br)$/.exec(host)?.[1];
+  return label && !label.startsWith('xn--') && nameWords(label).some(w => w.length > 2) ? safeClue(label, true) : null;
+}
 
 /** The one query a page may send, or why it sends none. */
-export function exaQueryFor(p: PersonPage): ExaQuery | { blocked: ExaBlock } {
+export function exaQueryFor(p: PersonPage, linkedCompany?: string): ExaQuery | { blocked: ExaBlock } {
   if (p.sensitive) return { blocked: p.sensitive };
   if (p.restricted) return { blocked: 'private' };
   const name = p.title.replace(/\s+/g, ' ').trim();
-  if (!name || /[@\d]/.test(name) || nameWords(name).length < 2) return { blocked: 'no_name' };
-  const clue = (p.company ?? p.role ?? '').replace(/\s+/g, ' ').trim();
-  if (!clue || clue.includes('@') || /\d{5,}/.test(clue.replace(/[\s().+-]/g, '')) || clue.length > MAX_CLUE_CHARS || !nameWords(clue).length) return { blocked: 'no_clue' };
+  const checkedName = name.normalize('NFKC');
+  if (!name || /\p{Nd}/u.test(checkedName) || hasAddressSyntax(checkedName) || nameWords(name).length < 2) return { blocked: 'no_name' };
+  const existing = p.company ?? p.role;
+  const clue = existing !== null ? safeClue(existing)
+    : p.exaWork?.map(raw => safeClue(raw, true)).find(Boolean)
+    ?? p.exaSites?.map(siteClue).find(Boolean)
+    ?? (linkedCompany && safeClue(linkedCompany, true));
+  if (!clue) return { blocked: 'no_clue' };
   return { query: `${name} ${clue}`, name, clue };
 }
 

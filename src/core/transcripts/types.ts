@@ -149,6 +149,9 @@ const HARNESS_FORMATS: ReadonlySet<TranscriptFormat> = new Set([
   'grok',
 ]);
 
+export const TRANSCRIPT_PROVIDER_RE = /^[a-z0-9](?:[a-z0-9]|-(?=[a-z0-9])){0,39}$/;
+export const TRANSCRIPT_PROVIDER_ERROR = '--provider needs 1–40 lowercase letters or digits, with single hyphens allowed between them';
+
 /**
  * Stable HASHED id suffixes. Always a sha256 prefix, never a cleaned prefix
  * of the source id: prefix identity let same-prefix session ids silently
@@ -157,12 +160,12 @@ const HARNESS_FORMATS: ReadonlySet<TranscriptFormat> = new Set([
  * 12 hex chars (48 bits) for the slug keeps collisions negligible at
  * backfill-everything scale; 16 hex chars (64 bits) for the dedup identity.
  */
-export function transcriptSlugId(sourceId: string): string {
-  return createHash('sha256').update(sourceId).digest('hex').slice(0, 12);
+export function transcriptSlugId(sourceId: string, provider?: string): string {
+  return transcriptFullId(sourceId, provider).slice(0, 12);
 }
 
-export function transcriptFullId(sourceId: string): string {
-  return createHash('sha256').update(sourceId).digest('hex').slice(0, 16);
+export function transcriptFullId(sourceId: string, provider?: string): string {
+  return createHash('sha256').update(provider === undefined ? sourceId : `provider:${provider}\0${sourceId}`).digest('hex').slice(0, 16);
 }
 
 /** Max slugified-title length inside an export slug (keeps slugs readable). */
@@ -198,13 +201,12 @@ export function buildTranscriptSlug(
   format: TranscriptFormat,
   dateIso: string,
   meta: { sessionId: string; title?: string },
+  provider?: string,
 ): string {
   const day = dateIso.slice(0, 10);
-  const id = transcriptSlugId(meta.sessionId);
-  if (HARNESS_FORMATS.has(format)) {
-    return `${SLUG_DIRS[format]}/${day}-${format}-${id}`;
-  }
+  const id = transcriptSlugId(meta.sessionId, provider);
+  if (provider === undefined && HARNESS_FORMATS.has(format)) return `${SLUG_DIRS[format]}/${day}-${format}-${id}`;
   const title = slugifySegment(meta.title ?? '').slice(0, TITLE_SLUG_MAX).replace(/-$/, '');
   const label = title || 'untitled';
-  return `${SLUG_DIRS[format]}/${day}-${label}-${id}`;
+  return `${provider === undefined ? SLUG_DIRS[format] : `conversations/${provider}`}/${day}-${label}-${id}`;
 }

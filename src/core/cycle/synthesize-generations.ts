@@ -48,7 +48,7 @@ export interface SynthesisActivationDetails {
 export interface SynthesisActivationInput {
   sourceId: string;
   maintenance: MaintenanceAuthority | null;
-  brainDir: string;
+  brainDir: string | null;
   transcripts: ReadonlyArray<{ filePath: string; contentHash: string; content: string; basename: string }>;
   refs: ReadonlyArray<{ slug: string; source_id: string; raw_source?: string }>;
   outcomes: ReadonlyArray<{ jobId: number; status: string }>;
@@ -119,7 +119,7 @@ export async function activateSynthesisGenerations(engine: BrainEngine, input: S
         if (outcome.state === 'held') { details.held.push({ owner_key: key.ownerKey, reason: outcome.reason }); continue; }
         if (outcome.state === 'unchanged') continue;
         retired = outcome.retired;
-        for (const slug of retired) {
+        if (input.brainDir !== null) for (const slug of retired) {
           const file = await removeDreamPageFile(engine, input.brainDir, slug, sourceId, sourceId);
           if (file.held) details.file_holds.push(file.held);
         }
