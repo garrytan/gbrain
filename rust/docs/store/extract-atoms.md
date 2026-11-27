@@ -18,9 +18,10 @@ methods in `families/cli_reads_doctor_search.rs` and `families/op_checkpoint.rs`
 
 `listExtractablePages` keeps the backlog count's predicate (`link_queries/atom_backlog.rs`) for one source and also
 skips a page whose current content has a completed or held `managed-atoms` checkpoint (the store keeps op
-checkpoints). It returns the newest pages first (`updated_at` descending), at most `limit`, only of `affectedSlugs`
-when the run names them. The statement's `extract_atoms_page_state` exclusion finds nothing: the store keeps no page
-state.
+checkpoints) and a page whose current input is held by an atom generation (#10270, the rule the backlog count
+applies; the caller passes the live `holdIds`). It returns the newest pages first (`updated_at` descending), at most
+`limit`, only of `affectedSlugs` when the run names them. The statement's `extract_atoms_page_state` exclusion finds
+nothing: the store keeps no page state.
 
 `releasePartialAtomDispositions` deletes the source's `managed-atoms` checkpoints whose `partial` is below the cap; a
 checkpoint with no `partial` stays, and a `partial` that is not an integer fails as the SQL cast fails. The two state
