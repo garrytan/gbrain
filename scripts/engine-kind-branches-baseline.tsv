@@ -119,6 +119,7 @@ src/core/embedding-ann-build.ts	kind_compare	1
 src/core/embedding-dim-check.ts	kind_compare	2
 src/core/engine-connect.ts	kind_compare	1
 src/core/engine-open.ts	kind_compare	4
+src/core/engine-swap/collation-report.ts	kind_compare	1	the swap report names lists whose order changes only for a Postgres source; PGLite and Rust both sort text in byte order
 src/core/facts/drain-scheduler.ts	kind_compare	2
 src/core/facts/drain.ts	kind_compare	2
 src/core/facts/fts-index.ts	kind_compare	1

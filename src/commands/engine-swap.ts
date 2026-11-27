@@ -109,6 +109,7 @@ export function renderPlanText(p: SwapPlan): string {
       ? `Failback does not carry (no Rust read call returns it, or failback does not write it back), ${p.way_back.losses.not_carried_tables.length} table(s): ${p.way_back.losses.not_carried_tables.join(', ') || 'none'}; fields: ${Object.entries(p.way_back.losses.not_carried_fields).map(([t, c]) => c.map(x => `${t}.${x}`).join(', ')).join(', ') || 'none'}`
       : 'Failback does not carry: unknown (the schema of this brain could not be read).',
     p.way_back.fingerprint_rule,
+    ...p.collation.lines,
     'Nothing was written.',
   ];
   return lines.filter(Boolean).join('\n');
