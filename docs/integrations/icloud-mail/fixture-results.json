@@ -76,5 +76,43 @@
       "page_private_and_external_untrusted": true,
       "waiting_no_google_sources": true
     }
-  ]
+  ],
+  "outside_text_retest": {
+    "architecture": "arm64",
+    "python": "3.14.6",
+    "wire_and_projection_tests_passed": 11,
+    "platform": "Darwin",
+    "gbrain": "gbrain 0.60.777.0",
+    "disposable_settings_and_database_verified": true,
+    "held_message_excluded_and_later_reply_indexed": true,
+    "initial_native_sync": {
+      "added": 1,
+      "modified": 0,
+      "deleted": 0,
+      "chunks_created": 1,
+      "embedded": 0
+    },
+    "sent_reply_native_sync": {
+      "added": 1,
+      "modified": 0,
+      "deleted": 0,
+      "chunks_created": 1,
+      "embedded": 0
+    },
+    "unchanged_native_sync": {
+      "added": 0,
+      "modified": 0,
+      "deleted": 0,
+      "chunks_created": 0,
+      "embedded": 0
+    },
+    "reopened_capture_ledger_per_poll": true,
+    "sent_reply_found_on_original_page": true,
+    "outside_notation_remained_escaped_after_native_sync": true,
+    "quiet_repeat_page_revision_and_request_watermark_equal": true,
+    "source_scoped_search_finds_reply_default_source_excludes_it": true,
+    "unqualified_trusted_cli_search_can_find_private_page": true,
+    "page_private_and_external_untrusted": true,
+    "waiting_no_google_sources": true
+  }
 }

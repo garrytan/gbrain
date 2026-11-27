@@ -115,6 +115,7 @@ def verify(bun, checkout, root):
         assert second["chunks_created"] > 0, second
         assert reply_page["id"] == original["id"] and reply_page["revision"] != original["revision"]
         assert "basaltlantern" in reply_page["compiled_truth"] and "cobaltquasar" in reply_page["compiled_truth"]
+        assert r"gbrain\:facts is a label." in reply_page["compiled_truth"]
 
         found = search("cobaltquasar", SOURCE)
         assert len(found) == 1 and found[0]["slug"] == PAGE_SLUG and found[0]["source_id"] == SOURCE, found
@@ -150,6 +151,7 @@ def verify(bun, checkout, root):
             "unchanged_native_sync": cli_counts(quiet),
             "reopened_capture_ledger_per_poll": True,
             "sent_reply_found_on_original_page": True,
+            "outside_notation_remained_escaped_after_native_sync": True,
             "quiet_repeat_page_revision_and_request_watermark_equal": True,
             "source_scoped_search_finds_reply_default_source_excludes_it": True,
             "unqualified_trusted_cli_search_can_find_private_page": trusted_owner_search_match,

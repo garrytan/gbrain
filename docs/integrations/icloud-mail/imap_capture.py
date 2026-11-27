@@ -20,6 +20,13 @@ MAX_MESSAGES_PER_MAILBOX = 25
 MAX_UID_SPAN = 4096
 MAX_UID = 2**32 - 1
 MESSAGE_ID = re.compile(r"<[^<>\s@]+@[^<>\s@]+>", re.ASCII)
+GBRAIN_MARKER = re.compile(r"(gbrain[\s\ufeff]*):(?=[\s\ufeff]*[a-z])", re.IGNORECASE)
+OUTSIDE_STRUCTURE = re.compile(
+    r"^[\s\ufeff]*(?:<!--\s*timeline\s*-->|---(?:[\s\ufeff]+timeline[\s\ufeff]+---)?[\s\ufeff]*$"
+    r"|#{1,6}[\s\ufeff]*(?:timeline|history|\d{4}-\d{2}-\d{2})"
+    r"|(?:-[\s\ufeff]*)?(?:\*\*|\d{4}年))",
+    re.IGNORECASE,
+)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS scope (binding TEXT NOT NULL);
@@ -213,6 +220,17 @@ def held_count(state):
         return db.execute("SELECT COUNT(*) FROM message_hold").fetchone()[0]
 
 
+def neutralize_outside_text(text):
+    """Apply GBrain's outside-content rules at the Python projection boundary."""
+    # Match the line breaks splitlines() would otherwise introduce after escaping.
+    text = re.sub(r"\r\n?|[\x0b\x0c\x1c-\x1e\x85\u2028\u2029]", "\n", text.replace("\x00", ""))
+    text = GBRAIN_MARKER.sub(r"\1\\:", text).replace("[Source:", r"[Source\:")
+    # GBrain scans structured syntax even through indentation. Match the
+    # prefixes of timeline and transcript lines conservatively.
+    return "\n".join("\\" + line if OUTSIDE_STRUCTURE.match(line) else line
+                     for line in text.split("\n"))
+
+
 def project(state, pages):
     """Replay the accepted ledger without contacting iCloud or rewriting equal files."""
     require(state.is_file(), "capture ledger does not exist")
@@ -237,7 +255,8 @@ def project(state, pages):
                 "SELECT id, subject, sender, sent_date, body FROM message WHERE thread_id = ? ORDER BY rowid",
                 (thread_id,),
             )
-            for message_id, subject, sender, date, body in messages:
+            for message in messages:
+                message_id, subject, sender, date, body = map(neutralize_outside_text, message)
                 parts.extend(("## Message", "", f"    Message-ID: {message_id}",
                               f"    Subject: {json.dumps(subject, ensure_ascii=False)}",
                               f"    From: {json.dumps(sender, ensure_ascii=False)}",

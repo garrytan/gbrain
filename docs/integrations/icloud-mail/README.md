@@ -25,7 +25,7 @@ Run from this directory. Use Bun 1.4.4 and Python 3.12 or later with OpenSSL ava
 
 After dependency installation the tests use loopback only. The native test creates and removes its own scratch directory. It sets a temporary `GBRAIN_HOME`, explicitly passes a PGLite database path in that directory and checks the resulting configuration before importing any mail. It clears inherited provider and GBrain settings from the child environment and disables Bun's dotenv loading. Test certificates and scratch databases stay outside the sample directory.
 
-The runner uses the ordinary GBrain CLI to register a non-federated Markdown source, sync it, and check scoped search and Waiting. Only the Markdown projection enters the source directory. The capture ledger sits outside it.
+The runner uses the ordinary GBrain CLI to register a non-federated Markdown source, sync it, and check scoped search and Waiting. Only the Markdown projection enters the source directory. The capture ledger sits outside it. Projection escapes GBrain control syntax in email headers and bodies using the [outside-content rules](https://github.com/garrytan/gbrain/blob/c347693ce37c80c47b13cb1151dbc360953d5079/src/core/outside-content.ts).
 
 ## What the checks establish
 
@@ -36,6 +36,7 @@ The runner uses the ordinary GBrain CLI to register a non-federated Markdown sou
 | Unsupported mail | The ledger records the mailbox, UIDVALIDITY, UID and a reason for each unsupported item. Held items stay out of the index and later valid mail still syncs. A repeat retains the holds without recreating them. |
 | Recovery | Reopened processes resume the ledger. A fetch failure in the later folder rolls back the earlier folder. A changed UIDVALIDITY or regressed UIDNEXT stops without advancing the ledger. Omission never removes the archived page. Accepted ledger rows can be projected again while the provider is unavailable. |
 | GBrain Inbox and Sent | The initial page appears in its exact source. The reply revises the same page ID and slug, and scoped keyword search finds it once. The archived page is private and external untrusted. |
+| Outside text | Fictional mail that mentions GBrain control notation remains searchable text. The escaped notation survives GBrain sync, and the ledger retains the original mail text. |
 | GBrain unchanged run | Zero page imports, deletions, chunks and embeddings. Page ID, content hash, revisions and committed request watermark match the previous run. GBrain still updates its source freshness timestamp. |
 | Follow-ups | `waiting --source icloud-fixture --json` reports `no_google_sources: true`. Native follow-up changes are outside this import path. |
 

@@ -35,7 +35,9 @@ def message(message_id, subject, body, parent=None, *, subtype="plain"):
 
 
 PARENT = message(PARENT_ID, "Synthetic approval request", "Can you confirm basaltlantern tomorrow?")
-REPLY = message(REPLY_ID, "Re: Synthetic approval request", "Yes, I confirmed cobaltquasar.", PARENT_ID)
+REPLY = message(REPLY_ID, "Re: Synthetic approval request",
+                "Yes, I confirmed cobaltquasar. Fixture glossary: gbrain:facts is a label.",
+                PARENT_ID)
 EXCLUDED = message("<excluded@example.test>", "Excluded copy", "privateheldcontrol")
 HTML_ONLY = message("<notice@example.test>", "HTML notice", "<p>fixturehtmlnotice</p>", subtype="html")
 PAGE_SLUG = f"emails/{hashlib.sha256(PARENT_ID.encode()).hexdigest()}"
@@ -201,6 +203,25 @@ class CaptureTests(unittest.TestCase):
         self.assertEqual(before, target.stat().st_mtime_ns)
         self.assertEqual(before_state, self.state.read_bytes())
         self.assertFalse(any(cmd.startswith(b"UID") for cmd in self.server.commands))
+
+    def test_projection_escapes_outside_notation_and_preserves_the_ledger(self):
+        sample = message(PARENT_ID, "Glossary: gbrain:takes",
+                         "Keep glacierbeacon.\nGBrain : facts\n[Source: example\n"
+                         "\u2028## Timeline glossary")
+        self.server.mailboxes["INBOX"] = (11, 4, {3: sample})
+        self.assertEqual(self.collect(), 1)
+        self.assertEqual(project(self.state, self.pages), 1)
+        page = (self.pages / f"{PAGE_SLUG}.md").read_text()
+        self.assertIn('Subject: "Glossary: gbrain\\\\:takes"', page)
+        self.assertIn(r"GBrain \: facts", page)
+        self.assertIn(r"[Source\: example", page)
+        self.assertIn(r"\## Timeline glossary", page)
+        self.assertIn("Keep glacierbeacon.", page)
+        with closing(sqlite3.connect(self.state)) as db:
+            subject, body = db.execute("SELECT subject, body FROM message").fetchone()
+        self.assertEqual(subject, "Glossary: gbrain:takes")
+        self.assertIn("GBrain : facts", body)
+        self.assertEqual(project(self.state, self.pages), 0)
 
     def test_verified_tls_rejects_untrusted_cert_and_wrong_hostname_before_login(self):
         with self.assertRaises(ssl.SSLCertVerificationError):
