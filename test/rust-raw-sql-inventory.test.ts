@@ -55,7 +55,6 @@ const SITES: Record<Member, Record<string, { count: number; why: string }>> = {
   },
   executeRawDirect: {
     'src/core/persistence/consumer-lane.ts': { count: 1, why: 'consumerStatementEngine returns the engine unchanged unless engine.kind is postgres' },
-    'src/core/persistence/effect-journal.ts': { count: 1, why: 'renews a managed-persistence effect claim; a Rust brain refuses managed persistence at admission (rust-engine/errors.ts)' },
     'src/core/persistence/journal.ts': { count: 1, why: 'reclaims a managed-persistence write; a Rust brain refuses managed persistence at admission (rust-engine/errors.ts)' },
   },
   keywordBoundedRead: {

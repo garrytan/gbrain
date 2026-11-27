@@ -23,8 +23,8 @@ import { describe, expect } from 'bun:test';
 import { createSource, parityArms } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { waitFor } from '../helpers/wait-for.ts';
-import { isCapabilityRefusal } from './arm-capabilities.ts';
-import { addTrustAllowRule, listTrustAllowRules, removeTrustAllowRule } from '../../src/core/trust/allow-rules.ts';
+import { addTrustAllowRule, getTrustAllowRule, listTrustAllowRules, removeTrustAllowRule } from '../../src/core/trust/allow-rules.ts';
+import { applyOwnerAction, previewOwnerAction } from '../../src/core/trust/owner-actions.ts';
 import type { WriteGateHoldRow, WriteGateReceiptFields, WriteGateReceiptRow } from '../../src/core/engine-sql/trust-write-gate.ts';
 
 const { parityTest } = parityArms(testBackends());
@@ -193,27 +193,56 @@ describe('engine parity: write gate receipts and holds', () => {
     return out;
   });
 
-  parityTest('listTrustAllowRuleRows lists the allow rules trust allow adds, active and by source; the add refuses on Rust', { methods: ['listTrustAllowRuleRows'] }, async (engine, backend) => {
+  parityTest('trust allow add, remove and read keep the allow rules; listTrustAllowRuleRows lists them active and by source', {
+    methods: ['listTrustAllowRuleRows', 'addTrustAllowRule', 'removeTrustAllowRule', 'readTrustAllowRule'],
+  }, async (engine, backend) => {
     await createSource(engine, backend, 'work');
     const empty = await listTrustAllowRules(engine);
     expect(empty).toEqual([]);
     const add = (sourceId: string, reasonFamily: string | null) =>
       addTrustAllowRule(engine, { sourceId, uriPrefix: 'https://feeds.example.com/', reasonFamily, reason: 'parity' }, null);
-    const first = await add('default', 'standing_instruction').then(() => null, (e: unknown) => e);
-    if (backend === 'rust') {
-      expect(isCapabilityRefusal(first, 'raw_sql')).toBe(true);
-      expect(await listTrustAllowRules(engine, { includeRemoved: true })).toEqual([]);
-      throw first;
-    }
-    expect(first).toBeNull();
+    const first = await add('default', 'standing_instruction');
+    expect(first.created).toBe(true);
+    // The same (source, prefix, family) while the rule is active returns it, with nothing new written.
+    const repeat = await add('default', 'standing_instruction');
+    expect([repeat.created, repeat.rule.id]).toEqual([false, first.rule.id]);
     const second = await add('work', null);
     const third = await add('default', null);
     expect(await removeTrustAllowRule(engine, third.rule.id, null)).not.toBeNull();
+    // A second remove finds no active rule; the removed row stays readable as the receipt.
+    expect(await removeTrustAllowRule(engine, third.rule.id, null)).toBeNull();
+    const receipt = await getTrustAllowRule(engine, third.rule.id);
+    expect([receipt?.removed_at !== null, receipt?.removed_by]).toEqual([true, 'host:unregistered']);
+    expect(await getTrustAllowRule(engine, third.rule.id + 1000)).toBeNull();
+    // The engine member directly: a whole id below 1 or an unknown id is null; the row read matches the receipt's id.
+    expect([await engine.readTrustAllowRule(0), Number((await engine.readTrustAllowRule(third.rule.id))?.id)]).toEqual([null, third.rule.id]);
+    const archived = await addTrustAllowRule(engine, { sourceId: 'nope', uriPrefix: null, reasonFamily: null, reason: null }, null).then(() => 'added', (e: unknown) => (e as { code?: string }).code);
+    expect(archived).toBe('invalid_params');
     const view = async (opts: Parameters<typeof listTrustAllowRules>[1]) => (await listTrustAllowRules(engine, opts)).map((r) => ({
       ...r, id: r.id - second.rule.id, ref: `a+${r.id - second.rule.id}`, created_at: r.created_at ? 'set' : null, removed_at: r.removed_at ? 'set' : null,
     }));
     return { empty, active: await view({}), withRemoved: await view({ includeRemoved: true }), work: await view({ sourceIds: ['work'] }),
       none: await view({ sourceIds: [] }) };
+  });
+  // `gbrain trust allow` past the owner's typed confirmation (commands/trust.ts runOwnerAction): preview, then apply bound
+  // to the preview, then `trust allow --remove a<id>` the same way. The confirmation itself needs a terminal, so the
+  // case passes the confirmation the terminal returns.
+  parityTest('trust allow and trust allow --remove run past the owner confirmation: added, unchanged, removed, gone', {
+    methods: ['addTrustAllowRule', 'removeTrustAllowRule', 'readTrustAllowRule', 'listTrustAllowRuleRows'],
+  }, async (engine) => {
+    const allow = { action: 'allow' as const, source: 'default', uri_prefix: 'https://feeds.example.com/', reason_family: 'override', reason: 'parity' };
+    const run = async (input: Parameters<typeof applyOwnerAction>[1]) => {
+      const preview = await previewOwnerAction(engine, input);
+      return applyOwnerAction(engine, input, { binding: preview.binding, confirmation: preview.raises ? { via: 'tty' } : null, by: null });
+    };
+    const added = await run(allow);
+    const unchanged = await run(allow);
+    const removed = await run({ action: 'allow_remove', ref: added.ref });
+    const gone = await run({ action: 'allow_remove', ref: added.ref }).then(() => 'removed again', (e: unknown) => (e as { code?: string }).code);
+    const out = { added: [added.ref.startsWith('a'), added.status], unchanged: [unchanged.ref === added.ref, unchanged.status], removed: removed.status, gone,
+      left: (await listTrustAllowRules(engine)).length, receipts: (await listTrustAllowRules(engine, { includeRemoved: true })).length };
+    expect(out).toEqual({ added: [true, 'added'], unchanged: [true, 'unchanged'], removed: 'removed', gone: 'not_found', left: 0, receipts: 1 });
+    return out;
   });
 });
 

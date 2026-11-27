@@ -162,16 +162,9 @@ export async function readEmbedBacklog(engine: BrainEngine, sourceIds: string[],
     for (const id of sourceIds) out.set(id, { source_id: id, state: 'disabled', pending_chunks: 0, oldest_pending_since: null, age_seconds: null });
     return out;
   }
-  const { quoteIdentifier, resolveActiveEmbeddingColumnFromEngine } = await import('./search/embedding-column.ts');
-  const { chunkGenerationFilter } = await import('./search/safe-chunks.ts');
-  const column = quoteIdentifier((await resolveActiveEmbeddingColumnFromEngine(engine, { fallbackToLegacy: true })).name);
-  const rows = await engine.executeRaw<{ source_id: string; pending: unknown; unaged: unknown; oldest: unknown }>(
-    `SELECT p.source_id, count(*)::int AS pending, count(*) FILTER (WHERE cc.embedding_pending_since IS NULL)::int AS unaged,
-            min(cc.embedding_pending_since) AS oldest
-       FROM content_chunks cc JOIN pages p ON p.id = cc.page_id
-      WHERE cc.${column} IS NULL AND p.deleted_at IS NULL AND p.source_id = ANY($1::text[]) AND ${chunkGenerationFilter('p', 'cc')}
-        AND NOT jsonb_exists(COALESCE(p.frontmatter, '{}'::jsonb), 'embed_skip')
-      GROUP BY p.source_id`, [sourceIds]);
+  const { resolveActiveEmbeddingColumnFromEngine } = await import('./search/embedding-column.ts');
+  const column = (await resolveActiveEmbeddingColumnFromEngine(engine, { fallbackToLegacy: true })).name;
+  const rows = await engine.readEmbedBacklogRows(column, sourceIds);
   const byId = new Map(rows.map(row => [row.source_id, row]));
   for (const id of sourceIds) {
     const row = byId.get(id);

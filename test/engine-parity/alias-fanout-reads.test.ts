@@ -384,8 +384,11 @@ describe('alias fan-out: a refused Rust read reads as no rows', () => {
     const viaStore: BrainEngine['findPagesByTitles'] = (...args) =>
       (STORE_MEMBERS.findPagesByTitles as (b: unknown, ...a: unknown[]) => Promise<never>)(brain, ...args)
         .catch((e: unknown) => { refusals.push(e); throw e; });
+    // A member's lineage read is served now (row 32e-b-2); a labelled-only member speaking for an audience of several identities
+    // still widens the page policy past what the store reads, so the store member refuses typed.
     const widened = <T>(fn: () => Promise<T>) => withCallerAccess({
-      identity: ['member:alice-example'], lineage: true, hidePrivate: true,
+      identity: ['member:alice-example'], hidePrivate: true, labelledOnly: true,
+      audienceIdentities: [['member:alice-example'], ['member:bob-example']],
     }, fn);
     const run = (engine: BrainEngine) => widened(() => withRequestConfigSnapshot(engine,
       () => resolveQueryEntities(engine, 'Acme Example renewal', { sourceId: 'default', excludePrivate: true })));

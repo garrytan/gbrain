@@ -35,7 +35,7 @@ use crate::Store;
 use crate::cli_reads::pg_text::timestamptz_text;
 use crate::env::iso;
 use crate::error::Result;
-use crate::keyword::{TsQuery, plainto_tsquery, to_tsvector, ts_matches};
+use crate::keyword::{FtsConfig, TsQuery, plainto_tsquery_in, to_tsvector_in, ts_matches};
 use crate::links::no_nul;
 use crate::trust::{TrustPolicy, TrustTier};
 use serde::Deserialize;
@@ -57,6 +57,9 @@ pub struct SavedFactsMatchQuery {
     pub world_only: bool,
     /// `minTrust`: `trustFloorSql` over the row's stored tier; null sets none.
     pub min_trust: Option<String>,
+    /// The text search configuration (`GBRAIN_FTS_LANGUAGE`): absent is `english`; `german` is
+    /// the other one ported, and any other name refuses.
+    pub fts_config: Option<String>,
 }
 
 /// Rows each pool keeps (`pool_rank <= 200`).
@@ -167,6 +170,7 @@ impl Store {
         texts.extend(q.terms.iter().map(|t| ("terms", t.as_str())));
         texts.extend(q.pats.iter().flatten().map(|p| ("pats", p.as_str())));
         no_nul(OP, &texts)?;
+        let config = FtsConfig::parse(q.fts_config.as_deref())?;
         // `unnest(terms, pats)` pads the shorter array with NULLs.
         let mut kept = Vec::new();
         for i in 0..q.terms.len().max(q.pats.len()) {
@@ -174,7 +178,7 @@ impl Store {
             match q.pats.get(i).cloned().flatten() {
                 Some(pat) => kept.push(Term::Pattern(i + 1, pat)),
                 None => {
-                    let query = plainto_tsquery(term)?;
+                    let query = plainto_tsquery_in(config, term)?;
                     if !query.items.is_empty() {
                         kept.push(Term::Query(i + 1, query));
                     }
@@ -209,7 +213,8 @@ impl Store {
                     .chars()
                     .map(pg_lower_char)
                     .collect();
-                let vector = to_tsvector(&format!("{} {}", row.fact, slug.replace('-', " ")))?;
+                let vector =
+                    to_tsvector_in(config, &format!("{} {}", row.fact, slug.replace('-', " ")))?;
                 let mut matched = Vec::new();
                 for term in &kept {
                     let (index, hit) = match term {
@@ -297,21 +302,27 @@ impl Store {
 
     /// `matchHeadStems(heads, terms)`: one row per head in `heads` order, each with the 1-based
     /// indexes of the terms whose `plainto_tsquery` the head's `to_tsvector` matches, in `terms`
-    /// order. A term that stems to nothing (a stopword) matches no head. English only; the
-    /// TypeScript member refuses another language.
-    pub fn match_head_stems(&self, heads: &[String], terms: &[String]) -> Result<Vec<HeadStemRow>> {
+    /// order. A term that stems to nothing (a stopword) matches no head. `config` is the text
+    /// search configuration (absent: `english`).
+    pub fn match_head_stems(
+        &self,
+        heads: &[String],
+        terms: &[String],
+        config: Option<&str>,
+    ) -> Result<Vec<HeadStemRow>> {
         const OP: &str = "matchHeadStems";
+        let config = FtsConfig::parse(config)?;
         let mut texts: Vec<(&str, &str)> = heads.iter().map(|h| ("heads", h.as_str())).collect();
         texts.extend(terms.iter().map(|t| ("terms", t.as_str())));
         no_nul(OP, &texts)?;
         let queries = terms
             .iter()
-            .map(|t| plainto_tsquery(t))
+            .map(|t| plainto_tsquery_in(config, t))
             .collect::<Result<Vec<TsQuery>>>()?;
         heads
             .iter()
             .map(|h| {
-                let vector = to_tsvector(h)?;
+                let vector = to_tsvector_in(config, h)?;
                 let i = queries
                     .iter()
                     .enumerate()

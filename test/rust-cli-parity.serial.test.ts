@@ -308,7 +308,6 @@ let rustArm: 'on' | 'no-engine' = 'on';
  * it. A command that refuses and is not here fails; one listed here that now answers passes and prints that its row can go.
  */
 const STOPPED_COMMANDS: Record<string, string> = {
-  'entity "Alice Example" --json': 'executeRaw',
 };
 
 const CLI_FILE = 'test/rust-cli-parity.serial.test.ts';

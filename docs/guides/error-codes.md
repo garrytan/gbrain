@@ -1699,6 +1699,46 @@ More: [docs/guides/core-memory.md#remote-edits](../../docs/guides/core-memory.md
 |---|---|---|---|---|---|---|
 | A corpus window failed after its model call on every allowed attempt, so the sweep stopped paying for it; its file stays pending until an operator retries it. | A window that can never commit was re-extracted forever before #6785. The count is per window and source incarnation; tail growth and changing error codes do not reset it, and one extraction-config change (model, provider, key presence) retries it once. | Fix the cause the last code names (for writer_coordinator_required: gbrain sources writer status <source>), then ask the user before gbrain sweep --retry-failed --apply: the retry pays for the extraction again. Run: gbrain sweep --retry-failed --json | agent | `repeat the read that failed` | 1 | no |
 
+### correct_guest_refused
+
+<a id="correct_guest_refused"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| correct was refused because the write source is a guest source, so no rule was saved and no fact changed. | A guest writes only guest notes; a standing rule changes what every agent loads, so only the brain's owner or its members save one. | Tell the user what should be corrected; the brain's owner saves the rule. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/standing-rules.md#correct_guest_refused](../../docs/guides/standing-rules.md#correct_guest_refused)
+
+### correct_instruction_refused
+
+<a id="correct_instruction_refused"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| correct was refused because the rule reads like an instruction to override an agent, send data out or handle credentials, so nothing was written. | Standing rules reach every agent at session start; the write gate's override, exfiltration and credential families never become one. | Rephrase the rule as the user's own preference about a fact or a way of working. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/standing-rules.md#correct_instruction_refused](../../docs/guides/standing-rules.md#correct_instruction_refused)
+
+### correct_origin_refused
+
+<a id="correct_origin_refused"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| correct was refused because content_origin was not user_said (tool output or an inference), so nothing was written. | A standing rule is what the user told their agent; text a tool returned or an agent inferred could plant a rule nobody asked for. | Call correct only with the user's own correction; save what a tool returned with remember instead. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/standing-rules.md#correct_origin_refused](../../docs/guides/standing-rules.md#correct_origin_refused)
+
+### correct_receipt_not_found
+
+<a id="correct_receipt_not_found"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| No correction receipt with that id was made by this connection. | A receipt is read and resumed only by the caller that made it, or on the brain host, so one connection never learns about another's corrections. | Use the receipt_id that correct returned to this connection, or run gbrain correct status <receipt> on the brain host. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/standing-rules.md#correct_receipt_not_found](../../docs/guides/standing-rules.md#correct_receipt_not_found)
+
 ### cost_cap_exceeded
 
 <a id="cost_cap_exceeded"></a>
@@ -2265,9 +2305,11 @@ More: [docs/ENGINES.md#opening-an-engine-from-settings-experimental](../../docs/
 |---|---|---|---|---|---|---|
 | The move to another engine (`gbrain engine swap`) was refused before anything changed; the current engine keeps authority. | A swap needs a settled, unmanaged brain and readiness evidence that cannot be waived: managed storage, unfinished worktree refreshes, failing readiness criteria, more than one writer host, a team brain, a lagging follower, differing digests or fingerprints, an engine-selecting override, or host access that would change. Each reason has one recovery row in docs/guides/engine-swap.md. | Correct the request using the message above, then retry. Run: gbrain engine swap --to rust --plan --json | agent | `repeat the read that failed` | 1 | no |
 
-Reasons: `refresh_unsettled`, `managed_storage`, `no_shadow`, `not_ready`, `multiple_writer_hosts`, `writer_coverage_unknown`, `team_brain`, `follower_behind`, `digest_mismatch`, `route_override`, `host_access_unbound`, `host_access_changed`, `fingerprint_semantics_differ`.
+Reasons: `refresh_unsettled`, `managed_storage`, `no_shadow`, `not_ready`, `multiple_writer_hosts`, `writer_coverage_unknown`, `team_brain`, `follower_behind`, `digest_mismatch`, `route_override`, `host_access_unbound`, `host_access_changed`, `fingerprint_semantics_differ`, `folder_rules_unserved`, `remote_access_unserved`, `brain_in_use`, `verification_incomplete`, `checkpoint_unavailable`, `failback_unavailable`, `failback_mismatch`.
 
 Override: reason `refresh_unsettled`: retryable, exit 1, retryable.
+
+Override: reason `failback_mismatch`: unavailable, exit 1, not retryable.
 
 Override: reason `managed_storage`: consent, exit 3, not retryable.
 
@@ -2290,6 +2332,16 @@ Override: reason `host_access_changed`: consent, exit 3, not retryable.
 Override: reason `digest_mismatch`: unavailable, exit 1, not retryable.
 
 Override: reason `fingerprint_semantics_differ`: unavailable, exit 1, not retryable.
+
+Override: reason `folder_rules_unserved`: unavailable, exit 1, not retryable.
+
+Override: reason `remote_access_unserved`: unavailable, exit 1, not retryable.
+
+Override: reason `brain_in_use`: retryable, exit 1, retryable.
+
+Override: reason `verification_incomplete`: unavailable, exit 1, not retryable.
+
+Override: reason `checkpoint_unavailable`: unavailable, exit 1, not retryable.
 
 More: [docs/guides/engine-swap.md#refusals](../../docs/guides/engine-swap.md#refusals)
 
@@ -2381,7 +2433,7 @@ More: [docs/guides/repair.md#rename-identity](../../docs/guides/repair.md#rename
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| `remember`, or an owner `gbrain trust release` that writes a held fact into its entity page's `## Facts` table (a managed brain), refused a claim that was explicitly forgotten for this subject (wire `invalid_params`, message prefix `fact_withdrawn:`); nothing was saved, and a refused release leaves the fact held. | A forgotten claim stays withdrawn: remembering the same normalized text does not restore it, and a claim forgotten without an entity is withdrawn for every entity. The additive `withdrawn` object (`at`, `subject`: an entity slug or `all_entities`, `visibility`) says when and how widely the exact claim was forgotten; it covers that exact claim only, and its absence carries no meaning. | Do not retry the same text. Tell the user the claim was forgotten (withdrawn.at, withdrawn.subject); if it is still true, remember it in new words. To link a fact saved without an entity, remember it with entity and replaces set to its fact id instead of forgetting it. For a refused release, do not retry it: drop the hold (gbrain trust drop h<id>) unless the user wants the claim back in new words. | agent | `repeat the read that failed` | 1 | no |
+| `remember`, or an owner `gbrain trust release` that writes a held fact into its entity page's `## Facts` table (a managed brain), refused a claim that was explicitly forgotten for this subject (wire `invalid_params`, message prefix `fact_withdrawn:`); nothing was saved, and a refused release leaves the fact held. | A forgotten claim stays withdrawn: remembering the same normalized text does not restore it, and a claim forgotten without an entity is withdrawn for every entity. The additive `withdrawn` object (`at`, `subject`: an entity slug or `all_entities`, `visibility`) says when and how widely the exact claim was forgotten; it covers that exact claim only, is sent only to a caller that reads private pages (a remote caller gets the refusal without it), and its absence carries no meaning. | Do not retry the same text. Tell the user the claim was forgotten (with withdrawn.at and withdrawn.subject when the refusal carries them); if it is still true, remember it in new words. To link a fact saved without an entity, remember it with entity and replaces set to its fact id instead of forgetting it. For a refused release, do not retry it: drop the hold (gbrain trust drop h<id>) unless the user wants the claim back in new words. | agent | `repeat the read that failed` | 1 | no |
 
 ### facts_absorb_write_refused
 
@@ -3413,7 +3465,7 @@ More: [docs/guides/household.md#household_exists](../../docs/guides/household.md
 
 | Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
 |---|---|---|---|---|---|---|
-| A write or delete was refused because it would let more people read household records than the placement table allows: a remote caller retyping a household record, moving one from adults to shared (dropping a child from about, removing audience: adults, a shared kind) or widening its readable_by; a remote caller taking a subject out of child, retyping it, or deleting it while records are about it; or anyone narrowing or deleting a subject while records about it are still shared with helpers. Nothing was written. | A household record's readers are written from its subject's role and its own fields when the record is written; a change that skipped that step would leave readers wider than the table, so these changes run on the brain host, where gbrain household replace --about changes a subject and its records together. | Keep the record or subject as stored, or run the command in fix on the brain host (gbrain household replace --about <slug>, with --role <role> to reclassify); a remote agent asks the brain's owner. Run: gbrain household list --json | agent | `repeat the read that failed` | 1 | no |
+| A write or delete was refused because it would let more people read household records than the placement table allows: a remote caller retyping a household record, moving one from adults to shared (dropping a child from about, removing audience: adults, a shared kind) or widening its readable_by; a remote caller taking a subject out of child, retyping it, or deleting it while records are about it; on a brain that serves several people, a remote caller other than the owner giving, changing or removing a subject's role, or deleting it, whatever records exist; or anyone narrowing or deleting a subject while records about it are still shared with helpers. Nothing was written. | A household record's readers are written from its subject's role and its own fields when the record is written; a change that skipped that step would leave readers wider than the table, so these changes run on the brain host, where gbrain household replace --about changes a subject and its records together. | Keep the record or subject as stored, or run the command in fix on the brain host (gbrain household replace --about <slug>, with --role <role> to reclassify); a remote agent asks the brain's owner. Run: gbrain household list --json | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/household.md#household_reclassify](../../docs/guides/household.md#household_reclassify)
 
@@ -4813,6 +4865,16 @@ More: [docs/ENGINES.md#pg-pool-stalled](../../docs/ENGINES.md#pg-pool-stalled)
 
 More: [docs/ENGINES.md#pg-statement-build-failed](../../docs/ENGINES.md#pg-statement-build-failed)
 
+### pg_storage_interrupted
+
+<a id="pg_storage_interrupted"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| PostgreSQL was interrupted (EINTR, "Interrupted system call") while opening or reading one of its data files. | The operating system interrupted the server's file access: a fault on the database host (its storage or a network filesystem), not damaged rows, so no repair command applies and the statement that hit it did not finish. | PostgreSQL was interrupted reading a data file on the database host, which is not a sign of damaged rows. Check its storage and the PostgreSQL log; once it reads again, check the original job or write receipt before resubmitting. | host_admin | `gbrain doctor --json` | 1 | no |
+
+More: [docs/ENGINES.md#the-gbrain_db_access-marker](../../docs/ENGINES.md#the-gbrain_db_access-marker)
+
 ### pglite_busy
 
 <a id="pglite_busy"></a>
@@ -5050,6 +5112,16 @@ More: [docs/guides/qm.md#proposed-writes](../../docs/guides/qm.md#proposed-write
 Reasons: `actor`, `credential`.
 
 More: [docs/guides/qm.md#proposed-writes](../../docs/guides/qm.md#proposed-writes)
+
+### propose_owner_only
+
+<a id="propose_owner_only"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Only the owner of this install can read or answer job proposals, and this connection is not bound to the owner, so nothing was read or changed. | Job proposals read the owner's mail, calendar, open loops and agent history; a member-bound connection never sees them. | Ask the brain owner to run gbrain propose on the brain host. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/job-proposals.md#who-can-see-them](../../docs/guides/job-proposals.md#who-can-see-them)
 
 ### provenance_required
 
@@ -5743,6 +5815,18 @@ More: [docs/guides/upgrades-auto-update.md#restart](../../docs/guides/upgrades-a
 
 More: [docs/guides/upgrades-auto-update.md#restart](../../docs/guides/upgrades-auto-update.md#restart)
 
+### restore_step_unsupported
+
+<a id="restore_step_unsupported"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| `gbrain backup restore` of a Rust brain stopped before it published anything: the archive holds work or state this runtime cannot make safe (unfinished write requests or recovery records, a purge that needs replay, a live OAuth client or local writer it cannot revoke yet, shared-skill publication it cannot switch off yet, a record kind it does not know), or the mode or addon cannot serve the restore. | A restored brain must not resume old work, bring purged content back or keep archived authority, and a Rust store cannot cancel requests with receipts or replay purges yet, so restore refuses by name instead of skipping the step. The restore target stays reserved with a private failed receipt and staging folder; the archive and the original brain are untouched, so running the same command again fails with restore_target_exists. | Read the reason: take a new backup of the original brain after pausing its writers, or restore with a newer release that supports the missing step, into a new absent --into. Never skip the quarantine. | user | `gbrain doctor --json` | 1 | no |
+
+Reasons: `purge_replay`, `purge_mirror_unreadable`, `pending_requests`, `recovery_required`, `archived_authority`, `shared_skill_state`, `unclassified_state`, `recovery_mode`, `restore_addon_too_old`.
+
+More: [docs/guides/troubleshooting.md#restore-step-unsupported](../../docs/guides/troubleshooting.md#restore-step-unsupported)
+
 ### result_too_large
 
 <a id="result_too_large"></a>
@@ -5814,6 +5898,56 @@ More: [docs/guides/windowed-reads.md#revision_changed](../../docs/guides/windowe
 | The Google grant behind a socket mint or broker call was revoked or expired; reconnect the account. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/google-socket.md#error-codes](../../docs/guides/google-socket.md#error-codes)
+
+### rule_exists
+
+<a id="rule_exists"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| correct was refused because a proposed or active rule with the same words already exists, so nothing was written. | One rule per wording keeps approvals and retirements unambiguous. | Ask the owner to approve the existing rule, or leave it: it is already saved. Run: gbrain rules list | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/standing-rules.md#rule_exists](../../docs/guides/standing-rules.md#rule_exists)
+
+### rule_owner_only
+
+<a id="rule_owner_only"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A remote caller tried to write, move or retype a standing rule page outside the correct verb, so nothing was written. | Rules change only through correct (which writes the rule and its fact fix together, with a receipt) or gbrain rules on the brain host, so an agent cannot edit a rule its owner confirmed. | Use correct to save a rule; ask the owner to retire one with gbrain rules retire <id>. | user | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/standing-rules.md#rule_owner_only](../../docs/guides/standing-rules.md#rule_owner_only)
+
+### rule_proposed
+
+<a id="rule_proposed"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The standing rule is saved but waits for the owner: it is proposed, or active for retrieval and not yet confirmed for the standing-rules section. | An agent can sound like its user; a rule reaches every session only after the owner confirms its exact revision in their own terminal. | Relay the receipt's next.user_message to the user; they run gbrain rules approve <id>@<revision> in their own terminal. | user | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/standing-rules.md#rule_proposed](../../docs/guides/standing-rules.md#rule_proposed)
+
+### rule_revision_stale
+
+<a id="rule_revision_stale"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The revision named for approval is not the rule page's current revision, so nothing was approved. | Approval binds one exact revision; approving another would load words the owner did not see. | Run gbrain rules show <id> to read the current revision, then approve that one. Run: gbrain rules list | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/standing-rules.md#rule_revision_stale](../../docs/guides/standing-rules.md#rule_revision_stale)
+
+### rule_transition
+
+<a id="rule_transition"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A write to a standing rule page was refused because it moves the rule's status in a way rules never move (proposed → active → retired, never back), so nothing was written. | A retired rule stays retired so an old approval can never come back to life; a new rule gets its own confirmation. | Save a new rule with correct instead of reviving a retired one. Run: gbrain rules list | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/standing-rules.md#rule_transition](../../docs/guides/standing-rules.md#rule_transition)
 
 ### runtime_build_skew
 
@@ -6159,6 +6293,16 @@ More: [docs/guides/conversation-archive.md#setup-history-import](../../docs/guid
 
 More: [docs/guides/repair.md#setup-hosted-connection](../../docs/guides/repair.md#setup-hosted-connection)
 
+### setup_household_unbound
+
+<a id="setup_household_unbound"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| gbrain setup --shape household was refused because the household template would set the brain to serve several people while this harness's connection stays bound to nobody (a shared stdio harness such as OpenClaw or Hermes is installed, or --no-stdio-member was given), so nothing was written. | On a brain that serves several people an unbound connection reads none of the household records, so the owner's own agent could not answer what needs doing at home, and every later setup run would refuse that connection. | Give the owner a key over HTTP (gbrain auth create <name> --member <owner>); or drop --no-stdio-member; or set up the owner alone with --household-members none. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/tutorials/household-brain.md#if-a-run-stops](../../docs/tutorials/household-brain.md#if-a-run-stops)
+
 ### setup_owner_conflict
 
 <a id="setup_owner_conflict"></a>
@@ -6170,6 +6314,26 @@ More: [docs/guides/repair.md#setup-hosted-connection](../../docs/guides/repair.m
 Reasons: `live_serve`, `unowned_entry`, `other_install`, `harness_lane`.
 
 More: [docs/guides/repair.md#setup-owner-conflict](../../docs/guides/repair.md#setup-owner-conflict)
+
+### setup_receipt_not_found
+
+<a id="setup_receipt_not_found"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A setup template status or resume named a receipt that is not on this machine (or none exists for this brain and source), so nothing was read or written. | A template run records each step and each key in a receipt under the brain's config directory; a status or resume reads only that record, so a missing one is never guessed. | Run the template again with --yes (every step is idempotent), or name a receipt this machine holds. Run: gbrain household template --json | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/tutorials/household-brain.md#if-a-run-stops](../../docs/tutorials/household-brain.md#if-a-run-stops)
+
+### setup_receipt_target_mismatch
+
+<a id="setup_receipt_target_mismatch"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A setup template status or resume named a receipt written for another brain, source or harness than the command names, so nothing was read or written. | A receipt names its target so a resume never changes a brain or source the person did not name, and a status never proves another target's keys. | Run the command with the receipt's own harness and source, or name a receipt of this target. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/tutorials/household-brain.md#if-a-run-stops](../../docs/tutorials/household-brain.md#if-a-run-stops)
 
 ### setup_serves_several
 
@@ -6660,6 +6824,16 @@ More: [docs/guides/repair.md#slug-spelling](../../docs/guides/repair.md#slug-spe
 | gbrain repair slug-spelling did not move any page because the database's encoding is not UTF8; nothing was written. | Finding every stored spelling of a name compares composed Unicode text, which only a UTF8 database can evaluate; without it the repair could miss another page that prints the same name and merge two pages. | Move the brain to a database created with UTF8 encoding (gbrain doctor reports database_encoding), then preview again with gbrain repair slug-spelling --source <id>. | user | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/repair.md#slug-spelling](../../docs/guides/repair.md#slug-spelling)
+
+### slug_too_long
+
+<a id="slug_too_long"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A page slug is longer than the 255 characters a slug can be, so nothing was written (sync holds the file). | Every operation that names a page (get, put, delete, repair) refuses a slug over 255 characters, so a page stored under one could never be read, fixed or removed again (#10080). The message names the length, never the slug. | Move the file to a shorter path (or give it a shorter slug: line), commit and sync. A page an older sync already stored under such a slug can be removed with gbrain delete. | agent | `repeat the read that failed` | 1 | no |
+
+More: [docs/guides/write-refusals.md#slug_too_long](../../docs/guides/write-refusals.md#slug_too_long)
 
 ### source_binding_required
 
@@ -7524,6 +7698,16 @@ More: [docs/guides/troubleshooting.md#upstream-rewritten](../../docs/guides/trou
 | An `as_of` read found no version of the page that declares a readable `valid_from`, so no edition can be placed on the date. | Valid time comes only from the `valid_from` / `valid_until` frontmatter the page carries; gbrain never infers when text took effect. Only the user knows the date, so the fix asks them before a templated edit_page records it. | Ask the user when the text took effect and record it as a quoted valid_from (the fix carries the edit). For what the brain had recorded at a time, read with known_as_of instead. | agent | `repeat the read that failed` | 1 | no |
 
 More: [docs/guides/page-history.md#valid_time_undeclared](../../docs/guides/page-history.md#valid_time_undeclared)
+
+### value_unavailable
+
+<a id="value_unavailable"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Every count on the value card failed to read, so nothing was counted. | The card reads pages, links, facts, the archive ledger, telemetry and the brain score with separate queries; it fails only when all of them fail, which means the brain itself could not be read. | Run gbrain doctor --json on the brain host to see why the brain cannot be read, then ask again. Run: gbrain doctor --json | agent | `repeat the read that failed` | 1 | yes |
+
+More: [docs/guides/value-card.md#when-a-count-is-unavailable](../../docs/guides/value-card.md#when-a-count-is-unavailable)
 
 ### vault_generation_changed
 

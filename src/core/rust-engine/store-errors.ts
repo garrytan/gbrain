@@ -52,6 +52,11 @@ export function mapStoreError(error: unknown, ctx: StoreErrorContext): unknown {
     case 'store_closed':
       return opError('engine_closed', `The Rust engine's store is closed, so ${ctx.member} did not run.`,
         'Open the brain again with openEngine or connect() before calling it.', { detail: `member=${ctx.member}` });
+    case 'store_missing':
+      // The store's own last line (the CLI's connect refuses first, src/core/engine-connect.ts): a store that must be
+      // there was not, and the open created nothing.
+      return opError('brain_missing', `The Rust store is not there (an unmounted drive or a moved folder?), so ${ctx.member} did not open it. Nothing was created there.`,
+        'Mount or move the brain back, or point `database_path` in the gbrain config at where it lives now.', { reason: 'missing_brain', detail });
     case 'store_locked':
       return opError('rust_store_locked', 'Another gbrain process or engine has this brain open, so the Rust engine opened nothing.',
         'Stop the other process that is using this brain, or disconnect the other engine, then try again.', { retryable: true, detail });

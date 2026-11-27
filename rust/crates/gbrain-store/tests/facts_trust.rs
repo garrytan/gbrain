@@ -402,7 +402,7 @@ fn head_stems_name_the_terms_each_head_matches_by_stem() {
     let b = brain("facts-trust-head-stems");
     let heads = ["widget", "running", "acme", "widgets"].map(String::from);
     let terms = ["widgets", "runs", "zebra", "the"].map(String::from);
-    let rows = b.match_head_stems(&heads, &terms).unwrap();
+    let rows = b.match_head_stems(&heads, &terms, None).unwrap();
     let got: Vec<(String, Vec<u64>)> = rows.into_iter().map(|r| (r.h, r.i)).collect();
     assert_eq!(
         got,
@@ -413,12 +413,53 @@ fn head_stems_name_the_terms_each_head_matches_by_stem() {
             ("widgets".into(), vec![1]),
         ]
     );
-    assert!(b.match_head_stems(&[], &terms).unwrap().is_empty());
+    assert!(b.match_head_stems(&[], &terms, None).unwrap().is_empty());
     assert_eq!(
-        b.match_head_stems(&["a\0b".to_string()], &terms)
+        b.match_head_stems(&["a\0b".to_string()], &terms, None)
             .unwrap_err()
             .code,
         "invalid_argument"
+    );
+}
+
+#[test]
+fn head_stems_match_under_the_german_configuration_and_refuse_an_unported_one() {
+    let b = brain("facts-trust-head-stems-german");
+    // `Häuser` and `Haus` share the German stem `haus`; `und` is a German stopword.
+    let heads = ["Haus", "Straßen", "Kinder"].map(String::from);
+    let terms = ["Häuser", "Strasse", "und", "Kind"].map(String::from);
+    let german: Vec<(String, Vec<u64>)> = b
+        .match_head_stems(&heads, &terms, Some("german"))
+        .unwrap()
+        .into_iter()
+        .map(|r| (r.h, r.i))
+        .collect();
+    assert_eq!(
+        german,
+        vec![
+            ("Haus".into(), vec![1]),
+            ("Straßen".into(), vec![2]),
+            ("Kinder".into(), vec![4]),
+        ]
+    );
+    let english: Vec<Vec<u64>> = b
+        .match_head_stems(&heads, &terms, None)
+        .unwrap()
+        .into_iter()
+        .map(|r| r.i)
+        .collect();
+    assert_ne!(
+        english,
+        german.iter().map(|(_, i)| i.clone()).collect::<Vec<_>>()
+    );
+    let refused = b
+        .match_head_stems(&heads, &terms, Some("french"))
+        .unwrap_err();
+    assert_eq!(refused.code, "invalid_argument");
+    assert!(
+        refused.message.contains("no Snowball port for the french"),
+        "{}",
+        refused.message
     );
 }
 

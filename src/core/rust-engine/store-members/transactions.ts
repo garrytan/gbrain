@@ -173,10 +173,12 @@ function boundEngine(parent: RustEngine, scope: RustTransactionScope, held: Held
   const store: RustStore = {
     brain: scope.brain, close: async () => undefined,
     importRelation: refuseSeed('importRelation'), replaceRelationRows: refuseSeed('replaceRelationRows'), replaceInterval: refuseSeed('replaceInterval'),
-    relationDigest: refuseSeed('relationDigest'), relationEntries: refuseSeed('relationEntries'), allocatorCheck: refuseSeed('allocatorCheck'),
+    relationDigest: refuseSeed('relationDigest'), relationEntries: refuseSeed('relationEntries'), allocatorCheck: refuseSeed('allocatorCheck'), allocatorAdvance: refuseSeed('allocatorAdvance'),
     factFingerprints: refuseSeed('factFingerprints'), seedPlan: refuseSeed('seedPlan'),
     // A snapshot copies the whole store at one committed generation, so it never runs through a transaction's handle either.
     snapshotTo: refuseSeed('snapshotTo'), snapshotCancel: () => { throw capabilityMissing('transactions', 'snapshotCancel'); },
+    // The restore census and quarantine run on the restored store's own handle (gbrain backup restore), never inside a transaction.
+    restoreCensus: refuseSeed('restoreCensus'), restoreQuarantine: refuseSeed('restoreQuarantine'),
   };
   return Object.create(parent, {
     _txScope: { value: scope, writable: false, enumerable: false },

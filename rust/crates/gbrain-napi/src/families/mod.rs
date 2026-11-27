@@ -67,6 +67,7 @@ mod page_visibility;
 mod pages;
 mod publication_journal;
 mod reflex_reads;
+mod restore;
 mod retrieval_feedback;
 mod search;
 mod seed;
@@ -168,12 +169,14 @@ mod page_purge_holds;
 mod page_purge_journal;
 mod page_purge_sweep;
 mod page_spend;
+mod persistence_upkeep;
 mod purge_effects;
 mod purge_plan;
 mod raw_files;
 mod relations;
 mod remote_links;
 mod repair_applies;
+mod retention_purge;
 mod salience;
 mod schema_detect;
 mod secret_store;
@@ -199,5 +202,7 @@ mod source_cr_mode;
 mod synopsis_tier;
 // The page-list, slug-source, access and connector-status reads (rust/docs/store/list-reads.md).
 mod list_reads;
+// The memory-trust evals' harness reads (rust/docs/store/eval-harness-reads.md).
+mod eval_harness_reads;
 // The legacy_slug_spellings doctor check's page scan (rust/docs/store/slug-spelling-repair.md).
 mod slug_spelling_repair;

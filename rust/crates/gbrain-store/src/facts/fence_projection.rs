@@ -65,6 +65,22 @@ struct FieldRow {
     claim_unit: Option<String>,
     claim_period: Option<String>,
     attributed_to: Option<String>,
+    /// Whether the fence row states a `valid_until` cell (#10055); a missing key is SQL NULL.
+    until_cell: Option<bool>,
+}
+
+/// `date_trunc('second', t)` in microseconds (toward the earlier second).
+pub(super) fn whole_second(us: i64) -> i64 {
+    us.div_euclid(1_000_000) * 1_000_000
+}
+
+/// `context ~* '^superseded by #[0-9]+$'`: the marker a superseded row's fence cell renders.
+fn superseded_marker(context: &str) -> bool {
+    const PREFIX: &str = "superseded by #";
+    context.len() > PREFIX.len()
+        && context.is_char_boundary(PREFIX.len())
+        && context[..PREFIX.len()].eq_ignore_ascii_case(PREFIX)
+        && context[PREFIX.len()..].bytes().all(|b| b.is_ascii_digit())
 }
 
 /// One move of `moveGuardedFenceRows` (`AS m(id bigint, row_num integer, visibility text)`).
@@ -184,10 +200,13 @@ impl Store {
     }
 
     /// `refreshFenceFactFields(sourceId, slug, fieldRows)`: for each record, the page's fact at its
-    /// row number (any state) takes the record's kind, notability, context, valid_from (kept when
-    /// the record has none), valid_until, expired_at, source, confidence, the four claim columns and
-    /// attributed_to, when any of them differs. Every record is cast first, as Postgres casts the
-    /// document before it updates a row.
+    /// row number (any state) takes the record's kind, notability, context, valid_from, valid_until,
+    /// expired_at, source, confidence, the four claim columns and attributed_to, when any of them
+    /// differs. Every record is cast first, as Postgres casts the document before it updates a row.
+    /// #10055 keeps a row's history the fence cells render coarsely: a stored valid_from its cell
+    /// states to the second stays (a sub-second `remember` instant survives); a row that stays
+    /// retired keeps its expiry time, its valid_until unless the record states a different one, and
+    /// its context when the cell is the generated `superseded by #N` marker of a superseded row.
     pub fn refresh_fence_fact_fields(
         &self,
         source_id: &str,
@@ -235,10 +254,30 @@ impl Store {
                 let not_null = super::not_null;
                 new.kind = r.kind.clone().ok_or_else(|| not_null("kind"))?;
                 new.notability = r.notability.clone().ok_or_else(|| not_null("notability"))?;
-                new.context = r.context.clone();
-                new.valid_from_us = f.valid_from.unwrap_or(old.valid_from_us);
-                new.valid_until_us = f.valid_until;
-                new.expired_at_us = f.expired_at;
+                let retired = old.expired_at_us.is_some() && f.expired_at.is_some();
+                new.context = if retired
+                    && old.superseded_by.is_some()
+                    && r.context.as_deref().is_some_and(superseded_marker)
+                {
+                    old.context.clone()
+                } else {
+                    r.context.clone()
+                };
+                new.valid_from_us = match f.valid_from {
+                    Some(from) if whole_second(old.valid_from_us) != from => from,
+                    _ => old.valid_from_us,
+                };
+                // `NOT r.until_cell OR date_trunc('second', f.valid_until) = r.valid_until`, NULL
+                // (a missing cell flag, a NULL side) counting as not true.
+                let until_unchanged = matches!((old.valid_until_us, f.valid_until),
+                    (Some(stored), Some(cell)) if whole_second(stored) == cell);
+                new.valid_until_us = if retired && (r.until_cell == Some(false) || until_unchanged)
+                {
+                    old.valid_until_us
+                } else {
+                    f.valid_until
+                };
+                new.expired_at_us = f.expired_at.map(|at| old.expired_at_us.unwrap_or(at));
                 new.source = r.source.clone().ok_or_else(|| not_null("source"))?;
                 new.confidence = f.confidence.ok_or_else(|| not_null("confidence"))?;
                 new.claim_metric = r.claim_metric.clone();

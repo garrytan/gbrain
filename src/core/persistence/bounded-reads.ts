@@ -111,8 +111,12 @@ export const TYPED_PREPARATION_READS: ReadonlySet<string> = new Set(['getSource'
   'listPurgeClaimFacts', 'listPurgeClaimTakes', 'listQueuedPagePurges', 'listPageLinkStreams', 'listPagePurgeTombstones',
   'listForcedCutSeqs', 'readSegmentedVersionBodyBytes',
   'listChunkedOccurrences', 'readRetiredChunkVectors', 'hasStaleSegmentChunks', 'readLiveSlugAliases', 'readSourceSlugProbe', 'readSegmentedLivePage', 'normalizeFenceLines', 'listGlobalPurgeWithdrawals',
-  'readPagePrivacyHidden', 'readLinkTargetPages', 'readWriteVisibilityProbe',
-  'hasPositionedPageFacts', 'hasFenceAbsentHold', 'listPageTakeRowNums', 'readPageInlineBody']);
+  'readPagePrivacyHidden', 'readLinkTargetPages', 'readPageHiddenFromWriter', 'readSlugFolderRules', 'readWriteVisibilityProbe',
+  'hasPositionedPageFacts', 'hasFenceAbsentHold', 'listPageTakeRowNums', 'readPageInlineBody',
+  // The access, page-visibility, grant and source reads a preparation makes (caller identity, folder rules, writer fences, credential
+  // grants, source rows): each ran as a raw statement through this view's `executeRaw` before it became a typed member.
+  'readWriterSlugFence', 'readOAuthClientWriteGrant', 'readAccessTokenWriteGrant', 'shareLockWriteCredential', 'readSourceRow',
+  'readMayActFor', 'readAudiencePrincipals', 'readScopeSourceConfigs', 'readOwnerOnlySourcesPresent', 'readOwnerOnlySourceConfig']);
 
 /**
  * Engine members that return a store over the engine. The view binds them to itself, so the store's raw statements go

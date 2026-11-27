@@ -208,6 +208,8 @@ describe('doctor lists text keys by byte', () => {
   parityTest('function-search-path reads list overloads by byte signature', {
     methods: ['executeRaw'], requires: 'raw_sql',
   }, async (engine) => {
+    // Named permanent loss (docs/designs/RUST_ENGINE.md#named-permanent-losses): Postgres function overloads; a Rust
+    // brain has no SQL functions, and doctor skips function_search_path there (no_sql_functions).
     const overloads = ['public.gbrain_fts_input(text[])', 'public.gbrain_fts_input(text, text)'];
     await engine.executeRaw(`CREATE FUNCTION public.gbrain_fts_input(a text[]) RETURNS text LANGUAGE sql SET search_path = pg_catalog AS $$ SELECT 'a' $$`);
     await engine.executeRaw(`CREATE FUNCTION public.gbrain_fts_input(a text, b text) RETURNS text LANGUAGE sql SET search_path = pg_catalog AS $$ SELECT 'b' $$`);

@@ -172,6 +172,8 @@ const sweptReads: readonly LockedRead[] = [
   ['readPagePrivacyHidden', 'pages', 'AS hidden FROM pages p', e => e.readPagePrivacyHidden('default', 'notes/seal-probe')],
   ['readLinkTargetPages', 'pages', 'AS visible', e => e.readLinkTargetPages('default', ['notes/seal-probe'], null)],
   ['readWriteVisibilityProbe', 'pages', 'AS identity_may_open', e => e.readWriteVisibilityProbe('default', 'notes/seal-probe')],
+  ['readPageHiddenFromWriter', 'pages', 'SELECT 1 FROM pages WHERE source_id', e => e.readPageHiddenFromWriter('default', 'notes/seal-probe', { identities: [['member:alice-example']], satisfiedRuleIds: [], folderCoverage: [], owner: false, labelledOnly: false }, true)],
+  ['readSlugFolderRules', 'access_rules', 'gbrain_access_folder_rules', e => e.readSlugFolderRules('default', 'notes/seal-probe')],
 ];
 
 describe.skipIf(!hasDatabase())('typed reads swept into the preparation set keep the deadline (Postgres)', () => {

@@ -596,7 +596,7 @@ describe('adapter identity', () => {
     // test-reads-source-ok[raw-bytes]: the adapter's source bytes are the fingerprint under test; a change must bump the epoch input
     for (const f of files) digest.update(`${f}\0${readFileSync(join(root, f), 'utf8')}\0`);
     // When this fails, the adapter's mapping changed: bump SHADOW_ADAPTER_VERSION (a new evidence epoch) and set both values here.
-    expect([SHADOW_ADAPTER_VERSION, digest.digest('hex')]).toEqual([13, 'a1acaf707747aa337adb0faf35669017730b7ef9d5e97c058b38f04660113272']);
+    expect([SHADOW_ADAPTER_VERSION, digest.digest('hex')]).toEqual([14, 'c7dbf63dcd180a5408cc289e22e099b1b12e2b8da429d45f1d0828e766571b16']);
   });
 });
 

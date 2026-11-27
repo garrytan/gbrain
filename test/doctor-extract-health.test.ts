@@ -102,6 +102,25 @@ describe('computeExtractHealthCheck — WARN paths', () => {
     expect(check.message).not.toContain('0d ago');
   });
 
+  test('#10356 a halt on the current UTC day is today even when the session calendar has moved on', async () => {
+    await clearRollup();
+    await engine.transaction(async tx => {
+      const [clock] = await tx.executeRaw<{ utc_day: string; zone: string }>(
+        `SELECT (now() AT TIME ZONE 'UTC')::date::text AS utc_day,
+                CASE WHEN (now() AT TIME ZONE 'Pacific/Kiritimati')::date <> (now() AT TIME ZONE 'UTC')::date
+                     THEN 'Pacific/Kiritimati' ELSE 'Pacific/Pago_Pago' END AS zone`, []);
+      await tx.executeRaw("SELECT set_config('TimeZone', $1, true)", [clock!.zone]);
+      const [session] = await tx.executeRaw<{ day: string }>('SELECT CURRENT_DATE::text AS day', []);
+      expect(session!.day).not.toBe(clock!.utc_day);
+      await tx.executeRaw(
+        `INSERT INTO extract_rollup_7d (kind, source_id, day, cost_usd, eval_pass_count, eval_fail_count, halt_count, round_completed_count, rollup_write_failures, updated_at)
+         VALUES ('atoms', 'default', $1::date, 1.00, 0, 0, 9, 1, 0, NOW())`, [clock!.utc_day]);
+      const check = await computeExtractHealthCheck(tx as never);
+      expect((check.details as any).kinds[0].last_halt_age_days).toBe(0);
+      expect(check.message).toContain('last halt today');
+    });
+  });
+
   test('the age is the last halt, not the last clean run (#5863)', async () => {
     await clearRollup();
     await engine.executeRaw(

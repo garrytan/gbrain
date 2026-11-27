@@ -39,3 +39,18 @@ describe('the facts unique violations of the Rust store', () => {
     }
   });
 });
+
+describe('the Rust store code store_missing', () => {
+  // Value: protects=a store that must already exist and is not there reaches every caller as brain_missing (reason
+  // missing_brain, the user acts), never as an unregistered store code; fails_when=mapStoreError passes store_missing
+  // through or maps it to another code; why_new=store_missing is internal and has no registry entry; seam=none;
+  // no_claim=the CLI refusal text (test/rust-missing-store-read-commands.test.ts)
+  test('maps to brain_missing with reason missing_brain, keeping the store detail', () => {
+    const raw = Object.assign(new Error('/x/brain.rust holds no brain (no records.redb); nothing was created'), { code: 'store_missing' });
+    const mapped = mapStoreError(raw, { member: 'connect' }) as Error & Record<string, unknown>;
+    expect(mapped.code).toBe('brain_missing');
+    expect(mapped.reason).toBe('missing_brain');
+    expect(String(mapped.message)).toContain('Nothing was created there.');
+    expect(String(mapped.detail)).toContain('holds no brain');
+  });
+});
