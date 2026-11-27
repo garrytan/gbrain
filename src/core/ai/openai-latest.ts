@@ -95,7 +95,7 @@ function cachePath(): string {
 
 /* ── id grammar + ranking (pure; exported for tests) ─────────────────────── */
 
-const TOP_SUFFIXES = ['sol', 'pro'] as const;
+const TOP_SUFFIXES = ['astra', 'sol', 'pro'] as const;
 const MID_SUFFIXES = ['terra'] as const;
 const CHEAP_SUFFIXES = ['luna', 'nano', 'mini'] as const;
 const KNOWN_SUFFIXES = new Set<string>([...TOP_SUFFIXES, ...MID_SUFFIXES, ...CHEAP_SUFFIXES]);
