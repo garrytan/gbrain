@@ -128,6 +128,16 @@ describe('secrets.on_write block', () => {
     });
   });
 
+  test('put_pages drops the slug of an entry the screen refused, even when the slug holds a value only the page text marks as a secret', async () => {
+    await withMode('block', async () => {
+      const opaque = ['q7hv2lz9', 'kp4rt6wm', '8yb3nc5x', 'd1fg0js'].join('');
+      const result = await call(remote(), 'put_pages', { pages: [{ slug: 'notes/session-' + opaque, content: '# Call\n\nAuthorization: Bearer ' + opaque + '\n' }], request_id: randomUUID() });
+      expect(result.pages[0]).toMatchObject({ index: 0, state: 'refused' });
+      expect(result.pages[0].slug).toBeUndefined();
+      expect(JSON.stringify(result)).not.toContain(opaque);
+    });
+  });
+
   test('a reserved kind hidden by NUL bytes stays refused when the write also carries a token (redact)', async () => {
     await withMode('redact', async () => {
       const before = Number((await engine.executeRaw<{ n: unknown }>("SELECT count(*) AS n FROM persistence_requests r WHERE r::text LIKE '%managed_sync_%'"))[0]!.n);

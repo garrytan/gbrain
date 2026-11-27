@@ -174,14 +174,15 @@ export async function principalLive(engine: BrainEngine, row: Pick<WakeRow, 'pri
  */
 async function ownerReadsWholeQueue(engine: BrainEngine, row: Pick<WakeRow, 'principal_kind' | 'principal_id' | 'member_id'>): Promise<boolean> {
   if (!row.member_id) return false;
-  const [owner] = await engine.executeRaw<{ value: string }>("SELECT value FROM config WHERE key = 'access.owner_member'");
-  if (owner?.value !== row.member_id) return false;
-  if (row.principal_kind === 'oauth_client') {
-    const [client] = await engine.executeRaw<{ scope: string | null }>('SELECT scope FROM oauth_clients WHERE client_id = $1 AND deleted_at IS NULL', [row.principal_id]);
-    return client != null && hasScope(parseScopeString(client.scope), 'admin');
-  }
-  const [token] = await engine.executeRaw<{ scopes: unknown }>('SELECT scopes FROM access_tokens WHERE id::text = $1 AND revoked_at IS NULL', [row.principal_id]);
-  return token != null && hasScope(normalizeTokenScopes(token.scopes) ?? ['read', 'write', 'admin'], 'admin');
+  const [live] = await engine.executeRaw<{ owner: string | null; client_scope: string | null; token: boolean; token_scopes: unknown }>(
+    `SELECT (SELECT value FROM config WHERE key = 'access.owner_member') AS owner,
+            (SELECT scope FROM oauth_clients WHERE $1 = 'oauth_client' AND client_id = $2 AND deleted_at IS NULL) AS client_scope,
+            EXISTS (SELECT 1 FROM access_tokens WHERE $1 = 'legacy_token' AND id::text = $2 AND revoked_at IS NULL) AS token,
+            (SELECT scopes FROM access_tokens WHERE $1 = 'legacy_token' AND id::text = $2 AND revoked_at IS NULL) AS token_scopes`,
+    [row.principal_kind, row.principal_id]);
+  if (!live || live.owner !== row.member_id) return false;
+  if (row.principal_kind === 'oauth_client') return hasScope(parseScopeString(live.client_scope), 'admin');
+  return live.token && hasScope(normalizeTokenScopes(live.token_scopes) ?? ['read', 'write', 'admin'], 'admin');
 }
 
 /** End a watch at Wakeshift once (best effort: the conversation is told; a failure leaves Wakeshift's own ttl to end it). */
