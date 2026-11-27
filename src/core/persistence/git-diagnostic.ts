@@ -54,14 +54,15 @@ export function gitDiagnostic(phase: GitDiagnostic['phase'], step: string, stder
   return { phase, step, line: sanitizeGitStderr(raw), ...(IDENTITY_STDERR.test(raw) ? { identity: true as const } : {}) };
 }
 
-const attached = new WeakMap<object, GitDiagnostic>();
+/** The non-enumerable property a gitFailure carries its diagnostic on (never serialized with the error). */
+const DIAGNOSTIC = 'gitDiagnostic';
 
 /** Attaches a diagnostic to an error (a gitFailure); recordFailure reads it back with gitDiagnosticOf. */
 export function withGitDiagnostic<E extends object>(error: E, diagnostic: GitDiagnostic | undefined): E {
-  if (diagnostic) attached.set(error, diagnostic);
+  if (diagnostic) Object.defineProperty(error, DIAGNOSTIC, { value: diagnostic, enumerable: false, configurable: true, writable: false });
   return error;
 }
 
 export function gitDiagnosticOf(error: unknown): GitDiagnostic | undefined {
-  return error !== null && typeof error === 'object' ? attached.get(error) : undefined;
+  return error !== null && typeof error === 'object' ? (error as Record<string, GitDiagnostic | undefined>)[DIAGNOSTIC] : undefined;
 }
