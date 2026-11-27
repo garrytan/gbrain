@@ -173,7 +173,7 @@ function buildProxy<E extends BrainEngine>(engine: E, sink: ShadowSink, opts: Sh
     const scope = outer ? outer.scope : opts.writes?.scope(engine);
     const writes: TxWrites = { wrote: false, scope, nested: !!outer, path: outer && scope ? [...outer.path, scope.open()] : [], lane: outer ? outer.lane : follow ? newTxLane() : undefined };
     const call = (scope: Frame | null) => fn.apply(engine, [
-      (tx: BrainEngine) => beforeCommit(drained((callback as (tx: BrainEngine) => unknown)(tx && typeof tx === 'object' ? buildProxy(tx, sink, opts, true, scope, writes) : tx), writes.lane), tx, outer ? undefined : writes.scope),
+      (tx: BrainEngine) => beforeCommit(drained(() => (callback as (tx: BrainEngine) => unknown)(tx && typeof tx === 'object' ? buildProxy(tx, sink, opts, true, scope, writes) : tx), writes.lane), tx, outer ? undefined : writes.scope),
       ...rest,
     ]);
     const out = follow ? followScope(followCtx(engine, frame, inTransaction), false, call) : call(null);
@@ -196,8 +196,12 @@ function buildProxy<E extends BrainEngine>(engine: E, sink: ShadowSink, opts: Sh
    * Holds a transaction callback's outcome, resolved or rejected, until no follow pre-read holds the lane and the calls held behind it have been sent, so
    * they are sent before the transaction's COMMIT or ROLLBACK (or its savepoint's), as they would be without the shadow, never after it.
    */
-  const drained = (out: unknown, lane: TxLane | undefined): unknown => {
-    if (!lane || (!isThenable(out) && !lane.gate)) return out;
+  const drained = (callback: () => unknown, lane: TxLane | undefined): unknown => {
+    if (!lane) return callback();
+    // A callback that throws at once is drained too: its calls may already be held or waiting, and the ROLLBACK must not go first.
+    let out: unknown;
+    try { out = callback(); } catch (error) { out = Promise.reject(error); }
+    if (!isThenable(out) && !lane.gate) return out;
     const drain = async (): Promise<void> => { while (lane.gate) await lane.gate; };
     return Promise.resolve(out).then(async (value: unknown) => { await drain(); return value; }, async (error: unknown) => { await drain(); throw error; });
   };
