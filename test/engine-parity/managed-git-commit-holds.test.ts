@@ -31,8 +31,15 @@
  *    seamed (effectRecoverySeam, restored in finally). The GCH-03a removal STOPS on Rust at delete_page preparation
  *    (file-claims.ts findLiveFileClaimants is raw SQL; the page-prepare item, due 2026-12-10). PGLite and Postgres run
  *    every case unseamed.
- *  - Seams: retries come due at once (requeueEffectRow with delayMs 0, a typed member every arm serves). Real engines,
- *    real Git checkouts.
+ *  - Seams: retries come due at once (requeueEffectRow with delayMs 0, a typed member every arm serves). In the two push
+ *    cases (`slowPushRecord`) that same member waits SLOW_PUSH_RECORD_MS before it requeues a failed push, so the
+ *    attempt is certainly still `running` while the drain starts (a slow `git` cannot do it: the effect runs git
+ *    synchronously, which holds the whole process). Real engines, real Git checkouts.
+ *  - Drains: submitPageMutation starts this process's background consumer, which can claim a Git effect while the test
+ *    drains. A claimed effect is `running` (a valid lease) until its worker records the attempt, so drainGit waits until
+ *    the row leaves `running` and the expected state holds, bounded by time with a message naming the last state. A
+ *    drain that only counted passes (20 passes, no wait) returned while the push was in flight and read
+ *    {state: running, code: null}; with slowPushRecord and claimedGit that drain fails on every run, and drainGit passes.
  */
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
@@ -73,7 +80,7 @@ const ctxFor = (engine: BrainEngine, sourceId: string) => ({ engine, sourceId, r
 /** What the effect worker wrote at each failed attempt (requeue or park), read at the typed member it writes through. */
 type Written = { kind: 'requeue' | 'park'; reason: string | null; data: Record<string, any> };
 
-async function withNoIdentityCheckout<T>(engine: BrainEngine, backend: ParityBackend, opts: { source?: string; identity?: boolean },
+async function withNoIdentityCheckout<T>(engine: BrainEngine, backend: ParityBackend, opts: { source?: string; identity?: boolean; slowPushRecord?: boolean },
   run: (home: string, root: string, written: Written[]) => Promise<T>): Promise<T> {
   const source = opts.source ?? 'work';
   if (backend === 'rust') liftManagedHold(engine);
@@ -85,6 +92,8 @@ async function withNoIdentityCheckout<T>(engine: BrainEngine, backend: ParityBac
   const written: Written[] = [];
   target.requeueEffectRow = (o: Parameters<BrainEngine['requeueEffectRow']>[0]) => {
     written.push({ kind: 'requeue', reason: o.reason, data: JSON.parse(o.dataJson) });
+    // `slowPushRecord` (see the header): a failed push's requeue waits first, so its row stays claimed and `running`.
+    if (opts.slowPushRecord && o.reason === 'git_push_unavailable') return Bun.sleep(SLOW_PUSH_RECORD_MS).then(() => requeue({ ...o, delayMs: 0 }));
     return requeue({ ...o, delayMs: 0 });
   };
   target.parkEffectRow = (o: Parameters<BrainEngine['parkEffectRow']>[0]) => {
@@ -120,6 +129,45 @@ async function withNoIdentityCheckout<T>(engine: BrainEngine, backend: ParityBac
   }
 }
 
+type GitRow = { state: string; error_code?: string | null };
+/** How long `slowPushRecord` holds a failed push's requeue write; far longer than 20 effect passes take. */
+const SLOW_PUSH_RECORD_MS = 3_000;
+
+/**
+ * Effect passes until the Git effect is out of `running` and `until` holds, bounded by `timeoutMs`; the row it saw.
+ * A row another worker claimed (the process's own background consumer, which submitPageMutation starts) is `running`
+ * until that worker records the attempt, and a pass in that time finds nothing to claim, so this waits instead of
+ * counting passes. Past the deadline it fails, naming what it waited for and the last state and code it read.
+ */
+async function drainGit<R extends GitRow>(engine: BrainEngine, git: () => Promise<R>, until: (row: R) => boolean, what: string,
+  timeoutMs = 60_000): Promise<R> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const row = await git();
+    if (row.state !== 'running' && until(row)) return row;
+    if (Date.now() > deadline) {
+      throw new Error(`the Git effect did not reach ${what} within ${timeoutMs} ms; last state ${row.state} (${row.error_code ?? 'no code'})`);
+    }
+    if (row.state !== 'running') await runPersistenceEffects(engine, { engine: engine.kind } as never, { hostId: hostIdFor(engine), limit: 20 });
+    await Bun.sleep(25);
+  }
+}
+
+/**
+ * Starts one effect pass without waiting for it and returns once the Git effect is claimed (`running`, by that pass or
+ * by the background consumer): the race the flaky drain lost, made certain. The caller awaits the returned pass (it
+ * is wrapped, because an async function that returned it bare would wait for it).
+ */
+async function claimedGit(engine: BrainEngine, git: () => Promise<GitRow>, timeoutMs = 30_000): Promise<{ pass: Promise<number> }> {
+  const pass = runPersistenceEffects(engine, { engine: engine.kind } as never, { hostId: hostIdFor(engine), limit: 20 });
+  const deadline = Date.now() + timeoutMs;
+  for (let row = await git(); row.state !== 'running'; row = await git()) {
+    if (Date.now() > deadline) { await pass; throw new Error(`the Git effect was not claimed within ${timeoutMs} ms; last state ${row.state}`); }
+    await Bun.sleep(5);
+  }
+  return { pass };
+}
+
 /** One put_page, then effect passes until its Git effect parks; what each failed attempt wrote. */
 async function writeUntilParked(engine: BrainEngine, written: Written[], slug = 'notes/ivy-example', source = 'work') {
   const from = written.length;
@@ -128,10 +176,7 @@ async function writeUntilParked(engine: BrainEngine, written: Written[], slug = 
     params: { slug, content: '---\ntype: note\ntitle: Ivy Example\n---\nWorks at widget-co.\n', request_id } });
   const row = (await engine.readWriteRequest('local_cli', (await readLocalWriter(engine, 'cli')).id, request_id))!;
   const git = async () => (await engine.readRequestEffects(row.id, 'git'))[0]!;
-  for (let i = 0; i < 60 && (await git()).state !== 'failed'; i++) {
-    await runPersistenceEffects(engine, { engine: engine.kind } as never, { hostId: hostIdFor(engine), limit: 20 });
-    await Bun.sleep(50);
-  }
+  await drainGit(engine, git, row => row.state === 'failed', 'parked (failed)');
   const attempts = written.slice(from).filter(w => w.kind === 'park' || w.reason === 'git_unavailable').map(w => ({
     kind: w.kind, reason: w.reason, failures: w.data.target_failures ?? null,
     last_error: w.data.last_error ?? w.data.parked?.[0]?.last_error ?? null, parked: w.data.parked?.map((p: { error_code: string }) => p.error_code) ?? null }));
@@ -207,9 +252,7 @@ describe('engine parity: a managed Git commit that cannot be made is loud in gbr
     execFileSync('git', ['-C', root, 'config', 'user.name', 'Example']);
     execFileSync('git', ['-C', root, 'config', 'user.email', 'example@example.invalid']);
     await runPersistenceAdministration(engine, 'writer_retry_effects', { source_id: 'work', parked_code: 'git_unavailable' });
-    for (let i = 0; i < 20 && (await git()).state !== 'committed'; i++) {
-      await runPersistenceEffects(engine, { engine: engine.kind } as never, { hostId: hostIdFor(engine), limit: 20 });
-    }
+    await drainGit(engine, git, row => row.state === 'committed', 'committed');
     const after = await syncStatusOutput(engine, home);
     const fixed = { state: (await git()).state, tracked: tracked(), holds: after.json.git_commit_holds, sync_json: JSON.stringify(after.json), lines: after.lines.join('\n') };
     expect(fixed).toMatchObject({ state: 'committed', tracked: 'notes/ivy-example.md', holds: [] });
@@ -267,15 +310,12 @@ describe('engine parity: a managed Git commit that cannot be made is loud in gbr
   parityTest('F1: a put whose push fails is a push hold that names its step and reason, and it pushes once the remote is back even with its tracking ref pruned (Rust: recovery probe seamed)', {
     methods: ['worktreeClaimStore', 'readRequestEffects', 'requeueEffectRow', 'listGitPushHoldRows', 'readSyncStatusCommittedRow'],
     timeout: 120_000,
-  }, async (engine, backend) => withNoIdentityCheckout(engine, backend, { source: 'pushheld', identity: true }, async (home, root) => {
+  }, async (engine, backend) => withNoIdentityCheckout(engine, backend, { source: 'pushheld', identity: true, slowPushRecord: true }, async (home, root) => {
     // F1 on every arm: put_page is Rust-servable, so this case runs on Rust (seamed below), unlike the removal case.
     // SEAMED on Rust: the failed push's recordFailure runs lane 7's recovery probe (raw SQL until 20da396ebd lands,
     // conflict row 55), so effectRecoverySeam answers "no recovery record" there; PGLite and Postgres keep their raw read.
     if (backend === 'rust') effectRecoverySeam.probe = async () => false;
     const tip = (ref: string) => execFileSync('git', ['-C', ref === 'remote' ? join(home, 'remote.git') : root, 'rev-parse', ref === 'remote' ? 'main' : 'HEAD'], { encoding: 'utf8' }).trim();
-    const drain = async (git: () => Promise<{ state: string; error_code?: string | null }>, until: (row: { state: string; error_code?: string | null }) => boolean) => {
-      for (let i = 0; i < 20 && !until(await git()); i++) await runPersistenceEffects(engine, { engine: engine.kind } as never, { hostId: hostIdFor(engine), limit: 20 });
-    };
     const submit = async (operation: 'put_page' | 'delete_page', params: Record<string, unknown>) => {
       const request_id = randomUUID();
       await submitPageMutation(ctxFor(engine, 'pushheld') as never, { operation, params: { ...params, request_id } });
@@ -284,12 +324,14 @@ describe('engine parity: a managed Git commit that cannot be made is loud in gbr
     };
     try {
       const put = await submit('put_page', { slug: 'notes/lee-example', content: '---\ntype: note\ntitle: Lee Example\n---\nWorks at widget-co.\n' });
-      await drain(put, row => row.state === 'committed');
+      await drainGit(engine, put, row => row.state === 'committed', 'committed');
       expect(tip('remote')).toBe(tip('HEAD'));
       execFileSync('git', ['-C', root, 'remote', 'set-url', 'origin', join(home, 'no-such-remote.git')]);
       const removal = await submit('put_page', { slug: 'notes/mia-example', content: '---\ntype: note\ntitle: Mia Example\n---\nWorks at acme-example.\n' });
-      await drain(removal, row => row.state === 'queued' && !!row.error_code);
-      const held = await removal();
+      // The first failed push is still being recorded (claimed, running) while the drain starts: slowPushRecord holds it.
+      const inflight = await claimedGit(engine, removal);
+      const held = await drainGit(engine, removal, row => row.state === 'queued' && !!row.error_code, 'a queued push hold');
+      await inflight.pass;
       expect({ state: held.state, code: held.error_code }).toEqual({ state: 'queued', code: 'git_push_unavailable' });
       const status = await syncStatusOutput(engine, home, 'pushheld');
       const hold = (status.json.git_push_holds as Array<Record<string, unknown>>)[0]!;
@@ -298,8 +340,7 @@ describe('engine parity: a managed Git commit that cannot be made is loud in gbr
       execFileSync('git', ['-C', root, 'remote', 'set-url', 'origin', join(home, 'remote.git')]);
       execFileSync('git', ['-C', root, 'update-ref', '-d', 'refs/remotes/origin/main']);
       expect(tip('remote')).not.toBe(tip('HEAD'));
-      await drain(removal, row => row.state === 'committed');
-      const done = await removal();
+      const done = await drainGit(engine, removal, row => row.state === 'committed', 'committed');
       expect({ state: done.state, push: (done.outcome as Record<string, unknown>).push }).toEqual({ state: 'committed', push: 'committed' });
       expect(tip('remote')).toBe(tip('HEAD'));
       return { held: { state: held.state, code: held.error_code }, hold: JSON.stringify(hold), done: JSON.stringify(done.outcome) };
@@ -309,7 +350,7 @@ describe('engine parity: a managed Git commit that cannot be made is loud in gbr
   parityTest('GCH-03a + F1: a removal whose push failed, retried after its tracking ref was pruned, pushes; the push hold names its step and reason (Rust: stops at delete_page preparation)', {
     methods: ['worktreeClaimStore', 'readRequestEffects', 'requeueEffectRow', 'listGitPushHoldRows', 'readSyncStatusCommittedRow'],
     timeout: 120_000,
-  }, async (engine, backend) => withNoIdentityCheckout(engine, backend, { source: 'pruned', identity: true }, async (home, root) => {
+  }, async (engine, backend) => withNoIdentityCheckout(engine, backend, { source: 'pruned', identity: true, slowPushRecord: true }, async (home, root) => {
     // STOPPED on Rust: delete_page's preparation reads live file claimants with raw SQL (file-claims.ts
     // findLiveFileClaimants, via page-prepare.ts prepareFileTarget), the page-prepare item due 2026-12-10, so the Rust arm
     // stops on executeRaw before any Git step; the F1 case above carries the push-hold evidence on Rust.
@@ -317,9 +358,6 @@ describe('engine parity: a managed Git commit that cannot be made is loud in gbr
     // conflict row 55), so effectRecoverySeam answers "no recovery record" there; PGLite and Postgres keep their raw read.
     if (backend === 'rust') effectRecoverySeam.probe = async () => false;
     const tip = (ref: string) => execFileSync('git', ['-C', ref === 'remote' ? join(home, 'remote.git') : root, 'rev-parse', ref === 'remote' ? 'main' : 'HEAD'], { encoding: 'utf8' }).trim();
-    const drain = async (git: () => Promise<{ state: string; error_code?: string | null }>, until: (row: { state: string; error_code?: string | null }) => boolean) => {
-      for (let i = 0; i < 20 && !until(await git()); i++) await runPersistenceEffects(engine, { engine: engine.kind } as never, { hostId: hostIdFor(engine), limit: 20 });
-    };
     const submit = async (operation: 'put_page' | 'delete_page', params: Record<string, unknown>) => {
       const request_id = randomUUID();
       await submitPageMutation(ctxFor(engine, 'pruned') as never, { operation, params: { ...params, request_id } });
@@ -328,13 +366,15 @@ describe('engine parity: a managed Git commit that cannot be made is loud in gbr
     };
     try {
       const put = await submit('put_page', { slug: 'notes/lee-example', content: '---\ntype: note\ntitle: Lee Example\n---\nWorks at widget-co.\n' });
-      await drain(put, row => row.state === 'committed');
+      await drainGit(engine, put, row => row.state === 'committed', 'committed');
       expect(tip('remote')).toBe(tip('HEAD'));
       execFileSync('git', ['-C', root, 'remote', 'set-url', 'origin', join(home, 'no-such-remote.git')]);
       const page = await engine.readPageSnapshot('notes/lee-example', { sourceId: 'pruned', includeDeleted: true });
       const removal = await submit('delete_page', { slug: 'notes/lee-example', expected_revision: page!.revision });
-      await drain(removal, row => row.state === 'queued' && !!row.error_code);
-      const held = await removal();
+      // The first failed push is still being recorded (claimed, running) while the drain starts: slowPushRecord holds it.
+      const inflight = await claimedGit(engine, removal);
+      const held = await drainGit(engine, removal, row => row.state === 'queued' && !!row.error_code, 'a queued push hold');
+      await inflight.pass;
       expect({ state: held.state, code: held.error_code }).toEqual({ state: 'queued', code: 'git_push_unavailable' });
       const status = await syncStatusOutput(engine, home, 'pruned');
       const hold = (status.json.git_push_holds as Array<Record<string, unknown>>)[0]!;
@@ -343,8 +383,7 @@ describe('engine parity: a managed Git commit that cannot be made is loud in gbr
       execFileSync('git', ['-C', root, 'remote', 'set-url', 'origin', join(home, 'remote.git')]);
       execFileSync('git', ['-C', root, 'update-ref', '-d', 'refs/remotes/origin/main']);
       expect(tip('remote')).not.toBe(tip('HEAD'));
-      await drain(removal, row => row.state === 'committed');
-      const done = await removal();
+      const done = await drainGit(engine, removal, row => row.state === 'committed', 'committed');
       expect({ state: done.state, outcome: done.outcome }).toEqual({ state: 'committed', outcome: { git: 'skipped', reason: 'target_absent', push: 'committed' } });
       expect(tip('remote')).toBe(tip('HEAD'));
       return { held: { state: held.state, code: held.error_code }, hold: JSON.stringify(hold), done: JSON.stringify(done.outcome) };
