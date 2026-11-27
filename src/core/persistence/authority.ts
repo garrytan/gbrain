@@ -103,7 +103,7 @@ export async function submissionAuthority(ctx: OperationContext, operation: stri
  * registration check just made answers the authorization that follows it (`withRegisteredLocalWriter`, once).
  */
 /** The engine authorization reads through: its raw statements plus the typed local writer and source membership reads. */
-export type AuthorityEngine = SqlEngine & Pick<BrainEngine, 'readLiveMember' | 'listTakeHoldersAtRows' | 'readAccessTokenAttest' | 'readOauthClientAttest' | 'hasLabelledOnlyMember' | 'hasLabelledOnlyMemberAmong' | 'getConfig' | 'readLinkedMember' | 'readLocalWriterRow' | 'readSourceMembership' | 'readWriterSlugFence' | 'readWriteVisibilityProbe' | 'readPagePrivacyHidden' | 'readLinkTargetPages' | 'readPageHiddenFromWriter' | 'readOauthClient' | 'readOAuthClientWriteGrant' | 'readAccessTokenWriteGrant' | 'shareLockWriteCredential'>;
+export type AuthorityEngine = SqlEngine & Pick<BrainEngine, 'readLiveMember' | 'listTakeHoldersAtRows' | 'readAccessTokenAttest' | 'readOauthClientAttest' | 'hasLabelledOnlyMember' | 'hasLabelledOnlyMemberAmong' | 'getConfig' | 'getConfigValues' | 'readLinkedMember' | 'readLocalWriterRow' | 'readSourceMembership' | 'readWriterSlugFence' | 'readWriteVisibilityProbe' | 'readPagePrivacyHidden' | 'readLinkTargetPages' | 'readPageHiddenFromWriter' | 'readOauthClient' | 'readOAuthClientWriteGrant' | 'readAccessTokenWriteGrant' | 'shareLockWriteCredential'>;
 function localWriterRow(engine: AuthorityEngine, id: string, lock: boolean): Promise<Array<{ lane: string; revoked_at: unknown; grant_ceiling: LocalGrant }>> {
   const registered = lock ? undefined : takeRegisteredWriterRow(id);
   if (registered) return Promise.resolve([registered]);
