@@ -31,12 +31,10 @@ const call = async (name: string, params: Record<string, unknown>, remote: boole
 };
 /** Runs `fn` with every observation-date page read failing (`this` kept: a transaction scope inherits the method). */
 async function observationReadFails<T>(fn: () => Promise<T>): Promise<T> {
-  const original = PGLiteEngine.prototype.executeRaw;
-  engine.executeRaw = (function (this: PGLiteEngine, sql: string, ...rest: unknown[]) {
-    if (sql.includes('p.import_filename FROM pages p') && sql.includes('unnest($1::text[], $2::text[])')) return Promise.reject(new Error('observation read failed'));
-    return (original as (...a: unknown[]) => unknown).call(this, sql, ...rest);
-  }) as typeof engine.executeRaw;
-  try { return await fn(); } finally { delete (engine as { executeRaw?: unknown }).executeRaw; }
+  // The observed-date page read is the typed member readAdmittedPageDateFields; a database error there (not a refusal)
+  // must still read as "observed unknown" with the response marked degraded.
+  engine.readAdmittedPageDateFields = (() => Promise.reject(new Error('observation read failed'))) as typeof engine.readAdmittedPageDateFields;
+  try { return await fn(); } finally { delete (engine as { readAdmittedPageDateFields?: unknown }).readAdmittedPageDateFields; }
 }
 
 beforeAll(async () => {

@@ -64,6 +64,8 @@ export interface BuildReceipt {
     hints: 'shown' | 'names_only';
     harness: string | null;
     routing: { file: string; rows: number; unmatched: number; stat: [string, number, number] } | null;
+    /** 1 when the index records each skill's `audience: owner` (a catalog built before that is treated as stale for a turn outside the owner's sessions). */
+    audiences?: 1;
   };
   ranker: { id: string; version: number; variant: Variant; params: (typeof VARIANT_PARAMS)[Variant]; calibration_split_sha256: string; tokenizer: string; k: number; hint_chars: number; trigger_share: number };
   index: { file: 'index.bin'; index_hash: string; size: number; n_terms: number; n_postings: number; truncated_skills: number };
@@ -102,7 +104,7 @@ const bodyHash = (s: SkillRecord) => sha(s.body);
 
 /** sha256 over every effective input that affects ranking, eligibility or loading. */
 export function catalogHash(skills: readonly SkillRecord[], skipped: readonly SkippedSkill[], routingRows: number, scope: string): string {
-  const rows = skills.map(s => [s.id, s.name, s.description, s.whenToUse ?? '', s.triggers, s.routing, bodyHash(s), s.path ?? '', s.namespace ?? '', ...(s.deprecated ? [{ deprecated: s.replacedBy ?? true }] : [])]);
+  const rows = skills.map(s => [s.id, s.name, s.description, s.whenToUse ?? '', s.triggers, s.routing, bodyHash(s), s.path ?? '', s.namespace ?? '', ...(s.deprecated ? [{ deprecated: s.replacedBy ?? true }] : []), ...(s.audience ? [{ audience: s.audience }] : [])]);
   const skips = skipped.map(k => [k.reason, k.id ?? '', k.path ?? '', k.kept ?? '']).sort((a, b) => (JSON.stringify(a) < JSON.stringify(b) ? -1 : 1));
   return sha(JSON.stringify({ v: 1, skills: rows, skipped: skips, routing_rows: routingRows, scope }));
 }
@@ -240,7 +242,7 @@ export async function buildSkillIndex(input: BuildInput, opts: { home?: string; 
           : p.source.kind === 'claude_plugins' ? { kind: 'claude_plugins', claude_dir: resolve(input.claudePlugins!) }
           : { kind: 'json', snapshot: 'source.json', ...(input.fromJsonStdin ? { stdin: true } : { file: resolve(input.fromJson!) }), ...(input.dirs?.length ? { dirs: input.dirs.map(d => resolve(d)) } : {}) },
         fingerprint_sha256: p.source.fingerprint ? sha(JSON.stringify(p.source.fingerprint)) : null,
-        skill_count: p.records.length, skipped: p.skipped, scope, hints: scope === 'project' ? 'names_only' : 'shown', harness: input.harness ?? null, routing: p.routing,
+        skill_count: p.records.length, skipped: p.skipped, scope, hints: scope === 'project' ? 'names_only' : 'shown', harness: input.harness ?? null, routing: p.routing, audiences: 1,
       },
       ranker: { id: RANKER_ID, version: RANKER_VERSION, variant, params: VARIANT_PARAMS[variant], calibration_split_sha256: CALIBRATION_SPLIT_SHA256, tokenizer: TOKENIZER_ID, k: 5, hint_chars: HINT_CHARS, trigger_share: share },
       index: { file: 'index.bin', index_hash: sha(bytes), size: bytes.length, n_terms: header.n_terms, n_postings: header.n_postings, truncated_skills: truncatedSkills },

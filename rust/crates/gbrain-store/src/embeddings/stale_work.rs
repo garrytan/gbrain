@@ -57,7 +57,7 @@ fn large_page(read: &dyn KvRead, page: &PageRecord) -> Result<bool> {
 
 /// `pageBudgetLimitedFilter`: the page has a held or capped budget row that still applies (large, or a reason that applies
 /// at any size). The store keeps that row in the page's ledger record (`page_embedding_budget.rs`).
-pub(super) fn budget_limited(read: &dyn KvRead, page: &PageRecord) -> Result<bool> {
+pub(crate) fn budget_limited(read: &dyn KvRead, page: &PageRecord) -> Result<bool> {
     let Some((state, reason)) = crate::page_embedding_budget::read_state_reason(read, page.id)?
     else {
         return Ok(false);

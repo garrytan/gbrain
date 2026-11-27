@@ -22,10 +22,49 @@ impl Brain {
         self.run(env, move |s| s.read_embedding_backlog_age(&column))
     }
 
+    /// `readEmbedBacklogRows(column, sourceIds)`: `{ source_id, pending, unaged, oldest }[]`.
+    #[napi]
+    pub fn read_embed_backlog_rows<'env>(
+        &self,
+        env: &'env Env,
+        column: String,
+        source_ids: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.read_embed_backlog_rows(&column, &source_ids)
+        })
+    }
+
     /// `readAtomProvenanceCounts()`: the one aggregate row.
     #[napi]
     pub fn read_atom_provenance_counts<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
         self.run(env, move |s| s.read_atom_provenance_counts())
+    }
+
+    /// `listBodyRecheckGroups()`: the unchanged-body recheck's `{ page_id, sh, n }` groups.
+    #[napi]
+    pub fn list_body_recheck_groups<'env>(&self, env: &'env Env) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_body_recheck_groups())
+    }
+
+    /// `readBodyRecheckPage(pageId)`: the page's body storage and body columns, or null.
+    #[napi]
+    pub fn read_body_recheck_page<'env>(
+        &self,
+        env: &'env Env,
+        page_id: i64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_body_recheck_page(page_id))
+    }
+
+    /// `listBodyRecheckVersions(pageId)`: the newest 20 inline versions with a body.
+    #[napi]
+    pub fn list_body_recheck_versions<'env>(
+        &self,
+        env: &'env Env,
+        page_id: i64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_body_recheck_versions(page_id))
     }
 
     /// `countCredentialProjectionPending(sourceIds?)`: `{ rebuildable, kept }`.
@@ -74,6 +113,15 @@ impl Brain {
         self.run(env, move |s| {
             s.list_untiled_segmented_page_rows(source_ids.as_deref(), slugs.as_deref(), limit)
         })
+    }
+
+    /// `listAmbiguousExtractionInputs()`: `{ page, grammars, total }` rows.
+    #[napi]
+    pub fn list_ambiguous_extraction_inputs<'env>(
+        &self,
+        env: &'env Env,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_ambiguous_extraction_inputs())
     }
 
     /// `listExtractionInputReceipts()`: `{ pipeline, kind, pages, samples }` rows.

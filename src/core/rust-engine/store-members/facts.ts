@@ -22,14 +22,14 @@ import { clampSearchLimit, MAX_SEARCH_LIMIT, type BrainEngine, type FactListOpts
 import { escapeLikePattern } from '../../cjk.ts';
 import { valueHash } from '../../chronicle/ontology.ts';
 import { ensureWellFormed } from '../../text-safe.ts';
-import { getFtsLanguage } from '../../fts-language.ts';
-import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
+import { refuseMember, storeCall, storeFtsConfig, takeOptions, type StoreMember } from './common.ts';
 import { storePrivacyPolicy } from './private-provenance.ts';
 import { storeVisibility } from './fact-visibility.ts';
 import { privateProvenanceFilterUnderPolicy } from '../../search/private-visibility.ts';
 import { withDates } from '../store-codec.ts';
 import { FACT_DATES, withVector } from './fact-codec.ts';
 import { checkFactIds, checkFactSourcePrefix, type FactPreimage } from '../../engine-sql/facts.ts';
+import { facetOfMetric } from '../../profile/facets.ts';
 
 type Member<K extends keyof BrainEngine> = BrainEngine[K] extends (...args: infer A) => Promise<infer R> ? StoreMember<A, R> : never;
 type FactRow = Awaited<ReturnType<BrainEngine['listFactsByEntity']>>[number];
@@ -299,12 +299,12 @@ export const findCandidateDuplicates: Member<'findCandidateDuplicates'> = async 
     ['k', 'embedding', 'embeddingModel', 'arm', 'attributedTo', 'excludeMemberPages', 'onlyPage']) as NonNullable<typeof opts>;
   const keyword = o.arm === 'keyword';
   if (o.embedding && !o.embeddingModel) return [];
-  // The store's full-text search is the `english` configuration only.
-  if (keyword && getFtsLanguage() !== 'english') refuseMember('findCandidateDuplicates', `the keyword arm in FTS language ${getFtsLanguage()}`);
+  // The keyword arm parses both texts at query time, under a configuration the store ports.
+  const ftsConfig = keyword ? storeFtsConfig('findCandidateDuplicates', 'the keyword arm in FTS language') : undefined;
   const rows: Row[] = await storeCall({ member: 'findCandidateDuplicates' }, () => brain.findCandidateDuplicates({
     sourceId, entitySlug, k: Math.min(Math.max(o.k ?? 5, 1), 20), attributedTo: o.attributedTo || undefined,
     onlyPage: o.onlyPage || undefined, excludeMemberPages: o.excludeMemberPages === true,
-    ...(keyword ? { keyword: true, factText: wellFormed(factText) } : {}),
+    ...(keyword ? { keyword: true, factText: wellFormed(factText), ftsConfig } : {}),
     ...(o.embedding ? { embedding: vectorLiteral(o.embedding), embeddingModel: o.embeddingModel } : {}),
   }));
   return facts(rows);
@@ -314,6 +314,8 @@ export const consolidateFact: Member<'consolidateFact'> = async (brain, id, take
   await storeCall({ member: 'consolidateFact' }, () => brain.consolidateFact(id, takeId));
 };
 
+const TRAJECTORY_NATIVE_PAGE = 500;
+
 export const findTrajectory: Member<'findTrajectory'> = async (brain, opts) => {
   const o = takeOptions('findTrajectory', opts,
     ['entitySlug', 'sourceId', 'sourceIds', 'remote', 'metric', 'kind', 'since', 'until', 'limit', 'excludePrivate']) as unknown as typeof opts;
@@ -322,16 +324,26 @@ export const findTrajectory: Member<'findTrajectory'> = async (brain, opts) => {
   const widen = worldOnly ? storeVisibility('findTrajectory', ['world']).widen : undefined;
   const sourceIds = Array.isArray(o.sourceIds) && o.sourceIds.length > 0 ? [...new Set(o.sourceIds)] : [o.sourceId ?? 'default'];
   const limit = clampSearchLimit(o.limit, 100, 500);
-  const rows: Row[] = await storeCall({ member: 'findTrajectory' }, () => brain.findTrajectory({
+  const read = (until: string | undefined): Promise<Row[]> => storeCall({ member: 'findTrajectory' }, () => brain.findTrajectory({
     sourceIds, entitySlug: o.entitySlug, worldOnly, ...(widen ? { widen } : {}), metric: o.metric ?? undefined, kind: o.kind ?? 'all',
-    since: o.since ? new Date(o.since).toISOString() : undefined, until: o.until ? new Date(o.until).toISOString() : undefined,
-    limit: 500,
+    since: o.since ? new Date(o.since).toISOString() : undefined, until,
+    limit: TRAJECTORY_NATIVE_PAGE,
     excludePrivate: factPolicy('findTrajectory', o.excludePrivate),
   }));
-  // Lane 3 P1: profile.<facet> claims are never trajectory points (engine-sql/facts.ts filters them in SQL); the native read
-  // takes the 500 cap so dropping them here cannot shorten the caller's page. It returns the newest rows in date order, so the
-  // page is the last `limit` of them.
-  const points = rows.filter((row) => !String(row.metric ?? '').startsWith('profile.'));
+  // Lane 3 P1: profile.<facet> claims are never trajectory points (engine-sql/facts.ts filters them in SQL). The native read
+  // has no metric filter and returns the newest rows in date order, so it is paged back in time (until: the oldest row read,
+  // whose ties the next read repeats) until `limit` other rows are found or history ends; the page is the last `limit` of them.
+  const seen = new Set<unknown>();
+  let points: Row[] = [];
+  let until = o.until ? new Date(o.until).toISOString() : undefined;
+  for (let first = true; ; first = false) {
+    const rows = await read(until);
+    const fresh = first ? rows : rows.filter((row) => !seen.has(row.fact_id));
+    for (const row of fresh) seen.add(row.fact_id);
+    points = [...fresh.filter((row) => facetOfMetric(row.metric as string | null) === null), ...points];
+    if (rows.length < TRAJECTORY_NATIVE_PAGE || points.length >= limit || fresh.length === 0) break;
+    until = String(rows[0]!.valid_from);
+  }
   return points.slice(Math.max(0, points.length - limit))
     .map((row) => withDates(withVector(row), ['valid_from', 'valid_until']) as unknown as TrajectoryPoint);
 };

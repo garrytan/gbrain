@@ -781,6 +781,18 @@ impl Brain {
         })
     }
 
+    /// `claimCoalescedGitEffects({ hostId, worktreeId, limit, deadOwners, ownerJson })`: the claimed rows.
+    #[napi]
+    pub fn claim_coalesced_git_effects<'env>(
+        &self,
+        env: &'env Env,
+        input: Value,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.claim_coalesced_git_effects(&required(input, "claimCoalescedGitEffects input")?)
+        })
+    }
+
     /// `readMirrorGateRows(requestIds)`: the withdrawal mirrors that gate these requests.
     #[napi]
     pub fn read_mirror_gate_rows<'env>(
@@ -1297,6 +1309,41 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
             s.clear_unkept_chunk_vectors(page_id, model.as_deref(), dims, &current_ids)
+        })
+    }
+
+    /// `readChunkInputHashes(pageId)`: `{ id, embedding_input_hash }` rows.
+    #[napi]
+    pub fn read_chunk_input_hashes<'env>(
+        &self,
+        env: &'env Env,
+        page_id: f64,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.read_chunk_input_hashes(page_id))
+    }
+
+    /// `clearChunkEmbeddingsByIds(pageId, column, ids)`: resolves null.
+    #[napi]
+    pub fn clear_chunk_embeddings_by_ids<'env>(
+        &self,
+        env: &'env Env,
+        page_id: f64,
+        ids: Vec<f64>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.clear_chunk_embeddings_by_ids(page_id, &ids))
+    }
+
+    /// `writeChunkInputHashes(pageId, ids, hashes)`: resolves null.
+    #[napi]
+    pub fn write_chunk_input_hashes<'env>(
+        &self,
+        env: &'env Env,
+        page_id: f64,
+        ids: Vec<f64>,
+        hashes: Vec<String>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| {
+            s.write_chunk_input_hashes(page_id, &ids, &hashes)
         })
     }
 

@@ -139,13 +139,16 @@ export async function listTrustClaimTargets(raw: EngineRawRead, mode: TrustClaim
 export type ClaimLiftTable = 'pages' | 'facts' | 'takes' | 'timeline_entries';
 
 const CLAIM_LIFTED_SQL = {
-  pages: "SELECT count(*) AS n FROM pages WHERE write_origin->>'channel' = 'trust_claim'",
-  facts: "SELECT count(*) AS n FROM facts WHERE write_origin->>'channel' = 'trust_claim'",
-  takes: "SELECT count(*) AS n FROM takes WHERE write_origin->>'channel' = 'trust_claim'",
-  timeline_entries: "SELECT count(*) AS n FROM timeline_entries WHERE write_origin->>'channel' = 'trust_claim'",
+  pages: "SELECT count(*) AS n FROM pages WHERE write_origin->>'channel' = 'trust_claim' AND write_origin->'owner_decision' IS NULL",
+  facts: "SELECT count(*) AS n FROM facts WHERE write_origin->>'channel' = 'trust_claim' AND write_origin->'owner_decision' IS NULL",
+  takes: "SELECT count(*) AS n FROM takes WHERE write_origin->>'channel' = 'trust_claim' AND write_origin->'owner_decision' IS NULL",
+  timeline_entries: "SELECT count(*) AS n FROM timeline_entries WHERE write_origin->>'channel' = 'trust_claim' AND write_origin->'owner_decision' IS NULL",
 } as const;
 
-/** Rows of `table` whose write origin names a source claim (`trust_claim`), whatever their source. */
+/**
+ * Rows of `table` a source claim lifted (`write_origin.channel` `trust_claim`) that no owner decision (`trust confirm`,
+ * `trust lower`) has settled since, whatever their source: the rows `trust claim-sources --relower` may lower (#10178).
+ */
 export async function countClaimLiftedRows(raw: EngineRawRead, table: ClaimLiftTable): Promise<number> {
   const [row] = await raw<{ n: number | string }>(CLAIM_LIFTED_SQL[table]);
   return Number(row?.n ?? 0);

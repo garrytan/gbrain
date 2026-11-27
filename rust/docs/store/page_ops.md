@@ -113,7 +113,7 @@ outer catch of the retrieval reflex in `src/core/context/reflex.ts`.
 
 PGLite's purge (`purgeDeletedPages`, `src/core/engine-sql/pages.ts:329`) skips a tombstone that one
 of four holds keeps (`pages.ts:349-353` for the dry run, `:370-380` for the delete). The store
-applies the two that read only the page row and `config`, and the other two never match a Rust row:
+applies the two that read only the page row and `config`; it does not apply the other two:
 
 - Derived retirement (`derivedRetirementPurgeHold`,
   `src/core/persistence/derived-retirement-hold.ts:38-41`): the page's `retired_by` text is one of
@@ -136,11 +136,12 @@ applies the two that read only the page row and `config`, and the other two neve
   `Etc/GMT0`, so a day is 24 hours. Text compares in byte order.
 - Sync identity downgrade (`op_checkpoints`, op `sync-identity-downgrade`, `pages.ts:349`) and
   derived origin park (`derivedOriginPurgeHold`, `src/core/persistence/derived-origin-hold.ts:31`)
-  never match: only `executeRaw` writes those rows, through `recordIdentityDowngrades`
-  (`src/core/sync-identity-downgrades.ts`) and `parkDerivedOrigin` (`derived-origin-hold.ts`,
-  called from `src/core/repair/origin-carry.ts`), and the Rust engine refuses `executeRaw`. The
-  store serves the resumable-op checkpoints (persistence.md, "Op checkpoints"), not these rows; the
-  family that serves these writers must add both holds.
+  are not applied here. The store does keep these rows now (`parkDerivedOrigin` writes the park
+  through `upsertDerivedOriginPark`, `persistence/origin_holds.rs`), and the retention purge's
+  managed candidate read applies both (label_door.md, "The retention purge's bookkeeping"). The one
+  caller that reaches this purge on the retention path, the unmanaged expiry (`purgeExpired`), still
+  stops on a Rust brain at the pre-write check, so this purge must add both holds before that stop
+  lifts.
 
 Each purged page goes through `remove_page`, the eval-candidate scrub and the alias and rename-history
 scrub, as `deletePages` does.

@@ -13,12 +13,10 @@ import { PAGE_INLINE_MAX_BYTES } from '../page-size-policy.ts';
 export interface PreimageNeed { pageId: number; slug: string; revision: string }
 
 /** The needs with no version of their starting revision on their page. */
-export async function missingPreimages(engine: Pick<BrainEngine, 'executeRaw'>, needs: readonly PreimageNeed[]): Promise<PreimageNeed[]> {
+export async function missingPreimages(engine: Pick<BrainEngine, 'listMissingPreimages'>, needs: readonly PreimageNeed[]): Promise<PreimageNeed[]> {
   if (!needs.length) return [];
-  const rows = await engine.executeRaw<{ i: number }>(`SELECT n.i FROM unnest($1::bigint[], $2::uuid[]) WITH ORDINALITY AS n(page_id, revision, i)
-    WHERE NOT EXISTS (SELECT 1 FROM page_versions v WHERE v.page_id = n.page_id AND v.knowledge_revision = n.revision)`,
-  [needs.map(n => n.pageId), needs.map(n => n.revision)]);
-  return rows.map(r => needs[Number(r.i) - 1]!);
+  const positions = await engine.listMissingPreimages(needs.map(n => n.pageId), needs.map(n => n.revision));
+  return positions.map(i => needs[i - 1]!);
 }
 
 /** Test runs enforce the invariant inside every belief batch; `GBRAIN_BELIEF_PREIMAGE_CHECK=0` turns it off for a probe that breaks it on purpose. */

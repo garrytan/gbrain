@@ -35,5 +35,5 @@ describe('unit shard budget', () => {
       .map(({ shard, ms }) => ({ shard: `${shard}/${UNIT_SHARDS}`, ms }))
       .filter(s => s.ms > UNIT_SHARD_BUDGET_MS);
     expect(over).toEqual([]);
-  });
+  }, UNIT_SHARDS * 1_000);
 });

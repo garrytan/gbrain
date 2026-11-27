@@ -3,7 +3,8 @@ import { createHash } from 'node:crypto';
 import { expect } from 'bun:test';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { normalizeLoweredClaim } from '../../src/core/facts/withdrawal-schema.ts';
-import { pageSnapshotKey } from '../../src/core/page-snapshot-batch.ts';
+import { pageSnapshotKey, readPageSnapshotsBatch } from '../../src/core/page-snapshot-batch.ts';
+import type { ReadQuery } from '../../src/core/search/read-enrichment.ts';
 
 export const OTHER = 'snapshot-batch-example';
 export const FENCE = '<!--- gbrain:facts:begin -->\n| # | claim | kind | confidence | visibility | notability | valid_from | valid_until | source | context |\n'
@@ -98,3 +99,59 @@ export async function pageSnapshotBatchMatchesPurgedReads(engine: BrainEngine) {
   expect(dave.page.compiled_truth).not.toContain('Ships  Weekly');
   expect(dave.globalPurges?.count).toBe(1);
 }
+
+export const SOURCE_WIDE = 'snapshot-batch-wide-example';
+const SOURCE_WIDE_COUNT = 40;
+
+/**
+ * #9350: a source's '*' withdrawals cross the wire once per batch, not once per page, and every batched snapshot
+ * still equals the per-page read: a page-subject withdrawal of a claim that is also withdrawn source-wide keeps the
+ * earlier time, a page-only withdrawal and another visibility stay separate, and a second source keeps its own ledger.
+ */
+export async function pageSnapshotBatchCarriesSourceWideOnce(engine: BrainEngine) {
+  await seed(engine);
+  if (!(await engine.executeRaw('SELECT 1 FROM sources WHERE id=$1', [SOURCE_WIDE])).length) {
+    await engine.executeRaw('INSERT INTO sources(id,name) VALUES ($1,$1)', [SOURCE_WIDE]);
+    for (const slug of ['people/erin-example', 'people/frank-example', 'notes/wide-plain-example']) {
+      await engine.putPage(slug, { type: slug.startsWith('people/') ? 'person' : 'note', title: slug, compiled_truth: `${slug}.\n\n${FENCE}`, timeline: '' }, { sourceId: SOURCE_WIDE });
+    }
+    const add = `INSERT INTO fact_withdrawals(source_id,visibility,subject,fact_hash,withdrawn_at) VALUES ($1,$2,$3,$4,$5::timestamptz)`;
+    for (let i = 0; i < SOURCE_WIDE_COUNT; i++) await engine.executeRaw(add, [SOURCE_WIDE, 'world', '*', claimHash(`unrelated claim ${i}`), '2026-03-01T00:00:00Z']);
+    await engine.executeRaw(add, [SOURCE_WIDE, 'world', '*', claimHash('ships weekly'), '2026-03-02T00:00:00Z']);
+    await engine.executeRaw(add, [SOURCE_WIDE, 'world', 'people/erin-example', claimHash('ships weekly'), '2026-02-01T00:00:00Z']);
+    await engine.executeRaw(add, [SOURCE_WIDE, 'private', 'people/erin-example', claimHash('ships weekly'), '2026-04-01T00:00:00Z']);
+    await engine.executeRaw(add, [SOURCE_WIDE, 'world', 'people/frank-example', claimHash('hires slowly'), '2026-04-01T00:00:00Z']);
+  }
+  const refs = [
+    { slug: 'notes/missing-example', sourceId: SOURCE_WIDE },
+    { slug: 'people/erin-example', sourceId: SOURCE_WIDE },
+    { slug: 'people/alice-example', sourceId: 'default' },
+    { slug: 'people/frank-example', sourceId: SOURCE_WIDE },
+    { slug: 'notes/wide-plain-example', sourceId: SOURCE_WIDE },
+    { slug: 'companies/acme-example', sourceId: 'default' },
+  ];
+  const shipped: number[] = [];
+  const counted: ReadQuery = async <T,>(sql: string, params?: unknown[]) => {
+    const rows = await engine.executeRaw<Record<string, unknown>>(sql, params);
+    if (sql.includes('batch_n')) {
+      for (const row of rows) for (const value of Object.values(row)) {
+        if (Array.isArray(value) && value.some(w => w && typeof w === 'object' && 'fact_hash' in w)) shipped.push(value.length);
+      }
+    }
+    return rows as T[];
+  };
+  const { snapshots, covered } = await readPageSnapshotsBatch(counted, refs);
+  expect(covered).toBe(refs.length);
+  expect(shipped.reduce((a, b) => a + b, 0)).toBeLessThan(2 * (SOURCE_WIDE_COUNT + 1));
+  for (const ref of refs) expect(snapshots.get(pageSnapshotKey(ref.sourceId, ref.slug)) ?? null).toEqual(await engine.readPageSnapshot(ref.slug, { sourceId: ref.sourceId }));
+  const erin = snapshots.get(pageSnapshotKey(SOURCE_WIDE, 'people/erin-example'))!;
+  expect(erin.withdrawals).toHaveLength(SOURCE_WIDE_COUNT + 2);
+  const shipsWeekly = erin.withdrawals.filter(w => w.fact_hash === claimHash('ships weekly'));
+  expect(shipsWeekly.map(w => [w.visibility, new Date(w.withdrawn_at).toISOString()])).toEqual([
+    ['private', '2026-04-01T00:00:00.000Z'], ['world', '2026-02-01T00:00:00.000Z']]);
+  expect(erin.page.compiled_truth).toContain('~~Ships  Weekly~~');
+  expect(snapshots.get(pageSnapshotKey(SOURCE_WIDE, 'people/frank-example'))!.withdrawals).toHaveLength(SOURCE_WIDE_COUNT + 2);
+  expect(snapshots.get(pageSnapshotKey(SOURCE_WIDE, 'notes/wide-plain-example'))!.withdrawals).toHaveLength(SOURCE_WIDE_COUNT + 1);
+  expect(snapshots.get(pageSnapshotKey('default', 'people/alice-example'))!.withdrawals).toHaveLength(1);
+}
+

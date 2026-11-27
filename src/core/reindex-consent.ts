@@ -33,14 +33,8 @@ export async function estimateReindexSpend(engine: BrainEngine, opts: { type: st
     const { estimateCostFromChars, lookupEmbeddingPrice } = await import('./embedding-pricing.ts');
     const price = lookupEmbeddingPrice(getEmbeddingModel());
     if (price.kind !== 'known') return { pages: opts.target, est_usd: null };
-    const rows = await engine.executeRaw<{ n: string | number; chars: string | number | null }>(
-      `SELECT COUNT(*)::bigint AS n, COALESCE(SUM(LENGTH(compiled_truth) + LENGTH(timeline)), 0)::bigint AS chars
-         FROM pages
-        WHERE page_kind = 'markdown' AND (chunker_version < $1 OR contextual_retrieval_mode IS NULL)
-          AND deleted_at IS NULL AND ($2::text IS NULL OR type = $2)`,
-      [MARKDOWN_CHUNKER_VERSION, opts.type]);
-    const pending = Number(rows[0]?.n ?? 0);
-    const chars = Number(rows[0]?.chars ?? 0) * (pending > 0 ? Math.min(1, opts.target / pending) : 1);
+    const found = await engine.readReindexSpendInputs(MARKDOWN_CHUNKER_VERSION, opts.type); // engine-sql/remediation-records.ts
+    const chars = found.chars * (found.pages > 0 ? Math.min(1, opts.target / found.pages) : 1);
     return { pages: opts.target, est_usd: estimateCostFromChars(chars, price.pricePerMTok) };
   } catch (err) {
     rethrowCapabilityRefusal(err); // null means "no known price": a refused read must not ask consent without an estimate

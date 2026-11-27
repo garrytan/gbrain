@@ -198,7 +198,8 @@ impl Store {
     }
 
     /// `updateFenceFactCells(sourceId, id, cells)`: writes a fence row's cells onto the fact. A null `validFrom`
-    /// keeps the stored one; `validUntil` is written only with `setValidUntil`; a null `expiredAt` clears the
+    /// keeps the stored one, and so does one equal to the stored instant to the second (#10055: a sub-second
+    /// `remember` instant survives its whole-second fence cell); `validUntil` is written only with `setValidUntil`; a null `expiredAt` clears the
     /// expiry and a time keeps an existing one (`COALESCE(expired_at, $10)`). `confidence` is a `REAL`.
     pub fn update_fence_fact_cells(&self, a: &FenceCellsArgs) -> Result<()> {
         const OP: &str = "updateFenceFactCells";
@@ -210,7 +211,10 @@ impl Store {
             row.visibility = a.visibility.clone();
             row.notability = a.notability.clone();
             row.context = a.context.clone();
-            if let Some(from) = valid_from {
+            if let Some(from) = valid_from
+                && row.valid_from_us != from
+                && super::fence_projection::whole_second(row.valid_from_us) != from
+            {
                 row.valid_from_us = from;
             }
             if a.set_valid_until {

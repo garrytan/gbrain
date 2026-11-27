@@ -189,10 +189,11 @@ const PINS: Pin[] = [
     params: [[4, 'src-a']],
   },
   {
+    // master #10389 (313005fe9a) changed the valid_from rule of this statement; the pin follows master's new text.
     from: 'src/core/cycle/extract-facts.ts:536 writeFenceReconcile',
     case: { method: 'updateFenceFactCells', variant: 'default', run: async e => { await e.updateFenceFactCells('src-a', 4, CELLS); } },
     texts: [`UPDATE facts SET kind = $3, visibility = $4, notability = $5, context = $6,
-          valid_from = COALESCE($7::timestamptz, valid_from),
+          valid_from = CASE WHEN $7::timestamptz IS NULL OR valid_from = $7::timestamptz OR date_trunc('second', valid_from) = $7::timestamptz THEN valid_from ELSE $7::timestamptz END,
           valid_until = CASE WHEN $8::boolean THEN $9::timestamptz ELSE valid_until END,
           expired_at = CASE WHEN $10::timestamptz IS NULL THEN NULL ELSE COALESCE(expired_at, $10::timestamptz) END,
           source = $11, confidence = $12,

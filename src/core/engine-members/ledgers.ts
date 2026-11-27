@@ -15,6 +15,7 @@ import type { OauthGrantAuditInsert } from '../engine-sql/oauth-revocation.ts';
 import type { ListLoopsOpts as OpenLoopListOpts, LoopStatus as OpenLoopStatus, OpenLoopUpsert as OpenLoopUpsertInput } from '../loops/loops-store.ts';
 import type * as OpenLoopsSql from '../engine-sql/open-loops.ts';
 import type * as BeliefPurgeSql from '../engine-sql/belief-purge.ts';
+import type * as BeliefPurgeLedgerSql from '../engine-sql/belief-purge-ledger.ts';
 import type * as BeliefStateSql from '../engine-sql/belief-state.ts';
 import type * as ReadSharedSourcesSql from '../engine-sql/read-shared-sources.ts';
 import type * as PinnedQuestionsSql from '../engine-sql/pinned-questions.ts';
@@ -27,9 +28,9 @@ export interface LedgerMembers {
   // Belief ledger writes (engine-sql/belief-ledger.ts). Each runs the statement its caller in src/core/belief/ ran through executeRaw.
   /** The fingerprints among `factFps` and `takeFps` that a fact or take purge of the source tombstoned (subject '*' included). No set order. */
   readBeliefTombstones(sourceId: string, factFps: readonly string[], takeFps: readonly string[]): Promise<string[]>;
-  /** Of `claims`, each one the ledger recorded under its pre-v341 Postgres fingerprint, with that fingerprint (belief/legacy-fingerprint.ts). A claim with none is absent; the Rust store never held one, so it answers none. */
+  /** Of `claims`, each one the ledger recorded under its pre-v353 Postgres fingerprint, with that fingerprint (belief/legacy-fingerprint.ts). A claim with none is absent; the Rust store never held one, so it answers none. */
   readLegacyClaimFingerprints(sourceId: string, claims: readonly string[]): Promise<BeliefLedgerSql.LegacyClaimFingerprintRow[]>;
-  /** The `claimFp` of each probe whose claim a purge of the source tombstoned under its current or its pre-v341 fingerprint. No set order; the Rust store answers none. */
+  /** The `claimFp` of each probe whose claim a purge of the source tombstoned under its current or its pre-v353 fingerprint. No set order; the Rust store answers none. */
   readLegacyBeliefTombstones(sourceId: string, probes: readonly BeliefLedgerSql.LegacyTombstoneProbe[]): Promise<string[]>;
   /** The coverage state of the source's current incarnation: its newest coverage event other than `coverage.restored`, or null. */
   readLatestBeliefCoverage(sourceId: string): Promise<BeliefLedgerSql.BeliefCoverageRow | null>;
@@ -37,6 +38,10 @@ export interface LedgerMembers {
   hasBeliefBaseline(sourceId: string, slug: string, runId: string): Promise<boolean>;
   /** The source's slugs (pages, then page-less database-only fact subjects) lacking a baseline of run `runId`, after `after` and not in `skip`; the first `limit` in byte order. */
   listBeliefBaselinePending(sourceId: string, runId: string, after: string, skip: readonly string[], limit: number): Promise<string[]>;
+  /** The slugs the drift scan may check in the source's incarnation (pages, page-less fact subjects, open lifetimes), most recently touched first and in byte order within a tie. */
+  listBeliefDriftCandidates(sourceId: string, incarnation: string): Promise<string[]>;
+  /** The newest event of `slug` in the source's incarnation other than a coverage event or a backfill, or null. */
+  readNewestBeliefEvent(sourceId: string, incarnation: string, slug: string): Promise<BeliefLedgerSql.BeliefNewestEventRow | null>;
   /** How many distinct slugs of the source have a baseline event of run `runId`. */
   countBeliefBaselineSlugs(sourceId: string, runId: string): Promise<number>;
   /** The source's suppressions on any of `subjectKeys` or on a field whose text hashes to one of `fieldHashes`. No set order. */
@@ -76,6 +81,35 @@ export interface LedgerMembers {
   replayPagePurges(row: BeliefPurgeSql.ReplayPagePurges): Promise<void>;
   /** What the restored archive has that the purge replay probes: which of `stores` exist, page_versions.change_reason, persistence_brain, derivation_inputs, belief_events. */
   readPurgeReplaySchema(stores: readonly string[]): Promise<BeliefPurgeSql.PurgeReplaySchema>;
+  // The belief-ledger half of a purge (engine-sql/belief-purge-ledger.ts). Each runs the statement belief/purge.ts or belief/preimages.ts ran through executeRaw.
+  /** The stream slug of each derived row of the source, as `facts:<id>`, `takes:<id>` and `pages:<id>` refs. No set order. */
+  listDerivedStreamSlugs(sourceId: string, factIds: readonly number[], takeIds: readonly number[], pageIds: readonly number[]): Promise<Array<{ ref: string; slug: string }>>;
+  /** The 1-based positions of the (page, revision) pairs no version of the page holds. No set order. */
+  listMissingPreimages(pageIds: readonly number[], revisions: readonly string[]): Promise<number[]>;
+  /** Clears the recorded values of the source's fact and take events with the fingerprints (and, on a SQL engine, the legacy ones) and of the lifetimes' events; how many it marked. Write. */
+  redactPurgedBeliefKeys(input: BeliefPurgeLedgerSql.RedactPurgedKeysInput): Promise<number>;
+  /** The next 1000 fact, take and link events of the source after `after` with a context or resolution source, in id order. */
+  listBeliefCarrierEvents(sourceId: string, after: number): Promise<BeliefPurgeLedgerSql.BeliefCarrierEvent[]>;
+  /** One event's value, value hash and redacted fields, or null. */
+  readBeliefEventValue(sourceId: string, id: number): Promise<BeliefPurgeLedgerSql.BeliefEventValue | null>;
+  /** Rewrites one event's value, value hash and redacted fields; its prior hash stays only while an earlier event of the subject has it. Write. */
+  rewriteBeliefEventFields(input: BeliefPurgeLedgerSql.BeliefEventRewrite): Promise<void>;
+  /** The subject's events after `afterId` chained to `oldHash` take `newHash`. Write. */
+  rechainBeliefPriorHash(input: BeliefPurgeLedgerSql.BeliefPriorRechain): Promise<void>;
+  /** The next 1000 live facts, takes or links of the source after `after` whose carrying field is not empty, in id order. */
+  listBeliefQuotingRows(kind: BeliefPurgeLedgerSql.BeliefQuotingKind, sourceId: string, after: number): Promise<BeliefPurgeLedgerSql.BeliefQuotingRow[]>;
+  /** The page's lifetimes: the open one at the slug with no page hint and every one hinted at the page. No set order. */
+  listPageBeliefLifetimes(sourceId: string, slug: string, pageId: number): Promise<string[]>;
+  /** Each distinct claim of the page's facts and takes, with its fingerprint. No set order. */
+  listPagePurgeLiveClaims(sourceId: string, slug: string, pageId: number): Promise<Array<{ claim: string; fp: string }>>;
+  /** The next 1000 versions of the page after `after`, in id order: id, compiled_truth and timeline. */
+  listPageVersionFenceBodies(pageId: number, after: number): Promise<Array<{ id: number; compiled_truth: string; timeline: string | null }>>;
+  /** The next 1000 fact and take events of the source's lifetimes after `after`, in id order: id, recorded claim and fingerprint. */
+  listLifetimeClaimEvents(sourceId: string, lifetimes: readonly string[], after: number): Promise<Array<{ id: number; claim: string | null; claim_fp: string | null }>>;
+  /** The source's versions among `versionIds`, in id order, with their page, slug and whether the page passes the no-caller page policy. */
+  listPurgeCarrierVersions(sourceId: string, versionIds: readonly number[]): Promise<BeliefPurgeLedgerSql.PurgeCarrierVersion[]>;
+  /** The subject keys among `keys` that have an event in the source. No set order. */
+  listKnownBeliefSubjectKeys(sourceId: string, keys: readonly string[]): Promise<string[]>;
 
   /**
    * Whether a page known by its slug sits under an applied folder rule, a pending or invalid folder prefix, or the
@@ -147,6 +181,8 @@ export interface LedgerMembers {
   applyAccessRuleChanges(sourceId: string, changes: AccessRuleChanges): Promise<void>;
   restampAccessWindow(sourceId: string, after: number, batch: number): Promise<AccessRestampWindow>;
   finishAccessRestamp(sourceId: string): Promise<number>;
+  /** The pages of the source whose kept folder rule ids differ from the rules that cover them now (what a restamp would change). */
+  countAccessFolderDrift(sourceId: string): Promise<number>;
   insertAccessPolicyRevision(row: AccessRevisionInsert): Promise<void>;
   markAccessRevisionsApplied(sourceId: string, upTo?: number): Promise<void>;
   approveAccessPolicyRevision(sourceId: string, revision: number, actor: string): Promise<void>;
@@ -205,6 +241,8 @@ export interface LedgerMembers {
   insertVolunteerEvents(rows: readonly VolunteerEventsSql.VolunteerEventInsert[]): Promise<void>;
   /** The volunteered and later-retrieved counts per match arm and channel over the last `days` days, by byte of arm then channel. */
   readVolunteerUsage(sourceIds: readonly string[], days: number): Promise<VolunteerEventsSql.VolunteerUsageRow[]>;
+  /** The retention delete: removes the volunteered-page log rows older than `ttlDays` days; how many went (context/volunteer-events.ts purgeStaleVolunteerEvents). */
+  deleteVolunteerEventsOlderThan(ttlDays: number): Promise<number>;
   /** Records a chronicle decision for a page revision; false when the ledger guards keep the existing row (chronicle/ledger.ts). */
   upsertChronicleRow(w: ChronicleLedgerSql.ChronicleRowUpsert): Promise<boolean>;
   /** Takes one automatic chronicle judge slot when fewer than `limit` were taken in the last 24 hours; false otherwise. */
@@ -213,6 +251,8 @@ export interface LedgerMembers {
   insertRetrievalEvents(events: RetrievalFeedbackSql.RetrievalEventInsert[]): Promise<void>;
   /** One retrieval event with its pages by rank and its links by byte of source, edge key and target, or null. */
   readRetrievalEvent(id: string): Promise<RetrievalFeedbackSql.RetrievalEventRead | null>;
+  /** Each page row's content hash and learned page weight (halved toward neutral after an edit), null without one (search/feedback-boost.ts); in no set order. */
+  readPageFeedbackWeights(pageIds: readonly number[]): Promise<RetrievalFeedbackSql.PageFeedbackWeightRow[]>;
   /** Applies one batch of ratings (targets already distinct): each newly stored rating moves its element's weight. */
   applyRetrievalRatings(args: RetrievalFeedbackSql.RetrievalRatingBatch): Promise<RetrievalFeedbackSql.AppliedRatingRow[]>;
   /** The Git-gap census reads (commands/sources-git-gap.ts; engine-sql/git-gap-census.ts). The source's checkout root and incarnation. */

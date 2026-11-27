@@ -26,11 +26,13 @@ const fake = (raw: Raw, pages: PageTrustRow[] = []) => ({
   // Only a hideHeld read (dropHeldFenceRows) calls it; these cases never pass hideHeld.
   listHeldFenceCells: async () => [],
   listFenceRowTrust: (async () => raw('listFenceRowTrust')) as never,
+  // The guest-mark read of a guest page's stamp: it fails as `raw` does.
+  readGuestMarks: (async () => raw('readGuestMarks')) as never,
 });
 
 const page = (over: Partial<PageTrustRow> = {}): PageTrustRow => ({
   id: 1, source_id: 'default', slug: 'people/alice-example', trust_tier: 'operator_curated', write_origin: { channel: 'import' },
-  flagged: false, guest: false, byId: true, ...over,
+  flagged: false, guest: false, precedence: 'curated', byId: true, ...over,
 });
 
 const fenceChunk = () => ({

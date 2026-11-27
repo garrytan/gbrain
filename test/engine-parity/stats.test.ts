@@ -75,6 +75,24 @@ describe('engine parity: stats without vectors', () => {
     },
   );
 
+  // `gbrain stats --json` prints pages_by_type in key order, so a count tie must read in one order on every engine:
+  // largest count first, then type in byte order (toEqual ignores key order, so the case compares the key list).
+  parityTest(
+    'getStats lists pages_by_type largest count first, a tie in type byte order',
+    { methods: ['putPage', 'getStats'] },
+    async (engine) => {
+      const types = ['project', 'note', 'meeting', 'company', 'concept', 'person', 'source', 'event', 'atom', 'question', 'decision', 'idea'];
+      for (const [i, type] of types.entries()) {
+        await engine.putPage(`tie/${type}`, { type: type as never, title: `Tie ${i}`, compiled_truth: `Tie ${i}.`, timeline: '' });
+      }
+      await engine.putPage('tie/person-two', { type: 'person', title: 'Tie two', compiled_truth: 'Tie two.', timeline: '' });
+      const order = Object.keys((await engine.getStats()).pages_by_type);
+      const byte = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+      expect(order).toEqual(['person', ...types.filter(t => t !== 'person').sort(byte)]);
+      return order;
+    },
+  );
+
   parityTest(
     'getHealth counts dead links, entity coverage over the threshold, orphans and the most connected pages',
     { methods: ['putPage', 'addLink', 'addTimelineEntry', 'deletePage', 'getHealth'] },

@@ -10,6 +10,7 @@
  * an audience can only be a guest, who reads nothing a credential could not.
  */
 import type { Check } from '../../doctor.ts';
+import type { BrainEngine } from '../../../core/engine.ts';
 import { agentFix, checkError, infoCheck } from '../check-fix.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
 import { accessRestrictionsPresent } from '../../../core/search/private-visibility.ts';
@@ -18,20 +19,25 @@ import { STDIO_MAY_ACT_FOR_KEY } from '../../../core/access/audience.ts';
 const name = 'access_may_act_for_wildcard';
 const SAMPLE = 20;
 
+const byBytes = (a: string, b: string): number => Buffer.compare(Buffer.from(a), Buffer.from(b));
+const namesEveryone = (row: Record<string, unknown>): boolean => Array.isArray(row.may_act_for) && row.may_act_for.includes('*');
+
+/** The live tokens and clients whose may_act_for holds `*`, by kind, then name, then id in byte order (the first SAMPLE). */
+async function wildcardCredentials(engine: BrainEngine): Promise<Array<{ kind: 'token' | 'client'; id: string; name: string }>> {
+  const tokens = (await engine.listActiveAccessTokenRows()).filter(namesEveryone).map(r => ({ kind: 'token' as const, id: String(r.id), name: String(r.name) }));
+  const clients = (await engine.listActiveOauthClientRows()).filter(namesEveryone)
+    .map(r => ({ kind: 'client' as const, id: String(r.client_id), name: String(r.client_name ?? r.client_id) }));
+  return [...tokens, ...clients].sort((a, b) => byBytes(a.kind, b.kind) || byBytes(a.name, b.name) || byBytes(a.id, b.id)).slice(0, SAMPLE);
+}
+
 async function sharedAgentVerdict(ctx: DoctorContext): Promise<Check> {
   const engine = connectedEngine(ctx);
   if (!(await accessRestrictionsPresent(engine).catch(() => true))) {
     return infoCheck(name, 'Not applicable: no page names readers and no member exists.', 'not_applicable');
   }
   try {
-    const rows = await engine.executeRaw<{ kind: 'token' | 'client'; id: string; name: string }>(
-      `SELECT * FROM (
-         SELECT 'token' AS kind, id::text AS id, name FROM access_tokens WHERE revoked_at IS NULL AND '*' = ANY(may_act_for)
-         UNION ALL
-         SELECT 'client' AS kind, client_id AS id, COALESCE(client_name, client_id) AS name FROM oauth_clients WHERE deleted_at IS NULL AND '*' = ANY(may_act_for)
-       ) w ORDER BY kind COLLATE "C", name COLLATE "C", id COLLATE "C" LIMIT ${SAMPLE}`);
-    const [stdio] = await engine.executeRaw<{ value: string | null }>('SELECT value FROM config WHERE key = $1', [STDIO_MAY_ACT_FOR_KEY]);
-    const stdioWild = (stdio?.value ?? '').split(',').map(s => s.trim()).includes('*');
+    const rows = await wildcardCredentials(engine);
+    const stdioWild = ((await engine.readStoredConfigValue(STDIO_MAY_ACT_FOR_KEY)) ?? '').split(',').map(s => s.trim()).includes('*');
     const named = [...rows.map(r => `${r.kind} ${r.name}`), ...(stdioWild ? [`config ${STDIO_MAY_ACT_FOR_KEY}`] : [])];
     const details = { credentials: rows.map(r => ({ kind: r.kind, name: r.name })), stdio: stdioWild, truncated: rows.length === SAMPLE };
     if (!named.length) return { name, status: 'ok', details, message: 'No credential may act for every member (no may_act_for holds *).' };

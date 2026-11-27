@@ -1,4 +1,5 @@
 import { OperationError, opError } from '../ops/contract.ts';
+import { withLiveConfigRead } from '../config-snapshot.ts';
 import { callerAccessAllowedSql, callerIdentities, currentCallerAccess, OWNER_MEMBER_KEY, privatePagesFilterForCaller, readHonorAliases, readPolicyFragment, readRemotePolicyNow, resolveExcludePrivatePages } from '../search/private-visibility.ts';
 import { anyLabelledOnlyMember, labelledOnlyFor } from '../access/labelled-only.ts';
 import { hostFix } from '../ops/op-fix.ts';
@@ -20,11 +21,11 @@ import { ownerOnlySourcesPresent, sourceIsOwnerOnly } from '../access/owner-only
 
 /** An engine that also reads a stored writer's slug fence (storedOwnerSpeaksForItself and the checks that call it). */
 /** An engine that resolves a writer's live member identity (access/caller.ts memberIdentityFor). */
-export type MemberEngine = SqlEngine & Pick<BrainEngine, 'readLiveMember' | 'hasLabelledOnlyMember' | 'hasLabelledOnlyMemberAmong' | 'getConfig' | 'readLinkedMember' | 'readAccessTokenAttest' | 'readOauthClientAttest'>;
+export type MemberEngine = SqlEngine & Pick<BrainEngine, 'readLiveMember' | 'getConfigValues' | 'hasLabelledOnlyMember' | 'hasLabelledOnlyMemberAmong' | 'getConfig' | 'readLinkedMember' | 'readAccessTokenAttest' | 'readOauthClientAttest'>;
 export type FenceEngine = MemberEngine & Pick<BrainEngine, 'readWriterSlugFence'>;
 
 /** An engine that also runs the opening probe of a page write's visibility check (authorizePageVisibility). */
-export type VisibilityEngine = FenceEngine & Pick<BrainEngine, 'readWriteVisibilityProbe' | 'readPagePrivacyHidden' | 'readLinkTargetPages'>;
+export type VisibilityEngine = FenceEngine & Pick<BrainEngine, 'readWriteVisibilityProbe' | 'readPagePrivacyHidden' | 'readLinkTargetPages' | 'readPageHiddenFromWriter'>;
 
 /** Publication uses fresh policy, independent of the read-side telemetry cache (read through the resolver). */
 export async function excludesPrivateWrites(engine: SqlEngine, remote: boolean): Promise<boolean> {
@@ -93,30 +94,19 @@ export async function authorizePageVisibility(engine: VisibilityEngine, authorit
   const hidePrivate = excludePrivate || !policy.privacyRelaxed;
   if (!hidePrivate && !policy.restricted && !labelled) return;
   // A live page is hidden when the writer's member-access policy fails it, or, when `hide`, its privacy part does. A
-  // soft-deleted row (no live one) is judged as before by the statement, so a write never republishes it.
+  // soft-deleted row (no live one) is judged by the same policy (readPageHiddenFromWriter), so a write never republishes it.
   const hiddenUnder = async (hide: boolean) => {
     const [row] = await engine.readLinkTargetPages(authority.sourceId, [slug], await writerReadPolicy(engine, authority, policy.restricted, ownerOnlyPresent));
     if (row) return !(row.readable && (!hide || row.visible));
-    return (await engine.executeRaw(`SELECT 1 FROM pages WHERE source_id=$1 AND slug=$2
-      AND NOT (${await writerReadPolicySql(engine, authority, 'pages', hide, policy.restricted, ownerOnlyPresent)}) LIMIT 1`, [authority.sourceId, slug])).length > 0;
+    return engine.readPageHiddenFromWriter(authority.sourceId, slug, await writerReadPolicy(engine, authority, policy.restricted, ownerOnlyPresent), hide);
   };
   if (!await hiddenUnder(hidePrivate && owner !== true)) return;
   if (hidePrivate && owner === undefined && await ownerOnLivePage() && !await hiddenUnder(false)) return;
   throw pageNotVisibleError();
 }
 
-/**
- * The read policy a stored remote write's writer is held to, re-resolved live: the member-access part always (an
- * empty identity, the strictest reading, when the brain has no restrictions), then the privacy part when
- * `hidePrivate`. No operator hatch relaxes the member-access part. GBRA-108 design 1: a labelled-only writer is held to
- * pages that name it too, the same rule its reads follow.
- */
-export async function writerReadPolicySql(engine: FenceEngine, authority: WriteAuthority, pageAlias: string, hidePrivate: boolean,
-  restricted?: boolean, ownerOnlyPresent?: boolean): Promise<string> {
-  return renderWriterReadPolicy(await writerReadPolicy(engine, authority, restricted, ownerOnlyPresent), pageAlias, hidePrivate);
-}
-
-/** What writerReadPolicySql renders, gathered: the writer's identities, folder access, owner record and labelled-only grant. */
+/** The read policy a stored remote write's writer is held to, re-resolved live, as gathered inputs (renderWriterReadPolicy renders them): the writer's identities, folder access, owner record and labelled-only grant.
+ * The member-access part always applies (an empty identity, the strictest reading, when the brain has no restrictions); no operator hatch relaxes it. */
 export async function writerReadPolicy(engine: FenceEngine, authority: WriteAuthority, restricted?: boolean, ownerOnlyPresent?: boolean): Promise<WriterReadPolicy> {
   restricted ??= (await readRemotePolicyNow(engine)).restricted;
   const identities = restricted ? await writerIdentities(engine, authority) : [[]];
@@ -137,8 +127,8 @@ async function writerLabelledOnly(engine: MemberEngine, authority: WriteAuthorit
   const bound = attested ? [] : await memberIdentityFor(engine, authority);
   const actor = attested ? parseStoredActor(authority.actingFor) : null;
   const stored = actor ? [`member:${actor.member}`] : Array.isArray(authority.actingFor) ? authority.actingFor.filter(p => p.startsWith('member:')) : [];
-  const [owner] = await engine.executeRaw<{ value: string }>('SELECT value FROM config WHERE key = $1', [OWNER_MEMBER_KEY]);
-  const ownerId = owner?.value?.trim();
+  // The owner read live (a typed read every engine serves, never the request's config snapshot), as labelledOnlyFor does.
+  const ownerId = (await withLiveConfigRead(() => engine.getConfig(OWNER_MEMBER_KEY)))?.trim();
   const members = [...identities, bound, ...stored.map(p => [p])].filter(id => !(ownerId && id.includes(`member:${ownerId}`)));
   return labelledOnlyFor(engine, members);
 }
@@ -150,7 +140,7 @@ async function writerLabelledOnly(engine: MemberEngine, authority: WriteAuthorit
  * (authorizePageVisibility), so only a slug with no live page is checked here. Refused with the readers line to add and
  * the page rule the operator could add instead.
  */
-export async function assertLabelledOnlyCreate(engine: MemberEngine, authority: WriteAuthority, slug: string,
+export async function assertLabelledOnlyCreate(engine: MemberEngine & Pick<BrainEngine, 'readSlugFolderRules'>, authority: WriteAuthority, slug: string,
   stored: { deleted_at?: unknown } | null | undefined, frontmatter: unknown): Promise<void> {
   if (!authority.remote || (stored && stored.deleted_at == null)) return;
   if (!await anyLabelledOnlyMember(engine)) return;
@@ -159,12 +149,10 @@ export async function assertLabelledOnlyCreate(engine: MemberEngine, authority: 
   const named = new Set(identities.flat());
   if ((normalizeReaders(frontmatter) ?? []).some(r => named.has(r))) return;
   const folder = await folderAccessForAll(engine, identities);
-  const [row] = await engine.executeRaw<{ named: boolean }>('SELECT COALESCE(gbrain_access_folder_rules($1, $2) && $3::text[], false) AS named',
-    [authority.sourceId, slug, folder.satisfiedRuleIds]);
-  if (row?.named === true) return;
+  // A rule over the slug that the writer satisfies names it; the rules covering it are read typed, and overlap is judged here.
+  if ((await engine.readSlugFolderRules(authority.sourceId, slug) ?? []).some(id => folder.satisfiedRuleIds.includes(id))) return;
   const reader = [...named].sort().find(p => p.startsWith('member:'))?.slice('member:'.length) ?? [...named].sort()[0] ?? 'alice-example';
-  const [owner] = await engine.executeRaw<{ value: string }>('SELECT value FROM config WHERE key = $1', [OWNER_MEMBER_KEY]).catch(() => []);
-  const ownerId = owner?.value?.trim();
+  const ownerId = (await withLiveConfigRead(() => engine.getConfig(OWNER_MEMBER_KEY)).catch(() => null))?.trim();
   const ruleReaders = ownerId && ACCESS_ID_RE.test(ownerId) && ownerId !== reader ? `${reader},${ownerId}` : reader;
   throw opError('access_labelled_only_unnamed', `This connection is labelled-only, so a page it creates must name it: add readable_by: [${reader}] (or one of its groups) to the frontmatter of ${slug}, or ask the user for a page or folder rule over it that lists them; nothing was written.`,
     `Add readable_by: [${reader}] (or one of its groups) to the frontmatter and submit again with a new request_id, or ask the user to add a page or folder rule that lists it on the brain host.`,
@@ -173,7 +161,7 @@ export async function assertLabelledOnlyCreate(engine: MemberEngine, authority: 
 }
 
 /** The readers check (remoteReadersChecked) and the labelled-only create check (assertLabelledOnlyCreate) of one remote page write. */
-export async function remoteLabelsChecked<T extends { parsedPage: { frontmatter: unknown } }>(engine: MemberEngine, authority: WriteAuthority, slug: string,
+export async function remoteLabelsChecked<T extends { parsedPage: { frontmatter: unknown } }>(engine: MemberEngine & Pick<BrainEngine, 'readSlugFolderRules'>, authority: WriteAuthority, slug: string,
   stored: { frontmatter?: unknown; deleted_at?: unknown } | null | undefined, prepared: T): Promise<T> {
   const ready = await remoteReadersChecked(engine, authority, stored?.frontmatter, prepared);
   await assertLabelledOnlyCreate(engine, authority, slug, stored, ready.parsedPage.frontmatter);
@@ -313,9 +301,11 @@ export async function defaultSourceMemberWriter(engine: BrainEngine, authority: 
  * GST-2059: whether a default-source member writer is the brain owner (config access.owner_member, an enabled member),
  * whose new pages stay shared. A disabled or removed owner member is not the owner here, so its pages keep the stamp.
  */
-export async function defaultSourceWriterIsOwner(engine: Pick<BrainEngine, 'getConfig' | 'readLiveMember'>, writer: string | null): Promise<boolean> {
+export async function defaultSourceWriterIsOwner(engine: Pick<BrainEngine, 'getConfigValues' | 'readLiveMember'>, writer: string | null): Promise<boolean> {
   if (!writer) return false;
-  const owner = (await engine.getConfig(OWNER_MEMBER_KEY))?.trim();
+  // The config table itself through the keyed typed read, never `getConfig`: a batch's config snapshot would keep a former
+  // owner exempt from the member-only reader labels (master's P-0 fix, test/owner-writer-fresh-read.test.ts).
+  const owner = (await engine.getConfigValues([OWNER_MEMBER_KEY])).find(row => row.key === OWNER_MEMBER_KEY)?.value?.trim();
   if (!owner || !ACCESS_ID_RE.test(owner) || writer !== `member:${owner}`) return false;
   return (await engine.readLiveMember('member', owner)) !== null;
 }

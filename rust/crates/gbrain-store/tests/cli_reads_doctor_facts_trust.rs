@@ -388,3 +388,46 @@ fn a_fresh_brain_starts_with_the_trust_backfill_done_and_the_write_gate_scan_bas
         "pages": 0, "facts": 0, "takes": 0, "timeline_entries": 0 } }));
     assert!(s.count_legacy_unknown_by_source(&spec).unwrap().is_empty());
 }
+
+#[test]
+fn a_claim_lifted_row_an_owner_decided_since_is_not_counted() {
+    let s = brain("trust-claim-decided");
+    let mut id = 0;
+    stamped(
+        &s,
+        Some(("operator_curated", json!({ "channel": "trust_claim" }))),
+        |tx| {
+            let input: PageInput = args(
+                json!({ "type": "note", "title": "C", "compiled_truth": "c", "timeline": "" }),
+            );
+            id = tx
+                .put_page("trust/claimed", &input, &PutPageOptions::default())
+                .unwrap()["id"]
+                .as_i64()
+                .unwrap();
+        },
+    );
+    assert_eq!(
+        s.count_claim_lifted_rows(&table("pages")).unwrap(),
+        json!(1)
+    );
+    // `trust confirm` merges owner_decision into the claim's write origin (#10178): the row is settled, not relowerable.
+    let decision =
+        json!({ "tier": "user_confirmed", "at": "2026-11-25T00:00:00.000Z" }).to_string();
+    let tx = s.begin_transaction(false).unwrap();
+    tx.apply_write_trust(
+        &["gbrain.write_trust_promotion".to_string()],
+        &["user_confirmed".to_string()],
+    )
+    .unwrap();
+    assert_eq!(
+        tx.set_row_trust_tier("pages", id as f64, "user_confirmed", &decision)
+            .unwrap(),
+        vec![id as u64]
+    );
+    tx.commit_transaction().unwrap();
+    assert_eq!(
+        s.count_claim_lifted_rows(&table("pages")).unwrap(),
+        json!(0)
+    );
+}

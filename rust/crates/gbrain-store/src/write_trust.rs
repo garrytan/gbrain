@@ -1,4 +1,4 @@
-//! The write trust context: the store's stand-in for the nine transaction-local settings PGLite's
+//! The write trust context: the store's stand-in for the ten transaction-local settings PGLite's
 //! trust triggers, write attribution triggers and fence reads read with `current_setting(name, true)`.
 //!
 //! | Setting | Read as |
@@ -31,7 +31,7 @@
 //! refused when it is set (`invalid_argument`), with the context unchanged: a tier or promotion
 //! name that is no tier (PGLite raises `22023` in the stamp trigger, and the fence read ranks it 0),
 //! a `write_origin` that is not JSON (PGLite raises at `::jsonb` in the trigger), and a setting
-//! name outside the nine (the engine routes no other name here). TypeScript sets none of these. A
+//! name outside the ten (the engine routes no other name here). TypeScript sets none of these. A
 //! `write_request` that is not a UUID is kept as set, as `set_config` keeps it; the page, version,
 //! fact, take and timeline writes refuse it, as the attribution triggers raise at their `::uuid`
 //! cast ([`WriteAttribution::refuse_request_not_uuid`]).
@@ -66,9 +66,11 @@ pub const WRITE_REQUEST: &str = "gbrain.write_request";
 pub const WRITE_PRINCIPAL_KIND: &str = "gbrain.write_principal_kind";
 /// `gbrain.write_principal_id`.
 pub const WRITE_PRINCIPAL_ID: &str = "gbrain.write_principal_id";
+/// `gbrain.guest_note`: the write request a guest note's publication names (guests/admission.ts).
+pub const WRITE_GUEST_NOTE: &str = "gbrain.guest_note";
 
-/// The nine settings, in the order the module table lists them.
-pub const WRITE_TRUST_SETTINGS: [&str; 9] = [
+/// The ten settings, in the order the module table lists them.
+pub const WRITE_TRUST_SETTINGS: [&str; 10] = [
     WRITE_TRUST_TIER,
     WRITE_ORIGIN,
     WRITE_TRUST_PROMOTION,
@@ -78,6 +80,7 @@ pub const WRITE_TRUST_SETTINGS: [&str; 9] = [
     WRITE_REQUEST,
     WRITE_PRINCIPAL_KIND,
     WRITE_PRINCIPAL_ID,
+    WRITE_GUEST_NOTE,
 ];
 
 /// The actor of one write, as the attribution trigger reads it: each setting with `''` read as
@@ -120,7 +123,7 @@ impl WriteContextSlot {
     }
 }
 
-/// The setting `name` is, or `invalid_argument` when it is none of the nine.
+/// The setting `name` is, or `invalid_argument` when it is none of the ten.
 fn setting(name: &str) -> Result<&'static str> {
     WRITE_TRUST_SETTINGS
         .into_iter()
@@ -165,7 +168,7 @@ fn opened_ids(setting: Option<&str>) -> Vec<u64> {
 
 impl Store {
     /// `applyTransactionSettings(names, values)` for the write trust settings: sets each named
-    /// setting to the value at its index. All or nothing: a name outside the nine, a value the trust
+    /// setting to the value at its index. All or nothing: a name outside the ten, a value the trust
     /// rules refuse, or lists of different lengths is `invalid_argument` and changes nothing.
     pub fn apply_write_trust(&self, names: &[String], values: &[String]) -> Result<()> {
         if names.len() != values.len() {
@@ -189,7 +192,7 @@ impl Store {
     }
 
     /// `readTransactionSettings(names)` for the write trust settings: the text each named setting
-    /// was last set to, in `names` order; `None` where it was never set. A name outside the nine is
+    /// was last set to, in `names` order; `None` where it was never set. A name outside the ten is
     /// `invalid_argument`.
     pub fn read_write_trust(&self, names: &[String]) -> Result<Vec<Option<String>>> {
         let names = names
@@ -237,6 +240,9 @@ impl Store {
             backfill: text(WRITE_TRUST_BACKFILL) == Some("on"),
             keep: TrustTable::keep_list(text(WRITE_TRUST_KEEP)),
             attribution: attribution(&text),
+            // `COALESCE(NULLIF(current_setting('gbrain.guest_note', true), '') = current_setting('gbrain.write_request', true), false)`.
+            guest_note_is_request: text(WRITE_GUEST_NOTE)
+                .is_some_and(|note| !note.is_empty() && text(WRITE_REQUEST) == Some(note)),
         })
     }
 }
@@ -415,6 +421,7 @@ mod tests {
                 "0B9C4F0E-1A2B-4C3D-8E4F-5A6B7C8D9E01",
                 "application",
                 "host:test",
+                "",
             ]),
         )
         .unwrap();
@@ -439,8 +446,26 @@ mod tests {
                     principal_kind: Some("application".into()),
                     principal_id: Some("host:test".into()),
                 },
+                guest_note_is_request: false,
             }
         );
+        // `gbrain.guest_note` names this write's request, as text (the trigger compares the two settings as set): the
+        // write publishes a guest note. The lower-case spelling of the same UUID is not the same text.
+        s.apply_write_trust(
+            &strings(&[WRITE_GUEST_NOTE]),
+            &strings(&["0b9c4f0e-1a2b-4c3d-8e4f-5a6b7c8d9e01"]),
+        )
+        .unwrap();
+        assert!(!s.write_trust().unwrap().guest_note_is_request);
+        s.apply_write_trust(
+            &strings(&[WRITE_GUEST_NOTE]),
+            &strings(&["0B9C4F0E-1A2B-4C3D-8E4F-5A6B7C8D9E01"]),
+        )
+        .unwrap();
+        assert!(s.write_trust().unwrap().guest_note_is_request);
+        s.apply_write_trust(&strings(&[WRITE_GUEST_NOTE]), &strings(&["another"]))
+            .unwrap();
+        assert!(!s.write_trust().unwrap().guest_note_is_request);
         assert_eq!(
             s.read_write_trust(&strings(&[WRITE_REQUEST])).unwrap(),
             vec![Some("0B9C4F0E-1A2B-4C3D-8E4F-5A6B7C8D9E01".to_string())]

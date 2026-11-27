@@ -1,4 +1,4 @@
-//! The follow spec of the spend, decide, wake and pinned-question relations.
+//! The follow spec of the spend, decide, wake, chronicle and pinned-question relations.
 
 use super::remove_core::need;
 use super::{Follow, Identity, Mode, Replace, number, text};
@@ -73,6 +73,13 @@ pub(super) static SPECS: &[(&str, Follow)] = &[
         follow(&["source_id", "idempotency_key"], remove_completion),
     ),
     ("wake_crons", follow(&["name"], remove_cron)),
+    (
+        "chronicle_page_state",
+        follow(
+            &["source_id", "page_id", "content_hash", "extractor_version"],
+            remove_ledger_row,
+        ),
+    ),
     ("wake_cron_runs", follow(&["id", "name"], remove_cron_run)),
     (
         "wake_forgets",
@@ -185,6 +192,16 @@ fn remove_terms(tx: &mut dyn KvWrite, id: &Identity, _: Mode) -> Result<bool> {
 
 fn remove_rollup(tx: &mut dyn KvWrite, id: &Identity, _: Mode) -> Result<bool> {
     crate::telemetry::remove_rollup(tx, need!(id, "token_name"))
+}
+
+fn remove_ledger_row(tx: &mut dyn KvWrite, id: &Identity, _: Mode) -> Result<bool> {
+    crate::chronicle_ledger::remove_ledger_row(
+        tx,
+        need!(id, "source_id"),
+        need!(id, "page_id", i64),
+        need!(id, "content_hash"),
+        need!(id, "extractor_version", i32),
+    )
 }
 
 fn remove_pin(tx: &mut dyn KvWrite, id: &Identity, _: Mode) -> Result<bool> {

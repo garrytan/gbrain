@@ -78,6 +78,8 @@ mod effect_worker;
 pub(crate) mod effects;
 mod embedding_candidates;
 mod freshness;
+mod git_durability;
+mod git_effects;
 mod git_holds;
 mod head_blocker;
 mod housekeeping;
@@ -90,6 +92,14 @@ mod lease_order_tests;
 mod noop_settle;
 mod notifier;
 mod op_checkpoint;
+
+/// Whether an `op_checkpoints` parent row (`op`, `fingerprint`) exists. A part holding NUL names no row.
+pub(crate) fn op_checkpoint_exists(read: &dyn KvRead, op: &str, fingerprint: &str) -> Result<bool> {
+    match op_checkpoint::parent_key(op, fingerprint) {
+        Ok(key) => Ok(read.get(&key)?.is_some()),
+        Err(_) => Ok(false),
+    }
+}
 mod origin_holds;
 mod owner_scans;
 pub(crate) mod projection_queue;
@@ -99,17 +109,24 @@ mod purge_effects;
 mod receipt_compaction;
 mod receipt_list;
 mod retained_sources;
+mod retention_purge;
 mod sync_conversions;
 mod sync_orphan_reads;
 mod sync_pass_pages;
 mod sync_run_reads;
 pub(crate) mod topology;
+mod topology_store;
 pub(crate) use topology::purge_probe_rows as purge_probe_topology_rows;
 mod worktree_admission;
 #[cfg(test)]
 mod worktree_claim_tests;
 mod worktree_rows;
 mod worktrees;
+
+/// Whether the source holds a worktree binding at its current incarnation (the doctor's `bound`).
+pub(crate) fn is_source_claimed(read: &dyn KvRead, source_id: &str) -> Result<bool> {
+    worktrees::is_source_claimed_in(read, source_id)
+}
 mod write_claim_terms;
 mod writer_status;
 mod writer_status_queue;
@@ -117,9 +134,11 @@ mod writer_versions;
 pub use checkpoint_validation::{IncompleteSyncReceiptSpec, OpenPassWorkSpec};
 pub use connector_orphans::OrphanBounds;
 pub use diagnostic_checkpoints::HeldHitQuery;
-pub use effect_worker::{EffectClaim, EffectSettle, LinksRearm, Settle};
+pub use effect_worker::{CoalescedGitClaim, EffectClaim, EffectSettle, LinksRearm, Settle};
 pub use effects::{PublicationEffectsSpec, QueuedEffect, WithdrawalEffectsSpec};
 pub(crate) use effects::{all_effects, request_effects};
+pub use git_durability::{GitDurabilityRead, GitDurabilityWrite};
+pub use git_effects::{GitClaimRef, GitEffectRead, GitEffectWrite};
 pub use head_blocker::HeadBlockerSpec;
 pub use housekeeping::{HousekeepingClaim, HousekeepingTurn, TrueUpReservation};
 pub(crate) use housekeeping::{HousekeepingRow, turn_key};
@@ -133,7 +152,9 @@ pub use notifier::{
     NotifierCoverage, NotifierLeaseClaim, NotifierStateError, NotifierStatePatch, WantedMarkerInput,
 };
 pub use op_checkpoint::AtomGenerationBump;
+pub use topology_store::{TopologyRead, TopologyWrite};
 mod trust_scan_cursor;
+mod upkeep;
 
 pub(crate) use op_checkpoint::{
     delete_op_checkpoint_in, list_op_checkpoint_records_in, op_checkpoint_completed_keys,
@@ -156,6 +177,9 @@ pub use purge_effects::{
     GitEffectsCarryingArgs, PageGitEffectsArgs, PurgeEffectDataArgs, PurgeGitEffectRow,
 };
 pub use receipt_list::{IncarnationRequestFilter, WriteRequestListFilter};
+pub use retention_purge::{
+    ExpiringOrigin, ManagedPurgeCandidate, PurgeFailureRow, ReleasedPurgeOrigin,
+};
 pub use sync_pass_pages::{SyncImportPageQuery, SyncImportPageWindow};
 pub use sync_run_reads::SyncAdmissionEffectsQuery;
 pub use topology::TopologyChangeInsert;

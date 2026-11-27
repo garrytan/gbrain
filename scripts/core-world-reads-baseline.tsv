@@ -120,6 +120,7 @@ src/core/belief/purge-mirror.ts	module_collection	1	shadow capture: the purge li
 src/core/belief/state.ts	module_collection	2	W6: per-engine state, or mark as a constant table
 src/core/binary-self-update.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/binary-self-update.ts	spawn_import	1	W7: process-wide effects move to src/cli
+src/core/binary-self-update.ts	process_env	2	stays: GH_TOKEN/GITHUB_TOKEN is the caller shell or CI runner credential for the GitHub attestation API (keyless reads share 60 an hour per IP), not a brain setting
 src/core/bootstrap/adopt-connection.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/bootstrap/adopted-connections.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/bootstrap/assets.ts	fs_import	1	W7: filesystem boundary moves to the local app
@@ -231,7 +232,7 @@ src/core/company-brain/revision.ts	fs_import	1	W7: filesystem boundary moves to 
 src/core/company-brain/revision.ts	spawn_import	1	W7: process-wide effects move to src/cli
 src/core/company-brain/runtime.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/config-db-merge.ts	module_collection	1	W6: per-engine state, or mark as a constant table
-src/core/config-snapshot.ts	als_store	1	W2: engine scope (decision E) replaces ad hoc async context
+src/core/config-snapshot.ts	als_store	2	W2: engine scope (decision E) replaces ad hoc async context; +1 GST-3824 L1: the reserved agent-policy config write scope (withReservedConfigWrite)
 src/core/config-snapshot.ts	module_collection	1	W6: per-engine state, or mark as a constant table
 src/core/config.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/config.ts	load_config	1	W6: settings plane out of the core
@@ -288,6 +289,7 @@ src/core/context/sensitivity-scan.ts	process_env	1	W6: settings plane out of the
 src/core/context/session-speaker.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/context/session-speaker.ts	spawn_import	1	W7: process-wide effects move to src/cli
 src/core/context/session-start-pack.ts	process_env	2	W6: settings plane out of the core
+src/core/context/session-start-sections.ts	fs_import	1	W7: filesystem boundary moves to the local app (the hook-side first-session outcome record under GBRAIN_HOME, read by doctor and gbrain onboarding status)
 src/core/context/volunteer-events.ts	module_collection	1	W6: per-engine state, or mark as a constant table
 src/core/contextual-retrieval-service.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/contextual-retrieval-service.ts	process_env	1	W6: settings plane out of the core
@@ -366,6 +368,8 @@ src/core/engine-connect.ts	module_collection	1	W6: per-engine state, or mark as 
 src/core/engine-connect.ts	process_env	2	W6: settings plane out of the core
 src/core/engine-open.ts	als_store	1	W2: engine scope (decision E) replaces ad hoc async context
 src/core/engine-scope-store.ts	als_store	1	W2: engine scope (decision E) replaces ad hoc async context
+src/core/engine-sql/eval-harness-reads.ts	module_collection	1	W6: per-engine state (the eval harness pause holder, a WeakSet keyed by engine object, so a nested pause is refused)
+src/core/entities/evidence/collapse.ts	fs_import	1	W7: filesystem boundary moves to the local app (the two person files a C7 collapse edits in a git source, read under the commit lock; same door as identity-decisions.ts)
 src/core/env-number.ts	module_collection	1	W6: per-engine state, or mark as a constant table
 src/core/env-number.ts	process_env	1	W6: settings plane out of the core
 src/core/env-trust.ts	fs_import	1	W7: filesystem boundary moves to the local app
@@ -477,6 +481,10 @@ src/core/github-app-token.ts	fs_import	1	W7: filesystem boundary moves to the lo
 src/core/github-source.ts	fs_import	2	W7: filesystem boundary moves to the local app
 src/core/github-source.ts	load_config	1	W6: settings plane out of the core
 src/core/github-source.ts	process_env	2	W6: settings plane out of the core
+src/core/google-socket/ledger.ts	fs_import	1	W7: filesystem boundary moves to the local app (broker ledger and mint audit file under the private home)
+src/core/google-socket/preconditions.ts	fs_import	1	W7: filesystem boundary moves to the local app (activation gate checks the mode of GBRAIN_HOME)
+src/core/google-socket/server.ts	fs_import	1	W7: filesystem boundary moves to the local app (socket bind in the private run dir, like cli-socket/server.ts)
+src/core/google-socket/server.ts	process_global	3	W7: process-wide effects move to src/cli (server euid for peer checks, like cli-socket/server.ts)
 src/core/google/access.ts	process_env	1	W6: settings plane out of the core
 src/core/google/access.ts	spawn_import	1	W7: process-wide effects move to src/cli
 src/core/google/file-modes.ts	fs_import	1	W7: filesystem boundary moves to the local app
@@ -519,8 +527,9 @@ src/core/ingestion/sources/inbox-folder.ts	fs_import	2	W7: filesystem boundary m
 src/core/ingestion/sources/markdown-greenfield.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/init-embed-check.ts	process_env	1	W6: settings plane out of the core
 src/core/interaction.ts	fs_import	1	W7: filesystem boundary moves to the local app
-src/core/interaction.ts	process_env	3	W6: settings plane out of the core
+src/core/interaction.ts	process_env	4	W6: settings plane out of the core; +1 GST-3824 L1: ownerWriteAgentMarker default env
 src/core/last-retrieved.ts	module_collection	2	W6: per-engine state, or mark as a constant table
+src/core/ledger/store.ts	module_collection	1	W6: per-engine state (GST-3824 L2: one in-process reservation queue per engine, so concurrent policy_reserve calls in one process wait for the ledger lock instead of failing it)
 src/core/link-extraction.ts	process_env	2	W6: settings plane out of the core
 src/core/link-validity.ts	module_collection	1	W6: per-engine state, or mark as a constant table
 src/core/maintenance/run.ts	fs_import	1	GBRA-438: unattended upkeep checks that a source checkout still exists before running filesystem phases there (a vanished checkout runs the database-only phases instead of failing each run); moves with the W7 filesystem boundary
@@ -612,6 +621,7 @@ src/core/oauth-provider.ts	als_store	1	W2: engine scope (decision E) replaces ad
 src/core/onboard/checks.ts	load_config	1	W6: settings plane out of the core
 src/core/onboard/init-nudge.ts	process_env	2	W6: settings plane out of the core
 src/core/onboard/mcp-onboarding.ts	fs_import	1	W7: filesystem boundary moves to the local app
+src/core/onboard/setup-history.ts	fs_import	1	W7: filesystem boundary moves to the local app (stats the session files setup's history import previews)
 src/core/onboard/mcp-onboarding.ts	process_env	1	W6: settings plane out of the core
 src/core/onboard/writeback-nudge.ts	load_config	1	W6: settings plane out of the core
 src/core/onboard/writeback-nudge.ts	process_env	1	W6: settings plane out of the core
@@ -1283,3 +1293,19 @@ src/core/owned-folder/paths.ts	fs_import	1	W7: filesystem boundary moves to the 
 src/core/owned-folder/remove.ts	fs_import	1	W7: filesystem boundary moves to the local app; GST-3022 owned folders: checks OWNER.json and prunes the directories a source removal leaves empty, never following a symlink
 src/core/owned-folder/writer.ts	fs_import	1	W7: filesystem boundary moves to the local app; GST-3022 owned folders: the one writer of the folder: OWNER.json, the README and the day files, with lstat symlink checks
 src/core/remote-caller.ts	als_store	1	W2: engine scope (decision E) replaces ad hoc async context; marks an MCP handler's caller remote so the Rust owner client keeps its writes off the owner socket
+src/core/engine-swap/checkpoint.ts	fs_import	1	the swap checkpoint writes, hashes and re-reads the PGLite dump file; a local recovery artifact by design
+src/core/engine-swap/gates.ts	fs_import	1	the folder-rule blocker checks for .gbrain/access.yml under each source local_path; stays until the Rust engine serves folder rules
+src/core/engine-swap/pg-checkpoint.ts	fs_import	1	the Postgres swap checkpoint creates the 0600 dump file under the gbrain home, hashes it and re-reads it; a local recovery artifact by design
+src/core/engine-swap/pg-checkpoint.ts	process_env	1	pg_dump runs with the parent environment plus PGPASSWORD for the child only, so the password never reaches argv
+src/core/engine-swap/pg-checkpoint.ts	spawn_import	1	the Postgres swap checkpoint runs pg_dump and pg_restore --list (through src/core/spawn.ts)
+src/core/engine-swap/record.ts	fs_import	1	the swap run record is a 0600 local file under the config dir, written atomically; the run must survive a kill
+src/core/engine-swap/route.ts	fs_import	1	the authority switch keeps the config file's database_url in a 0600 file beside the run record, never in the record
+src/core/engine-swap/route.ts	process_env	1	the route check refuses while GBRAIN_DATABASE_URL or DATABASE_URL would route the brain past the swapped config
+src/core/engine-swap/route.ts	spawn_import	1	the route probe runs a fresh gbrain process (engine status --json --probe) to prove the switched config opens Rust
+src/core/engine-swap/run.ts	fs_import	1	the run removes a checkpoint file it wrote but never recorded before writing a new one
+src/core/policy/authority.ts	process_env	1	W6: settings plane out of the core (GST-3824 L1: terminalAuthorityProblem reads the agent markers of this process)
+src/core/policy/authority.ts	als_store	1	W2: engine scope (decision E) replaces ad hoc async context (GST-3824 L1: the owner proof of the running policy command)
+src/core/policy/store.ts	load_config	1	W6: settings plane out of the core (GST-3824 L1: the trusted local write context of a policy command)
+src/core/rules/admission.ts	als_store	1	W2: engine scope (decision E) replaces ad hoc async context (GST-3827 C2: the rule-writer scope of the correct verb and gbrain rules)
+src/core/rules/correct.ts	load_config	1	W6: settings plane out of the core (GST-3827 C2: the trusted local write context of gbrain rules approve and retire, as in policy/store.ts)
+src/core/setup/brain-first-upgrade-notice.ts	fs_import	1	W7: filesystem boundary moves to the local app (GST-3824 L1: rewrites installed brain-first blocks when the policy line setting changes)

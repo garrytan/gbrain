@@ -1,18 +1,20 @@
 //! Volunteered-page events: the `context_volunteer_events` table of the PGLite engine, as the members of
 //! `src/core/engine-sql/volunteer-events.ts` run it (rust/docs/store/volunteer-events.md).
 //!
-//! Members: insertVolunteerEvents, readVolunteerUsage.
+//! Members: insertVolunteerEvents, listVolunteerChannels, readVolunteerUsage, deleteVolunteerEventsOlderThan; the page
+//! purge's name-store scrub is `deletePurgedNameStoreRows` (`delete_volunteer_events_for_slugs`) and its receipt probe is
+//! the `context_volunteer_events` store probe (`count_for_slug`).
 //!
 //! Keys (every record starts with `keys::TELEMETRY`, `a`):
 //! - `a 0x0C id BE8 -> VolunteerRecord`: one event, its id the `BIGSERIAL`.
 //! - `a 0x0D -> last id` (JSON integer): the id sequence.
 //!
-//! The 90-day purge (`purgeStaleVolunteerEvents`) stays raw SQL and refuses on a Rust brain. A page is "used" when its
+//! A page is "used" when its
 //! retrieval record (`page_ops/retrievals.rs`) is later than the event, as `GREATEST(p.last_retrieved_at,
 //! r.last_retrieved_at) > e.volunteered_at` reads it: a Rust page has no separate column.
 
-use crate::error::Result;
-use crate::kv::scan_prefix;
+use crate::error::{INVALID_ARGUMENT, Result, StoreError};
+use crate::kv::{KvRead, scan_prefix};
 use crate::links::no_nul;
 use crate::{Store, get_json, keys, page_ops, pages, put_json};
 use serde::{Deserialize, Serialize};
@@ -20,6 +22,7 @@ use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
 const OP_INSERT: &str = "insertVolunteerEvents";
+const OP_RETENTION: &str = "deleteVolunteerEventsOlderThan";
 const DAY_US: i64 = 86_400_000_000;
 
 fn event_prefix() -> [u8; 2] {
@@ -169,6 +172,50 @@ impl Store {
                 .collect(),
         ))
     }
+    /// `deleteVolunteerEventsOlderThan(ttlDays)`: deletes the rows older than `ttl_days` days
+    /// (`volunteered_at < now() - interval`) and returns how many. A day count that is not a number refuses,
+    /// as the interval cast does.
+    pub fn delete_volunteer_events_older_than(&self, ttl_days: f64) -> Result<u64> {
+        if !ttl_days.is_finite() {
+            return Err(StoreError::new(
+                INVALID_ARGUMENT,
+                format!(
+                    "{OP_RETENTION}: invalid input syntax for type interval: \"{ttl_days} days\""
+                ),
+            ));
+        }
+        self.write(|tx| {
+            let cutoff = self.env.now_micros() - (ttl_days * DAY_US as f64).round() as i64;
+            let mut removed = 0;
+            for (key, e) in all_events(&*tx)? {
+                if e.volunteered_at < cutoff {
+                    tx.delete(&key)?;
+                    removed += 1;
+                }
+            }
+            Ok(removed)
+        })
+    }
+
+    /// `deleteVolunteerEventsForSlugs(sourceId, slugs)`: deletes the rows naming those slugs of the source
+    /// (`scrubPurgedNameStores`) and returns how many.
+    pub fn delete_volunteer_events_for_slugs(
+        &self,
+        source_id: &str,
+        slugs: &[String],
+    ) -> Result<u64> {
+        if slugs.is_empty() {
+            return Ok(0);
+        }
+        self.write(|tx| scrub_purged_slugs(tx, source_id, slugs))
+    }
+
+    /// How many rows still name the slug (the purge receipt's `context_volunteer_events` probe through
+    /// [`count_for_slug`]); the store's own tests read it here.
+    pub fn count_volunteer_events_for_slug(&self, source_id: &str, slug: &str) -> Result<u64> {
+        let read = self.read()?;
+        Ok(count_for_slug(&*read, source_id, slug)? as u64)
+    }
 }
 
 fn all_events(read: &dyn crate::kv::KvRead) -> Result<Vec<(Vec<u8>, VolunteerRecord)>> {
@@ -195,13 +242,27 @@ pub(crate) fn scrub_purged_slugs(
     tx: &mut dyn crate::kv::KvWrite,
     source_id: &str,
     slugs: &[String],
-) -> Result<()> {
+) -> Result<u64> {
+    let mut removed = 0;
     for (key, e) in all_events(&*tx)? {
         if e.source_id == source_id && slugs.contains(&e.slug) {
             tx.delete(&key)?;
+            removed += 1;
         }
     }
-    Ok(())
+    Ok(removed)
+}
+
+/// How many rows still name the slug: the page purge receipt's `context_volunteer_events` probe
+/// (`facts/purge_store_probe.rs`, the SQL's `SELECT 1 FROM context_volunteer_events WHERE source_id = $1 AND slug = $2`).
+pub(crate) fn count_for_slug(read: &dyn KvRead, source_id: &str, slug: &str) -> Result<usize> {
+    if source_id.contains('\0') || slug.contains('\0') {
+        return Ok(0);
+    }
+    Ok(all_events(read)?
+        .into_iter()
+        .filter(|(_, e)| e.source_id == source_id && e.slug == slug)
+        .count())
 }
 
 /// The `context_volunteer_events` rows a purge probe searches (src/core/deletion-inventory.ts).

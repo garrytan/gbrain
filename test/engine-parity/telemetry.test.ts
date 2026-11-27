@@ -264,12 +264,12 @@ describe('engine parity: telemetry', () => {
     const members = Object.entries(RUST_ENGINE_MEMBERS).filter(([, cls]) => cls === 'telemetry').map(([m]) => m).sort();
     expect(members).toEqual([
       'applyRetrievalRatings', 'chronicleStore', 'countMcpRequestLogRows', 'countMcpRequestsLastDay',
-      'countMcpRequestsLastDayByToken', 'countRecentChronicleReservations', 'hasMcpLogRowsPastWindow',
+      'countMcpRequestsLastDayByToken', 'countRecentChronicleReservations', 'deleteVolunteerEventsOlderThan', 'hasMcpLogRowsPastWindow',
       'hasPendingAutoChronicleRow', 'insertAccessReadLogRows', 'insertRetrievalEvents', 'insertVolunteerEvents',
       'listAccessReadPageRefs', 'logChatUsage', 'logMcpRequest', 'pruneAccessReadLog', 'pruneChronicleReservations',
       'pruneMcpRequestLogBatch', 'readAccessReadLog', 'readAccessReadsOfPages', 'readChatUsage', 'readChronicleRow',
       'readClientOpUsage', 'readMcpLifetimeUsage', 'readMcpLogPruneCutoff', 'readMcpRequestLogBytes',
-      'readMcpRequestLogPage', 'readMcpRollupPrunedBefore', 'readPendingWriteHealth', 'readRetrievalEvent',
+      'readMcpRequestLogPage', 'readMcpRollupPrunedBefore', 'readPageFeedbackWeights', 'readPendingWriteHealth', 'readRetrievalEvent',
       'readSearchStats', 'readVolunteerUsage', 'recordSearchTelemetry', 'reserveChronicleJudgeSlot',
       'tallyAccessReadsOfPages', 'upsertChronicleRow',
     ]);

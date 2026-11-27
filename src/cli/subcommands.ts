@@ -28,7 +28,11 @@ export const CONFIG_SUBCOMMANDS = ['show', 'get', 'set', 'unset'] as const;
 export const QUARANTINE_SUBCOMMANDS = ['list', 'clear', 'scan', 'release', 'drop'] as const;
 export const CORE_SUBCOMMANDS = ['list', 'show', 'status', 'add', 'remove', 'diff', 'ack', 'init', 'suggest'] as const;
 export const LOOPS_SUBCOMMANDS = ['list', 'show', 'done', 'drop', 'mute', 'unmute'] as const;
+export const HOUSEHOLD_SUBCOMMANDS = ['due', 'add', 'mark', 'list', 'replace', 'template'] as const;
+export const CORRECT_SUBCOMMANDS = ['status', 'resume'] as const;
+export const RULES_SUBCOMMANDS = ['list', 'show', 'approve', 'retire', 'check'] as const;
 export const GUESTS_SUBCOMMANDS = ['init', 'promote', 'grant-owner-clients'] as const;
+export const CLAIMS_SUBCOMMANDS = ['check'] as const;
 export const SCHEMA_SUBCOMMANDS = [
   'active', 'list', 'show', 'validate', 'use', 'detect', 'suggest', 'review-candidates', 'init', 'fork', 'edit',
   'diff', 'graph', 'lint', 'explain', 'review-orphans', 'downgrade', 'usage', 'stats', 'cardinality-preview',
@@ -61,7 +65,12 @@ export const ROUTERS: Readonly<Record<string, RouterInventory>> = {
   // so `core list --help` ran `list` against a null engine and `loops show --help` exited 2 "needs a loop id".
   core: { subcommands: CORE_SUBCOMMANDS, bareHelpFirst: true },
   loops: { subcommands: LOOPS_SUBCOMMANDS, bareHelpFirst: true },
+  household: { subcommands: HOUSEHOLD_SUBCOMMANDS, bareHelpFirst: true },
   guests: { subcommands: GUESTS_SUBCOMMANDS, bareHelpFirst: true },
+  claims: { subcommands: CLAIMS_SUBCOMMANDS, bareHelpFirst: true },
+  // `gbrain correct "<rule>"` takes free text; a one-word rule `help` prints usage instead, so --help never opens the brain.
+  correct: { subcommands: CORRECT_SUBCOMMANDS, bareHelpFirst: true },
+  rules: { subcommands: RULES_SUBCOMMANDS, bareHelpFirst: true },
 };
 
 /** `--help` / `-h` before any `--` terminator. */

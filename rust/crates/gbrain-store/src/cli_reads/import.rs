@@ -93,6 +93,8 @@ pub struct PageTrustRow {
     pub write_origin: Option<Value>,
     pub flagged: bool,
     pub guest: bool,
+    /// The class of source the page came from (`cli_reads/precedence.rs`).
+    pub precedence: String,
     #[serde(rename = "byId")]
     pub by_id: bool,
 }
@@ -114,6 +116,9 @@ pub struct RowTrustRow {
     pub write_origin: Option<Value>,
     pub flagged: bool,
     pub contested: Option<String>,
+    /// A fact's class of source, or `approved` when it came from an allowed-claims page
+    /// (`cli_reads/precedence.rs`); none on a take or timeline row.
+    pub precedence: Option<String>,
 }
 
 /// A live page with its aliases and knowledge revision (`listLinkPageMetadata`).
@@ -164,7 +169,7 @@ pub(crate) fn config_says_guest(config: &Map<String, Value>) -> bool {
 }
 
 fn source_is_guest(read: &dyn KvRead, id: &str) -> Result<bool> {
-    Ok(read_source(read, id)?.is_some_and(|s| config_says_guest(&s.config)))
+    crate::guest_sources::source_is_guest(read, id)
 }
 
 fn trust_row(read: &dyn KvRead, page: &PageRecord, by_id: bool) -> Result<PageTrustRow> {
@@ -177,6 +182,7 @@ fn trust_row(read: &dyn KvRead, page: &PageRecord, by_id: bool) -> Result<PageTr
         write_origin: page.write_origin.clone(),
         flagged: crate::trust::activation_suppressed(read, "pages", page.id, tier)?,
         guest: source_is_guest(read, &page.source_id)?,
+        precedence: crate::cli_reads::precedence::page_precedence(read, page)?.to_owned(),
         by_id,
     })
 }
@@ -237,18 +243,29 @@ impl Store {
         Ok(false)
     }
 
-    /// Never hidden (the store has no row-level security) and never a row (it has no guest_sources).
-    pub fn read_guest_source_row(&self, _source_id: &str) -> Result<GuestSourceLookupRow> {
-        self.read()?;
-        Ok(GuestSourceLookupRow {
-            hidden: false,
-            source_id: None,
-            writers: None,
-            trust_ceiling: None,
-        })
+    /// Never hidden (the store has no row-level security). The row is the source's guest_sources row
+    /// (`guest_sources.rs`), kept only by `upsertGuestSource`: a source whose config says guest has none.
+    pub fn read_guest_source_row(&self, source_id: &str) -> Result<GuestSourceLookupRow> {
+        let read = self.read()?;
+        Ok(
+            match crate::guest_sources::read_guest_row(&*read, source_id)? {
+                Some(row) => GuestSourceLookupRow {
+                    hidden: false,
+                    source_id: Some(source_id.to_string()),
+                    writers: Some(row.writers),
+                    trust_ceiling: Some(row.trust_ceiling),
+                },
+                None => GuestSourceLookupRow {
+                    hidden: false,
+                    source_id: None,
+                    writers: None,
+                    trust_ceiling: None,
+                },
+            },
+        )
     }
 
-    /// The ids among `source_ids` (each once) of sources whose config says guest, in id order.
+    /// The ids among `source_ids` (each once) of guest sources (config says guest, or a guest row), in id order.
     pub fn list_guest_source_ids(&self, source_ids: &[String]) -> Result<Vec<String>> {
         let read = self.read()?;
         let mut out = Vec::new();
@@ -260,12 +277,23 @@ impl Store {
         Ok(out)
     }
 
-    /// Whether any source's config says guest.
+    /// Whether any source is a guest source (its config says guest, or it has a guest row).
     pub fn has_guest_source(&self) -> Result<bool> {
         let read = self.read()?;
-        Ok(all_sources(&*read)?
-            .iter()
-            .any(|s| config_says_guest(&s.config)))
+        for s in all_sources(&*read)? {
+            if config_says_guest(&s.config)
+                || crate::guest_sources::read_guest_row(&*read, &s.id)?.is_some()
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
+    /// `hasGuestSourceRow(sourceId)`: whether the source has a guest row (the record `upsertGuestSource` writes); a
+    /// source whose config alone says guest has none.
+    pub fn has_guest_source_row(&self, source_id: &str) -> Result<bool> {
+        Ok(crate::guest_sources::read_guest_row(&*self.read()?, source_id)?.is_some())
     }
 
     /// The trust rows of the pages named by id (deleted ones too) and by key (live ones unless
@@ -307,13 +335,13 @@ impl Store {
         }
         let wanted: BTreeSet<u64> = lookup.ids.iter().copied().collect();
         let read = self.read()?;
-        let mut found: Vec<(u64, RowTrust)> = Vec::new();
+        let mut found: Vec<(u64, RowTrust, Option<String>)> = Vec::new();
         match table {
             "timeline_entries" if !wanted.is_empty() => {
                 let mut failure = None;
                 scan_prefix(&*read, &[keys::TIMELINE], false, &mut |_, v| {
                     match serde_json::from_slice::<TimelineRecord>(v) {
-                        Ok(r) if wanted.contains(&r.id) => found.push((r.id, r.trust)),
+                        Ok(r) if wanted.contains(&r.id) => found.push((r.id, r.trust, None)),
                         Ok(_) => {}
                         Err(e) => failure = Some(StoreError::from(e)),
                     }
@@ -322,7 +350,7 @@ impl Store {
                 if let Some(e) = failure {
                     return Err(e);
                 }
-                found.sort_by_key(|(id, _)| *id);
+                found.sort_by_key(|(id, _, _)| *id);
             }
             "facts" => {
                 for &id in &wanted {
@@ -331,14 +359,19 @@ impl Store {
                             trust_tier: Some(f.trust_tier.clone()),
                             write_origin: f.write_origin.clone(),
                         };
-                        found.push((id, trust));
+                        let precedence = crate::cli_reads::precedence::fact_precedence(
+                            &*read,
+                            &f.source_id,
+                            f.source_markdown_slug.as_deref(),
+                        )?;
+                        found.push((id, trust, Some(precedence.to_owned())));
                     }
                 }
             }
             "takes" => {
                 for &id in &wanted {
                     if let Some(t) = read_take(&*read, id)? {
-                        found.push((id, t.trust));
+                        found.push((id, t.trust, None));
                     }
                 }
             }
@@ -346,7 +379,7 @@ impl Store {
         }
         found
             .into_iter()
-            .map(|(id, trust)| {
+            .map(|(id, trust, precedence)| {
                 let tier = trust.tier();
                 let contested = match (table, i64::try_from(id)) {
                     ("timeline_entries", _) | (_, Err(_)) => None,
@@ -360,6 +393,7 @@ impl Store {
                     write_origin: trust.write_origin.as_ref().map(jsonb_value),
                     flagged: crate::trust::activation_suppressed(&*read, table, id, tier)?,
                     contested,
+                    precedence,
                 })
             })
             .collect()

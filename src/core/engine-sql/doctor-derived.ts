@@ -11,8 +11,8 @@
  * The Rust engine answers the same members from its store (rust/crates/gbrain-store/src/cli_reads/doctor_derived.rs,
  * doctor_derived_health.rs and doctor_derived_ledgers.rs, rust/docs/store/cli-reads-doctor-derived.md). Two answers, per member:
  *  - served from the store's records;
- *  - the empty answer where the store keeps no writer for the relation at all (`page_extraction_state`,
- *    `page_embedding_budget`, `derived_generations`, `derived_generation_items`, `derived_generation_activations`,
+ *  - the empty answer where the store keeps no writer for the relation at all (`page_embedding_budget`,
+ *    `derived_generations`, `derived_generation_items`, `derived_generation_activations`,
  *    `belief_events`, `extract_rollup_7d` never get a row on a Rust brain), so the empty answer is the true one.
  * No member is left to refuse with `engine_capability_missing`.
  */
@@ -27,11 +27,11 @@ export type { EngineRawRead } from './cli-reads-ops.ts';
 export const DOCTOR_DERIVED_MEMBERS: readonly string[] = [
   'readIgnoredPrivacyLabelCounts', 'countSafeIndexPending', 'countCredentialProjectionPending', 'countPagesByTypeAndOwner',
   'listRecordedTombstones', 'countDerivedVisibility', 'listUntiledSegmentedPageRows', 'listTimelineHistoryBatch',
-  'listAtomFenceCandidates', 'readPageCompiledTruths', 'readEmbeddingBacklogAge', 'listBudgetLimitedRows', 'readBudgetHoldAge',
+  'listAtomFenceCandidates', 'readPageCompiledTruths', 'readEmbeddingBacklogAge', 'readEmbedBacklogRows', 'listBudgetLimitedRows', 'readBudgetHoldAge',
   'listImageAssetFiles', 'listAmbiguousExtractionInputs', 'listExtractionInputReceipts', 'listUnpricedDerivationModels',
   'listRestorableAtomRetirements', 'countLedgerCoveredAtomRetirements', 'listLiveGenerationRetirements', 'listHeldGenerations',
   'listOrphanGenerationCandidates', 'listOntologyFactCandidates', 'readAtomProvenanceCounts',
-  'readExtractRollup7d', 'listRecordedHaltReasons7d',
+  'readExtractRollup7d', 'listRecordedHaltReasons7d', 'listBodyRecheckGroups', 'readBodyRecheckPage', 'listBodyRecheckVersions',
 ];
 
 /** The `content_chunks` vector column name `withEmbeddingColumn` puts in: a registry-resolved or COLUMN_NAME_REGEX-checked name. */
@@ -321,6 +321,28 @@ const BACKLOG_AGE_SQL = `SELECT EXTRACT(EPOCH FROM now() - min(cc.embedding_pend
 export async function readEmbeddingBacklogAge(raw: EngineRawRead, column: string): Promise<EmbeddingBacklogAgeRow | undefined> {
   const [row] = await raw<EmbeddingBacklogAgeRow>(withEmbeddingColumn(BACKLOG_AGE_SQL, column));
   return row;
+}
+
+export interface EmbedBacklogRow { source_id: string; pending: number; unaged: number; oldest: Date | string | null }
+
+// chunk-visibility-ok: the chunkGenerationFilter('p', 'cc') predicate is inlined as literal text (check:engine-sql-dynamic forbids composed SQL), moved verbatim from sync-pending.ts readEmbedBacklog
+const EMBED_BACKLOG_ROWS_SQL = `SELECT p.source_id, count(*)::int AS pending, count(*) FILTER (WHERE cc.embedding_pending_since IS NULL)::int AS unaged,
+            min(cc.embedding_pending_since) AS oldest
+       FROM content_chunks cc JOIN pages p ON p.id = cc.page_id
+      WHERE cc."__COL__" IS NULL AND p.deleted_at IS NULL AND p.source_id = ANY($1::text[]) AND ((cc.body_generation IS NULL AND p.body_storage <> 'segmented')
+       OR (cc.body_generation <= p.body_generation
+           AND EXISTS (SELECT 1 FROM page_body_manifest lm WHERE lm.page_id = cc.page_id AND lm.occurrence_id = cc.occurrence_id
+             AND lm.staging_id IS NULL AND lm.gen_from <= p.body_generation AND (lm.gen_to IS NULL OR lm.gen_to > p.body_generation))))
+        AND NOT jsonb_exists(COALESCE(p.frontmatter, '{}'::jsonb), 'embed_skip')
+      GROUP BY p.source_id`;
+
+/**
+ * Per source among `sourceIds`: the live-body chunks of live pages (not `embed_skip`) with no vector in `column`, how
+ * many of them carry no pending-since stamp, and the oldest stamp (`gbrain sync` pending and the doctor's managed-sync
+ * latency). A source with no such chunk has no row.
+ */
+export async function readEmbedBacklogRows(raw: EngineRawRead, column: string, sourceIds: string[]): Promise<EmbedBacklogRow[]> {
+  return raw<EmbedBacklogRow>(withEmbeddingColumn(EMBED_BACKLOG_ROWS_SQL, column), [sourceIds]);
 }
 
 export interface BudgetLimitedRow { source_id: string; state: 'held' | 'capped'; reason: string; pages: number; chunks: number; chars: number }
@@ -655,6 +677,69 @@ export async function readAtomProvenanceCounts(raw: EngineRawRead): Promise<Atom
   };
 }
 
+// ---- the unchanged-body recheck of atom_provenance_drift (commands/doctor/checks/atom-body-recheck.ts) -----------------
+
+/** The page-bound and slug-unbound atoms atom_provenance_drift reads (`ss` NULL: slug-unbound), as a CTE body. */
+export const ATOM_PROVENANCE_CTE = `atom AS (
+         SELECT a.source_id,
+                -- managed atoms keep their provisional prefix for good (#5770)
+                CASE WHEN a.frontmatter->>'managed_extraction' = 'true'
+                     THEN regexp_replace(a.frontmatter->>'source_hash', '^pending:', '')
+                     ELSE a.frontmatter->>'source_hash' END AS sh,
+                -- NULL = slug-unbound: transcript-minted (source_path only) or
+                -- pre-binding-era. \`ss IS NULL\` is THE predicate for that
+                -- population everywhere below (#4799 / #4806).
+                NULLIF(a.frontmatter->>'source_slug', '') AS ss,
+                CASE WHEN a.frontmatter->>'extracted_at' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}'
+                     THEN a.frontmatter->>'extracted_at' END AS ext
+           FROM pages a
+          WHERE a.type = 'atom'
+            AND a.deleted_at IS NULL
+            AND a.frontmatter->>'source_hash' IS NOT NULL
+            -- in-flight marker written before an unmanaged extraction commits
+            AND (a.frontmatter->>'source_hash' NOT LIKE 'pending:%' OR a.frontmatter->>'managed_extraction' = 'true')
+         )`;
+
+/** (page, source_hash) groups of drifted atoms the recheck reads per run; the rest keep their drift verdict. */
+export const BODY_RECHECK_GROUPS = 200;
+/** The newest versions of a page searched for an atom's extraction edition. */
+export const BODY_RECHECK_VERSIONS = 20;
+
+export interface BodyRecheckGroup { page_id: number; sh: string; n: number }
+export interface BodyRecheckPage { body_storage: string | null; compiled_truth: string | null; timeline: string | null }
+export interface BodyRecheckVersion { compiled_truth: string | null; timeline: string | null; title: string; type: string; frontmatter: unknown; tags: unknown }
+
+/**
+ * The drifted atoms of live inline pages, grouped by page and 16-character source hash, whose hash names no live page
+ * of their source: the first BODY_RECHECK_GROUPS groups by page id, then hash in byte order.
+ */
+export async function listBodyRecheckGroups(raw: EngineRawRead): Promise<BodyRecheckGroup[]> {
+  const rows = await raw<{ page_id: number | string; sh: string; n: number | string }>(
+    `WITH ${ATOM_PROVENANCE_CTE}, live_hashes AS MATERIALIZED (
+       SELECT DISTINCT source_id, substring(content_hash from 1 for 16) AS sh FROM pages WHERE deleted_at IS NULL AND content_hash IS NOT NULL
+     )
+     SELECT p.id AS page_id, atom.sh, count(*)::int AS n
+       FROM atom
+       JOIN pages p ON p.source_id = atom.source_id AND p.slug = atom.ss AND p.deleted_at IS NULL AND p.body_storage = 'inline'
+       LEFT JOIN live_hashes h ON h.source_id = atom.source_id AND h.sh = atom.sh
+      WHERE h.sh IS NULL AND length(atom.sh) = 16
+      GROUP BY p.id, atom.sh ORDER BY p.id, atom.sh COLLATE "C" LIMIT ${BODY_RECHECK_GROUPS}`, []);
+  return rows.map(r => ({ page_id: Number(r.page_id), sh: r.sh, n: Number(r.n) }));
+}
+
+/** The body storage and body columns of the page with this id, or null when no page has it. */
+export async function readBodyRecheckPage(raw: EngineRawRead, pageId: number): Promise<BodyRecheckPage | null> {
+  const [page] = await raw<BodyRecheckPage>('SELECT body_storage, compiled_truth, timeline FROM pages WHERE id = $1', [pageId]);
+  return page ?? null;
+}
+
+/** The newest BODY_RECHECK_VERSIONS inline versions of the page that hold a body, newest first. */
+export async function listBodyRecheckVersions(raw: EngineRawRead, pageId: number): Promise<BodyRecheckVersion[]> {
+  return raw<BodyRecheckVersion>(
+    `SELECT compiled_truth, timeline, title, type, frontmatter, tags FROM page_versions
+        WHERE page_id = $1 AND body_storage = 'inline' AND compiled_truth IS NOT NULL ORDER BY id DESC LIMIT $2`, [pageId, BODY_RECHECK_VERSIONS]);
+}
+
 export interface ExtractRollupRow {
   kind: string; cost_7d_usd: number; eval_pass_count: number; eval_fail_count: number; halt_count: number; round_completed_count: number;
   expected_limit_count: number; rollup_write_failures: number; last_updated_at: Date | string | null; last_halt_age_days: number | string | null;
@@ -670,9 +755,9 @@ const EXTRACT_ROLLUP_SQL = `SELECT
          SUM(expected_limit_count) AS expected_limit_count,
          SUM(rollup_write_failures) AS rollup_write_failures,
          MAX(updated_at) AS last_updated_at,
-         CURRENT_DATE - MAX(day) FILTER (WHERE halt_count > 0) AS last_halt_age_days
+         (now() AT TIME ZONE 'UTC')::date - MAX(day) FILTER (WHERE halt_count > 0) AS last_halt_age_days
        FROM extract_rollup_7d
-       WHERE day >= CURRENT_DATE - 7
+       WHERE day >= (now() AT TIME ZONE 'UTC')::date - 7
        GROUP BY kind
        ORDER BY kind COLLATE "C"`;
 const EXTRACT_ROLLUP_NO_EXPECTED_SQL = `SELECT
@@ -685,13 +770,17 @@ const EXTRACT_ROLLUP_NO_EXPECTED_SQL = `SELECT
          0 AS expected_limit_count,
          SUM(rollup_write_failures) AS rollup_write_failures,
          MAX(updated_at) AS last_updated_at,
-         CURRENT_DATE - MAX(day) FILTER (WHERE halt_count > 0) AS last_halt_age_days
+         (now() AT TIME ZONE 'UTC')::date - MAX(day) FILTER (WHERE halt_count > 0) AS last_halt_age_days
        FROM extract_rollup_7d
-       WHERE day >= CURRENT_DATE - 7
+       WHERE day >= (now() AT TIME ZONE 'UTC')::date - 7
        GROUP BY kind
        ORDER BY kind COLLATE "C"`;
 
-/** The 7-day extract rollup per kind; `withExpected: false` is the pre-v141 text for a brain without `expected_limit_count`. */
+/**
+ * The 7-day extract rollup per kind; `withExpected: false` is the pre-v141 text for a brain without `expected_limit_count`.
+ * Days are UTC days (the rollup writer's), so the window and the last halt's age do not move with the session time zone
+ * (#10356).
+ */
 export function readExtractRollup7d(raw: EngineRawRead, withExpected: boolean): Promise<ExtractRollupRow[]> {
   return raw<ExtractRollupRow>(withExpected ? EXTRACT_ROLLUP_SQL : EXTRACT_ROLLUP_NO_EXPECTED_SQL, []);
 }

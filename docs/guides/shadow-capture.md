@@ -62,7 +62,9 @@ checks the source so that a new path cannot skip it. No physical secure-erase is
 
 `capture delete` and `gbrain engine shadow stop --delete` share one delete path. It takes the replay lock first and
 refuses with `shadow_replay_busy` while a replay holds it. A lock a crashed run left behind is never taken over
-automatically; the error names the file to remove.
+automatically; the error names the file to remove. `stop --delete` also takes the restore drill's lock first and refuses
+with `drill_running` (exit 1, nothing stopped or deleted) while a drill holds it; see
+[engine-shadow-drill](engine-shadow-drill.md).
 
 ## Sealing a recording (for the replay release)
 

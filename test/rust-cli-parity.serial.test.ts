@@ -309,7 +309,6 @@ let rustArm: 'on' | 'no-engine' = 'on';
  * it. A command that refuses and is not here fails; one listed here that now answers passes and prints that its row can go.
  */
 const STOPPED_COMMANDS: Record<string, string> = {
-  'entity "Alice Example" --json': 'executeRaw',
 };
 
 const CLI_FILE = 'test/rust-cli-parity.serial.test.ts';
@@ -567,9 +566,9 @@ describe.skipIf(!HAVE_ADDON)('the CLI on a Rust brain answers like the CLI on a 
       // typed raw_sql refusal on a Rust brain (owner: access family, lane 15).
       // write_gate_hold_ambiguous (master #10200) lists the holds the v333 upgrade could not tie to one page; the Rust hold carries no
       // page id (the hold-by-page-id swap row, due Fri Nov 27), so the check stops on the typed refusal rather than answer a quiet zero.
-      // legacy_slug_spellings (master #10168) finds pages stored under an older spelling of their name through raw SQL on the spelling
-      // index (repair/slug-spelling-guards.ts); it stops on the typed raw_sql refusal on a Rust brain (swap-report row, owner trunk).
-      typedRefusals: ['access_disabled_member_credentials', 'legacy_slug_spellings', 'write_gate_hold_ambiguous'],
+      // legacy_slug_spellings is gone from this list: its row-security and candidate page reads are typed members the store
+      // serves (readRowSecurityTables, listSlugSpellingCandidates), so it answers ok as it does on PGLite.
+      typedRefusals: ['access_disabled_member_credentials', 'write_gate_hold_ambiguous'],
     });
     const count = (s: string) => checks.filter((c) => c.status === s).length;
     table.push({ command: 'doctor --json', state: 'runs', note: ` ${checks.length} checks, ${count('ok')} ok, ${count('warn')} warn, 0 fail; PGLite ${pgReport!.checks!.length}` });
