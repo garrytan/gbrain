@@ -29,7 +29,7 @@ import { configDir } from '../src/core/config.ts';
 import { shadowRoot } from '../src/shadow/state.ts';
 import { scratchRootDefault } from '../src/shadow/write-compare-child.ts';
 import { faultsPath, readFaults } from '../src/shadow/ledger.ts';
-import { lostPath, movedOutsideFootprint, pageRefs, readWriteTally, recordLost, sentPath, unfoldedLost, writeTallyPath, WriteTally, type WriteEvent } from '../src/shadow/write-compare.ts';
+import { lostPath, movedOutsideFootprint, pageRefs, readReceipt, readWriteTally, recordLost, sentPath, unfoldedLost, writeTallyPath, WriteTally, type WriteEvent } from '../src/shadow/write-compare.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { defineWriteCompareScenarios, fakeComparer, page, row5, settle, tallyOn, watchPreimage } from './helpers/shadow-write-compare-scenarios.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -659,6 +659,13 @@ describe('every sample the child was sent ends in the tally (sample accounting)'
     expect(t.comparable + t.unexplained_difference + t.uncomparable + t.capability_missing).toBe(10);
     expect(existsSync(sentPath(dir, 'sess-3'))).toBe(false);
   }, 60_000);
+
+  test('a qualifying count from 0 to the sent count is read; any other value makes the receipt unreadable, never a guess', () => {
+    const dir = tmp();
+    const write = (q: unknown) => writeFileSync(sentPath(dir, 'sess-q'), JSON.stringify({ session: 'sess-q', sent: 5, sent_qualifying: q }) + '\n');
+    for (const q of [0, 3, 5]) { write(q); expect(readReceipt(dir, 'sess-q')).toMatchObject({ sent: 5, sent_qualifying: q }); }
+    for (const q of [-1, 6, 2.5, null, '3']) { write(q); expect(readReceipt(dir, 'sess-q')).toBe('unreadable'); }
+  });
 
   test('a sent count written before it carried the qualifying count books every lost sample pipe_unflushed, as before (never fewer against the share)', async () => {
     const other = '{"t":"write","op":"updatePageContextualRetrievalState","outcome":"capability_missing","family":"pages:updatePageContextualRetrievalState"}\n';
