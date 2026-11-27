@@ -48,7 +48,20 @@ function addresses(value: unknown): string[] {
   return [];
 }
 
-const domainOf = (address: string): string => (address.match(/<([^>]+)>/)?.[1] ?? address).split('@').pop()!.trim().toLowerCase();
+const bare = (address: string): string => (address.match(/<([^>]+)>/)?.[1] ?? address).trim().toLowerCase();
+const domainOf = (address: string): string => bare(address).split('@').pop()!;
+/** Public mail domains have no inside: every address but the account's own is outside. */
+const PUBLIC_MAIL_DOMAINS = new Set(['gmail.com', 'googlemail.com', 'icloud.com', 'me.com', 'mac.com', 'yahoo.com', 'outlook.com', 'hotmail.com', 'live.com', 'msn.com', 'aol.com', 'proton.me', 'protonmail.com', 'gmx.com']);
+
+/** The invitee addresses a calendar write would add that count toward the outside-invite pause. */
+export function outsideInvitees(account: string, server: GoogleServer, tool: string, args: Record<string, unknown>): string[] {
+  if (server !== 'calendar') return [];
+  const invited = tool === 'create_event' ? [...addresses(args.attendees), ...addresses(args.attendeeEmails)]
+    : tool === 'update_event' ? [...addresses(args.addedAttendees), ...addresses(args.addedAttendeeEmails)] : [];
+  const self = bare(account);
+  const home = domainOf(account);
+  return invited.filter(a => (PUBLIC_MAIL_DOMAINS.has(home) ? bare(a) !== self : domainOf(a) !== home));
+}
 
 export interface CallEffects {
   /** Arguments as sent upstream (calendar notification forced to NONE). */
@@ -68,10 +81,7 @@ export function applyArgumentRules(account: string, server: GoogleServer, tool: 
       throw new SocketError('broker_args_refused', `calendar.${tool} sends no email from the broker: notificationLevel must be NONE or absent (got ${JSON.stringify(out.notificationLevel)})`, { field: 'notificationLevel' });
     }
     out.notificationLevel = 'NONE';
-    const home = domainOf(account);
-    const invited = tool === 'create_event' ? [...addresses(out.attendees), ...addresses(out.attendeeEmails)]
-      : tool === 'update_event' ? [...addresses(out.addedAttendees), ...addresses(out.addedAttendeeEmails)] : [];
-    outside = invited.filter(a => domainOf(a) !== home).length;
+    outside = outsideInvitees(account, server, tool, out).length;
   }
   if (server === 'gmail' && tool === 'create_draft') {
     const recipients = [...addresses(out.to), ...addresses(out.cc), ...addresses(out.bcc)];

@@ -254,11 +254,14 @@ export const RAW_MEMBERS: ReadonlySet<string> = new Set(['executeRaw', 'executeR
 const READ_PREFIX = /^(get|list|count|find|search|read|resolve|has|is|sum|cosines|traverse|relational|batchLoad|discover|load)/;
 /** Read-only members whose names do not start with a read prefix (search-read helpers). */
 export const READ_ONLY_MEMBERS: ReadonlySet<string> = new Set([
+  'probePurgeDerivations',
   'activeEmbeddingColId', 'aliasCanonicalRefs', 'generatedPagesIn', 'livePageIdsAt', 'pageCollapseFacts', 'pagesLinkingTo',
   'slugsEndingIn', 'supersedingPageSlugs',
   'dailyDecideSpend', 'decideConflictNoEntityCounts', 'decideSlotUsage',
   'normalizeFenceLines', 'sampleEffectiveDates', 'sampleEffectiveDateSources', 'sharedSkillPackTablePresent',
   'storedTimelineRowsByPageIds',
+  // Sets transaction-local settings (the persistence identity and write context) and writes no row: the raw set_config statement it replaced was never a write to follow or compare.
+  'setWriteContext',
   // The read-view digest cache read (the name carries a read prefix; listed so the class is explicit).
   'readPageViewDigest',
   // Batch 11 typed reads (page purge port, caller-links, chronicle): row locks and statements that only read.
@@ -382,7 +385,7 @@ export const UNMAPPED_WRITE_MEMBERS: ReadonlySet<string> = new Set([
   'setEffectTransactionLimits', 'setFactSupersededBy', 'setLocalStatementTimeout', 'setOauthClientReadSharedRevision',
   'setOauthClientRevision', 'setOauthClientTokenTtl', 'setPageType', 'setProjectionChunkerVersion', 'setPurgeEffectData',
   'setPurgeProbeTimeout', 'setPurgeVersionBody', 'setSourceChunkerVersion', 'setSourceContextualMode',
-  'setTakeSupersededBy', 'setWriteContext', 'settleFactsReconcile', 'settleFreshnessMarker', 'settleGenerationMember',
+  'setTakeSupersededBy', 'settleFactsReconcile', 'settleFreshnessMarker', 'settleGenerationMember',
   'settleMuteRecheck', 'settleNoopEmbeddingRows', 'settlePageEmbeddingReservation', 'settleSpendReservation',
   'settleSpendWithLog', 'settleWakeForget', 'settleWakeWatch', 'shareLockWriteCredential', 'softDeleteDerivedPages',
   'softDeleteOauthClient', 'stampConversationSourceWindows', 'stampDeferredProjectionJob', 'stampDreamPageProvenance',
@@ -431,6 +434,7 @@ export const UNMAPPED_WRITE_MEMBERS: ReadonlySet<string> = new Set([
 export type MemberKind = 'read_name' | 'raw' | 'reserved' | 'ignored' | 'schema' | 'mapped' | 'unmapped';
 
 /** How the follow wrapper treats a member name (mirrored reads and transactions are decided before this). */
+
 export function memberKind(name: string): MemberKind {
   if (name.startsWith('_')) return 'ignored';
   if (name === 'withReservedConnection') return 'reserved';

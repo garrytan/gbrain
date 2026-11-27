@@ -102,3 +102,15 @@ export async function resolveTranscriptAtomSlug(engine: BrainEngine, sourceId: s
   const mine = await engine.readLiveGenerationLocator(sourceId, ATOM_KIND, atomOwnerKey({ kind: 'transcript', transcriptKey: item.transcriptKey ?? item.filePath }));
   return mine?.locator === held.source_path ? legacy : atomSlug(title, item.filePath, item.transcriptKey ?? item.filePath, undatedDate);
 }
+
+/**
+ * #10270: a page whose complete read already has a held result for its current input pin and the current policy (the
+ * hold ids `currentHoldIds` returns, bound at `placeholder`) is skipped by the phase (`heldForInput`), so discovery and
+ * the backlog leave it out too; doctor's `generation_held` lists it with its release.
+ */
+export function heldAtomInputExclusionSql(placeholder: string): string {
+  return `AND NOT EXISTS (SELECT 1 FROM derived_generations dg
+        WHERE dg.source_id = p.source_id AND dg.kind = 'atom' AND dg.state = 'held' AND dg.owner_key = 'source_slug:' || p.slug
+          AND dg.hold_id = ANY(${placeholder}::text[]) AND COALESCE(dg.held_context->>'partial', 'false') <> 'true'
+          AND dg.input_pin IN (p.content_hash, p.content_hash || ':' || p.id::text || ':' || p.knowledge_revision::text))`;
+}

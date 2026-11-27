@@ -133,7 +133,7 @@ async function planOwner(engine: BrainEngine, requested: string): Promise<NonNul
 }
 
 /** Live tokens and OAuth clients bound to no member, with the rescope command that binds each to `owner`. */
-async function unboundCredentials(engine: BrainEngine, owner: string): Promise<NonNullable<ServesReceipt['unbound']>> {
+export async function unboundCredentials(engine: BrainEngine, owner: string): Promise<NonNullable<ServesReceipt['unbound']>> {
   const tokens = await engine.listUnboundTokenNames();
   const clients = await engine.listUnboundClientIds();
   return [
@@ -281,7 +281,7 @@ async function unlabeledOutside(engine: BrainEngine, sourceId: string, rules: Se
 
 const blocked = (r: ServesReceipt): boolean => [...r.members, ...(r.owner ? [r.owner] : []), ...r.rules, ...(r.company_rule ? [r.company_rule] : []), ...r.keys].some(x => x.action === 'blocked');
 
-function writeKeyFile(path: string, token: string): void {
+export function writeKeyFile(path: string, token: string): void {
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   chmodSync(dirname(path), 0o700);
   const tmp = `${path}.${process.pid}.tmp`;

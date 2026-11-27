@@ -130,6 +130,33 @@ describe('refusal-swallow extract sites', () => {
     return { all, named, first, pinned: identity?.identity?.pageId === older.id && typeof identity?.identity?.revision === 'string' };
   });
 
+  parityTest('extract-atoms.ts:470 discovery leaves out a page held for its current input, not one held for older content or a partial hold (#10270)', {
+    methods: ['putPage', 'getPage', 'recordHeldGenerationRow', 'listExtractablePages'],
+  }, async (engine) => {
+    const body = 'We met and decided many durable things. '.repeat(40);
+    for (const slug of ['meetings/held', 'meetings/held-pinned', 'meetings/stale-hold', 'meetings/partial', 'meetings/open']) {
+      await engine.putPage(slug, page('meeting', slug, `${body} ${slug}`));
+    }
+    const pageOf = async (slug: string) => (await engine.getPage(slug))!;
+    const hold = (holdId: string, inputPin: string, context: string) =>
+      ({ holdId, runId: null, inputPin, inputSize: null, setHash: 'set', reason: 'shrunk', context, proposal: null, proposalBytes: 0 });
+    const held = await pageOf('meetings/held');
+    const pinned = await pageOf('meetings/held-pinned');
+    const partial = await pageOf('meetings/partial');
+    const record = (slug: string, row: ReturnType<typeof hold>) =>
+      engine.transaction(tx => tx.recordHeldGenerationRow({ sourceId: 'default', kind: 'atom', ownerKey: `source_slug:${slug}` }, row as never));
+    await record('meetings/held', hold('hold-a', held.content_hash!, '{}'));
+    await record('meetings/held-pinned', hold('hold-b', `${pinned.content_hash}:${pinned.id}:${(pinned as unknown as { knowledge_revision: string }).knowledge_revision}`, '{}'));
+    await record('meetings/stale-hold', hold('hold-c', 'f'.repeat(64), '{}'));
+    await record('meetings/partial', hold('hold-d', partial.content_hash!, '{"partial":true}'));
+    const list = async (holdIds: string[]) => (await engine.listExtractablePages({
+      sourceId: 'default', types: ['meeting'], minChars: 500, limit: 50, affectedSlugs: null, connectorExclusion: null, holdIds,
+    })).map(p => p.slug).sort();
+    const out = { all: await list([]), held: await list(['hold-a', 'hold-b', 'hold-c', 'hold-d']), other: await list(['hold-other']) };
+    expect(out.held).toEqual(['meetings/open', 'meetings/partial', 'meetings/stale-hold']);
+    return out;
+  });
+
   parityTest('extract-atoms.ts:567 the idempotency read names the hashes a live, unmanaged atom of the source carries', {
     methods: ['putPage', 'listAtomSourceHashes'],
   }, async (engine, backend) => {

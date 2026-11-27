@@ -8,14 +8,19 @@
 //! connector source, and no live, unmanaged atom of the same source carries its content hash's first 16
 //! characters as `source_hash`.
 //!
-//! The statement's two disposition exclusions: a page whose current content has a completed or held
+//! The statement's disposition exclusions: a page whose current content has a completed or held
 //! `managed-atoms` checkpoint (whose `partial`, when set, is at or above `maxInputChars`), and a page whose
 //! `extract_atoms_page_state` row for its current content (`atom_state.rs`) is tombstoned or records a partial cap at or
 //! above `maxInputChars`.
+//!
+//! A page whose input is held (#10270) is left out too: a held `atom` generation whose hold id is one of the
+//! query's `holdIds`, that is not a partial hold, and whose input pin is the page's content hash or
+//! `<content hash>:<id>:<knowledge revision>` (`generations::atom_reads::held_atom_inputs`).
 
 use crate::Store;
 use crate::cli_reads::pg_text::fm_text;
 use crate::error::Result;
+use crate::generations::atom_reads::held_atom_inputs;
 use crate::kv::KvRead;
 use crate::pages::{PageRecord, all_pages};
 use crate::persistence::managed_atom_discovery_skips_in;
@@ -47,6 +52,9 @@ pub struct AtomBacklogQuery {
     pub max_input_chars: Option<i64>,
     #[serde(default)]
     pub connector_exclusion: Option<ConnectorExclusion>,
+    /// The hold ids of the held atom generations whose input is still current (`currentHoldIds(engine, 'atom')`).
+    #[serde(default)]
+    pub hold_ids: Vec<String>,
 }
 
 /// The first 16 characters of the content hash: `substring(p.content_hash from 1 for 16)`.
@@ -134,6 +142,8 @@ impl Store {
                 Some((p.source_id.as_str(), hash))
             })
             .collect();
+        let hold_ids: BTreeSet<&str> = query.hold_ids.iter().map(String::as_str).collect();
+        let held = held_atom_inputs(&*read, &hold_ids)?;
         let mut count = 0;
         for page in &pages {
             if query
@@ -172,6 +182,14 @@ impl Store {
                 }
             }
             if atoms.contains(&(page.source_id.as_str(), hash_head(hash))) {
+                continue;
+            }
+            let owner = format!("source_slug:{}", page.slug);
+            let current = format!("{hash}:{}:{}", page.id, page.knowledge_revision);
+            if [hash, current.as_str()]
+                .into_iter()
+                .any(|pin| held.contains(&(page.source_id.clone(), owner.clone(), pin.to_string())))
+            {
                 continue;
             }
             if let Some(incarnation) = incarnations.get(&page.source_id)

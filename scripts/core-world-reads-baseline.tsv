@@ -120,6 +120,7 @@ src/core/belief/purge-mirror.ts	module_collection	1	shadow capture: the purge li
 src/core/belief/state.ts	module_collection	2	W6: per-engine state, or mark as a constant table
 src/core/binary-self-update.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/binary-self-update.ts	spawn_import	1	W7: process-wide effects move to src/cli
+src/core/binary-self-update.ts	process_env	2	stays: GH_TOKEN/GITHUB_TOKEN is the caller shell or CI runner credential for the GitHub attestation API (keyless reads share 60 an hour per IP), not a brain setting
 src/core/bootstrap/adopt-connection.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/bootstrap/adopted-connections.ts	fs_import	1	W7: filesystem boundary moves to the local app
 src/core/bootstrap/assets.ts	fs_import	1	W7: filesystem boundary moves to the local app
@@ -1294,4 +1295,6 @@ src/core/remote-caller.ts	als_store	1	W2: engine scope (decision E) replaces ad 
 src/core/policy/authority.ts	process_env	1	W6: settings plane out of the core (GST-3824 L1: terminalAuthorityProblem reads the agent markers of this process)
 src/core/policy/authority.ts	als_store	1	W2: engine scope (decision E) replaces ad hoc async context (GST-3824 L1: the owner proof of the running policy command)
 src/core/policy/store.ts	load_config	1	W6: settings plane out of the core (GST-3824 L1: the trusted local write context of a policy command)
+src/core/rules/admission.ts	als_store	1	W2: engine scope (decision E) replaces ad hoc async context (GST-3827 C2: the rule-writer scope of the correct verb and gbrain rules)
+src/core/rules/correct.ts	load_config	1	W6: settings plane out of the core (GST-3827 C2: the trusted local write context of gbrain rules approve and retire, as in policy/store.ts)
 src/core/setup/brain-first-upgrade-notice.ts	fs_import	1	W7: filesystem boundary moves to the local app (GST-3824 L1: rewrites installed brain-first blocks when the policy line setting changes)
