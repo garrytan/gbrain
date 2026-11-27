@@ -18,9 +18,8 @@
  *    only, and the runner parity cases preview empty brains, which prove nothing about a listing.
  *  - Seam: none in a preview. Every fact, page and source is seeded through typed members; the url-clone-fences clone
  *    is a plain git checkout under a temp dir and the captured-facts transcript a file under a temp CLAUDE_CONFIG_DIR.
- *    The populated purged-page-facts case seeds its purge record through the real page purge, which writes
- *    `page_purges` with raw SQL (persistence/page-purge.ts `tombstonePage`), so it stops on a Rust brain at that step
- *    until lane 13 (rust-engine/page-purge-rust) serves the purge. Generated values (hashes, ids, uuids, the temp
+ *    The populated purged-page-facts case removes its page through the real retention purge
+ *    (`purgeDeletedPagesCoordinated`), which runs on a Rust brain too. Generated values (hashes, ids, uuids, the temp
  *    root) are compared by shape.
  */
 import { describe, expect } from 'bun:test';
