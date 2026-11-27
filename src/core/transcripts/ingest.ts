@@ -698,9 +698,10 @@ export async function transcriptPageCeiling(engine: BrainEngine): Promise<number
  *   - its request has left the journal: trusted when the revision's principal
  *     is the local CLI and the page carries the importer's stamp;
  *   - no request wrote it (the direct importer on an unmanaged brain, a write
- *     from before attribution): trusted when `ingested_via` is the importer's
- *     or NULL; a remote write is always a journaled request, and on this path
- *     it also replaces the stamp with `mcp:<operation>`.
+ *     from before attribution): trusted when `ingested_via` is NULL, or is the
+ *     importer's and no later write moved the page past it (`ingested_at >=
+ *     updated_at`): a remote rewrite keeps the stamp, so a later write with no
+ *     request never vouches for it, and over an empty stamp it writes its own.
  * So a remote edit can't choose the layout or the part size. A part 2 is
  * split evidence only under the same rule: its id is derivable from part 1's,
  * so any writer can put a page carrying it anywhere. A split session the

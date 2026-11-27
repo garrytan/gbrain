@@ -285,7 +285,7 @@ export async function importFromContent(
     /**
      * #10330: an edit of a stored page is not a new ingestion. The page row keeps its first-ingest columns
      * (source_kind, source_uri, ingested_via and the ingested_at the engine would stamp); the values above still
-     * reach the guardrail input.
+     * reach the guardrail input. A page with no stored channel keeps none: the write stamps its own (importer-provenance.ts).
      */
     keepIngestColumns?: boolean;
     /** Wave B: who stages a segmented body (the journaled request's principal); unset: the local maintenance principal, kind `import`. */
@@ -749,7 +749,7 @@ export async function importFromContent(
       const chunkWrites = planImportChunkWrites(fresh, kept, !segmented && !!opts.prepare && opts.boundedChunkWrites === true);
       const deferChunks = chunkReplacementDeferred = chunkWrites.defer;
       let written: Page | undefined;
-      const ingest = opts.keepIngestColumns && existing ? { source_kind: null, source_uri: null, ingested_via: null }
+      const ingest = opts.keepIngestColumns && existing?.ingested_via ? { source_kind: null, source_uri: null, ingested_via: null }
         : { source_kind: opts.source_kind ?? null, source_uri: opts.source_uri ?? originUri, ingested_via: opts.ingested_via ?? null };
       await pipelined(tx, [
         () => assertPreparedFactWithdrawals(tx, txOpts.sourceId, parsed.compiled_truth, parsed.timeline || '', slug),
