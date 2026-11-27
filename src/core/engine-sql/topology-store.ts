@@ -124,7 +124,69 @@ export interface TopologyStore extends ContentReceiptStore {
   worktreeMembers(worktreeId: string): Promise<{ source_id: string; relative_path: string }[]>;
   brainId(): Promise<string | null>;
   worktreeOwner(id: string): Promise<{ owner_host_id: string | null; state: string } | null>;
+
+  // Managed clone, reclone and their recovery (topology-clone.ts, topology-recovery.ts, physical-root.ts).
+  /** The worktree's manifest (null when it has none), or null when the worktree is missing. */
+  worktreeManifest(id: string): Promise<{ manifest: Record<string, any> | null } | null>;
+  /** Locks the worktree and reads its owner host and manifest; null when it is missing. */
+  lockWorktreeManifest(id: string): Promise<{ owner_host_id: string | null; manifest: Record<string, any> | null } | null>;
+  /** The change with this id, or null. */
+  readChange(id: string): Promise<TopologyChange | null>;
+  /** Locks the recovering changes that name this worktree: their ids and recovery records. */
+  lockRecoveringChanges(worktreeId: string): Promise<{ id: string; recovery: Record<string, any> | null }[]>;
+  /** A new worktree owned by `hostId` at epoch 1 in the recovering state. */
+  insertRecoveringWorktree(id: string, hostId: string): Promise<void>;
+  markWorktreeRecovering(id: string): Promise<void>;
+  markWorktreeActive(id: string): Promise<void>;
+  /** Marks the worktree recovering and records its manifest. */
+  recoverWorktreeWithManifest(id: string, manifest: Record<string, unknown>): Promise<void>;
+  /** Binds a source to a worktree at the table's defaults (no relative path, generation 1). */
+  insertCloneBinding(sourceId: string, incarnation: string, worktreeId: string): Promise<void>;
+  /** Replaces a recovering change's recovery record. */
+  setChangeRecovery(id: string, recovery: Record<string, unknown>): Promise<void>;
+  /** Replaces a change's recovery record whatever its state (a restamp already holds the change locked). */
+  restampChangeRecovery(id: string, recovery: Record<string, unknown>): Promise<void>;
+  /** Closes a change committed or failed: clears its recovery and merges `outcome` into the recorded one. */
+  closeChange(id: string, state: 'committed' | 'failed', outcome: Record<string, unknown>): Promise<void>;
+  /** Commits a change and merges `outcome` into the recorded one. */
+  commitChange(id: string, outcome: Record<string, unknown>): Promise<void>;
+  /** Clears the source's last commit and sync time (a reclone starts its sync again). */
+  resetSourceSync(id: string, incarnation: string): Promise<void>;
+
+  // The clone and its recovery read these with the column lists they always sent (topology-clone.ts, topology-recovery.ts).
+  /** The source's incarnation, config, last commit and local path, or null. */
+  readCloneSource(id: string): Promise<{ incarnation: string; config: Record<string, unknown>; last_commit: string | null; local_path: string | null } | null>;
+  /** The source's incarnation, last commit and config, or null. */
+  readSourceHead(id: string): Promise<{ incarnation: string; last_commit: string | null; config: unknown } | null>;
+  /** The host's local path of a worktree, or null. */
+  cloneHostBindingPath(worktreeId: string, hostId: string): Promise<{ local_path: string } | null>;
+  /** Locks the worktree and reads its owner host, owner epoch and state; null when missing. */
+  lockCloneWorktree(id: string): Promise<{ owner_host_id: string; owner_epoch: string; state: string } | null>;
+  /** The sources bound to the worktree, in source id order (the locale's, which never reaches output). */
+  boundSourceIds(worktreeId: string): Promise<string[]>;
+  /** The clone's host binding insert, unless one exists. */
+  insertCloneHostBinding(worktreeId: string, hostId: string, localPath: string, coordinationPath: string): Promise<void>;
+
+  // Owner activity (persistence/owner-activity.ts).
+  /**
+   * When the owner of each worktree was last active: its liveness (a consumer heartbeat within `lapsedMs`; this engine
+   * keeps none on Rust and PGLite), the newest evidence of activity, the oldest open write and the store's clock. One
+   * row per listed worktree that has an owner.
+   */
+  ownerActivity(ids: readonly string[], lapsedMs: number, opts?: { signal?: AbortSignal }): Promise<OwnerActivityRow[]>;
+  /**
+   * The managed writes waiting on each worktree (`owner_host_stale`, commands/doctor/checks/owner-host-stale.ts): per worktree with a
+   * queued, deferred, running or recovering request, how many, when the oldest was created and the sources bound to it (byte
+   * order); the order of the rows is not defined.
+   */
+  openWrites(): Promise<OpenWritesRow[]>;
 }
+
+/** One worktree's waiting writes (`openWrites`). */
+export interface OpenWritesRow { worktree_id: string; open_writes: number; oldest_open: string | Date; source_ids: string[] | null }
+
+/** One worktree's owner facts (`ownerActivity`). */
+export interface OwnerActivityRow { worktree_id: string; owner_host_id: string; live: boolean; last_active: string | Date | null; oldest_open: string | Date | null; db_now: string | Date }
 
 const TOPOLOGY_BOUND_SQL = "SELECT set_config('synchronous_commit','on',true),set_config('lock_timeout','1s',true),set_config('statement_timeout','5s',true)";
 const SYNCHRONOUS_COMMIT_SQL = "SELECT set_config('synchronous_commit','on',true)";
@@ -213,6 +275,49 @@ const MOVED_ROOT_SQL = `SELECT brain_id::text AS brain_id,
 const WORKTREE_MEMBERS_SQL = 'SELECT source_id,relative_path FROM persistence_source_bindings WHERE worktree_id=$1::uuid ORDER BY source_id COLLATE "C"';
 const BRAIN_ID_SQL = 'SELECT brain_id FROM persistence_brain WHERE singleton=1';
 const WORKTREE_OWNER_SQL = 'SELECT owner_host_id,state FROM persistence_worktrees WHERE id=$1::uuid';
+const WORKTREE_MANIFEST_SQL = 'SELECT manifest FROM persistence_worktrees WHERE id=$1::uuid';
+const LOCK_WORKTREE_MANIFEST_SQL = 'SELECT owner_host_id,manifest FROM persistence_worktrees WHERE id=$1::uuid FOR UPDATE';
+const READ_CHANGE_SQL = 'SELECT * FROM persistence_topology_changes WHERE id=$1::uuid';
+const LOCK_RECOVERING_CHANGES_SQL = "SELECT id,recovery FROM persistence_topology_changes WHERE state='recovering' AND $1::uuid=ANY(worktree_ids) FOR UPDATE";
+const INSERT_RECOVERING_WORKTREE_SQL = "INSERT INTO persistence_worktrees(id,owner_host_id,owner_epoch,state) VALUES($1::uuid,$2::uuid,1,'recovering')";
+const MARK_WORKTREE_RECOVERING_SQL = "UPDATE persistence_worktrees SET state='recovering' WHERE id=$1::uuid";
+const MARK_WORKTREE_ACTIVE_SQL = "UPDATE persistence_worktrees SET state='active' WHERE id=$1::uuid";
+const RECOVER_WORKTREE_WITH_MANIFEST_SQL = "UPDATE persistence_worktrees SET state='recovering',manifest=$2::text::jsonb WHERE id=$1::uuid";
+const INSERT_CLONE_BINDING_SQL = 'INSERT INTO persistence_source_bindings(source_id,source_incarnation,worktree_id) VALUES($1,$2::uuid,$3::uuid)';
+const SET_CHANGE_RECOVERY_SQL = "UPDATE persistence_topology_changes SET recovery=$2::text::jsonb,updated_at=now() WHERE id=$1::uuid AND state='recovering'";
+const RESTAMP_CHANGE_RECOVERY_SQL = 'UPDATE persistence_topology_changes SET recovery=$2::text::jsonb,updated_at=now() WHERE id=$1::uuid';
+const CLOSE_CHANGE_SQL = `UPDATE persistence_topology_changes SET state=$2,recovery=NULL,recovery_bytes=0,updated_at=now(),
+    outcome=COALESCE(outcome,'{}'::jsonb)||$3::text::jsonb WHERE id=$1::uuid`;
+const COMMIT_CHANGE_SQL = "UPDATE persistence_topology_changes SET state='committed',outcome=outcome||$2::text::jsonb,updated_at=now() WHERE id=$1::uuid";
+/** `owner_host_stale`'s read of the writes waiting on each worktree: the statement the doctor check sent through executeRaw, unchanged. */
+const OPEN_WRITES_SQL = `
+      SELECT r.worktree_id::text AS worktree_id, count(*)::int AS open_writes, min(r.created_at) AS oldest_open,
+        (SELECT array_agg(b.source_id ORDER BY b.source_id COLLATE "C") FROM persistence_source_bindings b WHERE b.worktree_id=r.worktree_id) AS source_ids
+      FROM persistence_requests r WHERE r.worktree_id IS NOT NULL AND r.state IN ('queued','deferred','running','recovering')
+      GROUP BY r.worktree_id`;
+
+const OWNER_ACTIVITY_SQL = `
+    SELECT now() AS db_now, w.id::text AS worktree_id, w.owner_host_id::text AS owner_host_id,
+      EXISTS (SELECT 1 FROM persistence_consumers c WHERE c.host_id=w.owner_host_id
+        AND c.renewed_at > now() - ($2::double precision * interval '1 millisecond')) AS live,
+      GREATEST(w.heartbeat_at,
+        (SELECT max(c.renewed_at) FROM persistence_consumers c WHERE c.host_id=w.owner_host_id),
+        (SELECT COALESCE(r.published_at, r.completed_at) FROM persistence_requests r WHERE r.worktree_id>=w.id AND r.worktree_id<=w.id
+          AND r.state='committed' AND NOT COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%' ORDER BY r.worktree_id DESC, r.sequence DESC LIMIT 1),
+        (SELECT max(x.completed_at) FROM sources s CROSS JOIN LATERAL (SELECT r.completed_at FROM persistence_requests r
+          WHERE r.worktree_id=w.id AND r.source_incarnation=s.incarnation AND r.state='committed' AND COALESCE(r.intent->>'kind','') LIKE 'managed_sync_%'
+          ORDER BY r.completed_at DESC LIMIT 1) x)) AS last_active,
+      (SELECT min(r.created_at) FROM persistence_requests r WHERE r.worktree_id=w.id AND r.state IN ('queued','deferred','running','recovering')) AS oldest_open
+    FROM persistence_worktrees w
+    WHERE w.id::text = ANY($1::text[]) AND w.owner_host_id IS NOT NULL`;
+const READ_CLONE_SOURCE_SQL = 'SELECT incarnation,config,last_commit,local_path FROM sources WHERE id=$1';
+const READ_SOURCE_HEAD_SQL = 'SELECT incarnation,last_commit,config FROM sources WHERE id=$1';
+const CLONE_HOST_BINDING_PATH_SQL = 'SELECT local_path FROM persistence_host_bindings WHERE worktree_id=$1::uuid AND host_id=$2::uuid';
+const LOCK_CLONE_WORKTREE_SQL = 'SELECT owner_host_id,owner_epoch,state FROM persistence_worktrees WHERE id=$1::uuid FOR UPDATE';
+// The member order never reaches output: the members are re-sorted in JS and only name the source rows to lock.
+const BOUND_SOURCE_IDS_SQL = 'SELECT source_id FROM persistence_source_bindings WHERE worktree_id=$1::uuid ORDER BY source_id';
+const INSERT_CLONE_HOST_BINDING_SQL = 'INSERT INTO persistence_host_bindings(worktree_id,host_id,local_path,coordination_path) VALUES($1::uuid,$2::uuid,$3,$4) ON CONFLICT(worktree_id,host_id) DO NOTHING';
+const RESET_SOURCE_SYNC_SQL = 'UPDATE sources SET last_commit=NULL,last_sync_at=NULL WHERE id=$1 AND incarnation=$2::uuid';
 
 /** `topologyStore()` on PGLite and Postgres: the store over `exec` (a transaction engine runs every call in it). */
 export async function topologyStore(exec: RawSql): Promise<TopologyStore> {
@@ -294,10 +399,34 @@ export function sqlTopologyStore(exec: RawSql): TopologyStore {
     worktreeMembers: worktreeId => exec.executeRaw(WORKTREE_MEMBERS_SQL, [worktreeId]),
     brainId: async () => (await first<{ brain_id: string }>(BRAIN_ID_SQL, []))?.brain_id ?? null,
     worktreeOwner: id => first(WORKTREE_OWNER_SQL, [id]),
+    worktreeManifest: id => first(WORKTREE_MANIFEST_SQL, [id]),
+    lockWorktreeManifest: id => first(LOCK_WORKTREE_MANIFEST_SQL, [id]),
+    readChange: id => first<TopologyChange>(READ_CHANGE_SQL, [id]),
+    lockRecoveringChanges: worktreeId => exec.executeRaw(LOCK_RECOVERING_CHANGES_SQL, [worktreeId]),
+    insertRecoveringWorktree: (id, hostId) => run(INSERT_RECOVERING_WORKTREE_SQL, [id, hostId]),
+    markWorktreeRecovering: id => run(MARK_WORKTREE_RECOVERING_SQL, [id]),
+    markWorktreeActive: id => run(MARK_WORKTREE_ACTIVE_SQL, [id]),
+    recoverWorktreeWithManifest: (id, manifest) => run(RECOVER_WORKTREE_WITH_MANIFEST_SQL, [id, JSON.stringify(manifest)]),
+    insertCloneBinding: (sourceId, incarnation, worktreeId) => run(INSERT_CLONE_BINDING_SQL, [sourceId, incarnation, worktreeId]),
+    setChangeRecovery: (id, recovery) => run(SET_CHANGE_RECOVERY_SQL, [id, JSON.stringify(recovery)]),
+    restampChangeRecovery: (id, recovery) => run(RESTAMP_CHANGE_RECOVERY_SQL, [id, JSON.stringify(recovery)]),
+    closeChange: (id, state, outcome) => run(CLOSE_CHANGE_SQL, [id, state, JSON.stringify(outcome)]),
+    commitChange: (id, outcome) => run(COMMIT_CHANGE_SQL, [id, JSON.stringify(outcome)]),
+    resetSourceSync: (id, incarnation) => run(RESET_SOURCE_SYNC_SQL, [id, incarnation]),
+    readCloneSource: id => first(READ_CLONE_SOURCE_SQL, [id]),
+    readSourceHead: id => first(READ_SOURCE_HEAD_SQL, [id]),
+    cloneHostBindingPath: (worktreeId, hostId) => first(CLONE_HOST_BINDING_PATH_SQL, [worktreeId, hostId]),
+    lockCloneWorktree: id => first(LOCK_CLONE_WORKTREE_SQL, [id]),
+    boundSourceIds: async worktreeId => (await exec.executeRaw<{ source_id: string }>(BOUND_SOURCE_IDS_SQL, [worktreeId])).map(row => row.source_id),
+    insertCloneHostBinding: (worktreeId, hostId, localPath, coordinationPath) => run(INSERT_CLONE_HOST_BINDING_SQL, [worktreeId, hostId, localPath, coordinationPath]),
+    ownerActivity: (ids, lapsedMs, opts) => exec.executeRaw<OwnerActivityRow>(OWNER_ACTIVITY_SQL, [[...ids], lapsedMs], opts),
+    openWrites: () => exec.executeRaw<OpenWritesRow>(OPEN_WRITES_SQL),
   };
 }
 
 /** The statements `sqlTopologyStore` sends whose text is pinned by a test against the callers' fragments. */
 export const TOPOLOGY_STORE_STATEMENTS = {
   ACTIVE_REFRESH_SQL, RETIRE_STATE_EXPIRED_SQL, EXPIRED_ARCHIVE_ROW_SQL,
+  LOCK_WORKTREE_MANIFEST_SQL, LOCK_RECOVERING_CHANGES_SQL, CLOSE_CHANGE_SQL, COMMIT_CHANGE_SQL, OWNER_ACTIVITY_SQL, OPEN_WRITES_SQL,
+  READ_CLONE_SOURCE_SQL, READ_SOURCE_HEAD_SQL, CLONE_HOST_BINDING_PATH_SQL, LOCK_CLONE_WORKTREE_SQL, BOUND_SOURCE_IDS_SQL, INSERT_CLONE_HOST_BINDING_SQL,
 } as const;

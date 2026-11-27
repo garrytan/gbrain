@@ -32,7 +32,9 @@
 //! - `0x03 <kind> ...`: per-entity fact sequences (`facts/entity_order.rs` lists the kinds: `01 source 00 entity` the
 //!   counter, `02 source 00 entity 00 seq` the index of fact ids), written only on a multi-user store;
 //! - `0x04`: the clock high-water mark;
-//! - `0x05 <family byte> <claim id>`: the lease name and epoch a claim was taken under.
+//! - `0x05 <family byte> <claim id>`: the lease name and epoch a claim was taken under. Family bytes (`CLAIM_*`):
+//!   `01` job, `02` write request (also a grouped publication follower), `03` effect (also a coalesced Git effect),
+//!   `04` drain lease, `05` cycle lock, `06` refresh row, `07` sync checkpoint. Append only, never reuse.
 //!
 //! Nothing writes under `~L` until a caller takes a lease, so a brain that never does keeps every byte.
 
@@ -60,6 +62,15 @@ pub const CLAIM_WRITE: u8 = 0x02;
 pub const CLAIM_EFFECT: u8 = 0x03;
 pub const CLAIM_DRAIN_LEASE: u8 = 0x04;
 pub const CLAIM_CYCLE_LOCK: u8 = 0x05;
+/// A worktree refresh row (lane LM slice 3): the claim id is the refresh row id, lowercase. Taken when the row is
+/// created (`insert_draining`) or adopted by a new holder (`adopt_claim`, `set_holder`), checked on every state
+/// mutation, ended at the terminal states (`completed`, `aborted`).
+pub const CLAIM_REFRESH: u8 = 0x06;
+/// A managed sync checkpoint (lane LM slice 3): the claim id is `<op> 0x00 <fingerprint>` of the `op_checkpoints`
+/// row (the sync cursor of op `managed-sync` and the ghost report claim). Taken when the row is created or claimed
+/// (`cursor_insert`, `ghost_report_claim`) or adopted by a resuming run (`checkpoint_touch` of a cursor row), checked on
+/// every compare-and-swap and write, ended when the cursor is marked done or deleted.
+pub const CLAIM_SYNC_CHECKPOINT: u8 = 0x07;
 
 /// The longest lease name, in bytes.
 pub const MAX_NAME_BYTES: usize = 512;

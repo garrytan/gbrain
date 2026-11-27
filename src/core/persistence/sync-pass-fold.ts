@@ -44,6 +44,8 @@ import { emptySyncScope } from './sync-slug-mode.ts';
 import { faultPoint } from './fault-points.ts';
 import { supersessionSql } from './terminal-classify.ts';
 import { publishPassStamp, syncGitTopLevel, type FenceTrendPrefix, type SyncIntent } from './sync-prepare.ts';
+import { syncRows } from '../engine-sql/managed-sync-store.ts';
+import { rethrowCapabilityRefusal } from '../engine-capability-refusal.ts';
 
 /** What a folded stamp's proof needs of its round: S1's mark, page count and largest page id, and the round's imports. */
 export interface PassFold {
@@ -97,8 +99,7 @@ export async function ownWritebackCommit(engine: Pick<BrainEngine, 'executeRaw'>
   const head = git(['rev-parse', '--verify', '--quiet', 'HEAD^{commit}'])?.trim();
   const changed = head && head !== input.from ? git(['diff-tree', '-r', '-z', '--no-renames', input.from, head]) : null;
   if (!head || changed === null) return false;
-  const effects = await engine.executeRaw<{ path: string | null; hash: string | null; state: string }>(`SELECT data->>'relative_path' AS path, data->>'expected_hash' AS hash, state
-    FROM persistence_effects WHERE request_id = ANY($1::uuid[]) AND kind='git'`, [input.writeIds]);
+  const effects = await syncRows<{ path: string | null; hash: string | null; state: string }>(engine, 'writeback_effects', [input.writeIds]);
   if (!effects.length || effects.some(effect => !['committed', 'running'].includes(effect.state) || !effect.path || !effect.hash)) return false;
   const root = realpathSync(input.localPath);
   const want = new Map(effects.map(effect => [relative(input.gitRoot, join(root, effect.path!)).split(sep).join('/'), effect.hash!]));
@@ -132,6 +133,8 @@ async function foldedStamp(tx: BrainEngine, input: { row: WriteRequest; p: SyncI
     });
     return null;
   } catch (error) {
+    // A refusal of the engine (a capability it lacks) is not a stamp that failed: it ends the import, never reads as 'error'.
+    rethrowCapabilityRefusal(error);
     return error instanceof StampSkipped ? error.reason : 'error';
   }
 }
@@ -145,11 +148,9 @@ async function provenStamp(tx: BrainEngine, { row, p, root, trend }: { row: Writ
     () => readPassRow(tx, row.source_id, stamp.incarnation),
     () => findOpenPassWork(tx, row.worktree_id!, row.request_id, !!writeback),
     () => readConvergedWatermark(tx, scope, row.request_id, OPEN_AT_STAMP_CAP, writeback ? { own: writeback } : undefined),
-    () => tx.executeRaw(`SELECT last_commit, config->>'slug_root_mode' AS mode FROM sources WHERE id=$1 AND incarnation=$2::uuid`, [row.source_id, row.source_incarnation]),
+    () => syncRows(tx, 'source_mode', [row.source_id, row.source_incarnation]),
     () => proveConfirm(tx, { sourceId: row.source_id, incarnation: row.source_incarnation, passId: p.passId!, base: fold.base, postgres, self: row.id }),
-    () => tx.executeRaw(`SELECT 1 FROM persistence_requests r WHERE r.source_id=$1 AND r.slug='__managed_sync_checkpoint__' AND r.intent IS NOT NULL AND NOT r.compacted
-      AND r.operation='submit_job' AND r.intent->>'kind'='managed_sync_checkpoint' AND r.state IN ('failed','conflict','cancelled')
-      AND NOT EXISTS (SELECT 1 FROM persistence_requests c WHERE ${supersessionSql('r', 'c')}) LIMIT 1`, [row.source_id]),
+    () => syncRows(tx, 'refused_checkpoint', [row.source_id]),
   ]) as [unknown[], Awaited<ReturnType<typeof readPassRow>>, string | null, Awaited<ReturnType<typeof readConvergedWatermark>>, Array<{ last_commit: string | null; mode: string | null }>,
     Awaited<ReturnType<typeof proveConfirm>>, unknown[]];
   if (!lease.length || !pass || pass.value.lease_token !== stamp.leaseToken || pass.value.telemetry.pass_id !== p.passId) return 'lease';

@@ -44,7 +44,7 @@ src/commands/doctor/checks/managed-guard.ts	execute_raw	1
 src/commands/doctor/checks/managed-sync-convergence.ts	execute_raw	1
 src/commands/doctor/checks/managed-sync-movement.ts	execute_raw	1
 src/commands/doctor/checks/orphan-estimate.ts	execute_raw	2
-src/commands/doctor/checks/owner-host-stale.ts	execute_raw	2
+src/commands/doctor/checks/owner-host-stale.ts	execute_raw	1
 src/commands/doctor/checks/persistence-requests.ts	execute_raw	1
 src/commands/doctor/checks/pglite-worker.ts	sql_template	1
 src/commands/doctor/checks/postgres-tls.ts	execute_raw	1
@@ -202,7 +202,7 @@ src/core/cycle/patterns-plan.ts	execute_raw	1
 src/core/cycle/patterns.ts	execute_raw	7
 src/core/cycle/transcript-discovery.ts	execute_raw	2
 src/core/cycle/unindexed-files.ts	execute_raw	1
-src/core/db-lock.ts	execute_raw	2
+src/core/db-lock.ts	execute_raw	1
 src/core/db.ts	driver_call	2
 src/core/db.ts	sql_template	4
 src/core/derived-links.ts	execute_raw	10
@@ -239,7 +239,7 @@ src/core/facts/purge.ts	execute_raw	1	GBRA-574 F #9674 (opened before this ratch
 src/core/feedback/store.ts	execute_raw	7
 src/core/function-search-path.ts	execute_raw	3
 src/core/ghost-pages.ts	execute_raw	1
-src/core/git/redact-finish.ts	execute_raw	7	GST-2988 PR 2 publish redaction finish: reads sources.local_path and persistence_host_bindings to find the checkout that owns a pushed root, reads and compare-and-sets sources.last_commit to the rebuilt sha, and lists persistence_effects worktree ids to remap parked effects; branched before the #9641 ratchet; no typed engine method for these source and effect reads exists yet
+src/core/git/redact-finish.ts	execute_raw	5	GST-2988 PR 2 publish redaction finish: reads sources.local_path and persistence_host_bindings to find the checkout that owns a pushed root, reads and compare-and-sets sources.last_commit to the rebuilt sha, and lists persistence_effects worktree ids to remap parked effects; branched before the #9641 ratchet; no typed engine method for these source and effect reads exists yet
 src/core/git/untrack-admission.ts	execute_raw	3	came from master #9627 (held private facts, database-only untrack), which landed after this ratchet was cut
 src/core/github-source.ts	execute_raw	2
 src/core/google/attachment-backfill.ts	execute_raw	2
@@ -345,7 +345,7 @@ src/core/persistence/bounded-reads.ts	execute_raw	10
 src/core/persistence/capacity-view.ts	execute_raw	1
 src/core/persistence/change-reason.ts	execute_raw	2
 src/core/persistence/compaction-pass.ts	execute_raw	1
-src/core/persistence/config-snapshot.ts	execute_raw	2
+src/core/persistence/config-snapshot.ts	execute_raw	1
 src/core/persistence/connector-account-mismatch.ts	execute_raw	1
 src/core/persistence/connector-checkpoint-migration.ts	execute_raw	8
 src/core/persistence/connector-google-receipts.ts	execute_raw	1
@@ -364,10 +364,10 @@ src/core/persistence/diagnostics.ts	execute_raw	1
 src/core/persistence/drift-conflicts.ts	execute_raw	4
 src/core/persistence/effect-journal.ts	execute_raw	5
 src/core/persistence/effect-recovery.ts	execute_raw	16
-src/core/persistence/effect-retry.ts	execute_raw	10
+src/core/persistence/effect-retry.ts	execute_raw	9
 src/core/persistence/effect-settle.ts	execute_raw	7
 src/core/persistence/effect-targets.ts	execute_raw	7
-src/core/persistence/effects.ts	execute_raw	9
+src/core/persistence/effects.ts	execute_raw	8
 src/core/persistence/embedding-settlement.ts	execute_raw	6
 src/core/persistence/engine-graduation.ts	execute_raw	18
 src/core/persistence/facts-maintenance.ts	execute_raw	4
@@ -378,7 +378,6 @@ src/core/persistence/forget-prepare.ts	execute_raw	1	GBRA-574 F #9674 (opened be
 src/core/persistence/git-conversion.ts	execute_raw	16
 src/core/persistence/git-declared.ts	execute_raw	7
 src/core/persistence/git-door.ts	execute_raw	1
-src/core/persistence/git-durability-administration.ts	execute_raw	2
 src/core/persistence/git-gap.ts	execute_raw	5
 src/core/persistence/graduation-copy.ts	execute_raw	36
 src/core/persistence/graduation-digest.ts	execute_raw	5	sync 13b: master (R2) splits the digest read into readKeysetRows, which the shadow seed shares; the trunk side counted 4
@@ -388,15 +387,11 @@ src/core/persistence/graduation-schema.ts	execute_raw	8
 src/core/persistence/graduation-target.ts	driver_call	2
 src/core/persistence/graduation-target.ts	execute_raw	5
 src/core/persistence/graduation-verify.ts	execute_raw	15
-src/core/persistence/group-publish.ts	execute_raw	11
+src/core/persistence/group-publish.ts	execute_raw	4
 src/core/persistence/hosted-repo.ts	execute_raw	4
 src/core/persistence/identity.ts	execute_raw	3
-src/core/persistence/import-deferral.ts	execute_raw	1
-src/core/persistence/import-mutations.ts	execute_raw	3
-src/core/persistence/import-prepare.ts	execute_raw	1
 src/core/persistence/import-reads.ts	execute_raw	7
-src/core/persistence/journal.ts	execute_raw	25
-src/core/persistence/landing-gaps.ts	execute_raw	3
+src/core/persistence/journal.ts	execute_raw	15
 src/core/persistence/legacy-sync-failures.ts	execute_raw	1
 src/core/persistence/limits.ts	execute_raw	1
 src/core/persistence/links-extraction-holds.ts	execute_raw	2
@@ -407,17 +402,14 @@ src/core/persistence/managed-sources.ts	execute_raw	1
 src/core/persistence/memory-prepare.ts	execute_raw	1
 src/core/persistence/memory-proposals.ts	execute_raw	9
 src/core/persistence/mirror-read-only.ts	execute_raw	2
-src/core/persistence/noop-kernel.ts	execute_raw	2
+src/core/persistence/noop-kernel.ts	execute_raw	1
 src/core/persistence/origin-index.ts	execute_raw	2
-src/core/persistence/owner-activity.ts	execute_raw	1
 src/core/persistence/page-advisories.ts	execute_raw	1
 src/core/persistence/page-append.ts	execute_raw	2
 src/core/persistence/page-mutations.ts	execute_raw	2
-src/core/persistence/page-prepare.ts	execute_raw	8
+src/core/persistence/page-prepare.ts	execute_raw	6
 src/core/persistence/page-upload.ts	execute_raw	15
 src/core/persistence/page-visibility.ts	execute_raw	4
-src/core/persistence/pending-import.ts	execute_raw	1
-src/core/persistence/physical-root.ts	execute_raw	8
 src/core/persistence/plain-directory-drift.ts	execute_raw	2	#8079: reads and records whether a page revision was written with its file in step (journal receipt join plus agreement checkpoint); persistence protocol state, no typed checkpoint methods yet.
 src/core/persistence/preadmit-cache.ts	execute_raw	3
 src/core/persistence/preparation-budget.ts	execute_raw	1
@@ -435,61 +427,20 @@ src/core/persistence/reconcile-prepare.ts	execute_raw	1
 src/core/persistence/reconcile-state.ts	execute_raw	5
 src/core/persistence/reconcile.ts	execute_raw	3
 src/core/persistence/recovery-resolve.ts	execute_raw	10
-src/core/persistence/refresh-barrier.ts	execute_raw	4
 src/core/persistence/refusal-breaker.ts	execute_raw	1
 src/core/persistence/resolve-paths.ts	execute_raw	5
 src/core/persistence/rows-behind.ts	execute_raw	4
 src/core/persistence/searchable.ts	execute_raw	1
 src/core/persistence/segmented-apply.ts	execute_raw	6
 src/core/persistence/skill-activation.ts	execute_raw	11
-src/core/persistence/soak-counters.ts	execute_raw	2
-src/core/persistence/sync-cursor-key.ts	execute_raw	7
-src/core/persistence/sync-delete-tombstones.ts	execute_raw	1
-src/core/persistence/sync-discovery.ts	execute_raw	6
-src/core/persistence/sync-drain.ts	execute_raw	2
-src/core/persistence/sync-dry-run-writer.ts	execute_raw	1
-src/core/persistence/sync-failures.ts	execute_raw	4
-src/core/persistence/sync-freshness.ts	execute_raw	1
-src/core/persistence/sync-ghosts.ts	execute_raw	3
-src/core/persistence/sync-group.ts	execute_raw	1
-src/core/persistence/sync-held-deletions.ts	execute_raw	1
-src/core/persistence/sync-holds.ts	execute_raw	6
-src/core/persistence/sync-idle-skips.ts	execute_raw	1
-src/core/persistence/sync-lanes.ts	execute_raw	1
-src/core/persistence/sync-markers.ts	execute_raw	9
-src/core/persistence/sync-origin.ts	execute_raw	1
-src/core/persistence/sync-page-fault.ts	execute_raw	9
-src/core/persistence/sync-pass-apply.ts	execute_raw	3
-src/core/persistence/sync-pass-batch.ts	execute_raw	3
-src/core/persistence/sync-pass-carried.ts	execute_raw	2
+src/core/persistence/sync-drain.ts	execute_raw	1
 src/core/persistence/sync-pass-confirm.ts	execute_raw	8
-src/core/persistence/sync-pass-episode.ts	execute_raw	2
-src/core/persistence/sync-pass-fold.ts	execute_raw	3
-src/core/persistence/sync-pass-readers.ts	execute_raw	1
-src/core/persistence/sync-pass-run.ts	execute_raw	12
-src/core/persistence/sync-pass-status.ts	execute_raw	3
-src/core/persistence/sync-pass.ts	execute_raw	10	readFileRemovingDeletes (audit LC-1, decision E1): one bounded read of the committed delete_page receipts whose write-through removed the file, so a restored file is held for repair file-drift; the managed-sync pass reads stay raw until the persistence area is typed (sync 13b: the trunk side counted 9, this read is the tenth; a Rust brain refuses managed persistence before the pass runs)
-src/core/persistence/sync-prepare.ts	execute_raw	15	#9646: the stamp fence-trend pre-read runs outside the 5 s publication (newest sequence, open-import probe); moves with the persistence engine-sql conversion
-src/core/persistence/sync-prescreen.ts	execute_raw	2
-src/core/persistence/sync-run.ts	execute_raw	27
-src/core/persistence/sync-screen.ts	execute_raw	1
-src/core/persistence/sync-slices.ts	execute_raw	2
-src/core/persistence/sync-slug-mode.ts	execute_raw	3
-src/core/persistence/sync-status.ts	execute_raw	6
-src/core/persistence/sync-stop-class.ts	execute_raw	1
-src/core/persistence/sync-streamed.ts	execute_raw	1
-src/core/persistence/sync-tail-record.ts	execute_raw	3
-src/core/persistence/sync-tail.ts	execute_raw	2
-src/core/persistence/sync-waivers.ts	execute_raw	8
-src/core/persistence/sync-window.ts	execute_raw	2
-src/core/persistence/topology-clone.ts	execute_raw	19
-src/core/persistence/topology-recovery.ts	execute_raw	16
-src/core/persistence/transient-retry.ts	execute_raw	1
+src/core/persistence/sync-run.ts	execute_raw	7
 src/core/persistence/unbound-source.ts	execute_raw	4
 src/core/persistence/unimported-file.ts	execute_raw	1
 src/core/persistence/unindexed-files.ts	execute_raw	8
 src/core/persistence/upload-streamed.ts	execute_raw	1
-src/core/persistence/worktree-refresh.ts	execute_raw	28
+src/core/persistence/worktree-refresh.ts	execute_raw	2
 src/core/persistence/write-applied.ts	execute_raw	1
 src/core/pglite-statements.ts	driver_call	1
 src/core/planner-stats.ts	execute_raw	14
@@ -576,7 +527,7 @@ src/core/sources-ops.ts	execute_raw	1	#9634, pre-ratchet: +1 is the INSERT that 
 src/core/sql-query.ts	execute_raw	2
 src/core/storage-manifest/adopt.ts	execute_raw	4
 src/core/storage-manifest/source.ts	execute_raw	4
-src/core/sync-anchor.ts	execute_raw	2
+src/core/sync-anchor.ts	execute_raw	1
 src/core/sync-attempt.ts	execute_raw	1
 src/core/sync-identity-downgrades.ts	execute_raw	1
 src/core/sync-pending.ts	execute_raw	1
@@ -591,7 +542,7 @@ src/core/takes-write.ts	execute_raw	5
 src/core/think/index.ts	execute_raw	2
 src/core/think/persist-take.ts	execute_raw	1
 src/core/timeline-dedup-repair.ts	execute_raw	11
-src/core/timeline-extract.ts	execute_raw	6
+src/core/timeline-extract.ts	execute_raw	5
 src/core/timeline-write-through.ts	execute_raw	1
 src/core/transcripts/archive.ts	execute_raw	10
 src/core/transcripts/discover.ts	execute_raw	2
@@ -601,7 +552,6 @@ src/core/transcripts/recover.ts	execute_raw	1
 src/core/transcripts/secret-audit.ts	execute_raw	1
 src/core/trust/allow-rules.ts	execute_raw	5
 src/core/trust/backfill.ts	execute_raw	6
-src/core/trust/channel.ts	execute_raw	1
 src/core/trust/claim.ts	execute_raw	7
 src/core/trust/derived-gate.ts	execute_raw	1
 src/core/trust/held-removals.ts	execute_raw	4

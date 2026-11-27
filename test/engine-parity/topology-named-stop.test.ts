@@ -7,7 +7,8 @@
  *  - Contract: on PGLite and Postgres the recovery scan reaches a recovering change under its topology locks and the
  *    clone runs its own checks; both arms agree. On the Rust engine each step refuses by its own name
  *    (`member=source_topology_recovery` / `member=managed_source_clone`, capability raw_sql, written=nothing) before any
- *    lock: the recovering change is exactly as recorded, no clone directory or staging directory exists, no source is
+ *    lock (while the managed hold is on; with it lifted, GBRAIN_TEST_RUST_MANAGED=1, both steps run on the typed topology
+ *    store and equal the SQL arms): the recovering change is exactly as recorded, no clone directory or staging directory exists, no source is
  *    registered, and the typed status read (`readTopologyRecoveryStops`) names the stop for the change.
  *  - Regression: on the Rust engine the recovery scan reached topology-locks.ts `withTopologyLocks` and the clone its
  *    first raw read (topology-clone.ts), so each refused as the generic `member=executeRaw`, which names neither the
@@ -88,7 +89,7 @@ describe('engine parity: the named Rust stop for source topology changes', () =>
     const after = await engine.listTopologyRecoveries(host, null, 16);
     const stops = await readTopologyRecoveryStops(engine, host);
     const listed = stops.recovering.map(row => ({ source: row.source_id, operation: row.operation, stop: row.stop }));
-    if (backend === 'rust') {
+    if (backend === 'rust' && !engine.capabilities.has('managed_persistence')) {
       expect({ refusal: named(refusal), unchanged: text(after) === before, listed, stop: stops.stop }).toEqual({
         refusal: { code: 'engine_capability_missing', member: 'source_topology_recovery', written: 'nothing' }, unchanged: true,
         listed: [{ source: 'work', operation: 'writer_claim', stop: 'source_topology_recovery' }], stop: 'source_topology_recovery' });
@@ -111,7 +112,7 @@ describe('engine parity: the named Rust stop for source topology changes', () =>
     const left = { target: existsSync(target), staging: readdirSync(home).filter(name => name.startsWith('.gbrain-clone-') || name.includes('.gbrain-old-')),
       registered: (await engine.readSourceMembership('cloned')) !== null, recovering: (await engine.listTopologyRecoveries(localHostId(), null, 16)).length };
     expect(left).toEqual({ target: false, staging: [], registered: false, recovering: 0 });
-    if (backend === 'rust') {
+    if (backend === 'rust' && !engine.capabilities.has('managed_persistence')) {
       expect({ add: named(add), reclone: named(reclone) }).toEqual({
         add: { code: 'engine_capability_missing', member: 'managed_source_clone', written: 'nothing' },
         reclone: { code: 'engine_capability_missing', member: 'managed_source_clone', written: 'nothing' } });

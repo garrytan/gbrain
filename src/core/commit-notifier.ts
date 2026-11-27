@@ -33,6 +33,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import type { DetectionMode, MarkerIntent, NotifierSourceRow, NotifierState, StatePatch, WantedMarker } from './notifier/store.ts';
+import type { NotifierLeaseRef } from './engine-sql/notifier.ts';
 
 export type ResidentKind = 'serve' | 'serve-http' | 'jobs-worker' | 'autopilot';
 
@@ -82,7 +83,7 @@ export interface NotifierStore {
   settleMarkers(sourceId: string, read: WantedMarker[], run: { pulled: boolean; full: boolean }): Promise<WantedMarker[]>;
   readStates(sourceIds: string[]): Promise<NotifierSourceRow[]>;
   writeState(sourceId: string, patch: StatePatch): Promise<void>;
-  writeCoverage(sourceId: string, c: { head: string | null; mode: DetectionMode; ownerHostId: string; ownerKind: string; ownerPid: number }): Promise<void>;
+  writeCoverage(sourceId: string, c: { head: string | null; mode: DetectionMode; ownerHostId: string; ownerKind: string; ownerPid: number; lease?: NotifierLeaseRef }): Promise<void>;
 }
 
 export interface CommitNotifierOptions {
@@ -313,7 +314,7 @@ export function startCommitNotifier(opts: CommitNotifierOptions): CommitNotifier
   let excluded = new Set<string>();
   let owner = false;
   let fence: number | null = null;
-  let leased = false;
+  let leased = false; const heldLease = () => (leased && fence !== null ? { lease: { hostId: opts.hostId, ownerId, fence } } : {}); // the lease writes name (I-5)
   let stopped = false;
   let flagReadAt = -Infinity;
   let listedAt = -Infinity;
@@ -350,7 +351,7 @@ export function startCommitNotifier(opts: CommitNotifierOptions): CommitNotifier
     rt.state = patch.state;
     if (patch.attempts !== undefined) rt.attempts = patch.attempts;
     rt.nextRetryAt = patch.nextRetryInMs ? now() + patch.nextRetryInMs : 0;
-    await guard(`recording the notifier state of ${rt.sourceId}`, () => opts.store.writeState(rt.sourceId, patch), undefined);
+    await guard(`recording the notifier state of ${rt.sourceId}`, () => opts.store.writeState(rt.sourceId, { ...patch, ...heldLease() }), undefined);
   };
   const trace = (rt: Rt, event: Record<string, unknown>): string | null => {
     try { return opts.trace?.(rt.sourceId, { at: new Date(now()).toISOString(), source_id: rt.sourceId, resident: opts.resident, head: rt.head, last_commit: rt.lastCommit, ...event }) ?? null; }
@@ -404,7 +405,7 @@ export function startCommitNotifier(opts: CommitNotifierOptions): CommitNotifier
     if (key !== rt.coverageKey) {
       rt.coverageKey = key;
       await guard(`recording what the notifier sees of ${rt.sourceId}`, () => opts.store.writeCoverage(rt.sourceId,
-        { head: rt.head, mode: mode(rt), ownerHostId: opts.hostId, ownerKind: opts.resident, ownerPid: pid }), undefined);
+        { head: rt.head, mode: mode(rt), ownerHostId: opts.hostId, ownerKind: opts.resident, ownerPid: pid, ...heldLease() }), undefined);
     }
   };
 

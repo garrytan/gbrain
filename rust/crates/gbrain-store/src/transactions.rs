@@ -167,33 +167,24 @@ impl Transaction {
         &self.store
     }
 
-    /// Commits and returns the commit sequence (lane L2 makes this a `CommitPosition`).
-    pub fn commit(self) -> Result<u64> {
-        self.store.commit_transaction()
+    /// Commits and returns the commit's position (interfaces I-1 and I-2): the sequence of its
+    /// record-file commit and its index in that batch (`CommitPosition::end_of` the sequence it saw
+    /// for one opened read-only). The only way to commit it: its bound store refuses
+    /// `commit_transaction` (see [`Store::begin_with`]).
+    pub fn commit(self) -> Result<CommitPosition> {
+        self.store.commit_owned_at()
     }
 
-    /// [`Transaction::commit`] with the commit's own position (`commit_log.rs`).
-    pub fn commit_at(self) -> Result<CommitPosition> {
-        self.store.commit_transaction_at()
-    }
-
-    /// Ends the transaction without keeping its writes.
+    /// Ends the transaction without keeping its writes. The only way to roll it back besides
+    /// dropping it.
     pub fn rollback(self) -> Result<()> {
-        self.store.rollback_transaction()
+        self.store.rollback_owned()
     }
 
     /// Checks that `token` holds its lease now, and again at commit: the lease record is read inside
     /// the transaction (interface I-1 / I-5; `Store::assert_lease`).
     pub fn assert_lease(&self, token: &crate::leases::LeaseToken) -> Result<()> {
         self.store.assert_lease(token)
-    }
-}
-
-/// A transaction reads and writes through its bound store, so it can stand where a `&Store` is wanted.
-impl std::ops::Deref for Transaction {
-    type Target = Store;
-    fn deref(&self) -> &Store {
-        &self.store
     }
 }
 
@@ -496,6 +487,9 @@ pub struct OpenTransaction {
     read_only: AtomicBool,
     /// Opened read-only, so it never wrote and its commit writes nothing.
     opened_read_only: bool,
+    /// Owned by a [`Transaction`] (`begin_with`): only its `commit` and `rollback` end it; the bound
+    /// store's `commit_transaction` and `rollback_transaction` refuse with `invalid_state`.
+    owned: bool,
     optimistic: bool,
     deadline: Option<Instant>,
     /// The single-flight owner id (optimistic mode), its age and the brain's table.
@@ -1239,25 +1233,37 @@ impl Store {
     }
 
     /// Opens an explicit transaction with `options` (interface I-1).
+    ///
+    /// `TxnMode::Optimistic` needs a brain opened in multi-user mode on the concurrent store; any
+    /// other brain refuses it with `invalid_state` (it never quietly runs serialized). The returned
+    /// [`Transaction`] is the only handle that ends it: [`Transaction::store`] reads and writes
+    /// through the transaction, and its `commit_transaction` / `rollback_transaction` refuse.
     pub fn begin_with(&self, options: TxnOptions) -> Result<Transaction> {
         Ok(Transaction {
-            store: self.begin_bound(options)?,
+            store: self.begin_inner(options, true)?,
         })
     }
 
-    /// [`Store::begin_with`], returning the bound store itself (the binding's shape). An optimistic
-    /// transaction on a single-writer store runs as a serialized one: its base already holds the
-    /// writer.
+    /// [`Store::begin_with`], returning the bound store itself (the binding's shape): its own
+    /// `commit_transaction` and `rollback_transaction` end it. Optimistic mode is refused as there.
     pub fn begin_bound(&self, options: TxnOptions) -> Result<Store> {
+        self.begin_inner(options, false)
+    }
+
+    fn begin_inner(&self, options: TxnOptions, owned: bool) -> Result<Store> {
         if self.bound.is_some() {
             return Err(StoreError::new(
                 INVALID_STATE,
                 "a transaction is already open on this store; nest with a savepoint",
             ));
         }
-        let optimistic = options.mode == TxnMode::Optimistic
-            && self.multiuser()
-            && self.kv.occ_stats().is_some();
+        let optimistic = options.mode == TxnMode::Optimistic;
+        if optimistic && !(self.multiuser() && self.kv.occ_stats().is_some()) {
+            return Err(StoreError::new(
+                INVALID_STATE,
+                "an optimistic transaction needs a brain opened in multi-user mode on the concurrent store; open it with the multi-user switch on, or begin a serialized transaction",
+            ));
+        }
         if deadline_passed(options.deadline) {
             return Err(transaction_deadline());
         }
@@ -1287,6 +1293,7 @@ impl Store {
             kv: self.kv.clone(),
             read_only: AtomicBool::new(options.read_only),
             opened_read_only: options.read_only,
+            owned,
             optimistic,
             deadline: options.deadline,
             owner,
@@ -1410,10 +1417,29 @@ impl Store {
         self.commit_transaction_at().map(|p| p.sequence)
     }
 
+    /// Refuses ending a transaction a [`Transaction`] owns through its bound store.
+    fn refuse_owned(&self, what: &str) -> Result<()> {
+        if self.transaction()?.owned {
+            return Err(StoreError::new(
+                INVALID_STATE,
+                format!(
+                    "this transaction is owned by a Transaction handle; {what} it with Transaction::{what}"
+                ),
+            ));
+        }
+        Ok(())
+    }
+
     /// [`Store::commit_transaction`] with the commit's own position (`commit_log.rs`). A
     /// transaction that commits nothing (opened read-only) reports `CommitPosition::end_of` the
     /// sequence it saw.
     pub fn commit_transaction_at(&self) -> Result<CommitPosition> {
+        self.refuse_owned("commit")?;
+        self.commit_owned_at()
+    }
+
+    /// The commit itself (`Transaction::commit`, and `commit_transaction_at` after its check).
+    pub(crate) fn commit_owned_at(&self) -> Result<CommitPosition> {
         let tx = self.transaction()?;
         let _exclusive = lock(&tx.exclusive);
         let mut state = lock(&tx.state);
@@ -1526,6 +1552,12 @@ impl Store {
     /// released (`State::roll_back`), so no id it handed out is reused. Rolling back an ended
     /// transaction is a no-op.
     pub fn rollback_transaction(&self) -> Result<()> {
+        self.refuse_owned("rollback")?;
+        self.rollback_owned()
+    }
+
+    /// The rollback itself (`Transaction::rollback`, and `rollback_transaction` after its check).
+    pub(crate) fn rollback_owned(&self) -> Result<()> {
         let tx = self.transaction()?;
         let _exclusive = lock(&tx.exclusive);
         let ended = {
@@ -1705,6 +1737,9 @@ mod optimistic_tests;
 
 #[cfg(test)]
 mod review_tests;
+
+#[cfg(test)]
+mod harness_review_tests;
 
 #[cfg(test)]
 mod tests {

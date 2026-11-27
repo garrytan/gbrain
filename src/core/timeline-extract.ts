@@ -15,6 +15,7 @@ import { parseInlineCitationTimelineEntries, findTimelineSourceDelimiter, parseT
 import { isDatedTimelineLine, isValidDate, supersededInlineCitationEntries } from './timeline-citations.ts';
 import { createHash } from 'node:crypto';
 import type { BrainEngine } from './engine.ts';
+import { syncRows, type SyncExec } from './engine-sql/managed-sync-store.ts';
 import { firstMaterializedMarkerIndex } from './timeline-marker.ts';
 import { BodyReadStopped, bodyBlocks, detachedValue, retainedGenerationBlocks } from './page-body/segment-blocks.ts';
 
@@ -310,12 +311,10 @@ const STORED_ROWS_PAGE = 5_000;
  * Each stored non-event timeline row of a page (`date_text` is `date::text`, unrecordedCanonicalTimeline's form),
  * STORED_ROWS_PAGE rows at a time by id, so a page with many rows is never held as one array.
  */
-export async function eachStoredTimelineRow(engine: Pick<BrainEngine, 'executeRaw'>, pageId: number,
+export async function eachStoredTimelineRow(engine: SyncExec, pageId: number,
   fn: (row: StoredTimelineTuple & { date_text: string }) => void): Promise<void> {
   for (let after = 0; ;) {
-    const rows = await engine.executeRaw<StoredTimelineTuple & { date_text: string }>(
-      `SELECT id, to_char(date, 'YYYY-MM-DD') AS date, date::text AS date_text, source, summary, detail FROM timeline_entries
-        WHERE page_id = $1 AND event_page_id IS NULL AND id > $2 ORDER BY id LIMIT $3`, [pageId, after, STORED_ROWS_PAGE]);
+    const rows = await syncRows<StoredTimelineTuple & { date_text: string }>(engine, 'stored_timeline_page', [pageId, after, STORED_ROWS_PAGE]);
     for (const row of rows) fn(row);
     if (rows.length < STORED_ROWS_PAGE) return;
     after = Number(rows[rows.length - 1]!.id);

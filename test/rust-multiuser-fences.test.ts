@@ -365,7 +365,7 @@ describe('review G1, G3, G7, G11: the queue and the lock handle bind each claim 
     });
   });
 
-  withAddon('G13 (evidence): on a Rust brain a managed sync refuses managed_persistence before any statement runs, so assertDrainLease\'s raw SQL is never reached', async () => {
+  withAddon('G13 (evidence): on a Rust brain a managed sync refuses before any statement runs, so assertDrainLease\'s raw SQL is never reached', async () => {
     await withEnv({ GBRAIN_RUST_MULTIUSER: '1' }, async () => {
       const engine = await open();
       const a = (await rustLeases(engine).acquire('consumer:h', holder('a'), 60_000))!;
@@ -375,7 +375,9 @@ describe('review G1, G3, G7, G11: the queue and the lock handle bind each claim 
       (engine as { executeRaw: unknown }).executeRaw = (sql: string, ...rest: unknown[]) => { raw.push(sql); return (executeRaw as (...args: unknown[]) => unknown)(sql, ...rest); };
       const { performManagedSync } = await import('../src/core/persistence/sync-run.ts');
       const failure = await refusal(() => performManagedSync(engine, { sourceId: 'default' } as never));
-      expect(failure.code).toBe('engine_capability_missing');
+      // LM slice 3 lifted the managed_persistence hold on a multi-user Rust brain; a brain with no managed mode now
+      // refuses at the writer coordinator instead. Either way no raw SQL runs.
+      expect(failure.code).toBe('writer_coordinator_required');
       expect(raw).toEqual([]);
     });
   });

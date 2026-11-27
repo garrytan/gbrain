@@ -18,6 +18,7 @@ use gbrain_store::persistence::{
     PublicationEffectsSpec, PublicationWrite, Settle, WriteCompletion, WriteRequestInsert,
 };
 use gbrain_store::redb_kv::RedbKv;
+use gbrain_store::transactions::{TxnMode, TxnOptions};
 use gbrain_store::write_origin::WriteOrigin;
 use gbrain_store::{Env, Kv, OpenOptions, Store, keys};
 use serde_json::{Value, json};
@@ -64,6 +65,11 @@ impl Drop for Brain {
 }
 
 fn brain(name: &str, multiuser: bool) -> Brain {
+    let concurrent = std::env::var("GBRAIN_RUST_CONCURRENT_WRITES").is_ok_and(|v| v == "1");
+    brain_with(name, multiuser, concurrent)
+}
+
+fn brain_with(name: &str, multiuser: bool, concurrent: bool) -> Brain {
     let dir = PathBuf::from(env!("CARGO_TARGET_TMPDIR")).join(format!(
         "fences-{name}-{}-{}",
         std::process::id(),
@@ -76,8 +82,7 @@ fn brain(name: &str, multiuser: bool) -> Brain {
         ids: AtomicU64::new(1),
     });
     let kv = RedbKv::open_path(&dir.join("records.redb")).unwrap();
-    let kv: Arc<dyn Kv> = if std::env::var("GBRAIN_RUST_CONCURRENT_WRITES").is_ok_and(|v| v == "1")
-    {
+    let kv: Arc<dyn Kv> = if concurrent {
         Arc::new(OccKv::new(kv).unwrap())
     } else {
         Arc::new(kv)
@@ -1911,4 +1916,168 @@ fn g16_with_the_mode_off_a_claim_keeps_the_transaction_s_time() {
         "queued",
         "off-mode behavior changed"
     );
+}
+
+// G16, the optimistic-transaction caveat (lane L1's optimistic transactions). An optimistic transaction does not hold
+// the writer, so other writers commit while it runs, and it meets them only at the group commit. A claim it takes
+// is timed at the claim member's call (the live store clock), not at the transaction's start; the claim then lives
+// its lease from the call. The one window left is the time from the claim member's call to the transaction's
+// commit: the claim is published with that much less of its lease. These tests force the concurrent store and
+// multi-user mode, and assert that the transaction really is optimistic.
+
+/// An optimistic transaction on the concurrent store, multi-user mode on, asserted.
+fn optimistic(b: &Brain) -> Store {
+    assert!(b.store.multiuser(), "multi-user mode is on");
+    let tx = b
+        .store
+        .begin_bound(TxnOptions {
+            mode: TxnMode::Optimistic,
+            ..TxnOptions::default()
+        })
+        .unwrap();
+    assert!(tx.transaction_optimistic(), "the transaction is optimistic");
+    tx
+}
+
+/// Another writer commits while the optimistic transaction is open (it does not hold the writer).
+fn commit_elsewhere(b: &Brain, n: u32) {
+    b.store.set_config(&format!("test.other.{n}"), "1").unwrap();
+}
+
+#[test]
+fn g16_optimistic_a_claim_lives_its_lease_from_the_claim_call_not_from_the_transaction_start() {
+    let b = brain_with("g16-occ-write", true, true);
+    let a = b.lease("consumer:h", "a");
+    let id = admit_request(&b, REQ);
+    let tx = optimistic(&b);
+    b.advance_ms(20_000); // work before the claim
+    commit_elsewhere(&b, 1);
+    assert!(
+        tx.stamp_write_claim(&stamp(&id, TOKEN, Some(&a)))
+            .unwrap()
+            .is_some()
+    );
+    b.advance_ms(20_000); // the stall after the claim: 40 s after the start, 20 s after the call
+    commit_elsewhere(&b, 2);
+    tx.commit_transaction().unwrap();
+    let spec = ExpireClaims {
+        host_id: HOST.into(),
+        charge: false,
+        dead_owners: vec![],
+        fence: Some(a.clone()),
+    };
+    b.store.expire_stale_write_claims(&spec).unwrap();
+    assert_eq!(
+        request(&b, &id)["state"],
+        "running",
+        "a claim still live at the sweep's call (10 s of its 30 s lease left) was taken back"
+    );
+}
+
+#[test]
+fn g16_optimistic_a_job_claim_lives_its_lease_from_the_claim_call_not_from_the_transaction_start() {
+    let b = brain_with("g16-occ-job", true, true);
+    let a = b.lease("consumer:h", "a");
+    let id = add_job(&b, "work");
+    let tx = optimistic(&b);
+    b.advance_ms(20_000);
+    commit_elsewhere(&b, 1);
+    assert!(
+        tx.claim_next_job(&claim_spec("w:1", Some(&a)))
+            .unwrap()
+            .is_some()
+    );
+    b.advance_ms(20_000);
+    commit_elsewhere(&b, 2);
+    tx.commit_transaction().unwrap();
+    let swept = b
+        .store
+        .reclaim_stalled_jobs_fenced(0.0, MARK, Some(&a))
+        .unwrap();
+    assert_eq!(swept["requeued"].as_array().unwrap().len(), 0, "{swept}");
+    assert_eq!(job(&b, id)["status"], "active");
+}
+
+/// The window, named exactly: the claim is timed at the claim member's call, so a transaction that stalls longer
+/// than the lease between that call and its commit publishes a claim that is already expired, and the next sweep
+/// takes it back. Expiry compares each claim with now (as Postgres `clock_timestamp()` does); it never moves a
+/// claim's deadline to the commit.
+#[test]
+fn g16_optimistic_window_a_stall_from_the_claim_call_to_the_commit_longer_than_the_lease_publishes_an_expired_claim()
+ {
+    let b = brain_with("g16-occ-window", true, true);
+    let a = b.lease("consumer:h", "a");
+    let id = admit_request(&b, REQ);
+    let tx = optimistic(&b);
+    assert!(
+        tx.stamp_write_claim(&stamp(&id, TOKEN, Some(&a)))
+            .unwrap()
+            .is_some()
+    );
+    b.advance_ms(30_001); // call-to-commit longer than the 30 s lease
+    commit_elsewhere(&b, 1);
+    tx.commit_transaction().unwrap();
+    let spec = ExpireClaims {
+        host_id: HOST.into(),
+        charge: false,
+        dead_owners: vec![],
+        fence: Some(a.clone()),
+    };
+    b.store.expire_stale_write_claims(&spec).unwrap();
+    assert_eq!(
+        request(&b, &id)["state"],
+        "queued",
+        "the window: a claim whose lease ran out between its call and its commit is expired"
+    );
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Host-fence census (I-5, host fence table): consumer heartbeat rows.
+
+fn consumer_renewal(
+    host: &str,
+    fence: Option<&LeaseToken>,
+) -> gbrain_store::consumers::ConsumerRenewal {
+    let mut renewal = json!({
+        "hostId": host, "pid": 4242, "nonce": "n-1", "pidNs": null, "kind": "full", "mode": "full",
+        "restartRequired": false, "rootBarrierAgeMs": null, "pool": null, "hostJsonPath": "/h/host.json",
+        "persistenceHome": "/h", "mintedUnder": null, "version": "v-test", "purgeMs": 600_000,
+    });
+    if let Some(fence) = fence {
+        renewal["fence"] = serde_json::to_value(fence).unwrap();
+    }
+    serde_json::from_value(renewal).unwrap()
+}
+
+/// A process whose host lease was taken over cannot keep its consumer heartbeat row alive: consumer election reads a
+/// live row as "another consumer runs here", so a stale holder's renewal would make the host defer to a process that
+/// no longer holds the host. The renewal under the old epoch is refused at commit and writes nothing.
+#[test]
+fn census_a_consumer_row_renewal_under_a_taken_over_host_lease_is_refused() {
+    let b = brain("census-consumer", true);
+    let old = b.lease("consumer:h", "a");
+    let new = b.take_over("consumer:h", &old);
+    let err = b
+        .store
+        .renew_consumer_row(&consumer_renewal("h", Some(&old)))
+        .unwrap_err();
+    assert_eq!(err.code, gbrain_store::error::LEASE_LOST, "{err}");
+    assert!(
+        b.store.list_host_consumer_rows("h").unwrap().is_empty(),
+        "a refused renewal wrote a row"
+    );
+    b.store
+        .renew_consumer_row(&consumer_renewal("h", Some(&new)))
+        .unwrap();
+    assert_eq!(b.store.list_host_consumer_rows("h").unwrap().len(), 1);
+}
+
+/// With no fence (no host registered) the renewal is exactly what it was.
+#[test]
+fn census_a_consumer_row_renewal_with_no_fence_is_unchanged() {
+    let b = brain("census-consumer-none", true);
+    b.store
+        .renew_consumer_row(&consumer_renewal("h", None))
+        .unwrap();
+    assert_eq!(b.store.list_host_consumer_rows("h").unwrap().len(), 1);
 }

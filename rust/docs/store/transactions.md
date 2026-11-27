@@ -141,7 +141,12 @@ again: the layers are locked while the scan runs.
 ## Optimistic transactions (multi-user mode)
 
 With multi-user mode on (`GBRAIN_RUST_MULTIUSER=1` or the brain's `engine.rust.multiuser` config row), the engine opens
-every explicit transaction optimistically (`Store::begin_with` / `begin_bound` with `TxnMode::Optimistic`; the binding's
+every explicit transaction optimistically. `TxnMode::Optimistic` on any other brain (the switch off, or the
+single-writer store) is refused with `invalid_state`; it never runs serialized in its place. The I-1 handle
+`Store::begin_with` returns a `Transaction`: `Transaction::store()` reads and writes through it, `Transaction::commit`
+(returning the frozen `CommitPosition`) and `Transaction::rollback` consume it and are the only ways to end it besides a
+drop, and its bound store's `commit_transaction` / `rollback_transaction` refuse with `invalid_state`. The binding uses
+`begin_bound`, whose bound store ends itself as before (`Store::begin_with` / `begin_bound` with `TxnMode::Optimistic`; the binding's
 `beginTransaction(brain, readOnly, { mode: 'optimistic', deadlineAtMs?, retryKeys?, age? })`). Off, nothing here runs.
 
 - The base is an ordinary write of the concurrent store: it reads from a snapshot, records every key and range it read,

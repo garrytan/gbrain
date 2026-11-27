@@ -114,10 +114,15 @@ export interface StatePatch {
   progress?: boolean;
   /** null clears the last error; omitted keeps it. */
   error?: { code: string; message: string; tracePath: string | null } | null;
+  /** The notifier lease the write is made under (multi-user Rust refuses it lease_lost when lost); the SQL engines ignore it. */
+  lease?: NotifierLeaseRef;
 }
 
+/** The notifier lease a state or coverage write is made under: this host, this notifier's owner id and its fence. */
+export interface NotifierLeaseRef { hostId: string; ownerId: string; fence: number }
+
 /** The coverage record of a source (writeNotifierCoverage). */
-export interface Coverage { head: string | null; mode: DetectionMode; ownerHostId: string; ownerKind: string; ownerPid: number }
+export interface Coverage { head: string | null; mode: DetectionMode; ownerHostId: string; ownerKind: string; ownerPid: number; lease?: NotifierLeaseRef }
 
 /** One source as the freshness notice and the sync status notifier block read it (readNotifierStatusRows). */
 export interface NotifierStatusRow {

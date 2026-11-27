@@ -17,6 +17,7 @@ import { LockStolenError } from '../db-lock.ts';
 import { OperationError } from '../ops/contract.ts';
 import { isWriteCapacityWait } from './admission-retry.ts';
 import { isRetryableConnError, isStatementTimeoutError } from '../retry-matcher.ts';
+import { syncRows } from '../engine-sql/managed-sync-store.ts';
 
 /**
  * A stop a managed sync run records no failure for, so the next pass resumes it: `lease_lost` when the pass lost its drain
@@ -88,8 +89,7 @@ export async function stopRecorded(engine: BrainEngine, key: string, runId: stri
 }
 /** #6712 PR 3 (L7): this run's recorded stop with the gbrain version that recorded it (null on a row from before versions were kept), or null when none is. */
 export async function recordedStop(engine: BrainEngine, key: string, runId: string): Promise<RecordedStop | null> {
-  const [row] = await engine.executeRaw<RecordedStop>(
-    "SELECT completed_keys->0->>'gbrain_version' AS gbrain_version FROM op_checkpoints WHERE op='managed-sync-failure' AND fingerprint=$1 AND completed_keys->0->>'run_id'=$2", [key, runId]);
+  const [row] = await syncRows<RecordedStop>(engine, 'recorded_stop', [key, runId]);
   return row ?? null;
 }
 export interface RecordedStop { gbrain_version: string | null }

@@ -39,6 +39,7 @@ import { sourceDbOnlyVerdict } from './source-storage.ts';
 import { readDeletionProvenance } from './sync-origin-evidence.ts';
 import { levelReuseAllowed, SYNC_LEVEL_REUSE_KEY } from './sync-tree-reuse.ts';
 import type { ShadowLevel, ShadowPath } from './sync-pass.ts';
+import { syncRows } from '../engine-sql/managed-sync-store.ts';
 
 const execFileAsync = promisify(execFile);
 
@@ -62,7 +63,7 @@ export const newHeldDeletionState = (): HeldDeletionState => ({ screened: new Se
  */
 export async function readPassSwitches(engine: Pick<BrainEngine, 'executeRaw'>, sourceId: string): Promise<{ heldDeletions: boolean; levelReuse: boolean }> {
   const own = `${SYNC_APPLY_HELD_DELETIONS_KEY}.source.${sourceId}`;
-  const rows = await engine.executeRaw<{ key: string; value: string | null }>('SELECT key, value FROM config WHERE key = ANY($1::text[])', [[own, SYNC_APPLY_HELD_DELETIONS_KEY, SYNC_LEVEL_REUSE_KEY]]);
+  const rows = await syncRows<{ key: string; value: string | null }>(engine, 'config_values', [[own, SYNC_APPLY_HELD_DELETIONS_KEY, SYNC_LEVEL_REUSE_KEY]]);
   const value = (key: string) => rows.find(row => row.key === key)?.value;
   return { heldDeletions: (value(own) ?? value(SYNC_APPLY_HELD_DELETIONS_KEY))?.trim().toLowerCase() === 'true', levelReuse: levelReuseAllowed(value(SYNC_LEVEL_REUSE_KEY)) };
 }

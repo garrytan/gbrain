@@ -154,9 +154,10 @@ describe('engine parity: catalog probes', () => {
     const result = await answered(() => runEntry(engine, ownerHostStaleEntry));
     if (!result.answered) return result;
     const [check] = result.checks;
-    // The released state: the Rust store keeps the journal, so the check reaches the owner-host read and skips it by name.
+    // The released state: the Rust store keeps the journal and serves managed mode, so the check reads the owner hosts
+    // through the topology store (no skip).
     if (backend === 'rust') expect({ status: check?.status, outcome: (check?.details as { outcome?: unknown } | undefined)?.outcome, reason: (check?.details as { reason?: unknown } | undefined)?.reason })
-      .toEqual({ status: 'ok', outcome: 'skipped', reason: 'raw_sql' });
+      .toEqual({ status: 'ok', outcome: undefined, reason: undefined });
     return { answered: true, names: result.checks.map((c) => c.name), status: check?.status };
   });
 

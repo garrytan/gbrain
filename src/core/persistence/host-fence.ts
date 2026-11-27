@@ -63,7 +63,16 @@ export function hostRegistrationOf(engine: object): HostRegistration | null {
     const found = registrations.get(at)?.[0];
     if (found) return found;
   }
-  return null;
+  // A wrapper of the engine (a recording proxy, a scoped view) keeps no registration of its own: it reads the engine's.
+  const root = engineRootOf(engine);
+  return root !== engine ? hostRegistrationOf(root) : null;
+}
+
+/** The engine object a wrapper or a transaction-bound clone stands for (a Rust engine answers `_engineRoot`), else `engine`. */
+export function engineRootOf(engine: object): object {
+  const at = engine as { _engineRoot?: () => object };
+  if (typeof at._engineRoot !== 'function') return engine;
+  try { return at._engineRoot() ?? engine; } catch { return engine; }
 }
 
 /** The fence a protected call on `engine` carries: the registration's lease, or null (off, or not registered). */
@@ -109,6 +118,33 @@ export function bindClaimFence(token: string, fence: LeaseToken | null): void {
     if (claimFences.size <= MAX_BOUND_CLAIMS) break;
     claimFences.delete(oldest);
   }
+}
+
+/** Binds every claim in `tokens` to `fence` (the stamp that took them together). */
+export function bindClaimFences(tokens: readonly (string | null | undefined)[], fence: LeaseToken | null): void {
+  for (const token of tokens) if (token) bindClaimFence(token, fence);
+}
+
+/**
+ * `{ fence }` for a write on claims taken together (a group's members, one coalesced Git claim): the fence the first
+ * bound member was stamped under; none of them bound uses the engine's, as `claimFenceOpts` does.
+ */
+export function claimBatchFenceOpts(engine: object, tokens: readonly (string | null | undefined)[]): { fence?: LeaseToken } {
+  return claimFenceOpts(engine, tokens.find(token => token && claimFences.has(token)) ?? null);
+}
+
+/**
+ * `items` split by the fence their claim was stamped under (`tokenOf` names each item's execution token), so one write
+ * never carries a fence for a claim another stamp took. Items whose claims share a fence stay together, in order.
+ */
+export function claimFenceGroups<T>(engine: object, items: readonly T[], tokenOf: (item: T) => string | null | undefined): Array<{ opts: { fence?: LeaseToken }; items: T[] }> {
+  const groups: Array<{ opts: { fence?: LeaseToken }; items: T[] }> = [];
+  for (const item of items) {
+    const opts = claimFenceOpts(engine, tokenOf(item));
+    const group = groups.find(g => g.opts.fence === opts.fence || (g.opts.fence && opts.fence && JSON.stringify(g.opts.fence) === JSON.stringify(opts.fence)));
+    if (group) group.items.push(item); else groups.push({ opts, items: [item] });
+  }
+  return groups;
 }
 
 /** `{ fence }` for a write on claim `token`: the fence it was stamped under; a claim stamped elsewhere uses the engine's. */

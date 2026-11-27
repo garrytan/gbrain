@@ -25,20 +25,21 @@ fn page(slug: &str) -> PageKeyHint {
     }
 }
 
-/// Review 4.1: optimistic mode needs the brain's resolved multi-user switch, not only a concurrent store.
+/// Review 4.1: optimistic mode needs the brain's resolved multi-user switch, not only a concurrent store
+/// (refused since L6's review, `harness_review_tests`).
 #[test]
 fn optimistic_mode_needs_the_multiuser_switch() {
     let concurrent_only = crate::test_support::occ_store();
-    let t = concurrent_only.begin_bound(optimistic()).unwrap();
-    assert!(!t.transaction_optimistic());
-    t.rollback_transaction().unwrap();
+    let Err(err) = concurrent_only.begin_bound(optimistic()) else {
+        panic!("a concurrent store without the switch ran optimistic");
+    };
+    assert_eq!(err.code, crate::error::INVALID_STATE);
     let on = mu_store();
     let t = on.begin_bound(optimistic()).unwrap();
     assert!(t.transaction_optimistic());
     t.rollback_transaction().unwrap();
 }
 
-/// Review 1.1: a read-only optimistic transaction answers the sequence it read at, not a later one.
 #[test]
 fn a_read_only_optimistic_commit_answers_its_own_snapshot_sequence() {
     let s = mu_store();
@@ -203,15 +204,14 @@ fn the_deadline_is_checked_again_after_the_savepoints_merge() {
     assert_eq!(get(&s, b"ylate"), None);
 }
 
-/// Review 2.5: a deadline holds even when the transaction runs serialized (a brain whose mode the
-/// store resolved on but whose records opened on the single-writer store).
+/// Review 2.5: a deadline holds on a serialized transaction too.
 #[test]
 fn a_deadline_holds_on_a_transaction_that_runs_serialized() {
     let s = crate::test_support::store();
     let t = s
         .begin_bound(TxnOptions {
             deadline: Some(Instant::now() + Duration::from_millis(500)),
-            ..optimistic()
+            ..TxnOptions::default()
         })
         .unwrap();
     t.write(|w| w.put(b"yk", b"x")).unwrap();

@@ -279,7 +279,7 @@ fn p_b_facts_of_one_entity_read_back_in_commit_order_multi_writer() {
                             "input": {"fact": text, "entity_slug": "people/alice", "source": "chat"}, "sourceId": "default",
                         }))
                         .unwrap();
-                        let id = tx.insert_fact(&args).unwrap()["id"].as_u64().unwrap();
+                        let id = tx.store().insert_fact(&args).unwrap()["id"].as_u64().unwrap();
                         match s.commit_position(tx) {
                             Ok(position) => return (position, id, text.clone()),
                             Err(e) => assert_eq!(e.code, WRITE_CONFLICT, "an untyped refusal: {e}"),
@@ -358,12 +358,13 @@ fn p_e_a_read_with_a_writes_token_sees_that_write_multi_writer() {
         let store = open_mu_logged(&dir);
         for n in 0..writes {
             let tx = store.begin_with(host(n)).unwrap_or_else(|e| panic!("{e}"));
-            tx.put_page(
-                &format!("e/{n}"),
-                &page("acknowledged"),
-                &PutPageOptions::default(),
-            )
-            .unwrap();
+            tx.store()
+                .put_page(
+                    &format!("e/{n}"),
+                    &page("acknowledged"),
+                    &PutPageOptions::default(),
+                )
+                .unwrap();
             let position = store.commit_position(tx).unwrap_or_else(|e| panic!("{e}"));
             let log = store
                 .read_commit_log(None, 10_000)
