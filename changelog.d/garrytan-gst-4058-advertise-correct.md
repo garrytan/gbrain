@@ -3,3 +3,5 @@
 ### Fixed
 - Claude Code's default registration (`gbrain serve --surface starter --advertise verbs`) listed only the seven memory verbs and `request_tools`. `correct` was callable but never listed, so agents told "keep this as a standing rule" saved it with `remember` and `forget` instead. A verbs listing on a wider surface (starter or full) now also lists `correct` when the connection can call it. `gbrain serve --surface verbs` is unchanged: it lists and accepts exactly the seven memory verbs.
 - `correct`'s tool description now says to call it only when the user corrects a wrong fact or asks for a standing rule, that over MCP the rule often waits for the owner's approval before anything changes, and to call `remember` for anything else the user wants saved. Agents had been calling `correct` for a plain "remember this", which left the fact unsaved until the owner approved a rule.
+
+<!-- behavior-change: correct_listed_beside_verbs_gst4058 -->
