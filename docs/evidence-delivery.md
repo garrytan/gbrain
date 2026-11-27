@@ -319,11 +319,12 @@ never long pages.
 **Limits.** One size preflight query reads the character and byte counts of the hit pages
 under the caller's read scope; it never reads a body. Then, in rank order, at
 most **5** long pages (`LONG_PAGE_MAX_PAGES`) holding at most **1,000,000**
-stored-body bytes together (`LONG_PAGE_MAX_INPUT_BYTES`) are fetched in one
+stored-body bytes together (`LONG_PAGE_MAX_INPUT_BYTES`, the timeline counted
+even under `detail: "low"`, since the read returns it) are fetched in one
 bounded batched call of their own, so they can neither slow nor fail the
 conversation fetch. A page that would cross a limit is skipped whole, never
-sliced: bodies are sanitized whole before any cut. Preflight plus fetch share
-a cooperative **2,000 ms** deadline (`LONG_PAGE_DEADLINE_MS`). A long page that
+sliced: bodies are sanitized whole before any cut. Preflight plus fetch,
+fence-overlay reads included, share a cooperative **2,000 ms** deadline (`LONG_PAGE_DEADLINE_MS`). A long page that
 cannot be delivered in its unit keeps its ranked chunk, byte-identical to the
 off path, with `delivered.reason: "long_page_chunk"` and a fallback code
 saying why (below). A preflight that fails or misses the deadline leaves the
@@ -335,7 +336,9 @@ remote callers): unchanged chunks are paid for first, then conversations and
 long pages reserve their matching span and grow in rank order. A long page
 whose matching span no longer fits keeps its ranked chunk
 (`long_page_chunk`, fallback `long_page_over_budget`), so the key never returns
-less than `chunk` would.
+less than `chunk` would. Only a block's first ranked passage is reserved: a later
+ranked passage on the same page (or conversation) that the budget leaves out
+comes back as its own ranked-chunk row the same way, never dropped.
 
 **Response.** A long-page block is an ordinary delivered row (`delivered.unit`
 is the unit that ran; a `section` with no structure falls back to `window`
@@ -601,7 +604,10 @@ warning naming the minimum server version.
    `serializeMarkdown` writes); `project` is `credentialSafeProjection`
    (`src/core/credential-projection.ts`), the function the markdown and code
    chunkers apply before splitting, so chunks and page text agree on every
-   redacted key. Each fetched chunk is located in that text in
+   redacted key. Each fetched chunk is placed by its stored byte span when the
+   span still holds the chunk's text, so text repeated under two headings is
+   placed where it was cut. A chunk with no span or a stale one is located in
+   that text in
    `chunk_index` order: exact match first, then a whitespace-insensitive match
    (the chunker trims chunks and folds some whitespace-only runs, so chunk text
    is not always verbatim). A fenced-code hit is placed by its code without the

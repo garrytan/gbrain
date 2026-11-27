@@ -21,18 +21,19 @@ import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { runHook } from '../src/commands/hook.ts';
 import {
-  ensureIpcSecretForConfig, requestContextPack, resolveSocketPathForConfig, startResolveIpcServer, type IpcPathConfig,
+  CONTEXT_PACK_SERVER_BUDGET_MS, ensureIpcSecretForConfig, requestContextPack, resolveSocketPathForConfig, startResolveIpcServer, type IpcPathConfig,
 } from '../src/core/context/resolve-ipc.ts';
 import { acknowledgeSessionStartSection, settleFirstSession } from '../src/core/context/session-start-pack.ts';
 import { readFirstSessionOutcomes } from '../src/core/context/session-start-sections.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { makeContextPackIpcHandler } from '../src/mcp/context-pack-handler.ts';
 import { INSTALL_RECEIPT_KEY } from '../src/core/onboard/setup-history.ts';
+import { configDir } from '../src/core/config.ts';
 import {
   FIRST_SESSION_KEY, __resetFirstSessionQuietForTests, firstSessionCoachingQuiet, firstSessionStatus, reserveFirstSession,
   type FirstSessionLane,
 } from '../src/core/onboard/first-session.ts';
-import { __resetHotMemoryCacheForTests } from '../src/core/facts/meta-hook.ts';
+import { HOT_MEMORY_SESSION_ONLY_KEY, __resetHotMemoryCacheForTests } from '../src/core/facts/meta-hook.ts';
 
 const ENV_KEYS = ['GBRAIN_HOME', 'DATABASE_URL', 'GBRAIN_DATABASE_URL', 'GBRAIN_SOURCE', 'GBRAIN_HOOKS', 'GBRAIN_HOOK_LANE', 'CLAUDE_CONFIG_DIR', 'CODEX_HOME'] as const;
 const SECTION_HEAD = 'First sessions on this brain';
@@ -158,6 +159,51 @@ describe('SessionStart first-session section', () => {
     expect(context).toContain(SECTION_HEAD);
     expect(context).toContain('gbrain setup codex --history 30');
     expect(lastOutcome()).toMatchObject({ harness: 'codex', outcome: 'delivered' });
+  }, 20_000);
+
+  test('a cold assembly past the transport budget still delivers the section: the budget answer carries it', async () => {
+    const cfg = config();
+    const slowEngine = new Proxy(engine, {
+      get(target, key) {
+        const value = Reflect.get(target, key, target);
+        if (typeof value !== 'function') return value;
+        if (key !== 'getConfig') return value.bind(target);
+        return (k: string) => k !== HOT_MEMORY_SESSION_ONLY_KEY ? target.getConfig(k)
+          : new Promise(done => setTimeout(done, CONTEXT_PACK_SERVER_BUDGET_MS + 400)).then(() => target.getConfig(k));
+      },
+    });
+    const secret = ensureIpcSecretForConfig(cfg)!;
+    const handler = makeContextPackIpcHandler(slowEngine, 'default', { firstSessionLane: 'owner' });
+    const inFlight: Promise<unknown>[] = [];
+    const context_pack: typeof handler = (req, progress) => { const work = handler(req, progress); inFlight.push(work.catch(() => null)); return work; };
+    const server = await startResolveIpcServer(resolveSocketPathForConfig(cfg, 'resolve')!, { resolve: async () => null, context_pack }, { secret, boundSourceId: 'default' });
+    if (!server) throw new Error('the test serve did not start');
+    servers.push(server);
+    try {
+      const out = await sessionStart('startup');
+      expect(out).toContain(SECTION_HEAD + ' (1 of 3)');
+      expect((await firstSessionStatus(engine)).delivered_sessions).toBe(1);
+      expect(lastOutcome()).toMatchObject({ harness: 'claude-code', outcome: 'delivered' });
+    } finally {
+      await Promise.all(inFlight);
+    }
+  }, 20_000);
+
+  test('a Codex startup whose serve binds after the hook started waits for it, instead of settling no_ipc after its retry', async () => {
+    const cfg = config();
+    ensureIpcSecretForConfig(cfg);
+    mkdirSync(join(tmp, 'codex'), { recursive: true });
+    writeFileSync(join(tmp, 'codex', '.gbrain-connection-codex-gbrain.json'), JSON.stringify({
+      harness: 'codex', connection: 'local-stdio', setup_receipt_version: 2, status: 'installed', name: 'gbrain', gbrain_home: configDir(),
+    }));
+    const late = setTimeout(() => void serve(cfg), 300);
+    try {
+      const out = await sessionStart('startup', 'codex-cold-1', 'codex');
+      expect(lastOutcome()).toMatchObject({ harness: 'codex', outcome: 'delivered' });
+      expect(codexSessionStartContext(out)).toContain(SECTION_HEAD);
+    } finally {
+      clearTimeout(late);
+    }
   }, 20_000);
 
   test('a fresh brain with no core: Codex gets a JSON envelope its parser accepts, Claude Code keeps plain text', async () => {

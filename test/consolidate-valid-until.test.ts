@@ -16,6 +16,8 @@ import { describe, test, expect, beforeAll, afterAll, beforeEach } from 'bun:tes
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runPhaseConsolidate } from '../src/core/cycle/phases/consolidate.ts';
 import { configureGateway, resetGateway } from '../src/core/ai/gateway.ts';
+import { operationsByName } from '../src/core/operations.ts';
+import { managedBrain } from './helpers/managed-brain.ts';
 
 let engine: PGLiteEngine;
 
@@ -183,6 +185,25 @@ describe('R4a — chronological valid_until writeback', () => {
     // Newest fact's valid_until stays NULL.
     expect(rows[2].id).toBe(idNewest);
     expect(rows[2].valid_until).toBeNull();
+  });
+
+  test('a fact with no event date takes its place in the chain at its save time, so only the newest value stays open', async () => {
+    await seedPage('cdx4-acme-undated');
+    const insert = async (text: string, validFrom: string | null, createdAt: string) => (await engine.executeRaw<{ id: number }>(
+      `INSERT INTO facts (source_id, entity_slug, fact, kind, source, valid_from, created_at, confidence, embedding, embedded_at, embedding_model, embedded_text_hash)
+       VALUES ('default', 'cdx4-acme-undated', $1, 'fact', 'test', $2::timestamptz, $3::timestamptz, 0.9, $4::vector, $3::timestamptz, 'openai:text-embedding-3-large', md5($1))
+       RETURNING id`, [text, validFrom, createdAt, unitVec()]))[0].id;
+    const undatedOld = await insert('Headcount claim A', null, '2026-01-10T00:00:00Z');
+    const datedMid = await insert('Headcount claim B', '2026-02-01T00:00:00Z', '2026-02-01T00:00:00Z');
+    const undatedNew = await insert('Headcount claim C', null, '2026-03-01T00:00:00Z');
+
+    await runPhaseConsolidate(engine, {});
+
+    const until = new Map((await engine.executeRaw<{ id: number; valid_until: Date | null }>(
+      `SELECT id, valid_until FROM facts WHERE entity_slug = 'cdx4-acme-undated'`)).map(r => [Number(r.id), r.valid_until ? new Date(r.valid_until).toISOString().slice(0, 10) : null]));
+    expect(until.get(undatedOld)).toBe('2026-02-01');
+    expect(until.get(datedMid)).toBe('2026-03-01');
+    expect(until.get(undatedNew)).toBeNull();
   });
 
   test('same-day cluster (3 facts, identical valid_from): id tiebreaker establishes chronological order', async () => {
@@ -567,3 +588,27 @@ describe('R4b / R7 — cycle idempotency: re-run consolidate produces zero new t
     }
   });
 });
+
+describe('#10288 undated facts in the managed consolidation chain', () => {
+  test('the managed publication closes an undated fact at the next value and the dated fact before an undated one at its save time', async () => {
+    await managedBrain(async ({ engine: managed, ctx }) => {
+      await operationsByName.put_page.handler(ctx, { slug: 'companies/undated-example', content: '---\ntitle: Undated Example\ntype: company\n---\n\n# Undated Example\n' });
+      await managed.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+      const ids: number[] = [];
+      try {
+        for (const [text, validFrom, createdAt] of [['Headcount claim A', null, '2026-01-10T00:00:00Z'], ['Headcount claim B', '2026-02-01T00:00:00Z', '2026-02-01T00:00:00Z'], ['Headcount claim C', null, '2026-03-01T00:00:00Z']] as const) {
+          ids.push(Number((await managed.executeRaw<{ id: number }>(
+            `INSERT INTO facts (source_id, entity_slug, fact, kind, source, visibility, valid_from, created_at, confidence, embedding, embedded_at, embedding_model, embedded_text_hash)
+             VALUES ('default', 'companies/undated-example', $1, 'fact', 'test', 'world', $2::timestamptz, $3::timestamptz, 0.9, $4::vector, $3::timestamptz, 'openai:text-embedding-3-large', md5($1))
+             RETURNING id`, [text, validFrom, createdAt, unitVec()]))[0].id));
+        }
+      } finally { await managed.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1'); }
+      const result = await runPhaseConsolidate(managed, { sourceId: 'default', minOldestAgeMs: 0 });
+      expect(result.details.facts_consolidated).toBe(3);
+      const until = new Map((await managed.executeRaw<{ id: number; valid_until: Date | null }>(
+        `SELECT id, valid_until FROM facts WHERE entity_slug = 'companies/undated-example'`)).map(r => [Number(r.id), r.valid_until ? new Date(r.valid_until).toISOString().slice(0, 10) : null]));
+      expect([ids.map(id => until.get(id))]).toEqual([['2026-02-01', '2026-03-01', null]]);
+    });
+  }, 120_000);
+});
+

@@ -128,14 +128,14 @@ export const DEFAULT_CLUSTER_THRESHOLD = 0.85;
  *
  * Idempotent: re-running on the same cluster produces the same
  * chronological order and the same valid_until values. No-op if
- * valid_until is already correct.
+ * valid_until is already correct. A fact with no event date (#10288) takes
+ * its place in the chain at its save time, as same-metric supersession does,
+ * so it neither stays open beside an older dated value nor is skipped.
  */
+const eventTime = (f: FactRow): Date => f.valid_from ?? f.created_at;
+
 async function writeValidUntilChain(tx: BrainEngine, cluster: FactRow[]): Promise<void> {
-  const chronological = cluster.filter((f): f is FactRow & { valid_from: Date } => f.valid_from !== null).sort((a, b) => {
-    const t = a.valid_from.getTime() - b.valid_from.getTime();
-    if (t !== 0) return t;
-    return a.id - b.id;
-  });
+  const chronological = [...cluster].sort((a, b) => eventTime(a).getTime() - eventTime(b).getTime() || a.id - b.id);
   const values = new Map((await tx.executeRaw<{ id: number; claim_value: number | string | null }>(
     'SELECT id, claim_value FROM facts WHERE id = ANY($1::bigint[])', [cluster.map(f => f.id)])).map(r => [Number(r.id), r.claim_value]));
   for (const { member: older, next: newer } of consolidationCloses(chronological, f => ({ text: f.fact, value: values.get(f.id) }))) {
@@ -147,7 +147,7 @@ async function writeValidUntilChain(tx: BrainEngine, cluster: FactRow[]): Promis
          SET valid_until = $1
        WHERE id = $2
          AND (valid_until IS DISTINCT FROM $1)`,
-      [newer.valid_from, older.id],
+      [eventTime(newer), older.id],
     );
   }
 }
