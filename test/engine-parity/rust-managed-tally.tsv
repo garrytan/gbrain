@@ -227,6 +227,7 @@ test/engine-parity/mention-pass.test.ts	4	0
 test/engine-parity/migrate-embeddings-usage.test.ts	1	0
 test/engine-parity/migrate-engine-source.test.ts	2	0
 test/engine-parity/multi-writer-conformance.test.ts	15	0
+test/engine-parity/nonowner-remote-writes.test.ts	0	0
 test/engine-parity/notifier-freshness.test.ts	3	0
 test/engine-parity/notifier-resident.test.ts	4	0
 test/engine-parity/notifier.test.ts	4	0
