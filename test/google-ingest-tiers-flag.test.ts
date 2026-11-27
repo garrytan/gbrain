@@ -1,7 +1,7 @@
 /**
  * Value: protects=sources add accepts one Google ingest-tier flag and retains the access default when neither is passed; fails_when=CLI validation, parsing or config serialization drops an opt-in or opt-out, writes an implicit override, or admits a conflicting or misplaced flag; why_new=existing tests read stored overrides but do not pass them through sources add; seam=exit and console spies on legacy refusals; no_claim=Gmail sync behavior
  */
-import { describe, expect, spyOn, test } from 'bun:test';
+import { afterAll, beforeAll, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -12,6 +12,7 @@ import { googleTuningConfig, parseGoogleSourceConfig } from '../src/core/google/
 import { managedSourceAddInput } from '../src/core/persistence/managed-sources.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import type { AddSourceOpts } from '../src/core/sources-ops.ts';
+import { resetPgliteState } from './helpers/reset-pglite.ts';
 
 const googleAdd = ['add', 'mail', '--kind', 'google', '--account', 'alice@example.com'];
 const githubAdd = ['add', 'issues', '--kind', 'github'];
@@ -66,12 +67,20 @@ describe('sources add Gmail ingest tiers', () => {
 });
 
 describe('legacy sources add Gmail ingest tiers', () => {
+  let engine: PGLiteEngine;
+
+  beforeAll(async () => {
+    engine = new PGLiteEngine();
+    await engine.connect({});
+    await engine.initSchema();
+  });
+
+  afterAll(() => engine.disconnect());
+  beforeEach(() => resetPgliteState(engine));
+
   test('stores true with --ingest-tiers and omits the key without it', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'gbrain-ingest-tiers-'));
-    const engine = new PGLiteEngine();
     try {
-      await engine.connect({});
-      await engine.initSchema();
       const args = ['--kind', 'google', '--account', 'alice@example.invalid', '--services', 'gmail',
         '--access', 'env', '--token-env', 'SOME_FAKE_VAR'];
       await runSources(engine, ['add', 'mail-default', ...args, '--dir', join(dir, 'default')]);
@@ -84,15 +93,11 @@ describe('legacy sources add Gmail ingest tiers', () => {
       expect(enabledRow?.id).toBe('mail-on');
       expect(enabledRow.config.g_ingest_tiers).toBe(true);
     } finally {
-      await engine.disconnect();
       rmSync(dir, { recursive: true, force: true });
     }
   });
 
   test('refuses --ingest-tiers without --kind google', async () => {
-    const engine = new PGLiteEngine();
-    await engine.connect({});
-    await engine.initSchema();
     const error = spyOn(console, 'error').mockImplementation(() => {});
     const exit = spyOn(process, 'exit').mockImplementation(() => { throw new Error('process.exit'); });
     try {
@@ -102,14 +107,10 @@ describe('legacy sources add Gmail ingest tiers', () => {
     } finally {
       exit.mockRestore();
       error.mockRestore();
-      await engine.disconnect();
     }
   });
 
   test('refuses both flags before source creation', async () => {
-    const engine = new PGLiteEngine();
-    await engine.connect({});
-    await engine.initSchema();
     const error = spyOn(console, 'error').mockImplementation(() => {});
     const exit = spyOn(process, 'exit').mockImplementation(() => { throw new Error('process.exit'); });
     try {
@@ -119,7 +120,6 @@ describe('legacy sources add Gmail ingest tiers', () => {
     } finally {
       exit.mockRestore();
       error.mockRestore();
-      await engine.disconnect();
     }
   });
 });
