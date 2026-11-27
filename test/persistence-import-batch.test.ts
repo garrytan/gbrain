@@ -284,7 +284,7 @@ test('an unchanged re-import screens its files with one read of each batch-share
     const original = brain.engine.executeRaw;
     brain.engine.executeRaw = async function(this: BrainEngine, sql, params, opts) {
       const flat = sql.replace(/\s+/g, ' ').trim();
-      for (const key of ['FROM persistence_local_writers', 'FROM shared_skill_packs', "profile='company-brain'", 'FROM sources s LEFT JOIN persistence_source_bindings'])
+      for (const key of ['FROM persistence_local_writers', 'FROM shared_skill_packs', 'FROM sources s LEFT JOIN persistence_source_bindings'])
         if (flat.includes(key)) counted.set(key, (counted.get(key) ?? 0) + 1);
       return original.call(this, sql, params, opts);
     } as BrainEngine['executeRaw'];
@@ -295,11 +295,25 @@ test('an unchanged re-import screens its files with one read of each batch-share
       counted.set('FROM persistence_local_writers', (counted.get('FROM persistence_local_writers') ?? 0) + 1);
       return writer.apply(this, args);
     };
+    // The company profile's two reads moved off executeRaw onto the typed readSourceIncarnation and hasCompanyBrainReceipt.
+    // They are counted at the typed member only: Postgres runs each typed read through its own executeRaw, so a raw key would count it twice.
+    const receipt = brain.engine.hasCompanyBrainReceipt, incarnation = brain.engine.readSourceIncarnation;
+    brain.engine.hasCompanyBrainReceipt = function(this: BrainEngine, ...args: Parameters<BrainEngine['hasCompanyBrainReceipt']>) {
+      counted.set('hasCompanyBrainReceipt', (counted.get('hasCompanyBrainReceipt') ?? 0) + 1);
+      return receipt.apply(this, args);
+    };
+    brain.engine.readSourceIncarnation = function(this: BrainEngine, ...args: Parameters<BrainEngine['readSourceIncarnation']>) {
+      counted.set('readSourceIncarnation', (counted.get('readSourceIncarnation') ?? 0) + 1);
+      return incarnation.apply(this, args);
+    };
     let again: PromiseSettledResult<unknown>[];
-    try { again = await importManagedFiles(brain.engine, files, { sourceId, noEmbed: true }); } finally { brain.engine.executeRaw = original; brain.engine.readLocalWriterRow = writer; }
+    try { again = await importManagedFiles(brain.engine, files, { sourceId, noEmbed: true }); } finally { brain.engine.executeRaw = original; brain.engine.readLocalWriterRow = writer; brain.engine.hasCompanyBrainReceipt = receipt; brain.engine.readSourceIncarnation = incarnation; }
     expect(again.map(r => r.status === 'fulfilled' && (r.value as { status: string }).status)).toEqual(files.map(() => 'skipped'));
     // A per-file screen would read each of these at least once per file (12 here).
     for (const key of counted.keys()) expect({ key, perBatch: counted.get(key)! <= 4 }).toEqual({ key, perBatch: true });
-    expect(counted.size).toBe(4);
+    // Exactly one company-profile read of each value per batch-shared proxy (the import's reads and the screen's): two on both engines,
+    // the count the two raw statements had before the typed members.
+    expect([counted.get('readSourceIncarnation'), counted.get('hasCompanyBrainReceipt')]).toEqual([2, 2]);
+    expect(counted.size).toBe(5);
   }
 }), 300_000);
