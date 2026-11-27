@@ -19,9 +19,10 @@ import { APPLICATION_AUTHORITY, withSubmissionAuthority } from '../src/core/mini
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
 import { makeGitFixture } from './helpers/git-fixture.ts';
 import { withEnv } from './helpers/with-env.ts';
+import postgres from '#postgres';
 
 const home = mkdtempSync(join(tmpdir(), 'gbrain-sync-company-'));
-const stores: Array<{ engine: BrainEngine; close: () => Promise<void> }> = [];
+const stores: Array<{ engine: BrainEngine; close: () => Promise<void>; databaseUrl?: string }> = [];
 beforeAll(async () => {
   const engine = new PGLiteEngine(); await engine.connect({}); await engine.initSchema();
   stores.push({ engine, close: () => engine.disconnect() });
@@ -157,14 +158,16 @@ for (const phase of ['admitted', 'complete']) for (const caller of ['explicit', 
     const fetcher = spyOn(globalThis, 'fetch').mockImplementation((async () => {
       networkCalls++; throw new Error('Unexpected network call in company cancellation fixture');
     }) as unknown as typeof fetch);
-    engine.executeRaw = async function(this: BrainEngine, sql, params) {
-      const rows = await execute.call(this, sql, params);
-      if (!observed && sql === 'SELECT config,incarnation FROM sources WHERE id=$1' && params?.[0] === f.sourceId) {
-        expect((rows[0] as { config: { company_brain: unknown } }).config.company_brain).toBeDefined();
+    // The company profile reads the source's config and incarnation through the typed readSourceIncarnation member.
+    const readIncarnation = engine.readSourceIncarnation;
+    engine.readSourceIncarnation = async function(this: BrainEngine, sourceId: string) {
+      const row = await readIncarnation.call(this, sourceId);
+      if (!observed && sourceId === f.sourceId) {
+        expect((row?.config as { company_brain?: unknown } | undefined)?.company_brain).toBeDefined();
         observed = true; controller.abort(new Error('company profile fixture cancelled'));
       }
-      return rows;
-    } as BrainEngine['executeRaw'];
+      return row;
+    } as BrainEngine['readSourceIncarnation'];
     try {
       if (caller === 'job') {
         await expect(withSubmissionAuthority(APPLICATION_AUTHORITY, () => performSync(engine, { sourceId: f.sourceId }), controller.signal))
@@ -174,7 +177,7 @@ for (const phase of ['admitted', 'complete']) for (const caller of ['explicit', 
       expect(observed).toBe(true);
       expect(networkCalls).toBe(0);
       expect(await snapshot()).toEqual(before);
-    } finally { engine.executeRaw = execute; fetcher.mockRestore(); await disposePersistenceConsumer(engine); }
+    } finally { engine.readSourceIncarnation = readIncarnation; fetcher.mockRestore(); await disposePersistenceConsumer(engine); }
   });
 }
 
@@ -215,3 +218,54 @@ check('a company source with a fixable fence refuses source_writeback_required n
   for (const text of [JSON.stringify(failed), JSON.stringify(blocked)]) { expect(text).not.toContain('Sentinelcompanyzq8'); expect(text).not.toContain('partnership'); }
   await disposePersistenceConsumer(engine);
 });
+
+// No seam: a second session holds an ACCESS EXCLUSIVE lock on source_ingestion_receipts, so the typed
+// hasCompanyBrainReceipt read of the company profile really blocks in Postgres. The real AbortSignal fires while
+// pg_stat_activity shows that read waiting; the sync then ends cancelled, never synced, and writes nothing.
+// The control run releases the same lock without aborting and must reach synced, so the abort is what cancels.
+for (const abort of [true, false]) test.skipIf(!process.env.DATABASE_URL)(abort
+  ? 'a real abort while the typed company-profile receipt read is blocked in Postgres ends the sync cancelled'
+  : 'without the abort, the same blocked company-profile receipt read resumes and the sync completes', () =>
+  withEnv({ GBRAIN_HOME: home, GBRAIN_SYNC_FAILURES_DIR: home, GBRAIN_SOURCE: undefined }, async () => {
+    const store = stores.find(s => s.databaseUrl)!, engine = store.engine;
+    const f = await input(engine, true);
+    expect(await connectCompanyBrain(engine, f)).toMatchObject({ ok: true, receipt: { outcome: 'complete' } });
+    await disposePersistenceConsumer(engine);
+    writeFileSync(join(f.path, 'people/operator.md'), '---\ntype: person\ntitle: Example Operator\n---\n# Example Operator\nOwns the updated synthetic account.\n');
+    (await makeGitFixture(f.path)).commitAll('Update synthetic company source');
+    const snapshot = async () => ({
+      sources: await engine.executeRaw('SELECT * FROM sources WHERE id=$1', [f.sourceId]),
+      receipts: await engine.executeRaw('SELECT * FROM source_ingestion_receipts WHERE source_id=$1 ORDER BY id', [f.sourceId]),
+      pages: await engine.executeRaw('SELECT * FROM pages WHERE source_id=$1 ORDER BY id', [f.sourceId]),
+      requests: await engine.executeRaw('SELECT * FROM persistence_requests WHERE source_id=$1 ORDER BY id', [f.sourceId]),
+      checkpoints: await engine.executeRaw('SELECT * FROM op_checkpoints ORDER BY op,fingerprint'),
+      effects: await engine.executeRaw('SELECT * FROM persistence_effects WHERE source_id=$1 ORDER BY id', [f.sourceId]),
+    });
+    const before = await snapshot(), controller = new AbortController();
+    const admin = postgres(store.databaseUrl!, { max: 2, prepare: false }), holder = await admin.reserve();
+    let settled = false, waiting: string[] = [];
+    try {
+      await holder.unsafe('BEGIN');
+      await holder.unsafe('LOCK TABLE source_ingestion_receipts IN ACCESS EXCLUSIVE MODE');
+      const sync = performSync(engine, { sourceId: f.sourceId, signal: controller.signal }).finally(() => { settled = true; });
+      for (let i = 0; i < 400 && waiting.length === 0; i++) {
+        await new Promise(r => setTimeout(r, 25));
+        waiting = (await admin.unsafe(`SELECT query FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND pid<>pg_backend_pid()`)).map(r => String(r.query));
+      }
+      console.info('BLOCKED_READ', JSON.stringify(waiting));
+      expect(waiting.length).toBe(1);
+      expect(waiting[0]).toContain("r.profile='company-brain'");
+      expect(settled).toBe(false);
+      if (abort) controller.abort(new Error('company profile cancelled by a real signal'));
+      await new Promise(r => setTimeout(r, 100));
+      await holder.unsafe('ROLLBACK');
+      const result = await sync;
+      console.info('ABORT_RESULT', JSON.stringify({ status: result.status, reason: (result as { reason?: string }).reason }));
+      if (!abort) { expect(result.status).toBe('synced'); return; }
+      expect(result).toMatchObject({ status: 'partial', reason: 'timeout', filesImported: 0, added: 0, modified: 0, deleted: 0 });
+      expect(await snapshot()).toEqual(before);
+    } finally {
+      await holder.unsafe('ROLLBACK').catch(() => {}); holder.release(); await admin.end();
+      await disposePersistenceConsumer(engine);
+    }
+  }), 120_000);

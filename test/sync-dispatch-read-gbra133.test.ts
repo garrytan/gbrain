@@ -23,7 +23,9 @@ import { endSyncDispatchRead, syncDispatchRow, withSyncDispatchRead } from '../s
 
 const git = (root: string, ...args: string[]) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 
-/** The statements the engine's top-level executeRaw sends while `fn` runs, whitespace-normalized. */
+const TYPED_PROFILE_READS = ['readSourceIncarnation', 'hasCompanyBrainReceipt'] as const;
+
+/** The statements the engine's top-level executeRaw sends while `fn` runs, whitespace-normalized, and each typed profile read by name. */
 async function recordStatements(engine: BrainEngine, fn: () => Promise<unknown>): Promise<string[]> {
   const sent: string[] = [];
   const target = engine as unknown as Record<string, (...args: unknown[]) => Promise<unknown>>;
@@ -32,8 +34,13 @@ async function recordStatements(engine: BrainEngine, fn: () => Promise<unknown>)
     sent.push(String(args[0]).replace(/\s+/g, ' ').trim());
     return original.apply(this, args);
   };
+  // The company profile's own reads are typed members (company-brain/profile.ts), so each call is recorded by name.
+  for (const name of TYPED_PROFILE_READS) {
+    const typed = target[name]!;
+    target[name] = function (this: unknown, ...args: unknown[]) { sent.push(name); return typed.apply(this, args); };
+  }
   try { await fn(); return sent; }
-  finally { delete target.executeRaw; }
+  finally { delete target.executeRaw; for (const name of TYPED_PROFILE_READS) delete target[name]; }
 }
 
 /** Each routing read the run sent before it took the drain lease (the lease holder record). */
@@ -45,7 +52,7 @@ function routingReads(sent: string[]) {
     leaseTaken: lease >= 0,
     modeReadLiveUnderLease: under.some(sql => sql.startsWith('SELECT') && sql.endsWith('FROM persistence_brain WHERE singleton=1')),
     resolver: count(sql => sql === 'SELECT id FROM sources WHERE id = $1 AND archived = false'),
-    profile: count(sql => sql === 'SELECT config,incarnation FROM sources WHERE id=$1'),
+    profile: count(sql => sql === 'SELECT config,incarnation FROM sources WHERE id=$1' || (TYPED_PROFILE_READS as readonly string[]).includes(sql)),
     mode: count(sql => sql === MANAGED_MODE_SQL),
     anchor: count(sql => sql === 'SELECT local_path AS value FROM sources WHERE id = $1'),
     connector: count(sql => sql === 'SELECT local_path,config FROM sources WHERE id=$1'),

@@ -521,7 +521,7 @@ for (const boundary of ['mode', 'company-profile'] as const) for (const interrup
   const checkpoints = await engine.executeRaw('SELECT op,fingerprint,completed_keys FROM op_checkpoints ORDER BY op,fingerprint');
   let entered!: () => void, resume!: () => void;
   const atRead = new Promise<void>(resolve => { entered = resolve; }), releaseRead = new Promise<void>(resolve => { resume = resolve; });
-  const execute = engine.executeRaw, interval = globalThis.setInterval;
+  const execute = engine.executeRaw, readIncarnation = engine.readSourceIncarnation, interval = globalThis.setInterval;
   const timer = interrupted === 'lease-loss' ? spyOn(globalThis, 'setInterval').mockImplementation(((fn: (...args: any[]) => void, milliseconds?: number, ...args: any[]) =>
     interval(fn, milliseconds === 300_000 ? 10 : milliseconds, ...args)) as unknown as typeof interval) : undefined;
   let pending!: Promise<Awaited<ReturnType<typeof performSync>>>, observed: Awaited<ReturnType<typeof performSync>> | undefined;
@@ -532,13 +532,19 @@ for (const boundary of ['mode', 'company-profile'] as const) for (const interrup
     await engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
     const signal = currentSourceFilesystemSignal()!;
     const lost = new Promise<void>(resolve => signal.addEventListener('abort', () => resolve(), { once: true }));
-    engine.executeRaw = async function (this: BrainEngine, sql: string, params?: unknown[]) {
+    // The mode is an executeRaw read; the company profile reads the source through the typed readSourceIncarnation member.
+    if (boundary === 'mode') engine.executeRaw = async function (this: BrainEngine, sql: string, params?: unknown[]) {
       const result = await execute.call(this, sql, params);
-      if (!readObserved && sql === (boundary === 'mode' ? 'SELECT enabled FROM persistence_brain WHERE singleton=1' : 'SELECT config,incarnation FROM sources WHERE id=$1')) {
+      if (!readObserved && sql === 'SELECT enabled FROM persistence_brain WHERE singleton=1') {
         readObserved = true; entered(); await releaseRead;
       }
       return result;
     } as BrainEngine['executeRaw'];
+    else engine.readSourceIncarnation = async function (this: BrainEngine, sourceId: string) {
+      const row = await readIncarnation.call(this, sourceId);
+      if (!readObserved && sourceId === f.id) { readObserved = true; entered(); await releaseRead; }
+      return row;
+    } as BrainEngine['readSourceIncarnation'];
     pending = interrupted === 'job-abort'
       ? withSubmissionAuthority(APPLICATION_AUTHORITY, () => performSync(engine, f.opts), abort.signal)
       : performSync(engine, { ...f.opts, ...(interrupted === 'explicit-abort' ? { signal: abort.signal } : {}) });
@@ -574,7 +580,7 @@ for (const boundary of ['mode', 'company-profile'] as const) for (const interrup
     expect(await engine.executeRaw('SELECT enabled FROM persistence_brain WHERE singleton=1')).toEqual([{ enabled: true }]);
     console.info(`SYNC_AFTER_AWAIT engine=${engine.kind} boundary=${boundary} case=${interrupted} barrier_observed=true checkpoints=0 published=0`);
   } finally {
-    resume(); timer?.mockRestore(); engine.executeRaw = execute;
+    resume(); timer?.mockRestore(); engine.executeRaw = execute; engine.readSourceIncarnation = readIncarnation;
     if (leasedKey) await engine.executeRaw('DELETE FROM gbrain_cycle_locks WHERE id=$1', [leasedKey]);
     await outer.catch(() => {}); await pending?.catch(() => {});
     rmSync(parent, { recursive: true, force: true });
