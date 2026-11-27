@@ -13,7 +13,8 @@
  * no such chat in reach is reported as information, so a brain with nothing
  * to separate yet is not marked unhealthy. A credential holding --may-act-for
  * is skipped: the per-person fix names it, and its notice says a call that
- * names no audience reads its full grant.
+ * names no audience reads its full grant. So are the local stdio servers once config mcp.stdio_may_act_for is set
+ * (GST-4043): the bot harness fix sets it, and each turn's audience then bounds what the server reads.
  * A remote caller (run_doctor only) gets counts, never credential names.
  * Not applicable on a brain that serves one person (access.serves).
  */
@@ -26,6 +27,7 @@ import type { Check } from '../../doctor.ts';
 import { connectedEngine, type DoctorContext, type DoctorEntry } from '../context.ts';
 import { infoCheck } from '../check-fix.ts';
 import { brainServes } from '../../../core/access/serves.ts';
+import { STDIO_MAY_ACT_FOR_KEY } from '../../../core/access/audience.ts';
 
 interface Finding { subject: ExposureSubject; label: string; reasons: string[]; census: ChatCensus }
 
@@ -60,7 +62,8 @@ async function runUnscopedMultiUserToken(ctx: DoctorContext): Promise<Check[]> {
     if (reasons.length) findings.push({ subject, label: subjectLabel(subject), reasons, census: c });
   }
   const local: Finding[] = [];
-  if (!ctx.remote) {
+  const actsForStdioAudience = !!(await engine.getConfig(STDIO_MAY_ACT_FOR_KEY))?.trim();
+  if (!ctx.remote && !actsForStdioAudience) {
     const plugins = claudeCodeChannelPlugins();
     const harnesses = [...new Set([
       ...readBrainFirstLedger().filter(e => e.status === 'installed' && BOT_HARNESSES.includes(e.harness)).map(e => e.harness),

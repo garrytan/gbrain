@@ -22,14 +22,15 @@ import { closeSync, existsSync, openSync, readSync } from 'node:fs';
 import { homedir, userInfo } from 'node:os';
 import { join } from 'node:path';
 import { openclawStateDir } from '../core/setup/brain-first.ts';
-import { mintedKeysReadCalls, type LayoutOutcome } from './setup-brain-layout.ts';
+import { companySourceFirst, COMPANY_SOURCE, labelsInCompany, mintedKeysReadCalls, type BrainShape, type LayoutOutcome } from './setup-brain-layout.ts';
 import { opError, OperationError } from '../core/ops/contract.ts';
 import { ACCESS_ID_RE } from '../core/access/principals.ts';
 import { bunSpawnSync } from '../core/spawn.ts';
 import { loadConfig } from '../core/config.ts';
 import { companyRuleLines, readRoster, readsLines, rosterEmpty, type ServesReceipt, type ServesStatus, receiptLines, receiptOk } from './access-serves.ts';
 
-export interface ServesFlags { serves?: 'one' | 'several'; members?: string; membersFile?: string; source?: string; stdioMember?: string; labelledOnly?: boolean; openHistory?: boolean; owner?: string; dryRun: boolean }
+/** `source`: the source the members are labelled in, the harness's pinned source (--source, GBRAIN_SOURCE or a Codex receipt); unset, the labelling child resolves the brain's own (sources.default). `brain` and `team` are the run's --shape, so a pin on the company source adds it before labelling. */
+export interface ServesFlags { serves?: 'one' | 'several'; members?: string; membersFile?: string; source?: string; stdioMember?: string; labelledOnly?: boolean; openHistory?: boolean; owner?: string; brain?: BrainShape; team?: boolean; dryRun: boolean }
 
 /** GBRA-585 D: the login name of the person running setup as a member id (lower-cased, other characters as '-'), or null when none fits. */
 export function loginOwnerId(login?: string): string | null {
@@ -87,6 +88,8 @@ export interface ServesOutcome {
   owner_from?: ServesOwner['from'];
   /** GBRA-585 A: the labelling child run again after the layout step added the company source, so the keys this run minted read it. */
   regrant?: ServesReceipt;
+  /** GST-4043: the company source this run added before labelling the members in it (the layout step then keeps it). */
+  company_first?: NonNullable<LayoutOutcome['company']>;
   error?: string;
 }
 
@@ -95,8 +98,12 @@ export const PGLITE_SEVERAL_NOTE = 'PGLite lets one process at a time open this 
   + 'admin commands (access, sources, auth) and most reads refuse with pglite_busy until it stops, and every member\'s connection drops while it is down; '
   + 'page and fact writes (put, remember) still work through it. For a brain several people use, move to Postgres first: gbrain migrate --to postgres (docs/ENGINES.md#pglite-live-serve)';
 
+/**
+ * GST-4043: a gbrain child on the host brain (GBRAIN_BRAIN_ID=host), so a .gbrain-mount or registered mount around the
+ * directory setup runs from never redirects it; a thin client ignores the variable, where an explicit --brain refuses.
+ */
 function child(launcher: string, args: string[]): { ok: boolean; stdout: string; stderr: string } {
-  const r = bunSpawnSync([launcher, ...args], { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe', env: process.env });
+  const r = bunSpawnSync([launcher, ...args], { stdin: 'ignore', stdout: 'pipe', stderr: 'pipe', env: { ...process.env, GBRAIN_BRAIN_ID: 'host' } });
   return { ok: r.exitCode === 0, stdout: r.stdout?.toString() ?? '', stderr: r.stderr?.toString() ?? '' };
 }
 
@@ -244,8 +251,13 @@ export function servesPreflight(flags: ServesFlags, launcher: string, harness: s
 /** The serves part of a setup run (a preview on a dry run), or null when it has nothing to do or say: a one-person brain with no bound entry. */
 export function servesApply(flags: ServesFlags, launcher: string, harness: string, plan: ServesPlan, hasBrain: boolean, entry: EntryBinding = { member: null, previous: null }): ServesOutcome | null {
   const several = flags.serves === 'several';
-  const labelled = !several ? null : hasBrain || !flags.dryRun ? runServesSeveral(launcher, plan.roster, flags, plan.owner)
-    : { mode: 'several' as const, note: `the new brain is created first; then ${plan.roster.join(', ')} each get a member, a folder rule and a bound key${plan.owner ? `, and ${plan.owner.id} is named the brain owner` : ''}` };
+  const inCompany = several && labelsInCompany(flags.brain, !!flags.team, flags.source);
+  const first = inCompany && (hasBrain || !flags.dryRun) ? companySourceFirst(launcher, flags.dryRun) : null;
+  const ahead = [...(hasBrain ? [] : ['the new brain is created']), ...(flags.dryRun && inCompany && (!hasBrain || first?.action === 'created') ? [`source ${COMPANY_SOURCE} is added`] : [])];
+  const labelled = !several ? null
+    : first?.action === 'failed' ? { mode: 'several' as const, error: `source ${COMPANY_SOURCE}, which the members are labelled in, could not be added: ${first.detail ?? 'unknown error'}` }
+    : !ahead.length || !flags.dryRun ? { ...runServesSeveral(launcher, plan.roster, flags, plan.owner), ...(first?.action === 'created' ? { company_first: first } : {}) }
+    : { mode: 'several' as const, note: `${ahead.join(' and ')} first; then ${plan.roster.join(', ')} each get a member, a folder rule and a bound key${plan.owner ? `, and ${plan.owner.id} is named the brain owner` : ''}` };
   const reread = several && !flags.dryRun ? readServesStatus(launcher) : null;
   const status = reread ? ('status' in reread ? reread.status : null) : plan.status;
   const preview = several && flags.dryRun && status?.serves !== 'several';
@@ -292,7 +304,9 @@ export function servesOk(o: ServesOutcome | null): boolean {
  */
 export function servesAfterLayout(o: ServesOutcome | null, flags: ServesFlags, launcher: string, plan: ServesPlan, layout: LayoutOutcome | null | undefined): ServesOutcome | null {
   if (!o || flags.serves !== 'several') return o;
-  if (layout?.company?.action !== 'created') {
+  const added = layout?.company?.action === 'created';
+  if (o.company_first && layout?.company?.action === 'kept') layout.company = o.company_first;
+  if (!added) {
     callReadersAfterServes(o.receipt, launcher, plan, layout);
     return o;
   }

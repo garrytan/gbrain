@@ -24,6 +24,9 @@
  * while that list is still the one setup last gave the key (permissions.setup_reads): a key changed by hand is skipped
  * and named with the rescope command, a source archived since is dropped from the list, and a key whose write source is
  * archived is BLOCKED (its write source never moves); any other kept key (today's default or scalar grant) is never changed. The preview names the list and what `company` holds.
+ * GST-4043: without --source the run labels the source the CLI resolves (GBRAIN_SOURCE, then sources.default), not
+ * literal `default`. A re-run on another source moves a list key setup minted (its list still the one setup gave it)
+ * to write to that source, keeping what it read; any other key writing elsewhere is skipped with its rescope command.
  */
 import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
@@ -43,6 +46,7 @@ import { COMPANY_SOURCE_ID, memberKeyReadSources, openPagesLines, readOpenPages,
 import { rescopeLegacyToken } from '../core/grants/legacy-token.ts';
 import { coerceLegacyPermissions } from '../core/legacy-token-scope.ts';
 import type { OpenPages } from '../core/access/open-pages.ts';
+import { resolveSourceId } from '../core/source-resolver.ts';
 import { addFolderRules, currentFolderRules } from './access-rules.ts';
 import { mintToken } from './auth-mint.ts';
 import { rescopeArchiveAfter, rescopeArchiveBefore } from './archive-rescope.ts';
@@ -74,8 +78,11 @@ export interface ServesReceipt {
    * today), so labelled-only members still read the company pages. A re-run only adds readers.
    */
   company_rule?: { source: string; id: string; prefix: string; readers: string[]; adds?: string[]; action: 'add' | 'keep' | 'blocked'; detail?: string; write?: RuleWrite };
-  /** GBRA-585 A: reads = the source list a minted or list key holds once the run is done; adds = what a re-run adds to a kept list key. */
-  keys: Array<{ member: string; token_name: string; path: string; action: 'mint' | 'keep' | 'skipped' | 'blocked'; detail?: string; reads?: string[]; adds?: string[] }>;
+  /**
+   * GBRA-585 A: reads = the source list a minted or list key holds once the run is done; adds = what a re-run adds to a kept list key.
+   * GST-4043: moves = the write source a kept list key setup minted leaves for this run's source (the run's source writes first in reads).
+   */
+  keys: Array<{ member: string; token_name: string; path: string; action: 'mint' | 'keep' | 'skipped' | 'blocked'; detail?: string; reads?: string[]; adds?: string[]; moves?: string }>;
   /** GBRA-585 A: what the keys this run mints write and read, and what the company source holds when they read it. */
   reads?: { write: string; sources: string[]; company: { pages: number; calls: number } | null };
   key_dir: string;
@@ -191,14 +198,22 @@ async function plan(engine: BrainEngine, roster: string[], sourceId: string, lab
     else if (token.member_id !== id) keys.push({ member: id, token_name: name, path, action: 'blocked', detail: `a token named ${name} exists but is not bound to ${id}; revoke it (gbrain auth revoke ${name}) or bind it (gbrain auth rescope --token ${name} --member ${id})` });
     else if (!existsSync(path)) keys.push({ member: id, token_name: name, path, action: 'blocked', detail: `the key ${name} exists but its file is gone and a key is shown only once; revoke it (gbrain auth revoke ${name}) and run this again to mint a new one` });
     else if (hashToken(readFileSync(path, 'utf8').trim()) !== token.token_hash) keys.push({ member: id, token_name: name, path, action: 'blocked', detail: `the file does not hold the live key ${name} (it was revoked and made again, or another brain wrote it); revoke it (gbrain auth revoke ${name}), delete ${path} and run this again to mint a new one` });
-    else if (token.source_grant !== 'federated' || token.source_id !== sourceId) keys.push({ member: id, token_name: name, path, action: 'keep' });
-    else {
+    else if (token.source_grant !== 'federated' && (token.source_id ?? 'default') === sourceId) keys.push({ member: id, token_name: name, path, action: 'keep' });
+    else if (token.source_grant !== 'federated') {
+      keys.push({ member: id, token_name: name, path, action: 'skipped',
+        detail: `it writes to ${token.source_id ?? 'default'} and setup did not mint it with a source list, so setup leaves it as it is; to move it to ${sourceId}, run gbrain auth rescope --token ${name} --sources ${desired.join(',')}` });
+    } else {
       const held = textList(token.federated_read);
       const adds = desired.filter(s => !held.includes(s));
       const active = new Set((await engine.executeRaw<{ id: string }>('SELECT id FROM sources WHERE id = ANY($1::text[]) AND archived IS NOT TRUE', [held])).map(r => r.id));
       const reads = [...held.filter(s => active.has(s)), ...adds];
       const minted = setupReads(token.permissions);
-      if (!active.has(sourceId)) {
+      if (token.source_id !== sourceId) {
+        const moved = [...new Set([sourceId, ...reads])];
+        if (minted && sameSet(minted, held)) keys.push({ member: id, token_name: name, path, action: 'keep', reads: moved, moves: token.source_id ?? 'default', adds });
+        else keys.push({ member: id, token_name: name, path, action: 'skipped', reads: held,
+          detail: `it writes to ${token.source_id} and its source list (${held.join(', ')}) is not the one setup gave it, so setup leaves it as it is; to move it to ${sourceId}, run gbrain auth rescope --token ${name} --sources ${moved.join(',')}` });
+      } else if (!active.has(sourceId)) {
         keys.push({ member: id, token_name: name, path, action: 'blocked', reads: held,
           detail: `its write source ${sourceId} is archived, so setup leaves the key as it is and never moves where it writes; repoint it with gbrain auth rescope --token ${name} --sources <new write source>${reads.length ? `,${reads.join(',')}` : ''}, or revoke it with gbrain auth revoke ${name}` });
       } else if (adds.length && !(minted && sameSet(minted, held))) {
@@ -342,7 +357,7 @@ export async function labelSeveral(engine: BrainEngine, roster: string[], source
       }
       abortAfter('serves-key');
     }
-    for (const k of receipt.keys.filter(x => x.action === 'keep' && x.adds?.length)) {
+    for (const k of receipt.keys.filter(x => x.action === 'keep' && (x.adds?.length || x.moves))) {
       await rescopeLegacyToken(engine, { target: { name: k.token_name }, sources: k.reads!, reset: [], refreshOperations: false, allNew: false, dryRun: false, json: true });
       await recordSetupReads(engine, k.token_name, k.reads!);
     }
@@ -375,7 +390,7 @@ export function receiptLines(r: ServesReceipt): string[] {
     ...r.rules.map(x => `  rule       ${x.prefix} readable by ${x.readers.map(p => p.replace(/^member:/, '')).join(', ')} (${verb(x.action)})${x.detail ? `: ${x.detail}` : ''}`),
     ...(r.rule_write ? [writeLine(r.rule_write)] : []),
     ...companyRuleLines(r),
-    ...r.keys.map(k => `  key        ${k.member}: ${k.path} (${verb(k.action)}${k.action === 'blocked' ? '' : ', 0600'}; token ${k.token_name}${k.adds?.length ? `; ${r.applied ? 'now also reads' : 'will also read'} ${k.adds.join(', ')}` : ''})${k.detail ? `: ${k.detail}` : ''}`),
+    ...r.keys.map(k => `  key        ${k.member}: ${k.path} (${verb(k.action)}${k.action === 'blocked' ? '' : ', 0600'}; token ${k.token_name}${k.moves ? `; ${r.applied ? 'now writes to' : 'will write to'} ${r.source_id} instead of ${k.moves}` : ''}${k.adds?.length ? `; ${r.applied ? 'now also reads' : 'will also read'} ${k.adds.join(', ')}` : ''})${k.detail ? `: ${k.detail}` : ''}`),
     ...readsLines(r),
     ...(writePending(r.rule_write) ? [`  The rules are not enforced yet: finish with gbrain access resume --source ${r.source_id}`] : []),
     ...(writePending(r.company_rule?.write) && !companyHeld(r) ? [`  The company rule is not enforced yet: finish with gbrain access resume --source ${r.company_rule!.source}`] : []),
@@ -442,7 +457,8 @@ export async function runAccessServes(engine: BrainEngine, mode: string | undefi
   const roster = readRoster(flagValue(args, '--members'), flagValue(args, '--members-file'));
   if (!roster.length) throw rosterEmpty('gbrain access serves several');
   const owner = flagValue(args, '--owner');
-  const r = await labelSeveral(engine, roster, flagValue(args, '--source') ?? 'default', args.includes('--yes'), json, { labelledOnly: args.includes('--labelled-only'), ...(owner !== undefined ? { owner: assertAccessId(owner) } : {}) });
+  const source = await resolveSourceId(engine, flagValue(args, '--source') ?? null);
+  const r = await labelSeveral(engine, roster, source, args.includes('--yes'), json, { labelledOnly: args.includes('--labelled-only'), ...(owner !== undefined ? { owner: assertAccessId(owner) } : {}) });
   if (r.applied) await rescopeArchiveAfter(engine);
   console.log(json ? JSON.stringify(r, null, 2) : receiptLines(r).join('\n'));
   if (!receiptOk(r)) setCliExitVerdict(1);

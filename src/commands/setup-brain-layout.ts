@@ -291,10 +291,10 @@ export interface LayoutOutcome {
   household?: { result: TemplateResult | null; argv: string[]; detail?: string };
 }
 
-/** A gbrain child; `source` pins it to one source through GBRAIN_SOURCE (null: the caller's environment as it is). */
+/** A gbrain child on the host brain (GBRAIN_BRAIN_ID=host, as the labelling children); `source` pins it to one source through GBRAIN_SOURCE (null: the caller's environment as it is). */
 type Run = (argv: string[], stdin?: string, source?: string | null) => { code: number; stdout: string; stderr: string };
 const run: Run = (argv, stdin, source) => {
-  const env = source ? { ...process.env, GBRAIN_SOURCE: source } : process.env;
+  const env = { ...process.env, GBRAIN_BRAIN_ID: 'host', ...(source ? { GBRAIN_SOURCE: source } : {}) };
   const child = bunSpawnSync(argv, { stdin: stdin === undefined ? 'ignore' : new TextEncoder().encode(stdin), stdout: 'pipe', stderr: 'pipe', env });
   return { code: child.exitCode ?? 1, stdout: child.stdout?.toString() ?? '', stderr: child.stderr?.toString() ?? '' };
 };
@@ -459,6 +459,13 @@ function ensureCompanySource(exec: Run, launcher: string, dryRun: boolean): NonN
   try { const doc = JSON.parse(add.stdout) as { federated?: unknown; config?: { federated?: unknown } }; federated = doc.federated === true || doc.config?.federated === true; } catch { /* unreadable: not federated */ }
   return { source: COMPANY_SOURCE, action: 'created', federated, root };
 }
+
+/**
+ * GST-4043: setup labels the people before the layout step runs, so a --shape company run whose members are labelled
+ * in source company (its pinned source) adds that source first.
+ */
+export const labelsInCompany = (shape: BrainShape | undefined, team: boolean, source: string | undefined): boolean => source === COMPANY_SOURCE && !team && hasCompany(shape);
+export const companySourceFirst = (launcher: string, dryRun: boolean): NonNullable<LayoutOutcome['company']> => ensureCompanySource(run, launcher, dryRun);
 
 /**
  * The layout for this run. `instructionsPath` is the file the brain-first block lives in (null when the harness has
