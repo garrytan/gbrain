@@ -23,6 +23,7 @@ import { buildFollowStatus, readFollowerFile, renderFollowStatus } from '../../s
 import { newMirrorCounters } from '../../src/shadow/mirror.ts';
 import { writeSeedRecord } from '../../src/shadow/seed.ts';
 import { wrapShadowEngine } from '../../src/shadow/wrapper.ts';
+import { wrapShadowSibling } from '../../src/shadow/state.ts';
 import { completeWriteRow, insertPublicationEffects, lockPersistenceCounters } from '../../src/core/engine-sql/persistence-journal.ts';
 import { sqlWrites } from '../../src/shadow/sql-writes.ts';
 import { sealImportedPage } from '../../src/core/engine-sql/write-guards.ts';
@@ -1450,10 +1451,12 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
     }
   });
   describe('a bulk import\'s worker engines are shadowed like the primary (sync and import at their default concurrency)', () => {
-    /** A Postgres sync or import of more than 100 files opens its own worker engines (sync/imports.ts, commands/import.ts); a PGLite brain imports on the primary, serially. */
+    /** A Postgres sync of more than 100 files, or an import with --workers, opens its own worker engines (sync/imports.ts, commands/import.ts); a PGLite brain imports on the primary, serially. */
     const FILES = 104;
-    const putSamples = (inbox: WriteEvent[]) => inbox.filter((e) => e.op === 'putPage').length;
-    async function bulk(run: (wrapped: BrainEngine, root: string, sourceId: string) => Promise<unknown>) {
+    const note = (i: number) => `---\ntitle: W${i}\ntype: note\n---\nW${i} is note ${i}.\n`;
+    /** Page writes that reached the sampler, and those of them that are full samples (read back, with no outcome of their own). */
+    const counts = (inbox: WriteEvent[]) => { const puts = inbox.filter((e) => e.op === 'putPage'); return { sampled: puts.length, full: puts.filter((e) => !e.outcome).length }; };
+    async function bulk(run: (wrapped: BrainEngine, root: string, sourceId: string, git: ReturnType<typeof makeGitFixture> extends Promise<infer G> ? G : never, inbox: WriteEvent[]) => Promise<unknown>, pages = FILES) {
       await ctx.reset(); await primary().setConfig('search.contextual_retrieval', 'none');
       const home = ctx.tempDir(); const sourceId = `bulk${Date.now() % 100000}`; const root = join(home, sourceId); mkdirSync(root);
       const { inbox, wrapped } = rig();
@@ -1461,26 +1464,63 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       if (ctx.kind === 'postgres' && !url) throw new Error('the Postgres primary does not say which database it opened');
       await withEnv({ GBRAIN_HOME: home, GBRAIN_SYNC_FAILURES_DIR: home, GBRAIN_SOURCE: undefined, GBRAIN_DATABASE_URL: url }, async () => {
         const git = await makeGitFixture(root); mkdirSync(join(root, 'notes'));
-        for (let i = 0; i < FILES; i++) writeFileSync(join(root, `notes/w${i}.md`), `---\ntitle: W${i}\ntype: note\n---\nW${i} is note ${i}.\n`);
+        for (let i = 0; i < FILES; i++) writeFileSync(join(root, `notes/w${i}.md`), note(i));
         git.commitAll('first');
         await primary().executeRaw('INSERT INTO sources(id,name,local_path) VALUES($1,$1,$2)', [sourceId, root]);
-        try { await run(wrapped, root, sourceId); } finally { await disposePersistenceConsumer(wrapped); await disposePersistenceConsumer(primary()); }
+        try { await run(wrapped, root, sourceId, git, inbox); } finally { await disposePersistenceConsumer(wrapped); await disposePersistenceConsumer(primary()); }
       });
       const [{ n }] = await primary().executeRaw<{ n: string }>('SELECT count(*)::text AS n FROM pages WHERE source_id=$1', [sourceId]);
-      expect(Number(n)).toBe(FILES); // the import itself is unchanged
-      await until(() => putSamples(inbox) >= FILES, 60_000).catch(() => undefined);
-      return putSamples(inbox);
+      expect(Number(n)).toBe(pages); // the import itself is unchanged
+      await until(() => counts(inbox).full >= FILES, 60_000).catch(() => undefined);
+      return counts(inbox);
     }
 
-    test('a full sync at its default concurrency samples every page write, also the ones its worker engines make', async () => {
-      const sampled = await bulk((wrapped, root, sourceId) => performSync(wrapped, { full: true, noPull: true, noEmbed: true, noSchemaPack: true, sourceId, repoPath: root } as never));
-      expect(sampled).toBe(FILES); // master: 0 on Postgres (four unwrapped workers wrote every page), FILES on PGLite (serial)
+    test('a full sync at its default concurrency samples every page write, also the ones its worker engines make, and reads each back', async () => {
+      const got = await bulk((wrapped, root, sourceId) => performSync(wrapped, { full: true, noPull: true, noEmbed: true, noSchemaPack: true, sourceId, repoPath: root } as never));
+      expect(got).toEqual({ sampled: FILES, full: FILES }); // master: 0 on Postgres (four unwrapped workers wrote every page), FILES on PGLite (serial)
     }, 300_000);
 
-    test('gbrain import with --workers samples every page write its worker engines make', async () => {
-      const sampled = await bulk((wrapped, root, sourceId) => runImport(wrapped, [root, '--workers', '4', '--no-embed'], { sourceId } as never));
-      expect(sampled).toBe(FILES); // master: 0 on Postgres, FILES on PGLite (a PGLite import never opens workers)
+    test('an incremental sync of more than 100 new files (the sync worker loop, not the import one) samples and reads back every page its workers write', async () => {
+      const got = await bulk(async (wrapped, root, sourceId, git, inbox) => {
+        const opts = { noPull: true, noEmbed: true, noSchemaPack: true, sourceId, repoPath: root };
+        await performSync(wrapped, { ...opts, concurrency: 1 } as never); // the first sync, serial on the primary
+        for (let i = FILES; i < 2 * FILES; i++) writeFileSync(join(root, `notes/w${i}.md`), note(i));
+        git.commitAll('second');
+        inbox.length = 0;
+        await performSync(wrapped, opts as never); // 104 new files: past the incremental threshold, so workers import them
+      }, 2 * FILES);
+      expect(got).toEqual({ sampled: FILES, full: FILES }); // master: 0 on Postgres
     }, 300_000);
+
+    test('gbrain import with --workers samples every page write its worker engines make, and reads each back', async () => {
+      const got = await bulk((wrapped, root, sourceId) => runImport(wrapped, [root, '--workers', '4', '--no-embed'], { sourceId } as never));
+      expect(got).toEqual({ sampled: FILES, full: FILES }); // master: 0 on Postgres, FILES on PGLite (a PGLite import never opens workers)
+    }, 300_000);
+
+    test('a worker\'s disconnect waits for its own sampled read-back, and another worker\'s disconnect leaves it running', async () => {
+      if (ctx.kind !== 'postgres') return; // PGLite opens no worker engines
+      await ctx.reset(); await fillSeedFixture(primary());
+      const { inbox, wrapped } = rig();
+      const url = (primary() as unknown as { connectedDatabaseUrl: string }).connectedDatabaseUrl;
+      const { PostgresEngine } = await import('../../src/core/postgres-engine.ts');
+      const open = async () => { const e = new PostgresEngine(); await e.connect({ database_url: url, poolSize: 2 } as never); return e; };
+      const a = await open(); const b = await open();
+      const wa = wrapShadowSibling(wrapped, a); const wb = wrapShadowSibling(wrapped, b);
+      let release!: () => void; const held = new Promise<void>((r) => { release = r; });
+      const real = a.getPage.bind(a);
+      const hook = spyOn(a, 'getPage').mockImplementation((async (...args: Parameters<typeof a.getPage>) => { await held; return real(...args); }) as never); // the read-back's page read waits
+      try {
+        await wa.putPage('people/barrier-example', page('Barrier Example'));
+        await wb.disconnect(); // another worker goes: it must not abandon this one's read-back
+        await new Promise((r) => setTimeout(r, 100));
+        expect(inbox.filter((e) => e.op === 'putPage')).toEqual([]); // still reading back
+        const gone = wa.disconnect();
+        setTimeout(release, 300); // finishes within the 2 s the disconnect waits
+        await gone;
+      } finally { hook.mockRestore(); release(); }
+      const [event] = inbox.filter((e) => e.op === 'putPage');
+      expect(event?.outcome).toBeUndefined(); // a full sample, sent before the worker's pool closed (not readback_abandoned or readback_failed)
+    }, 60_000);
   });
 }
 

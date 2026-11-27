@@ -950,15 +950,16 @@ describe('every sample the child was sent ends in the tally (sample accounting)'
 });
 
 describe('worker engines opened beside a shadowed primary (sync and import workers)', () => {
-  /** A stand-in worker engine: its disconnect hooks are kept, and its one write is recorded. */
-  const fakeWorker = () => {
+  const URL_A = 'postgresql://shadow@127.0.0.1:1/brain_a';
+  /** A stand-in engine: its disconnect hooks are kept, and its one write is recorded. */
+  const fakeEngine = (url: string | undefined) => {
     const hooks: Array<() => Promise<void>> = []; const wrote: string[] = [];
-    return { hooks, wrote, kind: 'postgres', registerBeforeDisconnect(stop: () => Promise<void>) { hooks.push(stop); return () => {}; }, async addTag(slug: string, tag: string) { wrote.push(`${slug}:${tag}`); } };
+    return { hooks, wrote, kind: 'postgres', connectedDatabaseUrl: url, registerBeforeDisconnect(stop: () => Promise<void>) { hooks.push(stop); return () => {}; }, async addTag(slug: string, tag: string) { wrote.push(`${slug}:${tag}`); } };
   };
   const sink = () => ({ counters: newMirrorCounters(), offer: () => {}, active: () => true });
 
   test('a worker of an engine that is not shadowed is returned as it is, and nothing is registered on it', () => {
-    const worker = fakeWorker();
+    const worker = fakeEngine(URL_A);
     expect(wrapShadowSibling(primary, worker)).toBe(worker);
     expect(worker.hooks).toEqual([]);
   });
@@ -967,8 +968,8 @@ describe('worker engines opened beside a shadowed primary (sync and import worke
     const lines: string[] = [];
     const sampler = createWriteSampler({ rate: 1, send: (line) => { lines.push(line); return true; }, active: () => true });
     let noted = 0; // the writer observer (swap eligibility) now sees a worker's committed writes as this process's
-    const wrapped = wrapShadowEngine(primary, sink(), { sampleRate: 0, writes: sampler, onCommittedWrite: () => { noted++; } });
-    const worker = fakeWorker();
+    const wrapped = wrapShadowEngine(fakeEngine(URL_A) as never, sink(), { sampleRate: 0, writes: sampler, onCommittedWrite: () => { noted++; } });
+    const worker = fakeEngine(URL_A);
     const shadowed = wrapShadowSibling(wrapped, worker);
     expect(shadowed).not.toBe(worker);
     await shadowed.addTag('people/a-example', 'x'); // a sampled write outside the pilot: counted by family, through the worker's own sampler
@@ -979,10 +980,36 @@ describe('worker engines opened beside a shadowed primary (sync and import worke
     await worker.hooks[0]!();
   });
 
+  test('a worker connected to another database (or one that names none) is left unwrapped: nothing of it reaches this brain\'s shadow', async () => {
+    const lines: string[] = [];
+    const wrapped = wrapShadowEngine(fakeEngine(URL_A) as never, sink(), { sampleRate: 0, writes: createWriteSampler({ rate: 1, send: (line) => { lines.push(line); return true; }, active: () => true }) });
+    for (const other of [fakeEngine('postgresql://shadow@127.0.0.1:1/brain_b'), fakeEngine(undefined)]) {
+      expect(wrapShadowSibling(wrapped, other)).toBe(other);
+      await other.addTag('people/a-example', 'x');
+      expect(other.hooks).toEqual([]);
+    }
+    expect(lines).toEqual([]);
+    const unnamed = wrapShadowEngine(fakeEngine(undefined) as never, sink(), { sampleRate: 0 }); // a primary that names no URL (PGLite) shadows no worker
+    const worker = fakeEngine(undefined);
+    expect(wrapShadowSibling(unnamed, worker)).toBe(worker);
+  });
+
   test('without a write sampler (a brain that was never seeded) a worker is wrapped and nothing waits at its disconnect', () => {
-    const wrapped = wrapShadowEngine(primary, sink(), { sampleRate: 0 });
-    const worker = fakeWorker();
+    const wrapped = wrapShadowEngine(fakeEngine(URL_A) as never, sink(), { sampleRate: 0 });
+    const worker = fakeEngine(URL_A);
     expect(wrapShadowSibling(wrapped, worker)).not.toBe(worker);
     expect(worker.hooks).toEqual([]);
+  });
+
+  test('a loss a worker\'s sampler could not record is carried by the next line its primary sends, after the worker is gone', async () => {
+    const lines: string[] = []; let accept = false;
+    const sampler = createWriteSampler({ rate: 1, send: (line) => { if (!accept) return false; lines.push(line); return true; }, active: () => true, lost: () => false });
+    const wrapped = wrapShadowEngine(fakeEngine(URL_A) as never, sink(), { sampleRate: 0, writes: sampler });
+    const worker = fakeEngine(URL_A);
+    await wrapShadowSibling(wrapped, worker).addTag('people/a-example', 'x'); // refused by the pipe, and the loss journal is down
+    await worker.hooks[0]!(); // the worker disconnects with the loss still unrecorded
+    accept = true;
+    await (wrapped as unknown as { addTag(s: string, t: string): Promise<void> }).addTag('people/a-example', 'y');
+    expect(lines.map((l) => JSON.parse(l).dropped)).toEqual([1]); // master's fork kept it to itself and it was lost
   });
 });

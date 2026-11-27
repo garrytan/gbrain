@@ -94,11 +94,19 @@ export const SIBLING_SETTLE_MS = 2_000;
 export function wrapShadowEngine<E extends BrainEngine>(engine: E, sink: ShadowSink, opts: ShadowWrapperOptions): E {
   const proxy = buildProxy(engine, sink, opts, false, null, null);
   registerShadowSibling(proxy, <W extends object>(worker: W): W => {
+    if (!sameDatabase(engine, worker)) return worker; // a worker of another database (a config that changed while this brain was open) never reaches this brain's shadow
     const writes = opts.writes?.fork();
     if (writes) (worker as unknown as BrainEngine).registerBeforeDisconnect(async () => { try { await writes.settle(SIBLING_SETTLE_MS); } catch { /* the shadow never fails a disconnect */ } });
     return wrapShadowEngine(worker as unknown as BrainEngine, sink, { ...opts, writes }) as unknown as W;
   });
   return proxy;
+}
+
+/** True when both engines say they are connected to the same database URL; an engine that names none (PGLite opens no worker) is never the same. */
+function sameDatabase(primary: object, worker: object): boolean {
+  const url = (e: object): unknown => { try { return (e as { connectedDatabaseUrl?: unknown }).connectedDatabaseUrl; } catch { return undefined; } };
+  const a = url(primary);
+  return typeof a === 'string' && a.length > 0 && a === url(worker);
 }
 
 /** Whether a member call may write: a mapped or unmapped member, schema work, a reserved connection, raw SQL with a write statement, or an ignored member that writes the database (locks, logs, caches). A false yes only notes a process that writes anyway. */
