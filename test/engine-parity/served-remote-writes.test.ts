@@ -1,14 +1,16 @@
 /**
  * BrainEngine parity: the remote whole operations of the served wire (rust-engine/served/remote-whole-ops.ts
  * REMOTE_WHOLE_OPERATIONS) that no other parity file calls as a remote caller: add_tag, remove_tag, add_link, remove_link,
- * remember, forget, restore_page and edit_page, each called over MCP stdio (dispatchToolCall with remote: true).
+ * remember, forget, delete_page, restore_page and edit_page, each called over MCP stdio (dispatchToolCall with remote: true).
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: on every arm (PGLite; Postgres with DATABASE_URL; the Rust arm, embedded or served) each operation answers
  *    the same and leaves the same state, read back through typed reads.
  *  - Regression: on the served arm (GBRAIN_TEST_RUST_SERVED=1, multi-user), a remote caller's write was refused before it
  *    was sent; it now crosses as one whole operation the brain server runs as in process. A server that ran it under
- *    another context, or a client that sent its members one by one, answers differently or writes differently.
+ *    another context, or a client that sent its members one by one, answers differently or writes differently. A remote
+ *    delete_page also refused on every Rust arm, embedded too: its guest check (guests/admission.ts
+ *    refuseRemoteGuestDelete) ran raw SQL; it now reads the typed member readGuestDeleteRow.
  *  - Why existing coverage misses it: these operations had no remote parity case (test/rust-served-remote-whole-ops.test.ts
  *    requires one per listed operation).
  *  - Seam: none. Pages are seeded with putPage; each tool runs through dispatchToolCall; ids and revisions are compared by
@@ -70,10 +72,10 @@ parityTest('remote remember stores a fact and forget withdraws it', { methods: [
   return out;
 });
 
-parityTest('remote restore_page brings back a soft-deleted page at its revision', { methods: ['putPage', 'softDeletePage', 'getPage'] }, async (engine) => {
-  // delete_page is not on the remote list yet: a remote delete reaches a raw-SQL guest check on Rust (guests/admission.ts).
+parityTest('remote restore_page brings back a page a remote delete_page soft-deleted, at its revision', { methods: ['putPage', 'getPage'] }, async (engine) => {
   await engine.putPage('notes/gone', NOTE('Gone', 'Soon deleted.'));
-  await engine.softDeletePage('notes/gone');
+  const deleted = await tool(engine, 'delete_page', { slug: 'notes/gone', expected_revision: (await engine.getPage('notes/gone'))?.knowledge_revision });
+  expect(deleted.ok).toBe(true);
   const unread = await tool(engine, 'restore_page', { slug: 'notes/gone' });
   const deletedRevision = (await engine.getPage('notes/gone', { includeDeleted: true } as never))?.knowledge_revision;
   const restored = await tool(engine, 'restore_page', { slug: 'notes/gone', expected_revision: deletedRevision });
@@ -92,5 +94,17 @@ parityTest('remote edit_page replaces text at the revision it read', { methods: 
   const out = { edited: edited.ok ? 'ok' : edited.code, stale: stale.ok ? 'ok' : stale.code, body };
   expect(out.edited).toBe('ok');
   expect(out.body).toContain('new words');
+  return out;
+});
+
+parityTest('remote delete_page soft-deletes a page at the revision it read', { methods: ['putPage', 'getPage'] }, async (engine) => {
+  await engine.putPage('notes/deleted', NOTE('Deleted', 'Deleted remotely.'));
+  const unread = await tool(engine, 'delete_page', { slug: 'notes/deleted' });
+  const revision = (await engine.getPage('notes/deleted'))?.knowledge_revision;
+  const deleted = await tool(engine, 'delete_page', { slug: 'notes/deleted', expected_revision: revision });
+  const live = await engine.getPage('notes/deleted');
+  const tombstone = await engine.getPage('notes/deleted', { includeDeleted: true } as never);
+  const out = { unread: unread.ok ? 'ok' : unread.code, deleted: deleted.ok ? 'ok' : deleted.code, status: deleted.body.status, live: live === null, tombstone: tombstone?.deleted_at != null };
+  expect(out).toEqual({ unread: 'revision_required', deleted: 'ok', status: 'soft_deleted', live: true, tombstone: true });
   return out;
 });

@@ -55,6 +55,7 @@ test/engine-parity/embed-stale-work.test.ts	served
 test/engine-parity/embedding-install.test.ts	served	
 test/engine-parity/entity-card-option-reads.test.ts	served	
 test/engine-parity/entity-card-timeline.test.ts	served	
+test/engine-parity/entity-identities.test.ts	served	
 test/engine-parity/export-bytes.test.ts	served	
 test/engine-parity/extract-takes-reads.test.ts	served	
 test/engine-parity/extract-takes.test.ts	served	

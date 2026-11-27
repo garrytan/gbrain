@@ -293,7 +293,7 @@ The list is `REMOTE_WHOLE_OPERATIONS` in `src/core/rust-engine/served/remote-who
 |---|---|
 | `put_page` | `credential-grant-writes`, `owner-write-privacy`, `unbound-claim`, `world-only-spelling-read` |
 | `put_pages`, `capture` | `remote-links`, `plain-member-writes` |
-| `add_tag`, `remove_tag`, `add_link`, `remove_link`, `remember`, `forget`, `restore_page`, `edit_page` | `served-remote-writes` |
+| `delete_page` (soft delete only), `add_tag`, `remove_tag`, `add_link`, `remove_link`, `remember`, `forget`, `restore_page`, `edit_page` | `served-remote-writes` |
 | `add_timeline_entry` | `timeline-add` |
 | `revert_version` | `page-mutation-reads` |
 | `takes_add`, `takes_update`, `takes_supersede`, `takes_resolve`, `takes_remove` | `takes-prepare` |
@@ -301,8 +301,10 @@ The list is `REMOTE_WHOLE_OPERATIONS` in `src/core/rust-engine/served/remote-who
 | `request_tools` (persist form only) | `request-tools-persist` |
 
 `test/rust-served-remote-whole-ops.test.ts` requires each listed operation to be a write operation with a parity file that is
-a `served` row of `test/engine-parity/rust-served-set.tsv`, with one named exception, `request_tools` (below). Not listed
-yet: `delete_page` (a remote delete reaches a raw-SQL guest check on every Rust brain).
+a `served` row of `test/engine-parity/rust-served-set.tsv`, with one named exception, `request_tools` (below). A remote
+`delete_page` is a soft delete: the operation refuses a remote purge (`permission_denied`) and a remote retention purge
+(`invalid_params`) before it deletes, on the server as in process. Its guest-note check reads the engine member
+`readGuestDeleteRow`; a Rust brain keeps no guest marks or promotions, so no page there is a guest note it refuses.
 
 How one crosses:
 

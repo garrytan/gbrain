@@ -11052,6 +11052,7 @@
         "readGlobalMaintenanceDeaths": "none",
         "readGraduationGateRow": "none",
         "readGroupSpendTotals": "none",
+        "readGuestDeleteRow": "none",
         "readGuestSourceRow": "none",
         "readHandoverRow": "none",
         "readHeadBlockerRows": "none",

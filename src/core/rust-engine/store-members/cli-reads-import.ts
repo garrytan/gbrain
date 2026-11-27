@@ -5,7 +5,7 @@
  * sync routing row from readSourceState and hasCompanyBrainReceipt.
  */
 import type {
-  GuestSourceLookupRow, LinkPageMetadataRow, PageAtRevisionRef, PageTrustLookup, PageTrustRow, RowTrustLookup, RowTrustRow,
+  GuestDeleteRow, GuestSourceLookupRow, LinkPageMetadataRow, PageAtRevisionRef, PageTrustLookup, PageTrustRow, RowTrustLookup, RowTrustRow,
   SourceIncarnationRow, SourceRecordRow, StoredTimelineRow,
 } from '../../engine.ts';
 import type { SyncDispatchRow } from '../../engine-sql/sync-dispatch.ts';
@@ -44,6 +44,15 @@ export const hasCompanyBrainReceipt: StoreMember<[sourceId: string], boolean> = 
 
 export const readGuestSourceRow: StoreMember<[sourceId: string], GuestSourceLookupRow> = (brain, sourceId) =>
   storeCall({ member: 'readGuestSourceRow', sourceId }, () => brain.readGuestSourceRow(sourceId));
+
+/**
+ * A page's guest records for a remote delete. The store keeps no guest marks or promotions, and its guest_sources answer
+ * is readGuestSourceRow's (no row, never hidden), so no page is a guest note the delete check refuses.
+ */
+export const readGuestDeleteRow: StoreMember<[sourceId: string, slug: string], GuestDeleteRow> = async (brain, sourceId) => {
+  const source: GuestSourceLookupRow = await storeCall({ member: 'readGuestDeleteRow', sourceId }, () => brain.readGuestSourceRow(sourceId));
+  return { hidden: source.hidden, guest: source.source_id !== null, kept: false, writer: null };
+};
 
 export const listGuestSourceIds: StoreMember<[sourceIds: readonly string[]], string[]> = async (brain, sourceIds) =>
   sourceIds.length === 0 ? [] : storeCall({ member: 'listGuestSourceIds' }, () => brain.listGuestSourceIds([...sourceIds]));

@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2450/2479
+# covered: 2451/2480
 # lifecycle: 12/12
 # pages: 141/142
 # search: 8/8
@@ -75,7 +75,7 @@
 # loop_mutes: 8/8
 # source_archive: 6/6
 # entity_identities: 5/5
-# cli_reads_import: 16/16
+# cli_reads_import: 17/17
 # wanted_links: 2/2
 # write_misc: 125/141
 # repair_bookkeeping: 59/59
@@ -158,11 +158,11 @@ withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
 listCatalogRelations	lifecycle	yes	1	no	yes	yes	serves
 readCatalogSchemaVersion	lifecycle	yes	1	no	yes	yes	serves
 listCatalogForeignKeys	lifecycle	yes	1	no	yes	yes	serves
-getPage	pages	yes	300	yes	yes	yes	serves
+getPage	pages	yes	301	yes	yes	yes	serves
 readPageSnapshot	pages	yes	114	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	7	no	yes	yes	serves
 lockPageKeys	pages	yes	20	no	yes	yes	serves
-putPage	pages	yes	1382	yes	yes	yes	serves
+putPage	pages	yes	1384	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	45	yes	yes	yes	serves
@@ -1997,6 +1997,7 @@ readSyncDispatchRow	cli_reads_import	yes	1	no	yes	yes	serves
 readRetainedSources	cli_reads_import	yes	1	no	yes	yes	serves
 hasCompanyBrainReceipt	cli_reads_import	yes	1	no	yes	yes	serves
 readGuestSourceRow	cli_reads_import	yes	1	no	yes	yes	serves
+readGuestDeleteRow	cli_reads_import	yes	1	no	yes	yes	serves
 listGuestSourceIds	cli_reads_import	yes	1	no	yes	yes	serves
 hasGuestSource	cli_reads_import	yes	1	no	yes	yes	serves
 readPageTrustRows	cli_reads_import	yes	21	no	yes	yes	serves
