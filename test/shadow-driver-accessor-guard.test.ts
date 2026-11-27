@@ -1,10 +1,11 @@
 /**
  * No save path sends a statement straight to the database driver inside a shadowed transaction.
  *
- * The shadow wrapper hands a transaction callback a wrapped engine and sees only BrainEngine method calls on it.
- * A statement sent through the driver itself (`tx.sql`, `(tx as PostgresEngine).sql`, `(tx as any).db`, a
- * destructured `{ sql }`, or a helper that casts the engine it is given) is invisible to it: the write is never
- * compared, and a failed shadow pre-read cannot be ordered around it. This test scans every function reachable
+ * The shadow wrapper hands a transaction callback a wrapped engine. It sees BrainEngine method calls on it, and the
+ * statements sent on its driver handle (`tx.sql` / `tx.db`: a postgres.js tagged template or `unsafe`, PGLite `query`
+ * or `exec`) as if they were `executeRaw`. It does not see the handle's other members (`begin`, `savepoint`,
+ * `reserve`, a query started with `execute()` or `cursor()`), nor a driver a helper reaches some other way, so a
+ * write still belongs on a BrainEngine method. This test scans every function reachable
  * from a `transaction` / `transactionDirect` callback in src/ (test/helpers/driver-accessor-scan.ts) and fails on
  * any driver accessor that is not a reviewed exception below. A new caller turns it red; so does an exception
  * that no longer matches the code.
@@ -28,15 +29,11 @@ const REVIEWED: Record<string, { sites: number; reason: string }> = {
       + '(app.scopes, JIT off, statement_timeout) and SELECTs; a top-level one opens BEGIN READ ONLY, and inside a caller\'s '
       + 'transaction it is a savepoint that restores the settings. A rollback there cannot undo saved data.',
   },
-  'src/core/vector-index.ts\tdropAndRebuild': {
-    sites: 1,
-    reason: 'Swaps a rebuilt HNSW index (DROP INDEX, ALTER INDEX RENAME): DDL, not page data, and no production caller. '
-      + 'Only test/vector-index-lifecycle.test.ts calls it; the test below fails if a src/ caller appears.',
-  },
   'src/core/persistence/pool-capacity.ts\tordinaryPool': {
     sites: 1,
     reason: 'Reads the postgres.js pool to size publication concurrency (its options.max) and to key an in-process counter '
-      + 'on the pool object. It sends no statement.',
+      + 'on the pool object. It sends no statement. Inside a shadowed transaction it reads the shadow\'s view of the handle, '
+      + 'which passes options through and is the same object for every read in that transaction.',
   },
 };
 
@@ -74,21 +71,6 @@ describe('driver accessors inside shadowed transactions', () => {
     // test-reads-source-ok[structural]: a reachability census over src/ by the TypeScript checker is the only way to see a cast-and-pass escape.
     const sites = scanDriverAccessors(real(), { root, inScope: file => file.startsWith(src), txMembers: SHADOW_TRANSACTION_MEMBERS });
     expect(gaps(sites), 'Send the statement through a BrainEngine method (executeRaw, a typed engine method) so the shadow wrapper sees it, or add a reviewed row to REVIEWED in this file with a reason a reviewer can check.').toEqual([]);
-  }, 120_000);
-
-  test('dropAndRebuild keeps no production caller, which its exception depends on', () => {
-    const callers: string[] = [];
-    for (const sf of real().getSourceFiles()) {
-      if (sf.isDeclarationFile || !sf.fileName.startsWith(join(root, 'src') + '/')) continue;
-      const visit = (node: ts.Node): void => {
-        if (ts.isIdentifier(node) && node.text === 'dropAndRebuild' && !(ts.isFunctionDeclaration(node.parent) && node.parent.name === node)) {
-          callers.push(`${sf.fileName.slice(root.length + 1)}:${sf.getLineAndCharacterOfPosition(node.getStart()).line + 1}`);
-        }
-        ts.forEachChild(node, visit);
-      };
-      visit(sf);
-    }
-    expect(callers, 'A src/ caller of dropAndRebuild puts its raw-driver index swap on a live path: route the swap through executeRaw and drop its REVIEWED row.').toEqual([]);
   }, 120_000);
 });
 
