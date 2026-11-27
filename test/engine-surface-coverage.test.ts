@@ -230,7 +230,7 @@ const INTERFACE_METHODS: readonly string[] = [
   // Doctor derived reads (engine-sql/doctor-derived.ts; covered by test/engine-parity/doctor-derived.test.ts)
   'readIgnoredPrivacyLabelCounts', 'countSafeIndexPending', 'countCredentialProjectionPending', 'countPagesByTypeAndOwner', 'listRecordedTombstones',
   'countDerivedVisibility', 'listUntiledSegmentedPageRows', 'listTimelineHistoryBatch', 'readPageCompiledTruths',
-  'readEmbeddingBacklogAge', 'listBudgetLimitedRows', 'readBudgetHoldAge', 'listImageAssetFiles', 'listAmbiguousExtractionInputs',
+  'readEmbeddingBacklogAge', 'readEmbedBacklogRows', 'listBudgetLimitedRows', 'readBudgetHoldAge', 'listImageAssetFiles', 'listAmbiguousExtractionInputs',
   'listExtractionInputReceipts', 'listUnpricedDerivationModels', 'listRestorableAtomRetirements', 'countLedgerCoveredAtomRetirements',
   'listLiveGenerationRetirements', 'listHeldGenerations', 'listOrphanGenerationCandidates',
   'listOntologyFactCandidates', 'readAtomProvenanceCounts', 'listBodyRecheckGroups', 'readBodyRecheckPage', 'listBodyRecheckVersions', 'readExtractRollup7d', 'readExtractKindRollup7d', 'listRecordedHaltReasons7d',

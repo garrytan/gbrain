@@ -65,6 +65,8 @@ export interface DoctorMembers {
   readPageCompiledTruths(ids: number[], timeoutMs?: number): Promise<Array<{ id: number; body: string | null }>>;
   /** Age of the oldest live chunk with no vector in `column`, the chunks with no pending-since stamp, and whether the oldest predates the backfill. */
   readEmbeddingBacklogAge(column: string): Promise<DoctorDerivedSql.EmbeddingBacklogAgeRow | undefined>;
+  /** Per source among `sourceIds`: the live-body chunks with no vector in `column`, the unstamped ones and the oldest pending-since stamp. */
+  readEmbedBacklogRows(column: string, sourceIds: string[]): Promise<DoctorDerivedSql.EmbedBacklogRow[]>;
   /** Held and capped large pages with chunks still waiting for `column`, by source, state and reason. */
   listBudgetLimitedRows(opts: { column: string; sourceId?: string; signature: string | null }): Promise<DoctorDerivedSql.BudgetLimitedRow[]>;
   /** How many applying budget holds are older than a day, and the oldest update time. */

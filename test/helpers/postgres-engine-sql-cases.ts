@@ -322,6 +322,7 @@ export const DOMAIN_OF: Record<string, string> = {
   'listAtomFenceCandidates': OOS.doctorDerived,
   'readPageCompiledTruths': OOS.doctorDerived,
   'readEmbeddingBacklogAge': OOS.doctorDerived,
+  'readEmbedBacklogRows': OOS.doctorDerived,
   'listBudgetLimitedRows': OOS.doctorDerived,
   'readBudgetHoldAge': OOS.doctorDerived,
   'listImageAssetFiles': OOS.doctorDerived,

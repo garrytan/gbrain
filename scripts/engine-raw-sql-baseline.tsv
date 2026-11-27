@@ -589,7 +589,6 @@ src/core/storage-manifest/source.ts	execute_raw	4
 src/core/sync-anchor.ts	execute_raw	2
 src/core/sync-attempt.ts	execute_raw	1
 src/core/sync-identity-downgrades.ts	execute_raw	1
-src/core/sync-pending.ts	execute_raw	1
 src/core/sync-policy.ts	execute_raw	1
 src/core/sync-status-report.ts	execute_raw	1
 src/core/synopsis-sweep.ts	execute_raw	3

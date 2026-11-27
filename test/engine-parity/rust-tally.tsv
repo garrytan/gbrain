@@ -325,7 +325,7 @@ test/engine-parity/remote-access-matrix.test.ts	3	2
 test/engine-parity/remote-links.test.ts	9	0
 test/engine-parity/remote-policy.test.ts	2	0
 test/engine-parity/repair-aliases.test.ts	1	0
-test/engine-parity/repair-bookkeeping.test.ts	7	1
+test/engine-parity/repair-bookkeeping.test.ts	8	0
 test/engine-parity/repair-busy.test.ts	1	0
 test/engine-parity/repair-facts-previews-2.test.ts	7	1
 test/engine-parity/repair-facts-previews-3.test.ts	11	0
@@ -368,7 +368,7 @@ test/engine-parity/search-reads.test.ts	21	0
 test/engine-parity/search-refusal-swallows.test.ts	2	1
 test/engine-parity/search-space-separators.test.ts	1	0
 test/engine-parity/search.test.ts	23	0
-test/engine-parity/segment-pending-stamp.test.ts	1	1
+test/engine-parity/segment-pending-stamp.test.ts	3	0
 test/engine-parity/segment-regions.test.ts	1	0
 test/engine-parity/segmented-body.test.ts	22	0
 test/engine-parity/segmented-callers.test.ts	3	0

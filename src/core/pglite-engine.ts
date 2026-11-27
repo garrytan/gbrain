@@ -1768,6 +1768,7 @@ export class PGLiteEngine implements BrainEngine {
   listTimelineHistoryBatch(sourceIds: string[], afterId: number) { return doctorDerivedImpl.listTimelineHistoryBatch(this.rawRead, sourceIds, afterId); }
   readPageCompiledTruths(ids: number[], timeoutMs?: number) { return doctorDerivedImpl.readPageCompiledTruths(this.rawRead, ids, timeoutMs); }
   readEmbeddingBacklogAge(column: string) { return doctorDerivedImpl.readEmbeddingBacklogAge(this.rawRead, column); }
+  readEmbedBacklogRows(column: string, sourceIds: string[]) { return doctorDerivedImpl.readEmbedBacklogRows(this.rawRead, column, sourceIds); }
   listBudgetLimitedRows(opts: { column: string; sourceId?: string; signature: string | null }) { return doctorDerivedImpl.listBudgetLimitedRows(this.rawRead, opts); }
   readBudgetHoldAge() { return doctorDerivedImpl.readBudgetHoldAge(this.rawRead); }
   listImageAssetFiles() { return doctorDerivedImpl.listImageAssetFiles(this.rawRead); }
