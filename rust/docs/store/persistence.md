@@ -702,8 +702,8 @@ milliseconds, rounded as `EXTRACT(EPOCH ...)*1000` cast to bigint rounds.
 `gbrain sources writer deactivate` and `activate` (`src/core/persistence/deactivation.ts`,
 `activation.ts`, `pre-activation-release.ts`) and the counter charges of a topology receipt
 (`topology-receipts.ts`) are the callers the native release methods are built for. On this tree no
-TypeScript file calls `brain.writerReleaseRows`, `setBrainEnabled`, `releaseWorktreeBindings` or the native
-`addPersistenceCounters`: `store-members/writer-release.ts` does not exist, `writerReleaseStore` appears only in
+TypeScript file calls `setBrainEnabled`, `releaseWorktreeBindings` or the native `addPersistenceCounters`, and the
+only TypeScript call of `brain.writerReleaseRows` is the `brain_mode` read behind `readManagedModeRows`: `store-members/writer-release.ts` does not exist, `writerReleaseStore` appears only in
 `src/core/engine-sql/writer-release.ts`, and the BrainEngine member `addPersistenceCounters` is classified
 `persistence_journal` (`members/pages.ts:26`) and refuses on a Rust brain. The one release read served is
 `readManagedModeRows`, which reads `kind: 'brain_mode'` (`store-members/persistence.ts:9-15`). Each
