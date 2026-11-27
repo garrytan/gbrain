@@ -111,7 +111,7 @@ export const TYPED_PREPARATION_READS: ReadonlySet<string> = new Set(['getSource'
   'listPurgeClaimFacts', 'listPurgeClaimTakes', 'listQueuedPagePurges', 'listPageLinkStreams', 'listPagePurgeTombstones',
   'listForcedCutSeqs', 'readSegmentedVersionBodyBytes',
   'listChunkedOccurrences', 'readRetiredChunkVectors', 'hasStaleSegmentChunks', 'readLiveSlugAliases', 'readSourceSlugProbe', 'readSegmentedLivePage', 'normalizeFenceLines', 'listGlobalPurgeWithdrawals',
-  'readPagePrivacyHidden', 'readLinkTargetPages', 'readWriteVisibilityProbe',
+  'readPagePrivacyHidden', 'readLinkTargetPages', 'readPageHiddenFromWriter', 'readSlugFolderRules', 'readWriteVisibilityProbe',
   'hasPositionedPageFacts', 'hasFenceAbsentHold', 'listPageTakeRowNums', 'readPageInlineBody']);
 
 /**

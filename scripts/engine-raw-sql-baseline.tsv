@@ -416,7 +416,7 @@ src/core/persistence/page-append.ts	execute_raw	2
 src/core/persistence/page-mutations.ts	execute_raw	2
 src/core/persistence/page-prepare.ts	execute_raw	8
 src/core/persistence/page-upload.ts	execute_raw	15
-src/core/persistence/page-visibility.ts	execute_raw	3
+src/core/persistence/page-visibility.ts	execute_raw	1
 src/core/persistence/pending-import.ts	execute_raw	1
 src/core/persistence/physical-root.ts	execute_raw	8
 src/core/persistence/plain-directory-drift.ts	execute_raw	2	#8079: reads and records whether a page revision was written with its file in step (journal receipt join plus agreement checkpoint); persistence protocol state, no typed checkpoint methods yet.

@@ -399,6 +399,7 @@ test/engine-parity/mention-coverage.test.ts
 test/engine-parity/mention-pass.test.ts
 test/engine-parity/migrate-embeddings-usage.test.ts
 test/engine-parity/migrate-engine-source.test.ts
+test/engine-parity/mixed-set-forwarding.test.ts
 test/engine-parity/notifier-freshness.test.ts
 test/engine-parity/notifier-resident.test.ts
 test/engine-parity/notifier.test.ts
@@ -1011,6 +1012,7 @@ test/page-purge-claim-sweep-9743.test.ts
 test/page-purge-journal-timeout-6511.test.ts
 test/page-spend-reservation.test.ts
 test/page-state-engine.test.ts
+test/page-visibility-create-reads.test.ts
 test/pages-source-created-idx-7379.test.ts
 test/pages-status-7179.test.ts
 test/parallel-projection-drain-9192.test.ts

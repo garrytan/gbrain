@@ -11422,6 +11422,7 @@
         "readPageFileOrigin": "none",
         "readPageFolderRulesAllowed": "none",
         "readPageHiddenFromCaller": "none",
+        "readPageHiddenFromWriter": "none",
         "readPageIdInSource": "none",
         "readPageIdentity": "none",
         "readPageIndexingState": "none",

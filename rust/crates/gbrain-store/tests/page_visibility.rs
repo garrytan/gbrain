@@ -157,6 +157,77 @@ fn hidden_judges_the_labelled_only_conjunct() {
     assert!(hidden("ruled/page", &none));
 }
 
+/// `readPageHiddenFromWriter`: the writer's policy judged on the row of a slug, live or soft-deleted (the statement of
+/// `hiddenUnder`'s fallback has no `deleted_at` test), and false for a slug with no row.
+#[test]
+fn hidden_from_writer_judges_a_soft_deleted_row_like_a_live_one() {
+    let dir = TempDir::new("visibility-writer-hidden");
+    let store = open(&dir);
+    let rows = [
+        ("open", json!({})),
+        ("names-bob", json!({"readable_by": ["member:bob"]})),
+        ("names-alice", json!({"readable_by": ["member:alice"]})),
+        ("private", json!({"visibility": "private"})),
+    ];
+    for (name, frontmatter) in &rows {
+        put(&store, &format!("notes/{name}"), frontmatter.clone());
+        put(&store, &format!("gone/{name}"), frontmatter.clone());
+        store
+            .soft_delete_page(&format!("gone/{name}"), Some("default"))
+            .unwrap();
+    }
+    let ids = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+    let policy = |identity: &[&str], labelled: bool| PrivacyPolicy {
+        identity: ids(identity),
+        caller_record: true,
+        labelled_only: labelled.then(|| LabelledOnly {
+            identity: ids(identity),
+            satisfied_rule_ids: vec![],
+        }),
+        ..Default::default()
+    };
+    let hidden = |slug: &str, policy: &PrivacyPolicy, hide: bool| {
+        store
+            .read_page_hidden_from_writer("default", slug, policy, hide, true)
+            .unwrap()
+    };
+    let bob = policy(&["member:bob"], false);
+    for prefix in ["notes", "gone"] {
+        // A row that names another reader hides the slug, whether or not the row is deleted; one that names the writer does not.
+        assert!(
+            hidden(&format!("{prefix}/names-alice"), &bob, true),
+            "{prefix}"
+        );
+        assert!(
+            !hidden(&format!("{prefix}/names-bob"), &bob, true),
+            "{prefix}"
+        );
+        assert!(!hidden(&format!("{prefix}/open"), &bob, true), "{prefix}");
+        // The privacy part hides a private page only when asked.
+        assert!(hidden(&format!("{prefix}/private"), &bob, true), "{prefix}");
+        assert!(
+            !hidden(&format!("{prefix}/private"), &bob, false),
+            "{prefix}"
+        );
+        // A labelled-only writer reads only a page that names it, soft-deleted or not.
+        let carol = policy(&["member:carol"], true);
+        assert!(hidden(&format!("{prefix}/open"), &carol, true), "{prefix}");
+        assert!(
+            hidden(&format!("{prefix}/names-bob"), &carol, true),
+            "{prefix}"
+        );
+    }
+    let names_carol = policy(&["member:bob", "member:carol"], true);
+    assert!(!hidden("gone/names-bob", &names_carol, true));
+    // No row, in this source or another: nothing is hidden.
+    assert!(!hidden("notes/missing", &bob, true));
+    assert!(
+        !store
+            .read_page_hidden_from_writer("other", "notes/names-alice", &bob, true, true)
+            .unwrap()
+    );
+}
+
 #[test]
 fn access_names_each_page_row_once() {
     let dir = TempDir::new("visibility-access");
