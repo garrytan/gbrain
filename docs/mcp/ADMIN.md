@@ -353,7 +353,8 @@ the request log. Removing a member stays a brain-host command
 (`gbrain access member rm`).
 
 New `memory-reader`, `memory-writer` and `coding-agent` grants are callable on
-the full surface and list the seven memory verbs plus `request_tools`, which
+the full surface and list the seven memory verbs, `correct` (when the grant
+can write) and `request_tools`, which
 returns any other tool's schema (`gbrain auth clients` shows the surface as
 `full (set by install)`); `gbrain agent register` daily-driver and coding-agent
 clients without `--surface` do the same. Their operation snapshot is still the

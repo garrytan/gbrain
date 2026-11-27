@@ -2079,7 +2079,14 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
 - **Follow.** A seeded brain is followed while shadow mode is on. Each committed write through the wrapped engine is
   read back from the brain, in its own short read-only `REPEATABLE READ` transaction (on Postgres, a dedicated
   one-connection pool, so the serving pool is never used), and applied to the Rust store, so stored ids and fact
-  fingerprints stay identical. A rolled-back transaction changes nothing. The coverage watermark says whether every
+  fingerprints stay identical. A rolled-back transaction changes nothing. Inside a transaction, the rows a write will
+  delete or re-key, and the page ids it names, are read first in a savepoint that only that read uses. A nested
+  transaction still running is waited for first (without holding the others), then the transaction's other calls
+  already running, each wait at most 2 seconds, and later calls are held until the write is sent, so a failed read can
+  never undo another statement of the transaction. A call that starts a callback during that wait makes the read skip at
+  once, and so does a call that does not finish in time: that write is described relation-level instead. The transaction's
+  end waits until no read holds the lane, and at most 2 seconds for calls it started and did not await. Statements sent
+  straight through the driver (`tx.sql`, `tx.db`) are not seen by the lane. The coverage watermark says whether every
   committed write is in the store. It goes invalid on a shed, a gap in the write sequence, a failed read, a relation
   the follower cannot describe row by row (which then needs a pass for that relation), or rows the store had to
   displace. **Every session that owns the store starts invalid**, even after a clean stop, and becomes valid again

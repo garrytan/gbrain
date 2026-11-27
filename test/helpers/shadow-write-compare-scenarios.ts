@@ -1393,7 +1393,7 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       }
     }, 120_000);
 
-    test('a pin that cannot be taken because another call is in flight leaves the sample uncomparable (in_transaction_busy), never a pass; a pinned page with tags written after it is not moved', async () => {
+    test('a call still running when the callback returns is waited for before the pin, so the pin is taken; a pinned page with tags written after it is not moved', async () => {
       await fresh();
       const { inbox, wrapped } = prod();
       await wrapped.transaction(async (tx) => { await tx.putPage('companies/acme-example', page('Acme No Later Write')); });
@@ -1405,11 +1405,11 @@ export function defineWriteCompareScenarios(ctx: WriteCompareContext): void {
       await wrapped.transaction(async (tx) => {
         const written = await tx.putPage('people/alice-example', page('Alice Busy'));
         await tx.addPageTagsById(written.id, ['alpha']);
-        void tx.deleteChunks('people/alice-example'); // still running when the callback returns
+        void tx.deleteChunks('people/alice-example'); // still running when the callback returns: with the follower wired, the transaction's end waits for it, so the pin is taken after it
       });
       await until(() => putEvents(inbox).length >= 3);
-      if (pg) { expect(putEvents(inbox)[2]).toMatchObject({ outcome: 'uncomparable', reason: 'in_transaction_busy' }); expect(putEvents(inbox)[2]!.moved).toBeUndefined(); }
-      else expect(putEvents(inbox)[2]!.reason).not.toBe('in_transaction_busy'); // no fence, no pin, nothing to be busy about
+      expect(putEvents(inbox)[2]!.outcome).toBeUndefined(); // a full sample (before the drain: in_transaction_busy on Postgres)
+      expect(Boolean(putEvents(inbox)[2]!.moved)).toBe(false);
     }, 120_000);
   });
 
