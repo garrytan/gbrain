@@ -80,6 +80,21 @@ export async function listFactSourcePages(raw: EngineRawRead, ids: readonly numb
   return rows.map(r => ({ id: Number(r.id), page_id: Number(r.page_id), slug: r.slug, title: r.title, type: r.type }));
 }
 
+/** A fact's holding page ref (`listFactHoldingRefs`): its source, `source_markdown_slug` as `slug`, and its entity. */
+export interface FactHoldingRefRow { id: number; source_id: string; slug: string | null; entity_slug: string | null }
+
+/**
+ * Each of `ids`'s source, holding page slug and entity (search/evidence-date.ts `factObservationDates`, for facts
+ * that do not carry their holding slug), facts of any source and any state; a missing id has no row. The rows come
+ * in no set order. The text is the one evidence-date.ts sent (pinned in test/engine-sql-caller-raw-sql-pins.test.ts).
+ */
+export async function listFactHoldingRefs(raw: EngineRawRead, ids: readonly number[]): Promise<FactHoldingRefRow[]> {
+  if (!ids.length) return [];
+  const rows = await raw<{ id: number | string; source_id: string; slug: string | null; entity_slug: string | null }>(
+    'SELECT id, source_id, source_markdown_slug AS slug, entity_slug FROM facts WHERE id = ANY($1::bigint[])', [[...ids]]);
+  return rows.map(r => ({ ...r, id: Number(r.id) }));
+}
+
 /** A typed-claim fact of `listTypedClaimFactsAtPages`. `id` is a JS number; `valid_from` is whatever the driver hands back. */
 export interface TypedClaimFactRow {
   id: number;

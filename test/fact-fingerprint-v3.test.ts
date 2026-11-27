@@ -81,7 +81,7 @@ for (const backend of testBackends()) describe(`fact fingerprint v3 (${backend})
     const before = await stored();
 
     const migration = MIGRATIONS.find(m => m.name === 'fact_fingerprint_v3');
-    expect(migration?.version).toBe(341);
+    expect(migration?.version).toBe(353);
     await engine.runMigration(migration!.version, migration!.sql);
 
     // No stored hash is rewritten; new rows only add the current fingerprint.
@@ -105,6 +105,30 @@ for (const backend of testBackends()) describe(`fact fingerprint v3 (${backend})
     const [hit] = await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM facts WHERE source_id=$1 AND visibility=$2 AND gbrain_fact_fingerprint(fact)=$3',
       [sourceId, 'world', explicitFingerprint(legacyClaim)]);
     expect(hit!.n).toBe(2);
+  });
+
+  test('running the migration a second time changes no row: the same withdrawals, fingerprints and expired facts', async () => {
+    // Sync 20 moved this migration from v341 to v353; a brain may meet it again, so a rerun must be a no-op.
+    const sourceId = `fpv3-${backend}-${crypto.randomUUID().slice(0, 8)}`;
+    await engine.executeRaw('INSERT INTO sources(id,name) VALUES($1,$1) ON CONFLICT DO NOTHING', [sourceId]);
+    const claims = ['Iota\u0085twice claim', 'Kappa\u0085fence claim', 'Lambda plain claim'];
+    const fact = await engine.insertFact({ fact: claims[0]!, visibility: 'world', source: 'synthetic' }, { source_id: sourceId });
+    await engine.executeRaw(`INSERT INTO fact_withdrawals(source_id,visibility,fact_hash,withdrawn_at)
+      SELECT $1,'world',${legacyFingerprintSql('c')},'2026-01-03T00:00:00Z' FROM unnest($2::text[]) c ON CONFLICT DO NOTHING`, [sourceId, claims]);
+    await engine.putPage('notes/fpv3-twice', { type: 'note', title: 'Fingerprint', compiled_truth: 'Lead.\n\n' + fence(claims[1]!, claims[2]!) }, { sourceId });
+    const migration = MIGRATIONS.find(m => m.name === 'fact_fingerprint_v3')!;
+    const state = async () => ({
+      withdrawals: await engine.executeRaw<Record<string, unknown>>(
+        `SELECT source_id, visibility, subject, fact_hash, withdrawn_at::text AS at FROM fact_withdrawals WHERE source_id=$1
+         ORDER BY fact_hash, subject NULLS FIRST`, [sourceId]),
+      facts: await engine.executeRaw<Record<string, unknown>>(
+        'SELECT id, gbrain_fact_fingerprint(fact) AS fp, expired_at IS NOT NULL AS expired FROM facts WHERE source_id=$1 ORDER BY id', [sourceId]),
+    });
+    await engine.runMigration(migration.version, migration.sql);
+    const once = await state();
+    expect(once.facts.map(f => Number(f.id))).toContain(Number(fact.id));
+    await engine.runMigration(migration.version, migration.sql);
+    expect(await state()).toEqual(once);
   });
 
   /** A fresh source holding `slug` with a fence of `claims`, and the migration run after `ledger` wrote its pre-migration rows. */

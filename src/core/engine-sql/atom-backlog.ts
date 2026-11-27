@@ -24,6 +24,11 @@ export interface AtomBacklogQuery {
   maxInputChars: number;
   /** When connector pages are opted out: the page types left out of sources of these kinds; null when they are counted. */
   connectorExclusion: { pageTypes: string[]; sourceKinds: string[] } | null;
+  /**
+   * The hold ids `currentHoldIds(engine, 'atom')` returns (#10270): a page whose held atom generation carries one of them,
+   * for the page's current input pin and not a partial hold, is skipped by the phase and so is left out of the count.
+   */
+  holdIds?: readonly string[];
 }
 
 export const ATOM_BACKLOG_SCOPED_SQL = `SELECT COUNT(*) AS cnt FROM pages p
@@ -49,6 +54,10 @@ export const ATOM_BACKLOG_SCOPED_SQL = `SELECT COUNT(*) AS cnt FROM pages p
     AND (scan.tombstoned OR scan.partial_input_chars >= $4::integer)
 )
            AND COALESCE(p.frontmatter->>'extract_atoms', '') <> 'false'
+           AND NOT EXISTS (SELECT 1 FROM derived_generations dg
+        WHERE dg.source_id = p.source_id AND dg.kind = 'atom' AND dg.state = 'held' AND dg.owner_key = 'source_slug:' || p.slug
+          AND dg.hold_id = ANY($5::text[]) AND COALESCE(dg.held_context->>'partial', 'false') <> 'true'
+          AND dg.input_pin IN (p.content_hash, p.content_hash || ':' || p.id::text || ':' || p.knowledge_revision::text))
            AND NOT EXISTS (
              SELECT 1 FROM pages atom
              WHERE atom.type = 'atom' AND atom.source_id = $1
@@ -81,6 +90,10 @@ export const ATOM_BACKLOG_SCOPED_CONNECTORS_OUT_SQL = `SELECT COUNT(*) AS cnt FR
 )
            AND COALESCE(p.frontmatter->>'extract_atoms', '') <> 'false' AND NOT (p.type = ANY($5::text[]) AND EXISTS (SELECT 1 FROM sources cs
         WHERE cs.id = p.source_id AND cs.config->>'kind' = ANY($6::text[])))
+           AND NOT EXISTS (SELECT 1 FROM derived_generations dg
+        WHERE dg.source_id = p.source_id AND dg.kind = 'atom' AND dg.state = 'held' AND dg.owner_key = 'source_slug:' || p.slug
+          AND dg.hold_id = ANY($7::text[]) AND COALESCE(dg.held_context->>'partial', 'false') <> 'true'
+          AND dg.input_pin IN (p.content_hash, p.content_hash || ':' || p.id::text || ':' || p.knowledge_revision::text))
            AND NOT EXISTS (
              SELECT 1 FROM pages atom
              WHERE atom.type = 'atom' AND atom.source_id = $1
@@ -111,6 +124,10 @@ export const ATOM_BACKLOG_ALL_SQL = `SELECT COUNT(*) AS cnt FROM pages p
     AND (scan.tombstoned OR scan.partial_input_chars >= $3::integer)
 )
            AND COALESCE(p.frontmatter->>'extract_atoms', '') <> 'false'
+           AND NOT EXISTS (SELECT 1 FROM derived_generations dg
+        WHERE dg.source_id = p.source_id AND dg.kind = 'atom' AND dg.state = 'held' AND dg.owner_key = 'source_slug:' || p.slug
+          AND dg.hold_id = ANY($4::text[]) AND COALESCE(dg.held_context->>'partial', 'false') <> 'true'
+          AND dg.input_pin IN (p.content_hash, p.content_hash || ':' || p.id::text || ':' || p.knowledge_revision::text))
            AND NOT EXISTS (
              SELECT 1 FROM pages atom
              WHERE atom.type = 'atom' AND atom.source_id = p.source_id
@@ -142,6 +159,10 @@ export const ATOM_BACKLOG_ALL_CONNECTORS_OUT_SQL = `SELECT COUNT(*) AS cnt FROM 
 )
            AND COALESCE(p.frontmatter->>'extract_atoms', '') <> 'false' AND NOT (p.type = ANY($4::text[]) AND EXISTS (SELECT 1 FROM sources cs
         WHERE cs.id = p.source_id AND cs.config->>'kind' = ANY($5::text[])))
+           AND NOT EXISTS (SELECT 1 FROM derived_generations dg
+        WHERE dg.source_id = p.source_id AND dg.kind = 'atom' AND dg.state = 'held' AND dg.owner_key = 'source_slug:' || p.slug
+          AND dg.hold_id = ANY($6::text[]) AND COALESCE(dg.held_context->>'partial', 'false') <> 'true'
+          AND dg.input_pin IN (p.content_hash, p.content_hash || ':' || p.id::text || ':' || p.knowledge_revision::text))
            AND NOT EXISTS (
              SELECT 1 FROM pages atom
              WHERE atom.type = 'atom' AND atom.source_id = p.source_id
@@ -153,7 +174,7 @@ export const ATOM_BACKLOG_ALL_CONNECTORS_OUT_SQL = `SELECT COUNT(*) AS cnt FROM 
 /** Pages awaiting atom extraction (no atom of their current content yet, no held or tombstoned disposition) in `query`'s scope. */
 export async function countAtomExtractionBacklog(raw: EngineRawRead, query: AtomBacklogQuery): Promise<number> {
   const { sourceId, types, minChars, maxInputChars, connectorExclusion: connectors } = query;
-  const tail = connectors ? [connectors.pageTypes, connectors.sourceKinds] : [];
+  const tail = [...(connectors ? [connectors.pageTypes, connectors.sourceKinds] : []), [...(query.holdIds ?? [])]];
   const [row] = sourceId === null
     ? await raw<{ cnt: string | number }>(connectors ? ATOM_BACKLOG_ALL_CONNECTORS_OUT_SQL : ATOM_BACKLOG_ALL_SQL, [types, minChars, maxInputChars, ...tail])
     : await raw<{ cnt: string | number }>(connectors ? ATOM_BACKLOG_SCOPED_CONNECTORS_OUT_SQL : ATOM_BACKLOG_SCOPED_SQL, [sourceId, types, minChars, maxInputChars, ...tail]);

@@ -29,17 +29,18 @@ export interface OverrideRuling {
 }
 
 /**
- * A dated override of criterion 1's duration for ONE brain. It applies only while `now` is before `expires` and only
- * to the brain whose `brainRefFor(persistence_brain.brain_id)` equals `brain_ref`; a null `brain_ref` binds no brain
- * yet, so the override applies nowhere. Once it expires the policy's own duration (14 days) stands again.
+ * A dated override of criterion 1's duration. It applies only while `now` is before `expires`, and then either to every
+ * brain that opts in to the swap (`applies_to: 'every_opt_in_brain'`; only the opt-in swap reads this policy) or to the
+ * one brain whose `brainRefFor(persistence_brain.brain_id)` equals `brain_ref` (a null `brain_ref` binds no brain yet,
+ * so it applies nowhere). Once it expires the policy's own duration (14 days) stands again. An override changes the
+ * duration only: lag, clean reconciles, caught-up following and every other criterion still gate.
  */
-export interface ShadowOverride {
+export type ShadowOverride = {
   id: string;
-  brain_ref: string | null;
   shadow_min: { kind: 'days'; days: number };
   expires: string;
   ruling: OverrideRuling;
-}
+} & ({ applies_to: 'every_opt_in_brain' } | { applies_to: 'brain'; brain_ref: string | null });
 
 export interface ReadinessPolicy {
   version: 1;
@@ -57,15 +58,16 @@ export const READINESS_POLICY: ReadinessPolicy = {
   shadow_min: { kind: 'days', days: DEFAULT_SHADOW_MIN_DAYS },
   approved_by: 'D14 (docs/designs/RUST_ENGINE.md "Swap readiness")',
   overrides: [{
-    // C1 of the Dec 1 swap ask: keep the Dec 1 opt-in swap with a dated override of criterion 1 for the
-    // maintainer's own brain. `brain_ref` is that brain's `brain_ref` from `gbrain engine swap --to rust --plan --json`.
-    id: 'c1-dec1-swap',
-    brain_ref: null,
+    // The opt-in swap opens Thu 2026-12-03. Criterion 1's minimum shadow is 5 days for every brain that opts in until
+    // the end of Tue 2026-12-08 PST (2026-12-09 08:00 UTC); after that the 14-day default stands again. Shadow days
+    // still count only in the evidence epoch of the exact Rust build the brain switches to (shadow/evidence-epoch.ts).
+    id: 'c1-opt-in-short-shadow',
+    applies_to: 'every_opt_in_brain',
     shadow_min: { kind: 'days', days: 5 },
-    expires: '2026-12-08T08:00:00.000Z',
+    expires: '2026-12-09T08:00:00.000Z',
     ruling: {
-      words: 'Do it', by: 'the maintainer', at: '2026-11-21 at 1:17 PM PST',
-      place: 'Slack channel C0CJDTJG5PE, thread 1795295460.046919, message 1795295827.787139',
+      words: 'Do it', by: 'the maintainer', at: '2026-11-25 at 3:20 PM PST',
+      place: 'Slack channel C0CJDTJG5PE, message 1795648831.786269',
     },
   }],
 };
@@ -90,6 +92,7 @@ export interface PolicyInForce {
 function overrideMiss(o: ShadowOverride, ref: string | null, now: Date): OverrideMiss | null {
   const expiry = Date.parse(o.expires);
   if (!Number.isFinite(expiry) || now.getTime() >= expiry) return 'expired';
+  if (o.applies_to === 'every_opt_in_brain') return null;
   if (o.brain_ref === null) return 'unbound';
   if (ref === null) return 'unknown_brain';
   return ref === o.brain_ref ? null : 'another_brain';
@@ -115,14 +118,14 @@ export function policyInForce(base: ReadinessPolicy, brainId: string | null, now
   const shown = hit ?? list[0];
   const why = shown && !hit ? overrideMiss(shown, ref, now) : null;
   const policy: ReadinessPolicy = hit
-    ? { ...plain, shadow_min: { ...hit.shadow_min, expires: hit.expires }, approved_by: `${quote(hit.ruling)}; override ${hit.id}, this brain only` }
+    ? { ...plain, shadow_min: { ...hit.shadow_min, expires: hit.expires }, approved_by: `${quote(hit.ruling)}; override ${hit.id}, ${hit.applies_to === 'every_opt_in_brain' ? 'every opt-in brain' : 'this brain only'}` }
     : plain;
   const note = shown && why ? `; override ${shown.id} (${quote(shown.ruling)}, until ${shown.expires}) does not apply: ${MISS_TEXT[why]}` : '';
   return {
     policy,
     override: shown ? { id: shown.id, applies: !!hit, why, expires: shown.expires, ruling: shown.ruling } : null,
     text: describePolicy(policy, now) + note,
-    hash: createHash('sha256').update(JSON.stringify({ policy: policyHash(policy), override: hit?.id ?? null, brain_ref: hit ? ref : null }))
+    hash: createHash('sha256').update(JSON.stringify({ policy: policyHash(policy), override: hit?.id ?? null, brain_ref: hit && hit.applies_to === 'brain' ? ref : null }))
       .digest('hex').slice(0, 16),
     brain_ref: ref,
   };

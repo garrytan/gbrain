@@ -423,6 +423,59 @@ impl Store {
         writer_release_rows_in(&*self.read()?, &*self.env, what)
     }
 
+    /// `pauseManagedPersistence()`: one store write. Reads the brain mode and the count of recorded
+    /// topology changes and turns `enabled` off with no epoch bump; returns the prior
+    /// `{ enabled, mode_epoch, topology_changes }` (the epoch and count as text). Nothing else moves.
+    pub fn pause_managed_persistence(&self) -> Result<Value> {
+        let brain_id = self.brain_id().to_string();
+        self.write(|tx| {
+            if brain_id.is_empty() {
+                return Err(StoreError::invalid(
+                    "this brain has no persistence brain row",
+                ));
+            }
+            let mut mode = brain_mode_in(&*tx)?;
+            let changes = topology_change_count(&*tx)?;
+            let prior = json!({ "enabled": mode.enabled, "mode_epoch": mode.mode_epoch.to_string(), "topology_changes": changes.to_string() });
+            mode.enabled = false;
+            put_json(tx, &brain_mode_key(), &mode)?;
+            Ok(prior)
+        })
+    }
+
+    /// `restoreManagedPersistence({ enabled, mode_epoch, topology_changes })`: one compare-and-set
+    /// write. Puts `enabled` back only while the brain mode is still paused (`enabled` false) at
+    /// `mode_epoch` and the store holds `topology_changes` topology changes; otherwise a real
+    /// activation or deactivation ran during the pause (a deactivation of a disabled brain records a
+    /// topology change without moving the epoch), and nothing is written. True when it wrote.
+    pub fn restore_managed_persistence(
+        &self,
+        enabled: bool,
+        mode_epoch: &str,
+        topology_changes: &str,
+    ) -> Result<bool> {
+        let whole = |name: &str, v: &str| -> Result<u64> {
+            v.parse().map_err(|_| {
+                StoreError::invalid(format!(
+                    "restoreManagedPersistence: {name} is not a whole number: {v}"
+                ))
+            })
+        };
+        let epoch = i64::try_from(whole("mode_epoch", mode_epoch)?).map_err(|_| {
+            StoreError::invalid("restoreManagedPersistence: mode_epoch is out of range")
+        })?;
+        let changes = whole("topology_changes", topology_changes)?;
+        self.write(|tx| {
+            let mut mode = brain_mode_in(&*tx)?;
+            if mode.enabled || mode.mode_epoch != epoch || topology_change_count(&*tx)? != changes {
+                return Ok(false);
+            }
+            mode.enabled = enabled;
+            put_json(tx, &brain_mode_key(), &mode)?;
+            Ok(true)
+        })
+    }
+
     /// Turns managed persistence on or off; returns the new mode epoch as text.
     pub fn set_brain_enabled(&self, enabled: bool) -> Result<String> {
         let brain_id = self.brain_id().to_string();
@@ -438,4 +491,19 @@ impl Store {
     pub fn add_persistence_counters(&self, key: &str, delta: &CounterDelta) -> Result<()> {
         self.write(|tx| add_persistence_counters_in(tx, key, delta))
     }
+}
+
+/// How many topology changes the store holds (`SELECT count(*) FROM persistence_topology_changes`).
+fn topology_change_count(read: &dyn crate::kv::KvRead) -> Result<u64> {
+    let mut n = 0u64;
+    crate::kv::scan_prefix(
+        read,
+        &[crate::keys::PERSISTENCE, crate::persistence::TOPOLOGY],
+        false,
+        &mut |_, _| {
+            n += 1;
+            true
+        },
+    )?;
+    Ok(n)
 }

@@ -63,4 +63,24 @@ describe('readLinkTargetPages writer policy (Rust engine member)', () => {
       expect(await asked(writer({ identities, labelledOnly }))).toEqual({ outcome: 'engine_capability_missing', policy: null, calls: 0 });
     }
   });
+
+  test('one identity holding an invalid entry goes as the empty identity the SQL applies, never the raw entries', async () => {
+    const mixed = [['member:carol-example', 'Bad Id']];
+    const plain = await asked(writer({ identities: mixed }));
+    expect(plain.outcome).toBe('served');
+    expect(plain.policy).toMatchObject({ identity: [], callerRecord: true });
+    expect(JSON.stringify(plain.policy)).not.toContain('carol-example');
+    const labelled = await asked(writer({ identities: mixed, labelledOnly: true }));
+    expect(labelled.policy).toEqual({ ...plain.policy, labelledOnly: { identity: [], satisfiedRuleIds: [] } });
+  });
+
+  test('an identity emptied by an invalid entry beside valid satisfied rules refuses before the store is called; an invalid rule id alone is served', async () => {
+    const mixed = [['member:carol-example', 'Bad Id']];
+    expect(await asked(writer({ identities: mixed, satisfiedRuleIds: ['work:team'] }))).toEqual({ outcome: 'engine_capability_missing', policy: null, calls: 0 });
+    expect(await asked(writer({ identities: mixed, satisfiedRuleIds: ['work:team'], labelledOnly: true }))).toEqual({ outcome: 'engine_capability_missing', policy: null, calls: 0 });
+    const rulesEmptied = await asked(writer({ identities: [['member:carol-example']], satisfiedRuleIds: ['work:team', 'not a rule'] }));
+    expect(rulesEmptied.outcome).toBe('served');
+    expect(rulesEmptied.policy).toMatchObject({ identity: ['member:carol-example'] });
+    expect(rulesEmptied.policy).not.toHaveProperty('satisfiedRuleIds');
+  });
 });

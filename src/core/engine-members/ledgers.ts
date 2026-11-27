@@ -28,9 +28,9 @@ export interface LedgerMembers {
   // Belief ledger writes (engine-sql/belief-ledger.ts). Each runs the statement its caller in src/core/belief/ ran through executeRaw.
   /** The fingerprints among `factFps` and `takeFps` that a fact or take purge of the source tombstoned (subject '*' included). No set order. */
   readBeliefTombstones(sourceId: string, factFps: readonly string[], takeFps: readonly string[]): Promise<string[]>;
-  /** Of `claims`, each one the ledger recorded under its pre-v341 Postgres fingerprint, with that fingerprint (belief/legacy-fingerprint.ts). A claim with none is absent; the Rust store never held one, so it answers none. */
+  /** Of `claims`, each one the ledger recorded under its pre-v353 Postgres fingerprint, with that fingerprint (belief/legacy-fingerprint.ts). A claim with none is absent; the Rust store never held one, so it answers none. */
   readLegacyClaimFingerprints(sourceId: string, claims: readonly string[]): Promise<BeliefLedgerSql.LegacyClaimFingerprintRow[]>;
-  /** The `claimFp` of each probe whose claim a purge of the source tombstoned under its current or its pre-v341 fingerprint. No set order; the Rust store answers none. */
+  /** The `claimFp` of each probe whose claim a purge of the source tombstoned under its current or its pre-v353 fingerprint. No set order; the Rust store answers none. */
   readLegacyBeliefTombstones(sourceId: string, probes: readonly BeliefLedgerSql.LegacyTombstoneProbe[]): Promise<string[]>;
   /** The coverage state of the source's current incarnation: its newest coverage event other than `coverage.restored`, or null. */
   readLatestBeliefCoverage(sourceId: string): Promise<BeliefLedgerSql.BeliefCoverageRow | null>;
@@ -251,6 +251,8 @@ export interface LedgerMembers {
   insertRetrievalEvents(events: RetrievalFeedbackSql.RetrievalEventInsert[]): Promise<void>;
   /** One retrieval event with its pages by rank and its links by byte of source, edge key and target, or null. */
   readRetrievalEvent(id: string): Promise<RetrievalFeedbackSql.RetrievalEventRead | null>;
+  /** Each page row's content hash and learned page weight (halved toward neutral after an edit), null without one (search/feedback-boost.ts); in no set order. */
+  readPageFeedbackWeights(pageIds: readonly number[]): Promise<RetrievalFeedbackSql.PageFeedbackWeightRow[]>;
   /** Applies one batch of ratings (targets already distinct): each newly stored rating moves its element's weight. */
   applyRetrievalRatings(args: RetrievalFeedbackSql.RetrievalRatingBatch): Promise<RetrievalFeedbackSql.AppliedRatingRow[]>;
   /** The Git-gap census reads (commands/sources-git-gap.ts; engine-sql/git-gap-census.ts). The source's checkout root and incarnation. */

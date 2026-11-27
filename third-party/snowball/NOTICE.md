@@ -1,4 +1,4 @@
-# Snowball English stemmer, ported to Rust
+# Snowball English and German stemmers, ported to Rust
 
 `rust/crates/gbrain-store/src/keyword/stem.rs` ports the English stemmer of PostgreSQL's `english_stem` text
 search dictionary. That stemmer is code that the Snowball compiler generated, plus the Snowball runtime library.
@@ -43,3 +43,18 @@ Snowball directly. The 50,477 words are, in order:
 
 How to check the lexeme column against PostgreSQL 18.6 is in `third-party/postgresql/NOTICE.md` (the
 `regen-search-goldens.ts` command).
+
+## The German stemmer
+
+`rust/crates/gbrain-store/src/keyword/stem_german.rs` ports the German stemmer that PGLite, the parity reference,
+builds for `german_stem`: the `stem_UTF_8_german.c` that PostgreSQL's master branch ships in
+`src/backend/snowball/libstemmer/`, whose header says "Generated from german.sbl by Snowball 3.0.0", with the
+Snowball 3.0.0 runtime functions it calls from `utilities.c` (`find_among` and `find_among_b` with relative
+`substring_i`, `get_utf8`, `get_b_utf8`, `skip_utf8`, `skip_b_utf8`, the `*_grouping_U` functions, `eq_s_b`,
+`replace_s`, `slice_from_s` and `slice_del`). Snowball 3.0.0 is under the same BSD 3-clause licence (`LICENSE`).
+The stopword list is PostgreSQL's `german.stop`, described in `third-party/postgresql/NOTICE.md`.
+
+`rust/crates/gbrain-store/src/keyword/stem_german/pglite_german_stem.tsv` has two columns: a word, and what PGLite
+returns for `ts_lexize('german_stem', word)` (an empty second column for a stopword). The lexeme column always comes
+from PGLite, never from the port.
+

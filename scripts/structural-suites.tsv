@@ -164,9 +164,12 @@ test/e2e/workspace-generic-compat.test.ts	generic agent-workspace compat (INSTAL
 test/embedding-dim-check-facts.test.ts	doctor checkFactsEmbeddingWidthConsistency wiring (T6)	4	doctor-source-helper
 test/embedding-dim-check-facts.test.ts	postgres-engine fact insert cast (T6, codex #20)	1	source-surface-helper
 test/enforced-member-classes.test.ts	enforced member allow-list	6	readFileSync
+test/engine-guard-wiring.test.ts	engine guard wrappers are wired into an engine	2	readFileSync
 test/engine-sql-jobs.test.ts	(file-level)	7	readFileSync
 test/engine-status-brain-ref-safety.test.ts	the PGLite lock is unchanged	3	readFileSync
 test/engine-status-brain-ref-safety.test.ts	the brain_ref write is best-effort and off the critical path	4	readFileSync
+test/engine-swap-cli.test.ts	engine_swap_refused recovery table	1	readFileSync
+test/engine-swap-cli.test.ts	the swap report names each write type criterion 5 does not compare	7	readFileSync
 test/env-trust-protected-keys.test.ts	CWD_DOTENV_PROTECTED_KEYS covers every suspicious GBRAIN_* env read in src/	3	readFileSync
 test/error-catalogue.test.ts	error code registry (agent contract v1)	5	readFileSync
 test/error-registry-6317-contract.test.ts	#6317 codes are registered with a full envelope	3	readFileSync
@@ -325,6 +328,7 @@ test/resolver.test.ts	RESOLVER.md trigger round-trip (D5/C)	2	readFileSync
 test/resolver.test.ts	Skill example-name validator (D13)	4	readFileSync
 test/retrieval-reflex-recipe-routing.test.ts	retrieval-reflex recipe routing is MECE with the query skill (#4292)	5	readFileSync
 test/runtime-version.test.ts	stated Bun floor	2	readFileSync
+test/rust-permanent-losses.test.ts	(file-level)	3	readFileSync
 test/schema-bootstrap-coverage.test.ts	(file-level)	15	source-surface-helper
 test/schema-pack-unify-types-handler.test.ts	#1575 unify-types worker dry-run default	1	source-surface-helper
 test/schema-pack/suggest.test.ts	runSuggest — source-text contract (structural)	1	readFileSync
@@ -389,7 +393,7 @@ test/scripts/postgres-unit-arms.test.ts	postgres-unit-arms list	14	readFileSync
 test/scripts/pregate-remote-gate.test.ts	.gstack policy floor	1	readFileSync
 test/scripts/pregate-remote-gate.test.ts	pregate-remote-gate.sh	8	readFileSync
 test/scripts/pregate-remote-gate.test.ts	pregate-remote-gate.sh --list	4	readFileSync
-test/scripts/pregate-remote-gate.test.ts	reuse of GitHub full runs on the identical tree	9	readFileSync
+test/scripts/pregate-remote-gate.test.ts	reuse of GitHub full runs on the identical tree	10	readFileSync
 test/scripts/pregate-remote-gate.test.ts	ship_lanes_from (/ship lanes carried from CI, docs/ci-event-parity.md#ship-lanes)	3	readFileSync
 test/scripts/promote-stable.test.ts	promote-stable.yml	2	readFileSync
 test/scripts/regen-all.test.ts	regen:all	8	readFileSync
@@ -424,8 +428,9 @@ test/serve-http-mcp-transport-cleanup.test.ts	POST /mcp transport cleanup (#2844
 test/serve-http-metrics.test.ts	serve-http.ts wiring (structural — the two defects of the original PR)	2	source-surface-helper
 test/serve-stdin-eof-drain.test.ts	serve-sync-runner stays off the boot path (#4409)	1	readFileSync
 test/setup-brain-layout.test.ts	setup --shape personal	9	readFileSync
+test/setup-household.test.ts	setup --shape household	3	readFileSync
+test/setup-migrations.test.ts	gbrain setup: setup migrations on the brain it creates (Cat 41 run 4)	3	readFileSync
 test/setup-pi-skill-extension.test.ts	(file-level)	7	readFileSync
-test/setup.test.ts	gbrain setup: setup migrations on the brain it creates (Cat 41 run 4)	3	readFileSync
 test/shadow-drill.test.ts	the probe of the opened copy	7	readFileSync
 test/shadow-drill.test.ts	the stop word list is the Rust engine list (review round 2)	2	readFileSync
 test/shadow-replay.test.ts	comparison	2	readFileSync
@@ -435,7 +440,7 @@ test/shadow-replay.test.ts	review fixes (ship pass 2)	3	readFileSync
 test/shadow-replay.test.ts	the per-brain hash key (review of 3e7a623341)	3	readFileSync
 test/shared-skills-catalog.test.ts	(file-level)	22	readFileSync
 test/shared-skills-export.serial.test.ts	(file-level)	15	readFileSync
-test/shared-skills-init.serial.test.ts	real combined brain initialization	4	readFileSync
+test/shared-skills-init.serial.test.ts	real combined brain initialization	6	readFileSync
 test/shared-skills-migration-cli.serial.test.ts	(file-level)	1	readFileSync
 test/shared-skills-optimizer.serial.test.ts	(file-level)	15	readFileSync
 test/shared-skills-publication-sparse.test.ts	(file-level)	4	readFileSync

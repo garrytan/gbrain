@@ -36,6 +36,7 @@ import { prepareMemoryMutation } from '../src/core/persistence/memory-prepare.ts
 import { runFactsRelink } from '../src/core/facts/relink.ts';
 import { runPhaseConsolidate } from '../src/core/cycle/phases/consolidate.ts';
 import { serializePageToMarkdown } from '../src/core/markdown.ts';
+import { lintContent } from '../src/commands/lint.ts';
 import type { AuthInfo } from '../src/core/ops/contract.ts';
 import { testBackends } from './helpers/test-backends.ts';
 import { isolatedPersistencePostgres } from './helpers/persistence-postgres.ts';
@@ -127,6 +128,10 @@ for (const kind of testBackends()) {
       const [pageRow] = await engine.executeRaw<{ page_readers: string[]; compiled_truth: string }>('SELECT page_readers, compiled_truth FROM pages WHERE source_id = $1 AND slug = $2', [SRC, 'memory/members/alice-example']);
       expect(pageRow!.page_readers).toEqual(['member:alice-example']);
       expect(pageRow!.compiled_truth).toContain(CANARY.alice);
+      // #9945: the page the first fact creates carries its capture time, so a content lint finds temporal provenance.
+      const created = await engine.readPageSnapshot('memory/members/alice-example', { sourceId: SRC });
+      expect(lintContent(serializePageToMarkdown(created!.page, created!.tags), 'memory/members/alice-example.md').map(i => i.rule)).not.toContain('missing-created');
+      expect(Date.now() - Date.parse(String(created!.page.frontmatter.captured_at))).toBeLessThan(600_000);
       const acme = await engine.executeRaw<{ compiled_truth: string }>('SELECT compiled_truth FROM pages WHERE source_id = $1 AND slug = $2', [SRC, ACME]);
       expect(acme[0]!.compiled_truth).not.toContain(CANARY.alice);
     }, 60_000);

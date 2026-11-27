@@ -31,7 +31,7 @@ pub(super) fn pg_uuid(text: &str) -> Result<String> {
 }
 
 /// The claim lease: `claim_expires_at=now()+interval '2 minutes'`.
-const CLAIM_LEASE_US: i64 = 120_000_000;
+pub(super) const CLAIM_LEASE_US: i64 = 120_000_000;
 
 /// The data keys a completed claim drops (`data-'retry_slugs'-'target_failures'-...`).
 const COMPLETED_DROPS: [&str; 6] = [
@@ -272,7 +272,7 @@ pub(crate) fn claim_coalesced_git_effects_in(
 
 /// The effect a settle statement names: `WHERE id=$1 AND execution_token=$2::uuid`, plus
 /// `recovery IS NULL` when `no_recovery` is set.
-fn claimed(
+pub(super) fn claimed(
     read: &dyn KvRead,
     id: &str,
     token: Option<&str>,
@@ -499,7 +499,7 @@ pub(crate) fn read_mirror_gate_rows_in(
 
 /// `jsonb_array_elements(COALESCE(data->'parked','[]'))` holds a target whose `error_code` is
 /// `code`; a `parked` that is not an array refuses as `jsonb_array_elements` does.
-fn parked_with(data: &Value, code: &str) -> Result<bool> {
+pub(super) fn parked_with(data: &Value, code: &str) -> Result<bool> {
     match data.get("parked") {
         None => Ok(false),
         Some(Value::Array(items)) => Ok(items

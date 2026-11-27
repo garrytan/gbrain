@@ -28,7 +28,7 @@ const NOW = new Date('2026-11-30T12:00:00.000Z');
 const ts = new Date(NOW.getTime() - 86_400_000).toISOString();
 const epochDir = () => {
   const dir = mkdtempSync(join(tmpdir(), 'gbrain-shadow-recall-')); dirs.push(dir);
-  // pregate-literal: SHADOW_ADAPTER_VERSION=11 the number 11 on the next line is test data (a count, size, index or date), not the adapter version
+  // pregate-literal: SHADOW_ADAPTER_VERSION=11 the number 11 on the next line is test data (a date, index or count), not the adapter version
   const epoch = ensureEpoch(dir, { seed_id: 's', rust_addon_sha256: 'a', comparator_version: 2, adapter_version: 'x', capability_set_hash: 'c', readiness_policy_hash: 'p' }, Date.parse('2026-11-24T00:00:00Z')).epoch_id;
   return { dir, epoch };
 };
@@ -54,6 +54,7 @@ describe('scoring', () => {
     expect([recallEligible([0, { limit: 10 }]), recallEligible([0, {}]), recallEligible([0, { limit: 9 }]), recallEligible([0, { limit: 10, offset: 5 }])]).toEqual([true, true, false, false]);
   });
   test('every reference row tied with the tenth is a true neighbour, whichever the engine returned', () => {
+    // pregate-literal: SHADOW_ADAPTER_VERSION=13 the number 13 on the next line is test data (a count, size, index or date), not the adapter version
     const tied = ref(13, (i) => (i < 9 ? 1 - i / 100 : 0.5)); // c9, c10, c11 and c12 tie at the cutoff
     expect(scoreRecall(tied, rows(ids(0, 10)), rows([...ids(0, 9), 'c12']))).toMatchObject({ vector: 1 });
     expect(scoreRecall(tied, rows(ids(0, 10)), rows([...ids(0, 9), 'c13']))).toMatchObject({ vector: 0.9 });

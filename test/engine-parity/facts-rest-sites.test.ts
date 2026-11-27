@@ -32,6 +32,8 @@ import { getFtsLanguage } from '../../src/core/fts-language.ts';
 import { basisEmbedding, createSource, archiveSource, parityArms, type ParityBackend } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { withCallerAccess } from '../../src/core/search/private-visibility.ts';
+import { factWithdrawnRefusal } from '../../src/core/facts/single-prepare.ts';
+import { FACT_WITHDRAWN_MESSAGE } from '../../src/core/facts/withdrawal.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -544,11 +546,40 @@ describe('engine parity: facts write-path and recall statements that left execut
     return out;
   });
 
+  // A remote save of a forgotten claim meets one plain fact_withdrawn refusal, byte-identical whether the withdrawn rows
+  // sit on a page the caller sees, on a page it may not see, or on no page at all; a local caller keeps the detail
+  // (factWithdrawnRefusal, facts/single-prepare.ts).
+  parityTest('a remote refusal of a forgotten claim is identical whether its withdrawn rows are visible, hidden or absent', {
+    methods: ['readClaimWithdrawal', 'insertFacts', 'putPage', 'insertFactWithdrawal', 'expireFactsByWithdrawal'],
+  }, async (engine) => {
+    await engine.putPage('notes/hidden', note('Hidden', { visibility: 'private' }));
+    await fenced(engine, [
+      { fact: 'open claim', entity_slug: 'people/a', source_markdown_slug: 'notes/open' },
+      { fact: 'hidden claim', entity_slug: 'people/a', source_markdown_slug: 'notes/hidden' },
+    ]);
+    const days: Record<string, string> = { 'open claim': '01', 'hidden claim': '02', 'unbacked claim': '03' };
+    for (const [fact, day] of Object.entries(days)) {
+      expect(await engine.insertFactWithdrawal(SRC, 'world', fact, '*', `2026-06-${day}T00:00:00Z`)).toBe(true);
+      await engine.expireFactsByWithdrawal(SRC, 'world', fact, '*');
+    }
+    const refusal = async (fact: string, excludePrivate: boolean) => {
+      const err = await factWithdrawnRefusal(engine, SRC, { fact, kind: 'fact', visibility: 'world', entity_slug: 'people/a' }, { excludePrivate });
+      return JSON.stringify({ ...err, message: err.message, name: err.name });
+    };
+    const remote = Object.fromEntries(await Promise.all(Object.keys(days).map(async f => [f, await refusal(f, true)] as const)));
+    const local = Object.fromEntries(await Promise.all(Object.keys(days).map(async f => [f, JSON.parse(await refusal(f, false)).withdrawn ?? null] as const)));
+    const plain = JSON.parse(remote['open claim']!);
+    expect({ code: plain.code, message: plain.message, withdrawn: plain.withdrawn ?? null }).toEqual({ code: 'invalid_params', message: FACT_WITHDRAWN_MESSAGE, withdrawn: null });
+    expect(new Set(Object.values(remote)).size).toBe(1);
+    expect(local).toEqual(Object.fromEntries(Object.entries(days).map(([f, day]) => [f, { at: `2026-06-${day}T00:00:00.000Z`, subject: 'all_entities', visibility: 'world' }])));
+    return { remote: plain, local };
+  });
+
   // An id binds as bigint: PGLite refuses a fraction with the cast error; the Rust member refuses it before the store with
   // its typed refusal. Any other error fails the case.
-  parityTest('readReplacementTarget refuses an id that is not a whole number', {
+  parityTest('readReplacementTarget fails an id that is not a whole number with the bigint cast error on every engine', {
     methods: ['readReplacementTarget'],
-  }, (engine, backend) => rustStopsWith(backend, 'readReplacementTarget (an id that is not a whole number)', async () => {
+  }, async (engine) => {
     try {
       await engine.readReplacementTarget({ targetId: 1.5, sourceId: SRC, ownPage: null });
     } catch (error) {
@@ -557,7 +588,7 @@ describe('engine parity: facts write-path and recall statements that left execut
       throw error;
     }
     throw new Error('readReplacementTarget read a fractional id');
-  }));
+  });
 
   parityTest('readMemberPageWithdrawal finds the withdrawal a save onto a member page meets: its own subject first, another subject only for a row the member reads', {
     methods: ['readMemberPageWithdrawal', 'insertFacts', 'expireFact', 'insertFactWithdrawal', 'putPage'],
@@ -702,20 +733,20 @@ describe('engine parity: facts write-path and recall statements that left execut
     return { oldId: ids.get('old claim')!, newId: ids.get('new claim')! };
   };
 
-  parityTest('expireSupersededFact takes an until that is not an ISO instant only where Postgres reads it', {
+  parityTest('expireSupersededFact reads an until in Postgres timestamp text on every engine', {
     methods: ['expireSupersededFact', 'readPairFactRow', 'insertFact'],
-  }, (engine, backend) => rustStopsWith(backend, 'expireSupersededFact (an until that is not an ISO instant)', async () => {
+  }, async (engine) => {
     const { oldId, newId } = await supersedePair(engine);
     const expired = await engine.expireSupersededFact({ oldId, sourceId: SRC, newId, until: '2026-03-01 00:00:00+00' });
     const row = await engine.readPairFactRow(oldId);
     const out = { expired, valid_until: iso(row!.valid_until) };
     expect(out).toEqual({ expired: 1, valid_until: '2026-03-01T00:00:00.000Z' });
     return out;
-  }));
+  });
 
-  parityTest('restoreSupersededFact takes an expiredAt that is not an ISO instant only where Postgres reads it', {
+  parityTest('restoreSupersededFact reads an expiredAt in Postgres timestamp text on every engine', {
     methods: ['expireSupersededFact', 'restoreSupersededFact', 'readPairFactRow', 'insertFact'],
-  }, (engine, backend) => rustStopsWith(backend, 'restoreSupersededFact (an expiredAt that is not an ISO instant)', async () => {
+  }, async (engine) => {
     const { oldId, newId } = await supersedePair(engine);
     expect(await engine.expireSupersededFact({ oldId, sourceId: SRC, newId, until: null })).toBe(1);
     const restored = await engine.restoreSupersededFact({
@@ -725,7 +756,7 @@ describe('engine parity: facts write-path and recall statements that left execut
     const out = { restored, expired_at: iso(row!.expired_at), superseded_by: row!.superseded_by };
     expect(out).toEqual({ restored: 1, expired_at: '2026-04-01T00:00:00.000Z', superseded_by: null });
     return out;
-  }));
+  });
 
   parityTest('readFactForForget, expireFactSuperseded and expireFactAtDate read and end an active fact for a forget, and only an active one', {
     methods: ['readFactForForget', 'expireFactSuperseded', 'expireFactAtDate', 'insertFact', 'insertFacts', 'listFactsByEntity'],

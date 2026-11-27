@@ -15,6 +15,19 @@ use gbrain_store::takes;
 mod proposals;
 mod reads;
 
+/// A take, page or proposal id or a row number, bound as a Postgres bigint or integer: a JS number
+/// that is not a whole number within 2^53 (a fraction, NaN, an infinity, or a value past the safe
+/// range) refuses with `invalid_argument` instead of being truncated or saturated by `as i64`.
+pub(crate) fn whole(v: f64, what: &str) -> Result<i64, gbrain_store::error::StoreError> {
+    if v.is_finite() && v.fract() == 0.0 && v.abs() <= 9_007_199_254_740_991.0 {
+        Ok(v as i64)
+    } else {
+        Err(gbrain_store::error::StoreError::invalid(format!(
+            "{what} must be a whole number: {v}"
+        )))
+    }
+}
+
 #[napi]
 impl Brain {
     /// `addTakesBatch(rows)`: resolves the number of rows given.
@@ -136,7 +149,7 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
             let rows: Vec<takes::FenceRowInput> = required(rows, "matchTakeRows rows")?;
-            s.match_take_rows(page_id as i64, &rows, &limit)
+            s.match_take_rows(whole(page_id, "pageId")?, &rows, &limit)
         })
     }
 
@@ -150,7 +163,7 @@ impl Brain {
     ) -> napi::Result<Object<'env>> {
         self.run(env, move |s| {
             let row_nums: Vec<Value> = required(row_nums, "deleteTakeRows rowNums")?;
-            s.delete_take_rows(page_id as i64, &row_nums)
+            s.delete_take_rows(whole(page_id, "pageId")?, &row_nums)
         })
     }
 }

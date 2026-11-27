@@ -70,6 +70,16 @@ impl Brain {
         })
     }
 
+    /// `listFactHoldingRefs(ids)`: resolves `[{ id, source_id, slug, entity_slug }]`, each fact's holding page ref.
+    #[napi]
+    pub fn list_fact_holding_refs<'env>(
+        &self,
+        env: &'env Env,
+        ids: Vec<f64>,
+    ) -> napi::Result<Object<'env>> {
+        self.run(env, move |s| s.list_fact_holding_refs(&ids))
+    }
+
     /// `listNearestFacts(args)`: resolves the pool rows nearest the vector, each with its `similarity`.
     #[napi]
     pub fn list_nearest_facts<'env>(

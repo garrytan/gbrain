@@ -94,10 +94,16 @@ export async function startGoogleSocket(opts: GoogleSocketOptions): Promise<Goog
   }
 
   const now = opts.now ?? Date.now;
-  const vault = opts.vault ?? openVault();
+  let vault: CredentialVault, audit: (fields: string[]) => void, ledger: BrokerLedger;
+  try {
+    vault = opts.vault ?? openVault();
+    audit = openAuditLog(googleAuditPath(home), now);
+    ledger = new BrokerLedger(brokerStatePath(home), now);
+  } catch (error) {
+    await lock.release();
+    return no((error as Error).message);
+  }
   const tokens = new SocketTokens(vault, opts.fetchImpl ?? fetch, now);
-  const audit = openAuditLog(googleAuditPath(home), now);
-  const ledger = new BrokerLedger(brokerStatePath(home), now);
   const broker = new GoogleBroker({
     tokens, client: opts.mcp ?? new GoogleMcpClient(opts.fetchImpl ?? fetch), ledger, audit,
     gate: () => {
@@ -132,7 +138,7 @@ export async function startGoogleSocket(opts: GoogleSocketOptions): Promise<Goog
         }
         mintTimes.set(peer, [...recent, t]);
         try {
-          const minted = await tokens.mintIngest(request.account);
+          const minted = await tokens.mintIngest(request.account, request.fresh === true);
           audit([request.caller, request.account, 'ingest', 'ok']);
           return { v: GOOGLE_SOCKET_VERSION, ok: true, request_id: id, ...minted };
         } catch (error) {

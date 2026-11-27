@@ -87,7 +87,13 @@ Example `.gitignore` addition:
 media/x/
 media/articles/
 meetings/transcripts/
+/decisions/
 ```
+
+A single-folder entry such as `decisions/` is written as `/decisions/`, so it
+ignores only the folder at the repository root and never a tracked folder of the
+same name deeper down (`docs/decisions/`). An older unanchored line gbrain wrote
+stays as it is; change it to the anchored form by hand and commit it.
 
 ### 2. `gbrain export --restore-only` — repopulate missing db_only files
 

@@ -69,6 +69,7 @@ export type PgAccessReason =
   | 'schema_missing'      // 42P01 / 42703 missing relation or column
   | 'pgvector_missing'    // vector extension absent
   | 'storage_corrupt'     // XX000/XX001/XX002: torn TOAST value, catalog/tuple damage (#5216, #4738)
+  | 'storage_interrupted' // XX000 relation-file open/read failed with EINTR ("Interrupted system call"): a host I/O fault, not damaged data
   | 'tls_required_default' // postgres_tls_required: gbrain's TLS default met a non-local server without TLS
   | 'unknown';
 
@@ -165,8 +166,10 @@ interface ReasonRow {
   /** Code-prefix matches (e.g. every 08xxx connection SQLSTATE). */
   codePrefixes?: string[];
   patterns?: RegExp[];
-  /** Left out only on a row for a gbrain-coded error: its advice is that code's error-registry suggestion. */
+  /** Left out only on a row for a gbrain-coded error (or one naming `advice`): its advice is that code's error-registry suggestion. */
   remediation?: string;
+  /** The error-registry code whose suggestion advises a row matched on a raw Postgres message, whose SQLSTATE has no registry entry. */
+  advice?: keyof typeof CODES;
   /** E10: the same advice without Supabase specifics, used when the configured URL is not a Supabase host. */
   plainRemediation?: string;
   fix?: PgAccessFix;
@@ -186,6 +189,12 @@ const REASON_ROWS: ReadonlyArray<ReasonRow> = [
     reason: 'tls_required_default',
     transient: false,
     codes: ['postgres_tls_required'],
+  },
+  {
+    reason: 'storage_interrupted',
+    transient: false,
+    patterns: [/could not (?:open file|read blocks? [^\n]*?in file) "[^"\n]+"[^\n]*: Interrupted system call/i],
+    advice: 'pg_storage_interrupted',
   },
   {
     reason: 'storage_corrupt',
@@ -415,7 +424,7 @@ export function classifyPgAccessError(err: unknown, ctx?: PgAccessContext): PgAc
       sqlstate: looksLikeSqlstate(code),
       message,
       remediation: ctx?.url && row.plainRemediation && (!looksLikeSupabase(ctx.url) || (row.reason === 'dns_failed' && isSupabasePoolerUrl(ctx.url))) ? row.plainRemediation
-        : row.remediation ?? (CODES as Record<string, { suggestion?: string }>)[code ?? '']?.suggestion ?? UNKNOWN_REMEDIATION,
+        : row.remediation ?? (CODES as Record<string, { suggestion?: string }>)[row.advice ?? code ?? '']?.suggestion ?? UNKNOWN_REMEDIATION,
       fix: contextualFix(row.reason, ctx?.url) ?? row.fix,
       supabase: supabaseHints(ctx?.url, row.reason),
       brainId: ctx?.brainId,
