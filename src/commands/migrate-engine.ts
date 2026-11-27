@@ -32,6 +32,7 @@ import { drainProjections, queuePageProjection } from '../core/page-state/projec
 import { carryChunkMetadata } from '../core/embed-stale.ts';
 import { normalizeAliasList } from '../core/search/alias-normalize.ts';
 import { withReservedConfigWrite } from '../core/config-snapshot.ts';
+import { NO_AUTHOR } from '../core/persistence/content-author-schema.ts';
 
 interface MigrateOpts {
   targetEngine: 'postgres' | 'pglite';
@@ -531,7 +532,7 @@ export async function copyPageToTarget(
     content_hash: page.content_hash,
     ...(row ? { page_kind: row.page_kind ?? undefined, source_path: row.source_path, effective_date: asDate(row.effective_date), effective_date_source: row.effective_date_source,
       import_filename: row.import_filename, source_kind: row.source_kind, source_uri: row.source_uri, ingested_via: row.ingested_via,
-      content_author: row.content_author } : {}),
+      content_author: row.content_author ?? NO_AUTHOR } : {}),
   }), { ...sourceOpts, allowEmptyOverwrite: true });
   await target.setPageAliases(page.slug, page.source_id ?? 'default', normalizeAliasList(page.frontmatter?.aliases));
 

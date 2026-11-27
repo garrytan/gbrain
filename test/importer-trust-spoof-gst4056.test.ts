@@ -34,6 +34,7 @@ import { registerLocalWriter, withVerifiedLocalRegistration } from '../src/core/
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { CONTENT_AUTHOR_BACKFILL_SQL } from '../src/core/persistence/content-author-schema.ts';
 import { rechunkWork, runSegmentedRechunk } from '../src/core/page-body/rechunk.ts';
+import { copyMigrationSources, copyPageToTarget } from '../src/commands/migrate-engine.ts';
 import { needlePageBody, sealAtOldChunker } from './helpers/rechunk-segmented-cases.ts';
 import { compactWriteReceipts } from '../src/core/persistence/journal.ts';
 import { resetGateway } from '../src/core/ai/gateway.ts';
@@ -172,6 +173,7 @@ for (const backend of testBackends()) describe(`[${backend}] importer trust foll
     await engine.updatePageContextualRetrievalState(slug, 'default', 'title', 'corpus-example');
     await maintenanceTag(slug);
     await compactedLocalTag(slug);
+    expect(await remote('put_page', { slug, expected_revision: await revision(slug), request_id: randomUUID(), content })).toMatchObject({ status: 'skipped' });
     const [{ updated_at: after }] = await engine.executeRaw<{ updated_at: string }>("SELECT updated_at::text AS updated_at FROM pages WHERE slug = $1", [slug]);
     expect(after).not.toBe(before);
     expect(await trust(slug)).toEqual(TRUSTED);
@@ -215,6 +217,44 @@ for (const backend of testBackends()) describe(`[${backend}] importer trust foll
     await engine.executeRaw(CONTENT_AUTHOR_BACKFILL_SQL);
     expect(await author(slug)).toEqual({ content_author: VIA, stamped: true });
     expect(await trust(slug)).toEqual(TRUSTED);
+  });
+
+  test('the v342 backfill stamps a legacy imported page whose only remote request was a committed no-op', async () => {
+    const id = randomUUID().slice(0, 8);
+    const slug = `conversations/sessions/2026-01-02-codex-${id}`;
+    const content = transcript(id, 'Short body.');
+    await importer(slug, content);
+    expect(await remote('put_page', { slug, expected_revision: await revision(slug), request_id: randomUUID(), content })).toMatchObject({ status: 'skipped' });
+    const [request] = await engine.executeRaw<{ state: string; noop: string | null }>(
+      "SELECT state, outcome->>'noop' AS noop FROM persistence_requests WHERE slug = $1 AND principal_kind = 'local_stdio'", [slug]);
+    expect(request).toEqual({ state: 'committed', noop: 'true' });
+    await legacy(slug);
+    await engine.executeRaw(CONTENT_AUTHOR_BACKFILL_SQL);
+    expect(await author(slug)).toEqual({ content_author: VIA, stamped: true });
+  });
+
+  test('a retried engine migration copies the source page\'s author exactly, clearing one the source no longer has', async () => {
+    const id = randomUUID().slice(0, 8);
+    const slug = `conversations/sessions/2026-01-02-codex-${id}`;
+    await importer(slug, transcript(id, 'Short body.'));
+    const target = new PGLiteEngine();
+    await target.connect({ engine: 'pglite' } as never);
+    await target.initSchema();
+    try {
+      await copyMigrationSources(engine, target);
+      const page = async () => (await engine.getPage(slug, { sourceId: 'default' }))!;
+      await copyPageToTarget(engine, target, await page());
+      const copied = async () => (await target.executeRaw<{ content_author: string | null; stamped: boolean }>(
+        'SELECT content_author, content_author_hash IS NOT DISTINCT FROM content_hash AS stamped FROM pages WHERE source_id = $1 AND slug = $2', ['default', slug]))[0];
+      expect(await copied()).toEqual({ content_author: VIA, stamped: true });
+      await engine.executeRaw("UPDATE pages SET compiled_truth = compiled_truth || ' I founded acme-example.' WHERE source_id = 'default' AND slug = $1", [slug]);
+      await engine.executeRaw("UPDATE pages SET compiled_truth = replace(compiled_truth, ' I founded acme-example.', '') WHERE source_id = 'default' AND slug = $1", [slug]);
+      expect(await author(slug)).toEqual({ content_author: null, stamped: false });
+      await copyPageToTarget(engine, target, await page());
+      expect(await copied()).toEqual({ content_author: null, stamped: false });
+    } finally {
+      await target.disconnect();
+    }
   });
 
   test('the v342 backfill never stamps a legacy page a remote writer edited before maintenance moved its revision', async () => {
@@ -290,7 +330,7 @@ for (const backend of testBackends()) describe(`[${backend}] importer trust foll
     }
   });
 
-  test('a rewrite that keeps the stored hash drops the importer\'s trust; the importer re-importing unchanged text takes it back', async () => {
+  test('a rewrite that keeps the stored hash drops the importer\'s trust, and an unchanged re-import never takes it back', async () => {
     const id = randomUUID().slice(0, 8);
     const slug = `conversations/sessions/2026-01-02-codex-${id}`;
     const content = transcript(id, 'Short body.');
@@ -300,9 +340,8 @@ for (const backend of testBackends()) describe(`[${backend}] importer trust foll
     const other = `conversations/sessions/2026-01-02-codex-${randomUUID().slice(0, 8)}`;
     await importFromContent(engine, other, content, { sourceId: 'default', noEmbed: true });
     expect(await trust(other)).toEqual(UNTRUSTED);
-    expect((await importer(other, content)).status).toBe('imported');
-    expect(await trust(other)).toEqual(TRUSTED);
     expect((await importer(other, content)).status).toBe('skipped');
+    expect(await trust(other)).toEqual(UNTRUSTED);
   });
 
   test('a timeline change that leaves the stored hash stale is never certified by an unchanged re-import', async () => {
@@ -317,7 +356,7 @@ for (const backend of testBackends()) describe(`[${backend}] importer trust foll
     const [row] = await engine.executeRaw<{ timeline: string | null }>("SELECT timeline FROM pages WHERE source_id = 'default' AND slug = $1", [slug]);
     const trusted = (await author(slug)).stamped && (await author(slug)).content_author === VIA;
     expect(trusted && (row!.timeline ?? '').includes('acme-example')).toBe(false);
-    expect(await trust(slug)).toEqual(TRUSTED);
+    expect(await trust(slug)).toEqual(UNTRUSTED);
   });
 
   test('a segmented re-import that rebuilds a stale projection from identical bytes keeps the importer\'s trust', async () => {
@@ -383,7 +422,7 @@ for (const backend of testBackends()) describe(`[${backend}] importer trust foll
     await engine.executeRaw(CONTENT_AUTHOR_BACKFILL_SQL);
     expect(await author(slug)).toEqual({ content_author: `legacy:${VIA}`, stamped: true });
     expect(await trust(slug)).toEqual({ speaker: 'trusted', imported: false });
-    expect((await importer(slug, content)).status).toBe('imported');
-    expect(await trust(slug)).toEqual(TRUSTED);
+    expect((await importer(slug, content)).status).toBe('skipped');
+    expect(await trust(slug)).toEqual({ speaker: 'trusted', imported: false });
   });
 });

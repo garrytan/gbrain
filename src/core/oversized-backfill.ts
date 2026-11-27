@@ -43,6 +43,7 @@ import { currentEmbeddingSignature } from './embedding.ts';
 import { budgetLimitedReport } from './held-embedding.ts';
 import type { PageType } from './types.ts';
 import { materializedSnapshot } from './persistence/segmented-apply.ts';
+import { verifiedContentAuthor } from './persistence/content-author-schema.ts';
 
 /** The `page_embedding_budget.reason` a backfilled large page waits under. */
 export const BACKFILL_HOLD_REASON = 'upgrade_backfill';
@@ -128,15 +129,17 @@ async function rewritePage(engine: BrainEngine, page: Candidate, snapshot: NonNu
   const markdown = serializeMarkdown(fm, snapshot.page.compiled_truth ?? '', snapshot.page.timeline ?? '', {
     type: (snapshot.page.type as PageType) ?? 'note', title: snapshot.page.title ?? '', tags: snapshot.tags,
   });
+  // GST-4056: only the oversized marker changes, so the page keeps its verified author.
+  const author = await verifiedContentAuthor(engine, page.id);
   if (!managed) {
-    await importFromContent(engine, page.slug, markdown, { sourceId: page.source_id, noEmbed: true, forceRechunk: true, preserveGateMarkers: true });
+    await importFromContent(engine, page.slug, markdown, { sourceId: page.source_id, noEmbed: true, forceRechunk: true, preserveGateMarkers: true, content_author: author });
     return;
   }
   const config = loadConfig() ?? { engine: engine.kind };
   const ctx = { engine, config, remote: false, dryRun: false, sourceId: page.source_id, writeWaitMs: resolveCliWriteWaitMs({ config }),
     logger: { info: () => {}, warn: (m: string) => console.error(m), error: (m: string) => console.error(m) } } as unknown as OperationContext;
   await submitPageMutation(ctx, { operation: 'put_page', managedFileImport: true, params: { slug: page.slug, source_id: page.source_id, content: markdown,
-    kind: 'managed_quarantine_clear', expected_revision: snapshot.revision, request_id: randomUUID() } });
+    kind: 'managed_quarantine_clear', expected_revision: snapshot.revision, request_id: randomUUID(), ...(author ? { content_author: author } : {}) } });
 }
 
 export async function runOversizedBackfill(engine: BrainEngine, opts: {

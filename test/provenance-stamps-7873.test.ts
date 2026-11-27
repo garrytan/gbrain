@@ -207,6 +207,18 @@ for (const kind of testBackends()) {
           .toEqual([{ source_kind: null, ingested_via: null, ingested_at: null }]);
       });
 
+      // Value: protects=GST-4037 D a remote capture over an existing page keeps its first-ingest columns; fails_when=mcp:capture or the capture's time reaches source_kind / ingested_via / ingested_at; why_new=the put_page row above; seam=none; no_claim=a capture that creates the page
+      test('a remote capture over an existing page keeps its first-ingest columns', async () => {
+        const slug = 'inbox/capture-existing';
+        const before = await seed(slug, STORED, 'external_untrusted');
+        const columns = () => engine.executeRaw('SELECT source_kind, ingested_via, ingested_at::text AS ingested_at FROM pages WHERE source_id = $1 AND slug = $2', ['default', slug]);
+        const stored = await columns();
+        const current = await read(slug);
+        await call('capture', { slug, expected_revision: current.revision, content: serializePageToMarkdown({ ...before.page, compiled_truth: 'Captured body, recaptured' }, before.tags) });
+        expect((await page(slug)).page.compiled_truth).toContain('recaptured');
+        expect(await columns()).toEqual(stored);
+      });
+
       // Value: protects=remote append_page on an unclassified captured page keeps stored stamps and the lowering marker; fails_when=append re-derives the page higher or drops stamps; why_new=prior rows cover edit_page/put_page/capture only; seam=none; no_claim=segmented splice path (inline page only)
       test('a remote append_page keeps the stored stamps and does not raise an unclassified page', async () => {
         const slug = 'inbox/append-stamps';

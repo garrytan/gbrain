@@ -14,7 +14,8 @@
  *   (import-file.ts `content_author`), so a repeated declaration still counts (a statement that writes the same author
  *   and hash it found declares nothing).
  * - New text: the declared author, or none when the statement declared none (a raw UPDATE, a maintenance rewrite that
- *   keeps the hash, a projection-only flip that does not carry the author, an older binary).
+ *   keeps the hash, a projection-only flip that does not carry the author, an older binary). An empty author (`NO_AUTHOR`)
+ *   clears both columns even on unchanged text.
  * - The same text (title, type, body, timeline, body generation and frontmatter other than the hash-ephemeral keys and
  *   `tags`): a trusted importer or connector that declares itself takes it; otherwise a verified author stays and its
  *   hash follows the content hash (a tag change restamps the hash), so a remote write of identical text, a tag change or
@@ -35,6 +36,8 @@ export const CONNECTOR_AUTHOR_PREFIX = 'connector:';
  * revision carries no importer request): speaker markers honor it as before, fence acceptance does not.
  */
 export const LEGACY_AUTHOR_PREFIX = 'legacy:';
+/** A declared author that clears both columns whatever the text (engine migration copying a page whose source has none). */
+export const NO_AUTHOR = '';
 
 /** Principals that reach the brain from outside (MCP over HTTP, legacy tokens, stdio MCP). */
 const REMOTE_PRINCIPAL_KINDS = ['oauth_client', 'legacy_token', 'local_stdio'];
@@ -58,7 +61,10 @@ export const CONTENT_AUTHOR_FUNCTION_SQL = `CREATE OR REPLACE FUNCTION gbrain_gu
 DECLARE
   declared boolean := NEW.content_author IS NOT NULL AND NEW.content_author_hash IS NULL;
 BEGIN
-  IF ${text('NEW')} IS NOT DISTINCT FROM ${text('OLD')} THEN
+  IF NEW.content_author = '${NO_AUTHOR}' THEN
+    NEW.content_author := NULL;
+    NEW.content_author_hash := NULL;
+  ELSIF ${text('NEW')} IS NOT DISTINCT FROM ${text('OLD')} THEN
     IF declared AND ${trustedAuthorSql('NEW.content_author')} THEN
       NEW.content_author_hash := NEW.content_hash;
     ELSIF OLD.content_author IS NOT NULL AND OLD.content_author_hash = OLD.content_hash THEN
@@ -94,6 +100,7 @@ END $fn$`;
 export const CONTENT_AUTHOR_BACKFILL_SQL = `WITH remote_pages AS MATERIALIZED (
   SELECT DISTINCT r.source_id, r.slug FROM persistence_requests r
    WHERE r.principal_kind IN (${list(REMOTE_PRINCIPAL_KINDS)}) AND r.state = 'committed' AND r.operation NOT IN (${list(METADATA_OPERATIONS)})
+     AND (r.outcome->>'noop') IS DISTINCT FROM 'true'
 ), remote_versions AS MATERIALIZED (
   SELECT DISTINCT v.page_id FROM page_versions v LEFT JOIN persistence_requests r ON r.id = v.write_request_id
    WHERE v.write_principal_kind IN (${list(REMOTE_PRINCIPAL_KINDS)}) AND (r.id IS NULL OR r.operation NOT IN (${list(METADATA_OPERATIONS)}))
@@ -141,13 +148,8 @@ export function contentAuthoredBySql(page: string, authors: string, opts: { lega
   return `(${page}.content_author IN (${names}) AND ${page}.content_author_hash = ${page}.content_hash)`;
 }
 
-/**
- * A trusted importer or connector re-importing a page whose live text no trusted importer is the verified author of: the
- * import must write its text (never skip it as unchanged), so the trigger stamps the author only on text it wrote.
- */
-export async function importerAuthorPending(exec: { executeRaw: <T>(sql: string, params?: unknown[]) => Promise<T[]> },
-  pageId: number | string, author: string | null | undefined): Promise<boolean> {
-  if (!isTrustedContentAuthor(author)) return false;
-  const rows = await exec.executeRaw(`SELECT 1 FROM pages WHERE id = $1 AND ${trustedAuthorSql('content_author')} AND content_author_hash = content_hash`, [Number(pageId)]);
-  return rows.length === 0;
+/** The page's verified content author (its hash is the live hash), or null: what a rewrite of unchanged text carries. */
+export async function verifiedContentAuthor(exec: { executeRaw: <T>(sql: string, params?: unknown[]) => Promise<T[]> }, pageId: number | string): Promise<string | null> {
+  const [row] = await exec.executeRaw<{ author: string | null }>(`SELECT CASE WHEN content_author_hash = content_hash THEN content_author END AS author FROM pages WHERE id = $1`, [Number(pageId)]);
+  return row?.author ?? null;
 }

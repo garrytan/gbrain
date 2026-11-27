@@ -177,7 +177,7 @@ export async function putPage(
     const { rows } = await exec.run(sqlFragment`
       WITH ins AS (
       INSERT INTO pages (source_id, slug, type, page_kind, title, compiled_truth, timeline, frontmatter, content_hash, updated_at, effective_date, effective_date_source, import_filename, chunker_version, source_path, source_kind, source_uri, ingested_via, ingested_at, content_author, content_author_hash${crColumns})
-      VALUES (${sourceId}, ${slug}, ${page.type}, ${pageKind}, ${sanitizeText(page.title)}, ${sanitizeText(page.compiled_truth)}, ${sanitizeText(page.timeline || '')}, ${jsonbParam(frontmatter)}, ${hash}, now(), ${effectiveDate}, ${effectiveDateSource}, ${importFilename}, ${chunkerVersion}::smallint, ${sourcePath}, ${sourceKind}, ${sourceUri}, ${ingestedVia}, ${ingestedAt}, ${contentAuthor}, ${contentAuthor === null ? null : hash}${crValues})
+      VALUES (${sourceId}, ${slug}, ${page.type}, ${pageKind}, ${sanitizeText(page.title)}, ${sanitizeText(page.compiled_truth)}, ${sanitizeText(page.timeline || '')}, ${jsonbParam(frontmatter)}, ${hash}, now(), ${effectiveDate}, ${effectiveDateSource}, ${importFilename}, ${chunkerVersion}::smallint, ${sourcePath}, ${sourceKind}, ${sourceUri}, ${ingestedVia}, ${ingestedAt}, ${contentAuthor || null}, ${contentAuthor ? hash : null}${crValues})
       ON CONFLICT (source_id, slug) DO UPDATE SET${crSet}
         type = EXCLUDED.type,
         page_kind = EXCLUDED.page_kind,
@@ -199,7 +199,7 @@ export async function putPage(
         ingested_via          = COALESCE(EXCLUDED.ingested_via,          pages.ingested_via),
         ingested_at           = COALESCE(EXCLUDED.ingested_at,           pages.ingested_at),
         -- GST-4056: this write declares its author (a NULL hash); the pages_content_author trigger settles it (content-author-schema.ts).
-        content_author        = EXCLUDED.content_author,
+        content_author        = ${contentAuthor}::text,
         content_author_hash   = NULL
       RETURNING knowledge_revision, text_projection_revision, id, source_id, slug, type, title, compiled_truth, timeline, frontmatter, content_hash, created_at, updated_at, effective_date, effective_date_source, import_filename, source_kind, source_uri, ingested_via, ingested_at
       ), ${HOLD_BIND_CTE}

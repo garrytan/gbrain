@@ -119,7 +119,6 @@ import { assertGuestWriterAtPublication, insertGuestMark, refuseRemoteGuestDelet
 import { skipsGuestNote } from '../guests/derived.ts';
 import { NOT_A_GUEST_WRITE, prepareGuestWrite, type GuestWrite } from '../guests/publication.ts';
 import { clearOwedPurges } from './derived-origin-hold.ts';
-import { importerAuthorPending } from './content-author-schema.ts';
 
 
 const ownerStatusFix = (sourceId: string): Action => readFix(`Shows source ${sourceId}'s canonical owner with its pending, failed and recovering requests, read-only.`,
@@ -1185,14 +1184,13 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
     if (materialized) content = serializePageToMarkdown({...snapshot.page,...parsed,timeline,type:parsed.typeExplicit ? parsed.type : snapshot.page.type},parsed.tags);
   }
   const storedTier = snapshot ? await storedPageTier(engine, row.source_id, row.slug) : null;
-  const authorPending = !!snapshot && await importerAuthorPending(engine, snapshot.page.id, row.authority.remote ? null : typeof p.ingested_via === 'string' ? p.ingested_via : null);
   // Detect an exact canonical no-op before ingestion can invoke any provider.
   // Revision/identity checks above still apply to stale identical replacements.
   if (snapshot && (snapshot.page.deleted_at != null) === targetDeleted && typeof content === 'string') {
     const incoming = parseMarkdown(content,row.slug,{ activePack });
     resolveParsedSubtype(incoming, snapshot.page);
     const tags = versionTags ?? [...new Set([...snapshot.tags,...incoming.tags])].sort();
-    if (digest(canonical(snapshot.page,snapshot.tags)) === digest(canonical(incoming,tags)) && !authorPending) {
+    if (digest(canonical(snapshot.page,snapshot.tags)) === digest(canonical(incoming,tags))) {
       const file=await prepareFileTarget(engine,row,snapshot,targetDeleted ? null : serializePageToMarkdown(snapshot.page,snapshot.tags),undefined,{ activePack, remote: row.authority.remote, clock });
       return {observedRevision,noop:true,file,...await pageDatabaseOnlyPublication(engine,row,file),
         apply:async()=>({...pageNoopAdvisories(row),status:'skipped',slug:row.slug,source_id:row.source_id,noop:true,chunks:0,chunk_skip_reason:'write_skipped',
@@ -1225,8 +1223,8 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
     source_kind: typeof p.source_kind === 'string' ? p.source_kind : null,
     source_uri: typeof p.source_uri === 'string' ? p.source_uri : null,
     ingested_via: typeof p.ingested_via === 'string' ? p.ingested_via : null,
-    keepIngestColumns: row.operation === 'edit_page' || (row.authority.remote && (row.operation === 'put_page' || row.operation === 'append_page')),
-    content_author: row.authority.remote ? `mcp:${row.operation}` : typeof p.ingested_via === 'string' ? p.ingested_via : null,
+    keepIngestColumns: row.operation === 'edit_page' || (row.authority.remote && (row.operation === 'put_page' || row.operation === 'append_page' || row.operation === 'capture')),
+    content_author: row.authority.remote ? `mcp:${row.operation}` : typeof p.content_author === 'string' ? p.content_author : typeof p.ingested_via === 'string' ? p.ingested_via : null,
     ...(gateTrust ? { writeGate: gateInput(gateTrust, row.id) } : {}),
     // Provenance compares the caller's page with the stored one, so it runs before the server's trust marker is stamped.
     prepareFrontmatter: page => {
@@ -1279,7 +1277,7 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
   // CEO-21: the server-stamped trust marker alone never makes a write: unchanged as stamped or as the caller sent it.
   const callerPage = { ...ready.parsedPage, frontmatter: suppliedTrustMarkerView(ready.parsedPage.frontmatter, suppliedTrustMarker) };
   const logicalNoop = snapshot !== null && [ready.parsedPage, callerPage].some(page => digest(canonical(snapshot.page, snapshot.tags)) === digest(canonical(page, tags)));
-  const noop = logicalNoop && !authorPending && (snapshot?.page.deleted_at != null) === targetDeleted;
+  const noop = logicalNoop && (snapshot?.page.deleted_at != null) === targetDeleted;
   const ordinaryPage = ['put_page','capture','restore_page','revert_version','edit_page'].includes(row.operation);
   // A managed maintenance page (e.g. the dream write-back after grounding
   // quarantine) republishes a body; its automatic links follow that body.

@@ -5554,8 +5554,8 @@
         "idempotent": true,
         "name": "content_author_attribution",
         "sql": {
-          "length": 1910,
-          "sha256": "e9076afaea38f1f9b43b86d19a13154f67a97bb59d85842144b6409cd32fbd74"
+          "length": 2016,
+          "sha256": "ac01e903b4783925c96fcb2e0759e63a1ff84fb2435ce9c5cfdc87d9a97dba83"
         },
         "sqlFor": "absent",
         "transaction": "absent",
@@ -5567,8 +5567,8 @@
         "idempotent": true,
         "name": "content_author_backfill",
         "sql": {
-          "length": 2974,
-          "sha256": "7779d0bc51f4e2d5df47ed7e91e3e572141de178c22e60bdddd040502d17d838"
+          "length": 3028,
+          "sha256": "dc9b6c87d184c5610420206fe6e88ea97807c49da2c1667f9a6a637ddd38ddb7"
         },
         "sqlFor": "absent",
         "transaction": "absent",

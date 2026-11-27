@@ -1,5 +1,4 @@
 import { assertUnmanagedCanonicalWriter } from './persistence/maintenance.ts';
-import { importerAuthorPending } from './persistence/content-author-schema.ts';
 import { legacyImportHold } from './persistence/legacy-slug-put.ts';
 import { suffixedFrontmatterSlugHold } from './persistence/suffixed-slug.ts';
 import { noncanonicalPrivateHold } from './persistence/visibility-request.ts';
@@ -547,9 +546,8 @@ export async function importFromContent(
       && !trustMarkerChanged(existing.frontmatter, page.frontmatter) && (existing.content_hash === hash
         ? !opts.prepare || sameCanonicalImport(existingSnapshot, page)
         : !legacyHashMatch && await sameContentAnyKeyOrder(engine, existing, existingSnapshot?.tags ?? null, page, sourceId ?? 'default'));
-    const unchanged = (await unchangedAs(parsedPage) || (suppliedTrustMarker !== parsed.frontmatter.trust_tier
-      && await unchangedAs({ ...parsedPage, frontmatter: suppliedTrustMarkerView(parsed.frontmatter, suppliedTrustMarker) })))
-      && !await importerAuthorPending(engine, existing!.id, opts.content_author !== undefined ? opts.content_author : opts.ingested_via);
+    const unchanged = await unchangedAs(parsedPage) || (suppliedTrustMarker !== parsed.frontmatter.trust_tier
+      && await unchangedAs({ ...parsedPage, frontmatter: suppliedTrustMarkerView(parsed.frontmatter, suppliedTrustMarker) }));
     if (existing && unchanged) {
       // #5050: unchanged content chunked before the safe-chunk fence is re-sealed
       // projection-only; the canonical write stays a no-op.

@@ -77,3 +77,18 @@ test('a marked segmented page is sized by body_bytes, counted over the block, th
     expect(await runOversizedBackfill(engine, { dryRun: true })).toMatchObject({ candidates: 0, over_block: 0 });
   }
 }), 300_000);
+
+test('the backfill keeps a verified importer author on a segmented page whose text it does not change (GST-4056)', async () => withEnv(env, async () => {
+  for (const engine of engines) {
+    await engine.setConfig('pages.segmented_storage', 'on');
+    await engine.setConfig('content_sanity.bytes_block', '500000');
+    const slug = 'notes/backfill-imported';
+    expect((await importFromContent(engine, slug, content, { noEmbed: true, ingested_via: 'cli:transcripts-ingest' })).status).toBe('imported');
+    const author = () => engine.executeRaw<{ content_author: string | null; stamped: boolean }>(
+      "SELECT content_author, content_author_hash IS NOT DISTINCT FROM content_hash AS stamped FROM pages WHERE source_id = 'default' AND slug = $1", [slug]);
+    expect(await author()).toEqual([{ content_author: 'cli:transcripts-ingest', stamped: true }]);
+    await engine.unsetConfig('content_sanity.bytes_block');
+    expect(await runOversizedBackfill(engine)).toMatchObject({ reindexed: 1, failed: [] });
+    expect(await author()).toEqual([{ content_author: 'cli:transcripts-ingest', stamped: true }]);
+  }
+}), 300_000);
