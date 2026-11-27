@@ -577,7 +577,12 @@ export class WriteTally {
         if (key === undefined || key === this.key || pending.keys.includes(key)) continue; // this child's own session is settled at the end of its input; a marked session is the serving process's to publish and clear
         const path = join(this.dir, name); const rec = parseOwed(path);
         if (rec === null || rec === 'unreadable') continue;
-        if (rec.booked_epoch !== undefined) { if (rec.booked_epoch !== epoch) stale.push(key); continue; } // a tombstone: it stays for as long as its epoch does, and goes with it
+        if (rec.booked_epoch !== undefined) { // a tombstone: it stays for as long as its epoch does, and goes with it
+          if (rec.booked_epoch !== epoch) { stale.push(key); continue; }
+          const more = rec.owed - ((tally?.settled?.[key] ?? 0) + (lines.bySession[key] ?? 0)); // the serving process raised `owed` after the window was booked: the rest is a plain orphan (the window is booked already)
+          if (more > 0 && recordLostCount(this.dir, epoch, 'receipt_orphaned', more, key) >= more) booked = true;
+          continue;
+        }
         const age = Date.now() - statSync(path).mtimeMs;
         const orphaned = rec.child_exited || (rec.child_pid !== undefined && rec.child_pid > 1 && !running(rec.child_pid)) || (rec.closed && age > STALE_RECEIPT_MS) || (rec.serving_pid > 1 && !running(rec.serving_pid) && age > STALE_RECEIPT_MS);
         if (!orphaned && !rec.closed) continue;

@@ -654,3 +654,32 @@ describe('OWC ship-p4: the stale-tombstone cleanup, the child stamp and the chil
     }, 30_000);
   });
 });
+
+describe('OWC ship-p5 A: the supervisor\'s late exit publication must not erase a booked tombstone', () => {
+  test('a worker dies inside a window, another owner books it (the tombstone), THEN the supervisor sees the exit and publishes its v:1 record: the tombstone stays, so an older reader still reads the epoch as unresolved', () => {
+    const r = rig();
+    try {
+      for (let i = 0; i < 3; i++) expect(r.sup.send(sample(i))).toBe(true); // the window is open: marker owed 1, three samples accepted
+      const key = r.sessions[0]!;
+      expect(ownerPass(r.dir, r.epoch)).toEqual({ write_window_lost: 1 }); // another serving process's owner worker books the dead worker's window
+      expect(readOwed(r.dir, key)).toMatchObject({ v: 2, booked_epoch: r.epoch });
+      r.children[0]!.emit('exit', 1, null); // the exit reaches the supervisor late: it writes v:1, owed 3, child_exited, under the lock
+      ownerPass(r.dir, r.epoch);
+      expect(readOwed(r.dir, key)).toMatchObject({ v: 2, booked_epoch: r.epoch }); // was removed: the v:1 record replaced the tombstone, and the pass booked 2 receipt_orphaned and deleted it
+      expect(oldBooks(r.dir, key)).toBe('skips'); // an older reader must still see an unreadable file
+    } finally { r.done(); }
+  });
+  test('the same when the exit-time record could not be written and is kept: the keeper\'s later publication leaves the tombstone v:2 as well, and the pass books the rest once', async () => {
+    const r = rig();
+    try {
+      for (let i = 0; i < 3; i++) expect(r.sup.send(sample(i))).toBe(true);
+      const key = r.sessions[0]!;
+      expect(ownerPass(r.dir, r.epoch)).toEqual({ write_window_lost: 1 });
+      r.state.fault = 'before-rename'; r.children[0]!.emit('exit', 1, null); // the exit-time record fails: kept and marked
+      r.state.fault = null; await sleep(150); // the keeper publishes it (the retry timer) under the lock
+      expect(ownerPass(r.dir, r.epoch)).toEqual({ receipt_orphaned: 2, write_window_lost: 1 });
+      expect(readOwed(r.dir, key)).toMatchObject({ v: 2, owed: 3, booked_epoch: r.epoch }); expect(oldBooks(r.dir, key)).toBe('skips');
+      expect(ownerPass(r.dir, r.epoch)).toEqual({ receipt_orphaned: 2, write_window_lost: 1 }); // once
+    } finally { r.done(); }
+  });
+});
