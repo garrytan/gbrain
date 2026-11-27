@@ -40,6 +40,7 @@ import { assertPurgeParams } from './purge-params.ts';
 import { authorizeWrite, slugDisclosable } from './authority.ts';
 import { admitPolicyFrontmatter } from '../policy/admission.ts';
 import { admitRuleFrontmatter } from '../rules/admission.ts';
+import { isTeamRuleSlug } from '../rules/record.ts';
 import { admitActionFrontmatter } from '../ledger/admission.ts';
 import { remoteLabelsChecked, defaultSourceMemberWriter, defaultSourceWriterIsOwner, defaultSourceWriterReaders, ownerRewriteOf, storedWriterReadsHeld } from './page-visibility.ts';
 import { loadFenceChunkOverlay } from '../eligibility/fence-overlay.ts';
@@ -207,6 +208,14 @@ function putProvenance(row: WriteRequest, snapshot: PageSnapshot | null, parsed:
   const { ingested_at, ...channel } = stamp;
   Object.assign(parsed.frontmatter, ingested_at ? stamp : channel);
   return stamp;
+}
+/**
+ * #10330: an edit of a stored page is not a new ingestion, so the import keeps its first-ingest columns. A managed
+ * put_page stamps the first write's provenance (putProvenance), so its import keeps them too, and the provenance update
+ * keeps a stored ingested_at as the column holds it (microseconds; a JS Date keeps milliseconds).
+ */
+function keepsIngestColumns(row: WriteRequest): boolean {
+  return row.operation === 'edit_page' || (row.operation === 'put_page' && !!row.worktree_id);
 }
 function serverOwnsProvenance(row: WriteRequest): boolean {
   return (row.operation === 'put_page' && !!row.worktree_id) || (row.authority.remote === true && CALLER_CONTENT_OPERATIONS.includes(row.operation));
@@ -1221,6 +1230,7 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
     source_kind: typeof p.source_kind === 'string' ? p.source_kind : null,
     source_uri: typeof p.source_uri === 'string' ? p.source_uri : null,
     ingested_via: typeof p.ingested_via === 'string' ? p.ingested_via : null,
+    keepIngestColumns: keepsIngestColumns(row),
     ...(gateTrust ? { writeGate: gateInput(gateTrust, row.id) } : {}),
     // Provenance compares the caller's page with the stored one, so it runs before the server's trust marker is stamped.
     prepareFrontmatter: page => {
@@ -1228,7 +1238,7 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
       suppliedTrustMarker = page.frontmatter.trust_tier;
       if (labelGuard) heldLabels = holdPrivacyLabels(page.frontmatter, snapshot?.page.frontmatter, labelGuard);
       stampPageTrustMarker(row, page.frontmatter, trust, storedTier, snapshot?.page.frontmatter);
-      defaultSourceWriterReaders(defaultSourceWriter, page.frontmatter, snapshot?.page, defaultSourceOwner, ownerRewrite);
+      defaultSourceWriterReaders(isTeamRuleSlug(row.slug) ? null : defaultSourceWriter, page.frontmatter, snapshot?.page, defaultSourceOwner, ownerRewrite);
       admitPolicyFrontmatter(row.authority.remote, row.slug, page, snapshot?.page.type); admitRuleFrontmatter(row.authority.remote, row.slug, page, snapshot?.page.type);
       admitActionFrontmatter(row.authority.remote, row.slug, page, snapshot?.page.type);
       if (privateRequest) assertPrivateRequestKept(row, page.frontmatter);
@@ -1329,8 +1339,8 @@ async function prepareInlineOrSegmentedMutation(unbounded: BrainEngine, row: Wri
         async () => pinMode ? (await tx.executeRaw<{ mode: string | null }>(`UPDATE sources SET config=CASE WHEN config->>'slug_root_mode' IS NULL
           THEN jsonb_set(${SOURCE_CONFIG_OBJECT_SQL},'{slug_root_mode}',to_jsonb($2::text)) ELSE config END WHERE id=$1 RETURNING config->>'slug_root_mode' AS mode`,
         [row.source_id, pinMode]))[0] : undefined,
-        async () => { if (provenance) await tx.executeRaw(`UPDATE pages SET source_kind=$3,ingested_via=$4,ingested_at=$5::timestamptz
-          WHERE source_id=$1 AND slug=$2`, [row.source_id, row.slug, provenance.source_kind, provenance.ingested_via, provenance.ingested_at]); },
+        async () => { if (provenance) await tx.executeRaw(`UPDATE pages SET source_kind=$3,ingested_via=$4,ingested_at=CASE WHEN $6::boolean THEN ingested_at ELSE $5::timestamptz END
+          WHERE source_id=$1 AND slug=$2`, [row.source_id, row.slug, provenance.source_kind, provenance.ingested_via, provenance.ingested_at, snapshot?.page.ingested_at != null]); },
         async () => { if (lean) ({ removedTimeline, contested } = projectedRows(await project?.(tx, applied?.pageId))); },
       ]) as [unknown, { mode: string | null } | undefined, unknown, unknown];
       if (pinMode && pinned?.mode !== pinMode) throw pageRefusal('revision_conflict', 'The source slug-root mode changed during preparation.', row,

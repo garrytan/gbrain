@@ -7,7 +7,7 @@
  * the loud warning) and the read half (configAllowsUnverifiedRemote).
  */
 import { describe, test, expect } from 'bun:test';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -434,6 +434,7 @@ describe('config set — self_upgrade.* keys are FILE-plane canonical (#5489)', 
     { leaf: 'last_applied_version', raw: '0.57.1.0', stored: '0.57.1.0' },
     { leaf: 'autopilot_launcher', raw: 'external', stored: 'external' },
     { leaf: 'serve_launcher', raw: 'external', stored: 'external' },
+    { leaf: 'worker_launcher', raw: 'external', stored: 'external' },
   ];
 
   test('the cases cover every registered self_upgrade.* key', async () => {
@@ -457,6 +458,19 @@ describe('config set — self_upgrade.* keys are FILE-plane canonical (#5489)', 
       });
     });
   }
+
+  test('self_upgrade.worker_launcher rejects values other than external', async () => {
+    const parent = mkdtempSync(join(tmpdir(), 'gb-cfg-selfup-worker-'));
+    try {
+      await withEnv({ GBRAIN_HOME: parent }, async () => {
+        const result = await captureAll(() => runConfig(noEngine, ['set', 'self_upgrade.worker_launcher', 'systemd']));
+        expect(result.exitCode).toBe(1);
+        expect(result.err).toContain('must be external');
+      });
+    } finally {
+      rmSync(parent, { recursive: true, force: true });
+    }
+  });
 
   test('the readers see the new mode: startup check, doctor, and unset restores the notify default', async () => {
     const parent = mkdtempSync(join(tmpdir(), 'gb-cfg-selfup-read-'));

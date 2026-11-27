@@ -63,7 +63,7 @@ const row = fc.record({
 function fenceRow(r: Parameters<typeof adoptableClaim>[0], claim: string): ParsedFact {
   const date = (d: Date) => d.toISOString().endsWith('T00:00:00.000Z') ? d.toISOString().slice(0, 10) : d.toISOString().replace(/\.\d{3}Z$/, 'Z');
   return { rowNum: 7, active: true, claim, kind: r.kind, confidence: r.confidence, visibility: r.visibility, notability: r.notability,
-    validFrom: date(r.valid_from), validUntil: r.valid_until ? date(r.valid_until) : undefined, source: r.source, context: r.context ?? undefined,
+    validFrom: r.valid_from ? date(r.valid_from) : undefined, validUntil: r.valid_until ? date(r.valid_until) : undefined, source: r.source, context: r.context ?? undefined,
     ...(r.claim_metric ? { claimMetric: r.claim_metric } : {}), ...(r.claim_value != null ? { claimValue: r.claim_value } : {}),
     ...(r.claim_unit ? { claimUnit: r.claim_unit } : {}), ...(r.claim_period ? { claimPeriod: r.claim_period } : {}) };
 }

@@ -56,6 +56,7 @@ beforeAll(async () => {
   // level fix — non-discriminative.)
   await asOwner(engine, tx => tx.insertFact(
     {
+      valid_from: new Date(),
       fact: 'the user prefers oat milk in their coffee',
       kind: 'preference',
       entity_slug: 'coffee-prefs',
@@ -71,6 +72,7 @@ beforeAll(async () => {
   // predicate on `source` instead, so this row must survive exclusion.
   await asOwner(engine, tx => tx.insertFact(
     {
+      valid_from: new Date(),
       fact: 'EXTRACTION_COMPLETE',
       kind: 'fact',
       entity_slug: 'coffee-prefs',
@@ -82,6 +84,7 @@ beforeAll(async () => {
   for (let i = 0; i < 5; i++) {
     await engine.insertFact(
       {
+        valid_from: new Date(),
         fact: 'EXTRACTION_COMPLETE',
         kind: 'fact',
         entity_slug: null,
@@ -94,6 +97,7 @@ beforeAll(async () => {
   }
   await engine.insertFact(
     {
+      valid_from: new Date(),
       fact: 'EXTRACTION_NOT_APPLICABLE',
       kind: 'fact',
       entity_slug: null,
@@ -160,6 +164,7 @@ describe('recall op excludes extract-conversation-facts audit rows', () => {
   test('remote=true (world-only visibility) excludes audit rows even when they are world-visible', async () => {
     await engine.insertFact(
       {
+        valid_from: new Date(),
         fact: 'EXTRACTION_COMPLETE',
         kind: 'fact',
         entity_slug: null,
@@ -240,12 +245,12 @@ describe('post-review fix: legacy (pre-v2) terminal audit rows are also excluded
     await engine2.initSchema();
 
     await engine2.insertFact(
-      { fact: 'the user prefers oat milk in their coffee', kind: 'preference', entity_slug: 'coffee-prefs', source: 'test', visibility: 'world' },
+      { valid_from: new Date(), fact: 'the user prefers oat milk in their coffee', kind: 'preference', entity_slug: 'coffee-prefs', source: 'test', visibility: 'world' },
       { source_id: 'default' },
     );
     for (let i = 0; i < 5; i++) {
       await engine2.insertFact(
-        { fact: 'EXTRACTION_COMPLETE', kind: 'fact', entity_slug: null, source: LEGACY_TERMINAL_AUDIT_SOURCE, source_session: `legacy-audit-batch-${i}`, notability: 'low' },
+        { valid_from: new Date(), fact: 'EXTRACTION_COMPLETE', kind: 'fact', entity_slug: null, source: LEGACY_TERMINAL_AUDIT_SOURCE, source_session: `legacy-audit-batch-${i}`, notability: 'low' },
         { source_id: 'default' },
       );
     }
@@ -287,7 +292,7 @@ describe('countUnconsolidatedFacts excludes audit checkpoint rows', () => {
     await engine3.initSchema();
 
     await engine3.insertFact(
-      { fact: 'the user prefers oat milk in their coffee', kind: 'preference', entity_slug: 'coffee-prefs', source: 'test' },
+      { valid_from: new Date(), fact: 'the user prefers oat milk in their coffee', kind: 'preference', entity_slug: 'coffee-prefs', source: 'test' },
       { source_id: 'default' },
     );
     // One checkpoint row per audit source (current terminal, non-extractable,
@@ -295,7 +300,7 @@ describe('countUnconsolidatedFacts excludes audit checkpoint rows', () => {
     // them.
     for (const auditSource of AUDIT_ROW_SOURCES) {
       await engine3.insertFact(
-        { fact: 'EXTRACTION_COMPLETE', kind: 'fact', entity_slug: null, source: auditSource, source_session: `audit-${auditSource}`, notability: 'low' },
+        { valid_from: new Date(), fact: 'EXTRACTION_COMPLETE', kind: 'fact', entity_slug: null, source: auditSource, source_session: `audit-${auditSource}`, notability: 'low' },
         { source_id: 'default' },
       );
     }
@@ -312,7 +317,7 @@ describe('countUnconsolidatedFacts excludes audit checkpoint rows', () => {
   // #5831: consolidate reads (source, entity) buckets only, so a fact with no
   // entity is never drained and must not count as pending backlog.
   test('a fact with no entity is not pending consolidation backlog', async () => {
-    await engine3.insertFact({ fact: 'small teams ship faster with written decisions', kind: 'fact', entity_slug: null, source: 'test' }, { source_id: 'default' });
+    await engine3.insertFact({ valid_from: new Date(), fact: 'small teams ship faster with written decisions', kind: 'fact', entity_slug: null, source: 'test' }, { source_id: 'default' });
     expect(await engine3.countUnconsolidatedFacts('default')).toBe(1);
   });
 });

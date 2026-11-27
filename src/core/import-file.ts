@@ -282,6 +282,12 @@ export async function importFromContent(
     source_kind?: string | null;
     source_uri?: string | null;
     ingested_via?: string | null;
+    /**
+     * #10330: an edit of a stored page is not a new ingestion. The page row keeps its first-ingest columns
+     * (source_kind, source_uri, ingested_via and the ingested_at the engine would stamp); the values above still
+     * reach the guardrail input.
+     */
+    keepIngestColumns?: boolean;
     /** Wave B: who stages a segmented body (the journaled request's principal); unset: the local maintenance principal, kind `import`. */
     segmentedOwner?: SegmentedStagingOwner;
     /** Wave B: a segmented body an earlier preparation of this write staged (`PreparedContentImport.segmented`), reused when its inputs are unchanged. */
@@ -743,13 +749,15 @@ export async function importFromContent(
       const chunkWrites = planImportChunkWrites(fresh, kept, !segmented && !!opts.prepare && opts.boundedChunkWrites === true);
       const deferChunks = chunkReplacementDeferred = chunkWrites.defer;
       let written: Page | undefined;
+      const ingest = opts.keepIngestColumns && existing ? { source_kind: null, source_uri: null, ingested_via: null }
+        : { source_kind: opts.source_kind ?? null, source_uri: opts.source_uri ?? originUri, ingested_via: opts.ingested_via ?? null };
       await pipelined(tx, [
         () => assertPreparedFactWithdrawals(tx, txOpts.sourceId, parsed.compiled_truth, parsed.timeline || '', slug),
         async () => { if (existing && preimage && !demote && !segmented) await tx.createVersion(slug, { ...txOpts, ...opts.history, preimage }); },
         async () => {
           if (segmented) return segmented.apply(tx, { type: parsed.type, title: parsed.title, frontmatter: parsed.frontmatter, page_kind: 'markdown',
             effective_date: effectiveDate, effective_date_source: effectiveDateSource, import_filename: filenameForChain, source_path: opts.sourcePath ?? null,
-            source_kind: opts.source_kind ?? null, source_uri: opts.source_uri ?? originUri, ingested_via: opts.ingested_via ?? null }, { mode: effectiveCRMode, corpusGeneration });
+            ...ingest }, { mode: effectiveCRMode, corpusGeneration });
           written = await tx.putPage(slug, {
             type: parsed.type,
             title: parsed.title,
@@ -765,9 +773,7 @@ export async function importFromContent(
             // v0.39.3.0 provenance write-through (WARN-8). Engine layer applies
             // COALESCE-preserve UPDATE so omitting these on a later put_page
             // doesn't erase the original ingestion's audit trail.
-            source_kind: opts.source_kind ?? null,
-            source_uri: opts.source_uri ?? originUri,
-            ingested_via: opts.ingested_via ?? null,
+            ...ingest,
             // ingested_at is server-stamped at the engine layer when any
             // provenance write fires; never client-controlled.
             // Empty-overwrite escape hatch only when the caller vouched (file

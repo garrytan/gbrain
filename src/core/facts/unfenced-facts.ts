@@ -85,6 +85,7 @@ import { commitFactFenceFile, gitPathState } from './fence-write.ts';
 import { isOwnedClone } from '../url-clone.ts';
 import { parseSourceConfig } from '../sources-load.ts';
 import { isSourceDbOnlySlug } from '../persistence/source-storage.ts';
+import { isRuleSlug } from '../rules/record.ts';
 
 export interface UnfencedFactRow {
   id: string;
@@ -95,7 +96,7 @@ export interface UnfencedFactRow {
   visibility: 'private' | 'world';
   notability: 'high' | 'medium' | 'low';
   context: string | null;
-  valid_from: Date;
+  valid_from: Date | null;
   valid_until: Date | null;
   source: string;
   confidence: number;
@@ -119,6 +120,8 @@ export interface UnfencedFactsOutcome {
   skipped_url_clone: number;
   /** Unmanaged (#7098): rows of a read-only mirror source (`gbrain sources mirror-readonly`), kept database-only for the same reason. */
   skipped_mirror_read_only: number;
+  /** GST-4027: rows whose entity is a standing rule page stay unfenced; only the rules owner edits that page. */
+  skipped_rule_page: number;
   pages_touched: number;
   /** `<slug> (<reason>)` per page whose fence write failed; its rows stay unfenced. */
   failed_pages: string[];
@@ -181,7 +184,8 @@ export type FenceRowInput = Pick<UnfencedFactRow, 'kind' | 'visibility' | 'conte
  * attributed_to) render only when present.
  */
 export function fenceRowOf(row: FenceRowInput, rowNum: number, claim: string): ParsedFact {
-  const validFromStr = formatFenceDate(row.valid_from instanceof Date ? row.valid_from : new Date(row.valid_from));
+  const validFromStr = row.valid_from == null ? undefined
+    : formatFenceDate(row.valid_from instanceof Date ? row.valid_from : new Date(row.valid_from));
   const validUntilStr = row.valid_until
     ? formatFenceDate(row.valid_until instanceof Date ? row.valid_until : new Date(row.valid_until))
     : undefined;
@@ -302,7 +306,7 @@ export async function planUnfencedFacts(engine: BrainEngine, opts: { sourceId?: 
   const archived = new Set(sources.filter(s => s.archived).map(s => s.id));
   const outcome: UnfencedFactsOutcome = {
     scanned: 0, fenced: 0, skipped_no_entity: 0, skipped_no_local_path: 0, skipped_no_page: 0,
-    skipped_archived: 0, skipped_url_clone: 0, skipped_mirror_read_only: 0, pages_touched: 0, failed_pages: [], write_errors: 0, fenced_slugs: [], missing_files: [], unbound_refused: [], unadoptable_rows: [],
+    skipped_archived: 0, skipped_url_clone: 0, skipped_mirror_read_only: 0, skipped_rule_page: 0, pages_touched: 0, failed_pages: [], write_errors: 0, fenced_slugs: [], missing_files: [], unbound_refused: [], unadoptable_rows: [],
   };
   // #10005: every serve's maintenance sweep runs this, so the rows that can never be fenced here (no entity, no live
   // page, a skipped source) are counted on the server and only the fenceable ones are transferred.
@@ -340,6 +344,7 @@ export async function planUnfencedFacts(engine: BrainEngine, opts: { sourceId?: 
   );
   const groups = new Map<string, UnfencedFactRow[]>();
   for (const row of rows) {
+    if (isRuleSlug(row.entity_slug)) { outcome.skipped_rule_page += 1; continue; }
     const key = `${row.source_id}\0${row.entity_slug}`;
     groups.set(key, [...groups.get(key) ?? [], row]);
   }

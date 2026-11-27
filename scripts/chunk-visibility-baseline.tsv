@@ -27,11 +27,9 @@ src/core/engine-sql/code-edges.ts	1
 src/core/engine-sql/health.ts	2
 src/core/engine-sql/pages.ts	2
 src/core/entities/resolve.ts	2
-src/core/facts/purge-verify.ts	2
 src/core/facts/withdrawal-discovery.ts	1
 src/core/oversized-backfill.ts	2
 src/core/page-state/contextual-proof.ts	1
-src/core/page-state/projections.ts	2
 src/core/persistence/embedding-noop-settle.ts	1
 src/core/persistence/page-purge.ts	1
 src/core/pglite-engine.ts	1
@@ -46,3 +44,4 @@ src/eval/brainbench/metrics/trust-reads.ts	1
 src/eval/longmemeval/retrieval-arms.ts	1
 src/core/engine-sql/facts-purge.ts	1
 src/core/engine-sql/entity-reads.ts	1
+src/core/facts/purge-verify.ts	1

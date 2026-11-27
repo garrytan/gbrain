@@ -1,7 +1,10 @@
 /**
- * The persistence state reads the import path makes (BrainEngine readManagedModeRows, ownsSchemaTables): the one brain row's stored mode, and
- * the store owning its own tables.
+ * The persistence state members the import and put paths reach (BrainEngine readManagedModeRows, ownsSchemaTables,
+ * readLedgerSource, readLocalWriterRow, insertLocalWriterRow): the one brain row's stored mode, the store owning its
+ * own tables, the belief ledger's view of a source, and the local writer registration every CLI write checks
+ * (persistence/identity.ts registerLocalWriter).
  */
+import type { LocalWriterInsert, LocalWriterRow } from '../../engine-sql/persistence-state.ts';
 import type { StoreBrain } from '../store.ts';
 import { storeCall, type StoreMember } from './common.ts';
 import type { LedgerSource } from '../../engine-sql/belief.ts';
@@ -40,3 +43,22 @@ export const readLedgerSource = async function readLedgerSource(this: RustEngine
   if (scope && row.coverage !== null && row.coverage !== 'coverage.stopped') scope.settings.set(PLAN_CACHE_SETTING, 'force_generic_plan');
   return { ...row, managedRows: [{ enabled: false }], planModePrev };
 };
+
+/**
+ * The registration row of a local writer, or undefined. `lock` asks PGLite for FOR SHARE so a revocation waits; the
+ * store runs one write transaction at a time, so a read never overlaps a revocation and the option changes nothing.
+ * `revoked_at` comes back as a Date, as PGLite returns a timestamptz.
+ */
+export const readLocalWriterRow: StoreMember<[id: string, opts?: { lock?: boolean }], LocalWriterRow | undefined> =
+  async (brain, id) => {
+    const row = await storeCall({ member: 'readLocalWriterRow' }, () => brain.readLocalWriter(id)) as
+      { lane: string; credential_hash: string; grant_ceiling: LocalWriterRow['grant_ceiling']; revoked_at: string | null } | null;
+    if (!row) return undefined;
+    return { lane: row.lane, credential_hash: row.credential_hash, grant_ceiling: row.grant_ceiling, revoked_at: row.revoked_at === null ? null : new Date(row.revoked_at) };
+  };
+
+/** Stores a local writer unless its id or credential hash is registered already; true when this call stored it. */
+export const insertLocalWriterRow: StoreMember<[row: LocalWriterInsert], boolean> = (brain, row) =>
+  storeCall({ member: 'insertLocalWriterRow' }, () => brain.insertLocalWriterRow({
+    id: row.id, lane: row.lane, credentialHash: row.credentialHash, grantCeiling: row.grant,
+  }));

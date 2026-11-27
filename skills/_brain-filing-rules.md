@@ -12,6 +12,12 @@ not the source, not the skill that's running.
 3. Cross-link from related directories
 4. When in doubt: what would you search for to find this page again?
 
+On `gbrain-base-v2`, write `type: concept` in both `originals/` and `ideas/`,
+with `subtype: original` or `subtype: idea`, respectively. These folders
+don't set the subtype automatically. Follow the active source's schema on
+other packs; for example, `gbrain-recommended` declares `type: original`
+for `originals/`.
+
 ## Common Misfiling Patterns -- DO NOT DO THESE
 
 | Wrong | Right | Why |
@@ -167,9 +173,8 @@ to add a new directory the synthesis subagent may write to:
 ## Takes attribution (v0.32+)
 
 When writing a `<!--- gbrain:takes:begin -->` fence, the **holder** column says
-WHO BELIEVES the claim, not who it's ABOUT. Cross-modal eval over 100K
-production takes scored attribution at 6.5/10 — holder/subject confusion was
-the #1 error. These six rules are the contract. Long form with worked
+WHO BELIEVES the claim, not who it's ABOUT. Holder/subject confusion is the
+most common attribution error. These six rules are the contract. Long form with worked
 examples lives in `docs/takes-vs-facts.md`.
 
 1. **Holder ≠ subject.** The test: did this person SAY or CLEARLY IMPLY this?

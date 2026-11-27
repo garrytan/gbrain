@@ -11,6 +11,7 @@ import { FOUNDATION_MEMBERS } from './members/foundation.ts';
 import { PAGES_MEMBERS } from './members/pages.ts';
 import { CONTENT_MEMBERS } from './members/content.ts';
 import { FACTS_MEMBERS } from './members/facts.ts';
+import { CYCLE_MEMBERS } from './members/cycle.ts';
 import { PERSISTENCE_MEMBERS } from './members/persistence.ts';
 import { ACCESS_MEMBERS } from './members/access.ts';
 import { JOBS_MEMBERS } from './members/jobs.ts';
@@ -347,14 +348,9 @@ export const RUST_ENGINE_MEMBERS = {
   readBodyManifestRows: 'raw_sql',
   readExportPageRows: 'raw_sql',
   readExportWithdrawalLedgerBytes: 'raw_sql',
-  readSegmentedPageHead: 'raw_sql',
   readSegmentedVersionBodyBytes: 'raw_sql',
-  listPageTypesByIds: 'raw_sql',
   listVersionReasonWriters: 'raw_sql',
-  listVersionTrustTiers: 'raw_sql',
   readWithdrawalDiscovery: 'raw_sql',
-  listCoveredSources: 'raw_sql',
-  countSearchVectorRows: 'raw_sql',
   // Queue health reads (engine-sql/jobs-health.ts), answered from the store's job rows (rust/crates/gbrain-store/src/jobs/health.rs).
   listPrivateQueueHealth: 'minion_queue',
   listQueueWedgeCounts: 'minion_queue',
@@ -369,7 +365,6 @@ export const RUST_ENGINE_MEMBERS = {
   // capability list stays as on master; its adapter lands with its native method.
   applyDecideReviewQueue: 'eval_capture',
   applyDecideSweepDeferred: 'eval_capture',
-  attachSourcePath: 'raw_sql',
   closeOpenLoop: 'facts',
   countSegmentedTimelinePages: 'raw_sql',
   countTimelineCommentMarkupRows: 'raw_sql',
@@ -377,9 +372,7 @@ export const RUST_ENGINE_MEMBERS = {
   decideConflictNoEntityCounts: 'eval_capture',
   decideSlotUsage: 'eval_capture',
   deleteDecideState: 'eval_capture',
-  deleteTimelineRows: 'raw_sql',
   ensureDecideState: 'eval_capture',
-  expireMemoryProposals: 'raw_sql',
   getDecideCalibration: 'eval_capture',
   getDecideProposal: 'eval_capture',
   getDecideReviewProposal: 'eval_capture',
@@ -394,7 +387,6 @@ export const RUST_ENGINE_MEMBERS = {
   insertDecideReceipts: 'eval_capture',
   insertDecideReviewProposal: 'eval_capture',
   insertDecideSpend: 'eval_capture',
-  listAccessTokens: 'raw_sql',
   listActiveAccessMembers: 'raw_sql',
   listAwaitingMemoryProposals: 'raw_sql',
   listDecideCalibrations: 'eval_capture',
@@ -417,22 +409,17 @@ export const RUST_ENGINE_MEMBERS = {
   purgeStaleAppliedCaptures: 'ingest_log',
   listOwnerProposalRows: 'raw_sql',
   listSharedSkillPackRoots: 'raw_sql',
-  listStoredTimelineRowsOrdered: 'raw_sql',
   listSynopsisSourceIds: 'raw_sql',
   listTimelineOrphanPages: 'raw_sql',
-  notifierCoverageRecorded: 'raw_sql',
   pruneDecideReceipts: 'eval_capture',
-  purgeMemoryProposals: 'raw_sql',
   readAdmissionSource: 'raw_sql',
   readDecideState: 'eval_capture',
   readEntityOpenLoops: 'facts',
   readHealthMemoClock: 'raw_sql',
   readMaxTimelineEntryId: 'raw_sql',
   readMemoryProposal: 'raw_sql',
-  readOpCheckpointKeys: 'raw_sql',
   readPendingProposalSummary: 'raw_sql',
   readProposalReviewRates: 'eval_capture',
-  readSourceState: 'raw_sql',
   sampleEffectiveDateSources: 'raw_sql',
   sampleEffectiveDates: 'raw_sql',
   setDecideCalibrationRetired: 'eval_capture',
@@ -447,6 +434,7 @@ export const RUST_ENGINE_MEMBERS = {
   ...PAGES_MEMBERS,
   ...CONTENT_MEMBERS,
   ...FACTS_MEMBERS,
+  ...CYCLE_MEMBERS,
   ...PERSISTENCE_MEMBERS,
   ...ACCESS_MEMBERS,
   ...JOBS_MEMBERS,

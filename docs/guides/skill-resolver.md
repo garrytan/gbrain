@@ -328,18 +328,52 @@ on its next turn, so no OpenClaw command runs and the gateway does not reload:
   rest are logged as the control arm.
 - `--pins-route system|first_turn`: the owner's pins every turn in the system
   context (default), or once per session as the session-start brief (see
-  below). Conversation pins always go in the system context.
+  below). Conversation pins always go in the system context. To keep some pins
+  on every turn and send others once per session, leave this at `system` and
+  add the once-per-session ones with `gbrain skills pin add <id> --brief`.
+- `--operator-rule "<line>"`: one line from you, sent on every owner turn in
+  the system context, ahead of the pins, in its own `<operator_rule>` block
+  (for example `--operator-rule "Ask before you send, spend, delete or publish."`).
+  `--conversation-operator-rule "<line>"` does the same for conversations.
+  A line is at most 200 characters, with no line breaks and no `<` or `>`,
+  so it cannot open or close a block; `--operator-rule ''` clears it. These
+  settings, like `--owner-sender`, need the resolver set up: pass them with
+  `--skill-loading resolve` (or `shadow`) the first time; setup refuses them,
+  writing nothing, when no agent has the resolver on, and alongside
+  `--skill-loading off`, `spring` or `--remove`. It
+  follows the session class like the pins do, and `--pins-route` never moves it.
 - `--owner-sender <id>` (repeatable): only turns from these senders get
   suggestions; others get the pins only. When OpenClaw sends no memory
   audience, a direct session from one of these senders also counts as the
   owner's, and a turn from anyone else on the shared main session (OpenClaw's
   default `session.dmScope: main` puts every DM there) counts as another
   person's DM. Set it when people other than you can message the agent and
-  OpenClaw has no memory provider.
+  OpenClaw has no memory provider. Setup and doctor warn when a live agent on
+  `dmScope: main` has none ([skill_resolver_owner_unverified](#skill_resolver_owner_unverified)).
+- `--require-owner-sender`: fail closed. With no memory audience from
+  OpenClaw, the main session counts as the owner's only for a turn from one of
+  the `--owner-sender` ids, so with none set it is always another person's
+  DM (conversation pins and rule, no brief, no owner-only skill).
+  `--no-require-owner-sender` turns it off. It is off by default, so an
+  existing single-user install keeps treating its main session as the owner's.
+- `--owner-skill <name>` (repeatable): keep a skill to the owner's sessions by
+  name, whatever copy OpenClaw loads (a bare name also covers a plugin's
+  namespaced copy, such as `acme-tools:<name>`). Use it when a host-local copy in the
+  agent's workspace overrides a shared copy and lacks `audience: owner` in its
+  front matter: the name is never suggested or pinned in a conversation, and
+  gbrain never edits the host's skill files. Each run adds to the agent's
+  list; `--no-owner-skill <name>` (repeatable) removes a name. The setup
+  output (`owner_skills` per agent in `--json`) and `owner_skill_ids` in
+  `~/.gbrain/openclaw-skill-resolver.json` show the list. A name not in the
+  catalog yet is kept, with a note, so it is owner-only once installed.
 - `--suggest-in owner|conversation|owner,conversation`: which session classes
   get suggestions (default both). Pins are unaffected.
 - `--skill-loading off`: uninstalls the plugin and removes its files and
   state. Pins stay in config.json.
+
+The rule line, the pins and the brief reach the model only while the agent's
+mode is `live`. In `shadow` the plugin injects nothing at all, and `off`
+does nothing.
 
 `skills.resolver.per_harness.openclaw.{top_k,min_match,top_gate}` overrides the
 defaults (3, `description` and the resolver's gate); the global `skills.resolver.top_k`,
@@ -374,8 +408,8 @@ Each turn gets a session class, and the class decides what the plugin adds:
 
 | Class | When | Pins | Suggestions | `audience: owner` skills |
 |---|---|---|---|---|
-| `owner`, `main` | the agent owner's own session | owner pins (or the session-start brief) | yes | yes |
-| `direct`, `group`, `channel`, `conversation`, `unknown` | anyone else's DM, a group, a channel, or a session gbrain cannot place | conversation pins | yes | never |
+| `owner`, `main` | the agent owner's own session | operator rule and owner pins every turn, the session-start brief once | yes | yes |
+| `direct`, `group`, `channel`, `conversation`, `unknown` | anyone else's DM, a group, a channel, or a session gbrain cannot place | conversation rule and pins | yes | never |
 | `relay`, `cron`, `heartbeat`, `webhook`, `internal` | another session's message, a scheduled run, a webhook, a subagent | none | none | never |
 
 The class comes from what OpenClaw resolved for the turn: its trigger and
@@ -385,15 +419,33 @@ owner; `conversation` is a group, channel or another person's DM). OpenClaw
 sends a memory audience only with a native memory provider. Without one, the
 class comes from the session key's shape (`agent:<id>:main` is `main`,
 `...:direct:<peer>` is `direct` unless the sender is an `--owner-sender`, and
-with `--owner-sender` set, `main` from any other sender, or with no sender
-id, is `direct` too,
+with `--owner-sender` or `--require-owner-sender` set, `main` from any
+other sender, or with no sender id, is `direct` too,
 `...:group:<id>` is `group`, `...:cron:...`, `...:relay-<sender>`,
 `...:subagent:...` and `hook:...` are silent) and the log line says
-`audience: unknown`. Owner pins and owner-only skills never reach a session
-that is not the owner's, with or without an audience.
+`audience: unknown`. With an audience, owner pins and owner-only skills never
+reach a session that is not the owner's. Without one and without
+`--owner-sender` or `--require-owner-sender`, the main session is the owner's
+whoever wrote: under OpenClaw's default `session.dmScope: main` that includes
+anyone who messages the agent directly, which is why setup and doctor warn.
 
-A skill whose `SKILL.md` front matter says `audience: owner` is suggested
-and pinned only in the owner's sessions. `owner` is the only defined value;
+**Shared sessions.** OpenClaw pins a session's system prompt when the
+session starts and sends later changes as appended updates, so an owner turn's
+rule and pins stay in the prompt of a session the owner shares with others
+(OpenClaw's default `session.dmScope: main`) until something replaces them.
+On every live conversation turn the plugin therefore sends an
+`<owner_context_withdrawn>` block ahead of the conversation rule and pins,
+which tells the model that any owner rule, pins, brief or suggestions from an
+earlier turn no longer apply; the log line says `withdrawn: true`. The
+owner's next turn on that session gets their rule, pins and brief again. Silent
+turns (relay, cron, heartbeat, webhook, internal) are the owner's own
+machinery and get nothing, as before. The other person still shares the
+session's transcript, so give each DM its own session (`per-channel-peer`)
+when others message the agent.
+
+A skill whose `SKILL.md` front matter says `audience: owner`, or whose name is
+in the agent's `--owner-skill` list, is suggested and pinned only in the
+owner's sessions. `owner` is the only defined value;
 any other non-empty `audience` (a list, a typo, `true`, a number, a mapping)
 is treated as `owner`, and so is an `Audience:` key in another letter case (a
 leading byte order mark is ignored), and an `audience:` line in front matter
@@ -402,9 +454,11 @@ makes a skill public. A catalog built before gbrain recorded
 audiences suggests nothing and pins nothing outside the owner's sessions
 until it is rebuilt, which happens on its own after an upgrade.
 
-**The session-start brief.** With `--pins-route first_turn`, the owner's pins
-arrive once, on the first turn of each owner session, and again after a
-compaction. gbrain records each session by OpenClaw's durable session id in
+**The session-start brief.** Pins added with `gbrain skills pin add <id>
+--brief` arrive once, in a `<session_brief>` block on the first turn of each
+owner session, and again after a compaction, while the other pins and the
+operator rule stay on every turn. With `--pins-route first_turn`, the owner's
+every-turn pins join the brief too. gbrain records each session by OpenClaw's durable session id in
 `~/.gbrain/openclaw-session-briefs.jsonl`, so a gateway restart or a retried
 run never repeats the brief; a new session (`/new`, a reset) gets a new one.
 
@@ -506,7 +560,12 @@ On OpenClaw a pin shows in the owner's own sessions unless `--class` says
 otherwise: `--class conversation` for groups, channels and other people's DMs
 only, `--class owner,conversation` for both ([session classes](#session-classes)).
 Adding a pin again without `--class` (to change its `--line`) keeps its
-classes; `--class owner` sets it back to the owner's sessions.
+classes; `--class owner` sets it back to the owner's sessions. `--brief`
+moves an OpenClaw pin into the owner's [session-start brief](#session-classes)
+(once per session instead of every turn) and `--every-turn` moves it back; a
+brief pin is for the owner's sessions only, so it cannot take `--class
+conversation`. Brief pins count toward the 64, are capped at 600 tokens on
+their own, and are never also suggested.
 A pin OpenClaw hides from the agent, loads from another folder, or marks
 `audience: owner` (in a conversation) is left out of the block, and setup
 names it (`skill_resolver_pin_withheld`). After the catalog is rebuilt (a skill
@@ -1225,6 +1284,46 @@ not warned: the block names each path. Setup leaves those skills out of the agen
 doctor warns when the plugin still suggests one (the limits changed since
 setup ran). To get them back, raise those limits in `openclaw.json` or split
 the root, then run setup again. gbrain never edits these limits itself.
+
+### skill_resolver_plugin_outdated
+
+The plugin code installed in OpenClaw is older than this gbrain's, so it
+ignores settings added since: the operator rule line, `--brief` pins,
+`--require-owner-sender` and `--owner-skill`, and before version 7 it does
+not withdraw the owner's context on another person's turn. This happens when only the state was refreshed
+(`--skills-index-only`, which the plugin runs on its own after a gbrain
+upgrade), or when the files are new but the gateway has not restarted since
+(doctor reads the version each logged turn ran). Rerun the `gbrain setup
+openclaw` command you installed with, keeping its `--workspace`, `--name`
+and `--agent` flags, so it rewrites and reinstalls the plugin, then restart the
+gateway once. Until the new code runs, doctor does not count
+`--require-owner-sender` as in force, and `gbrain skills pin` says `--brief`
+pins are not delivered.
+
+### skill_resolver_owner_unverified
+
+An OpenClaw agent with the resolver live has no owner sender set, and
+OpenClaw puts every direct message on its main session (`session.dmScope` is
+`main`, OpenClaw's default, in `openclaw.json` or on a route binding for the
+agent). Without a memory audience from OpenClaw, the plugin can only tell the
+owner apart by sender id, so anyone who messages the agent directly gets the
+owner's pins, brief, operator rule and owner-only suggestions. Setup prints it
+as a note; doctor warns unless every turn the agent logged in the last 24 hours
+carried OpenClaw's memory audience. Fix it with your sender id on that channel:
+the bare id the channel reports (for example `123456789` on Telegram), or the
+`telegram:123456789` form OpenClaw's `commands.ownerAllowFrom` uses, which
+matches only on turns from that channel:
+
+```bash
+gbrain setup openclaw --skills-index-only --agent main --owner-sender <your sender id>
+```
+
+or add `--require-owner-sender` to treat the main session as another person's
+DM until a sender is set. Doctor counts `--require-owner-sender` as in force
+only once a turn logged in the last 24 hours shows the gateway running plugin
+code that enforces it (version 6 or later). A `dmScope` of `per-peer`, `per-channel-peer` or
+`per-account-channel-peer` gives each DM its own session, which never counts
+as the owner's without `--owner-sender`.
 
 ### skill_resolver_host_hidden
 

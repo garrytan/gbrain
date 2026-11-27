@@ -192,7 +192,10 @@ for (const kind of testBackends()) {
       const cases: Array<[string | null, string]> = [[null, '2026-03-20T23:30:00Z'], ['monthly', '2026-03-02T00:00:00Z'], ['quarterly', '2026-03-30T00:00:00Z'],
         ['annual', '2026-12-31T12:00:00Z'], ['weekly', '2025-12-29T00:00:00Z'], ['weekly', '2027-01-03T00:00:00Z'], ['per launch', '2026-05-05T05:00:00Z']];
       for (const [period, at] of cases) {
-        const [row] = await engine.executeRaw<{ b: string }>('SELECT ' + claimBucketSql('f') + ' AS b FROM (SELECT $1::text AS claim_period, $2::timestamptz AS valid_from) f', [period, at]);
+        const [row] = await engine.executeRaw<{ b: string }>('SELECT ' + claimBucketSql('f') + ' AS b FROM (SELECT $1::text AS claim_period, $2::timestamptz AS valid_from, $2::timestamptz AS created_at) f', [period, at]);
+        // An undated claim (#10288) buckets at its save time.
+        const [undated] = await engine.executeRaw<{ b: string }>('SELECT ' + claimBucketSql('f') + ' AS b FROM (SELECT $1::text AS claim_period, NULL::timestamptz AS valid_from, $2::timestamptz AS created_at) f', [period, at]);
+        expect(undated!.b).toBe(claimBucket(period, at));
         expect(row!.b).toBe(claimBucket(period, at));
       }
     });
@@ -242,6 +245,14 @@ for (const kind of testBackends()) {
       const again = await runClaimConflicts(engine, { sourceIds: [src] });
       expect(again).toMatchObject({ status: 'complete', pairs_found: 0, proposals_written: 0 });
       expect(await proposals(src)).toHaveLength(4);
+    });
+
+    test('#10288: two claims with no event date in one bucket pair by their save time', async () => {
+      const src = await source();
+      const older = await fact(src, { value: 40000, at: null as never });
+      const newer = await fact(src, { value: 45000, at: null as never });
+      const preview = await runClaimConflicts(engine, { sourceIds: [src], dryRun: true });
+      expect(pairKeys(preview.sources[0]!.pairs)).toEqual([newer + '>' + older]);
     });
 
     test('concurrent runs file one proposal per pair; a pair with a pending trust supersede_fact proposal is skipped', async () => {

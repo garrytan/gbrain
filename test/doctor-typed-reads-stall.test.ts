@@ -46,7 +46,7 @@ const CALLS: Record<string, (engine: BrainEngine) => Promise<unknown>> = {
   readMaxTimelineEntryId: (e) => e.readMaxTimelineEntryId(),
   storedTimelineRowsByPageIds: (e) => e.storedTimelineRowsByPageIds([1, 2]),
   countSegmentedTimelinePages: (e) => e.countSegmentedTimelinePages(['default'], 10),
-  notifierCoverageRecorded: (e) => e.notifierCoverageRecorded(),
+  hasNotifierCoverage: (e) => e.hasNotifierCoverage(),
   getWorktreeBinding: (e) => e.getWorktreeBinding('default', null),
   // The source reads source resolution makes inside a doctor check (part A).
   listLocalPathSources: (e) => e.listLocalPathSources(),

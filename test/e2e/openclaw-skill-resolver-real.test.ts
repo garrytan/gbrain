@@ -29,6 +29,9 @@
  *  - a skills_read of a suggested skill logs a read marked suggested;
  *  - fail-open: a corrupted library or a stuck worker never fails or stalls a
  *    turn, injects nothing and logs the miss;
+ *  - a shared main session (dmScope main, --owner-sender): another person's
+ *    DM after an owner DM gets the owner's rule and pins withdrawn by a
+ *    replacing system context, and gateway start logs no worker crash;
  *  - doctor reads healthy; off removes the plugin and keeps the pins;
  *  - a 750-skill directory: what OpenClaw loads, what setup excludes, what
  *    doctor says, and which settings lift OpenClaw's cut;
@@ -199,7 +202,8 @@ describe.skipIf(!BIN)('gbrain-skill-resolver in a real OpenClaw gateway', () => 
   test('doctor reads the plugin healthy', async () => {
     const r = await oc.gbrain(['doctor', '--only', 'skill_resolver', '--json']);
     const check = JSON.parse(r.stdout).checks.find((c: { name: string }) => c.name === 'skill_resolver');
-    expect(check.status).toBe('ok');
+    const exposed = check.details.openclaw.agents.find((a: { id: string }) => a.id === 'main')?.owner_unverified;
+    expect({ status: check.status, code: check.details.code }).toEqual(exposed ? { status: 'warn', code: 'skill_resolver_owner_unverified' } : { status: 'ok', code: undefined });
     expect(check.details.openclaw).toMatchObject({ plugin: 'installed', library: 'ok' });
     expect(check.details.openclaw.recent.deadline_misses).toBe(0);
     expect(check.details.openclaw.agents).toEqual([expect.objectContaining({ id: 'main', mode: 'live', fresh: true, pins: 1 })]);
@@ -429,7 +433,8 @@ describe.skipIf(!BIN)('listing off with a skill outside the workspace in a real 
   test('doctor reads "listing off, resolver live", names the gbrain home and splits recent counts by source and session class', async () => {
     const r = await oc.gbrain(['doctor', '--only', 'skill_resolver', '--json']);
     const check = JSON.parse(r.stdout.slice(r.stdout.indexOf('{'))).checks.find((c: { name: string }) => c.name === 'skill_resolver');
-    expect({ status: check.status, message: check.message }).toEqual({ status: 'ok', message: expect.stringContaining('listing off, resolver live') });
+    const exposed = check.details.openclaw.agents.find((a: { id: string }) => a.id === 'main')?.owner_unverified;
+    expect({ status: check.status, code: check.details.code, message: check.message }).toEqual({ status: exposed ? 'warn' : 'ok', code: exposed ? 'skill_resolver_owner_unverified' : undefined, message: expect.stringContaining('listing off, resolver live') });
     const d = check.details.openclaw;
     expect(d.gbrain_home).toBe(oc.gbrainHome);
     expect(d.agents[0]).toMatchObject({ id: 'main', listing: 'off', path_reads: 'any', verdict: 'listing off, resolver live' });
@@ -618,4 +623,59 @@ describe.skipIf(!BIN)('session classes and the session-start brief in a real Ope
     expect(ledger.map((l) => !!l.drop)).toEqual([false, true, false]);
     expect(new Set(ledger.map((l) => l.k)).size).toBe(1);
   }, 300_000);
+});
+
+describe.skipIf(!BIN)('a shared main session in a real OpenClaw gateway (session.dmScope main, --owner-sender)', () => {
+  let oc: RealOpenclaw;
+  const OWNER: TelegramUser = { id: 424242, is_bot: false, first_name: 'Alice', username: 'alice_example' };
+  const GUEST: TelegramUser = { id: 515151, is_bot: false, first_name: 'Bob', username: 'bob_example' };
+  const RULE = 'Ask before you send, spend, delete or publish.';
+
+  async function dm(from: TelegramUser, text: string): Promise<ModelRequest> {
+    const requests = oc.requests.length;
+    const lines = turnLines(oc).length;
+    oc.telegramSend({ chat: { id: from.id, type: 'private', first_name: from.first_name }, from, text });
+    const deadline = Date.now() + TURN_MS;
+    let request: ModelRequest | undefined;
+    while (Date.now() < deadline) {
+      request = oc.requests.slice(requests).find((r) => promptText(r, text) !== '');
+      if (request && turnLines(oc).length > lines) break;
+      await Bun.sleep(200);
+    }
+    expect({ request: Boolean(request), lines: turnLines(oc).length > lines }).toEqual({ request: true, lines: true });
+    return request!;
+  }
+
+  beforeAll(async () => {
+    oc = new RealOpenclaw(BIN!, 'shared');
+    oc.skill('deploy-example', 'Deploy the web service to production with a rolling restart and health checks');
+    oc.skill('translate-example', 'Translate a document between English and Spanish keeping its formatting');
+    await oc.start();
+    await oc.startTelegram({ allowFrom: [String(OWNER.id), String(GUEST.id)], groupAllowFrom: [], groups: [] });
+    expect((await oc.gbrain(['init', '--pglite', '--no-embedding'])).code).toBe(0);
+    const r = await oc.gbrain(['setup', 'openclaw', '--skill-loading', 'resolve', '--agent', 'main', '--owner-sender', String(OWNER.id), '--operator-rule', RULE, '--gbrain-bin', oc.gbrainBin, '--json']);
+    expect({ code: r.code, stderr: r.code === 0 ? '' : r.stderr.slice(-3000) }).toEqual({ code: 0, stderr: '' });
+    expect((await oc.gbrain(['skills', 'pin', 'add', 'translate-example', '--catalog', 'openclaw-main'])).code).toBe(0);
+    await oc.startGateway();
+  }, 300_000);
+
+  afterAll(async () => { await oc?.close(); }, 60_000);
+
+  test('gateway start logs no worker crash: the discovery load from a copy OpenClaw deletes starts no worker', async () => {
+    await Bun.sleep(2000);
+    expect(oc.logLines().filter((l) => l.code === 'skill_resolver_worker_crash')).toEqual([]);
+  }, 60_000);
+
+  test('after an owner DM, another person\'s DM on the same main session gets the owner\'s rule and pins withdrawn after their last appearance in the request', async () => {
+    const owner = await dm(OWNER, 'Please deploy the web service to production with a rolling restart');
+    expect(systemText(owner)).toContain(RULE);
+    expect(pinned({ request: owner })).toEqual(['translate-example']);
+    const guest = await dm(GUEST, 'Translate this document into Spanish and keep the formatting');
+    const all = guest.body.messages.map((m) => typeof m.content === 'string' ? m.content : JSON.stringify(m.content)).join('\n');
+    const withdrawn = all.lastIndexOf('<owner_context_withdrawn>');
+    expect(withdrawn).toBeGreaterThan(-1);
+    expect(withdrawn).toBeGreaterThan(all.lastIndexOf(RULE));
+    expect(withdrawn).toBeGreaterThan(all.lastIndexOf('<pinned_skills>'));
+    expect(turnLines(oc).at(-1)).toMatchObject({ session_class: 'direct', outcome: 'skipped_sender', withdrawn: true });
+  }, 240_000);
 });

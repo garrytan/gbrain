@@ -33,38 +33,6 @@
         },
         "user_message": "Semantic search is configured for OpenAI but its API key is missing. Can you add it?",
         "contract_version": 1
-      },
-      {
-        "code": "recall_hint",
-        "kind": "info",
-        "why": "The facts in this response are the newest saved facts: `query` searches pages and does not rank facts. `question` ranks saved facts by relevance to a question (it does not search pages).",
-        "fix": {
-          "argv": [
-            "gbrain",
-            "recall",
-            "--question",
-            "quokka-journey-marker",
-            "--query",
-            "quokka-journey-marker",
-            "--brain",
-            "host",
-            "--source",
-            "default"
-          ],
-          "command": "gbrain recall --question quokka-journey-marker --query quokka-journey-marker --brain host --source default",
-          "mcp": {
-            "tool": "recall",
-            "arguments": {
-              "query": "quokka-journey-marker",
-              "question": "quokka-journey-marker"
-            }
-          },
-          "consent": [],
-          "actor": "agent",
-          "why": "The same recall with question set to the query, so saved facts come back ranked by relevance and pages are still searched.",
-          "requires_exclusive": false
-        },
-        "contract_version": 1
       }
     ],
     "degraded": {
@@ -83,15 +51,11 @@
   "content": [
     {
       "type": "text",
-      "text": "{\n  \"facts\": [],\n  \"total\": 0,\n  \"facts_order\": \"newest\",\n  \"protocol_version\": 1,\n  \"results\": [\n    {\n      \"slug\": \"journey-note-3\",\n      \"title\": \"Journey note 3\",\n      \"chunk\": \"# Journey note 3\\n\\nThe quokka-journey-marker 3 lives in note 3.\",\n      \"evidence\": \"keyword_exact\",\n      \"create_safety\": \"probable\",\n      \"provenance\": \"journey-note-3\",\n      \"source_id\": \"default\",\n      \"trust_tier\": \"operator_curated\",\n      \"origin\": \"managed_file_import\"\n    },\n    {\n      \"slug\": \"journey-note-2\",\n      \"title\": \"Journey note 2\",\n      \"chunk\": \"# Journey note 2\\n\\nThe quokka-journey-marker 2 lives in note 2.\",\n      \"evidence\": \"keyword_exact\",\n      \"create_safety\": \"probable\",\n      \"provenance\": \"journey-note-2\",\n      \"source_id\": \"default\",\n      \"trust_tier\": \"operator_curated\",\n      \"origin\": \"managed_file_import\"\n    },\n    {\n      \"slug\": \"journey-note-1\",\n      \"title\": \"Journey note 1\",\n      \"chunk\": \"# Journey note 1\\n\\nThe quokka-journey-marker 1 lives in note 1.\",\n      \"evidence\": \"keyword_exact\",\n      \"create_safety\": \"probable\",\n      \"provenance\": \"journey-note-1\",\n      \"source_id\": \"default\",\n      \"trust_tier\": \"operator_curated\",\n      \"origin\": \"managed_file_import\"\n    }\n  ],\n  \"search_degraded\": \"keyword_only_no_embedding_provider\"\n}"
+      "text": "{\n  \"facts\": [],\n  \"total\": 0,\n  \"facts_order\": \"relevance\",\n  \"facts_degraded\": {\n    \"reason\": \"keyword_only_no_embedding_provider\"\n  },\n  \"protocol_version\": 1,\n  \"results\": [\n    {\n      \"slug\": \"journey-note-3\",\n      \"title\": \"Journey note 3\",\n      \"chunk\": \"# Journey note 3\\n\\nThe quokka-journey-marker 3 lives in note 3.\",\n      \"evidence\": \"keyword_exact\",\n      \"create_safety\": \"probable\",\n      \"provenance\": \"journey-note-3\",\n      \"source_id\": \"default\",\n      \"trust_tier\": \"operator_curated\",\n      \"origin\": \"managed_file_import\"\n    },\n    {\n      \"slug\": \"journey-note-2\",\n      \"title\": \"Journey note 2\",\n      \"chunk\": \"# Journey note 2\\n\\nThe quokka-journey-marker 2 lives in note 2.\",\n      \"evidence\": \"keyword_exact\",\n      \"create_safety\": \"probable\",\n      \"provenance\": \"journey-note-2\",\n      \"source_id\": \"default\",\n      \"trust_tier\": \"operator_curated\",\n      \"origin\": \"managed_file_import\"\n    },\n    {\n      \"slug\": \"journey-note-1\",\n      \"title\": \"Journey note 1\",\n      \"chunk\": \"# Journey note 1\\n\\nThe quokka-journey-marker 1 lives in note 1.\",\n      \"evidence\": \"keyword_exact\",\n      \"create_safety\": \"probable\",\n      \"provenance\": \"journey-note-1\",\n      \"source_id\": \"default\",\n      \"trust_tier\": \"operator_curated\",\n      \"origin\": \"managed_file_import\"\n    }\n  ],\n  \"search_degraded\": \"keyword_only_no_embedding_provider\"\n}"
     },
     {
       "type": "text",
       "text": "[gbrain notice degraded_recall kind=degraded]\nwhy: Recall was degraded (keyword_only_no_embedding_provider): semantic (vector) search did not run, so matches phrased differently from the query can be missing. Treat a thin or empty result as \"not found with a degraded search\", never as \"the brain has nothing on this\".\nnext: {{next}}\nuser_message: Semantic search is configured for OpenAI but its API key is missing. Can you add it?"
-    },
-    {
-      "type": "text",
-      "text": "[gbrain notice recall_hint kind=info]\nwhy: The facts in this response are the newest saved facts: `query` searches pages and does not rank facts. `question` ranks saved facts by relevance to a question (it does not search pages).\nfix: recall {\"query\":\"quokka-journey-marker\",\"question\":\"quokka-journey-marker\"}\nnext: {{next}}"
     },
     {
       "type": "text",

@@ -12,7 +12,7 @@ const correct: Operation = {
   idempotent: true,
   writeInference: 'none',
   outputRedaction: 'no_stored_text',
-  description: 'The user corrected you: saves their standing rule and replaces fact_id with corrected_fact (or withdraws it). Branch on state and next.',
+  description: 'Only when the user corrects a wrong fact or asks for a standing rule: saves the rule and replaces fact_id with corrected_fact (or withdraws it); over MCP it often waits for owner approval first. Anything else to save: call remember. Branch on state and next.',
   params: {
     rule: { type: 'string', description: 'The rule, in the user\'s words.' },
     fact_id: { type: 'string', description: 'The wrong fact.' },

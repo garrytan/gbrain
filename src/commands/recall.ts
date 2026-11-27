@@ -493,6 +493,7 @@ async function recallVerbResult(engine: BrainEngine, flags: ParsedFlags, sourceI
     ...(flags.query ? { query: flags.query } : {}),
     ...(flags.budgetTokens ? { budget_tokens: flags.budgetTokens } : {}),
     ...(flags.since ? { since: flags.since.toISOString() } : {}),
+    ...(flags.since && (flags.today || flags.sinceLastRun) ? { include_undated: true } : {}),
     ...(flags.grep ? { grep: flags.grep } : {}),
     include_expired: flags.includeExpired,
     limit: flags.limit,
@@ -515,10 +516,22 @@ async function recallVerbResult(engine: BrainEngine, flags: ParsedFlags, sourceI
     return stamped(result, degradedStampFor('recall', result, { retrieval }, notices));
   }
   const { callRemoteTool, extractResponseMeta, unpackToolResult } = await import('../core/mcp-client.ts');
-  const raw = await callRemoteTool(ctx.config, 'recall', params, { timeoutMs: 30_000 });
+  const raw = await askWithoutUndatedOnRefusal(params, p => callRemoteTool(ctx.config, 'recall', p, { timeoutMs: 30_000 }));
   const result = unpackToolResult(raw) as RecallVerbResult;
   const meta = extractResponseMeta(raw);
   return stamped(result, (meta?.degraded as RecallVerbResult['degraded'] | undefined) ?? degradedStampFor('recall', result, meta, []));
+}
+
+/** #10288: a host from before include_undated stores no undated fact, so one that refuses the parameter (mcp.strict_params=reject) is asked again without it. */
+async function askWithoutUndatedOnRefusal<T>(params: Record<string, unknown>, ask: (p: Record<string, unknown>) => Promise<T>): Promise<T> {
+  try {
+    return await ask(params);
+  } catch (error) {
+    if (params.include_undated === undefined || !(error instanceof RemoteMcpError) || error.detail?.code !== 'invalid_params'
+      || !String(error.detail?.suggestion ?? '').includes('"include_undated"')) throw error;
+    const { include_undated: _undated, ...older } = params;
+    return ask(older);
+  }
 }
 
 export async function renderRecallVerbResult(flags: ParsedFlags, result: RecallVerbResult): Promise<void> {
@@ -724,9 +737,9 @@ async function runRecallOnce(
     const cfg = loadConfig();
     const { callRemoteTool, unpackToolResult } = await import('../core/mcp-client.ts');
     const { enforcedRead } = await import('../cli/enforced-member.ts');
-    const fetchRecall = async <T>(p: Record<string, unknown>): Promise<T> => (enforced
+    const fetchRecall = <T>(params: Record<string, unknown>): Promise<T> => askWithoutUndatedOnRefusal(params, async p => (enforced
       ? await enforcedRead(engine, 'recall', 'recall', p, { sourceId }) as T
-      : unpackToolResult<T>(await callRemoteTool(cfg!, 'recall', p, { timeoutMs: 30_000 })));
+      : unpackToolResult<T>(await callRemoteTool(cfg!, 'recall', p, { timeoutMs: 30_000 }))));
     const params: Record<string, unknown> = {
       limit: flags.limit,
       include_expired: flags.includeExpired,
@@ -735,6 +748,7 @@ async function runRecallOnce(
     if (flags.entity) params.entity = flags.entity;
     if (flags.sessionId) params.session_id = flags.sessionId;
     if (resolvedSince) params.since = resolvedSince.toISOString();
+    if (resolvedSince && (flags.today || flags.sinceLastRun)) params.include_undated = true;
     if (flags.grep) params.grep = flags.grep;
     if (flags.pending) params.include_pending = true;
     // #5535: send source_id whenever the selector was explicit — including
@@ -951,6 +965,7 @@ async function listRowsLocal(
   // this window" question and keeps event-time ordering; `--since-last-run`
   // resolves from a creation-time cursor (see the since-only arm below).
   const windowEventTime = !flags.sinceLastRun;
+  const windowIncludeUndated = flags.today || flags.sinceLastRun;
   if (flags.entity) {
     const slug = (await resolveEntitySlug(engine, sourceId, flags.entity)) ?? flags.entity;
     // With a window, entity ANDs onto since in one query (before LIMIT);
@@ -960,6 +975,7 @@ async function listRowsLocal(
     const lists = await Promise.all(slugs.map(entitySlug => resolvedSince
       ? engine.listFactsSince(sourceId, resolvedSince, {
           eventTime: windowEventTime,
+          includeUndated: windowIncludeUndated,
           entitySlug,
           sessionId: flags.sessionId || undefined,
           activeOnly: !flags.includeExpired,
@@ -990,6 +1006,7 @@ async function listRowsLocal(
     if (entityTextFallbackApplies(flags, rows.length)) {
       const textRows = await engine.listFactsSince(sourceId, resolvedSince ?? new Date(0), {
         eventTime: resolvedSince ? windowEventTime : true,
+        includeUndated: !resolvedSince || windowIncludeUndated,
         activeOnly: !flags.includeExpired,
         limit: flags.limit,
         grep: flags.entity.toLowerCase(),
@@ -1007,6 +1024,7 @@ async function listRowsLocal(
     if (resolvedSince) {
       return engine.listFactsSince(sourceId, resolvedSince, {
         eventTime: windowEventTime,
+        includeUndated: windowIncludeUndated,
         sessionId: flags.sessionId,
         activeOnly: !flags.includeExpired,
         limit: flags.limit,
@@ -1034,7 +1052,8 @@ async function listRowsLocal(
     // `--since DURATION`/`--today` cutoff is a genuine "what happened in
     // this window" question and keeps event-time ordering.
     return engine.listFactsSince(sourceId, resolvedSince, {
-      eventTime: !flags.sinceLastRun,
+      eventTime: windowEventTime,
+      includeUndated: windowIncludeUndated,
       activeOnly: !flags.includeExpired,
       limit: flags.limit,
       grep: flags.grep ?? undefined,
@@ -1044,6 +1063,7 @@ async function listRowsLocal(
   }
   return engine.listFactsSince(sourceId, new Date(0), {
     eventTime: true,
+    includeUndated: true,
     activeOnly: !flags.includeExpired,
     limit: flags.limit,
     grep: flags.grep ?? undefined,
@@ -1191,7 +1211,7 @@ function remoteFactToRow(o: Record<string, unknown>): FactRow {
     visibility: (o.visibility === 'private' || o.visibility === 'world') ? o.visibility : 'private',
     notability: (o.notability === 'high' || o.notability === 'medium' || o.notability === 'low') ? o.notability : 'medium',
     context: null,
-    valid_from: parseMaybeDate(o.valid_from) ?? new Date(0),
+    valid_from: parseMaybeDate(o.valid_from),
     valid_until: parseMaybeDate(o.valid_until),
     expired_at: parseMaybeDate(o.expired_at),
     superseded_by: typeof o.superseded_by === 'number' ? o.superseded_by : null,
@@ -1214,7 +1234,7 @@ function factRowToJson(r: FactRow): Record<string, unknown> {
     entity_slug: r.entity_slug,
     visibility: r.visibility,
     notability: r.notability,
-    valid_from: r.valid_from.toISOString(),
+    valid_from: r.valid_from?.toISOString() ?? null,
     valid_until: r.valid_until?.toISOString() ?? null,
     expired_at: r.expired_at?.toISOString() ?? null,
     superseded_by: r.superseded_by,
@@ -1359,7 +1379,7 @@ function renderToday(rows: FactRow[], windowStart: Date | null): string {
     parts.push(`## ${entity}`);
     for (const r of group) {
       const icon = KIND_ICON[r.kind];
-      const ageStr = humanAge(r.valid_from);
+      const ageStr = r.valid_from ? humanAge(r.valid_from) : `saved ${humanAge(r.created_at)}`;
       const conf = effectiveConfidence(r).toFixed(2);
       parts.push(`- ${icon} ${r.fact} (${r.kind}, ${ageStr}, conf ${conf})`);
     }
@@ -1400,7 +1420,7 @@ function renderAsContext(rows: FactRow[]): string {
   for (const r of rows) {
     const icon = KIND_ICON[r.kind];
     const tag = r.entity_slug ? ` [${r.entity_slug}]` : '';
-    const ageStr = humanAge(r.valid_from);
+    const ageStr = r.valid_from ? humanAge(r.valid_from) : `saved ${humanAge(r.created_at)}`;
     parts.push(`- ${icon}${tag} ${r.fact} (${r.kind}, ${ageStr})`);
   }
   return parts.join('\n');
