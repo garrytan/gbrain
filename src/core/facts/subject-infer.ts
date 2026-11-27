@@ -257,5 +257,10 @@ async function liveFactEntityPage(engine: BrainEngine, sourceId: string, slug: s
     `SELECT p.slug, p.type FROM pages p WHERE p.source_id = $1 AND p.slug = $2 AND p.deleted_at IS NULL ${privacy} LIMIT 1`,
     [sourceId, slug],
   );
-  return row && isFactEntityPage(row.slug, row.type) ? row.slug : null;
+  if (!row) return null;
+  if (isFactEntityPage(row.slug, row.type)) return row.slug;
+  if (row.type == null) return null;
+  const { loadFactTargetTypes } = await import('../mentions/policy.ts');
+  const targets = await loadFactTargetTypes(engine, sourceId).catch(() => ({ types: [] as string[] }));
+  return targets.types.includes(row.type) ? row.slug : null;
 }

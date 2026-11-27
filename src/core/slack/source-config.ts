@@ -39,5 +39,8 @@ export function parseSlackSourceConfig(config: Record<string, unknown>, fallback
     syncIntervalMin: syncIntervalMinutes(config, SLACK_DEFAULT_SYNC_INTERVAL_MIN)!,
     maxRequests: positiveInt(config.s_max_requests, SLACK_DEFAULT_MAX_REQUESTS, 10_000),
     skip: [...new Set(skip)].sort(),
+    // Present only when set, so a source without them keeps its identity digest.
+    ...(config.s_channels_from === 'initiatives' ? { channelsFrom: 'initiatives' as const } : {}),
+    ...(config.s_mode === 'intake' ? { mode: 'intake' as const } : {}),
   };
 }

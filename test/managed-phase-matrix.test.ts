@@ -338,6 +338,18 @@ const MATRIX: Record<CyclePhase, Entry> = {
       expect((await getPin(engine, sourceId, slug))?.answer.map(s => s.text)).toEqual(['Acme example builds widgets in Lisbon.']);
     },
   },
+  ideas: {
+    seed: async ({ engine, sourceId }) => {
+      await engine.setConfig('initiatives.source', sourceId);
+      await put(engine, sourceId, 'ideas/csv-export', page('idea', 'CSV export', 'Export reports as CSV.', 'status: open\n'));
+      await put(engine, sourceId, 'initiatives/export-v2', page('initiative', 'Export v2', 'Ship CSV export.', 'status: done\nimplements: [ideas/csv-export]\n'));
+    },
+    assert: async ({ engine, sourceId, result }) => {
+      expect(result.status).not.toBe('failed');
+      expect(await committed(engine, sourceId, 'ideas/csv-export')).not.toHaveLength(0);
+      expect((await engine.getPage('ideas/csv-export', { sourceId }))?.frontmatter?.status).toBe('implemented');
+    },
+  },
   edge_contradictions: {
     config: { 'dream.edge_contradictions.mode': 'apply', 'models.dream.edge_contradictions': 'anthropic:claude-sonnet-4-6' },
     seed: async ({ engine, sourceId }) => {

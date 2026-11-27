@@ -6,6 +6,7 @@
     "extract-conversation-facts",
     "chronicle_extract",
     "loops_extract",
+    "initiative_finish",
     "enrich",
     "lint-fix",
     "integrity-auto",

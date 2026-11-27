@@ -5860,6 +5860,225 @@ export const OPERATION_MANIFEST: OperationMeta[] = [
     "area": "takes"
   },
   {
+    "name": "initiatives_list",
+    "outputRedaction": "no_stored_text",
+    "description": "List ideas or initiatives with status (filter by status). Ideas: open/planned/implemented/obsolete/rejected/withdrawn; initiatives: active/done/cancelled.",
+    "params": {
+      "kind": {
+        "type": "string",
+        "enum": [
+          "initiative",
+          "idea"
+        ],
+        "description": "What to list (default initiative)."
+      },
+      "status": {
+        "type": "string",
+        "description": "Only this status."
+      },
+      "limit": {
+        "type": "number",
+        "description": "Max rows (default 100, max 500)."
+      }
+    },
+    "scope": "read",
+    "area": "initiatives"
+  },
+  {
+    "name": "initiative_status",
+    "outputRedaction": "no_stored_text",
+    "description": "One initiative: status, recent facts collected (Slack, meetings, remember), ideas it implements, targets, Slack channels and merge state.",
+    "params": {
+      "slug": {
+        "type": "string",
+        "required": true,
+        "description": "Initiative slug or name."
+      },
+      "facts_limit": {
+        "type": "number",
+        "description": "Recent facts to return (default 20, max 100)."
+      }
+    },
+    "scope": "read",
+    "area": "initiatives"
+  },
+  {
+    "name": "initiative_start",
+    "idempotent": true,
+    "outputRedaction": "no_stored_text",
+    "description": "Create an initiative: requirements as the page body, the ideas it implements, the project/concept pages it changes (targets; none = it becomes a new project), tracker key and optionally a Slack channel to bind.",
+    "params": {
+      "title": {
+        "type": "string",
+        "required": true,
+        "description": "Initiative title."
+      },
+      "body": {
+        "type": "string",
+        "required": true,
+        "description": "Requirements in markdown (problem, goals, requirements, affected systems, rollout, risks)."
+      },
+      "slug": {
+        "type": "string",
+        "description": "Slug tail (default from the title); created under the initiatives prefix."
+      },
+      "implements": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Idea slugs this initiative implements."
+      },
+      "targets": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Slugs of project/concept pages this initiative changes; a slug that does not exist becomes a new project on finish."
+      },
+      "tracker": {
+        "type": "string",
+        "description": "Issue tracker key (epic), free-form."
+      },
+      "slack_channel": {
+        "type": "string",
+        "description": "Slack channel name or id to bind right away (the bot must be in it)."
+      },
+      "request_id": {
+        "type": "string",
+        "description": "Reuse only to retry."
+      }
+    },
+    "scope": "write",
+    "mutating": true,
+    "area": "initiatives"
+  },
+  {
+    "name": "initiative_bind_slack",
+    "idempotent": true,
+    "outputRedaction": "no_stored_text",
+    "description": "Bind a Slack channel (name or id) to an active initiative: its messages and threads are synced and their facts land on the initiative. The bot must be in the channel (/invite @<bot> for private ones). unbind:true stops reading it.",
+    "params": {
+      "slug": {
+        "type": "string",
+        "required": true,
+        "description": "Initiative slug or name."
+      },
+      "channel": {
+        "type": "string",
+        "required": true,
+        "description": "Channel name (#name or name) or id."
+      },
+      "unbind": {
+        "type": "boolean",
+        "description": "Stop reading the channel instead."
+      }
+    },
+    "scope": "write",
+    "mutating": true,
+    "area": "initiatives"
+  },
+  {
+    "name": "finish_initiative",
+    "outputRedaction": "no_stored_text",
+    "description": "Finish an active initiative as done or cancelled. A background job runs the final Slack sync, posts a closing note and leaves its channels; for done it writes a merge plan (facts added/replaced/obsoleted on the target pages, new projects) into the page for review (initiative_merge_apply applies it). dry_run shows the steps.",
+    "params": {
+      "slug": {
+        "type": "string",
+        "required": true,
+        "description": "Initiative slug or name."
+      },
+      "outcome": {
+        "type": "string",
+        "required": true,
+        "enum": [
+          "done",
+          "cancelled"
+        ],
+        "description": "done (shipped) or cancelled."
+      },
+      "note": {
+        "type": "string",
+        "description": "Release or closing note."
+      },
+      "dry_run": {
+        "type": "boolean",
+        "description": "Show the steps without changing anything."
+      }
+    },
+    "scope": "write",
+    "mutating": true,
+    "area": "initiatives"
+  },
+  {
+    "name": "initiative_merge_apply",
+    "outputRedaction": "no_stored_text",
+    "description": "Apply the merge plan of a finished (done) initiative to its target pages: facts added, replaced (old kept as history) or withdrawn, new project pages created, timeline entries linking back. skip: item ids to leave out. dry_run previews.",
+    "params": {
+      "slug": {
+        "type": "string",
+        "required": true,
+        "description": "Initiative slug or name."
+      },
+      "skip": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Merge plan item ids (m1, m2, …) to leave out."
+      },
+      "dry_run": {
+        "type": "boolean",
+        "description": "Preview without writing."
+      }
+    },
+    "scope": "write",
+    "mutating": true,
+    "area": "initiatives"
+  },
+  {
+    "name": "idea_submit",
+    "outputRedaction": "no_stored_text",
+    "description": "Add an idea (problem + proposal). Checks first: a near-identical idea returns status duplicate instead of a new page; always returns similar ideas, initiatives in progress and existing project/concept pages (maybe already implemented). dry_run only checks.",
+    "params": {
+      "text": {
+        "type": "string",
+        "required": true,
+        "description": "The idea in plain words."
+      },
+      "title": {
+        "type": "string",
+        "description": "Short title (default from the text)."
+      },
+      "problem": {
+        "type": "string",
+        "description": "The problem it solves."
+      },
+      "proposal": {
+        "type": "string",
+        "description": "What to build or change."
+      },
+      "related": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Slugs of project/concept pages the idea concerns."
+      },
+      "dry_run": {
+        "type": "boolean",
+        "description": "Only check for duplicates and similar work."
+      },
+      "allow_duplicate": {
+        "type": "boolean",
+        "description": "Create even when a near-identical idea exists."
+      }
+    },
+    "scope": "write",
+    "mutating": true,
+    "area": "initiatives"
+  },
+  {
     "name": "whoami",
     "mutating": false,
     "idempotent": true,

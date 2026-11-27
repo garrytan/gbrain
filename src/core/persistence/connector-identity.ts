@@ -74,6 +74,8 @@ export const CONNECTOR_LEAF_RULES: { google: Record<string, LeafClass | ElidedLe
   },
   slack: {
     channels: 'identity', historyDays: 'identity', lookbackDays: 'identity', timezone: 'identity', record: 'identity', dir: 'identity', privateOnly: 'identity', skip: 'identity',
+    // Written only when set (absent by default, so existing digests hold). The channels an initiative adds are read at run time and never enter the config.
+    channelsFrom: 'identity', mode: 'identity',
     // Where the token lives, the schedule and the per-run request cap never change what a sweep reads; the account pin covers a swapped token.
     tokenEnv: 'excluded', syncIntervalMin: 'excluded', maxRequests: 'excluded',
   },

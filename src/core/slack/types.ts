@@ -38,7 +38,16 @@ export interface SlackSourceConfig {
   /** Requests per run before it stops partial. Excluded from the identity. */
   maxRequests: number;
   skip: SlackSkippable[];
+  /** `initiatives`: each run also reads the channels of active initiatives (not part of the identity: read at run time). Absent by default. */
+  channelsFrom?: SlackChannelsFrom;
+  /** `intake`: messages become ideas (handled once, answered in thread) instead of day pages. Absent means `days`. */
+  mode?: 'intake';
 }
+
+export const SLACK_CHANNELS_FROM = ['initiatives'] as const;
+export type SlackChannelsFrom = typeof SLACK_CHANNELS_FROM[number];
+export const SLACK_MODES = ['days', 'intake'] as const;
+export type SlackMode = typeof SLACK_MODES[number];
 
 /** Who a token belongs to: the account pin. */
 export interface SlackAccount { teamId: string; enterpriseId: string | null; team: string | null; botUserId: string | null }

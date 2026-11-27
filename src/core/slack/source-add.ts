@@ -6,7 +6,7 @@ import { SYNC_INTERVAL_MIN_FLOOR, type MeetingRecordMode } from '../meetings/typ
 import type { MeetingsRecordChoice } from '../meetings/source-add.ts';
 import { VERSION } from '../../version.ts';
 import { slackApi, SlackChannelUnavailableError } from './client.ts';
-import type { SlackChannelInfo, SlackSkippable } from './types.ts';
+import type { SlackChannelInfo, SlackChannelsFrom, SlackMode, SlackSkippable } from './types.ts';
 
 export interface AddSourceSlackOpts {
   channels: string[];
@@ -20,6 +20,10 @@ export interface AddSourceSlackOpts {
   timezone?: string;
   maxRequests?: number;
   skip?: SlackSkippable[];
+  /** `initiatives`: also read the channels of active initiatives at each run (static `channels` may then be empty). */
+  channelsFrom?: SlackChannelsFrom;
+  /** `intake`: messages become ideas instead of day pages (needs static channels). */
+  mode?: SlackMode;
 }
 
 /** The `sources.config` a new slack source is registered with. Only non-default tuning keys are written; no token ever is. */
@@ -36,6 +40,8 @@ export function slackSourceConfig(opts: AddSourceSlackOpts, choice: MeetingsReco
     ...(opts.private ? { s_visibility: 'private' } : {}),
     ...(opts.maxRequests !== undefined ? { s_max_requests: opts.maxRequests } : {}),
     ...(opts.skip?.length ? { s_skip: [...new Set(opts.skip)].sort().join(',') } : {}),
+    ...(opts.channelsFrom ? { s_channels_from: opts.channelsFrom } : {}),
+    ...(opts.mode === 'intake' ? { s_mode: 'intake' } : {}),
     ...(opts.syncIntervalMin !== undefined ? { sync_interval_min: Math.max(SYNC_INTERVAL_MIN_FLOOR, opts.syncIntervalMin) } : {}),
     // Chat joins unqualified reads only when the user asks (--federated), as meeting notes do.
     federated: federated ?? false,
@@ -78,6 +84,8 @@ export async function preflightSlackAdd(sourceId: string, opts: AddSourceSlackOp
   await api.usersProbe().catch(fail);
   const privateChannels = infos.filter(info => info.isPrivate);
   log(`Slack workspace ${account.team ?? account.teamId}: ${infos.length} channel${infos.length === 1 ? '' : 's'} readable.`);
+  if (opts.channelsFrom === 'initiatives') log('Each sync also reads the Slack channels of active initiatives; a channel the app cannot read is skipped and reported.');
+  if (opts.mode === 'intake') log('Intake mode: each new message becomes an idea, answered in its thread (the app also needs the chat:write and reactions:write scopes).');
   if (privateChannels.length) log(`Private channels (their pages are private and stay out of any Git checkout): ${privateChannels.map(info => `#${info.name} (${info.id})`).join(', ')}.`);
   log('Note: a brain that other people or agents read sees every imported channel together; Slack\'s per-channel membership does not carry over.');
   return infos;

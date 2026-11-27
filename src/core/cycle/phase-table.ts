@@ -52,6 +52,7 @@ export const MANAGED_PHASE_TABLE: Readonly<Record<CyclePhase, ManagedPhaseEntry>
   edge_contradictions: { tier: 'paid', class: 'writes', reason: 'Applied closures append a timeline line through the coordinated add_timeline_entry mutation; proposals live in the link_edge_proposals side table.' },
   claim_conflicts: { tier: 'free', class: 'no_coordinated_write', reason: 'writes the decide_proposals review queue only' },
   drift: { tier: 'paid', class: 'writes', reason: 'The drift report page publishes through the maintenance coordinator.' },
+  ideas: { tier: 'paid', class: 'writes', reason: 'Idea pages publish through coordinated put_page mutations (status, similar ideas); clustering embeds idea text.' },
   standing_questions: { tier: 'paid', class: 'writes', reason: 'Question pages publish through coordinated put_page mutations; answers and evidence pointers live in the pinned_questions side tables.' },
   chronicle: { tier: 'paid', class: 'writes', reason: 'Life Chronicle event pages and their projections publish through the maintenance coordinator, re-validated against the judged depth revision.' },
   facts_drain: { tier: 'paid', class: 'writes', reason: 'Queued facts-absorb jobs publish facts through the same coordinated write path as the job worker.' },

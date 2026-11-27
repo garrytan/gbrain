@@ -3539,6 +3539,30 @@ More: [docs/guides/google-connect.md#troubleshooting](../../docs/guides/google-c
 |---|---|---|---|---|---|---|
 | This local CLI principal already owns another source/destination for this harness. | The step needs the user's decision before it runs. | Stop and ask the user; re-run only with the authorization the message names. | user | `repeat the read that failed` | 1 | no |
 
+### initiative_not_active
+
+<a id="initiative_not_active"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The initiative is already finished (done or cancelled), so it cannot be changed this way. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+### initiative_not_done
+
+<a id="initiative_not_done"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| Only an initiative finished as done has a merge plan to apply. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+### initiative_not_found
+
+<a id="initiative_not_found"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| No initiative page with that slug exists in the initiatives source. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
 ### input_required
 
 <a id="input_required"></a>
@@ -4130,6 +4154,14 @@ More: [docs/guides/shared-brain-skills.md#troubleshoot-leave-and-recover](../../
 | A memory writeback setting change did not confirm, so it may or may not have been saved. | A database write that throws can be a rollback or a lost acknowledgement, and the two look the same to the caller. The setting and its audit row commit together, so a re-read shows which happened. | Call get_memory_settings to read the mode in effect, and change it again only if the change did not land. | host_admin | `gbrain doctor --json` | 1 | no |
 
 More: [docs/guides/ambient-writeback.md#reading-and-changing-it-remotely](../../docs/guides/ambient-writeback.md#reading-and-changing-it-remotely)
+
+### merge_plan_missing
+
+<a id="merge_plan_missing"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The finished initiative has no merge plan yet; the finish job writes it. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
 
 ### merge_recommended
 
@@ -6824,6 +6856,38 @@ More: [docs/guides/skillpacks-as-scaffolding.md#updating-installed-skills](../..
 | Another gbrain skillpack command holds this workspace's writer lock (.gbrain-skillpack.lock). | One writer per skills root keeps an update and a restore from interleaving. Side effects: nothing was written. A lock left by a crash is reclaimed after 10 minutes. | Wait for the other command to finish and run this one again. Run: gbrain skillpack restore --list --json | agent | `repeat the read that failed` | 2 | yes |
 
 More: [docs/guides/skillpacks-as-scaffolding.md#updating-installed-skills](../../docs/guides/skillpacks-as-scaffolding.md#updating-installed-skills)
+
+### slack_bot_not_in_channel
+
+<a id="slack_bot_not_in_channel"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The Slack bot is not a member of the channel, so it cannot read it; invite it first (/invite @<bot>). | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+### slack_channel_bound
+
+<a id="slack_channel_bound"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The Slack channel is already bound to another active initiative or used as the ideas intake channel. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+### slack_channel_not_found
+
+<a id="slack_channel_not_found"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| The Slack app cannot see a channel with that name or id. | The request itself was wrong or no longer matches the brain; nothing was changed. | Correct the request using the message above, then retry. | agent | `repeat the read that failed` | 1 | no |
+
+### slack_not_configured
+
+<a id="slack_not_configured"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| No Slack bot token is configured for this brain, so Slack channels cannot be checked or bound. | A capability this request needs is not configured or not reachable on this brain. | A required capability is not available on this brain. Run `gbrain doctor --json` to see what is missing. | agent | `gbrain doctor --json` | 1 | no |
 
 ### slug_page_mismatch
 
