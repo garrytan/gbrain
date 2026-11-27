@@ -414,6 +414,7 @@ test/engine-parity/op-checkpoint.test.ts
 test/engine-parity/open-loops.test.ts
 test/engine-parity/open-pages.test.ts
 test/engine-parity/orphan-lifetimes.test.ts
+test/engine-parity/owner-fact-reads.test.ts
 test/engine-parity/owner-only-marks.test.ts
 test/engine-parity/owner-only-reads.test.ts
 test/engine-parity/owner-only-row-delete-marks.test.ts
