@@ -11,7 +11,7 @@ import { renderFragment, sqlFragment, trustedSql } from './fragment.ts';
 import { privatePagesFilterFragment } from '../search/private-visibility.ts';
 import { REDACT_PURGED_KEYS_LEGACY_SQL } from '../belief/legacy-fingerprint.ts';
 
-/** `redactPurgedBeliefKeys`' argument. `legacyClaims`: the purged claims that may have a pre-v341 fingerprint. */
+/** `redactPurgedBeliefKeys`' argument. `legacyClaims`: the purged claims that may have a pre-v353 fingerprint. */
 export interface RedactPurgedKeysInput { sourceId: string; claimFps: readonly string[]; lifetimes: readonly string[]; legacyClaims: readonly string[] }
 /** One event `listBeliefCarrierEvents` answers: its carrying fields as text (`value->>'context'`, `value->>'resolved_source'`). */
 export interface BeliefCarrierEvent { id: number; subject_kind: string; subject_key: string; context: string | null; resolved_source: string | null }
@@ -53,7 +53,7 @@ const REDACT_PURGED_KEYS_SQL = `UPDATE belief_events SET value = NULL, value_has
 /**
  * Clears the recorded value of the source's fact and take events with one of the fingerprints, and of every event of
  * the lifetimes, unless already cleared; with `legacyClaims`, also of the fact and take events recorded under such a
- * claim's pre-v341 fingerprint. Answers how many events it marked. Write.
+ * claim's pre-v353 fingerprint. Answers how many events it marked. Write.
  */
 export async function redactPurgedBeliefKeys(exec: SqlExecutor, input: RedactPurgedKeysInput): Promise<number> {
   const params: unknown[] = [input.sourceId, [...input.claimFps], [...input.lifetimes]];

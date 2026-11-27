@@ -469,7 +469,7 @@ After completing available phases:
    > - The **signal-detector** captures entities from every conversation
    > - The **briefing** skill can compile daily context
    > - The **daily-task-prep** skill handles day planning
-   > - Say 'enrich [person]' to deep-dive any contact"
+   > - Say 'enrich [person]' to fill in one person's page; nothing is enriched until you ask"
 
 ## When it fails
 

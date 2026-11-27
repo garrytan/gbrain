@@ -59,6 +59,10 @@ pub const WRITE_CONFLICT: &str = "write_conflict";
 /// build cannot carry over to its own shape (`seed/format_5.rs`); nothing was changed. The message names the
 /// record and the re-seed steps.
 pub const SHADOW_RESEED_REQUIRED: &str = "shadow_reseed_required";
+/// A restore changed nothing because the store holds work or state it cannot make safe: the message
+/// names the first blocker (`pending_requests`, `recovery_required`, `purge_replay` or
+/// `unclassified_state`) and its count.
+pub const RESTORE_REFUSED: &str = "restore_refused";
 /// A write inside a read-only transaction (Postgres SQLSTATE 25006, `read_only_sql_transaction`).
 pub const READ_ONLY_TRANSACTION: &str = "read_only_transaction";
 /// An input written in a form the store does not read the way Postgres does (a resolved date with

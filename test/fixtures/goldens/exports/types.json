@@ -12205,7 +12205,7 @@
           "searchable?: boolean | \"pending\" | undefined",
           "searchable_fix?: Record<string, unknown> | undefined",
           "searchable_retry_after_ms?: number | undefined",
-          "skip_reason?: \"purged_content\" | \"readers_noncanonical\" | \"content_rejected\" | \"file_too_large\" | \"frontmatter_slug_conflict\" | \"invalid_fence\" | \"invalid_frontmatter\" | \"parser_regression\" | \"rename_held\" | \"tag_too_long\" | \"visibility_noncanonical\" | \"write_gate_rejected\" | \"malformed_path\" | \"slug_collision\" | undefined",
+          "skip_reason?: \"purged_content\" | \"readers_noncanonical\" | \"content_rejected\" | \"file_too_large\" | \"frontmatter_slug_conflict\" | \"invalid_fence\" | \"invalid_frontmatter\" | \"parser_regression\" | \"rename_held\" | \"slug_too_long\" | \"tag_too_long\" | \"visibility_noncanonical\" | \"write_gate_rejected\" | \"malformed_path\" | \"slug_collision\" | undefined",
           "slug: string",
           "status: \"error\" | \"imported\" | \"skipped\"",
           "type_warning?: { kind: \"alias_of\" | \"undeclared\"; type: string; canonical?: string; directory?: string; } | undefined"
@@ -13015,7 +13015,7 @@
       {
         "kind": "interface",
         "members": [
-          "code: \"file_too_large\" | \"frontmatter_slug_conflict\" | \"invalid_frontmatter\" | \"parser_regression\" | \"rename_held\" | \"tag_too_long\"",
+          "code: \"file_too_large\" | \"frontmatter_slug_conflict\" | \"invalid_frontmatter\" | \"parser_regression\" | \"rename_held\" | \"slug_too_long\" | \"tag_too_long\"",
           "intended?: \"yaml_alias_limit\" | undefined",
           "key?: string | undefined",
           "line?: number | undefined",
@@ -13068,14 +13068,14 @@
         "kind": "variable",
         "name": "HOLD_CODES",
         "signature": [
-          "readonly [\"invalid_frontmatter\", \"frontmatter_slug_conflict\", \"file_too_large\", \"rename_held\", \"parser_regression\", \"tag_too_long\"]"
+          "readonly [\"invalid_frontmatter\", \"frontmatter_slug_conflict\", \"file_too_large\", \"rename_held\", \"parser_regression\", \"tag_too_long\", \"slug_too_long\"]"
         ]
       },
       {
         "kind": "type",
         "name": "HoldCode",
         "signature": [
-          "\"file_too_large\" | \"frontmatter_slug_conflict\" | \"invalid_frontmatter\" | \"parser_regression\" | \"rename_held\" | \"tag_too_long\""
+          "\"file_too_large\" | \"frontmatter_slug_conflict\" | \"invalid_frontmatter\" | \"parser_regression\" | \"rename_held\" | \"slug_too_long\" | \"tag_too_long\""
         ]
       },
       {
@@ -13245,7 +13245,7 @@
         "kind": "function",
         "name": "classifyImportHold",
         "signature": [
-          "(parsed: ParsedMarkdown, ctx?: { byteLength?: number; maxBytes?: number; codeFile?: boolean; expectedSlug?: string | null; slugExempt?: (declared: string) => boolean; slugConflictMessage?: (found: string, expected: string) => string; }) => ContentHold | null"
+          "(parsed: ParsedMarkdown, ctx?: { byteLength?: number; maxBytes?: number; codeFile?: boolean; expectedSlug?: string | null; slugExempt?: (declared: string) => boolean; slugConflictMessage?: (found: string, expected: string) => string; createsPage?: boolean; }) => ContentHold | null"
         ]
       },
       {
@@ -18268,7 +18268,7 @@
         "members": [
           "block: { token_cap: number; tokenizer: string; }",
           "build: { args: string[]; rebuild_argv: string[] | null; ms: number; built_at: string; generation: number; }",
-          "catalog: { name: string; catalog_hash: string; source: { kind: \"dir\" | \"bundled\" | \"json\" | \"claude_plugins\"; dirs?: string[]; stdin?: boolean; file?: string; snapshot?: \"source.json\"; bundled_skills?: number; claude_dir?: string; }; fingerprint_sha256: string | null; skill_count: number; skipped: SkippedSkill[]; scope: \"user\" | \"project\"; hints: \"shown\" | \"names_only\"; harness: string | null; routing: { file: string; rows: number; unmatched: number; stat: [string, number, number]; } | null; }",
+          "catalog: { name: string; catalog_hash: string; source: { kind: \"dir\" | \"bundled\" | \"json\" | \"claude_plugins\"; dirs?: string[]; stdin?: boolean; file?: string; snapshot?: \"source.json\"; bundled_skills?: number; claude_dir?: string; }; fingerprint_sha256: string | null; skill_count: number; skipped: SkippedSkill[]; scope: \"user\" | \"project\"; hints: \"shown\" | \"names_only\"; harness: string | null; routing: { file: string; rows: number; unmatched: number; stat: [string, number, number]; } | null; audiences?: 1; }",
           "gbrain_commit: string | null",
           "gbrain_version: string",
           "index: { file: \"index.bin\"; index_hash: string; size: number; n_terms: number; n_postings: number; truncated_skills: number; }",
@@ -18290,7 +18290,7 @@
         "kind": "type",
         "name": "CatalogHandleOptions",
         "signature": [
-          "{ home?: string | undefined; failOpen?: boolean | undefined; deadlineMs?: number | undefined; sessionTokenBudget?: number | undefined; loadHint?: string | undefined; readRoot?: string | undefined; namesOnly?: boolean | undefined; explainTarget?: string | undefined; router?: boolean | undefined; env?: NodeJS.ProcessEnv | undefined; now?: (() => number) | undefined; }"
+          "{ audience?: \"owner\" | \"others\" | undefined; home?: string | undefined; failOpen?: boolean | undefined; deadlineMs?: number | undefined; sessionTokenBudget?: number | undefined; loadHint?: string | undefined; readRoot?: string | undefined; hidden?: readonly string[] | undefined; namesOnly?: boolean | undefined; explainTarget?: string | undefined; router?: boolean | undefined; offline?: boolean | undefined; env?: NodeJS.ProcessEnv | undefined; now?: (() => number) | undefined; }"
         ]
       },
       {
@@ -18310,7 +18310,7 @@
         "kind": "type",
         "name": "CatalogTurnOptions",
         "signature": [
-          "{ failOpen?: boolean | undefined; deadlineMs?: number | undefined; sessionTokenBudget?: number | undefined; loadHint?: string | undefined; readRoot?: string | undefined; namesOnly?: boolean | undefined; explainTarget?: string | undefined; router?: boolean | undefined; now?: (() => number) | undefined; }"
+          "{ audience?: \"owner\" | \"others\" | undefined; failOpen?: boolean | undefined; deadlineMs?: number | undefined; sessionTokenBudget?: number | undefined; loadHint?: string | undefined; readRoot?: string | undefined; hidden?: readonly string[] | undefined; namesOnly?: boolean | undefined; explainTarget?: string | undefined; router?: boolean | undefined; offline?: boolean | undefined; now?: (() => number) | undefined; }"
         ]
       },
       {
@@ -18376,15 +18376,18 @@
       {
         "kind": "interface",
         "members": [
+          "audience?: \"owner\" | \"others\" | undefined",
           "catalogs?: string[] | undefined",
           "deadlineMs?: number | undefined",
           "env?: NodeJS.ProcessEnv | undefined",
           "explainTarget?: string | undefined",
           "failOpen?: boolean | undefined",
+          "hidden?: readonly string[] | undefined",
           "home?: string | undefined",
           "loadHint?: string | undefined",
           "namesOnly?: boolean | undefined",
           "now?: (() => number) | undefined",
+          "offline?: boolean | undefined",
           "readRoot?: string | undefined",
           "router?: boolean | undefined",
           "sessionTokenBudget?: number | undefined"

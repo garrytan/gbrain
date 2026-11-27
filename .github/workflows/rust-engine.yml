@@ -20,6 +20,9 @@ name: Rust engine
 #              (see the addon job).
 #   addon-linux-gate, addon-darwin-gate  one check per target named like the old single cell
 #              ("Addon and Bun smoke / <target>"): green only when every half of that target passed.
+#   shadow-follow  builds the addon and runs the shadow seed and follow test files that need it, on PGLite and
+#              against a PostgreSQL service container (Linux only; a missing addon, a skipped test or a lane
+#              that ran no test fails the job).
 #   without-rust  no Rust on PATH: bun install, bun run build, ./bin/gbrain --version.
 #   keyword-goldens  proves the generated and golden keyword-search files are what PostgreSQL 18.6
 #              says: parser/actions.rs and parser/charclass.rs are regenerated and compared, and the
@@ -43,6 +46,12 @@ name: Rust engine
 #   - The keyword-goldens job runs on a pull request only when it changes rust/**, and not on the
 #     schedule. It compares committed files with PostgreSQL 18.6 output, which does not drift.
 #     Covered by every push to master.
+#   - The shadow-follow job runs on every event this workflow runs on except the schedule. The pull_request
+#     path list also names the shadow seed and follow test files and their helpers, so a pull request that
+#     changes only those files runs it. The push list does not: the scope job turns the macOS addon cell on for
+#     every push, so a push path would start macOS runs for a Linux-only job. Master pushes that already match
+#     (src/shadow/**, rust/** and the others) run it. Covered by those pushes and by every pull request that
+#     changes the test files.
 
 on:
   pull_request:
@@ -74,6 +83,12 @@ on:
       - 'test/token-member-cli-parity.serial.test.ts'
       - 'test/rust-mcp-receipts.serial.test.ts'
       - 'test/fixtures/rust-cli-parity-brain/**'
+      - 'test/shadow-seed*.test.ts'
+      - 'test/shadow-follow*.test.ts'
+      - 'test/e2e/shadow-seed*.test.ts'
+      - 'test/e2e/shadow-follow*.test.ts'
+      - 'test/helpers/shadow-*.ts'
+      - 'test/helpers/follow-*.ts'
       - '.github/workflows/rust-engine.yml'
   push:
     branches: [master]
@@ -573,6 +588,103 @@ jobs:
           ok=$(printf '%s\n' "$rows" | awk -F'\t' '$2 == "success"' | grep -c . || true)
           echo "$TARGET halves expected $want, found $have, passed $ok"
           [ "$want" -gt 0 ] && [ "$have" -eq "$want" ] && [ "$ok" -eq "$want" ] || { echo "::error::not every $TARGET half of the addon job passed"; exit 1; }
+
+  # The shadow seed and follow tests that need the built addon and a PostgreSQL server together. The addon job
+  # has no database (and its macOS cell cannot start a service container), and no other job has the addon, so
+  # these files skip everywhere else. The env vars make a missing addon an error instead of a skip (these
+  # files read GBRAIN_TEST_RUST_ADDON_REQUIRED; the other name matches the addon job's lanes), and the last step
+  # fails the job when a lane ran no test or any test in it did not pass. Linux only: it does not depend on the scope job and never adds a macOS cell.
+  shadow-follow:
+    name: Shadow seed and follow with the Rust addon and PostgreSQL
+    if: github.event_name != 'schedule'
+    runs-on: ubicloud-standard-4-ubuntu-2404
+    timeout-minutes: 40
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: gbrain_test
+        ports:
+          - 5432:5432
+        options: >-
+          --shm-size=1g
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - id: checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        timeout-minutes: 3
+        continue-on-error: true
+        with:
+          persist-credentials: false
+      - name: Check out again after a stalled first attempt
+        if: steps.checkout.outcome == 'failure'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262  # v4
+        timeout-minutes: 3
+        with:
+          persist-credentials: false
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6  # v2
+        with:
+          bun-version: 1.4.4
+      # rustup reads the pinned version from rust/rust-toolchain.toml. Every runner this workflow
+      # uses ships rustup; a runner without it fails here rather than piping an installer into sh.
+      - name: Install the pinned Rust toolchain
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v rustup >/dev/null 2>&1; then
+            echo "::error::rustup is not installed on this runner. Use a runner image that ships rustup."
+            exit 1
+          fi
+          channel="$(sed -n 's/^channel = "\(.*\)"$/\1/p' "$GITHUB_WORKSPACE/rust/rust-toolchain.toml")"
+          test -n "$channel"
+          rustup toolchain install "$channel" --profile minimal
+          rustup default "$channel"
+          rustc --version
+          cargo --version
+      # The cache name is built in a step so the cache key line holds no long literal value.
+      - name: Name the cache from the lock file and toolchain
+        id: cachename
+        run: echo "value=rust-addon-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust/Cargo.lock', 'rust/rust-toolchain.toml') }}" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@5a3ec84eff668545956fd18022155c47e93e2684  # v4.2.3
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            rust/target
+          key: ${{ steps.cachename.outputs.value }}
+          restore-keys: |
+            rust-addon-${{ runner.os }}-${{ runner.arch }}-
+      - name: Build the addon
+        run: bun run rust:build
+      - name: Install dependencies (bounded, retried once)
+        timeout-minutes: 8
+        run: bun scripts/ci-bun-install.ts --frozen-lockfile --ignore-scripts
+      # The PGLite files seed and follow a PGLite primary with the real addon; the PostgreSQL files do the same
+      # against the service container. Two receipt lanes, so the PostgreSQL half cannot pass on the PGLite half's receipt.
+      - name: Shadow seed and follow tests (PGLite primary, then PostgreSQL primary)
+        timeout-minutes: 25
+        shell: bash
+        env:
+          GBRAIN_TEST_REQUIRE_RUST_ADDON: '1'
+          GBRAIN_TEST_RUST_ADDON_REQUIRED: '1'
+          GBRAIN_TEST_RECEIPT_DIR: ${{ runner.temp }}/receipts
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/gbrain_test
+          GBRAIN_TEST_ALLOW_DATABASE_URL: '1'
+        run: |
+          set -euo pipefail
+          bash scripts/run-with-receipt.sh shadow-follow pglite -- bun test --timeout=200000 test/shadow-seed.test.ts test/shadow-seed-managed-gate.test.ts test/shadow-follow.test.ts
+          bash scripts/run-with-receipt.sh shadow-follow-pg postgres -- bun test --timeout=200000 test/e2e/shadow-seed.test.ts test/e2e/shadow-seed-managed-gate.test.ts test/e2e/shadow-follow.test.ts
+      - name: Fail the shadow lanes when no test ran
+        shell: bash
+        run: |
+          set -euo pipefail
+          bun scripts/require-executed-tests.ts "$RUNNER_TEMP/receipts" shadow-follow
+          bun scripts/require-executed-tests.ts "$RUNNER_TEMP/receipts" shadow-follow-pg
 
   # Event parity (docs/TESTING.md#event-parity): the schedule runs only `checks`.
   # Check mode only: each command exits 1 if a committed file differs from what PostgreSQL 18.6 produces.

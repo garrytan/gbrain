@@ -468,8 +468,7 @@ This skill guarantees:
   with the backup path as the recovery line.
 - The team brain is stamped `brain.audience=shared` at handoff, so it never
   gets the personal writeback consent nudge.
-- Routing matches the frontmatter triggers; output stays under `writes_to:`;
-  no real names, fork-specific paths or upstream-fork references.
+- Routing matches the frontmatter triggers; output stays under `writes_to:`.
 
 ## Output Format
 

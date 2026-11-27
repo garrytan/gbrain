@@ -20,6 +20,8 @@ import { randomUUID } from 'node:crypto';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { importFromContent } from '../src/core/import-file.ts';
+import { serializePageToMarkdown } from '../src/core/markdown.ts';
+import { lintContent } from '../src/commands/lint.ts';
 import { configureGateway, resetGateway, __setEmbedTransportForTests } from '../src/core/ai/gateway.ts';
 import { GBrainOAuthProvider } from '../src/core/oauth-provider.ts';
 import { sqlQueryForEngine } from '../src/core/sql-query.ts';
@@ -160,6 +162,10 @@ for (const kind of testBackends()) {
       expect(String(rows[0]!.source)).toContain('qm:' + ALICE_ID + '; slack:C0SCOPE/p1');
       const [page] = await engine.executeRaw<{ page_readers: string[] | null }>('SELECT page_readers FROM pages WHERE source_id = $1 AND slug = $2', [SCOPE_A, 'memory/scope']);
       expect(page!.page_readers).toBeNull();
+      // #9945: the scope page the first fact creates carries its capture time, so a content lint finds temporal provenance.
+      const created = await engine.readPageSnapshot('memory/scope', { sourceId: SCOPE_A });
+      expect(lintContent(serializePageToMarkdown(created!.page, created!.tags), 'memory/scope.md').map(i => i.rule)).not.toContain('missing-created');
+      expect(Date.now() - Date.parse(String(created!.page.frontmatter.captured_at))).toBeLessThan(600_000);
       const named = await call(bob, 'memory_recall', { query: 'launch Thursday', source_id: SCOPE_A });
       expect(named.isError).toBe(false);
       expect(named.text).toContain('canaryscopea');
@@ -271,26 +277,34 @@ for (const kind of testBackends()) {
       expect(out.structured!.status).toBe('committed');
       const [row] = await engine.executeRaw<{ authority: any }>('SELECT authority FROM persistence_requests WHERE request_id = $1::uuid', [out.structured!.request_id]);
       const authority = typeof row!.authority === 'string' ? JSON.parse(row!.authority) : row!.authority;
-      // The removal lands just before the credential lock (the typed shareLockWriteCredential member) is taken.
-      const original = engine.shareLockWriteCredential;
       let removed = false;
-      engine.shareLockWriteCredential = (async function (this: BrainEngine, ...args: Parameters<typeof engine.shareLockWriteCredential>) {
-        if (!removed && args[0] === 'oauth_client') {
-          removed = true;
-          await this.executeRaw('UPDATE oauth_clients SET attest_sources = NULL WHERE client_id = $1', [clients.scopes!.id]);
-        }
-        return original.apply(this, args);
-      }) as typeof engine.shareLockWriteCredential;
       const ROLLBACK = new Error('rollback');
       let outcome: Error | null = null;
-      try {
-        await engine.transaction(async tx => {
-          outcome = await refusal(authorizeWrite(tx as never, authority, 'remember', 'memory/scope', true));
-          throw ROLLBACK;
-        }).catch(e => { if (e !== ROLLBACK) throw e; });
-      } finally {
-        engine.shareLockWriteCredential = original;
-      }
+      // The removal lands in the transaction just before the credential row is locked FOR SHARE (the typed
+      // shareLockWriteCredential member when the engine has it, else the raw statement), so the recheck must see it.
+      await engine.transaction(async tx => {
+        const lockMember = (tx as { shareLockWriteCredential?: (kind: string, id: string) => Promise<void> }).shareLockWriteCredential;
+        const rawOriginal = tx.executeRaw.bind(tx);
+        const raced = new Proxy(tx, {
+          get(target, key) {
+            if (key === 'shareLockWriteCredential' && typeof lockMember === 'function') return async (kind: string, id: string) => {
+              if (!removed && kind === 'oauth_client') { removed = true; await rawOriginal('UPDATE oauth_clients SET attest_sources = NULL WHERE client_id = $1', [clients.scopes!.id]); }
+              return lockMember.call(target, kind, id);
+            };
+            if (key === 'executeRaw') return async (...args: Parameters<typeof engine.executeRaw>) => {
+              if (!removed && /FROM oauth_clients WHERE client_id\s*=\s*\$1.*FOR SHARE/s.test(String(args[0]))) {
+                removed = true;
+                await rawOriginal('UPDATE oauth_clients SET attest_sources = NULL WHERE client_id = $1', [clients.scopes!.id]);
+              }
+              return rawOriginal(...args);
+            };
+            const value = Reflect.get(target, key, target);
+            return typeof value === 'function' ? value.bind(target) : value;
+          },
+        });
+        outcome = await refusal(authorizeWrite(raced as never, authority, 'remember', 'memory/scope', true));
+        throw ROLLBACK;
+      }).catch(e => { if (e !== ROLLBACK) throw e; });
       expect(removed).toBe(true);
       expect((outcome as (Error & { reason?: string }) | null)?.reason).toBe('source_not_attested');
       const [still] = await engine.executeRaw<{ attest_sources: string[] | null }>('SELECT attest_sources FROM oauth_clients WHERE client_id = $1', [clients.scopes!.id]);

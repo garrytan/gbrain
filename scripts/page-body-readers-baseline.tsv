@@ -655,6 +655,7 @@ src/core/repair/timeline.ts	timelineRepair	call:serializePageToMarkdown	SEGW
 src/core/repair/visibility.ts	applyFactItem	field	INLINE	inline pages only: a segmented page returns before the read and its fenced fact is left for the owner
 src/core/repair/visibility.ts	visibilityWrite	call:serializePageToMarkdown	SEGW	
 src/core/repair/visibility.ts	applyFactItem	call:serializePageToMarkdown	INLINE	inline pages only: a segmented page returns before the read and its fenced fact is left for the owner
+src/core/rules/record.ts	renderRulePage	call:serializeMarkdown	NONE	serializes a new rule page from its own short fields; reads no stored body
 src/core/rust-engine/snapshot-overlay.ts	overlayStoreLead	field	STREAM	the Rust arm of readSnapshotStatement's withdrawal overlay (page-state/snapshot.ts): the Rust store keeps every body inline; the seal lead of a segmented page (a bounded timeline prefix), overlaid as PGLite's seal overlays it
 src/core/rust-engine/snapshot-overlay.ts	overlayStoreSnapshots	field	STREAM	the Rust arm of readSnapshotStatement's withdrawal overlay (page-state/snapshot.ts): the Rust store keeps every body inline; the body strike skips a segmented page as readSnapshotStatement does (per-window overlay in PR 2)
 src/core/rust-engine/store-members/chunks.ts	sealChunks	field	STREAM	mirrors sealPageTextProjection (text-seal.ts): sends sanitizeRemoteBody(timeline) with the seal for the page keyword vector; a segmented page (null timeline from the Rust store) sends none
@@ -669,7 +670,7 @@ src/core/schema-migrations/v123-configurable-fts-language.ts	v123	sql	NONE	not t
 src/core/schema-migrations/v124-page-search-vector-drop-compiled-truth.ts	v124	sql	NONE	not the page body: historical search-vector trigger
 src/core/schema-migrations/v189-pages-credential-projection-pending.ts	v189	sql	NONE	not a live reader: historical migration over inline pages (segmented pages did not exist)
 src/core/schema-migrations/v248-segmented-page-storage.ts	COMMON_SQL	sql	NONE	not a live reader: migration DDL for the segmented body columns and their CHECK
-src/core/schema-migrations/v341-fact-fingerprint-v3.ts	FACT_FINGERPRINT_V3_SQL	sql	NONE	not a live reader: one-shot migration that reads inline bodies from pages and segmented bodies from page_segment_texts to find fence cells needing a twin withdrawal row
+src/core/schema-migrations/v353-fact-fingerprint-v3.ts	FACT_FINGERPRINT_V3_SQL	sql	NONE	not a live reader: one-shot migration that reads inline bodies from pages and segmented bodies from page_segment_texts to find fence cells needing a twin withdrawal row
 src/core/schema-pack/field-usage.ts	runFieldUsage	field	LEAD	
 src/core/schema-pack/page-to-alias.ts	resolveValue	field	LEAD	
 src/core/schema-pack/page-to-alias.ts	runPageToAliasCore	field	LEAD	

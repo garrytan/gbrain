@@ -29,6 +29,7 @@ import { compareWriterVersions } from '../core/persistence/writer-versions.ts';
 import { resolveQuietHoursWindow, resolveSelfUpgradeMode } from '../core/self-upgrade.ts';
 import { evaluateQuietHours } from '../core/minions/quiet-hours.ts';
 import { logSelfUpgrade } from '../core/audit/self-upgrade-audit.ts';
+import { isProcessAlive } from '../core/pglite-lock.ts';
 import {
   classifyGbrainCommand, collectHostProcesses, copyFix, gbrainEntry, launcherName, mismatchedBuilds, PENDING_BUILD, planRestart, runRestartSteps, verifyRestart,
   homeFromPsEnvironment, unitFromCgroup,
@@ -101,6 +102,16 @@ function packageNameAt(root: string): string | null | undefined {
   }
 }
 
+function linuxProcessExited(pid: number): boolean {
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, 'utf8');
+    const state = stat[stat.lastIndexOf(')') + 2];
+    return state === 'Z' || state === 'X';
+  } catch {
+    return !isProcessAlive(pid);
+  }
+}
+
 /** This user's processes from `ps` (Linux and macOS), or the given pids; null when ps cannot run. */
 function readProcessTable(uid: number | undefined, pids?: number[]): ProcessTableRow[] | null {
   const select = pids ? ['-p', pids.join(',')] : uid === undefined ? ['-x'] : ['-U', String(uid)];
@@ -113,9 +124,11 @@ function readProcessTable(uid: number | undefined, pids?: number[]): ProcessTabl
     const elapsed = parseEtimeToMs(m[3]!);
     const pid = Number(m[1]);
     const ppid = Number(m[2]);
+    const gbrainHome = processHome(pid);
+    if (gbrainHome == null && process.platform === 'linux' && linuxProcessExited(pid)) return [];
     const cwd = processCwd(pid);
     const unit = classifyGbrainCommand(m[4]!, { cwd, packageName: packageNameAt }) === 'serve' ? processUnit(pid) : null;
-    return [{ pid, ppid, command: m[4]!, started_ms: elapsed === null ? null : now - elapsed, gbrain_home: processHome(pid), cwd, unit: unit && unitRunsServe(unit, pid, ppid) ? unit : null }];
+    return [{ pid, ppid, command: m[4]!, started_ms: elapsed === null ? null : now - elapsed, gbrain_home: gbrainHome, cwd, unit: unit && unitRunsServe(unit, pid, ppid) ? unit : null }];
   });
   if (process.platform !== 'darwin') return rows;
   const homes = darwinProcessHomes(select, new Map(rows.map(row => [row.pid, row.command])));

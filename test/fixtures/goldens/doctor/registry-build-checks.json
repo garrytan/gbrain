@@ -1071,6 +1071,10 @@
       },
       {
         "category": "brain",
+        "name": "rules_regression"
+      },
+      {
+        "category": "brain",
         "name": "unlinked_facts"
       },
       {

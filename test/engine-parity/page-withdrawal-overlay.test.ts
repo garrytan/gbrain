@@ -25,6 +25,7 @@ import { openSegmentedBody, readBodyRange } from '../../src/core/page-body/read-
 import { sealSegmentedPage, stageSegmentedImport } from '../../src/core/persistence/segmented-apply.ts';
 import { conversationBody } from '../helpers/conversation-page.ts';
 import { testBackends } from '../helpers/test-backends.ts';
+import { pageSnapshotKey } from '../../src/core/page-snapshot-batch.ts';
 import { parityArms } from './harness.ts';
 
 const { parityTest } = parityArms(testBackends());
@@ -179,5 +180,33 @@ describe('engine parity: page withdrawal overlay', () => {
       expect(segment).toBe(bounded!.compiled_truth);
       // The marker's `latest` is the purge's wall-clock time; the count and filter are what the read reports.
       return { withdrawals: snap.withdrawals, globalPurges: { count: snap.globalPurges!.count, world_only: snap.globalPurges!.world_only }, bounded: fenceLines(bounded!.compiled_truth), segment: sha(segment) };
+    });
+
+  // #9350 (master 4a2ea71e25): the batch read carries a source's '*' withdrawals once per batch and merges them per page;
+  // a page-subject withdrawal of a claim also withdrawn source-wide keeps the earlier time, the other visibility stays
+  // separate, and every batched snapshot equals the per-page read.
+  parityTest('a batch with many source-wide withdrawals lists each page\'s withdrawals as the per-page read does (#9350)',
+    { methods: ['insertFactWithdrawal', 'putPage', 'readPageSnapshot', 'readPageSnapshotsBatch'] },
+    async (engine) => {
+      for (const slug of ['people/erin', 'people/frank', 'notes/plain']) {
+        await engine.putPage(slug, { type: 'note', title: slug, compiled_truth: `${slug}.\n\n${FENCE}\n`, timeline: '' });
+      }
+      for (let i = 0; i < 12; i++) await engine.insertFactWithdrawal('default', 'world', `unrelated claim ${i}`, '*', T1);
+      await engine.insertFactWithdrawal('default', 'private', 'Walks to work', '*', T2);
+      await engine.insertFactWithdrawal('default', 'private', 'walks to work', 'people/erin', T1);
+      await engine.insertFactWithdrawal('default', 'world', 'walks to work', 'people/erin', T2);
+      await engine.insertFactWithdrawal('default', 'private', 'Drinks green tea', 'people/frank', T2);
+      const refs = ['notes/missing', 'people/erin', 'people/frank', 'notes/plain'].map(slug => ({ slug, sourceId: 'default' }));
+      const { snapshots, covered } = await engine.readPageSnapshotsBatch(refs);
+      expect(covered).toBe(refs.length);
+      const view = async (slug: string) => {
+        const batched = snapshots.get(pageSnapshotKey('default', slug)) ?? null;
+        const single = await engine.readPageSnapshot(slug, { sourceId: 'default' });
+        expect(batched?.withdrawals ?? null).toEqual(single?.withdrawals ?? null);
+        expect(batched?.page.compiled_truth ?? null).toEqual(single?.page.compiled_truth ?? null);
+        return single ? { withdrawals: single.withdrawals.map(w => [w.visibility, w.fact_hash, new Date(w.withdrawn_at).toISOString()]),
+          fence: fenceLines(single.page.compiled_truth ?? '') } : null;
+      };
+      return { erin: await view('people/erin'), frank: await view('people/frank'), plain: await view('notes/plain'), missing: await view('notes/missing') };
     });
 });

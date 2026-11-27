@@ -60,7 +60,7 @@ export function renderPlanText(p: SwapPlan): string {
     p.shadow ? '' : 'No shadow runs for this brain, so there is no readiness evidence yet. Seed one with `gbrain engine shadow seed`, then start it with `gbrain engine shadow start`.',
     'Worktree refreshes: none unfinished.',
     'Readiness:',
-    ...p.criteria.map(c => `  ${String(c.n).padStart(2)}. [${c.state}] ${c.name}: ${c.detail}`),
+    ...p.criteria.flatMap(c => [`  ${String(c.n).padStart(2)}. [${c.state}] ${c.name}: ${c.detail}`, ...(c.lines ?? []).map(l => `       ${l}`)]),
     `Engine-selecting variables set (names only): ${p.routes.env.length ? p.routes.env.join(', ') : 'none'}`,
     `Service definitions: ${p.routes.services.length ? p.routes.services.map(s => `${s.name} (${s.kind}${s.unread ? '; unreadable, names unknown' : s.sets.length ? `; sets ${s.sets.join(', ')}` : ''})`).join('; ') : 'none found'}`,
     `Free disk at ${p.disk.path || '(unknown)'}: ${p.disk.free_bytes === null ? 'unknown' : `${(p.disk.free_bytes / 2 ** 30).toFixed(1)} GiB`}`,
