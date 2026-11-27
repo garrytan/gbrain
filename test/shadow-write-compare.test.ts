@@ -26,11 +26,13 @@ import { ensureEpoch, epochPath, readEpoch, withLock } from '../src/shadow/evide
 import { buildFollowStatus, renderFollowStatus } from '../src/shadow/follow-status.ts';
 import { encodeArgs } from '../src/shadow/codec.ts';
 import { configDir } from '../src/core/config.ts';
-import { shadowRoot } from '../src/shadow/state.ts';
+import { shadowRoot, wrapShadowSibling } from '../src/shadow/state.ts';
+import { wrapShadowEngine } from '../src/shadow/wrapper.ts';
+import { createWriteSampler } from '../src/shadow/write-capture.ts';
+import { newMirrorCounters } from '../src/shadow/mirror.ts';
 import { scratchRootDefault } from '../src/shadow/write-compare-child.ts';
 import { faultsPath, readFaults } from '../src/shadow/ledger.ts';
 import { sampleWeight } from '../src/shadow/supervisor.ts';
-import { createWriteSampler } from '../src/shadow/write-capture.ts';
 import { droppedWeight, MAX_DROPPED, lostPath, movedOutsideFootprint, owedPath, pageRefs, readOwed, readWriteSnapshot, readWriteTally, recordLost, sentPath, sessionKey, unfoldedLost, unfoldedLines, writeOwed, writeTallyPath, WriteTally, SAVE_FAILURE_EXIT_MS, type OwedRecord, type WriteEvent } from '../src/shadow/write-compare.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { defineWriteCompareScenarios, fakeComparer, page, row5, settle, tallyOn, watchPreimage } from './helpers/shadow-write-compare-scenarios.ts';
@@ -938,6 +940,84 @@ describe('every sample the child was sent ends in the tally (sample accounting)'
       expect(t.comparable).toBe(0);
     });
   }, 30_000);
+});
+
+describe('worker engines opened beside a shadowed primary (sync and import workers)', () => {
+  const URL_A = 'postgresql://shadow@127.0.0.1:1/brain_a';
+  /** A stand-in engine: its disconnect hooks are kept, and its one write is recorded. */
+  const fakeEngine = (url: string | undefined) => {
+    const hooks: Array<() => Promise<void>> = []; const wrote: string[] = [];
+    return { hooks, wrote, kind: 'postgres', connectedDatabaseUrl: url, registerBeforeDisconnect(stop: () => Promise<void>) { hooks.push(stop); return () => {}; }, async addTag(slug: string, tag: string) { wrote.push(`${slug}:${tag}`); } };
+  };
+  const sink = () => ({ counters: newMirrorCounters(), offer: () => {}, active: () => true });
+
+  test('a worker of an engine that is not shadowed is returned as it is, and nothing is registered on it', () => {
+    const worker = fakeEngine(URL_A);
+    expect(wrapShadowSibling(primary, worker)).toBe(worker);
+    expect(worker.hooks).toEqual([]);
+  });
+
+  test('a worker of a shadowed primary is wrapped with the same sink and a sampler of its own, which settles when the worker disconnects', async () => {
+    const lines: string[] = [];
+    const sampler = createWriteSampler({ rate: 1, send: (line) => { lines.push(line); return true; }, active: () => true });
+    let noted = 0; // the writer observer (swap eligibility) now sees a worker's committed writes as this process's
+    const wrapped = wrapShadowEngine(fakeEngine(URL_A) as never, sink(), { sampleRate: 0, writes: sampler, onCommittedWrite: () => { noted++; } });
+    const worker = fakeEngine(URL_A);
+    const shadowed = wrapShadowSibling(wrapped, worker);
+    expect(shadowed).not.toBe(worker);
+    await shadowed.addTag('people/a-example', 'x'); // a sampled write outside the pilot: counted by family, through the worker's own sampler
+    expect(worker.wrote).toEqual(['people/a-example:x']); // the write itself is unchanged
+    expect(lines.map((l) => JSON.parse(l))).toEqual([{ t: 'write', op: 'addTag', outcome: 'capability_missing', family: 'tags' }]);
+    expect(noted).toBe(1);
+    expect(worker.hooks).toHaveLength(1); // the worker's read-backs settle before its pool closes
+    await worker.hooks[0]!();
+  });
+
+  test('a worker connected to another database (or one that names none) is left unwrapped: nothing of it reaches this brain\'s shadow', async () => {
+    const lines: string[] = [];
+    const wrapped = wrapShadowEngine(fakeEngine(URL_A) as never, sink(), { sampleRate: 0, writes: createWriteSampler({ rate: 1, send: (line) => { lines.push(line); return true; }, active: () => true }) });
+    for (const other of [fakeEngine('postgresql://shadow@127.0.0.1:1/brain_b'), fakeEngine(undefined)]) {
+      expect(wrapShadowSibling(wrapped, other)).toBe(other);
+      await other.addTag('people/a-example', 'x');
+      expect(other.hooks).toEqual([]);
+    }
+    expect(lines).toEqual([]);
+    const unnamed = wrapShadowEngine(fakeEngine(undefined) as never, sink(), { sampleRate: 0 }); // a primary that names no URL (PGLite) shadows no worker
+    const worker = fakeEngine(undefined);
+    expect(wrapShadowSibling(unnamed, worker)).toBe(worker);
+  });
+
+  test('without a write sampler (a brain that was never seeded) a worker is wrapped and nothing waits at its disconnect', () => {
+    const wrapped = wrapShadowEngine(fakeEngine(URL_A) as never, sink(), { sampleRate: 0 });
+    const worker = fakeEngine(URL_A);
+    expect(wrapShadowSibling(wrapped, worker)).not.toBe(worker);
+    expect(worker.hooks).toEqual([]);
+  });
+
+  test('a worker\'s sampler sends through the primary\'s supervisor and owes what it cannot send there too: one durable record covers every worker', async () => {
+    const lines: string[] = []; const owed: number[] = []; let acceptSamples = false;
+    const sampler = createWriteSampler({ rate: 1, active: () => true, lost: () => false, owe: (n) => { owed.push(n); return true; },
+      send: (line) => { const e = JSON.parse(line); if (acceptSamples && e.reason !== 'send_shed') { lines.push(line); return true; } return false; } }); // the pipe takes samples but refuses loss-only lines
+    const wrapped = wrapShadowEngine(fakeEngine(URL_A) as never, sink(), { sampleRate: 0, writes: sampler });
+    const worker = wrapShadowSibling(wrapped, fakeEngine(URL_A));
+    for (let i = 0; i < MAX_DROPPED + 5; i++) await worker.addTag('people/a-example', `t${i}`); // refused, and the loss journal is down: the losses wait in the shared list
+    acceptSamples = true;
+    await worker.addTag('people/a-example', 'last'); // taken, carrying MAX_DROPPED; the rest cannot go as a loss-only line, so it is owed
+    expect(JSON.parse(lines[0]!).dropped).toBe(MAX_DROPPED);
+    expect(owed).toEqual([5]); // owed through the same supervisor option the primary uses, never left only in the worker's memory
+  });
+
+  test('a loss a worker\'s sampler could not record is carried by the next line its primary sends, after the worker is gone', async () => {
+    const lines: string[] = []; let accept = false;
+    const sampler = createWriteSampler({ rate: 1, send: (line) => { if (!accept) return false; lines.push(line); return true; }, active: () => true, lost: () => false });
+    const wrapped = wrapShadowEngine(fakeEngine(URL_A) as never, sink(), { sampleRate: 0, writes: sampler });
+    const worker = fakeEngine(URL_A);
+    await wrapShadowSibling(wrapped, worker).addTag('people/a-example', 'x'); // refused by the pipe, and the loss journal is down
+    await worker.hooks[0]!(); // the worker disconnects with the loss still unrecorded
+    accept = true;
+    await (wrapped as unknown as { addTag(s: string, t: string): Promise<void> }).addTag('people/a-example', 'y');
+    expect(lines.map((l) => JSON.parse(l).dropped)).toEqual([1]); // master's fork kept it to itself and it was lost
+  });
 });
 
 // ---- S2c: a durable per-session obligation for write samples (design: the supervisor owes, the child settles) ----

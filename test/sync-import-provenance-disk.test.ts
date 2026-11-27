@@ -20,6 +20,8 @@ import { dirname, join } from 'node:path';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { claimWorktree } from '../src/core/persistence/ownership.ts';
+import { markGitDurable } from './helpers/git-fixture.ts';
+import { settleManagedGitEffects } from './helpers/managed-brain.ts';
 import { disposePersistenceConsumer } from '../src/core/persistence/service.ts';
 import { performManagedSync } from '../src/core/persistence/sync-run.ts';
 import { readSyncImportProvenance, SYNC_IMPORT_PARSER_VERSION, SYNC_IMPORT_PROVENANCE_OP, syncImportParserFor } from '../src/core/persistence/sync-holds.ts';
@@ -59,6 +61,8 @@ describe('managed-sync import provenance records the bytes on disk, the revision
     await engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
     const id = `prov-${randomUUID().slice(0, 12)}`, root = join(home, id);
     mkdirSync(root, { recursive: true }); git(root, 'init', '-q');
+    // GST-3743: write-back reaches a non-default checkout only when this host commits it (durable); a foreign one stays database-only.
+    markGitDurable(root);
     for (const [path, body] of Object.entries(files)) { mkdirSync(dirname(join(root, path)), { recursive: true }); writeFileSync(join(root, path), body); }
     const head = commit(root, 'seed');
     await engine.executeRaw('INSERT INTO sources(id,name,local_path,config) VALUES($1,$1,$2,$3::text::jsonb)', [id, root, JSON.stringify(config)]);
@@ -119,7 +123,9 @@ describe('managed-sync import provenance records the bytes on disk, the revision
   test.each([['batched'], ['per-entry']] as const)('a %s no-op waiver records the provenance in its waiver transaction without a new revision', async mode => withEnv({ GBRAIN_SYNC_WAIVE_BATCH: mode === 'batched' ? undefined : '0' }, () => each(async engine => {
     const f = await fixture(engine, { 'notes/one.md': note('A first unchanged observation.'), 'notes/two.md': note('A second unchanged observation.'), 'people/fixable.md': fixable });
     expect((await performManagedSync(engine, f.opts)).status).toBe('first_sync');
-    commit(f.root, 'commit the canonical writeback');
+    // The checkout is durable (GST-3743), so the Git effect commits the canonical writeback.
+    await settleManagedGitEffects(engine, f.id);
+    expect(git(f.root, 'status', '--porcelain')).toBe('');
     const before = new Map<string, string>();
     for (const slug of ['notes/one', 'notes/two', 'people/fixable']) {
       const { snapshot } = await provenanceOf(engine, f, slug);
