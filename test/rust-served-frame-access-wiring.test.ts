@@ -34,6 +34,13 @@ describe('the served session resolves each frame\'s access record by its princip
     expect(session).toContain("import { frameAccessWire } from '../owner-ipc/frame-access.ts';");
   });
 
+  test('the dispatcher gets the resolved record explicitly: a frame\'s own access field can never survive the spread', () => {
+    // Hardening (L3 owner review): the admitted frame sets `access` to the resolved value even when it is undefined (the
+    // owner's trusted view), so a later change to frameAccessWire cannot let the frame's original record through.
+    const admit = prepare.slice(prepare.indexOf('side.admit('));
+    expect(admit.startsWith('side.admit({ ...frame, args, access }')).toBe(true);
+  });
+
   test('an authenticated principal can carry the record the store built for it', () => {
     const auth = read('src/core/rust-engine/served/auth.ts');
     const shape = auth.slice(auth.indexOf('export interface AuthenticatedPrincipal'), auth.indexOf('export const LOCAL_OWNER'));
