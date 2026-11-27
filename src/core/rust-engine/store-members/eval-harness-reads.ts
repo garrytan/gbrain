@@ -59,6 +59,6 @@ export const pauseManagedPersistence: Member<'pauseManagedPersistence'> = async 
   return { enabled: prior.enabled === true, mode_epoch: String(prior.mode_epoch), topology_changes: String(prior.topology_changes) } satisfies ManagedPausePrior;
 };
 
-/** One compare-and-set store write: put enabled back only while still paused at the prior epoch with no topology change since. */
+/** One compare-and-set store write: put enabled back only while still paused at the prior epoch with no brain-wide topology change since. */
 export const restoreManagedPersistence: Member<'restoreManagedPersistence'> = (brain, prior) =>
   storeCall<boolean>({ member: 'restoreManagedPersistence' }, () => brain.restoreManagedPersistence({ enabled: prior.enabled, mode_epoch: prior.mode_epoch, topology_changes: prior.topology_changes }));

@@ -11,15 +11,20 @@
 //!   records>`. A scan reads every stored record of every keyspace, so a copy kept anywhere is
 //!   found; table and column names differ from the SQL engines for records the list does not map.
 //! - A record that is a JSON object is read field by field: a string field is a text column, an
-//!   object or array field a jsonb column (its compact JSON text). A config row (raw text, which
-//!   may parse as JSON) and any other stored value is one text column, `value`, read as UTF-8.
-//!   Keys are not read, except the `source_id` and `content_hash` a `page_purges` key holds.
+//!   object or array field a jsonb column (its compact JSON text), and a number or boolean in a
+//!   jsonb field (`JSONB_FIELDS`) a jsonb column too. A config row (raw text, which may parse as
+//!   JSON) and any other stored value is one text column, `value`, read as UTF-8. Keys are not
+//!   read, except the text columns some keys hold: a config row's `key`, a `page_purges` key's
+//!   `source_id` and `content_hash`, and a `page_aliases` row's `source_id`, `alias_norm`, `slug`
+//!   and `origin` (the row's value is empty).
 //! - activeOnly leaves out an expired or deleted record (`expired_at_us`, `deleted_at_us`,
-//!   `deleted_at`), an inactive take, a record of a deleted page (by its `page_id`, a page id in
-//!   its key, or a fence fact's `source_id` and `source_markdown_slug`) and every derived index
-//!   keyspace (`DERIVED`).
-//! - Hits are sorted by table, column and value in UTF-8 byte order, as the SQL engines sort them,
-//!   and at most `limit` are kept while scanning.
+//!   `deleted_at`), a fact past its `valid_until`, an inactive take, a record of a deleted page (by
+//!   its `page_id`, a wanted link's `origin_page_id`, a page id in its key, a fence fact's
+//!   `source_id` and `source_markdown_slug`, or a page alias's source and slug) and every derived
+//!   index keyspace (`DERIVED`).
+//! - Hits are sorted by table, column and value, then the slug, page id and entity of a tie, in
+//!   UTF-8 byte order with a missing one first, as the SQL engines sort them, and at most `limit`
+//!   are kept while scanning.
 //!
 //! The match is a case-insensitive substring: the pattern and each value are lowercased
 //! (`str::to_lowercase`, which agrees with Postgres `lower()` on ASCII text).
@@ -272,6 +277,11 @@ const MAPPED: &[Mapped] = &[
         ],
     },
     Mapped {
+        table: "page_aliases",
+        prefix: &[keys::ALIAS, ALIAS_ROW],
+        columns: &["source_id", "alias_norm", "slug", "origin"],
+    },
+    Mapped {
         table: "page_purges",
         prefix: &[keys::FACT, 0x0C],
         columns: &[
@@ -283,6 +293,45 @@ const MAPPED: &[Mapped] = &[
         ],
     },
 ];
+
+/// The kind byte of a `page_aliases` row (`k 0x02 source \0 alias_norm \0 slug \0 origin`) and of
+/// its copy seen from the page (`k 0x03 source \0 slug \0 alias_norm \0 origin`), aliases.rs.
+const ALIAS_ROW: u8 = 0x02;
+const ALIAS_BY_PAGE: u8 = 0x03;
+/// The sub-tag after `q <source> \0` of a wanted link record (wanted_links.rs).
+const WANTED: u8 = b'W';
+
+/// The NUL-separated text parts of a key after its first `skip` bytes.
+fn key_parts(key: &[u8], skip: usize) -> Vec<&[u8]> {
+    key.get(skip..)
+        .unwrap_or_default()
+        .split(|b| *b == 0)
+        .collect()
+}
+
+/// The source and slug a page alias row or its page-side copy belongs to, read from its key.
+fn alias_owner(key: &[u8]) -> Option<(String, String)> {
+    if key.first() != Some(&keys::ALIAS) {
+        return None;
+    }
+    let parts = key_parts(key, 2);
+    let at = match *key.get(1)? {
+        ALIAS_ROW => 2,
+        ALIAS_BY_PAGE => 1,
+        _ => return None,
+    };
+    let text = |b: &[u8]| String::from_utf8_lossy(b).into_owned();
+    Some((text(parts.first()?), text(parts.get(at)?)))
+}
+
+/// Whether the key is a wanted link record: `q <source> \0 W ...`.
+fn is_wanted(key: &[u8]) -> bool {
+    key.first() == Some(&keys::LINK_QUERIES)
+        && key
+            .iter()
+            .position(|b| *b == 0)
+            .is_some_and(|nul| key.get(nul + 1) == Some(&WANTED))
+}
 
 /// `scanTextColumns({ pattern, tables?, activeOnly, limit? })`.
 #[derive(Debug, Clone, Deserialize)]
@@ -315,13 +364,90 @@ fn table_of(key: &[u8]) -> String {
     format!("{}/{}", space.family, name.replace(' ', "_"))
 }
 
+/// The jsonb fields of the stored records (`jsonb::de_value` / `de_opt_value` fields: a SQL
+/// `jsonb` column), by the key prefix of their record. A number or a boolean stored as a whole
+/// jsonb value is text to the SQL scan (`x."col"::text`), so these fields read it as its JSON text;
+/// a number or boolean field of any other record is a SQL number or boolean column, not scanned.
+const JSONB_FIELDS: &[(&[u8], &[&str])] = &[
+    (&[keys::EVAL_CAPTURE, 0x20], &["domain_scorecards"]),
+    (&[keys::DREAM_VERDICT], &["reasons", "segments", "entities"]),
+    (&[keys::FACT, 0x08], &["evidence"]),
+    (&[keys::FACT, 0x01], &["write_origin"]),
+    (&[keys::CODE_TRAVERSAL_CACHE, 0x01], &["response_json"]),
+    (&[keys::REQUEST], &["intent", "authority", "outcome"]),
+    (&[keys::WRITER], &["grant_ceiling"]),
+    (&[keys::CODE_EDGE, 0x01], &["edge_metadata"]),
+    (&[keys::JOBS, 0x18], &["content_blocks"]),
+    (&[keys::JOBS, 0x19], &["input"]),
+    (&[keys::TRUST, 0x06], &["before_state", "after_state"]),
+    (&[keys::TRUST, 0x04], &["payload", "write_origin"]),
+    (&[keys::TRUST, 0x09, 0x00], &["value", "cause"]),
+    (
+        &[keys::CONTRADICTIONS, 0x01],
+        &["source_tier_breakdown", "report_json"],
+    ),
+    (&[keys::CONTRADICTIONS, 0x03], &["verdict"]),
+    (&[keys::TELEMETRY, 0x02], &["params"]),
+    (
+        &[keys::PAGE_BODY, 0x02],
+        &["entryState", "protectedRegions", "factsSlots", "outline"],
+    ),
+    (&[keys::PAGE_BODY, 0x05], &["body_flags"]),
+    (&[keys::PAGE_BODY, 0x04], &["output", "receipt"]),
+    (&[keys::PAGE], &["write_origin"]),
+    (&[keys::VERSION], &["write_origin"]),
+    (&[keys::RAW_FILES, 0x01], &["data"]),
+    (&[keys::RAW_FILES, 0x02], &["metadata"]),
+    (&[keys::INGEST_LOG], &["pages_updated"]),
+    (&[keys::DERIVED_GENERATION, 0x03], &["preimage"]),
+    (
+        &[keys::JOBS, 0x01],
+        &[
+            "submission_authority",
+            "data",
+            "result",
+            "progress",
+            "stacktrace",
+            "quiet_hours",
+            "spend_authorization",
+        ],
+    ),
+    (&[keys::JOBS, 0x05], &["payload"]),
+    (
+        &[keys::PERSISTENCE, 0x05],
+        &["data", "outcome", "recovery", "claim_owner"],
+    ),
+    (&[keys::PERSISTENCE, 0x02], &["completed_keys"]),
+    (&[keys::PERSISTENCE, 0x03], &["recovery", "outcome"]),
+];
+
+/// Whether `field` of the record stored at `key` is a jsonb field (`JSONB_FIELDS`).
+fn jsonb_field(key: &[u8], field: &str) -> bool {
+    JSONB_FIELDS
+        .iter()
+        .any(|(prefix, fields)| key.starts_with(prefix) && fields.contains(&field))
+}
+
+/// The jsonb text of a whole-value number or boolean. A whole number that reached the store as a
+/// float (a JavaScript number) prints without `.0`, as the SQL engines store `JSON.stringify`'s
+/// text.
+fn scalar_text(v: &Value) -> String {
+    match v.as_f64() {
+        Some(f) if v.is_f64() && f.fract() == 0.0 && f.abs() < 9_007_199_254_740_992.0 => {
+            format!("{f:.0}")
+        }
+        _ => v.to_string(),
+    }
+}
+
 /// One text column of a stored value: its name, its text and its kind (`text` or `jsonb`).
 type TextColumn = (String, String, &'static str);
 
 /// The text columns of one stored record: `(column, text)` for each string field and the compact
 /// JSON text of each object or array field of a JSON object, plus the text columns its key holds
-/// (`page_purges`: `source_id` and `content_hash`); a config row (raw text) or any other value is
-/// the whole value as `value`, read as UTF-8.
+/// (`page_purges`: `source_id` and `content_hash`; a config row: `key`; a `page_aliases` row, whose
+/// value is empty: `source_id`, `alias_norm`, `slug` and `origin`); a config row (raw text) or any
+/// other value is the whole value as `value`, read as UTF-8.
 fn text_columns(
     table: &str,
     key: &[u8],
@@ -334,8 +460,20 @@ fn text_columns(
             "text",
         )]
     };
+    let text = |b: &[u8]| String::from_utf8_lossy(b).into_owned();
     if key.first() == Some(&keys::CONFIG) {
-        return (raw(), None);
+        let mut out = raw();
+        out.push(("key".into(), text(key.get(1..).unwrap_or_default()), "text"));
+        return (out, None);
+    }
+    if table == "page_aliases" {
+        let names = ["source_id", "alias_norm", "slug", "origin"];
+        let out = names
+            .iter()
+            .zip(key_parts(key, 2))
+            .map(|(name, part)| (name.to_string(), text(part), "text"))
+            .collect();
+        return (out, None);
     }
     let (mut out, record) = match serde_json::from_slice::<Value>(value) {
         Ok(Value::Object(map)) => {
@@ -345,6 +483,9 @@ fn text_columns(
                     Value::String(s) => out.push((field.clone(), s.clone(), "text")),
                     Value::Object(_) | Value::Array(_) => {
                         out.push((field.clone(), v.to_string(), "jsonb"))
+                    }
+                    Value::Number(_) | Value::Bool(_) if jsonb_field(key, field) => {
+                        out.push((field.clone(), scalar_text(v), "jsonb"))
                     }
                     _ => {}
                 }
@@ -356,28 +497,28 @@ fn text_columns(
     };
     if table == "page_purges" {
         // The key is `F 0x0C source \0 content_hash \0`.
-        let mut parts = key.get(2..).unwrap_or_default().split(|b| *b == 0);
-        for column in ["source_id", "content_hash"] {
-            if let Some(part) = parts.next() {
-                out.push((
-                    column.into(),
-                    String::from_utf8_lossy(part).into_owned(),
-                    "text",
-                ));
-            }
+        for (column, part) in ["source_id", "content_hash"].iter().zip(key_parts(key, 2)) {
+            out.push((column.to_string(), text(part), "text"));
         }
     }
     (out, record)
 }
 
 /// The page a derived record of a page belongs to, read from its key: the page id index
-/// (`I <id>`) and the page body rows keyed by page id (`b 0x02|0x04|0x05|0x08 <id> ...`).
+/// (`I <id>`), the page body rows keyed by page id (`b 0x02|0x04|0x05|0x08 <id> ...`) and the
+/// sealed search timeline of a page (`M page_search_timeline/<id>`, pages.rs).
 fn key_page_id(key: &[u8]) -> Option<u64> {
     match *key.first()? {
         keys::PAGE_ID => keys::be8(key.get(1..9)?),
         keys::PAGE_BODY if matches!(key.get(1)?, 0x02 | 0x04 | 0x05 | 0x08) => {
             keys::be8(key.get(2..10)?)
         }
+        keys::META => std::str::from_utf8(key.get(1..)?)
+            .ok()?
+            .strip_prefix(crate::pages::SEARCH_TIMELINE)?
+            .strip_prefix('/')?
+            .parse()
+            .ok(),
         _ => None,
     }
 }
@@ -385,7 +526,8 @@ fn key_page_id(key: &[u8]) -> Option<u64> {
 /// Keyspaces that only index or cache other records (postings, trigrams, vectors, link and
 /// timeline indexes, query state). activeOnly leaves them out: what they copy is read from the
 /// records they index, which activeOnly filters, and a deleted page's index entries cannot be told
-/// from a live one's by their values.
+/// from a live one's by their values. The `q` keyspace is not one of them: it holds the wanted
+/// links and the link relationships and transitions themselves.
 const DERIVED: &[u8] = &[
     keys::POSTING,
     keys::TRIGRAM,
@@ -397,18 +539,31 @@ const DERIVED: &[u8] = &[
     keys::TIMELINE_LATEST,
     keys::REQUEST_ID,
     keys::CHUNK_QUERIES,
-    keys::LINK_QUERIES,
     keys::TIMELINE_QUERIES,
 ];
 
-/// The fields of a page the scan needs (the page body is not read).
+/// The fields of a page record the harness reads need (the page body is not decoded).
 #[derive(Deserialize)]
-struct PageHead {
-    id: u64,
-    source_id: String,
-    slug: String,
+pub(crate) struct PageHead {
+    pub id: u64,
+    pub source_id: String,
+    pub slug: String,
     #[serde(default)]
-    deleted_at_us: Option<i64>,
+    pub deleted_at_us: Option<i64>,
+}
+
+/// Every page record of every source, a soft-deleted page included, as its `PageHead`.
+pub(crate) fn page_heads(read: &dyn KvRead) -> Result<Vec<PageHead>> {
+    let mut pages = Vec::new();
+    let mut failure = None;
+    scan_prefix(read, &[keys::PAGE], false, &mut |_, v| {
+        match serde_json::from_slice::<PageHead>(v) {
+            Ok(p) => pages.push(p),
+            Err(e) => failure = Some(StoreError::from(e)),
+        }
+        failure.is_none()
+    })?;
+    failure.map_or(Ok(pages), Err)
 }
 
 fn text_field<'a>(record: &'a Map<String, Value>, field: &str) -> Option<&'a str> {
@@ -464,18 +619,7 @@ impl Store {
             return Err(StoreError::invalid("scanTextColumns: the pattern is empty"));
         }
         let read = self.read()?;
-        let mut pages: Vec<PageHead> = Vec::new();
-        let mut failure = None;
-        scan_prefix(&*read, &[keys::PAGE], false, &mut |_, v| {
-            match serde_json::from_slice::<PageHead>(v) {
-                Ok(p) => pages.push(p),
-                Err(e) => failure = Some(StoreError::from(e)),
-            }
-            failure.is_none()
-        })?;
-        if let Some(e) = failure {
-            return Err(e);
-        }
+        let pages = page_heads(&*read)?;
         let slug_of: HashMap<u64, &str> = pages.iter().map(|p| (p.id, p.slug.as_str())).collect();
         let deleted: BTreeSet<u64> = pages
             .iter()
@@ -492,6 +636,7 @@ impl Store {
             .as_ref()
             .map(|t| t.iter().map(String::as_str).collect());
         let limit = q.limit.map(|n| usize::try_from(n).unwrap_or(usize::MAX));
+        let now = self.env.now_micros();
         let mut hits: Vec<Hit> = Vec::new();
         scan(&*read, &mut |k, v| {
             if q.active_only && k.first().is_some_and(|t| DERIVED.contains(t)) {
@@ -507,16 +652,28 @@ impl Store {
                 .and_then(|r| {
                     if table == "pages" {
                         id_field(r, "id")
+                    } else if is_wanted(k) {
+                        id_field(r, "origin_page_id")
                     } else {
                         id_field(r, "page_id")
                     }
                 })
                 .or_else(|| key_page_id(k));
+            let alias = alias_owner(k);
             if q.active_only {
+                if alias.as_ref().is_some_and(|(source, slug)| {
+                    deleted_keys.contains(&(source.as_str(), slug.as_str()))
+                }) {
+                    return;
+                }
                 if let Some(r) = &record
                     && (set(r, "expired_at_us")
                         || set(r, "deleted_at_us")
                         || set(r, "deleted_at")
+                        || (table == "facts"
+                            && r.get("valid_until_us")
+                                .and_then(Value::as_i64)
+                                .is_some_and(|until| until <= now))
                         || (table == "takes" && r.get("active") == Some(&Value::Bool(false)))
                         || text_field(r, "source_id")
                             .zip(text_field(r, "source_markdown_slug"))
@@ -543,8 +700,9 @@ impl Store {
                     .find_map(|f| text_field(r, f))
                     .map(str::to_string)
             });
-            let slug =
-                own.or_else(|| page_id.and_then(|id| slug_of.get(&id).map(|s| s.to_string())));
+            let slug = own
+                .or_else(|| alias.map(|(_, slug)| slug))
+                .or_else(|| page_id.and_then(|id| slug_of.get(&id).map(|s| s.to_string())));
             for (column, text, _) in columns {
                 if text.to_lowercase().contains(&pattern) {
                     hits.push(Hit {
@@ -584,9 +742,20 @@ struct Hit {
     entity_slug: Option<String>,
 }
 
-/// By table, column and value, in UTF-8 byte order (the SQL engines order by `convert_to(..., 'UTF8')`).
+/// By table, column and value, then the slug, page id and entity of a tie, in UTF-8 byte order
+/// with a missing one first (the SQL engines order by `convert_to(..., 'UTF8') NULLS FIRST`).
 fn sort_hits(hits: &mut [Hit]) {
-    hits.sort_by(|a, b| (&a.table, &a.column, &a.value).cmp(&(&b.table, &b.column, &b.value)));
+    fn order(h: &Hit) -> impl Ord + '_ {
+        (
+            &h.table,
+            &h.column,
+            &h.value,
+            &h.slug,
+            h.page_id,
+            &h.entity_slug,
+        )
+    }
+    hits.sort_by(|a, b| order(a).cmp(&order(b)));
 }
 
 /// Calls `f` with every stored key and value.
@@ -638,8 +807,42 @@ mod tests {
         );
         assert_eq!(
             cols,
-            vec![("value".to_string(), r#"{"keytoken":1}"#.to_string(), "text")]
+            vec![
+                ("value".to_string(), r#"{"keytoken":1}"#.to_string(), "text"),
+                ("key".to_string(), "k".to_string(), "text")
+            ]
         );
+        // A number or boolean is a column only in a jsonb field.
+        let raw = [keys::RAW_FILES, 0x01, 0, 0, 0, 0, 0, 0, 0, 1];
+        let (cols, _) = text_columns("raw/raw", &raw, br#"{"data":42,"page_id":1}"#);
+        assert_eq!(cols, vec![("data".to_string(), "42".to_string(), "jsonb")]);
+        let (cols, _) = text_columns("raw/raw", &raw, br#"{"data":4815162342.0}"#);
+        assert_eq!(cols[0].1, "4815162342");
+        let (cols, _) = text_columns("raw/raw", &raw, br#"{"data":1.5}"#);
+        assert_eq!(cols[0].1, "1.5");
+        let (cols, _) = text_columns("x", b"x", br#"{"data":true}"#);
+        assert!(cols.is_empty());
+        // A page alias row is its key.
+        let mut key = vec![keys::ALIAS, ALIAS_ROW];
+        key.extend_from_slice(b"default\0acme\0companies/acme\0frontmatter");
+        assert_eq!(table_of(&key), "page_aliases");
+        let (cols, _) = text_columns("page_aliases", &key, b"");
+        assert_eq!(
+            cols.iter()
+                .map(|c| (c.0.as_str(), c.1.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("source_id", "default"),
+                ("alias_norm", "acme"),
+                ("slug", "companies/acme"),
+                ("origin", "frontmatter")
+            ]
+        );
+        let owner = Some(("default".to_string(), "companies/acme".to_string()));
+        assert_eq!(alias_owner(&key), owner);
+        let mut by_page = vec![keys::ALIAS, ALIAS_BY_PAGE];
+        by_page.extend_from_slice(b"default\0companies/acme\0acme\0declared");
+        assert_eq!(alias_owner(&by_page), owner);
         // A page purge's source and content hash are in its key.
         let mut key = vec![keys::FACT, 0x0C];
         key.extend_from_slice(b"default\0abc123\0");
@@ -652,6 +855,53 @@ mod tests {
                 ("slug", "notes/a"),
                 ("source_id", "default"),
                 ("content_hash", "abc123")
+            ]
+        );
+    }
+
+    #[test]
+    fn a_wanted_link_and_a_sealed_timeline_are_tied_to_their_page_by_key() {
+        let mut wanted = vec![keys::LINK_QUERIES];
+        wanted.extend_from_slice(b"default\0W");
+        assert!(is_wanted(&wanted));
+        let mut relationship = vec![keys::LINK_QUERIES];
+        relationship.extend_from_slice(b"default\0R");
+        assert!(!is_wanted(&relationship));
+        assert_eq!(
+            key_page_id(&keys::meta("page_search_timeline/42")),
+            Some(42)
+        );
+        assert_eq!(key_page_id(&keys::meta("page_search_timeline_x/42")), None);
+    }
+
+    #[test]
+    fn a_tie_of_equal_values_sorts_by_slug_page_and_entity_with_a_missing_one_first() {
+        let hit = |slug: Option<&str>, page_id: Option<u64>| Hit {
+            table: "pages".into(),
+            column: "compiled_truth".into(),
+            value: "same".into(),
+            slug: slug.map(str::to_string),
+            page_id,
+            entity_slug: None,
+        };
+        let mut hits = vec![
+            hit(Some("notes/b"), Some(1)),
+            hit(Some("notes/a"), Some(3)),
+            hit(None, Some(9)),
+            hit(Some("notes/a"), Some(2)),
+        ];
+        sort_hits(&mut hits);
+        let order: Vec<_> = hits
+            .iter()
+            .map(|h| (h.slug.as_deref(), h.page_id))
+            .collect();
+        assert_eq!(
+            order,
+            vec![
+                (None, Some(9)),
+                (Some("notes/a"), Some(2)),
+                (Some("notes/a"), Some(3)),
+                (Some("notes/b"), Some(1))
             ]
         );
     }

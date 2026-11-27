@@ -4,7 +4,7 @@
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: getFactsByIds returns { id, source_id, fact, entity_slug, expired_at, superseded_by } for each stored id
  *    (a missing id answers nothing, a repeated id once), by id. findLiveFactsByText returns { id, fact } for the facts
- *    of one source whose text is exactly one of the texts and that have not expired, by id. listPageIdSlugs returns
+ *    of one source whose text is exactly one of the texts and that are active (not expired, not past valid_until), by id. listPageIdSlugs returns
  *    { id, slug, source_id, deleted_at } for every page, a soft-deleted one included, by id.
  *  - Regression: the evals ran these reads as raw SQL (facts by id, facts by text, the page id map), so on a Rust
  *    brain their setup stopped on the raw_sql refusal and Cat 37-39 could not run.
@@ -15,12 +15,13 @@
  *    the slug its row is about, and with activeOnly leaves out expired facts, deleted pages and their rows.
  *  - Difference by design (DECISION A): the Rust store has no SQL catalog. It keeps the SQL names of the tables its
  *    records map (pages, content_chunks, facts, takes, timeline_entries, sources, write_gate_*, trust_proposals,
- *    page_purges) and names every other record by its keyspace, and it scans every stored record. So these cases
+ *    page_aliases, page_purges) and names every other record by its keyspace, and it scans every stored record. So these cases
  *    compare which tokens each engine finds and the slugs they are about, never the table and column names of a hit.
  *    withManagedPersistencePaused(fn) turns managed persistence off without moving mode_epoch, runs fn and puts the
- *    prior enabled value back only while the brain row is still paused at the same epoch (compare-and-set): a real
- *    activation or deactivation during fn is kept and reported as paused_state_changed; a throw is rethrown after the
- *    restore. The evals wrote enabled=true unconditionally before, which turned a classic brain managed.
+ *    prior enabled value back only while the brain row is still paused at the same epoch with no new brain-wide
+ *    topology change (compare-and-set): a real activation or deactivation during fn is kept and reported as
+ *    paused_state_changed, a change to one source is not; a throw is rethrown after the restore, carrying the restore
+ *    error too when the restore also fails. The evals wrote enabled=true unconditionally before, which turned a classic brain managed.
  *  - Review round 1 regressions (each failed on the head before the fix): a config value that parses as JSON was
  *    missed on Rust; hasColumn said no trust columns for takes and timeline entries on Rust; a page purge's key columns
  *    were not scanned on Rust; the SQL scan lowercased a non-ASCII pattern in JavaScript but each value in the
@@ -28,7 +29,14 @@
  *    nested pause restored too early; a cancelled request left the brain paused (Postgres); a deactivation of a
  *    paused brain that released its pre-activation claims was undone by the restore. The lost-reply case pins the
  *    recovery command's behavior (gbrain sources writer activate turns the brain back on with a new epoch).
- *  - Seam: none. Real engines; ids and timestamps are compared by shape, not by literal.
+ *  - Review round 2 regressions (each failed on the base before the fix): a change to one source during fn stopped the
+ *    restore; a failed restore after a throw was lost (a string or a frozen error); activeOnly kept a deleted page's
+ *    wanted links (SQL), aliases and sealed timeline (Rust) and a fact past its valid_until; Rust left out the link
+ *    relationships and transitions under activeOnly, a token in a config key, a page alias and a whole jsonb number or
+ *    boolean; equal values came back in different orders before the limit.
+ *  - Seam: real engines; ids and timestamps are compared by shape, not by literal. The both-errors case alone replaces
+ *    the engine's restoreManagedPersistence with a rejecting stub (deleted in finally): no real store fails a restore
+ *    on demand.
  */
 import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';

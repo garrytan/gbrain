@@ -424,7 +424,7 @@ impl Store {
     }
 
     /// `pauseManagedPersistence()`: one store write. Reads the brain mode and the count of recorded
-    /// topology changes and turns `enabled` off with no epoch bump; returns the prior
+    /// brain-wide topology changes (`topology_change_count`) and turns `enabled` off with no epoch bump; returns the prior
     /// `{ enabled, mode_epoch, topology_changes }` (the epoch and count as text). Nothing else moves.
     pub fn pause_managed_persistence(&self) -> Result<Value> {
         let brain_id = self.brain_id().to_string();
@@ -445,9 +445,10 @@ impl Store {
 
     /// `restoreManagedPersistence({ enabled, mode_epoch, topology_changes })`: one compare-and-set
     /// write. Puts `enabled` back only while the brain mode is still paused (`enabled` false) at
-    /// `mode_epoch` and the store holds `topology_changes` topology changes; otherwise a real
-    /// activation or deactivation ran during the pause (a deactivation of a disabled brain records a
-    /// topology change without moving the epoch), and nothing is written. True when it wrote.
+    /// `mode_epoch` and the store holds `topology_changes` brain-wide topology changes; otherwise a
+    /// real activation or deactivation ran during the pause (a deactivation of a disabled brain
+    /// records a brain-wide topology change without moving the epoch), and nothing is written. A
+    /// change to one source during the pause does not stop the restore. True when it wrote.
     pub fn restore_managed_persistence(
         &self,
         enabled: bool,
@@ -493,17 +494,37 @@ impl Store {
     }
 }
 
-/// How many topology changes the store holds (`SELECT count(*) FROM persistence_topology_changes`).
+/// How many brain-wide topology changes the store holds (`SELECT count(*) FROM
+/// persistence_topology_changes WHERE source_id = '*'`). A change to one source (a source add,
+/// claim, removal or a company-brain connect) does not change the brain's own state, so it is not
+/// counted. A record that is not readable refuses (the restore then keeps the brain paused).
 fn topology_change_count(read: &dyn crate::kv::KvRead) -> Result<u64> {
+    #[derive(serde::Deserialize)]
+    struct SourceOf<'a> {
+        #[serde(borrow)]
+        source_id: std::borrow::Cow<'a, str>,
+    }
     let mut n = 0u64;
+    let mut bad = false;
     crate::kv::scan_prefix(
         read,
         &[crate::keys::PERSISTENCE, crate::persistence::TOPOLOGY],
         false,
-        &mut |_, _| {
-            n += 1;
-            true
+        &mut |_, v| match serde_json::from_slice::<SourceOf>(v) {
+            Ok(r) => {
+                n += u64::from(r.source_id == "*");
+                true
+            }
+            Err(_) => {
+                bad = true;
+                false
+            }
         },
     )?;
+    if bad {
+        return Err(StoreError::invalid(
+            "a topology change record is not readable",
+        ));
+    }
     Ok(n)
 }
