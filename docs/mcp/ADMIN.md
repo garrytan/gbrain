@@ -531,8 +531,9 @@ Fix it by binding first:
   `gbrain auth rescope --token <name> --may-act-for <members>`, and have its
   harness name each request's audience. For a local stdio agent, label each
   person and bind its server with
-  `gbrain setup <harness> --serves several --members <id,...>`
-  (`--stdio-member <member>` when one person alone uses it).
+  `gbrain setup claude-code --members <id,...>` or `gbrain setup codex --members <id,...>`
+  (`--stdio-member <member>` when one person alone uses it); for another harness, label
+  them with `gbrain access serves several --members <id,...>`.
 - Narrowing only, which leaves the credential unbound: when the channels sit
   in different sources, grant one audience's source with
   `gbrain auth rescope --token <name> --sources <source>` (or for a new harness

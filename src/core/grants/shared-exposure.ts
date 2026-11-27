@@ -189,7 +189,7 @@ const splitBySource = (census: ChatCensus | null | undefined): boolean => !censu
 export function bindArgv(s: ExposureSubject): string[] {
   if (s.kind === 'legacy_token') return ['gbrain', 'auth', 'rescope', '--token', s.name, '--member', '<member>'];
   if (s.kind === 'oauth_client') return ['gbrain', 'auth', 'rescope', '--client', s.id, '--member', '<member>'];
-  return ['gbrain', 'setup', s.harness, '--serves', 'several', '--members', '<id,...>'];
+  return ['claude-code', 'codex'].includes(s.harness) ? ['gbrain', 'setup', s.harness, '--serves', 'several', '--members', '<id,...>'] : ['gbrain', 'access', 'serves', 'several', '--members', '<id,...>'];
 }
 
 /** The narrowing command: a credential's source rescope, which leaves it unbound. Null when no source split exists. */
@@ -222,7 +222,7 @@ export function remedyText(s: ExposureSubject, census?: ChatCensus | null): stri
   const target = s.kind === 'legacy_token' ? `--token ${s.name}` : s.kind === 'oauth_client' ? `--client ${s.id}` : null;
   const steps: string[] = [target
     ? `bind the credential to the person who uses this agent (gbrain auth rescope ${target} --member <id>), or, for one agent several people share, to their audience (gbrain auth rescope ${target} --may-act-for <members>; its harness then names each request's audience)`
-    : `label each person and bind this harness's server (${bindArgv(s).join(' ')}; --stdio-member <member> when one person alone uses the harness)`];
+    : s.kind === 'stdio' && ['claude-code', 'codex'].includes(s.harness) ? `label each person and bind this harness's server (${bindArgv(s).join(' ')}; --stdio-member <member> when one person alone uses the harness)` : `label each person (${bindArgv(s).join(' ')})`];
   if (splitBySource(census)) {
     steps.push(s.kind === 'stdio'
       ? 'narrowing only, which leaves the server unbound: pin the agent to one audience\'s source by setting GBRAIN_SOURCE=<source> in its MCP server environment and running gbrain sources unfederate <source> (a federated sibling source stays nameable)'

@@ -179,7 +179,8 @@ whenever the user gives one. Capture
 them. A coded refusal (`setup_owner_conflict`, `setup_hosted_connection`) means
 another owner or a hosted brain holds the target; follow its `fix`.
 When the brain will answer several people (a team bot, a shared channel), ask the
-user who they are and add `--serves several --members <id,...>`: each gets a member,
+user who they are and add `--members <id,...>` (claude-code and codex; for another
+harness, label them with `gbrain access serves several --members <id,...>`): each gets a member,
 a folder `people/<member>/` only they read and a bound key
 (`~/.gbrain/member-keys/<member>.key`; relay paths, never keys). On
 `setup_serves_several`, rerun with its fix. Add `--stdio-member <member>`

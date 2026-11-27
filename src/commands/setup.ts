@@ -244,8 +244,14 @@ function parseFlags(args: string[]): SetupFlags | string {
   if (args.includes('--receipt') && !args.includes('--status')) return '--receipt names the receipt --status reads; --resume takes the receipt id itself';
   if (owner !== undefined && !ACCESS_ID_RE.test(owner)) return `invalid --owner '${owner}'; a member id is lower-case letters, digits, '.', '_' and '-' (1-64 characters, starting with a letter or digit)`;
   if (named && (!['claude-code', 'codex'].includes(positionals[0] ?? '') || ['--instructions-only', '--remove', '--skills-index-only', '--wakeshift'].some((f) => args.includes(f)))) {
-    const roster = [value('--members') && `--members ${value('--members')}`, value('--members-file') && `--members-file ${value('--members-file')}`, source && `--source ${source}`, args.includes('--labelled-only') && '--labelled-only', owner && `--owner ${owner}`].filter(Boolean).join(' ');
-    return `--members sets up per-member access only in gbrain setup claude-code or codex (not --instructions-only, --remove, --skills-index-only or --wakeshift); to label the people of this brain, preview gbrain access serves several ${roster}, and add --yes once you have settled whether members read the existing history; nothing was written`;
+    const target = source ?? (process.env.GBRAIN_SOURCE && isValidSourceId(process.env.GBRAIN_SOURCE) ? process.env.GBRAIN_SOURCE : undefined);
+    const label = ['gbrain', 'access', 'serves', 'several', ...['--members', '--members-file'].flatMap((f) => (value(f) !== undefined ? [f, value(f)!] : [])), ...(target ? ['--source', target] : []), '--owner', owner ?? loginOwnerId() ?? '<owner-member-id>'];
+    const keep = [...label, '--labelled-only'];
+    const paths = args.includes('--labelled-only') ? `preview ${shellQuoteArgv(keep)} (members read only pages labelled for them)`
+      : args.includes('--open-history') ? `preview ${shellQuoteArgv(label)} (members also read the pages no rule restricts)`
+      : `preview ${shellQuoteArgv(keep)} to keep the existing pages private, or ${shellQuoteArgv(label)} to let every member read them`;
+    const connect = ['gbrain', 'setup', ...args.filter((a, i) => !['--members', '--members-file', '--owner', '--serves', '--labelled-only', '--open-history'].includes(a) && !['--members', '--members-file', '--owner', '--serves'].includes(args[i - 1] ?? ''))];
+    return `--members sets up per-member access only in gbrain setup claude-code or codex (not --instructions-only, --remove, --skills-index-only or --wakeshift); nothing was written. To label the people of this brain, ${paths}, then run the one you choose again with --yes; to connect memory, run ${shellQuoteArgv(connect)}`;
   }
   let stdioMember: string | undefined;
   try { stdioMember = parseStdioMemberFlag(args); } catch (e) { return `${(e as Error).message}; nothing was written`; }
@@ -528,6 +534,7 @@ export async function runSetup(args: string[], deps: { openclaw?: { bin?: string
     const surface: McpSurface = chosenSurface ?? prior?.surface ?? profile.surface;
     const advertise = chosenSurface !== undefined ? flags.advertise ?? null : registrationAdvertise({ userChoseSurface: false, prior, profile });
     const sourceId = flags.source ?? (process.env.GBRAIN_SOURCE && isValidSourceId(process.env.GBRAIN_SOURCE) ? process.env.GBRAIN_SOURCE : null);
+    const servesFlags = { ...flags, source: sourceId ?? undefined };
     let plan: ClaudeSetupPlan = {
       name: flags.name, scope, ...(projectDir ? { projectDir } : {}), launcher, brainHome,
       ...(process.env.GBRAIN_HOME?.trim() ? { gbrainHomeEnv: process.env.GBRAIN_HOME.trim() } : {}),
@@ -573,7 +580,7 @@ export async function runSetup(args: string[], deps: { openclaw?: { bin?: string
         actor: 'agent', argv: ['gbrain', 'bootstrap', 'harness', '--remove', '--dry-run'],
         why: 'Preview removing the bootstrap harness wiring first, or keep it and skip setup.', verify: verifyDryRun('claude-code', flags.name) }), out);
     }
-    const servesPlan = servesPreflight(flags, launcher, 'claude-code', !!cfg, !!liveOwner?.ours, binding);
+    const servesPlan = servesPreflight(servesFlags, launcher, 'claude-code', !!cfg, !!liveOwner?.ours, binding);
     if (servesPlan instanceof OperationError) return refuse(servesPlan, out);
     const tie = ownerTie(flags, servesPlan, binding, !!pluginOwner);
     const unbound = householdTieRefusal(flags, servesPlan, binding, !!pluginOwner, tie, 'claude-code');
@@ -590,12 +597,12 @@ export async function runSetup(args: string[], deps: { openclaw?: { bin?: string
         { step: 'hooks', action: found.hooksCurrent ? 'keep' : 'write', detail: plan.events.length ? `${plan.events.join(', ')} in ${found.settingsPath}` : `no hooks (${found.settingsPath})` },
         ...Object.entries(found.edited).map(([event]) => ({ step: 'hooks' as const, action: 'preserve' as const, detail: `${event} was edited after setup wrote it; kept` })),
       ];
-      const serves = servesApply(flags, launcher, 'claude-code', servesPlan, !!cfg, binding);
+      const serves = servesApply(servesFlags, launcher, 'claude-code', servesPlan, !!cfg, binding);
       const instructions = brainFirstFor('claude-code', flags, mcpAccess(flags.name, plan.advertise ?? surface, serves), { scope, projectDir });
       const skills = skillsFor('claude-code', flags, launcher, { scope, projectDir }, instructions);
       const resolver = await resolverFor('claude-code', flags, launcher);
       const layout = await layoutFor('claude-code', flags, launcher, instructions, brainCreate);
-      const servesDone = servesAfterLayout(serves, flags, launcher, servesPlan, layout.outcome);
+      const servesDone = servesAfterLayout(serves, servesFlags, launcher, servesPlan, layout.outcome);
       return finish(out, { dryRun: true, target, consent, steps, states: [], verify: null, notices: layout.notices([]), notes, instructions, skills, resolver, serves: servesDone, launcher, layout: layout.outcome });
     }
 
@@ -605,7 +612,7 @@ export async function runSetup(args: string[], deps: { openclaw?: { bin?: string
       beforeMcp: brainCreate ? async () => { notices = runBrainInit(initArgv, out, 'claude-code'); historyReceipt(launcher, 'claude-code', flags, out); } : undefined,
     });
     for (const s of result.steps) say(out, `  ${s.action.padEnd(8)} ${s.step.padEnd(7)} ${s.detail}`);
-    const serves = servesApply(flags, launcher, 'claude-code', servesPlan, true, binding);
+    const serves = servesApply(servesFlags, launcher, 'claude-code', servesPlan, true, binding);
     const instructions = brainFirstFor('claude-code', flags, mcpAccess(flags.name, plan.advertise ?? surface, serves), { scope, projectDir });
     const skills = skillsFor('claude-code', flags, launcher, { scope, projectDir }, instructions);
     const resolver = await resolverFor('claude-code', flags, launcher);
@@ -621,7 +628,7 @@ export async function runSetup(args: string[], deps: { openclaw?: { bin?: string
     const states = ['configured', ...(verify.ok ? ['connection-verified', 'native-pending'] : [])];
     const turnHook = plan.events.includes('UserPromptSubmit') && instructions?.decision.value === 'accepted' ? verifyTurnHook('claude-code', { projectDir }) : null;
     const layout = await layoutFor('claude-code', flags, launcher, instructions, brainCreate);
-    const servesDone = servesAfterLayout(serves, flags, launcher, servesPlan, layout.outcome);
+    const servesDone = servesAfterLayout(serves, servesFlags, launcher, servesPlan, layout.outcome);
     const history = await historyStep('claude-code', flags, launcher, brainCreate, !!liveOwner, scope === 'project' ? ['--scope', 'project'] : []);
     const suggestion = suggestionFor({ launcher, noSuggestion: flags.noSuggestion, dryRun: flags.dryRun, liveServe: liveOwner });
     const code = await finish(out, { dryRun: false, target: { ...target, registration_owner: pluginOwner ? 'plugin' : 'setup' }, consent: result.receipt.consent, steps: result.steps, states, verify, notices: withHistoryDecision(layout.notices(notices), history), notes,
@@ -784,6 +791,7 @@ async function runCodexSetup(flags: SetupFlags, launcher: string, cfg: GBrainCon
       ? { profile: { surface: chosenSurface, advertise: flags.advertise ?? null }, origin: 'explicit' }
       : !priorProfile || priorOrigin === 'default' ? { profile: defaults, origin: 'default' } : { profile: priorProfile, origin: priorOrigin };
     const sourceId = flags.source ?? (process.env.GBRAIN_SOURCE && isValidSourceId(process.env.GBRAIN_SOURCE) ? process.env.GBRAIN_SOURCE : prior?.source_id ?? null);
+    const servesFlags = { ...flags, source: sourceId ?? undefined };
     let plan: CodexSetupPlan = {
       name: flags.name, launcher, brainHome,
       ...(process.env.GBRAIN_HOME?.trim() ? { gbrainHomeEnv: process.env.GBRAIN_HOME.trim() } : {}),
@@ -840,7 +848,7 @@ async function runCodexSetup(flags: SetupFlags, launcher: string, cfg: GBrainCon
         actor: 'agent', argv: harnessLane ? ['gbrain', 'bootstrap', 'harness', '--remove', '--dry-run'] : ['gbrain', 'setup', 'codex', laneEvents.every((e) => e === 'SessionEnd') ? '--no-capture' : '--no-hooks', '--dry-run', '--json'],
         why: harnessLane ? 'Preview removing the bootstrap harness wiring first, or keep it and skip setup.' : 'Keep the bootstrap lane for those events and preview setup without them.', verify: verifyDryRun('codex', flags.name) }), out);
     }
-    const servesPlan = servesPreflight(flags, launcher, 'codex', !!cfg, !!liveOwner?.ours, binding);
+    const servesPlan = servesPreflight(servesFlags, launcher, 'codex', !!cfg, !!liveOwner?.ours, binding);
     if (servesPlan instanceof OperationError) return refuse(servesPlan, out);
     const tie = ownerTie(flags, servesPlan, binding, !!pluginOwner);
     const unbound = householdTieRefusal(flags, servesPlan, binding, !!pluginOwner, tie, 'codex');
@@ -859,12 +867,12 @@ async function runCodexSetup(flags: SetupFlags, launcher: string, cfg: GBrainCon
         { step: 'trust', action: found.trustCurrent ? 'keep' : 'write', detail: `trust entries for setup's groups in ${found.configPath}` },
         ...Object.keys(found.edited).map((event) => ({ step: 'hooks' as const, action: 'preserve' as const, detail: `${event} was edited after setup wrote it; kept` })),
       ];
-      const serves = servesApply(flags, launcher, 'codex', servesPlan, !!cfg, binding);
+      const serves = servesApply(servesFlags, launcher, 'codex', servesPlan, !!cfg, binding);
       const instructions = brainFirstFor('codex', flags, mcpAccess(flags.name, plan.advertise ?? plan.surface, serves), {});
       const skills = skillsFor('codex', flags, launcher, {}, instructions);
       const resolver = await resolverFor('codex', flags, launcher);
       const layout = await layoutFor('codex', flags, launcher, instructions, brainCreate);
-      const servesDone = servesAfterLayout(serves, flags, launcher, servesPlan, layout.outcome);
+      const servesDone = servesAfterLayout(serves, servesFlags, launcher, servesPlan, layout.outcome);
       return finish(out, { harness: 'codex', dryRun: true, target, consent, steps, states: [], verify: null, notices: layout.notices([]), notes, instructions, skills, resolver, serves: servesDone, layout: layout.outcome });
     }
 
@@ -875,7 +883,7 @@ async function runCodexSetup(flags: SetupFlags, launcher: string, cfg: GBrainCon
     });
     for (const s of result.steps) say(out, `  ${s.action.padEnd(8)} ${s.step.padEnd(7)} ${s.detail}`);
     for (const n of result.notes) say(out, `note: ${n}`);
-    const serves = servesApply(flags, launcher, 'codex', servesPlan, true, binding);
+    const serves = servesApply(servesFlags, launcher, 'codex', servesPlan, true, binding);
     const instructions = brainFirstFor('codex', flags, mcpAccess(flags.name, plan.advertise ?? plan.surface, serves), {});
     const skills = skillsFor('codex', flags, launcher, {}, instructions);
     const resolver = await resolverFor('codex', flags, launcher);
@@ -892,7 +900,7 @@ async function runCodexSetup(flags: SetupFlags, launcher: string, cfg: GBrainCon
     const states = ['configured', ...(verify.ok ? ['connection-verified', push === 'native-verified' && result.receipt.trust.owned.UserPromptSubmit ? 'native-verified' : 'native-pending'] : [])];
     const turnHook = plan.events.includes('UserPromptSubmit') && instructions?.decision.value === 'accepted' ? verifyTurnHook('codex') : null;
     const layout = await layoutFor('codex', flags, launcher, instructions, brainCreate);
-    const servesDone = servesAfterLayout(serves, flags, launcher, servesPlan, layout.outcome);
+    const servesDone = servesAfterLayout(serves, servesFlags, launcher, servesPlan, layout.outcome);
     const history = await historyStep('codex', flags, launcher, brainCreate, !!liveOwner, []);
     const suggestion = suggestionFor({ launcher, noSuggestion: flags.noSuggestion, dryRun: flags.dryRun, liveServe: liveOwner });
     const code = await finish(out, { harness: 'codex', dryRun: false, target: { ...target, registration_owner: pluginOwner ? 'plugin' : 'setup' }, consent: result.receipt.consent,

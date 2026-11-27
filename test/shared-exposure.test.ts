@@ -166,7 +166,8 @@ describe('signals and the warning', () => {
     expect(bot.why).toContain('gbrain auth create <name> --member <id>');
     expect(exposureFix({ kind: 'stdio', harness: 'hermes' }).why).not.toContain('cannot tell');
     expect(sharedTokenNotice({ kind: 'stdio', harness: 'claude-code' }, { harness: 'claude-code' })).toBeNull();
-    expect(exposureFix({ kind: 'stdio', harness: 'hermes' }).argv).toEqual(['gbrain', 'setup', 'hermes', '--serves', 'several', '--members', '<id,...>']);
+    expect(exposureFix({ kind: 'stdio', harness: 'hermes' }).argv).toEqual(['gbrain', 'access', 'serves', 'several', '--members', '<id,...>']);
+    expect(exposureFix({ kind: 'stdio', harness: 'claude-code' }).argv).toEqual(['gbrain', 'setup', 'claude-code', '--serves', 'several', '--members', '<id,...>']);
   });
 
   test('Claude Code channel plugins and bot workspaces are read from config paths', () => {
