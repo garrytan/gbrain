@@ -14,6 +14,8 @@ import type { PostgresEngine } from '../../src/core/postgres-engine.ts';
 import type { Invalidation } from '../../src/shadow/invalidations.ts';
 import { hasDatabase } from './helpers.ts';
 import { persistencePostgresTemplate } from '../helpers/persistence-postgres.ts';
+import { publicationConcurrency, tryAcquirePublicationCapacity } from '../../src/core/persistence/pool-capacity.ts';
+import type { BrainEngine } from '../../src/core/engine.ts';
 import { busyPreReadIsRelationLevel, driverFragmentStaysAFragment, driverWriteSurvivesFailedPreRead, writesKeepOrderBesideNestedTransaction, nestedFollowedWritesStayInTheirSavepoint, finishedNestedIsNotBusy, heldCallKeepsItsContext, heldCallRollsBackWithItsTransaction, outerWriteSurvivesNestedRollback, sampledSiblingDoesNotWaitForItself, unawaitedFollowedWriteCommits, syncThrowRollsBackHeldWrite, failedPreReadKeepsSiblingWrites, failedPreReadKeepsTransaction, followHarness, PAGE, restoreFollowProbes } from '../helpers/follow-producer.ts';
 
 const d = hasDatabase() ? describe : describe.skip;
@@ -52,6 +54,23 @@ d('shadow follow producer on Postgres', () => {
     expect(items.filter((i) => i.kind !== 'rows')).toEqual([]);
   }, 60_000);
 
+  test('a transaction\'s sql handle keys the publication counter the same with shadow on as off', async () => {
+    // pool-capacity.ts ordinaryPool keys an in-process counter on tx.sql, which shadow mode replaces with a view inside a
+    // transaction. The view must be one object per transaction and pass options through, or the counter splits.
+    const measure = (e: BrainEngine) => e.transaction(async (tx) => {
+      const sql = (tx as unknown as { sql: unknown }).sql;
+      const held: Array<() => void> = [];
+      for (let release = tryAcquirePublicationCapacity(tx); release && held.length < 20; release = tryAcquirePublicationCapacity(tx)) held.push(release);
+      let nestedShares = true;
+      await tx.transaction(async (inner) => { nestedShares = (inner as unknown as { sql: unknown }).sql === sql; });
+      held.forEach((release) => release());
+      return { stable: (tx as unknown as { sql: unknown }).sql === sql, concurrency: publicationConcurrency(tx), acquired: held.length, nestedShares };
+    });
+    const off = await measure(engine);
+    const on = await measure(followHarness(engine).engine);
+    expect(off.acquired).toBeGreaterThan(0);
+    expect(on).toEqual(off);
+  }, 60_000);
   test('a failed pre-read does not abort the transaction around it', async () => { await failedPreReadKeepsTransaction(engine); }, 60_000);
   test('a failed pre-read does not undo sibling writes of the transaction that were in flight around it (pipelined)', async () => { await failedPreReadKeepsSiblingWrites(engine); }, 60_000);
   test('a pre-read waits for a running nested transaction, whose own followed write never waits for it: both commit with no stall', async () => { await busyPreReadIsRelationLevel(engine); }, 60_000);
