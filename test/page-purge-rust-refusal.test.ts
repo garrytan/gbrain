@@ -127,10 +127,12 @@ describe('a page purge on a Rust brain refuses before any write', () => {
     expect(await readsOf(engine, ['notes/expired'], [id])).toEqual(before);
   }, 120_000);
 
-  test('delete_page has no stop on a Rust brain, and the retention purge stops first at releaseStaleHolds, owned by lane 4', async () => {
+  test('delete_page has no stop on a Rust brain, and the retention purge stops first at the unmanaged expiry reads, owned by lane 4', async () => {
     expect(await purgePathStops({ kind: 'rust' })).toEqual([]);
     const [first] = await purgePathStops({ kind: 'rust' }, 'retention');
-    expect({ name: first?.name, owner: first?.owner }).toEqual({ name: 'releaseStaleHolds (persistence/derived-origin-hold.ts)', owner: 'lane 4' });
+    // releaseStaleHolds is served since lane 4's retention-purge-rust (c291d88f9a); the first stop left is purgeExpired's
+    // expired-page reads (RETENTION_STOPS in src/core/persistence/purge-path-members.ts).
+    expect({ name: first?.name, owner: first?.owner }).toEqual({ name: '<anonymous> (persistence/purge-deleted.ts)', owner: 'lane 4' });
     expect(PURGE_PATH.map(purgeEntryName)).toContain(first!.name);
   });
 });
