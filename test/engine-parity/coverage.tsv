@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2517/2549
+# covered: 2529/2566
 # lifecycle: 21/22
 # pages: 141/142
 # search: 8/8
@@ -110,7 +110,7 @@
 # doctor_derived: 29/29
 # doctor_persistence: 37/37
 # doctor_pages: 18/18
-# doctor_search: 11/11
+# doctor_search: 23/28
 # doctor_reads_acc: 29/29
 # doctor_checkpoints: 18/18
 # doctor_sync: 3/3
@@ -144,21 +144,21 @@ scanTextColumns	lifecycle	yes	6	no	yes	yes	serves
 pauseManagedPersistence	lifecycle	yes	1	no	yes	yes	serves
 restoreManagedPersistence	lifecycle	no	0	no	-	-	-
 withManagedPersistencePaused	lifecycle	yes	7	no	yes	yes	serves
-getPage	pages	yes	294	yes	yes	yes	serves
+getPage	pages	yes	296	yes	yes	yes	serves
 readPageSnapshot	pages	yes	121	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	8	no	yes	yes	serves
 lockPageKeys	pages	yes	17	no	yes	yes	serves
-putPage	pages	yes	1427	yes	yes	yes	serves
+putPage	pages	yes	1432	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	45	yes	yes	yes	serves
 deletePages	pages	yes	10	yes	yes	yes	serves
 resolveSlugsByPaths	pages	yes	2	yes	yes	yes	serves
-softDeletePage	pages	yes	355	yes	yes	yes	serves
+softDeletePage	pages	yes	357	yes	yes	yes	serves
 softDeletePages	pages	yes	8	yes	yes	yes	serves
-restorePage	pages	yes	22	yes	yes	yes	serves
+restorePage	pages	yes	23	yes	yes	yes	serves
 purgeDeletedPages	pages	yes	12	no	yes	yes	serves
-listPages	pages	yes	22	yes	yes	yes	serves
+listPages	pages	yes	23	yes	yes	yes	serves
 findPages	pages	yes	5	no	yes	yes	serves
 countPagesBy	pages	yes	1	no	yes	yes	serves
 pageTypeTotals	pages	yes	2	no	yes	yes	serves
@@ -856,7 +856,7 @@ clearFenceHoldRows	persistence_journal	yes	1	no	yes	yes	serves
 readFenceHoldFiles	persistence_journal	yes	1	no	yes	yes	serves
 readLiveGenerationRow	persistence_journal	yes	6	no	yes	yes	serves
 activateGenerationRows	persistence_journal	yes	20	no	yes	yes	serves
-recordHeldGenerationRow	persistence_journal	yes	14	no	yes	yes	serves
+recordHeldGenerationRow	persistence_journal	yes	15	no	yes	yes	serves
 readGitHoldRecords	persistence_journal	yes	3	no	yes	yes	serves
 readGitHoldRetryRequest	persistence_journal	yes	2	no	yes	yes	serves
 readGitHoldReportInputs	persistence_journal	yes	2	no	yes	yes	serves
@@ -1941,7 +1941,7 @@ listSegmentedPages	withdrawal_pages	yes	2	no	yes	yes	serves
 invalidateWithdrawnPages	withdrawal_pages	yes	2	no	yes	yes	serves
 hasWithdrawnFenceClaim	withdrawal_fence	yes	2	no	yes	yes	serves
 runMigration	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
-executeRaw	raw_sql	yes	41	yes	yes	yes	refuses:raw_sql
+executeRaw	raw_sql	yes	34	yes	yes	yes	refuses:raw_sql
 executeRawDirect	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 keywordBoundedRead	raw_sql	yes	1	no	yes	yes	refuses:raw_sql
 addCodeEdges	code_edges	yes	12	yes	yes	yes	serves
@@ -2098,8 +2098,8 @@ readPageRevisionWriter	write_misc	yes	1	no	yes	yes	serves
 readRevisionWriterRequest	write_misc	yes	2	no	yes	yes	serves
 writeSyncAdmissionStamp	write_misc	yes	5	no	yes	yes	serves
 readSyncAdmissionEffects	write_misc	yes	6	no	yes	yes	serves
-readOpCheckpointRecord	write_misc	yes	26	no	yes	yes	serves
-writeOpCheckpointRecord	write_misc	yes	54	no	yes	yes	serves
+readOpCheckpointRecord	write_misc	yes	27	no	yes	yes	serves
+writeOpCheckpointRecord	write_misc	yes	55	no	yes	yes	serves
 purgeStaleCheckpoints	write_misc	yes	1	no	yes	yes	serves
 readHealthMemoClock	write_misc	yes	1	no	yes	yes	serves
 listSynopsisSourceIds	write_misc	yes	4	no	yes	yes	serves
@@ -2561,7 +2561,24 @@ countImageModalityMismatches	doctor_pages	yes	1	no	yes	yes	serves
 readImagePageCoverage	doctor_pages	yes	1	no	yes	yes	serves
 listBracketPathPages	doctor_pages	yes	1	no	yes	yes	serves
 listSlugPathCandidates	doctor_pages	yes	1	no	yes	yes	serves
-countAtomExtractionBacklog	doctor_search	yes	2	no	yes	yes	serves
+countAtomExtractionBacklog	doctor_search	yes	3	no	yes	yes	serves
+listExtractablePages	doctor_search	yes	4	no	yes	yes	serves
+listAtomSourceHashes	doctor_search	yes	1	no	yes	yes	serves
+listTombstonedTranscripts	doctor_search	yes	3	no	yes	yes	serves
+listSourcePageAtomTitles	doctor_search	yes	1	no	yes	yes	serves
+releasePartialAtomDispositions	doctor_search	yes	3	no	yes	yes	serves
+assertAtomStateStore	doctor_search	yes	1	no	yes	yes	serves
+readAtomPageIdentity	doctor_search	no	0	no	-	-	-
+writeAtomPageState	doctor_search	yes	2	no	yes	yes	serves
+recordAtomPagePartial	doctor_search	no	0	no	-	-	-
+recordAtomTranscriptPartial	doctor_search	yes	1	no	yes	yes	serves
+stampAtomTranscriptTombstone	doctor_search	yes	1	no	yes	yes	serves
+strikeAtomTranscript	doctor_search	yes	2	no	yes	yes	serves
+listLiveTranscriptGenerations	doctor_search	yes	2	no	yes	yes	serves
+moveGenerationLocator	doctor_search	no	0	no	-	-	-
+readLivePageSourcePath	doctor_search	no	0	no	-	-	-
+readLiveGenerationLocator	doctor_search	no	0	no	-	-	-
+listConversationPageFrontmatter	doctor_search	yes	1	no	yes	yes	serves
 listAtomBacklogSourceIds	doctor_search	yes	2	no	yes	yes	serves
 listGitImageHoldCounts	doctor_search	yes	1	no	yes	yes	serves
 listTruncatedMarkdownBodies	doctor_search	yes	1	no	yes	yes	serves

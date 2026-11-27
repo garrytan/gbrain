@@ -317,7 +317,7 @@ test/engine-parity/receipt-compaction-step.test.ts	1	0
 test/engine-parity/rechunk-chunk-ids.test.ts	2	0
 test/engine-parity/referrer-reads.test.ts	5	0
 test/engine-parity/refusal-blocker-sites.test.ts	6	0
-test/engine-parity/refusal-swallow-extract.test.ts	3	7
+test/engine-parity/refusal-swallow-extract.test.ts	14	1
 test/engine-parity/refusal-swallow-health.test.ts	5	1
 test/engine-parity/refusal-swallow-paths.test.ts	6	0
 test/engine-parity/refusal-swallow-sites.test.ts	9	0
