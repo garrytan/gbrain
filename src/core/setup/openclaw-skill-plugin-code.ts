@@ -8,7 +8,7 @@
  * changes the plugin code itself.
  */
 
-export const OPENCLAW_SKILL_PLUGIN_CODE_VERSION = 7;
+export const OPENCLAW_SKILL_PLUGIN_CODE_VERSION = 8;
 
 export interface LoaderConstants { home: string; libDir: string; statePath: string; logDir: string; gbrainBin: string; gbrainHomeEnv: string | null }
 
@@ -91,7 +91,7 @@ const LOADER_JS = String.raw`// Managed by gbrain setup openclaw; a re-run rewri
 // state file gbrain writes, re-read when it changes, so a mode or pin change never reloads this plugin.
 // Every failure path lets the turn proceed unchanged; no handler waits more than DEADLINE_MS. Each log line
 // names the turn's session class (from OpenClaw's memoryAudience and trigger, else the session key's shape),
-// whether the host sent an audience, and each skill's OpenClaw source; never the turn's text. The owner's
+// whether the host sent an audience (or the plugin verified the owner by sender id), and each skill's OpenClaw source; never the turn's text. The owner's
 // sessions get the operator rule line and the owner pins every turn, and the session-start brief (the --brief
 // pins, plus the owner pins when pins_route is first_turn) on a session's first turn, recorded per durable
 // session so a restart or a retried run never repeats it; conversations get their own rule line and pins and
@@ -273,10 +273,11 @@ function keyClassOf(key) {
 
 // The turn's session class and whether the host resolved its audience. With an audience (OpenClaw's memoryAudience):
 // owner (owner-private on a user turn), or group, channel or direct (another person's DM) for a conversation. With
-// none (a host without a native memory provider), the session key's class, logged audience unknown: its main session
-// counts as the owner's (with require_owner_sender, or once owner_sender_ids is set, only for a turn from one of
-// them), and so does a direct session whose sender is one of the agent's owner_sender_ids. Relay
-// (another session's message), cron, heartbeat, webhook and internal come from the trigger and provenance first.
+// none (a host without a native memory provider): once owner_sender_ids or require_owner_sender is set, a main or
+// direct session is the owner's (logged audience sender) only for a verified owner turn, else another person's DM;
+// with neither set, main is the owner's by its key alone. Every other turn keeps the session key's class, logged
+// audience unknown. Relay (another session's message), cron, heartbeat, webhook and internal come from the trigger
+// and provenance first.
 function sessionClassOf(event, ctx, a, sessionKey) {
   const pick = (k) => (ctx && ctx[k] !== undefined ? ctx[k] : event && event[k]);
   const audience = pick('memoryAudience');
@@ -301,11 +302,25 @@ function sessionClassOf(event, ctx, a, sessionKey) {
   }
   const owners = Array.isArray(a.owner_sender_ids) ? a.owner_sender_ids : [];
   if ((keyed === 'direct' || keyed === 'main') && (owners.length || a.require_owner_sender === true)) {
-    const sender = senderOf(event, ctx);
-    if (!isOwnerSender(owners, sender, event, ctx)) return of('direct');
-    if (keyed === 'direct') return of('owner');
+    return verifiedOwner(owners, event, ctx, trigger) ? { cls: 'owner', audience: 'sender' } : of('direct');
   }
   return of(keyed);
+}
+
+// A turn the host sent no memory audience for is the owner's only when every check holds: a user trigger, a sender id
+// in owner_sender_ids that the channel context does not contradict, no senderIsOwner false from the host, and a chat
+// that is not a group or channel. The session key alone never makes a turn the owner's.
+function verifiedOwner(owners, event, ctx, trigger) {
+  if (trigger !== 'user') return false;
+  const pick = (k) => (ctx && ctx[k] !== undefined ? ctx[k] : event && event[k]);
+  if (pick('senderIsOwner') === false) return false;
+  const sender = senderOf(event, ctx);
+  if (!isOwnerSender(owners, sender, event, ctx)) return false;
+  const cc = pick('channelContext');
+  const said = cc && cc.sender && cc.sender.id;
+  if (said !== undefined && said !== null && String(said) !== sender) return false;
+  const type = cc && cc.chat && typeof cc.chat.type === 'string' ? cc.chat.type.toLowerCase() : '';
+  return type !== 'group' && type !== 'supergroup' && type !== 'channel';
 }
 
 // owner (the owner's own sessions), silent (no pins, no suggestions) or conversation (everything else, unknown included).

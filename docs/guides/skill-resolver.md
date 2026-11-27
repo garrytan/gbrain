@@ -344,10 +344,11 @@ on its next turn, so no OpenClaw command runs and the gateway does not reload:
   follows the session class like the pins do, and `--pins-route` never moves it.
 - `--owner-sender <id>` (repeatable): only turns from these senders get
   suggestions; others get the pins only. When OpenClaw sends no memory
-  audience, a direct session from one of these senders also counts as the
-  owner's, and a turn from anyone else on the shared main session (OpenClaw's
-  default `session.dmScope: main` puts every DM there) counts as another
-  person's DM. Set it when people other than you can message the agent and
+  audience, a turn on the main session or a direct session counts as the
+  owner's only when it is a user turn from one of these senders in a chat
+  that is not a group or channel, and every other turn there (OpenClaw's
+  default `session.dmScope: main` puts every DM on the main session) counts
+  as another person's DM ([session classes](#session-classes)). Set it when people other than you can message the agent and
   OpenClaw has no memory provider. Setup and doctor warn when a live agent on
   `dmScope: main` has none ([skill_resolver_owner_unverified](#skill_resolver_owner_unverified)).
 - `--require-owner-sender`: fail closed. With no memory audience from
@@ -389,8 +390,9 @@ turn text) to `skill-index/logs/openclaw-<date>.jsonl`, and a `read` line
 when the model opens a skill, by `skills_read` or by `read` of its
 `SKILL.md` path, directly or through `dispatch_action` (counted once),
 marked with whether it was suggested, the tool, the source and the session
-class. Each line also says whether OpenClaw sent a memory audience (`audience`:
-`host` or `unknown`); a line with `brief: true` delivered the session-start
+class. Each line also says where the class came from (`audience`: `host`
+when OpenClaw sent a memory audience, `sender` when the plugin verified the
+owner by sender id without one, else `unknown`); a line with `brief: true` delivered the session-start
 brief. `gbrain doctor --only
 skill_resolver` reports the plugin, the library, the gbrain home, each agent's
 catalog, pins, skill listing and read reach and, over the last 24 hours, the
@@ -418,12 +420,16 @@ inter-session relay), then its `memoryAudience` (`owner-private` is the
 owner; `conversation` is a group, channel or another person's DM). OpenClaw
 sends a memory audience only with a native memory provider. Without one, the
 class comes from the session key's shape (`agent:<id>:main` is `main`,
-`...:direct:<peer>` is `direct` unless the sender is an `--owner-sender`, and
-with `--owner-sender` or `--require-owner-sender` set, `main` from any
-other sender, or with no sender id, is `direct` too,
-`...:group:<id>` is `group`, `...:cron:...`, `...:relay-<sender>`,
-`...:subagent:...` and `hook:...` are silent) and the log line says
-`audience: unknown`. With an audience, owner pins and owner-only skills never
+`...:direct:<peer>` is `direct`, `...:group:<id>` is `group`, `...:cron:...`,
+`...:relay-<sender>`, `...:subagent:...` and `hook:...` are silent) and the
+log line says `audience: unknown`. With `--owner-sender` or
+`--require-owner-sender` set, a turn on `main` or a `direct` session is
+`owner` (logged `audience: sender`) only when every check holds: OpenClaw's
+trigger is `user`, the sender id is one of the `--owner-sender` ids, the
+channel context names no other sender, OpenClaw did not say `senderIsOwner:
+false`, and the chat type is not a group, supergroup or channel. Any other
+turn there is `direct`, so the session key alone never makes a turn the
+owner's. With an audience, owner pins and owner-only skills never
 reach a session that is not the owner's. Without one and without
 `--owner-sender` or `--require-owner-sender`, the main session is the owner's
 whoever wrote: under OpenClaw's default `session.dmScope: main` that includes
@@ -1289,8 +1295,10 @@ the root, then run setup again. gbrain never edits these limits itself.
 
 The plugin code installed in OpenClaw is older than this gbrain's, so it
 ignores settings added since: the operator rule line, `--brief` pins,
-`--require-owner-sender` and `--owner-skill`, and before version 7 it does
-not withdraw the owner's context on another person's turn. This happens when only the state was refreshed
+`--require-owner-sender` and `--owner-skill`, before version 7 it does
+not withdraw the owner's context on another person's turn, and before
+version 8 it counts a main or direct session as the owner's from the sender
+id alone, without the trigger and chat checks. This happens when only the state was refreshed
 (`--skills-index-only`, which the plugin runs on its own after a gbrain
 upgrade), or when the files are new but the gateway has not restarted since
 (doctor reads the version each logged turn ran). Rerun the `gbrain setup
