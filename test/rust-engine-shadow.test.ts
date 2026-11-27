@@ -1022,6 +1022,41 @@ describe('supervisor sample accounting (a sample is owed in a durable record bef
       } finally { h.done(); }
     });
 
+    test('ship-r3: a remover paused under the tally lock after it read a settled owed:1 cannot delete the owed:2 that a stop()-path publication writes meanwhile: the record is kept and republished, and the extra sample is still owed', async () => {
+      const fsm = await import('node:fs');
+      const h = flakyHarness({ retryMs: 60_000 });
+      const { WriteTally } = await import('../src/shadow/write-compare.ts');
+      const epoch = (): string => ensureEpoch(h.dir, INPUTS_S2D, NOW_S2D.getTime()).epoch_id;
+      const lock = join(h.dir, 'write-comparisons.lock'); const tallyFile = join(h.dir, 'write-comparisons.json');
+      const realRead = fsm.readFileSync; let paused = false;
+      // The seam is the one the D1-F2 tests use: the remover's last read, the tally's settled count, taken under the lock right before it unlinks. What the serving process does next happens "while the remover is paused".
+      const spy = spyOn(fsm, 'readFileSync').mockImplementation(((path: unknown, ...rest: unknown[]) => {
+        const out = (realRead as (...a: unknown[]) => unknown)(path, ...rest);
+        if (!paused && String(path) === tallyFile && existsSync(lock)) {
+          paused = true;
+          h.disk.failing = true; h.sup.owe(1); h.sup.stop(); // the close-time write fails: the record is kept and marked; stop() leaves the owe flush queued
+          h.disk.failing = false; (h.sup as unknown as { flushStaged(): boolean }).flushStaged(); // the disk is back and the queued flush runs, as it would in its own turn
+        }
+        return out;
+      }) as never);
+      try {
+        h.sup.send(sample(0)); await turn(); const s0 = h.sessions[0]!; h.settle({ [s0]: 1 });
+        writeOwed(h.dir, { v: 1, session: s0, serving_pid: process.pid, owed: 1, closed: true, child_exited: true }); // the record the remover judges: settled, its session over
+        new WriteTally(h.dir, epoch, () => true, process.pid, 'owner').recover(); // the owner's pass removes the settled record; the interleaving happens inside it
+        expect(paused).toBe(true);
+      } finally { spy.mockRestore(); }
+      try {
+        h.sup.publishKeptNow(); // the keeper's own try, with the disk fine and the lock free
+        expect(h.owed(0)).toMatchObject({ owed: 2, closed: true }); // was: gone (unlinked on the owed:1 it judged), and nothing kept to republish it
+        expect(existsSync(join(h.dir, `write-pending.${s0}.json`))).toBe(false);
+        expect(h.status()).toMatchObject({ state: 'capability_missing', unresolved_replays: 1, outstanding_sessions: [`write-owed.${s0}.json`] }); // the second sample is owed, not measured
+        new WriteTally(h.dir, epoch, () => true, process.pid, 'owner').recover();
+        expect(h.owed(0)).toMatchObject({ owed: 2 }); // one settled of two: the file stays until the worker books the other
+        h.settle({ [s0]: 2 }); // booked once
+        expect(h.status()).toMatchObject({ state: 'measured' });
+      } finally { h.done(); }
+    });
+
     // ---- D1 (second read of the plan): the marker's own durability, the live-worker window, refused samples ----
     test('D1-F1: the marker\'s directory entry is flushed after the link; a failed flush leaves it unpublished and it is retried until the flush succeeds', async () => {
       const durable = await import('../src/core/fs-durable.ts');
