@@ -318,8 +318,8 @@ describe('#10537 serveBuildSkewError', () => {
       expect(error?.message).toContain('the running gbrain serve (PID 99)');
       expect(error?.message).toContain(message);
       expect(error?.suggestion).toContain('gbrain upgrade --restart-only');
-      expect(error?.suggestion).toContain('stop the serve (PID 99)');
-      expect(error?.suggestion).not.toContain('GBRAIN_SYNC_NO_DELEGATE');
+      expect(error?.message).toContain('stop the serve (PID 99)');
+      expect(error?.message).not.toContain('GBRAIN_SYNC_NO_DELEGATE');
     }
   });
   test('any other failure is left alone', () => {

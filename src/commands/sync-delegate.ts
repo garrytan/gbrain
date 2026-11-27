@@ -341,8 +341,8 @@ export function serveBuildSkewError(error: Error, ctx: { pid: number; serveVersi
   if (!STALE_MODULE_GRAPH.test(error.message)) return null;
   const serve = `the running gbrain serve (PID ${ctx.pid}${ctx.serveVersion ? `, v${ctx.serveVersion}` : ''})`;
   return opError('serve_build_skew',
-    `The sync could not run inside ${serve}: it still runs the gbrain build it started with, and that code no longer matches the gbrain installed on disk (this CLI is v${VERSION}). The serve reported: ${error.message}`,
-    `Restart the serve onto the installed build: ${RESTART_SERVE}. ${ctx.canRunBeside ? 'To sync now without it, re-run with GBRAIN_SYNC_NO_DELEGATE=1.' : `Or stop the serve (PID ${ctx.pid}) and re-run gbrain sync.`}`,
+    `The sync could not run inside ${serve}: it still runs the gbrain build it started with, and that code no longer matches the gbrain installed on disk (this CLI is v${VERSION}). ${ctx.canRunBeside ? 'To sync now without it, re-run with GBRAIN_SYNC_NO_DELEGATE=1.' : `Or stop the serve (PID ${ctx.pid}) and re-run gbrain sync.`} The serve reported: ${error.message}`,
+    `Restart the serve onto the installed build: ${RESTART_SERVE}.`,
     { fix: { ask_user: true, argv: ['gbrain', 'upgrade', '--restart-only'], consent: [], actor: 'agent', requires_exclusive: false,
       why: 'Restarts every gbrain process on this host onto the installed build, drain-first, and verifies they all report one build.',
       user_message: `A gbrain serve (PID ${ctx.pid}) still runs an older build than the one installed, so sync could not run inside it. Restart it onto the installed build with \`gbrain upgrade --restart-only\`?`,

@@ -424,7 +424,8 @@ describe('maybeDelegateManagedSyncToServe (the Postgres ladder, client half)', (
     expect(json.message).toContain(`this CLI is v${VERSION}`);
     expect(json.message).toContain(stale);
     expect(json.suggestion).toContain('gbrain upgrade --restart-only');
-    expect(json.suggestion).toContain('GBRAIN_SYNC_NO_DELEGATE=1');
+    // The human renderer prints the fix's command instead of the suggestion, so the workaround rides in the message.
+    expect(json.message).toContain('GBRAIN_SYNC_NO_DELEGATE=1');
     expect((skew as OperationError).fix).toMatchObject({ ask_user: true, argv: ['gbrain', 'upgrade', '--restart-only'] });
     expect(other).toBeInstanceOf(OperationError);
     expect((other as OperationError).toJSON()).toMatchObject({ error: 'internal_error', message: 'disk full' });

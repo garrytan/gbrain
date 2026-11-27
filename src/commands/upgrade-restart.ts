@@ -254,14 +254,25 @@ async function hostSources(withHeartbeats = true): Promise<{ sources: ProcessSou
   return { sources, notes, close, pidFile: DEFAULT_PID_FILE };
 }
 
+/**
+ * #10536: how this build runs itself, so a restart step's `gbrain …` starts the installed build even when Bun's bin
+ * directory is not on PATH: a compiled binary is its own executable, a package install is Bun running its entry file.
+ */
+function selfInvocation(): string[] {
+  const entry = process.argv[1];
+  if (!entry) return ['gbrain'];
+  return /^(\/\$bunfs\/|[A-Za-z]:[\\/]~BUN[\\/])/.test(entry) ? [process.execPath] : [process.execPath, entry];
+}
+
 /** The real executor for restart steps; `pidFile` is the default supervisor PID file. */
 /** Runs restart commands without blocking the event loop (the autopilot daemon keeps its timers and signals); a command still running after `timeoutMs` is killed. */
-export function hostExecutor(pidFile: string, timeoutMs = 600_000): RestartExecutor {
+export function hostExecutor(pidFile: string, timeoutMs = 600_000, self: string[] = selfInvocation()): RestartExecutor {
   return {
     run: (argv, env) => new Promise(resolve => {
       let output = '';
       let timedOut = false;
-      const child = spawn(argv[0]!, argv.slice(1), { stdio: ['ignore', 'pipe', 'pipe'], env: env ? { ...process.env, ...env } : process.env });
+      const [cmd, ...args] = argv[0] === 'gbrain' ? [...self, ...argv.slice(1)] : argv;
+      const child = spawn(cmd!, args, { stdio: ['ignore', 'pipe', 'pipe'], env: env ? { ...process.env, ...env } : process.env });
       const timer = setTimeout(() => { timedOut = true; child.kill('SIGKILL'); }, timeoutMs);
       child.stdout?.on('data', chunk => { output += chunk; });
       child.stderr?.on('data', chunk => { output += chunk; });
