@@ -11,6 +11,7 @@
  */
 import type { LegacyUnscopedRead } from './brands.ts';
 import type { QueryOpts, SqlExecutor } from './executor.ts';
+import type { FenceOpts } from './lease-token.ts';
 import type { ProjectionScanCursor } from '../page-state/projection-window.ts';
 import { joinFragments, sqlFragment, trustedSql, type SqlFragment } from './fragment.ts';
 
@@ -32,7 +33,7 @@ export const COMPLETE_HOUSEKEEPING_TURN_SQL = `UPDATE op_checkpoints SET complet
     WHERE op=$1 AND fingerprint=$2 AND completed_keys='["leased"]'::jsonb`;
 
 /** A turn claim: the checkpoint op, this host, the interval after a finished turn, the lease, and which live consumers block it. */
-export interface HousekeepingTurnClaim {
+export interface HousekeepingTurnClaim extends FenceOpts {
   op: string; hostId: string; intervalMs: number; leaseMs: number; consumerKinds: readonly string[]; consumerLiveMs: number;
 }
 

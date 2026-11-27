@@ -13,6 +13,7 @@ import type {
 } from '../../engine-sql/jobs-wake.ts';
 import { withDates } from '../store-codec.ts';
 import { storeCall, type StoreMember } from './common.ts';
+import type { FenceOpts } from '../../engine-sql/lease-token.ts';
 
 const call = <T>(member: string, run: () => Promise<T>): Promise<T> => storeCall({ member }, run);
 
@@ -67,8 +68,8 @@ export const recordWakeTermsAcceptance: StoreMember<[principalKey: string, terms
 export const listDueWakeWatches: StoreMember<[spec?: { ids?: readonly number[] }], WakeRow[]> = async (brain, spec) =>
   (await call<WakeRow[]>('listDueWakeWatches', () => brain.listDueWakeWatches(spec?.ids ? [...spec.ids] : null))).map(r => withDates(r, DUE_DATES));
 
-export const claimWakeWatch: StoreMember<[id: number, leaseSeconds: number], { lease: string; attempts: number } | null> = (brain, id, leaseSeconds) =>
-  call('claimWakeWatch', () => brain.claimWakeWatch(id, leaseSeconds));
+export const claimWakeWatch: StoreMember<[id: number, leaseSeconds: number, opts?: FenceOpts], { lease: string; attempts: number } | null> = (brain, id, leaseSeconds, opts) =>
+  call('claimWakeWatch', () => opts?.fence ? brain.claimWakeWatch(id, leaseSeconds, opts.fence) : brain.claimWakeWatch(id, leaseSeconds));
 
 export const settleWakeWatch: StoreMember<[settle: WakeWatchSettle], boolean> = (brain, settle) =>
   call('settleWakeWatch', () => brain.settleWakeWatch(settle));
@@ -83,7 +84,7 @@ export const forgetWakeMember: StoreMember<[memberId: string], { ended: number; 
 export const forgetWakeCredential: StoreMember<[kind: WakeCredentialKind, id: string], { ended: number; queued: number }> = (brain, kind, id) =>
   call('forgetWakeCredential', () => brain.forgetWakeCredential(kind, id));
 
-export const claimWakeForgets: StoreMember<[spec: { leaseSeconds: number; limit: number }], WakeForgetClaim[]> = (brain, spec) =>
+export const claimWakeForgets: StoreMember<[spec: { leaseSeconds: number; limit: number } & FenceOpts], WakeForgetClaim[]> = (brain, spec) =>
   call('claimWakeForgets', () => brain.claimWakeForgets(spec));
 
 export const settleWakeForget: StoreMember<[settle: WakeForgetSettle], boolean> = (brain, settle) =>

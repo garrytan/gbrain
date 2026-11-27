@@ -417,7 +417,7 @@ export interface PersistenceMembers {
   /** Leases this host's housekeeping turn; true when it was free. `direct` sends it on the Postgres direct pool. */
   claimHousekeepingTurn(claim: HousekeepingTurnClaim, opts?: { signal?: AbortSignal; direct?: boolean }): Promise<boolean>;
   /** Marks this host's leased housekeeping turn finished. `direct` sends it on the Postgres direct pool. */
-  completeHousekeepingTurn(turn: { op: string; hostId: string }, opts?: { direct?: boolean }): Promise<void>;
+  completeHousekeepingTurn(turn: { op: string; hostId: string } & FenceOpts, opts?: { direct?: boolean }): Promise<void>;
   /** The explicit receipt retention (null when unset), the brain's reserved terminal bytes and now minus `floorDays`, as text. */
   readReceiptBudget(retentionKey: string, floorDays: number): Promise<ReceiptBudget>;
   /** Up to 100 compactable receipts completed over `retentionDays` ago, oldest first, without unresolved caller refusals or open-sync rows. */
@@ -442,11 +442,11 @@ export interface PersistenceMembers {
   selectProjectionWindowJobs(cursor: Pick<ProjectionScanCursor, 'after' | 'highWater'>, retryCooldown: boolean): Promise<ProjectionWindowRow[]>;
   // The segmented projector's queue writes (page-body/projection.ts). `claim` is `segmented_projecting:<uuid>`, unique to one build.
   /** Claims the page's queued job unless another live claim holds it: `claimed`, `held`, or `absent` when the page has no job. */
-  claimSegmentedProjection(ref: ProjectionPageRef, claim: string): Promise<SegmentedProjectionClaimOutcome>;
+  claimSegmentedProjection(ref: ProjectionPageRef, claim: string, opts?: FenceOpts): Promise<SegmentedProjectionClaimOutcome>;
   /** Moves this build's claim to now, in the caller's transaction when it has one; false when the job no longer carries `claim`. */
-  renewSegmentedProjectionClaim(ref: ProjectionPageRef, claim: string): Promise<boolean>;
+  renewSegmentedProjectionClaim(ref: ProjectionPageRef, claim: string, opts?: FenceOpts): Promise<boolean>;
   /** Puts a job that still carries `claim` back to `canonical_change`, so another build can take it. */
-  releaseSegmentedProjectionClaim(ref: ProjectionPageRef, claim: string): Promise<void>;
+  releaseSegmentedProjectionClaim(ref: ProjectionPageRef, claim: string, opts?: FenceOpts): Promise<void>;
   /** Deletes the job when it is still queued at `job.revision` (the page sealed at that revision). */
   deleteProjectionJob(job: ProjectionJobRef): Promise<void>;
   /** Marks a job still queued at `job.revision` and not under a live claim `rebuild_failed`, starting its retry window. */
