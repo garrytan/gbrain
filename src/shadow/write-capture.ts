@@ -14,6 +14,9 @@ import { relationRead } from './seed.ts';
 import { MAX_DROPPED, MAX_PRE_LINKS, MAX_PRE_PAGES, movedOutsideFootprint, PILOT_WRITES, pageRefs, pageSet, readBack, readBackText, writeFamily, type PageRef, type PreImage, type WriteEvent } from './write-compare.ts';
 import { sqlWrites } from './sql-writes.ts';
 import { memberKind } from './write-map.ts';
+import { INSERT_CANONICAL_TIMELINE_SQL, REMOVE_TIMELINE_ROWS_SQL, UPDATE_TIMELINE_DETAILS_SQL } from '../core/engine-sql/timeline.ts';
+import { DELETE_TAKE_ROWS_SQL } from '../core/engine-sql/takes.ts';
+import { DELETE_STALE_PAGE_WRITE_GATE_RECEIPTS_SQL } from '../core/engine-sql/trust-write-gate.ts';
 import { COMPLETE_WRITE_PURGE_PROBE_SQL, COMPLETE_WRITE_SQL, ENSURE_COUNTERS_SQL, LOCK_COUNTERS_SQL, PUBLICATION_EFFECTS_SQL } from '../core/engine-sql/persistence-journal.ts';
 
 /** How long the preimage read may hold a sampled write. */
@@ -181,6 +184,13 @@ export const JOURNAL_MEMBER_STATEMENTS: ReadonlyMap<string, readonly string[]> =
   ['completeWriteRow', [COMPLETE_WRITE_SQL, COMPLETE_WRITE_PURGE_PROBE_SQL]],
   // The publication's effects insert (persistence_effects only): a raw statement the rule judged bookkeeping until the journal moved onto this member.
   ['insertPublicationEffects', [PUBLICATION_EFFECTS_SQL]],
+  // A page write's own timeline rows, its fence takes and its stale page receipts (timeline_entries, takes and write_gate_receipts only): raw
+  // statements the rule judged bookkeeping until the put path moved onto these members (engine-sql/timeline.ts, takes.ts, trust-write-gate.ts).
+  ['removeTimelineRows', [REMOVE_TIMELINE_ROWS_SQL]],
+  ['insertCanonicalTimelineRows', [INSERT_CANONICAL_TIMELINE_SQL]],
+  ['updateTimelineDetails', [UPDATE_TIMELINE_DETAILS_SQL]],
+  ['deleteTakeRows', [DELETE_TAKE_ROWS_SQL]],
+  ['deleteStalePageWriteGateReceipts', [DELETE_STALE_PAGE_WRITE_GATE_RECEIPTS_SQL]],
 ]);
 /** The closing text seal of an imported page (engine-sql/write-guards.ts sealImportedPage): the statement AFTER_PAGE_WRITE matched by text while it was raw, pinned by test/shadow-follow-producer.test.ts. */
 const SEAL_MEMBER = 'sealImportedPage';

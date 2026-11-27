@@ -148,6 +148,7 @@ import { PgliteCheckpointGuard, guardedHandle, writesWal } from './pglite-engine
 import { pgliteExecutor } from './engine-sql/dialect-pglite.ts';
 import type { SqlExecutor } from './engine-sql/executor.ts';
 import { scopedRead, unscopedExecutor } from './engine-sql/brands.ts';
+import * as factsBackstopImpl from './engine-sql/facts-backstop.ts';
 import * as codeEdgesImpl from './engine-sql/code-edges.ts';
 import * as codeTraversalCache from './engine-sql/code-traversal-cache.ts';
 import { getEdgesByChunk as getEdgesByChunkPglite, type PgliteCodeEdgesDeps } from './pglite-engine/code-edges.ts';
@@ -279,6 +280,9 @@ import * as trustFenceImpl from './engine-sql/trust-fence.ts';
 import * as idleProbeImpl from './engine-sql/persistence-idle-probe.ts';
 import * as linkTemporalImpl from './engine-sql/link-temporal.ts';
 import type { RelationshipKey, RelationshipStateWrite } from './link-relationships.ts';
+import type { TrustTable } from './trust/schema.ts';
+import * as versionReasons from './engine-sql/version-reasons.ts';
+import * as noopSettleImpl from './engine-sql/persistence-embedding-noop-settle.ts';
 
 /**
  * #4284 — opt-in out-of-band watchdog for a PGLite disconnect with a live
@@ -3751,4 +3755,21 @@ export class PGLiteEngine implements BrainEngine {
   requeueEffectRow(claim: effectWorkerImpl.EffectClaimRef & { dataJson: string; reason: string | null; delayMs: number }) { return effectWorkerImpl.requeueEffectRow(this, claim); }
   parkEffectRow(claim: effectWorkerImpl.EffectClaimRef & { dataJson: string }) { return effectWorkerImpl.parkEffectRow(this, claim); }
   deleteStalePageWriteGateReceipts(sourceId: string, slug: string, contentHash: string | null) { return trustWriteGateImpl.deleteStalePageWriteGateReceipts(this.engineSql, sourceId, slug, contentHash); }
+  pendingTrustProposalsFor(table: TrustTable, id: number) { return trustProposalsImpl.pendingTrustProposalsFor(unscopedExecutor(this.engineSql, 'trust: the trust proposal read ran through executeRaw unscoped'), table, id); }
+  async readLatestVersionIdAtTier(pageId: number, tier: string) { return versionReasons.readLatestVersionIdAtTier(this, pageId, tier); }
+  readFenceHoldFiles(sourceIds: readonly string[], slugs: readonly string[]) { return fenceHoldsImpl.readFenceHoldFiles(this.rawRead, sourceIds, slugs); }
+  probeNoopEmbeddingSettle(from: string) { return noopSettleImpl.probeNoopEmbeddingSettle(this, from); }
+  lockNoopEmbeddingWindow(spec: { from: string; limit: number }) { return noopSettleImpl.lockNoopEmbeddingWindow(this, spec); }
+  readNoopEmbeddingCandidates(spec: noopSettleImpl.NoopSettleCandidateSpec) { return noopSettleImpl.readNoopEmbeddingCandidates(this, spec); }
+  settleNoopEmbeddingRows(ids: readonly string[]) { return noopSettleImpl.settleNoopEmbeddingRows(this, ids); }
+  probeProjectionWindowCandidates(candidates: readonly projectionRebuildImpl.ProjectionWindowCandidate[]) { return projectionRebuildImpl.probeProjectionWindowCandidates(this.rawRead, candidates); }
+  readPagesRowEstimate() { return projectionRebuildImpl.readPagesRowEstimate(this.rawRead); }
+  hasPendingFactsExtraction(pageId: number | string, jobStates: readonly string[]) { return factsBackstopImpl.hasPendingFactsExtraction(unscopedExecutor(this.engineSql, 'facts backstop: pending extraction read ran unscoped through executeRaw'), pageId, jobStates); }
+  hasCompletedFactsExtraction(pageId: number | string) { return factsBackstopImpl.hasCompletedFactsExtraction(unscopedExecutor(this.engineSql, 'facts backstop: completed extraction read ran unscoped through executeRaw'), pageId); }
+  readProjectionJobReason(key: projectionRebuildImpl.ProjectionJobKey) { return projectionRebuildImpl.readProjectionJobReason(this.rawRead, key); }
+  hasSegmentedPage(sourceId: string, slug: string) { return projectionRebuildImpl.hasSegmentedPage(this.rawRead, sourceId, slug); }
+  rekeyProjectionJob(job: projectionRebuildImpl.ProjectionJobKey, revision: string) { return projectionRebuildImpl.rekeyProjectionJob(this.rawRead, job, revision); }
+  stampDeferredProjectionJob(job: projectionRebuildImpl.ProjectionJobKey, requeue: boolean) { return projectionRebuildImpl.stampDeferredProjectionJob(this.rawRead, job, requeue); }
+  touchUnclaimedProjectionJob(job: projectionRebuildImpl.ProjectionJobKey) { return projectionRebuildImpl.touchUnclaimedProjectionJob(this.rawRead, job); }
+  deferProjectionJob(job: projectionRebuildImpl.ProjectionJobKey) { return projectionRebuildImpl.deferProjectionJob(this.rawRead, job); }
 }

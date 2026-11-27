@@ -519,6 +519,7 @@ import type { GuardedTakeRow } from './engine-sql/trust-fence.ts';
 import type { GuardedTakeRowsQuery } from './engine-sql/trust-fence.ts';
 import type { LinkEndpointPage } from './engine-sql/link-reads.ts';
 import type { LivePageBodyRow } from './engine-sql/write-guards.ts';
+import type { TrustTable } from './trust/schema.ts';
 export type { StaleTakeOpts, StaleTakeRow, TakeEmbeddingInput } from './takes-row-types.ts';
 
 /** Resolution metadata for resolveTake. */
@@ -3736,4 +3737,12 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
   staleLinkRelationshipKeys(limit: number): Promise<RelationshipKey[]>;
   /** The raw stored `trust_tier` of a page by (source, slug), live or a tombstone (the page write gate), or null (engine-sql/write-guards.ts). */
   readStoredPageTier(sourceId: string, slug: string): Promise<string | null>;
+  /** The pending trust proposals naming a row as target or related, by id. */
+  pendingTrustProposalsFor(table: TrustTable, id: number): Promise<TrustProposalRow[]>;
+  /** The page's newest version whose snapshot `trust_tier` is `tier`, or null when none is (engine-sql/version-reasons.ts). */
+  readLatestVersionIdAtTier(pageId: number, tier: string): Promise<number | null>;
+  /** Whether page `pageId` has a queued or running facts backstop effect, or a facts-absorb job in `jobStates` (engine-sql/facts-backstop.ts). */
+  hasPendingFactsExtraction(pageId: number | string, jobStates: readonly string[]): Promise<boolean>;
+  /** Whether a facts-absorb job for page `pageId` completed without being skipped (engine-sql/facts-backstop.ts). */
+  hasCompletedFactsExtraction(pageId: number | string): Promise<boolean>;
 }

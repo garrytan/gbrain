@@ -79,4 +79,5 @@ export const FACTS_MEMBERS = {
   listFenceFactRows: 'facts',
   listFenceRetireCandidates: 'facts',
   deleteStalePageWriteGateReceipts: 'facts',
+  pendingTrustProposalsFor: 'facts',
 } as const satisfies Partial<Record<keyof BrainEngine, MemberClass>>;

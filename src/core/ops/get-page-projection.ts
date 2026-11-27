@@ -9,7 +9,6 @@ import { renderTrustedText, type TrustFields } from '../eligibility/labels.ts';
 import { loadPageTrust } from '../eligibility/stamp.ts';
 import { resolveReadEligibility, type ReadEligibility } from '../eligibility/policy.ts';
 import { admitsTrust } from '../trust/tier.ts';
-import { rederiveHiddenSql } from '../eligibility/sql.ts';
 import { fenceTranscriptText, isQuotedPageType, neutralizeToolCalls, quotesTier } from '../search/transcript-quote.ts';
 
 /**
@@ -214,9 +213,7 @@ export async function pageTrustForRead(ctx: Pick<OperationContext, 'engine' | 'a
   const trust = (await loadPageTrust(ctx.engine, [{ page_id: page.id, slug: '' }]).catch(() => null))?.byId.get(page.id)
     ?? { trust_tier: 'unknown' as const, origin: 'unrecorded' };
   if (eligibility.floor && !admitsTrust(trust.trust_tier, eligibility.floor)) return null;
-  const [hidden] = await ctx.engine.executeRaw<{ n: number }>(
-    `SELECT count(*)::int AS n FROM pages p WHERE p.id = $1 AND NOT ${rederiveHiddenSql('pages', 'p')}`, [page.id]);
-  if (Number(hidden?.n) > 0) return null;
+  if (await ctx.engine.pageAwaitsRederive(Number(page.id))) return null;
   return { trust, eligibility };
 }
 

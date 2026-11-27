@@ -3,7 +3,7 @@
  * a thin call over the store's page_body family (rust/docs/store/page_body.md). Bytes cross the binding as lowercase
  * hex and dates as ISO strings; this file converts them to and from `Uint8Array` and `Date`.
  *
- * Served: allocateBodyOccurrenceIds, stageSegmentTexts, readSegmentTexts, stageManifestRows, readManifest,
+ * Served: allocateBodyOccurrenceIds, stageSegmentTexts, readSegmentTexts, stageManifestRows, readManifest, readSegmentedEmbedPage,
  * stageSegmentChunks, createSegmentedPageShell, flipBodyGeneration, sealSegmentedPage, openBodyStaging, setBodyStagingState,
  * readSegmentDerivations, upsertSegmentDerivations, retireSegmentDerivations, refreshPageBody. stageSegmentChunks
  * refuses a chunk that carries a vector (vectors are not stored), as upsertChunks does.
@@ -18,7 +18,7 @@
  * unexported.
  */
 import type { BodyFlipInput, BodyFlipResult, BodyRegion, BodyStagingInput, BodyStagingState, ManifestRow, ManifestRowInput,
-  SegmentChunkInput, SegmentedPageMeta, SegmentTextInput } from '../../page-body/types.ts';
+  SegmentChunkInput, SegmentedEmbedPage, SegmentedEmbedRef, SegmentedPageMeta, SegmentTextInput } from '../../page-body/types.ts';
 import type { SegmentDerivationInput, SegmentDerivationKind, SegmentDerivationRow } from '../../page-body/derivations.ts';
 import { bodyGenerationIncompleteError, bodyStagingGoneError } from '../../engine-sql/page-body.ts';
 import { opError } from '../../ops/contract.ts';
@@ -139,6 +139,15 @@ export const readManifest: StoreMember<[pageId: number, opts?: { generation?: nu
     const rows: StoredManifestRow[] = await storeCall({ member: 'readManifest' }, () => brain.readManifest(pageId, o));
     return rows.map(toManifestRow);
   };
+
+/** The stored row's `body_bytes` is null when the shell recorded none; `Number(null)` reads it as 0, as PGLite's read does. */
+type StoredSegmentedEmbedPage = Omit<SegmentedEmbedPage, 'body_storage' | 'body_bytes'> & { body_bytes: number | null };
+
+export const readSegmentedEmbedPage: StoreMember<[ref: SegmentedEmbedRef], SegmentedEmbedPage | null> = async (brain, ref) => {
+  const input = 'id' in ref ? { id: ref.id } : { sourceId: ref.sourceId, slug: ref.slug };
+  const row: StoredSegmentedEmbedPage | null = await storeCall({ member: 'readSegmentedEmbedPage' }, () => brain.readSegmentedEmbedPage(input));
+  return row ? { ...row, id: Number(row.id), body_storage: 'segmented', body_bytes: Number(row.body_bytes) } : null;
+};
 
 /**
  * The chunks get PGLite's normalisation (`prepareChunks`: model default, empty values to null, scrubbed text) plus

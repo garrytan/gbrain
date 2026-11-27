@@ -5,7 +5,7 @@
  */
 import type { ImportedPageSeal } from '../../engine-sql/write-guards.ts';
 import { storeCall, type StoreMember } from './common.ts';
-import type { LivePageBodyRow } from '../../engine-sql/write-guards.ts';
+import type { LivePageBodyRow, PageIndexingState } from '../../engine-sql/write-guards.ts';
 
 /** Seals an imported page: the revision, the timeline text and the chunker version; the sealed page's id, or null. */
 export const sealImportedPage: StoreMember<[slug: string, seal: ImportedPageSeal], { id: number } | null> = async (brain, slug, seal) => {
@@ -23,3 +23,6 @@ export const readLivePageBody: StoreMember<[slug: string, opts: { sourceId: stri
 
 export const readStoredPageTier: StoreMember<[sourceId: string, slug: string], string | null> = (brain, sourceId, slug) =>
   storeCall({ member: 'readStoredPageTier', slug, sourceId }, () => brain.readStoredPageTier(sourceId, slug));
+
+export const readPageIndexingState: StoreMember<[pageId: number], PageIndexingState | null> = (brain, pageId) =>
+  storeCall({ member: 'readPageIndexingState' }, () => brain.readPageIndexingState(pageId)) as Promise<PageIndexingState | null>;

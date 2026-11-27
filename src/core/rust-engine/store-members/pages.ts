@@ -7,17 +7,45 @@ import { sourceOriginScope } from '../../persistence/origin-guard.ts';
 import { isRevisionRejection, mapStoreError } from '../store-errors.ts';
 import type { StoreBrain } from '../store.ts';
 import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
+import { storePagePolicy } from './private-provenance.ts';
 
-const READ_SCOPE = ['sourceId', 'sourceIds', 'includeDeleted'] as const;
+const READ_SCOPE = ['sourceId', 'sourceIds', 'includeDeleted', 'excludePrivate', 'resolveAlias', 'requireUnambiguous',
+  'requireLiveSource', 'preserveExactIdentity'] as const;
+
+/**
+ * The store scope of a page read: `excludePrivate` becomes the page policy (`privatePagesFilterForCaller('p')`, with the
+ * caller's reader identity and private-readable grant), under which a hidden page reads as missing.
+ */
+function pageScope(member: string, opts: object | undefined, allowed: readonly string[], ignored: readonly string[] = []): Record<string, unknown> {
+  const scope = takeOptions(member, opts, allowed, ignored);
+  if ('excludePrivate' in scope) scope.excludePrivate = storePagePolicy(member, scope.excludePrivate, { callerReaders: true }) ?? null;
+  return scope;
+}
+
+/**
+ * PGLite reads a page by its exact stored spelling. The store keeps every slug lowercased and lowercases the slug it is
+ * asked for, so a slug with capitals would find the lowercase page that PGLite's exact read misses (and `get` would add
+ * `resolved_slug`). No stored slug has capitals, so such a read answers nothing, as on PGLite, once its options pass.
+ */
+const hasCapitals = (slug: string) => slug !== slug.toLowerCase();
 
 export const readPageSnapshot: StoreMember<[slug: string, opts?: PageSnapshotOptions], PageSnapshot | null> = async (brain, slug, opts) => {
-  const scope = takeOptions('readPageSnapshot', opts, READ_SCOPE);
+  const scope = pageScope('readPageSnapshot', opts, READ_SCOPE);
+  if (hasCapitals(slug)) return null;
   const snapshot: PageSnapshot | null = await storeCall({ member: 'readPageSnapshot', slug }, () => brain.readPageSnapshot(slug, scope));
   return snapshot === null ? null : { ...snapshot, page: toGetPage(snapshot.page) };
 };
 
+/**
+ * `readPolicyOpts` (get_write_attribution) also passes `requireSafeChunks` and `takesHoldersAllowList`. The SQL page
+ * read (page-state/snapshot.ts) reads neither: they fence chunk and take reads, not the page row. The store ignores
+ * them too.
+ */
+const GET_PAGE_UNREAD = ['requireSafeChunks', 'takesHoldersAllowList'] as const;
+
 export const getPage: StoreMember<[slug: string, opts?: GetPageOpts], Page | null> = async (brain, slug, opts) => {
-  const scope = takeOptions('getPage', opts, READ_SCOPE);
+  const scope = pageScope('getPage', opts, READ_SCOPE, GET_PAGE_UNREAD);
+  if (hasCapitals(slug)) return null;
   const snapshot: PageSnapshot | null = await storeCall({ member: 'getPage', slug }, () => brain.readPageSnapshot(slug, scope));
   return snapshot === null ? null : toGetPage(snapshot.page);
 };

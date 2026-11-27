@@ -20,6 +20,7 @@ import { isGuestWrite, skipsGuestNote } from '../guests/derived.ts';
 import { bodyUnread, isSegmentedPage } from '../page-body/page-shape.ts';
 import type { PersistenceEffect } from './effect-model.ts';
 import type { WriteRequest } from './model.ts';
+import { requireOauthClientColumns } from '../engine-sql/oauth-clients.ts';
 
 export type FactsBackstopStatus = { queued: true } | { skipped: string };
 
@@ -32,13 +33,14 @@ export async function authorizeFactsBackstop(engine: BrainEngine, row: WriteRequ
   await authorizeWrite(engine, row.authority, 'extract_facts', row.slug, lock);
   // A grant may have become confined while the page itself remains in scope.
   if (row.principal_kind === 'oauth_client') {
-    const [current] = await engine.executeRaw<{ bound_slug_prefixes: unknown }>('SELECT bound_slug_prefixes FROM oauth_clients WHERE client_id=$1', [row.principal_id]);
+    const found = await engine.readOauthClient(row.principal_id);
+    const current = found && requireOauthClientColumns(found, ['bound_slug_prefixes']);
     if (current?.bound_slug_prefixes != null) throw opError('permission_denied', 'The current writer grant is confined.',
       `OAuth client ${row.principal_id} is now bound to slug prefixes, so facts from ${row.slug} are not extracted; the page itself is written. Widening the grant is the brain host operator's decision.`,
       { fix: readFix('Lists the OAuth clients with their bound slug prefixes, read-only.', { argv: ['gbrain', 'auth', 'clients', '--json'] }) });
   } else if (row.principal_kind === 'local_cli' || row.principal_kind === 'local_stdio') {
-    const [current] = await engine.executeRaw<{ prefixes: unknown }>("SELECT grant_ceiling->'slugPrefixes' AS prefixes FROM persistence_local_writers WHERE id=$1::uuid", [row.principal_id]);
-    if (current?.prefixes != null) throw opError('permission_denied', 'The current writer grant is confined.',
+    const prefixes = await engine.readWriterSlugFence({ kind: row.principal_kind, id: row.principal_id });
+    if (prefixes != null) throw opError('permission_denied', 'The current writer grant is confined.',
       `Local writer ${row.principal_id} now has slug prefixes, so facts from ${row.slug} are not extracted; the page itself is written. Replacing the grant is the user's decision.`,
       { fix: readFix('Lists the local writer registrations and their grants, read-only.', { argv: ['gbrain', 'auth', 'local-writer', 'list', '--json'] }) });
   }
@@ -53,23 +55,12 @@ const STARTABLE_JOB_STATES: readonly MinionJobStatus[] = ['waiting', 'delayed', 
  * still start. Both carry the page id and revision, so the next revision ends
  * them as `superseded`.
  */
-async function extractionPendingForPage(engine: BrainEngine, pageId: number): Promise<boolean> {
-  const [row] = await engine.executeRaw<{ pending: boolean }>(
-    `SELECT EXISTS (SELECT 1 FROM persistence_effects
-                     WHERE kind = 'facts-backstop' AND state IN ('queued', 'running') AND data->>'page_id' = $1)
-         OR EXISTS (SELECT 1 FROM minion_jobs
-                     WHERE name = 'facts-absorb' AND status = ANY($2::text[]) AND data->>'page_id' = $1) AS pending`,
-    [String(pageId), [...STARTABLE_JOB_STATES]]);
-  return row?.pending === true;
+function extractionPendingForPage(engine: BrainEngine, pageId: number): Promise<boolean> {
+  return engine.hasPendingFactsExtraction(pageId, STARTABLE_JOB_STATES);
 }
 
-async function extractionCompletedForPage(engine: BrainEngine, pageId: number): Promise<boolean> {
-  const [row] = await engine.executeRaw<{ done: boolean }>(
-    `SELECT EXISTS (SELECT 1 FROM minion_jobs
-                     WHERE name = 'facts-absorb' AND status = 'completed' AND data->>'page_id' = $1
-                       AND result->>'skipped' IS NULL) AS done`,
-    [String(pageId)]);
-  return row?.done === true;
+function extractionCompletedForPage(engine: BrainEngine, pageId: number): Promise<boolean> {
+  return engine.hasCompletedFactsExtraction(pageId);
 }
 
 /**
@@ -115,7 +106,7 @@ export async function readFactsBackstopJobPage(engine: BrainEngine, data: Record
   if (!snapshot) return { skipped: 'page_missing' } as const;
   if (data.persistence_request_id !== undefined) {
     if (typeof data.persistence_request_id !== 'string' || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(data.persistence_request_id)) return { skipped: 'invalid_write_request' } as const;
-    const [row] = await engine.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE id=$1::uuid', [data.persistence_request_id]);
+    const row = await engine.readWriteRequestById(data.persistence_request_id);
     if (!row || row.state !== 'committed' || row.slug !== slug || row.source_id !== sourceId
       || row.source_incarnation !== snapshot.sourceIncarnation || snapshot.page.id !== data.page_id
       || snapshot.revision !== data.revision) return { skipped: 'superseded' } as const;
@@ -131,9 +122,9 @@ export async function readFactsBackstopJobPage(engine: BrainEngine, data: Record
 /** Job insertion and outbox completion commit together; losing their ACK cannot create another job. */
 export async function dispatchFactsBackstopEffect(engine: BrainEngine, effect: PersistenceEffect, hostId: string): Promise<void> {
   await engine.transaction(async tx => {
-    await tx.executeRaw("SELECT set_config('synchronous_commit','on',true)");
+    await tx.requireSynchronousCommit();
     await guardEffectSource(tx, effect, hostId);
-    const [row] = await tx.executeRaw<WriteRequest>('SELECT * FROM persistence_requests WHERE id=$1::uuid', [effect.request_id]);
+    const row = await tx.readWriteRequestById(effect.request_id);
     let skipped: string | undefined;
     if (!row || row.state !== 'committed') skipped = 'invalid_write_request';
     if (row && !skipped) {
@@ -144,7 +135,7 @@ export async function dispatchFactsBackstopEffect(engine: BrainEngine, effect: P
       }
     }
     if (effect.data.slug) await tx.lockPageKeys([{ sourceId: effect.source_id, slug: effect.data.slug }]);
-    const [current] = await tx.executeRaw<PersistenceEffect>('SELECT * FROM persistence_effects WHERE id=$1 FOR UPDATE', [effect.id]);
+    const current = await tx.lockEffectClaimRow(effect.id);
     if (!current || current.state !== 'running' || current.execution_token !== effect.execution_token) return;
     const snapshot = effect.data.slug ? await tx.readPageSnapshot(effect.data.slug, { sourceId: effect.source_id }) : null;
     if (!snapshot || snapshot.page.id !== effect.data.page_id || snapshot.revision !== effect.revision) skipped ??= 'superseded';

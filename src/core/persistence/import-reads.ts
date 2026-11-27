@@ -104,7 +104,7 @@ const ORIGIN = flat(SYNC_ORIGIN_PAGES_SQL), TIMELINE = flat(STORED_TIMELINE_SQL)
  * preparation reads its own page's origin claimants, timeline rows, take collisions and safe-chunk fence. Here each kind
  * is read once for the slice (the first call sends it) and every call it covers is answered row for row as its own
  * statement would answer: the origin read is the same statement over the slice's paths, filtered to the call's; a page
- * with no stored takes has no collision; the timeline and fence reads are their statements over the slice's page ids.
+ * with no stored takes has no collision (the typed `matchTakeRows` read too); the timeline and fence reads are their statements over the slice's page ids.
  * A call the slice read does not cover (another page or path, a page with takes rows, a caller's signal) runs its own
  * statement, and a failed slice read falls back to each call's own.
  */
@@ -127,6 +127,7 @@ export function sliceReads(engine: BrainEngine, slice: { sourceId: string; pageI
     return out;
   };
   const pageIds = [...ids].map(Number);
+  const pagesWithTakes = () => once(TAKES, async () => byKey(await engine.executeRaw<Record<string, unknown>>('SELECT DISTINCT page_id FROM takes WHERE page_id=ANY($1::bigint[])', [pageIds]), 'page_id'));
   const answer = (kind: string, sql: string, params: unknown[]): Promise<unknown[]> | undefined => {
     if (kind === ORIGIN) {
       const wanted = params[1] as unknown;
@@ -136,14 +137,14 @@ export function sliceReads(engine: BrainEngine, slice: { sourceId: string; pageI
     }
     const id = String(params[0]);
     if (!ids.has(id)) return undefined;
+    // No COLLATE "C": `date` here is the ISO text alias, fixed-width digits and dashes, which sorts the same in every collation; the text must stay equal to STORED_TIMELINE_SQL (timeline-reads.ts).
     if (kind === TIMELINE) return once(kind, async () => byKey(await engine.executeRaw<Record<string, unknown>>(
       'SELECT page_id,id,date::text AS date,source,summary,detail FROM timeline_entries WHERE page_id=ANY($1::bigint[]) AND event_page_id IS NULL ORDER BY page_id,date,id', [pageIds]), 'page_id', true))
       .then(rows => rows.get(id) ?? []);
     if (kind === FENCE) return once(kind, async () => byKey(await engine.executeRaw<Record<string, unknown>>(
       "SELECT id,chunker_version FROM pages WHERE id=ANY($1::bigint[]) AND deleted_at IS NULL AND body_storage IS DISTINCT FROM 'segmented'", [pageIds]), 'id', true))
       .then(rows => rows.get(id) ?? []);
-    return once(kind, async () => byKey(await engine.executeRaw<Record<string, unknown>>('SELECT DISTINCT page_id FROM takes WHERE page_id=ANY($1::bigint[])', [pageIds]), 'page_id'))
-      .then(rows => rows.has(id) ? engine.executeRaw(sql, params) : []);
+    return pagesWithTakes().then(rows => rows.has(id) ? engine.executeRaw(sql, params) : []);
   };
   return registerSliceView(new Proxy(engine, { get(target, key) {
     if (key === 'executeRaw') return (sql: string, params?: unknown[], opts?: { signal?: AbortSignal }) => {
@@ -151,11 +152,22 @@ export function sliceReads(engine: BrainEngine, slice: { sourceId: string; pageI
       const answered = !opts?.signal && params && [ORIGIN, TIMELINE, TAKES, FENCE].includes(kind) ? answer(kind, sql, params) : undefined;
       return answered ? answered.catch(() => target.executeRaw(sql, params, opts)) : target.executeRaw(sql, params, opts);
     };
+    // The typed stored-timeline read is STORED_TIMELINE_SQL: answer it from the slice's batch too.
+    if (key === 'listStoredTimelineRowsOrdered') return async (pageId: number) => {
+      const answered = answer(TIMELINE, STORED_TIMELINE_SQL, [pageId]);
+      const rows = answered ? await answered.catch(() => undefined) : undefined;
+      return rows ?? target.listStoredTimelineRowsOrdered(pageId);
+    };
     // The typed fence read (`getPageSealState`) is the same statement as FENCE: answer it from the slice's batch too.
     if (key === 'getPageSealState') return async (pageId: number) => {
       const answered = answer(FENCE, SAFE_FENCE_SQL, [pageId]);
       const rows = answered ? await answered.catch(() => undefined) : undefined;
       return rows ? (rows[0] as { chunker_version: number | null } | undefined) ?? null : target.getPageSealState(pageId);
+    };
+    // The typed take collision read (`matchTakeRows`) is the same statement as TAKES: a page of the slice with no stored takes has no collision.
+    if (key === 'matchTakeRows') return async (pageId: number, rows: Parameters<BrainEngine['matchTakeRows']>[1], limit: number) => {
+      const has = ids.has(String(pageId)) ? await pagesWithTakes().then(pages => pages.has(String(pageId)), () => undefined) : undefined;
+      return has === false ? [] : target.matchTakeRows(pageId, rows, limit);
     };
     const value = Reflect.get(target, key, target);
     return typeof value === 'function' ? value.bind(target) : value;

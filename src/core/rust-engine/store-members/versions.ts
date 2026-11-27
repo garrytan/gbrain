@@ -1,14 +1,18 @@
 /**
- * Page version members (BrainEngine createVersion, getVersions). A version keeps the reason a write stamped on it and
+ * Page version members (BrainEngine createVersion, getVersions, readLatestVersionIdAtTier). A version keeps the reason a write stamped on it and
  * can version the caller's own read of the page (`preimage`). `revertToVersion` is not served: it reads pages through
  * raw SQL.
  */
 import type { PageVersion, GetVersionsOpts, PageVersionRows } from '../../page-state/version-types.ts';
 import { toCreatedVersion, toVersion } from '../store-codec.ts';
-import { storeCall, takeOptions, type StoreMember } from './common.ts';
+import { refuseMember, storeCall, takeOptions, type StoreMember } from './common.ts';
 import type { VersionHistory } from '../../page-state/versions.ts';
 import type { PageSnapshot } from '../../page-state/types.ts';
 import { isSegmentedPage } from '../../page-body/page-shape.ts';
+
+function requireInteger(member: string, name: string, value: number): void {
+  if (!Number.isSafeInteger(value)) refuseMember(member, `a ${name} that is not an integer`);
+}
 
 /**
  * The fields of the caller's page read (`createPageVersion`'s `preimage`) that the version takes: a fact purge reads the
@@ -43,4 +47,12 @@ export const getVersions: StoreMember<[slug: string, opts?: GetVersionsOpts<bool
   const scope = takeOptions('getVersions', opts, ['sourceId', 'sourceIds', 'limit', 'includeBody']);
   const rows: PageVersion[] = await storeCall({ member: 'getVersions', slug }, () => brain.getVersions(slug, scope));
   return rows.map((row) => toVersion(row)) as PageVersionRows<boolean>;
+};
+
+/** The page's newest version id stamped with `tier`, or null (engine-sql/version-reasons.ts readLatestVersionIdAtTier). */
+export const readLatestVersionIdAtTier: StoreMember<[pageId: number, tier: string], number | null> = async (brain, pageId, tier) => {
+  const member = 'readLatestVersionIdAtTier';
+  requireInteger(member, 'page id', pageId);
+  if (typeof tier !== 'string') refuseMember(member, 'a tier that is not text');
+  return storeCall({ member }, () => brain.readLatestVersionIdAtTier(pageId, tier));
 };

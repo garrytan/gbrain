@@ -93,6 +93,8 @@ pub struct PageTrustRow {
     pub write_origin: Option<Value>,
     pub flagged: bool,
     pub guest: bool,
+    /// The class of source the page came from (`cli_reads/precedence.rs`).
+    pub precedence: String,
     #[serde(rename = "byId")]
     pub by_id: bool,
 }
@@ -177,6 +179,7 @@ fn trust_row(read: &dyn KvRead, page: &PageRecord, by_id: bool) -> Result<PageTr
         write_origin: page.write_origin.clone(),
         flagged: crate::trust::activation_suppressed(read, "pages", page.id, tier)?,
         guest: source_is_guest(read, &page.source_id)?,
+        precedence: crate::cli_reads::precedence::page_precedence(read, page)?.to_owned(),
         by_id,
     })
 }

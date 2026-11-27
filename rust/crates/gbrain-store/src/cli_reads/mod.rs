@@ -26,6 +26,7 @@ pub mod mention_reads;
 mod pg_case;
 pub(crate) mod pg_jsonb;
 pub(crate) mod pg_text;
+pub(crate) mod precedence;
 pub mod put_reads;
 pub mod reads;
 pub mod reflex_reads;

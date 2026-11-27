@@ -188,17 +188,17 @@ function groupReads(tx: BrainEngine): BrainEngine {
 /**
  * #5984: reads a claimed group's preparation repeats for every member and that
  * publication checks again inside the group transaction (the local writer, the
- * source root, the coordinator switch, the shared skill packs, still raw in
- * knowledge-guard.ts); the source's own row (`getSource`, `readSourceState`)
- * and its worktree binding (`getWorktreeBinding`) are typed reads, below.
+ * source root, the coordinator switch); the source's own row (`getSource`,
+ * `readSourceState`), its worktree binding (`getWorktreeBinding`) and the shared
+ * skill packs (knowledge-guard.ts) are typed reads, below.
  * Plain reads only; a locking read is never answered here.
  */
 const STABLE_IN_PREPARATION = new Set([
   'SELECT lane,revoked_at,grant_ceiling FROM persistence_local_writers WHERE id=$1::uuid',
   'SELECT local_path FROM sources WHERE id=$1',
   MANAGED_MODE_SQL,
+  // ghost-pages.ts still sends this probe raw; knowledge-guard.ts uses the typed member below.
   "SELECT to_regclass('shared_skill_packs') IS NOT NULL AS present",
-  'SELECT p.source_id,p.source_incarnation,s.local_path AS source_root, h.local_path AS worktree_root,b.relative_path FROM shared_skill_packs p JOIN sources s ON s.id=p.source_id AND s.incarnation=p.source_incarnation LEFT JOIN persistence_source_bindings b ON b.source_id=p.source_id AND b.source_incarnation=p.source_incarnation LEFT JOIN persistence_host_bindings h ON h.worktree_id=b.worktree_id AND h.host_id=$1::uuid',
 ]);
 /**
  * #5984: the engine a claimed group's members are prepared with. The reads
@@ -231,6 +231,9 @@ export function preparationReads(engine: BrainEngine, imports?: ImportGroupReads
     if (key === 'getAllConfig') return () => once('config:*', () => target.getAllConfig()).then(all => ({ ...all }));
     // The source row (contextual retrieval policy) is one read per source for the group, taking no member's deadline or signal.
     if (key === 'getSource') return (sourceId: string) => once(`source:${sourceId}`, () => withoutReadDeadline(() => target.getSource(sourceId)));
+    // The shared skill packs (knowledge-guard.ts, engine-sql/write-misc.ts), once for the group, as their two statements were.
+    if (key === 'sharedSkillPackTablePresent') return () => once(key, () => target.sharedSkillPackTablePresent());
+    if (key === 'listSharedSkillPackRoots') return (hostId: string) => once(JSON.stringify([key, hostId]), () => target.listSharedSkillPackRoots(hostId));
     if (imports && key === 'readPageSnapshot') return (slug: string, opts?: Parameters<BrainEngine['readPageSnapshot']>[1]) =>
       imports.snapshot(slug, opts) ?? target.readPageSnapshot(slug, opts);
     if (imports && key === 'findDuplicatePage') return (sourceId: string, opts: Parameters<NonNullable<BrainEngine['findDuplicatePage']>>[1]) => imports.findDuplicate(sourceId, opts);

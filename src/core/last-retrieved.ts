@@ -221,7 +221,7 @@ function startBump(engine: BrainEngine, pageIds: number[]): void {
       // 5-minute throttle (D2) + best-effort. The upsert is idempotent:
       // setting last_retrieved_at = NOW() multiple times in a row is the
       // same as setting it once (TIMESTAMPTZ comparison is monotonic).
-      await engine.executeRaw(BUMP_LAST_RETRIEVED_SQL, [pageIds]);
+      await engine.bumpPageRetrievals(pageIds);
     } catch (err) {
       // Pre-v224 brain (table missing) falls through silently — the search
       // op already returned, the LSD signal just stays NULL until upgrade.

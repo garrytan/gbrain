@@ -28,7 +28,7 @@ import { fenceHoldLocation, fenceHoldRelay, type FenceAutoRepair, type FenceHold
 import { COVERAGE_COUNT_CAP, type CoverageRelevance } from '../search/retrieval-coverage.ts';
 import { READERS_FIX_EFFECT } from './readers-request.ts';
 
-type Exec = Pick<BrainEngine, 'executeRaw'>;
+type Exec = Pick<BrainEngine, 'executeRaw' | 'readHeldPageRows'>;
 
 /** `fenceAuto`: whether the maintenance run repairs fence holds, read only when some returned hold is one. */
 export interface HeldPage { record: GitHoldRecord; revision: string | null; fenceAuto?: FenceAutoRepair }
@@ -79,12 +79,7 @@ export function readHeldPages(engine: Exec, pageIds: number[], request?: object)
   const ids = [...new Set(pageIds.filter(id => Number.isInteger(id)))].sort((a, b) => a - b);
   if (!ids.length) return Promise.resolve(new Map());
   return cached(request, `pages:${ids.join(',')}`, async () => {
-    const rows = await engine.executeRaw<{ record: GitHoldRecord; revision: string | null }>(`SELECT h.completed_keys->0 AS record, p.knowledge_revision::text AS revision
-      FROM op_checkpoints h
-      JOIN sources s ON s.id=h.completed_keys->0->>'source_id' AND s.incarnation::text=h.completed_keys->0->>'incarnation'
-      LEFT JOIN pages p ON p.id=(h.completed_keys->0->>'page_id')::int
-      WHERE h.op=$1 AND (h.completed_keys->0->>'page_id')=ANY($2::text[])
-      ORDER BY h.fingerprint`, [GIT_HOLD_OP, ids.map(String)]);
+    const rows = await engine.readHeldPageRows<GitHoldRecord>(ids.map(String));
     const out = new Map<number, HeldPage>();
     const fenceAuto = await fenceAutoRepairFor(engine, rows.map(row => row.record));
     for (const row of rows) {

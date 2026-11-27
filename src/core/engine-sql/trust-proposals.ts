@@ -121,3 +121,11 @@ export async function listTrustProposals(exec: LegacyUnscopedRead, filter: Trust
     [status, filter.sourceId ?? null, filter.action ?? null, filter.since?.toISOString() ?? null, trustProposalLimit(filter.limit)]);
   return rows.map(normalizeTrustProposal);
 }
+
+/** Pending proposals naming a row as target or related (guards and explain read this). */
+export async function pendingTrustProposalsFor(exec: LegacyUnscopedRead, table: TrustTable, id: number): Promise<TrustProposalRow[]> {
+  const rows = await exec.executeRaw<Record<string, unknown>>(
+    `SELECT * FROM trust_proposals WHERE status = 'pending'
+       AND ((target_table = $1 AND target_id = $2) OR (related_table = $1 AND related_id = $2)) ORDER BY id`, [table, id]);
+  return rows.map(normalizeTrustProposal);
+}

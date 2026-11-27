@@ -7,15 +7,15 @@ export const CONTENT_MEMBERS = {
   readSegmentedEmbedPage: 'page_body',
   deleteRewrittenSegmentDerivations: 'page_body',
   hasUnsealedPages: 'chunks',
-  readPageEmbeddingBudget: 'pages', // held: no Rust store member yet; served later as 'embeddings'
-  recordPageEmbeddingHold: 'pages', // held: no Rust store member yet; served later as 'embeddings'
-  openPageEmbeddingHold: 'pages', // held: no Rust store member yet; served later as 'embeddings'
-  reservePageEmbedding: 'pages', // held: no Rust store member yet; served later as 'embeddings'
-  settlePageEmbeddingReservation: 'pages', // held: no Rust store member yet; served later as 'embeddings'
-  readEmbeddingCompletion: 'pages', // held: no Rust store member yet; served later as 'embeddings'
-  lockEffectClaimRow: 'pages', // held: no Rust store member yet; served later as 'embeddings'
-  lockEmbeddingSwitch: 'pages', // held: no Rust store member yet; served later as 'embeddings'
-  installChunkEmbeddings: 'pages', // held: no Rust store member yet; served later as 'embeddings'
+  readPageEmbeddingBudget: 'embeddings',
+  recordPageEmbeddingHold: 'embeddings',
+  openPageEmbeddingHold: 'embeddings',
+  reservePageEmbedding: 'embeddings',
+  settlePageEmbeddingReservation: 'embeddings',
+  readEmbeddingCompletion: 'embeddings',
+  lockEffectClaimRow: 'embeddings',
+  lockEmbeddingSwitch: 'embeddings',
+  installChunkEmbeddings: 'embeddings',
   readLinkContextMatches: 'links',
   readLinkContextOriginPages: 'links',
   // reindex-search-vector's steps (engine-sql/search-vector.ts): no-ops under the store's one language
@@ -34,4 +34,5 @@ export const CONTENT_MEMBERS = {
   linkRelationshipKeysForOrigin: 'links',
   linkRelationshipKeysForPages: 'links',
   staleLinkRelationshipKeys: 'links',
+  readLatestVersionIdAtTier: 'page_versions',
 } as const satisfies Partial<Record<keyof BrainEngine, MemberClass>>;

@@ -8,6 +8,11 @@
  * (store-members/fence-holds.ts).
  */
 import type { EngineRawRead } from './cli-reads-ops.ts';
+
+/** `readFenceHoldFiles`: $1 the source ids, $2 the slugs. The text `fenceHoldEntries` has always sent. */
+const FENCE_HOLD_FILES_SQL = `SELECT source_id, slug, NULLIF(btrim(source_path), '') IS NULL AS database_only FROM pages
+      WHERE source_id = ANY($1::text[]) AND slug = ANY($2::text[]) AND deleted_at IS NULL`;
+
 /** A held page's file state, as `fenceHoldEntries` reads it: `database_only` when the page records no file. */
 export interface FenceHoldFileRow { source_id: string; slug: string; database_only: boolean }
 
@@ -52,4 +57,9 @@ export async function listFenceHoldRows(raw: EngineRawRead, sourceIds: readonly 
   const params: unknown[] = [[...sourceIds], [...kinds]];
   if (ownerKey !== undefined) params.push(ownerKey);
   return raw<FenceHoldRow>(ownerKey === undefined ? EVERY_OWNER_SQL : ONE_OWNER_SQL, params);
+}
+
+/** The live pages of `slugs` in `sourceIds`, with whether each records no file. */
+export async function readFenceHoldFiles(raw: EngineRawRead, sourceIds: readonly string[], slugs: readonly string[]): Promise<FenceHoldFileRow[]> {
+  return raw<FenceHoldFileRow>(FENCE_HOLD_FILES_SQL, [[...sourceIds], [...slugs]]);
 }

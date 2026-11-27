@@ -7,12 +7,13 @@
  *  - `revision_conflict` and `revision_required` are `PageRevisionConflictError`; a missing page is the error
  *    PGLite's member throws (`PageMissingError` for addLink and addTimelineEntry).
  *  - `origin_claimed` is `page_identity_changed` with detail `origin_already_claimed`, PGLite's origin-guard refusal.
+ *  - `page_ambiguous` is `PageSnapshotAmbiguousError`, what readPageSnapshot throws under `requireUnambiguous`.
  *  - Every other code stays on the original error, which already carries it (`invalid_slug`, `empty_overwrite`, ...).
  */
 import { opError } from '../ops/contract.ts';
 import { originAlreadyClaimed } from '../persistence/origin-guard.ts';
 import { PageMissingError } from '../engine-errors.ts';
-import { PageRevisionConflictError } from '../page-state/types.ts';
+import { PageRevisionConflictError, PageSnapshotAmbiguousError } from '../page-state/types.ts';
 
 export interface StoreErrorContext {
   member: string;
@@ -57,6 +58,8 @@ export function mapStoreError(error: unknown, ctx: StoreErrorContext): unknown {
       return pageNotFound(error, ctx);
     case 'origin_claimed':
       return originClaimed(error);
+    case 'page_ambiguous':
+      return new PageSnapshotAmbiguousError();
     default:
       return error;
   }

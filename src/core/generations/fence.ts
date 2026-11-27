@@ -175,13 +175,8 @@ export interface FenceHold { source_id: string; kind: FenceGenerationKind; slug:
 
 /** The held fence results of `sources` (one page with `slug`), oldest first. */
 export async function listFenceHolds(db: BrainEngine, sources: readonly string[], slug?: string): Promise<FenceHold[]> {
-  const params: unknown[] = [[...sources], [...FENCE_GENERATION_KINDS]];
-  if (slug !== undefined) params.push(fenceOwnerKey(slug));
-  const rows = await db.executeRaw<{ source_id: string; kind: FenceGenerationKind; owner_key: string; held_reason: HeldReason; held_context: Record<string, unknown> | null; created_at: string }>(
-    `SELECT source_id, kind, owner_key, held_reason, held_context, created_at::text AS created_at FROM derived_generations
-      WHERE source_id = ANY($1::text[]) AND kind = ANY($2::text[]) AND state = 'held'${slug === undefined ? '' : ' AND owner_key = $3'}
-      ORDER BY created_at, id`, params);
-  return rows.map(row => ({ source_id: row.source_id, kind: row.kind, slug: fenceSlugOf(row.owner_key) ?? row.owner_key, reason: row.held_reason,
+  const rows = await db.listFenceHoldRows(sources, FENCE_GENERATION_KINDS, slug === undefined ? undefined : fenceOwnerKey(slug));
+  return rows.map(row => ({ source_id: row.source_id, kind: row.kind as FenceGenerationKind, slug: fenceSlugOf(row.owner_key) ?? row.owner_key, reason: row.held_reason as HeldReason,
     read: String(row.held_context?.read ?? 'absent'), rows: Number(row.held_context?.rows ?? 0), since: row.created_at,
     writer: typeof row.held_context?.writer === 'string' ? row.held_context.writer : null }));
 }
@@ -193,9 +188,7 @@ export type FenceHoldEntry = FenceHold & { fix: Action };
 export async function fenceHoldEntries(db: BrainEngine, sources: readonly string[], opts: { slug?: string; limit?: number } = {}): Promise<FenceHoldEntry[]> {
   const holds = (await listFenceHolds(db, sources, opts.slug)).slice(0, opts.limit ?? 20);
   if (!holds.length) return [];
-  const files = await db.executeRaw<{ source_id: string; slug: string; database_only: boolean }>(
-    `SELECT source_id, slug, NULLIF(btrim(source_path), '') IS NULL AS database_only FROM pages
-      WHERE source_id = ANY($1::text[]) AND slug = ANY($2::text[]) AND deleted_at IS NULL`, [[...new Set(holds.map(hold => hold.source_id))], holds.map(hold => hold.slug)]);
+  const files = await db.readFenceHoldFiles([...new Set(holds.map(hold => hold.source_id))], holds.map(hold => hold.slug));
   const databaseOnly = new Map(files.map(row => [`${row.source_id}\u0000${row.slug}`, row.database_only === true]));
   return holds.map(hold => ({ ...hold, fix: fenceAbsentFix(hold, { databaseOnly: databaseOnly.get(`${hold.source_id}\u0000${hold.slug}`) ?? false }) }));
 }

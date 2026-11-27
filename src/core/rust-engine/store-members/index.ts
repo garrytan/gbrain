@@ -71,6 +71,14 @@ import * as syncHoldStore from './sync-hold-store.ts';
 import * as effectWorker from './effect-worker.ts';
 import * as wantedLinks from './wanted-links.ts';
 import * as trustWriteGate from './trust-write-gate.ts';
+import * as trustProposals from './trust-proposals.ts';
+import * as noopSettle from './noop-settle.ts';
+import * as projectionRebuild from './projection-rebuild.ts';
+import * as factsBackstop from './facts-backstop.ts';
+import * as jobsOauthClients from './jobs-oauth-clients.ts';
+import * as pageVisibility from './page-visibility.ts';
+import * as embeddingInstall from './embedding-install.ts';
+import * as pageEmbeddingBudget from './page-embedding-budget.ts';
 import * as linkTemporal from './link-temporal.ts';
 
 /** Schema is created when the store opens (rust/README.md, `brain.open`), so there is nothing left for initSchema to run. */
@@ -97,7 +105,8 @@ export const STORE_MEMBERS = {
   ...cliSources, ...cliReadsImport, ...cliEntities, ...importMembers, ...jobs, ...persistenceIdentity, ...persistence, ...writerAdmin,
   // The put and get path on a brain with no managed persistence.
   ...writeMisc, ...connectGate, ...withdrawalFence, ...accessMembers, ...trustTierReads, ...publicationJournal, ...writeGuards,
-  ...writeContext, ...housekeeping, ...effectScans, ...trustFence, ...fenceHolds, ...ownerScans, ...syncHoldStore, ...effectWorker, ...wantedLinks, ...linkTemporal, ...trustWriteGate,
+  ...writeContext, ...housekeeping, ...effectScans, ...trustFence, ...fenceHolds, ...ownerScans, ...syncHoldStore, ...effectWorker, ...wantedLinks, ...linkTemporal, ...trustWriteGate, ...trustProposals, ...noopSettle, ...projectionRebuild,
+  ...factsBackstop, ...jobsOauthClients, ...pageVisibility, ...embeddingInstall, ...pageEmbeddingBudget,
 } as const satisfies { [K in keyof BrainEngine]?: (brain: never, ...args: never[]) => Promise<unknown> };
 
 export type ServedMember = keyof typeof STORE_MEMBERS;

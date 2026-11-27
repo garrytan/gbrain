@@ -1,7 +1,7 @@
 /**
  * Chunk reads beyond the core chunks members: one page of a page's chunks (BrainEngine getChunkPage), batched chunk
  * windows for evidence delivery (getChunkWindows) and the pages with a body but no chunks
- * (countChunklessPagesWithContent, listChunklessPagesWithContent).
+ * (countChunklessPagesWithContent, listChunklessPagesWithContent), and the import's deleteChunksExcept.
  *
  * Export only BrainEngine members from this file, each a `StoreMember` named after the member it serves (see tags.ts):
  * index.ts spreads the whole module into STORE_MEMBERS, so every export is served. Row decoders and other helpers stay
@@ -60,4 +60,21 @@ export const listChunklessPagesWithContent: StoreMember<[opts?: { batchSize?: nu
   (brain, opts) => {
     const options = takeOptions('listChunklessPagesWithContent', opts, ['batchSize', 'afterPageId', 'sourceId']);
     return storeCall({ member: 'listChunklessPagesWithContent' }, () => brain.listChunklessPagesWithContent(options));
+  };
+
+const INT32_MAX = 2 ** 31 - 1;
+
+function int32Ids(member: string, ids: readonly number[]): number[] {
+  for (const id of ids) {
+    if (!Number.isInteger(id) || Math.abs(id) > INT32_MAX) refuseMember(member, 'an id that is not a 32-bit integer');
+  }
+  return [...ids];
+}
+
+/** Unlike deleteChunks the slug is matched as written and the text seal is kept. */
+export const deleteChunksExcept: StoreMember<[slug: string, keepIds: readonly number[], opts?: { sourceId?: string }], void> =
+  async (brain, slug, keepIds, opts) => {
+    const keep = int32Ids('deleteChunksExcept', keepIds);
+    const { sourceId } = takeOptions('deleteChunksExcept', opts, ['sourceId']) as { sourceId?: string };
+    await storeCall({ member: 'deleteChunksExcept', slug }, () => brain.deleteChunksExcept({ slug, keepIds: keep, sourceId: sourceId ?? 'default' }));
   };

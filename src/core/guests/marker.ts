@@ -34,11 +34,8 @@ export async function withGuestSourceSql<T>(read: (guestSql: typeof guestSourceS
  * Whether any source is a guest source, read from the sources themselves on every call; a failed read answers yes. Like
  * search's read policy (search/read-policy-sql.ts), it reads sources as `read_source`: a live read check, not a listing.
  */
-export async function brainHasGuestSource(engine: Pick<BrainEngine, 'executeRaw'>): Promise<boolean> {
-  try {
-    const [row] = await engine.executeRaw<{ present: boolean }>(`SELECT EXISTS (SELECT 1 FROM sources read_source WHERE ${guestSourceSql('read_source.config', 'read_source.id')}) AS present`);
-    return row?.present !== false;
-  } catch { return true; }
+export async function brainHasGuestSource(engine: Pick<BrainEngine, 'hasGuestSource'>): Promise<boolean> {
+  try { return await engine.hasGuestSource(); } catch { return true; }
 }
 
 export interface GuestStamp {

@@ -153,4 +153,20 @@ export interface FactsStatementMembers {
   declarePersistence(opts?: { durable?: DurablePersistenceSettings }): Promise<string | null>;
   /** Synchronous commit for the rest of the current transaction (engine-sql/persistence-declaration.ts); nothing outside one. */
   requireSynchronousCommit(): Promise<void>;
+  /** The resident's window probe: each candidate's source and live page, at its index `i`, looked up by key. */
+  probeProjectionWindowCandidates(candidates: readonly ProjectionRebuildSql.ProjectionWindowCandidate[]): Promise<ProjectionRebuildSql.ProjectionWindowProbe[]>;
+  /** The planner's estimate of the pages table's rows (0 before statistics, and on an engine without planner statistics). */
+  readPagesRowEstimate(): Promise<number>;
+  /** The reason of the queue row `key`, or null when it is no longer queued. */
+  readProjectionJobReason(key: ProjectionRebuildSql.ProjectionJobKey): Promise<string | null>;
+  /** Whether the page is a live segmented page. */
+  hasSegmentedPage(sourceId: string, slug: string): Promise<boolean>;
+  /** Moves the job still queued at `job.revision` to `revision` at now. */
+  rekeyProjectionJob(job: ProjectionRebuildSql.ProjectionJobKey, revision: string): Promise<void>;
+  /** Moves the time of the job still queued at `job.revision` to now; with `requeue`, its reason becomes canonical_change. */
+  stampDeferredProjectionJob(job: ProjectionRebuildSql.ProjectionJobKey, requeue: boolean): Promise<void>;
+  /** Moves the time of the job still queued at `job.revision` to now unless a live segmented claim holds it. */
+  touchUnclaimedProjectionJob(job: ProjectionRebuildSql.ProjectionJobKey): Promise<void>;
+  /** Moves the time of the job still queued at `job.revision` to now; false when no such job is queued. */
+  deferProjectionJob(job: ProjectionRebuildSql.ProjectionJobKey): Promise<boolean>;
 }

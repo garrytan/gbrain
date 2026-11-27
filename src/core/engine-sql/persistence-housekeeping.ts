@@ -46,6 +46,13 @@ export const TRUE_UP_RESERVATIONS_SQL = `WITH t AS (SELECT * FROM unnest($1::uui
 /** One request `trueUpRequests` shrinks: the reservation it read, what the receipt keeps and the effect bytes it sized. */
 export interface TrueUpReservation { id: string; old: number; kept: number; effects: string }
 
+/** `SEGMENTED_PROJECTION_CLAIMED_SQL` (projections.ts). */
+export const SEGMENTED_PROJECTION_CLAIMED_TEXT = "(split_part(j.reason,':',1)='segmented_projecting' AND j.updated_at>=now()-interval '60 seconds')";
+/** `PROJECTION_RETRY_READY_SQL` (projections.ts). */
+export const PROJECTION_RETRY_READY_TEXT = "(j.reason IS DISTINCT FROM 'rebuild_failed' OR j.updated_at<now()-interval '30 seconds')"
+  + ` AND NOT ${SEGMENTED_PROJECTION_CLAIMED_TEXT}`
+  + " AND NOT (split_part(j.reason,':',1)='chunk_replacement_continuing' AND j.updated_at>=now()-interval '60 seconds')";
+
 /** `PROJECTION_RETRY_READY_SQL` (projections.ts) as a fragment: a queue row `j` out of its retry cooldown. */
 export function projectionRetryReadyFragment(): SqlFragment {
   return sqlFragment`${trustedSql(PROJECTION_RETRY_READY_TEXT)}`;
@@ -75,12 +82,6 @@ export interface HousekeepingTurnClaim {
   op: string; hostId: string; intervalMs: number; leaseMs: number; consumerKinds: readonly string[]; consumerLiveMs: number;
 }
 
-/** `SEGMENTED_PROJECTION_CLAIMED_SQL` (projections.ts). */
-export const SEGMENTED_PROJECTION_CLAIMED_TEXT = "(split_part(j.reason,':',1)='segmented_projecting' AND j.updated_at>=now()-interval '60 seconds')";
-/** `PROJECTION_RETRY_READY_SQL` (projections.ts). */
-export const PROJECTION_RETRY_READY_TEXT = "(j.reason IS DISTINCT FROM 'rebuild_failed' OR j.updated_at<now()-interval '30 seconds')"
-  + ` AND NOT ${SEGMENTED_PROJECTION_CLAIMED_TEXT}`
-  + " AND NOT (split_part(j.reason,':',1)='chunk_replacement_continuing' AND j.updated_at>=now()-interval '60 seconds')";
 
 export interface PendingSegmentedProjection { source_id: string; source_incarnation: string; slug: string; revision: string }
 

@@ -44,6 +44,20 @@ export const OWNER_IPC_LOCAL_ONLY_READS: ReadonlySet<string> = new Set([
   'readAdmissionSource', 'readEntityOpenLoops', 'readHealthMemoClock', 'readMaxTimelineEntryId',
   'readMemoryProposal', 'readOpCheckpointKeys', 'readPendingProposalSummary', 'readSourceState',
   'sampleEffectiveDateSources', 'sampleEffectiveDates', 'sharedSkillPackTablePresent', 'storedTimelineRowsByPageIds',
+  // The persistence, effect, projection, trust-fence and link temporal reads the Rust engine landing parts serve, as main
+  // classes them (owner-ipc/typed-member-classes.ts there): SELECTs only (lockSourceForUpdate and the claim selects take
+  // row locks, released when the call ends).
+  'hasGuestSource', 'readDatabaseClock', 'readLivePageBody', 'lockSourceForUpdate', 'readStoredPageTier', 'hasSegmentStorage',
+  'listLinkEndpointPages', 'readLinkRelationshipEvidence', 'linkRelationshipKeysForOrigin', 'linkRelationshipKeysForPages',
+  'staleLinkRelationshipKeys', 'readLatestVersionIdAtTier', 'listFenceFactRows', 'listFenceRetireCandidates',
+  'pendingTrustProposalsFor', 'readTopologyChange', 'hasClaimableWrite', 'listCompactableReceipts', 'listEffectRecoveries',
+  'listFenceHoldRows', 'listGatedMirrorRequests', 'listOverdueHeldWrites', 'listOwnerRecoveryHeads',
+  'listPendingSegmentedProjections', 'listReservationsAfter', 'listResumableRefreshes', 'listRetiredDeactivations',
+  'listTopologyRecoveries', 'readGraduationGateRow', 'readHeldPageRows', 'readReceiptBudget', 'selectClaimableEffect',
+  'selectClaimableWrite', 'selectProjectionWindowJobs', 'readWriteRequestProgress', 'probeIdleWork', 'hasRearmableTargets',
+  'listTrueUpRequests', 'readMirrorGateRows', 'readFenceHoldFiles', 'probeNoopEmbeddingSettle', 'readNoopEmbeddingCandidates',
+  'probeProjectionWindowCandidates', 'readPagesRowEstimate', 'hasPendingFactsExtraction', 'hasCompletedFactsExtraction',
+  'readProjectionJobReason', 'hasSegmentedPage', 'listGuardedTakeRows',
 ]);
 
 const page = 'getPage for that slug and source';
@@ -210,6 +224,28 @@ export const OWNER_IPC_CONFIRMING_READS: Readonly<Record<string, string>> = {
   expireMemoryProposals: 'listMemoryProposalRows for that source', purgeMemoryProposals: 'listMemoryProposalRows for that source',
   // The applied-capture purge (engine-sql/op-checkpoint.ts).
   purgeStaleAppliedCaptures: 'nothing: a purge removes only records past the retention, so running it again removes nothing more',
+  // The persistence, effect, projection and link temporal writers the Rust engine landing parts serve. Main names the
+  // same reads, except where a read it names is not a member here (the relationship-note, consumer-row and rebuild
+  // progress reads): those name the nearest read member, or say why a rerun repeats nothing.
+  bumpPageRetrievals: page, insertCanonicalTimelineRows: timeline, applyLinkTemporalRows: links,
+  writeManualLinkTransitions: 'readLinkRelationshipEvidence for those pages',
+  removeManualLinkTransitions: 'readLinkRelationshipEvidence for those pages',
+  writeLinkRelationshipState: 'linkRelationshipKeysForOrigin for the origin page',
+  deleteStalePageWriteGateReceipts: 'listWriteGateReceiptsFor that page',
+  claimHousekeepingTurn: 'readReceiptBudget', completeHousekeepingTurn: 'readReceiptBudget',
+  expireStaleWriteClaims: 'readWriteRequest for that request',
+  deleteConsumerRow: 'nothing: the row is gone after the first call, so running it again deletes nothing more',
+  renewConsumerRow: 'nothing: a renewal only moves the row\'s heartbeat forward, so running it again changes nothing more',
+  stampWorktreeHeartbeats: 'nothing: a stamp only moves the heartbeats forward, so running it again changes nothing more',
+  stampEffectClaim: 'readRequestEffects for that request', retryEffectRow: 'readRequestEffects for that request',
+  advanceEffectRow: 'readRequestEffects for that request', retryBusyEffectRow: 'readRequestEffects for that request',
+  requeueEffectRow: 'readRequestEffects for that request', parkEffectRow: 'readRequestEffects for that request',
+  lockOverdueHold: 'nothing: the lock is released when the call ends, so running it again repeats no write',
+  lockNoopEmbeddingWindow: 'nothing: the lock is released when the call ends, so running it again repeats no write',
+  trueUpReservations: 'listTrueUpRequests', settleNoopEmbeddingRows: 'readNoopEmbeddingCandidates',
+  markProjectionRebuildFailed: 'readProjectionJobReason for that job', rekeyProjectionJob: 'readProjectionJobReason for that job',
+  stampDeferredProjectionJob: 'readProjectionJobReason for that job',
+  touchUnclaimedProjectionJob: 'readProjectionJobReason for that job', deferProjectionJob: 'readProjectionJobReason for that job',
 };
 
 /**

@@ -278,16 +278,16 @@ export interface TimelineDetailRefresh { id: number; detail: string; next: strin
 /** One timeline bullet of a page body the fence projection inserts as the page's own row (`date` is `YYYY-MM-DD`). */
 export interface CanonicalTimelineRow { date: string; source: string; summary: string; detail: string }
 
-const REMOVE_TIMELINE_ROWS_SQL = `DELETE FROM timeline_entries t USING jsonb_to_recordset($2::text::jsonb) AS d(id integer,date date,source text,summary text,detail text,removed boolean)
+export const REMOVE_TIMELINE_ROWS_SQL = `DELETE FROM timeline_entries t USING jsonb_to_recordset($2::text::jsonb) AS d(id integer,date date,source text,summary text,detail text,removed boolean)
         WHERE t.page_id=$1 AND t.event_page_id IS NULL AND t.id=d.id AND t.date=d.date AND t.source=d.source
           AND t.summary=d.summary AND t.detail=d.detail RETURNING t.date::text AS date, d.removed`;
 
-const INSERT_CANONICAL_TIMELINE_SQL = `INSERT INTO timeline_entries (page_id,date,source,summary,detail)
+export const INSERT_CANONICAL_TIMELINE_SQL = `INSERT INTO timeline_entries (page_id,date,source,summary,detail)
     SELECT $1,r.date::date,r.source,r.summary,r.detail FROM jsonb_to_recordset($2::text::jsonb) AS r(ord integer,date text,source text,summary text,detail text)
     ORDER BY r.ord
     ON CONFLICT (page_id,date,md5(summary),source) DO NOTHING`;
 
-const UPDATE_TIMELINE_DETAILS_SQL = `UPDATE timeline_entries t SET detail=r.next FROM jsonb_to_recordset($2::text::jsonb) AS r(id integer,detail text,next text)
+export const UPDATE_TIMELINE_DETAILS_SQL = `UPDATE timeline_entries t SET detail=r.next FROM jsonb_to_recordset($2::text::jsonb) AS r(id integer,detail text,next text)
         WHERE t.page_id=$1 AND t.event_page_id IS NULL AND t.id=r.id AND t.detail=r.detail`;
 
 /**

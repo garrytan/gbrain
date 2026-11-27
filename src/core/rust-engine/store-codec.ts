@@ -88,10 +88,28 @@ export function toPutPage<T extends object>(page: T): T {
   return { ...rest, emotional_weight: undefined } as T;
 }
 
+/**
+ * The key order of the page PGLite's `rowToPage` builds (src/core/utils.ts). `gbrain get --json` prints the page in this
+ * order, so the Rust page lists its keys the same way; a key not named here follows, in the store's order.
+ */
+const PAGE_KEY_ORDER = [
+  'id', 'slug', 'type', 'title', 'compiled_truth', 'timeline', 'frontmatter', 'content_hash', 'body_storage', 'body_bytes',
+  'source_path', 'knowledge_revision', 'text_projection_revision', 'emotional_weight', 'created_at', 'updated_at',
+  'updated_at_iso', 'deleted_at', 'effective_date', 'effective_date_source', 'import_filename', 'salience_touched_at',
+  'source_kind', 'source_uri', 'withheld_source_path', 'ingested_via', 'ingested_at', 'contextual_retrieval_mode', 'source_id',
+] as const;
+
+function inPageKeyOrder(page: Row): Row {
+  const ordered: Row = {};
+  for (const key of PAGE_KEY_ORDER) if (Object.prototype.hasOwnProperty.call(page, key)) ordered[key] = page[key];
+  for (const key of Object.keys(page)) if (!Object.prototype.hasOwnProperty.call(ordered, key)) ordered[key] = page[key];
+  return ordered;
+}
+
 /** The page `getPage` and `readPageSnapshot` return: PGLite's row has the defaulted columns and no `updated_at_iso`. */
 export function toGetPage<T extends object>(page: T): T {
   const { updated_at_iso: _iso, ...rest } = pageDates(page as Row);
-  return guardNullBody({ ...PAGE_ROW_DEFAULTS, ...rest }) as T;
+  return guardNullBody(inPageKeyOrder({ ...PAGE_ROW_DEFAULTS, ...rest })) as T;
 }
 
 /** A row of `listPages`: the table's columns plus `updated_at_iso`. */

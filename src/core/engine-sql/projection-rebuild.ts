@@ -16,6 +16,14 @@ import { sealableImageSql } from '../page-state/projection-class.ts';
 import { movableChunkSql } from '../search/safe-chunks.ts';
 import { chunkModelMatchesSql } from '../embedding-invalidation.ts';
 import { quoteIdentifier } from '../search/embedding-column.ts';
+/** One queue row the resident's window selection probes. */
+export interface ProjectionWindowCandidate { source_incarnation: string; slug: string }
+
+/** A candidate's source (`source_id`, `archived`) and live page (`page_kind`, `body_storage`); each part null when missing. */
+export interface ProjectionWindowProbe {
+  i: number; source_id: string | null; archived: boolean | null; page_kind: string | null; body_storage: string | null;
+}
+
 
 /**
  * The live inline page (Markdown or code, not segmented; with `media`, also a sealable image) of an active source
@@ -179,4 +187,69 @@ export async function queuePageProjectionJob(raw: EngineRawRead, sourceId: strin
     SELECT s.incarnation,p.slug,p.knowledge_revision,$3 FROM pages p JOIN sources s ON s.id=p.source_id
     WHERE p.source_id=$1 AND p.slug=$2 AND p.deleted_at IS NULL
     ON CONFLICT(source_incarnation,slug) DO UPDATE SET revision=EXCLUDED.revision,reason=EXCLUDED.reason,updated_at=now()`, [sourceId, slug, reason]);
+}
+
+/**
+ * The resident's window probe (projections.ts selectWindowJobs): for each candidate, at its index `i`, the source of
+ * its incarnation and that source's live page at its slug, each looked up by key. Rows come in no set order.
+ */
+export async function probeProjectionWindowCandidates(raw: EngineRawRead, candidates: readonly ProjectionWindowCandidate[]): Promise<ProjectionWindowProbe[]> {
+  return raw<ProjectionWindowProbe>(
+    `SELECT k.i,s.id AS source_id,s.archived,p.page_kind,p.body_storage
+      FROM jsonb_to_recordset($1::text::jsonb) AS k(i int, source_incarnation uuid, slug text)
+      LEFT JOIN LATERAL (SELECT s.id,s.archived FROM sources s WHERE s.incarnation=k.source_incarnation OFFSET 0) s ON true
+      LEFT JOIN LATERAL (SELECT p.page_kind,p.body_storage FROM (SELECT p.id FROM pages p WHERE p.source_id=s.id AND p.slug=k.slug OFFSET 0) q
+        JOIN pages p ON p.id=q.id WHERE p.deleted_at IS NULL) p ON true`,
+    [JSON.stringify(candidates.map((row, i) => ({ i, source_incarnation: row.source_incarnation, slug: row.slug })))]);
+}
+
+/** The planner's estimate of the pages table's rows (0 before statistics); the drain's statistics debt is sized by it. */
+export async function readPagesRowEstimate(raw: EngineRawRead): Promise<number> {
+  const [pages] = await raw<{ rows: number }>("SELECT GREATEST(reltuples,0)::float8 AS rows FROM pg_class WHERE oid='pages'::regclass");
+  return Number(pages?.rows ?? 0);
+}
+
+/** The reason of the queue row `key`, or null when no such row is queued (another worker consumed it). */
+export async function readProjectionJobReason(raw: EngineRawRead, key: ProjectionJobKey): Promise<string | null> {
+  const rows = await raw<{ reason: string }>(`SELECT reason FROM page_projection_jobs
+          WHERE source_incarnation=$1::uuid AND slug=$2 AND revision=$3::uuid`, [key.sourceIncarnation, key.slug, key.revision]);
+  return rows.length ? rows[0]!.reason : null;
+}
+
+/** Whether the page is a live segmented page. */
+export async function hasSegmentedPage(raw: EngineRawRead, sourceId: string, slug: string): Promise<boolean> {
+  return (await raw(`SELECT 1 FROM pages WHERE source_id=$1 AND slug=$2 AND body_storage='segmented' AND deleted_at IS NULL`,
+    [sourceId, slug])).length > 0;
+}
+
+/** Moves the job still queued at `job.revision` to `revision` at now. */
+export async function rekeyProjectionJob(raw: EngineRawRead, job: ProjectionJobKey, revision: string): Promise<void> {
+  await raw(`UPDATE page_projection_jobs SET revision=$4::uuid,updated_at=now()
+          WHERE source_incarnation=$1::uuid AND slug=$2 AND revision=$3::uuid`, [job.sourceIncarnation, job.slug, job.revision, revision]);
+}
+
+/**
+ * Moves the time of the job still queued at `job.revision` to now; with `requeue`, its reason becomes
+ * `canonical_change` too, so the ordinary rebuild takes it.
+ */
+export async function stampDeferredProjectionJob(raw: EngineRawRead, job: ProjectionJobKey, requeue: boolean): Promise<void> {
+  const { text, params } = renderFragment(sqlFragment`UPDATE page_projection_jobs SET updated_at=now()${trustedSql(requeue ? ",reason='canonical_change'" : '')}
+            WHERE source_incarnation=${job.sourceIncarnation}::uuid AND slug=${job.slug} AND revision=${job.revision}::uuid`);
+  await raw(text, params);
+}
+
+/** projections.ts `SEGMENTED_PROJECTION_CLAIMED_SQL` (the same text as MARK_PROJECTION_REBUILD_FAILED_SQL's): a live segmented claim on queue row `j`. */
+const SEGMENTED_PROJECTION_CLAIMED_TEXT = "(split_part(j.reason,':',1)='segmented_projecting' AND j.updated_at>=now()-interval '60 seconds')";
+
+/** Moves the time of the job still queued at `job.revision` to now unless a live segmented claim holds it. */
+export async function touchUnclaimedProjectionJob(raw: EngineRawRead, job: ProjectionJobKey): Promise<void> {
+  const { text, params } = renderFragment(sqlFragment`UPDATE page_projection_jobs j SET updated_at=now() WHERE j.source_incarnation=${job.sourceIncarnation}::uuid AND j.slug=${job.slug} AND j.revision=${job.revision}::uuid
+            AND NOT ${trustedSql(SEGMENTED_PROJECTION_CLAIMED_TEXT)}`);
+  await raw(text, params);
+}
+
+/** Moves the time of the job still queued at `job.revision` to now; false when no such job is queued. */
+export async function deferProjectionJob(raw: EngineRawRead, job: ProjectionJobKey): Promise<boolean> {
+  return (await raw(`UPDATE page_projection_jobs SET updated_at=now()
+        WHERE source_incarnation=$1::uuid AND slug=$2 AND revision=$3::uuid RETURNING slug`, [job.sourceIncarnation, job.slug, job.revision])).length > 0;
 }

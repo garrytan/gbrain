@@ -13,9 +13,25 @@
 import type { FenceHoldFileRow, FenceHoldKey, FenceHoldRow } from '../../engine-sql/fence-holds.ts';
 import { storeCall, type StoreMember } from './common.ts';
 
+type StoredPage = { page: { deleted_at?: string | null; source_path?: string | null } } | null;
+
 /** The held rows of `kinds` in `sourceIds` (one owner with `ownerKey`), oldest first; `created_at` is `timestamptz::text`. */
 
 /** The held rows of `kinds` in `sourceIds` (one owner with `ownerKey`), oldest first; `created_at` is `timestamptz::text`. */
 export const listFenceHoldRows: StoreMember<[sourceIds: readonly string[], kinds: readonly string[], ownerKey?: string], FenceHoldRow[]> =
   async (brain, sourceIds, kinds, ownerKey) => storeCall({ member: 'listFenceHoldRows' },
     () => brain.listFenceHoldRows([...sourceIds], [...kinds], ownerKey ?? null));
+
+/** The live pages of `slugs` in `sourceIds`, with whether each records no file. */
+export const readFenceHoldFiles: StoreMember<[sourceIds: readonly string[], slugs: readonly string[]], FenceHoldFileRow[]> =
+  async (brain, sourceIds, slugs) => {
+    const rows: FenceHoldFileRow[] = [];
+    for (const sourceId of new Set(sourceIds)) {
+      for (const slug of new Set(slugs)) {
+        const snapshot: StoredPage = await storeCall({ member: 'readFenceHoldFiles', slug, sourceId },
+          () => brain.readPageSnapshot(slug, { sourceId }));
+        if (snapshot !== null) rows.push({ source_id: sourceId, slug, database_only: !snapshot.page.source_path?.trim() });
+      }
+    }
+    return rows;
+  };

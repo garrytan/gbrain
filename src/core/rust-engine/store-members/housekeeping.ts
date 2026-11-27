@@ -56,6 +56,10 @@ export const selectProjectionWindowJobs: StoreMember<[cursor: Pick<ProjectionSca
   (brain, cursor, retryCooldown) => storeCall({ member: 'selectProjectionWindowJobs' }, () => brain.selectProjectionWindowJobs(
     { after: { source_incarnation: cursor.after.source_incarnation, slug: cursor.after.slug }, highWater: cursor.highWater }, retryCooldown));
 
+export const deleteProjectionJob: StoreMember<[job: ProjectionJobRef], void> = async (brain, job) => {
+  await storeCall({ member: 'deleteProjectionJob' }, () => brain.deleteProjectionJob({ sourceIncarnation: job.sourceIncarnation, slug: job.slug, revision: job.revision }));
+};
+
 export const markProjectionRebuildFailed: StoreMember<[job: ProjectionJobRef], void> = async (brain, job) => {
   await storeCall({ member: 'markProjectionRebuildFailed' }, () => brain.markProjectionRebuildFailed({ sourceIncarnation: job.sourceIncarnation, slug: job.slug, revision: job.revision }));
 };

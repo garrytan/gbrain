@@ -17,7 +17,7 @@ import type { ClaimExpiry } from '../engine-sql/persistence-claims.ts';
 import type { ClaimHeadSpec } from '../engine-sql/persistence-claims.ts';
 import type { ConsumerRenewal } from '../engine-sql/persistence-claims.ts';
 import type { ConsumerRowKey } from '../engine-sql/persistence-claims.ts';
-import type { FenceHoldRow } from '../engine-sql/fence-holds.ts';
+import type { FenceHoldFileRow, FenceHoldRow } from '../engine-sql/fence-holds.ts';
 import type { GatedMirrorRequest } from '../engine-sql/persistence-effect-scans.ts';
 import type { GraduationGateRow } from '../engine-sql/connect-gate.ts';
 import type { HousekeepingTurnClaim } from '../engine-sql/persistence-housekeeping.ts';
@@ -32,6 +32,10 @@ import type { IdleProbeRow } from '../engine-sql/persistence-idle-probe.ts';
 import type { IdleProbeSpec } from '../engine-sql/persistence-idle-probe.ts';
 import type { ReservedConnection } from '../engine.ts';
 import type { TrueUpReservation } from '../engine-sql/persistence-housekeeping.ts';
+import type { NoopSettleCandidate } from '../engine-sql/persistence-embedding-noop-settle.ts';
+import type { NoopSettleCandidateSpec } from '../engine-sql/persistence-embedding-noop-settle.ts';
+import type { NoopSettleWindow } from '../engine-sql/persistence-embedding-noop-settle.ts';
+import type { NoopSettledRow } from '../engine-sql/persistence-embedding-noop-settle.ts';
 
 export interface PersistenceMembers {
   // Write-journal statements (engine-sql/persistence-journal.ts): the text journal.ts, limits.ts and held-reads.ts sent through executeRaw.
@@ -235,4 +239,16 @@ export interface PersistenceMembers {
   requeueEffectRow(claim: EffectClaimRef & { dataJson: string; reason: string | null; delayMs: number }): Promise<void>;
   /** Fails a claimed effect (no recovery) as `targets_parked` with data `dataJson`. */
   parkEffectRow(claim: EffectClaimRef & { dataJson: string }): Promise<void>;
+  readFenceHoldFiles(sourceIds: readonly string[], slugs: readonly string[]): Promise<FenceHoldFileRow[]>;
+  // No-op embedding settle (engine-sql/persistence-embedding-noop-settle.ts): the statements embedding-noop-settle.ts
+  // sends to settle, in bulk, queued page embedding effects whose chunks already carry current vectors. The caller
+  // runs the last three in one transaction and keeps the source guard, the cursor and the true-up.
+  /** Whether an unattempted queued embedding effect lies past effect id `from` (`probeNoopEmbeddingSettle`). */
+  probeNoopEmbeddingSettle(from: string): Promise<boolean>;
+  /** The newest effect id, then the next `limit` unattempted embedding effects past `from`, locked skip-locked (`lockNoopEmbeddingWindow`). */
+  lockNoopEmbeddingWindow(spec: { from: string; limit: number }): Promise<NoopSettleWindow>;
+  /** The window effects the runner would find nothing to embed for, before their source guard; share-locks their pages (`readNoopEmbeddingCandidates`). */
+  readNoopEmbeddingCandidates(spec: NoopSettleCandidateSpec): Promise<NoopSettleCandidate[]>;
+  /** Settles these queued effects as the runner's claim and completion of a no-op leave them (`settleNoopEmbeddingRows`). */
+  settleNoopEmbeddingRows(ids: readonly string[]): Promise<NoopSettledRow[]>;
 }

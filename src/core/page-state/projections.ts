@@ -512,8 +512,8 @@ export async function noteProjectionRebuilds(engine: BrainEngine, rebuilt: numbe
   if (owed.rows !== null && owed.rebuilt < 50 + owed.rows * 0.1) return;
   if (!await drained()) return;
   await refreshProjectionStatistics(engine);
-  const [pages] = await engine.executeRaw<{ rows: number }>("SELECT GREATEST(reltuples,0)::float8 AS rows FROM pg_class WHERE oid='pages'::regclass");
-  statisticsDebt.set(engine, { rebuilt: 0, rows: Number(pages?.rows ?? 0) });
+  // An engine without planner statistics (Rust) answers 0: its debt restarts from no rows.
+  statisticsDebt.set(engine, { rebuilt: 0, rows: await engine.readPagesRowEstimate() });
   statisticsRefreshes.set(engine, projectionStatisticsRefreshes(engine) + 1);
 }
 
@@ -620,13 +620,7 @@ async function selectWindowJobs(engine: BrainEngine, cursor: ProjectionScanCurso
     seen.add(key);
     return true;
   });
-  const probed = candidates.length ? await engine.executeRaw<{ i: number; source_id: string | null; archived: boolean | null; page_kind: string | null; body_storage: string | null }>(
-    `SELECT k.i,s.id AS source_id,s.archived,p.page_kind,p.body_storage
-      FROM jsonb_to_recordset($1::text::jsonb) AS k(i int, source_incarnation uuid, slug text)
-      LEFT JOIN LATERAL (SELECT s.id,s.archived FROM sources s WHERE s.incarnation=k.source_incarnation OFFSET 0) s ON true
-      LEFT JOIN LATERAL (SELECT p.page_kind,p.body_storage FROM (SELECT p.id FROM pages p WHERE p.source_id=s.id AND p.slug=k.slug OFFSET 0) q
-        JOIN pages p ON p.id=q.id WHERE p.deleted_at IS NULL) p ON true`,
-    [JSON.stringify(candidates.map((row, i) => ({ i, source_incarnation: row.source_incarnation, slug: row.slug })))]) : [];
+  const probed = candidates.length ? await engine.probeProjectionWindowCandidates(candidates) : [];
   const jobs: Array<QueuedJob & { ord: number }> = [];
   for (const probe of probed.sort((a, b) => Number(a.i) - Number(b.i))) {
     const row = candidates[Number(probe.i)]!;
@@ -759,28 +753,24 @@ export async function rebuildPendingPageProjections(engine: BrainEngine, limit =
   // false: a refused or dropped connection handed this page back and this worker stops.
   const runJob = async (index: number): Promise<boolean> => {
     const job = jobs[index]!;
-    const observed = [job.source_incarnation, job.slug, job.revision];
+    const key = { sourceIncarnation: job.source_incarnation, slug: job.slug, revision: job.revision };
     try {
       const prepared = await engine.transaction(async tx => {
         await tx.lockPageKeys([{ sourceId: job.source_id, slug: job.slug }]);
-        const pending = await tx.executeRaw<{ reason: string }>(`SELECT reason FROM page_projection_jobs
-          WHERE source_incarnation=$1::uuid AND slug=$2 AND revision=$3::uuid`, observed);
-        if (!pending.length) return null;
-        if (pending[0]!.reason === DEFERRED_CHUNK_REPLACEMENT || pending[0]!.reason.split(':')[0] === DEFERRED_CHUNK_CLAIM) return 'deferred';
+        const pending = await tx.readProjectionJobReason(key);
+        if (pending === null) return null;
+        if (pending === DEFERRED_CHUNK_REPLACEMENT || pending.split(':')[0] === DEFERRED_CHUNK_CLAIM) return 'deferred';
         const read = await readGuardedProjectionSnapshot(tx, job.slug, job.source_id, { allowUnsealed: true });
         if (!read) {
-          const [segmented] = await tx.executeRaw(`SELECT 1 FROM pages WHERE source_id=$1 AND slug=$2 AND body_storage='segmented' AND deleted_at IS NULL`,
-            [job.source_id, job.slug]);
-          return segmented ? 'segmented' : null;
+          return await tx.hasSegmentedPage(job.source_id, job.slug) ? 'segmented' : null;
         }
         const { snapshot } = read;
         if (snapshot.sourceIncarnation === job.source_incarnation && snapshot.revision === job.revision) return read;
         if (snapshot.sourceIncarnation !== job.source_incarnation || snapshot.page.text_projection_revision === snapshot.revision) {
-          await tx.executeRaw('DELETE FROM page_projection_jobs WHERE source_incarnation=$1::uuid AND slug=$2 AND revision=$3::uuid', observed);
+          await tx.deleteProjectionJob(key);
           return 'removed';
         }
-        await tx.executeRaw(`UPDATE page_projection_jobs SET revision=$4::uuid,updated_at=now()
-          WHERE source_incarnation=$1::uuid AND slug=$2 AND revision=$3::uuid`, [...observed, snapshot.revision]);
+        await tx.rekeyProjectionJob(key, snapshot.revision);
         return read;
       });
       if (!prepared) { superseded++; return true; }
@@ -794,17 +784,14 @@ export async function rebuildPendingPageProjections(engine: BrainEngine, limit =
         else {
           superseded++;
           // A skipped page (sealed meanwhile, or no longer inline Markdown) goes back to the ordinary rebuild.
-          await engine.executeRaw(`UPDATE page_projection_jobs SET updated_at=now()${step === 'skipped' ? ",reason='canonical_change'" : ''}
-            WHERE source_incarnation=$1::uuid AND slug=$2 AND revision=$3::uuid`, observed);
+          await engine.stampDeferredProjectionJob(key, step === 'skipped');
         }
         return true;
       }
       if (prepared === 'segmented') {
         const built = await buildSegmentedProjection(engine, { sourceId: job.source_id, slug: job.slug });
-        await engine.executeRaw(built.sealed
-          ? 'DELETE FROM page_projection_jobs WHERE source_incarnation=$1::uuid AND slug=$2 AND revision=$3::uuid'
-          : `UPDATE page_projection_jobs j SET updated_at=now() WHERE j.source_incarnation=$1::uuid AND j.slug=$2 AND j.revision=$3::uuid
-            AND NOT ${SEGMENTED_PROJECTION_CLAIMED_SQL}`, observed);
+        if (built.sealed) await engine.deleteProjectionJob(key);
+        else await engine.touchUnclaimedProjectionJob(key);
         if (built.sealed) rebuilt++;
         else superseded++;
         return true;
@@ -821,17 +808,14 @@ export async function rebuildPendingPageProjections(engine: BrainEngine, limit =
         return false;
       }
       if (!(error instanceof PageRevisionConflictError)) {
-        await engine.executeRaw(`UPDATE page_projection_jobs j SET reason='rebuild_failed',updated_at=now()
-          WHERE j.source_incarnation=$1::uuid AND j.slug=$2 AND j.revision=$3::uuid AND NOT ${SEGMENTED_PROJECTION_CLAIMED_SQL}`, observed);
+        await engine.markProjectionRebuildFailed(key);
         if (opts.onFailure) opts.onFailure({ source_id: job.source_id, slug: job.slug, reason: (error instanceof Error ? error.message : String(error)).split('\n')[0].slice(0, 300) });
         else process.stderr.write('[gbrain] Projection rebuild failed; work remains queued. Inspect projection readiness and the recorded source path.\n');
         return true;
       }
       // The page moved under its install: defer the exact row this call listed
       // (a newer trigger-queued row already carries its own stamp) and report it.
-      const deferred = await engine.executeRaw(`UPDATE page_projection_jobs SET updated_at=now()
-        WHERE source_incarnation=$1::uuid AND slug=$2 AND revision=$3::uuid RETURNING slug`, observed);
-      if (!deferred.length) { superseded++; return true; }
+      if (!(await engine.deferProjectionJob(key))) { superseded++; return true; }
       opts.onHeal?.({ kind: 'deferred', source_id: job.source_id, slug: job.slug });
       opts.onFailure?.({ source_id: job.source_id, slug: job.slug, reason: `revision_conflict: ${error.message.split('\n')[0].slice(0, 280)}` });
     }

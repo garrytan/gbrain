@@ -20,3 +20,10 @@ export const moveChunkIndexes: StoreMember<[pageId: number, waves: readonly (rea
 
 export const getChunkReuseRows: StoreMember<[slug: string, opts?: { sourceId?: string }], ChunkReuseRow[]> = (brain, slug, opts) =>
   storeCall({ member: 'getChunkReuseRows', slug, sourceId: opts?.sourceId }, () => brain.getChunkReuseRows(slug, opts?.sourceId ?? null));
+
+export const writeTextProjectionSeal: StoreMember<[slug: string, opts: { sourceId: string; revision: string; timelineText: string }], void> =
+  async (brain, slug, opts) => {
+    await storeCall({ member: 'writeTextProjectionSeal', slug, sourceId: opts.sourceId }, () => brain.writeTextProjectionSeal(slug, {
+      sourceId: opts.sourceId, revision: opts.revision, timelineText: opts.timelineText,
+    }));
+  };
