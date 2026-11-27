@@ -6,7 +6,7 @@
 #   (source_path writes, listColumnsOnly, vectors, fuzzy resolveSlugs, multi-source getChunks), or differ only as a row in
 #   test/rust-expected-divergence/ names),
 #   refuses:<capability> (throws engine_capability_missing), n/a:<why> (no such member on that arm), - (not covered).
-# covered: 2457/2483
+# covered: 2463/2489
 # lifecycle: 12/12
 # pages: 141/142
 # search: 8/8
@@ -133,11 +133,11 @@ withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
 listCatalogRelations	lifecycle	yes	1	no	yes	yes	serves
 readCatalogSchemaVersion	lifecycle	yes	1	no	yes	yes	serves
 listCatalogForeignKeys	lifecycle	yes	1	no	yes	yes	serves
-getPage	pages	yes	289	yes	yes	yes	serves
+getPage	pages	yes	291	yes	yes	yes	serves
 readPageSnapshot	pages	yes	105	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	8	no	yes	yes	serves
 lockPageKeys	pages	yes	17	no	yes	yes	serves
-putPage	pages	yes	1369	yes	yes	yes	serves
+putPage	pages	yes	1372	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	45	yes	yes	yes	serves
@@ -839,7 +839,7 @@ clearFenceHoldRows	persistence_journal	yes	1	no	yes	yes	serves
 readFenceHoldFiles	persistence_journal	yes	1	no	yes	yes	serves
 readLiveGenerationRow	persistence_journal	yes	6	no	yes	yes	serves
 activateGenerationRows	persistence_journal	yes	20	no	yes	yes	serves
-recordHeldGenerationRow	persistence_journal	yes	14	no	yes	yes	serves
+recordHeldGenerationRow	persistence_journal	yes	15	no	yes	yes	serves
 readGitHoldRecords	persistence_journal	yes	3	no	yes	yes	serves
 readGitHoldRetryRequest	persistence_journal	yes	2	no	yes	yes	serves
 readGitHoldReportInputs	persistence_journal	yes	2	no	yes	yes	serves
@@ -2495,7 +2495,7 @@ readImagePageCoverage	doctor_pages	yes	1	no	yes	yes	serves
 listBracketPathPages	doctor_pages	yes	1	no	yes	yes	serves
 listSlugPathCandidates	doctor_pages	yes	1	no	yes	yes	serves
 countAtomExtractionBacklog	doctor_search	yes	2	no	yes	yes	serves
-listExtractablePages	doctor_search	yes	2	no	yes	yes	serves
+listExtractablePages	doctor_search	yes	3	no	yes	yes	serves
 listAtomSourceHashes	doctor_search	yes	1	no	yes	yes	serves
 listTombstonedTranscripts	doctor_search	yes	1	no	yes	yes	serves
 listSourcePageAtomTitles	doctor_search	yes	1	no	yes	yes	serves
