@@ -54,7 +54,7 @@ d('shadow follow producer on Postgres', () => {
 
   test('a failed pre-read does not abort the transaction around it', async () => { await failedPreReadKeepsTransaction(engine); }, 60_000);
   test('a failed pre-read does not undo sibling writes of the transaction that were in flight around it (pipelined)', async () => { await failedPreReadKeepsSiblingWrites(engine); }, 60_000);
-  test('a pre-read never waits for a running nested transaction: the write is relation-level (pre_read_busy) and every write commits', async () => { await busyPreReadIsRelationLevel(engine); }, 60_000);
+  test('a pre-read waits for a running nested transaction, whose own followed write never waits for it: both commit with no stall', async () => { await busyPreReadIsRelationLevel(engine); }, 60_000);
   test('a callback that throws at once rolls back the write a pre-read held (it is sent before the ROLLBACK)', async () => { await syncThrowRollsBackHeldWrite(engine); }, 60_000);
   test('with write sampling on too, a call the sampler held does not wait for itself when it is let go', async () => { await sampledSiblingDoesNotWaitForItself(engine); }, 60_000);
   test('a followed write the callback did not await is sent before the COMMIT and commits', async () => { await unawaitedFollowedWriteCommits(engine); }, 60_000);

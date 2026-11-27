@@ -101,21 +101,26 @@ export async function failedPreReadKeepsSiblingWrites(primary: BrainEngine): Pro
 }
 
 /**
- * A pre-read never waits for a call that runs a callback (a nested transaction may itself be waiting for a call held behind the pre-read):
- * the write is planned relation-level (`pre_read_busy`), and every write commits.
+ * A pre-read beside a running nested transaction waits for it, while a followed write inside that nested transaction never waits for the outer
+ * pre-read (which is waiting for it): both writes commit, row by row, with no stall until the 2 second bound.
  */
 export async function busyPreReadIsRelationLevel(primary: BrainEngine): Promise<void> {
   const h = followHarness(primary);
   await primary.putPage('people/busy', PAGE('Busy'));
+  await primary.putPage('people/busy-gone', PAGE('Busy Gone'));
+  const t0 = Date.now();
   await h.engine.transaction(async (tx) => {
     await Promise.all([
       tx.transaction(async (nested) => { await new Promise((r) => setTimeout(r, 30)); await nested.addTag('people/busy', 'nested'); }),
-      tx.deletePage('people/busy-gone'), // a delete pre-reads the rows it removes
+      tx.deletePage('people/busy-gone'), // a delete pre-reads the rows it removes: it waits for the nested transaction
     ]);
   });
+  const ms = Date.now() - t0;
   if (!(await primary.getTags('people/busy')).includes('nested')) throw new Error('the nested write was lost');
+  if (await primary.getPage('people/busy-gone')) throw new Error('the delete did not commit');
+  if (ms > 1_500) throw new Error(`the nested write and the waiting delete stalled each other until the bound (${ms} ms)`);
   const items = h.batches.flatMap((b) => b.items);
-  if (!items.some((i) => i.kind === 'relation' && i.reason === 'pre_read_busy')) throw new Error(`no pre_read_busy item: ${JSON.stringify(items)}`);
+  if (items.some((i) => i.kind === 'relation' && i.reason === 'pre_read_busy')) throw new Error(`a write was planned pre_read_busy: ${JSON.stringify(items)}`);
 }
 
 /**
