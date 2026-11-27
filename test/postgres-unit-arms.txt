@@ -287,6 +287,7 @@ test/engine-parity/fact-fingerprint-ambiguous.test.ts
 test/engine-parity/fact-fingerprint-corpus.test.ts
 test/engine-parity/fact-future-order.test.ts
 test/engine-parity/fact-insert-guard.test.ts
+test/engine-parity/fact-keys-private-title.test.ts
 test/engine-parity/fact-page-delete.test.ts
 test/engine-parity/fact-pool-widening.test.ts
 test/engine-parity/fact-provenance.test.ts
@@ -395,6 +396,7 @@ test/engine-parity/meeting-pages.test.ts
 test/engine-parity/meetings-sync.test.ts
 test/engine-parity/memory-mutation-reads.test.ts
 test/engine-parity/memory-proposal-reads.test.ts
+test/engine-parity/mention-coverage-private.test.ts
 test/engine-parity/mention-coverage.test.ts
 test/engine-parity/mention-pass.test.ts
 test/engine-parity/migrate-embeddings-usage.test.ts

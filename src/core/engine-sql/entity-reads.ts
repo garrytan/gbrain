@@ -67,8 +67,12 @@ export async function readMentionIndexStatus(exec: LegacyUnscopedRead, sourceIds
  * `excludePrivate` leaves out the pages the caller may not read.
  */
 export async function countLivePagesInSource(exec: LegacyUnscopedRead, sourceId: string, opts: CoverageCountOpts = {}): Promise<number> {
-  const priv = opts.excludePrivate ? ` AND ${privatePagesFilterForCaller('pages')}` : '';
-  const [n] = await exec.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM pages WHERE source_id = $1 AND deleted_at IS NULL${priv}`, [sourceId]);
+  if (!opts.excludePrivate) {
+    const [n] = await exec.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM pages WHERE source_id = $1 AND deleted_at IS NULL', [sourceId]);
+    return Number(n?.n ?? 0);
+  }
+  const { text, params } = renderFragment(sqlFragment`SELECT count(*)::int AS n FROM pages WHERE source_id = ${sourceId} AND deleted_at IS NULL AND ${trustedSql(privatePagesFilterForCaller('pages'))}`);
+  const [n] = await exec.executeRaw<{ n: number }>(text, params);
   return Number(n?.n ?? 0);
 }
 
@@ -81,12 +85,18 @@ export async function countLivePagesInSource(exec: LegacyUnscopedRead, sourceId:
  */
 export async function countMentionDueSince(exec: LegacyUnscopedRead, sourceId: string, since: string, mentionVersion: number,
   opts: CoverageCountOpts = {}): Promise<number> {
-  const priv = opts.excludePrivate ? ` AND ${privatePagesFilterForCaller('p')}` : '';
-  const [n] = await exec.executeRaw<{ n: number }>(
-      `SELECT count(*)::int AS n FROM pages p LEFT JOIN page_mention_state s ON s.page_id = p.id
+  if (!opts.excludePrivate) {
+    const [n] = await exec.executeRaw<{ n: number }>(
+        `SELECT count(*)::int AS n FROM pages p LEFT JOIN page_mention_state s ON s.page_id = p.id
         WHERE p.source_id = $1 AND p.updated_at >= $2::text::timestamptz AND p.deleted_at IS NULL
-          AND (s.page_id IS NULL OR s.mention_revision IS DISTINCT FROM p.knowledge_revision OR s.mention_version IS DISTINCT FROM $3)${priv}`,
-      [sourceId, since, mentionVersion]);
+          AND (s.page_id IS NULL OR s.mention_revision IS DISTINCT FROM p.knowledge_revision OR s.mention_version IS DISTINCT FROM $3)`,
+        [sourceId, since, mentionVersion]);
+    return Number(n?.n ?? 0);
+  }
+  const { text, params } = renderFragment(sqlFragment`SELECT count(*)::int AS n FROM pages p LEFT JOIN page_mention_state s ON s.page_id = p.id
+        WHERE p.source_id = ${sourceId} AND p.updated_at >= ${since}::text::timestamptz AND p.deleted_at IS NULL
+          AND (s.page_id IS NULL OR s.mention_revision IS DISTINCT FROM p.knowledge_revision OR s.mention_version IS DISTINCT FROM ${mentionVersion}) AND ${trustedSql(privatePagesFilterForCaller('p'))}`);
+  const [n] = await exec.executeRaw<{ n: number }>(text, params);
   return Number(n?.n ?? 0);
 }
 
