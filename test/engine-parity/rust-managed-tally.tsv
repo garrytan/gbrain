@@ -464,7 +464,7 @@ test/engine-parity/worktree-terms.test.ts	3	1
 test/engine-parity/world-only-spelling-read.test.ts	5	0
 test/engine-parity/write-attribution.test.ts	11	0
 test/engine-parity/write-guards.test.ts	10	0
-test/engine-parity/write-misc.test.ts	81	1
+test/engine-parity/write-misc.test.ts	82	0
 test/engine-parity/write-outcome-order.test.ts	1	0
 test/engine-parity/write-request-cancel.test.ts	2	0
 test/engine-parity/write-request-reads.test.ts	3	0
