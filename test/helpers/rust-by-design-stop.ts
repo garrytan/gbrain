@@ -30,19 +30,6 @@ export function rethrowRoutedStop(error: unknown, member: string, row: string): 
 }
 
 /**
- * A typed member that refuses by name on Rust until its owner serves it: the refusal is `engine_capability_missing`
- * with reason `capability`, naming `member`, and RUST_ENGINE.md row `row` names the owner.
- */
-export function rethrowNamedMemberStop(error: unknown, capability: string, member: string, row: string): never {
-  const message = error instanceof Error ? error.message : String(error);
-  const detail = typeof error === 'object' && error !== null ? (error as { code?: unknown; reason?: unknown }) : {};
-  if (detail.code !== 'engine_capability_missing' || detail.reason !== capability || !message.includes(member)) {
-    throw new Error(`expected the named ${capability} stop on ${member} (RUST_ENGINE.md row ${row}), got: ${message}`, { cause: error });
-  }
-  throw error;
-}
-
-/**
  * A managed-mode stop (RUST_ENGINE.md row 47, the managed-mode program). With the user-facing hold kept, a managed sync
  * on the Rust arm refuses `engine_capability_missing` reason `managed_persistence`, naming `performManagedSync`. With the
  * hold lifted (GBRAIN_TEST_RUST_MANAGED=1, test/engine-parity/rust-managed.ts) it runs on, and stops at the first

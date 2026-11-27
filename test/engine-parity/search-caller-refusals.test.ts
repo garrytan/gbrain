@@ -26,7 +26,6 @@ import { dispatchToolCall } from '../../src/mcp/dispatch.ts';
 import { prefixAnchoredPages } from '../../src/core/search/entity-anchor.ts';
 import { retrieveEvidence } from '../../src/core/questions/refresh.ts';
 import type { PinRow } from '../../src/core/questions/store.ts';
-import { rethrowNamedMemberStop } from '../helpers/rust-by-design-stop.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -169,9 +168,8 @@ describe('engine parity: search-caller reads that stopped a user command on Rust
   });
 
   /**
-   * The refresh's evidence read: the prefix-anchored pages come first. On Rust this case still stops, after the anchored
-   * read, at retrieveEvidence's typed candidate-page read (listQuestionCandidatePages, engine-sql/question-reads.ts):
-   * a named pages stop (RUST_ENGINE.md row 62) until the store keeps the page generation counter.
+   * The refresh's evidence read: the prefix-anchored pages come first. The Rust store keeps the page generation counter,
+   * so every evidence read (engine-sql/question-reads.ts) is a served member and the Rust arm answers as PGLite does.
    */
   parityTest('gbrain questions refresh of a slug-prefix pin gathers the prefix-anchored pages first', {
     methods: ['putPage', 'readPrefixAnchoredPages'],
@@ -182,10 +180,7 @@ describe('engine parity: search-caller reads that stopped a user command on Rust
     }
     const pin = { id: 1, source_id: 'default', slug: 'questions/widget-status', question: 'What is the widget status?', scope_slug_prefix: 'projects/widget/',
       scope_entity: null } as unknown as PinRow;
-    // The Rust arm's stop, by name (RUST_ENGINE.md row 62): the evidence reads are typed members, and the first one,
-    // listQuestionCandidatePages, refuses with the pages capability until the store keeps the page generation counter.
-    const evidence = await retrieveEvidence(engine, pin)
-      .catch((e: unknown) => rethrowNamedMemberStop(e, 'pages', 'listQuestionCandidatePages', '62'));
+    const evidence = await retrieveEvidence(engine, pin);
     const pages = evidence.filter(e => e.kind === 'page').map(e => e.page_slug);
     expect(pages.slice(0, 3)).toEqual(['projects/widget/n3', 'projects/widget/n2', 'projects/widget/n1']);
     return pages;
