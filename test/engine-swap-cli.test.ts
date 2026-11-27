@@ -328,7 +328,9 @@ describe('the swap report names each write type criterion 5 does not compare', (
       // The trunk's chronicle ledger row (upsertChronicleRow, src/shadow/write-map.ts) is a non-pilot write counted on the other line.
       'chronicle_page_state',
       // The guest-source record, guest marks and trust allow rules (src/shadow/write-map.ts) are non-pilot writes counted on the other line.
-      'guest_sources', 'guest_marks', 'trust_allow_rules']);
+      'guest_sources', 'guest_marks', 'trust_allow_rules',
+      // The core edit notice writes (insert, ack, purge blanking; src/shadow/write-map.ts) are non-pilot writes counted on the other line.
+      'core_edit_notices']);
     const stray = Object.keys(WRITE_MAP).filter(op => !PILOT_WRITES.has(op)).map(writeFamily)
       .filter(f => !named.has(f) && !other.has(f) && !/^(pages|links):[A-Za-z]+$/.test(f));
     expect(stray).toEqual([]);
