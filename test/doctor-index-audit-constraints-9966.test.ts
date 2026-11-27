@@ -63,6 +63,17 @@ for (const kind of testBackends()) describe(`index_audit and constraint indexes 
       const [check] = await indexAuditEntry.run({ engine: bare.engine, args: ['--index-audit'], progress } as unknown as DoctorContext) as Check[];
       expect(check).toMatchObject({ name: 'index_audit', status: 'warn' });
       expect(check!.message).toContain('dup_fixture_k_idx');
+      await bare.engine.executeRaw(`CREATE TABLE healthy_fixture AS SELECT n FROM generate_series(1, 12000) AS n`);
+      for (let n = 1; n <= 24; n++) {
+        await bare.engine.executeRaw(`CREATE INDEX healthy_fixture_${n}_idx ON healthy_fixture ((n + ${n}))`);
+      }
+      const [auditWithLargeIndexes] = await indexAuditEntry.run({
+        engine: bare.engine, args: ['--index-audit'], progress,
+      } as unknown as DoctorContext) as Check[];
+      expect(auditWithLargeIndexes).toMatchObject({ status: 'warn', details: { exact: false } });
+      expect(auditWithLargeIndexes!.message).toContain('dup_fixture_k_idx');
+      expect(auditWithLargeIndexes!.message).toContain('invalid, unready or being dropped');
+      expect(auditWithLargeIndexes!.message).toContain('healthy_fixture_');
     } finally {
       await bare.close();
     }
