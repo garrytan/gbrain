@@ -117,7 +117,8 @@ export const CONTENT_AUTHOR_BACKFILL_SQL = `WITH remote_requests AS MATERIALIZED
    WHERE p.content_author IS NULL AND p.content_hash IS NOT NULL
      AND (p.ingested_via IN (${list(TRUSTED_IMPORTER_VIAS)}) OR s.config->>'kind' IN (${list(CONNECTOR_AUTHOR_KINDS)}) OR r.intent->>'ingested_via' IN (${list(TRUSTED_IMPORTER_VIAS)}))
      AND (p.revision_principal_kind IS NULL OR p.revision_principal_kind NOT IN (${list(REMOTE_PRINCIPAL_KINDS)}))
-     AND NOT EXISTS (SELECT 1 FROM remote_requests x WHERE x.page_id = p.id OR (x.source_id = p.source_id AND x.slug = p.slug))
+     AND NOT EXISTS (SELECT 1 FROM remote_requests x WHERE x.page_id = p.id)
+     AND NOT EXISTS (SELECT 1 FROM remote_requests x WHERE x.source_id = p.source_id AND x.slug = p.slug)
      AND NOT EXISTS (SELECT 1 FROM remote_versions x WHERE x.page_id = p.id)
 ), legacy AS (
   SELECT c.id, c.hash, c.revision, CASE

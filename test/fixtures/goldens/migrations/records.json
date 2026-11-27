@@ -5580,8 +5580,8 @@
         "idempotent": true,
         "name": "content_author_backfill",
         "sql": {
-          "length": 3674,
-          "sha256": "74d7897eea9566ef314896020ca38128ad53bd463a00ac3a19a4f7e84e9a29a2"
+          "length": 3729,
+          "sha256": "9ab78512cb825965344a1e6db9470758c162bc703236b6e5ce2e30f2fbb8341b"
         },
         "sqlFor": "absent",
         "transaction": "absent",
