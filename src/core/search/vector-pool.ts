@@ -93,9 +93,11 @@ export function remainingVectorBudget(deadline: number): number {
 /**
  * The pooled attempts, widening the window x4 up to three times, then (Postgres,
  * indexed) the exact fallback. `hnswOrdered` says the attempts can only be
- * ordered by the HNSW scan (HNSW_ORDERED_POOL_SETTINGS): a short window then
- * means the scan reached `hnsw.max_scan_tuples`, which a wider window does not
- * raise, so the exact fallback comes next with the rest of the deadline.
+ * ordered by an iterative HNSW scan (HNSW_ORDERED_POOL_SETTINGS): a short
+ * window then means the scan reached `hnsw.max_scan_tuples`, which a wider
+ * window does not raise, so the exact fallback comes next with the rest of the
+ * deadline. A non-iterative scan stops at `ef_search`, which widening raises,
+ * so it keeps widening.
  */
 export async function searchVectorPool(
   limit: number,

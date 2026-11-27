@@ -80,12 +80,19 @@ import { hasDatabase } from './helpers.ts';
     expect(await engine.executeRaw<{ enable_sort: string }>(`SELECT current_setting('enable_sort') AS enable_sort`)).toEqual([{ enable_sort: 'on' }]);
 
     const walk = spyOn(vectorPool, 'searchIndexWalk').mockResolvedValue(null);
+    const original = vectorPool.searchVectorPool;
+    const ordered: unknown[] = [];
+    const pool = spyOn(vectorPool, 'searchVectorPool').mockImplementation((...args) => (ordered.push(args[8]), original(...args)));
     let results;
     try {
       results = await engine.searchVector(vec(11), searchOpts);
+      await engine.searchVector(vec(11), { ...searchOpts, hnswIterativeScan: 'off' });
     } finally {
       walk.mockRestore();
+      pool.mockRestore();
     }
+    // A non-iterative scan stops at ef_search, which a wider window raises, so only iterative pools skip widening.
+    expect(ordered).toEqual([true, false]);
     // HNSW is approximate and each fresh database builds its own graph, so the reference is the pooled attempt on this graph, never the exact rows.
     const pooledRows = await attempt(statementFor, { innerLimit: stmt.innerLimit, maxScanTuples: POOL_MAX_SCAN_TUPLES, remainingMs: 8_000, exact: false }, true, searchOpts, (tx, sql, bound) => tx.unsafe(sql, bound));
     const visible = await engine.executeRaw<{ id: number }>('SELECT id FROM pages');
