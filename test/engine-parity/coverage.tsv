@@ -141,9 +141,9 @@ hasTable	lifecycle	yes	1	no	yes	yes	serves
 hasColumn	lifecycle	yes	2	no	yes	yes	serves
 listTextBearingColumns	lifecycle	yes	1	no	yes	yes	serves
 scanTextColumns	lifecycle	yes	14	no	yes	yes	serves
-pauseManagedPersistence	lifecycle	yes	1	no	yes	yes	serves
+pauseManagedPersistence	lifecycle	yes	2	no	yes	yes	serves
 restoreManagedPersistence	lifecycle	no	0	no	-	-	-
-withManagedPersistencePaused	lifecycle	yes	9	no	yes	yes	serves
+withManagedPersistencePaused	lifecycle	yes	10	no	yes	yes	serves
 getPage	pages	yes	295	yes	yes	yes	serves
 readPageSnapshot	pages	yes	121	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	8	no	yes	yes	serves
@@ -1023,7 +1023,7 @@ findTopologyChanges	persistence_journal	yes	3	no	yes	yes	serves
 readTopologyChangeDigest	persistence_journal	yes	2	no	yes	yes	serves
 listTopologyRecoveries	persistence_journal	yes	5	no	yes	yes	serves
 readTopologyChange	persistence_journal	yes	4	no	yes	yes	serves
-insertTopologyChange	persistence_journal	yes	11	no	yes	yes	serves
+insertTopologyChange	persistence_journal	yes	12	no	yes	yes	serves
 renewWriteClaim	persistence_journal	yes	1	no	yes	yes	serves
 releaseUnpublishedClaim	persistence_journal	yes	4	no	yes	yes	serves
 expireStaleWriteClaims	persistence_journal	yes	1	no	yes	yes	serves
@@ -2059,10 +2059,10 @@ listHostRepositoryRoots	write_misc	yes	1	no	yes	yes	serves
 listPendingGitEffectPaths	write_misc	no	0	no	-	-	-
 listWorktreeMembers	write_misc	yes	2	no	yes	yes	serves
 worktreeClaimStore	write_misc	yes	46	no	yes	yes	serves
-readWriterAdminState	write_misc	yes	21	no	yes	yes	serves
+readWriterAdminState	write_misc	yes	22	no	yes	yes	serves
 readWorktreeManifest	write_misc	yes	5	no	yes	yes	serves
 writerAdminStore	write_misc	yes	7	no	yes	yes	serves
-writerReleaseStore	write_misc	yes	23	no	yes	yes	serves
+writerReleaseStore	write_misc	yes	24	no	yes	yes	serves
 publicationJournalStore	write_misc	yes	2	no	yes	yes	serves
 chronicleStore	write_misc	yes	2	no	yes	yes	serves
 hasExtractedEvents	write_misc	yes	1	no	yes	yes	serves

@@ -35,10 +35,13 @@
  *    relationships and transitions under activeOnly, a token in a config key, a page alias and a whole jsonb number or
  *    boolean; equal values came back in different orders before the limit. Review round 3: a restore that threw before
  *    returning a promise hid fn's error; activeOnly kept the aliases of a hard-deleted page; Rust read a whole jsonb
- *    number with an exponent (1e-7) and a derived alias's display text only outside page_aliases.
+ *    number with an exponent (1e-7) and a derived alias's display text only outside page_aliases; a pause token an older
+ *    gbrain took (its topology_changes counted every change) let the restore turn the brain back on after a brain-wide
+ *    deactivation.
  *  - Seam: real engines; ids and timestamps are compared by shape, not by literal. The both-errors case alone replaces
  *    the engine's restoreManagedPersistence with a rejecting, then a throwing, stub (deleted in finally): no real store
- *    fails a restore on demand.
+ *    fails a restore on demand. The owner-upgrade case wraps pauseManagedPersistence to return the token an older gbrain
+ *    returned (deleted in finally): one process cannot run two gbrain versions.
  */
 import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -48,6 +51,7 @@ import { createSource, parityArms, type ParityBackend } from './harness.ts';
 import { testBackends } from '../helpers/test-backends.ts';
 import { withEnv } from '../helpers/with-env.ts';
 import type { BrainEngine, NewFact } from '../../src/core/engine.ts';
+import type { ManagedPausePrior } from '../../src/core/engine-sql/eval-harness-reads.ts';
 import { withRequestSignal } from '../../src/core/request-signal.ts';
 import { writerAdminState } from '../../src/core/persistence/admin-intent.ts';
 import { runPersistenceAdministration } from '../../src/core/persistence/administration.ts';
@@ -534,6 +538,36 @@ describe('engine parity: the eval harness reads', () => {
     };
     expect(result).toEqual({ sourceChange: 'restored', afterSource: { enabled: true, sameEpoch: true },
       brainChange: 'paused_state_changed', afterBrain: { enabled: false, sameEpoch: true } });
+    return result;
+  });
+
+  parityTest('withManagedPersistencePaused leaves the brain paused, and says why, when an owner upgrade and a deactivation run during fn', {
+    methods: ['writerReleaseStore', 'readWriterAdminState', 'withManagedPersistencePaused', 'pauseManagedPersistence', 'insertTopologyChange'],
+  }, async (engine, backend) => {
+    await createSource(engine, backend, 'work');
+    await topologyChange(engine, 'work', 'company-brain-connect', 'd0000000-0000-4000-8000-0000000000b1');
+    await setEnabled(engine, true);
+    // The pause ran on the gbrain before an owner upgrade: its token held topology_changes, a count of every topology
+    // change (the brain-wide ones plus the one source change above), not brain_topology_changes.
+    const target = engine as unknown as { pauseManagedPersistence: BrainEngine['pauseManagedPersistence'] };
+    const current = engine.pauseManagedPersistence.bind(engine);
+    target.pauseManagedPersistence = async () => {
+      const prior = await current() as unknown as Record<string, string | boolean>;
+      const everyChange = Number(prior.brain_topology_changes) + 1;
+      return { enabled: prior.enabled, mode_epoch: prior.mode_epoch, topology_changes: String(everyChange) } as unknown as ManagedPausePrior;
+    };
+    let outcome: unknown;
+    try {
+      // A brain-wide deactivation during fn makes the brain-wide count equal the old token's count of every change.
+      outcome = await engine.withManagedPersistencePaused(async () => {
+        await topologyChange(engine, '*', 'writer_deactivate', 'd0000000-0000-4000-8000-0000000000b2');
+      }).then(o => o.restore, (e: { code?: string; message?: string }) => ({ code: e.code, names: /gbrain sources writer activate/.test(e.message ?? '') }));
+    } finally {
+      delete (target as Partial<typeof target>).pauseManagedPersistence;
+    }
+    const after = await brainState(engine);
+    const result = { outcome, enabled: after.enabled };
+    expect(result).toEqual({ outcome: { code: 'managed_pause_token_outdated', names: true }, enabled: false });
     return result;
   });
 

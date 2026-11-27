@@ -38,6 +38,22 @@ const rolledBack = async (engine: BrainEngine, fn: (tx: BrainEngine) => Promise<
 const factHits = async (engine: BrainEngine, token: string) =>
   (await engine.scanTextColumns({ pattern: token, activeOnly: false, tables: ['facts', 'eval_scan_links'] })).map(h => [h.table, h.value]);
 
+/**
+ * Waits, at most 10 s, until another backend waits on a lock of persistence_brain (the brain row), so a test knows its
+ * statement is blocked on that lock rather than not yet sent. Throws when it never is.
+ */
+const waitForBrainLockWaiter = async (engine: BrainEngine) => {
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    const [{ n }] = await engine.executeRaw<{ n: string }>(`SELECT count(*)::text AS n FROM pg_catalog.pg_locks l
+      WHERE NOT l.granted AND l.pid <> pg_backend_pid()
+        AND (l.relation = 'persistence_brain'::regclass OR l.locktype IN ('transactionid', 'tuple'))`);
+    if (Number(n) > 0) return;
+    await Bun.sleep(25);
+  }
+  throw new Error('no statement waited on the brain row lock within 10 s');
+};
+
 function catalogCases(open: () => BrainEngine) {
   test('a temporary table named like a scanned table does not hide the stored rows', async () => {
     const engine = open();
@@ -145,13 +161,13 @@ describe.if(backends.includes('postgres'))('scanTextColumns on Postgres', () => 
       const pausing = engine.pauseManagedPersistence();
       let done = false;
       void pausing.then(() => { done = true; }, () => { done = true; });
-      await Bun.sleep(300);
+      await waitForBrainLockWaiter(engine);
       const waited = !done;
       release();
       await change;
       const prior = await pausing;
       const [{ n }] = await engine.executeRaw<{ n: string }>("SELECT count(*)::text AS n FROM persistence_topology_changes WHERE source_id = '*'");
-      const result = { waited, counted: prior.topology_changes === n, restored: await engine.restoreManagedPersistence(prior),
+      const result = { waited, counted: prior.brain_topology_changes === n, restored: await engine.restoreManagedPersistence(prior),
         enabled: JSON.parse(await engine.readWriterAdminState()).brain.enabled };
       expect(result).toEqual({ waited: true, counted: true, restored: true, enabled: true });
     } finally {
@@ -183,7 +199,7 @@ describe.if(backends.includes('postgres'))('scanTextColumns on Postgres', () => 
       const restoring = engine.restoreManagedPersistence(prior);
       let done = false;
       void restoring.then(() => { done = true; }, () => { done = true; });
-      await Bun.sleep(300);
+      await waitForBrainLockWaiter(engine);
       const waited = !done;
       release();
       await deactivation;

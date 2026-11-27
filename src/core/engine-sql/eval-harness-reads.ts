@@ -240,9 +240,27 @@ export async function scanTextColumns(engine: Raw, spec: TextScanSpec): Promise<
 /**
  * The brain row's managed state before a harness pause: `enabled`, `mode_epoch` and the count of recorded brain-wide
  * topology changes (`source_id = '*'`), each as text. A change to one source (a source add, claim, removal or a
- * company-brain connect) does not change the brain's own state, so it is not counted.
+ * company-brain connect) does not change the brain's own state, so it is not counted. The count is named
+ * `brain_topology_changes`: a pause token from an older gbrain holds `topology_changes`, a count of every change, which
+ * the restore cannot compare, so it refuses that token (see assertCurrentPauseToken).
  */
-export interface ManagedPausePrior { enabled: boolean; mode_epoch: string; topology_changes: string }
+export interface ManagedPausePrior { enabled: boolean; mode_epoch: string; brain_topology_changes: string }
+
+/** The code of the refusal of a pause token whose count the restore cannot compare. */
+export const PAUSE_TOKEN_OUTDATED = 'managed_pause_token_outdated';
+
+/**
+ * Refuses, before anything is written, a pause token with no `brain_topology_changes`: one an older gbrain took (an
+ * owner upgrade between the pause and the restore). Its `topology_changes` counted every topology change, so after a
+ * brain-wide deactivation it can equal the brain-wide count and the compare-and-set would turn the brain back on. The
+ * brain stays paused (enabled=false); `gbrain sources writer activate` turns it back on.
+ */
+export function assertCurrentPauseToken(prior: ManagedPausePrior): void {
+  if (typeof (prior as { brain_topology_changes?: unknown }).brain_topology_changes === 'string') return;
+  throw Object.assign(new Error('restoreManagedPersistence: this pause token was taken by an older gbrain, which counted every '
+    + 'topology change, so the restore cannot tell whether this brain changed during the pause; managed persistence stays off. '
+    + 'Run `gbrain sources writer activate` to turn it back on.'), { code: PAUSE_TOKEN_OUTDATED });
+}
 
 /** What withManagedPersistencePaused reports: fn's result and whether the prior state was put back. */
 export interface ManagedPauseOutcome<T> { result: T; restore: 'restored' | 'paused_state_changed' }
@@ -251,7 +269,7 @@ export interface ManagedPauseOutcome<T> { result: T; restore: 'restored' | 'paus
 export const PAUSE_MANAGED_SQL = `WITH prior AS (SELECT enabled, mode_epoch, (SELECT count(*) FROM persistence_topology_changes WHERE source_id = '*') AS topology_changes
         FROM persistence_brain WHERE singleton = 1 FOR UPDATE),
       paused AS (UPDATE persistence_brain SET enabled = false WHERE singleton = 1)
-    SELECT enabled, mode_epoch::text AS mode_epoch, topology_changes::text AS topology_changes FROM prior`;
+    SELECT enabled, mode_epoch::text AS mode_epoch, topology_changes::text AS brain_topology_changes FROM prior`;
 /**
  * Puts `enabled` back only while the row is still paused at the epoch the pause read and no brain-wide topology change
  * was recorded since (compare-and-set). A deactivation of a disabled brain releases its claims without moving the
@@ -271,10 +289,10 @@ export const LOCK_BRAIN_SQL = 'SELECT 1 FROM persistence_brain WHERE singleton =
 export async function pauseManagedPersistence(engine: Pick<BrainEngine, 'transaction'>): Promise<ManagedPausePrior> {
   const [row] = await engine.transaction(async tx => {
     await tx.executeRaw(LOCK_BRAIN_SQL);
-    return tx.executeRaw<{ enabled: boolean; mode_epoch: string; topology_changes: string }>(PAUSE_MANAGED_SQL);
+    return tx.executeRaw<{ enabled: boolean; mode_epoch: string; brain_topology_changes: string }>(PAUSE_MANAGED_SQL);
   });
   if (!row) throw new Error('pauseManagedPersistence: this brain has no persistence brain row');
-  return { enabled: row.enabled === true, mode_epoch: String(row.mode_epoch), topology_changes: String(row.topology_changes) };
+  return { enabled: row.enabled === true, mode_epoch: String(row.mode_epoch), brain_topology_changes: String(row.brain_topology_changes) };
 }
 
 /**
@@ -283,9 +301,10 @@ export async function pauseManagedPersistence(engine: Pick<BrainEngine, 'transac
  * deactivation that held the lock (a statement's snapshot is taken before it waits for a lock).
  */
 export async function restoreManagedPersistence(engine: Pick<BrainEngine, 'transaction'>, prior: ManagedPausePrior): Promise<boolean> {
+  assertCurrentPauseToken(prior);
   return engine.transaction(async tx => {
     await tx.executeRaw(LOCK_BRAIN_SQL);
-    const rows = await tx.executeRaw<{ restored: boolean }>(RESTORE_MANAGED_SQL, [prior.enabled, prior.mode_epoch, prior.topology_changes]);
+    const rows = await tx.executeRaw<{ restored: boolean }>(RESTORE_MANAGED_SQL, [prior.enabled, prior.mode_epoch, prior.brain_topology_changes]);
     return rows.length > 0;
   });
 }

@@ -139,15 +139,18 @@ describe('eval harness SQL, byte for byte', () => {
   });
 
   test('pauseManagedPersistence and restoreManagedPersistence', async () => {
-    const { engine, calls } = recorder((text) => (text.startsWith('WITH prior') ? [{ enabled: true, mode_epoch: '7', topology_changes: '2' }] : [{ restored: true }]));
-    expect(await sql.pauseManagedPersistence(engine)).toEqual({ enabled: true, mode_epoch: '7', topology_changes: '2' });
-    expect(await sql.restoreManagedPersistence(engine, { enabled: true, mode_epoch: '7', topology_changes: '2' })).toBe(true);
+    const { engine, calls } = recorder((text) => (text.startsWith('WITH prior') ? [{ enabled: true, mode_epoch: '7', brain_topology_changes: '2' }] : [{ restored: true }]));
+    expect(await sql.pauseManagedPersistence(engine)).toEqual({ enabled: true, mode_epoch: '7', brain_topology_changes: '2' });
+    expect(await sql.restoreManagedPersistence(engine, { enabled: true, mode_epoch: '7', brain_topology_changes: '2' })).toBe(true);
+    // A pause token an older gbrain took (topology_changes, a count of every change) is refused before any statement.
+    const outdated = { enabled: true, mode_epoch: '7', topology_changes: '3' } as unknown as sql.ManagedPausePrior;
+    expect(await sql.restoreManagedPersistence(engine, outdated).then(() => 'restored', (e: { code?: string }) => e.code)).toBe(sql.PAUSE_TOKEN_OUTDATED);
     expect(calls).toEqual([
       { text: 'SELECT 1 FROM persistence_brain WHERE singleton = 1 FOR UPDATE', params: undefined },
       { text: `WITH prior AS (SELECT enabled, mode_epoch, (SELECT count(*) FROM persistence_topology_changes WHERE source_id = '*') AS topology_changes
         FROM persistence_brain WHERE singleton = 1 FOR UPDATE),
       paused AS (UPDATE persistence_brain SET enabled = false WHERE singleton = 1)
-    SELECT enabled, mode_epoch::text AS mode_epoch, topology_changes::text AS topology_changes FROM prior`, params: undefined },
+    SELECT enabled, mode_epoch::text AS mode_epoch, topology_changes::text AS brain_topology_changes FROM prior`, params: undefined },
       { text: 'SELECT 1 FROM persistence_brain WHERE singleton = 1 FOR UPDATE', params: undefined },
       { text: `UPDATE persistence_brain SET enabled = $1 WHERE singleton = 1 AND enabled = false AND mode_epoch = $2::bigint
       AND (SELECT count(*) FROM persistence_topology_changes WHERE source_id = '*') = $3::bigint RETURNING true AS restored`, params: [true, '7', '2'] },

@@ -425,7 +425,9 @@ impl Store {
 
     /// `pauseManagedPersistence()`: one store write. Reads the brain mode and the count of recorded
     /// brain-wide topology changes (`topology_change_count`) and turns `enabled` off with no epoch bump; returns the prior
-    /// `{ enabled, mode_epoch, topology_changes }` (the epoch and count as text). Nothing else moves.
+    /// `{ enabled, mode_epoch, brain_topology_changes }` (the epoch and count as text). The count is
+    /// named for what it counts: an older gbrain's token held `topology_changes`, a count of every
+    /// change, which the restore refuses. Nothing else moves.
     pub fn pause_managed_persistence(&self) -> Result<Value> {
         let brain_id = self.brain_id().to_string();
         self.write(|tx| {
@@ -436,16 +438,16 @@ impl Store {
             }
             let mut mode = brain_mode_in(&*tx)?;
             let changes = topology_change_count(&*tx)?;
-            let prior = json!({ "enabled": mode.enabled, "mode_epoch": mode.mode_epoch.to_string(), "topology_changes": changes.to_string() });
+            let prior = json!({ "enabled": mode.enabled, "mode_epoch": mode.mode_epoch.to_string(), "brain_topology_changes": changes.to_string() });
             mode.enabled = false;
             put_json(tx, &brain_mode_key(), &mode)?;
             Ok(prior)
         })
     }
 
-    /// `restoreManagedPersistence({ enabled, mode_epoch, topology_changes })`: one compare-and-set
+    /// `restoreManagedPersistence({ enabled, mode_epoch, brain_topology_changes })`: one compare-and-set
     /// write. Puts `enabled` back only while the brain mode is still paused (`enabled` false) at
-    /// `mode_epoch` and the store holds `topology_changes` brain-wide topology changes; otherwise a
+    /// `mode_epoch` and the store holds `brain_topology_changes` brain-wide topology changes; otherwise a
     /// real activation or deactivation ran during the pause (a deactivation of a disabled brain
     /// records a brain-wide topology change without moving the epoch), and nothing is written. A
     /// change to one source during the pause does not stop the restore. True when it wrote.
@@ -453,7 +455,7 @@ impl Store {
         &self,
         enabled: bool,
         mode_epoch: &str,
-        topology_changes: &str,
+        brain_topology_changes: &str,
     ) -> Result<bool> {
         let whole = |name: &str, v: &str| -> Result<u64> {
             v.parse().map_err(|_| {
@@ -465,7 +467,7 @@ impl Store {
         let epoch = i64::try_from(whole("mode_epoch", mode_epoch)?).map_err(|_| {
             StoreError::invalid("restoreManagedPersistence: mode_epoch is out of range")
         })?;
-        let changes = whole("topology_changes", topology_changes)?;
+        let changes = whole("brain_topology_changes", brain_topology_changes)?;
         self.write(|tx| {
             let mut mode = brain_mode_in(&*tx)?;
             if mode.enabled || mode.mode_epoch != epoch || topology_change_count(&*tx)? != changes {
