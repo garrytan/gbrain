@@ -53,7 +53,7 @@ export interface OpenclawSkillView {
     require_owner_sender: boolean }>;
   recent: { turns: number; outcomes: Record<string, number>; errors: Record<string, number>; deadline_misses: number; miss_rate: number | null; reads: number; reads_of_suggested: number;
     by_session_class: Record<string, SplitCounts>; by_source: Record<string, SourceCounts>;
-    /** Turns by whether OpenClaw sent a memory audience (host) or the class came from the session key (unknown). */
+    /** Turns by whether OpenClaw sent a memory audience (host), the plugin verified the owner by sender id with none (sender), or the class came from the session key (unknown). */
     by_audience: Record<string, number>;
     /** The same split per agent. */
     by_agent_audience: Record<string, Record<string, number>>;
@@ -91,7 +91,7 @@ function recentOpenclaw(home: string, now: number, configSince: number): Opencla
       if (j.session_class !== undefined || j.outcome !== 'error') {
         const c = cls(j.session_class);
         c.turns++;
-        if (j.audience === 'host' || j.audience === 'unknown') {
+        if (j.audience === 'host' || j.audience === 'unknown' || j.audience === 'sender') {
           recent.by_audience[j.audience] = (recent.by_audience[j.audience] ?? 0) + 1;
           if (typeof j.agent === 'string' && !SILENT.has(String(j.session_class)) && Date.parse(j.at) >= configSince) { const m = (recent.by_agent_audience[j.agent] ??= {}); m[j.audience] = (m[j.audience] ?? 0) + 1; }
         }
@@ -140,7 +140,7 @@ export async function openclawSkillView(home: string, now = Date.now()): Promise
   }
   for (const a of agents) {
     const seen = recent.by_agent_audience[a.id];
-    if (seen && (seen.host ?? 0) > 0 && !seen.unknown) a.owner_unverified = false;
+    if (seen && (seen.host ?? 0) > 0 && !seen.unknown && !seen.sender) a.owner_unverified = false;
   }
   const plugin = files ? (openclawSkillPluginRegistered(dir) ? 'installed' : 'files_only') : 'absent';
   for (const a of agents) if (a.listing === 'off' && a.mode === 'live' && plugin === 'installed') a.verdict = LISTING_OFF_RESOLVER_LIVE;
@@ -155,7 +155,7 @@ export function describeOpenclawSkill(v: OpenclawSkillView): { line: string; pro
   const miss = r.miss_rate === null ? '' : `, deadline misses ${(r.miss_rate * 100).toFixed(1)}%`;
   const reads = r.reads ? `, ${r.reads_of_suggested}/${r.reads} skill reads were suggested` : '';
   const errs = Object.entries(r.errors).map(([c, n]) => `${c} x${n}`).join(', ');
-  const keyed = r.by_audience.unknown ? `, ${r.by_audience.unknown} without a memory audience (classed by session key)` : '';
+  const keyed = (r.by_audience.sender ? `, ${r.by_audience.sender} owner turns verified by sender id` : '') + (r.by_audience.unknown ? `, ${r.by_audience.unknown} without a memory audience (classed by session key)` : '');
   const line = `openclaw plugin ${v.plugin}, library ${v.library}; ${agents || 'no agent'}${r.turns ? `; last 24h ${r.turns} turns${keyed}${miss}${reads}${errs ? `, ${errs}` : ''}` : ''}`;
   let problem: { code: string; what: string; agent?: string } | null = null;
   const exposed = on.find((a) => a.owner_unverified);

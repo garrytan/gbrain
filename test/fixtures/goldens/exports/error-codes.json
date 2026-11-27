@@ -161,6 +161,7 @@
     "consent_required",
     "consent_timeout",
     "consumers_without_heartbeat",
+    "contact_page_owned",
     "content_filter_owned",
     "content_null_bytes",
     "content_receipt_stale",

@@ -31,6 +31,7 @@ import type { LoopsExclusionPolicy } from './loops-exclusion.ts';
 import type { PrivateSenders } from './ingest-tiers.ts';
 import { CredentialError } from '../creds/errors.ts';
 import { jsonbSafeJson, truncateUtf8 } from '../text-safe.ts';
+import { CONNECTOR_AUTHOR_PREFIX } from '../persistence/content-author-schema.ts';
 
 export function myAddressSet(entry: CredentialEntry): Set<string> {
   const out = new Set<string>();
@@ -229,6 +230,7 @@ export async function importRendered(
       noEmbed: true, // embeds handled by the size gate below, like sync
       sourceId: deps.sourceId,
       ...(activePack ? { activePack } : {}),
+      content_author: `${CONNECTOR_AUTHOR_PREFIX}google`,
     };
     const result = databaseOnly
       ? await importFromContent(deps.engine, slug, markdown, { ...opts, sourcePath: relPath, preserveGateMarkers: true, holdNoncanonicalPrivate: true })

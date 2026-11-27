@@ -14,8 +14,8 @@ import { safeCode } from './child-checks.ts';
 import { decodeValue, encodeValue } from './codec.ts';
 import { droppedWeight, pageRefs, pageSet, readBack, readBackText, SAVE_FAILURE_EXIT_MS, type WriteEvent, type WriteOutcome, type WriteTally } from './write-compare.ts';
 
-/** Columns the seed always reports as unmapped and the typed read-back never shows (rust/docs/store/seed.md, "Some unmapped columns are expected": `pages.generation`, the primary's cache clock). */
-const EXPECTED_UNMAPPED: ReadonlySet<string> = new Set(['generation']);
+/** Columns the seed always reports as unmapped and the typed read-back never shows (rust/docs/store/seed.md, "Some unmapped columns are expected": `pages.generation`, the primary's cache clock, and `pages.content_author` / `content_author_hash`, who wrote the text, which no typed read returns). */
+const EXPECTED_UNMAPPED: ReadonlySet<string> = new Set(['generation', 'content_author', 'content_author_hash']);
 /**
  * Replays waiting behind the one that runs: a sync sends a page sample every 15-25 ms and a replay takes about 42 ms, so a burst of 28 edits found room for 16 and shed 12 (`queue_full`).
  * 256 samples is about 11 s of replay (inside the 30 s exit deadline), a few MB for the usual few-KB sample; the byte bound holds the worst case (a sample line is at most 512 KB), counted at
