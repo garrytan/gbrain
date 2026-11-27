@@ -1,5 +1,10 @@
 # TODOS
 
+## Shadow write accounting follow-ups (filed 2026-11-27, shadow lost-sample share fix)
+
+- [ ] **P2 — A refusal backlog of 100,000 or more loses every refused write sample past 10,000.** **What:** while the loss journal is unavailable, the write sampler keeps refused samples in memory and puts their count (`dropped`) on the next line the pipe accepts. The serving process reads at most five digits of that count and the child credits at most 10,000, so a backlog of 100,000 refused samples books 10,000 and the other 90,000 are in neither the sent count nor the tally. Already on master before the lost-sample share fix; that fix makes both ends read the count the same way but does not keep the rest. **Fix:** cap the backlog the sampler carries, or book the excess as its own lost reason when the journal comes back, with a test that fails first (100,000 refused `addLink` samples, then one accepted line, then a check that every refused sample is counted).
+- Open notes from the same fix's review: a lost-sample append whose bytes land but whose flush fails, or a receipt above 10,000 samples that is booked in more than one append, can be booked twice on retry (more than was lost, never less); and during a rolling upgrade an older shadow child folds the new `*_nonqualifying` reasons as uncomparable (the old behavior).
+
 ## Opt-in telemetry client follow-ups (filed 2026-11-22, telemetry PR 2)
 
 - [ ] **P1 — Test that `--yes` never sets a telemetry tier.** **What:** the plan requires that `--yes`, `--json` and unattended runs never answer the telemetry question; `--json` and the no-recommended-option rule are tested (test/gbrain-telemetry-cli.test.ts, test/init-first-run.test.ts), `--yes` is not. **Fix:** a setup test that runs with `--yes` and checks settings.json stays unanswered. **Deferred from plan:** ~/.capy/work/gbrain-telemetry/plan-v2.md. **Effort:** S.
