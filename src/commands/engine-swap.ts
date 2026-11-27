@@ -20,6 +20,7 @@ import { noBrainError } from '../core/engine-connect.ts';
 import { opError } from '../core/ops/contract.ts';
 import { ENGINE_SELECTING_ENV, planEngineSwap, type ServiceDefinition, type SwapPlan, type SwapPlanInputs } from '../core/engine-swap/plan.ts';
 import { configDestination, resolveSwapDestination, type SwapDestinationProbe } from '../core/engine-swap/destination.ts';
+import { readStoreBrainId, swapStoreDir } from '../shadow/store-identity.ts';
 import { rustMultiuserFromEnv } from '../core/rust-engine/multiuser-switch.ts';
 import { mountedBrainError, SWAP_RECOVERY } from '../core/engine-swap/refusals.ts';
 import { HOST_BRAIN_ID } from '../core/brain-registry.ts';
@@ -126,6 +127,8 @@ export interface EngineSwapCliDeps extends Pick<SwapPlanInputs, 'readShadowStatu
   resolveDestination?: SwapDestinationProbe;
   /** This host's `rust_server.url` (default: read from the gbrain config file). */
   rustServerUrl?: () => string | null;
+  /** The brain id of the Rust store the swap moves to (default: its `FORMAT` file, store-identity.ts; never opened). */
+  storeBrainId?: () => string | null;
   /** The global --brain value (default: getCliOptions().brain). */
   cliBrain?: string | null;
   out?: (text: string) => void;
@@ -154,6 +157,13 @@ function configuredRustServerUrl(): string | null {
   return loadConfig()?.rust_server?.url ?? null;
 }
 
+/** The brain id of the Rust store a swap of the configured brain moves to, or null (store-identity.ts). */
+function configuredStoreBrainId(): string | null {
+  const config = loadConfig();
+  const store = config ? swapStoreDir(config) : null;
+  return store ? readStoreBrainId(store) : null;
+}
+
 /** Runs the command; returns the exit code. */
 export async function runEngineSwap(args: readonly string[], deps: EngineSwapCliDeps = {}): Promise<number> {
   const parsed = parseEngineSwapArgs(args);
@@ -179,7 +189,7 @@ export async function runEngineSwap(args: readonly string[], deps: EngineSwapCli
     // With the switch off, `{ multiuser: false }` carries only the switch (no evidence counts; managed_storage reads it).
     const evidence = !multiuser ? null : deps.resolveDestination
       ? await resolveSwapDestination(brainId, deps.resolveDestination)
-      : configDestination(brainId, { env, rustServerUrl: (deps.rustServerUrl ?? configuredRustServerUrl)() });
+      : configDestination(brainId, { env, rustServerUrl: (deps.rustServerUrl ?? configuredRustServerUrl)(), storeBrainId: deps.storeBrainId ?? configuredStoreBrainId });
     const destination = evidence ? { multiuser, expectedBrainId: brainId, destination: evidence } : { multiuser: false };
     const plan = await planEngineSwap(engine, {
       readShadowStatus: deps.readShadowStatus, now: deps.now,

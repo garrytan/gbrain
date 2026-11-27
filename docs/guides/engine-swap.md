@@ -199,10 +199,13 @@ swap. The host that swaps becomes the brain server, so its configuration counts 
   (the plan checks the names only). The other writer hosts must reach the server.
 - This host names no server of its own: no `rust_server.url` in its config and no `GBRAIN_RUST_SERVER_URL`. Those make a
   Rust engine on this host a client of that server, so it cannot serve the swapped brain. Set them on the other hosts only.
+- The Rust store the swap moves to already exists. Shadow mode creates it the first time it runs for this brain; the plan
+  reads the store's brain id from its `FORMAT` file and never opens or creates the store. With no store yet, run shadow
+  mode for this brain until it has created its store, then read the plan again.
 
 The row's detail says "accepted on config only" or "not accepted (config only)" with the reason, and the plan hash binds
-the listen address. The swap run checks the live server at that address after its switch; when the server does not answer
-as a served multi-user Rust brain for this brain, the run gives authority back to Postgres.
+the listen address and the store's brain id. The swap run checks the live server at that address after its switch; when
+the server does not answer as a served multi-user Rust brain for that store, the run gives authority back to Postgres.
 
 **Say to your agent:** *"Check whether my brain, written from two machines, can move to the Rust server."*
 

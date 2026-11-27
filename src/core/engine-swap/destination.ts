@@ -33,6 +33,11 @@ export interface SwapDestinationEvidence {
   listen?: string;
   /** Config evidence that does not count: why, in words the plan prints. */
   refused?: string;
+  /**
+   * Config evidence that counts: the persistence brain id of the Rust store the swap moves to (src/shadow/store-identity.ts). The
+   * plan hash binds it, and the swap run's probe requires the server on `listen` to serve exactly this brain.
+   */
+  store_brain_id?: string;
 }
 
 /** What a destination probe reports (the facts only; the resolver adds the source). */
@@ -84,6 +89,8 @@ export interface ConfigDestinationInputs {
   env: Readonly<Record<string, string | undefined>>;
   /** `rust_server.url` from this host's gbrain config, when set. */
   rustServerUrl?: string | null;
+  /** The brain id of the Rust store the swap moves to (src/shadow/store-identity.ts); asked only when everything else counts. */
+  storeBrainId?: () => string | null;
 }
 
 /**
@@ -96,7 +103,9 @@ export interface ConfigDestinationInputs {
  *     needs on any other address (the files are read only when the server starts, never here);
  *   - this host is not itself a client: its config names no `rust_server.url` and `GBRAIN_RUST_SERVER_URL` is unset.
  *     With either set, a Rust engine on this host connects to that server instead of opening the store
- *     (engine-construct.ts), so a brain server started here could not serve the swapped brain.
+ *     (engine-construct.ts), so a brain server started here could not serve the swapped brain;
+ *   - the Rust store the swap moves to has a brain id (`storeBrainId`), which the evidence carries as `store_brain_id`
+ *     for the plan hash and the swap run's probe. With none, the run could not check the server, so it refuses.
  * Otherwise the evidence is `served: false` with the reason in `refused`, and the plan keeps refusing.
  */
 export function configDestination(brainId: string, inputs: ConfigDestinationInputs): SwapDestinationEvidence {
@@ -121,7 +130,12 @@ export function configDestination(brainId: string, inputs: ConfigDestinationInpu
   if (!cert || !key) {
     return refuse(`${RUST_SERVER_LISTEN_ENV} ${listen} is not a loopback address, so the server needs ${RUST_SERVER_TLS_CERT_ENV} and ${RUST_SERVER_TLS_KEY_ENV}`, listen);
   }
-  return { ...base, served: true, listen };
+  // Last, so a host that does not count never reads it: the brain the run's probe must find on the server.
+  const storeBrainId = inputs.storeBrainId?.() ?? null;
+  if (!storeBrainId) {
+    return refuse('the Rust store this swap moves to has no brain id yet (no readable FORMAT in the shadow store), so the swap run could not check that the server serves it; run the shadow for this brain until it creates its store, then read the plan again', listen);
+  }
+  return { ...base, served: true, listen, store_brain_id: storeBrainId };
 }
 
 /**

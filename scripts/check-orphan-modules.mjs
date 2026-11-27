@@ -54,6 +54,7 @@ const ALLOWLIST = new Map([
 // reason 'script-reachable', which the guard verifies.
 const PERMITTED_TEST_ONLY = [
   { path: 'src/core/bootstrap/template-repo.ts', reason: 'script-reachable' },
+  { path: 'src/core/engine-swap/served-probe.ts', reason: 'held: multi-user Rust lane L5 B1 builds the swap run\'s served-destination probe ahead of its caller; the run-half commit wires it into runSwapStates once rust-engine/swap-pg-run reaches the multi-user trunk. Added 2026-11-27; remove when that commit lands.' },
   { path: 'src/core/google/provenance.ts', reason: 'held: Google provenance lister (GST-3849 PR 1) lands ahead of its callers, the per-account purge and eval suppression in the approved Google Workspace plan; the PR that wires the first caller removes this entry' },
   { path: 'src/eval/longmemeval/diagnostics.ts', reason: 'script-reachable' },
   { path: 'src/eval/longmemeval/evidence-brief.ts', reason: 'held: eval-only wave 1 brief builder (10x memory advantage plan A3), loaded by path from gbrain-evals eval/runner/pilot; product wiring is plan item A8, conditional on the A5 pilot' },

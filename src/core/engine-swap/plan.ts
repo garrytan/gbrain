@@ -129,8 +129,9 @@ function planHash(p: Omit<SwapPlan, 'plan_hash'>, dest: DestinationOptions | und
     criteria: p.criteria.map(c => [c.n, c.state]), routes: p.routes,
     // Bound only when destination evidence exists and the switch is on, so every other plan hashes as before.
     ...(d ? { destination: { engine: d.engine, brain_id: d.brain_id, served: d.served, multiuser: d.multiuser,
-      // Config evidence also binds that it is config-only and the address the run will check.
-      ...(d.source === 'config' ? { source: d.source, listen: d.listen ?? null } : {}) } } : {}),
+      // Config evidence also binds that it is config-only, the address the run will check and the store brain id the
+      // server there must serve, so a plan read before the store changed no longer matches its --expect hash.
+      ...(d.source === 'config' ? { source: d.source, listen: d.listen ?? null, store_brain_id: d.store_brain_id ?? null } : {}) } } : {}),
   };
   return createHash('sha256').update(JSON.stringify(bound)).digest('hex').slice(0, 16);
 }

@@ -14,14 +14,17 @@
  * disk between their two plans (diskMoves) so a live reading fails them.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { closeSync, fsyncSync, mkdirSync, mkdtempSync, openSync, rmSync, writeFileSync, writeSync } from 'node:fs';
+import { closeSync, existsSync, fsyncSync, mkdirSync, mkdtempSync, openSync, readdirSync, rmSync, writeFileSync, writeSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
+import { loadConfig } from '../src/core/config.ts';
 import type { BrainEngine } from '../src/core/engine.ts';
 import { renderCliError } from '../src/core/agent-output.ts';
 import { runEngineSwap, type EngineSwapCliDeps } from '../src/commands/engine-swap.ts';
-import type { SwapDestinationProbe } from '../src/core/engine-swap/destination.ts';
+import { configDestination, type SwapDestinationProbe } from '../src/core/engine-swap/destination.ts';
+import { plannedProbeTarget } from '../src/core/engine-swap/served-probe.ts';
+import { readStoreBrainId, swapStoreDir } from '../src/shadow/store-identity.ts';
 import type { ShadowStatus } from '../src/core/engine-swap/readiness.ts';
 import { withEnv } from './helpers/with-env.ts';
 
@@ -30,6 +33,8 @@ const SWITCH = 'GBRAIN_RUST_MULTIUSER';
 const LISTEN = 'GBRAIN_RUST_SERVER_LISTEN';
 const CERT = 'GBRAIN_RUST_SERVER_TLS_CERT';
 const KEY = 'GBRAIN_RUST_SERVER_TLS_KEY';
+/** The persistence brain id of the swap's Rust store (its FORMAT file), which a served destination must report. */
+const STORE_ID = '0b6f1d1e-6a52-4c8e-9f0a-1c2d3e4f5a6b';
 
 let engine: PGLiteEngine;
 let home: string;
@@ -76,6 +81,8 @@ async function run(extra: Partial<EngineSwapCliDeps> & { hosts?: number | null; 
     home, dataDir: home, freeBytes: () => 64 * 2 ** 30, resolveBrain: () => 'host', cliBrain: null,
     // This machine's own gbrain config is not under test; the case that reads the config file passes undefined.
     rustServerUrl: () => null,
+    // The swap's Rust store already exists and has this brain id (store-identity.ts); the cases that read FORMAT pass undefined.
+    storeBrainId: () => STORE_ID,
     out: t => { stdout += t; },
     writeError: (e, o) => { const r = renderCliError(e, { json: o.json, command: 'engine swap', tty: false }); error = r.stdout ?? r.stderr ?? ''; return r.exitCode; },
     ...deps,
@@ -295,6 +302,78 @@ describe('engine swap --plan reads the destination from this host\'s configurati
       const probed = await run({ resolveDestination: served });
       // Same verdict and criteria states: only the config-only basis and the address tell the three apart.
       expect(new Set([a.plan.plan_hash, otherAddress.plan.plan_hash, probed.plan.plan_hash]).size).toBe(3);
+    });
+  });
+
+  test('a swap whose Rust store has no brain id yet refuses, and says how to fix it', async () => {
+    for (const none of [() => null, () => '']) {
+      const r = await run({ env: serving(), storeBrainId: none });
+      expect(r.plan.reason).toBe('multiple_writer_hosts');
+      expect(r.plan.verdict).toBe('NOT READY');
+      expect(elig(r.plan).detail).toContain('not accepted (config only)');
+      expect(elig(r.plan).detail).toContain('has no brain id yet');
+      expect(elig(r.plan).detail).toContain('run the shadow for this brain until it creates its store');
+    }
+  });
+
+  test('the store brain id is read only for a host that otherwise counts', async () => {
+    let asked = 0;
+    const storeBrainId = () => { asked++; return STORE_ID; };
+    await run({ env: serving({ [SWITCH]: undefined }), storeBrainId });
+    await run({ env: serving({ [LISTEN]: '127.0.0.1:7443' }), storeBrainId });
+    await run({ env: serving(), rustServerUrl: () => 'https://brain.example:7443', storeBrainId });
+    expect(asked).toBe(0);
+    await run({ env: serving(), storeBrainId });
+    expect(asked).toBe(1);
+  });
+
+  test('the plan hash binds the store brain id, so a plan read before the store changed no longer matches', async () => {
+    const a = await run({ env: serving() });
+    const other = await run({ env: serving(), storeBrainId: () => '9f8e7d6c-5b4a-4321-8fed-cba987654321' });
+    expect(other.plan.verdict).toBe(a.plan.verdict);
+    expect(other.plan.criteria).toEqual(a.plan.criteria);
+    expect(other.plan.plan_hash).not.toBe(a.plan.plan_hash);
+    // The plan JSON stays as it was: the id is in the evidence and the hash, not a new plan field.
+    expect(other.stdout.replace(other.plan.plan_hash, '')).toBe(a.stdout.replace(a.plan.plan_hash, ''));
+    expect(a.stdout).not.toContain(STORE_ID);
+  });
+
+  test('the run probes the address and the store brain id the plan bound, and nothing for evidence that does not count', () => {
+    const env = serving();
+    const counted = configDestination('host', { env, storeBrainId: () => STORE_ID });
+    expect(counted.store_brain_id).toBe(STORE_ID);
+    expect(plannedProbeTarget(counted)).toEqual({ listen: at, expectedBrainId: STORE_ID });
+    expect(plannedProbeTarget(configDestination('host', { env, storeBrainId: () => null }))).toBeNull();
+    expect(plannedProbeTarget(configDestination('host', { env: serving({ [LISTEN]: '127.0.0.1:7443' }), storeBrainId: () => STORE_ID }))).toBeNull();
+    expect(plannedProbeTarget({ engine: 'rust', brain_id: 'host', served: true, multiuser: true, source: 'probe' })).toBeNull();
+    expect(plannedProbeTarget(null)).toBeNull();
+  });
+
+  test('by default the store brain id is read from FORMAT in the configured brain\'s shadow store, which is never created', async () => {
+    const gh = mkdtempSync(join(home, 'gbrain-store-'));
+    mkdirSync(join(gh, '.gbrain'), { recursive: true });
+    writeFileSync(join(gh, '.gbrain', 'config.json'), JSON.stringify({ engine: 'pglite', database_path: join(gh, 'brain.pglite') }));
+    await withEnv({ GBRAIN_HOME: gh, DATABASE_URL: undefined, GBRAIN_DATABASE_URL: undefined }, async () => {
+      const store = swapStoreDir(loadConfig()!)!;
+      expect(store.startsWith(join(gh, '.gbrain', 'shadow'))).toBe(true);
+      expect(store.endsWith('/store')).toBe(true);
+      // No store yet: refused, and the read created nothing.
+      const missing = await run({ env: serving(), storeBrainId: undefined });
+      expect(missing.plan.reason).toBe('multiple_writer_hosts');
+      expect(elig(missing.plan).detail).toContain('has no brain id yet');
+      expect(existsSync(join(gh, '.gbrain', 'shadow'))).toBe(false);
+      // A FORMAT that names no valid brain id counts as none.
+      mkdirSync(store, { recursive: true });
+      writeFileSync(join(store, 'FORMAT'), '{"format_version":1}');
+      expect(readStoreBrainId(store)).toBeNull();
+      writeFileSync(join(store, 'FORMAT'), 'not json');
+      expect(readStoreBrainId(store)).toBeNull();
+      writeFileSync(join(store, 'FORMAT'), JSON.stringify({ format_version: 1, brain_id: STORE_ID }));
+      const found = await run({ env: serving(), storeBrainId: undefined });
+      expect(found.plan.verdict).toBe('READY');
+      const injected = await run({ env: serving() });
+      expect(found.plan.plan_hash).toBe(injected.plan.plan_hash);
+      expect(readdirSync(store)).toEqual(['FORMAT']);
     });
   });
 
