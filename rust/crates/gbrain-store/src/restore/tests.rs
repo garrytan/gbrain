@@ -1443,3 +1443,39 @@ fn a_windows_origin_the_restore_cannot_rebase_is_named_in_the_report() {
         report.reconnect
     );
 }
+
+/// A brain that keeps keyed lookups (`~k`, written by every page write since store format 9) is
+/// classified: its census names nothing and the quarantine runs. A record under another `~` family
+/// still refuses by name.
+#[test]
+fn keyed_lookup_entries_are_classified_and_another_family_still_refuses() {
+    let store = crate::test_support::store();
+    let input: crate::pages::PageInput = serde_json::from_value(serde_json::json!({
+        "type": "note", "title": "Alpha", "compiled_truth": "red apple",
+    }))
+    .unwrap();
+    store
+        .put_page("notes/a", &input, &Default::default())
+        .unwrap();
+    let mut keyed = 0;
+    crate::kv::scan_prefix(
+        &*store.read().unwrap(),
+        &keys::KEYED_INDEX,
+        false,
+        &mut |_, _| {
+            keyed += 1;
+            true
+        },
+    )
+    .unwrap();
+    assert!(keyed > 0, "the page write kept no keyed entry");
+    assert_eq!(
+        store.restore_census(&[]).unwrap().unclassified,
+        Vec::<String>::new()
+    );
+    store.write(|tx| tx.put(&[b'~', b'z', 1], b"x")).unwrap();
+    assert_eq!(
+        store.restore_census(&[]).unwrap().unclassified,
+        ["tag 0x7e"]
+    );
+}
