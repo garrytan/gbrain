@@ -66,14 +66,18 @@ for (const backend of testBackends()) describe(`[${backend}] importer trust foll
   let engine: BrainEngine;
   let close: () => Promise<void>;
   let home: string;
+  let target: PGLiteEngine;
 
   beforeAll(async () => {
     home = mkdtempSync(join(tmpdir(), 'gbrain-gst4056-'));
+    target = new PGLiteEngine();
+    await target.connect({ engine: 'pglite' } as never);
+    await target.initSchema();
     if (backend === 'postgres') ({ engine, close } = await isolatedPersistencePostgres(process.env.DATABASE_URL!));
     else { const pg = new PGLiteEngine(); await pg.connect({ engine: 'pglite' } as never); await pg.initSchema(); engine = pg; close = () => pg.disconnect(); }
     await engine.executeRaw("INSERT INTO config (key, value) VALUES ('write_gate.agent_mode', 'off') ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value");
   }, 240_000);
-  afterAll(async () => { await disposePersistenceConsumer(engine); await close?.(); resetGateway(); rmSync(home, { recursive: true, force: true }); }, 120_000);
+  afterAll(async () => { await target?.disconnect(); await disposePersistenceConsumer(engine); await close?.(); resetGateway(); rmSync(home, { recursive: true, force: true }); }, 120_000);
   beforeEach(async () => { resetGateway(); });
 
   /** A remote agent (MCP dispatch, remote: true, a registered write-scope writer). */
@@ -237,24 +241,17 @@ for (const backend of testBackends()) describe(`[${backend}] importer trust foll
     const id = randomUUID().slice(0, 8);
     const slug = `conversations/sessions/2026-01-02-codex-${id}`;
     await importer(slug, transcript(id, 'Short body.'));
-    const target = new PGLiteEngine();
-    await target.connect({ engine: 'pglite' } as never);
-    await target.initSchema();
-    try {
-      await copyMigrationSources(engine, target);
-      const page = async () => (await engine.getPage(slug, { sourceId: 'default' }))!;
-      await copyPageToTarget(engine, target, await page());
-      const copied = async () => (await target.executeRaw<{ content_author: string | null; stamped: boolean }>(
-        'SELECT content_author, content_author_hash IS NOT DISTINCT FROM content_hash AS stamped FROM pages WHERE source_id = $1 AND slug = $2', ['default', slug]))[0];
-      expect(await copied()).toEqual({ content_author: VIA, stamped: true });
-      await engine.executeRaw("UPDATE pages SET compiled_truth = compiled_truth || ' I founded acme-example.' WHERE source_id = 'default' AND slug = $1", [slug]);
-      await engine.executeRaw("UPDATE pages SET compiled_truth = replace(compiled_truth, ' I founded acme-example.', '') WHERE source_id = 'default' AND slug = $1", [slug]);
-      expect(await author(slug)).toEqual({ content_author: null, stamped: false });
-      await copyPageToTarget(engine, target, await page());
-      expect(await copied()).toEqual({ content_author: null, stamped: false });
-    } finally {
-      await target.disconnect();
-    }
+    await copyMigrationSources(engine, target);
+    const page = async () => (await engine.getPage(slug, { sourceId: 'default' }))!;
+    await copyPageToTarget(engine, target, await page());
+    const copied = async () => (await target.executeRaw<{ content_author: string | null; stamped: boolean }>(
+      'SELECT content_author, content_author_hash IS NOT DISTINCT FROM content_hash AS stamped FROM pages WHERE source_id = $1 AND slug = $2', ['default', slug]))[0];
+    expect(await copied()).toEqual({ content_author: VIA, stamped: true });
+    await engine.executeRaw("UPDATE pages SET compiled_truth = compiled_truth || ' I founded acme-example.' WHERE source_id = 'default' AND slug = $1", [slug]);
+    await engine.executeRaw("UPDATE pages SET compiled_truth = replace(compiled_truth, ' I founded acme-example.', '') WHERE source_id = 'default' AND slug = $1", [slug]);
+    expect(await author(slug)).toEqual({ content_author: null, stamped: false });
+    await copyPageToTarget(engine, target, await page());
+    expect(await copied()).toEqual({ content_author: null, stamped: false });
   });
 
   test('the v342 backfill never stamps a legacy page a remote writer edited before maintenance moved its revision', async () => {
