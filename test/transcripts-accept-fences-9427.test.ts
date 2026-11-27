@@ -194,5 +194,23 @@ async function cli(args: string[]): Promise<{ doc: Record<string, unknown>; exit
     expect(await listed()).toEqual([EMAIL, REMOTE].sort());
     expect((await cli([])).doc).toMatchObject({ pages: [], already_accepted: 3 });
   }, 60_000);
+
+  test('GST-4026: a direct-path acceptance holds on the page content, so maintenance that only moves timestamps keeps it and a later edit does not', async () => {
+    await acceptAll();
+    await engine.executeRaw("UPDATE pages SET updated_at = updated_at + interval '1 minute' WHERE slug = ANY($1)", [[TRANSCRIPTS[0], TRANSCRIPTS[1]]]);
+    expect(await listed()).toEqual([EMAIL, REMOTE].sort());
+    expect((await cli([])).doc).toMatchObject({ pages: [], already_accepted: 3, not_eligible: expect.not.arrayContaining([expect.objectContaining({ slug: TRANSCRIPTS[0] })]) });
+    await conversation(TRANSCRIPTS[0]!, undefined, 'Session, edited by hand');
+    expect(await listed()).toEqual([EMAIL, TRANSCRIPTS[0]!, REMOTE].sort());
+    expect(((await cli([])).doc.not_eligible as Array<{ slug: string }>).map(p => p.slug)).toContain(TRANSCRIPTS[0]);
+  }, 60_000);
+
+  test('GST-4026: an acceptance recorded before it carried a content hash keeps the timestamp rule', async () => {
+    await acceptAll();
+    const stored = JSON.parse((await engine.getConfig(FENCE_ACCEPTANCE_KEY))!) as Array<Record<string, unknown>>;
+    await engine.setConfig(FENCE_ACCEPTANCE_KEY, JSON.stringify(stored.map(({ content_hash: _hash, ...entry }) => entry)));
+    await engine.executeRaw("UPDATE pages SET updated_at = updated_at + interval '1 minute' WHERE slug = $1", [TRANSCRIPTS[0]]);
+    expect(await listed()).toEqual([EMAIL, TRANSCRIPTS[0]!, REMOTE].sort());
+  }, 60_000);
 }
 });

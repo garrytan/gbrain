@@ -10,8 +10,9 @@
  * calendar and GitHub pages, and any page a remote writer or another local writer last wrote, stay for per-page
  * review. An acceptance binds the page id and a fingerprint of the page's indexed fence rows (fact, take and link ids),
  * and the check re-reads the provenance each run, so a new row, a removed row or a later non-importer write puts the
- * page back on the list. Tag changes and re-embedding change no text, so they keep a page eligible (GST-4056). The record
- * is the config row `transcripts.fence_acceptance` (no operation writes config),
+ * page back on the list. Tag changes, re-embedding and other maintenance change no text, so they keep a page eligible and
+ * accepted (GST-4056, GST-4026); an importer rewrite with the same rows stays accepted. An acceptance records the page's
+ * content_hash it was given for. The record is the config row `transcripts.fence_acceptance` (no operation writes config),
  * and nothing in a page or its rows changes, so repo-less and repo-backed brains behave the same.
  */
 import type { BrainEngine } from '../engine.ts';
@@ -27,15 +28,18 @@ const PROJECTION_KEYS = `ARRAY['embedding','embedded_at','embedding_model','embe
 
 /** What the doctor check lists per page: location and counts, never a cell value. */
 export interface OutsideFenceItem { source_id: string; slug: string; type: string; facts: number; world_facts: number; takes: number; links: number }
-export interface OutsideFencePage extends OutsideFenceItem { page_id: number; fingerprint: string; imported_transcript: boolean }
-export interface FenceAcceptance { page_id: number; source_id: string; slug: string; fingerprint: string; accepted_at: string }
+export interface OutsideFencePage extends OutsideFenceItem {
+  page_id: number; fingerprint: string; imported_transcript: boolean; content_hash: string;
+}
+export interface FenceAcceptance { page_id: number; source_id: string; slug: string; fingerprint: string; accepted_at: string; content_hash?: string }
 
 /** Imported pages whose body is outside-authored text and that have fence rows indexed as facts, takes or links. */
 export async function listOutsideFencePages(engine: BrainEngine): Promise<OutsideFencePage[]> {
   // The fingerprint hashes each row's fields as JSON; a fixed session time zone keeps a timestamp's text the same everywhere.
   const rows = await engine.transaction(async tx => { await tx.executeRaw("SET LOCAL TimeZone = 'UTC'"); return tx.executeRaw<OutsideFencePage & { page_id: number | string }>(
-    `SELECT p.id AS page_id, p.source_id, p.slug, p.type, sum(x.facts)::int AS facts, sum(x.world_facts)::int AS world_facts,
+    `WITH listed AS (SELECT p.id AS page_id, p.source_id, p.slug, p.type, sum(x.facts)::int AS facts, sum(x.world_facts)::int AS world_facts,
             sum(x.takes)::int AS takes, sum(x.links)::int AS links, md5(string_agg(x.k, ',' ORDER BY x.k)) AS fingerprint,
+            COALESCE(max(p.content_hash), '') AS content_hash,
             bool_and(p.type = 'conversation' AND p.frontmatter ? 'transcript_import' AND ${importerWroteLiveTextSql('p', '$1')}) AS imported_transcript
        FROM (SELECT fp.id AS page_id, 1 AS facts, CASE WHEN f.visibility = 'world' THEN 1 ELSE 0 END AS world_facts, 0 AS takes, 0 AS links, 'f' || f.id || ':' || md5((to_jsonb(f) - ${PROJECTION_KEYS} - 'consolidated_at' - 'consolidated_into')::text) AS k
                FROM facts f JOIN pages fp ON fp.source_id = f.source_id AND fp.slug = f.source_markdown_slug
@@ -47,8 +51,9 @@ export async function listOutsideFencePages(engine: BrainEngine): Promise<Outsid
       WHERE p.deleted_at IS NULL AND s.archived IS NOT TRUE
         AND ((s.config->>'kind' = 'google' AND p.type IN ('email', 'meeting')) OR s.config->>'kind' = 'github'
              OR p.frontmatter ? 'transcript_import')
-      GROUP BY p.id, p.source_id, p.slug, p.type
-      ORDER BY p.source_id, p.slug`, [IMPORTER_INGESTED_VIA]); });
+      GROUP BY p.id, p.source_id, p.slug, p.type)
+     SELECT * FROM listed
+      ORDER BY source_id, slug`, [IMPORTER_INGESTED_VIA]); });
   return rows.map(row => ({ ...row, page_id: Number(row.page_id), imported_transcript: row.imported_transcript === true }));
 }
 
@@ -74,7 +79,7 @@ export interface FenceAcceptancePlan {
   plan_hash: string;
   source_id: string | null;
   /** Imported transcripts whose current rows the apply accepts. */
-  pages: Array<OutsideFenceItem & { page_id: number; fingerprint: string }>;
+  pages: Array<OutsideFenceItem & { page_id: number; fingerprint: string; content_hash: string }>;
   /** Already accepted with these exact rows. */
   already_accepted: number;
   /** Listed pages this command never accepts (not an importer-written transcript): they stay for per-page review. */
@@ -84,15 +89,16 @@ export interface FenceAcceptancePlan {
 export async function planFenceAcceptance(engine: BrainEngine, opts: { sourceId?: string } = {}): Promise<FenceAcceptancePlan> {
   const [listed, acceptance] = await Promise.all([listOutsideFencePages(engine), loadFenceAcceptance(engine)]);
   const scoped = listed.filter(p => opts.sourceId === undefined || p.source_id === opts.sourceId);
-  const pages = scoped.filter(p => p.imported_transcript && !isAccepted(p, acceptance)).map(p => ({ ...fenceItem(p), page_id: p.page_id, fingerprint: p.fingerprint }));
+  const pages = scoped.filter(p => p.imported_transcript && !isAccepted(p, acceptance))
+    .map(p => ({ ...fenceItem(p), page_id: p.page_id, fingerprint: p.fingerprint, content_hash: p.content_hash }));
   const [brain] = await engine.executeRaw<{ brain_id: string }>('SELECT brain_id::text AS brain_id FROM persistence_brain WHERE singleton=1');
   return {
     plan_hash: computePlanHash({ brain: brain?.brain_id ?? 'unknown', source: opts.sourceId ?? null, operation: 'transcripts_accept_fences',
-      records: pages.map(p => ({ id: String(p.page_id), revision: p.fingerprint })), parameters: { source_id: opts.sourceId ?? null }, effects: [] }),
+      records: pages.map(p => ({ id: String(p.page_id), revision: `${p.fingerprint}:${p.content_hash}` })), parameters: { source_id: opts.sourceId ?? null }, effects: [] }),
     source_id: opts.sourceId ?? null,
     pages,
     already_accepted: scoped.filter(p => isAccepted(p, acceptance)).length,
-    not_eligible: scoped.filter(p => !p.imported_transcript).map(fenceItem),
+    not_eligible: scoped.filter(p => !p.imported_transcript && !isAccepted(p, acceptance)).map(fenceItem),
   };
 }
 
@@ -110,7 +116,7 @@ export async function applyFenceAcceptance(engine: BrainEngine, plan: FenceAccep
     const acceptance = await loadFenceAcceptance(tx);
     await tx.setConfig(FENCE_ACCEPTANCE_KEY, JSON.stringify([
       ...acceptance.filter(a => !planned.has(a.page_id)),
-      ...plan.pages.map(p => ({ page_id: p.page_id, source_id: p.source_id, slug: p.slug, fingerprint: p.fingerprint, accepted_at: at })),
+      ...plan.pages.map(p => ({ page_id: p.page_id, source_id: p.source_id, slug: p.slug, fingerprint: p.fingerprint, content_hash: p.content_hash, accepted_at: at })),
     ]));
   });
   return plan.pages.length;

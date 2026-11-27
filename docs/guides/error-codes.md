@@ -6193,6 +6193,16 @@ More: [docs/guides/write-refusals.md#segmented_mirror_writer_gate](../../docs/gu
 
 More: [docs/guides/troubleshooting.md#serve-build-drift](../../docs/guides/troubleshooting.md#serve-build-drift)
 
+### serve_build_skew
+
+<a id="serve_build_skew"></a>
+
+| Meaning | Why | Next step | Who acts · consent | Verify | Exit | Retryable |
+|---|---|---|---|---|---|---|
+| A `gbrain sync` delegated to a live `gbrain serve` failed inside it because the serve's code no longer matches the gbrain installed on disk: the serve still runs the build it started with, and an upgrade replaced the files under it. | A long-running serve keeps the modules it loaded at start but loads others lazily from disk, so after an upgrade a lazy import mixes the new files into the old module graph and fails on a missing export. On Postgres a serve whose heartbeat shows an older build is not handed the run at all; this error covers a serve whose build is not recorded or a skew the version check cannot see. | Restart the serve onto the installed build with gbrain upgrade --restart-only (add --stop-mcp for a serve an agent harness started, then reconnect gbrain there). On Postgres, GBRAIN_SYNC_NO_DELEGATE=1 runs the sync beside the serve meanwhile. Run: gbrain doctor --only runtime_build_skew --json | agent | `gbrain doctor --json` | 1 | no |
+
+More: [docs/guides/troubleshooting.md#runtime-build-skew](../../docs/guides/troubleshooting.md#runtime-build-skew)
+
 ### serve_port_in_use
 
 <a id="serve_port_in_use"></a>
