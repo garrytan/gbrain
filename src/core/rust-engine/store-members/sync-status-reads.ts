@@ -27,7 +27,7 @@ import type { SourceStateRow } from '../../engine-sql/write-misc.ts';
 import type { CycleLockRow, SourceDetailRow, SourceRow } from '../../engine.ts';
 import { SYNC_ADMISSION_KEY, SYNC_ADMISSION_SETTING_PARAMS } from '../../persistence/sync-admission.ts';
 import { SYNC_DELETES_WITHHELD_OP } from '../../persistence/sync-pass-row.ts';
-import { IDENTITY_DOWNGRADE_OP } from '../../persistence/sync-status-sql.ts';
+import { GIT_COMMIT_CODES, GIT_PUSH_CODES, IDENTITY_DOWNGRADE_OP } from '../../persistence/sync-status-sql.ts';
 import type { StoreBrain } from '../store.ts';
 import { refuseMember, storeCall, type StoreMember } from './common.ts';
 
@@ -122,12 +122,16 @@ export const readSyncStatusSourceRow: StoreMember<[sourceId: string], SyncStatus
 };
 
 /**
- * The managed-sync counts are not read here yet (an open item of the capability flip; rust/docs/store/journal.md).
- * `git_push_held` is true without a read: it only gates sync status's push and commit hold reads (the typed
- * `listGitPushHoldRows`), so each runs once instead of a second journal scan for the gate.
+ * The managed-sync counts and the fence flag are not read here yet (an open item of the capability flip;
+ * rust/docs/store/journal.md). `git_push_held` is read as the SQL engines read it: a held Git effect of the source on a
+ * push or commit code (the typed hold read), or a Git effect with parked targets (the typed parked read).
  */
-export const readSyncStatusCommittedRow: StoreMember<[sourceId: string], SyncStatusCommittedRow> = async () =>
-  ({ n: 0, git_push_held: true, fence_held: false, last_committed_at: null });
+export const readSyncStatusCommittedRow: StoreMember<[sourceId: string], SyncStatusCommittedRow> = async (brain, sourceId) => {
+  const member = 'readSyncStatusCommittedRow';
+  const holds = await storeCall({ member }, () => brain.gitPushHoldRows([...GIT_PUSH_CODES, ...GIT_COMMIT_CODES], [sourceId])) as unknown[];
+  const parked = holds.length ? [] : await storeCall({ member }, () => brain.parkedEffectRows([sourceId])) as Array<{ kind?: string }>;
+  return { n: 0, git_push_held: holds.length > 0 || parked.some(row => row.kind === 'git'), fence_held: false, last_committed_at: null };
+};
 
 /** The source incarnation's newest managed-sync cursor, the one keyed `failedKey` first. */
 export const readManagedSyncCursorHeader: StoreMember<[sourceId: string, incarnation: string, failedKey: string], { header: never; key: string } | null> =
