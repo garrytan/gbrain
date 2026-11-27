@@ -684,10 +684,9 @@ export async function serveOwnerEngine(
     const readDeadlineAt = typeof frame.read_deadline_at === 'number' ? frame.read_deadline_at : undefined;
     let access: CallerAccess | null;
     try { access = frame.access === undefined ? null : callerAccessOf(member, decodeValue(frame.access as Wire)); } catch (error) { refuse(error); return; }
-    // A client's call runs exempt from the owner's host-fence refusal: the owner's registration is not the client's.
     const invoke = () => runAsOwnerClientCall(() => readDeadlineAt === undefined ? target(...args) : withReadDeadline(readDeadlineAt, () => target(...args)));
-    // The call runs under the caller's access record, re-checked by withCallerAccess, or under none when it had none.
-    // A v3 call runs inside its session's scope too (served/session.ts: the remote mark, a transaction binding).
+    // The call runs under the caller's access record (re-checked by withCallerAccess) or none, exempt from the owner's host-fence
+    // refusal (fence-dispatch.ts), and a v3 call inside its session's scope (served/session.ts: remote mark, transaction binding).
     const scoped = () => access ? withCallerAccess(access, invoke) : withoutCallerAccess(invoke);
     call.run = () => withRequestSignal(controller.signal, () => served ? served.wrapRun(scoped) : scoped());
     if (deadlineAt !== undefined) {
