@@ -53,7 +53,8 @@ export interface SessionCallOptions {
 
 const DENIED = 'This credential cannot open a multi-user session on this brain (only the brain owner\'s own key is admitted for now).';
 
-function denied(detail: string) {
+/** The one `permission_denied` every owner-only refusal gives (also the served client's gate, served/http-session.ts). */
+export function denied(detail: string) {
   return opError('permission_denied', DENIED, 'Connect with the brain owner\'s own key, or run the call on the brain host.', { detail });
 }
 
