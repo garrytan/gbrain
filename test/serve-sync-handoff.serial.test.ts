@@ -378,6 +378,59 @@ describe('maybeDelegateManagedSyncToServe (the Postgres ladder, client half)', (
     expect(n).toBe(0);
   }), 120_000);
 
+  test('#10537: a serve on an older build than this CLI is never handed the run: one line names both builds and the restart, and this process consumes itself', async () => withEnv({ GBRAIN_HOME: home }, async () => {
+    const f = await fixture(1);
+    const starts: string[] = [];
+    const sock = await serveSocket({ sync_start: (req) => { starts.push(req.clientToken); return { ok: false, protocol: 2 as const, error: 'busy' }; } });
+    resetOwnConsumerForTest();
+    captureStderr();
+    const older = await maybeDelegateManagedSyncToServe(engine, [], baseOpts(f.id), deps({ sock, row: serveRow({ version: '0.0.1.0' }) }));
+    releaseStderr();
+    expect(starts).toEqual([]);
+    expect(older).toMatchObject({ kind: 'own_consumer', reason: 'build_skew' });
+    const line = older.kind === 'own_consumer' ? older.line ?? '' : '';
+    expect(line).toContain(`the running gbrain serve is v0.0.1.0 and this CLI is v${VERSION}`);
+    expect(line).toContain('this run uses its own consumer beside the serve (PID 4242)');
+    expect(line).toContain('gbrain upgrade --restart-only');
+    expect(captured).toEqual([line]);
+    expect(ownConsumerForcedReason()).toBe('build_skew');
+    resetOwnConsumerForTest();
+    // A serve on this build, a newer one, or one whose build is not recorded is still handed the run.
+    captureStderr();
+    for (const version of [VERSION, '999.0.0.0', 'test', '']) {
+      expect(await maybeDelegateManagedSyncToServe(engine, [], baseOpts(f.id), deps({ sock, row: serveRow({ version }) }))).toMatchObject({ kind: 'own_consumer', reason: 'serve_refused' });
+    }
+    releaseStderr();
+    expect(starts).toHaveLength(4);
+    expect(ownConsumerForcedReason()).toBeNull();
+  }), 120_000);
+
+  test('#10537: a run that fails inside the serve on a missing export throws serve_build_skew naming both builds, the restart and GBRAIN_SYNC_NO_DELEGATE=1; any other failure is unchanged', async () => withEnv({ GBRAIN_HOME: home }, async () => {
+    const f = await fixture(1);
+    const failingServe = (message: string) => serveSocket({
+      sync_start: () => ({ ok: true, protocol: 2 as const, jobId: 'job-10537' }),
+      sync_status: () => ({ ok: true, protocol: 2 as const, state: 'error' as const, managed: true, lines: [],
+        jobErrorEnvelope: { error: 'internal_error', code: 'internal_error', message, contract_version: 1 } }),
+    });
+    const stale = "Export named 'hostIdFor' not found in module '/home/alice-example/.bun/install/global/node_modules/gbrain/src/core/persistence/identity.ts'.";
+    captureStderr();
+    const skew = await maybeDelegateManagedSyncToServe(engine, [], baseOpts(f.id), deps({ sock: await failingServe(stale) })).catch(e => e);
+    const other = await maybeDelegateManagedSyncToServe(engine, [], baseOpts(f.id), deps({ sock: await failingServe('disk full') })).catch(e => e);
+    releaseStderr();
+    expect(skew).toBeInstanceOf(OperationError);
+    const json = (skew as OperationError).toJSON();
+    expect(json.error).toBe('serve_build_skew');
+    expect(json.message).toContain('the running gbrain serve (PID 4242, vtest)');
+    expect(json.message).toContain(`this CLI is v${VERSION}`);
+    expect(json.message).toContain(stale);
+    expect(json.suggestion).toContain('gbrain upgrade --restart-only');
+    // The human renderer prints the fix's command instead of the suggestion, so the workaround rides in the message.
+    expect(json.message).toContain('GBRAIN_SYNC_NO_DELEGATE=1');
+    expect((skew as OperationError).fix).toMatchObject({ ask_user: true, argv: ['gbrain', 'upgrade', '--restart-only'] });
+    expect(other).toBeInstanceOf(OperationError);
+    expect((other as OperationError).toJSON()).toMatchObject({ error: 'internal_error', message: 'disk full' });
+  }), 120_000);
+
   test('#6696 (A5): the CLI sends origin interactive in the delegation payload', async () => withEnv({ GBRAIN_HOME: home }, async () => {
     const f = await fixture(1);
     const origins: unknown[] = [];
