@@ -16,6 +16,3 @@
 - Text that held a raw control character now shows its `\NNN` escape. Tab prints as before.
 - A consent refusal's JSON `preview` has no `command` when its argv holds a NUL byte or a lone surrogate.
 - `gbrain sync status` prints the rendered identity question and prints "command unavailable" instead of joining raw argv.
-
-### Known, not in this change
-- Bidirectional controls (U+202A to U+202E, U+2066 to U+2069) are not escaped, so they can still reorder what a terminal shows.
