@@ -41,6 +41,7 @@ import { prepareFenceFactAppend, prepareFenceFactCreate } from '../src/core/fact
 import { prepareManagedFactsMutation } from '../src/core/persistence/facts-prepare.ts';
 import { prepareMaintenanceMutation } from '../src/core/persistence/prepared-maintenance.ts';
 import { heldRowDestination, planHeldMoves } from '../src/core/facts/held-fact-move.ts';
+import { fenceUnfencedFacts, planUnfencedFacts } from '../src/core/facts/unfenced-facts.ts';
 import { withEnv } from './helpers/with-env.ts';
 
 const RETIRED = 'people/old-desk-example';
@@ -182,6 +183,25 @@ describe('GST-4027 managed brain: fact writers never land on a rule page', () =>
       prepareMaintenanceMutation(brain.engine, row({ kind: 'managed_maintenance_move_held_fact', facts: [], content: '' }, 'maintenance'), config),
     ].map(p => p.then(() => null, e => codeOf(e))));
     expect(refusals).toEqual(['rule_owner_only', 'rule_owner_only', 'rule_owner_only', 'rule_owner_only', 'rule_owner_only']);
+    expect(await ruleState(brain)).toEqual(before);
+  }), 60_000);
+
+  test('the unfenced-fact sweep leaves a legacy row on the rule page alone and submits nothing, pass after pass', () => withEnv({ GBRAIN_HOME: brain.home }, async () => {
+    await brain.engine.executeRaw('UPDATE persistence_brain SET enabled=false WHERE singleton=1');
+    await brain.engine.executeRaw(`INSERT INTO facts (source_id, entity_slug, fact, kind, visibility, notability, source, confidence)
+      VALUES ('default', $1, 'Legacy claim on the rule page.', 'fact', 'world', 'high', 'test', 1)`, [brain.rule]);
+    await brain.engine.executeRaw('UPDATE persistence_brain SET enabled=true WHERE singleton=1');
+    const before = await ruleState(brain);
+    const requests = async () => Number((await brain.engine.executeRaw<{ n: number }>('SELECT COUNT(*)::int AS n FROM persistence_requests WHERE slug=$1', [brain.rule]))[0]!.n);
+    const submitted = await requests();
+    for (let pass = 0; pass < 2; pass++) {
+      const plan = await planUnfencedFacts(brain.engine, { sourceId: 'default' });
+      expect([...plan.groups.keys()].filter(k => k.endsWith('\0' + brain.rule))).toEqual([]);
+      const outcome = await fenceUnfencedFacts(brain.engine, plan);
+      expect(outcome.skipped_rule_page).toBe(1);
+      expect(outcome.failed_pages.filter(p => p.includes(brain.rule))).toEqual([]);
+    }
+    expect(await requests()).toBe(submitted);
     expect(await ruleState(brain)).toEqual(before);
   }), 60_000);
 });
