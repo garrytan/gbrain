@@ -24,7 +24,7 @@ import { appendRecall, firstTenKeys, IntervalGate, readEpochRecall, recallEligib
 
 const dirs: string[] = [];
 afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
-const NOW = new Date('2026-11-30T12:00:00.000Z');
+const NOW = new Date('2026-11-30T12:00:00.000Z'); // pregate-literal: SHADOW_ADAPTER_VERSION=12 unrelated count, not the adapter version
 const ts = new Date(NOW.getTime() - 86_400_000).toISOString();
 const epochDir = () => {
   const dir = mkdtempSync(join(tmpdir(), 'gbrain-shadow-recall-')); dirs.push(dir);
@@ -41,11 +41,11 @@ const ids = (from: number, to: number) => Array.from({ length: to - from }, (_, 
 
 describe('scoring', () => {
   test('Rust missing a true neighbour scores below 1 while the primary scores 1', () => {
-    expect(scoreRecall(ref(12), rows(ids(0, 10)), rows([...ids(0, 9), 'c11']))).toMatchObject({ vector: 0.9, primary: 1, ref_size: 10 });
+    expect(scoreRecall(ref(12), rows(ids(0, 10)), rows([...ids(0, 9), 'c11']))).toMatchObject({ vector: 0.9, primary: 1, ref_size: 10 }); // pregate-literal: SHADOW_ADAPTER_VERSION=12 unrelated count, not the adapter version
   });
   test('the wrong filter, an under-filled answer and an under-filled reference', () => {
-    expect(scoreRecall(ref(12), rows(ids(0, 10)), rows(ids(20, 30)))).toMatchObject({ vector: 0, primary: 1 }); // all outside the reference
-    expect(scoreRecall(ref(12), rows(ids(0, 10)), rows(ids(0, 4)))).toMatchObject({ vector: 0.4 }); // under-filled
+    expect(scoreRecall(ref(12), rows(ids(0, 10)), rows(ids(20, 30)))).toMatchObject({ vector: 0, primary: 1 }); // pregate-literal: SHADOW_ADAPTER_VERSION=12 unrelated count, not the adapter version (all outside the reference)
+    expect(scoreRecall(ref(12), rows(ids(0, 10)), rows(ids(0, 4)))).toMatchObject({ vector: 0.4 }); // pregate-literal: SHADOW_ADAPTER_VERSION=12 unrelated count, not the adapter version (under-filled)
     expect(scoreRecall(ref(4), rows(ids(0, 4)), rows(ids(0, 2)))).toMatchObject({ vector: 0.5, primary: 1, ref_size: 4 }); // only four eligible rows exist: the denominator is the reference's
   });
   test('an empty corpus is skipped, and so are an offset and a limit under ten', () => {
@@ -53,15 +53,15 @@ describe('scoring', () => {
     expect([recallEligible([0, { limit: 10 }]), recallEligible([0, {}]), recallEligible([0, { limit: 9 }]), recallEligible([0, { limit: 10, offset: 5 }])]).toEqual([true, true, false, false]);
   });
   test('every reference row tied with the tenth is a true neighbour, whichever the engine returned', () => {
-    const tied = ref(13, (i) => (i < 9 ? 1 - i / 100 : 0.5)); // c9, c10, c11 and c12 tie at the cutoff
-    expect(scoreRecall(tied, rows(ids(0, 10)), rows([...ids(0, 9), 'c12']))).toMatchObject({ vector: 1 });
+    const tied = ref(13, (i) => (i < 9 ? 1 - i / 100 : 0.5)); // pregate-literal: SHADOW_ADAPTER_VERSION=12 unrelated count, not the adapter version (c9, c10, c11 and c12 tie at the cutoff)
+    expect(scoreRecall(tied, rows(ids(0, 10)), rows([...ids(0, 9), 'c12']))).toMatchObject({ vector: 1 }); // pregate-literal: SHADOW_ADAPTER_VERSION=12 unrelated count, not the adapter version
     expect(scoreRecall(tied, rows(ids(0, 10)), rows([...ids(0, 9), 'c13']))).toMatchObject({ vector: 0.9 });
   });
   test('tied rows fill only the top-ten places the strictly better rows leave: ten tied rows and none of nine better ones score 0.1', () => {
     const tied = ref(29, (i) => (i < 9 ? 1 - i / 100 : 0.5)); // nine strictly better rows, then twenty tied at the cutoff
     expect(scoreRecall(tied, rows(ids(0, 10)), rows(ids(9, 19)))).toMatchObject({ vector: 0.1, primary: 1 }); // the nine better rows were all missed
     expect(scoreRecall(tied, rows(ids(0, 10)), rows([...ids(0, 9), 'c20']))).toMatchObject({ vector: 1 }); // one tied row takes the one place left
-    expect(scoreRecall(tied, rows(ids(0, 10)), rows([...ids(0, 8), 'c12', 'c13']))).toMatchObject({ vector: 0.9 }); // two tied rows, one place
+    expect(scoreRecall(tied, rows(ids(0, 10)), rows([...ids(0, 8), 'c12', 'c13']))).toMatchObject({ vector: 0.9 }); // pregate-literal: SHADOW_ADAPTER_VERSION=12 unrelated count, not the adapter version (two tied rows, one place)
   });
   test('a reference that fills its window with rows tied at the cutoff is unscorable: the tie may run past it', () => {
     const full = ref(RECALL_REFERENCE_LIMIT, (i) => (i < 9 ? 1 - i / 100 : 0.5)); // the fiftieth row still ties the tenth score
@@ -72,10 +72,10 @@ describe('scoring', () => {
   });
   test('an element that is not a row takes its place in the first ten: a null ahead of nine neighbours scores 0.9, never 1', () => {
     const nine = ids(0, 9);
-    expect(scoreRecall(ref(12), rows(ids(0, 10)), [null, ...rows(nine)])).toMatchObject({ vector: 0.9, primary: 1 });
-    expect(scoreRecall(ref(12), [null, 'x', ...rows(nine)], rows(ids(0, 10)))).toMatchObject({ vector: 1, primary: 0.8 }); // the same for the primary's own answer
-    expect(scoreRecall(ref(12), rows(ids(0, 10)), [...rows(nine), null, ...rows(['c9'])])).toMatchObject({ vector: 0.9 }); // a hole at the tenth place pushes the next row out
-    expect(scoreRecall(ref(12), rows(ids(0, 10)), null)).toMatchObject({ vector: 0 }); // not a list: nothing
+    expect(scoreRecall(ref(12), rows(ids(0, 10)), [null, ...rows(nine)])).toMatchObject({ vector: 0.9, primary: 1 }); // pregate-literal: SHADOW_ADAPTER_VERSION=12 unrelated count, not the adapter version
+    expect(scoreRecall(ref(12), [null, 'x', ...rows(nine)], rows(ids(0, 10)))).toMatchObject({ vector: 1, primary: 0.8 }); // pregate-literal: SHADOW_ADAPTER_VERSION=12 unrelated count, not the adapter version (the same for the primary's own answer)
+    expect(scoreRecall(ref(12), rows(ids(0, 10)), [...rows(nine), null, ...rows(['c9'])])).toMatchObject({ vector: 0.9 }); // pregate-literal: SHADOW_ADAPTER_VERSION=12 unrelated count, not the adapter version (a hole at the tenth place pushes the next row out)
+    expect(scoreRecall(ref(12), rows(ids(0, 10)), null)).toMatchObject({ vector: 0 }); // pregate-literal: SHADOW_ADAPTER_VERSION=12 unrelated count, not the adapter version (not a list: nothing)
   });
   test('the rerun representation of an answer keeps its holes: a null ahead of ten neighbours scores 0.9 for the primary through the rerun path too', async () => {
     const keys = firstTenKeys([null, ...rows(ids(0, 10))]); // what the serving process sends back for a moved vector sample's rerun
@@ -83,7 +83,7 @@ describe('scoring', () => {
     expect(keys[0]).toBeNull();
     const env = {
       timeoutMs: 1000, now: () => 0, curEpoch: () => 'e',
-      ask: async (p: Record<string, unknown>) => (p.kind === 'rerun' ? { stamp: 1, epoch_id: 'e', keys, attempt: 'a1' } : p.attempt === 'a1' ? ref(12) : (() => { throw Object.assign(new Error('moved'), { code: 'moved' }); })()),
+      ask: async (p: Record<string, unknown>) => (p.kind === 'rerun' ? { stamp: 1, epoch_id: 'e', keys, attempt: 'a1' } : p.attempt === 'a1' ? ref(12) : (() => { throw Object.assign(new Error('moved'), { code: 'moved' }); })()), // pregate-literal: SHADOW_ADAPTER_VERSION=12 unrelated count, not the adapter version
       exclusive: async (_s: number, fn: () => Promise<unknown>) => fn(),
       callRust: async () => ({ value: rows(ids(0, 10)) }),
       write: (score: unknown) => { written.push(score); },
@@ -94,11 +94,11 @@ describe('scoring', () => {
   });
   test('ten copies of one true neighbour are one neighbour, not ten', () => {
     const copies = Array.from({ length: 10 }, () => ({ chunk_id: 'c0', score: 0.5 }));
-    expect(scoreRecall(ref(12), copies, copies)).toMatchObject({ vector: 0.1, primary: 0.1 });
-    expect(scoreRecall(ref(12), rows(ids(0, 10)), copies)!.overlap).toBe(0.1); // distinct identities on both sides
+    expect(scoreRecall(ref(12), copies, copies)).toMatchObject({ vector: 0.1, primary: 0.1 }); // pregate-literal: SHADOW_ADAPTER_VERSION=12 unrelated count, not the adapter version
+    expect(scoreRecall(ref(12), rows(ids(0, 10)), copies)!.overlap).toBe(0.1); // pregate-literal: SHADOW_ADAPTER_VERSION=12 unrelated count, not the adapter version (distinct identities on both sides)
   });
   test('overlap with the primary is its own number', () => {
-    expect(scoreRecall(ref(12), rows(ids(0, 10)), rows([...ids(0, 9), 'c11']))!.overlap).toBe(0.9);
+    expect(scoreRecall(ref(12), rows(ids(0, 10)), rows([...ids(0, 9), 'c11']))!.overlap).toBe(0.9); // pregate-literal: SHADOW_ADAPTER_VERSION=12 unrelated count, not the adapter version
   });
   test('the gate allows one reference run a minute', () => {
     let at = 0;
@@ -262,7 +262,7 @@ describe('the wait before a rerun after a moved check', () => {
     const env = {
       timeoutMs: 1000, now: () => t.clock, curEpoch: () => 'e', random: () => 0.5,
       pause: async (ms: number) => { t.waits.push(ms); t.clock += ms; },
-      ask: async (p: Record<string, unknown>) => (p.kind === 'rerun' ? { stamp: 1, epoch_id: 'e', keys: firstTenKeys(rows(ids(0, 10))), attempt: `a${t.waits.length}` } : t.clock < quietAt ? moved() : ref(12)),
+      ask: async (p: Record<string, unknown>) => (p.kind === 'rerun' ? { stamp: 1, epoch_id: 'e', keys: firstTenKeys(rows(ids(0, 10))), attempt: `a${t.waits.length}` } : t.clock < quietAt ? moved() : ref(12)), // pregate-literal: SHADOW_ADAPTER_VERSION=12 unrelated count, not the adapter version
       exclusive: async (_s: number, fn: () => Promise<unknown>) => fn(),
       callRust: async () => ({ value: rows(ids(0, 10)) }),
       write: (score: unknown) => { t.written.push(score); },
