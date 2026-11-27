@@ -122,6 +122,9 @@ never a pass. With no shadow running, every criterion is `missing`.
    transaction: a call that started before the write and has not finished (how a pipelined import sends an update's version row beside its page write) is waited for first, at most
    2 seconds, with every later call held behind the read so their statements keep their order. A call that does not finish in that time, or that runs a callback of its own (a nested
    transaction), is not waited for: nothing is read and the sample is `uncomparable` (`in_transaction_busy`), because that call's later statements would run inside the savepoint and be rolled back with it.
+   The outermost transaction's commit or rollback waits until every started sampled write has been sent, so a sampled write is never sent after its transaction ended; it also waits, at most
+   2 seconds, for the calls its callback started and did not await. If one is still unfinished then, the transaction ends as it would without the shadow and the samples whose write had not finished are
+   `uncomparable` (`drain_timeout`).
    Only writes of the outermost transaction are compared; one inside a nested transaction (a savepoint) is
    `uncomparable` (`in_transaction`). A link or delete write in a transaction is `uncomparable` when any other write of the transaction, before or after it, could change what it reads back
    (`in_transaction_prior_write`, `in_transaction_later_write`): only a version row and the bookkeeping below do not count, including the `links` effect's own statements (its row locks,
