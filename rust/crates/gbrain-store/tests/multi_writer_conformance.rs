@@ -1478,7 +1478,7 @@ fn c09_idempotency_key_maps_to_one_row() {
 #[test]
 #[ignore = "multi_writer"]
 fn c09_idempotency_key_maps_to_one_row_multi_writer() {
-    let b = brain_in("c09m", memory_env::StoreMode::Optimistic);
+    let b = memory_env::brain_mu("c09m");
     require_transactions(&b);
     idempotency_key_maps_to_one_row(&b);
 }

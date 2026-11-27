@@ -49,9 +49,15 @@ fn origin(i: usize) -> WriteOrigin {
     }
 }
 
-fn begin_host(s: &Store, i: usize) -> MuTxn {
+/// An optimistic transaction on the concurrent store; the single-writer store refuses optimistic mode, so
+/// that half of a two-store case runs serialized.
+fn begin_host(s: &Store, i: usize, optimistic: bool) -> MuTxn {
     s.begin_with(TxnOptions {
-        mode: TxnMode::Optimistic,
+        mode: if optimistic {
+            TxnMode::Optimistic
+        } else {
+            TxnMode::Serialized
+        },
         deadline: None,
         origin: Some(origin(i)),
         ..TxnOptions::default()
@@ -450,7 +456,7 @@ fn second_host_promotion_keeps_clock_floor_and_positions_multi_writer() {
         let a = mu::open_logged(&a_path, optimistic, Clock::at(T0), HOST_A)
             .unwrap_or_else(|e| panic!("{e}"));
         for i in 0..6 {
-            let tx = begin_host(&a.store, i);
+            let tx = begin_host(&a.store, i, optimistic);
             put(tx.store(), &format!("hand/{i}"), "committed on host A");
             commit_host(&a.store, tx);
         }
@@ -499,7 +505,7 @@ fn second_host_promotion_keeps_clock_floor_and_positions_multi_writer() {
         // B commits more: positions above A's last, commit times rising across the move, row times at or above the floor.
         let mut positions = Vec::new();
         for i in 0..4 {
-            let tx = begin_host(&b.store, 10 + i);
+            let tx = begin_host(&b.store, 10 + i, optimistic);
             put(tx.store(), &format!("after/{i}"), "committed on host B");
             positions.push(commit_host(&b.store, tx));
         }
@@ -527,7 +533,7 @@ fn second_host_promotion_keeps_clock_floor_and_positions_multi_writer() {
             "the old primary is fenced after the promotion (its lease epoch moved)",
         )
         .unwrap_or_else(|e| panic!("{e}"));
-        let late = begin_host(&a.store, 1);
+        let late = begin_host(&a.store, 1, optimistic);
         put(late.store(), "late/write", "from the old primary");
         let refused = a.store.commit_position(late).unwrap_err();
         assert_lost(
