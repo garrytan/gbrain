@@ -166,7 +166,7 @@ describe('signals and the warning', () => {
     expect(bot.why).toContain('gbrain auth create <name> --member <id>');
     expect(exposureFix({ kind: 'stdio', harness: 'hermes' }).why).not.toContain('cannot tell');
     expect(sharedTokenNotice({ kind: 'stdio', harness: 'claude-code' }, { harness: 'claude-code' })).toBeNull();
-    expect(exposureFix({ kind: 'stdio', harness: 'hermes' }).argv).toEqual(['gbrain', 'setup', 'hermes', '--serves', 'several', '--members', '<id,...>']);
+    expect(exposureFix({ kind: 'stdio', harness: 'hermes' }).argv).toEqual(['gbrain', 'config', 'set', 'mcp.stdio_may_act_for', '<members>']);
   });
 
   test('Claude Code channel plugins and bot workspaces are read from config paths', () => {
@@ -229,6 +229,39 @@ describe('doctor unscoped_multi_user_token', () => {
     const warn = await doctor({}, home);
     expect(warn.status).toBe('warn');
     expect(warn.message).toContain('The gbrain access hermes uses reaches 2 channels');
+  });
+
+  test('GST-4043: the fix doctor gives a bot harness (config mcp.stdio_may_act_for) is the one that clears its warning', async () => {
+    await reset();
+    const home = tmp();
+    mkdirSync(join(home, '.gbrain'), { recursive: true });
+    writeFileSync(join(home, '.gbrain', 'agent-instructions.json'), JSON.stringify({ entries: [{ harness: 'hermes', path: join(home, '.hermes', 'SOUL.md'), status: 'installed', block_version: 1, access: { kind: 'mcp', server: 'gbrain' }, writer: 'gbrain setup hermes' }] }));
+    await chat('chats/a', '#alpha, Jul 2');
+    await chat('chats/b', '#beta, Jul 2');
+    const warn = await doctor({}, home);
+    expect(warn.status).toBe('warn');
+    expect(warn.fix.argv).toEqual(['gbrain', 'config', 'set', 'mcp.stdio_may_act_for', '<members>']);
+    await engine.setConfig(warn.fix.argv[3], 'alice-example,bob-example');
+    try {
+      expect((await doctor({}, home)).status).toBe('ok');
+    } finally {
+      await engine.setConfig('mcp.stdio_may_act_for', '');
+    }
+    expect((await doctor({}, home)).status).toBe('warn');
+    for (const cleared of ['none', 'not a member list!']) {
+      await engine.setConfig('mcp.stdio_may_act_for', cleared);
+      expect((await doctor({}, home)).status).toBe('warn');
+    }
+    mkdirSync(join(home, '.claude'), { recursive: true });
+    writeFileSync(join(home, '.claude', 'settings.json'), JSON.stringify({ enabledPlugins: { 'telegram@claude-plugins-official': true } }));
+    await engine.setConfig('mcp.stdio_may_act_for', 'alice-example,bob-example');
+    try {
+      const plugin = await doctor({}, home);
+      expect(plugin.status).toBe('warn');
+      expect(plugin.details.flagged.map((f: any) => f.subject.harness)).toEqual(['claude-code']);
+    } finally {
+      await engine.setConfig('mcp.stdio_may_act_for', '');
+    }
   });
 
   test('a credential holding may_act_for is not flagged; a member-bound one still is', async () => {

@@ -22,11 +22,10 @@ import { join } from 'node:path';
 import { catalogStatus } from '../../../core/skills/resolver/build.ts';
 import { logsDir } from '../../../core/skills/resolver/paths.ts';
 import { OPENCLAW_SKILL_PLUGIN_CODE_VERSION } from '../../../core/setup/openclaw-skill-plugin-code.ts';
-import { openclawAgentPolicy, openclawHostDrift, openclawLoaderVersion, openclawOwnerUnverified, openclawSkillLibDir, openclawSkillPluginDir, openclawSkillPluginRegistered, readOpenclawSkillState, type OpenclawPathReads } from '../../../core/setup/openclaw-skill-plugin.ts';
+import { OPENCLAW_LOG_WINDOW_MS, readOpenclawLogTail, openclawAgentPolicy, openclawGuardRuns, openclawHostDrift, openclawLoaderVersion, openclawOwnerUnverified, openclawSkillLibDir, openclawSkillPluginDir, openclawSkillPluginRegistered, readOpenclawSkillState, type OpenclawPathReads } from '../../../core/setup/openclaw-skill-plugin.ts';
 import { catalogSkillIds } from '../../../core/setup/skill-pins.ts';
+import { openclawConfigPath } from '../../../core/setup/brain-first.ts';
 
-const LOG_WINDOW_MS = 24 * 3600 * 1000;
-const LOG_READ_CAP = 4 * 1024 * 1024;
 /** A deadline-miss rate above this blocks go-live (the plan's bar) and warns here. */
 export const OPENCLAW_MISS_RATE_WARN = 0.05;
 
@@ -62,7 +61,8 @@ export interface OpenclawSkillView {
     running_version: number | null };
 }
 
-function recentOpenclaw(home: string, now: number): OpenclawSkillView['recent'] {
+/** `configSince`: when OpenClaw's config last changed; a memory audience logged before it says nothing about the gateway the config now describes (GST-4004). */
+function recentOpenclaw(home: string, now: number, configSince: number): OpenclawSkillView['recent'] {
   const recent: OpenclawSkillView['recent'] = { turns: 0, outcomes: {}, errors: {}, deadline_misses: 0, miss_rate: null, reads: 0, reads_of_suggested: 0, by_session_class: {}, by_source: {}, by_audience: {}, by_agent_audience: {}, running_version: null };
   const cls = (v: unknown) => (recent.by_session_class[typeof v === 'string' && v ? v : 'unknown'] ??= { turns: 0, suggested: 0, would_suggest: 0, reads: 0, reads_of_suggested: 0 });
   const src = (v: unknown) => (recent.by_source[typeof v === 'string' && v ? v : 'unknown'] ??= { suggested: 0, would_suggest: 0, reads: 0, reads_of_suggested: 0 });
@@ -73,15 +73,13 @@ function recentOpenclaw(home: string, now: number): OpenclawSkillView['recent'] 
   for (const f of files) {
     let text = '';
     try {
-      const p = join(dir, f);
-      text = readFileSync(p, 'utf8');
-      if (statSync(p).size > LOG_READ_CAP) text = text.slice(-LOG_READ_CAP);
+      text = readOpenclawLogTail(join(dir, f));
     } catch { continue; }
     for (const line of text.split('\n')) {
       if (!line) continue;
       let j: { at?: unknown; agent?: unknown; plugin?: unknown; outcome?: unknown; code?: unknown; suggested?: unknown; session_class?: unknown; audience?: unknown; source?: unknown; sources?: unknown };
       try { j = JSON.parse(line); } catch { continue; }
-      if (typeof j.outcome !== 'string' || typeof j.at !== 'string' || now - Date.parse(j.at) > LOG_WINDOW_MS) continue;
+      if (typeof j.outcome !== 'string' || typeof j.at !== 'string' || now - Date.parse(j.at) > OPENCLAW_LOG_WINDOW_MS) continue;
       if (typeof j.agent === 'string') recent.running_version = Number(j.plugin) || 0;
       if (j.outcome === 'read') {
         const c = cls(j.session_class), s = src(j.source);
@@ -95,7 +93,7 @@ function recentOpenclaw(home: string, now: number): OpenclawSkillView['recent'] 
         c.turns++;
         if (j.audience === 'host' || j.audience === 'unknown') {
           recent.by_audience[j.audience] = (recent.by_audience[j.audience] ?? 0) + 1;
-          if (typeof j.agent === 'string' && !SILENT.has(String(j.session_class))) { const m = (recent.by_agent_audience[j.agent] ??= {}); m[j.audience] = (m[j.audience] ?? 0) + 1; }
+          if (typeof j.agent === 'string' && !SILENT.has(String(j.session_class)) && Date.parse(j.at) >= configSince) { const m = (recent.by_agent_audience[j.agent] ??= {}); m[j.audience] = (m[j.audience] ?? 0) + 1; }
         }
         const names = Array.isArray(j.suggested) ? j.suggested : [];
         const field = j.outcome === 'would_suggest' ? 'would_suggest' : j.outcome === 'suggested' ? 'suggested' : null;
@@ -127,7 +125,10 @@ export async function openclawSkillView(home: string, now = Date.now()): Promise
   }
   const agents: OpenclawSkillView['agents'] = [];
   const loader = files ? openclawLoaderVersion() : null;
-  const guardRuns = loader !== null && loader >= OPENCLAW_SKILL_PLUGIN_CODE_VERSION;
+  let configSince = 0;
+  try { configSince = statSync(openclawConfigPath()).mtimeMs; } catch { /* silent-read-ok: with no OpenClaw config file there is no later config to date the logged audiences against */ }
+  const recent = recentOpenclaw(home, now, configSince);
+  const guardRuns = openclawGuardRuns(loader, recent.running_version);
   for (const [id, a] of Object.entries(state?.agents ?? {})) {
     const s = existsSync(join(home, 'skill-index', a.catalog, 'receipt.json')) ? await catalogStatus(a.catalog, { home }) : null;
     const ids = a.mode !== 'off' && s ? catalogSkillIds(home, a.catalog) : null;
@@ -137,8 +138,6 @@ export async function openclawSkillView(home: string, now = Date.now()): Promise
       conversation_pins: a.conversation_pinned_ids?.length ?? 0, suggest_in: a.suggest_classes ?? ['owner', 'conversation'],
       listing: policy.listing, path_reads: policy.path_reads, verdict: null, ...(ids ? { host } : {}), owner_unverified: openclawOwnerUnverified(id, guardRuns ? a : { ...a, require_owner_sender: false }), require_owner_sender: !!a.require_owner_sender });
   }
-  const recent = recentOpenclaw(home, now);
-  if (recent.running_version === null || recent.running_version < OPENCLAW_SKILL_PLUGIN_CODE_VERSION) for (const a of agents) if (a.mode === 'live') a.owner_unverified = openclawOwnerUnverified(a.id, { ...state!.agents[a.id]!, require_owner_sender: false });
   for (const a of agents) {
     const seen = recent.by_agent_audience[a.id];
     if (seen && (seen.host ?? 0) > 0 && !seen.unknown) a.owner_unverified = false;
