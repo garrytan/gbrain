@@ -248,7 +248,6 @@ src/commands/doctor/checks/ontology-facts.ts#ontologyFactsCheck	capability_refus
 src/commands/doctor/checks/origin-twins.ts#runOriginTwins	capability_refusal_swallowed	1
 src/commands/doctor/checks/orphan-bindings.ts#checkForeignOwnershipMarkers	capability_refusal_swallowed	1
 src/commands/doctor/checks/orphan-estimate.ts#orphanFullScanMaxPages	promise_catch_empty	1
-src/commands/doctor/checks/outside-content-fences.ts#runOutsideContentFences	capability_refusal_swallowed	1
 src/commands/doctor/checks/overwritten-edits.ts#runOverwrittenEdits	capability_refusal_swallowed	1
 src/commands/doctor/checks/owner-host-stale.ts#ownerHostStaleCheck	capability_refusal_swallowed	1
 src/commands/doctor/checks/parked-effects.ts#checkParkedEffects	capability_refusal_swallowed	1
@@ -1789,7 +1788,7 @@ src/core/search/evidence-date.ts#withFactDateHeaders	promise_catch_empty	1
 src/core/search/evidence-delivery.ts#configNumber	catch_empty	1
 src/core/search/evidence-delivery.ts#resolveEvidencePlan	catch_empty	1
 src/core/search/evidence-delivery.ts#selectLongPages	capability_refusal_swallowed	1
-src/core/search/evidence-delivery.ts#withLongPagePolicy	promise_catch_empty	2
+src/core/search/evidence-delivery.ts#withLongPagePolicy	promise_catch_empty	1
 src/core/search/evidence-packing.ts#configPacking	catch_empty	1
 src/core/search/evidence-packing.ts#queryBudgetUsesAuto	catch_empty	1
 src/core/search/evidence-tail-trim.ts#evidenceTailTrimEnabled	catch_empty	1

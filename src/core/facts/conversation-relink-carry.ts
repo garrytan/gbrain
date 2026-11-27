@@ -6,8 +6,8 @@
  * context; the row stays the page's derived row, so it has no fence to lose
  * and fence projection never touches it). A replacement of the page's batch
  * (`extract-conversation-facts --force`, a newer extractor version) clears
- * the page first: `clearConversationFacts` expires those relinked rows
- * instead of deleting them (and deletes the previous run's expired copies), and
+ * the page first: `clearConversationFacts` expires those relinked rows, like
+ * every other prior row of the batch, and
  * each inserted row with no entity whose claim matches one of them inherits
  * its entity and note. The relink holds, and the page never carries two active
  * copies of the claim.
@@ -23,17 +23,19 @@ const NOTE = /entity relinked from ([a-z]+)/;
 export async function inheritRelinkedEntities<T extends { fact: string; entity_slug?: string | null; context?: string | null }>(
   db: BrainEngine, sourceId: string, slug: string, rows: T[]): Promise<T[]> {
   if (!rows.some(row => !row.entity_slug)) return rows;
-  const prior = await db.executeRaw<{ fact: string; entity_slug: string; context: string }>(
-    `SELECT f.fact, f.entity_slug, f.context FROM facts f
+  // #10443: expired rows are kept as history, so only each claim's newest prior row decides; an older relink never overrides a later entity.
+  const prior = await db.executeRaw<{ fact: string; entity_slug: string; context: string; carried: boolean }>(
+    `SELECT f.fact, f.entity_slug, f.context, (${RELINKED_DERIVED_ROW}
+        AND EXISTS (SELECT 1 FROM pages p WHERE p.source_id = f.source_id AND p.slug = f.entity_slug AND p.deleted_at IS NULL)) AS carried
+      FROM facts f
       WHERE f.source_id = $1 AND f.source_markdown_slug = $2 AND f.source LIKE 'cli:extract-conversation-facts%' AND f.expired_at IS NOT NULL
-        AND ${RELINKED_DERIVED_ROW}
-        AND EXISTS (SELECT 1 FROM pages p WHERE p.source_id = f.source_id AND p.slug = f.entity_slug AND p.deleted_at IS NULL)
       ORDER BY f.id DESC`, [sourceId, slug]);
   if (!prior.length) return rows;
-  const byClaim = new Map<string, { entity_slug: string; context: string }>();
+  const byClaim = new Map<string, { entity_slug: string; context: string; carried: boolean }>();
   for (const p of prior) if (!byClaim.has(p.fact)) byClaim.set(p.fact, p);
   return rows.map(row => {
     const p = row.entity_slug ? undefined : byClaim.get(row.fact);
-    return p ? { ...row, entity_slug: p.entity_slug, context: appendContextNote(row.context ?? null, `entity relinked from ${NOTE.exec(p.context)?.[1] ?? 'mention'}`) } : row;
+    if (!p?.carried) return row;
+    return { ...row, entity_slug: p.entity_slug, context: appendContextNote(row.context ?? null, `entity relinked from ${NOTE.exec(p.context)?.[1] ?? 'mention'}`) };
   });
 }

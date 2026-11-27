@@ -37,7 +37,7 @@ export interface SweepFact {
   entity_slug: string | null;
   fact: string;
   visibility: 'private' | 'world';
-  valid_from: Date | string;
+  valid_from: Date | string | null;
   created_at: Date | string;
   has_embedding: boolean;
 }
@@ -77,7 +77,7 @@ export interface ConflictCandidateRow {
   expired_at: Date | string | null;
   valid_until: Date | string | null;
   source_markdown_slug: string | null;
-  valid_from: Date | string;
+  valid_from: Date | string | null;
   created_at: Date | string;
   similarity: number;
 }

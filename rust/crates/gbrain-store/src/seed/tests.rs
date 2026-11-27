@@ -633,6 +633,25 @@ fn facts_keep_ids_tiers_and_embeddings() {
     assert_eq!(import(&s, "facts", vec![fact]).skipped, 1);
 }
 
+#[test]
+fn an_undated_fact_seeds_at_its_save_time_and_counts_a_loss() {
+    let s = seeded_pages();
+    let mut fact = row(&[
+        ("id", "502"),
+        ("source_id", "default"),
+        ("fact", "Alice likes tea"),
+        ("source", "mcp:remember"),
+        ("created_at", "2026-01-01 12:00:00+00"),
+    ]);
+    fact.insert("valid_from".into(), None);
+    let r = import(&s, "facts", vec![fact]);
+    assert_eq!(r.imported, 1);
+    assert_eq!(r.losses.get("fact_unknown_event_date"), Some(&1));
+    let read = s.read().unwrap();
+    let got = read_fact(&*read, 502).unwrap().unwrap();
+    assert_eq!(got.valid_from_us, us("2026-01-01T12:00:00Z"));
+}
+
 fn take_row(id: &str, row_num: &str, claim: &str) -> SeedRow {
     row(&[
         ("id", id),

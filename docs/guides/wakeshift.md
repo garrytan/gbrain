@@ -26,7 +26,7 @@ After an upgrade that adds events, run `gbrain wakeshift enable` again to publis
 
 | Event | Watch with | Wakes when | Payload |
 | --- | --- | --- | --- |
-| `gbrain.job.finished` | `watch_job` (admin scope; agent tokens only their own jobs) | the job is completed, failed, dead or cancelled | job id, kind, status, times, duration, `next: get_job <id>` |
+| `gbrain.job.finished` | `watch_job` (admin scope; a remote credential only the jobs it submitted, unless it is the owner's admin credential) | the job is completed, failed, dead or cancelled | job id, kind, status, times, duration, `next: get_job <id>` |
 | `gbrain.write.settled` | `watch_write_request` (write scope; only your own receipts) | the write is committed (with no recovery still running), failed, conflict or cancelled | request id, state, operation, source id, accepted and settled times, `next: get_write_request <id>` |
 | `gbrain.cron.finished` | `watch_cron` (admin scope; registered names only) | the cron's next run reports ok or failed | cron name, status, finish time, a next line |
 
@@ -60,7 +60,7 @@ A Wakeshift key is an Ed25519 private key: `wst_` followed by 50 base58 characte
 
 ## Who it is for
 
-A watch belongs to the credential that made it: the OAuth client or token, or the local stdio pipe. `list_watches` and `unwatch` touch only the caller's own watches. `watch_job` runs the same owner check as `get_job`, so an agent-scoped token can watch only the jobs it submitted. A job it doesn't own reads exactly like a missing one, and nothing is sent. If the credential is revoked or its client is deleted before the job finishes, the watch ends without a wake.
+A watch belongs to the credential that made it: the OAuth client or token, or the local stdio pipe. `list_watches` and `unwatch` touch only the caller's own watches. `watch_job` runs the same owner check as `get_job`, so a remote credential, admin scope included, can watch only the jobs it submitted. The exceptions are an admin credential bound to the brain owner (`access.owner_member`) that names no person or audience, and the local stdio pipe. A job it doesn't own reads exactly like a missing one, and nothing is sent. If the credential is revoked or its client is deleted before the job finishes, the watch ends without a wake. For a job that still exists, the drainer checks job ownership again before delivery, and for an owner's watch on a job it didn't submit it also checks that the credential is still bound to the brain owner and still holds admin scope. If the job is no longer visible to the watcher (including after the credential is rescoped below admin or its member stops being the owner), the watch ends with `last_error: job_not_visible` and nothing is sent. If the job row was removed, the wake says its details are gone.
 
 ## Shared brains
 
@@ -74,7 +74,7 @@ Each person then sees one agreement step before their first watch: the first `wa
 
 The drainer re-checks this before every wake: on a shared brain a watch whose person hasn't accepted the current terms ends with `last_error: terms_not_accepted` instead of waking. A member added after enable, on a brain whose links were never set, makes every watch refuse with `wakeshift_shared_brain` and `gbrain doctor` warn until you run `enable` with the links.
 
-A watch and its terms acceptance belong to the credential (or the member it is bound to), not to a person a trusted system names with `x-qm-actor`. So a call that names one is refused with `actor_not_attested` (reason `op_not_attested`) on every watch tool, `list_watches`, `unwatch` and `accept_wakeshift_terms`, even when the operator listed them in `--attest-ops`: one person would otherwise see or end another's watches.
+A watch and its terms acceptance belong to the credential (or the member it is bound to), not to a person a trusted system names with `x-qm-actor`. So a call that names one is refused with `actor_not_attested` (reason `op_not_attested`) on every watch tool, `list_watches`, `unwatch` and `accept_wakeshift_terms`, even when the operator listed them in `--attest-ops`: one person would otherwise see or end another's watches. A call that names an audience (`X-Gbrain-On-Behalf-Of`) is refused the same way, with reason `audience_not_supported`; call `wait_job` for a job or `get_write_request` for a write instead.
 
 ## Removing someone
 

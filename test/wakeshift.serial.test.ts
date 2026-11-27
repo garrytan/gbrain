@@ -12,6 +12,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
+import { operationsByName, type OperationContext } from '../src/core/operations.ts';
+import { withCallerAccess } from '../src/core/search/private-visibility.ts';
 import { disabledOpsForPublishGates } from '../src/mcp/publish-gates.ts';
 import { encodeWakeshiftKey } from '../src/core/wakeshift/client.ts';
 import { wakeshiftManifestHash } from '../src/core/wakeshift/events.ts';
@@ -21,6 +23,8 @@ import { loadConfig } from '../src/core/config.ts';
 import { startFakeWakeshift, type FakeWakeshift } from './helpers/fake-wakeshift.ts';
 import { runWakeshift } from '../src/commands/wakeshift.ts';
 import { readFileSync } from 'node:fs';
+import { mintLegacyToken } from '../src/core/token-mint.ts';
+import { bindCredential } from '../src/core/access/members.ts';
 
 const KEY = encodeWakeshiftKey(Buffer.alloc(32, 9));
 const WATCH_OPS = ['watch_job', 'list_watches', 'unwatch'];
@@ -61,6 +65,7 @@ beforeEach(async () => {
   fake.calls.length = 0;
   fake.respond.clear();
   await engine.executeRaw('DELETE FROM wake_subscriptions');
+  await engine.executeRaw('DELETE FROM wake_terms_acceptances');
   await engine.executeRaw('DELETE FROM minion_jobs');
 });
 
@@ -172,9 +177,133 @@ describe('access', () => {
     expect(row).toMatchObject({ state: 'ended', last_error: 'principal_revoked' });
   });
 
+  test('a watch whose job its credential can no longer read is ended at delivery without an emit', async () => {
+    await engine.executeRaw(`INSERT INTO oauth_clients (client_id, client_name) VALUES ('client-v', 'client-v') ON CONFLICT DO NOTHING`);
+    const id = await seedJob('active', 'client-v');
+    expect((await dispatchToolCall(engine, 'watch_job', { id }, agent('client-v'))).isError).toBeFalsy();
+    await engine.executeRaw(`UPDATE minion_jobs SET data = data || '{"__owner_client_id":"client-other"}'::jsonb WHERE id = $1`, [id]);
+    await finish(id);
+    expect(await drainWakes(engine)).toMatchObject({ delivered: 0, ended: 1 });
+    expect(emits()).toHaveLength(0);
+    expect(await engine.executeRaw('SELECT state, last_error FROM wake_subscriptions')).toEqual([{ state: 'ended', last_error: 'job_not_visible' }]);
+  });
+
+  test('an owner-bound watch reads the whole queue only while its credential still holds admin (GST-4023)', async () => {
+    writeConfig({ enabled: true, url: fake.url, terms_url: 'https://example.com/terms', privacy_url: 'https://example.com/privacy' });
+    await engine.executeRaw("INSERT INTO access_members (id) VALUES ('owner-example') ON CONFLICT (id) DO UPDATE SET disabled_at = NULL, tombstoned_at = NULL");
+    await engine.setConfig('access.owner_member', 'owner-example');
+    await engine.executeRaw(`INSERT INTO oauth_clients (client_id, client_name, scope, member_id) VALUES ('client-owner', 'client-owner', 'read write admin', 'owner-example')
+      ON CONFLICT (client_id) DO UPDATE SET deleted_at = NULL, scope = EXCLUDED.scope, member_id = EXCLUDED.member_id`);
+    const owner = { remote: true, transport: 'http' as const, sourceId: 'default', auth: { token: 't', clientId: 'client-owner', principal: { kind: 'oauth_client' as const, id: 'client-owner' }, scopes: ['admin', 'write', 'read'] } };
+    try {
+      const before = await seedJob('active', 'client-a');
+      const after = await seedJob('active', 'client-a');
+      const step = body(await dispatchToolCall(engine, 'watch_job', { id: before }, owner));
+      expect(body(await dispatchToolCall(engine, 'accept_wakeshift_terms', { terms_version: step.terms_version }, owner))).toMatchObject({ accepted: true });
+      for (const id of [before, after]) expect(body(await dispatchToolCall(engine, 'watch_job', { id }, owner))).toMatchObject({ watching: true });
+      expect(await engine.executeRaw("SELECT DISTINCT member_id FROM wake_subscriptions WHERE state = 'open'")).toEqual([{ member_id: 'owner-example' }]);
+
+      await finish(before);
+      expect(await drainWakes(engine)).toMatchObject({ delivered: 1, ended: 0 });
+
+      await engine.executeRaw("UPDATE oauth_clients SET scope = 'read write' WHERE client_id = 'client-owner'");
+      await finish(after);
+      expect(await drainWakes(engine)).toMatchObject({ delivered: 0, ended: 1 });
+      expect(emits()).toHaveLength(1);
+      expect(emits()[0]!.body.payload).toMatchObject({ job: before });
+      expect(await engine.executeRaw('SELECT target, state, last_error FROM wake_subscriptions ORDER BY id'))
+        .toEqual([{ target: String(before), state: 'delivered', last_error: null }, { target: String(after), state: 'ended', last_error: 'job_not_visible' }]);
+    } finally {
+      await engine.executeRaw("DELETE FROM config WHERE key = 'access.owner_member'");
+      await engine.executeRaw("UPDATE access_members SET disabled_at = now(), tombstoned_at = now() WHERE id = 'owner-example'");
+    }
+  });
+
+  test('an owner-bound watch stops reading the whole queue once its client\'s granted source is archived (GST-4023)', async () => {
+    writeConfig({ enabled: true, url: fake.url, terms_url: 'https://example.com/terms', privacy_url: 'https://example.com/privacy' });
+    await engine.executeRaw("INSERT INTO access_members (id) VALUES ('owner-example') ON CONFLICT (id) DO UPDATE SET disabled_at = NULL, tombstoned_at = NULL");
+    await engine.setConfig('access.owner_member', 'owner-example');
+    await engine.executeRaw("INSERT INTO sources (id, name) VALUES ('source-archive-example', 'source-archive-example') ON CONFLICT (id) DO UPDATE SET archived = false");
+    await engine.executeRaw(`INSERT INTO oauth_clients (client_id, client_name, scope, member_id, source_id) VALUES ('client-owner', 'client-owner', 'read write admin', 'owner-example', 'source-archive-example')
+      ON CONFLICT (client_id) DO UPDATE SET deleted_at = NULL, scope = EXCLUDED.scope, member_id = EXCLUDED.member_id, source_id = EXCLUDED.source_id`);
+    const owner = { remote: true, transport: 'http' as const, sourceId: 'source-archive-example', auth: { token: 't', clientId: 'client-owner', principal: { kind: 'oauth_client' as const, id: 'client-owner' }, scopes: ['admin', 'write', 'read'] } };
+    try {
+      const before = await seedJob('active', 'client-a');
+      const after = await seedJob('active', 'client-a');
+      const step = body(await dispatchToolCall(engine, 'watch_job', { id: before }, owner));
+      expect(body(await dispatchToolCall(engine, 'accept_wakeshift_terms', { terms_version: step.terms_version }, owner))).toMatchObject({ accepted: true });
+      for (const id of [before, after]) expect(body(await dispatchToolCall(engine, 'watch_job', { id }, owner))).toMatchObject({ watching: true });
+
+      await finish(before);
+      expect(await drainWakes(engine)).toMatchObject({ delivered: 1, ended: 0 });
+
+      await engine.executeRaw("UPDATE sources SET archived = true WHERE id = 'source-archive-example'");
+      await finish(after);
+      expect(await drainWakes(engine)).toMatchObject({ delivered: 0, ended: 1 });
+      expect(emits()).toHaveLength(1);
+      expect(await engine.executeRaw('SELECT target, state, last_error FROM wake_subscriptions ORDER BY id'))
+        .toEqual([{ target: String(before), state: 'delivered', last_error: null }, { target: String(after), state: 'ended', last_error: 'job_not_visible' }]);
+    } finally {
+      await engine.executeRaw("DELETE FROM config WHERE key = 'access.owner_member'");
+      await engine.executeRaw("UPDATE oauth_clients SET source_id = NULL WHERE client_id = 'client-owner'");
+      await engine.executeRaw("UPDATE access_members SET disabled_at = now(), tombstoned_at = now() WHERE id = 'owner-example'");
+    }
+  });
+
+  test('ownership that moves while a drain tick is delivering takes effect for the rest of that tick (GST-4023)', async () => {
+    writeConfig({ enabled: true, url: fake.url, terms_url: 'https://example.com/terms', privacy_url: 'https://example.com/privacy' });
+    await engine.executeRaw("INSERT INTO access_members (id) VALUES ('owner-example'), ('next-owner-example') ON CONFLICT (id) DO UPDATE SET disabled_at = NULL, tombstoned_at = NULL");
+    await engine.setConfig('access.owner_member', 'owner-example');
+    await engine.executeRaw(`INSERT INTO oauth_clients (client_id, client_name, scope, member_id) VALUES ('client-owner', 'client-owner', 'read write admin', 'owner-example')
+      ON CONFLICT (client_id) DO UPDATE SET deleted_at = NULL, scope = EXCLUDED.scope, member_id = EXCLUDED.member_id`);
+    const owner = { remote: true, transport: 'http' as const, sourceId: 'default', auth: { token: 't', clientId: 'client-owner', principal: { kind: 'oauth_client' as const, id: 'client-owner' }, scopes: ['admin', 'write', 'read'] } };
+    try {
+      const first = await seedJob('active', 'client-a');
+      const second = await seedJob('active', 'client-a');
+      const step = body(await dispatchToolCall(engine, 'watch_job', { id: first }, owner));
+      expect(body(await dispatchToolCall(engine, 'accept_wakeshift_terms', { terms_version: step.terms_version }, owner))).toMatchObject({ accepted: true });
+      for (const id of [first, second]) expect(body(await dispatchToolCall(engine, 'watch_job', { id }, owner))).toMatchObject({ watching: true });
+      await finish(first);
+      await finish(second);
+      fake.respond.set('/events/emit', async () => {
+        await engine.setConfig('access.owner_member', 'next-owner-example');
+        return { status: 200, body: { matched: 1, duplicate: false, unmatched: [], ended: [] } };
+      });
+      expect(await drainWakes(engine)).toMatchObject({ delivered: 1, ended: 1 });
+      expect(await engine.executeRaw('SELECT target, state, last_error FROM wake_subscriptions ORDER BY id'))
+        .toEqual([{ target: String(first), state: 'delivered', last_error: null }, { target: String(second), state: 'ended', last_error: 'job_not_visible' }]);
+    } finally {
+      await engine.executeRaw("DELETE FROM config WHERE key = 'access.owner_member'");
+      await engine.executeRaw("UPDATE access_members SET disabled_at = now(), tombstoned_at = now() WHERE id IN ('owner-example', 'next-owner-example')");
+    }
+  });
+
+  test('an owner-bound legacy token rescoped below admin ends with job_not_visible too (GST-4023)', async () => {
+    writeConfig({ enabled: true, url: fake.url, terms_url: 'https://example.com/terms', privacy_url: 'https://example.com/privacy' });
+    await engine.executeRaw("INSERT INTO access_members (id) VALUES ('owner-example') ON CONFLICT (id) DO UPDATE SET disabled_at = NULL, tombstoned_at = NULL");
+    await engine.setConfig('access.owner_member', 'owner-example');
+    const minted = await mintLegacyToken(engine, { name: 'wk-owner-token', scopes: ['read', 'write', 'admin'], takesHolders: ['world'] });
+    await bindCredential(engine, { kind: 'token', id: minted.id }, { member: 'owner-example' });
+    const owner = { remote: true, transport: 'http' as const, sourceId: 'default', auth: { token: 't', clientId: minted.id, principal: { kind: 'legacy_token' as const, id: minted.id }, scopes: ['read', 'write', 'admin'] } };
+    try {
+      const id = await seedJob('active', 'client-a');
+      const step = body(await dispatchToolCall(engine, 'watch_job', { id }, owner));
+      expect(body(await dispatchToolCall(engine, 'accept_wakeshift_terms', { terms_version: step.terms_version }, owner))).toMatchObject({ accepted: true });
+      expect(body(await dispatchToolCall(engine, 'watch_job', { id }, owner))).toMatchObject({ watching: true });
+      await engine.executeRaw("UPDATE access_tokens SET scopes = '{read,write}' WHERE id = $1", [minted.id]);
+      await finish(id);
+      expect(await drainWakes(engine)).toMatchObject({ delivered: 0, ended: 1 });
+      expect(emits()).toHaveLength(0);
+      expect(await engine.executeRaw('SELECT state, last_error FROM wake_subscriptions')).toEqual([{ state: 'ended', last_error: 'job_not_visible' }]);
+    } finally {
+      await engine.executeRaw("DELETE FROM config WHERE key = 'access.owner_member'");
+      await engine.executeRaw("UPDATE access_members SET disabled_at = now(), tombstoned_at = now() WHERE id = 'owner-example'");
+    }
+  });
+
   test('two watchers of one job each get their own emit with distinct ids', async () => {
     await engine.executeRaw(`INSERT INTO oauth_clients (client_id, client_name) VALUES ('client-c', 'client-c') ON CONFLICT DO NOTHING`);
-    const id = await seedJob('active');
+    const id = await seedJob('active', 'client-c');
     await dispatchToolCall(engine, 'watch_job', { id }, stdio);
     const admin = { remote: true, transport: 'http' as const, sourceId: 'default', auth: { token: 't', clientId: 'client-c', principal: { kind: 'oauth_client' as const, id: 'client-c' }, member: null, scopes: ['admin'] } };
     await dispatchToolCall(engine, 'watch_job', { id }, admin);
@@ -183,6 +312,23 @@ describe('access', () => {
     const ids = emits().map(e => e.body.id);
     expect(new Set(ids).size).toBe(2);
     expect(new Set(emits().map(e => e.body.to[0].user)).size).toBe(2);
+  });
+
+  test('every watch call for an audience is refused, so one audience never sees or ends another\'s watch', async () => {
+    await engine.executeRaw(`INSERT INTO oauth_clients (client_id, client_name) VALUES ('client-e', 'client-e') ON CONFLICT DO NOTHING`);
+    const id = await seedJob('active', 'client-e');
+    const c = { engine, config: {}, dryRun: false, logger: { info() {}, warn() {}, error() {}, debug() {} }, ...agent('client-e') } as unknown as OperationContext;
+    const refused = await withCallerAccess({ audience: ['member:alice-example'] }, () => operationsByName.watch_job!.handler(c, { id })).then(() => null, (e: unknown) => e);
+    expect(JSON.stringify(refused)).toContain('audience_not_supported');
+    expect(await engine.executeRaw('SELECT id FROM wake_subscriptions')).toEqual([]);
+    expect((await dispatchToolCall(engine, 'watch_job', { id }, agent('client-e'))).isError).toBeFalsy();
+    const opened = fake.calls.length;
+    for (const [name, args] of [['list_watches', {}], ['unwatch', { job: id }]] as const) {
+      const r = await withCallerAccess({ audience: ['member:alice-example'] }, () => operationsByName[name]!.handler(c, args)).then(() => null, (e: unknown) => e);
+      expect([name, JSON.stringify(r)]).toEqual([name, expect.stringContaining('audience_not_supported')]);
+    }
+    expect(await engine.executeRaw("SELECT state FROM wake_subscriptions")).toEqual([{ state: 'open' }]);
+    expect(fake.calls).toHaveLength(opened);
   });
 
   test('list_watches and unwatch act only on the caller\'s own watches', async () => {

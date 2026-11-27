@@ -153,8 +153,8 @@ export async function indexImportedSessions(
     const fm = (typeof row.frontmatter === 'string' ? JSON.parse(row.frontmatter) : row.frontmatter) as
       | Record<string, unknown>
       | null;
-    const ti = fm?.transcript_import as { harness?: string; session_id?: string } | undefined;
-    if (!ti || typeof ti.harness !== 'string' || typeof ti.session_id !== 'string') continue;
+    const ti = fm?.transcript_import as { harness?: string; session_id?: string; format?: string } | undefined;
+    if (!ti || typeof ti.harness !== 'string' || typeof ti.session_id !== 'string' || ti.format !== undefined) continue;
     let set = byHarness.get(ti.harness);
     if (!set) {
       set = new Set();

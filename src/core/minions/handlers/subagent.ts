@@ -83,7 +83,7 @@ import { resolveChatPerTurnTimeoutMs } from '../handler-timeouts.ts';
 
 // ── Defaults ────────────────────────────────────────────────
 
-const DEFAULT_MODEL = 'claude-sonnet-4-6';
+const DEFAULT_MODEL = 'claude-sonnet-5-5';
 const DEFAULT_MAX_TURNS = 20;
 const DEFAULT_MAX_OUTPUT_TOKENS = 8192;
 const DEFAULT_RATE_KEY = 'anthropic:messages';

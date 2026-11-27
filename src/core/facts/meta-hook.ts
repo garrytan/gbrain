@@ -280,7 +280,7 @@ export async function getBrainHotMemoryMeta(
         notability: r.notability,
         entity_slug: r.entity_slug,
         ...(r.entity_slugs ? { entity_slugs: r.entity_slugs } : {}),
-        valid_from: r.valid_from.toISOString(),
+        valid_from: r.valid_from?.toISOString() ?? null,
         // v0.45.7 ambient recall: recording time, so delta's "new facts since my
         // last wake" filters on WHEN the fact was learned, not its semantic
         // validity date (a fact recorded today about last month is NEW).

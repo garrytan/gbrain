@@ -168,7 +168,7 @@ interface SetupFlags {
   skillResolver?: 'on' | 'shadow' | 'off';
   /** OpenClaw: the agents --skill-loading applies to (--agent <id>, repeatable, or --all-agents); unset means the agents already on, else main. */
   agents?: string[] | 'all';
-  /** OpenClaw rollout knobs written to the plugin's state (hot, no reload): --live-fraction, --pins-route, --owner-sender, --suggest-in, --operator-rule, --conversation-operator-rule, --require-owner-sender. */
+  /** OpenClaw rollout knobs written to the plugin's state (hot, no reload): --live-fraction, --pins-route, --owner-sender, --suggest-in, --operator-rule, --conversation-operator-rule, --require-owner-sender, --owner-skill, --no-owner-skill. */
   openclawTuning?: OpenclawSkillTuning;
   /** GST-363: whom the brain serves; several labels each person (setup-serves.ts). */
   serves?: 'one' | 'several';
@@ -201,7 +201,7 @@ interface SetupFlags {
   noSuggestion: boolean;
 }
 
-export const VALUE_FLAGS = new Set(['--shape', '--notes', '--docs', '--transcripts', '--surface', '--advertise', '--scope', '--name', '--source', '--gbrain-bin', '--workspace', '--skill-loading', '--agent', '--live-fraction', '--pins-route', '--owner-sender', '--suggest-in', '--operator-rule', '--conversation-operator-rule', '--serves', '--members', '--members-file', '--stdio-member', '--owner', '--household-members', '--receipt', '--resume', ...HISTORY_VALUE_FLAGS]);
+export const VALUE_FLAGS = new Set(['--shape', '--notes', '--docs', '--transcripts', '--surface', '--advertise', '--scope', '--name', '--source', '--gbrain-bin', '--workspace', '--skill-loading', '--agent', '--live-fraction', '--pins-route', '--owner-sender', '--owner-skill', '--no-owner-skill', '--suggest-in', '--operator-rule', '--conversation-operator-rule', '--serves', '--members', '--members-file', '--stdio-member', '--owner', '--household-members', '--receipt', '--resume', ...HISTORY_VALUE_FLAGS]);
 
 function parseFlags(args: string[]): SetupFlags | string {
   const value = (flag: string): string | undefined => {
@@ -273,6 +273,8 @@ function parseFlags(args: string[]): SetupFlags | string {
   const liveFraction = value('--live-fraction');
   const pinsRoute = value('--pins-route');
   const owners = args.flatMap((a, i) => (a === '--owner-sender' ? [args[i + 1] ?? ''] : []));
+  const ownerSkillsAdd = args.flatMap((a, i) => (a === '--owner-skill' ? [args[i + 1] ?? ''] : []));
+  const ownerSkillsRemove = args.flatMap((a, i) => (a === '--no-owner-skill' ? [args[i + 1] ?? ''] : []));
   const suggestIn = value('--suggest-in');
   const rule = value('--operator-rule');
   const talkRule = value('--conversation-operator-rule');
@@ -282,7 +284,7 @@ function parseFlags(args: string[]): SetupFlags | string {
   }
   const requireOwner = args.includes('--require-owner-sender') ? true : args.includes('--no-require-owner-sender') ? false : undefined;
   if (args.includes('--require-owner-sender') && args.includes('--no-require-owner-sender')) return 'pass --require-owner-sender or --no-require-owner-sender, not both';
-  if ((liveFraction !== undefined || pinsRoute !== undefined || owners.length || suggestIn !== undefined || rule !== undefined || talkRule !== undefined || requireOwner !== undefined) && !openclaw) return '--live-fraction, --pins-route, --owner-sender, --suggest-in, --operator-rule, --conversation-operator-rule and --require-owner-sender are for openclaw only';
+  if ((liveFraction !== undefined || pinsRoute !== undefined || owners.length || ownerSkillsAdd.length || ownerSkillsRemove.length || suggestIn !== undefined || rule !== undefined || talkRule !== undefined || requireOwner !== undefined) && !openclaw) return '--live-fraction, --pins-route, --owner-sender, --owner-skill, --no-owner-skill, --suggest-in, --operator-rule, --conversation-operator-rule and --require-owner-sender are for openclaw only';
   for (const [flag, v] of [['--operator-rule', rule], ['--conversation-operator-rule', talkRule]] as const) {
     const problem = v ? operatorRuleProblem(v) : null;
     if (problem) return `${flag} ${problem} (an empty value clears it)`;
@@ -292,11 +294,15 @@ function parseFlags(args: string[]): SetupFlags | string {
   if (liveFraction !== undefined && !(/^(0(\.\d+)?|1(\.0+)?)$/.test(liveFraction))) return '--live-fraction must be a number from 0 to 1 (the share of sessions that see suggestions; the rest are logged as control)';
   if (pinsRoute !== undefined && pinsRoute !== 'system' && pinsRoute !== 'first_turn') return '--pins-route must be system (appendSystemContext, every turn) or first_turn (appendContext on a session\'s first turn and after compaction)';
   if (owners.some((o) => !/^[\x21-\x7e]{1,128}$/.test(o))) return '--owner-sender needs a sender id';
-  const tuningGiven = liveFraction !== undefined || pinsRoute !== undefined || owners.length > 0 || suggestIn !== undefined || rule !== undefined || talkRule !== undefined || requireOwner !== undefined;
+  if ([...ownerSkillsAdd, ...ownerSkillsRemove].some((n) => !/^[\x21-\x7e]{1,128}$/.test(n) || /[<>]/.test(n))) return '--owner-skill and --no-owner-skill need a skill name (1-128 visible characters, no spaces, < or >)';
+  const bothWays = ownerSkillsAdd.filter((n) => ownerSkillsRemove.includes(n));
+  if (bothWays.length) return `pass --owner-skill or --no-owner-skill for ${bothWays.join(', ')}, not both`;
+  const tuningGiven = liveFraction !== undefined || pinsRoute !== undefined || owners.length > 0 || ownerSkillsAdd.length > 0 || ownerSkillsRemove.length > 0 || suggestIn !== undefined || rule !== undefined || talkRule !== undefined || requireOwner !== undefined;
   const openclawTuning = { ...(liveFraction !== undefined ? { live_fraction: Number(liveFraction) } : {}), ...(pinsRoute ? { pins_route: pinsRoute as 'system' | 'first_turn' } : {}), ...(owners.length ? { owner_sender_ids: owners } : {}), ...(suggestClasses ? { suggest_classes: suggestClasses as Array<'owner' | 'conversation'> } : {}),
-    ...(rule !== undefined ? { operator_rule: rule } : {}), ...(talkRule !== undefined ? { conversation_operator_rule: talkRule } : {}), ...(requireOwner !== undefined ? { require_owner_sender: requireOwner } : {}) };
+    ...(rule !== undefined ? { operator_rule: rule } : {}), ...(talkRule !== undefined ? { conversation_operator_rule: talkRule } : {}), ...(requireOwner !== undefined ? { require_owner_sender: requireOwner } : {}),
+    ...(ownerSkillsAdd.length ? { owner_skills_add: [...new Set(ownerSkillsAdd)] } : {}), ...(ownerSkillsRemove.length ? { owner_skills_remove: [...new Set(ownerSkillsRemove)] } : {}) };
   const chosenLoading = flagLoading ?? (envLoading || undefined);
-  const tuningFlags = '--live-fraction, --pins-route, --owner-sender, --suggest-in, --operator-rule, --conversation-operator-rule and --require-owner-sender';
+  const tuningFlags = '--live-fraction, --pins-route, --owner-sender, --owner-skill, --no-owner-skill, --suggest-in, --operator-rule, --conversation-operator-rule and --require-owner-sender';
   if (tuningGiven && (chosenLoading === 'off' || chosenLoading === 'spring' || args.includes('--remove'))) return `${tuningFlags} cannot be set while turning the OpenClaw skill resolver off; nothing was written`;
   if (tuningGiven && chosenLoading !== 'resolve' && chosenLoading !== 'shadow') {
     const stateAgents = readOpenclawSkillState(configDir())?.agents ?? {};

@@ -165,7 +165,7 @@ describe('eval longmemeval --call-plan', () => {
       expect(r.scope).toBe('full');
       expect(r.model).toMatch(/^[a-z-]+:/);
     }
-    expect(p.rows.reader).toMatchObject({ calls: String(QUESTIONS.length), max_out_tokens: '1024', model: 'anthropic:claude-sonnet-4-6' });
+    expect(p.rows.reader).toMatchObject({ calls: String(QUESTIONS.length), max_out_tokens: '1024', model: 'anthropic:claude-sonnet-5-5' });
     expect(p.rows.judge).toMatchObject({ calls: String(QUESTIONS.length), max_out_tokens: '16', model: 'openai:gpt-4o' });
     expect(p.rows.expansion).toMatchObject({ model: 'anthropic:claude-haiku-4-5-20251001', max_out_tokens: '64000' });
     expect(p.rows.synopsis!.max_out_tokens).toBe('200');

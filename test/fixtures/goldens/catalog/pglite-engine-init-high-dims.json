@@ -283,6 +283,8 @@
       "oauth_codes.oauth_codes_client_id_fkey": "f FOREIGN KEY (client_id) REFERENCES oauth_clients(client_id) ON DELETE CASCADE",
       "oauth_codes.oauth_codes_pkey": "p PRIMARY KEY (code_hash)",
       "oauth_grant_audit.oauth_grant_audit_pkey": "p PRIMARY KEY (id)",
+      "oauth_refresh_rotations.oauth_refresh_rotations_client_id_fkey": "f FOREIGN KEY (client_id) REFERENCES oauth_clients(client_id) ON DELETE CASCADE",
+      "oauth_refresh_rotations.oauth_refresh_rotations_pkey": "p PRIMARY KEY (token_hash)",
       "oauth_tokens.oauth_tokens_client_id_fkey": "f FOREIGN KEY (client_id) REFERENCES oauth_clients(client_id) ON DELETE CASCADE",
       "oauth_tokens.oauth_tokens_pkey": "p PRIMARY KEY (token_hash)",
       "op_checkpoint_paths.op_checkpoint_paths_parent_fk": "f FOREIGN KEY (op, fingerprint) REFERENCES op_checkpoints(op, fingerprint) ON DELETE CASCADE",
@@ -1012,6 +1014,9 @@
       "oauth_grant_audit": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
+      "oauth_refresh_rotations": [
+        "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
+      ],
       "oauth_tokens": [
         "<current_role> -> <current_role> WITH GRANT OPTION: DELETE,INSERT,REFERENCES,SELECT,TRIGGER,TRUNCATE,UPDATE"
       ],
@@ -1550,8 +1555,12 @@
       "idx_oauth_clients_federated_read": "CREATE INDEX idx_oauth_clients_federated_read ON public.oauth_clients USING gin (federated_read)",
       "idx_oauth_clients_source_id": "CREATE INDEX idx_oauth_clients_source_id ON public.oauth_clients USING btree (source_id) WHERE (source_id IS NOT NULL)",
       "idx_oauth_grant_audit_client": "CREATE INDEX idx_oauth_grant_audit_client ON public.oauth_grant_audit USING btree (client_id, created_at)",
+      "idx_oauth_refresh_rotations_client": "CREATE INDEX idx_oauth_refresh_rotations_client ON public.oauth_refresh_rotations USING btree (client_id)",
+      "idx_oauth_refresh_rotations_expiry": "CREATE INDEX idx_oauth_refresh_rotations_expiry ON public.oauth_refresh_rotations USING btree (expires_at)",
+      "idx_oauth_refresh_rotations_family": "CREATE INDEX idx_oauth_refresh_rotations_family ON public.oauth_refresh_rotations USING btree (family_id)",
       "idx_oauth_tokens_client": "CREATE INDEX idx_oauth_tokens_client ON public.oauth_tokens USING btree (client_id)",
       "idx_oauth_tokens_expiry": "CREATE INDEX idx_oauth_tokens_expiry ON public.oauth_tokens USING btree (expires_at)",
+      "idx_oauth_tokens_family": "CREATE INDEX idx_oauth_tokens_family ON public.oauth_tokens USING btree (family_id) WHERE (family_id IS NOT NULL)",
       "idx_pages_frontmatter": "CREATE INDEX idx_pages_frontmatter ON public.pages USING gin (frontmatter)",
       "idx_pages_projection_pending": "CREATE INDEX idx_pages_projection_pending ON public.pages USING btree (source_id, page_kind, slug) WHERE ((deleted_at IS NULL) AND (text_projection_revision IS DISTINCT FROM knowledge_revision))",
       "idx_pages_projection_waiting": "CREATE INDEX idx_pages_projection_waiting ON public.pages USING btree (source_id, page_kind, slug) WHERE ((deleted_at IS NULL) AND (text_projection_revision IS DISTINCT FROM knowledge_revision) AND (text_projection_revision IS DISTINCT FROM '00000000-0000-0000-0000-000000000153'::uuid))",
@@ -1644,6 +1653,7 @@
       "oauth_clients_pkey": "CREATE UNIQUE INDEX oauth_clients_pkey ON public.oauth_clients USING btree (client_id)",
       "oauth_codes_pkey": "CREATE UNIQUE INDEX oauth_codes_pkey ON public.oauth_codes USING btree (code_hash)",
       "oauth_grant_audit_pkey": "CREATE UNIQUE INDEX oauth_grant_audit_pkey ON public.oauth_grant_audit USING btree (id)",
+      "oauth_refresh_rotations_pkey": "CREATE UNIQUE INDEX oauth_refresh_rotations_pkey ON public.oauth_refresh_rotations USING btree (token_hash)",
       "oauth_tokens_pkey": "CREATE UNIQUE INDEX oauth_tokens_pkey ON public.oauth_tokens USING btree (token_hash)",
       "op_checkpoint_paths_pkey": "CREATE UNIQUE INDEX op_checkpoint_paths_pkey ON public.op_checkpoint_paths USING btree (op, fingerprint, path)",
       "op_checkpoints_pkey": "CREATE UNIQUE INDEX op_checkpoints_pkey ON public.op_checkpoints USING btree (op, fingerprint)",
@@ -2959,7 +2969,7 @@
           "6 visibility text/text NOT NULL DEFAULT 'private'::text",
           "7 notability text/text NOT NULL DEFAULT 'medium'::text",
           "8 context text/text NULL",
-          "9 valid_from timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
+          "9 valid_from timestamp with time zone/timestamptz NULL DEFAULT now()",
           "10 valid_until timestamp with time zone/timestamptz NULL",
           "11 expired_at timestamp with time zone/timestamptz NULL",
           "12 superseded_by bigint/int8 NULL",
@@ -3541,6 +3551,18 @@
         ],
         "flags": "relkind=r rls=false force_rls=false"
       },
+      "oauth_refresh_rotations": {
+        "columns": [
+          "1 token_hash text/text NOT NULL",
+          "2 client_id text/text NOT NULL",
+          "3 family_id text/text NOT NULL",
+          "4 replaced_by_hash text/text NOT NULL",
+          "5 rotated_at_ms bigint/int8 NOT NULL",
+          "6 expires_at bigint/int8 NOT NULL",
+          "7 sealed_pair text/text NULL"
+        ],
+        "flags": "relkind=r rls=true force_rls=false"
+      },
       "oauth_tokens": {
         "columns": [
           "1 token_hash text/text NOT NULL",
@@ -3550,7 +3572,8 @@
           "5 expires_at bigint/int8 NULL",
           "6 resource text/text NULL",
           "7 created_at timestamp with time zone/timestamptz NOT NULL DEFAULT now()",
-          "8 grant_type text/text NULL"
+          "8 grant_type text/text NULL",
+          "9 family_id text/text NULL"
         ],
         "flags": "relkind=r rls=true force_rls=false"
       },

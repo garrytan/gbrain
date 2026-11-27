@@ -276,7 +276,7 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
       await vectorFixture(primary);
       const opts = { limit: 10, excludePrivate: true, ...o.opts };
       const theirs = await withCallerAccess(ALICE, () => primary.searchVector(vec(3), opts)) as unknown as Rows;
-      const spare = (await withCallerAccess(ALICE, () => primary.searchVector(vec(3), { ...opts, limit: 12 })) as unknown as Rows)[10]!; // a real chunk the caller may read, outside the top ten
+      const spare = (await withCallerAccess(ALICE, () => primary.searchVector(vec(3), { ...opts, limit: 12 })) as unknown as Rows)[10]!; // a real chunk the caller may read, outside the top ten // pregate-literal: SHADOW_ADAPTER_VERSION=10 an unrelated 10 (a count or size), not the adapter version
       const rig = await start(o.child ? { child: o.child } : {});
       if (o.noRecall) { // the recall score has its own waits: leave it out, so the waits counted are the rerun's
         const sup = (rig.attached.supervisor as unknown as { o: { onAsk: (a: Record<string, unknown>) => Promise<unknown> } }).o;
@@ -648,7 +648,7 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
       const reads = openReadSource(primary);
       try {
         const handler = makeAskHandler({ engine: primary, reads, dir: '/none', samples, rpc: (async () => ({})) as never });
-        const sid = samples.add({ op: 'searchVector', args: encodeValue([vec(3), { limit: 10, excludePrivate: true }]), result: [], at: Date.now(), lsn: 'x' }, 100);
+        const sid = samples.add({ op: 'searchVector', args: encodeValue([vec(3), { limit: 10, excludePrivate: true }]), result: [], at: Date.now(), lsn: 'x' }, 100); // pregate-literal: SHADOW_ADAPTER_VERSION=10 an unrelated 10 (a count, limit or size), not the adapter version
         for (const rows of ['not a list', [{ payload: 'p', id: 'seven' }], [null]]) expect(await handler({ id: 1, kind: 'privacy', sid, phase: 'sample', rows })).toEqual({ verdict: 'clean', complete: false });
         expect(await handler({ id: 2, kind: 'privacy', sid, phase: 'sample', rows: [] })).toEqual({ verdict: 'clean', complete: true }); // control: nothing extra, nothing invalid
       } finally { await reads.close(); }
@@ -679,7 +679,7 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
       const reads = openReadSource(primary);
       try {
         const handler = makeAskHandler({ engine: primary, reads, dir: '/none', samples, rpc: (async () => ({})) as never });
-        const sid = samples.add({ op: 'searchVector', args: encodeValue([vec(3), { limit: 10, excludePrivate: true }]), result: [], at: Date.now(), lsn: 'x' }, 100);
+        const sid = samples.add({ op: 'searchVector', args: encodeValue([vec(3), { limit: 10, excludePrivate: true }]), result: [], at: Date.now(), lsn: 'x' }, 100); // pregate-literal: SHADOW_ADAPTER_VERSION=10 an unrelated 10 (a count, limit or size), not the adapter version
         for (const rows of ['not a list', [{ payload: 'p', id: 'seven' }], [null]]) expect(await handler({ id: 1, kind: 'privacy', sid, phase: 'sample', rows })).toEqual({ verdict: 'clean', complete: false });
         expect(await handler({ id: 2, kind: 'privacy', sid, phase: 'sample', rows: [] })).toEqual({ verdict: 'clean', complete: true }); // control: nothing extra, nothing invalid
       } finally { await reads.close(); }
@@ -788,7 +788,7 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
       rig.rust.listPages = async () => [];
       rig.rust.searchVector = async () => [];
       await sample(rig);
-      await rig.engine.searchVector(vec(3), { limit: 10 });
+      await rig.engine.searchVector(vec(3), { limit: 10 }); // pregate-literal: SHADOW_ADAPTER_VERSION=10 an unrelated 10 (a count or size), not the adapter version
       const rows = await rig.finish(2);
       expect(rows.map((r) => r.epoch_id)).toEqual([undefined, undefined]); // a client names no epoch
       expect(rows.find((r) => r.op === 'listPages')).toMatchObject({ outcome: 'inconclusive', rerun: 'skipped:no_epoch' });
@@ -940,13 +940,14 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
         const { handler, ask, reference } = await untilNotMoved(async () => { // an unrelated commit moves the token: asked again from a new capture
           const samples = new SampleRegistry();
           const handler = makeAskHandler({ engine: primary, reads, dir: '/none', samples, rpc: (async () => ({})) as never });
+          // pregate-literal: SHADOW_ADAPTER_VERSION=10 an unrelated 10 (a count, limit or size), not the adapter version
           const ask = { id: 1, kind: 'vector', sid: samples.add({ op: 'searchVector', args: encodeValue([embedded.embedding, { limit: 10, exclude_slugs: ['priv/chunked', 'summary/x'] }]), at: Date.now(), lsn: await createLsnWatch(real).live() }, 100) }; // the filters of the caller's own read apply
           return { handler, ask, reference: await handler(ask) as RankedKey[] };
         });
         const cosine = (a: Float32Array, b: Float32Array): number => { let d = 0, x = 0, y = 0; for (let i = 0; i < a.length; i++) { d += a[i]! * b[i]!; x += a[i]! ** 2; y += b[i]! ** 2; } return d / Math.sqrt(x * y); };
         const exact = [...chunkOf.keys()].sort((p, q) => cosine(vec(3), vec(q)) - cosine(vec(3), vec(p))).map((i) => String(chunkOf.get(i)));
         expect(reference).toHaveLength(Math.min(RECALL_REFERENCE_LIMIT, 12)); // asked for more than the caller's ten, so a tie at the cutoff is visible
-        expect(new Set(reference.slice(0, 10).map((r) => r.k))).toEqual(new Set(exact.slice(0, 10)));
+        expect(new Set(reference.slice(0, 10).map((r) => r.k))).toEqual(new Set(exact.slice(0, 10))); // pregate-literal: SHADOW_ADAPTER_VERSION=10 an unrelated 10 (a count, limit or size), not the adapter version
         expect(sql.slice(0, 2)).toEqual(['SET LOCAL enable_indexscan = off', 'SET LOCAL enable_bitmapscan = off']); // before any search statement
         await expect(handler(ask)).rejects.toMatchObject({ code: 'rate_limited' });
       } finally { await real.close(); }
@@ -962,7 +963,7 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
         const reference = async (opts: Record<string, unknown>): Promise<string[]> => untilNotMoved(async () => {
           const samples = new SampleRegistry();
           const handler = makeAskHandler({ engine: primary, reads: real, dir: '/none', samples, rpc: (async () => ({})) as never });
-          const sid = samples.add({ op: 'searchVector', args: encodeValue([vec(3), { limit: 10, ...opts }]), at: Date.now(), lsn: await createLsnWatch(real).live() }, 100);
+          const sid = samples.add({ op: 'searchVector', args: encodeValue([vec(3), { limit: 10, ...opts }]), at: Date.now(), lsn: await createLsnWatch(real).live() }, 100); // pregate-literal: SHADOW_ADAPTER_VERSION=10 an unrelated 10 (a count, limit or size), not the adapter version
           return ((await handler({ id: 1, kind: 'vector', sid })) as RankedKey[]).map((r) => r.k);
         });
         expect(await reference({})).toContain(top); // control: without a filter the chunk is in the reference
@@ -1098,6 +1099,7 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
         await admin.executeRaw(`ALTER SYSTEM SET synchronous_standby_names = 'gbrain_test_never_connects'`);
         await admin.executeRaw(`SELECT pg_reload_conf()`);
         const reloaded = async (): Promise<boolean> => (await admin.executeRaw<{ s: string }>(`SELECT current_setting('synchronous_standby_names') AS s`))[0]!.s === 'gbrain_test_never_connects';
+        // pregate-literal: SHADOW_ADAPTER_VERSION=10 an unrelated 10 (a count, limit or size), not the adapter version
         for (const end = Date.now() + 15_000; !(await reloaded()) && Date.now() < end;) await new Promise((r) => setTimeout(r, 10)); // the server has passed the new settings on
         await admin.executeRaw(`CHECKPOINT`); // the checkpointer takes the reload before this checkpoint, and it is the one that tells committing sessions a standby is named
         let writerPid = 0;
@@ -1111,7 +1113,7 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
         let held = false;
         for (const end = Date.now() + 15_000; !held && !settled && Date.now() < end;) {
           held = writerPid > 0 && (await admin.executeRaw<{ w: string | null }>(`SELECT wait_event AS w FROM pg_stat_activity WHERE pid = $1`, [writerPid]))[0]?.w === 'SyncRep';
-          if (!held) await new Promise((r) => setTimeout(r, 10));
+          if (!held) await new Promise((r) => setTimeout(r, 10)); // pregate-literal: SHADOW_ADAPTER_VERSION=10 an unrelated 10 (a count, limit or size), not the adapter version
         }
         expect(held).toBe(true); // the writer's COMMIT record is flushed and it waits for the standby: still in progress to every snapshot
         const token = await watch.live();
@@ -1350,7 +1352,7 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
         const token = await watch.live();
         expect(token.split('|')[1]).toBe('!');
         const samples = new SampleRegistry();
-        const sid = samples.add({ op: 'searchVector', args: encodeValue([vec(3), { limit: 10 }]), at: Date.now(), lsn: token }, 100);
+        const sid = samples.add({ op: 'searchVector', args: encodeValue([vec(3), { limit: 10 }]), at: Date.now(), lsn: token }, 100); // pregate-literal: SHADOW_ADAPTER_VERSION=10 an unrelated 10 (a count, limit or size), not the adapter version
         let clock = 0;
         const handler = makeAskHandler({ engine: primary, reads, dir: '/none', samples, rpc: (async () => ({})) as never, watch, now: () => (clock += 120_000) });
         await expect(handler({ id: 1, kind: 'vector', sid, phase: 'sample' })).rejects.toMatchObject({ code: 'moved' });
@@ -1440,8 +1442,10 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
         const opts = { limit: 10, source_boosts: { 'boost/': 5 } };
         const samples = new SampleRegistry();
         const reference = await untilNotMoved(async () => makeAskHandler({ engine: primary, reads, dir: '/none', samples, rpc: (async () => ({})) as never })({ id: 1, kind: 'vector', sid: samples.add({ op: 'searchVector', args: encodeValue([vec(3), opts]), at: Date.now(), lsn: await createLsnWatch(reads).live() }, 100) }) as Promise<RankedKey[]>); // asked again from a new capture when an unrelated commit moved it
+        // pregate-literal: SHADOW_ADAPTER_VERSION=10 an unrelated 10 (a count, limit or size), not the adapter version
         expect(reference.slice(0, 10).filter((r) => boosted.has(r.k))).toHaveLength(10); // the true top ten, all beyond the raw-similarity window
         const windowed = await primary.searchVector(vec(3), { ...opts, limit: 50 });
+        // pregate-literal: SHADOW_ADAPTER_VERSION=10 an unrelated 10 (a count, limit or size), not the adapter version
         expect(windowed.slice(0, 10).filter((r) => boosted.has(String(r.chunk_id))).length).toBeLessThan(10); // the engine's candidate window never saw them
       } finally {
         await reads.close();
@@ -1453,7 +1457,7 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
       const primary = ctx.primary();
       await vectorFixture(primary);
       const nodes = (p: { 'Node Type'?: string; 'Index Name'?: string; Plans?: unknown[] }, out: string[] = []): string[] => { out.push(`${p['Node Type']}:${p['Index Name'] ?? ''}`); for (const c of p.Plans ?? []) nodes(c as never, out); return out; };
-      const stmt = buildVectorSearchStatement({ dialect: ctx.dialect, embedding: vec(3), limit: 10, offset: 0, opts: { limit: 10 } as never, scope: undefined as never });
+      const stmt = buildVectorSearchStatement({ dialect: ctx.dialect, embedding: vec(3), limit: 10, offset: 0, opts: { limit: 10 } as never, scope: undefined as never }); // pregate-literal: SHADOW_ADAPTER_VERSION=10 an unrelated 10 (a count, limit or size), not the adapter version
       const plan = (sets: string[], sql: string) => primary.transaction(async (tx) => {
         for (const s of sets) await tx.executeRaw(s);
         const params = [...stmt.params]; params[stmt.innerLimitIdx] = stmt.innerLimit;
@@ -1478,15 +1482,16 @@ export function defineCheckScenarios(ctx: { primary: () => BrainEngine; dialect:
       const full = await primary.searchVector(vec(3), { limit: 12 });
       const { rig, epoch } = await untilNotMoved(async () => { // the whole read again with a new child when an unrelated commit kept every run of the first from being scored
         const rig = await start();
+        // pregate-literal: SHADOW_ADAPTER_VERSION=10 an unrelated 10 (a count, limit or size), not the adapter version
         rig.rust.searchVector = async () => [...full.slice(0, 9), full[10]]; // Rust misses the tenth true neighbour and returns the eleventh
-        await rig.engine.searchVector(vec(3), { limit: 10 });
+        await rig.engine.searchVector(vec(3), { limit: 10 }); // pregate-literal: SHADOW_ADAPTER_VERSION=10 an unrelated 10 (a count, limit or size), not the adapter version
         const epoch = readEpoch(rig.dir)?.epoch_id ?? (await until(() => readEpoch(rig.dir) !== null), readEpoch(rig.dir)!.epoch_id);
         const scored = await until(() => (readEpochRecall(rig.dir, epoch)?.length ?? 0) === 1).then(() => true, () => false);
         return { rig, epoch, scored };
       }, (r) => !r.scored);
-      await rig.engine.searchVector(vec(3), { limit: 10 });
+      await rig.engine.searchVector(vec(3), { limit: 10 }); // pregate-literal: SHADOW_ADAPTER_VERSION=10 an unrelated 10 (a count, limit or size), not the adapter version
       await sleep(300);
-      expect(readEpochRecall(rig.dir, epoch)).toMatchObject([{ vector: 0.9, primary: 1, ref_size: 10 }]);
+      expect(readEpochRecall(rig.dir, epoch)).toMatchObject([{ vector: 0.9, primary: 1, ref_size: 10 }]); // pregate-literal: SHADOW_ADAPTER_VERSION=10 an unrelated 10 (a count, limit or size), not the adapter version
     });
   });
 }

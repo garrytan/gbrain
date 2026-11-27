@@ -152,7 +152,7 @@ export interface ExtractFromFenceOpts {
    * Precedence chain:
    *   1. Explicit `validFrom:` in the fence row (today's behavior, preserved).
    *   2. `pageEffectiveDate` when set.
-   *   3. `undefined` → engine.insertFact defaults to now() at insert time.
+   *   3. Otherwise null: the event date is unknown (#10288), stored NULL.
    *
    * Optional because `facts/fence-write.ts` calls this from a context
    * with no `Page` object available (Codex F6). Null and undefined are
@@ -258,9 +258,9 @@ export function extractFactsFromFenceText(
   const pageDateFallback = opts.pageEffectiveDate ?? undefined;
 
   return facts.map(f => {
-    // v0.35.4 (D-ENG-1) valid_from precedence: fence > pageEffectiveDate > engine default (now).
+    // v0.35.4 (D-ENG-1) valid_from precedence: fence > pageEffectiveDate > unknown (NULL, #10288).
     const fenceDate = parseValidDate(f.validFrom);
-    const validFrom = fenceDate ?? pageDateFallback ?? undefined;
+    const validFrom = fenceDate ?? pageDateFallback ?? null;
 
     // valid_until derivation. Three branches:
     //   1. Explicit validUntil in the fence → honor as-is.

@@ -19,6 +19,8 @@ import { countFingerprintMismatches, differingCodePoints, probeRecord, PROBE_COR
 import { FollowChild, type FollowStore } from '../src/shadow/follow-child.ts';
 import { appendPass, buildFollowStatus, lagBucket, lagP99, NOT_RUN_PROBE, readFollowerFile, type FollowStatus } from '../src/shadow/follow-status.ts';
 import { openReadSource } from '../src/shadow/read-pool.ts';
+import { ShadowFollower } from '../src/shadow/follower.ts';
+import type { Invalidation } from '../src/shadow/invalidations.ts';
 import { Reconciler } from '../src/shadow/reconcile.ts';
 import { writeSeedRecord, type SeedRecord } from '../src/shadow/seed.ts';
 import { SHADOW_STATE_VERSION, shadowBrainKey, shadowDirFor, writeShadowState, type ShadowState } from '../src/shadow/state.ts';
@@ -532,5 +534,25 @@ describe('shadow read source', () => {
       await expect(reads.read(async () => 1)).rejects.toThrow(/closed/);
       expect(connect).toHaveBeenCalledTimes(2);
     } finally { connect.mockRestore(); disconnect.mockRestore(); }
+  });
+});
+
+describe('the follower\'s two write counts', () => {
+  const follower = () => new ShadowFollower({ reads: { pauseMs: 0, read: async () => { throw new Error('no reads'); }, close: async () => {} } as never, send: () => true, rpc: async () => { throw new Error('no child'); } });
+  const batch = (seq: number, items: Invalidation[]) => ({ seq, committed_at: 0, items });
+  const rows = (relation: string): Invalidation => ({ kind: 'rows', relation, selector: { id: '1' }, before_keys: null });
+
+  test('`published` counts every batch (the stable rerun and the mirror read it); `pageLinkWrites` counts only a batch that can change a row a write comparison reads, so the process\'s own bookkeeping never moves it', async () => {
+    const f = follower();
+    f.publish(batch(1, [rows('persistence_effects'), { kind: 'relation', relation: 'persistence_requests', reason: 'raw_sql' }])); // journal rows
+    f.publish(batch(2, [rows('link_transitions'), rows('config'), { kind: 'relation', relation: 'memory_proposals', reason: 'raw_sql' }]));
+    expect([f.published, f.pageLinkWrites]).toEqual([2, 0]);
+    f.publish(batch(3, [rows('pages')]));
+    f.publish(batch(4, [rows('persistence_effects'), rows('links')]));
+    f.publish(batch(5, [{ kind: 'relation', relation: 'pages', reason: 'raw_sql' }]));
+    f.publish(batch(6, [{ kind: 'relation', relation: 'links', reason: 'raw_sql' }]));
+    f.publish(batch(7, [{ kind: 'invalid', reason: 'unmapped_write:somethingNew' }])); // a write nothing can describe may have changed them: it counts
+    expect([f.published, f.pageLinkWrites]).toEqual([7, 5]);
+    await f.settle();
   });
 });

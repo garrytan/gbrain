@@ -52,7 +52,7 @@ import { upsertFactRow, parseFactsFence, formatFenceDate } from '../facts-fence.
 import { withHeldFactsFence } from './unfenced-facts.ts';
 import { unparsedFenceRefusal } from '../fence-repair/refusal.ts';
 import type { OperationError } from '../ops/contract.ts';
-import { extractFactsFromFenceText } from './extract-from-fence.ts';
+import { extractFactsFromFenceText, pageFactDate } from './extract-from-fence.ts';
 import { logStubGuardEvent } from './stub-guard-audit.ts';
 import { isFactWithdrawn } from './withdrawal.ts';
 import { managedPersistenceEnabled } from '../persistence/ownership.ts';
@@ -99,7 +99,8 @@ export interface FenceInputFact {
   visibility: FactVisibility;
   /** Defaults to 1.0 when undefined (matches engine.insertFact behavior). */
   confidence?: number;
-  validFrom?: Date;
+  /** The event date; null or omitted: unknown, an empty fence cell (#10288). */
+  validFrom?: Date | null;
   /**
    * MEMORY_VERBS v1 (c5): remember's ttl → valid_until. Written to the
    * fence cell losslessly (formatFenceDate); the DB column derives from it on
@@ -268,6 +269,11 @@ export async function commitFactFenceFile(
   }
 
   recordWriteFailure(slug, sourceId, ['git_durability_commit_failed'], filePath);
+}
+
+/** #10288: the date an empty fence cell on this page projects to (the page's fact date), as sync reads it. */
+async function bodyFactDate(engine: BrainEngine, slug: string, body: string): Promise<Date | undefined> {
+  return pageFactDate({ slug, frontmatter: parseMarkdown(body, `${slug}.md`).frontmatter, timeZone: await engine.getConfig('brain.timezone') }) ?? undefined;
 }
 
 /**
@@ -532,7 +538,7 @@ export async function writeFactsToFence(
           confidence:  f.confidence ?? 1.0,
           visibility:  f.visibility,
           notability:  f.notability ?? 'medium',
-          validFrom:   formatFenceDate(f.validFrom ?? new Date()),
+          validFrom:   f.validFrom ? formatFenceDate(f.validFrom) : undefined,
           // MEMORY_VERBS v1 (c5): remember's ttl threads through to the fence
           // cell — was hard-coded undefined, which silently dropped expiry on
           // this path. extractFactsFromFenceText derives the DB column from it.
@@ -567,7 +573,7 @@ export async function writeFactsToFence(
         return { inserted: 0, ids: [], fenceWriteFailed: true };
       }
 
-      const allExtracted = extractFactsFromFenceText(parsed.facts, target.slug, target.sourceId);
+      const allExtracted = extractFactsFromFenceText(parsed.facts, target.slug, target.sourceId, { pageEffectiveDate: await bodyFactDate(engine, target.slug, tmpBody) });
       const newRowSet = new Set(assignedRowNums);
       const toInsert = allExtracted.filter(r => newRowSet.has(r.row_num));
 

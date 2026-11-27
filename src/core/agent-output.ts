@@ -24,6 +24,7 @@ import { redactUrlsInText } from './url-redact.ts';
 import { parseRepoBase } from './repo-base.ts';
 import { recordAgentContractEvent } from './agent-contract-log.ts';
 import { cliRouting, pinRouting, type FixRouting } from './fix-routing.ts';
+import { noteCliErrorCode } from './telemetry/error-tally.ts';
 
 export const CONTRACT_VERSION = 1 as const;
 
@@ -879,6 +880,7 @@ export function projectionConflictLine(e: unknown, command: string): string | nu
 export function renderCliError(e: unknown, opts: { json: boolean; command: string; tty: boolean }): CliErrorRender {
   const env = toAgentError(e, { transport: 'cli', command: opts.command, render: cliRenderContext() });
   const exitCode = exitCodeForCode(env.code, env.reason);
+  noteCliErrorCode(env.code);
   if (opts.json) return { stdout: `${JSON.stringify(env, null, 2)}\n`, exitCode };
   const lines = [`Error [${env.code}]: ${env.message}`];
   const relay = env.fix && !env.fix.command && env.fix.mcp ? `call ${env.fix.mcp.tool} over MCP with ${JSON.stringify(env.fix.mcp.arguments)}` : undefined;

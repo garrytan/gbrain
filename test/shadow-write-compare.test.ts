@@ -11,8 +11,9 @@
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { appendFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { WRITE_COVERAGE_LIMIT, type ShadowStatus } from '../src/core/engine-swap/readiness.ts';
 import { PassThrough } from 'node:stream';
 import { createEngine } from '../src/core/engine-factory.ts';
@@ -27,7 +28,8 @@ import { encodeArgs } from '../src/shadow/codec.ts';
 import { configDir } from '../src/core/config.ts';
 import { shadowRoot } from '../src/shadow/state.ts';
 import { scratchRootDefault } from '../src/shadow/write-compare-child.ts';
-import { lostPath, movedOutsideFootprint, pageRefs, readWriteTally, recordLost, unfoldedLost, writeTallyPath, WriteTally, type WriteEvent } from '../src/shadow/write-compare.ts';
+import { faultsPath, readFaults } from '../src/shadow/ledger.ts';
+import { lostPath, movedOutsideFootprint, pageRefs, readWriteTally, recordLost, sentPath, unfoldedLost, writeTallyPath, WriteTally, type WriteEvent } from '../src/shadow/write-compare.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { defineWriteCompareScenarios, fakeComparer, page, row5, settle, tallyOn, watchPreimage } from './helpers/shadow-write-compare-scenarios.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -383,6 +385,59 @@ describe('a client child records no write comparison (lane owner ruling)', () =>
   }, 60_000);
 });
 
+describe('a client child\'s verdicts are counted, never dropped (no_epoch)', () => {
+  test('a client child hands its verdicts to the owner as lost samples, in a few appends, and the owner counts every one as uncomparable no_epoch; the tally file is not touched by the client', () => {
+    const dir = tmp();
+    const owner = tallyOn(dir);
+    owner.tally.note('capability_missing', 'tags'); // the owner has recorded one
+    const before = readFileSync(writeTallyPath(dir), 'utf8');
+    const client = new WriteTally(dir, () => null, () => true, 424242); // a child with no epoch of its own
+    const lostFile = lostPath(dir, process.pid);
+    const sizes = new Set<number>();
+    for (let n = 0; n < 600; n++) { client.note(n % 2 ? 'capability_missing' : 'uncomparable', n % 2 ? 'tags' : 'moved'); sizes.add(existsSync(lostFile) ? statSync(lostFile).size : 0); }
+    expect(sizes.size).toBeLessThanOrEqual(4); // one append per 256 verdicts, not one per verdict
+    client.save();
+    expect(readFileSync(writeTallyPath(dir), 'utf8')).toBe(before); // a client child records nothing in the tally
+    expect(unfoldedLost(dir, owner.epoch)).toBe(600);
+    owner.tally.save(); // the owner folds them in
+    expect(owner.counts()).toMatchObject({ comparable: 0, capability_missing: 1, uncomparable: 600, uncomparable_by_reason: { no_epoch: 600 } });
+  });
+
+  // pregate-literal: SHADOW_ADAPTER_VERSION=10 an unrelated 10 (a count, limit or size), not the adapter version
+  test('a client\'s pending verdicts plus a large count are all kept across the 10,000-line append cap: only what was written is released (255 + 10,000 = 10,255 counted)', () => {
+    const dir = tmp();
+    const owner = tallyOn(dir);
+    const client = new WriteTally(dir, () => null, () => true, 424242);
+    client.note('uncomparable', 'send_shed', 255); client.note('uncomparable', 'send_shed', 10_000);
+    client.save();
+    // pregate-literal: SHADOW_ADAPTER_VERSION=10 an unrelated 10 (a count, limit or size), not the adapter version
+    expect(unfoldedLost(dir, owner.epoch)).toBe(10_255); // before: 10,000, and 255 released unwritten
+    owner.tally.save();
+    expect(owner.counts().uncomparable_by_reason.no_epoch).toBe(10_255);
+  });
+
+  test('a client whose appends fail keeps the whole count: nothing is released, and the last save names it in a fault', () => {
+    const dir = tmp();
+    tallyOn(dir);
+    mkdirSync(lostPath(dir, process.pid)); // appends fail
+    const client = new WriteTally(dir, () => null, () => true, 424242);
+    client.note('uncomparable', 'moved', 300);
+    expect(client.save()).toBe(false);
+    expect(readFaults(dir).map((f) => [f.kind, f.detail])).toContainEqual(['write_samples_unrecorded', 'no_epoch n=300']);
+  });
+
+  test('with no epoch on disk yet nothing can be recorded: the count waits for the next save, and the last one leaves a fault line, never a silent drop; a deleted shadow directory counts nothing', () => {
+    const dir = tmp();
+    const client = new WriteTally(dir, () => null, () => true, 424242);
+    client.note('uncomparable', 'moved', 3);
+    expect(client.save()).toBe(false);
+    expect(readFaults(dir).map((f) => f.kind)).toEqual(['write_samples_unrecorded']);
+    const gone = new WriteTally(join(dir, 'gone'), () => null, () => false, 424243);
+    gone.note('uncomparable', 'moved', 3); gone.save();
+    expect(existsSync(join(dir, 'gone'))).toBe(false);
+  });
+});
+
 describe('write comparison rules (review findings)', () => {
   const sample = (over: Partial<WriteEvent> = {}): WriteEvent => ({
     t: 'write', op: 'putPage', args: encodeArgs(['people/pat-example', { type: 'person', title: 'Pat', compiled_truth: 'Pat.', timeline: '' }]) as unknown[],
@@ -560,6 +615,311 @@ describe('every sample the child was sent ends in the tally (sample accounting)'
   const ADDON = async () => ({ ok: true as const, addon: { target: 'linux-x64-glibc', engineAbi: 1, engineBuild: 'b1', catalogVersion: 3 } as never });
   const BASE = { loadAddon: ADDON, capabilities: () => ['search', 'pages'], readinessPolicyHash: () => 'p1', heartbeatMs: 60_000, childId: 'c1' };
   const replayLine = (n: number) => JSON.stringify({ t: 'write', op: 'putPage', args: encodeArgs([`people/queued-${n}-example`, { type: 'person', title: `Queued ${n}`, compiled_truth: 'Q.', timeline: '' }]) as unknown[], pre: { sources: [], pages: [], links: [] }, post: { pages: [null], links: [] } }) + '\n';
+
+  test('the child counts what its serving process sent and it never read (the pipe dropped at that process\'s exit) as uncomparable pipe_unflushed, exactly once, and removes the sent count', async () => {
+    await withEnv({ GBRAIN_HOME: tmp() }, async () => {
+      const dir = tmp();
+      writeSeedRecord(dir, { version: 1, seed_id: 'seed-1', started_at: '2026-01-01T00:00:00.000Z', finished_at: '2026-01-01T00:01:00.000Z', unseeded_gap_rows_total: 0, unseeded_gap_rows: {}, relations: {}, digests: true } as never);
+      writeFileSync(sentPath(dir, 'sess-1'), JSON.stringify({ session: 'sess-1', sent: 10 }) + '\n'); // pregate-literal: SHADOW_ADAPTER_VERSION=10 an unrelated 10 (a count, limit or size), not the adapter version
+      const input = new PassThrough();
+      const done = runShadowChild(dir, { input, writeControl: () => {}, ...BASE, session: 'sess-1', addonSha256: () => 'a'.repeat(64), openEngine: () => ({ ownerRole: 'owner', async connect() {}, async disconnect() {} }) as never });
+      input.write('{"t":"write","op":"putPage"}\n{"t":"write","op":"putPage"}\n'); // two samples read
+      input.write('{"t":"write","op":"putPage","dropped":2}\n'); // a third, carrying two earlier refusals: three samples' worth
+      input.write('{"t":"write","op":"putPage","pad":"cut by the exit of the serving proc'); // a line the exit cut short: not read
+      input.end();
+      await done;
+      const t = readWriteTally(dir, readEpoch(dir)!.epoch_id)!;
+      expect(t.uncomparable_by_reason).toMatchObject({ no_sample: 3, send_shed: 2, pipe_unflushed: 10 - 5 }); // pregate-literal: SHADOW_ADAPTER_VERSION=10 an unrelated 10 (a count, limit or size), not the adapter version
+      expect(t.comparable + t.unexplained_difference + t.uncomparable + t.capability_missing).toBe(3 + 2 + 5);
+      expect(existsSync(sentPath(dir, 'sess-1'))).toBe(false);
+    });
+  }, 30_000);
+
+  async function childWithSent(sent: number, lines: string[], prepare?: (dir: string) => void) {
+    return withEnv({ GBRAIN_HOME: tmp() }, async () => {
+      const dir = tmp();
+      writeSeedRecord(dir, { version: 1, seed_id: 'seed-1', started_at: '2026-01-01T00:00:00.000Z', finished_at: '2026-01-01T00:01:00.000Z', unseeded_gap_rows_total: 0, unseeded_gap_rows: {}, relations: {}, digests: true } as never);
+      writeFileSync(sentPath(dir, 'sess-3'), JSON.stringify({ session: 'sess-3', sent }) + '\n');
+      prepare?.(dir);
+      const input = new PassThrough();
+      const done = runShadowChild(dir, { input, writeControl: () => {}, ...BASE, session: 'sess-3', addonSha256: () => 'a'.repeat(64), openEngine: () => ({ ownerRole: 'owner', async connect() {}, async disconnect() {} }) as never });
+      for (const l of lines) input.write(l);
+      input.end();
+      await done;
+      return { dir, epoch: readEpoch(dir)!.epoch_id };
+    });
+  }
+
+  test('a deficit larger than 10,000 is counted whole, never cut (20,001 sent, 1 read: 20,000 counted pipe_unflushed)', async () => { // pregate-literal: SHADOW_ADAPTER_VERSION=10 an unrelated 10 (a count, limit or size), not the adapter version
+    const { dir, epoch } = await childWithSent(20_001, ['{"t":"write","op":"putPage"}\n']);
+    const t = readWriteTally(dir, epoch)!;
+    // pregate-literal: SHADOW_ADAPTER_VERSION=10 an unrelated 10 (a count, limit or size), not the adapter version
+    expect(t.uncomparable_by_reason).toMatchObject({ no_sample: 1, pipe_unflushed: 20_000 }); // before: 10,000, and the sent count was removed: 10,000 samples gone
+    expect(t.comparable + t.unexplained_difference + t.uncomparable + t.capability_missing).toBe(20_001);
+    expect(existsSync(sentPath(dir, 'sess-3'))).toBe(false);
+  }, 60_000);
+
+  test('a deficit that cannot be written to the tally is already on disk as lost samples and counted unresolved by status, and the sent count is removed only then (nine samples, blocked tally write)', async () => {
+    const { dir, epoch } = await childWithSent(10, ['{"t":"write","op":"putPage"}\n'], (d) => { // pregate-literal: SHADOW_ADAPTER_VERSION=10 an unrelated 10 (a count, limit or size), not the adapter version
+      mkdirSync(join(d, `write-comparisons.json.${process.pid}.tmp`)); // the tally cannot be saved by this process
+    });
+    expect(readWriteTally(dir, epoch)).toBeNull(); // nothing was saved to the tally
+    expect(unfoldedLost(dir, epoch)).toBe(9); // before: 0 and the receipt gone, so status read "measured" with the nine missing
+    expect(existsSync(sentPath(dir, 'sess-3'))).toBe(true); // was false: the tally save failed, so this child's own outcome was never saved; the sent count stays (the next owner worker books it)
+  }, 60_000);
+
+  test('a deficit that cannot be recorded at all (the lost file is not writable) is a fault line naming it, never a silent drop', async () => {
+    const { dir } = await childWithSent(10, ['{"t":"write","op":"putPage"}\n'], (d) => { mkdirSync(lostPath(d, process.pid)); }); // pregate-literal: SHADOW_ADAPTER_VERSION=10 an unrelated 10 (a count, limit or size), not the adapter version
+    expect(readFaults(dir).map((f) => [f.kind, f.detail])).toContainEqual(['write_samples_unrecorded', 'pipe_unflushed n=9']);
+  }, 60_000);
+
+  // S2b: a receipt (the sent count) is the only record that samples are missing, so it goes only when the whole deficit is in the lost-sample file.
+  const SEED = { version: 1, seed_id: 'seed-1', started_at: '2026-01-01T00:00:00.000Z', finished_at: '2026-01-01T00:01:00.000Z', unseeded_gap_rows_total: 0, unseeded_gap_rows: {}, relations: {}, digests: true } as never;
+  const OWNER = () => ({ ownerRole: 'owner', async connect() {}, async disconnect() {} }) as never;
+  const stat = (dir: string) => buildFollowStatus(dir, { sample_rate: 0.1 } as never, NOW).write_comparisons;
+  /** A passing tally of 1,000 comparable writes under `epoch`, so only an unsettled receipt can keep status from reading measured. */
+  const passing = (dir: string, epoch: string): void => { const f = JSON.parse(readFileSync(writeTallyPath(dir), 'utf8')); writeFileSync(writeTallyPath(dir), JSON.stringify({ ...f, epoch_id: epoch, comparable: 1000 }) + '\n'); };
+  const saved = (dir: string, epoch: string): void => writeFileSync(writeTallyPath(dir), JSON.stringify({ version: 1, epoch_id: epoch, updated_at: '', comparable: 1000, unexplained_difference: 0, uncomparable: 0, capability_missing: 0, capability_missing_by_family: {}, uncomparable_by_reason: {}, in_flight: [] }) + '\n');
+  const deadPid = (): number => spawnSync(process.execPath, ['-e', '0']).pid!; // a process that has ended
+  const receiptFile = (dir: string, session: string): string => sentPath(dir, session);
+  async function runChild(dir: string, session: string, lines: string[] = []) {
+    const input = new PassThrough();
+    const done = runShadowChild(dir, { input, writeControl: () => {}, ...BASE, session, addonSha256: () => 'a'.repeat(64), openEngine: OWNER });
+    for (const l of lines) input.write(l);
+    input.end();
+    await done;
+    return readEpoch(dir)!.epoch_id;
+  }
+
+  test('both the lost-sample append and the fault line fail (a full disk): the sent count stays on disk and status reads no evidence, never measured', async () => {
+    await withEnv({ GBRAIN_HOME: tmp() }, async () => {
+      const dir = tmp(); writeSeedRecord(dir, SEED);
+      writeFileSync(receiptFile(dir, 'sess-9'), JSON.stringify({ session: 'sess-9', sent: 10 }) + '\n'); // pregate-literal: SHADOW_ADAPTER_VERSION=10 the receipt's sent count, not the adapter version
+      mkdirSync(lostPath(dir, process.pid)); mkdirSync(faultsPath(dir)); // neither can be written (EISDIR stands for ENOSPC)
+      const epoch = await runChild(dir, 'sess-9', ['{"t":"write","op":"putPage"}\n']);
+      expect(existsSync(receiptFile(dir, 'sess-9'))).toBe(true); // before: removed, and nine samples were in no counter and no fault
+      rmSync(lostPath(dir, process.pid), { recursive: true }); rmSync(faultsPath(dir), { recursive: true }); passing(dir, epoch);
+      expect(stat(dir)).toMatchObject({ state: 'capability_missing', unresolved_replays: 1 });
+    });
+  }, 60_000);
+
+  test('a fault line alone is not a settlement: with the lost-sample file blocked the sent count stays, with its fault line written', async () => {
+    await withEnv({ GBRAIN_HOME: tmp() }, async () => {
+      const dir = tmp(); writeSeedRecord(dir, SEED);
+      writeFileSync(receiptFile(dir, 'sess-9'), JSON.stringify({ session: 'sess-9', sent: 10 }) + '\n'); // pregate-literal: SHADOW_ADAPTER_VERSION=10 a count in this test, not the adapter version
+      mkdirSync(lostPath(dir, process.pid));
+      const epoch = await runChild(dir, 'sess-9', ['{"t":"write","op":"putPage"}\n']);
+      expect(readFaults(dir).map((f) => [f.kind, f.detail])).toContainEqual(['write_samples_unrecorded', 'pipe_unflushed n=9']);
+      expect(existsSync(receiptFile(dir, 'sess-9'))).toBe(true); // before: removed because the fault line landed, and status read measured
+      rmSync(lostPath(dir, process.pid), { recursive: true }); passing(dir, epoch);
+      expect(stat(dir)).toMatchObject({ state: 'capability_missing', unresolved_replays: 1 });
+    });
+  }, 60_000);
+
+  for (const [what, make] of [['truncated', (f: string) => writeFileSync(f, '{"session":"sess-8","sent":1')], ['unreadable (EISDIR stands for EIO)', (f: string) => mkdirSync(f)], ['a negative number', (f: string) => writeFileSync(f, JSON.stringify({ session: 'sess-8', sent: -4 }))]] as const) {
+    test(`a sent count that is ${what}: raises one write_samples_unrecorded fault, is left in place, and status reads no evidence`, async () => {
+      await withEnv({ GBRAIN_HOME: tmp() }, async () => {
+        const dir = tmp(); writeSeedRecord(dir, SEED);
+        make(receiptFile(dir, 'sess-8'));
+        const epoch = await runChild(dir, 'sess-8', ['{"t":"write","op":"putPage"}\n']);
+        expect(readFaults(dir).filter((f) => f.kind === 'write_samples_unrecorded')).toHaveLength(1); // before: none, the child read it as no count
+        expect(existsSync(receiptFile(dir, 'sess-8'))).toBe(true);
+        passing(dir, epoch);
+        const s = stat(dir);
+        expect(s).toMatchObject({ state: 'capability_missing', unresolved_replays: 1 });
+        expect(s.outstanding_receipts).toEqual([basename(receiptFile(dir, 'sess-8'))]);
+      });
+    }, 60_000);
+  }
+
+  test('status counts a receipt of the current epoch, of no epoch and of another epoch as unresolved and names it; with no directory nothing is counted', () => {
+    const dir = tmp(); const { epoch } = tallyOn(dir); saved(dir, epoch);
+    expect(stat(dir)).toMatchObject({ state: 'measured', comparable: 1000 });
+    writeFileSync(receiptFile(dir, 'now'), JSON.stringify({ session: 'now', sent: 3, pid: process.pid, epoch_id: epoch }));
+    writeFileSync(receiptFile(dir, 'bare'), JSON.stringify({ session: 'bare', sent: 3, pid: process.pid }));
+    writeFileSync(receiptFile(dir, 'old'), JSON.stringify({ session: 'old', sent: 3, pid: process.pid, epoch_id: 'a-retired-epoch' }));
+    const s = stat(dir);
+    expect(s).toMatchObject({ state: 'capability_missing', unresolved_replays: 3 }); // was 2: the receipt of another epoch was left out
+    expect([...(s.outstanding_receipts ?? [])].sort()).toEqual(['bare', 'now', 'old'].map((n) => basename(receiptFile(dir, n))).sort()); // was bare and now only
+    expect((s as Record<string, unknown>).retired_receipts).toBeUndefined(); // was [old]: there is no longer a list of receipts status does not count
+    rmSync(receiptFile(dir, 'now')); rmSync(receiptFile(dir, 'bare'));
+    expect(stat(dir)).toMatchObject({ state: 'capability_missing', unresolved_replays: 1 }); // was measured with no unresolved: a receipt of another epoch is a deficit nobody recorded, so it keeps status at no evidence
+    expect(() => stat(join(dir, 'gone'))).not.toThrow();
+    expect(stat(join(dir, 'gone')).unresolved_replays).toBeUndefined();
+  });
+
+  test('a worker\'s own receipt is its own samples whatever epoch it names: a fresh command\'s receipt that names the previous epoch is booked under the new one, never dropped', async () => {
+    await withEnv({ GBRAIN_HOME: tmp() }, async () => {
+      const dir = tmp(); writeSeedRecord(dir, SEED);
+      writeFileSync(receiptFile(dir, 'sess-7'), JSON.stringify({ session: 'sess-7', sent: 10, pid: process.pid, epoch_id: 'the-previous-epoch' })); // pregate-literal: SHADOW_ADAPTER_VERSION=10 a count in this test, not the adapter version
+      const epoch = await runChild(dir, 'sess-7', ['{"t":"write","op":"putPage"}\n']);
+      expect(readWriteTally(dir, epoch)!.uncomparable_by_reason).toMatchObject({ no_sample: 1, pipe_unflushed: 9 }); // pregate-literal: SHADOW_ADAPTER_VERSION=10 a count in this test, not the adapter version; before: removed as another epoch\'s, nothing booked (10 sent, 1 delivered)
+      expect(existsSync(receiptFile(dir, 'sess-7'))).toBe(false);
+    });
+  }, 60_000);
+
+  test('a retired worker (its epoch is no longer the manifest\'s) settles nothing and removes no receipt; the current owner settles it whole', () => {
+    for (const stamped of [false, true]) {
+      const dir = tmp(); const old = tallyOn(dir); // epoch 1
+      const fields = { seed_id: 's', rust_addon_sha256: 'b', comparator_version: 1, adapter_version: 'x', capability_set_hash: null, readiness_policy_hash: 'p' };
+      const next = ensureEpoch(dir, fields, NOW.getTime() + 60_000).epoch_id; // the manifest moves to epoch 2
+      expect(next).not.toBe(old.epoch);
+      writeFileSync(receiptFile(dir, 'dead'), JSON.stringify({ session: 'dead', sent: 7, pid: deadPid(), ...(stamped ? { epoch_id: next } : {}) }));
+      old.tally.save(); old.tally.recover();
+      expect(existsSync(receiptFile(dir, 'dead'))).toBe(true); // before: removed, with its lines booked under epoch 1 where nobody reads them
+      const owner = new WriteTally(dir, () => next, () => true, process.pid);
+      owner.recover(); owner.save();
+      expect(readWriteTally(dir, next)!.uncomparable_by_reason).toEqual({ receipt_orphaned: 7 });
+      expect(existsSync(receiptFile(dir, 'dead'))).toBe(false);
+    }
+  });
+
+  test('a receipt a dead session left is settled exactly once by an owner worker (receipt_orphaned); a live pid, a pid we cannot trust and a count we cannot trust are left alone', async () => {
+    await withEnv({ GBRAIN_HOME: tmp() }, async () => {
+      const dir = tmp(); writeSeedRecord(dir, SEED);
+      const put = (session: string, body: Record<string, unknown>, ageMs = 0): void => { const f = receiptFile(dir, session); writeFileSync(f, JSON.stringify({ session, ...body })); if (ageMs) { const t = new Date(Date.now() - ageMs); utimesSync(f, t, t); } };
+      put('dead', { sent: 7, pid: deadPid() });
+      put('recycled', { sent: 2, pid: process.ppid }, 20 * 60_000); // its pid is alive but the file is old: the pid was reused
+      put('live', { sent: 50, pid: process.ppid }); // a running worker's own receipt
+      put('nopid', { sent: 50 }); // cannot tell yet: fresh
+      put('hostile', { sent: 50, pid: -1 }); put('hostile2', { sent: 50, pid: 0 }); put('hostile3', { sent: 50, pid: 1.5 }); // not a pid
+      put('huge', { sent: 5_000_000_000, pid: deadPid() }); // not a count we can write down
+      const epoch = await runChild(dir, 'sess-a');
+      expect(readWriteTally(dir, epoch)!.uncomparable_by_reason).toEqual({ receipt_orphaned: 9 }); // before: nothing settled, every receipt left for ever
+      expect(readdirSync(dir).filter((n) => n.startsWith('write-sent.')).sort()).toEqual(['hostile', 'hostile2', 'hostile3', 'huge', 'live', 'nopid'].map((n) => basename(receiptFile(dir, n))).sort());
+      expect(await runChild(dir, 'sess-b')).toBe(epoch);
+      expect(readWriteTally(dir, epoch)!.uncomparable_by_reason).toEqual({ receipt_orphaned: 9 }); // once: the second owner finds nothing to add
+    });
+  }, 60_000);
+
+  test('a sent count stays when this child\'s final tally save failed (an outcome only in memory), and status reads no evidence, never measured', async () => {
+    await withEnv({ GBRAIN_HOME: tmp() }, async () => {
+      const dir = tmp(); writeSeedRecord(dir, SEED);
+      const epoch = await runChild(dir, 'warmup'); saved(dir, epoch); // a passing tally of 1,000 comparable writes
+      writeFileSync(receiptFile(dir, 'pending'), JSON.stringify({ session: 'pending', sent: 1 }));
+      mkdirSync(`${writeTallyPath(dir)}.${process.pid}.tmp`); // this child cannot save its tally
+      await runChild(dir, 'pending', [JSON.stringify({ t: 'write', op: 'putPage', outcome: 'uncomparable', reason: 'preimage_timeout' }) + '\n']); // sent 1, received 1: no deficit, one outcome that stays in memory
+      expect(existsSync(receiptFile(dir, 'pending'))).toBe(true); // before: removed (sent == received), and the outcome was lost with status still measured
+      expect(readWriteTally(dir, epoch)!.uncomparable).toBe(0);
+      expect(stat(dir)).toMatchObject({ state: 'capability_missing', unresolved_replays: 1, outstanding_receipts: [basename(receiptFile(dir, 'pending'))] });
+    });
+  }, 60_000);
+
+  test('a client worker whose lost-sample write failed keeps its count and status reads no evidence, even though its fault line was written; the count is written down at the next save', () => {
+    const dir = tmp(); const { tally, epoch } = tallyOn(dir); saved(dir, epoch); // an epoch and a passing tally of 1,000 comparable writes
+    const client = new WriteTally(dir, () => null, () => true, process.pid); // another process owns the store
+    for (let i = 0; i < 3; i++) client.note('uncomparable', 'preimage_timeout');
+    mkdirSync(lostPath(dir, process.pid)); // the lost-sample file cannot be written
+    expect(client.save()).toBe(false);
+    expect(readFaults(dir).map((f) => [f.kind, f.detail])).toContainEqual(['write_samples_unrecorded', 'no_epoch n=3']);
+    expect(stat(dir)).toMatchObject({ state: 'capability_missing', unrecorded_sample_faults: 1 }); // before: measured, the fault line was ignored
+    expect(client.save()).toBe(false); expect(readFaults(dir).filter((f) => f.kind === 'write_samples_unrecorded')).toHaveLength(1); // one fault line for the same count
+    rmSync(lostPath(dir, process.pid), { recursive: true }); // the disk recovers
+    expect(client.save()).toBe(true);
+    expect(unfoldedLost(dir, epoch)).toBe(3); // before: 0, the count was cleared by the fault line and never written down
+    tally.save(); // the owner folds the three lost samples into the tally
+    expect(readWriteTally(dir, epoch)!.uncomparable_by_reason).toMatchObject({ no_epoch: 3 });
+    expect(stat(dir)).toMatchObject({ state: 'capability_missing', unrecorded_sample_faults: 1 }); // nothing else is open, but the fault of this epoch still blocks measured (a new epoch clears it)
+  });
+
+  test('an orphaned receipt keeps status at no evidence until an owner worker settles it as receipt_orphaned (uncomparable); then the receipt is gone and the unresolved mark clears', async () => {
+    await withEnv({ GBRAIN_HOME: tmp() }, async () => {
+      const dir = tmp(); writeSeedRecord(dir, SEED);
+      const epoch = await runChild(dir, 'sess-a'); saved(dir, epoch); // a passing tally of 1,000 comparable writes under the current epoch
+      writeFileSync(receiptFile(dir, 'dead'), JSON.stringify({ session: 'dead', sent: 7, pid: deadPid() })); // a command that died: its receipt is nobody's
+      const before = stat(dir);
+      expect(before).toMatchObject({ state: 'capability_missing', comparable: 1000, unresolved_replays: 1, outstanding_receipts: [basename(receiptFile(dir, 'dead'))] }); // not measured while seven samples are unaccounted for
+      expect(readWriteTally(dir, epoch)!.uncomparable).toBe(0);
+      expect(await runChild(dir, 'sess-b')).toBe(epoch); // the next owner worker settles it
+      const t = readWriteTally(dir, epoch)!;
+      expect(t.uncomparable_by_reason).toEqual({ receipt_orphaned: 7 });
+      expect(t).toMatchObject({ comparable: 1000, uncomparable: 7 }); // booked uncomparable, never compared
+      expect(existsSync(receiptFile(dir, 'dead'))).toBe(false);
+      const after = stat(dir);
+      expect(after.unresolved_replays).toBeUndefined();
+      expect(after.outstanding_receipts).toBeUndefined();
+      expect(after).toMatchObject({ state: 'measured', comparable: 1000, uncomparable: 7 }); // every deficit is now recorded
+    });
+  }, 60_000);
+
+  test('a receipt that names another epoch keeps status at no evidence, then is settled as receipt_orphaned (uncomparable), never compared', async () => {
+    await withEnv({ GBRAIN_HOME: tmp() }, async () => {
+      const dir = tmp(); writeSeedRecord(dir, SEED);
+      const epoch = await runChild(dir, 'sess-a'); saved(dir, epoch); // a passing tally of 1,000 comparable writes
+      writeFileSync(receiptFile(dir, 'dead'), JSON.stringify({ session: 'dead', sent: 7, pid: deadPid(), epoch_id: 'a-retired-epoch' }));
+      expect(stat(dir)).toMatchObject({ state: 'capability_missing', unresolved_replays: 1, outstanding_receipts: [basename(receiptFile(dir, 'dead'))] }); // before: measured, the receipt was listed as retired and not counted
+      expect(await runChild(dir, 'sess-b')).toBe(epoch);
+      expect(readWriteTally(dir, epoch)!).toMatchObject({ comparable: 1000, uncomparable: 7, uncomparable_by_reason: { receipt_orphaned: 7 } });
+      expect(existsSync(receiptFile(dir, 'dead'))).toBe(false);
+      expect(stat(dir)).toMatchObject({ state: 'measured', comparable: 1000, uncomparable: 7 }); // measured only once every deficit is recorded
+    });
+  }, 60_000);
+
+  test('a leftover receipt that names another epoch is settled by the next owner worker as receipt_orphaned like any other', async () => {
+    await withEnv({ GBRAIN_HOME: tmp() }, async () => {
+      const dir = tmp(); writeSeedRecord(dir, SEED);
+      writeFileSync(receiptFile(dir, 'dead'), JSON.stringify({ session: 'dead', sent: 7, pid: deadPid(), epoch_id: 'a-retired-epoch' }));
+      const epoch = await runChild(dir, 'sess-a');
+      expect(readWriteTally(dir, epoch)?.uncomparable_by_reason ?? {}).toEqual({ receipt_orphaned: 7 }); // was {}: it was removed with no count
+      expect(existsSync(receiptFile(dir, 'dead'))).toBe(false);
+    });
+  }, 60_000);
+
+  test('no sent count, or one that is not more than what was read, adds nothing', async () => {
+    await withEnv({ GBRAIN_HOME: tmp() }, async () => {
+      for (const sent of [undefined, 2, 'bad'] as const) {
+        const dir = tmp();
+        writeSeedRecord(dir, { version: 1, seed_id: 'seed-1', started_at: '2026-01-01T00:00:00.000Z', finished_at: '2026-01-01T00:01:00.000Z', unseeded_gap_rows_total: 0, unseeded_gap_rows: {}, relations: {}, digests: true } as never);
+        if (sent !== undefined) writeFileSync(sentPath(dir, 'sess-2'), JSON.stringify({ session: 'sess-2', sent }) + '\n');
+        const input = new PassThrough();
+        const done = runShadowChild(dir, { input, writeControl: () => {}, ...BASE, session: 'sess-2', addonSha256: () => 'a'.repeat(64), openEngine: () => ({ ownerRole: 'owner', async connect() {}, async disconnect() {} }) as never });
+        input.write('{"t":"write","op":"putPage"}\n{"t":"write","op":"putPage"}\n'); input.end();
+        await done;
+        expect(readWriteTally(dir, readEpoch(dir)!.epoch_id)!.uncomparable_by_reason).toEqual({ no_sample: 2 });
+      }
+    });
+  }, 30_000);
+
+  test('a burst of 300 samples behind one stuck replay: 256 wait their turn, the other 44 are counted queue_full, and every one of the 300 ends in the tally (never comparable when shed)', async () => {
+    await withEnv({ GBRAIN_HOME: tmp() }, async () => {
+      const dir = tmp();
+      writeSeedRecord(dir, { version: 1, seed_id: 'seed-1', started_at: '2026-01-01T00:00:00.000Z', finished_at: '2026-01-01T00:01:00.000Z', unseeded_gap_rows_total: 0, unseeded_gap_rows: {}, relations: {}, digests: true } as never);
+      const input = new PassThrough();
+      let exitCode = null as number | null;
+      void runShadowChild(dir, {
+        input, writeControl: () => {}, ...BASE, addonSha256: () => 'a'.repeat(64),
+        openEngine: () => ({ ownerRole: 'owner', async connect() {}, async disconnect() {}, storeFor: () => new Promise(() => {}) }) as never,
+        exitDeadlineMs: 300, exit: (code) => { exitCode = code; },
+      });
+      for (let n = 0; n < 300; n++) input.write(replayLine(n));
+      input.end();
+      const until = Date.now() + 10_000;
+      while (exitCode === null && Date.now() < until) await new Promise((r) => setTimeout(r, 25));
+      expect(exitCode).toBe(0);
+      const t = readWriteTally(dir, readEpoch(dir)!.epoch_id)!;
+      expect(t.uncomparable_by_reason.queue_full).toBe(44); // master: 16 wait, 284 are shed
+      expect(t.uncomparable_by_reason.child_exit_deadline).toBe(255); // the 255 behind the stuck replay are counted at the exit deadline
+      expect(t.comparable + t.unexplained_difference + t.uncomparable + t.capability_missing + t.in_flight.length).toBe(300);
+      expect(t.comparable).toBe(0);
+    });
+  }, 30_000);
+
+  test('a queue that is full by bytes, not by count, sheds the next sample queue_full and gives the bytes back when the replays end', async () => {
+    const dir = tmp(); let release = (): void => {};
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const comparer = fakeComparer(dir, { connect: () => gate });
+    const sample = (n: number): WriteEvent => ({ t: 'write', op: 'putPage', args: encodeArgs([`people/bytes-${n}-example`, { type: 'person', title: 'B', compiled_truth: 'B.', timeline: '' }]) as unknown[], pre: { sources: [], pages: [], links: [] }, post: { pages: [null], links: [] } });
+    const MIB = 1024 * 1024;
+    for (let n = 0; n < 3; n++) comparer.handle(sample(n), 7 * MIB); // 7 + 7 fit in 16 MiB, the third would be 21
+    release();
+    await comparer.idle();
+    expect(comparer.counts().uncomparable_by_reason.queue_full).toBe(1);
+    for (let n = 3; n < 5; n++) comparer.handle(sample(n), 7 * MIB); // the bytes came back
+    await comparer.idle();
+    expect(comparer.counts().uncomparable_by_reason.queue_full).toBe(1);
+    const t = comparer.counts();
+    expect(t.comparable + t.unexplained_difference + t.uncomparable).toBe(5);
+  }, 30_000);
 
   test('a child that reaches its exit deadline with replays still queued counts them (uncomparable, named), never drops them uncounted', async () => {
     await withEnv({ GBRAIN_HOME: tmp() }, async () => {

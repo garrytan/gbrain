@@ -1274,6 +1274,9 @@ describe('E2E synthesize — oneshot mode (#4216, DEFAULT)', () => {
       await rig.engine.setConfig('dream.synthesize.session_corpus_dir', rig.corpusDir);
       await rig.engine.setConfig('dream.synthesize.mode', 'agentic');
       await rig.engine.setConfig('agent.use_gateway_loop', 'true');
+      // The default subagent model (claude-sonnet-5-5) is a thinking model with a 32000-token output cap per turn, so
+      // 16 agentic turns estimate past the $5 cap; this test is about the mode dial, so it caps output the way an operator would.
+      await rig.engine.setConfig('agent.max_output_tokens', '8192');
       const content = 'User: agentic-dial conversation\n'.repeat(120);
       const filePath = join(rig.corpusDir, '2026-08-16-agentic-dial.txt');
       writeFileSync(filePath, content);

@@ -102,12 +102,16 @@ originals/ page AND update the person's timeline.
 
 ## Brain page format
 
-For ALL voice-note-derived pages, include this skeleton:
+Keep the voice-note metadata in this skeleton for every route. The shown type
+and subtype are for `originals/` on `gbrain-base-v2`; for `ideas/` on v2,
+keep `type: concept` and use `subtype: idea`. For other routes or packs, use
+the active source's declared type and the applicable subtype.
 
 ```markdown
 ---
 title: "[Title derived from content]"
-type: [original | concept | voice-note | ...]
+type: concept
+subtype: original
 created: YYYY-MM-DD
 updated: YYYY-MM-DD
 tags: [voice-note, relevant-tags]
