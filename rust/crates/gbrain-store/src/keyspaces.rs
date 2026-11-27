@@ -90,6 +90,9 @@ pub const KEYWORD_KINDS: &[KeyKind] = &[
     k(keys::KW_BASENAME, "keyword_slug_basename"),
     k(keys::KW_CHUNK_FORWARD, "keyword_chunk_forward"),
     k(keys::KW_PAGE_FORWARD, "keyword_page_forward"),
+    k(keys::KW_CHUNK_PENDING, "keyword_chunk_pending"),
+    k(keys::KW_PAGE_PENDING, "keyword_page_pending"),
+    k(keys::KW_PENDING_COUNT, "keyword_pending_count"),
 ];
 
 /// Every top-level tag, in tag-byte order. The tags `keys.rs` lists first, with no family

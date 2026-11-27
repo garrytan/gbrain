@@ -34,6 +34,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 
 use super::filters::readable_chunk_vector;
+use super::pending::{self, Overlay};
 use super::titles::readable_page_vector;
 use super::trgm::trigram_bytes;
 use super::tsearch::{Op, QItem, TsEntry, TsQuery, TsVector};
@@ -82,17 +83,18 @@ pub(crate) fn serves(read: &dyn KvRead) -> Result<bool> {
 }
 
 /// One posting a document owns: its kind byte, its text and its value.
-struct Posting {
-    kind: u8,
-    term: Vec<u8>,
-    value: Vec<u8>,
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Posting {
+    pub(crate) kind: u8,
+    pub(crate) term: Vec<u8>,
+    pub(crate) value: Vec<u8>,
 }
 
 fn encode_positions(pos: &[u16]) -> Vec<u8> {
     pos.iter().flat_map(|p| p.to_be_bytes()).collect()
 }
 
-fn decode_positions(value: &[u8]) -> Vec<u16> {
+pub(super) fn decode_positions(value: &[u8]) -> Vec<u16> {
     value
         .as_chunks::<2>()
         .0
@@ -142,9 +144,37 @@ fn posting_key(kind: u8, term: &[u8], doc: &[u8]) -> Vec<u8> {
     key
 }
 
+/// The `(kind, term)` pairs the document's forward record lists (the last fold's postings).
+pub(super) fn folded_terms(read: &dyn KvRead, forward: &[u8]) -> Result<BTreeSet<(u8, Vec<u8>)>> {
+    Ok(match read.get(forward)? {
+        Some(bytes) => decode_forward(&bytes).into_iter().collect(),
+        None => BTreeSet::new(),
+    })
+}
+
+/// The document's postings as stored (the last fold's), in its forward record's order, with their
+/// values; a listed posting the store lacks reads as an empty value.
+pub(super) fn folded_postings(
+    read: &dyn KvRead,
+    forward: &[u8],
+    doc: &[u8],
+) -> Result<Vec<Posting>> {
+    let Some(bytes) = read.get(forward)? else {
+        return Ok(Vec::new());
+    };
+    let mut out = Vec::new();
+    for (kind, term) in decode_forward(&bytes) {
+        let value = read
+            .get(&posting_key(kind, &term, doc))?
+            .unwrap_or_default();
+        out.push(Posting { kind, term, value });
+    }
+    Ok(out)
+}
+
 /// Makes the document's postings `new`: deletes the ones its forward record lists and `new` does
 /// not, puts the new or changed ones and rewrites the forward record.
-fn replace_postings(
+pub(super) fn replace_postings(
     w: &mut dyn KvWrite,
     forward: &[u8],
     doc: &[u8],
@@ -197,12 +227,27 @@ fn chunk_postings(read: &dyn KvRead, page_id: u64, index: u32) -> Result<Vec<Pos
     })
 }
 
-/// Rebuilds the postings of chunk `(page_id, index)` from its record as `w` holds it.
+/// Rebuilds the postings of chunk `(page_id, index)` from its record as `w` holds it, and drops
+/// its pending record (a build's direct write).
 pub(crate) fn reindex_chunk(w: &mut dyn KvWrite, page_id: u64, index: u32) -> Result<()> {
     let postings = chunk_postings(&*w, page_id, index)?;
     replace_postings(
         w,
         &keys::chunk_forward(page_id, index),
+        &chunk_doc(page_id, index),
+        postings,
+    )?;
+    pending::drop_pending(w, &keys::chunk_pending(page_id, index))
+}
+
+/// Stages the postings of chunk `(page_id, index)` from its record as `w` holds it (a write's
+/// flush; `pending.rs`).
+pub(crate) fn stage_chunk(w: &mut dyn KvWrite, page_id: u64, index: u32) -> Result<()> {
+    let postings = chunk_postings(&*w, page_id, index)?;
+    pending::stage(
+        w,
+        &keys::chunk_forward(page_id, index),
+        &keys::chunk_pending(page_id, index),
         &chunk_doc(page_id, index),
         postings,
     )
@@ -238,12 +283,26 @@ fn page_postings(read: &dyn KvRead, page_id: u64) -> Result<Vec<Posting>> {
     Ok(postings)
 }
 
-/// Rebuilds the postings of page `page_id` from the page as `w` holds it.
+/// Rebuilds the postings of page `page_id` from the page as `w` holds it, and drops its pending
+/// record (a build's direct write).
 pub(crate) fn reindex_page(w: &mut dyn KvWrite, page_id: u64) -> Result<()> {
     let postings = page_postings(&*w, page_id)?;
     replace_postings(
         w,
         &keys::page_forward(page_id),
+        &page_id.to_be_bytes(),
+        postings,
+    )?;
+    pending::drop_pending(w, &keys::page_pending(page_id))
+}
+
+/// Stages the postings of page `page_id` from the page as `w` holds it (a write's flush).
+pub(crate) fn stage_page(w: &mut dyn KvWrite, page_id: u64) -> Result<()> {
+    let postings = page_postings(&*w, page_id)?;
+    pending::stage(
+        w,
+        &keys::page_forward(page_id),
+        &keys::page_pending(page_id),
         &page_id.to_be_bytes(),
         postings,
     )
@@ -304,10 +363,36 @@ pub(crate) fn expected_records(read: &dyn KvRead, page_id: u64) -> Result<Vec<(V
     Ok(out)
 }
 
+/// The postings document `doc` should hold, from the records as `read` holds them (`chunk`: a
+/// chunk document, else a page document).
+pub(crate) fn expected_postings(read: &dyn KvRead, chunk: bool, doc: Doc) -> Result<Vec<Posting>> {
+    if chunk {
+        chunk_postings(read, doc.0, doc.1)
+    } else {
+        page_postings(read, doc.0)
+    }
+}
+
+/// The document a posting or forward record belongs to: `(chunk, doc)`; `None` for any other key.
+pub(crate) fn record_doc(key: &[u8]) -> Option<(bool, Doc)> {
+    let kind = *key.get(1)?;
+    match kind {
+        KW_CHUNK_POSTING..=KW_BASENAME => {
+            let len = usize::from(u16::from_be_bytes([*key.get(2)?, *key.get(3)?]));
+            let suffix = key.get(4 + len..)?;
+            let doc = doc_of(suffix)?;
+            Some((kind == KW_CHUNK_POSTING, doc))
+        }
+        keys::KW_CHUNK_FORWARD => Some((true, doc_of(key.get(2..)?)?)),
+        keys::KW_PAGE_FORWARD => Some((false, doc_of(key.get(2..)?)?)),
+        _ => None,
+    }
+}
+
 /// A document: `(page_id, chunk_index)`; a page document has chunk index 0.
 pub(crate) type Doc = (u64, u32);
 
-fn doc_of(suffix: &[u8]) -> Option<Doc> {
+pub(super) fn doc_of(suffix: &[u8]) -> Option<Doc> {
     match suffix.len() {
         12 => Some((keys::be8(&suffix[..8])?, keys::be4(&suffix[8..])?)),
         8 => Some((keys::be8(suffix)?, 0)),
@@ -322,17 +407,25 @@ pub(crate) fn basename_pages(
     handles: &[String],
 ) -> Result<Option<BTreeSet<u64>>> {
     let mut out = BTreeSet::new();
+    let overlay = Overlay::read(read, false)?;
     for handle in handles {
         if handle.len() > usize::from(u16::MAX) {
             return Ok(None);
         }
         let prefix = keys::keyword_term_prefix(KW_BASENAME, handle.as_bytes());
         scan_prefix(read, &prefix, false, &mut |k, _| {
-            if let Some((page, _)) = doc_of(&k[prefix.len()..]) {
-                out.insert(page);
+            if let Some(doc) = doc_of(&k[prefix.len()..])
+                && !overlay.holds(doc)
+            {
+                out.insert(doc.0);
             }
             true
         })?;
+        out.extend(
+            overlay
+                .entries(KW_BASENAME, handle.as_bytes())
+                .map(|(doc, _)| doc.0),
+        );
     }
     Ok(Some(out))
 }
@@ -345,14 +438,20 @@ pub(crate) fn title_trigram_pages(
     need: usize,
 ) -> Result<Vec<u64>> {
     let mut shared: BTreeMap<u64, usize> = BTreeMap::new();
+    let overlay = Overlay::read(read, false)?;
     for t in trigrams {
         let prefix = keys::keyword_term_prefix(KW_TITLE_TRIGRAM, t);
         scan_prefix(read, &prefix, false, &mut |k, _| {
-            if let Some((page, _)) = doc_of(&k[prefix.len()..]) {
-                *shared.entry(page).or_default() += 1;
+            if let Some(doc) = doc_of(&k[prefix.len()..])
+                && !overlay.holds(doc)
+            {
+                *shared.entry(doc.0).or_default() += 1;
             }
             true
         })?;
+        for (doc, _) in overlay.entries(KW_TITLE_TRIGRAM, t) {
+            *shared.entry(doc.0).or_default() += 1;
+        }
     }
     Ok(shared
         .into_iter()
@@ -381,15 +480,31 @@ impl Postings {
     pub(crate) fn read(read: &dyn KvRead, kind: u8, queries: &[&TsQuery]) -> Result<Self> {
         let words: BTreeSet<&str> = queries.iter().flat_map(|q| query_lexemes(q)).collect();
         let mut lists = BTreeMap::new();
+        let overlay = if words.is_empty() {
+            None
+        } else {
+            Some(Overlay::for_kind(read, kind)?)
+        };
         for word in words {
             let prefix = keys::keyword_term_prefix(kind, word.as_bytes());
             let mut list = Vec::new();
+            let overlay = overlay.as_ref().expect("read when words exist");
             scan_prefix(read, &prefix, false, &mut |k, v| {
-                if let Some(doc) = doc_of(&k[prefix.len()..]) {
+                if let Some(doc) = doc_of(&k[prefix.len()..])
+                    && !overlay.holds(doc)
+                {
                     list.push((doc, decode_positions(v)));
                 }
                 true
             })?;
+            if !overlay.is_empty() {
+                list.extend(
+                    overlay
+                        .entries(kind, word.as_bytes())
+                        .map(|(doc, v)| (doc, decode_positions(v))),
+                );
+                list.sort_by_key(|a| a.0);
+            }
             lists.insert(word.to_owned(), list);
         }
         Ok(Postings { lists })

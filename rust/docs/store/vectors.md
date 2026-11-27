@@ -78,8 +78,9 @@ and 9.1/10.4 after at 10,000 pages, 28.5/35.5 and 22.4/26.7 at 50,000; the 4% so
 10,000, 89.9/109.4 and 38.9/44.3 at 50,000. Three more interleaved runs at 10,000 pages agree; the one loss
 is about 0.3 ms at the unfiltered 10,000-page p50. An earlier run of the same binaries measured the
 filtered "before" cases faster (34 ms and 70 ms for the 4% source), unexplained. `verify` compared 404
-cases per size through the default path, the walk and the full scan with 0 mismatches. `cosinesByChunkIds` still reads every
-page (about 590 ms at 50,000 pages).
+cases per size through the default path, the walk and the full scan with 0 mismatches. These benches ran before the keyed lookups, when
+`cosinesByChunkIds` read every page (about 590 ms at 50,000 pages); it now reads only the pages that hold the asked
+chunk ids ([keyed-index.md](keyed-index.md), `## cosinesByChunkIds` below).
 
 ## searchTakesVector
 
@@ -161,7 +162,8 @@ vectors by `updateTakeEmbeddings`; both raise the vector generation. The parity 
 ## `cosinesByChunkIds`
 
 The hybrid pipeline rescores the vector arm's candidates with `cosinesByChunkIds(ids, column, query)`, which the
-store serves as an exact scan (`Store::cosines_by_chunk_ids`): one `{ id, cosine }` row per chunk that is
+store serves as an exact cosine (`Store::cosines_by_chunk_ids`) over only the pages that hold those chunk ids, found by
+key ([keyed-index.md](keyed-index.md)): one `{ id, cosine }` row per chunk that is
 visible to `getEmbeddingsByChunkIds` and has a vector, and no row for an id that is missing, deleted or has no
 vector. The score is the text-space cosine, and it is `0` when the stored vector has another dimension count
 or either norm is zero. The TypeScript member returns a map of chunk id to cosine. A query pgvector cannot parse refuses `invalid_argument`. The TypeScript member refuses a

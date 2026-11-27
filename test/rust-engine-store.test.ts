@@ -998,3 +998,147 @@ describe('the addon searchKeyword on a Rust brain', () => {
     expect(nonEmpty).toBeGreaterThan(20);
   });
 });
+
+/**
+ * Derived link batches (store-members/link-queries.ts `replaceDerivedLinksBatch`): a batch of origins runs in one store
+ * transaction, so it commits once (one durable sync); a failure anywhere in it rolls the whole batch back and the
+ * caller's page-by-page replay ends with the rows a clean run writes; and a batch the call acknowledged survives a
+ * SIGKILL of the process and a reopen.
+ */
+describe('Derived link batches on a Rust brain', () => {
+  const ORIGINS = ['people/p0', 'people/p1', 'people/p2'];
+  const TARGETS = ['companies/c0', 'companies/c1', 'companies/c2'];
+
+  async function seed(engine: RustEngine): Promise<void> {
+    for (const slug of TARGETS) await engine.putPage(slug, { type: 'company', title: slug, compiled_truth: `${slug} body`, timeline: '' });
+    for (const [i, slug] of ORIGINS.entries()) {
+      const body = `Works at [[${TARGETS[i]}]] and advises [[${TARGETS[(i + 1) % 3]}]].\n\n- works_at [[${TARGETS[i]}]] (since 2019)`;
+      await engine.putPage(slug, { type: 'person', title: slug, compiled_truth: body, timeline: `- **2021-01-01** | Joined [[${TARGETS[i]}]]` });
+    }
+  }
+
+  async function batch(engine: RustEngine) {
+    const items = [];
+    for (const [i, slug] of ORIGINS.entries()) {
+      const snap = await engine.readPageSnapshot(slug, { sourceId: 'default' });
+      items.push({
+        origin: { slug, sourceId: 'default', expectedRevision: snap!.revision, sourceIncarnation: snap!.sourceIncarnation },
+        links: [
+          { from_slug: slug, to_slug: TARGETS[i]!, link_type: 'works_at', link_source: 'markdown' },
+          { from_slug: slug, to_slug: TARGETS[(i + 1) % 3]!, link_type: 'advises', link_source: 'markdown' },
+        ],
+      });
+    }
+    return items;
+  }
+
+  /** Every link of every origin and the relationship keys of their pages, without ids or times. */
+  async function rows(engine: RustEngine) {
+    const out: unknown[] = [];
+    const ids: number[] = [];
+    for (const slug of ORIGINS) {
+      const links = await engine.getLinks(slug);
+      out.push(links.map(l => `${l.from_slug}>${l.to_slug}:${l.link_type}:${l.link_source ?? ''}`).sort());
+      ids.push(Number((await engine.getPage(slug) as { id: number }).id));
+    }
+    const keys = await engine.linkRelationshipKeysForPages(ids);
+    return { links: out, keys: keys.map(k => JSON.stringify(k)).sort() };
+  }
+
+  withAddon('a batch commits once, and a failure inside it rolls the whole batch back before the page-by-page replay', async () => {
+    const { replaceDerivedLinksBatchOrReplay } = await import('../src/core/derived-links.ts');
+    const clean = (await open()).engine;
+    const failing = (await open()).engine;
+    await seed(clean);
+    await seed(failing);
+    const profile = (addon as unknown as { commitProfile(reset?: boolean): { commits: number } }).commitProfile;
+    profile(true);
+    await clean.replaceDerivedLinksBatch(await batch(clean));
+    expect(profile(true).commits).toBe(1);
+    const want = await rows(clean);
+    expect(want.links).toEqual([
+      ['people/p0>companies/c0:works_at:markdown', 'people/p0>companies/c1:advises:markdown'].sort(),
+      ['people/p1>companies/c1:works_at:markdown', 'people/p1>companies/c2:advises:markdown'].sort(),
+      ['people/p2>companies/c0:advises:markdown', 'people/p2>companies/c2:works_at:markdown'].sort(),
+    ]);
+
+    // The second origin's temporal write fails once: the store call for every origin's links and the first origin's
+    // temporal rows already ran inside the transaction, and all of it rolls back.
+    const proto = (addon as unknown as { Brain: { prototype: Record<string, (...a: unknown[]) => Promise<unknown>> } }).Brain.prototype;
+    const real = proto.applyLinkTemporalRows!;
+    let calls = 0;
+    let failAt = 2;
+    proto.applyLinkTemporalRows = function (this: unknown, ...args: unknown[]) {
+      calls += 1;
+      if (calls === failAt) return Promise.reject(Object.assign(new Error('injected disk failure'), { code: 'store_io' }));
+      return real.apply(this, args);
+    };
+    try {
+      const before = await rows(failing);
+      const refused = await failing.replaceDerivedLinksBatch(await batch(failing)).then(() => null, (e: unknown) => e);
+      expect(refused).toBeInstanceOf(Error);
+      expect(calls).toBe(2);
+      expect(await rows(failing)).toEqual(before);
+
+      // Through the extract helper: the batch fails the same way, then each origin is replayed on its own.
+      calls = 0;
+      failAt = 2;
+      const replayed: string[] = [];
+      const spy = new Proxy(failing, {
+        get(target, key, receiver) {
+          const value = Reflect.get(target, key, receiver);
+          if (key === 'replaceDerivedLinks' && typeof value === 'function') {
+            return (...args: unknown[]) => { replayed.push((args[0] as { slug: string }).slug); return (value as (...a: unknown[]) => unknown).apply(target, args); };
+          }
+          return value;
+        },
+      });
+      const outcomes = await replaceDerivedLinksBatchOrReplay(spy as never, await batch(failing));
+      expect(replayed).toEqual(ORIGINS);
+      expect(outcomes).toHaveLength(3);
+    } finally {
+      proto.applyLinkTemporalRows = real;
+    }
+    expect(await rows(failing)).toEqual(want);
+  });
+
+  withAddon('a batch the call acknowledged is still there after the process is killed and the brain reopens', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'gbrain-rust-store-'));
+    dirs.push(dir);
+    const root = join(import.meta.dir, '..');
+    // The child writes one batch at a time and prints ACK <n> only after the call resolved, then starts the next.
+    const child = `
+      const { loadRustAddon } = await import(${JSON.stringify(join(root, 'src/core/rust-engine/addon-loader.ts'))});
+      const { openRustEngine } = await import(${JSON.stringify(join(root, 'src/core/rust-engine.ts'))});
+      const addon = await loadRustAddon({ env: { GBRAIN_RUST_ENGINE_ADDON: ${JSON.stringify(BUILT)} } });
+      const engine = openRustEngine({ addon, databasePath: ${JSON.stringify(dir)} });
+      await engine.connect({ engine: 'pglite', database_path: ${JSON.stringify(dir)} });
+      await engine.putPage('companies/t', { type: 'company', title: 't', compiled_truth: 't', timeline: '' });
+      for (let n = 0; ; n++) {
+        const slug = 'people/p' + n;
+        await engine.putPage(slug, { type: 'person', title: slug, compiled_truth: 'Works at [[companies/t]].', timeline: '' });
+        const snap = await engine.readPageSnapshot(slug, { sourceId: 'default' });
+        await engine.replaceDerivedLinksBatch([{ origin: { slug, sourceId: 'default', expectedRevision: snap.revision,
+          sourceIncarnation: snap.sourceIncarnation }, links: [{ from_slug: slug, to_slug: 'companies/t', link_type: 'works_at', link_source: 'markdown' }] }]);
+        process.stdout.write('ACK ' + n + '\\n');
+      }`;
+    const proc = Bun.spawn([process.execPath, '-e', child], { stdout: 'pipe', stderr: 'pipe', env: { ...process.env, GBRAIN_SWEEP: '0' } });
+    const reader = proc.stdout.getReader();
+    let text = '';
+    let acked = -1;
+    while (acked < 3) {
+      const { value, done } = await reader.read();
+      if (done) throw new Error(`child ended before ACK 3: ${await new Response(proc.stderr).text()}`);
+      text += new TextDecoder().decode(value);
+      const seen = [...text.matchAll(/ACK (\d+)\n/g)].map(m => Number(m[1]));
+      if (seen.length) acked = Math.max(...seen);
+    }
+    proc.kill('SIGKILL');
+    await proc.exited;
+    const { engine } = await open(dir);
+    for (let n = 0; n <= acked; n++) {
+      const links = await engine.getLinks(`people/p${n}`);
+      expect(links.map(l => `${l.from_slug}>${l.to_slug}:${l.link_type}`)).toEqual([`people/p${n}>companies/t:works_at`]);
+    }
+  });
+});

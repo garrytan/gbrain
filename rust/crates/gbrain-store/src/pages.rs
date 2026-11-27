@@ -1578,7 +1578,8 @@ impl Store {
         self.write(|tx| Ok(put_page_in(tx, &*self.env, slug, input, options)?.to_page()))
     }
 
-    /// `listPages(filters)`. Scans every page.
+    /// `listPages(filters)`. Sorted by `updated_at` with no type, tag or slug filter it walks the
+    /// updated-order lookup (`keyed_index.rs`); otherwise it scans every page.
     pub fn list_pages(&self, filters: &PageFilters) -> Result<Vec<Value>> {
         let limit = filters.limit.filter(|l| *l > 0).unwrap_or(100);
         let offset = filters.offset.unwrap_or(0);
@@ -1608,33 +1609,93 @@ impl Store {
             .collect();
         // One snapshot serves the page scan and the family columns.
         let read = self.read()?;
+        let matches = |p: &PageRecord| {
+            (filters.include_deleted || p.deleted_at_us.is_none())
+                && filters.page_type.as_ref().is_none_or(|t| &p.page_type == t)
+                && filters.tag.as_ref().is_none_or(|t| p.tags.contains(t))
+                && sources
+                    .as_ref()
+                    .is_none_or(|s| s.contains(p.source_id.as_str()))
+                && filters
+                    .slug_prefix
+                    .as_ref()
+                    .is_none_or(|x| p.slug.starts_with(x.as_str()))
+                && !excluded.iter().any(|x| p.slug.starts_with(x))
+                && filters
+                    .slug_after
+                    .as_ref()
+                    .is_none_or(|x| p.slug.as_str() > x.as_str())
+                && match &after {
+                    None => true,
+                    Some((ts, None)) => p.updated_at_us > *ts,
+                    Some((ts, Some(slug))) => {
+                        p.updated_at_us > *ts
+                            || (p.updated_at_us == *ts && p.slug.as_str() > slug.as_str())
+                    }
+                }
+        };
+        // Sorted by updated_at with no type, tag or slug filter: walk the updated-order lookup
+        // (`keyed_index.rs`) and stop at offset + limit kept rows, the same rows in the same order.
+        let newest_first = !matches!(
+            filters.sort.as_deref(),
+            Some("updated_asc" | "created_desc" | "slug")
+        );
+        let by_updated = newest_first || filters.sort.as_deref() == Some("updated_asc");
+        // Under the test switch (`keyed_index::FULL_SCAN`) the walk is skipped entirely, so the
+        // comparison tests check it against this member's own scan, sort and slice below.
+        if by_updated
+            && !crate::keyed_index::full_scan()
+            && filters.page_type.is_none()
+            && filters.tag.is_none()
+            && filters.slug_prefix.is_none()
+            && excluded.is_empty()
+            && filters.slug_after.is_none()
+        {
+            let want = offset.saturating_add(limit);
+            let floor = after.as_ref().map(|(ts, _)| *ts);
+            let mut kept: Vec<PageRecord> = Vec::new();
+            let mut failure = None;
+            if want > 0 {
+                crate::keyed_index::walk_pages_by_updated(
+                    &*read,
+                    newest_first,
+                    if newest_first { None } else { floor },
+                    &mut |page| {
+                        // Newest first, every later page is older still: past the floor nothing matches.
+                        if newest_first && floor.is_some_and(|ts| page.updated_at_us < ts) {
+                            return Ok(false);
+                        }
+                        if !matches(&page) {
+                            return Ok(true);
+                        }
+                        if let Some(policy) = &filters.exclude_private {
+                            match page_hidden(&*read, &page, policy) {
+                                Ok(true) => return Ok(true),
+                                Ok(false) => {}
+                                Err(e) => {
+                                    failure = Some(e);
+                                    return Ok(false);
+                                }
+                            }
+                        }
+                        kept.push(page);
+                        Ok(kept.len() < want)
+                    },
+                )?;
+            }
+            if let Some(e) = failure {
+                return Err(e);
+            }
+            return kept
+                .iter()
+                .skip(offset)
+                .take(limit)
+                .map(|page| page.to_page_with_columns(&*read))
+                .collect();
+        }
         let mut pages: Vec<PageRecord> = all_pages(&*read)?
             .into_iter()
-            .filter(|p| {
-                (filters.include_deleted || p.deleted_at_us.is_none())
-                    && filters.page_type.as_ref().is_none_or(|t| &p.page_type == t)
-                    && filters.tag.as_ref().is_none_or(|t| p.tags.contains(t))
-                    && sources
-                        .as_ref()
-                        .is_none_or(|s| s.contains(p.source_id.as_str()))
-                    && filters
-                        .slug_prefix
-                        .as_ref()
-                        .is_none_or(|x| p.slug.starts_with(x.as_str()))
-                    && !excluded.iter().any(|x| p.slug.starts_with(x))
-                    && filters
-                        .slug_after
-                        .as_ref()
-                        .is_none_or(|x| p.slug.as_str() > x.as_str())
-                    && match &after {
-                        None => true,
-                        Some((ts, None)) => p.updated_at_us > *ts,
-                        Some((ts, Some(slug))) => {
-                            p.updated_at_us > *ts
-                                || (p.updated_at_us == *ts && p.slug.as_str() > slug.as_str())
-                        }
-                    }
-            })
+            .filter(|p| matches(p))
             .collect();
         if let Some(policy) = &filters.exclude_private {
             let mut kept = Vec::with_capacity(pages.len());

@@ -1,6 +1,7 @@
 //! The store format 14 upgrade deletes the legacy word postings in its one write transaction: a
 //! failed upgrade leaves the old brain byte for byte, the next open upgrades it, keyword search
-//! answers as before, and a build that stops at format 8 refuses the upgraded brain.
+//! answers as before, a format-13 brain keeps its pending keyword records, and a build that stops
+//! at any earlier format (8, 9, 12 or 13) refuses the upgraded brain.
 
 use super::*;
 use crate::kv::Kv;
@@ -138,9 +139,37 @@ fn old_brain(version: u32) -> (Arc<dyn Kv>, usize, Vec<Value>) {
     (kv, postings, said)
 }
 
+/// The formats this build opens from 8 on below its own: each one an older build stopped at.
+fn earlier_formats() -> Vec<u32> {
+    crate::FORMAT_VERSIONS
+        .iter()
+        .copied()
+        .filter(|v| *v >= 8 && *v < crate::FORMAT_VERSION)
+        .collect()
+}
+
+/// The pending keyword records (`keyword/pending.rs`, under `R`) and their count.
+fn pending_records(kv: &dyn Kv) -> Vec<(Vec<u8>, Vec<u8>)> {
+    let mut out = Vec::new();
+    let snap = kv.snapshot().unwrap();
+    for kind in [
+        keys::KW_CHUNK_PENDING,
+        keys::KW_PAGE_PENDING,
+        keys::KW_PENDING_COUNT,
+    ] {
+        scan_prefix(&*snap, &[keys::TRIGRAM, kind], false, &mut |k, v| {
+            out.push((k.to_vec(), v.to_vec()));
+            true
+        })
+        .unwrap();
+    }
+    out
+}
+
 #[test]
 fn a_format_8_brain_loses_its_legacy_postings_and_answers_as_before() {
-    for version in [7, 8] {
+    assert_eq!(earlier_formats(), [8, 9, 12, 13]);
+    for version in std::iter::once(7).chain(earlier_formats()) {
         let (kv, postings, said) = old_brain(version);
         assert!(postings > 0);
         let store = Store::open_kv(kv.clone(), env(), OpenOptions::default()).unwrap();
@@ -195,25 +224,68 @@ fn an_upgrade_that_fails_at_its_commit_leaves_the_format_8_brain_and_runs_again(
     upgrade_fails_then_succeeds(crate::test_support::FaultOp::Commit);
 }
 
-/// A build that opens formats 1 to 8 only refuses a brain this build upgraded, before it writes
-/// anything (it would write legacy postings again).
+/// A format-13 brain holding pending keyword records (writes that have not folded yet) and the
+/// legacy word postings opens at this build's format: the step deletes the postings and changes no
+/// other record, so the pending records, the keyed entries and every other record stay byte for
+/// byte, and search answers as before.
 #[test]
-fn a_format_8_build_refuses_a_brain_at_this_build_s_format() {
+fn a_format_13_brain_keeps_its_pending_records_and_loses_its_legacy_postings() {
+    assert!(earlier_formats().contains(&13));
+    let (kv, postings, said) = old_brain(13);
+    assert!(postings > 0);
+    let pending = pending_records(&*kv);
+    assert!(
+        pending.len() > 1,
+        "the brain holds no pending keyword record to keep"
+    );
+    let format_key = keys::meta("format");
+    let others = |kv: &dyn Kv| -> Vec<(Vec<u8>, Vec<u8>)> {
+        dump(kv)
+            .into_iter()
+            .filter(|(k, _)| *k != format_key && k.first() != Some(&keys::POSTING))
+            .collect()
+    };
+    let before = others(&*kv);
+    let store = Store::open_kv(kv.clone(), env(), OpenOptions::default()).unwrap();
+    assert_eq!(store.info().format_version, crate::FORMAT_VERSION);
+    assert_eq!(legacy_count(&*kv), 0, "postings left");
+    assert_eq!(pending_records(&*kv), pending);
+    assert!(
+        others(&*kv) == before,
+        "the step from format 13 changed a record"
+    );
+    assert_eq!(answers(&store), said);
+}
+
+/// A build that stops at any earlier format this build opens from 8 on (8, 9, 12 or 13) refuses a
+/// brain this build upgraded, before it writes anything (it would write legacy postings again).
+#[test]
+fn every_older_build_refuses_a_brain_at_this_build_s_format() {
     let (kv, _, _) = old_brain(8);
     drop(Store::open_kv(kv.clone(), env(), OpenOptions::default()).unwrap());
     let before = dump(&*kv);
-    let format_8_build: Vec<u32> = (1..=8).collect();
-    let err = Store::open_kv_in(kv.clone(), env(), OpenOptions::default(), &format_8_build)
-        .err()
-        .expect("a format-8 build must refuse the upgraded brain");
-    assert_eq!(err.code, crate::error::FORMAT_UNKNOWN, "{}", err.message);
-    assert!(
-        err.message
-            .contains(&format!("store format {}", crate::FORMAT_VERSION)),
-        "{}",
-        err.message
-    );
-    assert!(dump(&*kv) == before, "the refused open changed records");
+    assert_eq!(earlier_formats(), [8, 9, 12, 13]);
+    for last in earlier_formats() {
+        let older: Vec<u32> = crate::FORMAT_VERSIONS
+            .iter()
+            .copied()
+            .filter(|v| *v <= last)
+            .collect();
+        let err = Store::open_kv_in(kv.clone(), env(), OpenOptions::default(), &older)
+            .err()
+            .unwrap_or_else(|| panic!("a format-{last} build must refuse the upgraded brain"));
+        assert_eq!(err.code, crate::error::FORMAT_UNKNOWN, "{}", err.message);
+        assert!(
+            err.message
+                .contains(&format!("store format {}", crate::FORMAT_VERSION)),
+            "{}",
+            err.message
+        );
+        assert!(
+            dump(&*kv) == before,
+            "the refused open by the format-{last} build changed records"
+        );
+    }
 }
 
 /// A new brain writes no legacy posting, whatever it holds.

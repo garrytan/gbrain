@@ -887,6 +887,21 @@ fn decode_all<T: DeserializeOwned>(raw: Vec<(Vec<u8>, Vec<u8>)>) -> Result<Vec<(
         .collect()
 }
 
+/// The transitions an origin page may own: those its keyed entries name (`keyed_index.rs`), in key
+/// order, as `scan_tag(read, TRANSITION)` would list them. The caller keeps its own test.
+fn transitions_of_origin(
+    read: &dyn KvRead,
+    page_id: u64,
+) -> Result<Vec<(Vec<u8>, TransitionRecord)>> {
+    let mut raw = Vec::new();
+    for key in crate::keyed_index::transitions_by_origin(read, page_id)? {
+        if let Some(value) = read.get(&key)? {
+            raw.push((key, value));
+        }
+    }
+    decode_all(raw)
+}
+
 fn scan_under<T: DeserializeOwned>(read: &dyn KvRead, prefix: &[u8]) -> Result<Vec<(Vec<u8>, T)>> {
     let mut raw = Vec::new();
     scan_prefix(read, prefix, false, &mut |k, v| {
@@ -1247,7 +1262,7 @@ fn keys_for_origin(
             keys.insert(RelationshipKey::of_link(&link));
         }
     }
-    for (_, t) in scan_tag::<TransitionRecord>(read, TRANSITION)? {
+    for (_, t) in transitions_of_origin(read, page_id)? {
         if t.origin_page_id == Some(page_id) {
             keys.insert(t.key());
         }
@@ -1746,7 +1761,7 @@ impl Store {
                 }
             }
             let mut doomed = Vec::new();
-            for (key, t) in scan_tag::<TransitionRecord>(&*tx, TRANSITION)? {
+            for (key, t) in transitions_of_origin(&*tx, page_id)? {
                 if t.origin_page_id == Some(page_id) && input.producers.contains(&t.producer) {
                     doomed.push(key);
                 }
@@ -1801,7 +1816,13 @@ impl Store {
                     live_targets.push(slug.clone());
                 }
             }
-            let keys_after = keys_for_origin(&*tx, page_id, &input.link_types)?;
+            // The keyed lookup of this statement's own new transitions is written when the statement
+            // ends (`keyed_index.rs`), so the rows inserted above are added here; a row it deleted
+            // reads back as gone.
+            let mut keys_after = keys_for_origin(&*tx, page_id, &input.link_types)?;
+            keys_after.extend(inserted.iter().cloned());
+            keys_after.sort();
+            keys_after.dedup();
             Ok(ApplyTemporalResult {
                 inserted,
                 live_targets,

@@ -14,8 +14,9 @@ listed as row 50 of docs/designs/RUST_ENGINE.md. A `Page` is PGLite's `Page` plu
 (`2026-08-10T12:00:00.000123Z`) or `null`, and the TypeScript wrapper turns them into `Date`.
 A page's `knowledge_revision` is a UUID that changes when its type, kind, title, body, timeline,
 frontmatter, deletion or tags change. `text_projection_revision` is `null` until chunks are
-installed for that revision. `listPages` and `resolveSlugs` scan every page; there are no
-secondary indexes yet.
+installed for that revision. `resolveSlugs` scans every page. `listPages` sorted by `updated_at` with no type, tag or
+slug filter walks the updated-order keyed lookup ([keyed-index.md](keyed-index.md)) and reads only the pages it
+returns; any other `listPages` scans every page.
 
 | JS | Resolves | Mirrors |
 | --- | --- | --- |
