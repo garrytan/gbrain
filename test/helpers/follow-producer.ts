@@ -3,7 +3,9 @@ import type { BrainEngine } from '../../src/core/engine.ts';
 import { newMirrorCounters } from '../../src/shadow/mirror.ts';
 import type { InvalidationBatch } from '../../src/shadow/invalidations.ts';
 import { wrapShadowEngine, type ShadowSink } from '../../src/shadow/wrapper.ts';
+import { createWriteSampler } from '../../src/shadow/write-capture.ts';
 import { WRITE_MAP } from '../../src/shadow/write-map.ts';
+import { withStoredSlug } from '../../src/core/utils.ts';
 
 export interface FollowHarness<E extends BrainEngine> {
   engine: E;
@@ -136,4 +138,101 @@ export async function syncThrowRollsBackHeldWrite(primary: BrainEngine): Promise
   await new Promise((r) => setTimeout(r, 300));
   if (!threw) throw new Error('the transaction did not report the callback error');
   if (!(await primary.getPage('people/held'))) throw new Error('the held delete committed after the transaction rolled back');
+}
+
+/**
+ * Follow and write sampling wired together, as production wires them: a sampled page write holds the sampler's gate, and a tag write sent beside it
+ * waits there. When it is let go, its own pre-read must not wait for itself: it is planned row by row, at once, not relation-level after a timeout.
+ */
+export async function sampledSiblingDoesNotWaitForItself(primary: BrainEngine): Promise<void> {
+  const batches: InvalidationBatch[] = [];
+  const sampler = createWriteSampler({ rate: 1, active: () => true, send: () => true });
+  const engine = wrapShadowEngine(primary, { counters: newMirrorCounters(), offer: () => {}, active: () => true }, { sampleRate: 0, writes: sampler, follow: { sink: { publish: (b) => { batches.push(b); } } } });
+  await primary.putPage('notes/gate', PAGE('Gate'));
+  const t0 = Date.now();
+  await engine.transaction(async (tx) => { await Promise.all([tx.putPage('notes/gate', PAGE('Gate Updated'), { sourceId: 'default', inline: true } as never), tx.addTag('notes/gate', 'tagged')]); });
+  const ms = Date.now() - t0;
+  await sampler.settle(2_000);
+  const items = batches.flatMap((b) => b.items);
+  if (items.some((i) => i.kind === 'relation' && i.reason === 'pre_read_busy')) throw new Error(`a call waited for itself and was planned relation-level (${ms} ms): ${JSON.stringify(items)}`);
+  if (!(await primary.getTags('notes/gate')).includes('tagged')) throw new Error('the tag write was lost');
+}
+
+/**
+ * A followed write the callback starts and does not await (its pre-read runs first): the transaction's COMMIT waits until it has been sent, so
+ * it commits as it would without the shadow, never failing on a connection the transaction already gave back.
+ */
+export async function unawaitedFollowedWriteCommits(primary: BrainEngine): Promise<void> {
+  const h = followHarness(primary);
+  await primary.putPage('people/unawaited', PAGE('Unawaited'));
+  const failures: unknown[] = [];
+  let pending: Promise<unknown> | undefined;
+  await h.engine.transaction(async (tx) => { pending = tx.deletePage('people/unawaited').catch((e) => { failures.push(e); }); });
+  await pending;
+  if (failures.length) throw new Error(`the followed write failed after the COMMIT: ${String((failures[0] as Error)?.message ?? failures[0])}`);
+  if (await primary.getPage('people/unawaited')) throw new Error('the followed delete did not commit');
+}
+
+/** A call held behind a slow pre-read, when the callback then fails: the held call is sent before the ROLLBACK, so it is rolled back with the rest. */
+export async function heldCallRollsBackWithItsTransaction(primary: BrainEngine): Promise<void> {
+  const h = followHarness(primary, { preReadSql: 'SELECT pg_sleep(0.3)' }); // a slow pre-read holds the lane
+  await primary.putPage('people/held-delete', PAGE('Held Delete'));
+  let pending: Promise<unknown> | undefined;
+  let threw = false;
+  try {
+    await h.engine.transaction(async (tx) => {
+      void tx.deletePage('people/held-delete').catch(() => undefined);
+      pending = tx.putPage('people/queued', PAGE('Queued')).catch(() => undefined); // held while the pre-read runs
+      await new Promise((r) => setTimeout(r, 50));
+      throw new Error('abort');
+    });
+  } catch (error) { threw = (error as Error).message === 'abort'; }
+  await pending;
+  await new Promise((r) => setTimeout(r, 300));
+  if (!threw) throw new Error('the transaction did not report the callback error');
+  if (await primary.getPage('people/queued')) throw new Error('the held page write committed after the transaction rolled back');
+  if (!(await primary.getPage('people/held-delete'))) throw new Error('the delete committed after the transaction rolled back');
+}
+
+/** A write sent while a nested transaction runs waits for it, so the nested rollback cannot undo the outer write. */
+export async function outerWriteSurvivesNestedRollback(primary: BrainEngine): Promise<void> {
+  const h = followHarness(primary);
+  await primary.setConfig('test.follow.nested', 'set');
+  await h.engine.transaction(async (tx) => {
+    await Promise.all([
+      tx.transaction(async (nested) => { await nested.getConfig('test.follow.nested'); await new Promise((r) => setTimeout(r, 50)); throw new Error('nested abort'); }).catch(() => undefined),
+      tx.unsetConfig('test.follow.nested'),
+    ]);
+  });
+  const [row] = await primary.executeRaw<{ value: string }>("SELECT value FROM config WHERE key = 'test.follow.nested'");
+  const left = row?.value;
+  if (left !== null && left !== undefined) throw new Error(`the outer unsetConfig was undone by the nested rollback (value ${JSON.stringify(left)})`);
+}
+
+/** A call held behind a pre-read keeps its own caller's context: a write scoped to a page's stored legacy spelling updates that page, never a twin. */
+export async function heldCallKeepsItsContext(primary: BrainEngine): Promise<void> {
+  const h = followHarness(primary, { preReadSql: 'SELECT pg_sleep(0.1)' });
+  await primary.putPage('people/legacy-seed', PAGE('Legacy'));
+  await primary.executeRaw("UPDATE pages SET slug='People/Legacy' WHERE slug='people/legacy-seed'");
+  await primary.putPage('people/gone', PAGE('Gone'));
+  await h.engine.transaction(async (tx) => {
+    await Promise.all([
+      tx.deletePage('people/gone'), // its pre-read holds the lane
+      withStoredSlug('People/Legacy', () => tx.putPage('People/Legacy', PAGE('Legacy Updated'))), // held behind it
+    ]);
+  });
+  const rows = await primary.executeRaw<{ slug: string; title: string }>("SELECT slug, title FROM pages WHERE lower(slug) = 'people/legacy' ORDER BY slug");
+  if (JSON.stringify(rows.map((r) => [r.slug, r.title])) !== JSON.stringify([['People/Legacy', 'Legacy Updated']])) throw new Error(`the held write lost its caller's context: ${JSON.stringify(rows)}`);
+}
+
+/** A nested transaction the callback already awaited no longer counts as running: the next followed write is planned row by row. */
+export async function finishedNestedIsNotBusy(primary: BrainEngine): Promise<void> {
+  const h = followHarness(primary);
+  await primary.putPage('people/after-nested', PAGE('After Nested'));
+  await h.engine.transaction(async (tx) => {
+    await tx.transaction(async (nested) => { await nested.getPage('people/after-nested'); });
+    await tx.addTag('people/after-nested', 'next');
+  });
+  const items = h.batches.flatMap((b) => b.items);
+  if (items.some((i) => i.kind === 'relation' && i.reason === 'pre_read_busy')) throw new Error(`a finished nested transaction made the next write busy: ${JSON.stringify(items)}`);
 }

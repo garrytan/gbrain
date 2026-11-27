@@ -14,7 +14,7 @@ import type { PostgresEngine } from '../../src/core/postgres-engine.ts';
 import type { Invalidation } from '../../src/shadow/invalidations.ts';
 import { hasDatabase } from './helpers.ts';
 import { persistencePostgresTemplate } from '../helpers/persistence-postgres.ts';
-import { busyPreReadIsRelationLevel, syncThrowRollsBackHeldWrite, failedPreReadKeepsSiblingWrites, failedPreReadKeepsTransaction, followHarness, PAGE, restoreFollowProbes } from '../helpers/follow-producer.ts';
+import { busyPreReadIsRelationLevel, finishedNestedIsNotBusy, heldCallKeepsItsContext, heldCallRollsBackWithItsTransaction, outerWriteSurvivesNestedRollback, sampledSiblingDoesNotWaitForItself, unawaitedFollowedWriteCommits, syncThrowRollsBackHeldWrite, failedPreReadKeepsSiblingWrites, failedPreReadKeepsTransaction, followHarness, PAGE, restoreFollowProbes } from '../helpers/follow-producer.ts';
 
 const d = hasDatabase() ? describe : describe.skip;
 
@@ -56,6 +56,12 @@ d('shadow follow producer on Postgres', () => {
   test('a failed pre-read does not undo sibling writes of the transaction that were in flight around it (pipelined)', async () => { await failedPreReadKeepsSiblingWrites(engine); }, 60_000);
   test('a pre-read never waits for a running nested transaction: the write is relation-level (pre_read_busy) and every write commits', async () => { await busyPreReadIsRelationLevel(engine); }, 60_000);
   test('a callback that throws at once rolls back the write a pre-read held (it is sent before the ROLLBACK)', async () => { await syncThrowRollsBackHeldWrite(engine); }, 60_000);
+  test('with write sampling on too, a call the sampler held does not wait for itself when it is let go', async () => { await sampledSiblingDoesNotWaitForItself(engine); }, 60_000);
+  test('a followed write the callback did not await is sent before the COMMIT and commits', async () => { await unawaitedFollowedWriteCommits(engine); }, 60_000);
+  test('a call held behind a slow pre-read is rolled back with its transaction when the callback fails', async () => { await heldCallRollsBackWithItsTransaction(engine); }, 60_000);
+  test('a write sent while a nested transaction runs is not undone by that nested rollback', async () => { await outerWriteSurvivesNestedRollback(engine); }, 60_000);
+  test("a call held behind a pre-read keeps its own caller's context (a stored legacy slug spelling)", async () => { await heldCallKeepsItsContext(engine); }, 60_000);
+  test('a nested transaction already awaited does not make the next followed write busy', async () => { await finishedNestedIsNotBusy(engine); }, 60_000);
 
   test('a rolled-back transaction and a rolled-back savepoint publish nothing for the undone work', async () => {
     const h = followHarness(engine);
