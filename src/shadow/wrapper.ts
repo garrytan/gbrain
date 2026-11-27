@@ -20,6 +20,7 @@
 import { AsyncResource } from 'node:async_hooks';
 import type { BrainEngine } from '../core/engine.ts';
 import { registerEngineView } from '../core/persistence/switches.ts';
+import { query as renderPgliteTemplate } from '@electric-sql/pglite/template';
 import { callerAccessRecord } from '../core/search/private-visibility.ts';
 import { CAPTURE_BUDGET_BYTES, CaptureTooLargeError, encodeArgs, encodeValue } from './codec.ts';
 import { followRaw, followScope, followWrite, laneCall, laneHeld, newTxLane, startedWithin, type FollowContext, type FollowOptions, type Frame, type LaneEntry, type TxLane } from './follow.ts';
@@ -133,17 +134,17 @@ function mayWrite(name: string, args: unknown[]): boolean {
   return true;
 }
 
-/** A real method, not an accessor: `get sql()` hands out the driver client, a function with its own properties that a bound copy would lose. */
 /** The driver handles an engine exposes: `get sql()` (Postgres) and `get db()` (PGLite). */
 const DRIVER_HANDLES: ReadonlySet<PropertyKey> = new Set(['sql', 'db']);
-/** Driver handle members that send a statement from its text: postgres.js `unsafe`, PGLite `query` and `exec`. */
+/** Driver handle members that send a statement from its text: postgres.js `unsafe`, PGLite `query` and `exec` (and PGLite's `sql` template, wrapped beside them). */
 const DRIVER_STATEMENT_MEMBERS: ReadonlySet<PropertyKey> = new Set(['unsafe', 'query', 'exec']);
 
-/** A postgres.js query not sent yet: it sends itself when first awaited (`then`, `catch`, `finally`). */
+/** A postgres.js query not sent yet: it sends itself through its `handle` when first awaited or started (`execute`, `forEach`, a cursor). */
 function isUnsentQuery(value: unknown): boolean {
   return value instanceof Promise && (value as { executed?: unknown }).executed === false && typeof (value as { handle?: unknown }).handle === 'function';
 }
 
+/** A real method, not an accessor: `get sql()` hands out the driver client, a function with its own properties that a bound copy would lose. */
 function isMethod(target: object, prop: PropertyKey): boolean {
   for (let o: object | null = target; o; o = Object.getPrototypeOf(o)) {
     const d = Object.getOwnPropertyDescriptor(o, prop);
@@ -152,29 +153,107 @@ function isMethod(target: object, prop: PropertyKey): boolean {
   return true;
 }
 
+/** What a described statement (`.describe()`, which plans it and runs nothing) passes the hold point as: a read. */
+const DESCRIBED_SQL = 'SELECT 1';
+
+/** A promise that settles the first time the connection settles `query`: its own resolve or reject, or the pair a cursor read with `for await` assigns before each batch. */
+function settledOf(query: Record<string, any>): Promise<unknown> {
+  const done = new Promise<unknown>((ok, fail) => {
+    for (const [name, end] of [['resolve', ok], ['reject', fail]] as const) {
+      const wrap = (fn: unknown): unknown => (typeof fn === 'function' ? (x: unknown) => { end(x); return (fn as (x: unknown) => unknown)(x); } : fn);
+      let current = wrap(query[name]);
+      Object.defineProperty(query, name, { configurable: true, enumerable: true, get: () => current, set: (fn: unknown) => { current = wrap(fn); } });
+    }
+  });
+  done.catch(() => undefined); // the caller sees the outcome on the query itself
+  return done;
+}
+
+/** Leads a statement that holds a structural value this file cannot render, so the follower reads it as unparsable (an invalidation), never as a read. */
+const UNREADABLE_DRIVER_SQL = 'UNREADABLE_DRIVER_FRAGMENT';
+
+/**
+ * The text postgres.js sends for a tagged template, as the follower and sampler must see it: an identifier (`sql('pages')`) is its quoted name, a
+ * query fragment is its own text in place, a column builder (`sql({...})`) is what it builds, and only a plain value becomes `$n`. Mirrors
+ * postgres.js `stringify` (vendor/postgres/src/types.js); a value it cannot render puts UNREADABLE_DRIVER_SQL first.
+ */
+function taggedText(strings: readonly string[], args: readonly unknown[], options: unknown): { text: string; params: unknown[] } {
+  const state = { params: [] as unknown[], unreadable: false };
+  const text = renderTagged(strings, args, state, options);
+  return { text: state.unreadable ? `${UNREADABLE_DRIVER_SQL} ${text}` : text, params: state.params };
+}
+type RenderState = { params: unknown[]; unreadable: boolean };
+const isQueryFragment = (v: unknown): v is { strings: string[]; args: unknown[] } =>
+  v instanceof Promise && Array.isArray((v as { strings?: unknown }).strings) && Array.isArray((v as { args?: unknown }).args);
+function renderTagged(strings: readonly string[], args: readonly unknown[], state: RenderState, options: unknown): string {
+  let text = strings[0] ?? '';
+  for (let i = 1; i < strings.length; i++) text += renderValue(text, args[i - 1], state, options) + strings[i];
+  return text;
+}
+function renderValue(before: string, value: unknown, state: RenderState, options: unknown): string {
+  if (isQueryFragment(value)) return renderTagged(value.strings, value.args, state, options);
+  if (Array.isArray(value) && isQueryFragment(value[0])) {
+    return value.map((q) => { if (isQueryFragment(q)) return ' ' + renderTagged(q.strings, q.args, state, options); state.unreadable = true; return ''; }).join('');
+  }
+  const kind = value && typeof value === 'object' ? (value as object).constructor?.name : undefined;
+  if (kind === 'Identifier' && typeof (value as { value?: unknown }).value === 'string') return (value as { value: string }).value;
+  if (kind === 'Parameter') { state.params.push((value as { value?: unknown }).value); return `$${state.params.length}`; }
+  if (kind === 'Builder' || (value && typeof value === 'object' && typeof (value as { build?: unknown }).build === 'function')) {
+    try {
+      const built = (value as { build: (...a: unknown[]) => unknown }).build(before, state.params, [], options);
+      if (typeof built === 'string') return built;
+      if (Array.isArray(built)) return built.join(',');
+    } catch { /* falls through to unreadable */ }
+    state.unreadable = true;
+    return '';
+  }
+  state.params.push(value);
+  return `$${state.params.length}`;
+}
+
 /**
  * The driver handle a transaction engine exposes (`sql` on Postgres, `db` on PGLite), seen through the same wrapping as `executeRaw`, so a statement sent on it is
- * followed, sampled and ordered like one sent through the engine. A postgres.js query (a tagged template or `unsafe`) is sent when it is first awaited, so it is
- * wrapped then: one built as a fragment of another query is never sent on its own. Every other member is the driver's own, bound to it.
+ * followed, sampled and ordered like one sent through the engine. A postgres.js query (a tagged template or `unsafe`) is sent when it is first awaited or started, so
+ * it is wrapped then (`lazy`): one built as a fragment of another query is never sent on its own, and its text is what postgres.js sends (taggedText). Every other member is
+ * the driver's own, called on the driver and keeping its own properties.
  */
 function viewOfDriver(handle: object, asRaw: (text: string, params: unknown[], send: () => unknown) => unknown): object {
   const raw = handle as Record<PropertyKey, any> & ((...args: unknown[]) => unknown);
-  /** Wraps a postgres.js query on its first await; a value that is not one unsent query (a helper, a fragment builder) is returned as it is. */
+  /**
+   * Routes a postgres.js query through the wrapping when it is sent. Every way to send one (`await`, `.then`, `.catch`, `.finally`, `.execute()`,
+   * `.forEach()`, a cursor) calls its `handle`, so the wrapping takes `handle` and the query stays the driver's own promise: a cancelled or failed
+   * query rejects to its own caller, a cursor ends as it does without the shadow, and the statement is handed to the driver one microtask after it is
+   * sent, as postgres.js does. A described statement (`.describe()`) runs nothing, so it passes the hold point as a read. A value that is not one
+   * unsent query (a helper, a fragment builder) is returned as it is.
+   */
   const lazy = (out: unknown, text: string, params: unknown[]): unknown => {
     if (!isUnsentQuery(out)) return out;
-    const query = out as Promise<unknown> & Record<string, unknown>;
-    const then = Object.getPrototypeOf(query).then as Promise<unknown>['then'];
-    let sent: Promise<unknown> | undefined;
-    const start = (): Promise<unknown> => (sent ??= Promise.resolve(asRaw(text, params, () => ({ then: (ok: any, fail: any) => then.call(query, ok, fail) }))));
-    Object.defineProperties(query, {
-      then: { configurable: true, writable: true, value: (ok?: any, fail?: any) => start().then(ok, fail) },
-      catch: { configurable: true, writable: true, value: (fail?: any) => start().catch(fail) },
-      finally: { configurable: true, writable: true, value: (done?: any) => start().finally(done) },
-    });
+    const query = out as Promise<unknown> & Record<string, any>;
+    query.handle = function shadowHandle(): Promise<void> {
+      if (query.executed) return Promise.resolve();
+      query.executed = true;
+      const done = settledOf(query);
+      let sent = false;
+      const send = (): Promise<unknown> => {
+        if (!sent) { sent = true; void Promise.resolve().then(() => query.handler(query)); }
+        return done;
+      };
+      try {
+        const routed = query.onlyDescribe ? asRaw(DESCRIBED_SQL, [], send) : asRaw(text, params, send);
+        // The wrapping's own outcome is the query's, which its caller holds; a wrapping that failed before the statement went out still sends it.
+        if (isThenable(routed)) routed.then(undefined, () => { send(); }); else send();
+      } catch { send(); }
+      return Promise.resolve();
+    };
     return query;
   };
   const members = new Map<PropertyKey, { original: unknown; wrapped: unknown }>();
   const statement = (prop: PropertyKey, fn: Function): Function => {
+    if (prop === 'sql') return function driverTemplate(strings: TemplateStringsArray, ...values: unknown[]) { // PGLite's tagged template
+      let rendered: { query: string; params: unknown[] };
+      try { rendered = renderPgliteTemplate(strings, ...values); } catch { rendered = { query: UNREADABLE_DRIVER_SQL, params: [] }; }
+      return asRaw(rendered.query, rendered.params, () => fn.call(raw, strings, ...values));
+    };
     if (prop === 'unsafe') return function driverUnsafe(text: unknown, params?: unknown, ...rest: unknown[]) { const out = fn.call(raw, text, params, ...rest); return typeof text === 'string' ? lazy(out, text, Array.isArray(params) ? params : []) : out; };
     // PGLite sends at the call: the statement goes through the wrapping before it is made.
     return function driverStatement(text: unknown, ...rest: unknown[]) {
@@ -186,14 +265,17 @@ function viewOfDriver(handle: object, asRaw: (text: string, params: unknown[], s
       const out = Reflect.apply(fn, raw, args);
       const strings = args[0] as { raw?: unknown } | undefined;
       if (!Array.isArray(strings) || !Array.isArray(strings.raw)) return out;
-      return lazy(out, (strings as string[]).reduce((text, part, i) => `${text}$${i}${part}`), args.slice(1));
+      const { text, params } = taggedText(strings as string[], args.slice(1), raw.options);
+      return lazy(out, text, params);
     },
     get(handleTarget, prop) {
       const value = Reflect.get(handleTarget, prop, handleTarget);
       if (typeof value !== 'function') return value;
       const memo = members.get(prop);
       if (memo && memo.original === value) return memo.wrapped;
-      const wrapped = DRIVER_STATEMENT_MEMBERS.has(prop) ? statement(prop, value) : value.bind(raw);
+      const wrapped = DRIVER_STATEMENT_MEMBERS.has(prop) || (prop === 'sql' && typeof raw !== 'function') ? statement(prop, value)
+        // Called with the driver as `this`, and keeps its own properties (postgres.js `sql.typed.bigint`, `sql.types`).
+        : new Proxy(value, { apply: (fn, _this, args) => Reflect.apply(fn, raw, args) });
       members.set(prop, { original: value, wrapped });
       return wrapped;
     },

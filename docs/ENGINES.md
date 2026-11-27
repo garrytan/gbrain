@@ -2092,11 +2092,13 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   later calls are held until the write is sent, so a failed read can never undo another statement of the transaction. A call that starts a callback during that wait makes the read skip at
   once, and so does a call that does not finish in time: that write is described relation-level instead. The transaction's
   end waits until no read holds the lane, and at most 2 seconds for calls it started and did not await. A statement sent
-  on the transaction's driver handle (`tx.sql` as a tagged template or `unsafe`, `tx.db.query` or `tx.db.exec`) goes
-  through the lane and the follower as `executeRaw` does; the handle's other members (`begin`, `savepoint`, `reserve`, a
-  query started with `execute()` or `cursor()`) are not seen. A nested transaction that waits for a later call of its
-  enclosing transaction while a read waits for it stalls until the 2-second bound; the read then skips and the call goes
-  on. The coverage watermark says whether every
+  on the transaction's driver handle (`tx.sql` as a tagged template or `unsafe`, `tx.db.query`, `tx.db.exec`, or on
+  PGLite the `tx.db.sql` template) goes through the lane and the follower as `executeRaw` does, however it is started
+  (awaited, `execute()`, `forEach()` or a cursor), as the text the driver sends. A structural value the shadow cannot
+  render makes that write an invalidation, and `describe()` counts as a read. Only the handle's `begin`, `savepoint`
+  and `reserve` are not seen. A nested transaction that waits for a later call of its enclosing transaction while a
+  read waits for it holds that call for 2 seconds; the lane then opens and the read waits up to 2 seconds more for the
+  nested transaction to end before it skips and the write is described relation-level. The coverage watermark says whether every
   committed write is in the store. It goes invalid on a shed, a gap in the write sequence, a failed read, a relation
   the follower cannot describe row by row (which then needs a pass for that relation), or rows the store had to
   displace. **Every session that owns the store starts invalid**, even after a clean stop, and becomes valid again
