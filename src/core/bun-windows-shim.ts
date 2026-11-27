@@ -19,8 +19,19 @@ const STALE_SHIM = /^gbrain\.exe\.stale(\.\d+)*$/;
 /** Bun's Windows launcher is a few KB. */
 const MAX_SHIM_BYTES = 1024 * 1024;
 
-/** The directory Bun links global bins into: BUN_INSTALL_BIN, else <BUN_INSTALL>/bin, else ~/.bun/bin. */
-export function bunShimDir(env: NodeJS.ProcessEnv = process.env): string {
+/**
+ * The directory Bun links global bins into: what `askBun` (`bun pm bin -g`, which also honors bunfig's globalBinDir)
+ * reports, else BUN_INSTALL_BIN, else <BUN_INSTALL>/bin, else ~/.bun/bin.
+ */
+export function bunShimDir(env: NodeJS.ProcessEnv = process.env, askBun?: () => string): string {
+  if (askBun) {
+    try {
+      const reported = askBun().trim();
+      if (reported) return reported;
+    } catch {
+      // Bun could not answer: the environment's answer below is the one Bun uses without a bunfig override.
+    }
+  }
   if (env.BUN_INSTALL_BIN) return env.BUN_INSTALL_BIN;
   if (env.BUN_INSTALL) return join(env.BUN_INSTALL, 'bin');
   return join(env.USERPROFILE || env.HOME || homedir(), '.bun', 'bin');

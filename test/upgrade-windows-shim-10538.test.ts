@@ -31,6 +31,12 @@ describe('#10538 Bun bin directory', () => {
     expect(bunShimDir({ USERPROFILE: '/u', HOME: '/h' })).toBe(join('/u', '.bun', 'bin'));
     expect(bunShimDir({ HOME: '/h' })).toBe(join('/h', '.bun', 'bin'));
   });
+
+  test('the directory Bun reports (bunfig globalBinDir included) wins; a failed or empty answer falls back to the environment', () => {
+    expect(bunShimDir({ BUN_INSTALL_BIN: '/x/bin' }, () => '/from-bunfig/bin\n')).toBe('/from-bunfig/bin');
+    expect(bunShimDir({ BUN_INSTALL_BIN: '/x/bin' }, () => { throw new Error('bun not found'); })).toBe('/x/bin');
+    expect(bunShimDir({ BUN_INSTALL_BIN: '/x/bin' }, () => '  ')).toBe('/x/bin');
+  });
 });
 
 describe('#10538 moving an orphaned launcher aside', () => {
@@ -120,11 +126,11 @@ describe('#10538 reinstall hint', () => {
  * `bun remove` leaves gbrain.exe, and the fake `bun add` refuses with EEXIST while it exists. failAdd 'target' makes
  * the target's add write a partial launcher and fail (the restore then meets that launcher); 'all' fails every add.
  */
-async function windowsUpgrade(failAdd: 'none' | 'target' | 'all' = 'none') {
+async function windowsUpgrade(failAdd: 'none' | 'target' | 'all' = 'none', opts: { bunfigBinDir?: boolean } = {}) {
   const home = tempDir('upgrade');
   const bunInstall = join(home, '.bun');
   const bin = join(home, 'path-bin');
-  const shims = join(bunInstall, 'bin');
+  const shims = opts.bunfigBinDir ? join(home, 'bunfig-bin') : join(bunInstall, 'bin');
   const globalRoot = join(bunInstall, 'install', 'global');
   const pkgDir = join(globalRoot, 'node_modules', 'gbrain');
   mkdirSync(bin);
@@ -138,9 +144,10 @@ async function windowsUpgrade(failAdd: 'none' | 'target' | 'all' = 'none') {
   writeFileSync(join(bin, 'git'), `#!/bin/sh\ncase "$*" in *--exit-code*) exit 0;; *) printf 'aaa\\trefs/tags/v${TARGET}\\n'; exit 0;; esac\n`, { mode: 0o755 });
   writeFileSync(join(bin, 'bun'), [
     '#!/bin/sh',
-    'G="$BUN_INSTALL/install/global"; B="$BUN_INSTALL/bin"',
+    'G="$BUN_INSTALL/install/global"; B="${FAKE_BUN_BIN:-$BUN_INSTALL/bin}"',
     'printf "bun:%s\\n" "$*" >> "$HOME/calls.log"',
     'case "$1" in',
+    '  pm) echo "$B"; exit 0;;',
     '  remove) rm -rf "$G/node_modules/gbrain" "$B/gbrain.bunx"; exit 0;;',
     '  add)',
     '    ver="${4##*#v}"',
@@ -163,8 +170,9 @@ async function windowsUpgrade(failAdd: 'none' | 'target' | 'all' = 'none') {
     `await runUpgrade(['--swap-only', '--no-bun-floor-check'], { targetVersion: '${TARGET}' });`,
     '',
   ].join('\n'));
-  const env: Record<string, string | undefined> = { ...process.env, HOME: home, GBRAIN_HOME: home, BUN_INSTALL: bunInstall, PATH: `${bin}:${process.env.PATH}`, GBRAIN_RELEASE_CHANNEL: 'alpha' };
+  const env: Record<string, string | undefined> = { ...process.env, HOME: home, GBRAIN_HOME: home, BUN_INSTALL: bunInstall, PATH: `${bin}:${process.env.PATH}`, GBRAIN_RELEASE_CHANNEL: 'alpha', FAKE_BUN_BIN: opts.bunfigBinDir ? shims : undefined };
   delete env.BUN_INSTALL_BIN;
+  if (!opts.bunfigBinDir) delete env.FAKE_BUN_BIN;
   delete env.USERPROFILE;
   const proc = Bun.spawn([process.execPath, '--no-env-file', 'run', driver], { cwd: home, env, stdout: 'pipe', stderr: 'pipe' });
   const [stdout, stderr] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()]);
@@ -193,6 +201,14 @@ describe('#10538 Windows upgrade with a held gbrain.exe launcher', () => {
     expect(r.errors).toEqual([]);
   }, 60_000);
 
+  test('a bin directory only bunfig names (Bun reports it) is where the launcher is moved aside', async () => {
+    const r = await windowsUpgrade('none', { bunfigBinDir: true });
+    expect(r.out).not.toContain('EEXIST');
+    expect(r.out).toContain(`Upgrade complete. Now running: gbrain ${TARGET}`);
+    expect(r.calls).toContain('bun:pm bin -g');
+    expect(r.shimFiles).toEqual(['gbrain.bunx', 'gbrain.exe', expect.stringMatching(/^gbrain\.exe\.stale\.\d+$/)]);
+  }, 60_000);
+
   test('when the add fails, the partial launcher is moved aside too and the previous version is restored', async () => {
     const r = await windowsUpgrade('target');
     expect(r.stderr).toContain(`Restored gbrain ${VERSION}.`);
@@ -202,7 +218,7 @@ describe('#10538 Windows upgrade with a held gbrain.exe launcher', () => {
     expect(r.errors.at(-1)).toMatchObject({ phase: 'pinned-reinstall', to_version: TARGET });
   }, 60_000);
 
-  test('when the restore fails too, the printed and recorded recovery has no && and ends with the restore line', async () => {
+  test('when the restore fails too, the printed recovery is one step per line, the recorded one numbered, neither with &&', async () => {
     const r = await windowsUpgrade('all');
     const expected = reinstallHintLines(TARGET, VERSION, 'win32', r.shims);
     expect(r.stderr).toContain('Restore failed. Reinstall by hand:');
@@ -211,7 +227,8 @@ describe('#10538 Windows upgrade with a held gbrain.exe launcher', () => {
     expect(printed.some(l => l.includes('&&'))).toBe(false);
     expect(printed.at(-1)).toBe(`If the add fails, restore ${VERSION} with: bun add -g --backend=copyfile github:garrytan/gbrain#v${VERSION}`);
     const hint = r.errors.at(-1)?.hint as string;
-    expect(hint).toBe(expected.join('; '));
+    expect(hint).toBe(`${expected[0]} ${expected.slice(1).map((line, i) => `(${i + 1}) ${line}`).join(' ')}`);
+    expect(hint).toContain(`(5) If the add fails, restore ${VERSION}`);
     expect(hint).not.toContain('&&');
   }, 60_000);
 });

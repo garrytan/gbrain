@@ -417,7 +417,8 @@ async function installStableRelease(method: string, target: { version: string; c
   }
   const bun = (bunArgs: string[]) => execFileSync('bun', bunArgs, { env: ctx.upgradeEnv, stdio: cliChildStdio(), timeout: 300_000 });
   // #10538: on Windows the running gbrain.exe launcher survives `bun remove -g` and blocks every `bun add -g` with EEXIST.
-  const shimDir = bunShimDir(ctx.upgradeEnv);
+  const askBun = () => execFileSync('bun', ['pm', 'bin', '-g'], { env: ctx.upgradeEnv, encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 15_000 });
+  const shimDir = bunShimDir(ctx.upgradeEnv, process.platform === 'win32' ? askBun : undefined);
   let removed = false;
   try {
     bun(['remove', '-g', 'gbrain']);
@@ -431,7 +432,7 @@ async function installStableRelease(method: string, target: { version: string; c
     const hint = reinstallHintLines(target.version, ctx.oldVersion, process.platform, shimDir);
     try { if (removed) moveAsideOrphanedShim(shimDir); bun(['add', '-g', BUN_BACKEND, `github:${GBRAIN_GITHUB_REPO}#v${ctx.oldVersion}`]); console.error(`Restored gbrain ${ctx.oldVersion}.`); }
     catch { console.error('Restore failed. Reinstall by hand:'); for (const line of hint) console.error(`  ${line}`); }
-    recordUpgradeError({ phase: ctx.phase ?? 'stable-reinstall', fromVersion: ctx.oldVersion, toVersion: target.version, error: `bun add -g ${BUN_BACKEND} ${spec} failed`, recover: hint.join('; ') });
+    recordUpgradeError({ phase: ctx.phase ?? 'stable-reinstall', fromVersion: ctx.oldVersion, toVersion: target.version, error: `bun add -g ${BUN_BACKEND} ${spec} failed`, recover: process.platform === 'win32' ? `${hint[0]} ${hint.slice(1).map((line, i) => `(${i + 1}) ${line}`).join(' ')}` : hint[0] });
     setCliExitVerdict(1);
     return 'failed';
   }
@@ -760,7 +761,7 @@ export function recordUpgradeError(record: {
   fromVersion: string;
   toVersion: string;
   error: string;
-  /** The paste-ready recovery step doctor shows (the record's `hint` field). */
+  /** The recovery doctor shows (the record's `hint` field): a paste-ready step, or on Windows numbered steps to run one at a time. */
   recover: string;
 }): void {
   try {
