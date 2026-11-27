@@ -3,14 +3,17 @@
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: on a host with no Git identity, a bound put_page commits the page; its Git effect fails `git_unavailable`
- *    at the commit step and keeps the step and git's sanitized first stderr line (`last_error`); attempts 1-4 requeue,
- *    attempt 5 parks (PARK_AFTER_FAILURES); writer status and doctor parked_effects list it; `gbrain sync status` JSON
- *    carries `git_commit_holds` with the step, the line and `identity_missing`, its `next` is the identity fix, and the
- *    text names the hold and never says "holds nothing". Setting the checkout's identity and the documented retry then
- *    commits the file and clears the hold. A clean filter that prints a token-bearing URL and an Authorization header
- *    leaves no secret in the stored effect, the JSON or the text. PGLite, Postgres and Rust print the same bytes.
- *  - Regression: the hold missing from sync status (git_unavailable not read there), the step or line lost, a secret
- *    stored or printed, a Rust sync status that never reads Git holds, or the arms printing different output.
+ *    at the commit step and keeps exactly the step and a reason code (`last_error` {phase, step, reason, identity});
+ *    attempts 1-4 requeue, attempt 5 parks (PARK_AFTER_FAILURES); writer status and doctor parked_effects list it;
+ *    `gbrain sync status` JSON carries `git_commit_holds` with the step, `reason: identity_missing` and
+ *    `owner_host: this_host`; its `next` is the identity question for the user (ask_user), `needs_human` is true with
+ *    `needs_human_from.kind: git_commit`, and the text names the hold, prints ASK THE USER and never says "holds
+ *    nothing". Setting the checkout's identity and the documented retry then commits the file and clears the hold. A
+ *    clean filter that prints a token-bearing URL and an Authorization header stores and prints none of git's words:
+ *    the effect keeps {phase: commit, step: add, reason: filter_failed}. PGLite, Postgres and Rust print the same bytes.
+ *  - Regression: the hold missing from sync status (git_unavailable not read there), the step or reason lost, any of
+ *    git's stderr stored or printed (GCH-01), a hold the user must answer that sync status reports as needing nobody
+ *    (GCH-02 follow-up F2), a Rust sync status that never reads Git holds, or the arms printing different output.
  *  - Why existing coverage misses it: managed-git-missing-identity.test.ts pins the park on PGLite only and reads no
  *    sync status; no test fed a secret through a git step's stderr.
  *  - Rust: the failure record's recovery probe (persistence/effects.ts recordFailure) is raw SQL, so on a Rust brain
@@ -139,8 +142,9 @@ async function syncStatusOutput(engine: BrainEngine, home: string, source = 'wor
   };
   const json = JSON.parse(await capture(['--json'])) as Record<string, unknown>;
   const text = norm(await capture([]));
-  const picked = JSON.parse(norm(JSON.stringify({ git_commit_holds: json.git_commit_holds, git_push_holds: json.git_push_holds, next: json.next })));
-  const lines = text.split('\n').filter(line => /git commits not made|git effects blocked|^\s+fix: |Next:|holds nothing/.test(line));
+  const picked = JSON.parse(norm(JSON.stringify({ git_commit_holds: json.git_commit_holds, git_push_holds: json.git_push_holds, next: json.next,
+    needs_human: json.needs_human, human_reason: json.human_reason, needs_human_from: json.needs_human_from })));
+  const lines = text.split('\n').filter(line => /git commits held|git effects blocked|^\s+fix: |ASK THE USER|check \(read-only\)|Next:|holds nothing/.test(line));
   return { json: picked, lines, text };
 }
 
@@ -166,16 +170,24 @@ describe('engine parity: a managed Git commit that cannot be made is loud in gbr
     expect(attempts.length).toBe(5);
     expect(attempts.map(a => [a.kind, a.failures, a.parked])).toEqual([['requeue', 1, null], ['requeue', 2, null], ['requeue', 3, null], ['requeue', 4, null], ['park', null, ['git_unavailable']]]);
     expect(effect).toEqual({ state: 'failed', code: 'targets_parked' });
-    const last = attempts[4]!.last_error;
-    expect({ phase: last.phase, step: last.step, identity: last.identity }).toEqual({ phase: 'commit', step: 'commit-tree', identity: true });
+    // F2 first: the identity question is the next step and sync status says a person must answer it.
+    const next = status.json.next as Record<string, unknown>;
+    expect(String(next.docs)).toContain('docs/guides/concurrent-writes.md#managed-git-identity');
+    expect({ next: next.next, actor: next.actor }).toEqual({ next: 'ask_user', actor: 'user' });
+    expect({ needs_human: status.json.needs_human, from: status.json.needs_human_from, reason: status.json.human_reason })
+      .toEqual({ needs_human: true, from: { kind: 'git_commit', code: 'git_unavailable', root: '<home>/checkout' }, reason: next.user_message });
+    const identityError = { phase: 'commit', step: 'commit-tree', reason: 'identity_missing', identity: true };
+    expect(attempts.map(a => a.last_error)).toEqual(Array(5).fill(identityError));
     expect(out.tracked).toBe('');
     expect(out.writer_lists_it).toBe(true);
     expect(out.doctor.lists_it).toBe(true);
     expect(hold).toMatchObject({ source_id: 'work', retrying: 0, parked: 1, codes: ['git_unavailable'], former_worktree: false, identity_missing: true,
-      last_error: { phase: 'commit', step: 'commit-tree', identity: true } });
-    expect(String((status.json.next as Record<string, unknown>).docs)).toContain('docs/guides/concurrent-writes.md#managed-git-identity');
+      owner_host: 'this_host', root: '<home>/checkout' });
+    expect(hold!.last_error).toEqual(identityError);
+    expect(status.lines.some(line => line.includes('ASK THE USER: Git cannot commit page files in <home>/checkout'))).toBe(true);
     expect(status.json.git_push_holds).toEqual([]);
-    expect(status.lines.some(line => line.includes('git commits not made: 0 retrying, 1 parked (git_unavailable)') && line.includes('at step commit-tree'))).toBe(true);
+    expect(status.lines.some(line => line.includes('git commits held: 0 retrying, 1 parked (git_unavailable)')
+      && line.includes('at step commit-tree (reason: identity_missing)'))).toBe(true);
     expect(out.holds_nothing).toBe(false);
 
     // The documented fix: the checkout's identity, then one more attempt for the parked effect.
@@ -190,8 +202,8 @@ describe('engine parity: a managed Git commit that cannot be made is loud in gbr
     expect(fixed).toMatchObject({ state: 'committed', tracked: 'notes/ivy-example.md', holds: [] });
     expect((await readSyncStatus(engine, 'work')).git_commit_holds).toEqual([]);
 
-    // A clean filter that prints a token-bearing remote URL and an Authorization header, then fails: the add step's
-    // line is kept, and no secret reaches the stored effect, the JSON or the text.
+    // A clean filter that prints a token-bearing remote URL and an Authorization header, then fails: only the add step
+    // and its reason code are kept; none of git's words (no secret, no URL) reach the stored effect, the JSON or the text.
     const script = join(home, 'leaky-filter.sh');
     writeFileSync(script, `#!/bin/sh\necho ${JSON.stringify(`fatal: cannot reach ${SECRET_URL} ${SECRET_HEADER}`)} >&2\nexit 1\n`, { mode: 0o755 });
     execFileSync('git', ['-C', root, 'config', 'filter.leaky.clean', script]);
@@ -202,19 +214,18 @@ describe('engine parity: a managed Git commit that cannot be made is loud in gbr
     const stored = JSON.stringify(written.slice(from));
     const leakStatus = await syncStatusOutput(engine, home);
     const printed = JSON.stringify(leakStatus.json) + leakStatus.text;
-    const secrets = ['hunter2tokenvalue', 'qq9secretquerytoken', 'zz8secretbearervalue', 'alice-example:'];
-    const leakHold = (leakStatus.json.git_commit_holds as Array<{ last_error: { line: string } | null }>)[0];
+    const secrets = ['hunter2tokenvalue', 'qq9secretquerytoken', 'zz8secretbearervalue', 'alice-example:', 'git.example.invalid', 'cannot reach'];
+    const leakHold = (leakStatus.json.git_commit_holds as Array<{ last_error: Record<string, unknown> | null }>)[0];
     const sanitized = {
       leaked: secrets.filter(secret => stored.includes(secret) || printed.includes(secret)),
       effect: leak.effect, last_error: leakHold?.last_error ?? null,
       sync_json: JSON.stringify(leakStatus.json), lines: leakStatus.lines.join('\n'),
     };
     expect(sanitized.leaked).toEqual([]);
-    expect(stored).toContain('git.example.invalid/acme.git');
-    expect(sanitized.last_error).toMatchObject({ phase: 'commit', step: 'add' });
-    expect(String(sanitized.last_error?.line)).toContain('https://git.example.invalid/acme.git');
-    expect(String(sanitized.last_error?.line)).toContain('<REDACTED>');
-    expect(JSON.stringify(sanitized.last_error)).not.toContain('identity');
+    const filterError = { phase: 'commit', step: 'add', reason: 'filter_failed' };
+    expect(sanitized.last_error).toEqual(filterError);
+    expect(leak.attempts.map(a => a.last_error)).toEqual(Array(5).fill(filterError));
+    expect(stored).not.toContain('"line"');
     return { ...out, fixed, sanitized };
   }));
 
@@ -231,8 +242,9 @@ describe('engine parity: a managed Git commit that cannot be made is loud in gbr
       expect(effect).toEqual({ state: 'failed', code: 'targets_parked' });
       const status = await syncStatusOutput(engine, home, 'seeded');
       const hold = (status.json.git_commit_holds as Array<Record<string, unknown>>)[0];
-      expect(hold).toMatchObject({ source_id: 'seeded', retrying: 0, parked: 1, codes: ['git_unavailable'], identity_missing: true,
-        last_error: { phase: 'commit', step: 'commit-tree', line: 'Author identity unknown', identity: true } });
+      expect(hold).toMatchObject({ source_id: 'seeded', retrying: 0, parked: 1, codes: ['git_unavailable'], identity_missing: true, owner_host: 'this_host' });
+      expect(hold!.last_error).toEqual({ phase: 'commit', step: 'commit-tree', reason: 'identity_missing', identity: true });
+      expect(status.json.needs_human).toBe(true);
       expect(status.json.git_push_holds).toEqual([]);
       expect(status.text).not.toContain('holds nothing');
       return { sync_json: JSON.stringify(status.json), lines: status.lines.join('\n') };

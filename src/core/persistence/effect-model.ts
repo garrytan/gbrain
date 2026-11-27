@@ -51,7 +51,7 @@ export function adoptedBy(trailers: Iterable<string>): string[] {
 }
 /** `rule`: for `git_target_ignored`, the .gitignore rule that excludes the file (`<file>:<line>: <pattern>`). */
 export interface ParkedTarget { slug?: string; error_code: string; rule?: string;
-  /** The failed git step, its phase and git's sanitized first stderr line when the target parked (git-diagnostic.ts). */
+  /** The failed git step, its phase and its reason code when the target parked (git-diagnostic.ts). */
   last_error?: GitDiagnostic }
 /** #7423 / #7378: a settled target: under a declared db_only dir (`declared`), or its current bytes proved on the fetched remote (effect-settle.ts). */
 export type SettledTarget = { slug: string; declared: string }
@@ -121,7 +121,7 @@ export interface PersistenceEffect {
     busy_at?: string;
     /** The target `target_failures` belongs to; a different target starts from zero. */
     failing_target?: string;
-    /** The last failed git step of the current target: phase, step and git's sanitized first stderr line (git-diagnostic.ts). */
+    /** The last failed git step of the current target: phase, step and reason code (git-diagnostic.ts). */
     last_error?: GitDiagnostic;
     /** Targets set aside after repeated failures; a slugless entry parks the whole effect. */
     parked?: ParkedTarget[];

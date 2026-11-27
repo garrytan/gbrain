@@ -728,7 +728,7 @@ async function recordFailure(engine: BrainEngine, effect: PersistenceEffect, err
   const prior = target !== undefined && effect.data.retry_slugs?.includes(target) ? PARK_AFTER_FAILURES - 1
     : effect.data.failing_target === target ? effect.data.target_failures ?? 0 : 0;
   const failures = prior + 1;
-  // The failed step and git's sanitized first line replace any earlier one, so a later failure never shows an old cause.
+  // The failed step and its reason code replace any earlier one, so a later failure never shows an old cause.
   const { last_error: _stale, ...data } = effect.data;
   const lastError = lastErrorOf(error);
   if (failures < PARK_AFTER_FAILURES) {
@@ -1005,11 +1005,15 @@ async function runEffectPass(engine: BrainEngine, config: GBrainConfig, opts: Ef
       const pending = unpushed.get(binding.local_path) ?? { binding, items: [] };
       // #7089: an absent target whose removal an earlier attempt committed (its push failed) joins the push like an
       // unchanged one while the root is ahead of its upstream; on a root that is not ahead it completes without a push.
-      const ahead = [...outcomes.values()].some(outcome => !(outcome instanceof OperationError) && outcome.reason === 'target_absent')
-        && await gitRootAhead(binding.local_path, opts.signal);
+      // GCH-03: a probe that cannot answer holds only the absent targets (as a push hold); every other target keeps its own outcome.
+      let ahead = false, probeError: unknown = null;
+      if ([...outcomes.values()].some(outcome => !(outcome instanceof OperationError) && outcome.reason === 'target_absent')) {
+        try { ahead = await gitRootAhead(binding.local_path, opts.signal); } catch (error) { probeError = error; }
+      }
       for (const { effect, path, attempt } of targets) {
         const outcome = outcomes.get(path)!;
         if (outcome instanceof OperationError) await recordFailure(engine, effect, outcome, opts.signal, attempt.target);
+        else if (outcome.reason === 'target_absent' && probeError) await recordFailure(engine, effect, probeError, opts.signal, attempt.target);
         else if (outcome.reason === 'target_absent' && !ahead) await completeEffect(engine, effect, outcome);
         else pending.items.push({ effect, outcome: commits.has(path) ? { ...outcome, commit: commits.get(path) } : outcome, target: attempt.target });
       }

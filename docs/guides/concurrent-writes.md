@@ -714,9 +714,13 @@ effect fails `git_unavailable`: the file stays untracked, the effect is retried
 every 30 seconds, and after 5 failures (about 2.5 minutes) it parks. Its message
 says "a missing Git identity (user.name, user.email) in that checkout is one
 cause to check". `gbrain sync status --source <source>` shows them as
-`git commits not made: … at step commit-tree: "Author identity unknown"`; its `--json` has `git_commit_holds`
-(each with the failed step, git's first error line with secrets removed, and `identity_missing`), and `Next:` names
-the fix. Another failing step (a clean filter, a hook) shows its own step and line instead. Set the identity in the
+`git commits held: … at step commit-tree (reason: identity_missing)`; its `--json` has `git_commit_holds` (each with
+the failed step, a reason code from a fixed list, `identity_missing` and `owner_host`). gbrain never stores or prints
+git's own error text, because a filter, hook or credential helper can print a secret or a private path; run the
+failing step in the checkout to read it. When this host owns the checkout, `Next:` is a question for the user
+(`ASK THE USER:`, `needs_human: true`): which name and email commits should use. When another host owns it, set the
+identity on that host, which `gbrain sources writer status --source <source>` names. Another failing step (a clean
+filter, a hook) shows its own step and reason (`filter_failed`, `hook_rejected`) instead. Set the identity in the
 checkout, then retry the parked effects:
 
 ```bash

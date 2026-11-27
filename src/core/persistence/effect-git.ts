@@ -34,7 +34,7 @@ const canonical = (path: string) => { try { return join(realpathSync(dirname(pat
 
 const effectStatusFix = readFix('Shows each source\'s canonical owner with its retrying and parked Git effects, read-only.',
   { argv: ['gbrain', 'sources', 'writer', 'status', '--json'] });
-/** `diag` names the failed step and git's sanitized first stderr line (git-diagnostic.ts); the effect keeps it as `last_error`. */
+/** `diag` names the failed step and its reason code (git-diagnostic.ts); the effect keeps it as `last_error`. */
 export const gitFailure = (message: string, cause: string, diag?: GitDiagnostic) => withGitDiagnostic(opError('git_unavailable', message,
   `${cause} The page write itself is committed; the effect worker tries this Git effect again and parks it after repeated failures. If it keeps failing, check the checkout with git status on the brain host.`,
   { fix: effectStatusFix }), diag);
@@ -638,12 +638,23 @@ export function fileDigests(path: string, objectFormat: string): string | null {
  * #7089: whether `root`'s branch has commits its upstream (the local remote-tracking ref, never fetched) lacks; false
  * without an upstream. A Git effect whose target is absent asks this before completing: its removal may have been
  * committed by an earlier attempt whose push failed, and only a root that is ahead owes a push.
+ * GCH-03: false only when there is no upstream to push to (none configured, a detached HEAD, or a tracking ref never
+ * fetched). When the upstream resolves but git cannot count past it (a damaged ref or object), or a step does not
+ * finish, the answer is unknown, so this throws `git_push_unavailable` with the push phase: the effect stays a push
+ * hold and retries, never completes without its push and never reads as a commit that was not made.
  */
 export async function gitRootAhead(root: string, signal?: AbortSignal): Promise<boolean> {
-  return withSession(root, signal, undefined, false, async session => {
-    const count = await git(session, ['rev-list', '--count', '@{upstream}..HEAD']);
-    return count.code === 0 && Number(count.stdout.trim()) > 0;
-  });
+  try {
+    return await withSession(root, signal, undefined, false, async session => {
+      const count = await git(session, ['rev-list', '--count', '@{upstream}..HEAD']);
+      if (count.code === 0) return Number(count.stdout.trim()) > 0;
+      const upstream = await git(session, ['rev-parse', '--symbolic-full-name', '@{upstream}']);
+      if (upstream.code !== 0) return false;
+      throw withGitDiagnostic(opError('git_push_unavailable', 'Cannot tell whether the canonical checkout has commits its upstream lacks; its push will retry.',
+        `git rev-list could not count the commits past the checkout's upstream ${upstream.stdout.trim()}, so gbrain does not know whether a commit still owes a push. Nothing is lost locally and the worker tries again on a later pass. If it keeps failing, check the checkout with git status and git fsck on the brain host.`,
+        { fix: effectStatusFix }), gitDiagnostic('push', 'rev-list', count.stderr));
+    });
+  } catch (error) { throw pushPhaseFailure(error); }
 }
 
 /** Git's refusal of a push because the remote branch moved (LC_ALL=C keeps it untranslated). */
@@ -692,7 +703,7 @@ export function pushPhaseFailure(error: unknown): unknown {
   const diag = gitDiagnosticOf(error);
   return withGitDiagnostic(opError('git_push_unavailable', 'The canonical commit is durable locally; its push will retry.',
     `${error.suggestion ?? error.message} The commit itself is local and nothing is lost; the worker pushes again on a later pass.`, { fix: error.fix }),
-    { phase: 'push', step: diag?.step ?? 'push', line: diag?.line ?? null });
+    { phase: 'push', step: diag?.step ?? 'push', reason: diag?.reason ?? 'other' });
 }
 
 async function pushCommittedRoot(root: string, signal: AbortSignal | undefined, scanBudgetMs: number): Promise<{ push: 'committed'; integrated?: number; redaction?: PushRedaction } | { push: 'skipped'; reason: 'no_tracking_remote' }> {
