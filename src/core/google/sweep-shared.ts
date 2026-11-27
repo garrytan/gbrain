@@ -99,6 +99,8 @@ export interface GoogleSyncDeps {
   cfg: GoogleSourceConfig;
   opts: SyncOpts;
   entry: CredentialEntry;
+  /** #10094: who the owner is in reply-owed loop detection only: myAddressSet(entry) plus loops.owner_addresses, read once per sync. Ingest tiers, grace holds and paid extraction (sweep and catch-up) keep myAddressSet(entry). */
+  myAddresses: Set<string>;
   log: (msg: string) => void;
   /**
    * #5349: one forward-progress note per imported item. The progress-aware

@@ -461,7 +461,9 @@ export function writeResponse(row: WriteRequest, hints: { retryAfterMs?: number 
     }
     if (content.key || content.line !== undefined) error.detail = [content.key ? `key ${content.key}` : '', content.line !== undefined ? `line ${content.line}` : ''].filter(Boolean).join(', ');
   }
-  const withdrawn = isTerminal(row) ? withdrawnFromDetail(row.error_detail) : undefined;
+  // A remote requester never reads a stored withdrawal's detail (a refusal stored before this rule, or a managed
+  // extraction's locked check, may hold one): it gets the plain refusal, as factWithdrawnRefusal answers it.
+  const withdrawn = isTerminal(row) && row.authority?.remote === false ? withdrawnFromDetail(row.error_detail) : undefined;
   if (withdrawn) error.withdrawn = withdrawn;
   if (reason === 'page_identity_changed' && isMissingPageMessage(row.error_message)) error.canonical = 'page_not_found';
   error.receiptFields = { operation: row.operation, source_id: row.source_id, slug: row.slug || null, principal_kind: row.principal_kind, principal_id: row.principal_id };

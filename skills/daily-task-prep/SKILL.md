@@ -1,6 +1,7 @@
 ---
 name: daily-task-prep
 version: 1.0.0
+audience: owner
 description: |
   Morning preparation. Calendar lookahead, meeting context loading, open threads
   from yesterday, active task review. Extends briefing with actionable prep.

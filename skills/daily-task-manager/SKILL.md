@@ -1,6 +1,7 @@
 ---
 name: daily-task-manager
 version: 2.0.0
+audience: owner
 description: |
   Task lifecycle management with stable task IDs. Add, complete, defer, remove,
   and review tasks with deterministic action routing and fail-closed ambiguity

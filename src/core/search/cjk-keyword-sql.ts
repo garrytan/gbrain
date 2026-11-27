@@ -23,7 +23,7 @@
 import type { SearchOpts } from '../types.ts';
 import { buildBestPerPagePoolCte } from './sql-ranking.ts';
 import { frontmatterWhereSql } from './frontmatter-where.ts';
-import { escapeLikePattern, cjkMatchTerms } from '../cjk.ts';
+import { escapeLikePattern, cjkMatchGroups, cjkMatchTerms } from '../cjk.ts';
 
 /** Query-shape context shared by both engines' CJK fallback call sites. */
 export interface CjkKeywordCtx {
@@ -114,7 +114,8 @@ export function buildCJKKeywordSql(query: string, ctx: CjkKeywordCtx, variant: C
     // chunk-visibility-ok: ctx.visibilityClause is buildVisibilityClause(..., { chunkAlias: 'cc' }) (engine searchKeywordCJK)
     fromClause = `unnest($${params.length}::bigint[]) AS cand(id) JOIN content_chunks cc ON cc.id = cand.id`;
   }
-  const { whereLikeClause, matchedExpr } = likeClauses(terms, likeParamIndices, any);
+  const groups = cjkMatchGroups(qRaw);
+  const { whereLikeClause, matchedExpr } = likeClauses(terms, likeParamIndices, any, groups);
 
   const termFreqExpr = rawTermIndices
     .map(idx => `((LENGTH(cc.chunk_text) - LENGTH(REPLACE(cc.chunk_text, $${idx}, ''))) / NULLIF(LENGTH($${idx}), 0)::real)`)
@@ -138,7 +139,10 @@ export function buildCJKKeywordSql(query: string, ctx: CjkKeywordCtx, variant: C
         + ${positionExpr})
       * ${sourceFactorCase})
     `;
-  const scoreExpr = any ? `(${MATCHED_TERM_WEIGHT} * (${matchedExpr}) + ${tfScoreExpr})` : tfScoreExpr;
+  // #10417: with OR alternatives the term-frequency part is held below one matched-term step, so a chunk satisfying an
+  // alternative outranks every partial chunk however often (or in however boosted a source) the partial repeats a term.
+  const tfPart = groups.length > 1 ? `LEAST(${tfScoreExpr}, ${MATCHED_TERM_WEIGHT - 1})` : tfScoreExpr;
+  const scoreExpr = any ? `(${MATCHED_TERM_WEIGHT} * (${matchedExpr}) + ${tfPart})` : tfScoreExpr;
   return assemble({ dedup, fromClause, scoreExpr, orderExpr, whereLikeClause, detailFilter, extraFilter, hardExcludeClause, visibilityClause, innerLimitIndex, limitIndex, offsetIndex, params });
 }
 
@@ -165,7 +169,7 @@ export function buildCJKCandidateSql(
   }
   params.push(stage.cap);
   const capIndex = params.length;
-  const { whereLikeClause } = likeClauses(terms, likeParamIndices, stage.match === 'any' && terms.length > 1);
+  const { whereLikeClause } = likeClauses(terms, likeParamIndices, stage.match === 'any' && terms.length > 1, cjkMatchGroups(query));
   return {
     // chunk-visibility-ok: ctx.visibilityClause is buildVisibilityClause(..., { chunkAlias: 'cc' }) (engine searchKeywordCJK)
     sql: `SELECT cc.id AS chunk_id
@@ -179,15 +183,22 @@ export function buildCJKCandidateSql(
   };
 }
 
-function likeClauses(terms: string[], likeParamIndices: number[], any: boolean): { whereLikeClause: string; matchedExpr: string } {
+/** #10417: the all-terms stage requires every term of one cjkMatchGroups alternative; the any-term stage any term, ranking a chunk that satisfies an alternative above every partial one. */
+const anyOf = (alternatives: string[]) => alternatives.length === 1 ? alternatives[0]! : `(${alternatives.map(alt => `(${alt})`).join(' OR ')})`;
+
+function likeClauses(terms: string[], likeParamIndices: number[], any: boolean, groups: string[][]): { whereLikeClause: string; matchedExpr: string } {
   const likes = likeParamIndices.map((idx, termIndex) => {
     const term = terms[termIndex];
     const operator = term.toLowerCase() === term.toUpperCase() ? 'LIKE' : 'ILIKE';
     return `cc.chunk_text ${operator} $${idx} ESCAPE '\\'`;
   });
+  const firstIndex = new Map<string, number>();
+  terms.forEach((term, i) => { if (!firstIndex.has(term)) firstIndex.set(term, i); });
+  const strict = anyOf(groups.map(group => group.map(term => likes[firstIndex.get(term)!]).join(' AND ')));
+  const strictBonus = groups.length > 1 ? ` + (${strict})::int * ${likes.length + 1}` : '';
   return {
-    whereLikeClause: any ? `(${likes.join(' OR ')})` : likes.join(' AND '),
-    matchedExpr: likes.map(l => `(${l})::int`).join(' + '),
+    whereLikeClause: any ? `(${likes.join(' OR ')})` : strict,
+    matchedExpr: likes.map(l => `(${l})::int`).join(' + ') + strictBonus,
   };
 }
 

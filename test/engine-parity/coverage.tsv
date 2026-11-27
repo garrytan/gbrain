@@ -237,10 +237,10 @@ transactionDirect	lifecycle	yes	1	no	yes	yes	refuses:transactions
 registerBeforeDisconnect	lifecycle	yes	2	no	yes	yes	serves
 withReservedConnection	lifecycle	yes	1	no	yes	yes	refuses:raw_sql
 getPage	pages	yes	51	yes	yes	yes	serves
-readPageSnapshot	pages	yes	21	no	yes	yes	serves
+readPageSnapshot	pages	yes	31	no	yes	yes	serves
 readPageSnapshotsBatch	pages	yes	1	no	yes	yes	serves
 lockPageKeys	pages	yes	1	no	yes	yes	refuses:transactions
-putPage	pages	yes	199	yes	yes	yes	serves
+putPage	pages	yes	209	yes	yes	yes	serves
 findDuplicatePage	pages	yes	1	no	yes	yes	serves
 findDuplicatePages	pages	yes	1	no	yes	yes	serves
 deletePage	pages	yes	17	yes	yes	yes	serves
@@ -452,7 +452,7 @@ getStats	stats_ingest	yes	4	yes	yes	yes	serves
 getHealth	stats_ingest	yes	5	yes	yes	yes	serves
 logIngest	stats_ingest	yes	2	no	yes	yes	serves
 getIngestLog	stats_ingest	yes	2	no	yes	yes	serves
-updateSlug	sync_aliases	yes	14	no	yes	yes	serves
+updateSlug	sync_aliases	yes	24	no	yes	yes	serves
 rewriteLinks	sync_aliases	yes	1	no	yes	yes	serves
 resolveSlugWithAlias	sync_aliases	yes	1	yes	yes	yes	serves
 resolveSlugWithAliasDetailed	sync_aliases	yes	1	yes	yes	yes	serves
