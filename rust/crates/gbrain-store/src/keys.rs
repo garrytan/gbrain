@@ -168,6 +168,10 @@ pub fn family_text(tag: [u8; 2], parts: &[&str]) -> Vec<u8> {
 /// of the family under `2`.
 pub const PAGE_EXTRACTION_STATE: [u8; 2] = family_tag(b'e');
 
+/// Family `guest_marks` (`guest_marks.rs`): who a guest note was saved for, one record per guest page, `~g <page id>`. A
+/// two-byte family tag: the one-byte tags are taken.
+pub const GUEST_MARK: [u8; 2] = family_tag(b'g');
+
 pub fn text(tag: u8, parts: &[&str]) -> Vec<u8> {
     let mut key = vec![tag];
     for (i, part) in parts.iter().enumerate() {

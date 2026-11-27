@@ -18,6 +18,7 @@ import type { SurfacedReadMembers } from './engine-members/surfaced-reads.ts';
 import type { HandoverReadMembers } from './engine-members/handover-reads.ts';
 import type { PageKey, PageSnapshot, PageSnapshotOptions, PageWriteOptions } from './page-state/types.ts';
 import type * as CollateGuestSources from './engine-sql/collate-guest-sources.ts';
+import type * as GuestNotes from './engine-sql/guest-notes.ts';
 import type * as AccessMembersSql from './engine-sql/access-members.ts';
 import type * as LinkSlugReadsSql from './engine-sql/link-slug-reads.ts';
 import type * as SlugSpellingsSql from './engine-sql/slug-spellings.ts';
@@ -1646,6 +1647,12 @@ export interface BrainEngine extends ReadStatementMembers, FactsStatementMembers
   upsertGuestSource(sourceId: string, writers: readonly string[], trustCeiling: string): Promise<CollateGuestSources.GuestSourceRow>;
   /** The live page at `slug` in each guest source (only `guestSource` when given), by source id in byte order (guests/promote.ts). */
   listGuestNotes(slug: string, guestSource?: string): Promise<Array<{ id: number; source_id: string }>>;
+  /** Publication's recheck of a guest source: its writers under a share lock, with gbrain.guest_note set to `requestId` (guests/admission.ts); null with no guest_sources row. */
+  claimGuestNotePublication(sourceId: string, requestId: string): Promise<{ writers: string[] } | null>;
+  /** Writes the guest mark of the page at the mark's (sourceId, slug), saved now; how many rows it wrote (guests/admission.ts insertGuestMark). */
+  insertGuestMark(mark: GuestNotes.GuestMarkInsert): Promise<number>;
+  /** The guest marks of `pageIds`, each with whether its page was promoted (guests/marker.ts loadGuestMarks). */
+  readGuestMarks(pageIds: readonly number[]): Promise<GuestNotes.GuestMarkRow[]>;
   /** The guest sources (config `guest: true` or a guest_sources row) among `sourceIds`, in no particular order. */
   listGuestSourceIds(sourceIds: readonly string[]): Promise<string[]>;
   /** Whether any source is a guest source. */
