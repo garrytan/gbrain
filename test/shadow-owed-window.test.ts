@@ -11,7 +11,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { buildFollowStatus } from '../src/shadow/follow-status.ts';
 import { runShadowChild } from '../src/shadow/child.ts';
-import { readEpoch } from '../src/shadow/evidence-epoch.ts';
+import { encodeArgs } from '../src/shadow/codec.ts';
+import { ensureEpoch, readEpoch } from '../src/shadow/evidence-epoch.ts';
 import { writeSeedRecord } from '../src/shadow/seed.ts';
 import { withEnv } from './helpers/with-env.ts';
 import { closeAllOwedAtExit, OWED_WINDOW_MS, OWED_WINDOW_SAMPLES, ShadowSupervisor } from '../src/shadow/supervisor.ts';
@@ -591,4 +592,65 @@ describe('OWC: the child books a window the serving process never closed', () =>
   test('a full record (v:1) the child did not get everything of is booked pipe_unflushed, as before (no window was lost)', async () => {
     expect(await run({ v: 1, owed: 1, closed: true }, '')).toEqual({ by: { pipe_unflushed: 1 }, settled: { 'sess-1': 1 }, fileLeft: false, after: { pipe_unflushed: 1 }, gone: true });
   }, 30_000);
+});
+
+describe('OWC ship-p4: the stale-tombstone cleanup, the child stamp and the child booking order', () => {
+  test('B: a stale tombstone of an earlier epoch is replaced by a locked higher obligation between the listing and the cleanup: the cleanup reads it again under the lock and leaves the replacement alone', () => {
+    const dir = tmp(); const { epoch } = tallyOn(dir); passing(dir, epoch);
+    writeOwed(dir, { v: 2, session: 'w1', serving_pid: process.pid, owed: 3, closed: false, child_exited: false, open_until: 1, booked_epoch: 'an-earlier-epoch' });
+    writeOwed(dir, { v: 1, session: 'w2', serving_pid: deadPid(), child_pid: deadPid(), owed: 2, closed: false, child_exited: false }); // an orphan to book, so the pass takes its cleanup path
+    const proto = WriteTally.prototype as unknown as { update(...args: unknown[]): boolean }; const real = proto.update; let replaced = false;
+    const spy = spyOn(proto, 'update').mockImplementation(function (this: WriteTally, ...args: unknown[]) {
+      const ok = real.apply(this, args);
+      if (!replaced) { replaced = true; writeOwed(dir, { v: 1, session: 'w1', serving_pid: process.pid, owed: 3, closed: false, child_exited: false }); } // the serving process publishes a higher obligation for the same session, after the listing
+      return ok;
+    });
+    try { ownerPass(dir, epoch); } finally { spy.mockRestore(); }
+    expect(replaced).toBe(true);
+    expect(readOwed(dir, 'w1')).toMatchObject({ v: 1, owed: 3 }); // was removed: the unlink had no lock and no re-read
+  });
+  test('B: a stale tombstone nobody replaced is still removed by the next pass', () => {
+    const dir = tmp(); const { epoch } = tallyOn(dir); passing(dir, epoch);
+    writeOwed(dir, { v: 2, session: 'w1', serving_pid: 1, owed: 3, closed: false, child_exited: false, open_until: 1, booked_epoch: 'an-earlier-epoch' });
+    ownerPass(dir, epoch); expect(readOwed(dir, 'w1')).toBeNull();
+  });
+
+  describe('child', () => {
+    const ADDON = async () => ({ ok: true as const, addon: { target: 'linux-x64-glibc', engineAbi: 1, engineBuild: 'b1', catalogVersion: 3 } as never });
+    const BASE = { loadAddon: ADDON, capabilities: () => ['search', 'pages'], readinessPolicyHash: () => 'p1', heartbeatMs: 60_000, childId: 'c1' };
+    const seed = (dir: string): void => { writeSeedRecord(dir, { version: 1, seed_id: 'seed-1', started_at: '2026-01-01T00:00:00.000Z', finished_at: '2026-01-01T00:01:00.000Z', unseeded_gap_rows_total: 0, unseeded_gap_rows: {}, relations: {}, digests: true } as never); };
+    const replay = (n: number): string => JSON.stringify({ t: 'write', op: 'putPage', args: encodeArgs([`people/p4-${n}-example`, { type: 'person', title: `P ${n}`, compiled_truth: 'P.', timeline: '' }]) as unknown[], pre: { sources: [], pages: [], links: [] }, post: { pages: [null], links: [] } }) + '\n';
+    test('C: a child that books the window at the end of its input stamps its own epoch on the marker it leaves, so a later epoch\'s owner pass never reads that window as its own', async () => {
+      await withEnv({ GBRAIN_HOME: tmp() }, async () => {
+        const dir = tmp(); seed(dir);
+        writeOwed(dir, { v: 2, session: 'sess-1', serving_pid: deadPid(), child_pid: deadPid(), owed: 1, closed: false, child_exited: false, open_until: Date.now() + 60_000 });
+        const input = new PassThrough();
+        const done = runShadowChild(dir, { input, writeControl: () => {}, ...BASE, session: 'sess-1', addonSha256: () => 'a'.repeat(64), openEngine: () => ({ ownerRole: 'owner', async connect() {}, async disconnect() {} }) as never });
+        input.end(); await done;
+        const e1 = readEpoch(dir)!;
+        expect(readOwed(dir, 'sess-1')).toMatchObject({ v: 2, booked_epoch: e1.epoch_id }); // was unstamped: finish() refuses an unclosed record
+        const e2 = ensureEpoch(dir, { ...e1.inputs, rust_addon_sha256: 'b'.repeat(64) }, NOW.getTime() + 60_000).epoch_id; expect(e2).not.toBe(e1.epoch_id);
+        passing(dir, e2); ownerPass(dir, e2);
+        expect(stat(dir)).toMatchObject({ state: 'measured' }); expect(stat(dir).write_windows_lost).toBeUndefined(); // was capability_missing with 1 window lost: the next epoch stamped it
+        expect(readOwed(dir, 'sess-1')).toBeNull(); // the old epoch's tombstone goes with its epoch
+      });
+    }, 30_000);
+    test('D: a child that dies in the drain (its replays still unsettled) has booked no window yet: the next owner books the whole deficit, ONE write_window_lost for the one window', async () => {
+      await withEnv({ GBRAIN_HOME: tmp() }, async () => {
+        const dir = tmp(); seed(dir);
+        writeOwed(dir, { v: 2, session: 'sess-1', serving_pid: deadPid(), child_pid: deadPid(), owed: 3, closed: false, child_exited: false, open_until: Date.now() + 60_000 });
+        const input = new PassThrough(); let exitCode = null as number | null; const seen: { v?: { before: number | undefined; after: number | undefined } } = {};
+        const died = (code: number): void => { // the process ends here (the real `exit`): what the tally holds at this moment is all a dead child leaves, and the next owner pass books the rest
+          exitCode = code; const epoch = readEpoch(dir)!.epoch_id;
+          seen.v = { before: readWriteTally(dir, epoch)!.uncomparable_by_reason[WINDOW_LOST_REASON], after: ownerPass(dir, epoch)[WINDOW_LOST_REASON] };
+        };
+        void runShadowChild(dir, { input, writeControl: () => {}, ...BASE, session: 'sess-1', addonSha256: () => 'a'.repeat(64), exitDeadlineMs: 300, exit: died,
+          openEngine: () => ({ ownerRole: 'owner', async connect() {}, async disconnect() {}, storeFor: () => new Promise(() => {}) }) as never }); // the first replay never finishes
+        input.write(replay(0) + replay(1)); input.end(); // 2 of the 3 owed samples arrive; the third was dropped in the pipe
+        const until = Date.now() + 10_000; while (exitCode === null && Date.now() < until) await sleep(25);
+        expect(exitCode).toBe(0);
+        expect(seen.v).toEqual({ before: undefined, after: 1 }); // was { before: 1, after: 2 }: booked before the drain (durable at once), then again by the owner
+      });
+    }, 30_000);
+  });
 });

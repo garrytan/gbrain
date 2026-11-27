@@ -568,13 +568,16 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
   // The serving process wrote down, durably and before any line reached the pipe, how many write samples it owes this session (`write-owed.<session>.json`). What it owed and this child never read was dropped in its pipe at its exit: it is
   // booked as `pipe_unflushed`, settled in this child's own saves. A file that is there and cannot be read stays, and status reads it as no evidence.
   const owedRecord = readOwed(shadowDir, session);
-  if (owedRecord !== null && owedRecord !== 'unreadable') writes.missing(Math.max(0, owedRecord.owed - received), owedRecord.v === 2 ? 1 : 0); // a marker (v:2) the serving process never closed: one of the missing is a lost window
   // The serving process ended our stdin: nothing it was asked can still be answered. A queued rerun ends as skipped.
   ask.closeAll(); waiter.close(); // a rerun waiting for a quiet window ends now, as skipped
   for (const task of reruns.drop()) record(task.event, task.c, task.rustMs, task.rows, 'skipped:child_closing');
   await drain();
   await reruns.idle();
   await recalling;
+  // Booked only once every replay this child took has settled, never before: a child that dies (or reaches its exit deadline) while a replay is still unsettled has credited no missing sample, so the next owner worker books the whole deficit once, the
+  // window included. Booked earlier, that credit is durable at once while the replays still owed are a deficit of their own, and the owner would count the window a second time.
+  await writes.idle();
+  if (owedRecord !== null && owedRecord !== 'unreadable') writes.missing(Math.max(0, owedRecord.owed - received), owedRecord.v === 2 ? 1 : 0); // a marker (v:2) the serving process never closed: one of the missing is a lost window
   // The owed file is removed only now, once the serving process closed it and the settled count read back from disk covers everything it owed: a failed final save (or a death or the exit deadline before it) leaves it, and the next owner
   // worker books what was never settled as receipt_orphaned (more than was lost, never less); with it gone, status would read measured with an outcome that was only ever in memory.
   if (await writes.idle()) { try { writes.finish(); } catch { /* the file stays: the next owner worker settles it, or status reads no evidence */ } }

@@ -274,7 +274,7 @@ export const withTallyLock = <T>(dir: string, fn: () => T, waitMs: number): T =>
  * The one way an owed file is removed: under the tally lock, with no marker for the session, the record on disk read again (a republished, higher record is not the one that was judged settled) and the tally's settled count read again, the file is
  * removed only if everything it owes is settled (and, for the worker's own `finish()`, it was closed). The serving process publishes a record and clears its marker under the same lock. False when the file stays: unsettled, marked, unreadable or the lock stayed held.
  */
-function removeSettledOwed(dir: string, key: string, requireClosed: boolean, tombEpoch?: string): boolean {
+function removeSettledOwed(dir: string, key: string, requireClosed: boolean, tombEpoch?: string, stampOnly = false): boolean {
   try {
     return withTallyLock(dir, () => {
       const pending = listPending(dir);
@@ -283,10 +283,28 @@ function removeSettledOwed(dir: string, key: string, requireClosed: boolean, tom
       if (rec === null) return true;
       if (rec === 'unreadable' || (requireClosed && !rec.closed)) return false;
       if ((loadTally(dir)?.settled?.[key] ?? 0) < rec.owed) return false;
+      if (stampOnly) { if (rec.v !== 2 || tombEpoch === undefined) return false; if (rec.booked_epoch === undefined) writeOwed(dir, { ...rec, booked_epoch: tombEpoch }); return true; } // the worker's own end of input: an open marker it settled is stamped with its epoch, never removed
       if (tombEpoch !== undefined && rec.v === 2) { if (rec.booked_epoch === undefined) writeOwed(dir, { ...rec, booked_epoch: tombEpoch }); return true; } // a booked window stays as a tombstone
       removeOwed(dir, key); return true;
     }, REMOVER_LOCK_WAIT_MS);
   } catch { return false; } // silent-read-ok: the file stays; the next pass tries again, and status reads its deficit
+}
+
+/**
+ * Removes a tombstone of an EARLIER epoch (it goes with its epoch), under the tally lock and judged on the record read again there: the serving process may have republished a higher obligation for the session since the listing, and that
+ * record is not a tombstone (or names this epoch, or has a marker) and stays. False when the file stays.
+ */
+function removeStaleTomb(dir: string, key: string, epoch: string): boolean {
+  try {
+    return withTallyLock(dir, () => {
+      const pending = listPending(dir);
+      if (pending.failed || pending.keys.includes(key)) return false;
+      const rec = parseOwed(join(dir, `write-owed.${key}.json`));
+      if (rec === null) return true;
+      if (rec === 'unreadable' || rec.v !== 2 || rec.booked_epoch === undefined || rec.booked_epoch === epoch) return false;
+      removeOwed(dir, key); return true;
+    }, REMOVER_LOCK_WAIT_MS);
+  } catch { return false; } // silent-read-ok: the file stays; the next pass tries again
 }
 
 /** The most samples one `recordLost` call stands for (the child's own cap on a `dropped` count). */
@@ -574,7 +592,7 @@ export class WriteTally {
       }
       if (booked && !this.update()) return;
       for (const key of removable) removeSettledOwed(this.dir, key, false, tombs.has(key) ? epoch : undefined); // judged above on a record read before the booking: it is read again under the lock; a booked window stays as a tombstone
-      for (const key of stale) removeOwed(this.dir, key);
+      for (const key of stale) removeStaleTomb(this.dir, key, epoch);
       for (const name of names.filter((n) => RECEIPT_NAME.test(n))) {
         const path = join(this.dir, name); const r = parseReceipt(path);
         if (r === null || r === 'unreadable') continue;
@@ -637,8 +655,9 @@ export class WriteTally {
     if (!this.key) return true;
     const rec = parseOwed(owedPath(this.dir, this.key));
     if (rec === null) return true;
-    if (rec === 'unreadable' || !rec.closed || this.epoch() === null) return false;
+    const epoch = this.epoch(); const open = rec !== 'unreadable' && rec.v === 2 && !rec.closed; // an open marker (v:2) the child settled at the end of its input: it stays, as the tombstone of the epoch THIS child booked it in
+    if (rec === 'unreadable' || (!rec.closed && !open) || epoch === null || (open && this.retired)) return false;
     try { if ((loadTally(this.dir)?.settled?.[this.key] ?? 0) < rec.owed) return false; } catch { return false; } // silent-read-ok: the file stays; status reads its deficit
-    return removeSettledOwed(this.dir, this.key, true); // the same checks again under the lock: a higher record the serving process published meanwhile stays
+    return open ? removeSettledOwed(this.dir, this.key, false, epoch, true) : removeSettledOwed(this.dir, this.key, true); // the same checks again under the lock: a higher record the serving process published meanwhile stays
   }
 }
