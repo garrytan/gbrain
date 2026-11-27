@@ -324,7 +324,7 @@ const idea_submit: Operation = {
     const text = typeof p.text === 'string' ? p.text.trim() : '';
     if (!text) throw opError('invalid_params', 'idea_submit: text is required.', 'Describe the idea in plain words.');
     const { submitIdea } = await import('../initiatives/ideas.ts');
-    const author = ctx.endUser ?? ctx.agentLabel ?? undefined;
+    const author = ctx.agentLabel ?? undefined;
     return submitIdea(ctx, cfg, {
       text,
       ...(typeof p.title === 'string' && p.title.trim() ? { title: p.title.trim() } : {}),
