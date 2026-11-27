@@ -353,9 +353,7 @@ export async function writeFactsToFence(
     const { inserted, ids } = await publishManagedEntityFacts(engine, target.sourceId, target.slug, kept);
     return { inserted, ids, ...withdrawnSkipped };
   }
-  if (target.localPath === null) {
-    return { inserted: 0, ids: [], legacyFallback: true };
-  }
+  if (target.localPath === null) return { inserted: 0, ids: [], legacyFallback: true };
   if (facts.length === 0) {
     return { inserted: 0, ids: [] };
   }
