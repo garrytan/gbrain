@@ -41,11 +41,12 @@ describe('#6662 reinstall hint', () => {
       bunReinstallCommand('#v0.60.213.0'),
       'If the add fails, restore 0.60.200.0 with: bun add -g --backend=copyfile github:garrytan/gbrain#v0.60.200.0',
     ]);
-    const win = reinstallHintLines('0.60.213.0', '0.60.200.0', 'win32');
+    const win = reinstallHintLines('0.60.213.0', '0.60.200.0', 'win32', 'C:\\Users\\a\\.bun\\bin');
     expect(win.some(l => l.includes('&&'))).toBe(false);
     expect(win.slice(1)).toEqual([
       'git ls-remote --exit-code --tags https://github.com/garrytan/gbrain refs/tags/v0.60.213.0',
       'bun remove -g gbrain',
+      'If C:\\Users\\a\\.bun\\bin\\gbrain.exe is still there, move it aside: Move-Item -Force "C:\\Users\\a\\.bun\\bin\\gbrain.exe" "C:\\Users\\a\\.bun\\bin\\gbrain.exe.stale"',
       'bun add -g --backend=copyfile github:garrytan/gbrain#v0.60.213.0',
       'If the add fails, restore 0.60.200.0 with: bun add -g --backend=copyfile github:garrytan/gbrain#v0.60.200.0',
     ]);

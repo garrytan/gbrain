@@ -1,7 +1,7 @@
 import type { BrainEngine } from '../core/engine.ts';
 import { execFileSync, spawnSync } from '../core/spawn.ts';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, appendFileSync, realpathSync } from 'fs';
-import { basename, join, dirname, resolve } from 'path';
+import { basename, join, dirname, resolve, win32 } from 'path';
 import { isNewerVersion, parseSemver, semverGt } from '../core/semver.ts';
 import { cliChildStdio, jsonRequested, setCliExitVerdict, writeJsonDocument } from '../core/cli-force-exit.ts';
 import { opError, type OperationError } from '../core/ops/contract.ts';
@@ -27,6 +27,7 @@ import {
   readPackageTarget,
   type TargetFloor,
 } from '../core/bun-floor.ts';
+import { bunShimDir, moveAsideOrphanedShim } from '../core/bun-windows-shim.ts';
 
 const GBRAIN_GITHUB_REPO = 'garrytan/gbrain';
 
@@ -415,16 +416,22 @@ async function installStableRelease(method: string, target: { version: string; c
     return 'refused';
   }
   const bun = (bunArgs: string[]) => execFileSync('bun', bunArgs, { env: ctx.upgradeEnv, stdio: cliChildStdio(), timeout: 300_000 });
+  // #10538: on Windows the running gbrain.exe launcher survives `bun remove -g` and blocks every `bun add -g` with EEXIST.
+  const shimDir = bunShimDir(ctx.upgradeEnv);
+  let removed = false;
   try {
     bun(['remove', '-g', 'gbrain']);
+    removed = true;
+    moveAsideOrphanedShim(shimDir);
     bun(['add', '-g', BUN_BACKEND, spec]);
     return 'installed';
   } catch {
     if (installedDespiteFailure(ctx.oldVersion, method)) return 'installed';
     console.error(`Installing ${spec} failed. Restoring gbrain ${ctx.oldVersion}...`);
-    try { bun(['add', '-g', BUN_BACKEND, `github:${GBRAIN_GITHUB_REPO}#v${ctx.oldVersion}`]); console.error(`Restored gbrain ${ctx.oldVersion}.`); }
-    catch { console.error(`Restore failed. Reinstall by hand: ${bunReinstallCommand(`#v${target.version}`)}`); }
-    recordUpgradeError({ phase: ctx.phase ?? 'stable-reinstall', fromVersion: ctx.oldVersion, toVersion: target.version, error: `bun add -g ${BUN_BACKEND} ${spec} failed`, recover: bunReinstallCommand(`#v${target.version}`) });
+    const hint = reinstallHintLines(target.version, ctx.oldVersion, process.platform, shimDir);
+    try { if (removed) moveAsideOrphanedShim(shimDir); bun(['add', '-g', BUN_BACKEND, `github:${GBRAIN_GITHUB_REPO}#v${ctx.oldVersion}`]); console.error(`Restored gbrain ${ctx.oldVersion}.`); }
+    catch { console.error('Restore failed. Reinstall by hand:'); for (const line of hint) console.error(`  ${line}`); }
+    recordUpgradeError({ phase: ctx.phase ?? 'stable-reinstall', fromVersion: ctx.oldVersion, toVersion: target.version, error: `bun add -g ${BUN_BACKEND} ${spec} failed`, recover: hint.join('; ') });
     setCliExitVerdict(1);
     return 'failed';
   }
@@ -652,16 +659,19 @@ export function planPinnedReinstall(requested: string | null, oldVersion: string
 /**
  * #6662: the reinstall steps to print. The guarded one-liner works in POSIX
  * shells and PowerShell 7; Windows PowerShell 5.1 has no `&&`, so on Windows
- * each step is its own line. Always ends with the restore line for oldVersion.
+ * each step is its own line, with the step that moves a leftover gbrain.exe launcher out of the add's way (#10538).
+ * Always ends with the restore line for oldVersion.
  */
-export function reinstallHintLines(version: string, oldVersion: string, platform: NodeJS.Platform = process.platform): string[] {
+export function reinstallHintLines(version: string, oldVersion: string, platform: NodeJS.Platform = process.platform, shimDir: string = bunShimDir()): string[] {
   const tag = `v${version}`;
   const restore = `If the add fails, restore ${oldVersion} with: bun add -g ${BUN_BACKEND} github:${GBRAIN_GITHUB_REPO}#v${oldVersion}`;
   if (platform !== 'win32') return [bunReinstallCommand(`#${tag}`), restore];
+  const shim = win32.join(shimDir, 'gbrain.exe');
   return [
     'Run these one at a time, and stop if the first one fails (the tag is not published yet):',
     releaseTagProbeCommand(tag),
     'bun remove -g gbrain',
+    `If ${shim} is still there, move it aside: Move-Item -Force "${shim}" "${shim}.stale"`,
     `bun add -g ${BUN_BACKEND} github:${GBRAIN_GITHUB_REPO}#${tag}`,
     restore,
   ];
