@@ -22,6 +22,7 @@ import { capabilityMissing } from './rust-engine/errors.ts';
 import { opError } from './ops/contract.ts';
 import { transactionAborted } from './postgres-engine/transaction-abort.ts';
 import { RUST_ENGINE_MEMBERS } from './rust-engine/members.ts';
+import { isReadMember, SELF_ADMITTED_MEMBERS as SELF_ADMITTED } from './rust-engine/member-access.ts';
 import { openRustStore, type RustStore, type StoreBrain } from './rust-engine/store.ts';
 import { mapStoreError } from './rust-engine/store-errors.ts';
 import { STORE_MEMBERS } from './rust-engine/store-members/index.ts';
@@ -108,22 +109,6 @@ function transactionCancelledWhileWaiting(): Error {
 }
 /** Threads of the transaction executor: one, so the calls of the transaction that holds the writer never wait for the pool. */
 const TRANSACTION_POOL_THREADS = 1;
-/** Members that run on their own admission (the transaction members) rather than the writer gate. */
-const SELF_ADMITTED = new Set(['transaction', 'transactionDirect', 'lockPageKeys']);
-/**
- * Members that only read: they run on a snapshot and never wait for an open transaction. The member table has no
- * read/write column, so the names decide; a member this does not match counts as a write and waits, which is always
- * safe (the transaction runs on its own executor, so a waiting write can never block it).
- */
-const READ_MEMBER = /^(get|list|read|find|count|search|resolve|traverse|has|query|explain|lookup|describe|scan|is)[A-Z]/;
-const READ_MEMBERS = new Set([
-  'batchLoadEmotionalInputs', 'loadContradictionsTrend', 'sumStaleChunkChars', 'relationalChainHop', 'relationalFanout',
-  'keywordBoundedRead',
-]);
-const WRITE_MEMBERS = new Set(['resolveTake']);
-function isReadMember(member: string): boolean {
-  return !WRITE_MEMBERS.has(member) && (READ_MEMBERS.has(member) || READ_MEMBER.test(member));
-}
 /** Builds the Rust engine around an addon the loader has already verified. Nothing is opened or written yet. */
 export function openRustEngine(opts: OpenRustEngineOptions): RustEngine {
   return new RustEngine(opts);
@@ -168,6 +153,12 @@ export class RustEngine implements BrainEngine {
   private _writer: { scope: RustTransactionScope; done: Promise<void>; release: () => void } | null = null;
   /** The transaction executor's pool, made on the first transaction and shut down by `disconnect`. */
   private _txPool: { shutdown(waitMs: number): Promise<unknown> } | null = null;
+  /**
+   * Set by `disconnect` before it waits for the open transaction, cleared by the next connect: a transaction or write
+   * still waiting at the gate then rejects `engine_closed` and writes nothing, instead of taking the writer when the
+   * open transaction ends and running on a store that `disconnect` is about to close.
+   */
+  private _gateClosed = false;
 
   constructor(opts: OpenRustEngineOptions) {
     this.addon = opts.addon;
@@ -236,6 +227,7 @@ export class RustEngine implements BrainEngine {
       this._owner = role;
       prior?.();
       this._leaveOwner = installOwnerClient(this, role.connection, { rejoin: () => this._takeOver(role.connection) });
+      this._gateClosed = false;
       this._connected = true;
       return;
     }
@@ -268,6 +260,7 @@ export class RustEngine implements BrainEngine {
         throw abandoned();
       }
       this._store = store;
+      this._gateClosed = false;
       this._connected = true;
     } finally {
       storeSettled();
@@ -366,7 +359,16 @@ export class RustEngine implements BrainEngine {
         'Make every call inside transaction(fn) on the engine passed to fn, not on the outer engine.', { reason: 'transaction_reentry', detail: `member=${member}` });
     }
     if (SELF_ADMITTED.has(member) || isReadMember(member)) return;
-    while (this._writer) await this._writer.done;
+    while (this._writer) {
+      await this._writer.done;
+      this._throwIfGateClosed(member);
+    }
+    this._throwIfGateClosed(member);
+  }
+
+  /** A call that waited at the gate while `disconnect` ran rejects `engine_closed`; nothing has run. */
+  private _throwIfGateClosed(member: string): void {
+    if (this._gateClosed) throw mapStoreError({ code: 'store_closed' }, { member });
   }
 
   /** Waits until no transaction holds the writer, bounded by `signal`: an abort while waiting rejects `cancelled`. */
@@ -401,7 +403,9 @@ export class RustEngine implements BrainEngine {
     let rootBrain: StoreBrain;
     for (;;) {
       await this._awaitWriter(signal);
+      this._throwIfGateClosed('transaction');
       rootBrain = (await this.storeFor('transaction')).brain;
+      this._throwIfGateClosed('transaction');
       if (!this._writer) break;
     }
     // The waits above can end after an abort with no writer left to wait for; nothing has opened yet, so it rejects here.
@@ -452,6 +456,9 @@ export class RustEngine implements BrainEngine {
 
   /** `disconnect`: waits a bounded time for the open transaction, then rolls it back; its later calls reject `engine_closed`. */
   private async _endOpenTransaction(): Promise<void> {
+    // Closed before the wait: a transaction queued behind the open one must not take the writer when the open one ends
+    // during the wait, since nothing would then end it before the pool and the store shut down.
+    this._gateClosed = true;
     const open = this._writer;
     if (!open) return;
     let timer: ReturnType<typeof setTimeout> | undefined;

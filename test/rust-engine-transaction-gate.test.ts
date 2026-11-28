@@ -4,6 +4,11 @@
  *  - `disconnect` waits a bounded time for an open transaction, then rolls it back. The gate must be freed then, even
  *    when the transaction's callback never returns: a write that waited on it settles, and the reconnected engine
  *    writes at once. Before the fix the gate stayed held by the stranded callback, and every later write waited forever.
+ *  - `disconnect` closes the gate before that wait: a transaction queued behind the open one rejects `engine_closed`
+ *    and writes nothing when the open one ends during the wait. Before the fix it took the writer and ran after
+ *    `disconnect` had returned, on a pool and store that were shut down.
+ *  - Served reads never wait for an open transaction, including the reads whose names do not start with a read verb.
+ *    Before the fix the gate decided by name, and those reads waited for the writer.
  *  - A transaction that waits for the open one rejects `cancelled` as soon as its signal aborts, even when the abort
  *    came before its wait began. When an abort comes while it waits and no transaction is left, it still opens nothing
  *    and its callback never runs.
@@ -121,4 +126,48 @@ describe('Rust engine writer gate', () => {
     // The gate is free afterwards.
     expect(await within(brain.engine.putPage('gate/next', NOTE), 5_000)).toBe('resolved');
   }, 30_000);
+
+  withAddon('a transaction queued behind the open one rejects engine_closed when the open one ends during disconnect', async () => {
+    const brain = await openRustBrain();
+    brains.push(brain);
+    const { tx, release } = await holdWriter(brain, 'gate/t1');
+    let ran = false;
+    const queued = brain.engine.transaction(async (engine) => { ran = true; await engine.putPage('gate/t2', NOTE); });
+    queued.catch(() => undefined);
+    expect(await within(queued, 200)).toBe('pending');
+    const closing = brain.engine.disconnect();
+    release(); // the open transaction ends on its own, well inside disconnect's wait
+    expect(await within(tx, 5_000)).toBe('resolved');
+    await closing;
+    expect(await within(queued, 1_000)).toBe('rejected:engine_closed');
+    expect(ran).toBe(false);
+    await brain.engine.connect({ engine: 'pglite', database_path: brain.dir } as never);
+    expect(await brain.engine.getPage('gate/t1')).not.toBeNull();
+    expect(await brain.engine.getPage('gate/t2')).toBeNull();
+    expect(await within(brain.engine.putPage('gate/after', NOTE), 5_000)).toBe('resolved');
+  }, 30_000);
+
+  // Served reads whose names start with no read verb (getPage is the control). Each must answer while a transaction holds
+  // the writer; the gate used to read them as writes, so they waited until it ended.
+  const READS: Array<[string, (engine: any) => Promise<unknown>]> = [
+    ['getPage', (e) => e.getPage('gate/none')],
+    ['generatedPagesIn', (e) => e.generatedPagesIn([])],
+    ['aliasCanonicalRefs', (e) => e.aliasCanonicalRefs([])],
+    ['discoverOntologyDimensions', (e) => e.discoverOntologyDimensions()],
+    ['pageCollapseFacts', (e) => e.pageCollapseFacts([], [])],
+    ['livePageIdsAt', (e) => e.livePageIdsAt([])],
+    ['pagesLinkingTo', (e) => e.pagesLinkingTo([], [])],
+    ['cosinesByChunkIds', (e) => e.cosinesByChunkIds([1], 'embedding', new Float32Array([1, 0, 0]))],
+  ];
+  for (const [member, read] of READS) {
+    withAddon(`${member} answers while another transaction holds the writer`, async () => {
+      const brain = await openRustBrain();
+      brains.push(brain);
+      const { tx, release } = await holdWriter(brain, 'gate/open');
+      const outcome = await within(read(brain.engine), 2_000);
+      release();
+      expect(await within(tx, 5_000)).toBe('resolved');
+      expect(outcome).toBe('resolved');
+    }, 30_000);
+  }
 });
