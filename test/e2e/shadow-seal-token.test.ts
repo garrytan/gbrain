@@ -390,6 +390,26 @@ d('the seal change token on Postgres', () => {
     } finally { await hidden.drop(); }
   }, 60_000);
 
+  test('a pool connection another part of the sealing process holds reserved, and wrote through, is proven its own and still seals', async () => {
+    // A serving process keeps one pool connection reserved for its whole life (the persistence consumer's idle lane), and
+    // that connection wrote through the hooks at startup. It can never be reserved again, yet it is the process's own.
+    await engine.withReservedConnection(async (conn) => {
+      await conn.executeRaw(`INSERT INTO config (key, value) VALUES ('held-own-lane', '1')`);
+      const [{ pid }] = await conn.executeRaw<{ pid: number }>('SELECT pg_backend_pid() AS pid');
+      const [{ n }] = await engine.executeRaw<{ n: number }>('SELECT count(*)::int AS n FROM engine_writer_sessions WHERE backend_pid = $1', [pid]);
+      expect(n).toBe(1); // the hooks recorded it as a writer, and it is still connected
+      expect(await sealMark(deps())).toHaveProperty('token');
+    });
+  }, 60_000);
+
+  test('a pool connection of the sealing process still running a statement at the seal is proven its own and does not refuse it', async () => {
+    const busy = engine.executeRaw('SELECT pg_sleep(1.5)');
+    try {
+      await new Promise((r) => setTimeout(r, 300)); // the statement is running: not idle, and not reservable
+      expect(await sealMark(deps())).toHaveProperty('token');
+    } finally { await busy; }
+  }, 60_000);
+
   test('a statistics reset is refused', async () => {
     const token = await sealed();
     await engine.executeRaw('SELECT pg_stat_reset()');
