@@ -75,6 +75,7 @@ usual CPU choice).
   --model ./models/qwen3-reranker-0.6b-q8_0.gguf \
   --alias qwen3-reranker-0.6b \
   --reranking --pooling rank \
+  -b 2048 -ub 2048 \
   --port 8081
 ```
 
@@ -83,6 +84,14 @@ The `--alias` matters: without it, llama-server's `/v1/models` (and the
 path, which makes the gbrain config string ugly and brittle. With
 `--alias qwen3-reranker-0.6b`, your config string is short and stable.
 `--pooling rank` selects the reranking head explicitly.
+
+Set `-b 2048 -ub 2048` (logical and physical batch size) explicitly. Some
+llama-server builds default the physical batch to 512 and answer any longer
+input with HTTP 500 (`input (518 tokens) is too large to process. increase
+the physical batch size`). `applyReranker` fails open on that, so search
+looks healthy while serving un-reranked order. Short synthetic health
+checks do not catch it: also send one input of 1,000+ tokens and confirm
+`rerank_score` is present. Inputs above 2048 tokens can still fail.
 
 `--reranking` and `--embeddings` are mutually exclusive at server
 launch. If you also run a local embedder via the

@@ -43,7 +43,10 @@ export const llamaServerReranker: Recipe = {
   },
   setup_hint:
     'Build llama.cpp, then `llama-server --model <gguf-path> --alias ' +
-    '<short-id> --reranking --port 8081`. The --alias makes provider:model ' +
+    '<short-id> --reranking -b 2048 -ub 2048 --port 8081`. Set -b/-ub ' +
+    'explicitly: older builds default the physical batch to 512 and answer ' +
+    'longer inputs with HTTP 500 (search then fails open to un-reranked ' +
+    'order). The --alias makes provider:model ' +
     'strings short (without it, /v1/models defaults the id to the gguf file ' +
     'path). Then `gbrain config set search.reranker.model ' +
     'llama-server-reranker:<short-id>` and `gbrain config set ' +
