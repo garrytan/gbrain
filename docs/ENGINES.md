@@ -2141,10 +2141,17 @@ gbrain engine shadow stop [--delete]               # turn it off; --delete remov
   `engine shadow reconcile` too) has its child write a seal into `follower.json` (`src/shadow/seal.ts`). The next
   owner session takes the sealed obligations over only when `follower.json` was not written since, `state.json` was
   not restarted, the evidence epoch is the same and no line was added to `follower-invalidations.jsonl`; it is still
-  invalid until its serving process confirms that the primary's writer evidence is exactly what it was at the seal (on
-  Postgres: no other connection's writer-session row added or moved, no coverage gap, every hook intact; no seal is
-  written while another connection has a write open or wrote in the last 10 minutes and is still connected). On PGLite
-  only the file checks apply. Any doubt, a failed read or a timeout leaves the watermark invalid until a full pass. A
+  invalid until its serving process confirms that the primary shows no write since the seal. On Postgres the seal holds
+  a versioned token read from the database's own counters: the statistics epoch and, for each relation the seed copied
+  (and `page_projection_jobs`), its oid, relfilenode and insert, update and delete counts. The confirmation refuses any
+  difference, a new coverage gap, a hook that is not working, a login role that can write a brain table with no way to
+  record evidence, `track_counts` off, a server older than PostgreSQL 15, a prepared transaction, another connection
+  with a write open, and any other connection that is not idle (or went idle under a minute ago, or cannot be seen),
+  because counters show only what the server has flushed. No seal is written under the same conditions, and not while a
+  connection the writer hooks recorded is still connected, whatever the age of its row: a writer still connected during
+  the seal check is refused until it commits or disconnects. After the child took a confirmation the check reads once
+  more, and a failure withdraws it (`revokeSeal`: invalid again, full obligation). PGLite never seals or confirms
+  (`pglite_no_db_continuity`). Any doubt, a failed read or a timeout leaves the watermark invalid until a full pass. A
   write published after the follower closed, or one the child would not take, leaves an invalidation line, which
   voids the seal. The named persistence-journal members (`JOURNAL_BOOKKEEPING_MEMBERS` in `src/shadow/follow.ts`)
   publish the tables their statements write instead of invalidating the watermark; every other member the write map

@@ -448,6 +448,7 @@ export class FollowChild {
       // `continuity` only once this session is known to continue the one before it (no seal waiting for its confirmation).
       case 'state': this.readForeign(); return { ...file.watermark, continuity: this.pendingSeal ? null : this.continuity, pending_seal: this.pendingSeal ? { db_at: this.pendingSeal.db_at } : null };
       case 'confirmSeal': return this.confirmSeal((a.db_at ?? null) as string | null, a.ok === true, typeof a.reason === 'string' && /^[A-Za-z0-9_.:-]{1,64}$/.test(a.reason) ? a.reason : 'refused');
+      case 'revokeSeal': return this.withdrawConfirmation(typeof a.reason === 'string' && /^[A-Za-z0-9_.:-]{1,64}$/.test(a.reason) ? a.reason : 'refused');
       case 'barrier': return { stamp: this.barrier() };
       case 'seedPlan': return store.seedPlan();
       case 'relationDigest': return store.relationDigest(id, a.relation as string, lo, hi);
@@ -502,6 +503,20 @@ export class FollowChild {
     this.provisionalAt = null;
     if (this.fullAt === null && this.dirty.size === 0 && !file.watermark.valid && pending.watermark.valid) file.watermark = { ...pending.watermark };
     return { ...file.watermark, confirmed: true };
+  }
+
+  /**
+   * The serving process saw a write after it confirmed the seal (seal.ts): the confirmation is withdrawn. The watermark
+   * is invalid with a full obligation, a new continuity is drawn (as for a refused seal), and status names the reason.
+   */
+  private withdrawConfirmation(reason: string): Watermark {
+    this.readForeign();
+    this.pendingSeal = null;
+    this.invalidate('seal_revoked');
+    this.continuity = randomUUID();
+    this.file!.continuity = this.continuity;
+    this.outcome('refused', reason);
+    return { ...this.file!.watermark };
   }
 
   /** False only when the write was attempted and failed. */

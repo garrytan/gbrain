@@ -1,0 +1,4 @@
+---
+kind: fix
+---
+Shadow mode carries its coverage watermark from one short gbrain serve session to the next only when the primary shows no write in between. It now judges that from the database's own write counters for the copied tables and the statistics epoch, not from the writer records, which a restricted role, locked evidence tables or a refreshed older row could leave unchanged. A seal is refused while another connection has a write open, a prepared transaction exists, a recorded writer is still connected, another connection went idle in the last minute or cannot be seen, or a login role can write without a way to record it, and on PostgreSQL older than 15 or with track_counts off. A writer still connected during the seal check is refused until it commits or disconnects. When that happens the next session runs a full reconcile pass, and status names the reason.
