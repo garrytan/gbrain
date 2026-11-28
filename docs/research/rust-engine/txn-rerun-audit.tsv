@@ -1,0 +1,815 @@
+# Optimistic transaction rerun audit on rust-engine/multiuser, base 59141461ed7c3508c7af0cb20009212f5ba50934 (line numbers are base lines).
+# runOptimisticTransaction (src/core/rust-engine/optimistic-transaction.ts) runs an engine.transaction callback again after write_conflict; this lists what each callback does outside the transaction on a rerun.
+# Section 1, every engine.transaction call in src/: 474 rows = 415 audited in this lane + 59 out of lane (46 L1, 13 src/shadow/ L2). Verdicts: FIXED 9, FOLLOW-UP 59, SAFE 48, UNREACHABLE 132, pure 226
+# Section 2, via a pass-through wrapper (not counted in section 1): 335 rows, one per caller that passes its function through a wrapper. Verdicts: FIXED 16, FOLLOW-UP 1, SAFE 69, UNREACHABLE 10, pure 239
+file:line	verdict	reason
+src/commands/agent-register.ts:541	SAFE	outer flags (createdWorkspace, registered) are assigned, not accumulated, and the last run is the committed one
+src/commands/agent-register.ts:685	pure	OAuth adapter: the provider and grant-store callbacks it runs write through tx members (oauth-grants.ts revokeClient) or a SqlQuery over tx (tx.executeRaw, which the Rust engine refuses) and keep no outer state
+src/commands/auth.ts:660	SAFE	the write callback assigns its result; the committed run wins
+src/commands/auth.ts:829	pure	OAuth adapter: the provider and grant-store callbacks it runs write through tx members (oauth-grants.ts revokeClient) or a SqlQuery over tx (tx.executeRaw, which the Rust engine refuses) and keep no outer state
+src/commands/autopilot-health.ts:32	UNREACHABLE	the first awaited statement is tx.executeRaw; the Rust engine refuses raw_sql, so no run gets past it
+src/commands/embed.ts:1248	pure	callback reads and writes through tx and returns its result; no outer state (only idempotent module caches are reached)
+src/commands/embed.ts:1444	pure	callback reads and writes through tx and returns its result; no outer state (only idempotent module caches are reached)
+src/commands/embed.ts:1623	pure	pass-through wrapper: the run keeps no outer state itself; the functions its callers pass are audited in the via-wrapper section
+src/commands/embed.ts:1792	pure	callback reads and writes through tx and returns its result; no outer state
+src/commands/embed.ts:2090	SAFE	per-run outer state is reset at the top of the callback on the base
+src/commands/embed.ts:2152	pure	callback reads and writes through tx and returns its result; no outer state (only idempotent module caches are reached)
+src/commands/extract.ts:2590	SAFE	outer values are assigned per run; the committed run wins
+src/commands/household-template.ts:355	pure	OAuth adapter: the provider and grant-store callbacks it runs write through tx members (oauth-grants.ts revokeClient) or a SqlQuery over tx (tx.executeRaw, which the Rust engine refuses) and keep no outer state
+src/commands/integrity.ts:761	pure	the callback only calls tx.appendTimeline; the fetch hit is a comment
+src/commands/mcp-provision.ts:34	SAFE	an orphan credential journal from a lost run names a client that never committed; delivery checks for a live client first
+src/commands/migrate-embeddings.ts:788	pure	callback reads and writes through tx and returns its result; no outer state
+src/commands/migrate-embeddings.ts:888	pure	pass-through wrapper: the run keeps no outer state itself; the functions its callers pass are audited in the via-wrapper section
+src/commands/reindex-aliases.ts:69	pure	pass-through wrapper: the run keeps no outer state itself; the functions its callers pass are audited in the via-wrapper section
+src/commands/serve-http-registration.ts:192	FIXED	dupClientId and registered are reset at the top of each run
+src/commands/serve-http-webhooks.ts:303	pure	callback reads and writes through tx and returns its result; no outer state
+src/commands/serve-http.ts:678	pure	OAuth adapter: the provider and grant-store callbacks it runs write through tx members (oauth-grants.ts revokeClient) or a SqlQuery over tx (tx.executeRaw, which the Rust engine refuses) and keep no outer state
+src/commands/sources-git-gap.ts:175	pure	callback reads and writes through tx and returns its result; no outer state
+src/commands/sources-git-gap.ts:185	FIXED	census and pending are restored per run; collect calls are buffered and flushed after commit; cursor and offset move after commit
+src/commands/sources-git-gap.ts:198	pure	callback reads and writes through tx and returns its result; no outer state
+src/commands/sources.ts:815	pure	callback reads and writes through tx and returns its result; no outer state
+src/commands/sources.ts:1146	pure	callback reads and writes through tx and returns its result; no outer state
+src/commands/sync/holds.ts:217	pure	callback reads and writes through tx and returns its result; no outer state
+src/commands/sync/holds.ts:268	pure	callback reads and writes through tx and returns its result; no outer state
+src/commands/sync/plain-directory.ts:92	pure	callback reads and writes through tx and returns its result; no outer state
+src/commands/sync/unsupported-paths.ts:66	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/access/members.ts:402	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/access/open-pages.ts:143	UNREACHABLE	the first awaited statement is tx.executeRaw; the Rust engine refuses raw_sql, so no run gets past it
+src/core/access/policy-migrate.ts:105	SAFE	outer values are assigned per run; the committed run wins
+src/core/access/policy.ts:189	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/access/policy.ts:217	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/access/policy.ts:344	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/access/policy.ts:414	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/attendance-repair.ts:322	UNREACHABLE	the first awaited statement is tx.executeRaw; the Rust engine refuses raw_sql, so no run gets past it
+src/core/backfill-effective-date.ts:205	UNREACHABLE	the callback calls tx.executeRaw before any outer effect; the Rust engine refuses raw_sql, so no run gets past it
+src/core/backup/snapshot.ts:282	SAFE	outer values are assigned per run; the committed run wins
+src/core/belief/coverage-report.ts:209	pure	callback reads and writes through tx and returns its result; no outer state (only idempotent module caches are reached)
+src/core/belief/coverage-report.ts:238	pure	drafts is a local array built inside the run; writes go through tx
+src/core/belief/purge-mirror.ts:377	SAFE	`result` is last-write-wins
+src/core/belief/writers.ts:60	SAFE	belief report{} counts only grow; markBeliefCommits marks only publications with committed events, so an over-count from a lost run does nothing
+src/core/bootstrap/verify.ts:268	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/bootstrap/verify.ts:270	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/chronicle/publish.ts:203	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/chunkers/symbol-resolver.ts:147	UNREACHABLE	the callback calls tx.executeRaw before any outer effect; the Rust engine refuses raw_sql, so no run gets past it
+src/core/company-brain/profile.ts:68	UNREACHABLE	the first awaited statement is tx.executeRaw; the Rust engine refuses raw_sql, so no run gets past it
+src/core/company-brain/receipts.ts:180	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/company-brain/receipts.ts:201	pure	pass-through wrapper: the run keeps no outer state itself; the functions its callers pass are audited in the via-wrapper section
+src/core/content-drift-sweep.ts:137	SAFE	outer values are assigned per run; the committed run wins
+src/core/content-drift-sweep.ts:182	SAFE	outer values are assigned per run; the committed run wins
+src/core/contextual-retrieval-service.ts:364	pure	callback reads and writes through tx and returns its result; no outer state (only idempotent module caches are reached)
+src/core/contextual-retrieval-service.ts:639	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/cycle/concept-publication.ts:140	UNREACHABLE	the callback calls tx.executeRaw before any outer effect; the Rust engine refuses raw_sql, so no run gets past it
+src/core/cycle/concept-publication.ts:142	UNREACHABLE	the callback calls tx.executeRaw before any outer effect; the Rust engine refuses raw_sql, so no run gets past it
+src/core/cycle/dream-breaker.ts:133	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/cycle/dream-write-deferral.ts:90	pure	pass-through wrapper: the run keeps no outer state itself; the functions its callers pass are audited in the via-wrapper section
+src/core/cycle/extract-facts.ts:1018	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/cycle/patterns.ts:971	pure	`write` is importFromContent plus tx.executeRaw on tx; no state outside the transaction
+src/core/cycle/phases/consolidate.ts:482	pure	callback reads and writes through tx and returns its result; no outer state (only idempotent module caches are reached)
+src/core/eligibility/scan.ts:154	SAFE	per-run outer state is reset at the top of the callback on the base
+src/core/embed-facts.ts:189	UNREACHABLE	the callback calls tx.executeRaw before any outer effect; the Rust engine refuses raw_sql, so no run gets past it
+src/core/embed-retry.ts:38	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/embed-stale.ts:192	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/embed-stale.ts:349	pure	callback reads and writes through tx and returns its result; no outer state (only idempotent module caches are reached)
+src/core/embed-stale.ts:453	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/embed-stale.ts:553	pure	pass-through wrapper: the run keeps no outer state itself; the functions its callers pass are audited in the via-wrapper section
+src/core/embed-stale.ts:606	pure	pass-through wrapper: the run keeps no outer state itself; the functions its callers pass are audited in the via-wrapper section
+src/core/embed-takes.ts:114	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/embedding-invalidation.ts:137	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/embedding-invalidation.ts:206	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/embedding-migration-budget.ts:81	pure	pass-through wrapper: the run keeps no outer state itself; the functions its callers pass are audited in the via-wrapper section
+src/core/embedding-migration-budget.ts:149	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/embedding-migration-budget.ts:159	SAFE	`current` is read fresh each run
+src/core/embedding-migration-budget.ts:190	SAFE	`current` is read fresh each run
+src/core/embedding-migration.ts:126	pure	pass-through wrapper: the run keeps no outer state itself; the functions its callers pass are audited in the via-wrapper section
+src/core/embedding-migration.ts:932	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/embedding-migration.ts:1307	pure	pass-through wrapper: the run keeps no outer state itself; the functions its callers pass are audited in the via-wrapper section
+src/core/embedding-migration.ts:1432	pure	pass-through wrapper: the run keeps no outer state itself; the functions its callers pass are audited in the via-wrapper section
+src/core/embedding-migration.ts:1489	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/embedding-migration.ts:1548	pure	pass-through wrapper: the run keeps no outer state itself; the functions its callers pass are audited in the via-wrapper section
+src/core/embedding-readiness.ts:89	pure	pass-through wrapper: the run keeps no outer state itself; the functions its callers pass are audited in the via-wrapper section
+src/core/embedding-readiness.ts:103	pure	pass-through wrapper: the run keeps no outer state itself; the functions its callers pass are audited in the via-wrapper section
+src/core/embedding-restamp.ts:94	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/engine-sql/abort-aware.ts:24	UNREACHABLE	a SqlExecutor guard used only by the Postgres engine (postgres-engine.ts); the Rust engine never runs this code
+src/core/engine-sql/access-members.ts:39	UNREACHABLE	the first awaited statement is tx.executeRaw; the Rust engine refuses raw_sql, so no run gets past it
+src/core/engine-sql/access-members.ts:73	UNREACHABLE	the first awaited statement is tx.executeRaw; the Rust engine refuses raw_sql, so no run gets past it
+src/core/engine-sql/access-members.ts:81	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/engine-sql/chronicle-ledger.ts:116	UNREACHABLE	the first awaited statement is tx.executeRaw; the Rust engine refuses raw_sql, so no run gets past it
+src/core/engine-sql/dialect-pglite.ts:73	UNREACHABLE	a transaction inside the PGLite or Postgres engine implementation; the Rust engine never runs this code
+src/core/engine-sql/entity-identities.ts:87	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/engine-sql/eval-harness-reads.ts:256	UNREACHABLE	the first awaited statement is tx.executeRaw; the Rust engine refuses raw_sql, so no run gets past it
+src/core/engine-sql/links.ts:248	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/engine-sql/page-body.ts:230	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/engine-sql/page-body.ts:334	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/engine-sql/page-embedding-budget.ts:112	UNREACHABLE	the first awaited statement is tx.executeRaw; the Rust engine refuses raw_sql, so no run gets past it
+src/core/engine-sql/pages.ts:237	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/engine-sql/pages.ts:384	pure	gone is a local Set built inside the run; deletes go through tx
+src/core/engine-sql/read-route-guard.ts:54	UNREACHABLE	a SqlExecutor guard used only by the Postgres engine (postgres-engine.ts); the Rust engine never runs this code
+src/core/engine-sql/rename-alias-rows.ts:21	UNREACHABLE	the first awaited statement is tx.executeRaw; the Rust engine refuses raw_sql, so no run gets past it
+src/core/engine-sql/rename-alias-rows.ts:35	UNREACHABLE	the first awaited statement is tx.executeRaw; the Rust engine refuses raw_sql, so no run gets past it
+src/core/engine-sql/takes.ts:553	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/engine-sql/worktree-claim.ts:109	pure	pass-through wrapper: the run keeps no outer state itself; the functions its callers pass are audited in the via-wrapper section
+src/core/engine-sql/writer-admin.ts:205	pure	pass-through wrapper: the run keeps no outer state itself; the functions its callers pass are audited in the via-wrapper section
+src/core/engine-swap/fence.ts:45	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/facts/file-body-guard.ts:65	SAFE	nested savepoint; mirror (fence-write.ts:583, forget.ts:304) writes only through the savepoint; onFailure warns, or overwrites mirrorWarning with the latest value, so a rerun at most repeats a warning line
+src/core/facts/fts-index.ts:52	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/facts/purge-verify.ts:156	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/facts/purge-verify.ts:198	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/facts/withdrawal.ts:85	SAFE	noteBelief writes into the belief batch store opened inside the same run (or the enclosing caller's run); the enqueue is tx.applyDecideReviewQueue; the invalidation list has no registrants
+src/core/facts/writeback-settings.ts:119	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/function-search-path.ts:162	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/generations/managed-retire.ts:56	SAFE	outer values are assigned per run; the committed run wins
+src/core/generations/managed-retire.ts:110	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/generations/managed-retire.ts:114	SAFE	outer values are assigned per run; the committed run wins
+src/core/generations/managed.ts:102	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/git/untrack-admission.ts:46	UNREACHABLE	the first awaited statement is tx.executeRaw; the Rust engine refuses raw_sql, so no run gets past it
+src/core/grants/legacy-token.ts:242	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/grants/legacy-token.ts:380	pure	result is a local object built inside the run
+src/core/grants/lifecycle.ts:18	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/grants/migration.ts:8	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/grants/service.ts:140	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/guests/sources.ts:100	SAFE	addSource with no path, clone or github writes rows only
+src/core/guests/sources.ts:107	UNREACHABLE	the first awaited statement is tx.executeRaw; the Rust engine refuses raw_sql, so no run gets past it
+src/core/harness/client-setup.ts:44	pure	recoverCredentialDelivery only reads (the openSync hit is a read-only open)
+src/core/import-file.ts:184	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/import-file.ts:845	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/import-file.ts:1275	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/import-file.ts:1287	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/import-file.ts:1908	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/import-file.ts:2021	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/line-grammar-config.ts:40	UNREACHABLE	the first awaited statement is tx.executeRaw; the Rust engine refuses raw_sql, so no run gets past it
+src/core/link-source-check-repair.ts:119	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/link-source-check-repair.ts:123	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/migrate.ts:226	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/migration-preludes.ts:56	pure	pass-through wrapper: the run keeps no outer state itself; the functions its callers pass are audited in the via-wrapper section
+src/core/minions/authorize-legacy.ts:98	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/minions/budget-meter.ts:77	pure	pass-through wrapper: the run keeps no outer state itself; the functions its callers pass are audited in the via-wrapper section
+src/core/minions/budget-meter.ts:183	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/minions/legacy-cancel.ts:106	UNREACHABLE	the first awaited statement is tx.executeRaw; the Rust engine refuses raw_sql, so no run gets past it
+src/core/minions/rate-leases.ts:77	UNREACHABLE	the first awaited statement is tx.executeRaw; the Rust engine refuses raw_sql, so no run gets past it
+src/core/oauth-grants.ts:392	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/oauth-provider.ts:1197	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/ops/page-upload.ts:249	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/ops/pages.ts:167	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/ops/pages.ts:436	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/ops/valid-time-read.ts:267	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/page-body/projection.ts:75	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/page-body/projection.ts:170	SAFE	per-run outer state is reset at the top of the callback on the base
+src/core/page-body/segment-derive.ts:564	UNREACHABLE	the callback calls tx.executeRaw before any outer effect; the Rust engine refuses raw_sql, so no run gets past it
+src/core/page-body/segment-derive.ts:596	UNREACHABLE	the callback calls tx.executeRaw before any outer effect; the Rust engine refuses raw_sql, so no run gets past it
+src/core/page-body/segment-derive.ts:647	UNREACHABLE	the callback calls tx.executeRaw before any outer effect; the Rust engine refuses raw_sql, so no run gets past it
+src/core/page-body/segmented-embedding.ts:139	pure	pass-through wrapper: the run keeps no outer state itself; the functions its callers pass are audited in the via-wrapper section
+src/core/page-body/streamed-import.ts:481	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/page-embedding-budget.ts:201	UNREACHABLE	the first awaited statement is tx.executeRaw; the Rust engine refuses raw_sql, so no run gets past it
+src/core/page-spend.ts:81	UNREACHABLE	the first awaited statement is tx.executeRaw; the Rust engine refuses raw_sql, so no run gets past it
+src/core/page-state/image-seal.ts:79	pure	done is a local array built inside the run
+src/core/page-state/materialize.ts:19	SAFE	belief report{} counts only grow; markBeliefCommits marks only publications with committed events, so an over-count from a lost run does nothing
+src/core/page-state/projections.ts:133	pure	callback reads and writes through tx and returns its result; no outer state (only idempotent module caches are reached)
+src/core/page-state/projections.ts:245	pure	callback reads and writes through tx and returns its result; no outer state (only idempotent module caches are reached)
+src/core/page-state/projections.ts:297	pure	callback reads and writes through tx and returns its result; no outer state (only idempotent module caches are reached)
+src/core/page-state/projections.ts:369	pure	rows, accepted and the installed/dropped counters are locals declared inside the run
+src/core/page-state/projections.ts:714	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/page-state/rename-alias.ts:42	UNREACHABLE	the first awaited statement is tx.executeRaw; the Rust engine refuses raw_sql, so no run gets past it
+src/core/page-state/rename-alias.ts:109	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/page-state/tags.ts:6	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/page-state/versions.ts:58	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/persistence/activation.ts:225	SAFE	registerLocalWriter (replace=false) creates its file exclusively and ensureRegistrationRow re-inserts the row from the existing file; refreshManagedFilesystemRoots rewrites the per-root registry files from the rows it reads, so a rerun converges on the same files
+src/core/persistence/admin-lock.ts:91	pure	callback reads and writes through tx and returns its result; no outer state (only idempotent module caches are reached)
+src/core/persistence/atom-maintenance.ts:356	pure	children and accepted are locals declared inside the run
+src/core/persistence/atom-maintenance.ts:433	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/persistence/atom-maintenance.ts:442	SAFE	outer values are assigned per run; the committed run wins
+src/core/persistence/atom-maintenance.ts:622	pure	children and accepted are locals declared inside the run
+src/core/persistence/attribution.ts:89	pure	pass-through wrapper: the run keeps no outer state itself; the functions its callers pass are audited in the via-wrapper section
+src/core/persistence/concept-rebuild.ts:193	SAFE	per-run outer state is reset at the top of the callback on the base
+src/core/persistence/connector-checkpoint-migration.ts:85	SAFE	per-run outer state is reset at the top of the callback on the base
+src/core/persistence/connector-checkpoint-migration.ts:109	UNREACHABLE	the first awaited statement is tx.executeRaw; the Rust engine refuses raw_sql, so no run gets past it
+src/core/persistence/connector-path.ts:22	UNREACHABLE	the first awaited statement is tx.executeRaw; the Rust engine refuses raw_sql, so no run gets past it
+src/core/persistence/control.ts:39	pure	pass-through wrapper: the run keeps no outer state itself; the functions its callers pass are audited in the via-wrapper section
+src/core/persistence/database-write.ts:40	SAFE	belief report{} counts only grow; markBeliefCommits marks only publications with committed events, so an over-count from a lost run does nothing
+src/core/persistence/deactivation.ts:276	SAFE	carryHoldsToClassicState overwrites the state file with exactly the managed holds read in this run and `carried` is local; the root-registry refresh rewrites files from the rows read, so a rerun converges
+src/core/persistence/effect-facts.ts:125	pure	callback reads and writes through tx and returns its result; no outer state (only idempotent module caches are reached)
+src/core/persistence/effect-journal.ts:146	pure	callback reads and writes through tx and returns its result; no outer state (only idempotent module caches are reached)
+src/core/persistence/effect-journal.ts:235	pure	callback reads and writes through tx and returns its result; no outer state (only idempotent module caches are reached)
+src/core/persistence/effect-recovery.ts:75	UNREACHABLE	the first awaited statement is tx.executeRaw; the Rust engine refuses raw_sql, so no run gets past it
+src/core/persistence/effect-recovery.ts:125	UNREACHABLE	the first awaited statement is tx.executeRaw; the Rust engine refuses raw_sql, so no run gets past it
+src/core/persistence/effect-recovery.ts:217	UNREACHABLE	the first awaited statement is tx.executeRaw; the Rust engine refuses raw_sql, so no run gets past it
+src/core/persistence/effect-recovery.ts:240	UNREACHABLE	the first awaited statement is tx.executeRaw; the Rust engine refuses raw_sql, so no run gets past it
+src/core/persistence/effect-retry.ts:144	pure	effects is a local array declared inside the run; the requeue goes through tx
+src/core/persistence/effect-retry.ts:258	pure	callback reads and writes through tx and returns its result; no outer state (only idempotent module caches are reached)
+src/core/persistence/effect-settle.ts:179	UNREACHABLE	tx.executeRaw (set_config) runs before any effect; the Rust engine refuses raw_sql; the callback is also pure (effects is a run-local array)
+src/core/persistence/effect-targets.ts:29	UNREACHABLE	the first awaited statement is tx.executeRaw; the Rust engine refuses raw_sql, so no run gets past it
+src/core/persistence/effects.ts:134	UNREACHABLE	the first awaited statement is tx.executeRaw; the Rust engine refuses raw_sql, so no run gets past it
+src/core/persistence/effects.ts:170	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/persistence/effects.ts:234	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/persistence/effects.ts:428	pure	callback reads and writes through tx and returns its result; no outer state (only idempotent module caches are reached)
+src/core/persistence/effects.ts:541	pure	callback reads and writes through tx and returns its result; no outer state (only idempotent module caches are reached)
+src/core/persistence/effects.ts:836	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/persistence/effects.ts:907	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/persistence/effects.ts:982	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/persistence/effects.ts:1054	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/persistence/embedding-noop-settle.ts:64	SAFE	per-run outer state is reset at the top of the callback on the base
+src/core/persistence/embedding-settlement.ts:93	pure	pass-through wrapper: the run keeps no outer state itself; the functions its callers pass are audited in the via-wrapper section
+src/core/persistence/engine-graduation.ts:1419	UNREACHABLE	the first awaited statement is tx.executeRaw; the Rust engine refuses raw_sql, so no run gets past it
+src/core/persistence/facts-maintenance.ts:714	pure	children and accepted are locals declared inside the run
+src/core/persistence/git-conversion.ts:568	UNREACHABLE	the first awaited statement is tx.executeRaw; the Rust engine refuses raw_sql, so no run gets past it
+src/core/persistence/git-conversion.ts:615	UNREACHABLE	the first awaited statement is tx.executeRaw; the Rust engine refuses raw_sql, so no run gets past it
+src/core/persistence/git-conversion.ts:860	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/persistence/git-conversion.ts:1059	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/persistence/git-conversion.ts:1126	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/persistence/git-conversion.ts:1147	UNREACHABLE	the first awaited statement is tx.executeRaw; the Rust engine refuses raw_sql, so no run gets past it
+src/core/persistence/git-durability-administration.ts:344	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/persistence/git-gap.ts:452	UNREACHABLE	the first awaited statement is tx.executeRaw; the Rust engine refuses raw_sql, so no run gets past it
+src/core/persistence/graduation-copy.ts:94	UNREACHABLE	the first awaited statement is tx.executeRaw; the Rust engine refuses raw_sql, so no run gets past it
+src/core/persistence/graduation-copy.ts:183	UNREACHABLE	the callback calls tx.executeRaw before any outer effect; the Rust engine refuses raw_sql, so no run gets past it
+src/core/persistence/graduation-copy.ts:223	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/persistence/graduation-copy.ts:255	UNREACHABLE	the callback calls tx.executeRaw before any outer effect; the Rust engine refuses raw_sql, so no run gets past it
+src/core/persistence/graduation-copy.ts:296	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/persistence/graduation-copy.ts:314	pure	byName and pending are run-local; the target is the Postgres graduation target
+src/core/persistence/graduation-copy.ts:358	UNREACHABLE	the first awaited statement is tx.executeRaw; the Rust engine refuses raw_sql, so no run gets past it
+src/core/persistence/graduation-copy.ts:377	UNREACHABLE	the callback calls tx.executeRaw before any outer effect; the Rust engine refuses raw_sql, so no run gets past it
+src/core/persistence/graduation-digest.ts:164	UNREACHABLE	the first awaited statement is tx.executeRaw; the Rust engine refuses raw_sql, so no run gets past it
+src/core/persistence/graduation-drain.ts:167	UNREACHABLE	the first awaited statement is tx.executeRaw; the Rust engine refuses raw_sql, so no run gets past it
+src/core/persistence/graduation-losses.ts:66	UNREACHABLE	the first awaited statement is tx.executeRaw; the Rust engine refuses raw_sql, so no run gets past it
+src/core/persistence/graduation-schema.ts:150	UNREACHABLE	the first awaited statement is tx.executeRaw; the Rust engine refuses raw_sql, so no run gets past it
+src/core/persistence/graduation-target.ts:332	UNREACHABLE	the callback calls tx.executeRaw before any outer effect; the Rust engine refuses raw_sql, so no run gets past it
+src/core/persistence/graduation-verify.ts:239	UNREACHABLE	target is the Postgres graduation target; snapshot() calls tx.executeRaw before admitWriteInTransaction, and the run always throws ReplayRollback
+src/core/persistence/identity.ts:351	UNREACHABLE	the first awaited statement is tx.executeRaw; the Rust engine refuses raw_sql, so no run gets past it
+src/core/persistence/import-deferral.ts:46	pure	callback reads and writes through tx and returns its result; no outer state (only idempotent module caches are reached)
+src/core/persistence/links-maintenance.ts:141	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/persistence/local-edit-adoption.ts:281	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/persistence/local-edit-adoption.ts:354	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/persistence/managed-sync-orphans.ts:199	pure	pass-through wrapper: the run keeps no outer state itself; the functions its callers pass are audited in the via-wrapper section
+src/core/persistence/memory-proposals.ts:122	UNREACHABLE	the first awaited statement is tx.executeRaw; the Rust engine refuses raw_sql, so no run gets past it
+src/core/persistence/memory-proposals.ts:320	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/persistence/page-advisories.ts:31	UNREACHABLE	the callback calls tx.executeRaw before any outer effect; the Rust engine refuses raw_sql, so no run gets past it
+src/core/persistence/page-batch.ts:204	pure	callback reads and writes through tx and returns its result; no outer state (only idempotent module caches are reached)
+src/core/persistence/page-purge.ts:540	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/persistence/page-upload.ts:182	UNREACHABLE	the callback calls tx.executeRaw before any outer effect; the Rust engine refuses raw_sql, so no run gets past it
+src/core/persistence/physical-root.ts:157	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/persistence/pre-activation-release.ts:69	SAFE	opts.blocked is deactivationBlockers (a read); the root-registry refresh rewrites files from the rows read, so a rerun converges
+src/core/persistence/prepared-maintenance.ts:316	pure	rows is a local array declared inside the run
+src/core/persistence/publication-deadline.ts:115	SAFE	outer values are assigned per run; the committed run wins
+src/core/persistence/publication-deadline.ts:115	SAFE	outer values are assigned per run; the committed run wins
+src/core/persistence/publication-deadline.ts:118	SAFE	outer values are assigned per run; the committed run wins
+src/core/persistence/receipt-true-up.ts:44	SAFE	outer values are assigned per run; the committed run wins
+src/core/persistence/reconcile-backup.ts:160	UNREACHABLE	the callback calls tx.executeRaw before any outer effect; the Rust engine refuses raw_sql, so no run gets past it
+src/core/persistence/reconcile.ts:206	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/persistence/recovery-resolve.ts:639	pure	callback reads and writes through tx and returns its result; no outer state (only idempotent module caches are reached)
+src/core/persistence/recovery-resolve.ts:646	pure	callback reads and writes through tx and returns its result; no outer state (only idempotent module caches are reached)
+src/core/persistence/refresh-barrier.ts:134	pure	callback reads and writes through tx and returns its result; no outer state (only idempotent module caches are reached)
+src/core/persistence/refresh-barrier.ts:145	pure	callback reads and writes through tx and returns its result; no outer state (only idempotent module caches are reached)
+src/core/persistence/skill-activation.ts:72	UNREACHABLE	the callback calls tx.executeRaw before any outer effect; the Rust engine refuses raw_sql, so no run gets past it
+src/core/persistence/staging.ts:191	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/persistence/sync-admission.ts:93	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/persistence/sync-cursor-key.ts:96	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/persistence/sync-cursor-key.ts:131	pure	fence is assertDrainLease, a read; the deletes go through tx
+src/core/persistence/sync-cursor-key.ts:145	pure	fence is assertDrainLease, a read; the delete goes through tx
+src/core/persistence/sync-cursor-key.ts:151	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/persistence/sync-cursor-key.ts:181	pure	pass-through wrapper: the run keeps no outer state itself; the functions its callers pass are audited in the via-wrapper section
+src/core/persistence/sync-failures.ts:55	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/persistence/sync-group.ts:160	FIXED	admitGroup runs the cursorHolds callback in the tx; admitAndSave (sync-run.ts) now restores the pass-batch entry at the top of each run; the other callers (sync-run.ts cursorHolds at the hold paths) only read
+src/core/persistence/sync-lease.ts:110	FIXED	inFencedSlices keeps a per-run landed list and reports it to a committed() callback after commit; retireMarkers and dangling in sync-pass-apply.ts now count from it
+src/core/persistence/sync-pass-apply.ts:264	SAFE	state.withheld is last-write-wins
+src/core/persistence/sync-pass-apply.ts:272	SAFE	outer values are assigned per run; the committed run wins
+src/core/persistence/sync-pass-apply.ts:448	SAFE	recorded.add runs before the transaction by design; the callback writes rows only
+src/core/persistence/sync-pass-fold.ts:130	pure	callback reads and writes through tx and returns its result; no outer state (only idempotent module caches are reached)
+src/core/persistence/sync-pass-run.ts:410	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/persistence/sync-pass-run.ts:571	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/persistence/sync-pass-run.ts:642	SAFE	outer values are assigned per run; the committed run wins
+src/core/persistence/sync-pass-run.ts:781	SAFE	outer values are assigned per run; the committed run wins
+src/core/persistence/sync-pass-run.ts:892	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/persistence/sync-pass.ts:385	pure	pass-through wrapper: the run keeps no outer state itself; the functions its callers pass are audited in the via-wrapper section
+src/core/persistence/sync-run.ts:244	FIXED	passBatchRerun restores the pass-batch entry at the top of each run
+src/core/persistence/sync-run.ts:618	FIXED	passBatchRerun restores the pass-batch entry at the top of each run
+src/core/persistence/sync-run.ts:1325	pure	pass-through wrapper: the run keeps no outer state itself; the functions its callers pass are audited in the via-wrapper section
+src/core/persistence/sync-run.ts:1683	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/persistence/sync-waivers.ts:120	FIXED	passBatchRerun restores the pass-batch entry at the top of each run
+src/core/persistence/sync-waivers.ts:195	FIXED	passBatchRerun restores the pass-batch entry at the top of each run
+src/core/persistence/sync-waivers.ts:276	FIXED	passBatchRerun restores the pass-batch entry at the top of each run
+src/core/persistence/topology-transaction.ts:22	pure	pass-through wrapper: the run keeps no outer state itself; the functions its callers pass are audited in the via-wrapper section
+src/core/persistence/topology-transaction.ts:26	pure	pass-through wrapper: the run keeps no outer state itself; the functions its callers pass are audited in the via-wrapper section
+src/core/persistence/worktree-refresh.ts:225	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/persistence/worktree-refresh.ts:455	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/persistence/worktree-refresh.ts:467	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/persistence/worktree-refresh.ts:685	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/persistence/worktree-refresh.ts:734	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/persistence/worktree-refresh.ts:1023	pure	callback reads and writes through tx and returns its result; no outer state (only idempotent module caches are reached)
+src/core/persistence/worktree-refresh.ts:1077	pure	callback reads and writes through tx and returns its result; no outer state (only idempotent module caches are reached)
+src/core/persistence/worktree-refresh.ts:1110	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/persistence/worktree-refresh.ts:1152	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/persistence/worktree-refresh.ts:1178	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/persistence/worktree-refresh.ts:1180	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/persistence/worktree-refresh.ts:1184	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/persistence/worktree-refresh.ts:1188	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/persistence/worktree-refresh.ts:1287	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/persistence/worktree-refresh.ts:1364	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/pglite-engine.ts:1463	UNREACHABLE	a transaction inside the PGLite or Postgres engine implementation; the Rust engine never runs this code
+src/core/pglite-engine.ts:1483	UNREACHABLE	a transaction inside the PGLite or Postgres engine implementation; the Rust engine never runs this code
+src/core/pglite-engine.ts:1530	UNREACHABLE	a transaction inside the PGLite or Postgres engine implementation; the Rust engine never runs this code
+src/core/pglite-engine.ts:1576	UNREACHABLE	a transaction inside the PGLite or Postgres engine implementation; the Rust engine never runs this code
+src/core/pglite-engine.ts:1666	UNREACHABLE	a transaction inside the PGLite or Postgres engine implementation; the Rust engine never runs this code
+src/core/pglite-engine.ts:2303	UNREACHABLE	a transaction inside the PGLite or Postgres engine implementation; the Rust engine never runs this code
+src/core/pglite-engine.ts:3762	UNREACHABLE	a transaction inside the PGLite or Postgres engine implementation; the Rust engine never runs this code
+src/core/pglite-engine.ts:3956	UNREACHABLE	a transaction inside the PGLite or Postgres engine implementation; the Rust engine never runs this code
+src/core/pglite-engine.ts:4018	UNREACHABLE	a transaction inside the PGLite or Postgres engine implementation; the Rust engine never runs this code
+src/core/pglite-engine.ts:4023	UNREACHABLE	a transaction inside the PGLite or Postgres engine implementation; the Rust engine never runs this code
+src/core/pglite-engine.ts:4057	UNREACHABLE	a transaction inside the PGLite or Postgres engine implementation; the Rust engine never runs this code
+src/core/pglite-engine.ts:5190	UNREACHABLE	a transaction inside the PGLite or Postgres engine implementation; the Rust engine never runs this code
+src/core/pglite-engine.ts:5222	UNREACHABLE	a transaction inside the PGLite or Postgres engine implementation; the Rust engine never runs this code
+src/core/pglite-engine.ts:5226	UNREACHABLE	a transaction inside the PGLite or Postgres engine implementation; the Rust engine never runs this code
+src/core/pglite-engine.ts:5447	UNREACHABLE	a transaction inside the PGLite or Postgres engine implementation; the Rust engine never runs this code
+src/core/pglite-engine.ts:5455	UNREACHABLE	a transaction inside the PGLite or Postgres engine implementation; the Rust engine never runs this code
+src/core/pglite-engine.ts:5457	UNREACHABLE	a transaction inside the PGLite or Postgres engine implementation; the Rust engine never runs this code
+src/core/pglite-engine.ts:5459	UNREACHABLE	a transaction inside the PGLite or Postgres engine implementation; the Rust engine never runs this code
+src/core/pglite-engine.ts:5476	UNREACHABLE	a transaction inside the PGLite or Postgres engine implementation; the Rust engine never runs this code
+src/core/pglite-engine.ts:5477	UNREACHABLE	a transaction inside the PGLite or Postgres engine implementation; the Rust engine never runs this code
+src/core/pglite-engine.ts:5478	UNREACHABLE	a transaction inside the PGLite or Postgres engine implementation; the Rust engine never runs this code
+src/core/pglite-engine.ts:5482	UNREACHABLE	a transaction inside the PGLite or Postgres engine implementation; the Rust engine never runs this code
+src/core/pglite-engine.ts:5559	UNREACHABLE	a transaction inside the PGLite or Postgres engine implementation; the Rust engine never runs this code
+src/core/pglite-engine.ts:5560	UNREACHABLE	a transaction inside the PGLite or Postgres engine implementation; the Rust engine never runs this code
+src/core/pglite-engine.ts:5562	UNREACHABLE	a transaction inside the PGLite or Postgres engine implementation; the Rust engine never runs this code
+src/core/pglite-engine.ts:5594	UNREACHABLE	a transaction inside the PGLite or Postgres engine implementation; the Rust engine never runs this code
+src/core/pglite-engine.ts:5597	UNREACHABLE	a transaction inside the PGLite or Postgres engine implementation; the Rust engine never runs this code
+src/core/pglite-engine/checkpoint-guard.ts:169	UNREACHABLE	a transaction inside the PGLite or Postgres engine implementation; the Rust engine never runs this code
+src/core/planner-stats.ts:214	UNREACHABLE	the first awaited statement is tx.executeRaw; the Rust engine refuses raw_sql, so no run gets past it
+src/core/planner-stats.ts:288	UNREACHABLE	the first awaited statement is tx.executeRaw; the Rust engine refuses raw_sql, so no run gets past it
+src/core/postgres-engine.ts:779	UNREACHABLE	a transaction inside the PGLite or Postgres engine implementation; the Rust engine never runs this code
+src/core/postgres-engine.ts:782	UNREACHABLE	a transaction inside the PGLite or Postgres engine implementation; the Rust engine never runs this code
+src/core/postgres-engine.ts:1262	UNREACHABLE	a transaction inside the PGLite or Postgres engine implementation; the Rust engine never runs this code
+src/core/postgres-engine.ts:1306	UNREACHABLE	a transaction inside the PGLite or Postgres engine implementation; the Rust engine never runs this code
+src/core/postgres-engine.ts:1405	UNREACHABLE	a transaction inside the PGLite or Postgres engine implementation; the Rust engine never runs this code
+src/core/postgres-engine.ts:2042	UNREACHABLE	a transaction inside the PGLite or Postgres engine implementation; the Rust engine never runs this code
+src/core/postgres-engine.ts:2295	UNREACHABLE	a transaction inside the PGLite or Postgres engine implementation; the Rust engine never runs this code
+src/core/postgres-engine.ts:3720	UNREACHABLE	a transaction inside the PGLite or Postgres engine implementation; the Rust engine never runs this code
+src/core/postgres-engine.ts:3890	UNREACHABLE	a transaction inside the PGLite or Postgres engine implementation; the Rust engine never runs this code
+src/core/postgres-engine.ts:3958	UNREACHABLE	a transaction inside the PGLite or Postgres engine implementation; the Rust engine never runs this code
+src/core/postgres-engine.ts:3963	UNREACHABLE	a transaction inside the PGLite or Postgres engine implementation; the Rust engine never runs this code
+src/core/postgres-engine.ts:3997	UNREACHABLE	a transaction inside the PGLite or Postgres engine implementation; the Rust engine never runs this code
+src/core/postgres-engine.ts:5173	UNREACHABLE	a transaction inside the PGLite or Postgres engine implementation; the Rust engine never runs this code
+src/core/postgres-engine.ts:5208	UNREACHABLE	a transaction inside the PGLite or Postgres engine implementation; the Rust engine never runs this code
+src/core/postgres-engine.ts:5212	UNREACHABLE	a transaction inside the PGLite or Postgres engine implementation; the Rust engine never runs this code
+src/core/postgres-engine.ts:5682	UNREACHABLE	a transaction inside the PGLite or Postgres engine implementation; the Rust engine never runs this code
+src/core/postgres-engine.ts:5690	UNREACHABLE	a transaction inside the PGLite or Postgres engine implementation; the Rust engine never runs this code
+src/core/postgres-engine.ts:5692	UNREACHABLE	a transaction inside the PGLite or Postgres engine implementation; the Rust engine never runs this code
+src/core/postgres-engine.ts:5694	UNREACHABLE	a transaction inside the PGLite or Postgres engine implementation; the Rust engine never runs this code
+src/core/postgres-engine.ts:5711	UNREACHABLE	a transaction inside the PGLite or Postgres engine implementation; the Rust engine never runs this code
+src/core/postgres-engine.ts:5712	UNREACHABLE	a transaction inside the PGLite or Postgres engine implementation; the Rust engine never runs this code
+src/core/postgres-engine.ts:5713	UNREACHABLE	a transaction inside the PGLite or Postgres engine implementation; the Rust engine never runs this code
+src/core/postgres-engine.ts:5717	UNREACHABLE	a transaction inside the PGLite or Postgres engine implementation; the Rust engine never runs this code
+src/core/postgres-engine.ts:5794	UNREACHABLE	a transaction inside the PGLite or Postgres engine implementation; the Rust engine never runs this code
+src/core/postgres-engine.ts:5795	UNREACHABLE	a transaction inside the PGLite or Postgres engine implementation; the Rust engine never runs this code
+src/core/postgres-engine.ts:5797	UNREACHABLE	a transaction inside the PGLite or Postgres engine implementation; the Rust engine never runs this code
+src/core/postgres-engine.ts:5829	UNREACHABLE	a transaction inside the PGLite or Postgres engine implementation; the Rust engine never runs this code
+src/core/postgres-engine.ts:5832	UNREACHABLE	a transaction inside the PGLite or Postgres engine implementation; the Rust engine never runs this code
+src/core/questions/refresh.ts:449	UNREACHABLE	the callback calls tx.executeRaw before any outer effect; the Rust engine refuses raw_sql, so no run gets past it
+src/core/repair/aliases.ts:37	pure	callback reads and writes through tx and returns its result; no outer state (only idempotent module caches are reached)
+src/core/repair/attribution-backfill.ts:41	UNREACHABLE	the first awaited statement is tx.executeRaw; the Rust engine refuses raw_sql, so no run gets past it
+src/core/repair/content-receipt-root.ts:105	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/repair/contextual-mode.ts:36	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/repair/file-drift-class.ts:301	UNREACHABLE	the first awaited statement is tx.executeRaw; the Rust engine refuses raw_sql, so no run gets past it
+src/core/repair/file-drift-class.ts:317	UNREACHABLE	the first awaited statement is tx.executeRaw; the Rust engine refuses raw_sql, so no run gets past it
+src/core/repair/file-drift.ts:670	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/repair/frontmatter-keys.ts:100	pure	callback reads and writes through tx and returns its result; no outer state (only idempotent module caches are reached)
+src/core/repair/keep-db-policy.ts:168	SAFE	per-run outer state is reset at the top of the callback on the base
+src/core/repair/missing-tables.ts:62	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/repair/overwritten-edits.ts:192	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/repair/rows-behind.ts:169	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/repair/secret-spans.ts:461	SAFE	per-run outer state is reset at the top of the callback on the base
+src/core/repair/secret-spans.ts:561	SAFE	keyring addKey creates the key file exclusively and reuses the `current` pointer on a rerun; receipts are written through tx
+src/core/repair/segmented-mirror.ts:158	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/repair/segmented-tiling.ts:318	pure	callback reads and writes through tx and returns its result; no outer state (only idempotent module caches are reached)
+src/core/repair/timeline-comments.ts:64	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/rust-engine/served/session-calls.ts:189	SAFE	the ++runs > 1 guard throws on a rerun by design; the served session call must not repeat
+src/core/rust-engine/store-members/jobs-queue.ts:133	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/rust-engine/store-members/jobs.ts:85	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/rust-engine/store-members/pages.ts:67	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/schema-migrations/helpers.ts:174	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/schema-migrations/v023-files-source-id-page-id-ledger.ts:40	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/schema-migrations/v210-clamp-oauth-token-ttl.ts:28	UNREACHABLE	a schema migration over sqlQueryForEngine(tx) raw SQL; the Rust engine refuses runMigration and raw_sql, so the stderr notices never run on a Rust tx
+src/core/schema-migrations/v275-rls-backfill-unguarded-tables.ts:116	UNREACHABLE	the first awaited statement is tx.executeRaw; the Rust engine refuses raw_sql, so no run gets past it
+src/core/schema-migrations/v302-link-transitions-source.ts:57	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/search/projection-statistics.ts:109	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/search/projection-statistics.ts:157	UNREACHABLE	the first awaited statement is tx.executeRaw; the Rust engine refuses raw_sql, so no run gets past it
+src/core/search/projection-statistics.ts:308	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/secret-store/restore.ts:54	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/secret-store/store.ts:215	SAFE	per-run outer state is reset at the top of the callback on the base
+src/core/shared-skills/catalog.ts:94	pure	pass-through wrapper: the run keeps no outer state itself; the functions its callers pass are audited in the via-wrapper section
+src/core/shared-skills/membership.ts:168	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/shared-skills/membership.ts:205	pure	member and acknowledgment are read and set inside the run; the fetch hit is the 'fetched' stage string
+src/core/shared-skills/membership.ts:252	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/shared-skills/policy.ts:196	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/shared-skills/publication.ts:446	SAFE	per-run outer state is reset at the top of the callback on the base
+src/core/shared-skills/retention.ts:140	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/shared-skills/retention.ts:168	UNREACHABLE	the first awaited statement is tx.executeRaw; the Rust engine refuses raw_sql, so no run gets past it
+src/core/timeline-extract.ts:482	UNREACHABLE	the callback calls tx.executeRaw before any outer effect; the Rust engine refuses raw_sql, so no run gets past it
+src/core/timeline-extract.ts:520	pure	callback reads and writes through tx and returns its result; no outer state (only idempotent module caches are reached)
+src/core/token-mint.ts:126	pure	insert is tx.insertAccessToken and returns its rows; no outer state
+src/core/trust/backfill.ts:308	pure	report and tables are locals declared inside the run (a snapshot read)
+src/core/trust/backfill.ts:389	UNREACHABLE	engine.executeRaw runs before the transaction; the Rust engine refuses raw_sql, so the transaction is never opened
+src/core/trust/backfill.ts:488	UNREACHABLE	engine.executeRaw runs before the transaction; the Rust engine refuses raw_sql, so the transaction is never opened
+src/core/trust/backfill.ts:493	UNREACHABLE	engine.executeRaw runs before the transaction; the Rust engine refuses raw_sql, so the transaction is never opened
+src/core/trust/held-removals.ts:82	SAFE	belief report{} counts only grow; markBeliefCommits marks only publications with committed events, so an over-count from a lost run does nothing
+src/core/trust/owner-actions.ts:539	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/trust/owner-actions.ts:548	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/trust/page-handlers.ts:153	SAFE	belief report{} counts only grow; markBeliefCommits marks only publications with committed events, so an over-count from a lost run does nothing
+src/core/trust/page-handlers.ts:241	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/trust/page-handlers.ts:364	SAFE	per-run outer state is reset at the top of the callback on the base
+src/core/trust/supersede-handlers.ts:357	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/url-source-origin.ts:246	SAFE	lockDownCheckout is an idempotent git config write
+src/core/vector-index.ts:295	pure	callback reads and writes through tx and returns its result; no outer state
+src/core/vector-prewarm.ts:151	UNREACHABLE	the first awaited statement is tx.executeRaw; the Rust engine refuses raw_sql, so no run gets past it
+src/core/write-through.ts:529	pure	callback reads and writes through tx and returns its result; no outer state
+src/commands/export.ts:112	FOLLOW-UP	out of lane: src/commands/export.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
+src/core/belief/backfill.ts:104	FOLLOW-UP	out of lane: src/core/belief/backfill.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
+src/core/belief/backfill.ts:163	FOLLOW-UP	out of lane: src/core/belief/backfill.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
+src/core/belief/coverage.ts:38	FOLLOW-UP	out of lane: src/core/belief/coverage.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
+src/core/belief/coverage.ts:59	FOLLOW-UP	out of lane: src/core/belief/coverage.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
+src/core/company-brain/runtime.ts:137	FOLLOW-UP	out of lane: src/core/company-brain/runtime.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
+src/core/company-brain/runtime.ts:193	FOLLOW-UP	out of lane: src/core/company-brain/runtime.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
+src/core/company-brain/runtime.ts:219	FOLLOW-UP	out of lane: src/core/company-brain/runtime.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
+src/core/derived-links.ts:178	FOLLOW-UP	out of lane: src/core/derived-links.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
+src/core/derived-links.ts:209	FOLLOW-UP	out of lane: src/core/derived-links.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
+src/core/engine-sql/facts.ts:123	FOLLOW-UP	out of lane: src/core/engine-sql/facts.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
+src/core/engine-sql/facts.ts:173	FOLLOW-UP	out of lane: src/core/engine-sql/facts.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
+src/core/engine-sql/facts.ts:298	FOLLOW-UP	out of lane: src/core/engine-sql/facts.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
+src/core/facts/purge.ts:462	FOLLOW-UP	out of lane: src/core/facts/purge.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
+src/core/mentions/pass.ts:180	FOLLOW-UP	out of lane: src/core/mentions/pass.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
+src/core/mentions/pass.ts:182	FOLLOW-UP	out of lane: src/core/mentions/pass.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
+src/core/mentions/pass.ts:462	FOLLOW-UP	out of lane: src/core/mentions/pass.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
+src/core/mentions/pass.ts:521	FOLLOW-UP	out of lane: src/core/mentions/pass.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
+src/core/mentions/pass.ts:605	FOLLOW-UP	out of lane: src/core/mentions/pass.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
+src/core/page-body/ingest.ts:118	FOLLOW-UP	out of lane: src/core/page-body/ingest.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
+src/core/page-body/ingest.ts:440	FOLLOW-UP	out of lane: src/core/page-body/ingest.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
+src/core/page-body/rechunk.ts:201	FOLLOW-UP	out of lane: src/core/page-body/rechunk.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
+src/core/page-body/rechunk.ts:212	FOLLOW-UP	out of lane: src/core/page-body/rechunk.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
+src/core/persistence/connector-sync.ts:850	FOLLOW-UP	out of lane: src/core/persistence/connector-sync.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
+src/core/persistence/connector-sync.ts:1198	FOLLOW-UP	out of lane: src/core/persistence/connector-sync.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
+src/core/persistence/connector-sync.ts:1246	FOLLOW-UP	out of lane: src/core/persistence/connector-sync.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
+src/core/persistence/coordinator.ts:364	FOLLOW-UP	out of lane: src/core/persistence/coordinator.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
+src/core/persistence/coordinator.ts:379	FOLLOW-UP	out of lane: src/core/persistence/coordinator.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
+src/core/persistence/coordinator.ts:427	FOLLOW-UP	out of lane: src/core/persistence/coordinator.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
+src/core/persistence/coordinator.ts:435	FOLLOW-UP	out of lane: src/core/persistence/coordinator.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
+src/core/persistence/coordinator.ts:580	FOLLOW-UP	out of lane: src/core/persistence/coordinator.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
+src/core/persistence/coordinator.ts:832	FOLLOW-UP	out of lane: src/core/persistence/coordinator.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
+src/core/persistence/effect-links.ts:117	FOLLOW-UP	out of lane: src/core/persistence/effect-links.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
+src/core/persistence/effect-links.ts:163	FOLLOW-UP	out of lane: src/core/persistence/effect-links.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
+src/core/persistence/journal.ts:273	FOLLOW-UP	out of lane: src/core/persistence/journal.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
+src/core/persistence/journal.ts:283	FOLLOW-UP	out of lane: src/core/persistence/journal.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
+src/core/persistence/journal.ts:499	FOLLOW-UP	out of lane: src/core/persistence/journal.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
+src/core/persistence/journal.ts:765	FOLLOW-UP	out of lane: src/core/persistence/journal.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
+src/core/persistence/journal.ts:802	FOLLOW-UP	out of lane: src/core/persistence/journal.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
+src/core/persistence/journal.ts:839	FOLLOW-UP	out of lane: src/core/persistence/journal.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
+src/core/persistence/journal.ts:871	FOLLOW-UP	out of lane: src/core/persistence/journal.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
+src/core/persistence/journal.ts:891	FOLLOW-UP	out of lane: src/core/persistence/journal.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
+src/core/persistence/journal.ts:1010	FOLLOW-UP	out of lane: src/core/persistence/journal.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
+src/core/persistence/journal.ts:1149	FOLLOW-UP	out of lane: src/core/persistence/journal.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
+src/core/persistence/rows-behind.ts:159	FOLLOW-UP	out of lane: src/core/persistence/rows-behind.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
+src/core/write-gate-recheck.ts:120	FOLLOW-UP	out of lane: src/core/write-gate-recheck.ts is owned by L1 (rust-engine/mu-red17-links-rerun); no edit here, the owner lane audits it
+src/shadow/follow.ts:137	FOLLOW-UP	out of lane: src/shadow/ is owned by L2; no edit here, the owner lane audits it
+src/shadow/read-pool.ts:43	FOLLOW-UP	out of lane: src/shadow/ is owned by L2; no edit here, the owner lane audits it
+src/shadow/replay-copy.ts:66	FOLLOW-UP	out of lane: src/shadow/ is owned by L2; no edit here, the owner lane audits it
+src/shadow/replay-copy.ts:106	FOLLOW-UP	out of lane: src/shadow/ is owned by L2; no edit here, the owner lane audits it
+src/shadow/seed.ts:151	FOLLOW-UP	out of lane: src/shadow/ is owned by L2; no edit here, the owner lane audits it
+src/shadow/wrapper.ts:251	FOLLOW-UP	out of lane: src/shadow/ is owned by L2; no edit here, the owner lane audits it
+src/shadow/wrapper.ts:254	FOLLOW-UP	out of lane: src/shadow/ is owned by L2; no edit here, the owner lane audits it
+src/shadow/write-capture.ts:109	FOLLOW-UP	out of lane: src/shadow/ is owned by L2; no edit here, the owner lane audits it
+src/shadow/write-capture.ts:120	FOLLOW-UP	out of lane: src/shadow/ is owned by L2; no edit here, the owner lane audits it
+src/shadow/writer-hooks.ts:115	FOLLOW-UP	out of lane: src/shadow/ is owned by L2; no edit here, the owner lane audits it
+src/shadow/writer-hooks.ts:151	FOLLOW-UP	out of lane: src/shadow/ is owned by L2; no edit here, the owner lane audits it
+src/shadow/writer-hooks.ts:180	FOLLOW-UP	out of lane: src/shadow/ is owned by L2; no edit here, the owner lane audits it
+src/shadow/writer-observations.ts:167	FOLLOW-UP	out of lane: src/shadow/ is owned by L2; no edit here, the owner lane audits it
+# via-wrapper
+src/commands/embed.ts:1750	SAFE	via src/commands/embed.ts:1623: the passed function is a lease, ownership or fence guard: it reads, checks and throws, and changes no outer state
+src/commands/migrate-embeddings.ts:822	UNREACHABLE	via src/commands/migrate-embeddings.ts:888: the run opens with LOCK TABLE through tx.executeRaw; the Rust engine refuses raw_sql
+src/commands/reindex-aliases.ts:110	pure	via src/commands/reindex-aliases.ts:69: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/access/open-pages.ts:187	pure	via src/core/access/open-pages.ts:143: pass-through: hands the function on; the function its caller supplies has its own row
+src/commands/reindex-frontmatter.ts:71	pure	via src/core/backfill-effective-date.ts:205: passes no callback; the wrapper run is its direct row
+src/commands/reindex-frontmatter.ts:141	pure	via src/core/backfill-effective-date.ts:205: the argument is an options or data value; the function it carries (if any) is a guard listed above; the run writes through tx
+src/core/belief/writers.ts:73	pure	via src/core/belief/writers.ts:60: passes no callback; the wrapper run is its direct row
+src/core/trust/supersede-handlers.ts:121	pure	via src/core/belief/writers.ts:60: the argument is an options or data value; the function it carries (if any) is a guard listed above; the run writes through tx
+src/core/persistence/takes-prepare.ts:85	pure	via src/core/belief/writers.ts:60: the argument is an options or data value; the function it carries (if any) is a guard listed above; the run writes through tx
+src/core/company-brain/profile.ts:82	pure	via src/core/company-brain/profile.ts:68, src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/company-brain/profile.ts:134	pure	via src/core/company-brain/profile.ts:68: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/sync-anchor.ts:240	UNREACHABLE	via src/core/company-brain/profile.ts:68: every run reaches tx.executeRaw before an outer effect; the Rust engine refuses raw_sql, so no run gets past it
+src/core/sync-anchor.ts:341	pure	via src/core/company-brain/profile.ts:68: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/company-brain/receipts.ts:228	pure	via src/core/company-brain/receipts.ts:201: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/company-brain/receipts.ts:244	pure	via src/core/company-brain/receipts.ts:201: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/company-brain/receipts.ts:258	pure	via src/core/company-brain/receipts.ts:201: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/company-brain/receipts.ts:270	pure	via src/core/company-brain/receipts.ts:201: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/cycle/dream-write-deferral.ts:111	pure	via src/core/cycle/dream-write-deferral.ts:90: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/cycle/dream-write-deferral.ts:147	pure	via src/core/cycle/dream-write-deferral.ts:90: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/persistence/embed-facts-administration.ts:27	pure	via src/core/embed-facts.ts:189: passes no callback; the wrapper run is its direct row
+src/commands/migrate-embeddings.ts:781	pure	via src/core/embed-facts.ts:189: passes no callback; the wrapper run is its direct row
+src/commands/embed.ts:898	pure	via src/core/embed-facts.ts:189: the argument is an options or data value; the function it carries (if any) is a guard listed above; the run writes through tx
+src/core/embed-stale.ts:372	SAFE	via src/core/embed-stale.ts:553, src/core/embed-stale.ts:606: the passed function is a lease, ownership or fence guard: it reads, checks and throws, and changes no outer state
+src/core/embedding-migration.ts:1184	SAFE	via src/core/embedding-migration-budget.ts:81: the passed function is a lease, ownership or fence guard: it reads, checks and throws, and changes no outer state
+src/core/embedding-migration.ts:1229	SAFE	via src/core/embedding-migration-budget.ts:81: the passed function is a lease, ownership or fence guard: it reads, checks and throws, and changes no outer state
+src/core/embedding-migration.ts:1249	SAFE	via src/core/embedding-migration-budget.ts:81: the passed function is a lease, ownership or fence guard: it reads, checks and throws, and changes no outer state
+src/core/embedding-migration.ts:1275	SAFE	via src/core/embedding-migration-budget.ts:81: the passed function is a lease, ownership or fence guard: it reads, checks and throws, and changes no outer state
+src/core/embedding-migration.ts:1285	SAFE	via src/core/embedding-migration-budget.ts:81: the passed function is a lease, ownership or fence guard: it reads, checks and throws, and changes no outer state
+src/commands/migrate-embeddings.ts:694	SAFE	via src/core/embedding-migration-budget.ts:81: assertOwned sets only the sticky `lost` flag, which is the same on every run
+src/core/embedding-migration.ts:1243	SAFE	via src/core/embedding-migration.ts:126: the passed function is a lease, ownership or fence guard: it reads, checks and throws, and changes no outer state
+src/commands/migrate-embeddings.ts:717	SAFE	via src/core/embedding-migration.ts:1307: the passed function is a lease, ownership or fence guard: it reads, checks and throws, and changes no outer state
+src/commands/migrate-embeddings.ts:733	SAFE	via src/core/embedding-migration.ts:1432: assertOwned sets only the sticky `lost` flag, which is the same on every run
+src/commands/migrate-embeddings.ts:739	SAFE	via src/core/embedding-migration.ts:1432: assertOwned sets only the sticky `lost` flag, which is the same on every run
+src/commands/migrate-embeddings.ts:838	SAFE	via src/core/embedding-migration.ts:1548: `projecting` is an in-flight coalescing WeakMap keyed by engine; a rerun joins or replaces the same entry
+src/core/embed-stale.ts:409	pure	via src/core/embedding-readiness.ts:103, src/core/embedding-readiness.ts:89: the argument is an options or data value; the function it carries (if any) is a guard listed above; the run writes through tx
+src/core/embed-stale.ts:421	pure	via src/core/embedding-readiness.ts:103, src/core/embedding-readiness.ts:89: passes no callback; the wrapper run is its direct row
+src/core/embedding-migration.ts:641	pure	via src/core/embedding-readiness.ts:103, src/core/embedding-readiness.ts:89: passes no callback; the wrapper run is its direct row
+src/core/embedding-migration.ts:849	pure	via src/core/embedding-readiness.ts:103, src/core/embedding-readiness.ts:89: passes no callback; the wrapper run is its direct row
+src/core/embedding-migration.ts:1024	pure	via src/core/embedding-readiness.ts:103, src/core/embedding-readiness.ts:89: passes no callback; the wrapper run is its direct row
+src/core/embedding-migration.ts:1186	SAFE	via src/core/embedding-readiness.ts:103, src/core/embedding-readiness.ts:89: the passed function is a lease, ownership or fence guard: it reads, checks and throws, and changes no outer state
+src/commands/migrate-embeddings.ts:714	SAFE	via src/core/embedding-readiness.ts:103, src/core/embedding-readiness.ts:89: the passed function is a lease, ownership or fence guard: it reads, checks and throws, and changes no outer state
+src/commands/migrate-embeddings.ts:798	pure	via src/core/embedding-readiness.ts:103, src/core/embedding-readiness.ts:89: passes no callback; the wrapper run is its direct row
+src/commands/embed.ts:1726	pure	via src/core/embedding-readiness.ts:103, src/core/embedding-readiness.ts:89: the argument is an options or data value; the function it carries (if any) is a guard listed above; the run writes through tx
+src/commands/embed.ts:1736	SAFE	via src/core/embedding-readiness.ts:103, src/core/embedding-readiness.ts:89: the passed function is a lease, ownership or fence guard: it reads, checks and throws, and changes no outer state
+src/core/persistence/ownership.ts:150	SAFE	via src/core/engine-sql/worktree-claim.ts:109: the file steps are crash-reentrant by design (create-if-absent then read-back, append only missing globs, hash-guarded renames, a per-root registry rewrite), so a rerun converges on the same files
+src/core/persistence/ownership.ts:159	SAFE	via src/core/engine-sql/worktree-claim.ts:109: the file steps are crash-reentrant by design (create-if-absent then read-back, append only missing globs, hash-guarded renames, a per-root registry rewrite), so a rerun converges on the same files
+src/core/persistence/ownership.ts:397	SAFE	via src/core/engine-sql/writer-admin.ts:205: the file steps are crash-reentrant by design (create-if-absent then read-back, append only missing globs, hash-guarded renames, a per-root registry rewrite), so a rerun converges on the same files
+src/core/persistence/ownership.ts:460	pure	via src/core/engine-sql/writer-admin.ts:205: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/persistence/ownership.ts:510	SAFE	via src/core/engine-sql/writer-admin.ts:205: the file steps are crash-reentrant by design (create-if-absent then read-back, append only missing globs, hash-guarded renames, a per-root registry rewrite), so a rerun converges on the same files
+src/core/facts/forget.ts:304	pure	via src/core/facts/file-body-guard.ts:65: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/facts/fence-write.ts:583	pure	via src/core/facts/file-body-guard.ts:65: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/commands/config-line-grammar.ts:13	pure	via src/core/line-grammar-config.ts:40: pass-through: hands the function on; the function its caller supplies has its own row
+src/commands/config-line-grammar.ts:26	pure	via src/core/line-grammar-config.ts:40: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/commands/config-line-grammar.ts:42	UNREACHABLE	via src/core/line-grammar-config.ts:40: every run reaches tx.executeRaw before an outer effect; the Rust engine refuses raw_sql, so no run gets past it
+src/core/migration-preludes.ts:94	pure	via src/core/migration-preludes.ts:56: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/migration-preludes.ts:119	pure	via src/core/migration-preludes.ts:56: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/minions/delegated-spend.ts:62	pure	via src/core/minions/budget-meter.ts:77: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/postgres-engine.ts:1905	UNREACHABLE	via src/core/page-body/segment-derive.ts:647: a PGLite or Postgres engine implementation call; the Rust engine never runs this code
+src/core/pglite-engine.ts:2166	UNREACHABLE	via src/core/page-body/segment-derive.ts:647: a PGLite or Postgres engine implementation call; the Rust engine never runs this code
+src/core/page-body/segmented-embedding.ts:113	pure	via src/core/page-body/segmented-embedding.ts:139: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/page-body/segmented-embedding.ts:186	pure	via src/core/page-body/segmented-embedding.ts:139: passes no callback; the wrapper run is its direct row
+src/core/embed-stale.ts:273	pure	via src/core/page-body/segmented-embedding.ts:139: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/embed-stale.ts:549	SAFE	via src/core/page-body/segmented-embedding.ts:139: the passed function is a lease, ownership or fence guard: it reads, checks and throws, and changes no outer state
+src/core/contextual-retrieval-service.ts:624	SAFE	via src/core/page-body/segmented-embedding.ts:139: `held` is assigned per run; the committed run wins
+src/core/persistence/derived-retirement-hold.ts:66	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/page-body/streamed-import.ts:510	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/import-file.ts:508	SAFE	via src/core/persistence/attribution.ts:89: the only outer effect reached is a stderr warning line; a rerun repeats that line and changes no state
+src/core/import-file.ts:579	pure	via src/core/persistence/attribution.ts:89: the argument is an options or data value; the function it carries (if any) is a guard listed above; the run writes through tx
+src/core/import-file.ts:1172	pure	via src/core/persistence/attribution.ts:89: passes no callback; the wrapper run is its direct row
+src/core/company-brain/profile.ts:116	pure	via src/core/persistence/attribution.ts:89: passes no callback; the wrapper run is its direct row
+src/core/generations/adapters/page.ts:86	pure	via src/core/persistence/attribution.ts:89: passes no callback; the wrapper run is its direct row
+src/core/cycle/synthesize-verify.ts:1480	SAFE	via src/core/persistence/attribution.ts:89: the only outer effect reached is a stderr warning line; a rerun repeats that line and changes no state
+src/core/persistence/import-prepare.ts:261	pure	via src/core/persistence/attribution.ts:89: passes no callback; the wrapper run is its direct row
+src/core/transcripts/ingest.ts:442	pure	via src/core/persistence/attribution.ts:89: passes no callback; the wrapper run is its direct row
+src/core/oversized-backfill.ts:132	pure	via src/core/persistence/attribution.ts:89: passes no callback; the wrapper run is its direct row
+src/commands/reindex.ts:521	pure	via src/core/persistence/attribution.ts:89: passes no callback; the wrapper run is its direct row
+src/core/persistence/reconcile-prepare.ts:110	pure	via src/core/persistence/attribution.ts:89: passes no callback; the wrapper run is its direct row
+src/core/enrichment-service.ts:359	pure	via src/core/persistence/attribution.ts:89: passes no callback; the wrapper run is its direct row
+src/eval/brainbench/seed.ts:78	pure	via src/core/persistence/attribution.ts:89: passes no callback; the wrapper run is its direct row
+src/eval/brainbench/metrics/write-back.ts:157	pure	via src/core/persistence/attribution.ts:89: passes no callback; the wrapper run is its direct row
+src/commands/eval-longmemeval.ts:1437	pure	via src/core/persistence/attribution.ts:89: passes no callback; the wrapper run is its direct row
+src/core/minions/handlers/ingest-capture.ts:412	pure	via src/core/persistence/attribution.ts:89: passes no callback; the wrapper run is its direct row
+src/commands/brainstorm.ts:432	pure	via src/core/persistence/attribution.ts:89: passes no callback; the wrapper run is its direct row
+src/core/company-brain/demo.ts:34	pure	via src/core/persistence/attribution.ts:89: passes no callback; the wrapper run is its direct row
+src/commands/quarantine.ts:281	pure	via src/core/persistence/attribution.ts:89: passes no callback; the wrapper run is its direct row
+src/commands/quarantine.ts:396	pure	via src/core/persistence/attribution.ts:89: passes no callback; the wrapper run is its direct row
+src/core/transcripts/archive.ts:1126	pure	via src/core/persistence/attribution.ts:89: passes no callback; the wrapper run is its direct row
+src/core/repair/url-clone-fences.ts:196	pure	via src/core/persistence/attribution.ts:89: passes no callback; the wrapper run is its direct row
+src/core/repair/label-write.ts:54	pure	via src/core/persistence/attribution.ts:89: passes no callback; the wrapper run is its direct row
+src/core/cycle/concept-writes.ts:87	pure	via src/core/persistence/attribution.ts:89: passes no callback; the wrapper run is its direct row
+src/core/persistence/file-repair.ts:251	pure	via src/core/persistence/attribution.ts:89: passes no callback; the wrapper run is its direct row
+src/core/persistence/file-repair.ts:428	pure	via src/core/persistence/attribution.ts:89: passes no callback; the wrapper run is its direct row
+src/core/persistence/page-prepare.ts:1214	pure	via src/core/persistence/attribution.ts:89: passes no callback; the wrapper run is its direct row
+src/core/rust-engine/owner-ipc/owner-ops.ts:80	pure	via src/core/persistence/attribution.ts:89: passes no callback; the wrapper run is its direct row
+src/core/persistence/sync-prepare.ts:968	pure	via src/core/persistence/attribution.ts:89: passes no callback; the wrapper run is its direct row
+src/core/persistence/sync-prepare.ts:1027	pure	via src/core/persistence/attribution.ts:89: passes no callback; the wrapper run is its direct row
+src/core/persistence/connector-sync.ts:1418	pure	via src/core/persistence/attribution.ts:89: passes no callback; the wrapper run is its direct row
+src/eval/longmemeval/diagnostics.ts:1095	pure	via src/core/persistence/attribution.ts:89: passes no callback; the wrapper run is its direct row
+src/core/import-file.ts:870	pure	via src/core/persistence/attribution.ts:89: applyPrepared writes through tx; the segmented afterCommit runs after commit
+src/core/import-file.ts:1404	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/import-file.ts:1524	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/takes-write.ts:635	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/takes-write.ts:700	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/takes-write.ts:754	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/takes-write.ts:822	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/takes-write.ts:901	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/takes-write.ts:905	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/trust/taint.ts:153	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/enrichment-service.ts:374	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/cycle/dream-provenance.ts:54	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/cycle/patterns.ts:972	UNREACHABLE	via src/core/persistence/attribution.ts:89: every run reaches tx.executeRaw before an outer effect; the Rust engine refuses raw_sql, so no run gets past it
+src/core/think/persist-take.ts:173	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/cycle/phases/consolidate.ts:360	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/cycle/phases/consolidate.ts:447	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/trust/taint.ts:174	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/output/writer.ts:276	SAFE	via src/core/persistence/attribution.ts:89: `report` is assigned per run; the committed run wins
+src/core/generations/publish.ts:166	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/generations/publish.ts:246	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/facts/unfenced-facts.ts:676	FIXED	via src/core/persistence/attribution.ts:89: the adopted fence file is published inside the run; restoreLostPublication puts back the file a lost run left behind; test test/engine-parity/facts-txn-rerun.test.ts
+src/core/repair/timeline-comments.ts:62	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/facts/forget.ts:171	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/facts/forget.ts:176	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/facts/forget.ts:192	FIXED	via src/core/persistence/attribution.ts:89: strikeSegments resets `first = true` at the top of each run, so a rerun strikes the caller's reason, not the overlay's; test test/engine-parity/facts-txn-rerun.test.ts
+src/core/facts/forget.ts:205	pure	via src/core/persistence/attribution.ts:89: passes no callback; the wrapper run is its direct row
+src/core/facts/forget.ts:347	FIXED	via src/core/persistence/attribution.ts:89: calls strikeSegments, fixed at forget.ts:192
+src/core/facts/forget.ts:213	SAFE	via src/core/persistence/attribution.ts:89: mirrorWarning is assigned per run (last value wins); a rerun repeats one console.warn line
+src/core/facts/forget.ts:302	FIXED	via src/core/persistence/attribution.ts:89: the inline mirror publishes the page file inside the run; restoreLostPublication puts back the file a lost run left behind; test test/engine-parity/facts-txn-rerun.test.ts
+src/core/facts/forget.ts:329	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/repair/readers.ts:215	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/repair/readers.ts:230	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/repair/visibility.ts:510	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/repair/visibility.ts:231	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/repair/visibility.ts:251	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/repair/take-supersession.ts:235	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/repair/atoms-restore.ts:145	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/repair/extractor-facts.ts:284	SAFE	via src/core/persistence/attribution.ts:89: the module state reached is the tableParses diagnostic counter; no behavior reads it
+src/core/repair/unwithdrawn-facts.ts:247	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/repair/purged-page-facts.ts:153	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/repair/purged-change-reasons.ts:163	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/persistence/derived-facts.ts:72	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/persistence/derived-facts.ts:54	SAFE	via src/core/persistence/attribution.ts:89: the only outer effect reached is a stderr warning line; a rerun repeats that line and changes no state
+src/core/facts/conversation-incremental.ts:366	SAFE	via src/core/persistence/attribution.ts:89: the only outer effect reached is a stderr warning line; a rerun repeats that line and changes no state
+src/commands/extract-conversation-facts.ts:641	SAFE	via src/core/persistence/attribution.ts:89: the only outer effect reached is a stderr warning line; a rerun repeats that line and changes no state
+src/core/facts/conversation-relink.ts:178	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/extract/receipt-writer.ts:224	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/repair/conversation-labels.ts:282	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/repair/captured-facts.ts:327	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/repair/agent-session-facts.ts:450	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/repair/redacted-facts.ts:311	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/repair/ontology-facts.ts:141	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/repair/facts-rehome.ts:135	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/repair/consolidate-ties.ts:98	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/repair/duplicate-facts.ts:198	pure	via src/core/persistence/attribution.ts:89: pass-through: hands the function on; the function its caller supplies has its own row
+src/core/repair/duplicate-facts.ts:208	pure	via src/core/persistence/attribution.ts:89, src/core/persistence/database-write.ts:40: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/repair/duplicate-facts.ts:236	pure	via src/core/persistence/attribution.ts:89, src/core/persistence/database-write.ts:40: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/facts/proposal-supersede.ts:298	FIXED	via src/core/persistence/attribution.ts:89: accept and undo publish the page file inside the run; restorePublishedFile puts back the file a lost run left behind; test test/engine-parity/cycle-txn-rerun.test.ts
+src/core/facts/proposal-supersede.ts:343	FIXED	via src/core/persistence/attribution.ts:89: accept and undo publish the page file inside the run; restorePublishedFile puts back the file a lost run left behind; test test/engine-parity/cycle-txn-rerun.test.ts
+src/core/ops/links.ts:170	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/calibration/undo-wave.ts:111	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/repair/frontmatter.ts:684	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/trust/timeline-projection.ts:53	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/trust/timeline-projection.ts:75	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/commands/extract-timeline-db.ts:140	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/extract-timeline-from-meetings.ts:190	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/cycle/extract-takes.ts:163	FIXED	via src/core/persistence/attribution.ts:89: prune truncates result.warnings to the length it had before the first run; test test/engine-parity/takes-txn-rerun.test.ts
+src/core/cycle/extract-takes.ts:217	FIXED	via src/core/persistence/attribution.ts:89: write restores the gate tally to its value before the first run; test test/engine-parity/takes-txn-rerun.test.ts
+src/core/cycle/extract-takes.ts:348	FIXED	via src/core/persistence/attribution.ts:89: resultRerun restores pagesWithTakes, takesUpserted, warnings, failedFiles and writeGate at the top of each run; test test/engine-parity/takes-txn-rerun.test.ts
+src/core/persistence/purge-deleted.ts:198	UNREACHABLE	via src/core/persistence/attribution.ts:89: every run reaches tx.executeRaw before an outer effect; the Rust engine refuses raw_sql, so no run gets past it
+src/core/persistence/purge-deleted.ts:479	UNREACHABLE	via src/core/persistence/attribution.ts:89: every run reaches tx.executeRaw before an outer effect; the Rust engine refuses raw_sql, so no run gets past it
+src/core/repair/legacy-twins.ts:326	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/repair/ghost-pages.ts:471	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/timeline-write-through.ts:402	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/enrichment-service.ts:395	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/cycle/dream-provenance.ts:53	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/generations/repair.ts:305	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/schema-pack/sync.ts:110	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/cycle/phantom-redirect.ts:286	FIXED	via src/core/persistence/attribution.ts:89: the redirect file rename runs inside the run; restoreLostPublication puts back the file a lost run left behind; test test/engine-parity/cycle-txn-rerun.test.ts
+src/core/cycle/phantom-redirect.ts:315	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/cycle/phantom-redirect.ts:406	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/cycle/phantom-redirect.ts:674	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/cycle/extract-facts.ts:943	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/cycle/extract-facts.ts:1079	pure	via src/core/persistence/attribution.ts:89: the run reads and writes through tx (publishFenceGeneration writes rows); result.warnings is pushed only in the catch after the transaction settles
+src/core/cycle/extract-facts.ts:807	SAFE	via src/core/persistence/attribution.ts:89: passes signal.throwIfAborted, which only throws
+src/core/sweep.ts:556	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/repair/slug-spelling.ts:447	SAFE	via src/core/persistence/attribution.ts:89: the module state reached is a lazy lookup-table cache; filling it twice gives the same table
+src/core/minions/handlers/ingest-capture.ts:320	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/repair/origin-twins.ts:317	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/repair/open-facts.ts:415	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/schema-pack/retype.ts:228	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/schema-pack/page-to-link.ts:202	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/schema-pack/page-to-alias.ts:220	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/google/loops-extract.ts:528	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/commands/sync/rename-collision.ts:53	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/commands/sync/rename-collision.ts:63	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/commands/sync/renames.ts:375	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/commands/import-calls.ts:285	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/repair/moved-pages.ts:230	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/repair/rename-identity.ts:241	SAFE	via src/core/persistence/attribution.ts:89: the module state reached is the tableParses diagnostic counter; no behavior reads it
+src/core/repair/url-clone-fences.ts:163	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/repair/fact-claim-dates.ts:245	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/repair/label-write.ts:51	SAFE	via src/core/persistence/attribution.ts:89: the only outer effect reached is a stderr warning line; a rerun repeats that line and changes no state
+src/core/repair/open-facts.ts:486	SAFE	via src/core/persistence/attribution.ts:89: `changed` is assigned per run; the committed run wins
+src/core/repair/label-write.ts:90	pure	via src/core/persistence/attribution.ts:89: afterImport is inPlace from open-facts.ts:483, which writes through tx; the file write is FIXED at label-write.ts:97
+src/core/repair/label-write.ts:97	FIXED	via src/core/persistence/attribution.ts:89: writeLabelFile records the rendered file per run, restores it if the run is lost and commits it after the transaction; test test/engine-parity/cycle-txn-rerun.test.ts
+src/core/repair/label-write.ts:171	pure	via src/core/persistence/attribution.ts:89: passes no callback; the wrapper run is its direct row
+src/core/repair/origin-carry.ts:88	pure	via src/core/persistence/attribution.ts:89: passes no callback; the wrapper run is its direct row
+src/core/facts/backstop.ts:728	FIXED	via src/core/persistence/attribution.ts:89: derivedFactWriter marks the counts and write_gate before the transaction and resets them at the top of each run (insertDerivedFact and gateGroup); test test/engine-parity/takes-txn-rerun.test.ts
+src/core/facts/backstop.ts:744	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/facts/fence-write.ts:581	FIXED	via src/core/persistence/attribution.ts:89: the fence file is published inside the run; restoreLostPublication puts back the file a lost run left behind; test test/engine-parity/facts-txn-rerun.test.ts
+src/core/facts/fence-write.ts:634	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/facts/write-single.ts:273	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/facts/write-single.ts:315	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/cycle/grade-takes.ts:856	pure	via src/core/persistence/attribution.ts:89: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/cycle/concept-publication.ts:295	pure	via src/core/persistence/concept-rebuild.ts:193: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/cycle/concept-writes.ts:86	SAFE	via src/core/persistence/concept-rebuild.ts:193: the only outer effect reached is a stderr warning line; a rerun repeats that line and changes no state
+src/core/persistence/control.ts:35	SAFE	via src/core/persistence/control.ts:39: the passed function is a lease, ownership or fence guard: it reads, checks and throws, and changes no outer state
+src/core/repair/ontology-facts.ts:140	pure	via src/core/persistence/database-write.ts:40: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/repair/facts-rehome.ts:134	pure	via src/core/persistence/database-write.ts:40: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/repair/consolidate-ties.ts:97	pure	via src/core/persistence/database-write.ts:40: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/repair/duplicate-facts.ts:197	SAFE	via src/core/persistence/database-write.ts:40: write returns the ids; the push into the outer list happens after commit
+src/core/persistence/deactivation.ts:230	SAFE	via src/core/persistence/deactivation.ts:276: the passed value is a fault or test hook; production passes none, and a hook only throws
+src/core/persistence/recovery-resolve.ts:838	UNREACHABLE	via src/core/persistence/effect-recovery.ts:125: every run reaches tx.executeRaw before an outer effect; the Rust engine refuses raw_sql, so no run gets past it
+src/core/persistence/effects.ts:276	SAFE	via src/core/persistence/effect-recovery.ts:240: the passed value is a fault or test hook; production passes none, and a hook only throws
+src/core/persistence/effects.ts:283	SAFE	via src/core/persistence/effect-recovery.ts:240: the passed value is a fault or test hook; production passes none, and a hook only throws
+src/core/persistence/effects.ts:818	pure	via src/core/persistence/effect-recovery.ts:240: passes no callback; the wrapper run is its direct row
+src/core/persistence/embedding-settlement.ts:85	UNREACHABLE	via src/core/persistence/embedding-settlement.ts:93: the run opens with SELECT ... FOR UPDATE through tx.executeRaw; the Rust engine refuses raw_sql
+src/core/persistence/graduation-copy.ts:236	pure	via src/core/persistence/graduation-copy.ts:183: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/persistence/graduation-copy.ts:216	SAFE	via src/core/persistence/graduation-copy.ts:183: onBatch is a progress callback; a rerun reports the same batch again
+src/core/persistence/graduation-digest.ts:178	pure	via src/core/persistence/graduation-digest.ts:164: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/persistence/graduation-copy.ts:136	pure	via src/core/persistence/graduation-digest.ts:164: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/persistence/graduation-verify.ts:54	pure	via src/core/persistence/graduation-digest.ts:164: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/persistence/graduation-verify.ts:55	pure	via src/core/persistence/graduation-digest.ts:164: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/persistence/engine-graduation.ts:733	pure	via src/core/persistence/graduation-drain.ts:167: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/persistence/engine-graduation.ts:742	pure	via src/core/persistence/graduation-drain.ts:167: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/persistence/engine-graduation.ts:912	pure	via src/core/persistence/graduation-drain.ts:167: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/persistence/engine-graduation.ts:1226	pure	via src/core/persistence/graduation-drain.ts:167: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/persistence/engine-graduation.ts:1340	pure	via src/core/persistence/graduation-drain.ts:167: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/engine-swap/failback-copy.ts:213	pure	via src/core/persistence/graduation-schema.ts:150: pass-through: hands the function on; the function its caller supplies has its own row
+src/core/engine-swap/failback-copy.ts:216	pure	via src/core/persistence/graduation-schema.ts:150: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/engine-swap/failback-copy.ts:231	pure	via src/core/persistence/graduation-schema.ts:150: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/engine-swap/failback-copy.ts:234	pure	via src/core/persistence/graduation-schema.ts:150: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/engine-swap/failback-copy.ts:238	pure	via src/core/persistence/graduation-schema.ts:150: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/engine-swap/failback-copy.ts:244	pure	via src/core/persistence/graduation-schema.ts:150: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/engine-swap/failback-copy.ts:261	pure	via src/core/persistence/graduation-schema.ts:150: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/engine-swap/failback-copy.ts:272	pure	via src/core/persistence/graduation-schema.ts:150: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/engine-swap/failback.ts:261	pure	via src/core/persistence/graduation-schema.ts:150: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/engine-swap/fence.ts:47	pure	via src/core/persistence/graduation-schema.ts:150: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/engine-swap/fence.ts:70	pure	via src/core/persistence/graduation-schema.ts:150: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/persistence/engine-graduation.ts:736	pure	via src/core/persistence/graduation-schema.ts:150: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/persistence/engine-graduation.ts:780	pure	via src/core/persistence/graduation-schema.ts:150: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/persistence/engine-graduation.ts:796	pure	via src/core/persistence/graduation-schema.ts:150: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/persistence/engine-graduation.ts:823	pure	via src/core/persistence/graduation-schema.ts:150: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/persistence/engine-graduation.ts:877	pure	via src/core/persistence/graduation-schema.ts:150: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/persistence/engine-graduation.ts:894	pure	via src/core/persistence/graduation-schema.ts:150: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/persistence/engine-graduation.ts:899	pure	via src/core/persistence/graduation-schema.ts:150: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/persistence/engine-graduation.ts:949	pure	via src/core/persistence/graduation-schema.ts:150: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/persistence/engine-graduation.ts:1232	pure	via src/core/persistence/graduation-schema.ts:150: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/persistence/engine-graduation.ts:1249	pure	via src/core/persistence/graduation-schema.ts:150: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/persistence/engine-graduation.ts:1310	pure	via src/core/persistence/graduation-schema.ts:150: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/persistence/engine-graduation.ts:1324	pure	via src/core/persistence/graduation-schema.ts:150: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/persistence/engine-graduation.ts:1354	pure	via src/core/persistence/graduation-schema.ts:150: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/persistence/engine-graduation.ts:1356	pure	via src/core/persistence/graduation-schema.ts:150: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/persistence/engine-graduation.ts:1368	pure	via src/core/persistence/graduation-schema.ts:150: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/repair/managed-sync-orphans.ts:74	pure	via src/core/persistence/managed-sync-orphans.ts:199: passes no callback; the wrapper run is its direct row
+src/core/persistence/sync-cursor-key.ts:189	SAFE	via src/core/persistence/managed-sync-orphans.ts:199: the passed function is a lease, ownership or fence guard: it reads, checks and throws, and changes no outer state
+src/core/persistence/deactivation.ts:245	pure	via src/core/persistence/pre-activation-release.ts:69: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/persistence/group-publish.ts:303	pure	via src/core/persistence/publication-deadline.ts:115, src/core/persistence/publication-deadline.ts:118: pass-through: hands the function on; the function its caller supplies has its own row
+src/core/persistence/coordinator.ts:641	FOLLOW-UP	via src/core/persistence/publication-deadline.ts:115, src/core/persistence/publication-deadline.ts:118: owner: L1 (src/core/persistence/coordinator.ts, via publicationTransaction at publication-deadline.ts:115/118). The callback sets `published = true` and publishes page files inside the run; a rerun after a lost commit reads its own new bytes and refuses with localEditRefusal. No edit here
+src/core/persistence/sync-cursor-key.ts:102	SAFE	via src/core/persistence/sync-cursor-key.ts:181: the passed function is a lease, ownership or fence guard: it reads, checks and throws, and changes no outer state
+src/core/persistence/sync-cursor-key.ts:139	SAFE	via src/core/persistence/sync-cursor-key.ts:181: the passed function is a lease, ownership or fence guard: it reads, checks and throws, and changes no outer state
+src/core/persistence/sync-run.ts:1032	FIXED	via src/core/persistence/sync-group.ts:160: admitAndSave restores the pass-batch entry at the top of each run; test test/engine-parity/sync-txn-rerun.test.ts
+src/core/persistence/sync-run.ts:1001	SAFE	via src/core/persistence/sync-group.ts:160: passes assertActive, a guard that throws when the run lost its lease and changes no state; the pass-batch entry is restored per run (sync-run.ts:244)
+src/core/persistence/sync-run.ts:1545	pure	via src/core/persistence/sync-group.ts:160: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/persistence/sync-run.ts:1130	SAFE	via src/core/persistence/sync-group.ts:160: passes assertActive, a guard that throws when the run lost its lease and changes no state; the pass-batch entry is restored per run (sync-run.ts:244)
+src/core/persistence/sync-run.ts:1548	pure	via src/core/persistence/sync-group.ts:160: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/persistence/sync-run.ts:1143	pure	via src/core/persistence/sync-group.ts:160: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/persistence/sync-run.ts:1172	pure	via src/core/persistence/sync-group.ts:160: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/persistence/sync-pass-apply.ts:218	FIXED	via src/core/persistence/sync-lease.ts:110: markersRetired and dangling.released are counted from the committed landed list after commit; test test/engine-parity/sync-txn-rerun.test.ts
+src/core/persistence/sync-pass-apply.ts:300	FIXED	via src/core/persistence/sync-lease.ts:110: markersRetired and dangling.released are counted from the committed landed list after commit; test test/engine-parity/sync-txn-rerun.test.ts
+src/core/persistence/sync-pass-apply.ts:406	pure	via src/core/persistence/sync-lease.ts:110: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/persistence/sync-pass-run.ts:908	pure	via src/core/persistence/sync-pass-run.ts:781: the argument is an options or data value; the function it carries (if any) is a guard listed above; the run writes through tx
+src/core/persistence/sync-pass.ts:1034	SAFE	via src/core/persistence/sync-pass.ts:385: prior and reuse.cache are set only on the round_snapshot reuse path, which the Rust engine never takes
+src/core/persistence/sync-pass.ts:735	SAFE	via src/core/persistence/sync-pass.ts:385: timings[key] is assigned, not added; the last run wins
+src/core/persistence/sync-run.ts:1555	pure	via src/core/persistence/sync-run.ts:1325: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/persistence/sync-run.ts:537	SAFE	via src/core/persistence/sync-run.ts:244: passes assertActive, a guard that throws when the run lost its lease and changes no state; the pass-batch entry is restored per run (sync-run.ts:244)
+src/core/persistence/sync-run.ts:1509	pure	via src/core/persistence/sync-run.ts:244: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/persistence/sync-run.ts:541	SAFE	via src/core/persistence/sync-run.ts:244: passes assertActive, a guard that throws when the run lost its lease and changes no state; the pass-batch entry is restored per run (sync-run.ts:244)
+src/core/persistence/sync-run.ts:573	SAFE	via src/core/persistence/sync-run.ts:244: passes assertActive, a guard that throws when the run lost its lease and changes no state; the pass-batch entry is restored per run (sync-run.ts:244)
+src/core/persistence/sync-run.ts:661	SAFE	via src/core/persistence/sync-run.ts:244: passes assertActive, a guard that throws when the run lost its lease and changes no state; the pass-batch entry is restored per run (sync-run.ts:244)
+src/core/persistence/sync-run.ts:692	SAFE	via src/core/persistence/sync-run.ts:244: passes assertActive, a guard that throws when the run lost its lease and changes no state; the pass-batch entry is restored per run (sync-run.ts:244)
+src/core/persistence/sync-run.ts:809	SAFE	via src/core/persistence/sync-run.ts:244: passes assertActive, a guard that throws when the run lost its lease and changes no state; the pass-batch entry is restored per run (sync-run.ts:244)
+src/core/persistence/sync-run.ts:733	SAFE	via src/core/persistence/sync-run.ts:244: passes assertActive, a guard that throws when the run lost its lease and changes no state; the pass-batch entry is restored per run (sync-run.ts:244)
+src/core/persistence/sync-run.ts:738	SAFE	via src/core/persistence/sync-run.ts:244: passes assertActive, a guard that throws when the run lost its lease and changes no state; the pass-batch entry is restored per run (sync-run.ts:244)
+src/core/persistence/sync-run.ts:770	SAFE	via src/core/persistence/sync-run.ts:244: passes assertActive, a guard that throws when the run lost its lease and changes no state; the pass-batch entry is restored per run (sync-run.ts:244)
+src/core/persistence/sync-run.ts:942	SAFE	via src/core/persistence/sync-run.ts:244: passes assertActive, a guard that throws when the run lost its lease and changes no state; the pass-batch entry is restored per run (sync-run.ts:244)
+src/core/persistence/sync-run.ts:1517	pure	via src/core/persistence/sync-run.ts:244: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/persistence/sync-run.ts:1170	pure	via src/core/persistence/sync-run.ts:244: passes no callback; the wrapper run is its direct row
+src/core/persistence/sync-run.ts:1235	pure	via src/core/persistence/sync-run.ts:244: passes no callback; the wrapper run is its direct row
+src/core/persistence/sync-run.ts:1524	pure	via src/core/persistence/sync-run.ts:244: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/persistence/sync-run.ts:1579	pure	via src/core/persistence/sync-run.ts:244: passes no callback; the wrapper run is its direct row
+src/core/persistence/sync-run.ts:1603	pure	via src/core/persistence/sync-run.ts:244: passes no callback; the wrapper run is its direct row
+src/core/persistence/sync-run.ts:1662	pure	via src/core/persistence/sync-run.ts:244: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/persistence/sync-run.ts:1694	pure	via src/core/persistence/sync-run.ts:244: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/persistence/sync-run.ts:1533	pure	via src/core/persistence/sync-waivers.ts:120: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/persistence/sync-run.ts:930	pure	via src/core/persistence/sync-waivers.ts:195: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/persistence/sync-run.ts:956	pure	via src/core/persistence/sync-waivers.ts:276: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/company-brain/admission.ts:278	pure	via src/core/persistence/topology-transaction.ts:22, src/core/persistence/topology-transaction.ts:26: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/url-source-origin.ts:245	SAFE	via src/core/persistence/topology-transaction.ts:22, src/core/persistence/topology-transaction.ts:26: the git config lock-down is an idempotent set; the DB write is tx.executeRaw, which the Rust engine refuses
+src/core/persistence/topology-clone.ts:106	SAFE	via src/core/persistence/topology-transaction.ts:22, src/core/persistence/topology-transaction.ts:26: lockedConfig is assigned per run; the file steps are crash-reentrant by design (create-if-absent then read-back, append only missing globs, hash-guarded renames, a per-root registry rewrite), so a rerun converges on the same files
+src/core/persistence/topology-clone.ts:161	SAFE	via src/core/persistence/topology-transaction.ts:22, src/core/persistence/topology-transaction.ts:26: the file steps are crash-reentrant by design (create-if-absent then read-back, append only missing globs, hash-guarded renames, a per-root registry rewrite), so a rerun converges on the same files
+src/core/persistence/topology-clone.ts:170	pure	via src/core/persistence/topology-transaction.ts:22, src/core/persistence/topology-transaction.ts:26: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/persistence/topology-clone.ts:187	SAFE	via src/core/persistence/topology-transaction.ts:22, src/core/persistence/topology-transaction.ts:26: the file steps are crash-reentrant by design (create-if-absent then read-back, append only missing globs, hash-guarded renames, a per-root registry rewrite), so a rerun converges on the same files
+src/core/persistence/topology-recovery.ts:106	pure	via src/core/persistence/topology-transaction.ts:22, src/core/persistence/topology-transaction.ts:26: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/persistence/topology-recovery.ts:111	SAFE	via src/core/persistence/topology-transaction.ts:22, src/core/persistence/topology-transaction.ts:26: the file steps are crash-reentrant by design (create-if-absent then read-back, append only missing globs, hash-guarded renames, a per-root registry rewrite), so a rerun converges on the same files
+src/core/persistence/topology-recovery.ts:148	SAFE	via src/core/persistence/topology-transaction.ts:22, src/core/persistence/topology-transaction.ts:26: the file steps are crash-reentrant by design (create-if-absent then read-back, append only missing globs, hash-guarded renames, a per-root registry rewrite), so a rerun converges on the same files
+src/core/persistence/topology-clone.ts:194	SAFE	via src/core/persistence/topology-transaction.ts:22, src/core/persistence/topology-transaction.ts:26: the passed value is a fault or test hook; production passes none, and a hook only throws
+src/core/persistence/topology-clone.ts:201	pure	via src/core/persistence/topology-transaction.ts:22, src/core/persistence/topology-transaction.ts:26: passes no callback; the wrapper run is its direct row
+src/core/persistence/topology-recovery.ts:238	pure	via src/core/persistence/topology-transaction.ts:22, src/core/persistence/topology-transaction.ts:26: passes no callback; the wrapper run is its direct row
+src/core/persistence/topology-recovery.ts:213	pure	via src/core/persistence/topology-transaction.ts:22, src/core/persistence/topology-transaction.ts:26: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/persistence/source-lifecycle.ts:170	pure	via src/core/persistence/topology-transaction.ts:22, src/core/persistence/topology-transaction.ts:26: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/persistence/source-lifecycle.ts:232	SAFE	via src/core/persistence/topology-transaction.ts:22, src/core/persistence/topology-transaction.ts:26: `deleting` is reset per run; retiredPages is filled after commit
+src/core/persistence/source-lifecycle.ts:261	SAFE	via src/core/persistence/topology-transaction.ts:22, src/core/persistence/topology-transaction.ts:26: manifests.set, mkdir and the root-registry rewrite are idempotent
+src/core/questions/service.ts:127	pure	via src/core/questions/refresh.ts:449: passes no callback; the wrapper run is its direct row
+src/core/questions/phase.ts:85	pure	via src/core/questions/refresh.ts:449: passes no callback; the wrapper run is its direct row
+src/core/repair/attribution-backfill.ts:56	pure	via src/core/repair/attribution-backfill.ts:41: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/repair/attribution-backfill.ts:79	pure	via src/core/repair/attribution-backfill.ts:41: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/persistence/sync-pass-apply.ts:560	pure	via src/core/repair/keep-db-policy.ts:168: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/shared-skills/catalog.ts:101	pure	via src/core/shared-skills/catalog.ts:94: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/shared-skills/catalog.ts:187	pure	via src/core/shared-skills/catalog.ts:94: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/shared-skills/catalog.ts:190	pure	via src/core/shared-skills/catalog.ts:94: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/repair/accepted-takes.ts:157	pure	via src/core/trust/page-handlers.ts:153: passes no callback; the wrapper run is its direct row
+src/core/trust/owner-actions.ts:524	pure	via src/core/trust/page-handlers.ts:153: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/repair/lost-fence-rows.ts:209	pure	via src/core/trust/page-handlers.ts:153: passes no callback; the wrapper run is its direct row
+src/core/trust/page-handlers.ts:245	pure	via src/core/trust/page-handlers.ts:153: the function passed reads and writes through tx; the scan found no outer write, mutation, file call or module state
+src/core/persistence/page-purge.ts:468	SAFE	appendPurgeIntent inside the purge run: every run writes the same line (request is the persistence row id admitted before the transaction, and every other field is computed from it); restore dedupes on request, so a lost run never shows as unverified; test test/engine-parity/page-purge-rerun.test.ts
