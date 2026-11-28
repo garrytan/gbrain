@@ -16,8 +16,8 @@
 //!   Keys are not read, except the `source_id` and `content_hash` a `page_purges` key holds.
 //! - activeOnly leaves out an expired or deleted record (`expired_at_us`, `deleted_at_us`,
 //!   `deleted_at`), an inactive take, a record of a deleted page (by its `page_id`, a page id in
-//!   its key, or a fence fact's `source_id` and `source_markdown_slug`) and every derived index
-//!   keyspace (`DERIVED`).
+//!   its key, or a fence fact's `source_id` and `source_markdown_slug`), every derived index
+//!   keyspace (`DERIVED`) and the multi-user commit log (`commit_log::COMMIT_LOG`).
 //! - Hits are sorted by table, column and value in UTF-8 byte order, as the SQL engines sort them,
 //!   and at most `limit` are kept while scanning.
 //!
@@ -494,7 +494,7 @@ impl Store {
         let limit = q.limit.map(|n| usize::try_from(n).unwrap_or(usize::MAX));
         let mut hits: Vec<Hit> = Vec::new();
         scan(&*read, &mut |k, v| {
-            if q.active_only && k.first().is_some_and(|t| DERIVED.contains(t)) {
+            if q.active_only && not_active(k) {
                 return;
             }
             let table = table_of(k);
@@ -590,6 +590,15 @@ fn sort_hits(hits: &mut [Hit]) {
 }
 
 /// Calls `f` with every stored key and value.
+/// Whether activeOnly leaves out every record under `key`'s tag: a derived index keyspace
+/// (`DERIVED`), or the commit log of a multi-user brain (`commit_log::COMMIT_LOG`). A commit record
+/// holds a copy of each value its commit wrote, a deleted page's body and its fence facts included,
+/// and the copy carries none of the fields that show the record was later deleted or expired.
+fn not_active(key: &[u8]) -> bool {
+    key.first()
+        .is_some_and(|t| DERIVED.contains(t) || *t == crate::commit_log::COMMIT_LOG)
+}
+
 fn scan(read: &dyn KvRead, f: &mut dyn FnMut(&[u8], &[u8])) -> Result<()> {
     scan_prefix(read, &[], false, &mut |k, v| {
         f(k, v);
@@ -706,5 +715,66 @@ mod tests {
             .map(String::from),
         );
         check("pages", pages);
+    }
+
+    #[test]
+    fn active_only_leaves_out_the_commit_log_copy_of_a_deleted_page() {
+        use crate::pages::{PageInput, PutPageOptions};
+        use crate::test_support::occ_kv;
+        let store = Store::open_kv(
+            std::sync::Arc::new(occ_kv()),
+            std::sync::Arc::new(crate::env::SystemEnv),
+            crate::OpenOptions {
+                multiuser: true,
+                keyword_index_builder: false,
+                multiuser_writes: crate::MultiUserWrites {
+                    commit_log: true,
+                    host_id: Some("h".into()),
+                    ..Default::default()
+                },
+                ..crate::OpenOptions::default()
+            },
+        )
+        .unwrap();
+        let input = PageInput {
+            page_type: "note".into(),
+            title: "Fenced".into(),
+            compiled_truth: "A page that held fencepagetoken.".into(),
+            ..PageInput::default()
+        };
+        store
+            .put_page("notes/fenced", &input, &PutPageOptions::default())
+            .unwrap();
+        store
+            .soft_delete_pages(
+                &["notes/fenced".to_string()],
+                &crate::page_ops::SourceOption {
+                    source_id: Some("default".into()),
+                },
+            )
+            .unwrap();
+        let tables = |active_only: bool| -> Vec<String> {
+            let q = TextScanQuery {
+                pattern: "fencepagetoken".into(),
+                tables: None,
+                active_only,
+                limit: None,
+            };
+            let hits = store.scan_text_columns(&q).unwrap();
+            let mut t: Vec<String> = hits
+                .iter()
+                .map(|h| h["table"].as_str().unwrap().to_string())
+                .collect();
+            t.dedup();
+            t
+        };
+        // Without activeOnly the page and the commit record that copied its body are both found.
+        let all = tables(false);
+        assert!(all.contains(&"pages".to_string()), "{all:?}");
+        assert!(all.iter().any(|t| t.starts_with("unknown/2")), "{all:?}");
+        // With activeOnly neither is: the page is deleted and the commit log is left out.
+        assert_eq!(tables(true), Vec::<String>::new());
+        assert!(not_active(&[crate::commit_log::COMMIT_LOG, 0, 1]));
+        assert!(!not_active(&[keys::PAGE, 0]));
     }
 }

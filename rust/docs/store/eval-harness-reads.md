@@ -49,7 +49,10 @@ The store has no SQL catalog, so the catalog reads and the text scan answer from
   the page body rows), or for a fence fact by its `source_id` and `source_markdown_slug`. It also
   leaves out the derived index keyspaces (search postings, trigrams, vectors, link and timeline
   indexes, query state): what they copy is read from the records they index, and a deleted page's
-  index entries cannot be told from a live one's by their values. The SQL engines apply the same
+  index entries cannot be told from a live one's by their values. On a multi-user brain it also
+  leaves out the commit log (key tag `2`, `commit_log::COMMIT_LOG`): each commit record copies the
+  values its commit wrote, a later-deleted page and its fence facts included, and the copy has no
+  deletion field. A scan without activeOnly still reads the log. The SQL engines apply the same
   filters where the columns exist.
 - **Order and limit.** Hits are sorted by table, column and value in UTF-8 byte order, as the SQL
   engines sort them (`convert_to(..., 'UTF8')`), and the scan keeps at most `limit` hits while it
