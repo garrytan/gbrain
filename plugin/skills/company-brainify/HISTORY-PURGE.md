@@ -52,13 +52,13 @@ unread=$(for d in people meetings daily companies projects analysis; do [ -d "$d
 [ -z "$unread" ] || { printf 'not on the export list, never read — ABORT:\n%s\n' "$unread"; exit 1; }
 SANITIZED=""
 for d in people meetings daily companies projects analysis; do [ -d "$d" ] && SANITIZED="$SANITIZED $d"; done
-STAGED=$(find $SANITIZED -type f | LC_ALL=C sort | while IFS= read -r f; do printf '%s\t%s\n' "$(git hash-object -- "$f")" "$f"; done | LC_ALL=C sort)
+STAGED_TREE=$(export GIT_INDEX_FILE="$WORK/staged.index"; git read-tree HEAD && git add -- $SANITIZED && git write-tree)
 gbrain git commit-push -m "Sanitize: strip sensitive content before history purge" -- $SANITIZED
 # The pushed folders must be exactly the staged pages, byte for byte: a
 # teammate push to them that commit-push merged in is content nobody read, so
 # stop and reconcile it as above. Once they match, the sanitize commit is the
 # new base, so a restart of Step 1 only stops on pushes made after it.
-[ "$(git -c core.quotePath=false ls-tree -r HEAD -- $SANITIZED | awk -F '\t' '{ split($1, m, " "); print m[3] "\t" $2 }' | LC_ALL=C sort)" = "$STAGED" ] \
+[ -n "$STAGED_TREE" ] && git diff --quiet "$STAGED_TREE" HEAD -- $SANITIZED \
   || { echo "a teammate pushed to the sanitized folders during the sanitize push — ABORT, reconcile and re-stage"; exit 1; }
 git rev-parse HEAD > "$STAGING.base"
 

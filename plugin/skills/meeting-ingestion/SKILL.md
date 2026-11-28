@@ -482,14 +482,11 @@ Phase 4. An unflagged anonymous label means speaker resolution was skipped.
 
 **V5 — Fabricated-attendee sanity checks.**
 Recorders confidently invent names and emails for unlabeled speakers.
-- An attendee name that appears NOWHERE in the transcript or in calendar or
-  invite metadata (the invite list, an event page, the user's roster) is a
-  guess; the recorder's own attendee list is not support. Ask the user or
-  remove the name, even when `gbrain whois` matches it exactly: a match proves
-  someone in the brain has that name, not that they attended.
-- Resolve a corroborated attendee to a page only by an exact
-  `gbrain whois <email or name>` match
-  ([identity rule](../conventions/brain-first.md#identity-exact-match)).
+- An attendee name found NOWHERE in the transcript or calendar/invite
+  metadata is a guess (the recorder's list is not support): ask the user or
+  remove it, even on an exact `gbrain whois` match, which proves the name, not
+  attendance. Resolve a supported attendee only by an exact `gbrain whois`
+  match ([identity rule](../conventions/brain-first.md#identity-exact-match)).
 - An attendee email whose domain doesn't match the person's claimed org is a
   fabrication suspect (recorders commonly grab the host's domain). Verify the
   real address or clear the field.

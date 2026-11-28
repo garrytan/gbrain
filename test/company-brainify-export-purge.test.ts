@@ -242,7 +242,7 @@ describe('company-brainify export: only files that got the read ship', () => {
       const r = reaudit(() => {});
       const base = readFileSync(`${r.stageDir}.base`, 'utf8').trim();
       const teammate = `cd '${r.seed}' && printf '%s' '${body}' > '${path}' && git commit -q -am teammate && git push -q origin main`;
-      const run = bash(sanitizePush(), r.shared, { STAGING: r.stageDir, TEAMMATE: teammate });
+      const run = bash(sanitizePush(), r.shared, { WORK: r.dir, STAGING: r.stageDir, TEAMMATE: teammate });
       expect(run.stdout.includes('a teammate pushed to the sanitized folders')).toBe(stops);
       expect(run.status).toBe(stops ? 1 : 0);
       const after = readFileSync(`${r.stageDir}.base`, 'utf8').trim();
@@ -250,19 +250,30 @@ describe('company-brainify export: only files that got the read ship', () => {
     }
   });
 
+  test('an ignored file the staging copy carried does not stop the sanitize push', () => {
+    const r = reaudit(seed => { write(seed, '.gitignore', '*.swp\n'); git(seed, 'add', '.gitignore'); git(seed, 'commit', '-q', '-m', 'ignore'); });
+    write(r.stageDir, 'people/.alice-example.md.swp', 'editor swap file\n');
+    const list = readFileSync(`${r.stageDir}.export-list`, 'utf8').trim().split('\n').concat('people/.alice-example.md.swp').sort();
+    writeFileSync(`${r.stageDir}.export-list`, list.join('\n') + '\n');
+    const run = bash(sanitizePush(), r.shared, { WORK: r.dir, STAGING: r.stageDir, TEAMMATE: 'true' });
+    expect(run.stdout).not.toContain('ABORT');
+    expect(run.status).toBe(0);
+    expect(git(r.dir, '--git-dir', r.remote, 'show', 'main:people/alice-example.md') + '\n').toBe(CLEAN);
+  });
+
   test('a restart of Step 1 after the sanitize push only stops on pushes made after it', () => {
     const r = reaudit(() => {});
-    const first = bash(sanitizePush(), r.shared, { STAGING: r.stageDir, TEAMMATE: 'true' });
+    const first = bash(sanitizePush(), r.shared, { WORK: r.dir, STAGING: r.stageDir, TEAMMATE: 'true' });
     expect(first.status).toBe(0);
     expect(git(r.dir, '--git-dir', r.remote, 'show', 'main:people/alice-example.md') + '\n').toBe(CLEAN);
     git(r.seed, 'pull', '-q', '--no-rebase', '--no-edit', 'origin', 'main');
     teammateEdit(r.seed, 'README.md', 'Pushed while the card waited.\n');
-    const again = bash(sanitizePush(), r.clone('restart'), { STAGING: r.stageDir, TEAMMATE: 'true' });
+    const again = bash(sanitizePush(), r.clone('restart'), { WORK: r.dir, STAGING: r.stageDir, TEAMMATE: 'true' });
     expect(again.stdout).not.toContain('ABORT');
     expect(again.status).toBe(0);
     git(r.seed, 'pull', '-q', '--no-rebase', '--no-edit', 'origin', 'main');
     teammateEdit(r.seed, 'people/bob-example.md', 'Pushed while the card waited.\n');
-    const moved = bash(sanitizePush(), r.clone('restart-2'), { STAGING: r.stageDir, TEAMMATE: 'true' });
+    const moved = bash(sanitizePush(), r.clone('restart-2'), { WORK: r.dir, STAGING: r.stageDir, TEAMMATE: 'true' });
     expect(moved.status).toBe(1);
     expect(moved.stdout).toContain('people/bob-example.md');
     expect(moved.stdout).not.toContain('people/alice-example.md');
