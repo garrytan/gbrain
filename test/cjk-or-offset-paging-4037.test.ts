@@ -37,7 +37,7 @@ for (const backend of testBackends()) describe(`[${backend}] GST-4037 steady OFF
   beforeAll(async () => {
     if (backend === 'pglite') { engine = new PGLiteEngine(); await engine.connect({}); await engine.initSchema(); }
     else { const pg = await isolatedPersistencePostgres(process.env.DATABASE_URL!); engine = pg.engine; closePostgres = pg.close; }
-    for (const id of ['long', 'alts']) await engine.executeRaw(`INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT DO NOTHING`, [id]);
+    for (const id of ['long', 'alts', 'boost']) await engine.executeRaw(`INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT DO NOTHING`, [id]);
     // One long page whose 40 chunks each match both terms many times, beside short all-term and partial pages.
     await page('notes/long', 'long', Array.from({ length: 40 }, (_, i) => `${'席位升级'.repeat(6)} 段落${i}`));
     for (let i = 0; i < 5; i++) await page(`notes/both-${i}`, 'long', [`席位和升级 ${i}`]);
@@ -47,6 +47,9 @@ for (const backend of testBackends()) describe(`[${backend}] GST-4037 steady OFF
     await page('notes/three-a', 'alts', ['席位升级团队']);
     await page('notes/three-b', 'alts', ['团队管理席位']);
     await page('notes/partial', 'alts', ['只有席位']);
+    // A boosted source puts both strict hits' term-frequency scores past 999; the older page repeats the terms half as often.
+    await page('notes/older', 'boost', ['席位升级'.repeat(6)]);
+    await page('notes/stronger', 'boost', ['席位升级'.repeat(12)]);
   }, 120_000);
   afterAll(async () => { await engine.disconnect(); await closePostgres?.(); }, 60_000);
 
@@ -72,5 +75,18 @@ for (const backend of testBackends()) describe(`[${backend}] GST-4037 steady OFF
     // The strict pass alone returns the retry's leading rows, in its order.
     const strict = (await engine.searchKeyword(q, { sourceId: 'alts', limit: 100 })).map(r => r.slug);
     expect(strict).toEqual(all.slice(0, 3));
+    // A strict pass returns the term-frequency score, never the matched-terms sort key.
+    for (const row of await engine.searchKeyword(q, { sourceId: 'alts', limit: 100 })) expect(row.score).toBeLessThan(1000);
+  }, 120_000);
+
+  test('a boosted strict hit past 999 still outranks a weaker one, and keeps its own score', async () => {
+    const source_boosts = { 'notes/': 100 };
+    for (const orFallback of [false, true]) {
+      const rows = await engine.searchKeyword('席位 升级', { sourceId: 'boost', limit: 10, source_boosts, orFallback });
+      expect([orFallback, rows.map(r => r.slug)]).toEqual([orFallback, ['notes/stronger', 'notes/older']]);
+      expect(rows[1]!.score).toBeGreaterThan(999);
+      expect(rows[0]!.score).toBeGreaterThan(rows[1]!.score);
+      expect((await engine.searchKeyword('席位 升级', { sourceId: 'boost', limit: 1, offset: 1, source_boosts, orFallback })).map(r => r.slug)).toEqual(['notes/older']);
+    }
   }, 120_000);
 });

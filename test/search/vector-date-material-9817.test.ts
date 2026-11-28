@@ -55,9 +55,12 @@ describe('#9817 the date-bound materialization rule', () => {
     for (const [opts, chunks, expected] of cases) expect([opts, chunks, build(opts, chunks).dateFilterMaterialOff]).toEqual([opts, chunks, expected]);
   });
 
-  test('a source scope keeps the rule only while it covers most of the brain', () => {
+  test('a source scope keeps the rule only once its share is known and covers most of the brain', () => {
     expect(build({ afterDate: '2026-01-01', sourceId: 'source-a' }, ABOVE, { share: 0.9 }).dateFilterMaterialOff).toBe(true);
     expect(build({ afterDate: '2026-01-01', sourceId: 'source-a' }, ABOVE, { share: 0.01 }).dateFilterMaterialOff).toBe(false);
+    expect(build({ afterDate: '2026-01-01', sourceId: 'source-a' }, ABOVE).dateFilterMaterialOff).toBe(false);
+    expect(build({ afterDate: '2026-01-01', sourceIds: ['source-a', 'source-b'] }, ABOVE).dateFilterMaterialOff).toBe(false);
+    expect(build({ afterDate: '2026-01-01' }, ABOVE).dateFilterMaterialOff).toBe(true);
   });
 
   test('a non-indexed column (no relaxed statement) never flips', () => {

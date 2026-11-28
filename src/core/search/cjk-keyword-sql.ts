@@ -21,7 +21,6 @@
  *   - Empty-query guard returns null without binding SQL.
  */
 import type { SearchOpts } from '../types.ts';
-import { buildBestPerPagePoolCte } from './sql-ranking.ts';
 import { frontmatterWhereSql } from './frontmatter-where.ts';
 import { escapeLikePattern, cjkMatchAlternatives, cjkMatchTerms } from '../cjk.ts';
 
@@ -123,17 +122,15 @@ export function buildCJKKeywordSql(query: string, ctx: CjkKeywordCtx, variant: C
         + ${positionExpr})
       * ${sourceFactorCase})
     `;
-  // #10417: the term-frequency part is held below one matched-term step, so a chunk satisfying an alternative outranks
-  // every partial chunk however often (or in however boosted a source) the partial repeats a term, and `score DESC`
-  // orders by matched terms first. GST-4037: a multi-term strict pass scores the same way as its any-term retry, so the
-  // strict rows are exactly the retry's leading rows in the same order and an OFFSET page means the same rows whichever
-  // pass served it (hybrid search runs the retry only when the strict page comes back short).
-  // A strict row of a single alternative matches every term, so the capped term-frequency part alone gives that order
-  // and its score stays on the term-frequency scale that keyword-arm confidence reads.
-  const cappedTf = `LEAST(${tfScoreExpr}, ${MATCHED_TERM_WEIGHT - 1})`;
-  const scoreExpr = terms.length < 2 ? tfScoreExpr
-    : any || groups.length > 1 ? `(${MATCHED_TERM_WEIGHT} * (${matchedExpr}) + ${cappedTf})` : cappedTf;
-  return assemble({ dedup, fromClause, scoreExpr, whereLikeClause, detailFilter, extraFilter, hardExcludeClause, visibilityClause, limitIndex, offsetIndex, params });
+  // GST-4037: rows order by the matched-term tier, then by the uncapped term-frequency score, as two keys. A strict pass
+  // and its any-term retry share that order, so the strict rows are exactly the retry's leading rows and an OFFSET page
+  // means the same rows whichever pass served it (hybrid search runs the retry only when the strict page comes back
+  // short). A strict pass of one alternative has a single tier. The returned score is unchanged: the term-frequency
+  // score for a strict pass, #10417's matched-terms score for the retry.
+  const tierExpr = any || (terms.length > 1 && groups.length > 1) ? `(${matchedExpr})` : undefined;
+  const tfPart = groups.length > 1 ? `LEAST(tf_rank, ${MATCHED_TERM_WEIGHT - 1})` : 'tf_rank';
+  const scoreOf = any ? `(${MATCHED_TERM_WEIGHT} * match_tier + ${tfPart})` : 'tf_rank';
+  return assemble({ dedup, fromClause, tierExpr, tfExpr: tfScoreExpr, scoreOf, whereLikeClause, detailFilter, extraFilter, hardExcludeClause, visibilityClause, limitIndex, offsetIndex, params });
 }
 
 /**
@@ -268,42 +265,46 @@ const STALE_COLUMN = `CASE WHEN p.updated_at < (
  * window's rows alone.
  */
 function assemble(a: {
-  dedup: boolean; fromClause: string; scoreExpr: string; whereLikeClause: string; detailFilter: string; extraFilter: string;
-  hardExcludeClause: string; visibilityClause: string; limitIndex: number; offsetIndex: number; params: unknown[];
+  dedup: boolean; fromClause: string; tierExpr: string | undefined; tfExpr: string; scoreOf: string; whereLikeClause: string; detailFilter: string;
+  extraFilter: string; hardExcludeClause: string; visibilityClause: string; limitIndex: number; offsetIndex: number; params: unknown[];
 }): CjkKeywordSql {
-  const { dedup, fromClause, scoreExpr, whereLikeClause, detailFilter, extraFilter, hardExcludeClause, visibilityClause, limitIndex, offsetIndex, params } = a;
+  const { dedup, fromClause, tierExpr, tfExpr, scoreOf, whereLikeClause, detailFilter, extraFilter, hardExcludeClause, visibilityClause, limitIndex, offsetIndex, params } = a;
+  const scored = `SELECT ${dedup ? 'p.slug, p.source_id, p.id AS page_id, cc.id AS chunk_id' : `${DISPLAY_COLUMNS}, ${STALE_COLUMN}`},
+             ${tierExpr ?? '0'} AS match_tier, ${tfExpr} AS tf_rank
+           FROM ${fromClause}
+           JOIN pages p ON p.id = cc.page_id
+           JOIN sources s ON s.id = p.source_id
+           WHERE ${whereLikeClause} ${detailFilter}${extraFilter} ${hardExcludeClause} ${visibilityClause}`;
+  const order = 'match_tier DESC, tf_rank DESC, page_id ASC, chunk_id ASC';
   if (dedup) {
     return {
       // chunk-visibility-ok: the display join reads only the window's chunk ids, which `ranked` took through ctx.visibilityClause (buildVisibilityClause with chunkAlias 'cc')
       sql: `WITH ranked AS (
-           SELECT p.slug, p.source_id, p.id AS page_id, cc.id AS chunk_id, ${scoreExpr} AS score
-           FROM ${fromClause}
-           JOIN pages p ON p.id = cc.page_id
-           JOIN sources s ON s.id = p.source_id
-           WHERE ${whereLikeClause} ${detailFilter}${extraFilter} ${hardExcludeClause} ${visibilityClause}
+           ${scored}
              AND cc.modality = 'text'
          ),
-         ${buildBestPerPagePoolCte('ranked')},
+         best_per_page AS (
+           SELECT DISTINCT ON (COALESCE(source_id, 'default'), slug) * FROM ranked
+           ORDER BY COALESCE(source_id, 'default'), slug, ${order}
+         ),
          page_window AS (
-           SELECT page_id, chunk_id, score FROM best_per_page
-           ORDER BY score DESC, page_id ASC, chunk_id ASC
+           SELECT page_id, chunk_id, match_tier, tf_rank, ${scoreOf} AS score FROM best_per_page
+           ORDER BY ${order}
            LIMIT $${limitIndex} OFFSET $${offsetIndex}
          )
          SELECT ${DISPLAY_COLUMNS}, w.score, ${STALE_COLUMN}
          FROM page_window w
          JOIN content_chunks cc ON cc.id = w.chunk_id
          JOIN pages p ON p.id = w.page_id
-         ORDER BY w.score DESC, w.page_id ASC, w.chunk_id ASC`,
+         ORDER BY w.match_tier DESC, w.tf_rank DESC, w.page_id ASC, w.chunk_id ASC`,
       params,
     };
   }
   return {
-    sql: `SELECT ${DISPLAY_COLUMNS}, ${scoreExpr} AS score, ${STALE_COLUMN}
-         FROM ${fromClause}
-         JOIN pages p ON p.id = cc.page_id
-         JOIN sources s ON s.id = p.source_id
-         WHERE ${whereLikeClause} ${detailFilter}${extraFilter} ${hardExcludeClause} ${visibilityClause}
-         ORDER BY score DESC, page_id ASC, chunk_id ASC
+    sql: `SELECT *, ${scoreOf} AS score FROM (
+           ${scored}
+         ) scored
+         ORDER BY ${order}
          LIMIT $${limitIndex} OFFSET $${offsetIndex}`,
     params,
   };

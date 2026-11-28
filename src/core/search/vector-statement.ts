@@ -158,7 +158,8 @@ export const JOINED_STATEMENT_SETTINGS: Readonly<Record<string, string>> = { ena
  * this size, and for frontmatter filters, turning it off slowed 75k-chunk
  * searches 2.3x warm and 5.9x cold, so they keep the planner's plan, as do the
  * shapes the evaluation did not measure (slug exclusions, language, symbol
- * kind, compiled-truth detail and a narrowing source scope). Only
+ * kind, compiled-truth detail, and a source scope that is narrow or whose share
+ * is not known yet). Only
  * materialization moves: HNSW_ORDERED_POOL_SETTINGS and the pool's exact
  * fallback routing still follow the index walk alone.
  */
@@ -438,7 +439,7 @@ export function buildVectorSearchStatement(input: VectorSearchStatementInput): V
   const walk = relaxed && !narrowed && !(scopeScan && chunks! <= SCOPE_SCAN_FIRST_MAX_CHUNKS);
   const dateFilterMaterialOff = relaxed && !!(opts?.afterDate || opts?.beforeDate)
     && !(opts?.where || opts?.exclude_slugs?.length || opts?.language || opts?.symbolKind || opts?.detail === 'low')
-    && !(share !== undefined && share < INDEX_WALK_MIN_SCOPE_SHARE)
+    && (opts?.sourceIds?.length || opts?.sourceId ? share !== undefined && share >= INDEX_WALK_MIN_SCOPE_SHARE : true)
     && (input.brainChunks ?? -1) >= DATE_FILTER_MATERIAL_OFF_MIN_CHUNKS;
   const overfetch = indexWalkOverfetch(share);
   const preMigration = modelParam ? `(${modelParam}::text IS NULL AND NOT EXISTS(SELECT 1 FROM config WHERE key='embedding_migration.state'))` : '';

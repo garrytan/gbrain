@@ -7736,10 +7736,16 @@ return it to the operating system, both on the brain host:
 
 1. Measure first: `SELECT pg_size_pretty(pg_relation_size('persistence_requests')) AS heap,
    pg_size_pretty(pg_total_relation_size('persistence_requests') - pg_relation_size('persistence_requests')) AS toast_and_indexes;`
-2. If your database offers the `pg_repack` extension (Supabase does), run
-   `pg_repack --table=persistence_requests` against the brain's database. It
-   rebuilds the table while writes continue and holds an exclusive lock only
-   briefly, at the start and at the end.
+2. If your database offers the `pg_repack` extension (Supabase does), first
+   check that the disk has free space of about twice the table plus its
+   indexes (`pg_size_pretty(2 * pg_total_relation_size('persistence_requests'))`),
+   then run `pg_repack --no-kill-backend --table=persistence_requests` against
+   the brain's database. It rebuilds the table while writes continue and holds
+   an exclusive lock only briefly, at the start and at the end. Without
+   `--no-kill-backend`, pg_repack cancels and then disconnects any session that
+   blocks that lock for long, which can roll back a gbrain write; with it, a
+   lock it cannot get skips the table instead, so run it again at a quieter
+   time.
 3. Otherwise stop everything that writes to the brain (`gbrain serve`,
    autopilot, job workers, cron syncs), then run
    `VACUUM (FULL, ANALYZE) persistence_requests;`. It locks the table against
