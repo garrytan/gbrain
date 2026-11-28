@@ -149,11 +149,12 @@ parityTest('a remote search marks a hit whose newer file is held and shows no ho
   const view = {
     error: reply.error,
     stale: Object.fromEntries(reply.rows.filter(r => typeof r.slug === 'string').map(r => [String(r.slug), r.stale?.held_since ?? null]).sort()),
-    notice: reply.text.includes('notice held_files'),
+    // The degraded stamp, not the notice block: a notice shows once per session, so a later arm of this file would not see it.
+    degraded: /\[gbrain degraded: [^\]]*held_files/.test(reply.text),
     leaked: leaked(reply.text),
     refused: w.refused(),
   };
-  expect(view).toEqual({ error: false, stale: { 'notes/nova-open': '2026-06-01T00:00:00Z', 'people/nova-example': null }, notice: true, leaked: [], refused: [] });
+  expect(view).toEqual({ error: false, stale: { 'notes/nova-open': '2026-06-01T00:00:00Z', 'people/nova-example': null }, degraded: true, leaked: [], refused: [] });
   return view;
 });
 

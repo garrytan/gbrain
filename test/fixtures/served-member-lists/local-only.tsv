@@ -1030,6 +1030,7 @@ readCycleListingInstant	owner process only: a gbrain command, a job worker or cy
 readDatabaseClock	ruling A default
 readDeletePageRequest	write path only: a write or purge operation reads it; a remote caller's write crosses whole and runs on the server, or is refused
 readDeletedPageBody	ruling A default
+readDeltaSessionRow	not served: a remote delta with a session_id also sends upsertSessionState and ageOutSessionState (writes a served client may not send; the GC rethrows the refusal), so the read cannot be proven alone; needs delta served whole or the session-state writes (DECISION)
 readDerivationPurgeState	write path only: a write or purge operation reads it; a remote caller's write crosses whole and runs on the server, or is refused
 readDoctorLastKnown	reached remotely only through run_doctor, which crosses whole: the brain server runs it as the owner (admin scope); no other remote operation reaches it
 readDoctorSources	ruling A default

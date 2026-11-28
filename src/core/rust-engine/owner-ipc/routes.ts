@@ -135,9 +135,9 @@ export const OWNER_IPC_REMOTE_TYPED_READS: readonly string[] = [
   'listVisibleNameVariantCandidates', 'readRetirementHop', 'readEntityAliasRows', 'readRankCoverage', 'readReferrerTargetCounts',
   'listVersionReasonWriters',
   // served-remote-search-reads, served-remote-context-reads (both routes): the reads a remote search, query, exact search,
-  // delta, context pack, write attribution, recall, guest read and household mark make. readPageDateFieldsByIds and
+  // context pack, write attribution, recall, guest read and household mark make. readPageDateFieldsByIds and
   // readGuestMarks also pass the page-id guard (served/remote-member-policy.ts).
-  'readDeltaSessionRow', 'readEntityAnchoredPages', 'readEntityIdentityIdsForPages', 'readEntityInboundEdges',
+  'readEntityAnchoredPages', 'readEntityIdentityIdsForPages', 'readEntityInboundEdges',
   'readEntityNewestFacts', 'readExactSnippetChunks', 'readFactCacheWatermark', 'readFactsEmbeddingColumn',
   'readFolderAccess', 'readGuestMarks', 'readHeldHitRows', 'readLiveSlugs', 'readLongPageSizes',
   'readNotifierStatusRows', 'readPageAliasRows', 'readPageDateFieldsByIds', 'readPageHiddenFromCaller',

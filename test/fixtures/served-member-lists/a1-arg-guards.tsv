@@ -2,7 +2,6 @@
 # Per-user access (A1) must not lift while this file has rows; test/rust-served-a1-lock.test.ts enforces it.
 # Keep rows sorted (LC_ALL=C) and unique.
 member	hazard
-readDeltaSessionRow	clientId and sessionId are client arguments, so a caller could read another client's surfaced page slugs; pin clientId to the caller's auth client
 readEntityAnchoredPages	no privacy clause at all: the entity title and anchored pages come back for any id the client names; add the caller's page policy or drop unreadable ids
 readEntityIdentityIdsForPages	any source and slug the client names returns its entity id for a live page, private or not; keep only pages the caller may read
 readEntityInboundEdges	privacy depends on the excludePrivate argument the client sends; force excludePrivate on remote frames

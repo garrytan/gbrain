@@ -1,13 +1,12 @@
 /**
- * BrainEngine parity — the member reads a remote delta, context pack, write attribution, recall, page read and
- * household mark make (lane L3 S4): the delta session row, inbound edges, the fact cache watermark, a page's reference
+ * BrainEngine parity — the member reads a remote context pack, write attribution, recall, page read and
+ * household mark make (lane L3 S4): inbound edges, the fact cache watermark, a page's reference
  * date, revision attribution, entity identity ids, guest marks and the hidden-from-caller check.
  *
  * Authoring gate (docs/TESTING.md#authoring-gate):
  *  - Contract: a remote caller gets the same answer from every engine arm and from the served arm (the brain owner
  *    answers each member over the owner socket), and that answer never carries a page, fact or mark the caller may not read.
- *  - Regression: the served arm refuses any member that is not in OWNER_IPC_REMOTE_TYPED_READS. The delta session read
- *    degrades to an unavailable-state refusal and the hidden-from-caller check changes a page_not_found into a
+ *  - Regression: the served arm refuses any member that is not in OWNER_IPC_REMOTE_TYPED_READS. The hidden-from-caller check changes a page_not_found into a
  *    capability refusal, so each case asserts `refused: []`, the answer and the member list.
  *  - Why existing coverage misses it: the members run inside remote ops, so no engine case names them with a remote caller.
  *  - Seam: dispatchToolCall with a remote caller; recordingEngine reports the members called and the typed refusals.
@@ -34,28 +33,6 @@ function watched(engine: BrainEngine) {
   const refusals: unknown[] = [];
   return { engine: recordingEngine(engine, calls, refusals), calls, refused: () => refusals.map(e => String((e as { message?: unknown }).message ?? e).slice(0, 120)) };
 }
-
-parityTest('a remote delta with a session id reads the session row and delivers only what the caller may read since the last call', {
-  methods: ['putPage', 'sealChunks', 'insertFacts', 'addLink', 'readDeltaSessionRow', 'readEntityInboundEdges'],
-  timeout: 240_000,
-}, async (engine: BrainEngine) => {
-  await seedNova(engine);
-  const w = watched(engine);
-  const first = await remoteCall(w.engine, 'delta', { session_id: 's-r2-delta', entities: 'Nova Example' });
-  await new Promise(r => setTimeout(r, 20));
-  await engine.putPage('notes/nova-after', { type: 'note', title: 'Nova after note', compiled_truth: 'Nova Example after the first call.', timeline: '' });
-  await engine.putPage('notes/nova-after-private', { type: 'note', title: 'Nova after private', compiled_truth: `Nova Example private. ${PRIVATE_MARK}`, timeline: '', frontmatter: { visibility: 'private' } });
-  const second = await remoteCall(w.engine, 'delta', { session_id: 's-r2-delta', entities: 'Nova Example' });
-  const slugs = (body: Record<string, any>) => (body.pages as Array<{ slug: string }> ?? []).map(p => p.slug).sort();
-  const view = {
-    firstError: first.error, firstPages: slugs(first.body),
-    secondError: second.error, secondPages: slugs(second.body), secondDegraded: second.body.degraded_reason ?? null,
-    leaked: leaked(first.text + second.text), refused: w.refused(),
-  };
-  expect(view).toEqual({ firstError: false, firstPages: [], secondError: false, secondPages: ['notes/nova-after'], secondDegraded: null, leaked: [], refused: [] });
-  for (const member of ['readDeltaSessionRow', 'readEntityInboundEdges']) expect(w.calls.has(member), member).toBe(true);
-  return view;
-});
 
 parityTest('a remote context pack lists the newer mentions of an entity the caller may read and none it may not', {
   methods: ['putPage', 'sealChunks', 'insertFacts', 'addLink', 'setConfig', 'readEntityInboundEdges', 'readFactCacheWatermark', 'readPageReferenceDate'],
