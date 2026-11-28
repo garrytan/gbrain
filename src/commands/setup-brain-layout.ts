@@ -33,7 +33,9 @@ import { homedir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import type { Decision, Notice } from '../core/agent-output.ts';
 import { gbrainPath } from '../core/config.ts';
-import { getCliOptions } from '../core/cli-options.ts';
+import { resolveBrainId } from '../core/brain-resolver.ts';
+import { getCliOptions, setCliOptions } from '../core/cli-options.ts';
+import { COMPANY_FIRST_ADD_ARGS } from '../core/setup/company-source.ts';
 import { probeBlock, removeBlock, spliceBlock, type BlockMarkers } from '../core/managed-block.ts';
 import { writeUnlessChanged } from '../core/setup/brain-first.ts';
 import { bunSpawnSync } from '../core/spawn.ts';
@@ -293,10 +295,28 @@ export interface LayoutOutcome {
 }
 
 /**
- * GST-4043: setup's gbrain children open the brain setup was run against: an explicit --brain is forwarded as
- * GBRAIN_BRAIN_ID (which they inherit as it is), else they resolve it from the working directory as the harness does.
+ * GST-4043: setup's gbrain children open the brain setup was run against: an explicit --brain, or the brain the
+ * registration pins (pinSetupBrain), is forwarded as GBRAIN_BRAIN_ID (which they inherit as it is), else they resolve it
+ * from the working directory as the harness does.
  */
 export const chosenBrainEnv = (): { GBRAIN_BRAIN_ID?: string } => { const brain = getCliOptions().brain; return brain ? { GBRAIN_BRAIN_ID: brain } : {}; };
+
+/**
+ * GST-4069: the brain a Claude Code or Codex registration pins with GBRAIN_BRAIN_ID, so its sessions open the brain this
+ * run set up wherever they start: --brain or GBRAIN_BRAIN_ID, else the brain an earlier setup pinned (`prior`), else,
+ * when the run labels people or binds the entry to a member (`labels`), the brain setup resolves here. It becomes this
+ * run's --brain, so every child opens it too. Null leaves the brain to the session's directory, as before.
+ */
+export function pinSetupBrain(prior: string | undefined, labels: boolean): string | null {
+  const chosen = getCliOptions().brain ?? (process.env.GBRAIN_BRAIN_ID || prior || null);
+  if (!chosen && !labels) return null;
+  const brain = resolveBrainId(chosen);
+  setCliOptions({ ...getCliOptions(), brain });
+  return brain;
+}
+
+/** The --shape (and --team) of this run, for a printed setup re-run that has to keep them. */
+export const shapeArgv = (shape: BrainShape | undefined, team: boolean): string[] => [...(shape ? ['--shape', shape] : []), ...(team ? ['--team'] : [])];
 
 /** A gbrain child on the brain setup was run against (chosenBrainEnv), as the labelling children; `source` pins it to one source through GBRAIN_SOURCE (null: the caller's environment as it is). */
 type Run = (argv: string[], stdin?: string, source?: string | null) => { code: number; stdout: string; stderr: string };
@@ -473,7 +493,7 @@ function ensureCompanySource(exec: Run, launcher: string, dryRun: boolean, feder
  * is added --no-federated: a one-person brain's default would put company pages in default search.
  */
 export const labelsInCompany = (shape: BrainShape | undefined, team: boolean, source: string | undefined): boolean => source === COMPANY_SOURCE && !team && hasCompany(shape);
-export const companySourceFirst = (launcher: string, dryRun: boolean): NonNullable<LayoutOutcome['company']> => ensureCompanySource(run, launcher, dryRun, ['--no-federated']);
+export const companySourceFirst = (launcher: string, dryRun: boolean): NonNullable<LayoutOutcome['company']> => ensureCompanySource(run, launcher, dryRun, [...COMPANY_FIRST_ADD_ARGS]);
 
 /**
  * The layout for this run. `instructionsPath` is the file the brain-first block lives in (null when the harness has

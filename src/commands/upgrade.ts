@@ -430,8 +430,13 @@ async function installStableRelease(method: string, target: { version: string; c
     if (linked && installedDespiteFailure(ctx.oldVersion, method)) return 'installed';
     console.error(`Installing ${spec} failed. Restoring gbrain ${ctx.oldVersion}...`);
     const hint = reinstallHintLines(target.version, ctx.oldVersion, process.platform, shimDir);
-    try { if (removed || !shimLinked(shimDir)) moveAsideOrphanedShim(shimDir); bun(['add', '-g', BUN_BACKEND, `github:${GBRAIN_GITHUB_REPO}#v${ctx.oldVersion}`]); console.error(`Restored gbrain ${ctx.oldVersion}.`); }
-    catch { console.error('Restore failed. Reinstall by hand:'); for (const line of hint) console.error(`  ${line}`); }
+    try {
+      try { bun(['remove', '-g', 'gbrain']); removed = true; } catch { /* the failed add may have registered nothing */ }
+      if (removed || !shimLinked(shimDir)) moveAsideOrphanedShim(shimDir);
+      bun(['add', '-g', BUN_BACKEND, `github:${GBRAIN_GITHUB_REPO}#v${ctx.oldVersion}`]);
+      if (installedVersion(method) !== ctx.oldVersion) throw new Error('restored version not observed');
+      console.error(`Restored gbrain ${ctx.oldVersion}.`);
+    } catch { console.error('Restore failed. Reinstall by hand:'); for (const line of hint) console.error(`  ${line}`); }
     recordUpgradeError({ phase: ctx.phase ?? 'stable-reinstall', fromVersion: ctx.oldVersion, toVersion: target.version, error: `bun add -g ${BUN_BACKEND} ${spec} failed`, recover: process.platform === 'win32' ? `${hint[0]} ${hint.slice(1).map((line, i) => `(${i + 1}) ${line}`).join(' ')}` : hint[0] });
     setCliExitVerdict(1);
     return 'failed';
@@ -534,17 +539,21 @@ function postSwapSmoke(newVersion: string, r: SmokeRecovery): boolean {
  * already in place (postinstall work outlived the install timeout). Treat a
  * newer `gbrain --version` as a completed swap instead of reporting failure.
  */
-function installedDespiteFailure(oldVersion: string, method: string): boolean {
+function installedVersion(method: string): string | null {
   try {
     const [gbrain, ...entry] = installedGbrain(method);
-    const observed = execFileSync(gbrain, [...entry, '--version'], { encoding: 'utf-8', timeout: 10_000 }).trim().replace(/^gbrain\s*/i, '');
-    const o = parseSemver(observed), prior = parseSemver(oldVersion);
-    if (!o || !prior || !semverGt(o, prior)) return false;
-    console.log(`The install step did not finish cleanly, but gbrain ${observed} is installed. Migrations run in post-upgrade.`);
-    return true;
+    return execFileSync(gbrain, [...entry, '--version'], { encoding: 'utf-8', timeout: 10_000 }).trim().replace(/^gbrain\s*/i, '');
   } catch {
-    return false;
+    return null;
   }
+}
+
+function installedDespiteFailure(oldVersion: string, method: string): boolean {
+  const observed = installedVersion(method);
+  const o = observed ? parseSemver(observed) : null, prior = parseSemver(oldVersion);
+  if (!o || !prior || !semverGt(o, prior)) return false;
+  console.log(`The install step did not finish cleanly, but gbrain ${observed} is installed. Migrations run in post-upgrade.`);
+  return true;
 }
 
 export async function describeMigrationFailure(error: unknown, newVersion: string): Promise<string> {

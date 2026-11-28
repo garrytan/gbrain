@@ -2979,7 +2979,7 @@ and none of them ever refuses the work:
 
 | Code | Kind | What you do |
 |---|---|---|
-| `room_above_level` | `safety` | some items are `readable: false` or `unknown` for the room: use them to do the work, keep them out of the reply unless the ask needs them, offer the rest in a direct message |
+| `room_above_level` | `safety` | some items are `readable: false` or `unknown` for the room: use them to do the work; keep them out of the reply unless the ask cannot be answered without them, never add one the ask did not call for, and offer the rest in a direct message |
 | `room_hints_unavailable` | `degraded` | the room could not be judged (`_meta.room.unavailable` names why): the answer is complete, treat every item as above the room, and follow `fix` when one is given |
 | `room_conflict` | `safety` | the `room` argument named a different room than the harness did: the answer was marked for everyone either names; trust the harness's room |
 
@@ -3109,7 +3109,7 @@ see:
 |---|---|
 | Sibling jobs' calls in flight fill the group | the job is delayed (no attempt burned) and retried; after 6 retries it dies like exhaustion |
 | The group's settled spend reaches its cap | the job dies with `derived_cap_exhausted` (derived cap) or `cost_cap_exceeded`; its `result.spend_refusal` envelope carries the group's spent, reserved and remaining amounts and a `fix` that reruns the command with twice the cap (`next: ask_user`) |
-| A model with no known price, derived or default cap | runs unmetered and warns `BUDGET_TRACKER_NO_PRICING` |
+| A model with no known price, derived or default cap | runs, but gbrain cannot price its calls, so they add nothing to the group's spend and the cap does not limit them; it warns `BUDGET_TRACKER_NO_PRICING` once per job. Register the rate with `gbrain pricing set` to meter it |
 | A model with no known price, user cap | dies with `no_pricing` before the provider call; register the rate with `gbrain pricing set` and rerun |
 
 A rerun queues the unfinished work under a new group: completed jobs are
@@ -4066,7 +4066,7 @@ flowchart LR
     Synthesis --> Answer[Cited answer]
 ```
 
-**Two engines, one contract.** PGLite (Postgres 17 via WASM, zero-config, default) for personal brains up to ~50K pages. Postgres + pgvector (Supabase or self-hosted) for shared, large or multi-machine brains. Both implement one `BrainEngine` contract ([`src/core/engine.ts`](src/core/engine.ts)); CLI and MCP share one op registry.
+**Two engines, one contract.** PGLite (Postgres 17 via WASM, zero-config, default) for personal brains up to roughly 30K pages, about 200K embedded chunks: past about 300K chunks PGLite can no longer build the vector index, and `gbrain doctor` warns before that ([ceiling](docs/ENGINES.md#pglite-vector-index-ceiling)). Postgres + pgvector (Supabase or self-hosted) for shared, large or multi-machine brains. Both implement one `BrainEngine` contract ([`src/core/engine.ts`](src/core/engine.ts)); CLI and MCP share one op registry.
 
 **Canonical files preserve file-backed knowledge.** Your brain repo holds the Markdown; the database is an index rebuildable from it, and git deletes become soft-deletes. DB-only pages, unresolved facts, history and operational state need a database backup: [where your memory lives](docs/guides/where-your-memory-lives.md), [system of record](docs/architecture/system-of-record.md). Publish public subsets, share team mounts, or point a thin client at a colleague's brain. Topologies in [`docs/architecture/topologies.md`](docs/architecture/topologies.md).
 
@@ -4933,12 +4933,26 @@ about 300k chunks at 1,024 dimensions, is refused before the build with
 `pglite_vector_index_too_large`; vector search keeps working with exact scans,
 and the fix is the read-only `gbrain migrate --to postgres --plan --json`.
 
+The ceiling is counted in chunks, not pages, and a page can hold anywhere from
+one chunk to dozens: one 50,000-page brain held 248,802 chunks, another 53,324
+pages held 375,000. Past the budget the build does not just run slowly, it
+never finishes: building the same index over those 375,000 chunks with
+`maintenance_work_mem` set by hand to 1 GB (PGLite 0.4.3) had not finished after
+10.8 hours, and with 2 GB after 8.8 hours, while 75,000 chunks took 70 seconds
+and 15,000 took 14. So plan the move to Postgres + pgvector before a PGLite
+brain reaches about 200,000 chunks at 1,024 dimensions (roughly 30,000 pages
+of ordinary notes). `gbrain doctor` checks this in `pglite_scale`, at any page
+count: it warns once the index needs 65% of the build budget (about 200k
+1,024-dimension chunks) and again, saying the index cannot be built, past it;
+both warnings carry the read-only move plan as their fix.
+
 **When to use PGLite vs Postgres:**
 
 | Factor | PGLite | PostgresEngine + Supabase |
 |--------|--------|--------------------------|
 | Setup | `gbrain init` (zero-config) | Account + connection string |
 | Scale | Good for < 1,000 files | Production-proven at 10K+ |
+| Vector index | Builds in minutes up to about 250k chunks; refused past about 300k (1,024 dimensions) | No PGLite memory ceiling |
 | Multi-device | Single machine only | Any device via remote MCP |
 | Cost | Free | Supabase Pro ($25/mo) |
 | Concurrency | Single process | Connection pooling |

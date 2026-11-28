@@ -10,6 +10,9 @@
  *     the SAME reason for the SAME brain_id count (diagnose/refused rows and
  *     cross-brain rows never sum toward one threshold).
  *
+ * pglite_scale also warns, at any page count, when the chunk vector (HNSW) index nears or passes what PGLite can
+ * build (GST-4084): the ceiling is counted in chunks, and pages hold very different numbers of them.
+ *
  * pglite_scale's fix is the read-only graduation plan (`gbrain migrate --to
  * postgres --plan --json`, which proposes a target when none is given) and
  * names the stay-on-PGLite alternative, `gbrain mcp expose`.
@@ -18,6 +21,7 @@
 import type { BrainEngine } from '../../../core/engine.ts';
 import type { Check } from '../../doctor.ts';
 import { readReceipts } from '../../../core/db-repair-receipts.ts';
+import { hnswBuildNeed, PGLITE_HNSW_GRAPH_BUDGET_BYTES, PGLITE_HNSW_WARN_FRACTION } from '../../../core/vector-index.ts';
 
 /** Pages-only, warn-only (CEO-review E2 pinned semantics). */
 export const PGLITE_SCALE_PAGE_THRESHOLD = 1000;
@@ -29,6 +33,28 @@ export async function pgliteScaleCheck(engine: BrainEngine): Promise<Check | nul
   if (engine.kind !== 'pglite') return null;
   try {
     const stats = await engine.getStats();
+    const index = await hnswBuildNeed(engine, 'content_chunks', 'embedding').catch(() => null);
+    const budgetMb = PGLITE_HNSW_GRAPH_BUDGET_BYTES / (1024 * 1024);
+    if (index && index.mb >= budgetMb * PGLITE_HNSW_WARN_FRACTION) {
+      const over = index.mb > budgetMb;
+      const state = over
+        ? `needs about ${index.mb} MB to build and PGLite can give it ${budgetMb} MB, so it cannot be built on PGLite and vector search runs without it (exact scans, slower)`
+        : `needs about ${index.mb} MB of the ${budgetMb} MB PGLite can give a vector index build; a little more growth and it can no longer be rebuilt here`;
+      return {
+        name: 'pglite_scale',
+        status: 'warn',
+        message: `PGLite brain has ${index.rows} embedded chunks (${stats.page_count} pages): its chunk vector index ${state}. Postgres + pgvector builds it without this limit. Preview the move (read-only): gbrain migrate --to postgres --plan --json.`,
+        details: { embedded_chunks: index.rows, dimensions: index.dims, hnsw_build_mb: index.mb, hnsw_budget_mb: budgetMb, over_budget: over },
+        fix: {
+          argv: PGLITE_SCALE_PLAN_ARGV, consent: [], actor: 'agent', requires_exclusive: false,
+          verify: { argv: ['gbrain', 'doctor', '--only', 'pglite_scale', '--json'] }, docs: 'docs/ENGINES.md#pglite-vector-index-ceiling',
+          why: `PGLite runs Postgres inside WebAssembly with a 2 GiB memory ceiling, and pgvector keeps the whole HNSW graph in memory while it builds. The plan is read-only: it lists what moves, what stays, the blockers and the exact run command. Sharing the brain with \`gbrain mcp expose\` does not lift this limit.`,
+          user_message: over
+            ? `Your brain has ${index.rows} embedded chunks, more than PGLite can build a vector index for, so search runs slower without one. Should I preview a move to Postgres? Nothing changes yet.`
+            : `Your brain has ${index.rows} embedded chunks, close to the most PGLite can build a vector index for. Should I preview a move to Postgres before it gets there? Nothing changes yet.`,
+        },
+      };
+    }
     if (stats.page_count >= PGLITE_SCALE_PAGE_THRESHOLD) {
       return {
         name: 'pglite_scale',

@@ -796,12 +796,26 @@ about 300k chunks at 1,024 dimensions, is refused before the build with
 `pglite_vector_index_too_large`; vector search keeps working with exact scans,
 and the fix is the read-only `gbrain migrate --to postgres --plan --json`.
 
+The ceiling is counted in chunks, not pages, and a page can hold anywhere from
+one chunk to dozens: one 50,000-page brain held 248,802 chunks, another 53,324
+pages held 375,000. Past the budget the build does not just run slowly, it
+never finishes: building the same index over those 375,000 chunks with
+`maintenance_work_mem` set by hand to 1 GB (PGLite 0.4.3) had not finished after
+10.8 hours, and with 2 GB after 8.8 hours, while 75,000 chunks took 70 seconds
+and 15,000 took 14. So plan the move to Postgres + pgvector before a PGLite
+brain reaches about 200,000 chunks at 1,024 dimensions (roughly 30,000 pages
+of ordinary notes). `gbrain doctor` checks this in `pglite_scale`, at any page
+count: it warns once the index needs 65% of the build budget (about 200k
+1,024-dimension chunks) and again, saying the index cannot be built, past it;
+both warnings carry the read-only move plan as their fix.
+
 **When to use PGLite vs Postgres:**
 
 | Factor | PGLite | PostgresEngine + Supabase |
 |--------|--------|--------------------------|
 | Setup | `gbrain init` (zero-config) | Account + connection string |
 | Scale | Good for < 1,000 files | Production-proven at 10K+ |
+| Vector index | Builds in minutes up to about 250k chunks; refused past about 300k (1,024 dimensions) | No PGLite memory ceiling |
 | Multi-device | Single machine only | Any device via remote MCP |
 | Cost | Free | Supabase Pro ($25/mo) |
 | Concurrency | Single process | Connection pooling |

@@ -80,6 +80,8 @@ export interface CodexSetupReceipt {
   gbrain_home_env?: string;
   launcher: string;
   source_id: string | null;
+  /** GST-4069: the brain the table pins with GBRAIN_BRAIN_ID (absent: the session's directory picks it). */
+  brain_id?: string;
   surface: McpSurface;
   /**
    * I1: `explicit` when --surface (or GBRAIN_SURFACE) chose the surface or setup adopted an entry it did not write;
@@ -112,6 +114,8 @@ export interface CodexSetupPlan {
   brainHome: string;
   gbrainHomeEnv?: string;
   sourceId: string | null;
+  /** GST-4069: GBRAIN_BRAIN_ID in the table, so its sessions open this brain wherever they start; unset leaves it to the session's directory. */
+  brainId?: string;
   surface: McpSurface;
   /** `serve --advertise`; null lists the whole surface. */
   advertise: McpSurface | null;
@@ -193,10 +197,11 @@ export const CODEX_FORWARDED_PROVIDER_ENV: readonly string[] = [
   'VOYAGE_API_KEY', 'ZHIPUAI_API_KEY',
 ];
 
-export function desiredCodexMcpEntry(plan: Pick<CodexSetupPlan, 'launcher' | 'brainHome' | 'surface' | 'advertise' | 'gbrainHomeEnv' | 'sourceId' | 'stdioMember'>): Record<string, CodexTomlValue> {
+export function desiredCodexMcpEntry(plan: Pick<CodexSetupPlan, 'launcher' | 'brainHome' | 'surface' | 'advertise' | 'gbrainHomeEnv' | 'sourceId' | 'brainId' | 'stdioMember'>): Record<string, CodexTomlValue> {
   const env: Record<string, string> = {};
   if (plan.gbrainHomeEnv) env.GBRAIN_HOME = plan.gbrainHomeEnv;
   if (plan.sourceId) env.GBRAIN_SOURCE = plan.sourceId;
+  if (plan.brainId) env.GBRAIN_BRAIN_ID = plan.brainId;
   // Codex starts stdio servers in the session's directory, so serve starts through the launcher too (#8426).
   return { command: hookLauncherPath(plan.brainHome), args: stdioServeArgv(plan.launcher, plan.surface, plan.advertise, plan.stdioMember), ...(Object.keys(env).length ? { env } : {}),
     env_vars: [...CODEX_FORWARDED_PROVIDER_ENV] };
@@ -333,7 +338,8 @@ export async function applyCodexSetup(
     const mcpDone = opts.pluginOwner !== null || found.mcp.state === 'current';
     const consentSame = prior?.consent !== undefined && consentValues(prior.consent) === consentValues(consent);
     const originSame = prior?.surface_origin === plan.surfaceOrigin;
-    if (prior?.status === 'installed' && consentSame && originSame && mcpDone && found.hooksCurrent && found.trustCurrent && found.grace.state !== 'absent' && !opts.brainCreated) {
+    const brainSame = (prior?.brain_id ?? null) === (plan.brainId ?? null);
+    if (prior?.status === 'installed' && consentSame && originSame && brainSame && mcpDone && found.hooksCurrent && found.trustCurrent && found.grace.state !== 'absent' && !opts.brainCreated) {
       steps.push({ step: 'receipt', action: 'keep', detail: `${paths.receiptPath} already records this install` });
       steps.push({ step: 'mcp', action: opts.pluginOwner ? 'skip' : 'keep', detail: opts.pluginOwner ? `the '${opts.pluginOwner}' plugin serves '${plan.name}'` : `[mcp_servers.${plan.name}] in ${paths.configPath} is current` });
       steps.push({ step: 'hooks', action: 'keep', detail: plan.events.length ? `${plan.events.join(', ')} in ${paths.hooksPath} are current` : 'no hooks wanted' });
@@ -345,7 +351,7 @@ export async function applyCodexSetup(
     const receipt: CodexSetupReceipt = {
       harness: 'codex', connection: 'local-stdio', setup_receipt_version: CODEX_SETUP_RECEIPT_VERSION, status: 'prepared',
       name: plan.name, gbrain_home: plan.brainHome, ...(plan.gbrainHomeEnv ? { gbrain_home_env: plan.gbrainHomeEnv } : {}),
-      launcher: plan.launcher, source_id: plan.sourceId, surface: plan.surface, ...(plan.surfaceOrigin ? { surface_origin: plan.surfaceOrigin } : {}),
+      launcher: plan.launcher, source_id: plan.sourceId, ...(plan.brainId ? { brain_id: plan.brainId } : {}), surface: plan.surface, ...(plan.surfaceOrigin ? { surface_origin: plan.surfaceOrigin } : {}),
       ...(plan.advertise ? { advertise: plan.advertise } : {}),
       config_path: paths.configPath, hooks_path: paths.hooksPath,
       entry_hash: prior?.entry_hash ?? null, pending_entry_hash: opts.pluginOwner ? null : desiredHash,
