@@ -107,6 +107,9 @@ describe('engine swap --plan', () => {
     expect(json.way_back.known_limits.length).toBe(3);
     expect(r.stdout).toContain('Named loss for remote callers: A remote read by the brain owner on a Rust brain refuses by name');
     expect(json.way_back.remote_limits.length).toBe(1);
+    // RUST_ENGINE.md row RQ-1: the plain recall query's order on Rust is named in the plan, in text and in JSON.
+    expect(r.stdout).toContain('Named loss for every caller: A plain recall query (a query with no entity, session, since or supersessions selector) answers the newest facts first on a Rust brain');
+    expect(json.way_back.read_limits).toEqual([expect.stringContaining('RUST_ENGINE.md row RQ-1')]);
   });
 
   test('the human plan names the verdict, every criterion, the policy, the capability report and the write pause, and no value', async () => {

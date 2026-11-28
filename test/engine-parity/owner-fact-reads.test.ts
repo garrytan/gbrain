@@ -10,7 +10,8 @@
  *    it: the facts from an open page (world and private), from its own page and from a page derived from its own page, and
  *    from a `visibility: private` page; never a fact from a page kept to another member, from a read-by-nobody page or from
  *    a page derived from another member's page. Each tool's answer is compared across arms, with ids and write times only
- *    removed.
+ *    removed, except the plain recall query: its fact set is compared across arms and its order fields are pinned per
+ *    engine (the named loss in RUST_ENGINE.md row RQ-1).
  *  - Regression: on a Rust brain every remote owner read refused before any work (ownerLineageRefusal,
  *    src/mcp/engine-access-refusal.ts, engine_capability_missing "the owner lineage read"), so the owner got no fact at
  *    all. This case is red there and green once the owner lineage read goes to the Rust store as its owner read rule.
@@ -154,9 +155,22 @@ describe('engine parity: the brain owner\'s remote fact reads judge each fact by
       for (const [label, tool, params] of reads) {
         const cell = await observe(engine, token, who, tool, params);
         expect({ who, what: label, error: cell.error, facts: cell.facts }).toEqual({ who, what: label, error: null, facts: OWNER_FACTS });
-        // A plain query ranks facts on an engine with raw SQL and keeps the newest-facts read on the Rust engine (sync 21, as on
-        // master), so the query read is compared across arms by the facts it gives the owner, not by its order or ranking fields.
-        mine[label] = label === 'recall query' ? { facts: cell.facts } : cell.payload;
+        if (label === 'recall query') {
+          // Named loss, RUST_ENGINE.md row RQ-1: a plain recall query (no entity, session, since or supersessions selector)
+          // ranks facts by the query on PGLite and Postgres, and answers the newest facts first on Rust (master's
+          // `!lacksRawSql(ctx.engine)` guard in src/core/ops/facts.ts). The fact set is compared across arms below; the
+          // order fields are pinned per engine here, so this case fails the day Rust ranks. When it fails that way: delete
+          // this branch, compare the whole answer again (`mine[label] = cell.payload`, as for every other read), close row RQ-1
+          // and drop its swap plan line (RUST_READ_LIMITS in src/core/engine-swap/failback.ts).
+          const body = cell.payload as { facts_order?: unknown; facts_degraded?: unknown; facts?: Array<{ relevance?: unknown }> };
+          const order = { who, facts_order: body.facts_order, facts_degraded: body.facts_degraded ?? null, ranked: (body.facts ?? []).some(f => f.relevance !== undefined) };
+          expect(order).toEqual(engine.kind === 'rust'
+            ? { who, facts_order: 'newest', facts_degraded: null, ranked: false }
+            : { who, facts_order: 'relevance', facts_degraded: { reason: 'keyword_only_no_embedding_provider' }, ranked: true });
+          mine[label] = { facts: cell.facts };
+          continue;
+        }
+        mine[label] = cell.payload;
       }
       // get_page's fact table: compared across arms; it never carries a fact outside the owner's set.
       const page = await observe(engine, token, who, 'get_page', { slug: ENTITY });

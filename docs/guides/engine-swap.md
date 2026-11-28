@@ -191,6 +191,14 @@ Once it can, one named loss stays: a remote read by the brain owner on a Rust br
 remote callers, and the local CLI, read what they read on the old engine. The swap plan lists it under "Named loss for
 remote callers".
 
+<a id="plain-recall-order"></a>
+### Plain recall query order on Rust
+
+A plain recall query (a `query` with no entity, session, since or supersessions selector) answers the newest facts
+first on a Rust brain; PGLite and Postgres rank the facts by the query. The facts are the same; only their order and
+the ranking fields differ. Recall with `question:` ranks on every engine. This is a named loss for every caller, local or
+remote, and the swap plan lists it under "Named loss for every caller".
+
 <a id="policy"></a>
 ## The readiness policy
 
