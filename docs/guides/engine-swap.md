@@ -140,7 +140,7 @@ never a pass. With no shadow running, every criterion is `missing`.
 
    Named loss: aged put receipts are not compacted on a Rust brain until the typed member lands; the receipt cleanup pass refuses up front (engine_capability_missing) and the rest of the write upkeep still runs, so receipts stay at their full size past the retention window.
 
-   Named loss: embedding vectors on a Rust brain install only into a plain float vector column, and only at the width the store already keeps; half-precision columns and vectors of another width are refused (engine_capability_missing) instead of stored, so such a page stays unembedded.
+   Named loss: embedding vectors on a Rust brain install only into a plain float vector column; half-precision columns are refused (engine_capability_missing) instead of stored, so such a page stays unembedded. As on the other chunk writes, a batch with a vector of another width than the configured embedding_dimensions (1536 when unset), or with a value too large for a 32-bit float, is refused whole (invalid_argument) and nothing in it is stored.
 
    Named loss: on any brain, preparing the links of one written page reads the whole sources table to find that page's source (fetchSource), one read per page, sized by the number of sources; on Postgres that read also runs outside the write's preparation deadline. A lookup by source id is a lane E follow-up due Wed Dec 9.
 
@@ -149,6 +149,8 @@ never a pass. With no shadow running, every criterion is `missing`.
    Named loss: on a Rust brain, a partial page read refuses engine_capability_missing instead of answering: gbrain get with --body none, --lines or --around-chunk-id (get_page with body, lines or around_chunk_id). A full gbrain get of the same page answers.
 
    Named loss: on a Rust brain that holds a page stored under a slug with capitals, deleted or not (a seeded or migrated brain; gbrain put stores slugs in lowercase), a page read by that exact spelling refuses engine_capability_missing, even when a live page with the lowercase slug exists; read the page by its lowercase slug.
+
+   Named loss: on a Rust brain, gbrain put of a page whose new text removes some of its timeline entries (one of two, in the case checked) refuses engine_capability_missing and exits 1; nothing is written and the page keeps its old text. Keep the entries, or make that edit on a PGLite or Postgres brain. Serving this check without raw SQL is a lane E follow-up due Wed Dec 9.
 6. Zero `privacy_diverged` events (the field is absent, not zero, while any privacy check of the last 7 days is unsettled, so criterion 6 has no evidence until it settles).
 7. Zero fingerprint mismatches, a passed fingerprint probe and a passed allocator verification.
 8. Speed: paired bench samples. **Reported, not gating.** D23 (the maintainer's C1 ruling of 2026-11-19) makes the
