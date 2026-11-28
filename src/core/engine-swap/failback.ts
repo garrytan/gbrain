@@ -48,14 +48,6 @@ export const RUST_REMOTE_LIMITS = [
   'A remote read by the brain owner on a Rust brain refuses by name (engine_capability_missing, "the owner lineage read") until the store models the owner\'s lineage read; other remote callers and the local CLI read as on the old engine.',
 ] as const;
 
-/**
- * Stated in the swap plan: what every caller, local or remote, reads differently on the Rust engine (named losses, each a
- * RUST_ENGINE.md row with a parity pin).
- */
-export const RUST_READ_LIMITS = [
-  'A plain recall query (a query with no entity, session, since or supersessions selector) answers the newest facts first on a Rust brain; PGLite and Postgres rank the facts by the query. The facts are the same; recall with question: ranks on every engine (RUST_ENGINE.md row RQ-1).',
-] as const;
-
 /** The fingerprint guard's rule, in plain words, for the swap and failback plans and the guide. */
 export const FINGERPRINT_RULE_TEXT = 'Fingerprint rule (the probe\'s own rule, both directions): where the Postgres or PGLite engine\'s lower() or whitespace class differs from the Rust engine on some characters, the run stops only if a stored fact holds one; with no such character, any probe mismatch stops it. Stock Postgres differs on dozens of rare characters (for example U+0085, next line), so its probe always reports mismatches; a brain whose facts hold none of them is not affected.';
 

@@ -104,7 +104,6 @@ export function renderPlanText(p: SwapPlan): string {
     `Way back: ${p.way_back.statement}`,
     ...p.way_back.known_limits.map(l => `Known limit: ${l}`),
     ...p.way_back.remote_limits.map(l => `Named loss for remote callers: ${l}`),
-    ...p.way_back.read_limits.map(l => `Named loss for every caller: ${l}`),
     `Failback accepted losses (counted by its plan): ${p.way_back.accepted_losses.join(', ')}`,
     p.way_back.losses
       ? `Failback does not carry (no Rust read call returns it, or failback does not write it back), ${p.way_back.losses.not_carried_tables.length} table(s): ${p.way_back.losses.not_carried_tables.join(', ') || 'none'}; fields: ${Object.entries(p.way_back.losses.not_carried_fields).map(([t, c]) => c.map(x => `${t}.${x}`).join(', ')).join(', ') || 'none'}`
