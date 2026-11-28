@@ -324,7 +324,7 @@ async function main(): Promise<void> {
   if (runs.length) mined = runs.map(run => mineRun(run));
   else if (latest) {
     const { workflow, events } = laneSource(lane, e2eProfile);
-    const candidates = (JSON.parse(gh(["run", "list", "--workflow", workflow, "--branch", "master", "--status", "success", "--limit", String(latest * 4), "--json", "databaseId,event"])) as Array<{ databaseId: number; event: string }>)
+    const candidates = (JSON.parse(gh(["run", "list", "--workflow", workflow, "--branch", "master", "--status", "success", "--limit", "100", "--json", "databaseId,event"])) as Array<{ databaseId: number; event: string }>)
       .filter(r => events.includes(r.event)).map(r => String(r.databaseId));
     mined = [];
     for (const run of candidates) {
