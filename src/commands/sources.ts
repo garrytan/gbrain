@@ -1961,7 +1961,7 @@ export async function runSources(engine: BrainEngine, args: string[]): Promise<v
     // v0.42.44 brain-repo git durability
     case 'harden':     { const { runHarden } = await import('./sources-harden.ts'); return runHarden(engine, rest); }
     case 'pull':       { const { runPull } = await import('./sources-harden.ts'); return runPull(engine, rest); }
-    // agent-bootstrap: scan-gated workspace push
+    // Managed committed-HEAD retry, or unmanaged workspace push.
     case 'push':       return runPush(engine, rest);
     case 'unharden':   { const { runUnharden } = await import('./sources-harden.ts'); return runUnharden(engine, rest); }
     // undefined / --help / -h are handled by the guards above, before this
@@ -2095,24 +2095,30 @@ Subcommands:
                                     --path is DB-free (the harden cron's entry).
   push <id> | --path <dir> [--branch <b>] [--message <m>]
        [--allow-unverified-remote] [--scan-timeout <s>] [--json]
-                                    Scan-gated add→commit→pull→push of a workspace
-                                    repo; every commit it pushes is scanned
+                                    Managed: scan and push only the committed HEAD
+                                    under the owner lock; never stage, commit,
+                                    pull, integrate or run hooks. Dirty files stay local.
+                                    --branch, --message and --allow-unverified-remote
+                                    are for unmanaged workspaces only.
+                                    Unmanaged: scan-gated add→commit→pull→push.
+                                    Every commit it pushes is scanned
                                     (--scan-timeout: the scan's budget, default
                                     300 s). Blocks on secret-scan findings (override
                                     per finding via .gbrain-scan-allow) and on
-                                    tracked deny-list files (*.pglite, .env*,
-                                    *.pem, *.key, .gbrain/**). Refuses remotes not
-                                    verifiably private — verified via REST, falling
-                                    back to pure git protocol where gh is blocked
+                                    deny-list paths (*.pglite, .env*,
+                                    *.pem, *.key, .gbrain/**). Unmanaged push
+                                    refuses remotes not verifiably private,
+                                    verified via REST and falling back to pure git
+                                    protocol where gh is blocked
                                     (cloud proxies); private verdicts cached 1h.
                                     Unverified-remote overrides (self-hosted git
                                     you trust; every use warns loudly): the flag
                                     above, GBRAIN_ALLOW_UNVERIFIED_REMOTE=1, or
                                     "gbrain config set push.allow_unverified_remote
                                     true" (file-plane — reaches detached hook
-                                    children). Single-flight (a concurrent push
-                                    exits 0 as "skipped"); pushes even on a clean
-                                    tree. Writes per-root status under
+                                    children). An unmanaged single-flight push
+                                    can skip a concurrent run, pushes even on a
+                                    clean tree, and writes per-root status under
                                     ~/.gbrain/bootstrap/.
   unharden <id>                     Remove durability cron/hook/credential wiring.
 

@@ -86,6 +86,16 @@ function snapshot(f: Fixture) {
 }
 const remoteHead = (f: Fixture) => git(f.remote, 'rev-parse', 'refs/heads/main');
 
+test('sources push help distinguishes managed committed-only and unmanaged workspace behavior', async () => {
+  const output: string[] = [], original = console.log;
+  console.log = (...values: unknown[]) => output.push(values.map(String).join(' '));
+  try { await runSources(engine, ['push', '--help']); } finally { console.log = original; }
+  const help = output.join('\n');
+  expect(help).toContain('Managed: scan and push only the committed HEAD');
+  expect(help).toContain('never stage, commit,');
+  expect(help).toContain('Unmanaged: scan-gated add→commit→pull→push');
+});
+
 test('pushes only committed HEAD; dirty index, untracked secrets and hooks stay untouched', () => fixture(async f => {
   const head = commit(f, 'committed.md', 'safe committed bytes\n');
   const hookDir = join(f.home, 'hooks'); mkdirSync(hookDir);
