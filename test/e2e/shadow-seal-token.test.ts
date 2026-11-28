@@ -239,6 +239,58 @@ d('the seal change token on Postgres', () => {
     expect(calls[2]!.args).toEqual({ reason: 'other_writer_open' });
   }, 60_000);
 
+  /**
+   * A reading role that is not a superuser and lacks pg_read_all_stats (a hosted database's app role): another role's
+   * pg_stat_activity row shows its pid, usesysid, usename and application_name, but state, backend_xid, state_change
+   * and backend_type are NULL (measured on PostgreSQL 16 and 17). The read runs under SET LOCAL ROLE to that role.
+   */
+  async function unprivilegedReads(): Promise<{ reads: ReadSource; drop: () => Promise<void> }> {
+    const role = `seal_rd_${process.pid}_${Math.floor(Math.random() * 1e6)}`;
+    await engine.executeRaw(`CREATE ROLE ${role} NOLOGIN BYPASSRLS`); // the read turns row security off, as the brain owner may
+    await engine.executeRaw(`GRANT USAGE ON SCHEMA public TO ${role}`);
+    await engine.executeRaw(`GRANT SELECT ON ALL TABLES IN SCHEMA public TO ${role}`);
+    const wrapped: ReadSource = { pauseMs: reads.pauseMs, close: async () => {}, read: (fn) => reads.read(async (tx, query) => { await query(`SET LOCAL ROLE ${role}`); return fn(tx, query); }) };
+    return { reads: wrapped, drop: async () => { await engine.executeRaw(`DROP OWNED BY ${role}`).catch(() => undefined); await engine.executeRaw(`DROP ROLE IF EXISTS ${role}`).catch(() => undefined); } };
+  }
+
+  test('a connected idle session of a role that cannot write a copied relation (a monitoring agent) does not refuse, seen or hidden', async () => {
+    const monitor = await throwawayRole([]);
+    const hidden = await unprivilegedReads();
+    try {
+      const app = 'monitor-agent';
+      const sql = monitor.connect(app);
+      await sql`SELECT 1`; // idle from now on, well inside the settle window
+      expect(await backends(app)).toBe(1);
+      const seen = await sealMark(deps()); // read as a superuser: the session is visible and idle for under a minute
+      expect(seen).not.toHaveProperty('refused');
+      const token = (seen as { token: string }).token;
+      expect(await sealMark(deps(hidden.reads))).not.toHaveProperty('refused'); // read by a role that cannot see it
+      await sql`SELECT 1`;
+      expect(await quietSince(deps(), token)).toEqual({ ok: true });
+      await finish(sql, app);
+    } finally { await hidden.drop(); await monitor.drop(); }
+  }, 60_000);
+
+  test('a session hidden from the reading role, of a role that can write a copied relation, is refused while its write is open', async () => {
+    const writer = await throwawayRole(['GRANT INSERT ON config TO $ROLE', 'GRANT INSERT ON engine_writer_coverage_gaps TO $ROLE', 'GRANT INSERT, UPDATE ON engine_writer_sessions TO $ROLE', 'GRANT USAGE ON ALL SEQUENCES IN SCHEMA public TO $ROLE'], true);
+    const hidden = await unprivilegedReads();
+    try {
+      expect(await sealMark(deps(hidden.reads))).not.toHaveProperty('refused'); // the role alone is covered: no refusal yet
+      const app = 'hidden-writer';
+      const sql = writer.connect(app);
+      let release!: () => void;
+      const held = new Promise<void>((r) => { release = r; });
+      let started!: () => void;
+      const open = new Promise<void>((r) => { started = r; });
+      const tx = sql.begin(async (t) => { await t`INSERT INTO config (key, value) VALUES ('hidden-open', '1')`; started(); await held; });
+      await open;
+      try {
+        expect(await sealMark(deps(hidden.reads))).toEqual({ refused: 'other_backend_unseen' });
+      } finally { release(); await tx; }
+      await finish(sql, app);
+    } finally { await hidden.drop(); await writer.drop(); }
+  }, 60_000);
+
   test('a statistics reset is refused', async () => {
     const token = await sealed();
     await engine.executeRaw('SELECT pg_stat_reset()');
