@@ -228,11 +228,11 @@ export async function prepareFenceFactAppend(engine: BrainEngine, row: WriteRequ
   // #10589: a segmented page publishes the edit as a splice of the segments it touches. The whole-body path re-reads,
   // re-segments, re-hashes and restages the page, so on a page holding a fence over a segment a save outran its
   // preparation budget and was lost; it remains for a splice that declines. The spliced regions are the ones that path
-  // stores: rows the ledger withdraws are kept struck and purged rows dropped, as its import does.
+  // stores: trimmed, with rows the ledger withdraws kept struck and purged rows dropped, as its import does.
   const spliced = snapshot && isSegmentedPage(snapshot.page) && !fenceAppendProbe.wholeBody ? await withPendingFenceRows(pending, async () => {
-    const stored = !ledgerApplies(snapshotLedger(snapshot)) ? next : {
-      compiled_truth: (await preserveWithdrawnFenceRows(engine, row.source_id, next.compiled_truth, row.slug)).trim(),
-      timeline: (await preserveWithdrawnFenceRows(engine, row.source_id, next.timeline, row.slug)).trim() };
+    const applies = ledgerApplies(snapshotLedger(snapshot));
+    const region = async (text: string) => (applies ? await preserveWithdrawnFenceRows(engine, row.source_id, text, row.slug) : text).trim();
+    const stored = { compiled_truth: await region(next.compiled_truth), timeline: await region(next.timeline) };
     return prepareSegmentedSpliceMutation(engine, row, snapshot, {
       replacements: async live => {
         const replacements = regionReplacements(live, snapshot.bodyGeneration, [base.compiled_truth, stored.compiled_truth],

@@ -62,7 +62,7 @@ import { isStagingBodyRef, prepareStagedUpload } from './page-upload.ts';
 import { pipelined } from '../page-state/transactions.ts';
 import { overlayCanonicalBodies } from '../page-state/snapshot.ts';
 import { segmentedRevertRefusal } from '../page-state/versions.ts';
-import { bodyUnread, fenceBody, isSegmentedPage, pageBodySegmentedError, withoutBody } from '../page-body/page-shape.ts';
+import { bodyUnread, fenceBody, isSegmentedPage, pageBodyBytes, pageBodySegmentedError, withoutBody } from '../page-body/page-shape.ts';
 import { fileBodyDigests, overlaidFileBodyDigests, rawFileBodyDigests, storedBodyDigests, type ByteSource, type FileReading, type RegionDigests } from '../page-body/body-digests.ts';
 import { ledgerApplies, type BodyLedger } from '../page-body/segment-ledger.ts';
 import { inferredHeadPrefix } from '../page-body/streamed-import.ts';
@@ -448,9 +448,14 @@ async function segmentedFileMatches(engine: BrainEngine, slug: string, bytes: By
       return same(file.digests, stored);
     }
     // #10589: the overlay is a function of the text and the ledger, so a file holding the stored bytes matches without
-    // it. Overlaying both copies sends each whole facts fence to the database twice, on every write to the page.
-    storedRaw ??= await storedBodyDigests(engine, Number(snapshot.page.id), { withdrawals: [] }, between);
-    if (same(await rawFileBodyDigests(bytes, reading, file.regions, between), storedRaw)) return true;
+    // it. Overlaying both copies sends each whole facts fence to the database twice, on every write to the page. A file
+    // whose regions differ in length from the stored body cannot hold its bytes, so it goes straight to the overlay.
+    const regionBytes = [...file.regions.truth, ...file.regions.timeline]
+      .reduce((n, piece) => n + ('text' in piece ? Buffer.byteLength(piece.text, 'utf8') : piece.end - piece.start), 0);
+    if (regionBytes === pageBodyBytes(snapshot.page)) {
+      storedRaw ??= await storedBodyDigests(engine, Number(snapshot.page.id), { withdrawals: [] }, between);
+      if (same(await rawFileBodyDigests(bytes, reading, file.regions, between), storedRaw)) return true;
+    }
     // A facts fence under a ledger that applies is compared overlaid, one complete fence block at a time; a fence longer
     // than FENCE_MAX_BYTES refuses, as the stored side's trusted read does.
     const fileDigests = await overlaidFileBodyDigests(bytes, reading, file.regions, async text => (await overlayCanonicalBodies(engine.executeRaw.bind(engine), text, '',

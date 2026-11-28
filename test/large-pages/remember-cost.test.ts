@@ -7,7 +7,8 @@
  *    fence's end, plus the row. The canonical file's drift check compares the file with the stored bytes before it
  *    overlays either copy, so a file holding the stored bytes is not overlaid at all. The result is the one the
  *    whole-body path gives (stored body, canonical file and facts rows of a twin written that way, `fenceAppendProbe`),
- *    and the page still reads whole with `gbrain get`.
+ *    and the page still reads whole with `gbrain get`. On a source with no withdrawals, a fence the splice opens is
+ *    stored and written as that path writes it (trimmed regions), so the next save passes the file's drift check.
  * 2. Fails when: remember restages the whole page (no splice: spliceWork.segmented stays 0), or the drift check overlays
  *    the fence on a file that holds the stored bytes (bodyDigestWork.largestHeld), or the splice gives another body, file
  *    or facts row than the whole-body path.
@@ -120,6 +121,41 @@ for (const kind of testBackends()) {
       const printed = parts.join('');
       expect(printed).toContain('Owner Example likes chess');
       expect(printed).toContain(`~~${WITHDRAWN}~~`);
+    }, 300_000);
+  });
+
+  describe(`remember opening a facts fence on a segmented page whose source has no withdrawals (${kind})`, () => {
+    let brain: TwinBrain;
+    const pageId = async (slug: string) => Number((await brain.engine.executeRaw<{ id: number }>('SELECT id FROM pages WHERE source_id=$1 AND slug=$2', [brain.sourceId, slug]))[0]!.id);
+    const remember = (slug: string, fact: string) => brain.call('remember', { fact, entity: slug, provenance: 'chat 2026-11-27' }, slug);
+    const proseOf = (name: string) => `---\ntype: person\ntitle: ${name}\n---\n\n# ${name}\n\n`
+      + Array.from({ length: 16_000 }, (_, i) => `Line ${i} of a long note kept on this page so it is stored in segments.`).join('\n') + '\n';
+
+    beforeAll(async () => {
+      brain = await openTwinBrain(kind, [], async seed => { await seed.setSwitch(true); });
+      for (const [slug, name] of [[OWNER, 'Owner Example'], [TWIN, 'Twin Example']] as const) {
+        expect(await brain.call('put_page', { slug, content: proseOf(name) })).toMatchObject({ state: 'committed' });
+        expect(await brain.storageOf(slug)).toBe('segmented');
+      }
+    }, 600_000);
+
+    afterAll(() => { fenceAppendProbe.wholeBody = false; return brain.close(); }, 120_000);
+
+    test('the splice stores and writes what the whole-body path does, and the next save passes the file check', async () => {
+      expect(ledgerApplies((await openSegmentedBody(brain.engine, { pageId: await pageId(OWNER), expect: { slug: OWNER, sourceId: brain.sourceId } })).ledger)).toBe(false);
+      Object.assign(spliceWork, { segmented: 0, read: 0, rows: 0, matches: 0 });
+      expect(await remember(OWNER, 'Owner Example prefers window seats')).toMatchObject({ status: 'inserted', entity_slug: OWNER });
+      expect(spliceWork.segmented).toBeGreaterThan(0);
+      fenceAppendProbe.wholeBody = true;
+      try {
+        expect(await remember(TWIN, 'Twin Example prefers window seats')).toMatchObject({ status: 'inserted', entity_slug: TWIN });
+      } finally { fenceAppendProbe.wholeBody = false; }
+      const neutral = (slug: string, text: string) => text.replaceAll(slug, '<slug>').replaceAll('Owner Example', '<name>').replaceAll('Twin Example', '<name>');
+      const body = async (slug: string) => { const b = await materializeSegmentedBody(brain.engine, await pageId(slug), brain.sourceId); return neutral(slug, b.compiled_truth + '\n' + b.timeline); };
+      const file = (slug: string) => { const f = neutral(slug, readFileSync(fileOf(brain, slug), 'utf8')); return f.slice(f.indexOf('\n---\n')); };
+      expect(await body(OWNER) === await body(TWIN)).toBe(true);
+      expect(file(OWNER) === file(TWIN)).toBe(true);
+      expect(await remember(OWNER, 'Owner Example likes chess')).toMatchObject({ status: 'inserted', entity_slug: OWNER });
     }, 300_000);
   });
 }
