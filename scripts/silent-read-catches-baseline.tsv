@@ -677,7 +677,6 @@ src/core/apple/contacts-client.ts#readAppleContactsToken	catch_empty	1
 src/core/atomic-write.ts#atomicWriteFileSync	catch_empty	2
 src/core/audit/self-upgrade-audit.ts#readAllSelfUpgrades	catch_empty	1
 src/core/autopilot-heartbeat.ts#readAutopilotHeartbeat	catch_empty	1
-src/core/autopilot-heartbeat.ts#readDaemonStaleAfter	catch_empty	1
 src/core/autopilot-lock.ts#readProcessCommand	catch_empty	1
 src/core/autopilot-paths.ts#autopilotPauseReason	catch_empty	1
 src/core/autopilot-paths.ts#readInstallIdRecord	catch_empty	1

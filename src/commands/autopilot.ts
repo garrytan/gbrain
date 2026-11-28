@@ -22,7 +22,7 @@ import { setCliExitVerdict } from '../core/cli-force-exit.ts';
 import { exitCliError } from '../cli/cli-error.ts';
 import { autopilotNoRepoRefusal, autopilotPgliteRefusal } from './autopilot-refusals.ts';
 import { readGlobalMaintenanceVerdict } from '../core/minions/global-maintenance-stall.ts';
-import { readDaemonStaleAfter } from '../core/autopilot-heartbeat.ts';
+import { readAutopilotStatusHeartbeat } from '../core/autopilot-heartbeat.ts';
 import { detectExecutionEnvironment } from '../core/execution-env.ts';
 import { join, dirname, isAbsolute, resolve as resolvePath } from 'path';
 import { execSync } from '../core/spawn.ts';
@@ -1517,8 +1517,9 @@ export function autopilotStatusExitCode(state: AutopilotState, globalMaintenance
 /**
  * Pure classifier so the tri-state is testable without an installed daemon.
  *
- * The heartbeat is the lock mtime, which the tick loop already refreshes every
- * pass (`utimesSync(lockPath, ...)`). #7003: the threshold comes from the
+ * The heartbeat is the lock mtime, which the tick loop refreshes every pass.
+ * An exited lock owner cannot keep ticking, regardless of its last heartbeat.
+ * #7003: for a live or unknown owner, the threshold comes from the
  * daemon's own heartbeat sidecar when one matches the lock (its next tick, so an
  * adaptive 2x sleep is not stale); a missing, foreign or older sidecar (a daemon
  * still on a pre-#7003 binary) falls back to the flag rule below, so liveness
@@ -1530,6 +1531,7 @@ export function classifyAutopilotStatus(input: {
   disabledReason: string | null;
   pausedReason?: string | null;
   heartbeatAgeSeconds: number | null;
+  heartbeatOwnerExited?: boolean;
   intervalSeconds: number;
   /** #7003: the running daemon's own threshold (autopilot-heartbeat.ts daemonStaleAfterSeconds); wins over intervalSeconds. */
   daemon?: { staleAfter: number; nextTickAt: string | null } | null;
@@ -1560,7 +1562,7 @@ export function classifyAutopilotStatus(input: {
   // status swears everything is fine (the 71-day incident's shape again).
   else if (pausedReason !== null) state = 'paused';
   else if (input.heartbeatAgeSeconds === null) state = 'never_run';
-  else state = input.heartbeatAgeSeconds > staleAfter ? 'stale' : 'fresh';
+  else state = input.heartbeatOwnerExited || input.heartbeatAgeSeconds > staleAfter ? 'stale' : 'fresh';
 
   return {
     installed: input.installed,
@@ -1597,11 +1599,7 @@ function showStatus(json: boolean, intervalSeconds: number) {
 
   const pausedReason = autopilotPauseReason();
 
-  let heartbeatAgeSeconds: number | null = null;
-  try {
-    const { mtimeMs } = statSync(autopilotLockPath());
-    heartbeatAgeSeconds = Math.max(0, Math.floor((Date.now() - mtimeMs) / 1000));
-  } catch { /* never ran, or already cleaned up */ }
+  const heartbeat = readAutopilotStatusHeartbeat();
 
   const jobStatus = autopilotJobStatus(job);
   const installTarget = jobStatus.installTarget;
@@ -1610,9 +1608,8 @@ function showStatus(json: boolean, intervalSeconds: number) {
     installTarget,
     disabledReason,
     pausedReason,
-    heartbeatAgeSeconds,
+    ...heartbeat,
     intervalSeconds,
-    daemon: readDaemonStaleAfter(),
     lastLog: lastLine,
   });
   const processing = readAutopilotProcessingStatus();
@@ -1643,7 +1640,8 @@ function showStatus(json: boolean, intervalSeconds: number) {
       case 'stale':
         console.log(
           `Autopilot: installed (${report.install_target}) but NOT ticking — last heartbeat ` +
-          `${report.heartbeat_age_seconds}s ago (stale after ${report.stale_after_seconds}s).`,
+          `${report.heartbeat_age_seconds}s ago ` +
+          (heartbeat.heartbeatOwnerExited ? '(the last daemon exited).' : `(stale after ${report.stale_after_seconds}s).`),
         );
         break;
       case 'fresh':

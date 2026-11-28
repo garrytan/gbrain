@@ -12,8 +12,9 @@
  * - no sidecar, one written by another pid than the lock holder, or one older than the lock (a daemon binary that
  *   does not write it): the caller's flag, as before.
  */
-import { readFileSync, renameSync, statSync, writeFileSync } from 'fs';
+import { closeSync, fstatSync, openSync, readFileSync, renameSync, statSync, writeFileSync } from 'fs';
 import { autopilotHeartbeatPath, autopilotLockPath } from './autopilot-paths.ts';
+import { isProcessAlive } from './pglite-lock.ts';
 
 export interface AutopilotHeartbeat {
   pid: number;
@@ -65,10 +66,30 @@ export function daemonStaleAfterSeconds(heartbeat: AutopilotHeartbeat | null, lo
   return { staleAfter: Math.max(0, Math.ceil((nextMs - lock.mtimeMs) / 1000)) + Math.max(base, 120), nextTickAt: heartbeat.next_tick_at };
 }
 
-/** The live daemon's threshold for `gbrain autopilot --status`: its sidecar graded against the lock's mtime and holder pid. */
-export function readDaemonStaleAfter(lockPath = autopilotLockPath(), heartbeatPath = autopilotHeartbeatPath()): { staleAfter: number; nextTickAt: string | null } | null {
-  let lock: { mtimeMs: number; pid: number | null };
-  try { lock = { mtimeMs: statSync(lockPath).mtimeMs, pid: null }; } catch { return null; }
-  try { const n = parseInt(readFileSync(lockPath, 'utf-8').trim(), 10); lock.pid = Number.isFinite(n) ? n : null; } catch { /* unreadable: pid unknown */ }
-  return daemonStaleAfterSeconds(readAutopilotHeartbeat(heartbeatPath), lock);
+/** Read the lock's timestamp and owner from the same file, even if a restart replaces the path. */
+function readAutopilotLock(path: string): { read: 'available'; mtimeMs: number; pid: number | null } | { read: 'unavailable' } {
+  try {
+    const fd = openSync(path, 'r');
+    try {
+      const { mtimeMs } = fstatSync(fd);
+      const value = readFileSync(fd, 'utf-8').trim();
+      const parsed = Number(value);
+      const pid = /^[1-9][0-9]*$/.test(value) && Number.isSafeInteger(parsed) && parsed <= 0x7fffffff ? parsed : null;
+      return { read: 'available', mtimeMs, pid };
+    } finally {
+      closeSync(fd);
+    }
+  } catch {
+    // A lock readable only as metadata still provides the legacy age signal.
+    try { return { read: 'available', mtimeMs: statSync(path).mtimeMs, pid: null }; } catch { return { read: 'unavailable' }; }
+  }
+}
+
+export function readAutopilotStatusHeartbeat() {
+  const snapshot = readAutopilotLock(autopilotLockPath());
+  const lock = snapshot.read === 'available' ? snapshot : null;
+  const heartbeatAgeSeconds = lock ? Math.max(0, Math.floor((Date.now() - lock.mtimeMs) / 1000)) : null;
+  const heartbeatOwnerExited = lock?.pid != null && !isProcessAlive(lock.pid);
+  const daemon = heartbeatOwnerExited ? null : daemonStaleAfterSeconds(readAutopilotHeartbeat(), lock);
+  return { heartbeatAgeSeconds, heartbeatOwnerExited, daemon };
 }
