@@ -597,7 +597,7 @@ export class WriteTally {
   private saveQueued = false;
   /**
    * `defer`: when given, `note` does not save at once; it asks `defer` to run one save later (the child passes `setImmediate`), and every outcome noted before that save runs goes into it. Without it every `note` saves at once.
-   * The child reads a burst of write samples far faster than one locked, flushed rename per sample allows (about 6 ms each): saving once per event-loop turn lets it keep up, so the serving process never holds a backlog in its pipe when it exits.
+   * The child reads a burst of write samples far faster than one locked, flushed rename per sample allows (about 6 ms each): saving once per event-loop turn removes that bottleneck; the measured bursts through 1,000 page writes left no pipe backlog at exit. Slow or failing saves and other bottlenecks can still leave samples unsettled.
    * An outcome not yet saved when the child dies is a deficit the next owner books as `receipt_orphaned`, as for any unsaved outcome; a replay's in-flight mark stays on disk until the save that ends it.
    */
   constructor(private readonly dir: string, private readonly epoch: () => string | null, private readonly alive: () => boolean = () => existsSync(dir), private readonly pid: number = process.pid, session = '', private readonly now: () => number = Date.now, private readonly defer?: (save: () => void) => void) {
