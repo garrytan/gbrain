@@ -489,23 +489,18 @@ describe('seal.ts: the primary\'s change token', () => {
     expect(await refusedFor({ hang: true })).toEqual({ refused: 'read_timeout' });
   });
 
-  /** A primary whose pool hands out connections with these backend pids, in order, and counts what is still reserved. */
-  const fakePrimary = (pids: number[], o: { max?: number; fail?: boolean } = {}) => {
-    const state = { reserved: 0, asked: 0 };
-    const sql = {
-      options: { max: o.max ?? pids.length },
-      reserve: async () => {
-        if (o.fail) throw new Error('pool ended');
-        const pid = pids[state.asked++];
-        state.reserved++;
-        let released = false;
-        return Object.assign(async () => [{ pid }], { release: () => { if (!released) { released = true; state.reserved--; } } });
-      },
-    };
+  /**
+   * A primary whose pool driver reports these backend pids (the vendored driver's `backend_pids`): one list for every
+   * read, or one list per read in order (the last repeats). `missing`: a driver without the accessor. Counts the reads.
+   */
+  const fakePrimary = (pids: number[] | number[][], o: { missing?: boolean } = {}) => {
+    const state = { reads: 0 };
+    const lists = Array.isArray(pids[0]) ? (pids as number[][]) : [pids as number[]];
+    const sql = o.missing ? {} : { get backend_pids() { const at = Math.min(state.reads++, lists.length - 1); return [...lists[at]!]; } };
     return { primary: { sql } as never, state };
   };
 
-  test('no connection is left out by its name: only pool connections proven the sealing process\'s own (reserved, asked for their pid, held through the read) are, the open-write check only at the seal', async () => {
+  test('no connection is left out by its name: only pool connections proven the sealing process\'s own (their pid held by its driver, before and after the read) are, the open-write check only at the seal', async () => {
     const dir = hooked();
     // No primary to prove anything with: nothing is left out, whatever the connections are called.
     const atSeal = fakeReads({ named: [41, 42] });
@@ -515,26 +510,35 @@ describe('seal.ts: the primary\'s change token', () => {
     const atCheck = fakeReads({ facts: { app: 'gbrain-2-def' }, named: [41] });
     await quietSince({ dir, reads: atCheck, postgres: true }, mark);
     expect(atCheck.activityParams.map((p) => p.slice(0, 2))).toEqual([[[], []]]); // the previous sealing process's name leaves nothing out either
-    // A primary whose idle pool connections are 41 and 42: both proven, then released after the read.
-    const own = fakePrimary([42, 41]);
+    // A primary whose pool connections are 41, 42 and 43 (43 does not carry the name the read sees): 41 and 42 are proven,
+    // whatever they are doing (idle, busy or held reserved elsewhere), and the pool is read again after the activity read.
+    const own = fakePrimary([42, 41, 43]);
     const proven = fakeReads({ named: [41, 42] });
     expect(await sealMark({ dir, reads: proven, postgres: true, primary: own.primary })).toHaveProperty('token');
-    expect(proven.activityParams.map((p) => p.slice(0, 2))).toEqual([[[42, 41], [42, 41]]]);
-    expect(own.state.reserved).toBe(0);
+    expect(proven.activityParams.map((p) => p.slice(0, 2))).toEqual([[[41, 42], [41, 42]]]);
+    expect(own.state.reads).toBe(2);
     const checked = fakePrimary([41]);
     const atCheck2 = fakeReads({ named: [41] });
     expect(await quietSince({ dir, reads: atCheck2, postgres: true, primary: checked.primary }, mark)).toEqual({ ok: true });
     expect(atCheck2.activityParams.map((p) => p.slice(0, 2))).toEqual([[[], [41]]]); // at the check an open write is never left out
-    // A named connection that is not ours (another client set the name): the pool hands out a new connection (77), so
-    // proving stops; the stranger is judged on its state like anyone else.
-    const stranger = fakePrimary([41, 77, 78]);
+    // A named connection that is not ours (another client set the name): its pid is not the pool's, so it is judged on
+    // its state like anyone else.
+    const stranger = fakePrimary([41, 77]);
     const judged = fakeReads({ named: [41, 99] });
     await sealMark({ dir, reads: judged, postgres: true, primary: stranger.primary });
-    expect(judged.activityParams.map((p) => p.slice(0, 2))).toEqual([[[41, 77], [41, 77]]]);
-    expect(stranger.state).toEqual({ reserved: 0, asked: 2 });
-    // Proving fails: refused, never read as quiet.
-    expect(await sealMark({ dir, reads: fakeReads({ named: [41] }), postgres: true, primary: fakePrimary([], { fail: true }).primary })).toEqual({ refused: 'own_backends_unproven' });
-    expect(await quietSince({ dir, reads: fakeReads({ named: [41] }), postgres: true, primary: fakePrimary([], { fail: true }).primary }, mark)).toEqual({ ok: false, reason: 'own_backends_unproven' });
+    expect(judged.activityParams.map((p) => p.slice(0, 2))).toEqual([[[41], [41]]]);
+    // No connection carries the name: the pool is not read at all.
+    const unnamed = fakePrimary([41]);
+    expect(await sealMark({ dir, reads: fakeReads({ named: [] }), postgres: true, primary: unnamed.primary })).toHaveProperty('token');
+    expect(unnamed.state.reads).toBe(0);
+    // Proving fails: a driver that reports no pids, or a proven connection gone from the pool by the end of the read (its
+    // pid may be a new backend's now). Refused, never read as quiet.
+    expect(await sealMark({ dir, reads: fakeReads({ named: [41] }), postgres: true, primary: fakePrimary([], { missing: true }).primary })).toEqual({ refused: 'own_backends_unproven' });
+    expect(await quietSince({ dir, reads: fakeReads({ named: [41] }), postgres: true, primary: fakePrimary([], { missing: true }).primary }, mark)).toEqual({ ok: false, reason: 'own_backends_unproven' });
+    expect(await sealMark({ dir, reads: fakeReads({ named: [41, 42] }), postgres: true, primary: fakePrimary([[41, 42], [42]]).primary })).toEqual({ refused: 'own_backends_unproven' });
+    expect(await quietSince({ dir, reads: fakeReads({ named: [41] }), postgres: true, primary: fakePrimary([[41], []]).primary }, mark)).toEqual({ ok: false, reason: 'own_backends_unproven' });
+    // A stranger that leaves during the read changes nothing: only proven pids must still be the pool's.
+    expect(await sealMark({ dir, reads: fakeReads({ named: [41, 99] }), postgres: true, primary: fakePrimary([[41, 77], [41]]).primary })).toHaveProperty('token');
   });
 
   test('not quiet when the database shows a write, an epoch change or a changed relation, each with its reason', async () => {

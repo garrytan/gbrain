@@ -150,7 +150,9 @@ function Connection(options, queues = {}, { onopen = noop, onend = noop, onclose
     cancel,
     end,
     count: 0,
-    id
+    id,
+    // GBrain: the pid the server sent this connection in BackendKeyData at startup (null before it), read by sql.backend_pids.
+    get backend_pid() { return backend.pid }
   }
 
   queues.closed && queues.closed.push(connection)

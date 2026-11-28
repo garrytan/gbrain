@@ -1,5 +1,5 @@
 diff --git a/cjs/src/connection.js b/vendor/postgres/cjs/src/connection.js
-index 07f6716..174846a 100644
+index 07f6716..e5c4f20 100644
 --- a/cjs/src/connection.js
 +++ b/vendor/postgres/cjs/src/connection.js
 @@ -20,6 +20,7 @@
@@ -97,7 +97,18 @@ index 07f6716..174846a 100644
      connect(query) {
        initial = query
        reconnect()
-@@ -143,11 +172,13 @@
+@@ -119,7 +148,9 @@
+     cancel,
+     end,
+     count: 0,
+-    id
++    id,
++    // GBrain: the pid the server sent this connection in BackendKeyData at startup (null before it), read by sql.backend_pids.
++    get backend_pid() { return backend.pid }
+   }
+ 
+   queues.closed && queues.closed.push(connection)
+@@ -143,11 +174,13 @@
    }
  
    async function cancel({ pid, secret }, resolve, reject) {
@@ -113,7 +124,7 @@ index 07f6716..174846a 100644
      } catch (error) {
        reject(error)
      }
-@@ -163,22 +194,174 @@
+@@ -163,22 +196,174 @@
      if (q.cancelled)
        return
  
@@ -294,7 +305,7 @@ index 07f6716..174846a 100644
      }
    }
  
-@@ -232,13 +415,20 @@
+@@ -232,13 +417,20 @@
      q.prepare = options.prepare && ('prepare' in q.options ? q.options.prepare : true)
      q.string = string
      q.signature = q.prepare && types + string
@@ -317,7 +328,7 @@ index 07f6716..174846a 100644
  
      typeof options.debug === 'function' && options.debug(id, string, parameters, types)
    }
-@@ -295,10 +485,11 @@
+@@ -295,10 +487,11 @@
  
    /* c8 ignore next 3 */
    function drain() {
@@ -330,7 +341,7 @@ index 07f6716..174846a 100644
      if (incomings) {
        incomings.push(x)
        remaining -= x.length
-@@ -330,6 +521,9 @@
+@@ -330,6 +523,9 @@
        remaining = 0
        incomings = null
      }
@@ -340,7 +351,7 @@ index 07f6716..174846a 100644
    }
  
    async function connect() {
-@@ -366,6 +560,7 @@
+@@ -366,6 +562,7 @@
      try {
        statements = {}
        needsTypes = options.fetch_types
@@ -348,7 +359,7 @@ index 07f6716..174846a 100644
        statementId = Math.random().toString(36).slice(2)
        statementCount = 1
        lifeTimer.start()
-@@ -379,20 +574,35 @@
+@@ -379,20 +576,35 @@
    }
  
    function error(err) {
@@ -384,7 +395,7 @@ index 07f6716..174846a 100644
    function queryError(query, err) {
      if (query.reserve)
        return query.reject(err)
-@@ -428,7 +638,14 @@
+@@ -428,7 +640,14 @@
      if (socket) {
        socket.removeListener('data', data)
        socket.removeListener('connect', connected)
@@ -400,7 +411,7 @@ index 07f6716..174846a 100644
      }
      ended && (ended(), ending = ended = null)
    }
-@@ -437,20 +654,53 @@
+@@ -437,20 +656,53 @@
      incoming = Buffer.alloc(0)
      remaining = 0
      incomings = null
@@ -456,7 +467,7 @@ index 07f6716..174846a 100644
      closedTime = performance.now()
      hadError && options.shared.retries++
      delay = (typeof backoff === 'function' ? backoff(options.shared.retries) : backoff) * 1000
-@@ -459,6 +709,10 @@
+@@ -459,6 +711,10 @@
  
    /* Handlers */
    function handle(xs, x = xs[0]) {
@@ -467,7 +478,7 @@ index 07f6716..174846a 100644
      (
        x === 68 ? DataRow :                   // D
        x === 100 ? CopyData :                 // d
-@@ -489,6 +743,39 @@
+@@ -489,6 +745,39 @@
      )(xs)
    }
  
@@ -507,7 +518,7 @@ index 07f6716..174846a 100644
    function DataRow(x) {
      let index = 7
      let length
-@@ -533,13 +820,26 @@
+@@ -533,13 +822,26 @@
    }
  
    function ReadyForQuery(x) {
@@ -535,7 +546,7 @@ index 07f6716..174846a 100644
        } else {
          query.resolve(results || result)
        }
-@@ -547,9 +847,16 @@
+@@ -547,9 +849,16 @@
        errored(errorResponse)
      }
  
@@ -552,7 +563,7 @@ index 07f6716..174846a 100644
  
      if (initial) {
        if (target_session_attrs) {
-@@ -559,28 +866,54 @@
+@@ -559,28 +868,54 @@
            return terminate()
        }
  
@@ -613,7 +624,7 @@ index 07f6716..174846a 100644
          : connection.reserved()
        : ending
          ? terminate()
-@@ -629,8 +962,13 @@
+@@ -629,8 +964,13 @@
      for (let i = 0; i < length; ++i)
        !query.statement.types[i] && (query.statement.types[i] = x.readUInt32BE(7 + i * 4))
  
@@ -628,7 +639,7 @@ index 07f6716..174846a 100644
    }
  
    function RowDescription(x) {
-@@ -767,15 +1105,23 @@
+@@ -767,15 +1107,23 @@
  
    async function fetchArrayTypes() {
      needsTypes = false
@@ -660,7 +671,7 @@ index 07f6716..174846a 100644
    }
  
    function addArrayType(oid, typarray) {
-@@ -821,7 +1167,16 @@
+@@ -821,7 +1169,16 @@
    function retry(q, error) {
      delete statements[q.signature]
      q.retried = error
@@ -678,7 +689,7 @@ index 07f6716..174846a 100644
    }
  
    function NotificationResponse(x) {
-@@ -1039,6 +1394,59 @@
+@@ -1039,6 +1396,59 @@
    return buffer
  }
  
@@ -739,10 +750,10 @@ index 07f6716..174846a 100644
    seconds = typeof seconds === 'function' ? seconds() : seconds
    if (!seconds)
 diff --git a/cjs/src/index.js b/vendor/postgres/cjs/src/index.js
-index f09c61c..2c31a38 100644
+index f09c61c..8e92781 100644
 --- a/cjs/src/index.js
 +++ b/vendor/postgres/cjs/src/index.js
-@@ -62,10 +62,36 @@ function Postgres(a, b) {
+@@ -62,10 +62,47 @@ function Postgres(a, b) {
        , full = Queue()
        , queues = { connecting, reserved, closed, ended, open, busy, full }
  
@@ -777,10 +788,21 @@ index f09c61c..2c31a38 100644
 +    }
 +  })
 +
++  // GBrain: the server backend pids of this pool's connections that have a live session (any queue but `closed`, and not
++  // while `connecting`, when the pid may still be the previous session's). Each is the pid the server sent over this
++  // connection's own socket, so a caller can tell its own backends in pg_stat_activity from another client's that copies
++  // its application_name. Read-only; a getter, so every read is current.
++  Object.defineProperty(sql, 'backend_pids', {
++    enumerable: false,
++    get() {
++      return connections.filter(c => c.queue !== closed && c.queue !== connecting && Number.isInteger(c.backend_pid)).map(c => c.backend_pid)
++    }
++  })
++
    Object.assign(sql, {
      get parameters() { return options.parameters },
      largeObject: largeObject.bind(null, sql),
-@@ -200,58 +226,248 @@ function Postgres(a, b) {
+@@ -200,58 +237,248 @@ function Postgres(a, b) {
      return await sql`select pg_notify(${ channel }, ${ '' + payload })`
    }
  
@@ -1053,7 +1075,7 @@ index f09c61c..2c31a38 100644
        let uncaughtError
          , result
  
-@@ -281,6 +497,8 @@ function Postgres(a, b) {
+@@ -281,6 +508,8 @@ function Postgres(a, b) {
        return result
  
        function savepoint(name, fn) {
@@ -1062,7 +1084,7 @@ index f09c61c..2c31a38 100644
          if (name && Array.isArray(name.raw))
            return savepoint(sql => sql.apply(sql, arguments))
  
-@@ -290,18 +508,33 @@ function Postgres(a, b) {
+@@ -290,18 +519,33 @@ function Postgres(a, b) {
  
        function handler(q) {
          q.catch(e => uncaughtError || (uncaughtError = e))
@@ -1102,7 +1124,7 @@ index f09c61c..2c31a38 100644
      }
    }
  
-@@ -351,7 +584,7 @@ function Postgres(a, b) {
+@@ -351,7 +595,7 @@ function Postgres(a, b) {
      return new Promise((resolve, reject) => {
        query.state
          ? query.active
@@ -1111,7 +1133,7 @@ index f09c61c..2c31a38 100644
            : query.cancelled = { resolve, reject }
          : (
            queries.remove(query),
-@@ -362,6 +595,25 @@ function Postgres(a, b) {
+@@ -362,6 +606,25 @@ function Postgres(a, b) {
      })
    }
  
@@ -1137,7 +1159,7 @@ index f09c61c..2c31a38 100644
    async function end({ timeout = null } = {}) {
      if (ending)
        return ending
-@@ -398,7 +650,14 @@ function Postgres(a, b) {
+@@ -398,7 +661,14 @@ function Postgres(a, b) {
      move(c, ended)
    }
  
@@ -1153,7 +1175,7 @@ index f09c61c..2c31a38 100644
      if (queries.length === 0)
        return move(c, open)
  
-@@ -418,12 +677,50 @@ function Postgres(a, b) {
+@@ -418,12 +688,50 @@ function Postgres(a, b) {
        : move(c, full)
    }
  
@@ -1205,7 +1227,7 @@ index f09c61c..2c31a38 100644
    }
  }
  
-@@ -444,7 +741,7 @@ function parseOptions(a, b) {
+@@ -444,7 +752,7 @@ function parseOptions(a, b) {
    'timeout' in o && (console.log('The timeout option is deprecated, use idle_timeout instead'), o.idle_timeout = o.timeout) // eslint-disable-line
    query.sslrootcert === 'system' && (query.ssl = 'verify-full')
  
@@ -1214,7 +1236,7 @@ index f09c61c..2c31a38 100644
    const defaults = {
      max             : globalThis.Cloudflare ? 3 : 10,
      ssl             : false,
-@@ -453,6 +750,10 @@ function parseOptions(a, b) {
+@@ -453,6 +761,10 @@ function parseOptions(a, b) {
      connect_timeout : 30,
      max_lifetime    : max_lifetime,
      max_pipeline    : 100,
@@ -1225,7 +1247,7 @@ index f09c61c..2c31a38 100644
      backoff         : backoff,
      keep_alive      : 60,
      prepare         : true,
-@@ -491,11 +792,19 @@ function parseOptions(a, b) {
+@@ -491,11 +803,19 @@ function parseOptions(a, b) {
      onnotice        : o.onnotice,
      onnotify        : o.onnotify,
      onclose         : o.onclose,
@@ -1316,7 +1338,7 @@ index 0578284..e80a868 100644
  
    return '$' + (types.push(
 diff --git a/src/connection.js b/vendor/postgres/src/connection.js
-index 1b1cccd..061a315 100644
+index 1b1cccd..5cce859 100644
 --- a/src/connection.js
 +++ b/vendor/postgres/src/connection.js
 @@ -20,6 +20,7 @@
@@ -1414,7 +1436,18 @@ index 1b1cccd..061a315 100644
      connect(query) {
        initial = query
        reconnect()
-@@ -143,11 +172,13 @@
+@@ -119,7 +148,9 @@
+     cancel,
+     end,
+     count: 0,
+-    id
++    id,
++    // GBrain: the pid the server sent this connection in BackendKeyData at startup (null before it), read by sql.backend_pids.
++    get backend_pid() { return backend.pid }
+   }
+ 
+   queues.closed && queues.closed.push(connection)
+@@ -143,11 +174,13 @@
    }
  
    async function cancel({ pid, secret }, resolve, reject) {
@@ -1430,7 +1463,7 @@ index 1b1cccd..061a315 100644
      } catch (error) {
        reject(error)
      }
-@@ -163,22 +194,174 @@
+@@ -163,22 +196,174 @@
      if (q.cancelled)
        return
  
@@ -1611,7 +1644,7 @@ index 1b1cccd..061a315 100644
      }
    }
  
-@@ -232,13 +415,20 @@
+@@ -232,13 +417,20 @@
      q.prepare = options.prepare && ('prepare' in q.options ? q.options.prepare : true)
      q.string = string
      q.signature = q.prepare && types + string
@@ -1634,7 +1667,7 @@ index 1b1cccd..061a315 100644
  
      typeof options.debug === 'function' && options.debug(id, string, parameters, types)
    }
-@@ -295,10 +485,11 @@
+@@ -295,10 +487,11 @@
  
    /* c8 ignore next 3 */
    function drain() {
@@ -1647,7 +1680,7 @@ index 1b1cccd..061a315 100644
      if (incomings) {
        incomings.push(x)
        remaining -= x.length
-@@ -330,6 +521,9 @@
+@@ -330,6 +523,9 @@
        remaining = 0
        incomings = null
      }
@@ -1657,7 +1690,7 @@ index 1b1cccd..061a315 100644
    }
  
    async function connect() {
-@@ -366,6 +560,7 @@
+@@ -366,6 +562,7 @@
      try {
        statements = {}
        needsTypes = options.fetch_types
@@ -1665,7 +1698,7 @@ index 1b1cccd..061a315 100644
        statementId = Math.random().toString(36).slice(2)
        statementCount = 1
        lifeTimer.start()
-@@ -379,20 +574,35 @@
+@@ -379,20 +576,35 @@
    }
  
    function error(err) {
@@ -1701,7 +1734,7 @@ index 1b1cccd..061a315 100644
    function queryError(query, err) {
      if (query.reserve)
        return query.reject(err)
-@@ -428,7 +638,14 @@
+@@ -428,7 +640,14 @@
      if (socket) {
        socket.removeListener('data', data)
        socket.removeListener('connect', connected)
@@ -1717,7 +1750,7 @@ index 1b1cccd..061a315 100644
      }
      ended && (ended(), ending = ended = null)
    }
-@@ -437,20 +654,53 @@
+@@ -437,20 +656,53 @@
      incoming = Buffer.alloc(0)
      remaining = 0
      incomings = null
@@ -1773,7 +1806,7 @@ index 1b1cccd..061a315 100644
      closedTime = performance.now()
      hadError && options.shared.retries++
      delay = (typeof backoff === 'function' ? backoff(options.shared.retries) : backoff) * 1000
-@@ -459,6 +709,10 @@
+@@ -459,6 +711,10 @@
  
    /* Handlers */
    function handle(xs, x = xs[0]) {
@@ -1784,7 +1817,7 @@ index 1b1cccd..061a315 100644
      (
        x === 68 ? DataRow :                   // D
        x === 100 ? CopyData :                 // d
-@@ -489,6 +743,39 @@
+@@ -489,6 +745,39 @@
      )(xs)
    }
  
@@ -1824,7 +1857,7 @@ index 1b1cccd..061a315 100644
    function DataRow(x) {
      let index = 7
      let length
-@@ -533,13 +820,26 @@
+@@ -533,13 +822,26 @@
    }
  
    function ReadyForQuery(x) {
@@ -1852,7 +1885,7 @@ index 1b1cccd..061a315 100644
        } else {
          query.resolve(results || result)
        }
-@@ -547,9 +847,16 @@
+@@ -547,9 +849,16 @@
        errored(errorResponse)
      }
  
@@ -1869,7 +1902,7 @@ index 1b1cccd..061a315 100644
  
      if (initial) {
        if (target_session_attrs) {
-@@ -559,28 +866,54 @@
+@@ -559,28 +868,54 @@
            return terminate()
        }
  
@@ -1930,7 +1963,7 @@ index 1b1cccd..061a315 100644
          : connection.reserved()
        : ending
          ? terminate()
-@@ -629,8 +962,13 @@
+@@ -629,8 +964,13 @@
      for (let i = 0; i < length; ++i)
        !query.statement.types[i] && (query.statement.types[i] = x.readUInt32BE(7 + i * 4))
  
@@ -1945,7 +1978,7 @@ index 1b1cccd..061a315 100644
    }
  
    function RowDescription(x) {
-@@ -767,15 +1105,23 @@
+@@ -767,15 +1107,23 @@
  
    async function fetchArrayTypes() {
      needsTypes = false
@@ -1977,7 +2010,7 @@ index 1b1cccd..061a315 100644
    }
  
    function addArrayType(oid, typarray) {
-@@ -821,7 +1167,16 @@
+@@ -821,7 +1169,16 @@
    function retry(q, error) {
      delete statements[q.signature]
      q.retried = error
@@ -1995,7 +2028,7 @@ index 1b1cccd..061a315 100644
    }
  
    function NotificationResponse(x) {
-@@ -1039,6 +1394,59 @@
+@@ -1039,6 +1396,59 @@
    return buffer
  }
  
@@ -2056,10 +2089,10 @@ index 1b1cccd..061a315 100644
    seconds = typeof seconds === 'function' ? seconds() : seconds
    if (!seconds)
 diff --git a/src/index.js b/vendor/postgres/src/index.js
-index c7fba3d..5bacfcb 100644
+index c7fba3d..dbeca3e 100644
 --- a/src/index.js
 +++ b/vendor/postgres/src/index.js
-@@ -62,10 +62,36 @@ function Postgres(a, b) {
+@@ -62,10 +62,47 @@ function Postgres(a, b) {
        , full = Queue()
        , queues = { connecting, reserved, closed, ended, open, busy, full }
  
@@ -2094,10 +2127,21 @@ index c7fba3d..5bacfcb 100644
 +    }
 +  })
 +
++  // GBrain: the server backend pids of this pool's connections that have a live session (any queue but `closed`, and not
++  // while `connecting`, when the pid may still be the previous session's). Each is the pid the server sent over this
++  // connection's own socket, so a caller can tell its own backends in pg_stat_activity from another client's that copies
++  // its application_name. Read-only; a getter, so every read is current.
++  Object.defineProperty(sql, 'backend_pids', {
++    enumerable: false,
++    get() {
++      return connections.filter(c => c.queue !== closed && c.queue !== connecting && Number.isInteger(c.backend_pid)).map(c => c.backend_pid)
++    }
++  })
++
    Object.assign(sql, {
      get parameters() { return options.parameters },
      largeObject: largeObject.bind(null, sql),
-@@ -200,58 +226,248 @@ function Postgres(a, b) {
+@@ -200,58 +237,248 @@ function Postgres(a, b) {
      return await sql`select pg_notify(${ channel }, ${ '' + payload })`
    }
  
@@ -2370,7 +2414,7 @@ index c7fba3d..5bacfcb 100644
        let uncaughtError
          , result
  
-@@ -281,6 +497,8 @@ function Postgres(a, b) {
+@@ -281,6 +508,8 @@ function Postgres(a, b) {
        return result
  
        function savepoint(name, fn) {
@@ -2379,7 +2423,7 @@ index c7fba3d..5bacfcb 100644
          if (name && Array.isArray(name.raw))
            return savepoint(sql => sql.apply(sql, arguments))
  
-@@ -290,18 +508,33 @@ function Postgres(a, b) {
+@@ -290,18 +519,33 @@ function Postgres(a, b) {
  
        function handler(q) {
          q.catch(e => uncaughtError || (uncaughtError = e))
@@ -2419,7 +2463,7 @@ index c7fba3d..5bacfcb 100644
      }
    }
  
-@@ -351,7 +584,7 @@ function Postgres(a, b) {
+@@ -351,7 +595,7 @@ function Postgres(a, b) {
      return new Promise((resolve, reject) => {
        query.state
          ? query.active
@@ -2428,7 +2472,7 @@ index c7fba3d..5bacfcb 100644
            : query.cancelled = { resolve, reject }
          : (
            queries.remove(query),
-@@ -362,6 +595,25 @@ function Postgres(a, b) {
+@@ -362,6 +606,25 @@ function Postgres(a, b) {
      })
    }
  
@@ -2454,7 +2498,7 @@ index c7fba3d..5bacfcb 100644
    async function end({ timeout = null } = {}) {
      if (ending)
        return ending
-@@ -398,7 +650,14 @@ function Postgres(a, b) {
+@@ -398,7 +661,14 @@ function Postgres(a, b) {
      move(c, ended)
    }
  
@@ -2470,7 +2514,7 @@ index c7fba3d..5bacfcb 100644
      if (queries.length === 0)
        return move(c, open)
  
-@@ -418,12 +677,50 @@ function Postgres(a, b) {
+@@ -418,12 +688,50 @@ function Postgres(a, b) {
        : move(c, full)
    }
  
@@ -2522,7 +2566,7 @@ index c7fba3d..5bacfcb 100644
    }
  }
  
-@@ -444,7 +741,7 @@ function parseOptions(a, b) {
+@@ -444,7 +752,7 @@ function parseOptions(a, b) {
    'timeout' in o && (console.log('The timeout option is deprecated, use idle_timeout instead'), o.idle_timeout = o.timeout) // eslint-disable-line
    query.sslrootcert === 'system' && (query.ssl = 'verify-full')
  
@@ -2531,7 +2575,7 @@ index c7fba3d..5bacfcb 100644
    const defaults = {
      max             : globalThis.Cloudflare ? 3 : 10,
      ssl             : false,
-@@ -453,6 +750,10 @@ function parseOptions(a, b) {
+@@ -453,6 +761,10 @@ function parseOptions(a, b) {
      connect_timeout : 30,
      max_lifetime    : max_lifetime,
      max_pipeline    : 100,
@@ -2542,7 +2586,7 @@ index c7fba3d..5bacfcb 100644
      backoff         : backoff,
      keep_alive      : 60,
      prepare         : true,
-@@ -491,11 +792,19 @@ function parseOptions(a, b) {
+@@ -491,11 +803,19 @@ function parseOptions(a, b) {
      onnotice        : o.onnotice,
      onnotify        : o.onnotify,
      onclose         : o.onclose,

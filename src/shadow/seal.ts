@@ -24,9 +24,11 @@
  *    at close. The sealing process's own pool connections are left out of the activity checks (the open-write check
  *    only at close), not the counters: what it commits is published to the follower, and a write published after the
  *    follower closed is recorded as lost (follower.ts `close`), which voids the seal; its own writes after the token
- *    move the counters and refuse the seal. A connection is left out only when proven ours: reserved from the
- *    primary's pool and asked for its backend pid, held reserved through the read (`ownBackends`); a connection name
- *    proves nothing, since any client can set it, and a proof that fails refuses (`own_backends_unproven`);
+ *    move the counters and refuse the seal. A connection is left out only when proven ours: its backend pid is one the
+ *    server sent a live connection of the primary's pool over that connection's own socket (the vendored driver's
+ *    `backend_pids`), read before and after the activity read (`ownBackends`), so a pool connection held reserved or
+ *    busy elsewhere in the process is proven too; a connection name proves nothing, since any client can set it, and a
+ *    proof that cannot be made refuses (`own_backends_unproven`);
  *  - a login role that can write a brain table with no complete way to record evidence (`uncovered_roles` of
  *    writer-observations.ts) refuses at close and at the next start; a new coverage gap and a hook that is not working
  *    refuse the next start;
@@ -70,8 +72,9 @@ export interface SealDeps {
   postgres: boolean;
   rpc: <T>(method: string, args?: Record<string, unknown>, timeoutMs?: number) => Promise<T>;
   /**
-   * The serving process's primary engine: its pool connections are proven its own by reserving them (`ownBackends`),
-   * and only those are left out of the activity checks. Left out, nothing is proven and nothing is left out.
+   * The serving process's primary engine: its pool connections are proven its own from the backend pids its driver
+   * holds (`ownBackends`), and only those are left out of the activity checks. Left out, nothing is proven and nothing
+   * is left out.
    */
   primary?: BrainEngine;
   /** Waits before each retry of a revoke the child did not acknowledge (default `REVOKE_RETRY_MS`). */
@@ -84,7 +87,7 @@ export interface SealDeps {
 export const SEAL_CONFIRM_UNACKNOWLEDGED = 'seal_confirm_unacknowledged';
 /** A commit the child may have applied (it was sent) but did not acknowledge: revoked, named by this reason. */
 export const SEAL_COMMIT_UNACKNOWLEDGED = 'seal_commit_unacknowledged';
-/** The sealing process's own connections could not be proven by reserving them (an error, or a wait past `SEAL_READ_MS`). */
+/** The sealing process's own connections could not be proven: its pool reports no backend pids, or a proven connection closed during the read. */
 export const OWN_BACKENDS_UNPROVEN = 'own_backends_unproven';
 /** Waits before the retries of an unacknowledged revoke. */
 export const REVOKE_RETRY_MS: readonly number[] = [1_000, 2_000, 5_000, 10_000, 30_000];
@@ -166,7 +169,7 @@ const NAMED_SQL = `SELECT a.pid FROM pg_catalog.pg_stat_activity a /* own backen
 /**
  * Who could have written, or still be about to be seen writing. $1 backend pids left out of the open-write check,
  * $2 backend pids left out of the other checks (both only pids proven to be the sealing process's own pool
- * connections, held reserved while this runs; never a connection name), $3 the copied relations.
+ * connections, from the pids their driver holds; never a connection name), $3 the copied relations.
  *  writing  another backend has a transaction with a write open (a transaction id is assigned at the first write);
  *  prepared a prepared transaction exists in this database (it holds locks and has no backend);
  *  live     a connection the hooks recorded as a writer is still connected, however old its row (its next write may not
@@ -202,55 +205,52 @@ const RELS_SQL = `SELECT c.relname::text AS name, c.oid::text AS oid, c.relfilen
 
 type Observed = Omit<Mark, 'v'>;
 
-/** A postgres.js pool, as far as `ownBackends` uses it. */
-interface ReservingPool { options?: { max?: number }; reserve: (o?: { signal?: AbortSignal }) => Promise<((strings: TemplateStringsArray) => Promise<Array<{ pid: unknown }>>) & { release: () => void }> }
-
-/** Pool connections of the sealing process, held reserved until `release`: their backends cannot end or be reused meanwhile. */
-interface Own { pids: number[]; release: () => void }
+/** A postgres.js pool, as far as `ownBackends` uses it: the vendored driver's `backend_pids` (vendor/postgres src/index.js). */
+interface PidPool { backend_pids?: unknown }
 
 /**
- * Proves which of `named` (connections that carry this process's name) are this process's own pool connections:
- * reserves connections from the primary's pool, one at a time, and asks each for its backend pid, until every named
- * pid is matched, the pool's size is reached, or a reservation opened a new connection (no idle one was left; a busy
- * one of ours is then judged on its state, as anyone's). The reservations are held through the activity read, so a
- * proven pid is a live backend of ours for that whole read. An error or a wait past `SEAL_READ_MS` proves nothing:
- * refused as `own_backends_unproven`. No primary, or one without a pool (PGLite): nothing proven, nothing left out.
+ * The backend pids of the primary pool's live connections, whatever they are doing (idle, running a statement, or held
+ * reserved by another part of the process, such as the persistence consumer's idle lane). Each is the pid the server
+ * sent that connection over its own socket at startup (BackendKeyData), so another client cannot claim it by copying
+ * this process's connection name. Null when the pool reports none (a driver without the accessor): refused as
+ * `own_backends_unproven` when a connection carries this process's name. No primary, or one without a pool (PGLite):
+ * nothing proven, nothing left out.
  */
-async function ownBackends(primary: BrainEngine | undefined, named: number[]): Promise<Own | null> {
-  const none: Own = { pids: [], release: () => {} };
-  if (named.length === 0 || !primary) return none;
-  let pool: ReservingPool | undefined;
-  try { pool = (primary as unknown as { sql?: ReservingPool }).sql; } catch { return null; } // silent-read-ok: a torn-down pool proves nothing, refused as own_backends_unproven
-  if (!pool || typeof pool.reserve !== 'function') return none;
-  const max = Math.max(1, Number(pool.options?.max) || 1);
-  const held: Array<{ release: () => void }> = [];
-  const pids: number[] = [];
-  const release = (): void => { for (const r of held.splice(0)) { try { r.release(); } catch { /* already released */ } } }; // silent-read-ok: releasing a reservation twice is harmless
-  const abort = new AbortController();
-  const timer = setTimeout(() => abort.abort(new Error('own backends not proven in time')), SEAL_READ_MS);
-  (timer as { unref?: () => void }).unref?.();
-  try {
-    const want = new Set(named);
-    while (held.length < max && [...want].some((pid) => !pids.includes(pid))) {
-      const r = await pool.reserve({ signal: abort.signal });
-      held.push(r);
-      const [row] = await r`SELECT pg_backend_pid() AS pid`;
-      const pid = Number(row?.pid);
-      if (!Number.isInteger(pid)) throw new Error('no backend pid');
-      pids.push(pid);
-      if (!want.has(pid)) break; // a new connection: no idle one of ours was left to prove
-    }
-    return { pids, release };
-  } catch {
-    release();
-    return null; // silent-read-ok: unproven, so the read is refused (own_backends_unproven)
-  } finally { clearTimeout(timer); }
+function poolPids(primary: BrainEngine | undefined): number[] | null {
+  if (!primary) return [];
+  let pool: PidPool | undefined;
+  try { pool = (primary as unknown as { sql?: PidPool }).sql; } catch { return null; } // silent-read-ok: a torn-down pool proves nothing, refused as own_backends_unproven
+  if (!pool) return [];
+  const pids = pool.backend_pids;
+  if (!Array.isArray(pids)) return null;
+  return pids.filter((pid): pid is number => Number.isInteger(pid));
+}
+
+/**
+ * Which of `named` (connections that carry this process's name) are this process's own pool connections: those whose
+ * pid the pool holds. `poolPids` is read again after the activity read (`stillOwn`): a proven connection that closed in
+ * between could have had its pid taken by a new backend, so the read is then refused rather than trusted.
+ */
+function ownBackends(primary: BrainEngine | undefined, named: number[]): number[] | null {
+  if (named.length === 0) return [];
+  const pids = poolPids(primary);
+  if (!pids) return null;
+  const held = new Set(pids);
+  return named.filter((pid) => held.has(pid));
+}
+
+function stillOwn(primary: BrainEngine | undefined, proven: number[]): boolean {
+  if (proven.length === 0) return true;
+  const pids = poolPids(primary);
+  if (!pids) return false;
+  const held = new Set(pids);
+  return proven.every((pid) => held.has(pid));
 }
 
 /**
  * The common read of a seal and of its check, in the order the refusals are decided: server and counters, then who is
  * connected or writing, then the relations. Only this backend and the sealing process's own pool connections proven by
- * reservation (`ownBackends`) are left out of the activity checks; the open-write check leaves out the proven ones only
+ * their driver's backend pids (`ownBackends`) are left out of the activity checks; the open-write check leaves out the proven ones only
  * at the seal (`mark` null). A connection name proves nothing: a previous sealing process's name is not left out either.
  */
 async function observe(tx: BrainEngine, query: ReadQuery, names: string[], mark: Mark | null, primary: BrainEngine | undefined): Promise<Observed | { refused: string }> {
@@ -260,10 +260,10 @@ async function observe(tx: BrainEngine, query: ReadQuery, names: string[], mark:
   if (facts.version < MIN_SERVER_VERSION) return { refused: 'postgres_version_old' };
   if (String(facts.track_counts).toLowerCase() !== 'on' || facts.counts_role_off !== false) return { refused: 'track_counts_off' };
   const named = (await query(NAMED_SQL, [facts.app])).map((r) => Number(r.pid)).filter((pid) => Number.isInteger(pid));
-  const own = await ownBackends(primary, named);
+  const own = ownBackends(primary, named);
   if (!own) return { refused: OWN_BACKENDS_UNPROVEN };
-  let act: Record<string, unknown> | undefined;
-  try { [act] = await query(ACTIVITY_SQL, [mark ? [] : own.pids, own.pids, names]); } finally { own.release(); }
+  const [act] = await query(ACTIVITY_SQL, [mark ? [] : own, own, names]);
+  if (!stillOwn(primary, own)) return { refused: OWN_BACKENDS_UNPROVEN };
   if (!act) return { refused: 'mark_unreadable' };
   if (act.writing !== 0) return { refused: 'other_writer_open' };
   if (act.prepared !== 0) return { refused: 'prepared_transaction' };
