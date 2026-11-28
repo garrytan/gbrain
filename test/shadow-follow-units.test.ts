@@ -655,4 +655,16 @@ describe('the follower\'s two write counts', () => {
     expect([f.published, f.pageLinkWrites]).toEqual([7, 4]);
     await f.settle();
   });
+
+  test('after `close()` both publish rules hold: a bookkeeping-only batch does not move `pageLinkWrites` but is still booked lost (no seed plan read, so every write counts), and a page row moves both', async () => {
+    const lost: string[] = [];
+    const f = new ShadowFollower({ reads: { pauseMs: 0, read: async () => { throw new Error('no reads'); }, close: async () => {} } as never, send: () => true, rpc: async () => { throw new Error('no child'); }, onLost: (reason: string) => lost.push(reason) } as never);
+    f.close();
+    f.publish(batch(1, [{ kind: 'invalid', reason: 'unmapped_write:declarePersistence' }]));
+    expect([f.published, f.pageLinkWrites]).toEqual([1, 0]);
+    expect(lost).toEqual(['published_after_close']); // no plan read yet, so the closed follower cannot tell it is not followed
+    f.publish(batch(2, [rows('pages')]));
+    expect([f.published, f.pageLinkWrites]).toEqual([2, 1]);
+    expect(lost).toEqual(['published_after_close', 'published_after_close']);
+  });
 });

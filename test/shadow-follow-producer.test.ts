@@ -15,7 +15,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:tes
 import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { PostgresEngine } from '../src/core/postgres-engine.ts';
 import { JOURNAL_BOOKKEEPING_MEMBERS, journalItems, journalWriteItems } from '../src/shadow/follow.ts';
-import { JOURNAL_MEMBER_STATEMENTS } from '../src/shadow/write-capture.ts';
+import { bookkeepingMember, JOURNAL_MEMBER_STATEMENTS } from '../src/shadow/write-capture.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { busyPreReadIsRelationLevel, driverWriteSurvivesFailedPreRead, nestedThatWaitsForALaterCallMatchesShadowOff, pgliteTemplateWriteIsSeen, writesKeepOrderBesideNestedTransaction, nestedFollowedWritesStayInTheirSavepoint, finishedNestedIsNotBusy, heldCallKeepsItsContext, heldCallRollsBackWithItsTransaction, outerWriteSurvivesNestedRollback, sampledSiblingDoesNotWaitForItself, unawaitedFollowedWriteCommits, syncThrowRollsBackHeldWrite, failedPreReadKeepsSiblingWrites, failedPreReadKeepsTransaction, followHarness, PAGE, restoreFollowProbes } from './helpers/follow-producer.ts';
 import { mergeItems, type Invalidation } from '../src/shadow/invalidations.ts';
@@ -223,6 +223,8 @@ describe('persistence-journal bookkeeping', () => {
     for (let p: object | null = PostgresEngine.prototype; p && p !== Object.prototype; p = Object.getPrototypeOf(p)) for (const key of Object.getOwnPropertyNames(p)) candidates.add(key);
     for (let p: object | null = PGLiteEngine.prototype; p && p !== Object.prototype; p = Object.getPrototypeOf(p)) for (const key of Object.getOwnPropertyNames(p)) candidates.add(key);
     expect([...candidates].filter((name) => journalItems(name) !== null).sort()).toEqual([...LISTED].sort());
+    // The write sampler's bookkeeping rule (write-capture.ts `bookkeepingMember`, follower.ts `movesComparedRows`) names the same members as the follower's exemption.
+    expect([...candidates].filter((name) => bookkeepingMember(name)).sort()).toEqual([...LISTED].sort());
     for (const name of UNMAPPED_WRITE_MEMBERS) {
       const items = await call(name);
       if (LISTED.includes(name)) expect(items.filter((i) => i.kind === 'invalid')).toEqual([]);
