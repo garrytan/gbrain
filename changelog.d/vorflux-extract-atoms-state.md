@@ -9,3 +9,6 @@
 
 ### Known gap
 - On a Rust brain with a session corpus directory configured (`dream.synthesize.session_corpus_dir`), the phase now refuses by name before any model call instead of skipping every corpus file without a word. Brain pages still extract on a Rust brain without a session corpus, and Postgres and PGLite are not affected. This lasts until the session corpus lookups work on the Rust store.
+
+### Known gap
+- This build does not serve extract_atoms page discovery on a Rust brain yet, so the Rust brain refuses the phase by name (`engine_capability_missing`, member `listExtractablePages`) before any model call. The ledger and store work described above is in place but is not reached until that discovery is served. Postgres and PGLite are not affected.
