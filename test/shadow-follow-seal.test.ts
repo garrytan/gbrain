@@ -428,3 +428,27 @@ describe('the serving side records a write it will never hand over', () => {
     expect(lost).toEqual(['published_after_close']); // at once, inside the publishing call
   });
 });
+
+describe('revokeSeal: the serving process saw a writer after it confirmed the seal', () => {
+  test('a confirmed seal is withdrawn: the watermark is invalid with a full obligation, a new continuity is drawn, and status names the reason', async () => {
+    const { dir, continuity } = await sealed();
+    const s = next(dir);
+    expect(await s.ask('confirmSeal', { db_at: 'mark-1', ok: true })).toMatchObject({ valid: true, confirmed: true });
+    expect(await s.ask('revokeSeal', { reason: 'other_writer_open' })).toMatchObject({ valid: false });
+    const st = await s.ask<State>('state');
+    expect(st).toMatchObject({ valid: false, pending_seal: null });
+    expect(st.continuity).not.toBe(continuity);
+    expect(sealShown(dir)).toMatchObject({ outcome: 'refused', reason: 'other_writer_open' });
+    // The obligation is full: only a full pass that started after the revoke clears it.
+    expect(await s.ask('watermark', { valid: true, since: 6_000, relations: ['pages'] })).toMatchObject({ valid: false });
+    expect(await s.ask('watermark', { valid: true, since: 6_000 })).toMatchObject({ valid: true });
+  });
+
+  test('a reason that is not a short code is recorded as plain refused', async () => {
+    const { dir } = await sealed();
+    const s = next(dir);
+    await s.ask('confirmSeal', { db_at: 'mark-1', ok: true });
+    await s.ask('revokeSeal', { reason: 'not a code!' });
+    expect(sealShown(dir)).toMatchObject({ outcome: 'refused', reason: 'refused' });
+  });
+});
