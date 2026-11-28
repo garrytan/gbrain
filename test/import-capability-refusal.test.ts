@@ -19,6 +19,7 @@ import { PGLiteEngine } from '../src/core/pglite-engine.ts';
 import { runImport } from '../src/commands/import.ts';
 import { loadSyncFailures } from '../src/core/sync-failure-ledger.ts';
 import { isEngineCapabilityRefusal } from '../src/core/engine-capability-refusal.ts';
+import { capabilityMissing } from '../src/core/rust-engine/errors.ts';
 import { rustStandIn } from './helpers/rust-stand-in.ts';
 import { resetPgliteState } from './helpers/reset-pglite.ts';
 import { withEnv } from './helpers/with-env.ts';
@@ -59,7 +60,13 @@ async function runCaptured(view: BrainEngine) {
 }
 
 test('a capability refusal on a file ends the import with that refusal, no partial result and no ledger row', async () => {
-  const { stdout, error, ledger } = await runCaptured(rustStandIn(engine));
+  // The Rust store now serves every member the import reaches (the typed source reads of part A and the import members), so the
+  // stand-in alone no longer refuses one. The per-file refusal comes from `transaction`, which a Rust brain refuses (`transactions`).
+  const refusing = new Proxy(rustStandIn(engine), { get(target, key, receiver) {
+    if (key === 'transaction') return async () => { throw capabilityMissing('transactions', 'transaction'); };
+    return Reflect.get(target, key, receiver);
+  } }) as unknown as BrainEngine;
+  const { stdout, error, ledger } = await runCaptured(refusing);
   expect(isEngineCapabilityRefusal(error), `rejected with ${String(error)}`).toBe(true);
   expect(ledger).toBe(0);
   expect(stdout).not.toContain('"status":"partial"');
