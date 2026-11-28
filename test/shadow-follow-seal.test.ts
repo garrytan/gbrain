@@ -10,10 +10,10 @@
  * Regression it catches: a restart trusted on its own word. The real-database path: test/e2e/shadow-serve-short-sessions.test.ts.
  */
 import { afterEach, describe, expect, spyOn, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { FollowChild, noteLostWrite, type FollowStore } from '../src/shadow/follow-child.ts';
+import { FollowChild, lostWriteRecorder, noteLostWrite, type FollowStore } from '../src/shadow/follow-child.ts';
 import * as followStatus from '../src/shadow/follow-status.ts';
 import { appendPass, buildFollowStatus, readFollowerFile, readPasses } from '../src/shadow/follow-status.ts';
 import type { ReadSource } from '../src/shadow/read-pool.ts';
@@ -523,5 +523,67 @@ describe('revokeSeal: the serving process saw a writer after it confirmed the se
     await s.ask('confirmSeal', { db_at: 'mark-1', ok: true });
     await s.ask('revokeSeal', { reason: 'not a code!' });
     expect(sealShown(dir)).toMatchObject({ outcome: 'refused', reason: 'refused' });
+  });
+});
+
+describe('lostWriteRecorder: a lost write the serving process could not record at once', () => {
+  const foreign = (dir: string): string => join(dir, 'follower-invalidations.jsonl');
+  const size = (dir: string): number => statSync(foreign(dir)).size;
+
+  test('a post-close write whose line failed is recorded once storage recovers, before the clean shutdown: the next session refuses the seal', async () => {
+    const { dir, continuity } = await sealed();
+    const before = size(dir);
+    const invalidated: string[] = [];
+    const rec = lostWriteRecorder({ dir, now: () => 6_000, retryMs: 60_000, invalidate: (reason: string) => invalidated.push(reason) } as never);
+    chmodSync(foreign(dir), 0o400);
+    try { rec.note('published_after_close'); } finally { chmodSync(foreign(dir), 0o600); }
+    expect(size(dir)).toBe(before); // the injected failure fired: no line
+    expect(rec.pending()).toBe('published_after_close');
+    expect(invalidated).toEqual(['lost_write_unrecorded']); // a live child hears of it at once
+    expect(rec.flush()).toBe(true); // the shutdown, storage back
+    rec.stop();
+    expect(size(dir)).toBeGreaterThan(before);
+    const later = next(dir);
+    expect(sealShown(dir)).toMatchObject({ outcome: 'refused', reason: 'invalidation_after_seal' });
+    await refused(later, continuity);
+  });
+
+  test('a shutdown while the line still cannot be written does not seal (lost_write_unrecorded)', async () => {
+    const { dir } = await sealed();
+    const rec = lostWriteRecorder({ dir, now: () => 6_000, retryMs: 60_000 } as never);
+    chmodSync(foreign(dir), 0o400);
+    try {
+      rec.note('readback_abandoned');
+      expect(rec.flush()).toBe(false);
+    } finally { chmodSync(foreign(dir), 0o600); rec.stop(); }
+    expect(rec.pending()).toBe('readback_abandoned');
+  });
+
+  test('a second loss inside the one-second throttle is written when the first line failed', () => {
+    const dir = tmp();
+    writeFileSync(foreign(dir), '');
+    let clock = 6_000;
+    const rec = lostWriteRecorder({ dir, now: () => clock, retryMs: 60_000 } as never);
+    chmodSync(foreign(dir), 0o400);
+    try { rec.note('apply_shed'); } finally { chmodSync(foreign(dir), 0o600); }
+    expect(size(dir)).toBe(0); // the injected failure fired
+    clock = 6_200;
+    rec.note('apply_shed');
+    rec.stop();
+    expect(size(dir)).toBeGreaterThan(0);
+    expect(rec.pending()).toBeNull();
+  });
+
+  test('a failed line is retried on its own timer', async () => {
+    const dir = tmp();
+    writeFileSync(foreign(dir), '');
+    const rec = lostWriteRecorder({ dir, retryMs: 20 } as never);
+    chmodSync(foreign(dir), 0o400);
+    try { rec.note('apply_shed'); expect(size(dir)).toBe(0); } finally { chmodSync(foreign(dir), 0o600); }
+    const end = Date.now() + 2_000;
+    while (size(dir) === 0 && Date.now() < end) await new Promise((r) => setTimeout(r, 10));
+    rec.stop();
+    expect(size(dir)).toBeGreaterThan(0);
+    expect(rec.pending()).toBeNull();
   });
 });
