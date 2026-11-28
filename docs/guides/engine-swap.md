@@ -137,6 +137,10 @@ never a pass. With no shadow running, every criterion is `missing`.
    Named loss: on a Rust brain that another process holds open (a running gbrain serve or any open engine), a gbrain put, remember or import from a second process refuses engine_capability_missing (reason transactions) at write admission, because a transaction does not cross the owner socket; no page is written, though the CLI's local writer registration is recorded first. Writes from the process that holds the brain are unaffected.
 
    Named loss: on a Rust brain a write whose process died after it claimed the write and before it committed holds later writes to sources with no owner for its publication lease (365 s by default), because abandoned claims are released at once on PGLite only and dead owners are detected on Postgres only; meanwhile each put ends write_pending (exit 10), and the first write after the lease ends replays the dead write, then the queued ones. Nothing is lost.
+
+   Named loss: on any brain, preparing the links of one written page reads the whole sources table to find that page's source (fetchSource), one read per page, sized by the number of sources; on Postgres that read also runs outside the write's preparation deadline. A lookup by source id is a lane E follow-up due Wed Dec 9.
+
+   Named loss: on a Rust brain, every page read (get_page) checks for sync holds by reading the state of every source, one after another, and every sync-hold record in the brain before it keeps the ones for that page, so one read costs one store call per source plus one scan of all hold records. A hold lookup keyed by page is a lane E follow-up due Wed Dec 9.
 6. Zero `privacy_diverged` events (the field is absent, not zero, while any privacy check of the last 7 days is unsettled, so criterion 6 has no evidence until it settles).
 7. Zero fingerprint mismatches, a passed fingerprint probe and a passed allocator verification.
 8. Speed: paired bench samples. **Reported, not gating.** D23 (the maintainer's C1 ruling of 2026-11-19) makes the
