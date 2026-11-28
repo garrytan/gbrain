@@ -1,0 +1,4 @@
+**Shadow mode no longer lets a cleanup worker from a replaced evidence epoch delete the new epoch's lost-window file.**
+
+### Fixed
+- When a shadow session crashes while a window of samples is open, the worker books the loss and leaves a small file (`write-owed.window-lost-<session>.json`) that keeps an older gbrain, reading the same folder, from reading that epoch as measured. If the epoch changed while a worker of the previous epoch was partway through its cleanup pass, that worker could delete the new epoch's file, and an older gbrain then read the write comparison as measured and passed swap criterion 5 although samples were lost. The cleanup now reads the epoch again under the lock it already holds and removes nothing when the epoch has moved. This build's own status always read the epoch as not measured; only an older gbrain sharing the folder was affected. Nothing a status page or the swap check counts changes.

@@ -411,7 +411,8 @@ function removeSettledOwed(dir: string, key: string, requireClosed: boolean, epo
 
 /**
  * Removes a tombstone of an EARLIER epoch (it goes with its epoch), under the tally lock and judged on the record read again there: the serving process may have republished a higher obligation for the session since the listing, and that
- * record is not a tombstone (or names this epoch, or has a marker) and stays. False when the file stays.
+ * record is not a tombstone (or names this epoch, or has a marker) and stays. The manifest is read again there too: a pass that began in an epoch the manifest has since left removes nothing, since what it lists may be the new epoch's own
+ * blocker. False when the file stays.
  */
 function removeStaleTomb(dir: string, key: string, epoch: string): boolean {
   try {
@@ -422,6 +423,7 @@ function removeStaleTomb(dir: string, key: string, epoch: string): boolean {
       const rec = parseOwed(join(dir, `write-owed.${key}.json`));
       if (rec === null) return true;
       if (rec === 'unreadable' || rec.v !== 2 || rec.booked_epoch === undefined || rec.booked_epoch === epoch) return false;
+      if (readEpoch(dir)?.epoch_id !== epoch) return false; // the epoch moved after this pass began: this may be the new epoch's blocker, and the new owner decides
       if (session !== key && rec.serving_pid > 1 && running(rec.serving_pid)) return false; // the session's serving process is alive: its delayed record (the cumulative count) may still be published, and this blocker is what keeps the samples it already settled from being booked again
       removeOwed(dir, key); return true;
     }, REMOVER_LOCK_WAIT_MS);
