@@ -1354,7 +1354,7 @@ src/core/search/evidence-date.ts#loadPageDateHeaders	promise_catch_empty	1
 src/core/search/evidence-date.ts#withFactDateHeaders	promise_catch_empty	1
 src/core/search/evidence-delivery.ts#configNumber	catch_empty	1
 src/core/search/evidence-delivery.ts#resolveEvidencePlan	catch_empty	1
-src/core/search/evidence-delivery.ts#withLongPagePolicy	promise_catch_empty	2
+src/core/search/evidence-delivery.ts#withLongPagePolicy	promise_catch_empty	1
 src/core/search/evidence-packing.ts#configPacking	catch_empty	1
 src/core/search/evidence-packing.ts#queryBudgetUsesAuto	catch_empty	1
 src/core/search/evidence-tail-trim.ts#evidenceTailTrimEnabled	catch_empty	1

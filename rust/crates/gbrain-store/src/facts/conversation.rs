@@ -36,7 +36,10 @@
 //! so the trust stamp, the purge refusal and the indexes stay as every other fact write keeps
 //! them; a delete clears `superseded_by` on the rows that named the row.
 
-use super::{AUDIT_ROW_SOURCES, FactRecord, bigint, delete_fact, page_rows, read_fact, write_fact};
+use super::{
+    AUDIT_ROW_SOURCES, FactRecord, bigint, delete_fact, fact_fingerprint, page_rows, read_fact,
+    write_fact,
+};
 use crate::Store;
 use crate::env::iso;
 use crate::error::Result;
@@ -125,6 +128,15 @@ pub struct ClearPageArgs {
     pub source_id: String,
     pub slug: String,
     pub windows: Option<ClearWindows>,
+}
+
+/// `narrowConversationExpiredCopies(sourceId, slug, facts)`.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, rename_all = "camelCase", deny_unknown_fields)]
+pub struct NarrowCopiesArgs {
+    pub source_id: String,
+    pub slug: String,
+    pub facts: Vec<String>,
 }
 
 /// The window key of a row, `None` when it is unanchored or a part is missing (SQL NULL).
@@ -232,7 +244,7 @@ impl Store {
                     "entity_slug": r.entity_slug,
                     "dimension": r.dimension,
                     "value_hash": r.value_hash,
-                    "valid_from": iso(r.valid_from_us),
+                    "valid_from": r.valid_from().map(iso),
                 })
             })
             .collect())
@@ -365,6 +377,30 @@ impl Store {
                 }
             }
             Ok(out)
+        })
+    }
+
+    /// `narrowConversationExpiredCopies(sourceId, slug, facts)` (#10443): sets to `private` every expired extractor copy
+    /// (`source LIKE 'cli:extract-conversation-facts%'`) on the page whose claim fingerprint is one of `facts`' and whose
+    /// visibility is wider, so history never shows a claim wider than the active row that replaced it.
+    pub fn narrow_conversation_expired_copies(&self, a: &NarrowCopiesArgs) -> Result<()> {
+        const OP: &str = "narrowConversationExpiredCopies";
+        no_nul(OP, &[("sourceId", &a.source_id), ("slug", &a.slug)])?;
+        let wanted: std::collections::BTreeSet<String> =
+            a.facts.iter().map(|f| fact_fingerprint(f)).collect();
+        let trust = &self.write_trust()?;
+        self.write(|tx| {
+            let picked: Vec<u64> = page_rows(&*tx, &a.source_id, &a.slug)?
+                .into_iter()
+                .filter(|r| {
+                    r.source.starts_with("cli:extract-conversation-facts")
+                        && r.expired_at_us.is_some()
+                        && r.visibility != "private"
+                        && wanted.contains(&fact_fingerprint(&r.fact))
+                })
+                .map(|r| r.id)
+                .collect();
+            update_ids(tx, trust, &picked, |r| r.visibility = "private".into())
         })
     }
 
@@ -542,6 +578,79 @@ mod tests {
         assert!(cleared_by(&row(None), Some(&w)));
         assert!(!cleared_by(&row(Some(win(1, 1, "x"))), Some(&w)));
         assert!(cleared_by(&row(Some(win(1, 2, "y"))), Some(&w)));
+    }
+
+    #[test]
+    fn narrowing_sets_the_wider_expired_extractor_copies_of_the_named_claims_private() {
+        let store = store();
+        // Every row starts world-visible. The claim fingerprint folds case and spacing.
+        let row = |fact: &str, source: &str, expired: bool| NewFactInput {
+            fact: Some(fact.into()),
+            source: Some(source.into()),
+            visibility: Some("world".into()),
+            valid_from: Some("2026-01-01T00:00:00.000Z".into()),
+            expired_at: expired.then(|| "2026-02-01T00:00:00.000Z".into()),
+            source_markdown_slug: Some(PAGE.into()),
+            ..NewFactInput::default()
+        };
+        let out = store
+            .insert_facts(&InsertFactsArgs {
+                rows: vec![
+                    row("Ship the thing", EXTRACTOR, true),
+                    row("Ship the thing", EXTRACTOR, false),
+                    row("Ship the thing", "cli:remember", true),
+                    row("Another claim", EXTRACTOR, true),
+                ],
+                source_id: "default".into(),
+                delete_for_page_first: None,
+            })
+            .unwrap();
+        let ids: Vec<u64> = serde_json::from_value(out["ids"].clone()).unwrap();
+        let args = |facts: &[&str]| NarrowCopiesArgs {
+            source_id: "default".into(),
+            slug: PAGE.into(),
+            facts: facts.iter().map(|f| (*f).into()).collect(),
+        };
+        let visibility = |id: u64| {
+            read_fact(&*store.read().unwrap(), id)
+                .unwrap()
+                .unwrap()
+                .visibility
+        };
+        let before: Vec<String> = ids.iter().map(|id| visibility(*id)).collect();
+        assert!(before.iter().all(|v| v != "private"));
+        // Nothing named, another page and an unnamed claim change nothing.
+        store
+            .narrow_conversation_expired_copies(&args(&[]))
+            .unwrap();
+        store
+            .narrow_conversation_expired_copies(&NarrowCopiesArgs {
+                slug: "meetings/other".into(),
+                ..args(&["ship the  THING"])
+            })
+            .unwrap();
+        assert_eq!(
+            ids.iter().map(|id| visibility(*id)).collect::<Vec<_>>(),
+            before
+        );
+        // Only the expired extractor copy of the named claim goes private: not the active row, not a non-extractor row.
+        store
+            .narrow_conversation_expired_copies(&args(&["ship the  THING"]))
+            .unwrap();
+        assert_eq!(
+            ids.iter().map(|id| visibility(*id)).collect::<Vec<_>>(),
+            vec![
+                "private".to_string(),
+                before[1].clone(),
+                before[2].clone(),
+                before[3].clone()
+            ]
+        );
+        // A repeat changes nothing.
+        store
+            .narrow_conversation_expired_copies(&args(&["ship the  THING"]))
+            .unwrap();
+        assert_eq!(visibility(ids[0]), "private");
     }
 
     #[test]

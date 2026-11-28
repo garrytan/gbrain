@@ -74,6 +74,8 @@ pub struct PoolArgs {
     pub session_id: Option<String>,
     /// `filters.since`, an ISO time: `COALESCE(valid_from, created_at) >= since`.
     pub since: Option<String>,
+    /// With `since`: also the facts with no event date (`filters.includeUndated`, recall's `include_undated`, #10288).
+    pub include_undated: bool,
     /// `filters.grep` as the `ILIKE` pattern (`%escaped%`).
     pub grep: Option<String>,
     pub include_expired: bool,
@@ -193,7 +195,10 @@ impl<'a> Pool<'a> {
         {
             return Ok(false);
         }
-        if self.since.is_some_and(|since| row.valid_from_us < since) {
+        // `COALESCE(valid_from, created_at) >= since`, and `valid_from IS NOT NULL` unless `includeUndated`.
+        if self.since.is_some_and(|since| {
+            (!a.include_undated && row.valid_from().is_none()) || row.at_us() < since
+        }) {
             return Ok(false);
         }
         if let Some(pattern) = &a.grep
@@ -235,7 +240,7 @@ pub(super) fn pool_row(row: &FactRecord, similarity: Value) -> Value {
         "entity_slug": row.entity_slug,
         "source_id": row.source_id,
         "source": row.source,
-        "valid_from": iso(row.valid_from_us),
+        "valid_from": row.valid_from().map(iso),
         "valid_until": row.valid_until_us.map(iso),
         "created_at": iso(row.created_at_us),
         "claim_metric": row.claim_metric,
@@ -359,7 +364,7 @@ impl Store {
         let now = self.env.now_micros();
         let time = |r: &FactRecord| {
             if keyword {
-                r.valid_from_us
+                r.at_us()
             } else {
                 super::ranked_time(r, now)
             }

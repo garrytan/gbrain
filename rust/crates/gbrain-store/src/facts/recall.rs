@@ -257,7 +257,8 @@ impl Store {
                             if wanted.contains(&(f.source_id.as_str(), entity.as_str(), dimension.as_str())))
             })
             .collect();
-        rows.sort_by(|a, b| a.valid_from_us.cmp(&b.valid_from_us).then(a.id.cmp(&b.id)));
+        // `ORDER BY f.valid_from, f.id`: an unknown date sorts last.
+        rows.sort_by_key(|f| (f.valid_from().is_none(), f.valid_from_us, f.id));
         Ok(rows.iter().map(plain_row).collect())
     }
 
@@ -309,13 +310,16 @@ impl Store {
                     .as_deref()
                     .is_some_and(|e| wanted.contains(&(f.source_id.as_str(), e)))
                     && has_call_off_cue(&f.fact)
+                    && f.valid_from().is_some()
             })
             .collect();
-        // The window's order: each partition (source, entity), newest first.
+        // The window's order: each partition (source, entity), newest first by the ranking time (a fact dated
+        // after now ranks as of when it was saved); a fact with no event date is not a cue (#10288).
+        let now = self.env.now_micros();
         rows.sort_by(|a, b| {
             (&a.source_id, &a.entity_slug)
                 .cmp(&(&b.source_id, &b.entity_slug))
-                .then(b.valid_from_us.cmp(&a.valid_from_us))
+                .then(super::ranked_time(b, now).cmp(&super::ranked_time(a, now)))
                 .then(b.id.cmp(&a.id))
         });
         let mut kept = Vec::new();
@@ -441,7 +445,7 @@ impl Store {
                         "entity_slug": entity,
                         "claim_metric": metric,
                         "claim_period": fact.claim_period,
-                        "valid_from": crate::env::iso(fact.valid_from_us),
+                        "valid_from": fact.valid_from().map(crate::env::iso),
                     }));
                 }
             }

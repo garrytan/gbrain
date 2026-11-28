@@ -512,9 +512,9 @@ impl Store {
                     && f.expired_at_us.is_none()
                     && f.superseded_by.is_none()
                     && f.conversation_slot()
-                    && f.valid_from_us <= at
+                    && f.at_us() <= at
             })
-            .max_by_key(|f| (f.valid_from_us, f.id));
+            .max_by_key(|f| (f.at_us(), f.id));
         Ok(best.map_or(Value::Null, |f| json!({ "value_hash": f.value_hash })))
     }
 
@@ -609,6 +609,7 @@ impl Store {
                     && t.entity_slug.as_deref() == Some(a.slug.as_str())
                     && t.dimension.as_deref() == Some(dimension)
                     && t.value_hash.as_deref() == Some(hash)
+                    && t.valid_from().is_some()
                     && t.valid_from_us == m.valid_from_us
             })
             .min_by_key(|t| (t.expired_at_us.is_some(), t.id));

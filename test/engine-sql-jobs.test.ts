@@ -76,7 +76,7 @@ describe('engine-sql/jobs.ts copied constants', () => {
 
   test('the job owner fragment renders as jobOwnedSql, with and without an alias', () => {
     const owner = { principal: { kind: 'oauth_client', id: 'c1' }, clientId: 'c1', actor: ['sys', 'ext', 'mem', 'aud'] as const };
-    for (const alias of [undefined, 'j']) {
+    for (const alias of [undefined, 'j'] as const) {
       const { text, params } = renderFragment(jobOwnedFragment(owner, alias));
       expect(text).toBe(jobOwnedSql(1, alias));
       expect(params).toEqual(jobOwnerParams(owner));

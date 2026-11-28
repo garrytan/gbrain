@@ -25,7 +25,7 @@ export function poolArgs(member: string, scope: FactPoolScope, filters: FactPool
     suppressFlagged: scope.suppressFlagged === true,
     ...(filters?.entities ? { entities: filters.entities.map(e => ({ sourceId: e.sourceId, slug: e.slug })) } : {}),
     ...(filters?.sessionId ? { sessionId: filters.sessionId } : {}),
-    ...(filters?.since ? { since: filters.since.toISOString() } : {}),
+    ...(filters?.since ? { since: filters.since.toISOString(), ...(filters.includeUndated ? { includeUndated: true } : {}) } : {}),
     ...(grep ? { grep: `%${escapeLikePattern(grep)}%` } : {}),
     includeExpired: filters?.includeExpired === true,
   };

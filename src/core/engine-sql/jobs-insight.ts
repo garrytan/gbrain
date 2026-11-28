@@ -13,7 +13,7 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import { renderFragment, sqlFragment, type SqlFragment } from './fragment.ts';
-import { jobOwnedFragment, type JobOwnerSpec } from './jobs-queue.ts';
+import { jobOwnedFragment, type JobAlias, type JobOwnerSpec } from './jobs-queue.ts';
 
 type Raw = Pick<BrainEngine, 'executeRaw'>;
 
@@ -61,7 +61,7 @@ export interface JobInsightRows {
 const num = (v: unknown): number => (v == null ? 0 : Number(v));
 
 /** The row behind `alias` is the fenced caller's; always true when unfenced. */
-const ownedBy = (owner: JobOwnerSpec | null, alias: string): SqlFragment =>
+const ownedBy = (owner: JobOwnerSpec | null, alias: JobAlias): SqlFragment =>
   owner ? sqlFragment`COALESCE((${jobOwnedFragment(owner, alias)}), false)` : sqlFragment`true`;
 
 export async function readJobInsight(tx: Raw, spec: JobInsightSpec): Promise<JobInsightRows> {

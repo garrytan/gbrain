@@ -212,7 +212,7 @@ describe('engine parity: group 5 facts conversation publication and relink state
       active: await engine.countActiveConversationFacts(SRC, PAGE),
       page: await engine.countPageConversationFacts(SRC, PAGE),
       otherPage: await engine.countPageConversationFacts(SRC, 'conversations/c2'),
-      slots: slots.map(s => ({ entity_slug: s.entity_slug, dimension: s.dimension, hashed: /^[0-9a-f]+$/.test(s.value_hash), valid_from: new Date(s.valid_from).toISOString() })),
+      slots: slots.map(s => ({ entity_slug: s.entity_slug, dimension: s.dimension, hashed: /^[0-9a-f]+$/.test(s.value_hash), valid_from: s.valid_from == null ? null : new Date(s.valid_from).toISOString() })),
       noSlots: await engine.listHeldFactSlots(SRC, 'conversations/none'),
     };
     expect(out).toEqual({
@@ -649,6 +649,40 @@ describe('engine parity: group 5 facts conversation publication and relink state
     ]);
     expect(await engine.listClearedRelinkedFacts(SRC, 'conversations/none')).toEqual([]);
     return found;
+  });
+
+  parityTest('narrowConversationExpiredCopies makes the page\'s wider expired extractor copies of the named claims private and leaves every other row', {
+    methods: ['putPage', 'insertFacts', 'expireFact', 'narrowConversationExpiredCopies', 'listFactsSince'],
+  }, async (engine) => {
+    await engine.putPage(PAGE, note('Chat'));
+    await engine.putPage('conversations/c2', note('Other'));
+    const world = { visibility: 'world' } as const;
+    const expiredCopy = await derived(engine, PAGE, 'Ship the thing', world);
+    const active = await derived(engine, PAGE, 'Ship the thing', world);
+    const remembered = await derived(engine, PAGE, 'Ship the thing', { ...world, source: 'cli:remember' });
+    const unnamed = await derived(engine, PAGE, 'Another claim', world);
+    const otherPage = await derived(engine, 'conversations/c2', 'Ship the thing', world);
+    for (const id of [expiredCopy, remembered, unnamed, otherPage]) expect(await engine.expireFact(id)).toBe(true);
+    const names = labels({ expiredCopy, active, remembered, unnamed, otherPage });
+    const visibility = async () => {
+      const found = await engine.listFactsSince(SRC, new Date(0), { activeOnly: false, limit: 500 } as never);
+      return Object.fromEntries(sorted(found.map(r => [nameOf(names, r.id), r.visibility] as const), r => r[0]));
+    };
+    const before = await visibility();
+    await engine.narrowConversationExpiredCopies(SRC, PAGE, []);
+    await engine.narrowConversationExpiredCopies(SRC, 'conversations/none', ['ship the  THING']);
+    const untouched = await visibility();
+    // The claim fingerprint folds case and spacing, so a differently spelled claim names the same copies.
+    await engine.narrowConversationExpiredCopies(SRC, PAGE, ['ship the  THING']);
+    const after = await visibility();
+    await engine.narrowConversationExpiredCopies(SRC, PAGE, ['ship the  THING']);
+    const again = await visibility();
+    const out = { before, untouched, after, again };
+    expect(before).toEqual({ expiredCopy: 'world', active: 'world', remembered: 'world', unnamed: 'world', otherPage: 'world' });
+    expect(untouched).toEqual(before);
+    expect(after).toEqual({ expiredCopy: 'private', active: 'world', remembered: 'world', unnamed: 'world', otherPage: 'world' });
+    expect(again).toEqual(after);
+    return out;
   });
 
   parityTest('countEmbeddedFactsAmong counts the named facts of the source that carry an embedding', {

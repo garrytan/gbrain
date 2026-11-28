@@ -33,13 +33,18 @@ export const UNREVIEWED_LIVE_JOBS_WHERE = `status IN ('waiting','active','delaye
 /** A caller's attested actor: system, external id, member and audience key (minions/types.ts `JobActor`). */
 export type JobActorTuple = readonly [string, string, string, string];
 
+/** The minion_jobs table aliases a fenced read names; each maps to its constant `alias.` prefix, so no caller text is spliced. */
+const JOB_ALIAS_PREFIX = { a: 'a.', c: 'c.', h: 'h.', j: 'j.', k: 'k.', p: 'p.', s: 's.' } as const;
+export type JobAlias = keyof typeof JOB_ALIAS_PREFIX;
+
 /**
  * True when the job's accepted actor and audience equal `actor`: the fragment form of `jobActorSql`
- * (minions/types.ts), which numbers its placeholders by hand. `alias` is a code-provided table alias.
+ * (minions/types.ts), which numbers its placeholders by hand. `alias` is one of the code-provided table aliases.
  */
-export function jobActorFragment(actor: JobActorTuple, alias?: string): SqlFragment {
+export function jobActorFragment(actor: JobActorTuple, alias?: JobAlias): SqlFragment {
   const [system, externalId, member, audience] = actor;
-  const grant = trustedSql(`${alias ? alias + '.' : ''}submission_authority->'grant'`);
+  const prefix = alias ? JOB_ALIAS_PREFIX[alias] : '';
+  const grant = trustedSql(`${prefix}submission_authority->'grant'`);
   return sqlFragment`COALESCE(${grant}->'actor'->>'system', '') = ${system}::text AND COALESCE(${grant}->'actor'->>'external_id', '') = ${externalId}::text AND COALESCE(${grant}->'actor'->>'member', '') = ${member}::text AND COALESCE(CASE WHEN jsonb_typeof(${grant}->'actingFor') = 'array' THEN (SELECT string_agg(DISTINCT e COLLATE "C", ',' ORDER BY e COLLATE "C") FROM jsonb_array_elements_text(${grant}->'actingFor') e) WHEN ${grant}->'actingFor' IS NOT NULL THEN '!' END, '') = ${audience}::text`;
 }
 
@@ -56,8 +61,8 @@ export interface JobOwnerSpec { principal: { kind: string; id: string } | null; 
  * pre-authority rows) matches only its `__owner_client_id` stamp. Either way its actor and audience must equal the
  * caller's. NULL when the row is missing (a LEFT JOIN), so wrap a SELECT-list use in COALESCE. `alias` is a code-provided table alias.
  */
-export function jobOwnedFragment(owner: JobOwnerSpec, alias?: string): SqlFragment {
-  const t = alias ? `${alias}.` : '';
+export function jobOwnedFragment(owner: JobOwnerSpec, alias?: JobAlias): SqlFragment {
+  const t = alias ? JOB_ALIAS_PREFIX[alias] : '';
   const principal = trustedSql(`${t}submission_authority->'principal'`);
   const data = trustedSql(`${t}data`);
   return sqlFragment`((${principal}->>'kind' = ${owner.principal?.kind ?? null}::text AND ${principal}->>'id' = ${owner.principal?.id ?? null}::text)

@@ -12,7 +12,7 @@
  */
 import type { BrainEngine } from '../engine.ts';
 import { joinFragments, renderFragment, sqlFragment, type SqlFragment } from './fragment.ts';
-import { jobOwnedFragment, type JobOwnerSpec } from './jobs-queue.ts';
+import { jobOwnedFragment, type JobAlias, type JobOwnerSpec } from './jobs-queue.ts';
 
 type Raw = Pick<BrainEngine, 'executeRaw'>;
 
@@ -44,7 +44,7 @@ export interface SpendTreeRow {
 export async function readJobSpendTree(tx: Raw, spec: JobSpendTreeSpec): Promise<SpendTreeRow[]> {
   if (spec.jobIds.length === 0) return [];
   // An unfenced caller owns every row, as `true`; a fenced one owns the rows `jobOwnedFragment` matches.
-  const owned = (alias: string): SqlFragment => spec.owner
+  const owned = (alias: JobAlias): SqlFragment => spec.owner
     ? sqlFragment`COALESCE((${jobOwnedFragment(spec.owner, alias)}), false)` : sqlFragment`true`;
   const { text, params } = renderFragment(sqlFragment`WITH RECURSIVE tree(root, id, owned, depth) AS (
        SELECT s.id, s.id, ${owned('s')}, 0 FROM minion_jobs s WHERE s.id = ANY(${[...spec.jobIds]}::int[])
