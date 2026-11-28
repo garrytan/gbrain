@@ -13,9 +13,8 @@
  *  - Why existing coverage misses it: test/rust-served-remote-doctor.serial.test.ts ran one served brain; no parity file
  *    ran a remote run_doctor on both multi-user routes (test/rust-served-remote-whole-ops.test.ts requires one).
  *  - Seam: none. Pages are seeded with putPage; each form runs through dispatchToolCall.
- *  - The case name says where doctor runs: on the brain server for a served client, in process otherwise. In process on
- *    the Rust arm, doctor catches the raw-SQL refusals of four doctor files on its way; those are pinned by name in
- *    test/rust-stop-pins/l3-served-doctor.tsv. A served client sends no member, so it catches nothing and has no pin.
+ *  - On the Rust arm, doctor catches the raw-SQL refusals of four doctor files on its way, in process or on the brain
+ *    server (the served arm counts what its server catches); those are pinned in test/rust-stop-pins/l3-served-doctor.tsv.
  */
 import { expect } from 'bun:test';
 import { parityArms } from './harness.ts';
@@ -23,7 +22,6 @@ import { testBackends } from '../helpers/test-backends.ts';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import { dispatchToolCall } from '../../src/mcp/dispatch.ts';
 import { PAGE_CHECK_NAMES } from '../../src/core/doctor-categories.ts';
-import { rustServedRequested } from './rust-arm.ts';
 
 const { parityTest } = parityArms(testBackends());
 
@@ -43,9 +41,7 @@ function checksOf(text: string): Check[] {
   return Array.isArray(checks) ? checks as Check[] : [];
 }
 
-const WHERE = rustServedRequested() ? 'on the brain server' : 'in process';
-
-parityTest(`a remote run_doctor (${WHERE}) completes in each form, runs every check, and shows no page the caller may not read`, { methods: ['putPage'], timeout: 240_000 }, async (engine: BrainEngine) => {
+parityTest('a remote run_doctor completes in each form, runs every check, and shows no page the caller may not read', { methods: ['putPage'], timeout: 240_000 }, async (engine: BrainEngine) => {
   await engine.putPage('notes/open-doctor', { type: 'note' as never, title: 'Open', compiled_truth: 'An open note.', timeline: '', frontmatter: {} });
   await engine.putPage(`notes/${PRIVATE}`, { type: 'note' as never, title: PRIVATE, compiled_truth: `${PRIVATE} body.`, timeline: '', frontmatter: { visibility: 'private' } });
   await engine.putPage(`notes/${READERS}`, { type: 'note' as never, title: READERS, compiled_truth: `${READERS} body.`, timeline: '', frontmatter: { readable_by: ['alice-example'] } });

@@ -346,27 +346,44 @@ export async function openServedClientAt(dir: string, served: ServedPeerCredenti
 
 /**
  * The members the served arm's owner engine runs for a case count as the case's calls: a remote whole operation (put_page
- * from an agent-facing caller) runs its members on the server, never on the client the case holds. The owner engine's
- * members are wrapped once (recording into the current case's set), and each case names its set (recordServedCalls).
+ * from an agent-facing caller, run_doctor) runs its members on the server, never on the client the case holds. The owner
+ * engine's members are wrapped once (recording into the current case's sets), and each case names its sets
+ * (recordServedCalls). A typed refusal an owner member raises for a caller in src/ outside the engine (a doctor check on
+ * the server, which may catch it and carry on) counts as the case's refusal too, as on the embedded arm; a refusal of a
+ * member call a client sent over the wire is the client's own (its recording engine keeps it), so it is not kept twice.
  */
-const servedSinks = new WeakMap<object, { current: Set<string> | null }>();
-function wrapOwnerMembers(owner: RustEngine): { current: Set<string> | null } {
-  const sink = { current: null as Set<string> | null };
+/** True when a src/ file outside the engine called the refusing member (harness.ts caughtSite names a site for it). */
+function calledFromSrc(error: unknown): boolean {
+  return String((error as { stack?: unknown } | null)?.stack ?? '').split('\n').some(frame => {
+    const file = /\/(src\/[^\s:()]+\.ts):\d+/.exec(frame)?.[1];
+    return file !== undefined && !file.startsWith('src/core/rust-engine') && file !== 'src/core/ops/contract.ts' && file !== 'src/core/engine-capability-refusal.ts';
+  });
+}
+type ServedSink = { current: Set<string> | null; refusals: unknown[] | null };
+const servedSinks = new WeakMap<object, ServedSink>();
+function wrapOwnerMembers(owner: RustEngine): ServedSink {
+  const sink: ServedSink = { current: null, refusals: null };
   const record = owner as unknown as Record<string, unknown>;
+  const keep = (error: unknown) => {
+    if ((error as { code?: unknown } | null)?.code === 'engine_capability_missing' && calledFromSrc(error)) sink.refusals?.push(error);
+    throw error;
+  };
   for (const member of Object.keys(RUST_ENGINE_MEMBERS)) {
     const value = record[member];
     if (typeof value !== 'function') continue;
     Object.defineProperty(owner, member, { configurable: true, writable: true, enumerable: false, value: function (this: unknown, ...args: unknown[]) {
       sink.current?.add(member);
-      return (value as (...a: unknown[]) => unknown).apply(this === undefined ? owner : this, args);
+      let result: unknown;
+      try { result = (value as (...a: unknown[]) => unknown).apply(this === undefined ? owner : this, args); } catch (error) { return keep(error); }
+      return result instanceof Promise ? result.catch(keep) : result;
     } });
   }
   return sink;
 }
-/** Records into `calls` the members the served arm's server runs from now on (no-op for any other engine). */
-export function recordServedCalls(engine: object, calls: Set<string>): void {
+/** Records into `calls` (and `refusals`) the members the served arm's server runs from now on (no-op for any other engine). */
+export function recordServedCalls(engine: object, calls: Set<string>, refusals: unknown[]): void {
   const sink = servedSinks.get((engine as Record<symbol, object | undefined>)[SERVED_OWNER] ?? {});
-  if (sink) sink.current = calls;
+  if (sink) { sink.current = calls; sink.refusals = refusals; }
 }
 /**
  * A second served client of the same brain server as the served arm engine `engine`: a new protocol v3 connection with

@@ -1023,7 +1023,7 @@ export function parityArms(backends: readonly TestBackend[]): ParitySuite {
         // The engine object the scenario receives. Write operations key their persistence consumer on it, so it is the
         // one the harness stops when the case ends (stopWriteQueue).
         const given = recordingEngine(arm.engine, calls, refusals);
-        recordServedCalls(arm.engine, calls); // a served arm: the members its server runs for the case count too
+        recordServedCalls(arm.engine, calls, refusals); // a served arm: the members its server runs, and the refusals it catches, count too
         let scenarioFailed = false;
         try {
           if (arm.backend === 'rust') {
@@ -1466,7 +1466,7 @@ function mwHandle<T>(arm: ParityArm, label: LedgerArm, scenario: ParityScenario<
           servedPeerEngine: () => servedPeerOf(arm, calls, refusals),
       };
       const given = recordingEngine(arm.engine, calls, refusals);
-      recordServedCalls(arm.engine, calls);
+      recordServedCalls(arm.engine, calls, refusals);
       return {
         run: () => scenario(given, arm.backend, ctx), calls, refusals, capabilities: arm.engine.capabilities as ReadonlySet<string> | undefined,
         finish: async (failed: boolean) => {
