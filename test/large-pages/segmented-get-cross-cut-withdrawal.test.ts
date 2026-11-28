@@ -23,7 +23,7 @@ import { markdownHead, segmentedMarkdownDocument } from '../../src/core/page-win
 import { streamSegmentedGet } from '../../src/cli/page-render.ts';
 import { isolatedPersistencePostgres } from '../helpers/persistence-postgres.ts';
 import { testBackends } from '../helpers/test-backends.ts';
-import { factRow, importSegmented, overlaidStoredBody, PRIVATE, seedLedger } from '../helpers/segmented-privacy-fixture.ts';
+import { factRow, importSegmented, overlaidStoredBody, pageContent, PRIVATE, seedLedger } from '../helpers/segmented-privacy-fixture.ts';
 
 const getPage = operations.find(o => o.name === 'get_page')!;
 const SLUG = 'people/owner-example';
@@ -106,5 +106,53 @@ for (const kind of testBackends()) {
       expect(want.subarray(r.window.byte_start, r.window.byte_start + text.length).equals(text)).toBe(true);
       expect(r.total_bytes ?? want.length).toBe(want.length);
     }, 120_000);
+  });
+
+  describe(`gbrain get of a facts fence whose opener a forced cut splits, under withdrawals (${kind})`, () => {
+    let engine: BrainEngine;
+    let close: () => Promise<void>;
+    const rows = () => [factRow(`${PRIVATE.withdrawn} old employer`), factRow(`${PRIVATE.purged} old phone`), factRow(KEPT)];
+    const after = '\n\n' + Array.from({ length: 30_000 }, (_, i) => `After the fence, line ${i} of closing notes about acme-example.`).join('\n') + '\n';
+    /** A forced cut 10 bytes into the opener: the segment before it ends inside the marker and records no facts slot. */
+    const cases = {
+      'people/opener-example': pageContent('x'.repeat(SEGMENT_MAX_BYTES - 10) + renderFactsTable(rows()) + after),
+    };
+
+    beforeAll(async () => {
+      if (kind === 'postgres') ({ engine, close } = await isolatedPersistencePostgres(process.env.DATABASE_URL!));
+      else {
+        engine = new PGLiteEngine();
+        await engine.connect({});
+        await engine.initSchema();
+        close = () => engine.disconnect();
+      }
+      for (const [slug, content] of Object.entries(cases)) {
+        await importSegmented(engine, slug, content);
+        await seedLedger(engine, slug);
+      }
+    }, 300_000);
+
+    afterAll(async () => { await close(); });
+
+    for (const slug of Object.keys(cases)) {
+      test(`${slug}: local gbrain get streams the overlaid page whole`, async () => {
+        const [split] = await engine.executeRaw<{ n: number }>(`SELECT count(*)::int AS n FROM page_body_manifest m JOIN pages p ON p.id=m.page_id
+          WHERE p.source_id='default' AND p.slug=$1 AND m.gen_to IS NULL AND m.staging_id IS NULL AND coalesce(m.entry_state->'withdrawal'->>'carry','')<>''`, [slug]);
+        expect(split!.n).toBe(1);
+        const [page] = await engine.executeRaw<{ id: number }>("SELECT id FROM pages WHERE source_id='default' AND slug=$1", [slug]);
+        const snapshot = (await engine.readPageSnapshot(slug, { sourceId: 'default' }))!;
+        const want = markdownHead(snapshot.page, snapshot.tags) + (await overlaidStoredBody(engine, slug, Number(page!.id))).compiled_truth + '\n';
+        let refusal: unknown;
+        try { await getPage.handler(ctx(), { slug }); } catch (e) { refusal = e; }
+        const writes: string[] = [];
+        expect(await streamSegmentedGet(engine, { slug }, refusal, async t => { writes.push(t); })).toBe(true);
+        const printed = writes.join('');
+        expect(printed === want).toBe(true);
+        expect(printed).toContain(KEPT);
+        expect(printed).not.toContain(PRIVATE.purged);
+      }, 120_000);
+    }
+    const ctx = (): OperationContext => ({ engine, config: {} as GBrainConfig, logger: { info() {}, warn() {}, error() {} }, dryRun: false, remote: false,
+      sourceId: 'default' } as unknown as OperationContext);
   });
 }

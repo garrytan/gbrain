@@ -178,5 +178,21 @@ for (const kind of testBackends()) {
       expect(spliced).toContain('The page owner holds the ©');
       expect(spliced === await body(b)).toBe(true);
     }, 300_000);
+
+    test('the splice declines where the whole-body import decides otherwise: a household subject, a new oversized verdict', async () => {
+      const save = async (slug: string, head: string, before: () => Promise<void> = async () => {}) => {
+        expect(await brain.call('put_page', { slug, content: proseOf('Page Example').replace('type: person\n', head) })).toMatchObject({ state: 'committed' });
+        await before();
+        Object.assign(spliceWork, { segmented: 0, read: 0, rows: 0, matches: 0 });
+        expect(await remember(slug, 'The page owner prefers tea')).toMatchObject({ status: 'inserted', entity_slug: slug });
+        expect(spliceWork.segmented).toBe(0);
+        return (await brain.engine.readPageSnapshot(slug, { sourceId: brain.sourceId }))!.page;
+      };
+      await save('people/carol-example', 'type: person\nhousehold_role: adult\n');
+      try {
+        const page = await save('people/dan-example', 'type: person\n', () => brain.engine.setConfig('content_sanity.bytes_block', '1000000'));
+        expect((page.frontmatter as Record<string, any>).embed_skip?.reason).toBe('oversized');
+      } finally { await brain.engine.unsetConfig('content_sanity.bytes_block'); }
+    }, 300_000);
   });
 }

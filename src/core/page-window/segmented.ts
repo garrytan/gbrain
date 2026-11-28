@@ -269,19 +269,20 @@ export async function segmentedMarkdownDocument(engine: BrainEngine, body: Segme
     const measured = new Map<number, { bytes: number; newlines: number; last: number }>();
     segmentedReadWork.units += body.rows.length;
     if (ledgerApplies(body.ledger)) {
-      for (let i = 0; i < body.rows.length; i++) {
+      for (let i = 0, done = -1; i < body.rows.length; i++) {
         if (!body.rows[i]!.hasFacts) continue;
         let j = i;
         while (j + 1 < body.rows.length && body.rows[j + 1]!.hasFacts && body.rows[j + 1]!.region === body.rows[i]!.region) j++;
-        let first = i;
-        for await (const seg of trustedSegments(engine, body, body.rows.slice(i, j + 1))) {
+        // The row before a run records no facts slot when a forced cut fell inside the run's opener; it is read with the run.
+        let first = i - 1 > done && body.rows[i - 1]!.region === body.rows[i]!.region ? i - 1 : i;
+        for await (const seg of trustedSegments(engine, body, body.rows.slice(first, j + 1))) {
           let last = first;
           while (body.rows[last]!.byteStart + body.rows[last]!.byteLen < seg.row.byteStart + seg.row.byteLen) last++;
           const text = Buffer.from(seg.pieces.map(piece => piece.text).join(''), 'utf8');
           measured.set(first, { bytes: text.length, newlines: newlinesIn(text), last });
           first = last + 1;
         }
-        i = j;
+        i = done = j;
       }
     }
     const rowUnits: Array<Omit<DocumentUnit, 'start'>> = [];

@@ -36,9 +36,12 @@ import { FACTS_FENCE_BEGIN, FACTS_FENCE_END, factsFenceSection, fenceCellReadBac
 import { serializePageToMarkdown } from '../markdown.ts';
 import { isSegmentedPage, pageBodyOverCeilingError } from '../page-body/page-shape.ts';
 import { materializedPage, segmentedOverCeiling } from '../persistence/segmented-apply.ts';
-import { preparePageMutation, snapshotLedger } from '../persistence/page-prepare.ts';
-import { ledgerApplies } from '../page-body/segment-ledger.ts';
-import { preserveWithdrawnFenceRows } from './withdrawal.ts';
+import { preparePageMutation } from '../persistence/page-prepare.ts';
+import { chooseBodyStorage, readPageBodyPolicy } from '../page-body/limits.ts';
+import { PAGE_MAX_BYTES } from '../page-size-policy.ts';
+import { effectiveBytesBlock } from '../import-screen.ts';
+import { EMBED_SKIP_KEY } from '../embed-skip.ts';
+import { assertPreparedFactWithdrawals, preserveWithdrawnFenceRows } from './withdrawal.ts';
 import { prepareSegmentedSpliceMutation } from '../persistence/page-append.ts';
 import type { BodyReplacement, SplicePage } from '../page-body/splice.ts';
 import { refuseRuleFactTarget } from '../rules/admission.ts';
@@ -228,12 +231,21 @@ export async function prepareFenceFactAppend(engine: BrainEngine, row: WriteRequ
   // #10589: a segmented page publishes the edit as a splice of the segments it touches. The whole-body path re-reads,
   // re-segments, re-hashes and restages the page, so on a page holding a fence over a segment a save outran its
   // preparation budget and was lost; it remains for a splice that declines. The spliced regions are the ones that path
-  // stores: trimmed, with rows the ledger withdraws kept struck and purged rows dropped, as its import does.
+  // stores: trimmed, with rows withdrawn kept struck and purged rows dropped, as its import does.
   const spliced = snapshot && isSegmentedPage(snapshot.page) && !fenceAppendProbe.wholeBody ? await withPendingFenceRows(pending, async () => {
-    const applies = ledgerApplies(snapshotLedger(snapshot));
-    const region = async (text: string) => (applies ? await preserveWithdrawnFenceRows(engine, row.source_id, text, row.slug) : text).trim();
+    const region = async (text: string) => (await preserveWithdrawnFenceRows(engine, row.source_id, text, row.slug)).trim();
     const stored = { compiled_truth: await region(next.compiled_truth), timeline: await region(next.timeline) };
-    return prepareSegmentedSpliceMutation(engine, row, snapshot, {
+    // The splice skips what only that path's import decides, so it declines where the import would decide otherwise:
+    // household and rule admission, inline storage under the current writer policy, the single-string page ceiling,
+    // and an oversized verdict the stored frontmatter does not already carry.
+    const fm = snapshot.page.frontmatter ?? {};
+    if (snapshot.page.type === 'household' || snapshot.page.type === 'rule' || fm.household_role !== undefined) return null;
+    const bodyBytes = Buffer.byteLength(stored.compiled_truth, 'utf8') + Buffer.byteLength(stored.timeline, 'utf8');
+    if (bodyBytes > PAGE_MAX_BYTES) return null;
+    const policy = await readPageBodyPolicy(engine);
+    if (chooseBodyStorage({ policy, bodyBytes, current: 'segmented', pageKind: 'markdown' }) !== 'segmented') return null;
+    if ((bodyBytes > await effectiveBytesBlock(engine)) !== ((fm[EMBED_SKIP_KEY] as { reason?: unknown } | undefined)?.reason === 'oversized')) return null;
+    const splice = await prepareSegmentedSpliceMutation(engine, row, snapshot, {
       replacements: async live => {
         const replacements = regionReplacements(live, snapshot.bodyGeneration, [base.compiled_truth, stored.compiled_truth],
           [base.timeline ?? '', stored.timeline]);
@@ -241,6 +253,11 @@ export async function prepareFenceFactAppend(engine: BrainEngine, row: WriteRequ
       },
       file: frontmatter => serializePageToMarkdown({ ...base, ...stored, frontmatter } as Page, snapshot.tags),
     });
+    // As the import's validate: a withdrawal committed since preparation that would change a fence row refuses the write.
+    return splice && { ...splice, validate: async (tx: BrainEngine) => {
+      await splice.validate?.(tx);
+      await assertPreparedFactWithdrawals(tx, row.source_id, stored.compiled_truth, stored.timeline, row.slug);
+    } };
   }) : null;
   const prepared = spliced ?? await withPendingFenceRows(pending,
     () => preparePageMutation(engine, { ...row, ...(snapshot && rememberAcceptsPageCreatedSince(row, snapshot) ? { page_id: snapshot.page.id } : {}),
