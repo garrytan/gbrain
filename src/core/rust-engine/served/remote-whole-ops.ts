@@ -1,24 +1,27 @@
 /**
- * Remote writes over the served wire (multi-user lane L3; design docs/designs/rust-engine/multi-user-server.md, "Remote
- * writes over the served wire"; approach (a), ruled 2026-11-26).
+ * Remote whole operations over the served wire (multi-user lane L3; design docs/designs/rust-engine/multi-user-server.md,
+ * "Remote writes over the served wire"; approach (a), ruled 2026-11-26; run_doctor ruled 2026-11-28).
  *
- * An agent-facing (remote) caller of a served client sends a write as ONE whole operation (`runOperation`), never as
- * single engine members: the brain server then runs the operation's own handler, the same contract as in process, with
- * `ctx.remote` true and the remote caller mark on, under the access record B3 proved for the connection. Remote single
- * member writes stay refused (owner-ipc/routes.ts OWNER_IPC_REMOTE_READS).
+ * An agent-facing (remote) caller of a served client sends a write, or run_doctor, as ONE whole operation
+ * (`runOperation`), never as single engine members: the brain server then runs the operation's own handler, the same
+ * contract as in process, with `ctx.remote` true and the remote caller mark on, under the access record B3 proved for
+ * the connection. Remote single member writes stay refused (owner-ipc/routes.ts OWNER_IPC_REMOTE_READS).
  *
- * Who may write what:
+ * Who may send what:
  *  - Only the operations of REMOTE_WHOLE_OPERATIONS cross; the server refuses any other whole operation of a remote
  *    caller before it decodes its parameters.
  *  - Until per-user access lifts (ruling A1), only the brain owner's floor (an owner server token, or the local owner)
  *    may send one: any other principal is refused, so a remote whole operation never runs on a record or an authority a
  *    client built for someone else.
  *  - For the owner's floor the caller's grant the client sends (`auth`) is a narrowing claim, as the access record is
- *    (B3): it can only take scopes away, and the server checks the operation's scope against it again.
+ *    (B3): it can only take scopes away, and the server checks the operation's scope against it again (run_doctor
+ *    needs admin).
  *  - The client strips the bearer token from the grant it sends.
  *  - One operation crosses in one parameter form only (REMOTE_WHOLE_PARAM_FORMS): request_tools, as a surface persist.
  * Fencing and replay: the owner's persistence journal and claim fences, unchanged; a journaled operation reuses the wire
- * request id (served/session.ts), so a retry after a restart is answered by the journal's own receipt, never a second write.
+ * request id (served/session.ts), so a retry after a restart is answered by the journal's own receipt, never a second
+ * write. One read crosses whole too, run_doctor: a retry of it with no request record runs it again
+ * (replayableWholeRead), and only while its definition still says it writes nothing.
  */
 import { opError, type Operation, type OperationContext } from '../../ops/contract.ts';
 import type { McpSurface } from '../../../mcp/surface.ts';
@@ -58,7 +61,43 @@ export const REMOTE_WHOLE_OPERATIONS: Readonly<Record<string, string>> = {
   // Ruled 2026-11-27: a read-scope operation marked `mutating` (test/rust-served-remote-whole-ops.test.ts names it), and
   // only in its persist form (REMOTE_WHOLE_PARAM_FORMS): it writes the caller's own OAuth client row and its audit row.
   request_tools: 'test/engine-parity/request-tools-persist.test.ts',
+  // Ruled 2026-11-28 (lane L3 S1): an admin-scope read (test/rust-served-remote-whole-ops.test.ts names it). Its checks
+  // read the brain server's store and host, so it crosses whole instead of as hundreds of single member reads.
+  run_doctor: 'test/engine-parity/served-remote-doctor.test.ts',
 };
+
+/**
+ * The whole operations a retry may run again when the server has no record of its request id (a restart or an eviction
+ * lost the answer), each with the only parameters it may carry. A whole write never does: it ends `outcome_unknown`
+ * unless the journal holds its receipt. run_doctor has no write of its own; like every doctor run it refreshes the fence
+ * census cache (fence_integrity's scan record), and a replay refreshes it as a second call does.
+ */
+const REPLAYABLE_WHOLE_READS: Readonly<Record<string, ReadonlySet<string>>> = {
+  run_doctor: new Set(['tier', 'only']),
+};
+
+/**
+ * True when whole operation `name` with `params` may run again on a retry with no request record: it is on
+ * REPLAYABLE_WHOLE_READS, its definition `op` (read when the retry arrives) still says it writes nothing and gives the
+ * same answer twice (`mutating: false`, `idempotent: true`), and neither the definition nor the call has a parameter
+ * off its list. Anything else fails closed (false).
+ */
+export function replayableWholeRead(name: unknown, params: unknown,
+  op: Pick<Operation, 'mutating' | 'idempotent' | 'params'> | undefined): boolean {
+  if (typeof name !== 'string' || !Object.hasOwn(REPLAYABLE_WHOLE_READS, name) || !op) return false;
+  if (op.mutating !== false || op.idempotent !== true) return false;
+  if (!params || typeof params !== 'object' || Array.isArray(params)) return false;
+  const allowed = REPLAYABLE_WHOLE_READS[name]!;
+  return Object.keys(op.params ?? {}).every(k => allowed.has(k)) && Object.keys(params).every(k => allowed.has(k));
+}
+
+/** replayableWholeRead for a frame (`runOperation` args `[name, params, ...]`), against the operation registry. */
+export async function replayableWholeCall(kind: unknown, member: unknown, args: unknown): Promise<boolean> {
+  if (kind !== 'fn' || member !== OWNER_RUN_OPERATION || !Array.isArray(args) || typeof args[0] !== 'string') return false;
+  if (!Object.hasOwn(REPLAYABLE_WHOLE_READS, args[0])) return false;
+  const { operationsByName } = await import('../../operations.ts');
+  return replayableWholeRead(args[0], args[1], operationsByName[args[0]]);
+}
 
 /**
  * Operations that cross whole only in one form of their parameters (for the caller's claimed grant); any other form runs

@@ -35,7 +35,7 @@ import {
 import { OWNER_IPC_REMOTE_READS, OWNER_IPC_REMOTE_SIDE_WRITES, OWNER_IPC_REMOTE_TXN_SETTINGS, ownerIpcRefusal, ownerMemberOnlyReads } from '../owner-ipc/routes.ts';
 import { OWNER_RUN_OPERATION } from '../owner-ipc/whole-op.ts';
 import { frameAccessWire } from '../owner-ipc/frame-access.ts';
-import { remoteWholeOperationCall } from './remote-whole-ops.ts';
+import { remoteWholeOperationCall, replayableWholeCall } from './remote-whole-ops.ts';
 import { LOCAL_OWNER, RECHECK_MS, authenticateToken, effectiveRemote, recheckToken, type AuthenticatedPrincipal, type VerifyDeps } from './auth.ts';
 import {
   servedAdminPath, servedAuthRefused, servedPositionNotReached, servedPositionRefused, servedProtocol, servedReqConflict,
@@ -339,7 +339,11 @@ export function servedSession(side: ServedServerSide, opts: ServedServerOptions,
       // remote mark and the engine scope (review G4).
       const ph = createHash('sha256').update(`${kind}\u0000${member}\u0000`).update(JSON.stringify(args))
         .update(`\u0000${JSON.stringify(access ?? null)}\u0000${remote}\u0000${JSON.stringify(frame.scope ?? null)}`).digest('hex');
-      entry = state.requests.begin(principal!.key, req, ph, member, frame.retry === true, ownerMemberOnlyReads(member) || journaled);
+      // A retry with no record runs again only when that cannot write twice: a member-only read, a journaled operation
+      // (its receipt answers), or a whole read with no write of its own (remote-whole-ops.ts replayableWholeRead).
+      const rerunnable = ownerMemberOnlyReads(member) || journaled
+        || (frame.retry === true && await replayableWholeCall(kind, member, args));
+      entry = state.requests.begin(principal!.key, req, ph, member, frame.retry === true, rerunnable);
       if (entry.kind === 'conflict') { replyDirect(id, member, servedReqConflict(member, req)); return; }
       if (entry.kind === 'busy') { replyDirect(id, member, ownerBusy('queue_full', member, MAX_REQUEST_WAITERS)); return; }
       if (entry.kind === 'unknown') { replyDirect(id, member, servedOutcomeUnknown(member, req)); return; }
