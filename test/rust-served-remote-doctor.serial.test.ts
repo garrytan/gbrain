@@ -1,33 +1,39 @@
 /**
- * A remote run_doctor over the served wire (multi-user lane L3): an agent-facing (remote) admin caller of a served client
- * runs doctor; the reads doctor needs that are not open to a remote caller are refused by the served client before
- * anything is sent, so those checks cannot run.
+ * A remote run_doctor over the served wire (multi-user lane L3, slice S1): an agent-facing (remote) admin caller of a
+ * served client runs doctor, and doctor crosses as ONE whole operation (`runOperation`) that the brain server runs as the
+ * owner (rust-engine/served/remote-whole-ops.ts REMOTE_WHOLE_OPERATIONS).
  *
  * Mode: the owner opens with GBRAIN_RUST_MULTIUSER=1 set in-run (after the preload); the test asserts its store reports
  * `multiuser: true` and the client reports `served` and `multi_writer`.
  *
  * 1. Protects:
- *    - the report completes (no tool error) and every wave check that could not run for the remote caller says so:
- *      its host_action state is `unknown`, never `action_required`. The brain is fresh, so no wave check has a real
- *      finding; an `action_required` line here is a claim about the brain that nothing checked;
- *    - the four wave checks whose read failure has its own shape (connector_checkpoints, unbound_source,
- *      segmented_storage, fact_bulk_dates) are offered to the remote caller and report unknown;
- *    - no local-only data reaches the remote caller: a private page body, a config value and the brain's directory
- *      never appear in any report;
- *    - each row of test/fixtures/served-member-lists/local-only.tsv with the run_doctor reason is a member one of the
- *      three remote run_doctor reports (focused, tier ops, the page-class checks) calls and the served client refuses
- *      before sending, while every report still completes.
- * 2. Fails on: a remote doctor that reports a host action for a check whose read was refused, that returns local-only
- *    data, or a run_doctor-reason row that this run never refuses.
- * 3. Seam: none below the engine: a real owner, a real v3 listener, a real served client, the MCP dispatch.
+ *    - while the doctor handler runs on the client, the client sends exactly one frame, `fn runOperation run_doctor`, and
+ *      no member call (test-local recorder on the client's connection, counted only inside the handler's invocation
+ *      window; the MCP dispatch's own access reads before the handler are outside it and still run);
+ *    - the served report equals the report the same remote call gives in process on the owner engine, as canonical JSON
+ *      (sorted keys, timings and timestamps normalized), in the three report forms (focused, tier ops, page-class checks);
+ *    - no check says "Unknown: this check could not run for the remote caller";
+ *    - no local-only data reaches the remote caller: a private page body, a config value and the brain's directory never
+ *      appear in any report;
+ *    - the server checks the claimed grant's scope: a claim without admin is refused `permission_denied` with reason
+ *      `scope_missing` and the doctor handler never runs on the server; an admin claim runs it once.
+ * 2. Fails on: a client that runs doctor itself (member frames, refused reads, "could not run" checks), a served report
+ *    that differs from the in-process one, local-only data in a report, or a non-admin claim that runs doctor.
+ * 3. Seam: none below the engine: a real owner, a real v3 listener, a real served client, the MCP dispatch. The frame
+ *    recorder and the handler counter are test-local wrappers on the client's connection object and the registered
+ *    operation; no production code changes for them.
  */
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PAGE_CHECK_NAMES } from '../src/core/doctor-categories.ts';
+import { operationsByName } from '../src/core/operations.ts';
+import { withRemoteCaller } from '../src/core/remote-caller.ts';
 import { openRustEngine, type RustEngine } from '../src/core/rust-engine.ts';
+import { OWNER_RUN_OPERATION } from '../src/core/rust-engine/owner-ipc/forwarded-names.ts';
 import { listenServed, type ServedListener } from '../src/core/rust-engine/served/listener.ts';
+import { servedConnectionOf } from '../src/core/rust-engine/served/store-returning.ts';
 import { dispatchToolCall } from '../src/mcp/dispatch.ts';
 import { loadRustArmAddon, rustArmAddonPath } from './engine-parity/rust-arm.ts';
 
@@ -40,37 +46,55 @@ const TOKEN = 'remote-doctor-owner-token';
 const STDIO = { remote: true, admissionOrigin: 'interactive', transport: 'stdio', takesHoldersAllowList: ['world'], sourceId: 'default' } as const;
 const SECRET_BODY = 'doctor-marker-private-body-7f3a';
 const SECRET_CONFIG = 'doctor-marker-config-value-91c2';
-const DOCTOR_REASON = 'reached remotely only through run_doctor (admin scope); skipped for a remote caller';
-const OWN_SHAPES = ['connector_checkpoints', 'unbound_source', 'segmented_storage', 'fact_bulk_dates'];
-type ReportCheck = { name: string; status: string; message: string; details?: { host_action?: { check_id: string; state: string } } };
-type Report = { checks: ReportCheck[] };
+const COULD_NOT_RUN = 'Unknown: this check could not run for the remote caller';
+const FORMS: Array<Record<string, unknown>> = [{}, { tier: 'ops' }, { only: [...PAGE_CHECK_NAMES] }];
+const formName = (params: Record<string, unknown>) => Object.keys(params).join(',') || 'focused';
+type Conn = { request(kind: 'call' | 'fn', member: string, args: unknown[], opts?: { txn?: string }): Promise<unknown> };
+type ReportCheck = { name?: unknown; message?: unknown };
+type Form = { form: string; frames: string[]; error: boolean; text: string; inProcess: string };
 let dir = '';
 let owner: RustEngine;
 let listener: ServedListener;
 let client: RustEngine;
-const refused = new Set<string>();
-let text = '';
-let report: Report;
+const forms: Form[] = [];
+let depth = 0;
+let invocations = 0;
+let frames: string[] = [];
+let restore: () => void = () => undefined;
 
-/** The engine doctor runs on, recording each member the served client refused before sending (its refusal names the member). */
-function recordRefusals(engine: RustEngine): RustEngine {
-  const note = (error: unknown) => {
-    const e = error as { code?: string; message?: string };
-    const member = e?.code === 'engine_capability_missing' ? /^(\w+) cannot run from a second process on this brain:/.exec(e.message ?? '')?.[1] : undefined;
-    if (member) refused.add(member);
+/** The report text of a tool result. */
+const textOf = (out: { content: Array<{ text?: string }> }) => out.content.map(c => c.text ?? '').join('\n');
+
+/** Canonical JSON: sorted keys; timings (`*_ms`, `elapsed*`, `duration*`) and ISO timestamps normalized. */
+function canonical(text: string): string {
+  const norm = (value: unknown, key = ''): unknown => {
+    if (Array.isArray(value)) return value.map(v => norm(v));
+    if (value && typeof value === 'object') {
+      return Object.fromEntries(Object.keys(value).sort().map(k => [k, norm((value as Record<string, unknown>)[k], k)]));
+    }
+    if (typeof value === 'number' && /(_ms|^elapsed|^duration|_seconds)$/i.test(key)) return 0;
+    if (typeof value === 'string') return value.replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z/g, '<ts>').replace(/\b\d+(\.\d+)?\s?ms\b/g, '<n>ms');
+    return value;
   };
-  return new Proxy(engine, {
-    get(target, prop) {
-      const value = Reflect.get(target, prop, target);
-      if (typeof value !== 'function') return value;
-      return (...args: unknown[]) => {
-        try {
-          const out = value.apply(target, args);
-          return out instanceof Promise ? out.catch((error: unknown) => { note(error); throw error; }) : out;
-        } catch (error) { note(error); throw error; }
-      };
-    },
-  });
+  let body: unknown;
+  try { body = JSON.parse(text); } catch { return text; }
+  return JSON.stringify(norm(body), null, 1);
+}
+
+function checksOf(text: string): ReportCheck[] {
+  try {
+    const checks = (JSON.parse(text) as { checks?: unknown }).checks;
+    return Array.isArray(checks) ? checks as ReportCheck[] : [];
+  } catch { return []; }
+}
+
+/** The code, reason and detail of a refused call (undefined when it resolved). */
+async function refusalOf(call: Promise<unknown>): Promise<{ code: unknown; reason: unknown; ranFalse: boolean } | undefined> {
+  try { await call; return undefined; } catch (error) {
+    const e = error as { code?: unknown; reason?: unknown; detail?: unknown; envelope?: { reason?: unknown; detail?: unknown } };
+    const detail = String(e.detail ?? e.envelope?.detail ?? '');
+    return { code: e.code, reason: e.reason ?? e.envelope?.reason, ranFalse: detail.includes('ran=false') };
+  }
 }
 
 describeAddon('a remote run_doctor over the served wire', () => {
@@ -89,19 +113,36 @@ describeAddon('a remote run_doctor over the served wire', () => {
     listener = await listenServed(owner.ownerServer()!, { host: '127.0.0.1', port: 0 });
     client = openRustEngine({ addon: await loadRustArmAddon(), databasePath: dir, served: { url: `gbrain+tcp://127.0.0.1:${listener.port}`, token: TOKEN } });
     await client.connect({ engine: 'rust', database_path: dir } as never);
-    // The focused report, the ops tier and the page-class checks are the three remote run_doctor reports; each reaches
-    // members the others do not.
-    const texts: string[] = [];
-    for (const params of [{}, { tier: 'ops' }, { only: [...PAGE_CHECK_NAMES] }]) {
-      const out = await dispatchToolCall(recordRefusals(client), 'run_doctor', params, STDIO as never);
-      expect({ params, error: out.isError === true }).toEqual({ params, error: false });
-      texts.push((out.content as Array<{ text: string }>).map(c => c.text).join('\n'));
+
+    // Test-local instrumentation: the doctor handler's invocation window (the registered operation, which the client's
+    // dispatch and the server's runOperation both call in this one process) and every request the client's connection
+    // is asked to send while that window is open.
+    const op = operationsByName.run_doctor!;
+    const handler = op.handler;
+    op.handler = async (ctx, params) => {
+      depth++; invocations++;
+      try { return await handler(ctx, params); } finally { depth--; }
+    };
+    const conn = servedConnectionOf(client) as unknown as Conn;
+    const request = conn.request;
+    conn.request = (kind, member, args, opts) => {
+      if (depth > 0) frames.push(kind === 'fn' && member === OWNER_RUN_OPERATION ? `fn ${member} ${String(args[0])}` : `${kind} ${member}`);
+      return request(kind, member, args, opts);
+    };
+    restore = () => { op.handler = handler; conn.request = request; };
+
+    for (const params of FORMS) {
+      frames = [];
+      const out = await dispatchToolCall(client, 'run_doctor', params, STDIO as never);
+      const seen = frames;
+      frames = [];
+      const local = await dispatchToolCall(owner, 'run_doctor', params, STDIO as never);
+      forms.push({ form: formName(params), frames: seen, error: out.isError === true, text: textOf(out), inProcess: textOf(local) });
     }
-    report = JSON.parse(texts[0]!) as Report;
-    text = texts.join('\n');
   }, 300_000);
 
   afterAll(async () => {
+    restore();
     await client?.disconnect().catch(() => undefined);
     await listener?.close().catch(() => undefined);
     await owner?.disconnect().catch(() => undefined);
@@ -114,28 +155,39 @@ describeAddon('a remote run_doctor over the served wire', () => {
       .toEqual({ multiuser: true, served: true, mw: true });
   });
 
-  // Value: protects=a remote doctor names a check it could not run as unknown; fails_when=a refused read reports action_required; why_new=no test ran run_doctor through a served client
-  test('every wave check the remote caller could not run reports unknown, never a host action', () => {
-    const waves = report.checks.filter(c => c.details?.host_action);
-    expect(waves.length).toBeGreaterThan(0);
-    expect(waves.filter(c => c.details!.host_action!.state === 'action_required').map(c => c.name)).toEqual([]);
-    const own = Object.fromEntries(OWN_SHAPES.map(id => {
-      const c = waves.find(w => w.name === id);
-      return [id, c ? { state: c.details!.host_action!.state, unknown: c.message.startsWith('Unknown: this check could not run for the remote caller') } : null];
-    }));
-    expect(own).toEqual(Object.fromEntries(OWN_SHAPES.map(id => [id, { state: 'unknown', unknown: true }])));
+  // Value: protects=run_doctor crosses whole; fails_when=the client runs doctor itself and sends (or refuses) member calls; why_new=the client ran doctor and refused its local-only reads
+  test('inside the doctor handler the client sends exactly one runOperation run_doctor frame and no member call, in each form', () => {
+    expect(forms.map(f => ({ form: f.form, error: f.error, frames: f.frames })))
+      .toEqual(FORMS.map(p => ({ form: formName(p), error: false, frames: [`fn ${OWNER_RUN_OPERATION} run_doctor`] })));
   });
 
-  // Value: protects=each local-only row given the run_doctor reason is one a remote run_doctor reaches and the served client refuses; fails_when=a row gets that reason but doctor no longer calls it, or the client sends it; why_new=the reason was a claim no run checked
-  test('every member listed as reached only through run_doctor is refused for the remote caller, and the report still completes', () => {
-    const listed = readFileSync(join(import.meta.dir, 'fixtures/served-member-lists/local-only.tsv'), 'utf8').split('\n')
-      .map(line => line.split('\t')).filter(row => row[1] === DOCTOR_REASON).map(row => row[0]!);
-    expect(listed.length).toBeGreaterThan(0);
-    expect(listed.filter(member => !refused.has(member))).toEqual([]);
+  // Value: protects=a served remote doctor reports what the owner's in-process remote doctor reports; fails_when=a check differs or could not run; why_new=no test compared the two reports
+  test('the served report equals the in-process remote report on the owner engine (canonical JSON), and no check says it could not run', () => {
+    for (const f of forms) {
+      expect({ form: f.form, hasChecks: checksOf(f.text).length > 0 }).toEqual({ form: f.form, hasChecks: true });
+      expect({ form: f.form, report: canonical(f.text) }).toEqual({ form: f.form, report: canonical(f.inProcess) });
+    }
+    expect(forms.flatMap(f => checksOf(f.text).filter(c => typeof c.message === 'string' && c.message.startsWith(COULD_NOT_RUN))
+      .map(c => `${f.form}:${String(c.name)}`))).toEqual([]);
   });
 
   test('no local-only data reaches the remote caller', () => {
+    const text = forms.map(f => f.text).join('\n');
     expect({ body: text.includes(SECRET_BODY), config: text.includes(SECRET_CONFIG), dir: text.includes(dir) })
       .toEqual({ body: false, config: false, dir: false });
+  });
+
+  // Value: protects=the server checks the claimed grant's admin scope before doctor runs; fails_when=a non-admin claim runs doctor on the owner's floor; why_new=run_doctor is the first admin-scope remote whole operation
+  test('a claim without admin is refused scope_missing and doctor never runs on the server; an admin claim runs it once', async () => {
+    const conn = servedConnectionOf(client) as unknown as Conn;
+    const send = (scopes: string[]) => withRemoteCaller(true, () => conn.request('fn', OWNER_RUN_OPERATION,
+      ['run_doctor', {}, { sourceId: 'default', transport: 'http' }, { auth: { clientId: 'c', scopes } }]));
+    invocations = 0;
+    const refused = await refusalOf(send(['read', 'write']));
+    const ranRefused = invocations;
+    invocations = 0;
+    const admin = await send(['read', 'write', 'admin']).then(v => ({ ok: true, value: v }), (e: unknown) => ({ ok: false, value: e }));
+    expect({ refused, ranRefused, admin: admin.ok, ranAdmin: invocations })
+      .toEqual({ refused: { code: 'permission_denied', reason: 'scope_missing', ranFalse: true }, ranRefused: 0, admin: true, ranAdmin: 1 });
   });
 });
