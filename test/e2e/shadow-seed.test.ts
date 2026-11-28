@@ -28,7 +28,7 @@ import { shadowBrainKey, shadowDirFor } from '../../src/shadow/state.ts';
 import { withEnv } from '../helpers/with-env.ts';
 import { expectSeedReadParity, fillSeedFixture, insertSeedFixtureJobs, primaryDigests, seedInto } from '../helpers/shadow-seed-fixture.ts';
 import {
-  expectBudgetStopNamesTheWayOut, expectDefaultBudgetStop, expectFinishedSeed, expectRestartKeepsAStoreWithASeedRecord, expectRestartRefusesAHeldStore, inSeedHome, runSeedCommand,
+  expectBudgetStopNamesTheWayOut, expectDefaultBudgetStop, expectFinishedSeed, expectRestartKeepsAStoreWithASeedRecord, expectRestartRefusesAHeldStore, expectRestartRefusesALinkedStore, inSeedHome, runRestartWatchingTheLockedStore, runSeedCommand,
   steppingClock, type SeedBudgetCase,
 } from '../helpers/shadow-seed-budget.ts';
 
@@ -175,7 +175,8 @@ d('shadow seed from Postgres', () => {
       expectBudgetStopNamesTheWayOut(stopped);
       await expectRestartRefusesAHeldStore(c, dir);
       await expectRestartKeepsAStoreWithASeedRecord(c, dir);
-      await expectFinishedSeed(c, dir, await runSeedCommand(c, ['seed', '--restart', '--budget-minutes', '0'], { now: steppingClock() }));
+      await expectRestartRefusesALinkedStore(c, dir);
+      await expectFinishedSeed(c, dir, await runRestartWatchingTheLockedStore(c, dir));
     });
   });
 

@@ -12,7 +12,7 @@
  * once, in one read-only snapshot, and writes `seed.json` (src/shadow/seed.ts).
  */
 import { createHash } from 'node:crypto';
-import { existsSync, mkdirSync, rmSync } from 'node:fs';
+import { existsSync, lstatSync, mkdirSync, renameSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { loadConfig } from '../core/config.ts';
 import type { EngineConfig } from '../core/types.ts';
@@ -483,7 +483,7 @@ const RESTART_STEP = 'No seed.json was written. To seed again from the start, ru
  * `seed --restart`: deletes the partial Rust store a stopped seed left. It opens the store first, so it holds the store's
  * lock: a store another process holds, or one this build cannot read, is refused and left alone. Holding the lock it
  * checks again that no seed.json exists (a seed writes seed.json before it closes its store, so a seed that finished
- * while this command waited is seen here) and that shadow mode is off, and only then deletes the store directory.
+ * while this command waited is seen here) and that shadow mode is off, and only then renames the store directory away (the lock moves with it) and deletes it.
  * Returns false after printing a refusal; nothing is deleted then.
  */
 async function clearPartialStore(
@@ -491,17 +491,23 @@ async function clearPartialStore(
 ): Promise<boolean> {
   const storePath = join(dir, 'store');
   if (!existsSync(storePath)) return true;
+  // Deleting a link would leave the partial data it points to where it is and start the new seed on another volume.
+  if (lstatSync(storePath).isSymbolicLink()) {
+    err('engine shadow: --restart deleted nothing: the Rust store path is a symbolic link, and a restart would leave the data it points to. Move the link aside yourself, then run --restart again.');
+    return false;
+  }
   let probe: { close(): Promise<void> };
   try {
     probe = await openStore(addon, storePath);
   } catch (e) {
     const code = (e as { code?: unknown } | null)?.code;
-    const why = code === 'rust_store_locked'
-      ? 'another process holds the Rust store (stop shadow mode with gbrain engine shadow stop and wait 30 seconds, or let a running seed, reconcile or drill finish)'
-      : `the Rust store did not open (${typeof code === 'string' && /^[a-z0-9_]{1,64}$/i.test(code) ? code : 'open_failed'})`;
-    err(`engine shadow: --restart deleted nothing: ${why}. To delete every shadow file instead, run gbrain engine shadow stop --delete.`);
+    // A held store may be a running seed, which `stop --delete` does not check for, so only an unreadable store is sent there.
+    err(code === 'rust_store_locked'
+      ? 'engine shadow: --restart deleted nothing: another process holds the Rust store (stop shadow mode with gbrain engine shadow stop and wait 30 seconds, or let a running seed, reconcile or drill finish, then run --restart again).'
+      : `engine shadow: --restart deleted nothing: the Rust store did not open (${typeof code === 'string' && /^[a-z0-9_]{1,64}$/i.test(code) ? code : 'open_failed'}). To delete every shadow file instead, run gbrain engine shadow stop --delete.`);
     return false;
   }
+  let removed: string | null = null;
   try {
     if (existsSync(seedRecordPath(dir))) {
       err(`engine shadow: --restart deleted nothing: a seed finished while it waited (seed.json exists). ${RESEED_STEP}`);
@@ -511,11 +517,15 @@ async function clearPartialStore(
       err('engine shadow: --restart deleted nothing: shadow mode was turned on while it waited. Stop it first (gbrain engine shadow stop).');
       return false;
     }
-    // Deleted while this process still holds the lock, so no other process can open the store in between.
-    rmSync(storePath, { recursive: true, force: true });
+    // The lock belongs to the store's file, so that file is never unlinked in place: while the path still named it, another
+    // process could open a new file there and this delete would remove that too. The store is renamed away while the lock is
+    // held (the lock moves with the file), which frees the path at once, and only the renamed copy is deleted.
+    removed = `${storePath}.deleting-${process.pid}-${Date.now()}`;
+    renameSync(storePath, removed);
   } finally {
     await probe.close().catch(() => undefined);
   }
+  if (removed) rmSync(removed, { recursive: true, force: true });
   err('engine shadow: --restart deleted the partial Rust store that a stopped seed left; the seed starts again from the beginning.');
   return true;
 }

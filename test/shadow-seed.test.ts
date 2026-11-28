@@ -28,7 +28,7 @@ import {
   parseSeedBudgetMs, readSeedRecord, runSeed, SeedBudgetError, seedRecordPath, seedSwapCheck, writeSeedRecord, type SeedRecord, type SeedTarget,
 } from '../src/shadow/seed.ts';
 import {
-  expectBudgetStopNamesTheWayOut, expectDefaultBudgetStop, expectFinishedSeed, expectRestartKeepsAStoreWithASeedRecord, expectRestartRefusesAHeldStore, inSeedHome, runSeedCommand,
+  expectBudgetStopNamesTheWayOut, expectDefaultBudgetStop, expectFinishedSeed, expectRestartKeepsAStoreWithASeedRecord, expectRestartRefusesAHeldStore, expectRestartRefusesALinkedStore, inSeedHome, runRestartWatchingTheLockedStore, runSeedCommand,
   steppingClock, type SeedBudgetCase,
 } from './helpers/shadow-seed-budget.ts';
 import { countSeedGaps } from '../src/shadow/seed-gaps.ts';
@@ -372,7 +372,8 @@ describe('gbrain engine shadow seed budget and restart', () => {
       await expectDefaultBudgetStop(c, dir);
       await expectRestartRefusesAHeldStore(c, dir);
       await expectRestartKeepsAStoreWithASeedRecord(c, dir);
-      await expectFinishedSeed(c, dir, await runSeedCommand(c, ['seed', '--restart', '--budget-minutes', 'none'], { now: steppingClock() }));
+      await expectRestartRefusesALinkedStore(c, dir);
+      await expectFinishedSeed(c, dir, await runRestartWatchingTheLockedStore(c, dir));
     });
   });
 

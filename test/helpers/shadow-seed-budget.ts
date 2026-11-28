@@ -4,14 +4,14 @@
  * a clock that moves 10 minutes per reading stops a default (30-minute) seed after a few relations.
  */
 import { expect } from 'bun:test';
-import { existsSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { RustAddon } from '../../src/core/rust-engine/addon-loader.ts';
 import { openRustStore } from '../../src/core/rust-engine/store.ts';
 import { runEngineShadow, type EngineShadowDeps } from '../../src/commands/engine-shadow.ts';
 import { readSeedRecord, seedRecordPath } from '../../src/shadow/seed.ts';
-import { shadowBrainKey, shadowDirFor } from '../../src/shadow/state.ts';
+import { SHADOW_STATE_VERSION, shadowBrainKey, shadowDirFor, writeShadowState } from '../../src/shadow/state.ts';
 import { withEnv } from './with-env.ts';
 import { expectSeedReadParity } from './shadow-seed-fixture.ts';
 
@@ -52,7 +52,8 @@ export async function runSeedCommand(c: SeedBudgetCase, args: string[], extra: P
 
 /** Runs `fn` with GBRAIN_HOME (and any other variables) set for the case; returns its shadow directory too. */
 export function inSeedHome<T>(c: SeedBudgetCase, env: Record<string, string | undefined>, fn: (dir: string) => Promise<T>): Promise<T> {
-  return withEnv({ GBRAIN_HOME: c.home, ...env }, () => fn(shadowDirFor(shadowBrainKey(c.config)!)));
+  // The budget variable is cleared first: a value exported in the developer's shell must not change a default-budget case.
+  return withEnv({ GBRAIN_HOME: c.home, GBRAIN_SHADOW_SEED_BUDGET_MINUTES: undefined, ...env }, () => fn(shadowDirFor(shadowBrainKey(c.config)!)));
 }
 
 /** A seed that runs past the default budget stops with a partial store, and a plain rerun refuses that store. */
@@ -96,8 +97,38 @@ export async function expectRestartRefusesAHeldStore(c: SeedBudgetCase, dir: str
   }
   expect(refused.code).toBe(1);
   expect(refused.err).toContain('--restart deleted nothing: another process holds the Rust store');
+  // A holder may be a running seed, so the message must not send the owner to the command that deletes every shadow file.
+  expect(refused.err).not.toContain('stop --delete');
   expect(existsSync(join(dir, 'store'))).toBe(true);
   expect(readSeedRecord(dir)).toBeNull();
+}
+
+/**
+ * `--restart` deletes the store it holds the lock of. It must not unlink the locked file in place: the lock belongs to that
+ * file, so while the path still named it another process could open a new file there and have it deleted too. The store
+ * is renamed away first (the lock moves with the file), so the path is free before anything is deleted and only the
+ * renamed copy goes. Returns the run, which reseeds.
+ */
+export async function runRestartWatchingTheLockedStore(c: SeedBudgetCase, dir: string): Promise<SeedRun> {
+  let opened = 0;
+  let atClose: { storeExists: boolean; renamed: string[] } | undefined;
+  const run = await runSeedCommand(c, ['seed', '--restart', '--budget-minutes', 'none'], {
+    now: steppingClock(),
+    openStore: async (addon, path) => {
+      const real = await openRustStore(addon as RustAddon, path);
+      if (++opened > 1) return real;
+      // The first open is the lock probe; its close comes right after the store was removed from the path.
+      return Object.create(real, { close: { value: async () => {
+        const renamed = readdirSync(dir).filter(n => n.startsWith('store.'));
+        atClose = { storeExists: existsSync(join(dir, 'store')), renamed: renamed.filter(n => readdirSync(join(dir, n)).length > 0) };
+        await real.close();
+      } } });
+    },
+  });
+  expect(atClose).toEqual({ storeExists: false, renamed: [expect.stringMatching(/^store\.deleting-/)] });
+  // Nothing is left behind once the old store is gone.
+  expect(readdirSync(dir).filter(n => n.startsWith('store.'))).toEqual([]);
+  return run;
 }
 
 /** The store's files, to prove a refused --restart deleted nothing. */
@@ -131,6 +162,39 @@ export async function expectRestartKeepsAStoreWithASeedRecord(c: SeedBudgetCase,
   expect(finishedMeanwhile.err).toContain('--restart deleted nothing: a seed finished while it waited');
   expect(storeFiles(dir)).toEqual(files);
   rmSeedRecord(dir);
+
+  // Shadow mode is turned on while --restart waits to open the store: nothing is deleted and no seed starts.
+  const state = { version: SHADOW_STATE_VERSION, enabled: true, started_at: 'x', sample_rate: 0.1, queue_bound: 1, plan_hash: 'h', brain: 'b', primary_engine: 'pglite' };
+  const enabledMeanwhile = await runSeedCommand(c, ['seed', '--restart', '--budget-minutes', 'none'], {
+    now: steppingClock(),
+    openStore: async (addon, path) => {
+      writeShadowState(dir, state);
+      return openRustStore(addon as RustAddon, path);
+    },
+  });
+  expect(enabledMeanwhile.code).toBe(1);
+  expect(enabledMeanwhile.err).toContain('--restart deleted nothing: shadow mode was turned on while it waited');
+  expect(readSeedRecord(dir)).toBeNull();
+  expect(storeFiles(dir)).toEqual(files);
+  writeShadowState(dir, { ...state, enabled: false });
+}
+
+/** `--restart` refuses a store path that is a symbolic link: removing the link would leave the data it points to. */
+export async function expectRestartRefusesALinkedStore(c: SeedBudgetCase, dir: string): Promise<void> {
+  const real = join(dir, 'store');
+  const moved = join(dir, 'moved-store');
+  renameSync(real, moved);
+  symlinkSync(moved, real);
+  try {
+    const refused = await runSeedCommand(c, ['seed', '--restart', '--budget-minutes', 'none'], { now: steppingClock() });
+    expect(refused.code).toBe(1);
+    expect(refused.err).toContain('--restart deleted nothing: the Rust store path is a symbolic link');
+    expect(lstatSync(real).isSymbolicLink()).toBe(true);
+    expect(readdirSync(moved).length).toBeGreaterThan(0);
+  } finally {
+    rmSync(real);
+    renameSync(moved, real);
+  }
 }
 
 function rmSeedRecord(dir: string): void {
