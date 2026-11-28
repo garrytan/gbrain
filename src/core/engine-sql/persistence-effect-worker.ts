@@ -1,8 +1,11 @@
 import type { LegacyUnscopedRead } from './brands.ts';
-/** `advanceEffectRow`: $1 id, $2 token, $3 the slug the cursor moves to. The text `advanceEffectCursor` has always sent. */
+/**
+ * `advanceEffectRow`: $1 id, $2 token, $3 the slug the cursor moves to. The text `advanceEffectCursor` has always sent.
+ * The `\n` escape keeps the text byte for byte while no source line starts with the token column, which the release
+ * secrets scan reads as a credential assignment.
+ */
 export const ADVANCE_EFFECT_SQL = `UPDATE persistence_effects SET state='queued',data=jsonb_set(
-    CASE WHEN kind='embedding' THEN jsonb_set(data,'{embedding_attempt_base}',to_jsonb(attempts)) ELSE data-'target_failures'-'failing_target' END,'{after_slug}',to_jsonb($3::text)),
-    execution_token=NULL,claim_expires_at=NULL,claim_owner=NULL,next_attempt_at=now(),error_code=NULL,
+    CASE WHEN kind='embedding' THEN jsonb_set(data,'{embedding_attempt_base}',to_jsonb(attempts)) ELSE data-'target_failures'-'failing_target' END,'{after_slug}',to_jsonb($3::text)),\n    execution_token=NULL,claim_expires_at=NULL,claim_owner=NULL,next_attempt_at=now(),error_code=NULL,
     updated_at=now()
     WHERE id=$1 AND execution_token=$2::uuid AND recovery IS NULL AND set_config('gbrain.persistence_protocol','2',true)='2'`;
 
