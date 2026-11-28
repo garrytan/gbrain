@@ -1,18 +1,21 @@
 /**
- * The Rust engine's readGuestSourceRow member (store-members/cli-reads-import.ts). The store has no guest_sources
- * table and answers "not a guest" for every source, so a source whose config says guest refuses instead: otherwise
- * the guest write guards in guests/admission.ts would pass a write that the guest rules restrict.
+ * The Rust engine's readGuestSourceRow member (store-members/cli-reads-import.ts). On the Rust engine trunk the store
+ * keeps guest source rows itself, so the member answers the store's row: a guest source gets its writers and trust
+ * ceiling, so the guest write guards in guests/admission.ts see the same row as on PGLite and Postgres.
  */
 import { describe, expect, test } from 'bun:test';
 import { readGuestSourceRow } from '../src/core/rust-engine/store-members/cli-reads-import.ts';
 import type { StoreBrain } from '../src/core/rust-engine/store.ts';
 
+const GUEST_ROW = { hidden: false, source_id: 'guests', writers: ['guest-writer'], trust_ceiling: 'guest' };
+
 function fakeBrain(guestIds: string[]): StoreBrain {
   return {
     isOpen: true,
     async open() {}, async close() {},
-    async listGuestSourceIds(ids: string[]) { return ids.filter(id => guestIds.includes(id)); },
-    async readGuestSourceRow() { return { hidden: false, source_id: null, writers: null, trust_ceiling: null }; },
+    async readGuestSourceRow(sourceId: string) {
+      return guestIds.includes(sourceId) ? GUEST_ROW : { hidden: false, source_id: null, writers: null, trust_ceiling: null };
+    },
   } as unknown as StoreBrain;
 }
 
@@ -21,8 +24,7 @@ describe('readGuestSourceRow on the Rust store', () => {
     expect(await readGuestSourceRow(fakeBrain(['other']), 'notes')).toEqual({ hidden: false, source_id: null, writers: null, trust_ceiling: null });
   });
 
-  test('a source whose config says guest refuses with engine_capability_missing', async () => {
-    const refused = await readGuestSourceRow(fakeBrain(['guests']), 'guests').catch((e: unknown) => e);
-    expect((refused as { code?: string }).code).toBe('engine_capability_missing');
+  test('a guest source answers the row the store keeps', async () => {
+    expect(await readGuestSourceRow(fakeBrain(['guests']), 'guests')).toEqual(GUEST_ROW);
   });
 });
