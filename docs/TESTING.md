@@ -734,7 +734,7 @@ bun run weights:mine --lane e2e --e2e-profile full --run <successful-full-corpus
 that ran the lane (a push that reused a full run of its tree has no lane jobs),
 so a refresh is a median without run IDs collected by hand. `--coverage-only`
 keeps every existing weight, drops untracked files and adds only the files the
-map lacks, recording the runs behind them under `coverageOnly` in the metadata:
+map lacks, appending the runs behind them to the `coverageOnly` list in the metadata:
 it closes a coverage gap when a full unit refresh would push shards over
 `UNIT_SHARD_BUDGET_MS`. A full refresh is the same command without it.
 
@@ -1119,7 +1119,7 @@ normalizes `COVERAGE_DIR` to an absolute path before moving `HOME`, and
 coverage lane). Both names avoid the `GBRAIN_` prefix so the env scrub keeps
 them.
 
-**Two corpora.** `prCorpus` is the 48 coverage-collecting lanes in
+**Two corpora.** `prCorpus` is the 52 coverage-collecting lanes in
 `test.yml` (46 unit shards, 4 serial partitions, `slow-entity-resolve-perf` and
 `slow-brainbench-e2e`), identical on every PR; the gates run against it.
 `fullCorpus` is the nightly (or manual `full_corpus=true`) set in `e2e.yml`:

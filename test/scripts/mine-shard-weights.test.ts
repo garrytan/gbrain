@@ -559,7 +559,7 @@ it('--latest N mines the newest N successful master runs that ran the lane, and 
     };
     // 105 reused an earlier full run of its tree (no unit jobs); 104 is a manual dispatch, not a master push or the nightly.
     writeFileSync(join(fixtures, 'list.json'), JSON.stringify([{ databaseId: 105, event: 'push' }, { databaseId: 104, event: 'workflow_dispatch' }, { databaseId: 103, event: 'push' }, { databaseId: 102, event: 'schedule' }, { databaseId: 101, event: 'push' }]));
-    writeFileSync(join(fixtures, '105.json'), JSON.stringify({ conclusion: 'success', headSha: 'commit-105', jobs: [{ name: 'verify', conclusion: 'success' }] }));
+    writeFileSync(join(fixtures, '105.json'), JSON.stringify({ conclusion: 'success', headSha: 'commit-105', jobs: [{ name: 'verify', conclusion: 'success' }, { name: 'test (1, 2)', conclusion: 'skipped' }] }));
     run('104', [['test/one.test.ts', 99_000], ['test/two.test.ts', 99_000]]);
     run('103', [['test/one.test.ts', 4000], ['test/two.test.ts', 3000], ['test/new.test.ts', 700]]);
     run('102', [['test/one.test.ts', 2000], ['test/two.test.ts', 6000]]);
@@ -581,8 +581,12 @@ it('--latest N mines the newest N successful master runs that ran the lane, and 
     expect(JSON.parse(readFileSync(out, 'utf8'))).toEqual({ 'test/new.test.ts': 600, 'test/one.test.ts': 42, 'test/two.test.ts': 43 });
     expect(JSON.parse(readFileSync(meta, 'utf8'))).toEqual({
       lane: 'unit', run: '90', measuredFiles: 2, totalFiles: 3,
-      coverageOnly: { addedFiles: 1, run: '103', commit: 'commit-103', runs: ['103', '102', '101'], commits: ['commit-103', 'commit-102', 'commit-101'] },
+      coverageOnly: [{ addedFiles: 1, run: '103', commit: 'commit-103', runs: ['103', '102', '101'], commits: ['commit-103', 'commit-102', 'commit-101'] }],
     });
+    const recorded = readFileSync(meta, 'utf8');
+    const again = mine('--latest', '3', '--coverage-only');
+    expect(again.status, again.stderr).toBe(0);
+    expect(readFileSync(meta, 'utf8')).toBe(recorded);
 
     const full = mine('--latest', '3');
     expect(full.status, full.stderr).toBe(0);

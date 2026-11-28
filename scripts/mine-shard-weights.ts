@@ -330,7 +330,8 @@ async function main(): Promise<void> {
     for (const run of candidates) {
       if (mined.length === latest) break;
       const info = viewRun(run);
-      if (!info.jobs.some((j: { name: string }) => isJob(j.name, lane, e2eProfile))) continue; // a master push that reused a full run of its tree ran no lane jobs
+      const laneJobs = info.jobs.filter((j: { name: string }) => isJob(j.name, lane, e2eProfile));
+      if (laneJobs.every((j: { conclusion: string }) => j.conclusion === "skipped")) continue; // a master push that reused a full run of its tree ran no lane jobs, or skipped them
       mined.push(mineRun(run, info));
       runs.push(run);
     }
@@ -353,12 +354,14 @@ async function main(): Promise<void> {
   for (const [file, duration] of coverageOnly ? added : measured) weights.set(file, duration);
   const metadataPath = out.endsWith(".json") ? out.replace(/\.json$/, ".metadata.json") : `${out}.metadata.json`;
   const several = mined.length > 1 ? { runs, commits: mined.map(m => m.commit) } : {};
-  // Coverage-only keeps the provenance of the weights it kept and names the runs behind the files it added.
-  const metadata = coverageOnly && existsSync(metadataPath)
-    ? { ...JSON.parse(readFileSync(metadataPath, "utf8")), totalFiles: weights.size, coverageOnly: { addedFiles: added.length, run: run ?? null, commit, ...several } }
+  // Coverage-only keeps the provenance of the weights it kept and appends one batch per run that added files.
+  const batch = { addedFiles: added.length, run: run ?? null, commit, ...several };
+  const prior = coverageOnly && existsSync(metadataPath) ? JSON.parse(readFileSync(metadataPath, "utf8")) : undefined;
+  const metadata = prior
+    ? { ...prior, totalFiles: weights.size, coverageOnly: [...[prior.coverageOnly ?? []].flat(), ...(added.length ? [batch] : [])] }
     : { lane, unit: lane === "serial" ? "seconds" : "milliseconds", run: run ?? null, commit, source: run ? "github" : input ? "file" : "stdin",
       ...several, measuredFiles: coverageOnly ? added.length : measured.size, totalFiles: weights.size, mergeExisting: mergeExisting || coverageOnly,
-      ...(coverageOnly ? { coverageOnly: { addedFiles: added.length, run: run ?? null, commit, ...several } } : {}),
+      ...(coverageOnly ? { coverageOnly: [batch] } : {}),
       ...(full ? { e2eProfile, attempt, jobs: fullJobs, logSha256: createHash("sha256").update(raw).digest("hex"), corpusSha256: createHash("sha256").update([...expectedFiles!].sort().join("\n") + "\n").digest("hex") } : {}),
     };
   const temp = `${out}.${process.pid}.tmp`;
