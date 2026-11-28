@@ -640,7 +640,9 @@ async function reconcileCommand(
   const supervisor = new ShadowSupervisor({ dir: brain.dir, argv: shadowChildArgv(brain.dir), stillEnabled: () => true, ...deps.reconcileSupervisor });
   const reads = openReadSource(primary);
   try {
-    const sealDeps = { dir: brain.dir, reads, postgres: primaryTakesWriterHooks(readShadowState(brain.dir)?.primary_engine) };
+    // `primary` lets the seal prove this command's own pool connections (seal.ts), as a serving process's close does
+    // (attach.ts): the startup query leaves one open and recently used, which is not another writer.
+    const sealDeps = { dir: brain.dir, reads, postgres: primaryTakesWriterHooks(readShadowState(brain.dir)?.primary_engine), primary };
     // The pass's basis (seal.ts): handed over only once its watermark restore was acknowledged; it is what the seal carries.
     let basis: string | null = null;
     const reconciler = new Reconciler({
