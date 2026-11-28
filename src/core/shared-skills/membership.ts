@@ -214,7 +214,8 @@ export async function joinBrain(ctx: OperationContext, params: { adapter: string
       const prior = member.follow_policy.source_ids;
       if (prior && (!sourceIds || sourceIds.some(s => !prior.includes(s)))) fail('follow_approval_required', 'An active membership can only narrow its follow policy; leave and approve a new enrollment to widen it.',
         `Installation ${member.installation_id} follows only ${prior.join(', ')}. To follow more, ask the user to approve the wider policy, then leave_brain and join_brain again with it.`);
-      const renewed = renewPins(member.follow_policy, await bindPolicy(authority.ctx, sourceIds), sourceIds);
+      const pinned = Object.keys(member.follow_policy.sources).filter(id => !sourceIds || sourceIds.includes(id));
+      const renewed = renewPins(member.follow_policy, await bindPolicy(authority.ctx, pinned), sourceIds);
       if (stableJson(renewed) !== stableJson(member.follow_policy)) {
         await engine.executeRaw(`UPDATE shared_skill_members SET follow_policy=$2::text::jsonb,epoch=epoch+1,issued_sequence=0,acknowledged_sequence=0,desired_view=NULL,acknowledged_view=NULL WHERE installation_id=$1::uuid`, [member.installation_id, JSON.stringify(renewed)]);
         member = await ownMember(tx, member.installation_id, authority.principal);

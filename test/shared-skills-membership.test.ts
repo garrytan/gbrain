@@ -205,6 +205,22 @@ test('#6797 an approved join never grants a new capability or a new source incar
   expect(recreated.blocked_skills[0].source_incarnation).toBe(nextIncarnation);
 });
 
+test('#6797 refreshing a follow-all enrollment survives a brain that grew past 64 sources', async () => {
+  const extra = Array.from({ length: 65 }, (_, i) => `refresh-extra-${i}`);
+  const base = await context();
+  const ctx = { ...base, auth: { ...base.auth!, allowedSources: ['default', ...extra] } };
+  await engine.executeRaw('UPDATE oauth_clients SET federated_read=$2::text[] WHERE client_id=$1', [base.auth!.clientId, extra]);
+  const first = await join(ctx);
+  try {
+    for (const id of extra) await projectFixture('INSERT INTO sources (id, name) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING', [id]);
+    const again = await join(ctx);
+    expect(again.installation_id).toBe(first.installation_id);
+    expect(again.skills.map(skill => skill.name)).toEqual(['fixture']);
+  } finally {
+    await projectFixture('DELETE FROM sources WHERE id=ANY($1::text[])', [extra]);
+  }
+});
+
 test('#6797 narrowing an active enrollment issues a batch its acknowledgment records', async () => {
   const ctx = await context();
   const first = await joinBrain(ctx, { adapter: 'codex', follow_policy: { approved: true, source_ids: ['default'] } });
