@@ -10,6 +10,7 @@ import { join } from 'node:path';
 import type { BrainEngine } from '../../src/core/engine.ts';
 import type { RustAddon } from '../../src/core/rust-engine/addon-loader.ts';
 import { FollowChild } from '../../src/shadow/follow-child.ts';
+import * as followStatus from '../../src/shadow/follow-status.ts';
 import { buildFollowStatus, readFollowerFile, readPasses } from '../../src/shadow/follow-status.ts';
 import { rowDigest, sortKey } from '../../src/shadow/follow-digest.ts';
 import { nextGeneration } from '../../src/shadow/follower.ts';
@@ -391,6 +392,54 @@ export function defineFollowScenarios(ctx: FollowScenarioContext): void {
         expect(status(r).reconcile.consecutive_clean_full_passes).toBe(1);
       } finally { await base.close(); await r.close(); }
     }, 90_000);
+
+    // The stopped pass's record could not be appended once (the pass log was briefly not writable), so its repair is held
+    // only in the resume point. Append access is back before anything else runs. The repair is not lost: until it is
+    // published, status and writer coverage count it, and a fresh pass or another owner's continuity publishes it before
+    // dropping that resume point.
+    for (const recovery of ['a fresh full pass', 'the next owner under another continuity'] as const) {
+      test(`a repair whose stopped record could not be appended is counted at once and put on record by ${recovery}, never dropped with the resume point`, async () => {
+        const r = await rig();
+        const base = openReadSource(ctx.primary(), { pauseMs: 0 });
+        try {
+          expect(status(r).reconcile.consecutive_clean_full_passes).toBeGreaterThanOrEqual(1);
+          const since = new Date(Date.now() - 1_000);
+          const unknownBefore = planAsWrittenSource(r.dir).unknownPaths(since);
+          const original = followStatus.appendPass;
+          let failed = false;
+          const failing = spyOn(followStatus, 'appendPass').mockImplementation((d, p) => {
+            if (p.error === 'stopped' && !failed) { failed = true; throw Object.assign(new Error('EROFS: read-only file system'), { code: 'EROFS' }); }
+            return original(d, p);
+          });
+          let out: Awaited<ReturnType<typeof stopAfterTailRepair>>;
+          try { out = await stopAfterTailRepair(r, base); } finally { failing.mockRestore(); }
+          const { stopped, size } = out;
+          // The injection fired: no record, and the repair is in the resume point.
+          expect(failed).toBe(true);
+          expect(readPasses(r.dir).filter((p) => p.id === stopped.id)).toHaveLength(0);
+          const progress = JSON.parse(readFileSync(join(r.dir, 'reconcile', 'progress.json'), 'utf8')) as { id: string; repaired_rows: number };
+          expect(progress.id).toBe(stopped.id);
+          expect(progress.repaired_rows).toBeGreaterThanOrEqual(1);
+          // Right away, before any other pass runs: the repair already ends the clean streak and counts for writer coverage.
+          expect(status(r).reconcile.consecutive_clean_full_passes).toBe(0);
+          expect(status(r).reconcile.last_clean_full_pass_at).toBeNull();
+          expect(planAsWrittenSource(r.dir).unknownPaths(since)).toBe(unknownBefore + 1);
+          const otherOwner = async <T>(method: string, args?: Record<string, unknown>): Promise<T> => {
+            const out = await r.rpc<T>(method, args);
+            return (method === 'state' ? { ...(out as Record<string, unknown>), continuity: 'another-owner-continuity' } : out) as T;
+          };
+          const next = recovery === 'a fresh full pass'
+            ? await new Reconciler({ dir: r.dir, reads: base, rpc: r.rpc, follower: r.follower, intervalRows: size }).run('full')
+            : await new Reconciler({ dir: r.dir, reads: base, rpc: otherOwner, follower: r.follower, intervalRows: size }).run('full', undefined, { resume: true });
+          expect(next.error).toBeUndefined();
+          expect(next.id).not.toBe(stopped.id);
+          expect(next.repaired_rows).toBe(0);
+          expectRepairOnRecord(r, stopped.id, since, unknownBefore);
+          expect(status(r).reconcile.consecutive_clean_full_passes).toBe(1);
+          expect(status(r).reconcile.last_clean_full_pass_at).toBe(next.finished_at);
+        } finally { await base.close(); await r.close(); }
+      }, 90_000);
+    }
 
     // The next owner took the seal over and its serving process sent ok:true, which the child applied, but the answer
     // was lost, and neither the veto line nor any revoke reached the child (seal.ts returns the doubt). The child still
