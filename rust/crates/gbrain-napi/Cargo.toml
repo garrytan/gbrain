@@ -20,6 +20,8 @@ napi-derive = "3"
 [dev-dependencies]
 # Property tests of the binding's argument decoding only (never linked into the addon).
 proptest = { version = "1", default-features = false, features = ["std"] }
+# The engineBuild digest tests include build_digest.rs, which hashes with sha2.
+sha2 = "0.10"
 
 [build-dependencies]
 napi-build = "2"
