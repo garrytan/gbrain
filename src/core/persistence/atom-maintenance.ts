@@ -42,6 +42,10 @@ export interface AtomOrigin {
   generation?: number;
   /** #6503: the model read only the first `partialInputChars` characters; the batch records a partial disposition, not a completion. */
   partialInputChars?: number;
+  /** GST-4061: the newest world withdrawal of the page's claims when the input was read; a later one is a new input. */
+  withdrawnAt?: string;
+  /** GST-4061: when the page's content was read; its completed scan is stamped at it, so a withdrawal during the model call counts. */
+  readAt?: string;
 }
 export interface ManagedAtomSession {
   sourceId: string;
@@ -201,7 +205,7 @@ export async function managedAtomSession(engine: BrainEngine, sourceId: string, 
 }
 
 export async function readAtomOrigin(engine: BrainEngine, session: ManagedAtomSession,
-  item: { kind: 'page'; slug: string; content: string; contentHash: string } | { kind: 'transcript'; filePath: string; content: string; contentHash: string }): Promise<AtomOrigin> {
+  item: { kind: 'page'; slug: string; content: string; contentHash: string; readAt?: string } | { kind: 'transcript'; filePath: string; content: string; contentHash: string }): Promise<AtomOrigin> {
   if (item.kind === 'transcript') {
     if (sha256(readFileSync(item.filePath)) !== sha256(item.content)) throw opError('source_changed', 'The atom transcript changed before extraction.',
       `The transcript was edited while source ${session.sourceId}'s atom extraction read it; nothing was extracted from it. Run the drain again to extract the current file.`,
@@ -216,8 +220,12 @@ export async function readAtomOrigin(engine: BrainEngine, session: ManagedAtomSe
       { fix: drainFix(session.sourceId) });
   }
   const generation = await atomGeneration(engine, snapshot.page.id, item.contentHash);
+  const [withdrawn] = await engine.executeRaw<{ at: string | null }>(
+    `SELECT to_json(max(withdrawn_at))#>>'{}' AS at FROM fact_withdrawals WHERE source_id=$1 AND visibility='world' AND subject IN ('*', $2)
+       AND ($3::timestamptz IS NULL OR withdrawn_at <= $3::timestamptz)`, [session.sourceId, item.slug, item.readAt ?? null]);
   return { kind: item.kind, locator: item.slug, contentHash: item.contentHash, textHash: sha256(item.content), pageId: snapshot.page.id,
-    revision: snapshot.revision, visibility: effectiveVisibility({ kind: 'page', page: await withFolderRestricted(engine, snapshot.page) }), ...(generation > 0 ? { generation } : {}) };
+    revision: snapshot.revision, visibility: effectiveVisibility({ kind: 'page', page: await withFolderRestricted(engine, snapshot.page) }), ...(generation > 0 ? { generation } : {}),
+    ...(withdrawn?.at ? { withdrawnAt: withdrawn.at } : {}), ...(item.readAt ? { readAt: item.readAt } : {}) };
 }
 
 export const ATOM_GENERATION_OP = 'managed-atoms-generation';
@@ -257,12 +265,13 @@ export async function bumpAtomGeneration(tx: BrainEngine, sourceId: string, inca
 /**
  * The atom input a run key covers. Revision and visibility are left out, so a
  * revision-only source change (a tag, a timeline row) is the same input for
- * the drain and for an explicit retry (#5699).
+ * the drain and for an explicit retry (#5699). GST-4061: a world withdrawal of the page's claims changes its canonical
+ * body without changing its hash, so the newest one is part of the input (only when there is one: older keys stay).
  */
 function atomInput(session: ManagedAtomSession, origin: AtomOrigin): unknown[] {
   // #6503: a cut item's run is keyed by the cap it was read under, so a raised cap is a new run (the partial checkpoint is released first).
   return ['managed-atoms-v1', session.incarnation, origin.kind, origin.locator, origin.pageId, origin.contentHash,
-    ...(origin.partialInputChars ? ['partial', origin.partialInputChars] : [])];
+    ...(origin.partialInputChars ? ['partial', origin.partialInputChars] : []), ...(origin.withdrawnAt ? ['withdrawn', origin.withdrawnAt] : [])];
 }
 
 /** A retirement's regeneration generation enters the drain's key above 0, so earlier receipts are not replayed. */
@@ -321,6 +330,8 @@ export interface ManagedAtomGeneration {
   approved?: { retire: string[]; retiredBy: DerivedRetiredBy; expect?: Record<string, string> };
   /** An operator release of the held row this result matches (gbrain repair generations --mode release-held). */
   release?: { holdId: string; reason: HeldReason };
+  /** GST-4061: the live generation the caller's decision was read from; another one refuses (generation_fenced). */
+  expectedGeneration?: number;
 }
 
 export type ManagedAtomPublication =
@@ -340,7 +351,7 @@ export async function publishManagedAtomGeneration(engine: BrainEngine, session:
   const claim = atomClaim(session, origin);
   const plan = await planManagedGeneration(engine, atomGenerationAdapter, { key: generation.key, items: atoms.map(atom => markdownItem(atom.slug, atom.content)),
     input: generation.approved ? undefined : originInput(origin, generation.content), partial: Boolean(origin.partialInputChars), context, runId: generation.runId,
-    approved: generation.approved, release: generation.release }, { retiredBy: ATOM_RETIRED_BY_REEXTRACT, scope: generation.approved ? null : claim.runKey, locator: generation.locator ?? (origin.kind === 'transcript' ? origin.locator : null) });
+    approved: generation.approved, release: generation.release, expectedGeneration: generation.expectedGeneration }, { retiredBy: ATOM_RETIRED_BY_REEXTRACT, scope: generation.approved ? null : claim.runKey, locator: generation.locator ?? (origin.kind === 'transcript' ? origin.locator : null) });
   if (plan.kind === 'held') return { state: 'held', reason: plan.outcome.reason, holdId: plan.outcome.holdId, receipts: [] };
   if (plan.kind === 'unchanged') return { state: 'unchanged', receipts: generation.approved ? [] : await publishManagedAtoms(engine, session, origin, []) };
   // #9079: a release is its own run; under the drain's key its completion collides with the drain's for this input.
@@ -796,13 +807,13 @@ export async function prepareManagedAtomMutation(engine: BrainEngine, row: Write
         // #6503: a partial batch stamps nothing; its checkpoint below carries the disposition.
         if (p.failure || !p.origin.partialInputChars) await writeAtomPageState(tx, row.source_id, { slug: p.origin.locator, content: snapshot.page.compiled_truth,
           contentHash: p.origin.contentHash, identity: { pageId: p.origin.pageId!, sourceIncarnation: row.source_incarnation,
-            revision: p.origin.revision! } }, p.failure ? 'failure' : 'complete');
+            revision: p.origin.revision! }, readAt: p.origin.readAt }, p.failure ? 'failure' : 'complete');
       }
       // #6325: one strike per completed failure of this content, counted on the checkpoint it advances.
       const prior = Array.isArray(p.expectedCheckpoint) ? p.expectedCheckpoint[0] as AtomCheckpoint | undefined : undefined;
       const attempts = p.attempts ?? (prior?.failure ? Number(prior.attempts ?? 1) : 0) + 1;
       const checkpoint = JSON.stringify([{ sourceId: row.source_id, incarnation: row.source_incarnation, requestId: row.request_id,
-        kind: p.origin.kind, locator: p.origin.locator, pageId: p.origin.pageId, contentHash: p.origin.contentHash,
+        kind: p.origin.kind, locator: p.origin.locator, pageId: p.origin.pageId, contentHash: p.origin.contentHash, withdrawnAt: p.origin.withdrawnAt ?? null,
         ...(p.failure ? { failure: p.failure, attempts, ...(attempts >= MAX_DETERMINISTIC_FAILURES ? { held: true } : {}) }
           : p.origin.partialInputChars ? { partial: p.origin.partialInputChars } : {}) }]);
       await tx.executeRaw(`INSERT INTO op_checkpoints(op,fingerprint,completed_keys) VALUES('managed-atoms',$1,$2::text::jsonb)
@@ -878,11 +889,17 @@ export function managedAtomCompletedSql(page: { sourceId: string; pageId: string
 /**
  * #6325: discovery and the backlog skip a page whose current content completed or is held after repeated failures.
  * #7391: given the current input cap, a partial checkpoint recorded below it (one `releasePartialDispositions` clears) is not skipped.
+ * GST-4061: a completion settles the page only while no world withdrawal of its claims (subject the page or '*') is newer
+ * than the newest one its run read (`withdrawnAt`, null when it read none), so a withdrawal recorded during the model call
+ * still counts; the content hash does not change. A checkpoint written before that key existed compares its write time.
  */
 export function managedAtomDiscoverySql(maxInputChars?: string): string {
   return `AND NOT EXISTS (SELECT 1 FROM op_checkpoints ac
   WHERE ${managedAtomIdentitySql({ sourceId: 'p.source_id', pageId: 'p.id', contentHash: 'p.content_hash' })}
-    AND (ac.completed_keys->0->>'failure' IS NULL OR ac.completed_keys->0->>'held'='true')${maxInputChars ? `
+    AND ((ac.completed_keys->0->>'failure' IS NULL AND NOT EXISTS (SELECT 1 FROM fact_withdrawals w WHERE w.source_id=p.source_id
+        AND w.visibility='world' AND w.subject IN ('*', p.slug) AND w.withdrawn_at > CASE WHEN ac.completed_keys->0->'withdrawnAt' IS NOT NULL
+          THEN COALESCE((ac.completed_keys->0->>'withdrawnAt')::timestamptz, '-infinity'::timestamptz) ELSE ac.updated_at END))
+      OR ac.completed_keys->0->>'held'='true')${maxInputChars ? `
     AND (ac.completed_keys->0->>'partial' IS NULL OR (ac.completed_keys->0->>'partial')::integer >= ${maxInputChars})` : ''})`;
 }
 

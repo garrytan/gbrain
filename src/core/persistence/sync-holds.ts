@@ -1427,31 +1427,32 @@ export function recoveredReport(sourceId: string, recovered: { count: number; sa
     why: `${recovered.count} file(s)${prefix ? ` under ${prefix}/` : ''} imported only after quoting unquoted frontmatter values: whatever writes them emits YAML other tools refuse. Fix the generator to quote values (or write through put_page); the preview shows the on-disk quoting fix.` } };
 }
 
-/** #6188: the cursor's running total of files whose fences Tier 1 rewrote (classes and top directories only). */
-export interface FencesTally { count: number; by_class: Record<string, number>; sample_paths: string[]; dirs: Record<string, number> }
+/** #6188: the cursor's running total of files whose fences Tier 1 rewrote; GST-4061 `database_only`: rewrites sync wrote to no file. */
+export interface FencesTally { count: number; by_class: Record<string, number>; sample_paths: string[]; dirs: Record<string, number>; database_only?: number }
 
-/** Folds one normalized file into the cursor's running total. */
-export function addFencesNormalized(previous: FencesTally | undefined, path: string, fixes: ReadonlyArray<{ class: string }>): FencesTally {
+/** Folds one normalized file into the cursor's running total; `databaseOnly` when sync wrote the rewrite to no file. */
+export function addFencesNormalized(previous: FencesTally | undefined, path: string, fixes: ReadonlyArray<{ class: string }>, databaseOnly = false): FencesTally {
   const byClass = { ...(previous?.by_class ?? {}) };
   for (const fix of fixes) byClass[fix.class] = (byClass[fix.class] ?? 0) + 1;
-  const dir = path.includes('/') ? `${path.split('/')[0]}/` : './';
+  const dir = path.includes('/') ? `${path.split('/')[0]}/` : './', stayed = (previous?.database_only ?? 0) + (databaseOnly ? 1 : 0);
   return { count: (previous?.count ?? 0) + 1, by_class: byClass, sample_paths: [...(previous?.sample_paths ?? []), path].slice(0, 5),
-    dirs: { ...(previous?.dirs ?? {}), [dir]: (previous?.dirs?.[dir] ?? 0) + 1 } };
+    dirs: { ...(previous?.dirs ?? {}), [dir]: (previous?.dirs?.[dir] ?? 0) + 1 }, ...(stayed ? { database_only: stayed } : {}) };
 }
 
 /**
- * The sync result's `fences_normalized` (D12): files rewritten and committed,
- * fixes per class, writers by top directory (a file has no receipt principal),
+ * The sync result's `fences_normalized` (D12): files rewritten (GST-4061: `database_only` ones sync wrote to no file
+ * are never called committed), fixes per class, writers by top directory (a file has no receipt principal),
  * and for trusted local callers sample paths and their common directory.
  */
 export function fencesNormalizedReport(sourceId: string, tally: FencesTally | undefined, remote: boolean): FencesNormalized | undefined {
   if (!tally?.count) return undefined;
   const prefix = commonPathPrefix(tally.sample_paths);
   const writers = Object.entries(tally.dirs).sort((a, b) => b[1] - a[1]).slice(0, 5).map(([writer, count]) => ({ writer, count }));
-  return { count: tally.count, by_class: tally.by_class as FencesNormalized['by_class'], writers,
+  const stayed = tally.database_only ?? 0, where = stayed === 0 ? 'and committed' : stayed === tally.count ? 'in the brain only (sync writes no file back to this checkout, so the files keep the malformed fence)' : `(${tally.count - stayed} committed, ${stayed} in the brain only because sync writes no file back to their checkout)`;
+  return { count: tally.count, by_class: tally.by_class as FencesNormalized['by_class'], writers, ...(stayed ? { database_only: stayed } : {}),
     ...(remote ? {} : { sample_paths: tally.sample_paths, common_prefix: prefix }),
     fix: { argv: ['gbrain', 'sources', 'status', sourceId, '--json'], consent: [], actor: 'agent', requires_exclusive: false,
-      why: `${tally.count} file(s)${!remote && prefix ? ` under ${prefix}/` : ''} had a malformed facts or takes fence that sync rewrote losslessly and committed (claims and existing row numbers unchanged); whatever writes them emits fences gbrain has to repair. ${STRUCTURED_WRITE_ADVICE} Re-read a normalized page before editing it.` } };
+      why: `${tally.count} file(s)${!remote && prefix ? ` under ${prefix}/` : ''} had a malformed facts or takes fence that sync rewrote losslessly ${where}, with claims and existing row numbers unchanged; whatever writes them emits fences gbrain has to repair. ${STRUCTURED_WRITE_ADVICE} Re-read a normalized page before editing it.` } };
 }
 
 /**

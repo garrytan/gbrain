@@ -97,6 +97,7 @@ test/concept-rename-history-gst2687.test.ts
 test/connector-replacement-retire.test.ts
 test/consolidate-fenced-close-reimport.test.ts
 test/consolidate-same-instant-6023.test.ts
+test/consolidate-undated-chain-gst4049.test.ts
 test/contact-rows-drift-8109.test.ts
 test/conversation-facts-keep-quiet-gst3170.test.ts
 test/conversation-facts-outcome-marker-purge-7778.test.ts
@@ -222,6 +223,7 @@ test/extract-atoms-concurrent-run-7923.test.ts
 test/extract-atoms-input-truncated-6503.test.ts
 test/extract-atoms-raised-cap-drain-7391.test.ts
 test/extract-atoms-scan-input-gst4020.test.ts
+test/extract-atoms-withdrawal-rename-gst4061.test.ts
 test/extract-atoms-world-fence-rows.test.ts
 test/extract-endpoint-revision.serial.test.ts
 test/extract-entities-managed.test.ts

@@ -396,9 +396,9 @@ src/core/cycle/dream-write-deferral.ts	execute_raw	4
 src/core/cycle/drift.ts	execute_raw	2
 src/core/cycle/edge-contradictions.ts	execute_raw	13
 src/core/cycle/edge-contradictions.ts	sql_template	1
-src/core/cycle/extract-atoms-generation.ts	execute_raw	4
+src/core/cycle/extract-atoms-generation.ts	execute_raw	5	GST-4061: a managed page's renamed-from slug lists its managed atoms for the approved retirement, beside the module's other generation reads
 src/core/cycle/extract-atoms-input.ts	execute_raw	6
-src/core/cycle/extract-atoms-page-state.ts	execute_raw	10	GST-4020: latest-scan read, atom inventory, reused-atom hash move, the locked origin re-read, the discovery read clock and renamed-origin read sit with the module's scan-state SQL until extract_atoms state moves behind engine methods
+src/core/cycle/extract-atoms-page-state.ts	execute_raw	12	GST-4020: latest-scan read, atom inventory, reused-atom hash move, the locked origin re-read, the discovery read clock and renamed-origin read sit with the module's scan-state SQL until extract_atoms state moves behind engine methods; GST-4061 adds the withdrawn-quote atom read and the withdrawal-since-read check
 src/core/cycle/extract-atoms-stamp.ts	execute_raw	1
 src/core/cycle/extract-atoms.ts	execute_raw	6
 src/core/cycle/extract-facts.ts	execute_raw	13
@@ -746,7 +746,7 @@ src/core/persistence/activation.ts	execute_raw	9
 src/core/persistence/admin-lock.ts	execute_raw	7
 src/core/persistence/administration.ts	execute_raw	8
 src/core/persistence/applied-watermark.ts	execute_raw	4
-src/core/persistence/atom-maintenance.ts	execute_raw	21
+src/core/persistence/atom-maintenance.ts	execute_raw	22	GST-4061: the managed atom origin reads the newest world withdrawal of the page's claims for its run key, beside the origin's generation read
 src/core/persistence/authority.ts	execute_raw	4
 src/core/persistence/blocking-effects.ts	execute_raw	2
 src/core/persistence/bounded-reads.ts	execute_raw	10
@@ -873,7 +873,7 @@ src/core/persistence/plain-directory-drift.ts	execute_raw	2	#8079: reads and rec
 src/core/persistence/pre-activation-release.ts	execute_raw	7
 src/core/persistence/preadmit-cache.ts	execute_raw	4
 src/core/persistence/preparation-budget.ts	execute_raw	1
-src/core/persistence/prepared-maintenance.ts	execute_raw	14	GST-3612: the think take preparer reads back the take row id its takes_add wrote (page_id, row_num) inside the publication transaction, as the consolidation preparer does, so the derivation lowers that take; no typed engine method reads one take by row yet
+src/core/persistence/prepared-maintenance.ts	execute_raw	15	GST-4049: the managed consolidation preparer reads its members' save times (created_at) to place undated facts in the valid_until chain. GST-3612: the think take preparer reads back the take row id its takes_add wrote (page_id, row_num) inside the publication transaction, as the consolidation preparer does, so the derivation lowers that take; no typed engine method reads one take by row yet
 src/core/persistence/preview-approval.ts	execute_raw	3
 src/core/persistence/protocol.ts	execute_raw	2
 src/core/persistence/provider.ts	execute_raw	1

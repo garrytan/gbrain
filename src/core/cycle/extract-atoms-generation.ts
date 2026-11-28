@@ -7,14 +7,16 @@ import { existsSync } from 'node:fs';
 import { relative, resolve, sep } from 'node:path';
 import type { BrainEngine, LinkBatchInput } from '../engine.ts';
 import { isAvailable } from '../ai/gateway.ts';
-import { ATOM_KIND, atomGenerationAdapter, atomOwnerKey, atomPagePin, TRANSCRIPT_KEY_PREFIX, type AtomGenerationContext } from '../generations/adapters/atoms.ts';
+import { ATOM_KIND, atomGenerationAdapter, atomOwnerKey, atomPagePin, readAtomInput, TRANSCRIPT_KEY_PREFIX, type AtomGenerationContext } from '../generations/adapters/atoms.ts';
+import { ATOM_RETIRED_BY_REEXTRACT, publishManagedAtomGeneration, type AtomOrigin, type ManagedAtomSession } from '../persistence/atom-maintenance.ts';
+import { ATOM_RETIRED_BY_EXTRACT, type DerivedRetiredBy } from '../persistence/derived-retirement-hold.ts';
 import { markdownItem } from '../generations/adapters/page.ts';
 import type { GenerationKey } from '../generations/contract.ts';
 import { publishGeneration } from '../generations/publish.ts';
 import { originGone } from '../generations/proofs.ts';
 import { throwIfAborted } from '../abort-check.ts';
 import type { ExtractAtomsItem } from './extract-atoms-input.ts';
-import { renamedOriginSlugs } from './extract-atoms-page-state.ts';
+import { renamedOriginSlugs, withdrawnQuoteAtoms } from './extract-atoms-page-state.ts';
 import { relativeEscapesRoot } from '../path-confine.ts';
 
 /**
@@ -42,20 +44,68 @@ export async function publishUnmanagedAtoms(engine: BrainEngine, sourceId: strin
  * moved it from (renamedOriginSlugs: only a generation this same page produced, by the page id its pin carries). The page
  * is gone from that slug, so the old key's input is gone (`originGone`); a page since created there is held and left
  * live. It runs before the page's own publication, so a stop between the two leaves nothing old live. Returns the
- * retired slugs.
+ * retired slugs. GST-4061: each retirement expects the generation it was read at, so a generation another writer
+ * published since refuses (generation_fenced) and the page stays offered; on a managed source (`managed`) the old
+ * generation's managed atoms retire through the managed writer, as an approved retirement bound to their identities.
  */
 export async function retireRenamedOriginAtoms(engine: BrainEngine, sourceId: string, item: { slug: string; identity?: { pageId: number } },
-  opts: { runId: string; originLabel: string; signal?: AbortSignal }): Promise<string[]> {
+  opts: { runId: string; originLabel: string; signal?: AbortSignal; managed?: { session: ManagedAtomSession; origin: AtomOrigin } }): Promise<string[]> {
   const retired: string[] = [];
   if (!item.identity) return retired;
-  for (const from of await renamedOriginSlugs(engine, sourceId, item.slug, item.identity.pageId)) {
+  for (const from of await renamedOriginSlugs(engine, sourceId, item.slug, item.identity.pageId, opts.managed !== undefined)) {
     throwIfAborted(opts.signal, 'extract_atoms');
-    const key: GenerationKey = { kind: ATOM_KIND, sourceId, ownerKey: atomOwnerKey({ kind: 'page', slug: from }) };
-    const outcome = await publishGeneration(engine, atomGenerationAdapter, { key, items: [], proof: originGone(), runId: opts.runId, context: { postCommit: [] } });
+    const key: GenerationKey = { kind: ATOM_KIND, sourceId, ownerKey: atomOwnerKey({ kind: 'page', slug: from.slug }) };
+    if (opts.managed) {
+      const slugs = (await engine.executeRaw<{ slug: string }>(`SELECT slug FROM pages WHERE source_id=$1 AND type='atom' AND deleted_at IS NULL
+        AND frontmatter->>'source_slug'=$2 AND frontmatter->>'managed_extraction'='true' ORDER BY slug`, [sourceId, from.slug])).map(row => row.slug);
+      retired.push(...await retireApprovedAtoms(engine, key, slugs, { retiredBy: ATOM_RETIRED_BY_REEXTRACT, runId: opts.runId, expectedGeneration: from.generation,
+        managed: { session: opts.managed.session, origin: { ...opts.managed.origin, locator: from.slug } } }));
+      continue;
+    }
+    const outcome = await publishGeneration(engine, atomGenerationAdapter, { key, items: [], proof: originGone(), runId: opts.runId,
+      expectedGeneration: from.generation, context: { postCommit: [] } });
     if (outcome.state === 'held') console.error(heldLine(opts.originLabel, key, outcome.reason));
     else retired.push(...outcome.retired);
   }
   return retired;
+}
+
+/**
+ * GST-4061: what an empty complete rescan of a page retires before its completion (GBRA-161 D4: an empty answer retires
+ * nothing on its own): atoms still named after a slug the page was renamed from, once the page is private (they carry
+ * the visibility it had then), and the page's own atoms whose verified quote a world withdrawal since its last scan took
+ * out of the input (withdrawnQuoteAtoms). Returns the retired slugs.
+ */
+export async function retireOnEmptyRescan(engine: BrainEngine, sourceId: string, item: Extract<ExtractAtomsItem, { kind: 'page' }>, promptContent: string,
+  visibility: string, opts: { runId: string; originLabel: string; signal?: AbortSignal; managed?: { session: ManagedAtomSession; origin: AtomOrigin } }): Promise<string[]> {
+  const retired = visibility === 'private' ? await retireRenamedOriginAtoms(engine, sourceId, item, opts) : [];
+  const quoted = await withdrawnQuoteAtoms(engine, sourceId, item, promptContent, opts.managed !== undefined);
+  retired.push(...await retireApprovedAtoms(engine, atomGenerationOrigin(sourceId, item).key, quoted,
+    { retiredBy: opts.managed ? ATOM_RETIRED_BY_REEXTRACT : ATOM_RETIRED_BY_EXTRACT, runId: opts.runId, managed: opts.managed }));
+  return retired;
+}
+
+/**
+ * GST-4061: retire exactly `slugs` from `key`'s live generation as an approved retirement (no floor or valve), each bound
+ * to the identity it has now; atoms that are not live items of the key are left alone. A managed source admits it
+ * through the managed writer (`managed`). `expectedGeneration` refuses a generation published since the caller read it
+ * (generation_fenced). Returns the retired slugs.
+ */
+export async function retireApprovedAtoms(engine: BrainEngine, key: GenerationKey, slugs: readonly string[],
+  opts: { retiredBy: DerivedRetiredBy; runId: string; expectedGeneration?: number; managed?: { session: ManagedAtomSession; origin: AtomOrigin } }): Promise<string[]> {
+  if (!slugs.length) return [];
+  const rows = await atomGenerationAdapter.readItems(engine, key, slugs);
+  const live = slugs.filter(slug => rows.get(slug)?.live);
+  if (!live.length) return [];
+  const approved = { retire: live, retiredBy: opts.retiredBy, expect: Object.fromEntries(live.map(slug => [slug, rows.get(slug)!.identityHash])) };
+  if (opts.managed) {
+    const outcome = await publishManagedAtomGeneration(engine, opts.managed.session, opts.managed.origin, [],
+      { key, content: null, approved, runId: opts.runId, expectedGeneration: opts.expectedGeneration });
+    return outcome.state === 'admitted' && outcome.receipts.every(receipt => receipt.state === 'committed') ? live : [];
+  }
+  const outcome = await publishGeneration(engine, atomGenerationAdapter, { key, items: [], input: await readAtomInput(engine, key), approved,
+    runId: opts.runId, expectedGeneration: opts.expectedGeneration, context: { postCommit: [] } });
+  return outcome.state === 'published' ? outcome.retired : [];
 }
 
 /** GBRA-161: the input pin an unmanaged item was read at (a page's is bound to its row and revision, see atomPagePin). */

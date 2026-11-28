@@ -15,6 +15,7 @@ import { privatePagesFilterFragment, privateProvenanceFilterFragment, remoteProv
 
 /** file, enclosing top-level declaration, fragment: why it stays plain. */
 const PLAIN: Record<string, string> = {
+  'src/core/cycle/extract-atoms-page-state.ts renamedPrivateReofferSql privatePagesFilterFragment': 'maintenance: extract_atoms discovery re-offers a page renamed into a private folder; never a remote read',
   'src/core/engine-sql/trust-tier-reads.ts listValidTimeIdentities privatePagesFilterFragment': 'the world flag of the page; the read itself is gated by privatePagesFilterForCaller',
   'src/core/engine-sql/link-temporal.ts readLinkRelationshipEvidence privatePagesFilterFragment': 'write-side: records whether a link origin is public',
   'src/core/engine-sql/belief-state.ts readBeliefStateRows privatePagesFilterFragment': 'the ledger and purge read the stored world visibility, not a caller view',

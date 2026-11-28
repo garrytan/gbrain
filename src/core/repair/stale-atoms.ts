@@ -121,6 +121,12 @@ async function staleAtoms(db: BrainEngine, sourceIds: string[], atomId?: number)
     origin_page_id: row.origin_page_id === null ? null : Number(row.origin_page_id), chars: Number(row.chars) }));
 }
 
+/** #8848: how many live atoms of these sources the preview would list, by class; doctor's atom_provenance_drift warns on these alone. */
+export async function countRetirableStaleAtoms(db: BrainEngine, sourceIds: string[]): Promise<Record<StaleAtomClass, number>> {
+  const atoms = await staleAtoms(db, sourceIds);
+  return { origin_gone: atoms.filter(atom => atom.class === 'origin_gone').length, origin_changed: atoms.filter(atom => atom.class === 'origin_changed').length };
+}
+
 function sameAtom(live: StaleAtom | undefined, approved: StaleAtom): boolean {
   return !!live && (['id', 'source_id', 'incarnation', 'slug', 'revision', 'class', 'managed', 'origin_slug', 'origin_page_id', 'origin_hash', 'evidence'] as const)
     .every(field => live[field] === approved[field]);

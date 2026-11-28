@@ -97,9 +97,9 @@ import { OperationError } from '../ops/contract.ts';
 import { isOpPageSlug } from '../ops/context.ts';
 import type { WriteReceipt } from '../persistence/types.ts';
 import { acceptedPendingReceipt } from '../persistence/accepted-pending.ts';
-import { AtomPageStateError, canonicalPageInputs, MAX_DETERMINISTIC_FAILURES, PAGE_ATOMS_CURRENT_EXCLUSION_SQL, readAtomPageIdentity, reuseUnchangedAtoms, scanStillCurrentSql, writeAtomPageState, type AtomPageInput } from './extract-atoms-page-state.ts';
+import { AtomPageStateError, canonicalPageInputs, MAX_DETERMINISTIC_FAILURES, PAGE_ATOMS_CURRENT_EXCLUSION_SQL, readAtomPageIdentity, renamedPrivateReofferSql, reuseUnchangedAtoms, scanStillCurrentSql, currentPageInput, writeAtomPageState, type AtomPageInput } from './extract-atoms-page-state.ts';
 import { heldRowsForCaller } from '../eligibility/fence-overlay.ts';
-import { atomGenerationOrigin, atomInputPin, heldAtomInputExclusionSql, heldLine, publishUnmanagedAtoms, resolveTranscriptAtomSlug, resolveTranscriptKeys, retireRenamedOriginAtoms, transcriptRoot } from './extract-atoms-generation.ts';
+import { atomGenerationOrigin, atomInputPin, heldAtomInputExclusionSql, heldLine, publishUnmanagedAtoms, resolveTranscriptAtomSlug, resolveTranscriptKeys, retireOnEmptyRescan, retireRenamedOriginAtoms, transcriptRoot } from './extract-atoms-generation.ts';
 import { currentHoldIds, heldForInput } from '../generations/publish.ts';
 import { ATOM_TYPES, ATOMS_RESPONSE_SCHEMA } from './extract-atoms-schema.ts';
 import { parseAtomsOutcome } from './extract-atoms-parse.ts';
@@ -431,13 +431,13 @@ export async function discoverExtractablePages(
       AND COALESCE(p.frontmatter->>'dream_generated', '') <> 'true'
       ${RAW_SOURCE_HOLDER_EXCLUSION_SQL}
       AND ${minCompiledTruthChars('$3')}
-      ${MANAGED_ATOM_DISCOVERY_SQL}
+      AND ((TRUE ${MANAGED_ATOM_DISCOVERY_SQL}
       ${PAGE_SCAN_STATE_EXCLUSION_SQL}
+      ${PAGE_ATOMS_CURRENT_EXCLUSION_SQL}) OR ${renamedPrivateReofferSql()})
       ${connectorExclusion}
       ${SOURCE_ATOM_OPT_OUT_SQL}
       ${heldAtomInputExclusionSql('$5')}
       ${hasFilter ? "AND p.slug = ANY($6::text[])" : ''}
-      ${PAGE_ATOMS_CURRENT_EXCLUSION_SQL}
     ORDER BY p.updated_at DESC
     LIMIT $4
   `;
@@ -502,6 +502,7 @@ export async function countExtractAtomsBacklog(
     const connectorExclusion = await connectorAtomExclusionSql(engine);
     const holdIds = await currentHoldIds(engine, 'atom');
     const sourcePolicy = opts.sourcePolicy === 'excluded' ? SOURCE_ATOM_OPTED_OUT_SQL : SOURCE_ATOM_OPT_OUT_SQL;
+    const renamed = renamedPrivateReofferSql();
     const sql = scoped
       ? `SELECT COUNT(*) AS cnt FROM pages p
          WHERE p.source_id = $1
@@ -512,12 +513,12 @@ export async function countExtractAtomsBacklog(
            AND COALESCE(p.frontmatter->>'dream_generated', '') <> 'true'
            ${RAW_SOURCE_HOLDER_EXCLUSION_SQL}
            AND ${minCompiledTruthChars('$3')}
-           ${managedAtomDiscoverySql('$4::integer')}
+           AND ((TRUE ${managedAtomDiscoverySql('$4::integer')}
            ${pageScanStateExclusionSql('$4::integer')}
+           ${PAGE_ATOMS_CURRENT_EXCLUSION_SQL}) OR ${renamed})
            ${connectorExclusion}
            ${sourcePolicy}
-           ${heldAtomInputExclusionSql('$5')}
-           ${PAGE_ATOMS_CURRENT_EXCLUSION_SQL}`
+           ${heldAtomInputExclusionSql('$5')}`
       : `SELECT COUNT(*) AS cnt FROM pages p
          WHERE p.type = ANY($1::text[])
            AND p.deleted_at IS NULL
@@ -526,12 +527,12 @@ export async function countExtractAtomsBacklog(
            AND COALESCE(p.frontmatter->>'dream_generated', '') <> 'true'
            ${RAW_SOURCE_HOLDER_EXCLUSION_SQL}
            AND ${minCompiledTruthChars('$2')}
-           ${managedAtomDiscoverySql('$3::integer')}
+           AND ((TRUE ${managedAtomDiscoverySql('$3::integer')}
            ${pageScanStateExclusionSql('$3::integer')}
+           ${PAGE_ATOMS_CURRENT_EXCLUSION_SQL}) OR ${renamed})
            ${connectorExclusion}
            ${sourcePolicy}
-           ${heldAtomInputExclusionSql('$4')}
-           ${PAGE_ATOMS_CURRENT_EXCLUSION_SQL}`;
+           ${heldAtomInputExclusionSql('$4')}`;
     const extractableTypes = await resolveExtractableTypes();
     const maxInputChars = await resolveExtractAtomsInputCap(engine);
     const params = scoped
@@ -1085,7 +1086,7 @@ export async function runPhaseExtractAtoms(
 
   let stoppedEarly = false;
   await withBudgetTracker(budgetTracker, async () => {
-  for (const item of work) {
+  for (let item of work) {
     if (opts.signal?.aborted || opts.stopSignal?.aborted) { stoppedEarly = true; break; }
     await maybeYield();
     if (budgetExhausted || budgetTracker.totalSpent >= budgetCap) {
@@ -1093,6 +1094,7 @@ export async function runPhaseExtractAtoms(
       else pagesSkipped++;
       continue;
     }
+    if (item.kind === 'page') { const current = await currentPageInput(engine, sourceId, item, opts); if (!current) continue; item = current; } // GST-4061
 
     const originLabel = item.kind === 'transcript' ? item.filePath : item.slug;
     // #4706: bind the cut ONCE. This is the exact text the model receives,
@@ -1177,12 +1179,12 @@ export async function runPhaseExtractAtoms(
         // row is (source_id, file_path, content_hash)-keyed, so editing the
         // file re-eligibilizes it — which is what makes the permanence safe.
         if (!opts.dryRun) {
+          // GST-4020, GST-4061: an empty result retires only what retireOnEmptyRescan names (GBRA-161 D4), before the completion.
+          const retired = item.kind === 'page' && !truncated ? await retireOnEmptyRescan(engine, sourceId, item, promptContent, visibility,
+            { runId, originLabel, signal: opts.signal, managed: managed && origin ? { session: managed, origin } : undefined }) : [];
           const published = managed && origin ? await publishManagedAtoms(engine, managed, origin, []) : [];
           writeRequests.push(...published);
-          // GST-4020: an empty result never retires the page's own atoms (GBRA-161 D4), but atoms that still name a slug
-          // the page was renamed from carry the visibility it had then; once the page is private they go.
-          const renamed = !origin && item.kind === 'page' && !truncated && visibility === 'private' ? await retireRenamedOriginAtoms(engine, sourceId, item, { runId, originLabel, signal: opts.signal }) : [];
-          if (renamed.length) await atomFiles?.write([], renamed);
+          if (retired.length && !origin) await atomFiles?.write([], retired);
           if (!origin && truncated) await recordPartialDisposition(engine, sourceId, item, maxInputChars);
           else if (!origin && item.kind === 'page') await stampAtomsScanHash(item, input.inputSha256);
           else if (!origin && item.kind === 'transcript') await stampTranscriptTombstone(engine, sourceId, item.filePath, item.contentHash);
@@ -1320,6 +1322,7 @@ export async function runPhaseExtractAtoms(
         if (managed && origin) {
           for (const atom of managedAtoms) atom.links = provenanceLinks.filter(link => link.to_slug === atom.slug);
           throwIfAborted(opts.signal, 'extract_atoms');
+          if (item.kind === 'page' && !truncated) await retireRenamedOriginAtoms(engine, sourceId, item, { runId, originLabel, signal: opts.signal, managed: { session: managed, origin } }); // GST-4061
           const generation = await publishManagedAtomGeneration(engine, managed, origin, managedAtoms, { ...atomGenerationOrigin(sourceId, item), content: item.content, runId });
           if (generation.state === 'held') { console.error(heldLine(originLabel, atomGenerationOrigin(sourceId, item).key, generation.reason)); continue; }
           const published = generation.receipts;
