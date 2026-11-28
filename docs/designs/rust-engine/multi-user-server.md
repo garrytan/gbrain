@@ -418,12 +418,60 @@ included), and nothing more until the hello is answered; at most 32 connections 
 | `idempotency_conflict` | | a `req` reused with other arguments | send a new request id |
 | `engine_capability_missing` | `served` | an operation that names a server path | run it on the server host |
 
+### Turning the mode on by the config row
+
+The store resolves multi-user mode at open from the switch or the brain's config row (I-0.v2), and the serve, the
+owner token and the listener read the store's answer. So a server can run with only the row:
+
+```bash
+gbrain config set engine.rust.multiuser true
+gbrain auth create laptop --rust-server-owner
+gbrain serve --rust-listen 127.0.0.1:4141
+```
+
+A client has no store of the brain, so it still turns the mode on with `GBRAIN_RUST_MULTIUSER=1`.
+`test/rust-served-config-row.test.ts` runs this path through the real CLI with the switch unset on the brain's machine.
+
+### Added latency
+
+`bun scripts/bench-rust-served.ts --samples 1000` on tip `016947c166`, Intel Xeon 6975P-C x8, Linux x64, Bun 1.4.5.
+Three arms run one call shape in a rotating order: the plain Rust engine (multi-user mode off), the multi-user engine
+that owns the brain (embedded), and a served client of it over loopback TLS. Loopback has no network delay, so the
+served numbers are the protocol's own cost, a floor for a remote client. All times are in milliseconds, as p50 / p99.
+
+| Shape | Plain | Multi-user embedded | Served | Loss: served against plain |
+|---|---:|---:|---:|---:|
+| `getPage` (small read) | 0.075 / 0.138 | 0.074 / 0.109 | 0.151 / 0.445 | 0.076 / 0.307 |
+| `putPage` (write) | 4.455 / 5.794 | 4.724 / 6.211 | 3.297 / 6.401 | -1.158 / 0.607 |
+| `listPages` limit 50 | 1.154 / 2.709 | 1.135 / 2.036 | 1.782 / 3.653 | 0.627 / 0.944 |
+| `putPage` ~256 KiB body | 5.207 / 5.626 | 5.774 / 6.344 | 8.031 / 10.036 | 2.823 / 4.410 |
+
+Losses against the plain Rust engine:
+
+- `getPage`: 0.076 ms at p50 and 0.307 ms at p99, all from the wire. The mode itself costs nothing measurable.
+- `putPage`: 0.607 ms at p99. Of that, the multi-user mode costs 0.269 ms at p50 and 0.416 ms at p99, and the wire
+  0.19 ms at p99. At p50 the served write was 1.158 ms faster than the plain one. That is not a gain the design
+  explains; it is not counted as one.
+- `listPages` limit 50: 0.627 ms at p50 and 0.944 ms at p99, from the wire (0.646 / 1.618 ms over the embedded
+  multi-user engine).
+- `putPage` with a 256 KiB body: 2.823 ms at p50 and 4.410 ms at p99. The mode costs 0.566 / 0.718 ms and the wire
+  2.257 / 3.692 ms. This is the largest loss: the body crosses TLS and the length-framed codec once each way.
+
+### Lane L3 heads and the integration branch
+
+On `rust-engine/multiuser` at `016947c166`: `ec2e155496`, `ca9ca98f09`, `d4ccf96261`, `33834eaa16`, `7d43c2fcc6`,
+`a324b3b5b7`, `fcfdf65625` and `bff3c0a42a`. Four accepted heads are not on it yet, and the trunk has each one queued:
+
+- `8b5ec3e374`: multi-writer conformance and the C18 server gap (round `e1a7151be7`).
+- `a7b0bc5758`: the served client's member-credential claim is checked before anything runs (first round after
+  the main merge `3c4584f384`).
+- `ca51d235a9`: decision R on the owner socket, multi-user mode only (first round on or after Dec 3, 2026).
+- `0adb191731`: the served parity set covers every file with a nonzero Rust tally pin (after `ca51d235a9`).
+
 ### Still pending
 
 - M2: the server derives each caller's scope in the store (lane L4); until its self-check passes, owner tokens only.
 - Positions on the optimistic store and C22 (lane L2); interactive transactions without the sub-switch (lane L1).
-- The brain config key `engine.rust.multiuser` is read by `rustMultiuserOnFor` but the owner's election uses the
-  environment switch only, so a server needs `GBRAIN_RUST_MULTIUSER=1` in its environment.
 
 ## M2: per-user access
 

@@ -1,9 +1,13 @@
 #!/usr/bin/env bun
 /**
  * Bench: what a served Rust brain (protocol v3 over loopback TLS, src/core/rust-engine/served/) adds to a call, against
- * the same call on the embedded engine that owns the brain. One process hosts both: an embedded RustEngine on a temp
- * brain, an owner token, a TLS listener on 127.0.0.1 with a throwaway self-signed certificate, and a second RustEngine
- * that is a served client of it. Each sample alternates embedded and served so a drifting machine hits both alike.
+ * the same call on the plain Rust engine (multi-user mode off) and on the embedded engine that owns the served brain
+ * (multi-user mode on). One process hosts all three: a plain RustEngine on its own temp brain, opened with
+ * GBRAIN_RUST_MULTIUSER unset; a multi-user RustEngine that owns a second temp brain, with an owner token and a TLS
+ * listener on 127.0.0.1 (a throwaway self-signed certificate); and a third RustEngine that is a served client of it.
+ * Each sample runs the three in a rotating order so a drifting machine hits them alike. Losses are reported at p50 and
+ * p99: the mode's (multi-user embedded minus plain), the wire's (served minus multi-user embedded) and the total
+ * (served minus plain).
  *
  *   bun scripts/bench-rust-served.ts [--samples 1000] [--out /var/tmp/l3/bench-served.json]
  *
@@ -42,6 +46,7 @@ if (!existsSync(addonPath)) {
 }
 
 // The owner's election reads this before it opens (the operator-env preload drops GBRAIN_ switches, so set it here).
+// The plain engine opens with it unset (openPlain), and the store keeps the mode it resolved at open.
 process.env.GBRAIN_RUST_MULTIUSER = '1';
 
 const pct = (sorted: number[], p: number): number => sorted[Math.min(sorted.length - 1, Math.max(0, Math.ceil(p * sorted.length) - 1))]!;
@@ -59,8 +64,21 @@ const shapes: Shape[] = [
   { name: 'putPage ~256 KiB body', run: (e, i) => e.putPage('bench/large', { type: 'note', title: 'Large', compiled_truth: LARGE_BODY, frontmatter: { n: i } } as never) },
 ];
 
+type Arm = 'plain' | 'embedded' | 'served';
+
+/** Opens a RustEngine on `dir` with multi-user mode off: the switch is unset for the open only. */
+async function openPlain(addon: Awaited<ReturnType<typeof loadRustAddon>>, dir: string): Promise<RustEngine> {
+  const engine = openRustEngine({ addon, databasePath: dir });
+  delete process.env.GBRAIN_RUST_MULTIUSER;
+  try { await engine.connect({ engine: 'pglite', database_path: dir } as never); } finally { process.env.GBRAIN_RUST_MULTIUSER = '1'; }
+  if (engine.multiuser) throw new Error('the plain engine opened in multi-user mode');
+  return engine;
+}
+
 async function main(): Promise<void> {
   const dir = mkdtempSync(join(tmpdir(), 'gbrain-bench-served-'));
+  const plainDir = mkdtempSync(join(tmpdir(), 'gbrain-bench-plain-'));
+  let plain: RustEngine | undefined;
   const tlsDir = mkdtempSync(join(tmpdir(), 'gbrain-bench-served-tls-'));
   let owner: RustEngine | undefined;
   let client: RustEngine | undefined;
@@ -72,8 +90,10 @@ async function main(): Promise<void> {
     const tls = { cert: readFileSync(join(tlsDir, 'cert.pem')), key: readFileSync(join(tlsDir, 'key.pem')) };
 
     const addon = await loadRustAddon({ env: { GBRAIN_RUST_ENGINE_ADDON: addonPath } });
+    plain = await openPlain(addon, plainDir);
     owner = openRustEngine({ addon, databasePath: dir });
     await owner.connect({ engine: 'pglite', database_path: dir } as never);
+    if (!owner.multiuser) throw new Error('the owner did not open in multi-user mode');
     const server = owner.ownerServer();
     if (!server?.attachServed) throw new Error('the Rust owner did not start with protocol v3 (is GBRAIN_RUST_MULTIUSER on?)');
     const { token } = await mintOwnerServerToken(owner as unknown as BrainEngine, 'bench-served');
@@ -82,30 +102,33 @@ async function main(): Promise<void> {
     await client.connect({ engine: 'rust', database_path: dir } as never);
 
     // Seed pages through the owner: enough for listPages to return a full 50, and one to read.
-    for (let i = 0; i < 120; i++) await owner.putPage(`bench/seed-${i}`, smallPage(i) as never);
+    for (let i = 0; i < 120; i++) { await owner.putPage(`bench/seed-${i}`, smallPage(i) as never); await plain.putPage(`bench/seed-${i}`, smallPage(i) as never); }
+    const arms: Array<[Arm, RustEngine]> = [['plain', plain], ['embedded', owner], ['served', client]];
 
     const results: Array<Record<string, unknown>> = [];
     for (const shape of shapes) {
       const n = shape.samples ?? samples;
       // Warm both paths (connection, caches, JIT) before measuring.
-      for (let i = 0; i < 20; i++) { await shape.run(owner, i); await shape.run(client, i); }
-      const embedded: number[] = []; const served: number[] = [];
+      for (let i = 0; i < 20; i++) for (const [, engine] of arms) await shape.run(engine, i);
+      const times: Record<Arm, number[]> = { plain: [], embedded: [], served: [] };
       for (let i = 0; i < n; i++) {
-        // Alternate which side goes first, so neither always follows the other's cache state.
-        const order = i % 2 === 0 ? [owner, client] : [client, owner];
-        for (const engine of order) {
+        // Rotate which arm goes first, so none always follows another's cache state.
+        for (let k = 0; k < arms.length; k++) {
+          const [arm, engine] = arms[(i + k) % arms.length]!;
           const t0 = performance.now();
           await shape.run(engine, i);
-          (engine === owner ? embedded : served).push(performance.now() - t0);
+          times[arm].push(performance.now() - t0);
         }
       }
-      embedded.sort((a, b) => a - b); served.sort((a, b) => a - b);
-      const row = {
-        shape: shape.name, samples: n,
-        embedded_p50_ms: round(pct(embedded, 0.5)), embedded_p95_ms: round(pct(embedded, 0.95)),
-        served_p50_ms: round(pct(served, 0.5)), served_p95_ms: round(pct(served, 0.95)),
-        added_p50_ms: round(pct(served, 0.5) - pct(embedded, 0.5)), added_p95_ms: round(pct(served, 0.95) - pct(embedded, 0.95)),
-      };
+      for (const arm of Object.keys(times) as Arm[]) times[arm].sort((a, b) => a - b);
+      const at = (arm: Arm, p: number) => pct(times[arm], p);
+      const row: Record<string, unknown> = { shape: shape.name, samples: n };
+      for (const [p, key] of [[0.5, 'p50'], [0.95, 'p95'], [0.99, 'p99']] as const) {
+        for (const arm of Object.keys(times) as Arm[]) row[`${arm}_${key}_ms`] = round(at(arm, p));
+        row[`mode_loss_${key}_ms`] = round(at('embedded', p) - at('plain', p));
+        row[`wire_loss_${key}_ms`] = round(at('served', p) - at('embedded', p));
+        row[`total_loss_${key}_ms`] = round(at('served', p) - at('plain', p));
+      }
       results.push(row);
     }
 
@@ -118,12 +141,12 @@ async function main(): Promise<void> {
     writeFileSync(outPath, `${JSON.stringify(out, null, 2)}\n`);
 
     const lines = [
-      `Served vs embedded Rust brain, ${samples} samples per shape (interleaved), loopback TLS.`,
+      `Plain Rust (mode off), multi-user embedded and served Rust brain, ${samples} samples per shape (rotating order), loopback TLS.`,
       `Machine: ${machine.cpu_model} x${machine.cpu_count}, ${machine.os}, Bun ${machine.bun}.`,
       '',
-      '| Shape | Embedded p50 | Embedded p95 | Served p50 | Served p95 | Added p50 | Added p95 |',
+      '| Shape | Plain p50 / p99 | Multi-user embedded p50 / p99 | Served p50 / p99 | Mode loss p50 / p99 | Wire loss p50 / p99 | Total loss p50 / p99 |',
       '|---|---:|---:|---:|---:|---:|---:|',
-      ...results.map(r => `| ${r.shape} | ${r.embedded_p50_ms} ms | ${r.embedded_p95_ms} ms | ${r.served_p50_ms} ms | ${r.served_p95_ms} ms | ${r.added_p50_ms} ms | ${r.added_p95_ms} ms |`),
+      ...results.map(r => `| ${r.shape} | ${r.plain_p50_ms} / ${r.plain_p99_ms} ms | ${r.embedded_p50_ms} / ${r.embedded_p99_ms} ms | ${r.served_p50_ms} / ${r.served_p99_ms} ms | ${r.mode_loss_p50_ms} / ${r.mode_loss_p99_ms} ms | ${r.wire_loss_p50_ms} / ${r.wire_loss_p99_ms} ms | ${r.total_loss_p50_ms} / ${r.total_loss_p99_ms} ms |`),
       '',
       `JSON: ${outPath}`,
     ];
@@ -132,7 +155,10 @@ async function main(): Promise<void> {
     try { await client?.disconnect(); } catch { /* closing anyway */ }
     try { await listener?.close(); } catch { /* closing anyway */ }
     try { await owner?.disconnect(); } catch { /* closing anyway */ }
+    try { await plain?.disconnect(); } catch { /* closing anyway */ }
     rmSync(dir, { recursive: true, force: true });
+    rmSync(plainDir, { recursive: true, force: true });
+    rmSync(`${plainDir}.gbrain-owner.lock`, { force: true });
     rmSync(`${dir}.gbrain-owner.lock`, { force: true }); // the owner lock the engine keeps beside the brain folder
     rmSync(tlsDir, { recursive: true, force: true });
   }

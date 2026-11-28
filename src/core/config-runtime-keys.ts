@@ -6,6 +6,7 @@
  * recorded as internal state.
  */
 export const RUNTIME_READER_CONFIG_KEYS: readonly string[] = [
+  'engine.rust.multiuser', // rust-engine/multiuser-switch.ts (I-0): the brain's own multi-user Rust switch, true or 1 = on, read by the store at open; default off
   'apple.helper.port', // imessage/imessage-source.ts: the GBrain Helper's loopback port an imessage source reads (set by setup; no default)
   'dedupe.exa', 'dedupe.exa_run_cap', 'dedupe.exa_total_cap_usd', // entities/evidence/exa.ts (GST-3609): web search for gbrain dedupe classes/sample --exa, off unless on and EXA_API_KEY is set; queries per run, default 2000; total spend cap in USD, default 25
   'google_contacts.identity_links', // google/contact-identity.ts (GST-3609): on = each Google sync links the contacts it changed by exact email or phone; set by gbrain dedupe link-contacts --apply / --unlink, default off

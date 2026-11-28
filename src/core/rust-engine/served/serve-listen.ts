@@ -51,7 +51,7 @@ export async function startRustListen(engine: BrainEngine, args: readonly string
   if (!value || value.startsWith('--')) throw opError('invalid_params', '--rust-listen needs <host>:<port>.', 'Pass --rust-listen 127.0.0.1:4141 (or a TLS address with GBRAIN_RUST_SERVER_TLS_CERT and _KEY).');
   const store = (engine as unknown as { openStoreIfOpen?: (m: string) => object | null }).openStoreIfOpen?.('rustListen');
   if (!storeMode(store).multiuser) {
-    throw opError('engine_capability_missing', 'gbrain serve --rust-listen needs multi-user Rust, which is off.', 'Set GBRAIN_RUST_MULTIUSER=1 and start gbrain serve again.', { reason: 'served' });
+    throw opError('engine_capability_missing', 'gbrain serve --rust-listen needs multi-user Rust, which is off.', 'Set GBRAIN_RUST_MULTIUSER=1, or run gbrain config set engine.rust.multiuser true, and start gbrain serve again.', { reason: 'served' });
   }
   const owner = engine.kind === 'rust' ? (engine as unknown as { ownerServer?: () => OwnerEngineServer | null }).ownerServer?.() ?? null : null;
   if (!owner) {
