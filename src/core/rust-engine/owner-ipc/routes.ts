@@ -166,6 +166,10 @@ export const OWNER_IPC_REMOTE_TYPED_READS: readonly string[] = [
   // excludePrivate), and a record continuation of get_backlinks reads its referrers' amends and supersedes links and page status.
   // Both operations also need members no group serves yet (readReferrerGroupRows, readReferrerTypes), so the proof calls the loaders.
   'listRelationshipNoteRows', 'listRecordMetadataRows',
+  // served-remote-g1-household-members: a remote household_due reads the member each stored reader names (readAccessMembers by id only;
+  // served/remote-member-policy.ts refuses the list and email forms). The operation also needs listActiveAccessMembers (brainServes),
+  // which no group serves yet.
+  'readAccessMembers',
 ];
 
 /**

@@ -11,8 +11,11 @@
  * id to its page and checks it against the caller's read scope (persistence/page-visibility.ts remotePageAccess, under the
  * caller's access record and remote mark, which the served session set for this call). One id that names no page the
  * caller may read refuses the whole call with `permission_denied`, and nothing is stamped. The same page-id pre-check guards
- * the reads keyed by page ids the client chose (PAGE_ID_GUARDS), with reason `read_out_of_scope`. A local caller's call,
- * and every member off the table, runs unchanged.
+ * the reads keyed by page ids the client chose (PAGE_ID_GUARDS), with reason `read_out_of_scope`.
+ *
+ * Two members answer by their output or their lookup form, not by page ids: `nextLivePageAfter` (served/remote-scan-guard.ts) steps
+ * past pages the caller may not read, and `readAccessMembers` answers one member by id and refuses the list and email forms, which
+ * would hand a remote caller the member directory. A local caller's call, and every member off the table, runs unchanged.
  */
 import { opError } from '../../ops/contract.ts';
 import { isRemoteCaller } from '../../remote-caller.ts';
@@ -51,6 +54,7 @@ export function remoteMemberPolicy(engine: object, member: string, method: Membe
   const plain: Member = (...args) => method.apply(engine, args);
   // Output-aware guards (served/remote-scan-guard.ts): the answer, not the arguments, is checked.
   if (member === 'nextLivePageAfter') return (...args) => (isRemoteCaller() ? nextReadablePage(engine, plain)(...args) : plain(...args));
+  if (member === 'readAccessMembers') return async (...args) => (isRemoteCaller() && !byMemberId(args[0]) ? Promise.reject(directoryRefused()) : plain(...args));
   const guard = Object.hasOwn(PAGE_ID_GUARDS, member) ? PAGE_ID_GUARDS[member]! : undefined;
   if (!guard) return plain;
   return async (...args) => {
@@ -68,6 +72,16 @@ export function remoteMemberPolicy(engine: object, member: string, method: Membe
     if (outside > 0) throw refused(member, guard, ids.length, `${outside} of the ids name no page the caller may read`);
     return plain(...args);
   };
+}
+
+/** The one lookup form a remote caller may make of the member table: one member by id (household placement reads the member each stored reader names). */
+const byMemberId = (by: unknown): boolean => typeof by === 'object' && by !== null && typeof (by as { id?: unknown }).id === 'string'
+  && !('email' in by) && !('includeRemoved' in by);
+
+function directoryRefused(): Error {
+  return opError('permission_denied', 'The member directory read was refused: a remote caller reads one member by id, never the list or an email lookup, so nothing was read.',
+    'A remote caller names a member id; this is a client bug if it repeats.',
+    { reason: 'member_directory_out_of_scope', retryable: false, detail: 'member=readAccessMembers via=served form=list_or_email read=nothing' });
 }
 
 function refused(member: string, guard: PageIdGuard, count: number, why: string): Error {
