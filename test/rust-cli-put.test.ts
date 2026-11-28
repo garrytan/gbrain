@@ -134,10 +134,13 @@ function putThenGet(arm: Arm, token: string): Outcome {
 
 describe('gbrain put on a brain with no managed persistence', () => {
   const token = randomUUID().slice(0, 8);
-  let pglite: Outcome;
+  // The PGLite answers are the baseline of every arm, computed once by whichever test asks first, so a run filtered to
+  // one engine arm (bun test -t 'Rust:') compares against the real baseline, not an unset variable.
+  let baseline: Outcome | undefined;
+  const pgliteBaseline = (): Outcome => (baseline ??= putThenGet('pglite', token));
 
   test('PGLite: the puts commit and the pages read back', () => {
-    pglite = putThenGet('pglite', token);
+    const pglite = pgliteBaseline();
     for (const put of pglite.puts) expect(put).toMatchObject({ state: 'committed', status: 'created_or_updated', persistence: { mode: 'database' } });
     expect(pglite.gets[0]).toMatchObject({ slug: 'notes/put-parity-TOKEN', title: 'Put parity' });
     expect(pglite.gets[1]).toMatchObject({ slug: 'notes/put-parity-TOKEN-two', title: 'Second page' });
@@ -147,10 +150,12 @@ describe('gbrain put on a brain with no managed persistence', () => {
   }, 240_000);
 
   test.skipIf(!DATABASE_URL)('Postgres: the same answers and the same stored pages as PGLite', () => {
+    const pglite = pgliteBaseline();
     expect(putThenGet('postgres', token)).toEqual(pglite);
   }, 240_000);
 
   test.skipIf(!HAVE_ADDON)('Rust: the same answers and the same stored pages as PGLite', () => {
+    const pglite = pgliteBaseline();
     expect(putThenGet('rust', token)).toEqual(pglite);
   }, 240_000);
 });
