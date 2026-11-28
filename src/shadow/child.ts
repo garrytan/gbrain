@@ -403,7 +403,8 @@ export async function runShadowChild(shadowDir: string, deps: ShadowChildDeps): 
 
   // Write comparisons (write-compare.ts): sampled page and link writes replayed on a scratch store, counted under the current epoch.
   const session = deps.session ?? process.env.GBRAIN_SHADOW_SESSION ?? '';
-  const writes = createWriteComparer({ dir: shadowDir, load, tally: new WriteTally(shadowDir, curEpoch, () => !deleted(), process.pid, session, now), alive: () => !deleted(), openEngine: deps.openEngine, onError: recordRustError });
+  // The tally saves once per event-loop turn, not once per sample, so the child keeps up with a burst of write samples.
+  const writes = createWriteComparer({ dir: shadowDir, load, tally: new WriteTally(shadowDir, curEpoch, () => !deleted(), process.pid, session, now, (save) => { setImmediate(save); }), alive: () => !deleted(), openEngine: deps.openEngine, onError: recordRustError });
   const ask = createAsker(deps.writeControl, session);
   // A client child's (or a retired one's) lost lines are written on the same 2 s beat, never one durable write per verdict.
   const lineFlusher = setInterval(() => { try { writes.flush(); } catch { /* the lines stay held; the next beat tries again */ } }, deps.flushMs ?? 2_000);

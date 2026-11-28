@@ -164,6 +164,30 @@ describe('the locked write tally', () => {
     expect(status(dir).unresolved_replays).toBeUndefined(); // the first epoch is retired: its lost line is not this epoch's
   });
 
+  test('a tally with deferred saves saves the outcomes noted in one turn once, a save() or a pipe loss saves at once, and a replay\'s mark ends only with that save', () => {
+    const dir = tmp();
+    const { epoch } = tallyOn(dir);
+    const queued: Array<() => void> = [];
+    const tally = new WriteTally(dir, () => epoch, () => true, process.pid, 'session-a', Date.now, (save) => { queued.push(save); });
+    const counts = () => readWriteTally(dir, epoch);
+    expect(tally.begin()).toBe(true); // the mark is saved at once: no replay runs before it is durable
+    tally.note('comparable', undefined, 1, true, 1);
+    tally.note('capability_missing', 'tags', 1, false, 1);
+    tally.note('uncomparable', 'no_sample', 1, false, 1);
+    expect(queued.length).toBe(1); // one save asked for, however many outcomes
+    expect(counts()).toMatchObject({ comparable: 0, in_flight: [process.pid] }); // nothing saved yet: the mark still stands, so a death now reads as unexplained, never a pass
+    queued.shift()!();
+    expect(counts()).toMatchObject({ comparable: 1, capability_missing: 1, uncomparable: 1, in_flight: [] });
+    expect(readWriteTally(dir, epoch)?.settled?.[sessionKey('session-a')]).toBe(3);
+    tally.note('comparable');
+    expect(tally.save()).toBe(true); // the end of the input saves what is still waiting
+    expect(counts()?.comparable).toBe(2);
+    tally.missing(3, 1); // a pipe loss is booked at once, not on the next turn
+    expect(counts()).toMatchObject({ uncomparable_by_reason: { no_sample: 1, pipe_unflushed: 2 }, capability_missing_by_family: { tags: 1, pipe_unflushed_nonqualifying: 1 } });
+    for (const save of queued.splice(0)) save(); // the saves still asked for find nothing left to add
+    expect(counts()).toMatchObject({ comparable: 2, capability_missing: 2, uncomparable: 3 });
+  });
+
   test('two children: a mismatch the second saves is never lost when the first saves late, and neither clears the other\'s mark', () => {
     const dir = tmp();
     const a = tallyOn(dir, process.pid); const b = tallyOn(dir, OTHER);
