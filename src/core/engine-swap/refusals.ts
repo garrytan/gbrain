@@ -114,7 +114,7 @@ export function refreshUnsettledError(rows: readonly UnsettledRefresh[]): Operat
 export function managedStorageError(cause: 'multiuser' | 'unsupported' = 'unsupported'): OperationError {
   const row = SWAP_RECOVERY.managed_storage;
   const held = cause === 'multiuser'
-    ? 'The Rust engine holds managed storage on one host only, and multi-user mode (GBRAIN_RUST_MULTIUSER) is on'
+    ? "The Rust engine holds managed storage on one host only, and multi-user mode is on (GBRAIN_RUST_MULTIUSER=1 or the brain's engine.rust.multiuser row)"
     : 'This build of the Rust engine does not hold managed storage';
   const why = `This brain uses managed storage (persistence_brain.enabled is true). ${held}, so the cutover could not carry it and would fail after writes are fenced. The swap refuses now, before anything is read or written.`;
   return opError('engine_swap_refused', `The swap is refused: this brain uses managed storage, which the Rust engine does not support ${cause === 'multiuser' ? 'in multi-user mode' : 'in this build'}.`,

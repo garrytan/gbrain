@@ -108,6 +108,8 @@ describe(`engine swap refuses a managed brain only where Rust cannot hold it (${
     expect(env.fix.verify.argv).toEqual(['gbrain', 'engine', 'swap', '--to', 'rust', '--plan', '--json']);
     expect(String(env.fix.user_message)).toContain('managed storage');
     expect(String(env.fix.user_message)).toContain('in multi-user mode');
+    // One switch answer: multi-user mode is on by either route, so the reason names both.
+    expect(String(env.why)).toContain("multi-user mode is on (GBRAIN_RUST_MULTIUSER=1 or the brain's engine.rust.multiuser row)");
     expect(String(env.detail)).toContain('The current engine keeps authority; nothing was written.');
     expect(await persistenceSnapshot(engine)).toBe(before);
   });
