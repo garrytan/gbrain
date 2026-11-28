@@ -242,6 +242,10 @@ can reach.
   prints the result). Call `pool.shutdown(waitMs)` or `process.exit()` to leave early.
 - `new Pool(workers)` starts 1 to 256 threads. If the system refuses a thread, it throws
   `internal_error` and stops the threads it started.
+- `new Pool(workers, readWorkers)` adds 0 to 8 threads that take only calls made through a
+  `brain.withReadLane()` handle. Those calls wait in their own queue, so a read does not wait behind
+  writes that hold every general thread. A general thread takes a waiting general call before a
+  waiting read. The store opens `new Pool(4, 2)` and sends only calls that write nothing there.
 - The callback queue (`Sink`) holds 4 values. That size is fixed at compile time by napi-rs.
 - `rust/bench/` is a separate workspace and is not part of this one.
 - gbrain's addon loader (`src/core/rust-engine/addon-loader.ts`) uses `GBRAIN_RUST_ENGINE_ADDON`
