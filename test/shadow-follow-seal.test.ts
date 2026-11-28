@@ -9,11 +9,12 @@
  * writer or coverage gap recorded after the mark, an unreadable mark or follower.json, a broken hook, a failed read.
  * Regression it catches: a restart trusted on its own word. The real-database path: test/e2e/shadow-serve-short-sessions.test.ts.
  */
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { FollowChild, noteLostWrite, type FollowStore } from '../src/shadow/follow-child.ts';
+import * as followStatus from '../src/shadow/follow-status.ts';
 import { appendPass, buildFollowStatus, readFollowerFile, readPasses } from '../src/shadow/follow-status.ts';
 import type { ReadSource } from '../src/shadow/read-pool.ts';
 import { ShadowFollower } from '../src/shadow/follower.ts';
@@ -111,6 +112,35 @@ describe('a sealed close', () => {
     const s = next(dir);
     expect(await s.ask('confirmSeal', { db_at: 'mark-1', ok: true })).toMatchObject({ valid: false, confirmed: true });
     expect(await s.ask('watermark', { valid: true, since: 6_000, relations: ['tags'] })).toMatchObject({ valid: true });
+  });
+
+  test('taking a seal over writes the provisional invalid watermark in the same first write that consumes the seal: on disk before any call or close', async () => {
+    const { dir } = await sealed();
+    expect(readFollowerFile(dir)!.watermark.valid).toBe(true);
+    next(dir); // constructed only: no call, no close (a process killed here leaves exactly this on disk)
+    const disk = readFollowerFile(dir)!;
+    expect(disk.seal).toBeUndefined();
+    expect(disk.watermark).toMatchObject({ valid: false, invalidated_reason: 'follower_session_start' });
+    expect(disk.seal_outcome).toMatchObject({ outcome: 'taken', reason: null });
+    expect(buildFollowStatus(dir, STATE, new Date(5_500)).follower.coverage_watermark.valid).toBe(false);
+  });
+
+  test('a failed first write never freshens the valid file, and leaves a blocker so a later session cannot take the seal it could not remove', async () => {
+    const { dir, continuity } = await sealed();
+    const before = readFollowerFile(dir)!;
+    let failed = 0;
+    // Every write of the taking session fails (a full disk), then it dies before any other write.
+    const spy = spyOn(followStatus, 'writeFollowerFile').mockImplementation(() => { failed++; throw Object.assign(new Error('no space'), { code: 'ENOSPC' }); });
+    try { next(dir); } finally { spy.mockRestore(); }
+    expect(failed).toBe(2); // the injected failure fired: the consuming write, then the refusal's write
+    const disk = readFollowerFile(dir)!;
+    expect(disk.updated_at).toBe(before.updated_at); // not freshened
+    expect(disk.seal).toBeDefined(); // the seal could not be removed
+    // The session that failed died without another write; the next one must not take the seal over.
+    const later = next(dir);
+    expect(readFollowerFile(dir)!.seal_outcome).toMatchObject({ outcome: 'refused' });
+    await refused(later, continuity);
+    expect(sealShown(dir)).toMatchObject({ outcome: 'refused', reason: 'invalidation_after_seal' });
   });
 
   test('unconfirmed, the session\'s own full obligation is settled only by a full pass that started after the session', async () => {
