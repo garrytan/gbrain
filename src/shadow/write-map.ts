@@ -137,6 +137,10 @@ export const WRITE_MAP: Record<string, WriteSpec> = {
   replaceDerivedLinks: { tables: ['links', 'wanted_links', 'pages', 'link_relationships', 'link_transitions'], plan: (a) => [...derivedLinks(a[0]), ...LINK_STATE] },
   replaceDerivedLinksBatch: { tables: ['links', 'wanted_links', 'pages', 'link_relationships', 'link_transitions'], plan: (a) => [...each<any>(a[0], (item) => derivedLinks(item.origin)), ...LINK_STATE] },
   replaceWantedLinkRows: { tables: ['wanted_links'], plan: (a) => [{ relation: 'wanted_links', sel: { origin_page_id: id(a[0]?.pageId) }, del: true }] },
+  // remove_link's manual dated statements of the removed relationship (link-temporal-apply.ts removeManualTransitions): link_transitions only, which the
+  // write comparison does not read. It was the raw DELETE the SQL parser mapped to this relation; unmapped, every remove_link published `invalid`, which
+  // counted as another writer's page or link write and marked its own removeLink sample moved.
+  removeManualLinkTransitions: { tables: ['link_transitions'] },
   // Timeline
   addTimelineEntry: { tables: ['timeline_entries'], plan: (a) => [child('timeline_entries', a[0], a[2]?.sourceId)] },
   addTimelineEntriesBatch: { tables: ['timeline_entries'], plan: (a) => each<any>(a[0], (e) => [child('timeline_entries', e.slug, e.source_id)]) },
@@ -404,7 +408,7 @@ export const UNMAPPED_WRITE_MEMBERS: ReadonlySet<string> = new Set([
   'releaseBeliefRedactions', 'releaseDeferredReplacementClaim', 'releaseDrainLeaseHolder', 'releaseNotifierLease',
   'releasePageEmbeddingLease', 'releasePurgeRedactionsForField', 'releaseSegmentedProjectionClaim',
   'releaseClaimForPause', 'releaseUnpublishedClaim', 'releaseWatchdogClaim', 'removeAccessGroupMembers', 'removeLoopSuppression',
-  'removeManualLinkTransitions', 'removePageFrontmatterKeys', 'removeWakeCron', 'renameBeliefLifetime', 'renewConsumerRow',
+  'removePageFrontmatterKeys', 'removeWakeCron', 'renameBeliefLifetime', 'renewConsumerRow',
   'renewDeferredReplacementClaim', 'renewEffectClaim', 'renewJobLease', 'renewPageEmbeddingLease',
   'renewPrivateQueueLease', 'renewSegmentedProjectionClaim', 'renewWriteClaim', 'replaceAccessInvalidCoverage',
   'replaceGitHoldRow', 'replaceSearchVectorTriggerFunction', 'replaceSourceConfig', 'replaceVersionChangeReasons',
