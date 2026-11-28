@@ -188,6 +188,31 @@ describe('engine parity: the write journal upkeep steps', () => {
     return out;
   });
 
+  parityTest('a Git effect that holds a recovery record is retried with its record kept, not counted or parked at the cap', {
+    methods: ['readSourceMembership', 'lockPersistenceCounters', 'insertWriteRequest', 'insertWithdrawalEffects', 'transactionDirect',
+      'declarePersistence', 'stampWriteClaim', 'completeWriteRow', 'selectClaimableEffect', 'stampEffectClaim', 'completeEffectRow',
+      'publicationJournalStore', 'persistenceUpkeepStore', 'retryEffectRow', 'readRequestEffects'],
+    timeout: 60_000,
+  }, async (engine) => {
+    const id = await withdrawal(engine, 'b0000000-0000-4000-8000-0000000000e6');
+    const mirror = await claim(engine);
+    await engine.completeEffectRow({ id: mirror.id, token: mirror.execution_token, outcomeJson: '{}' });
+    const git = await claim(engine);
+    // A recovery record stored through the typed member a staging upgrade writes it with; no stand-in for the probe.
+    await (await engine.publicationJournalStore()).growRecoveryStaging('persistence_effects', git.id, { version: 2, parity: 'recovering' }, 64);
+    const upkeep = await engine.persistenceUpkeepStore();
+    const before = await upkeep.effectRecovering(git.id);
+    // The attempt is at the park cap for its target: without the record this failure would park the target.
+    const atCap = { ...git, data: { ...git.data, target_failures: 4, failing_target: 'notes/upkeep-example' } };
+    const failed = (await outcome(() => __effectFailureStepsForTests.recordFailure(engine, atCap,
+      opError('git_commit_failed' as never, 'The commit failed.', 'parity'), undefined, 'notes/upkeep-example'))) ?? 'ok';
+    const after = await upkeep.effectRecovering(git.id);
+    const row = (await engine.readRequestEffects(id)).find(e => e.kind === 'git')!;
+    const out = { before, after, failed, git: { state: row.state, error_code: row.error_code, recovering: row.recovering } };
+    expect(out).toEqual({ before: true, after: true, failed: 'ok', git: { state: 'queued', error_code: 'git_commit_failed', recovering: true } });
+    return out;
+  });
+
   parityTest('the segment sweep lists the sources bound to an active worktree this host owns', {
     methods: ['readWriterAdminState', 'worktreeClaimStore', 'persistenceUpkeepStore'],
     timeout: 120_000,

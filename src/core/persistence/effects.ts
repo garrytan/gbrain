@@ -714,8 +714,7 @@ async function recordFailure(engine: BrainEngine, effect: PersistenceEffect, err
     derived.counted.push({ effect, code: failureCode });
     return;
   }
-  const recovering = effectRecoverySeam.probe ? await effectRecoverySeam.probe(effect.id)
-    : await (await engine.persistenceUpkeepStore()).effectRecovering(effect.id);
+  const recovering = await (await engine.persistenceUpkeepStore()).effectRecovering(effect.id);
   if (recovering) { await retryEffect(engine, effect, code, 30_000); return; }
   // GBRA-133: a target a .gitignore rule excludes fails the same way on every attempt; it parks at once, naming the rule.
   if (code === 'git_target_ignored') { await parkEffectTarget(engine, effect, code, target, (error as OperationError).detail); return; }
@@ -736,13 +735,6 @@ async function recordFailure(engine: BrainEngine, effect: PersistenceEffect, err
 
 /** The failed step's diagnostic as the effect stores it (`data.last_error`, and on a parked entry); none for other errors. */
 const lastErrorOf = (error: unknown) => gitDiagnosticOf(error);
-
-/**
- * Test seam: answers recordFailure's recovery probe instead of its typed read (`effectRecovering`, lane 7's 20da396ebd,
- * which docs/designs/RUST_ENGINE.md conflict row 55a waited on). A parity test that stood a probe in here by name keeps
- * working until it moves to the typed read; null (the default) keeps the typed read.
- */
-export const effectRecoverySeam: { probe: ((effectId: string | number) => Promise<boolean>) | null } = { probe: null };
 
 /** Effects whose work is derived from a committed page: they count failures without a target and end terminal at the cap. */
 const DERIVED_KINDS: readonly string[] = ['links', 'facts-backstop'];

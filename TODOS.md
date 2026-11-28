@@ -1,5 +1,9 @@
 # TODOS
 
+## Agent output control-character follow-ups (filed 2026-11-28)
+
+- [ ] **P3 — c0-c1-legacy-error-text (owner: lane LM): C0 and C1 control characters in legacy error message and suggestion text.** **What:** `bidiInert` (src/core/agent-output.ts) escapes only bidi controls in an error envelope's `message`, `suggestion` and `why`, while `inertText` escapes the full C0, DEL, C1 and bidi set (`CONTROL_RE`). So a raw C0, DEL or C1 character in an `OperationError` message, suggestion or why reaches the CLI's `Error [code]:`, `Fix:` and `Why:` lines unescaped. Filed from lane LM slices 6-8. **Next:** audit the producers of those fields; then either widen `bidiInert` to the `CONTROL_RE` set for those fields (with a fail-first test that sends a C0, a DEL and a C1 character through each line) or sanitize at each producer. **Effort:** S. **Priority:** P3.
+
 ## Postgres date leniency (filed 2026-11-21, S2b-ns landing)
 
 - [ ] **P2 — Postgres reads an impossible date as the next valid day, so the engines disagree.** **What:** the postgres.js driver sends a `timestamptz` parameter through `new Date(value).toISOString()`, which turns an impossible date such as `2026-02-30T12:00:00+02:00` into March 2 before the statement leaves the process; PGLite and the Rust engine refuse the same input. On Postgres, an open-loop upsert with such a time can reopen a closed loop and overwrite its summary. The open-loop parity row in `test/engine-parity/open-loops.test.ts` skips the Postgres arm for this reason. **Fix:** refuse an impossible calendar day before the value reaches the driver (one check for every timestamp parameter the typed members send), then drop the Postgres skip from the parity row. **Owner:** core persistence. **Effort:** S. **Priority:** P2.

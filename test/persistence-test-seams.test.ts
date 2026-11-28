@@ -7,13 +7,16 @@
  * leaks into a later file that shares the shard process.
  * Fails when: a setter stops returning a working restore function, a restore
  * resets to a stale value instead of the previous one, or a production
- * default changes without its tests noticing.
+ * default changes without its tests noticing; or when effects.ts exports a
+ * stand-in for recordFailure's recovery probe again (RUST_ENGINE.md row 55a:
+ * the probe is the typed `effectRecovering` read on every engine).
  * Why new: the seams were bare setters with `null` resets; nothing checked
  * the restored value.
  * Seam: the seams under test.
  */
 import { afterAll, expect, test } from 'bun:test';
 import { MAINTENANCE_PUBLISH_WAIT_MS, MAINTENANCE_WRITE_WAIT_MS, MaintenanceWriteWait, __setMaintenanceWriteWaitForTests, maintenancePublishWaitMs } from '../src/core/persistence/maintenance-wait.ts';
+import * as effectsModule from '../src/core/persistence/effects.ts';
 import { EFFECT_RENEWAL_INTERVAL_MS, __setEffectRenewalIntervalForTests, effectRenewalInterval } from '../src/core/persistence/effects.ts';
 import { CONNECTOR_WAIT_BUDGET_MS, connectorWaitBudget } from '../src/core/persistence/connector-sync.ts';
 import { createConnectorFixture, withPausedOwnerBudget } from './helpers/connector-fixture.ts';
@@ -52,6 +55,10 @@ test('the effect renewal seam restores the previous interval', () => {
   expect(effectRenewalInterval()).toBe(1_500);
   outer();
   expectProductionDefaults();
+});
+
+test('a failed effect\'s recovery probe has no stand-in: recordFailure always reads the typed member', () => {
+  expect(Object.keys(effectsModule).filter(name => /recoveryseam/i.test(name))).toEqual([]);
 });
 
 test('the connector fixture restores the production wait budget on teardown', async () => {

@@ -729,10 +729,10 @@ git -C <checkout> config user.email "<email>"
 gbrain sources writer retry-effects <source> --parked-code git_unavailable --dry-run
 ```
 
-Run the printed command without `--dry-run` to retry them. PGLite and Postgres work this way today. On a Rust brain
-the failure record still refuses `raw_sql` instead of parking until lane 7's typed recovery read lands
-([RUST_ENGINE.md](../designs/RUST_ENGINE.md) conflict row 55a); `gbrain sync status` reads the holds the same way there
-([troubleshooting](troubleshooting.md#symptom-table)).
+Run the printed command without `--dry-run` to retry them. PGLite, Postgres and a Rust brain (single-host or
+multi-user) work this way: the failure record reads its recovery through a typed read
+([RUST_ENGINE.md](../designs/RUST_ENGINE.md) conflict row 55a, closed), and `gbrain sync status` reads the holds the
+same way on each ([troubleshooting](troubleshooting.md#symptom-table)).
 
 CLI and stdio registrations are durable, separate principals. The CLI lane is
 trusted local administration; stdio remains an untrusted memory caller.

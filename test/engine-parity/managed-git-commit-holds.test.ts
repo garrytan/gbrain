@@ -16,21 +16,17 @@
  *    (GCH-02 follow-up F2), a Rust sync status that never reads Git holds, or the arms printing different output.
  *  - Why existing coverage misses it: managed-git-missing-identity.test.ts pins the park on PGLite only and reads no
  *    sync status; no test fed a secret through a git step's stderr.
- *  - Rust: the failure record's recovery probe (persistence/effects.ts recordFailure) is raw SQL, so on a Rust brain
- *    (single-host and multi-user) the lifecycle case stops on a typed raw_sql refusal at the first failed attempt
- *    (docs/designs/RUST_ENGINE.md conflict row 55a). WAITING: it must run equal on the Rust arms once lane 7's typed
- *    effectRecovering (20da396ebd) reaches rust-engine/multiuser (it rides rust-engine/managed-on-rust-2b to main), and
- *    before multi-user mode turns on by default. Until then the second case proves the output on every arm: on Rust it
- *    stands lane 7's probe in by name (effects.ts effectRecoverySeam, answering "no recovery record"), and the arms
- *    compare the sync status bytes.
+ *  - Rust: the failure record's recovery probe (persistence/effects.ts recordFailure) is the typed effectRecovering
+ *    read, so on a Rust brain (single-host and multi-user) every case but the GCH-03a removal runs equal with no
+ *    stand-in (docs/designs/RUST_ENGINE.md conflict row 55a, closed). The second case compares the sync status bytes
+ *    of a seeded source on every arm.
  *  - Slice 4 (GCH-03a, F1, F2a): a put whose push fails is a push hold that names the step and reason (`last_error`,
  *    the text's "at step X (reason: Y)") and pushes once the remote is back, with its tracking ref pruned (F1). A
  *    removal whose push failed, retried after its tracking ref was pruned, pushes and never completes unpushed
  *    (GCH-03a). A commit hold that asks the user still sets `needs_human` (from `git_commit`) while a recovery record is
- *    `next`, so the JSON and the text's ASK THE USER agree (F2a). Rust: F1 and F2a run equal with the recovery probe
- *    seamed (effectRecoverySeam, restored in finally). The GCH-03a removal STOPS on Rust at delete_page preparation
- *    (file-claims.ts findLiveFileClaimants is raw SQL; the page-prepare item, due 2026-12-10). PGLite and Postgres run
- *    every case unseamed.
+ *    `next`, so the JSON and the text's ASK THE USER agree (F2a). Rust: F1 and F2a run equal. The GCH-03a removal
+ *    STOPS on Rust at delete_page preparation (file-claims.ts findLiveFileClaimants is raw SQL; the page-prepare item,
+ *    due 2026-12-10).
  *  - Seams: retries come due at once (requeueEffectRow with delayMs 0, a typed member every arm serves). In the two push
  *    cases (`slowPushRecord`) that same member waits SLOW_PUSH_RECORD_MS before it requeues a failed push, so the
  *    attempt is certainly still `running` while the drain starts (a slow `git` cannot do it: the effect runs git
@@ -57,7 +53,7 @@ import { runPersistenceAdministration } from '../../src/core/persistence/adminis
 import { disposePersistenceConsumer } from '../../src/core/persistence/service.ts';
 import { submitPageMutation } from '../../src/core/persistence/page-mutations.ts';
 import { hostIdFor, readLocalWriter } from '../../src/core/persistence/identity.ts';
-import { effectRecoverySeam, runPersistenceEffects } from '../../src/core/persistence/effects.ts';
+import { runPersistenceEffects } from '../../src/core/persistence/effects.ts';
 import { readSyncStatus } from '../../src/core/persistence/sync-status.ts';
 import { runSyncStatus } from '../../src/commands/sync/operator.ts';
 import { checkParkedEffects } from '../../src/commands/doctor/checks/parked-effects.ts';
@@ -205,7 +201,7 @@ async function syncStatusOutput(engine: BrainEngine, home: string, source = 'wor
 
 describe('engine parity: a managed Git commit that cannot be made is loud in gbrain sync status', () => {
   parityTest('no Git identity: requeued with its step, parked after 5, listed by writer status, doctor and sync status; the identity fix commits it; a leaky clean filter stores and prints no secret', {
-    methods: ['worktreeClaimStore', 'readRequestEffects', 'requeueEffectRow', 'parkEffectRow', 'listGitPushHoldRows', 'readSyncStatusCommittedRow'],
+    methods: ['worktreeClaimStore', 'readRequestEffects', 'requeueEffectRow', 'parkEffectRow', 'listGitPushHoldRows', 'readSyncStatusCommittedRow', 'persistenceUpkeepStore'],
     timeout: 180_000,
   }, async (engine, backend) => withNoIdentityCheckout(engine, backend, {}, async (home, root, written) => {
     const { git, attempts, request, effect } = await writeUntilParked(engine, written);
@@ -285,36 +281,28 @@ describe('engine parity: a managed Git commit that cannot be made is loud in gbr
     return { ...out, fixed, sanitized };
   }));
 
-  parityTest('sync status prints the same commit hold on every engine (on Rust, lane 7\'s recovery probe stood in by name)', {
+  parityTest('sync status prints the same commit hold on every engine', {
     methods: ['worktreeClaimStore', 'readRequestEffects', 'requeueEffectRow', 'parkEffectRow', 'listGitPushHoldRows', 'readSyncStatusCommittedRow'],
     timeout: 120_000,
   }, async (engine, backend) => withNoIdentityCheckout(engine, backend, { source: 'seeded' }, async (home, _root, written) => {
-    // effectRecoverySeam answers recordFailure's recovery probe as lane 7's typed effectRecovering will (no recovery
-    // record here), so the Rust arm records the failure; PGLite and Postgres keep their raw read.
-    if (backend === 'rust') effectRecoverySeam.probe = async () => false;
-    try {
-      const { attempts, effect } = await writeUntilParked(engine, written, 'notes/jade-example', 'seeded');
-      expect(attempts.map(a => a.kind)).toEqual(['requeue', 'requeue', 'requeue', 'requeue', 'park']);
-      expect(effect).toEqual({ state: 'failed', code: 'targets_parked' });
-      const status = await syncStatusOutput(engine, home, 'seeded');
-      const hold = (status.json.git_commit_holds as Array<Record<string, unknown>>)[0];
-      expect(hold).toMatchObject({ source_id: 'seeded', retrying: 0, parked: 1, codes: ['git_unavailable'], identity_missing: true, owner_host: 'this_host' });
-      expect(hold!.last_error).toEqual({ phase: 'commit', step: 'commit-tree', reason: 'identity_missing', identity: true });
-      expect(status.json.needs_human).toBe(true);
-      expect(status.json.git_push_holds).toEqual([]);
-      expect(status.text).not.toContain('holds nothing');
-      return { sync_json: JSON.stringify(status.json), lines: status.lines.join('\n') };
-    } finally { effectRecoverySeam.probe = null; }
+    const { attempts, effect } = await writeUntilParked(engine, written, 'notes/jade-example', 'seeded');
+    expect(attempts.map(a => a.kind)).toEqual(['requeue', 'requeue', 'requeue', 'requeue', 'park']);
+    expect(effect).toEqual({ state: 'failed', code: 'targets_parked' });
+    const status = await syncStatusOutput(engine, home, 'seeded');
+    const hold = (status.json.git_commit_holds as Array<Record<string, unknown>>)[0];
+    expect(hold).toMatchObject({ source_id: 'seeded', retrying: 0, parked: 1, codes: ['git_unavailable'], identity_missing: true, owner_host: 'this_host' });
+    expect(hold!.last_error).toEqual({ phase: 'commit', step: 'commit-tree', reason: 'identity_missing', identity: true });
+    expect(status.json.needs_human).toBe(true);
+    expect(status.json.git_push_holds).toEqual([]);
+    expect(status.text).not.toContain('holds nothing');
+    return { sync_json: JSON.stringify(status.json), lines: status.lines.join('\n') };
   }));
 
-  parityTest('F1: a put whose push fails is a push hold that names its step and reason, and it pushes once the remote is back even with its tracking ref pruned (Rust: recovery probe seamed)', {
+  parityTest('F1: a put whose push fails is a push hold that names its step and reason, and it pushes once the remote is back even with its tracking ref pruned', {
     methods: ['worktreeClaimStore', 'readRequestEffects', 'requeueEffectRow', 'listGitPushHoldRows', 'readSyncStatusCommittedRow'],
     timeout: 120_000,
   }, async (engine, backend) => withNoIdentityCheckout(engine, backend, { source: 'pushheld', identity: true, slowPushRecord: true }, async (home, root) => {
-    // F1 on every arm: put_page is Rust-servable, so this case runs on Rust (seamed below), unlike the removal case.
-    // SEAMED on Rust: the failed push's recordFailure runs lane 7's recovery probe (raw SQL until 20da396ebd lands,
-    // conflict row 55a), so effectRecoverySeam answers "no recovery record" there; PGLite and Postgres keep their raw read.
-    if (backend === 'rust') effectRecoverySeam.probe = async () => false;
+    // F1 on every arm: put_page is Rust-servable, so this case runs on Rust, unlike the removal case.
     const tip = (ref: string) => execFileSync('git', ['-C', ref === 'remote' ? join(home, 'remote.git') : root, 'rev-parse', ref === 'remote' ? 'main' : 'HEAD'], { encoding: 'utf8' }).trim();
     const submit = async (operation: 'put_page' | 'delete_page', params: Record<string, unknown>) => {
       const request_id = randomUUID();
@@ -322,29 +310,27 @@ describe('engine parity: a managed Git commit that cannot be made is loud in gbr
       const row = (await engine.readWriteRequest('local_cli', (await readLocalWriter(engine, 'cli')).id, request_id))!;
       return async () => (await engine.readRequestEffects(row.id, 'git'))[0]!;
     };
-    try {
-      const put = await submit('put_page', { slug: 'notes/lee-example', content: '---\ntype: note\ntitle: Lee Example\n---\nWorks at widget-co.\n' });
-      await drainGit(engine, put, row => row.state === 'committed', 'committed');
-      expect(tip('remote')).toBe(tip('HEAD'));
-      execFileSync('git', ['-C', root, 'remote', 'set-url', 'origin', join(home, 'no-such-remote.git')]);
-      const removal = await submit('put_page', { slug: 'notes/mia-example', content: '---\ntype: note\ntitle: Mia Example\n---\nWorks at acme-example.\n' });
-      // The first failed push is still being recorded (claimed, running) while the drain starts: slowPushRecord holds it.
-      const inflight = await claimedGit(engine, removal);
-      const held = await drainGit(engine, removal, row => row.state === 'queued' && !!row.error_code, 'a queued push hold');
-      await inflight.pass;
-      expect({ state: held.state, code: held.error_code }).toEqual({ state: 'queued', code: 'git_push_unavailable' });
-      const status = await syncStatusOutput(engine, home, 'pushheld');
-      const hold = (status.json.git_push_holds as Array<Record<string, unknown>>)[0]!;
-      expect({ codes: hold.codes, last_error: hold.last_error }).toEqual({ codes: ['git_push_unavailable'], last_error: { phase: 'push', step: 'ls-remote', reason: 'remote_unreachable' } });
-      expect(status.text).toContain('(git_push_unavailable) since <time> at step ls-remote (reason: remote_unreachable)');
-      execFileSync('git', ['-C', root, 'remote', 'set-url', 'origin', join(home, 'remote.git')]);
-      execFileSync('git', ['-C', root, 'update-ref', '-d', 'refs/remotes/origin/main']);
-      expect(tip('remote')).not.toBe(tip('HEAD'));
-      const done = await drainGit(engine, removal, row => row.state === 'committed', 'committed');
-      expect({ state: done.state, push: (done.outcome as Record<string, unknown>).push }).toEqual({ state: 'committed', push: 'committed' });
-      expect(tip('remote')).toBe(tip('HEAD'));
-      return { held: { state: held.state, code: held.error_code }, hold: JSON.stringify(hold), done: JSON.stringify(done.outcome) };
-    } finally { effectRecoverySeam.probe = null; }
+    const put = await submit('put_page', { slug: 'notes/lee-example', content: '---\ntype: note\ntitle: Lee Example\n---\nWorks at widget-co.\n' });
+    await drainGit(engine, put, row => row.state === 'committed', 'committed');
+    expect(tip('remote')).toBe(tip('HEAD'));
+    execFileSync('git', ['-C', root, 'remote', 'set-url', 'origin', join(home, 'no-such-remote.git')]);
+    const removal = await submit('put_page', { slug: 'notes/mia-example', content: '---\ntype: note\ntitle: Mia Example\n---\nWorks at acme-example.\n' });
+    // The first failed push is still being recorded (claimed, running) while the drain starts: slowPushRecord holds it.
+    const inflight = await claimedGit(engine, removal);
+    const held = await drainGit(engine, removal, row => row.state === 'queued' && !!row.error_code, 'a queued push hold');
+    await inflight.pass;
+    expect({ state: held.state, code: held.error_code }).toEqual({ state: 'queued', code: 'git_push_unavailable' });
+    const status = await syncStatusOutput(engine, home, 'pushheld');
+    const hold = (status.json.git_push_holds as Array<Record<string, unknown>>)[0]!;
+    expect({ codes: hold.codes, last_error: hold.last_error }).toEqual({ codes: ['git_push_unavailable'], last_error: { phase: 'push', step: 'ls-remote', reason: 'remote_unreachable' } });
+    expect(status.text).toContain('(git_push_unavailable) since <time> at step ls-remote (reason: remote_unreachable)');
+    execFileSync('git', ['-C', root, 'remote', 'set-url', 'origin', join(home, 'remote.git')]);
+    execFileSync('git', ['-C', root, 'update-ref', '-d', 'refs/remotes/origin/main']);
+    expect(tip('remote')).not.toBe(tip('HEAD'));
+    const done = await drainGit(engine, removal, row => row.state === 'committed', 'committed');
+    expect({ state: done.state, push: (done.outcome as Record<string, unknown>).push }).toEqual({ state: 'committed', push: 'committed' });
+    expect(tip('remote')).toBe(tip('HEAD'));
+    return { held: { state: held.state, code: held.error_code }, hold: JSON.stringify(hold), done: JSON.stringify(done.outcome) };
   }));
 
   parityTest('GCH-03a + F1: a removal whose push failed, retried after its tracking ref was pruned, pushes; the push hold names its step and reason (Rust: stops at delete_page preparation)', {
@@ -354,9 +340,6 @@ describe('engine parity: a managed Git commit that cannot be made is loud in gbr
     // STOPPED on Rust: delete_page's preparation reads live file claimants with raw SQL (file-claims.ts
     // findLiveFileClaimants, via page-prepare.ts prepareFileTarget), the page-prepare item due 2026-12-10, so the Rust arm
     // stops on executeRaw before any Git step; the F1 case above carries the push-hold evidence on Rust.
-    // SEAMED on Rust: the failed push's recordFailure runs lane 7's recovery probe (raw SQL until 20da396ebd lands,
-    // conflict row 55a), so effectRecoverySeam answers "no recovery record" there; PGLite and Postgres keep their raw read.
-    if (backend === 'rust') effectRecoverySeam.probe = async () => false;
     const tip = (ref: string) => execFileSync('git', ['-C', ref === 'remote' ? join(home, 'remote.git') : root, 'rev-parse', ref === 'remote' ? 'main' : 'HEAD'], { encoding: 'utf8' }).trim();
     const submit = async (operation: 'put_page' | 'delete_page', params: Record<string, unknown>) => {
       const request_id = randomUUID();
@@ -364,37 +347,34 @@ describe('engine parity: a managed Git commit that cannot be made is loud in gbr
       const row = (await engine.readWriteRequest('local_cli', (await readLocalWriter(engine, 'cli')).id, request_id))!;
       return async () => (await engine.readRequestEffects(row.id, 'git'))[0]!;
     };
-    try {
-      const put = await submit('put_page', { slug: 'notes/lee-example', content: '---\ntype: note\ntitle: Lee Example\n---\nWorks at widget-co.\n' });
-      await drainGit(engine, put, row => row.state === 'committed', 'committed');
-      expect(tip('remote')).toBe(tip('HEAD'));
-      execFileSync('git', ['-C', root, 'remote', 'set-url', 'origin', join(home, 'no-such-remote.git')]);
-      const page = await engine.readPageSnapshot('notes/lee-example', { sourceId: 'pruned', includeDeleted: true });
-      const removal = await submit('delete_page', { slug: 'notes/lee-example', expected_revision: page!.revision });
-      // The first failed push is still being recorded (claimed, running) while the drain starts: slowPushRecord holds it.
-      const inflight = await claimedGit(engine, removal);
-      const held = await drainGit(engine, removal, row => row.state === 'queued' && !!row.error_code, 'a queued push hold');
-      await inflight.pass;
-      expect({ state: held.state, code: held.error_code }).toEqual({ state: 'queued', code: 'git_push_unavailable' });
-      const status = await syncStatusOutput(engine, home, 'pruned');
-      const hold = (status.json.git_push_holds as Array<Record<string, unknown>>)[0]!;
-      expect({ codes: hold.codes, last_error: hold.last_error }).toEqual({ codes: ['git_push_unavailable'], last_error: { phase: 'push', step: 'ls-remote', reason: 'remote_unreachable' } });
-      expect(status.text).toContain('(git_push_unavailable) since <time> at step ls-remote (reason: remote_unreachable)');
-      execFileSync('git', ['-C', root, 'remote', 'set-url', 'origin', join(home, 'remote.git')]);
-      execFileSync('git', ['-C', root, 'update-ref', '-d', 'refs/remotes/origin/main']);
-      expect(tip('remote')).not.toBe(tip('HEAD'));
-      const done = await drainGit(engine, removal, row => row.state === 'committed', 'committed');
-      expect({ state: done.state, outcome: done.outcome }).toEqual({ state: 'committed', outcome: { git: 'skipped', reason: 'target_absent', push: 'committed' } });
-      expect(tip('remote')).toBe(tip('HEAD'));
-      return { held: { state: held.state, code: held.error_code }, hold: JSON.stringify(hold), done: JSON.stringify(done.outcome) };
-    } finally { effectRecoverySeam.probe = null; }
+    const put = await submit('put_page', { slug: 'notes/lee-example', content: '---\ntype: note\ntitle: Lee Example\n---\nWorks at widget-co.\n' });
+    await drainGit(engine, put, row => row.state === 'committed', 'committed');
+    expect(tip('remote')).toBe(tip('HEAD'));
+    execFileSync('git', ['-C', root, 'remote', 'set-url', 'origin', join(home, 'no-such-remote.git')]);
+    const page = await engine.readPageSnapshot('notes/lee-example', { sourceId: 'pruned', includeDeleted: true });
+    const removal = await submit('delete_page', { slug: 'notes/lee-example', expected_revision: page!.revision });
+    // The first failed push is still being recorded (claimed, running) while the drain starts: slowPushRecord holds it.
+    const inflight = await claimedGit(engine, removal);
+    const held = await drainGit(engine, removal, row => row.state === 'queued' && !!row.error_code, 'a queued push hold');
+    await inflight.pass;
+    expect({ state: held.state, code: held.error_code }).toEqual({ state: 'queued', code: 'git_push_unavailable' });
+    const status = await syncStatusOutput(engine, home, 'pruned');
+    const hold = (status.json.git_push_holds as Array<Record<string, unknown>>)[0]!;
+    expect({ codes: hold.codes, last_error: hold.last_error }).toEqual({ codes: ['git_push_unavailable'], last_error: { phase: 'push', step: 'ls-remote', reason: 'remote_unreachable' } });
+    expect(status.text).toContain('(git_push_unavailable) since <time> at step ls-remote (reason: remote_unreachable)');
+    execFileSync('git', ['-C', root, 'remote', 'set-url', 'origin', join(home, 'remote.git')]);
+    execFileSync('git', ['-C', root, 'update-ref', '-d', 'refs/remotes/origin/main']);
+    expect(tip('remote')).not.toBe(tip('HEAD'));
+    const done = await drainGit(engine, removal, row => row.state === 'committed', 'committed');
+    expect({ state: done.state, outcome: done.outcome }).toEqual({ state: 'committed', outcome: { git: 'skipped', reason: 'target_absent', push: 'committed' } });
+    expect(tip('remote')).toBe(tip('HEAD'));
+    return { held: { state: held.state, code: held.error_code }, hold: JSON.stringify(hold), done: JSON.stringify(done.outcome) };
   }));
 
   parityTest('F2a: a commit hold that asks the user still sets needs_human while a recovery record is the next step, and the text and JSON agree', {
     methods: ['worktreeClaimStore', 'readRequestEffects', 'requeueEffectRow', 'parkEffectRow', 'listGitPushHoldRows', 'readSyncStatusCommittedRow', 'readSyncRecoveryProbeRow'],
     timeout: 120_000,
   }, async (engine, backend) => withNoIdentityCheckout(engine, backend, { source: 'pending' }, async (home, _root, written) => {
-    if (backend === 'rust') effectRecoverySeam.probe = async () => false;
     const target = engine as unknown as Record<string, unknown>;
     const probe = engine.readSyncRecoveryProbeRow.bind(engine);
     try {
@@ -413,6 +393,6 @@ describe('engine parity: a managed Git commit that cannot be made is loud in gbr
       expect({ needs_human: status.json.needs_human, from: status.json.needs_human_from, reason: status.json.human_reason })
         .toEqual({ needs_human: true, from: { kind: 'git_commit', code: 'git_unavailable', root: '<home>/checkout' }, reason: hold.fix.user_message });
       return { sync_json: JSON.stringify(status.json), lines: status.lines.join('\n') };
-    } finally { target.readSyncRecoveryProbeRow = probe; effectRecoverySeam.probe = null; }
+    } finally { target.readSyncRecoveryProbeRow = probe; }
   }));
 });

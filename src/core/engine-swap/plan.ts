@@ -142,11 +142,11 @@ export async function assertNotManaged(engine: BrainEngine, destination?: Destin
 
 /**
  * What a managed brain loses on a Rust destination today (single-host and multi-user), named in the plan instead of
- * refused (RUST_ENGINE.md conflict row 55a). Absent from the plan of an unmanaged brain.
+ * refused. Empty: the one loss it named (RUST_ENGINE.md conflict row 55a, a failing Git effect's raw recovery read) is
+ * closed, as recordFailure reads it through the typed persistenceUpkeepStore. A managed plan keeps the empty field;
+ * an unmanaged plan does not carry it.
  */
-export const MANAGED_RUST_LOSSES: readonly string[] = [
-  'A Git effect that fails (git_unavailable, a push refusal) records its failure through raw SQL (persistence/effects.ts recordFailure) until lane 7\'s typed persistenceUpkeepStore (20da396ebd, on rust-engine/managed-on-rust-2b) reaches the Rust engine, so on a Rust brain it refuses raw_sql instead of retrying and parking. Owner: lane 7.',
-];
+export const MANAGED_RUST_LOSSES: readonly string[] = [];
 
 /** The plan hash binds what a run would act on, never volatile readings (time, free space). */
 function planHash(p: Omit<SwapPlan, 'plan_hash'>, dest: DestinationOptions | undefined): string {

@@ -211,7 +211,7 @@ test/engine-parity/jobs-worker-liveness.test.ts	5	1
 test/engine-parity/jobs.test.ts	16	0
 test/engine-parity/journal-purge-terminal.test.ts	2	0
 test/engine-parity/journal-typed-sites.test.ts	7	0
-test/engine-parity/journal-upkeep-steps.test.ts	5	0
+test/engine-parity/journal-upkeep-steps.test.ts	6	0
 test/engine-parity/keyword-visibility.test.ts	7	0
 test/engine-parity/label-guard-tiers.test.ts	2	0
 test/engine-parity/labelled-access-allowed.test.ts	2	0
