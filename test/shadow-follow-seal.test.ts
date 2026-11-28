@@ -356,7 +356,7 @@ function fakeReads(o: FakeOptions = {}): ReadSource & { sql: string[]; activityP
   } as never;
 }
 const FACTS = { version: 160016, track_counts: 'on', counts_role_off: false, app: 'gbrain-1-abc', stats_reset: '1700000000.5', postmaster: '1700000000.25' };
-const ACTIVITY = { writing: 0, prepared: 0, live: 0, recent: 0, gaps: 0, gaps_max: '' };
+const ACTIVITY = { writing: 0, prepared: 0, live: 0, recent: 0, unseen: 0, gaps: 0, gaps_max: '' };
 const rel = (name: string, o: Rows = {}): Rows => ({ name, oid: '16400', relfilenode: '16400', ins: '5', upd: '1', del: '0', ...o });
 const RELS = [rel('pages'), rel('page_projection_jobs', { oid: '16500', relfilenode: '16500', ins: '0', upd: '0' })];
 const MARK = { v: 2, app: 'gbrain-1-abc', stats_reset: '1700000000.5', postmaster: '1700000000.25', rels: { pages: { oid: '16400', relfilenode: '16400', ins: '5', upd: '1', del: '0' }, old_table: null, page_projection_jobs: { oid: '16500', relfilenode: '16500', ins: '0', upd: '0', del: '0' } }, gaps: 0, gaps_max: '' };
@@ -400,6 +400,7 @@ describe('seal.ts: the primary\'s change token', () => {
     expect(await refusedFor({ act: { prepared: 1 } })).toEqual({ refused: 'prepared_transaction' });
     expect(await refusedFor({ act: { live: 1 } })).toEqual({ refused: 'other_writer_live' });
     expect(await refusedFor({ act: { recent: 1 } })).toEqual({ refused: 'other_backend_recent' });
+    expect(await refusedFor({ act: { unseen: 1 } })).toEqual({ refused: 'other_backend_unseen' });
     expect(await refusedFor({ rels: [] })).toEqual({ refused: 'relation_missing' }); // pages was copied
     expect(await refusedFor({ uncovered: 1 })).toEqual({ refused: 'uncovered_writer_role' });
     expect(await refusedFor({ facts: null })).toEqual({ refused: 'mark_unreadable' });
@@ -416,10 +417,11 @@ describe('seal.ts: the primary\'s change token', () => {
     const dir = hooked();
     const atSeal = fakeReads();
     await sealMark({ dir, reads: atSeal, postgres: true });
-    expect(atSeal.activityParams).toEqual([[['gbrain-1-abc'], ['gbrain-1-abc']]]);
+    expect(atSeal.activityParams.map((p) => p.slice(0, 2))).toEqual([[['gbrain-1-abc'], ['gbrain-1-abc']]]);
+    expect(atSeal.activityParams[0]![2]).toContain('page_projection_jobs'); // the relations whose writers are waited on
     const atCheck = fakeReads({ facts: { app: 'gbrain-2-def' } });
     await quietSince({ dir, reads: atCheck, postgres: true }, mark);
-    expect(atCheck.activityParams).toEqual([[[], ['gbrain-2-def', 'gbrain-1-abc']]]);
+    expect(atCheck.activityParams.map((p) => p.slice(0, 2))).toEqual([[[], ['gbrain-2-def', 'gbrain-1-abc']]]);
   });
 
   test('not quiet when the database shows a write, an epoch change or a changed relation, each with its reason', async () => {
@@ -445,6 +447,7 @@ describe('seal.ts: the primary\'s change token', () => {
     expect(await quiet({ act: { prepared: 1 } })).toEqual({ ok: false, reason: 'prepared_transaction' });
     expect(await quiet({ act: { live: 1 } })).toEqual({ ok: false, reason: 'other_writer_live' });
     expect(await quiet({ act: { recent: 1 } })).toEqual({ ok: false, reason: 'other_backend_recent' });
+    expect(await quiet({ act: { unseen: 1 } })).toEqual({ ok: false, reason: 'other_backend_unseen' });
     expect(await quiet({ act: { writing: 1 }, facts: { stats_reset: 'other' } })).toEqual({ ok: false, reason: 'other_writer_open' });
     expect(await quiet({ act: { gaps: 1, gaps_max: '2026-11-28 10:00:02+00' } })).toEqual({ ok: false, reason: 'coverage_gap' });
     expect(await quiet({ uncovered: 1 })).toEqual({ ok: false, reason: 'uncovered_writer_role' });

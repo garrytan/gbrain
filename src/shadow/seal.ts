@@ -16,8 +16,9 @@
  *  - at the next start (`quietSince`, from `confirmSeal`) the same read must show the same token: any new write (or an
  *    aborted one), a TRUNCATE or rewrite, a relation dropped, created or replaced, a statistics reset or a restarted
  *    server refuses it. Counters only prove what the server has flushed (a backend flushes at most about a minute
- *    after a write, and at exit), so the check also refuses while any other connection to this database is not idle,
- *    went idle less than a minute ago, or cannot be seen, while a prepared transaction exists, while another connection
+ *    after a write, and at exit), so the check also refuses while another connection to this database, of a role that
+ *    can write a copied relation, is not idle, went idle less than a minute ago, or cannot be seen by the reading role
+ *    (a read-only role, such as a monitoring agent, is never waited on), while a prepared transaction exists, while another connection
  *    has a write transaction open, and while a connection the hooks recorded is still connected (the cost: a writer
  *    still connected during the seal check is refused until it commits or disconnects). The same activity checks run
  *    at close. The sealing process's own connections are left out of the activity checks, not the counters: what it
@@ -107,14 +108,27 @@ const FACTS_SQL = `SELECT current_setting('server_version_num')::int AS version,
   extract(epoch FROM pg_catalog.pg_postmaster_start_time())::text AS postmaster`;
 
 /**
+ * Whether the role `u` (a pg_stat_activity usesysid) can change a copied relation ($3 names): only such a role can move
+ * the token's counters, so only its sessions are waited on. A session with no role is counted (unknown). A role that
+ * reads only (a monitoring agent) is never waited on, whether its session is visible or not.
+ */
+const CAN_WRITE = (u: string): string => `(${u} IS NULL OR EXISTS (SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+      WHERE n.nspname = current_schema() AND c.relkind = 'r' AND c.relname::text = ANY($3::text[])
+        AND (has_table_privilege(${u}, c.oid, 'INSERT, UPDATE, DELETE, TRUNCATE') OR has_any_column_privilege(${u}, c.oid, 'INSERT') OR has_any_column_privilege(${u}, c.oid, 'UPDATE'))))`;
+
+/**
  * Who could have written, or still be about to be seen writing. $1 connection names left out of the open-write check,
- * $2 connection names left out of the other checks (backends that are idle and settled, or hidden from this role, show
- * `state` and `application_name` as NULL and are counted: hidden means unknown).
+ * $2 connection names left out of the other checks, $3 the copied relations.
  *  writing  another backend has a transaction with a write open (a transaction id is assigned at the first write);
  *  prepared a prepared transaction exists in this database (it holds locks and has no backend);
  *  live     a connection the hooks recorded as a writer is still connected, however old its row (its next write may not
  *           leave a new row);
- *  recent   another client connection is not idle or went idle less than SETTLE_SECONDS ago;
+ *  recent   another client connection of a role that can write a copied relation is not idle or went idle less than
+ *           SETTLE_SECONDS ago (its counters may not be flushed yet);
+ *  unseen   a backend of such a role (or of no role) whose row this role may not see: without superuser or
+ *           pg_read_all_stats, another role's row shows pid, usesysid, usename and application_name but NULL state,
+ *           backend_xid, state_change and backend_type (PostgreSQL 16 and 17), so neither its open write nor its
+ *           unflushed counters can be ruled out;
  *  gaps     the coverage-gap rows.
  */
 const ACTIVITY_SQL = `SELECT
@@ -125,7 +139,10 @@ const ACTIVITY_SQL = `SELECT
     AND EXISTS (SELECT 1 FROM pg_catalog.pg_stat_activity a WHERE a.pid = s.backend_pid AND a.datname = current_database())) AS live,
   (SELECT count(*)::int FROM pg_catalog.pg_stat_activity a WHERE a.datname = current_database() AND a.backend_type = 'client backend' AND a.pid <> pg_backend_pid()
     AND NOT (coalesce(a.application_name, '') = ANY($2::text[]))
-    AND (a.state IS DISTINCT FROM 'idle' OR a.state_change IS NULL OR a.state_change > clock_timestamp() - interval '${SETTLE_SECONDS} seconds')) AS recent,
+    AND (a.state IS DISTINCT FROM 'idle' OR a.state_change IS NULL OR a.state_change > clock_timestamp() - interval '${SETTLE_SECONDS} seconds')
+    AND ${CAN_WRITE('a.usesysid')}) AS recent,
+  (SELECT count(*)::int FROM pg_catalog.pg_stat_activity a WHERE a.datname = current_database() AND a.backend_type IS NULL AND a.pid <> pg_backend_pid()
+    AND NOT (coalesce(a.application_name, '') = ANY($2::text[])) AND ${CAN_WRITE('a.usesysid')}) AS unseen,
   (SELECT count(*)::int FROM engine_writer_coverage_gaps) AS gaps,
   (SELECT coalesce(max(created_at)::text, '') FROM engine_writer_coverage_gaps) AS gaps_max`;
 
@@ -149,12 +166,13 @@ async function observe(tx: BrainEngine, query: ReadQuery, names: string[], mark:
   if (facts.version < MIN_SERVER_VERSION) return { refused: 'postgres_version_old' };
   if (String(facts.track_counts).toLowerCase() !== 'on' || facts.counts_role_off !== false) return { refused: 'track_counts_off' };
   const settled = mark ? [facts.app, mark.app] : [facts.app];
-  const [act] = await query(ACTIVITY_SQL, [mark ? [] : [facts.app], settled]);
+  const [act] = await query(ACTIVITY_SQL, [mark ? [] : [facts.app], settled, names]);
   if (!act) return { refused: 'mark_unreadable' };
   if (act.writing !== 0) return { refused: 'other_writer_open' };
   if (act.prepared !== 0) return { refused: 'prepared_transaction' };
   if (act.live !== 0) return { refused: 'other_writer_live' };
   if (act.recent !== 0) return { refused: 'other_backend_recent' };
+  if (act.unseen !== 0) return { refused: 'other_backend_unseen' };
   const found = new Map((await query(RELS_SQL, [names])).map((r) => [r.name as string, r as unknown as Rel]));
   const rels: Record<string, Rel | null> = {};
   for (const name of names) { const r = found.get(name); rels[name] = r && isRel(r) ? { oid: r.oid, relfilenode: r.relfilenode, ins: r.ins, upd: r.upd, del: r.del } : null; }
